@@ -693,6 +693,18 @@
             (opt-const-bind env dst folded ty)
             (IrInstrMov dst folded ty))]
         [(IrNoValue) (OptInstrResult (opt-const-unbind env dst) instr)])]
+    [(IrInstrLaneId dst _ _) (opt-invalidate-def env dst instr)]
+    [(IrInstrSplat dst _ _ _) (opt-invalidate-def env dst instr)]
+    [(IrInstrVectorBinOp dst _ _ _ _ _) (opt-invalidate-def env dst instr)]
+    [(IrInstrVectorReduce dst _ _ _ _) (opt-invalidate-def env dst instr)]
+    [(IrInstrVectorCompare dst _ _ _ _ _) (opt-invalidate-def env dst instr)]
+    [(IrInstrMaskBinOp dst _ _ _ _) (opt-invalidate-def env dst instr)]
+    [(IrInstrMaskNot dst _ _) (opt-invalidate-def env dst instr)]
+    [(IrInstrMaskReduce dst _ _ _) (opt-invalidate-def env dst instr)]
+    [(IrInstrSelect dst _ _ _ _ _) (opt-invalidate-def env dst instr)]
+    [(IrInstrVectorLoad dst _ _ _ _) (opt-invalidate-def env dst instr)]
+    [(IrInstrPredicatedLoad dst _ _ _ _ _) (opt-invalidate-def env dst instr)]
+    [(IrInstrTailMask dst _ _ _) (opt-invalidate-def env dst instr)]
     [(IrInstrCall dst name args ty) (opt-invalidate-def env dst instr)]
     [(IrInstrPhi dst inputs ty) (opt-invalidate-def env dst instr)]
     [_ (OptInstrResult env instr)]))
@@ -737,6 +749,18 @@
               (IrInstrMov dst replacement ty)))]
         [(IrNoValue) (OptInstrResult (opt-const-unbind env dst) instr)])]
     [(IrInstrUnOp dst op v ty) (opt-invalidate-def env dst instr)]
+    [(IrInstrLaneId dst _ _) (opt-invalidate-def env dst instr)]
+    [(IrInstrSplat dst _ _ _) (opt-invalidate-def env dst instr)]
+    [(IrInstrVectorBinOp dst _ _ _ _ _) (opt-invalidate-def env dst instr)]
+    [(IrInstrVectorReduce dst _ _ _ _) (opt-invalidate-def env dst instr)]
+    [(IrInstrVectorCompare dst _ _ _ _ _) (opt-invalidate-def env dst instr)]
+    [(IrInstrMaskBinOp dst _ _ _ _) (opt-invalidate-def env dst instr)]
+    [(IrInstrMaskNot dst _ _) (opt-invalidate-def env dst instr)]
+    [(IrInstrMaskReduce dst _ _ _) (opt-invalidate-def env dst instr)]
+    [(IrInstrSelect dst _ _ _ _ _) (opt-invalidate-def env dst instr)]
+    [(IrInstrVectorLoad dst _ _ _ _) (opt-invalidate-def env dst instr)]
+    [(IrInstrPredicatedLoad dst _ _ _ _ _) (opt-invalidate-def env dst instr)]
+    [(IrInstrTailMask dst _ _ _) (opt-invalidate-def env dst instr)]
     [(IrInstrCall dst name args ty) (opt-invalidate-def env dst instr)]
     [(IrInstrPhi dst inputs ty) (opt-invalidate-def env dst instr)]
     [_ (OptInstrResult env instr)]))
@@ -818,6 +842,38 @@
     [(IrInstrBoundsCheck index length _)
       (opt-collect-value-uses (opt-collect-value-uses set index) length)]
     [(IrInstrCast _ src _ _) (opt-collect-value-uses set src)]
+    [(IrInstrSplat _ value _ _) (opt-collect-value-uses set value)]
+    [(IrInstrVectorBinOp _ _ lhs rhs _ _)
+      (opt-collect-value-uses (opt-collect-value-uses set lhs) rhs)]
+    [(IrInstrVectorReduce _ _ src _ _) (opt-collect-value-uses set src)]
+    [(IrInstrVectorCompare _ _ lhs rhs _ _)
+      (opt-collect-value-uses (opt-collect-value-uses set lhs) rhs)]
+    [(IrInstrMaskBinOp _ _ lhs rhs _)
+      (opt-collect-value-uses (opt-collect-value-uses set lhs) rhs)]
+    [(IrInstrMaskNot _ src _) (opt-collect-value-uses set src)]
+    [(IrInstrMaskReduce _ _ src _) (opt-collect-value-uses set src)]
+    [(IrInstrSelect _ mask on-true on-false _ _)
+      (opt-collect-value-uses
+        (opt-collect-value-uses (opt-collect-value-uses set mask) on-true)
+        on-false)]
+    [(IrInstrVectorLoad _ base index _ _)
+      (opt-collect-value-uses (opt-collect-value-uses set base) index)]
+    [(IrInstrVectorStore base index value _ _)
+      (opt-collect-value-uses
+        (opt-collect-value-uses (opt-collect-value-uses set base) index)
+        value)]
+    [(IrInstrPredicatedStore base index value mask _ _)
+      (opt-collect-value-uses
+        (opt-collect-value-uses
+          (opt-collect-value-uses (opt-collect-value-uses set base) index)
+          value)
+        mask)]
+    [(IrInstrPredicatedLoad _ base index mask _ _)
+      (opt-collect-value-uses
+        (opt-collect-value-uses (opt-collect-value-uses set base) index)
+        mask)]
+    [(IrInstrTailMask _ index length _)
+      (opt-collect-value-uses (opt-collect-value-uses set index) length)]
     [(IrInstrBranch cond _ _) (opt-collect-value-uses set cond)]
     [(IrInstrReturn maybe)
       (match maybe
@@ -853,6 +909,16 @@
     [(IrInstrBinOp dst _ _ _ _) (not (opt-used-contains set dst))]
     [(IrInstrUnOp dst _ _ _) (not (opt-used-contains set dst))]
     [(IrInstrPhi dst _ _) (not (opt-used-contains set dst))]
+    [(IrInstrLaneId dst _ _) (not (opt-used-contains set dst))]
+    [(IrInstrSplat dst _ _ _) (not (opt-used-contains set dst))]
+    [(IrInstrVectorBinOp dst _ _ _ _ _) (not (opt-used-contains set dst))]
+    [(IrInstrVectorReduce dst _ _ _ _) (not (opt-used-contains set dst))]
+    [(IrInstrVectorCompare dst _ _ _ _ _) (not (opt-used-contains set dst))]
+    [(IrInstrMaskBinOp dst _ _ _ _) (not (opt-used-contains set dst))]
+    [(IrInstrMaskNot dst _ _) (not (opt-used-contains set dst))]
+    [(IrInstrMaskReduce dst _ _ _) (not (opt-used-contains set dst))]
+    [(IrInstrSelect dst _ _ _ _ _) (not (opt-used-contains set dst))]
+    [(IrInstrTailMask dst _ _ _) (not (opt-used-contains set dst))]
     [_ false]))
 
 (define (opt-dce-instrs [set : OptUsedSet] [instrs : CompilerIrInstrList]) : CompilerIrInstrList
@@ -927,6 +993,35 @@
 
 (define (opt-unop-eq [a : CompilerIrUnOp] [b : CompilerIrUnOp]) : bool
   (= (opt-unop-tag a) (opt-unop-tag b)))
+
+(define (opt-mask-binop-tag [op : CompilerIrMaskBinOp]) : i64
+  (match op
+    [(IrMaskAnd) 0]
+    [(IrMaskOr) 1]))
+
+(define (opt-mask-binop-eq [a : CompilerIrMaskBinOp] [b : CompilerIrMaskBinOp]) : bool
+  (= (opt-mask-binop-tag a) (opt-mask-binop-tag b)))
+
+(define (opt-vector-reduce-tag [op : CompilerIrVectorReduceOp]) : i64
+  (match op
+    [(IrVectorReduceSum) 0]
+    [(IrVectorReduceMin) 1]
+    [(IrVectorReduceMax) 2]))
+
+(define (opt-vector-reduce-eq
+  [a : CompilerIrVectorReduceOp]
+  [b : CompilerIrVectorReduceOp]) : bool
+  (= (opt-vector-reduce-tag a) (opt-vector-reduce-tag b)))
+
+(define (opt-mask-reduce-tag [op : CompilerIrMaskReduceOp]) : i64
+  (match op
+    [(IrMaskReduceAll) 0]
+    [(IrMaskReduceAny) 1]))
+
+(define (opt-mask-reduce-eq
+  [a : CompilerIrMaskReduceOp]
+  [b : CompilerIrMaskReduceOp]) : bool
+  (= (opt-mask-reduce-tag a) (opt-mask-reduce-tag b)))
 
 (define (opt-value-eq [a : CompilerIrValue] [b : CompilerIrValue]) : bool
   (match a
@@ -1204,6 +1299,152 @@
               (opt-unop-eq aop bop)
               (and (opt-value-eq av bv) (opt-type-eq aty bty))))]
         [_ false])]
+    [(IrInstrLaneId ad alanes aty)
+      (match b
+        [(IrInstrLaneId bd blanes bty)
+          (and (= ad bd) (and (= alanes blanes) (opt-type-eq aty bty)))]
+        [_ false])]
+    [(IrInstrSplat ad av alanes aty)
+      (match b
+        [(IrInstrSplat bd bv blanes bty)
+          (and
+            (= ad bd)
+            (and
+              (opt-value-eq av bv)
+              (and (= alanes blanes) (opt-type-eq aty bty))))]
+        [_ false])]
+    [(IrInstrVectorBinOp ad aop al ar alanes aty)
+      (match b
+        [(IrInstrVectorBinOp bd bop bl br blanes bty)
+          (and
+            (= ad bd)
+            (and
+              (opt-binop-eq aop bop)
+              (and
+                (opt-value-eq al bl)
+                (and
+                  (opt-value-eq ar br)
+                  (and (= alanes blanes) (opt-type-eq aty bty))))))]
+        [_ false])]
+    [(IrInstrVectorReduce ad aop av alanes aty)
+      (match b
+        [(IrInstrVectorReduce bd bop bv blanes bty)
+          (and
+            (= ad bd)
+            (and
+              (opt-vector-reduce-eq aop bop)
+              (and
+                (opt-value-eq av bv)
+                (and (= alanes blanes) (opt-type-eq aty bty)))))]
+        [_ false])]
+    [(IrInstrVectorCompare ad aop al ar alanes aty)
+      (match b
+        [(IrInstrVectorCompare bd bop bl br blanes bty)
+          (and
+            (= ad bd)
+            (and
+              (opt-binop-eq aop bop)
+              (and
+                (opt-value-eq al bl)
+                (and
+                  (opt-value-eq ar br)
+                  (and (= alanes blanes) (opt-type-eq aty bty))))))]
+        [_ false])]
+    [(IrInstrMaskBinOp ad aop al ar alanes)
+      (match b
+        [(IrInstrMaskBinOp bd bop bl br blanes)
+          (and
+            (= ad bd)
+            (and
+              (opt-mask-binop-eq aop bop)
+              (and
+                (opt-value-eq al bl)
+                (and (opt-value-eq ar br) (= alanes blanes)))))]
+        [_ false])]
+    [(IrInstrMaskNot ad av alanes)
+      (match b
+        [(IrInstrMaskNot bd bv blanes)
+          (and (= ad bd) (and (opt-value-eq av bv) (= alanes blanes)))]
+        [_ false])]
+    [(IrInstrMaskReduce ad aop av alanes)
+      (match b
+        [(IrInstrMaskReduce bd bop bv blanes)
+          (and
+            (= ad bd)
+            (and
+              (opt-mask-reduce-eq aop bop)
+              (and (opt-value-eq av bv) (= alanes blanes))))]
+        [_ false])]
+    [(IrInstrSelect ad amask at af alanes aty)
+      (match b
+        [(IrInstrSelect bd bmask bt bf blanes bty)
+          (and
+            (= ad bd)
+            (and
+              (opt-value-eq amask bmask)
+              (and
+                (opt-value-eq at bt)
+                (and
+                  (opt-value-eq af bf)
+                  (and (= alanes blanes) (opt-type-eq aty bty))))))]
+        [_ false])]
+    [(IrInstrVectorLoad ad abase aindex alanes aty)
+      (match b
+        [(IrInstrVectorLoad bd bbase bindex blanes bty)
+          (and
+            (= ad bd)
+            (and
+              (opt-value-eq abase bbase)
+              (and
+                (opt-value-eq aindex bindex)
+                (and (= alanes blanes) (opt-type-eq aty bty)))))]
+        [_ false])]
+    [(IrInstrVectorStore abase aindex av alanes aty)
+      (match b
+        [(IrInstrVectorStore bbase bindex bv blanes bty)
+          (and
+            (opt-value-eq abase bbase)
+            (and
+              (opt-value-eq aindex bindex)
+              (and
+                (opt-value-eq av bv)
+                (and (= alanes blanes) (opt-type-eq aty bty)))))]
+        [_ false])]
+    [(IrInstrPredicatedStore abase aindex av amask alanes aty)
+      (match b
+        [(IrInstrPredicatedStore bbase bindex bv bmask blanes bty)
+          (and
+            (opt-value-eq abase bbase)
+            (and
+              (opt-value-eq aindex bindex)
+              (and
+                (opt-value-eq av bv)
+                (and
+                  (opt-value-eq amask bmask)
+                  (and (= alanes blanes) (opt-type-eq aty bty))))))]
+        [_ false])]
+    [(IrInstrPredicatedLoad ad abase aindex amask alanes aty)
+      (match b
+        [(IrInstrPredicatedLoad bd bbase bindex bmask blanes bty)
+          (and
+            (= ad bd)
+            (and
+              (opt-value-eq abase bbase)
+              (and
+                (opt-value-eq aindex bindex)
+                (and
+                  (opt-value-eq amask bmask)
+                  (and (= alanes blanes) (opt-type-eq aty bty))))))]
+        [_ false])]
+    [(IrInstrTailMask ad aindex alength alanes)
+      (match b
+        [(IrInstrTailMask bd bindex blength blanes)
+          (and
+            (= ad bd)
+            (and
+              (opt-value-eq aindex bindex)
+              (and (opt-value-eq alength blength) (= alanes blanes))))]
+        [_ false])]
     [(IrInstrCall ad aname aargs aty)
       (match b
         [(IrInstrCall bd bname bargs bty)
@@ -1464,10 +1705,36 @@
       (OptCseResult (opt-expr-invalidate-var table dst) instr)]
     [(IrInstrPhi dst _ _)
       (OptCseResult (opt-expr-invalidate-var table dst) instr)]
+    [(IrInstrLaneId dst _ _)
+      (OptCseResult (opt-expr-invalidate-var table dst) instr)]
+    [(IrInstrSplat dst _ _ _)
+      (OptCseResult (opt-expr-invalidate-var table dst) instr)]
+    [(IrInstrVectorBinOp dst _ _ _ _ _)
+      (OptCseResult (opt-expr-invalidate-var table dst) instr)]
+    [(IrInstrVectorReduce dst _ _ _ _)
+      (OptCseResult (opt-expr-invalidate-var table dst) instr)]
+    [(IrInstrVectorCompare dst _ _ _ _ _)
+      (OptCseResult (opt-expr-invalidate-var table dst) instr)]
+    [(IrInstrMaskBinOp dst _ _ _ _)
+      (OptCseResult (opt-expr-invalidate-var table dst) instr)]
+    [(IrInstrMaskNot dst _ _)
+      (OptCseResult (opt-expr-invalidate-var table dst) instr)]
+    [(IrInstrMaskReduce dst _ _ _)
+      (OptCseResult (opt-expr-invalidate-var table dst) instr)]
+    [(IrInstrSelect dst _ _ _ _ _)
+      (OptCseResult (opt-expr-invalidate-var table dst) instr)]
+    [(IrInstrVectorLoad dst _ _ _ _)
+      (OptCseResult (opt-expr-invalidate-var table dst) instr)]
+    [(IrInstrPredicatedLoad dst _ _ _ _ _)
+      (OptCseResult (opt-expr-invalidate-var table dst) instr)]
+    [(IrInstrTailMask dst _ _ _)
+      (OptCseResult (opt-expr-invalidate-var table dst) instr)]
     ;; Calls, stores, and control flow clear all available expressions.
     [(IrInstrCall _ _ _ _) (OptCseResult (OptExprNil) instr)]
     [(IrInstrStore _ _ _) (OptCseResult (OptExprNil) instr)]
     [(IrInstrStorePtr _ _ _) (OptCseResult (OptExprNil) instr)]
+    [(IrInstrVectorStore _ _ _ _ _) (OptCseResult (OptExprNil) instr)]
+    [(IrInstrPredicatedStore _ _ _ _ _ _) (OptCseResult (OptExprNil) instr)]
     [(IrInstrBoundsCheck _ _ _) (OptCseResult table instr)]
     [(IrInstrJump _) (OptCseResult (OptExprNil) instr)]
     [(IrInstrBranch _ _ _) (OptCseResult (OptExprNil) instr)]
@@ -1575,6 +1842,81 @@
     [(IrInstrBinOp dst op l r ty)
       (IrInstrBinOp dst op (opt-copy-resolve env l) (opt-copy-resolve env r) ty)]
     [(IrInstrUnOp dst op v ty) (IrInstrUnOp dst op (opt-copy-resolve env v) ty)]
+    [(IrInstrSplat dst value lanes ty)
+      (IrInstrSplat dst (opt-copy-resolve env value) lanes ty)]
+    [(IrInstrVectorBinOp dst op l r lanes ty)
+      (IrInstrVectorBinOp
+        dst
+        op
+        (opt-copy-resolve env l)
+        (opt-copy-resolve env r)
+        lanes
+        ty)]
+    [(IrInstrVectorReduce dst op src lanes ty)
+      (IrInstrVectorReduce dst op (opt-copy-resolve env src) lanes ty)]
+    [(IrInstrVectorCompare dst op l r lanes ty)
+      (IrInstrVectorCompare
+        dst
+        op
+        (opt-copy-resolve env l)
+        (opt-copy-resolve env r)
+        lanes
+        ty)]
+    [(IrInstrMaskBinOp dst op l r lanes)
+      (IrInstrMaskBinOp
+        dst
+        op
+        (opt-copy-resolve env l)
+        (opt-copy-resolve env r)
+        lanes)]
+    [(IrInstrMaskNot dst src lanes)
+      (IrInstrMaskNot dst (opt-copy-resolve env src) lanes)]
+    [(IrInstrMaskReduce dst op src lanes)
+      (IrInstrMaskReduce dst op (opt-copy-resolve env src) lanes)]
+    [(IrInstrSelect dst mask on-true on-false lanes ty)
+      (IrInstrSelect
+        dst
+        (opt-copy-resolve env mask)
+        (opt-copy-resolve env on-true)
+        (opt-copy-resolve env on-false)
+        lanes
+        ty)]
+    [(IrInstrVectorLoad dst base index lanes ty)
+      (IrInstrVectorLoad
+        dst
+        (opt-copy-resolve env base)
+        (opt-copy-resolve env index)
+        lanes
+        ty)]
+    [(IrInstrVectorStore base index value lanes ty)
+      (IrInstrVectorStore
+        (opt-copy-resolve env base)
+        (opt-copy-resolve env index)
+        (opt-copy-resolve env value)
+        lanes
+        ty)]
+    [(IrInstrPredicatedStore base index value mask lanes ty)
+      (IrInstrPredicatedStore
+        (opt-copy-resolve env base)
+        (opt-copy-resolve env index)
+        (opt-copy-resolve env value)
+        (opt-copy-resolve env mask)
+        lanes
+        ty)]
+    [(IrInstrPredicatedLoad dst base index mask lanes ty)
+      (IrInstrPredicatedLoad
+        dst
+        (opt-copy-resolve env base)
+        (opt-copy-resolve env index)
+        (opt-copy-resolve env mask)
+        lanes
+        ty)]
+    [(IrInstrTailMask dst index length lanes)
+      (IrInstrTailMask
+        dst
+        (opt-copy-resolve env index)
+        (opt-copy-resolve env length)
+        lanes)]
     [(IrInstrCall dst name args ty)
       (IrInstrCall dst name (opt-copy-subst-value-list env args) ty)]
     [(IrInstrStore name value ty)
@@ -1596,6 +1938,7 @@
     ;; `IrInstrAlloc`/`IrInstrJump` have no value operands; `IrInstrPhi` inputs
     ;; belong to predecessor edges and are not block-local copies.
     [(IrInstrAlloc _ _) instr]
+    [(IrInstrLaneId _ _ _) instr]
     [(IrInstrJump _) instr]
     [(IrInstrPhi _ _ _) instr]))
 
@@ -1618,6 +1961,18 @@
     [(IrInstrCast dst _ _ _) (opt-copy-invalidate-var env dst)]
     [(IrInstrBinOp dst _ _ _ _) (opt-copy-invalidate-var env dst)]
     [(IrInstrUnOp dst _ _ _) (opt-copy-invalidate-var env dst)]
+    [(IrInstrLaneId dst _ _) (opt-copy-invalidate-var env dst)]
+    [(IrInstrSplat dst _ _ _) (opt-copy-invalidate-var env dst)]
+    [(IrInstrVectorBinOp dst _ _ _ _ _) (opt-copy-invalidate-var env dst)]
+    [(IrInstrVectorReduce dst _ _ _ _) (opt-copy-invalidate-var env dst)]
+    [(IrInstrVectorCompare dst _ _ _ _ _) (opt-copy-invalidate-var env dst)]
+    [(IrInstrMaskBinOp dst _ _ _ _) (opt-copy-invalidate-var env dst)]
+    [(IrInstrMaskNot dst _ _) (opt-copy-invalidate-var env dst)]
+    [(IrInstrMaskReduce dst _ _ _) (opt-copy-invalidate-var env dst)]
+    [(IrInstrSelect dst _ _ _ _ _) (opt-copy-invalidate-var env dst)]
+    [(IrInstrVectorLoad dst _ _ _ _) (opt-copy-invalidate-var env dst)]
+    [(IrInstrPredicatedLoad dst _ _ _ _ _) (opt-copy-invalidate-var env dst)]
+    [(IrInstrTailMask dst _ _ _) (opt-copy-invalidate-var env dst)]
     [(IrInstrCall dst _ _ _) (opt-copy-invalidate-var env dst)]
     [(IrInstrPhi dst _ _) (opt-copy-invalidate-var env dst)]
     [_ env]))
@@ -1707,9 +2062,24 @@
     [(IrInstrCast dst _ _ _) (opt-bounds-invalidate-var facts dst)]
     [(IrInstrBinOp dst _ _ _ _) (opt-bounds-invalidate-var facts dst)]
     [(IrInstrUnOp dst _ _ _) (opt-bounds-invalidate-var facts dst)]
+    [(IrInstrLaneId dst _ _) (opt-bounds-invalidate-var facts dst)]
+    [(IrInstrSplat dst _ _ _) (opt-bounds-invalidate-var facts dst)]
+    [(IrInstrVectorBinOp dst _ _ _ _ _) (opt-bounds-invalidate-var facts dst)]
+    [(IrInstrVectorReduce dst _ _ _ _) (opt-bounds-invalidate-var facts dst)]
+    [(IrInstrVectorCompare dst _ _ _ _ _) (opt-bounds-invalidate-var facts dst)]
+    [(IrInstrMaskBinOp dst _ _ _ _) (opt-bounds-invalidate-var facts dst)]
+    [(IrInstrMaskNot dst _ _) (opt-bounds-invalidate-var facts dst)]
+    [(IrInstrMaskReduce dst _ _ _) (opt-bounds-invalidate-var facts dst)]
+    [(IrInstrSelect dst _ _ _ _ _) (opt-bounds-invalidate-var facts dst)]
+    [(IrInstrVectorLoad dst _ _ _ _) (opt-bounds-invalidate-var facts dst)]
+    [(IrInstrPredicatedLoad dst _ _ _ _ _)
+      (opt-bounds-invalidate-var facts dst)]
+    [(IrInstrTailMask dst _ _ _) (opt-bounds-invalidate-var facts dst)]
     [(IrInstrCall _ _ _ _) (OptBoundsNil)]
     [(IrInstrStore _ _ _) (OptBoundsNil)]
     [(IrInstrStorePtr _ _ _) (OptBoundsNil)]
+    [(IrInstrVectorStore _ _ _ _ _) (OptBoundsNil)]
+    [(IrInstrPredicatedStore _ _ _ _ _ _) (OptBoundsNil)]
     [(IrInstrJump _) (OptBoundsNil)]
     [(IrInstrBranch _ _ _) (OptBoundsNil)]
     [(IrInstrReturn _) (OptBoundsNil)]
@@ -2414,6 +2784,60 @@
         (IrInstrBinOp 1 (IrBinAdd) (IrValueVar 0) (IrValueI64 1) (AstTyI64))
         (IrInstrNil)))))
 
+(define (opt-vector-mask-test-instrs) : CompilerIrInstrList
+  (IrInstrCons
+    (IrInstrMov 0 (IrValueI64 3) (AstTyI64))
+    (IrInstrCons
+      (IrInstrMov 1 (IrValueI64 4) (AstTyI64))
+      (IrInstrCons
+        (IrInstrSplat 2 (IrValueVar 0) 4 (AstTyI64))
+        (IrInstrCons
+          (IrInstrLaneId 3 4 (AstTyI64))
+          (IrInstrCons
+            (IrInstrTailMask 4 (IrValueVar 0) (IrValueVar 1) 4)
+            (IrInstrCons
+              (IrInstrVectorBinOp
+                5
+                (IrBinAdd)
+                (IrValueVar 2)
+                (IrValueVar 3)
+                4
+                (AstTyI64))
+              (IrInstrCons
+                (IrInstrSelect
+                  6
+                  (IrValueVar 4)
+                  (IrValueVar 5)
+                  (IrValueVar 2)
+                  4
+                  (AstTyI64))
+                (IrInstrCons
+                  (IrInstrPredicatedStore
+                    (IrValueVar 8)
+                    (IrValueVar 0)
+                    (IrValueVar 6)
+                    (IrValueVar 4)
+                    4
+                    (AstTyI64))
+                  IrInstrNil)))))))))
+
+(define (compiler-optimize-vector-mask-self-test) : i64
+  (let
+    [instrs : CompilerIrInstrList (opt-vector-mask-test-instrs)]
+    (let
+      [folded : CompilerIrInstrList (opt-fold-instrs (OptConstNil) instrs)]
+      (let
+        [dce : CompilerIrInstrList
+          (opt-dce-instrs (opt-collect-instrs-uses (OptUsedNil) instrs) instrs)]
+        (let
+          [bounds : CompilerIrInstrList
+            (opt-bounds-instrs (OptBoundsNil) instrs)]
+          (cond
+            [(not (opt-instr-list-eq folded instrs)) 1]
+            [(not (= (compiler-ir-instr-list-count dce) 8)) 2]
+            [(not (= (compiler-ir-instr-list-count bounds) 8)) 3]
+            [else 42]))))))
+
 ;; Returns 42 when folding turns the one arithmetic instruction into a `Mov`
 ;; literal whose value (20 + 22) is correct, and a later `Load` redefining a
 ;; formerly-constant var invalidates the stale fact before another arithmetic
@@ -2432,7 +2856,9 @@
                 [stale-optimized : CompilerIrInstrList
                   (opt-fold-instrs (OptConstNil) stale-instrs)]
                 (if (= (opt-count-arith-instrs stale-optimized) 1)
-                  42
+                  (if (= (compiler-optimize-vector-mask-self-test) 42)
+                    42
+                    5)
                   4)))
             3)
           2)

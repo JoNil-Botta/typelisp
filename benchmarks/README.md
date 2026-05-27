@@ -82,10 +82,12 @@ same selfhost source, run:
 powershell -ExecutionPolicy Bypass -File scripts/benchmark-bootstrap.ps1 -Runs 3
 ```
 
-The harness builds `selfhost/compile.tl` twice: first through the Rust stage0
-CLI (`typelisp compile`), then through the freshly built stage1 compiler. It
-times compile-to-assembly separately from assemble/link time and reports the
-full native build time. If `TYPELISP_BIN` is unset, the script runs
+The harness compares the Rust stage0 CLI (`typelisp compile`) against a stage2
+selfhosted compiler. It times stage0 building stage1, uses that stage1 once to
+seed stage2, then times stage2 building stage3. The stage1 seed build is not
+included in the summary. Compile-to-assembly is reported separately from
+assemble/link time and the full native build time. If `TYPELISP_BIN` is unset,
+the script runs
 `cargo build --release` first, but that seed build is not included in the
 benchmark timings.
 

@@ -289,17 +289,21 @@ for ($i = 1; $i -le $Runs; $i++) {
 
 $stage1Compiler = ($rows | Where-Object { $_.compiler -eq "stage0-rust" } | Select-Object -First 1).binary
 Write-Host ""
-Write-Host "selfhost seed: $stage1Compiler"
+Write-Host "stage1 seed: $stage1Compiler"
+Write-Host "[stage1-bootstrap] building stage2 seed"
+$stage2Seed = Invoke-CompilerBuild "stage1-bootstrap" $stage1Compiler 1 "stage2-seed"
+$stage2Compiler = $stage2Seed.binary
+Write-Host "stage2 seed: $stage2Compiler"
 
 for ($i = 1; $i -le $Runs; $i++) {
-    Write-Host "[stage1-selfhost] run $i/$Runs"
-    $rows += Invoke-CompilerBuild "stage1-selfhost" $stage1Compiler $i "stage2"
+    Write-Host "[stage2-selfhost] run $i/$Runs"
+    $rows += Invoke-CompilerBuild "stage2-selfhost" $stage2Compiler $i "stage3"
 }
 
 $reportCsv = Join-Path $script:SessionDir "report.csv"
 $rows | Export-Csv -NoTypeInformation -Path $reportCsv
 
-$summary = foreach ($kind in @("stage0-rust", "stage1-selfhost")) {
+$summary = foreach ($kind in @("stage0-rust", "stage2-selfhost")) {
     $kindRows = @($rows | Where-Object { $_.compiler -eq $kind })
     $compileStats = Get-Stats ([double[]]($kindRows | ForEach-Object { $_.compile_ms }))
     $buildStats = Get-Stats ([double[]]($kindRows | ForEach-Object { $_.build_ms }))
@@ -318,10 +322,10 @@ Write-Host ""
 $summary | Format-Table -AutoSize
 
 $stage0BuildMin = ($summary | Where-Object { $_.compiler -eq "stage0-rust" }).build_min_s
-$selfhostBuildMin = ($summary | Where-Object { $_.compiler -eq "stage1-selfhost" }).build_min_s
+$selfhostBuildMin = ($summary | Where-Object { $_.compiler -eq "stage2-selfhost" }).build_min_s
 if ($stage0BuildMin -gt 0) {
     $ratio = [math]::Round($selfhostBuildMin / $stage0BuildMin, 2)
-    Write-Host "selfhost/stage0 build min ratio: ${ratio}x"
+    Write-Host "stage2/stage0 build min ratio: ${ratio}x"
 }
 
 Write-Host "artifacts: $script:SessionDir"

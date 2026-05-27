@@ -6,11 +6,14 @@
 ;;   typelisp run selfhost/doc.tl -- --html input.tl output.html
 ;;   typelisp run selfhost/doc.tl -- --html entry.tl imported.tl output.html
 ;;   typelisp run selfhost/doc.tl -- --test input.tl
+;;   typelisp run selfhost/doc.tl -- --load input.tl output.md [--stdlib-root <dir>...]
 (import "doc_render.tl")
 
 (import "doc_html.tl")
 
 (import "doc_test.tl")
+
+(import "compiler_load.tl")
 
 (define (doc-generate-file [input-path : String] [output-path : String]) : i64
   (let
@@ -28,12 +31,56 @@
       (DocModule (arg idx) (doc-extract-file (arg idx)))
       (doc-read-modules (+ idx 1) end))))
 
+(define (doc-module-list-count [modules : DocModuleList]) : i64
+  (match modules
+    [(DocModuleNil) 0]
+    [(DocModuleCons _ rest) (+ 1 (doc-module-list-count rest))]))
+
+(define (doc-modules-from-paths [paths : AstDeclPathList] [seen : SymI64Env]) : DocModuleList
+  (match paths
+    [(AstDeclPathNil) DocModuleNil]
+    [(AstDeclPathCons path rest)
+      (if (sym-i64-contains seen path)
+        (doc-modules-from-paths rest seen)
+        (DocModuleCons
+          (DocModule path (doc-extract-file path))
+          (doc-modules-from-paths rest (sym-i64-bind seen path 1))))]))
+
+(define (doc-render-loaded-markdown
+  [input-path : String]
+  [paths : AstDeclPathList]) : String
+  (let
+    [modules : DocModuleList
+      (doc-modules-from-paths
+        (AstDeclPathCons input-path paths)
+        (sym-i64-empty))]
+    (if (> (doc-module-list-count modules) 1)
+      (doc-render-module-graph-markdown modules)
+      (doc-render-markdown (doc-extract-file input-path)))))
+
 (define (doc-generate-module-graph [output-path : String]) : i64
   (let
     [modules : DocModuleList (doc-read-modules 1 (- (arg-count) 1))]
     (begin
       (write-file output-path (doc-render-module-graph-markdown modules))
       0)))
+
+(define (doc-generate-loaded-file
+  [input-path : String]
+  [output-path : String]
+  [stdlib-roots : CompilerLoadRootList]) : i64
+  (match (compiler-load-file-with-paths-and-roots
+    input-path
+    (sym-i64-empty)
+    stdlib-roots)
+    [(OkCompilerLoadWithPaths _ paths _ _)
+      (begin
+        (write-file output-path (doc-render-loaded-markdown input-path paths))
+        0)]
+    [(ErrCompilerLoadWithPaths diag)
+      (begin
+        (print-error (compiler-diagnostic-render diag))
+        1)]))
 
 (define (doc-generate-html-file [input-path : String] [output-path : String]) : i64
   (let
@@ -82,6 +129,11 @@
     (print-error "doc: expected --test input path")
     1))
 
+(define (doc-invalid-load-args) : i64
+  (begin
+    (print-error "doc: expected --load input and output paths")
+    1))
+
 (define (doc-invalid-html-args) : i64
   (begin
     (print-error "doc: expected --html input and output paths")
@@ -100,8 +152,12 @@
           (if (> (arg-count) 4)
             (doc-generate-html-module-graph (arg (- (arg-count) 1)))
             (doc-invalid-html-args)))
-        (if (= (arg-count) 3)
-          (doc-generate-file (arg 1) (arg 2))
-          (if (> (arg-count) 3)
-            (doc-generate-module-graph (arg (- (arg-count) 1)))
-            (doc-invalid-args)))))))
+        (if (or (string-eq (arg 1) "--load") (string-eq (arg 1) "load"))
+          (if (>= (arg-count) 4)
+            (doc-generate-loaded-file (arg 2) (arg 3) (doc-stdlib-roots 4))
+            (doc-invalid-load-args))
+          (if (= (arg-count) 3)
+            (doc-generate-file (arg 1) (arg 2))
+            (if (> (arg-count) 3)
+              (doc-generate-module-graph (arg (- (arg-count) 1)))
+              (doc-invalid-args))))))))

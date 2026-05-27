@@ -145,25 +145,26 @@ as the seed compiler. It installs failing `cargo` and `rustc` shims in `PATH` so
 the gate cannot silently fall back to Rust. On Linux it first runs
 the stage1-build path in `check-bootstrap-fixpoint.sh` with the seed compiler,
 then routes stage1 capability gates through `scripts/stage1-typelisp-wrapper.sh`.
-The wrapper gives the raw stage1 compiler the public `typelisp compile` shape
-and a no-Rust Linux host-action executor for source build/run and scratch
-assembly plans. Full public CLI gates still use the seed compiler until every
-public-tool exception is ported to the wrapper. On Windows it exports the seed
-compiler directly until native stage1 bootstrap/link support lands. The full
-stage2/stage3 fixpoint remains available through
+The wrapper gives the raw stage1 compiler the public `typelisp compile` and
+`typelisp doc` shapes and a no-Rust Linux host-action executor for source
+build/run and scratch assembly plans. Full public CLI gates still use the seed
+compiler until every public-tool exception is ported to the wrapper. On Windows
+it exports the seed compiler directly until native stage1 bootstrap/link support
+lands. The full stage2/stage3 fixpoint remains available through
 `check-bootstrap-fixpoint.sh`. The scripts that still run `cargo build --release`
 when `TYPELISP_BIN` is unset keep that path as a local fallback only until #795
 removes the Rust-owned stage0 dependency.
 
 The current stage1 wrapper implements the source-file `compile`, `build`, `run`,
-`fmt`, and private `debug host-action` path directly enough for the Linux
-capability smoke, deterministic assembly gate, and selfhost compile manifest.
+`fmt`, `doc`, `doc --test`, and private `debug host-action` path directly enough
+for the Linux capability smoke, deterministic assembly gate, selfhost compile
+manifest, and stdlib documentation gate.
 Direct `selfhost/build.tl` package-build parity is covered by
 `scripts/verify-public-tools.sh`; top-level stage1 wrapper routing for package
 builds is still staged separately. Seed-only public-tool exceptions remain:
-`doc`, `lint`, non-check `test`, package build wrapper routing, REPL/LSP, and
-full doc/integration gates still need either stage1-safe driver linking or
-dedicated wrapper routing before they can move off the seed compiler.
+`lint`, non-check `test`, package build wrapper routing, REPL/LSP, and full
+doc/integration gates still need either stage1-safe driver linking or dedicated
+wrapper routing before they can move off the seed compiler.
 
 ### Staged backend primitives (#1114)
 
@@ -268,8 +269,8 @@ runner commands.
 `scripts/verify-stdlib-docs.sh` discovers every `stdlib/*.tl` module, requires
 module and item documentation comments, generates Markdown through
 `typelisp doc`, and runs `typelisp doc --test` with `--stdlib-root`. The script
-is separate from `cargo test` so it can later run against a stage compiler
-artifact and switch to the selfhost doctest path when #865 lands.
+is separate from `cargo test` so the Linux no-Rust gate can run it through the
+stage1 wrapper's selfhost doc driver.
 
 ### Repository doctest gate
 
@@ -330,14 +331,15 @@ the artifact.
 Pull requests get Linux and Windows no-Rust coverage from
 `scripts/verify-no-rust-stage0.sh`. The Linux job first builds a fresh stage1
 compiler from published stage0, then smoke-tests the stage1 CLI/host-action
-wrapper, deterministic assembly, and the selfhost compile manifest through that
-wrapper. Public tools, doctests, inline tests, TypeLisp source format, native
-integration manifests, examples, stdlib, stdlib docs, selfhost native generated
-programs, and the selfhost external compiler corpus continue to use the seed
-compiler until their remaining public-tool and manifest exceptions are ported
-to the wrapper. The Windows job runs the host-supported gates against the
-published stage0 compiler and explicitly skips the Linux-only selfhost/docs
-checks until native stage1 bootstrap/link support lands.
+wrapper, deterministic assembly, the selfhost compile manifest, and stdlib
+documentation through that wrapper. Public tools, repository doctests, inline
+tests, TypeLisp source format, native integration manifests, examples, stdlib
+modules, docs Pages build, selfhost native generated programs, and the selfhost
+external compiler corpus continue to use the seed compiler until their remaining
+public-tool and manifest exceptions are ported to the wrapper. The Windows job
+runs the host-supported gates against the published stage0 compiler and
+explicitly skips the Linux-only selfhost/docs checks until native stage1
+bootstrap/link support lands.
 
 The remaining Linux and Windows `cargo test`, `cargo fmt`, `cargo clippy`, and
 release integration jobs are temporary Rust reference coverage until #795.

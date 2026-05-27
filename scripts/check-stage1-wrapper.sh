@@ -183,6 +183,51 @@ if [ -s "$WORKDIR/run.stderr" ]; then
     exit 1
 fi
 
+echo "[stage1-wrapper] doc"
+DOC_DIR="$WORKDIR/doc"
+DOC_STDLIB="$DOC_DIR/stdlib"
+DOC_ENTRY="$DOC_DIR/entry.tl"
+DOC_LOCAL="$DOC_DIR/local.tl"
+DOC_STDLIB_SOURCE="$DOC_STDLIB/docfixture.tl"
+DOC_MD="$DOC_DIR/entry.md"
+mkdir -p "$DOC_STDLIB"
+cat > "$DOC_LOCAL" <<'EOF'
+;;;; Local module docs.
+
+;;; Local answer docs.
+(define local-answer : i64 7)
+EOF
+cat > "$DOC_STDLIB_SOURCE" <<'EOF'
+;;;; Stdlib module docs.
+
+;;; Stdlib answer docs.
+(define stdlib-answer : i64 35)
+EOF
+cat > "$DOC_ENTRY" <<'EOF'
+;;;; Entry module docs.
+;;;; ```typelisp
+;;;; (import "stdlib/docfixture.tl")
+;;;; (define (main) : i64 stdlib-answer)
+;;;; ```
+
+(import "local.tl")
+(import "stdlib/docfixture.tl")
+
+;;; Entry docs.
+(define (main) : i64 (+ local-answer stdlib-answer))
+EOF
+run_capture doc "$COMPILER" doc "$DOC_ENTRY" -o "$DOC_MD" --stdlib-root "$DOC_STDLIB"
+assert_empty "$WORKDIR/doc.stderr"
+assert_contains "$WORKDIR/doc.stdout" "Generated: $DOC_MD"
+assert_contains "$DOC_MD" "Entry module docs."
+assert_contains "$DOC_MD" "Local module docs."
+assert_contains "$DOC_MD" "Stdlib module docs."
+
+echo "[stage1-wrapper] doc --test"
+run_capture doc-test "$COMPILER" doc --test "$DOC_ENTRY" --stdlib-root "$DOC_STDLIB"
+assert_empty "$WORKDIR/doc-test.stderr"
+assert_contains "$WORKDIR/doc-test.stdout" "Doc tests passed: 1 example(s)"
+
 if [ "${TYPELISP_STAGE1_SKIP_TEST_SMOKE:-}" = "1" ]; then
     echo "[stage1-wrapper] test commands skipped"
 else

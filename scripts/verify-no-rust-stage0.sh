@@ -165,6 +165,7 @@ if [ "$HOST_OS" = linux ]; then
     unset TYPELISP_STAGE1_SKIP_TEST_SMOKE
     run_with_compiler "$STAGE1_TYPELISP_BIN" "stage1 deterministic assembly" scripts/check-deterministic-asm.sh
     run_with_compiler "$STAGE1_TYPELISP_BIN" "stage1 selfhost compile manifest" env TYPELISP_COMPILE_MANIFEST_EXPECTATION_MODE=stage1 scripts/verify-selfhost-compile-manifest.sh
+    run_with_compiler "$STAGE1_TYPELISP_BIN" "stage1 stdlib documentation" scripts/verify-stdlib-docs.sh
 else
     run_gate "selfhost compile manifest" scripts/verify-selfhost-compile-manifest.sh
     run_gate "deterministic assembly" scripts/check-deterministic-asm.sh
@@ -177,7 +178,6 @@ run_gate "examples" scripts/verify-examples.sh
 run_gate "stdlib modules and fixtures" scripts/verify-stdlib.sh
 
 if [ "$HOST_OS" = linux ]; then
-    run_gate "stdlib documentation" scripts/verify-stdlib-docs.sh
     DOC_SITE_OUT="$ROOT/target/no-rust-docs-pages-site"
     export DOC_SITE_OUT
     run_gate "docs Pages build path" scripts/verify-doc-site.sh

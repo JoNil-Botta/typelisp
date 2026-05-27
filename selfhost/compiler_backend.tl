@@ -44,6 +44,10 @@
   (CompilerBackendNoAsm)
   (CompilerBackendSomeAsm String))
 
+(defenum CompilerBackendMaybeI64
+  (CompilerBackendNoI64)
+  (CompilerBackendSomeI64 i64))
+
 (defenum ResultCompilerBackend
   (OkCompilerBackend String)
   (ErrCompilerBackend CompilerDiagnostic))
@@ -458,6 +462,18 @@
         (string-append "$" (int->string (compiler-backend-char-code c))))]
     [(IrValueUnit) (CompilerBackendSomeImmediate "$0")]
     [_ (CompilerBackendNoImmediate)]))
+
+(define (compiler-backend-value-as-i64 [value : CompilerIrValue]) : CompilerBackendMaybeI64
+  (match value
+    [(IrValueI64 n) (CompilerBackendSomeI64 n)]
+    [(IrValueBool b)
+      (if b
+        (CompilerBackendSomeI64 1)
+        (CompilerBackendSomeI64 0))]
+    [(IrValueChar c)
+      (CompilerBackendSomeI64 (compiler-backend-char-code c))]
+    [(IrValueUnit) (CompilerBackendSomeI64 0)]
+    [_ (CompilerBackendNoI64)]))
 
 (define (compiler-backend-symbol-char [text : String] [idx : i64] [c : char]) : String
   (if (or
@@ -1381,6 +1397,27 @@
       (backend-cat5 "    leaq " (compiler-backend-slot src) ", " "%rax" "\n")
       (compiler-backend-emit-store-var-with-plan assignments dst "%rax"))))
 
+(define (compiler-backend-gep-index-asm [scale : i64]) : String
+  (if (= scale 1)
+    "    addq %rbx, %rax\n"
+    (if (or (= scale 2) (or (= scale 4) (= scale 8)))
+      (backend-cat4
+        "    leaq (%rax,%rbx,"
+        (int->string scale)
+        "), %rax\n"
+        "")
+      (string-append
+        (backend-cat5 "    imulq $" (int->string scale) ", " "%rbx" "\n")
+        "    addq %rbx, %rax\n"))))
+
+(define (compiler-backend-gep-immediate-asm [disp : i64]) : CompilerBackendMaybeAsm
+  (if (= disp 0)
+    (CompilerBackendSomeAsm "")
+    (if (compiler-backend-imm32? disp)
+      (CompilerBackendSomeAsm
+        (backend-cat4 "    addq $" (int->string disp) ", %rax\n" ""))
+      (CompilerBackendNoAsm))))
+
 (define (compiler-backend-emit-gep
   [assignments : CompilerRegAssignmentList]
   [dst : i64]
@@ -1389,34 +1426,57 @@
   [elem-ty : AstType]) : ResultCompilerBackend
   (match (compiler-backend-emit-load-value-with-plan assignments base "%rax")
     [(OkCompilerBackend base-asm)
-      (match (compiler-backend-emit-load-value-with-plan
-        assignments
-        offset
-        "%rbx")
-        [(OkCompilerBackend offset-asm)
-          (let
-            [scale : i64 (compiler-backend-type-size elem-ty)]
-            (OkCompilerBackend
-              (string-append
-                base-asm
-                (string-append
-                  offset-asm
+      (let
+        [scale : i64 (compiler-backend-type-size elem-ty)]
+        (match (compiler-backend-value-as-i64 offset)
+          [(CompilerBackendSomeI64 n)
+            (match (compiler-backend-gep-immediate-asm (* n scale))
+              [(CompilerBackendSomeAsm offset-asm)
+                (OkCompilerBackend
                   (string-append
-                    (if (= scale 1)
-                      ""
-                      (backend-cat5
-                        "    imulq $"
-                        (int->string scale)
-                        ", "
-                        "%rbx"
-                        "\n"))
+                    base-asm
                     (string-append
-                      "    addq %rbx, %rax\n"
+                      offset-asm
                       (compiler-backend-emit-store-var-with-plan
                         assignments
                         dst
-                        "%rax")))))))]
-        [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
+                        "%rax"))))]
+              [(CompilerBackendNoAsm)
+                (match (compiler-backend-emit-load-value-with-plan
+                  assignments
+                  offset
+                  "%rbx")
+                  [(OkCompilerBackend offset-asm)
+                    (OkCompilerBackend
+                      (string-append
+                        base-asm
+                        (string-append
+                          offset-asm
+                          (string-append
+                            (compiler-backend-gep-index-asm scale)
+                            (compiler-backend-emit-store-var-with-plan
+                              assignments
+                              dst
+                              "%rax")))))]
+                  [(ErrCompilerBackend message) (ErrCompilerBackend message)])])]
+          [(CompilerBackendNoI64)
+            (match (compiler-backend-emit-load-value-with-plan
+              assignments
+              offset
+              "%rbx")
+              [(OkCompilerBackend offset-asm)
+                (OkCompilerBackend
+                  (string-append
+                    base-asm
+                    (string-append
+                      offset-asm
+                      (string-append
+                        (compiler-backend-gep-index-asm scale)
+                        (compiler-backend-emit-store-var-with-plan
+                          assignments
+                          dst
+                          "%rax")))))]
+              [(ErrCompilerBackend message) (ErrCompilerBackend message)])]))]
     [(ErrCompilerBackend message) (ErrCompilerBackend message)]))
 
 (define (compiler-backend-emit-load-instr
@@ -9755,7 +9815,7 @@ tl_windows_setup_instances:
             (and
               (compiler-backend-string-contains?
                 asm
-                "    movq $8, %rbx\n    addq %rbx, %rax\n")
+                "    addq $8, %rax\n")
               (and
                 (not
                   (compiler-backend-string-contains? asm "    call _tl_Point\n"))
@@ -10569,22 +10629,26 @@ tl_windows_setup_instances:
     (and
       (compiler-backend-instr-contains?
         (IrInstrGep 3 (IrValueVar 1) (IrValueI64 2) (AstTyI32))
-        "    imulq $4, %rbx\n")
+        "    addq $8, %rax\n")
       (and
         (compiler-backend-instr-contains?
-          (IrInstrLoad 4 (IrValueVar 1) (AstTyU8))
-          "    movzbq (%r10), %rax\n")
+          (IrInstrGep 3 (IrValueVar 1) (IrValueVar 2) (AstTyI32))
+          "    leaq (%rax,%rbx,4), %rax\n")
         (and
           (compiler-backend-instr-contains?
-            (IrInstrStorePtr (IrValueVar 1) (IrValueI64 7) (AstTyI32))
-            "    movl %eax, (%r10)\n")
+            (IrInstrLoad 4 (IrValueVar 1) (AstTyU8))
+            "    movzbq (%r10), %rax\n")
           (and
             (compiler-backend-instr-contains?
-              (IrInstrCast 6 (IrValueVar 5) (AstTyI8) (AstTyI64))
-              "    movsbq -48(%rbp), %rax\n")
-            (compiler-backend-instr-contains?
-              (IrInstrBoundsCheck (IrValueVar 1) (IrValueVar 2) "bounds_ok")
-              "    jb .L_tl_test_bounds_ok\n")))))))
+              (IrInstrStorePtr (IrValueVar 1) (IrValueI64 7) (AstTyI32))
+              "    movl %eax, (%r10)\n")
+            (and
+              (compiler-backend-instr-contains?
+                (IrInstrCast 6 (IrValueVar 5) (AstTyI8) (AstTyI64))
+                "    movsbq -48(%rbp), %rax\n")
+              (compiler-backend-instr-contains?
+                (IrInstrBoundsCheck (IrValueVar 1) (IrValueVar 2) "bounds_ok")
+                "    jb .L_tl_test_bounds_ok\n"))))))))
 
 ;; A source exercising `array-ref`, used to confirm the lowerer's bounds-check
 ;; trap (#528) reaches the backend as a `call tl_oob_abort`.

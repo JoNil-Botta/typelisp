@@ -306,11 +306,13 @@ resolves), run the non-publishing verifier:
 TYPELISP_BIN=target/debug/typelisp scripts/verify-doc-site.sh
 ```
 
-It builds into `target/doc-site-verify/`, asserts `doc_site_smoke.tl` passes
-(exit 42), and fails on a build error, a missing required page, a dead local
-link, or an unresolved anchor. CI runs it on pull requests and default-branch
-pushes without deploying; the GitHub Pages publish workflow (#874) gates on it
-before uploading the artifact.
+It builds into `target/doc-site-verify/`, with native builder logs and objects
+in `target/doc-site-verify-work/`, asserts `doc_site_smoke.tl` passes (exit 42),
+and fails on a build error, a missing required page, a dead local link, or an
+unresolved anchor. Set `DOC_SITE_OUT` to choose a publish-ready output
+directory. CI runs it on pull requests and default-branch pushes without
+deploying; the GitHub Pages publish workflow (#874) gates on it before uploading
+the artifact.
 
 ### CI expectations
 

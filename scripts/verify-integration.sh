@@ -238,7 +238,7 @@ validate_manifest() {
 
         _fields=$(printf '%s\n' "$_line" | awk -F'|' '{ print NF }')
         if [ "$_fields" -ne 6 ] && [ "$_fields" -ne 7 ]; then
-            echo "manifest line $_line_no must have 6 fields, or 7 with an extra staged-marker field: $_line" >&2
+            echo "manifest line $_line_no must have 6 fields, or 7 with an extra field: $_line" >&2
             exit 1
         fi
 
@@ -272,9 +272,13 @@ EOF
                 ;;
         esac
         case "${_extra:-}" in
-            "" | requires-stage0-symbol:?*) ;;
+            "" | requires-stage0-symbol:?* | expected-stderr:?*) ;;
             requires-stage0-symbol:)
                 echo "manifest line $_line_no has empty staged symbol for $_name" >&2
+                exit 1
+                ;;
+            expected-stderr:)
+                echo "manifest line $_line_no has empty expected stderr for $_name" >&2
                 exit 1
                 ;;
             *)
@@ -926,9 +930,11 @@ while IFS='|' read -r name source want stdout_spec runtime_args deps extra || [ 
     esac
 
     requires_symbol=
+    expected_stderr_spec=-
     case "${extra:-}" in
         "") ;;
         requires-stage0-symbol:*) requires_symbol=${extra#requires-stage0-symbol:} ;;
+        expected-stderr:*) expected_stderr_spec=${extra#expected-stderr:} ;;
     esac
 
     source_path="$ROOT/$source"
@@ -955,9 +961,11 @@ while IFS='|' read -r name source want stdout_spec runtime_args deps extra || [ 
     stdout="$case_dir/$name.stdout"
     stderr="$case_dir/$name.stderr"
     expected_stdout_cmp="$case_dir/$name.expected.stdout.cmp"
+    expected_stderr_cmp="$case_dir/$name.expected.stderr.cmp"
     stdout_cmp="$case_dir/$name.stdout.cmp"
     stderr_cmp="$case_dir/$name.stderr.cmp"
     expected_stdout="$case_dir/$name.expected.stdout"
+    expected_stderr="$case_dir/$name.expected.stderr"
     code_file="$case_dir/$name.exit"
     build_stdout="$case_dir/$name.build.stdout"
     build_stderr="$case_dir/$name.build.stderr"
@@ -1040,7 +1048,9 @@ while IFS='|' read -r name source want stdout_spec runtime_args deps extra || [ 
     fi
 
     write_expected_stream "$stdout_spec" "$expected_stdout"
+    write_expected_stream "$expected_stderr_spec" "$expected_stderr"
     normalized_stream "$expected_stdout" "$expected_stdout_cmp"
+    normalized_stream "$expected_stderr" "$expected_stderr_cmp"
     normalized_stream "$stdout" "$stdout_cmp"
     normalized_stream "$stderr" "$stderr_cmp"
 
@@ -1056,9 +1066,11 @@ while IFS='|' read -r name source want stdout_spec runtime_args deps extra || [ 
         fi
         case_failed=1
     fi
-    if [ -s "$stderr_cmp" ]; then
-        echo "FAIL: $name wrote stderr" >&2
-        sed 's/^/  /' "$stderr_cmp" >&2
+    if ! cmp -s "$expected_stderr_cmp" "$stderr_cmp"; then
+        echo "FAIL: $name stderr mismatch" >&2
+        if command -v diff >/dev/null 2>&1; then
+            diff -u "$expected_stderr_cmp" "$stderr_cmp" >&2 || true
+        fi
         case_failed=1
     fi
 

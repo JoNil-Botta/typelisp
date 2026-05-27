@@ -6121,6 +6121,45 @@
             (compiler-typecheck-string-builtin-bad-arg-source)
             "typecheck: argument type mismatch"))))))
 
+;; Bootstrap argv builtin signature rules (#1042): `arg-count` returns i64 and
+;; `arg` accepts an i64 index and returns String. User declarations may shadow
+;; these bootstrap defaults.
+(define (compiler-typecheck-argv-builtin-ok-source) : String
+  "(define (main) : i64
+  (+ (arg-count) (string-length (arg 0))))")
+
+(define (compiler-typecheck-argv-builtin-bad-index-source) : String
+  "(define (main) : String (arg \"0\"))")
+
+(define (compiler-typecheck-argv-builtin-bad-arg-arity-source) : String
+  "(define (main) : String (arg 0 1))")
+
+(define (compiler-typecheck-argv-builtin-bad-count-arity-source) : String
+  "(define (main) : i64 (arg-count 0))")
+
+(define (compiler-typecheck-argv-builtin-shadow-source) : String
+  "(define (arg-count) : i64 9)
+(define (arg [n : i64]) : i64 n)
+(define (main) : i64 (+ (arg-count) (arg 1)))")
+
+(define (compiler-typecheck-argv-builtin-tests-ok?) : bool
+  (and
+    (compiler-typecheck-ok? (compiler-typecheck-argv-builtin-ok-source))
+    (and
+      (compiler-typecheck-error-ok?
+        (compiler-typecheck-argv-builtin-bad-index-source)
+        "typecheck: argument type mismatch")
+      (and
+        (compiler-typecheck-error-ok?
+          (compiler-typecheck-argv-builtin-bad-arg-arity-source)
+          "typecheck: arity mismatch")
+        (and
+          (compiler-typecheck-error-ok?
+            (compiler-typecheck-argv-builtin-bad-count-arity-source)
+            "typecheck: arity mismatch")
+          (compiler-typecheck-ok?
+            (compiler-typecheck-argv-builtin-shadow-source)))))))
+
 (define (compiler-typecheck-lambda-ok-typed-source) : String
   "(define (main) : i64 (let [f : (-> i64 i64) (lambda ([x : i64]) : i64 x)] (f 5)))")
 
@@ -6492,6 +6531,9 @@
     (if (compiler-typecheck-string-builtin-tests-ok?)
       unit
       (panic "typecheck: string builtin tests failed"))
+    (if (compiler-typecheck-argv-builtin-tests-ok?)
+      unit
+      (panic "typecheck: argv builtin tests failed"))
     (if (compiler-typecheck-lambda-tests-ok?)
       unit
       (panic "typecheck: lambda tests failed"))

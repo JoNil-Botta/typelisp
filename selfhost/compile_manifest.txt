@@ -162,6 +162,9 @@ case|selfhost_compiler_backend|selfhost/compiler_backend.tl|assembly|skip|direct
 contains|_tl_compiler_backend_emit_source:
 contains|_tl_compiler_backend_emit_program_for_target:
 contains|_tl_compiler_backend_runtime_windows_alloc_functions:
+contains|_tl_compiler_backend_runtime_file_open_status_functions:
+contains|_tl_compiler_backend_runtime_file_close_status_functions:
+contains|_tl_compiler_backend_runtime_windows_file_handle_functions:
 contains|_tl_compiler_backend_runtime_file_read_chunk_status_functions:
 contains|_tl_compiler_backend_runtime_windows_file_read_chunk_functions:
 contains|_tl_compiler_backend_runtime_env_var_value_functions:
@@ -297,6 +300,9 @@ contains|_tl_compiler_optimize_self_test:
 contains|_tl_compiler_optimize_strength_self_test:
 contains|_tl_compiler_optimize_bounds_self_test:
 contains|_tl_compiler_optimize_level_self_test:
+contains|_tl_compiler_optimize_ssa_self_test:
+contains|_tl_opt_cfg_dominators:
+contains|_tl_opt_verify_function:
 end
 
 case|selfhost_compiler_optimize_smoke|selfhost/compiler_optimize_smoke.tl|assembly|exactly-one|direct
@@ -305,6 +311,7 @@ contains|_tl_compiler_optimize_strength_self_test:
 contains|_tl_compiler_optimize_bounds_self_test:
 contains|_tl_optimize_program:
 contains|_tl_compiler_optimize_level_self_test:
+contains|_tl_compiler_optimize_ssa_self_test:
 end
 
 case|selfhost_compiler_parse_core|selfhost/compiler_parse_core.tl|assembly|skip|direct

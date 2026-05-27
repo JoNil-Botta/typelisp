@@ -476,6 +476,7 @@
       (tltest-reach-mark-expr value (tltest-reach-mark-name names name))]
     [(AstExprAnn inner _) (tltest-reach-mark-expr inner names)]
     [(AstExprCast inner _) (tltest-reach-mark-expr inner names)]
+    [(AstExprBorrow _ place) (tltest-reach-mark-expr place names)]
     [(AstExprMatch scrutinee arms)
       (tltest-reach-mark-match-arms
         arms

@@ -2485,28 +2485,36 @@
             (ErrCompilerBackend
               (compiler-backend-apply-instr-diagnostic message instr-diag))])]
       [(IrInstrStore name value ty)
-        (match (compiler-backend-emit-load-typed-value-with-plan
-          assignments
-          value
-          ty)
-          [(OkCompilerBackend load)
-            (OkCompilerBackend
-              (string-append
-                load
-                (if (compiler-backend-f64-type? ty)
-                  (backend-cat4
-                    "    movsd %xmm0, "
-                    (compiler-backend-user-symbol name)
-                    "(%rip)\n"
-                    "")
-                  (backend-cat4
-                    "    movq %rax, "
-                    (compiler-backend-user-symbol name)
-                    "(%rip)\n"
-                    ""))))]
-          [(ErrCompilerBackend message)
-            (ErrCompilerBackend
-              (compiler-backend-apply-instr-diagnostic message instr-diag))])]
+        (let
+          [addr : String
+            (backend-cat3 (compiler-backend-user-symbol name) "(%rip)" "")]
+          (match (compiler-backend-emit-store-immediate-to-memory value addr ty)
+            [(CompilerBackendSomeAsm store-asm) (OkCompilerBackend store-asm)]
+            [(CompilerBackendNoAsm)
+              (match (compiler-backend-emit-load-typed-value-with-plan
+                assignments
+                value
+                ty)
+                [(OkCompilerBackend load)
+                  (OkCompilerBackend
+                    (string-append
+                      load
+                      (if (compiler-backend-f64-type? ty)
+                        (backend-cat4
+                          "    movsd %xmm0, "
+                          (compiler-backend-user-symbol name)
+                          "(%rip)\n"
+                          "")
+                        (backend-cat4
+                          "    movq %rax, "
+                          (compiler-backend-user-symbol name)
+                          "(%rip)\n"
+                          ""))))]
+                [(ErrCompilerBackend message)
+                  (ErrCompilerBackend
+                    (compiler-backend-apply-instr-diagnostic
+                      message
+                      instr-diag))])]))]
       [(IrInstrJump target)
         (match (compiler-backend-emit-phi-edge-copies
           assignments
@@ -10244,7 +10252,9 @@ tl_windows_setup_instances:
           (compiler-backend-branch-fallthrough-ok?)
           (and
             (compiler-backend-zero-load-ok?)
-            (compiler-backend-zero-compare-ok?)))))))
+            (and
+              (compiler-backend-zero-compare-ok?)
+              (compiler-backend-global-immediate-store-ok?))))))))
 
 (define (compiler-backend-fallthrough-program) : CompilerIrProgram
   (IrProgram
@@ -10344,6 +10354,11 @@ tl_windows_setup_instances:
           "    testq %rax, %rax\n    sete %al\n")
         (not (compiler-backend-string-contains? asm "    cmpq $0, %rax\n")))]
     [(ErrCompilerBackend _) false]))
+
+(define (compiler-backend-global-immediate-store-ok?) : bool
+  (compiler-backend-instr-contains?
+    (IrInstrStore "g" (IrValueI64 7) (AstTyI64))
+    "    movq $7, _tl_g(%rip)\n"))
 
 (define (compiler-backend-phi-same-home-assignments) : CompilerRegAssignmentList
   (CompilerRegAssignmentCons

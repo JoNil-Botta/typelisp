@@ -202,14 +202,16 @@ fn selfhost_backend_windows_runtime_helpers_emit_assemble_link_and_run() {
     assert!(!asm.contains("\n_start:"), "asm:\n{}", asm);
     assert!(!asm.contains("tl_current_arena:"), "asm:\n{}", asm);
     assert!(
-        asm.matches("    rep movsb\n").count() >= 3,
-        "selfhost Windows runtime helper assembly should bulk-copy substring and concat payloads:\n{}",
+        asm.matches("    rep movsb\n").count() >= 10,
+        "selfhost Windows runtime helper assembly should bulk-copy string and path payloads:\n{}",
         asm
     );
     for old_loop in [
         ".L_tl_substring_copy_loop:\n",
         ".L_tl_string_concat_copy_a:\n",
         ".L_tl_string_concat_copy_b:\n",
+        "path_copy_loop:",
+        "path_copy_done:",
     ] {
         assert!(
             !asm.contains(old_loop),

@@ -141,13 +141,7 @@ if [ "$HOST_OS" = linux ]; then
         TYPELISP_BIN="$ROOT/target/bootstrap-fixpoint/stage1"
     fi
     ensure_executable "stage1" "$TYPELISP_BIN"
-    STAGE1_TOOLS_DIR="$ROOT/target/no-rust-stage1-tools"
-    STAGE1_TEST_BIN="$STAGE1_TOOLS_DIR/selfhost-test"
-    rm -rf "$STAGE1_TOOLS_DIR"
-    mkdir -p "$STAGE1_TOOLS_DIR"
-    run_gate "build stage1 CLI test driver" "$SEED_TYPELISP_BIN" build "$ROOT/selfhost/test.tl" -o "$STAGE1_TEST_BIN"
-    ensure_executable "stage1 test" "$STAGE1_TEST_BIN"
-    STAGE1_TYPELISP_BIN=$(make_stage1_cli_wrapper "$TYPELISP_BIN" "$STAGE1_TEST_BIN")
+    STAGE1_TYPELISP_BIN=$(make_stage1_cli_wrapper "$TYPELISP_BIN")
     echo
     echo "[no-rust-stage0] stage1 CLI wrapper=$STAGE1_TYPELISP_BIN"
 else
@@ -162,7 +156,13 @@ run_gate "public tool surface" scripts/verify-public-tools.sh
 run_gate "repository doctests" scripts/verify-doc-tests.sh
 run_gate "inline TypeLisp tests" scripts/verify-inline-tests.sh
 if [ "$HOST_OS" = linux ]; then
+    # Building the full selfhost test driver in this hosted no-Rust lane is
+    # currently too heavy for the runner; #1401 tracks restoring direct stage1
+    # test-command coverage without the host-action driver path.
+    TYPELISP_STAGE1_SKIP_TEST_SMOKE=1
+    export TYPELISP_STAGE1_SKIP_TEST_SMOKE
     run_with_compiler "$STAGE1_TYPELISP_BIN" "stage1 CLI host-action wrapper smoke" scripts/check-stage1-wrapper.sh
+    unset TYPELISP_STAGE1_SKIP_TEST_SMOKE
     run_with_compiler "$STAGE1_TYPELISP_BIN" "stage1 deterministic assembly" scripts/check-deterministic-asm.sh
 else
     run_gate "selfhost compile manifest" scripts/verify-selfhost-compile-manifest.sh

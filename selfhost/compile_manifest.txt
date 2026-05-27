@@ -182,6 +182,12 @@ contains|_tl_compiler_backend_runtime_helper_program:
 contains|_tl_compiler_backend_emit_program:
 end
 
+case|selfhost_compiler_backend_windows_driver_fixture|selfhost/compiler_backend_windows_driver_fixture.tl|assembly|skip|direct
+contains|_tl_compiler_backend_windows_driver_runtime_source:
+contains|_tl_compiler_backend_emit_source_for_target:
+contains|compiler-backend-windows-driver-fixture: expected output path
+end
+
 case|selfhost_compiler_backend_smoke|selfhost/compiler_backend_smoke.tl|assembly|exactly-one|direct
 contains|_tl_compiler_backend_self_test:
 contains|_tl_compiler_backend_emit_source:

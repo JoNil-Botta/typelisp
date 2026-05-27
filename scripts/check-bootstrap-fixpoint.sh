@@ -8,6 +8,11 @@ set -eu
 # compile to stage3.s, and the selfhost-emitted stage2/stage3 assembly must be
 # byte-identical.
 #
+# Set TYPELISP_BOOTSTRAP_STAGE1_PATH_FILE to persist the stage1 compiler path for
+# callers that want to reuse the freshly bootstrapped compiler. Set
+# TYPELISP_BOOTSTRAP_STAGE1_ONLY=1 to stop after linking stage1; normal runs
+# continue through the stage2/stage3 fixpoint.
+#
 # refs #47.
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
@@ -88,12 +93,27 @@ STAGE2_OBJ="$WORKDIR/stage2.o"
 STAGE2_BIN="$WORKDIR/stage2"
 STAGE3_ASM="$WORKDIR/stage3.s"
 
+write_stage1_path() {
+    if [ -n "${TYPELISP_BOOTSTRAP_STAGE1_PATH_FILE:-}" ]; then
+        STAGE1_PATH_DIR=$(dirname -- "$TYPELISP_BOOTSTRAP_STAGE1_PATH_FILE")
+        mkdir -p "$STAGE1_PATH_DIR"
+        printf '%s\n' "$STAGE1_BIN" > "$TYPELISP_BOOTSTRAP_STAGE1_PATH_FILE"
+        echo "[bootstrap] stage1 compiler: $STAGE1_BIN"
+    fi
+}
+
 echo "[bootstrap] stage0 -> stage1.s"
 run_with_heartbeat "stage0 -> stage1.s" "$COMPILER" compile selfhost/compile.tl -o "$STAGE1_ASM"
 
 echo "[bootstrap] link stage1"
 as "$STAGE1_ASM" -o "$STAGE1_OBJ"
 ld "$STAGE1_OBJ" -o "$STAGE1_BIN"
+
+if [ "${TYPELISP_BOOTSTRAP_STAGE1_ONLY:-}" = 1 ]; then
+    write_stage1_path
+    echo "bootstrap stage1 build passed"
+    exit 0
+fi
 
 echo "[bootstrap] stage1 -> stage2.s"
 run_with_heartbeat "stage1 -> stage2.s" "$STAGE1_BIN" selfhost/compile.tl -o "$STAGE2_ASM"
@@ -121,4 +141,5 @@ if ! cmp -s "$STAGE2_ASM" "$STAGE3_ASM"; then
 fi
 
 wc -l "$STAGE2_ASM" "$STAGE3_ASM"
+write_stage1_path
 echo "bootstrap fixpoint check passed"

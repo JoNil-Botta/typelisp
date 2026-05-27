@@ -485,8 +485,9 @@ build_linux_fixture_driver() {
 }
 
 # A staged-primitive integration case may be skipped only when a build/link
-# failure mentions the not-yet-published runtime symbol. Once stage0-latest
-# catches up, the case builds and runs normally with a drop-marker notice.
+# failure mentions the staged runtime symbol. Once the no-Rust compiler path
+# provides the symbol, the case builds and runs normally with a drop-marker
+# notice.
 integration_should_skip_staged() {
     _symbols=$1
     shift
@@ -522,13 +523,18 @@ run_linux_backend_fixtures() {
         "tl_substring:" \
         ".globl tl_string_concat" \
         "tl_string_concat:" \
+        ".globl tl_string_eq" \
+        "tl_string_eq:" \
+        ".L_tl_string_eq_word_loop:" \
+        "shrq \$3, %r8" \
+        "cmpq (%rdx), %rax" \
+        ".L_tl_string_eq_tail_loop:" \
         ".L_tl_read_stdin_line:" \
         ".L_tl_read_stdin_bytes:" \
         ".L_tl_stdin_eof:" \
         ".L_tl_flush_stdout:" \
         "tl: stdin failed" \
-        ".L_tl_substring_copy_loop:" \
-        ".L_tl_string_concat_copy_b:" \
+        "rep movsb" \
         "tl_current_arena:" \
         ".L_tl_alloc_new_arena:" \
         "call tl_alloc"
@@ -540,10 +546,14 @@ run_linux_backend_fixtures() {
         ".extern tl_oob_abort" \
         ".extern tl_substring" \
         ".extern tl_string_concat" \
+        ".extern tl_string_eq" \
         ".extern .L_tl_read_stdin_line" \
         ".extern .L_tl_read_stdin_bytes" \
         ".extern .L_tl_stdin_eof" \
-        ".extern .L_tl_flush_stdout"
+        ".extern .L_tl_flush_stdout" \
+        ".L_tl_substring_copy_loop:" \
+        ".L_tl_string_concat_copy_a:" \
+        ".L_tl_string_concat_copy_b:"
     do
         assert_not_contains "$_runtime_asm" "$_snippet" backend-runtime
     done
@@ -638,6 +648,10 @@ run_windows_backend_fixtures() {
         "tl_string_concat:" \
         ".globl tl_string_eq" \
         "tl_string_eq:" \
+        ".L_tl_string_eq_word_loop:" \
+        "shrq \$3, %r10" \
+        "cmpq (%r8), %rax" \
+        ".L_tl_string_eq_tail_loop:" \
         ".globl tl_string_to_int" \
         "tl_string_to_int:" \
         ".globl tl_int_to_string" \
@@ -683,7 +697,8 @@ run_windows_backend_fixtures() {
         "movq \$0x180, %r8" \
         "movq %rcx, %rbx" \
         "movq %r12, %rcx" \
-        "movq %rcx, %r10"
+        "movq %rcx, %r10" \
+        "rep movsb"
     do
         assert_contains "$_runtime_asm" "$_snippet" windows-backend-runtime
     done
@@ -709,7 +724,10 @@ run_windows_backend_fixtures() {
         ".extern .L_tl_read_stdin_bytes" \
         ".extern .L_tl_stdin_eof" \
         ".extern .L_tl_flush_stdout" \
-        ".extern tl_random_system_seed"
+        ".extern tl_random_system_seed" \
+        ".L_tl_substring_copy_loop:" \
+        ".L_tl_string_concat_copy_a:" \
+        ".L_tl_string_concat_copy_b:"
     do
         assert_not_contains "$_runtime_asm" "$_snippet" windows-backend-runtime
     done
@@ -950,7 +968,7 @@ while IFS='|' read -r name source want stdout_spec runtime_args deps extra || [ 
             > "$build_stdout" 2> "$build_stderr"
         if [ "$build_rc" -ne 0 ]; then
             if integration_should_skip_staged "$requires_symbol" "$build_stdout" "$build_stderr"; then
-                echo "[integration] SKIP $name (awaiting stage0 republish of '$requires_symbol')"
+                echo "[integration] SKIP $name (awaiting no-Rust compiler support for '$requires_symbol')"
                 skipped=$((skipped + 1))
                 continue
             fi
@@ -974,7 +992,7 @@ while IFS='|' read -r name source want stdout_spec runtime_args deps extra || [ 
     else
         if ! "$COMPILER" compile "$work_src" -o "$asm" > "$build_stdout" 2> "$build_stderr"; then
             if integration_should_skip_staged "$requires_symbol" "$build_stdout" "$build_stderr"; then
-                echo "[integration] SKIP $name (awaiting stage0 republish of '$requires_symbol')"
+                echo "[integration] SKIP $name (awaiting no-Rust compiler support for '$requires_symbol')"
                 skipped=$((skipped + 1))
                 continue
             fi
@@ -986,7 +1004,7 @@ while IFS='|' read -r name source want stdout_spec runtime_args deps extra || [ 
         fi
         if ! as "$asm" -o "$obj" >> "$build_stdout" 2>> "$build_stderr"; then
             if integration_should_skip_staged "$requires_symbol" "$build_stdout" "$build_stderr"; then
-                echo "[integration] SKIP $name (awaiting stage0 republish of '$requires_symbol')"
+                echo "[integration] SKIP $name (awaiting no-Rust compiler support for '$requires_symbol')"
                 skipped=$((skipped + 1))
                 continue
             fi
@@ -999,7 +1017,7 @@ while IFS='|' read -r name source want stdout_spec runtime_args deps extra || [ 
         if ! ld "$obj" -o "$bin" -dynamic-linker /lib64/ld-linux-x86-64.so.2 -lc \
             >> "$build_stdout" 2>> "$build_stderr"; then
             if integration_should_skip_staged "$requires_symbol" "$build_stdout" "$build_stderr"; then
-                echo "[integration] SKIP $name (awaiting stage0 republish of '$requires_symbol')"
+                echo "[integration] SKIP $name (awaiting no-Rust compiler support for '$requires_symbol')"
                 skipped=$((skipped + 1))
                 continue
             fi
@@ -1018,7 +1036,7 @@ while IFS='|' read -r name source want stdout_spec runtime_args deps extra || [ 
     fi
 
     if [ -n "$requires_symbol" ]; then
-        echo "[integration] NOTE: $name built with the current compiler; once the published stage0 provides '$requires_symbol', drop the requires-stage0-symbol marker" >&2
+        echo "[integration] NOTE: $name built with the current compiler; once the no-Rust compiler path provides '$requires_symbol', drop the requires-stage0-symbol marker" >&2
     fi
 
     write_expected_stream "$stdout_spec" "$expected_stdout"
@@ -1058,7 +1076,7 @@ if [ "$failed" -gt 0 ]; then
 fi
 
 if [ "$skipped" -gt 0 ]; then
-    echo "integration verification: $skipped case(s) skipped (staged primitive awaiting stage0 republish)"
+    echo "integration verification: $skipped case(s) skipped (staged primitive awaiting no-Rust compiler support)"
 fi
 
 if [ "$HOST_OS" = linux ]; then
@@ -1069,5 +1087,5 @@ fi
 
 echo "All $ran integration case(s) passed for $HOST_OS."
 if [ "$skipped" -ne 0 ]; then
-    echo "$skipped integration case(s) skipped (staged primitive awaiting stage0 republish)."
+    echo "$skipped integration case(s) skipped (staged primitive awaiting no-Rust compiler support)."
 fi

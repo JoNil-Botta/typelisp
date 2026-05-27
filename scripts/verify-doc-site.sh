@@ -135,6 +135,26 @@ for page in $pages; do
     grep -q 'href="typelisp-docs.css"' "$page" \
         || fail "$(basename "$page") does not reference typelisp-docs.css"
 
+    # Each page should expose the persistent stdlib module tree sidebar.
+    grep -q '<nav class="tl-doc-stdlib-sidebar" aria-label="Stdlib module tree">' "$page" \
+        || fail "$(basename "$page") does not include the stdlib module sidebar"
+    grep -q 'href="stdlib.html">stdlib</a>' "$page" \
+        || fail "$(basename "$page") does not include the stdlib sidebar root"
+    grep -q 'href="stdlib-io.html"' "$page" \
+        || fail "$(basename "$page") does not include representative stdlib module links"
+
+    page_base=$(basename "$page")
+    case "$page_base" in
+        stdlib.html)
+            grep -q 'class="tl-doc-tree-root is-current" aria-current="page" href="stdlib.html"' "$page" \
+                || fail "$page_base does not mark the stdlib root as current"
+            ;;
+        stdlib-*.html)
+            grep -q "class=\"tl-doc-tree-link is-current\" aria-current=\"page\" href=\"$page_base\"" "$page" \
+                || fail "$page_base does not mark its sidebar module link as current"
+            ;;
+    esac
+
     # Extract href targets (strip the href="...") wrapper).
     hrefs=$(grep -oE 'href="[^"]*"' "$page" | sed 's/^href="//; s/"$//')
     for href in $hrefs; do

@@ -3312,49 +3312,59 @@ fn run_selfhost_repl(name: &str, stdin: &str) -> Output {
         }
     }
     let source = dir.join("repl.tl");
-    let stdlib_root = manifest_dir.join("stdlib");
-    let exe = dir.join(if cfg!(target_os = "windows") {
-        "repl.exe"
-    } else {
-        "repl"
-    });
-
-    let mut build = Command::new(env!("CARGO_BIN_EXE_typelisp"));
-    build
-        .arg("build")
-        .arg(&source)
-        .arg("--stdlib-root")
-        .arg(&stdlib_root)
-        .arg("-o")
-        .arg(&exe);
-    if cfg!(target_os = "windows") {
-        build.arg("--target").arg("windows-x86_64");
+    #[cfg(target_os = "linux")]
+    {
+        let exe = dir.join("repl");
+        compile_selfhost_binary(&source, &exe);
+        run_binary_with_stdin(&exe, stdin)
     }
-    let build_output = run_with_crash_retry(|| build.output().expect("build selfhost repl"));
-    assert!(
-        build_output.status.success(),
-        "selfhost repl build failed\nstdout:\n{}\nstderr:\n{}",
-        String::from_utf8_lossy(&build_output.stdout),
-        String::from_utf8_lossy(&build_output.stderr)
-    );
 
-    run_with_crash_retry(|| {
-        let mut child = Command::new(&exe)
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .expect("spawn selfhost repl");
+    #[cfg(not(target_os = "linux"))]
+    {
+        let stdlib_root = manifest_dir.join("stdlib");
+        let exe = dir.join(if cfg!(target_os = "windows") {
+            "repl.exe"
+        } else {
+            "repl"
+        });
 
-        child
-            .stdin
-            .as_mut()
-            .expect("stdin is piped")
-            .write_all(stdin.as_bytes())
-            .expect("write selfhost repl stdin");
+        let mut build = Command::new(env!("CARGO_BIN_EXE_typelisp"));
+        build
+            .arg("build")
+            .arg(&source)
+            .arg("--stdlib-root")
+            .arg(&stdlib_root)
+            .arg("-o")
+            .arg(&exe);
+        if cfg!(target_os = "windows") {
+            build.arg("--target").arg("windows-x86_64");
+        }
+        let build_output = run_with_crash_retry(|| build.output().expect("build selfhost repl"));
+        assert!(
+            build_output.status.success(),
+            "selfhost repl build failed\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&build_output.stdout),
+            String::from_utf8_lossy(&build_output.stderr)
+        );
 
-        child.wait_with_output().expect("wait for selfhost repl")
-    })
+        run_with_crash_retry(|| {
+            let mut child = Command::new(&exe)
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .spawn()
+                .expect("spawn selfhost repl");
+
+            child
+                .stdin
+                .as_mut()
+                .expect("stdin is piped")
+                .write_all(stdin.as_bytes())
+                .expect("write selfhost repl stdin");
+
+            child.wait_with_output().expect("wait for selfhost repl")
+        })
+    }
 }
 
 #[test]

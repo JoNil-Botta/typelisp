@@ -1472,22 +1472,26 @@
   [src : CompilerIrValue]
   [from-ty : AstType]
   [to-ty : AstType]) : ResultCompilerBackend
-  (match (compiler-backend-emit-load-typed-value-with-plan
-    assignments
-    src
-    from-ty)
-    [(OkCompilerBackend load)
-      (OkCompilerBackend
-        (string-append
-          load
-          (compiler-backend-emit-store-typed-var-with-plan
-            assignments
-            dst
-            (if (compiler-backend-f64-type? to-ty)
-              "%xmm0"
-              "%rax")
-            to-ty)))]
-    [(ErrCompilerBackend message) (ErrCompilerBackend message)]))
+  (if (and
+    (opt-type-eq from-ty to-ty)
+    (compiler-backend-value-same-home? assignments dst src))
+    (OkCompilerBackend "")
+    (match (compiler-backend-emit-load-typed-value-with-plan
+      assignments
+      src
+      from-ty)
+      [(OkCompilerBackend load)
+        (OkCompilerBackend
+          (string-append
+            load
+            (compiler-backend-emit-store-typed-var-with-plan
+              assignments
+              dst
+              (if (compiler-backend-f64-type? to-ty)
+                "%xmm0"
+                "%rax")
+              to-ty)))]
+      [(ErrCompilerBackend message) (ErrCompilerBackend message)])))
 
 (define (compiler-backend-ir-value-list-count [args : CompilerIrValueList]) : i64
   (match args
@@ -1805,13 +1809,20 @@
           [(CompilerRegNoLocation) false])]
       [(CompilerRegNoLocation) false])))
 
+(define (compiler-backend-value-same-home?
+  [assignments : CompilerRegAssignmentList]
+  [dst : i64]
+  [src : CompilerIrValue]) : bool
+  (match src
+    [(IrValueVar src-var)
+      (compiler-backend-vars-same-home? assignments dst src-var)]
+    [_ false]))
+
 (define (compiler-backend-phi-same-home?
   [assignments : CompilerRegAssignmentList]
   [dst : i64]
   [value : CompilerIrValue]) : bool
-  (match value
-    [(IrValueVar src) (compiler-backend-vars-same-home? assignments src dst)]
-    [_ false]))
+  (compiler-backend-value-same-home? assignments dst value))
 
 (define (compiler-backend-phi-source-uses-home?
   [assignments : CompilerRegAssignmentList]
@@ -2137,6 +2148,27 @@
                   ""))))]
         [(ErrCompilerBackend message) (ErrCompilerBackend message)]))))
 
+(define (compiler-backend-emit-mov
+  [assignments : CompilerRegAssignmentList]
+  [dst : i64]
+  [src : CompilerIrValue]
+  [ty : AstType]) : ResultCompilerBackend
+  (if (compiler-backend-value-same-home? assignments dst src)
+    (OkCompilerBackend "")
+    (match (compiler-backend-emit-load-typed-value-with-plan assignments src ty)
+      [(OkCompilerBackend load)
+        (OkCompilerBackend
+          (string-append
+            load
+            (compiler-backend-emit-store-typed-var-with-plan
+              assignments
+              dst
+              (if (compiler-backend-f64-type? ty)
+                "%xmm0"
+                "%rax")
+              ty)))]
+      [(ErrCompilerBackend message) (ErrCompilerBackend message)])))
+
 (define (compiler-backend-emit-instr
   [target : CompilerBackendTarget]
   [function : String]
@@ -2163,21 +2195,8 @@
         "")]
     (match instr
       [(IrInstrMov dst src ty)
-        (match (compiler-backend-emit-load-typed-value-with-plan
-          assignments
-          src
-          ty)
-          [(OkCompilerBackend load)
-            (OkCompilerBackend
-              (string-append
-                load
-                (compiler-backend-emit-store-typed-var-with-plan
-                  assignments
-                  dst
-                  (if (compiler-backend-f64-type? ty)
-                    "%xmm0"
-                    "%rax")
-                  ty)))]
+        (match (compiler-backend-emit-mov assignments dst src ty)
+          [(OkCompilerBackend asm) (OkCompilerBackend asm)]
           [(ErrCompilerBackend message)
             (ErrCompilerBackend
               (compiler-backend-apply-instr-diagnostic message instr-diag))])]
@@ -9901,6 +9920,12 @@ tl_windows_setup_instances:
   (let
     [assignments : CompilerRegAssignmentList
       (compiler-backend-peephole-assignments)]
+    [coalesced : CompilerRegAssignmentList
+      (CompilerRegAssignmentCons
+        (CompilerRegAssignment 0 (CompilerRegRegister "%r12"))
+        (CompilerRegAssignmentCons
+          (CompilerRegAssignment 2 (CompilerRegRegister "%r12"))
+          CompilerRegAssignmentNil))]
     (and
       (string-eq
         (compiler-backend-emit-load-var-with-plan assignments 0 "%r12")
@@ -9913,12 +9938,29 @@ tl_windows_setup_instances:
           (string-eq
             (compiler-backend-emit-load-f64-var-with-plan assignments 1 "%xmm0")
             "    movsd %xmm2, %xmm0\n")
-          (string-eq
-            (compiler-backend-emit-store-f64-var-with-plan
-              assignments
-              1
-              "%xmm0")
-            "    movsd %xmm0, %xmm2\n"))))))
+          (and
+            (string-eq
+              (compiler-backend-emit-store-f64-var-with-plan
+                assignments
+                1
+                "%xmm0")
+              "    movsd %xmm0, %xmm2\n")
+            (and
+              (match (compiler-backend-emit-mov
+                coalesced
+                2
+                (IrValueVar 0)
+                (AstTyI64))
+                [(OkCompilerBackend asm) (string-eq asm "")]
+                [(ErrCompilerBackend _) false])
+              (match (compiler-backend-emit-cast
+                coalesced
+                2
+                (IrValueVar 0)
+                (AstTyI64)
+                (AstTyI64))
+                [(OkCompilerBackend asm) (string-eq asm "")]
+                [(ErrCompilerBackend _) false]))))))))
 
 (define (compiler-backend-peephole-asm-ok?) : bool
   (let

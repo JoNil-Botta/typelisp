@@ -255,12 +255,15 @@ case|selfhost_compiler_ir_types|selfhost/compiler_ir_types.tl|assembly|skip|dire
 contains|_tl_compiler_ir_program_summary:
 contains|_tl_compiler_ir_summary_globals:
 contains|_tl_compiler_ir_summary_functions:
+contains|_tl_compiler_ir_instr_render:
+contains|_tl_compiler_ir_tail_call_render_ok_question:
 contains|_tl_compiler_ir_instr_effect:
 contains|_tl_compiler_ir_effect_self_test:
 end
 
 case|selfhost_compiler_ir_types_smoke|selfhost/compiler_ir_types_smoke.tl|assembly|exactly-one|direct
 contains|_tl_compiler_ir_effect_self_test:
+contains|_tl_compiler_ir_tail_call_render_ok_question:
 end
 
 case|selfhost_compiler_liveness|selfhost/compiler_liveness.tl|assembly|skip|direct

@@ -321,6 +321,7 @@
         (compiler-live-value-vars index)
         (compiler-live-value-vars len))]
     [(IrInstrCall _ _ args _) (compiler-live-value-list-vars args)]
+    [(IrInstrTailCall _ args _) (compiler-live-value-list-vars args)]
     [(IrInstrStore _ value _) (compiler-live-value-vars value)]
     [(IrInstrBranch cond _ _) (compiler-live-value-vars cond)]
     [(IrInstrReturn value) (compiler-live-maybe-value-vars value)]

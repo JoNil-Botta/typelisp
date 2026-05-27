@@ -4140,11 +4140,48 @@
       (IrInstrBinOp 2 (IrBinAdd) (IrValueVar 1) (IrValueVar 1) (AstTyF64))
       (IrInstrNil))))
 
+(define (opt-copy-phi-instrs) : CompilerIrInstrList
+  (IrInstrCons
+    (IrInstrMov 1 (IrValueVar 0) (AstTyI64))
+    (IrInstrCons
+      (IrInstrPhi
+        2
+        (IrPhiInputCons (IrPhiInput (IrValueVar 1) "left") IrPhiInputNil)
+        (AstTyI64))
+      (IrInstrNil))))
+
+(define (opt-phi-first-input-var
+  [inputs : CompilerIrPhiInputList]
+  [fallback : i64]) : i64
+  (match inputs
+    [(IrPhiInputNil) fallback]
+    [(IrPhiInputCons input _)
+      (match input
+        [(IrPhiInput value _)
+          (match value
+            [(IrValueVar id) id]
+            [_ fallback])])]))
+
+(define (opt-phi-dst-first-input-var
+  [instrs : CompilerIrInstrList]
+  [dst : i64]
+  [fallback : i64]) : i64
+  (match instrs
+    [(IrInstrNil) fallback]
+    [(IrInstrCons instr rest)
+      (match instr
+        [(IrInstrPhi found inputs _)
+          (if (= found dst)
+            (opt-phi-first-input-var inputs fallback)
+            (opt-phi-dst-first-input-var rest dst fallback))]
+        [_ (opt-phi-dst-first-input-var rest dst fallback)])]))
+
 ;; Returns 42 when block-local copy propagation: rewrites a var copy into a later
 ;; use (pos: lhs v1 -> v0); does not propagate after the source (src-redef) or
 ;; destination (dst-redef) var is redefined; rewrites a CSE-introduced copy so
-;; DCE can drop it (cse: lhs v3 -> v2, then 3 instrs -> 2); and does not
-;; propagate an unsafe F64 source (f64: lhs stays v1).
+;; DCE can drop it (cse: lhs v3 -> v2, leaving 3 instrs); does not propagate an
+;; unsafe F64 source (f64: lhs stays v1); and leaves phi inputs untouched because
+;; they are edge operands rather than block-local value uses (#1043).
 (define (compiler-optimize-copy-self-test) : i64
   (let
     [pos : CompilerIrInstrList
@@ -4166,14 +4203,18 @@
             (let
               [f64 : CompilerIrInstrList
                 (opt-copy-instrs (OptCopyNil) (opt-copy-f64-instrs))]
-              (cond
-                [(not (= (opt-copy-binop-lhs-var pos 2) 0)) 1]
-                [(not (= (opt-copy-binop-lhs-var src-redef 2) 1)) 2]
-                [(not (= (opt-copy-binop-lhs-var dst-redef 2) 1)) 3]
-                [(not (= (opt-copy-binop-lhs-var cse 4) 2)) 4]
-                [(not (= (compiler-ir-instr-list-count cse-dce) 3)) 5]
-                [(not (= (opt-copy-binop-lhs-var f64 2) 1)) 6]
-                [else 42]))))))))
+              (let
+                [phi : CompilerIrInstrList
+                  (opt-copy-instrs (OptCopyNil) (opt-copy-phi-instrs))]
+                (cond
+                  [(not (= (opt-copy-binop-lhs-var pos 2) 0)) 1]
+                  [(not (= (opt-copy-binop-lhs-var src-redef 2) 1)) 2]
+                  [(not (= (opt-copy-binop-lhs-var dst-redef 2) 1)) 3]
+                  [(not (= (opt-copy-binop-lhs-var cse 4) 2)) 4]
+                  [(not (= (compiler-ir-instr-list-count cse-dce) 3)) 5]
+                  [(not (= (opt-copy-binop-lhs-var f64 2) 1)) 6]
+                  [(not (= (opt-phi-dst-first-input-var phi 2 (- 0 1)) 1)) 7]
+                  [else 42])))))))))
 
 ;; Count explicit trapping bounds checks after the dedicated bounds pass.
 (define (opt-count-bounds-instrs [instrs : CompilerIrInstrList]) : i64

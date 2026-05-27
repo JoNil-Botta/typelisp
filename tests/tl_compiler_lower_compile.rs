@@ -123,6 +123,9 @@ fn compiler_lower_tl_compiles_to_assembly() {
         "_tl_lower_let_bindings:",
         "_tl_lower_begin:",
         "_tl_lower_with_arena:",
+        "_tl_lower_with_resource:",
+        "_tl_lower_resource_bindings:",
+        "_tl_lower_emit_active_cleanups:",
         "_tl_lower_try:",
         "_tl_lower_if:",
         "_tl_lower_if_merge:",
@@ -172,6 +175,7 @@ fn compiler_lower_tl_compiles_to_assembly() {
         "lower: unsupported enum payload pattern",
         "(defenum ResultI64 (OkI64 i64) (ErrI64 String))",
         "(try (read a 40))",
+        "(with ([a (try (open-a a-ok)) close-a]",
         "typecheck: try operand must be Result-like enum",
     ] {
         assert_message(&asm, message, "compiler_lower");

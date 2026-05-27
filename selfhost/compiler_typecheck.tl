@@ -170,6 +170,37 @@
 (define (tc-bind [env : TcTypeEnv] [name : String] [ty : AstType]) : TcTypeEnv
   (TcTypeBind name ty env))
 
+(define (tc-code-expr-type) : AstType
+  (AstTyVar "Expr"))
+
+(define (tc-code-expr-type-name? [name : String]) : bool
+  (string-eq name "Expr"))
+
+(define (tc-code-expr-intrinsic-name? [name : String]) : bool
+  (or
+    (string-eq name "expr-bool")
+    (or
+      (string-eq name "expr-i64")
+      (or
+        (string-eq name "expr-splice")
+        (or
+          (string-eq name "expr-if")
+          (or
+            (string-eq name "expr-bool?")
+            (or
+              (string-eq name "expr-if?")
+              (or
+                (string-eq name "expr-if-cond")
+                (or
+                  (string-eq name "expr-if-then")
+                  (string-eq name "expr-if-else"))))))))))
+
+(define (tc-code-expr-runtime-call [name : String]) : ResultTcType
+  (ErrTcType
+    (string-append
+      "typecheck: "
+      (string-append name " is compile-time only; wrap it in (comptime ...)"))))
+
 (define (tc-bind-alias-if-free [env : TcTypeEnv] [name : String] [ty : AstType]) : TcTypeEnv
   (if (tc-name-bound? env name)
     env
@@ -950,7 +981,10 @@
             "typecheck: mutable reference types require mutable borrow checker support (#806)")]
         [(ErrTcUnit message) (ErrTcUnit message)])]
     [(AstTyRegion _ inner) (tc-source-type-policy-ok ctx inner)]
-    [(AstTyVar name) (ErrTcUnit (tc-source-type-policy-message name))]
+    [(AstTyVar name)
+      (if (tc-code-expr-type-name? name)
+        OkTcUnit
+        (ErrTcUnit (tc-source-type-policy-message name)))]
     [_ OkTcUnit]))
 
 (define (tc-source-maybe-type-policy-ok
@@ -2320,15 +2354,19 @@
   [args : AstExprList]) : ResultTcType
   (match (ast-expr-unspan func)
     [(AstExprVar name)
-      (if (and (tc-layout-query-name? name) (not (tc-name-bound? env name)))
-        (tc-layout-query-runtime-call name args)
-        (if (or (string-eq name "array-length") (string-eq name "length"))
-          (tc-array-length-call ctx env name func args)
-          (if (and
-            (or (string-eq name "string-ref") (string-eq name "char-at"))
-            (not (tc-name-bound? env name)))
-            (tc-string-ref-call ctx env args)
-            (tc-call-expr ctx env func args))))]
+      (if (and
+        (tc-code-expr-intrinsic-name? name)
+        (not (tc-name-bound? env name)))
+        (tc-code-expr-runtime-call name)
+        (if (and (tc-layout-query-name? name) (not (tc-name-bound? env name)))
+          (tc-layout-query-runtime-call name args)
+          (if (or (string-eq name "array-length") (string-eq name "length"))
+            (tc-array-length-call ctx env name func args)
+            (if (and
+              (or (string-eq name "string-ref") (string-eq name "char-at"))
+              (not (tc-name-bound? env name)))
+              (tc-string-ref-call ctx env args)
+              (tc-call-expr ctx env func args)))))]
     [_ (tc-call-expr ctx env func args)]))
 
 (define (tc-let-bindings
@@ -4908,7 +4946,7 @@
                   (string-append
                     (tc-type-render (tc-resolve-type ctx ty))
                     " is compile-time only")))]
-            [(CtfeExpr _) (ErrTcType "Expr value is compile-time only (#1135)")]
+            [(CtfeExpr _ _) (OkTcType (tc-code-expr-type))]
             [(CtfeExprList _)
               (ErrTcType "ExprList value is compile-time only (#1135)")])]
         [(ErrCtfe diag) (ErrTcType (compiler-diagnostic-message diag))])]
@@ -6605,6 +6643,40 @@
       (compiler-typecheck-unsafe-empty-source)
       "parse: unsafe requires a non-empty body")))
 
+;; Expr code-as-data (#1135): CTFE constructors produce a single public `Expr`
+;; type, while the compiler tracks each fragment's checked produced type
+;; internally enough to reject obviously bad generated `if` fragments.
+(define (compiler-typecheck-expr-code-as-data-tests-ok?) : bool
+  (and
+    (compiler-typecheck-ok? "(define (mk) : Expr (comptime (expr-bool true)))")
+    (and
+      (compiler-typecheck-ok?
+        "(define (mk) : Expr
+  (comptime
+    (expr-if
+      (expr-bool true)
+      (expr-splice (expr-bool true))
+      (expr-bool false))))")
+      (and
+        (compiler-typecheck-ok?
+          "(define (mk) : Expr
+  (comptime
+    (expr-if-cond
+      (expr-if (expr-bool true) (expr-bool true) (expr-bool false)))))")
+        (and
+          (compiler-typecheck-error-ok?
+            "(define (mk) : Expr
+  (comptime (expr-if (expr-i64 1) (expr-bool true) (expr-bool false))))"
+            "expr-if condition must be checked as bool")
+          (and
+            (compiler-typecheck-error-ok?
+              "(define (mk) : Expr
+  (comptime (expr-if (expr-bool true) (expr-bool true) (expr-i64 1))))"
+              "expr-if branches must have matching checked types")
+            (compiler-typecheck-error-ok?
+              "(define (mk) : Expr (expr-bool true))"
+              "typecheck: expr-bool is compile-time only; wrap it in (comptime ...)")))))))
+
 ;; CTFE layout queries (#989): folded calls produce `i64`, runtime calls are
 ;; rejected, and `offset-of` is restricted to repr-c structs and known fields.
 (define (compiler-typecheck-layout-query-tests-ok?) : bool
@@ -6751,6 +6823,9 @@
     (if (compiler-typecheck-io-builtin-tests-ok?)
       unit
       (panic "typecheck: io builtin tests failed"))
+    (if (compiler-typecheck-expr-code-as-data-tests-ok?)
+      unit
+      (panic "typecheck: Expr code-as-data tests failed"))
     (if (compiler-typecheck-layout-query-tests-ok?)
       42
       (begin

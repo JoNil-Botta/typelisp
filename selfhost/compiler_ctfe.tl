@@ -22,7 +22,7 @@
   (CtfeChar char)
   (CtfeUnit)
   (CtfeType AstType)
-  (CtfeExpr AstExpr)
+  (CtfeExpr AstExpr AstType)
   (CtfeExprList AstExprList))
 
 ;; CTFE-owned type layout metadata. The typechecker/lowerer build this from
@@ -198,7 +198,7 @@
     [(CtfeChar _) "char"]
     [(CtfeUnit) "unit"]
     [(CtfeType _) "type"]
-    [(CtfeExpr _) "expr"]
+    [(CtfeExpr _ _) "expr"]
     [(CtfeExprList _) "expr-list"]))
 
 ;; Promote a char to its i64 code point so the i64 comparison primitives drive
@@ -373,12 +373,19 @@
             (ctfe-diagnostic-at-expr
               expr
               "binary operation in comptime requires matching operand types"))])]
-    [(CtfeExpr a)
+    [(CtfeExpr a a-ty)
       (match rv
-        [(CtfeExpr b)
+        [(CtfeExpr b b-ty)
           (match op
-            [(AstBinEq) (OkCtfe (CtfeBool (ctfe-expr-eq a b)) fuel)]
-            [(AstBinNe) (OkCtfe (CtfeBool (not (ctfe-expr-eq a b))) fuel)]
+            [(AstBinEq)
+              (OkCtfe
+                (CtfeBool (and (ctfe-type-eq a-ty b-ty) (ctfe-expr-eq a b)))
+                fuel)]
+            [(AstBinNe)
+              (OkCtfe
+                (CtfeBool
+                  (not (and (ctfe-type-eq a-ty b-ty) (ctfe-expr-eq a b))))
+                fuel)]
             [_
               (ErrCtfe
                 (ctfe-diagnostic-at-expr
@@ -710,8 +717,225 @@
           expr
           "offset-of expects exactly one type argument and one field name"))]))
 
-;; Dispatch a comptime call: layout queries (#989) are the only supported call
-;; forms; everything else is rejected.
+(define (ctfe-expr-call-arity-error [name : String] [expr : AstExpr]) : ResultCtfe
+  (ErrCtfe
+    (ctfe-diagnostic-at-expr
+      expr
+      (string-append name " received the wrong number of arguments"))))
+
+(define (ctfe-expr-arg-error
+  [name : String]
+  [expr : AstExpr]
+  [message : String]) : ResultCtfe
+  (ErrCtfe
+    (ctfe-diagnostic-at-expr
+      expr
+      (string-append name (string-append " " message)))))
+
+(define (ctfe-eval-expr-bool
+  [args : AstExprList]
+  [expr : AstExpr]
+  [env : CtfeEnv]
+  [fuel : i64]) : ResultCtfe
+  (match args
+    [(AstExprCons arg rest)
+      (match rest
+        [(AstExprNil)
+          (match (compiler-ctfe-eval arg env fuel)
+            [(OkCtfe value arg-fuel)
+              (match value
+                [(CtfeBool b)
+                  (OkCtfe
+                    (CtfeExpr (AstExprLiteral (AstLitBool b)) (AstTyBool))
+                    arg-fuel)]
+                [_ (ctfe-expr-arg-error "expr-bool" expr "expects bool")])]
+            [(ErrCtfe diag) (ErrCtfe diag)])]
+        [_ (ctfe-expr-call-arity-error "expr-bool" expr)])]
+    [_ (ctfe-expr-call-arity-error "expr-bool" expr)]))
+
+(define (ctfe-eval-expr-i64
+  [args : AstExprList]
+  [expr : AstExpr]
+  [env : CtfeEnv]
+  [fuel : i64]) : ResultCtfe
+  (match args
+    [(AstExprCons arg rest)
+      (match rest
+        [(AstExprNil)
+          (match (compiler-ctfe-eval arg env fuel)
+            [(OkCtfe value arg-fuel)
+              (match value
+                [(CtfeI64 n)
+                  (OkCtfe
+                    (CtfeExpr (AstExprLiteral (AstLitInt n)) (AstTyI64))
+                    arg-fuel)]
+                [_ (ctfe-expr-arg-error "expr-i64" expr "expects i64")])]
+            [(ErrCtfe diag) (ErrCtfe diag)])]
+        [_ (ctfe-expr-call-arity-error "expr-i64" expr)])]
+    [_ (ctfe-expr-call-arity-error "expr-i64" expr)]))
+
+(define (ctfe-eval-expr-splice
+  [args : AstExprList]
+  [expr : AstExpr]
+  [env : CtfeEnv]
+  [fuel : i64]) : ResultCtfe
+  (match args
+    [(AstExprCons arg rest)
+      (match rest
+        [(AstExprNil)
+          (match (compiler-ctfe-eval arg env fuel)
+            [(OkCtfe value arg-fuel)
+              (match value
+                [(CtfeExpr ast ty) (OkCtfe (CtfeExpr ast ty) arg-fuel)]
+                [_ (ctfe-expr-arg-error "expr-splice" expr "expects Expr")])]
+            [(ErrCtfe diag) (ErrCtfe diag)])]
+        [_ (ctfe-expr-call-arity-error "expr-splice" expr)])]
+    [_ (ctfe-expr-call-arity-error "expr-splice" expr)]))
+
+(define (ctfe-eval-expr-if-else
+  [cond-ast : AstExpr]
+  [then-ast : AstExpr]
+  [then-ty : AstType]
+  [else-expr : AstExpr]
+  [expr : AstExpr]
+  [env : CtfeEnv]
+  [fuel : i64]) : ResultCtfe
+  (match (compiler-ctfe-eval else-expr env fuel)
+    [(OkCtfe else-value else-fuel)
+      (match else-value
+        [(CtfeExpr else-ast else-ty)
+          (if (ctfe-type-eq then-ty else-ty)
+            (OkCtfe
+              (CtfeExpr (AstExprIf cond-ast then-ast else-ast) then-ty)
+              else-fuel)
+            (ctfe-expr-arg-error
+              "expr-if"
+              expr
+              "branches must have matching checked types"))]
+        [_ (ctfe-expr-arg-error "expr-if" expr "else branch expects Expr")])]
+    [(ErrCtfe diag) (ErrCtfe diag)]))
+
+(define (ctfe-eval-expr-if-then
+  [cond-ast : AstExpr]
+  [then-expr : AstExpr]
+  [else-expr : AstExpr]
+  [expr : AstExpr]
+  [env : CtfeEnv]
+  [fuel : i64]) : ResultCtfe
+  (match (compiler-ctfe-eval then-expr env fuel)
+    [(OkCtfe then-value then-fuel)
+      (match then-value
+        [(CtfeExpr then-ast then-ty)
+          (ctfe-eval-expr-if-else
+            cond-ast
+            then-ast
+            then-ty
+            else-expr
+            expr
+            env
+            then-fuel)]
+        [_ (ctfe-expr-arg-error "expr-if" expr "then branch expects Expr")])]
+    [(ErrCtfe diag) (ErrCtfe diag)]))
+
+(define (ctfe-eval-expr-if
+  [args : AstExprList]
+  [expr : AstExpr]
+  [env : CtfeEnv]
+  [fuel : i64]) : ResultCtfe
+  (match args
+    [(AstExprCons cond-expr rest)
+      (match rest
+        [(AstExprCons then-expr rest-then)
+          (match rest-then
+            [(AstExprCons else-expr rest-else)
+              (match rest-else
+                [(AstExprNil)
+                  (match (compiler-ctfe-eval cond-expr env fuel)
+                    [(OkCtfe cond-value cond-fuel)
+                      (match cond-value
+                        [(CtfeExpr cond-ast cond-ty)
+                          (if (ctfe-type-eq cond-ty (AstTyBool))
+                            (ctfe-eval-expr-if-then
+                              cond-ast
+                              then-expr
+                              else-expr
+                              expr
+                              env
+                              cond-fuel)
+                            (ctfe-expr-arg-error
+                              "expr-if"
+                              expr
+                              "condition must be checked as bool"))]
+                        [_
+                          (ctfe-expr-arg-error
+                            "expr-if"
+                            expr
+                            "condition expects Expr")])]
+                    [(ErrCtfe diag) (ErrCtfe diag)])]
+                [_ (ctfe-expr-call-arity-error "expr-if" expr)])]
+            [_ (ctfe-expr-call-arity-error "expr-if" expr)])]
+        [_ (ctfe-expr-call-arity-error "expr-if" expr)])]
+    [_ (ctfe-expr-call-arity-error "expr-if" expr)]))
+
+(define (ctfe-eval-expr-predicate
+  [name : String]
+  [args : AstExprList]
+  [expr : AstExpr]
+  [env : CtfeEnv]
+  [fuel : i64]) : ResultCtfe
+  (match args
+    [(AstExprCons arg rest)
+      (match rest
+        [(AstExprNil)
+          (match (compiler-ctfe-eval arg env fuel)
+            [(OkCtfe value arg-fuel)
+              (match value
+                [(CtfeExpr ast _)
+                  (match (ast-expr-unspan ast)
+                    [(AstExprIf _ _ _)
+                      (OkCtfe (CtfeBool (string-eq name "expr-if?")) arg-fuel)]
+                    [(AstExprLiteral lit)
+                      (match lit
+                        [(AstLitBool _)
+                          (OkCtfe
+                            (CtfeBool (string-eq name "expr-bool?"))
+                            arg-fuel)]
+                        [_ (OkCtfe (CtfeBool false) arg-fuel)])]
+                    [_ (OkCtfe (CtfeBool false) arg-fuel)])]
+                [_ (ctfe-expr-arg-error name expr "expects Expr")])]
+            [(ErrCtfe diag) (ErrCtfe diag)])]
+        [_ (ctfe-expr-call-arity-error name expr)])]
+    [_ (ctfe-expr-call-arity-error name expr)]))
+
+(define (ctfe-eval-expr-if-part
+  [name : String]
+  [args : AstExprList]
+  [expr : AstExpr]
+  [env : CtfeEnv]
+  [fuel : i64]) : ResultCtfe
+  (match args
+    [(AstExprCons arg rest)
+      (match rest
+        [(AstExprNil)
+          (match (compiler-ctfe-eval arg env fuel)
+            [(OkCtfe value arg-fuel)
+              (match value
+                [(CtfeExpr ast result-ty)
+                  (match (ast-expr-unspan ast)
+                    [(AstExprIf cond then-branch else-branch)
+                      (if (string-eq name "expr-if-cond")
+                        (OkCtfe (CtfeExpr cond (AstTyBool)) arg-fuel)
+                        (if (string-eq name "expr-if-then")
+                          (OkCtfe (CtfeExpr then-branch result-ty) arg-fuel)
+                          (OkCtfe (CtfeExpr else-branch result-ty) arg-fuel)))]
+                    [_ (ctfe-expr-arg-error name expr "expects if Expr")])]
+                [_ (ctfe-expr-arg-error name expr "expects Expr")])]
+            [(ErrCtfe diag) (ErrCtfe diag)])]
+        [_ (ctfe-expr-call-arity-error name expr)])]
+    [_ (ctfe-expr-call-arity-error name expr)]))
+
+;; Dispatch a comptime call: layout queries and the v1 Expr code-as-data
+;; intrinsics are CTFE-only. Everything else is rejected.
 (define (ctfe-eval-call
   [func : AstExpr]
   [args : AstExprList]
@@ -721,11 +945,29 @@
   (match func
     [(AstExprSpanned inner _) (ctfe-eval-call inner args expr env fuel)]
     [(AstExprVar name)
-      (if (or (string-eq name "size-of") (string-eq name "align-of"))
-        (ctfe-eval-size-align-query name args expr env fuel)
-        (if (string-eq name "offset-of")
-          (ctfe-eval-offset-query args expr env fuel)
-          (ctfe-unsupported-form expr)))]
+      (if (string-eq name "expr-bool")
+        (ctfe-eval-expr-bool args expr env fuel)
+        (if (string-eq name "expr-i64")
+          (ctfe-eval-expr-i64 args expr env fuel)
+          (if (string-eq name "expr-splice")
+            (ctfe-eval-expr-splice args expr env fuel)
+            (if (string-eq name "expr-if")
+              (ctfe-eval-expr-if args expr env fuel)
+              (if (or (string-eq name "expr-if?") (string-eq name "expr-bool?"))
+                (ctfe-eval-expr-predicate name args expr env fuel)
+                (if (or
+                  (string-eq name "expr-if-cond")
+                  (or
+                    (string-eq name "expr-if-then")
+                    (string-eq name "expr-if-else")))
+                  (ctfe-eval-expr-if-part name args expr env fuel)
+                  (if (or
+                    (string-eq name "size-of")
+                    (string-eq name "align-of"))
+                    (ctfe-eval-size-align-query name args expr env fuel)
+                    (if (string-eq name "offset-of")
+                      (ctfe-eval-offset-query args expr env fuel)
+                      (ctfe-unsupported-form expr)))))))))]
     [_ (ctfe-unsupported-form expr)]))
 
 ;; Shared "unsupported compile-time form" diagnostic for ordinary calls.
@@ -1179,7 +1421,7 @@
     [(CtfeChar c) (AstLitChar c)]
     [(CtfeUnit) (AstLitUnit)]
     [(CtfeType _) (AstLitUnit)]
-    [(CtfeExpr _) (AstLitUnit)]
+    [(CtfeExpr _ _) (AstLitUnit)]
     [(CtfeExprList _) (AstLitUnit)]))
 
 (define (ctfe-type-list-eq [a : AstTypeList] [b : AstTypeList]) : bool

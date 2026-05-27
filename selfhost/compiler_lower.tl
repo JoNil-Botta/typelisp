@@ -1899,7 +1899,7 @@
                     (string-append
                       (tc-type-render (tc-resolve-type ctx ty))
                       " is compile-time only"))))]
-            [(CtfeExpr _)
+            [(CtfeExpr _ _)
               (ErrLowerExpr
                 (lower-diagnostic-at-expr
                   origin

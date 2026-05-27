@@ -161,6 +161,7 @@ end
 case|selfhost_compiler_backend|selfhost/compiler_backend.tl|assembly|skip|direct
 contains|_tl_compiler_backend_emit_source:
 contains|_tl_compiler_backend_emit_program_for_target:
+contains|_tl_compiler_backend_extern_metadata_symbol_ok_question:
 contains|_tl_compiler_backend_runtime_windows_alloc_functions:
 contains|_tl_compiler_backend_runtime_file_open_status_functions:
 contains|_tl_compiler_backend_runtime_file_close_status_functions:
@@ -170,6 +171,7 @@ contains|_tl_compiler_backend_runtime_windows_file_read_chunk_functions:
 contains|_tl_compiler_backend_runtime_env_var_value_functions:
 contains|_tl_compiler_backend_env_runtime_ok_question:
 contains|_tl_compiler_backend_self_test:
+contains|foreign_exact
 contains|backend: too many call args
 not-contains|backend: Windows runtime helpers not yet implemented (#648)
 end
@@ -319,6 +321,7 @@ contains|_tl_parse_ast_source:
 contains|_tl_parse_ast_program:
 contains|_tl_parse_ast_decl:
 contains|_tl_compiler_parse_abstraction_policy_message:
+contains|parse: unknown extern ABI
 contains|parse: malformed define
 contains|source-level generics or traits
 end
@@ -367,6 +370,7 @@ case|selfhost_compiler_typecheck|selfhost/compiler_typecheck.tl|assembly|skip|di
 contains|_tl_typecheck_compiler_program:
 contains|_tl_compiler_typecheck_self_test:
 contains|_tl_tc_source_type_policy_message:
+contains|extern ABI c does not support
 contains|typecheck: return type mismatch
 contains|source-level type parameters
 end

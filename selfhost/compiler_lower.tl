@@ -326,9 +326,9 @@
         module
         name
         (lower-decl-logical-name entry-path decl-path module name))]
-    [(AstDeclExtern name _)
-      ;; Exact extern linker metadata is owned by #911; keep today's extern
-      ;; calls raw while user TypeLisp declarations become logical names.
+    [(AstDeclExtern name _ _)
+      ;; Calls resolve through the local declaration name; backend metadata owns
+      ;; the exact external linker symbol.
       (lower-name-env-add-module-binding names module name name)]
     [_ names]))
 
@@ -5174,7 +5174,7 @@
                     module)]
                 [(ErrLowerValue message) (ErrLowerDecls message)])]
             [(ErrTcType message) (ErrLowerDecls (lower-diagnostic message))])]
-        [(AstDeclExtern name ty)
+        [(AstDeclExtern name metadata ty)
           (if (tc-type-contains-reference? (tc-resolve-type ctx ty))
             (ErrLowerDecls (lower-diagnostic (lower-reference-support-message)))
             (lower-decls-in-module
@@ -5187,7 +5187,9 @@
                 externs
                 (IrExtern
                   name
-                  (tc-type-without-regions (tc-resolve-type ctx ty))))
+                  (tc-type-without-regions (tc-resolve-type ctx ty))
+                  (ast-extern-metadata-abi metadata)
+                  (ast-extern-metadata-symbol metadata)))
               spans
               names
               module))]

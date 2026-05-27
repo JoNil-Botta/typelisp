@@ -612,27 +612,42 @@ Defines a named function.
 - Recursion is supported.
 - Varargs are **not** supported.
 
-### 4.3 `(extern name : (-> args ... ret))` — external symbol
+### 4.3 `(extern name [metadata...] : (-> args ... ret))` - external symbol
 
-Declares an external function to link against. The name is an identifier, not a
-string. External symbols are emitted without the `_tl_` TypeLisp function
-prefix. Identifier punctuation is converted to assembler-safe symbol text; for
-example, hyphens become underscores and `?` becomes `_question`. Extern
-signatures may use the backend ABI value types, including pointer-valued
-`String`, dynamic array, enum, and struct values. Exact external symbol
-metadata, including symbols that should not be derived from the TypeLisp
-identifier spelling, is owned by #911 and is separate from TypeLisp
-module-prefixed user symbols.
+Declares an external function to link against. The name is a TypeLisp
+identifier used for source lookup. The legacy form `(extern name : type)`
+defaults to target C ABI and uses `name` as the external linker symbol.
 
-After raw pointer implementation (#809/#896), `extern` signatures may also use
-`(Ptr T)` and `(MutPtr T)` to model C-style pointer arguments and returns
-(#897/#911/#912). Such signatures do not make the pointer safe: nullability,
-validity, aliasing, lifetime, mutability, and target ABI correctness remain the
-caller and callee's contract.
+Metadata may appear before `:`:
+
+- `(:abi c)` selects the C ABI. Unknown ABI names are rejected.
+- `(:symbol "exact_name")` supplies the external linker symbol independently of
+  the local TypeLisp name.
+
+External calls and `.extern` declarations use the metadata symbol without the
+`_tl_` TypeLisp function prefix. Symbol text is passed through the deterministic
+assembler-safe encoder used by the backend, so unsupported symbol characters are
+escaped consistently. Ordinary TypeLisp declarations still use module-prefixed
+`_tl_...` linker symbols.
+
+Extern signatures may use backend-supported scalar values, `unit`, function
+pointers, raw pointers, and pointer-sized TypeLisp runtime handles such as
+`String`, dynamic arrays, structs, and enums. Tuple values, fixed arrays,
+references, regions, `f32`, and other unsupported aggregate forms are rejected
+for extern parameters and returns; pass a raw pointer when a foreign API needs
+aggregate storage.
+
+Raw pointer signatures do not make the pointer safe: nullability, validity,
+aliasing, lifetime, mutability, and target ABI correctness remain the caller and
+callee's contract.
 
 Example:
 ```lisp test=check name=extern-declaration
 (extern foreign-add : (-> i64 i64 i64))
+```
+
+```lisp test=ignore name=extern-metadata-declaration reason="requires the selfhost parser metadata form"
+(extern local-add (:abi c) (:symbol "foreign_add_exact") : (-> i64 i64 i64))
 ```
 
 ```lisp test=ignore name=extern-raw-pointer-signature reason="raw pointer syntax is specified before implementation"
@@ -796,12 +811,11 @@ special entry rule: the selected entry declaration named `main` emits the host
 entry symbol `main`, while any other declaration named `main` receives a normal
 module-prefixed TypeLisp symbol.
 
-Exact external FFI linker names are not defined by this module model. `extern`
-declarations keep a TypeLisp declaration identity for lookup and visibility,
-but backend calls may bypass TypeLisp prefixing only when explicit external
-symbol metadata from #911 says to do so. Runtime helper symbols and
-backend-local labels are likewise outside module-prefixing and must not be
-accidentally rewritten as user declarations.
+Exact external FFI linker names are defined by `extern` metadata, not by this
+module model. `extern` declarations keep a TypeLisp declaration identity for
+lookup and visibility, while backend calls use the declaration's exact external
+symbol. Runtime helper symbols and backend-local labels are likewise outside
+module-prefixing and must not be accidentally rewritten as user declarations.
 
 ### 4.5 `(test name body...)` - inline test item
 
@@ -2958,7 +2972,9 @@ top-level     ::= define-var
 
 define-var    ::= "(" "define" ident [":" type] expr ")"
 define-func   ::= "(" "define" "(" ident param* ")" [":" type] expr ")"
-extern-decl   ::= "(" "extern" ident ":" type ")"
+extern-decl   ::= "(" "extern" ident extern-meta* ":" type ")"
+extern-meta   ::= "(" ":abi" "c" ")"
+                | "(" ":symbol" string ")"
 module-decl   ::= "(" "module" module-ident ")"
 import-decl   ::= "(" "import" string [":as" ident] ")"
 export-decl   ::= "(" "export" export-item+ ")"

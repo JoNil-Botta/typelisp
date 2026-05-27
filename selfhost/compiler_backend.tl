@@ -519,14 +519,25 @@
   [plan : CompilerBackendRuntimePlan]
   [functions : CompilerIrFunctionList]
   [externs : CompilerIrExternList]) : String
-  (if (and
-    (compiler-backend-plan-provides? plan name)
-    (not (compiler-backend-function-list-defines? functions name)))
-    (if (compiler-backend-runtime-user-symbol? name)
-      (compiler-backend-user-symbol name)
-      name)
-    (if (compiler-backend-extern-list-references? externs name)
-      (compiler-backend-asm-safe-symbol name)
+  (if (compiler-backend-extern-list-references? externs name)
+    (let
+      [link-symbol : String
+        (compiler-backend-extern-list-link-symbol externs name)]
+      (if (and
+        (and
+          (string-eq link-symbol name)
+          (compiler-backend-plan-provides? plan name))
+        (not (compiler-backend-function-list-defines? functions name)))
+        (if (compiler-backend-runtime-user-symbol? name)
+          (compiler-backend-user-symbol name)
+          name)
+        (compiler-backend-asm-safe-symbol link-symbol)))
+    (if (and
+      (compiler-backend-plan-provides? plan name)
+      (not (compiler-backend-function-list-defines? functions name)))
+      (if (compiler-backend-runtime-user-symbol? name)
+        (compiler-backend-user-symbol name)
+        name)
       (compiler-backend-user-symbol name))))
 
 (define (compiler-backend-type-size [ty : AstType]) : i64
@@ -1543,7 +1554,7 @@
     [(IrExternNil) AstTypeNil]
     [(IrExternCons item rest)
       (match item
-        [(IrExtern extern-name ty)
+        [(IrExtern extern-name ty _ _)
           (if (string-eq extern-name name)
             (match ty
               [(AstTyFunc args _) args]
@@ -3219,10 +3230,22 @@
     [(IrExternNil) false]
     [(IrExternCons item rest)
       (match item
-        [(IrExtern extern-name _)
+        [(IrExtern extern-name _ _ _)
           (if (string-eq extern-name name)
             true
             (compiler-backend-extern-list-references? rest name))])]))
+
+(define (compiler-backend-extern-list-link-symbol
+  [externs : CompilerIrExternList]
+  [name : String]) : String
+  (match externs
+    [(IrExternNil) name]
+    [(IrExternCons item rest)
+      (match item
+        [(IrExtern extern-name _ _ link-symbol)
+          (if (string-eq extern-name name)
+            link-symbol
+            (compiler-backend-extern-list-link-symbol rest name))])]))
 
 (define (compiler-backend-instr-calls?
   [instr : CompilerIrInstr]
@@ -3867,12 +3890,14 @@
     [(IrExternNil) ""]
     [(IrExternCons item rest)
       (match item
-        [(IrExtern name _)
-          (if (compiler-backend-plan-provides? plan name)
+        [(IrExtern name _ _ link-symbol)
+          (if (and
+            (string-eq name link-symbol)
+            (compiler-backend-plan-provides? plan name))
             (compiler-backend-emit-externs rest plan)
             (backend-cat4
               ".extern "
-              (compiler-backend-asm-safe-symbol name)
+              (compiler-backend-asm-safe-symbol link-symbol)
               "\n"
               (compiler-backend-emit-externs rest plan)))])]))
 
@@ -8294,55 +8319,65 @@ tl_windows_setup_instances:
 
 (define (compiler-backend-runtime-helper-externs) : CompilerIrExternList
   (IrExternCons
-    (IrExtern "tl_alloc" (AstTyI64))
+    (compiler-ir-extern-default "tl_alloc" (AstTyI64))
     (IrExternCons
-      (IrExtern "tl_oob_abort" (AstTyUnit))
+      (compiler-ir-extern-default "tl_oob_abort" (AstTyUnit))
       (IrExternCons
-        (IrExtern "tl_substring" (AstTyI64))
+        (compiler-ir-extern-default "tl_substring" (AstTyI64))
         (IrExternCons
-          (IrExtern "tl_string_concat" (AstTyI64))
+          (compiler-ir-extern-default "tl_string_concat" (AstTyI64))
           (IrExternCons
-            (IrExtern "tl_string_eq" (AstTyBool))
+            (compiler-ir-extern-default "tl_string_eq" (AstTyBool))
             (IrExternCons
-              (IrExtern "tl_string_to_int" (AstTyI64))
+              (compiler-ir-extern-default "tl_string_to_int" (AstTyI64))
               (IrExternCons
-                (IrExtern "tl_int_to_string" (AstTyString))
+                (compiler-ir-extern-default "tl_int_to_string" (AstTyString))
                 (IrExternCons
-                  (IrExtern "tl_print_err" (AstTyUnit))
+                  (compiler-ir-extern-default "tl_print_err" (AstTyUnit))
                   (IrExternCons
-                    (IrExtern ".L_tl_arg_count" (AstTyI64))
+                    (compiler-ir-extern-default ".L_tl_arg_count" (AstTyI64))
                     (IrExternCons
-                      (IrExtern ".L_tl_arg" (AstTyString))
+                      (compiler-ir-extern-default ".L_tl_arg" (AstTyString))
                       (IrExternCons
-                        (IrExtern ".L_tl_read_file" (AstTyString))
+                        (compiler-ir-extern-default
+                          ".L_tl_read_file"
+                          (AstTyString))
                         (IrExternCons
-                          (IrExtern ".L_tl_write_file" (AstTyUnit))
+                          (compiler-ir-extern-default
+                            ".L_tl_write_file"
+                            (AstTyUnit))
                           (IrExternCons
-                            (IrExtern ".L_tl_file_exists" (AstTyBool))
+                            (compiler-ir-extern-default
+                              ".L_tl_file_exists"
+                              (AstTyBool))
                             (IrExternCons
-                              (IrExtern ".L_tl_file_open_status" (AstTyI64))
+                              (compiler-ir-extern-default
+                                ".L_tl_file_open_status"
+                                (AstTyI64))
                               (IrExternCons
-                                (IrExtern ".L_tl_file_close_status" (AstTyI64))
+                                (compiler-ir-extern-default
+                                  ".L_tl_file_close_status"
+                                  (AstTyI64))
                                 (IrExternCons
-                                  (IrExtern
+                                  (compiler-ir-extern-default
                                     ".L_tl_file_read_chunk_status"
                                     (AstTyI64))
                                   (IrExternCons
-                                    (IrExtern
+                                    (compiler-ir-extern-default
                                       ".L_tl_file_read_chunk_bytes"
                                       (AstTyString))
                                     (IrExternCons
-                                      (IrExtern
+                                      (compiler-ir-extern-default
                                         ".L_tl_file_read_chunk_eof"
                                         (AstTyBool))
                                       (IrExternCons
-                                        (IrExtern
+                                        (compiler-ir-extern-default
                                           "tl_process_output"
                                           (AstTyFunc
                                             (AstTypeCons (AstTyI64) AstTypeNil)
                                             (AstTyI64)))
                                         (IrExternCons
-                                          (IrExtern
+                                          (compiler-ir-extern-default
                                             "tl_random_system_seed"
                                             (AstTyI64))
                                           IrExternNil)))))))))))))))))))))
@@ -8912,7 +8947,9 @@ tl_windows_setup_instances:
                     IrInstrNil))))
             IrBlockNil))
         IrFunctionNil))
-    (IrExternCons (IrExtern "tl_substring" (AstTyI64)) IrExternNil)))
+    (IrExternCons
+      (compiler-ir-extern-default "tl_substring" (AstTyI64))
+      IrExternNil)))
 
 (define (compiler-backend-runtime-coexist-ok?) : bool
   (match (compiler-backend-emit-program
@@ -8986,6 +9023,35 @@ tl_windows_setup_instances:
             asm
             "    call _tl_lib_u2etl_colon_colonhelper\n")))]
     [(ErrCompilerBackend _) false]))
+
+(define (compiler-backend-extern-metadata-source) : String
+  "(extern local-call (:abi c) (:symbol \"foreign_exact\") : (-> i64 i64))
+(define (normal) : i64 1)
+(define (main) : i64 (+ (local-call 7) (normal)))")
+
+(define (compiler-backend-extern-metadata-symbol-target-ok?
+  [target : CompilerBackendTarget]) : bool
+  (match (compiler-backend-emit-source-for-target
+    (compiler-backend-extern-metadata-source)
+    target)
+    [(OkCompilerBackend asm)
+      (and
+        (compiler-backend-string-contains? asm ".extern foreign_exact\n")
+        (and
+          (compiler-backend-string-contains? asm "    call foreign_exact\n")
+          (and
+            (compiler-backend-string-contains? asm "    call _tl_normal\n")
+            (and
+              (not
+                (compiler-backend-string-contains? asm ".extern local-call\n"))
+              (not
+                (compiler-backend-string-contains? asm "    call local-call\n"))))))]
+    [(ErrCompilerBackend _) false]))
+
+(define (compiler-backend-extern-metadata-symbol-ok?) : bool
+  (and
+    (compiler-backend-extern-metadata-symbol-target-ok? (BackendTargetLinux))
+    (compiler-backend-extern-metadata-symbol-target-ok? (BackendTargetWindows))))
 
 (define (compiler-backend-smoke-source) : String
   "(define answer : i64 40)
@@ -10476,15 +10542,15 @@ tl_windows_setup_instances:
             (compiler-backend-file-handle-open-close-runtime-ok?)
             (and
               (compiler-backend-string-runtime-ok?)
-              (and
+              (backend-and8
                 (compiler-backend-env-runtime-ok?)
-                (and
-                  (compiler-backend-expanded-scalar-regs-ok?)
-                  (and
-                    (compiler-backend-regalloc-f64-ok?)
-                    (and
-                      (compiler-backend-runtime-coexist-ok?)
-                      (compiler-backend-module-symbol-ok?)))))))))))
+                (compiler-backend-expanded-scalar-regs-ok?)
+                (compiler-backend-regalloc-f64-ok?)
+                (compiler-backend-runtime-coexist-ok?)
+                (compiler-backend-module-symbol-ok?)
+                (compiler-backend-extern-metadata-symbol-ok?)
+                true
+                true)))))))
     42
     (begin
       (panic "backend: smoke output mismatch")

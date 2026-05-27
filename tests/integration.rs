@@ -1287,6 +1287,27 @@ fn type_lisp_programs_compile_link_and_run_explicit_build() {
                 "token.tl",
             ],
         },
+        // refs #913: focused comptime type reflection coverage split out of the
+        // main typecheck smoke to keep large native smoke binaries below the
+        // Windows crash-prone size threshold.
+        Case {
+            name: "compiler_typecheck_reflection_smoke",
+            exit_code: 42,
+            stdout: "",
+            deps: &[
+                "compiler_typecheck.tl",
+                "compiler_specialize.tl",
+                "compiler_ctfe.tl",
+                "compiler_symbols.tl",
+                "compiler_parse_core.tl",
+                "compiler_diagnostic.tl",
+                "compiler_ast_types.tl",
+                "sym_i64_env.tl",
+                "read.tl",
+                "lex.tl",
+                "token.tl",
+            ],
+        },
         Case {
             name: "compiler_specialize_smoke",
             exit_code: 42,
@@ -5347,6 +5368,7 @@ fn source_path_for_case(manifest_dir: &PathBuf, name: &str) -> PathBuf {
         "compiler_parse_smoke" => "compiler_parse_smoke.tl",
         "compiler_symbols_smoke" => "compiler_symbols_smoke.tl",
         "compiler_typecheck_smoke" => "compiler_typecheck_smoke.tl",
+        "compiler_typecheck_reflection_smoke" => "compiler_typecheck_reflection_smoke.tl",
         "compiler_specialize_smoke" => "compiler_specialize_smoke.tl",
         "compiler_check_smoke" => "compiler_check_smoke.tl",
         "compiler_lower_smoke" => "compiler_lower_smoke.tl",

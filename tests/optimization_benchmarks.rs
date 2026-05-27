@@ -104,7 +104,10 @@ fn optimization_benchmark_manifest_and_tl_sources_compile() {
         case_count += 1;
     }
 
-    assert!(case_count >= 7, "expected the initial benchmark case set");
+    assert!(
+        case_count >= 11,
+        "expected optimization benchmark cases, including runtime helper coverage"
+    );
 
     let runner = fs::read_to_string(root.join("scripts").join("run-optimization-benchmarks.sh"))
         .expect("read optimization benchmark runner");
@@ -112,5 +115,9 @@ fn optimization_benchmark_manifest_and_tl_sources_compile() {
         runner.contains("TYPELISP_BENCH_SELFHOST")
             && runner.contains("case,category,tl_ms,c_ms,ratio"),
         "runner must expose the documented local benchmark controls and CSV report"
+    );
+    assert!(
+        runner.contains("\"$FILTER\"*"),
+        "runner must support prefix filtering for grouped benchmark cases"
     );
 }

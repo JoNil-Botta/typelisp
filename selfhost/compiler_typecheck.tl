@@ -934,7 +934,7 @@
     [(AstFieldDefNil) OkTcUnit]
     [(AstFieldDefCons field rest)
       (match field
-        [(AstFieldDef _ ty)
+        [(AstFieldDef _ ty _)
           (match (tc-source-type-policy-ok ctx ty)
             [(OkTcUnit) (tc-source-field-list-policy-ok ctx rest)]
             [(ErrTcUnit message) (ErrTcUnit message)])])]))
@@ -1142,7 +1142,7 @@
     [(AstDeclExtern _ ty) (tc-source-type-policy-ok ctx ty)]
     [(AstDeclDefEnum _ variants)
       (tc-source-variant-list-policy-ok ctx variants)]
-    [(AstDeclDefStruct name repr fields)
+    [(AstDeclDefStruct name repr _ fields)
       (match (tc-source-field-list-policy-ok ctx fields)
         [(OkTcUnit)
           (if (ast-struct-repr-c? repr)
@@ -1642,7 +1642,7 @@
     [(AstFieldDefNil) AstTypeNil]
     [(AstFieldDefCons field rest)
       (match field
-        [(AstFieldDef _ ty)
+        [(AstFieldDef _ ty _)
           (AstTypeCons (tc-resolve-type ctx ty) (tc-field-type-list ctx rest))])]))
 
 (define (tc-tag-type-list-region [region : String] [types : AstTypeList]) : AstTypeList
@@ -1741,7 +1741,7 @@
             [(OkTcEnv next-env)
               (tc-build-top-env-list-in-module ctx rest next-env module)]
             [(ErrTcEnv message) (ErrTcEnv message)])]
-        [(AstDeclDefStruct name _ fields)
+        [(AstDeclDefStruct name _ _ fields)
           (let
             [scoped-name : String (compiler-symbol-module-key module name)]
             (tc-build-top-env-list-in-module
@@ -1767,7 +1767,7 @@
                 [(OkTcEnv next-env)
                   (tc-build-top-env-list-in-module ctx rest next-env module)]
                 [(ErrTcEnv message) (ErrTcEnv message)])]
-            [(AstDeclDefStruct name _ fields)
+            [(AstDeclDefStruct name _ _ fields)
               (let
                 [scoped-name : String (compiler-symbol-module-key module name)]
                 (tc-build-top-env-list-in-module
@@ -3205,7 +3205,7 @@
               (compiler-symbol-handle-index handle))
               [(OkAstDecl decl)
                 (match decl
-                  [(AstDeclDefStruct _ repr fields)
+                  [(AstDeclDefStruct _ repr _ fields)
                     (OkTcStructDecl (TcStructDecl repr fields))]
                   [_
                     (ErrTcStructDecl
@@ -3293,7 +3293,7 @@
             TcReprCFieldLayoutNil)))]
     [(AstFieldDefCons field rest)
       (match field
-        [(AstFieldDef name ty)
+        [(AstFieldDef name ty _)
           (let
             [resolved : AstType (tc-resolve-type ctx ty)]
             (match (tc-repr-c-field-layout-info ctx owner name resolved seen)
@@ -3413,7 +3413,7 @@
       (match decl
         [(AstDeclModule next-module)
           (tc-ctfe-layouts-from-decls ctx rest next-module layouts)]
-        [(AstDeclDefStruct name repr _)
+        [(AstDeclDefStruct name repr _ _)
           (let
             [key : String (compiler-symbol-module-key module name)]
             [info : CtfeLayoutInfo (tc-ctfe-struct-layout-info ctx key repr)]
@@ -3433,7 +3433,7 @@
               (tc-ctfe-layout-add-names layouts info name module)))]
         [(AstDeclComptimeDecl template)
           (match template
-            [(AstDeclDefStruct name repr _)
+            [(AstDeclDefStruct name repr _ _)
               (let
                 [key : String (compiler-symbol-module-key module name)]
                 [info : CtfeLayoutInfo

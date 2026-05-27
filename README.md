@@ -149,8 +149,14 @@ historical generic/type-constructor work in #483 is superseded by that chain.
 (defenum Tree (Leaf i64) (Node Tree Tree))   ; recursive enums supported
 (defstruct Pair (fst i64) (snd i64))
 (extern foreign-add : (-> i64 i64 i64))
+(extern local-add (:abi c) (:symbol "foreign_add_exact") : (-> i64 i64 i64))
 (import "lib/util.tl")                        ; relative, deduped; cycles load once
 ```
+
+`extern` defaults to the target C ABI with the linker symbol equal to the local
+name. `(:symbol "...")` can bind a local TypeLisp declaration to an exact
+foreign linker symbol without applying the `_tl_` prefix used for ordinary
+TypeLisp declarations.
 
 The Rust stage0 loader still uses the legacy flat import model: imported
 definitions merge into one top-level namespace. The selfhost module direction is

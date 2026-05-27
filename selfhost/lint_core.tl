@@ -264,7 +264,7 @@
     [(AstDeclTest _ body _) (lint-walk-expr body threshold acc)]
     [(AstDeclComptimeDecl inner) (lint-walk-decl inner threshold acc)]
     [(AstDeclModule _) acc]
-    [(AstDeclExtern _ _) acc]
+    [(AstDeclExtern _ _ _) acc]
     [(AstDeclDefEnum _ _) acc]
     [(AstDeclDefStruct _ _ _ _) acc]
     [(AstDeclImport _) acc]))

@@ -118,6 +118,12 @@
   (AstStructReprDefault)
   (AstStructReprC))
 
+(defenum AstExternAbi
+  (AstExternAbiC))
+
+(defenum AstExternMetadata
+  (AstExternMetadata AstExternAbi String))
+
 (defenum AstStructCleanup
   (AstStructNoCleanup)
   (AstStructCleanupFn String))
@@ -237,7 +243,7 @@
   (AstDeclModule String)
   (AstDeclDef String AstMaybeType AstExpr)
   (AstDeclDefFn String AstParamList AstType AstExpr)
-  (AstDeclExtern String AstType)
+  (AstDeclExtern String AstExternMetadata AstType)
   (AstDeclDefEnum String AstVariantDefList)
   (AstDeclDefStruct String AstStructRepr AstStructCleanup AstFieldDefList)
   (AstDeclImport AstImportSpec)
@@ -341,7 +347,7 @@
   (match decl
     [(AstDeclDef _ _ _) 1]
     [(AstDeclDefFn _ _ _ _) 2]
-    [(AstDeclExtern _ _) 3]
+    [(AstDeclExtern _ _ _) 3]
     [(AstDeclDefEnum _ _) 4]
     [(AstDeclDefStruct _ _ _ _) 5]
     [(AstDeclImport _) 6]
@@ -353,6 +359,25 @@
   (match repr
     [(AstStructReprC) true]
     [(AstStructReprDefault) false]))
+
+(define (ast-extern-abi-c? [abi : AstExternAbi]) : bool
+  (match abi
+    [(AstExternAbiC) true]))
+
+(define (ast-extern-abi-eq? [a : AstExternAbi] [b : AstExternAbi]) : bool
+  (match a
+    [(AstExternAbiC) (ast-extern-abi-c? b)]))
+
+(define (ast-extern-default-metadata [name : String]) : AstExternMetadata
+  (AstExternMetadata (AstExternAbiC) name))
+
+(define (ast-extern-metadata-symbol [metadata : AstExternMetadata]) : String
+  (match metadata
+    [(AstExternMetadata _ symbol) symbol]))
+
+(define (ast-extern-metadata-abi [metadata : AstExternMetadata]) : AstExternAbi
+  (match metadata
+    [(AstExternMetadata abi _) abi]))
 
 (define (ast-struct-cleanup? [cleanup : AstStructCleanup]) : bool
   (match cleanup

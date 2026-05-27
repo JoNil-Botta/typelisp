@@ -168,7 +168,7 @@
   (IrGlobalCons CompilerIrGlobal CompilerIrGlobalList))
 
 (defenum CompilerIrExtern
-  (IrExtern String AstType))
+  (IrExtern String AstType AstExternAbi String))
 
 (defenum CompilerIrExternList
   (IrExternNil)
@@ -176,6 +176,9 @@
 
 (defenum CompilerIrProgram
   (IrProgram CompilerIrGlobalList CompilerIrFunctionList CompilerIrExternList))
+
+(define (compiler-ir-extern-default [name : String] [ty : AstType]) : CompilerIrExtern
+  (IrExtern name ty (AstExternAbiC) name))
 
 (defenum CompilerIrEffect
   (IrEffectPure)

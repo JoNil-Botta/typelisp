@@ -555,7 +555,7 @@
   (match decl
     [(AstDeclDef name _ _) (sym-i64-contains names name)]
     [(AstDeclDefFn name _ _ _) (sym-i64-contains names name)]
-    [(AstDeclExtern name _) (sym-i64-contains names name)]
+    [(AstDeclExtern name _ _) (sym-i64-contains names name)]
     [_ true]))
 
 (define (tltest-prune-runtime-decls-in

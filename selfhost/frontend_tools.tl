@@ -753,11 +753,14 @@
           "\", ret: "
           (front-type-render ret)
           (front-cat3 ", body: " (front-expr-render body) " }")))]
-    [(AstDeclExtern name ty)
+    [(AstDeclExtern name metadata ty)
       (front-cat3
         "Extern { name: \""
         name
-        (front-cat3 "\", ty: " (front-type-render ty) " }"))]
+        (front-cat3
+          "\", abi: c, symbol: \""
+          (ast-extern-metadata-symbol metadata)
+          (front-cat3 "\", ty: " (front-type-render ty) " }")))]
     [(AstDeclDefEnum name _) (front-cat3 "DefEnum { name: \"" name "\" }")]
     [(AstDeclDefStruct name repr cleanup fields)
       (front-cat3

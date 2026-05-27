@@ -1936,6 +1936,48 @@
     [(AstExprVar name) (TcSomeString name)]
     [_ (TcNoString)]))
 
+(define (tc-call-region-args-allowed-for-func
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [func : AstExpr]) : bool
+  (match (tc-expr-var-name func)
+    [(TcSomeString name) (tc-call-allows-region-args? ctx env name)]
+    [(TcNoString) false]))
+
+(define (tc-call-constructor-target-for-func
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [func : AstExpr]
+  [ret : AstType]) : AstMaybeType
+  (match (tc-expr-var-name func)
+    [(TcSomeString name)
+      (if (tc-constructor-name? ctx name)
+        (AstSomeType (tc-tag-active-region env ret))
+        (AstNoType))]
+    [(TcNoString) (AstNoType)]))
+
+(define (tc-call-function-type
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [func : AstExpr]
+  [args : AstExprList]
+  [params : AstTypeList]
+  [ret : AstType]) : ResultTcType
+  (let
+    [allow-region-args : bool
+      (tc-call-region-args-allowed-for-func ctx env func)]
+    [constructor-target : AstMaybeType
+      (tc-call-constructor-target-for-func ctx env func ret)]
+    (match (tc-check-call-args
+      ctx
+      env
+      args
+      params
+      allow-region-args
+      constructor-target)
+      [(OkTcUnit) (OkTcType (tc-tag-active-region env ret))]
+      [(ErrTcUnit message) (ErrTcType message)])))
+
 (define (tc-check-call-args
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -2018,30 +2060,7 @@
     [(OkTcType fn-ty)
       (match fn-ty
         [(AstTyFunc params ret)
-          (let
-            [call-name : TcMaybeString (tc-expr-var-name func)]
-            (let
-              [allow-region-args : bool
-                (match call-name
-                  [(TcSomeString name)
-                    (tc-call-allows-region-args? ctx env name)]
-                  [(TcNoString) false])]
-              [constructor-target : AstMaybeType
-                (match call-name
-                  [(TcSomeString name)
-                    (if (tc-constructor-name? ctx name)
-                      (AstSomeType (tc-tag-active-region env ret))
-                      (AstNoType))]
-                  [(TcNoString) (AstNoType)])]
-              (match (tc-check-call-args
-                ctx
-                env
-                args
-                params
-                allow-region-args
-                constructor-target)
-                [(OkTcUnit) (OkTcType (tc-tag-active-region env ret))]
-                [(ErrTcUnit message) (ErrTcType message)])))]
+          (tc-call-function-type ctx env func args params ret)]
         [(AstTyRegion _ inner)
           (match inner
             [(AstTyFunc params ret)

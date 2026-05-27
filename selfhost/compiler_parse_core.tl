@@ -305,6 +305,9 @@
 (define (compiler-parse-tag-ty-never) : i64
   114)
 
+(define (compiler-parse-tag-ty-expr) : i64
+  115)
+
 (define (compiler-parse-tag-ty-func) : i64
   130)
 
@@ -562,6 +565,7 @@
       (set! out (sym-i64-bind out "String" (compiler-parse-tag-ty-string)))
       (set! out (sym-i64-bind out "unit" (compiler-parse-tag-unit)))
       (set! out (sym-i64-bind out "never" (compiler-parse-tag-ty-never)))
+      (set! out (sym-i64-bind out "Expr" (compiler-parse-tag-ty-expr)))
       (set! out (sym-i64-bind out "->" (compiler-parse-tag-ty-func)))
       (set! out (sym-i64-bind out "Tuple" (compiler-parse-tag-ty-tuple)))
       (set! out (sym-i64-bind out "Array" (compiler-parse-tag-ty-array)))
@@ -846,7 +850,9 @@
                                     (OkAstType (AstTyUnit))
                                     (if (= tag (compiler-parse-tag-ty-never))
                                       (OkAstType (AstTyNever))
-                                      (OkAstType (AstTyVar name))))))))))))))))))]
+                                      (if (= tag (compiler-parse-tag-ty-expr))
+                                        (OkAstType (AstTyExpr))
+                                        (OkAstType (AstTyVar name)))))))))))))))))))]
     [(SCons (SSym head) rest)
       (let
         [tag : i64 (compiler-parse-dispatch-tag dispatch head)]

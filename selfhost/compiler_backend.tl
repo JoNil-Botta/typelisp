@@ -4660,15 +4660,10 @@ _tl_env_path_separator:
     js .L_tl_read_file_error
     call tl_alloc
     movq %rax, %r13
-    xorq %rcx, %rcx
-.L_tl_read_file_path_copy_loop:
-    cmpq %r12, %rcx
-    jge .L_tl_read_file_path_copy_done
-    movzbl (%rbx,%rcx), %edx
-    movb %dl, (%r13,%rcx)
-    incq %rcx
-    jmp .L_tl_read_file_path_copy_loop
-.L_tl_read_file_path_copy_done:
+    movq %r12, %rcx
+    movq %rbx, %rsi
+    movq %r13, %rdi
+    rep movsb
     movb $0, (%r13,%r12)
     movq $257, %rax
     movq $-100, %rdi
@@ -4755,15 +4750,10 @@ _tl_env_path_separator:
     js .L_tl_write_file_error
     call tl_alloc
     movq %rax, %r15
-    xorq %rcx, %rcx
-.L_tl_write_file_path_copy_loop:
-    cmpq %r12, %rcx
-    jge .L_tl_write_file_path_copy_done
-    movzbl (%rbx,%rcx), %edx
-    movb %dl, (%r15,%rcx)
-    incq %rcx
-    jmp .L_tl_write_file_path_copy_loop
-.L_tl_write_file_path_copy_done:
+    movq %r12, %rcx
+    movq %rbx, %rsi
+    movq %r15, %rdi
+    rep movsb
     movb $0, (%r15,%r12)
     movq $257, %rax
     movq $-100, %rdi
@@ -4825,15 +4815,10 @@ _tl_env_path_separator:
     js .L_tl_file_exists_error
     call tl_alloc
     movq %rax, %r13
-    xorq %rcx, %rcx
-.L_tl_file_exists_path_copy_loop:
-    cmpq %r12, %rcx
-    jge .L_tl_file_exists_path_copy_done
-    movzbl (%rbx,%rcx), %edx
-    movb %dl, (%r13,%rcx)
-    incq %rcx
-    jmp .L_tl_file_exists_path_copy_loop
-.L_tl_file_exists_path_copy_done:
+    movq %r12, %rcx
+    movq %rbx, %rsi
+    movq %r13, %rdi
+    rep movsb
     movb $0, (%r13,%r12)
     movq $21, %rax
     movq %r13, %rdi
@@ -4880,15 +4865,10 @@ _tl_env_path_separator:
     js .L_tl_read_file_status_invalid
     call tl_alloc
     movq %rax, %r13
-    xorq %rcx, %rcx
-.L_tl_read_file_status_path_copy_loop:
-    cmpq %r12, %rcx
-    jge .L_tl_read_file_status_path_copy_done
-    movzbl (%rbx,%rcx), %edx
-    movb %dl, (%r13,%rcx)
-    incq %rcx
-    jmp .L_tl_read_file_status_path_copy_loop
-.L_tl_read_file_status_path_copy_done:
+    movq %r12, %rcx
+    movq %rbx, %rsi
+    movq %r13, %rdi
+    rep movsb
     movb $0, (%r13,%r12)
     movq $257, %rax
     movq $-100, %rdi
@@ -4977,15 +4957,10 @@ _tl_env_path_separator:
     js .L_tl_write_file_status_invalid
     call tl_alloc
     movq %rax, %r15
-    xorq %rcx, %rcx
-.L_tl_write_file_status_path_copy_loop:
-    cmpq %r12, %rcx
-    jge .L_tl_write_file_status_path_copy_done
-    movzbl (%rbx,%rcx), %edx
-    movb %dl, (%r15,%rcx)
-    incq %rcx
-    jmp .L_tl_write_file_status_path_copy_loop
-.L_tl_write_file_status_path_copy_done:
+    movq %r12, %rcx
+    movq %rbx, %rsi
+    movq %r15, %rdi
+    rep movsb
     movb $0, (%r15,%r12)
     movq $257, %rax
     movq $-100, %rdi
@@ -5067,15 +5042,10 @@ _tl_env_path_separator:
     js .L_tl_append_file_status_invalid
     call tl_alloc
     movq %rax, %r15
-    xorq %rcx, %rcx
-.L_tl_append_file_status_path_copy_loop:
-    cmpq %r12, %rcx
-    jge .L_tl_append_file_status_path_copy_done
-    movzbl (%rbx,%rcx), %edx
-    movb %dl, (%r15,%rcx)
-    incq %rcx
-    jmp .L_tl_append_file_status_path_copy_loop
-.L_tl_append_file_status_path_copy_done:
+    movq %r12, %rcx
+    movq %rbx, %rsi
+    movq %r15, %rdi
+    rep movsb
     movb $0, (%r15,%r12)
     movq $257, %rax
     movq $-100, %rdi
@@ -5151,15 +5121,10 @@ _tl_env_path_separator:
     js .L_tl_file_exists_status_invalid
     call tl_alloc
     movq %rax, %r13
-    xorq %rcx, %rcx
-.L_tl_file_exists_status_path_copy_loop:
-    cmpq %r12, %rcx
-    jge .L_tl_file_exists_status_path_copy_done
-    movzbl (%rbx,%rcx), %edx
-    movb %dl, (%r13,%rcx)
-    incq %rcx
-    jmp .L_tl_file_exists_status_path_copy_loop
-.L_tl_file_exists_status_path_copy_done:
+    movq %r12, %rcx
+    movq %rbx, %rsi
+    movq %r13, %rdi
+    rep movsb
     movb $0, (%r13,%r12)
     movq $21, %rax
     movq %r13, %rdi
@@ -5201,15 +5166,10 @@ _tl_env_path_separator:
     js .L_tl_file_open_status_invalid
     call tl_alloc
     movq %rax, %r13
-    xorq %rcx, %rcx
-.L_tl_file_open_status_path_copy_loop:
-    cmpq %r12, %rcx
-    jge .L_tl_file_open_status_path_copy_done
-    movzbl (%rbx,%rcx), %edx
-    movb %dl, (%r13,%rcx)
-    incq %rcx
-    jmp .L_tl_file_open_status_path_copy_loop
-.L_tl_file_open_status_path_copy_done:
+    movq %r12, %rcx
+    movq %rbx, %rsi
+    movq %r13, %rdi
+    rep movsb
     movb $0, (%r13,%r12)
     cmpq $0, %r14
     je .L_tl_file_open_status_mode_read
@@ -5518,6 +5478,8 @@ _tl_env_path_separator:
     push %rbx
     push %r12
     push %r13
+    push %rsi
+    push %rdi
     sub $8, %rsp
     movq %rcx, %rbx
     movq %rdx, %r12
@@ -5530,15 +5492,10 @@ _tl_env_path_separator:
     call tl_alloc
     add $32, %rsp
     movq %rax, %r13
-    xorq %r10, %r10
-.L_tl_read_file_path_copy_loop:
-    cmpq %r12, %r10
-    jge .L_tl_read_file_path_copy_done
-    movzbl (%rbx,%r10), %edx
-    movb %dl, (%r13,%r10)
-    incq %r10
-    jmp .L_tl_read_file_path_copy_loop
-.L_tl_read_file_path_copy_done:
+    movq %r12, %rcx
+    movq %rbx, %rsi
+    movq %r13, %rdi
+    rep movsb
     movb $0, (%r13,%r12)
     movq %r13, %rcx
     movq $0x8000, %rdx
@@ -5593,6 +5550,8 @@ _tl_env_path_separator:
     movq %r13, 0(%rax)
     movq %r12, 8(%rax)
     add $8, %rsp
+    pop %rdi
+    pop %rsi
     pop %r13
     pop %r12
     pop %rbx
@@ -5620,6 +5579,8 @@ _tl_env_path_separator:
     push %r13
     push %r14
     push %r15
+    push %rsi
+    push %rdi
     sub $8, %rsp
     movq %rcx, %rbx
     movq %rdx, %r12
@@ -5636,15 +5597,10 @@ _tl_env_path_separator:
     call tl_alloc
     add $32, %rsp
     movq %rax, %r15
-    xorq %r10, %r10
-.L_tl_write_file_path_copy_loop:
-    cmpq %r12, %r10
-    jge .L_tl_write_file_path_copy_done
-    movzbl (%rbx,%r10), %edx
-    movb %dl, (%r15,%r10)
-    incq %r10
-    jmp .L_tl_write_file_path_copy_loop
-.L_tl_write_file_path_copy_done:
+    movq %r12, %rcx
+    movq %rbx, %rsi
+    movq %r15, %rdi
+    rep movsb
     movb $0, (%r15,%r12)
     movq %r15, %rcx
     movq $0x8301, %rdx
@@ -5672,6 +5628,8 @@ _tl_env_path_separator:
     js .L_tl_write_file_error
     xorq %rax, %rax
     add $8, %rsp
+    pop %rdi
+    pop %rsi
     pop %r15
     pop %r14
     pop %r13
@@ -5699,6 +5657,8 @@ _tl_env_path_separator:
     push %rbx
     push %r12
     push %r13
+    push %rsi
+    push %rdi
     sub $8, %rsp
     movq %rcx, %rbx
     movq %rdx, %r12
@@ -5711,15 +5671,10 @@ _tl_env_path_separator:
     call tl_alloc
     add $32, %rsp
     movq %rax, %r13
-    xorq %r10, %r10
-.L_tl_file_exists_path_copy_loop:
-    cmpq %r12, %r10
-    jge .L_tl_file_exists_path_copy_done
-    movzbl (%rbx,%r10), %edx
-    movb %dl, (%r13,%r10)
-    incq %r10
-    jmp .L_tl_file_exists_path_copy_loop
-.L_tl_file_exists_path_copy_done:
+    movq %r12, %rcx
+    movq %rbx, %rsi
+    movq %r13, %rdi
+    rep movsb
     movb $0, (%r13,%r12)
     movq %r13, %rcx
     xorq %rdx, %rdx
@@ -5734,6 +5689,8 @@ _tl_env_path_separator:
     movq $1, %rax
 .L_tl_file_exists_return:
     add $8, %rsp
+    pop %rdi
+    pop %rsi
     pop %r13
     pop %r12
     pop %rbx
@@ -5754,6 +5711,8 @@ _tl_env_path_separator:
     push %rbx
     push %r12
     push %r13
+    push %rsi
+    push %rdi
     sub $8, %rsp
     movq %rcx, %rbx
     movq %rdx, %r12
@@ -5766,15 +5725,10 @@ _tl_env_path_separator:
     call tl_alloc
     add $32, %rsp
     movq %rax, %r13
-    xorq %r10, %r10
-.L_tl_read_file_status_win_path_copy_loop:
-    cmpq %r12, %r10
-    jge .L_tl_read_file_status_win_path_copy_done
-    movzbl (%rbx,%r10), %edx
-    movb %dl, (%r13,%r10)
-    incq %r10
-    jmp .L_tl_read_file_status_win_path_copy_loop
-.L_tl_read_file_status_win_path_copy_done:
+    movq %r12, %rcx
+    movq %rbx, %rsi
+    movq %r13, %rdi
+    rep movsb
     movb $0, (%r13,%r12)
     movq %r13, %rcx
     movq $0x8000, %rdx
@@ -5829,6 +5783,8 @@ _tl_env_path_separator:
     movq $22, %rax
 .L_tl_read_file_status_win_return:
     add $8, %rsp
+    pop %rdi
+    pop %rsi
     pop %r13
     pop %r12
     pop %rbx
@@ -5846,6 +5802,8 @@ _tl_env_path_separator:
     push %r13
     push %r14
     push %r15
+    push %rsi
+    push %rdi
     sub $8, %rsp
     movq %rcx, %rbx
     movq %rdx, %r12
@@ -5862,15 +5820,10 @@ _tl_env_path_separator:
     call tl_alloc
     add $32, %rsp
     movq %rax, %r15
-    xorq %r10, %r10
-.L_tl_write_file_status_win_path_copy_loop:
-    cmpq %r12, %r10
-    jge .L_tl_write_file_status_win_path_copy_done
-    movzbl (%rbx,%r10), %edx
-    movb %dl, (%r15,%r10)
-    incq %r10
-    jmp .L_tl_write_file_status_win_path_copy_loop
-.L_tl_write_file_status_win_path_copy_done:
+    movq %r12, %rcx
+    movq %rbx, %rsi
+    movq %r15, %rdi
+    rep movsb
     movb $0, (%r15,%r12)
     movq %r15, %rcx
     movq $0x8301, %rdx
@@ -5936,6 +5889,8 @@ _tl_env_path_separator:
     movq $22, %rax
 .L_tl_write_file_status_win_return:
     add $8, %rsp
+    pop %rdi
+    pop %rsi
     pop %r15
     pop %r14
     pop %r13
@@ -5955,6 +5910,8 @@ _tl_env_path_separator:
     push %r13
     push %r14
     push %r15
+    push %rsi
+    push %rdi
     sub $8, %rsp
     movq %rcx, %rbx
     movq %rdx, %r12
@@ -5971,15 +5928,10 @@ _tl_env_path_separator:
     call tl_alloc
     add $32, %rsp
     movq %rax, %r15
-    xorq %r10, %r10
-.L_tl_append_file_status_win_path_copy_loop:
-    cmpq %r12, %r10
-    jge .L_tl_append_file_status_win_path_copy_done
-    movzbl (%rbx,%r10), %edx
-    movb %dl, (%r15,%r10)
-    incq %r10
-    jmp .L_tl_append_file_status_win_path_copy_loop
-.L_tl_append_file_status_win_path_copy_done:
+    movq %r12, %rcx
+    movq %rbx, %rsi
+    movq %r15, %rdi
+    rep movsb
     movb $0, (%r15,%r12)
     movq %r15, %rcx
     movq $0x8109, %rdx
@@ -6045,6 +5997,8 @@ _tl_env_path_separator:
     movq $22, %rax
 .L_tl_append_file_status_win_return:
     add $8, %rsp
+    pop %rdi
+    pop %rsi
     pop %r15
     pop %r14
     pop %r13
@@ -6062,6 +6016,8 @@ _tl_env_path_separator:
     push %rbx
     push %r12
     push %r13
+    push %rsi
+    push %rdi
     sub $8, %rsp
     movq %rcx, %rbx
     movq %rdx, %r12
@@ -6074,15 +6030,10 @@ _tl_env_path_separator:
     call tl_alloc
     add $32, %rsp
     movq %rax, %r13
-    xorq %r10, %r10
-.L_tl_file_exists_status_win_path_copy_loop:
-    cmpq %r12, %r10
-    jge .L_tl_file_exists_status_win_path_copy_done
-    movzbl (%rbx,%r10), %edx
-    movb %dl, (%r13,%r10)
-    incq %r10
-    jmp .L_tl_file_exists_status_win_path_copy_loop
-.L_tl_file_exists_status_win_path_copy_done:
+    movq %r12, %rcx
+    movq %rbx, %rsi
+    movq %r13, %rdi
+    rep movsb
     movb $0, (%r13,%r12)
     movq %r13, %rcx
     xorq %rdx, %rdx
@@ -6106,6 +6057,8 @@ _tl_env_path_separator:
     movq $22, %rax
 .L_tl_file_exists_status_win_return:
     add $8, %rsp
+    pop %rdi
+    pop %rsi
     pop %r13
     pop %r12
     pop %rbx
@@ -8527,7 +8480,7 @@ tl_windows_setup_instances:
               ".L_tl_string_eq_tail_loop:\n"))]
         [string-copy-helpers : bool
           (and
-            (compiler-backend-string-contains? asm "    rep movsb\n")
+            (>= (compiler-backend-string-count asm "    rep movsb\n") 11)
             (and
               (not
                 (compiler-backend-string-contains?
@@ -8538,10 +8491,16 @@ tl_windows_setup_instances:
                   (compiler-backend-string-contains?
                     asm
                     ".L_tl_string_concat_copy_a:\n"))
-                (not
-                  (compiler-backend-string-contains?
-                    asm
-                    ".L_tl_string_concat_copy_b:\n")))))]
+                (and
+                  (not
+                    (compiler-backend-string-contains?
+                      asm
+                      ".L_tl_string_concat_copy_b:\n"))
+                  (and
+                    (not
+                      (compiler-backend-string-contains? asm "path_copy_loop:"))
+                    (not
+                      (compiler-backend-string-contains? asm "path_copy_done:")))))))]
         [driver-labels : bool
           (backend-and8
             (compiler-backend-string-contains? asm ".globl tl_int_to_string\n")

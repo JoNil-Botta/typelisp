@@ -5,6 +5,7 @@
 #   case|id|source|assembly|main-policy|stage
 #   copy|source|staged-name
 #   requires-stage0-symbol|symbol
+#   requires-stage0-mode|reason
 #   contains|assembly text
 #   not-contains|assembly text
 #   count-at-least|assembly text|minimum-count
@@ -113,6 +114,7 @@ contains|.L_tl_fs_mkdir_status:
 end
 
 case|selfhost_check|selfhost/check.tl|assembly|exactly-one|direct
+requires-stage0-mode|#1361 stage1 compiler resource blocker (imports typechecker)
 contains|_tl_selfhost_check_config:
 contains|_tl_selfhost_check_file:
 contains|_tl_compiler_check_file_with_roots:
@@ -122,6 +124,7 @@ contains|selfhost-check: --stdlib-root requires a value
 end
 
 case|selfhost_compile|selfhost/compile.tl|assembly|exactly-one|direct
+requires-stage0-mode|#1361 stage1->stage2 resource blocker
 contains|_tl_compile_cli_config:
 contains|_tl_compile_cli_target:
 contains|_tl_compile_cli_invalid_opt_level:
@@ -163,6 +166,7 @@ contains|_tl_compiler_ast_smoke:
 end
 
 case|selfhost_compiler_backend|selfhost/compiler_backend.tl|assembly|skip|direct
+requires-stage0-mode|#1361 stage1 compiler resource blocker
 contains|_tl_compiler_backend_emit_source:
 contains|_tl_compiler_backend_emit_program_for_target:
 contains|_tl_compiler_backend_extern_metadata_symbol_ok_question:
@@ -181,6 +185,7 @@ not-contains|backend: Windows runtime helpers not yet implemented (#648)
 end
 
 case|selfhost_compiler_backend_runtime_fixture|selfhost/compiler_backend_runtime_fixture.tl|assembly|skip|direct
+requires-stage0-mode|#1361 stage1 compiler resource blocker (imports backend)
 contains|_tl_compiler_backend_runtime_fixture_emit:
 contains|_tl_compiler_backend_runtime_helper_program:
 contains|_tl_compiler_backend_emit_program:
@@ -193,30 +198,35 @@ contains|compiler-backend-windows-driver-fixture: expected output path
 end
 
 case|selfhost_compiler_backend_smoke|selfhost/compiler_backend_smoke.tl|assembly|exactly-one|direct
+requires-stage0-mode|#1361 stage1 compiler resource blocker (imports backend)
 contains|_tl_compiler_backend_self_test:
 contains|_tl_compiler_backend_emit_source:
 contains|_tl_lower_compiler_source:
 end
 
 case|selfhost_compiler_bounds_check_smoke|selfhost/compiler_bounds_check_smoke.tl|assembly|exactly-one|direct
+requires-stage0-mode|#1361 stage1 compiler resource blocker (imports backend)
 contains|_tl_bounds_check_smoke_program:
 contains|_tl_compiler_backend_emit_program:
 contains|_tl_optimize_program:
 end
 
 case|selfhost_compiler_backend_stack_args_fixture|selfhost/compiler_backend_stack_args_fixture.tl|assembly|exactly-one|direct
+requires-stage0-mode|#1361 stage1 compiler resource blocker (imports backend)
 contains|_tl_compiler_backend_stack_args_fixture_for_name:
 contains|windows-x86_64
 contains|linux-x86_64
 end
 
 case|selfhost_compiler_check_core|selfhost/compiler_check_core.tl|assembly|skip|direct
+requires-stage0-mode|#1361 stage1 compiler resource blocker (library root)
 contains|_tl_compiler_check_file:
 contains|_tl_compiler_check_file_with_roots:
 contains|_tl_compiler_check_source_with_roots:
 end
 
 case|selfhost_compiler_check_smoke|selfhost/compiler_check_smoke.tl|assembly|exactly-one|direct
+requires-stage0-mode|#1361 stage1 compiler resource blocker (imports typechecker)
 contains|_tl_compiler_check_self_test:
 contains|_tl_compiler_load_self_test:
 contains|_tl_compiler_check_file:
@@ -242,6 +252,7 @@ contains|_tl_compiler_diagnostic_self_test:
 end
 
 case|selfhost_compiler_driver|selfhost/compiler_driver.tl|assembly|exactly-one|direct
+requires-stage0-mode|#1361 stage1 compiler resource blocker (imports backend)
 contains|_tl_compiler_driver_compile_file:
 contains|_tl_compiler_driver_emit_file:
 contains|_tl_compiler_load_file:
@@ -249,6 +260,7 @@ contains|compiler-driver: expected input and output paths
 end
 
 case|selfhost_compiler_driver_core|selfhost/compiler_driver_core.tl|assembly|skip|direct
+requires-stage0-mode|#1361 stage1 compiler resource blocker (imports backend)
 contains|_tl_compiler_driver_compile_file:
 contains|_tl_compiler_driver_compile_file_with_roots_and_level:
 contains|_tl_compiler_driver_compile_file_for_target:
@@ -262,6 +274,7 @@ contains|_tl_compiler_backend_emit_source:
 end
 
 case|selfhost_compiler_ir_types|selfhost/compiler_ir_types.tl|assembly|skip|direct
+requires-stage0-mode|#1361 stage1 compiler resource blocker (library root)
 contains|_tl_compiler_ir_program_summary:
 contains|_tl_compiler_ir_summary_globals:
 contains|_tl_compiler_ir_summary_functions:
@@ -272,22 +285,26 @@ contains|_tl_compiler_ir_effect_self_test:
 end
 
 case|selfhost_compiler_ir_types_smoke|selfhost/compiler_ir_types_smoke.tl|assembly|exactly-one|direct
+requires-stage0-mode|#1361 stage1 compiler resource blocker (imports IR types)
 contains|_tl_compiler_ir_effect_self_test:
 contains|_tl_compiler_ir_tail_call_render_ok_question:
 end
 
 case|selfhost_compiler_liveness|selfhost/compiler_liveness.tl|assembly|skip|direct
+requires-stage0-mode|#1361 stage1 compiler resource blocker (imports IR types)
 contains|_tl_compiler_live_analyze_function:
 contains|_tl_compiler_live_self_test:
 contains|liveness: smoke mismatch
 end
 
 case|selfhost_compiler_liveness_smoke|selfhost/compiler_liveness_smoke.tl|assembly|exactly-one|direct
+requires-stage0-mode|#1361 stage1 compiler resource blocker (imports liveness)
 contains|_tl_compiler_live_self_test:
 contains|_tl_compiler_live_analyze_function:
 end
 
 case|selfhost_compiler_load|selfhost/compiler_load.tl|assembly|skip|direct
+requires-stage0-mode|#1361 stage1 compiler resource blocker (library root)
 contains|_tl_compiler_load_file:
 contains|_tl_compiler_load_file_with_roots:
 contains|_tl_compiler_load_resolve_import_with_roots:
@@ -295,6 +312,7 @@ contains|_tl_compiler_load_self_test:
 end
 
 case|selfhost_compiler_lower|selfhost/compiler_lower.tl|assembly|skip|direct
+requires-stage0-mode|#1361 stage1 compiler resource blocker (imports typechecker)
 contains|_tl_lower_compiler_source:
 contains|_tl_lower_compiler_program_checked:
 contains|_tl_compiler_lower_self_test:
@@ -302,11 +320,13 @@ contains|lower: unsupported expression
 end
 
 case|selfhost_compiler_lower_smoke|selfhost/compiler_lower_smoke.tl|assembly|exactly-one|direct
+requires-stage0-mode|#1361 stage1 compiler resource blocker (imports typechecker)
 contains|_tl_compiler_lower_self_test:
 contains|_tl_lower_compiler_source:
 end
 
 case|selfhost_compiler_optimize|selfhost/compiler_optimize.tl|assembly|skip|direct
+requires-stage0-mode|#1361 stage1 compiler resource blocker (imports IR types)
 contains|_tl_optimize_program:
 contains|_tl_optimize_program_with_level:
 contains|_tl_opt_fold_instrs:
@@ -321,6 +341,7 @@ contains|_tl_opt_verify_function:
 end
 
 case|selfhost_compiler_optimize_smoke|selfhost/compiler_optimize_smoke.tl|assembly|exactly-one|direct
+requires-stage0-mode|#1361 stage1 compiler resource blocker (imports optimizer/IR)
 contains|_tl_compiler_optimize_self_test:
 contains|_tl_compiler_optimize_strength_self_test:
 contains|_tl_compiler_optimize_bounds_self_test:
@@ -346,12 +367,14 @@ contains|_tl_parse_ast_source:
 end
 
 case|selfhost_compiler_regalloc|selfhost/compiler_regalloc.tl|assembly|skip|direct
+requires-stage0-mode|#1361 stage1 compiler resource blocker (imports liveness/IR)
 contains|_tl_compiler_reg_plan_function:
 contains|_tl_compiler_regalloc_self_test:
 contains|regalloc: smoke mismatch
 end
 
 case|selfhost_compiler_regalloc_smoke|selfhost/compiler_regalloc_smoke.tl|assembly|exactly-one|direct
+requires-stage0-mode|#1361 stage1 compiler resource blocker (imports regalloc)
 contains|_tl_compiler_regalloc_self_test:
 contains|_tl_compiler_reg_plan_function:
 end
@@ -380,6 +403,7 @@ contains|_tl_compiler_symbols_add_decl:
 end
 
 case|selfhost_compiler_typecheck|selfhost/compiler_typecheck.tl|assembly|skip|direct
+requires-stage0-mode|#1361 stage1 compiler resource blocker (library root)
 contains|_tl_typecheck_compiler_program:
 contains|_tl_compiler_typecheck_self_test:
 contains|_tl_tc_source_type_policy_message:
@@ -389,6 +413,7 @@ contains|source-level type parameters
 end
 
 case|selfhost_compiler_typecheck_smoke|selfhost/compiler_typecheck_smoke.tl|assembly|exactly-one|direct
+requires-stage0-mode|#1361 stage1 compiler resource blocker (imports typechecker)
 contains|_tl_compiler_typecheck_self_test:
 contains|_tl_typecheck_compiler_program:
 end
@@ -660,6 +685,7 @@ contains|run: expected source path
 end
 
 case|selfhost_test|selfhost/test.tl|assembly|skip|direct
+requires-stage0-mode|#1361 stage1 compiler resource blocker (test driver imports compiler pipeline)
 contains|_tl_tltest_run_config:
 contains|_tl_tltest_build_harness:
 contains|_tl_tltest_invalid_opt_level:

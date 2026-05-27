@@ -93,6 +93,15 @@ The no-Rust replacement for compile/symbol smoke coverage is
 The runner compiles each manifest case with an already-built TypeLisp compiler,
 rejects generated `# TODO` assembly, applies the case's `main:` label policy,
 and checks representative symbol/literal markers in the emitted assembly.
+By default those markers are checked in `stage0` mode, preserving the exact
+Rust-stage0 symbol coverage used by the reference `Test` jobs. The Linux
+no-Rust capability tier also runs the same manifest through
+`scripts/stage1-typelisp-wrapper.sh` with
+`TYPELISP_COMPILE_MANIFEST_EXPECTATION_MODE=stage1`; in that mode `_tl_foo`
+symbol markers also accept the selfhost compiler's module-qualified
+`_tl_<module>_u2etl_colon_colonfoo` labels without changing the manifest list.
+Use `requires-stage0-mode|<reason>` only for a case that must remain seed-only
+for a named blocker such as the current #1361 stage1->stage2 resource limit.
 
 Every top-level `selfhost/*.tl` file must appear as a manifest `case` or a
 `decision` line. This makes new modules and smoke drivers fail CI until they
@@ -148,13 +157,13 @@ removes the Rust-owned stage0 dependency.
 
 The current stage1 wrapper implements the source-file `compile`, `build`, `run`,
 `fmt`, and private `debug host-action` path directly enough for the Linux
-capability smoke and deterministic assembly gate. Direct `selfhost/build.tl`
-package-build parity is covered by `scripts/verify-public-tools.sh`; top-level
-stage1 wrapper routing for package builds is still staged separately. Seed-only
-public-tool exceptions remain: `doc`, `lint`, non-check `test`, package build
-wrapper routing, REPL/LSP, and full manifest/doc/integration gates still need
-either stage1-safe driver linking or dedicated wrapper routing before they can
-move off the seed compiler.
+capability smoke, deterministic assembly gate, and selfhost compile manifest.
+Direct `selfhost/build.tl` package-build parity is covered by
+`scripts/verify-public-tools.sh`; top-level stage1 wrapper routing for package
+builds is still staged separately. Seed-only public-tool exceptions remain:
+`doc`, `lint`, non-check `test`, package build wrapper routing, REPL/LSP, and
+full doc/integration gates still need either stage1-safe driver linking or
+dedicated wrapper routing before they can move off the seed compiler.
 
 ### Staged backend primitives (#1114)
 
@@ -321,12 +330,12 @@ the artifact.
 Pull requests get Linux and Windows no-Rust coverage from
 `scripts/verify-no-rust-stage0.sh`. The Linux job first builds a fresh stage1
 compiler from published stage0, then smoke-tests the stage1 CLI/host-action
-wrapper and runs deterministic assembly through that wrapper. Public tools,
-doctests, inline tests, selfhost compile manifests, TypeLisp source format,
-native integration manifests, examples, stdlib, stdlib docs, selfhost native
-generated programs, and the selfhost external compiler corpus continue to use
-the seed compiler until their remaining public-tool and manifest exceptions are
-ported to the wrapper. The Windows job runs the host-supported gates against the
+wrapper, deterministic assembly, and the selfhost compile manifest through that
+wrapper. Public tools, doctests, inline tests, TypeLisp source format, native
+integration manifests, examples, stdlib, stdlib docs, selfhost native generated
+programs, and the selfhost external compiler corpus continue to use the seed
+compiler until their remaining public-tool and manifest exceptions are ported
+to the wrapper. The Windows job runs the host-supported gates against the
 published stage0 compiler and explicitly skips the Linux-only selfhost/docs
 checks until native stage1 bootstrap/link support lands.
 

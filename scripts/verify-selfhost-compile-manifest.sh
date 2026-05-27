@@ -13,6 +13,15 @@ cd "$ROOT"
 
 MANIFEST=${TYPELISP_COMPILE_MANIFEST:-selfhost/compile_manifest.txt}
 WORKDIR=${TYPELISP_COMPILE_MANIFEST_WORKDIR:-target/selfhost-compile-manifest}
+EXPECTATION_MODE=${TYPELISP_COMPILE_MANIFEST_EXPECTATION_MODE:-stage0}
+
+case "$EXPECTATION_MODE" in
+    stage0 | stage1) ;;
+    *)
+        echo "unknown compile manifest expectation mode: $EXPECTATION_MODE" >&2
+        exit 1
+        ;;
+esac
 
 if [ -n "${TYPELISP_BIN:-}" ]; then
     COMPILER=$TYPELISP_BIN
@@ -71,7 +80,10 @@ contains_text() {
     needle=$1
     [ "$compiled" -eq 2 ] && return
     if ! grep -F -- "$needle" "$asm_path" >/dev/null; then
-        fail "$case_id assembly is missing expected text [$needle]"
+        if [ "$EXPECTATION_MODE" = stage1 ] && stage1_contains_text "$needle"; then
+            return
+        fi
+        fail "$case_id assembly is missing expected text [$needle] in $EXPECTATION_MODE mode (assembly: $asm_path)"
     fi
 }
 
@@ -79,7 +91,10 @@ not_contains_text() {
     needle=$1
     [ "$compiled" -eq 2 ] && return
     if grep -F -- "$needle" "$asm_path" >/dev/null; then
-        fail "$case_id assembly contains forbidden text [$needle]"
+        fail "$case_id assembly contains forbidden text [$needle] in $EXPECTATION_MODE mode (assembly: $asm_path)"
+    fi
+    if [ "$EXPECTATION_MODE" = stage1 ] && stage1_contains_text "$needle"; then
+        fail "$case_id assembly contains forbidden stage1-qualified text for [$needle] in stage1 mode (assembly: $asm_path)"
     fi
 }
 
@@ -88,9 +103,60 @@ count_at_least() {
     min=$2
     [ "$compiled" -eq 2 ] && return
     count=$(grep -F -- "$needle" "$asm_path" | wc -l | tr -d ' ')
-    if [ "$count" -lt "$min" ]; then
-        fail "$case_id assembly has $count occurrence(s) of [$needle], expected at least $min"
+    if [ "$count" -lt "$min" ] && [ "$EXPECTATION_MODE" = stage1 ]; then
+        count=$(stage1_count_text "$needle")
     fi
+    if [ "$count" -lt "$min" ]; then
+        fail "$case_id assembly has $count occurrence(s) of [$needle] in $EXPECTATION_MODE mode, expected at least $min (assembly: $asm_path)"
+    fi
+}
+
+stage1_symbol_regex() {
+    needle=$1
+    case "$needle" in
+        match_nested)
+            printf '_match_\n'
+            return 0
+            ;;
+        .L_tl_*:)
+            symbol=${needle#.L_tl_}
+            symbol=${symbol%:}
+            printf '(_tl|\\.L_tl)_%s\n' "$symbol"
+            return 0
+            ;;
+        _tl_*:)
+            symbol=${needle#_tl_}
+            symbol=${symbol%:}
+            printf '^_tl_[[:alnum:]_]+_u2etl_colon_colon%s:$\n' "$symbol"
+            return 0
+            ;;
+        _tl_*)
+            symbol=${needle#_tl_}
+            printf '_tl_[[:alnum:]_]+_u2etl_colon_colon%s\n' "$symbol"
+            return 0
+            ;;
+        call\ _tl_*)
+            symbol=${needle#call _tl_}
+            printf 'call[[:space:]]+_tl_[[:alnum:]_]+_u2etl_colon_colon%s\n' "$symbol"
+            return 0
+            ;;
+    esac
+    return 1
+}
+
+stage1_contains_text() {
+    needle=$1
+    regex=$(stage1_symbol_regex "$needle") || return 1
+    grep -E -- "$regex" "$asm_path" >/dev/null
+}
+
+stage1_count_text() {
+    needle=$1
+    regex=$(stage1_symbol_regex "$needle") || {
+        printf '0\n'
+        return
+    }
+    grep -E -- "$regex" "$asm_path" | wc -l | tr -d ' '
 }
 
 staged_symbol_matches() {
@@ -107,6 +173,10 @@ main_label_count() {
     awk 'BEGIN { count = 0 } /^main:$/ { count += 1 } END { print count }' "$asm_path"
 }
 
+stage1_entry_label_count() {
+    awk 'BEGIN { count = 0 } /^_start:$/ { count += 1 } END { print count }' "$asm_path"
+}
+
 ensure_compiled() {
     if [ "$compiled" -ne 0 ]; then
         return
@@ -120,6 +190,13 @@ ensure_compiled() {
         compile_source="$case_dir/$(basename "$case_source")"
     else
         compile_source="$ROOT/$case_source"
+    fi
+
+    if [ "$EXPECTATION_MODE" = stage1 ] && [ -n "$case_requires_stage0_mode" ]; then
+        echo "[selfhost-compile] SKIP $case_id (stage1 blocker: $case_requires_stage0_mode)"
+        skipped=$((skipped + 1))
+        compiled=2
+        return
     fi
 
     echo "[selfhost-compile] $case_id ($case_source)"
@@ -138,7 +215,7 @@ ensure_compiled() {
         sed 's/^/  /' "$out_path" >&2
         echo "stderr:" >&2
         sed 's/^/  /' "$err_path" >&2
-        fail "$case_id compile exited $code"
+        fail "$case_id compile exited $code in $EXPECTATION_MODE mode"
     fi
 
     if grep -F -- "# TODO" "$asm_path" >/dev/null; then
@@ -146,14 +223,26 @@ ensure_compiled() {
     fi
 
     main_count=$(main_label_count)
+    stage1_entry_count=0
+    if [ "$EXPECTATION_MODE" = stage1 ]; then
+        stage1_entry_count=$(stage1_entry_label_count)
+    fi
     case "$main_policy" in
         exactly-one)
-            if [ "$main_count" -ne 1 ]; then
+            if [ "$main_count" -eq 0 ] && [ "$EXPECTATION_MODE" = stage1 ]; then
+                if [ "$stage1_entry_count" -ne 1 ]; then
+                    fail "$case_id expected exactly one stage1 _start: entry fallback, found $stage1_entry_count"
+                fi
+            elif [ "$main_count" -ne 1 ]; then
                 fail "$case_id expected exactly one main: label, found $main_count"
             fi
             ;;
         present)
-            if [ "$main_count" -lt 1 ]; then
+            if [ "$main_count" -eq 0 ] && [ "$EXPECTATION_MODE" = stage1 ]; then
+                if [ "$stage1_entry_count" -lt 1 ]; then
+                    fail "$case_id expected a main: label or stage1 _start: entry fallback"
+                fi
+            elif [ "$main_count" -lt 1 ]; then
                 fail "$case_id expected a main: label"
             fi
             ;;
@@ -181,6 +270,7 @@ case_dir=
 compiled=1
 case_count=0
 skipped=0
+case_requires_stage0_mode=
 
 while IFS='|' read -r kind a b c d e; do
     case "$kind" in
@@ -203,11 +293,16 @@ while IFS='|' read -r kind a b c d e; do
             asm_path=
             compiled=0
             case_requires_symbol=
+            case_requires_stage0_mode=
             case_count=$((case_count + 1))
             ;;
         requires-stage0-symbol)
             [ -n "$case_id" ] || fail "requires-stage0-symbol appears before a case"
             case_requires_symbol=$a
+            ;;
+        requires-stage0-mode)
+            [ -n "$case_id" ] || fail "requires-stage0-mode appears before a case"
+            case_requires_stage0_mode=$a
             ;;
         copy)
             [ -n "$case_id" ] || fail "copy appears before a case"
@@ -244,7 +339,7 @@ if [ -n "$case_id" ]; then
     fail "manifest ended before case $case_id had an end directive"
 fi
 
-echo "selfhost compile manifest passed: $case_count case(s)"
+echo "selfhost compile manifest passed: $case_count case(s) ($EXPECTATION_MODE mode)"
 if [ "$skipped" -ne 0 ]; then
-    echo "selfhost compile manifest: $skipped case(s) skipped (staged primitive awaiting no-Rust compiler support)"
+    echo "selfhost compile manifest: $skipped case(s) skipped in $EXPECTATION_MODE mode (blockers documented in manifest)"
 fi

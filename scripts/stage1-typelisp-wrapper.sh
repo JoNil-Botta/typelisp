@@ -10,6 +10,8 @@ set -eu
 # without routing back through the Rust CLI.
 
 STAGE1_BIN=${TYPELISP_STAGE1_BIN:-}
+STAGE1_TEST_BIN=${TYPELISP_STAGE1_TEST_BIN:-}
+ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 
 fail() {
     echo "$*" >&2
@@ -21,8 +23,15 @@ usage() {
 usage: typelisp <command> [args...]
 
 stage1 wrapper commands:
-  compile, check, build, run
+  compile, check, build, run, test
   debug check, debug host-action
+EOF
+}
+
+test_usage() {
+    cat >&2 <<'EOF'
+Usage:
+    typelisp test [--check] <file.tl> [--target <target>] [--opt-level <0|1|2|3>] [--stdlib-root <dir>...]
 EOF
 }
 
@@ -221,6 +230,41 @@ run_executable_with_args() {
         done < "$args_file"
     fi
     "$@"
+}
+
+heartbeat_log() {
+    if [ "${TYPELISP_STAGE1_HEARTBEAT_FD:-}" = "3" ]; then
+        echo "$*" >&3
+    else
+        echo "$*" >&2
+    fi
+}
+
+run_with_heartbeat() {
+    label=$1
+    shift
+    status_file=${TMPDIR:-/tmp}/typelisp-stage1-heartbeat-$$.status
+    rm -f "$status_file"
+    (
+        set +e
+        "$@"
+        code=$?
+        printf '%s\n' "$code" > "$status_file"
+        exit "$code"
+    ) &
+    pid=$!
+    elapsed=0
+    while [ ! -f "$status_file" ]; do
+        sleep 5
+        elapsed=$((elapsed + 5))
+        if [ $((elapsed % 30)) -eq 0 ]; then
+            heartbeat_log "[$label] still running (${elapsed}s)"
+        fi
+    done
+    wait "$pid" 2> /dev/null || true
+    code=$(sed -n '1p' "$status_file")
+    rm -f "$status_file"
+    return "$code"
 }
 
 execute_plan_file() {
@@ -441,6 +485,153 @@ run_command() {
     run_executable_with_args "$bin" "$runtime_args"
 }
 
+test_args_have_check() {
+    while [ "$#" -gt 0 ]; do
+        if [ "$1" = "--check" ]; then
+            return 0
+        fi
+        shift
+    done
+    return 1
+}
+
+selfhost_test_driver() {
+    require_stage1
+    require_linux_host_action
+
+    if [ -n "$STAGE1_TEST_BIN" ]; then
+        if [ ! -x "$STAGE1_TEST_BIN" ]; then
+            fail "stage1 test driver is not executable: $STAGE1_TEST_BIN"
+        fi
+        printf '%s\n' "$STAGE1_TEST_BIN"
+        return
+    fi
+
+    cache_dir=${TYPELISP_STAGE1_DRIVER_CACHE_DIR:-"$ROOT/target/stage1-wrapper-cache"}
+    driver="$cache_dir/selfhost-test"
+    marker="$cache_dir/stage1-bin.path"
+    build_dir="$cache_dir/build"
+    roots="$build_dir/stdlib.roots"
+    source="$ROOT/selfhost/test.tl"
+
+    rebuild=0
+    if [ ! -x "$driver" ]; then
+        rebuild=1
+    elif [ ! -f "$marker" ]; then
+        rebuild=1
+    elif [ "$(sed -n '1p' "$marker")" != "$STAGE1_BIN" ]; then
+        rebuild=1
+    elif [ "$STAGE1_BIN" -nt "$driver" ]; then
+        rebuild=1
+    elif [ "$source" -nt "$driver" ]; then
+        rebuild=1
+    fi
+
+    if [ "$rebuild" -eq 1 ]; then
+        rm -rf "$build_dir"
+        mkdir -p "$build_dir"
+        : > "$roots"
+        heartbeat_log "[stage1-wrapper] building selfhost test driver"
+        run_with_heartbeat \
+            "stage1-wrapper selfhost/test.tl compile" \
+            compile_source_to_exe \
+            "$source" \
+            "$driver.tmp" \
+            linux-x86_64 \
+            scalar \
+            "" \
+            "$roots" \
+            "$build_dir" > /dev/null
+        mv "$driver.tmp" "$driver"
+        printf '%s\n' "$STAGE1_BIN" > "$marker"
+    fi
+
+    printf '%s\n' "$driver"
+}
+
+emit_file() {
+    path=$1
+    if [ -s "$path" ]; then
+        cat "$path"
+    fi
+}
+
+emit_file_stderr() {
+    path=$1
+    if [ -s "$path" ]; then
+        cat "$path" >&2
+    fi
+}
+
+stderr_ends_with_newline() {
+    path=$1
+    if [ ! -s "$path" ]; then
+        return 0
+    fi
+    last=$(tail -c 1 "$path" | od -An -tx1 | tr -d ' \n')
+    [ "$last" = "0a" ] || [ "$last" = "0d" ]
+}
+
+test_command() {
+    if [ "$#" -eq 0 ]; then
+        echo "Error: missing file argument" >&2
+        test_usage
+        exit 1
+    fi
+    case "$1" in
+        help | --help | -h)
+            test_usage
+            return
+            ;;
+    esac
+
+    driver=$(selfhost_test_driver)
+    workdir=${TMPDIR:-/tmp}/typelisp-stage1-test-$$
+    rm -rf "$workdir"
+    mkdir -p "$workdir"
+    trap 'rm -rf "$workdir"' EXIT HUP INT TERM
+
+    plan="$workdir/test.plan"
+    driver_stderr="$workdir/test-driver.stderr"
+
+    set +e
+    "$driver" "$@" > "$plan" 2> "$driver_stderr"
+    driver_status=$?
+    set -e
+
+    if test_args_have_check "$@"; then
+        emit_file "$plan"
+        emit_file_stderr "$driver_stderr"
+        exit "$driver_status"
+    fi
+
+    if [ "$driver_status" -ne 0 ]; then
+        emit_file "$plan"
+        emit_file_stderr "$driver_stderr"
+        exit "$driver_status"
+    fi
+
+    run_stdout="$workdir/test-run.stdout"
+    run_stderr="$workdir/test-run.stderr"
+    set +e
+    execute_plan_file "$plan" > "$run_stdout" 2> "$run_stderr"
+    run_status=$?
+    set -e
+
+    emit_file "$run_stdout"
+    emit_file_stderr "$run_stderr"
+    if [ "$run_status" -ne 0 ]; then
+        if grep -q '^Error: ' "$run_stderr"; then
+            exit "$run_status"
+        fi
+        if ! stderr_ends_with_newline "$run_stderr"; then
+            printf '\n' >&2
+        fi
+        echo "typelisp test: test executable exited with exit status: $run_status" >&2
+        exit "$run_status"
+    fi
+}
+
 debug_command() {
     [ "$#" -gt 0 ] || fail "Error: missing debug subcommand"
     case "$1" in
@@ -475,7 +666,8 @@ case "$command" in
     check) check_command "$@" ;;
     build) build_command "$@" ;;
     run) run_command "$@" ;;
-    test | fmt | lint | doc | tokenize | parse)
+    test) test_command "$@" ;;
+    fmt | lint | doc | tokenize | parse)
         fail "stage1 wrapper does not support '$command' yet; use the seed compiler for this gate"
         ;;
     debug) debug_command "$@" ;;

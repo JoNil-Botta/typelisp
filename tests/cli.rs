@@ -108,6 +108,83 @@ fn typelisp_with_stdin(args: &[&str], stdin: &str) -> Output {
     })
 }
 
+#[cfg(target_os = "linux")]
+fn run_binary_with_stdin(binary: &std::path::Path, stdin: &str) -> Output {
+    run_with_crash_retry(|| {
+        let mut child = Command::new(binary)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("spawn binary");
+
+        child
+            .stdin
+            .as_mut()
+            .expect("stdin is piped")
+            .write_all(stdin.as_bytes())
+            .expect("write binary stdin");
+
+        child.wait_with_output().expect("wait for binary")
+    })
+}
+
+#[cfg(target_os = "linux")]
+fn compile_selfhost_binary(source: &std::path::Path, output: &std::path::Path) {
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let stdlib_root = manifest_dir.join("stdlib");
+    let asm = output.with_extension("s");
+    let obj = output.with_extension("o");
+    let source_arg = source.to_str().expect("selfhost source path is utf-8");
+    let stdlib_arg = stdlib_root.to_str().expect("stdlib path is utf-8");
+    let asm_arg = asm.to_str().expect("assembly path is utf-8");
+
+    let compile = typelisp(&[
+        "compile",
+        source_arg,
+        "--stdlib-root",
+        stdlib_arg,
+        "-o",
+        asm_arg,
+    ]);
+    assert!(
+        compile.status.success(),
+        "selfhost source compile failed: {}\nstdout:\n{}\nstderr:\n{}",
+        source.display(),
+        stdout(&compile),
+        stderr(&compile)
+    );
+
+    let assemble = Command::new("as")
+        .arg(&asm)
+        .arg("-o")
+        .arg(&obj)
+        .output()
+        .expect("run assembler");
+    assert!(
+        assemble.status.success(),
+        "selfhost source assemble failed: {}\nstdout:\n{}\nstderr:\n{}",
+        source.display(),
+        stdout(&assemble),
+        stderr(&assemble)
+    );
+
+    let link = Command::new("ld")
+        .arg(&obj)
+        .arg("-o")
+        .arg(output)
+        .args(["-dynamic-linker", "/lib64/ld-linux-x86-64.so.2", "-lc"])
+        .output()
+        .expect("run linker");
+    assert!(
+        link.status.success(),
+        "selfhost source link failed: {}\nstdout:\n{}\nstderr:\n{}",
+        source.display(),
+        stdout(&link),
+        stderr(&link)
+    );
+}
+
 fn typelisp_with_path(args: &[&str], path: &std::path::Path) -> Output {
     run_with_crash_retry(|| {
         Command::new(env!("CARGO_BIN_EXE_typelisp"))
@@ -266,15 +343,9 @@ fn run_selfhost_lsp_frame(work_name: &str, stdin: &str) -> Output {
         }
     }
     let source = selfhost_work.join("lsp_frame.tl");
-    let stdlib_root = manifest_dir.join("stdlib");
-    let source_arg = source.to_str().expect("source path is utf-8");
-    let stdlib_arg = stdlib_root.to_str().expect("stdlib path is utf-8");
-    let mut args = vec!["run", source_arg, "--stdlib-root", stdlib_arg];
-    if cfg!(target_os = "windows") {
-        args.push("--target");
-        args.push("windows-x86_64");
-    }
-    typelisp_with_stdin(&args, stdin)
+    let binary = work_dir.join("selfhost-lsp-frame");
+    compile_selfhost_binary(&source, &binary);
+    run_binary_with_stdin(&binary, stdin)
 }
 
 #[cfg(target_os = "linux")]
@@ -1344,16 +1415,7 @@ fn selfhost_compile_cli_driver_writes_assembly_and_reports_errors() {
     let driver_source = manifest_dir.join("selfhost").join("compile.tl");
     let dir = fixture_dir("selfhost-compile-cli");
     let driver_bin = dir.join("selfhost-compile");
-    let driver_source_arg = driver_source.to_str().expect("driver path is utf-8");
-    let driver_bin_arg = driver_bin.to_str().expect("driver output path is utf-8");
-
-    let build = typelisp(&["build", driver_source_arg, "-o", driver_bin_arg]);
-    assert!(
-        build.status.success(),
-        "selfhost compile driver build failed\nstdout:\n{}\nstderr:\n{}",
-        stdout(&build),
-        stderr(&build)
-    );
+    compile_selfhost_binary(&driver_source, &driver_bin);
 
     let source = dir.join("main.tl");
     let explicit_asm = dir.join("custom-output.s");
@@ -1833,16 +1895,7 @@ fn selfhost_test_planner_threads_opt_level_into_harness_compile() {
     let driver_source = manifest_dir.join("selfhost").join("test.tl");
     let dir = fixture_dir("selfhost-test-opt-level");
     let driver_bin = dir.join("selfhost-test");
-    let driver_source_arg = driver_source.to_str().expect("driver path is utf-8");
-    let driver_bin_arg = driver_bin.to_str().expect("driver output path is utf-8");
-
-    let build = typelisp(&["build", driver_source_arg, "-o", driver_bin_arg]);
-    assert!(
-        build.status.success(),
-        "selfhost test planner build failed\nstdout:\n{}\nstderr:\n{}",
-        stdout(&build),
-        stderr(&build)
-    );
+    compile_selfhost_binary(&driver_source, &driver_bin);
 
     let source = dir.join("inline-opt.tl");
     fs::write(
@@ -1963,41 +2016,11 @@ fn selfhost_build_run_tools_execute_source_files() {
 
     let build_driver = manifest_dir.join("selfhost").join("build.tl");
     let build_bin = dir.join("selfhost-build-tool");
-    let build_driver_arg = build_driver.to_str().expect("build driver path is utf-8");
-    let build_bin_arg = build_bin.to_str().expect("build tool output path is utf-8");
-    let build = typelisp(&[
-        "build",
-        build_driver_arg,
-        "--stdlib-root",
-        stdlib_arg,
-        "-o",
-        build_bin_arg,
-    ]);
-    assert!(
-        build.status.success(),
-        "selfhost build tool build failed\nstdout:\n{}\nstderr:\n{}",
-        stdout(&build),
-        stderr(&build)
-    );
+    compile_selfhost_binary(&build_driver, &build_bin);
 
     let run_driver = manifest_dir.join("selfhost").join("run.tl");
     let run_bin = dir.join("selfhost-run-tool");
-    let run_driver_arg = run_driver.to_str().expect("run driver path is utf-8");
-    let run_bin_arg = run_bin.to_str().expect("run tool output path is utf-8");
-    let build_run = typelisp(&[
-        "build",
-        run_driver_arg,
-        "--stdlib-root",
-        stdlib_arg,
-        "-o",
-        run_bin_arg,
-    ]);
-    assert!(
-        build_run.status.success(),
-        "selfhost run tool build failed\nstdout:\n{}\nstderr:\n{}",
-        stdout(&build_run),
-        stderr(&build_run)
-    );
+    compile_selfhost_binary(&run_driver, &run_bin);
 
     let spaced = dir.join("with space");
     fs::create_dir_all(&spaced).expect("create spaced selfhost tool fixture dir");
@@ -2142,8 +2165,12 @@ fn selfhost_build_run_tools_execute_source_files() {
 #[test]
 fn selfhost_build_run_planners_default_to_host_target() {
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    #[cfg(target_os = "windows")]
     let stdlib_root = manifest_dir.join("stdlib");
+    #[cfg(target_os = "windows")]
     let stdlib_arg = stdlib_root.to_str().expect("stdlib path is utf-8");
+    #[cfg(target_os = "linux")]
+    let dir = fixture_dir("selfhost-build-run-plan-default");
     let expected_target = if cfg!(target_os = "windows") {
         "windows-x86_64"
     } else {
@@ -2151,7 +2178,15 @@ fn selfhost_build_run_planners_default_to_host_target() {
     };
 
     let build_driver = manifest_dir.join("selfhost").join("build.tl");
+    #[cfg(target_os = "windows")]
     let build_driver_arg = build_driver.to_str().expect("build driver path is utf-8");
+    #[cfg(target_os = "linux")]
+    let build_plan = {
+        let build_bin = dir.join("selfhost-build-plan");
+        compile_selfhost_binary(&build_driver, &build_bin);
+        driver_output(&build_bin, &["--host-plan", "main.tl"])
+    };
+    #[cfg(target_os = "windows")]
     let build_plan = typelisp(&[
         "run",
         build_driver_arg,
@@ -2176,7 +2211,15 @@ fn selfhost_build_run_planners_default_to_host_target() {
     );
 
     let run_driver = manifest_dir.join("selfhost").join("run.tl");
+    #[cfg(target_os = "windows")]
     let run_driver_arg = run_driver.to_str().expect("run driver path is utf-8");
+    #[cfg(target_os = "linux")]
+    let run_plan = {
+        let run_bin = dir.join("selfhost-run-plan");
+        compile_selfhost_binary(&run_driver, &run_bin);
+        driver_output(&run_bin, &["--host-plan", "main.tl"])
+    };
+    #[cfg(target_os = "windows")]
     let run_plan = typelisp(&[
         "run",
         run_driver_arg,

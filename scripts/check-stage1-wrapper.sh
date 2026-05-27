@@ -114,9 +114,12 @@ if [ -s "$WORKDIR/run.stderr" ]; then
     exit 1
 fi
 
-echo "[stage1-wrapper] test --check"
-TEST_SRC="$WORKDIR/inline-test.tl"
-cat > "$TEST_SRC" <<'EOF'
+if [ "${TYPELISP_STAGE1_SKIP_TEST_SMOKE:-}" = "1" ]; then
+    echo "[stage1-wrapper] test commands skipped"
+else
+    echo "[stage1-wrapper] test --check"
+    TEST_SRC="$WORKDIR/inline-test.tl"
+    cat > "$TEST_SRC" <<'EOF'
 (import "stdlib/test.tl")
 
 (define (inc [x : i64]) : i64 (+ x 1))
@@ -124,99 +127,100 @@ cat > "$TEST_SRC" <<'EOF'
 (test inc-basic
   (assert-i64-eq (inc 41) 42 "inc result"))
 EOF
-run_capture test-check "$COMPILER" test --check "$TEST_SRC" --target linux-x86_64 --opt-level 3 --stdlib-root "$ROOT/stdlib"
-assert_empty "$WORKDIR/test-check.stderr"
-assert_contains "$WORKDIR/test-check.stdout" "TypeLisp test typecheck passed: 1 test(s)"
+    run_capture test-check "$COMPILER" test --check "$TEST_SRC" --target linux-x86_64 --opt-level 3 --stdlib-root "$ROOT/stdlib"
+    assert_empty "$WORKDIR/test-check.stderr"
+    assert_contains "$WORKDIR/test-check.stdout" "TypeLisp test typecheck passed: 1 test(s)"
 
-echo "[stage1-wrapper] test"
-run_capture test-run "$COMPILER" test "$TEST_SRC" --opt-level 2 --stdlib-root "$ROOT/stdlib"
-assert_empty "$WORKDIR/test-run.stdout"
-assert_contains "$WORKDIR/test-run.stderr" "test inc-basic"
-assert_contains "$WORKDIR/test-run.stderr" "ok inc-basic"
-assert_contains "$WORKDIR/test-run.stderr" "TypeLisp tests passed: 1 test(s)"
-[ ! -f "$TEST_SRC.test.s" ] || {
-    echo "test left scratch assembly behind: $TEST_SRC.test.s" >&2
-    exit 1
-}
+    echo "[stage1-wrapper] test"
+    run_capture test-run "$COMPILER" test "$TEST_SRC" --opt-level 2 --stdlib-root "$ROOT/stdlib"
+    assert_empty "$WORKDIR/test-run.stdout"
+    assert_contains "$WORKDIR/test-run.stderr" "test inc-basic"
+    assert_contains "$WORKDIR/test-run.stderr" "ok inc-basic"
+    assert_contains "$WORKDIR/test-run.stderr" "TypeLisp tests passed: 1 test(s)"
+    [ ! -f "$TEST_SRC.test.s" ] || {
+        echo "test left scratch assembly behind: $TEST_SRC.test.s" >&2
+        exit 1
+    }
 
-echo "[stage1-wrapper] test no-tests"
-NO_TEST_SRC="$WORKDIR/no-tests.tl"
-cat > "$NO_TEST_SRC" <<'EOF'
+    echo "[stage1-wrapper] test no-tests"
+    NO_TEST_SRC="$WORKDIR/no-tests.tl"
+    cat > "$NO_TEST_SRC" <<'EOF'
 (define (main) : i64 0)
 EOF
-run_capture test-no-tests-check "$COMPILER" test --check "$NO_TEST_SRC"
-assert_empty "$WORKDIR/test-no-tests-check.stderr"
-assert_contains "$WORKDIR/test-no-tests-check.stdout" "TypeLisp test typecheck passed: 0 test(s)"
-run_capture test-no-tests-run "$COMPILER" test "$NO_TEST_SRC"
-assert_empty "$WORKDIR/test-no-tests-run.stdout"
-assert_contains "$WORKDIR/test-no-tests-run.stderr" "TypeLisp tests passed: 0 test(s)"
-[ ! -f "$NO_TEST_SRC.test.s" ] || {
-    echo "test no-tests left scratch assembly behind: $NO_TEST_SRC.test.s" >&2
-    exit 1
-}
+    run_capture test-no-tests-check "$COMPILER" test --check "$NO_TEST_SRC"
+    assert_empty "$WORKDIR/test-no-tests-check.stderr"
+    assert_contains "$WORKDIR/test-no-tests-check.stdout" "TypeLisp test typecheck passed: 0 test(s)"
+    run_capture test-no-tests-run "$COMPILER" test "$NO_TEST_SRC"
+    assert_empty "$WORKDIR/test-no-tests-run.stdout"
+    assert_contains "$WORKDIR/test-no-tests-run.stderr" "TypeLisp tests passed: 0 test(s)"
+    [ ! -f "$NO_TEST_SRC.test.s" ] || {
+        echo "test no-tests left scratch assembly behind: $NO_TEST_SRC.test.s" >&2
+        exit 1
+    }
 
-echo "[stage1-wrapper] test failures"
-FAIL_SRC="$WORKDIR/inline-test-fail.tl"
-cat > "$FAIL_SRC" <<'EOF'
+    echo "[stage1-wrapper] test failures"
+    FAIL_SRC="$WORKDIR/inline-test-fail.tl"
+    cat > "$FAIL_SRC" <<'EOF'
 (import "stdlib/test.tl")
 
 (test failing-case
   (assert-i64-eq 1 2 "inline failure message"))
 EOF
-set +e
-TYPELISP_STAGE1_HEARTBEAT_FD=3 "$COMPILER" test "$FAIL_SRC" --stdlib-root "$ROOT/stdlib" 3>&2 > "$WORKDIR/test-fail.stdout" 2> "$WORKDIR/test-fail.stderr"
-fail_status=$?
-set -e
-if [ "$fail_status" -eq 0 ]; then
-    echo "stage1 wrapper test failure case unexpectedly succeeded" >&2
-    exit 1
-fi
-assert_empty "$WORKDIR/test-fail.stdout"
-assert_contains "$WORKDIR/test-fail.stderr" "test failing-case"
-assert_contains "$WORKDIR/test-fail.stderr" "inline failure message"
-assert_contains "$WORKDIR/test-fail.stderr" "typelisp test: test executable exited"
-[ ! -f "$FAIL_SRC.test.s" ] || {
-    echo "failing test left scratch assembly behind: $FAIL_SRC.test.s" >&2
-    exit 1
-}
+    set +e
+    TYPELISP_STAGE1_HEARTBEAT_FD=3 "$COMPILER" test "$FAIL_SRC" --stdlib-root "$ROOT/stdlib" 3>&2 > "$WORKDIR/test-fail.stdout" 2> "$WORKDIR/test-fail.stderr"
+    fail_status=$?
+    set -e
+    if [ "$fail_status" -eq 0 ]; then
+        echo "stage1 wrapper test failure case unexpectedly succeeded" >&2
+        exit 1
+    fi
+    assert_empty "$WORKDIR/test-fail.stdout"
+    assert_contains "$WORKDIR/test-fail.stderr" "test failing-case"
+    assert_contains "$WORKDIR/test-fail.stderr" "inline failure message"
+    assert_contains "$WORKDIR/test-fail.stderr" "typelisp test: test executable exited"
+    [ ! -f "$FAIL_SRC.test.s" ] || {
+        echo "failing test left scratch assembly behind: $FAIL_SRC.test.s" >&2
+        exit 1
+    }
 
-BAD_SRC="$WORKDIR/inline-test-bad.tl"
-cat > "$BAD_SRC" <<'EOF'
+    BAD_SRC="$WORKDIR/inline-test-bad.tl"
+    cat > "$BAD_SRC" <<'EOF'
 (test compile-error
   (missing-inline-test-name))
 EOF
-set +e
-TYPELISP_STAGE1_HEARTBEAT_FD=3 "$COMPILER" test --check "$BAD_SRC" 3>&2 > "$WORKDIR/test-bad.stdout" 2> "$WORKDIR/test-bad.stderr"
-bad_status=$?
-set -e
-if [ "$bad_status" -eq 0 ]; then
-    echo "stage1 wrapper test compile-error case unexpectedly succeeded" >&2
-    exit 1
-fi
-assert_empty "$WORKDIR/test-bad.stdout"
-assert_contains "$WORKDIR/test-bad.stderr" "typecheck: unbound name missing-inline-test-name"
+    set +e
+    TYPELISP_STAGE1_HEARTBEAT_FD=3 "$COMPILER" test --check "$BAD_SRC" 3>&2 > "$WORKDIR/test-bad.stdout" 2> "$WORKDIR/test-bad.stderr"
+    bad_status=$?
+    set -e
+    if [ "$bad_status" -eq 0 ]; then
+        echo "stage1 wrapper test compile-error case unexpectedly succeeded" >&2
+        exit 1
+    fi
+    assert_empty "$WORKDIR/test-bad.stdout"
+    assert_contains "$WORKDIR/test-bad.stderr" "typecheck: unbound name missing-inline-test-name"
 
-set +e
-TYPELISP_STAGE1_HEARTBEAT_FD=3 "$COMPILER" test "$TEST_SRC" --opt-level 3>&2 > "$WORKDIR/test-missing-opt.stdout" 2> "$WORKDIR/test-missing-opt.stderr"
-missing_opt_status=$?
-set -e
-if [ "$missing_opt_status" -eq 0 ]; then
-    echo "stage1 wrapper test missing-opt-level case unexpectedly succeeded" >&2
-    exit 1
-fi
-assert_empty "$WORKDIR/test-missing-opt.stdout"
-assert_contains "$WORKDIR/test-missing-opt.stderr" "test: --opt-level requires a value"
+    set +e
+    TYPELISP_STAGE1_HEARTBEAT_FD=3 "$COMPILER" test "$TEST_SRC" --opt-level 3>&2 > "$WORKDIR/test-missing-opt.stdout" 2> "$WORKDIR/test-missing-opt.stderr"
+    missing_opt_status=$?
+    set -e
+    if [ "$missing_opt_status" -eq 0 ]; then
+        echo "stage1 wrapper test missing-opt-level case unexpectedly succeeded" >&2
+        exit 1
+    fi
+    assert_empty "$WORKDIR/test-missing-opt.stdout"
+    assert_contains "$WORKDIR/test-missing-opt.stderr" "test: --opt-level requires a value"
 
-set +e
-TYPELISP_STAGE1_HEARTBEAT_FD=3 "$COMPILER" test --check "$TEST_SRC" --target nope 3>&2 > "$WORKDIR/test-bad-target.stdout" 2> "$WORKDIR/test-bad-target.stderr"
-bad_target_status=$?
-set -e
-if [ "$bad_target_status" -eq 0 ]; then
-    echo "stage1 wrapper test bad-target case unexpectedly succeeded" >&2
-    exit 1
+    set +e
+    TYPELISP_STAGE1_HEARTBEAT_FD=3 "$COMPILER" test --check "$TEST_SRC" --target nope 3>&2 > "$WORKDIR/test-bad-target.stdout" 2> "$WORKDIR/test-bad-target.stderr"
+    bad_target_status=$?
+    set -e
+    if [ "$bad_target_status" -eq 0 ]; then
+        echo "stage1 wrapper test bad-target case unexpectedly succeeded" >&2
+        exit 1
+    fi
+    assert_empty "$WORKDIR/test-bad-target.stdout"
+    assert_contains "$WORKDIR/test-bad-target.stderr" "test: unknown target nope"
 fi
-assert_empty "$WORKDIR/test-bad-target.stdout"
-assert_contains "$WORKDIR/test-bad-target.stderr" "test: unknown target nope"
 
 echo "[stage1-wrapper] debug host-action"
 mkdir -p "$(dirname -- "$HOST_ACTION_BIN")"

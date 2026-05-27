@@ -486,8 +486,12 @@ end
 
 case|selfhost_doc_test|selfhost/doc_test.tl|assembly|skip|direct
 contains|_tl_doc_test_extract_source:
+contains|_tl_doc_test_parse_run_metadata:
+contains|_tl_doc_test_parse_output_spec:
 contains|_tl_doc_test_run_source_with_roots:
 contains|unsupported TypeLisp doctest option
+contains|doctest-exit metadata must be an integer
+contains|TypeLisp doctest options `run` and `expect-error` cannot be combined
 contains|was expected to fail
 end
 

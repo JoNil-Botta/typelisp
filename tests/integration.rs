@@ -4614,6 +4614,8 @@ fn selfhost_doc_driver_writes_single_file_markdown() {
         &work_dir,
         SELFHOST_DOC_DRIVER_DEPS,
     );
+    let driver_bin = work_dir.join("doc-driver");
+    compile_source_to_binary(&driver_path, &driver_bin, "doc.tl");
 
     let input_path = work_dir.join("fixture.tl");
     fs::write(
@@ -4635,10 +4637,7 @@ fn selfhost_doc_driver_writes_single_file_markdown() {
     .expect("write doc driver input fixture");
     let output_path = work_dir.join("fixture.md");
 
-    let output = Command::new(env!("CARGO_BIN_EXE_typelisp"))
-        .arg("run")
-        .arg(&driver_path)
-        .arg("--")
+    let output = Command::new(&driver_bin)
         .arg(&input_path)
         .arg(&output_path)
         .output()
@@ -4697,10 +4696,7 @@ fn selfhost_doc_driver_writes_single_file_markdown() {
         rendered
     );
 
-    let invalid = Command::new(env!("CARGO_BIN_EXE_typelisp"))
-        .arg("run")
-        .arg(&driver_path)
-        .arg("--")
+    let invalid = Command::new(&driver_bin)
         .output()
         .expect("run selfhost doc driver without paths");
 
@@ -4742,6 +4738,8 @@ fn selfhost_doc_driver_writes_single_file_html() {
         &work_dir,
         SELFHOST_DOC_DRIVER_DEPS,
     );
+    let driver_bin = work_dir.join("doc-driver");
+    compile_source_to_binary(&driver_path, &driver_bin, "doc.tl");
 
     let input_path = work_dir.join("fixture.tl");
     fs::write(
@@ -4758,10 +4756,7 @@ fn selfhost_doc_driver_writes_single_file_html() {
     .expect("write doc driver HTML input fixture");
     let output_path = work_dir.join("fixture.html");
 
-    let output = Command::new(env!("CARGO_BIN_EXE_typelisp"))
-        .arg("run")
-        .arg(&driver_path)
-        .arg("--")
+    let output = Command::new(&driver_bin)
         .arg("--html")
         .arg(&input_path)
         .arg(&output_path)
@@ -4821,6 +4816,8 @@ fn selfhost_doc_driver_writes_module_index_html() {
         &work_dir,
         SELFHOST_DOC_DRIVER_DEPS,
     );
+    let driver_bin = work_dir.join("doc-driver");
+    compile_source_to_binary(&driver_path, &driver_bin, "doc.tl");
 
     let first_path = work_dir.join("first.tl");
     fs::write(
@@ -4846,10 +4843,7 @@ fn selfhost_doc_driver_writes_module_index_html() {
     .expect("write second HTML module fixture");
     let output_path = work_dir.join("index.html");
 
-    let output = Command::new(env!("CARGO_BIN_EXE_typelisp"))
-        .arg("run")
-        .arg(&driver_path)
-        .arg("--")
+    let output = Command::new(&driver_bin)
         .arg("--html")
         .arg(&first_path)
         .arg(&second_path)
@@ -4903,6 +4897,8 @@ fn selfhost_doc_driver_runs_doctests() {
         &work_dir,
         SELFHOST_DOC_DRIVER_DEPS,
     );
+    let driver_bin = work_dir.join("doc-driver");
+    compile_source_to_binary(&driver_path, &driver_bin, "doc.tl");
 
     let passing_path = work_dir.join("passing_docs.tl");
     fs::write(
@@ -4922,10 +4918,7 @@ fn selfhost_doc_driver_runs_doctests() {
     )
     .expect("write passing doctest fixture");
 
-    let pass = Command::new(env!("CARGO_BIN_EXE_typelisp"))
-        .arg("run")
-        .arg(&driver_path)
-        .arg("--")
+    let pass = Command::new(&driver_bin)
         .arg("--test")
         .arg(&passing_path)
         .output()
@@ -4955,10 +4948,7 @@ fn selfhost_doc_driver_runs_doctests() {
     )
     .expect("write failing doctest fixture");
 
-    let fail = Command::new(env!("CARGO_BIN_EXE_typelisp"))
-        .arg("run")
-        .arg(&driver_path)
-        .arg("--")
+    let fail = Command::new(&driver_bin)
         .arg("--test")
         .arg(&failing_path)
         .output()

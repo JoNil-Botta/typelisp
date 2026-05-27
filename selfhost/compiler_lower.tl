@@ -118,6 +118,9 @@
 (define (lower-diagnostic-with-path [diag : CompilerDiagnostic] [path : String]) : CompilerDiagnostic
   (compiler-diagnostic-with-path diag path))
 
+(define (lower-reference-support-message) : String
+  "lower: reference-typed programs require borrow/reference lowering support (#803/#806/#804)")
+
 (define (lower-instr-list-append
   [instrs : CompilerIrInstrList]
   [instr : CompilerIrInstr]) : CompilerIrInstrList
@@ -1724,6 +1727,9 @@
             [(LowerExpr inner-state value _)
               (lower-materialize-at-expr inner-state value expr-ty origin)])]
         [(ErrLowerExpr message) (ErrLowerExpr message)])]
+    [(AstExprBorrow _ _)
+      (ErrLowerExpr
+        (lower-diagnostic-at-expr origin (lower-reference-support-message)))]
     [(AstExprUnary op inner)
       (match (lower-expr ctx state env type-env inner)
         [(OkLowerExpr lowered)
@@ -5040,45 +5046,49 @@
   [body : AstExpr]
   [spans : CompilerSourceSpans]
   [names : LowerNameEnv]) : ResultLowerFunction
-  (let
-    [param-count : i64 (lower-param-count params)]
+  (if (or
+    (tc-param-list-contains-reference? params)
+    (tc-type-contains-reference? (tc-resolve-type ctx ret)))
+    (ErrLowerFunction (lower-diagnostic (lower-reference-support-message)))
     (let
-      [env : SymI64Env (lower-bind-params params 0 (sym-i64-empty))]
-      [type-env : TcTypeEnv
-        (tc-bind-return-type
-          (tc-bind-params ctx top-env params)
-          (tc-type-without-regions (tc-resolve-type ctx ret)))]
-      [function-spans : CompilerSourceSpans
-        (lower-record-function-span spans logical-name body)]
-      [state : LowerState
-        (LowerState
-          param-count
-          0
-          "entry"
-          IrInstrNil
-          IrBlockNil
-          logical-name
-          function-spans
-          names)]
-      [ret-ty : AstType (tc-type-without-regions (tc-resolve-type ctx ret))]
-      (match (lower-expr ctx state env type-env body)
-        [(OkLowerExpr lowered)
-          (match lowered
-            [(LowerExpr body-state value _)
-              (let
-                [final-state : LowerState
-                  (lower-state-emit
-                    body-state
-                    (IrInstrReturn (lower-return-maybe value ret-ty)))]
-                (OkLowerFunction
-                  (IrFunction
-                    logical-name
-                    (lower-param-list ctx params 0)
-                    ret-ty
-                    (lower-state-next-var final-state)
-                    (lower-state-build-blocks final-state))
-                  (lower-state-spans final-state)))])]
-        [(ErrLowerExpr message) (ErrLowerFunction message)]))))
+      [param-count : i64 (lower-param-count params)]
+      (let
+        [env : SymI64Env (lower-bind-params params 0 (sym-i64-empty))]
+        [type-env : TcTypeEnv
+          (tc-bind-return-type
+            (tc-bind-params ctx top-env params)
+            (tc-type-without-regions (tc-resolve-type ctx ret)))]
+        [function-spans : CompilerSourceSpans
+          (lower-record-function-span spans logical-name body)]
+        [state : LowerState
+          (LowerState
+            param-count
+            0
+            "entry"
+            IrInstrNil
+            IrBlockNil
+            logical-name
+            function-spans
+            names)]
+        [ret-ty : AstType (tc-type-without-regions (tc-resolve-type ctx ret))]
+        (match (lower-expr ctx state env type-env body)
+          [(OkLowerExpr lowered)
+            (match lowered
+              [(LowerExpr body-state value _)
+                (let
+                  [final-state : LowerState
+                    (lower-state-emit
+                      body-state
+                      (IrInstrReturn (lower-return-maybe value ret-ty)))]
+                  (OkLowerFunction
+                    (IrFunction
+                      logical-name
+                      (lower-param-list ctx params 0)
+                      ret-ty
+                      (lower-state-next-var final-state)
+                      (lower-state-build-blocks final-state))
+                    (lower-state-spans final-state)))])]
+          [(ErrLowerExpr message) (ErrLowerFunction message)])))))
 
 (define (lower-global-value [names : LowerNameEnv] [expr : AstExpr]) : ResultLowerValue
   (match expr
@@ -5162,18 +5172,22 @@
                 [(ErrLowerValue message) (ErrLowerDecls message)])]
             [(ErrTcType message) (ErrLowerDecls (lower-diagnostic message))])]
         [(AstDeclExtern name ty)
-          (lower-decls-in-module
-            ctx
-            top-env
-            rest
-            globals
-            functions
-            (lower-extern-list-append
-              externs
-              (IrExtern name (tc-type-without-regions (tc-resolve-type ctx ty))))
-            spans
-            names
-            module)]
+          (if (tc-type-contains-reference? (tc-resolve-type ctx ty))
+            (ErrLowerDecls (lower-diagnostic (lower-reference-support-message)))
+            (lower-decls-in-module
+              ctx
+              top-env
+              rest
+              globals
+              functions
+              (lower-extern-list-append
+                externs
+                (IrExtern
+                  name
+                  (tc-type-without-regions (tc-resolve-type ctx ty))))
+              spans
+              names
+              module))]
         [(AstDeclDefFn name params ret body)
           (match (lower-function
             ctx
@@ -5292,7 +5306,9 @@
 (define (lower-compiler-program-unlocated [program : AstProgram]) : ResultCompilerLower
   (match (compiler-specialize-program program)
     [(OkSpecProgram specialized)
-      (match (typecheck-compiler-program specialized)
+      (match (typecheck-compiler-specialized-program-with-paths
+        specialized
+        AstDeclPathNil)
         [(OkCompilerTypecheck _)
           (match (build-compiler-symbols specialized)
             [(OkCompilerSymbols symbols)
@@ -5406,6 +5422,11 @@
 (define (compiler-lower-unsupported-source) : String
   "(define (main) : (Tuple i64 bool)
   (tuple 1 true))")
+
+(define (compiler-lower-reference-source) : String
+  "(define (take [r : (& n i64)]) : unit unit)
+(define (main [n : i64]) : unit
+  (take (& n)))")
 
 ;; `(comptime expr)` folds to a literal via the scalar CTFE evaluator (#719).
 ;; These fixtures exercise arithmetic, `if`, and `let` folds, plus the
@@ -6727,6 +6748,11 @@
       (if (compiler-lower-error-ok?
         (compiler-lower-unsupported-source)
         "lower: unsupported expression")
+        unit
+        (set! ok false))
+      (if (compiler-lower-error-ok?
+        (compiler-lower-reference-source)
+        (lower-reference-support-message))
         unit
         (set! ok false))
       (if (compiler-lower-comptime-fold-ok?

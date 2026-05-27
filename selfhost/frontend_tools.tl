@@ -583,6 +583,13 @@
         "Cast { expr: "
         (front-expr-render inner)
         (front-cat3 ", ty: " (front-type-render ty) " }"))]
+    [(AstExprBorrow lifetime place)
+      (front-cat3
+        "Borrow { lifetime: "
+        (match lifetime
+          [(AstBorrowLifetimeInferred) "Infer"]
+          [(AstBorrowLifetimeNamed name) (front-cat3 "\"" name "\"")])
+        (front-cat3 ", place: " (front-expr-render place) " }"))]
     [(AstExprMatch scrutinee _)
       (front-cat3 "Match { scrutinee: " (front-expr-render scrutinee) " }")]
     [(AstExprForeach name index-ty start end body)

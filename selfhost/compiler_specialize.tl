@@ -1162,7 +1162,8 @@
       (match (spec-rewrite-expr value templates state)
         [(OkSpecExpr rewritten state2)
           (OkSpecExpr (AstExprIntToPtr rewritten ty) state2)]
-        [(ErrSpecExpr diag) (ErrSpecExpr diag)])]))
+        [(ErrSpecExpr diag) (ErrSpecExpr diag)])]
+    [(AstExprBorrow _ _) (OkSpecExpr expr state)]))
 
 (define (spec-substitute-values-expr [expr : AstExpr] [subs : SpecValueSubst]) : ResultSpecSubExpr
   (match expr
@@ -1425,7 +1426,8 @@
       (match (spec-substitute-values-expr value subs)
         [(OkSpecSubExpr rewritten)
           (OkSpecSubExpr (AstExprIntToPtr rewritten ty))]
-        [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]))
+        [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
+    [(AstExprBorrow _ _) (OkSpecSubExpr expr)]))
 
 (define (spec-substitute-values-expr-list
   [exprs : AstExprList]
@@ -1761,7 +1763,8 @@
         [(OkSpecSubExpr rewritten)
           (OkSpecSubExpr
             (AstExprIntToPtr rewritten (spec-substitute-type ty subs)))]
-        [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]))
+        [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
+    [(AstExprBorrow _ _) (OkSpecSubExpr expr)]))
 
 (define (spec-substitute-types-expr-list
   [exprs : AstExprList]

@@ -22,6 +22,13 @@
   (OkTcTypeList AstTypeList)
   (ErrTcTypeList String))
 
+(defenum TcBorrowPlace
+  (TcBorrowPlace String AstType))
+
+(defenum ResultTcBorrowPlace
+  (OkTcBorrowPlace TcBorrowPlace)
+  (ErrTcBorrowPlace String))
+
 (defenum ResultTcString
   (OkTcString String)
   (ErrTcString String))
@@ -702,6 +709,45 @@
     [(AstTyRegion _ _) true]
     [_ false]))
 
+(define (tc-type-list-contains-reference? [types : AstTypeList]) : bool
+  (match types
+    [(AstTypeNil) false]
+    [(AstTypeCons head tail)
+      (or
+        (tc-type-contains-reference? head)
+        (tc-type-list-contains-reference? tail))]))
+
+(define (tc-type-contains-reference? [ty : AstType]) : bool
+  (match ty
+    [(AstTyFunc args ret)
+      (or
+        (tc-type-list-contains-reference? args)
+        (tc-type-contains-reference? ret))]
+    [(AstTyTuple elems) (tc-type-list-contains-reference? elems)]
+    [(AstTyArray elem _) (tc-type-contains-reference? elem)]
+    [(AstTyDynArray elem) (tc-type-contains-reference? elem)]
+    [(AstTyPtr elem) (tc-type-contains-reference? elem)]
+    [(AstTyMutPtr elem) (tc-type-contains-reference? elem)]
+    [(AstTyRef _ _) true]
+    [(AstTyMutRef _ _) true]
+    [(AstTyRegion _ inner) (tc-type-contains-reference? inner)]
+    [_ false]))
+
+(define (tc-maybe-type-contains-reference? [maybe-ty : AstMaybeType]) : bool
+  (match maybe-ty
+    [(AstNoType) false]
+    [(AstSomeType ty) (tc-type-contains-reference? ty)]))
+
+(define (tc-param-list-contains-reference? [params : AstParamList]) : bool
+  (match params
+    [(AstParamNil) false]
+    [(AstParamCons param rest)
+      (match param
+        [(AstParam _ ty _)
+          (or
+            (tc-type-contains-reference? ty)
+            (tc-param-list-contains-reference? rest))])]))
+
 (define (tc-type-list-collect-regions
   [types : AstTypeList]
   [out : TcStringList]) : TcStringList
@@ -892,17 +938,12 @@
     [(AstTyDynArray elem) (tc-source-type-policy-ok ctx elem)]
     [(AstTyPtr elem) (tc-source-type-policy-ok ctx elem)]
     [(AstTyMutPtr elem) (tc-source-type-policy-ok ctx elem)]
-    [(AstTyRef _ inner)
-      (match (tc-source-type-policy-ok ctx inner)
-        [(OkTcUnit)
-          (ErrTcUnit
-            "typecheck: reference types require borrow checker support (#803/#806/#804)")]
-        [(ErrTcUnit message) (ErrTcUnit message)])]
+    [(AstTyRef _ inner) (tc-source-type-policy-ok ctx inner)]
     [(AstTyMutRef _ inner)
       (match (tc-source-type-policy-ok ctx inner)
         [(OkTcUnit)
           (ErrTcUnit
-            "typecheck: reference types require borrow checker support (#803/#806/#804)")]
+            "typecheck: mutable reference types require mutable borrow checker support (#806)")]
         [(ErrTcUnit message) (ErrTcUnit message)])]
     [(AstTyRegion _ inner) (tc-source-type-policy-ok ctx inner)]
     [(AstTyVar name) (ErrTcUnit (tc-source-type-policy-message name))]
@@ -936,7 +977,11 @@
       (match field
         [(AstFieldDef _ ty _)
           (match (tc-source-type-policy-ok ctx ty)
-            [(OkTcUnit) (tc-source-field-list-policy-ok ctx rest)]
+            [(OkTcUnit)
+              (if (tc-type-contains-reference? (tc-resolve-type ctx ty))
+                (ErrTcUnit
+                  "typecheck: storing references in aggregate fields requires lifetime support (#804)")
+                (tc-source-field-list-policy-ok ctx rest))]
             [(ErrTcUnit message) (ErrTcUnit message)])])]))
 
 (define (tc-source-variant-list-policy-ok
@@ -948,7 +993,12 @@
       (match variant
         [(AstVariantDef _ fields)
           (match (tc-source-type-list-policy-ok ctx fields)
-            [(OkTcUnit) (tc-source-variant-list-policy-ok ctx rest)]
+            [(OkTcUnit)
+              (if (tc-type-list-contains-reference?
+                (tc-resolve-type-list ctx fields))
+                (ErrTcUnit
+                  "typecheck: storing references in aggregate fields requires lifetime support (#804)")
+                (tc-source-variant-list-policy-ok ctx rest))]
             [(ErrTcUnit message) (ErrTcUnit message)])])]))
 
 (define (tc-source-pattern-list-policy-ok
@@ -1060,7 +1110,11 @@
       (match (tc-source-param-list-policy-ok ctx params)
         [(OkTcUnit)
           (match (tc-source-maybe-type-policy-ok ctx maybe-ret)
-            [(OkTcUnit) (tc-source-expr-policy-ok ctx body)]
+            [(OkTcUnit)
+              (if (tc-maybe-type-contains-reference? maybe-ret)
+                (ErrTcUnit
+                  "typecheck: returning references requires lifetime support (#804)")
+                (tc-source-expr-policy-ok ctx body))]
             [(ErrTcUnit message) (ErrTcUnit message)])]
         [(ErrTcUnit message) (ErrTcUnit message)])]
     [(AstExprTuple exprs) (tc-source-expr-list-policy-ok ctx exprs)]
@@ -1087,6 +1141,7 @@
       (match (tc-source-expr-policy-ok ctx inner)
         [(OkTcUnit) (tc-source-type-policy-ok ctx ty)]
         [(ErrTcUnit message) (ErrTcUnit message)])]
+    [(AstExprBorrow _ place) (tc-source-expr-policy-ok ctx place)]
     [(AstExprMatch scrutinee arms)
       (match (tc-source-expr-policy-ok ctx scrutinee)
         [(OkTcUnit) (tc-source-match-arm-list-policy-ok ctx arms)]
@@ -1130,13 +1185,21 @@
   (match decl
     [(AstDeclDef _ maybe-ty expr)
       (match (tc-source-maybe-type-policy-ok ctx maybe-ty)
-        [(OkTcUnit) (tc-source-expr-policy-ok ctx expr)]
+        [(OkTcUnit)
+          (if (tc-maybe-type-contains-reference? maybe-ty)
+            (ErrTcUnit
+              "typecheck: storing references in top-level values requires lifetime support (#804)")
+            (tc-source-expr-policy-ok ctx expr))]
         [(ErrTcUnit message) (ErrTcUnit message)])]
     [(AstDeclDefFn _ params ret body)
       (match (tc-source-param-list-policy-ok ctx params)
         [(OkTcUnit)
           (match (tc-source-type-policy-ok ctx ret)
-            [(OkTcUnit) (tc-source-expr-policy-ok ctx body)]
+            [(OkTcUnit)
+              (if (tc-type-contains-reference? (tc-resolve-type ctx ret))
+                (ErrTcUnit
+                  "typecheck: returning references requires lifetime support (#804)")
+                (tc-source-expr-policy-ok ctx body))]
             [(ErrTcUnit message) (ErrTcUnit message)])]
         [(ErrTcUnit message) (ErrTcUnit message)])]
     [(AstDeclExtern _ ty) (tc-source-type-policy-ok ctx ty)]
@@ -1999,7 +2062,9 @@
                 [(OkTcUnit)
                   (if (and
                     (tc-type-contains-any-region got)
-                    (not allow-region-args))
+                    (and
+                      (not allow-region-args)
+                      (not (tc-type-contains-reference? got))))
                     (ErrTcUnit
                       "typecheck: cannot pass region-tagged value to function parameter; region value would escape")
                     (match constructor-target
@@ -2758,6 +2823,13 @@
     [(AstExprSpmdReduce _ _ _ _ _ _ _)
       (ErrTcSpmdExprInfo
         "typecheck: spmd-reduce inside foreach is not supported")]
+    [(AstExprBorrow _ place)
+      (match (tc-spmd-expr ctx env spmd-env place)
+        [(OkTcSpmdExprInfo info)
+          (match info
+            [(TcSpmdExprInfo _ class next-spmd-env)
+              (tc-spmd-finish expr-ty class next-spmd-env)])]
+        [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)])]
     [(AstExprStructGet receiver _)
       (match (tc-spmd-expr ctx env spmd-env receiver)
         [(OkTcSpmdExprInfo info)
@@ -3040,6 +3112,7 @@
         (tc-expr-uses-free-name? value name bound))]
     [(AstExprAnn inner _) (tc-expr-uses-free-name? inner name bound)]
     [(AstExprCast inner _) (tc-expr-uses-free-name? inner name bound)]
+    [(AstExprBorrow _ place) (tc-expr-uses-free-name? place name bound)]
     [(AstExprMatch scrutinee arms)
       (or
         (tc-expr-uses-free-name? scrutinee name bound)
@@ -3688,6 +3761,110 @@
         (string-append
           "typecheck: unknown struct field "
           (compiler-struct-field-key struct-name field)))]))
+
+(define (tc-borrow-place-var [name : String] [ty : AstType]) : ResultTcBorrowPlace
+  (if (tc-type-contains-reference? ty)
+    (ErrTcBorrowPlace
+      "typecheck: borrowing reference-typed places is not implemented (#804)")
+    (match (tc-type-outer-region ty)
+      [(TcSomeString region)
+        (OkTcBorrowPlace (TcBorrowPlace region (tc-type-without-regions ty)))]
+      [(TcNoString)
+        (OkTcBorrowPlace (TcBorrowPlace name (tc-type-without-regions ty)))])))
+
+(define (tc-borrow-place-struct-field
+  [ctx : TcContext]
+  [place : TcBorrowPlace]
+  [field : String]) : ResultTcBorrowPlace
+  (match place
+    [(TcBorrowPlace lifetime receiver-ty)
+      (match (tc-type-strip-region (tc-resolve-type ctx receiver-ty))
+        [(AstTyStruct struct-name)
+          (match (tc-struct-field-type ctx struct-name field)
+            [(OkTcType field-ty)
+              (OkTcBorrowPlace
+                (TcBorrowPlace lifetime (tc-type-without-regions field-ty)))]
+            [(ErrTcType message) (ErrTcBorrowPlace message)])]
+        [_
+          (ErrTcBorrowPlace
+            "typecheck: struct-get borrow requires struct place")])]))
+
+(define (tc-borrow-place-tuple-field
+  [ctx : TcContext]
+  [place : TcBorrowPlace]
+  [index : i64]) : ResultTcBorrowPlace
+  (match place
+    [(TcBorrowPlace lifetime tuple-ty)
+      (match (tc-type-strip-region (tc-resolve-type ctx tuple-ty))
+        [(AstTyTuple elems)
+          (match (tc-type-list-ref elems index)
+            [(OkTcType elem-ty)
+              (OkTcBorrowPlace
+                (TcBorrowPlace lifetime (tc-type-without-regions elem-ty)))]
+            [(ErrTcType message) (ErrTcBorrowPlace message)])]
+        [_
+          (ErrTcBorrowPlace "typecheck: tuple-ref borrow requires tuple place")])]))
+
+(define (tc-borrow-place-array-element
+  [ctx : TcContext]
+  [place : TcBorrowPlace]) : ResultTcBorrowPlace
+  (match place
+    [(TcBorrowPlace lifetime array-ty)
+      (match (tc-type-strip-region (tc-resolve-type ctx array-ty))
+        [(AstTyArray elem-ty _)
+          (OkTcBorrowPlace
+            (TcBorrowPlace lifetime (tc-type-without-regions elem-ty)))]
+        [(AstTyDynArray elem-ty)
+          (OkTcBorrowPlace
+            (TcBorrowPlace lifetime (tc-type-without-regions elem-ty)))]
+        [_
+          (ErrTcBorrowPlace "typecheck: array-ref borrow requires array place")])]))
+
+(define (tc-borrow-place [ctx : TcContext] [env : TcTypeEnv] [expr : AstExpr]) : ResultTcBorrowPlace
+  (match (ast-expr-unspan expr)
+    [(AstExprVar name)
+      (match (tc-lookup env name)
+        [(OkTcType ty) (tc-borrow-place-var name ty)]
+        [(ErrTcType message) (ErrTcBorrowPlace message)])]
+    [(AstExprStructGet receiver field)
+      (match (tc-borrow-place ctx env receiver)
+        [(OkTcBorrowPlace place) (tc-borrow-place-struct-field ctx place field)]
+        [(ErrTcBorrowPlace message) (ErrTcBorrowPlace message)])]
+    [(AstExprTupleRef tuple index)
+      (match (tc-borrow-place ctx env tuple)
+        [(OkTcBorrowPlace place) (tc-borrow-place-tuple-field ctx place index)]
+        [(ErrTcBorrowPlace message) (ErrTcBorrowPlace message)])]
+    [(AstExprArrayRef array index)
+      (match (tc-expr ctx env index)
+        [(OkTcType index-ty)
+          (if (tc-integer-type? index-ty)
+            (match (tc-borrow-place ctx env array)
+              [(OkTcBorrowPlace place)
+                (tc-borrow-place-array-element ctx place)]
+              [(ErrTcBorrowPlace message) (ErrTcBorrowPlace message)])
+            (ErrTcBorrowPlace "typecheck: array index must be integer"))]
+        [(ErrTcType message) (ErrTcBorrowPlace message)])]
+    [_
+      (ErrTcBorrowPlace
+        "typecheck: borrow requires a local, parameter, or aggregate place")]))
+
+(define (tc-borrow-expr
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [lifetime : AstBorrowLifetime]
+  [place-expr : AstExpr]) : ResultTcType
+  (match (tc-borrow-place ctx env place-expr)
+    [(OkTcBorrowPlace place)
+      (match place
+        [(TcBorrowPlace inferred referent-ty)
+          (match lifetime
+            [(AstBorrowLifetimeInferred)
+              (OkTcType (AstTyRef inferred referent-ty))]
+            [(AstBorrowLifetimeNamed requested)
+              (if (string-eq requested inferred)
+                (OkTcType (AstTyRef inferred referent-ty))
+                (ErrTcType "typecheck: borrow lifetime mismatch"))])])]
+    [(ErrTcBorrowPlace message) (ErrTcType message)]))
 
 (define (tc-literal-pattern-compatible? [lit : AstLiteral] [scrut-ty : AstType]) : bool
   (let
@@ -4532,6 +4709,7 @@
             (ErrTcType
               "typecheck: cast requires integer/char source and target"))]
         [(ErrTcType message) (ErrTcType message)])]
+    [(AstExprBorrow lifetime place) (tc-borrow-expr ctx env lifetime place)]
     [(AstExprUnary op inner)
       (match (tc-expr ctx env inner)
         [(OkTcType ty) (tc-unop-type op ty)]
@@ -5618,9 +5796,44 @@
     (compiler-typecheck-ok? (compiler-typecheck-raw-pointer-source))
     (compiler-typecheck-raw-pointer-render-ok?)))
 
-(define (compiler-typecheck-reference-source) : String
-  "(define (use-string [s : (& r String)]) : i64
-  (string-length s))")
+(define (compiler-typecheck-reference-local-source) : String
+  "(define (take [r : (& n i64)]) : unit unit)
+(define (main [n : i64]) : unit
+  (let [r : (& n i64) (& n)]
+    (take r)))")
+
+(define (compiler-typecheck-reference-param-source) : String
+  "(define (take [r : (& n i64)]) : unit unit)
+(define (main [n : i64]) : unit
+  (take (& n)))")
+
+(define (compiler-typecheck-reference-projection-source) : String
+  "(defstruct Pair (left i64) (right i64))
+(define (take-pair [r : (& p i64)]) : unit unit)
+(define (take-tuple [r : (& t i64)]) : unit unit)
+(define (take-array [r : (& items i64)]) : unit unit)
+(define (main [p : Pair] [t : (Tuple i64 bool)] [items : (Array i64)]) : unit
+  (begin
+    (take-pair (& (struct-get p left)))
+    (take-tuple (& (tuple-ref t 0)))
+    (take-array (& (array-ref items 0)))))")
+
+(define (compiler-typecheck-reference-temp-source) : String
+  "(define (take [r : (& n i64)]) : unit unit)
+(define (main [n : i64]) : unit
+  (take (& (+ n 1))))")
+
+(define (compiler-typecheck-reference-mismatch-source) : String
+  "(define (take [r : (& n i64)]) : unit unit)
+(define (main [n : i64]) : unit
+  (take (& other n)))")
+
+(define (compiler-typecheck-reference-return-source) : String
+  "(define (main [n : i64]) : (& n i64)
+  (& n))")
+
+(define (compiler-typecheck-reference-mut-source) : String
+  "(define (main [n : (&mut phase i64)]) : unit unit)")
 
 (define (compiler-typecheck-reference-render-ok?) : bool
   (and
@@ -5649,9 +5862,28 @@
 (define (compiler-typecheck-reference-tests-ok?) : bool
   (and
     (compiler-typecheck-reference-render-ok?)
-    (compiler-typecheck-error-ok?
-      (compiler-typecheck-reference-source)
-      "typecheck: reference types require borrow checker support (#803/#806/#804)")))
+    (and
+      (compiler-typecheck-ok? (compiler-typecheck-reference-local-source))
+      (and
+        (compiler-typecheck-ok? (compiler-typecheck-reference-param-source))
+        (and
+          (compiler-typecheck-ok?
+            (compiler-typecheck-reference-projection-source))
+          (and
+            (compiler-typecheck-error-ok?
+              (compiler-typecheck-reference-temp-source)
+              "typecheck: borrow requires a local, parameter, or aggregate place")
+            (and
+              (compiler-typecheck-error-ok?
+                (compiler-typecheck-reference-mismatch-source)
+                "typecheck: borrow lifetime mismatch")
+              (and
+                (compiler-typecheck-error-ok?
+                  (compiler-typecheck-reference-return-source)
+                  "typecheck: returning references requires lifetime support (#804)")
+                (compiler-typecheck-error-ok?
+                  (compiler-typecheck-reference-mut-source)
+                  "typecheck: mutable reference types require mutable borrow checker support (#806)")))))))))
 
 ;; A type error whose offending expression (`missing`) is on source line 2, so
 ;; the diagnostic must locate it there (not at the 1:1 fallback) — proving the

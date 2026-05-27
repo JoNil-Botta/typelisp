@@ -380,6 +380,7 @@ contains|_tl_compiler_reg_plan_function:
 end
 
 case|selfhost_compiler_specialize|selfhost/compiler_specialize.tl|assembly|skip|direct
+requires-stage0-mode|#1361 stage1 compiler resource blocker (specializer/type-value pipeline)
 contains|_tl_compiler_specialize_program:
 contains|_tl_compiler_specialize_self_test:
 contains|__tl_specialized_alloc_type_i64_none
@@ -387,6 +388,7 @@ contains|specialize: expected type value
 end
 
 case|selfhost_compiler_specialize_smoke|selfhost/compiler_specialize_smoke.tl|assembly|exactly-one|direct
+requires-stage0-mode|#1361 stage1 compiler resource blocker (imports specializer)
 contains|_tl_compiler_specialize_self_test:
 contains|_tl_compiler_specialize_program:
 end

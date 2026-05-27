@@ -760,6 +760,309 @@
         (compiler-ir-function-list-instruction-count functions)
         (compiler-ir-function-list-var-count functions))]))
 
+(define (compiler-ir-cat3 [a : String] [b : String] [c : String]) : String
+  (string-append a (string-append b c)))
+
+(define (compiler-ir-cat4 [a : String] [b : String] [c : String] [d : String]) : String
+  (string-append a (string-append b (string-append c d))))
+
+(define (compiler-ir-cat5
+  [a : String]
+  [b : String]
+  [c : String]
+  [d : String]
+  [e : String]) : String
+  (string-append a (string-append b (string-append c (string-append d e)))))
+
+(define (compiler-ir-cat6
+  [a : String]
+  [b : String]
+  [c : String]
+  [d : String]
+  [e : String]
+  [f : String]) : String
+  (string-append
+    a
+    (string-append b (string-append c (string-append d (string-append e f))))))
+
+(define (compiler-ir-type-list-name [types : AstTypeList]) : String
+  (match types
+    [(AstTypeNil) ""]
+    [(AstTypeCons head tail)
+      (compiler-ir-cat3
+        " "
+        (compiler-ir-type-name head)
+        (compiler-ir-type-list-name tail))]))
+
+(define (compiler-ir-type-name [ty : AstType]) : String
+  (match ty
+    [(AstTyI64) "i64"]
+    [(AstTyI32) "i32"]
+    [(AstTyI16) "i16"]
+    [(AstTyI8) "i8"]
+    [(AstTyU64) "u64"]
+    [(AstTyU32) "u32"]
+    [(AstTyU16) "u16"]
+    [(AstTyU8) "u8"]
+    [(AstTyF64) "f64"]
+    [(AstTyF32) "f32"]
+    [(AstTyBool) "bool"]
+    [(AstTyChar) "char"]
+    [(AstTyString) "String"]
+    [(AstTyUnit) "unit"]
+    [(AstTyNever) "never"]
+    [(AstTyFunc args ret)
+      (compiler-ir-cat4
+        "(->"
+        (compiler-ir-type-list-name args)
+        " "
+        (compiler-ir-cat3 (compiler-ir-type-name ret) ")" ""))]
+    [(AstTyTuple elems)
+      (compiler-ir-cat3 "(Tuple" (compiler-ir-type-list-name elems) ")")]
+    [(AstTyArray elem count)
+      (compiler-ir-cat5
+        "(Array "
+        (compiler-ir-type-name elem)
+        " "
+        (int->string count)
+        ")")]
+    [(AstTyDynArray elem)
+      (compiler-ir-cat3 "(Array " (compiler-ir-type-name elem) ")")]
+    [(AstTyRegion region inner)
+      (compiler-ir-cat5 "(in " region " " (compiler-ir-type-name inner) ")")]
+    [(AstTyRef region inner)
+      (compiler-ir-cat5 "(& " region " " (compiler-ir-type-name inner) ")")]
+    [(AstTyMutRef region inner)
+      (compiler-ir-cat5 "(&mut " region " " (compiler-ir-type-name inner) ")")]
+    [(AstTyEnum name) name]
+    [(AstTyStruct name) name]
+    [(AstTyVar name) (compiler-ir-cat3 "'" name "'")]
+    [(AstTyPtr elem)
+      (compiler-ir-cat3 "(Ptr " (compiler-ir-type-name elem) ")")]
+    [(AstTyMutPtr elem)
+      (compiler-ir-cat3 "(MutPtr " (compiler-ir-type-name elem) ")")]))
+
+(define (compiler-ir-vector-type-name [elem : AstType] [lanes : i64]) : String
+  (compiler-ir-cat5
+    "(Vector "
+    (compiler-ir-type-name elem)
+    " "
+    (int->string lanes)
+    ")"))
+
+(define (compiler-ir-mask-type-name [lanes : i64]) : String
+  (compiler-ir-cat3 "(Mask " (int->string lanes) ")"))
+
+(define (compiler-ir-value-describe [value : CompilerIrValue]) : String
+  (match value
+    [(IrValueVar id) (compiler-ir-cat3 "%" (int->string id) "")]
+    [(IrValueGlobal name) (compiler-ir-cat3 "@" name "")]
+    [(IrValueI64 n) (int->string n)]
+    [(IrValueF64 n) n]
+    [(IrValueBool b)
+      (if b
+        "true"
+        "false")]
+    [(IrValueChar c) (int->string (cast c : i64))]
+    [(IrValueString s) s]
+    [(IrValueUnit) "unit"]))
+
+(define (compiler-ir-value-list-describe [values : CompilerIrValueList]) : String
+  (match values
+    [(IrValueNil) ""]
+    [(IrValueCons head tail)
+      (match tail
+        [(IrValueNil) (compiler-ir-value-describe head)]
+        [_
+          (compiler-ir-cat3
+            (compiler-ir-value-describe head)
+            ", "
+            (compiler-ir-value-list-describe tail))])]))
+
+(define (compiler-ir-binop-name [op : CompilerIrBinOp]) : String
+  (match op
+    [(IrBinAdd) "add"]
+    [(IrBinSub) "sub"]
+    [(IrBinMul) "mul"]
+    [(IrBinDiv) "div"]
+    [(IrBinMod) "mod"]
+    [(IrBinEq) "eq"]
+    [(IrBinNe) "ne"]
+    [(IrBinLt) "lt"]
+    [(IrBinLe) "le"]
+    [(IrBinGt) "gt"]
+    [(IrBinGe) "ge"]
+    [(IrBinAnd) "and"]
+    [(IrBinOr) "or"]
+    [(IrBinBitAnd) "bitand"]
+    [(IrBinBitOr) "bitor"]
+    [(IrBinBitXor) "bitxor"]
+    [(IrBinShl) "shl"]
+    [(IrBinShr) "shr"]))
+
+(define (compiler-ir-mask-binop-name [op : CompilerIrMaskBinOp]) : String
+  (match op
+    [(IrMaskAnd) "mask_and"]
+    [(IrMaskOr) "mask_or"]))
+
+(define (compiler-ir-vector-reduce-op-name [op : CompilerIrVectorReduceOp]) : String
+  (match op
+    [(IrVectorReduceSum) "sum"]
+    [(IrVectorReduceMin) "min"]
+    [(IrVectorReduceMax) "max"]))
+
+(define (compiler-ir-mask-reduce-op-name [op : CompilerIrMaskReduceOp]) : String
+  (match op
+    [(IrMaskReduceAll) "all"]
+    [(IrMaskReduceAny) "any"]))
+
+(define (compiler-ir-lane-type-name [lanes : i64] [elem : AstType]) : String
+  (compiler-ir-cat3 (int->string lanes) " x " (compiler-ir-type-name elem)))
+
+(define (compiler-ir-vector-suffix [lanes : i64] [elem : AstType]) : String
+  (compiler-ir-cat3 " : " (compiler-ir-lane-type-name lanes elem) ""))
+
+(define (compiler-ir-instr-describe [instr : CompilerIrInstr]) : String
+  (match instr
+    [(IrInstrLaneId dst lanes ty)
+      (compiler-ir-cat5
+        "  "
+        (compiler-ir-value-describe (IrValueVar dst))
+        " = lane_id "
+        (compiler-ir-lane-type-name lanes ty)
+        "")]
+    [(IrInstrSplat dst value lanes ty)
+      (compiler-ir-cat6
+        "  "
+        (compiler-ir-value-describe (IrValueVar dst))
+        " = splat "
+        (compiler-ir-value-describe value)
+        (compiler-ir-vector-suffix lanes ty)
+        "")]
+    [(IrInstrVectorBinOp dst op lhs rhs lanes elem-ty)
+      (compiler-ir-cat6
+        "  "
+        (compiler-ir-value-describe (IrValueVar dst))
+        (compiler-ir-cat3 " = vector_" (compiler-ir-binop-name op) " ")
+        (compiler-ir-value-describe lhs)
+        (compiler-ir-cat3 ", " (compiler-ir-value-describe rhs) "")
+        (compiler-ir-vector-suffix lanes elem-ty))]
+    [(IrInstrVectorReduce dst op src lanes elem-ty)
+      (compiler-ir-cat6
+        "  "
+        (compiler-ir-value-describe (IrValueVar dst))
+        (compiler-ir-cat3
+          " = vector_reduce_"
+          (compiler-ir-vector-reduce-op-name op)
+          " ")
+        (compiler-ir-value-describe src)
+        (compiler-ir-vector-suffix lanes elem-ty)
+        "")]
+    [(IrInstrVectorCompare dst op lhs rhs lanes elem-ty)
+      (compiler-ir-cat6
+        "  "
+        (compiler-ir-value-describe (IrValueVar dst))
+        (compiler-ir-cat3 " = vector_cmp_" (compiler-ir-binop-name op) " ")
+        (compiler-ir-value-describe lhs)
+        (compiler-ir-cat3 ", " (compiler-ir-value-describe rhs) "")
+        (compiler-ir-vector-suffix lanes elem-ty))]
+    [(IrInstrMaskBinOp dst op lhs rhs lanes)
+      (compiler-ir-cat6
+        "  "
+        (compiler-ir-value-describe (IrValueVar dst))
+        (compiler-ir-cat3 " = " (compiler-ir-mask-binop-name op) " ")
+        (compiler-ir-value-describe lhs)
+        (compiler-ir-cat3 ", " (compiler-ir-value-describe rhs) " : ")
+        (int->string lanes))]
+    [(IrInstrMaskNot dst src lanes)
+      (compiler-ir-cat6
+        "  "
+        (compiler-ir-value-describe (IrValueVar dst))
+        " = mask_not "
+        (compiler-ir-value-describe src)
+        " : "
+        (int->string lanes))]
+    [(IrInstrMaskReduce dst op src lanes)
+      (compiler-ir-cat6
+        "  "
+        (compiler-ir-value-describe (IrValueVar dst))
+        (compiler-ir-cat3
+          " = mask_reduce_"
+          (compiler-ir-mask-reduce-op-name op)
+          " ")
+        (compiler-ir-value-describe src)
+        " : "
+        (int->string lanes))]
+    [(IrInstrSelect dst mask on-true on-false lanes ty)
+      (compiler-ir-cat6
+        "  "
+        (compiler-ir-value-describe (IrValueVar dst))
+        " = select "
+        (compiler-ir-value-describe mask)
+        (compiler-ir-cat5
+          ", "
+          (compiler-ir-value-describe on-true)
+          ", "
+          (compiler-ir-value-describe on-false)
+          "")
+        (compiler-ir-vector-suffix lanes ty))]
+    [(IrInstrVectorLoad dst base index lanes elem-ty)
+      (compiler-ir-cat6
+        "  "
+        (compiler-ir-value-describe (IrValueVar dst))
+        " = vector_load "
+        (compiler-ir-value-describe base)
+        (compiler-ir-cat3 ", " (compiler-ir-value-describe index) "")
+        (compiler-ir-vector-suffix lanes elem-ty))]
+    [(IrInstrVectorStore base index value lanes elem-ty)
+      (compiler-ir-cat6
+        "  vector_store "
+        (compiler-ir-value-describe base)
+        (compiler-ir-cat3 ", " (compiler-ir-value-describe index) "")
+        (compiler-ir-cat3 ", " (compiler-ir-value-describe value) "")
+        (compiler-ir-vector-suffix lanes elem-ty)
+        "")]
+    [(IrInstrPredicatedStore base index value mask lanes elem-ty)
+      (compiler-ir-cat6
+        "  predicated_store "
+        (compiler-ir-value-describe base)
+        (compiler-ir-cat3 ", " (compiler-ir-value-describe index) "")
+        (compiler-ir-cat5
+          ", "
+          (compiler-ir-value-describe value)
+          ", "
+          (compiler-ir-value-describe mask)
+          "")
+        (compiler-ir-vector-suffix lanes elem-ty)
+        "")]
+    [(IrInstrPredicatedLoad dst base index mask lanes elem-ty)
+      (compiler-ir-cat6
+        "  "
+        (compiler-ir-value-describe (IrValueVar dst))
+        " = predicated_load "
+        (compiler-ir-value-describe base)
+        (compiler-ir-cat5
+          ", "
+          (compiler-ir-value-describe index)
+          ", "
+          (compiler-ir-value-describe mask)
+          "")
+        (compiler-ir-vector-suffix lanes elem-ty))]
+    [(IrInstrTailMask dst index len lanes)
+      (compiler-ir-cat6
+        "  "
+        (compiler-ir-value-describe (IrValueVar dst))
+        " = tail_mask "
+        (compiler-ir-value-describe index)
+        (compiler-ir-cat3 ", " (compiler-ir-value-describe len) " : ")
+        (int->string lanes))]
+    [_ "non-vector-mask-instr"]))
+
+(define (compiler-ir-value-var-eq? [value : CompilerIrValue] [want : i64]) : bool
+  (match value
+    [(IrValueVar id) (= id want)]
+    [_ false]))
+
 (define (compiler-ir-effect-is?
   [instr : CompilerIrInstr]
   [effect : CompilerIrEffect]) : bool
@@ -1010,12 +1313,182 @@
                     (compiler-ir-effect-invalidates-cse? IrEffectControlFlow)
                     (compiler-ir-effect-invalidates-cse? IrEffectUnknown)))))))))))
 
+(define (compiler-ir-display-type-names-ok?) : bool
+  (and
+    (string-eq (compiler-ir-vector-type-name (AstTyI32) 8) "(Vector i32 8)")
+    (string-eq (compiler-ir-mask-type-name 8) "(Mask 8)")))
+
+(define (compiler-ir-display-op-names-ok?) : bool
+  (and
+    (string-eq (compiler-ir-vector-reduce-op-name IrVectorReduceSum) "sum")
+    (and
+      (string-eq (compiler-ir-vector-reduce-op-name IrVectorReduceMin) "min")
+      (and
+        (string-eq (compiler-ir-vector-reduce-op-name IrVectorReduceMax) "max")
+        (and
+          (string-eq (compiler-ir-mask-reduce-op-name IrMaskReduceAll) "all")
+          (and
+            (string-eq (compiler-ir-mask-reduce-op-name IrMaskReduceAny) "any")
+            (and
+              (string-eq (compiler-ir-mask-binop-name IrMaskAnd) "mask_and")
+              (string-eq (compiler-ir-mask-binop-name IrMaskOr) "mask_or"))))))))
+
+(define (compiler-ir-display-instrs-ok?) : bool
+  (let
+    [ok : bool true]
+    (begin
+      (if (string-eq
+        (compiler-ir-instr-describe (IrInstrLaneId 0 4 (AstTyI64)))
+        "  %0 = lane_id 4 x i64")
+        unit
+        (set! ok false))
+      (if (string-eq
+        (compiler-ir-instr-describe
+          (IrInstrSplat 1 (IrValueI64 7) 4 (AstTyI64)))
+        "  %1 = splat 7 : 4 x i64")
+        unit
+        (set! ok false))
+      (if (string-eq
+        (compiler-ir-instr-describe
+          (IrInstrVectorBinOp
+            2
+            (IrBinAdd)
+            (IrValueVar 0)
+            (IrValueVar 1)
+            4
+            (AstTyI64)))
+        "  %2 = vector_add %0, %1 : 4 x i64")
+        unit
+        (set! ok false))
+      (if (string-eq
+        (compiler-ir-instr-describe
+          (IrInstrVectorReduce
+            8
+            (IrVectorReduceSum)
+            (IrValueVar 2)
+            4
+            (AstTyI64)))
+        "  %8 = vector_reduce_sum %2 : 4 x i64")
+        unit
+        (set! ok false))
+      (if (string-eq
+        (compiler-ir-instr-describe
+          (IrInstrVectorCompare
+            3
+            (IrBinLt)
+            (IrValueVar 0)
+            (IrValueVar 1)
+            4
+            (AstTyI64)))
+        "  %3 = vector_cmp_lt %0, %1 : 4 x i64")
+        unit
+        (set! ok false))
+      (if (string-eq
+        (compiler-ir-instr-describe
+          (IrInstrMaskBinOp 4 (IrMaskOr) (IrValueVar 3) (IrValueVar 3) 4))
+        "  %4 = mask_or %3, %3 : 4")
+        unit
+        (set! ok false))
+      (if (string-eq
+        (compiler-ir-instr-describe (IrInstrMaskNot 5 (IrValueVar 4) 4))
+        "  %5 = mask_not %4 : 4")
+        unit
+        (set! ok false))
+      (if (string-eq
+        (compiler-ir-instr-describe
+          (IrInstrMaskReduce 9 (IrMaskReduceAny) (IrValueVar 5) 4))
+        "  %9 = mask_reduce_any %5 : 4")
+        unit
+        (set! ok false))
+      (if (string-eq
+        (compiler-ir-instr-describe
+          (IrInstrSelect
+            6
+            (IrValueVar 5)
+            (IrValueVar 2)
+            (IrValueVar 1)
+            4
+            (AstTyI64)))
+        "  %6 = select %5, %2, %1 : 4 x i64")
+        unit
+        (set! ok false))
+      (if (string-eq
+        (compiler-ir-instr-describe
+          (IrInstrVectorLoad 7 (IrValueVar 10) (IrValueVar 11) 4 (AstTyI64)))
+        "  %7 = vector_load %10, %11 : 4 x i64")
+        unit
+        (set! ok false))
+      (if (string-eq
+        (compiler-ir-instr-describe
+          (IrInstrVectorStore
+            (IrValueVar 12)
+            (IrValueVar 11)
+            (IrValueVar 6)
+            4
+            (AstTyI64)))
+        "  vector_store %12, %11, %6 : 4 x i64")
+        unit
+        (set! ok false))
+      (if (string-eq
+        (compiler-ir-instr-describe
+          (IrInstrPredicatedStore
+            (IrValueVar 12)
+            (IrValueVar 11)
+            (IrValueVar 6)
+            (IrValueVar 5)
+            4
+            (AstTyI64)))
+        "  predicated_store %12, %11, %6, %5 : 4 x i64")
+        unit
+        (set! ok false))
+      (if (string-eq
+        (compiler-ir-instr-describe
+          (IrInstrPredicatedLoad
+            10
+            (IrValueVar 12)
+            (IrValueVar 11)
+            (IrValueVar 5)
+            4
+            (AstTyI64)))
+        "  %10 = predicated_load %12, %11, %5 : 4 x i64")
+        unit
+        (set! ok false))
+      ok)))
+
+(define (compiler-ir-display-tail-mask-ok?) : bool
+  (let
+    [instr : CompilerIrInstr
+      (IrInstrTailMask 9 (IrValueVar 1) (IrValueVar 2) 8)]
+    (and
+      (string-eq
+        (compiler-ir-instr-describe instr)
+        "  %9 = tail_mask %1, %2 : 8")
+      (and
+        (compiler-ir-effect-is? instr IrEffectPure)
+        (match instr
+          [(IrInstrTailMask dst index len lanes)
+            (and
+              (= dst 9)
+              (and
+                (compiler-ir-value-var-eq? index 1)
+                (and (compiler-ir-value-var-eq? len 2) (= lanes 8))))]
+          [_ false])))))
+
+(define (compiler-ir-display-self-test-ok?) : bool
+  (and
+    (compiler-ir-display-type-names-ok?)
+    (and
+      (compiler-ir-display-op-names-ok?)
+      (and (compiler-ir-display-instrs-ok?) (compiler-ir-display-tail-mask-ok?)))))
+
 (define (compiler-ir-effect-self-test) : i64
   (if (compiler-ir-instruction-effects-ok?)
     (if (compiler-ir-vector-mask-effects-ok?)
       (if (compiler-ir-runtime-effects-ok?)
         (if (compiler-ir-effect-predicates-ok?)
-          42
+          (if (compiler-ir-display-self-test-ok?)
+            42
+            1)
           1)
         1)
       1)

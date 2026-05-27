@@ -370,6 +370,63 @@ chain.
 Until that path is complete, write explicit monomorphic declarations such as
 `MaybeI64`, `ResultStringI64`, or domain-specific structs/enums.
 
+#### 3.7.1 Typed expression macros (v1 design)
+
+V1 macros are compile-time expression transformers. They are declared with
+`defmacro`, checked through a function-type-like `macro` type, and expanded
+before ordinary runtime typechecking and lowering. A macro is not a runtime
+value and cannot be stored in variables, passed to functions, placed in fields,
+or called indirectly.
+
+Macro signatures use ordinary produced types. The operands received by the
+macro body are unevaluated code fragments of the single compiler-provided
+`Expr` type, but each operand slot in the signature states the ordinary type
+that the operand expression must produce at the call site. For example, a macro
+with type `(macro (bool bool) bool)` takes two operand expressions that must
+each typecheck as `bool` and produces an expression that must typecheck as
+`bool`. A final slot may be variadic, written `T ...`; the macro body receives
+those remaining operands as an `ExprList`.
+
+`Expr` and `ExprList` are compile-time-only types. They are valid in macro
+bodies and explicit `(comptime ...)` helper code, but they have no runtime
+representation. The compiler tracks the checked produced type of each `Expr`
+internally; there is no source-level `Expr<T>` and no generic macro type
+parameter.
+
+The source surface is:
+
+```lisp test=ignore name=macro-defmacro-surface reason="typed macro declarations are specified before selfhost implementation"
+(defmacro (and2 [lhs : bool] [rhs : bool]) : bool
+  (expr-if lhs rhs (expr-bool false)))
+
+(defmacro (all [first : bool] [rest : bool ...]) : bool
+  ;; `first` is an Expr; `rest` is an ExprList.
+  (fold-bool-and first rest))
+```
+
+The canonical binding types for those declarations are `(macro (bool bool)
+bool)` and `(macro (bool bool ...) bool)`. The `defmacro` operand list names
+the macro body's compile-time parameters and their call-site produced types.
+Fixed operands bind as `Expr`; a variadic final operand binds as `ExprList`.
+The macro body must typecheck as `Expr`, and the produced fragment must
+post-expand typecheck as the declared result type.
+
+Typed expansion has three checks:
+
+1. The macro call site is checked from the macro signature before expansion.
+   Operand type errors are reported at the operand source span.
+2. The macro body is checked as compile-time TypeLisp over `Expr`/`ExprList`.
+3. The expanded expression is checked again by the ordinary typechecker as a
+   safety net; failures are compiler or macro diagnostics with expansion spans.
+
+Expansion runs after parsing/import loading and before runtime typechecking.
+The expander resolves a list head in the macro namespace first; if no macro is
+found, the form is left for ordinary value-call checking. A module may not
+declare a local value/function and a local macro with the same unqualified name
+in v1. Hygiene and binding-introducing macros are not part of v1; the initial
+stdlib macros (`and`, `or`, `when`, `unless`, and `cond`) must expand without
+introducing new user-visible bindings.
+
 ### 3.8 Type conversions (casts)
 
 ```lisp test=ignore name=cast-placeholder reason=placeholder
@@ -733,6 +790,9 @@ items through a qualified name. Value and type namespaces remain separate:
 - Value exports cover function `define`s, variable `define`s, and TypeLisp
   declarations for `extern`s.
 - Type exports cover enum and struct type names.
+- Macro exports cover top-level `defmacro` declarations. Macro exports live in
+  a separate compile-time namespace from value and type exports; they are
+  looked up only while expanding expression heads.
 - Enum variant constructors and struct constructors/accessors are value-space
   capabilities that must be exported explicitly or through a transparent type
   export.
@@ -761,9 +821,23 @@ exported separately with `(variant VariantName)`. A transparent convenience
 form such as `(type Point :transparent)` may be added later, but v1 semantics
 are defined by the explicit item forms above.
 
+Macro exports use the same item-list shape:
+
+```lisp test=ignore name=module-macro-export-syntax reason="macro exports are specified before #1140 implementation"
+(module bool-macros)
+
+(defmacro (and2 [lhs : bool] [rhs : bool]) : bool
+  (expr-if lhs rhs (expr-bool false)))
+
+(export (macro and2))
+```
+
 Duplicate exports of the same item are accepted as idempotent only if they name
-the same namespace item. Unknown export names and namespace mistakes, such as
-exporting a type as a value, are rejected.
+the same namespace item and export kind. Unknown export names, private imported
+names, and namespace mistakes, such as exporting a type as a value or exporting
+a value as a macro, are rejected. A macro and value with the same spelling are
+distinct export kinds in module metadata, but v1 rejects declaring both in the
+same local module because expression-head lookup would otherwise be ambiguous.
 
 #### 4.4.3 Qualified lookup
 
@@ -780,6 +854,8 @@ Qualified lookup applies to:
 - Struct constructors: `(geometry/Point 3 4)`.
 - Struct fields: `(struct-get p x)` resolves `x` through the receiver's struct
   type; exporting the field controls whether external modules may use it.
+- Macros: `(bool/and2 a b)` resolves `and2` in the imported module's macro
+  namespace during expansion.
 - Generated declarations: generated family keys include the generator module
   identity plus the generated declaration identity.
 
@@ -808,7 +884,84 @@ Example with colliding local names:
 (define (main) : i64 (+ (left/get) (right/get)))
 ```
 
-#### 4.4.4 TypeLisp linker symbols
+#### 4.4.4 Macro export/import and expansion ordering
+
+Macro-bearing modules use the same loader identity and path-resolution rules as
+ordinary imports. Relative paths, canonical module identities, stdlib-root
+fallback, and `pkg:<alias>/...` package dependency resolution are shared with
+sections 4.4 and 4.4.1; there is no separate macro search path.
+
+Before expanding a module's non-import forms, the loader parses the module,
+collects its import declarations, recursively loads imported modules, and builds
+the imported macro namespace from each dependency's exported macro items.
+Imported macros are then available to the importer for the entire expansion of
+that module through qualified names such as `bool/and2`. The imported macro's
+typed signature is used for call-site checking in the importing module; operand
+expressions are not evaluated before expansion.
+
+Local macros are source-order declarations. A local `defmacro` is available
+only after its declaration has been parsed and checked; using a local macro
+before its `defmacro` is a source-located error. A local macro may call imported
+macros and earlier local macros while its body is checked and expanded, but it
+may not depend on later local macros.
+
+Macro export tables are complete only after the exporting module's own imports
+and earlier local macro declarations have been processed. V1 rejects cycles
+that require a macro export from a module whose macro table is still being
+built. Non-macro import cycles keep the ordinary loader behavior described in
+section 4.4 until the general module-cycle policy is tightened.
+
+Diagnostics required by v1:
+
+- Missing macro export: a qualified macro head names an imported module but no
+  exported macro of that name.
+- Private macro: the exporting module has a local macro of that name but does
+  not export it with `(export (macro name))`.
+- Duplicate macro export: two distinct macro declarations would be exported
+  under the same `(module, macro-name)` identity.
+- Unknown export item: `(export (macro name))` names no local macro.
+- Late local macro use: an unqualified macro head appears before the local
+  `defmacro` declaration that would bind it.
+
+Cross-module macro use:
+
+```lisp test=ignore name=module-exported-macro-use reason="macro export/import expansion is tracked by #1140"
+;; bool_macros.tl
+(module bool-macros)
+(defmacro (and2 [lhs : bool] [rhs : bool]) : bool
+  (expr-if lhs rhs (expr-bool false)))
+(export (macro and2))
+
+;; main.tl
+(import "bool_macros.tl" :as bool)
+(define (main) : i64
+  (if (bool/and2 true true) 0 1))
+```
+
+Private or missing macro diagnostic:
+
+```lisp test=ignore name=module-private-macro-diagnostic reason="negative macro visibility example for #1140"
+;; hidden.tl
+(module hidden)
+(defmacro (private-and [lhs : bool] [rhs : bool]) : bool
+  (expr-if lhs rhs (expr-bool false)))
+
+;; main.tl
+(import "hidden.tl" :as hidden)
+(define (main) : i64
+  (if (hidden/private-and true true) 0 1)) ; error: private macro hidden/private-and
+```
+
+Late local macro diagnostic:
+
+```lisp test=ignore name=module-late-local-macro-diagnostic reason="negative macro ordering example for #1140"
+(define eager : bool (late true)) ; error: local macro late is defined later
+
+(defmacro (late [value : bool]) : bool
+  value)
+```
+
+#### 4.4.5 TypeLisp linker symbols
 
 The TypeLisp declaration identity used by lowering and backend symbol emission
 is `(canonical-module-identity, declaration-identity)`. User TypeLisp linker
@@ -2968,6 +3121,7 @@ program       ::= top-level*
 
 top-level     ::= define-var
                 | define-func
+                | defmacro
                 | extern-decl
                 | module-decl
                 | import-decl
@@ -2978,6 +3132,9 @@ top-level     ::= define-var
 
 define-var    ::= "(" "define" ident [":" type] expr ")"
 define-func   ::= "(" "define" "(" ident param* ")" [":" type] expr ")"
+defmacro      ::= "(" "defmacro" "(" ident macro-operand* ")" ":" type expr+ ")"
+macro-operand ::= "[" ident ":" type "]"
+                | "[" ident ":" type "..." "]"      ; variadic final operand only
 extern-decl   ::= "(" "extern" ident extern-meta* ":" type ")"
 extern-meta   ::= "(" ":abi" "c" ")"
                 | "(" ":symbol" string ")"
@@ -2986,6 +3143,7 @@ import-decl   ::= "(" "import" string [":as" ident] ")"
 export-decl   ::= "(" "export" export-item+ ")"
 export-item   ::= "(" "value" ident ")"
                 | "(" "type" ident ")"
+                | "(" "macro" ident ")"
                 | "(" "constructor" ident ")"
                 | "(" "field" ident ident ")"
                 | "(" "variant" ident ")"
@@ -3062,10 +3220,12 @@ type          ::= "i64" | "i32" | "i16" | "i8"
                 | "u64" | "u32" | "u16" | "u8"
                 | "f64" | "f32" | "bool" | "char" | "unit"
                 | "String"
+                | "Expr" | "ExprList"               ; compile-time-only macro body values
                 | "(" "Tuple" type+ ")"
                 | "(" "Array" type [integer] ")"
                 | ptr-type
                 | ref-type
+                | macro-type
                 | "(" "->" type+ ")"
                 | "(" "in" ident type ")"              ; region-tagged (v1)
                 | ident                                ; enum or struct name
@@ -3075,6 +3235,10 @@ ptr-type      ::= "(" "Ptr" type ")"
 
 ref-type      ::= "(" "&" ident type ")"
                 | "(" "&mut" ident type ")"
+
+macro-type    ::= "(" "macro" "(" macro-type-slot* ")" type ")"
+macro-type-slot ::= type
+                  | type "..."                         ; variadic final slot only
 
 module-ident  ::= ident ("/" ident)*
 ident         ::= [a-zA-Z_][a-zA-Z0-9_!?+-=*/<>:]*

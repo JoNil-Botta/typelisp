@@ -143,7 +143,9 @@ historical generic/type-constructor work in #483 is superseded by that chain.
 
 ### Top-level forms
 
-`define` (variable / function), `defenum`, `defstruct`, `extern`, `import`.
+Implemented today: `define` (variable / function), `defenum`, `defstruct`,
+`extern`, and `import`. The selfhost module/macro path additionally specifies
+`module`, `export`, and `defmacro`; those are pending implementation slices.
 
 ```lisp
 (defenum Tree (Leaf i64) (Node Tree Tree))   ; recursive enums supported
@@ -162,7 +164,9 @@ The Rust stage0 loader still uses the legacy flat import model: imported
 definitions merge into one top-level namespace. The selfhost module direction is
 private-by-default modules with canonical identities, `(export ...)`, import
 aliases, and qualified names such as `math/add`; see `SPEC.md` section 4.4 for
-the specified migration contract.
+the specified migration contract. Macro exports/imports use the same module
+loader identities and path-resolution rules, with macro expansion happening
+before ordinary runtime typechecking.
 
 FFI-facing structs will use explicit `repr c` metadata and comptime layout
 queries such as `size-of`, `align-of`, and `offset-of`; this is specified for

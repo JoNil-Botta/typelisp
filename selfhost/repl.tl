@@ -104,6 +104,7 @@
     [(AstTyString) "String"]
     [(AstTyUnit) "unit"]
     [(AstTyNever) "never"]
+    [(AstTyExpr) "Expr"]
     [(AstTyFunc args ret)
       (string-append
         "(->"

@@ -1095,7 +1095,10 @@
             name)]
         (match (compiler-symbols-lookup-type symbols lookup-name)
           [(SomeI64 handle) (tc-resolved-nominal-type lookup-name handle)]
-          [(NoneI64) (AstTyVar name)]))]))
+          [(NoneI64)
+            (if (string-eq name "Expr")
+              (AstTyExpr)
+              (AstTyVar name))]))]))
 
 (define (tc-resolve-type [ctx : TcContext] [ty : AstType]) : AstType
   (match ty

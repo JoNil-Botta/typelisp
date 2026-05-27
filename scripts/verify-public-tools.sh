@@ -229,6 +229,11 @@ assert_stdout_empty
 assert_contains "$err" "typelisp repl"
 assert_contains "$err" "typelisp lsp"
 assert_contains "$err" "typelisp fmt"
+if grep -q "typelisp lint" "$err"; then
+    HAS_LINT_COMMAND=1
+else
+    HAS_LINT_COMMAND=0
+fi
 assert_contains "$err" "typelisp doc"
 
 run_cmd missing-command "$COMPILER"
@@ -776,6 +781,47 @@ while IFS='|' read -r diag_name diag_command diag_expect || [ -n "$diag_name" ];
     done < "$contains"
 done < "$BACKEND_DIAG_MANIFEST"
 
+if [ "$HAS_LINT_COMMAND" = 1 ]; then
+    echo "[public-tools] lint command"
+    cat > "$WORKDIR/lint_ladder.tl" <<'EOF'
+(define (classify [x : i64]) : i64
+  (if (= x 0)
+    10
+    (if (= x 1)
+      20
+      (if (= x 2)
+        30
+        0))))
+EOF
+    run_cmd lint-nested-if "$COMPILER" lint "$WORKDIR/lint_ladder.tl"
+    assert_success
+    assert_stderr_empty
+    assert_contains "$out" "lint_ladder.tl:"
+    assert_contains "$out" "nested if-ladder"
+    assert_contains "$out" "prefer cond"
+    assert_contains "$out" "match"
+    assert_contains "$out" "lint: 1 finding(s)"
+
+    cat > "$WORKDIR/lint_clean.tl" <<'EOF'
+(define (classify [x : i64]) : i64
+  (if (= x 0)
+    10
+    0))
+EOF
+    run_cmd lint-clean "$COMPILER" lint "$WORKDIR/lint_clean.tl"
+    assert_success
+    assert_stderr_empty
+    assert_contains "$out" "lint: 0 finding(s)"
+
+    run_cmd lint-missing "$COMPILER" lint
+    assert_failure
+    assert_stdout_empty
+    assert_contains "$err" "Error: missing file argument"
+    assert_contains "$err" "typelisp lint <file.tl>"
+else
+    echo "[public-tools] SKIP lint command (compiler predates public lint CLI)"
+fi
+
 echo "[public-tools] formatter golden corpus"
 format_manifest() {
     cat <<'EOF'
@@ -1071,6 +1117,17 @@ assert_contains "$err" "test failing-case"
 assert_contains "$err" "inline failure message"
 assert_contains "$err" "typelisp test: test executable exited"
 [ ! -f "$WORKDIR/inline_test_fail.tl.test.s" ] || fail "failing typelisp test left scratch assembly behind"
+
+run_cmd inline-test-no-tests-check "$COMPILER" test --check "$ROOT/stdlib/windows_setup.tl" --stdlib-root "$ROOT/stdlib"
+assert_success
+assert_stderr_empty
+assert_contains "$out" "TypeLisp test typecheck passed: 0 test(s)"
+
+run_cmd inline-test-no-tests-run "$COMPILER" test "$ROOT/stdlib/windows_setup.tl" --stdlib-root "$ROOT/stdlib"
+assert_success
+assert_stdout_empty
+assert_contains "$err" "TypeLisp tests passed: 0 test(s)"
+[ ! -f "$ROOT/stdlib/windows_setup.tl.test.s" ] || fail "no-test typelisp test left scratch assembly behind"
 
 echo "[public-tools] package build"
 PKG="$WORKDIR/pkg"

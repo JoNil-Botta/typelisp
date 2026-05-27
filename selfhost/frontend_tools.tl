@@ -583,6 +583,13 @@
         "Cast { expr: "
         (front-expr-render inner)
         (front-cat3 ", ty: " (front-type-render ty) " }"))]
+    [(AstExprBorrow lifetime place)
+      (front-cat3
+        "Borrow { lifetime: "
+        (match lifetime
+          [(AstBorrowLifetimeInferred) "Infer"]
+          [(AstBorrowLifetimeNamed name) (front-cat3 "\"" name "\"")])
+        (front-cat3 ", place: " (front-expr-render place) " }"))]
     [(AstExprMatch scrutinee _)
       (front-cat3 "Match { scrutinee: " (front-expr-render scrutinee) " }")]
     [(AstExprForeach name index-ty start end body)
@@ -690,6 +697,41 @@
           (front-maybe-module-render module-name)
           (front-cat3 ", alias: " (front-maybe-alias-render alias) " }")))]))
 
+(define (front-struct-cleanup-render [cleanup : AstStructCleanup]) : String
+  (match cleanup
+    [(AstStructNoCleanup) "None"]
+    [(AstStructCleanupFn name) (front-cat3 "Some(\"" name "\")")]))
+
+(define (front-field-cleanup-render [cleanup : AstFieldCleanup]) : String
+  (match cleanup
+    [(AstFieldNoCleanup) "None"]
+    [(AstFieldCleanupFn name) (front-cat3 "Some(\"" name "\")")]
+    [(AstFieldOwnedCleanup) "Owned"]))
+
+(define (front-field-render [field : AstFieldDef]) : String
+  (match field
+    [(AstFieldDef name ty cleanup)
+      (front-cat3
+        "Field { name: \""
+        name
+        (front-cat3
+          "\", ty: "
+          (front-type-render ty)
+          (front-cat3 ", cleanup: " (front-field-cleanup-render cleanup) " }")))]))
+
+(define (front-field-list-items-render [fields : AstFieldDefList]) : String
+  (match fields
+    [(AstFieldDefNil) ""]
+    [(AstFieldDefCons field (AstFieldDefNil)) (front-field-render field)]
+    [(AstFieldDefCons field rest)
+      (front-cat3
+        (front-field-render field)
+        ", "
+        (front-field-list-items-render rest))]))
+
+(define (front-field-list-render [fields : AstFieldDefList]) : String
+  (front-cat3 "[" (front-field-list-items-render fields) "]"))
+
 (define (front-decl-render [decl : AstDecl]) : String
   (match decl
     [(AstDeclModule name) (front-cat3 "Module(\"" name "\")")]
@@ -717,7 +759,7 @@
         name
         (front-cat3 "\", ty: " (front-type-render ty) " }"))]
     [(AstDeclDefEnum name _) (front-cat3 "DefEnum { name: \"" name "\" }")]
-    [(AstDeclDefStruct name repr _)
+    [(AstDeclDefStruct name repr cleanup fields)
       (front-cat3
         "DefStruct { name: \""
         name
@@ -726,7 +768,10 @@
           (if (ast-struct-repr-c? repr)
             "c"
             "default")
-          " }"))]
+          (front-cat3
+            ", cleanup: "
+            (front-struct-cleanup-render cleanup)
+            (front-cat3 ", fields: " (front-field-list-render fields) " }"))))]
     [(AstDeclImport spec) (front-import-render spec)]
     [(AstDeclTest name body _)
       (front-cat3

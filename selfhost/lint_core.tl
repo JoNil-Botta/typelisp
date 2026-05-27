@@ -214,6 +214,7 @@
     [(AstExprSet _ value) (lint-walk-expr value threshold acc)]
     [(AstExprAnn inner _) (lint-walk-expr inner threshold acc)]
     [(AstExprCast inner _) (lint-walk-expr inner threshold acc)]
+    [(AstExprBorrow _ place) (lint-walk-expr place threshold acc)]
     [(AstExprMatch scrutinee arms)
       (lint-walk-match-arms
         arms
@@ -265,7 +266,7 @@
     [(AstDeclModule _) acc]
     [(AstDeclExtern _ _) acc]
     [(AstDeclDefEnum _ _) acc]
-    [(AstDeclDefStruct _ _ _) acc]
+    [(AstDeclDefStruct _ _ _ _) acc]
     [(AstDeclImport _) acc]))
 
 ;;; Walk every declaration body in `decls`.

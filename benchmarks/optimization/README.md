@@ -28,7 +28,13 @@ Useful knobs:
 - `TYPELISP_BENCH_RUNS=5` or `--runs 5` changes runtime repetitions.
 - `TYPELISP_BENCH_CLANG_OPT=-O2` changes the clang optimization level. The
   default is `-O3`.
-- `--filter array_sum` runs one case by manifest name.
+- `--filter array_sum` runs one case by manifest name; `--filter runtime_`
+  runs every case with that manifest-name prefix.
+
+The `runtime_*` cases isolate backend-emitted runtime helper shapes for string
+equality, substring, concatenation, integer/string conversion, and path helper
+copying. They use command-line inputs and loop-carried work so both TypeLisp and
+clang see runtime data rather than compile-time constants.
 
 The report columns are CSV:
 

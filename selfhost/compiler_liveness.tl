@@ -151,6 +151,25 @@
       d)
     e))
 
+(define (compiler-live-set6
+  [a : i64]
+  [b : i64]
+  [c : i64]
+  [d : i64]
+  [e : i64]
+  [f : i64]) : CompilerLiveI64Set
+  (compiler-live-set-insert
+    (compiler-live-set-insert
+      (compiler-live-set-insert
+        (compiler-live-set-insert
+          (compiler-live-set-insert
+            (compiler-live-set-insert CompilerLiveI64Nil a)
+            b)
+          c)
+        d)
+      e)
+    f))
+
 (define (compiler-live-set7
   [a : i64]
   [b : i64]
@@ -250,6 +269,57 @@
         (compiler-live-value-vars lhs)
         (compiler-live-value-vars rhs))]
     [(IrInstrUnOp _ _ src _) (compiler-live-value-vars src)]
+    [(IrInstrLaneId _ _ _) CompilerLiveI64Nil]
+    [(IrInstrSplat _ value _ _) (compiler-live-value-vars value)]
+    [(IrInstrVectorBinOp _ _ lhs rhs _ _)
+      (compiler-live-set-union
+        (compiler-live-value-vars lhs)
+        (compiler-live-value-vars rhs))]
+    [(IrInstrVectorReduce _ _ src _ _) (compiler-live-value-vars src)]
+    [(IrInstrVectorCompare _ _ lhs rhs _ _)
+      (compiler-live-set-union
+        (compiler-live-value-vars lhs)
+        (compiler-live-value-vars rhs))]
+    [(IrInstrMaskBinOp _ _ lhs rhs _)
+      (compiler-live-set-union
+        (compiler-live-value-vars lhs)
+        (compiler-live-value-vars rhs))]
+    [(IrInstrMaskNot _ src _) (compiler-live-value-vars src)]
+    [(IrInstrMaskReduce _ _ src _) (compiler-live-value-vars src)]
+    [(IrInstrSelect _ mask on-true on-false _ _)
+      (compiler-live-set-union
+        (compiler-live-value-vars mask)
+        (compiler-live-set-union
+          (compiler-live-value-vars on-true)
+          (compiler-live-value-vars on-false)))]
+    [(IrInstrVectorLoad _ base index _ _)
+      (compiler-live-set-union
+        (compiler-live-value-vars base)
+        (compiler-live-value-vars index))]
+    [(IrInstrVectorStore base index value _ _)
+      (compiler-live-set-union
+        (compiler-live-value-vars base)
+        (compiler-live-set-union
+          (compiler-live-value-vars index)
+          (compiler-live-value-vars value)))]
+    [(IrInstrPredicatedStore base index value mask _ _)
+      (compiler-live-set-union
+        (compiler-live-value-vars base)
+        (compiler-live-set-union
+          (compiler-live-value-vars index)
+          (compiler-live-set-union
+            (compiler-live-value-vars value)
+            (compiler-live-value-vars mask))))]
+    [(IrInstrPredicatedLoad _ base index mask _ _)
+      (compiler-live-set-union
+        (compiler-live-value-vars base)
+        (compiler-live-set-union
+          (compiler-live-value-vars index)
+          (compiler-live-value-vars mask)))]
+    [(IrInstrTailMask _ index len _)
+      (compiler-live-set-union
+        (compiler-live-value-vars index)
+        (compiler-live-value-vars len))]
     [(IrInstrCall _ _ args _) (compiler-live-value-list-vars args)]
     [(IrInstrStore _ value _) (compiler-live-value-vars value)]
     [(IrInstrBranch cond _ _) (compiler-live-value-vars cond)]
@@ -267,6 +337,24 @@
     [(IrInstrCast dst _ _ _) (CompilerLiveI64Cons dst CompilerLiveI64Nil)]
     [(IrInstrBinOp dst _ _ _ _) (CompilerLiveI64Cons dst CompilerLiveI64Nil)]
     [(IrInstrUnOp dst _ _ _) (CompilerLiveI64Cons dst CompilerLiveI64Nil)]
+    [(IrInstrLaneId dst _ _) (CompilerLiveI64Cons dst CompilerLiveI64Nil)]
+    [(IrInstrSplat dst _ _ _) (CompilerLiveI64Cons dst CompilerLiveI64Nil)]
+    [(IrInstrVectorBinOp dst _ _ _ _ _)
+      (CompilerLiveI64Cons dst CompilerLiveI64Nil)]
+    [(IrInstrVectorReduce dst _ _ _ _)
+      (CompilerLiveI64Cons dst CompilerLiveI64Nil)]
+    [(IrInstrVectorCompare dst _ _ _ _ _)
+      (CompilerLiveI64Cons dst CompilerLiveI64Nil)]
+    [(IrInstrMaskBinOp dst _ _ _ _)
+      (CompilerLiveI64Cons dst CompilerLiveI64Nil)]
+    [(IrInstrMaskNot dst _ _) (CompilerLiveI64Cons dst CompilerLiveI64Nil)]
+    [(IrInstrMaskReduce dst _ _ _) (CompilerLiveI64Cons dst CompilerLiveI64Nil)]
+    [(IrInstrSelect dst _ _ _ _ _) (CompilerLiveI64Cons dst CompilerLiveI64Nil)]
+    [(IrInstrVectorLoad dst _ _ _ _)
+      (CompilerLiveI64Cons dst CompilerLiveI64Nil)]
+    [(IrInstrPredicatedLoad dst _ _ _ _ _)
+      (CompilerLiveI64Cons dst CompilerLiveI64Nil)]
+    [(IrInstrTailMask dst _ _ _) (CompilerLiveI64Cons dst CompilerLiveI64Nil)]
     [(IrInstrCall dst _ _ _) (CompilerLiveI64Cons dst CompilerLiveI64Nil)]
     [(IrInstrPhi dst _ _) (CompilerLiveI64Cons dst CompilerLiveI64Nil)]
     [_ CompilerLiveI64Nil]))
@@ -715,6 +803,46 @@
         (compiler-live-set-eq? uses (compiler-live-set2 10 11))
         (compiler-live-set-eq? defs (compiler-live-set5 0 1 2 3 4)))]))
 
+(define (compiler-live-vector-mask-use-def-ok?) : bool
+  (match (compiler-live-block-use-def
+    (IrInstrCons
+      (IrInstrLaneId 0 4 (compiler-live-i64-ty))
+      (IrInstrCons
+        (IrInstrSplat 1 (IrValueVar 10) 4 (compiler-live-i64-ty))
+        (IrInstrCons
+          (IrInstrVectorBinOp
+            2
+            (IrBinAdd)
+            (IrValueVar 0)
+            (IrValueVar 1)
+            4
+            (compiler-live-i64-ty))
+          (IrInstrCons
+            (IrInstrTailMask 3 (IrValueVar 11) (IrValueVar 12) 4)
+            (IrInstrCons
+              (IrInstrPredicatedLoad
+                4
+                (IrValueVar 13)
+                (IrValueVar 11)
+                (IrValueVar 3)
+                4
+                (compiler-live-i64-ty))
+              (IrInstrCons
+                (IrInstrPredicatedStore
+                  (IrValueVar 14)
+                  (IrValueVar 11)
+                  (IrValueVar 2)
+                  (IrValueVar 3)
+                  4
+                  (compiler-live-i64-ty))
+                (IrInstrCons
+                  (IrInstrMaskReduce 5 (IrMaskReduceAny) (IrValueVar 3) 4)
+                  IrInstrNil))))))))
+    [(CompilerLiveUseDef uses defs)
+      (and
+        (compiler-live-set-eq? uses (compiler-live-set5 10 11 12 13 14))
+        (compiler-live-set-eq? defs (compiler-live-set6 0 1 2 3 4 5)))]))
+
 (define (compiler-live-straight-ok?) : bool
   (let
     [liveness : CompilerFunctionLiveness
@@ -820,8 +948,10 @@
     (and
       (compiler-live-memory-use-def-ok?)
       (and
-        (compiler-live-straight-ok?)
-        (and (compiler-live-branch-ok?) (compiler-live-phi-ok?)))))
+        (compiler-live-vector-mask-use-def-ok?)
+        (and
+          (compiler-live-straight-ok?)
+          (and (compiler-live-branch-ok?) (compiler-live-phi-ok?))))))
     42
     (begin
       (panic "liveness: smoke mismatch")

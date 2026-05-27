@@ -300,15 +300,17 @@ Array and string indexing is bounds-checked at runtime.
 
 ### Memory and aliasing
 
-TypeLisp does not currently have source-level borrow expressions, destructors,
-`free`, or a garbage collector. `SPEC.md` now defines v1 move-only aggregate
-handle semantics for the selfhost checker: scalars, raw pointers, and
-non-capturing function values are copyable, while `String`, arrays, tuples,
-structs, enums, and capturing closures move in by-value positions. The current
-Rust-stage compiler may still accept aggregate copies until that checker lands.
-Aggregate values are implemented as pointer-sized handles in the IR/ABI, but
-those handles are not checked language references. The v1 raw pointer design is
-now specified as explicit unsafe syntax:
+TypeLisp does not currently implement source-level borrow checking,
+destructors, `free`, or a garbage collector. `SPEC.md` now defines v1
+move-only aggregate handle semantics and the reserved immutable borrow
+expression forms `(& place)` / `(& arena place)` for the selfhost checker:
+scalars, raw pointers, and non-capturing function values are copyable, while
+`String`, arrays, tuples, structs, enums, and capturing closures move in
+by-value positions. The current Rust-stage compiler may still accept aggregate
+copies until that checker lands. Aggregate values are implemented as
+pointer-sized handles in the IR/ABI, but those handles are not checked language
+references. The v1 raw pointer design is now specified as explicit unsafe
+syntax:
 `(Ptr T)`/`(MutPtr T)` are nullable, copyable pointer-sized values, and
 dereference/write/offset/cast operations require `(unsafe ...)`. That surface is
 for FFI/runtime work and is not implemented yet; it is not the future safe
@@ -364,13 +366,21 @@ TypeLisp*:
 
 Compiler self-test and smoke-driver conventions are documented in
 [`selfhost/TESTING.md`](selfhost/TESTING.md).
-Published stage0 compilers for local bootstrap checks can be fetched with
+Published stage0 compilers for local no-Rust checks can be fetched with
 [`scripts/fetch-stage0.sh`](scripts/fetch-stage0.sh), or
 [`scripts/fetch-stage0.ps1`](scripts/fetch-stage0.ps1) from PowerShell. Both
 default to `target/stage0/`. To run the same no-Rust stage0 verification gate
 used by CI, run
 `scripts/verify-no-rust-stage0.sh`; it fetches `stage0-latest` when
-`TYPELISP_BIN` is unset and prevents accidental Cargo fallback.
+`TYPELISP_BIN` is unset and prevents accidental Cargo fallback. On Linux, that
+wrapper uses the published compiler only as the bootstrap seed, checks the
+stage0-to-stage1 bootstrap, then runs deterministic assembly through the freshly
+bootstrapped stage1 compiler via a no-Rust CLI wrapper. That wrapper also smokes
+the stage1 `build`, `run`, and private `debug host-action` path on Linux. Full
+public CLI gates still use the seed compiler until every public-tool exception is
+ported to the wrapper. On Windows, the host-supported gates still run against the
+published stage0 compiler until native stage1 bootstrap/link support lands. The
+full stage2/stage3 fixpoint remains available through `scripts/check-bootstrap-fixpoint.sh`.
 
 Smaller runnable examples, including `calc.tl`, remain in [`examples/`](examples).
 

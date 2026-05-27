@@ -170,6 +170,13 @@
     instr-diag
     (compiler-diagnostic-message diag)))
 
+(define (compiler-backend-vector-mask-unimplemented
+  [instr-diag : CompilerDiagnostic]) : ResultCompilerBackend
+  (ErrCompilerBackend
+    (compiler-diagnostic-with-message
+      instr-diag
+      "backend: vector/mask IR emission is not implemented")))
+
 (define (compiler-backend-round-up-16 [n : i64]) : i64
   (if (= n 0)
     0
@@ -343,7 +350,7 @@
         [(CompilerRegRegister home)
           (if (string-eq home reg)
             ""
-            (backend-cat5 "    movq " home ", " reg "\n"))]
+            (backend-cat5 "    movsd " home ", " reg "\n"))]
         [(CompilerRegSpill offset)
           (backend-cat5
             "    movsd "
@@ -364,7 +371,7 @@
         [(CompilerRegRegister home)
           (if (string-eq home reg)
             ""
-            (backend-cat5 "    movq " reg ", " home "\n"))]
+            (backend-cat5 "    movsd " reg ", " home "\n"))]
         [(CompilerRegSpill offset)
           (backend-cat5
             "    movsd "
@@ -812,11 +819,29 @@
             (if (= size 2)
               "%r14w"
               "%r14b"))
-          (if (= size 4)
-            "%r15d"
-            (if (= size 2)
-              "%r15w"
-              "%r15b")))))))
+          (if (string-eq reg "%r15")
+            (if (= size 4)
+              "%r15d"
+              (if (= size 2)
+                "%r15w"
+                "%r15b"))
+            (if (string-eq reg "%r8")
+              (if (= size 4)
+                "%r8d"
+                (if (= size 2)
+                  "%r8w"
+                  "%r8b"))
+              (if (string-eq reg "%r9")
+                (if (= size 4)
+                  "%r9d"
+                  (if (= size 2)
+                    "%r9w"
+                    "%r9b"))
+                (if (= size 4)
+                  "%r15d"
+                  (if (= size 2)
+                    "%r15w"
+                    "%r15b"))))))))))
 
 (define (compiler-backend-emit-load-register [reg : String] [ty : AstType]) : String
   (let
@@ -2132,6 +2157,34 @@
           [(ErrCompilerBackend message)
             (ErrCompilerBackend
               (compiler-backend-apply-instr-diagnostic message instr-diag))])]
+      [(IrInstrLaneId _ _ _)
+        (compiler-backend-vector-mask-unimplemented instr-diag)]
+      [(IrInstrSplat _ _ _ _)
+        (compiler-backend-vector-mask-unimplemented instr-diag)]
+      [(IrInstrVectorBinOp _ _ _ _ _ _)
+        (compiler-backend-vector-mask-unimplemented instr-diag)]
+      [(IrInstrVectorReduce _ _ _ _ _)
+        (compiler-backend-vector-mask-unimplemented instr-diag)]
+      [(IrInstrVectorCompare _ _ _ _ _ _)
+        (compiler-backend-vector-mask-unimplemented instr-diag)]
+      [(IrInstrMaskBinOp _ _ _ _ _)
+        (compiler-backend-vector-mask-unimplemented instr-diag)]
+      [(IrInstrMaskNot _ _ _)
+        (compiler-backend-vector-mask-unimplemented instr-diag)]
+      [(IrInstrMaskReduce _ _ _ _)
+        (compiler-backend-vector-mask-unimplemented instr-diag)]
+      [(IrInstrSelect _ _ _ _ _ _)
+        (compiler-backend-vector-mask-unimplemented instr-diag)]
+      [(IrInstrVectorLoad _ _ _ _ _)
+        (compiler-backend-vector-mask-unimplemented instr-diag)]
+      [(IrInstrVectorStore _ _ _ _ _)
+        (compiler-backend-vector-mask-unimplemented instr-diag)]
+      [(IrInstrPredicatedStore _ _ _ _ _ _)
+        (compiler-backend-vector-mask-unimplemented instr-diag)]
+      [(IrInstrPredicatedLoad _ _ _ _ _ _)
+        (compiler-backend-vector-mask-unimplemented instr-diag)]
+      [(IrInstrTailMask _ _ _ _)
+        (compiler-backend-vector-mask-unimplemented instr-diag)]
       [(IrInstrCall dst name args ty)
         (let
           [param-types : AstTypeList
@@ -2742,6 +2795,60 @@
         length)]
     [(IrInstrCast _ src _ _)
       (compiler-backend-collect-value-string strings src)]
+    [(IrInstrSplat _ value _ _)
+      (compiler-backend-collect-value-string strings value)]
+    [(IrInstrVectorBinOp _ _ lhs rhs _ _)
+      (compiler-backend-collect-value-string
+        (compiler-backend-collect-value-string strings lhs)
+        rhs)]
+    [(IrInstrVectorReduce _ _ src _ _)
+      (compiler-backend-collect-value-string strings src)]
+    [(IrInstrVectorCompare _ _ lhs rhs _ _)
+      (compiler-backend-collect-value-string
+        (compiler-backend-collect-value-string strings lhs)
+        rhs)]
+    [(IrInstrMaskBinOp _ _ lhs rhs _)
+      (compiler-backend-collect-value-string
+        (compiler-backend-collect-value-string strings lhs)
+        rhs)]
+    [(IrInstrMaskNot _ src _)
+      (compiler-backend-collect-value-string strings src)]
+    [(IrInstrMaskReduce _ _ src _)
+      (compiler-backend-collect-value-string strings src)]
+    [(IrInstrSelect _ mask on-true on-false _ _)
+      (compiler-backend-collect-value-string
+        (compiler-backend-collect-value-string
+          (compiler-backend-collect-value-string strings mask)
+          on-true)
+        on-false)]
+    [(IrInstrVectorLoad _ base index _ _)
+      (compiler-backend-collect-value-string
+        (compiler-backend-collect-value-string strings base)
+        index)]
+    [(IrInstrVectorStore base index value _ _)
+      (compiler-backend-collect-value-string
+        (compiler-backend-collect-value-string
+          (compiler-backend-collect-value-string strings base)
+          index)
+        value)]
+    [(IrInstrPredicatedStore base index value mask _ _)
+      (compiler-backend-collect-value-string
+        (compiler-backend-collect-value-string
+          (compiler-backend-collect-value-string
+            (compiler-backend-collect-value-string strings base)
+            index)
+          value)
+        mask)]
+    [(IrInstrPredicatedLoad _ base index mask _ _)
+      (compiler-backend-collect-value-string
+        (compiler-backend-collect-value-string
+          (compiler-backend-collect-value-string strings base)
+          index)
+        mask)]
+    [(IrInstrTailMask _ index length _)
+      (compiler-backend-collect-value-string
+        (compiler-backend-collect-value-string strings index)
+        length)]
     [_ strings]))
 
 (define (compiler-backend-collect-instr-list-strings
@@ -2859,6 +2966,59 @@
         (compiler-backend-collect-value-f64 floats index)
         length)]
     [(IrInstrCast _ src _ _) (compiler-backend-collect-value-f64 floats src)]
+    [(IrInstrSplat _ value _ _)
+      (compiler-backend-collect-value-f64 floats value)]
+    [(IrInstrVectorBinOp _ _ lhs rhs _ _)
+      (compiler-backend-collect-value-f64
+        (compiler-backend-collect-value-f64 floats lhs)
+        rhs)]
+    [(IrInstrVectorReduce _ _ src _ _)
+      (compiler-backend-collect-value-f64 floats src)]
+    [(IrInstrVectorCompare _ _ lhs rhs _ _)
+      (compiler-backend-collect-value-f64
+        (compiler-backend-collect-value-f64 floats lhs)
+        rhs)]
+    [(IrInstrMaskBinOp _ _ lhs rhs _)
+      (compiler-backend-collect-value-f64
+        (compiler-backend-collect-value-f64 floats lhs)
+        rhs)]
+    [(IrInstrMaskNot _ src _) (compiler-backend-collect-value-f64 floats src)]
+    [(IrInstrMaskReduce _ _ src _)
+      (compiler-backend-collect-value-f64 floats src)]
+    [(IrInstrSelect _ mask on-true on-false _ _)
+      (compiler-backend-collect-value-f64
+        (compiler-backend-collect-value-f64
+          (compiler-backend-collect-value-f64 floats mask)
+          on-true)
+        on-false)]
+    [(IrInstrVectorLoad _ base index _ _)
+      (compiler-backend-collect-value-f64
+        (compiler-backend-collect-value-f64 floats base)
+        index)]
+    [(IrInstrVectorStore base index value _ _)
+      (compiler-backend-collect-value-f64
+        (compiler-backend-collect-value-f64
+          (compiler-backend-collect-value-f64 floats base)
+          index)
+        value)]
+    [(IrInstrPredicatedStore base index value mask _ _)
+      (compiler-backend-collect-value-f64
+        (compiler-backend-collect-value-f64
+          (compiler-backend-collect-value-f64
+            (compiler-backend-collect-value-f64 floats base)
+            index)
+          value)
+        mask)]
+    [(IrInstrPredicatedLoad _ base index mask _ _)
+      (compiler-backend-collect-value-f64
+        (compiler-backend-collect-value-f64
+          (compiler-backend-collect-value-f64 floats base)
+          index)
+        mask)]
+    [(IrInstrTailMask _ index length _)
+      (compiler-backend-collect-value-f64
+        (compiler-backend-collect-value-f64 floats index)
+        length)]
     [_ floats]))
 
 (define (compiler-backend-collect-instr-list-f64s
@@ -5806,9 +5966,21 @@ tl_print_err:
 tl_string_eq:
     cmpq %rcx, %rsi
     jne .L_tl_string_eq_false
-.L_tl_string_eq_loop:
-    testq %rsi, %rsi
+    movq %rsi, %r8
+    shrq $3, %r8
+    jz .L_tl_string_eq_tail
+.L_tl_string_eq_word_loop:
+    movq (%rdi), %rax
+    cmpq (%rdx), %rax
+    jne .L_tl_string_eq_false
+    addq $8, %rdi
+    addq $8, %rdx
+    decq %r8
+    jne .L_tl_string_eq_word_loop
+.L_tl_string_eq_tail:
+    andq $7, %rsi
     jz .L_tl_string_eq_true
+.L_tl_string_eq_tail_loop:
     movzbl (%rdi), %eax
     movzbl (%rdx), %r8d
     cmpb %r8b, %al
@@ -5816,7 +5988,7 @@ tl_string_eq:
     incq %rdi
     incq %rdx
     decq %rsi
-    jmp .L_tl_string_eq_loop
+    jne .L_tl_string_eq_tail_loop
 .L_tl_string_eq_true:
     movq $1, %rax
     ret
@@ -5863,9 +6035,21 @@ tl_string_to_int:
 tl_string_eq:
     cmpq %r9, %rdx
     jne .L_tl_string_eq_false
-.L_tl_string_eq_loop:
-    testq %rdx, %rdx
+    movq %rdx, %r10
+    shrq $3, %r10
+    jz .L_tl_string_eq_tail
+.L_tl_string_eq_word_loop:
+    movq (%rcx), %rax
+    cmpq (%r8), %rax
+    jne .L_tl_string_eq_false
+    addq $8, %rcx
+    addq $8, %r8
+    decq %r10
+    jne .L_tl_string_eq_word_loop
+.L_tl_string_eq_tail:
+    andq $7, %rdx
     jz .L_tl_string_eq_true
+.L_tl_string_eq_tail_loop:
     movzbl (%rcx), %eax
     movzbl (%r8), %r10d
     cmpb %r10b, %al
@@ -5873,7 +6057,7 @@ tl_string_eq:
     incq %rcx
     incq %r8
     decq %rdx
-    jmp .L_tl_string_eq_loop
+    jne .L_tl_string_eq_tail_loop
 .L_tl_string_eq_true:
     movq $1, %rax
     ret
@@ -6071,15 +6255,10 @@ tl_substring:
     movq %r12, %rdi
     call tl_alloc
     movq %rax, %r13
-    movq $0, %rcx
-.L_tl_substring_copy_loop:
-    cmpq %r12, %rcx
-    jge .L_tl_substring_copy_done
-    movzbl (%rbx,%rcx), %edx
-    movb %dl, (%r13,%rcx)
-    incq %rcx
-    jmp .L_tl_substring_copy_loop
-.L_tl_substring_copy_done:
+    movq %r12, %rcx
+    movq %rbx, %rsi
+    movq %r13, %rdi
+    rep movsb
     movq $16, %rdi
     call tl_alloc
     movq %r13, 0(%rax)
@@ -6101,6 +6280,8 @@ tl_substring:
     push %rbx
     push %r12
     push %r13
+    push %rsi
+    push %rdi
     sub $8, %rsp
     movq %rcx, %rbx
     addq %rdx, %rbx
@@ -6110,15 +6291,10 @@ tl_substring:
     call tl_alloc
     add $32, %rsp
     movq %rax, %r13
-    movq $0, %rcx
-.L_tl_substring_copy_loop:
-    cmpq %r12, %rcx
-    jge .L_tl_substring_copy_done
-    movzbl (%rbx,%rcx), %edx
-    movb %dl, (%r13,%rcx)
-    incq %rcx
-    jmp .L_tl_substring_copy_loop
-.L_tl_substring_copy_done:
+    movq %r12, %rcx
+    movq %rbx, %rsi
+    movq %r13, %rdi
+    rep movsb
     movq $16, %rcx
     sub $32, %rsp
     call tl_alloc
@@ -6126,6 +6302,8 @@ tl_substring:
     movq %r13, 0(%rax)
     movq %r12, 8(%rax)
     add $8, %rsp
+    pop %rdi
+    pop %rsi
     pop %r13
     pop %r12
     pop %rbx
@@ -6153,26 +6331,15 @@ tl_string_concat:
     addq %r14, %rdi
     call tl_alloc
     movq %rax, %r15
-    movq $0, %rcx
-.L_tl_string_concat_copy_a:
-    cmpq %r12, %rcx
-    jge .L_tl_string_concat_copy_a_done
-    movzbl (%rbx,%rcx), %edx
-    movb %dl, (%r15,%rcx)
-    incq %rcx
-    jmp .L_tl_string_concat_copy_a
-.L_tl_string_concat_copy_a_done:
-    movq $0, %rcx
-.L_tl_string_concat_copy_b:
-    cmpq %r14, %rcx
-    jge .L_tl_string_concat_copy_b_done
-    movzbl (%r13,%rcx), %edx
-    movq %r12, %rax
-    addq %rcx, %rax
-    movb %dl, (%r15,%rax)
-    incq %rcx
-    jmp .L_tl_string_concat_copy_b
-.L_tl_string_concat_copy_b_done:
+    movq %r12, %rcx
+    movq %rbx, %rsi
+    movq %r15, %rdi
+    rep movsb
+    movq %r14, %rcx
+    movq %r13, %rsi
+    movq %r15, %rdi
+    addq %r12, %rdi
+    rep movsb
     movq $16, %rdi
     call tl_alloc
     movq %r15, 0(%rax)
@@ -6200,6 +6367,8 @@ tl_string_concat:
     push %r13
     push %r14
     push %r15
+    push %rsi
+    push %rdi
     sub $8, %rsp
     movq %rcx, %rbx
     movq %rdx, %r12
@@ -6211,26 +6380,15 @@ tl_string_concat:
     call tl_alloc
     add $32, %rsp
     movq %rax, %r15
-    movq $0, %rcx
-.L_tl_string_concat_copy_a:
-    cmpq %r12, %rcx
-    jge .L_tl_string_concat_copy_a_done
-    movzbl (%rbx,%rcx), %edx
-    movb %dl, (%r15,%rcx)
-    incq %rcx
-    jmp .L_tl_string_concat_copy_a
-.L_tl_string_concat_copy_a_done:
-    movq $0, %rcx
-.L_tl_string_concat_copy_b:
-    cmpq %r14, %rcx
-    jge .L_tl_string_concat_copy_b_done
-    movzbl (%r13,%rcx), %edx
-    movq %r12, %rax
-    addq %rcx, %rax
-    movb %dl, (%r15,%rax)
-    incq %rcx
-    jmp .L_tl_string_concat_copy_b
-.L_tl_string_concat_copy_b_done:
+    movq %r12, %rcx
+    movq %rbx, %rsi
+    movq %r15, %rdi
+    rep movsb
+    movq %r14, %rcx
+    movq %r13, %rsi
+    movq %r15, %rdi
+    addq %r12, %rdi
+    rep movsb
     movq $16, %rcx
     sub $32, %rsp
     call tl_alloc
@@ -6240,6 +6398,8 @@ tl_string_concat:
     addq %r14, %rdx
     movq %rdx, 8(%rax)
     add $8, %rsp
+    pop %rdi
+    pop %rsi
     pop %r15
     pop %r14
     pop %r13
@@ -8029,6 +8189,33 @@ tl_windows_setup_instances:
             (compiler-backend-string-contains? asm "tl_string_eq:\n")
             (compiler-backend-string-contains? asm ".globl tl_string_to_int\n")
             (compiler-backend-string-contains? asm "tl_string_to_int:\n"))]
+        [string-eq-word-path : bool
+          (backend-and4
+            (compiler-backend-string-contains?
+              asm
+              ".L_tl_string_eq_word_loop:\n")
+            (compiler-backend-string-contains? asm "    shrq $3, %r8\n")
+            (compiler-backend-string-contains? asm "    cmpq (%rdx), %rax\n")
+            (compiler-backend-string-contains?
+              asm
+              ".L_tl_string_eq_tail_loop:\n"))]
+        [string-copy-helpers : bool
+          (and
+            (compiler-backend-string-contains? asm "    rep movsb\n")
+            (and
+              (not
+                (compiler-backend-string-contains?
+                  asm
+                  ".L_tl_substring_copy_loop:\n"))
+              (and
+                (not
+                  (compiler-backend-string-contains?
+                    asm
+                    ".L_tl_string_concat_copy_a:\n"))
+                (not
+                  (compiler-backend-string-contains?
+                    asm
+                    ".L_tl_string_concat_copy_b:\n")))))]
         [driver-labels : bool
           (backend-and8
             (compiler-backend-string-contains? asm ".globl tl_int_to_string\n")
@@ -8213,36 +8400,24 @@ tl_windows_setup_instances:
                       asm
                       ".extern tl_random_system_seed\n"))))))]
         (and
-          base-labels
-          (and
+          (backend-and8
+            base-labels
             string-labels
-            (and
-              driver-labels
-              (and
-                file-labels
-                (and
-                  file-handle-labels
-                  (and
-                    file-read-chunk-labels
-                    (and
-                      stdio-labels
-                      (and
-                        process-labels
-                        (and
-                          no-externs
-                          (and
-                            file-handle-no-externs
-                            (and
-                              file-read-chunk-no-externs
-                              (and
-                                random-labels
-                                (and
-                                  (compiler-backend-string-contains?
-                                    asm
-                                    "    call tl_alloc\n")
-                                  (compiler-backend-string-contains?
-                                    asm
-                                    ".L_tl_stdin_eof_flag:\n")))))))))))))))]
+            string-eq-word-path
+            string-copy-helpers
+            driver-labels
+            file-labels
+            file-handle-labels
+            file-read-chunk-labels)
+          (backend-and8
+            stdio-labels
+            process-labels
+            no-externs
+            file-handle-no-externs
+            file-read-chunk-no-externs
+            random-labels
+            (compiler-backend-string-contains? asm "    call tl_alloc\n")
+            (compiler-backend-string-contains? asm ".L_tl_stdin_eof_flag:\n"))))]
     [(ErrCompilerBackend _) false]))
 
 (define (compiler-backend-file-handle-open-close-runtime-ok?) : bool
@@ -8698,6 +8873,13 @@ tl_windows_setup_instances:
 (define (main) : i64
   (calc 10 5))")
 
+(define (compiler-backend-regalloc-f64-source) : String
+  "(define (main) : f64
+  (let
+    [a : f64 1.5]
+    [b : f64 2.5]
+    (+ a b)))")
+
 (define (compiler-backend-asm-ok? [asm : String]) : bool
   (and
     (compiler-backend-string-contains? asm ".data\n")
@@ -8758,6 +8940,61 @@ tl_windows_setup_instances:
                   (compiler-backend-string-contains?
                     asm
                     "    leaq .L_tl_str_6869(%rip), %rax\n")))))))]
+    [(ErrCompilerBackend _) false]))
+
+;; Backend-owned replacement for the string runtime helper emission tests
+;; (#1044): source-level string builtins lower to direct calls, and the backend
+;; emits each helper body instead of leaving an extern placeholder.
+(define (compiler-backend-string-runtime-source) : String
+  "(define (parse-and-render [s : String]) : i64
+  (+
+    (string->int s)
+    (+
+      (string-length (int->string 42))
+      (+
+        (string-length (substring s 0 1))
+        (string-length (string-concat s \"!\"))))))
+(define (main) : i64 (parse-and-render \"42\"))")
+
+(define (compiler-backend-string-runtime-ok?) : bool
+  (match (compiler-backend-emit-source (compiler-backend-string-runtime-source))
+    [(OkCompilerBackend asm)
+      (and
+        (backend-and8
+          (compiler-backend-string-contains? asm ".globl tl_string_to_int\n")
+          (compiler-backend-string-contains? asm "tl_string_to_int:\n")
+          (compiler-backend-string-contains? asm "    call tl_string_to_int\n")
+          (compiler-backend-string-contains? asm ".globl tl_int_to_string\n")
+          (compiler-backend-string-contains? asm "tl_int_to_string:\n")
+          (compiler-backend-string-contains? asm "    call tl_int_to_string\n")
+          (compiler-backend-string-contains? asm ".globl tl_substring\n")
+          (compiler-backend-string-contains? asm "    call tl_substring\n"))
+        (and
+          (backend-and8
+            (compiler-backend-string-contains? asm "tl_substring:\n")
+            (compiler-backend-string-contains? asm ".globl tl_string_concat\n")
+            (compiler-backend-string-contains? asm "tl_string_concat:\n")
+            (compiler-backend-string-contains?
+              asm
+              "    call tl_string_concat\n")
+            (not
+              (compiler-backend-string-contains?
+                asm
+                ".extern tl_string_to_int\n"))
+            (not
+              (compiler-backend-string-contains?
+                asm
+                ".extern tl_int_to_string\n"))
+            (not
+              (compiler-backend-string-contains? asm ".extern tl_substring\n"))
+            (not
+              (compiler-backend-string-contains?
+                asm
+                ".extern tl_string_concat\n")))
+          (not
+            (compiler-backend-string-contains?
+              asm
+              (compiler-backend-todo-marker)))))]
     [(ErrCompilerBackend _) false]))
 
 (define (compiler-backend-aggregate-ok?) : bool
@@ -8844,14 +9081,66 @@ tl_windows_setup_instances:
                         "    movq %rsi, %r12\n")))))))))]
     [(ErrCompilerBackend _) false]))
 
+(define (compiler-backend-regalloc-f64-ok?) : bool
+  (match (compiler-backend-emit-source (compiler-backend-regalloc-f64-source))
+    [(OkCompilerBackend asm)
+      (and
+        (compiler-backend-string-contains? asm "main:\n")
+        (and
+          (compiler-backend-string-contains? asm "    movsd %xmm0, %xmm2\n")
+          (and
+            (compiler-backend-string-contains? asm "    movsd %xmm0, %xmm3\n")
+            (and
+              (compiler-backend-string-contains? asm "    movsd %xmm2, %xmm0\n")
+              (and
+                (compiler-backend-string-contains?
+                  asm
+                  "    movsd %xmm3, %xmm1\n")
+                (and
+                  (compiler-backend-string-contains?
+                    asm
+                    "    addsd %xmm1, %xmm0\n")
+                  (not
+                    (compiler-backend-string-contains?
+                      asm
+                      "    movsd %xmm0, -8(%rbp)\n"))))))))]
+    [(ErrCompilerBackend _) false]))
+
 (define (compiler-backend-peephole-assignments) : CompilerRegAssignmentList
   (CompilerRegAssignmentCons
     (CompilerRegAssignment 0 (CompilerRegRegister "%r12"))
     (CompilerRegAssignmentCons
-      (CompilerRegAssignment 1 (CompilerRegRegister "%xmm0"))
+      (CompilerRegAssignment 1 (CompilerRegRegister "%xmm2"))
       (CompilerRegAssignmentCons
         (CompilerRegAssignment 2 (CompilerRegRegister "%r13"))
         CompilerRegAssignmentNil))))
+
+(define (compiler-backend-expanded-scalar-assignments) : CompilerRegAssignmentList
+  (CompilerRegAssignmentCons
+    (CompilerRegAssignment 0 (CompilerRegRegister "%r8"))
+    (CompilerRegAssignmentCons
+      (CompilerRegAssignment 1 (CompilerRegRegister "%r9"))
+      CompilerRegAssignmentNil)))
+
+(define (compiler-backend-expanded-scalar-regs-ok?) : bool
+  (let
+    [assignments : CompilerRegAssignmentList
+      (compiler-backend-expanded-scalar-assignments)]
+    (and
+      (string-eq
+        (compiler-backend-emit-load-var-with-plan assignments 0 "%rax")
+        "    movq %r8, %rax\n")
+      (and
+        (string-eq
+          (compiler-backend-emit-store-var-with-plan assignments 1 "%rax")
+          "    movq %rax, %r9\n")
+        (and
+          (string-eq
+            (compiler-backend-emit-load-register "%r8" (AstTyU32))
+            "    movl %r8d, %eax\n")
+          (and
+            (not (compiler-backend-plan-uses-callee-regs? assignments))
+            (= (compiler-backend-frame-slots 2 assignments) 2)))))))
 
 (define (compiler-backend-peephole-register-moves-ok?) : bool
   (let
@@ -8868,13 +9157,13 @@ tl_windows_setup_instances:
         (and
           (string-eq
             (compiler-backend-emit-load-f64-var-with-plan assignments 1 "%xmm0")
-            "")
+            "    movsd %xmm2, %xmm0\n")
           (string-eq
             (compiler-backend-emit-store-f64-var-with-plan
               assignments
               1
               "%xmm0")
-            ""))))))
+            "    movsd %xmm0, %xmm2\n"))))))
 
 (define (compiler-backend-peephole-asm-ok?) : bool
   (let
@@ -9321,11 +9610,17 @@ tl_windows_setup_instances:
         9)
       ;; #1044: an f64 unary op other than negation is rejected (mirrors the
       ;; f64-binary-op reject; only IrUnNeg has an f64 lowering).
-      (compiler-backend-instr-diagnostic-case-ok?
-        (IrInstrUnOp 2 (IrUnNot) (IrValueF64 "1.0") (AstTyF64))
-        "backend: unsupported f64 unary op"
-        40
-        11))))
+      (and
+        (compiler-backend-instr-diagnostic-case-ok?
+          (IrInstrUnOp 2 (IrUnNot) (IrValueF64 "1.0") (AstTyF64))
+          "backend: unsupported f64 unary op"
+          40
+          11)
+        (compiler-backend-instr-diagnostic-case-ok?
+          (IrInstrLaneId 3 4 (AstTyI64))
+          "backend: vector/mask IR emission is not implemented"
+          44
+          13)))))
 
 (define (compiler-backend-optimizer-rewrite-diagnostic-ok?) : bool
   (let
@@ -9848,8 +10143,14 @@ tl_windows_setup_instances:
           (and
             (compiler-backend-file-handle-open-close-runtime-ok?)
             (and
-              (compiler-backend-runtime-coexist-ok?)
-              (compiler-backend-module-symbol-ok?)))))))
+              (compiler-backend-string-runtime-ok?)
+              (and
+                (compiler-backend-expanded-scalar-regs-ok?)
+                (and
+                  (compiler-backend-regalloc-f64-ok?)
+                  (and
+                    (compiler-backend-runtime-coexist-ok?)
+                    (compiler-backend-module-symbol-ok?))))))))))
     42
     (begin
       (panic "backend: smoke output mismatch")

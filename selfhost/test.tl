@@ -38,6 +38,9 @@
 (defenum InlineHarness
   (InlineHarness AstProgram AstDeclPathList i64))
 
+(defenum InlineRuntimeDecls
+  (InlineRuntimeDecls AstDeclList AstDeclPathList))
+
 (define (tltest-root-cons [root : String] [roots : CompilerLoadRootList]) : CompilerLoadRootList
   (CompilerLoadRootCons root roots))
 
@@ -223,6 +226,11 @@
     [(AstDeclCons head rest)
       (AstDeclCons head (tltest-decl-list-append rest right))]))
 
+(define (tltest-decl-list-count [items : AstDeclList]) : i64
+  (match items
+    [(AstDeclNil) 0]
+    [(AstDeclCons _ rest) (+ 1 (tltest-decl-list-count rest))]))
+
 (define (tltest-path-list-append
   [left : AstDeclPathList]
   [right : AstDeclPathList]) : AstDeclPathList
@@ -382,6 +390,220 @@
     (AstTyI64)
     (AstExprBegin (tltest-main-exprs tests count))))
 
+(define (tltest-reach-mark-name [names : SymI64Env] [name : String]) : SymI64Env
+  (if (sym-i64-contains names name)
+    names
+    (sym-i64-bind names name 1)))
+
+(define (tltest-reach-mark-expr-list [exprs : AstExprList] [names : SymI64Env]) : SymI64Env
+  (match exprs
+    [(AstExprNil) names]
+    [(AstExprCons head rest)
+      (tltest-reach-mark-expr-list rest (tltest-reach-mark-expr head names))]))
+
+(define (tltest-reach-mark-let-bindings
+  [bindings : AstLetBindingList]
+  [names : SymI64Env]) : SymI64Env
+  (match bindings
+    [(AstLetBindingNil) names]
+    [(AstLetBindingCons binding rest)
+      (match binding
+        [(AstLetBinding _ _ value)
+          (tltest-reach-mark-let-bindings
+            rest
+            (tltest-reach-mark-expr value names))])]))
+
+(define (tltest-reach-mark-resource-bindings
+  [bindings : AstResourceBindingList]
+  [names : SymI64Env]) : SymI64Env
+  (match bindings
+    [(AstResourceBindingNil) names]
+    [(AstResourceBindingCons binding rest)
+      (match binding
+        [(AstResourceBinding _ init cleanup)
+          (tltest-reach-mark-resource-bindings
+            rest
+            (tltest-reach-mark-expr cleanup (tltest-reach-mark-expr init names)))])]))
+
+(define (tltest-reach-mark-match-arms
+  [arms : AstMatchArmList]
+  [names : SymI64Env]) : SymI64Env
+  (match arms
+    [(AstMatchArmNil) names]
+    [(AstMatchArmCons arm rest)
+      (match arm
+        [(AstMatchArm _ body)
+          (tltest-reach-mark-match-arms
+            rest
+            (tltest-reach-mark-expr body names))])]))
+
+(define (tltest-reach-mark-expr [expr : AstExpr] [names : SymI64Env]) : SymI64Env
+  (match expr
+    [(AstExprSpanned inner _) (tltest-reach-mark-expr inner names)]
+    [(AstExprLiteral _) names]
+    [(AstExprVar name) (tltest-reach-mark-name names name)]
+    [(AstExprBinary _ left right)
+      (tltest-reach-mark-expr right (tltest-reach-mark-expr left names))]
+    [(AstExprUnary _ inner) (tltest-reach-mark-expr inner names)]
+    [(AstExprCall func args)
+      (tltest-reach-mark-expr-list args (tltest-reach-mark-expr func names))]
+    [(AstExprIf cond then-branch else-branch)
+      (tltest-reach-mark-expr
+        else-branch
+        (tltest-reach-mark-expr then-branch (tltest-reach-mark-expr cond names)))]
+    [(AstExprLet bindings body)
+      (tltest-reach-mark-expr
+        body
+        (tltest-reach-mark-let-bindings bindings names))]
+    [(AstExprLambda _ _ body) (tltest-reach-mark-expr body names)]
+    [(AstExprTuple exprs) (tltest-reach-mark-expr-list exprs names)]
+    [(AstExprTupleRef tuple _) (tltest-reach-mark-expr tuple names)]
+    [(AstExprArray exprs) (tltest-reach-mark-expr-list exprs names)]
+    [(AstExprMakeArray _ len) (tltest-reach-mark-expr len names)]
+    [(AstExprArrayRef array index)
+      (tltest-reach-mark-expr index (tltest-reach-mark-expr array names))]
+    [(AstExprArraySet array index value)
+      (tltest-reach-mark-expr
+        value
+        (tltest-reach-mark-expr index (tltest-reach-mark-expr array names)))]
+    [(AstExprStringRef text index)
+      (tltest-reach-mark-expr index (tltest-reach-mark-expr text names))]
+    [(AstExprWhile cond body)
+      (tltest-reach-mark-expr body (tltest-reach-mark-expr cond names))]
+    [(AstExprBegin exprs) (tltest-reach-mark-expr-list exprs names)]
+    [(AstExprUnsafe exprs) (tltest-reach-mark-expr-list exprs names)]
+    [(AstExprSet name value)
+      (tltest-reach-mark-expr value (tltest-reach-mark-name names name))]
+    [(AstExprAnn inner _) (tltest-reach-mark-expr inner names)]
+    [(AstExprCast inner _) (tltest-reach-mark-expr inner names)]
+    [(AstExprBorrow _ place) (tltest-reach-mark-expr place names)]
+    [(AstExprMatch scrutinee arms)
+      (tltest-reach-mark-match-arms
+        arms
+        (tltest-reach-mark-expr scrutinee names))]
+    [(AstExprForeach _ _ start end body)
+      (tltest-reach-mark-expr
+        body
+        (tltest-reach-mark-expr end (tltest-reach-mark-expr start names)))]
+    [(AstExprSpmdReduce _ _ _ start end init value)
+      (tltest-reach-mark-expr
+        value
+        (tltest-reach-mark-expr
+          init
+          (tltest-reach-mark-expr end (tltest-reach-mark-expr start names))))]
+    [(AstExprStructGet receiver _) (tltest-reach-mark-expr receiver names)]
+    [(AstExprWithRegion _ body) (tltest-reach-mark-expr-list body names)]
+    [(AstExprWithResource bindings body)
+      (tltest-reach-mark-expr-list
+        body
+        (tltest-reach-mark-resource-bindings bindings names))]
+    [(AstExprTypeLiteral _) names]
+    [(AstExprComptime inner) (tltest-reach-mark-expr inner names)]
+    [(AstExprTry inner) (tltest-reach-mark-expr inner names)]
+    [(AstExprPtrNull _) names]
+    [(AstExprPtrNullCheck inner) (tltest-reach-mark-expr inner names)]
+    [(AstExprPtrRead ptr) (tltest-reach-mark-expr ptr names)]
+    [(AstExprPtrWrite ptr value)
+      (tltest-reach-mark-expr value (tltest-reach-mark-expr ptr names))]
+    [(AstExprPtrOffset ptr offset)
+      (tltest-reach-mark-expr offset (tltest-reach-mark-expr ptr names))]
+    [(AstExprPtrCast ptr _) (tltest-reach-mark-expr ptr names)]
+    [(AstExprPtrToInt ptr) (tltest-reach-mark-expr ptr names)]
+    [(AstExprIntToPtr value _) (tltest-reach-mark-expr value names)]))
+
+(define (tltest-reach-mark-tests [tests : InlineTestList] [names : SymI64Env]) : SymI64Env
+  (match tests
+    [(InlineTestNil) names]
+    [(InlineTestCons test rest)
+      (match test
+        [(InlineTest _ _ _ body _)
+          (tltest-reach-mark-tests rest (tltest-reach-mark-expr body names))])]))
+
+(define (tltest-reach-mark-decl [decl : AstDecl] [names : SymI64Env]) : SymI64Env
+  (match decl
+    [(AstDeclDef name _ expr)
+      (if (sym-i64-contains names name)
+        (tltest-reach-mark-expr expr names)
+        names)]
+    [(AstDeclDefFn name _ _ body)
+      (if (sym-i64-contains names name)
+        (tltest-reach-mark-expr body names)
+        names)]
+    [_ names]))
+
+(define (tltest-reach-mark-decls [decls : AstDeclList] [names : SymI64Env]) : SymI64Env
+  (match decls
+    [(AstDeclNil) names]
+    [(AstDeclCons decl rest)
+      (tltest-reach-mark-decls rest (tltest-reach-mark-decl decl names))]))
+
+(define (tltest-reach-fixed
+  [decls : AstDeclList]
+  [fuel : i64]
+  [names : SymI64Env]) : SymI64Env
+  (if (<= fuel 0)
+    names
+    (tltest-reach-fixed decls (- fuel 1) (tltest-reach-mark-decls decls names))))
+
+(define (tltest-reachable-names [decls : AstDeclList] [tests : InlineTestList]) : SymI64Env
+  (tltest-reach-fixed
+    decls
+    (tltest-decl-list-count decls)
+    (tltest-reach-mark-tests tests (sym-i64-empty))))
+
+(define (tltest-reachable-runtime-decl? [decl : AstDecl] [names : SymI64Env]) : bool
+  (match decl
+    [(AstDeclDef name _ _) (sym-i64-contains names name)]
+    [(AstDeclDefFn name _ _ _) (sym-i64-contains names name)]
+    [(AstDeclExtern name _) (sym-i64-contains names name)]
+    [_ true]))
+
+(define (tltest-prune-runtime-decls-in
+  [decls : AstDeclList]
+  [paths : AstDeclPathList]
+  [names : SymI64Env]
+  [decls-rev : AstDeclList]
+  [paths-rev : AstDeclPathList]) : InlineRuntimeDecls
+  (match decls
+    [(AstDeclNil)
+      (InlineRuntimeDecls
+        (tltest-decl-list-reverse decls-rev)
+        (tltest-path-list-reverse paths-rev))]
+    [(AstDeclCons decl rest)
+      (let
+        [decl-path : String
+          (match paths
+            [(AstDeclPathCons path _) path]
+            [(AstDeclPathNil) ""])]
+        [rest-paths : AstDeclPathList
+          (match paths
+            [(AstDeclPathCons _ path-rest) path-rest]
+            [(AstDeclPathNil) AstDeclPathNil])]
+        (if (tltest-reachable-runtime-decl? decl names)
+          (tltest-prune-runtime-decls-in
+            rest
+            rest-paths
+            names
+            (AstDeclCons decl decls-rev)
+            (AstDeclPathCons decl-path paths-rev))
+          (tltest-prune-runtime-decls-in
+            rest
+            rest-paths
+            names
+            decls-rev
+            paths-rev)))]))
+
+(define (tltest-prune-runtime-decls
+  [decls : AstDeclList]
+  [paths : AstDeclPathList]
+  [tests : InlineTestList]) : InlineRuntimeDecls
+  (tltest-prune-runtime-decls-in
+    decls
+    paths
+    (tltest-reachable-names decls tests)
+    AstDeclNil
+    AstDeclPathNil))
+
 (define (tltest-build-harness
   [source : String]
   [decls : AstDeclList]
@@ -391,19 +613,21 @@
       (let
         [test-decls : AstDeclList (tltest-test-decls tests)]
         [test-paths : AstDeclPathList (tltest-test-paths tests)]
-        (InlineHarness
-          (AstProgram
-            (tltest-decl-list-append
-              runtime-decls
-              (tltest-decl-list-append
-                test-decls
-                (AstDeclCons (tltest-main-decl tests count) AstDeclNil))))
-          (tltest-path-list-append
-            runtime-paths
-            (tltest-path-list-append
-              test-paths
-              (AstDeclPathCons source AstDeclPathNil)))
-          count))]))
+        (match (tltest-prune-runtime-decls runtime-decls runtime-paths tests)
+          [(InlineRuntimeDecls pruned-decls pruned-paths)
+            (InlineHarness
+              (AstProgram
+                (tltest-decl-list-append
+                  pruned-decls
+                  (tltest-decl-list-append
+                    test-decls
+                    (AstDeclCons (tltest-main-decl tests count) AstDeclNil))))
+              (tltest-path-list-append
+                pruned-paths
+                (tltest-path-list-append
+                  test-paths
+                  (AstDeclPathCons source AstDeclPathNil)))
+              count)]))]))
 
 (define (tltest-backend-target [target : String]) : CompilerBackendTarget
   (if (or
@@ -474,6 +698,35 @@
         (print-error (compiler-diagnostic-render diag))
         1)]))
 
+(define (tltest-no-tests-check [decls : AstDeclList] [paths : AstDeclPathList]) : i64
+  (match (typecheck-compiler-program-with-paths (AstProgram decls) paths)
+    [(OkCompilerTypecheck _)
+      (begin
+        (print-string "TypeLisp test typecheck passed: 0 test(s)\n")
+        0)]
+    [(ErrCompilerTypecheck diag)
+      (begin
+        (print-error (compiler-diagnostic-render diag))
+        1)]))
+
+(define (tltest-no-tests-run
+  [source : String]
+  [target : String]
+  [mode : String]
+  [opt-level : i64])
+  :
+  i64
+  ;; With no inline tests there is no source harness to validate here. `test
+  ;; --check` owns source typechecking; run mode only needs the zero-test runner
+  ;; plan so the Rust host-action boundary can keep its normal contract.
+  (tltest-run-plan
+    source
+    (AstProgram (AstDeclCons (tltest-main-decl InlineTestNil 0) AstDeclNil))
+    (AstDeclPathCons source AstDeclPathNil)
+    target
+    mode
+    opt-level))
+
 (define (tltest-run-config [config : TestConfig]) : i64
   (match config
     [(TestConfig source target mode roots opt-level test-mode)
@@ -484,17 +737,22 @@
         [(OkCompilerLoadWithPaths decls paths _ _)
           (match (tltest-build-harness source decls paths)
             [(InlineHarness program harness-paths count)
-              (match test-mode
-                [(TestModeCheck)
-                  (tltest-check-only program harness-paths count)]
-                [(TestModeRun)
-                  (tltest-run-plan
-                    source
-                    program
-                    harness-paths
-                    target
-                    mode
-                    opt-level)])])]
+              (if (= count 0)
+                (match test-mode
+                  [(TestModeCheck) (tltest-no-tests-check decls paths)]
+                  [(TestModeRun)
+                    (tltest-no-tests-run source target mode opt-level)])
+                (match test-mode
+                  [(TestModeCheck)
+                    (tltest-check-only program harness-paths count)]
+                  [(TestModeRun)
+                    (tltest-run-plan
+                      source
+                      program
+                      harness-paths
+                      target
+                      mode
+                      opt-level)]))])]
         [(ErrCompilerLoadWithPaths diag)
           (begin
             (print-error (compiler-diagnostic-render diag))

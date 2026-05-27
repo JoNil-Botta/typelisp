@@ -10069,6 +10069,71 @@ tl_windows_setup_instances:
       (compiler-backend-bool-eq-source)
       (compiler-backend-todo-marker))))
 
+;; Backend-owned scalar instruction emit-shape coverage for stable wide integer
+;; forms (#1353). Narrow typed instruction selection and checked trap emission
+;; are kept as explicit follow-up work in the coverage map.
+(define (compiler-backend-scalar-wide-source) : String
+  "(define (xor64 [a : i64] [b : i64]) : i64 (bit-xor a b))
+(define (shl64 [a : i64] [b : i64]) : i64 (shl a b))
+(define (shr64 [a : i64] [b : i64]) : i64 (shr a b))")
+
+(define (compiler-backend-scalar-wide-ops-ok?) : bool
+  (match (compiler-backend-emit-source (compiler-backend-scalar-wide-source))
+    [(OkCompilerBackend asm)
+      (backend-and8
+        (compiler-backend-string-contains? asm "    xorq %rbx, %rax\n")
+        (compiler-backend-string-contains? asm "    shlq %cl, %rax\n")
+        (compiler-backend-string-contains? asm "    sarq %cl, %rax\n")
+        (not (compiler-backend-string-contains? asm "    orq "))
+        (not (compiler-backend-string-contains? asm "    addq %rbx, %rax\n"))
+        (not
+          (compiler-backend-string-contains? asm (compiler-backend-todo-marker)))
+        true
+        true)]
+    [(ErrCompilerBackend _) false]))
+
+(define (compiler-backend-scalar-div-mod-source) : String
+  "(define (div64 [a : i64] [b : i64]) : i64 (/ a b))
+(define (mod64 [a : i64] [b : i64]) : i64 (% a b))
+(define (main) : i64
+  (+ (div64 42 6) (mod64 22 7)))")
+
+(define (compiler-backend-scalar-div-mod-ok?) : bool
+  (match (compiler-backend-emit-source (compiler-backend-scalar-div-mod-source))
+    [(OkCompilerBackend asm)
+      (backend-and8
+        (compiler-backend-string-contains? asm "    cqto\n")
+        (compiler-backend-string-contains? asm "    idivq %rbx\n")
+        (compiler-backend-string-contains? asm "    movq %rdx, %rax\n")
+        (not
+          (compiler-backend-string-contains? asm (compiler-backend-todo-marker)))
+        true
+        true
+        true
+        true)]
+    [(ErrCompilerBackend _) false]))
+
+(define (compiler-backend-f64-abi-source) : String
+  "(define (half [x : f64]) : f64 (/ x 2.0))
+(define (callhalf [x : f64]) : f64 (half x))
+(define (second [n : i64] [x : f64]) : f64 x)")
+
+(define (compiler-backend-f64-abi-ok?) : bool
+  (match (compiler-backend-emit-source (compiler-backend-f64-abi-source))
+    [(OkCompilerBackend asm)
+      (backend-and8
+        (compiler-backend-string-contains? asm "    movq %rdi, -8(%rbp)\n")
+        (compiler-backend-string-contains? asm "    movsd %xmm0, -16(%rbp)\n")
+        (not
+          (compiler-backend-string-contains? asm "    movsd %xmm1, -16(%rbp)\n"))
+        (compiler-backend-string-contains? asm "    divsd %xmm1, %xmm0\n")
+        (compiler-backend-string-contains? asm "    call _tl_half\n")
+        (compiler-backend-string-contains? asm "    movsd %xmm0, ")
+        (not
+          (compiler-backend-string-contains? asm (compiler-backend-todo-marker)))
+        true)]
+    [(ErrCompilerBackend _) false]))
+
 ;; #750: a SysV call with seven integer args no longer rejects as "too many
 ;; call args". The 7th arg spills: 16-byte call space is reserved, the spilled
 ;; value is staged through %r11 and stored at 0(%rsp), and `add8` reads its
@@ -10214,9 +10279,9 @@ tl_windows_setup_instances:
                 (compiler-backend-runtime-coexist-ok?)
                 (compiler-backend-module-symbol-ok?)
                 (compiler-backend-extern-metadata-symbol-ok?)
-                true
-                true
-                true)))))))
+                (compiler-backend-scalar-wide-ops-ok?)
+                (compiler-backend-scalar-div-mod-ok?)
+                (compiler-backend-f64-abi-ok?))))))))
     42
     (begin
       (panic "backend: smoke output mismatch")

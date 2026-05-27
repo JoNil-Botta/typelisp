@@ -179,11 +179,12 @@ if [ "$HOST_OS" = linux ]; then
     run_gate "stdlib documentation" scripts/verify-stdlib-docs.sh
     run_gate "selfhost native generated programs" scripts/verify-selfhost-native.sh
     run_gate "selfhost external compiler corpus" scripts/verify-selfhost.sh
+    run_gate "selfhost package loader corpus" scripts/verify-selfhost-package-loader.sh
 else
     echo
     echo "[no-rust-stage0] skipping Linux-only gates on Windows:"
     echo "[no-rust-stage0]   stdlib documentation, selfhost native generated programs,"
-    echo "[no-rust-stage0]   selfhost external compiler corpus"
+    echo "[no-rust-stage0]   selfhost external compiler corpus, selfhost package loader corpus"
 fi
 
 echo

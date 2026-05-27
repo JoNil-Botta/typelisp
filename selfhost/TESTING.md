@@ -251,6 +251,12 @@ Each new corpus file must be listed in the script manifest. See
 [`selfhost/tests/README.md`](tests/README.md) for the corpus layout and local
 runner commands.
 
+`scripts/verify-selfhost-package-loader.sh` is the Linux no-Rust end-to-end
+package-loader corpus. It builds `selfhost/check.tl` once, generates tiny
+`typelisp.pkg` fixtures under `target/`, and checks `pkg:<alias>/...` import
+success, string-normalized deduplication, missing package import diagnostics,
+parent-escape rejection, and flat-namespace duplicate diagnostics.
+
 ### Stdlib documentation gate
 
 `scripts/verify-stdlib-docs.sh` discovers every `stdlib/*.tl` module, requires
@@ -319,9 +325,10 @@ compiler from published stage0, then smoke-tests the stage1 CLI/host-action
 wrapper and runs deterministic assembly through that wrapper. Public tools,
 doctests, inline tests, selfhost compile manifests, TypeLisp source format,
 native integration manifests, examples, stdlib, stdlib docs, selfhost native
-generated programs, and the selfhost external compiler corpus continue to use
-the seed compiler until their remaining public-tool and manifest exceptions are
-ported to the wrapper. The Windows job runs the host-supported gates against the
+generated programs, the selfhost external compiler corpus, and the selfhost
+package loader corpus continue to use the seed compiler until their remaining
+public-tool and manifest exceptions are ported to the wrapper. The Windows job
+runs the host-supported gates against the
 published stage0 compiler and explicitly skips the Linux-only selfhost/docs
 checks until native stage1 bootstrap/link support lands.
 
@@ -342,6 +349,7 @@ TYPELISP_BIN=./target/debug/typelisp ./scripts/verify-stdlib-docs.sh
 TYPELISP_BIN=./target/debug/typelisp ./scripts/verify-doc-tests.sh
 TYPELISP_BIN=./target/debug/typelisp ./scripts/verify-inline-tests.sh
 TYPELISP_BIN=./target/debug/typelisp ./scripts/verify-selfhost.sh
+TYPELISP_BIN=./target/debug/typelisp ./scripts/verify-selfhost-package-loader.sh
 scripts/verify-no-rust-stage0.sh
 ```
 

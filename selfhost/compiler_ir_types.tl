@@ -211,6 +211,7 @@
     [(AstTyString) "String"]
     [(AstTyUnit) "unit"]
     [(AstTyNever) "never"]
+    [(AstTyExpr) "Expr"]
     [(AstTyFunc args ret)
       (compiler-ir-cat3
         "(-> "
@@ -918,6 +919,7 @@
     [(AstTyString) "String"]
     [(AstTyUnit) "unit"]
     [(AstTyNever) "never"]
+    [(AstTyExpr) "Expr"]
     [(AstTyFunc args ret)
       (compiler-ir-cat4
         "(->"

@@ -61,7 +61,12 @@ jobs:
       # TypeLisp verification scripts run once through the release compiler.
       - name: Fetch PR base
         if: ${{ matrix.suite == 'rust' && matrix.os == 'ubuntu-latest' && github.event_name == 'pull_request' }}
-        run: git fetch --no-tags --depth=1 origin "${{ github.event.pull_request.base.sha }}:refs/remotes/origin/pr-base"
+        run: |
+          base_sha="$(git cat-file -p HEAD | sed -n 's/^parent //p' | head -n 1)"
+          if [ -z "$base_sha" ]; then
+            base_sha="${{ github.event.pull_request.base.sha }}"
+          fi
+          git fetch --no-tags --depth=1 origin "$base_sha:refs/remotes/origin/pr-base"
 
       - name: Check implementation language allowlist
         if: ${{ matrix.suite == 'rust' && matrix.os == 'ubuntu-latest' }}

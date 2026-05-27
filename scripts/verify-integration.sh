@@ -456,6 +456,34 @@ show_build_streams() {
     show_stream_if_nonempty stderr "$_stderr"
 }
 
+build_linux_fixture_driver() {
+    _label=$1
+    _source=$2
+    _bin=$3
+    _asm="$_bin.s"
+    _obj="$_bin.o"
+    _build_stdout="$_bin.build.stdout"
+    _build_stderr="$_bin.build.stderr"
+
+    build_with_retry "$COMPILER" compile "$_source" -o "$_asm" > "$_build_stdout" 2> "$_build_stderr"
+    if [ "$build_rc" -ne 0 ]; then
+        echo "FAIL: $_label compile failed" >&2
+        show_build_streams "$_build_stdout" "$_build_stderr"
+        exit 1
+    fi
+    if ! as "$_asm" -o "$_obj" >> "$_build_stdout" 2>> "$_build_stderr"; then
+        echo "FAIL: $_label assemble failed" >&2
+        show_build_streams "$_build_stdout" "$_build_stderr"
+        exit 1
+    fi
+    if ! ld "$_obj" -o "$_bin" -dynamic-linker /lib64/ld-linux-x86-64.so.2 -lc \
+        >> "$_build_stdout" 2>> "$_build_stderr"; then
+        echo "FAIL: $_label link failed" >&2
+        show_build_streams "$_build_stdout" "$_build_stderr"
+        exit 1
+    fi
+}
+
 # A staged-primitive integration case may be skipped only when a build/link
 # failure mentions the not-yet-published runtime symbol. Once stage0-latest
 # catches up, the case builds and runs normally with a drop-marker notice.
@@ -479,9 +507,12 @@ run_linux_backend_fixtures() {
     _runtime_asm="$_runtime_dir/runtime_helpers.s"
     _runtime_obj="$_runtime_dir/runtime_helpers.o"
     _runtime_bin="$_runtime_dir/runtime_helpers"
+    _runtime_driver="$_runtime_dir/runtime_fixture_driver"
 
     echo "[backend-runtime] emit -> assemble -> link -> run"
-    run_fixture_with_retry "$COMPILER" run selfhost/compiler_backend_runtime_fixture.tl -- "$_runtime_asm"
+    build_linux_fixture_driver backend-runtime-driver \
+        selfhost/compiler_backend_runtime_fixture.tl "$_runtime_driver"
+    "$_runtime_driver" "$_runtime_asm"
     for _snippet in \
         ".globl tl_alloc" \
         "tl_alloc:" \
@@ -532,9 +563,12 @@ run_linux_backend_fixtures() {
     _stack_asm="$_stack_dir/stack_args.s"
     _stack_obj="$_stack_dir/stack_args.o"
     _stack_bin="$_stack_dir/stack_args"
+    _stack_driver="$_stack_dir/stack_args_fixture_driver"
 
     echo "[backend-stack-args] emit -> assemble -> link -> run"
-    run_fixture_with_retry "$COMPILER" run selfhost/compiler_backend_stack_args_fixture.tl -- "$_stack_asm" linux-x86_64
+    build_linux_fixture_driver backend-stack-args-driver \
+        selfhost/compiler_backend_stack_args_fixture.tl "$_stack_driver"
+    "$_stack_driver" "$_stack_asm" linux-x86_64
     for _snippet in \
         "subq \$16, %rsp" \
         "movq %r11, 0(%rsp)" \

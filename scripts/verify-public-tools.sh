@@ -173,6 +173,27 @@ assert_not_contains() {
     fi
 }
 
+build_linux_cli_tool() {
+    _case=$1
+    _source=$2
+    _output=$3
+    _asm="$_output.s"
+    _obj="$_output.o"
+
+    run_cmd "$_case-compile" "$COMPILER" compile "$_source" --stdlib-root "$ROOT/stdlib" -o "$_asm"
+    assert_success
+    assert_stderr_empty
+    assert_contains "$out" "Generated:"
+    run_cmd "$_case-assemble" as "$_asm" -o "$_obj"
+    assert_success
+    assert_stdout_empty
+    assert_stderr_empty
+    run_cmd "$_case-link" ld "$_obj" -o "$_output" -dynamic-linker /lib64/ld-linux-x86-64.so.2 -lc
+    assert_success
+    assert_stdout_empty
+    assert_stderr_empty
+}
+
 strip_expected_trailing_lf() {
     src=$1
     dst=$2
@@ -686,12 +707,10 @@ assert_contains "$out" "from-plan"
 if [ "$HOST_OS" = linux ]; then
     SELFHOST_PLANNER_DIR="$WORKDIR/selfhost-planners"
     mkdir -p "$SELFHOST_PLANNER_DIR/with space" "$SELFHOST_PLANNER_DIR/stdlib one"
-    run_cmd selfhost-build-tool-build "$COMPILER" build selfhost/build.tl --stdlib-root "$ROOT/stdlib" -o "$SELFHOST_PLANNER_DIR/build-tool"
-    assert_success
-    assert_contains "$out" "Generated:"
-    run_cmd selfhost-run-tool-build "$COMPILER" build selfhost/run.tl --stdlib-root "$ROOT/stdlib" -o "$SELFHOST_PLANNER_DIR/run-tool"
-    assert_success
-    assert_contains "$out" "Generated:"
+    command -v as >/dev/null 2>&1 || fail "missing assembler: as"
+    command -v ld >/dev/null 2>&1 || fail "missing linker: ld"
+    build_linux_cli_tool selfhost-build-tool selfhost/build.tl "$SELFHOST_PLANNER_DIR/build-tool"
+    build_linux_cli_tool selfhost-run-tool selfhost/run.tl "$SELFHOST_PLANNER_DIR/run-tool"
 
     PLANNER_SOURCE="$SELFHOST_PLANNER_DIR/with space/main file.tl"
     PLANNER_OUTPUT="$SELFHOST_PLANNER_DIR/with space/the program"

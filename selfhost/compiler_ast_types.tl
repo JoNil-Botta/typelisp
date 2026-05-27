@@ -98,8 +98,13 @@
   (AstParamNil)
   (AstParamCons AstParam AstParamList))
 
+(defenum AstFieldCleanup
+  (AstFieldNoCleanup)
+  (AstFieldCleanupFn String)
+  (AstFieldOwnedCleanup))
+
 (defenum AstFieldDef
-  (AstFieldDef String AstType))
+  (AstFieldDef String AstType AstFieldCleanup))
 
 (defenum AstFieldDefList
   (AstFieldDefNil)
@@ -114,6 +119,10 @@
 
 (defenum AstExternMetadata
   (AstExternMetadata AstExternAbi String))
+
+(defenum AstStructCleanup
+  (AstStructNoCleanup)
+  (AstStructCleanupFn String))
 
 (defenum AstVariantDef
   (AstVariantDef String AstTypeList))
@@ -231,7 +240,7 @@
   (AstDeclDefFn String AstParamList AstType AstExpr)
   (AstDeclExtern String AstExternMetadata AstType)
   (AstDeclDefEnum String AstVariantDefList)
-  (AstDeclDefStruct String AstStructRepr AstFieldDefList)
+  (AstDeclDefStruct String AstStructRepr AstStructCleanup AstFieldDefList)
   (AstDeclImport AstImportSpec)
   (AstDeclTest String AstExpr AstSourceSpan)
   (AstDeclComptimeDecl AstDecl))
@@ -334,7 +343,7 @@
     [(AstDeclDefFn _ _ _ _) 2]
     [(AstDeclExtern _ _ _) 3]
     [(AstDeclDefEnum _ _) 4]
-    [(AstDeclDefStruct _ _ _) 5]
+    [(AstDeclDefStruct _ _ _ _) 5]
     [(AstDeclImport _) 6]
     [(AstDeclTest _ _ _) 7]
     [(AstDeclComptimeDecl _) 8]
@@ -363,6 +372,17 @@
 (define (ast-extern-metadata-abi [metadata : AstExternMetadata]) : AstExternAbi
   (match metadata
     [(AstExternMetadata abi _) abi]))
+
+(define (ast-struct-cleanup? [cleanup : AstStructCleanup]) : bool
+  (match cleanup
+    [(AstStructCleanupFn _) true]
+    [(AstStructNoCleanup) false]))
+
+(define (ast-field-cleanup? [cleanup : AstFieldCleanup]) : bool
+  (match cleanup
+    [(AstFieldCleanupFn _) true]
+    [(AstFieldOwnedCleanup) true]
+    [(AstFieldNoCleanup) false]))
 
 (define (compiler-ast-smoke) : i64
   (let

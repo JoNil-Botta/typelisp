@@ -1079,7 +1079,10 @@ fn parse_renders_newer_selfhost_ast_forms() {
     let source = dir.join("main.tl");
     fs::write(
         &source,
-        "(comptime-decl (defstruct Point (x i64)))\n\
+        "(comptime-decl\n\
+           (defstruct Point\n\
+             (:cleanup close-point)\n\
+             (x i64 (:cleanup close-x))))\n\
          (define (main [n : i64] [xs : (Array i64)]) : i64\n\
            (begin\n\
              (comptime (type (Array i64 4)))\n\
@@ -1100,6 +1103,16 @@ fn parse_renders_newer_selfhost_ast_forms() {
     let out = stdout(&alias);
     assert!(
         out.contains("ComptimeDecl { template: DefStruct"),
+        "stdout:\n{}",
+        out
+    );
+    assert!(
+        out.contains("cleanup: Some(\"close-point\")"),
+        "stdout:\n{}",
+        out
+    );
+    assert!(
+        out.contains("cleanup: Some(\"close-x\")"),
         "stdout:\n{}",
         out
     );

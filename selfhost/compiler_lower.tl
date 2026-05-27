@@ -719,7 +719,7 @@
               (compiler-symbol-handle-index handle))
               [(OkAstDecl decl)
                 (match decl
-                  [(AstDeclDefStruct _ _ fields) (OkAstFieldDefList fields)]
+                  [(AstDeclDefStruct _ _ _ fields) (OkAstFieldDefList fields)]
                   [_
                     (ErrAstFieldDefList
                       "lower: struct symbol owner is not a struct")])]
@@ -1178,7 +1178,7 @@
           (string-append "lower: unknown struct field " field-name)))]
     [(AstFieldDefCons field rest)
       (match field
-        [(AstFieldDef name ty)
+        [(AstFieldDef name ty _)
           (let
             [resolved : AstType (tc-resolve-type ctx ty)]
             (let
@@ -5244,7 +5244,7 @@
             spans
             names
             module)]
-        [(AstDeclDefStruct _ _ _)
+        [(AstDeclDefStruct _ _ _ _)
           (lower-decls-in-module
             ctx
             top-env

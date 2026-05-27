@@ -245,7 +245,7 @@
         module
         name
         (compiler-symbol-make-handle (compiler-symbol-kind-defenum) index))]
-    [(AstDeclDefStruct name _ _)
+    [(AstDeclDefStruct name _ _ _)
       (compiler-symbols-add-type-in-module
         symbols
         module
@@ -430,7 +430,7 @@
     [(AstFieldDefNil) (OkCompilerRegistries registries)]
     [(AstFieldDefCons field rest)
       (match field
-        [(AstFieldDef name _)
+        [(AstFieldDef name _ _)
           (if (sym-i64-contains seen name)
             (ErrCompilerRegistries
               (compiler-registries-duplicate-field-message struct-name name))
@@ -489,7 +489,7 @@
                 (+ index 1)
                 module)]
             [(ErrCompilerRegistries message) (ErrCompilerRegistries message)])]
-        [(AstDeclDefStruct name _ fields)
+        [(AstDeclDefStruct name _ _ fields)
           (match (build-compiler-field-registry-list
             fields
             registries
@@ -521,7 +521,7 @@
                     module)]
                 [(ErrCompilerRegistries message)
                   (ErrCompilerRegistries message)])]
-            [(AstDeclDefStruct name _ fields)
+            [(AstDeclDefStruct name _ _ fields)
               (match (build-compiler-field-registry-list
                 fields
                 registries
@@ -606,7 +606,7 @@
     [(AstFieldDefNil) (ErrAstType "symbols: field index not found")]
     [(AstFieldDefCons field rest)
       (match field
-        [(AstFieldDef _ ty)
+        [(AstFieldDef _ ty _)
           (if (= target index)
             (OkAstType ty)
             (compiler-field-type-at-index rest target (+ index 1)))])]))
@@ -635,7 +635,7 @@
     (compiler-registry-handle-owner-index handle))
     [(OkAstDecl decl)
       (match decl
-        [(AstDeclDefStruct _ _ fields)
+        [(AstDeclDefStruct _ _ _ fields)
           (compiler-field-type-at-index
             fields
             (compiler-registry-handle-child-index handle)

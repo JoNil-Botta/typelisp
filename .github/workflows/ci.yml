@@ -21,11 +21,11 @@ jobs:
   no-rust-stage0:
     name: No-Rust Stage0 Verification (linux)
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 35
     steps:
       - uses: actions/checkout@v4
 
-      - name: Run no-Rust stage0 gate
+      - name: Run no-Rust bootstrap + stage1 capability gate
         run: scripts/verify-no-rust-stage0.sh
 
   no-rust-stage0-windows:

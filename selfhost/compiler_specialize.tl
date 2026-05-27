@@ -17,7 +17,7 @@
   (SpecCacheCons String String SpecCache))
 
 (defenum SpecState
-  (SpecState AstDeclList SpecCache))
+  (SpecState AstDeclList SpecCache CtfeEnv))
 
 (defenum SpecValueList
   (SpecValueNil)
@@ -116,6 +116,10 @@
 (define (spec-param-type [param : AstParam]) : AstType
   (match param
     [(AstParam _ ty _) ty]))
+
+(define (spec-state-ctfe-env [state : SpecState]) : CtfeEnv
+  (match state
+    [(SpecState _ _ env) env]))
 
 (define (spec-type-kind? [ty : AstType]) : bool
   (match ty
@@ -237,6 +241,22 @@
     (string-append "m" (int->string (- 0 n)))
     (int->string n)))
 
+(define (spec-string-key-from [text : String] [idx : i64] [n : i64]) : String
+  (if (>= idx n)
+    ""
+    (string-append
+      "_"
+      (string-append
+        (int->string (cast (string-ref text idx) : i64))
+        (spec-string-key-from text (+ idx 1) n)))))
+
+(define (spec-string-key [text : String]) : String
+  (let
+    [n : i64 (string-length text)]
+    (string-append
+      "string_"
+      (string-append (int->string n) (spec-string-key-from text 0 n)))))
+
 (define (spec-type-list-key [types : AstTypeList]) : String
   (match types
     [(AstTypeNil) "nil"]
@@ -303,6 +323,7 @@
         "bool_1"
         "bool_0")]
     [(CtfeChar c) (string-append "char_" (int->string (cast c : i64)))]
+    [(CtfeString text) (spec-string-key text)]
     [(CtfeUnit) "unit"]
     [(CtfeType ty) (string-append "type_" (spec-type-key ty))]
     [(CtfeExpr _ _) "Expr"]
@@ -331,6 +352,7 @@
     [(CtfeI64 _) (ctfe-type-eq ty (AstTyI64))]
     [(CtfeBool _) (ctfe-type-eq ty (AstTyBool))]
     [(CtfeChar _) (ctfe-type-eq ty (AstTyChar))]
+    [(CtfeString _) (ctfe-type-eq ty (AstTyString))]
     [(CtfeUnit) (ctfe-type-eq ty (AstTyUnit))]
     [(CtfeType _) false]
     [(CtfeExpr _ _) (ctfe-type-eq ty (AstTyExpr))]
@@ -341,6 +363,7 @@
     [(CtfeI64 _) "i64"]
     [(CtfeBool _) "bool"]
     [(CtfeChar _) "char"]
+    [(CtfeString _) "String"]
     [(CtfeUnit) "unit"]
     [(CtfeType _) "type"]
     [(CtfeExpr _ _) "Expr"]
@@ -537,6 +560,11 @@
     [(CtfeI64 n) (OkSpecSubExpr (AstExprLiteral (AstLitInt n)))]
     [(CtfeBool b) (OkSpecSubExpr (AstExprLiteral (AstLitBool b)))]
     [(CtfeChar c) (OkSpecSubExpr (AstExprLiteral (AstLitChar c)))]
+    [(CtfeString _)
+      (ErrSpecSubExpr
+        (spec-diagnostic-at-expr
+          origin
+          "cannot substitute compile-time String value into runtime expression"))]
     [(CtfeUnit) (OkSpecSubExpr (AstExprLiteral (AstLitUnit)))]
     [(CtfeType ty)
       (ErrSpecSubExpr
@@ -670,7 +698,7 @@
               (if is-comptime
                 (match (compiler-ctfe-eval
                   arg
-                  (ctfe-env-empty)
+                  (spec-state-ctfe-env state)
                   (ctfe-fuel-limit))
                   [(OkCtfe value _)
                     (if (spec-type-kind? param-ty)
@@ -808,7 +836,7 @@
   (match template
     [(SpecTemplate name params ret body)
       (match state
-        [(SpecState generated cache)
+        [(SpecState generated cache ctfe-env)
           (let
             [key : String (spec-specialization-key name values)]
             (match (spec-cache-lookup cache key)
@@ -828,7 +856,8 @@
                                 [cached-state : SpecState
                                   (SpecState
                                     generated
-                                    (SpecCacheCons key generated-name cache))]
+                                    (SpecCacheCons key generated-name cache)
+                                    ctfe-env)]
                                 (match (spec-rewrite-expr
                                   valued-body
                                   (spec-template-list-remove-params
@@ -839,7 +868,8 @@
                                     (match rewritten-state
                                       [(SpecState
                                           rewritten-generated
-                                          rewritten-cache)
+                                          rewritten-cache
+                                          rewritten-ctfe-env)
                                         (OkSpecEnsure
                                           generated-name
                                           (SpecState
@@ -854,7 +884,8 @@
                                                   ret
                                                   type-subs)
                                                 rewritten-body))
-                                            rewritten-cache))])]
+                                            rewritten-cache
+                                            rewritten-ctfe-env))])]
                                   [(ErrSpecExpr diag) (ErrSpecEnsure diag)]))]
                             [(ErrSpecSubExpr diag) (ErrSpecEnsure diag)])]
                         [(ErrSpecSubExpr diag) (ErrSpecEnsure diag)])]
@@ -1882,10 +1913,14 @@
             (match (spec-rewrite-decls
               decls
               templates
-              (SpecState AstDeclNil SpecCacheNil))
+              (SpecState
+                AstDeclNil
+                SpecCacheNil
+                (ctfe-env-with-reflections
+                  (ctfe-reflections-from-program program))))
               [(OkSpecDecls rewritten state)
                 (match state
-                  [(SpecState generated _)
+                  [(SpecState generated _ _)
                     (OkSpecProgram
                       (AstProgram (spec-decl-list-append rewritten generated)))])]
               [(ErrSpecDecls diag) (ErrSpecProgram diag)])]))]))
@@ -1990,7 +2025,8 @@
 ;;; src/specialize.rs deterministic-names / stable-keys coverage). The mangling
 ;;; is a pure function of the template name and comptime argument values, so
 ;;; identical args produce identical names, distinct type args never collide,
-;;; multi-value ordering is stable, and negative scalars encode without a `-`.
+;;; multi-value ordering is stable, and negative scalars / arbitrary strings
+;;; encode without punctuation that could break generated identifiers.
 (define (compiler-specialize-name-key-ok?) : bool
   (let
     [vals-i64 : SpecValueList
@@ -2001,6 +2037,8 @@
       (SpecValueCons
         (CtfeType (AstTyI64))
         (SpecValueCons (CtfeI64 5) (SpecValueNil)))]
+    [vals-string : SpecValueList
+      (SpecValueCons (CtfeString "a b") (SpecValueNil))]
     (and
       (string-eq
         (spec-specialized-name "alloc" vals-i64)
@@ -2022,7 +2060,11 @@
               (string-eq
                 (spec-specialized-name "pair" vals-multi)
                 "__tl_specialized_pair_type_i64_i64_5_none")
-              (string-eq (spec-value-key (CtfeI64 (- 0 3))) "i64_m3"))))))))
+              (and
+                (string-eq (spec-value-key (CtfeI64 (- 0 3))) "i64_m3")
+                (string-eq
+                  (spec-specialized-name "name" vals-string)
+                  "__tl_specialized_name_string_3_97_32_98_none")))))))))
 
 ;;; Count function declarations named `name` in `decls` (specialized decls are
 ;;; emitted as ordinary `AstDeclDefFn`s, so reuse means a count of exactly 1).
@@ -2152,6 +2194,24 @@
               [_ false])]
           [(ErrSpecSubExpr _) false])))))
 
+(define (compiler-specialize-reflection-string-param-source) : String
+  "(defstruct Point (x i64))
+(define (tag-helper [comptime key : String] [x : i64]) : i64 x)
+(define (main) : i64 (tag-helper (type-key (type Point)) 7))")
+
+(define (compiler-specialize-reflection-string-param-ok?) : bool
+  (match (parse-ast-source (compiler-specialize-reflection-string-param-source))
+    [(OkAstProgram program)
+      (match (compiler-specialize-program program)
+        [(OkSpecProgram specialized)
+          (match specialized
+            [(AstProgram decls)
+              (compiler-specialize-decl-list-defines?
+                decls
+                "__tl_specialized_tag-helper_string_12_115_116_114_117_99_116_95_80_111_105_110_116_none")])]
+        [(ErrSpecProgram _) false])]
+    [(ErrAstProgram _) false]))
+
 (define (compiler-specialize-self-test) : i64
   (if (compiler-specialize-type-param-ok?)
     (if (compiler-specialize-runtime-type-use-rejected?)
@@ -2162,7 +2222,9 @@
               (if (compiler-specialize-reuse-ok?)
                 (if (compiler-specialize-subst-ok?)
                   (if (compiler-specialize-value-subst-ok?)
-                    1
+                    (if (compiler-specialize-reflection-string-param-ok?)
+                      1
+                      0)
                     0)
                   0)
                 0)

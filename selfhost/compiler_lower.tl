@@ -2070,6 +2070,11 @@
                     (string-append
                       (tc-type-render (tc-resolve-type ctx ty))
                       " is compile-time only"))))]
+            [(CtfeString _)
+              (ErrLowerExpr
+                (lower-diagnostic-at-expr
+                  origin
+                  "String value is compile-time only"))]
             [(CtfeExpr _ _)
               (ErrLowerExpr
                 (lower-diagnostic-at-expr

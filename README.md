@@ -138,8 +138,9 @@ monomorphic declarations such as `MaybeI64` or domain-specific `Result*` enums;
 the selfhost compiler already uses `(try expr)` as the Lisp-shaped propagation
 form for compatible concrete Result-like enums.
 
-The comptime implementation path is tracked by #893, #913, #970, and #902;
-historical generic/type-constructor work in #483 is superseded by that chain.
+The comptime implementation path is tracked by #893 and #902; v1 type
+reflection from #913 is implemented in the selfhost CTFE path. Historical
+generic/type-constructor work in #483 is superseded by that chain.
 
 ### Top-level forms
 

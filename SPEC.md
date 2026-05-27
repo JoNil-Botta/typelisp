@@ -1851,7 +1851,7 @@ not perform a reset; the semantics match minus reclamation. The form still
 prevents escapes, so programs compile and run identically, but allocations
 accumulate in the process-lifetime arena instead of being reclaimed.
 
-### 5.17 Comptime type reflection (specified, selfhost pending)
+### 5.17 Comptime type reflection (specified, selfhost v1 implemented)
 
 Type reflection is the compile-time-only surface that lets generators inspect
 TypeLisp types and emit concrete declarations instead of using source-level
@@ -1895,6 +1895,11 @@ V1 primitive names and signatures are fixed as follows:
 | `(function-param-count type-expr)` | `i64` | Requires function type. |
 | `(function-param-type type-expr index-expr)` | `type` | Zero-based parameter type. |
 | `(function-return-type type-expr)` | `type` | Function return type. |
+
+Selfhost v1 implements this surface in CTFE for explicit `(comptime ...)` folds
+and comptime parameter evaluation. `String` and `type` metadata remain
+compile-time-only; programs may compare or compose them in CTFE, but direct
+runtime observation is rejected before lowering.
 
 `index-expr`, `variant-index-expr`, and `payload-index-expr` must evaluate to
 `i64` in the same comptime context. Out-of-range indices, wrong arity,

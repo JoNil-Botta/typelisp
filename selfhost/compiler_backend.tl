@@ -8187,11 +8187,12 @@ tl_windows_setup_instances:
           runtime-io-asm
           runtime-file-asm
           (backend-cat5
+            file-handle-asm
             file-read-chunk-asm
             fs-asm
             runtime-tail-asm
-            random-and-windows-asm
-            (backend-cat4
+            (backend-cat5
+              random-and-windows-asm
               env-var-exists-asm
               env-var-value-asm
               env-path-separator-asm

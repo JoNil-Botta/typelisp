@@ -12,6 +12,43 @@ This document specifies the TypeLisp language as implemented today. It is the gr
 
 TypeLisp is a statically typed Lisp/Scheme dialect that compiles to native x86_64 assembly. Every expression has a known type at compile time. There is no runtime type tagging, no garbage collector, and no interpreter.
 
+### Safe code: no undefined behavior
+
+Safe TypeLisp programs do not have undefined behavior. A conforming compiler
+and runtime must handle every accepted safe-code operation with exactly one of
+these outcomes:
+
+- **Static reject:** the program is rejected before lowering/code generation.
+- **Deterministic runtime trap:** the program aborts through a documented
+  runtime trap path instead of continuing with an invalid value or invalid
+  memory access.
+- **Defined result:** the operation produces the specified value, including
+  specified wrapping behavior where the language says arithmetic wraps.
+
+Safe code is source outside an `(unsafe ...)` context and outside helpers
+documented as unsafe by convention. An unsafe context does not disable ordinary
+type checking; it only moves responsibility for raw-pointer, foreign-ABI, and
+manual resource-reset invariants to the programmer. Optimizations may rely on
+the static type, move, borrow, and region facts below, but must not reinterpret
+accepted safe code as having behavior outside this table.
+
+| Safety area | Safe-code outcome | Binding rule and owner |
+|-------------|-------------------|------------------------|
+| Integer `+`, `-`, `*`, and `neg` overflow | Defined wrap | Wrap modulo 2^N for the result type width; signed results interpret the wrapped bits as two's-complement values. See section 5.4 and #1101. |
+| Integer `/` and `%` invalid operands | Deterministic runtime trap | Divisor zero and signed minimum divided/remaindered by `-1` trap through the integer division/remainder abort path. See section 5.4 and #1101. |
+| Integer shift counts | Deterministic runtime trap | `shl`/`shr` trap when the count is negative or not less than the left operand's bit width. See section 5.4. |
+| Supported integer/`char` casts | Defined result | Integer/integer and integer/`char` casts use the defined truncation, sign-extension, and zero-extension rules. See section 3.8 and #1101. |
+| Unsupported casts | Static reject | Unsupported cast families, including floating-point casts until they are specified, are rejected before lowering. See section 3.8 and #1101. |
+| Array, string, slice, and generated collection bounds | Deterministic runtime trap | Out-of-bounds indexing, invalid slice ranges, negative dynamic-array lengths, and allocation byte-count overflow trap through the bounds-check abort path. SPMD inactive tail lanes do not perform bounds checks or memory accesses. See sections 5.15 and 6.1. |
+| Initialized-before-use and no use-after-move | Static reject | Safe code cannot read an uninitialized place or a place whose move-only value has been moved. Move-only aggregate semantics are specified in section 4.6.2 and #1046; enforcement is tracked by #1048 and #805. |
+| Borrow/reference validity and arena escape | Static reject | Safe references and region-tagged aggregate handles cannot outlive their lifetime/arena, be returned or stored into a longer-lived slot, or be captured by an escaping closure. Current region-tagged escape checks are in sections 3.9, 5.16, and 7.3; immutable borrow rules are owned by #1033/#1034/#1035. |
+| Mutation through shared references | Static reject | Safe code cannot write through an immutable/shared reference. Mutable-reference writes require exclusive access; that checker work is owned by #806. Current aggregate-handle mutation is governed by the move-only and aliasing rules in sections 4.6.2 and 7.6. |
+| SPMD safe-code data-race freedom | Static reject | Safe `foreach`/SPMD code rejects varying calls, unsupported varying control flow, unsafe shared mutation, and reduction shapes that cannot be proven race-free by the SPMD rules. See section 5.15 and #937/#1012. |
+| Invalid enum/struct states | Static reject | Safe code constructs enums and structs only through their checked constructors and pattern forms. Arbitrary bit construction, invalid variants, invalid field layouts, packed-field access, and recursive-by-value `repr c` states are rejected. See sections 3.5, 4.6, and 5.13. |
+| Raw pointer dereference/write/arithmetic/casts, foreign ABI assumptions, and manual arena reset | Static reject | Safe code may pass, return, compare, and null-test raw pointer values as specified, but dereference, write, offset, pointer/integer cast, foreign ABI invariants beyond the declared signature, and low-level manual region reset require `(unsafe ...)` or an unsafe-by-convention helper. See sections 3.4, 5.19, 7.3, and 7.4; design/implementation owners are #954, #809, #812, #1052, #1054, and #1055. |
+| Invalid comptime-to-runtime values | Static reject | Comptime generation and reflection cannot smuggle invalid runtime values, invalid types, or unstable compiler-internal identities into safe runtime code. Runtime observation of comptime-only metadata is rejected. See sections 3.7 and 5.17; reflection surface owner is #970. |
+| Valid comptime-generated runtime values | Defined result | Accepted generated declarations and values have ordinary valid runtime representations and follow the same safe-code contract as hand-written declarations. See sections 3.7 and 5.17; reflection surface owner is #970. |
+
 ### Compilation pipeline
 
 ```

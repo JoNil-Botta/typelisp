@@ -496,8 +496,7 @@ run_linux_backend_fixtures() {
         ".L_tl_stdin_eof:" \
         ".L_tl_flush_stdout:" \
         "tl: stdin failed" \
-        ".L_tl_substring_copy_loop:" \
-        ".L_tl_string_concat_copy_b:" \
+        "rep movsb" \
         "tl_current_arena:" \
         ".L_tl_alloc_new_arena:" \
         "call tl_alloc"
@@ -512,7 +511,10 @@ run_linux_backend_fixtures() {
         ".extern .L_tl_read_stdin_line" \
         ".extern .L_tl_read_stdin_bytes" \
         ".extern .L_tl_stdin_eof" \
-        ".extern .L_tl_flush_stdout"
+        ".extern .L_tl_flush_stdout" \
+        ".L_tl_substring_copy_loop:" \
+        ".L_tl_string_concat_copy_a:" \
+        ".L_tl_string_concat_copy_b:"
     do
         assert_not_contains "$_runtime_asm" "$_snippet" backend-runtime
     done
@@ -649,7 +651,8 @@ run_windows_backend_fixtures() {
         "movq \$0x180, %r8" \
         "movq %rcx, %rbx" \
         "movq %r12, %rcx" \
-        "movq %rcx, %r10"
+        "movq %rcx, %r10" \
+        "rep movsb"
     do
         assert_contains "$_runtime_asm" "$_snippet" windows-backend-runtime
     done
@@ -675,7 +678,10 @@ run_windows_backend_fixtures() {
         ".extern .L_tl_read_stdin_bytes" \
         ".extern .L_tl_stdin_eof" \
         ".extern .L_tl_flush_stdout" \
-        ".extern tl_random_system_seed"
+        ".extern tl_random_system_seed" \
+        ".L_tl_substring_copy_loop:" \
+        ".L_tl_string_concat_copy_a:" \
+        ".L_tl_string_concat_copy_b:"
     do
         assert_not_contains "$_runtime_asm" "$_snippet" windows-backend-runtime
     done

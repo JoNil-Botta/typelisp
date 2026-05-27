@@ -764,6 +764,11 @@
       (ErrCompilerBackend
         (compiler-diagnostic-at-start "" "backend: expected f64 value"))]))
 
+(define (compiler-backend-emit-load-i64-immediate [n : i64] [reg : String]) : String
+  (if (= n 0)
+    (backend-cat5 "    xorq " reg ", " reg "\n")
+    (backend-cat5 "    movq $" (int->string n) ", " reg "\n")))
+
 (define (compiler-backend-emit-load-value-with-plan
   [assignments : CompilerRegAssignmentList]
   [value : CompilerIrValue]
@@ -782,21 +787,18 @@
           "\n"))]
     [(IrValueI64 n)
       (OkCompilerBackend
-        (backend-cat5 "    movq $" (int->string n) ", " reg "\n"))]
+        (compiler-backend-emit-load-i64-immediate n reg))]
     [(IrValueBool b)
       (if b
-        (OkCompilerBackend (backend-cat5 "    movq $" "1" ", " reg "\n"))
-        (OkCompilerBackend (backend-cat5 "    movq $" "0" ", " reg "\n")))]
+        (OkCompilerBackend (compiler-backend-emit-load-i64-immediate 1 reg))
+        (OkCompilerBackend (compiler-backend-emit-load-i64-immediate 0 reg)))]
     [(IrValueChar c)
       (OkCompilerBackend
-        (backend-cat5
-          "    movq $"
-          (int->string (compiler-backend-char-code c))
-          ", "
-          reg
-          "\n"))]
+        (compiler-backend-emit-load-i64-immediate
+          (compiler-backend-char-code c)
+          reg))]
     [(IrValueUnit)
-      (OkCompilerBackend (backend-cat5 "    movq $" "0" ", " reg "\n"))]
+      (OkCompilerBackend (compiler-backend-emit-load-i64-immediate 0 reg))]
     [(IrValueF64 _)
       (ErrCompilerBackend
         (compiler-diagnostic-at-start
@@ -9883,10 +9885,10 @@ tl_windows_setup_instances:
         (compiler-backend-string-contains?
           asm
           "    movq $16, %rdi\n    call tl_alloc\n")
-        (and
-          (compiler-backend-string-contains?
-            asm
-            "    movq $0, %rax\n    movq %rax, (%r10)\n")
+          (and
+            (compiler-backend-string-contains?
+              asm
+              "    xorq %rax, %rax\n    movq %rax, (%r10)\n")
           (and
             (compiler-backend-string-contains?
               asm
@@ -10201,7 +10203,9 @@ tl_windows_setup_instances:
       (compiler-backend-peephole-asm-ok?)
       (and
         (compiler-backend-fallthrough-jump-ok?)
-        (compiler-backend-branch-fallthrough-ok?)))))
+        (and
+          (compiler-backend-branch-fallthrough-ok?)
+          (compiler-backend-zero-load-ok?))))))
 
 (define (compiler-backend-fallthrough-program) : CompilerIrProgram
   (IrProgram
@@ -10276,6 +10280,14 @@ tl_windows_setup_instances:
                       "    jmp .Lbranch_then\n")))))]
           [(ErrCompilerBackend _) false])]
       [(ErrCompilerBackend _) false])))
+
+(define (compiler-backend-zero-load-ok?) : bool
+  (match (compiler-backend-emit-load-value-with-plan
+    CompilerRegAssignmentNil
+    (IrValueI64 0)
+    "%rax")
+    [(OkCompilerBackend asm) (string-eq asm "    xorq %rax, %rax\n")]
+    [(ErrCompilerBackend _) false]))
 
 (define (compiler-backend-phi-same-home-assignments) : CompilerRegAssignmentList
   (CompilerRegAssignmentCons

@@ -2,7 +2,7 @@
 set -eu
 
 # Smoke-test a TYPELISP_BIN-compatible stage1 wrapper on the Linux host-action
-# surface: compile, build, run, and debug host-action.
+# surface: compile, build, run, fmt, and debug host-action.
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
@@ -40,6 +40,11 @@ cat > "$SRC" <<'EOF'
   7)
 EOF
 
+fail() {
+    echo "$*" >&2
+    exit 1
+}
+
 assert_contains() {
     file=$1
     needle=$2
@@ -52,11 +57,56 @@ assert_contains() {
 
 assert_empty() {
     file=$1
-    if [ -s "$file" ]; then
-        echo "expected $file to be empty" >&2
+    [ ! -s "$file" ] || {
+        echo "expected empty file: $file" >&2
         sed 's/^/  /' "$file" >&2 || true
         exit 1
+    }
+}
+
+assert_nonempty() {
+    file=$1
+    [ -s "$file" ] || fail "expected non-empty file: $file"
+}
+
+strip_expected_trailing_lf() {
+    src=$1
+    dst=$2
+    normalized="$WORKDIR/expected-normalized.tmp"
+    tr -d '\r' < "$src" > "$normalized"
+    size=$(wc -c < "$normalized" | tr -d ' ')
+    if [ "$size" -gt 0 ]; then
+        last=$(tail -c 1 "$normalized" | od -An -tx1 | tr -d ' \n')
+        if [ "$last" = "0a" ]; then
+            dd if="$normalized" of="$dst" bs=1 count=$((size - 1)) 2> /dev/null
+            return
+        fi
     fi
+    cp "$normalized" "$dst"
+}
+
+check_file_exact() {
+    actual=$1
+    expected=$2
+    if ! cmp -s "$actual" "$expected"; then
+        echo "expected:" >&2
+        sed 's/^/  /' "$expected" >&2 || true
+        echo "actual:" >&2
+        sed 's/^/  /' "$actual" >&2 || true
+        fail "unexpected file content: $actual"
+    fi
+}
+
+format_manifest() {
+    cat <<'EOF'
+char_literal
+comments
+decls
+flow
+let_bindings
+negative_int
+tail_comment
+EOF
 }
 
 run_capture() {
@@ -66,6 +116,25 @@ run_capture() {
     stderr="$WORKDIR/$label.stderr"
     if ! TYPELISP_STAGE1_HEARTBEAT_FD=3 "$@" 3>&2 > "$stdout" 2> "$stderr"; then
         echo "stage1 wrapper smoke command failed: $label" >&2
+        echo "stdout:" >&2
+        sed 's/^/  /' "$stdout" >&2 || true
+        echo "stderr:" >&2
+        sed 's/^/  /' "$stderr" >&2 || true
+        exit 1
+    fi
+}
+
+run_expect_failure() {
+    label=$1
+    shift
+    stdout="$WORKDIR/$label.stdout"
+    stderr="$WORKDIR/$label.stderr"
+    set +e
+    "$@" > "$stdout" 2> "$stderr"
+    status=$?
+    set -e
+    if [ "$status" -eq 0 ]; then
+        echo "stage1 wrapper smoke command unexpectedly succeeded: $label" >&2
         echo "stdout:" >&2
         sed 's/^/  /' "$stdout" >&2 || true
         echo "stderr:" >&2
@@ -221,6 +290,60 @@ EOF
     assert_empty "$WORKDIR/test-bad-target.stdout"
     assert_contains "$WORKDIR/test-bad-target.stderr" "test: unknown target nope"
 fi
+
+echo "[stage1-wrapper] fmt"
+format_manifest | sort > "$WORKDIR/format-expected.txt"
+find tests/format_golden -maxdepth 1 -type f -name '*.tl' |
+    sed 's#^tests/format_golden/##; s#\.tl$##' | sort > "$WORKDIR/format-actual.txt"
+if ! cmp -s "$WORKDIR/format-expected.txt" "$WORKDIR/format-actual.txt"; then
+    diff -u "$WORKDIR/format-expected.txt" "$WORKDIR/format-actual.txt" >&2 || true
+    fail "format golden source manifest is out of date"
+fi
+find tests/format_golden -maxdepth 1 -type f -name '*.expected' |
+    sed 's#^tests/format_golden/##; s#\.expected$##' | sort > "$WORKDIR/format-actual-expected.txt"
+if ! cmp -s "$WORKDIR/format-expected.txt" "$WORKDIR/format-actual-expected.txt"; then
+    diff -u "$WORKDIR/format-expected.txt" "$WORKDIR/format-actual-expected.txt" >&2 || true
+    fail "format golden expected-output manifest is out of date"
+fi
+
+set -- "$COMPILER" fmt
+while IFS= read -r fmt_name; do
+    [ -n "$fmt_name" ] || continue
+    cp "tests/format_golden/$fmt_name.tl" "$WORKDIR/$fmt_name.tl"
+    strip_expected_trailing_lf "tests/format_golden/$fmt_name.expected" "$WORKDIR/$fmt_name.expected"
+    set -- "$@" "$WORKDIR/$fmt_name.tl"
+done < "$WORKDIR/format-expected.txt"
+run_capture fmt-golden "$@"
+assert_empty "$WORKDIR/fmt-golden.stdout"
+assert_empty "$WORKDIR/fmt-golden.stderr"
+while IFS= read -r fmt_name; do
+    [ -n "$fmt_name" ] || continue
+    check_file_exact "$WORKDIR/$fmt_name.tl" "$WORKDIR/$fmt_name.expected"
+done < "$WORKDIR/format-expected.txt"
+
+set -- "$COMPILER" fmt --check
+while IFS= read -r fmt_name; do
+    [ -n "$fmt_name" ] || continue
+    set -- "$@" "$WORKDIR/$fmt_name.tl"
+done < "$WORKDIR/format-expected.txt"
+run_capture fmt-golden-check "$@"
+assert_empty "$WORKDIR/fmt-golden-check.stdout"
+assert_empty "$WORKDIR/fmt-golden-check.stderr"
+
+cp "tests/format_golden/decls.tl" "$WORKDIR/fmt-changed.tl"
+run_expect_failure fmt-check-changed "$COMPILER" fmt --check "$WORKDIR/fmt-changed.tl"
+assert_empty "$WORKDIR/fmt-check-changed.stdout"
+assert_contains "$WORKDIR/fmt-check-changed.stderr" "fmt: would reformat"
+check_file_exact "$WORKDIR/fmt-changed.tl" "tests/format_golden/decls.tl"
+
+run_expect_failure fmt-missing "$COMPILER" fmt "$WORKDIR/missing.tl"
+assert_empty "$WORKDIR/fmt-missing.stdout"
+assert_nonempty "$WORKDIR/fmt-missing.stderr"
+
+printf '(define (' > "$WORKDIR/fmt-parse-error.tl"
+run_expect_failure fmt-parse-error "$COMPILER" fmt "$WORKDIR/fmt-parse-error.tl"
+assert_empty "$WORKDIR/fmt-parse-error.stdout"
+assert_nonempty "$WORKDIR/fmt-parse-error.stderr"
 
 echo "[stage1-wrapper] debug host-action"
 mkdir -p "$(dirname -- "$HOST_ACTION_BIN")"

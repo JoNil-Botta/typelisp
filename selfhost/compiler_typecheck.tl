@@ -56,6 +56,10 @@
   (OkTcUnit)
   (ErrTcUnit String))
 
+(defenum TcMoveKind
+  (TcCopyable)
+  (TcMoveOnly))
+
 (defenum TcSpmdClass
   (TcSpmdUniform)
   (TcSpmdVarying))
@@ -1429,6 +1433,47 @@
     [(AstTyPtr _) true]
     [(AstTyMutPtr _) true]
     [_ false]))
+
+(define (tc-type-move-kind [ty : AstType]) : TcMoveKind
+  (match ty
+    [(AstTyI64) (TcCopyable)]
+    [(AstTyI32) (TcCopyable)]
+    [(AstTyI16) (TcCopyable)]
+    [(AstTyI8) (TcCopyable)]
+    [(AstTyU64) (TcCopyable)]
+    [(AstTyU32) (TcCopyable)]
+    [(AstTyU16) (TcCopyable)]
+    [(AstTyU8) (TcCopyable)]
+    [(AstTyF64) (TcCopyable)]
+    [(AstTyF32) (TcCopyable)]
+    [(AstTyBool) (TcCopyable)]
+    [(AstTyChar) (TcCopyable)]
+    [(AstTyUnit) (TcCopyable)]
+    [(AstTyNever) (TcCopyable)]
+    [(AstTyFunc _ _) (TcCopyable)]
+    [(AstTyPtr _) (TcCopyable)]
+    [(AstTyMutPtr _) (TcCopyable)]
+    [(AstTyRef _ _) (TcCopyable)]
+    [(AstTyRegion _ inner) (tc-type-move-kind inner)]
+    [(AstTyString) (TcMoveOnly)]
+    [(AstTyTuple _) (TcMoveOnly)]
+    [(AstTyArray _ _) (TcMoveOnly)]
+    [(AstTyDynArray _) (TcMoveOnly)]
+    [(AstTyMutRef _ _) (TcMoveOnly)]
+    [(AstTyEnum _) (TcMoveOnly)]
+    [(AstTyStruct _) (TcMoveOnly)]
+    [(AstTyVar _) (TcMoveOnly)]))
+
+(define (tc-move-kind-copyable? [kind : TcMoveKind]) : bool
+  (match kind
+    [(TcCopyable) true]
+    [(TcMoveOnly) false]))
+
+(define (tc-type-copyable? [ty : AstType]) : bool
+  (tc-move-kind-copyable? (tc-type-move-kind ty)))
+
+(define (tc-type-move-only? [ty : AstType]) : bool
+  (not (tc-type-copyable? ty)))
 
 (define (tc-raw-pointer-elem [ty : AstType] [message : String]) : ResultTcType
   (match (tc-type-strip-region ty)
@@ -5757,6 +5802,76 @@
             "typecheck: try error type mismatch")
           (compiler-typecheck-ok? (compiler-typecheck-result-try-panic-source)))))))
 
+(define (compiler-typecheck-move-kind-copyable-tests-ok?) : bool
+  (and
+    (tc-type-copyable? (AstTyI64))
+    (and
+      (tc-type-copyable? (AstTyI32))
+      (and
+        (tc-type-copyable? (AstTyF64))
+        (and
+          (tc-type-copyable? (AstTyF32))
+          (and
+            (tc-type-copyable? (AstTyBool))
+            (and
+              (tc-type-copyable? (AstTyChar))
+              (and
+                (tc-type-copyable? (AstTyUnit))
+                (and
+                  (tc-type-copyable? (AstTyNever))
+                  (and
+                    (tc-type-copyable? (AstTyFunc AstTypeNil (AstTyI64)))
+                    (and
+                      (tc-type-copyable?
+                        (AstTyPtr (AstTyRegion "inner" (AstTyString))))
+                      (and
+                        (tc-type-copyable?
+                          (AstTyMutPtr (AstTyDynArray (AstTyI64))))
+                        (tc-type-copyable? (AstTyRef "r" (AstTyString)))))))))))))))
+
+(define (compiler-typecheck-move-kind-move-only-tests-ok?) : bool
+  (and
+    (tc-type-move-only? (AstTyString))
+    (and
+      (tc-type-move-only? (AstTyDynArray (AstTyI64)))
+      (and
+        (tc-type-move-only? (AstTyArray (AstTyI64) 4))
+        (and
+          (tc-type-move-only?
+            (AstTyTuple
+              (AstTypeCons (AstTyI64) (AstTypeCons (AstTyBool) AstTypeNil))))
+          (and
+            (tc-type-move-only? (AstTyStruct "Box"))
+            (and
+              (tc-type-move-only? (AstTyEnum "ResultI64"))
+              (and
+                (tc-type-move-only? (AstTyMutRef "phase" (AstTyI64)))
+                (tc-type-move-only?
+                  (AstTyTuple
+                    (AstTypeCons
+                      (AstTyStruct "Box")
+                      (AstTypeCons (AstTyDynArray (AstTyI64)) AstTypeNil))))))))))))
+
+(define (compiler-typecheck-move-kind-region-tests-ok?) : bool
+  (and
+    (tc-type-copyable? (AstTyRegion "r" (AstTyI64)))
+    (and
+      (tc-type-copyable? (AstTyRegion "r" (AstTyRef "inner" (AstTyString))))
+      (and
+        (tc-type-move-only? (AstTyRegion "r" (AstTyString)))
+        (and
+          (tc-type-move-only?
+            (AstTyRegion "r" (AstTyTuple (AstTypeCons (AstTyI64) AstTypeNil))))
+          (tc-type-move-only?
+            (AstTyRegion "r" (AstTyMutRef "phase" (AstTyI64)))))))))
+
+(define (compiler-typecheck-move-kind-tests-ok?) : bool
+  (and
+    (compiler-typecheck-move-kind-copyable-tests-ok?)
+    (and
+      (compiler-typecheck-move-kind-move-only-tests-ok?)
+      (compiler-typecheck-move-kind-region-tests-ok?))))
+
 (define (compiler-typecheck-raw-pointer-source) : String
   "(extern raw-sink : (-> (Ptr i64) unit))
 (extern raw-make : (-> (MutPtr (Ptr u8))))
@@ -6603,6 +6718,9 @@
     (if (compiler-typecheck-result-try-tests-ok?)
       unit
       (panic "typecheck: result try tests failed"))
+    (if (compiler-typecheck-move-kind-tests-ok?)
+      unit
+      (panic "typecheck: move-kind classifier tests failed"))
     (if (compiler-typecheck-raw-pointer-tests-ok?)
       unit
       (panic "typecheck: raw pointer type tests failed"))

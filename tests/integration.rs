@@ -1431,6 +1431,7 @@ fn type_lisp_programs_compile_link_and_run_explicit_build() {
             stdout: "",
             deps: &[
                 "doc_test.tl",
+                "build_run_core.tl",
                 "compiler_check_core.tl",
                 "compiler_load.tl",
                 "compiler_typecheck.tl",

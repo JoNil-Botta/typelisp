@@ -895,6 +895,7 @@ fn native_cases() -> Vec<Case> {
             "",
             &[
                 "doc_test.tl",
+                "build_run_core.tl",
                 "compiler_check_core.tl",
                 "compiler_load.tl",
                 "compiler_typecheck.tl",

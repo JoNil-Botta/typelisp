@@ -135,45 +135,65 @@
 (define (lower-reference-support-message) : String
   "lower: reference-typed programs require borrow/reference lowering support (#803/#806/#804)")
 
-(define (lower-instr-list-append
+(define (lower-instr-list-reverse-onto
   [instrs : CompilerIrInstrList]
-  [instr : CompilerIrInstr]) : CompilerIrInstrList
+  [acc : CompilerIrInstrList]) : CompilerIrInstrList
   (match instrs
-    [(IrInstrNil) (IrInstrCons instr IrInstrNil)]
+    [(IrInstrNil) acc]
     [(IrInstrCons head rest)
-      (IrInstrCons head (lower-instr-list-append rest instr))]))
+      (lower-instr-list-reverse-onto rest (IrInstrCons head acc))]))
 
-(define (lower-block-list-append
+(define (lower-instr-list-reverse
+  [instrs : CompilerIrInstrList]) : CompilerIrInstrList
+  (lower-instr-list-reverse-onto instrs IrInstrNil))
+
+(define (lower-block-list-reverse-onto
   [blocks : CompilerIrBlockList]
-  [block : CompilerIrBlock]) : CompilerIrBlockList
+  [acc : CompilerIrBlockList]) : CompilerIrBlockList
   (match blocks
-    [(IrBlockNil) (IrBlockCons block IrBlockNil)]
+    [(IrBlockNil) acc]
     [(IrBlockCons head rest)
-      (IrBlockCons head (lower-block-list-append rest block))]))
+      (lower-block-list-reverse-onto rest (IrBlockCons head acc))]))
 
-(define (lower-global-list-append
+(define (lower-block-list-reverse
+  [blocks : CompilerIrBlockList]) : CompilerIrBlockList
+  (lower-block-list-reverse-onto blocks IrBlockNil))
+
+(define (lower-global-list-reverse-onto
   [globals : CompilerIrGlobalList]
-  [global : CompilerIrGlobal]) : CompilerIrGlobalList
+  [acc : CompilerIrGlobalList]) : CompilerIrGlobalList
   (match globals
-    [(IrGlobalNil) (IrGlobalCons global IrGlobalNil)]
+    [(IrGlobalNil) acc]
     [(IrGlobalCons head rest)
-      (IrGlobalCons head (lower-global-list-append rest global))]))
+      (lower-global-list-reverse-onto rest (IrGlobalCons head acc))]))
 
-(define (lower-function-list-append
+(define (lower-global-list-reverse
+  [globals : CompilerIrGlobalList]) : CompilerIrGlobalList
+  (lower-global-list-reverse-onto globals IrGlobalNil))
+
+(define (lower-function-list-reverse-onto
   [functions : CompilerIrFunctionList]
-  [func : CompilerIrFunction]) : CompilerIrFunctionList
+  [acc : CompilerIrFunctionList]) : CompilerIrFunctionList
   (match functions
-    [(IrFunctionNil) (IrFunctionCons func IrFunctionNil)]
+    [(IrFunctionNil) acc]
     [(IrFunctionCons head rest)
-      (IrFunctionCons head (lower-function-list-append rest func))]))
+      (lower-function-list-reverse-onto rest (IrFunctionCons head acc))]))
 
-(define (lower-extern-list-append
+(define (lower-function-list-reverse
+  [functions : CompilerIrFunctionList]) : CompilerIrFunctionList
+  (lower-function-list-reverse-onto functions IrFunctionNil))
+
+(define (lower-extern-list-reverse-onto
   [externs : CompilerIrExternList]
-  [item : CompilerIrExtern]) : CompilerIrExternList
+  [acc : CompilerIrExternList]) : CompilerIrExternList
   (match externs
-    [(IrExternNil) (IrExternCons item IrExternNil)]
+    [(IrExternNil) acc]
     [(IrExternCons head rest)
-      (IrExternCons head (lower-extern-list-append rest item))]))
+      (lower-extern-list-reverse-onto rest (IrExternCons head acc))]))
+
+(define (lower-extern-list-reverse
+  [externs : CompilerIrExternList]) : CompilerIrExternList
+  (lower-extern-list-reverse-onto externs IrExternNil))
 
 (define (lower-name-env-lookup [names : LowerNameEnv] [source-name : String]) : TcMaybeString
   (match names
@@ -527,7 +547,7 @@
         next-var
         next-label
         current-label
-        (lower-instr-list-append current-instrs instr)
+        (IrInstrCons instr current-instrs)
         blocks
         function
         spans
@@ -579,13 +599,13 @@
         names)
       (let
         [block-instrs : CompilerIrInstrList
-          current-instrs]
+          (lower-instr-list-reverse current-instrs)]
         (LowerState
           next-var
           next-label-id
           next-label
           IrInstrNil
-          (lower-block-list-append blocks (IrBlock current-label block-instrs))
+          (IrBlockCons (IrBlock current-label block-instrs) blocks)
           function
           spans
           names))]))
@@ -593,7 +613,10 @@
 (define (lower-state-build-blocks [state : LowerState]) : CompilerIrBlockList
   (match state
     [(LowerState _ _ current-label current-instrs blocks _ _ _)
-      (lower-block-list-append blocks (IrBlock current-label current-instrs))]))
+      (lower-block-list-reverse
+        (IrBlockCons
+          (IrBlock current-label (lower-instr-list-reverse current-instrs))
+          blocks))]))
 
 (define (lower-materialize
   [state : LowerState]
@@ -5835,7 +5858,12 @@
   [names : LowerNameEnv]
   [module : String]) : ResultLowerDecls
   (match decls
-    [(AstDeclNil) (OkLowerDecls globals functions externs spans)]
+    [(AstDeclNil)
+      (OkLowerDecls
+        (lower-global-list-reverse globals)
+        (lower-function-list-reverse functions)
+        (lower-extern-list-reverse externs)
+        spans)]
     [(AstDeclCons decl rest)
       (match decl
         [(AstDeclDef name _ expr)
@@ -5851,12 +5879,12 @@
                       ctx
                       top-env
                       rest
-                      (lower-global-list-append
-                        globals
+                      (IrGlobalCons
                         (IrGlobal
                           (lower-current-decl-logical-name names module name)
                           (tc-type-without-regions ty)
-                          value))
+                          value)
+                        globals)
                       functions
                       externs
                       spans
@@ -5876,13 +5904,13 @@
                 rest
                 globals
                 functions
-                (lower-extern-list-append
-                  externs
+                (IrExternCons
                   (IrExtern
                     name
                     (tc-type-without-regions (tc-resolve-type decl-ctx ty))
                     (ast-extern-metadata-abi metadata)
-                    (ast-extern-metadata-symbol metadata)))
+                    (ast-extern-metadata-symbol metadata))
+                  externs)
                 spans
                 names
                 module)))]
@@ -5908,7 +5936,7 @@
                       top-env
                       rest
                       globals
-                      (lower-function-list-append functions func)
+                      (IrFunctionCons func functions)
                       externs
                       function-spans
                       names

@@ -27,10 +27,11 @@ Coverage notes:
   `append-file`, and `file-nonempty?` on missing, empty-path, directory-read,
   missing-parent write, empty-file, and existing-file paths without masking host
   I/O failures.
-- `io_file_handle.tl` covers `FileHandle` open/close success, empty-path and
-  missing-file open failures, invalid and double-close failures, write-truncate
-  creation/truncation, write-append preservation/creation, and the Windows
-  unsupported result.
+- `io_file_handle.tl` covers `FileHandle` open/close success, streaming chunk
+  reads, zero-byte reads, EOF stickiness, negative counts, invalid/read-after-close
+  and write-only read failures, empty-path and missing-file open failures,
+  write-truncate creation/truncation, write-append preservation/creation, and
+  the Windows unsupported result.
 - `io_stdio_lines.tl` covers stdin line wrappers, blank-line vs EOF state,
   stdout/stderr write-line helpers, and stdout flushing with fixture stdin.
 - `io_stdio_bytes.tl` covers fixed-byte stdin wrappers, short reads at EOF, and
@@ -53,8 +54,8 @@ Coverage notes:
 - `text_buf_api.tl` covers empty buffers, repeated appends, char/int append
   helpers, buffer concatenation, clear/reset behavior, and rendering.
 - `visual_studio_api.tl` covers the SetupConfiguration stdlib data model,
-  instance/package list helpers, result/error predicates, and the current
-  structured unsupported runtime result.
+  instance/package list helpers, result/error predicates, and the runtime
+  success/error result shape.
 - `test_assert_success.tl` covers successful assertion helpers. The
   `test_assert_failure.tl` fixture covers the panic-on-failure path and exact
   caller diagnostic on stderr.

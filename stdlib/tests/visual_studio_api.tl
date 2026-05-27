@@ -12,6 +12,25 @@
         (assert-string-eq (windows-setup-error-message error) message message))]
     [(OkWindowsSetupInstances _) (panic message)]))
 
+(define (assert-windows-setup-runtime-result
+  [result : ResultWindowsSetupInstances]
+  [message : String]) : unit
+  (match result
+    [(OkWindowsSetupInstances instances)
+      (assert-true (>= (windows-setup-instance-list-count instances) 0) message)]
+    [(ErrWindowsSetupInstances error)
+      (begin
+        (assert-true
+          (or
+            (windows-setup-error-unsupported? error)
+            (or
+              (windows-setup-error-unavailable? error)
+              (windows-setup-error-query-failed? error)))
+          message)
+        (assert-true
+          (> (string-length (windows-setup-error-message error)) 0)
+          message))]))
+
 (define (assert-windows-setup-error-message
   [error : WindowsSetupError]
   [expected : String]
@@ -94,6 +113,11 @@
         (windows-setup-error-query-failed? (WindowsSetupQueryFailed "failed"))
         "windows setup query failed predicate")
       (assert-windows-setup-unsupported
+        (ErrWindowsSetupInstances
+          (WindowsSetupUnsupported
+            "windows setup: SetupConfiguration is only supported on windows-x86_64 targets"))
+        "windows setup: SetupConfiguration is only supported on windows-x86_64 targets")
+      (assert-windows-setup-runtime-result
         (windows-setup-instances)
-        "windows setup: SetupConfiguration enumeration is not implemented")
+        "windows setup runtime result")
       42)))

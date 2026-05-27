@@ -6,10 +6,11 @@
 ;;;; Primitives required from the compiler/runtime: `read-file`, `write-file`,
 ;;;; `file-exists?`, `read-file-status`, `write-file-status`,
 ;;;; `append-file-status`, `file-exists-status`, `file-open-status`,
-;;;; `file-close-status`,
-;;;; `read-stdin-line`, `read-stdin-bytes`, `stdin-eof?`, `print-string`,
-;;;; `print-error`, `flush-stdout`, `int->string`, `string-append`, and
-;;;; `string-length`.
+;;;; `file-close-status`, `file-read-chunk-status`,
+;;;; `file-read-chunk-bytes`, `file-read-chunk-eof?`,
+;;;; `read-stdin-line`, `read-stdin-bytes`,
+;;;; `stdin-eof?`, `print-string`, `print-error`, `flush-stdout`,
+;;;; `int->string`, `string-append`, and `string-length`.
 ;;;;
 ;;;; The `try-*` helpers return explicit monomorphic result enums. Host errors
 ;;;; are reported through status-code primitives and mapped into `IoError`.
@@ -69,6 +70,19 @@
 (defenum ResultIoFile
   (OkIoFile FileHandle)
   (ErrIoFile IoError))
+
+;;; Streaming file read chunk backed by active-arena owned bytes.
+;;;
+;;; `bytes` currently uses `String` as a byte container until #807 splits text
+;;; strings from binary byte slices.
+(defstruct FileRead
+  (bytes String)
+  (eof bool))
+
+;;; Result type for streaming file reads.
+(defenum ResultIoRead
+  (OkIoRead FileRead)
+  (ErrIoRead IoError))
 
 ;;; Stdin read result containing the bytes/text read plus the post-read EOF flag.
 ;;;
@@ -192,6 +206,14 @@
 (define (file-handle-invalid-message) : String
   "file handle is closed or invalid")
 
+;;; Diagnostic payload for invalid streaming reads.
+(define (file-read-unsupported-message) : String
+  "file handle is closed, invalid, or not open for reading")
+
+;;; Diagnostic payload for invalid streaming read counts.
+(define (file-read-invalid-count-message) : String
+  "file-read-chunk count must be non-negative")
+
 ;;; Open `path` in `mode`, returning a runtime-managed file handle.
 ;;;
 ;;; The returned handle must be passed to `file-close`. Empty paths return
@@ -218,6 +240,32 @@
       (if (= status io-status-unsupported)
         (ErrIoUnit (IoUnsupported (file-handle-invalid-message)))
         (ErrIoUnit (io-error-from-status "file-close" status))))))
+
+;;; Return the bytes captured by a streaming file read.
+(define (file-read-bytes [read : FileRead]) : String
+  (struct-get read bytes))
+
+;;; Return true when a streaming file read observed EOF after the read.
+(define (file-read-eof? [read : FileRead]) : bool
+  (struct-get read eof))
+
+;;; Read up to `count` bytes from a runtime-managed read-mode file handle.
+;;;
+;;; The returned bytes are represented as `String` until #807 adds a distinct
+;;; byte-string/slice type. A short read does not imply EOF; EOF becomes true
+;;; only after the runtime receives a zero-byte host read.
+(define (file-read-chunk [handle : FileHandle] [count : i64]) : ResultIoRead
+  (if (< count 0)
+    (ErrIoRead (IoInvalidPath (file-read-invalid-count-message)))
+    (let
+      [raw : i64 (struct-get handle id)]
+      [status : i64 (file-read-chunk-status raw count)]
+      (if (= status io-status-ok)
+        (OkIoRead
+          (FileRead (file-read-chunk-bytes raw) (file-read-chunk-eof? raw)))
+        (if (= status io-status-unsupported)
+          (ErrIoRead (IoUnsupported (file-read-unsupported-message)))
+          (ErrIoRead (io-error-from-status "file-read-chunk" status)))))))
 
 ;;; Read `path` and return either its contents or a structured I/O error.
 ;;;

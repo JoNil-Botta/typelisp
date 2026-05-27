@@ -131,40 +131,56 @@ The complete local no-Rust gate is:
 scripts/verify-no-rust-stage0.sh
 ```
 
-That wrapper fetches `stage0-latest` when `TYPELISP_BIN` is unset, exports the
-fetched compiler to the verification scripts, and installs failing `cargo` and
-`rustc` shims in `PATH` so the gate cannot silently fall back to Rust. The
-scripts that still run `cargo build --release` when `TYPELISP_BIN` is unset keep
-that path as a local fallback only until #795 removes the Rust-owned stage0
-dependency.
+That wrapper fetches `stage0-latest` when `TYPELISP_BIN` is unset and treats it
+as the seed compiler. It installs failing `cargo` and `rustc` shims in `PATH` so
+the gate cannot silently fall back to Rust. On Linux it first runs
+the stage1-build path in `check-bootstrap-fixpoint.sh` with the seed compiler,
+then routes compile-only capability gates through the freshly bootstrapped
+stage1 compiler. Full public CLI gates still use the seed compiler until the
+selfhost compiler grows a no-Rust host-action wrapper. On Windows it exports the
+seed compiler directly until native stage1 bootstrap/link support lands. The
+full stage2/stage3 fixpoint remains available through
+`check-bootstrap-fixpoint.sh`. The scripts that still run `cargo build --release`
+when `TYPELISP_BIN` is unset keep that path as a local fallback only until #795
+removes the Rust-owned stage0 dependency.
 
 ### Staged backend primitives (#1114)
 
-A PR that introduces a new backend runtime primitive (a new `tl_*` hook emitted
-by `src/backend/mod.rs`) is in a bootstrap deadlock against the no-Rust gate: the
-gate compiles the new test with the *published* `stage0-latest`, which was built
-from an earlier commit and does not yet know the new symbol, so the build fails
-on an undefined symbol. The per-merge stage0 release (#659) only republishes
-*after* merge.
+The Linux no-Rust gate now runs capability checks with a freshly bootstrapped
+stage1 compiler, so source-only selfhost changes should not need a staging
+marker just because the published `stage0-latest` artifact lags `main`.
+`requires-stage0-symbol` is now a historical marker name for the narrower
+Class-B case: a backend/runtime primitive that the no-Rust compiler path cannot
+emit yet, usually because a new Rust helper has not been mirrored in
+`selfhost/compiler_backend.tl` or because the Windows no-Rust path is still
+driven directly by published stage0.
 
-To break the deadlock, mark a test that exercises a not-yet-published symbol so
-the no-Rust gate skips it (only there — the Rust-built `Test` job still runs it):
+Mark a test that exercises such a staged symbol so the no-Rust gate skips it
+only when the build failure mentions that symbol (the Rust-built `Test` job
+still runs it):
 
 - `scripts/verify-stdlib.sh`: add a sixth manifest field
   `requires-stage0-symbol:<name>` to the runnable test row, e.g.
   `stdlib/tests/foo_api.tl|42|-|-|-|requires-stage0-symbol:tl_foo`.
 - `scripts/verify-inline-tests.sh`: add a directive comment near the top of the
   inline-test file: `;; requires-stage0-symbol: tl_foo`.
+- `scripts/verify-integration.sh`: add an optional seventh manifest field to
+  the native integration row, e.g.
+  `foo_runtime|tests/integration/foo_runtime.tl|42|-|-|-|requires-stage0-symbol:tl_foo`.
+  Use a comma-separated marker when one row may fail on any of several staged
+  symbols.
 
-A marked test is skipped **only** when its build fails and `<name>` appears in the
-build/typecheck output (the undefined-symbol signal); any other build failure
-still fails the gate, and unmarked tests are unaffected. Once the published
-stage0 provides the symbol the marked test builds and runs normally (with a
-"drop the marker" notice from `verify-stdlib.sh`).
+A marked test is skipped **only** when its build fails and `<name>` appears in
+the build/typecheck output (the undefined-symbol signal); any other build
+failure still fails the gate, and unmarked tests are unaffected. Once the
+no-Rust compiler path provides the symbol, the marked test builds and runs
+normally (with a "drop the marker" notice from the manifest-based verifiers).
 
-Workflow: introduce the primitive + a marked test in one PR → merge → let #659
-republish `stage0-latest` → drop the `requires-stage0-symbol` marker in a
-follow-up.
+Workflow: introduce the primitive + marked stdlib, inline, or native integration
+coverage in one PR only when the selfhost no-Rust path cannot emit the primitive
+yet, then drop the `requires-stage0-symbol` marker in the PR that mirrors the
+primitive into that path. For Windows-only staging, drop the marker after the
+published Windows stage0 path can build the marked row normally.
 
 For new selfhost tests:
 
@@ -288,13 +304,17 @@ before uploading the artifact.
 
 ### CI expectations
 
-Pull requests get Linux and Windows no-Rust stage0 coverage from
-`scripts/verify-no-rust-stage0.sh`. The Linux job runs public tools, doctests,
-inline tests, selfhost compile manifests, deterministic assembly, TypeLisp
-source format, native integration manifests, examples, stdlib, stdlib docs,
-selfhost native generated programs, the selfhost external compiler corpus, and
-the bootstrap smoke check. The Windows job runs the same host-supported gates
-and explicitly skips the Linux-only selfhost/docs/bootstrap checks.
+Pull requests get Linux and Windows no-Rust coverage from
+`scripts/verify-no-rust-stage0.sh`. The Linux job first builds a fresh stage1
+compiler from published stage0, then runs the deterministic assembly check
+through a stage1 compile wrapper. Public tools, doctests, inline tests, selfhost
+compile manifests, TypeLisp source format, native integration manifests,
+examples, stdlib, stdlib docs, selfhost native generated programs, and the
+selfhost external compiler corpus continue to use the seed compiler until
+selfhost host-action routing and selfhost-specific manifest expectations can
+replace the Rust CLI boundary. The Windows job runs the host-supported gates
+against the published stage0 compiler and explicitly skips the Linux-only
+selfhost/docs checks until native stage1 bootstrap/link support lands.
 
 The remaining Linux and Windows `cargo test`, `cargo fmt`, `cargo clippy`, and
 release integration jobs are temporary Rust reference coverage until #795.

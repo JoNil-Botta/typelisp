@@ -1079,7 +1079,10 @@ fn parse_renders_newer_selfhost_ast_forms() {
     let source = dir.join("main.tl");
     fs::write(
         &source,
-        "(comptime-decl (defstruct Point (x i64)))\n\
+        "(comptime-decl\n\
+           (defstruct Point\n\
+             (:cleanup close-point)\n\
+             (x i64 (:cleanup close-x))))\n\
          (define (main [n : i64] [xs : (Array i64)]) : i64\n\
            (begin\n\
              (comptime (type (Array i64 4)))\n\
@@ -1100,6 +1103,16 @@ fn parse_renders_newer_selfhost_ast_forms() {
     let out = stdout(&alias);
     assert!(
         out.contains("ComptimeDecl { template: DefStruct"),
+        "stdout:\n{}",
+        out
+    );
+    assert!(
+        out.contains("cleanup: Some(\"close-point\")"),
+        "stdout:\n{}",
+        out
+    );
+    assert!(
+        out.contains("cleanup: Some(\"close-x\")"),
         "stdout:\n{}",
         out
     );
@@ -1892,9 +1905,10 @@ fn selfhost_test_planner_threads_opt_level_into_harness_compile() {
     }
 
     assert!(
-        opt_level_texts[0].contains(
-            "    addq %rbx, %rax\n    movq %rax, %r14\n    movq %r14, %rdi\n    call sink\n"
-        ),
+        opt_level_texts[0].contains("    movq $20, %rax\n")
+            && opt_level_texts[0].contains("    movq $22, %rax\n")
+            && opt_level_texts[0].contains("    addq %rbx, %rax\n")
+            && opt_level_texts[0].contains("    call sink\n"),
         "test opt-level 0 should leave lowered arithmetic in harness assembly:\n{}",
         opt_level_texts[0]
     );

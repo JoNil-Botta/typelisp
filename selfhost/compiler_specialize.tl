@@ -1122,6 +1122,46 @@
       (match (spec-rewrite-expr inner templates state)
         [(OkSpecExpr rewritten state2)
           (OkSpecExpr (AstExprPtrNullCheck rewritten) state2)]
+        [(ErrSpecExpr diag) (ErrSpecExpr diag)])]
+    [(AstExprPtrRead ptr)
+      (match (spec-rewrite-expr ptr templates state)
+        [(OkSpecExpr rewritten state2)
+          (OkSpecExpr (AstExprPtrRead rewritten) state2)]
+        [(ErrSpecExpr diag) (ErrSpecExpr diag)])]
+    [(AstExprPtrWrite ptr value)
+      (match (spec-rewrite-expr ptr templates state)
+        [(OkSpecExpr rewritten-ptr ptr-state)
+          (match (spec-rewrite-expr value templates ptr-state)
+            [(OkSpecExpr rewritten-value value-state)
+              (OkSpecExpr
+                (AstExprPtrWrite rewritten-ptr rewritten-value)
+                value-state)]
+            [(ErrSpecExpr diag) (ErrSpecExpr diag)])]
+        [(ErrSpecExpr diag) (ErrSpecExpr diag)])]
+    [(AstExprPtrOffset ptr offset)
+      (match (spec-rewrite-expr ptr templates state)
+        [(OkSpecExpr rewritten-ptr ptr-state)
+          (match (spec-rewrite-expr offset templates ptr-state)
+            [(OkSpecExpr rewritten-offset offset-state)
+              (OkSpecExpr
+                (AstExprPtrOffset rewritten-ptr rewritten-offset)
+                offset-state)]
+            [(ErrSpecExpr diag) (ErrSpecExpr diag)])]
+        [(ErrSpecExpr diag) (ErrSpecExpr diag)])]
+    [(AstExprPtrCast ptr ty)
+      (match (spec-rewrite-expr ptr templates state)
+        [(OkSpecExpr rewritten state2)
+          (OkSpecExpr (AstExprPtrCast rewritten ty) state2)]
+        [(ErrSpecExpr diag) (ErrSpecExpr diag)])]
+    [(AstExprPtrToInt ptr)
+      (match (spec-rewrite-expr ptr templates state)
+        [(OkSpecExpr rewritten state2)
+          (OkSpecExpr (AstExprPtrToInt rewritten) state2)]
+        [(ErrSpecExpr diag) (ErrSpecExpr diag)])]
+    [(AstExprIntToPtr value ty)
+      (match (spec-rewrite-expr value templates state)
+        [(OkSpecExpr rewritten state2)
+          (OkSpecExpr (AstExprIntToPtr rewritten ty) state2)]
         [(ErrSpecExpr diag) (ErrSpecExpr diag)])]))
 
 (define (spec-substitute-values-expr [expr : AstExpr] [subs : SpecValueSubst]) : ResultSpecSubExpr
@@ -1351,6 +1391,40 @@
       (match (spec-substitute-values-expr inner subs)
         [(OkSpecSubExpr rewritten)
           (OkSpecSubExpr (AstExprPtrNullCheck rewritten))]
+        [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
+    [(AstExprPtrRead ptr)
+      (match (spec-substitute-values-expr ptr subs)
+        [(OkSpecSubExpr rewritten) (OkSpecSubExpr (AstExprPtrRead rewritten))]
+        [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
+    [(AstExprPtrWrite ptr value)
+      (match (spec-substitute-values-expr ptr subs)
+        [(OkSpecSubExpr rewritten-ptr)
+          (match (spec-substitute-values-expr value subs)
+            [(OkSpecSubExpr rewritten-value)
+              (OkSpecSubExpr (AstExprPtrWrite rewritten-ptr rewritten-value))]
+            [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
+        [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
+    [(AstExprPtrOffset ptr offset)
+      (match (spec-substitute-values-expr ptr subs)
+        [(OkSpecSubExpr rewritten-ptr)
+          (match (spec-substitute-values-expr offset subs)
+            [(OkSpecSubExpr rewritten-offset)
+              (OkSpecSubExpr (AstExprPtrOffset rewritten-ptr rewritten-offset))]
+            [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
+        [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
+    [(AstExprPtrCast ptr ty)
+      (match (spec-substitute-values-expr ptr subs)
+        [(OkSpecSubExpr rewritten)
+          (OkSpecSubExpr (AstExprPtrCast rewritten ty))]
+        [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
+    [(AstExprPtrToInt ptr)
+      (match (spec-substitute-values-expr ptr subs)
+        [(OkSpecSubExpr rewritten) (OkSpecSubExpr (AstExprPtrToInt rewritten))]
+        [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
+    [(AstExprIntToPtr value ty)
+      (match (spec-substitute-values-expr value subs)
+        [(OkSpecSubExpr rewritten)
+          (OkSpecSubExpr (AstExprIntToPtr rewritten ty))]
         [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]))
 
 (define (spec-substitute-values-expr-list
@@ -1651,6 +1725,42 @@
       (match (spec-substitute-types-expr inner subs)
         [(OkSpecSubExpr rewritten)
           (OkSpecSubExpr (AstExprPtrNullCheck rewritten))]
+        [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
+    [(AstExprPtrRead ptr)
+      (match (spec-substitute-types-expr ptr subs)
+        [(OkSpecSubExpr rewritten) (OkSpecSubExpr (AstExprPtrRead rewritten))]
+        [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
+    [(AstExprPtrWrite ptr value)
+      (match (spec-substitute-types-expr ptr subs)
+        [(OkSpecSubExpr rewritten-ptr)
+          (match (spec-substitute-types-expr value subs)
+            [(OkSpecSubExpr rewritten-value)
+              (OkSpecSubExpr (AstExprPtrWrite rewritten-ptr rewritten-value))]
+            [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
+        [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
+    [(AstExprPtrOffset ptr offset)
+      (match (spec-substitute-types-expr ptr subs)
+        [(OkSpecSubExpr rewritten-ptr)
+          (match (spec-substitute-types-expr offset subs)
+            [(OkSpecSubExpr rewritten-offset)
+              (OkSpecSubExpr (AstExprPtrOffset rewritten-ptr rewritten-offset))]
+            [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
+        [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
+    [(AstExprPtrCast ptr ty)
+      (match (spec-substitute-types-expr ptr subs)
+        [(OkSpecSubExpr rewritten)
+          (OkSpecSubExpr
+            (AstExprPtrCast rewritten (spec-substitute-type ty subs)))]
+        [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
+    [(AstExprPtrToInt ptr)
+      (match (spec-substitute-types-expr ptr subs)
+        [(OkSpecSubExpr rewritten) (OkSpecSubExpr (AstExprPtrToInt rewritten))]
+        [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
+    [(AstExprIntToPtr value ty)
+      (match (spec-substitute-types-expr value subs)
+        [(OkSpecSubExpr rewritten)
+          (OkSpecSubExpr
+            (AstExprIntToPtr rewritten (spec-substitute-type ty subs)))]
         [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]))
 
 (define (spec-substitute-types-expr-list

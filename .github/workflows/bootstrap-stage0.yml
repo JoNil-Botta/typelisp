@@ -125,6 +125,15 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          # Multiple main pushes can publish concurrently; only the current
+          # origin/main commit may move the mutable stage0-latest release.
+          git fetch --no-tags --depth=1 origin main
+          latest_main="$(git rev-parse refs/remotes/origin/main)"
+          if [ "$latest_main" != "${{ github.sha }}" ]; then
+            echo "Skipping stage0-latest update for ${{ github.sha }} because origin/main is now $latest_main."
+            exit 0
+          fi
+
           gh release delete stage0-latest --yes \
             --repo "$GITHUB_REPOSITORY" 2>/dev/null || true
           git push origin :refs/tags/stage0-latest 2>/dev/null || true

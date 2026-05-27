@@ -79,8 +79,8 @@ stdlib_build_run() {
 }
 
 # A staged-primitive row may be skipped ONLY on the no-Rust gate, ONLY when the
-# build failed because the fetched compiler does not yet provide the named
-# runtime symbol/name (it appears as undefined/unbound in the build output).
+# build failed because the current no-Rust compiler path does not yet provide the
+# named runtime symbol/name (it appears as undefined/unbound in the build output).
 # Any other build failure still fails the gate. Returns 0 = skip.
 stdlib_should_skip_staged() {
     _symbols=$1
@@ -113,6 +113,7 @@ string.tl
 test.tl
 text_buf.tl
 vector.tl
+windows_registry.tl
 windows_sdk.tl
 windows_setup.tl
 EOF
@@ -131,13 +132,13 @@ stdlib_test_manifest() {
 stdlib/tests/string_edges.tl|42|-|-
 stdlib/tests/json_helpers.tl|42|-|-
 stdlib/tests/json_parse_stringify.tl|42|-|-
-stdlib/tests/io_edges.tl|42|-|-|-|requires-stage0-symbol:file-open-status,append-file-status
-stdlib/tests/io_file_handle.tl|42|-|-|-|requires-stage0-symbol:file-open-status,append-file-status
-stdlib/tests/io_stdio_lines.tl|42|host-line:stdout-line|host-line:stderr-line|printf:alpha\n\nomega|requires-stage0-symbol:file-open-status,append-file-status
-stdlib/tests/io_stdio_bytes.tl|42|-|-|literal:abcdef|requires-stage0-symbol:file-open-status,append-file-status
+stdlib/tests/io_edges.tl|42|-|-|-|requires-stage0-symbol:file-read-chunk-status,append-file-status
+stdlib/tests/io_file_handle.tl|42|-|-|-|requires-stage0-symbol:file-read-chunk-status,append-file-status
+stdlib/tests/io_stdio_lines.tl|42|host-line:stdout-line|host-line:stderr-line|printf:alpha\n\nomega|requires-stage0-symbol:file-read-chunk-status,append-file-status
+stdlib/tests/io_stdio_bytes.tl|42|-|-|literal:abcdef|requires-stage0-symbol:file-read-chunk-status,append-file-status
 stdlib/tests/env_api.tl|42|-|-
 stdlib/tests/cpu_api.tl|42|-|-|-|requires-stage0-symbol:cpuid
-stdlib/tests/fs_api.tl|42|-|-|-|requires-stage0-symbol:file-open-status,append-file-status
+stdlib/tests/fs_api.tl|42|-|-|-|requires-stage0-symbol:file-read-chunk-status,append-file-status
 stdlib/tests/hash_api.tl|42|-|-
 stdlib/tests/hashmap_api.tl|42|-|-
 stdlib/tests/process_api.tl|42|-|-
@@ -148,8 +149,9 @@ stdlib/tests/vector_api.tl|42|-|-
 stdlib/tests/visual_studio_api.tl|42|-|-
 stdlib/tests/test_assert_success.tl|42|-|-
 stdlib/tests/test_assert_failure.tl|134|-|literal:stdlib test failure message
-stdlib/tests/windows_sdk_api.tl|42|-|-|-|requires-stage0-symbol:file-open-status,append-file-status
-stdlib/tests/msvc_api.tl|42|-|-|-|requires-stage0-symbol:file-open-status,append-file-status
+stdlib/tests/windows_registry_api.tl|42|-|-|-|requires-stage0-symbol:tl_windows_sdk_registry_install
+stdlib/tests/windows_sdk_api.tl|42|-|-|-|requires-stage0-symbol:file-read-chunk-status,append-file-status,tl_windows_sdk_registry_install
+stdlib/tests/msvc_api.tl|42|-|-|-|requires-stage0-symbol:file-read-chunk-status,append-file-status,tl_windows_sdk_registry_install
 EOF
 }
 
@@ -421,7 +423,7 @@ while IFS='|' read -r fixture want stdout_spec stderr_spec stdin_spec extra; do
 
     if [ "$build_status" -ne 0 ]; then
         if stdlib_should_skip_staged "$requires_symbol" "$stem.build.err"; then
-            echo "[stdlib] SKIP $fixture (awaiting stage0 republish of '$requires_symbol')"
+            echo "[stdlib] SKIP $fixture (awaiting no-Rust compiler support for '$requires_symbol')"
             skipped=$((skipped + 1))
             continue
         fi
@@ -431,7 +433,7 @@ while IFS='|' read -r fixture want stdout_spec stderr_spec stdin_spec extra; do
     fi
 
     if [ -n "$requires_symbol" ]; then
-        echo "[stdlib] NOTE: $fixture built with the current compiler; once the published stage0 provides '$requires_symbol', drop the requires-stage0-symbol marker" >&2
+        echo "[stdlib] NOTE: $fixture built with the current compiler; once the no-Rust compiler path provides '$requires_symbol', drop the requires-stage0-symbol marker" >&2
     fi
 
     if [ "$got" -ne "$want" ]; then
@@ -531,7 +533,7 @@ done < "$CHECK_MANIFEST"
 module_count=$(wc -l < "$EXPECTED" | tr -d ' ')
 
 if [ "$skipped" -gt 0 ]; then
-    echo "stdlib verification: $skipped runnable fixture(s) skipped (staged primitive awaiting stage0 republish)"
+    echo "stdlib verification: $skipped runnable fixture(s) skipped (staged primitive awaiting no-Rust compiler support)"
 fi
 
 echo "stdlib verification passed for $module_count module(s), $passed runnable fixture(s), $checked check fixture(s)"

@@ -27,12 +27,26 @@
         (if (< (arg-count) 3)
           "linux-x86_64"
           (arg 2))]
-      (match (compiler-backend-runtime-fixture-emit target-name)
-        [(OkCompilerBackend asm)
-          (begin
-            (write-file (arg 1) asm)
-            0)]
-        [(ErrCompilerBackend diag)
-          (begin
-            (print-error (compiler-diagnostic-render diag))
-            1)]))))
+      ;; Keep the driver source emit direct in main; this is the compile-heavy
+      ;; fixture path and avoids an extra helper wrapper in the native smoke.
+      (if (string-eq target-name "windows-driver-primitives")
+        (match (compiler-backend-emit-source-for-target
+          (compiler-backend-windows-driver-runtime-source)
+          (BackendTargetWindows))
+          [(OkCompilerBackend asm)
+            (begin
+              (write-file (arg 1) asm)
+              0)]
+          [(ErrCompilerBackend diag)
+            (begin
+              (print-error (compiler-diagnostic-render diag))
+              1)])
+        (match (compiler-backend-runtime-fixture-emit target-name)
+          [(OkCompilerBackend asm)
+            (begin
+              (write-file (arg 1) asm)
+              0)]
+          [(ErrCompilerBackend diag)
+            (begin
+              (print-error (compiler-diagnostic-render diag))
+              1)])))))

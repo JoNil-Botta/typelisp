@@ -341,7 +341,7 @@ fn type_lisp_programs_compile_link_and_run() {
         Case {
             name: "string_eq",
             exit_code: 0,
-            stdout: "true\nfalse\nfalse\ntrue\n",
+            stdout: "true\ntrue\ntrue\nfalse\nfalse\ntrue\nfalse\n",
             deps: &[],
         },
         Case {
@@ -352,19 +352,18 @@ fn type_lisp_programs_compile_link_and_run() {
         },
         Case {
             name: "substring",
-            exit_code: 33,
+            exit_code: 55,
             stdout: "",
             deps: &[],
         },
         // refs #13/#27: `(string-append a b)` / `(string-concat a b)` joins two
         // Strings into a fresh heap String via the emit-on-demand, libc-free
-        // `tl_string_concat` runtime. The program prints "foo"+"bar" then a
-        // "\n"+"" concatenation, so stdout is exactly "foobar\n" and it exits 0 —
-        // unblocking exposing concatenation in the interpreter.
+        // `tl_string_concat` runtime. This covers empty, left/right-empty,
+        // short, and long concatenations.
         Case {
             name: "string_append",
             exit_code: 0,
-            stdout: "foobar\n",
+            stdout: "[]\nright\nleft\nfoobar\nabcdefghijklmnopqrstuvwxyz0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ\n",
             deps: &[],
         },
         // Multi-file program (#44): entry imports a helper module and calls a
@@ -950,7 +949,7 @@ fn type_lisp_programs_compile_link_and_run_explicit_build() {
         Case {
             name: "string_eq",
             exit_code: 0,
-            stdout: "true\nfalse\nfalse\ntrue\n",
+            stdout: "true\ntrue\ntrue\nfalse\nfalse\ntrue\nfalse\n",
             deps: &[],
         },
         Case {
@@ -961,16 +960,16 @@ fn type_lisp_programs_compile_link_and_run_explicit_build() {
         },
         Case {
             name: "substring",
-            exit_code: 33,
+            exit_code: 55,
             stdout: "",
             deps: &[],
         },
         // refs #13/#27: string concatenation via `tl_string_concat`, also through
-        // the explicit compile -> as -> ld -> run pipeline. Prints "foobar\n".
+        // the explicit compile -> as -> ld -> run pipeline.
         Case {
             name: "string_append",
             exit_code: 0,
-            stdout: "foobar\n",
+            stdout: "[]\nright\nleft\nfoobar\nabcdefghijklmnopqrstuvwxyz0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ\n",
             deps: &[],
         },
         Case {
@@ -1634,6 +1633,12 @@ fn selfhost_backend_runtime_helpers_emit_assemble_link_and_run() {
         "\ntl_substring:\n",
         ".globl tl_string_concat\n",
         "\ntl_string_concat:\n",
+        ".globl tl_string_eq\n",
+        "\ntl_string_eq:\n",
+        ".L_tl_string_eq_word_loop:\n",
+        "    shrq $3, %r8\n",
+        "    cmpq (%rdx), %rax\n",
+        ".L_tl_string_eq_tail_loop:\n",
         "\n.L_tl_read_stdin_line:\n",
         "\n.L_tl_read_stdin_bytes:\n",
         "\n.L_tl_stdin_eof:\n",
@@ -1645,8 +1650,7 @@ fn selfhost_backend_runtime_helpers_emit_assemble_link_and_run() {
         "process: spawn failed",
         ".L_tl_stdin_eof_flag:\n",
         "tl: stdin failed",
-        ".L_tl_substring_copy_loop:\n",
-        ".L_tl_string_concat_copy_b:\n",
+        "    rep movsb\n",
         "tl_current_arena:\n",
         ".L_tl_alloc_new_arena:\n",
         "    movq %rax, tl_current_arena(%rip)\n",
@@ -1659,11 +1663,27 @@ fn selfhost_backend_runtime_helpers_emit_assemble_link_and_run() {
             asm
         );
     }
+    assert!(
+        asm.matches("    rep movsb\n").count() >= 3,
+        "runtime helper assembly should bulk-copy substring and concat payloads:\n{}",
+        asm
+    );
+    for old_loop in [
+        ".L_tl_substring_copy_loop:\n",
+        ".L_tl_string_concat_copy_a:\n",
+        ".L_tl_string_concat_copy_b:\n",
+    ] {
+        assert!(
+            !asm.contains(old_loop),
+            "runtime helper assembly should not use byte copy loop {old_loop:?}:\n{asm}"
+        );
+    }
     for helper in [
         ".extern tl_alloc\n",
         ".extern tl_oob_abort\n",
         ".extern tl_substring\n",
         ".extern tl_string_concat\n",
+        ".extern tl_string_eq\n",
         ".extern .L_tl_read_stdin_line\n",
         ".extern .L_tl_read_stdin_bytes\n",
         ".extern .L_tl_stdin_eof\n",

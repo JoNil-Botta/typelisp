@@ -44,12 +44,20 @@
   (OkAstFieldDefList AstFieldDefList)
   (ErrAstFieldDefList String))
 
+(defenum ResultAstFieldCleanup
+  (OkAstFieldCleanup AstFieldCleanup)
+  (ErrAstFieldCleanup String))
+
 (defenum ResultAstStructRepr
   (OkAstStructRepr AstStructRepr)
   (ErrAstStructRepr String))
 
+(defenum ResultAstStructCleanup
+  (OkAstStructCleanup AstStructCleanup)
+  (ErrAstStructCleanup String))
+
 (defenum ResultAstStructDefParts
-  (OkAstStructDefParts AstStructRepr AstFieldDefList)
+  (OkAstStructDefParts AstStructRepr AstStructCleanup AstFieldDefList)
   (ErrAstStructDefParts String))
 
 (defenum ResultAstVariantDef
@@ -396,6 +404,24 @@
 (define (compiler-parse-tag-expr-with-resource) : i64
   255)
 
+(define (compiler-parse-tag-expr-ptr-read) : i64
+  256)
+
+(define (compiler-parse-tag-expr-ptr-write) : i64
+  257)
+
+(define (compiler-parse-tag-expr-ptr-offset) : i64
+  258)
+
+(define (compiler-parse-tag-expr-ptr-cast) : i64
+  259)
+
+(define (compiler-parse-tag-expr-ptr-to-int) : i64
+  260)
+
+(define (compiler-parse-tag-expr-int-to-ptr) : i64
+  261)
+
 (define (compiler-parse-tag-lit-true) : i64
   300)
 
@@ -587,6 +613,24 @@
       (set!
         out
         (sym-i64-bind out "ptr-null?" (compiler-parse-tag-expr-ptr-null-check)))
+      (set!
+        out
+        (sym-i64-bind out "ptr-read" (compiler-parse-tag-expr-ptr-read)))
+      (set!
+        out
+        (sym-i64-bind out "ptr-write!" (compiler-parse-tag-expr-ptr-write)))
+      (set!
+        out
+        (sym-i64-bind out "ptr-offset" (compiler-parse-tag-expr-ptr-offset)))
+      (set!
+        out
+        (sym-i64-bind out "ptr-cast" (compiler-parse-tag-expr-ptr-cast)))
+      (set!
+        out
+        (sym-i64-bind out "ptr->int" (compiler-parse-tag-expr-ptr-to-int)))
+      (set!
+        out
+        (sym-i64-bind out "int->ptr" (compiler-parse-tag-expr-int-to-ptr)))
       (set!
         out
         (sym-i64-bind out "with" (compiler-parse-tag-expr-with-resource)))
@@ -889,21 +933,59 @@
         [(ErrAstParam message) (ErrAstParamList message)])]
     [_ (ErrAstParamList "parse: malformed parameter list")]))
 
-(define (parse-ast-field-def [dispatch : SymI64Env] [s : Sexpr]) : ResultAstFieldDef
+(define (parse-ast-field-cleanup [s : Sexpr]) : ResultAstFieldCleanup
+  (match s
+    [(SCons (SSym key) tail)
+      (if (string-eq key ":cleanup")
+        (match tail
+          [(SCons (SSym cleanup-fn) (SNil))
+            (OkAstFieldCleanup (AstFieldCleanupFn cleanup-fn))]
+          [_ (ErrAstFieldCleanup "parse: malformed field :cleanup metadata")])
+        (if (string-eq key ":owned")
+          (match tail
+            [(SNil) (OkAstFieldCleanup (AstFieldOwnedCleanup))]
+            [_ (ErrAstFieldCleanup "parse: malformed field :owned metadata")])
+          (if (compiler-parse-metadata-key? key)
+            (ErrAstFieldCleanup
+              (string-append "parse: unknown field metadata " key))
+            (ErrAstFieldCleanup "parse: malformed field cleanup metadata"))))]
+    [_ (ErrAstFieldCleanup "parse: malformed field cleanup metadata")]))
+
+(define (parse-ast-field-def
+  [dispatch : SymI64Env]
+  [s : Sexpr]
+  [allow-cleanup : bool]) : ResultAstFieldDef
   (match s
     [(SCons (SSym name) (SCons ty (SNil)))
       (match (parse-ast-type dispatch ty)
-        [(OkAstType parsed-ty) (OkAstFieldDef (AstFieldDef name parsed-ty))]
+        [(OkAstType parsed-ty)
+          (OkAstFieldDef (AstFieldDef name parsed-ty (AstFieldNoCleanup)))]
         [(ErrAstType message) (ErrAstFieldDef message)])]
+    [(SCons (SSym name) (SCons ty (SCons cleanup-meta (SNil))))
+      (if allow-cleanup
+        (match (parse-ast-type dispatch ty)
+          [(OkAstType parsed-ty)
+            (match (parse-ast-field-cleanup cleanup-meta)
+              [(OkAstFieldCleanup parsed-cleanup)
+                (OkAstFieldDef (AstFieldDef name parsed-ty parsed-cleanup))]
+              [(ErrAstFieldCleanup message) (ErrAstFieldDef message)])]
+          [(ErrAstType message) (ErrAstFieldDef message)])
+        (ErrAstFieldDef
+          "parse: field cleanup metadata requires struct :cleanup metadata"))]
+    [(SCons (SSym _) (SCons _ (SCons _ (SCons _ _))))
+      (ErrAstFieldDef "parse: duplicate field cleanup metadata")]
     [_ (ErrAstFieldDef "parse: malformed field definition")]))
 
-(define (parse-ast-field-def-list [dispatch : SymI64Env] [s : Sexpr]) : ResultAstFieldDefList
+(define (parse-ast-field-def-list
+  [dispatch : SymI64Env]
+  [s : Sexpr]
+  [allow-cleanup : bool]) : ResultAstFieldDefList
   (match s
     [(SNil) (OkAstFieldDefList AstFieldDefNil)]
     [(SCons head tail)
-      (match (parse-ast-field-def dispatch head)
+      (match (parse-ast-field-def dispatch head allow-cleanup)
         [(OkAstFieldDef parsed-head)
-          (match (parse-ast-field-def-list dispatch tail)
+          (match (parse-ast-field-def-list dispatch tail allow-cleanup)
             [(OkAstFieldDefList parsed-tail)
               (OkAstFieldDefList (AstFieldDefCons parsed-head parsed-tail))]
             [(ErrAstFieldDefList message) (ErrAstFieldDefList message)])]
@@ -923,14 +1005,22 @@
           (ErrAstStructRepr (string-append "parse: unknown struct repr " name))))]
     [_ (ErrAstStructRepr "parse: malformed :repr metadata")]))
 
+(define (parse-ast-defstruct-cleanup-tail [tail : Sexpr]) : ResultAstStructCleanup
+  (match tail
+    [(SCons (SSym cleanup-fn) (SNil))
+      (OkAstStructCleanup (AstStructCleanupFn cleanup-fn))]
+    [_ (ErrAstStructCleanup "parse: malformed defstruct :cleanup metadata")]))
+
 (define (parse-ast-defstruct-items
   [dispatch : SymI64Env]
   [items : SpannedSexpr]
   [repr : AstStructRepr]
+  [cleanup : AstStructCleanup]
   [seen-repr : bool]
+  [seen-cleanup : bool]
   [seen-field : bool]) : ResultAstStructDefParts
   (match items
-    [(SpSNil _) (OkAstStructDefParts repr AstFieldDefNil)]
+    [(SpSNil _) (OkAstStructDefParts repr cleanup AstFieldDefNil)]
     [(SpSCons head tail _)
       (match (spanned-sexpr-form head)
         [(SCons (SSym key) after-key)
@@ -943,60 +1033,123 @@
                   "parse: duplicate defstruct :repr metadata")
                 (match (parse-ast-defstruct-repr-tail after-key)
                   [(OkAstStructRepr next-repr)
-                    (parse-ast-defstruct-items
-                      dispatch
-                      tail
-                      next-repr
-                      true
-                      false)]
+                    (if (and
+                      (ast-struct-repr-c? next-repr)
+                      (ast-struct-cleanup? cleanup))
+                      (ErrAstStructDefParts
+                        "parse: defstruct cannot combine :repr c with :cleanup metadata")
+                      (parse-ast-defstruct-items
+                        dispatch
+                        tail
+                        next-repr
+                        cleanup
+                        true
+                        seen-cleanup
+                        false))]
                   [(ErrAstStructRepr message) (ErrAstStructDefParts message)])))
-            (if (compiler-parse-metadata-key? key)
+            (if (string-eq key ":cleanup")
               (if seen-field
                 (ErrAstStructDefParts
                   "parse: defstruct metadata must appear before fields")
-                (if (string-eq key ":packed")
-                  (ErrAstStructDefParts "parse: packed repr is reserved")
+                (if seen-cleanup
                   (ErrAstStructDefParts
-                    (string-append "parse: unknown defstruct metadata " key))))
-              (match (parse-ast-field-def dispatch (spanned-sexpr-form head))
-                [(OkAstFieldDef parsed-field)
-                  (match (parse-ast-defstruct-items
-                    dispatch
-                    tail
-                    repr
-                    seen-repr
-                    true)
-                    [(OkAstStructDefParts parsed-repr parsed-rest)
-                      (OkAstStructDefParts
-                        parsed-repr
-                        (AstFieldDefCons parsed-field parsed-rest))]
-                    [(ErrAstStructDefParts message)
-                      (ErrAstStructDefParts message)])]
-                [(ErrAstFieldDef message) (ErrAstStructDefParts message)])))]
+                    "parse: duplicate defstruct :cleanup metadata")
+                  (match (parse-ast-defstruct-cleanup-tail after-key)
+                    [(OkAstStructCleanup next-cleanup)
+                      (if (ast-struct-repr-c? repr)
+                        (ErrAstStructDefParts
+                          "parse: defstruct cannot combine :repr c with :cleanup metadata")
+                        (parse-ast-defstruct-items
+                          dispatch
+                          tail
+                          repr
+                          next-cleanup
+                          seen-repr
+                          true
+                          false))]
+                    [(ErrAstStructCleanup message)
+                      (ErrAstStructDefParts message)])))
+              (if (compiler-parse-metadata-key? key)
+                (if seen-field
+                  (ErrAstStructDefParts
+                    "parse: defstruct metadata must appear before fields")
+                  (if (string-eq key ":packed")
+                    (ErrAstStructDefParts "parse: packed repr is reserved")
+                    (ErrAstStructDefParts
+                      (string-append "parse: unknown defstruct metadata " key))))
+                (match (parse-ast-field-def
+                  dispatch
+                  (spanned-sexpr-form head)
+                  (ast-struct-cleanup? cleanup))
+                  [(OkAstFieldDef parsed-field)
+                    (match (parse-ast-defstruct-items
+                      dispatch
+                      tail
+                      repr
+                      cleanup
+                      seen-repr
+                      seen-cleanup
+                      true)
+                      [(OkAstStructDefParts
+                          parsed-repr
+                          parsed-cleanup
+                          parsed-rest)
+                        (OkAstStructDefParts
+                          parsed-repr
+                          parsed-cleanup
+                          (AstFieldDefCons parsed-field parsed-rest))]
+                      [(ErrAstStructDefParts message)
+                        (ErrAstStructDefParts message)])]
+                  [(ErrAstFieldDef message) (ErrAstStructDefParts message)]))))]
         [_
-          (match (parse-ast-field-def dispatch (spanned-sexpr-form head))
+          (match (parse-ast-field-def
+            dispatch
+            (spanned-sexpr-form head)
+            (ast-struct-cleanup? cleanup))
             [(OkAstFieldDef parsed-field)
               (match (parse-ast-defstruct-items
                 dispatch
                 tail
                 repr
+                cleanup
                 seen-repr
+                seen-cleanup
                 true)
-                [(OkAstStructDefParts parsed-repr parsed-rest)
+                [(OkAstStructDefParts parsed-repr parsed-cleanup parsed-rest)
                   (OkAstStructDefParts
                     parsed-repr
+                    parsed-cleanup
                     (AstFieldDefCons parsed-field parsed-rest))]
                 [(ErrAstStructDefParts message) (ErrAstStructDefParts message)])]
             [(ErrAstFieldDef message) (ErrAstStructDefParts message)])])]
     [_ (ErrAstStructDefParts "parse: malformed field list")]))
 
+(define (compiler-parse-type-list-has-metadata? [s : Sexpr]) : bool
+  (match s
+    [(SNil) false]
+    [(SCons head rest)
+      (match head
+        [(SCons (SSym key) _)
+          (if (compiler-parse-metadata-key? key)
+            true
+            (compiler-parse-type-list-has-metadata? rest))]
+        [_ (compiler-parse-type-list-has-metadata? rest)])]
+    [_ false]))
+
 (define (parse-ast-variant-def [dispatch : SymI64Env] [s : Sexpr]) : ResultAstVariantDef
   (match s
     [(SCons (SSym name) fields)
-      (match (parse-ast-type-list dispatch fields)
-        [(OkAstTypeList parsed-fields)
-          (OkAstVariantDef (AstVariantDef name parsed-fields))]
-        [(ErrAstTypeList message) (ErrAstVariantDef message)])]
+      (if (compiler-parse-metadata-key? name)
+        (if (string-eq name ":cleanup")
+          (ErrAstVariantDef "parse: defenum cleanup metadata is reserved")
+          (ErrAstVariantDef
+            (string-append "parse: unknown defenum metadata " name)))
+        (if (compiler-parse-type-list-has-metadata? fields)
+          (ErrAstVariantDef "parse: enum payload cleanup metadata is reserved")
+          (match (parse-ast-type-list dispatch fields)
+            [(OkAstTypeList parsed-fields)
+              (OkAstVariantDef (AstVariantDef name parsed-fields))]
+            [(ErrAstTypeList message) (ErrAstVariantDef message)])))]
     [_ (ErrAstVariantDef "parse: malformed variant definition")]))
 
 (define (parse-ast-variant-def-list [dispatch : SymI64Env] [s : Sexpr]) : ResultAstVariantDefList
@@ -1519,6 +1672,65 @@
         [(ErrAstExpr message) (ErrAstExpr message)])]
     [_ (ErrAstExpr "parse: ptr-null? expects exactly one expression")]))
 
+(define (parse-ast-ptr-read [dispatch : SymI64Env] [rest : SpannedSexpr]) : ResultAstExpr
+  (match rest
+    [(SpSCons expr (SpSNil _) _)
+      (match (parse-ast-expr dispatch expr)
+        [(OkAstExpr parsed-expr) (OkAstExpr (AstExprPtrRead parsed-expr))]
+        [(ErrAstExpr message) (ErrAstExpr message)])]
+    [_ (ErrAstExpr "parse: ptr-read expects exactly one expression")]))
+
+(define (parse-ast-ptr-write [dispatch : SymI64Env] [rest : SpannedSexpr]) : ResultAstExpr
+  (match rest
+    [(SpSCons ptr (SpSCons value (SpSNil _) _) _)
+      (match (parse-ast-expr dispatch ptr)
+        [(OkAstExpr parsed-ptr)
+          (match (parse-ast-expr dispatch value)
+            [(OkAstExpr parsed-value)
+              (OkAstExpr (AstExprPtrWrite parsed-ptr parsed-value))]
+            [(ErrAstExpr message) (ErrAstExpr message)])]
+        [(ErrAstExpr message) (ErrAstExpr message)])]
+    [_ (ErrAstExpr "parse: ptr-write! expects exactly two expressions")]))
+
+(define (parse-ast-ptr-offset [dispatch : SymI64Env] [rest : SpannedSexpr]) : ResultAstExpr
+  (match rest
+    [(SpSCons ptr (SpSCons offset (SpSNil _) _) _)
+      (match (parse-ast-expr dispatch ptr)
+        [(OkAstExpr parsed-ptr)
+          (match (parse-ast-expr dispatch offset)
+            [(OkAstExpr parsed-offset)
+              (OkAstExpr (AstExprPtrOffset parsed-ptr parsed-offset))]
+            [(ErrAstExpr message) (ErrAstExpr message)])]
+        [(ErrAstExpr message) (ErrAstExpr message)])]
+    [_ (ErrAstExpr "parse: ptr-offset expects exactly two expressions")]))
+
+(define (parse-ast-ptr-cast-like
+  [dispatch : SymI64Env]
+  [is-int-to-ptr : bool]
+  [rest : SpannedSexpr]) : ResultAstExpr
+  (match rest
+    [(SpSCons expr (SpSCons colon (SpSCons ty (SpSNil _) _) _) _)
+      (if (sexpr-colon? (spanned-sexpr-form colon))
+        (match (parse-ast-expr dispatch expr)
+          [(OkAstExpr parsed-expr)
+            (match (parse-ast-type dispatch (spanned-sexpr-form ty))
+              [(OkAstType parsed-ty)
+                (if is-int-to-ptr
+                  (OkAstExpr (AstExprIntToPtr parsed-expr parsed-ty))
+                  (OkAstExpr (AstExprPtrCast parsed-expr parsed-ty)))]
+              [(ErrAstType message) (ErrAstExpr message)])]
+          [(ErrAstExpr message) (ErrAstExpr message)])
+        (ErrAstExpr "parse: expected ':' in pointer cast"))]
+    [_ (ErrAstExpr "parse: pointer cast expects (form expr : pointer-type)")]))
+
+(define (parse-ast-ptr-to-int [dispatch : SymI64Env] [rest : SpannedSexpr]) : ResultAstExpr
+  (match rest
+    [(SpSCons expr (SpSNil _) _)
+      (match (parse-ast-expr dispatch expr)
+        [(OkAstExpr parsed-expr) (OkAstExpr (AstExprPtrToInt parsed-expr))]
+        [(ErrAstExpr message) (ErrAstExpr message)])]
+    [_ (ErrAstExpr "parse: ptr->int expects exactly one expression")]))
+
 (define (parse-ast-with-region [dispatch : SymI64Env] [rest : SpannedSexpr]) : ResultAstExpr
   (match rest
     [(SpSNil _)
@@ -1839,13 +2051,28 @@
     [(SpSSym op _)
       (let
         [tag : i64 (compiler-parse-dispatch-tag dispatch op)]
-        (if (= tag (compiler-parse-tag-expr-cond))
-          (parse-ast-cond dispatch rest)
-          (if (ast-unop-tag? tag)
-            (parse-ast-unary dispatch (ast-unop-from-tag tag) rest)
-            (if (ast-binop-tag? tag)
-              (parse-ast-binary dispatch (ast-binop-from-tag tag) rest)
-              (parse-ast-list-expr-tag dispatch tag head rest)))))]
+        (if (= tag (compiler-parse-tag-expr-ptr-read))
+          (parse-ast-ptr-read dispatch rest)
+          (if (= tag (compiler-parse-tag-expr-ptr-write))
+            (parse-ast-ptr-write dispatch rest)
+            (if (= tag (compiler-parse-tag-expr-ptr-offset))
+              (parse-ast-ptr-offset dispatch rest)
+              (if (= tag (compiler-parse-tag-expr-ptr-cast))
+                (parse-ast-ptr-cast-like dispatch false rest)
+                (if (= tag (compiler-parse-tag-expr-ptr-to-int))
+                  (parse-ast-ptr-to-int dispatch rest)
+                  (if (= tag (compiler-parse-tag-expr-int-to-ptr))
+                    (parse-ast-ptr-cast-like dispatch true rest)
+                    (if (= tag (compiler-parse-tag-expr-cond))
+                      (parse-ast-cond dispatch rest)
+                      (if (ast-unop-tag? tag)
+                        (parse-ast-unary dispatch (ast-unop-from-tag tag) rest)
+                        (if (ast-binop-tag? tag)
+                          (parse-ast-binary
+                            dispatch
+                            (ast-binop-from-tag tag)
+                            rest)
+                          (parse-ast-list-expr-tag dispatch tag head rest)))))))))))]
     [_ (parse-ast-call dispatch head rest)]))
 
 (define (parse-ast-expr [dispatch : SymI64Env] [s : SpannedSexpr]) : ResultAstExpr
@@ -1968,13 +2195,15 @@
         dispatch
         fields
         (AstStructReprDefault)
+        (AstStructNoCleanup)
+        false
         false
         false)
-        [(OkAstStructDefParts repr parsed-fields)
+        [(OkAstStructDefParts repr cleanup parsed-fields)
           (match parsed-fields
             [(AstFieldDefNil)
               (ErrAstDecl "parse: defstruct needs at least one field")]
-            [_ (OkAstDecl (AstDeclDefStruct name repr parsed-fields))])]
+            [_ (OkAstDecl (AstDeclDefStruct name repr cleanup parsed-fields))])]
         [(ErrAstStructDefParts message) (ErrAstDecl message)])]
     [_ (ErrAstDecl "parse: malformed defstruct")]))
 
@@ -2433,6 +2662,12 @@
 (define (compiler-parse-raw-pointer-source) : String
   "(extern raw-map : (-> (Ptr i64) (MutPtr (Ptr u8))))")
 
+(define (compiler-parse-raw-pointer-ops-source) : String
+  "(define (main [p : (MutPtr i64)] [n : u64]) : u64
+  (unsafe
+    (ptr-write! p (ptr-read p))
+    (ptr->int (ptr-cast (ptr-offset (int->ptr n : (MutPtr i64)) 1) : (Ptr i64)))))")
+
 (define (compiler-parse-raw-pointer-ok?) : bool
   (match (parse-ast-source (compiler-parse-raw-pointer-source))
     [(OkAstProgram (AstProgram decls))
@@ -2451,6 +2686,9 @@
               [_ false]))]
         [_ false])]
     [(ErrAstProgram _) false]))
+
+(define (compiler-parse-raw-pointer-ops-ok?) : bool
+  (compiler-parse-ok? (compiler-parse-raw-pointer-ops-source)))
 
 (define (compiler-parse-reference-source) : String
   "(define (use [s : (& r String)] [items : (&mut phase (Array i64))]) : unit unit)")
@@ -2515,6 +2753,80 @@
     [(AstFieldDefNil) 0]
     [(AstFieldDefCons _ rest) (+ 1 (compiler-parse-field-count rest))]))
 
+(define (compiler-parse-field-cleanup-score [cleanup : AstFieldCleanup]) : i64
+  (match cleanup
+    [(AstFieldNoCleanup) 0]
+    [(AstFieldCleanupFn _) 10]
+    [(AstFieldOwnedCleanup) 100]))
+
+(define (compiler-parse-field-cleanup-list-score [fields : AstFieldDefList]) : i64
+  (match fields
+    [(AstFieldDefNil) 0]
+    [(AstFieldDefCons field rest)
+      (match field
+        [(AstFieldDef _ _ cleanup)
+          (+
+            (compiler-parse-field-cleanup-score cleanup)
+            (compiler-parse-field-cleanup-list-score rest))])]))
+
+(define (compiler-parse-struct-cleanup-source) : String
+  "(defstruct Resource
+  (:cleanup close-resource)
+  (fd i64 (:cleanup close-fd))
+  (child i64 (:owned))
+  (status i64))")
+
+(define (compiler-parse-struct-cleanup-ok?) : bool
+  (match (parse-ast-source (compiler-parse-struct-cleanup-source))
+    [(OkAstProgram (AstProgram decls))
+      (match decls
+        [(AstDeclCons (AstDeclDefStruct name repr cleanup fields) AstDeclNil)
+          (and
+            (string-eq name "Resource")
+            (and
+              (match repr
+                [(AstStructReprDefault) true]
+                [_ false])
+              (and
+                (match cleanup
+                  [(AstStructCleanupFn cleanup-name)
+                    (string-eq cleanup-name "close-resource")]
+                  [_ false])
+                (and
+                  (= (compiler-parse-field-count fields) 3)
+                  (= (compiler-parse-field-cleanup-list-score fields) 110)))))]
+        [_ false])]
+    [(ErrAstProgram _) false]))
+
+(define (compiler-parse-comptime-struct-cleanup-source) : String
+  "(comptime-decl
+  (defstruct Resource
+    (:cleanup close-resource)
+    (fd i64 (:cleanup close-fd))))")
+
+(define (compiler-parse-comptime-struct-cleanup-ok?) : bool
+  (match (parse-ast-source (compiler-parse-comptime-struct-cleanup-source))
+    [(OkAstProgram (AstProgram decls))
+      (match decls
+        [(AstDeclCons (AstDeclComptimeDecl template) AstDeclNil)
+          (match template
+            [(AstDeclDefStruct _ repr cleanup fields)
+              (and
+                (match repr
+                  [(AstStructReprDefault) true]
+                  [_ false])
+                (and
+                  (ast-struct-cleanup? cleanup)
+                  (= (compiler-parse-field-cleanup-list-score fields) 10)))]
+            [_ false])]
+        [_ false])]
+    [(ErrAstProgram _) false]))
+
+(define (compiler-parse-cleanup-metadata-ok?) : bool
+  (and
+    (compiler-parse-struct-cleanup-ok?)
+    (compiler-parse-comptime-struct-cleanup-ok?)))
+
 (define (compiler-parse-repr-c-source) : String
   "(defstruct Stat
   (:repr c)
@@ -2525,7 +2837,7 @@
   (match (parse-ast-source (compiler-parse-repr-c-source))
     [(OkAstProgram (AstProgram decls))
       (match decls
-        [(AstDeclCons (AstDeclDefStruct name repr fields) AstDeclNil)
+        [(AstDeclCons (AstDeclDefStruct name repr _ fields) AstDeclNil)
           (and
             (string-eq name "Stat")
             (and
@@ -2543,7 +2855,7 @@
       (match decls
         [(AstDeclCons (AstDeclComptimeDecl template) AstDeclNil)
           (match template
-            [(AstDeclDefStruct _ repr fields)
+            [(AstDeclDefStruct _ repr _ fields)
               (and
                 (ast-struct-repr-c? repr)
                 (= (compiler-parse-field-count fields) 1))]
@@ -2627,6 +2939,43 @@
               "(defstruct Bad (:repr c))"
               "parse: defstruct needs at least one field")))))))
 
+(define (compiler-parse-cleanup-error-tests-ok?) : bool
+  (and
+    (compiler-parse-error-ok?
+      "(defstruct Bad (:cleanup close) (:cleanup close2) (x i64))"
+      "parse: duplicate defstruct :cleanup metadata")
+    (and
+      (compiler-parse-error-ok?
+        "(defstruct Bad (x i64 (:cleanup close-x)))"
+        "parse: field cleanup metadata requires struct :cleanup metadata")
+      (and
+        (compiler-parse-error-ok?
+          "(defstruct Bad (:repr c) (:cleanup close) (x i64))"
+          "parse: defstruct cannot combine :repr c with :cleanup metadata")
+        (and
+          (compiler-parse-error-ok?
+            "(defstruct Bad (:cleanup close) (:repr c) (x i64))"
+            "parse: defstruct cannot combine :repr c with :cleanup metadata")
+          (and
+            (compiler-parse-error-ok?
+              "(defstruct Bad (:cleanup) (x i64))"
+              "parse: malformed defstruct :cleanup metadata")
+            (and
+              (compiler-parse-error-ok?
+                "(defstruct Bad (:cleanup close) (x i64 (:cleanup)))"
+                "parse: malformed field :cleanup metadata")
+              (and
+                (compiler-parse-error-ok?
+                  "(defstruct Bad (:cleanup close) (x i64 (:cleanup close-x) (:owned)))"
+                  "parse: duplicate field cleanup metadata")
+                (and
+                  (compiler-parse-error-ok?
+                    "(defenum Bad (:cleanup close) (A))"
+                    "parse: defenum cleanup metadata is reserved")
+                  (compiler-parse-error-ok?
+                    "(defenum Bad (A i64 (:cleanup close)))"
+                    "parse: enum payload cleanup metadata is reserved"))))))))))
+
 (define (compiler-parse-comptime-decl-error-tests-ok?) : bool
   (and
     (compiler-parse-error-ok?
@@ -2686,9 +3035,21 @@
       (compiler-parse-error-ok?
         "(define (main [p : (MutPtr i64 i64)]) : unit unit)"
         "parse: MutPtr expects exactly one type")
-      (compiler-parse-error-ok?
-        "(define (main [p : (Ptr (Array))]) : unit unit)"
-        "parse: malformed array type"))))
+      (and
+        (compiler-parse-error-ok?
+          "(define (main [p : (Ptr (Array))]) : unit unit)"
+          "parse: malformed array type")
+        (and
+          (compiler-parse-error-ok?
+            "(define (main [p : (Ptr i64)]) : i64 (ptr-read))"
+            "parse: ptr-read expects exactly one expression")
+          (and
+            (compiler-parse-error-ok?
+              "(define (main [p : (MutPtr i64)]) : unit (ptr-write! p))"
+              "parse: ptr-write! expects exactly two expressions")
+            (compiler-parse-error-ok?
+              "(define (main [p : (Ptr i64)]) : (Ptr u8) (ptr-cast p (Ptr u8)))"
+              "parse: pointer cast expects (form expr : pointer-type)")))))))
 
 (define (compiler-parse-reference-error-tests-ok?) : bool
   (and
@@ -2752,24 +3113,26 @@
       (and
         (compiler-parse-repr-c-error-tests-ok?)
         (and
-          (compiler-parse-error-ok?
-            (compiler-parse-malformed-module-source)
-            "parse: malformed module")
+          (compiler-parse-cleanup-error-tests-ok?)
           (and
             (compiler-parse-error-ok?
-              (compiler-parse-malformed-import-source)
-              "parse: malformed import")
+              (compiler-parse-malformed-module-source)
+              "parse: malformed module")
             (and
               (compiler-parse-error-ok?
-                (compiler-parse-empty-test-source)
-                "parse: test needs at least one expression")
+                (compiler-parse-malformed-import-source)
+                "parse: malformed import")
               (and
-                (compiler-parse-let-error-tests-ok?)
+                (compiler-parse-error-ok?
+                  (compiler-parse-empty-test-source)
+                  "parse: test needs at least one expression")
                 (and
-                  (compiler-parse-abstraction-policy-tests-ok?)
+                  (compiler-parse-let-error-tests-ok?)
                   (and
-                    (compiler-parse-raw-pointer-error-tests-ok?)
-                    (compiler-parse-reference-error-tests-ok?)))))))))))
+                    (compiler-parse-abstraction-policy-tests-ok?)
+                    (and
+                      (compiler-parse-raw-pointer-error-tests-ok?)
+                      (compiler-parse-reference-error-tests-ok?))))))))))))
 
 ;; Top-level declaration parsing (#1072 / #1041): accept value/function `define`,
 ;; `extern`, `defenum`, `defstruct`, and `import`; reject malformed forms with
@@ -3175,10 +3538,14 @@
                               (and
                                 (compiler-parse-repr-c-ok?)
                                 (and
-                                  (compiler-parse-raw-pointer-ok?)
+                                  (compiler-parse-cleanup-metadata-ok?)
                                   (and
-                                    (compiler-parse-reference-ok?)
-                                    (compiler-parse-resource-with-shape-ok?))))))))))))))))
+                                    (compiler-parse-raw-pointer-ok?)
+                                    (and
+                                      (compiler-parse-raw-pointer-ops-ok?)
+                                      (and
+                                        (compiler-parse-reference-ok?)
+                                        (compiler-parse-resource-with-shape-ok?))))))))))))))))))
         (if (and
           (compiler-parse-error-tests-ok?)
           (and

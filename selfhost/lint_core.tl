@@ -242,7 +242,15 @@
     [(AstExprComptime inner) (lint-walk-expr inner threshold acc)]
     [(AstExprTry inner) (lint-walk-expr inner threshold acc)]
     [(AstExprPtrNull _) acc]
-    [(AstExprPtrNullCheck inner) (lint-walk-expr inner threshold acc)]))
+    [(AstExprPtrNullCheck inner) (lint-walk-expr inner threshold acc)]
+    [(AstExprPtrRead ptr) (lint-walk-expr ptr threshold acc)]
+    [(AstExprPtrWrite ptr value)
+      (lint-walk-expr value threshold (lint-walk-expr ptr threshold acc))]
+    [(AstExprPtrOffset ptr offset)
+      (lint-walk-expr offset threshold (lint-walk-expr ptr threshold acc))]
+    [(AstExprPtrCast ptr _) (lint-walk-expr ptr threshold acc)]
+    [(AstExprPtrToInt ptr) (lint-walk-expr ptr threshold acc)]
+    [(AstExprIntToPtr value _) (lint-walk-expr value threshold acc)]))
 
 ;;; Walk the body expression(s) carried by a declaration, if any.
 (define (lint-walk-decl
@@ -257,7 +265,7 @@
     [(AstDeclModule _) acc]
     [(AstDeclExtern _ _) acc]
     [(AstDeclDefEnum _ _) acc]
-    [(AstDeclDefStruct _ _ _) acc]
+    [(AstDeclDefStruct _ _ _ _) acc]
     [(AstDeclImport _) acc]))
 
 ;;; Walk every declaration body in `decls`.

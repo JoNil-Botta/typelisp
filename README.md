@@ -300,15 +300,17 @@ Array and string indexing is bounds-checked at runtime.
 
 ### Memory and aliasing
 
-TypeLisp does not currently have source-level borrow expressions, destructors,
-`free`, or a garbage collector. `SPEC.md` now defines v1 move-only aggregate
-handle semantics for the selfhost checker: scalars, raw pointers, and
-non-capturing function values are copyable, while `String`, arrays, tuples,
-structs, enums, and capturing closures move in by-value positions. The current
-Rust-stage compiler may still accept aggregate copies until that checker lands.
-Aggregate values are implemented as pointer-sized handles in the IR/ABI, but
-those handles are not checked language references. The v1 raw pointer design is
-now specified as explicit unsafe syntax:
+TypeLisp does not currently implement source-level borrow checking,
+destructors, `free`, or a garbage collector. `SPEC.md` now defines v1
+move-only aggregate handle semantics and the reserved immutable borrow
+expression forms `(& place)` / `(& arena place)` for the selfhost checker:
+scalars, raw pointers, and non-capturing function values are copyable, while
+`String`, arrays, tuples, structs, enums, and capturing closures move in
+by-value positions. The current Rust-stage compiler may still accept aggregate
+copies until that checker lands. Aggregate values are implemented as
+pointer-sized handles in the IR/ABI, but those handles are not checked language
+references. The v1 raw pointer design is now specified as explicit unsafe
+syntax:
 `(Ptr T)`/`(MutPtr T)` are nullable, copyable pointer-sized values, and
 dereference/write/offset/cast operations require `(unsafe ...)`. That surface is
 for FFI/runtime work and is not implemented yet; it is not the future safe

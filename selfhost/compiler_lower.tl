@@ -118,6 +118,9 @@
 (define (lower-diagnostic-with-path [diag : CompilerDiagnostic] [path : String]) : CompilerDiagnostic
   (compiler-diagnostic-with-path diag path))
 
+(define (lower-reference-support-message) : String
+  "lower: reference-typed programs require borrow/reference lowering support (#803/#806/#804)")
+
 (define (lower-instr-list-append
   [instrs : CompilerIrInstrList]
   [instr : CompilerIrInstr]) : CompilerIrInstrList
@@ -1724,6 +1727,9 @@
             [(LowerExpr inner-state value _)
               (lower-materialize-at-expr inner-state value expr-ty origin)])]
         [(ErrLowerExpr message) (ErrLowerExpr message)])]
+    [(AstExprBorrow _ _)
+      (ErrLowerExpr
+        (lower-diagnostic-at-expr origin (lower-reference-support-message)))]
     [(AstExprUnary op inner)
       (match (lower-expr ctx state env type-env inner)
         [(OkLowerExpr lowered)
@@ -1961,6 +1967,9 @@
         [(OkLowerExpr ptr-lowered)
           (match ptr-lowered
             [(LowerExpr ptr-state ptr-value ptr-ty)
+              ;; Preserve left-to-right evaluation: the value expression may
+              ;; lower to calls or other effects, so keep the pointer in its own
+              ;; raw pointer temp before lowering the value.
               (match (lower-state-alloc-var ptr-state)
                 [(LowerAlloc ptr-allocated ptr-var)
                   (let
@@ -5040,45 +5049,49 @@
   [body : AstExpr]
   [spans : CompilerSourceSpans]
   [names : LowerNameEnv]) : ResultLowerFunction
-  (let
-    [param-count : i64 (lower-param-count params)]
+  (if (or
+    (tc-param-list-contains-reference? params)
+    (tc-type-contains-reference? (tc-resolve-type ctx ret)))
+    (ErrLowerFunction (lower-diagnostic (lower-reference-support-message)))
     (let
-      [env : SymI64Env (lower-bind-params params 0 (sym-i64-empty))]
-      [type-env : TcTypeEnv
-        (tc-bind-return-type
-          (tc-bind-params ctx top-env params)
-          (tc-type-without-regions (tc-resolve-type ctx ret)))]
-      [function-spans : CompilerSourceSpans
-        (lower-record-function-span spans logical-name body)]
-      [state : LowerState
-        (LowerState
-          param-count
-          0
-          "entry"
-          IrInstrNil
-          IrBlockNil
-          logical-name
-          function-spans
-          names)]
-      [ret-ty : AstType (tc-type-without-regions (tc-resolve-type ctx ret))]
-      (match (lower-expr ctx state env type-env body)
-        [(OkLowerExpr lowered)
-          (match lowered
-            [(LowerExpr body-state value _)
-              (let
-                [final-state : LowerState
-                  (lower-state-emit
-                    body-state
-                    (IrInstrReturn (lower-return-maybe value ret-ty)))]
-                (OkLowerFunction
-                  (IrFunction
-                    logical-name
-                    (lower-param-list ctx params 0)
-                    ret-ty
-                    (lower-state-next-var final-state)
-                    (lower-state-build-blocks final-state))
-                  (lower-state-spans final-state)))])]
-        [(ErrLowerExpr message) (ErrLowerFunction message)]))))
+      [param-count : i64 (lower-param-count params)]
+      (let
+        [env : SymI64Env (lower-bind-params params 0 (sym-i64-empty))]
+        [type-env : TcTypeEnv
+          (tc-bind-return-type
+            (tc-bind-params ctx top-env params)
+            (tc-type-without-regions (tc-resolve-type ctx ret)))]
+        [function-spans : CompilerSourceSpans
+          (lower-record-function-span spans logical-name body)]
+        [state : LowerState
+          (LowerState
+            param-count
+            0
+            "entry"
+            IrInstrNil
+            IrBlockNil
+            logical-name
+            function-spans
+            names)]
+        [ret-ty : AstType (tc-type-without-regions (tc-resolve-type ctx ret))]
+        (match (lower-expr ctx state env type-env body)
+          [(OkLowerExpr lowered)
+            (match lowered
+              [(LowerExpr body-state value _)
+                (let
+                  [final-state : LowerState
+                    (lower-state-emit
+                      body-state
+                      (IrInstrReturn (lower-return-maybe value ret-ty)))]
+                  (OkLowerFunction
+                    (IrFunction
+                      logical-name
+                      (lower-param-list ctx params 0)
+                      ret-ty
+                      (lower-state-next-var final-state)
+                      (lower-state-build-blocks final-state))
+                    (lower-state-spans final-state)))])]
+          [(ErrLowerExpr message) (ErrLowerFunction message)])))))
 
 (define (lower-global-value [names : LowerNameEnv] [expr : AstExpr]) : ResultLowerValue
   (match expr
@@ -5162,18 +5175,22 @@
                 [(ErrLowerValue message) (ErrLowerDecls message)])]
             [(ErrTcType message) (ErrLowerDecls (lower-diagnostic message))])]
         [(AstDeclExtern name ty)
-          (lower-decls-in-module
-            ctx
-            top-env
-            rest
-            globals
-            functions
-            (lower-extern-list-append
-              externs
-              (IrExtern name (tc-type-without-regions (tc-resolve-type ctx ty))))
-            spans
-            names
-            module)]
+          (if (tc-type-contains-reference? (tc-resolve-type ctx ty))
+            (ErrLowerDecls (lower-diagnostic (lower-reference-support-message)))
+            (lower-decls-in-module
+              ctx
+              top-env
+              rest
+              globals
+              functions
+              (lower-extern-list-append
+                externs
+                (IrExtern
+                  name
+                  (tc-type-without-regions (tc-resolve-type ctx ty))))
+              spans
+              names
+              module))]
         [(AstDeclDefFn name params ret body)
           (match (lower-function
             ctx
@@ -5292,7 +5309,9 @@
 (define (lower-compiler-program-unlocated [program : AstProgram]) : ResultCompilerLower
   (match (compiler-specialize-program program)
     [(OkSpecProgram specialized)
-      (match (typecheck-compiler-program specialized)
+      (match (typecheck-compiler-specialized-program-with-paths
+        specialized
+        AstDeclPathNil)
         [(OkCompilerTypecheck _)
           (match (build-compiler-symbols specialized)
             [(OkCompilerSymbols symbols)
@@ -5406,6 +5425,11 @@
 (define (compiler-lower-unsupported-source) : String
   "(define (main) : (Tuple i64 bool)
   (tuple 1 true))")
+
+(define (compiler-lower-reference-source) : String
+  "(define (take [r : (& n i64)]) : unit unit)
+(define (main [n : i64]) : unit
+  (take (& n)))")
 
 ;; `(comptime expr)` folds to a literal via the scalar CTFE evaluator (#719).
 ;; These fixtures exercise arithmetic, `if`, and `let` folds, plus the
@@ -5539,6 +5563,19 @@
       (ptr-write! p 41)
       (ptr-read p)
       (ptr->int (ptr-offset (ptr-cast (int->ptr n : (MutPtr i64)) : (Ptr i64)) 2)))))")
+
+(define (compiler-lower-raw-pointer-direct-call-source) : String
+  "(extern raw-make : (-> (MutPtr i64)))
+(define (main) : unit
+  (unsafe
+    (ptr-write! (raw-make) 41)))")
+
+(define (compiler-lower-raw-pointer-call-value-source) : String
+  "(extern raw-make : (-> (MutPtr i64)))
+(extern raw-value : (-> i64))
+(define (main) : unit
+  (unsafe
+    (ptr-write! (raw-make) (raw-value))))")
 
 (define (compiler-lower-aggregate-source) : String
   "(defstruct Point (x i64) (y i64))
@@ -5747,6 +5784,19 @@
         0)]
     [_ 0]))
 
+(define (lower-test-instr-store-ptr-count [instr : CompilerIrInstr]) : i64
+  (match instr
+    [(IrInstrStorePtr _ _ _) 1]
+    [_ 0]))
+
+(define (lower-test-instr-u64-mov-count [instr : CompilerIrInstr]) : i64
+  (match instr
+    [(IrInstrMov _ _ ty)
+      (match ty
+        [(AstTyU64) 1]
+        [_ 0])]
+    [_ 0]))
+
 (define (lower-test-instrs-phi-count [instrs : CompilerIrInstrList]) : i64
   (match instrs
     [(IrInstrNil) 0]
@@ -5794,6 +5844,22 @@
       (+
         (lower-test-instr-call-count instr name)
         (lower-test-instrs-call-count rest name))]))
+
+(define (lower-test-instrs-store-ptr-count [instrs : CompilerIrInstrList]) : i64
+  (match instrs
+    [(IrInstrNil) 0]
+    [(IrInstrCons instr rest)
+      (+
+        (lower-test-instr-store-ptr-count instr)
+        (lower-test-instrs-store-ptr-count rest))]))
+
+(define (lower-test-instrs-u64-mov-count [instrs : CompilerIrInstrList]) : i64
+  (match instrs
+    [(IrInstrNil) 0]
+    [(IrInstrCons instr rest)
+      (+
+        (lower-test-instr-u64-mov-count instr)
+        (lower-test-instrs-u64-mov-count rest))]))
 
 (define (lower-test-blocks-phi-count [blocks : CompilerIrBlockList]) : i64
   (match blocks
@@ -5856,6 +5922,26 @@
           (+
             (lower-test-instrs-call-count instrs name)
             (lower-test-blocks-call-count rest name))])]))
+
+(define (lower-test-blocks-store-ptr-count [blocks : CompilerIrBlockList]) : i64
+  (match blocks
+    [(IrBlockNil) 0]
+    [(IrBlockCons block rest)
+      (match block
+        [(IrBlock _ instrs)
+          (+
+            (lower-test-instrs-store-ptr-count instrs)
+            (lower-test-blocks-store-ptr-count rest))])]))
+
+(define (lower-test-blocks-u64-mov-count [blocks : CompilerIrBlockList]) : i64
+  (match blocks
+    [(IrBlockNil) 0]
+    [(IrBlockCons block rest)
+      (match block
+        [(IrBlock _ instrs)
+          (+
+            (lower-test-instrs-u64-mov-count instrs)
+            (lower-test-blocks-u64-mov-count rest))])]))
 
 ;; Phi count of the function named `name`, or -1 when no such function exists
 ;; (so a missing function fails both the `> 0` and `= 0` assertions below).
@@ -5930,6 +6016,30 @@
           (+
             (lower-test-blocks-call-count blocks name)
             (lower-test-functions-call-count rest name))])]))
+
+(define (lower-test-function-store-ptr-count
+  [funcs : CompilerIrFunctionList]
+  [name : String]) : i64
+  (match funcs
+    [(IrFunctionNil) (- 0 1)]
+    [(IrFunctionCons func rest)
+      (match func
+        [(IrFunction fname _ _ _ blocks)
+          (if (string-eq fname name)
+            (lower-test-blocks-store-ptr-count blocks)
+            (lower-test-function-store-ptr-count rest name))])]))
+
+(define (lower-test-function-u64-mov-count
+  [funcs : CompilerIrFunctionList]
+  [name : String]) : i64
+  (match funcs
+    [(IrFunctionNil) (- 0 1)]
+    [(IrFunctionCons func rest)
+      (match func
+        [(IrFunction fname _ _ _ blocks)
+          (if (string-eq fname name)
+            (lower-test-blocks-u64-mov-count blocks)
+            (lower-test-function-u64-mov-count rest name))])]))
 
 (define (lower-test-global-list-has-name?
   [globals : CompilerIrGlobalList]
@@ -6576,7 +6686,25 @@
       (compiler-lower-or-short-circuit-source))))
 
 (define (compiler-lower-raw-pointer-ops-ok?) : bool
-  (compiler-lower-ok? (compiler-lower-raw-pointer-ops-source)))
+  (and
+    (compiler-lower-ok? (compiler-lower-raw-pointer-ops-source))
+    (and
+      (compiler-lower-ok? (compiler-lower-raw-pointer-direct-call-source))
+      (compiler-lower-ok? (compiler-lower-raw-pointer-call-value-source)))))
+
+(define (compiler-lower-raw-pointer-call-value-shape-ok?) : bool
+  (match (lower-compiler-source (compiler-lower-raw-pointer-call-value-source))
+    [(OkCompilerLower program _)
+      (match program
+        [(IrProgram _ functions _)
+          (and
+            (= (lower-test-functions-call-count functions "raw-make") 1)
+            (and
+              (= (lower-test-functions-call-count functions "raw-value") 1)
+              (and
+                (= (lower-test-function-store-ptr-count functions "main") 1)
+                (> (lower-test-function-u64-mov-count functions "main") 0))))])]
+    [(ErrCompilerLower _) false]))
 
 (define (compiler-lower-string-length-ok?) : bool
   (match (parse-ast-source (compiler-lower-string-length-source))
@@ -6704,6 +6832,9 @@
       (if (compiler-lower-raw-pointer-ops-ok?)
         unit
         (set! ok false))
+      (if (compiler-lower-raw-pointer-call-value-shape-ok?)
+        unit
+        (set! ok false))
       ok)))
 
 (define (compiler-lower-back-half-tests-ok?) : bool
@@ -6727,6 +6858,11 @@
       (if (compiler-lower-error-ok?
         (compiler-lower-unsupported-source)
         "lower: unsupported expression")
+        unit
+        (set! ok false))
+      (if (compiler-lower-error-ok?
+        (compiler-lower-reference-source)
+        (lower-reference-support-message))
         unit
         (set! ok false))
       (if (compiler-lower-comptime-fold-ok?

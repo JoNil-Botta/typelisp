@@ -27,7 +27,7 @@ Language direction:
 - Use Zig-style comptime as the abstraction mechanism. TypeLisp should not grow
   source-level generics, traits, interfaces, or `impl` syntax; comptime code
   should generate concrete types, functions, and implementation bundles instead.
-  See #893, #913, and #970.
+  See #893, #913, #970, and #902.
 - Move toward C3-style modules where module identity participates in name
   resolution and prefixes TypeLisp linker symbols; see #950, #952, and #953.
 - Use an arena-based memory model with a default program-lifetime arena and
@@ -124,7 +124,7 @@ Name              ; a defenum / defstruct nominal type
 
 `f32` is in the type system but rejected by backend validation today.
 Raw pointer types `(Ptr T)` and `(MutPtr T)` plus `(unsafe ...)` are specified
-for the v1 FFI surface in [SPEC.md §3.4](SPEC.md) and §5.19, but implementation
+for the v1 FFI surface in [SPEC.md §3.4](SPEC.md) and §5.20, but implementation
 is still pending.
 
 ### Abstraction policy
@@ -138,7 +138,8 @@ monomorphic declarations such as `MaybeI64` or domain-specific `Result*` enums;
 the selfhost compiler already uses `(try expr)` as the Lisp-shaped propagation
 form for compatible concrete Result-like enums.
 
-The comptime implementation path is tracked by #893, #913, and #483.
+The comptime implementation path is tracked by #893, #913, #970, and #902;
+historical generic/type-constructor work in #483 is superseded by that chain.
 
 ### Top-level forms
 

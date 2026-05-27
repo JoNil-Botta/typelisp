@@ -2019,6 +2019,47 @@ fn selfhost_test_planner_threads_opt_level_into_harness_compile() {
     );
 }
 
+#[test]
+fn test_check_zero_inline_root_enum_constructor_return() {
+    let dir = fixture_dir("test-check-root-enum-constructor");
+    let source = dir.join("maybe_some.tl");
+    fs::write(
+        &source,
+        "(defenum Maybe
+  (None)
+  (Some i64))
+
+(define (make-some) : Maybe
+  (Some 1))
+",
+    )
+    .expect("write root enum constructor fixture");
+    let source_arg = source.to_str().expect("fixture path is utf-8");
+
+    let check = typelisp(&["test", "--check", source_arg]);
+    assert!(
+        check.status.success(),
+        "test --check failed\nstdout:\n{}\nstderr:\n{}",
+        stdout(&check),
+        stderr(&check)
+    );
+    assert_eq!(
+        stdout(&check),
+        "TypeLisp test typecheck passed: 0 test(s)\n"
+    );
+    assert_eq!(stderr(&check), "");
+
+    let run = typelisp(&["test", source_arg]);
+    assert!(
+        run.status.success(),
+        "test run failed\nstdout:\n{}\nstderr:\n{}",
+        stdout(&run),
+        stderr(&run)
+    );
+    assert_eq!(stdout(&run), "");
+    assert_eq!(stderr(&run), "TypeLisp tests passed: 0 test(s)\n");
+}
+
 #[cfg(target_os = "linux")]
 #[test]
 fn selfhost_build_run_tools_execute_source_files() {

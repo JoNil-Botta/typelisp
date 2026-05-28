@@ -96,6 +96,7 @@ run_gate() {
 make_stage1_cli_wrapper() {
     stage1_bin=$1
     stage1_test_bin=${2:-}
+    stage1_doc_bin=${3:-}
     wrapper_dir="$ROOT/target/no-rust-stage1-wrapper"
     wrapper="$wrapper_dir/typelisp"
     rm -rf "$wrapper_dir"
@@ -107,12 +108,45 @@ TYPELISP_STAGE1_BIN='$stage1_bin'
 export TYPELISP_STAGE1_BIN
 TYPELISP_STAGE1_TEST_BIN='$stage1_test_bin'
 export TYPELISP_STAGE1_TEST_BIN
+TYPELISP_STAGE1_DOC_BIN='$stage1_doc_bin'
+export TYPELISP_STAGE1_DOC_BIN
 TYPELISP_STAGE1_DRIVER_CACHE_DIR='$wrapper_dir/cache'
 export TYPELISP_STAGE1_DRIVER_CACHE_DIR
 exec '$ROOT/scripts/stage1-typelisp-wrapper.sh' "\$@"
 EOF
     chmod +x "$wrapper"
     printf '%s\n' "$wrapper"
+}
+
+build_stage1_doc_driver() {
+    seed=$1
+    driver_dir="$ROOT/target/no-rust-stage1-doc-driver"
+    asm="$driver_dir/selfhost-doc.s"
+    obj="$driver_dir/selfhost-doc.o"
+    bin="$driver_dir/selfhost-doc"
+
+    command -v as >/dev/null 2>&1 || {
+        echo "stage1 doc driver prebuild requires 'as'" >&2
+        exit 1
+    }
+    command -v ld >/dev/null 2>&1 || {
+        echo "stage1 doc driver prebuild requires 'ld'" >&2
+        exit 1
+    }
+
+    rm -rf "$driver_dir"
+    mkdir -p "$driver_dir"
+    if ! "$seed" compile "$ROOT/selfhost/doc.tl" -o "$asm" --target linux-x86_64 --backend-mode scalar --stdlib-root "$ROOT/stdlib" \
+        > "$driver_dir/compile.stdout" 2> "$driver_dir/compile.stderr"; then
+        echo "stage1 doc driver prebuild failed" >&2
+        sed 's/^/  /' "$driver_dir/compile.stdout" >&2 || true
+        sed 's/^/  /' "$driver_dir/compile.stderr" >&2 || true
+        exit 1
+    fi
+    as "$asm" -o "$obj"
+    ld "$obj" -o "$bin" -dynamic-linker /lib64/ld-linux-x86-64.so.2 -lc
+    ensure_executable "stage1 doc driver" "$bin"
+    printf '%s\n' "$bin"
 }
 
 run_with_compiler() {
@@ -141,7 +175,8 @@ if [ "$HOST_OS" = linux ]; then
         TYPELISP_BIN="$ROOT/target/bootstrap-fixpoint/stage1"
     fi
     ensure_executable "stage1" "$TYPELISP_BIN"
-    STAGE1_TYPELISP_BIN=$(make_stage1_cli_wrapper "$TYPELISP_BIN")
+    STAGE1_DOC_BIN=$(build_stage1_doc_driver "$SEED_TYPELISP_BIN")
+    STAGE1_TYPELISP_BIN=$(make_stage1_cli_wrapper "$TYPELISP_BIN" "" "$STAGE1_DOC_BIN")
     echo
     echo "[no-rust-stage0] stage1 CLI wrapper=$STAGE1_TYPELISP_BIN"
 else

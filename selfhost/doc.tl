@@ -142,22 +142,50 @@
 (define (main) : i64
   (if (< (arg-count) 2)
     (doc-invalid-args)
-    (if (or (string-eq (arg 1) "--test") (string-eq (arg 1) "test"))
-      (if (>= (arg-count) 3)
-        (doc-test-file (arg 2) (doc-stdlib-roots 3))
-        (doc-invalid-test-args))
-      (if (or (string-eq (arg 1) "--html") (string-eq (arg 1) "html"))
-        (if (= (arg-count) 4)
-          (doc-generate-html-file (arg 2) (arg 3))
-          (if (> (arg-count) 4)
-            (doc-generate-html-module-graph (arg (- (arg-count) 1)))
-            (doc-invalid-html-args)))
-        (if (or (string-eq (arg 1) "--load") (string-eq (arg 1) "load"))
-          (if (>= (arg-count) 4)
-            (doc-generate-loaded-file (arg 2) (arg 3) (doc-stdlib-roots 4))
-            (doc-invalid-load-args))
-          (if (= (arg-count) 3)
-            (doc-generate-file (arg 1) (arg 2))
-            (if (> (arg-count) 3)
-              (doc-generate-module-graph (arg (- (arg-count) 1)))
-              (doc-invalid-args))))))))
+    (doc-main-dispatch (doc-command-kind (arg 1)))))
+
+(define (doc-command-kind-load [value : String]) : i64
+  (if (or (string-eq value "--load") (string-eq value "load"))
+    3
+    0))
+
+(define (doc-command-kind-html [value : String]) : i64
+  (if (or (string-eq value "--html") (string-eq value "html"))
+    2
+    (doc-command-kind-load value)))
+
+(define (doc-command-kind [value : String]) : i64
+  (if (or (string-eq value "--test") (string-eq value "test"))
+    1
+    (doc-command-kind-html value)))
+
+(define (doc-main-test) : i64
+  (if (>= (arg-count) 3)
+    (doc-test-file (arg 2) (doc-stdlib-roots 3))
+    (doc-invalid-test-args)))
+
+(define (doc-main-html) : i64
+  (if (= (arg-count) 4)
+    (doc-generate-html-file (arg 2) (arg 3))
+    (if (> (arg-count) 4)
+      (doc-generate-html-module-graph (arg (- (arg-count) 1)))
+      (doc-invalid-html-args))))
+
+(define (doc-main-load) : i64
+  (if (>= (arg-count) 4)
+    (doc-generate-loaded-file (arg 2) (arg 3) (doc-stdlib-roots 4))
+    (doc-invalid-load-args)))
+
+(define (doc-main-default) : i64
+  (if (= (arg-count) 3)
+    (doc-generate-file (arg 1) (arg 2))
+    (if (> (arg-count) 3)
+      (doc-generate-module-graph (arg (- (arg-count) 1)))
+      (doc-invalid-args))))
+
+(define (doc-main-dispatch [kind : i64]) : i64
+  (match kind
+    [1 (doc-main-test)]
+    [2 (doc-main-html)]
+    [3 (doc-main-load)]
+    [_ (doc-main-default)]))

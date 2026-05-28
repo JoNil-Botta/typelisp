@@ -461,7 +461,6 @@ selfhost/doc.tl:872:5: nested if-ladder: chain of if/else-if; prefer cond (value
 selfhost/doc.tl:878:3: nested if-ladder: chain of if/else-if; prefer cond (value/guard ladders) or match (variant dispatch)
 selfhost/doc.tl:887:3: nested if-ladder: chain of if/else-if; prefer cond (value/guard ladders) or match (variant dispatch)
 selfhost/doc.tl:911:5: nested if-ladder: chain of if/else-if; prefer cond (value/guard ladders) or match (variant dispatch)
-selfhost/doc.tl:91:3: nested if-ladder: chain of if/else-if; prefer cond (value/guard ladders) or match (variant dispatch)
 selfhost/doc.tl:954:7: nested if-ladder: chain of if/else-if; prefer cond (value/guard ladders) or match (variant dispatch)
 selfhost/doc_extract.tl:227:13: nested if-ladder: chain of if/else-if; prefer cond (value/guard ladders) or match (variant dispatch)
 selfhost/doc_extract.tl:238:13: nested if-ladder: chain of if/else-if; prefer cond (value/guard ladders) or match (variant dispatch)

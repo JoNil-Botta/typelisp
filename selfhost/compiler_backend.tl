@@ -7276,30 +7276,35 @@ tl_region_reset:
 (define (compiler-backend-runtime-windows-alloc-functions) : String
   "    .globl tl_alloc
 tl_alloc:
-    push %rbp
-    mov %rsp, %rbp
-    sub $48, %rsp
     testq %rcx, %rcx
     jg .L_tl_alloc_win_size_ready
     movq $1, %rcx
 .L_tl_alloc_win_size_ready:
     addq $7, %rcx
-    jc .L_tl_alloc_abort
+    jc .L_tl_alloc_enter_abort
     andq $-8, %rcx
     movq %rcx, %r11
     movq tl_current_arena(%rip), %r8
     testq %r8, %r8
-    jz .L_tl_alloc_new_arena
+    jz .L_tl_alloc_new_arena_entry
     movq 16(%r8), %rax
     movq %rax, %r10
     addq %r11, %r10
-    jc .L_tl_alloc_abort
+    jc .L_tl_alloc_enter_abort
     cmpq 24(%r8), %r10
-    ja .L_tl_alloc_new_arena
+    ja .L_tl_alloc_new_arena_entry
     movq %r10, 16(%r8)
-    mov %rbp, %rsp
-    pop %rbp
     ret
+.L_tl_alloc_new_arena_entry:
+    push %rbp
+    mov %rsp, %rbp
+    sub $48, %rsp
+    jmp .L_tl_alloc_new_arena
+.L_tl_alloc_enter_abort:
+    push %rbp
+    mov %rsp, %rbp
+    sub $48, %rsp
+    jmp .L_tl_alloc_abort
 .L_tl_alloc_new_arena:
     movq %r11, -8(%rbp)
     movq $0x4000000, %rdx

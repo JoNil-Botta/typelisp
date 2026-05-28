@@ -26,6 +26,16 @@
 ;;;; (import "stdlib/io.tl")
 ;;;; (define empty-read : StdinRead (stdin-read-bytes 0))
 ;;;; ```
+;;;;
+;;;; ```typelisp run
+;;;; ;; doctest-exit: 0
+;;;; ;; doctest-stdout: literal:hello from io\n
+;;;; (import "stdlib/io.tl")
+;;;; (define (main) : i64
+;;;;   (begin
+;;;;     (stdout-write "hello from io\n")
+;;;;     0))
+;;;; ```
 ;;; Structured file I/O failures.
 ;;;
 ;;; `IoSystemCode` stores a target-specific positive error code and path.

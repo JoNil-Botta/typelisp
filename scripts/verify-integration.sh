@@ -211,6 +211,13 @@ copy_dep() {
     _dst="$_case_dir/$_dep"
     mkdir -p "$(dirname -- "$_dst")"
     cp "$_src" "$_dst"
+    case "$_dep" in
+        stdlib/*)
+            _sibling_dst="$(dirname -- "$_case_dir")/$_dep"
+            mkdir -p "$(dirname -- "$_sibling_dst")"
+            cp "$_src" "$_sibling_dst"
+            ;;
+    esac
 }
 
 windows_integration_skips() {

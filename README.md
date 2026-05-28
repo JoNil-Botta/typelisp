@@ -237,13 +237,15 @@ Rust CLI plumbing are separate follow-up work.
 Examples are standalone TypeLisp source snippets. By default an example must
 parse, resolve imports, and type-check. Add `expect-error` after the language tag
 when the example is intended to fail. `typelisp run` / `tl run` fences are
-recognized as runnable examples for the upcoming runner: they must include
-`;; doctest-exit: <integer>` and may include `;; doctest-stdout: -` /
-`;; doctest-stderr: -` or `literal:<escaped text>` (`\n`, `\t`, `\r`, `\\`).
-This slice parses and type-checks those runnable examples but does not execute
-them yet. Ordinary `;` and `;;` comments are not documentation and are ignored
-by the doctest scanner. Legacy `;;;;` and `;;;` doc comments remain accepted
-while the repository migrates, but `;#` and `;:` are the canonical spellings.
+recognized as runnable examples: they must include `;; doctest-exit: <integer>`
+and may include `;; doctest-stdout: -` / `;; doctest-stderr: -` or
+`literal:<escaped text>` (`\n`, `\t`, `\r`, `\\`). On Linux, runnable examples
+compile and run through the self-hosted no-Rust build/run path and compare exact
+exit status, stdout, and stderr. Unsupported hosts report an unsupported
+runnable doctest diagnostic. Ordinary `;` and `;;` comments are not
+documentation and are ignored by the doctest scanner. Legacy `;;;;` and `;;;`
+doc comments remain accepted while the repository migrates, but `;#` and `;:`
+are the canonical spellings.
 
 Inline tests can live next to source declarations as `(test name body...)`
 items. Normal `check`, `compile`, `build`, and `run` ignore them. `typelisp

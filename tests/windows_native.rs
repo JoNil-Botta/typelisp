@@ -895,19 +895,33 @@ fn native_cases() -> Vec<Case> {
             "",
             &[
                 "doc_test.tl",
+                "build_run_core.tl",
+                "compiler_driver_core.tl",
+                "compiler_backend.tl",
+                "compiler_optimize.tl",
+                "compiler_regalloc.tl",
+                "compiler_liveness.tl",
+                "compiler_lower.tl",
                 "compiler_check_core.tl",
                 "compiler_load.tl",
                 "compiler_typecheck.tl",
                 "compiler_specialize.tl",
                 "compiler_ctfe.tl",
+                "compiler_ir_types.tl",
                 "compiler_symbols.tl",
                 "compiler_parse_core.tl",
                 "compiler_ast_types.tl",
                 "compiler_diagnostic.tl",
                 "sym_i64_env.tl",
+                "text_buf.tl",
                 "read.tl",
                 "lex.tl",
                 "token.tl",
+                "stdlib/fs.tl",
+                "stdlib/env.tl",
+                "stdlib/io.tl",
+                "stdlib/string.tl",
+                "stdlib/process.tl",
             ],
         ),
         case_with_deps(
@@ -1010,10 +1024,7 @@ fn case_with_args(
 fn run_case(case: &Case) {
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let source_path = source_path_for_case(&manifest_dir, case.name);
-    let work_dir = manifest_dir
-        .join("target")
-        .join("windows-native-tests")
-        .join(case.name);
+    let work_dir = case_work_dir(&manifest_dir, case);
     fs::create_dir_all(&work_dir).expect("create Windows native test work dir");
     let work_path = work_dir.join(format!("{}.tl", case.name));
     copy_tl_source(&source_path, &work_path);
@@ -1049,6 +1060,18 @@ fn run_case(case: &Case) {
         case.name, stderr,
     );
     assert_eq!(stderr, "", "{} wrote stderr", case.name);
+}
+
+fn case_work_dir(manifest_dir: &Path, case: &Case) -> PathBuf {
+    let case_dir = manifest_dir
+        .join("target")
+        .join("windows-native-tests")
+        .join(case.name);
+    if case.deps.iter().any(|dep| *dep == "build_run_core.tl") {
+        case_dir.join("selfhost")
+    } else {
+        case_dir
+    }
 }
 
 fn source_path_for_case(manifest_dir: &Path, name: &str) -> PathBuf {
@@ -1095,11 +1118,7 @@ fn dep_source_path(manifest_dir: &Path, source_dir: &Path, dep: &str) -> PathBuf
         "format_rules.tl" => manifest_dir.join("selfhost").join("format_rules.tl"),
         "format_tokens.tl" => manifest_dir.join("selfhost").join("format_tokens.tl"),
         "text_buf_core.tl" => manifest_dir.join("selfhost").join("text_buf.tl"),
-        "stdlib/string.tl" => manifest_dir.join("stdlib").join("string.tl"),
-        "stdlib/test.tl" => manifest_dir.join("stdlib").join("test.tl"),
-        "stdlib/io.tl" => manifest_dir.join("stdlib").join("io.tl"),
-        "stdlib/process.tl" => manifest_dir.join("stdlib").join("process.tl"),
-        "stdlib/text_buf.tl" => manifest_dir.join("stdlib").join("text_buf.tl"),
+        _ if dep.starts_with("stdlib/") => manifest_dir.join(dep),
         _ => source_dir.join(dep),
     }
 }
@@ -1108,11 +1127,22 @@ fn copy_case_deps(manifest_dir: &Path, source_dir: &Path, work_dir: &Path, deps:
     for dep in deps {
         let dep_src = dep_source_path(manifest_dir, source_dir, dep);
         let dep_dst = work_dir.join(dep);
-        if let Some(parent) = dep_dst.parent() {
-            fs::create_dir_all(parent).expect("create dep work dir");
+        copy_tl_source_mkdirs(&dep_src, &dep_dst);
+        if dep.starts_with("stdlib/")
+            && work_dir.file_name().and_then(|name| name.to_str()) == Some("selfhost")
+        {
+            if let Some(parent) = work_dir.parent() {
+                copy_tl_source_mkdirs(&dep_src, &parent.join(dep));
+            }
         }
-        copy_tl_source(&dep_src, &dep_dst);
     }
+}
+
+fn copy_tl_source_mkdirs(source: &Path, dest: &Path) {
+    if let Some(parent) = dest.parent() {
+        fs::create_dir_all(parent).expect("create dep work dir");
+    }
+    copy_tl_source(source, dest);
 }
 
 fn copy_tl_source(source: &Path, dest: &Path) {

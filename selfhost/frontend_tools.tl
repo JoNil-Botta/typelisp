@@ -58,13 +58,11 @@
       j)))
 
 (define (front-number-char? [c : char] [seen-dot : bool]) : bool
-  (if (is-digit c)
-    true
-    (if (= c #_')
-      true
-      (if (= c #.')
-        (not seen-dot)
-        false))))
+  (cond
+    [(is-digit c) true]
+    [(= c #_') true]
+    [(= c #.') (not seen-dot)]
+    [else false]))
 
 (define (front-scan-number-end [src : String] [start : i64] [n : i64]) : i64
   (let
@@ -555,6 +553,11 @@
           ", index: "
           (front-expr-render index)
           (front-cat3 ", value: " (front-expr-render value) " }")))]
+    [(AstExprArrayPush arr value)
+      (front-cat3
+        "ArrayPush { expr: "
+        (front-expr-render arr)
+        (front-cat3 ", value: " (front-expr-render value) " }"))]
     [(AstExprStringRef text index)
       (front-cat3
         "StringRef { expr: "

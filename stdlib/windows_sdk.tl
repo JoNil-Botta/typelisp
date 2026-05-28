@@ -183,21 +183,22 @@
 
 ;;; Return the first missing required directory in `layout`.
 (define (windows-sdk-first-missing-path [layout : WindowsSdkLayout]) : WindowsSdkMaybeString
-  (if (not (windows-sdk-path-exists? (windows-sdk-root layout)))
-    (WindowsSdkSomeString (windows-sdk-root layout))
-    (if (not (windows-sdk-path-exists? (windows-sdk-include-ucrt layout)))
-      (WindowsSdkSomeString (windows-sdk-include-ucrt layout))
-      (if (not (windows-sdk-path-exists? (windows-sdk-include-um layout)))
-        (WindowsSdkSomeString (windows-sdk-include-um layout))
-        (if (not (windows-sdk-path-exists? (windows-sdk-include-shared layout)))
-          (WindowsSdkSomeString (windows-sdk-include-shared layout))
-          (if (not (windows-sdk-path-exists? (windows-sdk-lib-ucrt-x64 layout)))
-            (WindowsSdkSomeString (windows-sdk-lib-ucrt-x64 layout))
-            (if (not (windows-sdk-path-exists? (windows-sdk-lib-um-x64 layout)))
-              (WindowsSdkSomeString (windows-sdk-lib-um-x64 layout))
-              (if (not (windows-sdk-path-exists? (windows-sdk-bin-x64 layout)))
-                (WindowsSdkSomeString (windows-sdk-bin-x64 layout))
-                (WindowsSdkNoString)))))))))
+  (cond
+    [(not (windows-sdk-path-exists? (windows-sdk-root layout)))
+      (WindowsSdkSomeString (windows-sdk-root layout))]
+    [(not (windows-sdk-path-exists? (windows-sdk-include-ucrt layout)))
+      (WindowsSdkSomeString (windows-sdk-include-ucrt layout))]
+    [(not (windows-sdk-path-exists? (windows-sdk-include-um layout)))
+      (WindowsSdkSomeString (windows-sdk-include-um layout))]
+    [(not (windows-sdk-path-exists? (windows-sdk-include-shared layout)))
+      (WindowsSdkSomeString (windows-sdk-include-shared layout))]
+    [(not (windows-sdk-path-exists? (windows-sdk-lib-ucrt-x64 layout)))
+      (WindowsSdkSomeString (windows-sdk-lib-ucrt-x64 layout))]
+    [(not (windows-sdk-path-exists? (windows-sdk-lib-um-x64 layout)))
+      (WindowsSdkSomeString (windows-sdk-lib-um-x64 layout))]
+    [(not (windows-sdk-path-exists? (windows-sdk-bin-x64 layout)))
+      (WindowsSdkSomeString (windows-sdk-bin-x64 layout))]
+    [else (WindowsSdkNoString)]))
 
 ;;; Validate a root/version pair and return a complete SDK layout.
 (define (windows-sdk-layout-from-root-version-checked

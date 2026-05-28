@@ -144,24 +144,25 @@
         opt-level))
     (let
       [current : String (arg idx)]
-      (if (string-eq current "-o")
-        (if (>= (+ idx 1) count)
-          (ErrCompileCliConfig "compile: -o requires a value")
-          (if has-output
-            (ErrCompileCliConfig "compile: -o was provided more than once")
-            (compile-cli-parse-options
-              (+ idx 2)
-              count
-              input-path
-              (arg (+ idx 1))
-              true
-              has-target
-              target
-              stdlib-roots
-              emit-ir
-              has-opt-level
-              opt-level)))
-        (if (string-eq current "--stdlib-root")
+      (cond
+        [(string-eq current "-o")
+          (if (>= (+ idx 1) count)
+            (ErrCompileCliConfig "compile: -o requires a value")
+            (if has-output
+              (ErrCompileCliConfig "compile: -o was provided more than once")
+              (compile-cli-parse-options
+                (+ idx 2)
+                count
+                input-path
+                (arg (+ idx 1))
+                true
+                has-target
+                target
+                stdlib-roots
+                emit-ir
+                has-opt-level
+                opt-level)))]
+        [(string-eq current "--stdlib-root")
           (if (>= (+ idx 1) count)
             (ErrCompileCliConfig "compile: --stdlib-root requires a value")
             (compile-cli-parse-options
@@ -175,91 +176,88 @@
               (compile-cli-root-list-append stdlib-roots (arg (+ idx 1)))
               emit-ir
               has-opt-level
-              opt-level))
-          (if (string-eq current "--target")
-            (if (>= (+ idx 1) count)
-              (ErrCompileCliConfig "compile: --target requires a value")
-              (if has-target
-                (ErrCompileCliConfig
-                  "compile: --target was provided more than once")
-                (match (compile-cli-target (arg (+ idx 1)))
-                  [(OkCompileCliTarget parsed-target)
+              opt-level))]
+        [(string-eq current "--target")
+          (if (>= (+ idx 1) count)
+            (ErrCompileCliConfig "compile: --target requires a value")
+            (if has-target
+              (ErrCompileCliConfig
+                "compile: --target was provided more than once")
+              (match (compile-cli-target (arg (+ idx 1)))
+                [(OkCompileCliTarget parsed-target)
+                  (compile-cli-parse-options
+                    (+ idx 2)
+                    count
+                    input-path
+                    output-path
+                    has-output
+                    true
+                    parsed-target
+                    stdlib-roots
+                    emit-ir
+                    has-opt-level
+                    opt-level)]
+                [(ErrCompileCliTarget message) (ErrCompileCliConfig message)])))]
+        [(string-eq current "--opt-level")
+          (if (>= (+ idx 1) count)
+            (ErrCompileCliConfig "compile: --opt-level requires a value")
+            (if has-opt-level
+              (ErrCompileCliConfig
+                "compile: --opt-level was provided more than once")
+              (let
+                [value : String (arg (+ idx 1))]
+                (match (compiler-optimize-parse-level value)
+                  [(OkCompilerOptimizeLevel parsed-level)
                     (compile-cli-parse-options
                       (+ idx 2)
                       count
                       input-path
                       output-path
                       has-output
-                      true
-                      parsed-target
+                      has-target
+                      target
                       stdlib-roots
                       emit-ir
-                      has-opt-level
-                      opt-level)]
-                  [(ErrCompileCliTarget message) (ErrCompileCliConfig message)])))
-            (if (string-eq current "--opt-level")
-              (if (>= (+ idx 1) count)
-                (ErrCompileCliConfig "compile: --opt-level requires a value")
-                (if has-opt-level
-                  (ErrCompileCliConfig
-                    "compile: --opt-level was provided more than once")
-                  (let
-                    [value : String (arg (+ idx 1))]
-                    (match (compiler-optimize-parse-level value)
-                      [(OkCompilerOptimizeLevel parsed-level)
-                        (compile-cli-parse-options
-                          (+ idx 2)
-                          count
-                          input-path
-                          output-path
-                          has-output
-                          has-target
-                          target
-                          stdlib-roots
-                          emit-ir
-                          true
-                          parsed-level)]
-                      [(ErrCompilerOptimizeLevel)
-                        (ErrCompileCliConfig
-                          (compile-cli-invalid-opt-level value))]))))
-              (if (string-eq current "--backend-mode")
-                (if (>= (+ idx 1) count)
-                  (ErrCompileCliConfig
-                    "compile: --backend-mode requires a value")
-                  (match (compile-cli-backend-mode (arg (+ idx 1)))
-                    [(OkCompileCliBackendMode)
-                      (compile-cli-parse-options
-                        (+ idx 2)
-                        count
-                        input-path
-                        output-path
-                        has-output
-                        has-target
-                        target
-                        stdlib-roots
-                        emit-ir
-                        has-opt-level
-                        opt-level)]
-                    [(ErrCompileCliBackendMode message)
-                      (ErrCompileCliConfig message)]))
-                (if (string-eq current "--emit-ir")
-                  (compile-cli-parse-options
-                    (+ idx 1)
-                    count
-                    input-path
-                    output-path
-                    has-output
-                    has-target
-                    target
-                    stdlib-roots
-                    true
-                    has-opt-level
-                    opt-level)
-                  (if (compile-cli-flag? current)
-                    (ErrCompileCliConfig
-                      (string-append "compile: unknown flag " current))
-                    (ErrCompileCliConfig
-                      (string-append "compile: unexpected argument " current))))))))))))
+                      true
+                      parsed-level)]
+                  [(ErrCompilerOptimizeLevel)
+                    (ErrCompileCliConfig (compile-cli-invalid-opt-level value))]))))]
+        [(string-eq current "--backend-mode")
+          (if (>= (+ idx 1) count)
+            (ErrCompileCliConfig "compile: --backend-mode requires a value")
+            (match (compile-cli-backend-mode (arg (+ idx 1)))
+              [(OkCompileCliBackendMode)
+                (compile-cli-parse-options
+                  (+ idx 2)
+                  count
+                  input-path
+                  output-path
+                  has-output
+                  has-target
+                  target
+                  stdlib-roots
+                  emit-ir
+                  has-opt-level
+                  opt-level)]
+              [(ErrCompileCliBackendMode message) (ErrCompileCliConfig message)]))]
+        [(string-eq current "--emit-ir")
+          (compile-cli-parse-options
+            (+ idx 1)
+            count
+            input-path
+            output-path
+            has-output
+            has-target
+            target
+            stdlib-roots
+            true
+            has-opt-level
+            opt-level)]
+        [(compile-cli-flag? current)
+          (ErrCompileCliConfig (string-append "compile: unknown flag " current))]
+        [else
+          (ErrCompileCliConfig
+            (string-append "compile: unexpected argument " current))]))))
 
 (define (compile-cli-config [count : i64]) : ResultCompileCliConfig
   (if (< count 2)

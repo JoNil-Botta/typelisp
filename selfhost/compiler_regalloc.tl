@@ -66,9 +66,6 @@
     CompilerLiveI64Set
     CompilerRegIntervalList))
 
-(defenum CompilerRegIntervalScan
-  (CompilerRegIntervalScan CompilerRegIntervalList i64))
-
 (defenum CompilerRegAssignState
   (CompilerRegAssignState CompilerRegActiveList CompilerRegAssignmentList))
 
@@ -94,16 +91,16 @@
 
 (define (compiler-reg-sysv-integer-registers) : CompilerRegStringList
   (CompilerRegStringCons
-    "%r12"
+    "%r8"
     (CompilerRegStringCons
-      "%r13"
+      "%r9"
       (CompilerRegStringCons
-        "%r14"
+        "%r12"
         (CompilerRegStringCons
-          "%r15"
+          "%r13"
           (CompilerRegStringCons
-            "%r8"
-            (CompilerRegStringCons "%r9" CompilerRegStringNil)))))))
+            "%r14"
+            (CompilerRegStringCons "%r15" CompilerRegStringNil)))))))
 
 (define (compiler-reg-sysv-caller-saved-integer-registers) : CompilerRegStringList
   (CompilerRegStringCons
@@ -457,119 +454,166 @@
     [(IrFunction _ _ _ _ blocks)
       (compiler-reg-block-list-moves blocks CompilerRegMoveNil)]))
 
+(define (compiler-reg-fill-i64-array [items : (Array i64)] [value : i64]) : unit
+  (let
+    [index : i64 0]
+    [count : i64 (array-length items)]
+    (begin
+      (while (< index count)
+        (begin
+          (array-set! items index value)
+          (set! index (+ index 1))))
+      unit)))
+
 (define (compiler-reg-extend-interval
-  [intervals : CompilerRegIntervalList]
+  [starts : (Array i64)]
+  [ends : (Array i64)]
   [var : i64]
-  [point : i64]) : CompilerRegIntervalList
-  (match intervals
-    [(CompilerRegIntervalNil)
-      (CompilerRegIntervalCons
-        (CompilerRegInterval var point point)
-        CompilerRegIntervalNil)]
-    [(CompilerRegIntervalCons interval rest)
-      (match interval
-        [(CompilerRegInterval id start end)
-          (if (= id var)
-            (CompilerRegIntervalCons
-              (CompilerRegInterval
-                id
-                (compiler-reg-min start point)
-                (compiler-reg-max end point))
-              rest)
-            (if (> id var)
-              (CompilerRegIntervalCons
-                (CompilerRegInterval var point point)
-                intervals)
-              (CompilerRegIntervalCons
-                interval
-                (compiler-reg-extend-interval rest var point))))])]))
+  [point : i64]) : unit
+  (if (< var 0)
+    unit
+    (if (>= var (array-length starts))
+      unit
+      (let
+        [start : i64 (array-ref starts var)]
+        [end : i64 (array-ref ends var)]
+        (begin
+          (if (< start 0)
+            (begin
+              (array-set! starts var point)
+              (array-set! ends var point))
+            (begin
+              (if (< point start)
+                (array-set! starts var point)
+                unit)
+              (if (> point end)
+                (array-set! ends var point)
+                unit)))
+          unit)))))
 
 (define (compiler-reg-extend-set
-  [intervals : CompilerRegIntervalList]
+  [starts : (Array i64)]
+  [ends : (Array i64)]
   [set : CompilerLiveI64Set]
-  [point : i64]) : CompilerRegIntervalList
+  [point : i64]) : unit
   (match set
-    [(CompilerLiveI64Nil) intervals]
+    [(CompilerLiveI64Nil) unit]
     [(CompilerLiveI64Cons var rest)
-      (compiler-reg-extend-set
-        (compiler-reg-extend-interval intervals var point)
-        rest
-        point)]))
+      (begin
+        (compiler-reg-extend-interval starts ends var point)
+        (compiler-reg-extend-set starts ends rest point))]))
 
 (define (compiler-reg-extend-instr
-  [intervals : CompilerRegIntervalList]
-  [liveness : CompilerFunctionLiveness]
-  [label : String]
-  [index : i64]
+  [starts : (Array i64)]
+  [ends : (Array i64)]
+  [live-after : CompilerLiveI64Set]
   [point : i64]
-  [instr : CompilerIrInstr]) : CompilerRegIntervalList
-  (let
-    [with-defs : CompilerRegIntervalList
-      (compiler-reg-extend-set intervals (compiler-live-instr-defs instr) point)]
-    (let
-      [with-uses : CompilerRegIntervalList
-        (compiler-reg-extend-set
-          with-defs
-          (compiler-live-instr-uses instr)
-          point)]
-      (compiler-reg-extend-set
-        with-uses
-        (compiler-live-after liveness label index)
-        (+ point 1)))))
+  [instr : CompilerIrInstr]) : unit
+  (begin
+    (compiler-reg-extend-set starts ends (compiler-live-instr-defs instr) point)
+    (compiler-reg-extend-set starts ends (compiler-live-instr-uses instr) point)
+    (compiler-reg-extend-set starts ends live-after (+ point 1))))
 
 (define (compiler-reg-live-intervals-instrs
   [instrs : CompilerIrInstrList]
-  [liveness : CompilerFunctionLiveness]
-  [label : String]
-  [index : i64]
+  [live-afters : CompilerLiveInstrSetList]
   [point : i64]
-  [intervals : CompilerRegIntervalList]) : CompilerRegIntervalScan
+  [starts : (Array i64)]
+  [ends : (Array i64)]) : i64
   (match instrs
-    [(IrInstrNil) (CompilerRegIntervalScan intervals point)]
+    [(IrInstrNil) point]
     [(IrInstrCons instr rest)
-      (compiler-reg-live-intervals-instrs
-        rest
-        liveness
-        label
-        (+ index 1)
-        (+ point 2)
-        (compiler-reg-extend-instr intervals liveness label index point instr))]))
+      (match live-afters
+        [(CompilerLiveInstrSetCons live-after rest-after)
+          (begin
+            (compiler-reg-extend-instr starts ends live-after point instr)
+            (compiler-reg-live-intervals-instrs
+              rest
+              rest-after
+              (+ point 2)
+              starts
+              ends))]
+        [(CompilerLiveInstrSetNil)
+          (begin
+            (compiler-reg-extend-instr
+              starts
+              ends
+              CompilerLiveI64Nil
+              point
+              instr)
+            (compiler-reg-live-intervals-instrs
+              rest
+              CompilerLiveInstrSetNil
+              (+ point 2)
+              starts
+              ends))])]))
 
 (define (compiler-reg-live-intervals-blocks
   [blocks : CompilerIrBlockList]
   [liveness : CompilerFunctionLiveness]
   [point : i64]
-  [intervals : CompilerRegIntervalList]) : CompilerRegIntervalScan
+  [starts : (Array i64)]
+  [ends : (Array i64)]) : i64
   (match blocks
-    [(IrBlockNil) (CompilerRegIntervalScan intervals point)]
+    [(IrBlockNil) point]
     [(IrBlockCons block rest)
       (match block
         [(IrBlock label instrs)
-          (match (compiler-reg-live-intervals-instrs
-            instrs
-            liveness
-            label
-            0
-            point
-            intervals)
-            [(CompilerRegIntervalScan block-intervals next-point)
-              (compiler-reg-live-intervals-blocks
-                rest
-                liveness
-                next-point
-                block-intervals)])])]))
+          (let
+            [live-afters : CompilerLiveInstrSetList
+              (match (compiler-live-find-block
+                (compiler-live-function-blocks liveness)
+                label)
+                [(CompilerLiveSomeBlock live-block)
+                  (compiler-live-block-instr-after live-block)]
+                [(CompilerLiveNoBlock) CompilerLiveInstrSetNil])]
+            (compiler-reg-live-intervals-blocks
+              rest
+              liveness
+              (compiler-reg-live-intervals-instrs
+                instrs
+                live-afters
+                point
+                starts
+                ends)
+              starts
+              ends))])]))
+
+(define (compiler-reg-interval-arrays-to-list
+  [starts : (Array i64)]
+  [ends : (Array i64)]
+  [index : i64]
+  [acc : CompilerRegIntervalList]) : CompilerRegIntervalList
+  (if (< index 0)
+    acc
+    (let
+      [start : i64 (array-ref starts index)]
+      [end : i64 (array-ref ends index)]
+      (if (< start 0)
+        (compiler-reg-interval-arrays-to-list starts ends (- index 1) acc)
+        (compiler-reg-interval-arrays-to-list
+          starts
+          ends
+          (- index 1)
+          (CompilerRegIntervalCons (CompilerRegInterval index start end) acc))))))
 
 (define (compiler-reg-live-intervals
   [func : CompilerIrFunction]
   [liveness : CompilerFunctionLiveness]) : CompilerRegIntervalList
   (match func
-    [(IrFunction _ _ _ _ blocks)
-      (match (compiler-reg-live-intervals-blocks
-        blocks
-        liveness
-        0
-        CompilerRegIntervalNil)
-        [(CompilerRegIntervalScan intervals _) intervals])]))
+    [(IrFunction _ _ _ vars blocks)
+      (let
+        [starts : (Array i64) (make-array i64 vars)]
+        [ends : (Array i64) (make-array i64 vars)]
+        (begin
+          (compiler-reg-fill-i64-array starts -1)
+          (compiler-reg-fill-i64-array ends -1)
+          (compiler-reg-live-intervals-blocks blocks liveness 0 starts ends)
+          (compiler-reg-interval-arrays-to-list
+            starts
+            ends
+            (- vars 1)
+            CompilerRegIntervalNil)))]))
 
 (define (compiler-reg-ineligible-non-scalars
   [types : CompilerRegVarTypeList]
@@ -727,15 +771,12 @@
     [(CompilerRegInterval left-var left-start left-end)
       (match right
         [(CompilerRegInterval right-var right-start right-end)
-          (if (< left-start right-start)
-            true
-            (if (> left-start right-start)
-              false
-              (if (< left-end right-end)
-                true
-                (if (> left-end right-end)
-                  false
-                  (< left-var right-var)))))])]))
+          (cond
+            [(< left-start right-start) true]
+            [(> left-start right-start) false]
+            [(< left-end right-end) true]
+            [(> left-end right-end) false]
+            [else (< left-var right-var)])])]))
 
 (define (compiler-reg-candidate-insert
   [candidates : CompilerRegIntervalList]
@@ -1694,10 +1735,10 @@
         (and
           (compiler-reg-location-register?
             (compiler-reg-assignment-lookup assignments 0)
-            "%r12")
+            "%r8")
           (compiler-reg-location-register?
             (compiler-reg-assignment-lookup assignments 1)
-            "%r12")))]))
+            "%r8")))]))
 
 (define (compiler-reg-f64-reuse-ok?) : bool
   (match (compiler-reg-plan-function (compiler-reg-f64-reuse-function))
@@ -1722,11 +1763,11 @@
           (and
             (compiler-reg-location-register?
               (compiler-reg-assignment-lookup assignments 4)
-              "%r8")
+              "%r14")
             (and
               (compiler-reg-location-register?
                 (compiler-reg-assignment-lookup assignments 5)
-                "%r9")
+                "%r15")
               (compiler-reg-location-spill-offset?
                 (compiler-reg-assignment-lookup assignments 6)
                 (compiler-reg-stack-slot-offset 6))))))]))
@@ -1769,7 +1810,7 @@
             (compiler-reg-unassigned? assignments 0)
             (compiler-reg-location-register?
               (compiler-reg-assignment-lookup assignments 2)
-              "%r12"))))]))
+              "%r8"))))]))
 
 (define (compiler-reg-f64-call-live-ok?) : bool
   (match (compiler-reg-plan-function (compiler-reg-f64-call-live-function))
@@ -1799,7 +1840,7 @@
               (compiler-reg-unassigned? assignments 1)
               (compiler-reg-location-register?
                 (compiler-reg-assignment-lookup assignments 3)
-                "%r12")))))]))
+                "%r8")))))]))
 
 (define (compiler-reg-f64-call-arg-ok?) : bool
   (match (compiler-reg-plan-function (compiler-reg-f64-call-arg-function))
@@ -1847,7 +1888,7 @@
               "%xmm2")
             (compiler-reg-location-register?
               (compiler-reg-assignment-lookup assignments 5)
-              "%r12"))]
+              "%r8"))]
         (and marked (and unassigned homes)))]))
 
 (define (compiler-reg-same-location?

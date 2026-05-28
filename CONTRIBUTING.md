@@ -42,10 +42,10 @@ path, or the temporary bootstrap/migration reason and issue link.
 
 ## Implementation Languages Rule
 
-**Implementation, tooling, tests, and build logic must be written in `sh`
-(POSIX shell) or `typelisp` (`.tl`) only.** Rust, C, Python, PowerShell, and any
-other programming language are not permitted for those purposes. This formalizes
-the self-hosted, no-Rust direction
+**Implementation, tooling, tests, and build logic must be written in TypeLisp
+(`.tl`) by default.** Rust, C, Python, POSIX shell, PowerShell, and any other
+programming language are not permitted for those purposes unless a path
+exception below applies. This formalizes the self-hosted, no-Rust direction
 ([#795](https://github.com/JoNil-Botta/typelisp/issues/795)) as an explicit,
 enforceable rule (see
 [#1171](https://github.com/JoNil-Botta/typelisp/issues/1171)).
@@ -57,11 +57,12 @@ artifacts (e.g. `.s`, `.o`) should not be committed.
 
 Path exceptions:
 
-- **`benchmarks/**`** — comparison baselines may be C (and other languages); the
+- **`scripts/*.sh`** and **`tests/public-tools/*.sh`** - POSIX shell wrappers
+  and public-tool corpus harnesses.
+- **`scripts/*.ps1`** - Windows PowerShell wrappers and benchmark helpers.
+- **`benchmarks/**`** - comparison baselines may be C (and other languages); the
   benchmark harness exists to compare TypeLisp *against* clang-compiled C.
-- **`tools/vs-code-extension/**`** — editor-API client code.
-- **`scripts/fetch-stage0.ps1`** — Windows PowerShell bootstrap wrapper for
-  fetching the published stage0 compiler.
+- **`tools/vs-code-extension/**`** - editor-API client code.
 
 Enforcement is staged (warn-then-enforce, like the lint gate
 [#1164](https://github.com/JoNil-Botta/typelisp/issues/1164)): the rule cannot

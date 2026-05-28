@@ -73,6 +73,33 @@ Environment knobs:
 | `BENCH_CLANG_OPT` | `-O2`   | clang optimization level for the C baseline.  |
 | `BENCH_FILTER`    | (empty) | Only run benchmarks whose name contains this. |
 
+## Bootstrap compiler benchmark
+
+To compare the Rust stage0 compiler against the selfhosted compiler on the
+same selfhost source, run:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/benchmark-bootstrap.ps1 -Runs 3
+```
+
+The harness compares the Rust stage0 CLI (`typelisp compile`) against a stage2
+selfhosted compiler. It times stage0 building stage1, uses that stage1 once to
+seed stage2, then times stage2 building stage3. The stage1 seed build is not
+included in the summary. Compile-to-assembly is reported separately from
+assemble/link time and the full native build time. If `TYPELISP_BIN` is unset,
+the script runs
+`cargo build --release` first, but that seed build is not included in the
+benchmark timings.
+
+Useful knobs:
+
+| Variable | Default | Meaning |
+|----------|---------|---------|
+| `TYPELISP_BIN` | (built) | Stage0 `typelisp` binary used as the seed compiler. |
+| `TYPELISP_BOOTSTRAP_BENCH_RUNS` | `3` | Timed repetitions per compiler. |
+| `TYPELISP_BOOTSTRAP_BENCH_TARGET` | host target | `windows-x86_64` or `linux-x86_64`. |
+| `TYPELISP_BOOTSTRAP_BENCH_OPT_LEVEL` | compiler default | Optional `--opt-level 0|1|2|3` passed to both compilers. |
+
 ## Reading the results
 
 For each benchmark the harness prints wall-clock runtime (min and median),

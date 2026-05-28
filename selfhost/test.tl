@@ -73,19 +73,20 @@
       (ErrTestConfig "test: expected source path"))
     (let
       [current : String (arg idx)]
-      (if (string-eq current "--check")
-        (tltest-parse-options
-          (+ idx 1)
-          count
-          source
-          has-source
-          target
-          mode
-          roots
-          has-opt-level
-          opt-level
-          TestModeCheck)
-        (if (string-eq current "--target")
+      (cond
+        [(string-eq current "--check")
+          (tltest-parse-options
+            (+ idx 1)
+            count
+            source
+            has-source
+            target
+            mode
+            roots
+            has-opt-level
+            opt-level
+            TestModeCheck)]
+        [(string-eq current "--target")
           (if (>= (+ idx 1) count)
             (ErrTestConfig "test: --target requires a value")
             (let
@@ -102,79 +103,78 @@
                   has-opt-level
                   opt-level
                   test-mode)
-                (ErrTestConfig (tltest-unknown-target value)))))
-          (if (string-eq current "--backend-mode")
-            (if (>= (+ idx 1) count)
-              (ErrTestConfig "test: --backend-mode requires a value")
+                (ErrTestConfig (tltest-unknown-target value)))))]
+        [(string-eq current "--backend-mode")
+          (if (>= (+ idx 1) count)
+            (ErrTestConfig "test: --backend-mode requires a value")
+            (let
+              [value : String (arg (+ idx 1))]
+              (if (host-plan-backend-mode-valid? value)
+                (if (string-eq value "scalar")
+                  (tltest-parse-options
+                    (+ idx 2)
+                    count
+                    source
+                    has-source
+                    target
+                    value
+                    roots
+                    has-opt-level
+                    opt-level
+                    test-mode)
+                  (ErrTestConfig (tltest-unsupported-mode value)))
+                (ErrTestConfig (tltest-unknown-mode value)))))]
+        [(string-eq current "--stdlib-root")
+          (if (>= (+ idx 1) count)
+            (ErrTestConfig "test: --stdlib-root requires a value")
+            (tltest-parse-options
+              (+ idx 2)
+              count
+              source
+              has-source
+              target
+              mode
+              (tltest-root-cons (arg (+ idx 1)) roots)
+              has-opt-level
+              opt-level
+              test-mode))]
+        [(string-eq current "--opt-level")
+          (if (>= (+ idx 1) count)
+            (ErrTestConfig "test: --opt-level requires a value")
+            (if has-opt-level
+              (ErrTestConfig "test: --opt-level was provided more than once")
               (let
                 [value : String (arg (+ idx 1))]
-                (if (host-plan-backend-mode-valid? value)
-                  (if (string-eq value "scalar")
+                (match (compiler-optimize-parse-level value)
+                  [(OkCompilerOptimizeLevel parsed-level)
                     (tltest-parse-options
                       (+ idx 2)
                       count
                       source
                       has-source
                       target
-                      value
-                      roots
-                      has-opt-level
-                      opt-level
-                      test-mode)
-                    (ErrTestConfig (tltest-unsupported-mode value)))
-                  (ErrTestConfig (tltest-unknown-mode value)))))
-            (if (string-eq current "--stdlib-root")
-              (if (>= (+ idx 1) count)
-                (ErrTestConfig "test: --stdlib-root requires a value")
-                (tltest-parse-options
-                  (+ idx 2)
-                  count
-                  source
-                  has-source
-                  target
-                  mode
-                  (tltest-root-cons (arg (+ idx 1)) roots)
-                  has-opt-level
-                  opt-level
-                  test-mode))
-              (if (string-eq current "--opt-level")
-                (if (>= (+ idx 1) count)
-                  (ErrTestConfig "test: --opt-level requires a value")
-                  (if has-opt-level
-                    (ErrTestConfig
-                      "test: --opt-level was provided more than once")
-                    (let
-                      [value : String (arg (+ idx 1))]
-                      (match (compiler-optimize-parse-level value)
-                        [(OkCompilerOptimizeLevel parsed-level)
-                          (tltest-parse-options
-                            (+ idx 2)
-                            count
-                            source
-                            has-source
-                            target
-                            mode
-                            roots
-                            true
-                            parsed-level
-                            test-mode)]
-                        [(ErrCompilerOptimizeLevel)
-                          (ErrTestConfig (tltest-invalid-opt-level value))]))))
-                (if (host-plan-flag? current)
-                  (ErrTestConfig (string-append "test: unknown flag " current))
-                  (if has-source
-                    (ErrTestConfig "test: accepts only one source file")
-                    (tltest-parse-options
-                      (+ idx 1)
-                      count
-                      current
-                      true
-                      target
                       mode
                       roots
-                      has-opt-level
-                      opt-level
-                      test-mode)))))))))))
+                      true
+                      parsed-level
+                      test-mode)]
+                  [(ErrCompilerOptimizeLevel)
+                    (ErrTestConfig (tltest-invalid-opt-level value))]))))]
+        [(host-plan-flag? current)
+          (ErrTestConfig (string-append "test: unknown flag " current))]
+        [has-source (ErrTestConfig "test: accepts only one source file")]
+        [else
+          (tltest-parse-options
+            (+ idx 1)
+            count
+            current
+            true
+            target
+            mode
+            roots
+            has-opt-level
+            opt-level
+            test-mode)]))))
 
 (define (tltest-config [count : i64]) : ResultTestConfig
   (tltest-parse-options
@@ -466,6 +466,8 @@
       (tltest-reach-mark-expr
         value
         (tltest-reach-mark-expr index (tltest-reach-mark-expr array names)))]
+    [(AstExprArrayPush array value)
+      (tltest-reach-mark-expr value (tltest-reach-mark-expr array names))]
     [(AstExprStringRef text index)
       (tltest-reach-mark-expr index (tltest-reach-mark-expr text names))]
     [(AstExprWhile cond body)

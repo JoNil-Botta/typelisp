@@ -187,23 +187,16 @@
 
 ;;; Convert a runtime status code into the public structured error model.
 (define (io-error-from-status [path : String] [code : i64]) : IoError
-  (if (io-status-expected-absence? code)
-    (IoNotFound path)
-    (if (= code io-status-permission-denied)
-      (IoPermissionDenied path)
-      (if (= code io-status-invalid)
-        (IoInvalidPath path)
-        (if (= code io-status-name-too-long)
-          (IoInvalidPath path)
-          (if (= code io-status-interrupted)
-            (IoInterrupted path)
-            (if (= code io-status-is-directory)
-              (IoUnsupported path)
-              (if (= code io-status-unsupported)
-                (IoUnsupported path)
-                (if (= code io-status-ok)
-                  (IoUnknown path)
-                  (IoSystemCode code path))))))))))
+  (cond
+    [(io-status-expected-absence? code) (IoNotFound path)]
+    [(= code io-status-permission-denied) (IoPermissionDenied path)]
+    [(= code io-status-invalid) (IoInvalidPath path)]
+    [(= code io-status-name-too-long) (IoInvalidPath path)]
+    [(= code io-status-interrupted) (IoInterrupted path)]
+    [(= code io-status-is-directory) (IoUnsupported path)]
+    [(= code io-status-unsupported) (IoUnsupported path)]
+    [(= code io-status-ok) (IoUnknown path)]
+    [else (IoSystemCode code path)]))
 
 ;;; Convert an open mode into the runtime helper's compact mode code.
 (define (open-mode-code [mode : OpenMode]) : i64

@@ -85,25 +85,33 @@
   (match left
     [(CompilerLiveI64Nil) right]
     [(CompilerLiveI64Cons head rest)
-      (compiler-live-set-union rest (compiler-live-set-insert right head))]))
-
-(define (compiler-live-set-remove [set : CompilerLiveI64Set] [value : i64]) : CompilerLiveI64Set
-  (match set
-    [(CompilerLiveI64Nil) CompilerLiveI64Nil]
-    [(CompilerLiveI64Cons head rest)
-      (if (= head value)
-        rest
-        (if (> head value)
-          set
-          (CompilerLiveI64Cons head (compiler-live-set-remove rest value))))]))
+      (match right
+        [(CompilerLiveI64Nil) left]
+        [(CompilerLiveI64Cons right-head right-rest)
+          (if (= head right-head)
+            (CompilerLiveI64Cons head (compiler-live-set-union rest right-rest))
+            (if (< head right-head)
+              (CompilerLiveI64Cons head (compiler-live-set-union rest right))
+              (CompilerLiveI64Cons
+                right-head
+                (compiler-live-set-union left right-rest))))])]))
 
 (define (compiler-live-set-minus
   [left : CompilerLiveI64Set]
   [right : CompilerLiveI64Set]) : CompilerLiveI64Set
-  (match right
-    [(CompilerLiveI64Nil) left]
-    [(CompilerLiveI64Cons head rest)
-      (compiler-live-set-minus (compiler-live-set-remove left head) rest)]))
+  (match left
+    [(CompilerLiveI64Nil) CompilerLiveI64Nil]
+    [(CompilerLiveI64Cons left-head left-rest)
+      (match right
+        [(CompilerLiveI64Nil) left]
+        [(CompilerLiveI64Cons right-head right-rest)
+          (if (= left-head right-head)
+            (compiler-live-set-minus left-rest right-rest)
+            (if (< left-head right-head)
+              (CompilerLiveI64Cons
+                left-head
+                (compiler-live-set-minus left-rest right))
+              (compiler-live-set-minus left right-rest)))])]))
 
 (define (compiler-live-set-eq?
   [left : CompilerLiveI64Set]

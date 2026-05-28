@@ -179,12 +179,12 @@ contains|_tl_compiler_backend_runtime_windows_file_handle_functions:
 contains|_tl_compiler_backend_runtime_file_read_chunk_status_functions:
 contains|_tl_compiler_backend_runtime_windows_file_read_chunk_functions:
 contains|_tl_compiler_backend_runtime_env_var_value_functions:
-contains|_tl_compiler_backend_env_runtime_ok_question:
-contains|_tl_compiler_backend_self_test:
 contains|foreign_exact
 contains|backend: too many call args
 not-contains|backend: Windows runtime helpers not yet implemented (#648)
 end
+
+decision|selfhost/compiler_backend_tests.tl|backend smoke-test helper module imported by selfhost/compiler_backend_smoke.tl and stack-args fixture; no direct CLI/main compile case
 
 case|selfhost_compiler_backend_runtime_fixture|selfhost/compiler_backend_runtime_fixture.tl|assembly|skip|direct
 requires-stage0-mode|#1437 stage1 compiler resource blocker (imports backend)
@@ -203,6 +203,7 @@ end
 case|selfhost_compiler_backend_smoke|selfhost/compiler_backend_smoke.tl|assembly|exactly-one|direct
 requires-stage0-mode|#1437 stage1 compiler resource blocker (imports backend)
 contains|_tl_compiler_backend_self_test:
+contains|_tl_compiler_backend_env_runtime_ok_question:
 contains|_tl_compiler_backend_emit_source:
 contains|_tl_lower_compiler_source:
 end
@@ -409,7 +410,6 @@ end
 
 case|selfhost_compiler_symbols_smoke|selfhost/compiler_symbols_smoke.tl|assembly|exactly-one|direct
 contains|_tl_compiler_symbols_self_test:
-contains|_tl_compiler_symbols_add_decl:
 end
 
 case|selfhost_compiler_typecheck|selfhost/compiler_typecheck.tl|assembly|skip|direct
@@ -507,7 +507,6 @@ case|selfhost_doc_site|selfhost/doc_site.tl|assembly|exactly-one|direct
 contains|_tl_doc_site_build:
 contains|_tl_doc_site_usage:
 contains|_tl_doc_site_render_index:
-contains|_tl_doc_html_render_module_page:
 contains|.L_tl_arg_count:
 contains|.L_tl_arg:
 contains|typelisp-docs.css
@@ -517,7 +516,6 @@ end
 case|selfhost_doc_site_smoke|selfhost/doc_site_smoke.tl|assembly|exactly-one|direct
 contains|_tl_doc_site_smoke:
 contains|_tl_doc_site_render_index:
-contains|_tl_doc_html_render_module_page:
 contains|_tl_doc_extract_source:
 contains|_tl_format_lex:
 end
@@ -553,7 +551,6 @@ end
 
 case|selfhost_emit|selfhost/emit.tl|assembly|exactly-one|direct
 contains|_tl_emit_program:
-contains|_tl_emit_expr:
 contains|tl_string_concat:
 contains|emit: too many call args
 end
@@ -565,9 +562,9 @@ contains|_tl_emit_expr:
 end
 
 case|selfhost_eval|selfhost/eval.tl|assembly|exactly-one|direct
-contains|_tl_eval_sexpr:
+contains|_tl_eval_sexpr_result:
 contains|_tl_run_program:
-contains|_tl_apply_value:
+contains|_tl_apply_value_result:
 contains|eval: unbound variable
 end
 

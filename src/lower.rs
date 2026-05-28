@@ -814,6 +814,9 @@ impl FnLowerer {
             ast::Expr::ArraySet { expr, index, value } => {
                 self.expr_diverges(expr) || self.expr_diverges(index) || self.expr_diverges(value)
             }
+            ast::Expr::ArrayPush { expr, value } => {
+                self.expr_diverges(expr) || self.expr_diverges(value)
+            }
             ast::Expr::StructGet { expr, .. } => self.expr_diverges(expr),
             ast::Expr::Tuple(elems) | ast::Expr::Array(elems) => {
                 elems.iter().any(|expr| self.expr_diverges(expr))
@@ -1007,7 +1010,8 @@ impl FnLowerer {
             ast::Expr::Set(_, _)
             | ast::Expr::While { .. }
             | ast::Expr::Foreach { .. }
-            | ast::Expr::ArraySet { .. } => Type::Unit,
+            | ast::Expr::ArraySet { .. }
+            | ast::Expr::ArrayPush { .. } => Type::Unit,
             // A reduction's result type is the seed/result type held by `init`.
             ast::Expr::SpmdReduce { init, .. } => {
                 self.infer_expr_type_with_locals(init, local_types)
@@ -1323,6 +1327,7 @@ impl FnLowerer {
             ast::Expr::Array(elems) => self.lower_array_literal(elems),
             ast::Expr::ArrayRef { expr, index } => self.lower_array_ref(expr, index),
             ast::Expr::ArraySet { expr, index, value } => self.lower_array_set(expr, index, value),
+            ast::Expr::ArrayPush { expr, value } => self.lower_array_push(expr, value),
             ast::Expr::StructGet { expr, field } => self.lower_struct_get(expr, field),
             ast::Expr::Tuple(elems) => self.lower_tuple(elems),
             ast::Expr::TupleRef { expr, index } => self.lower_tuple_ref(expr, *index),
@@ -1525,6 +1530,10 @@ impl FnLowerer {
             ast::Expr::ArraySet { expr, index, value } => {
                 Self::collect_captured_names(expr, candidates, local_bindings, captures);
                 Self::collect_captured_names(index, candidates, local_bindings, captures);
+                Self::collect_captured_names(value, candidates, local_bindings, captures);
+            }
+            ast::Expr::ArrayPush { expr, value } => {
+                Self::collect_captured_names(expr, candidates, local_bindings, captures);
                 Self::collect_captured_names(value, candidates, local_bindings, captures);
             }
             ast::Expr::While { cond, body } => {
@@ -5399,6 +5408,223 @@ impl FnLowerer {
             dst: Value::Var(elem_ptr),
             src: store_val,
             ty: elem_ty,
+        });
+
+        Value::ConstUnit
+    }
+
+    /// Lower `(array-push! a v)`. Dynamic arrays currently store only `{ptr,len}`
+    /// with no capacity field, so push grows by allocating a fresh active-arena
+    /// buffer of `(len + 1) * elem_size`, copying the old elements, writing the
+    /// new tail element, and mutating the existing fat handle in place.
+    fn lower_array_push(&mut self, arr: &ast::Expr, value: &ast::Expr) -> Value {
+        let arr_val = self.lower_expr(arr);
+        let arr_ty = self.value_type(&arr_val);
+        let elem_ty = match &arr_ty {
+            Type::DynArray(e) => (**e).clone(),
+            _ => return Value::ConstUnit,
+        };
+        let elem_size = elem_ty.size() as i64;
+
+        let store_val = if dyn_array_elem_is_aggregate_pointer(&elem_ty) {
+            let previous = self.force_heap_aggregate_storage;
+            self.force_heap_aggregate_storage = true;
+            let value = self.lower_expr_as(value, &elem_ty);
+            self.force_heap_aggregate_storage = previous;
+            value
+        } else {
+            self.lower_expr_as(value, &elem_ty)
+        };
+
+        let len_ptr = self.gep_byte(&arr_val, DYN_ARRAY_LEN_OFFSET);
+        let old_len = self.builder.fresh_var();
+        self.builder.emit(Instruction::Load {
+            dst: old_len,
+            src: Value::Var(len_ptr),
+            ty: Type::I64,
+        });
+        self.record_local(old_len, Type::I64);
+
+        let max_old_len = if elem_size == 0 {
+            i64::MAX - 1
+        } else {
+            (i64::MAX / elem_size) - 1
+        };
+        let len_ok = self.builder.fresh_var();
+        self.builder.emit(Instruction::BinOp {
+            dst: len_ok,
+            op: BinOp::Le,
+            lhs: Value::Var(old_len),
+            rhs: Value::ConstI64(max_old_len),
+            ty: Type::Bool,
+        });
+        self.record_local(len_ok, Type::Bool);
+
+        let grow_label = self.builder.fresh_label("array_push_len_ok");
+        let fail_label = self.builder.fresh_label("array_push_len_fail");
+        self.builder.emit(Instruction::Branch {
+            cond: Value::Var(len_ok),
+            true_label: grow_label.clone(),
+            false_label: fail_label.clone(),
+        });
+
+        self.builder.finish_block(&fail_label);
+        self.builder.emit(Instruction::Call {
+            dst: None,
+            func: "tl_oob_abort".into(),
+            args: vec![],
+            ty: Type::Unit,
+        });
+        self.builder.emit(Instruction::Jump(grow_label.clone()));
+
+        self.builder.finish_block(&grow_label);
+
+        let new_len = self.builder.fresh_var();
+        self.builder.emit(Instruction::BinOp {
+            dst: new_len,
+            op: BinOp::Add,
+            lhs: Value::Var(old_len),
+            rhs: Value::ConstI64(1),
+            ty: Type::I64,
+        });
+        self.record_local(new_len, Type::I64);
+
+        let byte_count = self.builder.fresh_var();
+        self.builder.emit(Instruction::BinOp {
+            dst: byte_count,
+            op: BinOp::Mul,
+            lhs: Value::Var(new_len),
+            rhs: Value::ConstI64(elem_size),
+            ty: Type::I64,
+        });
+        self.record_local(byte_count, Type::I64);
+
+        let new_buf = self.builder.fresh_var();
+        self.builder.emit(Instruction::Call {
+            dst: Some(new_buf),
+            func: "tl_alloc".into(),
+            args: vec![Value::Var(byte_count)],
+            ty: Type::U64,
+        });
+        self.record_local(new_buf, Type::U64);
+
+        let old_buf_ptr = self.gep_byte(&arr_val, DYN_ARRAY_PTR_OFFSET);
+        let old_buf = self.builder.fresh_var();
+        self.builder.emit(Instruction::Load {
+            dst: old_buf,
+            src: Value::Var(old_buf_ptr),
+            ty: Type::U64,
+        });
+        self.record_local(old_buf, Type::U64);
+
+        let index_slot = self.builder.fresh_var();
+        self.builder.emit(Instruction::Alloc {
+            var: index_slot,
+            ty: Type::I64,
+        });
+        self.record_local(index_slot, Type::I64);
+        self.builder.emit(Instruction::Store {
+            dst: Value::Var(index_slot),
+            src: Value::ConstI64(0),
+            ty: Type::I64,
+        });
+
+        let header_label = self.builder.fresh_label("array_push_copy_header");
+        let body_label = self.builder.fresh_label("array_push_copy_body");
+        let exit_label = self.builder.fresh_label("array_push_copy_exit");
+        self.builder.emit(Instruction::Jump(header_label.clone()));
+
+        self.builder.finish_block(&header_label);
+        let i = self.builder.fresh_var();
+        self.builder.emit(Instruction::Load {
+            dst: i,
+            src: Value::Var(index_slot),
+            ty: Type::I64,
+        });
+        self.record_local(i, Type::I64);
+        let keep_copying = self.builder.fresh_var();
+        self.builder.emit(Instruction::BinOp {
+            dst: keep_copying,
+            op: BinOp::Lt,
+            lhs: Value::Var(i),
+            rhs: Value::Var(old_len),
+            ty: Type::Bool,
+        });
+        self.record_local(keep_copying, Type::Bool);
+        self.builder.emit(Instruction::Branch {
+            cond: Value::Var(keep_copying),
+            true_label: body_label.clone(),
+            false_label: exit_label.clone(),
+        });
+
+        self.builder.finish_block(&body_label);
+        let old_elem_ptr = self.builder.fresh_var();
+        self.builder.emit(Instruction::Gep {
+            dst: old_elem_ptr,
+            base: Value::Var(old_buf),
+            offset: Value::Var(i),
+            elem_ty: elem_ty.clone(),
+        });
+        self.record_local(old_elem_ptr, Type::U64);
+        let old_elem = self.builder.fresh_var();
+        self.builder.emit(Instruction::Load {
+            dst: old_elem,
+            src: Value::Var(old_elem_ptr),
+            ty: elem_ty.clone(),
+        });
+        self.record_local(old_elem, elem_ty.clone());
+        let new_elem_ptr = self.builder.fresh_var();
+        self.builder.emit(Instruction::Gep {
+            dst: new_elem_ptr,
+            base: Value::Var(new_buf),
+            offset: Value::Var(i),
+            elem_ty: elem_ty.clone(),
+        });
+        self.record_local(new_elem_ptr, Type::U64);
+        self.builder.emit(Instruction::Store {
+            dst: Value::Var(new_elem_ptr),
+            src: Value::Var(old_elem),
+            ty: elem_ty.clone(),
+        });
+        let next_i = self.builder.fresh_var();
+        self.builder.emit(Instruction::BinOp {
+            dst: next_i,
+            op: BinOp::Add,
+            lhs: Value::Var(i),
+            rhs: Value::ConstI64(1),
+            ty: Type::I64,
+        });
+        self.record_local(next_i, Type::I64);
+        self.builder.emit(Instruction::Store {
+            dst: Value::Var(index_slot),
+            src: Value::Var(next_i),
+            ty: Type::I64,
+        });
+        self.builder.emit(Instruction::Jump(header_label));
+
+        self.builder.finish_block(&exit_label);
+        let tail_ptr = self.builder.fresh_var();
+        self.builder.emit(Instruction::Gep {
+            dst: tail_ptr,
+            base: Value::Var(new_buf),
+            offset: Value::Var(old_len),
+            elem_ty: elem_ty.clone(),
+        });
+        self.record_local(tail_ptr, Type::U64);
+        self.builder.emit(Instruction::Store {
+            dst: Value::Var(tail_ptr),
+            src: store_val,
+            ty: elem_ty,
+        });
+        self.builder.emit(Instruction::Store {
+            dst: Value::Var(old_buf_ptr),
+            src: Value::Var(new_buf),
+            ty: Type::U64,
+        });
+        self.builder.emit(Instruction::Store {
+            dst: Value::Var(len_ptr),
+            src: Value::Var(new_len),
+            ty: Type::I64,
         });
 
         Value::ConstUnit
@@ -11220,6 +11446,57 @@ mod tests {
             })
         });
         assert!(has_alloc16, "expected tl_alloc(16) for the fat-array value");
+    }
+
+    #[test]
+    fn test_lower_array_push_allocates_copies_and_updates_fat_value() {
+        let src = "(define (f [n : i64] [v : i64]) : i64 \
+                   (let ([a : (Array i64) (make-array i64 n)]) \
+                     (begin (array-push! a v) (array-length a))))";
+        let prog = parse(src).unwrap();
+        let ir = lower_program(&prog);
+        let f = ir.functions.iter().position(|f| f.name == "f").unwrap();
+
+        assert!(
+            count(
+                &ir,
+                f,
+                |i| matches!(i, Instruction::Call { func, .. } if func == "tl_alloc")
+            ) >= 2,
+            "make-array and array-push! should both allocate element buffers"
+        );
+        assert!(
+            count(
+                &ir,
+                f,
+                |i| matches!(i, Instruction::Call { func, .. } if func == "tl_oob_abort")
+            ) >= 2,
+            "make-array and array-push! should both retain overflow traps"
+        );
+        assert!(
+            count(&ir, f, |i| matches!(
+                i,
+                Instruction::Gep {
+                    elem_ty: Type::I64,
+                    ..
+                }
+            )) >= 3,
+            "array-push! should address old elements, copied elements, and the tail"
+        );
+        assert!(
+            count(&ir, f, |i| matches!(
+                i,
+                Instruction::Store { ty: Type::U64, .. }
+            )) >= 2,
+            "array-push! should store the replacement buffer pointer into the fat value"
+        );
+        assert!(
+            count(&ir, f, |i| matches!(
+                i,
+                Instruction::Store { ty: Type::I64, .. }
+            )) >= 3,
+            "array-push! should store the copied/tail elements and replacement length"
+        );
     }
 
     #[test]

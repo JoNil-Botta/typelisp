@@ -46,6 +46,7 @@
 (defenum CompilerIrValue
   (IrValueVar i64)
   (IrValueGlobal String)
+  (IrValueGlobalAddr String)
   (IrValueI64 i64)
   (IrValueF64 String)
   (IrValueBool bool)
@@ -253,6 +254,7 @@
   (match value
     [(IrValueVar id) (string-append "%" (int->string id))]
     [(IrValueGlobal name) (string-append "@" name)]
+    [(IrValueGlobalAddr name) (string-append "&@" name)]
     [(IrValueI64 value) (int->string value)]
     [(IrValueF64 value) value]
     [(IrValueBool value)
@@ -361,13 +363,11 @@
       (or (string-eq name "tl_div_abort") (string-eq name "tl_shift_abort")))))
 
 (define (compiler-ir-direct-call-effect [name : String]) : CompilerIrEffect
-  (if (compiler-ir-runtime-memory-read? name)
-    IrEffectMemoryRead
-    (if (compiler-ir-runtime-memory-write? name)
-      IrEffectMemoryWrite
-      (if (compiler-ir-runtime-control-flow? name)
-        IrEffectControlFlow
-        IrEffectUnknown))))
+  (cond
+    [(compiler-ir-runtime-memory-read? name) IrEffectMemoryRead]
+    [(compiler-ir-runtime-memory-write? name) IrEffectMemoryWrite]
+    [(compiler-ir-runtime-control-flow? name) IrEffectControlFlow]
+    [else IrEffectUnknown]))
 
 (define (compiler-ir-instr-effect [instr : CompilerIrInstr]) : CompilerIrEffect
   (match instr
@@ -966,6 +966,7 @@
   (match value
     [(IrValueVar id) (compiler-ir-cat3 "%" (int->string id) "")]
     [(IrValueGlobal name) (compiler-ir-cat3 "@" name "")]
+    [(IrValueGlobalAddr name) (compiler-ir-cat3 "&@" name "")]
     [(IrValueI64 n) (int->string n)]
     [(IrValueF64 n) n]
     [(IrValueBool b)

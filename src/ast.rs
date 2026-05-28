@@ -242,6 +242,11 @@ pub enum Expr {
         index: Box<Expr>,
         value: Box<Expr>,
     },
+    /// Append mutation: `(array-push! expr value)`. Allocates a new dynamic
+    /// array element buffer in the active arena, copies the old buffer, writes
+    /// `value` at the old length, and updates the existing fat `{ptr, len}`
+    /// handle in place. Evaluates to Unit.
+    ArrayPush { expr: Box<Expr>, value: Box<Expr> },
     /// While loop: (while cond body)
     While { cond: Box<Expr>, body: Box<Expr> },
     /// Begin / sequence: (begin e1 e2 ...)

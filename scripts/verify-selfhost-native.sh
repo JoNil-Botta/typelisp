@@ -391,6 +391,7 @@ EOF
     cat > "$_pkg/bad/duplicate.tl" <<'EOF'
 (import "pkg:math/src/dup.tl")
 (define (dup) : i64 2)
+(define (dup) : i64 3)
 (define (main) : i64 (dup))
 EOF
     run_compiler_driver_expect_error \
@@ -426,7 +427,7 @@ EOF
         "jb .Lmain_str_bounds_ok" \
         ".Lmain_str_bounds_ok" \
         "substr_bounds_fail" \
-        "setbe %al"
+        "jbe .Lmain_substr_ok"
     do
         assert_contains "$_asm" "$_snippet" compiler-driver-string-runtime
     done

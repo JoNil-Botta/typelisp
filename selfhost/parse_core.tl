@@ -282,25 +282,20 @@
     [(SCons (SSym op) rest)
       (let
         [tag : i64 (parse-dispatch-tag dispatch op)]
-        (if (= tag (parse-tag-let))
-          (parse-let dispatch rest)
-          (if (= tag (parse-tag-if))
-            (parse-if dispatch rest)
-            (if (= tag (parse-tag-while))
-              (parse-while dispatch rest)
-              (if (= tag (parse-tag-print))
-                (parse-print dispatch rest)
-                (if (= tag (parse-tag-set))
-                  (parse-set dispatch rest)
-                  (if (= tag (parse-tag-begin))
-                    (parse-begin dispatch rest)
-                    (if (= tag (parse-tag-not))
-                      (parse-not dispatch rest)
-                      (if (is-binary-tag tag)
-                        (parse-binary dispatch (parse-op-tag tag) rest tag)
-                        (match (parse-args dispatch rest)
-                          [(OkExprList args) (OkExpr (ECall op args))]
-                          [(ErrExprList message) (ErrExpr message)]))))))))))]
+        (cond
+          [(= tag (parse-tag-let)) (parse-let dispatch rest)]
+          [(= tag (parse-tag-if)) (parse-if dispatch rest)]
+          [(= tag (parse-tag-while)) (parse-while dispatch rest)]
+          [(= tag (parse-tag-print)) (parse-print dispatch rest)]
+          [(= tag (parse-tag-set)) (parse-set dispatch rest)]
+          [(= tag (parse-tag-begin)) (parse-begin dispatch rest)]
+          [(= tag (parse-tag-not)) (parse-not dispatch rest)]
+          [(is-binary-tag tag)
+            (parse-binary dispatch (parse-op-tag tag) rest tag)]
+          [else
+            (match (parse-args dispatch rest)
+              [(OkExprList args) (OkExpr (ECall op args))]
+              [(ErrExprList message) (ErrExpr message)])]))]
     [_ (ErrExpr "parse: malformed expression")]))
 
 (define (parse [s : Sexpr]) : ResultExpr

@@ -194,20 +194,19 @@
                         (set! err message)
                         (set! done true))])))))
           (set! done true)))
-      (if clean-eof
-        LspFrameEof
-        (if (not (string-eq err ""))
-          (LspFrameErr err)
-          (if (< content-length 0)
-            (LspFrameErr "lsp: missing Content-Length")
-            (let
-              [payload-read : StdinRead (stdin-read-bytes content-length)]
-              [payload : String (stdin-read-text payload-read)]
-              (if (and
-                (stdin-read-eof? payload-read)
-                (< (string-length payload) content-length))
-                (LspFrameErr "lsp: truncated payload")
-                (LspFrameOk payload)))))))))
+      (cond
+        [clean-eof LspFrameEof]
+        [(not (string-eq err "")) (LspFrameErr err)]
+        [(< content-length 0) (LspFrameErr "lsp: missing Content-Length")]
+        [else
+          (let
+            [payload-read : StdinRead (stdin-read-bytes content-length)]
+            [payload : String (stdin-read-text payload-read)]
+            (if (and
+              (stdin-read-eof? payload-read)
+              (< (string-length payload) content-length))
+              (LspFrameErr "lsp: truncated payload")
+              (LspFrameOk payload)))]))))
 
 (define (lsp-frame-write-body [body : String]) : unit
   (begin
@@ -354,13 +353,11 @@
 (define (lsp-hex-value [c : char]) : i64
   (let
     [code : i64 (cast c : i64)]
-    (if (and (>= code 48) (<= code 57))
-      (- code 48)
-      (if (and (>= code 65) (<= code 70))
-        (+ 10 (- code 65))
-        (if (and (>= code 97) (<= code 102))
-          (+ 10 (- code 97))
-          -1)))))
+    (cond
+      [(and (>= code 48) (<= code 57)) (- code 48)]
+      [(and (>= code 65) (<= code 70)) (+ 10 (- code 65))]
+      [(and (>= code 97) (<= code 102)) (+ 10 (- code 97))]
+      [else -1])))
 
 (define (lsp-percent-decode [text : String]) : LspStringResult
   (let
@@ -664,38 +661,37 @@
   [stdlib-roots : CompilerLoadRootList]) : LspHandleResult
   (match (lsp-json-string-field message "method")
     [(OkLspJsonText method)
-      (if (string-eq method "initialize")
-        (begin
-          (match (json-object-get message "id")
-            [(JsonFound id) (lsp-write-response id (lsp-initialize-result))]
-            [(JsonMissing) unit])
-          (LspContinue docs))
-        (if (string-eq method "initialized")
-          (LspContinue docs)
-          (if (string-eq method "shutdown")
-            (begin
-              (match (json-object-get message "id")
-                [(JsonFound id) (lsp-write-response id JsonNull)]
-                [(JsonMissing) unit])
-              (LspContinue docs))
-            (if (string-eq method "exit")
-              (LspExit docs)
-              (if (string-eq method "textDocument/didOpen")
-                (match (json-object-get message "params")
-                  [(JsonFound params) (lsp-did-open params docs stdlib-roots)]
-                  [(JsonMissing) (LspContinue docs)])
-                (if (string-eq method "textDocument/didChange")
-                  (match (json-object-get message "params")
-                    [(JsonFound params)
-                      (lsp-did-change params docs stdlib-roots)]
-                    [(JsonMissing) (LspContinue docs)])
-                  (if (string-eq method "textDocument/didClose")
-                    (match (json-object-get message "params")
-                      [(JsonFound params) (lsp-did-close params docs)]
-                      [(JsonMissing) (LspContinue docs)])
-                    (begin
-                      (lsp-maybe-write-method-not-found message)
-                      (LspContinue docs)))))))))]
+      (cond
+        [(string-eq method "initialize")
+          (begin
+            (match (json-object-get message "id")
+              [(JsonFound id) (lsp-write-response id (lsp-initialize-result))]
+              [(JsonMissing) unit])
+            (LspContinue docs))]
+        [(string-eq method "initialized") (LspContinue docs)]
+        [(string-eq method "shutdown")
+          (begin
+            (match (json-object-get message "id")
+              [(JsonFound id) (lsp-write-response id JsonNull)]
+              [(JsonMissing) unit])
+            (LspContinue docs))]
+        [(string-eq method "exit") (LspExit docs)]
+        [(string-eq method "textDocument/didOpen")
+          (match (json-object-get message "params")
+            [(JsonFound params) (lsp-did-open params docs stdlib-roots)]
+            [(JsonMissing) (LspContinue docs)])]
+        [(string-eq method "textDocument/didChange")
+          (match (json-object-get message "params")
+            [(JsonFound params) (lsp-did-change params docs stdlib-roots)]
+            [(JsonMissing) (LspContinue docs)])]
+        [(string-eq method "textDocument/didClose")
+          (match (json-object-get message "params")
+            [(JsonFound params) (lsp-did-close params docs)]
+            [(JsonMissing) (LspContinue docs)])]
+        [else
+          (begin
+            (lsp-maybe-write-method-not-found message)
+            (LspContinue docs))])]
     [(MissingLspJsonText) (LspContinue docs)]))
 
 (define (lsp-stdlib-roots [idx : i64]) : CompilerLoadRootList

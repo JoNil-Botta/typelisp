@@ -411,27 +411,22 @@
 (define (lex-check-step [src : String] [i : i64] [n : i64]) : ResultLexI64
   (let
     [c : char (string-ref src i)]
-    (if (is-space c)
-      (OkLexI64 (+ i 1))
-      (if (or (= c #(') (= c #['))
-        (OkLexI64 (+ i 1))
-        (if (or (= c #)') (= c #]'))
-          (OkLexI64 (+ i 1))
-          (if (= c #"')
-            (let
-              [start : i64 (+ i 1)]
-              (match (scan-str-end-result src start n)
-                [(OkLexI64 end) (OkLexI64 (+ end 1))]
-                [(ErrLexI64 message) (ErrLexI64 message)]))
-            (if (= c #;')
-              (OkLexI64 (scan-comment-end src (+ i 1) n))
-              (if (= c ##')
-                (lex-check-char-end src i n)
-                (if (or (is-digit c) (negative-number-start? src i n))
-                  (OkLexI64 (scan-number-end src i n))
-                  (if (is-symbol-char c)
-                    (OkLexI64 (scan-symbol-end src i n))
-                    (ErrLexI64 "lexer: unexpected character")))))))))))
+    (cond
+      [(is-space c) (OkLexI64 (+ i 1))]
+      [(or (= c #(') (= c #[')) (OkLexI64 (+ i 1))]
+      [(or (= c #)') (= c #]')) (OkLexI64 (+ i 1))]
+      [(= c #"')
+        (let
+          [start : i64 (+ i 1)]
+          (match (scan-str-end-result src start n)
+            [(OkLexI64 end) (OkLexI64 (+ end 1))]
+            [(ErrLexI64 message) (ErrLexI64 message)]))]
+      [(= c #;') (OkLexI64 (scan-comment-end src (+ i 1) n))]
+      [(= c ##') (lex-check-char-end src i n)]
+      [(or (is-digit c) (negative-number-start? src i n))
+        (OkLexI64 (scan-number-end src i n))]
+      [(is-symbol-char c) (OkLexI64 (scan-symbol-end src i n))]
+      [else (ErrLexI64 "lexer: unexpected character")])))
 
 (define (lex-check-spanned [src : String]) : ResultLexCheck
   (let
@@ -629,17 +624,23 @@
   [total : i64]) : unit
   (let
     [k : i64 0]
+    [pos : i64 0]
+    [line : i64 1]
+    [col : i64 1]
     (while (< k total)
       (begin
         (let
           [at : i64 (array-ref starts k)]
-          (array-set!
-            stoks
-            k
-            (SpannedToken
-              (array-ref toks k)
-              (index-line src at)
-              (index-col src at))))
+          (begin
+            (while (< pos at)
+              (begin
+                (if (= (string-ref src pos) #\newline')
+                  (begin
+                    (set! line (+ line 1))
+                    (set! col 1))
+                  (set! col (+ col 1)))
+                (set! pos (+ pos 1))))
+            (array-set! stoks k (SpannedToken (array-ref toks k) line col))))
         (set! k (+ k 1))))))
 
 (define (source-error-at [src : String] [idx : i64] [message : String]) : SourceError

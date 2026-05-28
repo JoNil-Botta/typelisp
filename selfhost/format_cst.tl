@@ -77,46 +77,49 @@
   [stop-tag : i64]) : FormatParsedCstList
   (let
     [tag : i64 (format-token-tag (format-token-at stream idx))]
-    (if (= tag (fmt-tag-end))
-      (if (= stop-tag 0)
-        (FmtParsedCstList FmtCstNil idx)
-        (begin
-          (panic "format cst: unclosed delimiter")
-          (FmtParsedCstList FmtCstNil idx)))
-      (if (and (!= stop-tag 0) (= tag stop-tag))
-        (FmtParsedCstList FmtCstNil (+ idx 1))
-        (if (fmt-unexpected-closing tag)
+    (cond
+      [(= tag (fmt-tag-end))
+        (if (= stop-tag 0)
+          (FmtParsedCstList FmtCstNil idx)
           (begin
-            (panic "format cst: unexpected closing delimiter")
-            (FmtParsedCstList FmtCstNil (+ idx 1)))
-          (match (fmt-parse-one stream idx)
-            [(FmtParsedCst node next)
-              (match (fmt-parse-seq stream next stop-tag)
-                [(FmtParsedCstList rest final)
-                  (FmtParsedCstList (FmtCstCons node rest) final)])]))))))
+            (panic "format cst: unclosed delimiter")
+            (FmtParsedCstList FmtCstNil idx)))]
+      [(and (!= stop-tag 0) (= tag stop-tag))
+        (FmtParsedCstList FmtCstNil (+ idx 1))]
+      [(fmt-unexpected-closing tag)
+        (begin
+          (panic "format cst: unexpected closing delimiter")
+          (FmtParsedCstList FmtCstNil (+ idx 1)))]
+      [else
+        (match (fmt-parse-one stream idx)
+          [(FmtParsedCst node next)
+            (match (fmt-parse-seq stream next stop-tag)
+              [(FmtParsedCstList rest final)
+                (FmtParsedCstList (FmtCstCons node rest) final)])])])))
 
 (define (fmt-parse-one [stream : FormatTokenStream] [idx : i64]) : FormatParsedCst
   (let
     [tok : FormatToken (format-token-at stream idx)]
     [tag : i64 (format-token-tag (format-token-at stream idx))]
-    (if (= tag (fmt-tag-lparen))
-      (match (fmt-parse-seq stream (+ idx 1) (fmt-tag-rparen))
-        [(FmtParsedCstList items next) (FmtParsedCst (FmtCstList items) next)])
-      (if (= tag (fmt-tag-lbracket))
+    (cond
+      [(= tag (fmt-tag-lparen))
+        (match (fmt-parse-seq stream (+ idx 1) (fmt-tag-rparen))
+          [(FmtParsedCstList items next) (FmtParsedCst (FmtCstList items) next)])]
+      [(= tag (fmt-tag-lbracket))
         (match (fmt-parse-seq stream (+ idx 1) (fmt-tag-rbracket))
           [(FmtParsedCstList items next)
-            (FmtParsedCst (FmtCstBracketList items) next)])
-        (if (= tag (fmt-tag-comment))
-          (FmtParsedCst (FmtCstComment (format-token-text tok)) (+ idx 1))
-          (if (fmt-unexpected-closing tag)
-            (begin
-              (panic "format cst: unexpected closing delimiter")
-              (FmtParsedCst (FmtCstAtom tok) (+ idx 1)))
-            (if (= tag (fmt-tag-end))
-              (begin
-                (panic "format cst: unexpected end")
-                (FmtParsedCst (FmtCstAtom tok) idx))
-              (FmtParsedCst (FmtCstAtom tok) (+ idx 1)))))))))
+            (FmtParsedCst (FmtCstBracketList items) next)])]
+      [(= tag (fmt-tag-comment))
+        (FmtParsedCst (FmtCstComment (format-token-text tok)) (+ idx 1))]
+      [(fmt-unexpected-closing tag)
+        (begin
+          (panic "format cst: unexpected closing delimiter")
+          (FmtParsedCst (FmtCstAtom tok) (+ idx 1)))]
+      [(= tag (fmt-tag-end))
+        (begin
+          (panic "format cst: unexpected end")
+          (FmtParsedCst (FmtCstAtom tok) idx))]
+      [else (FmtParsedCst (FmtCstAtom tok) (+ idx 1))])))
 
 (define (parse-format-tokens [stream : FormatTokenStream]) : FormatCst
   (match (fmt-parse-seq stream 0 0)

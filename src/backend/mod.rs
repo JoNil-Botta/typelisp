@@ -47,6 +47,7 @@ const REGION_MARK_RUNTIME_SYMBOL: &str = "tl_region_mark";
 const REGION_RESET_RUNTIME_SYMBOL: &str = "tl_region_reset";
 const CPUID_RUNTIME_SYMBOL: &str = "tl_cpuid";
 const XGETBV_RUNTIME_SYMBOL: &str = "tl_xgetbv";
+const WINDOWS_STACK_PROBE_THRESHOLD: i32 = 4096;
 
 const SYSV_INTEGER_ARG_REGS: [&str; 6] = ["%rdi", "%rsi", "%rdx", "%rcx", "%r8", "%r9"];
 const SYSV_FLOAT_ARG_REGS: [&str; 8] = [
@@ -3783,9 +3784,7 @@ impl X86_64Backend {
         }
 
         self.stack_size = (self.stack_size + 15) & !15;
-        if self.stack_size > 0 {
-            self.emit(&format!("    sub ${}, %rsp", self.stack_size));
-        }
+        self.emit_stack_frame_alloc(self.stack_size);
 
         self.store_closure_entry_user_args(arg_tys);
 
@@ -9438,9 +9437,7 @@ impl X86_64Backend {
         // Align stack to 16 bytes
         self.stack_size = (self.stack_size + 15) & !15;
 
-        if self.stack_size > 0 {
-            self.emit(&format!("    sub ${}, %rsp", self.stack_size));
-        }
+        self.emit_stack_frame_alloc(self.stack_size);
 
         for reg in &saved_home_regs {
             let offset = self.callee_saved_offsets[reg];
@@ -11246,6 +11243,20 @@ impl X86_64Backend {
         }
     }
 
+    fn emit_stack_frame_alloc(&mut self, frame_size: i32) {
+        if frame_size <= 0 {
+            return;
+        }
+
+        if self.target.os == BackendOs::Windows && frame_size >= WINDOWS_STACK_PROBE_THRESHOLD {
+            self.emit(&format!("    movl ${}, %eax", frame_size));
+            self.emit("    callq __chkstk");
+            self.emit("    subq %rax, %rsp");
+        } else {
+            self.emit(&format!("    sub ${}, %rsp", frame_size));
+        }
+    }
+
     fn mangle_name(name: &str) -> String {
         // Simple name mangling
         if name == "main" {
@@ -11540,6 +11551,24 @@ mod tests {
             BackendMode::Scalar => LowerMode::Scalar,
             BackendMode::Avx2 => LowerMode::Avx2,
             BackendMode::Avx512 => LowerMode::Avx512,
+        }
+    }
+
+    fn large_stack_frame_program() -> Program {
+        Program {
+            functions: vec![Function {
+                name: "main".into(),
+                params: vec![],
+                ret: Type::I64,
+                locals: vec![(0, Type::Array(Box::new(Type::I64), 600))],
+                blocks: vec![BasicBlock {
+                    label: "entry".into(),
+                    instructions: vec![Instruction::Return(Some(Value::ConstI64(42)))],
+                }],
+                entry: "entry".into(),
+            }],
+            globals: vec![],
+            externs: vec![],
         }
     }
 
@@ -12430,6 +12459,34 @@ mod tests {
             "unit main should return zero to the CRT:\n{}",
             main
         );
+    }
+
+    #[test]
+    fn test_windows_target_large_stack_frame_uses_chkstk_probe() {
+        let asm = generate_assembly_for_target(
+            &large_stack_frame_program(),
+            BackendTarget::windows_x86_64(),
+        )
+        .expect("large Windows frame should compile");
+        let main = asm.split("main:").nth(1).expect("expected main function");
+
+        assert!(main.contains("    movl $4800, %eax"), "main:\n{}", main);
+        assert!(main.contains("    callq __chkstk"), "main:\n{}", main);
+        assert!(main.contains("    subq %rax, %rsp"), "main:\n{}", main);
+        assert!(!main.contains("    sub $4800, %rsp"), "main:\n{}", main);
+    }
+
+    #[test]
+    fn test_linux_target_large_stack_frame_uses_plain_sub() {
+        let asm = generate_assembly_for_target(
+            &large_stack_frame_program(),
+            BackendTarget::linux_x86_64_system_v(),
+        )
+        .expect("large Linux frame should compile");
+        let main = asm.split("main:").nth(1).expect("expected main function");
+
+        assert!(main.contains("    sub $4800, %rsp"), "main:\n{}", main);
+        assert!(!main.contains("__chkstk"), "main:\n{}", main);
     }
 
     #[test]
@@ -17824,6 +17881,24 @@ mod tests {
         // memory, not a load from it.
         assert!(asm.contains("imulq $8"), "asm:\n{}", asm);
         assert!(asm.contains("%rax, (%r10)"), "asm:\n{}", asm);
+        assert!(!asm.contains("# TODO"), "asm:\n{}", asm);
+    }
+
+    #[test]
+    fn test_compile_array_push_allocates_copy_buffer_and_updates_fat() {
+        let asm = compile_ok("(define (f [a : (Array i64)] [v : i64]) : unit (array-push! a v))");
+
+        assert!(asm.contains("    call tl_alloc"), "asm:\n{}", asm);
+        assert!(asm.contains("tl_alloc:"), "asm:\n{}", asm);
+        assert!(asm.contains("    call tl_oob_abort"), "asm:\n{}", asm);
+        assert!(asm.contains("tl_oob_abort:"), "asm:\n{}", asm);
+        assert!(
+            asm.contains("$1152921504606846974"),
+            "push must check old_len before computing (old_len + 1) * 8:\n{}",
+            asm
+        );
+        assert!(asm.contains("imulq"), "asm:\n{}", asm);
+        assert!(asm.contains("$8"), "asm:\n{}", asm);
         assert!(!asm.contains("# TODO"), "asm:\n{}", asm);
     }
 

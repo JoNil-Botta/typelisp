@@ -1430,6 +1430,7 @@ fn type_lisp_programs_compile_link_and_run_explicit_build() {
             stdout: "",
             deps: &[
                 "compiler_backend.tl",
+                "compiler_backend_tests.tl",
                 "compiler_optimize.tl",
                 "compiler_regalloc.tl",
                 "compiler_liveness.tl",
@@ -1557,6 +1558,7 @@ fn selfhost_backend_stack_args_emit_assemble_link_and_run() {
         &selfhost_dir,
         &work_dir,
         &[
+            "compiler_backend_tests.tl",
             "compiler_backend.tl",
             "compiler_optimize.tl",
             "compiler_regalloc.tl",
@@ -2178,7 +2180,7 @@ fn selfhost_compiler_driver_emits_deterministic_runnable_assembly() {
         "    jb .Lmain_str_bounds_ok",
         ".Lmain_str_bounds_ok",
         "substr_bounds_fail",
-        "    setbe %al\n",
+        "    jbe .Lmain_substr_ok",
     ] {
         assert!(
             string_asm.contains(snippet),

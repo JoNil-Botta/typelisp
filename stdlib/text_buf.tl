@@ -60,15 +60,13 @@
 (define (text-buf-char-string [c : char]) : String
   (let
     [code : i64 (cast c : i64)]
-    (if (= code 9)
-      "\t"
-      (if (= code 10)
-        "\n"
-        (if (= code 13)
-          "\r"
-          (if (and (>= code 32) (<= code 126))
-            (substring text-buf-ascii-printable-table (- code 32) 1)
-            (panic "text-buf: unsupported non-printable char")))))))
+    (cond
+      [(= code 9) "\t"]
+      [(= code 10) "\n"]
+      [(= code 13) "\r"]
+      [(and (>= code 32) (<= code 126))
+        (substring text-buf-ascii-printable-table (- code 32) 1)]
+      [else (panic "text-buf: unsupported non-printable char")])))
 
 ;;; Append one char byte to `buf`.
 (define (text-buf-append-char [buf : TextBuf] [c : char]) : TextBuf

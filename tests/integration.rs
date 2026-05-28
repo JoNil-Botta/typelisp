@@ -12,7 +12,9 @@ struct Case {
     /// Additional source files that the entry program imports; copied into the
     /// work dir preserving their relative path so `(import ...)` resolves.
     /// Most deps are relative to the entry source directory; selected fixtures
-    /// are sourced from their canonical `selfhost/` or `stdlib/` modules.
+    /// are sourced from their canonical `selfhost/` or `stdlib/` modules. The
+    /// `stdlib/` deps are also mirrored next to selfhost work dirs so
+    /// selfhost-local `../stdlib/...` imports resolve in isolated tests.
     deps: &'static [&'static str],
 }
 
@@ -51,19 +53,33 @@ const SELFHOST_DOC_DRIVER_DEPS: &[&str] = &[
     "doc_extract.tl",
     "format_tokens.tl",
     "doc_test.tl",
+    "build_run_core.tl",
+    "compiler_driver_core.tl",
+    "compiler_backend.tl",
+    "compiler_optimize.tl",
+    "compiler_regalloc.tl",
+    "compiler_liveness.tl",
+    "compiler_lower.tl",
     "compiler_check_core.tl",
     "compiler_load.tl",
     "compiler_typecheck.tl",
     "compiler_specialize.tl",
     "compiler_ctfe.tl",
+    "compiler_ir_types.tl",
     "compiler_symbols.tl",
     "compiler_parse_core.tl",
     "compiler_ast_types.tl",
     "compiler_diagnostic.tl",
     "sym_i64_env.tl",
+    "text_buf.tl",
     "read.tl",
     "lex.tl",
     "token.tl",
+    "stdlib/fs.tl",
+    "stdlib/env.tl",
+    "stdlib/io.tl",
+    "stdlib/string.tl",
+    "stdlib/process.tl",
 ];
 
 #[test]
@@ -1432,19 +1448,32 @@ fn type_lisp_programs_compile_link_and_run_explicit_build() {
             deps: &[
                 "doc_test.tl",
                 "build_run_core.tl",
+                "compiler_driver_core.tl",
+                "compiler_backend.tl",
+                "compiler_optimize.tl",
+                "compiler_regalloc.tl",
+                "compiler_liveness.tl",
+                "compiler_lower.tl",
                 "compiler_check_core.tl",
                 "compiler_load.tl",
                 "compiler_typecheck.tl",
                 "compiler_specialize.tl",
                 "compiler_ctfe.tl",
+                "compiler_ir_types.tl",
                 "compiler_symbols.tl",
                 "compiler_parse_core.tl",
                 "compiler_ast_types.tl",
                 "compiler_diagnostic.tl",
                 "sym_i64_env.tl",
+                "text_buf.tl",
                 "read.tl",
                 "lex.tl",
                 "token.tl",
+                "stdlib/fs.tl",
+                "stdlib/env.tl",
+                "stdlib/io.tl",
+                "stdlib/string.tl",
+                "stdlib/process.tl",
             ],
         },
         // refs #388: selfhost Markdown rendering over extracted docs. The
@@ -4615,7 +4644,8 @@ fn selfhost_doc_driver_writes_single_file_markdown() {
     let work_dir = manifest_dir
         .join("target")
         .join("integration-tests")
-        .join("selfhost-doc-driver");
+        .join("selfhost-doc-driver")
+        .join("selfhost");
     fs::create_dir_all(&work_dir).expect("create selfhost doc driver test work dir");
 
     let driver_path = work_dir.join("doc.tl");
@@ -4739,7 +4769,8 @@ fn selfhost_doc_driver_writes_single_file_html() {
     let work_dir = manifest_dir
         .join("target")
         .join("integration-tests")
-        .join("selfhost-doc-driver-html");
+        .join("selfhost-doc-driver-html")
+        .join("selfhost");
     fs::create_dir_all(&work_dir).expect("create selfhost HTML doc driver test work dir");
 
     let driver_path = work_dir.join("doc.tl");
@@ -4817,7 +4848,8 @@ fn selfhost_doc_driver_writes_module_index_html() {
     let work_dir = manifest_dir
         .join("target")
         .join("integration-tests")
-        .join("selfhost-doc-driver-html-index");
+        .join("selfhost-doc-driver-html-index")
+        .join("selfhost");
     fs::create_dir_all(&work_dir).expect("create selfhost HTML doc index test work dir");
 
     let driver_path = work_dir.join("doc.tl");
@@ -4898,7 +4930,8 @@ fn selfhost_doc_driver_runs_doctests() {
     let work_dir = manifest_dir
         .join("target")
         .join("integration-tests")
-        .join("selfhost-doc-driver-test-mode");
+        .join("selfhost-doc-driver-test-mode")
+        .join("selfhost");
     fs::create_dir_all(&work_dir).expect("create selfhost doc driver test work dir");
 
     let driver_path = work_dir.join("doc.tl");
@@ -5356,40 +5389,39 @@ fn dep_source_path(manifest_dir: &Path, source_dir: &Path, dep: &str) -> PathBuf
     if dep == "text_buf_core.tl" {
         return manifest_dir.join("selfhost").join("text_buf.tl");
     }
-    if dep == "stdlib/string.tl" {
-        return manifest_dir.join("stdlib").join("string.tl");
-    }
-    if dep == "stdlib/test.tl" {
-        return manifest_dir.join("stdlib").join("test.tl");
-    }
-    if dep == "stdlib/io.tl" {
-        return manifest_dir.join("stdlib").join("io.tl");
-    }
-    if dep == "stdlib/json.tl" {
-        return manifest_dir.join("stdlib").join("json.tl");
-    }
-    if dep == "stdlib/text_buf.tl" {
-        return manifest_dir.join("stdlib").join("text_buf.tl");
+    if let Some(stdlib_dep) = dep.strip_prefix("stdlib/") {
+        return manifest_dir.join("stdlib").join(stdlib_dep);
     }
     source_dir.join(dep)
+}
+
+fn copy_dep_file(dep_src: &Path, dep_dst: &Path, dep: &str) {
+    if let Some(parent) = dep_dst.parent() {
+        fs::create_dir_all(parent).expect("create dep work dir");
+    }
+    fs::copy(dep_src, dep_dst).unwrap_or_else(|err| {
+        panic!(
+            "copy imported module {} from {} to {}: {}",
+            dep,
+            dep_src.display(),
+            dep_dst.display(),
+            err
+        )
+    });
 }
 
 fn copy_case_deps(manifest_dir: &Path, source_dir: &Path, work_dir: &Path, deps: &[&str]) {
     for dep in deps {
         let dep_src = dep_source_path(manifest_dir, source_dir, dep);
         let dep_dst = work_dir.join(dep);
-        if let Some(parent) = dep_dst.parent() {
-            fs::create_dir_all(parent).expect("create dep work dir");
+        copy_dep_file(&dep_src, &dep_dst, dep);
+        if dep.starts_with("stdlib/")
+            && work_dir.file_name().and_then(|name| name.to_str()) == Some("selfhost")
+        {
+            if let Some(parent) = work_dir.parent() {
+                copy_dep_file(&dep_src, &parent.join(dep), dep);
+            }
         }
-        fs::copy(&dep_src, &dep_dst).unwrap_or_else(|err| {
-            panic!(
-                "copy imported module {} from {} to {}: {}",
-                dep,
-                dep_src.display(),
-                dep_dst.display(),
-                err
-            )
-        });
     }
 }
 
@@ -5441,13 +5473,19 @@ fn compile_source_to_binary(source: &Path, bin_path: &Path, context: &str) {
     compile_source_to_binary_with_args(source, bin_path, context, &[]);
 }
 
+fn case_work_dir(manifest_dir: &Path, suite: &str, case: &Case) -> PathBuf {
+    let case_dir = manifest_dir.join("target").join(suite).join(case.name);
+    if case.deps.iter().any(|dep| *dep == "build_run_core.tl") {
+        case_dir.join("selfhost")
+    } else {
+        case_dir
+    }
+}
+
 fn run_case_explicit_build(case: &Case) {
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let source_path = source_path_for_case(&manifest_dir, case.name);
-    let work_dir = manifest_dir
-        .join("target")
-        .join("integration-tests-explicit")
-        .join(case.name);
+    let work_dir = case_work_dir(&manifest_dir, "integration-tests-explicit", case);
     fs::create_dir_all(&work_dir).expect("create explicit build test work dir");
     let work_path = work_dir.join(format!("{}.tl", case.name));
     fs::copy(&source_path, &work_path).expect("copy TypeLisp program to work dir");
@@ -5523,10 +5561,7 @@ fn run_case_explicit_build(case: &Case) {
 fn run_case(case: &Case) {
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let source_path = source_path_for_case(&manifest_dir, case.name);
-    let work_dir = manifest_dir
-        .join("target")
-        .join("integration-tests")
-        .join(case.name);
+    let work_dir = case_work_dir(&manifest_dir, "integration-tests", case);
     fs::create_dir_all(&work_dir).expect("create integration test work dir");
     let work_path = work_dir.join(format!("{}.tl", case.name));
     fs::copy(&source_path, &work_path).expect("copy TypeLisp program to work dir");

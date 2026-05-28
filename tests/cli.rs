@@ -2092,7 +2092,7 @@ fn selfhost_build_run_tools_execute_source_files() {
         .arg("--target")
         .arg("linux-x86_64")
         .arg("--backend-mode")
-        .arg("avx2")
+        .arg("scalar")
         .output()
         .expect("run selfhost build tool");
     assert!(
@@ -2122,6 +2122,34 @@ fn selfhost_build_run_tools_execute_source_files() {
         String::from_utf8_lossy(&built.stderr)
     );
 
+    let avx2_output = spaced.join("avx2 program");
+    let avx2_arg = avx2_output.to_str().expect("avx2 output path is utf-8");
+    let build_avx2 = Command::new(&build_bin)
+        .arg("--direct")
+        .arg(source_arg)
+        .arg("-o")
+        .arg(avx2_arg)
+        .arg("--target")
+        .arg("linux-x86_64")
+        .arg("--backend-mode")
+        .arg("avx2")
+        .output()
+        .expect("run selfhost build tool avx2 rejection");
+    assert!(
+        !build_avx2.status.success(),
+        "selfhost build tool unexpectedly accepted avx2\nstdout:\n{}\nstderr:\n{}",
+        stdout(&build_avx2),
+        stderr(&build_avx2)
+    );
+    assert_eq!(stdout(&build_avx2), "");
+    assert!(
+        stderr(&build_avx2).contains(
+            "build: --backend-mode avx2 requires the Rust build driver until selfhost SIMD support (#1014)"
+        ),
+        "stderr:\n{}",
+        stderr(&build_avx2)
+    );
+
     let run_source = spaced.join("run file.tl");
     fs::write(
         &run_source,
@@ -2139,7 +2167,7 @@ fn selfhost_build_run_tools_execute_source_files() {
         .arg("--target")
         .arg("linux-x86_64")
         .arg("--backend-mode")
-        .arg("avx512")
+        .arg("scalar")
         .arg("--stdlib-root")
         .arg(stdlib_arg)
         .arg("--")
@@ -2156,6 +2184,35 @@ fn selfhost_build_run_tools_execute_source_files() {
     );
     assert_eq!(stdout(&run_output), "arg with spaces");
     assert_eq!(stderr(&run_output), "");
+
+    let run_avx512 = Command::new(&run_bin)
+        .arg("--direct")
+        .arg(run_source_arg)
+        .arg("--target")
+        .arg("linux-x86_64")
+        .arg("--backend-mode")
+        .arg("avx512")
+        .arg("--stdlib-root")
+        .arg(stdlib_arg)
+        .arg("--")
+        .arg("arg with spaces")
+        .arg("colon:arg")
+        .output()
+        .expect("run selfhost run tool avx512 rejection");
+    assert!(
+        !run_avx512.status.success(),
+        "selfhost run tool unexpectedly accepted avx512\nstdout:\n{}\nstderr:\n{}",
+        stdout(&run_avx512),
+        stderr(&run_avx512)
+    );
+    assert_eq!(stdout(&run_avx512), "");
+    assert!(
+        stderr(&run_avx512).contains(
+            "run: --backend-mode avx512 requires the Rust run driver until selfhost SIMD support (#1014)"
+        ),
+        "stderr:\n{}",
+        stderr(&run_avx512)
+    );
 
     let env_source = spaced.join("env run file.tl");
     fs::write(
@@ -2350,22 +2407,26 @@ fn selfhost_build_run_planners_default_to_host_target() {
 
 #[cfg(target_os = "linux")]
 #[test]
-fn run_accepts_backend_mode_flag_with_avx512() {
+fn run_rejects_backend_mode_flag_with_avx512_until_selfhost_simd() {
     let dir = fixture_dir("backend-mode-run-avx512");
     let source = write_main_source(&dir);
     let source_arg = source.to_str().expect("source path is utf-8");
 
     let output = typelisp(&["run", source_arg, "--backend-mode", "avx512", "--", "arg"]);
 
-    assert_eq!(
-        stderr(&output),
-        "",
-        "avx512 run should have no errors for scalar IR"
+    assert!(
+        !output.status.success(),
+        "avx512 run should be rejected until selfhost SIMD support lands\nstdout:\n{}\nstderr:\n{}",
+        stdout(&output),
+        stderr(&output)
     );
-    assert_eq!(
-        output.status.code(),
-        Some(42),
-        "avx512 run should return program exit code 42"
+    assert_eq!(stdout(&output), "");
+    assert!(
+        stderr(&output).contains(
+            "run: --backend-mode avx512 requires the Rust run driver until selfhost SIMD support (#1014)"
+        ),
+        "stderr:\n{}",
+        stderr(&output)
     );
 }
 
@@ -2487,7 +2548,7 @@ fn build_accepts_backend_mode_flag_with_avx512() {
 
     assert!(
         output.status.success(),
-        "avx512 build should succeed for scalar IR\nstdout:\n{}\nstderr:\n{}",
+        "avx512 build should succeed for package builds\nstdout:\n{}\nstderr:\n{}",
         stdout(&output),
         stderr(&output)
     );
@@ -2736,7 +2797,7 @@ fn check_warns_for_inexact_contextual_f32_literal() {
 
 #[cfg(target_os = "linux")]
 #[test]
-fn build_source_accepts_avx512_backend_mode() {
+fn build_source_rejects_avx512_backend_mode_until_selfhost_simd() {
     let dir = fixture_dir("backend-mode-source-build-avx512");
     let source = write_main_source(&dir);
     let source_arg = source.to_str().expect("source path is utf-8");
@@ -2744,9 +2805,17 @@ fn build_source_accepts_avx512_backend_mode() {
     let output = typelisp(&["build", source_arg, "--backend-mode", "avx512"]);
 
     assert!(
-        output.status.success(),
-        "avx512 build source should succeed for scalar IR\nstdout:\n{}\nstderr:\n{}",
+        !output.status.success(),
+        "avx512 build source should be rejected until selfhost SIMD support lands\nstdout:\n{}\nstderr:\n{}",
         stdout(&output),
+        stderr(&output)
+    );
+    assert_eq!(stdout(&output), "");
+    assert!(
+        stderr(&output).contains(
+            "build: --backend-mode avx512 requires the Rust build driver until selfhost SIMD support (#1014)"
+        ),
+        "stderr:\n{}",
         stderr(&output)
     );
 }

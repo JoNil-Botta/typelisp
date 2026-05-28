@@ -19,6 +19,10 @@
   (OkSourceToolTarget CompilerBackendTarget)
   (ErrSourceToolTarget String))
 
+(defenum ResultSourceToolBackendMode
+  (OkSourceToolBackendMode)
+  (ErrSourceToolBackendMode String))
+
 (define (source-tool-cat3 [a : String] [b : String] [c : String]) : String
   (string-append a (string-append b c)))
 
@@ -49,10 +53,23 @@
     [(BackendTargetLinux) true]
     [(BackendTargetWindows) false]))
 
-(define (source-tool-backend-mode-valid? [value : String]) : bool
-  (or
-    (string-eq value "scalar")
-    (or (string-eq value "avx2") (string-eq value "avx512"))))
+(define (source-tool-backend-mode [command : String] [value : String]) : ResultSourceToolBackendMode
+  (if (string-eq value "scalar")
+    (OkSourceToolBackendMode)
+    (if (or (string-eq value "avx2") (string-eq value "avx512"))
+      (ErrSourceToolBackendMode
+        (source-tool-cat3
+          command
+          ": --backend-mode "
+          (string-append
+            value
+            (string-append
+              " requires the Rust "
+              (string-append
+                command
+                " driver until selfhost SIMD support (#1014)")))))
+      (ErrSourceToolBackendMode
+        (source-tool-cat3 command ": unknown backend mode " value)))))
 
 (define (source-tool-opt-level-valid? [value : String]) : bool
   (or

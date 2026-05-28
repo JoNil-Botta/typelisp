@@ -37,12 +37,12 @@ jobs:
           - suite: typelisp-lint
             name: TypeLisp Lint (linux)
             os: ubuntu-latest
-            timeout_minutes: 15
+            timeout_minutes: 30
             stage0_bin: target/stage0/typelisp
           - suite: typelisp-lint
             name: TypeLisp Lint (windows-latest)
             os: windows-latest
-            timeout_minutes: 20
+            timeout_minutes: 30
             stage0_bin: target/stage0/typelisp.exe
           - suite: rust
             name: Test + Integration

@@ -2762,6 +2762,89 @@
               vars
               ret-ty))])]))
 
+(define (compiler-backend-emit-mov-trivial-phi-return-edge-instrs
+  [source-function : String]
+  [instrs : CompilerIrInstrList]
+  [from-label : String]
+  [assignments : CompilerRegAssignmentList]
+  [vars : i64]
+  [ret-ty : AstType]
+  [moved-dst : i64]
+  [moved-src : CompilerIrValue]) : ResultCompilerBackend
+  (match instrs
+    [(IrInstrCons instr rest)
+      (match instr
+        [(IrInstrPhi dst inputs _)
+          (match rest
+            [(IrInstrCons next after-return)
+              (match next
+                [(IrInstrReturn maybe)
+                  (match after-return
+                    [(IrInstrNil)
+                      (match maybe
+                        [(IrSomeValue value)
+                          (if (compiler-backend-branch-uses-var? value dst)
+                            (match (compiler-backend-phi-input-value
+                              inputs
+                              from-label)
+                              [(OkBackendValue incoming)
+                                (if (compiler-backend-branch-uses-var?
+                                  incoming
+                                  moved-dst)
+                                  (compiler-backend-emit-return
+                                    source-function
+                                    (IrSomeValue moved-src)
+                                    assignments
+                                    vars
+                                    ret-ty)
+                                  (OkCompilerBackend ""))]
+                              [(ErrBackendValue message)
+                                (ErrCompilerBackend
+                                  (compiler-diagnostic-at-start "" message))])
+                            (OkCompilerBackend ""))]
+                        [(IrNoValue) (OkCompilerBackend "")])]
+                    [_ (OkCompilerBackend "")])]
+                [_ (OkCompilerBackend "")])]
+            [_ (OkCompilerBackend "")])]
+        [_ (OkCompilerBackend "")])]
+    [_ (OkCompilerBackend "")]))
+
+(define (compiler-backend-emit-mov-trivial-phi-return-edge
+  [source-function : String]
+  [blocks : CompilerIrBlockList]
+  [target-label : String]
+  [from-label : String]
+  [assignments : CompilerRegAssignmentList]
+  [vars : i64]
+  [ret-ty : AstType]
+  [moved-dst : i64]
+  [moved-src : CompilerIrValue]) : ResultCompilerBackend
+  (match blocks
+    [(IrBlockNil) (OkCompilerBackend "")]
+    [(IrBlockCons block rest)
+      (match block
+        [(IrBlock block-label instrs)
+          (if (string-eq block-label target-label)
+            (compiler-backend-emit-mov-trivial-phi-return-edge-instrs
+              source-function
+              instrs
+              from-label
+              assignments
+              vars
+              ret-ty
+              moved-dst
+              moved-src)
+            (compiler-backend-emit-mov-trivial-phi-return-edge
+              source-function
+              rest
+              target-label
+              from-label
+              assignments
+              vars
+              ret-ty
+              moved-dst
+              moved-src))])]))
+
 (define (compiler-backend-emit-mov
   [assignments : CompilerRegAssignmentList]
   [dst : i64]
@@ -3643,6 +3726,91 @@
             func-diag
             "")))]))
 
+(define (compiler-backend-emit-fused-mov-trivial-phi-return-rest
+  [target : CompilerBackendTarget]
+  [function : String]
+  [source-function : String]
+  [blocks : CompilerIrBlockList]
+  [current-label : String]
+  [fallthrough : CompilerBackendMaybeLabel]
+  [dst : i64]
+  [src : CompilerIrValue]
+  [ty : AstType]
+  [target-label : String]
+  [after-jump : CompilerIrInstrList]
+  [assignments : CompilerRegAssignmentList]
+  [vars : i64]
+  [types : CompilerRegVarTypeList]
+  [ret-ty : AstType]
+  [plan : CompilerBackendRuntimePlan]
+  [functions : CompilerIrFunctionList]
+  [externs : CompilerIrExternList]
+  [spans : CompilerSourceSpans]
+  [func-diag : CompilerDiagnostic]
+  [use-counts : (Array i64)]) : ResultCompilerBackend
+  (match (compiler-backend-emit-mov-trivial-phi-return-edge
+    source-function
+    blocks
+    target-label
+    current-label
+    assignments
+    vars
+    ret-ty
+    dst
+    src)
+    [(OkCompilerBackend direct-return)
+      (if (string-eq direct-return "")
+        (compiler-backend-emit-instrs-normal
+          target
+          function
+          source-function
+          blocks
+          current-label
+          fallthrough
+          (IrInstrMov dst src ty)
+          (IrInstrCons (IrInstrJump target-label) after-jump)
+          assignments
+          vars
+          types
+          ret-ty
+          plan
+          functions
+          externs
+          spans
+          func-diag
+          use-counts)
+        (match (compiler-backend-emit-instrs
+          target
+          function
+          source-function
+          blocks
+          current-label
+          fallthrough
+          after-jump
+          assignments
+          vars
+          types
+          ret-ty
+          plan
+          functions
+          externs
+          spans
+          func-diag
+          use-counts)
+          [(OkCompilerBackend tail)
+            (OkCompilerBackend (string-append direct-return tail))]
+          [(ErrCompilerBackend message) (ErrCompilerBackend message)]))]
+    [(ErrCompilerBackend message)
+      (ErrCompilerBackend
+        (compiler-backend-apply-instr-diagnostic
+          message
+          (compiler-backend-instr-diagnostic
+            spans
+            source-function
+            (IrInstrMov dst src ty)
+            func-diag
+            "")))]))
+
 (define (compiler-backend-emit-instrs
   [target : CompilerBackendTarget]
   [function : String]
@@ -3665,6 +3833,71 @@
     [(IrInstrNil) (OkCompilerBackend "")]
     [(IrInstrCons instr rest)
       (match instr
+        [(IrInstrMov dst src ty)
+          (match rest
+            [(IrInstrCons next after-jump)
+              (match next
+                [(IrInstrJump target-label)
+                  (compiler-backend-emit-fused-mov-trivial-phi-return-rest
+                    target
+                    function
+                    source-function
+                    blocks
+                    current-label
+                    fallthrough
+                    dst
+                    src
+                    ty
+                    target-label
+                    after-jump
+                    assignments
+                    vars
+                    types
+                    ret-ty
+                    plan
+                    functions
+                    externs
+                    spans
+                    func-diag
+                    use-counts)]
+                [_ (compiler-backend-emit-instrs-normal
+                  target
+                  function
+                  source-function
+                  blocks
+                  current-label
+                  fallthrough
+                  instr
+                  rest
+                  assignments
+                  vars
+                  types
+                  ret-ty
+                  plan
+                  functions
+                  externs
+                  spans
+                  func-diag
+                  use-counts)])]
+            [_ (compiler-backend-emit-instrs-normal
+              target
+              function
+              source-function
+              blocks
+              current-label
+              fallthrough
+              instr
+              rest
+              assignments
+              vars
+              types
+              ret-ty
+              plan
+              functions
+              externs
+              spans
+              func-diag
+              use-counts)])]
         [(IrInstrGep gep-dst base offset elem-ty)
           (if (compiler-backend-var-single-use? use-counts gep-dst)
             (match (compiler-backend-value-as-i64 offset)

@@ -2694,6 +2694,47 @@
                     [(ErrTcUnit message) (ErrTcEnv message)])])]
             [(ErrTcType message) (ErrTcEnv message)])])]))
 
+(define (tc-resource-cleanup-direct-name-ok [cleanup : AstExpr]) : ResultTcUnit
+  (match (ast-expr-unspan cleanup)
+    [(AstExprVar _) OkTcUnit]
+    [_ (ErrTcUnit "typecheck: with cleanup must be a direct function name")]))
+
+(define (tc-resource-cleanup-ok
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [cleanup : AstExpr]
+  [resource-ty : AstType]) : ResultTcUnit
+  (match (tc-resource-cleanup-direct-name-ok cleanup)
+    [(OkTcUnit)
+      (match (tc-expr ctx env cleanup)
+        [(OkTcType cleanup-ty)
+          (tc-expect
+            cleanup-ty
+            (tc-fn1 (tc-type-without-regions resource-ty) (AstTyUnit))
+            "typecheck: with cleanup function type mismatch")]
+        [(ErrTcType message) (ErrTcUnit message)])]
+    [(ErrTcUnit message) (ErrTcUnit message)]))
+
+(define (tc-resource-bindings
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [bindings : AstResourceBindingList]) : ResultTcEnv
+  (match bindings
+    [(AstResourceBindingNil) (OkTcEnv env)]
+    [(AstResourceBindingCons binding rest)
+      (match binding
+        [(AstResourceBinding name init cleanup)
+          (match (tc-expr ctx env init)
+            [(OkTcType init-ty)
+              (match (tc-resource-cleanup-ok ctx env cleanup init-ty)
+                [(OkTcUnit)
+                  (tc-resource-bindings
+                    ctx
+                    (tc-bind env name (tc-type-without-regions init-ty))
+                    rest)]
+                [(ErrTcUnit message) (ErrTcEnv message)])]
+            [(ErrTcType message) (ErrTcEnv message)])])]))
+
 (define (tc-begin-list
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -5333,8 +5374,10 @@
                   (string-append region "'")))
               (OkTcType body-ty))]
           [(ErrTcType message) (ErrTcType message)]))]
-    [(AstExprWithResource _ _)
-      (ErrTcType "typecheck: resource with is not implemented yet (#907)")]
+    [(AstExprWithResource bindings body)
+      (match (tc-resource-bindings ctx env bindings)
+        [(OkTcEnv body-env) (tc-begin-list ctx body-env body)]
+        [(ErrTcEnv message) (ErrTcType message)])]
     [(AstExprComptime inner)
       (match (compiler-ctfe-eval inner (tc-ctfe-env ctx) (ctfe-fuel-limit))
         [(OkCtfe value _)
@@ -6294,6 +6337,46 @@
 (define (main [flag : bool]) : ResultI64
   (if flag (panic \"stop\") (OkI64 1)))")
 
+(define (compiler-typecheck-resource-with-source) : String
+  "(define (close [h : i64]) : unit unit)
+(define (main) : i64
+  (with ([a 1 close]
+         [b (+ a 1) close])
+    (+ a b)))")
+
+(define (compiler-typecheck-resource-with-cleanup-mismatch-source) : String
+  "(define (close [h : bool]) : unit unit)
+(define (main) : i64
+  (with ([h 1 close])
+    h))")
+
+(define (compiler-typecheck-resource-with-cleanup-return-source) : String
+  "(define (close [h : i64]) : i64 h)
+(define (main) : i64
+  (with ([h 1 close])
+    h))")
+
+(define (compiler-typecheck-resource-with-cleanup-expression-source) : String
+  "(define (close [h : i64]) : unit unit)
+(define (main) : i64
+  (with ([h 1 (close h)])
+    h))")
+
+(define (compiler-typecheck-resource-with-tests-ok?) : bool
+  (and
+    (compiler-typecheck-ok? (compiler-typecheck-resource-with-source))
+    (and
+      (compiler-typecheck-error-ok?
+        (compiler-typecheck-resource-with-cleanup-mismatch-source)
+        "typecheck: with cleanup function type mismatch")
+      (and
+        (compiler-typecheck-error-ok?
+          (compiler-typecheck-resource-with-cleanup-return-source)
+          "typecheck: with cleanup function type mismatch")
+        (compiler-typecheck-error-ok?
+          (compiler-typecheck-resource-with-cleanup-expression-source)
+          "typecheck: with cleanup must be a direct function name")))))
+
 (define (compiler-typecheck-result-try-tests-ok?) : bool
   (and
     (compiler-typecheck-ok? (compiler-typecheck-result-try-source))
@@ -7238,6 +7321,9 @@
     (if (compiler-typecheck-move-kind-tests-ok?)
       unit
       (panic "typecheck: move-kind classifier tests failed"))
+    (if (compiler-typecheck-resource-with-tests-ok?)
+      unit
+      (panic "typecheck: resource with tests failed"))
     (if (compiler-typecheck-raw-pointer-tests-ok?)
       unit
       (panic "typecheck: raw pointer type tests failed"))

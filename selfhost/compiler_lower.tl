@@ -94,6 +94,20 @@
 (defenum LowerStringFields
   (LowerStringFields LowerState CompilerIrValue CompilerIrValue))
 
+(defenum LowerCleanup
+  (LowerCleanup String String))
+
+(defenum LowerCleanupList
+  (LowerCleanupNil)
+  (LowerCleanupCons LowerCleanup LowerCleanupList))
+
+(defenum LowerResourceBindings
+  (LowerResourceBindings LowerState SymI64Env TcTypeEnv LowerCleanupList))
+
+(defenum ResultLowerResourceBindings
+  (OkLowerResourceBindings LowerResourceBindings)
+  (ErrLowerResourceBindings CompilerDiagnostic))
+
 (define (lower-diagnostic [message : String]) : CompilerDiagnostic
   (compiler-diagnostic-at-start "" message))
 
@@ -1297,6 +1311,89 @@
     [(AstTyUnit) IrNoValue]
     [_ (IrSomeValue value)]))
 
+(define (lower-cleanup-marker-name) : String
+  " __tl_active_cleanup")
+
+(define (lower-cleanup-hidden-name [var-id : i64]) : String
+  (string-append "__tl_cleanup_resource." (int->string var-id)))
+
+(define (lower-cleanup-metadata-type
+  [hidden-name : String]
+  [cleanup-name : String]) : AstType
+  (AstTyTuple
+    (AstTypeCons
+      (AstTyVar hidden-name)
+      (AstTypeCons (AstTyVar cleanup-name) AstTypeNil))))
+
+(define (lower-type-env-push-cleanup
+  [type-env : TcTypeEnv]
+  [hidden-name : String]
+  [cleanup-name : String]) : TcTypeEnv
+  (tc-bind
+    type-env
+    (lower-cleanup-marker-name)
+    (lower-cleanup-metadata-type hidden-name cleanup-name)))
+
+(define (lower-cleanup-name-from-expr [cleanup : AstExpr]) : ResultTcString
+  (match (ast-expr-unspan cleanup)
+    [(AstExprVar name) (OkTcString name)]
+    [_ (ErrTcString "lower: resource cleanup must be a direct function name")]))
+
+(define (lower-emit-cleanup-call
+  [state : LowerState]
+  [env : SymI64Env]
+  [hidden-name : String]
+  [cleanup-name : String]) : ResultLowerState
+  (match (sym-i64-lookup env hidden-name)
+    [(SomeI64 resource-id)
+      (match (lower-state-alloc-var state)
+        [(LowerAlloc allocated var-id)
+          (OkLowerState
+            (lower-state-emit
+              allocated
+              (IrInstrCall
+                var-id
+                (lower-resolve-call-name allocated env cleanup-name)
+                (IrValueCons (IrValueVar resource-id) IrValueNil)
+                (AstTyUnit))))])]
+    [(NoneI64)
+      (ErrLowerState
+        (lower-diagnostic "lower: missing resource cleanup binding"))]))
+
+(define (lower-emit-cleanup-list
+  [state : LowerState]
+  [env : SymI64Env]
+  [cleanups : LowerCleanupList]) : ResultLowerState
+  (match cleanups
+    [(LowerCleanupNil) (OkLowerState state)]
+    [(LowerCleanupCons cleanup rest)
+      (match cleanup
+        [(LowerCleanup hidden-name cleanup-name)
+          (match (lower-emit-cleanup-call state env hidden-name cleanup-name)
+            [(OkLowerState next-state)
+              (lower-emit-cleanup-list next-state env rest)]
+            [(ErrLowerState message) (ErrLowerState message)])])]))
+
+(define (lower-emit-active-cleanups
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]) : ResultLowerState
+  (match type-env
+    [(TcTypeNil) (OkLowerState state)]
+    [(TcTypeBind key ty rest)
+      (if (string-eq key (lower-cleanup-marker-name))
+        (match ty
+          [(AstTyTuple
+              (AstTypeCons
+                (AstTyVar hidden-name)
+                (AstTypeCons (AstTyVar cleanup-name) AstTypeNil)))
+            (match (lower-emit-cleanup-call state env hidden-name cleanup-name)
+              [(OkLowerState next-state)
+                (lower-emit-active-cleanups next-state env rest)]
+              [(ErrLowerState message) (ErrLowerState message)])]
+          [_ (lower-emit-active-cleanups state env rest)])
+        (lower-emit-active-cleanups state env rest))]))
+
 (define (lower-load-single-payload
   [ctx : TcContext]
   [state : LowerState]
@@ -1359,6 +1456,8 @@
 (define (lower-try-finish
   [ctx : TcContext]
   [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
   [result-value : CompilerIrValue]
   [operand-info : TcResultInfo]
   [return-info : TcResultInfo]
@@ -1372,27 +1471,32 @@
       result-value
       (tc-result-info-err-type operand-info))
       [(LowerExpr err-payload-state err-payload _)
-        (match (lower-return-result-err
-          ctx
-          err-payload-state
-          return-info
-          err-payload)
-          [(OkLowerState returned-state)
-            (let
-              [ok-start : LowerState
-                (lower-state-finish-block returned-state ok-label)]
-              (match (lower-load-single-payload
-                ctx
-                ok-start
-                result-value
-                (tc-result-info-ok-type operand-info))
-                [(LowerExpr ok-state ok-payload ok-ty)
-                  (OkLowerExpr (LowerExpr ok-state ok-payload ok-ty))]))]
+        (match (lower-emit-active-cleanups err-payload-state env type-env)
+          [(OkLowerState cleanup-state)
+            (match (lower-return-result-err
+              ctx
+              cleanup-state
+              return-info
+              err-payload)
+              [(OkLowerState returned-state)
+                (let
+                  [ok-start : LowerState
+                    (lower-state-finish-block returned-state ok-label)]
+                  (match (lower-load-single-payload
+                    ctx
+                    ok-start
+                    result-value
+                    (tc-result-info-ok-type operand-info))
+                    [(LowerExpr ok-state ok-payload ok-ty)
+                      (OkLowerExpr (LowerExpr ok-state ok-payload ok-ty))]))]
+              [(ErrLowerState message) (ErrLowerExpr message)])]
           [(ErrLowerState message) (ErrLowerExpr message)])])))
 
 (define (lower-try-with-info
   [ctx : TcContext]
   [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
   [result-value : CompilerIrValue]
   [operand-info : TcResultInfo]
   [return-info : TcResultInfo]
@@ -1434,6 +1538,8 @@
                                     (IrValueVar eq-var)
                                     ok-label
                                     err-label))
+                                env
+                                type-env
                                 result-value
                                 operand-info
                                 return-info
@@ -1465,6 +1571,8 @@
                       (lower-try-with-info
                         ctx
                         result-state
+                        env
+                        type-env
                         result-value
                         operand-info
                         return-info
@@ -1936,11 +2044,8 @@
     [(AstExprArraySet arr index value)
       (lower-array-set ctx state env type-env arr index value)]
     [(AstExprWithRegion _ body) (lower-with-arena ctx state env type-env body)]
-    [(AstExprWithResource _ _)
-      (ErrLowerExpr
-        (lower-diagnostic-at-expr
-          origin
-          "lower: resource with is not implemented yet (#907)"))]
+    [(AstExprWithResource bindings body)
+      (lower-with-resource ctx state env type-env bindings body)]
     [(AstExprTry inner) (lower-try ctx state env type-env inner origin)]
     ;; `(comptime expr)` folds to a literal via the scalar CTFE evaluator (#719).
     ;; Successful folds reuse the ordinary literal path; CTFE rejections (free
@@ -4095,6 +4200,89 @@
                           rest)]))])]
             [(ErrLowerExpr message) (ErrLowerEnv message)])])]))
 
+(define (lower-resource-bindings
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [bindings : AstResourceBindingList]
+  [cleanups : LowerCleanupList]) : ResultLowerResourceBindings
+  (match bindings
+    [(AstResourceBindingNil)
+      (OkLowerResourceBindings
+        (LowerResourceBindings state env type-env cleanups))]
+    [(AstResourceBindingCons binding rest)
+      (match binding
+        [(AstResourceBinding name init cleanup)
+          (match (lower-expr ctx state env type-env init)
+            [(OkLowerExpr lowered)
+              (match lowered
+                [(LowerExpr init-state init-value init-ty)
+                  (match (lower-cleanup-name-from-expr cleanup)
+                    [(OkTcString cleanup-name)
+                      (let
+                        [binding-ty : AstType (tc-type-without-regions init-ty)]
+                        (match (lower-state-alloc-var init-state)
+                          [(LowerAlloc allocated var-id)
+                            (let
+                              [hidden-name : String
+                                (lower-cleanup-hidden-name var-id)]
+                              [bound-state : LowerState
+                                (lower-state-emit
+                                  allocated
+                                  (IrInstrMov var-id init-value binding-ty))]
+                              [bound-env : SymI64Env
+                                (sym-i64-bind
+                                  (sym-i64-bind env name var-id)
+                                  hidden-name
+                                  var-id)]
+                              [bound-type-env : TcTypeEnv
+                                (lower-type-env-push-cleanup
+                                  (tc-bind type-env name binding-ty)
+                                  hidden-name
+                                  cleanup-name)]
+                              (lower-resource-bindings
+                                ctx
+                                bound-state
+                                bound-env
+                                bound-type-env
+                                rest
+                                (LowerCleanupCons
+                                  (LowerCleanup hidden-name cleanup-name)
+                                  cleanups)))]))]
+                    [(ErrTcString message)
+                      (ErrLowerResourceBindings
+                        (lower-diagnostic-at-expr cleanup message))])])]
+            [(ErrLowerExpr message) (ErrLowerResourceBindings message)])])]))
+
+(define (lower-with-resource
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [bindings : AstResourceBindingList]
+  [body : AstExprList]) : ResultLowerExpr
+  (match (lower-resource-bindings
+    ctx
+    state
+    env
+    type-env
+    bindings
+    LowerCleanupNil)
+    [(OkLowerResourceBindings lowered-bindings)
+      (match lowered-bindings
+        [(LowerResourceBindings binding-state body-env body-type-env cleanups)
+          (match (lower-begin ctx binding-state body-env body-type-env body)
+            [(OkLowerExpr lowered-body)
+              (match lowered-body
+                [(LowerExpr body-state value body-ty)
+                  (match (lower-emit-cleanup-list body-state body-env cleanups)
+                    [(OkLowerState cleanup-state)
+                      (OkLowerExpr (LowerExpr cleanup-state value body-ty))]
+                    [(ErrLowerState message) (ErrLowerExpr message)])])]
+            [(ErrLowerExpr message) (ErrLowerExpr message)])])]
+    [(ErrLowerResourceBindings message) (ErrLowerExpr message)]))
+
 (define (lower-begin
   [ctx : TcContext]
   [state : LowerState]
@@ -5832,6 +6020,30 @@
 (define (main [flag : bool]) : ResultI64
   (chain flag))")
 
+(define (compiler-lower-resource-with-source) : String
+  "(defenum ResultI64 (OkI64 i64) (ErrI64 String))
+(define (open-a [ok : bool]) : ResultI64
+  (if ok (OkI64 10) (ErrI64 \"open a\")))
+(define (open-b [ok : bool]) : ResultI64
+  (if ok (OkI64 32) (ErrI64 \"open b\")))
+(define (use-a [ok : bool] [h : i64]) : ResultI64
+  (if ok (OkI64 h) (ErrI64 \"use a\")))
+(define (close-a [h : i64]) : unit unit)
+(define (close-b [h : i64]) : unit unit)
+(define (main [a-ok : bool] [b-ok : bool] [use-ok : bool]) : ResultI64
+  (with ([a (try (open-a a-ok)) close-a]
+         [b (try (open-b b-ok)) close-b])
+    (OkI64 (+ (try (use-a use-ok a)) b))))")
+
+(define (compiler-lower-resource-with-nested-source) : String
+  "(defenum ResultI64 (OkI64 i64) (ErrI64 String))
+(define (close-a [h : i64]) : unit unit)
+(define (close-b [h : i64]) : unit unit)
+(define (main) : ResultI64
+  (with ([a 10 close-a])
+    (with ([b 32 close-b])
+      (OkI64 (+ a b)))))")
+
 (define (compiler-lower-ok? [src : String]) : bool
   (match (lower-compiler-source src)
     [(OkCompilerLower _ _) true]
@@ -6508,6 +6720,30 @@
                 (> (lower-test-function-load-count functions "sum") 3))))])]
     [(ErrCompilerLower _) false]))
 
+(define (compiler-lower-resource-with-shape-ok?) : bool
+  (match (lower-compiler-source (compiler-lower-resource-with-source))
+    [(OkCompilerLower program _)
+      (match program
+        [(IrProgram _ functions _)
+          (and
+            (= (lower-test-functions-call-count functions "close-a") 3)
+            (and
+              (= (lower-test-functions-call-count functions "close-b") 2)
+              (and
+                (> (lower-test-function-return-count functions "main") 2)
+                (> (lower-test-function-branch-count functions "main") 2))))])]
+    [(ErrCompilerLower _) false]))
+
+(define (compiler-lower-resource-with-nested-shape-ok?) : bool
+  (match (lower-compiler-source (compiler-lower-resource-with-nested-source))
+    [(OkCompilerLower program _)
+      (match program
+        [(IrProgram _ functions _)
+          (and
+            (= (lower-test-functions-call-count functions "close-a") 1)
+            (= (lower-test-functions-call-count functions "close-b") 1))])]
+    [(ErrCompilerLower _) false]))
+
 (define (compiler-lower-array-access-shape-ok? [src : String]) : bool
   (match (lower-compiler-source src)
     [(OkCompilerLower program _)
@@ -6978,6 +7214,12 @@
         (set! ok false))
       (if (compiler-lower-result-try-shape-ok?
         (compiler-lower-result-try-source))
+        unit
+        (set! ok false))
+      (if (compiler-lower-resource-with-shape-ok?)
+        unit
+        (set! ok false))
+      (if (compiler-lower-resource-with-nested-shape-ok?)
         unit
         (set! ok false))
       (if (compiler-lower-ok? (compiler-lower-array-length-source))

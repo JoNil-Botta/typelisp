@@ -83,6 +83,8 @@ fn compiler_typecheck_tl_compiles_to_assembly() {
         "_tl_compiler_typecheck_foreach_spmd_tests_ok_question:",
         "_tl_compiler_typecheck_region_tests_ok_question:",
         "_tl_compiler_typecheck_result_try_tests_ok_question:",
+        "_tl_compiler_typecheck_resource_with_tests_ok_question:",
+        "_tl_tc_resource_bindings:",
         "_tl_build_compiler_symbols:",
         "_tl_parse_ast_source:",
     ] {
@@ -118,6 +120,8 @@ fn compiler_typecheck_tl_compiles_to_assembly() {
         "typecheck: try operand must be Result-like enum",
         "typecheck: try requires enclosing Result-like function",
         "typecheck: try error type mismatch",
+        "typecheck: with cleanup function type mismatch",
+        "typecheck: with cleanup must be a direct function name",
         "typecheck: smoke score mismatch",
         "(extern print-i64 : (-> i64 unit))",
         "[fixed : (Array i64 3) (array 1 2 3)]",
@@ -126,6 +130,7 @@ fn compiler_typecheck_tl_compiles_to_assembly() {
         "(defenum Maybe (None) (Some i64))",
         "(defstruct Point (x i64) (y i64))",
         "(with-arena r",
+        "(with ([a 1 close]",
         "(defstruct Box (s String))",
         "(try (read flag))",
     ] {

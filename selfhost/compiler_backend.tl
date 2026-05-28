@@ -77,6 +77,7 @@
     bool
     bool
     bool
+    bool
     bool))
 
 ;; Backend code-generation target (#646). Linux/System V and Windows x64 are
@@ -2676,6 +2677,7 @@
           _
           _
           _
+          _
           _)
         (if (or arg-count arg)
           "    movq %rcx, .L_tl_argc(%rip)
@@ -3433,6 +3435,7 @@
         provides-file-exists
         provides-file-handle
         provides-file-read-chunk
+        provides-fs
         provides-process-output
         read-line
         read-bytes
@@ -3552,38 +3555,56 @@
                   ".L_tl_file_read_chunk_eof"
                   provides-file-read-chunk)
                 (or
-                  (compiler-backend-provides-runtime-name?
-                    name
-                    ".L_tl_read_stdin_line"
-                    read-line)
-                  (or
-                    (backend-or4
-                      (compiler-backend-provides-runtime-name?
-                        name
-                        ".L_tl_read_stdin_bytes"
-                        read-bytes)
-                      (compiler-backend-provides-runtime-name?
-                        name
-                        ".L_tl_stdin_eof"
-                        stdin-eof)
-                      (compiler-backend-provides-runtime-name?
-                        name
-                        ".L_tl_flush_stdout"
-                        flush-stdout)
-                      (compiler-backend-provides-runtime-name?
-                        name
-                        "tl_random_system_seed"
-                        random-system-seed))
-                    (compiler-backend-plan-provides-tail?
+                  (backend-or4
+                    (compiler-backend-provides-runtime-name?
                       name
-                      read-bytes
-                      stdin-eof
-                      flush-stdout
-                      random-system-seed
-                      windows-setup-instances
-                      provides-env-var-exists
-                      provides-env-var-value
-                      provides-env-path-separator))))))))]))
+                      ".L_tl_fs_mkdir_status"
+                      provides-fs)
+                    (compiler-backend-provides-runtime-name?
+                      name
+                      ".L_tl_fs_remove_file_status"
+                      provides-fs)
+                    (compiler-backend-provides-runtime-name?
+                      name
+                      ".L_tl_fs_remove_dir_status"
+                      provides-fs)
+                    (compiler-backend-provides-runtime-name?
+                      name
+                      ".L_tl_fs_process_id"
+                      provides-fs))
+                  (or
+                    (compiler-backend-provides-runtime-name?
+                      name
+                      ".L_tl_read_stdin_line"
+                      read-line)
+                    (or
+                      (backend-or4
+                        (compiler-backend-provides-runtime-name?
+                          name
+                          ".L_tl_read_stdin_bytes"
+                          read-bytes)
+                        (compiler-backend-provides-runtime-name?
+                          name
+                          ".L_tl_stdin_eof"
+                          stdin-eof)
+                        (compiler-backend-provides-runtime-name?
+                          name
+                          ".L_tl_flush_stdout"
+                          flush-stdout)
+                        (compiler-backend-provides-runtime-name?
+                          name
+                          "tl_random_system_seed"
+                          random-system-seed))
+                      (compiler-backend-plan-provides-tail?
+                        name
+                        read-bytes
+                        stdin-eof
+                        flush-stdout
+                        random-system-seed
+                        windows-setup-instances
+                        provides-env-var-exists
+                        provides-env-var-value
+                        provides-env-path-separator)))))))))]))
 
 (define (compiler-backend-runtime-plan-for
   [functions : CompilerIrFunctionList]
@@ -3689,6 +3710,18 @@
       (compiler-backend-extern-list-references?
         externs
         ".L_tl_file_read_chunk_eof")]
+    [extern-fs-mkdir-status : bool
+      (compiler-backend-extern-list-references? externs ".L_tl_fs_mkdir_status")]
+    [extern-fs-remove-file-status : bool
+      (compiler-backend-extern-list-references?
+        externs
+        ".L_tl_fs_remove_file_status")]
+    [extern-fs-remove-dir-status : bool
+      (compiler-backend-extern-list-references?
+        externs
+        ".L_tl_fs_remove_dir_status")]
+    [extern-fs-process-id : bool
+      (compiler-backend-extern-list-references? externs ".L_tl_fs_process_id")]
     [extern-read-line : bool
       (compiler-backend-extern-list-references? externs ".L_tl_read_stdin_line")]
     [extern-read-bytes : bool
@@ -3777,6 +3810,18 @@
       (compiler-backend-function-list-calls?
         functions
         ".L_tl_file_read_chunk_eof")]
+    [calls-fs-mkdir-status : bool
+      (compiler-backend-function-list-calls? functions ".L_tl_fs_mkdir_status")]
+    [calls-fs-remove-file-status : bool
+      (compiler-backend-function-list-calls?
+        functions
+        ".L_tl_fs_remove_file_status")]
+    [calls-fs-remove-dir-status : bool
+      (compiler-backend-function-list-calls?
+        functions
+        ".L_tl_fs_remove_dir_status")]
+    [calls-fs-process-id : bool
+      (compiler-backend-function-list-calls? functions ".L_tl_fs_process_id")]
     [calls-read-line : bool
       (compiler-backend-function-list-calls? functions ".L_tl_read_stdin_line")]
     [calls-read-bytes : bool
@@ -3850,6 +3895,18 @@
             (or
               calls-file-read-chunk-bytes
               (or extern-file-read-chunk-eof calls-file-read-chunk-eof))))]
+      [needs-fs-runtime : bool
+        (or
+          (backend-or4
+            extern-fs-mkdir-status
+            extern-fs-remove-file-status
+            extern-fs-remove-dir-status
+            extern-fs-process-id)
+          (backend-or4
+            calls-fs-mkdir-status
+            calls-fs-remove-file-status
+            calls-fs-remove-dir-status
+            calls-fs-process-id))]
       [needs-read-line : bool (or extern-read-line calls-read-line)]
       [needs-read-bytes : bool (or extern-read-bytes calls-read-bytes)]
       [needs-stdin-eof : bool (or extern-stdin-eof calls-stdin-eof)]
@@ -3911,16 +3968,18 @@
               (or
                 needs-file-read-chunk
                 (or
-                  needs-process-output
+                  needs-fs-runtime
                   (or
-                    needs-read-line
+                    needs-process-output
                     (or
-                      needs-read-bytes
+                      needs-read-line
                       (or
-                        needs-random-system-seed
+                        needs-read-bytes
                         (or
-                          needs-windows-setup-instances
-                          (or needs-env-var-value needs-env-path-separator)))))))))]
+                          needs-random-system-seed
+                          (or
+                            needs-windows-setup-instances
+                            (or needs-env-var-value needs-env-path-separator))))))))))]
         (OkBackendRuntimePlan
           (BackendRuntimePlan
             needs-alloc
@@ -3939,6 +3998,7 @@
             needs-file-exists
             needs-file-handle
             needs-file-read-chunk
+            needs-fs-runtime
             needs-process-output
             needs-read-line
             needs-read-bytes
@@ -4226,6 +4286,7 @@ tl_current_arena:
         file-exists
         file-handle
         file-read-chunk
+        _
         process-output
         read-line
         read-bytes
@@ -5544,6 +5605,240 @@ _tl_env_path_separator:
       (string-append
         (compiler-backend-runtime-file-read-chunk-bytes-functions)
         (compiler-backend-runtime-file-read-chunk-eof-functions)))))
+
+(define (compiler-backend-runtime-fs-functions) : String
+  ".L_tl_fs_mkdir_status:
+    push %rbp
+    mov %rsp, %rbp
+    push %rbx
+    push %r12
+    push %r13
+    sub $8, %rsp
+    movq %rdi, %rbx
+    movq %rsi, %r12
+    cmpq $0, %r12
+    jl .L_tl_fs_mkdir_status_invalid
+    movq %r12, %rdi
+    addq $1, %rdi
+    js .L_tl_fs_mkdir_status_invalid
+    call tl_alloc
+    movq %rax, %r13
+    xorq %rcx, %rcx
+.L_tl_fs_mkdir_status_path_copy_loop:
+    cmpq %r12, %rcx
+    jge .L_tl_fs_mkdir_status_path_copy_done
+    movzbl (%rbx,%rcx), %edx
+    movb %dl, (%r13,%rcx)
+    incq %rcx
+    jmp .L_tl_fs_mkdir_status_path_copy_loop
+.L_tl_fs_mkdir_status_path_copy_done:
+    movb $0, (%r13,%r12)
+    movq $83, %rax
+    movq %r13, %rdi
+    movq $448, %rsi
+    syscall
+    testq %rax, %rax
+    js .L_tl_fs_mkdir_status_error_from_rax
+    xorq %rax, %rax
+    jmp .L_tl_fs_mkdir_status_return
+.L_tl_fs_mkdir_status_error_from_rax:
+    negq %rax
+    jmp .L_tl_fs_mkdir_status_return
+.L_tl_fs_mkdir_status_invalid:
+    movq $22, %rax
+.L_tl_fs_mkdir_status_return:
+    add $8, %rsp
+    pop %r13
+    pop %r12
+    pop %rbx
+    pop %rbp
+    ret
+
+.L_tl_fs_remove_file_status:
+    push %rbp
+    mov %rsp, %rbp
+    push %rbx
+    push %r12
+    push %r13
+    sub $8, %rsp
+    movq %rdi, %rbx
+    movq %rsi, %r12
+    cmpq $0, %r12
+    jl .L_tl_fs_remove_file_status_invalid
+    movq %r12, %rdi
+    addq $1, %rdi
+    js .L_tl_fs_remove_file_status_invalid
+    call tl_alloc
+    movq %rax, %r13
+    xorq %rcx, %rcx
+.L_tl_fs_remove_file_status_path_copy_loop:
+    cmpq %r12, %rcx
+    jge .L_tl_fs_remove_file_status_path_copy_done
+    movzbl (%rbx,%rcx), %edx
+    movb %dl, (%r13,%rcx)
+    incq %rcx
+    jmp .L_tl_fs_remove_file_status_path_copy_loop
+.L_tl_fs_remove_file_status_path_copy_done:
+    movb $0, (%r13,%r12)
+    movq $87, %rax
+    movq %r13, %rdi
+    syscall
+    testq %rax, %rax
+    js .L_tl_fs_remove_file_status_error_from_rax
+    xorq %rax, %rax
+    jmp .L_tl_fs_remove_file_status_return
+.L_tl_fs_remove_file_status_error_from_rax:
+    negq %rax
+    jmp .L_tl_fs_remove_file_status_return
+.L_tl_fs_remove_file_status_invalid:
+    movq $22, %rax
+.L_tl_fs_remove_file_status_return:
+    add $8, %rsp
+    pop %r13
+    pop %r12
+    pop %rbx
+    pop %rbp
+    ret
+
+.L_tl_fs_remove_dir_status:
+    push %rbp
+    mov %rsp, %rbp
+    push %rbx
+    push %r12
+    push %r13
+    sub $8, %rsp
+    movq %rdi, %rbx
+    movq %rsi, %r12
+    cmpq $0, %r12
+    jl .L_tl_fs_remove_dir_status_invalid
+    movq %r12, %rdi
+    addq $1, %rdi
+    js .L_tl_fs_remove_dir_status_invalid
+    call tl_alloc
+    movq %rax, %r13
+    xorq %rcx, %rcx
+.L_tl_fs_remove_dir_status_path_copy_loop:
+    cmpq %r12, %rcx
+    jge .L_tl_fs_remove_dir_status_path_copy_done
+    movzbl (%rbx,%rcx), %edx
+    movb %dl, (%r13,%rcx)
+    incq %rcx
+    jmp .L_tl_fs_remove_dir_status_path_copy_loop
+.L_tl_fs_remove_dir_status_path_copy_done:
+    movb $0, (%r13,%r12)
+    movq $84, %rax
+    movq %r13, %rdi
+    syscall
+    testq %rax, %rax
+    js .L_tl_fs_remove_dir_status_error_from_rax
+    xorq %rax, %rax
+    jmp .L_tl_fs_remove_dir_status_return
+.L_tl_fs_remove_dir_status_error_from_rax:
+    negq %rax
+    jmp .L_tl_fs_remove_dir_status_return
+.L_tl_fs_remove_dir_status_invalid:
+    movq $22, %rax
+.L_tl_fs_remove_dir_status_return:
+    add $8, %rsp
+    pop %r13
+    pop %r12
+    pop %rbx
+    pop %rbp
+    ret
+
+.L_tl_fs_process_id:
+    movq $39, %rax
+    syscall
+    ret
+
+")
+
+(define (compiler-backend-runtime-windows-fs-mkdir-status-functions) : String
+  ".L_tl_fs_mkdir_status:
+    push %rbp
+    mov %rsp, %rbp
+    push %rbx
+    push %r12
+    push %r13
+    sub $8, %rsp
+    movq %rcx, %rbx
+    movq %rdx, %r12
+    cmpq $0, %r12
+    jl .L_tl_fs_mkdir_status_win_invalid
+    movq %r12, %rcx
+    addq $1, %rcx
+    js .L_tl_fs_mkdir_status_win_invalid
+    sub $32, %rsp
+    call tl_alloc
+    add $32, %rsp
+    movq %rax, %r13
+    xorq %r10, %r10
+.L_tl_fs_mkdir_status_win_path_copy_loop:
+    cmpq %r12, %r10
+    jge .L_tl_fs_mkdir_status_win_path_copy_done
+    movzbl (%rbx,%r10), %edx
+    movb %dl, (%r13,%r10)
+    incq %r10
+    jmp .L_tl_fs_mkdir_status_win_path_copy_loop
+.L_tl_fs_mkdir_status_win_path_copy_done:
+    movb $0, (%r13,%r12)
+    movq %r13, %rcx
+    sub $32, %rsp
+    call _mkdir
+    add $32, %rsp
+    testl %eax, %eax
+    js .L_tl_fs_mkdir_status_win_errno
+    xorq %rax, %rax
+    jmp .L_tl_fs_mkdir_status_win_return
+.L_tl_fs_mkdir_status_win_errno:
+    sub $32, %rsp
+    call _errno
+    add $32, %rsp
+    movslq (%rax), %rax
+    testq %rax, %rax
+    jne .L_tl_fs_mkdir_status_win_return
+    movq $1, %rax
+    jmp .L_tl_fs_mkdir_status_win_return
+.L_tl_fs_mkdir_status_win_invalid:
+    movq $22, %rax
+.L_tl_fs_mkdir_status_win_return:
+    add $8, %rsp
+    pop %r13
+    pop %r12
+    pop %rbx
+    pop %rbp
+    ret
+
+")
+
+(define (compiler-backend-runtime-windows-fs-functions) : String
+  (string-append
+    (compiler-backend-runtime-windows-fs-mkdir-status-functions)
+    ".L_tl_fs_remove_file_status:
+    movq $38, %rax
+    ret
+
+.L_tl_fs_remove_dir_status:
+    movq $38, %rax
+    ret
+
+.L_tl_fs_process_id:
+    push %rbp
+    mov %rsp, %rbp
+    sub $32, %rsp
+    call GetCurrentProcessId
+    add $32, %rsp
+    movl %eax, %eax
+    pop %rbp
+    ret
+
+"))
+
+(define (compiler-backend-runtime-fs-functions-for-target
+  [target : CompilerBackendTarget]) : String
+  (if (compiler-backend-target-windows? target)
+    (compiler-backend-runtime-windows-fs-functions)
+    (compiler-backend-runtime-fs-functions)))
 
 (define (compiler-backend-runtime-windows-read-file-functions) : String
   ".L_tl_read_file:
@@ -7652,6 +7947,7 @@ tl_windows_setup_instances:
         file-exists
         file-handle
         file-read-chunk
+        fs-runtime
         process-output
         read-line
         read-bytes
@@ -7781,6 +8077,10 @@ tl_windows_setup_instances:
           (if file-read-chunk
             (compiler-backend-runtime-file-read-chunk-functions target)
             "")]
+        [fs-asm : String
+          (if fs-runtime
+            (compiler-backend-runtime-fs-functions-for-target target)
+            "")]
         [process-output-asm : String
           (if process-output
             (if (compiler-backend-target-windows? target)
@@ -7829,6 +8129,41 @@ tl_windows_setup_instances:
           (if windows-setup-instances
             (compiler-backend-runtime-windows-setup-instances-functions target)
             "")]
+        [runtime-front-asm : String
+          (backend-cat5
+            alloc-asm
+            region-mark-asm
+            region-reset-asm
+            oob-asm
+            substring-asm)]
+        [runtime-string-asm : String
+          (backend-cat5
+            concat-asm
+            string-eq-asm
+            string-to-int-asm
+            int-to-string-asm
+            abort-asm)]
+        [runtime-io-asm : String
+          (backend-cat5
+            print-err-asm
+            arg-count-asm
+            arg-asm
+            read-file-asm
+            read-file-status-asm)]
+        [runtime-file-asm : String
+          (backend-cat5
+            write-file-asm
+            write-file-status-asm
+            append-file-status-asm
+            file-exists-asm
+            file-exists-status-asm)]
+        [runtime-tail-asm : String
+          (backend-cat5
+            process-output-asm
+            read-line-asm
+            read-bytes-asm
+            stdin-eof-asm
+            flush-stdout-asm)]
         [random-and-windows-asm : String
           (string-append random-system-seed-asm windows-setup-instances-asm)]
         [env-var-exists-asm : String
@@ -7846,65 +8181,22 @@ tl_windows_setup_instances:
             target
             env-path-separator
             (compiler-backend-runtime-env-path-separator-functions))]
-        (string-append
-          alloc-asm
-          (string-append
-            region-mark-asm
-            (string-append
-              region-reset-asm
-              (string-append
-                oob-asm
-                (string-append
-                  substring-asm
-                  (string-append
-                    concat-asm
-                    (string-append
-                      string-eq-asm
-                      (string-append
-                        string-to-int-asm
-                        (string-append
-                          int-to-string-asm
-                          (string-append
-                            abort-asm
-                            (string-append
-                              print-err-asm
-                              (string-append
-                                arg-count-asm
-                                (string-append
-                                  arg-asm
-                                  (string-append
-                                    read-file-asm
-                                    (string-append
-                                      read-file-status-asm
-                                      (string-append
-                                        write-file-asm
-                                        (string-append
-                                          write-file-status-asm
-                                          (string-append
-                                            append-file-status-asm
-                                            (string-append
-                                              file-exists-asm
-                                              (string-append
-                                                file-exists-status-asm
-                                                (string-append
-                                                  file-handle-asm
-                                                  (string-append
-                                                    file-read-chunk-asm
-                                                    (string-append
-                                                      process-output-asm
-                                                      (string-append
-                                                        read-line-asm
-                                                        (string-append
-                                                          read-bytes-asm
-                                                          (string-append
-                                                            stdin-eof-asm
-                                                            (string-append
-                                                              flush-stdout-asm
-                                                              (backend-cat4
-                                                                random-and-windows-asm
-                                                                env-var-exists-asm
-                                                                env-var-value-asm
-                                                                env-path-separator-asm)))))))))))))))))))))))))))))]))
+        (backend-cat5
+          runtime-front-asm
+          runtime-string-asm
+          runtime-io-asm
+          runtime-file-asm
+          (backend-cat5
+            file-handle-asm
+            file-read-chunk-asm
+            fs-asm
+            runtime-tail-asm
+            (backend-cat5
+              random-and-windows-asm
+              env-var-exists-asm
+              env-var-value-asm
+              env-path-separator-asm
+              ""))))]))
 
 ;; Argument register for call arg `idx` under the target's calling convention.
 ;; System V (Linux) uses rdi/rsi/rdx/rcx/r8/r9 via `compiler-backend-arg-reg`;
@@ -8009,6 +8301,7 @@ tl_windows_setup_instances:
             _
             _
             _
+            _
             process-output
             _
             _
@@ -8051,6 +8344,7 @@ tl_windows_setup_instances:
         file-exists
         file-handle
         file-read-chunk
+        fs-runtime
         process-output
         read-line
         read-bytes
@@ -8083,22 +8377,24 @@ tl_windows_setup_instances:
               write-file
               file-exists
               file-handle
-              read-line)
+              file-read-chunk)
             (or
-              file-read-chunk
+              fs-runtime
               (or
                 process-output
                 (or
-                  (backend-or8
-                    read-bytes
-                    stdin-eof
-                    flush-stdout
-                    region-mark
-                    region-reset
-                    random-system-seed
-                    windows-setup-instances
-                    env-var-exists)
-                  (backend-or4 env-var-value env-path-separator false false)))))))]))
+                  read-line
+                  (or
+                    (backend-or8
+                      read-bytes
+                      stdin-eof
+                      flush-stdout
+                      region-mark
+                      region-reset
+                      random-system-seed
+                      windows-setup-instances
+                      env-var-exists)
+                    (backend-or4 env-var-value env-path-separator false false))))))))]))
 
 (define (compiler-backend-target-runtime-ok?
   [target : CompilerBackendTarget]
@@ -8106,6 +8402,7 @@ tl_windows_setup_instances:
   (if (compiler-backend-target-windows? target)
     (match plan
       [(BackendRuntimePlan
+          _
           _
           _
           _
@@ -8149,7 +8446,8 @@ tl_windows_setup_instances:
     (compiler-backend-target-windows? target)
     (not (compiler-backend-runtime-plan-empty? plan)))
     (string-append
-      "    .extern malloc
+      (string-append
+        "    .extern malloc
     .extern _write
     .extern exit
     .extern _read
@@ -8160,6 +8458,11 @@ tl_windows_setup_instances:
     .extern _access
     .extern _errno
 "
+        (if (compiler-backend-plan-provides? plan ".L_tl_fs_mkdir_status")
+          "    .extern _mkdir
+    .extern GetCurrentProcessId
+"
+          ""))
       (if (compiler-backend-plan-provides? plan "tl_random_system_seed")
         "    .extern SystemFunction036
 "
@@ -10162,6 +10465,7 @@ tl_windows_setup_instances:
       false
       false
       false
+      false
       false)
     IrFunctionNil
     IrExternNil
@@ -10413,6 +10717,68 @@ tl_windows_setup_instances:
             (compiler-backend-string-contains?
               asm
               ".extern .L_tl_append_file_status\n"))))]
+    [(ErrCompilerBackend _) false]))
+
+(define (compiler-backend-fs-runtime-source) : String
+  "(define (main) : i64
+  (+ (fs-process-id)
+    (+ (fs-mkdir-status \"target/typelisp-fs\")
+      (+ (fs-remove-file-status \"target/typelisp-fs/artifact.o\")
+        (fs-remove-dir-status \"target/typelisp-fs\")))))")
+
+(define (compiler-backend-fs-runtime-ok?) : bool
+  (match (compiler-backend-emit-source (compiler-backend-fs-runtime-source))
+    [(OkCompilerBackend asm)
+      (and
+        (backend-and8
+          (compiler-backend-string-contains? asm ".L_tl_fs_mkdir_status:\n")
+          (compiler-backend-string-contains?
+            asm
+            ".L_tl_fs_remove_file_status:\n")
+          (compiler-backend-string-contains?
+            asm
+            ".L_tl_fs_remove_dir_status:\n")
+          (compiler-backend-string-contains? asm ".L_tl_fs_process_id:\n")
+          (compiler-backend-string-contains? asm "    movq $83, %rax\n")
+          (compiler-backend-string-contains? asm "    movq $87, %rax\n")
+          (compiler-backend-string-contains? asm "    movq $84, %rax\n")
+          (compiler-backend-string-contains? asm "    movq $39, %rax\n"))
+        (and
+          (not (compiler-backend-string-contains? asm "    .extern _mkdir\n"))
+          (not
+            (compiler-backend-string-contains?
+              asm
+              ".extern .L_tl_fs_mkdir_status\n"))))]
+    [(ErrCompilerBackend _) false]))
+
+(define (compiler-backend-windows-fs-runtime-ok?) : bool
+  (match (compiler-backend-emit-source-for-target
+    (compiler-backend-fs-runtime-source)
+    (BackendTargetWindows))
+    [(OkCompilerBackend asm)
+      (and
+        (backend-and8
+          (compiler-backend-string-contains? asm ".L_tl_fs_mkdir_status:\n")
+          (compiler-backend-string-contains?
+            asm
+            ".L_tl_fs_remove_file_status:\n")
+          (compiler-backend-string-contains?
+            asm
+            ".L_tl_fs_remove_dir_status:\n")
+          (compiler-backend-string-contains? asm ".L_tl_fs_process_id:\n")
+          (compiler-backend-string-contains? asm "    call _mkdir\n")
+          (compiler-backend-string-contains? asm "    call _errno\n")
+          (compiler-backend-string-contains?
+            asm
+            "    call GetCurrentProcessId\n")
+          (compiler-backend-string-contains? asm "    .extern _mkdir\n"))
+        (and
+          (compiler-backend-string-contains?
+            asm
+            "    .extern GetCurrentProcessId\n")
+          (and
+            (compiler-backend-string-contains? asm "    movq $38, %rax\n")
+            (not (compiler-backend-string-contains? asm "    syscall")))))]
     [(ErrCompilerBackend _) false]))
 
 ;; A refutable literal payload match (#651) lowers to a payload comparison that
@@ -10714,24 +11080,28 @@ tl_windows_setup_instances:
           (compiler-backend-windows-process-output-ok?)
           (compiler-backend-append-file-status-ok?))
         (and
-          (backend-and8
-            (compiler-backend-user-helper-name-ok?)
-            (compiler-backend-file-handle-open-close-runtime-ok?)
-            (compiler-backend-string-runtime-ok?)
-            (compiler-backend-env-runtime-ok?)
-            (compiler-backend-expanded-scalar-regs-ok?)
-            (compiler-backend-regalloc-f64-ok?)
-            (compiler-backend-runtime-coexist-ok?)
-            (compiler-backend-module-symbol-ok?))
+          (compiler-backend-fs-runtime-ok?)
           (and
-            (compiler-backend-extern-metadata-symbol-ok?)
+            (compiler-backend-windows-fs-runtime-ok?)
             (and
-              (backend-and4
-                (compiler-backend-scalar-wide-ops-ok?)
-                (compiler-backend-scalar-div-mod-ok?)
-                (compiler-backend-f64-abi-ok?)
-                (compiler-backend-aggregate-storage-shape-ok?))
-              (compiler-backend-alloc-runtime-shape-ok?)))))))
+              (backend-and8
+                (compiler-backend-user-helper-name-ok?)
+                (compiler-backend-file-handle-open-close-runtime-ok?)
+                (compiler-backend-string-runtime-ok?)
+                (compiler-backend-env-runtime-ok?)
+                (compiler-backend-expanded-scalar-regs-ok?)
+                (compiler-backend-regalloc-f64-ok?)
+                (compiler-backend-runtime-coexist-ok?)
+                (compiler-backend-module-symbol-ok?))
+              (and
+                (compiler-backend-extern-metadata-symbol-ok?)
+                (and
+                  (backend-and4
+                    (compiler-backend-scalar-wide-ops-ok?)
+                    (compiler-backend-scalar-div-mod-ok?)
+                    (compiler-backend-f64-abi-ok?)
+                    (compiler-backend-aggregate-storage-shape-ok?))
+                  (compiler-backend-alloc-runtime-shape-ok?)))))))))
     42
     (begin
       (panic "backend: smoke output mismatch")

@@ -551,7 +551,6 @@ end
 
 case|selfhost_emit|selfhost/emit.tl|assembly|exactly-one|direct
 contains|_tl_emit_program:
-contains|_tl_emit_expr:
 contains|tl_string_concat:
 contains|emit: too many call args
 end

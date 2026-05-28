@@ -5036,7 +5036,7 @@
       (match block
         [(IrBlock label _) (CompilerBackendSomeLabel label)])]))
 
-(define (compiler-backend-emit-blocks
+(define (compiler-backend-emit-blocks-into
   [target : CompilerBackendTarget]
   [function : String]
   [source-function : String]
@@ -5051,9 +5051,10 @@
   [externs : CompilerIrExternList]
   [spans : CompilerSourceSpans]
   [func-diag : CompilerDiagnostic]
-  [use-counts : (Array i64)]) : ResultCompilerBackend
+  [use-counts : (Array i64)]
+  [buf : TextBuf]) : ResultCompilerBackend
   (match blocks
-    [(IrBlockNil) (OkCompilerBackend "")]
+    [(IrBlockNil) (OkCompilerBackend (text-buf-render buf))]
     [(IrBlockCons block rest)
       (match (compiler-backend-emit-block
         target
@@ -5073,7 +5074,7 @@
         func-diag
         use-counts)
         [(OkCompilerBackend head)
-          (match (compiler-backend-emit-blocks
+          (compiler-backend-emit-blocks-into
             target
             function
             source-function
@@ -5088,11 +5089,43 @@
             externs
             spans
             func-diag
-            use-counts)
-            [(OkCompilerBackend tail)
-              (OkCompilerBackend (string-append head tail))]
-            [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
+            use-counts
+            (text-buf-append buf head))]
         [(ErrCompilerBackend message) (ErrCompilerBackend message)])]))
+
+(define (compiler-backend-emit-blocks
+  [target : CompilerBackendTarget]
+  [function : String]
+  [source-function : String]
+  [all-blocks : CompilerIrBlockList]
+  [blocks : CompilerIrBlockList]
+  [assignments : CompilerRegAssignmentList]
+  [vars : i64]
+  [types : CompilerRegVarTypeList]
+  [ret-ty : AstType]
+  [plan : CompilerBackendRuntimePlan]
+  [functions : CompilerIrFunctionList]
+  [externs : CompilerIrExternList]
+  [spans : CompilerSourceSpans]
+  [func-diag : CompilerDiagnostic]
+  [use-counts : (Array i64)]) : ResultCompilerBackend
+  (compiler-backend-emit-blocks-into
+    target
+    function
+    source-function
+    all-blocks
+    blocks
+    assignments
+    vars
+    types
+    ret-ty
+    plan
+    functions
+    externs
+    spans
+    func-diag
+    use-counts
+    (text-buf-empty)))
 
 ;; Move INCOMING parameters into their local frame slots (#750). Register
 ;; params come from rdi/rsi/.. (or xmm0..) per the calling convention; params

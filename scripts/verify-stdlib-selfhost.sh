@@ -67,6 +67,33 @@ command -v ld >/dev/null 2>&1 || {
     exit 1
 }
 
+run_with_heartbeat() {
+    label=$1
+    shift
+    status_file="$WORKDIR/heartbeat-$$.status"
+    rm -f "$status_file"
+    (
+        set +e
+        "$@"
+        code=$?
+        printf '%s\n' "$code" > "$status_file"
+        exit "$code"
+    ) &
+    pid=$!
+    elapsed=0
+    while [ ! -f "$status_file" ]; do
+        sleep 5
+        elapsed=$((elapsed + 5))
+        if [ $((elapsed % 30)) -eq 0 ]; then
+            echo "[$label] still running (${elapsed}s)" >&2
+        fi
+    done
+    wait "$pid" 2> /dev/null || true
+    code=$(sed -n '1p' "$status_file")
+    rm -f "$status_file"
+    return "$code"
+}
+
 WORKDIR="$ROOT/target/stdlib-selfhost-verify"
 rm -rf "$WORKDIR"
 mkdir -p "$WORKDIR"
@@ -76,16 +103,26 @@ CHECK_OBJ="$WORKDIR/check.o"
 CHECK_OUT="$WORKDIR/check.compile.out"
 CHECK_ERR="$WORKDIR/check.compile.err"
 
-if ! "$COMPILER" compile selfhost/check.tl --stdlib-root "$ROOT/stdlib" -o "$CHECK_ASM" >"$CHECK_OUT" 2>"$CHECK_ERR"; then
+compile_check_driver() {
+    "$COMPILER" compile selfhost/check.tl --stdlib-root "$ROOT/stdlib" -o "$CHECK_ASM" \
+        >"$CHECK_OUT" 2>"$CHECK_ERR"
+}
+
+echo "[stdlib-selfhost] compiling selfhost/check.tl"
+if ! run_with_heartbeat \
+    "stdlib-selfhost selfhost/check.tl compile" \
+    compile_check_driver; then
     echo "FAIL: selfhost/check.tl compile failed" >&2
     sed 's/^/  /' "$CHECK_ERR" >&2 || true
     exit 1
 fi
+echo "[stdlib-selfhost] assembling selfhost/check.tl"
 if ! as "$CHECK_ASM" -o "$CHECK_OBJ" >>"$CHECK_OUT" 2>>"$CHECK_ERR"; then
     echo "FAIL: selfhost/check.tl assemble failed" >&2
     sed 's/^/  /' "$CHECK_ERR" >&2 || true
     exit 1
 fi
+echo "[stdlib-selfhost] linking selfhost/check.tl"
 if ! ld "$CHECK_OBJ" -o "$CHECK_BIN" -dynamic-linker /lib64/ld-linux-x86-64.so.2 -lc \
     >>"$CHECK_OUT" 2>>"$CHECK_ERR"; then
     echo "FAIL: selfhost/check.tl link failed" >&2

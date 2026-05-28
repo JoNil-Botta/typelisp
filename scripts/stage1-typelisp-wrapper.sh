@@ -11,6 +11,7 @@ set -eu
 
 STAGE1_BIN=${TYPELISP_STAGE1_BIN:-}
 STAGE1_TEST_BIN=${TYPELISP_STAGE1_TEST_BIN:-}
+STAGE1_DOC_BIN=${TYPELISP_STAGE1_DOC_BIN:-}
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 
 fail() {
@@ -23,8 +24,16 @@ usage() {
 usage: typelisp <command> [args...]
 
 stage1 wrapper commands:
-  compile, check, build, run, test, fmt
+  compile, check, build, run, test, fmt, doc
   debug check, debug host-action
+EOF
+}
+
+doc_usage() {
+    cat >&2 <<'EOF'
+Usage:
+    typelisp doc <file.tl> [-o <out.md>] [--stdlib-root <dir>...]
+    typelisp doc --test <file.tl> [--stdlib-root <dir>...]
 EOF
 }
 
@@ -571,6 +580,60 @@ selfhost_test_driver() {
     printf '%s\n' "$driver"
 }
 
+selfhost_doc_driver() {
+    require_stage1
+    require_linux_host_action
+
+    if [ -n "$STAGE1_DOC_BIN" ]; then
+        if [ ! -x "$STAGE1_DOC_BIN" ]; then
+            fail "stage1 doc driver is not executable: $STAGE1_DOC_BIN"
+        fi
+        printf '%s\n' "$STAGE1_DOC_BIN"
+        return
+    fi
+
+    cache_dir=${TYPELISP_STAGE1_DRIVER_CACHE_DIR:-"$ROOT/target/stage1-wrapper-cache"}
+    driver="$cache_dir/selfhost-doc"
+    marker="$cache_dir/stage1-bin.path"
+    build_dir="$cache_dir/doc-build"
+    roots="$build_dir/stdlib.roots"
+    source="$ROOT/selfhost/doc.tl"
+
+    rebuild=0
+    if [ ! -x "$driver" ]; then
+        rebuild=1
+    elif [ ! -f "$marker" ]; then
+        rebuild=1
+    elif [ "$(sed -n '1p' "$marker")" != "$STAGE1_BIN" ]; then
+        rebuild=1
+    elif [ "$STAGE1_BIN" -nt "$driver" ]; then
+        rebuild=1
+    elif [ "$source" -nt "$driver" ]; then
+        rebuild=1
+    fi
+
+    if [ "$rebuild" -eq 1 ]; then
+        rm -rf "$build_dir"
+        mkdir -p "$build_dir"
+        : > "$roots"
+        heartbeat_log "[stage1-wrapper] building selfhost doc driver"
+        run_with_heartbeat \
+            "stage1-wrapper selfhost/doc.tl compile" \
+            compile_source_to_exe \
+            "$source" \
+            "$driver.tmp" \
+            linux-x86_64 \
+            scalar \
+            "" \
+            "$roots" \
+            "$build_dir" > /dev/null
+        mv "$driver.tmp" "$driver"
+        printf '%s\n' "$STAGE1_BIN" > "$marker"
+    fi
+
+    printf '%s\n' "$driver"
+}
+
 emit_file() {
     path=$1
     if [ -s "$path" ]; then
@@ -715,6 +778,96 @@ fmt_command() {
     run_executable_with_args "$bin" "$runtime_args"
 }
 
+doc_command() {
+    if [ "$#" -eq 0 ]; then
+        echo "Error: missing doc subcommand or file argument" >&2
+        doc_usage
+        exit 1
+    fi
+    case "$1" in
+        help | --help | -h)
+            doc_usage
+            return
+            ;;
+    esac
+
+    case "$1" in
+        --test | test)
+            shift
+            if [ "$#" -eq 0 ]; then
+                echo "Error: missing file argument" >&2
+                doc_usage
+                exit 1
+            fi
+            source=$1
+            shift
+            workdir=${TMPDIR:-/tmp}/typelisp-stage1-doc-test-$$
+            rm -rf "$workdir"
+            mkdir -p "$workdir"
+            roots="$workdir/stdlib.roots"
+            : > "$roots"
+
+            while [ "$#" -gt 0 ]; do
+                case "$1" in
+                    --stdlib-root)
+                        shift
+                        [ "$#" -gt 0 ] || fail "Error: --stdlib-root requires a value"
+                        append_file_line "$roots" "$1"
+                        ;;
+                    *)
+                        echo "Warning: unknown flag: $1" >&2
+                        ;;
+                esac
+                shift || break
+            done
+
+            set -- --test "$source"
+            while IFS= read -r root || [ -n "$root" ]; do
+                set -- "$@" --stdlib-root "$root"
+            done < "$roots"
+            driver=$(selfhost_doc_driver)
+            "$driver" "$@"
+            ;;
+        *)
+            source=$1
+            shift
+            output=$(default_compile_output "$source" ".md")
+            workdir=${TMPDIR:-/tmp}/typelisp-stage1-doc-$$
+            rm -rf "$workdir"
+            mkdir -p "$workdir"
+            roots="$workdir/stdlib.roots"
+            : > "$roots"
+
+            while [ "$#" -gt 0 ]; do
+                case "$1" in
+                    -o)
+                        shift
+                        [ "$#" -gt 0 ] || fail "Error: -o requires a value"
+                        output=$1
+                        ;;
+                    --stdlib-root)
+                        shift
+                        [ "$#" -gt 0 ] || fail "Error: --stdlib-root requires a value"
+                        append_file_line "$roots" "$1"
+                        ;;
+                    *)
+                        echo "Warning: unknown flag: $1" >&2
+                        ;;
+                esac
+                shift || break
+            done
+
+            set -- --load "$source" "$output"
+            while IFS= read -r root || [ -n "$root" ]; do
+                set -- "$@" --stdlib-root "$root"
+            done < "$roots"
+            driver=$(selfhost_doc_driver)
+            "$driver" "$@"
+            echo "Generated: $output"
+            ;;
+    esac
+}
+
 debug_command() {
     [ "$#" -gt 0 ] || fail "Error: missing debug subcommand"
     case "$1" in
@@ -751,7 +904,8 @@ case "$command" in
     run) run_command "$@" ;;
     test) test_command "$@" ;;
     fmt) fmt_command "$@" ;;
-    lint | doc | tokenize | parse)
+    doc) doc_command "$@" ;;
+    lint | tokenize | parse)
         fail "stage1 wrapper does not support '$command' yet; use the seed compiler for this gate"
         ;;
     debug) debug_command "$@" ;;

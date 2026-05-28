@@ -2609,6 +2609,77 @@
                   ""))))]
         [(ErrCompilerBackend message) (ErrCompilerBackend message)]))))
 
+(define (compiler-backend-emit-trivial-phi-return-edge-instrs
+  [source-function : String]
+  [instrs : CompilerIrInstrList]
+  [from-label : String]
+  [assignments : CompilerRegAssignmentList]
+  [vars : i64]
+  [ret-ty : AstType]) : ResultCompilerBackend
+  (match instrs
+    [(IrInstrCons instr rest)
+      (match instr
+        [(IrInstrPhi dst inputs _)
+          (match rest
+            [(IrInstrCons next after-return)
+              (match next
+                [(IrInstrReturn maybe)
+                  (match after-return
+                    [(IrInstrNil)
+                      (match maybe
+                        [(IrSomeValue value)
+                          (if (compiler-backend-branch-uses-var? value dst)
+                            (match (compiler-backend-phi-input-value
+                              inputs
+                              from-label)
+                              [(OkBackendValue incoming)
+                                (compiler-backend-emit-return
+                                  source-function
+                                  (IrSomeValue incoming)
+                                  assignments
+                                  vars
+                                  ret-ty)]
+                              [(ErrBackendValue message)
+                                (ErrCompilerBackend
+                                  (compiler-diagnostic-at-start "" message))])
+                            (OkCompilerBackend ""))]
+                        [(IrNoValue) (OkCompilerBackend "")])]
+                    [_ (OkCompilerBackend "")])]
+                [_ (OkCompilerBackend "")])]
+            [_ (OkCompilerBackend "")])]
+        [_ (OkCompilerBackend "")])]
+    [_ (OkCompilerBackend "")]))
+
+(define (compiler-backend-emit-trivial-phi-return-edge
+  [source-function : String]
+  [blocks : CompilerIrBlockList]
+  [target-label : String]
+  [from-label : String]
+  [assignments : CompilerRegAssignmentList]
+  [vars : i64]
+  [ret-ty : AstType]) : ResultCompilerBackend
+  (match blocks
+    [(IrBlockNil) (OkCompilerBackend "")]
+    [(IrBlockCons block rest)
+      (match block
+        [(IrBlock block-label instrs)
+          (if (string-eq block-label target-label)
+            (compiler-backend-emit-trivial-phi-return-edge-instrs
+              source-function
+              instrs
+              from-label
+              assignments
+              vars
+              ret-ty)
+            (compiler-backend-emit-trivial-phi-return-edge
+              source-function
+              rest
+              target-label
+              from-label
+              assignments
+              vars
+              ret-ty))])]))
+
 (define (compiler-backend-emit-mov
   [assignments : CompilerRegAssignmentList]
   [dst : i64]
@@ -2840,24 +2911,38 @@
                       message
                       instr-diag))])]))]
       [(IrInstrJump target)
-        (match (compiler-backend-emit-phi-edge-copies
-          assignments
+        (match (compiler-backend-emit-trivial-phi-return-edge
+          source-function
           blocks
           target
-          current-label)
-          [(OkCompilerBackend copies)
-            (OkCompilerBackend
-              (string-append
-                copies
-                (if (compiler-backend-jump-target-is-fallthrough?
-                  target
-                  fallthrough)
-                  ""
-                  (backend-cat4
-                    "    jmp "
-                    (compiler-backend-asm-label function target)
-                    "\n"
-                    ""))))]
+          current-label
+          assignments
+          vars
+          ret-ty)
+          [(OkCompilerBackend direct-return)
+            (if (string-eq direct-return "")
+              (match (compiler-backend-emit-phi-edge-copies
+                assignments
+                blocks
+                target
+                current-label)
+                [(OkCompilerBackend copies)
+                  (OkCompilerBackend
+                    (string-append
+                      copies
+                      (if (compiler-backend-jump-target-is-fallthrough?
+                        target
+                        fallthrough)
+                        ""
+                        (backend-cat4
+                          "    jmp "
+                          (compiler-backend-asm-label function target)
+                          "\n"
+                          ""))))]
+                [(ErrCompilerBackend message)
+                  (ErrCompilerBackend
+                    (compiler-backend-apply-instr-diagnostic message instr-diag))])
+              (OkCompilerBackend direct-return))]
           [(ErrCompilerBackend message)
             (ErrCompilerBackend
               (compiler-backend-apply-instr-diagnostic message instr-diag))])]

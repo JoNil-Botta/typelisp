@@ -1794,10 +1794,12 @@
   (let
     [stack-count : i64
       (compiler-backend-call-stack-arg-count target args types 0 0 0 0)]
-    (if (and (= stack-count 0) (not (compiler-backend-target-windows? target)))
-      0
-      (compiler-backend-round-up-16
-        (+ (compiler-backend-outgoing-shadow-space target) (* stack-count 8))))))
+    (match target
+      [(BackendTargetWindows) (compiler-backend-round-up-16 (* stack-count 8))]
+      [(BackendTargetLinux)
+        (if (= stack-count 0)
+          0
+          (compiler-backend-round-up-16 (* stack-count 8)))])))
 
 (define (compiler-backend-emit-call-args
   [target : CompilerBackendTarget]
@@ -2941,8 +2943,10 @@
                       [(OkCompilerBackend body)
                         (let
                           [frame : i64
-                            (compiler-backend-frame-size
-                              (compiler-backend-frame-slots vars assignments))]
+                            (+
+                              (compiler-backend-frame-size
+                                (compiler-backend-frame-slots vars assignments))
+                              (compiler-backend-outgoing-shadow-space target))]
                           (OkCompilerBackend
                             (backend-cat5
                               ".globl "
@@ -11428,7 +11432,7 @@ tl_windows_setup_instances:
       (and
         (not (compiler-backend-string-contains? asm "too many call args"))
         (and
-          (compiler-backend-string-contains? asm "    subq $64, %rsp\n")
+          (not (compiler-backend-string-contains? asm "    addq $64, %rsp\n"))
           (and
             (compiler-backend-string-contains? asm "    movq %r11, 32(%rsp)\n")
             (and

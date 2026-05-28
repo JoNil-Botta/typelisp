@@ -5164,15 +5164,16 @@
                         (ErrCompilerBackend message)]))]
                 [(ErrCompilerBackend message) (ErrCompilerBackend message)])))))]))
 
-(define (compiler-backend-emit-functions
+(define (compiler-backend-emit-functions-into
   [target : CompilerBackendTarget]
   [functions : CompilerIrFunctionList]
   [all-functions : CompilerIrFunctionList]
   [externs : CompilerIrExternList]
   [plan : CompilerBackendRuntimePlan]
-  [spans : CompilerSourceSpans]) : ResultCompilerBackend
+  [spans : CompilerSourceSpans]
+  [buf : TextBuf]) : ResultCompilerBackend
   (match functions
-    [(IrFunctionNil) (OkCompilerBackend "")]
+    [(IrFunctionNil) (OkCompilerBackend (text-buf-render buf))]
     [(IrFunctionCons func rest)
       (match (compiler-backend-emit-function
         target
@@ -5182,17 +5183,31 @@
         plan
         spans)
         [(OkCompilerBackend head)
-          (match (compiler-backend-emit-functions
+          (compiler-backend-emit-functions-into
             target
             rest
             all-functions
             externs
             plan
-            spans)
-            [(OkCompilerBackend tail)
-              (OkCompilerBackend (string-append head tail))]
-            [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
+            spans
+            (text-buf-append buf head))]
         [(ErrCompilerBackend message) (ErrCompilerBackend message)])]))
+
+(define (compiler-backend-emit-functions
+  [target : CompilerBackendTarget]
+  [functions : CompilerIrFunctionList]
+  [all-functions : CompilerIrFunctionList]
+  [externs : CompilerIrExternList]
+  [plan : CompilerBackendRuntimePlan]
+  [spans : CompilerSourceSpans]) : ResultCompilerBackend
+  (compiler-backend-emit-functions-into
+    target
+    functions
+    all-functions
+    externs
+    plan
+    spans
+    (text-buf-empty)))
 
 (define (compiler-backend-string-list-contains?
   [strings : BackendStringList]

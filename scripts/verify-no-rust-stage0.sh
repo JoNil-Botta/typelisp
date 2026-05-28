@@ -160,9 +160,15 @@ if [ "$HOST_OS" = linux ]; then
     # currently too heavy for the runner; #1401 tracks restoring direct stage1
     # test-command coverage without the host-action driver path.
     TYPELISP_STAGE1_SKIP_TEST_SMOKE=1
+    # Building the full selfhost doc driver through stage1 is also too heavy
+    # for this hosted lane; #1437 tracks restoring direct stage1 coverage for
+    # compiler-sized selfhost drivers.
+    TYPELISP_STAGE1_SKIP_DOC_SMOKE=1
     export TYPELISP_STAGE1_SKIP_TEST_SMOKE
+    export TYPELISP_STAGE1_SKIP_DOC_SMOKE
     run_with_compiler "$STAGE1_TYPELISP_BIN" "stage1 CLI host-action wrapper smoke" scripts/check-stage1-wrapper.sh
     unset TYPELISP_STAGE1_SKIP_TEST_SMOKE
+    unset TYPELISP_STAGE1_SKIP_DOC_SMOKE
     run_with_compiler "$STAGE1_TYPELISP_BIN" "stage1 deterministic assembly" scripts/check-deterministic-asm.sh
     run_with_compiler "$STAGE1_TYPELISP_BIN" "stage1 selfhost compile manifest" env TYPELISP_COMPILE_MANIFEST_EXPECTATION_MODE=stage1 scripts/verify-selfhost-compile-manifest.sh
     run_with_compiler "$STAGE1_TYPELISP_BIN" "stage1 stdlib documentation" scripts/verify-stdlib-docs.sh

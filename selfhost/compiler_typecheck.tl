@@ -632,6 +632,141 @@
     [(TcStringCons item rest)
       (and (tc-string-list-contains b item) (tc-string-list-eq rest b))]))
 
+(define (tc-string-list-overlaps? [a : TcStringList] [b : TcStringList]) : bool
+  (match a
+    [(TcStringNil) false]
+    [(TcStringCons item rest)
+      (if (tc-string-list-contains b item)
+        true
+        (tc-string-list-overlaps? rest b))]))
+
+(define (tc-env-binding-matches-lifetime?
+  [key : String]
+  [ty : AstType]
+  [lifetime : String]) : bool
+  (if (string-eq key lifetime)
+    true
+    (if (string-eq key (tc-region-marker-name))
+      (match ty
+        [(AstTyVar region) (string-eq region lifetime)]
+        [_ false])
+      false)))
+
+(define (tc-lifetime-visible? [env : TcTypeEnv] [lifetime : String]) : bool
+  (match env
+    [(TcTypeNil) false]
+    [(TcTypeBind key ty rest)
+      (if (tc-env-binding-matches-lifetime? key ty lifetime)
+        true
+        (tc-lifetime-visible? rest lifetime))]))
+
+(define (tc-reference-lifetimes-visible?
+  [env : TcTypeEnv]
+  [lifetimes : TcStringList]) : bool
+  (match lifetimes
+    [(TcStringNil) true]
+    [(TcStringCons lifetime rest)
+      (and
+        (tc-lifetime-visible? env lifetime)
+        (tc-reference-lifetimes-visible? env rest))]))
+
+(define (tc-lifetime-outlives-binding-scan
+  [env : TcTypeEnv]
+  [lifetime : String]
+  [target : String]
+  [seen-target : bool]) : bool
+  (match env
+    [(TcTypeNil) false]
+    [(TcTypeBind key ty rest)
+      (if (tc-env-binding-matches-lifetime? key ty lifetime)
+        seen-target
+        (tc-lifetime-outlives-binding-scan
+          rest
+          lifetime
+          target
+          (or seen-target (string-eq key target))))]))
+
+(define (tc-lifetime-outlives-binding?
+  [env : TcTypeEnv]
+  [lifetime : String]
+  [target : String]) : bool
+  (tc-lifetime-outlives-binding-scan env lifetime target false))
+
+(define (tc-reference-lifetimes-outlive-binding?
+  [env : TcTypeEnv]
+  [lifetimes : TcStringList]
+  [target : String]) : bool
+  (match lifetimes
+    [(TcStringNil) true]
+    [(TcStringCons lifetime rest)
+      (and
+        (tc-lifetime-outlives-binding? env lifetime target)
+        (tc-reference-lifetimes-outlive-binding? env rest target))]))
+
+(define (tc-lifetime-outlives-lifetime-scan
+  [env : TcTypeEnv]
+  [value-lifetime : String]
+  [target-lifetime : String]
+  [seen-target : bool]) : bool
+  (if (string-eq value-lifetime target-lifetime)
+    true
+    (match env
+      [(TcTypeNil) false]
+      [(TcTypeBind key ty rest)
+        (if (tc-env-binding-matches-lifetime? key ty value-lifetime)
+          seen-target
+          (tc-lifetime-outlives-lifetime-scan
+            rest
+            value-lifetime
+            target-lifetime
+            (or
+              seen-target
+              (tc-env-binding-matches-lifetime? key ty target-lifetime))))])))
+
+(define (tc-lifetime-outlives-lifetime?
+  [env : TcTypeEnv]
+  [value-lifetime : String]
+  [target-lifetime : String]) : bool
+  (tc-lifetime-outlives-lifetime-scan env value-lifetime target-lifetime false))
+
+(define (tc-reference-lifetimes-outlive-lifetime?
+  [env : TcTypeEnv]
+  [lifetimes : TcStringList]
+  [target-lifetime : String]) : bool
+  (match lifetimes
+    [(TcStringNil) true]
+    [(TcStringCons lifetime rest)
+      (and
+        (tc-lifetime-outlives-lifetime? env lifetime target-lifetime)
+        (tc-reference-lifetimes-outlive-lifetime? env rest target-lifetime))]))
+
+(define (tc-ensure-reference-value-can-bind
+  [env : TcTypeEnv]
+  [value-ty : AstType]) : ResultTcUnit
+  (let
+    [lifetimes : TcStringList (tc-type-collect-reference-lifetimes value-ty)]
+    (if (tc-reference-lifetimes-visible? env lifetimes)
+      OkTcUnit
+      (ErrTcUnit "typecheck: reference value would escape lexical scope"))))
+
+(define (tc-ensure-reference-value-can-assign
+  [env : TcTypeEnv]
+  [target : String]
+  [value-ty : AstType]) : ResultTcUnit
+  (let
+    [lifetimes : TcStringList (tc-type-collect-reference-lifetimes value-ty)]
+    (if (tc-reference-lifetimes-outlive-binding? env lifetimes target)
+      OkTcUnit
+      (ErrTcUnit
+        "typecheck: cannot store reference into longer-lived binding; reference value would escape lexical scope"))))
+
+(define (tc-ensure-reference-type-does-not-escape-names
+  [ty : AstType]
+  [names : TcStringList]) : ResultTcUnit
+  (if (tc-string-list-overlaps? (tc-type-collect-reference-lifetimes ty) names)
+    (ErrTcUnit "typecheck: reference value would escape lexical scope")
+    OkTcUnit))
+
 (define (tc-type-strip-region [ty : AstType]) : AstType
   (match ty
     [(AstTyRegion _ inner) (tc-type-strip-region inner)]
@@ -736,6 +871,43 @@
     [(AstTyMutRef _ _) true]
     [(AstTyRegion _ inner) (tc-type-contains-reference? inner)]
     [_ false]))
+
+(define (tc-type-list-collect-reference-lifetimes
+  [types : AstTypeList]
+  [out : TcStringList]) : TcStringList
+  (match types
+    [(AstTypeNil) out]
+    [(AstTypeCons head tail)
+      (tc-type-list-collect-reference-lifetimes
+        tail
+        (tc-type-collect-reference-lifetimes-into head out))]))
+
+(define (tc-type-collect-reference-lifetimes-into
+  [ty : AstType]
+  [out : TcStringList]) : TcStringList
+  (match ty
+    [(AstTyFunc args ret)
+      (tc-type-collect-reference-lifetimes-into
+        ret
+        (tc-type-list-collect-reference-lifetimes args out))]
+    [(AstTyTuple elems) (tc-type-list-collect-reference-lifetimes elems out)]
+    [(AstTyArray elem _) (tc-type-collect-reference-lifetimes-into elem out)]
+    [(AstTyDynArray elem) (tc-type-collect-reference-lifetimes-into elem out)]
+    [(AstTyPtr elem) (tc-type-collect-reference-lifetimes-into elem out)]
+    [(AstTyMutPtr elem) (tc-type-collect-reference-lifetimes-into elem out)]
+    [(AstTyRef lifetime inner)
+      (tc-type-collect-reference-lifetimes-into
+        inner
+        (tc-string-list-add out lifetime))]
+    [(AstTyMutRef lifetime inner)
+      (tc-type-collect-reference-lifetimes-into
+        inner
+        (tc-string-list-add out lifetime))]
+    [(AstTyRegion _ inner) (tc-type-collect-reference-lifetimes-into inner out)]
+    [_ out]))
+
+(define (tc-type-collect-reference-lifetimes [ty : AstType]) : TcStringList
+  (tc-type-collect-reference-lifetimes-into ty TcStringNil))
 
 (define (tc-maybe-type-contains-reference? [maybe-ty : AstMaybeType]) : bool
   (match maybe-ty
@@ -2349,18 +2521,24 @@
                     (tc-resolve-type ctx want)
                     "typecheck: let binding type mismatch")
                     [(OkTcUnit)
-                      (tc-let-bindings
-                        ctx
-                        (tc-bind
-                          env
-                          name
-                          (if (tc-type-contains-any-region init-ty)
-                            init-ty
-                            (tc-resolve-type ctx want)))
-                        rest)]
+                      (match (tc-ensure-reference-value-can-bind env init-ty)
+                        [(OkTcUnit)
+                          (tc-let-bindings
+                            ctx
+                            (tc-bind
+                              env
+                              name
+                              (if (tc-type-contains-any-region init-ty)
+                                init-ty
+                                (tc-resolve-type ctx want)))
+                            rest)]
+                        [(ErrTcUnit message) (ErrTcEnv message)])]
                     [(ErrTcUnit message) (ErrTcEnv message)])]
                 [(AstNoType)
-                  (tc-let-bindings ctx (tc-bind env name init-ty) rest)])]
+                  (match (tc-ensure-reference-value-can-bind env init-ty)
+                    [(OkTcUnit)
+                      (tc-let-bindings ctx (tc-bind env name init-ty) rest)]
+                    [(ErrTcUnit message) (ErrTcEnv message)])])]
             [(ErrTcType message) (ErrTcEnv message)])])]))
 
 (define (tc-begin-list
@@ -3218,11 +3396,14 @@
         (string-eq key (tc-region-marker-name))
         (string-eq key (tc-default-boundary-name)))
         (tc-check-lambda-region-captures-scan rest bound body)
-        (if (and
-          (tc-type-contains-any-region ty)
-          (tc-expr-uses-free-name? body key bound))
-          (ErrTcUnit
-            "typecheck: lambda cannot capture region-tagged value; region value would escape")
+        (if (tc-expr-uses-free-name? body key bound)
+          (if (tc-type-contains-reference? ty)
+            (ErrTcUnit
+              "typecheck: lambda cannot capture immutable reference; reference value would escape lexical scope")
+            (if (tc-type-contains-any-region ty)
+              (ErrTcUnit
+                "typecheck: lambda cannot capture region-tagged value; region value would escape")
+              (tc-check-lambda-region-captures-scan rest bound body)))
           (tc-check-lambda-region-captures-scan rest bound body)))]))
 
 (define (tc-check-lambda-region-captures
@@ -3893,6 +4074,63 @@
       (ErrTcBorrowPlace
         "typecheck: borrow requires a local, parameter, or aggregate place")]))
 
+(define (tc-store-place-lifetime-var [name : String] [ty : AstType]) : ResultTcString
+  (match (tc-type-outer-region ty)
+    [(TcSomeString region) (OkTcString region)]
+    [(TcNoString) (OkTcString name)]))
+
+(define (tc-store-place-lifetime
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [expr : AstExpr]) : ResultTcString
+  (match (ast-expr-unspan expr)
+    [(AstExprVar name)
+      (match (tc-lookup env name)
+        [(OkTcType ty) (tc-store-place-lifetime-var name ty)]
+        [(ErrTcType message) (ErrTcString message)])]
+    [(AstExprStructGet receiver _) (tc-store-place-lifetime ctx env receiver)]
+    [(AstExprTupleRef tuple _) (tc-store-place-lifetime ctx env tuple)]
+    [(AstExprArrayRef array index)
+      (match (tc-expr ctx env index)
+        [(OkTcType index-ty)
+          (if (tc-integer-type? index-ty)
+            (tc-store-place-lifetime ctx env array)
+            (ErrTcString "typecheck: array index must be integer"))]
+        [(ErrTcType message) (ErrTcString message)])]
+    [_ (ErrTcString "typecheck: expression is not a storage place")]))
+
+(define (tc-ensure-reference-value-can-store-in-place
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [place-expr : AstExpr]
+  [value-ty : AstType]
+  [context : String]) : ResultTcUnit
+  (let
+    [lifetimes : TcStringList (tc-type-collect-reference-lifetimes value-ty)]
+    (match lifetimes
+      [(TcStringNil) OkTcUnit]
+      [_
+        (match (tc-store-place-lifetime ctx env place-expr)
+          [(OkTcString target-lifetime)
+            (if (tc-reference-lifetimes-outlive-lifetime?
+              env
+              lifetimes
+              target-lifetime)
+              OkTcUnit
+              (ErrTcUnit
+                (string-append
+                  "typecheck: cannot store reference into longer-lived "
+                  (string-append
+                    context
+                    "; reference value would escape lexical scope"))))]
+          [(ErrTcString _)
+            (ErrTcUnit
+              (string-append
+                "typecheck: cannot store reference into non-place "
+                (string-append
+                  context
+                  "; reference value would escape lexical scope")))])])))
+
 (define (tc-borrow-expr
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -4549,7 +4787,15 @@
         [(ErrTcType message) (ErrTcType message)])]
     [(AstExprLet bindings body)
       (match (tc-let-bindings ctx env bindings)
-        [(OkTcEnv next-env) (tc-expr ctx next-env body)]
+        [(OkTcEnv next-env)
+          (match (tc-expr ctx next-env body)
+            [(OkTcType body-ty)
+              (match (tc-ensure-reference-type-does-not-escape-names
+                body-ty
+                (tc-let-binding-list-add-bound-names bindings TcStringNil))
+                [(OkTcUnit) (OkTcType body-ty)]
+                [(ErrTcUnit message) (ErrTcType message)])]
+            [(ErrTcType message) (ErrTcType message)])]
         [(ErrTcEnv message) (ErrTcType message)])]
     [(AstExprLambda params maybe-ret body)
       (match (tc-check-lambda-region-captures env params body)
@@ -4663,7 +4909,15 @@
                               array-ty
                               value-ty
                               "array")
-                              [(OkTcUnit) (OkTcType (AstTyUnit))]
+                              [(OkTcUnit)
+                                (match (tc-ensure-reference-value-can-store-in-place
+                                  ctx
+                                  env
+                                  array
+                                  value-ty
+                                  "array")
+                                  [(OkTcUnit) (OkTcType (AstTyUnit))]
+                                  [(ErrTcUnit message) (ErrTcType message)])]
                               [(ErrTcUnit message) (ErrTcType message)])]
                           [(ErrTcUnit message) (ErrTcType message)])]
                       [(ErrTcType message) (ErrTcType message)])]
@@ -4680,7 +4934,15 @@
                               array-ty
                               value-ty
                               "array")
-                              [(OkTcUnit) (OkTcType (AstTyUnit))]
+                              [(OkTcUnit)
+                                (match (tc-ensure-reference-value-can-store-in-place
+                                  ctx
+                                  env
+                                  array
+                                  value-ty
+                                  "array")
+                                  [(OkTcUnit) (OkTcType (AstTyUnit))]
+                                  [(ErrTcUnit message) (ErrTcType message)])]
                               [(ErrTcUnit message) (ErrTcType message)])]
                           [(ErrTcUnit message) (ErrTcType message)])]
                       [(ErrTcType message) (ErrTcType message)])]
@@ -4739,7 +5001,13 @@
                     var-ty
                     value-ty
                     "assignment")
-                    [(OkTcUnit) (OkTcType (AstTyUnit))]
+                    [(OkTcUnit)
+                      (match (tc-ensure-reference-value-can-assign
+                        env
+                        name
+                        value-ty)
+                        [(OkTcUnit) (OkTcType (AstTyUnit))]
+                        [(ErrTcUnit message) (ErrTcType message)])]
                     [(ErrTcUnit message) (ErrTcType message)])]
                 [(ErrTcUnit message) (ErrTcType message)])]
             [(ErrTcType message) (ErrTcType message)])]
@@ -6647,7 +6915,7 @@
 (define (f) : i64 (comptime (offset-of (type Packet) missing)))"
                 "offset-of unknown field missing"))))))))
 
-(define (compiler-typecheck-self-test) : i64
+(define (compiler-typecheck-self-test-basics) : unit
   (begin
     (if (compiler-typecheck-ptr-null-tests-ok?)
       unit
@@ -6685,6 +6953,10 @@
         (begin
           (panic (compiler-diagnostic-message diag))
           unit)])
+    unit))
+
+(define (compiler-typecheck-self-test-diagnostics) : unit
+  (begin
     (if (compiler-typecheck-error-ok?
       (compiler-typecheck-unbound-source)
       "typecheck: unbound name missing")
@@ -6700,6 +6972,10 @@
       "typecheck: if branches must match")
       unit
       (panic "typecheck: branch mismatch diagnostic test failed"))
+    unit))
+
+(define (compiler-typecheck-self-test-models) : unit
+  (begin
     (if (compiler-typecheck-aggregate-tests-ok?)
       unit
       (panic "typecheck: aggregate tests failed"))
@@ -6733,6 +7009,10 @@
     (if (compiler-typecheck-located-ok?)
       unit
       (panic "typecheck: located diagnostic test failed"))
+    unit))
+
+(define (compiler-typecheck-self-test-builtins) : unit
+  (begin
     (if (compiler-typecheck-string-builtin-tests-ok?)
       unit
       (panic "typecheck: string builtin tests failed"))
@@ -6752,7 +7032,15 @@
       unit
       (panic "typecheck: io builtin tests failed"))
     (if (compiler-typecheck-layout-query-tests-ok?)
-      42
+      unit
       (begin
         (panic "typecheck: layout query tests failed")
-        0))))
+        unit))))
+
+(define (compiler-typecheck-self-test) : i64
+  (begin
+    (compiler-typecheck-self-test-basics)
+    (compiler-typecheck-self-test-diagnostics)
+    (compiler-typecheck-self-test-models)
+    (compiler-typecheck-self-test-builtins)
+    42))

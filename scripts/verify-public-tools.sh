@@ -781,7 +781,7 @@ EOF
     run_cmd selfhost-build-package-missing-alias "$SELFHOST_PLANNER_DIR/build-tool" --direct --manifest-path "$SELFHOST_BADPKG/typelisp.pkg"
     assert_failure
     assert_stdout_empty
-    assert_contains "$err" "compiler-load: cannot read import"
+    assert_contains "$err" "compiler-load: unknown package alias 'math'"
     assert_contains "$err" "pkg:math/src/lib.tl"
 
     cat > "$SELFHOST_BADPKG/typelisp.pkg" <<'EOF'

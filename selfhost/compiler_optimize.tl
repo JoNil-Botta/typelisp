@@ -3125,9 +3125,7 @@
     [(IrBlock label instrs)
       (IrBlock
         label
-        (opt-copy-instrs
-          (OptCopyNil)
-          (opt-fold-instrs (OptConstNil) instrs)))]))
+        (opt-copy-instrs (OptCopyNil) instrs))]))
 
 (define (optimize-block-list [blocks : CompilerIrBlockList]) : CompilerIrBlockList
   (match blocks

@@ -1362,10 +1362,13 @@
         extent)
       8)))
 
+(define (lower-variant-fields-storage-size [ctx : TcContext] [fields : AstTypeList]) : i64
+  (lower-align-up (lower-type-list-extent ctx fields 8) 8))
+
 (define (lower-variant-storage-size [ctx : TcContext] [variant : AstVariantDef]) : i64
   (match variant
     [(AstVariantDef _ fields)
-      (lower-align-up (lower-type-list-extent ctx fields 8) 8)]))
+      (lower-variant-fields-storage-size ctx fields)]))
 
 (define (lower-enum-variants-storage-size
   [ctx : TcContext]
@@ -2344,7 +2347,7 @@
                 (tc-resolve-type-list ctx fields))
                 [(OkLowerArgs args-state values)
                   (let
-                    [size : i64 (lower-enum-storage-size ctx enum-name)]
+                    [size : i64 (lower-variant-fields-storage-size ctx fields)]
                     (match (lower-reserve-heap-storage
                       args-state
                       size

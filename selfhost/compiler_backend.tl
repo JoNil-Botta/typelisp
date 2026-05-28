@@ -2263,11 +2263,18 @@
     [stack-count : i64
       (compiler-backend-call-stack-arg-count target args types 0 0 0 0)]
     (match target
-      [(BackendTargetWindows) (compiler-backend-round-up-16 (* stack-count 8))]
+      [(BackendTargetWindows) 0]
       [(BackendTargetLinux)
         (if (= stack-count 0)
           0
           (compiler-backend-round-up-16 (* stack-count 8)))])))
+
+(define (compiler-backend-windows-stack-arg-space [args : CompilerIrValueList]) : i64
+  (let
+    [arg-count : i64 (compiler-backend-ir-value-list-count args)]
+    (if (> arg-count 4)
+      (compiler-backend-round-up-16 (* (- arg-count 4) 8))
+      0)))
 
 (define (compiler-backend-instr-needs-outgoing-space?
   [instr : CompilerIrInstr]) : bool
@@ -2296,11 +2303,46 @@
             true
             (compiler-backend-blocks-need-outgoing-space? rest))])]))
 
+(define (compiler-backend-instr-outgoing-stack-space [instr : CompilerIrInstr]) : i64
+  (match instr
+    [(IrInstrCall _ _ args _) (compiler-backend-windows-stack-arg-space args)]
+    [_ 0]))
+
+(define (compiler-backend-instrs-outgoing-stack-space
+  [instrs : CompilerIrInstrList]
+  [max-space : i64]) : i64
+  (match instrs
+    [(IrInstrNil) max-space]
+    [(IrInstrCons instr rest)
+      (compiler-backend-instrs-outgoing-stack-space
+        rest
+        (compiler-reg-max
+          max-space
+          (compiler-backend-instr-outgoing-stack-space instr)))]))
+
+(define (compiler-backend-blocks-outgoing-stack-space
+  [blocks : CompilerIrBlockList]
+  [max-space : i64]) : i64
+  (match blocks
+    [(IrBlockNil) max-space]
+    [(IrBlockCons block rest)
+      (match block
+        [(IrBlock _ instrs)
+          (compiler-backend-blocks-outgoing-stack-space
+            rest
+            (compiler-backend-instrs-outgoing-stack-space instrs max-space))])]))
+
 (define (compiler-backend-outgoing-frame-space
   [target : CompilerBackendTarget]
   [blocks : CompilerIrBlockList]) : i64
   (if (compiler-backend-blocks-need-outgoing-space? blocks)
-    (compiler-backend-outgoing-shadow-space target)
+    (match target
+      [(BackendTargetWindows)
+        (compiler-backend-round-up-16
+          (+
+            (compiler-backend-outgoing-shadow-space target)
+            (compiler-backend-blocks-outgoing-stack-space blocks 0)))]
+      [(BackendTargetLinux) (compiler-backend-outgoing-shadow-space target)])
     0))
 
 (define (compiler-backend-emit-call-args

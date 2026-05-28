@@ -294,6 +294,7 @@ contains|_tl_compiler_ir_tail_call_render_ok_question:
 end
 
 case|selfhost_compiler_typecheck_reflection_smoke|selfhost/compiler_typecheck_reflection_smoke.tl|assembly|exactly-one|direct
+requires-stage0-mode|#1437 stage1 compiler resource blocker (imports typechecker)
 contains|_tl_compiler_typecheck_reflection_tests_ok_question:
 end
 

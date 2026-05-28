@@ -61,7 +61,6 @@ selfhost/build.tl:463:3: nested if-ladder: chain of if/else-if; prefer cond (val
 selfhost/build.tl:484:11: nested if-ladder: chain of if/else-if; prefer cond (value/guard ladders) or match (variant dispatch)
 selfhost/build.tl:5000:5: nested if-ladder: chain of if/else-if; prefer cond (value/guard ladders) or match (variant dispatch)
 selfhost/build.tl:5124:17: nested if-ladder: chain of if/else-if; prefer cond (value/guard ladders) or match (variant dispatch)
-selfhost/build.tl:575:7: nested if-ladder: chain of if/else-if; prefer cond (value/guard ladders) or match (variant dispatch)
 selfhost/build.tl:589:3: nested if-ladder: chain of if/else-if; prefer cond (value/guard ladders) or match (variant dispatch)
 selfhost/build.tl:601:7: nested if-ladder: chain of if/else-if; prefer cond (value/guard ladders) or match (variant dispatch)
 selfhost/build.tl:618:7: nested if-ladder: chain of if/else-if; prefer cond (value/guard ladders) or match (variant dispatch)

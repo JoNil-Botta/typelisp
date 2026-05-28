@@ -543,6 +543,42 @@
 (define (build-cli-unknown-opt-level [value : String]) : String
   (source-tool-cat3 "build: unknown opt level " value ""))
 
+(defenum BuildCliOption
+  (BuildCliOptionOutput)
+  (BuildCliOptionStdlibRoot)
+  (BuildCliOptionTarget)
+  (BuildCliOptionBackendMode)
+  (BuildCliOptionOptLevel)
+  (BuildCliOptionManifestPath)
+  (BuildCliOptionOther))
+
+(define (build-cli-option-rest3 [current : String]) : BuildCliOption
+  (if (string-eq current "--opt-level")
+    (BuildCliOptionOptLevel)
+    (if (string-eq current "--manifest-path")
+      (BuildCliOptionManifestPath)
+      (BuildCliOptionOther))))
+
+(define (build-cli-option-rest2 [current : String]) : BuildCliOption
+  (if (string-eq current "--backend-mode")
+    (BuildCliOptionBackendMode)
+    (build-cli-option-rest3 current)))
+
+(define (build-cli-option-rest1 [current : String]) : BuildCliOption
+  (if (string-eq current "--target")
+    (BuildCliOptionTarget)
+    (build-cli-option-rest2 current)))
+
+(define (build-cli-option-rest0 [current : String]) : BuildCliOption
+  (if (string-eq current "--stdlib-root")
+    (BuildCliOptionStdlibRoot)
+    (build-cli-option-rest1 current)))
+
+(define (build-cli-option [current : String]) : BuildCliOption
+  (if (string-eq current "-o")
+    (BuildCliOptionOutput)
+    (build-cli-option-rest0 current)))
+
 (define (build-cli-parse-options
   [idx : i64]
   [count : i64]
@@ -569,22 +605,23 @@
         (ErrBuildCliConfig "build: expected source path")))
     (let
       [current : String (arg idx)]
-      (if (string-eq current "-o")
-        (if (>= (+ idx 1) count)
-          (ErrBuildCliConfig "build: -o requires a value")
-          (if has-output
-            (ErrBuildCliConfig "build: -o was provided more than once")
-            (build-cli-parse-options
-              (+ idx 2)
-              count
-              source
-              has-source
-              (arg (+ idx 1))
-              true
-              target
-              stdlib-roots
-              opt-level)))
-        (if (string-eq current "--stdlib-root")
+      (match (build-cli-option current)
+        [(BuildCliOptionOutput)
+          (if (>= (+ idx 1) count)
+            (ErrBuildCliConfig "build: -o requires a value")
+            (if has-output
+              (ErrBuildCliConfig "build: -o was provided more than once")
+              (build-cli-parse-options
+                (+ idx 2)
+                count
+                source
+                has-source
+                (arg (+ idx 1))
+                true
+                target
+                stdlib-roots
+                opt-level)))]
+        [(BuildCliOptionStdlibRoot)
           (if (>= (+ idx 1) count)
             (ErrBuildCliConfig "build: --stdlib-root requires a value")
             (build-cli-parse-options
@@ -596,83 +633,81 @@
               has-output
               target
               (source-tool-root-list-append stdlib-roots (arg (+ idx 1)))
-              opt-level))
-          (if (string-eq current "--target")
-            (if (>= (+ idx 1) count)
-              (ErrBuildCliConfig "build: --target requires a value")
-              (let
-                [value : String (arg (+ idx 1))]
-                (match (source-tool-target value)
-                  [(OkSourceToolTarget parsed-target)
-                    (build-cli-parse-options
-                      (+ idx 2)
-                      count
-                      source
-                      has-source
-                      output
-                      has-output
-                      parsed-target
-                      stdlib-roots
-                      opt-level)]
-                  [(ErrSourceToolTarget _)
-                    (ErrBuildCliConfig (build-cli-unknown-target value))])))
-            (if (string-eq current "--backend-mode")
-              (if (>= (+ idx 1) count)
-                (ErrBuildCliConfig "build: --backend-mode requires a value")
-                (let
-                  [value : String (arg (+ idx 1))]
-                  (match (source-tool-backend-mode "build" value)
-                    [(OkSourceToolBackendMode)
-                      (build-cli-parse-options
-                        (+ idx 2)
-                        count
-                        source
-                        has-source
-                        output
-                        has-output
-                        target
-                        stdlib-roots
-                        opt-level)]
-                    [(ErrSourceToolBackendMode message)
-                      (ErrBuildCliConfig message)])))
-              (if (string-eq current "--opt-level")
-                (if (>= (+ idx 1) count)
-                  (ErrBuildCliConfig "build: --opt-level requires a value")
-                  (let
-                    [value : String (arg (+ idx 1))]
-                    (if (source-tool-opt-level-valid? value)
-                      (build-cli-parse-options
-                        (+ idx 2)
-                        count
-                        source
-                        has-source
-                        output
-                        has-output
-                        target
-                        stdlib-roots
-                        (string->int value))
-                      (ErrBuildCliConfig (build-cli-unknown-opt-level value)))))
-                (if (string-eq current "--manifest-path")
-                  (if (>= (+ idx 1) count)
-                    (ErrBuildCliConfig
-                      "build: --manifest-path requires a value")
-                    (ErrBuildCliConfig
-                      "build: --manifest-path is handled by Rust typelisp build; selfhost build tool expects a source file"))
-                  (if (source-tool-flag? current)
-                    (ErrBuildCliConfig
-                      (string-append "build: unknown flag " current))
-                    (if has-source
-                      (ErrBuildCliConfig "build: accepts only one source file")
-                      (build-cli-parse-options
-                        (+ idx 1)
-                        count
-                        current
-                        true
-                        output
-                        has-output
-                        target
-                        stdlib-roots
-                        opt-level))))))))))))
+              opt-level))]
+        [(BuildCliOptionTarget)
+          (if (>= (+ idx 1) count)
+            (ErrBuildCliConfig "build: --target requires a value")
+            (let
+              [value : String (arg (+ idx 1))]
+              (match (source-tool-target value)
+                [(OkSourceToolTarget parsed-target)
+                  (build-cli-parse-options
+                    (+ idx 2)
+                    count
+                    source
+                    has-source
+                    output
+                    has-output
+                    parsed-target
+                    stdlib-roots
+                    opt-level)]
+                [(ErrSourceToolTarget _)
+                  (ErrBuildCliConfig (build-cli-unknown-target value))])))]
+        [(BuildCliOptionBackendMode)
+          (if (>= (+ idx 1) count)
+            (ErrBuildCliConfig "build: --backend-mode requires a value")
+            (let
+              [value : String (arg (+ idx 1))]
+              (match (source-tool-backend-mode "build" value)
+                [(OkSourceToolBackendMode)
+                  (build-cli-parse-options
+                    (+ idx 2)
+                    count
+                    source
+                    has-source
+                    output
+                    has-output
+                    target
+                    stdlib-roots
+                    opt-level)]
+                [(ErrSourceToolBackendMode message) (ErrBuildCliConfig message)])))]
+        [(BuildCliOptionOptLevel)
+          (if (>= (+ idx 1) count)
+            (ErrBuildCliConfig "build: --opt-level requires a value")
+            (let
+              [value : String (arg (+ idx 1))]
+              (if (source-tool-opt-level-valid? value)
+                (build-cli-parse-options
+                  (+ idx 2)
+                  count
+                  source
+                  has-source
+                  output
+                  has-output
+                  target
+                  stdlib-roots
+                  (string->int value))
+                (ErrBuildCliConfig (build-cli-unknown-opt-level value)))))]
+        [(BuildCliOptionManifestPath)
+          (if (>= (+ idx 1) count)
+            (ErrBuildCliConfig "build: --manifest-path requires a value")
+            (ErrBuildCliConfig
+              "build: --manifest-path is handled by Rust typelisp build; selfhost build tool expects a source file"))]
+        [(BuildCliOptionOther)
+          (if (source-tool-flag? current)
+            (ErrBuildCliConfig (string-append "build: unknown flag " current))
+            (if has-source
+              (ErrBuildCliConfig "build: accepts only one source file")
+              (build-cli-parse-options
+                (+ idx 1)
+                count
+                current
+                true
+                output
+                has-output
+                target
+                stdlib-roots
+                opt-level)))]))))
 
 (define (build-cli-config [count : i64]) : ResultBuildCliConfig
   (build-cli-config-from 1 count))

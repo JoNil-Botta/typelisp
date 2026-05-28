@@ -2142,7 +2142,12 @@
                         (if (string-eq name "expr-if")
                           (ctfe-eval-expr-if-call args expr env fuel)
                           (if (ctfe-expr-inspector-name? name)
-                            (ctfe-eval-expr-inspector-call name args expr env fuel)
+                            (ctfe-eval-expr-inspector-call
+                              name
+                              args
+                              expr
+                              env
+                              fuel)
                             (ctfe-unsupported-form expr))))))))))))]
     [_ (ctfe-unsupported-form expr)]))
 

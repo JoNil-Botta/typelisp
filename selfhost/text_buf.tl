@@ -8,14 +8,14 @@
   (TextChunkCons String TextChunkList))
 
 (defenum TextBuf
-  (TextBuf TextChunkList))
+  (TextBuf TextChunkList i64))
 
 (define (text-buf-empty) : TextBuf
-  (TextBuf TextChunkNil))
+  (TextBuf TextChunkNil 0))
 
 (define (text-buf-append [buf : TextBuf] [chunk : String]) : TextBuf
   (match buf
-    [(TextBuf chunks) (TextBuf (TextChunkCons chunk chunks))]))
+    [(TextBuf chunks count) (TextBuf (TextChunkCons chunk chunks) (+ count 1))]))
 
 (define (text-chunk-list-concat [front : TextChunkList] [back : TextChunkList]) : TextChunkList
   (match front
@@ -25,21 +25,18 @@
 
 (define (text-buf-append-buffer [left : TextBuf] [right : TextBuf]) : TextBuf
   (match left
-    [(TextBuf left-chunks)
+    [(TextBuf left-chunks left-count)
       (match right
-        [(TextBuf right-chunks)
-          (TextBuf (text-chunk-list-concat right-chunks left-chunks))])]))
+        [(TextBuf right-chunks right-count)
+          (TextBuf
+            (text-chunk-list-concat right-chunks left-chunks)
+            (+ left-count right-count))])]))
 
 (define (text-chunks-render-rev [chunks : TextChunkList] [out : String]) : String
   (match chunks
     [(TextChunkNil) out]
     [(TextChunkCons chunk rest)
       (text-chunks-render-rev rest (string-append chunk out))]))
-
-(define (text-chunk-list-count [chunks : TextChunkList]) : i64
-  (match chunks
-    [(TextChunkNil) 0]
-    [(TextChunkCons _ rest) (+ 1 (text-chunk-list-count rest))]))
 
 (define (text-chunks-fill-array-rev
   [chunks : TextChunkList]
@@ -75,9 +72,7 @@
 
 (define (text-buf-render [buf : TextBuf]) : String
   (match buf
-    [(TextBuf chunks)
-      (let
-        [count : i64 (text-chunk-list-count chunks)]
-        (if (> count 32)
-          (text-chunks-render-balanced chunks count)
-          (text-chunks-render-rev chunks "")))]))
+    [(TextBuf chunks count)
+      (if (> count 32)
+        (text-chunks-render-balanced chunks count)
+        (text-chunks-render-rev chunks ""))]))

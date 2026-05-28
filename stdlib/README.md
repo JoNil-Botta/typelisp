@@ -63,8 +63,8 @@ installed-root discovery, namespace isolation, or an implicit prelude.
   data model and structured runtime result API. Import it with
   `(import "stdlib/windows_setup.tl")`.
 - `msvc.tl`: MSVC tool discovery (`link.exe` + `PATH`/`LIB`/`INCLUDE` command
-  environment) from a configured Developer Command Prompt; the newest-toolset
-  SetupConfiguration fallback is still wired separately by #855. Import it with
+  environment) from a configured Developer Command Prompt, or from the newest
+  usable SetupConfiguration instance plus Windows SDK discovery. Import it with
   `(import "stdlib/msvc.tl")`.
 
 ## Arena Allocation Policy

@@ -913,7 +913,9 @@
                       (compiler-backend-target-windows-abi-ok?)
                       (and
                         (compiler-backend-target-windows-callee-save-ok?)
-                        (compiler-backend-target-windows-runtime-ok?)))))))))))))
+                        (and
+                          (compiler-backend-target-windows-stack-probe-ok?)
+                          (compiler-backend-target-windows-runtime-ok?))))))))))))))
 
 (define (compiler-backend-target-linux-matches-default? [src : String]) : bool
   (match (compiler-backend-emit-source-for-target src (BackendTargetLinux))
@@ -922,6 +924,23 @@
         [(OkCompilerBackend default-asm) (string-eq linux-asm default-asm)]
         [(ErrCompilerBackend _) false])]
     [(ErrCompilerBackend _) false]))
+
+(define (compiler-backend-target-windows-stack-probe-ok?) : bool
+  (let
+    [win : String (compiler-backend-emit-stack-sub (BackendTargetWindows) 4800)]
+    [linux : String (compiler-backend-emit-stack-sub (BackendTargetLinux) 4800)]
+    (and
+      (compiler-backend-string-contains? win "    movl $4800, %eax\n")
+      (and
+        (compiler-backend-string-contains? win "    callq __chkstk\n")
+        (and
+          (compiler-backend-string-contains? win "    subq %rax, %rsp\n")
+          (and
+            (not
+              (compiler-backend-string-contains? win "    subq $4800, %rsp\n"))
+            (and
+              (compiler-backend-string-contains? linux "    subq $4800, %rsp\n")
+              (not (compiler-backend-string-contains? linux "__chkstk")))))))))
 
 (define (compiler-backend-target-windows-abi-source) : String
   "(extern ext : (-> i64 i64 i64 i64 i64 i64))

@@ -288,10 +288,23 @@
     [(= idx 7) (OkBackendReg "%xmm7")]
     [else (ErrBackendReg "backend: too many call args")]))
 
-(define (compiler-backend-emit-stack-sub [frame : i64]) : String
+(define (compiler-backend-emit-stack-sub
+  [target : CompilerBackendTarget]
+  [frame : i64]) : String
   (if (= frame 0)
     ""
-    (backend-cat4 "    subq $" (int->string frame) ", %rsp\n" "")))
+    (match target
+      [(BackendTargetWindows)
+        (if (>= frame 4096)
+          (backend-cat5
+            "    movl $"
+            (int->string frame)
+            ", %eax\n    callq __chkstk\n    subq %rax, %rsp\n"
+            ""
+            "")
+          (backend-cat4 "    subq $" (int->string frame) ", %rsp\n" ""))]
+      [(BackendTargetLinux)
+        (backend-cat4 "    subq $" (int->string frame) ", %rsp\n" "")])))
 
 (define (compiler-backend-emit-store-var [var-id : i64] [reg : String]) : String
   (backend-cat5 "    movq " reg ", " (compiler-backend-slot var-id) "\n"))
@@ -5476,7 +5489,7 @@
                               (backend-cat5
                                 symbol
                                 ":\n    pushq %rbp\n    movq %rsp, %rbp\n"
-                                (compiler-backend-emit-stack-sub frame)
+                                (compiler-backend-emit-stack-sub target frame)
                                 (string-append
                                   (compiler-backend-emit-save-callee-regs
                                     assignments

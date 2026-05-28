@@ -3192,6 +3192,141 @@
           (optimize-function-list-with-level functions level)
           externs))]))
 
+(define (opt-remap-spans-prepend-entry
+  [spans : CompilerSourceSpans]
+  [key : String]
+  [span : AstSourceSpan]) : CompilerSourceSpans
+  (match spans
+    [(CompilerSourceSpans entries instr-entries)
+      (CompilerSourceSpans
+        entries
+        (CompilerSourceSpansEntryCons
+          (CompilerSourceSpansEntry key span)
+          instr-entries))]))
+
+(define (opt-remap-spans-prepend-instr
+  [spans : CompilerSourceSpans]
+  [function : String]
+  [instr : CompilerIrInstr]
+  [span : AstSourceSpan]) : CompilerSourceSpans
+  (match instr
+    [(IrInstrMov dst _ _)
+      (opt-remap-spans-prepend-entry
+        spans
+        (compiler-source-spans-value-key function dst)
+        span)]
+    [(IrInstrAlloc dst _)
+      (opt-remap-spans-prepend-entry
+        spans
+        (compiler-source-spans-value-key function dst)
+        span)]
+    [(IrInstrAddrOf dst _)
+      (opt-remap-spans-prepend-entry
+        spans
+        (compiler-source-spans-value-key function dst)
+        span)]
+    [(IrInstrGep dst _ _ _)
+      (opt-remap-spans-prepend-entry
+        spans
+        (compiler-source-spans-value-key function dst)
+        span)]
+    [(IrInstrLoad dst _ _)
+      (opt-remap-spans-prepend-entry
+        spans
+        (compiler-source-spans-value-key function dst)
+        span)]
+    [(IrInstrCast dst _ _ _)
+      (opt-remap-spans-prepend-entry
+        spans
+        (compiler-source-spans-value-key function dst)
+        span)]
+    [(IrInstrBinOp dst _ _ _ _)
+      (opt-remap-spans-prepend-entry
+        spans
+        (compiler-source-spans-value-key function dst)
+        span)]
+    [(IrInstrUnOp dst _ _ _)
+      (opt-remap-spans-prepend-entry
+        spans
+        (compiler-source-spans-value-key function dst)
+        span)]
+    [(IrInstrLaneId dst _ _)
+      (opt-remap-spans-prepend-entry
+        spans
+        (compiler-source-spans-value-key function dst)
+        span)]
+    [(IrInstrSplat dst _ _ _)
+      (opt-remap-spans-prepend-entry
+        spans
+        (compiler-source-spans-value-key function dst)
+        span)]
+    [(IrInstrVectorBinOp dst _ _ _ _ _)
+      (opt-remap-spans-prepend-entry
+        spans
+        (compiler-source-spans-value-key function dst)
+        span)]
+    [(IrInstrVectorReduce dst _ _ _ _)
+      (opt-remap-spans-prepend-entry
+        spans
+        (compiler-source-spans-value-key function dst)
+        span)]
+    [(IrInstrVectorCompare dst _ _ _ _ _)
+      (opt-remap-spans-prepend-entry
+        spans
+        (compiler-source-spans-value-key function dst)
+        span)]
+    [(IrInstrMaskBinOp dst _ _ _ _)
+      (opt-remap-spans-prepend-entry
+        spans
+        (compiler-source-spans-value-key function dst)
+        span)]
+    [(IrInstrMaskNot dst _ _)
+      (opt-remap-spans-prepend-entry
+        spans
+        (compiler-source-spans-value-key function dst)
+        span)]
+    [(IrInstrMaskReduce dst _ _ _)
+      (opt-remap-spans-prepend-entry
+        spans
+        (compiler-source-spans-value-key function dst)
+        span)]
+    [(IrInstrSelect dst _ _ _ _ _)
+      (opt-remap-spans-prepend-entry
+        spans
+        (compiler-source-spans-value-key function dst)
+        span)]
+    [(IrInstrVectorLoad dst _ _ _ _)
+      (opt-remap-spans-prepend-entry
+        spans
+        (compiler-source-spans-value-key function dst)
+        span)]
+    [(IrInstrPredicatedLoad dst _ _ _ _ _)
+      (opt-remap-spans-prepend-entry
+        spans
+        (compiler-source-spans-value-key function dst)
+        span)]
+    [(IrInstrTailMask dst _ _ _)
+      (opt-remap-spans-prepend-entry
+        spans
+        (compiler-source-spans-value-key function dst)
+        span)]
+    [(IrInstrCall dst _ _ _)
+      (opt-remap-spans-prepend-entry
+        spans
+        (compiler-source-spans-value-key function dst)
+        span)]
+    [(IrInstrStore name _ _)
+      (opt-remap-spans-prepend-entry
+        spans
+        (compiler-source-spans-store-key function name)
+        span)]
+    [(IrInstrPhi dst _ _)
+      (opt-remap-spans-prepend-entry
+        spans
+        (compiler-source-spans-value-key function dst)
+        span)]
+    [_ spans]))
+
 (define (opt-remap-spans-instr
   [source-spans : CompilerSourceSpans]
   [out : CompilerSourceSpans]
@@ -3199,7 +3334,7 @@
   [instr : CompilerIrInstr]) : CompilerSourceSpans
   (match (compiler-source-spans-lookup-instr source-spans function instr)
     [(CompilerSomeSourceSpan span)
-      (compiler-source-spans-insert-instr out function instr span)]
+      (opt-remap-spans-prepend-instr out function instr span)]
     [(CompilerNoSourceSpan) out]))
 
 (define (opt-remap-spans-instrs

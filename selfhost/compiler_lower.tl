@@ -1370,6 +1370,54 @@
     [(AstVariantDef _ fields)
       (lower-variant-fields-storage-size ctx fields)]))
 
+(define (lower-nullary-variant-object-name
+  [enum-name : String]
+  [variant-name : String]) : String
+  (string-append
+    "__enum_obj_"
+    (string-append enum-name (string-append "_" variant-name))))
+
+(define (lower-nullary-variant-pointer-name
+  [enum-name : String]
+  [variant-name : String]) : String
+  (string-append
+    "__enum_ptr_"
+    (string-append enum-name (string-append "_" variant-name))))
+
+(define (lower-nullary-variant-globals
+  [enum-name : String]
+  [variants : AstVariantDefList]
+  [tag : i64]
+  [globals : CompilerIrGlobalList]) : CompilerIrGlobalList
+  (match variants
+    [(AstVariantDefNil) globals]
+    [(AstVariantDefCons variant rest)
+      (match variant
+        [(AstVariantDef variant-name fields)
+          (let
+            [next : CompilerIrGlobalList
+              (match fields
+                [(AstTypeNil)
+                  (let
+                    [object-name : String
+                      (lower-nullary-variant-object-name enum-name variant-name)]
+                    [pointer-name : String
+                      (lower-nullary-variant-pointer-name enum-name variant-name)]
+                    (IrGlobalCons
+                      (IrGlobal
+                        pointer-name
+                        (AstTyEnum enum-name)
+                        (IrValueGlobal object-name))
+                      (IrGlobalCons
+                        (IrGlobal object-name (AstTyI64) (IrValueI64 tag))
+                        globals)))]
+                [_ globals])]
+            (lower-nullary-variant-globals
+              enum-name
+              rest
+              (+ tag 1)
+              next))])]))
+
 (define (lower-enum-variants-storage-size
   [ctx : TcContext]
   [variants : AstVariantDefList]
@@ -2346,36 +2394,47 @@
                 args
                 (tc-resolve-type-list ctx fields))
                 [(OkLowerArgs args-state values)
-                  (let
-                    [size : i64 (lower-variant-fields-storage-size ctx fields)]
-                    (match (lower-reserve-heap-storage
-                      args-state
-                      size
-                      (AstTyEnum enum-name))
-                      [(LowerExpr base-state base _)
-                        (let
-                          [tag-state : LowerState
-                            (lower-store-at-offset
-                              base-state
-                              base
-                              0
-                              (IrValueI64
-                                (compiler-registry-handle-child-index handle))
-                              (AstTyI64))]
-                          (match (lower-store-values
-                            ctx
-                            tag-state
-                            base
-                            values
-                            fields
-                            8)
-                            [(OkLowerState done-state)
-                              (OkLowerExpr
-                                (LowerExpr
-                                  done-state
+                  (match fields
+                    [(AstTypeNil)
+                      (OkLowerExpr
+                        (LowerExpr
+                          args-state
+                          (IrValueGlobal
+                            (lower-nullary-variant-pointer-name
+                              enum-name
+                              variant-name))
+                          (AstTyEnum enum-name)))]
+                    [_
+                      (let
+                        [size : i64 (lower-variant-fields-storage-size ctx fields)]
+                        (match (lower-reserve-heap-storage
+                          args-state
+                          size
+                          (AstTyEnum enum-name))
+                          [(LowerExpr base-state base _)
+                            (let
+                              [tag-state : LowerState
+                                (lower-store-at-offset
+                                  base-state
                                   base
-                                  (AstTyEnum enum-name)))]
-                            [(ErrLowerState message) (ErrLowerExpr message)]))]))]
+                                  0
+                                  (IrValueI64
+                                    (compiler-registry-handle-child-index handle))
+                                  (AstTyI64))]
+                              (match (lower-store-values
+                                ctx
+                                tag-state
+                                base
+                                values
+                                fields
+                                8)
+                                [(OkLowerState done-state)
+                                  (OkLowerExpr
+                                    (LowerExpr
+                                      done-state
+                                      base
+                                      (AstTyEnum enum-name)))]
+                                [(ErrLowerState message) (ErrLowerExpr message)]))]))])]
                 [(ErrLowerArgs message) (ErrLowerExpr message)])]
             [(ErrAstTypeList message) (ErrLowerExpr (lower-diagnostic message))])])]
     [_
@@ -6568,12 +6627,16 @@
             spans
             names
             module)]
-        [(AstDeclDefEnum _ _)
+        [(AstDeclDefEnum name variants)
           (lower-decls-in-module
             ctx
             top-env
             rest
-            globals
+            (lower-nullary-variant-globals
+              (lower-current-decl-logical-name names module name)
+              variants
+              0
+              globals)
             functions
             externs
             spans

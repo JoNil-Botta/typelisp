@@ -1897,8 +1897,9 @@
       (match (lower-expr ctx state env type-env inner)
         [(OkLowerExpr lowered)
           (match lowered
-            [(LowerExpr inner-state value _)
-              (lower-materialize-at-expr inner-state value expr-ty origin)])]
+            [(LowerExpr inner-state value inner-ty)
+              (OkLowerExpr
+                (lower-cast-value inner-state value inner-ty expr-ty))])]
         [(ErrLowerExpr message) (ErrLowerExpr message)])]
     [(AstExprBorrow _ _)
       (ErrLowerExpr
@@ -6241,6 +6242,108 @@
         [_ 0])]
     [_ 0]))
 
+(define (lower-test-binop-same?
+  [actual : CompilerIrBinOp]
+  [want : CompilerIrBinOp]) : bool
+  (match actual
+    [(IrBinAdd)
+      (match want
+        [(IrBinAdd) true]
+        [_ false])]
+    [(IrBinSub)
+      (match want
+        [(IrBinSub) true]
+        [_ false])]
+    [(IrBinMul)
+      (match want
+        [(IrBinMul) true]
+        [_ false])]
+    [(IrBinDiv)
+      (match want
+        [(IrBinDiv) true]
+        [_ false])]
+    [(IrBinMod)
+      (match want
+        [(IrBinMod) true]
+        [_ false])]
+    [(IrBinEq)
+      (match want
+        [(IrBinEq) true]
+        [_ false])]
+    [(IrBinNe)
+      (match want
+        [(IrBinNe) true]
+        [_ false])]
+    [(IrBinLt)
+      (match want
+        [(IrBinLt) true]
+        [_ false])]
+    [(IrBinLe)
+      (match want
+        [(IrBinLe) true]
+        [_ false])]
+    [(IrBinGt)
+      (match want
+        [(IrBinGt) true]
+        [_ false])]
+    [(IrBinGe)
+      (match want
+        [(IrBinGe) true]
+        [_ false])]
+    [(IrBinAnd)
+      (match want
+        [(IrBinAnd) true]
+        [_ false])]
+    [(IrBinOr)
+      (match want
+        [(IrBinOr) true]
+        [_ false])]
+    [(IrBinBitAnd)
+      (match want
+        [(IrBinBitAnd) true]
+        [_ false])]
+    [(IrBinBitOr)
+      (match want
+        [(IrBinBitOr) true]
+        [_ false])]
+    [(IrBinBitXor)
+      (match want
+        [(IrBinBitXor) true]
+        [_ false])]
+    [(IrBinShl)
+      (match want
+        [(IrBinShl) true]
+        [_ false])]
+    [(IrBinShr)
+      (match want
+        [(IrBinShr) true]
+        [_ false])]))
+
+(define (lower-test-instr-binop-op-count
+  [instr : CompilerIrInstr]
+  [op : CompilerIrBinOp]) : i64
+  (match instr
+    [(IrInstrBinOp _ actual _ _ _)
+      (if (lower-test-binop-same? actual op)
+        1
+        0)]
+    [_ 0]))
+
+(define (lower-test-instr-cast-count [instr : CompilerIrInstr]) : i64
+  (match instr
+    [(IrInstrCast _ _ _ _) 1]
+    [_ 0]))
+
+(define (lower-test-instr-store-global-count
+  [instr : CompilerIrInstr]
+  [name : String]) : i64
+  (match instr
+    [(IrInstrStore store-name _ _)
+      (if (string-eq store-name name)
+        1
+        0)]
+    [_ 0]))
+
 (define (lower-test-instrs-phi-count [instrs : CompilerIrInstrList]) : i64
   (match instrs
     [(IrInstrNil) 0]
@@ -6304,6 +6407,34 @@
       (+
         (lower-test-instr-u64-mov-count instr)
         (lower-test-instrs-u64-mov-count rest))]))
+
+(define (lower-test-instrs-binop-op-count
+  [instrs : CompilerIrInstrList]
+  [op : CompilerIrBinOp]) : i64
+  (match instrs
+    [(IrInstrNil) 0]
+    [(IrInstrCons instr rest)
+      (+
+        (lower-test-instr-binop-op-count instr op)
+        (lower-test-instrs-binop-op-count rest op))]))
+
+(define (lower-test-instrs-cast-count [instrs : CompilerIrInstrList]) : i64
+  (match instrs
+    [(IrInstrNil) 0]
+    [(IrInstrCons instr rest)
+      (+
+        (lower-test-instr-cast-count instr)
+        (lower-test-instrs-cast-count rest))]))
+
+(define (lower-test-instrs-store-global-count
+  [instrs : CompilerIrInstrList]
+  [name : String]) : i64
+  (match instrs
+    [(IrInstrNil) 0]
+    [(IrInstrCons instr rest)
+      (+
+        (lower-test-instr-store-global-count instr name)
+        (lower-test-instrs-store-global-count rest name))]))
 
 (define (lower-test-blocks-phi-count [blocks : CompilerIrBlockList]) : i64
   (match blocks
@@ -6386,6 +6517,40 @@
           (+
             (lower-test-instrs-u64-mov-count instrs)
             (lower-test-blocks-u64-mov-count rest))])]))
+
+(define (lower-test-blocks-binop-op-count
+  [blocks : CompilerIrBlockList]
+  [op : CompilerIrBinOp]) : i64
+  (match blocks
+    [(IrBlockNil) 0]
+    [(IrBlockCons block rest)
+      (match block
+        [(IrBlock _ instrs)
+          (+
+            (lower-test-instrs-binop-op-count instrs op)
+            (lower-test-blocks-binop-op-count rest op))])]))
+
+(define (lower-test-blocks-cast-count [blocks : CompilerIrBlockList]) : i64
+  (match blocks
+    [(IrBlockNil) 0]
+    [(IrBlockCons block rest)
+      (match block
+        [(IrBlock _ instrs)
+          (+
+            (lower-test-instrs-cast-count instrs)
+            (lower-test-blocks-cast-count rest))])]))
+
+(define (lower-test-blocks-store-global-count
+  [blocks : CompilerIrBlockList]
+  [name : String]) : i64
+  (match blocks
+    [(IrBlockNil) 0]
+    [(IrBlockCons block rest)
+      (match block
+        [(IrBlock _ instrs)
+          (+
+            (lower-test-instrs-store-global-count instrs name)
+            (lower-test-blocks-store-global-count rest name))])]))
 
 ;; Phi count of the function named `name`, or -1 when no such function exists
 ;; (so a missing function fails both the `> 0` and `= 0` assertions below).
@@ -6484,6 +6649,44 @@
           (if (string-eq fname name)
             (lower-test-blocks-u64-mov-count blocks)
             (lower-test-function-u64-mov-count rest name))])]))
+
+(define (lower-test-function-binop-op-count
+  [funcs : CompilerIrFunctionList]
+  [name : String]
+  [op : CompilerIrBinOp]) : i64
+  (match funcs
+    [(IrFunctionNil) (- 0 1)]
+    [(IrFunctionCons func rest)
+      (match func
+        [(IrFunction fname _ _ _ blocks)
+          (if (string-eq fname name)
+            (lower-test-blocks-binop-op-count blocks op)
+            (lower-test-function-binop-op-count rest name op))])]))
+
+(define (lower-test-function-cast-count
+  [funcs : CompilerIrFunctionList]
+  [name : String]) : i64
+  (match funcs
+    [(IrFunctionNil) (- 0 1)]
+    [(IrFunctionCons func rest)
+      (match func
+        [(IrFunction fname _ _ _ blocks)
+          (if (string-eq fname name)
+            (lower-test-blocks-cast-count blocks)
+            (lower-test-function-cast-count rest name))])]))
+
+(define (lower-test-function-store-global-count
+  [funcs : CompilerIrFunctionList]
+  [name : String]
+  [global-name : String]) : i64
+  (match funcs
+    [(IrFunctionNil) (- 0 1)]
+    [(IrFunctionCons func rest)
+      (match func
+        [(IrFunction fname _ _ _ blocks)
+          (if (string-eq fname name)
+            (lower-test-blocks-store-global-count blocks global-name)
+            (lower-test-function-store-global-count rest name global-name))])]))
 
 (define (lower-test-global-list-has-name?
   [globals : CompilerIrGlobalList]
@@ -6625,6 +6828,116 @@
                 0)])]
         [(ErrCompilerLower _) false])]
     [(ErrAstProgram _) false]))
+
+(define (compiler-lower-global-source) : String
+  "(extern print-i64 : (-> i64 unit))
+(define answer : i64 40)
+(define flag : bool true)
+(define widened : i64 (cast 7 : i64))
+(define (main) : i64
+  (begin
+    (set! answer 41)
+    (if flag (+ answer widened) 0)))")
+
+(define (compiler-lower-global-shape-ok?) : bool
+  (match (lower-compiler-source (compiler-lower-global-source))
+    [(OkCompilerLower program _)
+      (match program
+        [(IrProgram globals functions externs)
+          (let
+            [ok : bool true]
+            (begin
+              (if (lower-test-global-list-has-name? globals "answer")
+                unit
+                (set! ok false))
+              (if (lower-test-global-list-has-name? globals "flag")
+                unit
+                (set! ok false))
+              (if (lower-test-global-list-has-name? globals "widened")
+                unit
+                (set! ok false))
+              (if (match externs
+                [(IrExternCons _ IrExternNil) true]
+                [_ false])
+                unit
+                (set! ok false))
+              (if (>
+                (lower-test-function-store-global-count
+                  functions
+                  "main"
+                  "answer")
+                0)
+                unit
+                (set! ok false))
+              ok))])]
+    [(ErrCompilerLower _) false]))
+
+(define (compiler-lower-numeric-source) : String
+  "(define (bits [a : i32] [b : i32] [s : i32]) : i32
+  (bit-xor (bit-or (bit-and a b) (shl a s)) (shr b s)))
+(define (floaty [a : f64] [b : f64]) : bool
+  (< (+ a b) 10.0))
+(define (casts [c : char] [x : i64]) : u8
+  (cast (+ x (cast c : i64)) : u8))
+(define (main) : i64
+  (if (floaty 1.0 2.0)
+    (+ (cast (bits (cast 7 : i32) (cast 3 : i32) (cast 1 : i32)) : i64) (cast (casts #A' 1) : i64))
+    0))")
+
+(define (compiler-lower-numeric-shape-ok?) : bool
+  (match (lower-compiler-source (compiler-lower-numeric-source))
+    [(OkCompilerLower program _)
+      (match program
+        [(IrProgram _ functions _)
+          (let
+            [ok : bool true]
+            (begin
+              (if (>
+                (lower-test-function-binop-op-count
+                  functions
+                  "bits"
+                  IrBinBitAnd)
+                0)
+                unit
+                (set! ok false))
+              (if (>
+                (lower-test-function-binop-op-count functions "bits" IrBinBitOr)
+                0)
+                unit
+                (set! ok false))
+              (if (>
+                (lower-test-function-binop-op-count
+                  functions
+                  "bits"
+                  IrBinBitXor)
+                0)
+                unit
+                (set! ok false))
+              (if (>
+                (lower-test-function-binop-op-count functions "bits" IrBinShl)
+                0)
+                unit
+                (set! ok false))
+              (if (>
+                (lower-test-function-binop-op-count functions "bits" IrBinShr)
+                0)
+                unit
+                (set! ok false))
+              (if (>
+                (lower-test-function-binop-op-count functions "floaty" IrBinAdd)
+                0)
+                unit
+                (set! ok false))
+              (if (>
+                (lower-test-function-binop-op-count functions "floaty" IrBinLt)
+                0)
+                unit
+                (set! ok false))
+              (if (> (lower-test-function-cast-count functions "casts") 0)
+                unit
+                (set! ok false))
+              ok))])]
+    [(ErrCompilerLower _) false]))
 
 ;; CTFE fold verification (#719): a folded `(comptime ...)` lowers to a literal,
 ;; so the function body must contain a `Mov` of the expected i64 literal and no
@@ -7396,6 +7709,9 @@
       (if (compiler-lower-module-function-returning-enum-ok?)
         unit
         (set! ok false))
+      (if (compiler-lower-global-shape-ok?)
+        unit
+        (set! ok false))
       (if (compiler-lower-raw-pointer-ops-ok?)
         unit
         (set! ok false))
@@ -7461,6 +7777,9 @@
         unit
         (set! ok false))
       (if (compiler-lower-layout-query-fold-tests-ok?)
+        unit
+        (set! ok false))
+      (if (compiler-lower-numeric-shape-ok?)
         unit
         (set! ok false))
       (if (compiler-lower-foreach-tests-ok?)

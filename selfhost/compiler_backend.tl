@@ -1057,24 +1057,24 @@
     [(IrBinMul) "    imulq %rbx, %rax\n"]
     [(IrBinDiv) "    cqto\n    idivq %rbx\n"]
     [(IrBinMod) "    cqto\n    idivq %rbx\n    movq %rdx, %rax\n"]
-    [(IrBinEq) "    cmpq %rbx, %rax\n    sete %al\n    movzbq %al, %rax\n"]
-    [(IrBinNe) "    cmpq %rbx, %rax\n    setne %al\n    movzbq %al, %rax\n"]
+    [(IrBinEq) "    cmpq %rbx, %rax\n    sete %al\n    movzbl %al, %eax\n"]
+    [(IrBinNe) "    cmpq %rbx, %rax\n    setne %al\n    movzbl %al, %eax\n"]
     [(IrBinLt)
       (if (compiler-backend-unsigned-rel-ty? ty)
-        "    cmpq %rbx, %rax\n    setb %al\n    movzbq %al, %rax\n"
-        "    cmpq %rbx, %rax\n    setl %al\n    movzbq %al, %rax\n")]
+        "    cmpq %rbx, %rax\n    setb %al\n    movzbl %al, %eax\n"
+        "    cmpq %rbx, %rax\n    setl %al\n    movzbl %al, %eax\n")]
     [(IrBinLe)
       (if (compiler-backend-unsigned-rel-ty? ty)
-        "    cmpq %rbx, %rax\n    setbe %al\n    movzbq %al, %rax\n"
-        "    cmpq %rbx, %rax\n    setle %al\n    movzbq %al, %rax\n")]
+        "    cmpq %rbx, %rax\n    setbe %al\n    movzbl %al, %eax\n"
+        "    cmpq %rbx, %rax\n    setle %al\n    movzbl %al, %eax\n")]
     [(IrBinGt)
       (if (compiler-backend-unsigned-rel-ty? ty)
-        "    cmpq %rbx, %rax\n    seta %al\n    movzbq %al, %rax\n"
-        "    cmpq %rbx, %rax\n    setg %al\n    movzbq %al, %rax\n")]
+        "    cmpq %rbx, %rax\n    seta %al\n    movzbl %al, %eax\n"
+        "    cmpq %rbx, %rax\n    setg %al\n    movzbl %al, %eax\n")]
     [(IrBinGe)
       (if (compiler-backend-unsigned-rel-ty? ty)
-        "    cmpq %rbx, %rax\n    setae %al\n    movzbq %al, %rax\n"
-        "    cmpq %rbx, %rax\n    setge %al\n    movzbq %al, %rax\n")]
+        "    cmpq %rbx, %rax\n    setae %al\n    movzbl %al, %eax\n"
+        "    cmpq %rbx, %rax\n    setge %al\n    movzbl %al, %eax\n")]
     [(IrBinAnd) "    andq %rbx, %rax\n"]
     [(IrBinOr) "    orq %rbx, %rax\n"]
     [(IrBinBitAnd) "    andq %rbx, %rax\n"]
@@ -1097,67 +1097,67 @@
     [(IrBinEq)
       (CompilerBackendSomeAsm
         (if (string-eq imm "$0")
-          "    testq %rax, %rax\n    sete %al\n    movzbq %al, %rax\n"
+          "    testq %rax, %rax\n    sete %al\n    movzbl %al, %eax\n"
           (backend-cat3
             "    cmpq "
             imm
-            ", %rax\n    sete %al\n    movzbq %al, %rax\n")))]
+            ", %rax\n    sete %al\n    movzbl %al, %eax\n")))]
     [(IrBinNe)
       (CompilerBackendSomeAsm
         (if (string-eq imm "$0")
-          "    testq %rax, %rax\n    setne %al\n    movzbq %al, %rax\n"
+          "    testq %rax, %rax\n    setne %al\n    movzbl %al, %eax\n"
           (backend-cat3
             "    cmpq "
             imm
-            ", %rax\n    setne %al\n    movzbq %al, %rax\n")))]
+            ", %rax\n    setne %al\n    movzbl %al, %eax\n")))]
     [(IrBinLt)
       (if (compiler-backend-unsigned-rel-ty? ty)
         (CompilerBackendSomeAsm
           (backend-cat3
             "    cmpq "
             imm
-            ", %rax\n    setb %al\n    movzbq %al, %rax\n"))
+            ", %rax\n    setb %al\n    movzbl %al, %eax\n"))
         (CompilerBackendSomeAsm
           (backend-cat3
             "    cmpq "
             imm
-            ", %rax\n    setl %al\n    movzbq %al, %rax\n")))]
+            ", %rax\n    setl %al\n    movzbl %al, %eax\n")))]
     [(IrBinLe)
       (if (compiler-backend-unsigned-rel-ty? ty)
         (CompilerBackendSomeAsm
           (backend-cat3
             "    cmpq "
             imm
-            ", %rax\n    setbe %al\n    movzbq %al, %rax\n"))
+            ", %rax\n    setbe %al\n    movzbl %al, %eax\n"))
         (CompilerBackendSomeAsm
           (backend-cat3
             "    cmpq "
             imm
-            ", %rax\n    setle %al\n    movzbq %al, %rax\n")))]
+            ", %rax\n    setle %al\n    movzbl %al, %eax\n")))]
     [(IrBinGt)
       (if (compiler-backend-unsigned-rel-ty? ty)
         (CompilerBackendSomeAsm
           (backend-cat3
             "    cmpq "
             imm
-            ", %rax\n    seta %al\n    movzbq %al, %rax\n"))
+            ", %rax\n    seta %al\n    movzbl %al, %eax\n"))
         (CompilerBackendSomeAsm
           (backend-cat3
             "    cmpq "
             imm
-            ", %rax\n    setg %al\n    movzbq %al, %rax\n")))]
+            ", %rax\n    setg %al\n    movzbl %al, %eax\n")))]
     [(IrBinGe)
       (if (compiler-backend-unsigned-rel-ty? ty)
         (CompilerBackendSomeAsm
           (backend-cat3
             "    cmpq "
             imm
-            ", %rax\n    setae %al\n    movzbq %al, %rax\n"))
+            ", %rax\n    setae %al\n    movzbl %al, %eax\n"))
         (CompilerBackendSomeAsm
           (backend-cat3
             "    cmpq "
             imm
-            ", %rax\n    setge %al\n    movzbq %al, %rax\n")))]
+            ", %rax\n    setge %al\n    movzbl %al, %eax\n")))]
     [(IrBinAnd)
       (CompilerBackendSomeAsm (backend-cat3 "    andq " imm ", %rax\n"))]
     [(IrBinOr)
@@ -1177,7 +1177,7 @@
 (define (compiler-backend-unop-asm [op : CompilerIrUnOp]) : String
   (match op
     [(IrUnNeg) "    negq %rax\n"]
-    [(IrUnNot) "    testq %rax, %rax\n    sete %al\n    movzbq %al, %rax\n"]
+    [(IrUnNot) "    testq %rax, %rax\n    sete %al\n    movzbl %al, %eax\n"]
     [(IrUnBitNot) "    notq %rax\n"]))
 
 (define (compiler-backend-f64-binop-asm [op : CompilerIrBinOp]) : ResultCompilerBackend
@@ -1188,22 +1188,22 @@
     [(IrBinDiv) (OkCompilerBackend "    divsd %xmm1, %xmm0\n")]
     [(IrBinEq)
       (OkCompilerBackend
-        "    ucomisd %xmm1, %xmm0\n    sete %al\n    movzbq %al, %rax\n")]
+        "    ucomisd %xmm1, %xmm0\n    sete %al\n    movzbl %al, %eax\n")]
     [(IrBinNe)
       (OkCompilerBackend
-        "    ucomisd %xmm1, %xmm0\n    setne %al\n    movzbq %al, %rax\n")]
+        "    ucomisd %xmm1, %xmm0\n    setne %al\n    movzbl %al, %eax\n")]
     [(IrBinLt)
       (OkCompilerBackend
-        "    ucomisd %xmm1, %xmm0\n    setb %al\n    movzbq %al, %rax\n")]
+        "    ucomisd %xmm1, %xmm0\n    setb %al\n    movzbl %al, %eax\n")]
     [(IrBinLe)
       (OkCompilerBackend
-        "    ucomisd %xmm1, %xmm0\n    setbe %al\n    movzbq %al, %rax\n")]
+        "    ucomisd %xmm1, %xmm0\n    setbe %al\n    movzbl %al, %eax\n")]
     [(IrBinGt)
       (OkCompilerBackend
-        "    ucomisd %xmm1, %xmm0\n    seta %al\n    movzbq %al, %rax\n")]
+        "    ucomisd %xmm1, %xmm0\n    seta %al\n    movzbl %al, %eax\n")]
     [(IrBinGe)
       (OkCompilerBackend
-        "    ucomisd %xmm1, %xmm0\n    setae %al\n    movzbq %al, %rax\n")]
+        "    ucomisd %xmm1, %xmm0\n    setae %al\n    movzbl %al, %eax\n")]
     [_
       (ErrCompilerBackend
         (compiler-diagnostic-at-start "" "backend: unsupported f64 binary op"))]))

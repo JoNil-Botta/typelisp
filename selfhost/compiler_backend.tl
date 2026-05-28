@@ -2210,7 +2210,7 @@
   [vars : i64]) : String
   (string-append
     (compiler-backend-emit-restore-callee-regs assignments vars)
-    "    movq %rbp, %rsp\n    popq %rbp\n    ret\n"))
+    "    leave\n    ret\n"))
 
 (define (compiler-backend-tail-call-return-normalize [ty : AstType]) : String
   (if (= (compiler-backend-type-size ty) 0)
@@ -2237,9 +2237,9 @@
         v
         ret-ty)
         [(OkCompilerBackend load)
-          (OkCompilerBackend
-            (string-append
-              load
+            (OkCompilerBackend
+             (string-append
+               load
               (compiler-backend-emit-epilogue assignments vars)))]
         [(ErrCompilerBackend message) (ErrCompilerBackend message)])]))
 

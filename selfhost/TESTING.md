@@ -351,6 +351,7 @@ cargo test --test tl_compiler_lower_compile
 cargo test --test tl_compiler_backend_compile
 TYPELISP_BIN=./target/debug/typelisp ./scripts/verify-selfhost-compile-manifest.sh
 TYPELISP_BIN=./target/debug/typelisp ./scripts/check-tl-format.sh
+TYPELISP_BIN=./target/debug/typelisp ./scripts/check-tl-lint.sh
 TYPELISP_BIN=./target/debug/typelisp ./scripts/verify-public-tools.sh
 TYPELISP_BIN=./target/debug/typelisp ./scripts/verify-stdlib-docs.sh
 TYPELISP_BIN=./target/debug/typelisp ./scripts/verify-doc-tests.sh
@@ -358,6 +359,12 @@ TYPELISP_BIN=./target/debug/typelisp ./scripts/verify-inline-tests.sh
 TYPELISP_BIN=./target/debug/typelisp ./scripts/verify-selfhost.sh
 scripts/verify-no-rust-stage0.sh
 ```
+
+`scripts/check-tl-lint.sh` runs `typelisp lint` over tracked standalone
+TypeLisp sources and compares findings with `scripts/tl-lint-baseline.txt`.
+Use `TYPELISP_LINT_UPDATE_BASELINE=1 scripts/check-tl-lint.sh` only when
+intentionally accepting or removing legacy lint debt; new unbaselined findings
+fail CI.
 
 Run the tests that match the layer you touched. On non-Linux platforms, scripts
 that require native `as`/`ld` either no-op by design or should be run through a

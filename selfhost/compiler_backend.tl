@@ -1801,6 +1801,40 @@
           0
           (compiler-backend-round-up-16 (* stack-count 8)))])))
 
+(define (compiler-backend-instr-needs-outgoing-space?
+  [instr : CompilerIrInstr]) : bool
+  (match instr
+    [(IrInstrCall _ _ _ _) true]
+    [(IrInstrBoundsCheck _ _ _) true]
+    [_ false]))
+
+(define (compiler-backend-instrs-need-outgoing-space?
+  [instrs : CompilerIrInstrList]) : bool
+  (match instrs
+    [(IrInstrNil) false]
+    [(IrInstrCons instr rest)
+      (if (compiler-backend-instr-needs-outgoing-space? instr)
+        true
+        (compiler-backend-instrs-need-outgoing-space? rest))]))
+
+(define (compiler-backend-blocks-need-outgoing-space?
+  [blocks : CompilerIrBlockList]) : bool
+  (match blocks
+    [(IrBlockNil) false]
+    [(IrBlockCons block rest)
+      (match block
+        [(IrBlock _ instrs)
+          (if (compiler-backend-instrs-need-outgoing-space? instrs)
+            true
+            (compiler-backend-blocks-need-outgoing-space? rest))])]))
+
+(define (compiler-backend-outgoing-frame-space
+  [target : CompilerBackendTarget]
+  [blocks : CompilerIrBlockList]) : i64
+  (if (compiler-backend-blocks-need-outgoing-space? blocks)
+    (compiler-backend-outgoing-shadow-space target)
+    0))
+
 (define (compiler-backend-emit-call-args
   [target : CompilerBackendTarget]
   [assignments : CompilerRegAssignmentList]
@@ -2946,7 +2980,9 @@
                             (+
                               (compiler-backend-frame-size
                                 (compiler-backend-frame-slots vars assignments))
-                              (compiler-backend-outgoing-shadow-space target))]
+                              (compiler-backend-outgoing-frame-space
+                                target
+                                blocks))]
                           (OkCompilerBackend
                             (backend-cat5
                               ".globl "

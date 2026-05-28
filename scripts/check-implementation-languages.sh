@@ -21,7 +21,7 @@ RETIRED="$WORKDIR/retired.txt"
 
 is_exception_path() {
     case "$1" in
-        benchmarks/* | tools/vs-code-extension/* | scripts/fetch-stage0.ps1) return 0 ;;
+        benchmarks/* | tools/vs-code-extension/* | scripts/*.ps1) return 0 ;;
         *) return 1 ;;
     esac
 }
@@ -71,7 +71,7 @@ fi
 if [ -s "$NEW" ]; then
     echo "implementation language gate: forbidden implementation-language files outside the baseline:" >&2
     sed 's/^/  - /' "$NEW" >&2
-    echo "Allowed implementation languages are sh and typelisp; benchmarks/** and tools/vs-code-extension/** are path exceptions." >&2
+    echo "Allowed implementation languages are sh and typelisp; benchmarks/**, tools/vs-code-extension/**, and scripts/*.ps1 are path exceptions." >&2
     exit 1
 fi
 

@@ -79,7 +79,7 @@ To compare the Rust stage0 compiler against the selfhosted compiler on the
 same selfhost source, run:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File benchmarks/benchmark-bootstrap.ps1 -Runs 3
+powershell -ExecutionPolicy Bypass -File scripts/benchmark-bootstrap.ps1 -Runs 3
 ```
 
 The harness compares the Rust stage0 CLI (`typelisp compile`) against a stage2

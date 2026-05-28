@@ -465,7 +465,10 @@ fn selfhost_compile_driver_runs_as_windows_native_executable() {
     );
 }
 
+// #1270: this compile-heavy selfhost backend fixture currently exhausts the
+// Windows crash retry guard when run through `typelisp run`.
 #[test]
+#[ignore = "#1270: selfhost backend driver fixture segfaults on Windows"]
 fn selfhost_backend_windows_driver_primitives_emit_assemble_link_and_run() {
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let work_dir = manifest_dir

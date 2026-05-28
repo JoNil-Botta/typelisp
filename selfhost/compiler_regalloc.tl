@@ -655,6 +655,10 @@
               (compiler-live-set-union
                 set
                 (compiler-live-after liveness label index))]
+            [(IrInstrTailCall _ _ _)
+              (compiler-live-set-union
+                set
+                (compiler-live-after liveness label index))]
             [_ set])]
         (compiler-reg-call-live-instrs rest liveness label (+ index 1) next-set))]))
 
@@ -682,6 +686,8 @@
         rest
         (match instr
           [(IrInstrCall _ _ args _)
+            (compiler-live-set-union set (compiler-live-value-list-vars args))]
+          [(IrInstrTailCall _ args _)
             (compiler-live-set-union set (compiler-live-value-list-vars args))]
           [_ set]))]))
 

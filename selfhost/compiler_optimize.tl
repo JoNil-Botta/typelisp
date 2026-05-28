@@ -706,6 +706,7 @@
     [(IrInstrPredicatedLoad dst _ _ _ _ _) (opt-invalidate-def env dst instr)]
     [(IrInstrTailMask dst _ _ _) (opt-invalidate-def env dst instr)]
     [(IrInstrCall dst name args ty) (opt-invalidate-def env dst instr)]
+    [(IrInstrTailCall _ _ _) (OptInstrResult env instr)]
     [(IrInstrPhi dst inputs ty) (opt-invalidate-def env dst instr)]
     [_ (OptInstrResult env instr)]))
 
@@ -762,6 +763,7 @@
     [(IrInstrPredicatedLoad dst _ _ _ _ _) (opt-invalidate-def env dst instr)]
     [(IrInstrTailMask dst _ _ _) (opt-invalidate-def env dst instr)]
     [(IrInstrCall dst name args ty) (opt-invalidate-def env dst instr)]
+    [(IrInstrTailCall _ _ _) (OptInstrResult env instr)]
     [(IrInstrPhi dst inputs ty) (opt-invalidate-def env dst instr)]
     [_ (OptInstrResult env instr)]))
 
@@ -830,6 +832,7 @@
       (opt-collect-value-uses (opt-collect-value-uses set l) r)]
     [(IrInstrUnOp _ _ src _) (opt-collect-value-uses set src)]
     [(IrInstrCall _ _ args _) (opt-collect-value-list-uses set args)]
+    [(IrInstrTailCall _ args _) (opt-collect-value-list-uses set args)]
     [(IrInstrStore _ value _) (opt-collect-value-uses set value)]
     ;; Pointer/memory ops carry operand uses too; missing any of these would let
     ;; DCE wrongly drop a definition that feeds an address/load/store/cast.
@@ -1454,6 +1457,13 @@
               (string-eq aname bname)
               (and (opt-value-list-eq aargs bargs) (opt-type-eq aty bty))))]
         [_ false])]
+    [(IrInstrTailCall aname aargs aty)
+      (match b
+        [(IrInstrTailCall bname bargs bty)
+          (and
+            (string-eq aname bname)
+            (and (opt-value-list-eq aargs bargs) (opt-type-eq aty bty)))]
+        [_ false])]
     [(IrInstrStore aname av aty)
       (match b
         [(IrInstrStore bname bv bty)
@@ -1735,6 +1745,7 @@
       (OptCseResult (opt-expr-invalidate-var table dst) instr)]
     ;; Calls, stores, and control flow clear all available expressions.
     [(IrInstrCall _ _ _ _) (OptCseResult (OptExprNil) instr)]
+    [(IrInstrTailCall _ _ _) (OptCseResult (OptExprNil) instr)]
     [(IrInstrStore _ _ _) (OptCseResult (OptExprNil) instr)]
     [(IrInstrStorePtr _ _ _) (OptCseResult (OptExprNil) instr)]
     [(IrInstrVectorStore _ _ _ _ _) (OptCseResult (OptExprNil) instr)]
@@ -1865,6 +1876,8 @@
     [(IrInstrTailMask _ _ _ _) instr]
     [(IrInstrCall dst name args ty)
       (IrInstrCall dst name (opt-copy-subst-value-list env args) ty)]
+    [(IrInstrTailCall name args ty)
+      (IrInstrTailCall name (opt-copy-subst-value-list env args) ty)]
     [(IrInstrStore name value ty)
       (IrInstrStore name (opt-copy-resolve env value) ty)]
     [(IrInstrBoundsCheck index length ok-label)
@@ -2022,6 +2035,7 @@
       (opt-bounds-invalidate-var facts dst)]
     [(IrInstrTailMask dst _ _ _) (opt-bounds-invalidate-var facts dst)]
     [(IrInstrCall _ _ _ _) (OptBoundsNil)]
+    [(IrInstrTailCall _ _ _) (OptBoundsNil)]
     [(IrInstrStore _ _ _) (OptBoundsNil)]
     [(IrInstrStorePtr _ _ _) (OptBoundsNil)]
     [(IrInstrVectorStore _ _ _ _ _) (OptBoundsNil)]
@@ -2767,6 +2781,8 @@
         (opt-verify-value-use defs doms index block-label pos)
         (opt-verify-value-use defs doms length block-label pos))]
     [(IrInstrCall _ _ args _)
+      (opt-verify-value-list-uses defs doms args block-label pos)]
+    [(IrInstrTailCall _ args _)
       (opt-verify-value-list-uses defs doms args block-label pos)]
     [(IrInstrStore _ value _)
       (opt-verify-value-use defs doms value block-label pos)]

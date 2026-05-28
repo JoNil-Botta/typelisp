@@ -129,6 +129,7 @@
     AstType)
   (IrInstrTailMask i64 CompilerIrValue CompilerIrValue i64)
   (IrInstrCall i64 String CompilerIrValueList AstType)
+  (IrInstrTailCall String CompilerIrValueList AstType)
   (IrInstrStore String CompilerIrValue AstType)
   (IrInstrJump String)
   (IrInstrBranch CompilerIrValue String String)
@@ -179,6 +180,114 @@
 
 (define (compiler-ir-extern-default [name : String] [ty : AstType]) : CompilerIrExtern
   (IrExtern name ty (AstExternAbiC) name))
+
+(define (compiler-ir-cat3 [a : String] [b : String] [c : String]) : String
+  (string-append a (string-append b c)))
+
+(define (compiler-ir-type-list-render [types : AstTypeList]) : String
+  (match types
+    [(AstTypeNil) ""]
+    [(AstTypeCons head rest)
+      (string-append
+        (compiler-ir-type-render head)
+        (match rest
+          [(AstTypeNil) ""]
+          [_ (string-append " " (compiler-ir-type-list-render rest))]))]))
+
+(define (compiler-ir-type-render [ty : AstType]) : String
+  (match ty
+    [(AstTyI64) "i64"]
+    [(AstTyI32) "i32"]
+    [(AstTyI16) "i16"]
+    [(AstTyI8) "i8"]
+    [(AstTyU64) "u64"]
+    [(AstTyU32) "u32"]
+    [(AstTyU16) "u16"]
+    [(AstTyU8) "u8"]
+    [(AstTyF64) "f64"]
+    [(AstTyF32) "f32"]
+    [(AstTyBool) "bool"]
+    [(AstTyChar) "char"]
+    [(AstTyString) "String"]
+    [(AstTyUnit) "unit"]
+    [(AstTyNever) "never"]
+    [(AstTyFunc args ret)
+      (compiler-ir-cat3
+        "(-> "
+        (compiler-ir-type-list-render args)
+        (string-append " " (string-append (compiler-ir-type-render ret) ")")))]
+    [(AstTyTuple elems)
+      (compiler-ir-cat3 "(Tuple " (compiler-ir-type-list-render elems) ")")]
+    [(AstTyArray elem count)
+      (compiler-ir-cat3
+        "(Array "
+        (compiler-ir-type-render elem)
+        (compiler-ir-cat3 " " (int->string count) ")"))]
+    [(AstTyDynArray elem)
+      (compiler-ir-cat3 "(Array " (compiler-ir-type-render elem) ")")]
+    [(AstTyRegion region inner)
+      (compiler-ir-cat3
+        "(Region "
+        region
+        (string-append " " (string-append (compiler-ir-type-render inner) ")")))]
+    [(AstTyRef region inner)
+      (compiler-ir-cat3
+        "(& "
+        region
+        (string-append " " (string-append (compiler-ir-type-render inner) ")")))]
+    [(AstTyMutRef region inner)
+      (compiler-ir-cat3
+        "(&mut "
+        region
+        (string-append " " (string-append (compiler-ir-type-render inner) ")")))]
+    [(AstTyEnum name) name]
+    [(AstTyStruct name) name]
+    [(AstTyVar name) name]
+    [(AstTyPtr elem)
+      (compiler-ir-cat3 "(Ptr " (compiler-ir-type-render elem) ")")]
+    [(AstTyMutPtr elem)
+      (compiler-ir-cat3 "(MutPtr " (compiler-ir-type-render elem) ")")]))
+
+(define (compiler-ir-value-render [value : CompilerIrValue]) : String
+  (match value
+    [(IrValueVar id) (string-append "%" (int->string id))]
+    [(IrValueGlobal name) (string-append "@" name)]
+    [(IrValueI64 value) (int->string value)]
+    [(IrValueF64 value) value]
+    [(IrValueBool value)
+      (if value
+        "true"
+        "false")]
+    [(IrValueChar value) (int->string (cast value : i64))]
+    [(IrValueString value) value]
+    [(IrValueUnit) "unit"]))
+
+(define (compiler-ir-value-list-render [values : CompilerIrValueList]) : String
+  (match values
+    [(IrValueNil) ""]
+    [(IrValueCons value rest)
+      (string-append
+        (compiler-ir-value-render value)
+        (match rest
+          [(IrValueNil) ""]
+          [_ (string-append ", " (compiler-ir-value-list-render rest))]))]))
+
+(define (compiler-ir-tail-call-render
+  [name : String]
+  [args : CompilerIrValueList]
+  [ty : AstType]) : String
+  (compiler-ir-cat3
+    "  tailcall "
+    name
+    (compiler-ir-cat3
+      "("
+      (compiler-ir-value-list-render args)
+      (compiler-ir-cat3 ") : " (compiler-ir-type-render ty) ""))))
+
+(define (compiler-ir-instr-render [instr : CompilerIrInstr]) : String
+  (match instr
+    [(IrInstrTailCall name args ty) (compiler-ir-tail-call-render name args ty)]
+    [_ "  <ir-instr>"]))
 
 (defenum CompilerIrEffect
   (IrEffectPure)
@@ -288,6 +397,7 @@
     [(IrInstrPredicatedStore _ _ _ _ _ _) IrEffectMemoryWrite]
     [(IrInstrCall _ name _ _) (compiler-ir-direct-call-effect name)]
     [(IrInstrBoundsCheck _ _ _) IrEffectControlFlow]
+    [(IrInstrTailCall _ _ _) IrEffectControlFlow]
     [(IrInstrJump _) IrEffectControlFlow]
     [(IrInstrBranch _ _ _) IrEffectControlFlow]
     [(IrInstrReturn _) IrEffectControlFlow]))
@@ -760,9 +870,6 @@
         (compiler-ir-function-list-instruction-count functions)
         (compiler-ir-function-list-var-count functions))]))
 
-(define (compiler-ir-cat3 [a : String] [b : String] [c : String]) : String
-  (string-append a (string-append b c)))
-
 (define (compiler-ir-cat4 [a : String] [b : String] [c : String] [d : String]) : String
   (string-append a (string-append b (string-append c d))))
 
@@ -1141,18 +1248,27 @@
                               IrEffectControlFlow)
                             (and
                               (compiler-ir-effect-is?
-                                (IrInstrJump "done")
+                                (IrInstrTailCall
+                                  "fact_loop"
+                                  (IrValueCons
+                                    (IrValueVar 3)
+                                    (IrValueCons (IrValueI64 1) IrValueNil))
+                                  (AstTyI64))
                                 IrEffectControlFlow)
                               (and
                                 (compiler-ir-effect-is?
-                                  (IrInstrBranch
-                                    (IrValueBool true)
-                                    "then"
-                                    "else")
+                                  (IrInstrJump "done")
                                   IrEffectControlFlow)
-                                (compiler-ir-effect-is?
-                                  (IrInstrReturn (IrSomeValue (IrValueI64 0)))
-                                  IrEffectControlFlow)))))))))))))))))
+                                (and
+                                  (compiler-ir-effect-is?
+                                    (IrInstrBranch
+                                      (IrValueBool true)
+                                      "then"
+                                      "else")
+                                    IrEffectControlFlow)
+                                  (compiler-ir-effect-is?
+                                    (IrInstrReturn (IrSomeValue (IrValueI64 0)))
+                                    IrEffectControlFlow))))))))))))))))))
 
 (define (compiler-ir-vector-mask-effects-ok?) : bool
   (and
@@ -1481,13 +1597,24 @@
       (compiler-ir-display-op-names-ok?)
       (and (compiler-ir-display-instrs-ok?) (compiler-ir-display-tail-mask-ok?)))))
 
+(define (compiler-ir-tail-call-render-ok?) : bool
+  (string-eq
+    (compiler-ir-instr-render
+      (IrInstrTailCall
+        "fact_loop"
+        (IrValueCons (IrValueVar 3) (IrValueCons (IrValueI64 1) IrValueNil))
+        (AstTyI64)))
+    "  tailcall fact_loop(%3, 1) : i64"))
+
 (define (compiler-ir-effect-self-test) : i64
   (if (compiler-ir-instruction-effects-ok?)
     (if (compiler-ir-vector-mask-effects-ok?)
       (if (compiler-ir-runtime-effects-ok?)
         (if (compiler-ir-effect-predicates-ok?)
           (if (compiler-ir-display-self-test-ok?)
-            42
+            (if (compiler-ir-tail-call-render-ok?)
+              42
+              1)
             1)
           1)
         1)

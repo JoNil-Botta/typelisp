@@ -2049,6 +2049,18 @@
               target-label
               from-label))])]))
 
+(define (compiler-backend-emit-epilogue
+  [assignments : CompilerRegAssignmentList]
+  [vars : i64]) : String
+  (string-append
+    (compiler-backend-emit-restore-callee-regs assignments vars)
+    "    movq %rbp, %rsp\n    popq %rbp\n    ret\n"))
+
+(define (compiler-backend-tail-call-return-normalize [ty : AstType]) : String
+  (if (= (compiler-backend-type-size ty) 0)
+    "    movq $0, %rax\n"
+    ""))
+
 (define (compiler-backend-emit-return
   [value : CompilerIrMaybeValue]
   [assignments : CompilerRegAssignmentList]
@@ -2059,9 +2071,7 @@
       (OkCompilerBackend
         (string-append
           "    movq $0, %rax\n"
-          (string-append
-            (compiler-backend-emit-restore-callee-regs assignments vars)
-            "    movq %rbp, %rsp\n    popq %rbp\n    ret\n")))]
+          (compiler-backend-emit-epilogue assignments vars)))]
     [(IrSomeValue v)
       (match (compiler-backend-emit-load-typed-value-with-plan
         assignments
@@ -2071,10 +2081,53 @@
           (OkCompilerBackend
             (string-append
               load
-              (string-append
-                (compiler-backend-emit-restore-callee-regs assignments vars)
-                "    movq %rbp, %rsp\n    popq %rbp\n    ret\n")))]
+              (compiler-backend-emit-epilogue assignments vars)))]
         [(ErrCompilerBackend message) (ErrCompilerBackend message)])]))
+
+(define (compiler-backend-emit-tail-call
+  [target : CompilerBackendTarget]
+  [name : String]
+  [args : CompilerIrValueList]
+  [ty : AstType]
+  [assignments : CompilerRegAssignmentList]
+  [vars : i64]
+  [plan : CompilerBackendRuntimePlan]
+  [functions : CompilerIrFunctionList]
+  [externs : CompilerIrExternList]
+  [instr-diag : CompilerDiagnostic]) : ResultCompilerBackend
+  (let
+    [param-types : AstTypeList
+      (compiler-backend-call-param-types name functions externs)]
+    (let
+      [call-space : i64
+        (compiler-backend-call-arg-space target args param-types)]
+      (match (compiler-backend-emit-call-args
+        target
+        assignments
+        args
+        param-types
+        0
+        0
+        0
+        0
+        instr-diag)
+        [(OkCompilerBackend args-asm)
+          (OkCompilerBackend
+            (string-append
+              (compiler-backend-emit-call-space-sub call-space)
+              (string-append
+                args-asm
+                (backend-cat5
+                  "    call "
+                  (compiler-backend-call-symbol name plan functions externs)
+                  "\n"
+                  (string-append
+                    (compiler-backend-emit-call-space-add call-space)
+                    (string-append
+                      (compiler-backend-tail-call-return-normalize ty)
+                      (compiler-backend-emit-epilogue assignments vars)))
+                  ""))))]
+        [(ErrCompilerBackend message) (ErrCompilerBackend message)]))))
 
 (define (compiler-backend-emit-instr
   [target : CompilerBackendTarget]
@@ -2250,6 +2303,22 @@
               [(ErrCompilerBackend message)
                 (ErrCompilerBackend
                   (compiler-backend-apply-instr-diagnostic message instr-diag))])))]
+      [(IrInstrTailCall name args ty)
+        (match (compiler-backend-emit-tail-call
+          target
+          name
+          args
+          ty
+          assignments
+          vars
+          plan
+          functions
+          externs
+          instr-diag)
+          [(OkCompilerBackend asm) (OkCompilerBackend asm)]
+          [(ErrCompilerBackend message)
+            (ErrCompilerBackend
+              (compiler-backend-apply-instr-diagnostic message instr-diag))])]
       [(IrInstrStore name value ty)
         (match (compiler-backend-emit-load-typed-value-with-plan
           assignments
@@ -2793,6 +2862,8 @@
       (compiler-backend-collect-value-string strings src)]
     [(IrInstrCall _ _ args _)
       (compiler-backend-collect-value-list-strings strings args)]
+    [(IrInstrTailCall _ args _)
+      (compiler-backend-collect-value-list-strings strings args)]
     [(IrInstrStore _ value _)
       (compiler-backend-collect-value-string strings value)]
     [(IrInstrBranch cond _ _)
@@ -2968,6 +3039,8 @@
         rhs)]
     [(IrInstrUnOp _ _ src _) (compiler-backend-collect-value-f64 floats src)]
     [(IrInstrCall _ _ args _)
+      (compiler-backend-collect-value-list-f64s floats args)]
+    [(IrInstrTailCall _ args _)
       (compiler-backend-collect-value-list-f64s floats args)]
     [(IrInstrStore _ value _) (compiler-backend-collect-value-f64 floats value)]
     [(IrInstrBranch cond _ _) (compiler-backend-collect-value-f64 floats cond)]
@@ -3252,6 +3325,7 @@
   [name : String]) : bool
   (match instr
     [(IrInstrCall _ call-name _ _) (string-eq call-name name)]
+    [(IrInstrTailCall call-name _ _) (string-eq call-name name)]
     [(IrInstrBoundsCheck _ _ _) (string-eq name "tl_oob_abort")]
     [_ false]))
 

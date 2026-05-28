@@ -1846,6 +1846,48 @@
             [(ErrCompilerBackend message) (ErrCompilerBackend message)])])]
     [(ErrCompilerBackend message) (ErrCompilerBackend message)]))
 
+(define (compiler-backend-emit-store-to-gep
+  [assignments : CompilerRegAssignmentList]
+  [base : CompilerIrValue]
+  [offset : CompilerIrValue]
+  [elem-ty : AstType]
+  [value : CompilerIrValue]
+  [store-ty : AstType]) : ResultCompilerBackend
+  (match (compiler-backend-value-as-i64 offset)
+    [(CompilerBackendSomeI64 n)
+      (let
+        [disp : i64 (* n (compiler-backend-type-size elem-ty))]
+        [addr : String (compiler-backend-r10-address disp)]
+        (match (compiler-backend-emit-load-value-with-plan assignments base "%r10")
+          [(OkCompilerBackend base-asm)
+            (match (compiler-backend-emit-store-immediate-to-memory
+              value
+              addr
+              store-ty)
+              [(CompilerBackendSomeAsm store-asm)
+                (OkCompilerBackend (string-append base-asm store-asm))]
+              [(CompilerBackendNoAsm)
+                (match (compiler-backend-emit-load-typed-value-with-plan
+                  assignments
+                  value
+                  store-ty)
+                  [(OkCompilerBackend value-asm)
+                    (OkCompilerBackend
+                      (string-append
+                        base-asm
+                        (string-append
+                          value-asm
+                          (if (compiler-backend-f64-type? store-ty)
+                            (compiler-backend-emit-store-xmm-to-memory addr "%xmm0")
+                            (compiler-backend-emit-store-rax-to-memory
+                              addr
+                              store-ty)))))]
+                  [(ErrCompilerBackend message) (ErrCompilerBackend message)])])]
+          [(ErrCompilerBackend message) (ErrCompilerBackend message)]))]
+    [(CompilerBackendNoI64)
+      (ErrCompilerBackend
+        (compiler-diagnostic-at-start "" "backend: non-immediate fused gep store"))]))
+
 (define (compiler-backend-emit-cast
   [assignments : CompilerRegAssignmentList]
   [dst : i64]
@@ -3295,6 +3337,70 @@
             func-diag
             "")))]))
 
+(define (compiler-backend-emit-fused-gep-store-rest
+  [target : CompilerBackendTarget]
+  [function : String]
+  [source-function : String]
+  [blocks : CompilerIrBlockList]
+  [current-label : String]
+  [fallthrough : CompilerBackendMaybeLabel]
+  [gep-dst : i64]
+  [base : CompilerIrValue]
+  [offset : CompilerIrValue]
+  [elem-ty : AstType]
+  [value : CompilerIrValue]
+  [store-ty : AstType]
+  [rest : CompilerIrInstrList]
+  [assignments : CompilerRegAssignmentList]
+  [vars : i64]
+  [types : CompilerRegVarTypeList]
+  [ret-ty : AstType]
+  [plan : CompilerBackendRuntimePlan]
+  [functions : CompilerIrFunctionList]
+  [externs : CompilerIrExternList]
+  [spans : CompilerSourceSpans]
+  [func-diag : CompilerDiagnostic]
+  [use-counts : (Array i64)]) : ResultCompilerBackend
+  (match (compiler-backend-emit-store-to-gep
+    assignments
+    base
+    offset
+    elem-ty
+    value
+    store-ty)
+    [(OkCompilerBackend head)
+      (match (compiler-backend-emit-instrs
+        target
+        function
+        source-function
+        blocks
+        current-label
+        fallthrough
+        rest
+        assignments
+        vars
+        types
+        ret-ty
+        plan
+        functions
+        externs
+        spans
+        func-diag
+        use-counts)
+        [(OkCompilerBackend tail)
+          (OkCompilerBackend (string-append head tail))]
+        [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
+    [(ErrCompilerBackend message)
+      (ErrCompilerBackend
+        (compiler-backend-apply-instr-diagnostic
+          message
+          (compiler-backend-instr-diagnostic
+            spans
+            source-function
+            (IrInstrGep gep-dst base offset elem-ty)
+            func-diag
+            "")))]))
+
 (define (compiler-backend-emit-instrs
   [target : CompilerBackendTarget]
   [function : String]
@@ -3339,6 +3445,51 @@
                             elem-ty
                             load-dst
                             load-ty
+                            after-load
+                            assignments
+                            vars
+                            types
+                            ret-ty
+                            plan
+                            functions
+                            externs
+                            spans
+                            func-diag
+                            use-counts)
+                          (compiler-backend-emit-instrs-normal
+                            target
+                            function
+                            source-function
+                            blocks
+                            current-label
+                            fallthrough
+                            instr
+                            rest
+                            assignments
+                            vars
+                            types
+                            ret-ty
+                            plan
+                            functions
+                            externs
+                            spans
+                            func-diag
+                            use-counts))]
+                      [(IrInstrStorePtr dst value store-ty)
+                        (if (compiler-backend-branch-uses-var? dst gep-dst)
+                          (compiler-backend-emit-fused-gep-store-rest
+                            target
+                            function
+                            source-function
+                            blocks
+                            current-label
+                            fallthrough
+                            gep-dst
+                            base
+                            offset
+                            elem-ty
+                            value
+                            store-ty
                             after-load
                             assignments
                             vars

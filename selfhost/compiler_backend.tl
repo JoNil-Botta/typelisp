@@ -5446,7 +5446,7 @@
               (compiler-reg-plan-assignments reg-plan)]
             (let
               [assignments : CompilerRegAssignmentList
-                (compiler-backend-drop-param-assignments raw-assignments params)]
+                raw-assignments]
               [types : CompilerRegVarTypeList
                 (compiler-reg-function-var-types func)]
               [use-counts : (Array i64)

@@ -1295,6 +1295,7 @@
     [(AstTyUnit) 0]
     [(AstTyNever) 0]
     [(AstTyExpr) 0]
+    [(AstTyExprList) 0]
     [(AstTyFunc _ _) 8]
     [(AstTyTuple _) 8]
     [(AstTyArray elem count) (* (lower-type-size ctx elem) count)]
@@ -1326,6 +1327,7 @@
     [(AstTyUnit) 1]
     [(AstTyNever) 1]
     [(AstTyExpr) 1]
+    [(AstTyExprList) 1]
     [(AstTyFunc _ _) 8]
     [(AstTyTuple _) 8]
     [(AstTyArray elem _) (lower-type-align ctx elem)]
@@ -6553,6 +6555,17 @@
                       module)]
                   [(ErrLowerFunction message) (ErrLowerDecls message)])]
               [(ErrTcEnv message) (ErrLowerDecls (lower-diagnostic message))]))]
+        [(AstDeclDefMacro _ _ _ _)
+          (lower-decls-in-module
+            ctx
+            top-env
+            rest
+            globals
+            functions
+            externs
+            spans
+            names
+            module)]
         [(AstDeclImport _)
           (lower-decls-in-module
             ctx

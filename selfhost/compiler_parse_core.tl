@@ -36,6 +36,14 @@
   (OkAstParamList AstParamList)
   (ErrAstParamList String))
 
+(defenum ResultAstMacroParam
+  (OkAstMacroParam AstMacroParam)
+  (ErrAstMacroParam String))
+
+(defenum ResultAstMacroParamList
+  (OkAstMacroParamList AstMacroParamList)
+  (ErrAstMacroParamList String))
+
 (defenum ResultAstFieldDef
   (OkAstFieldDef AstFieldDef)
   (ErrAstFieldDef String))
@@ -468,6 +476,9 @@
 (define (compiler-parse-tag-decl-test) : i64
   407)
 
+(define (compiler-parse-tag-decl-defmacro) : i64
+  408)
+
 (define (compiler-parse-dispatch-binops [e : SymI64Env]) : SymI64Env
   (let
     [e1 : SymI64Env (sym-i64-bind e "+" (compiler-parse-tag-bin-add))]
@@ -683,7 +694,13 @@
               (let
                 [e7 : SymI64Env
                   (sym-i64-bind e6 "module" (compiler-parse-tag-decl-module))]
-                (sym-i64-bind e7 "test" (compiler-parse-tag-decl-test))))))))))
+                (let
+                  [e8 : SymI64Env
+                    (sym-i64-bind e7 "test" (compiler-parse-tag-decl-test))]
+                  (sym-i64-bind
+                    e8
+                    "defmacro"
+                    (compiler-parse-tag-decl-defmacro)))))))))))
 
 (define (compiler-parse-dispatch-env) : SymI64Env
   (compiler-parse-dispatch-decls
@@ -920,6 +937,56 @@
           (if is-comptime
             true
             (ast-param-list-has-comptime? rest))])]))
+
+(define (ast-macro-param-variadic? [param : AstMacroParam]) : bool
+  (match param
+    [(AstMacroParam _ _ variadic) variadic]))
+
+(define (parse-ast-macro-param [dispatch : SymI64Env] [s : Sexpr]) : ResultAstMacroParam
+  (match s
+    [(SCons (SSym name) (SCons colon (SCons ty (SNil))))
+      (if (sexpr-colon? colon)
+        (match (parse-ast-type dispatch ty)
+          [(OkAstType parsed-ty)
+            (OkAstMacroParam (AstMacroParam name parsed-ty false))]
+          [(ErrAstType message) (ErrAstMacroParam message)])
+        (ErrAstMacroParam "parse: expected ':' in macro operand"))]
+    [(SCons (SSym name) (SCons colon (SCons ty (SCons (SSym dots) (SNil)))))
+      (if (sexpr-colon? colon)
+        (if (string-eq dots "...")
+          (match (parse-ast-type dispatch ty)
+            [(OkAstType parsed-ty)
+              (OkAstMacroParam (AstMacroParam name parsed-ty true))]
+            [(ErrAstType message) (ErrAstMacroParam message)])
+          (ErrAstMacroParam "parse: malformed macro operand"))
+        (ErrAstMacroParam "parse: expected ':' in macro operand"))]
+    [(SCons (SSym marker) _)
+      (if (string-eq marker "comptime")
+        (ErrAstMacroParam "parse: defmacro operands are already compile-time")
+        (ErrAstMacroParam "parse: malformed macro operand"))]
+    [_ (ErrAstMacroParam "parse: malformed macro operand")]))
+
+(define (parse-ast-macro-param-list [dispatch : SymI64Env] [s : Sexpr]) : ResultAstMacroParamList
+  (match s
+    [(SNil) (OkAstMacroParamList AstMacroParamNil)]
+    [(SCons head tail)
+      (match (parse-ast-macro-param dispatch head)
+        [(OkAstMacroParam parsed-head)
+          (if (ast-macro-param-variadic? parsed-head)
+            (match tail
+              [(SNil)
+                (OkAstMacroParamList
+                  (AstMacroParamCons parsed-head AstMacroParamNil))]
+              [_
+                (ErrAstMacroParamList
+                  "parse: variadic macro operand must be final")])
+            (match (parse-ast-macro-param-list dispatch tail)
+              [(OkAstMacroParamList parsed-tail)
+                (OkAstMacroParamList
+                  (AstMacroParamCons parsed-head parsed-tail))]
+              [(ErrAstMacroParamList message) (ErrAstMacroParamList message)]))]
+        [(ErrAstMacroParam message) (ErrAstMacroParamList message)])]
+    [_ (ErrAstMacroParamList "parse: malformed macro operand list")]))
 
 (define (parse-ast-param-list [dispatch : SymI64Env] [s : Sexpr]) : ResultAstParamList
   (match s
@@ -2157,6 +2224,33 @@
       (parse-ast-define-fn dispatch name params after-header)]
     [_ (ErrAstDecl "parse: malformed define")]))
 
+(define (parse-ast-defmacro [dispatch : SymI64Env] [rest : SpannedSexpr]) : ResultAstDecl
+  (match rest
+    [(SpSCons (SpSCons (SpSSym name _) params _) after-header _)
+      (match after-header
+        [(SpSCons colon (SpSCons ret (SpSCons body (SpSNil _) _) _) _)
+          (if (sexpr-colon? (spanned-sexpr-form colon))
+            (match (parse-ast-macro-param-list
+              dispatch
+              (spanned-sexpr-form params))
+              [(OkAstMacroParamList parsed-params)
+                (match (parse-ast-type dispatch (spanned-sexpr-form ret))
+                  [(OkAstType parsed-ret)
+                    (match (parse-ast-expr dispatch body)
+                      [(OkAstExpr parsed-body)
+                        (OkAstDecl
+                          (AstDeclDefMacro
+                            name
+                            parsed-params
+                            parsed-ret
+                            parsed-body))]
+                      [(ErrAstExpr message) (ErrAstDecl message)])]
+                  [(ErrAstType message) (ErrAstDecl message)])]
+              [(ErrAstMacroParamList message) (ErrAstDecl message)])
+            (ErrAstDecl "parse: expected ':' in macro definition"))]
+        [_ (ErrAstDecl "parse: malformed defmacro")])]
+    [_ (ErrAstDecl "parse: malformed defmacro")]))
+
 (define (parse-ast-extern-abi-tail [tail : Sexpr]) : ResultAstExternAbi
   (match tail
     [(SCons (SSym name) (SNil))
@@ -2384,6 +2478,8 @@
             (parse-ast-defenum dispatch rest)]
           [(= tag (compiler-parse-tag-decl-defstruct))
             (parse-ast-defstruct dispatch rest)]
+          [(= tag (compiler-parse-tag-decl-defmacro))
+            (parse-ast-defmacro dispatch rest)]
           [(= tag (compiler-parse-tag-decl-import)) (parse-ast-import rest)]
           [(= tag (compiler-parse-tag-decl-module)) (parse-ast-module rest)]
           [(= tag (compiler-parse-tag-decl-comptime-decl))
@@ -3684,6 +3780,35 @@
         "(define (main) : i64 ((lambda ([comptime n : i64]) n) 1))"
         "comptime parameters are only supported on top-level function definitions"))))
 
+(define (compiler-parse-defmacro-shape-ok?) : bool
+  (match (parse-ast-source
+    "(defmacro (all [first : bool] [rest : bool ...]) : bool first)")
+    [(OkAstProgram (AstProgram decls))
+      (match decls
+        [(AstDeclCons (AstDeclDefMacro name params (AstTyBool) _) AstDeclNil)
+          (and
+            (string-eq name "all")
+            (match params
+              [(AstMacroParamCons
+                  (AstMacroParam first (AstTyBool) false)
+                  (AstMacroParamCons
+                    (AstMacroParam rest (AstTyBool) true)
+                    AstMacroParamNil))
+                (and (string-eq first "first") (string-eq rest "rest"))]
+              [_ false]))]
+        [_ false])]
+    [(ErrAstProgram _) false]))
+
+(define (compiler-parse-defmacro-tests-ok?) : bool
+  (and
+    (compiler-parse-defmacro-shape-ok?)
+    (and
+      (compiler-parse-ok?
+        "(defmacro (and2 [lhs : bool] [rhs : bool]) : bool (expr-if lhs rhs (expr-bool false)))")
+      (compiler-parse-error-ok?
+        "(defmacro (bad [rest : bool ...] [x : bool]) : bool rest)"
+        "parse: variadic macro operand must be final"))))
+
 (define (compiler-parse-smoke) : i64
   (match (parse-ast-source (compiler-parse-smoke-source))
     [(OkAstProgram program)
@@ -3750,7 +3875,9 @@
                               (compiler-parse-repl-tests-ok?)
                               (and
                                 (compiler-parse-comptime-param-tests-ok?)
-                                (compiler-parse-resource-with-tests-ok?)))))))))))))
+                                (and
+                                  (compiler-parse-defmacro-tests-ok?)
+                                  (compiler-parse-resource-with-tests-ok?))))))))))))))
           42
           (begin
             (panic "parse: error-path self-tests failed")

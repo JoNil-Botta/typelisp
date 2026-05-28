@@ -164,6 +164,7 @@
   (match decl
     [(AstDeclDef _ _ expr) (tc-expr-diag expr message)]
     [(AstDeclDefFn _ _ _ body) (tc-expr-diag body message)]
+    [(AstDeclDefMacro _ _ _ body) (tc-expr-diag body message)]
     [(AstDeclTest _ _ span)
       (CompilerDiagnostic
         ""
@@ -280,6 +281,7 @@
     [(AstTyUnit) "unit"]
     [(AstTyNever) "never"]
     [(AstTyExpr) "Expr"]
+    [(AstTyExprList) "ExprList"]
     [(AstTyFunc args ret)
       (tc-cat3
         "(-> "
@@ -593,6 +595,23 @@
                                                                   (AstTyString)))
                                                               (tc-default-boundary-name)
                                                               (AstTyUnit))))))))))))))))))))))))))))))))
+
+(define (tc-macro-helper-env [env : TcTypeEnv]) : TcTypeEnv
+  (let
+    [expr : AstType (AstTyExpr)]
+    (let
+      [out : TcTypeEnv env]
+      (begin
+        (set! out (tc-bind out "expr-bool" (tc-fn1 (AstTyBool) expr)))
+        (set! out (tc-bind out "expr-splice" (tc-fn1 expr expr)))
+        (set! out (tc-bind out "expr-if" (tc-fn3 expr expr expr expr)))
+        (set! out (tc-bind out "expr-bool?" (tc-fn1 expr (AstTyBool))))
+        (set! out (tc-bind out "expr-bool-value" (tc-fn1 expr (AstTyBool))))
+        (set! out (tc-bind out "expr-if?" (tc-fn1 expr (AstTyBool))))
+        (set! out (tc-bind out "expr-if-cond" (tc-fn1 expr expr)))
+        (set! out (tc-bind out "expr-if-then" (tc-fn1 expr expr)))
+        (set! out (tc-bind out "expr-if-else" (tc-fn1 expr expr)))
+        out))))
 
 (define (tc-lookup [env : TcTypeEnv] [name : String]) : ResultTcType
   (match env
@@ -1098,7 +1117,9 @@
           [(NoneI64)
             (if (string-eq name "Expr")
               (AstTyExpr)
-              (AstTyVar name))]))]))
+              (if (string-eq name "ExprList")
+                (AstTyExprList)
+                (AstTyVar name)))]))]))
 
 (define (tc-resolve-type [ctx : TcContext] [ty : AstType]) : AstType
   (match ty
@@ -1171,6 +1192,18 @@
         [(AstParam _ ty _)
           (match (tc-source-type-policy-ok ctx ty)
             [(OkTcUnit) (tc-source-param-list-policy-ok ctx rest)]
+            [(ErrTcUnit message) (ErrTcUnit message)])])]))
+
+(define (tc-source-macro-param-list-policy-ok
+  [ctx : TcContext]
+  [params : AstMacroParamList]) : ResultTcUnit
+  (match params
+    [(AstMacroParamNil) OkTcUnit]
+    [(AstMacroParamCons param rest)
+      (match param
+        [(AstMacroParam _ ty _)
+          (match (tc-source-type-policy-ok ctx ty)
+            [(OkTcUnit) (tc-source-macro-param-list-policy-ok ctx rest)]
             [(ErrTcUnit message) (ErrTcUnit message)])])]))
 
 (define (tc-source-field-list-policy-ok
@@ -1409,6 +1442,13 @@
                 (tc-source-expr-policy-ok ctx body))]
             [(ErrTcUnit message) (ErrTcUnit message)])]
         [(ErrTcUnit message) (ErrTcUnit message)])]
+    [(AstDeclDefMacro _ params ret body)
+      (match (tc-source-macro-param-list-policy-ok ctx params)
+        [(OkTcUnit)
+          (match (tc-source-type-policy-ok ctx ret)
+            [(OkTcUnit) (tc-source-expr-policy-ok ctx body)]
+            [(ErrTcUnit message) (ErrTcUnit message)])]
+        [(ErrTcUnit message) (ErrTcUnit message)])]
     [(AstDeclExtern _ _ ty) (tc-source-type-policy-ok ctx ty)]
     [(AstDeclDefEnum _ variants)
       (tc-source-variant-list-policy-ok ctx variants)]
@@ -1531,6 +1571,10 @@
     [(AstTyExpr)
       (match b
         [(AstTyExpr) true]
+        [_ false])]
+    [(AstTyExprList)
+      (match b
+        [(AstTyExprList) true]
         [_ false])]
     [(AstTyFunc a-args a-ret)
       (match b
@@ -1672,6 +1716,7 @@
     [(AstTyUnit) (TcCopyable)]
     [(AstTyNever) (TcCopyable)]
     [(AstTyExpr) (TcCopyable)]
+    [(AstTyExprList) (TcCopyable)]
     [(AstTyFunc _ _) (TcCopyable)]
     [(AstTyPtr _) (TcCopyable)]
     [(AstTyMutPtr _) (TcCopyable)]
@@ -1951,6 +1996,44 @@
         [(AstParam name ty _)
           (tc-bind-params ctx (tc-bind env name (tc-resolve-type ctx ty)) rest)])]))
 
+(define (tc-bind-macro-params
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [params : AstMacroParamList]) : TcTypeEnv
+  (match params
+    [(AstMacroParamNil) env]
+    [(AstMacroParamCons param rest)
+      (match param
+        [(AstMacroParam name _ variadic)
+          (tc-bind-macro-params
+            ctx
+            (tc-bind
+              env
+              name
+              (if variadic
+                (AstTyExprList)
+                (AstTyExpr)))
+            rest)])]))
+
+(define (tc-ctfe-env-extend-macro-params
+  [ctx : TcContext]
+  [env : CtfeEnv]
+  [params : AstMacroParamList]) : CtfeEnv
+  (match params
+    [(AstMacroParamNil) env]
+    [(AstMacroParamCons param rest)
+      (match param
+        [(AstMacroParam name ty variadic)
+          (tc-ctfe-env-extend-macro-params
+            ctx
+            (ctfe-env-extend
+              env
+              name
+              (if variadic
+                (CtfeExprList AstExprNil)
+                (CtfeExpr (AstExprVar name) (tc-resolve-type ctx ty))))
+            rest)])]))
+
 (define (tc-top-decl-type [ctx : TcContext] [decl : AstDecl]) : ResultTcType
   (match decl
     [(AstDeclDef _ maybe-ty expr)
@@ -2057,6 +2140,8 @@
                 (tc-bind-module-name env module name ty)
                 module)]
             [(ErrTcType message) (ErrTcEnv message)])]
+        [(AstDeclDefMacro _ _ _ _)
+          (tc-build-top-env-list-in-module ctx rest env module)]
         [(AstDeclExtern name _ _)
           (match (tc-top-decl-type (tc-context-with-module ctx module) decl)
             [(OkTcType ty)
@@ -5474,8 +5559,7 @@
                   (string-append
                     (tc-type-render (tc-resolve-type ctx ty))
                     " is compile-time only")))]
-            [(CtfeExprList _)
-              (ErrTcType "ExprList value is compile-time only (#1135)")])]
+            [(CtfeExprList _) (OkTcType (AstTyExprList))])]
         [(ErrCtfe diag) (ErrTcType (compiler-diagnostic-message diag))])]
     [(AstExprTry inner) (tc-try-expr ctx env inner)]
     [(AstExprPtrNull ty)
@@ -5575,6 +5659,45 @@
           (CompilerTypecheckSummary values functions (+ externs 1))]
         [_ summary])]))
 
+(define (tc-check-defmacro-produced-type
+  [ctx : TcContext]
+  [ret : AstType]
+  [value : CompilerCtfeValue]) : ResultTcUnit
+  (match value
+    [(CtfeExpr _ produced)
+      (if (tc-type-compatible?
+        (tc-resolve-type ctx ret)
+        (tc-resolve-type ctx produced))
+        OkTcUnit
+        (ErrTcUnit
+          "typecheck: macro body produced type does not match declaration"))]
+    [_ (ErrTcUnit "typecheck: macro body must return Expr")]))
+
+(define (tc-check-defmacro
+  [ctx : TcContext]
+  [top-env : TcTypeEnv]
+  [params : AstMacroParamList]
+  [ret : AstType]
+  [body : AstExpr]) : ResultTcUnit
+  (let
+    [macro-env : TcTypeEnv
+      (tc-bind-macro-params ctx (tc-macro-helper-env top-env) params)]
+    (match (tc-expr ctx macro-env body)
+      [(OkTcType got)
+        (match (tc-expect
+          got
+          (AstTyExpr)
+          "typecheck: macro body must return Expr")
+          [(OkTcUnit)
+            (match (compiler-ctfe-eval
+              body
+              (tc-ctfe-env-extend-macro-params ctx (tc-ctfe-env ctx) params)
+              (ctfe-fuel-limit))
+              [(OkCtfe value _) (tc-check-defmacro-produced-type ctx ret value)]
+              [(ErrCtfe diag) (ErrTcUnit (compiler-diagnostic-message diag))])]
+          [(ErrTcUnit message) (ErrTcUnit message)])]
+      [(ErrTcType message) (ErrTcUnit message)])))
+
 (define (tc-check-decl [ctx : TcContext] [top-env : TcTypeEnv] [decl : AstDecl]) : ResultTcUnit
   (match decl
     [(AstDeclDef _ maybe-ty expr)
@@ -5608,6 +5731,8 @@
               [(OkTcUnit) OkTcUnit]
               [(ErrTcUnit message) (ErrTcUnit message)])]
           [(ErrTcType message) (ErrTcUnit message)]))]
+    [(AstDeclDefMacro _ params ret body)
+      (tc-check-defmacro ctx top-env params ret body)]
     [(AstDeclExtern _ metadata ty) (tc-check-extern-decl ctx metadata ty)]
     [_ OkTcUnit]))
 
@@ -7370,6 +7495,31 @@
           (compiler-typecheck-reflection-kind-mismatch-source)
           "struct-field-count requires struct type")))))
 
+(define (compiler-typecheck-defmacro-source) : String
+  "(defmacro (and2 [lhs : bool] [rhs : bool]) : bool
+  (expr-if lhs rhs (expr-bool false)))
+(defmacro (first [x : bool] [rest : bool ...]) : bool x)
+(define (main) : i64 0)")
+
+(define (compiler-typecheck-defmacro-produced-mismatch-source) : String
+  "(defmacro (bad) : i64 (expr-bool true))
+(define (main) : i64 0)")
+
+(define (compiler-typecheck-defmacro-body-type-source) : String
+  "(defmacro (bad [x : bool]) : bool (expr-bool? x))
+(define (main) : i64 0)")
+
+(define (compiler-typecheck-defmacro-tests-ok?) : bool
+  (and
+    (compiler-typecheck-ok? (compiler-typecheck-defmacro-source))
+    (and
+      (compiler-typecheck-error-ok?
+        (compiler-typecheck-defmacro-produced-mismatch-source)
+        "typecheck: macro body produced type does not match declaration")
+      (compiler-typecheck-error-ok?
+        (compiler-typecheck-defmacro-body-type-source)
+        "typecheck: macro body must return Expr"))))
+
 (define (compiler-typecheck-self-test-basics) : unit
   (begin
     (if (compiler-typecheck-ptr-null-tests-ok?)
@@ -7496,6 +7646,11 @@
       unit
       (begin
         (panic "typecheck: layout query tests failed")
+        unit))
+    (if (compiler-typecheck-defmacro-tests-ok?)
+      unit
+      (begin
+        (panic "typecheck: defmacro tests failed")
         unit))))
 
 (define (compiler-typecheck-self-test) : i64

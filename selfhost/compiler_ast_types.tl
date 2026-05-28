@@ -74,6 +74,7 @@
   ;; compile-time-only type; the produced runtime type is tracked internally by
   ;; CTFE values, not as a source-level type parameter.
   (AstTyExpr)
+  (AstTyExprList)
   (AstTyFunc AstTypeList AstType)
   (AstTyTuple AstTypeList)
   (AstTyArray AstType i64)
@@ -105,6 +106,13 @@
 (defenum AstParamList
   (AstParamNil)
   (AstParamCons AstParam AstParamList))
+
+(defenum AstMacroParam
+  (AstMacroParam String AstType bool))
+
+(defenum AstMacroParamList
+  (AstMacroParamNil)
+  (AstMacroParamCons AstMacroParam AstMacroParamList))
 
 (defenum AstFieldCleanup
   (AstFieldNoCleanup)
@@ -248,6 +256,7 @@
   (AstDeclModule String)
   (AstDeclDef String AstMaybeType AstExpr)
   (AstDeclDefFn String AstParamList AstType AstExpr)
+  (AstDeclDefMacro String AstMacroParamList AstType AstExpr)
   (AstDeclExtern String AstExternMetadata AstType)
   (AstDeclDefEnum String AstVariantDefList)
   (AstDeclDefStruct String AstStructRepr AstStructCleanup AstFieldDefList)
@@ -288,6 +297,7 @@
     [(AstTyUnit) 14]
     [(AstTyNever) 15]
     [(AstTyExpr) 16]
+    [(AstTyExprList) 29]
     [(AstTyFunc _ _) 17]
     [(AstTyTuple _) 18]
     [(AstTyArray _ _) 19]
@@ -354,6 +364,7 @@
   (match decl
     [(AstDeclDef _ _ _) 1]
     [(AstDeclDefFn _ _ _ _) 2]
+    [(AstDeclDefMacro _ _ _ _) 10]
     [(AstDeclExtern _ _ _) 3]
     [(AstDeclDefEnum _ _) 4]
     [(AstDeclDefStruct _ _ _ _) 5]

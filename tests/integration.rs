@@ -1430,6 +1430,7 @@ fn type_lisp_programs_compile_link_and_run_explicit_build() {
             stdout: "",
             deps: &[
                 "compiler_backend.tl",
+                "compiler_backend_tests.tl",
                 "compiler_optimize.tl",
                 "compiler_regalloc.tl",
                 "compiler_liveness.tl",

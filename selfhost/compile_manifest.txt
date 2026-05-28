@@ -562,9 +562,9 @@ contains|_tl_emit_expr:
 end
 
 case|selfhost_eval|selfhost/eval.tl|assembly|exactly-one|direct
-contains|_tl_eval_sexpr:
+contains|_tl_eval_sexpr_result:
 contains|_tl_run_program:
-contains|_tl_apply_value:
+contains|_tl_apply_value_result:
 contains|eval: unbound variable
 end
 

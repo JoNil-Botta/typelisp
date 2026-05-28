@@ -63,6 +63,12 @@ Total inline Rust `#[test]` items under `src/`: 926.
 | `src/lsp.rs` | 0 | The `typelisp lsp` server: JSON-RPC framing (`Content-Length` headers, JSON parsing), open-document tracking (`textDocument/didOpen`/`didChange`/`didClose`), the initialize/capabilities handshake, and the publish-diagnostics loop. No inline `#[test]` items — behavior is witnessed by `tests/tl_lsp_frame_compile.rs`. | `selfhost/lsp_frame.tl` + #789 own the selfhost LSP framing/server port; #845 owns public protocol-behavior coverage. The public `typelisp lsp` still runs the Rust server (selfhost routing pending #789). | Partial |
 | `src/repl.rs` | 0 | The `typelisp repl` input loop: multiline paren-balancing, session declaration/source persistence (top-level decls are remembered and type-checked before the session is mutated), and bare-expression evaluation by compiling a scratch program. No inline `#[test]` items — behavior is witnessed by `tests/tl_repl_compile.rs`. | `selfhost/repl.tl` + #1026 (selfhost REPL eval) / #1027 (route public `repl` through selfhost). The public `typelisp repl` still runs the Rust loop (selfhost routing pending #1026/#1027). | Partial |
 
+#1354 adds backend aggregate-return storage and allocator runtime emit-shape
+coverage through `compiler-backend-aggregate-storage-shape-ok?`,
+`compiler-backend-alloc-runtime-shape-ok?`, and `compiler_backend_smoke.tl`.
+Tuple/closure/fixed-array/string-ref and non-constant aggregate-global
+emit-shapes remain split to #1388.
+
 ### 2026-05-26 Inline Additions
 
 - #1056 adds inline Rust tests in `src/typechecker.rs`, `src/lower.rs`, and

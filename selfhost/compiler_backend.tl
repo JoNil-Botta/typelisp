@@ -8819,6 +8819,27 @@ tl_windows_setup_instances:
                     ".L_tl_alloc_size_ready:\n")))))))]
     [(ErrCompilerBackend _) false]))
 
+(define (compiler-backend-alloc-runtime-shape-ok?) : bool
+  (match (compiler-backend-emit-program
+    (compiler-backend-runtime-helper-program))
+    [(OkCompilerBackend asm)
+      (and
+        (backend-and8
+          (compiler-backend-string-contains? asm "    addq $7, %rdi\n")
+          (compiler-backend-string-contains? asm "    andq $-8, %rdi\n")
+          (compiler-backend-string-contains? asm "    movq 16(%r8), %rax\n")
+          (compiler-backend-string-contains? asm "    movq %rcx, 16(%r8)\n")
+          (compiler-backend-string-contains? asm "    movq $9, %rax\n")
+          (compiler-backend-string-contains? asm "    movq $0x22, %r10\n")
+          (compiler-backend-string-contains? asm "    jc .L_tl_alloc_abort\n")
+          (compiler-backend-string-contains? asm "    js .L_tl_alloc_abort\n"))
+        (and
+          (compiler-backend-string-contains? asm ".L_tl_alloc_abort:\n")
+          (compiler-backend-string-contains?
+            asm
+            "    leaq .L_tl_alloc_msg(%rip), %rsi\n")))]
+    [(ErrCompilerBackend _) false]))
+
 (define (compiler-backend-user-helper-name-program) : CompilerIrProgram
   (IrProgram
     IrGlobalNil
@@ -9350,6 +9371,40 @@ tl_windows_setup_instances:
                         asm
                         "    call _tl_Pair\n")))))))))]
     [(ErrCompilerBackend _) false]))
+
+;; Backend-owned replacement for representative aggregate storage emit-shape
+;; checks from the Rust backend suite (#1354). Non-constant aggregate globals
+;; remain blocked on selfhost lowering (#1388).
+(define (compiler-backend-aggregate-return-source) : String
+  "(defenum Shape (Circle i64) (Square i64) (Nothing))
+(defstruct Point (x i64) (y i64))
+(define (mk-shape) : Shape (Circle 7))
+(define (mk-point) : Point (Point 1 2))
+(define (mk-string) : String \"hi\")
+(define (main) : i64
+  (+ (match (mk-shape) [(Circle r) r] [(Square s) s] [Nothing 0])
+     (+ (struct-get (mk-point) y) (string-length (mk-string)))))")
+
+(define (compiler-backend-aggregate-return-shape-ok?) : bool
+  (match (compiler-backend-emit-source
+    (compiler-backend-aggregate-return-source))
+    [(OkCompilerBackend asm)
+      (and
+        (backend-and8
+          (compiler-backend-string-contains? asm "    call tl_alloc")
+          (compiler-backend-string-contains? asm "tl_alloc:")
+          (compiler-backend-string-contains? asm "movq $16")
+          (compiler-backend-string-contains? asm "movq $7,")
+          (compiler-backend-string-contains? asm "movq $1,")
+          (compiler-backend-string-contains? asm "movq $2,")
+          (compiler-backend-string-contains? asm ".L_tl_str_data_6869:")
+          (compiler-backend-string-contains? asm "    .quad 2\n"))
+        (not
+          (compiler-backend-string-contains? asm (compiler-backend-todo-marker))))]
+    [(ErrCompilerBackend _) false]))
+
+(define (compiler-backend-aggregate-storage-shape-ok?) : bool
+  (compiler-backend-aggregate-return-shape-ok?))
 
 (define (compiler-backend-enum-match-ok?) : bool
   (match (compiler-backend-emit-source (compiler-backend-enum-match-source))
@@ -10075,7 +10130,20 @@ tl_windows_setup_instances:
 (define (compiler-backend-array-access-asm-ok?) : bool
   (match (compiler-backend-emit-source (compiler-backend-array-access-source))
     [(OkCompilerBackend asm)
-      (compiler-backend-string-contains? asm "call tl_oob_abort")]
+      (and
+        (not (compiler-backend-string-contains? asm "setl %al"))
+        (and
+          (compiler-backend-string-contains? asm "    call tl_oob_abort")
+          (and
+            (compiler-backend-string-contains? asm "tl_oob_abort:")
+            (and
+              (compiler-backend-string-contains? asm "imulq $8")
+              (and
+                (compiler-backend-string-contains? asm "(%r10)")
+                (not
+                  (compiler-backend-string-contains?
+                    asm
+                    (compiler-backend-todo-marker))))))))]
     [(ErrCompilerBackend _) false]))
 
 (define (compiler-backend-make-array-source) : String
@@ -10094,9 +10162,18 @@ tl_windows_setup_instances:
         (compiler-backend-string-contains? asm "main:\n")
         (and
           (compiler-backend-string-contains? asm "    call tl_alloc\n")
-          (and
+          (backend-and8
+            (compiler-backend-string-contains? asm "tl_alloc:")
+            (compiler-backend-string-contains? asm "setle %al")
+            (compiler-backend-string-contains? asm "$1152921504606846975")
             (compiler-backend-string-contains? asm "call tl_oob_abort")
-            (compiler-backend-string-contains? asm "make_array_len_ok"))))]
+            (compiler-backend-string-contains? asm "tl_oob_abort:")
+            (compiler-backend-string-contains? asm "make_array_len_ok")
+            (compiler-backend-string-contains? asm "imulq")
+            (not
+              (compiler-backend-string-contains?
+                asm
+                (compiler-backend-todo-marker))))))]
     [(ErrCompilerBackend _) false]))
 
 (define (compiler-backend-region-source) : String
@@ -10563,22 +10640,24 @@ tl_windows_setup_instances:
           (compiler-backend-windows-process-output-ok?)
           (compiler-backend-append-file-status-ok?))
         (and
-          (compiler-backend-user-helper-name-ok?)
-          (and
+          (backend-and8
+            (compiler-backend-user-helper-name-ok?)
             (compiler-backend-file-handle-open-close-runtime-ok?)
+            (compiler-backend-string-runtime-ok?)
+            (compiler-backend-env-runtime-ok?)
+            (compiler-backend-expanded-scalar-regs-ok?)
+            (compiler-backend-regalloc-f64-ok?)
+            (compiler-backend-runtime-coexist-ok?)
+            (compiler-backend-module-symbol-ok?))
+          (and
+            (compiler-backend-extern-metadata-symbol-ok?)
             (and
-              (compiler-backend-string-runtime-ok?)
-              (and
-                (compiler-backend-env-runtime-ok?)
-                (backend-and8
-                  (compiler-backend-expanded-scalar-regs-ok?)
-                  (compiler-backend-regalloc-f64-ok?)
-                  (compiler-backend-runtime-coexist-ok?)
-                  (compiler-backend-module-symbol-ok?)
-                  (compiler-backend-extern-metadata-symbol-ok?)
-                  (compiler-backend-scalar-wide-ops-ok?)
-                  (compiler-backend-scalar-div-mod-ok?)
-                  (compiler-backend-f64-abi-ok?)))))))))
+              (backend-and4
+                (compiler-backend-scalar-wide-ops-ok?)
+                (compiler-backend-scalar-div-mod-ok?)
+                (compiler-backend-f64-abi-ok?)
+                (compiler-backend-aggregate-storage-shape-ok?))
+              (compiler-backend-alloc-runtime-shape-ok?)))))))
     42
     (begin
       (panic "backend: smoke output mismatch")

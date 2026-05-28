@@ -46,6 +46,7 @@
 (defenum CompilerIrValue
   (IrValueVar i64)
   (IrValueGlobal String)
+  (IrValueGlobalAddr String)
   (IrValueI64 i64)
   (IrValueF64 String)
   (IrValueBool bool)

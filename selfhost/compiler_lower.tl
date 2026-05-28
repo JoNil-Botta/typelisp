@@ -1377,13 +1377,6 @@
     "__enum_obj_"
     (string-append enum-name (string-append "_" variant-name))))
 
-(define (lower-nullary-variant-pointer-name
-  [enum-name : String]
-  [variant-name : String]) : String
-  (string-append
-    "__enum_ptr_"
-    (string-append enum-name (string-append "_" variant-name))))
-
 (define (lower-nullary-variant-globals
   [enum-name : String]
   [variants : AstVariantDefList]
@@ -1401,16 +1394,9 @@
                   (let
                     [object-name : String
                       (lower-nullary-variant-object-name enum-name variant-name)]
-                    [pointer-name : String
-                      (lower-nullary-variant-pointer-name enum-name variant-name)]
                     (IrGlobalCons
-                      (IrGlobal
-                        pointer-name
-                        (AstTyEnum enum-name)
-                        (IrValueGlobal object-name))
-                      (IrGlobalCons
-                        (IrGlobal object-name (AstTyI64) (IrValueI64 tag))
-                        globals)))]
+                      (IrGlobal object-name (AstTyI64) (IrValueI64 tag))
+                      globals))]
                 [_ globals])]
             (lower-nullary-variant-globals
               enum-name
@@ -2399,8 +2385,8 @@
                       (OkLowerExpr
                         (LowerExpr
                           args-state
-                          (IrValueGlobal
-                            (lower-nullary-variant-pointer-name
+                          (IrValueGlobalAddr
+                            (lower-nullary-variant-object-name
                               enum-name
                               variant-name))
                           (AstTyEnum enum-name)))]

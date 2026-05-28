@@ -1036,6 +1036,10 @@
       (match b
         [(IrValueGlobal gb) (string-eq ga gb)]
         [_ false])]
+    [(IrValueGlobalAddr ga)
+      (match b
+        [(IrValueGlobalAddr gb) (string-eq ga gb)]
+        [_ false])]
     [(IrValueI64 na)
       (match b
         [(IrValueI64 nb) (= na nb)]
@@ -1819,7 +1823,8 @@
     [(IrValueUnit) true]
     [(IrValueF64 _) false]
     [(IrValueString _) false]
-    [(IrValueGlobal _) false]))
+    [(IrValueGlobal _) false]
+    [(IrValueGlobalAddr _) false]))
 
 (define (opt-copy-resolve [env : OptCopyEnv] [value : CompilerIrValue]) : CompilerIrValue
   (match value

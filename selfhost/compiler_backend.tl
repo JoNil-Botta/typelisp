@@ -785,6 +785,14 @@
           "(%rip), "
           reg
           "\n"))]
+    [(IrValueGlobalAddr name)
+      (OkCompilerBackend
+        (backend-cat5
+          "    leaq "
+          (compiler-backend-user-symbol name)
+          "(%rip), "
+          reg
+          "\n"))]
     [(IrValueI64 n)
       (OkCompilerBackend
         (compiler-backend-emit-load-i64-immediate n reg))]
@@ -1010,6 +1018,14 @@
           (compiler-backend-emit-load-memory
             (backend-cat3 (compiler-backend-user-symbol name) "(%rip)" "")
             ty))]
+      [(IrValueGlobalAddr name)
+        (OkCompilerBackend
+          (backend-cat5
+            "    leaq "
+            (compiler-backend-user-symbol name)
+            "(%rip), %rax\n"
+            ""
+            ""))]
       [_ (compiler-backend-emit-load-value-with-plan assignments value "%rax")])))
 
 (define (compiler-backend-emit-load-typed-value
@@ -5860,6 +5876,9 @@
     [(IrValueF64 text)
       (OkCompilerBackend (backend-cat3 "    .double " text "\n"))]
     [(IrValueGlobal name)
+      (OkCompilerBackend
+        (backend-cat3 "    .quad " (compiler-backend-user-symbol name) "\n"))]
+    [(IrValueGlobalAddr name)
       (OkCompilerBackend
         (backend-cat3 "    .quad " (compiler-backend-user-symbol name) "\n"))]
     [(IrValueString text)

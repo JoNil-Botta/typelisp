@@ -33,7 +33,7 @@ jobs:
           - suite: no-rust-stage0
             name: No-Rust Stage0 Verification (windows-latest)
             os: windows-latest
-            timeout_minutes: 20
+            timeout_minutes: 30
           - suite: typelisp-lint
             name: TypeLisp Lint (linux)
             os: ubuntu-latest

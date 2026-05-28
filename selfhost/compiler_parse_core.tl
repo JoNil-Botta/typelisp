@@ -305,6 +305,9 @@
 (define (compiler-parse-tag-ty-never) : i64
   114)
 
+(define (compiler-parse-tag-ty-expr) : i64
+  115)
+
 (define (compiler-parse-tag-ty-func) : i64
   130)
 

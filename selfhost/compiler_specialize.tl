@@ -262,6 +262,7 @@
     [(AstTyString) "String"]
     [(AstTyUnit) "unit"]
     [(AstTyNever) "never"]
+    [(AstTyExpr) "Expr"]
     [(AstTyFunc args ret)
       (string-append
         "fn_"
@@ -304,7 +305,7 @@
     [(CtfeChar c) (string-append "char_" (int->string (cast c : i64)))]
     [(CtfeUnit) "unit"]
     [(CtfeType ty) (string-append "type_" (spec-type-key ty))]
-    [(CtfeExpr _) "expr"]
+    [(CtfeExpr _ _) "Expr"]
     [(CtfeExprList _) "expr-list"]))
 
 (define (spec-values-key [values : SpecValueList]) : String
@@ -332,7 +333,7 @@
     [(CtfeChar _) (ctfe-type-eq ty (AstTyChar))]
     [(CtfeUnit) (ctfe-type-eq ty (AstTyUnit))]
     [(CtfeType _) false]
-    [(CtfeExpr _) false]
+    [(CtfeExpr _ _) (ctfe-type-eq ty (AstTyExpr))]
     [(CtfeExprList _) false]))
 
 (define (spec-value-type-label [value : CompilerCtfeValue]) : String
@@ -342,7 +343,7 @@
     [(CtfeChar _) "char"]
     [(CtfeUnit) "unit"]
     [(CtfeType _) "type"]
-    [(CtfeExpr _) "expr"]
+    [(CtfeExpr _ _) "Expr"]
     [(CtfeExprList _) "expr-list"]))
 
 (define (spec-type-subst-lookup [subs : SpecTypeSubst] [name : String]) : SpecMaybeString
@@ -544,7 +545,7 @@
           (string-append
             "cannot substitute compile-time type value "
             (string-append (spec-type-key ty) " into runtime expression"))))]
-    [(CtfeExpr _)
+    [(CtfeExpr _ _)
       (ErrSpecSubExpr
         (spec-diagnostic-at-expr
           origin

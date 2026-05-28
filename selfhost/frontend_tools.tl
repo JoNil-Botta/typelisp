@@ -380,6 +380,7 @@
     [(AstTyString) "String"]
     [(AstTyUnit) "Unit"]
     [(AstTyNever) "Never"]
+    [(AstTyExpr) "Expr"]
     [(AstTyFunc args ret)
       (front-cat3
         "Func(["

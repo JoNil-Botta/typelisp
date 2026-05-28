@@ -70,6 +70,10 @@
   (AstTyString)
   (AstTyUnit)
   (AstTyNever)
+  ;; User-facing macro code-as-data type (#1135). This is a single concrete
+  ;; compile-time-only type; the produced runtime type is tracked internally by
+  ;; CTFE values, not as a source-level type parameter.
+  (AstTyExpr)
   (AstTyFunc AstTypeList AstType)
   (AstTyTuple AstTypeList)
   (AstTyArray AstType i64)
@@ -282,18 +286,19 @@
     [(AstTyString) 13]
     [(AstTyUnit) 14]
     [(AstTyNever) 15]
-    [(AstTyFunc _ _) 16]
-    [(AstTyTuple _) 17]
-    [(AstTyArray _ _) 18]
-    [(AstTyDynArray _) 19]
-    [(AstTyRegion _ _) 20]
-    [(AstTyRef _ _) 21]
-    [(AstTyMutRef _ _) 22]
-    [(AstTyEnum _) 23]
-    [(AstTyStruct _) 24]
-    [(AstTyVar _) 25]
-    [(AstTyPtr _) 26]
-    [(AstTyMutPtr _) 27]))
+    [(AstTyExpr) 16]
+    [(AstTyFunc _ _) 17]
+    [(AstTyTuple _) 18]
+    [(AstTyArray _ _) 19]
+    [(AstTyDynArray _) 20]
+    [(AstTyRegion _ _) 21]
+    [(AstTyRef _ _) 22]
+    [(AstTyMutRef _ _) 23]
+    [(AstTyEnum _) 24]
+    [(AstTyStruct _) 25]
+    [(AstTyVar _) 26]
+    [(AstTyPtr _) 27]
+    [(AstTyMutPtr _) 28]))
 
 (define (ast-expr-tag [expr : AstExpr]) : i64
   (match expr

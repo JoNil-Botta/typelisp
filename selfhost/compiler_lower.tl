@@ -676,6 +676,7 @@
     [(AstTyChar) 1]
     [(AstTyUnit) 0]
     [(AstTyNever) 0]
+    [(AstTyExpr) 0]
     [(AstTyFunc _ _) 8]
     [(AstTyTuple _) 8]
     [(AstTyArray elem count) (* (lower-type-size ctx elem) count)]
@@ -706,6 +707,7 @@
     [(AstTyChar) 1]
     [(AstTyUnit) 1]
     [(AstTyNever) 1]
+    [(AstTyExpr) 1]
     [(AstTyFunc _ _) 8]
     [(AstTyTuple _) 8]
     [(AstTyArray elem _) (lower-type-align ctx elem)]
@@ -2067,7 +2069,7 @@
                     (string-append
                       (tc-type-render (tc-resolve-type ctx ty))
                       " is compile-time only"))))]
-            [(CtfeExpr _)
+            [(CtfeExpr _ _)
               (ErrLowerExpr
                 (lower-diagnostic-at-expr
                   origin

@@ -279,6 +279,7 @@
     [(AstTyString) "String"]
     [(AstTyUnit) "unit"]
     [(AstTyNever) "never"]
+    [(AstTyExpr) "Expr"]
     [(AstTyFunc args ret)
       (tc-cat3
         "(-> "
@@ -1094,7 +1095,10 @@
             name)]
         (match (compiler-symbols-lookup-type symbols lookup-name)
           [(SomeI64 handle) (tc-resolved-nominal-type lookup-name handle)]
-          [(NoneI64) (AstTyVar name)]))]))
+          [(NoneI64)
+            (if (string-eq name "Expr")
+              (AstTyExpr)
+              (AstTyVar name))]))]))
 
 (define (tc-resolve-type [ctx : TcContext] [ty : AstType]) : AstType
   (match ty
@@ -1522,6 +1526,10 @@
       (match b
         [(AstTyNever) true]
         [_ false])]
+    [(AstTyExpr)
+      (match b
+        [(AstTyExpr) true]
+        [_ false])]
     [(AstTyFunc a-args a-ret)
       (match b
         [(AstTyFunc b-args b-ret)
@@ -1662,6 +1670,7 @@
     [(AstTyChar) (TcCopyable)]
     [(AstTyUnit) (TcCopyable)]
     [(AstTyNever) (TcCopyable)]
+    [(AstTyExpr) (TcCopyable)]
     [(AstTyFunc _ _) (TcCopyable)]
     [(AstTyPtr _) (TcCopyable)]
     [(AstTyMutPtr _) (TcCopyable)]
@@ -5386,6 +5395,7 @@
             [(CtfeBool _) (OkTcType (AstTyBool))]
             [(CtfeChar _) (OkTcType (AstTyChar))]
             [(CtfeUnit) (OkTcType (AstTyUnit))]
+            [(CtfeExpr _ _) (OkTcType (AstTyExpr))]
             [(CtfeType ty)
               (ErrTcType
                 (string-append
@@ -5393,7 +5403,6 @@
                   (string-append
                     (tc-type-render (tc-resolve-type ctx ty))
                     " is compile-time only")))]
-            [(CtfeExpr _) (ErrTcType "Expr value is compile-time only (#1135)")]
             [(CtfeExprList _)
               (ErrTcType "ExprList value is compile-time only (#1135)")])]
         [(ErrCtfe diag) (ErrTcType (compiler-diagnostic-message diag))])]
@@ -7074,12 +7083,22 @@
           (compiler-typecheck-ok?
             "(define (main) : i64 (+ (comptime (* 6 7)) 0))")
           (and
-            (compiler-typecheck-error-ok?
-              "(define (f [x : i64]) : i64 (comptime x))"
-              "compile-time evaluation cannot reference runtime variable 'x'")
-            (compiler-typecheck-error-ok?
-              "(define (main) : i64 (comptime (< 1 2)))"
-              "typecheck: return type mismatch")))))))
+            (compiler-typecheck-ok?
+              "(define (mk) : Expr (comptime (expr-if (expr-bool true) (expr-splice (expr-bool false)) (expr-bool true))))")
+            (and
+              (compiler-typecheck-ok?
+                "(define (mk) : bool (comptime (expr-if? (expr-if (expr-bool true) (expr-bool false) (expr-bool true)))))")
+              (and
+                (compiler-typecheck-error-ok?
+                  "(define (mk) : Expr (comptime (expr-if true (expr-bool true) (expr-bool false))))"
+                  "expr-if condition expects Expr")
+                (and
+                  (compiler-typecheck-error-ok?
+                    "(define (f [x : i64]) : i64 (comptime x))"
+                    "compile-time evaluation cannot reference runtime variable 'x'")
+                  (compiler-typecheck-error-ok?
+                    "(define (main) : i64 (comptime (< 1 2)))"
+                    "typecheck: return type mismatch"))))))))))
 
 ;; IO-builtin signature rules (#1042): whole-file helpers and file-handle status
 ;; primitives accept, plus wrong-argument, wrong-arity, and result-type-mismatch

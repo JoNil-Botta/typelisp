@@ -179,12 +179,12 @@ contains|_tl_compiler_backend_runtime_windows_file_handle_functions:
 contains|_tl_compiler_backend_runtime_file_read_chunk_status_functions:
 contains|_tl_compiler_backend_runtime_windows_file_read_chunk_functions:
 contains|_tl_compiler_backend_runtime_env_var_value_functions:
-contains|_tl_compiler_backend_env_runtime_ok_question:
-contains|_tl_compiler_backend_self_test:
 contains|foreign_exact
 contains|backend: too many call args
 not-contains|backend: Windows runtime helpers not yet implemented (#648)
 end
+
+decision|selfhost/compiler_backend_tests.tl|backend smoke-test helper module imported by selfhost/compiler_backend_smoke.tl and stack-args fixture; no direct CLI/main compile case
 
 case|selfhost_compiler_backend_runtime_fixture|selfhost/compiler_backend_runtime_fixture.tl|assembly|skip|direct
 requires-stage0-mode|#1437 stage1 compiler resource blocker (imports backend)
@@ -203,6 +203,7 @@ end
 case|selfhost_compiler_backend_smoke|selfhost/compiler_backend_smoke.tl|assembly|exactly-one|direct
 requires-stage0-mode|#1437 stage1 compiler resource blocker (imports backend)
 contains|_tl_compiler_backend_self_test:
+contains|_tl_compiler_backend_env_runtime_ok_question:
 contains|_tl_compiler_backend_emit_source:
 contains|_tl_lower_compiler_source:
 end

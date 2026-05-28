@@ -60,17 +60,15 @@
 ;;;
 ;;; Empty sides are returned without allocating an extra separator.
 (define (fs-path-join [left : String] [right : String]) : String
-  (if (= (string-length left) 0)
-    right
-    (if (= (string-length right) 0)
-      left
-      (if (fs-path-ends-separator? left)
-        (if (fs-path-starts-separator? right)
-          (string-append left (substring right 1 (- (string-length right) 1)))
-          (string-append left right))
-        (if (fs-path-starts-separator? right)
-          (string-append left right)
-          (string-append (string-append left (fs-path-separator)) right))))))
+  (cond
+    [(= (string-length left) 0) right]
+    [(= (string-length right) 0) left]
+    [(fs-path-ends-separator? left)
+      (if (fs-path-starts-separator? right)
+        (string-append left (substring right 1 (- (string-length right) 1)))
+        (string-append left right))]
+    [(fs-path-starts-separator? right) (string-append left right)]
+    [else (string-append (string-append left (fs-path-separator)) right)]))
 
 ;;; Index of the last path separator in `path`, or `-1` when there is none.
 (define (fs-last-separator-index [path : String]) : i64

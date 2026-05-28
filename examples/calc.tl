@@ -96,21 +96,17 @@
 ;; `TEnd` is dead code that only satisfies the `Token` result type, since `panic`
 ;; yields unit and never returns.
 (define (single-token [c : char]) : Token
-  (if (= c #+')
-    TPlus
-    (if (= c #-')
-      TMinus
-      (if (= c #*')
-        TStar
-        (if (= c #/')
-          TSlash
-          (if (= c #(')
-            TLParen
-            (if (= c #)')
-              TRParen
-              (begin
-                (panic "lexer: unexpected character")
-                TEnd))))))))
+  (cond
+    [(= c #+') TPlus]
+    [(= c #-') TMinus]
+    [(= c #*') TStar]
+    [(= c #/') TSlash]
+    [(= c #(') TLParen]
+    [(= c #)') TRParen]
+    [else
+      (begin
+        (panic "lexer: unexpected character")
+        TEnd)]))
 
 ;; Lex `src`, recording each emitted `Token` value into `toks` (which must be
 ;; large enough to hold every token plus the TEnd sentinel) and returning the

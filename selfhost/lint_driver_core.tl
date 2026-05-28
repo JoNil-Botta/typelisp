@@ -87,46 +87,129 @@
           (string-append (selfhost-lint-render-finding path finding) "\n"))
         (+ 1 (selfhost-lint-print-findings path rest)))]))
 
-;; Parse `source` (attributed to `path`) and run the lint rules over its program.
+(define (selfhost-lint-space? [c : char]) : bool
+  (or (= c #\space') (or (= c #\tab') (or (= c #\newline') (= c #\return')))))
+
+(define (selfhost-lint-prefix-at?
+  [source : String]
+  [start : i64]
+  [needle : String]) : bool
+  (let
+    [source-len : i64 (string-length source)]
+    [needle-len : i64 (string-length needle)]
+    (if (< start 0)
+      false
+      (if (> (+ start needle-len) source-len)
+        false
+        (let
+          [ok : bool true]
+          [idx : i64 0]
+          (begin
+            (while (and ok (< idx needle-len))
+              (if (= (string-ref source (+ start idx)) (string-ref needle idx))
+                (set! idx (+ idx 1))
+                (set! ok false)))
+            ok))))))
+
+(define (selfhost-lint-cond-delim? [source : String] [idx : i64]) : bool
+  (let
+    [source-len : i64 (string-length source)]
+    (if (>= idx source-len)
+      true
+      (let
+        [c : char (string-ref source idx)]
+        (or (selfhost-lint-space? c) (= c #)'))))))
+
+(define (selfhost-lint-line-start-index [source : String] [target-line : i64]) : i64
+  (let
+    [source-len : i64 (string-length source)]
+    [idx : i64 0]
+    [line : i64 1]
+    [start : i64 0]
+    (begin
+      (while (and (< idx source-len) (< line target-line))
+        (if (= (string-ref source idx) #\newline')
+          (begin
+            (set! line (+ line 1))
+            (set! start (+ idx 1))
+            (set! idx (+ idx 1)))
+          (set! idx (+ idx 1))))
+      (if (= line target-line)
+        start
+        source-len))))
+
+(define (selfhost-lint-cond-origin? [source : String] [span : AstSourceSpan]) : bool
+  (let
+    [line : i64 (struct-get span start-line)]
+    [col : i64 (struct-get span start-col)]
+    (if (or (<= line 0) (<= col 0))
+      false
+      (let
+        [line-start : i64 (selfhost-lint-line-start-index source line)]
+        [idx : i64 (+ line-start (- col 1))]
+        (and
+          (selfhost-lint-prefix-at? source idx "(cond")
+          (selfhost-lint-cond-delim? source (+ idx 5)))))))
+
+(define (selfhost-lint-filter-cond-origins
+  [source : String]
+  [items : LintFindingList]) : LintFindingList
+  (match items
+    [(LintFindingNil) LintFindingNil]
+    [(LintFindingCons finding rest)
+      (let
+        [filtered-rest : LintFindingList
+          (selfhost-lint-filter-cond-origins source rest)]
+        (if (selfhost-lint-cond-origin? source (struct-get finding span))
+          filtered-rest
+          (LintFindingCons finding filtered-rest)))]))
+
+(define (selfhost-lint-program-findings
+  [source : String]
+  [program : AstProgram]) : LintFindingList
+  (match program
+    [(AstProgram decls)
+      (selfhost-lint-filter-cond-origins
+        source
+        (lint-program (AstProgram decls) (lint-default-ladder-threshold)))]))
+
+;; Parse `source` (attributed to `path`) and run the lint rules over this source
+;; unit only. Imports are linted when their own files are selected by the repo
+;; lint gate, so a public driver does not duplicate every imported finding.
 (define (selfhost-lint-source-with-roots
   [path : String]
   [source : String]
   [stdlib-roots : CompilerLoadRootList]) : LintFindingList
-  (match (compiler-load-source-with-paths-and-roots
-    path
-    source
-    (sym-i64-empty)
-    stdlib-roots)
-    [(OkCompilerLoadWithPaths decls _ _ _)
-      (lint-program (AstProgram decls) (lint-default-ladder-threshold))]
-    [(ErrCompilerLoadWithPaths _) LintFindingNil]))
+  (match (parse-ast-source-diagnostic path source)
+    [(OkAstProgramDiagnostic program)
+      (selfhost-lint-program-findings source program)]
+    [(ErrAstProgramDiagnostic _) LintFindingNil]))
 
 ;; Lint a file on disk: print its findings + a summary; return 0 (warn-only), or
 ;; 1 when the file could not be loaded.
 (define (selfhost-lint-file
   [input-path : String]
   [stdlib-roots : CompilerLoadRootList]) : i64
-  (match (compiler-load-file-with-paths-and-roots
-    input-path
-    (sym-i64-empty)
-    stdlib-roots)
-    [(OkCompilerLoadWithPaths decls _ _ _)
-      (let
-        [findings : LintFindingList
-          (lint-program (AstProgram decls) (lint-default-ladder-threshold))]
-        (begin
-          (selfhost-lint-print-findings input-path findings)
-          (print-string
-            (string-append
-              "lint: "
+  (let
+    [source : String (read-file input-path)]
+    (match (parse-ast-source-diagnostic input-path source)
+      [(OkAstProgramDiagnostic program)
+        (let
+          [findings : LintFindingList
+            (selfhost-lint-program-findings source program)]
+          (begin
+            (selfhost-lint-print-findings input-path findings)
+            (print-string
               (string-append
-                (int->string (lint-finding-list-count findings))
-                " finding(s)\n")))
-          0))]
-    [(ErrCompilerLoadWithPaths diag)
-      (begin
-        (print-error (compiler-diagnostic-render diag))
-        1)]))
+                "lint: "
+                (string-append
+                  (int->string (lint-finding-list-count findings))
+                  " finding(s)\n")))
+            0))]
+      [(ErrAstProgramDiagnostic diag)
+        (begin
+          (print-error (compiler-diagnostic-render diag))
+          1)])))
 
 ;; ---- self-test (driven by lint_driver_smoke.tl) ----
 ;; A five-deep value-dispatch if-ladder (length 5 >= the default threshold of 3),

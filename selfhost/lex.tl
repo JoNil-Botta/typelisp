@@ -411,27 +411,22 @@
 (define (lex-check-step [src : String] [i : i64] [n : i64]) : ResultLexI64
   (let
     [c : char (string-ref src i)]
-    (if (is-space c)
-      (OkLexI64 (+ i 1))
-      (if (or (= c #(') (= c #['))
-        (OkLexI64 (+ i 1))
-        (if (or (= c #)') (= c #]'))
-          (OkLexI64 (+ i 1))
-          (if (= c #"')
-            (let
-              [start : i64 (+ i 1)]
-              (match (scan-str-end-result src start n)
-                [(OkLexI64 end) (OkLexI64 (+ end 1))]
-                [(ErrLexI64 message) (ErrLexI64 message)]))
-            (if (= c #;')
-              (OkLexI64 (scan-comment-end src (+ i 1) n))
-              (if (= c ##')
-                (lex-check-char-end src i n)
-                (if (or (is-digit c) (negative-number-start? src i n))
-                  (OkLexI64 (scan-number-end src i n))
-                  (if (is-symbol-char c)
-                    (OkLexI64 (scan-symbol-end src i n))
-                    (ErrLexI64 "lexer: unexpected character")))))))))))
+    (cond
+      [(is-space c) (OkLexI64 (+ i 1))]
+      [(or (= c #(') (= c #[')) (OkLexI64 (+ i 1))]
+      [(or (= c #)') (= c #]')) (OkLexI64 (+ i 1))]
+      [(= c #"')
+        (let
+          [start : i64 (+ i 1)]
+          (match (scan-str-end-result src start n)
+            [(OkLexI64 end) (OkLexI64 (+ end 1))]
+            [(ErrLexI64 message) (ErrLexI64 message)]))]
+      [(= c #;') (OkLexI64 (scan-comment-end src (+ i 1) n))]
+      [(= c ##') (lex-check-char-end src i n)]
+      [(or (is-digit c) (negative-number-start? src i n))
+        (OkLexI64 (scan-number-end src i n))]
+      [(is-symbol-char c) (OkLexI64 (scan-symbol-end src i n))]
+      [else (ErrLexI64 "lexer: unexpected character")])))
 
 (define (lex-check-spanned [src : String]) : ResultLexCheck
   (let

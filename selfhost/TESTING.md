@@ -362,11 +362,8 @@ TYPELISP_BIN=./target/debug/typelisp ./scripts/verify-selfhost.sh
 scripts/verify-no-rust-stage0.sh
 ```
 
-`scripts/check-tl-lint.sh` runs `typelisp lint` over tracked standalone
-TypeLisp sources and compares findings with `scripts/tl-lint-baseline.txt`.
-Use `TYPELISP_LINT_UPDATE_BASELINE=1 scripts/check-tl-lint.sh` only when
-intentionally accepting or removing legacy lint debt; new unbaselined findings
-fail CI.
+`scripts/check-tl-lint.sh` runs `typelisp lint` over tracked TypeLisp source
+units and fails CI on any finding.
 
 Run the tests that match the layer you touched. On non-Linux platforms, scripts
 that require native `as`/`ld` either no-op by design or should be run through a

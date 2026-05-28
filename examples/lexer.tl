@@ -84,21 +84,17 @@
 ;; dead code that only satisfies the `Token` result type, since `panic` yields
 ;; unit and never returns.
 (define (single-token [c : char]) : Token
-  (if (= c #+')
-    TPlus
-    (if (= c #-')
-      TMinus
-      (if (= c #*')
-        TStar
-        (if (= c #/')
-          TSlash
-          (if (= c #(')
-            TLParen
-            (if (= c #)')
-              TRParen
-              (begin
-                (panic "lexer: unexpected character")
-                TEnd))))))))
+  (cond
+    [(= c #+') TPlus]
+    [(= c #-') TMinus]
+    [(= c #*') TStar]
+    [(= c #/') TSlash]
+    [(= c #(') TLParen]
+    [(= c #)') TRParen]
+    [else
+      (begin
+        (panic "lexer: unexpected character")
+        TEnd)]))
 
 ;; Return the end index (exclusive) of the identifier that starts at `start`
 ;; in `src`: scan forward over identifier characters. `n` is the source length.
@@ -144,9 +140,9 @@
       (while (< i n)
         (let
           [c : char (string-ref src i)]
-          (if (is-space c)
-            (set! i (+ i 1))
-            (if (is-alpha c)
+          (cond
+            [(is-space c) (set! i (+ i 1))]
+            [(is-alpha c)
               ;; Accumulate a run of identifier chars into one TIdent token.
               (let
                 [start : i64 i]
@@ -154,24 +150,23 @@
                 (begin
                   (array-set! toks count (ident-token src start end))
                   (set! count (+ count 1))
-                  (set! i end)))
-              (if (is-digit c)
-                ;; Accumulate a run of digits into one TInt token.
-                (let
-                  [acc : i64 0]
-                  (begin
-                    (while (and (< i n) (is-digit (string-ref src i)))
-                      (begin
-                        (set!
-                          acc
-                          (+ (* acc 10) (digit-value (string-ref src i))))
-                        (set! i (+ i 1))))
-                    (array-set! toks count (TInt acc))
-                    (set! count (+ count 1))))
+                  (set! i end)))]
+            [(is-digit c)
+              ;; Accumulate a run of digits into one TInt token.
+              (let
+                [acc : i64 0]
                 (begin
-                  (array-set! toks count (single-token c))
-                  (set! count (+ count 1))
-                  (set! i (+ i 1))))))))
+                  (while (and (< i n) (is-digit (string-ref src i)))
+                    (begin
+                      (set! acc (+ (* acc 10) (digit-value (string-ref src i))))
+                      (set! i (+ i 1))))
+                  (array-set! toks count (TInt acc))
+                  (set! count (+ count 1))))]
+            [else
+              (begin
+                (array-set! toks count (single-token c))
+                (set! count (+ count 1))
+                (set! i (+ i 1)))])))
       ;; A real lexer terminates the stream; record the sentinel too.
       (array-set! toks count TEnd)
       count)))

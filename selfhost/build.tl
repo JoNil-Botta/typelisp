@@ -89,15 +89,12 @@
       (ErrBuildTarget (build-unknown-target value)))))
 
 (define (build-parse-opt-level [value : String]) : i64
-  (if (string-eq value "0")
-    0
-    (if (string-eq value "1")
-      1
-      (if (string-eq value "2")
-        2
-        (if (string-eq value "3")
-          3
-          -1)))))
+  (cond
+    [(string-eq value "0") 0]
+    [(string-eq value "1") 1]
+    [(string-eq value "2") 2]
+    [(string-eq value "3") 3]
+    [else -1]))
 
 (define (build-parse-options
   [idx : i64]
@@ -146,28 +143,29 @@
             stdlib-roots))))
     (let
       [current : String (arg idx)]
-      (if (string-eq current "-o")
-        (if (>= (+ idx 1) count)
-          (ErrBuildConfig "build: -o requires a value")
-          (if has-output
-            (ErrBuildConfig "build: -o was provided more than once")
-            (build-parse-options
-              (+ idx 2)
-              count
-              source
-              has-source
-              (arg (+ idx 1))
-              true
-              manifest
-              has-manifest
-              target
-              has-target
-              mode
-              opt-level
-              has-opt-level
-              stdlib-lines
-              stdlib-roots)))
-        (if (string-eq current "--manifest-path")
+      (cond
+        [(string-eq current "-o")
+          (if (>= (+ idx 1) count)
+            (ErrBuildConfig "build: -o requires a value")
+            (if has-output
+              (ErrBuildConfig "build: -o was provided more than once")
+              (build-parse-options
+                (+ idx 2)
+                count
+                source
+                has-source
+                (arg (+ idx 1))
+                true
+                manifest
+                has-manifest
+                target
+                has-target
+                mode
+                opt-level
+                has-opt-level
+                stdlib-lines
+                stdlib-roots)))]
+        [(string-eq current "--manifest-path")
           (if (>= (+ idx 1) count)
             (ErrBuildConfig "build: --manifest-path requires a value")
             (if has-manifest
@@ -188,120 +186,118 @@
                 opt-level
                 has-opt-level
                 stdlib-lines
-                stdlib-roots)))
-          (if (string-eq current "--stdlib-root")
-            (if (>= (+ idx 1) count)
-              (ErrBuildConfig "build: --stdlib-root requires a value")
-              (build-parse-options
-                (+ idx 2)
-                count
-                source
-                has-source
-                output
-                has-output
-                manifest
-                has-manifest
-                target
-                has-target
-                mode
-                opt-level
-                has-opt-level
-                (build-append-stdlib stdlib-lines (arg (+ idx 1)))
-                (build-root-list-append stdlib-roots (arg (+ idx 1)))))
-            (if (string-eq current "--target")
-              (if (>= (+ idx 1) count)
-                (ErrBuildConfig "build: --target requires a value")
-                (let
-                  [value : String (arg (+ idx 1))]
-                  (if (host-plan-target-valid? value)
-                    (build-parse-options
-                      (+ idx 2)
-                      count
-                      source
-                      has-source
-                      output
-                      has-output
-                      manifest
-                      has-manifest
-                      value
-                      true
-                      mode
-                      opt-level
-                      has-opt-level
-                      stdlib-lines
-                      stdlib-roots)
-                    (ErrBuildConfig (build-unknown-target value)))))
-              (if (string-eq current "--backend-mode")
-                (if (>= (+ idx 1) count)
-                  (ErrBuildConfig "build: --backend-mode requires a value")
-                  (let
-                    [value : String (arg (+ idx 1))]
-                    (if (host-plan-backend-mode-valid? value)
-                      (build-parse-options
-                        (+ idx 2)
-                        count
-                        source
-                        has-source
-                        output
-                        has-output
-                        manifest
-                        has-manifest
-                        target
-                        has-target
-                        value
-                        opt-level
-                        has-opt-level
-                        stdlib-lines
-                        stdlib-roots)
-                      (ErrBuildConfig (build-unknown-mode value)))))
-                (if (string-eq current "--opt-level")
-                  (if (>= (+ idx 1) count)
-                    (ErrBuildConfig "build: --opt-level requires a value")
-                    (if has-opt-level
-                      (ErrBuildConfig
-                        "build: --opt-level was provided more than once")
-                      (let
-                        [value : String (arg (+ idx 1))]
-                        [parsed : i64 (build-parse-opt-level value)]
-                        (if (< parsed 0)
-                          (ErrBuildConfig (build-unknown-opt-level value))
-                          (build-parse-options
-                            (+ idx 2)
-                            count
-                            source
-                            has-source
-                            output
-                            has-output
-                            manifest
-                            has-manifest
-                            target
-                            has-target
-                            mode
-                            parsed
-                            true
-                            stdlib-lines
-                            stdlib-roots)))))
-                  (if (host-plan-flag? current)
-                    (ErrBuildConfig
-                      (string-append "build: unknown flag " current))
-                    (if has-source
-                      (ErrBuildConfig "build: accepts only one source file")
-                      (build-parse-options
-                        (+ idx 1)
-                        count
-                        current
-                        true
-                        output
-                        has-output
-                        manifest
-                        has-manifest
-                        target
-                        has-target
-                        mode
-                        opt-level
-                        has-opt-level
-                        stdlib-lines
-                        stdlib-roots))))))))))))
+                stdlib-roots)))]
+        [(string-eq current "--stdlib-root")
+          (if (>= (+ idx 1) count)
+            (ErrBuildConfig "build: --stdlib-root requires a value")
+            (build-parse-options
+              (+ idx 2)
+              count
+              source
+              has-source
+              output
+              has-output
+              manifest
+              has-manifest
+              target
+              has-target
+              mode
+              opt-level
+              has-opt-level
+              (build-append-stdlib stdlib-lines (arg (+ idx 1)))
+              (build-root-list-append stdlib-roots (arg (+ idx 1)))))]
+        [(string-eq current "--target")
+          (if (>= (+ idx 1) count)
+            (ErrBuildConfig "build: --target requires a value")
+            (let
+              [value : String (arg (+ idx 1))]
+              (if (host-plan-target-valid? value)
+                (build-parse-options
+                  (+ idx 2)
+                  count
+                  source
+                  has-source
+                  output
+                  has-output
+                  manifest
+                  has-manifest
+                  value
+                  true
+                  mode
+                  opt-level
+                  has-opt-level
+                  stdlib-lines
+                  stdlib-roots)
+                (ErrBuildConfig (build-unknown-target value)))))]
+        [(string-eq current "--backend-mode")
+          (if (>= (+ idx 1) count)
+            (ErrBuildConfig "build: --backend-mode requires a value")
+            (let
+              [value : String (arg (+ idx 1))]
+              (if (host-plan-backend-mode-valid? value)
+                (build-parse-options
+                  (+ idx 2)
+                  count
+                  source
+                  has-source
+                  output
+                  has-output
+                  manifest
+                  has-manifest
+                  target
+                  has-target
+                  value
+                  opt-level
+                  has-opt-level
+                  stdlib-lines
+                  stdlib-roots)
+                (ErrBuildConfig (build-unknown-mode value)))))]
+        [(string-eq current "--opt-level")
+          (if (>= (+ idx 1) count)
+            (ErrBuildConfig "build: --opt-level requires a value")
+            (if has-opt-level
+              (ErrBuildConfig "build: --opt-level was provided more than once")
+              (let
+                [value : String (arg (+ idx 1))]
+                [parsed : i64 (build-parse-opt-level value)]
+                (if (< parsed 0)
+                  (ErrBuildConfig (build-unknown-opt-level value))
+                  (build-parse-options
+                    (+ idx 2)
+                    count
+                    source
+                    has-source
+                    output
+                    has-output
+                    manifest
+                    has-manifest
+                    target
+                    has-target
+                    mode
+                    parsed
+                    true
+                    stdlib-lines
+                    stdlib-roots)))))]
+        [(host-plan-flag? current)
+          (ErrBuildConfig (string-append "build: unknown flag " current))]
+        [has-source (ErrBuildConfig "build: accepts only one source file")]
+        [else
+          (build-parse-options
+            (+ idx 1)
+            count
+            current
+            true
+            output
+            has-output
+            manifest
+            has-manifest
+            target
+            has-target
+            mode
+            opt-level
+            has-opt-level
+            stdlib-lines
+            stdlib-roots)]))))
 
 (define (build-config [count : i64]) : ResultBuildConfig
   (build-config-from 1 count))

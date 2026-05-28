@@ -363,13 +363,11 @@
       (or (string-eq name "tl_div_abort") (string-eq name "tl_shift_abort")))))
 
 (define (compiler-ir-direct-call-effect [name : String]) : CompilerIrEffect
-  (if (compiler-ir-runtime-memory-read? name)
-    IrEffectMemoryRead
-    (if (compiler-ir-runtime-memory-write? name)
-      IrEffectMemoryWrite
-      (if (compiler-ir-runtime-control-flow? name)
-        IrEffectControlFlow
-        IrEffectUnknown))))
+  (cond
+    [(compiler-ir-runtime-memory-read? name) IrEffectMemoryRead]
+    [(compiler-ir-runtime-memory-write? name) IrEffectMemoryWrite]
+    [(compiler-ir-runtime-control-flow? name) IrEffectControlFlow]
+    [else IrEffectUnknown]))
 
 (define (compiler-ir-instr-effect [instr : CompilerIrInstr]) : CompilerIrEffect
   (match instr

@@ -1599,23 +1599,22 @@
     (tc-type-eq expected actual)))
 
 (define (tc-merge-branch-type [a : AstType] [b : AstType]) : ResultTcType
-  (if (tc-never-type? a)
-    (OkTcType b)
-    (if (tc-never-type? b)
-      (OkTcType a)
-      (if (tc-type-eq a b)
-        (let
-          [a-regions : TcStringList (tc-type-collect-regions a)]
-          [b-regions : TcStringList (tc-type-collect-regions b)]
-          (if (tc-string-list-eq a-regions b-regions)
-            (OkTcType a)
-            (match a-regions
-              [(TcStringNil) (OkTcType b)]
-              [_
-                (match b-regions
-                  [(TcStringNil) (OkTcType a)]
-                  [_ (ErrTcType "typecheck: if branches must match")])])))
-        (ErrTcType "typecheck: if branches must match")))))
+  (cond
+    [(tc-never-type? a) (OkTcType b)]
+    [(tc-never-type? b) (OkTcType a)]
+    [(tc-type-eq a b)
+      (let
+        [a-regions : TcStringList (tc-type-collect-regions a)]
+        [b-regions : TcStringList (tc-type-collect-regions b)]
+        (if (tc-string-list-eq a-regions b-regions)
+          (OkTcType a)
+          (match a-regions
+            [(TcStringNil) (OkTcType b)]
+            [_
+              (match b-regions
+                [(TcStringNil) (OkTcType a)]
+                [_ (ErrTcType "typecheck: if branches must match")])])))]
+    [else (ErrTcType "typecheck: if branches must match")]))
 
 (define (tc-integer-type? [ty : AstType]) : bool
   (match (tc-type-strip-region ty)
@@ -2662,19 +2661,20 @@
   [args : AstExprList]) : ResultTcType
   (match (ast-expr-unspan func)
     [(AstExprVar name)
-      (if (and (tc-layout-query-name? name) (not (tc-name-bound? env name)))
-        (tc-layout-query-runtime-call name args)
-        (if (or (string-eq name "array-length") (string-eq name "length"))
-          (tc-array-length-call ctx env name func args)
-          (if (and
+      (cond
+        [(and (tc-layout-query-name? name) (not (tc-name-bound? env name)))
+          (tc-layout-query-runtime-call name args)]
+        [(or (string-eq name "array-length") (string-eq name "length"))
+          (tc-array-length-call ctx env name func args)]
+        [(and
             (or (string-eq name "string-ref") (string-eq name "char-at"))
             (not (tc-name-bound? env name)))
-            (tc-string-ref-call ctx env args)
-            (if (and
-              (ctfe-reflection-query-name? name)
-              (not (tc-name-bound? env name)))
-              (tc-reflection-query-runtime-call name)
-              (tc-call-expr ctx env func args)))))]
+          (tc-string-ref-call ctx env args)]
+        [(and
+            (ctfe-reflection-query-name? name)
+            (not (tc-name-bound? env name)))
+          (tc-reflection-query-runtime-call name)]
+        [else (tc-call-expr ctx env func args)])]
     [_ (tc-call-expr ctx env func args)]))
 
 (define (tc-let-bindings

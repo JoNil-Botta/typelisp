@@ -2218,6 +2218,7 @@
     ""))
 
 (define (compiler-backend-emit-return
+  [source-function : String]
   [value : CompilerIrMaybeValue]
   [assignments : CompilerRegAssignmentList]
   [vars : i64]
@@ -2226,7 +2227,9 @@
     [(IrNoValue)
       (OkCompilerBackend
         (string-append
-          "    movq $0, %rax\n"
+          (if (string-eq source-function "main")
+            "    xorl %eax, %eax\n"
+            "")
           (compiler-backend-emit-epilogue assignments vars)))]
     [(IrSomeValue v)
       (match (compiler-backend-emit-load-typed-value-with-plan
@@ -2550,7 +2553,12 @@
             (ErrCompilerBackend
               (compiler-backend-apply-instr-diagnostic message instr-diag))])]
       [(IrInstrReturn value)
-        (match (compiler-backend-emit-return value assignments vars ret-ty)
+        (match (compiler-backend-emit-return
+          source-function
+          value
+          assignments
+          vars
+          ret-ty)
           [(OkCompilerBackend asm) (OkCompilerBackend asm)]
           [(ErrCompilerBackend message)
             (ErrCompilerBackend

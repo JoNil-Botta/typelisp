@@ -3171,15 +3171,8 @@
                                   "typecheck: foreach varying array lane type is not supported: "
                                   (tc-type-render
                                     (tc-type-strip-region elem-ty))))
-                              (tc-spmd-finish
-                                expr-ty
-                                TcSpmdUniform
-                                value-env))]
-                          [_
-                            (tc-spmd-finish
-                              expr-ty
-                              TcSpmdUniform
-                              value-env)]))])]
+                              (tc-spmd-finish expr-ty TcSpmdUniform value-env))]
+                          [_ (tc-spmd-finish expr-ty TcSpmdUniform value-env)]))])]
                 [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)])])]
         [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)])]
     [(AstExprStringRef str index)

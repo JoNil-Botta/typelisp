@@ -157,8 +157,7 @@
     [(IrInstrCons head rest)
       (lower-instr-list-reverse-onto rest (IrInstrCons head acc))]))
 
-(define (lower-instr-list-reverse
-  [instrs : CompilerIrInstrList]) : CompilerIrInstrList
+(define (lower-instr-list-reverse [instrs : CompilerIrInstrList]) : CompilerIrInstrList
   (lower-instr-list-reverse-onto instrs IrInstrNil))
 
 (define (lower-block-list-reverse-onto
@@ -169,8 +168,7 @@
     [(IrBlockCons head rest)
       (lower-block-list-reverse-onto rest (IrBlockCons head acc))]))
 
-(define (lower-block-list-reverse
-  [blocks : CompilerIrBlockList]) : CompilerIrBlockList
+(define (lower-block-list-reverse [blocks : CompilerIrBlockList]) : CompilerIrBlockList
   (lower-block-list-reverse-onto blocks IrBlockNil))
 
 (define (lower-global-list-reverse-onto
@@ -181,8 +179,7 @@
     [(IrGlobalCons head rest)
       (lower-global-list-reverse-onto rest (IrGlobalCons head acc))]))
 
-(define (lower-global-list-reverse
-  [globals : CompilerIrGlobalList]) : CompilerIrGlobalList
+(define (lower-global-list-reverse [globals : CompilerIrGlobalList]) : CompilerIrGlobalList
   (lower-global-list-reverse-onto globals IrGlobalNil))
 
 (define (lower-function-list-reverse-onto
@@ -193,8 +190,7 @@
     [(IrFunctionCons head rest)
       (lower-function-list-reverse-onto rest (IrFunctionCons head acc))]))
 
-(define (lower-function-list-reverse
-  [functions : CompilerIrFunctionList]) : CompilerIrFunctionList
+(define (lower-function-list-reverse [functions : CompilerIrFunctionList]) : CompilerIrFunctionList
   (lower-function-list-reverse-onto functions IrFunctionNil))
 
 (define (lower-extern-list-reverse-onto
@@ -205,8 +201,7 @@
     [(IrExternCons head rest)
       (lower-extern-list-reverse-onto rest (IrExternCons head acc))]))
 
-(define (lower-extern-list-reverse
-  [externs : CompilerIrExternList]) : CompilerIrExternList
+(define (lower-extern-list-reverse [externs : CompilerIrExternList]) : CompilerIrExternList
   (lower-extern-list-reverse-onto externs IrExternNil))
 
 (define (lower-name-env-lookup [names : LowerNameEnv] [source-name : String]) : TcMaybeString
@@ -483,9 +478,8 @@
     names
     (match (tc-context-program ctx)
       [(AstProgram decls) (lower-module-local-names-list decls names module "")])))
-(define (lower-string-set-contains?
-  [items : LowerStringSet]
-  [name : String]) : bool
+
+(define (lower-string-set-contains? [items : LowerStringSet] [name : String]) : bool
   (match items
     [(LowerStringNil) false]
     [(LowerStringCons item rest)
@@ -493,9 +487,7 @@
         true
         (lower-string-set-contains? rest name))]))
 
-(define (lower-string-set-insert
-  [items : LowerStringSet]
-  [name : String]) : LowerStringSet
+(define (lower-string-set-insert [items : LowerStringSet] [name : String]) : LowerStringSet
   (if (lower-string-set-contains? items name)
     items
     (LowerStringCons name items)))
@@ -535,12 +527,13 @@
               (lower-string-set-insert
                 out
                 (lower-decl-logical-name entry-path decl-path module name)))]
-          [_ (lower-function-set-from-decls-in-module
-            rest
-            rest-paths
-            entry-path
-            module
-            out)]))]))
+          [_
+            (lower-function-set-from-decls-in-module
+              rest
+              rest-paths
+              entry-path
+              module
+              out)]))]))
 
 (define (lower-function-set-from-decls
   [decls : AstDeclList]
@@ -658,7 +651,8 @@
   [state : LowerReachState]
   [expr : AstExpr]) : LowerReachState
   (match expr
-    [(AstExprSpanned inner _) (lower-reach-expr all-functions names state inner)]
+    [(AstExprSpanned inner _)
+      (lower-reach-expr all-functions names state inner)]
     [(AstExprLiteral _) state]
     [(AstExprVar name) (lower-reach-add-source all-functions names state name)]
     [(AstExprBinary _ lhs rhs)
@@ -691,9 +685,12 @@
         (lower-reach-let-bindings all-functions names state bindings)
         body)]
     [(AstExprLambda _ _ body) (lower-reach-expr all-functions names state body)]
-    [(AstExprTuple values) (lower-reach-expr-list all-functions names state values)]
-    [(AstExprTupleRef value _) (lower-reach-expr all-functions names state value)]
-    [(AstExprArray values) (lower-reach-expr-list all-functions names state values)]
+    [(AstExprTuple values)
+      (lower-reach-expr-list all-functions names state values)]
+    [(AstExprTupleRef value _)
+      (lower-reach-expr all-functions names state value)]
+    [(AstExprArray values)
+      (lower-reach-expr-list all-functions names state values)]
     [(AstExprMakeArray _ len) (lower-reach-expr all-functions names state len)]
     [(AstExprArrayRef array index)
       (lower-reach-expr
@@ -729,8 +726,10 @@
         names
         (lower-reach-expr all-functions names state cond)
         body)]
-    [(AstExprBegin exprs) (lower-reach-expr-list all-functions names state exprs)]
-    [(AstExprUnsafe exprs) (lower-reach-expr-list all-functions names state exprs)]
+    [(AstExprBegin exprs)
+      (lower-reach-expr-list all-functions names state exprs)]
+    [(AstExprUnsafe exprs)
+      (lower-reach-expr-list all-functions names state exprs)]
     [(AstExprSet _ value) (lower-reach-expr all-functions names state value)]
     [(AstExprAnn inner _) (lower-reach-expr all-functions names state inner)]
     [(AstExprCast inner _) (lower-reach-expr all-functions names state inner)]
@@ -765,7 +764,8 @@
             init)
           map-expr)
         reduce-expr)]
-    [(AstExprStructGet value _) (lower-reach-expr all-functions names state value)]
+    [(AstExprStructGet value _)
+      (lower-reach-expr all-functions names state value)]
     [(AstExprWithRegion _ exprs)
       (lower-reach-expr-list all-functions names state exprs)]
     [(AstExprWithResource bindings body)
@@ -795,7 +795,8 @@
         offset)]
     [(AstExprPtrCast ptr _) (lower-reach-expr all-functions names state ptr)]
     [(AstExprPtrToInt ptr) (lower-reach-expr all-functions names state ptr)]
-    [(AstExprIntToPtr value _) (lower-reach-expr all-functions names state value)]))
+    [(AstExprIntToPtr value _)
+      (lower-reach-expr all-functions names state value)]))
 
 (define (lower-reach-global-decls
   [all-functions : LowerStringSet]
@@ -860,12 +861,13 @@
                 entry-path
                 module
                 target))]
-          [_ (lower-find-function-body-in-module
-            rest
-            rest-paths
-            entry-path
-            module
-            target)]))]))
+          [_
+            (lower-find-function-body-in-module
+              rest
+              rest-paths
+              entry-path
+              module
+              target)]))]))
 
 (define (lower-find-function-body
   [decls : AstDeclList]
@@ -952,14 +954,15 @@
                 entry-path
                 module
                 reachable))]
-          [_ (AstDeclCons
-            decl
-            (lower-filter-reachable-decls-in-module
-              rest
-              rest-paths
-              entry-path
-              module
-              reachable))]))]))
+          [_
+            (AstDeclCons
+              decl
+              (lower-filter-reachable-decls-in-module
+                rest
+                rest-paths
+                entry-path
+                module
+                reachable))]))]))
 
 (define (lower-filter-reachable-paths-in-module
   [decls : AstDeclList]
@@ -1007,14 +1010,15 @@
                 entry-path
                 module
                 reachable))]
-          [_ (AstDeclPathCons
-            decl-path
-            (lower-filter-reachable-paths-in-module
-              rest
-              rest-paths
-              entry-path
-              module
-              reachable))]))]))
+          [_
+            (AstDeclPathCons
+              decl-path
+              (lower-filter-reachable-paths-in-module
+                rest
+                rest-paths
+                entry-path
+                module
+                reachable))]))]))
 
 (define (lower-prune-unreachable-functions
   [entry-path : String]
@@ -1027,21 +1031,20 @@
         [all-functions : LowerStringSet
           (lower-function-set-from-decls decls paths entry-path)]
         (if (lower-string-set-contains? all-functions "main")
-          (match
-            (lower-reach-process
+          (match (lower-reach-process
+            all-functions
+            names
+            decls
+            paths
+            entry-path
+            (lower-reach-global-decls
               all-functions
               names
-              decls
-              paths
-              entry-path
-              (lower-reach-global-decls
+              (lower-reach-add-logical
                 all-functions
-                names
-                (lower-reach-add-logical
-                  all-functions
-                  (LowerReachState LowerStringNil LowerStringNil)
-                  "main")
-                decls))
+                (LowerReachState LowerStringNil LowerStringNil)
+                "main")
+              decls))
             [(LowerReachState reachable _)
               (LowerPrunedProgram
                 (AstProgram
@@ -1362,13 +1365,14 @@
         extent)
       8)))
 
-(define (lower-variant-fields-storage-size [ctx : TcContext] [fields : AstTypeList]) : i64
+(define (lower-variant-fields-storage-size
+  [ctx : TcContext]
+  [fields : AstTypeList]) : i64
   (lower-align-up (lower-type-list-extent ctx fields 8) 8))
 
 (define (lower-variant-storage-size [ctx : TcContext] [variant : AstVariantDef]) : i64
   (match variant
-    [(AstVariantDef _ fields)
-      (lower-variant-fields-storage-size ctx fields)]))
+    [(AstVariantDef _ fields) (lower-variant-fields-storage-size ctx fields)]))
 
 (define (lower-nullary-variant-object-name
   [enum-name : String]
@@ -1398,11 +1402,7 @@
                       (IrGlobal object-name (AstTyI64) (IrValueI64 tag))
                       globals))]
                 [_ globals])]
-            (lower-nullary-variant-globals
-              enum-name
-              rest
-              (+ tag 1)
-              next))])]))
+            (lower-nullary-variant-globals enum-name rest (+ tag 1) next))])]))
 
 (define (lower-enum-variants-storage-size
   [ctx : TcContext]
@@ -2392,7 +2392,8 @@
                           (AstTyEnum enum-name)))]
                     [_
                       (let
-                        [size : i64 (lower-variant-fields-storage-size ctx fields)]
+                        [size : i64
+                          (lower-variant-fields-storage-size ctx fields)]
                         (match (lower-reserve-heap-storage
                           args-state
                           size
@@ -2405,7 +2406,8 @@
                                   base
                                   0
                                   (IrValueI64
-                                    (compiler-registry-handle-child-index handle))
+                                    (compiler-registry-handle-child-index
+                                      handle))
                                   (AstTyI64))]
                               (match (lower-store-values
                                 ctx
@@ -4916,7 +4918,9 @@
     [(LowerLabel header-label-state header-label)
       (match (lower-state-fresh-label header-label-state "array_push_copy_body")
         [(LowerLabel body-label-state body-label)
-          (match (lower-state-fresh-label body-label-state "array_push_copy_exit")
+          (match (lower-state-fresh-label
+            body-label-state
+            "array_push_copy_exit")
             [(LowerLabel exit-label-state exit-label)
               (match (lower-state-alloc-var exit-label-state)
                 [(LowerAlloc index-alloc index-var)
@@ -4926,10 +4930,7 @@
                         (lower-state-emit
                           (lower-state-emit
                             index-alloc
-                            (IrInstrMov
-                              index-var
-                              (IrValueI64 0)
-                              (AstTyI64)))
+                            (IrInstrMov index-var (IrValueI64 0) (AstTyI64)))
                           (IrInstrJump header-label))
                         header-label)]
                     (match (lower-state-alloc-var header-start)
@@ -5034,12 +5035,7 @@
   [elem-size : i64]
   [elem-ty : AstType]
   [value-ir : CompilerIrValue]) : LowerExpr
-  (match (lower-emit-binop
-    state
-    IrBinAdd
-    old-len
-    (IrValueI64 1)
-    (AstTyI64))
+  (match (lower-emit-binop state IrBinAdd old-len (IrValueI64 1) (AstTyI64))
     [(LowerExpr len-state new-len _)
       (match (lower-emit-binop
         len-state
@@ -5126,10 +5122,7 @@
                         (lower-array-push-after-max-check
                           (lower-state-emit
                             check-state
-                            (IrInstrBranch
-                              within-max
-                              alloc-label
-                              fail-label))
+                            (IrInstrBranch within-max alloc-label fail-label))
                           fail-label
                           alloc-label
                           arr-value
@@ -6735,45 +6728,45 @@
             specialized-paths
             names))
           [(LowerPrunedProgram checked-program checked-paths)
-        (match (typecheck-compiler-specialized-program-with-paths
-          checked-program
-          checked-paths)
-          [(OkCompilerTypecheck _)
-            (match (build-compiler-symbols checked-program)
-              [(OkCompilerSymbols symbols)
-                (match (build-compiler-registries checked-program)
-                    [(OkCompilerRegistries registries)
-                      (let
-                        [ctx : TcContext
-                        (TcContext checked-program symbols registries "")]
-                      (match (tc-build-top-env ctx checked-program)
-                        [(OkTcEnv top-env)
-                          (match (lower-compiler-program-checked-with-names
-                            ctx
-                            top-env
-                            checked-program
-                            names)
-                            [(OkCompilerLower ir spans)
-                              (OkCompilerLower ir spans)]
-                            [(ErrCompilerLower diag)
+            (match (typecheck-compiler-specialized-program-with-paths
+              checked-program
+              checked-paths)
+              [(OkCompilerTypecheck _)
+                (match (build-compiler-symbols checked-program)
+                  [(OkCompilerSymbols symbols)
+                    (match (build-compiler-registries checked-program)
+                      [(OkCompilerRegistries registries)
+                        (let
+                          [ctx : TcContext
+                            (TcContext checked-program symbols registries "")]
+                          (match (tc-build-top-env ctx checked-program)
+                            [(OkTcEnv top-env)
+                              (match (lower-compiler-program-checked-with-names
+                                ctx
+                                top-env
+                                checked-program
+                                names)
+                                [(OkCompilerLower ir spans)
+                                  (OkCompilerLower ir spans)]
+                                [(ErrCompilerLower diag)
+                                  (ErrCompilerLower
+                                    (lower-diagnostic-with-path diag entry-path))])]
+                            [(ErrTcEnv message)
                               (ErrCompilerLower
-                                (lower-diagnostic-with-path diag entry-path))])]
-                        [(ErrTcEnv message)
-                          (ErrCompilerLower
-                            (lower-diagnostic-with-path
-                              (lower-diagnostic message)
-                              entry-path))]))]
-                  [(ErrCompilerRegistries message)
+                                (lower-diagnostic-with-path
+                                  (lower-diagnostic message)
+                                  entry-path))]))]
+                      [(ErrCompilerRegistries message)
+                        (ErrCompilerLower
+                          (lower-diagnostic-with-path
+                            (lower-diagnostic message)
+                            entry-path))])]
+                  [(ErrCompilerSymbols message)
                     (ErrCompilerLower
                       (lower-diagnostic-with-path
                         (lower-diagnostic message)
                         entry-path))])]
-              [(ErrCompilerSymbols message)
-                (ErrCompilerLower
-                  (lower-diagnostic-with-path
-                    (lower-diagnostic message)
-                    entry-path))])]
-          [(ErrCompilerTypecheck diag) (ErrCompilerLower diag)])])]
+              [(ErrCompilerTypecheck diag) (ErrCompilerLower diag)])])]
       [(ErrSpecProgram diag)
         (ErrCompilerLower (lower-diagnostic-with-path diag entry-path))])))
 
@@ -8716,9 +8709,7 @@
     [(AstDeclNil) 0]
     [(AstDeclCons _ rest) (+ 1 (lower-test-decl-list-count rest))]))
 
-(define (lower-test-decl-list-defines?
-  [decls : AstDeclList]
-  [name : String]) : bool
+(define (lower-test-decl-list-defines? [decls : AstDeclList] [name : String]) : bool
   (match decls
     [(AstDeclNil) false]
     [(AstDeclCons decl rest)
@@ -8732,10 +8723,7 @@
 (define (compiler-lower-ast-dce-program) : AstProgram
   (AstProgram
     (AstDeclCons
-      (AstDeclDef
-        "callback"
-        AstNoType
-        (AstExprVar "callback-target"))
+      (AstDeclDef "callback" AstNoType (AstExprVar "callback-target"))
       (AstDeclCons
         (AstDeclDefFn
           "main"
@@ -8829,10 +8817,8 @@
                               kept
                               "callback-target")
                             (and
-                              (not
-                                (lower-test-decl-list-defines? kept "dead"))
-                              (= (lower-test-decl-list-count no-main-kept)
-                                 2))))))])])])])))
+                              (not (lower-test-decl-list-defines? kept "dead"))
+                              (= (lower-test-decl-list-count no-main-kept) 2))))))])])])])))
 
 (define (compiler-lower-back-half-tests-ok?) : bool
   (let

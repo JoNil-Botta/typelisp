@@ -444,7 +444,9 @@
         (compiler-backend-emit-restore-callee-reg assignments vars "%r12" 0)))))
 
 (define (compiler-backend-return-label [source-function : String]) : String
-  (compiler-backend-asm-label (compiler-backend-user-symbol source-function) "return"))
+  (compiler-backend-asm-label
+    (compiler-backend-user-symbol source-function)
+    "return"))
 
 (define (compiler-backend-inline-return-tail
   [assignments : CompilerRegAssignmentList]
@@ -484,8 +486,7 @@
       (if b
         (CompilerBackendSomeI64 1)
         (CompilerBackendSomeI64 0))]
-    [(IrValueChar c)
-      (CompilerBackendSomeI64 (compiler-backend-char-code c))]
+    [(IrValueChar c) (CompilerBackendSomeI64 (compiler-backend-char-code c))]
     [(IrValueUnit) (CompilerBackendSomeI64 0)]
     [_ (CompilerBackendNoI64)]))
 
@@ -804,8 +805,7 @@
           reg
           "\n"))]
     [(IrValueI64 n)
-      (OkCompilerBackend
-        (compiler-backend-emit-load-i64-immediate n reg))]
+      (OkCompilerBackend (compiler-backend-emit-load-i64-immediate n reg))]
     [(IrValueBool b)
       (if b
         (OkCompilerBackend (compiler-backend-emit-load-i64-immediate 1 reg))
@@ -989,7 +989,12 @@
           (if (string-eq mnemonic "")
             (CompilerBackendNoAsm)
             (CompilerBackendSomeAsm
-              (backend-cat5 "    " mnemonic " " imm (backend-cat3 ", " addr "\n")))))]
+              (backend-cat5
+                "    "
+                mnemonic
+                " "
+                imm
+                (backend-cat3 ", " addr "\n")))))]
       [(CompilerBackendNoImmediate) (CompilerBackendNoAsm)])))
 
 (define (compiler-backend-emit-store-typed-var-with-plan
@@ -1365,9 +1370,7 @@
                   (OkCompilerBackend
                     (string-append
                       lhs-asm
-                      (string-append
-                        rhs-asm
-                        (string-append op-asm return-tail))))]
+                      (string-append rhs-asm (string-append op-asm return-tail))))]
                 [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
             [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
         [(ErrCompilerBackend message) (ErrCompilerBackend message)])
@@ -1495,13 +1498,21 @@
     [(IrBinEq) "je"]
     [(IrBinNe) "jne"]
     [(IrBinLt)
-      (if (compiler-backend-unsigned-rel-ty? ty) "jb" "jl")]
+      (if (compiler-backend-unsigned-rel-ty? ty)
+        "jb"
+        "jl")]
     [(IrBinLe)
-      (if (compiler-backend-unsigned-rel-ty? ty) "jbe" "jle")]
+      (if (compiler-backend-unsigned-rel-ty? ty)
+        "jbe"
+        "jle")]
     [(IrBinGt)
-      (if (compiler-backend-unsigned-rel-ty? ty) "ja" "jg")]
+      (if (compiler-backend-unsigned-rel-ty? ty)
+        "ja"
+        "jg")]
     [(IrBinGe)
-      (if (compiler-backend-unsigned-rel-ty? ty) "jae" "jge")]
+      (if (compiler-backend-unsigned-rel-ty? ty)
+        "jae"
+        "jge")]
     [_ ""]))
 
 (define (compiler-backend-compare-false-jcc
@@ -1511,25 +1522,28 @@
     [(IrBinEq) "jne"]
     [(IrBinNe) "je"]
     [(IrBinLt)
-      (if (compiler-backend-unsigned-rel-ty? ty) "jae" "jge")]
+      (if (compiler-backend-unsigned-rel-ty? ty)
+        "jae"
+        "jge")]
     [(IrBinLe)
-      (if (compiler-backend-unsigned-rel-ty? ty) "ja" "jg")]
+      (if (compiler-backend-unsigned-rel-ty? ty)
+        "ja"
+        "jg")]
     [(IrBinGt)
-      (if (compiler-backend-unsigned-rel-ty? ty) "jbe" "jle")]
+      (if (compiler-backend-unsigned-rel-ty? ty)
+        "jbe"
+        "jle")]
     [(IrBinGe)
-      (if (compiler-backend-unsigned-rel-ty? ty) "jb" "jl")]
+      (if (compiler-backend-unsigned-rel-ty? ty)
+        "jb"
+        "jl")]
     [_ ""]))
 
 (define (compiler-backend-emit-jcc-label
   [jcc : String]
   [function : String]
   [label : String]) : String
-  (backend-cat5
-    "    "
-    jcc
-    " "
-    (compiler-backend-asm-label function label)
-    "\n"))
+  (backend-cat5 "    " jcc " " (compiler-backend-asm-label function label) "\n"))
 
 (define (compiler-backend-emit-compare-branch-jumps
   [function : String]
@@ -1555,9 +1569,7 @@
 (define (compiler-backend-emit-compare-flags
   [op : CompilerIrBinOp]
   [rhs : String]) : String
-  (if (and
-    (string-eq rhs "$0")
-    (compiler-backend-compare-uses-zero-test? op))
+  (if (and (string-eq rhs "$0") (compiler-backend-compare-uses-zero-test? op))
     "    testq %rax, %rax\n"
     (backend-cat4 "    cmpq " rhs ", %rax\n" "")))
 
@@ -1613,7 +1625,7 @@
                             fallthrough
                             true-jcc
                             false-jcc)))))]
-              [(ErrCompilerBackend message) (ErrCompilerBackend message)])])]
+                [(ErrCompilerBackend message) (ErrCompilerBackend message)])])]
         [(ErrCompilerBackend message) (ErrCompilerBackend message)]))))
 
 (define (compiler-backend-load-compare-type? [ty : AstType]) : bool
@@ -1644,7 +1656,9 @@
     [false-jcc : String (compiler-backend-compare-false-jcc op ty)]
     (if (string-eq true-jcc "")
       (ErrCompilerBackend
-        (compiler-diagnostic-at-start "" "backend: unsupported load compare branch"))
+        (compiler-diagnostic-at-start
+          ""
+          "backend: unsupported load compare branch"))
       (match (compiler-backend-emit-load-value-with-plan assignments ptr "%r10")
         [(OkCompilerBackend ptr-asm)
           (match (compiler-backend-immediate-operand rhs)
@@ -1682,7 +1696,7 @@
                             true-jcc
                             false-jcc)))))]
                 [(ErrCompilerBackend message) (ErrCompilerBackend message)])])]
-    [(ErrCompilerBackend message) (ErrCompilerBackend message)]))))
+        [(ErrCompilerBackend message) (ErrCompilerBackend message)]))))
 
 (define (compiler-backend-emit-gep-load-compare-branch
   [assignments : CompilerRegAssignmentList]
@@ -1858,11 +1872,7 @@
   (if (= scale 1)
     "    addq %rbx, %rax\n"
     (if (or (= scale 2) (or (= scale 4) (= scale 8)))
-      (backend-cat4
-        "    leaq (%rax,%rbx,"
-        (int->string scale)
-        "), %rax\n"
-        "")
+      (backend-cat4 "    leaq (%rax,%rbx," (int->string scale) "), %rax\n" "")
       (string-append
         (backend-cat5 "    imulq $" (int->string scale) ", " "%rbx" "\n")
         "    addq %rbx, %rax\n"))))
@@ -1977,7 +1987,10 @@
       (let
         [disp : i64 (* n (compiler-backend-type-size elem-ty))]
         [addr : String (compiler-backend-r10-address disp)]
-        (match (compiler-backend-emit-load-value-with-plan assignments base "%r10")
+        (match (compiler-backend-emit-load-value-with-plan
+          assignments
+          base
+          "%r10")
           [(OkCompilerBackend base-asm)
             (OkCompilerBackend
               (if (compiler-backend-f64-type? load-ty)
@@ -2000,7 +2013,9 @@
           [(ErrCompilerBackend message) (ErrCompilerBackend message)]))]
     [(CompilerBackendNoI64)
       (ErrCompilerBackend
-        (compiler-diagnostic-at-start "" "backend: non-immediate fused gep load"))]))
+        (compiler-diagnostic-at-start
+          ""
+          "backend: non-immediate fused gep load"))]))
 
 (define (compiler-backend-emit-store-ptr
   [assignments : CompilerRegAssignmentList]
@@ -2024,7 +2039,9 @@
                   (string-append
                     src-asm
                     (if (compiler-backend-f64-type? ty)
-                      (compiler-backend-emit-store-xmm-to-memory "(%r10)" "%xmm0")
+                      (compiler-backend-emit-store-xmm-to-memory
+                        "(%r10)"
+                        "%xmm0")
                       (compiler-backend-emit-store-rax-to-memory "(%r10)" ty)))))]
             [(ErrCompilerBackend message) (ErrCompilerBackend message)])])]
     [(ErrCompilerBackend message) (ErrCompilerBackend message)]))
@@ -2041,7 +2058,10 @@
       (let
         [disp : i64 (* n (compiler-backend-type-size elem-ty))]
         [addr : String (compiler-backend-r10-address disp)]
-        (match (compiler-backend-emit-load-value-with-plan assignments base "%r10")
+        (match (compiler-backend-emit-load-value-with-plan
+          assignments
+          base
+          "%r10")
           [(OkCompilerBackend base-asm)
             (match (compiler-backend-emit-store-immediate-to-memory
               value
@@ -2061,7 +2081,9 @@
                         (string-append
                           value-asm
                           (if (compiler-backend-f64-type? store-ty)
-                            (compiler-backend-emit-store-xmm-to-memory addr "%xmm0")
+                            (compiler-backend-emit-store-xmm-to-memory
+                              addr
+                              "%xmm0")
                             (compiler-backend-emit-store-rax-to-memory
                               addr
                               store-ty)))))]
@@ -2069,7 +2091,9 @@
           [(ErrCompilerBackend message) (ErrCompilerBackend message)]))]
     [(CompilerBackendNoI64)
       (ErrCompilerBackend
-        (compiler-diagnostic-at-start "" "backend: non-immediate fused gep store"))]))
+        (compiler-diagnostic-at-start
+          ""
+          "backend: non-immediate fused gep store"))]))
 
 (define (compiler-backend-emit-cast
   [assignments : CompilerRegAssignmentList]
@@ -2276,8 +2300,7 @@
       (compiler-backend-round-up-16 (* (- arg-count 4) 8))
       0)))
 
-(define (compiler-backend-instr-needs-outgoing-space?
-  [instr : CompilerIrInstr]) : bool
+(define (compiler-backend-instr-needs-outgoing-space? [instr : CompilerIrInstr]) : bool
   (match instr
     [(IrInstrCall _ _ _ _) true]
     [(IrInstrBoundsCheck _ _ _) true]
@@ -3285,9 +3308,7 @@
                           ""))))]
                 [(ErrCompilerBackend message)
                   (ErrCompilerBackend
-                    (compiler-backend-apply-instr-diagnostic
-                      message
-                      instr-diag))])]))]
+                    (compiler-backend-apply-instr-diagnostic message instr-diag))])]))]
       [(IrInstrJump target)
         (match (compiler-backend-emit-trivial-phi-return-edge
           source-function
@@ -3360,9 +3381,7 @@
       (array-set! counts index value)
       (compiler-backend-use-counts-fill counts (+ index 1) value))))
 
-(define (compiler-backend-use-count-inc
-  [counts : (Array i64)]
-  [var : i64]) : unit
+(define (compiler-backend-use-count-inc [counts : (Array i64)] [var : i64]) : unit
   (if (< var 0)
     unit
     (if (>= var (array-length counts))
@@ -3472,14 +3491,16 @@
       (begin
         (compiler-backend-count-value-use counts index)
         (compiler-backend-count-value-use counts length))]
-    [(IrInstrCall _ _ args _) (compiler-backend-count-value-list-uses counts args)]
+    [(IrInstrCall _ _ args _)
+      (compiler-backend-count-value-list-uses counts args)]
     [(IrInstrStore _ value _) (compiler-backend-count-value-use counts value)]
     [(IrInstrBranch cond _ _) (compiler-backend-count-value-use counts cond)]
     [(IrInstrReturn maybe)
       (match maybe
         [(IrNoValue) unit]
         [(IrSomeValue value) (compiler-backend-count-value-use counts value)])]
-    [(IrInstrPhi _ inputs _) (compiler-backend-count-phi-input-uses counts inputs)]
+    [(IrInstrPhi _ inputs _)
+      (compiler-backend-count-phi-input-uses counts inputs)]
     [_ unit]))
 
 (define (compiler-backend-count-instr-list-uses
@@ -3514,18 +3535,14 @@
       (compiler-backend-count-block-uses counts blocks)
       counts)))
 
-(define (compiler-backend-var-single-use?
-  [counts : (Array i64)]
-  [var : i64]) : bool
+(define (compiler-backend-var-single-use? [counts : (Array i64)] [var : i64]) : bool
   (if (< var 0)
     false
     (if (>= var (array-length counts))
       false
       (= (array-ref counts var) 1))))
 
-(define (compiler-backend-branch-uses-var?
-  [cond : CompilerIrValue]
-  [var : i64]) : bool
+(define (compiler-backend-branch-uses-var? [cond : CompilerIrValue] [var : i64]) : bool
   (match cond
     [(IrValueVar id) (= id var)]
     [_ false]))
@@ -3594,8 +3611,7 @@
         spans
         func-diag
         use-counts)
-        [(OkCompilerBackend tail)
-          (OkCompilerBackend (string-append head tail))]
+        [(OkCompilerBackend tail) (OkCompilerBackend (string-append head tail))]
         [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
     [(ErrCompilerBackend message) (ErrCompilerBackend message)]))
 
@@ -3653,8 +3669,7 @@
         spans
         func-diag
         use-counts)
-        [(OkCompilerBackend tail)
-          (OkCompilerBackend (string-append head tail))]
+        [(OkCompilerBackend tail) (OkCompilerBackend (string-append head tail))]
         [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
     [(ErrCompilerBackend message)
       (ErrCompilerBackend
@@ -3723,8 +3738,7 @@
         spans
         func-diag
         use-counts)
-        [(OkCompilerBackend tail)
-          (OkCompilerBackend (string-append head tail))]
+        [(OkCompilerBackend tail) (OkCompilerBackend (string-append head tail))]
         [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
     [(ErrCompilerBackend message)
       (ErrCompilerBackend
@@ -3798,8 +3812,7 @@
         spans
         func-diag
         use-counts)
-        [(OkCompilerBackend tail)
-          (OkCompilerBackend (string-append head tail))]
+        [(OkCompilerBackend tail) (OkCompilerBackend (string-append head tail))]
         [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
     [(ErrCompilerBackend message)
       (ErrCompilerBackend
@@ -3862,8 +3875,7 @@
         spans
         func-diag
         use-counts)
-        [(OkCompilerBackend tail)
-          (OkCompilerBackend (string-append head tail))]
+        [(OkCompilerBackend tail) (OkCompilerBackend (string-append head tail))]
         [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
     [(ErrCompilerBackend message)
       (ErrCompilerBackend
@@ -3926,8 +3938,7 @@
         spans
         func-diag
         use-counts)
-        [(OkCompilerBackend tail)
-          (OkCompilerBackend (string-append head tail))]
+        [(OkCompilerBackend tail) (OkCompilerBackend (string-append head tail))]
         [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
     [(ErrCompilerBackend message)
       (ErrCompilerBackend
@@ -4176,63 +4187,66 @@
                             spans
                             func-diag
                             use-counts)])]
-                    [_ (compiler-backend-emit-instrs-normal
-                      target
-                      function
-                      source-function
-                      blocks
-                      current-label
-                      fallthrough
-                      instr
-                      rest
-                      assignments
-                      vars
-                      types
-                      ret-ty
-                      plan
-                      functions
-                      externs
-                      spans
-                      func-diag
-                      use-counts)])]
-                [_ (compiler-backend-emit-instrs-normal
-                  target
-                  function
-                  source-function
-                  blocks
-                  current-label
-                  fallthrough
-                  instr
-                  rest
-                  assignments
-                  vars
-                  types
-                  ret-ty
-                  plan
-                  functions
-                  externs
-                  spans
-                  func-diag
-                  use-counts)])]
-            [_ (compiler-backend-emit-instrs-normal
-              target
-              function
-              source-function
-              blocks
-              current-label
-              fallthrough
-              instr
-              rest
-              assignments
-              vars
-              types
-              ret-ty
-              plan
-              functions
-              externs
-              spans
-              func-diag
-              use-counts)])]
+                    [_
+                      (compiler-backend-emit-instrs-normal
+                        target
+                        function
+                        source-function
+                        blocks
+                        current-label
+                        fallthrough
+                        instr
+                        rest
+                        assignments
+                        vars
+                        types
+                        ret-ty
+                        plan
+                        functions
+                        externs
+                        spans
+                        func-diag
+                        use-counts)])]
+                [_
+                  (compiler-backend-emit-instrs-normal
+                    target
+                    function
+                    source-function
+                    blocks
+                    current-label
+                    fallthrough
+                    instr
+                    rest
+                    assignments
+                    vars
+                    types
+                    ret-ty
+                    plan
+                    functions
+                    externs
+                    spans
+                    func-diag
+                    use-counts)])]
+            [_
+              (compiler-backend-emit-instrs-normal
+                target
+                function
+                source-function
+                blocks
+                current-label
+                fallthrough
+                instr
+                rest
+                assignments
+                vars
+                types
+                ret-ty
+                plan
+                functions
+                externs
+                spans
+                func-diag
+                use-counts)])]
         [(IrInstrCall dst name args ty)
           (match rest
             [(IrInstrCons next after-return)
@@ -4301,63 +4315,66 @@
                             spans
                             func-diag
                             use-counts)])]
-                    [_ (compiler-backend-emit-instrs-normal
-                      target
-                      function
-                      source-function
-                      blocks
-                      current-label
-                      fallthrough
-                      instr
-                      rest
-                      assignments
-                      vars
-                      types
-                      ret-ty
-                      plan
-                      functions
-                      externs
-                      spans
-                      func-diag
-                      use-counts)])]
-                [_ (compiler-backend-emit-instrs-normal
-                  target
-                  function
-                  source-function
-                  blocks
-                  current-label
-                  fallthrough
-                  instr
-                  rest
-                  assignments
-                  vars
-                  types
-                  ret-ty
-                  plan
-                  functions
-                  externs
-                  spans
-                  func-diag
-                  use-counts)])]
-            [_ (compiler-backend-emit-instrs-normal
-              target
-              function
-              source-function
-              blocks
-              current-label
-              fallthrough
-              instr
-              rest
-              assignments
-              vars
-              types
-              ret-ty
-              plan
-              functions
-              externs
-              spans
-              func-diag
-              use-counts)])]
+                    [_
+                      (compiler-backend-emit-instrs-normal
+                        target
+                        function
+                        source-function
+                        blocks
+                        current-label
+                        fallthrough
+                        instr
+                        rest
+                        assignments
+                        vars
+                        types
+                        ret-ty
+                        plan
+                        functions
+                        externs
+                        spans
+                        func-diag
+                        use-counts)])]
+                [_
+                  (compiler-backend-emit-instrs-normal
+                    target
+                    function
+                    source-function
+                    blocks
+                    current-label
+                    fallthrough
+                    instr
+                    rest
+                    assignments
+                    vars
+                    types
+                    ret-ty
+                    plan
+                    functions
+                    externs
+                    spans
+                    func-diag
+                    use-counts)])]
+            [_
+              (compiler-backend-emit-instrs-normal
+                target
+                function
+                source-function
+                blocks
+                current-label
+                fallthrough
+                instr
+                rest
+                assignments
+                vars
+                types
+                ret-ty
+                plan
+                functions
+                externs
+                spans
+                func-diag
+                use-counts)])]
         [(IrInstrGep gep-dst base offset elem-ty)
           (if (compiler-backend-var-single-use? use-counts gep-dst)
             (match (compiler-backend-value-as-i64 offset)
@@ -4369,7 +4386,9 @@
                         (if (compiler-backend-branch-uses-var? src gep-dst)
                           (if (and
                             (compiler-backend-load-compare-type? load-ty)
-                            (compiler-backend-var-single-use? use-counts load-dst))
+                            (compiler-backend-var-single-use?
+                              use-counts
+                              load-dst))
                             (match after-load
                               [(IrInstrCons maybe-cmp after-cmp)
                                 (match maybe-cmp
@@ -4394,9 +4413,9 @@
                                         [(IrInstrCons branch after-branch)
                                           (match branch
                                             [(IrInstrBranch
-                                              cond
-                                              true-label
-                                              false-label)
+                                                cond
+                                                true-label
+                                                false-label)
                                               (if (compiler-backend-branch-uses-var?
                                                 cond
                                                 cmp-dst)
@@ -4454,54 +4473,56 @@
                                                   spans
                                                   func-diag
                                                   use-counts))]
-                                            [_ (compiler-backend-emit-fused-gep-load-rest
-                                              target
-                                              function
-                                              source-function
-                                              blocks
-                                              current-label
-                                              fallthrough
-                                              gep-dst
-                                              base
-                                              offset
-                                              elem-ty
-                                              load-dst
-                                              load-ty
-                                              after-load
-                                              assignments
-                                              vars
-                                              types
-                                              ret-ty
-                                              plan
-                                              functions
-                                              externs
-                                              spans
-                                              func-diag
-                                              use-counts)])]
-                                        [_ (compiler-backend-emit-fused-gep-load-rest
-                                          target
-                                          function
-                                          source-function
-                                          blocks
-                                          current-label
-                                          fallthrough
-                                          gep-dst
-                                          base
-                                          offset
-                                          elem-ty
-                                          load-dst
-                                          load-ty
-                                          after-load
-                                          assignments
-                                          vars
-                                          types
-                                          ret-ty
-                                          plan
-                                          functions
-                                          externs
-                                          spans
-                                          func-diag
-                                          use-counts)])
+                                            [_
+                                              (compiler-backend-emit-fused-gep-load-rest
+                                                target
+                                                function
+                                                source-function
+                                                blocks
+                                                current-label
+                                                fallthrough
+                                                gep-dst
+                                                base
+                                                offset
+                                                elem-ty
+                                                load-dst
+                                                load-ty
+                                                after-load
+                                                assignments
+                                                vars
+                                                types
+                                                ret-ty
+                                                plan
+                                                functions
+                                                externs
+                                                spans
+                                                func-diag
+                                                use-counts)])]
+                                        [_
+                                          (compiler-backend-emit-fused-gep-load-rest
+                                            target
+                                            function
+                                            source-function
+                                            blocks
+                                            current-label
+                                            fallthrough
+                                            gep-dst
+                                            base
+                                            offset
+                                            elem-ty
+                                            load-dst
+                                            load-ty
+                                            after-load
+                                            assignments
+                                            vars
+                                            types
+                                            ret-ty
+                                            plan
+                                            functions
+                                            externs
+                                            spans
+                                            func-diag
+                                            use-counts)])
                                       (compiler-backend-emit-fused-gep-load-rest
                                         target
                                         function
@@ -4526,54 +4547,56 @@
                                         spans
                                         func-diag
                                         use-counts))]
-                                  [_ (compiler-backend-emit-fused-gep-load-rest
-                                    target
-                                    function
-                                    source-function
-                                    blocks
-                                    current-label
-                                    fallthrough
-                                    gep-dst
-                                    base
-                                    offset
-                                    elem-ty
-                                    load-dst
-                                    load-ty
-                                    after-load
-                                    assignments
-                                    vars
-                                    types
-                                    ret-ty
-                                    plan
-                                    functions
-                                    externs
-                                    spans
-                                    func-diag
-                                    use-counts)])]
-                              [_ (compiler-backend-emit-fused-gep-load-rest
-                                target
-                                function
-                                source-function
-                                blocks
-                                current-label
-                                fallthrough
-                                gep-dst
-                                base
-                                offset
-                                elem-ty
-                                load-dst
-                                load-ty
-                                after-load
-                                assignments
-                                vars
-                                types
-                                ret-ty
-                                plan
-                                functions
-                                externs
-                                spans
-                                func-diag
-                                use-counts)])
+                                  [_
+                                    (compiler-backend-emit-fused-gep-load-rest
+                                      target
+                                      function
+                                      source-function
+                                      blocks
+                                      current-label
+                                      fallthrough
+                                      gep-dst
+                                      base
+                                      offset
+                                      elem-ty
+                                      load-dst
+                                      load-ty
+                                      after-load
+                                      assignments
+                                      vars
+                                      types
+                                      ret-ty
+                                      plan
+                                      functions
+                                      externs
+                                      spans
+                                      func-diag
+                                      use-counts)])]
+                              [_
+                                (compiler-backend-emit-fused-gep-load-rest
+                                  target
+                                  function
+                                  source-function
+                                  blocks
+                                  current-label
+                                  fallthrough
+                                  gep-dst
+                                  base
+                                  offset
+                                  elem-ty
+                                  load-dst
+                                  load-ty
+                                  after-load
+                                  assignments
+                                  vars
+                                  types
+                                  ret-ty
+                                  plan
+                                  functions
+                                  externs
+                                  spans
+                                  func-diag
+                                  use-counts)])
                             (compiler-backend-emit-fused-gep-load-rest
                               target
                               function
@@ -4662,44 +4685,46 @@
                             spans
                             func-diag
                             use-counts))]
-                      [_ (compiler-backend-emit-instrs-normal
-                        target
-                        function
-                        source-function
-                        blocks
-                        current-label
-                        fallthrough
-                        instr
-                        rest
-                        assignments
-                        vars
-                        types
-                        ret-ty
-                        plan
-                        functions
-                        externs
-                        spans
-                        func-diag
-                        use-counts)])]
-                  [_ (compiler-backend-emit-instrs-normal
-                    target
-                    function
-                    source-function
-                    blocks
-                    current-label
-                    fallthrough
-                    instr
-                    rest
-                    assignments
-                    vars
-                    types
-                    ret-ty
-                    plan
-                    functions
-                    externs
-                    spans
-                    func-diag
-                    use-counts)])]
+                      [_
+                        (compiler-backend-emit-instrs-normal
+                          target
+                          function
+                          source-function
+                          blocks
+                          current-label
+                          fallthrough
+                          instr
+                          rest
+                          assignments
+                          vars
+                          types
+                          ret-ty
+                          plan
+                          functions
+                          externs
+                          spans
+                          func-diag
+                          use-counts)])]
+                  [_
+                    (compiler-backend-emit-instrs-normal
+                      target
+                      function
+                      source-function
+                      blocks
+                      current-label
+                      fallthrough
+                      instr
+                      rest
+                      assignments
+                      vars
+                      types
+                      ret-ty
+                      plan
+                      functions
+                      externs
+                      spans
+                      func-diag
+                      use-counts)])]
               [(CompilerBackendNoI64)
                 (compiler-backend-emit-instrs-normal
                   target
@@ -4759,7 +4784,9 @@
                         [(IrInstrCons branch after-branch)
                           (match branch
                             [(IrInstrBranch cond true-label false-label)
-                              (if (compiler-backend-branch-uses-var? cond cmp-dst)
+                              (if (compiler-backend-branch-uses-var?
+                                cond
+                                cmp-dst)
                                 (compiler-backend-emit-fused-load-compare-branch-rest
                                   target
                                   function
@@ -4806,44 +4833,46 @@
                                   spans
                                   func-diag
                                   use-counts))]
-                            [_ (compiler-backend-emit-instrs-normal
-                              target
-                              function
-                              source-function
-                              blocks
-                              current-label
-                              fallthrough
-                              instr
-                              rest
-                              assignments
-                              vars
-                              types
-                              ret-ty
-                              plan
-                              functions
-                              externs
-                              spans
-                              func-diag
-                              use-counts)])]
-                        [_ (compiler-backend-emit-instrs-normal
-                          target
-                          function
-                          source-function
-                          blocks
-                          current-label
-                          fallthrough
-                          instr
-                          rest
-                          assignments
-                          vars
-                          types
-                          ret-ty
-                          plan
-                          functions
-                          externs
-                          spans
-                          func-diag
-                          use-counts)])
+                            [_
+                              (compiler-backend-emit-instrs-normal
+                                target
+                                function
+                                source-function
+                                blocks
+                                current-label
+                                fallthrough
+                                instr
+                                rest
+                                assignments
+                                vars
+                                types
+                                ret-ty
+                                plan
+                                functions
+                                externs
+                                spans
+                                func-diag
+                                use-counts)])]
+                        [_
+                          (compiler-backend-emit-instrs-normal
+                            target
+                            function
+                            source-function
+                            blocks
+                            current-label
+                            fallthrough
+                            instr
+                            rest
+                            assignments
+                            vars
+                            types
+                            ret-ty
+                            plan
+                            functions
+                            externs
+                            spans
+                            func-diag
+                            use-counts)])
                       (compiler-backend-emit-instrs-normal
                         target
                         function
@@ -4863,44 +4892,46 @@
                         spans
                         func-diag
                         use-counts))]
-                  [_ (compiler-backend-emit-instrs-normal
-                    target
-                    function
-                    source-function
-                    blocks
-                    current-label
-                    fallthrough
-                    instr
-                    rest
-                    assignments
-                    vars
-                    types
-                    ret-ty
-                    plan
-                    functions
-                    externs
-                    spans
-                    func-diag
-                    use-counts)])]
-              [_ (compiler-backend-emit-instrs-normal
-                target
-                function
-                source-function
-                blocks
-                current-label
-                fallthrough
-                instr
-                rest
-                assignments
-                vars
-                types
-                ret-ty
-                plan
-                functions
-                externs
-                spans
-                func-diag
-                use-counts)])
+                  [_
+                    (compiler-backend-emit-instrs-normal
+                      target
+                      function
+                      source-function
+                      blocks
+                      current-label
+                      fallthrough
+                      instr
+                      rest
+                      assignments
+                      vars
+                      types
+                      ret-ty
+                      plan
+                      functions
+                      externs
+                      spans
+                      func-diag
+                      use-counts)])]
+              [_
+                (compiler-backend-emit-instrs-normal
+                  target
+                  function
+                  source-function
+                  blocks
+                  current-label
+                  fallthrough
+                  instr
+                  rest
+                  assignments
+                  vars
+                  types
+                  ret-ty
+                  plan
+                  functions
+                  externs
+                  spans
+                  func-diag
+                  use-counts)])
             (compiler-backend-emit-instrs-normal
               target
               function
@@ -4984,25 +5015,26 @@
                               spans
                               func-diag
                               use-counts)])]
-                      [_ (compiler-backend-emit-instrs-normal
-                        target
-                        function
-                        source-function
-                        blocks
-                        current-label
-                        fallthrough
-                        instr
-                        rest
-                        assignments
-                        vars
-                        types
-                        ret-ty
-                        plan
-                        functions
-                        externs
-                        spans
-                        func-diag
-                        use-counts)])]
+                      [_
+                        (compiler-backend-emit-instrs-normal
+                          target
+                          function
+                          source-function
+                          blocks
+                          current-label
+                          fallthrough
+                          instr
+                          rest
+                          assignments
+                          vars
+                          types
+                          ret-ty
+                          plan
+                          functions
+                          externs
+                          spans
+                          func-diag
+                          use-counts)])]
                   [(IrInstrBranch cond true-label false-label)
                     (if (compiler-backend-branch-uses-var? cond dst)
                       (compiler-backend-emit-fused-compare-branch-rest
@@ -5049,44 +5081,46 @@
                         spans
                         func-diag
                         use-counts))]
-                  [_ (compiler-backend-emit-instrs-normal
-                    target
-                    function
-                    source-function
-                    blocks
-                    current-label
-                    fallthrough
-                    instr
-                    rest
-                    assignments
-                    vars
-                    types
-                    ret-ty
-                    plan
-                    functions
-                    externs
-                    spans
-                    func-diag
-                    use-counts)])]
-              [_ (compiler-backend-emit-instrs-normal
-                target
-                function
-                source-function
-                blocks
-                current-label
-                fallthrough
-                instr
-                rest
-                assignments
-                vars
-                types
-                ret-ty
-                plan
-                functions
-                externs
-                spans
-                func-diag
-                use-counts)])
+                  [_
+                    (compiler-backend-emit-instrs-normal
+                      target
+                      function
+                      source-function
+                      blocks
+                      current-label
+                      fallthrough
+                      instr
+                      rest
+                      assignments
+                      vars
+                      types
+                      ret-ty
+                      plan
+                      functions
+                      externs
+                      spans
+                      func-diag
+                      use-counts)])]
+              [_
+                (compiler-backend-emit-instrs-normal
+                  target
+                  function
+                  source-function
+                  blocks
+                  current-label
+                  fallthrough
+                  instr
+                  rest
+                  assignments
+                  vars
+                  types
+                  ret-ty
+                  plan
+                  functions
+                  externs
+                  spans
+                  func-diag
+                  use-counts)])
             (compiler-backend-emit-instrs-normal
               target
               function
@@ -5106,25 +5140,26 @@
               spans
               func-diag
               use-counts))]
-        [_ (compiler-backend-emit-instrs-normal
-          target
-          function
-          source-function
-          blocks
-          current-label
-          fallthrough
-          instr
-          rest
-          assignments
-          vars
-          types
-          ret-ty
-          plan
-          functions
-          externs
-          spans
-          func-diag
-          use-counts)])]))
+        [_
+          (compiler-backend-emit-instrs-normal
+            target
+            function
+            source-function
+            blocks
+            current-label
+            fallthrough
+            instr
+            rest
+            assignments
+            vars
+            types
+            ret-ty
+            plan
+            functions
+            externs
+            spans
+            func-diag
+            use-counts)])]))
 
 (define (compiler-backend-emit-block
   [target : CompilerBackendTarget]
@@ -5172,8 +5207,7 @@
               ""))]
         [(ErrCompilerBackend message) (ErrCompilerBackend message)])]))
 
-(define (compiler-backend-next-block-label
-  [blocks : CompilerIrBlockList]) : CompilerBackendMaybeLabel
+(define (compiler-backend-next-block-label [blocks : CompilerIrBlockList]) : CompilerBackendMaybeLabel
   (match blocks
     [(IrBlockNil) (CompilerBackendNoLabel)]
     [(IrBlockCons block _)
@@ -5445,8 +5479,7 @@
             [raw-assignments : CompilerRegAssignmentList
               (compiler-reg-plan-assignments reg-plan)]
             (let
-              [assignments : CompilerRegAssignmentList
-                raw-assignments]
+              [assignments : CompilerRegAssignmentList raw-assignments]
               [types : CompilerRegVarTypeList
                 (compiler-reg-function-var-types func)]
               [use-counts : (Array i64)

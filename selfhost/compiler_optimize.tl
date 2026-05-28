@@ -3128,9 +3128,7 @@
 (define (optimize-block-fast [block : CompilerIrBlock]) : CompilerIrBlock
   (match block
     [(IrBlock label instrs)
-      (IrBlock
-        label
-        (opt-copy-instrs (OptCopyNil) instrs))]))
+      (IrBlock label (opt-copy-instrs (OptCopyNil) instrs))]))
 
 (define (optimize-block-list [blocks : CompilerIrBlockList]) : CompilerIrBlockList
   (match blocks
@@ -3142,9 +3140,7 @@
   (match blocks
     [(IrBlockNil) (IrBlockNil)]
     [(IrBlockCons block rest)
-      (IrBlockCons
-        (optimize-block-fast block)
-        (optimize-block-list-fast rest))]))
+      (IrBlockCons (optimize-block-fast block) (optimize-block-list-fast rest))]))
 
 (define (optimize-function-once [func : CompilerIrFunction]) : CompilerIrFunction
   (match func
@@ -3219,9 +3215,7 @@
 (defenum OptReachState
   (OptReachState OptStringSet OptStringSet))
 
-(define (opt-string-set-contains?
-  [items : OptStringSet]
-  [name : String]) : bool
+(define (opt-string-set-contains? [items : OptStringSet] [name : String]) : bool
   (match items
     [(OptStringNil) false]
     [(OptStringCons item rest)
@@ -3318,46 +3312,25 @@
     [(IrInstrAlloc _ _) state]
     [(IrInstrAddrOf _ _) state]
     [(IrInstrGep _ base offset _)
-      (opt-reach-value
-        functions
-        (opt-reach-value functions state base)
-        offset)]
+      (opt-reach-value functions (opt-reach-value functions state base) offset)]
     [(IrInstrLoad _ src _) (opt-reach-value functions state src)]
     [(IrInstrStorePtr dst src _)
-      (opt-reach-value
-        functions
-        (opt-reach-value functions state dst)
-        src)]
+      (opt-reach-value functions (opt-reach-value functions state dst) src)]
     [(IrInstrBoundsCheck index length _)
-      (opt-reach-value
-        functions
-        (opt-reach-value functions state index)
-        length)]
+      (opt-reach-value functions (opt-reach-value functions state index) length)]
     [(IrInstrCast _ src _ _) (opt-reach-value functions state src)]
     [(IrInstrBinOp _ _ lhs rhs _)
-      (opt-reach-value
-        functions
-        (opt-reach-value functions state lhs)
-        rhs)]
+      (opt-reach-value functions (opt-reach-value functions state lhs) rhs)]
     [(IrInstrUnOp _ _ src _) (opt-reach-value functions state src)]
     [(IrInstrLaneId _ _ _) state]
     [(IrInstrSplat _ value _ _) (opt-reach-value functions state value)]
     [(IrInstrVectorBinOp _ _ lhs rhs _ _)
-      (opt-reach-value
-        functions
-        (opt-reach-value functions state lhs)
-        rhs)]
+      (opt-reach-value functions (opt-reach-value functions state lhs) rhs)]
     [(IrInstrVectorReduce _ _ src _ _) (opt-reach-value functions state src)]
     [(IrInstrVectorCompare _ _ lhs rhs _ _)
-      (opt-reach-value
-        functions
-        (opt-reach-value functions state lhs)
-        rhs)]
+      (opt-reach-value functions (opt-reach-value functions state lhs) rhs)]
     [(IrInstrMaskBinOp _ _ lhs rhs _)
-      (opt-reach-value
-        functions
-        (opt-reach-value functions state lhs)
-        rhs)]
+      (opt-reach-value functions (opt-reach-value functions state lhs) rhs)]
     [(IrInstrMaskNot _ src _) (opt-reach-value functions state src)]
     [(IrInstrMaskReduce _ _ src _) (opt-reach-value functions state src)]
     [(IrInstrSelect _ mask on-true on-false _ _)
@@ -3369,17 +3342,11 @@
           on-true)
         on-false)]
     [(IrInstrVectorLoad _ base index _ _)
-      (opt-reach-value
-        functions
-        (opt-reach-value functions state base)
-        index)]
+      (opt-reach-value functions (opt-reach-value functions state base) index)]
     [(IrInstrVectorStore base index value _ _)
       (opt-reach-value
         functions
-        (opt-reach-value
-          functions
-          (opt-reach-value functions state base)
-          index)
+        (opt-reach-value functions (opt-reach-value functions state base) index)
         value)]
     [(IrInstrPredicatedStore base index value mask _ _)
       (opt-reach-value
@@ -3395,16 +3362,10 @@
     [(IrInstrPredicatedLoad _ base index mask _ _)
       (opt-reach-value
         functions
-        (opt-reach-value
-          functions
-          (opt-reach-value functions state base)
-          index)
+        (opt-reach-value functions (opt-reach-value functions state base) index)
         mask)]
     [(IrInstrTailMask _ index length _)
-      (opt-reach-value
-        functions
-        (opt-reach-value functions state index)
-        length)]
+      (opt-reach-value functions (opt-reach-value functions state index) length)]
     [(IrInstrCall _ name args _)
       (opt-reach-add-function
         functions
@@ -3428,10 +3389,7 @@
   (match instrs
     [(IrInstrNil) state]
     [(IrInstrCons instr rest)
-      (opt-reach-instrs
-        functions
-        (opt-reach-instr functions state instr)
-        rest)]))
+      (opt-reach-instrs functions (opt-reach-instr functions state instr) rest)]))
 
 (define (opt-reach-blocks
   [functions : CompilerIrFunctionList]
@@ -3508,16 +3466,15 @@
   [globals : CompilerIrGlobalList]
   [functions : CompilerIrFunctionList]) : CompilerIrFunctionList
   (if (opt-function-list-defines? functions "main")
-    (match
-      (opt-reach-process
+    (match (opt-reach-process
+      functions
+      (opt-reach-globals
         functions
-        (opt-reach-globals
+        (opt-reach-add-function
           functions
-          (opt-reach-add-function
-            functions
-            (OptReachState (OptStringNil) (OptStringNil))
-            "main")
-          globals))
+          (OptReachState (OptStringNil) (OptStringNil))
+          "main")
+        globals))
       [(OptReachState reachable _)
         (opt-filter-reachable-functions functions reachable)])
     functions))
@@ -3997,7 +3954,7 @@
     (match (optimize-program-with-spans-and-level
       (opt-spans-program instrs)
       spans
-      1)
+      2)
       [(CompilerOptimizedProgram _ optimized-spans)
         (opt-span-lookup-ok? optimized-spans "main" rewritten 41 7)])))
 
@@ -4031,7 +3988,7 @@
     (match (optimize-program-with-spans-and-level
       (opt-spans-program instrs)
       spans
-      1)
+      2)
       [(CompilerOptimizedProgram _ optimized-spans)
         (and
           (opt-span-lookup-ok? optimized-spans "main" first 51 9)
@@ -4948,9 +4905,7 @@
             (IrInstrReturn (IrSomeValue (IrValueVar 4)))
             (IrInstrNil)))))))
 
-(define (opt-test-function-named
-  [name : String]
-  [instrs : CompilerIrInstrList]) : CompilerIrFunction
+(define (opt-test-function-named [name : String] [instrs : CompilerIrInstrList]) : CompilerIrFunction
   (IrFunction
     name
     (IrParamNil)
@@ -5059,14 +5014,10 @@
 (define (opt-global-dce-main-instrs) : CompilerIrInstrList
   (IrInstrCons
     (IrInstrCall 1 "helper" (IrValueNil) (AstTyI64))
-    (IrInstrCons
-      (IrInstrReturn (IrSomeValue (IrValueVar 1)))
-      (IrInstrNil))))
+    (IrInstrCons (IrInstrReturn (IrSomeValue (IrValueVar 1))) (IrInstrNil))))
 
 (define (opt-global-dce-return-instrs [value : i64]) : CompilerIrInstrList
-  (IrInstrCons
-    (IrInstrReturn (IrSomeValue (IrValueI64 value)))
-    (IrInstrNil)))
+  (IrInstrCons (IrInstrReturn (IrSomeValue (IrValueI64 value))) (IrInstrNil)))
 
 (define (opt-global-dce-program) : CompilerIrProgram
   (IrProgram

@@ -206,10 +206,7 @@
         threshold
         (lint-walk-expr index threshold (lint-walk-expr array threshold acc)))]
     [(AstExprArrayPush array value)
-      (lint-walk-expr
-        value
-        threshold
-        (lint-walk-expr array threshold acc))]
+      (lint-walk-expr value threshold (lint-walk-expr array threshold acc))]
     [(AstExprStringRef str index)
       (lint-walk-expr index threshold (lint-walk-expr str threshold acc))]
     [(AstExprWhile cond body)

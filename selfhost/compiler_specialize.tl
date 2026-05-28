@@ -1316,8 +1316,7 @@
         [(OkSpecSubExpr rewritten-array)
           (match (spec-substitute-values-expr value subs)
             [(OkSpecSubExpr rewritten-value)
-              (OkSpecSubExpr
-                (AstExprArrayPush rewritten-array rewritten-value))]
+              (OkSpecSubExpr (AstExprArrayPush rewritten-array rewritten-value))]
             [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
         [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
     [(AstExprStringRef text index)
@@ -1710,8 +1709,7 @@
         [(OkSpecSubExpr rewritten-array)
           (match (spec-substitute-types-expr value subs)
             [(OkSpecSubExpr rewritten-value)
-              (OkSpecSubExpr
-                (AstExprArrayPush rewritten-array rewritten-value))]
+              (OkSpecSubExpr (AstExprArrayPush rewritten-array rewritten-value))]
             [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
         [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
     [(AstExprStringRef text index)

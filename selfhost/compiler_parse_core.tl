@@ -2038,7 +2038,9 @@
                                   (parse-ast-array-push dispatch rest)
                                   (if (= tag (compiler-parse-tag-expr-match))
                                     (parse-ast-match dispatch rest)
-                                    (if (= tag (compiler-parse-tag-expr-foreach))
+                                    (if (=
+                                      tag
+                                      (compiler-parse-tag-expr-foreach))
                                       (parse-ast-foreach dispatch rest)
                                       (if (=
                                         tag
@@ -2056,45 +2058,47 @@
                                               tag
                                               (compiler-parse-tag-expr-type-literal))
                                               (parse-ast-type-literal
-                                              dispatch
-                                              rest)
-                                            (if (=
-                                              tag
-                                              (compiler-parse-tag-expr-with-region))
-                                              (parse-ast-with-region
                                                 dispatch
                                                 rest)
                                               (if (=
                                                 tag
-                                                (compiler-parse-tag-expr-with-resource))
-                                                (parse-ast-with-resource
+                                                (compiler-parse-tag-expr-with-region))
+                                                (parse-ast-with-region
                                                   dispatch
                                                   rest)
                                                 (if (=
                                                   tag
-                                                  (compiler-parse-tag-expr-try))
-                                                  (parse-ast-try dispatch rest)
+                                                  (compiler-parse-tag-expr-with-resource))
+                                                  (parse-ast-with-resource
+                                                    dispatch
+                                                    rest)
                                                   (if (=
                                                     tag
-                                                    (compiler-parse-tag-expr-ptr-null))
-                                                    (parse-ast-ptr-null
+                                                    (compiler-parse-tag-expr-try))
+                                                    (parse-ast-try
                                                       dispatch
                                                       rest)
                                                     (if (=
                                                       tag
-                                                      (compiler-parse-tag-expr-ptr-null-check))
-                                                      (parse-ast-ptr-null-check
+                                                      (compiler-parse-tag-expr-ptr-null))
+                                                      (parse-ast-ptr-null
                                                         dispatch
                                                         rest)
                                                       (if (=
                                                         tag
-                                                        (compiler-parse-tag-decl-comptime-decl))
-                                                        (ErrAstExpr
-                                                          "parse: comptime-decl is only valid as a top-level declaration")
-                                                        (parse-ast-call
+                                                        (compiler-parse-tag-expr-ptr-null-check))
+                                                        (parse-ast-ptr-null-check
                                                           dispatch
-                                                          head
-                                                          rest))))))))))))))))))))))))))))))
+                                                          rest)
+                                                        (if (=
+                                                          tag
+                                                          (compiler-parse-tag-decl-comptime-decl))
+                                                          (ErrAstExpr
+                                                            "parse: comptime-decl is only valid as a top-level declaration")
+                                                          (parse-ast-call
+                                                            dispatch
+                                                            head
+                                                            rest))))))))))))))))))))))))))))))
 
 (define (parse-ast-list-expr
   [dispatch : SymI64Env]

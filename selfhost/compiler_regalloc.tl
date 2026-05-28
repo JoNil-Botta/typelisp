@@ -454,9 +454,7 @@
     [(IrFunction _ _ _ _ blocks)
       (compiler-reg-block-list-moves blocks CompilerRegMoveNil)]))
 
-(define (compiler-reg-fill-i64-array
-  [items : (Array i64)]
-  [value : i64]) : unit
+(define (compiler-reg-fill-i64-array [items : (Array i64)] [value : i64]) : unit
   (let
     [index : i64 0]
     [count : i64 (array-length items)]
@@ -597,9 +595,7 @@
           starts
           ends
           (- index 1)
-          (CompilerRegIntervalCons
-            (CompilerRegInterval index start end)
-            acc))))))
+          (CompilerRegIntervalCons (CompilerRegInterval index start end) acc))))))
 
 (define (compiler-reg-live-intervals
   [func : CompilerIrFunction]

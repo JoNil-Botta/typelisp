@@ -89,13 +89,9 @@
         [(CompilerLiveI64Nil) left]
         [(CompilerLiveI64Cons right-head right-rest)
           (if (= head right-head)
-            (CompilerLiveI64Cons
-              head
-              (compiler-live-set-union rest right-rest))
+            (CompilerLiveI64Cons head (compiler-live-set-union rest right-rest))
             (if (< head right-head)
-              (CompilerLiveI64Cons
-                head
-                (compiler-live-set-union rest right))
+              (CompilerLiveI64Cons head (compiler-live-set-union rest right))
               (CompilerLiveI64Cons
                 right-head
                 (compiler-live-set-union left right-rest))))])]))

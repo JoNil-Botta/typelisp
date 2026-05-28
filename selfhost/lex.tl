@@ -645,10 +645,7 @@
                     (set! col 1))
                   (set! col (+ col 1)))
                 (set! pos (+ pos 1))))
-            (array-set!
-              stoks
-              k
-              (SpannedToken (array-ref toks k) line col))))
+            (array-set! stoks k (SpannedToken (array-ref toks k) line col))))
         (set! k (+ k 1))))))
 
 (define (source-error-at [src : String] [idx : i64] [message : String]) : SourceError

@@ -328,18 +328,12 @@
         (compiler-backend-string-contains?
           asm
           "    movq $16, %rdi\n    call tl_alloc\n")
+        (and
+          (compiler-backend-string-contains? asm "    movq $0, (%r10)\n")
           (and
-            (compiler-backend-string-contains?
-              asm
-              "    movq $0, (%r10)\n")
-          (and
-            (compiler-backend-string-contains?
-              asm
-              "    movq $1, (%r10)\n")
+            (compiler-backend-string-contains? asm "    movq $1, (%r10)\n")
             (and
-              (compiler-backend-string-contains?
-                asm
-                "    addq $8, %rax\n")
+              (compiler-backend-string-contains? asm "    addq $8, %rax\n")
               (and
                 (not
                   (compiler-backend-string-contains? asm "    call _tl_Point\n"))
@@ -425,9 +419,7 @@
               (and
                 (compiler-backend-string-contains? asm "    movq %rax, %r8\n")
                 (and
-                  (compiler-backend-string-contains?
-                    asm
-                    "    movq %r8, %rax\n")
+                  (compiler-backend-string-contains? asm "    movq %r8, %rax\n")
                   (and
                     (not
                       (compiler-backend-string-contains?
@@ -666,9 +658,7 @@
         (AstTyI64)
         0
         (IrBlockCons
-          (IrBlock
-            "entry"
-            (IrInstrCons (IrInstrJump "done") IrInstrNil))
+          (IrBlock "entry" (IrInstrCons (IrInstrJump "done") IrInstrNil))
           (IrBlockCons
             (IrBlock
               "done"
@@ -684,10 +674,7 @@
     [(OkCompilerBackend asm)
       (and
         (compiler-backend-string-contains? asm ".Lmain_done:\n")
-        (not
-          (compiler-backend-string-contains?
-            asm
-            "    jmp .Lmain_done\n")))]
+        (not (compiler-backend-string-contains? asm "    jmp .Lmain_done\n")))]
     [(ErrCompilerBackend _) false]))
 
 (define (compiler-backend-branch-fallthrough-ok?) : bool
@@ -1887,16 +1874,16 @@
         (compiler-backend-f64-ok?)
         (compiler-backend-bool-control-flow-ok?)
         (compiler-backend-stack-args-ok?))
-        (and
-          (backend-and8
-            (compiler-backend-instr-diagnostics-ok?)
-            (compiler-backend-optimizer-rewrite-diagnostic-ok?)
-            (compiler-backend-runtime-helper-asm-ok?)
-            (compiler-backend-alloc-runtime-arena-ok?)
-            (compiler-backend-region-ok?)
-            (compiler-backend-process-output-ok?)
-            (compiler-backend-windows-process-output-ok?)
-            (compiler-backend-append-file-status-ok?))
+      (and
+        (backend-and8
+          (compiler-backend-instr-diagnostics-ok?)
+          (compiler-backend-optimizer-rewrite-diagnostic-ok?)
+          (compiler-backend-runtime-helper-asm-ok?)
+          (compiler-backend-alloc-runtime-arena-ok?)
+          (compiler-backend-region-ok?)
+          (compiler-backend-process-output-ok?)
+          (compiler-backend-windows-process-output-ok?)
+          (compiler-backend-append-file-status-ok?))
         (and
           (compiler-backend-fs-runtime-ok?)
           (and

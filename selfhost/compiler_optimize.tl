@@ -3410,6 +3410,11 @@
         functions
         (opt-reach-value-list functions state args)
         name)]
+    [(IrInstrTailCall name args _)
+      (opt-reach-add-function
+        functions
+        (opt-reach-value-list functions state args)
+        name)]
     [(IrInstrStore _ value _) (opt-reach-value functions state value)]
     [(IrInstrJump _) state]
     [(IrInstrBranch cond _ _) (opt-reach-value functions state cond)]

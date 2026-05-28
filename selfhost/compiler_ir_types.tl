@@ -254,6 +254,7 @@
   (match value
     [(IrValueVar id) (string-append "%" (int->string id))]
     [(IrValueGlobal name) (string-append "@" name)]
+    [(IrValueGlobalAddr name) (string-append "&@" name)]
     [(IrValueI64 value) (int->string value)]
     [(IrValueF64 value) value]
     [(IrValueBool value)
@@ -967,6 +968,7 @@
   (match value
     [(IrValueVar id) (compiler-ir-cat3 "%" (int->string id) "")]
     [(IrValueGlobal name) (compiler-ir-cat3 "@" name "")]
+    [(IrValueGlobalAddr name) (compiler-ir-cat3 "&@" name "")]
     [(IrValueI64 n) (int->string n)]
     [(IrValueF64 n) n]
     [(IrValueBool b)

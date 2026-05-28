@@ -466,6 +466,10 @@
       (tltest-reach-mark-expr
         value
         (tltest-reach-mark-expr index (tltest-reach-mark-expr array names)))]
+    [(AstExprArrayPush array value)
+      (tltest-reach-mark-expr
+        value
+        (tltest-reach-mark-expr array names))]
     [(AstExprStringRef text index)
       (tltest-reach-mark-expr index (tltest-reach-mark-expr text names))]
     [(AstExprWhile cond body)

@@ -41,7 +41,7 @@
 
 (define (main) : i64
   (match (compiler-backend-emit-program
-    (optimize-program (bounds-check-smoke-program)))
+    (optimize-program-with-level (bounds-check-smoke-program) 2))
     [(OkCompilerBackend asm)
       (if (and
         (= (compiler-backend-string-count asm "    call tl_oob_abort\n") 1)

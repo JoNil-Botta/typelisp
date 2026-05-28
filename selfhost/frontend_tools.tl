@@ -555,6 +555,11 @@
           ", index: "
           (front-expr-render index)
           (front-cat3 ", value: " (front-expr-render value) " }")))]
+    [(AstExprArrayPush arr value)
+      (front-cat3
+        "ArrayPush { expr: "
+        (front-expr-render arr)
+        (front-cat3 ", value: " (front-expr-render value) " }"))]
     [(AstExprStringRef text index)
       (front-cat3
         "StringRef { expr: "

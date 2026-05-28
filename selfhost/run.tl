@@ -65,16 +65,17 @@
       (RunPlanConfig source target mode opt-level stdlib-lines runtime-lines))
     (let
       [current : String (arg idx)]
-      (if (string-eq current "--")
-        (OkRunPlanConfig
-          (RunPlanConfig
-            source
-            target
-            mode
-            opt-level
-            stdlib-lines
-            (run-plan-runtime-args (+ idx 1) count runtime-lines)))
-        (if (string-eq current "--target")
+      (cond
+        [(string-eq current "--")
+          (OkRunPlanConfig
+            (RunPlanConfig
+              source
+              target
+              mode
+              opt-level
+              stdlib-lines
+              (run-plan-runtime-args (+ idx 1) count runtime-lines)))]
+        [(string-eq current "--target")
           (if (>= (+ idx 1) count)
             (ErrRunPlanConfig "run: --target requires a value")
             (let
@@ -89,59 +90,60 @@
                   opt-level
                   stdlib-lines
                   runtime-lines)
-                (ErrRunPlanConfig (run-plan-unknown-target value)))))
-          (if (string-eq current "--backend-mode")
-            (if (>= (+ idx 1) count)
-              (ErrRunPlanConfig "run: --backend-mode requires a value")
-              (let
-                [value : String (arg (+ idx 1))]
-                (if (host-plan-backend-mode-valid? value)
-                  (run-plan-parse-options
-                    (+ idx 2)
-                    count
-                    source
-                    target
-                    value
-                    opt-level
-                    stdlib-lines
-                    runtime-lines)
-                  (ErrRunPlanConfig (run-plan-unknown-mode value)))))
-            (if (string-eq current "--opt-level")
-              (if (>= (+ idx 1) count)
-                (ErrRunPlanConfig "run: --opt-level requires a value")
-                (let
-                  [value : String (arg (+ idx 1))]
-                  (if (host-plan-opt-level-valid? value)
-                    (run-plan-parse-options
-                      (+ idx 2)
-                      count
-                      source
-                      target
-                      mode
-                      value
-                      stdlib-lines
-                      runtime-lines)
-                    (ErrRunPlanConfig (run-plan-unknown-opt-level value)))))
-              (if (string-eq current "--stdlib-root")
-                (if (>= (+ idx 1) count)
-                  (ErrRunPlanConfig "run: --stdlib-root requires a value")
-                  (run-plan-parse-options
-                    (+ idx 2)
-                    count
-                    source
-                    target
-                    mode
-                    opt-level
-                    (run-plan-append-stdlib stdlib-lines (arg (+ idx 1)))
-                    runtime-lines))
-                (OkRunPlanConfig
-                  (RunPlanConfig
-                    source
-                    target
-                    mode
-                    opt-level
-                    stdlib-lines
-                    (run-plan-runtime-args idx count runtime-lines)))))))))))
+                (ErrRunPlanConfig (run-plan-unknown-target value)))))]
+        [(string-eq current "--backend-mode")
+          (if (>= (+ idx 1) count)
+            (ErrRunPlanConfig "run: --backend-mode requires a value")
+            (let
+              [value : String (arg (+ idx 1))]
+              (if (host-plan-backend-mode-valid? value)
+                (run-plan-parse-options
+                  (+ idx 2)
+                  count
+                  source
+                  target
+                  value
+                  opt-level
+                  stdlib-lines
+                  runtime-lines)
+                (ErrRunPlanConfig (run-plan-unknown-mode value)))))]
+        [(string-eq current "--opt-level")
+          (if (>= (+ idx 1) count)
+            (ErrRunPlanConfig "run: --opt-level requires a value")
+            (let
+              [value : String (arg (+ idx 1))]
+              (if (host-plan-opt-level-valid? value)
+                (run-plan-parse-options
+                  (+ idx 2)
+                  count
+                  source
+                  target
+                  mode
+                  value
+                  stdlib-lines
+                  runtime-lines)
+                (ErrRunPlanConfig (run-plan-unknown-opt-level value)))))]
+        [(string-eq current "--stdlib-root")
+          (if (>= (+ idx 1) count)
+            (ErrRunPlanConfig "run: --stdlib-root requires a value")
+            (run-plan-parse-options
+              (+ idx 2)
+              count
+              source
+              target
+              mode
+              opt-level
+              (run-plan-append-stdlib stdlib-lines (arg (+ idx 1)))
+              runtime-lines))]
+        [else
+          (OkRunPlanConfig
+            (RunPlanConfig
+              source
+              target
+              mode
+              opt-level
+              stdlib-lines
+              (run-plan-runtime-args idx count runtime-lines)))]))))
 
 (define (run-plan-config [count : i64]) : ResultRunPlanConfig
   (run-plan-config-from 1 count))
@@ -214,15 +216,16 @@
       (RunCliConfig source target stdlib-roots runtime-args opt-level))
     (let
       [current : String (arg idx)]
-      (if (string-eq current "--")
-        (OkRunCliConfig
-          (RunCliConfig
-            source
-            target
-            stdlib-roots
-            (source-tool-args-from-argv (+ idx 1) count runtime-args)
-            opt-level))
-        (if (string-eq current "--target")
+      (cond
+        [(string-eq current "--")
+          (OkRunCliConfig
+            (RunCliConfig
+              source
+              target
+              stdlib-roots
+              (source-tool-args-from-argv (+ idx 1) count runtime-args)
+              opt-level))]
+        [(string-eq current "--target")
           (if (>= (+ idx 1) count)
             (ErrRunCliConfig "run: --target requires a value")
             (let
@@ -238,56 +241,57 @@
                     runtime-args
                     opt-level)]
                 [(ErrSourceToolTarget _)
-                  (ErrRunCliConfig (run-cli-unknown-target value))])))
-          (if (string-eq current "--backend-mode")
-            (if (>= (+ idx 1) count)
-              (ErrRunCliConfig "run: --backend-mode requires a value")
-              (let
-                [value : String (arg (+ idx 1))]
-                (match (source-tool-backend-mode "run" value)
-                  [(OkSourceToolBackendMode)
-                    (run-cli-parse-options
-                      (+ idx 2)
-                      count
-                      source
-                      target
-                      stdlib-roots
-                      runtime-args
-                      opt-level)]
-                  [(ErrSourceToolBackendMode message) (ErrRunCliConfig message)])))
-            (if (string-eq current "--opt-level")
-              (if (>= (+ idx 1) count)
-                (ErrRunCliConfig "run: --opt-level requires a value")
-                (let
-                  [value : String (arg (+ idx 1))]
-                  (if (source-tool-opt-level-valid? value)
-                    (run-cli-parse-options
-                      (+ idx 2)
-                      count
-                      source
-                      target
-                      stdlib-roots
-                      runtime-args
-                      (string->int value))
-                    (ErrRunCliConfig (run-cli-unknown-opt-level value)))))
-              (if (string-eq current "--stdlib-root")
-                (if (>= (+ idx 1) count)
-                  (ErrRunCliConfig "run: --stdlib-root requires a value")
+                  (ErrRunCliConfig (run-cli-unknown-target value))])))]
+        [(string-eq current "--backend-mode")
+          (if (>= (+ idx 1) count)
+            (ErrRunCliConfig "run: --backend-mode requires a value")
+            (let
+              [value : String (arg (+ idx 1))]
+              (match (source-tool-backend-mode "run" value)
+                [(OkSourceToolBackendMode)
                   (run-cli-parse-options
                     (+ idx 2)
                     count
                     source
                     target
-                    (source-tool-root-list-append stdlib-roots (arg (+ idx 1)))
-                    runtime-args
-                    opt-level))
-                (OkRunCliConfig
-                  (RunCliConfig
-                    source
-                    target
                     stdlib-roots
-                    (source-tool-args-from-argv idx count runtime-args)
-                    opt-level))))))))))
+                    runtime-args
+                    opt-level)]
+                [(ErrSourceToolBackendMode message) (ErrRunCliConfig message)])))]
+        [(string-eq current "--opt-level")
+          (if (>= (+ idx 1) count)
+            (ErrRunCliConfig "run: --opt-level requires a value")
+            (let
+              [value : String (arg (+ idx 1))]
+              (if (source-tool-opt-level-valid? value)
+                (run-cli-parse-options
+                  (+ idx 2)
+                  count
+                  source
+                  target
+                  stdlib-roots
+                  runtime-args
+                  (string->int value))
+                (ErrRunCliConfig (run-cli-unknown-opt-level value)))))]
+        [(string-eq current "--stdlib-root")
+          (if (>= (+ idx 1) count)
+            (ErrRunCliConfig "run: --stdlib-root requires a value")
+            (run-cli-parse-options
+              (+ idx 2)
+              count
+              source
+              target
+              (source-tool-root-list-append stdlib-roots (arg (+ idx 1)))
+              runtime-args
+              opt-level))]
+        [else
+          (OkRunCliConfig
+            (RunCliConfig
+              source
+              target
+              stdlib-roots
+              (source-tool-args-from-argv idx count runtime-args)
+              opt-level))]))))
 
 (define (run-cli-config [count : i64]) : ResultRunCliConfig
   (run-cli-config-from 1 count))

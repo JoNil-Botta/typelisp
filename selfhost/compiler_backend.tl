@@ -267,38 +267,26 @@
   (backend-cat4 ".L" (compiler-backend-asm-safe-symbol function) "_" label))
 
 (define (compiler-backend-arg-reg [idx : i64]) : ResultBackendReg
-  (if (= idx 0)
-    (OkBackendReg "%rdi")
-    (if (= idx 1)
-      (OkBackendReg "%rsi")
-      (if (= idx 2)
-        (OkBackendReg "%rdx")
-        (if (= idx 3)
-          (OkBackendReg "%rcx")
-          (if (= idx 4)
-            (OkBackendReg "%r8")
-            (if (= idx 5)
-              (OkBackendReg "%r9")
-              (ErrBackendReg "backend: too many call args"))))))))
+  (cond
+    [(= idx 0) (OkBackendReg "%rdi")]
+    [(= idx 1) (OkBackendReg "%rsi")]
+    [(= idx 2) (OkBackendReg "%rdx")]
+    [(= idx 3) (OkBackendReg "%rcx")]
+    [(= idx 4) (OkBackendReg "%r8")]
+    [(= idx 5) (OkBackendReg "%r9")]
+    [else (ErrBackendReg "backend: too many call args")]))
 
 (define (compiler-backend-float-arg-reg [idx : i64]) : ResultBackendReg
-  (if (= idx 0)
-    (OkBackendReg "%xmm0")
-    (if (= idx 1)
-      (OkBackendReg "%xmm1")
-      (if (= idx 2)
-        (OkBackendReg "%xmm2")
-        (if (= idx 3)
-          (OkBackendReg "%xmm3")
-          (if (= idx 4)
-            (OkBackendReg "%xmm4")
-            (if (= idx 5)
-              (OkBackendReg "%xmm5")
-              (if (= idx 6)
-                (OkBackendReg "%xmm6")
-                (if (= idx 7)
-                  (OkBackendReg "%xmm7")
-                  (ErrBackendReg "backend: too many call args"))))))))))
+  (cond
+    [(= idx 0) (OkBackendReg "%xmm0")]
+    [(= idx 1) (OkBackendReg "%xmm1")]
+    [(= idx 2) (OkBackendReg "%xmm2")]
+    [(= idx 3) (OkBackendReg "%xmm3")]
+    [(= idx 4) (OkBackendReg "%xmm4")]
+    [(= idx 5) (OkBackendReg "%xmm5")]
+    [(= idx 6) (OkBackendReg "%xmm6")]
+    [(= idx 7) (OkBackendReg "%xmm7")]
+    [else (ErrBackendReg "backend: too many call args")]))
 
 (define (compiler-backend-emit-stack-sub [frame : i64]) : String
   (if (= frame 0)
@@ -491,34 +479,27 @@
     [_ (CompilerBackendNoI64)]))
 
 (define (compiler-backend-symbol-char [text : String] [idx : i64] [c : char]) : String
-  (if (or
-    (and (>= c #A') (<= c #Z'))
-    (or (and (>= c #a') (<= c #z')) (or (and (>= c #0') (<= c #9')) (= c #_'))))
-    (substring text idx 1)
-    (if (= c #-')
-      "_"
-      (if (= c #?')
-        "_question"
-        (if (= c #!')
-          "_bang"
-          (if (= c #+')
-            "_plus"
-            (if (= c #*')
-              "_star"
-              (if (= c #/')
-                "_slash"
-                (if (= c #=')
-                  "_eq"
-                  (if (= c #<')
-                    "_lt"
-                    (if (= c #>')
-                      "_gt"
-                      (if (= c #:')
-                        "_colon"
-                        (string-append
-                          "_u"
-                          (compiler-backend-hex-byte
-                            (compiler-backend-char-code c)))))))))))))))
+  (cond
+    [(or
+        (and (>= c #A') (<= c #Z'))
+        (or
+          (and (>= c #a') (<= c #z'))
+          (or (and (>= c #0') (<= c #9')) (= c #_'))))
+      (substring text idx 1)]
+    [(= c #-') "_"]
+    [(= c #?') "_question"]
+    [(= c #!') "_bang"]
+    [(= c #+') "_plus"]
+    [(= c #*') "_star"]
+    [(= c #/') "_slash"]
+    [(= c #=') "_eq"]
+    [(= c #<') "_lt"]
+    [(= c #>') "_gt"]
+    [(= c #:') "_colon"]
+    [else
+      (string-append
+        "_u"
+        (compiler-backend-hex-byte (compiler-backend-char-code c)))]))
 
 (define (compiler-backend-asm-safe-symbol [name : String]) : String
   (let
@@ -617,37 +598,23 @@
     [_ false]))
 
 (define (compiler-backend-hex-digit [n : i64]) : String
-  (if (= n 0)
-    "0"
-    (if (= n 1)
-      "1"
-      (if (= n 2)
-        "2"
-        (if (= n 3)
-          "3"
-          (if (= n 4)
-            "4"
-            (if (= n 5)
-              "5"
-              (if (= n 6)
-                "6"
-                (if (= n 7)
-                  "7"
-                  (if (= n 8)
-                    "8"
-                    (if (= n 9)
-                      "9"
-                      (if (= n 10)
-                        "a"
-                        (if (= n 11)
-                          "b"
-                          (if (= n 12)
-                            "c"
-                            (if (= n 13)
-                              "d"
-                              (if (= n 14)
-                                "e"
-                                "f"))))))))))))))))
+  (cond
+    [(= n 0) "0"]
+    [(= n 1) "1"]
+    [(= n 2) "2"]
+    [(= n 3) "3"]
+    [(= n 4) "4"]
+    [(= n 5) "5"]
+    [(= n 6) "6"]
+    [(= n 7) "7"]
+    [(= n 8) "8"]
+    [(= n 9) "9"]
+    [(= n 10) "a"]
+    [(= n 11) "b"]
+    [(= n 12) "c"]
+    [(= n 13) "d"]
+    [(= n 14) "e"]
+    [else "f"]))
 
 (define (compiler-backend-hex-byte [n : i64]) : String
   (string-append
@@ -655,21 +622,15 @@
     (compiler-backend-hex-digit (% n 16))))
 
 (define (compiler-backend-octal-digit [n : i64]) : String
-  (if (= n 0)
-    "0"
-    (if (= n 1)
-      "1"
-      (if (= n 2)
-        "2"
-        (if (= n 3)
-          "3"
-          (if (= n 4)
-            "4"
-            (if (= n 5)
-              "5"
-              (if (= n 6)
-                "6"
-                "7"))))))))
+  (cond
+    [(= n 0) "0"]
+    [(= n 1) "1"]
+    [(= n 2) "2"]
+    [(= n 3) "3"]
+    [(= n 4) "4"]
+    [(= n 5) "5"]
+    [(= n 6) "6"]
+    [else "7"]))
 
 (define (compiler-backend-octal-escape [n : i64]) : String
   (string-append
@@ -684,19 +645,14 @@
   [text : String]
   [idx : i64]
   [c : char]) : String
-  (if (= c #"')
-    "\\\""
-    (if (= c #\\')
-      "\\\\"
-      (if (= c #\newline')
-        "\\n"
-        (if (= c #\tab')
-          "\\t"
-          (if (= c #\return')
-            "\\r"
-            (if (and (>= c #\space') (<= c #~'))
-              (substring text idx 1)
-              (compiler-backend-octal-escape (compiler-backend-char-code c)))))))))
+  (cond
+    [(= c #"') "\\\""]
+    [(= c #\\') "\\\\"]
+    [(= c #\newline') "\\n"]
+    [(= c #\tab') "\\t"]
+    [(= c #\return') "\\r"]
+    [(and (>= c #\space') (<= c #~')) (substring text idx 1)]
+    [else (compiler-backend-octal-escape (compiler-backend-char-code c))]))
 
 (define (compiler-backend-escape-string [text : String]) : String
   (let
@@ -842,76 +798,74 @@
 (define (compiler-backend-emit-load-memory [addr : String] [ty : AstType]) : String
   (let
     [size : i64 (compiler-backend-type-size ty)]
-    (if (= size 8)
-      (backend-cat3 "    movq " addr ", %rax\n")
-      (if (= size 4)
+    (cond
+      [(= size 8) (backend-cat3 "    movq " addr ", %rax\n")]
+      [(= size 4)
         (if (compiler-backend-type-signed? ty)
           (backend-cat3 "    movslq " addr ", %rax\n")
-          (backend-cat3 "    movl " addr ", %eax\n"))
-        (if (= size 2)
-          (if (compiler-backend-type-signed? ty)
-            (backend-cat3 "    movswq " addr ", %rax\n")
-            (backend-cat3 "    movzwq " addr ", %rax\n"))
-          (if (= size 1)
-            (if (compiler-backend-type-signed? ty)
-              (backend-cat3 "    movsbq " addr ", %rax\n")
-              (backend-cat3 "    movzbq " addr ", %rax\n"))
-            ""))))))
+          (backend-cat3 "    movl " addr ", %eax\n"))]
+      [(= size 2)
+        (if (compiler-backend-type-signed? ty)
+          (backend-cat3 "    movswq " addr ", %rax\n")
+          (backend-cat3 "    movzwq " addr ", %rax\n"))]
+      [(= size 1)
+        (if (compiler-backend-type-signed? ty)
+          (backend-cat3 "    movsbq " addr ", %rax\n")
+          (backend-cat3 "    movzbq " addr ", %rax\n"))]
+      [else ""])))
 
 (define (compiler-backend-emit-load-f64-memory [addr : String] [reg : String]) : String
   (backend-cat5 "    movsd " addr ", " reg "\n"))
 
 (define (compiler-backend-reg-part [reg : String] [size : i64]) : String
-  (if (= size 8)
-    reg
-    (if (string-eq reg "%r12")
+  (cond
+    [(= size 8) reg]
+    [(string-eq reg "%r12")
       (if (= size 4)
         "%r12d"
         (if (= size 2)
           "%r12w"
-          "%r12b"))
-      (if (string-eq reg "%r13")
-        (if (= size 4)
-          "%r13d"
-          (if (= size 2)
-            "%r13w"
-            "%r13b"))
-        (if (string-eq reg "%r14")
-          (if (= size 4)
-            "%r14d"
-            (if (= size 2)
-              "%r14w"
-              "%r14b"))
-          (if (string-eq reg "%r15")
-            (if (= size 4)
-              "%r15d"
-              (if (= size 2)
-                "%r15w"
-                "%r15b"))
-            (if (string-eq reg "%r8")
-              (if (= size 4)
-                "%r8d"
-                (if (= size 2)
-                  "%r8w"
-                  "%r8b"))
-              (if (string-eq reg "%r9")
-                (if (= size 4)
-                  "%r9d"
-                  (if (= size 2)
-                    "%r9w"
-                    "%r9b"))
-                (if (= size 4)
-                  "%r15d"
-                  (if (= size 2)
-                    "%r15w"
-                    "%r15b"))))))))))
+          "%r12b"))]
+    [(string-eq reg "%r13")
+      (if (= size 4)
+        "%r13d"
+        (if (= size 2)
+          "%r13w"
+          "%r13b"))]
+    [(string-eq reg "%r14")
+      (if (= size 4)
+        "%r14d"
+        (if (= size 2)
+          "%r14w"
+          "%r14b"))]
+    [(string-eq reg "%r15")
+      (if (= size 4)
+        "%r15d"
+        (if (= size 2)
+          "%r15w"
+          "%r15b"))]
+    [(string-eq reg "%r8")
+      (if (= size 4)
+        "%r8d"
+        (if (= size 2)
+          "%r8w"
+          "%r8b"))]
+    [(string-eq reg "%r9")
+      (if (= size 4)
+        "%r9d"
+        (if (= size 2)
+          "%r9w"
+          "%r9b"))]
+    [(= size 4) "%r15d"]
+    [(= size 2) "%r15w"]
+    [else "%r15b"]))
 
 (define (compiler-backend-emit-load-register [reg : String] [ty : AstType]) : String
   (let
     [size : i64 (compiler-backend-type-size ty)]
-    (if (= size 8)
-      (backend-cat3 "    movq " reg ", %rax\n")
-      (if (= size 4)
+    (cond
+      [(= size 8) (backend-cat3 "    movq " reg ", %rax\n")]
+      [(= size 4)
         (if (compiler-backend-type-signed? ty)
           (backend-cat3
             "    movslq "
@@ -920,43 +874,40 @@
           (backend-cat3
             "    movl "
             (compiler-backend-reg-part reg size)
-            ", %eax\n"))
-        (if (= size 2)
-          (if (compiler-backend-type-signed? ty)
-            (backend-cat3
-              "    movswq "
-              (compiler-backend-reg-part reg size)
-              ", %rax\n")
-            (backend-cat3
-              "    movzwq "
-              (compiler-backend-reg-part reg size)
-              ", %rax\n"))
-          (if (= size 1)
-            (if (compiler-backend-type-signed? ty)
-              (backend-cat3
-                "    movsbq "
-                (compiler-backend-reg-part reg size)
-                ", %rax\n")
-              (backend-cat3
-                "    movzbq "
-                (compiler-backend-reg-part reg size)
-                ", %rax\n"))
-            ""))))))
+            ", %eax\n"))]
+      [(= size 2)
+        (if (compiler-backend-type-signed? ty)
+          (backend-cat3
+            "    movswq "
+            (compiler-backend-reg-part reg size)
+            ", %rax\n")
+          (backend-cat3
+            "    movzwq "
+            (compiler-backend-reg-part reg size)
+            ", %rax\n"))]
+      [(= size 1)
+        (if (compiler-backend-type-signed? ty)
+          (backend-cat3
+            "    movsbq "
+            (compiler-backend-reg-part reg size)
+            ", %rax\n")
+          (backend-cat3
+            "    movzbq "
+            (compiler-backend-reg-part reg size)
+            ", %rax\n"))]
+      [else ""])))
 
 (define (compiler-backend-emit-store-rax-to-memory
   [addr : String]
   [ty : AstType]) : String
   (let
     [size : i64 (compiler-backend-type-size ty)]
-    (if (= size 8)
-      (backend-cat3 "    movq %rax, " addr "\n")
-      (if (= size 4)
-        (backend-cat3 "    movl %eax, " addr "\n")
-        (if (= size 2)
-          (backend-cat3 "    movw %ax, " addr "\n")
-          (if (= size 1)
-            (backend-cat3 "    movb %al, " addr "\n")
-            ""))))))
+    (cond
+      [(= size 8) (backend-cat3 "    movq %rax, " addr "\n")]
+      [(= size 4) (backend-cat3 "    movl %eax, " addr "\n")]
+      [(= size 2) (backend-cat3 "    movw %ax, " addr "\n")]
+      [(= size 1) (backend-cat3 "    movb %al, " addr "\n")]
+      [else ""])))
 
 (define (compiler-backend-emit-store-xmm-to-memory
   [addr : String]
@@ -966,15 +917,12 @@
 (define (compiler-backend-store-immediate-mnemonic [ty : AstType]) : String
   (let
     [size : i64 (compiler-backend-type-size ty)]
-    (if (= size 8)
-      "movq"
-      (if (= size 4)
-        "movl"
-        (if (= size 2)
-          "movw"
-          (if (= size 1)
-            "movb"
-            ""))))))
+    (cond
+      [(= size 8) "movq"]
+      [(= size 4) "movl"]
+      [(= size 2) "movw"]
+      [(= size 1) "movb"]
+      [else ""])))
 
 (define (compiler-backend-emit-store-immediate-to-memory
   [value : CompilerIrValue]
@@ -11057,15 +11005,12 @@ tl_windows_setup_instances:
   (match target
     [(BackendTargetLinux) (compiler-backend-arg-reg idx)]
     [(BackendTargetWindows)
-      (if (= idx 0)
-        (OkBackendReg "%rcx")
-        (if (= idx 1)
-          (OkBackendReg "%rdx")
-          (if (= idx 2)
-            (OkBackendReg "%r8")
-            (if (= idx 3)
-              (OkBackendReg "%r9")
-              (ErrBackendReg "backend: too many call args")))))]))
+      (cond
+        [(= idx 0) (OkBackendReg "%rcx")]
+        [(= idx 1) (OkBackendReg "%rdx")]
+        [(= idx 2) (OkBackendReg "%r8")]
+        [(= idx 3) (OkBackendReg "%r9")]
+        [else (ErrBackendReg "backend: too many call args")])]))
 
 (define (compiler-backend-target-float-arg-reg
   [target : CompilerBackendTarget]
@@ -11073,15 +11018,12 @@ tl_windows_setup_instances:
   (match target
     [(BackendTargetLinux) (compiler-backend-float-arg-reg idx)]
     [(BackendTargetWindows)
-      (if (= idx 0)
-        (OkBackendReg "%xmm0")
-        (if (= idx 1)
-          (OkBackendReg "%xmm1")
-          (if (= idx 2)
-            (OkBackendReg "%xmm2")
-            (if (= idx 3)
-              (OkBackendReg "%xmm3")
-              (ErrBackendReg "backend: too many call args")))))]))
+      (cond
+        [(= idx 0) (OkBackendReg "%xmm0")]
+        [(= idx 1) (OkBackendReg "%xmm1")]
+        [(= idx 2) (OkBackendReg "%xmm2")]
+        [(= idx 3) (OkBackendReg "%xmm3")]
+        [else (ErrBackendReg "backend: too many call args")])]))
 
 ;; Caller-reserved outgoing shadow space in bytes: none on System V, 32 on
 ;; Windows x64.

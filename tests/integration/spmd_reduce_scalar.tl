@@ -77,70 +77,32 @@
       (fill-f64 fs)
       (fill-i32 gs n)
       ; xs = gs = [1,2,3,4,5]; fs = [1.0..5.0].
-      (if (!= (reduce-sum xs n) (manual-sum xs n))
-        1
-        (if (!= (reduce-sum xs n) 15)
-          2
-          ; length 3 (< a likely SIMD lane width)
-          (if (!= (reduce-sum xs 3) 6)
-            3
-            ; length 4 (exactly one i64 AVX2 lane width)
-            (if (!= (reduce-sum xs 4) 10)
-              16
-              ; empty range yields the seed, value untouched
-              (if (!= (spmd-reduce sum ([i : i64 0 0]) 99 (array-ref xs i)) 99)
-                4
-                (if (!= (reduce-max xs n 0) (manual-max xs n 0))
-                  5
-                  (if (!= (reduce-max xs n 0) 5)
-                    6
-                    ; seed larger than every element wins
-                    (if (!= (reduce-max xs n 100) 100)
-                      7
-                      (if (!= (reduce-min xs n 1000) 1)
-                        8
-                        ; seed smaller than every element wins
-                        (if (!= (reduce-min xs n 0) 0)
-                          9
-                          (if (!= (reduce-sum-i32 gs n) (cast 15 : i32))
-                            10
-                            (if (< (reduce-sum-f64 fs n) 14.5)
-                              11
-                              (if (> (reduce-sum-f64 fs n) 15.5)
-                                12
-                                (if (not (reduce-all-pos xs n))
-                                  13
-                                  (if (reduce-any-zero xs n)
-                                    14
-                                    ; tail length 5 already covered; check all-false on empty
-                                    (if (not
-                                      (spmd-reduce
-                                        all
-                                        ([i : i64 0 0])
-                                        true
-                                        (> (array-ref xs i) 0)))
-                                      15
-                                      ; i32 max/min: element wins, then seed wins
-                                      (if (!=
-                                        (reduce-max-i32 gs n (cast 0 : i32))
-                                        (cast 5 : i32))
-                                        17
-                                        (if (!=
-                                          (reduce-max-i32 gs n (cast 100 : i32))
-                                          (cast 100 : i32))
-                                          18
-                                          (if (!=
-                                            (reduce-min-i32
-                                              gs
-                                              n
-                                              (cast 1000 : i32))
-                                            (cast 1 : i32))
-                                            19
-                                            (if (!=
-                                              (reduce-min-i32
-                                                gs
-                                                n
-                                                (cast 0 : i32))
-                                              (cast 0 : i32))
-                                              20
-                                              42)))))))))))))))))))))))
+      (cond
+        [(!= (reduce-sum xs n) (manual-sum xs n)) 1]
+        [(!= (reduce-sum xs n) 15) 2]
+        ; length 3 (< a likely SIMD lane width)
+        [(!= (reduce-sum xs 3) 6) 3]
+        ; length 4 (exactly one i64 AVX2 lane width)
+        [(!= (reduce-sum xs 4) 10) 16]
+        ; empty range yields the seed, value untouched
+        [(!= (spmd-reduce sum ([i : i64 0 0]) 99 (array-ref xs i)) 99) 4]
+        [(!= (reduce-max xs n 0) (manual-max xs n 0)) 5]
+        [(!= (reduce-max xs n 0) 5) 6]
+        ; seed larger than every element wins
+        [(!= (reduce-max xs n 100) 100) 7]
+        [(!= (reduce-min xs n 1000) 1) 8]
+        ; seed smaller than every element wins
+        [(!= (reduce-min xs n 0) 0) 9]
+        [(!= (reduce-sum-i32 gs n) (cast 15 : i32)) 10]
+        [(< (reduce-sum-f64 fs n) 14.5) 11]
+        [(> (reduce-sum-f64 fs n) 15.5) 12]
+        [(not (reduce-all-pos xs n)) 13]
+        [(reduce-any-zero xs n) 14]
+        ; tail length 5 already covered; check all-false on empty
+        [(not (spmd-reduce all ([i : i64 0 0]) true (> (array-ref xs i) 0))) 15]
+        ; i32 max/min: element wins, then seed wins
+        [(!= (reduce-max-i32 gs n (cast 0 : i32)) (cast 5 : i32)) 17]
+        [(!= (reduce-max-i32 gs n (cast 100 : i32)) (cast 100 : i32)) 18]
+        [(!= (reduce-min-i32 gs n (cast 1000 : i32)) (cast 1 : i32)) 19]
+        [(!= (reduce-min-i32 gs n (cast 0 : i32)) (cast 0 : i32)) 20]
+        [else 42]))))

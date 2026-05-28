@@ -598,13 +598,12 @@
         (IrSomeValue lhs)
         (IrNoValue))]
     [(IrBinMul)
-      (if (or (opt-i64-zero? resolved-lhs) (opt-i64-zero? resolved-rhs))
-        (IrSomeValue (IrValueI64 0))
-        (if (opt-i64-one? resolved-rhs)
-          (IrSomeValue lhs)
-          (if (opt-i64-one? resolved-lhs)
-            (IrSomeValue rhs)
-            (IrNoValue))))]
+      (cond
+        [(or (opt-i64-zero? resolved-lhs) (opt-i64-zero? resolved-rhs))
+          (IrSomeValue (IrValueI64 0))]
+        [(opt-i64-one? resolved-rhs) (IrSomeValue lhs)]
+        [(opt-i64-one? resolved-lhs) (IrSomeValue rhs)]
+        [else (IrNoValue)])]
     [_ (IrNoValue)]))
 
 (define (opt-strength-bool-binop
@@ -615,21 +614,19 @@
   [resolved-rhs : CompilerIrValue]) : CompilerIrMaybeValue
   (match op
     [(IrBinAnd)
-      (if (or (opt-bool-false? resolved-lhs) (opt-bool-false? resolved-rhs))
-        (IrSomeValue (IrValueBool false))
-        (if (opt-bool-true? resolved-rhs)
-          (IrSomeValue lhs)
-          (if (opt-bool-true? resolved-lhs)
-            (IrSomeValue rhs)
-            (IrNoValue))))]
+      (cond
+        [(or (opt-bool-false? resolved-lhs) (opt-bool-false? resolved-rhs))
+          (IrSomeValue (IrValueBool false))]
+        [(opt-bool-true? resolved-rhs) (IrSomeValue lhs)]
+        [(opt-bool-true? resolved-lhs) (IrSomeValue rhs)]
+        [else (IrNoValue)])]
     [(IrBinOr)
-      (if (or (opt-bool-true? resolved-lhs) (opt-bool-true? resolved-rhs))
-        (IrSomeValue (IrValueBool true))
-        (if (opt-bool-false? resolved-rhs)
-          (IrSomeValue lhs)
-          (if (opt-bool-false? resolved-lhs)
-            (IrSomeValue rhs)
-            (IrNoValue))))]
+      (cond
+        [(or (opt-bool-true? resolved-lhs) (opt-bool-true? resolved-rhs))
+          (IrSomeValue (IrValueBool true))]
+        [(opt-bool-false? resolved-rhs) (IrSomeValue lhs)]
+        [(opt-bool-false? resolved-lhs) (IrSomeValue rhs)]
+        [else (IrNoValue)])]
     [_ (IrNoValue)]))
 
 (define (opt-strength-binop

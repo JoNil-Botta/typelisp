@@ -235,19 +235,20 @@
         (if (< j n)
           (let
             [c : char (string-ref src j)]
-            (if escaped
-              (begin
-                (set! escaped false)
-                (set! j (+ j 1)))
-              (if (= c #\\')
+            (cond
+              [escaped
+                (begin
+                  (set! escaped false)
+                  (set! j (+ j 1)))]
+              [(= c #\\')
                 (begin
                   (set! escaped true)
-                  (set! j (+ j 1)))
-                (if (= c #"')
-                  (begin
-                    (set! j (+ j 1))
-                    (set! keep false))
-                  (set! j (+ j 1))))))
+                  (set! j (+ j 1)))]
+              [(= c #"')
+                (begin
+                  (set! j (+ j 1))
+                  (set! keep false))]
+              [else (set! j (+ j 1))]))
           (begin
             (panic "format lexer: unterminated string literal")
             (set! keep false))))
@@ -292,9 +293,9 @@
       (while (< i n)
         (let
           [c : char (string-ref src i)]
-          (if (fmt-is-space c)
-            (set! i (+ i 1))
-            (if (= c #;')
+          (cond
+            [(fmt-is-space c) (set! i (+ i 1))]
+            [(= c #;')
               (let
                 [end : i64 (fmt-scan-comment-end src i n)]
                 (begin
@@ -303,113 +304,105 @@
                     count
                     (FmtComment (substring src i (- end i))))
                   (set! count (+ count 1))
-                  (set! i end)))
-              (if (= c #(')
-                (begin
-                  (fmt-store-token tokens count (FmtLParen))
-                  (set! count (+ count 1))
-                  (set! i (+ i 1)))
-                (if (= c #)')
+                  (set! i end)))]
+            [(= c #(')
+              (begin
+                (fmt-store-token tokens count (FmtLParen))
+                (set! count (+ count 1))
+                (set! i (+ i 1)))]
+            [(= c #)')
+              (begin
+                (fmt-store-token tokens count (FmtRParen))
+                (set! count (+ count 1))
+                (set! i (+ i 1)))]
+            [(= c #[')
+              (begin
+                (fmt-store-token tokens count (FmtLBracket))
+                (set! count (+ count 1))
+                (set! i (+ i 1)))]
+            [(= c #]')
+              (begin
+                (fmt-store-token tokens count (FmtRBracket))
+                (set! count (+ count 1))
+                (set! i (+ i 1)))]
+            [(= c #:')
+              (begin
+                (fmt-store-token tokens count (FmtColon))
+                (set! count (+ count 1))
+                (set! i (+ i 1)))]
+            [(= c #'')
+              (begin
+                (fmt-store-token tokens count (FmtQuote))
+                (set! count (+ count 1))
+                (set! i (+ i 1)))]
+            [(= c #`')
+              (begin
+                (fmt-store-token tokens count (FmtBacktick))
+                (set! count (+ count 1))
+                (set! i (+ i 1)))]
+            [(= c #.')
+              (begin
+                (fmt-store-token tokens count (FmtDot))
+                (set! count (+ count 1))
+                (set! i (+ i 1)))]
+            [(= c #,')
+              (if (< (+ i 1) n)
+                (if (= (string-ref src (+ i 1)) #@')
                   (begin
-                    (fmt-store-token tokens count (FmtRParen))
+                    (fmt-store-token tokens count (FmtCommaAt))
                     (set! count (+ count 1))
-                    (set! i (+ i 1)))
-                  (if (= c #[')
-                    (begin
-                      (fmt-store-token tokens count (FmtLBracket))
-                      (set! count (+ count 1))
-                      (set! i (+ i 1)))
-                    (if (= c #]')
-                      (begin
-                        (fmt-store-token tokens count (FmtRBracket))
-                        (set! count (+ count 1))
-                        (set! i (+ i 1)))
-                      (if (= c #:')
-                        (begin
-                          (fmt-store-token tokens count (FmtColon))
-                          (set! count (+ count 1))
-                          (set! i (+ i 1)))
-                        (if (= c #'')
-                          (begin
-                            (fmt-store-token tokens count (FmtQuote))
-                            (set! count (+ count 1))
-                            (set! i (+ i 1)))
-                          (if (= c #`')
-                            (begin
-                              (fmt-store-token tokens count (FmtBacktick))
-                              (set! count (+ count 1))
-                              (set! i (+ i 1)))
-                            (if (= c #.')
-                              (begin
-                                (fmt-store-token tokens count (FmtDot))
-                                (set! count (+ count 1))
-                                (set! i (+ i 1)))
-                              (if (= c #,')
-                                (if (< (+ i 1) n)
-                                  (if (= (string-ref src (+ i 1)) #@')
-                                    (begin
-                                      (fmt-store-token
-                                        tokens
-                                        count
-                                        (FmtCommaAt))
-                                      (set! count (+ count 1))
-                                      (set! i (+ i 2)))
-                                    (begin
-                                      (fmt-store-token tokens count (FmtComma))
-                                      (set! count (+ count 1))
-                                      (set! i (+ i 1))))
-                                  (begin
-                                    (fmt-store-token tokens count (FmtComma))
-                                    (set! count (+ count 1))
-                                    (set! i (+ i 1))))
-                                (if (= c #"')
-                                  (let
-                                    [end : i64
-                                      (fmt-scan-string-end src (+ i 1) n)]
-                                    (begin
-                                      (fmt-store-token
-                                        tokens
-                                        count
-                                        (FmtString (substring src i (- end i))))
-                                      (set! count (+ count 1))
-                                      (set! i end)))
-                                  (if (= c ##')
-                                    (let
-                                      [end : i64
-                                        (fmt-scan-char-end src (+ i 1) n)]
-                                      (begin
-                                        (fmt-store-token
-                                          tokens
-                                          count
-                                          (FmtChar (substring src i (- end i))))
-                                        (set! count (+ count 1))
-                                        (set! i end)))
-                                    (if (fmt-starts-number src i n)
-                                      (let
-                                        [end : i64
-                                          (fmt-scan-number-end src i n)]
-                                        (begin
-                                          (fmt-store-token
-                                            tokens
-                                            count
-                                            (FmtInt (substring src i (- end i))))
-                                          (set! count (+ count 1))
-                                          (set! i end)))
-                                      (if (fmt-is-symbol-char c)
-                                        (let
-                                          [end : i64
-                                            (fmt-scan-symbol-end src i n)]
-                                          (begin
-                                            (fmt-store-token
-                                              tokens
-                                              count
-                                              (FmtSymbol
-                                                (substring src i (- end i))))
-                                            (set! count (+ count 1))
-                                            (set! i end)))
-                                        (begin
-                                          (panic
-                                            "format lexer: unexpected character")
-                                          (set! i (+ i 1))))))))))))))))))))
+                    (set! i (+ i 2)))
+                  (begin
+                    (fmt-store-token tokens count (FmtComma))
+                    (set! count (+ count 1))
+                    (set! i (+ i 1))))
+                (begin
+                  (fmt-store-token tokens count (FmtComma))
+                  (set! count (+ count 1))
+                  (set! i (+ i 1))))]
+            [(= c #"')
+              (let
+                [end : i64 (fmt-scan-string-end src (+ i 1) n)]
+                (begin
+                  (fmt-store-token
+                    tokens
+                    count
+                    (FmtString (substring src i (- end i))))
+                  (set! count (+ count 1))
+                  (set! i end)))]
+            [(= c ##')
+              (let
+                [end : i64 (fmt-scan-char-end src (+ i 1) n)]
+                (begin
+                  (fmt-store-token
+                    tokens
+                    count
+                    (FmtChar (substring src i (- end i))))
+                  (set! count (+ count 1))
+                  (set! i end)))]
+            [(fmt-starts-number src i n)
+              (let
+                [end : i64 (fmt-scan-number-end src i n)]
+                (begin
+                  (fmt-store-token
+                    tokens
+                    count
+                    (FmtInt (substring src i (- end i))))
+                  (set! count (+ count 1))
+                  (set! i end)))]
+            [(fmt-is-symbol-char c)
+              (let
+                [end : i64 (fmt-scan-symbol-end src i n)]
+                (begin
+                  (fmt-store-token
+                    tokens
+                    count
+                    (FmtSymbol (substring src i (- end i))))
+                  (set! count (+ count 1))
+                  (set! i end)))]
+            [else
+              (begin
+                (panic "format lexer: unexpected character")
+                (set! i (+ i 1)))])))
       (fmt-store-token tokens count (FmtEnd))
       (FormatTokenStream tokens (+ count 1)))))

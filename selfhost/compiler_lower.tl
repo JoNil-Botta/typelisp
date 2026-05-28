@@ -1527,22 +1527,14 @@
             ty)])]))
 
 (define (lower-copy-chunk-size [remaining : i64]) : i64
-  (if (>= remaining 8)
-    8
-    (if (>= remaining 4)
-      4
-      (if (>= remaining 2)
-        2
-        1))))
+  (cond [(>= remaining 8) 8] [(>= remaining 4) 4] [(>= remaining 2) 2] [else 1]))
 
 (define (lower-copy-chunk-type [chunk : i64]) : AstType
-  (if (= chunk 8)
-    (AstTyU64)
-    (if (= chunk 4)
-      (AstTyU32)
-      (if (= chunk 2)
-        (AstTyU16)
-        (AstTyU8)))))
+  (cond
+    [(= chunk 8) (AstTyU64)]
+    [(= chunk 4) (AstTyU32)]
+    [(= chunk 2) (AstTyU16)]
+    [else (AstTyU8)]))
 
 (define (lower-copy-bytes
   [state : LowerState]
@@ -2269,22 +2261,18 @@
     (not (lower-top-level-value-defined? ctx name))))
 
 (define (lower-stdio-builtin? [name : String]) : bool
-  (if (string-eq name "read-stdin-line")
-    true
-    (if (string-eq name "read-stdin-bytes")
-      true
-      (if (string-eq name "stdin-eof?")
-        true
-        (string-eq name "flush-stdout")))))
+  (cond
+    [(string-eq name "read-stdin-line") true]
+    [(string-eq name "read-stdin-bytes") true]
+    [(string-eq name "stdin-eof?") true]
+    [else (string-eq name "flush-stdout")]))
 
 (define (lower-string-runtime-builtin? [name : String]) : bool
-  (if (string-eq name "substring")
-    true
-    (if (string-eq name "string-slice")
-      true
-      (if (string-eq name "string-append")
-        true
-        (string-eq name "string-concat")))))
+  (cond
+    [(string-eq name "substring") true]
+    [(string-eq name "string-slice") true]
+    [(string-eq name "string-append") true]
+    [else (string-eq name "string-concat")]))
 
 (define (lower-bootstrap-runtime-builtin? [name : String]) : bool
   (cond
@@ -2315,13 +2303,11 @@
     [else (string-eq name "print-error")]))
 
 (define (lower-stdio-runtime-name [name : String]) : String
-  (if (string-eq name "read-stdin-line")
-    ".L_tl_read_stdin_line"
-    (if (string-eq name "read-stdin-bytes")
-      ".L_tl_read_stdin_bytes"
-      (if (string-eq name "stdin-eof?")
-        ".L_tl_stdin_eof"
-        ".L_tl_flush_stdout"))))
+  (cond
+    [(string-eq name "read-stdin-line") ".L_tl_read_stdin_line"]
+    [(string-eq name "read-stdin-bytes") ".L_tl_read_stdin_bytes"]
+    [(string-eq name "stdin-eof?") ".L_tl_stdin_eof"]
+    [else ".L_tl_flush_stdout"]))
 
 (define (lower-args-as
   [ctx : TcContext]
@@ -4392,20 +4378,21 @@
       ;; calling a runtime symbol (#528, #527). Other `length` argument types
       ;; keep the ordinary direct-call path. `string-ref`/`char-at` likewise
       ;; recover their String byte-index builtin here unless shadowed (#677).
-      (if (and
-        (lower-builtin-call-available? ctx env name)
-        (tc-layout-query-name? name))
-        (ErrLowerExpr
-          (lower-diagnostic-at-expr
-            origin
-            (string-append
-              "lower: "
+      (cond
+        [(and
+            (lower-builtin-call-available? ctx env name)
+            (tc-layout-query-name? name))
+          (ErrLowerExpr
+            (lower-diagnostic-at-expr
+              origin
               (string-append
-                name
-                " is compile-time only; wrap it in (comptime ...)"))))
-        (if (and
-          (lower-builtin-call-available? ctx env name)
-          (or (string-eq name "string-ref") (string-eq name "char-at")))
+                "lower: "
+                (string-append
+                  name
+                  " is compile-time only; wrap it in (comptime ...)"))))]
+        [(and
+            (lower-builtin-call-available? ctx env name)
+            (or (string-eq name "string-ref") (string-eq name "char-at")))
           (lower-string-ref-call
             ctx
             state
@@ -4414,66 +4401,59 @@
             name
             args
             result-ty
-            origin)
-          (if (and
+            origin)]
+        [(and
             (lower-builtin-call-available? ctx env name)
             (or
               (string-eq name "array-length")
               (or (string-eq name "length") (string-eq name "string-length"))))
-            (lower-array-length
-              ctx
-              state
-              env
-              type-env
-              name
-              args
-              result-ty
-              origin)
-            (if (and
-              (lower-builtin-call-available? ctx env name)
-              (lower-string-runtime-builtin? name))
-              (lower-string-runtime-call
-                ctx
-                state
-                env
-                type-env
-                name
-                args
-                result-ty
-                origin)
-              (if (and
-                (lower-builtin-call-available? ctx env name)
-                (lower-stdio-builtin? name))
-                (lower-direct-call
-                  ctx
-                  state
-                  env
-                  type-env
-                  (lower-stdio-runtime-name name)
-                  args
-                  result-ty
-                  origin)
-                (if (and
-                  (lower-builtin-call-available? ctx env name)
-                  (lower-bootstrap-runtime-builtin? name))
-                  (lower-bootstrap-runtime-call
-                    ctx
-                    state
-                    env
-                    type-env
-                    name
-                    args
-                    result-ty
-                    origin)
-                  (lower-call-non-builtin
-                    ctx
-                    state
-                    env
-                    type-env
-                    name
-                    args
-                    result-ty
-                    origin)))))))]
+          (lower-array-length ctx state env type-env name args result-ty origin)]
+        [(and
+            (lower-builtin-call-available? ctx env name)
+            (lower-string-runtime-builtin? name))
+          (lower-string-runtime-call
+            ctx
+            state
+            env
+            type-env
+            name
+            args
+            result-ty
+            origin)]
+        [(and
+            (lower-builtin-call-available? ctx env name)
+            (lower-stdio-builtin? name))
+          (lower-direct-call
+            ctx
+            state
+            env
+            type-env
+            (lower-stdio-runtime-name name)
+            args
+            result-ty
+            origin)]
+        [(and
+            (lower-builtin-call-available? ctx env name)
+            (lower-bootstrap-runtime-builtin? name))
+          (lower-bootstrap-runtime-call
+            ctx
+            state
+            env
+            type-env
+            name
+            args
+            result-ty
+            origin)]
+        [else
+          (lower-call-non-builtin
+            ctx
+            state
+            env
+            type-env
+            name
+            args
+            result-ty
+            origin)])]
     [_
       (ErrLowerExpr
         (lower-diagnostic-at-expr func "lower: only direct calls are supported"))]))

@@ -207,65 +207,46 @@
 (define (json-hex-value [c : char]) : i64
   (let
     [code : i64 (json-char-code c)]
-    (if (and (>= code 48) (<= code 57))
-      (- code 48)
-      (if (and (>= code 65) (<= code 70))
-        (+ 10 (- code 65))
-        (if (and (>= code 97) (<= code 102))
-          (+ 10 (- code 97))
-          -1)))))
+    (cond
+      [(and (>= code 48) (<= code 57)) (- code 48)]
+      [(and (>= code 65) (<= code 70)) (+ 10 (- code 65))]
+      [(and (>= code 97) (<= code 102)) (+ 10 (- code 97))]
+      [else -1])))
 
 ;;; Encode a value from 0 through 15 as a one-character lowercase hex string.
 (define (json-hex-digit [value : i64]) : String
-  (if (= value 0)
-    "0"
-    (if (= value 1)
-      "1"
-      (if (= value 2)
-        "2"
-        (if (= value 3)
-          "3"
-          (if (= value 4)
-            "4"
-            (if (= value 5)
-              "5"
-              (if (= value 6)
-                "6"
-                (if (= value 7)
-                  "7"
-                  (if (= value 8)
-                    "8"
-                    (if (= value 9)
-                      "9"
-                      (if (= value 10)
-                        "a"
-                        (if (= value 11)
-                          "b"
-                          (if (= value 12)
-                            "c"
-                            (if (= value 13)
-                              "d"
-                              (if (= value 14)
-                                "e"
-                                "f"))))))))))))))))
+  (cond
+    [(= value 0) "0"]
+    [(= value 1) "1"]
+    [(= value 2) "2"]
+    [(= value 3) "3"]
+    [(= value 4) "4"]
+    [(= value 5) "5"]
+    [(= value 6) "6"]
+    [(= value 7) "7"]
+    [(= value 8) "8"]
+    [(= value 9) "9"]
+    [(= value 10) "a"]
+    [(= value 11) "b"]
+    [(= value 12) "c"]
+    [(= value 13) "d"]
+    [(= value 14) "e"]
+    [else "f"]))
 
 ;;; Return the JSON escape spelling for a control scalar code.
 (define (json-control-escape [code : i64]) : String
-  (if (= code 8)
-    "\\b"
-    (if (= code 9)
-      "\\t"
-      (if (= code 10)
-        "\\n"
-        (if (= code 12)
-          "\\f"
-          (if (= code 13)
-            "\\r"
-            (json-cat4
-              "\\u00"
-              (json-hex-digit (/ code 16))
-              (json-hex-digit (- code (* (/ code 16) 16)))
-              "")))))))
+  (cond
+    [(= code 8) "\\b"]
+    [(= code 9) "\\t"]
+    [(= code 10) "\\n"]
+    [(= code 12) "\\f"]
+    [(= code 13) "\\r"]
+    [else
+      (json-cat4
+        "\\u00"
+        (json-hex-digit (/ code 16))
+        (json-hex-digit (- code (* (/ code 16) 16)))
+        "")]))
 
 ;;; Return the JSON escape spelling for one string scalar code.
 (define (json-escape-char [code : i64]) : String
@@ -372,17 +353,16 @@
 ;;; Only tab, newline, carriage return, and printable ASCII are supported today.
 ;;; Successful decoded strings allocate in the active arena.
 (define (json-codepoint-string [code : i64]) : JsonCodepointStringResult
-  (if (= code 9)
-    (OkJsonCodepointString "\t")
-    (if (= code 10)
-      (OkJsonCodepointString "\n")
-      (if (= code 13)
-        (OkJsonCodepointString "\r")
-        (if (and (>= code 32) (<= code 126))
-          (OkJsonCodepointString
-            (substring json-ascii-printable-table (- code 32) 1))
-          (ErrJsonCodepointString
-            "json: unicode escape outside supported string range"))))))
+  (cond
+    [(= code 9) (OkJsonCodepointString "\t")]
+    [(= code 10) (OkJsonCodepointString "\n")]
+    [(= code 13) (OkJsonCodepointString "\r")]
+    [(and (>= code 32) (<= code 126))
+      (OkJsonCodepointString
+        (substring json-ascii-printable-table (- code 32) 1))]
+    [else
+      (ErrJsonCodepointString
+        "json: unicode escape outside supported string range")]))
 
 ;;; Parse four hex digits after a `\u` escape and return the decoded string.
 (define (json-parse-unicode-escape [text : String] [pos : i64]) : JsonParseEscapeResult
@@ -421,21 +401,15 @@
     (ErrJsonParseEscape "json: unterminated JSON escape")
     (let
       [code : i64 (json-char-code-at text pos)]
-      (if (= code 34)
-        (OkJsonParseEscape "\"" (+ pos 1))
-        (if (= code 92)
-          (OkJsonParseEscape "\\" (+ pos 1))
-          (if (= code 47)
-            (OkJsonParseEscape "/" (+ pos 1))
-            (if (= code 110)
-              (OkJsonParseEscape "\n" (+ pos 1))
-              (if (= code 114)
-                (OkJsonParseEscape "\r" (+ pos 1))
-                (if (= code 116)
-                  (OkJsonParseEscape "\t" (+ pos 1))
-                  (if (= code 117)
-                    (json-parse-unicode-escape text (+ pos 1))
-                    (ErrJsonParseEscape "json: unsupported JSON string escape")))))))))))
+      (cond
+        [(= code 34) (OkJsonParseEscape "\"" (+ pos 1))]
+        [(= code 92) (OkJsonParseEscape "\\" (+ pos 1))]
+        [(= code 47) (OkJsonParseEscape "/" (+ pos 1))]
+        [(= code 110) (OkJsonParseEscape "\n" (+ pos 1))]
+        [(= code 114) (OkJsonParseEscape "\r" (+ pos 1))]
+        [(= code 116) (OkJsonParseEscape "\t" (+ pos 1))]
+        [(= code 117) (json-parse-unicode-escape text (+ pos 1))]
+        [else (ErrJsonParseEscape "json: unsupported JSON string escape")]))))
 
 ;;; Parse a JSON string starting at `pos`, including the opening quote.
 ;;;
@@ -460,16 +434,17 @@
               (set! message "json: unterminated string"))
             (let
               [code : i64 (json-char-code-at text i)]
-              (if (= code 34)
-                (begin
-                  (set!
-                    out
-                    (text-buf-append
+              (cond
+                [(= code 34)
+                  (begin
+                    (set!
                       out
-                      (substring text segment-start (- i segment-start))))
-                  (set! i (+ i 1))
-                  (set! done true))
-                (if (= code 92)
+                      (text-buf-append
+                        out
+                        (substring text segment-start (- i segment-start))))
+                    (set! i (+ i 1))
+                    (set! done true))]
+                [(= code 92)
                   (begin
                     (set!
                       out
@@ -486,13 +461,13 @@
                         (begin
                           (set! ok false)
                           (set! done true)
-                          (set! message err))]))
-                  (if (< code 32)
-                    (begin
-                      (set! ok false)
-                      (set! done true)
-                      (set! message "json: control character in string"))
-                    (set! i (+ i 1))))))))
+                          (set! message err))]))]
+                [(< code 32)
+                  (begin
+                    (set! ok false)
+                    (set! done true)
+                    (set! message "json: control character in string"))]
+                [else (set! i (+ i 1))]))))
         (if ok
           (OkJsonParseString (text-buf-render out) i)
           (ErrJsonParseString message))))))
@@ -686,25 +661,20 @@
       (ErrJsonParseValue "json: expected JSON value")
       (let
         [code : i64 (json-char-code-at text i)]
-        (if (= code 110)
-          (json-parse-keyword text i "null" JsonNull)
-          (if (= code 116)
-            (json-parse-keyword text i "true" (JsonBool true))
-            (if (= code 102)
-              (json-parse-keyword text i "false" (JsonBool false))
-              (if (= code 34)
-                (match (json-parse-string text i)
-                  [(OkJsonParseString value next)
-                    (OkJsonParseValue (JsonString value) next)]
-                  [(ErrJsonParseString err) (ErrJsonParseValue err)])
-                (if (= code 91)
-                  (json-parse-array text i)
-                  (if (= code 123)
-                    (json-parse-object text i)
-                    (if (or (= code 45) (json-digit-code? code))
-                      (json-parse-number text i)
-                      (ErrJsonParseValue
-                        "json: unexpected character while parsing value"))))))))))))
+        (cond
+          [(= code 110) (json-parse-keyword text i "null" JsonNull)]
+          [(= code 116) (json-parse-keyword text i "true" (JsonBool true))]
+          [(= code 102) (json-parse-keyword text i "false" (JsonBool false))]
+          [(= code 34)
+            (match (json-parse-string text i)
+              [(OkJsonParseString value next)
+                (OkJsonParseValue (JsonString value) next)]
+              [(ErrJsonParseString err) (ErrJsonParseValue err)])]
+          [(= code 91) (json-parse-array text i)]
+          [(= code 123) (json-parse-object text i)]
+          [(or (= code 45) (json-digit-code? code)) (json-parse-number text i)]
+          [else
+            (ErrJsonParseValue "json: unexpected character while parsing value")])))))
 
 ;;; Parse an entire JSON document with recoverable errors.
 ;;;

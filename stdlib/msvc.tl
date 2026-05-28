@@ -374,18 +374,17 @@
 (define (msvc-first-missing-toolset-path
   [toolset-root : String]
   [tool : String]) : MsvcMaybeString
-  (if (not (msvc-path-exists? toolset-root))
-    (MsvcSomeString toolset-root)
-    (if (not (msvc-path-exists? (msvc-toolset-bin-x64 toolset-root)))
-      (MsvcSomeString (msvc-toolset-bin-x64 toolset-root))
-      (if (not (msvc-path-exists? (msvc-toolset-lib-x64 toolset-root)))
-        (MsvcSomeString (msvc-toolset-lib-x64 toolset-root))
-        (if (not (msvc-path-exists? (msvc-toolset-include toolset-root)))
-          (MsvcSomeString (msvc-toolset-include toolset-root))
-          (if (not
-            (msvc-path-exists? (msvc-toolset-executable toolset-root tool)))
-            (MsvcSomeString (msvc-toolset-executable toolset-root tool))
-            (MsvcNoString)))))))
+  (cond
+    [(not (msvc-path-exists? toolset-root)) (MsvcSomeString toolset-root)]
+    [(not (msvc-path-exists? (msvc-toolset-bin-x64 toolset-root)))
+      (MsvcSomeString (msvc-toolset-bin-x64 toolset-root))]
+    [(not (msvc-path-exists? (msvc-toolset-lib-x64 toolset-root)))
+      (MsvcSomeString (msvc-toolset-lib-x64 toolset-root))]
+    [(not (msvc-path-exists? (msvc-toolset-include toolset-root)))
+      (MsvcSomeString (msvc-toolset-include toolset-root))]
+    [(not (msvc-path-exists? (msvc-toolset-executable toolset-root tool)))
+      (MsvcSomeString (msvc-toolset-executable toolset-root tool))]
+    [else (MsvcNoString)]))
 
 ;;; Try to construct a tool result from one Visual Studio instance.
 (define (msvc-tool-from-instance

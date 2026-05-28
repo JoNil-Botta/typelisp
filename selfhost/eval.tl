@@ -782,17 +782,18 @@
         (panic "eval: cannot evaluate the empty list")
         (VInt 0))]
     [(SCons (SSym name) rest)
-      (if (string-eq name "list")
-        ;; The `list` SPECIAL FORM `(list e1 e2 ... en)`: `rest` is the cons
-        ;; spine `(SCons e1 (SCons e2 ... SNil))` of element expressions. Build
-        ;; the cons LIST `(VPair v1 (VPair v2 ... (VInt 0)))` with `eval-list`,
-        ;; which evaluates each element and conses it onto the recursively built
-        ;; tail, terminating at `(VInt 0)` (NIL). `(list)` denotes `(VInt 0)`.
-        ;; Like `begin` this is dispatched as a SPECIAL FORM (checked before the
-        ;; fixed-arity builtin-op and user-call paths) because it is variadic -
-        ;; there is no fixed parameter list to zip its operands against.
-        (eval-list rest env fenv)
-        (if (string-eq name "begin")
+      (cond
+        [(string-eq name "list")
+          ;; The `list` SPECIAL FORM `(list e1 e2 ... en)`: `rest` is the cons
+          ;; spine `(SCons e1 (SCons e2 ... SNil))` of element expressions. Build
+          ;; the cons LIST `(VPair v1 (VPair v2 ... (VInt 0)))` with `eval-list`,
+          ;; which evaluates each element and conses it onto the recursively built
+          ;; tail, terminating at `(VInt 0)` (NIL). `(list)` denotes `(VInt 0)`.
+          ;; Like `begin` this is dispatched as a SPECIAL FORM (checked before the
+          ;; fixed-arity builtin-op and user-call paths) because it is variadic -
+          ;; there is no fixed parameter list to zip its operands against.
+          (eval-list rest env fenv)]
+        [(string-eq name "begin")
           ;; The `begin` SPECIAL FORM `(begin e1 e2 ... en)`: `rest` is the cons
           ;; spine `(SCons e1 (SCons e2 ... SNil))` of sub-expressions. Walk it
           ;; with `eval-seq`, evaluating each form in order for its side effects
@@ -800,385 +801,366 @@
           ;; `(VInt 0)`). This is checked FIRST - before the builtin-op and
           ;; user-call paths - so `begin` is dispatched as a special form (its
           ;; operands control evaluation ORDER; they are not a call's arguments).
-          (eval-seq rest env fenv)
-          (if (string-eq name "lambda")
-            ;; The `lambda` SPECIAL FORM `(lambda (p...) body)`: rest is
-            ;; `(SCons params (SCons body SNil))`. It does NOT evaluate the body; it
-            ;; CAPTURES the current value environment `env` and packages the verbatim
-            ;; parameter LIST and body AST into a `(VClosure params body env)` VALUE -
-            ;; a first-class function. The captured `env` is what makes the body's
-            ;; FREE variables resolve to their definition-site bindings when the
-            ;; closure is later applied (closure = code + captured environment). The
-            ;; `fenv` is NOT captured: top-level `define`s live in the single shared
-            ;; function environment threaded through every application, so a closure
-            ;; body can still call any defined function.
-            (VClosure (lambda-params rest) (lambda-body rest) env)
-            (if (string-eq name "let")
-              ;; The `let` special form: `(let ((x e1) (y e2) ...) body)`. Fold the
-              ;; whole binding LIST into the environment (sequentially, `let*`-style),
-              ;; then evaluate the body in that extended environment.
-              (eval-sexpr
-                (let-body rest)
-                (eval-let-bindings (let-bindings rest) env fenv)
-                fenv)
-              (if (string-eq name "if")
-                ;; `if` SPECIAL FORM `(if cond then else)`: rest is
-                ;; `(SCons cond (SCons then (SCons else SNil)))`. Project the three
-                ;; sub-exprs, assert exactly three, then SHORT-CIRCUIT: eval cond,
-                ;; `as-int` it, and eval ONLY the taken branch. `0` is false, anything
-                ;; else true (a `VStr` condition is a type error, caught by `as-int`).
+          (eval-seq rest env fenv)]
+        [(string-eq name "lambda")
+          ;; The `lambda` SPECIAL FORM `(lambda (p...) body)`: rest is
+          ;; `(SCons params (SCons body SNil))`. It does NOT evaluate the body; it
+          ;; CAPTURES the current value environment `env` and packages the verbatim
+          ;; parameter LIST and body AST into a `(VClosure params body env)` VALUE -
+          ;; a first-class function. The captured `env` is what makes the body's
+          ;; FREE variables resolve to their definition-site bindings when the
+          ;; closure is later applied (closure = code + captured environment). The
+          ;; `fenv` is NOT captured: top-level `define`s live in the single shared
+          ;; function environment threaded through every application, so a closure
+          ;; body can still call any defined function.
+          (VClosure (lambda-params rest) (lambda-body rest) env)]
+        [(string-eq name "let")
+          ;; The `let` special form: `(let ((x e1) (y e2) ...) body)`. Fold the
+          ;; whole binding LIST into the environment (sequentially, `let*`-style),
+          ;; then evaluate the body in that extended environment.
+          (eval-sexpr
+            (let-body rest)
+            (eval-let-bindings (let-bindings rest) env fenv)
+            fenv)]
+        [(string-eq name "if")
+          ;; `if` SPECIAL FORM `(if cond then else)`: rest is
+          ;; `(SCons cond (SCons then (SCons else SNil)))`. Project the three
+          ;; sub-exprs, assert exactly three, then SHORT-CIRCUIT: eval cond,
+          ;; `as-int` it, and eval ONLY the taken branch. `0` is false, anything
+          ;; else true (a `VStr` condition is a type error, caught by `as-int`).
+          (let
+            [cond-e : Sexpr (sexpr-head rest)]
+            [restc : Sexpr (sexpr-tail rest)]
+            (let
+              [then-e : Sexpr (sexpr-head restc)]
+              [restt : Sexpr (sexpr-tail restc)]
+              (let
+                [else-e : Sexpr (sexpr-head restt)]
+                [reste : Sexpr (sexpr-tail restt)]
+                (begin
+                  (sexpr-expect-nil reste)
+                  (let
+                    [c : i64 (as-int (eval-sexpr cond-e env fenv))]
+                    (if (= c 0)
+                      (eval-sexpr else-e env fenv)
+                      (eval-sexpr then-e env fenv)))))))]
+        [(string-eq name "print")
+          ;; The `print` special form `(print e)`: rest is
+          ;; `(SCons e SNil)`. Evaluate the single argument, emit it via the
+          ;; matching host builtin, and RETURN the value so `(print x)`
+          ;; composes inside a larger expression. A `VInt` prints its integer
+          ;; (+ a newline) via the host `print`; a `VStr` writes its raw
+          ;; bytes (NO trailing newline) via the host `print-string` builtin
+          ;; (the write(2)-syscall string emitter, #13/#27) - so STRING values
+          ;; are now printable too, not a deferred abort.
+          (let
+            [arg : Sexpr (sexpr-head rest)]
+            [restp : Sexpr (sexpr-tail rest)]
+            (begin
+              (sexpr-expect-nil restp)
+              (let
+                [v : Value (eval-sexpr arg env fenv)]
+                (begin
+                  ;; A `VPair` now RENDERS AS A LIST (refs #27): the
+                  ;; recursive `print-value` walks the cons chain and emits
+                  ;; `(e1 e2 ... en)` (nesting parenthesised, an improper
+                  ;; final cdr rendered in dotted-pair form `(a . b)` - see
+                  ;; `print-value` / `print-list-tail`),
+                  ;; replacing the old opaque `#<pair>` placeholder. Like the
+                  ;; `VStr` / `VClosure` arms it writes RAW bytes with NO
+                  ;; trailing newline (only the `VInt` arm appends one via the
+                  ;; host `print`; the lexer has no string-escape support, so a
+                  ;; literal newline is unavailable - the caller appends one by
+                  ;; printing an int next when a clean line is wanted). `print`
+                  ;; stays TOTAL over every `Value` shape, and a pair in an
+                  ;; integer/string CONTEXT is still a type error via
+                  ;; `as-int` / `as-str`. The pair VALUE is still RETURNED so
+                  ;; `(print x)` composes inside a larger expression.
+                  (match v
+                    [(VInt n) (print n)]
+                    [(VStr s) (print-string s)]
+                    ;; A closure has no readable surface syntax, so it
+                    ;; prints a fixed `#<closure>` marker (raw bytes, NO
+                    ;; trailing newline - like the `VStr` arm) rather than
+                    ;; aborting; the closure value is still RETURNED so
+                    ;; `(print f)` composes.
+                    [(VClosure _ _ _) (print-string "#<closure>")]
+                    ;; A `VPair` prints as a list `(e1 e2 ... en)` via the
+                    ;; recursive `print-value` walk (nesting parenthesised; an
+                    ;; improper final cdr rendered in dotted-pair form
+                    ;; `(a . b)` - handling documented there).
+                    [(VPair _ _) (print-value v)])
+                  v))))]
+        [(string-eq name "string-length")
+          ;; STRING OP `(string-length s)`: rest is `(SCons s SNil)`.
+          ;; Evaluate the single argument, `as-str`-project it (a `VInt`
+          ;; here is a type error), call the host `string-length`
+          ;; builtin, and re-wrap its i64 byte-count as `(VInt r)`.
+          (let
+            [arg : Sexpr (sexpr-head rest)]
+            [restl : Sexpr (sexpr-tail rest)]
+            (begin
+              (sexpr-expect-nil restl)
+              (VInt (string-length (as-str (eval-sexpr arg env fenv))))))]
+        [(string-eq name "substring")
+          ;; STRING OP `(substring s i n)`: rest is
+          ;; `(SCons s (SCons i (SCons n SNil)))`. Evaluate all three
+          ;; sub-exprs, `as-str` the source and `as-int` the start /
+          ;; length, call the host `substring` builtin (a half-open
+          ;; `[i, i+n)` slice, bounds-checked at runtime), and re-wrap
+          ;; the fresh String result as `(VStr r)`.
+          (let
+            [se : Sexpr (sexpr-head rest)]
+            [rests : Sexpr (sexpr-tail rest)]
+            (let
+              [ie : Sexpr (sexpr-head rests)]
+              [rests2 : Sexpr (sexpr-tail rests)]
+              (let
+                [ne : Sexpr (sexpr-head rests2)]
+                [rests3 : Sexpr (sexpr-tail rests2)]
+                (begin
+                  (sexpr-expect-nil rests3)
+                  (VStr
+                    (substring
+                      (as-str (eval-sexpr se env fenv))
+                      (as-int (eval-sexpr ie env fenv))
+                      (as-int (eval-sexpr ne env fenv))))))))]
+        [(string-eq name "string-eq")
+          ;; STRING OP `(string-eq a b)`: rest is
+          ;; `(SCons a (SCons b SNil))`. Evaluate both operands,
+          ;; `as-str` each, call the host byte-wise `string-eq`
+          ;; builtin (a `bool`), and fold its result to the
+          ;; 1 (equal) / 0 (unequal) integer-truth convention as
+          ;; `(VInt r)` - matching how the comparison operators
+          ;; encode booleans.
+          (let
+            [ae : Sexpr (sexpr-head rest)]
+            [reste : Sexpr (sexpr-tail rest)]
+            (let
+              [be : Sexpr (sexpr-head reste)]
+              [reste2 : Sexpr (sexpr-tail reste)]
+              (begin
+                (sexpr-expect-nil reste2)
+                (VInt
+                  (if (string-eq
+                    (as-str (eval-sexpr ae env fenv))
+                    (as-str (eval-sexpr be env fenv)))
+                    1
+                    0)))))]
+        [(string-eq name "int->string")
+          ;; STRING OP `(int->string n)`: rest is
+          ;; `(SCons n SNil)`. Evaluate the single argument,
+          ;; `as-int`-project it (a `VStr` here is a type
+          ;; error), call the host `int->string` builtin
+          ;; (the i64 -> decimal-text conversion), and
+          ;; re-wrap the fresh String result as `(VStr r)` -
+          ;; so an integer VALUE can be turned into a string
+          ;; VALUE inside an interpreted program.
+          (let
+            [arg : Sexpr (sexpr-head rest)]
+            [resti : Sexpr (sexpr-tail rest)]
+            (begin
+              (sexpr-expect-nil resti)
+              (VStr (int->string (as-int (eval-sexpr arg env fenv))))))]
+        [(string-eq name "string->int")
+          ;; STRING OP `(string->int s)`: rest is
+          ;; `(SCons s SNil)`. Evaluate the single argument,
+          ;; `as-str`-project it (a `VInt` here is a type
+          ;; error), call the host `string->int` builtin (the
+          ;; decimal-string -> i64 parse), and re-wrap the
+          ;; i64 result as `(VInt r)` - the inverse of
+          ;; `int->string`, so a string VALUE denoting a
+          ;; number can be parsed back to an integer VALUE.
+          (let
+            [arg : Sexpr (sexpr-head rest)]
+            [restp2 : Sexpr (sexpr-tail rest)]
+            (begin
+              (sexpr-expect-nil restp2)
+              (VInt (string->int (as-str (eval-sexpr arg env fenv))))))]
+        [(string-eq name "string-append")
+          ;; STRING OP `(string-append a b)`: rest is
+          ;; `(SCons a (SCons b SNil))`. Evaluate both
+          ;; operands, `as-str`-project each (a `VInt` here
+          ;; is a type error), call the host `string-append`
+          ;; builtin - the emit-on-demand `tl_string_concat`
+          ;; runtime that copies both operands' bytes into
+          ;; ONE fresh heap String - and re-wrap that joined
+          ;; String as `(VStr r)`. This completes the
+          ;; interpreter's string toolkit: it can now BUILD
+          ;; strings, not only measure / slice / compare /
+          ;; print them.
+          (let
+            [ae : Sexpr (sexpr-head rest)]
+            [restA : Sexpr (sexpr-tail rest)]
+            (let
+              [be : Sexpr (sexpr-head restA)]
+              [restA2 : Sexpr (sexpr-tail restA)]
+              (begin
+                (sexpr-expect-nil restA2)
+                (VStr
+                  (string-append
+                    (as-str (eval-sexpr ae env fenv))
+                    (as-str (eval-sexpr be env fenv)))))))]
+        [(string-eq name "cons")
+          ;; CONS PAIR `(cons a b)`: rest is
+          ;; `(SCons a (SCons b SNil))`. Evaluate BOTH
+          ;; argument sub-exprs (in the current env, so
+          ;; nested calls resolve) into `Value`s and pack
+          ;; them into a fresh `(VPair a-val b-val)` cell -
+          ;; the heap-allocated two-field cons cell of the
+          ;; interpreted language. No `as-int`/`as-str`
+          ;; projection: a pair holds ANY two values
+          ;; (ints, strings, or further pairs), which is
+          ;; exactly what makes a singly-linked LIST a
+          ;; right-nested chain of pairs.
+          (let
+            [ae : Sexpr (sexpr-head rest)]
+            [restC : Sexpr (sexpr-tail rest)]
+            (let
+              [be : Sexpr (sexpr-head restC)]
+              [restC2 : Sexpr (sexpr-tail restC)]
+              (begin
+                (sexpr-expect-nil restC2)
+                (VPair (eval-sexpr ae env fenv) (eval-sexpr be env fenv)))))]
+        [(string-eq name "car")
+          ;; CAR `(car p)`: rest is `(SCons p SNil)`.
+          ;; Evaluate the single argument and project the
+          ;; FIRST field of the pair. A non-pair value in
+          ;; car position is a type error in the interpreted
+          ;; program - abort via `panic` (the same channel
+          ;; `as-int` / `as-str` use). `(VInt 0)` is the
+          ;; neutral fall-through after the panic.
+          (let
+            [pe : Sexpr (sexpr-head rest)]
+            [restR : Sexpr (sexpr-tail rest)]
+            (begin
+              (sexpr-expect-nil restR)
+              (match (eval-sexpr pe env fenv)
+                [(VPair a _) a]
+                [(VInt _)
+                  (begin
+                    (panic "car: not a pair")
+                    (VInt 0))]
+                [(VStr _)
+                  (begin
+                    (panic "car: not a pair")
+                    (VInt 0))]
+                [(VClosure _ _ _)
+                  (begin
+                    (panic "car: not a pair")
+                    (VInt 0))])))]
+        [(string-eq name "cdr")
+          ;; CDR `(cdr p)`: rest is `(SCons p SNil)`.
+          ;; Evaluate the single argument and project the
+          ;; SECOND field of the pair - the REST of a list.
+          ;; A non-pair value is a type error - abort.
+          (let
+            [pe : Sexpr (sexpr-head rest)]
+            [restD : Sexpr (sexpr-tail rest)]
+            (begin
+              (sexpr-expect-nil restD)
+              (match (eval-sexpr pe env fenv)
+                [(VPair _ d) d]
+                [(VInt _)
+                  (begin
+                    (panic "cdr: not a pair")
+                    (VInt 0))]
+                [(VStr _)
+                  (begin
+                    (panic "cdr: not a pair")
+                    (VInt 0))]
+                [(VClosure _ _ _)
+                  (begin
+                    (panic "cdr: not a pair")
+                    (VInt 0))])))]
+        [(string-eq name "pair?")
+          ;; PREDICATE `(pair? x)` (refs #27): rest is
+          ;; `(SCons x SNil)`. Evaluate the single argument
+          ;; and ask whether the resulting `Value` is a CONS
+          ;; PAIR - a `(VPair ...)` cell. Folds to the
+          ;; 1 (true) / 0 (false) integer-truth convention as
+          ;; `(VInt r)`, matching the comparison operators and
+          ;; `null?`. This is the structural test a recursive
+          ;; list algorithm uses to tell a non-empty list
+          ;; (a pair) from the NIL terminator, so it can recur
+          ;; on `(cdr l)` only while there is more list - the
+          ;; termination witness for `sum-list` below. Unlike
+          ;; `car` / `cdr` it is TOTAL: a non-pair is simply
+          ;; `(VInt 0)` (false), never a type error.
+          (let
+            [pe : Sexpr (sexpr-head rest)]
+            [restP : Sexpr (sexpr-tail rest)]
+            (begin
+              (sexpr-expect-nil restP)
+              (match (eval-sexpr pe env fenv)
+                [(VPair _ _) (VInt 1)]
+                [(VInt _) (VInt 0)]
+                [(VStr _) (VInt 0)]
+                [(VClosure _ _ _) (VInt 0)])))]
+        [(string-eq name "null?")
+          ;; PREDICATE `(null? x)` (refs #27/#141): rest is
+          ;; `(SCons x SNil)`. Evaluate the single argument and
+          ;; ask whether it is the EMPTY-LIST sentinel NIL.
+          ;; This file reuses `(VInt 0)` as nil (see the value
+          ;; domain notes: a list is a right-nested chain of
+          ;; pairs terminated by the integer `0`, no dedicated
+          ;; nil variant), so `null?` is true exactly when the
+          ;; value is `(VInt 0)`. Any other value - a non-zero
+          ;; int, a string, a closure, or a pair - is not nil.
+          ;; Folds to the 1 / 0 integer-truth convention as
+          ;; `(VInt r)`. Also TOTAL over the value domain.
+          (let
+            [pe : Sexpr (sexpr-head rest)]
+            [restN : Sexpr (sexpr-tail rest)]
+            (begin
+              (sexpr-expect-nil restN)
+              (match (eval-sexpr pe env fenv)
+                [(VInt n)
+                  (if (= n 0)
+                    (VInt 1)
+                    (VInt 0))]
+                [(VStr _) (VInt 0)]
+                [(VClosure _ _ _) (VInt 0)]
+                [(VPair _ _) (VInt 0)])))]
+        [(is-builtin-op name)
+          ;; A builtin binary call form `(op arg1 arg2)`: rest is
+          ;; `(SCons arg1 (SCons arg2 SNil))`. Both operands must be
+          ;; integers, so each is `as-int`-projected; the i64 result is
+          ;; re-wrapped as `(VInt r)`.
+          (let
+            [arg1 : Sexpr (sexpr-head rest)]
+            [rest2 : Sexpr (sexpr-tail rest)]
+            (let
+              [arg2 : Sexpr (sexpr-head rest2)]
+              [rest3 : Sexpr (sexpr-tail rest2)]
+              (begin
+                (sexpr-expect-nil rest3)
                 (let
-                  [cond-e : Sexpr (sexpr-head rest)]
-                  [restc : Sexpr (sexpr-tail rest)]
-                  (let
-                    [then-e : Sexpr (sexpr-head restc)]
-                    [restt : Sexpr (sexpr-tail restc)]
-                    (let
-                      [else-e : Sexpr (sexpr-head restt)]
-                      [reste : Sexpr (sexpr-tail restt)]
-                      (begin
-                        (sexpr-expect-nil reste)
-                        (let
-                          [c : i64 (as-int (eval-sexpr cond-e env fenv))]
-                          (if (= c 0)
-                            (eval-sexpr else-e env fenv)
-                            (eval-sexpr then-e env fenv)))))))
-                (if (string-eq name "print")
-                  ;; The `print` special form `(print e)`: rest is
-                  ;; `(SCons e SNil)`. Evaluate the single argument, emit it via the
-                  ;; matching host builtin, and RETURN the value so `(print x)`
-                  ;; composes inside a larger expression. A `VInt` prints its integer
-                  ;; (+ a newline) via the host `print`; a `VStr` writes its raw
-                  ;; bytes (NO trailing newline) via the host `print-string` builtin
-                  ;; (the write(2)-syscall string emitter, #13/#27) - so STRING values
-                  ;; are now printable too, not a deferred abort.
-                  (let
-                    [arg : Sexpr (sexpr-head rest)]
-                    [restp : Sexpr (sexpr-tail rest)]
-                    (begin
-                      (sexpr-expect-nil restp)
-                      (let
-                        [v : Value (eval-sexpr arg env fenv)]
-                        (begin
-                          ;; A `VPair` now RENDERS AS A LIST (refs #27): the
-                          ;; recursive `print-value` walks the cons chain and emits
-                          ;; `(e1 e2 ... en)` (nesting parenthesised, an improper
-                          ;; final cdr rendered in dotted-pair form `(a . b)` - see
-                          ;; `print-value` / `print-list-tail`),
-                          ;; replacing the old opaque `#<pair>` placeholder. Like the
-                          ;; `VStr` / `VClosure` arms it writes RAW bytes with NO
-                          ;; trailing newline (only the `VInt` arm appends one via the
-                          ;; host `print`; the lexer has no string-escape support, so a
-                          ;; literal newline is unavailable - the caller appends one by
-                          ;; printing an int next when a clean line is wanted). `print`
-                          ;; stays TOTAL over every `Value` shape, and a pair in an
-                          ;; integer/string CONTEXT is still a type error via
-                          ;; `as-int` / `as-str`. The pair VALUE is still RETURNED so
-                          ;; `(print x)` composes inside a larger expression.
-                          (match v
-                            [(VInt n) (print n)]
-                            [(VStr s) (print-string s)]
-                            ;; A closure has no readable surface syntax, so it
-                            ;; prints a fixed `#<closure>` marker (raw bytes, NO
-                            ;; trailing newline - like the `VStr` arm) rather than
-                            ;; aborting; the closure value is still RETURNED so
-                            ;; `(print f)` composes.
-                            [(VClosure _ _ _) (print-string "#<closure>")]
-                            ;; A `VPair` prints as a list `(e1 e2 ... en)` via the
-                            ;; recursive `print-value` walk (nesting parenthesised; an
-                            ;; improper final cdr rendered in dotted-pair form
-                            ;; `(a . b)` - handling documented there).
-                            [(VPair _ _) (print-value v)])
-                          v))))
-                  (if (string-eq name "string-length")
-                    ;; STRING OP `(string-length s)`: rest is `(SCons s SNil)`.
-                    ;; Evaluate the single argument, `as-str`-project it (a `VInt`
-                    ;; here is a type error), call the host `string-length`
-                    ;; builtin, and re-wrap its i64 byte-count as `(VInt r)`.
-                    (let
-                      [arg : Sexpr (sexpr-head rest)]
-                      [restl : Sexpr (sexpr-tail rest)]
-                      (begin
-                        (sexpr-expect-nil restl)
-                        (VInt
-                          (string-length (as-str (eval-sexpr arg env fenv))))))
-                    (if (string-eq name "substring")
-                      ;; STRING OP `(substring s i n)`: rest is
-                      ;; `(SCons s (SCons i (SCons n SNil)))`. Evaluate all three
-                      ;; sub-exprs, `as-str` the source and `as-int` the start /
-                      ;; length, call the host `substring` builtin (a half-open
-                      ;; `[i, i+n)` slice, bounds-checked at runtime), and re-wrap
-                      ;; the fresh String result as `(VStr r)`.
-                      (let
-                        [se : Sexpr (sexpr-head rest)]
-                        [rests : Sexpr (sexpr-tail rest)]
-                        (let
-                          [ie : Sexpr (sexpr-head rests)]
-                          [rests2 : Sexpr (sexpr-tail rests)]
-                          (let
-                            [ne : Sexpr (sexpr-head rests2)]
-                            [rests3 : Sexpr (sexpr-tail rests2)]
-                            (begin
-                              (sexpr-expect-nil rests3)
-                              (VStr
-                                (substring
-                                  (as-str (eval-sexpr se env fenv))
-                                  (as-int (eval-sexpr ie env fenv))
-                                  (as-int (eval-sexpr ne env fenv))))))))
-                      (if (string-eq name "string-eq")
-                        ;; STRING OP `(string-eq a b)`: rest is
-                        ;; `(SCons a (SCons b SNil))`. Evaluate both operands,
-                        ;; `as-str` each, call the host byte-wise `string-eq`
-                        ;; builtin (a `bool`), and fold its result to the
-                        ;; 1 (equal) / 0 (unequal) integer-truth convention as
-                        ;; `(VInt r)` - matching how the comparison operators
-                        ;; encode booleans.
-                        (let
-                          [ae : Sexpr (sexpr-head rest)]
-                          [reste : Sexpr (sexpr-tail rest)]
-                          (let
-                            [be : Sexpr (sexpr-head reste)]
-                            [reste2 : Sexpr (sexpr-tail reste)]
-                            (begin
-                              (sexpr-expect-nil reste2)
-                              (VInt
-                                (if (string-eq
-                                  (as-str (eval-sexpr ae env fenv))
-                                  (as-str (eval-sexpr be env fenv)))
-                                  1
-                                  0)))))
-                        (if (string-eq name "int->string")
-                          ;; STRING OP `(int->string n)`: rest is
-                          ;; `(SCons n SNil)`. Evaluate the single argument,
-                          ;; `as-int`-project it (a `VStr` here is a type
-                          ;; error), call the host `int->string` builtin
-                          ;; (the i64 -> decimal-text conversion), and
-                          ;; re-wrap the fresh String result as `(VStr r)` -
-                          ;; so an integer VALUE can be turned into a string
-                          ;; VALUE inside an interpreted program.
-                          (let
-                            [arg : Sexpr (sexpr-head rest)]
-                            [resti : Sexpr (sexpr-tail rest)]
-                            (begin
-                              (sexpr-expect-nil resti)
-                              (VStr
-                                (int->string (as-int (eval-sexpr arg env fenv))))))
-                          (if (string-eq name "string->int")
-                            ;; STRING OP `(string->int s)`: rest is
-                            ;; `(SCons s SNil)`. Evaluate the single argument,
-                            ;; `as-str`-project it (a `VInt` here is a type
-                            ;; error), call the host `string->int` builtin (the
-                            ;; decimal-string -> i64 parse), and re-wrap the
-                            ;; i64 result as `(VInt r)` - the inverse of
-                            ;; `int->string`, so a string VALUE denoting a
-                            ;; number can be parsed back to an integer VALUE.
-                            (let
-                              [arg : Sexpr (sexpr-head rest)]
-                              [restp2 : Sexpr (sexpr-tail rest)]
-                              (begin
-                                (sexpr-expect-nil restp2)
-                                (VInt
-                                  (string->int
-                                    (as-str (eval-sexpr arg env fenv))))))
-                            (if (string-eq name "string-append")
-                              ;; STRING OP `(string-append a b)`: rest is
-                              ;; `(SCons a (SCons b SNil))`. Evaluate both
-                              ;; operands, `as-str`-project each (a `VInt` here
-                              ;; is a type error), call the host `string-append`
-                              ;; builtin - the emit-on-demand `tl_string_concat`
-                              ;; runtime that copies both operands' bytes into
-                              ;; ONE fresh heap String - and re-wrap that joined
-                              ;; String as `(VStr r)`. This completes the
-                              ;; interpreter's string toolkit: it can now BUILD
-                              ;; strings, not only measure / slice / compare /
-                              ;; print them.
-                              (let
-                                [ae : Sexpr (sexpr-head rest)]
-                                [restA : Sexpr (sexpr-tail rest)]
-                                (let
-                                  [be : Sexpr (sexpr-head restA)]
-                                  [restA2 : Sexpr (sexpr-tail restA)]
-                                  (begin
-                                    (sexpr-expect-nil restA2)
-                                    (VStr
-                                      (string-append
-                                        (as-str (eval-sexpr ae env fenv))
-                                        (as-str (eval-sexpr be env fenv)))))))
-                              (if (string-eq name "cons")
-                                ;; CONS PAIR `(cons a b)`: rest is
-                                ;; `(SCons a (SCons b SNil))`. Evaluate BOTH
-                                ;; argument sub-exprs (in the current env, so
-                                ;; nested calls resolve) into `Value`s and pack
-                                ;; them into a fresh `(VPair a-val b-val)` cell -
-                                ;; the heap-allocated two-field cons cell of the
-                                ;; interpreted language. No `as-int`/`as-str`
-                                ;; projection: a pair holds ANY two values
-                                ;; (ints, strings, or further pairs), which is
-                                ;; exactly what makes a singly-linked LIST a
-                                ;; right-nested chain of pairs.
-                                (let
-                                  [ae : Sexpr (sexpr-head rest)]
-                                  [restC : Sexpr (sexpr-tail rest)]
-                                  (let
-                                    [be : Sexpr (sexpr-head restC)]
-                                    [restC2 : Sexpr (sexpr-tail restC)]
-                                    (begin
-                                      (sexpr-expect-nil restC2)
-                                      (VPair
-                                        (eval-sexpr ae env fenv)
-                                        (eval-sexpr be env fenv)))))
-                                (if (string-eq name "car")
-                                  ;; CAR `(car p)`: rest is `(SCons p SNil)`.
-                                  ;; Evaluate the single argument and project the
-                                  ;; FIRST field of the pair. A non-pair value in
-                                  ;; car position is a type error in the interpreted
-                                  ;; program - abort via `panic` (the same channel
-                                  ;; `as-int` / `as-str` use). `(VInt 0)` is the
-                                  ;; neutral fall-through after the panic.
-                                  (let
-                                    [pe : Sexpr (sexpr-head rest)]
-                                    [restR : Sexpr (sexpr-tail rest)]
-                                    (begin
-                                      (sexpr-expect-nil restR)
-                                      (match (eval-sexpr pe env fenv)
-                                        [(VPair a _) a]
-                                        [(VInt _)
-                                          (begin
-                                            (panic "car: not a pair")
-                                            (VInt 0))]
-                                        [(VStr _)
-                                          (begin
-                                            (panic "car: not a pair")
-                                            (VInt 0))]
-                                        [(VClosure _ _ _)
-                                          (begin
-                                            (panic "car: not a pair")
-                                            (VInt 0))])))
-                                  (if (string-eq name "cdr")
-                                    ;; CDR `(cdr p)`: rest is `(SCons p SNil)`.
-                                    ;; Evaluate the single argument and project the
-                                    ;; SECOND field of the pair - the REST of a list.
-                                    ;; A non-pair value is a type error - abort.
-                                    (let
-                                      [pe : Sexpr (sexpr-head rest)]
-                                      [restD : Sexpr (sexpr-tail rest)]
-                                      (begin
-                                        (sexpr-expect-nil restD)
-                                        (match (eval-sexpr pe env fenv)
-                                          [(VPair _ d) d]
-                                          [(VInt _)
-                                            (begin
-                                              (panic "cdr: not a pair")
-                                              (VInt 0))]
-                                          [(VStr _)
-                                            (begin
-                                              (panic "cdr: not a pair")
-                                              (VInt 0))]
-                                          [(VClosure _ _ _)
-                                            (begin
-                                              (panic "cdr: not a pair")
-                                              (VInt 0))])))
-                                    (if (string-eq name "pair?")
-                                      ;; PREDICATE `(pair? x)` (refs #27): rest is
-                                      ;; `(SCons x SNil)`. Evaluate the single argument
-                                      ;; and ask whether the resulting `Value` is a CONS
-                                      ;; PAIR - a `(VPair ...)` cell. Folds to the
-                                      ;; 1 (true) / 0 (false) integer-truth convention as
-                                      ;; `(VInt r)`, matching the comparison operators and
-                                      ;; `null?`. This is the structural test a recursive
-                                      ;; list algorithm uses to tell a non-empty list
-                                      ;; (a pair) from the NIL terminator, so it can recur
-                                      ;; on `(cdr l)` only while there is more list - the
-                                      ;; termination witness for `sum-list` below. Unlike
-                                      ;; `car` / `cdr` it is TOTAL: a non-pair is simply
-                                      ;; `(VInt 0)` (false), never a type error.
-                                      (let
-                                        [pe : Sexpr (sexpr-head rest)]
-                                        [restP : Sexpr (sexpr-tail rest)]
-                                        (begin
-                                          (sexpr-expect-nil restP)
-                                          (match (eval-sexpr pe env fenv)
-                                            [(VPair _ _) (VInt 1)]
-                                            [(VInt _) (VInt 0)]
-                                            [(VStr _) (VInt 0)]
-                                            [(VClosure _ _ _) (VInt 0)])))
-                                      (if (string-eq name "null?")
-                                        ;; PREDICATE `(null? x)` (refs #27/#141): rest is
-                                        ;; `(SCons x SNil)`. Evaluate the single argument and
-                                        ;; ask whether it is the EMPTY-LIST sentinel NIL.
-                                        ;; This file reuses `(VInt 0)` as nil (see the value
-                                        ;; domain notes: a list is a right-nested chain of
-                                        ;; pairs terminated by the integer `0`, no dedicated
-                                        ;; nil variant), so `null?` is true exactly when the
-                                        ;; value is `(VInt 0)`. Any other value - a non-zero
-                                        ;; int, a string, a closure, or a pair - is not nil.
-                                        ;; Folds to the 1 / 0 integer-truth convention as
-                                        ;; `(VInt r)`. Also TOTAL over the value domain.
-                                        (let
-                                          [pe : Sexpr (sexpr-head rest)]
-                                          [restN : Sexpr (sexpr-tail rest)]
-                                          (begin
-                                            (sexpr-expect-nil restN)
-                                            (match (eval-sexpr pe env fenv)
-                                              [(VInt n)
-                                                (if (= n 0)
-                                                  (VInt 1)
-                                                  (VInt 0))]
-                                              [(VStr _) (VInt 0)]
-                                              [(VClosure _ _ _) (VInt 0)]
-                                              [(VPair _ _) (VInt 0)])))
-                                        (if (is-builtin-op name)
-                                          ;; A builtin binary call form `(op arg1 arg2)`: rest is
-                                          ;; `(SCons arg1 (SCons arg2 SNil))`. Both operands must be
-                                          ;; integers, so each is `as-int`-projected; the i64 result is
-                                          ;; re-wrapped as `(VInt r)`.
-                                          (let
-                                            [arg1 : Sexpr (sexpr-head rest)]
-                                            [rest2 : Sexpr (sexpr-tail rest)]
-                                            (let
-                                              [arg2 : Sexpr (sexpr-head rest2)]
-                                              [rest3 : Sexpr (sexpr-tail rest2)]
-                                              (begin
-                                                (sexpr-expect-nil rest3)
-                                                (let
-                                                  [a : i64
-                                                    (as-int
-                                                      (eval-sexpr arg1 env fenv))]
-                                                  [b : i64
-                                                    (as-int
-                                                      (eval-sexpr arg2 env fenv))]
-                                                  (VInt (eval-builtin name a b))))))
-                                          ;; OTHERWISE: a USER-FUNCTION CALL `(f a b c)`. `rest` is the
-                                          ;; ARGUMENT-EXPRESSION list `(SCons a (SCons b (SCons c SNil)))`.
-                                          ;; Look up `f`'s PARAMETER LIST and body in the shared `fenv`,
-                                          ;; then build the callee env by zipping the parameter list
-                                          ;; against the argument list with `bind-args` (each argument
-                                          ;; evaluated in the CURRENT env, so caller variables resolve),
-                                          ;; and evaluate the body in that callee env with the SAME
-                                          ;; `fenv` - so the body resolves recursive and sibling calls.
-                                          ;; Arbitrary arity. BUT FIRST: a symbol head may
-                                          ;; name a CLOSURE-VALUED VARIABLE in the lexical
-                                          ;; env (e.g. `(let ((f (lambda (x) x))) (f 5))`),
-                                          ;; not a top-level `define`. So if `name` is bound
-                                          ;; in `env`, look it up and APPLY the resulting
-                                          ;; value as a closure (the variable shadows any
-                                          ;; same-named define); otherwise it is a call into
-                                          ;; the shared `fenv`.
-                                          (if (env-has env name)
-                                            (apply-value
-                                              (lookup env name)
-                                              rest
-                                              env
-                                              fenv)
-                                            (let
-                                              [params : Sexpr
-                                                (lookup-fn-params fenv name)]
-                                              [body : Sexpr
-                                                (lookup-fn-body fenv name)]
-                                              (eval-sexpr
-                                                body
-                                                (bind-args params rest env fenv)
-                                                fenv)))))))))))))))))))))]
+                  [a : i64 (as-int (eval-sexpr arg1 env fenv))]
+                  [b : i64 (as-int (eval-sexpr arg2 env fenv))]
+                  (VInt (eval-builtin name a b))))))]
+        ;; OTHERWISE: a USER-FUNCTION CALL `(f a b c)`. `rest` is the
+        ;; ARGUMENT-EXPRESSION list `(SCons a (SCons b (SCons c SNil)))`.
+        ;; Look up `f`'s PARAMETER LIST and body in the shared `fenv`,
+        ;; then build the callee env by zipping the parameter list
+        ;; against the argument list with `bind-args` (each argument
+        ;; evaluated in the CURRENT env, so caller variables resolve),
+        ;; and evaluate the body in that callee env with the SAME
+        ;; `fenv` - so the body resolves recursive and sibling calls.
+        ;; Arbitrary arity. BUT FIRST: a symbol head may
+        ;; name a CLOSURE-VALUED VARIABLE in the lexical
+        ;; env (e.g. `(let ((f (lambda (x) x))) (f 5))`),
+        ;; not a top-level `define`. So if `name` is bound
+        ;; in `env`, look it up and APPLY the resulting
+        ;; value as a closure (the variable shadows any
+        ;; same-named define); otherwise it is a call into
+        ;; the shared `fenv`.
+        [(env-has env name) (apply-value (lookup env name) rest env fenv)]
+        [else
+          (let
+            [params : Sexpr (lookup-fn-params fenv name)]
+            [body : Sexpr (lookup-fn-body fenv name)]
+            (eval-sexpr body (bind-args params rest env fenv) fenv))])]
     ;; APPLICATION OF A COMPUTED OPERATOR `((<expr>) a b ...)`: the head is itself
     ;; a non-symbol form (a `lambda` literal, or any expression that evaluates to a
     ;; closure), so it falls through the symbol-head arm. Evaluate the head form in
@@ -1528,219 +1510,179 @@
   [rest : Sexpr]
   [env : Env]
   [fenv : FnEnv]) : ResultValue
-  (if (string-eq name "list")
-    (eval-list-result rest env fenv)
-    (if (string-eq name "begin")
-      (eval-seq-result rest env fenv)
-      (if (string-eq name "lambda")
-        (match rest
-          [(SCons params (SCons body (SNil)))
-            (OkValue (VClosure params body env))]
-          [_ (ErrValue "eval: malformed lambda")])
-        (if (string-eq name "let")
-          (match rest
-            [(SCons bindings (SCons body (SNil)))
-              (match (eval-let-bindings-result bindings env fenv)
-                [(OkEnv let-env) (eval-sexpr-result body let-env fenv)]
-                [(ErrEnv message) (ErrValue message)])]
-            [_ (ErrValue "eval: malformed let")])
-          (if (string-eq name "if")
-            (match rest
-              [(SCons cond-e (SCons then-e (SCons else-e (SNil))))
-                (match (eval-value-as-int cond-e env fenv)
-                  [(OkI64 c)
-                    (if (= c 0)
-                      (eval-sexpr-result else-e env fenv)
-                      (eval-sexpr-result then-e env fenv))]
-                  [(ErrI64 message) (ErrValue message)])]
-              [_ (ErrValue "eval: malformed if")])
-            (if (string-eq name "print")
-              (match (eval-unary-arg rest "eval: malformed print")
-                [(OkUnaryArg arg)
-                  (match (eval-sexpr-result arg env fenv)
-                    [(OkValue v)
-                      (begin
-                        (match v
-                          [(VInt n) (print n)]
-                          [(VStr s) (print-string s)]
-                          [(VClosure _ _ _) (print-string "#<closure>")]
-                          [(VPair _ _) (print-value v)])
-                        (OkValue v))]
-                    [(ErrValue message) (ErrValue message)])]
-                [(ErrUnaryArg message) (ErrValue message)])
-              (if (string-eq name "string-length")
-                (match (eval-unary-arg rest "eval: malformed string-length")
-                  [(OkUnaryArg arg)
-                    (match (eval-value-as-str arg env fenv)
-                      [(OkString s) (OkValue (VInt (string-length s)))]
-                      [(ErrString message) (ErrValue message)])]
-                  [(ErrUnaryArg message) (ErrValue message)])
-                (if (string-eq name "substring")
-                  (match (eval-ternary-args rest "eval: malformed substring")
-                    [(OkTernaryArgs se ie ne)
-                      (match (eval-value-as-str se env fenv)
-                        [(OkString s)
-                          (match (eval-value-as-int ie env fenv)
-                            [(OkI64 i)
-                              (match (eval-value-as-int ne env fenv)
-                                [(OkI64 n) (OkValue (VStr (substring s i n)))]
-                                [(ErrI64 message) (ErrValue message)])]
-                            [(ErrI64 message) (ErrValue message)])]
-                        [(ErrString message) (ErrValue message)])]
-                    [(ErrTernaryArgs message) (ErrValue message)])
-                  (if (string-eq name "string-eq")
-                    (match (eval-binary-args rest "eval: malformed string-eq")
-                      [(OkBinaryArgs ae be)
-                        (match (eval-value-as-str ae env fenv)
-                          [(OkString a)
-                            (match (eval-value-as-str be env fenv)
-                              [(OkString b)
-                                (OkValue
-                                  (VInt
-                                    (if (string-eq a b)
-                                      1
-                                      0)))]
-                              [(ErrString message) (ErrValue message)])]
-                          [(ErrString message) (ErrValue message)])]
-                      [(ErrBinaryArgs message) (ErrValue message)])
-                    (if (string-eq name "int->string")
-                      (match (eval-unary-arg rest "eval: malformed int->string")
-                        [(OkUnaryArg arg)
-                          (match (eval-value-as-int arg env fenv)
-                            [(OkI64 n) (OkValue (VStr (int->string n)))]
-                            [(ErrI64 message) (ErrValue message)])]
-                        [(ErrUnaryArg message) (ErrValue message)])
-                      (if (string-eq name "string->int")
-                        (match (eval-unary-arg
-                          rest
-                          "eval: malformed string->int")
-                          [(OkUnaryArg arg)
-                            (match (eval-value-as-str arg env fenv)
-                              [(OkString s) (OkValue (VInt (string->int s)))]
-                              [(ErrString message) (ErrValue message)])]
-                          [(ErrUnaryArg message) (ErrValue message)])
-                        (if (string-eq name "string-append")
-                          (match (eval-binary-args
-                            rest
-                            "eval: malformed string-append")
-                            [(OkBinaryArgs ae be)
-                              (match (eval-value-as-str ae env fenv)
-                                [(OkString a)
-                                  (match (eval-value-as-str be env fenv)
-                                    [(OkString b)
-                                      (OkValue (VStr (string-append a b)))]
-                                    [(ErrString message) (ErrValue message)])]
-                                [(ErrString message) (ErrValue message)])]
-                            [(ErrBinaryArgs message) (ErrValue message)])
-                          (if (string-eq name "cons")
-                            (match (eval-binary-args
-                              rest
-                              "eval: malformed cons")
-                              [(OkBinaryArgs ae be)
-                                (match (eval-sexpr-result ae env fenv)
-                                  [(OkValue a)
-                                    (match (eval-sexpr-result be env fenv)
-                                      [(OkValue b) (OkValue (VPair a b))]
-                                      [(ErrValue message) (ErrValue message)])]
-                                  [(ErrValue message) (ErrValue message)])]
-                              [(ErrBinaryArgs message) (ErrValue message)])
-                            (if (string-eq name "car")
-                              (match (eval-unary-arg rest "eval: malformed car")
-                                [(OkUnaryArg pe)
-                                  (match (eval-sexpr-result pe env fenv)
-                                    [(OkValue pair-val)
-                                      (match pair-val
-                                        [(VPair a _) (OkValue a)]
-                                        [_ (ErrValue "car: not a pair")])]
-                                    [(ErrValue message) (ErrValue message)])]
-                                [(ErrUnaryArg message) (ErrValue message)])
-                              (if (string-eq name "cdr")
-                                (match (eval-unary-arg
-                                  rest
-                                  "eval: malformed cdr")
-                                  [(OkUnaryArg pe)
-                                    (match (eval-sexpr-result pe env fenv)
-                                      [(OkValue pair-val)
-                                        (match pair-val
-                                          [(VPair _ d) (OkValue d)]
-                                          [_ (ErrValue "cdr: not a pair")])]
-                                      [(ErrValue message) (ErrValue message)])]
-                                  [(ErrUnaryArg message) (ErrValue message)])
-                                (if (string-eq name "pair?")
-                                  (match (eval-unary-arg
-                                    rest
-                                    "eval: malformed pair?")
-                                    [(OkUnaryArg pe)
-                                      (match (eval-sexpr-result pe env fenv)
-                                        [(OkValue pair-val)
-                                          (match pair-val
-                                            [(VPair _ _) (OkValue (VInt 1))]
-                                            [_ (OkValue (VInt 0))])]
-                                        [(ErrValue message) (ErrValue message)])]
-                                    [(ErrUnaryArg message) (ErrValue message)])
-                                  (if (string-eq name "null?")
-                                    (match (eval-unary-arg
-                                      rest
-                                      "eval: malformed null?")
-                                      [(OkUnaryArg pe)
-                                        (match (eval-sexpr-result pe env fenv)
-                                          [(OkValue null-val)
-                                            (match null-val
-                                              [(VInt n)
-                                                (OkValue
-                                                  (if (= n 0)
-                                                    (VInt 1)
-                                                    (VInt 0)))]
-                                              [_ (OkValue (VInt 0))])]
-                                          [(ErrValue message)
-                                            (ErrValue message)])]
-                                      [(ErrUnaryArg message) (ErrValue message)])
-                                    (if (is-builtin-op name)
-                                      (match (eval-binary-args
-                                        rest
-                                        "eval: malformed binary expression")
-                                        [(OkBinaryArgs arg1 arg2)
-                                          (match (eval-value-as-int
-                                            arg1
-                                            env
-                                            fenv)
-                                            [(OkI64 a)
-                                              (match (eval-value-as-int
-                                                arg2
-                                                env
-                                                fenv)
-                                                [(OkI64 b)
-                                                  (OkValue
-                                                    (VInt
-                                                      (eval-builtin name a b)))]
-                                                [(ErrI64 message)
-                                                  (ErrValue message)])]
-                                            [(ErrI64 message)
-                                              (ErrValue message)])]
-                                        [(ErrBinaryArgs message)
-                                          (ErrValue message)])
-                                      (if (env-has env name)
-                                        (match (lookup-result env name)
-                                          [(OkValue f)
-                                            (apply-value-result f rest env fenv)]
-                                          [(ErrValue message)
-                                            (ErrValue message)])
-                                        (match (lookup-fn-result fenv name)
-                                          [(OkFnDef _ params body)
-                                            (match (bind-args-result
-                                              params
-                                              rest
-                                              env
-                                              fenv)
-                                              [(OkEnv call-env)
-                                                (eval-sexpr-result
-                                                  body
-                                                  call-env
-                                                  fenv)]
-                                              [(ErrEnv message)
-                                                (ErrValue message)])]
-                                          [(ErrFnDef message)
-                                            (ErrValue message)])))))))))))))))))))))
+  (cond
+    [(string-eq name "list") (eval-list-result rest env fenv)]
+    [(string-eq name "begin") (eval-seq-result rest env fenv)]
+    [(string-eq name "lambda")
+      (match rest
+        [(SCons params (SCons body (SNil)))
+          (OkValue (VClosure params body env))]
+        [_ (ErrValue "eval: malformed lambda")])]
+    [(string-eq name "let")
+      (match rest
+        [(SCons bindings (SCons body (SNil)))
+          (match (eval-let-bindings-result bindings env fenv)
+            [(OkEnv let-env) (eval-sexpr-result body let-env fenv)]
+            [(ErrEnv message) (ErrValue message)])]
+        [_ (ErrValue "eval: malformed let")])]
+    [(string-eq name "if")
+      (match rest
+        [(SCons cond-e (SCons then-e (SCons else-e (SNil))))
+          (match (eval-value-as-int cond-e env fenv)
+            [(OkI64 c)
+              (if (= c 0)
+                (eval-sexpr-result else-e env fenv)
+                (eval-sexpr-result then-e env fenv))]
+            [(ErrI64 message) (ErrValue message)])]
+        [_ (ErrValue "eval: malformed if")])]
+    [(string-eq name "print")
+      (match (eval-unary-arg rest "eval: malformed print")
+        [(OkUnaryArg arg)
+          (match (eval-sexpr-result arg env fenv)
+            [(OkValue v)
+              (begin
+                (match v
+                  [(VInt n) (print n)]
+                  [(VStr s) (print-string s)]
+                  [(VClosure _ _ _) (print-string "#<closure>")]
+                  [(VPair _ _) (print-value v)])
+                (OkValue v))]
+            [(ErrValue message) (ErrValue message)])]
+        [(ErrUnaryArg message) (ErrValue message)])]
+    [(string-eq name "string-length")
+      (match (eval-unary-arg rest "eval: malformed string-length")
+        [(OkUnaryArg arg)
+          (match (eval-value-as-str arg env fenv)
+            [(OkString s) (OkValue (VInt (string-length s)))]
+            [(ErrString message) (ErrValue message)])]
+        [(ErrUnaryArg message) (ErrValue message)])]
+    [(string-eq name "substring")
+      (match (eval-ternary-args rest "eval: malformed substring")
+        [(OkTernaryArgs se ie ne)
+          (match (eval-value-as-str se env fenv)
+            [(OkString s)
+              (match (eval-value-as-int ie env fenv)
+                [(OkI64 i)
+                  (match (eval-value-as-int ne env fenv)
+                    [(OkI64 n) (OkValue (VStr (substring s i n)))]
+                    [(ErrI64 message) (ErrValue message)])]
+                [(ErrI64 message) (ErrValue message)])]
+            [(ErrString message) (ErrValue message)])]
+        [(ErrTernaryArgs message) (ErrValue message)])]
+    [(string-eq name "string-eq")
+      (match (eval-binary-args rest "eval: malformed string-eq")
+        [(OkBinaryArgs ae be)
+          (match (eval-value-as-str ae env fenv)
+            [(OkString a)
+              (match (eval-value-as-str be env fenv)
+                [(OkString b)
+                  (OkValue
+                    (VInt
+                      (if (string-eq a b)
+                        1
+                        0)))]
+                [(ErrString message) (ErrValue message)])]
+            [(ErrString message) (ErrValue message)])]
+        [(ErrBinaryArgs message) (ErrValue message)])]
+    [(string-eq name "int->string")
+      (match (eval-unary-arg rest "eval: malformed int->string")
+        [(OkUnaryArg arg)
+          (match (eval-value-as-int arg env fenv)
+            [(OkI64 n) (OkValue (VStr (int->string n)))]
+            [(ErrI64 message) (ErrValue message)])]
+        [(ErrUnaryArg message) (ErrValue message)])]
+    [(string-eq name "string->int")
+      (match (eval-unary-arg rest "eval: malformed string->int")
+        [(OkUnaryArg arg)
+          (match (eval-value-as-str arg env fenv)
+            [(OkString s) (OkValue (VInt (string->int s)))]
+            [(ErrString message) (ErrValue message)])]
+        [(ErrUnaryArg message) (ErrValue message)])]
+    [(string-eq name "string-append")
+      (match (eval-binary-args rest "eval: malformed string-append")
+        [(OkBinaryArgs ae be)
+          (match (eval-value-as-str ae env fenv)
+            [(OkString a)
+              (match (eval-value-as-str be env fenv)
+                [(OkString b) (OkValue (VStr (string-append a b)))]
+                [(ErrString message) (ErrValue message)])]
+            [(ErrString message) (ErrValue message)])]
+        [(ErrBinaryArgs message) (ErrValue message)])]
+    [(string-eq name "cons")
+      (match (eval-binary-args rest "eval: malformed cons")
+        [(OkBinaryArgs ae be)
+          (match (eval-sexpr-result ae env fenv)
+            [(OkValue a)
+              (match (eval-sexpr-result be env fenv)
+                [(OkValue b) (OkValue (VPair a b))]
+                [(ErrValue message) (ErrValue message)])]
+            [(ErrValue message) (ErrValue message)])]
+        [(ErrBinaryArgs message) (ErrValue message)])]
+    [(string-eq name "car")
+      (match (eval-unary-arg rest "eval: malformed car")
+        [(OkUnaryArg pe)
+          (match (eval-sexpr-result pe env fenv)
+            [(OkValue pair-val)
+              (match pair-val
+                [(VPair a _) (OkValue a)]
+                [_ (ErrValue "car: not a pair")])]
+            [(ErrValue message) (ErrValue message)])]
+        [(ErrUnaryArg message) (ErrValue message)])]
+    [(string-eq name "cdr")
+      (match (eval-unary-arg rest "eval: malformed cdr")
+        [(OkUnaryArg pe)
+          (match (eval-sexpr-result pe env fenv)
+            [(OkValue pair-val)
+              (match pair-val
+                [(VPair _ d) (OkValue d)]
+                [_ (ErrValue "cdr: not a pair")])]
+            [(ErrValue message) (ErrValue message)])]
+        [(ErrUnaryArg message) (ErrValue message)])]
+    [(string-eq name "pair?")
+      (match (eval-unary-arg rest "eval: malformed pair?")
+        [(OkUnaryArg pe)
+          (match (eval-sexpr-result pe env fenv)
+            [(OkValue pair-val)
+              (match pair-val
+                [(VPair _ _) (OkValue (VInt 1))]
+                [_ (OkValue (VInt 0))])]
+            [(ErrValue message) (ErrValue message)])]
+        [(ErrUnaryArg message) (ErrValue message)])]
+    [(string-eq name "null?")
+      (match (eval-unary-arg rest "eval: malformed null?")
+        [(OkUnaryArg pe)
+          (match (eval-sexpr-result pe env fenv)
+            [(OkValue null-val)
+              (match null-val
+                [(VInt n)
+                  (OkValue
+                    (if (= n 0)
+                      (VInt 1)
+                      (VInt 0)))]
+                [_ (OkValue (VInt 0))])]
+            [(ErrValue message) (ErrValue message)])]
+        [(ErrUnaryArg message) (ErrValue message)])]
+    [(is-builtin-op name)
+      (match (eval-binary-args rest "eval: malformed binary expression")
+        [(OkBinaryArgs arg1 arg2)
+          (match (eval-value-as-int arg1 env fenv)
+            [(OkI64 a)
+              (match (eval-value-as-int arg2 env fenv)
+                [(OkI64 b) (OkValue (VInt (eval-builtin name a b)))]
+                [(ErrI64 message) (ErrValue message)])]
+            [(ErrI64 message) (ErrValue message)])]
+        [(ErrBinaryArgs message) (ErrValue message)])]
+    [(env-has env name)
+      (match (lookup-result env name)
+        [(OkValue f) (apply-value-result f rest env fenv)]
+        [(ErrValue message) (ErrValue message)])]
+    [else
+      (match (lookup-fn-result fenv name)
+        [(OkFnDef _ params body)
+          (match (bind-args-result params rest env fenv)
+            [(OkEnv call-env) (eval-sexpr-result body call-env fenv)]
+            [(ErrEnv message) (ErrValue message)])]
+        [(ErrFnDef message) (ErrValue message)])]))
 
 (define (eval-sexpr-result [s : Sexpr] [env : Env] [fenv : FnEnv]) : ResultValue
   (match s

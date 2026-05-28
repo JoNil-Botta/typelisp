@@ -71,7 +71,7 @@ jobs:
         shell: bash
         run: scripts/fetch-stage0.sh
 
-      - name: Run TypeLisp lint baseline gate
+      - name: Run TypeLisp lint gate
         if: ${{ matrix.suite == 'typelisp-lint' }}
         shell: bash
         run: TYPELISP_BIN=${{ matrix.stage0_bin }} TYPELISP_LINT_JOBS=8 scripts/check-tl-lint.sh

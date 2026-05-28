@@ -1979,35 +1979,38 @@
             [(OkCtfe value arg-fuel)
               (match value
                 [(CtfeExpr node ty)
-                  (if (string-eq name "expr-bool?")
-                    (OkCtfe (CtfeBool (ctfe-expr-bool? node)) arg-fuel)
-                    (if (string-eq name "expr-bool-value")
+                  (cond
+                    [(string-eq name "expr-bool?")
+                      (OkCtfe (CtfeBool (ctfe-expr-bool? node)) arg-fuel)]
+                    [(string-eq name "expr-bool-value")
                       (if (ctfe-expr-bool? node)
                         (OkCtfe (CtfeBool (ctfe-expr-bool-value node)) arg-fuel)
                         (ErrCtfe
                           (ctfe-diagnostic-at-expr
                             expr
-                            "expr-bool-value expects bool literal Expr")))
-                      (if (string-eq name "expr-if?")
-                        (OkCtfe (CtfeBool (ctfe-expr-if? node)) arg-fuel)
-                        (if (ctfe-expr-if? node)
-                          (if (string-eq name "expr-if-cond")
-                            (OkCtfe
-                              (CtfeExpr (ctfe-expr-if-cond node) (AstTyBool))
-                              arg-fuel)
-                            (if (string-eq name "expr-if-then")
-                              (OkCtfe
-                                (CtfeExpr (ctfe-expr-if-then node) ty)
-                                arg-fuel)
-                              (if (string-eq name "expr-if-else")
-                                (OkCtfe
-                                  (CtfeExpr (ctfe-expr-if-else node) ty)
-                                  arg-fuel)
-                                (ctfe-unsupported-form expr))))
-                          (ErrCtfe
-                            (ctfe-diagnostic-at-expr
-                              expr
-                              (string-append name " expects if Expr")))))))]
+                            "expr-bool-value expects bool literal Expr")))]
+                    [(string-eq name "expr-if?")
+                      (OkCtfe (CtfeBool (ctfe-expr-if? node)) arg-fuel)]
+                    [(ctfe-expr-if? node)
+                      (cond
+                        [(string-eq name "expr-if-cond")
+                          (OkCtfe
+                            (CtfeExpr (ctfe-expr-if-cond node) (AstTyBool))
+                            arg-fuel)]
+                        [(string-eq name "expr-if-then")
+                          (OkCtfe
+                            (CtfeExpr (ctfe-expr-if-then node) ty)
+                            arg-fuel)]
+                        [(string-eq name "expr-if-else")
+                          (OkCtfe
+                            (CtfeExpr (ctfe-expr-if-else node) ty)
+                            arg-fuel)]
+                        [else (ctfe-unsupported-form expr)])]
+                    [else
+                      (ErrCtfe
+                        (ctfe-diagnostic-at-expr
+                          expr
+                          (string-append name " expects if Expr")))])]
                 [_
                   (ErrCtfe
                     (ctfe-diagnostic-at-expr
@@ -2118,38 +2121,29 @@
   (match func
     [(AstExprSpanned inner _) (ctfe-eval-call inner args expr env fuel)]
     [(AstExprVar name)
-      (if (or (string-eq name "size-of") (string-eq name "align-of"))
-        (ctfe-eval-size-align-query name args expr env fuel)
-        (if (string-eq name "offset-of")
-          (ctfe-eval-offset-query args expr env fuel)
-          (if (ctfe-reflection-query-name? name)
-            (ctfe-eval-reflection-query name args expr env fuel)
-            (if (or (string-eq name "string-eq") (string-eq name "string=?"))
-              (ctfe-eval-string-eq-call name args expr env fuel)
-              (if (or
-                (string-eq name "string-append")
-                (string-eq name "string-concat"))
-                (ctfe-eval-string-append-call name args expr env fuel)
-                (if (or
-                  (string-eq name "string-length")
-                  (string-eq name "length"))
-                  (ctfe-eval-string-length-call name args expr env fuel)
-                  (if (string-eq name "int->string")
-                    (ctfe-eval-int-to-string-call args expr env fuel)
-                    (if (string-eq name "expr-bool")
-                      (ctfe-eval-expr-bool-call args expr env fuel)
-                      (if (string-eq name "expr-splice")
-                        (ctfe-eval-expr-splice-call args expr env fuel)
-                        (if (string-eq name "expr-if")
-                          (ctfe-eval-expr-if-call args expr env fuel)
-                          (if (ctfe-expr-inspector-name? name)
-                            (ctfe-eval-expr-inspector-call
-                              name
-                              args
-                              expr
-                              env
-                              fuel)
-                            (ctfe-unsupported-form expr))))))))))))]
+      (cond
+        [(or (string-eq name "size-of") (string-eq name "align-of"))
+          (ctfe-eval-size-align-query name args expr env fuel)]
+        [(string-eq name "offset-of")
+          (ctfe-eval-offset-query args expr env fuel)]
+        [(ctfe-reflection-query-name? name)
+          (ctfe-eval-reflection-query name args expr env fuel)]
+        [(or (string-eq name "string-eq") (string-eq name "string=?"))
+          (ctfe-eval-string-eq-call name args expr env fuel)]
+        [(or (string-eq name "string-append") (string-eq name "string-concat"))
+          (ctfe-eval-string-append-call name args expr env fuel)]
+        [(or (string-eq name "string-length") (string-eq name "length"))
+          (ctfe-eval-string-length-call name args expr env fuel)]
+        [(string-eq name "int->string")
+          (ctfe-eval-int-to-string-call args expr env fuel)]
+        [(string-eq name "expr-bool")
+          (ctfe-eval-expr-bool-call args expr env fuel)]
+        [(string-eq name "expr-splice")
+          (ctfe-eval-expr-splice-call args expr env fuel)]
+        [(string-eq name "expr-if") (ctfe-eval-expr-if-call args expr env fuel)]
+        [(ctfe-expr-inspector-name? name)
+          (ctfe-eval-expr-inspector-call name args expr env fuel)]
+        [else (ctfe-unsupported-form expr)])]
     [_ (ctfe-unsupported-form expr)]))
 
 ;; Shared "unsupported compile-time form" diagnostic for ordinary calls.

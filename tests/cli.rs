@@ -1687,8 +1687,8 @@ fn selfhost_compile_cli_driver_writes_assembly_and_reports_errors() {
         opt_level_texts[2]
     );
     assert_eq!(
-        opt_default_text, opt_level_texts[2],
-        "omitted --opt-level should use the shared default level 2"
+        opt_default_text, opt_level_texts[1],
+        "omitted --opt-level should use the shared default level 1"
     );
     assert_eq!(
         opt_level_texts[2], opt_level_texts[3],
@@ -1971,8 +1971,8 @@ fn selfhost_test_planner_threads_opt_level_into_harness_compile() {
         opt_level_texts[2]
     );
     assert_eq!(
-        default_text, opt_level_texts[2],
-        "omitted test --opt-level should use the shared default level 2"
+        default_text, opt_level_texts[1],
+        "omitted test --opt-level should use the shared default level 1"
     );
     assert_eq!(
         opt_level_texts[2], opt_level_texts[3],

@@ -28,7 +28,7 @@
   (CompilerOptimizedProgram CompilerIrProgram CompilerSourceSpans))
 
 (define compiler-optimize-level-default : i64
-  2)
+  1)
 
 (define (compiler-optimize-default-level) : i64
   compiler-optimize-level-default)
@@ -4963,7 +4963,7 @@
 
 (define (compiler-optimize-level-policy-ok?) : bool
   (and
-    (= (compiler-optimize-default-level) 2)
+    (= (compiler-optimize-default-level) 1)
     (and
       (compiler-optimize-level-valid? 0)
       (and
@@ -5011,7 +5011,7 @@
             (= (compiler-ir-instr-list-count level2-instrs) 0)
             (and
               (opt-program-eq level2 level3)
-              (opt-program-eq level2 defaulted))))))))
+              (opt-program-eq level1 defaulted))))))))
 
 (define (compiler-optimize-level-self-test) : i64
   (if (compiler-optimize-level-policy-ok?)
@@ -5655,10 +5655,12 @@
               (opt-function-first-instrs fixed)]
             (let
               [optimized-program : CompilerIrProgram
-                (optimize-program (opt-test-program (opt-fixed-point-instrs)))]
+                (optimize-program-with-level
+                  (opt-test-program (opt-fixed-point-instrs))
+                  2)]
               (let
                 [again-program : CompilerIrProgram
-                  (optimize-program optimized-program)]
+                  (optimize-program-with-level optimized-program 2)]
                 (cond
                   [(not (= (compiler-ir-instr-list-count once-instrs) 4)) 1]
                   [(not (= (opt-count-arith-instrs once-instrs) 3)) 2]

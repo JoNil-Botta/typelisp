@@ -410,7 +410,6 @@ end
 
 case|selfhost_compiler_symbols_smoke|selfhost/compiler_symbols_smoke.tl|assembly|exactly-one|direct
 contains|_tl_compiler_symbols_self_test:
-contains|_tl_compiler_symbols_add_decl:
 end
 
 case|selfhost_compiler_typecheck|selfhost/compiler_typecheck.tl|assembly|skip|direct

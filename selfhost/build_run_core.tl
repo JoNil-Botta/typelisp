@@ -5,11 +5,17 @@
 
 (import "../stdlib/io.tl")
 
+(import "../stdlib/msvc.tl")
+
 (import "../stdlib/process.tl")
 
 (defenum SourceToolCommandStatus
   (SourceToolCommandOk)
   (SourceToolCommandErr String))
+
+(defenum ResultSourceToolCommand
+  (OkSourceToolCommand ProcessCommand)
+  (ErrSourceToolCommand String))
 
 (defenum ResultSourceToolString
   (OkSourceToolString String)
@@ -47,11 +53,6 @@
       (string-eq value "windows_x86_64"))
       (OkSourceToolTarget (BackendTargetWindows))
       (ErrSourceToolTarget (string-append "unknown target " value)))))
-
-(define (source-tool-target-supported? [target : CompilerBackendTarget]) : bool
-  (match target
-    [(BackendTargetLinux) true]
-    [(BackendTargetWindows) false]))
 
 (define (source-tool-backend-mode [command : String] [value : String]) : ResultSourceToolBackendMode
   (if (string-eq value "scalar")
@@ -325,6 +326,21 @@ _tl_print_string:
       asm-path
       (process-args-cons "-o" (process-args-cons obj-path (process-args-empty))))))
 
+(define (source-tool-windows-assembler-command
+  [asm-path : String]
+  [obj-path : String]) : ProcessCommand
+  (process-command
+    (source-tool-resolve-command "clang")
+    (process-args-cons
+      "--target=x86_64-pc-windows-msvc"
+      (process-args-cons
+        "-c"
+        (process-args-cons
+          asm-path
+          (process-args-cons
+            "-o"
+            (process-args-cons obj-path (process-args-empty))))))))
+
 (define (source-tool-linker-command [obj-path : String] [bin-path : String]) : ProcessCommand
   (process-command
     (source-tool-resolve-command "ld")
@@ -339,6 +355,53 @@ _tl_print_string:
             (process-args-cons
               "/lib64/ld-linux-x86-64.so.2"
               (process-args-cons "-lc" (process-args-empty)))))))))
+
+(define (source-tool-windows-link-libs) : ProcessStringList
+  (process-args-cons
+    "msvcrt.lib"
+    (process-args-cons
+      "legacy_stdio_definitions.lib"
+      (process-args-cons
+        "kernel32.lib"
+        (process-args-cons
+          "advapi32.lib"
+          (process-args-cons
+            "ole32.lib"
+            (process-args-cons "oleaut32.lib" (process-args-empty))))))))
+
+(define (source-tool-windows-linker-args
+  [obj-path : String]
+  [bin-path : String]) : ProcessStringList
+  (process-args-cons
+    "/NOLOGO"
+    (process-args-cons
+      obj-path
+      (process-args-cons
+        (string-append "/OUT:" bin-path)
+        (process-args-cons
+          "/SUBSYSTEM:CONSOLE"
+          (process-args-cons
+            "/DYNAMICBASE:NO"
+            (process-args-cons
+              "/STACK:16777216"
+              (source-tool-windows-link-libs))))))))
+
+(define (source-tool-windows-linker-command
+  [obj-path : String]
+  [bin-path : String]) : ResultSourceToolCommand
+  (match (msvc-find-tool "x86_64-pc-windows-msvc" "link.exe")
+    [(OkMsvcTool tool)
+      (OkSourceToolCommand
+        (process-command-with-env-list
+          (process-command
+            (msvc-tool-executable tool)
+            (source-tool-windows-linker-args obj-path bin-path))
+          (msvc-tool-process-env tool)))]
+    [(ErrMsvcTool error)
+      (ErrSourceToolCommand
+        (string-append
+          "Error: failed to resolve linker 'link.exe' for target windows-x86_64: "
+          (msvc-error-message error)))]))
 
 (define (source-tool-clean-temp
   [temp-dir : String]
@@ -355,30 +418,34 @@ _tl_print_string:
     (try-remove-dir-if-exists temp-dir)
     unit))
 
-(define (source-tool-unsupported-target-message
-  [command : String]
-  [target : CompilerBackendTarget]) : String
-  (string-append
-    (string-append "Error: selfhost " command)
-    (string-append
-      " does not support process execution for target "
-      (source-tool-target-name target))))
-
 (define (source-tool-assemble-and-link
   [target : CompilerBackendTarget]
   [asm-path : String]
   [obj-path : String]
   [bin-path : String]) : SourceToolCommandStatus
-  (match (source-tool-run-command
-    "assembler"
-    target
-    (source-tool-assembler-command asm-path obj-path))
-    [(SourceToolCommandOk)
-      (source-tool-run-command
-        "linker"
+  (match target
+    [(BackendTargetLinux)
+      (match (source-tool-run-command
+        "assembler"
         target
-        (source-tool-linker-command obj-path bin-path))]
-    [(SourceToolCommandErr message) (SourceToolCommandErr message)]))
+        (source-tool-assembler-command asm-path obj-path))
+        [(SourceToolCommandOk)
+          (source-tool-run-command
+            "linker"
+            target
+            (source-tool-linker-command obj-path bin-path))]
+        [(SourceToolCommandErr message) (SourceToolCommandErr message)])]
+    [(BackendTargetWindows)
+      (match (source-tool-run-command
+        "assembler"
+        target
+        (source-tool-windows-assembler-command asm-path obj-path))
+        [(SourceToolCommandOk)
+          (match (source-tool-windows-linker-command obj-path bin-path)
+            [(OkSourceToolCommand command)
+              (source-tool-run-command "linker" target command)]
+            [(ErrSourceToolCommand message) (SourceToolCommandErr message)])]
+        [(SourceToolCommandErr message) (SourceToolCommandErr message)])]))
 
 (define (source-tool-build-source-in-temp
   [source : String]
@@ -446,25 +513,21 @@ _tl_print_string:
   [target : CompilerBackendTarget]
   [stdlib-roots : CompilerLoadRootList]
   [opt-level : i64]) : i64
-  (if (source-tool-target-supported? target)
-    (match (source-tool-create-temp-dir "typelisp-build")
-      [(OkSourceToolString temp-dir)
-        (source-tool-build-source-in-temp
-          source
-          output
-          has-output
-          target
-          stdlib-roots
-          opt-level
-          temp-dir)]
-      [(ErrSourceToolString message)
-        (begin
-          (print-error
-            (string-append "build: failed to create temp dir: " message))
-          1)])
-    (begin
-      (print-error (source-tool-unsupported-target-message "build" target))
-      1)))
+  (match (source-tool-create-temp-dir "typelisp-build")
+    [(OkSourceToolString temp-dir)
+      (source-tool-build-source-in-temp
+        source
+        output
+        has-output
+        target
+        stdlib-roots
+        opt-level
+        temp-dir)]
+    [(ErrSourceToolString message)
+      (begin
+        (print-error
+          (string-append "build: failed to create temp dir: " message))
+        1)]))
 
 (define (source-tool-run-executable
   [bin-path : String]
@@ -554,21 +617,16 @@ _tl_print_string:
   [stdlib-roots : CompilerLoadRootList]
   [runtime-args : ProcessStringList]
   [opt-level : i64]) : i64
-  (if (source-tool-target-supported? target)
-    (match (source-tool-create-temp-dir "typelisp-run")
-      [(OkSourceToolString temp-dir)
-        (source-tool-run-source-in-temp
-          source
-          target
-          stdlib-roots
-          runtime-args
-          opt-level
-          temp-dir)]
-      [(ErrSourceToolString message)
-        (begin
-          (print-error
-            (string-append "run: failed to create temp dir: " message))
-          1)])
-    (begin
-      (print-error (source-tool-unsupported-target-message "run" target))
-      1)))
+  (match (source-tool-create-temp-dir "typelisp-run")
+    [(OkSourceToolString temp-dir)
+      (source-tool-run-source-in-temp
+        source
+        target
+        stdlib-roots
+        runtime-args
+        opt-level
+        temp-dir)]
+    [(ErrSourceToolString message)
+      (begin
+        (print-error (string-append "run: failed to create temp dir: " message))
+        1)]))

@@ -21,7 +21,8 @@ RETIRED="$WORKDIR/retired.txt"
 
 is_exception_path() {
     case "$1" in
-        benchmarks/* | tools/vs-code-extension/* | scripts/*.ps1) return 0 ;;
+        benchmarks/* | tools/vs-code-extension/*) return 0 ;;
+        scripts/*.sh | tests/public-tools/*.sh | scripts/*.ps1) return 0 ;;
         *) return 1 ;;
     esac
 }
@@ -30,7 +31,7 @@ is_forbidden_file() {
     case "$1" in
         Cargo.toml | Cargo.lock | */Cargo.toml | */Cargo.lock) return 0 ;;
         *.rs | *.c | *.h | *.cc | *.cpp | *.cxx | *.hpp) return 0 ;;
-        *.py | *.ps1 | *.psm1 | *.js | *.ts | *.mjs | *.cjs) return 0 ;;
+        *.sh | *.py | *.ps1 | *.psm1 | *.js | *.ts | *.mjs | *.cjs) return 0 ;;
         *.rb | *.pl | *.lua | *.go | *.java | *.kt | *.swift | *.cs) return 0 ;;
         *) return 1 ;;
     esac
@@ -71,7 +72,8 @@ fi
 if [ -s "$NEW" ]; then
     echo "implementation language gate: forbidden implementation-language files outside the baseline:" >&2
     sed 's/^/  - /' "$NEW" >&2
-    echo "Allowed implementation languages are sh and typelisp; benchmarks/**, tools/vs-code-extension/**, and scripts/*.ps1 are path exceptions." >&2
+    echo "Allowed implementation language is TypeLisp." >&2
+    echo "Path exceptions: scripts/*.sh, tests/public-tools/*.sh, scripts/*.ps1, benchmarks/**, and tools/vs-code-extension/**." >&2
     exit 1
 fi
 

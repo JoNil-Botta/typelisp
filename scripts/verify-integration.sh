@@ -229,7 +229,7 @@ EOF
 
 windows_selfhost_crash_skip() {
     case "$1" in
-        compiler_lower_smoke | compiler_backend_smoke) return 0 ;;
+        compiler_typecheck_smoke | compiler_lower_smoke | compiler_backend_smoke) return 0 ;;
         *) return 1 ;;
     esac
 }

@@ -2647,6 +2647,12 @@
     (tc-offset-layout-query-runtime-call args)
     (tc-one-arg-layout-query-runtime-call name args)))
 
+(define (tc-reflection-query-runtime-call [name : String]) : ResultTcType
+  (ErrTcType
+    (string-append
+      "typecheck: "
+      (string-append name " is compile-time only; wrap it in (comptime ...)"))))
+
 (define (tc-call-or-array-length
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -2662,7 +2668,11 @@
             (or (string-eq name "string-ref") (string-eq name "char-at"))
             (not (tc-name-bound? env name)))
             (tc-string-ref-call ctx env args)
-            (tc-call-expr ctx env func args))))]
+            (if (and
+              (ctfe-reflection-query-name? name)
+              (not (tc-name-bound? env name)))
+              (tc-reflection-query-runtime-call name)
+              (tc-call-expr ctx env func args)))))]
     [_ (tc-call-expr ctx env func args)]))
 
 (define (tc-let-bindings
@@ -3988,7 +3998,9 @@
           (tc-ctfe-layouts-from-decls ctx decls "" CtfeLayoutInfoNil)])]))
 
 (define (tc-ctfe-env [ctx : TcContext]) : CtfeEnv
-  (ctfe-env-with-layouts (tc-ctfe-layouts ctx)))
+  (ctfe-env-with-metadata
+    (tc-ctfe-layouts ctx)
+    (ctfe-reflections-from-program (tc-context-program ctx))))
 
 (define (tc-string-prefix? [text : String] [prefix : String]) : bool
   (let
@@ -5394,6 +5406,7 @@
             [(CtfeI64 _) (OkTcType (AstTyI64))]
             [(CtfeBool _) (OkTcType (AstTyBool))]
             [(CtfeChar _) (OkTcType (AstTyChar))]
+            [(CtfeString _) (ErrTcType "String value is compile-time only")]
             [(CtfeUnit) (OkTcType (AstTyUnit))]
             [(CtfeExpr _ _) (OkTcType (AstTyExpr))]
             [(CtfeType ty)
@@ -7258,6 +7271,47 @@
 (define (f) : i64 (comptime (offset-of (type Packet) missing)))"
                 "offset-of unknown field missing"))))))))
 
+(define (compiler-typecheck-reflection-source) : String
+  "(defstruct Point (x i64) (flag bool))
+(defenum Maybe (None) (Some String))
+(define (field-count-helper [comptime T : type]) : i64
+  (comptime (struct-field-count (type T))))
+(define (enum-payload-helper [comptime T : type]) : i64
+  (comptime (enum-variant-payload-count (type T) 1)))
+(define (main) : i64
+  (+ (field-count-helper (type Point))
+     (+ (enum-payload-helper (type Maybe))
+        (+ (comptime (if (string-eq (type-kind (type Point)) \"struct\") 1 0))
+           (+ (comptime (if (string-eq (type-nominal-name (type Point)) \"Point\") 1 0))
+              (+ (comptime (if (= (struct-field-type (type Point) 0) (type i64)) 1 0))
+                 (+ (comptime (if (= (enum-variant-payload-type (type Maybe) 1 0) (type String)) 1 0))
+                    (+ (comptime (array-length (type (Array i64 4))))
+                       (comptime (function-param-count (type (-> i64 bool String))))))))))))")
+
+(define (compiler-typecheck-reflection-runtime-source) : String
+  "(define (main) : String (type-kind (type i64)))")
+
+(define (compiler-typecheck-reflection-string-result-source) : String
+  "(define (main) : String (comptime (type-kind (type i64))))")
+
+(define (compiler-typecheck-reflection-kind-mismatch-source) : String
+  "(define (main) : i64 (comptime (struct-field-count (type i64))))")
+
+(define (compiler-typecheck-reflection-tests-ok?) : bool
+  (and
+    (compiler-typecheck-ok? (compiler-typecheck-reflection-source))
+    (and
+      (compiler-typecheck-error-ok?
+        (compiler-typecheck-reflection-runtime-source)
+        "typecheck: type-kind is compile-time only; wrap it in (comptime ...)")
+      (and
+        (compiler-typecheck-error-ok?
+          (compiler-typecheck-reflection-string-result-source)
+          "String value is compile-time only")
+        (compiler-typecheck-error-ok?
+          (compiler-typecheck-reflection-kind-mismatch-source)
+          "struct-field-count requires struct type")))))
+
 (define (compiler-typecheck-self-test-basics) : unit
   (begin
     (if (compiler-typecheck-ptr-null-tests-ok?)
@@ -7377,6 +7431,9 @@
     (if (compiler-typecheck-io-builtin-tests-ok?)
       unit
       (panic "typecheck: io builtin tests failed"))
+    (if (compiler-typecheck-reflection-tests-ok?)
+      unit
+      (panic "typecheck: comptime reflection tests failed"))
     (if (compiler-typecheck-layout-query-tests-ok?)
       unit
       (begin

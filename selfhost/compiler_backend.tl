@@ -443,6 +443,16 @@
         (compiler-backend-emit-restore-callee-reg assignments vars "%r13" 1)
         (compiler-backend-emit-restore-callee-reg assignments vars "%r12" 0)))))
 
+(define (compiler-backend-return-label [source-function : String]) : String
+  (compiler-backend-asm-label (compiler-backend-user-symbol source-function) "return"))
+
+(define (compiler-backend-inline-return-tail
+  [assignments : CompilerRegAssignmentList]
+  [vars : i64]) : String
+  (string-append
+    (compiler-backend-emit-restore-callee-regs assignments vars)
+    "    leave\n    ret\n"))
+
 (define (compiler-backend-char-code [c : char]) : i64
   (cast c : i64))
 
@@ -1328,6 +1338,7 @@
 
 (define (compiler-backend-emit-binop-return
   [source-function : String]
+  [blocks : CompilerIrBlockList]
   [types : CompilerRegVarTypeList]
   [assignments : CompilerRegAssignmentList]
   [vars : i64]
@@ -1337,9 +1348,7 @@
   [ty : AstType]) : ResultCompilerBackend
   (let
     [return-tail : String
-      (string-append
-        (compiler-backend-emit-restore-callee-regs assignments vars)
-        "    leave\n    ret\n")]
+      (compiler-backend-return-tail source-function assignments vars blocks)]
     (if (compiler-backend-binop-f64? types lhs rhs ty)
       (match (compiler-backend-emit-load-f64-value-with-plan
         assignments
@@ -2700,20 +2709,72 @@
               target-label
               from-label))])]))
 
-(define (compiler-backend-emit-epilogue
-  [assignments : CompilerRegAssignmentList]
-  [vars : i64]) : String
-  (string-append
-    (compiler-backend-emit-restore-callee-regs assignments vars)
-    "    leave\n    ret\n"))
-
 (define (compiler-backend-tail-call-return-normalize [ty : AstType]) : String
   (if (= (compiler-backend-type-size ty) 0)
     "    movq $0, %rax\n"
     ""))
 
+(define (compiler-backend-instr-return-count [instr : CompilerIrInstr]) : i64
+  (match instr
+    [(IrInstrReturn _) 1]
+    [_ 0]))
+
+(define (compiler-backend-instr-list-return-count
+  [instrs : CompilerIrInstrList]) : i64
+  (match instrs
+    [(IrInstrNil) 0]
+    [(IrInstrCons instr rest)
+      (+
+        (compiler-backend-instr-return-count instr)
+        (compiler-backend-instr-list-return-count rest))]))
+
+(define (compiler-backend-block-list-return-count
+  [blocks : CompilerIrBlockList]) : i64
+  (match blocks
+    [(IrBlockNil) 0]
+    [(IrBlockCons block rest)
+      (match block
+        [(IrBlock _ instrs)
+          (+
+            (compiler-backend-instr-list-return-count instrs)
+            (compiler-backend-block-list-return-count rest))])]))
+
+(define (compiler-backend-use-shared-return?
+  [assignments : CompilerRegAssignmentList]
+  [blocks : CompilerIrBlockList]) : bool
+  (and
+    (compiler-backend-plan-uses-callee-regs? assignments)
+    (> (compiler-backend-block-list-return-count blocks) 1)))
+
+(define (compiler-backend-return-tail
+  [source-function : String]
+  [assignments : CompilerRegAssignmentList]
+  [vars : i64]
+  [blocks : CompilerIrBlockList]) : String
+  (if (compiler-backend-use-shared-return? assignments blocks)
+    (backend-cat4
+      "    jmp "
+      (compiler-backend-return-label source-function)
+      "\n"
+      "")
+    (compiler-backend-inline-return-tail assignments vars)))
+
+(define (compiler-backend-return-epilogue
+  [source-function : String]
+  [assignments : CompilerRegAssignmentList]
+  [vars : i64]
+  [blocks : CompilerIrBlockList]) : String
+  (if (compiler-backend-use-shared-return? assignments blocks)
+    (backend-cat4
+      (compiler-backend-return-label source-function)
+      ":\n"
+      (compiler-backend-inline-return-tail assignments vars)
+      "")
+    ""))
+
 (define (compiler-backend-emit-return
   [source-function : String]
+  [blocks : CompilerIrBlockList]
   [value : CompilerIrMaybeValue]
   [assignments : CompilerRegAssignmentList]
   [vars : i64]
@@ -2725,21 +2786,27 @@
           (if (string-eq source-function "main")
             "    xorl %eax, %eax\n"
             "")
-          (compiler-backend-emit-epilogue assignments vars)))]
+          (compiler-backend-return-tail source-function assignments vars blocks)))]
     [(IrSomeValue v)
       (match (compiler-backend-emit-load-typed-value-with-plan
         assignments
         v
         ret-ty)
         [(OkCompilerBackend load)
-            (OkCompilerBackend
-             (string-append
-               load
-              (compiler-backend-emit-epilogue assignments vars)))]
+          (OkCompilerBackend
+            (string-append
+              load
+              (compiler-backend-return-tail
+                source-function
+                assignments
+                vars
+                blocks)))]
         [(ErrCompilerBackend message) (ErrCompilerBackend message)])]))
 
 (define (compiler-backend-emit-tail-call
   [target : CompilerBackendTarget]
+  [source-function : String]
+  [blocks : CompilerIrBlockList]
   [name : String]
   [args : CompilerIrValueList]
   [ty : AstType]
@@ -2779,12 +2846,17 @@
                     (compiler-backend-emit-call-space-add call-space)
                     (string-append
                       (compiler-backend-tail-call-return-normalize ty)
-                      (compiler-backend-emit-epilogue assignments vars)))
+                      (compiler-backend-return-tail
+                        source-function
+                        assignments
+                        vars
+                        blocks)))
                   ""))))]
         [(ErrCompilerBackend message) (ErrCompilerBackend message)]))))
 
 (define (compiler-backend-emit-trivial-phi-return-edge-instrs
   [source-function : String]
+  [blocks : CompilerIrBlockList]
   [instrs : CompilerIrInstrList]
   [from-label : String]
   [assignments : CompilerRegAssignmentList]
@@ -2809,6 +2881,7 @@
                               [(OkBackendValue incoming)
                                 (compiler-backend-emit-return
                                   source-function
+                                  blocks
                                   (IrSomeValue incoming)
                                   assignments
                                   vars
@@ -2840,6 +2913,7 @@
           (if (string-eq block-label target-label)
             (compiler-backend-emit-trivial-phi-return-edge-instrs
               source-function
+              blocks
               instrs
               from-label
               assignments
@@ -2856,6 +2930,7 @@
 
 (define (compiler-backend-emit-mov-trivial-phi-return-edge-instrs
   [source-function : String]
+  [blocks : CompilerIrBlockList]
   [instrs : CompilerIrInstrList]
   [from-label : String]
   [assignments : CompilerRegAssignmentList]
@@ -2885,6 +2960,7 @@
                                   moved-dst)
                                   (compiler-backend-emit-return
                                     source-function
+                                    blocks
                                     (IrSomeValue moved-src)
                                     assignments
                                     vars
@@ -2919,6 +2995,7 @@
           (if (string-eq block-label target-label)
             (compiler-backend-emit-mov-trivial-phi-return-edge-instrs
               source-function
+              blocks
               instrs
               from-label
               assignments
@@ -3123,6 +3200,8 @@
       [(IrInstrTailCall name args ty)
         (match (compiler-backend-emit-tail-call
           target
+          source-function
+          blocks
           name
           args
           ty
@@ -3218,6 +3297,7 @@
       [(IrInstrReturn value)
         (match (compiler-backend-emit-return
           source-function
+          blocks
           value
           assignments
           vars
@@ -3906,6 +3986,7 @@
 (define (compiler-backend-emit-call-return
   [target : CompilerBackendTarget]
   [source-function : String]
+  [blocks : CompilerIrBlockList]
   [name : String]
   [args : CompilerIrValueList]
   [assignments : CompilerRegAssignmentList]
@@ -3942,9 +4023,11 @@
                   "\n"
                   (string-append
                     (compiler-backend-emit-call-space-add call-space)
-                    (string-append
-                      (compiler-backend-emit-restore-callee-regs assignments vars)
-                      "    leave\n    ret\n"))
+                    (compiler-backend-return-tail
+                      source-function
+                      assignments
+                      vars
+                      blocks))
                   ""))))]
         [(ErrCompilerBackend message)
           (ErrCompilerBackend
@@ -4007,6 +4090,7 @@
                           (if (compiler-backend-branch-uses-var? value dst)
                             (compiler-backend-emit-return
                               source-function
+                              blocks
                               (IrSomeValue src)
                               assignments
                               vars
@@ -4122,6 +4206,7 @@
                             (compiler-backend-emit-call-return
                               target
                               source-function
+                              blocks
                               name
                               args
                               assignments
@@ -4810,6 +4895,7 @@
                             (if (compiler-backend-branch-uses-var? value dst)
                               (compiler-backend-emit-binop-return
                                 source-function
+                                blocks
                                 types
                                 assignments
                                 vars
@@ -5377,7 +5463,15 @@
                                       target
                                       name
                                       plan)
-                                    (string-append spills body)))
+                                    (string-append
+                                      spills
+                                      (string-append
+                                        body
+                                        (compiler-backend-return-epilogue
+                                          name
+                                          assignments
+                                          vars
+                                          blocks)))))
                                 "\n")
                               "")))]
                       [(ErrCompilerBackend message)

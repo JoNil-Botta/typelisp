@@ -476,7 +476,10 @@ fn selfhost_backend_windows_driver_primitives_emit_assemble_link_and_run() {
         .join("windows-native-tests")
         .join("selfhost_backend_driver_primitives");
     fs::create_dir_all(&work_dir).expect("create selfhost Windows driver primitive test dir");
-    let fixture_path = copy_selfhost_tl_sources(&manifest_dir, &work_dir);
+    let _runtime_fixture_path = copy_selfhost_tl_sources(&manifest_dir, &work_dir);
+    let fixture_path = work_dir
+        .join("selfhost")
+        .join("compiler_backend_windows_driver_fixture.tl");
 
     let asm_path = work_dir.join("driver_primitives.s");
     let obj_path = work_dir.join("driver_primitives.obj");
@@ -494,7 +497,6 @@ fn selfhost_backend_windows_driver_primitives_emit_assemble_link_and_run() {
             .arg("windows-x86_64")
             .arg("--")
             .arg(&asm_path)
-            .arg("windows-driver-primitives")
             .output()
             .expect("run selfhost backend driver primitive fixture for Windows target")
     });

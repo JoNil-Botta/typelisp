@@ -3387,15 +3387,20 @@
         (opt-remap-spans-function source-spans out func)
         rest)]))
 
+(define (opt-remap-spans-fast-path? [source-spans : CompilerSourceSpans]) : bool
+  (> (compiler-source-spans-instr-count source-spans) 2048))
+
 (define (opt-remap-spans-program
   [source-spans : CompilerSourceSpans]
   [program : CompilerIrProgram]) : CompilerSourceSpans
-  (match program
-    [(IrProgram _ functions _)
-      (opt-remap-spans-functions
-        source-spans
-        (compiler-source-spans-clear-instrs source-spans)
-        functions)]))
+  (if (opt-remap-spans-fast-path? source-spans)
+    source-spans
+    (match program
+      [(IrProgram _ functions _)
+        (opt-remap-spans-functions
+          source-spans
+          (compiler-source-spans-clear-instrs source-spans)
+          functions)])))
 
 (define (optimize-program-with-spans-and-level
   [program : CompilerIrProgram]

@@ -6216,14 +6216,12 @@
 (define (compiler-backend-runtime-alloc-data-for-target
   [target : CompilerBackendTarget]) : String
   (string-append
-    (if (compiler-backend-target-windows? target)
-      ""
-      "    .section .bss
+    "    .section .bss
     .balign 8
 tl_current_arena:
     .zero 8
 
-")
+"
     "    .section .rodata
 .L_tl_alloc_msg:
     .byte 116,108,58,32,97,108,108,111,99,97,116,105,111,110,32,102,97,105,108,101,100,10
@@ -6687,15 +6685,61 @@ tl_region_reset:
 tl_alloc:
     push %rbp
     mov %rsp, %rbp
+    sub $48, %rsp
     testq %rcx, %rcx
     jg .L_tl_alloc_win_size_ready
     movq $1, %rcx
 .L_tl_alloc_win_size_ready:
-    sub $32, %rsp
-    call malloc
-    add $32, %rsp
+    addq $7, %rcx
+    jc .L_tl_alloc_abort
+    andq $-8, %rcx
+    movq %rcx, %r11
+    movq tl_current_arena(%rip), %r8
+    testq %r8, %r8
+    jz .L_tl_alloc_new_arena
+    movq 16(%r8), %rax
+    movq %rax, %r10
+    addq %r11, %r10
+    jc .L_tl_alloc_abort
+    cmpq 24(%r8), %r10
+    ja .L_tl_alloc_new_arena
+    movq %r10, 16(%r8)
+    mov %rbp, %rsp
+    pop %rbp
+    ret
+.L_tl_alloc_new_arena:
+    movq %r11, -8(%rbp)
+    movq $0x4000000, %rdx
+    movq %r11, %rax
+    addq $32, %rax
+    jc .L_tl_alloc_abort
+    cmpq %rdx, %rax
+    jbe .L_tl_alloc_len_ready
+    movq %rax, %rdx
+.L_tl_alloc_len_ready:
+    movq %rdx, -16(%rbp)
+    xorq %rcx, %rcx
+    movq $0x3000, %r8
+    movq $4, %r9
+    call VirtualAlloc
     testq %rax, %rax
     jz .L_tl_alloc_abort
+    movq -16(%rbp), %rdx
+    movq -8(%rbp), %r11
+    movq %rax, %rcx
+    addq %rdx, %rcx
+    jc .L_tl_alloc_abort
+    movq tl_current_arena(%rip), %r8
+    movq %r8, 0(%rax)
+    leaq 32(%rax), %r8
+    movq %r8, 8(%rax)
+    movq %rcx, 24(%rax)
+    movq %r8, %r10
+    addq %r11, %r10
+    jc .L_tl_alloc_abort
+    movq %r10, 16(%rax)
+    movq %rax, tl_current_arena(%rip)
+    movq %r8, %rax
     mov %rbp, %rsp
     pop %rbp
     ret
@@ -6703,11 +6747,8 @@ tl_alloc:
     movq $2, %rcx
     leaq .L_tl_alloc_msg(%rip), %rdx
     movq $.L_tl_alloc_msg_len, %r8
-    sub $32, %rsp
     call _write
-    add $32, %rsp
     movq $134, %rcx
-    sub $32, %rsp
     call exit
 
 ")
@@ -10625,7 +10666,7 @@ tl_windows_setup_instances:
     (not (compiler-backend-runtime-plan-empty? plan)))
     (string-append
       (string-append
-        "    .extern malloc
+        "    .extern VirtualAlloc
     .extern _write
     .extern exit
     .extern _read
@@ -12547,7 +12588,7 @@ tl_windows_setup_instances:
       (and
         (compiler-backend-string-contains? asm ".globl tl_alloc\n")
         (and
-          (compiler-backend-string-contains? asm "    call malloc\n")
+          (compiler-backend-string-contains? asm "    call VirtualAlloc\n")
           (and
             (compiler-backend-string-contains? asm "    call _write\n")
             (and
@@ -12636,7 +12677,7 @@ tl_windows_setup_instances:
                                                         (and
                                                           (compiler-backend-string-contains?
                                                             asm
-                                                            "    .extern malloc\n")
+                                                            "    .extern VirtualAlloc\n")
                                                           (and
                                                             (not
                                                               (compiler-backend-string-contains?

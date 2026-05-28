@@ -665,6 +665,7 @@ run_windows_backend_fixtures() {
         ".globl main" \
         ".globl tl_alloc" \
         "tl_alloc:" \
+        "tl_current_arena:" \
         ".globl tl_oob_abort" \
         "tl_oob_abort:" \
         ".globl tl_substring" \
@@ -697,7 +698,7 @@ run_windows_backend_fixtures() {
         ".L_tl_argv:" \
         "movq %rcx, .L_tl_argc(%rip)" \
         "movq %rdx, .L_tl_argv(%rip)" \
-        ".extern malloc" \
+        ".extern VirtualAlloc" \
         ".extern _write" \
         ".extern exit" \
         ".extern _read" \
@@ -707,7 +708,7 @@ run_windows_backend_fixtures() {
         ".extern _close" \
         ".extern _access" \
         ".extern SystemFunction036" \
-        "call malloc" \
+        "call VirtualAlloc" \
         "call _write" \
         "call _read" \
         "call fflush" \
@@ -735,7 +736,6 @@ run_windows_backend_fixtures() {
     for _snippet in \
         "syscall" \
         "_start:" \
-        "tl_current_arena:" \
         ".extern tl_alloc" \
         ".extern tl_oob_abort" \
         ".extern tl_substring" \

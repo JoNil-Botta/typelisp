@@ -165,7 +165,7 @@ fn selfhost_backend_windows_runtime_helpers_emit_assemble_link_and_run() {
         "    movq %rcx, .L_tl_argc(%rip)\n",
         "    movq %rdx, .L_tl_argv(%rip)\n",
         "    rep movsb\n",
-        "    .extern malloc\n",
+        "    .extern VirtualAlloc\n",
         "    .extern _write\n",
         "    .extern exit\n",
         "    .extern _read\n",
@@ -174,7 +174,7 @@ fn selfhost_backend_windows_runtime_helpers_emit_assemble_link_and_run() {
         "    .extern _lseeki64\n",
         "    .extern _close\n",
         "    .extern _access\n",
-        "    call malloc\n",
+        "    call VirtualAlloc\n",
         "    call _write\n",
         "    call _read\n",
         "    call fflush\n",
@@ -200,7 +200,7 @@ fn selfhost_backend_windows_runtime_helpers_emit_assemble_link_and_run() {
     }
     assert!(!asm.contains("    syscall"), "asm:\n{}", asm);
     assert!(!asm.contains("\n_start:"), "asm:\n{}", asm);
-    assert!(!asm.contains("tl_current_arena:"), "asm:\n{}", asm);
+    assert!(asm.contains("tl_current_arena:"), "asm:\n{}", asm);
     assert!(
         asm.matches("    rep movsb\n").count() >= 10,
         "selfhost Windows runtime helper assembly should bulk-copy string and path payloads:\n{}",

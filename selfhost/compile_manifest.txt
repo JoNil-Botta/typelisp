@@ -91,12 +91,16 @@ end
 decision|selfhost/ast_types.tl|legacy AST type declarations only; imported by selfhost/ast.tl and has no functions to compile directly
 
 case|selfhost_build|selfhost/build.tl|assembly|skip|direct
-contains|_tl_build_plan_config:
-contains|_tl_build_plan_render:
 contains|_tl_build_cli_config:
 contains|_tl_source_tool_build_source:
+contains|_tl_build_config:
+contains|_tl_build_config_from:
+contains|_tl_build_source_plan_render:
+contains|_tl_build_package:
+contains|_tl_build_package_emit:
 contains|_tl_host_plan_netline:
-contains|build: expected source path
+contains|could not find typelisp.pkg
+contains|Generated:
 end
 
 case|selfhost_build_run_core|selfhost/build_run_core.tl|assembly|skip|direct

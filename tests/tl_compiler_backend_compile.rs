@@ -562,9 +562,11 @@ fn build_and_run_planners_compile_to_assembly() {
     );
     assert_no_todo(&build_asm, "build planner");
     for sym in [
-        "_tl_build_plan_config:",
-        "_tl_build_plan_parse_options:",
-        "_tl_build_plan_render:",
+        "_tl_build_config:",
+        "_tl_build_parse_options:",
+        "_tl_build_source_plan_render:",
+        "_tl_build_package:",
+        "_tl_build_package_emit:",
         "_tl_host_plan_netline:",
         "_tl_host_plan_target_valid_question:",
     ] {
@@ -574,8 +576,9 @@ fn build_and_run_planners_compile_to_assembly() {
         "typelisp-host-plan v1\\n",
         "action",
         "build-source",
-        "build: expected source path",
-        "build: --manifest-path is handled by Rust typelisp build",
+        "could not find typelisp.pkg",
+        "Generated: ",
+        "build: --backend-mode ",
     ] {
         assert_message(&build_asm, message, "build planner");
     }

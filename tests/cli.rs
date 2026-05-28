@@ -2186,18 +2186,68 @@ fn selfhost_build_run_tools_execute_source_files() {
         stderr(&env_run_output)
     );
 
+    let package_root = dir.join("pkg");
+    let package_src = package_root.join("src");
+    let package_dep = package_root.join("vendor").join("math").join("src");
+    fs::create_dir_all(&package_src).expect("create selfhost package src");
+    fs::create_dir_all(&package_dep).expect("create selfhost package dep");
+    fs::write(
+        package_root.join("typelisp.pkg"),
+        r#"(package
+  (name "selfhost_cli_pkg")
+  (version "0.1.0")
+  (entry "src/main.tl")
+  (dependencies
+    (math "vendor/math")))
+"#,
+    )
+    .expect("write selfhost package manifest");
+    fs::write(
+        package_src.join("main.tl"),
+        r#"(import "pkg:math/src/lib.tl")
+(define (main) : i64 (add-one 41))
+"#,
+    )
+    .expect("write selfhost package main");
+    fs::write(
+        package_dep.join("lib.tl"),
+        "(define (add-one [x : i64]) : i64 (+ x 1))\n",
+    )
+    .expect("write selfhost package dep");
+
+    let manifest_arg = package_root
+        .join("typelisp.pkg")
+        .to_str()
+        .expect("package manifest path is utf-8")
+        .to_string();
     let package_build = Command::new(&build_bin)
         .arg("--direct")
         .arg("--manifest-path")
-        .arg("typelisp.pkg")
+        .arg(&manifest_arg)
+        .arg("--opt-level")
+        .arg("0")
         .output()
-        .expect("run selfhost build tool package rejection");
-    assert!(!package_build.status.success());
-    assert_eq!(stdout(&package_build), "");
+        .expect("run selfhost package build");
     assert!(
-        stderr(&package_build).contains("--manifest-path is handled by Rust typelisp build"),
-        "stderr:\n{}",
+        package_build.status.success(),
+        "selfhost package build failed\nstdout:\n{}\nstderr:\n{}",
+        stdout(&package_build),
         stderr(&package_build)
+    );
+    assert_eq!(stderr(&package_build), "");
+    let package_asm = package_root
+        .join("target")
+        .join("typelisp")
+        .join("selfhost_cli_pkg")
+        .join("selfhost_cli_pkg.s");
+    assert!(
+        package_asm.exists(),
+        "selfhost package build did not write assembly"
+    );
+    assert!(
+        stdout(&package_build).contains("Generated:"),
+        "stdout:\n{}",
+        stdout(&package_build)
     );
 
     let missing_target = Command::new(&run_bin)

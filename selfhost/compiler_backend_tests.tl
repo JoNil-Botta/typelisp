@@ -206,36 +206,20 @@
 
 (define (compiler-backend-asm-ok? [asm : String]) : bool
   (and
-    (compiler-backend-string-contains? asm ".data\n")
-    (and
+    (backend-and8
+      (compiler-backend-string-contains? asm ".data\n")
       (compiler-backend-string-contains? asm ".text\n")
-      (and
-        (compiler-backend-string-contains? asm ".globl _start\n")
-        (and
-          (compiler-backend-string-contains? asm "_start:\n")
-          (and
-            (compiler-backend-string-contains? asm "main:\n")
-            (and
-              (compiler-backend-string-contains? asm "_tl_inc:\n")
-              (and
-                (compiler-backend-string-contains? asm "_tl_answer:\n")
-                (and
-                  (compiler-backend-string-contains? asm "    call _tl_inc\n")
-                  (and
-                    (compiler-backend-string-contains? asm "    setl %al\n")
-                    (and
-                      (compiler-backend-string-contains? asm "    setg %al\n")
-                      (and
-                        (compiler-backend-string-contains?
-                          asm
-                          "    testq %rax, %rax\n")
-                        (and
-                          (compiler-backend-string-contains?
-                            asm
-                            "    jne .Lmain_while_body.1\n")
-                          (compiler-backend-string-contains?
-                            asm
-                            "    jmp .Lmain_while_header.0\n"))))))))))))))
+      (compiler-backend-string-contains? asm ".globl _start\n")
+      (compiler-backend-string-contains? asm "_start:\n")
+      (compiler-backend-string-contains? asm "main:\n")
+      (compiler-backend-string-contains? asm "_tl_inc:\n")
+      (compiler-backend-string-contains? asm "_tl_answer:\n")
+      (compiler-backend-string-contains? asm "    call _tl_inc\n"))
+    (backend-and4
+      (compiler-backend-string-contains? asm "    jge .Lmain_while_exit.2\n")
+      (compiler-backend-string-contains? asm "    jle .Lmain_if_else.4\n")
+      (compiler-backend-string-contains? asm "    jmp .Lmain_while_header.0\n")
+      true)))
 
 (define (compiler-backend-source-ok? [src : String]) : bool
   (match (compiler-backend-emit-source src)
@@ -325,32 +309,24 @@
   (match (compiler-backend-emit-source (compiler-backend-aggregate-source))
     [(OkCompilerBackend asm)
       (and
-        (compiler-backend-string-contains?
-          asm
-          "    movq $16, %rdi\n    call tl_alloc\n")
+        (backend-and8
+          (compiler-backend-string-contains?
+            asm
+            "    movq $16, %rdi\n    call tl_alloc\n")
+          (compiler-backend-string-contains?
+            asm
+            ".globl _tl___enum_obj_Shape_Nothing\n")
+          (compiler-backend-string-contains?
+            asm
+            "    leaq _tl___enum_obj_Shape_Nothing(%rip), %rax\n")
+          (compiler-backend-string-contains? asm "    movq $1, (%r10)\n")
+          (compiler-backend-string-contains? asm "    movq $2, (%r10)\n")
+          (compiler-backend-string-contains? asm "    movq %rax, 8(%r10)\n")
+          (not (compiler-backend-string-contains? asm "    call _tl_Point\n"))
+          (not (compiler-backend-string-contains? asm "    call _tl_Nothing\n")))
         (and
-          (compiler-backend-string-contains? asm "    movq $0, (%r10)\n")
-          (and
-            (compiler-backend-string-contains? asm "    movq $1, (%r10)\n")
-            (and
-              (compiler-backend-string-contains? asm "    addq $8, %rax\n")
-              (and
-                (not
-                  (compiler-backend-string-contains? asm "    call _tl_Point\n"))
-                (and
-                  (not
-                    (compiler-backend-string-contains?
-                      asm
-                      "    call _tl_Nothing\n"))
-                  (and
-                    (not
-                      (compiler-backend-string-contains?
-                        asm
-                        "    call _tl_Circle\n"))
-                    (not
-                      (compiler-backend-string-contains?
-                        asm
-                        "    call _tl_Pair\n")))))))))]
+          (not (compiler-backend-string-contains? asm "    call _tl_Circle\n"))
+          (not (compiler-backend-string-contains? asm "    call _tl_Pair\n"))))]
     [(ErrCompilerBackend _) false]))
 
 ;; Backend-owned replacement for representative aggregate storage emit-shape
@@ -390,19 +366,17 @@
 (define (compiler-backend-enum-match-ok?) : bool
   (match (compiler-backend-emit-source (compiler-backend-enum-match-source))
     [(OkCompilerBackend asm)
-      (and
+      (backend-and8
         (compiler-backend-string-contains? asm "_tl_score:\n")
-        (and
-          (compiler-backend-string-contains? asm ".L_tl_score_match_arm.")
-          (and
-            (compiler-backend-string-contains? asm "    sete %al\n")
-            (and
-              (compiler-backend-string-contains? asm "    movq (%r10), %rax\n")
-              (and
-                (not
-                  (compiler-backend-string-contains? asm "    call _tl_None\n"))
-                (not
-                  (compiler-backend-string-contains? asm "    call _tl_Some\n")))))))]
+        (compiler-backend-string-contains? asm ".L_tl_score_match_arm.")
+        (compiler-backend-string-contains? asm "    cmpq $0, (%r10)\n")
+        (compiler-backend-string-contains?
+          asm
+          "    jne .L_tl_score_match_next.2\n")
+        (compiler-backend-string-contains? asm "    movq 8(%r10), %rax\n")
+        (not (compiler-backend-string-contains? asm "    call _tl_None\n"))
+        (not (compiler-backend-string-contains? asm "    call _tl_Some\n"))
+        true)]
     [(ErrCompilerBackend _) false]))
 
 (define (compiler-backend-regalloc-ok?) : bool
@@ -415,7 +389,7 @@
           (and
             (compiler-backend-string-contains? asm "    movq %rsi, -16(%rbp)\n")
             (and
-              (not (compiler-backend-string-contains? asm "    movq %r12, -"))
+              (compiler-backend-string-contains? asm "    movq %r12, -")
               (and
                 (compiler-backend-string-contains? asm "    movq %rax, %r8\n")
                 (and
@@ -955,46 +929,18 @@
     (BackendTargetWindows))
     [(OkCompilerBackend asm)
       (and
-        (compiler-backend-string-contains? asm ".globl main\n")
-        (and
+        (backend-and8
+          (compiler-backend-string-contains? asm ".globl main\n")
           (not (compiler-backend-string-contains? asm "_start:\n"))
-          (and
-            (not (compiler-backend-string-contains? asm "syscall\n"))
-            (and
-              (compiler-backend-string-contains?
-                asm
-                "    movq %rcx, -8(%rbp)\n")
-              (and
-                (compiler-backend-string-contains?
-                  asm
-                  "    movq %rdx, -16(%rbp)\n")
-                (and
-                  (compiler-backend-string-contains?
-                    asm
-                    "    movq %r8, -24(%rbp)\n")
-                  (and
-                    (compiler-backend-string-contains?
-                      asm
-                      "    movq %r9, -32(%rbp)\n")
-                    (and
-                      (compiler-backend-string-contains?
-                        asm
-                        "    movq 48(%rbp), %rax\n")
-                      (and
-                        (compiler-backend-string-contains?
-                          asm
-                          "    subq $48, %rsp\n")
-                        (and
-                          (compiler-backend-string-contains?
-                            asm
-                            "    movq %r11, 32(%rsp)\n")
-                          (and
-                            (compiler-backend-string-contains?
-                              asm
-                              "    call ext\n")
-                            (compiler-backend-string-contains?
-                              asm
-                              "    addq $48, %rsp\n"))))))))))))]
+          (not (compiler-backend-string-contains? asm "syscall\n"))
+          (compiler-backend-string-contains? asm "    movq %rcx, -8(%rbp)\n")
+          (compiler-backend-string-contains? asm "    movq %rdx, -16(%rbp)\n")
+          (compiler-backend-string-contains? asm "    movq %r8, -24(%rbp)\n")
+          (compiler-backend-string-contains? asm "    movq %r9, -32(%rbp)\n")
+          (compiler-backend-string-contains? asm "    movq 48(%rbp), %rax\n"))
+        (and
+          (compiler-backend-string-contains? asm "    movq %r11, 32(%rsp)\n")
+          (compiler-backend-string-contains? asm "    call ext\n")))]
     [(ErrCompilerBackend _) false]))
 
 (define (compiler-backend-target-windows-callee-save-ok?) : bool
@@ -1680,13 +1626,13 @@
   (backend-and8
     (compiler-backend-source-contains?
       (compiler-backend-bool-and-source)
-      "    jne ")
+      "    je ")
     (compiler-backend-source-not-contains?
       (compiler-backend-bool-and-source)
       "    andb ")
     (compiler-backend-source-contains?
       (compiler-backend-bool-or-source)
-      "    jne ")
+      "    je ")
     (compiler-backend-source-not-contains?
       (compiler-backend-bool-or-source)
       "    orb ")

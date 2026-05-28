@@ -4102,13 +4102,24 @@
                       (match maybe
                         [(IrSomeValue value)
                           (if (compiler-backend-branch-uses-var? value dst)
-                            (compiler-backend-emit-return
+                            (match (compiler-backend-emit-return
                               source-function
                               blocks
                               (IrSomeValue src)
                               assignments
                               vars
                               ret-ty)
+                              [(OkCompilerBackend asm) (OkCompilerBackend asm)]
+                              [(ErrCompilerBackend message)
+                                (ErrCompilerBackend
+                                  (compiler-backend-apply-instr-diagnostic
+                                    message
+                                    (compiler-backend-instr-diagnostic
+                                      spans
+                                      source-function
+                                      instr
+                                      func-diag
+                                      "")))])
                             (compiler-backend-emit-instrs-normal
                               target
                               function

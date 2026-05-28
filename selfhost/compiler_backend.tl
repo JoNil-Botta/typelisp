@@ -1310,6 +1310,82 @@
               [(ErrCompilerBackend message) (ErrCompilerBackend message)])])]
       [(ErrCompilerBackend message) (ErrCompilerBackend message)])))
 
+(define (compiler-backend-emit-binop-return
+  [source-function : String]
+  [types : CompilerRegVarTypeList]
+  [assignments : CompilerRegAssignmentList]
+  [vars : i64]
+  [op : CompilerIrBinOp]
+  [lhs : CompilerIrValue]
+  [rhs : CompilerIrValue]
+  [ty : AstType]) : ResultCompilerBackend
+  (let
+    [return-tail : String
+      (string-append
+        (compiler-backend-emit-restore-callee-regs assignments vars)
+        "    leave\n    ret\n")]
+    (if (compiler-backend-binop-f64? types lhs rhs ty)
+      (match (compiler-backend-emit-load-f64-value-with-plan
+        assignments
+        lhs
+        "%xmm0")
+        [(OkCompilerBackend lhs-asm)
+          (match (compiler-backend-emit-load-f64-value-with-plan
+            assignments
+            rhs
+            "%xmm1")
+            [(OkCompilerBackend rhs-asm)
+              (match (compiler-backend-f64-binop-asm op)
+                [(OkCompilerBackend op-asm)
+                  (OkCompilerBackend
+                    (string-append
+                      lhs-asm
+                      (string-append
+                        rhs-asm
+                        (string-append op-asm return-tail))))]
+                [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
+            [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
+        [(ErrCompilerBackend message) (ErrCompilerBackend message)])
+      (match (compiler-backend-emit-load-value-with-plan assignments lhs "%rax")
+        [(OkCompilerBackend lhs-asm)
+          (match (compiler-backend-immediate-operand rhs)
+            [(CompilerBackendSomeImmediate imm)
+              (match (compiler-backend-binop-immediate-asm op imm ty)
+                [(CompilerBackendSomeAsm op-asm)
+                  (OkCompilerBackend
+                    (string-append lhs-asm (string-append op-asm return-tail)))]
+                [(CompilerBackendNoAsm)
+                  (match (compiler-backend-emit-load-value-with-plan
+                    assignments
+                    rhs
+                    "%rbx")
+                    [(OkCompilerBackend rhs-asm)
+                      (OkCompilerBackend
+                        (string-append
+                          lhs-asm
+                          (string-append
+                            rhs-asm
+                            (string-append
+                              (compiler-backend-binop-asm op ty)
+                              return-tail))))]
+                    [(ErrCompilerBackend message) (ErrCompilerBackend message)])])]
+            [(CompilerBackendNoImmediate)
+              (match (compiler-backend-emit-load-value-with-plan
+                assignments
+                rhs
+                "%rbx")
+                [(OkCompilerBackend rhs-asm)
+                  (OkCompilerBackend
+                    (string-append
+                      lhs-asm
+                      (string-append
+                        rhs-asm
+                        (string-append
+                          (compiler-backend-binop-asm op ty)
+                          return-tail))))]
+                [(ErrCompilerBackend message) (ErrCompilerBackend message)])])]
+        [(ErrCompilerBackend message) (ErrCompilerBackend message)]))))
+
 (define (compiler-backend-jump-label [function : String] [label : String]) : String
   (backend-cat4 "    jmp " (compiler-backend-asm-label function label) "\n" ""))
 
@@ -4539,6 +4615,79 @@
             (match rest
               [(IrInstrCons next after-branch)
                 (match next
+                  [(IrInstrReturn maybe)
+                    (match after-branch
+                      [(IrInstrNil)
+                        (match maybe
+                          [(IrSomeValue value)
+                            (if (compiler-backend-branch-uses-var? value dst)
+                              (compiler-backend-emit-binop-return
+                                source-function
+                                types
+                                assignments
+                                vars
+                                op
+                                lhs
+                                rhs
+                                ty)
+                              (compiler-backend-emit-instrs-normal
+                                target
+                                function
+                                source-function
+                                blocks
+                                current-label
+                                fallthrough
+                                instr
+                                rest
+                                assignments
+                                vars
+                                types
+                                ret-ty
+                                plan
+                                functions
+                                externs
+                                spans
+                                func-diag
+                                use-counts))]
+                          [(IrNoValue)
+                            (compiler-backend-emit-instrs-normal
+                              target
+                              function
+                              source-function
+                              blocks
+                              current-label
+                              fallthrough
+                              instr
+                              rest
+                              assignments
+                              vars
+                              types
+                              ret-ty
+                              plan
+                              functions
+                              externs
+                              spans
+                              func-diag
+                              use-counts)])]
+                      [_ (compiler-backend-emit-instrs-normal
+                        target
+                        function
+                        source-function
+                        blocks
+                        current-label
+                        fallthrough
+                        instr
+                        rest
+                        assignments
+                        vars
+                        types
+                        ret-ty
+                        plan
+                        functions
+                        externs
+                        spans
+                        func-diag
+                        use-counts)])]
                   [(IrInstrBranch cond true-label false-label)
                     (if (compiler-backend-branch-uses-var? cond dst)
                       (compiler-backend-emit-fused-compare-branch-rest

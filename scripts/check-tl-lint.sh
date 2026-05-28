@@ -63,10 +63,13 @@ RESOLVED_FINDINGS="$WORKDIR/findings.resolved"
 #   - selfhost/tests/ contains external compiler corpus snippets and errors.
 #   - import-heavy public tool drivers currently exceed the lint gate budget by
 #     linting large imported compiler/tool graphs; #1438 owns re-enabling them.
+#   - compiler-pipeline entry points and smoke drivers have the same import-heavy
+#     behavior; #1438 owns re-enabling them with bounded lint traversal.
 #   - tests/format_golden/ intentionally preserves formatter fixture text.
 #   - the listed integration drivers depend on manifest-staged helper files.
 git ls-files '*.tl' \
     | grep -v '^selfhost/tests/' \
+    | grep -v -E '^selfhost/compiler_(backend|backend_.*|bounds_check_smoke|check_core|check_smoke|driver|driver_core|liveness|liveness_smoke|lower|lower_smoke|optimize|optimize_smoke|regalloc|regalloc_smoke|specialize|specialize_smoke|typecheck|typecheck_smoke|typecheck_reflection_smoke)\.tl$' \
     | grep -v '^selfhost/lsp_frame\.tl$' \
     | grep -v '^selfhost/repl\.tl$' \
     | grep -v '^selfhost/run\.tl$' \

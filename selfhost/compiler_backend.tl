@@ -3860,6 +3860,76 @@
                     spans
                     func-diag
                     use-counts)]
+                [(IrInstrReturn maybe)
+                  (match after-jump
+                    [(IrInstrNil)
+                      (match maybe
+                        [(IrSomeValue value)
+                          (if (compiler-backend-branch-uses-var? value dst)
+                            (compiler-backend-emit-return
+                              source-function
+                              (IrSomeValue src)
+                              assignments
+                              vars
+                              ret-ty)
+                            (compiler-backend-emit-instrs-normal
+                              target
+                              function
+                              source-function
+                              blocks
+                              current-label
+                              fallthrough
+                              instr
+                              rest
+                              assignments
+                              vars
+                              types
+                              ret-ty
+                              plan
+                              functions
+                              externs
+                              spans
+                              func-diag
+                              use-counts))]
+                        [(IrNoValue)
+                          (compiler-backend-emit-instrs-normal
+                            target
+                            function
+                            source-function
+                            blocks
+                            current-label
+                            fallthrough
+                            instr
+                            rest
+                            assignments
+                            vars
+                            types
+                            ret-ty
+                            plan
+                            functions
+                            externs
+                            spans
+                            func-diag
+                            use-counts)])]
+                    [_ (compiler-backend-emit-instrs-normal
+                      target
+                      function
+                      source-function
+                      blocks
+                      current-label
+                      fallthrough
+                      instr
+                      rest
+                      assignments
+                      vars
+                      types
+                      ret-ty
+                      plan
+                      functions
+                      externs
+                      spans
+                      func-diag
+                      use-counts)])]
                 [_ (compiler-backend-emit-instrs-normal
                   target
                   function

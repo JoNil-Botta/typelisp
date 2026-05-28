@@ -3120,11 +3120,30 @@
                 (OptConstNil)
                 (opt-fold-instrs (OptConstNil) instrs))))))]))
 
+(define (optimize-block-fast [block : CompilerIrBlock]) : CompilerIrBlock
+  (match block
+    [(IrBlock label instrs)
+      (IrBlock
+        label
+        (opt-copy-instrs
+          (OptCopyNil)
+          (opt-strength-instrs
+            (OptConstNil)
+            (opt-fold-instrs (OptConstNil) instrs))))]))
+
 (define (optimize-block-list [blocks : CompilerIrBlockList]) : CompilerIrBlockList
   (match blocks
     [(IrBlockNil) (IrBlockNil)]
     [(IrBlockCons block rest)
       (IrBlockCons (optimize-block block) (optimize-block-list rest))]))
+
+(define (optimize-block-list-fast [blocks : CompilerIrBlockList]) : CompilerIrBlockList
+  (match blocks
+    [(IrBlockNil) (IrBlockNil)]
+    [(IrBlockCons block rest)
+      (IrBlockCons
+        (optimize-block-fast block)
+        (optimize-block-list-fast rest))]))
 
 (define (optimize-function-once [func : CompilerIrFunction]) : CompilerIrFunction
   (match func
@@ -3134,6 +3153,17 @@
       ;; and eliminate dead pure assignments.
       (let
         [folded : CompilerIrBlockList (optimize-block-list blocks)]
+        (let
+          [cfg : CompilerIrBlockList (opt-cfg-simplify-blocks folded)]
+          (let
+            [used : OptUsedSet (opt-collect-blocks-uses (OptUsedNil) cfg)]
+            (IrFunction name params ret-ty frame (opt-dce-block-list used cfg)))))]))
+
+(define (optimize-function-once-fast [func : CompilerIrFunction]) : CompilerIrFunction
+  (match func
+    [(IrFunction name params ret-ty frame blocks)
+      (let
+        [folded : CompilerIrBlockList (optimize-block-list-fast blocks)]
         (let
           [cfg : CompilerIrBlockList (opt-cfg-simplify-blocks folded)]
           (let
@@ -3161,7 +3191,7 @@
   (if (= level 0)
     func
     (if (= level 1)
-      (optimize-function-once func)
+      (optimize-function-once-fast func)
       (optimize-function func))))
 
 (define (optimize-function-list [funcs : CompilerIrFunctionList]) : CompilerIrFunctionList

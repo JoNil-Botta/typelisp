@@ -11474,27 +11474,27 @@ mod tests {
             "make-array and array-push! should both retain overflow traps"
         );
         assert!(
-            count(
-                &ir,
-                f,
-                |i| matches!(i, Instruction::Gep { elem_ty: Type::I64, .. })
-            ) >= 3,
+            count(&ir, f, |i| matches!(
+                i,
+                Instruction::Gep {
+                    elem_ty: Type::I64,
+                    ..
+                }
+            )) >= 3,
             "array-push! should address old elements, copied elements, and the tail"
         );
         assert!(
-            count(
-                &ir,
-                f,
-                |i| matches!(i, Instruction::Store { ty: Type::U64, .. })
-            ) >= 2,
+            count(&ir, f, |i| matches!(
+                i,
+                Instruction::Store { ty: Type::U64, .. }
+            )) >= 2,
             "array-push! should store the replacement buffer pointer into the fat value"
         );
         assert!(
-            count(
-                &ir,
-                f,
-                |i| matches!(i, Instruction::Store { ty: Type::I64, .. })
-            ) >= 3,
+            count(&ir, f, |i| matches!(
+                i,
+                Instruction::Store { ty: Type::I64, .. }
+            )) >= 3,
             "array-push! should store the copied/tail elements and replacement length"
         );
     }

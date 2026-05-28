@@ -41,7 +41,7 @@ Status meanings:
 
 Audit date: 2026-05-25. Source baseline: `origin/main` at `fce7c0c`.
 
-Total inline Rust `#[test]` items under `src/`: 926.
+Total inline Rust `#[test]` items under `src/`: 933.
 
 | Rust source file | Rust tests | Behavior protected | Replacement path | Status |
 | --- | ---: | --- | --- | --- |
@@ -153,6 +153,20 @@ Named remaining blockers:
   cases: the no-Rust native path now runs division/remainder traps, signed
   MIN / -1 traps, u16 division-by-zero, shift-count traps, and valid shift-bound
   cases with expected native exits and stderr diagnostics.
+
+### 2026-05-28 Inline Additions
+
+- #1449 adds seven inline Rust tests for dynamic-array `array-push!` support:
+  parser recognition, typechecker unit/mismatch/dynamic-array-only rules,
+  `spmd-reduce` side-effect rejection, lowerer reallocation/copy/fat-value
+  update shape, and backend allocation/update emission shape. The no-Rust
+  replacement path is the paired selfhost implementation in
+  `selfhost/compiler_parse_core.tl`, `selfhost/compiler_typecheck.tl`, and
+  `selfhost/compiler_lower.tl`; the concrete selfhost checks are
+  `compiler-typecheck-array-builtin-tests-ok?` and
+  `compiler-lower-array-push-shape-ok?`, with end-to-end dynamic-array native
+  coverage in the compiler-driver fixture run by `tests/integration.rs` and
+  the CI integration scripts.
 
 ## File Inventory
 

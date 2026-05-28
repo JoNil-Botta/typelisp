@@ -1413,8 +1413,8 @@ mod tests {
 
     #[test]
     fn test_parse_array_push_special_form() {
-        let prog = parse("(define (f [a : (Array i64)] [v : i64]) : unit (array-push! a v))")
-            .unwrap();
+        let prog =
+            parse("(define (f [a : (Array i64)] [v : i64]) : unit (array-push! a v))").unwrap();
         let body = match &prog.decls[0] {
             Decl::DefFn { body, .. } => body.unspan(),
             other => panic!("expected DefFn, got {:?}", other),

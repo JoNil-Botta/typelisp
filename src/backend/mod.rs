@@ -17829,9 +17829,7 @@ mod tests {
 
     #[test]
     fn test_compile_array_push_allocates_copy_buffer_and_updates_fat() {
-        let asm = compile_ok(
-            "(define (f [a : (Array i64)] [v : i64]) : unit (array-push! a v))",
-        );
+        let asm = compile_ok("(define (f [a : (Array i64)] [v : i64]) : unit (array-push! a v))");
 
         assert!(asm.contains("    call tl_alloc"), "asm:\n{}", asm);
         assert!(asm.contains("tl_alloc:"), "asm:\n{}", asm);

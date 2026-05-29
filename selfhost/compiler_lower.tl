@@ -34,9 +34,11 @@
   (LowerState
     i64
     i64
+    i64
     String
     CompilerIrInstrList
     CompilerIrBlockList
+    CompilerIrFunctionList
     String
     CompilerSourceSpans
     LowerNameEnv))
@@ -46,6 +48,9 @@
 
 (defenum LowerLabel
   (LowerLabel LowerState String))
+
+(defenum LowerLambdaName
+  (LowerLambdaName LowerState String))
 
 (defenum LowerExpr
   (LowerExpr LowerState CompilerIrValue AstType))
@@ -71,7 +76,7 @@
   (ErrLowerValue CompilerDiagnostic))
 
 (defenum ResultLowerFunction
-  (OkLowerFunction CompilerIrFunction CompilerSourceSpans)
+  (OkLowerFunction CompilerIrFunctionList CompilerSourceSpans)
   (ErrLowerFunction CompilerDiagnostic))
 
 ;; `lower-decls` also threads the `CompilerSourceSpans` provenance side table
@@ -192,6 +197,14 @@
 
 (define (lower-function-list-reverse [functions : CompilerIrFunctionList]) : CompilerIrFunctionList
   (lower-function-list-reverse-onto functions IrFunctionNil))
+
+(define (lower-function-list-append
+  [left : CompilerIrFunctionList]
+  [right : CompilerIrFunctionList]) : CompilerIrFunctionList
+  (match left
+    [(IrFunctionNil) right]
+    [(IrFunctionCons head rest)
+      (IrFunctionCons head (lower-function-list-append rest right))]))
 
 (define (lower-extern-list-reverse-onto
   [externs : CompilerIrExternList]
@@ -1248,32 +1261,38 @@
 
 (define (lower-state-next-var [state : LowerState]) : i64
   (match state
-    [(LowerState next-var _ _ _ _ _ _ _) next-var]))
+    [(LowerState next-var _ _ _ _ _ _ _ _ _) next-var]))
 
 (define (lower-state-current-label [state : LowerState]) : String
   (match state
-    [(LowerState _ _ label _ _ _ _ _) label]))
+    [(LowerState _ _ _ label _ _ _ _ _ _) label]))
 
 (define (lower-state-current-function [state : LowerState]) : String
   (match state
-    [(LowerState _ _ _ _ _ function _ _) function]))
+    [(LowerState _ _ _ _ _ _ _ function _ _) function]))
 
 (define (lower-state-spans [state : LowerState]) : CompilerSourceSpans
   (match state
-    [(LowerState _ _ _ _ _ _ spans _) spans]))
+    [(LowerState _ _ _ _ _ _ _ _ spans _) spans]))
 
 (define (lower-state-names [state : LowerState]) : LowerNameEnv
   (match state
-    [(LowerState _ _ _ _ _ _ _ names) names]))
+    [(LowerState _ _ _ _ _ _ _ _ _ names) names]))
+
+(define (lower-state-functions [state : LowerState]) : CompilerIrFunctionList
+  (match state
+    [(LowerState _ _ _ _ _ _ functions _ _ _) functions]))
 
 (define (lower-state-alloc-var [state : LowerState]) : LowerAlloc
   (match state
     [(LowerState
         next-var
         next-label
+        next-lambda
         current-label
         current-instrs
         blocks
+        functions
         function
         spans
         names)
@@ -1281,9 +1300,11 @@
         (LowerState
           (+ next-var 1)
           next-label
+          next-lambda
           current-label
           current-instrs
           blocks
+          functions
           function
           spans
           names)
@@ -1294,9 +1315,11 @@
     [(LowerState
         next-var
         next-label
+        next-lambda
         current-label
         current-instrs
         blocks
+        functions
         function
         spans
         names)
@@ -1304,31 +1327,66 @@
         (LowerState
           next-var
           (+ next-label 1)
+          next-lambda
           current-label
           current-instrs
           blocks
+          functions
           function
           spans
           names)
         (string-append (string-append prefix ".") (int->string next-label)))]))
+
+(define (lower-state-fresh-lambda-name [state : LowerState]) : LowerLambdaName
+  (match state
+    [(LowerState
+        next-var
+        next-label
+        next-lambda
+        current-label
+        current-instrs
+        blocks
+        functions
+        function
+        spans
+        names)
+      (LowerLambdaName
+        (LowerState
+          next-var
+          next-label
+          (+ next-lambda 1)
+          current-label
+          current-instrs
+          blocks
+          functions
+          function
+          spans
+          names)
+        (string-append
+          (string-append (string-append "__tl_lambda_" function) "_")
+          (int->string next-lambda)))]))
 
 (define (lower-state-emit [state : LowerState] [instr : CompilerIrInstr]) : LowerState
   (match state
     [(LowerState
         next-var
         next-label
+        next-lambda
         current-label
         current-instrs
         blocks
+        functions
         function
         spans
         names)
       (LowerState
         next-var
         next-label
+        next-lambda
         current-label
         (IrInstrCons instr current-instrs)
         blocks
+        functions
         function
         spans
         names)]))
@@ -1341,18 +1399,22 @@
     [(LowerState
         next-var
         next-label
+        next-lambda
         current-label
         current-instrs
         blocks
+        functions
         function
         spans
         names)
       (LowerState
         next-var
         next-label
+        next-lambda
         current-label
         current-instrs
         blocks
+        functions
         function
         (compiler-source-spans-insert-instr spans function instr span)
         names)]))
@@ -1371,9 +1433,11 @@
     [(LowerState
         next-var
         next-label-id
+        next-lambda
         current-label
         current-instrs
         blocks
+        functions
         function
         spans
         names)
@@ -1383,20 +1447,50 @@
         (LowerState
           next-var
           next-label-id
+          next-lambda
           next-label
           IrInstrNil
           (IrBlockCons (IrBlock current-label block-instrs) blocks)
+          functions
           function
           spans
           names))]))
 
 (define (lower-state-build-blocks [state : LowerState]) : CompilerIrBlockList
   (match state
-    [(LowerState _ _ current-label current-instrs blocks _ _ _)
+    [(LowerState _ _ _ current-label current-instrs blocks _ _ _ _)
       (lower-block-list-reverse
         (IrBlockCons
           (IrBlock current-label (lower-instr-list-reverse current-instrs))
           blocks))]))
+
+(define (lower-state-add-functions
+  [state : LowerState]
+  [new-functions : CompilerIrFunctionList]
+  [new-spans : CompilerSourceSpans]) : LowerState
+  (match state
+    [(LowerState
+        next-var
+        next-label
+        next-lambda
+        current-label
+        current-instrs
+        blocks
+        functions
+        function
+        _
+        names)
+      (LowerState
+        next-var
+        next-label
+        next-lambda
+        current-label
+        current-instrs
+        blocks
+        (lower-function-list-append new-functions functions)
+        function
+        new-spans
+        names)]))
 
 (define (lower-materialize
   [state : LowerState]
@@ -2211,6 +2305,73 @@
       (LowerExpr state (IrValueFunction (lower-resolve-name state name)) ty))
     (lower-var state env name ty)))
 
+(define (lower-lambda-captures-env?
+  [outer-env : SymI64Env]
+  [body : AstExpr]
+  [bound : TcStringList]) : bool
+  (match outer-env
+    [(SymI64Nil) false]
+    [(SymI64Bind name _ rest)
+      (if (tc-expr-uses-free-name? body name bound)
+        true
+        (lower-lambda-captures-env? rest body bound))]))
+
+(define (lower-lambda-ret-type
+  [ctx : TcContext]
+  [type-env : TcTypeEnv]
+  [lambda-expr : AstExpr]
+  [maybe-ret : AstMaybeType]) : ResultTcType
+  (match maybe-ret
+    [(AstSomeType ty) (OkTcType (tc-resolve-type ctx ty))]
+    [(AstNoType)
+      (match (tc-expr ctx type-env lambda-expr)
+        [(OkTcType ty)
+          (match (tc-type-strip-region ty)
+            [(AstTyFunc _ ret) (OkTcType ret)]
+            [_ (ErrTcType "lower: lambda did not typecheck as a function")])]
+        [(ErrTcType message) (ErrTcType message)])]))
+
+(define (lower-lambda
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [params : AstParamList]
+  [maybe-ret : AstMaybeType]
+  [body : AstExpr]
+  [origin : AstExpr]
+  [expr-ty : AstType]) : ResultLowerExpr
+  (if (lower-lambda-captures-env? env body (tc-param-bound-names params))
+    (ErrLowerExpr
+      (lower-diagnostic-at-expr
+        origin
+        "lower: capturing lambdas require closure lowering (#1418)"))
+    (match (lower-lambda-ret-type ctx type-env origin maybe-ret)
+      [(ErrTcType message)
+        (ErrLowerExpr (lower-diagnostic-at-expr origin message))]
+      [(OkTcType ret-ty)
+        (match (lower-state-fresh-lambda-name state)
+          [(LowerLambdaName named-state lambda-name)
+            (match (lower-function
+              ctx
+              type-env
+              lambda-name
+              params
+              ret-ty
+              body
+              (lower-state-spans named-state)
+              (lower-state-names named-state))
+              [(OkLowerFunction lambda-functions lambda-spans)
+                (OkLowerExpr
+                  (LowerExpr
+                    (lower-state-add-functions
+                      named-state
+                      lambda-functions
+                      lambda-spans)
+                    (IrValueFunction lambda-name)
+                    expr-ty))]
+              [(ErrLowerFunction message) (ErrLowerExpr message)])])])))
+
 (define (lower-return-maybe [value : CompilerIrValue] [ty : AstType]) : CompilerIrMaybeValue
   (match ty
     [(AstTyUnit) IrNoValue]
@@ -2890,6 +3051,8 @@
             [(ErrLowerExpr message) (ErrLowerExpr message)])])]
     [(AstExprCall func args)
       (lower-call ctx state env type-env func args expr-ty origin)]
+    [(AstExprLambda params maybe-ret body)
+      (lower-lambda ctx state env type-env params maybe-ret body origin expr-ty)]
     [(AstExprLet bindings body)
       (match (lower-let-bindings ctx state env type-env bindings)
         [(OkLowerEnv binding-state body-env body-type-env)
@@ -7412,9 +7575,11 @@
           (LowerState
             param-count
             0
+            0
             "entry"
             IrInstrNil
             IrBlockNil
+            IrFunctionNil
             logical-name
             function-spans
             names)]
@@ -7422,12 +7587,14 @@
         (match (lower-tail-expr ctx state env type-env body ret-ty)
           [(OkLowerState final-state)
             (OkLowerFunction
-              (IrFunction
-                logical-name
-                (lower-param-list ctx params 0)
-                ret-ty
-                (lower-state-next-var final-state)
-                (lower-state-build-blocks final-state))
+              (IrFunctionCons
+                (IrFunction
+                  logical-name
+                  (lower-param-list ctx params 0)
+                  ret-ty
+                  (lower-state-next-var final-state)
+                  (lower-state-build-blocks final-state))
+                (lower-state-functions final-state))
               (lower-state-spans final-state))]
           [(ErrLowerState message) (ErrLowerFunction message)])))))
 
@@ -7544,7 +7711,7 @@
                               expr
                               spans
                               local-names)
-                              [(OkLowerFunction init-func init-spans)
+                              [(OkLowerFunction init-funcs init-spans)
                                 (lower-decls-in-module
                                   ctx
                                   top-env
@@ -7552,7 +7719,9 @@
                                   (IrGlobalCons
                                     (IrGlobal global-name global-ty IrValueUnit)
                                     globals)
-                                  (IrFunctionCons init-func functions)
+                                  (lower-function-list-append
+                                    init-funcs
+                                    functions)
                                   externs
                                   init-spans
                                   names
@@ -7601,13 +7770,13 @@
                   body
                   spans
                   local-names)
-                  [(OkLowerFunction func function-spans)
+                  [(OkLowerFunction lowered-functions function-spans)
                     (lower-decls-in-module
                       ctx
                       top-env
                       rest
                       globals
-                      (IrFunctionCons func functions)
+                      (lower-function-list-append lowered-functions functions)
                       externs
                       function-spans
                       names
@@ -7885,6 +8054,19 @@
   (inc x))
 (define (main) : i64
   (+ (apply1 inc 41) (shadow-inc inc 1)))")
+
+(define (compiler-lower-noncapturing-lambda-value-source) : String
+  "(define (get-fn) : (-> i64 i64)
+  (lambda ([x : i64]) : i64 (+ x 1)))")
+
+(define (compiler-lower-immediate-lambda-call-source) : String
+  "(define (main) : i64
+  ((lambda ([x : i64]) : i64 (+ x 1)) 41))")
+
+(define (compiler-lower-unit-lambda-call-source) : String
+  "(extern print-i64 : (-> i64 unit))
+(define (main) : unit
+  ((lambda () : unit (print-i64 1))))")
 
 ;; `(comptime expr)` folds to a literal via the scalar CTFE evaluator (#719).
 ;; These fixtures exercise arithmetic, `if`, and `let` folds, plus the
@@ -8310,6 +8492,14 @@
     [(IrInstrCallIndirect _ _ _ _) 1]
     [_ 0]))
 
+(define (lower-test-instr-indirect-unit-count [instr : CompilerIrInstr]) : i64
+  (match instr
+    [(IrInstrCallIndirect _ _ _ ty)
+      (match ty
+        [(AstTyUnit) 1]
+        [_ 0])]
+    [_ 0]))
+
 (define (lower-test-value-function-count
   [value : CompilerIrValue]
   [name : String]) : i64
@@ -8329,6 +8519,25 @@
       (+
         (lower-test-value-function-count value name)
         (lower-test-value-list-function-count rest name))]))
+
+(define (lower-test-instr-return-function-count
+  [instr : CompilerIrInstr]
+  [function-name : String]) : i64
+  (match instr
+    [(IrInstrReturn maybe-value)
+      (match maybe-value
+        [(IrSomeValue value)
+          (lower-test-value-function-count value function-name)]
+        [(IrNoValue) 0])]
+    [_ 0]))
+
+(define (lower-test-instr-indirect-callee-function-count
+  [instr : CompilerIrInstr]
+  [function-name : String]) : i64
+  (match instr
+    [(IrInstrCallIndirect _ func _ _)
+      (lower-test-value-function-count func function-name)]
+    [_ 0]))
 
 (define (lower-test-instr-call-arg-function-count
   [instr : CompilerIrInstr]
@@ -8522,6 +8731,34 @@
         (lower-test-instr-indirect-call-count instr)
         (lower-test-instrs-indirect-call-count rest))]))
 
+(define (lower-test-instrs-indirect-unit-count [instrs : CompilerIrInstrList]) : i64
+  (match instrs
+    [(IrInstrNil) 0]
+    [(IrInstrCons instr rest)
+      (+
+        (lower-test-instr-indirect-unit-count instr)
+        (lower-test-instrs-indirect-unit-count rest))]))
+
+(define (lower-test-instrs-return-function-count
+  [instrs : CompilerIrInstrList]
+  [function-name : String]) : i64
+  (match instrs
+    [(IrInstrNil) 0]
+    [(IrInstrCons instr rest)
+      (+
+        (lower-test-instr-return-function-count instr function-name)
+        (lower-test-instrs-return-function-count rest function-name))]))
+
+(define (lower-test-instrs-indirect-callee-function-count
+  [instrs : CompilerIrInstrList]
+  [function-name : String]) : i64
+  (match instrs
+    [(IrInstrNil) 0]
+    [(IrInstrCons instr rest)
+      (+
+        (lower-test-instr-indirect-callee-function-count instr function-name)
+        (lower-test-instrs-indirect-callee-function-count rest function-name))]))
+
 (define (lower-test-instrs-call-arg-function-count
   [instrs : CompilerIrInstrList]
   [call-name : String]
@@ -8658,6 +8895,44 @@
           (+
             (lower-test-instrs-indirect-call-count instrs)
             (lower-test-blocks-indirect-call-count rest))])]))
+
+(define (lower-test-blocks-indirect-unit-count [blocks : CompilerIrBlockList]) : i64
+  (match blocks
+    [(IrBlockNil) 0]
+    [(IrBlockCons block rest)
+      (match block
+        [(IrBlock _ instrs)
+          (+
+            (lower-test-instrs-indirect-unit-count instrs)
+            (lower-test-blocks-indirect-unit-count rest))])]))
+
+(define (lower-test-blocks-return-function-count
+  [blocks : CompilerIrBlockList]
+  [function-name : String]) : i64
+  (match blocks
+    [(IrBlockNil) 0]
+    [(IrBlockCons block rest)
+      (match block
+        [(IrBlock _ instrs)
+          (+
+            (lower-test-instrs-return-function-count instrs function-name)
+            (lower-test-blocks-return-function-count rest function-name))])]))
+
+(define (lower-test-blocks-indirect-callee-function-count
+  [blocks : CompilerIrBlockList]
+  [function-name : String]) : i64
+  (match blocks
+    [(IrBlockNil) 0]
+    [(IrBlockCons block rest)
+      (match block
+        [(IrBlock _ instrs)
+          (+
+            (lower-test-instrs-indirect-callee-function-count
+              instrs
+              function-name)
+            (lower-test-blocks-indirect-callee-function-count
+              rest
+              function-name))])]))
 
 (define (lower-test-blocks-call-arg-function-count
   [blocks : CompilerIrBlockList]
@@ -8842,6 +9117,49 @@
           (if (string-eq fname name)
             (lower-test-blocks-indirect-call-count blocks)
             (lower-test-function-indirect-call-count rest name))])]))
+
+(define (lower-test-function-indirect-unit-count
+  [funcs : CompilerIrFunctionList]
+  [name : String]) : i64
+  (match funcs
+    [(IrFunctionNil) (- 0 1)]
+    [(IrFunctionCons func rest)
+      (match func
+        [(IrFunction fname _ _ _ blocks)
+          (if (string-eq fname name)
+            (lower-test-blocks-indirect-unit-count blocks)
+            (lower-test-function-indirect-unit-count rest name))])]))
+
+(define (lower-test-function-return-function-count
+  [funcs : CompilerIrFunctionList]
+  [name : String]
+  [function-name : String]) : i64
+  (match funcs
+    [(IrFunctionNil) (- 0 1)]
+    [(IrFunctionCons func rest)
+      (match func
+        [(IrFunction fname _ _ _ blocks)
+          (if (string-eq fname name)
+            (lower-test-blocks-return-function-count blocks function-name)
+            (lower-test-function-return-function-count rest name function-name))])]))
+
+(define (lower-test-function-indirect-callee-function-count
+  [funcs : CompilerIrFunctionList]
+  [name : String]
+  [function-name : String]) : i64
+  (match funcs
+    [(IrFunctionNil) (- 0 1)]
+    [(IrFunctionCons func rest)
+      (match func
+        [(IrFunction fname _ _ _ blocks)
+          (if (string-eq fname name)
+            (lower-test-blocks-indirect-callee-function-count
+              blocks
+              function-name)
+            (lower-test-function-indirect-callee-function-count
+              rest
+              name
+              function-name))])]))
 
 (define (lower-test-function-call-arg-function-count
   [funcs : CompilerIrFunctionList]
@@ -9671,6 +9989,78 @@
               ok))])]
     [(ErrCompilerLower _) false]))
 
+(define (compiler-lower-noncapturing-lambda-value-ok?) : bool
+  (match (lower-compiler-source
+    (compiler-lower-noncapturing-lambda-value-source))
+    [(OkCompilerLower program _)
+      (match program
+        [(IrProgram _ functions _)
+          (let
+            [lambda-name : String "__tl_lambda_get-fn_0"]
+            (and
+              (= (compiler-ir-function-list-count functions) 2)
+              (and
+                (=
+                  (lower-test-function-return-function-count
+                    functions
+                    "get-fn"
+                    lambda-name)
+                  1)
+                (> (lower-test-function-binop-count functions lambda-name) 0))))])]
+    [(ErrCompilerLower _) false]))
+
+(define (compiler-lower-immediate-lambda-call-ok?) : bool
+  (match (lower-compiler-source (compiler-lower-immediate-lambda-call-source))
+    [(OkCompilerLower program _)
+      (match program
+        [(IrProgram _ functions _)
+          (let
+            [lambda-name : String "__tl_lambda_main_0"]
+            (and
+              (= (compiler-ir-function-list-count functions) 2)
+              (and
+                (= (lower-test-function-indirect-call-count functions "main") 1)
+                (and
+                  (=
+                    (lower-test-function-indirect-callee-function-count
+                      functions
+                      "main"
+                      lambda-name)
+                    1)
+                  (=
+                    (lower-test-function-call-count
+                      functions
+                      "main"
+                      lambda-name)
+                    0)))))])]
+    [(ErrCompilerLower _) false]))
+
+(define (compiler-lower-unit-lambda-call-ok?) : bool
+  (match (lower-compiler-source (compiler-lower-unit-lambda-call-source))
+    [(OkCompilerLower program _)
+      (match program
+        [(IrProgram _ functions _)
+          (let
+            [lambda-name : String "__tl_lambda_main_0"]
+            (and
+              (= (compiler-ir-function-list-count functions) 2)
+              (and
+                (= (lower-test-function-indirect-unit-count functions "main") 1)
+                (=
+                  (lower-test-function-indirect-callee-function-count
+                    functions
+                    "main"
+                    lambda-name)
+                  1))))])]
+    [(ErrCompilerLower _) false]))
+
+(define (compiler-lower-noncapturing-lambda-tests-ok?) : bool
+  (and
+    (compiler-lower-noncapturing-lambda-value-ok?)
+    (and
+      (compiler-lower-immediate-lambda-call-ok?)
+      (compiler-lower-unit-lambda-call-ok?))))
+
 (define (compiler-lower-file-handle-status-shape-ok? [src : String]) : bool
   (match (lower-compiler-source src)
     [(OkCompilerLower program _)
@@ -10174,6 +10564,9 @@
         unit
         (set! ok false))
       (if (compiler-lower-function-value-shape-ok?)
+        unit
+        (set! ok false))
+      (if (compiler-lower-noncapturing-lambda-tests-ok?)
         unit
         (set! ok false))
       (if (compiler-lower-ok? (compiler-lower-aggregate-source))

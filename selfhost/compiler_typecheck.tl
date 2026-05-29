@@ -200,6 +200,9 @@
 (define (tc-region-marker-name) : String
   "__tl_active_region")
 
+(define (tc-cleanup-owner-marker-name) : String
+  " __tl_cleanup_owner")
+
 (define (tc-return-type-name) : String
   "__tl_return_type")
 
@@ -647,6 +650,57 @@
   (if (tc-string-list-contains items name)
     items
     (TcStringCons name items)))
+
+(define (tc-bind-cleanup-owner [env : TcTypeEnv] [name : String]) : TcTypeEnv
+  (tc-bind env (tc-cleanup-owner-marker-name) (AstTyVar name)))
+
+(define (tc-cleanup-owner-marker-for?
+  [key : String]
+  [ty : AstType]
+  [name : String]) : bool
+  (if (string-eq key (tc-cleanup-owner-marker-name))
+    (match ty
+      [(AstTyVar owner) (string-eq owner name)]
+      [_ false])
+    false))
+
+(define (tc-cleanup-owner-marker-entry? [key : String] [ty : AstType]) : bool
+  (if (string-eq key (tc-cleanup-owner-marker-name))
+    (match ty
+      [(AstTyVar _) true]
+      [_ false])
+    false))
+
+(define (tc-cleanup-owner-marker-head? [env : TcTypeEnv] [name : String]) : bool
+  (match env
+    [(TcTypeNil) false]
+    [(TcTypeBind key ty _) (tc-cleanup-owner-marker-for? key ty name)]))
+
+(define (tc-cleanup-owner-active? [env : TcTypeEnv] [name : String]) : bool
+  (match env
+    [(TcTypeNil) false]
+    [(TcTypeBind key ty rest)
+      (if (string-eq key name)
+        (tc-cleanup-owner-marker-head? rest name)
+        (tc-cleanup-owner-active? rest name))]))
+
+(define (tc-active-cleanup-owners-scan [root : TcTypeEnv] [env : TcTypeEnv]) : TcStringList
+  (match env
+    [(TcTypeNil) TcStringNil]
+    [(TcTypeBind key ty rest)
+      (let
+        [owners : TcStringList (tc-active-cleanup-owners-scan root rest)]
+        (if (string-eq key (tc-cleanup-owner-marker-name))
+          (match ty
+            [(AstTyVar owner)
+              (if (tc-cleanup-owner-active? root owner)
+                (tc-string-list-add owners owner)
+                owners)]
+            [_ owners])
+          owners))]))
+
+(define (tc-active-cleanup-owners [env : TcTypeEnv]) : TcStringList
+  (tc-active-cleanup-owners-scan env env))
 
 (define (tc-string-list-eq [a : TcStringList] [b : TcStringList]) : bool
   (match a
@@ -2553,19 +2607,24 @@
                       "typecheck: cannot pass region-tagged value to function parameter; region value would escape")
                     (match constructor-target
                       [(AstSomeType target)
-                        (match (tc-ensure-region-value-can-flow-into
+                        (match (tc-ensure-cleanup-resource-not-stored-expr
                           env
-                          target
-                          got
-                          "constructor result")
+                          arg)
                           [(OkTcUnit)
-                            (tc-check-call-args
-                              ctx
+                            (match (tc-ensure-region-value-can-flow-into
                               env
-                              rest-args
-                              rest-params
-                              allow-region-args
-                              constructor-target)]
+                              target
+                              got
+                              "constructor result")
+                              [(OkTcUnit)
+                                (tc-check-call-args
+                                  ctx
+                                  env
+                                  rest-args
+                                  rest-params
+                                  allow-region-args
+                                  constructor-target)]
+                              [(ErrTcUnit message) (ErrTcUnit message)])]
                           [(ErrTcUnit message) (ErrTcUnit message)])]
                       [(AstNoType)
                         (tc-check-call-args
@@ -2799,23 +2858,31 @@
                     (tc-resolve-type ctx want)
                     "typecheck: let binding type mismatch")
                     [(OkTcUnit)
-                      (match (tc-ensure-reference-value-can-bind env init-ty)
+                      (match (tc-ensure-cleanup-resource-not-let-bound env init)
                         [(OkTcUnit)
-                          (tc-let-bindings
-                            ctx
-                            (tc-bind
-                              env
-                              name
-                              (if (tc-type-contains-any-region init-ty)
-                                init-ty
-                                (tc-resolve-type ctx want)))
-                            rest)]
+                          (match (tc-ensure-reference-value-can-bind
+                            env
+                            init-ty)
+                            [(OkTcUnit)
+                              (tc-let-bindings
+                                ctx
+                                (tc-bind
+                                  env
+                                  name
+                                  (if (tc-type-contains-any-region init-ty)
+                                    init-ty
+                                    (tc-resolve-type ctx want)))
+                                rest)]
+                            [(ErrTcUnit message) (ErrTcEnv message)])]
                         [(ErrTcUnit message) (ErrTcEnv message)])]
                     [(ErrTcUnit message) (ErrTcEnv message)])]
                 [(AstNoType)
-                  (match (tc-ensure-reference-value-can-bind env init-ty)
+                  (match (tc-ensure-cleanup-resource-not-let-bound env init)
                     [(OkTcUnit)
-                      (tc-let-bindings ctx (tc-bind env name init-ty) rest)]
+                      (match (tc-ensure-reference-value-can-bind env init-ty)
+                        [(OkTcUnit)
+                          (tc-let-bindings ctx (tc-bind env name init-ty) rest)]
+                        [(ErrTcUnit message) (ErrTcEnv message)])]
                     [(ErrTcUnit message) (ErrTcEnv message)])])]
             [(ErrTcType message) (ErrTcEnv message)])])]))
 
@@ -2851,12 +2918,18 @@
         [(AstResourceBinding name init cleanup)
           (match (tc-expr ctx env init)
             [(OkTcType init-ty)
-              (match (tc-resource-cleanup-ok ctx env cleanup init-ty)
+              (match (tc-ensure-cleanup-resource-not-transferred env init)
                 [(OkTcUnit)
-                  (tc-resource-bindings
-                    ctx
-                    (tc-bind env name (tc-type-without-regions init-ty))
-                    rest)]
+                  (match (tc-resource-cleanup-ok ctx env cleanup init-ty)
+                    [(OkTcUnit)
+                      (tc-resource-bindings
+                        ctx
+                        (tc-bind
+                          (tc-bind-cleanup-owner env name)
+                          name
+                          (tc-type-without-regions init-ty))
+                        rest)]
+                    [(ErrTcUnit message) (ErrTcEnv message)])]
                 [(ErrTcUnit message) (ErrTcEnv message)])]
             [(ErrTcType message) (ErrTcEnv message)])])]))
 
@@ -3734,26 +3807,190 @@
     [(AstExprPtrToInt ptr) (tc-expr-uses-free-name? ptr name bound)]
     [(AstExprIntToPtr value _) (tc-expr-uses-free-name? value name bound)]))
 
-(define (tc-check-lambda-region-captures-scan
+(define (tc-name-is-free-cleanup-owner?
+  [owners : TcStringList]
+  [name : String]
+  [bound : TcStringList]) : bool
+  (and
+    (tc-string-list-contains owners name)
+    (not (tc-string-list-contains bound name))))
+
+(define (tc-expr-list-result-uses-cleanup-owner?
+  [exprs : AstExprList]
+  [owners : TcStringList]
+  [bound : TcStringList]) : bool
+  (match exprs
+    [(AstExprNil) false]
+    [(AstExprCons expr rest)
+      (match rest
+        [(AstExprNil) (tc-expr-result-uses-cleanup-owner? expr owners bound)]
+        [_ (tc-expr-list-result-uses-cleanup-owner? rest owners bound)])]))
+
+(define (tc-expr-list-any-result-uses-cleanup-owner?
+  [exprs : AstExprList]
+  [owners : TcStringList]
+  [bound : TcStringList]) : bool
+  (match exprs
+    [(AstExprNil) false]
+    [(AstExprCons expr rest)
+      (or
+        (tc-expr-result-uses-cleanup-owner? expr owners bound)
+        (tc-expr-list-any-result-uses-cleanup-owner? rest owners bound))]))
+
+(define (tc-match-arms-result-use-cleanup-owner?
+  [arms : AstMatchArmList]
+  [owners : TcStringList]
+  [bound : TcStringList]) : bool
+  (match arms
+    [(AstMatchArmNil) false]
+    [(AstMatchArmCons arm rest)
+      (match arm
+        [(AstMatchArm pattern body)
+          (or
+            (tc-expr-result-uses-cleanup-owner?
+              body
+              owners
+              (tc-pattern-add-bound-names pattern bound))
+            (tc-match-arms-result-use-cleanup-owner? rest owners bound))])]))
+
+(define (tc-expr-result-uses-cleanup-owner?
+  [expr : AstExpr]
+  [owners : TcStringList]
+  [bound : TcStringList]) : bool
+  (match expr
+    [(AstExprSpanned inner _)
+      (tc-expr-result-uses-cleanup-owner? inner owners bound)]
+    [(AstExprVar name) (tc-name-is-free-cleanup-owner? owners name bound)]
+    [(AstExprIf _ then-branch else-branch)
+      (or
+        (tc-expr-result-uses-cleanup-owner? then-branch owners bound)
+        (tc-expr-result-uses-cleanup-owner? else-branch owners bound))]
+    [(AstExprLet bindings body)
+      (tc-expr-result-uses-cleanup-owner?
+        body
+        owners
+        (tc-let-binding-list-add-bound-names bindings bound))]
+    [(AstExprMatch _ arms)
+      (tc-match-arms-result-use-cleanup-owner? arms owners bound)]
+    [(AstExprForeach index _ _ _ body)
+      (tc-expr-result-uses-cleanup-owner?
+        body
+        owners
+        (tc-string-list-add bound index))]
+    [(AstExprSpmdReduce _ index _ _ _ _ value)
+      (tc-expr-result-uses-cleanup-owner?
+        value
+        owners
+        (tc-string-list-add bound index))]
+    [(AstExprBegin exprs)
+      (tc-expr-list-result-uses-cleanup-owner? exprs owners bound)]
+    [(AstExprUnsafe exprs)
+      (tc-expr-list-result-uses-cleanup-owner? exprs owners bound)]
+    [(AstExprAnn inner _)
+      (tc-expr-result-uses-cleanup-owner? inner owners bound)]
+    [(AstExprCast inner _)
+      (tc-expr-result-uses-cleanup-owner? inner owners bound)]
+    [(AstExprComptime inner)
+      (tc-expr-result-uses-cleanup-owner? inner owners bound)]
+    [(AstExprTry inner) (tc-expr-result-uses-cleanup-owner? inner owners bound)]
+    [(AstExprWithRegion _ body)
+      (tc-expr-list-result-uses-cleanup-owner? body owners bound)]
+    [(AstExprWithResource bindings body)
+      (tc-expr-list-result-uses-cleanup-owner?
+        body
+        owners
+        (tc-resource-binding-list-add-bound-names bindings bound))]
+    [_ false]))
+
+(define (tc-expr-result-uses-active-cleanup-owner?
+  [env : TcTypeEnv]
+  [expr : AstExpr]) : bool
+  (tc-expr-result-uses-cleanup-owner?
+    expr
+    (tc-active-cleanup-owners env)
+    TcStringNil))
+
+(define (tc-expr-list-any-result-uses-active-cleanup-owner?
+  [env : TcTypeEnv]
+  [exprs : AstExprList]) : bool
+  (tc-expr-list-any-result-uses-cleanup-owner?
+    exprs
+    (tc-active-cleanup-owners env)
+    TcStringNil))
+
+(define (tc-ensure-cleanup-resource-not-let-bound
+  [env : TcTypeEnv]
+  [expr : AstExpr]) : ResultTcUnit
+  (if (tc-expr-result-uses-active-cleanup-owner? env expr)
+    (ErrTcUnit
+      "typecheck: ordinary let cannot own cleanup-required resource; use with")
+    OkTcUnit))
+
+(define (tc-ensure-cleanup-resource-not-transferred
+  [env : TcTypeEnv]
+  [expr : AstExpr]) : ResultTcUnit
+  (if (tc-expr-result-uses-active-cleanup-owner? env expr)
+    (ErrTcUnit
+      "typecheck: cleanup-required resource already has a cleanup owner")
+    OkTcUnit))
+
+(define (tc-ensure-cleanup-resource-not-stored-expr
+  [env : TcTypeEnv]
+  [expr : AstExpr]) : ResultTcUnit
+  (if (tc-expr-result-uses-active-cleanup-owner? env expr)
+    (ErrTcUnit
+      "typecheck: cannot store cleanup-required resource in ordinary aggregate")
+    OkTcUnit))
+
+(define (tc-ensure-cleanup-resource-not-stored-list
+  [env : TcTypeEnv]
+  [exprs : AstExprList]) : ResultTcUnit
+  (if (tc-expr-list-any-result-uses-active-cleanup-owner? env exprs)
+    (ErrTcUnit
+      "typecheck: cannot store cleanup-required resource in ordinary aggregate")
+    OkTcUnit))
+
+(define (tc-ensure-cleanup-resource-not-assigned
+  [env : TcTypeEnv]
+  [expr : AstExpr]) : ResultTcUnit
+  (if (tc-expr-result-uses-active-cleanup-owner? env expr)
+    (ErrTcUnit
+      "typecheck: cannot store cleanup-required resource in longer-lived binding")
+    OkTcUnit))
+
+(define (tc-check-lambda-region-captures-scan-root
+  [root : TcTypeEnv]
   [env : TcTypeEnv]
   [bound : TcStringList]
   [body : AstExpr]) : ResultTcUnit
   (match env
     [(TcTypeNil) OkTcUnit]
     [(TcTypeBind key ty rest)
-      (if (or
-        (string-eq key (tc-region-marker-name))
-        (string-eq key (tc-default-boundary-name)))
-        (tc-check-lambda-region-captures-scan rest bound body)
-        (if (tc-expr-uses-free-name? body key bound)
-          (if (tc-type-contains-reference? ty)
-            (ErrTcUnit
-              "typecheck: lambda cannot capture immutable reference; reference value would escape lexical scope")
-            (if (tc-type-contains-any-region ty)
-              (ErrTcUnit
-                "typecheck: lambda cannot capture region-tagged value; region value would escape")
-              (tc-check-lambda-region-captures-scan rest bound body)))
-          (tc-check-lambda-region-captures-scan rest bound body)))]))
+      (cond
+        [(or
+            (string-eq key (tc-region-marker-name))
+            (or
+              (string-eq key (tc-default-boundary-name))
+              (tc-cleanup-owner-marker-entry? key ty)))
+          (tc-check-lambda-region-captures-scan-root root rest bound body)]
+        [(not (tc-expr-uses-free-name? body key bound))
+          (tc-check-lambda-region-captures-scan-root root rest bound body)]
+        [(tc-cleanup-owner-active? root key)
+          (ErrTcUnit
+            "typecheck: lambda cannot capture cleanup-required resource; resource value would escape")]
+        [(tc-type-contains-reference? ty)
+          (ErrTcUnit
+            "typecheck: lambda cannot capture immutable reference; reference value would escape lexical scope")]
+        [(tc-type-contains-any-region ty)
+          (ErrTcUnit
+            "typecheck: lambda cannot capture region-tagged value; region value would escape")]
+        [else (tc-check-lambda-region-captures-scan-root root rest bound body)])]))
+
+(define (tc-check-lambda-region-captures-scan
+  [env : TcTypeEnv]
+  [bound : TcStringList]
+  [body : AstExpr]) : ResultTcUnit
+  (tc-check-lambda-region-captures-scan-root env env bound body))
 
 (define (tc-check-lambda-region-captures
   [env : TcTypeEnv]
@@ -5214,10 +5451,13 @@
               [(ErrTcType message) (ErrTcType message)]))]
         [(ErrTcUnit message) (ErrTcType message)])]
     [(AstExprTuple exprs)
-      (match (tc-expr-list-types ctx env exprs)
-        [(OkTcTypeList tys)
-          (OkTcType (tc-tag-active-region env (AstTyTuple tys)))]
-        [(ErrTcTypeList message) (ErrTcType message)])]
+      (match (tc-ensure-cleanup-resource-not-stored-list env exprs)
+        [(OkTcUnit)
+          (match (tc-expr-list-types ctx env exprs)
+            [(OkTcTypeList tys)
+              (OkTcType (tc-tag-active-region env (AstTyTuple tys)))]
+            [(ErrTcTypeList message) (ErrTcType message)])]
+        [(ErrTcUnit message) (ErrTcType message)])]
     [(AstExprTupleRef tuple index)
       (match (tc-expr ctx env tuple)
         [(OkTcType tuple-ty)
@@ -5230,16 +5470,20 @@
             [_ (ErrTcType "typecheck: tuple-ref requires tuple type")])]
         [(ErrTcType message) (ErrTcType message)])]
     [(AstExprArray exprs)
-      (match exprs
-        [(AstExprNil) (ErrTcType "typecheck: cannot infer type of empty array")]
-        [(AstExprCons first rest)
-          (match (tc-expr ctx env first)
-            [(OkTcType first-ty)
-              (match (tc-check-array-rest ctx env rest first-ty)
-                [(OkTcUnit)
-                  (OkTcType (AstTyArray first-ty (tc-expr-list-len exprs)))]
-                [(ErrTcUnit message) (ErrTcType message)])]
-            [(ErrTcType message) (ErrTcType message)])])]
+      (match (tc-ensure-cleanup-resource-not-stored-list env exprs)
+        [(OkTcUnit)
+          (match exprs
+            [(AstExprNil)
+              (ErrTcType "typecheck: cannot infer type of empty array")]
+            [(AstExprCons first rest)
+              (match (tc-expr ctx env first)
+                [(OkTcType first-ty)
+                  (match (tc-check-array-rest ctx env rest first-ty)
+                    [(OkTcUnit)
+                      (OkTcType (AstTyArray first-ty (tc-expr-list-len exprs)))]
+                    [(ErrTcUnit message) (ErrTcType message)])]
+                [(ErrTcType message) (ErrTcType message)])])]
+        [(ErrTcUnit message) (ErrTcType message)])]
     [(AstExprMakeArray elem-ty len)
       (let
         [elem : AstType (tc-resolve-type ctx elem-ty)]
@@ -5284,19 +5528,24 @@
                           elem-ty
                           "typecheck: array-set! value type mismatch")
                           [(OkTcUnit)
-                            (match (tc-ensure-region-value-can-flow-into
+                            (match (tc-ensure-cleanup-resource-not-stored-expr
                               env
-                              array-ty
-                              value-ty
-                              "array")
+                              value)
                               [(OkTcUnit)
-                                (match (tc-ensure-reference-value-can-store-in-place
-                                  ctx
+                                (match (tc-ensure-region-value-can-flow-into
                                   env
-                                  array
+                                  array-ty
                                   value-ty
                                   "array")
-                                  [(OkTcUnit) (OkTcType (AstTyUnit))]
+                                  [(OkTcUnit)
+                                    (match (tc-ensure-reference-value-can-store-in-place
+                                      ctx
+                                      env
+                                      array
+                                      value-ty
+                                      "array")
+                                      [(OkTcUnit) (OkTcType (AstTyUnit))]
+                                      [(ErrTcUnit message) (ErrTcType message)])]
                                   [(ErrTcUnit message) (ErrTcType message)])]
                               [(ErrTcUnit message) (ErrTcType message)])]
                           [(ErrTcUnit message) (ErrTcType message)])]
@@ -5309,19 +5558,24 @@
                           elem-ty
                           "typecheck: array-set! value type mismatch")
                           [(OkTcUnit)
-                            (match (tc-ensure-region-value-can-flow-into
+                            (match (tc-ensure-cleanup-resource-not-stored-expr
                               env
-                              array-ty
-                              value-ty
-                              "array")
+                              value)
                               [(OkTcUnit)
-                                (match (tc-ensure-reference-value-can-store-in-place
-                                  ctx
+                                (match (tc-ensure-region-value-can-flow-into
                                   env
-                                  array
+                                  array-ty
                                   value-ty
                                   "array")
-                                  [(OkTcUnit) (OkTcType (AstTyUnit))]
+                                  [(OkTcUnit)
+                                    (match (tc-ensure-reference-value-can-store-in-place
+                                      ctx
+                                      env
+                                      array
+                                      value-ty
+                                      "array")
+                                      [(OkTcUnit) (OkTcType (AstTyUnit))]
+                                      [(ErrTcUnit message) (ErrTcType message)])]
                                   [(ErrTcUnit message) (ErrTcType message)])]
                               [(ErrTcUnit message) (ErrTcType message)])]
                           [(ErrTcUnit message) (ErrTcType message)])]
@@ -5342,12 +5596,17 @@
                     elem-ty
                     "typecheck: array-push! value type mismatch")
                     [(OkTcUnit)
-                      (match (tc-ensure-region-value-can-flow-into
+                      (match (tc-ensure-cleanup-resource-not-stored-expr
                         env
-                        array-ty
-                        value-ty
-                        "array")
-                        [(OkTcUnit) (OkTcType (AstTyUnit))]
+                        value)
+                        [(OkTcUnit)
+                          (match (tc-ensure-region-value-can-flow-into
+                            env
+                            array-ty
+                            value-ty
+                            "array")
+                            [(OkTcUnit) (OkTcType (AstTyUnit))]
+                            [(ErrTcUnit message) (ErrTcType message)])]
                         [(ErrTcUnit message) (ErrTcType message)])]
                     [(ErrTcUnit message) (ErrTcType message)])]
                 [(ErrTcType message) (ErrTcType message)])]
@@ -5399,17 +5658,20 @@
                 var-ty
                 "typecheck: assignment type mismatch")
                 [(OkTcUnit)
-                  (match (tc-ensure-region-value-can-flow-into
-                    env
-                    var-ty
-                    value-ty
-                    "assignment")
+                  (match (tc-ensure-cleanup-resource-not-assigned env value)
                     [(OkTcUnit)
-                      (match (tc-ensure-reference-value-can-assign
+                      (match (tc-ensure-region-value-can-flow-into
                         env
-                        name
-                        value-ty)
-                        [(OkTcUnit) (OkTcType (AstTyUnit))]
+                        var-ty
+                        value-ty
+                        "assignment")
+                        [(OkTcUnit)
+                          (match (tc-ensure-reference-value-can-assign
+                            env
+                            name
+                            value-ty)
+                            [(OkTcUnit) (OkTcType (AstTyUnit))]
+                            [(ErrTcUnit message) (ErrTcType message)])]
                         [(ErrTcUnit message) (ErrTcType message)])]
                     [(ErrTcUnit message) (ErrTcType message)])]
                 [(ErrTcUnit message) (ErrTcType message)])]
@@ -5564,7 +5826,17 @@
           [(ErrTcType message) (ErrTcType message)]))]
     [(AstExprWithResource bindings body)
       (match (tc-resource-bindings ctx env bindings)
-        [(OkTcEnv body-env) (tc-begin-list ctx body-env body)]
+        [(OkTcEnv body-env)
+          (match (tc-begin-list ctx body-env body)
+            [(OkTcType body-ty)
+              (if (tc-expr-list-result-uses-cleanup-owner?
+                body
+                (tc-resource-binding-list-add-bound-names bindings TcStringNil)
+                TcStringNil)
+                (ErrTcType
+                  "typecheck: cleanup-required resource would escape with scope")
+                (OkTcType body-ty))]
+            [(ErrTcType message) (ErrTcType message)])]
         [(ErrTcEnv message) (ErrTcType message)])]
     [(AstExprComptime inner)
       (match (compiler-ctfe-eval inner (tc-ctfe-env ctx) (ctfe-fuel-limit))
@@ -6591,20 +6863,138 @@
   (with ([h 1 (close h)])
     h))")
 
+(define (compiler-typecheck-resource-with-nested-source) : String
+  "(define (close [h : i64]) : unit unit)
+(define (main) : i64
+  (with ([outer 1 close])
+    (with ([inner (+ outer 1) close])
+      (+ outer inner))))")
+
+(define (compiler-typecheck-resource-with-let-source) : String
+  "(define (close [h : i64]) : unit unit)
+(define (main) : i64
+  (with ([h 1 close])
+    (let ([copy h])
+      copy)))")
+
+(define (compiler-typecheck-resource-with-escape-source) : String
+  "(define (close [h : i64]) : unit unit)
+(define (main) : i64
+  (with ([h 1 close])
+    h))")
+
+(define (compiler-typecheck-resource-with-tuple-store-source) : String
+  "(define (close [h : i64]) : unit unit)
+(define (main) : i64
+  (with ([h 1 close])
+    (let ([t : (Tuple i64 i64) (tuple h 2)])
+      0)))")
+
+(define (compiler-typecheck-resource-with-array-store-source) : String
+  "(define (close [h : i64]) : unit unit)
+(define (main) : i64
+  (with ([h 1 close])
+    (let ([items : (Array i64 2) (array h 2)])
+      0)))")
+
+(define (compiler-typecheck-resource-with-struct-store-source) : String
+  "(defstruct Box (value i64))
+(define (close [h : i64]) : unit unit)
+(define (main) : i64
+  (with ([h 1 close])
+    (let ([box : Box (Box h)])
+      0)))")
+
+(define (compiler-typecheck-resource-with-enum-store-source) : String
+  "(defenum Maybe (Some i64))
+(define (close [h : i64]) : unit unit)
+(define (main) : i64
+  (with ([h 1 close])
+    (let ([m : Maybe (Some h)])
+      0)))")
+
+(define (compiler-typecheck-resource-with-lambda-capture-source) : String
+  "(define (close [h : i64]) : unit unit)
+(define (main) : i64
+  (with ([h 1 close])
+    ((lambda () : i64 h))))")
+
+(define (compiler-typecheck-resource-with-transfer-source) : String
+  "(define (close [h : i64]) : unit unit)
+(define (main) : i64
+  (with ([h 1 close]
+         [copy h close])
+    copy))")
+
+(define (compiler-typecheck-resource-with-assignment-source) : String
+  "(define (close [h : i64]) : unit unit)
+(define (main) : i64
+  (let ([slot : i64 0])
+    (with ([h 1 close])
+      (set! slot h))))")
+
+(define (compiler-typecheck-resource-with-shadow-source) : String
+  "(define (close [h : i64]) : unit unit)
+(define (main) : i64
+  (with ([h 1 close])
+    (let ([h : i64 2])
+      ((lambda () : i64 h)))))")
+
 (define (compiler-typecheck-resource-with-tests-ok?) : bool
   (and
     (compiler-typecheck-ok? (compiler-typecheck-resource-with-source))
     (and
-      (compiler-typecheck-error-ok?
-        (compiler-typecheck-resource-with-cleanup-mismatch-source)
-        "typecheck: with cleanup function type mismatch")
+      (compiler-typecheck-ok? (compiler-typecheck-resource-with-nested-source))
       (and
-        (compiler-typecheck-error-ok?
-          (compiler-typecheck-resource-with-cleanup-return-source)
-          "typecheck: with cleanup function type mismatch")
-        (compiler-typecheck-error-ok?
-          (compiler-typecheck-resource-with-cleanup-expression-source)
-          "typecheck: with cleanup must be a direct function name")))))
+        (compiler-typecheck-ok?
+          (compiler-typecheck-resource-with-shadow-source))
+        (and
+          (compiler-typecheck-error-ok?
+            (compiler-typecheck-resource-with-cleanup-mismatch-source)
+            "typecheck: with cleanup function type mismatch")
+          (and
+            (compiler-typecheck-error-ok?
+              (compiler-typecheck-resource-with-cleanup-return-source)
+              "typecheck: with cleanup function type mismatch")
+            (and
+              (compiler-typecheck-error-ok?
+                (compiler-typecheck-resource-with-cleanup-expression-source)
+                "typecheck: with cleanup must be a direct function name")
+              (and
+                (compiler-typecheck-error-ok?
+                  (compiler-typecheck-resource-with-let-source)
+                  "typecheck: ordinary let cannot own cleanup-required resource; use with")
+                (and
+                  (compiler-typecheck-error-ok?
+                    (compiler-typecheck-resource-with-escape-source)
+                    "typecheck: cleanup-required resource would escape with scope")
+                  (and
+                    (compiler-typecheck-error-ok?
+                      (compiler-typecheck-resource-with-tuple-store-source)
+                      "typecheck: cannot store cleanup-required resource in ordinary aggregate")
+                    (and
+                      (compiler-typecheck-error-ok?
+                        (compiler-typecheck-resource-with-array-store-source)
+                        "typecheck: cannot store cleanup-required resource in ordinary aggregate")
+                      (and
+                        (compiler-typecheck-error-ok?
+                          (compiler-typecheck-resource-with-struct-store-source)
+                          "typecheck: cannot store cleanup-required resource in ordinary aggregate")
+                        (and
+                          (compiler-typecheck-error-ok?
+                            (compiler-typecheck-resource-with-enum-store-source)
+                            "typecheck: cannot store cleanup-required resource in ordinary aggregate")
+                          (and
+                            (compiler-typecheck-error-ok?
+                              (compiler-typecheck-resource-with-lambda-capture-source)
+                              "typecheck: lambda cannot capture cleanup-required resource; resource value would escape")
+                            (and
+                              (compiler-typecheck-error-ok?
+                                (compiler-typecheck-resource-with-transfer-source)
+                                "typecheck: cleanup-required resource already has a cleanup owner")
+                              (compiler-typecheck-error-ok?
+                                (compiler-typecheck-resource-with-assignment-source)
+                                "typecheck: cannot store cleanup-required resource in longer-lived binding"))))))))))))))))
 
 (define (compiler-typecheck-result-try-tests-ok?) : bool
   (and

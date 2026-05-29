@@ -424,6 +424,10 @@ if [ "$WINDOWS_SEED_STAGED_RUNTIME_GAP" -eq 1 ] || [ "$LINUX_SEED_STAGED_RUNTIME
     echo
     echo "[no-rust-stage0] skipping seed build/run artifact gates until staged runtime symbols land in stage0:"
     echo "[no-rust-stage0]   native integration corpus, examples, stdlib modules and fixtures"
+elif [ "$HOST_OS" = linux ] && [ "$SEED_IS_STAGE1_BUNDLE" -eq 1 ]; then
+    echo
+    echo "[no-rust-stage0] skipping seed build/run artifact gates until the stage1 bundle reaches compiler/runtime parity:"
+    echo "[no-rust-stage0]   native integration corpus, examples, stdlib modules and fixtures"
 else
     run_gate "native integration corpus" scripts/verify-integration.sh
     run_gate "examples" scripts/verify-examples.sh
@@ -434,6 +438,11 @@ if [ "$HOST_OS" = linux ]; then
     if [ "$LINUX_SEED_STAGED_RUNTIME_GAP" -eq 1 ]; then
         echo
         echo "[no-rust-stage0] skipping Linux seed build/run gates until staged runtime symbols land in stage0:"
+        echo "[no-rust-stage0]   docs Pages build path, selfhost native generated programs,"
+        echo "[no-rust-stage0]   selfhost external compiler corpus"
+    elif [ "$SEED_IS_STAGE1_BUNDLE" -eq 1 ]; then
+        echo
+        echo "[no-rust-stage0] skipping Linux seed build/run gates until the stage1 bundle reaches compiler/runtime parity:"
         echo "[no-rust-stage0]   docs Pages build path, selfhost native generated programs,"
         echo "[no-rust-stage0]   selfhost external compiler corpus"
     else

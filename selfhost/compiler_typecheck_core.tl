@@ -2960,6 +2960,237 @@
     [(OkTcType _) true]
     [(ErrTcType _) false]))
 
+(define (tc-str-ref-type? [ty : AstType]) : bool
+  (match (tc-type-strip-region ty)
+    [(AstTyRef _ inner)
+      (match (tc-type-strip-region inner)
+        [(AstTyStr) true]
+        [_ false])]
+    [_ false]))
+
+(define (tc-string-handle-type? [ty : AstType]) : bool
+  (match (tc-type-strip-region ty)
+    [(AstTyString) true]
+    [_ (tc-str-ref-type? ty)]))
+
+(define (tc-check-string-handle-arg
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [arg : AstExpr]
+  [message : String]) : ResultTcUnit
+  (match (tc-expr ctx env arg)
+    [(OkTcType arg-ty)
+      (if (tc-string-handle-type? arg-ty)
+        OkTcUnit
+        (ErrTcUnit message))]
+    [(ErrTcType message) (ErrTcUnit message)]))
+
+(define (tc-check-exact-arg
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [arg : AstExpr]
+  [want : AstType]
+  [message : String]) : ResultTcUnit
+  (match (tc-expr ctx env arg)
+    [(OkTcType arg-ty) (tc-expect arg-ty want message)]
+    [(ErrTcType message) (ErrTcUnit message)]))
+
+(define (tc-one-string-handle-builtin-call
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [args : AstExprList]
+  [ret : AstType]) : ResultTcType
+  (match args
+    [(AstExprCons arg (AstExprNil))
+      (match (tc-check-string-handle-arg
+        ctx
+        env
+        arg
+        "typecheck: argument type mismatch")
+        [(OkTcUnit) (OkTcType (tc-tag-active-region env ret))]
+        [(ErrTcUnit message) (ErrTcType message)])]
+    [_ (ErrTcType "typecheck: arity mismatch")]))
+
+(define (tc-two-string-handle-builtin-call
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [args : AstExprList]
+  [ret : AstType]) : ResultTcType
+  (match args
+    [(AstExprCons left (AstExprCons right (AstExprNil)))
+      (match (tc-check-string-handle-arg
+        ctx
+        env
+        left
+        "typecheck: argument type mismatch")
+        [(OkTcUnit)
+          (match (tc-check-string-handle-arg
+            ctx
+            env
+            right
+            "typecheck: argument type mismatch")
+            [(OkTcUnit) (OkTcType (tc-tag-active-region env ret))]
+            [(ErrTcUnit message) (ErrTcType message)])]
+        [(ErrTcUnit message) (ErrTcType message)])]
+    [_ (ErrTcType "typecheck: arity mismatch")]))
+
+(define (tc-string-i64-i64-builtin-call
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [args : AstExprList]
+  [ret : AstType]) : ResultTcType
+  (match args
+    [(AstExprCons text (AstExprCons start (AstExprCons len (AstExprNil))))
+      (match (tc-check-string-handle-arg
+        ctx
+        env
+        text
+        "typecheck: argument type mismatch")
+        [(OkTcUnit)
+          (match (tc-check-exact-arg
+            ctx
+            env
+            start
+            (AstTyI64)
+            "typecheck: argument type mismatch")
+            [(OkTcUnit)
+              (match (tc-check-exact-arg
+                ctx
+                env
+                len
+                (AstTyI64)
+                "typecheck: argument type mismatch")
+                [(OkTcUnit) (OkTcType (tc-tag-active-region env ret))]
+                [(ErrTcUnit message) (ErrTcType message)])]
+            [(ErrTcUnit message) (ErrTcType message)])]
+        [(ErrTcUnit message) (ErrTcType message)])]
+    [_ (ErrTcType "typecheck: arity mismatch")]))
+
+(define (tc-string-i64-builtin-call
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [args : AstExprList]
+  [ret : AstType]) : ResultTcType
+  (match args
+    [(AstExprCons text (AstExprCons value (AstExprNil)))
+      (match (tc-check-string-handle-arg
+        ctx
+        env
+        text
+        "typecheck: argument type mismatch")
+        [(OkTcUnit)
+          (match (tc-check-exact-arg
+            ctx
+            env
+            value
+            (AstTyI64)
+            "typecheck: argument type mismatch")
+            [(OkTcUnit) (OkTcType (tc-tag-active-region env ret))]
+            [(ErrTcUnit message) (ErrTcType message)])]
+        [(ErrTcUnit message) (ErrTcType message)])]
+    [_ (ErrTcType "typecheck: arity mismatch")]))
+
+(define (tc-i64-string-builtin-call
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [args : AstExprList]
+  [ret : AstType]) : ResultTcType
+  (match args
+    [(AstExprCons value (AstExprCons text (AstExprNil)))
+      (match (tc-check-exact-arg
+        ctx
+        env
+        value
+        (AstTyI64)
+        "typecheck: argument type mismatch")
+        [(OkTcUnit)
+          (match (tc-check-string-handle-arg
+            ctx
+            env
+            text
+            "typecheck: argument type mismatch")
+            [(OkTcUnit) (OkTcType (tc-tag-active-region env ret))]
+            [(ErrTcUnit message) (ErrTcType message)])]
+        [(ErrTcUnit message) (ErrTcType message)])]
+    [_ (ErrTcType "typecheck: arity mismatch")]))
+
+(define (tc-borrowed-string-builtin-name? [name : String]) : bool
+  (cond
+    [(string-eq name "print-string") true]
+    [(string-eq name "print-str") true]
+    [(string-eq name "print-error") true]
+    [(string-eq name "string-eq") true]
+    [(string-eq name "string=?") true]
+    [(string-eq name "string->int") true]
+    [(string-eq name "substring") true]
+    [(string-eq name "string-slice") true]
+    [(string-eq name "string-append") true]
+    [(string-eq name "string-concat") true]
+    [(string-eq name "read-file") true]
+    [(string-eq name "read-file-status") true]
+    [(string-eq name "write-file") true]
+    [(string-eq name "write-file-status") true]
+    [(string-eq name "append-file-status") true]
+    [(string-eq name "file-exists?") true]
+    [(string-eq name "file-exists-status") true]
+    [(string-eq name "file-open-status") true]
+    [(string-eq name "file-write-status") true]
+    [(string-eq name "fs-mkdir-status") true]
+    [(string-eq name "fs-remove-file-status") true]
+    [(string-eq name "fs-remove-dir-status") true]
+    [(string-eq name "panic") true]
+    [(string-eq name "error") true]
+    [(string-eq name "env-var-exists?") true]
+    [else (string-eq name "env-var-value")]))
+
+(define (tc-borrowed-string-builtin-call
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [name : String]
+  [args : AstExprList]) : ResultTcType
+  (cond
+    [(or
+        (string-eq name "print-string")
+        (or (string-eq name "print-str") (string-eq name "print-error")))
+      (tc-one-string-handle-builtin-call ctx env args (AstTyUnit))]
+    [(or (string-eq name "string-eq") (string-eq name "string=?"))
+      (tc-two-string-handle-builtin-call ctx env args (AstTyBool))]
+    [(string-eq name "string->int")
+      (tc-one-string-handle-builtin-call ctx env args (AstTyI64))]
+    [(or (string-eq name "substring") (string-eq name "string-slice"))
+      (tc-string-i64-i64-builtin-call ctx env args (AstTyString))]
+    [(or (string-eq name "string-append") (string-eq name "string-concat"))
+      (tc-two-string-handle-builtin-call ctx env args (AstTyString))]
+    [(string-eq name "read-file")
+      (tc-one-string-handle-builtin-call ctx env args (AstTyString))]
+    [(string-eq name "read-file-status")
+      (tc-one-string-handle-builtin-call ctx env args (AstTyI64))]
+    [(string-eq name "write-file")
+      (tc-two-string-handle-builtin-call ctx env args (AstTyUnit))]
+    [(or
+        (string-eq name "write-file-status")
+        (string-eq name "append-file-status"))
+      (tc-two-string-handle-builtin-call ctx env args (AstTyI64))]
+    [(string-eq name "file-exists?")
+      (tc-one-string-handle-builtin-call ctx env args (AstTyBool))]
+    [(string-eq name "file-exists-status")
+      (tc-one-string-handle-builtin-call ctx env args (AstTyI64))]
+    [(string-eq name "file-open-status")
+      (tc-string-i64-builtin-call ctx env args (AstTyI64))]
+    [(string-eq name "file-write-status")
+      (tc-i64-string-builtin-call ctx env args (AstTyI64))]
+    [(or
+        (string-eq name "fs-mkdir-status")
+        (or
+          (string-eq name "fs-remove-file-status")
+          (string-eq name "fs-remove-dir-status")))
+      (tc-one-string-handle-builtin-call ctx env args (AstTyI64))]
+    [(or (string-eq name "panic") (string-eq name "error"))
+      (tc-one-string-handle-builtin-call ctx env args (AstTyNever))]
+    [(string-eq name "env-var-exists?")
+      (tc-one-string-handle-builtin-call ctx env args (AstTyBool))]
+    [else (tc-one-string-handle-builtin-call ctx env args (AstTyString))]))
+
 ;; Typecheck the *unshadowed* `(string-ref s i)` / `(char-at s i)` builtin: a
 ;; String plus any integer index, yielding `char`. The parser emits this as an
 ;; ordinary `Call`; when `string-ref`/`char-at` is not bound to a user function
@@ -2973,21 +3204,60 @@
     [(AstExprCons str (AstExprCons index (AstExprNil)))
       (match (tc-expr ctx env str)
         [(OkTcType str-ty)
-          (match (tc-expect
-            str-ty
-            (AstTyString)
-            "typecheck: string-ref requires String")
-            [(OkTcUnit)
-              (match (tc-expr ctx env index)
-                [(OkTcType index-ty)
-                  (if (tc-integer-type? index-ty)
-                    (OkTcType (AstTyChar))
-                    (ErrTcType "typecheck: string index must be integer"))]
-                [(ErrTcType message) (ErrTcType message)])]
-            [(ErrTcUnit message) (ErrTcType message)])]
+          (if (tc-string-handle-type? str-ty)
+            (match (tc-expr ctx env index)
+              [(OkTcType index-ty)
+                (if (tc-integer-type? index-ty)
+                  (OkTcType (AstTyChar))
+                  (ErrTcType "typecheck: string index must be integer"))]
+              [(ErrTcType message) (ErrTcType message)])
+            (ErrTcType "typecheck: string-ref requires String"))]
         [(ErrTcType message) (ErrTcType message)])]
     [_ (ErrTcType "typecheck: arity mismatch")]))
 
+(define (tc-length-string-call
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [name : String]
+  [func : AstExpr]
+  [args : AstExprList]
+  [arg-ty : AstType]) : ResultTcType
+  (if (and
+    (tc-default-builtin-unshadowed? env name)
+    (tc-string-handle-type? arg-ty))
+    (OkTcType (AstTyI64))
+    (if (string-eq name "string-length")
+      (if (tc-default-builtin-unshadowed? env name)
+        (ErrTcType "typecheck: argument type mismatch")
+        (tc-call-expr ctx env func args))
+      (tc-call-expr ctx env func args))))
+
+(define (tc-array-length-non-array-call
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [name : String]
+  [func : AstExpr]
+  [args : AstExprList]
+  [arg-ty : AstType]) : ResultTcType
+  (if (string-eq name "array-length")
+    (ErrTcType "typecheck: array-length requires dynamic array")
+    (tc-length-string-call ctx env name func args arg-ty)))
+
+(define (tc-array-length-array-call
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [name : String]
+  [func : AstExpr]
+  [args : AstExprList]) : ResultTcType
+  (if (string-eq name "string-length")
+    (if (tc-default-builtin-unshadowed? env name)
+      (ErrTcType "typecheck: argument type mismatch")
+      (tc-call-expr ctx env func args))
+    (OkTcType (AstTyI64))))
+
+;; `array-length` remains dynamic-array-only. `length` and `string-length` keep
+;; their legacy owned-String path while also accepting explicit borrowed `str`
+;; handles for the unshadowed default builtin.
 (define (tc-array-length-call
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -3001,11 +3271,10 @@
           (match (tc-expr ctx env arg)
             [(OkTcType arg-ty)
               (match (tc-type-strip-region arg-ty)
-                [(AstTyDynArray _) (OkTcType (AstTyI64))]
+                [(AstTyDynArray _)
+                  (tc-array-length-array-call ctx env name func args)]
                 [_
-                  (if (string-eq name "array-length")
-                    (ErrTcType "typecheck: array-length requires dynamic array")
-                    (tc-call-expr ctx env func args))])]
+                  (tc-array-length-non-array-call ctx env name func args arg-ty)])]
             [(ErrTcType message) (ErrTcType message)])]
         [_
           (if (string-eq name "array-length")
@@ -3090,12 +3359,18 @@
       (cond
         [(and (tc-layout-query-name? name) (not (tc-name-bound? env name)))
           (tc-layout-query-runtime-call name args)]
-        [(or (string-eq name "array-length") (string-eq name "length"))
+        [(or
+            (string-eq name "array-length")
+            (or (string-eq name "length") (string-eq name "string-length")))
           (tc-array-length-call ctx env name func args)]
         [(and
             (or (string-eq name "string-ref") (string-eq name "char-at"))
             (not (tc-name-bound? env name)))
           (tc-string-ref-call ctx env args)]
+        [(and
+            (tc-borrowed-string-builtin-name? name)
+            (tc-default-builtin-unshadowed? env name))
+          (tc-borrowed-string-builtin-call ctx env name args)]
         [(and
             (ctfe-reflection-query-name? name)
             (not (tc-name-bound? env name)))

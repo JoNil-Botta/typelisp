@@ -166,7 +166,7 @@ fn compiler_lower_tl_compiles_to_assembly() {
         "tl_region_reset",
         "make_array_len_nonneg",
         "(make-array i64 n)",
-        "char-at \\\" x\\\"",
+        "char-at (& spaced) 0",
         "(defstruct Point (x i64) (y i64))",
         "(struct-get p y)",
         "(defenum Maybe (None) (Some i64) (Pair i64 i64))",

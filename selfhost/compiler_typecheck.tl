@@ -278,6 +278,7 @@
     [(AstTyBool) "bool"]
     [(AstTyChar) "char"]
     [(AstTyString) "String"]
+    [(AstTyStr) "str"]
     [(AstTyUnit) "unit"]
     [(AstTyNever) "never"]
     [(AstTyExpr) "Expr"]
@@ -1138,6 +1139,12 @@
     [(AstTyVar name) (tc-resolve-type-name ctx name)]
     [_ ty]))
 
+(define (tc-source-str-value-policy-message) : String
+  "typecheck: str is a borrowed string-slice referent; use (& lifetime str)")
+
+(define (tc-source-str-mut-ref-policy-message) : String
+  "typecheck: mutable references to str are reserved; use immutable (& lifetime str)")
+
 (define (tc-source-type-policy-message [name : String]) : String
   (string-append
     "typecheck: unknown type "
@@ -1164,14 +1171,21 @@
     [(AstTyDynArray elem) (tc-source-type-policy-ok ctx elem)]
     [(AstTyPtr elem) (tc-source-type-policy-ok ctx elem)]
     [(AstTyMutPtr elem) (tc-source-type-policy-ok ctx elem)]
-    [(AstTyRef _ inner) (tc-source-type-policy-ok ctx inner)]
+    [(AstTyRef _ inner)
+      (match (tc-resolve-type ctx inner)
+        [(AstTyStr) OkTcUnit]
+        [_ (tc-source-type-policy-ok ctx inner)])]
     [(AstTyMutRef _ inner)
-      (match (tc-source-type-policy-ok ctx inner)
-        [(OkTcUnit)
-          (ErrTcUnit
-            "typecheck: mutable reference types require mutable borrow checker support (#806)")]
-        [(ErrTcUnit message) (ErrTcUnit message)])]
+      (match (tc-resolve-type ctx inner)
+        [(AstTyStr) (ErrTcUnit (tc-source-str-mut-ref-policy-message))]
+        [_
+          (match (tc-source-type-policy-ok ctx inner)
+            [(OkTcUnit)
+              (ErrTcUnit
+                "typecheck: mutable reference types require mutable borrow checker support (#806)")]
+            [(ErrTcUnit message) (ErrTcUnit message)])])]
     [(AstTyRegion _ inner) (tc-source-type-policy-ok ctx inner)]
+    [(AstTyStr) (ErrTcUnit (tc-source-str-value-policy-message))]
     [(AstTyVar name) (ErrTcUnit (tc-source-type-policy-message name))]
     [_ OkTcUnit]))
 
@@ -1560,6 +1574,10 @@
       (match b
         [(AstTyString) true]
         [_ false])]
+    [(AstTyStr)
+      (match b
+        [(AstTyStr) true]
+        [_ false])]
     [(AstTyUnit)
       (match b
         [(AstTyUnit) true]
@@ -1723,6 +1741,7 @@
     [(AstTyRef _ _) (TcCopyable)]
     [(AstTyRegion _ inner) (tc-type-move-kind inner)]
     [(AstTyString) (TcMoveOnly)]
+    [(AstTyStr) (TcMoveOnly)]
     [(AstTyTuple _) (TcMoveOnly)]
     [(AstTyArray _ _) (TcMoveOnly)]
     [(AstTyDynArray _) (TcMoveOnly)]
@@ -4330,9 +4349,14 @@
       "typecheck: borrowing reference-typed places is not implemented (#804)")
     (match (tc-type-outer-region ty)
       [(TcSomeString region)
-        (OkTcBorrowPlace (TcBorrowPlace region (tc-type-without-regions ty)))]
+        (OkTcBorrowPlace (TcBorrowPlace region (tc-borrow-referent-type ty)))]
       [(TcNoString)
-        (OkTcBorrowPlace (TcBorrowPlace name (tc-type-without-regions ty)))])))
+        (OkTcBorrowPlace (TcBorrowPlace name (tc-borrow-referent-type ty)))])))
+
+(define (tc-borrow-referent-type [ty : AstType]) : AstType
+  (match (tc-type-without-regions ty)
+    [(AstTyString) (AstTyStr)]
+    [_ (tc-type-without-regions ty)]))
 
 (define (tc-borrow-place-struct-field
   [ctx : TcContext]
@@ -4345,7 +4369,7 @@
           (match (tc-struct-field-type ctx struct-name field)
             [(OkTcType field-ty)
               (OkTcBorrowPlace
-                (TcBorrowPlace lifetime (tc-type-without-regions field-ty)))]
+                (TcBorrowPlace lifetime (tc-borrow-referent-type field-ty)))]
             [(ErrTcType message) (ErrTcBorrowPlace message)])]
         [_
           (ErrTcBorrowPlace
@@ -4362,7 +4386,7 @@
           (match (tc-type-list-ref elems index)
             [(OkTcType elem-ty)
               (OkTcBorrowPlace
-                (TcBorrowPlace lifetime (tc-type-without-regions elem-ty)))]
+                (TcBorrowPlace lifetime (tc-borrow-referent-type elem-ty)))]
             [(ErrTcType message) (ErrTcBorrowPlace message)])]
         [_
           (ErrTcBorrowPlace "typecheck: tuple-ref borrow requires tuple place")])]))
@@ -4375,10 +4399,10 @@
       (match (tc-type-strip-region (tc-resolve-type ctx array-ty))
         [(AstTyArray elem-ty _)
           (OkTcBorrowPlace
-            (TcBorrowPlace lifetime (tc-type-without-regions elem-ty)))]
+            (TcBorrowPlace lifetime (tc-borrow-referent-type elem-ty)))]
         [(AstTyDynArray elem-ty)
           (OkTcBorrowPlace
-            (TcBorrowPlace lifetime (tc-type-without-regions elem-ty)))]
+            (TcBorrowPlace lifetime (tc-borrow-referent-type elem-ty)))]
         [_
           (ErrTcBorrowPlace "typecheck: array-ref borrow requires array place")])]))
 
@@ -6831,55 +6855,201 @@
 (define (compiler-typecheck-reference-mut-source) : String
   "(define (main [n : (&mut phase i64)]) : unit unit)")
 
+(define (compiler-typecheck-reference-str-source) : String
+  "(define (take [s : (& text str)]) : unit unit)
+(define (main [text : String]) : unit
+  (let [view : (& text str) (& text)]
+    (take view)))")
+
+(define (compiler-typecheck-reference-str-region-source) : String
+  "(define (take [s : (& r str)]) : unit unit)
+(define (main) : unit
+  (with-arena r
+    (let [text : String (int->string 41)]
+      (take (& r text)))))")
+
+(define (compiler-typecheck-str-value-source) : String
+  "(define (main [s : str]) : unit unit)")
+
+(define (compiler-typecheck-str-return-source) : String
+  "(define (main) : str \"x\")")
+
+(define (compiler-typecheck-str-local-source) : String
+  "(define (main) : unit (let [s : str \"x\"] unit))")
+
+(define (compiler-typecheck-str-global-source) : String
+  "(define bad : str \"x\")")
+
+(define (compiler-typecheck-str-field-source) : String
+  "(defstruct Bad (s str))")
+
+(define (compiler-typecheck-str-variant-source) : String
+  "(defenum Bad (S str))")
+
+(define (compiler-typecheck-str-mut-ref-source) : String
+  "(define (main [s : (&mut text str)]) : unit unit)")
+
 (define (compiler-typecheck-reference-render-ok?) : bool
-  (and
-    (string-eq (tc-type-render (AstTyRef "r" (AstTyString))) "(& r String)")
-    (and
+  (let
+    [string-ref-render-ok : bool
+      (string-eq (tc-type-render (AstTyRef "r" (AstTyString))) "(& r String)")]
+    [str-ref-render-ok : bool
+      (string-eq (tc-type-render (AstTyRef "r" (AstTyStr))) "(& r str)")]
+    [mut-ref-render-ok : bool
       (string-eq
         (tc-type-render (AstTyMutRef "phase" (AstTyDynArray (AstTyI64))))
-        "(&mut phase (Array i64))")
+        "(&mut phase (Array i64))")]
+    [str-eq-ok : bool (tc-type-eq (AstTyStr) (AstTyStr))]
+    [str-distinct-ok : bool (not (tc-type-eq (AstTyStr) (AstTyString)))]
+    [str-move-kind-ok : bool (tc-type-move-only? (AstTyStr))]
+    [str-ref-move-kind-ok : bool (tc-type-copyable? (AstTyRef "r" (AstTyStr)))]
+    [region-erased-eq-ok : bool
+      (tc-type-eq
+        (AstTyRef "r" (AstTyRegion "inner" (AstTyI64)))
+        (AstTyRef "r" (AstTyI64)))]
+    [region-distinct-ok : bool
+      (not (tc-type-eq (AstTyRef "r" (AstTyI64)) (AstTyRef "s" (AstTyI64))))]
+    [mut-distinct-ok : bool
+      (not (tc-type-eq (AstTyRef "r" (AstTyI64)) (AstTyMutRef "r" (AstTyI64))))]
+    [region-contains-ok : bool
+      (tc-type-contains-region (AstTyRef "r" (AstTyI64)) "r")]
+    [inner-region-contains-ok : bool
+      (tc-type-contains-region
+        (AstTyMutRef "phase" (AstTyRegion "inner" (AstTyString)))
+        "inner")]
+    (and
+      string-ref-render-ok
       (and
-        (tc-type-eq
-          (AstTyRef "r" (AstTyRegion "inner" (AstTyI64)))
-          (AstTyRef "r" (AstTyI64)))
+        str-ref-render-ok
         (and
-          (not (tc-type-eq (AstTyRef "r" (AstTyI64)) (AstTyRef "s" (AstTyI64))))
+          mut-ref-render-ok
           (and
-            (not
-              (tc-type-eq
-                (AstTyRef "r" (AstTyI64))
-                (AstTyMutRef "r" (AstTyI64))))
+            str-eq-ok
             (and
-              (tc-type-contains-region (AstTyRef "r" (AstTyI64)) "r")
-              (tc-type-contains-region
-                (AstTyMutRef "phase" (AstTyRegion "inner" (AstTyString)))
-                "inner"))))))))
+              str-distinct-ok
+              (and
+                str-move-kind-ok
+                (and
+                  str-ref-move-kind-ok
+                  (and
+                    region-erased-eq-ok
+                    (and
+                      region-distinct-ok
+                      (and
+                        mut-distinct-ok
+                        (and region-contains-ok inner-region-contains-ok)))))))))))))
 
 (define (compiler-typecheck-reference-tests-ok?) : bool
-  (and
-    (compiler-typecheck-reference-render-ok?)
-    (and
-      (compiler-typecheck-ok? (compiler-typecheck-reference-local-source))
-      (and
-        (compiler-typecheck-ok? (compiler-typecheck-reference-param-source))
-        (and
-          (compiler-typecheck-ok?
-            (compiler-typecheck-reference-projection-source))
-          (and
-            (compiler-typecheck-error-ok?
-              (compiler-typecheck-reference-temp-source)
-              "typecheck: borrow requires a local, parameter, or aggregate place")
-            (and
-              (compiler-typecheck-error-ok?
-                (compiler-typecheck-reference-mismatch-source)
-                "typecheck: borrow lifetime mismatch")
-              (and
-                (compiler-typecheck-error-ok?
-                  (compiler-typecheck-reference-return-source)
-                  "typecheck: returning references requires lifetime support (#804)")
-                (compiler-typecheck-error-ok?
-                  (compiler-typecheck-reference-mut-source)
-                  "typecheck: mutable reference types require mutable borrow checker support (#806)")))))))))
+  (let
+    [render-ok : bool (compiler-typecheck-reference-render-ok?)]
+    [local-ok : bool
+      (compiler-typecheck-ok? (compiler-typecheck-reference-local-source))]
+    [param-ok : bool
+      (compiler-typecheck-ok? (compiler-typecheck-reference-param-source))]
+    [projection-ok : bool
+      (compiler-typecheck-ok? (compiler-typecheck-reference-projection-source))]
+    [str-ok : bool
+      (compiler-typecheck-ok? (compiler-typecheck-reference-str-source))]
+    [str-region-ok : bool
+      (compiler-typecheck-ok? (compiler-typecheck-reference-str-region-source))]
+    [temp-error-ok : bool
+      (compiler-typecheck-error-ok?
+        (compiler-typecheck-reference-temp-source)
+        "typecheck: borrow requires a local, parameter, or aggregate place")]
+    [mismatch-error-ok : bool
+      (compiler-typecheck-error-ok?
+        (compiler-typecheck-reference-mismatch-source)
+        "typecheck: borrow lifetime mismatch")]
+    [return-error-ok : bool
+      (compiler-typecheck-error-ok?
+        (compiler-typecheck-reference-return-source)
+        "typecheck: returning references requires lifetime support (#804)")]
+    [mut-ref-error-ok : bool
+      (compiler-typecheck-error-ok?
+        (compiler-typecheck-reference-mut-source)
+        "typecheck: mutable reference types require mutable borrow checker support (#806)")]
+    [str-value-error-ok : bool
+      (compiler-typecheck-error-ok?
+        (compiler-typecheck-str-value-source)
+        (tc-source-str-value-policy-message))]
+    [str-return-error-ok : bool
+      (compiler-typecheck-error-ok?
+        (compiler-typecheck-str-return-source)
+        (tc-source-str-value-policy-message))]
+    [str-local-error-ok : bool
+      (compiler-typecheck-error-ok?
+        (compiler-typecheck-str-local-source)
+        (tc-source-str-value-policy-message))]
+    [str-global-error-ok : bool
+      (compiler-typecheck-error-ok?
+        (compiler-typecheck-str-global-source)
+        (tc-source-str-value-policy-message))]
+    [str-field-error-ok : bool
+      (compiler-typecheck-error-ok?
+        (compiler-typecheck-str-field-source)
+        (tc-source-str-value-policy-message))]
+    [str-variant-error-ok : bool
+      (compiler-typecheck-error-ok?
+        (compiler-typecheck-str-variant-source)
+        (tc-source-str-value-policy-message))]
+    [str-mut-ref-error-ok : bool
+      (compiler-typecheck-error-ok?
+        (compiler-typecheck-str-mut-ref-source)
+        (tc-source-str-mut-ref-policy-message))]
+    [ok : bool true]
+    (begin
+      (if render-ok
+        unit
+        (set! ok false))
+      (if local-ok
+        unit
+        (set! ok false))
+      (if param-ok
+        unit
+        (set! ok false))
+      (if projection-ok
+        unit
+        (set! ok false))
+      (if str-ok
+        unit
+        (set! ok false))
+      (if str-region-ok
+        unit
+        (set! ok false))
+      (if temp-error-ok
+        unit
+        (set! ok false))
+      (if mismatch-error-ok
+        unit
+        (set! ok false))
+      (if return-error-ok
+        unit
+        (set! ok false))
+      (if mut-ref-error-ok
+        unit
+        (set! ok false))
+      (if str-value-error-ok
+        unit
+        (set! ok false))
+      (if str-return-error-ok
+        unit
+        (set! ok false))
+      (if str-local-error-ok
+        unit
+        (set! ok false))
+      (if str-global-error-ok
+        unit
+        (set! ok false))
+      (if str-field-error-ok
+        unit
+        (set! ok false))
+      (if str-variant-error-ok
+        unit
+        (set! ok false))
+      (if str-mut-ref-error-ok
+        unit
+        (set! ok false))
+      ok)))
 
 ;; A type error whose offending expression (`missing`) is on source line 2, so
 ;; the diagnostic must locate it there (not at the 1:1 fallback) — proving the
@@ -7469,7 +7639,8 @@
               (+ (comptime (if (= (struct-field-type (type Point) 0) (type i64)) 1 0))
                  (+ (comptime (if (= (enum-variant-payload-type (type Maybe) 1 0) (type String)) 1 0))
                     (+ (comptime (array-length (type (Array i64 4))))
-                       (comptime (function-param-count (type (-> i64 bool String))))))))))))")
+                       (+ (comptime (if (string-eq (type-key (type (& r str))) \"ref_r_str\") 1 0))
+                          (comptime (function-param-count (type (-> i64 bool String)))))))))))))")
 
 (define (compiler-typecheck-reflection-runtime-source) : String
   "(define (main) : String (type-kind (type i64)))")

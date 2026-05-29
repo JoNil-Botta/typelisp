@@ -1130,6 +1130,10 @@
       (match b
         [(AstTyString) true]
         [_ false])]
+    [(AstTyStr)
+      (match b
+        [(AstTyStr) true]
+        [_ false])]
     [(AstTyUnit)
       (match b
         [(AstTyUnit) true]

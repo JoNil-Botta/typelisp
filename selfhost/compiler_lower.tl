@@ -4944,6 +4944,26 @@
                         idx-off
                         elem-ty)])])])])]))
 
+;; Fixed arrays are inline element storage. Bounds check against the static
+;; length, then Gep directly from the array handle without loading dynamic-array
+;; fat fields.
+(define (lower-fixed-array-element-addr
+  [state : LowerState]
+  [arr-value : CompilerIrValue]
+  [idx-value : CompilerIrValue]
+  [idx-ty : AstType]
+  [elem-ty : AstType]
+  [elem-count : i64]) : LowerExpr
+  (match (lower-emit-cast state idx-value idx-ty (AstTyU64))
+    [(LowerExpr s1 idx-u _)
+      (match (lower-emit-cast s1 idx-value idx-ty (AstTyI64))
+        [(LowerExpr s2 idx-off _)
+          (lower-emit-gep
+            (lower-emit-bounds-check s2 idx-u (IrValueI64 elem-count))
+            arr-value
+            idx-off
+            elem-ty)])]))
+
 ;; `(make-array T len)` -> checked length, `tl_alloc` element buffer, and a
 ;; heap-backed dynamic-array fat value `{ ptr, len }`.
 (define (lower-make-array-store-fat
@@ -5131,11 +5151,49 @@
                     [(ErrTcType message)
                       (ErrLowerExpr (lower-diagnostic-at-expr index message))])])]
             [(ErrLowerExpr message) (ErrLowerExpr message)])]
-        [(AstTyArray _ _)
-          (ErrLowerExpr
-            (lower-diagnostic-at-expr
-              arr
-              "lower: fixed-array array-ref not yet supported"))]
+        [(AstTyArray elem-ty elem-count)
+          (let
+            [fixed-elem-ty : AstType (tc-type-without-regions elem-ty)]
+            (match (lower-expr ctx state env type-env arr)
+              [(OkLowerExpr arr-lowered)
+                (match arr-lowered
+                  [(LowerExpr arr-state arr-value _)
+                    (match (tc-expr ctx type-env index)
+                      [(OkTcType idx-ty)
+                        (match (lower-expr ctx arr-state env type-env index)
+                          [(OkLowerExpr idx-lowered)
+                            (match idx-lowered
+                              [(LowerExpr idx-state idx-value _)
+                                (match (lower-fixed-array-element-addr
+                                  idx-state
+                                  arr-value
+                                  idx-value
+                                  idx-ty
+                                  fixed-elem-ty
+                                  elem-count)
+                                  [(LowerExpr addr-state elem-ptr _)
+                                    (if (=
+                                      (lower-type-size ctx fixed-elem-ty)
+                                      0)
+                                      (OkLowerExpr
+                                        (LowerExpr
+                                          addr-state
+                                          IrValueUnit
+                                          fixed-elem-ty))
+                                      (match (lower-emit-load
+                                        addr-state
+                                        elem-ptr
+                                        fixed-elem-ty)
+                                        [(LowerExpr load-state load-value _)
+                                          (OkLowerExpr
+                                            (LowerExpr
+                                              load-state
+                                              load-value
+                                              fixed-elem-ty))]))])])]
+                          [(ErrLowerExpr message) (ErrLowerExpr message)])]
+                      [(ErrTcType message)
+                        (ErrLowerExpr (lower-diagnostic-at-expr index message))])])]
+              [(ErrLowerExpr message) (ErrLowerExpr message)]))]
         [_
           (ErrLowerExpr
             (lower-diagnostic-at-expr
@@ -5198,11 +5256,62 @@
                     [(ErrTcType message)
                       (ErrLowerExpr (lower-diagnostic-at-expr index message))])])]
             [(ErrLowerExpr message) (ErrLowerExpr message)])]
-        [(AstTyArray _ _)
-          (ErrLowerExpr
-            (lower-diagnostic-at-expr
-              arr
-              "lower: fixed-array array-set! not yet supported"))]
+        [(AstTyArray elem-ty elem-count)
+          (let
+            [fixed-elem-ty : AstType (tc-type-without-regions elem-ty)]
+            (match (lower-expr ctx state env type-env arr)
+              [(OkLowerExpr arr-lowered)
+                (match arr-lowered
+                  [(LowerExpr arr-state arr-value _)
+                    (match (tc-expr ctx type-env index)
+                      [(OkTcType idx-ty)
+                        (match (lower-expr ctx arr-state env type-env index)
+                          [(OkLowerExpr idx-lowered)
+                            (match idx-lowered
+                              [(LowerExpr idx-state idx-value _)
+                                (match (lower-expr
+                                  ctx
+                                  idx-state
+                                  env
+                                  type-env
+                                  value)
+                                  [(OkLowerExpr value-lowered)
+                                    (match value-lowered
+                                      [(LowerExpr value-state value-ir _)
+                                        (match (lower-fixed-array-element-addr
+                                          value-state
+                                          arr-value
+                                          idx-value
+                                          idx-ty
+                                          fixed-elem-ty
+                                          elem-count)
+                                          [(LowerExpr addr-state elem-ptr _)
+                                            (if (=
+                                              (lower-type-size
+                                                ctx
+                                                fixed-elem-ty)
+                                              0)
+                                              (OkLowerExpr
+                                                (LowerExpr
+                                                  addr-state
+                                                  IrValueUnit
+                                                  (AstTyUnit)))
+                                              (OkLowerExpr
+                                                (LowerExpr
+                                                  (lower-state-emit
+                                                    addr-state
+                                                    (IrInstrStorePtr
+                                                      elem-ptr
+                                                      value-ir
+                                                      fixed-elem-ty))
+                                                  IrValueUnit
+                                                  (AstTyUnit))))])])]
+                                  [(ErrLowerExpr message)
+                                    (ErrLowerExpr message)])])]
+                          [(ErrLowerExpr message) (ErrLowerExpr message)])]
+                      [(ErrTcType message)
+                        (ErrLowerExpr (lower-diagnostic-at-expr index message))])])]
+              [(ErrLowerExpr message) (ErrLowerExpr message)]))]
         [_
           (ErrLowerExpr
             (lower-diagnostic-at-expr
@@ -7604,10 +7713,22 @@
 (define (put [a : (Array i64)] [i : i64] [v : i64]) : unit (array-set! a i v))
 (define (main) : i64 0)")
 
+;; Fixed-array access lowers against inline array storage rather than the
+;; dynamic-array fat `{ptr, len}` layout.
+(define (compiler-lower-fixed-array-access-source) : String
+  "(define (get [a : (Array i64 3)] [i : i64]) : i64 (array-ref a i))
+(define (put [a : (Array i64 3)] [i : i64] [v : i64]) : unit (array-set! a i v))
+(define (main) : i64 0)")
+
 ;; `array-push!` lowers to checked arena reallocation, a runtime-length copy,
 ;; a tail store, and in-place fat `{ptr, len}` updates.
 (define (compiler-lower-array-push-source) : String
   "(define (grow [a : (Array i64)] [v : i64]) : unit (array-push! a v))
+(define (main) : i64 0)")
+
+;; Fixed arrays have no runtime capacity field and remain unsupported for push.
+(define (compiler-lower-fixed-array-push-source) : String
+  "(define (grow [a : (Array i64 3)] [v : i64]) : unit (array-push! a v))
 (define (main) : i64 0)")
 
 ;; `make-array` lowers to checked byte-count math, a `tl_alloc` element buffer,
@@ -9017,6 +9138,35 @@
             (> (lower-test-function-bounds-count functions "put") 0))])]
     [(ErrCompilerLower _) false]))
 
+(define (compiler-lower-fixed-array-access-shape-ok? [src : String]) : bool
+  (match (lower-compiler-source src)
+    [(OkCompilerLower program _)
+      (match program
+        [(IrProgram _ functions _)
+          (let
+            [ok : bool true]
+            (begin
+              (if (> (lower-test-function-bounds-count functions "get") 0)
+                unit
+                (set! ok false))
+              (if (> (lower-test-function-load-count functions "get") 0)
+                unit
+                (set! ok false))
+              (if (> (lower-test-function-bounds-count functions "put") 0)
+                unit
+                (set! ok false))
+              (if (= (lower-test-function-gep-offset-count functions "get" 1) 0)
+                unit
+                (set! ok false))
+              (if (= (lower-test-function-gep-offset-count functions "put" 1) 0)
+                unit
+                (set! ok false))
+              (if (> (lower-test-function-store-ptr-count functions "put") 0)
+                unit
+                (set! ok false))
+              ok))])]
+    [(ErrCompilerLower _) false]))
+
 (define (compiler-lower-array-push-shape-ok? [src : String]) : bool
   (match (lower-compiler-source src)
     [(OkCompilerLower program _)
@@ -9599,8 +9749,17 @@
         (compiler-lower-array-access-source))
         unit
         (set! ok false))
+      (if (compiler-lower-fixed-array-access-shape-ok?
+        (compiler-lower-fixed-array-access-source))
+        unit
+        (set! ok false))
       (if (compiler-lower-array-push-shape-ok?
         (compiler-lower-array-push-source))
+        unit
+        (set! ok false))
+      (if (compiler-lower-error-ok?
+        (compiler-lower-fixed-array-push-source)
+        "typecheck: array-push! requires dynamic array type")
         unit
         (set! ok false))
       (if (compiler-lower-make-array-shape-ok?

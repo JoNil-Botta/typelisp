@@ -319,6 +319,49 @@
                 (compiler-backend-todo-marker))))))]
     [(ErrCompilerBackend _) false]))
 
+;; Backend-owned replacement for the Rust `string-ref` emit-shape checks
+;; (#1417): source-level string indexing should keep literal string data, use an
+;; unsigned bounds check, call the out-of-bounds helper, and zero-extend the
+;; selected byte into the char result.
+(define (compiler-backend-string-ref-source) : String
+  "(define sample : String \"az\")
+(define (pick [i : i64]) : char (string-ref sample i))
+(define (main) : i64 0)")
+
+(define (compiler-backend-string-ref-shape-ok?) : bool
+  (match (compiler-backend-emit-source (compiler-backend-string-ref-source))
+    [(OkCompilerBackend asm)
+      (and
+        (backend-and8
+          (compiler-backend-string-contains? asm ".L_tl_str_data_617a:")
+          (compiler-backend-string-contains? asm ".L_tl_str_617a:")
+          (compiler-backend-string-contains? asm "    .string \"az\"\n")
+          (compiler-backend-string-contains?
+            asm
+            "    .quad .L_tl_str_data_617a\n")
+          (compiler-backend-string-contains? asm "    cmpq %r11, %rax\n")
+          (compiler-backend-string-contains?
+            asm
+            "    jb .L_tl_pick_str_bounds_ok")
+          (compiler-backend-string-contains? asm "    call tl_oob_abort")
+          (compiler-backend-string-contains? asm "tl_oob_abort:\n"))
+        (and
+          (backend-and4
+            (compiler-backend-string-contains? asm "    movq 8(%r10), %rax\n")
+            (compiler-backend-string-contains? asm "(%r10)")
+            (compiler-backend-string-contains? asm "movzbq")
+            (not (compiler-backend-string-contains? asm "movsbq (%r10)")))
+          (and
+            (not
+              (compiler-backend-string-contains?
+                asm
+                "    jl .L_tl_pick_str_bounds_ok"))
+            (not
+              (compiler-backend-string-contains?
+                asm
+                (compiler-backend-todo-marker))))))]
+    [(ErrCompilerBackend _) false]))
+
 (define (compiler-backend-aggregate-ok?) : bool
   (match (compiler-backend-emit-source (compiler-backend-aggregate-source))
     [(OkCompilerBackend asm)
@@ -2106,15 +2149,17 @@
                 (compiler-backend-module-symbol-ok?))
               (and
                 (compiler-backend-extern-metadata-symbol-ok?)
-                (backend-and8
-                  (compiler-backend-scalar-wide-ops-ok?)
-                  (compiler-backend-scalar-div-mod-ok?)
-                  (compiler-backend-narrow-scalar-instr-ok?)
-                  (compiler-backend-f64-abi-ok?)
-                  (compiler-backend-win64-f64-abi-ok?)
-                  (compiler-backend-aggregate-storage-shape-ok?)
-                  (compiler-backend-alloc-runtime-shape-ok?)
-                  (compiler-backend-windows-sdk-registry-runtime-ok?)))))))))
+                (and
+                  (compiler-backend-string-ref-shape-ok?)
+                  (backend-and8
+                    (compiler-backend-scalar-wide-ops-ok?)
+                    (compiler-backend-scalar-div-mod-ok?)
+                    (compiler-backend-narrow-scalar-instr-ok?)
+                    (compiler-backend-f64-abi-ok?)
+                    (compiler-backend-win64-f64-abi-ok?)
+                    (compiler-backend-aggregate-storage-shape-ok?)
+                    (compiler-backend-alloc-runtime-shape-ok?)
+                    (compiler-backend-windows-sdk-registry-runtime-ok?))))))))))
     42
     (begin
       (panic "backend: smoke output mismatch")

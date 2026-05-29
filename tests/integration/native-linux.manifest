@@ -102,6 +102,6 @@ doc_test_smoke|selfhost/doc_test_smoke.tl|42|-|-|doc_test.tl build_run_core.tl c
 doc_render_smoke|selfhost/doc_render_smoke.tl|42|-|-|doc_render.tl doc_extract.tl format_tokens.tl
 doc_html_smoke|selfhost/doc_html_smoke.tl|42|-|-|doc_html.tl doc_render.tl doc_extract.tl format_tokens.tl
 doc_md_smoke|selfhost/doc_md_smoke.tl|42|-|-|doc_extract.tl doc_html.tl doc_md.tl doc_render.tl format_tokens.tl
-doc_site_smoke|selfhost/doc_site_smoke.tl|42|-|-|doc_site_core.tl doc_html.tl doc_render.tl doc_extract.tl format_tokens.tl
+doc_site_smoke|selfhost/doc_site_smoke.tl|42|-|-|doc_site_core.tl doc_html.tl doc_md.tl doc_render.tl doc_extract.tl format_tokens.tl
 lint_smoke|selfhost/lint_smoke.tl|42|-|-|lint_core.tl compiler_ast_types.tl
 lint_driver_smoke|selfhost/lint_driver_smoke.tl|42|-|-|compiler_ast_types.tl compiler_diagnostic.tl compiler_load.tl compiler_parse_core.tl lex.tl lint_core.tl lint_driver_core.tl read.tl sym_i64_env.tl token.tl

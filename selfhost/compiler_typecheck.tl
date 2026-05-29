@@ -421,6 +421,37 @@
 (module main)
 (define (main) : i64 (get))")
 
+(define (compiler-typecheck-import-alias-source) : String
+  "(module data)
+(define (get) : i64 20)
+(defenum Maybe (None) (Some i64))
+(defstruct Point (x i64))
+(module main)
+(import \"data.tl\" module data :as d)
+(define (main) : i64
+  (+
+    (d/get)
+    (+
+      (let ([p : d/Point (d/Point 7)])
+        (struct-get p x))
+      (match (d/Some 3)
+        [(d/Some v) v]
+        [d/None 0]))))")
+
+(define (compiler-typecheck-import-alias-missing-source) : String
+  "(module data)
+(define (get) : i64 20)
+(module main)
+(import \"data.tl\" module data :as d)
+(define (main) : i64 (missing/get))")
+
+(define (compiler-typecheck-import-alias-missing-member-source) : String
+  "(module data)
+(define (get) : i64 20)
+(module main)
+(import \"data.tl\" module data :as d)
+(define (main) : i64 (d/missing))")
+
 (define (compiler-typecheck-repr-c-layout-source) : String
   "(defstruct Packet
   (:repr c)
@@ -527,34 +558,60 @@
             "typecheck: recursive repr c struct layout cycle involving Node"))))))
 
 (define (compiler-typecheck-nominal-tests-ok?) : bool
-  (and
-    (compiler-typecheck-ok? (compiler-typecheck-nominal-source))
-    (and
-      (compiler-typecheck-ok? (compiler-typecheck-comptime-decl-source))
-      (and
-        (compiler-typecheck-error-ok?
-          (compiler-typecheck-match-mismatch-source)
-          "typecheck: match arms must agree")
-        (and
-          (compiler-typecheck-error-ok?
-            (compiler-typecheck-unknown-variant-source)
-            "typecheck: unknown variant Other")
-          (and
-            (compiler-typecheck-error-ok?
-              (compiler-typecheck-unknown-field-source)
-              "typecheck: unknown struct field Point.z")
-            (and
-              (compiler-typecheck-error-ok?
-                (compiler-typecheck-duplicate-variant-source)
-                "symbols: duplicate enum variant Same")
-              (and
-                (compiler-typecheck-ok?
-                  (compiler-typecheck-module-qualified-source))
-                (and
-                  (compiler-typecheck-error-ok?
-                    (compiler-typecheck-module-unqualified-import-source)
-                    "typecheck: unbound name get")
-                  (compiler-typecheck-repr-c-tests-ok?))))))))))
+  (let
+    [ok : bool true]
+    (begin
+      (if (compiler-typecheck-ok? (compiler-typecheck-nominal-source))
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-ok? (compiler-typecheck-comptime-decl-source))
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        (compiler-typecheck-match-mismatch-source)
+        "typecheck: match arms must agree")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        (compiler-typecheck-unknown-variant-source)
+        "typecheck: unknown variant Other")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        (compiler-typecheck-unknown-field-source)
+        "typecheck: unknown struct field Point.z")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        (compiler-typecheck-duplicate-variant-source)
+        "symbols: duplicate enum variant Same")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-ok? (compiler-typecheck-module-qualified-source))
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        (compiler-typecheck-module-unqualified-import-source)
+        "typecheck: unbound name get")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-ok? (compiler-typecheck-import-alias-source))
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        (compiler-typecheck-import-alias-missing-source)
+        "typecheck: unbound name missing/get")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        (compiler-typecheck-import-alias-missing-member-source)
+        "typecheck: unbound name d/missing")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-repr-c-tests-ok?)
+        unit
+        (set! ok false))
+      ok)))
 
 (define (compiler-typecheck-region-builtin-source) : String
   "(define (main) : i64
@@ -613,6 +670,58 @@
     (match (Text (int->string 1))
       [(Text s) (string-length s)]
       [End 0])))")
+
+(define (compiler-typecheck-box-source) : String
+  "(define (main) : i64
+  (let
+    [b : (Box i64) (box 7)]
+    (box-get b)))")
+
+(define (compiler-typecheck-box-direct-source) : String
+  "(define (main) : i64 (box-get (box 7)))")
+
+(define (compiler-typecheck-box-region-source) : String
+  "(define (main) : i64
+  (with-arena r
+    (let
+      [b : (in r (Box i64)) (box 7)]
+      (box-get b))))")
+
+(define (compiler-typecheck-box-region-project-source) : String
+  "(define (main) : String
+  (with-arena r
+    (let
+      [b : (in r (Box String)) (box (int->string 41))]
+      (box-get b))))")
+
+(define (compiler-typecheck-box-get-non-box-source) : String
+  "(define (main) : i64 (box-get 1))")
+
+(define (compiler-typecheck-box-render-ok?) : bool
+  (and
+    (string-eq (tc-type-render (AstTyBox (AstTyI64))) "(Box i64)")
+    (and
+      (tc-type-eq (AstTyBox (AstTyRegion "r" (AstTyI64))) (AstTyBox (AstTyI64)))
+      (and
+        (tc-type-contains-region (AstTyBox (AstTyRegion "r" (AstTyString))) "r")
+        (tc-type-move-only? (AstTyBox (AstTyI64)))))))
+
+(define (compiler-typecheck-box-tests-ok?) : bool
+  (and
+    (compiler-typecheck-box-render-ok?)
+    (and
+      (compiler-typecheck-ok? (compiler-typecheck-box-source))
+      (and
+        (compiler-typecheck-ok? (compiler-typecheck-box-direct-source))
+        (and
+          (compiler-typecheck-ok? (compiler-typecheck-box-region-source))
+          (and
+            (compiler-typecheck-error-ok?
+              (compiler-typecheck-box-region-project-source)
+              "typecheck: region-tagged value cannot escape with-arena 'r'")
+            (compiler-typecheck-error-ok?
+              (compiler-typecheck-box-get-non-box-source)
+              "typecheck: box-get requires Box type")))))))
 
 (define (compiler-typecheck-region-tests-ok?) : bool
   (and
@@ -893,14 +1002,16 @@
           (and
             (tc-type-move-only? (AstTyStruct "Box"))
             (and
-              (tc-type-move-only? (AstTyEnum "ResultI64"))
+              (tc-type-move-only? (AstTyBox (AstTyI64)))
               (and
-                (tc-type-move-only? (AstTyMutRef "phase" (AstTyI64)))
-                (tc-type-move-only?
-                  (AstTyTuple
-                    (AstTypeCons
-                      (AstTyStruct "Box")
-                      (AstTypeCons (AstTyDynArray (AstTyI64)) AstTypeNil))))))))))))
+                (tc-type-move-only? (AstTyEnum "ResultI64"))
+                (and
+                  (tc-type-move-only? (AstTyMutRef "phase" (AstTyI64)))
+                  (tc-type-move-only?
+                    (AstTyTuple
+                      (AstTypeCons
+                        (AstTyStruct "Box")
+                        (AstTypeCons (AstTyDynArray (AstTyI64)) AstTypeNil)))))))))))))
 
 (define (compiler-typecheck-move-kind-region-tests-ok?) : bool
   (and
@@ -2058,6 +2169,9 @@
     (if (compiler-typecheck-region-tests-ok?)
       unit
       (panic "typecheck: region tests failed"))
+    (if (compiler-typecheck-box-tests-ok?)
+      unit
+      (panic "typecheck: box tests failed"))
     (if (compiler-typecheck-result-try-tests-ok?)
       unit
       (panic "typecheck: result try tests failed"))

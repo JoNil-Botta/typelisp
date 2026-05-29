@@ -387,7 +387,10 @@
   [paths : AstDeclPathList]
   [entry-path : String]
   [names : LowerNameEnv]) : LowerNameEnv
-  (lower-name-env-from-decls-in-module decls paths entry-path names ""))
+  (let
+    [base : LowerNameEnv
+      (lower-name-env-from-decls-in-module decls paths entry-path names "")]
+    (lower-name-env-with-import-aliases decls paths entry-path base true)))
 
 (define (lower-name-env-from-decls-in-module
   [decls : AstDeclList]
@@ -427,6 +430,180 @@
                 module
                 decl)
               module)]))]))
+
+(define (lower-alias-logical-name
+  [entry-path : String]
+  [decl-path : String]
+  [module : String]
+  [source-name : String]
+  [path-aware : bool]) : String
+  (if path-aware
+    (lower-decl-logical-name entry-path decl-path module source-name)
+    (compiler-symbol-module-key module source-name)))
+
+(define (lower-name-env-add-decl-alias-in-module
+  [names : LowerNameEnv]
+  [entry-path : String]
+  [decl-path : String]
+  [alias : String]
+  [module : String]
+  [decl : AstDecl]
+  [path-aware : bool]) : LowerNameEnv
+  (match decl
+    [(AstDeclDef name _ _)
+      (LowerNameBind
+        (compiler-symbol-module-key alias name)
+        (lower-alias-logical-name entry-path decl-path module name path-aware)
+        names)]
+    [(AstDeclDefFn name _ _ _)
+      (LowerNameBind
+        (compiler-symbol-module-key alias name)
+        (lower-alias-logical-name entry-path decl-path module name path-aware)
+        names)]
+    [(AstDeclExtern name _ _)
+      (LowerNameBind (compiler-symbol-module-key alias name) name names)]
+    [(AstDeclComptimeDecl template)
+      (lower-name-env-add-decl-alias-in-module
+        names
+        entry-path
+        decl-path
+        alias
+        module
+        template
+        path-aware)]
+    [_ names]))
+
+(define (lower-name-env-add-module-aliases
+  [decls : AstDeclList]
+  [paths : AstDeclPathList]
+  [entry-path : String]
+  [names : LowerNameEnv]
+  [target-module : String]
+  [alias : String]
+  [module : String]
+  [path-aware : bool]) : LowerNameEnv
+  (match decls
+    [(AstDeclNil) names]
+    [(AstDeclCons decl rest)
+      (let
+        [decl-path : String
+          (match paths
+            [(AstDeclPathCons path _) path]
+            [(AstDeclPathNil) entry-path])]
+        [rest-paths : AstDeclPathList
+          (match paths
+            [(AstDeclPathCons _ path-rest) path-rest]
+            [(AstDeclPathNil) AstDeclPathNil])]
+        (match decl
+          [(AstDeclModule next-module)
+            (lower-name-env-add-module-aliases
+              rest
+              rest-paths
+              entry-path
+              names
+              target-module
+              alias
+              next-module
+              path-aware)]
+          [(AstDeclImport _)
+            (lower-name-env-add-module-aliases
+              rest
+              rest-paths
+              entry-path
+              names
+              target-module
+              alias
+              module
+              path-aware)]
+          [(AstDeclTest _ _ _)
+            (lower-name-env-add-module-aliases
+              rest
+              rest-paths
+              entry-path
+              names
+              target-module
+              alias
+              module
+              path-aware)]
+          [_
+            (let
+              [next-names : LowerNameEnv
+                (if (string-eq module target-module)
+                  (lower-name-env-add-decl-alias-in-module
+                    names
+                    entry-path
+                    decl-path
+                    alias
+                    module
+                    decl
+                    path-aware)
+                  names)]
+              (lower-name-env-add-module-aliases
+                rest
+                rest-paths
+                entry-path
+                next-names
+                target-module
+                alias
+                module
+                path-aware))]))]))
+
+(define (lower-name-env-from-import-aliases
+  [all-decls : AstDeclList]
+  [all-paths : AstDeclPathList]
+  [decls : AstDeclList]
+  [paths : AstDeclPathList]
+  [entry-path : String]
+  [names : LowerNameEnv]
+  [path-aware : bool]) : LowerNameEnv
+  (match decls
+    [(AstDeclNil) names]
+    [(AstDeclCons decl rest)
+      (let
+        [rest-paths : AstDeclPathList
+          (match paths
+            [(AstDeclPathCons _ path-rest) path-rest]
+            [(AstDeclPathNil) AstDeclPathNil])]
+        [next-names : LowerNameEnv
+          (match decl
+            [(AstDeclImport
+                (AstImportSpec
+                  _
+                  (AstSomeModuleName target-module)
+                  (AstSomeImportAlias alias)))
+              (lower-name-env-add-module-aliases
+                all-decls
+                all-paths
+                entry-path
+                names
+                target-module
+                alias
+                ""
+                path-aware)]
+            [_ names])]
+        (lower-name-env-from-import-aliases
+          all-decls
+          all-paths
+          rest
+          rest-paths
+          entry-path
+          next-names
+          path-aware))]))
+
+(define (lower-name-env-with-import-aliases
+  [decls : AstDeclList]
+  [paths : AstDeclPathList]
+  [entry-path : String]
+  [names : LowerNameEnv]
+  [path-aware : bool]) : LowerNameEnv
+  (lower-name-env-from-import-aliases
+    decls
+    paths
+    decls
+    paths
+    entry-path
+    names
+    path-aware))
 
 (define (lower-name-env-add-local-decl
   [names : LowerNameEnv]
@@ -774,6 +951,8 @@
         names
         (lower-reach-resource-bindings all-functions names state bindings)
         body)]
+    [(AstExprBox inner) (lower-reach-expr all-functions names state inner)]
+    [(AstExprBoxGet inner) (lower-reach-expr all-functions names state inner)]
     [(AstExprTypeLiteral _) state]
     [(AstExprComptime inner) (lower-reach-expr all-functions names state inner)]
     [(AstExprTry inner) (lower-reach-expr all-functions names state inner)]
@@ -1304,6 +1483,7 @@
     [(AstTyTuple _) 8]
     [(AstTyArray elem count) (* (lower-type-size ctx elem) count)]
     [(AstTyDynArray _) 8]
+    [(AstTyBox _) 8]
     [(AstTyPtr _) 8]
     [(AstTyMutPtr _) 8]
     [(AstTyRef _ _) 8]
@@ -1337,6 +1517,7 @@
     [(AstTyTuple _) 8]
     [(AstTyArray elem _) (lower-type-align ctx elem)]
     [(AstTyDynArray _) 8]
+    [(AstTyBox _) 8]
     [(AstTyPtr _) 8]
     [(AstTyMutPtr _) 8]
     [(AstTyRef _ _) 8]
@@ -2719,6 +2900,14 @@
     [(AstExprWithRegion _ body) (lower-with-arena ctx state env type-env body)]
     [(AstExprWithResource bindings body)
       (lower-with-resource ctx state env type-env bindings body)]
+    [(AstExprBox _)
+      (ErrLowerExpr
+        (lower-diagnostic-at-expr
+          origin
+          "lower: box allocation is not implemented"))]
+    [(AstExprBoxGet _)
+      (ErrLowerExpr
+        (lower-diagnostic-at-expr origin "lower: box-get is not implemented"))]
     [(AstExprTry inner) (lower-try ctx state env type-env inner origin)]
     ;; `(comptime expr)` folds to a literal via the scalar CTFE evaluator (#719).
     ;; Successful folds reuse the ordinary literal path; CTFE rejections (free
@@ -7212,7 +7401,21 @@
                       (TcContext specialized symbols registries "")]
                     (match (tc-build-top-env ctx specialized)
                       [(OkTcEnv top-env)
-                        (lower-compiler-program-checked ctx top-env specialized)]
+                        (let
+                          [alias-names : LowerNameEnv
+                            (match specialized
+                              [(AstProgram decls)
+                                (lower-name-env-with-import-aliases
+                                  decls
+                                  AstDeclPathNil
+                                  "<source>"
+                                  LowerNameNil
+                                  false)])]
+                          (lower-compiler-program-checked-with-names
+                            ctx
+                            top-env
+                            specialized
+                            alias-names))]
                       [(ErrTcEnv message)
                         (ErrCompilerLower (lower-diagnostic message))]))]
                 [(ErrCompilerRegistries message)
@@ -7325,6 +7528,12 @@
 (define (compiler-lower-unsupported-source) : String
   "(define (main) : (Tuple i64 bool)
   (tuple 1 true))")
+
+(define (compiler-lower-box-unsupported-source) : String
+  "(define (main) : (Box i64) (box 7))")
+
+(define (compiler-lower-box-get-unsupported-source) : String
+  "(define (main [b : (Box i64)]) : i64 (box-get b))")
 
 (define (compiler-lower-reference-source) : String
   "(define (take [r : (& n i64)]) : unit unit)
@@ -8313,6 +8522,33 @@
                 (and
                   (> (lower-test-functions-call-count functions "right/get") 0)
                   (> (lower-test-function-binop-count functions "main") 0)))))])]
+    [(ErrCompilerLower _) false]))
+
+(define (compiler-lower-import-alias-source) : String
+  "(module data)
+(define (get) : i64 20)
+(defenum Maybe (None) (Some i64))
+(defstruct Point (x i64))
+(module main)
+(import \"data.tl\" module data :as d)
+(define (main) : i64
+  (+
+    (d/get)
+    (+
+      (let ([p : d/Point (d/Point 7)])
+        (struct-get p x))
+      (match (d/Some 3)
+        [(d/Some v) v]
+        [d/None 0]))))")
+
+(define (compiler-lower-import-alias-ok?) : bool
+  (match (lower-compiler-source (compiler-lower-import-alias-source))
+    [(OkCompilerLower lowered _)
+      (match lowered
+        [(IrProgram _ functions _)
+          (and
+            (> (lower-test-functions-call-count functions "data/get") 0)
+            (= (lower-test-functions-call-count functions "d/get") 0))])]
     [(ErrCompilerLower _) false]))
 
 (define (compiler-lower-module-function-returning-struct-source) : String
@@ -9386,6 +9622,9 @@
       (if (compiler-lower-module-qualified-ok?)
         unit
         (set! ok false))
+      (if (compiler-lower-import-alias-ok?)
+        unit
+        (set! ok false))
       (if (compiler-lower-module-function-returning-struct-ok?)
         unit
         (set! ok false))
@@ -9540,6 +9779,16 @@
       (if (compiler-lower-error-ok?
         (compiler-lower-unsupported-source)
         "lower: unsupported expression")
+        unit
+        (set! ok false))
+      (if (compiler-lower-error-ok?
+        (compiler-lower-box-unsupported-source)
+        "lower: box allocation is not implemented")
+        unit
+        (set! ok false))
+      (if (compiler-lower-error-ok?
+        (compiler-lower-box-get-unsupported-source)
+        "lower: box-get is not implemented")
         unit
         (set! ok false))
       (if (compiler-lower-error-ok?

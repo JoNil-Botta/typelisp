@@ -394,7 +394,9 @@
     [(AstExprPtrOffset _ _) "ptr-offset"]
     [(AstExprPtrCast _ _) "ptr-cast"]
     [(AstExprPtrToInt _) "ptr->int"]
-    [(AstExprIntToPtr _ _) "int->ptr"]))
+    [(AstExprIntToPtr _ _) "int->ptr"]
+    [(AstExprBox _) "box"]
+    [(AstExprBoxGet _) "box-get"]))
 
 (define (ctfe-value-type-name [value : CompilerCtfeValue]) : String
   (match value
@@ -720,6 +722,7 @@
       (AstTyArray (ctfe-reflect-resolve-type infos elem) len)]
     [(AstTyDynArray elem)
       (AstTyDynArray (ctfe-reflect-resolve-type infos elem))]
+    [(AstTyBox elem) (AstTyBox (ctfe-reflect-resolve-type infos elem))]
     [(AstTyPtr elem) (AstTyPtr (ctfe-reflect-resolve-type infos elem))]
     [(AstTyMutPtr elem) (AstTyMutPtr (ctfe-reflect-resolve-type infos elem))]
     [(AstTyRef region inner)
@@ -793,6 +796,8 @@
           (string-append "_" (ctfe-int-key count))))]
     [(AstTyDynArray elem)
       (string-append "dynarray_" (ctfe-type-key-with-reflections infos elem))]
+    [(AstTyBox elem)
+      (string-append "box_" (ctfe-type-key-with-reflections infos elem))]
     [(AstTyPtr elem)
       (string-append "ptr_" (ctfe-type-key-with-reflections infos elem))]
     [(AstTyMutPtr elem)
@@ -848,6 +853,7 @@
     [(AstTyTuple _) "tuple"]
     [(AstTyArray _ _) "array"]
     [(AstTyDynArray _) "dyn-array"]
+    [(AstTyBox _) "box"]
     [(AstTyPtr _) "ptr"]
     [(AstTyMutPtr _) "mut-ptr"]
     [(AstTyRef _ _) "ref"]
@@ -1066,6 +1072,7 @@
           -1
           (* elem-size count)))]
     [(AstTyDynArray _) 8]
+    [(AstTyBox _) 8]
     [(AstTyPtr _) 8]
     [(AstTyMutPtr _) 8]
     [(AstTyRef _ _) 8]
@@ -1109,6 +1116,7 @@
     [(AstTyTuple _) 8]
     [(AstTyArray elem _) (ctfe-type-align layouts elem)]
     [(AstTyDynArray _) 8]
+    [(AstTyBox _) 8]
     [(AstTyPtr _) 8]
     [(AstTyMutPtr _) 8]
     [(AstTyRef _ _) 8]
@@ -2379,6 +2387,14 @@
         [(AstExprIntToPtr b-value b-ty)
           (and (ctfe-expr-eq a-value b-value) (ctfe-type-eq a-ty b-ty))]
         [_ false])]
+    [(AstExprBox a-inner)
+      (match b
+        [(AstExprBox b-inner) (ctfe-expr-eq a-inner b-inner)]
+        [_ false])]
+    [(AstExprBoxGet a-inner)
+      (match b
+        [(AstExprBoxGet b-inner) (ctfe-expr-eq a-inner b-inner)]
+        [_ false])]
     [(AstExprSpanned a-inner _) (ctfe-expr-eq a-inner b)]
     [_ false]))
 
@@ -2728,6 +2744,10 @@
     [(AstTyDynArray a-elem)
       (match b
         [(AstTyDynArray b-elem) (ctfe-type-eq a-elem b-elem)]
+        [_ false])]
+    [(AstTyBox a-elem)
+      (match b
+        [(AstTyBox b-elem) (ctfe-type-eq a-elem b-elem)]
         [_ false])]
     [(AstTyPtr a-elem)
       (match b

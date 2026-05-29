@@ -317,6 +317,137 @@
     [(AstDeclComptimeDecl template)
       (compiler-symbols-add-decl-in-module symbols module template index)]))
 
+(define (compiler-symbols-add-decl-alias-in-module
+  [symbols : CompilerSymbols]
+  [alias : String]
+  [decl : AstDecl]
+  [index : i64]) : CompilerSymbols
+  (match decl
+    [(AstDeclDef name _ _)
+      (compiler-symbols-add-value-alias
+        symbols
+        (compiler-symbol-module-key alias name)
+        (compiler-symbol-make-handle (compiler-symbol-kind-value-define) index))]
+    [(AstDeclDefFn name _ _ _)
+      (compiler-symbols-add-value-alias
+        symbols
+        (compiler-symbol-module-key alias name)
+        (compiler-symbol-make-handle
+          (compiler-symbol-kind-function-define)
+          index))]
+    [(AstDeclDefMacro name _ _ _)
+      (compiler-symbols-add-macro-alias
+        symbols
+        (compiler-symbol-module-key alias name)
+        (compiler-symbol-make-handle (compiler-symbol-kind-defmacro) index))]
+    [(AstDeclExtern name _ _)
+      (compiler-symbols-add-value-alias
+        symbols
+        (compiler-symbol-module-key alias name)
+        (compiler-symbol-make-handle (compiler-symbol-kind-extern) index))]
+    [(AstDeclDefEnum name _)
+      (compiler-symbols-add-type-alias
+        symbols
+        (compiler-symbol-module-key alias name)
+        (compiler-symbol-make-handle (compiler-symbol-kind-defenum) index))]
+    [(AstDeclDefStruct name _ _ _)
+      (compiler-symbols-add-type-alias
+        symbols
+        (compiler-symbol-module-key alias name)
+        (compiler-symbol-make-handle (compiler-symbol-kind-defstruct) index))]
+    [(AstDeclComptimeDecl template)
+      (compiler-symbols-add-decl-alias-in-module symbols alias template index)]
+    [_ symbols]))
+
+(define (compiler-symbols-add-module-aliases-list
+  [symbols : CompilerSymbols]
+  [decls : AstDeclList]
+  [target-module : String]
+  [alias : String]
+  [index : i64]
+  [module : String]) : CompilerSymbols
+  (match decls
+    [(AstDeclNil) symbols]
+    [(AstDeclCons decl rest)
+      (match decl
+        [(AstDeclImport _)
+          (compiler-symbols-add-module-aliases-list
+            symbols
+            rest
+            target-module
+            alias
+            index
+            module)]
+        [(AstDeclModule next-module)
+          (compiler-symbols-add-module-aliases-list
+            symbols
+            rest
+            target-module
+            alias
+            index
+            next-module)]
+        [(AstDeclTest _ _ _)
+          (compiler-symbols-add-module-aliases-list
+            symbols
+            rest
+            target-module
+            alias
+            index
+            module)]
+        [_
+          (let
+            [next-symbols : CompilerSymbols
+              (if (string-eq module target-module)
+                (compiler-symbols-add-decl-alias-in-module
+                  symbols
+                  alias
+                  decl
+                  index)
+                symbols)]
+            (compiler-symbols-add-module-aliases-list
+              next-symbols
+              rest
+              target-module
+              alias
+              (+ index 1)
+              module))])]))
+
+(define (compiler-symbols-add-module-aliases
+  [symbols : CompilerSymbols]
+  [decls : AstDeclList]
+  [target-module : String]
+  [alias : String]) : CompilerSymbols
+  (compiler-symbols-add-module-aliases-list
+    symbols
+    decls
+    target-module
+    alias
+    0
+    ""))
+
+(define (build-compiler-symbol-aliases-list
+  [all-decls : AstDeclList]
+  [decls : AstDeclList]
+  [symbols : CompilerSymbols]) : CompilerSymbols
+  (match decls
+    [(AstDeclNil) symbols]
+    [(AstDeclCons decl rest)
+      (let
+        [next-symbols : CompilerSymbols
+          (match decl
+            [(AstDeclImport
+                (AstImportSpec
+                  _
+                  (AstSomeModuleName target-module)
+                  (AstSomeImportAlias alias)))
+              (compiler-symbols-add-module-aliases
+                symbols
+                all-decls
+                target-module
+                alias)]
+            [_ symbols])]
+        (build-compiler-symbol-aliases-list all-decls rest next-symbols))]))
+
 (define (build-compiler-symbol-list
   [decls : AstDeclList]
   [symbols : CompilerSymbols]
@@ -351,7 +482,11 @@
 (define (build-compiler-symbols [program : AstProgram]) : ResultCompilerSymbols
   (match program
     [(AstProgram decls)
-      (build-compiler-symbol-list decls (compiler-symbols-empty) 0)]))
+      (match (build-compiler-symbol-list decls (compiler-symbols-empty) 0)
+        [(OkCompilerSymbols symbols)
+          (OkCompilerSymbols
+            (build-compiler-symbol-aliases-list decls decls symbols))]
+        [(ErrCompilerSymbols message) (ErrCompilerSymbols message)])]))
 
 (define (build-compiler-symbols-from-source [src : String]) : ResultCompilerSymbols
   (match (parse-ast-source src)
@@ -440,6 +575,185 @@
                   (compiler-symbol-kind-struct-field)
                   struct-index
                   field-index))))))]))
+
+(define (compiler-registries-add-field-alias
+  [registries : CompilerRegistries]
+  [struct-name : String]
+  [field-name : String]
+  [handle : i64]) : CompilerRegistries
+  (match registries
+    [(CompilerRegistries variants fields)
+      (let
+        [key : String (compiler-struct-field-key struct-name field-name)]
+        (if (sym-i64-contains fields key)
+          registries
+          (CompilerRegistries variants (sym-i64-bind fields key handle))))]))
+
+(define (compiler-registries-add-variant-aliases-list
+  [registries : CompilerRegistries]
+  [alias : String]
+  [variants : AstVariantDefList]
+  [enum-index : i64]
+  [variant-index : i64]) : CompilerRegistries
+  (match variants
+    [(AstVariantDefNil) registries]
+    [(AstVariantDefCons variant rest)
+      (match variant
+        [(AstVariantDef name _)
+          (compiler-registries-add-variant-aliases-list
+            (compiler-registries-add-variant-alias
+              registries
+              (compiler-symbol-module-key alias name)
+              (compiler-registry-make-handle
+                (compiler-symbol-kind-enum-variant)
+                enum-index
+                variant-index))
+            alias
+            rest
+            enum-index
+            (+ variant-index 1))])]))
+
+(define (compiler-registries-add-field-aliases-list
+  [registries : CompilerRegistries]
+  [struct-name : String]
+  [fields : AstFieldDefList]
+  [struct-index : i64]
+  [field-index : i64]) : CompilerRegistries
+  (match fields
+    [(AstFieldDefNil) registries]
+    [(AstFieldDefCons field rest)
+      (match field
+        [(AstFieldDef name _ _)
+          (compiler-registries-add-field-aliases-list
+            (compiler-registries-add-field-alias
+              registries
+              struct-name
+              name
+              (compiler-registry-make-handle
+                (compiler-symbol-kind-struct-field)
+                struct-index
+                field-index))
+            struct-name
+            rest
+            struct-index
+            (+ field-index 1))])]))
+
+(define (compiler-registries-add-decl-alias-in-module
+  [registries : CompilerRegistries]
+  [alias : String]
+  [decl : AstDecl]
+  [index : i64]) : CompilerRegistries
+  (match decl
+    [(AstDeclDefEnum _ variants)
+      (compiler-registries-add-variant-aliases-list
+        registries
+        alias
+        variants
+        index
+        0)]
+    [(AstDeclDefStruct name _ _ fields)
+      (compiler-registries-add-field-aliases-list
+        registries
+        (compiler-symbol-module-key alias name)
+        fields
+        index
+        0)]
+    [(AstDeclComptimeDecl template)
+      (compiler-registries-add-decl-alias-in-module
+        registries
+        alias
+        template
+        index)]
+    [_ registries]))
+
+(define (compiler-registries-add-module-aliases-list
+  [registries : CompilerRegistries]
+  [decls : AstDeclList]
+  [target-module : String]
+  [alias : String]
+  [index : i64]
+  [module : String]) : CompilerRegistries
+  (match decls
+    [(AstDeclNil) registries]
+    [(AstDeclCons decl rest)
+      (match decl
+        [(AstDeclImport _)
+          (compiler-registries-add-module-aliases-list
+            registries
+            rest
+            target-module
+            alias
+            index
+            module)]
+        [(AstDeclModule next-module)
+          (compiler-registries-add-module-aliases-list
+            registries
+            rest
+            target-module
+            alias
+            index
+            next-module)]
+        [(AstDeclTest _ _ _)
+          (compiler-registries-add-module-aliases-list
+            registries
+            rest
+            target-module
+            alias
+            index
+            module)]
+        [_
+          (let
+            [next-registries : CompilerRegistries
+              (if (string-eq module target-module)
+                (compiler-registries-add-decl-alias-in-module
+                  registries
+                  alias
+                  decl
+                  index)
+                registries)]
+            (compiler-registries-add-module-aliases-list
+              next-registries
+              rest
+              target-module
+              alias
+              (+ index 1)
+              module))])]))
+
+(define (compiler-registries-add-module-aliases
+  [registries : CompilerRegistries]
+  [decls : AstDeclList]
+  [target-module : String]
+  [alias : String]) : CompilerRegistries
+  (compiler-registries-add-module-aliases-list
+    registries
+    decls
+    target-module
+    alias
+    0
+    ""))
+
+(define (build-compiler-registry-aliases-list
+  [all-decls : AstDeclList]
+  [decls : AstDeclList]
+  [registries : CompilerRegistries]) : CompilerRegistries
+  (match decls
+    [(AstDeclNil) registries]
+    [(AstDeclCons decl rest)
+      (let
+        [next-registries : CompilerRegistries
+          (match decl
+            [(AstDeclImport
+                (AstImportSpec
+                  _
+                  (AstSomeModuleName target-module)
+                  (AstSomeImportAlias alias)))
+              (compiler-registries-add-module-aliases
+                registries
+                all-decls
+                target-module
+                alias)]
+            [_ registries])]
+        (build-compiler-registry-aliases-list all-decls rest next-registries))]))
 
 (define (build-compiler-variant-registry-list
   [variants : AstVariantDefList]
@@ -615,7 +929,14 @@
     [(OkCompilerSymbols _)
       (match program
         [(AstProgram decls)
-          (build-compiler-registry-list decls (compiler-registries-empty) 0)])]
+          (match (build-compiler-registry-list
+            decls
+            (compiler-registries-empty)
+            0)
+            [(OkCompilerRegistries registries)
+              (OkCompilerRegistries
+                (build-compiler-registry-aliases-list decls decls registries))]
+            [(ErrCompilerRegistries message) (ErrCompilerRegistries message)])])]
     [(ErrCompilerSymbols message) (ErrCompilerRegistries message)]))
 
 (define (build-compiler-registries-from-source [src : String]) : ResultCompilerRegistries
@@ -1083,6 +1404,59 @@
         [(ErrCompilerSymbols _) false])]
     [(ErrAstProgram _) false]))
 
+(define (compiler-symbols-import-alias-source) : String
+  "(module data)
+(define answer : i64 7)
+(define (get) : i64 answer)
+(defenum Maybe (None) (Some i64))
+(defstruct Point (x i64))
+(module main)
+(import \"data.tl\" module data :as d)
+(define (main) : i64 (d/get))")
+
+(define (compiler-symbols-import-alias-ok?) : bool
+  (match (parse-ast-source (compiler-symbols-import-alias-source))
+    [(OkAstProgram program)
+      (match (build-compiler-symbols program)
+        [(OkCompilerSymbols symbols)
+          (match (build-compiler-registries program)
+            [(OkCompilerRegistries registries)
+              (and
+                (=
+                  (compiler-symbol-lookup-score
+                    (compiler-symbols-lookup-value symbols "d/get")
+                    (compiler-symbol-kind-function-define)
+                    1)
+                  1)
+                (and
+                  (=
+                    (compiler-symbol-lookup-score
+                      (compiler-symbols-lookup-type symbols "d/Point")
+                      (compiler-symbol-kind-defstruct)
+                      3)
+                    1)
+                  (and
+                    (=
+                      (compiler-registry-lookup-score
+                        (compiler-registries-lookup-variant registries "d/Some")
+                        (compiler-symbol-kind-enum-variant)
+                        2
+                        1)
+                      1)
+                    (=
+                      (compiler-registry-lookup-score
+                        (compiler-registries-lookup-struct-field
+                          registries
+                          "d/Point"
+                          "x")
+                        (compiler-symbol-kind-struct-field)
+                        3
+                        0)
+                      1))))]
+            [(ErrCompilerRegistries _) false])]
+        [(ErrCompilerSymbols _) false])]
+    [(ErrAstProgram _) false]))
+
 (define (compiler-symbols-self-test) : i64
   (match (parse-ast-source (compiler-symbols-smoke-source))
     [(OkAstProgram program)
@@ -1109,8 +1483,10 @@
                               (and
                                 (compiler-symbols-module-scope-ok?)
                                 (and
-                                  (compiler-symbols-macro-namespace-ok?)
-                                  (compiler-symbols-duplicate-macro-value-ok?)))))))))))
+                                  (compiler-symbols-import-alias-ok?)
+                                  (and
+                                    (compiler-symbols-macro-namespace-ok?)
+                                    (compiler-symbols-duplicate-macro-value-ok?))))))))))))
                 42
                 (begin
                   (panic "symbols: smoke score mismatch")

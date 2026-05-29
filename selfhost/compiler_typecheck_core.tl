@@ -296,6 +296,7 @@
         (tc-type-render elem)
         (tc-cat3 " " (int->string count) ")"))]
     [(AstTyDynArray elem) (tc-cat3 "(Array " (tc-type-render elem) ")")]
+    [(AstTyBox elem) (tc-cat3 "(Box " (tc-type-render elem) ")")]
     [(AstTyPtr elem) (tc-cat3 "(Ptr " (tc-type-render elem) ")")]
     [(AstTyMutPtr elem) (tc-cat3 "(MutPtr " (tc-type-render elem) ")")]
     [(AstTyRef region inner)
@@ -885,6 +886,7 @@
     [(AstTyTuple elems) (AstTyTuple (tc-type-list-without-regions elems))]
     [(AstTyArray elem len) (AstTyArray (tc-type-without-regions elem) len)]
     [(AstTyDynArray elem) (AstTyDynArray (tc-type-without-regions elem))]
+    [(AstTyBox elem) (AstTyBox (tc-type-without-regions elem))]
     [(AstTyPtr elem) (AstTyPtr (tc-type-without-regions elem))]
     [(AstTyMutPtr elem) (AstTyMutPtr (tc-type-without-regions elem))]
     [(AstTyRef region inner) (AstTyRef region (tc-type-without-regions inner))]
@@ -910,6 +912,7 @@
     [(AstTyTuple elems) (tc-type-list-contains-region elems region)]
     [(AstTyArray elem _) (tc-type-contains-region elem region)]
     [(AstTyDynArray elem) (tc-type-contains-region elem region)]
+    [(AstTyBox elem) (tc-type-contains-region elem region)]
     [(AstTyPtr elem) (tc-type-contains-region elem region)]
     [(AstTyMutPtr elem) (tc-type-contains-region elem region)]
     [(AstTyRef name inner)
@@ -937,6 +940,7 @@
     [(AstTyTuple elems) (tc-type-list-contains-any-region elems)]
     [(AstTyArray elem _) (tc-type-contains-any-region elem)]
     [(AstTyDynArray elem) (tc-type-contains-any-region elem)]
+    [(AstTyBox elem) (tc-type-contains-any-region elem)]
     [(AstTyPtr elem) (tc-type-contains-any-region elem)]
     [(AstTyMutPtr elem) (tc-type-contains-any-region elem)]
     [(AstTyRef _ _) true]
@@ -961,6 +965,7 @@
     [(AstTyTuple elems) (tc-type-list-contains-reference? elems)]
     [(AstTyArray elem _) (tc-type-contains-reference? elem)]
     [(AstTyDynArray elem) (tc-type-contains-reference? elem)]
+    [(AstTyBox elem) (tc-type-contains-reference? elem)]
     [(AstTyPtr elem) (tc-type-contains-reference? elem)]
     [(AstTyMutPtr elem) (tc-type-contains-reference? elem)]
     [(AstTyRef _ _) true]
@@ -989,6 +994,7 @@
     [(AstTyTuple elems) (tc-type-list-collect-reference-lifetimes elems out)]
     [(AstTyArray elem _) (tc-type-collect-reference-lifetimes-into elem out)]
     [(AstTyDynArray elem) (tc-type-collect-reference-lifetimes-into elem out)]
+    [(AstTyBox elem) (tc-type-collect-reference-lifetimes-into elem out)]
     [(AstTyPtr elem) (tc-type-collect-reference-lifetimes-into elem out)]
     [(AstTyMutPtr elem) (tc-type-collect-reference-lifetimes-into elem out)]
     [(AstTyRef lifetime inner)
@@ -1072,6 +1078,7 @@
     [(AstTyTuple elems) (tc-type-list-collect-regions elems out)]
     [(AstTyArray elem _) (tc-type-collect-regions-into elem out)]
     [(AstTyDynArray elem) (tc-type-collect-regions-into elem out)]
+    [(AstTyBox elem) (tc-type-collect-regions-into elem out)]
     [(AstTyPtr elem) (tc-type-collect-regions-into elem out)]
     [(AstTyMutPtr elem) (tc-type-collect-regions-into elem out)]
     [(AstTyRef name inner)
@@ -1094,6 +1101,7 @@
   (match (tc-type-strip-region ty)
     [(AstTyString) true]
     [(AstTyDynArray _) true]
+    [(AstTyBox _) true]
     [(AstTyTuple _) true]
     [(AstTyStruct _) true]
     [(AstTyEnum _) true]
@@ -1211,6 +1219,53 @@
       (AstTyStruct name)
       (AstTyVar name))))
 
+(define (tc-nominal-owner-name-list
+  [decls : AstDeclList]
+  [target : i64]
+  [index : i64]
+  [module : String]) : ResultTcString
+  (match decls
+    [(AstDeclNil) (ErrTcString "typecheck: nominal owner not found")]
+    [(AstDeclCons decl rest)
+      (match decl
+        [(AstDeclImport _)
+          (tc-nominal-owner-name-list rest target index module)]
+        [(AstDeclModule next-module)
+          (tc-nominal-owner-name-list rest target index next-module)]
+        [(AstDeclTest _ _ _)
+          (tc-nominal-owner-name-list rest target index module)]
+        [(AstDeclDefEnum name _)
+          (if (= target index)
+            (OkTcString (compiler-symbol-module-key module name))
+            (tc-nominal-owner-name-list rest target (+ index 1) module))]
+        [(AstDeclDefStruct name _ _ _)
+          (if (= target index)
+            (OkTcString (compiler-symbol-module-key module name))
+            (tc-nominal-owner-name-list rest target (+ index 1) module))]
+        [(AstDeclComptimeDecl template)
+          (match template
+            [(AstDeclDefEnum name _)
+              (if (= target index)
+                (OkTcString (compiler-symbol-module-key module name))
+                (tc-nominal-owner-name-list rest target (+ index 1) module))]
+            [(AstDeclDefStruct name _ _ _)
+              (if (= target index)
+                (OkTcString (compiler-symbol-module-key module name))
+                (tc-nominal-owner-name-list rest target (+ index 1) module))]
+            [_ (tc-nominal-owner-name-list rest target (+ index 1) module)])]
+        [_ (tc-nominal-owner-name-list rest target (+ index 1) module)])]))
+
+(define (tc-nominal-owner-name [ctx : TcContext] [handle : i64]) : ResultTcString
+  (match ctx
+    [(TcContext program _ _ _)
+      (match program
+        [(AstProgram decls)
+          (tc-nominal-owner-name-list
+            decls
+            (compiler-symbol-handle-index handle)
+            0
+            "")])]))
+
 (define (tc-resolve-type-name [ctx : TcContext] [name : String]) : AstType
   (match ctx
     [(TcContext _ symbols _ module)
@@ -1220,7 +1275,11 @@
             (compiler-symbol-module-key module name)
             name)]
         (match (compiler-symbols-lookup-type symbols lookup-name)
-          [(SomeI64 handle) (tc-resolved-nominal-type lookup-name handle)]
+          [(SomeI64 handle)
+            (match (tc-nominal-owner-name ctx handle)
+              [(OkTcString canonical-name)
+                (tc-resolved-nominal-type canonical-name handle)]
+              [(ErrTcString _) (tc-resolved-nominal-type lookup-name handle)])]
           [(NoneI64)
             (if (string-eq name "Expr")
               (AstTyExpr)
@@ -1235,6 +1294,7 @@
     [(AstTyTuple elems) (AstTyTuple (tc-resolve-type-list ctx elems))]
     [(AstTyArray elem len) (AstTyArray (tc-resolve-type ctx elem) len)]
     [(AstTyDynArray elem) (AstTyDynArray (tc-resolve-type ctx elem))]
+    [(AstTyBox elem) (AstTyBox (tc-resolve-type ctx elem))]
     [(AstTyPtr elem) (AstTyPtr (tc-resolve-type ctx elem))]
     [(AstTyMutPtr elem) (AstTyMutPtr (tc-resolve-type ctx elem))]
     [(AstTyRef region inner) (AstTyRef region (tc-resolve-type ctx inner))]
@@ -1275,6 +1335,7 @@
     [(AstTyTuple elems) (tc-source-type-list-policy-ok ctx elems)]
     [(AstTyArray elem _) (tc-source-type-policy-ok ctx elem)]
     [(AstTyDynArray elem) (tc-source-type-policy-ok ctx elem)]
+    [(AstTyBox elem) (tc-source-type-policy-ok ctx elem)]
     [(AstTyPtr elem) (tc-source-type-policy-ok ctx elem)]
     [(AstTyMutPtr elem) (tc-source-type-policy-ok ctx elem)]
     [(AstTyRef _ inner)
@@ -1502,6 +1563,8 @@
         [(OkTcUnit) (tc-source-type-policy-ok ctx ty)]
         [(ErrTcUnit message) (ErrTcUnit message)])]
     [(AstExprBorrow _ place) (tc-source-expr-policy-ok ctx place)]
+    [(AstExprBox inner) (tc-source-expr-policy-ok ctx inner)]
+    [(AstExprBoxGet inner) (tc-source-expr-policy-ok ctx inner)]
     [(AstExprMatch scrutinee arms)
       (match (tc-source-expr-policy-ok ctx scrutinee)
         [(OkTcUnit) (tc-source-match-arm-list-policy-ok ctx arms)]
@@ -1717,6 +1780,10 @@
       (match b
         [(AstTyDynArray b-elem) (tc-type-eq a-elem b-elem)]
         [_ false])]
+    [(AstTyBox a-elem)
+      (match b
+        [(AstTyBox b-elem) (tc-type-eq a-elem b-elem)]
+        [_ false])]
     [(AstTyPtr a-elem)
       (match b
         [(AstTyPtr b-elem) (tc-type-eq a-elem b-elem)]
@@ -1850,6 +1917,7 @@
     [(AstTyTuple _) (TcMoveOnly)]
     [(AstTyArray _ _) (TcMoveOnly)]
     [(AstTyDynArray _) (TcMoveOnly)]
+    [(AstTyBox _) (TcMoveOnly)]
     [(AstTyMutRef _ _) (TcMoveOnly)]
     [(AstTyEnum _) (TcMoveOnly)]
     [(AstTyStruct _) (TcMoveOnly)]
@@ -2335,9 +2403,168 @@
         [(AstDeclTest _ _ _)
           (tc-build-top-env-list-in-module ctx rest env module)])]))
 
+(define (tc-bind-enum-variant-aliases
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [alias : String]
+  [enum-name : String]
+  [variants : AstVariantDefList]) : TcTypeEnv
+  (match variants
+    [(AstVariantDefNil) env]
+    [(AstVariantDefCons variant rest)
+      (match variant
+        [(AstVariantDef name fields)
+          (tc-bind-enum-variant-aliases
+            ctx
+            (tc-bind
+              env
+              (compiler-symbol-module-key alias name)
+              (tc-enum-variant-constructor-type ctx enum-name fields))
+            alias
+            enum-name
+            rest)])]))
+
+(define (tc-bind-import-alias-decl-in-module
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [alias : String]
+  [module : String]
+  [decl : AstDecl]) : ResultTcEnv
+  (match decl
+    [(AstDeclDef name _ _)
+      (match (tc-top-decl-type (tc-context-with-module ctx module) decl)
+        [(OkTcType ty)
+          (OkTcEnv (tc-bind env (compiler-symbol-module-key alias name) ty))]
+        [(ErrTcType message) (ErrTcEnv message)])]
+    [(AstDeclDefFn name _ _ _)
+      (match (tc-top-decl-type (tc-context-with-module ctx module) decl)
+        [(OkTcType ty)
+          (OkTcEnv (tc-bind env (compiler-symbol-module-key alias name) ty))]
+        [(ErrTcType message) (ErrTcEnv message)])]
+    [(AstDeclExtern name _ _)
+      (match (tc-top-decl-type (tc-context-with-module ctx module) decl)
+        [(OkTcType ty)
+          (OkTcEnv (tc-bind env (compiler-symbol-module-key alias name) ty))]
+        [(ErrTcType message) (ErrTcEnv message)])]
+    [(AstDeclDefEnum name variants)
+      (OkTcEnv
+        (tc-bind-enum-variant-aliases
+          (tc-context-with-module ctx module)
+          env
+          alias
+          (compiler-symbol-module-key module name)
+          variants))]
+    [(AstDeclDefStruct name _ _ fields)
+      (OkTcEnv
+        (tc-bind
+          env
+          (compiler-symbol-module-key alias name)
+          (AstTyFunc
+            (tc-field-type-list (tc-context-with-module ctx module) fields)
+            (AstTyStruct (compiler-symbol-module-key module name)))))]
+    [(AstDeclComptimeDecl template)
+      (tc-bind-import-alias-decl-in-module ctx env alias module template)]
+    [_ (OkTcEnv env)]))
+
+(define (tc-bind-import-alias-module-list
+  [ctx : TcContext]
+  [decls : AstDeclList]
+  [env : TcTypeEnv]
+  [target-module : String]
+  [alias : String]
+  [module : String]) : ResultTcEnv
+  (match decls
+    [(AstDeclNil) (OkTcEnv env)]
+    [(AstDeclCons decl rest)
+      (match decl
+        [(AstDeclModule next-module)
+          (tc-bind-import-alias-module-list
+            ctx
+            rest
+            env
+            target-module
+            alias
+            next-module)]
+        [(AstDeclImport _)
+          (tc-bind-import-alias-module-list
+            ctx
+            rest
+            env
+            target-module
+            alias
+            module)]
+        [(AstDeclTest _ _ _)
+          (tc-bind-import-alias-module-list
+            ctx
+            rest
+            env
+            target-module
+            alias
+            module)]
+        [_
+          (if (string-eq module target-module)
+            (match (tc-bind-import-alias-decl-in-module
+              ctx
+              env
+              alias
+              module
+              decl)
+              [(OkTcEnv next-env)
+                (tc-bind-import-alias-module-list
+                  ctx
+                  rest
+                  next-env
+                  target-module
+                  alias
+                  module)]
+              [(ErrTcEnv message) (ErrTcEnv message)])
+            (tc-bind-import-alias-module-list
+              ctx
+              rest
+              env
+              target-module
+              alias
+              module))])]))
+
+(define (tc-bind-import-alias-module
+  [ctx : TcContext]
+  [decls : AstDeclList]
+  [env : TcTypeEnv]
+  [target-module : String]
+  [alias : String]) : ResultTcEnv
+  (tc-bind-import-alias-module-list ctx decls env target-module alias ""))
+
+(define (tc-build-top-env-aliases-list
+  [ctx : TcContext]
+  [all-decls : AstDeclList]
+  [decls : AstDeclList]
+  [env : TcTypeEnv]) : ResultTcEnv
+  (match decls
+    [(AstDeclNil) (OkTcEnv env)]
+    [(AstDeclCons decl rest)
+      (match decl
+        [(AstDeclImport
+            (AstImportSpec
+              _
+              (AstSomeModuleName target-module)
+              (AstSomeImportAlias alias)))
+          (match (tc-bind-import-alias-module
+            ctx
+            all-decls
+            env
+            target-module
+            alias)
+            [(OkTcEnv next-env)
+              (tc-build-top-env-aliases-list ctx all-decls rest next-env)]
+            [(ErrTcEnv message) (ErrTcEnv message)])]
+        [_ (tc-build-top-env-aliases-list ctx all-decls rest env)])]))
+
 (define (tc-build-top-env [ctx : TcContext] [program : AstProgram]) : ResultTcEnv
   (match program
-    [(AstProgram decls) (tc-build-top-env-list ctx decls (tc-default-env))]))
+    [(AstProgram decls)
+      (match (tc-build-top-env-list ctx decls (tc-default-env))
+        [(OkTcEnv env) (tc-build-top-env-aliases-list ctx decls decls env)]
+        [(ErrTcEnv message) (ErrTcEnv message)])]))
 
 (define (tc-bind-enum-variants-local
   [ctx : TcContext]
@@ -3531,6 +3758,20 @@
             [(TcSpmdExprInfo _ class next-spmd-env)
               (tc-spmd-finish expr-ty class next-spmd-env)])]
         [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)])]
+    [(AstExprBox inner)
+      (match (tc-spmd-expr ctx env spmd-env inner)
+        [(OkTcSpmdExprInfo info)
+          (match info
+            [(TcSpmdExprInfo _ class next-spmd-env)
+              (tc-spmd-finish expr-ty class next-spmd-env)])]
+        [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)])]
+    [(AstExprBoxGet inner)
+      (match (tc-spmd-expr ctx env spmd-env inner)
+        [(OkTcSpmdExprInfo info)
+          (match info
+            [(TcSpmdExprInfo _ class next-spmd-env)
+              (tc-spmd-finish expr-ty class next-spmd-env)])]
+        [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)])]
     [(AstExprWithRegion region body)
       (tc-spmd-begin-list ctx (tc-push-region env region) spmd-env body)]
     [(AstExprWithResource _ _)
@@ -3811,6 +4052,8 @@
     [(AstExprAnn inner _) (tc-expr-uses-free-name? inner name bound)]
     [(AstExprCast inner _) (tc-expr-uses-free-name? inner name bound)]
     [(AstExprBorrow _ place) (tc-expr-uses-free-name? place name bound)]
+    [(AstExprBox inner) (tc-expr-uses-free-name? inner name bound)]
+    [(AstExprBoxGet inner) (tc-expr-uses-free-name? inner name bound)]
     [(AstExprMatch scrutinee arms)
       (or
         (tc-expr-uses-free-name? scrutinee name bound)
@@ -3946,6 +4189,8 @@
     [(AstExprComptime inner)
       (tc-expr-result-uses-cleanup-owner? inner owners bound)]
     [(AstExprTry inner) (tc-expr-result-uses-cleanup-owner? inner owners bound)]
+    [(AstExprBoxGet inner)
+      (tc-expr-result-uses-cleanup-owner? inner owners bound)]
     [(AstExprWithRegion _ body)
       (tc-expr-list-result-uses-cleanup-owner? body owners bound)]
     [(AstExprWithResource bindings body)
@@ -5016,14 +5261,31 @@
     (tc-qualified-variant-name enum-name variant-name)))
 
 (define (tc-variant-name-matches?
+  [ctx : TcContext]
   [enum-name : String]
   [pattern-name : String]
   [variant-name : String]) : bool
-  (or
+  (if (or
     (string-eq pattern-name variant-name)
-    (string-eq pattern-name (tc-qualified-variant-name enum-name variant-name))))
+    (string-eq pattern-name (tc-qualified-variant-name enum-name variant-name)))
+    true
+    (let
+      [pattern-key : String (tc-variant-name-for-enum enum-name pattern-name)]
+      [candidate-key : String
+        (tc-qualified-variant-name enum-name variant-name)]
+      (match (compiler-registries-lookup-variant
+        (tc-context-registries ctx)
+        pattern-key)
+        [(SomeI64 pattern-handle)
+          (match (compiler-registries-lookup-variant
+            (tc-context-registries ctx)
+            candidate-key)
+            [(SomeI64 candidate-handle) (= pattern-handle candidate-handle)]
+            [(NoneI64) false])]
+        [(NoneI64) false]))))
 
 (define (tc-enum-has-single-variant?
+  [ctx : TcContext]
   [variants : AstVariantDefList]
   [enum-name : String]
   [variant-name : String]) : bool
@@ -5033,7 +5295,7 @@
         [(AstVariantDefNil)
           (match variant
             [(AstVariantDef name _)
-              (tc-variant-name-matches? enum-name variant-name name)])]
+              (tc-variant-name-matches? ctx enum-name variant-name name)])]
         [_ false])]
     [_ false]))
 
@@ -5072,7 +5334,7 @@
         [(AstTyEnum enum-name)
           (match (tc-program-enum-variants (tc-context-program ctx) enum-name)
             [(OkAstVariantDefList variants)
-              (if (tc-enum-has-single-variant? variants enum-name name)
+              (if (tc-enum-has-single-variant? ctx variants enum-name name)
                 (tc-variant-pattern-irrefutable? ctx enum-name name args)
                 false)]
             [(ErrAstVariantDefList _) false])]
@@ -5104,10 +5366,10 @@
   (match pattern
     [(AstPatWildcard) true]
     [(AstPatBinding name)
-      (tc-variant-name-matches? enum-name name variant-name)]
+      (tc-variant-name-matches? ctx enum-name name variant-name)]
     [(AstPatVariant name args)
       (and
-        (tc-variant-name-matches? enum-name name variant-name)
+        (tc-variant-name-matches? ctx enum-name name variant-name)
         (tc-variant-pattern-irrefutable? ctx enum-name name args))]
     [_ false]))
 
@@ -5428,6 +5690,27 @@
             [(ErrTcType message) (ErrTcType message)])
           (ErrTcType "typecheck: int->ptr target must be a raw pointer type")))]
     [(ErrTcUnit message) (ErrTcType message)]))
+
+(define (tc-box-expr [ctx : TcContext] [env : TcTypeEnv] [inner : AstExpr]) : ResultTcType
+  (match (tc-ensure-cleanup-resource-not-stored-expr env inner)
+    [(OkTcUnit)
+      (match (tc-expr ctx env inner)
+        [(OkTcType inner-ty)
+          (OkTcType (tc-tag-active-region env (AstTyBox inner-ty)))]
+        [(ErrTcType message) (ErrTcType message)])]
+    [(ErrTcUnit message) (ErrTcType message)]))
+
+(define (tc-box-get-expr
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [box-expr : AstExpr]) : ResultTcType
+  (match (tc-expr ctx env box-expr)
+    [(OkTcType box-ty)
+      (match (tc-type-strip-region (tc-resolve-type ctx box-ty))
+        [(AstTyBox inner-ty)
+          (OkTcType (tc-project-from-region-container box-ty inner-ty))]
+        [_ (ErrTcType "typecheck: box-get requires Box type")])]
+    [(ErrTcType message) (ErrTcType message)]))
 
 (define (tc-expr [ctx : TcContext] [env : TcTypeEnv] [expr : AstExpr]) : ResultTcType
   (match expr
@@ -5891,6 +6174,8 @@
                 (OkTcType body-ty))]
             [(ErrTcType message) (ErrTcType message)])]
         [(ErrTcEnv message) (ErrTcType message)])]
+    [(AstExprBox inner) (tc-box-expr ctx env inner)]
+    [(AstExprBoxGet inner) (tc-box-get-expr ctx env inner)]
     [(AstExprComptime inner)
       (match (compiler-ctfe-eval inner (tc-ctfe-env ctx) (ctfe-fuel-limit))
         [(OkCtfe value _)

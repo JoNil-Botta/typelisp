@@ -299,6 +299,7 @@
           (spec-type-key elem)
           (string-append "_" (spec-int-key count))))]
     [(AstTyDynArray elem) (string-append "dynarray_" (spec-type-key elem))]
+    [(AstTyBox elem) (string-append "box_" (spec-type-key elem))]
     [(AstTyPtr elem) (string-append "ptr_" (spec-type-key elem))]
     [(AstTyMutPtr elem) (string-append "mutptr_" (spec-type-key elem))]
     [(AstTyRef region inner)
@@ -518,6 +519,7 @@
     [(AstTyArray elem count)
       (AstTyArray (spec-substitute-type elem subs) count)]
     [(AstTyDynArray elem) (AstTyDynArray (spec-substitute-type elem subs))]
+    [(AstTyBox elem) (AstTyBox (spec-substitute-type elem subs))]
     [(AstTyPtr elem) (AstTyPtr (spec-substitute-type elem subs))]
     [(AstTyMutPtr elem) (AstTyMutPtr (spec-substitute-type elem subs))]
     [(AstTyRef region inner)
@@ -1151,6 +1153,16 @@
         [(ErrSpecExprList diag) (ErrSpecExpr diag)])]
     [(AstExprWithResource bindings body)
       (OkSpecExpr (AstExprWithResource bindings body) state)]
+    [(AstExprBox inner)
+      (match (spec-rewrite-expr inner templates state)
+        [(OkSpecExpr rewritten state2)
+          (OkSpecExpr (AstExprBox rewritten) state2)]
+        [(ErrSpecExpr diag) (ErrSpecExpr diag)])]
+    [(AstExprBoxGet inner)
+      (match (spec-rewrite-expr inner templates state)
+        [(OkSpecExpr rewritten state2)
+          (OkSpecExpr (AstExprBoxGet rewritten) state2)]
+        [(ErrSpecExpr diag) (ErrSpecExpr diag)])]
     [(AstExprComptime inner)
       (match (spec-rewrite-expr inner templates state)
         [(OkSpecExpr rewritten state2)
@@ -1431,6 +1443,14 @@
         [(ErrSpecSubExprList diag) (ErrSpecSubExpr diag)])]
     [(AstExprWithResource bindings body)
       (OkSpecSubExpr (AstExprWithResource bindings body))]
+    [(AstExprBox inner)
+      (match (spec-substitute-values-expr inner subs)
+        [(OkSpecSubExpr rewritten) (OkSpecSubExpr (AstExprBox rewritten))]
+        [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
+    [(AstExprBoxGet inner)
+      (match (spec-substitute-values-expr inner subs)
+        [(OkSpecSubExpr rewritten) (OkSpecSubExpr (AstExprBoxGet rewritten))]
+        [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
     [(AstExprComptime inner)
       (match (spec-substitute-values-expr inner subs)
         [(OkSpecSubExpr rewritten) (OkSpecSubExpr (AstExprComptime rewritten))]
@@ -1773,6 +1793,14 @@
         [(ErrSpecSubExprList diag) (ErrSpecSubExpr diag)])]
     [(AstExprWithResource bindings body)
       (OkSpecSubExpr (AstExprWithResource bindings body))]
+    [(AstExprBox inner)
+      (match (spec-substitute-types-expr inner subs)
+        [(OkSpecSubExpr rewritten) (OkSpecSubExpr (AstExprBox rewritten))]
+        [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
+    [(AstExprBoxGet inner)
+      (match (spec-substitute-types-expr inner subs)
+        [(OkSpecSubExpr rewritten) (OkSpecSubExpr (AstExprBoxGet rewritten))]
+        [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
     [(AstExprComptime inner)
       (match (spec-substitute-types-expr inner subs)
         [(OkSpecSubExpr rewritten) (OkSpecSubExpr (AstExprComptime rewritten))]

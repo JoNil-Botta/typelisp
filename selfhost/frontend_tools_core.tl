@@ -394,6 +394,7 @@
         (front-type-render elem)
         (front-cat3 ", " (int->string count) ")"))]
     [(AstTyDynArray elem) (front-cat3 "DynArray(" (front-type-render elem) ")")]
+    [(AstTyBox elem) (front-cat3 "Box(" (front-type-render elem) ")")]
     [(AstTyPtr elem) (front-cat3 "Ptr(" (front-type-render elem) ")")]
     [(AstTyMutPtr elem) (front-cat3 "MutPtr(" (front-type-render elem) ")")]
     [(AstTyRef region inner)
@@ -647,6 +648,10 @@
         "WithResource { bindings: ["
         (front-resource-binding-list-render bindings)
         (front-cat3 "], body: [" (front-expr-list-render body) "] }"))]
+    [(AstExprBox inner)
+      (front-cat3 "Box { expr: " (front-expr-render inner) " }")]
+    [(AstExprBoxGet inner)
+      (front-cat3 "BoxGet { expr: " (front-expr-render inner) " }")]
     [(AstExprTypeLiteral ty)
       (front-cat3 "TypeLiteral { ty: " (front-type-render ty) " }")]
     [(AstExprComptime inner)

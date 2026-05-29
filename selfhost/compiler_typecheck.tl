@@ -2212,8 +2212,45 @@
           unit)])
     unit))
 
+;; --- move checker fixtures (#1048) ------------------------------------------
+;; `String` is move-only; binding it into a fresh local with `let` moves it, so a
+;; later read of the source is a use-after-move. Copyable scalars are never moved.
+(define (compiler-typecheck-move-use-after-move-source) : String
+  "(define (use-after-move [s : String]) : String
+  (let [t : String s] s))")
+
+(define (compiler-typecheck-move-single-move-source) : String
+  "(define (single-move [s : String]) : String
+  (let [t : String s] t))")
+
+(define (compiler-typecheck-move-copyable-source) : String
+  "(define (copy-reuse [n : i64]) : i64
+  (let [t : i64 n] (+ n t)))")
+
+(define (compiler-typecheck-move-branch-source) : String
+  "(define (branch-move [flag : bool] [s : String]) : String
+  (begin (if flag (let [t : String s] t) (let [u : String s] u)) s))")
+
+;; Returns true when use-after-move is rejected (straight-line and after a
+;; branch that moves on every arm), while a single move and copyable reuse pass.
+(define (compiler-typecheck-move-tests-ok?) : bool
+  (and
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-move-use-after-move-source)
+      "typecheck: use of moved value `s`")
+    (and
+      (compiler-typecheck-ok? (compiler-typecheck-move-single-move-source))
+      (and
+        (compiler-typecheck-ok? (compiler-typecheck-move-copyable-source))
+        (compiler-typecheck-error-ok?
+          (compiler-typecheck-move-branch-source)
+          "typecheck: use of moved value `s`")))))
+
 (define (compiler-typecheck-self-test-diagnostics) : unit
   (begin
+    (if (compiler-typecheck-move-tests-ok?)
+      unit
+      (panic "typecheck: move checker tests failed"))
     (if (compiler-typecheck-error-ok?
       (compiler-typecheck-unbound-source)
       "typecheck: unbound name missing")

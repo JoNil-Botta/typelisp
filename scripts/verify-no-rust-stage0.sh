@@ -368,6 +368,8 @@ else
         [ "$STAGE1_HOST_ACTION_DRIVERS_AVAILABLE" -eq 0 ]; then
         echo
         echo "[no-rust-stage0] skipping seed public tool surface until staged runtime symbols land in stage0"
+    elif [ "$HOST_OS" = windows ]; then
+        run_with_compiler "$FRONT_GATE_TYPELISP_BIN" "public tool surface" env TYPELISP_LEGACY_PACKAGE_MANIFEST=1 scripts/verify-public-tools.sh
     elif [ "$SEED_STAGE1_WRAPPER" -eq 1 ]; then
         echo
         echo "[no-rust-stage0] skipping seed public tool surface until the bundled stage1 wrapper has full CLI parity"
@@ -402,6 +404,10 @@ if [ "$HOST_OS" = linux ]; then
     TYPELISP_STAGE1_SKIP_DOC_SMOKE=1
     export TYPELISP_STAGE1_SKIP_TEST_SMOKE
     export TYPELISP_STAGE1_SKIP_DOC_SMOKE
+    if [ "$SEED_IS_STAGE1_BUNDLE" -eq 1 ]; then
+        TYPELISP_STAGE1_SKIP_PACKAGE_SMOKE=1
+        export TYPELISP_STAGE1_SKIP_PACKAGE_SMOKE
+    fi
     if [ "$STAGE1_HOST_ACTION_DRIVERS_AVAILABLE" -eq 0 ]; then
         echo
         echo "[no-rust-stage0] skipping stage1 CLI host-action wrapper smoke until staged runtime symbols land in stage0"
@@ -410,6 +416,7 @@ if [ "$HOST_OS" = linux ]; then
     fi
     unset TYPELISP_STAGE1_SKIP_TEST_SMOKE
     unset TYPELISP_STAGE1_SKIP_DOC_SMOKE
+    unset TYPELISP_STAGE1_SKIP_PACKAGE_SMOKE
     run_with_compiler "$STAGE1_TYPELISP_BIN" "stage1 deterministic assembly" scripts/check-deterministic-asm.sh
     run_with_compiler "$STAGE1_TYPELISP_BIN" "stage1 selfhost compile manifest" env TYPELISP_COMPILE_MANIFEST_EXPECTATION_MODE=stage1 scripts/verify-selfhost-compile-manifest.sh
     if [ "$STAGE1_HOST_ACTION_DRIVERS_AVAILABLE" -eq 0 ]; then

@@ -1239,12 +1239,15 @@ Example:
 (package
   (name "my-app")
   (version "0.1.0")
+  (kind "bin")
   (entry "src/main.tl")
   (dependencies
     (math "../math")))
 ```
 
-- `name`, `version`, and `entry` are required string fields.
+- `name`, `version`, `kind`, and `entry` are required string fields.
+- `kind` is either `"bin"` or `"lib"`. `bin` produces a native executable;
+  `lib` produces a static archive.
 - `dependencies` is optional. Each entry has an alias symbol and a string root
   path: `(alias "relative/or/absolute/path")`.
 - Dependency aliases use the same character rules as package names: ASCII
@@ -1256,15 +1259,17 @@ Example:
   through the same module loader and compiler pipeline as `compile`.
 - `typelisp build` without `--manifest-path` searches for `typelisp.pkg` from
   the current directory upward.
-- Build output is assembly under
-  `target/typelisp/<package-name>/<package-name>.s` in the package root.
+- Build outputs are written under `target/typelisp/<package-name>/` in the
+  package root. `bin` packages produce `<package-name>` on Linux and
+  `<package-name>.exe` on Windows. `lib` packages produce `lib<package-name>.a`
+  on Linux and `<package-name>.lib` on Windows.
 - Package-root-qualified imports use the reserved string prefix
   `pkg:<alias>/...`, for example `(import "pkg:math/src/lib.tl")`.
 - This first package layer has no registry, semantic-version solving,
   transitive manifest loading, implicit preludes, lockfile, workspace model, or
-  native executable build promise for package manifests. Namespace isolation and
-  qualified symbol access are specified by the selfhost module model in section
-  4.4, not by package resolution itself.
+  dynamic/shared library output. Namespace isolation and qualified symbol access
+  are specified by the selfhost module model in section 4.4, not by package
+  resolution itself.
 
 ### 4.6 `(defenum ...)` and `(defstruct ...)`
 
@@ -3229,7 +3234,7 @@ Commands:
   compile           Generate assembly (.s)
   build <file.tl>   Compile, assemble, and link a native executable
   run               Compile, assemble, link, and run binary
-  build             Build nearest typelisp.pkg to package assembly
+  build             Build nearest typelisp.pkg artifact
   test              Run inline `(test ...)` items
 
 Options:
@@ -3258,8 +3263,8 @@ Options:
 
 For source-file builds, the default executable path is the source path with the
 `.tl` extension removed on Linux and with `.exe` on Windows. Source-file
-`build` does not run the executable. The package build form continues to write
-deterministic package assembly rather than native executables.
+`build` does not run the executable. The package build form writes the artifact
+selected by `typelisp.pkg`'s `kind` field.
 
 Linux native build/run uses `as` and `ld`. Windows native build/run uses
 `clang --target=x86_64-pc-windows-msvc` and `lld-link`, links against the CRT,

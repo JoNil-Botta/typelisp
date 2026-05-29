@@ -6,9 +6,16 @@ use std::path::{Component, Path, PathBuf};
 pub const MANIFEST_FILE: &str = "typelisp.pkg";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PackageKind {
+    Bin,
+    Lib,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PackageManifest {
     pub name: String,
     pub version: String,
+    pub kind: PackageKind,
     pub entry: PathBuf,
     pub dependencies: BTreeMap<String, PathBuf>,
     pub manifest_path: PathBuf,
@@ -122,6 +129,7 @@ pub fn load_manifest(path: &Path) -> Result<PackageManifest, PackageError> {
     Ok(PackageManifest {
         name: parsed.name,
         version: parsed.version,
+        kind: parsed.kind,
         entry: parsed.entry,
         dependencies,
         manifest_path,
@@ -133,6 +141,7 @@ pub fn load_manifest(path: &Path) -> Result<PackageManifest, PackageError> {
 struct ParsedManifest {
     name: String,
     version: String,
+    kind: PackageKind,
     entry: PathBuf,
     dependencies: BTreeMap<String, PathBuf>,
 }
@@ -164,6 +173,7 @@ fn parse_package_form(sexp: &Sexp) -> Result<ParsedManifest, String> {
 
     let mut name = None;
     let mut version = None;
+    let mut kind = None;
     let mut entry = None;
     let mut dependencies = None;
 
@@ -184,6 +194,10 @@ fn parse_package_form(sexp: &Sexp) -> Result<ParsedManifest, String> {
                 let value = parse_string_field(parts, field_name)?;
                 assign_field(&mut version, field_name, value)?;
             }
+            "kind" => {
+                let value = parse_package_kind(&parse_string_field(parts, field_name)?)?;
+                assign_field(&mut kind, field_name, value)?;
+            }
             "entry" => {
                 let value = parse_string_field(parts, field_name)?;
                 assign_field(&mut entry, field_name, value)?;
@@ -199,6 +213,7 @@ fn parse_package_form(sexp: &Sexp) -> Result<ParsedManifest, String> {
 
     let name = name.ok_or_else(|| "manifest missing required field `name`".to_string())?;
     let version = version.ok_or_else(|| "manifest missing required field `version`".to_string())?;
+    let kind = kind.ok_or_else(|| "manifest missing required field `kind`".to_string())?;
     let entry = entry.ok_or_else(|| "manifest missing required field `entry`".to_string())?;
     let dependencies = dependencies.unwrap_or_default();
 
@@ -220,9 +235,18 @@ fn parse_package_form(sexp: &Sexp) -> Result<ParsedManifest, String> {
     Ok(ParsedManifest {
         name,
         version,
+        kind,
         entry,
         dependencies,
     })
+}
+
+fn parse_package_kind(value: &str) -> Result<PackageKind, String> {
+    match value {
+        "bin" => Ok(PackageKind::Bin),
+        "lib" => Ok(PackageKind::Lib),
+        _ => Err("manifest field `kind` must be `bin` or `lib`".into()),
+    }
 }
 
 fn parse_string_field(parts: &[Sexp], field_name: &str) -> Result<String, String> {
@@ -280,7 +304,7 @@ fn is_normal_relative_path(path: &Path) -> bool {
             .all(|component| matches!(component, Component::Normal(_)))
 }
 
-fn assign_field(slot: &mut Option<String>, field_name: &str, value: String) -> Result<(), String> {
+fn assign_field<T>(slot: &mut Option<T>, field_name: &str, value: T) -> Result<(), String> {
     if slot.is_some() {
         return Err(format!("duplicate manifest field `{}`", field_name));
     }
@@ -509,7 +533,7 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::{PackageError, discover_manifest, load_manifest, parse_manifest};
+    use super::{PackageError, PackageKind, discover_manifest, load_manifest, parse_manifest};
     use std::fs;
     use std::path::{Path, PathBuf};
 
@@ -521,6 +545,7 @@ mod tests {
 (package
   (name "demo-app")
   (version "0.1.0")
+  (kind "bin")
   (entry "src/main.tl"))
 "#,
         )
@@ -528,6 +553,7 @@ mod tests {
 
         assert_eq!(manifest.name, "demo-app");
         assert_eq!(manifest.version, "0.1.0");
+        assert_eq!(manifest.kind, PackageKind::Bin);
         assert_eq!(manifest.entry, Path::new("src/main.tl"));
     }
 
@@ -538,6 +564,7 @@ mod tests {
 (package
   (name "demo-app")
   (version "0.1.0")
+  (kind "lib")
   (entry "src/main.tl")
   (dependencies
     (math "../math")
@@ -547,6 +574,7 @@ mod tests {
         .expect("parse manifest");
 
         assert_eq!(manifest.dependencies.len(), 2);
+        assert_eq!(manifest.kind, PackageKind::Lib);
         assert_eq!(
             manifest.dependencies.get("math"),
             Some(&PathBuf::from("../math"))
@@ -559,15 +587,20 @@ mod tests {
 
     #[test]
     fn parse_manifest_rejects_missing_field() {
-        let err = parse_manifest(r#"(package (name "demo") (entry "src/main.tl"))"#)
+        let err = parse_manifest(r#"(package (name "demo") (kind "bin") (entry "src/main.tl"))"#)
             .expect_err("missing version should fail");
         assert!(err.contains("missing required field `version`"));
+
+        let err =
+            parse_manifest(r#"(package (name "demo") (version "0.1.0") (entry "src/main.tl"))"#)
+                .expect_err("missing kind should fail");
+        assert!(err.contains("missing required field `kind`"));
     }
 
     #[test]
     fn parse_manifest_rejects_duplicate_field() {
         let err = parse_manifest(
-            r#"(package (name "demo") (name "again") (version "0.1.0") (entry "src/main.tl"))"#,
+            r#"(package (name "demo") (name "again") (version "0.1.0") (kind "bin") (entry "src/main.tl"))"#,
         )
         .expect_err("duplicate name should fail");
         assert!(err.contains("duplicate manifest field `name`"));
@@ -579,6 +612,7 @@ mod tests {
             r#"(package
   (name "demo")
   (version "0.1.0")
+  (kind "bin")
   (entry "src/main.tl")
   (dependencies (math "../math"))
   (dependencies (util "../util")))"#,
@@ -593,6 +627,7 @@ mod tests {
             r#"(package
   (name "demo")
   (version "0.1.0")
+  (kind "bin")
   (entry "src/main.tl")
   (dependencies
     (math "../math-a")
@@ -608,6 +643,7 @@ mod tests {
             r#"(package
   (name "demo")
   (version "0.1.0")
+  (kind "bin")
   (entry "src/main.tl")
   (dependencies
     (bad.alias "../bad")))"#,
@@ -617,9 +653,18 @@ mod tests {
     }
 
     #[test]
+    fn parse_manifest_rejects_invalid_kind() {
+        let err = parse_manifest(
+            r#"(package (name "demo") (version "0.1.0") (kind "cdylib") (entry "src/main.tl"))"#,
+        )
+        .expect_err("invalid kind should fail");
+        assert!(err.contains("manifest field `kind` must be `bin` or `lib`"));
+    }
+
+    #[test]
     fn parse_manifest_rejects_unknown_field() {
         let err = parse_manifest(
-            r#"(package (name "demo") (version "0.1.0") (entry "src/main.tl") (deps "nope"))"#,
+            r#"(package (name "demo") (version "0.1.0") (kind "bin") (entry "src/main.tl") (deps "nope"))"#,
         )
         .expect_err("unknown field should fail");
         assert!(err.contains("unknown manifest field `deps`"));
@@ -627,17 +672,19 @@ mod tests {
 
     #[test]
     fn parse_manifest_rejects_mistyped_field() {
-        let err =
-            parse_manifest(r#"(package (name demo) (version "0.1.0") (entry "src/main.tl"))"#)
-                .expect_err("symbol name should fail");
+        let err = parse_manifest(
+            r#"(package (name demo) (version "0.1.0") (kind "bin") (entry "src/main.tl"))"#,
+        )
+        .expect_err("symbol name should fail");
         assert!(err.contains("manifest field `name` must be a string"));
     }
 
     #[test]
     fn parse_manifest_rejects_absolute_entry() {
-        let err =
-            parse_manifest(r#"(package (name "demo") (version "0.1.0") (entry "/tmp/main.tl"))"#)
-                .expect_err("absolute entry should fail");
+        let err = parse_manifest(
+            r#"(package (name "demo") (version "0.1.0") (kind "bin") (entry "/tmp/main.tl"))"#,
+        )
+        .expect_err("absolute entry should fail");
         assert!(err.contains("normal relative path"));
     }
 
@@ -649,7 +696,7 @@ mod tests {
         fs::create_dir_all(&nested).expect("create nested test dir");
         fs::write(
             root.join("typelisp.pkg"),
-            r#"(package (name "demo") (version "0.1.0") (entry "src/main.tl"))"#,
+            r#"(package (name "demo") (version "0.1.0") (kind "bin") (entry "src/main.tl"))"#,
         )
         .expect("write manifest");
 
@@ -667,12 +714,13 @@ mod tests {
         let manifest_path = root.join("typelisp.pkg");
         fs::write(
             &manifest_path,
-            r#"(package (name "demo") (version "0.1.0") (entry "src/main.tl"))"#,
+            r#"(package (name "demo") (version "0.1.0") (kind "bin") (entry "src/main.tl"))"#,
         )
         .expect("write manifest");
 
         let manifest = load_manifest(&manifest_path).expect("load manifest");
         assert_eq!(manifest.name, "demo");
+        assert_eq!(manifest.kind, PackageKind::Bin);
         assert_eq!(manifest.entry_path(), manifest.root.join("src/main.tl"));
         assert!(manifest.dependencies.is_empty());
         assert_eq!(
@@ -694,6 +742,7 @@ mod tests {
             r#"(package
   (name "demo")
   (version "0.1.0")
+  (kind "bin")
   (entry "src/main.tl")
   (dependencies
     (math "../math")

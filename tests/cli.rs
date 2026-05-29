@@ -2355,6 +2355,7 @@ fn selfhost_build_run_tools_execute_source_files() {
         r#"(package
   (name "selfhost_cli_pkg")
   (version "0.1.0")
+  (kind "bin")
   (entry "src/main.tl")
   (dependencies
     (math "vendor/math")))
@@ -2394,14 +2395,29 @@ fn selfhost_build_run_tools_execute_source_files() {
         stderr(&package_build)
     );
     assert_eq!(stderr(&package_build), "");
-    let package_asm = package_root
+    let package_dir = package_root
         .join("target")
         .join("typelisp")
-        .join("selfhost_cli_pkg")
-        .join("selfhost_cli_pkg.s");
+        .join("selfhost_cli_pkg");
+    let package_asm = package_dir.join("selfhost_cli_pkg.s");
+    let package_bin = package_dir.join("selfhost_cli_pkg");
+    assert!(
+        package_bin.exists(),
+        "selfhost package build did not write executable"
+    );
     assert!(
         package_asm.exists(),
-        "selfhost package build did not write assembly"
+        "selfhost package build did not keep assembly side artifact"
+    );
+    let package_run = Command::new(&package_bin)
+        .output()
+        .expect("run selfhost package executable");
+    assert_eq!(
+        package_run.status.code(),
+        Some(42),
+        "selfhost package executable exited unexpectedly\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&package_run.stdout),
+        String::from_utf8_lossy(&package_run.stderr)
     );
     assert!(
         stdout(&package_build).contains("Generated:"),
@@ -2632,6 +2648,7 @@ fn build_accepts_backend_mode_flag_with_avx512() {
         r#"(package
   (name "backend_mode_build")
   (version "0.1.0")
+  (kind "bin")
   (entry "src/main.tl"))
 "#,
     )

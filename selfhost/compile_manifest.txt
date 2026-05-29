@@ -283,7 +283,6 @@ contains|_tl_compiler_backend_emit_source:
 end
 
 case|selfhost_compiler_ir_types|selfhost/compiler_ir_types.tl|assembly|skip|direct
-requires-stage0-mode|#1437 stage1 compiler resource blocker (library root)
 contains|_tl_compiler_ir_program_summary:
 contains|_tl_compiler_ir_summary_globals:
 contains|_tl_compiler_ir_summary_functions:
@@ -294,7 +293,6 @@ contains|_tl_compiler_ir_effect_self_test:
 end
 
 case|selfhost_compiler_ir_types_smoke|selfhost/compiler_ir_types_smoke.tl|assembly|exactly-one|direct
-requires-stage0-mode|#1437 stage1 compiler resource blocker (imports IR types)
 contains|_tl_compiler_ir_effect_self_test:
 contains|_tl_compiler_ir_tail_call_render_ok_question:
 end
@@ -305,20 +303,17 @@ contains|_tl_compiler_typecheck_reflection_tests_ok_question:
 end
 
 case|selfhost_compiler_liveness|selfhost/compiler_liveness.tl|assembly|skip|direct
-requires-stage0-mode|#1437 stage1 compiler resource blocker (imports IR types)
 contains|_tl_compiler_live_analyze_function:
 contains|_tl_compiler_live_self_test:
 contains|liveness: smoke mismatch
 end
 
 case|selfhost_compiler_liveness_smoke|selfhost/compiler_liveness_smoke.tl|assembly|exactly-one|direct
-requires-stage0-mode|#1437 stage1 compiler resource blocker (imports liveness)
 contains|_tl_compiler_live_self_test:
 contains|_tl_compiler_live_analyze_function:
 end
 
 case|selfhost_compiler_load|selfhost/compiler_load.tl|assembly|skip|direct
-requires-stage0-mode|#1437 stage1 compiler resource blocker (library root)
 contains|_tl_compiler_load_file:
 contains|_tl_compiler_load_file_with_roots:
 contains|_tl_compiler_load_resolve_import_with_roots:
@@ -381,14 +376,12 @@ contains|_tl_parse_ast_source:
 end
 
 case|selfhost_compiler_regalloc|selfhost/compiler_regalloc.tl|assembly|skip|direct
-requires-stage0-mode|#1437 stage1 compiler resource blocker (imports liveness/IR)
 contains|_tl_compiler_reg_plan_function:
 contains|_tl_compiler_regalloc_self_test:
 contains|regalloc: smoke mismatch
 end
 
 case|selfhost_compiler_regalloc_smoke|selfhost/compiler_regalloc_smoke.tl|assembly|exactly-one|direct
-requires-stage0-mode|#1437 stage1 compiler resource blocker (imports regalloc)
 contains|_tl_compiler_regalloc_self_test:
 contains|_tl_compiler_reg_plan_function:
 end
@@ -753,13 +746,11 @@ end
 decision|selfhost/lint_driver_core.tl|selfhost lint driver logic (#1163): arg parsing, finding rendering (path:line:col), file/source linting, and the driver self-test; main-less, imported by selfhost/lint.tl and selfhost/lint_driver_smoke.tl and exercised through the selfhost_lint and selfhost_lint_driver_smoke cases; has no main to compile directly
 
 case|selfhost_lint|selfhost/lint.tl|assembly|exactly-one|direct
-requires-stage0-mode|#1437 stage1 compiler resource blocker (imports compiler loader)
 contains|_tl_selfhost_lint_file:
 contains|_tl_selfhost_lint_render_finding:
 end
 
 case|selfhost_lint_driver_smoke|selfhost/lint_driver_smoke.tl|assembly|exactly-one|direct
-requires-stage0-mode|#1437 stage1 compiler resource blocker (imports compiler loader)
 contains|_tl_compiler_lint_driver_self_test:
 contains|_tl_selfhost_lint_source_with_roots:
 end

@@ -15,6 +15,7 @@ STAGE1_BUILD_BIN=${TYPELISP_STAGE1_BUILD_BIN:-}
 STAGE1_TEST_BIN=${TYPELISP_STAGE1_TEST_BIN:-}
 STAGE1_DOC_BIN=${TYPELISP_STAGE1_DOC_BIN:-}
 STAGE1_REPL_BIN=${TYPELISP_STAGE1_REPL_BIN:-}
+STAGE1_LSP_BIN=${TYPELISP_STAGE1_LSP_BIN:-}
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 
 fail() {
@@ -37,6 +38,7 @@ stage1 wrapper commands:
   typelisp fmt [--check] <file.tl>... [--stdlib-root <dir>...]
   typelisp doc <file.tl> [-o <out.md>] [--stdlib-root <dir>...]
   typelisp repl
+  typelisp lsp [--stdlib-root <dir>...]
   typelisp debug tokenize|parse|check <file.tl> [--stdlib-root <dir>...]
   typelisp debug host-action
 EOF
@@ -743,6 +745,60 @@ selfhost_repl_driver() {
     printf '%s\n' "$driver"
 }
 
+selfhost_lsp_driver() {
+    require_stage1
+    require_linux_host_action
+
+    if [ -n "$STAGE1_LSP_BIN" ]; then
+        if [ ! -x "$STAGE1_LSP_BIN" ]; then
+            fail "stage1 lsp driver is not executable: $STAGE1_LSP_BIN"
+        fi
+        printf '%s\n' "$STAGE1_LSP_BIN"
+        return
+    fi
+
+    cache_dir=${TYPELISP_STAGE1_DRIVER_CACHE_DIR:-"$ROOT/target/stage1-wrapper-cache"}
+    driver="$cache_dir/selfhost-lsp"
+    marker="$cache_dir/stage1-bin.path"
+    build_dir="$cache_dir/lsp-build"
+    roots="$build_dir/stdlib.roots"
+    source="$ROOT/selfhost/lsp_frame.tl"
+
+    rebuild=0
+    if [ ! -x "$driver" ]; then
+        rebuild=1
+    elif [ ! -f "$marker" ]; then
+        rebuild=1
+    elif [ "$(sed -n '1p' "$marker")" != "$STAGE1_BIN" ]; then
+        rebuild=1
+    elif [ "$STAGE1_BIN" -nt "$driver" ]; then
+        rebuild=1
+    elif [ "$source" -nt "$driver" ]; then
+        rebuild=1
+    fi
+
+    if [ "$rebuild" -eq 1 ]; then
+        rm -rf "$build_dir"
+        mkdir -p "$build_dir"
+        : > "$roots"
+        heartbeat_log "[stage1-wrapper] building selfhost lsp driver"
+        run_with_heartbeat \
+            "stage1-wrapper selfhost/lsp_frame.tl compile" \
+            compile_source_to_exe \
+            "$source" \
+            "$driver.tmp" \
+            linux-x86_64 \
+            scalar \
+            "" \
+            "$roots" \
+            "$build_dir" > /dev/null
+        mv "$driver.tmp" "$driver"
+        printf '%s\n' "$STAGE1_BIN" > "$marker"
+    fi
+
+    printf '%s\n' "$driver"
+}
+
 selfhost_build_driver() {
     require_stage1
     require_linux_host_action
@@ -1042,6 +1098,11 @@ repl_command() {
     "$driver"
 }
 
+lsp_command() {
+    driver=$(selfhost_lsp_driver)
+    "$driver" "$@"
+}
+
 debug_command() {
     if [ "$#" -eq 0 ]; then
         echo "Error: missing debug subcommand" >&2
@@ -1089,6 +1150,7 @@ case "$command" in
     fmt) fmt_command "$@" ;;
     doc) doc_command "$@" ;;
     repl) repl_command "$@" ;;
+    lsp) lsp_command "$@" ;;
     lint)
         fail "stage1 wrapper does not support '$command' yet; use the seed compiler for this gate"
         ;;

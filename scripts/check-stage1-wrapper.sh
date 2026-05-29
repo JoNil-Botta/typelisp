@@ -3,7 +3,7 @@ set -eu
 
 # Smoke-test a TYPELISP_BIN-compatible stage1 wrapper on the Linux host-action
 # surface: compile, tokenize, parse, check, source/package build, run, repl,
-# doc, test, fmt, and debug host-action.
+# lsp, doc, test, fmt, and debug host-action.
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
@@ -111,6 +111,16 @@ tail_comment
 EOF
 }
 
+lsp_frame_append() {
+    frame_file=$1
+    frame_body=$2
+    frame_len=$(printf '%s' "$frame_body" | wc -c | tr -d ' ')
+    {
+        printf 'Content-Length: %s\r\n\r\n' "$frame_len"
+        printf '%s' "$frame_body"
+    } >> "$frame_file"
+}
+
 run_capture() {
     label=$1
     shift
@@ -134,6 +144,26 @@ run_stdin_capture() {
     stderr="$WORKDIR/$label.stderr"
     if ! TYPELISP_STAGE1_HEARTBEAT_FD=3 "$@" 3>&2 < "$input" > "$stdout" 2> "$stderr"; then
         echo "stage1 wrapper smoke command failed: $label" >&2
+        echo "stdout:" >&2
+        sed 's/^/  /' "$stdout" >&2 || true
+        echo "stderr:" >&2
+        sed 's/^/  /' "$stderr" >&2 || true
+        exit 1
+    fi
+}
+
+run_stdin_expect_failure() {
+    label=$1
+    input=$2
+    shift 2
+    stdout="$WORKDIR/$label.stdout"
+    stderr="$WORKDIR/$label.stderr"
+    set +e
+    "$@" < "$input" > "$stdout" 2> "$stderr"
+    status=$?
+    set -e
+    if [ "$status" -eq 0 ]; then
+        echo "stage1 wrapper smoke command unexpectedly succeeded: $label" >&2
         echo "stdout:" >&2
         sed 's/^/  /' "$stdout" >&2 || true
         echo "stderr:" >&2
@@ -349,6 +379,37 @@ assert_contains "$WORKDIR/repl-session.stderr" "REPL evaluation is not implement
 run_expect_failure repl-args "$COMPILER" repl unexpected
 assert_empty "$WORKDIR/repl-args.stdout"
 assert_contains "$WORKDIR/repl-args.stderr" "Error: repl does not accept arguments"
+
+echo "[stage1-wrapper] lsp"
+LSP_INIT="$WORKDIR/lsp-init-shutdown.in"
+: > "$LSP_INIT"
+lsp_frame_append "$LSP_INIT" '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"capabilities":{}}}'
+lsp_frame_append "$LSP_INIT" '{"jsonrpc":"2.0","id":2,"method":"shutdown","params":null}'
+run_stdin_capture lsp-init-shutdown "$LSP_INIT" "$COMPILER" lsp
+assert_empty "$WORKDIR/lsp-init-shutdown.stderr"
+assert_contains "$WORKDIR/lsp-init-shutdown.stdout" '"id":1'
+assert_contains "$WORKDIR/lsp-init-shutdown.stdout" '"textDocumentSync"'
+assert_contains "$WORKDIR/lsp-init-shutdown.stdout" '"id":2'
+
+printf 'X-Test: 1\r\n\r\n' > "$WORKDIR/lsp-missing-length.in"
+run_stdin_expect_failure lsp-missing-length "$WORKDIR/lsp-missing-length.in" "$COMPILER" lsp
+assert_contains "$WORKDIR/lsp-missing-length.stdout" '"code":-32700'
+assert_contains "$WORKDIR/lsp-missing-length.stderr" "lsp: missing Content-Length"
+
+LSP_DIAG="$WORKDIR/lsp-diagnostics.in"
+LSP_PROJECT="$WORKDIR/lsp-project"
+mkdir -p "$LSP_PROJECT"
+LSP_URI="file://$LSP_PROJECT/main.tl"
+: > "$LSP_DIAG"
+lsp_frame_append "$LSP_DIAG" '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"capabilities":{}}}'
+lsp_frame_append "$LSP_DIAG" '{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"'"$LSP_URI"'","languageId":"typelisp","version":1,"text":"(define (main) : i64 true)"}}}'
+lsp_frame_append "$LSP_DIAG" '{"jsonrpc":"2.0","method":"textDocument/didChange","params":{"textDocument":{"uri":"'"$LSP_URI"'","version":2},"contentChanges":[{"text":"(define (main) : i64 0)"}]}}'
+lsp_frame_append "$LSP_DIAG" '{"jsonrpc":"2.0","method":"textDocument/didClose","params":{"textDocument":{"uri":"'"$LSP_URI"'"}}}'
+run_stdin_capture lsp-diagnostics "$LSP_DIAG" "$COMPILER" lsp
+assert_empty "$WORKDIR/lsp-diagnostics.stderr"
+assert_contains "$WORKDIR/lsp-diagnostics.stdout" '"code":"E0200"'
+assert_contains "$WORKDIR/lsp-diagnostics.stdout" "typecheck: return type mismatch"
+assert_contains "$WORKDIR/lsp-diagnostics.stdout" '"diagnostics":[]'
 
 echo "[stage1-wrapper] doc"
 if [ "${TYPELISP_STAGE1_SKIP_DOC_SMOKE:-}" = "1" ]; then

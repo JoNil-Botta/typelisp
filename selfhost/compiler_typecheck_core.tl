@@ -475,10 +475,21 @@
                                                     (tc-bind
                                                       (tc-bind
                                                         (tc-bind
-                                                          e19
-                                                          "file-read-chunk-status"
-                                                          (tc-fn2
-                                                            (AstTyI64)
+                                                          (tc-bind
+                                                            (tc-bind
+                                                              e19
+                                                              "file-read-chunk-status"
+                                                              (tc-fn2
+                                                                (AstTyI64)
+                                                                (AstTyI64)
+                                                                (AstTyI64)))
+                                                            "file-write-status"
+                                                            (tc-fn2
+                                                              (AstTyI64)
+                                                              (AstTyString)
+                                                              (AstTyI64)))
+                                                          "file-flush-status"
+                                                          (tc-fn1
                                                             (AstTyI64)
                                                             (AstTyI64)))
                                                         "file-read-chunk-bytes"
@@ -2472,6 +2483,8 @@
     [(string-eq name "file-open-status") true]
     [(string-eq name "file-close-status") true]
     [(string-eq name "file-read-chunk-status") true]
+    [(string-eq name "file-write-status") true]
+    [(string-eq name "file-flush-status") true]
     [(string-eq name "file-read-chunk-bytes") true]
     [(string-eq name "file-read-chunk-eof?") true]
     [(string-eq name "fs-mkdir-status") true]

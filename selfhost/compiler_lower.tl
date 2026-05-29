@@ -2300,6 +2300,8 @@
     [(string-eq name "file-open-status") true]
     [(string-eq name "file-close-status") true]
     [(string-eq name "file-read-chunk-status") true]
+    [(string-eq name "file-write-status") true]
+    [(string-eq name "file-flush-status") true]
     [(string-eq name "file-read-chunk-bytes") true]
     [(string-eq name "file-read-chunk-eof?") true]
     [(string-eq name "fs-mkdir-status") true]
@@ -2309,6 +2311,9 @@
     [(string-eq name "panic") true]
     [(string-eq name "error") true]
     [else (string-eq name "print-error")]))
+
+(define (lower-print-string-builtin? [name : String]) : bool
+  (or (string-eq name "print-string") (string-eq name "print-str")))
 
 (define (lower-stdio-runtime-name [name : String]) : String
   (cond
@@ -3817,6 +3822,96 @@
         result-ty
         origin)]))
 
+(define (lower-file-write-status-call
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [args : AstExprList]
+  [result-ty : AstType]
+  [origin : AstExpr]) : ResultLowerExpr
+  (match args
+    [(AstExprCons handle (AstExprCons contents (AstExprNil)))
+      (match (lower-expr ctx state env type-env handle)
+        [(OkLowerExpr lowered-handle)
+          (match lowered-handle
+            [(LowerExpr handle-state handle-value handle-ty)
+              (match (lower-cast-value
+                handle-state
+                handle-value
+                handle-ty
+                (AstTyI64))
+                [(LowerExpr handle-cast-state handle-cast-value _)
+                  (match (lower-expr
+                    ctx
+                    handle-cast-state
+                    env
+                    type-env
+                    contents)
+                    [(OkLowerExpr lowered-contents)
+                      (match lowered-contents
+                        [(LowerExpr contents-state contents-value _)
+                          (match (lower-string-fields
+                            contents-state
+                            contents-value)
+                            [(LowerStringFields fields-state ptr len)
+                              (lower-runtime-call-values
+                                fields-state
+                                ".L_tl_file_write_status"
+                                (IrValueCons
+                                  handle-cast-value
+                                  (IrValueCons ptr (IrValueCons len IrValueNil)))
+                                result-ty)])])]
+                    [(ErrLowerExpr message) (ErrLowerExpr message)])])])]
+        [(ErrLowerExpr message) (ErrLowerExpr message)])]
+    [_
+      (lower-direct-call
+        ctx
+        state
+        env
+        type-env
+        "file-write-status"
+        args
+        result-ty
+        origin)]))
+
+(define (lower-file-flush-status-call
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [args : AstExprList]
+  [result-ty : AstType]
+  [origin : AstExpr]) : ResultLowerExpr
+  (match args
+    [(AstExprCons handle (AstExprNil))
+      (match (lower-expr ctx state env type-env handle)
+        [(OkLowerExpr lowered-handle)
+          (match lowered-handle
+            [(LowerExpr handle-state handle-value handle-ty)
+              (match (lower-cast-value
+                handle-state
+                handle-value
+                handle-ty
+                (AstTyI64))
+                [(LowerExpr cast-state cast-value _)
+                  (lower-runtime-call-values
+                    cast-state
+                    ".L_tl_file_flush_status"
+                    (IrValueCons cast-value IrValueNil)
+                    result-ty)])])]
+        [(ErrLowerExpr message) (ErrLowerExpr message)])]
+    [_
+      (lower-direct-call
+        ctx
+        state
+        env
+        type-env
+        "file-flush-status"
+        args
+        result-ty
+        origin)]))
+
 (define (lower-file-read-chunk-field-call
   [ctx : TcContext]
   [state : LowerState]
@@ -4168,6 +4263,24 @@
         args
         result-ty
         origin)]
+    [(string-eq name "file-write-status")
+      (lower-file-write-status-call
+        ctx
+        state
+        env
+        type-env
+        args
+        result-ty
+        origin)]
+    [(string-eq name "file-flush-status")
+      (lower-file-flush-status-call
+        ctx
+        state
+        env
+        type-env
+        args
+        result-ty
+        origin)]
     [(string-eq name "file-read-chunk-bytes")
       (lower-file-read-chunk-field-call
         ctx
@@ -4439,6 +4552,20 @@
             (lower-stdio-runtime-name name)
             args
             result-ty
+            origin)]
+        [(and
+            (lower-builtin-call-available? ctx env name)
+            (lower-print-string-builtin? name))
+          (lower-message-runtime-call
+            ctx
+            state
+            env
+            type-env
+            args
+            name
+            "tl_print_str"
+            result-ty
+            "lower: print-string requires String"
             origin)]
         [(and
             (lower-builtin-call-available? ctx env name)
@@ -7300,9 +7427,12 @@
     [joined : String (string-append \"foo\" \"bar\")]
     [mid : String (substring \"abcdef\" 2 3)]
     [extended : String (string-concat mid \"!\")]
-    (+ (string-length joined)
-      (+ (string-length extended)
-        (cast (char-at \" x\" 0) : i64)))))")
+    (begin
+      (print-string joined)
+      (print-str extended)
+      (+ (string-length joined)
+        (+ (string-length extended)
+          (cast (char-at \" x\" 0) : i64))))))")
 
 (define (compiler-lower-string-shadow-source) : String
   "(define (string-length [s : String]) : i64 40)
@@ -7329,9 +7459,11 @@
     (+ handle
       (+ (append-file-status \"input.txt\" \"x\")
         (+ (file-read-chunk-status handle 4)
-          (+ (string-length (file-read-chunk-bytes handle))
-            (+ (if (file-read-chunk-eof? handle) 1 0)
-               (file-close-status handle))))))))")
+          (+ (file-write-status handle \"chunk\")
+            (+ (file-flush-status handle)
+              (+ (string-length (file-read-chunk-bytes handle))
+                (+ (if (file-read-chunk-eof? handle) 1 0)
+                   (file-close-status handle)))))))))")
 
 (define (compiler-lower-fs-status-source) : String
   "(define (main) : i64
@@ -8678,27 +8810,51 @@
     [(OkCompilerLower program _)
       (match program
         [(IrProgram _ functions _)
-          (and
-            (> (lower-test-functions-call-count functions "tl_substring") 0)
-            (and
-              (>
+          (let
+            [ok : bool true]
+            (begin
+              (if (>
+                (lower-test-functions-call-count functions "tl_substring")
+                0)
+                unit
+                (set! ok false))
+              (if (>
                 (lower-test-functions-call-count functions "tl_string_concat")
                 1)
-              (and
-                (> (lower-test-functions-call-count functions "tl_oob_abort") 0)
-                (and
-                  (= (lower-test-functions-call-count functions "substring") 0)
-                  (and
-                    (=
-                      (lower-test-functions-call-count
-                        functions
-                        "string-append")
-                      0)
-                    (=
-                      (lower-test-functions-call-count
-                        functions
-                        "string-concat")
-                      0))))))])]
+                unit
+                (set! ok false))
+              (if (>
+                (lower-test-functions-call-count functions "tl_oob_abort")
+                0)
+                unit
+                (set! ok false))
+              (if (= (lower-test-functions-call-count functions "substring") 0)
+                unit
+                (set! ok false))
+              (if (=
+                (lower-test-functions-call-count functions "string-append")
+                0)
+                unit
+                (set! ok false))
+              (if (=
+                (lower-test-functions-call-count functions "string-concat")
+                0)
+                unit
+                (set! ok false))
+              (if (>
+                (lower-test-functions-call-count functions "tl_print_str")
+                1)
+                unit
+                (set! ok false))
+              (if (=
+                (lower-test-functions-call-count functions "print-string")
+                0)
+                unit
+                (set! ok false))
+              (if (= (lower-test-functions-call-count functions "print-str") 0)
+                unit
+                (set! ok false))
+              ok))])]
     [(ErrCompilerLower _) false]))
 
 (define (compiler-lower-string-shadow-shape-ok? [src : String]) : bool
@@ -8764,6 +8920,20 @@
               (if (=
                 (lower-test-functions-call-count
                   functions
+                  ".L_tl_file_write_status")
+                1)
+                unit
+                (set! ok false))
+              (if (=
+                (lower-test-functions-call-count
+                  functions
+                  ".L_tl_file_flush_status")
+                1)
+                unit
+                (set! ok false))
+              (if (=
+                (lower-test-functions-call-count
+                  functions
                   ".L_tl_file_read_chunk_bytes")
                 1)
                 unit
@@ -8794,6 +8964,16 @@
                 (lower-test-functions-call-count
                   functions
                   "file-read-chunk-status")
+                0)
+                unit
+                (set! ok false))
+              (if (=
+                (lower-test-functions-call-count functions "file-write-status")
+                0)
+                unit
+                (set! ok false))
+              (if (=
+                (lower-test-functions-call-count functions "file-flush-status")
                 0)
                 unit
                 (set! ok false))

@@ -21,6 +21,8 @@ const FILE_EXISTS_STATUS_RUNTIME_SYMBOL: &str = ".L_tl_file_exists_status";
 const FILE_OPEN_STATUS_RUNTIME_SYMBOL: &str = ".L_tl_file_open_status";
 const FILE_CLOSE_STATUS_RUNTIME_SYMBOL: &str = ".L_tl_file_close_status";
 const FILE_READ_CHUNK_STATUS_RUNTIME_SYMBOL: &str = ".L_tl_file_read_chunk_status";
+const FILE_WRITE_STATUS_RUNTIME_SYMBOL: &str = ".L_tl_file_write_status";
+const FILE_FLUSH_STATUS_RUNTIME_SYMBOL: &str = ".L_tl_file_flush_status";
 const FILE_READ_CHUNK_BYTES_RUNTIME_SYMBOL: &str = ".L_tl_file_read_chunk_bytes";
 const FILE_READ_CHUNK_EOF_RUNTIME_SYMBOL: &str = ".L_tl_file_read_chunk_eof";
 const FS_MKDIR_STATUS_RUNTIME_SYMBOL: &str = ".L_tl_fs_mkdir_status";
@@ -4230,6 +4232,50 @@ impl FnLowerer {
             return Value::Var(dst);
         }
 
+        // `(file-write-status handle-id contents)` writes a String to a
+        // runtime-managed write handle and returns 0 or a positive status.
+        if let ast::Expr::Var(name) = func.unspan()
+            && name == "file-write-status"
+            && args.len() == 2
+            && !self.has_local_value(name)
+            && !self.function_types.contains_key(name)
+        {
+            let handle = self.lower_expr_as(&args[0], &Type::I64);
+            let contents = self.lower_expr_as(&args[1], &Type::String);
+            let handle_val = self.cast_value(handle, Type::I64);
+            let (ptr, len) = self.load_string_fields(&contents);
+            let dst = self.builder.fresh_var();
+            self.builder.emit(Instruction::Call {
+                dst: Some(dst),
+                func: FILE_WRITE_STATUS_RUNTIME_SYMBOL.to_string(),
+                args: vec![handle_val, Value::Var(ptr), Value::Var(len)],
+                ty: Type::I64,
+            });
+            self.record_local(dst, Type::I64);
+            return Value::Var(dst);
+        }
+
+        // `(file-flush-status handle-id)` flushes a runtime-managed write
+        // handle and returns 0 or a positive status.
+        if let ast::Expr::Var(name) = func.unspan()
+            && name == "file-flush-status"
+            && args.len() == 1
+            && !self.has_local_value(name)
+            && !self.function_types.contains_key(name)
+        {
+            let handle = self.lower_expr_as(&args[0], &Type::I64);
+            let handle_val = self.cast_value(handle, Type::I64);
+            let dst = self.builder.fresh_var();
+            self.builder.emit(Instruction::Call {
+                dst: Some(dst),
+                func: FILE_FLUSH_STATUS_RUNTIME_SYMBOL.to_string(),
+                args: vec![handle_val],
+                ty: Type::I64,
+            });
+            self.record_local(dst, Type::I64);
+            return Value::Var(dst);
+        }
+
         if let ast::Expr::Var(name) = func.unspan()
             && name == "file-read-chunk-bytes"
             && args.len() == 1
@@ -8365,6 +8411,8 @@ mod tests {
             (define (o) : i64 (file-open-status "input.txt" 0))
             (define (c) : i64 (file-close-status 1))
             (define (rs) : i64 (file-read-chunk-status 1 4))
+            (define (ws) : i64 (file-write-status 1 "chunk"))
+            (define (fs) : i64 (file-flush-status 1))
             (define (rb) : String (file-read-chunk-bytes 1))
             (define (re) : bool (file-read-chunk-eof? 1))
         "#,
@@ -8386,6 +8434,8 @@ mod tests {
             (FILE_OPEN_STATUS_RUNTIME_SYMBOL, 3),
             (FILE_CLOSE_STATUS_RUNTIME_SYMBOL, 1),
             (FILE_READ_CHUNK_STATUS_RUNTIME_SYMBOL, 2),
+            (FILE_WRITE_STATUS_RUNTIME_SYMBOL, 3),
+            (FILE_FLUSH_STATUS_RUNTIME_SYMBOL, 1),
         ] {
             let call = instrs.iter().find_map(|i| match i {
                 Instruction::Call { func, args, ty, .. } if func == symbol => Some((args, ty)),
@@ -8484,14 +8534,18 @@ mod tests {
             (define (file-open-status [n : i64]) : i64 n)
             (define (file-close-status) : i64 3)
             (define (file-read-chunk-status [n : i64]) : i64 n)
+            (define (file-write-status [n : i64]) : i64 n)
+            (define (file-flush-status) : i64 11)
             (define (file-read-chunk-bytes) : i64 5)
             (define (file-read-chunk-eof? [n : i64]) : i64 n)
             (define (main) : i64
               (+ (file-open-status 7)
                 (+ (file-close-status)
                   (+ (file-read-chunk-status 8)
-                    (+ (file-read-chunk-bytes)
-                       (file-read-chunk-eof? 9))))))
+                    (+ (file-write-status 10)
+                      (+ (file-flush-status)
+                        (+ (file-read-chunk-bytes)
+                           (file-read-chunk-eof? 9))))))))
         "#,
         )
         .unwrap();
@@ -8527,6 +8581,18 @@ mod tests {
         );
         assert!(
             main_instrs.iter().any(
+                |i| matches!(i, Instruction::Call { func, .. } if func == "file-write-status")
+            ),
+            "expected ordinary call to user-defined file-write-status"
+        );
+        assert!(
+            main_instrs.iter().any(
+                |i| matches!(i, Instruction::Call { func, .. } if func == "file-flush-status")
+            ),
+            "expected ordinary call to user-defined file-flush-status"
+        );
+        assert!(
+            main_instrs.iter().any(
                 |i| matches!(i, Instruction::Call { func, .. } if func == "file-read-chunk-bytes")
             ),
             "expected ordinary call to user-defined file-read-chunk-bytes"
@@ -8554,6 +8620,18 @@ mod tests {
                 |i| matches!(i, Instruction::Call { func, .. } if func == FILE_READ_CHUNK_STATUS_RUNTIME_SYMBOL)
             ),
             "user-defined file-read-chunk-status must not lower to the builtin runtime"
+        );
+        assert!(
+            !main_instrs.iter().any(
+                |i| matches!(i, Instruction::Call { func, .. } if func == FILE_WRITE_STATUS_RUNTIME_SYMBOL)
+            ),
+            "user-defined file-write-status must not lower to the builtin runtime"
+        );
+        assert!(
+            !main_instrs.iter().any(
+                |i| matches!(i, Instruction::Call { func, .. } if func == FILE_FLUSH_STATUS_RUNTIME_SYMBOL)
+            ),
+            "user-defined file-flush-status must not lower to the builtin runtime"
         );
         assert!(
             !main_instrs.iter().any(

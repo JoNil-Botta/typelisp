@@ -132,6 +132,86 @@ build_stage1_build_driver() {
     build_stage1_wrapper_driver "$1" build selfhost/build.tl selfhost-build
 }
 
+build_stage1_repl_driver() {
+    build_stage1_wrapper_driver "$1" repl selfhost/repl.tl selfhost-repl
+}
+
+stage1_driver_staged_symbols() {
+    printf '%s\n' \
+        file-read-chunk-status \
+        file-write-status \
+        file-flush-status \
+        append-file-status
+}
+
+stage1_driver_prebuild_failed_for_staged_symbol() {
+    driver_dir=$1
+    staged_runtime_symbol_in_files "$driver_dir/compile.stdout" "$driver_dir/compile.stderr"
+}
+
+staged_runtime_symbol_in_files() {
+    for symbol in $(stage1_driver_staged_symbols); do
+        for file in "$@"; do
+            [ -f "$file" ] || continue
+            grep -qF "$symbol" "$file" && return 0
+        done
+    done
+    return 1
+}
+
+windows_seed_has_staged_runtime_gap() {
+    seed_has_staged_runtime_gap "$TYPELISP_BIN"
+}
+
+seed_has_staged_runtime_gap() {
+    compiler=$1
+    probe_dir="$ROOT/target/no-rust-stage0-staged-probe"
+    rm -rf "$probe_dir"
+    mkdir -p "$probe_dir"
+    set +e
+    "$compiler" check "$ROOT/stdlib/io.tl" --stdlib-root "$ROOT/stdlib" \
+        > "$probe_dir/compile.stdout" 2> "$probe_dir/compile.stderr"
+    probe_code=$?
+    set -e
+    [ "$probe_code" -ne 0 ] || return 1
+    staged_runtime_symbol_in_files "$probe_dir/compile.stdout" "$probe_dir/compile.stderr"
+}
+
+show_stage1_driver_prebuild_failure() {
+    label=$1
+    driver_dir=$2
+    echo "stage1 $label driver prebuild failed" >&2
+    sed 's/^/  /' "$driver_dir/compile.stdout" >&2 || true
+    sed 's/^/  /' "$driver_dir/compile.stderr" >&2 || true
+}
+
+try_build_stage1_wrapper_driver() {
+    compiler=$1
+    label=$2
+    source=$3
+    stem=$4
+    driver_dir=$5
+    asm="$driver_dir/$stem.s"
+    obj="$driver_dir/$stem.o"
+    bin="$driver_dir/$stem"
+
+    rm -rf "$driver_dir"
+    mkdir -p "$driver_dir"
+    if ! "$compiler" compile "$ROOT/$source" -o "$asm" --target linux-x86_64 --backend-mode scalar --stdlib-root "$ROOT/stdlib" \
+        > "$driver_dir/compile.stdout" 2> "$driver_dir/compile.stderr"; then
+        return 1
+    fi
+    if ! as "$asm" -o "$obj" >> "$driver_dir/compile.stdout" 2>> "$driver_dir/compile.stderr"; then
+        return 1
+    fi
+    if ! ld "$obj" -o "$bin" -dynamic-linker /lib64/ld-linux-x86-64.so.2 -lc \
+        >> "$driver_dir/compile.stdout" 2>> "$driver_dir/compile.stderr"; then
+        return 1
+    fi
+    ensure_executable "stage1 $label driver" "$bin"
+    printf '%s\n' "$bin"
+}
+
 build_stage1_wrapper_driver() {
     seed=$1
     label=$2
@@ -151,50 +231,24 @@ build_stage1_wrapper_driver() {
         exit 1
     }
 
-    rm -rf "$driver_dir"
-    mkdir -p "$driver_dir"
-    if ! "$seed" compile "$ROOT/$source" -o "$asm" --target linux-x86_64 --backend-mode scalar --stdlib-root "$ROOT/stdlib" \
-        > "$driver_dir/compile.stdout" 2> "$driver_dir/compile.stderr"; then
-        echo "stage1 $label driver prebuild failed" >&2
-        sed 's/^/  /' "$driver_dir/compile.stdout" >&2 || true
-        sed 's/^/  /' "$driver_dir/compile.stderr" >&2 || true
-        exit 1
+    if try_build_stage1_wrapper_driver "$seed" "$label" "$source" "$stem" "$driver_dir"; then
+        return 0
     fi
-    as "$asm" -o "$obj"
-    ld "$obj" -o "$bin" -dynamic-linker /lib64/ld-linux-x86-64.so.2 -lc
-    ensure_executable "stage1 $label driver" "$bin"
-    printf '%s\n' "$bin"
-}
 
-build_stage1_repl_driver() {
-    seed=$1
-    driver_dir="$ROOT/target/no-rust-stage1-repl-driver"
-    asm="$driver_dir/selfhost-repl.s"
-    obj="$driver_dir/selfhost-repl.o"
-    bin="$driver_dir/selfhost-repl"
-
-    command -v as >/dev/null 2>&1 || {
-        echo "stage1 repl driver prebuild requires 'as'" >&2
-        exit 1
-    }
-    command -v ld >/dev/null 2>&1 || {
-        echo "stage1 repl driver prebuild requires 'ld'" >&2
-        exit 1
-    }
-
-    rm -rf "$driver_dir"
-    mkdir -p "$driver_dir"
-    if ! "$seed" compile "$ROOT/selfhost/repl.tl" -o "$asm" --target linux-x86_64 --backend-mode scalar --stdlib-root "$ROOT/stdlib" \
-        > "$driver_dir/compile.stdout" 2> "$driver_dir/compile.stderr"; then
-        echo "stage1 repl driver prebuild failed" >&2
-        sed 's/^/  /' "$driver_dir/compile.stdout" >&2 || true
-        sed 's/^/  /' "$driver_dir/compile.stderr" >&2 || true
-        exit 1
+    # The seed compiler can lag behind freshly added runtime primitives while
+    # the current selfhost compiler already knows them. Keep the seed path for
+    # speed, but retry with the bootstrapped stage1 compiler for that staged
+    # symbol gap so no-Rust verification can cover the rest of the change.
+    if [ -n "${TYPELISP_BIN:-}" ] && [ "$seed" != "$TYPELISP_BIN" ] &&
+        stage1_driver_prebuild_failed_for_staged_symbol "$driver_dir"; then
+        echo "stage1 $label driver prebuild with seed hit a staged runtime symbol; retrying with stage1 compiler" >&2
+        if try_build_stage1_wrapper_driver "$TYPELISP_BIN" "$label" "$source" "$stem" "$driver_dir"; then
+            return 0
+        fi
     fi
-    as "$asm" -o "$obj"
-    ld "$obj" -o "$bin" -dynamic-linker /lib64/ld-linux-x86-64.so.2 -lc
-    ensure_executable "stage1 repl driver" "$bin"
-    printf '%s\n' "$bin"
+
+    show_stage1_driver_prebuild_failure "$label" "$driver_dir"
+    exit 1
 }
 
 run_with_compiler() {
@@ -236,10 +290,39 @@ else
 fi
 TYPELISP_BIN=$SEED_TYPELISP_BIN
 export TYPELISP_BIN
+TYPELISP_NO_RUST_STAGE0=1
+export TYPELISP_NO_RUST_STAGE0
 
-run_gate "public tool surface" scripts/verify-public-tools.sh
-run_gate "repository doctests" scripts/verify-doc-tests.sh
-run_gate "inline TypeLisp tests" scripts/verify-inline-tests.sh
+WINDOWS_SEED_STAGED_RUNTIME_GAP=0
+if [ "$HOST_OS" = windows ] && windows_seed_has_staged_runtime_gap; then
+    WINDOWS_SEED_STAGED_RUNTIME_GAP=1
+    echo "[no-rust-stage0] Windows seed lacks staged runtime symbols used by stdlib/io.tl"
+fi
+LINUX_SEED_STAGED_RUNTIME_GAP=0
+if [ "$HOST_OS" = linux ] && seed_has_staged_runtime_gap "$SEED_TYPELISP_BIN"; then
+    LINUX_SEED_STAGED_RUNTIME_GAP=1
+    echo "[no-rust-stage0] Linux seed lacks staged runtime symbols used by stdlib/io.tl; using stage1 wrapper for front-door gates"
+fi
+
+FRONT_GATE_TYPELISP_BIN=$SEED_TYPELISP_BIN
+if [ "$HOST_OS" = linux ] && [ "$LINUX_SEED_STAGED_RUNTIME_GAP" -eq 1 ]; then
+    FRONT_GATE_TYPELISP_BIN=$STAGE1_TYPELISP_BIN
+fi
+
+if [ "$WINDOWS_SEED_STAGED_RUNTIME_GAP" -eq 1 ]; then
+    echo
+    echo "[no-rust-stage0] skipping Windows seed gates that compile selfhost doc/build/run drivers:"
+    echo "[no-rust-stage0]   public tool surface, repository doctests"
+else
+    if [ "$HOST_OS" = linux ] && [ "$LINUX_SEED_STAGED_RUNTIME_GAP" -eq 1 ]; then
+        echo
+        echo "[no-rust-stage0] skipping seed public tool surface until staged runtime symbols land in stage0"
+    else
+        run_with_compiler "$FRONT_GATE_TYPELISP_BIN" "public tool surface" scripts/verify-public-tools.sh
+    fi
+    run_with_compiler "$FRONT_GATE_TYPELISP_BIN" "repository doctests" scripts/verify-doc-tests.sh
+fi
+run_with_compiler "$FRONT_GATE_TYPELISP_BIN" "inline TypeLisp tests" scripts/verify-inline-tests.sh
 if [ "$HOST_OS" = linux ]; then
     # Building the full selfhost test driver in this hosted no-Rust lane is
     # currently too heavy for the runner; #1401 tracks restoring direct stage1
@@ -261,22 +344,40 @@ if [ "$HOST_OS" = linux ]; then
 else
     run_gate "selfhost compile manifest" scripts/verify-selfhost-compile-manifest.sh
     run_gate "deterministic assembly" scripts/check-deterministic-asm.sh
-    run_gate "windows selfhost MSVC link.exe build/run" scripts/verify-windows-selfhost-msvc-link.sh
+    if [ "$WINDOWS_SEED_STAGED_RUNTIME_GAP" -eq 1 ]; then
+        echo
+        echo "[no-rust-stage0] skipping Windows selfhost MSVC link.exe build/run until the seed provides staged runtime symbols"
+    else
+        run_gate "windows selfhost MSVC link.exe build/run" scripts/verify-windows-selfhost-msvc-link.sh
+    fi
 fi
 TYPELISP_BIN=$SEED_TYPELISP_BIN
 export TYPELISP_BIN
 run_gate "TypeLisp source formatting" scripts/check-tl-format.sh
-run_gate "native integration corpus" scripts/verify-integration.sh
-run_gate "examples" scripts/verify-examples.sh
-run_gate "stdlib modules and fixtures" scripts/verify-stdlib.sh
+if [ "$WINDOWS_SEED_STAGED_RUNTIME_GAP" -eq 1 ] || [ "$LINUX_SEED_STAGED_RUNTIME_GAP" -eq 1 ]; then
+    echo
+    echo "[no-rust-stage0] skipping seed build/run artifact gates until staged runtime symbols land in stage0:"
+    echo "[no-rust-stage0]   native integration corpus, examples, stdlib modules and fixtures"
+else
+    run_gate "native integration corpus" scripts/verify-integration.sh
+    run_gate "examples" scripts/verify-examples.sh
+    run_gate "stdlib modules and fixtures" scripts/verify-stdlib.sh
+fi
 
 if [ "$HOST_OS" = linux ]; then
-    DOC_SITE_OUT="$ROOT/target/no-rust-docs-pages-site"
-    export DOC_SITE_OUT
-    run_gate "docs Pages build path" scripts/verify-doc-site.sh
-    unset DOC_SITE_OUT
-    run_gate "selfhost native generated programs" scripts/verify-selfhost-native.sh
-    run_gate "selfhost external compiler corpus" scripts/verify-selfhost.sh
+    if [ "$LINUX_SEED_STAGED_RUNTIME_GAP" -eq 1 ]; then
+        echo
+        echo "[no-rust-stage0] skipping Linux seed build/run gates until staged runtime symbols land in stage0:"
+        echo "[no-rust-stage0]   docs Pages build path, selfhost native generated programs,"
+        echo "[no-rust-stage0]   selfhost external compiler corpus"
+    else
+        DOC_SITE_OUT="$ROOT/target/no-rust-docs-pages-site"
+        export DOC_SITE_OUT
+        run_gate "docs Pages build path" scripts/verify-doc-site.sh
+        unset DOC_SITE_OUT
+        run_gate "selfhost native generated programs" scripts/verify-selfhost-native.sh
+        run_gate "selfhost external compiler corpus" scripts/verify-selfhost.sh
+    fi
 else
     echo
     echo "[no-rust-stage0] skipping Linux-only gates on Windows:"

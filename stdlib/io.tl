@@ -7,6 +7,7 @@
 ;;;; `file-exists?`, `read-file-status`, `write-file-status`,
 ;;;; `append-file-status`, `file-exists-status`, `file-open-status`,
 ;;;; `file-close-status`, `file-read-chunk-status`,
+;;;; `file-write-status`, `file-flush-status`,
 ;;;; `file-read-chunk-bytes`, `file-read-chunk-eof?`,
 ;;;; `read-stdin-line`, `read-stdin-bytes`,
 ;;;; `stdin-eof?`, `print-string`, `print-error`, `flush-stdout`,
@@ -213,6 +214,14 @@
 (define (file-read-unsupported-message) : String
   "file handle is closed, invalid, or not open for reading")
 
+;;; Diagnostic payload for invalid streaming writes.
+(define (file-write-unsupported-message) : String
+  "file handle is closed, invalid, or not open for writing")
+
+;;; Diagnostic payload for invalid streaming flushes.
+(define (file-flush-unsupported-message) : String
+  "file handle is closed, invalid, or not open for writing")
+
 ;;; Diagnostic payload for invalid streaming read counts.
 (define (file-read-invalid-count-message) : String
   "file-read-chunk count must be non-negative")
@@ -269,6 +278,33 @@
         (if (= status io-status-unsupported)
           (ErrIoRead (IoUnsupported (file-read-unsupported-message)))
           (ErrIoRead (io-error-from-status "file-read-chunk" status)))))))
+
+;;; Write `contents` to a runtime-managed write-mode file handle.
+;;;
+;;; The runtime retries short host writes until all bytes are accepted or a
+;;; host error is returned. Closed, invalid, read-only, and unsupported handles
+;;; return `IoUnsupported`.
+(define (file-write [handle : FileHandle] [contents : String]) : ResultIoUnit
+  (let
+    [status : i64 (file-write-status (struct-get handle id) contents)]
+    (if (= status io-status-ok)
+      OkIoUnit
+      (if (= status io-status-unsupported)
+        (ErrIoUnit (IoUnsupported (file-write-unsupported-message)))
+        (ErrIoUnit (io-error-from-status "file-write" status))))))
+
+;;; Flush a runtime-managed write-mode file handle.
+;;;
+;;; Closed, invalid, read-only, and unsupported handles return
+;;; `IoUnsupported`; host flush failures are mapped through `io-error-from-status`.
+(define (file-flush [handle : FileHandle]) : ResultIoUnit
+  (let
+    [status : i64 (file-flush-status (struct-get handle id))]
+    (if (= status io-status-ok)
+      OkIoUnit
+      (if (= status io-status-unsupported)
+        (ErrIoUnit (IoUnsupported (file-flush-unsupported-message)))
+        (ErrIoUnit (io-error-from-status "file-flush" status))))))
 
 ;;; Read `path` and return either its contents or a structured I/O error.
 ;;;

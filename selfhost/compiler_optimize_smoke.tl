@@ -28,7 +28,11 @@
                       (if (= (compiler-optimize-level-self-test) 42)
                         (if (= (compiler-optimize-fixed-point-self-test) 42)
                           (if (= (compiler-optimize-global-dce-self-test) 42)
-                            (compiler-optimize-spans-self-test)
+                            (if (=
+                              (compiler-optimize-aggregate-candidate-self-test)
+                              42)
+                              (compiler-optimize-spans-self-test)
+                              1)
                             1)
                           1)
                         1)

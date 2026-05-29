@@ -12,13 +12,13 @@
 ;;;; (import "stdlib/windows_sdk.tl")
 ;;;; (define sdk : ResultWindowsSdkLayout (windows-sdk-discover))
 ;;;; ```
-(import "stdlib/env.tl")
+(import "env.tl")
 
-(import "stdlib/io.tl")
+(import "io.tl")
 
-(import "stdlib/string.tl")
+(import "string.tl")
 
-(import "stdlib/windows_registry.tl")
+(import "windows_registry.tl")
 
 ;;; Concrete Windows SDK paths needed by an x64 MSVC link environment.
 (defstruct WindowsSdkLayout

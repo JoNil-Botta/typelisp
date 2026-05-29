@@ -1085,8 +1085,16 @@
         " was expected to pass\n"
         (doc-test-public-diagnostic-render diag)))))
 
+;; Runnable doctests spawn nested build/run commands from a generated test
+;; binary. Keep that path Linux-only until the Windows selfhost executable
+;; instability tracked by #1270 is resolved.
+(define (doc-test-runnable-target-supported? [target : CompilerBackendTarget]) : bool
+  (match target
+    [(BackendTargetLinux) true]
+    [(BackendTargetWindows) false]))
+
 (define (doc-test-runnable-supported?) : bool
-  (source-tool-target-supported? (source-tool-default-target)))
+  (doc-test-runnable-target-supported? (source-tool-default-target)))
 
 (define (doc-test-runnable-unsupported-message
   [index : i64]
@@ -1442,7 +1450,7 @@
     [index : i64 (doc-test-example-index example)]
     [source-line : i64 (doc-test-example-source-line example)]
     [target : CompilerBackendTarget (source-tool-default-target)]
-    (if (source-tool-target-supported? target)
+    (if (doc-test-runnable-target-supported? target)
       (match (source-tool-create-temp-dir "typelisp-doctest")
         [(OkSourceToolString temp-dir)
           (doc-test-run-runnable-output

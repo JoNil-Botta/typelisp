@@ -1,3 +1,3 @@
-;;; SPEC safe-code contract: unsupported casts are statically rejected.
+;;; SPEC safe-code contract: non-numeric casts are statically rejected.
 (define (main) : i64
-  (cast 3.5 : i64))
+  (cast true : i64))

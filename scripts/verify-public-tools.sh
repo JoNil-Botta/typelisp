@@ -527,15 +527,21 @@ assert_contains "$err" "region-tagged value"
 assert_contains "$err" "cannot escape with-arena 'inner'"
 assert_contains "$err" "error[E0200]"
 
-cat > "$CLI_MATRIX/unsupported-float-cast.tl" <<'EOF'
-(define (main) : i64 (cast 3.5 : i64))
+cat > "$CLI_MATRIX/numeric-cast-matrix.tl" <<'EOF'
+(define (main) : i64 (cast (cast 42 : f64) : i64))
 EOF
-run_cmd check-unsupported-float-cast "$COMPILER" check "$CLI_MATRIX/unsupported-float-cast.tl"
+run_cmd check-numeric-cast-matrix "$COMPILER" check "$CLI_MATRIX/numeric-cast-matrix.tl"
+assert_success
+assert_contains "$out" "Type checking passed!"
+
+cat > "$CLI_MATRIX/unsupported-cast.tl" <<'EOF'
+(define (main) : i64 (cast true : i64))
+EOF
+run_cmd check-unsupported-cast "$COMPILER" check "$CLI_MATRIX/unsupported-cast.tl"
 assert_failure
 assert_stdout_empty
-assert_contains "$err" "floating-point casts are not supported yet"
-assert_contains "$err" "casts currently support integer/char and f64<->f32 conversions only"
-assert_contains "$err" "got f64 -> i64"
+assert_contains "$err" "cast requires scalar numeric (integer/char/float) source and target"
+assert_contains "$err" "got bool -> i64"
 assert_contains "$err" "error[E0200]"
 
 cat > "$CLI_MATRIX/inexact-f32-literal.tl" <<'EOF'

@@ -108,8 +108,9 @@ struct/enum fields, and (optionally) `let` bindings.
 (cast 300 : u8)
 ```
 
-`cast` currently supports integer/char widening, narrowing, and truncation only.
-`f64` arithmetic is supported, but floating-point casts are not implemented yet.
+`cast` supports the full scalar numeric matrix: integer/char widening,
+narrowing, and truncation; `f64` ↔ `f32` precision changes; and integer/char ↔
+float conversions (float → integer truncates toward zero).
 
 ### Types
 

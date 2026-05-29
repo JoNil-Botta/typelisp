@@ -2908,29 +2908,23 @@ fn check_rejects_stdlib_text_buf_render_escape_from_nested_region() {
 }
 
 #[test]
-fn check_reports_explicit_unsupported_float_cast_diagnostic() {
-    let dir = fixture_dir("unsupported-float-cast");
+fn check_accepts_int_float_casts() {
+    // The full scalar numeric cast matrix is supported, including `int <->
+    // float` conversions (a float -> int cast truncates toward zero).
+    let dir = fixture_dir("numeric-cast-matrix");
     let source = dir.join("main.tl");
-    fs::write(&source, "(define (main) : i64 (cast 3.5 : i64))\n").expect("write source");
+    fs::write(
+        &source,
+        "(define (trunc [x : f64]) : i64 (cast x : i64))\n\
+         (define (promote [n : i64]) : f64 (cast n : f64))\n\
+         (define (main) : i64 (trunc (promote 5)))\n",
+    )
+    .expect("write source");
     let source_arg = source.to_str().expect("source path is utf-8");
 
     let output = typelisp(&["check", source_arg]);
 
-    assert!(!output.status.success());
-    assert_eq!(stdout(&output), "");
-    let stderr = stderr(&output);
-    assert!(
-        stderr.contains("floating-point casts are not supported yet"),
-        "stderr:\n{}",
-        stderr
-    );
-    assert!(
-        stderr.contains("casts currently support integer/char and f64<->f32 conversions only"),
-        "stderr:\n{}",
-        stderr
-    );
-    assert!(stderr.contains("got f64 -> i64"), "stderr:\n{}", stderr);
-    assert!(stderr.contains("error[E0200]"), "stderr:\n{}", stderr);
+    assert!(output.status.success(), "stderr:\n{}", stderr(&output));
 }
 
 #[test]

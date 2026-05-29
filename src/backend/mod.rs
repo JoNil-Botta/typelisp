@@ -777,20 +777,13 @@ fn validate_function(
                             .map_err(|w| unsupported_value(&func.name, &w))?;
                     }
                 }
-                Instruction::Cast {
-                    src,
-                    from_ty,
-                    to_ty,
-                    ..
-                } => {
+                Instruction::Cast { src, .. } => {
+                    // The full scalar numeric cast matrix is supported: integer
+                    // widen/narrow/sign-change, `f64 <-> f32` precision
+                    // conversions, and `int <-> float` conversions (emitted via
+                    // the `cvtsi2s*`/`cvtts*2si`/`cvts*2s*` families).
                     check_operand(src, global_types)
                         .map_err(|w| unsupported_value(&func.name, &w))?;
-                    // `f64 <-> f32` precision conversions are supported. Any
-                    // other cast touching a float (int <-> float) is not.
-                    let float_to_float = from_ty.is_float() && to_ty.is_float();
-                    if (from_ty.is_float() || to_ty.is_float()) && !float_to_float {
-                        return unsupported("floating-point cast");
-                    }
                 }
                 Instruction::Call { args, .. } => {
                     for arg in args {
@@ -9949,6 +9942,35 @@ impl X86_64Backend {
                     self.store_xmm_value_to_var(*dst, "%xmm0", to_ty);
                     return;
                 }
+                // Integer/char -> float. Load the source extended to a full
+                // 64-bit GPR per its source signedness (`load_value` sign- or
+                // zero-extends), then convert the signed 64-bit value to the
+                // target float. Source widths up to 32 bits are exact for both
+                // signednesses; signed 64-bit is exact via `cvtsi2s*q`. (A
+                // `u64` with the high bit set would be treated as negative — a
+                // known limitation, matching the absence of a full unsigned
+                // 64-bit conversion sequence.)
+                if !is_scalar_float(from_ty) && is_scalar_float(to_ty) {
+                    self.load_value(src, "%rax", from_ty);
+                    match to_ty {
+                        Type::F32 => self.emit("    cvtsi2ssq %rax, %xmm0"),
+                        _ => self.emit("    cvtsi2sdq %rax, %xmm0"),
+                    }
+                    self.store_xmm_value_to_var(*dst, "%xmm0", to_ty);
+                    return;
+                }
+                // Float -> integer/char. Convert with truncation toward zero
+                // (`cvtts*2si`), matching C/Rust `as` semantics, into a 64-bit
+                // GPR; the store then truncates to the target width.
+                if is_scalar_float(from_ty) && !is_scalar_float(to_ty) {
+                    self.load_value(src, "%xmm0", from_ty);
+                    match from_ty {
+                        Type::F32 => self.emit("    cvttss2siq %xmm0, %rax"),
+                        _ => self.emit("    cvttsd2siq %xmm0, %rax"),
+                    }
+                    self.store_gpr_value_to_var(*dst, "%rax", to_ty);
+                    return;
+                }
                 self.load_value(src, "%rax", from_ty);
                 self.store_gpr_value_to_var(*dst, "%rax", to_ty);
             }
@@ -13138,6 +13160,32 @@ mod tests {
         let asm = compile_ok("(define (roundtrip [x : f64]) : f64 (cast (cast x : f32) : f64))");
         assert!(asm.contains("cvtsd2ss %xmm0, %xmm0"), "asm:\n{}", asm);
         assert!(asm.contains("cvtss2sd %xmm0, %xmm0"), "asm:\n{}", asm);
+    }
+
+    #[test]
+    fn test_compile_i64_to_f64_cast_uses_cvtsi2sdq() {
+        let asm = compile_ok("(define (to-f64 [n : i64]) : f64 (cast n : f64))");
+        assert!(asm.contains("cvtsi2sdq %rax, %xmm0"), "asm:\n{}", asm);
+        assert!(asm.contains("    movsd %xmm0,"), "asm:\n{}", asm);
+    }
+
+    #[test]
+    fn test_compile_i64_to_f32_cast_uses_cvtsi2ssq() {
+        let asm = compile_ok("(define (to-f32 [n : i64]) : f32 (cast n : f32))");
+        assert!(asm.contains("cvtsi2ssq %rax, %xmm0"), "asm:\n{}", asm);
+        assert!(asm.contains("    movss %xmm0,"), "asm:\n{}", asm);
+    }
+
+    #[test]
+    fn test_compile_f64_to_i64_cast_truncates_with_cvttsd2siq() {
+        let asm = compile_ok("(define (to-i64 [x : f64]) : i64 (cast x : i64))");
+        assert!(asm.contains("cvttsd2siq %xmm0, %rax"), "asm:\n{}", asm);
+    }
+
+    #[test]
+    fn test_compile_f32_to_i32_cast_truncates_with_cvttss2siq() {
+        let asm = compile_ok("(define (to-i32 [x : f32]) : i32 (cast x : i32))");
+        assert!(asm.contains("cvttss2siq %xmm0, %rax"), "asm:\n{}", asm);
     }
 
     #[test]

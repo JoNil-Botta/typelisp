@@ -3918,6 +3918,8 @@
       (opt-sccp-state-bind state dst (OptSccpOverdefined))]
     [(IrInstrCall dst _ _ _)
       (opt-sccp-state-bind state dst (OptSccpOverdefined))]
+    [(IrInstrCallIndirect dst _ _ _)
+      (opt-sccp-state-bind state dst (OptSccpOverdefined))]
     [_ state]))
 
 (define (opt-sccp-process-instrs
@@ -4086,6 +4088,12 @@
       (IrInstrSplat dst (opt-sccp-rewrite-value env value) lanes ty)]
     [(IrInstrCall dst name args ty)
       (IrInstrCall dst name (opt-sccp-rewrite-value-list env args) ty)]
+    [(IrInstrCallIndirect dst callee args ty)
+      (IrInstrCallIndirect
+        dst
+        (opt-sccp-rewrite-value env callee)
+        (opt-sccp-rewrite-value-list env args)
+        ty)]
     [(IrInstrTailCall name args ty)
       (IrInstrTailCall name (opt-sccp-rewrite-value-list env args) ty)]
     [(IrInstrStore name value ty)

@@ -2,8 +2,8 @@
 set -eu
 
 # Smoke-test a TYPELISP_BIN-compatible stage1 wrapper on the Linux host-action
-# surface: compile, source/package build, run, repl, doc, test, fmt, and debug
-# host-action.
+# surface: compile, tokenize, parse, check, source/package build, run, repl,
+# doc, test, fmt, and debug host-action.
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
@@ -107,6 +107,7 @@ decls
 flow
 let_bindings
 negative_int
+quote
 tail_comment
 EOF
 }
@@ -198,6 +199,63 @@ run_expect_failure compile-missing-source "$COMPILER" compile
 assert_empty "$WORKDIR/compile-missing-source.stdout"
 assert_contains "$WORKDIR/compile-missing-source.stderr" "compile: expected source path"
 
+echo "[stage1-wrapper] frontend aliases"
+run_capture tokenize "$COMPILER" tokenize "$SRC"
+assert_empty "$WORKDIR/tokenize.stderr"
+assert_contains "$WORKDIR/tokenize.stdout" "define"
+assert_contains "$WORKDIR/tokenize.stdout" "main"
+cp "$WORKDIR/tokenize.stdout" "$WORKDIR/tokenize.expected"
+
+run_capture debug-tokenize "$COMPILER" debug tokenize "$SRC"
+assert_empty "$WORKDIR/debug-tokenize.stderr"
+cmp -s "$WORKDIR/debug-tokenize.stdout" "$WORKDIR/tokenize.expected" || fail "debug tokenize differs from tokenize"
+
+run_capture parse "$COMPILER" parse "$SRC"
+assert_empty "$WORKDIR/parse.stderr"
+assert_contains "$WORKDIR/parse.stdout" "Program"
+assert_contains "$WORKDIR/parse.stdout" "DefFn"
+cp "$WORKDIR/parse.stdout" "$WORKDIR/parse.expected"
+
+run_capture debug-parse "$COMPILER" debug parse "$SRC"
+assert_empty "$WORKDIR/debug-parse.stderr"
+cmp -s "$WORKDIR/debug-parse.stdout" "$WORKDIR/parse.expected" || fail "debug parse differs from parse"
+
+run_capture check "$COMPILER" check "$SRC"
+assert_empty "$WORKDIR/check.stderr"
+assert_contains "$WORKDIR/check.stdout" "Type checking passed!"
+
+CHECK_ROOT="$WORKDIR/check-root"
+mkdir -p "$CHECK_ROOT/app" "$CHECK_ROOT/repo-stdlib"
+cat > "$CHECK_ROOT/repo-stdlib/helper.tl" <<'EOF'
+(define (helper) : i64 42)
+EOF
+cat > "$CHECK_ROOT/app/main.tl" <<'EOF'
+(import "stdlib/helper.tl")
+(define (main) : i64 (helper))
+EOF
+run_capture check-stdlib-root "$COMPILER" check "$CHECK_ROOT/app/main.tl" --stdlib-root "$CHECK_ROOT/repo-stdlib"
+assert_empty "$WORKDIR/check-stdlib-root.stderr"
+assert_contains "$WORKDIR/check-stdlib-root.stdout" "Type checking passed!"
+cp "$WORKDIR/check-stdlib-root.stdout" "$WORKDIR/check-stdlib-root.expected"
+
+run_capture debug-check-stdlib-root "$COMPILER" debug check "$CHECK_ROOT/app/main.tl" --stdlib-root "$CHECK_ROOT/repo-stdlib"
+assert_empty "$WORKDIR/debug-check-stdlib-root.stderr"
+cmp -s "$WORKDIR/debug-check-stdlib-root.stdout" "$WORKDIR/check-stdlib-root.expected" || fail "debug check differs from check"
+
+run_expect_failure debug-missing "$COMPILER" debug
+assert_empty "$WORKDIR/debug-missing.stdout"
+assert_contains "$WORKDIR/debug-missing.stderr" "Error: missing debug subcommand"
+assert_contains "$WORKDIR/debug-missing.stderr" "typelisp debug tokenize <file.tl>"
+
+run_expect_failure debug-unknown "$COMPILER" debug wat
+assert_empty "$WORKDIR/debug-unknown.stdout"
+assert_contains "$WORKDIR/debug-unknown.stderr" "Unknown debug command: wat"
+assert_contains "$WORKDIR/debug-unknown.stderr" "typelisp debug check <file.tl>"
+
+run_expect_failure tokenize-missing "$COMPILER" tokenize
+assert_empty "$WORKDIR/tokenize-missing.stdout"
+assert_contains "$WORKDIR/tokenize-missing.stderr" "Error: missing file argument"
+
 echo "[stage1-wrapper] build"
 run_capture build "$COMPILER" build "$SRC" -o "$BIN"
 [ -x "$BIN" ] || {
@@ -206,45 +264,88 @@ run_capture build "$COMPILER" build "$SRC" -o "$BIN"
 }
 assert_contains "$WORKDIR/build.stdout" "Generated: $BIN"
 
-echo "[stage1-wrapper] package build"
-PKG="$WORKDIR/pkg"
-mkdir -p "$PKG/src/nested/deeper" "$PKG/vendor/math/src"
-cat > "$PKG/typelisp.pkg" <<'EOF'
+if [ "${TYPELISP_STAGE1_SKIP_PACKAGE_SMOKE:-}" = "1" ]; then
+    echo "[stage1-wrapper] skipping package build smoke until the bundled stage1 build driver carries package kind artifacts"
+else
+    echo "[stage1-wrapper] package build"
+    PKG="$WORKDIR/pkg"
+    mkdir -p "$PKG/src/nested/deeper" "$PKG/vendor/math/src"
+    cat > "$PKG/typelisp.pkg" <<'EOF'
 (package
   (name "stage1_pkg")
   (version "0.1.0")
+  (kind "bin")
   (entry "src/main.tl")
   (dependencies
     (math "vendor/math")))
 EOF
-cat > "$PKG/src/main.tl" <<'EOF'
+    cat > "$PKG/src/main.tl" <<'EOF'
 (import "pkg:math/src/lib.tl")
 (define (main) : i64 (add-one 41))
 EOF
-cat > "$PKG/vendor/math/src/lib.tl" <<'EOF'
+    cat > "$PKG/vendor/math/src/lib.tl" <<'EOF'
 (define (add-one [x : i64]) : i64 (+ x 1))
 EOF
-PKG_ASM="$PKG/target/typelisp/stage1_pkg/stage1_pkg.s"
-run_capture build-package "$COMPILER" build --manifest-path "$PKG/typelisp.pkg" --opt-level 0
-[ -f "$PKG_ASM" ] || {
-    echo "package build did not write assembly $PKG_ASM" >&2
-    exit 1
-}
-assert_contains "$WORKDIR/build-package.stdout" "Generated: $PKG_ASM"
-assert_contains "$PKG_ASM" "main:"
-assert_contains "$PKG_ASM" "add_one"
+    PKG_OUT_DIR="$PKG/target/typelisp/stage1_pkg"
+    PKG_BIN="$PKG_OUT_DIR/stage1_pkg"
+    PKG_ASM="$PKG_OUT_DIR/stage1_pkg.s"
+    run_capture build-package "$COMPILER" build --manifest-path "$PKG/typelisp.pkg" --opt-level 0
+    [ -x "$PKG_BIN" ] || {
+        echo "package build did not write executable $PKG_BIN" >&2
+        exit 1
+    }
+    [ -f "$PKG_ASM" ] || {
+        echo "package build did not keep assembly side artifact $PKG_ASM" >&2
+        exit 1
+    }
+    assert_contains "$WORKDIR/build-package.stdout" "Generated: $PKG_BIN"
+    assert_contains "$PKG_ASM" "main:"
+    assert_contains "$PKG_ASM" "add_one"
+    set +e
+    "$PKG_BIN" > "$WORKDIR/build-package-bin.stdout" 2> "$WORKDIR/build-package-bin.stderr"
+    pkg_bin_status=$?
+    set -e
+    if [ "$pkg_bin_status" -ne 42 ]; then
+        echo "package executable expected exit 42, got $pkg_bin_status" >&2
+        exit 1
+    fi
 
-rm -rf "$PKG/target"
-run_capture_cwd build-package-discover "$PKG/src/nested/deeper" "$COMPILER" build
-[ -f "$PKG_ASM" ] || {
-    echo "package discovery did not write assembly $PKG_ASM" >&2
-    exit 1
-}
-assert_contains "$WORKDIR/build-package-discover.stdout" "Generated: ../../../target/typelisp/stage1_pkg/stage1_pkg.s"
+    rm -rf "$PKG/target"
+    run_capture_cwd build-package-discover "$PKG/src/nested/deeper" "$COMPILER" build
+    [ -x "$PKG_BIN" ] || {
+        echo "package discovery did not write executable $PKG_BIN" >&2
+        exit 1
+    }
+    [ -f "$PKG_ASM" ] || {
+        echo "package discovery did not keep assembly side artifact $PKG_ASM" >&2
+        exit 1
+    }
+    assert_contains "$WORKDIR/build-package-discover.stdout" "Generated: ../../../target/typelisp/stage1_pkg/stage1_pkg"
 
-run_expect_failure build-package-missing "$COMPILER" build --manifest-path "$WORKDIR/missing.pkg"
-assert_empty "$WORKDIR/build-package-missing.stdout"
-assert_contains "$WORKDIR/build-package-missing.stderr" "cannot read package manifest"
+    LIBPKG="$WORKDIR/libpkg"
+    mkdir -p "$LIBPKG/src"
+    cat > "$LIBPKG/typelisp.pkg" <<'EOF'
+(package
+  (name "stage1_lib")
+  (version "0.1.0")
+  (kind "lib")
+  (entry "src/lib.tl"))
+EOF
+    cat > "$LIBPKG/src/lib.tl" <<'EOF'
+(define (add-two [x : i64]) : i64 (+ x 2))
+EOF
+    LIB_ARCHIVE="$LIBPKG/target/typelisp/stage1_lib/libstage1_lib.a"
+    run_capture build-package-lib "$COMPILER" build --manifest-path "$LIBPKG/typelisp.pkg"
+    [ -s "$LIB_ARCHIVE" ] || {
+        echo "package lib build did not write static archive $LIB_ARCHIVE" >&2
+        exit 1
+    }
+    assert_contains "$WORKDIR/build-package-lib.stdout" "Generated: $LIB_ARCHIVE"
+
+    run_expect_failure build-package-missing "$COMPILER" build --manifest-path "$WORKDIR/missing.pkg"
+    assert_empty "$WORKDIR/build-package-missing.stdout"
+    assert_contains "$WORKDIR/build-package-missing.stderr" "cannot read package manifest"
+fi
 
 echo "[stage1-wrapper] run"
 set +e

@@ -1250,6 +1250,108 @@ fn debug_check_matches_top_level_alias_with_stdlib_root() {
 }
 
 #[test]
+fn check_uses_embedded_stdlib_without_root_or_env() {
+    let dir = fixture_dir("embedded-stdlib-check");
+    let source = dir.join("main.tl");
+    fs::write(
+        &source,
+        r#"
+(import "stdlib/string.tl")
+
+(define (main) : i64
+  (if (string-contains "hello" "ell") 42 1))
+"#,
+    )
+    .expect("write embedded stdlib check source");
+
+    let output = run_with_crash_retry(|| {
+        Command::new(env!("CARGO_BIN_EXE_typelisp"))
+            .arg("check")
+            .arg(&source)
+            .env_remove("TYPELISP_STDLIB_ROOT")
+            .output()
+            .expect("run embedded stdlib check")
+    });
+
+    assert!(output.status.success(), "stderr:\n{}", stderr(&output));
+    assert_eq!(stdout(&output), "Type checking passed!\n");
+    assert_eq!(stderr(&output), "");
+}
+
+#[test]
+fn compile_uses_embedded_stdlib_without_root_or_env() {
+    let dir = fixture_dir("embedded-stdlib-compile");
+    let source = dir.join("main.tl");
+    let output_path = dir.join("main.ir");
+    fs::write(
+        &source,
+        r#"
+(import "stdlib/string.tl")
+
+(define (main) : i64
+  (if (string-contains "hello" "ell") 42 1))
+"#,
+    )
+    .expect("write embedded stdlib compile source");
+
+    let output = run_with_crash_retry(|| {
+        Command::new(env!("CARGO_BIN_EXE_typelisp"))
+            .arg("compile")
+            .arg(&source)
+            .arg("--emit-ir")
+            .arg("-o")
+            .arg(&output_path)
+            .env_remove("TYPELISP_STDLIB_ROOT")
+            .output()
+            .expect("run embedded stdlib compile")
+    });
+
+    assert!(output.status.success(), "stderr:\n{}", stderr(&output));
+    assert_eq!(stderr(&output), "");
+    assert!(output_path.exists(), "compile did not write IR output");
+}
+
+#[test]
+fn missing_embedded_stdlib_import_reports_fallback_state() {
+    let dir = fixture_dir("embedded-stdlib-missing");
+    let source = dir.join("main.tl");
+    fs::write(
+        &source,
+        r#"
+(import "stdlib/not-here.tl")
+
+(define (main) : i64 0)
+"#,
+    )
+    .expect("write missing embedded stdlib source");
+
+    let output = run_with_crash_retry(|| {
+        Command::new(env!("CARGO_BIN_EXE_typelisp"))
+            .arg("check")
+            .arg(&source)
+            .env_remove("TYPELISP_STDLIB_ROOT")
+            .output()
+            .expect("run missing embedded stdlib check")
+    });
+
+    assert!(
+        !output.status.success(),
+        "missing stdlib import unexpectedly succeeded"
+    );
+    assert_eq!(stdout(&output), "");
+    assert!(
+        stderr(&output).contains("searched stdlib roots: none"),
+        "stderr:\n{}",
+        stderr(&output)
+    );
+    assert!(
+        stderr(&output).contains("embedded stdlib: available"),
+        "stderr:\n{}",
+        stderr(&output)
+    );
+}
+
+#[test]
 fn compile_accepts_explicit_scalar_backend_mode() {
     let dir = fixture_dir("backend-mode-scalar");
     let source = write_main_source(&dir);
@@ -2253,6 +2355,7 @@ fn selfhost_build_run_tools_execute_source_files() {
         r#"(package
   (name "selfhost_cli_pkg")
   (version "0.1.0")
+  (kind "bin")
   (entry "src/main.tl")
   (dependencies
     (math "vendor/math")))
@@ -2292,14 +2395,29 @@ fn selfhost_build_run_tools_execute_source_files() {
         stderr(&package_build)
     );
     assert_eq!(stderr(&package_build), "");
-    let package_asm = package_root
+    let package_dir = package_root
         .join("target")
         .join("typelisp")
-        .join("selfhost_cli_pkg")
-        .join("selfhost_cli_pkg.s");
+        .join("selfhost_cli_pkg");
+    let package_asm = package_dir.join("selfhost_cli_pkg.s");
+    let package_bin = package_dir.join("selfhost_cli_pkg");
+    assert!(
+        package_bin.exists(),
+        "selfhost package build did not write executable"
+    );
     assert!(
         package_asm.exists(),
-        "selfhost package build did not write assembly"
+        "selfhost package build did not keep assembly side artifact"
+    );
+    let package_run = Command::new(&package_bin)
+        .output()
+        .expect("run selfhost package executable");
+    assert_eq!(
+        package_run.status.code(),
+        Some(42),
+        "selfhost package executable exited unexpectedly\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&package_run.stdout),
+        String::from_utf8_lossy(&package_run.stderr)
     );
     assert!(
         stdout(&package_build).contains("Generated:"),
@@ -2530,6 +2648,7 @@ fn build_accepts_backend_mode_flag_with_avx512() {
         r#"(package
   (name "backend_mode_build")
   (version "0.1.0")
+  (kind "bin")
   (entry "src/main.tl"))
 "#,
     )

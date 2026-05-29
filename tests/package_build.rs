@@ -20,6 +20,7 @@ fn write_demo_package(root: &Path, package_name: &str) {
             r#"(package
   (name "{}")
   (version "0.1.0")
+  (kind "bin")
   (entry "src/main.tl"))
 "#,
             package_name
@@ -117,6 +118,7 @@ fn package_build_reports_manifest_parse_errors() {
         r#"(package
   (name "bad_pkg")
   (version "0.1.0")
+  (kind "bin")
   (entry "src/main.tl")
   (deps "not-yet"))
 "#,
@@ -157,6 +159,7 @@ fn package_build_resolves_path_dependency_import() {
         r#"(package
   (name "pkg_dep_app")
   (version "0.1.0")
+  (kind "bin")
   (entry "src/main.tl")
   (dependencies
     (math "vendor/math")))
@@ -210,6 +213,7 @@ fn package_build_reports_missing_package_alias() {
         r#"(package
   (name "missing_alias")
   (version "0.1.0")
+  (kind "bin")
   (entry "src/main.tl"))
 "#,
     )
@@ -261,6 +265,7 @@ fn package_build_reports_missing_dependency_file() {
         r#"(package
   (name "missing_dep_file")
   (version "0.1.0")
+  (kind "bin")
   (entry "src/main.tl")
   (dependencies
     (math "vendor/math")))
@@ -323,6 +328,7 @@ fn write_foldable_package(root: &Path, package_name: &str) {
             r#"(package
   (name "{}")
   (version "0.1.0")
+  (kind "bin")
   (entry "src/main.tl"))
 "#,
             package_name

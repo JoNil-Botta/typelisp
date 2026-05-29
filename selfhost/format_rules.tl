@@ -342,6 +342,10 @@
   (match node
     [(FmtCstAtom tok) (doc-text (format-token-text tok))]
     [(FmtCstComment text) (doc-text text)]
+    [(FmtCstPrefix tok child)
+      (doc-append
+        (doc-text (format-token-text tok))
+        (format-rules-cst-doc child))]
     [(FmtCstList items) (format-rules-list-doc items)]
     [(FmtCstBracketList items) (format-rules-delimited-doc "[" items "]")]
     [(FmtCstForms items) (format-rules-forms-doc items)]))
@@ -397,6 +401,19 @@
   ; keep
   (print-string \"x\"))")
 
+(define (format-rules-quote-source) : String
+  "(define (mk [e : Expr]) : Expr `(if ,e true false)) (define (body [xs : ExprList]) : Expr `(begin ,@xs))")
+
+(define (format-rules-quote-expected) : String
+  "(define (mk [e : Expr]) : Expr
+  `(if ,e
+    true
+    false))
+
+(define (body [xs : ExprList]) : Expr
+  `(begin
+    ,@xs))")
+
 (define (format-rules-self-test) : i64
   (let
     [decls : String
@@ -405,10 +422,14 @@
       (format-rules-render-source-width (format-rules-flow-source) 80)]
     [comments : String
       (format-rules-render-source-width (format-rules-comments-source) 80)]
+    [quote : String
+      (format-rules-render-source-width (format-rules-quote-source) 80)]
     (if (string-eq decls (format-rules-decls-expected))
       (if (string-eq flow (format-rules-flow-expected))
         (if (string-eq comments (format-rules-comments-expected))
-          42
+          (if (string-eq quote (format-rules-quote-expected))
+            42
+            4)
           3)
         2)
       1)))

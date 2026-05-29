@@ -27,6 +27,43 @@
 (defenum CompilerOptimizedProgram
   (CompilerOptimizedProgram CompilerIrProgram CompilerSourceSpans))
 
+(defenum OptAggregatePointer
+  (OptAggregatePointer i64 i64))
+
+(defenum OptAggregatePointerList
+  (OptAggregatePointerNil)
+  (OptAggregatePointerCons OptAggregatePointer OptAggregatePointerList))
+
+(defenum OptAggregateAccess
+  (OptAggregateStore i64 AstType)
+  (OptAggregateLoad i64 i64 AstType))
+
+(defenum OptAggregateAccessList
+  (OptAggregateAccessNil)
+  (OptAggregateAccessCons OptAggregateAccess OptAggregateAccessList))
+
+(defenum OptAggregateAllocCandidate
+  (OptAggregateAllocCandidate
+    i64
+    AstType
+    i64
+    OptAggregatePointerList
+    OptAggregateAccessList))
+
+(defenum OptAggregateAllocCandidateList
+  (OptAggregateAllocCandidateNil)
+  (OptAggregateAllocCandidateCons
+    OptAggregateAllocCandidate
+    OptAggregateAllocCandidateList))
+
+(defenum OptMaybeAggregateAlloc
+  (OptNoAggregateAlloc)
+  (OptSomeAggregateAlloc i64 AstType i64))
+
+(defenum OptAggregateScanResult
+  (OptAggregateScanOk OptAggregatePointerList OptAggregateAccessList)
+  (OptAggregateScanReject))
+
 (define compiler-optimize-level-default : i64
   1)
 
@@ -703,6 +740,7 @@
     [(IrInstrPredicatedLoad dst _ _ _ _ _) (opt-invalidate-def env dst instr)]
     [(IrInstrTailMask dst _ _ _) (opt-invalidate-def env dst instr)]
     [(IrInstrCall dst name args ty) (opt-invalidate-def env dst instr)]
+    [(IrInstrCallIndirect dst _ _ _) (opt-invalidate-def env dst instr)]
     [(IrInstrTailCall _ _ _) (OptInstrResult env instr)]
     [(IrInstrPhi dst inputs ty) (opt-invalidate-def env dst instr)]
     [_ (OptInstrResult env instr)]))
@@ -760,6 +798,7 @@
     [(IrInstrPredicatedLoad dst _ _ _ _ _) (opt-invalidate-def env dst instr)]
     [(IrInstrTailMask dst _ _ _) (opt-invalidate-def env dst instr)]
     [(IrInstrCall dst name args ty) (opt-invalidate-def env dst instr)]
+    [(IrInstrCallIndirect dst _ _ _) (opt-invalidate-def env dst instr)]
     [(IrInstrTailCall _ _ _) (OptInstrResult env instr)]
     [(IrInstrPhi dst inputs ty) (opt-invalidate-def env dst instr)]
     [_ (OptInstrResult env instr)]))
@@ -829,6 +868,8 @@
       (opt-collect-value-uses (opt-collect-value-uses set l) r)]
     [(IrInstrUnOp _ _ src _) (opt-collect-value-uses set src)]
     [(IrInstrCall _ _ args _) (opt-collect-value-list-uses set args)]
+    [(IrInstrCallIndirect _ func args _)
+      (opt-collect-value-list-uses (opt-collect-value-uses set func) args)]
     [(IrInstrTailCall _ args _) (opt-collect-value-list-uses set args)]
     [(IrInstrStore _ value _) (opt-collect-value-uses set value)]
     ;; Pointer/memory ops carry operand uses too; missing any of these would let
@@ -939,6 +980,484 @@
     [(IrBlockCons block rest)
       (IrBlockCons (opt-dce-block set block) (opt-dce-block-list set rest))]))
 
+;; --- aggregate allocation candidate analysis (#1487) ------------------------
+;;
+;; This is intentionally analysis-only. It recognizes heap aggregate allocations
+;; that stay local to a function and records the constant-offset derived pointers
+;; plus load/store accesses that a later scalar-replacement slice can consume.
+(define (opt-aggregate-fixed-type? [ty : AstType]) : bool
+  (match ty
+    [(AstTyStruct _) true]
+    [(AstTyEnum _) true]
+    [(AstTyTuple _) true]
+    [(AstTyArray _ _) true]
+    [_ false]))
+
+(define (opt-aggregate-tl-alloc-size [args : CompilerIrValueList]) : OptMaybeI64
+  (match args
+    [(IrValueCons value rest)
+      (match rest
+        [(IrValueNil)
+          (match value
+            [(IrValueI64 size) (OptSomeI64 size)]
+            [_ (OptNoI64)])]
+        [_ (OptNoI64)])]
+    [_ (OptNoI64)]))
+
+(define (opt-aggregate-direct-alloc [instr : CompilerIrInstr]) : OptMaybeAggregateAlloc
+  (match instr
+    [(IrInstrCall dst name args ty)
+      (if (and (string-eq name "tl_alloc") (opt-aggregate-fixed-type? ty))
+        (match (opt-aggregate-tl-alloc-size args)
+          [(OptSomeI64 size)
+            (if (> size 0)
+              (OptSomeAggregateAlloc dst ty size)
+              (OptNoAggregateAlloc))]
+          [(OptNoI64) (OptNoAggregateAlloc)])
+        (OptNoAggregateAlloc))]
+    [_ (OptNoAggregateAlloc)]))
+
+(define (opt-aggregate-pointer-list-lookup
+  [ptrs : OptAggregatePointerList]
+  [var : i64]) : OptMaybeI64
+  (match ptrs
+    [(OptAggregatePointerNil) (OptNoI64)]
+    [(OptAggregatePointerCons ptr rest)
+      (match ptr
+        [(OptAggregatePointer ptr-var offset)
+          (if (= ptr-var var)
+            (OptSomeI64 offset)
+            (opt-aggregate-pointer-list-lookup rest var))])]))
+
+(define (opt-aggregate-value-offset
+  [base : i64]
+  [ptrs : OptAggregatePointerList]
+  [value : CompilerIrValue]) : OptMaybeI64
+  (match value
+    [(IrValueVar var)
+      (if (= var base)
+        (OptSomeI64 0)
+        (opt-aggregate-pointer-list-lookup ptrs var))]
+    [_ (OptNoI64)]))
+
+(define (opt-aggregate-value-has-pointer?
+  [base : i64]
+  [ptrs : OptAggregatePointerList]
+  [value : CompilerIrValue]) : bool
+  (match (opt-aggregate-value-offset base ptrs value)
+    [(OptSomeI64 _) true]
+    [(OptNoI64) false]))
+
+(define (opt-aggregate-value-list-has-pointer?
+  [base : i64]
+  [ptrs : OptAggregatePointerList]
+  [values : CompilerIrValueList]) : bool
+  (match values
+    [(IrValueNil) false]
+    [(IrValueCons value rest)
+      (or
+        (opt-aggregate-value-has-pointer? base ptrs value)
+        (opt-aggregate-value-list-has-pointer? base ptrs rest))]))
+
+(define (opt-aggregate-maybe-value-has-pointer?
+  [base : i64]
+  [ptrs : OptAggregatePointerList]
+  [maybe : CompilerIrMaybeValue]) : bool
+  (match maybe
+    [(IrNoValue) false]
+    [(IrSomeValue value) (opt-aggregate-value-has-pointer? base ptrs value)]))
+
+(define (opt-aggregate-phi-inputs-have-pointer?
+  [base : i64]
+  [ptrs : OptAggregatePointerList]
+  [inputs : CompilerIrPhiInputList]) : bool
+  (match inputs
+    [(IrPhiInputNil) false]
+    [(IrPhiInputCons input rest)
+      (match input
+        [(IrPhiInput value _)
+          (or
+            (opt-aggregate-value-has-pointer? base ptrs value)
+            (opt-aggregate-phi-inputs-have-pointer? base ptrs rest))])]))
+
+(define (opt-aggregate-raw-var-is-pointer?
+  [base : i64]
+  [ptrs : OptAggregatePointerList]
+  [var : i64]) : bool
+  (or
+    (= var base)
+    (match (opt-aggregate-pointer-list-lookup ptrs var)
+      [(OptSomeI64 _) true]
+      [(OptNoI64) false])))
+
+(define (opt-aggregate-instr-has-pointer?
+  [instr : CompilerIrInstr]
+  [base : i64]
+  [ptrs : OptAggregatePointerList]) : bool
+  (match instr
+    [(IrInstrMov _ src _) (opt-aggregate-value-has-pointer? base ptrs src)]
+    [(IrInstrAddrOf _ src) (opt-aggregate-raw-var-is-pointer? base ptrs src)]
+    [(IrInstrGep _ src offset _)
+      (or
+        (opt-aggregate-value-has-pointer? base ptrs src)
+        (opt-aggregate-value-has-pointer? base ptrs offset))]
+    [(IrInstrLoad _ src _) (opt-aggregate-value-has-pointer? base ptrs src)]
+    [(IrInstrStorePtr ptr value _)
+      (or
+        (opt-aggregate-value-has-pointer? base ptrs ptr)
+        (opt-aggregate-value-has-pointer? base ptrs value))]
+    [(IrInstrBoundsCheck index length _)
+      (or
+        (opt-aggregate-value-has-pointer? base ptrs index)
+        (opt-aggregate-value-has-pointer? base ptrs length))]
+    [(IrInstrCast _ src _ _) (opt-aggregate-value-has-pointer? base ptrs src)]
+    [(IrInstrBinOp _ _ lhs rhs _)
+      (or
+        (opt-aggregate-value-has-pointer? base ptrs lhs)
+        (opt-aggregate-value-has-pointer? base ptrs rhs))]
+    [(IrInstrUnOp _ _ src _) (opt-aggregate-value-has-pointer? base ptrs src)]
+    [(IrInstrSplat _ src _ _) (opt-aggregate-value-has-pointer? base ptrs src)]
+    [(IrInstrVectorBinOp _ _ lhs rhs _ _)
+      (or
+        (opt-aggregate-value-has-pointer? base ptrs lhs)
+        (opt-aggregate-value-has-pointer? base ptrs rhs))]
+    [(IrInstrVectorReduce _ _ src _ _)
+      (opt-aggregate-value-has-pointer? base ptrs src)]
+    [(IrInstrVectorCompare _ _ lhs rhs _ _)
+      (or
+        (opt-aggregate-value-has-pointer? base ptrs lhs)
+        (opt-aggregate-value-has-pointer? base ptrs rhs))]
+    [(IrInstrMaskBinOp _ _ lhs rhs _)
+      (or
+        (opt-aggregate-value-has-pointer? base ptrs lhs)
+        (opt-aggregate-value-has-pointer? base ptrs rhs))]
+    [(IrInstrMaskNot _ src _) (opt-aggregate-value-has-pointer? base ptrs src)]
+    [(IrInstrMaskReduce _ _ src _)
+      (opt-aggregate-value-has-pointer? base ptrs src)]
+    [(IrInstrSelect _ mask on-true on-false _ _)
+      (or
+        (opt-aggregate-value-has-pointer? base ptrs mask)
+        (or
+          (opt-aggregate-value-has-pointer? base ptrs on-true)
+          (opt-aggregate-value-has-pointer? base ptrs on-false)))]
+    [(IrInstrVectorLoad _ vector-base index _ _)
+      (or
+        (opt-aggregate-value-has-pointer? base ptrs vector-base)
+        (opt-aggregate-value-has-pointer? base ptrs index))]
+    [(IrInstrVectorStore vector-base index value _ _)
+      (or
+        (opt-aggregate-value-has-pointer? base ptrs vector-base)
+        (or
+          (opt-aggregate-value-has-pointer? base ptrs index)
+          (opt-aggregate-value-has-pointer? base ptrs value)))]
+    [(IrInstrPredicatedStore store-base index value mask _ _)
+      (or
+        (opt-aggregate-value-has-pointer? base ptrs store-base)
+        (or
+          (opt-aggregate-value-has-pointer? base ptrs index)
+          (or
+            (opt-aggregate-value-has-pointer? base ptrs value)
+            (opt-aggregate-value-has-pointer? base ptrs mask))))]
+    [(IrInstrPredicatedLoad _ load-base index mask _ _)
+      (or
+        (opt-aggregate-value-has-pointer? base ptrs load-base)
+        (or
+          (opt-aggregate-value-has-pointer? base ptrs index)
+          (opt-aggregate-value-has-pointer? base ptrs mask)))]
+    [(IrInstrTailMask _ index length _)
+      (or
+        (opt-aggregate-value-has-pointer? base ptrs index)
+        (opt-aggregate-value-has-pointer? base ptrs length))]
+    [(IrInstrCall _ _ args _)
+      (opt-aggregate-value-list-has-pointer? base ptrs args)]
+    [(IrInstrTailCall _ args _)
+      (opt-aggregate-value-list-has-pointer? base ptrs args)]
+    [(IrInstrStore _ value _)
+      (opt-aggregate-value-has-pointer? base ptrs value)]
+    [(IrInstrBranch cond _ _) (opt-aggregate-value-has-pointer? base ptrs cond)]
+    [(IrInstrReturn maybe)
+      (opt-aggregate-maybe-value-has-pointer? base ptrs maybe)]
+    [(IrInstrPhi _ inputs _)
+      (opt-aggregate-phi-inputs-have-pointer? base ptrs inputs)]
+    [_ false]))
+
+(define (opt-aggregate-instrs-touch-candidate?
+  [instrs : CompilerIrInstrList]
+  [base : i64]
+  [ptrs : OptAggregatePointerList]) : bool
+  (match instrs
+    [(IrInstrNil) false]
+    [(IrInstrCons instr rest)
+      (or
+        (opt-aggregate-instr-has-pointer? instr base ptrs)
+        (opt-aggregate-instrs-touch-candidate? rest base ptrs))]))
+
+(define (opt-aggregate-instr-known-safe?
+  [instr : CompilerIrInstr]
+  [base : i64]
+  [ptrs : OptAggregatePointerList]) : bool
+  (match instr
+    [(IrInstrCall dst name _ _) (and (= dst base) (string-eq name "tl_alloc"))]
+    [(IrInstrGep _ src offset _)
+      (match (opt-aggregate-value-offset base ptrs src)
+        [(OptSomeI64 _)
+          (match offset
+            [(IrValueI64 _) true]
+            [_ false])]
+        [(OptNoI64) false])]
+    [(IrInstrLoad _ src _) (opt-aggregate-value-has-pointer? base ptrs src)]
+    [(IrInstrStorePtr ptr value _)
+      (and
+        (opt-aggregate-value-has-pointer? base ptrs ptr)
+        (not (opt-aggregate-value-has-pointer? base ptrs value)))]
+    [_ false]))
+
+(define (opt-aggregate-instr-crosses-unknown-effect?
+  [instr : CompilerIrInstr]
+  [base : i64]
+  [ptrs : OptAggregatePointerList]) : bool
+  (if (opt-aggregate-instr-known-safe? instr base ptrs)
+    false
+    (compiler-ir-effect-invalidates-cse? (compiler-ir-instr-effect instr))))
+
+(define (opt-aggregate-scan-instrs
+  [base : i64]
+  [ty : AstType]
+  [size : i64]
+  [instrs : CompilerIrInstrList]
+  [ptrs : OptAggregatePointerList]
+  [accesses : OptAggregateAccessList]
+  [seen-alloc : bool]) : OptAggregateScanResult
+  (match instrs
+    [(IrInstrNil)
+      (if seen-alloc
+        (OptAggregateScanOk ptrs accesses)
+        (OptAggregateScanReject))]
+    [(IrInstrCons instr rest)
+      (if (not seen-alloc)
+        (match (opt-aggregate-direct-alloc instr)
+          [(OptSomeAggregateAlloc dst alloc-ty alloc-size)
+            (if (and
+              (= dst base)
+              (and (= alloc-size size) (opt-type-eq alloc-ty ty)))
+              (opt-aggregate-scan-instrs base ty size rest ptrs accesses true)
+              (opt-aggregate-scan-instrs base ty size rest ptrs accesses false))]
+          [(OptNoAggregateAlloc)
+            (opt-aggregate-scan-instrs base ty size rest ptrs accesses false)])
+        (match instr
+          [(IrInstrGep dst src offset _)
+            (match (opt-aggregate-value-offset base ptrs src)
+              [(OptSomeI64 base-offset)
+                (match offset
+                  [(IrValueI64 field-offset)
+                    (opt-aggregate-scan-instrs
+                      base
+                      ty
+                      size
+                      rest
+                      (OptAggregatePointerCons
+                        (OptAggregatePointer dst (+ base-offset field-offset))
+                        ptrs)
+                      accesses
+                      true)]
+                  [_ (OptAggregateScanReject)])]
+              [(OptNoI64)
+                (if (opt-aggregate-value-has-pointer? base ptrs offset)
+                  (OptAggregateScanReject)
+                  (opt-aggregate-scan-instrs
+                    base
+                    ty
+                    size
+                    rest
+                    ptrs
+                    accesses
+                    true))])]
+          [(IrInstrLoad dst src load-ty)
+            (match (opt-aggregate-value-offset base ptrs src)
+              [(OptSomeI64 offset)
+                (opt-aggregate-scan-instrs
+                  base
+                  ty
+                  size
+                  rest
+                  ptrs
+                  (OptAggregateAccessCons
+                    (OptAggregateLoad dst offset load-ty)
+                    accesses)
+                  true)]
+              [(OptNoI64)
+                (if (opt-aggregate-instrs-touch-candidate? rest base ptrs)
+                  (OptAggregateScanReject)
+                  (opt-aggregate-scan-instrs
+                    base
+                    ty
+                    size
+                    rest
+                    ptrs
+                    accesses
+                    true))])]
+          [(IrInstrStorePtr ptr value store-ty)
+            (match (opt-aggregate-value-offset base ptrs ptr)
+              [(OptSomeI64 offset)
+                (if (opt-aggregate-value-has-pointer? base ptrs value)
+                  (OptAggregateScanReject)
+                  (opt-aggregate-scan-instrs
+                    base
+                    ty
+                    size
+                    rest
+                    ptrs
+                    (OptAggregateAccessCons
+                      (OptAggregateStore offset store-ty)
+                      accesses)
+                    true))]
+              [(OptNoI64)
+                (if (or
+                  (opt-aggregate-value-has-pointer? base ptrs value)
+                  (and
+                    (compiler-ir-effect-invalidates-cse?
+                      (compiler-ir-instr-effect instr))
+                    (opt-aggregate-instrs-touch-candidate? rest base ptrs)))
+                  (OptAggregateScanReject)
+                  (opt-aggregate-scan-instrs
+                    base
+                    ty
+                    size
+                    rest
+                    ptrs
+                    accesses
+                    true))])]
+          [_
+            (if (opt-aggregate-instr-has-pointer? instr base ptrs)
+              (OptAggregateScanReject)
+              (if (and
+                (opt-aggregate-instr-crosses-unknown-effect? instr base ptrs)
+                (opt-aggregate-instrs-touch-candidate? rest base ptrs))
+                (OptAggregateScanReject)
+                (opt-aggregate-scan-instrs base ty size rest ptrs accesses true)))]))]))
+
+(define (opt-aggregate-classify-one
+  [base : i64]
+  [ty : AstType]
+  [size : i64]
+  [instrs : CompilerIrInstrList]) : OptAggregateScanResult
+  (opt-aggregate-scan-instrs
+    base
+    ty
+    size
+    instrs
+    (OptAggregatePointerNil)
+    (OptAggregateAccessNil)
+    false))
+
+(define (opt-aggregate-candidates-from-instrs
+  [scan : CompilerIrInstrList]
+  [all : CompilerIrInstrList]) : OptAggregateAllocCandidateList
+  (match scan
+    [(IrInstrNil) (OptAggregateAllocCandidateNil)]
+    [(IrInstrCons instr rest)
+      (match (opt-aggregate-direct-alloc instr)
+        [(OptSomeAggregateAlloc base ty size)
+          (match (opt-aggregate-classify-one base ty size all)
+            [(OptAggregateScanOk ptrs accesses)
+              (OptAggregateAllocCandidateCons
+                (OptAggregateAllocCandidate base ty size ptrs accesses)
+                (opt-aggregate-candidates-from-instrs rest all))]
+            [(OptAggregateScanReject)
+              (opt-aggregate-candidates-from-instrs rest all)])]
+        [(OptNoAggregateAlloc) (opt-aggregate-candidates-from-instrs rest all)])]))
+
+(define (opt-aggregate-instr-list-append
+  [left : CompilerIrInstrList]
+  [right : CompilerIrInstrList]) : CompilerIrInstrList
+  (match left
+    [(IrInstrNil) right]
+    [(IrInstrCons head rest)
+      (IrInstrCons head (opt-aggregate-instr-list-append rest right))]))
+
+(define (opt-aggregate-flatten-blocks [blocks : CompilerIrBlockList]) : CompilerIrInstrList
+  (match blocks
+    [(IrBlockNil) (IrInstrNil)]
+    [(IrBlockCons block rest)
+      (match block
+        [(IrBlock _ instrs)
+          (opt-aggregate-instr-list-append
+            instrs
+            (opt-aggregate-flatten-blocks rest))])]))
+
+(define (opt-aggregate-allocation-candidates-function
+  [func : CompilerIrFunction]) : OptAggregateAllocCandidateList
+  (match func
+    [(IrFunction _ _ _ _ blocks)
+      (let
+        [instrs : CompilerIrInstrList (opt-aggregate-flatten-blocks blocks)]
+        (opt-aggregate-candidates-from-instrs instrs instrs))]))
+
+(define (opt-aggregate-candidate-list-append
+  [left : OptAggregateAllocCandidateList]
+  [right : OptAggregateAllocCandidateList]) : OptAggregateAllocCandidateList
+  (match left
+    [(OptAggregateAllocCandidateNil) right]
+    [(OptAggregateAllocCandidateCons head rest)
+      (OptAggregateAllocCandidateCons
+        head
+        (opt-aggregate-candidate-list-append rest right))]))
+
+(define (opt-aggregate-allocation-candidates-functions
+  [functions : CompilerIrFunctionList]) : OptAggregateAllocCandidateList
+  (match functions
+    [(IrFunctionNil) (OptAggregateAllocCandidateNil)]
+    [(IrFunctionCons func rest)
+      (opt-aggregate-candidate-list-append
+        (opt-aggregate-allocation-candidates-function func)
+        (opt-aggregate-allocation-candidates-functions rest))]))
+
+(define (opt-aggregate-allocation-candidates [program : CompilerIrProgram]) : OptAggregateAllocCandidateList
+  (match program
+    [(IrProgram _ functions _)
+      (opt-aggregate-allocation-candidates-functions functions)]))
+
+(define (opt-aggregate-candidate-list-count
+  [candidates : OptAggregateAllocCandidateList]) : i64
+  (match candidates
+    [(OptAggregateAllocCandidateNil) 0]
+    [(OptAggregateAllocCandidateCons _ rest)
+      (+ 1 (opt-aggregate-candidate-list-count rest))]))
+
+(define (opt-aggregate-pointer-list-count [ptrs : OptAggregatePointerList]) : i64
+  (match ptrs
+    [(OptAggregatePointerNil) 0]
+    [(OptAggregatePointerCons _ rest)
+      (+ 1 (opt-aggregate-pointer-list-count rest))]))
+
+(define (opt-aggregate-access-list-count [accesses : OptAggregateAccessList]) : i64
+  (match accesses
+    [(OptAggregateAccessNil) 0]
+    [(OptAggregateAccessCons _ rest)
+      (+ 1 (opt-aggregate-access-list-count rest))]))
+
+(define (opt-aggregate-access-list-load-count
+  [accesses : OptAggregateAccessList]) : i64
+  (match accesses
+    [(OptAggregateAccessNil) 0]
+    [(OptAggregateAccessCons access rest)
+      (+
+        (match access
+          [(OptAggregateLoad _ _ _) 1]
+          [_ 0])
+        (opt-aggregate-access-list-load-count rest))]))
+
+(define (opt-aggregate-access-list-store-count
+  [accesses : OptAggregateAccessList]) : i64
+  (match accesses
+    [(OptAggregateAccessNil) 0]
+    [(OptAggregateAccessCons access rest)
+      (+
+        (match access
+          [(OptAggregateStore _ _) 1]
+          [_ 0])
+        (opt-aggregate-access-list-store-count rest))]))
+
 ;; --- block-local common subexpression elimination (#546) --------------------
 ;;
 ;; Within a single basic block, track an available-expression table mapping a
@@ -1036,6 +1555,10 @@
     [(IrValueGlobalAddr ga)
       (match b
         [(IrValueGlobalAddr gb) (string-eq ga gb)]
+        [_ false])]
+    [(IrValueFunction fa)
+      (match b
+        [(IrValueFunction fb) (string-eq fa fb)]
         [_ false])]
     [(IrValueI64 na)
       (match b
@@ -1474,6 +1997,15 @@
               (string-eq aname bname)
               (and (opt-value-list-eq aargs bargs) (opt-type-eq aty bty))))]
         [_ false])]
+    [(IrInstrCallIndirect ad afunc aargs aty)
+      (match b
+        [(IrInstrCallIndirect bd bfunc bargs bty)
+          (and
+            (= ad bd)
+            (and
+              (opt-value-eq afunc bfunc)
+              (and (opt-value-list-eq aargs bargs) (opt-type-eq aty bty))))]
+        [_ false])]
     [(IrInstrTailCall aname aargs aty)
       (match b
         [(IrInstrTailCall bname bargs bty)
@@ -1762,6 +2294,7 @@
       (OptCseResult (opt-expr-invalidate-var table dst) instr)]
     ;; Calls, stores, and control flow clear all available expressions.
     [(IrInstrCall _ _ _ _) (OptCseResult (OptExprNil) instr)]
+    [(IrInstrCallIndirect _ _ _ _) (OptCseResult (OptExprNil) instr)]
     [(IrInstrTailCall _ _ _) (OptCseResult (OptExprNil) instr)]
     [(IrInstrStore _ _ _) (OptCseResult (OptExprNil) instr)]
     [(IrInstrStorePtr _ _ _) (OptCseResult (OptExprNil) instr)]
@@ -1833,7 +2366,8 @@
     [(IrValueF64 _) false]
     [(IrValueString _) false]
     [(IrValueGlobal _) false]
-    [(IrValueGlobalAddr _) false]))
+    [(IrValueGlobalAddr _) false]
+    [(IrValueFunction _) false]))
 
 (define (opt-copy-resolve [env : OptCopyEnv] [value : CompilerIrValue]) : CompilerIrValue
   (match value
@@ -1894,6 +2428,12 @@
     [(IrInstrTailMask _ _ _ _) instr]
     [(IrInstrCall dst name args ty)
       (IrInstrCall dst name (opt-copy-subst-value-list env args) ty)]
+    [(IrInstrCallIndirect dst func args ty)
+      (IrInstrCallIndirect
+        dst
+        (opt-copy-resolve env func)
+        (opt-copy-subst-value-list env args)
+        ty)]
     [(IrInstrTailCall name args ty)
       (IrInstrTailCall name (opt-copy-subst-value-list env args) ty)]
     [(IrInstrStore name value ty)
@@ -1951,6 +2491,7 @@
     [(IrInstrPredicatedLoad dst _ _ _ _ _) (opt-copy-invalidate-var env dst)]
     [(IrInstrTailMask dst _ _ _) (opt-copy-invalidate-var env dst)]
     [(IrInstrCall dst _ _ _) (opt-copy-invalidate-var env dst)]
+    [(IrInstrCallIndirect dst _ _ _) (opt-copy-invalidate-var env dst)]
     [(IrInstrPhi dst _ _) (opt-copy-invalidate-var env dst)]
     [_ env]))
 
@@ -2053,6 +2594,7 @@
       (opt-bounds-invalidate-var facts dst)]
     [(IrInstrTailMask dst _ _ _) (opt-bounds-invalidate-var facts dst)]
     [(IrInstrCall _ _ _ _) (OptBoundsNil)]
+    [(IrInstrCallIndirect _ _ _ _) (OptBoundsNil)]
     [(IrInstrTailCall _ _ _) (OptBoundsNil)]
     [(IrInstrStore _ _ _) (OptBoundsNil)]
     [(IrInstrStorePtr _ _ _) (OptBoundsNil)]
@@ -2800,6 +3342,10 @@
         (opt-verify-value-use defs doms length block-label pos))]
     [(IrInstrCall _ _ args _)
       (opt-verify-value-list-uses defs doms args block-label pos)]
+    [(IrInstrCallIndirect _ func args _)
+      (opt-verify-two
+        (opt-verify-value-use defs doms func block-label pos)
+        (opt-verify-value-list-uses defs doms args block-label pos))]
     [(IrInstrTailCall _ args _)
       (opt-verify-value-list-uses defs doms args block-label pos)]
     [(IrInstrStore _ value _)
@@ -3110,6 +3656,580 @@
       [reachable : OptLabelSet (opt-cfg-reachable-blocks folded)]
       (opt-cfg-filter-clean-blocks reachable folded))))
 
+;; --- sparse conditional constant propagation (#1348) -----------------------
+;;
+;; SCCP v1 runs after the local scalar simplifier. It keeps a small scalar
+;; lattice for SSA vars and a growing set of executable blocks. Unknown values
+;; are not rewritten; overdefined values keep the original instruction; proven
+;; constants rewrite value uses and scalar-producing instructions. The evaluator
+;; deliberately reuses the local folding helpers above so divide/modulo/shift
+;; trap preservation stays identical.
+(defenum OptSccpValue
+  (OptSccpUnknown)
+  (OptSccpConst CompilerIrValue AstType)
+  (OptSccpOverdefined))
+
+(defenum OptSccpEnv
+  (OptSccpEnvNil)
+  (OptSccpEnvCons i64 OptSccpValue OptSccpEnv))
+
+(defenum OptSccpState
+  (OptSccpState OptLabelSet OptSccpEnv bool))
+
+(define (opt-sccp-value-eq [a : OptSccpValue] [b : OptSccpValue]) : bool
+  (match a
+    [(OptSccpUnknown)
+      (match b
+        [(OptSccpUnknown) true]
+        [_ false])]
+    [(OptSccpOverdefined)
+      (match b
+        [(OptSccpOverdefined) true]
+        [_ false])]
+    [(OptSccpConst av aty)
+      (match b
+        [(OptSccpConst bv bty) (and (opt-value-eq av bv) (opt-type-eq aty bty))]
+        [_ false])]))
+
+(define (opt-sccp-join [old : OptSccpValue] [new : OptSccpValue]) : OptSccpValue
+  (match old
+    [(OptSccpUnknown) new]
+    [(OptSccpOverdefined) (OptSccpOverdefined)]
+    [(OptSccpConst old-value old-ty)
+      (match new
+        [(OptSccpUnknown) old]
+        [(OptSccpOverdefined) (OptSccpOverdefined)]
+        [(OptSccpConst new-value new-ty)
+          (if (and
+            (opt-value-eq old-value new-value)
+            (opt-type-eq old-ty new-ty))
+            old
+            (OptSccpOverdefined))])]))
+
+(define (opt-sccp-env-lookup [env : OptSccpEnv] [var : i64]) : OptSccpValue
+  (match env
+    [(OptSccpEnvNil) (OptSccpUnknown)]
+    [(OptSccpEnvCons id value rest)
+      (if (= id var)
+        value
+        (opt-sccp-env-lookup rest var))]))
+
+(define (opt-sccp-env-remove [env : OptSccpEnv] [var : i64]) : OptSccpEnv
+  (match env
+    [(OptSccpEnvNil) (OptSccpEnvNil)]
+    [(OptSccpEnvCons id value rest)
+      (if (= id var)
+        (opt-sccp-env-remove rest var)
+        (OptSccpEnvCons id value (opt-sccp-env-remove rest var)))]))
+
+(define (opt-sccp-env-set [env : OptSccpEnv] [var : i64] [value : OptSccpValue]) : OptSccpEnv
+  (OptSccpEnvCons var value (opt-sccp-env-remove env var)))
+
+(define (opt-sccp-state-bind
+  [state : OptSccpState]
+  [var : i64]
+  [value : OptSccpValue]) : OptSccpState
+  (match state
+    [(OptSccpState executable env changed)
+      (let
+        [old : OptSccpValue (opt-sccp-env-lookup env var)]
+        [merged : OptSccpValue (opt-sccp-join old value)]
+        (if (opt-sccp-value-eq old merged)
+          state
+          (OptSccpState executable (opt-sccp-env-set env var merged) true)))]))
+
+(define (opt-sccp-state-mark-executable [state : OptSccpState] [label : String]) : OptSccpState
+  (match state
+    [(OptSccpState executable env changed)
+      (if (opt-label-contains executable label)
+        state
+        (OptSccpState (opt-label-add executable label) env true))]))
+
+(define (opt-sccp-state-reset-changed [state : OptSccpState]) : OptSccpState
+  (match state
+    [(OptSccpState executable env _) (OptSccpState executable env false)]))
+
+(define (opt-sccp-immediate [value : CompilerIrValue] [ty : AstType]) : OptSccpValue
+  (match (opt-normalize-const value (opt-default-immediate-type value ty))
+    [(OptSomeConst folded folded-ty) (OptSccpConst folded folded-ty)]
+    [(OptNoConst) (OptSccpOverdefined)]))
+
+(define (opt-sccp-value
+  [state : OptSccpState]
+  [value : CompilerIrValue]
+  [ty : AstType]) : OptSccpValue
+  (match state
+    [(OptSccpState _ env _)
+      (match value
+        [(IrValueVar id) (opt-sccp-env-lookup env id)]
+        [_ (opt-sccp-immediate value ty)])]))
+
+(define (opt-sccp-fold-cast-value
+  [src : OptSccpValue]
+  [from-ty : AstType]
+  [to-ty : AstType]) : OptSccpValue
+  (match src
+    [(OptSccpUnknown) (OptSccpUnknown)]
+    [(OptSccpOverdefined) (OptSccpOverdefined)]
+    [(OptSccpConst value ty)
+      (match (opt-fold-cast (OptSomeConst value ty) from-ty to-ty)
+        [(IrSomeValue folded) (OptSccpConst folded to-ty)]
+        [(IrNoValue) (OptSccpOverdefined)])]))
+
+(define (opt-sccp-fold-binop-value
+  [op : CompilerIrBinOp]
+  [lhs : OptSccpValue]
+  [rhs : OptSccpValue]
+  [ty : AstType]) : OptSccpValue
+  (match lhs
+    [(OptSccpConst lhs-value lhs-ty)
+      (match rhs
+        [(OptSccpConst rhs-value rhs-ty)
+          (match (opt-fold-binop
+            op
+            (OptSomeConst lhs-value lhs-ty)
+            (OptSomeConst rhs-value rhs-ty)
+            ty)
+            [(IrSomeValue folded) (OptSccpConst folded ty)]
+            [(IrNoValue) (OptSccpOverdefined)])]
+        [(OptSccpUnknown) (OptSccpUnknown)]
+        [(OptSccpOverdefined) (OptSccpOverdefined)])]
+    [(OptSccpUnknown) (OptSccpUnknown)]
+    [(OptSccpOverdefined) (OptSccpOverdefined)]))
+
+(define (opt-sccp-fold-unop-value
+  [op : CompilerIrUnOp]
+  [src : OptSccpValue]
+  [ty : AstType]) : OptSccpValue
+  (match src
+    [(OptSccpConst value value-ty)
+      (match (opt-fold-unop op (OptSomeConst value value-ty) ty)
+        [(IrSomeValue folded) (OptSccpConst folded ty)]
+        [(IrNoValue) (OptSccpOverdefined)])]
+    [(OptSccpUnknown) (OptSccpUnknown)]
+    [(OptSccpOverdefined) (OptSccpOverdefined)]))
+
+(define (opt-sccp-phi-input-value
+  [state : OptSccpState]
+  [input : CompilerIrPhiInput]
+  [ty : AstType]) : OptSccpValue
+  (match state
+    [(OptSccpState executable _ _)
+      (match input
+        [(IrPhiInput value pred)
+          (if (opt-label-contains executable pred)
+            (opt-sccp-value state value ty)
+            (OptSccpUnknown))])]))
+
+(define (opt-sccp-phi-value
+  [state : OptSccpState]
+  [inputs : CompilerIrPhiInputList]
+  [ty : AstType]) : OptSccpValue
+  (match inputs
+    [(IrPhiInputNil) (OptSccpUnknown)]
+    [(IrPhiInputCons input rest)
+      (opt-sccp-join
+        (opt-sccp-phi-input-value state input ty)
+        (opt-sccp-phi-value state rest ty))]))
+
+(define (opt-sccp-mark-branch-targets
+  [state : OptSccpState]
+  [cond : CompilerIrValue]
+  [true-label : String]
+  [false-label : String]) : OptSccpState
+  (match (opt-sccp-value state cond (AstTyBool))
+    [(OptSccpConst value _)
+      (match value
+        [(IrValueBool known)
+          (if known
+            (opt-sccp-state-mark-executable state true-label)
+            (opt-sccp-state-mark-executable state false-label))]
+        [_
+          (opt-sccp-state-mark-executable
+            (opt-sccp-state-mark-executable state true-label)
+            false-label)])]
+    [(OptSccpOverdefined)
+      (opt-sccp-state-mark-executable
+        (opt-sccp-state-mark-executable state true-label)
+        false-label)]
+    [(OptSccpUnknown) state]))
+
+(define (opt-sccp-process-instr
+  [state : OptSccpState]
+  [instr : CompilerIrInstr]) : OptSccpState
+  (match instr
+    [(IrInstrMov dst value ty)
+      (opt-sccp-state-bind state dst (opt-sccp-value state value ty))]
+    [(IrInstrCast dst src from-ty to-ty)
+      (opt-sccp-state-bind
+        state
+        dst
+        (opt-sccp-fold-cast-value
+          (opt-sccp-value state src from-ty)
+          from-ty
+          to-ty))]
+    [(IrInstrBinOp dst op lhs rhs ty)
+      (opt-sccp-state-bind
+        state
+        dst
+        (opt-sccp-fold-binop-value
+          op
+          (opt-sccp-value state lhs ty)
+          (opt-sccp-value state rhs ty)
+          ty))]
+    [(IrInstrUnOp dst op value ty)
+      (opt-sccp-state-bind
+        state
+        dst
+        (opt-sccp-fold-unop-value op (opt-sccp-value state value ty) ty))]
+    [(IrInstrPhi dst inputs ty)
+      (opt-sccp-state-bind state dst (opt-sccp-phi-value state inputs ty))]
+    [(IrInstrJump label) (opt-sccp-state-mark-executable state label)]
+    [(IrInstrBranch cond true-label false-label)
+      (opt-sccp-mark-branch-targets state cond true-label false-label)]
+    [(IrInstrAlloc dst _) (opt-sccp-state-bind state dst (OptSccpOverdefined))]
+    [(IrInstrAddrOf dst _) (opt-sccp-state-bind state dst (OptSccpOverdefined))]
+    [(IrInstrGep dst _ _ _)
+      (opt-sccp-state-bind state dst (OptSccpOverdefined))]
+    [(IrInstrLoad dst _ _) (opt-sccp-state-bind state dst (OptSccpOverdefined))]
+    [(IrInstrLaneId dst _ _)
+      (opt-sccp-state-bind state dst (OptSccpOverdefined))]
+    [(IrInstrSplat dst _ _ _)
+      (opt-sccp-state-bind state dst (OptSccpOverdefined))]
+    [(IrInstrVectorBinOp dst _ _ _ _ _)
+      (opt-sccp-state-bind state dst (OptSccpOverdefined))]
+    [(IrInstrVectorReduce dst _ _ _ _)
+      (opt-sccp-state-bind state dst (OptSccpOverdefined))]
+    [(IrInstrVectorCompare dst _ _ _ _ _)
+      (opt-sccp-state-bind state dst (OptSccpOverdefined))]
+    [(IrInstrMaskBinOp dst _ _ _ _)
+      (opt-sccp-state-bind state dst (OptSccpOverdefined))]
+    [(IrInstrMaskNot dst _ _)
+      (opt-sccp-state-bind state dst (OptSccpOverdefined))]
+    [(IrInstrMaskReduce dst _ _ _)
+      (opt-sccp-state-bind state dst (OptSccpOverdefined))]
+    [(IrInstrSelect dst _ _ _ _ _)
+      (opt-sccp-state-bind state dst (OptSccpOverdefined))]
+    [(IrInstrVectorLoad dst _ _ _ _)
+      (opt-sccp-state-bind state dst (OptSccpOverdefined))]
+    [(IrInstrPredicatedLoad dst _ _ _ _ _)
+      (opt-sccp-state-bind state dst (OptSccpOverdefined))]
+    [(IrInstrTailMask dst _ _ _)
+      (opt-sccp-state-bind state dst (OptSccpOverdefined))]
+    [(IrInstrCall dst _ _ _)
+      (opt-sccp-state-bind state dst (OptSccpOverdefined))]
+    [(IrInstrCallIndirect dst _ _ _)
+      (opt-sccp-state-bind state dst (OptSccpOverdefined))]
+    [_ state]))
+
+(define (opt-sccp-process-instrs
+  [state : OptSccpState]
+  [instrs : CompilerIrInstrList]) : OptSccpState
+  (match instrs
+    [(IrInstrNil) state]
+    [(IrInstrCons instr rest)
+      (opt-sccp-process-instrs (opt-sccp-process-instr state instr) rest)]))
+
+(define (opt-sccp-process-block
+  [state : OptSccpState]
+  [block : CompilerIrBlock]) : OptSccpState
+  (match state
+    [(OptSccpState executable _ _)
+      (match block
+        [(IrBlock label instrs)
+          (if (opt-label-contains executable label)
+            (opt-sccp-process-instrs state instrs)
+            state)])]))
+
+(define (opt-sccp-process-blocks
+  [state : OptSccpState]
+  [blocks : CompilerIrBlockList]) : OptSccpState
+  (match blocks
+    [(IrBlockNil) state]
+    [(IrBlockCons block rest)
+      (opt-sccp-process-blocks (opt-sccp-process-block state block) rest)]))
+
+(define (opt-sccp-env-from-params
+  [params : CompilerIrParamList]
+  [env : OptSccpEnv]) : OptSccpEnv
+  (match params
+    [(IrParamNil) env]
+    [(IrParamCons param rest)
+      (match param
+        [(IrParam _ _ id)
+          (opt-sccp-env-from-params
+            rest
+            (opt-sccp-env-set env id (OptSccpOverdefined)))])]))
+
+(define (opt-sccp-initial-state
+  [params : CompilerIrParamList]
+  [blocks : CompilerIrBlockList]) : OptSccpState
+  (OptSccpState
+    (opt-label-add (OptLabelNil) (opt-cfg-entry-label blocks))
+    (opt-sccp-env-from-params params (OptSccpEnvNil))
+    true))
+
+(define (opt-sccp-analyze-fixed
+  [blocks : CompilerIrBlockList]
+  [state : OptSccpState]
+  [remaining : i64]) : OptSccpState
+  (if (<= remaining 0)
+    state
+    (let
+      [next : OptSccpState
+        (opt-sccp-process-blocks (opt-sccp-state-reset-changed state) blocks)]
+      (match next
+        [(OptSccpState _ _ changed)
+          (if changed
+            (opt-sccp-analyze-fixed blocks next (- remaining 1))
+            next)]))))
+
+(define (opt-sccp-analyze
+  [params : CompilerIrParamList]
+  [blocks : CompilerIrBlockList]) : OptSccpState
+  (opt-sccp-analyze-fixed
+    blocks
+    (opt-sccp-initial-state params blocks)
+    (+
+      (+ (compiler-ir-block-list-count blocks) 8)
+      (* 2 (compiler-ir-block-list-instruction-count blocks)))))
+
+(define (opt-sccp-rewrite-value [env : OptSccpEnv] [value : CompilerIrValue]) : CompilerIrValue
+  (match value
+    [(IrValueVar id)
+      (match (opt-sccp-env-lookup env id)
+        [(OptSccpConst folded _) folded]
+        [_ value])]
+    [_ value]))
+
+(define (opt-sccp-rewrite-maybe-value
+  [env : OptSccpEnv]
+  [value : CompilerIrMaybeValue]) : CompilerIrMaybeValue
+  (match value
+    [(IrNoValue) (IrNoValue)]
+    [(IrSomeValue inner) (IrSomeValue (opt-sccp-rewrite-value env inner))]))
+
+(define (opt-sccp-rewrite-value-list
+  [env : OptSccpEnv]
+  [values : CompilerIrValueList]) : CompilerIrValueList
+  (match values
+    [(IrValueNil) (IrValueNil)]
+    [(IrValueCons value rest)
+      (IrValueCons
+        (opt-sccp-rewrite-value env value)
+        (opt-sccp-rewrite-value-list env rest))]))
+
+(define (opt-sccp-rewrite-phi-inputs
+  [env : OptSccpEnv]
+  [inputs : CompilerIrPhiInputList]) : CompilerIrPhiInputList
+  (match inputs
+    [(IrPhiInputNil) (IrPhiInputNil)]
+    [(IrPhiInputCons input rest)
+      (match input
+        [(IrPhiInput value label)
+          (IrPhiInputCons
+            (IrPhiInput (opt-sccp-rewrite-value env value) label)
+            (opt-sccp-rewrite-phi-inputs env rest))])]))
+
+(define (opt-sccp-rewrite-scalar-def
+  [env : OptSccpEnv]
+  [dst : i64]
+  [ty : AstType]
+  [fallback : CompilerIrInstr]) : CompilerIrInstr
+  (match (opt-sccp-env-lookup env dst)
+    [(OptSccpConst value _) (IrInstrMov dst value ty)]
+    [_ fallback]))
+
+(define (opt-sccp-rewrite-instr [env : OptSccpEnv] [instr : CompilerIrInstr]) : CompilerIrInstr
+  (match instr
+    [(IrInstrMov dst value ty)
+      (opt-sccp-rewrite-scalar-def
+        env
+        dst
+        ty
+        (IrInstrMov dst (opt-sccp-rewrite-value env value) ty))]
+    [(IrInstrGep dst base offset ty)
+      (IrInstrGep
+        dst
+        (opt-sccp-rewrite-value env base)
+        (opt-sccp-rewrite-value env offset)
+        ty)]
+    [(IrInstrLoad dst src ty)
+      (IrInstrLoad dst (opt-sccp-rewrite-value env src) ty)]
+    [(IrInstrStorePtr ptr value ty)
+      (IrInstrStorePtr
+        (opt-sccp-rewrite-value env ptr)
+        (opt-sccp-rewrite-value env value)
+        ty)]
+    [(IrInstrCast dst src from-ty to-ty)
+      (opt-sccp-rewrite-scalar-def
+        env
+        dst
+        to-ty
+        (IrInstrCast dst (opt-sccp-rewrite-value env src) from-ty to-ty))]
+    [(IrInstrBinOp dst op lhs rhs ty)
+      (opt-sccp-rewrite-scalar-def
+        env
+        dst
+        ty
+        (IrInstrBinOp
+          dst
+          op
+          (opt-sccp-rewrite-value env lhs)
+          (opt-sccp-rewrite-value env rhs)
+          ty))]
+    [(IrInstrUnOp dst op value ty)
+      (opt-sccp-rewrite-scalar-def
+        env
+        dst
+        ty
+        (IrInstrUnOp dst op (opt-sccp-rewrite-value env value) ty))]
+    [(IrInstrSplat dst value lanes ty)
+      (IrInstrSplat dst (opt-sccp-rewrite-value env value) lanes ty)]
+    [(IrInstrCall dst name args ty)
+      (IrInstrCall dst name (opt-sccp-rewrite-value-list env args) ty)]
+    [(IrInstrCallIndirect dst callee args ty)
+      (IrInstrCallIndirect
+        dst
+        (opt-sccp-rewrite-value env callee)
+        (opt-sccp-rewrite-value-list env args)
+        ty)]
+    [(IrInstrTailCall name args ty)
+      (IrInstrTailCall name (opt-sccp-rewrite-value-list env args) ty)]
+    [(IrInstrStore name value ty)
+      (IrInstrStore name (opt-sccp-rewrite-value env value) ty)]
+    [(IrInstrBoundsCheck index length ok-label)
+      (IrInstrBoundsCheck
+        (opt-sccp-rewrite-value env index)
+        (opt-sccp-rewrite-value env length)
+        ok-label)]
+    [(IrInstrBranch cond true-label false-label)
+      (let
+        [rewritten-cond : CompilerIrValue (opt-sccp-rewrite-value env cond)]
+        (match rewritten-cond
+          [(IrValueBool known)
+            (if known
+              (IrInstrJump true-label)
+              (IrInstrJump false-label))]
+          [_ (IrInstrBranch rewritten-cond true-label false-label)]))]
+    [(IrInstrReturn value)
+      (IrInstrReturn (opt-sccp-rewrite-maybe-value env value))]
+    [(IrInstrPhi dst inputs ty)
+      (opt-sccp-rewrite-scalar-def
+        env
+        dst
+        ty
+        (IrInstrPhi dst (opt-sccp-rewrite-phi-inputs env inputs) ty))]
+    [(IrInstrVectorBinOp dst op lhs rhs lanes ty)
+      (IrInstrVectorBinOp
+        dst
+        op
+        (opt-sccp-rewrite-value env lhs)
+        (opt-sccp-rewrite-value env rhs)
+        lanes
+        ty)]
+    [(IrInstrVectorReduce dst op src lanes ty)
+      (IrInstrVectorReduce dst op (opt-sccp-rewrite-value env src) lanes ty)]
+    [(IrInstrVectorCompare dst op lhs rhs lanes ty)
+      (IrInstrVectorCompare
+        dst
+        op
+        (opt-sccp-rewrite-value env lhs)
+        (opt-sccp-rewrite-value env rhs)
+        lanes
+        ty)]
+    [(IrInstrMaskBinOp dst op lhs rhs lanes)
+      (IrInstrMaskBinOp
+        dst
+        op
+        (opt-sccp-rewrite-value env lhs)
+        (opt-sccp-rewrite-value env rhs)
+        lanes)]
+    [(IrInstrMaskNot dst src lanes)
+      (IrInstrMaskNot dst (opt-sccp-rewrite-value env src) lanes)]
+    [(IrInstrMaskReduce dst op src lanes)
+      (IrInstrMaskReduce dst op (opt-sccp-rewrite-value env src) lanes)]
+    [(IrInstrSelect dst mask true-value false-value lanes ty)
+      (IrInstrSelect
+        dst
+        (opt-sccp-rewrite-value env mask)
+        (opt-sccp-rewrite-value env true-value)
+        (opt-sccp-rewrite-value env false-value)
+        lanes
+        ty)]
+    [(IrInstrVectorLoad dst base index lanes ty)
+      (IrInstrVectorLoad
+        dst
+        (opt-sccp-rewrite-value env base)
+        (opt-sccp-rewrite-value env index)
+        lanes
+        ty)]
+    [(IrInstrVectorStore base index value lanes ty)
+      (IrInstrVectorStore
+        (opt-sccp-rewrite-value env base)
+        (opt-sccp-rewrite-value env index)
+        (opt-sccp-rewrite-value env value)
+        lanes
+        ty)]
+    [(IrInstrPredicatedStore base index value mask lanes ty)
+      (IrInstrPredicatedStore
+        (opt-sccp-rewrite-value env base)
+        (opt-sccp-rewrite-value env index)
+        (opt-sccp-rewrite-value env value)
+        (opt-sccp-rewrite-value env mask)
+        lanes
+        ty)]
+    [(IrInstrPredicatedLoad dst base index mask lanes ty)
+      (IrInstrPredicatedLoad
+        dst
+        (opt-sccp-rewrite-value env base)
+        (opt-sccp-rewrite-value env index)
+        (opt-sccp-rewrite-value env mask)
+        lanes
+        ty)]
+    [(IrInstrTailMask dst index length lanes)
+      (IrInstrTailMask
+        dst
+        (opt-sccp-rewrite-value env index)
+        (opt-sccp-rewrite-value env length)
+        lanes)]
+    [(IrInstrAlloc _ _) instr]
+    [(IrInstrAddrOf _ _) instr]
+    [(IrInstrLaneId _ _ _) instr]
+    [(IrInstrJump _) instr]))
+
+(define (opt-sccp-rewrite-instrs
+  [env : OptSccpEnv]
+  [instrs : CompilerIrInstrList]) : CompilerIrInstrList
+  (match instrs
+    [(IrInstrNil) (IrInstrNil)]
+    [(IrInstrCons instr rest)
+      (IrInstrCons
+        (opt-sccp-rewrite-instr env instr)
+        (opt-sccp-rewrite-instrs env rest))]))
+
+(define (opt-sccp-rewrite-block [env : OptSccpEnv] [block : CompilerIrBlock]) : CompilerIrBlock
+  (match block
+    [(IrBlock label instrs)
+      (IrBlock label (opt-sccp-rewrite-instrs env instrs))]))
+
+(define (opt-sccp-rewrite-blocks
+  [env : OptSccpEnv]
+  [blocks : CompilerIrBlockList]) : CompilerIrBlockList
+  (match blocks
+    [(IrBlockNil) (IrBlockNil)]
+    [(IrBlockCons block rest)
+      (IrBlockCons
+        (opt-sccp-rewrite-block env block)
+        (opt-sccp-rewrite-blocks env rest))]))
+
+(define (opt-sccp-blocks
+  [params : CompilerIrParamList]
+  [blocks : CompilerIrBlockList]) : CompilerIrBlockList
+  (match (opt-sccp-analyze params blocks)
+    [(OptSccpState _ env _)
+      (opt-cfg-simplify-blocks (opt-sccp-rewrite-blocks env blocks))]))
+
 (defenum OptFunctionPassResult
   (OptFunctionPassResult CompilerIrFunction bool))
 
@@ -3154,16 +4274,22 @@
 (define (optimize-function-once [func : CompilerIrFunction]) : CompilerIrFunction
   (match func
     [(IrFunction name params ret-ty frame blocks)
-      ;; Fold first (folding can expose constant branches and turn temporaries
-      ;; dead), simplify the CFG, then collect uses across the reachable function
-      ;; and eliminate dead pure assignments.
+      ;; Fold first so SCCP can reuse local facts, then simplify the reachable
+      ;; CFG and eliminate dead pure assignments.
       (let
         [folded : CompilerIrBlockList (optimize-block-list blocks)]
         (let
-          [cfg : CompilerIrBlockList (opt-cfg-simplify-blocks folded)]
+          [sccp : CompilerIrBlockList (opt-sccp-blocks params folded)]
           (let
-            [used : OptUsedSet (opt-collect-blocks-uses (OptUsedNil) cfg)]
-            (IrFunction name params ret-ty frame (opt-dce-block-list used cfg)))))]))
+            [cfg : CompilerIrBlockList (opt-cfg-simplify-blocks sccp)]
+            (let
+              [used : OptUsedSet (opt-collect-blocks-uses (OptUsedNil) cfg)]
+              (IrFunction
+                name
+                params
+                ret-ty
+                frame
+                (opt-dce-block-list used cfg))))))]))
 
 (define (optimize-function-once-fast [func : CompilerIrFunction]) : CompilerIrFunction
   (match func
@@ -3276,6 +4402,7 @@
   [value : CompilerIrValue]) : OptReachState
   (match value
     [(IrValueGlobal name) (opt-reach-add-function functions state name)]
+    [(IrValueFunction name) (opt-reach-add-function functions state name)]
     [_ state]))
 
 (define (opt-reach-value-list
@@ -3380,6 +4507,11 @@
         functions
         (opt-reach-value-list functions state args)
         name)]
+    [(IrInstrCallIndirect _ func args _)
+      (opt-reach-value-list
+        functions
+        (opt-reach-value functions state func)
+        args)]
     [(IrInstrTailCall name args _)
       (opt-reach-add-function
         functions
@@ -4009,6 +5141,194 @@
     (and (compiler-optimize-spans-fold-ok?) (compiler-optimize-spans-cse-ok?)))
     42
     1))
+
+(define (opt-aggregate-test-alloc) : CompilerIrInstr
+  (IrInstrCall
+    1
+    "tl_alloc"
+    (IrValueCons (IrValueI64 16) IrValueNil)
+    (AstTyStruct "Pair")))
+
+(define (opt-aggregate-positive-instrs) : CompilerIrInstrList
+  (IrInstrCons
+    (opt-aggregate-test-alloc)
+    (IrInstrCons
+      (IrInstrGep 2 (IrValueVar 1) (IrValueI64 0) (AstTyU8))
+      (IrInstrCons
+        (IrInstrStorePtr (IrValueVar 2) (IrValueI64 10) (AstTyI64))
+        (IrInstrCons
+          (IrInstrGep 3 (IrValueVar 1) (IrValueI64 8) (AstTyU8))
+          (IrInstrCons
+            (IrInstrStorePtr (IrValueVar 3) (IrValueBool true) (AstTyBool))
+            (IrInstrCons
+              (IrInstrGep 4 (IrValueVar 1) (IrValueI64 0) (AstTyU8))
+              (IrInstrCons
+                (IrInstrLoad 5 (IrValueVar 4) (AstTyI64))
+                (IrInstrCons
+                  (IrInstrReturn (IrSomeValue (IrValueVar 5)))
+                  IrInstrNil)))))))))
+
+(define (opt-aggregate-returned-instrs) : CompilerIrInstrList
+  (IrInstrCons
+    (opt-aggregate-test-alloc)
+    (IrInstrCons (IrInstrReturn (IrSomeValue (IrValueVar 1))) IrInstrNil)))
+
+(define (opt-aggregate-passed-instrs) : CompilerIrInstrList
+  (IrInstrCons
+    (opt-aggregate-test-alloc)
+    (IrInstrCons
+      (IrInstrCall
+        2
+        "touch"
+        (IrValueCons (IrValueVar 1) IrValueNil)
+        (AstTyUnit))
+      (IrInstrCons (IrInstrReturn (IrSomeValue (IrValueI64 0))) IrInstrNil))))
+
+(define (opt-aggregate-global-store-instrs) : CompilerIrInstrList
+  (IrInstrCons
+    (opt-aggregate-test-alloc)
+    (IrInstrCons
+      (IrInstrStore "escaped" (IrValueVar 1) (AstTyU64))
+      (IrInstrCons (IrInstrReturn (IrSomeValue (IrValueI64 0))) IrInstrNil))))
+
+(define (opt-aggregate-store-through-other-instrs) : CompilerIrInstrList
+  (IrInstrCons
+    (opt-aggregate-test-alloc)
+    (IrInstrCons
+      (IrInstrStorePtr (IrValueVar 99) (IrValueVar 1) (AstTyU64))
+      (IrInstrCons (IrInstrReturn (IrSomeValue (IrValueI64 0))) IrInstrNil))))
+
+(define (opt-aggregate-unknown-offset-instrs) : CompilerIrInstrList
+  (IrInstrCons
+    (opt-aggregate-test-alloc)
+    (IrInstrCons
+      (IrInstrGep 2 (IrValueVar 1) (IrValueVar 9) (AstTyU8))
+      (IrInstrCons (IrInstrReturn (IrSomeValue (IrValueI64 0))) IrInstrNil))))
+
+(define (opt-aggregate-call-separated-instrs) : CompilerIrInstrList
+  (IrInstrCons
+    (opt-aggregate-test-alloc)
+    (IrInstrCons
+      (IrInstrGep 2 (IrValueVar 1) (IrValueI64 0) (AstTyU8))
+      (IrInstrCons
+        (IrInstrStorePtr (IrValueVar 2) (IrValueI64 10) (AstTyI64))
+        (IrInstrCons
+          (IrInstrCall 9 "touch" IrValueNil (AstTyUnit))
+          (IrInstrCons
+            (IrInstrGep 3 (IrValueVar 1) (IrValueI64 0) (AstTyU8))
+            (IrInstrCons
+              (IrInstrLoad 4 (IrValueVar 3) (AstTyI64))
+              (IrInstrCons
+                (IrInstrReturn (IrSomeValue (IrValueVar 4)))
+                IrInstrNil))))))))
+
+(define (opt-aggregate-predicated-memory-instrs) : CompilerIrInstrList
+  (IrInstrCons
+    (opt-aggregate-test-alloc)
+    (IrInstrCons
+      (IrInstrGep 2 (IrValueVar 1) (IrValueI64 0) (AstTyU8))
+      (IrInstrCons
+        (IrInstrStorePtr (IrValueVar 2) (IrValueI64 10) (AstTyI64))
+        (IrInstrCons
+          (IrInstrPredicatedLoad
+            8
+            (IrValueVar 99)
+            (IrValueI64 0)
+            (IrValueBool true)
+            4
+            (AstTyI64))
+          (IrInstrCons
+            (IrInstrGep 3 (IrValueVar 1) (IrValueI64 0) (AstTyU8))
+            (IrInstrCons
+              (IrInstrLoad 4 (IrValueVar 3) (AstTyI64))
+              (IrInstrCons
+                (IrInstrReturn (IrSomeValue (IrValueVar 4)))
+                IrInstrNil))))))))
+
+(define (opt-aggregate-phi-flowed-blocks) : CompilerIrBlockList
+  (IrBlockCons
+    (IrBlock
+      "entry"
+      (IrInstrCons
+        (opt-aggregate-test-alloc)
+        (IrInstrCons (IrInstrJump "join") IrInstrNil)))
+    (IrBlockCons
+      (IrBlock
+        "join"
+        (IrInstrCons
+          (IrInstrPhi
+            2
+            (IrPhiInputCons (IrPhiInput (IrValueVar 1) "entry") (IrPhiInputNil))
+            (AstTyU64))
+          (IrInstrCons (IrInstrReturn (IrSomeValue (IrValueI64 0))) IrInstrNil)))
+      IrBlockNil)))
+
+(define (opt-aggregate-no-candidates? [instrs : CompilerIrInstrList]) : bool
+  (=
+    (opt-aggregate-candidate-list-count
+      (opt-aggregate-allocation-candidates (opt-spans-program instrs)))
+    0))
+
+(define (opt-aggregate-phi-flowed-rejected?) : bool
+  (=
+    (opt-aggregate-candidate-list-count
+      (opt-aggregate-allocation-candidates
+        (IrProgram
+          IrGlobalNil
+          (IrFunctionCons
+            (IrFunction
+              "main"
+              IrParamNil
+              (AstTyI64)
+              4
+              (opt-aggregate-phi-flowed-blocks))
+            IrFunctionNil)
+          IrExternNil)))
+    0))
+
+(define (opt-aggregate-positive-classified?) : bool
+  (match (opt-aggregate-allocation-candidates
+    (opt-spans-program (opt-aggregate-positive-instrs)))
+    [(OptAggregateAllocCandidateCons candidate rest)
+      (match rest
+        [(OptAggregateAllocCandidateNil)
+          (match candidate
+            [(OptAggregateAllocCandidate base ty size ptrs accesses)
+              (and
+                (= base 1)
+                (and
+                  (= size 16)
+                  (and
+                    (opt-type-eq ty (AstTyStruct "Pair"))
+                    (and
+                      (= (opt-aggregate-pointer-list-count ptrs) 3)
+                      (and
+                        (= (opt-aggregate-access-list-count accesses) 3)
+                        (and
+                          (= (opt-aggregate-access-list-store-count accesses) 2)
+                          (= (opt-aggregate-access-list-load-count accesses) 1)))))))])]
+        [_ false])]
+    [_ false]))
+
+(define (compiler-optimize-aggregate-candidate-self-test) : i64
+  (cond
+    [(not (opt-aggregate-positive-classified?)) 1]
+    [(not (opt-aggregate-no-candidates? (opt-aggregate-returned-instrs))) 2]
+    [(not (opt-aggregate-no-candidates? (opt-aggregate-passed-instrs))) 3]
+    [(not (opt-aggregate-no-candidates? (opt-aggregate-global-store-instrs))) 4]
+    [(not
+        (opt-aggregate-no-candidates?
+          (opt-aggregate-store-through-other-instrs)))
+      5]
+    [(not (opt-aggregate-no-candidates? (opt-aggregate-unknown-offset-instrs)))
+      6]
+    [(not (opt-aggregate-no-candidates? (opt-aggregate-call-separated-instrs)))
+      7]
+    [(not (opt-aggregate-phi-flowed-rejected?)) 8]
+    [(not
+        (opt-aggregate-no-candidates? (opt-aggregate-predicated-memory-instrs)))
+      9]
+    [else 42]))
 
 (define (opt-count-cast-instrs [instrs : CompilerIrInstrList]) : i64
   (match instrs
@@ -5189,8 +6509,181 @@
             (opt-count-mov-dst-instrs instrs dst)
             (opt-count-mov-dst-blocks rest dst))])]))
 
+(define (opt-count-arith-blocks [blocks : CompilerIrBlockList]) : i64
+  (match blocks
+    [(IrBlockNil) 0]
+    [(IrBlockCons block rest)
+      (match block
+        [(IrBlock _ instrs)
+          (+ (opt-count-arith-instrs instrs) (opt-count-arith-blocks rest))])]))
+
+(define (opt-blocks-mov-dst-i64-value
+  [blocks : CompilerIrBlockList]
+  [dst : i64]
+  [fallback : i64]) : i64
+  (match blocks
+    [(IrBlockNil) fallback]
+    [(IrBlockCons block rest)
+      (match block
+        [(IrBlock _ instrs)
+          (let
+            [value : i64 (opt-mov-dst-i64-value instrs dst fallback)]
+            (if (= value fallback)
+              (opt-blocks-mov-dst-i64-value rest dst fallback)
+              value))])]))
+
 (define (opt-cfg-test-function [blocks : CompilerIrBlockList]) : CompilerIrFunction
   (IrFunction "cfg" (IrParamNil) (AstTyI64) 16 blocks))
+
+(define (opt-sccp-cond-params) : CompilerIrParamList
+  (IrParamCons (IrParam "cond" (AstTyBool) 0) (IrParamNil)))
+
+(define (opt-sccp-loop-params) : CompilerIrParamList
+  (IrParamCons (IrParam "cond" (AstTyBool) 4) (IrParamNil)))
+
+(define (opt-sccp-cross-block-blocks) : CompilerIrBlockList
+  (IrBlockCons
+    (IrBlock
+      "entry"
+      (IrInstrCons
+        (IrInstrMov 0 (IrValueI64 20) (AstTyI64))
+        (IrInstrCons (IrInstrJump "rhs") (IrInstrNil))))
+    (IrBlockCons
+      (IrBlock
+        "rhs"
+        (IrInstrCons
+          (IrInstrBinOp 1 (IrBinAdd) (IrValueVar 0) (IrValueI64 22) (AstTyI64))
+          (IrInstrCons
+            (IrInstrReturn (IrSomeValue (IrValueVar 1)))
+            (IrInstrNil))))
+      (IrBlockNil))))
+
+(define (opt-sccp-diamond-blocks) : CompilerIrBlockList
+  (IrBlockCons
+    (IrBlock
+      "entry"
+      (IrInstrCons (IrInstrBranch (IrValueVar 0) "then" "else") (IrInstrNil)))
+    (IrBlockCons
+      (IrBlock
+        "then"
+        (IrInstrCons
+          (IrInstrMov 1 (IrValueI64 7) (AstTyI64))
+          (IrInstrCons (IrInstrJump "join") (IrInstrNil))))
+      (IrBlockCons
+        (IrBlock
+          "else"
+          (IrInstrCons
+            (IrInstrMov 2 (IrValueI64 7) (AstTyI64))
+            (IrInstrCons (IrInstrJump "join") (IrInstrNil))))
+        (IrBlockCons
+          (IrBlock
+            "join"
+            (IrInstrCons
+              (IrInstrPhi
+                3
+                (IrPhiInputCons
+                  (IrPhiInput (IrValueVar 1) "then")
+                  (IrPhiInputCons
+                    (IrPhiInput (IrValueVar 2) "else")
+                    (IrPhiInputNil)))
+                (AstTyI64))
+              (IrInstrCons
+                (IrInstrReturn (IrSomeValue (IrValueVar 3)))
+                (IrInstrNil))))
+          (IrBlockNil))))))
+
+(define (opt-sccp-constant-branch-blocks) : CompilerIrBlockList
+  (IrBlockCons
+    (IrBlock
+      "entry"
+      (IrInstrCons
+        (IrInstrMov 0 (IrValueBool true) (AstTyBool))
+        (IrInstrCons (IrInstrBranch (IrValueVar 0) "then" "else") (IrInstrNil))))
+    (IrBlockCons
+      (IrBlock
+        "then"
+        (IrInstrCons (IrInstrReturn (IrSomeValue (IrValueI64 1))) (IrInstrNil)))
+      (IrBlockCons
+        (IrBlock
+          "else"
+          (IrInstrCons
+            (IrInstrReturn (IrSomeValue (IrValueI64 2)))
+            (IrInstrNil)))
+        (IrBlockNil)))))
+
+(define (opt-sccp-loop-blocks) : CompilerIrBlockList
+  (IrBlockCons
+    (IrBlock
+      "entry"
+      (IrInstrCons
+        (IrInstrMov 0 (IrValueI64 0) (AstTyI64))
+        (IrInstrCons (IrInstrJump "loop") (IrInstrNil))))
+    (IrBlockCons
+      (IrBlock
+        "loop"
+        (IrInstrCons
+          (IrInstrPhi
+            1
+            (IrPhiInputCons
+              (IrPhiInput (IrValueVar 0) "entry")
+              (IrPhiInputCons
+                (IrPhiInput (IrValueVar 2) "body")
+                (IrPhiInputNil)))
+            (AstTyI64))
+          (IrInstrCons
+            (IrInstrBranch (IrValueVar 4) "body" "exit")
+            (IrInstrNil))))
+      (IrBlockCons
+        (IrBlock
+          "body"
+          (IrInstrCons
+            (IrInstrBinOp 2 (IrBinAdd) (IrValueVar 1) (IrValueI64 1) (AstTyI64))
+            (IrInstrCons (IrInstrJump "loop") (IrInstrNil))))
+        (IrBlockCons
+          (IrBlock
+            "exit"
+            (IrInstrCons
+              (IrInstrReturn (IrSomeValue (IrValueVar 1)))
+              (IrInstrNil)))
+          (IrBlockNil))))))
+
+(define (opt-sccp-trap-blocks) : CompilerIrBlockList
+  (IrBlockCons
+    (IrBlock
+      "entry"
+      (IrInstrCons
+        (IrInstrBinOp 1 (IrBinDiv) (IrValueI64 1) (IrValueI64 0) (AstTyI64))
+        (IrInstrCons (IrInstrReturn (IrSomeValue (IrValueVar 1))) (IrInstrNil))))
+    (IrBlockNil)))
+
+(define (compiler-optimize-sccp-self-test) : i64
+  (let
+    [cross : CompilerIrBlockList
+      (opt-sccp-blocks (IrParamNil) (opt-sccp-cross-block-blocks))]
+    [diamond : CompilerIrBlockList
+      (opt-sccp-blocks (opt-sccp-cond-params) (opt-sccp-diamond-blocks))]
+    [branch : CompilerIrBlockList
+      (opt-sccp-blocks (IrParamNil) (opt-sccp-constant-branch-blocks))]
+    [loop : CompilerIrBlockList
+      (opt-sccp-blocks (opt-sccp-loop-params) (opt-sccp-loop-blocks))]
+    [trap : CompilerIrBlockList
+      (opt-sccp-blocks (IrParamNil) (opt-sccp-trap-blocks))]
+    (cond
+      [(not (= (opt-count-arith-blocks cross) 0)) 1]
+      [(not (= (opt-blocks-mov-dst-i64-value cross 1 (- 0 999)) 42)) 2]
+      [(not (= (opt-count-phi-blocks diamond) 0)) 3]
+      [(not (= (opt-blocks-mov-dst-i64-value diamond 3 (- 0 999)) 7)) 4]
+      [(not (= (compiler-ir-block-list-count branch) 2)) 5]
+      [(opt-block-list-has-label? branch "else") 6]
+      [(not (= (opt-count-branches-blocks branch) 0)) 7]
+      [(not (= (opt-count-jump-to-blocks branch "then") 1)) 8]
+      [(not (= (compiler-ir-block-list-count loop) 4)) 9]
+      [(not (= (opt-count-phi-blocks loop) 1)) 10]
+      [(not (= (opt-count-mov-dst-blocks loop 1) 0)) 11]
+      [(not (= (opt-count-arith-blocks loop) 1)) 12]
+      [(not (= (opt-count-arith-blocks trap) 1)) 13]
+      [(not (= (opt-count-mov-dst-blocks trap 1) 0)) 14]
+      [else 42])))
 
 (define (opt-cfg-constant-if-blocks) : CompilerIrBlockList
   (IrBlockCons

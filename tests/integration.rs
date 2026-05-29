@@ -5801,6 +5801,25 @@ fn assert_exit_code_without_output(output: &std::process::Output, expected: i32,
 }
 
 #[test]
+fn embedded_stdlib_resolves_import_without_root_or_env() {
+    let work_dir = std::env::temp_dir().join(format!(
+        "typelisp-embedded-stdlib-lookup-{}",
+        std::process::id()
+    ));
+
+    let work_path = write_stdlib_string_import_fixture(&work_dir, STDLIB_STRING_CONTAINS_PROGRAM);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_typelisp"))
+        .arg("run")
+        .arg(&work_path)
+        .env_remove("TYPELISP_STDLIB_ROOT")
+        .output()
+        .expect("run embedded stdlib lookup fixture");
+
+    assert_exit_code_without_output(&output, 42, "embedded stdlib fixture exited unexpectedly");
+}
+
+#[test]
 fn stdlib_root_option_resolves_stdlib_import_without_staging() {
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let work_dir = std::env::temp_dir().join(format!(
@@ -6028,9 +6047,58 @@ fn stdlib_root_env_appears_in_missing_import_diagnostic() {
         stderr,
     );
     assert!(
+        stderr.contains("embedded stdlib: available"),
+        "missing stdlib diagnostic did not mention embedded stdlib availability\nstderr:\n{}",
+        stderr,
+    );
+    assert!(
         stderr.contains(&env_root.display().to_string()),
         "missing stdlib diagnostic did not include env root {}\nstderr:\n{}",
         env_root.display(),
+        stderr,
+    );
+}
+
+#[test]
+fn embedded_stdlib_missing_import_diagnostic_mentions_fallback() {
+    let work_dir = std::env::temp_dir().join(format!(
+        "typelisp-embedded-stdlib-missing-diag-{}",
+        std::process::id()
+    ));
+
+    let work_path = write_stdlib_string_import_fixture(
+        &work_dir,
+        r#"
+(import "stdlib/not-here.tl")
+
+(define (main) : i64
+  0)
+"#,
+    );
+
+    let output = Command::new(env!("CARGO_BIN_EXE_typelisp"))
+        .arg("check")
+        .arg(&work_path)
+        .env_remove("TYPELISP_STDLIB_ROOT")
+        .output()
+        .expect("check missing embedded stdlib fixture");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !output.status.success(),
+        "missing embedded stdlib check unexpectedly succeeded\nstdout:\n{}\nstderr:\n{}",
+        stdout,
+        stderr,
+    );
+    assert!(
+        stderr.contains("searched stdlib roots: none"),
+        "missing embedded stdlib diagnostic did not mention empty roots\nstderr:\n{}",
+        stderr,
+    );
+    assert!(
+        stderr.contains("embedded stdlib: available"),
+        "missing embedded stdlib diagnostic did not mention embedded fallback\nstderr:\n{}",
         stderr,
     );
 }

@@ -485,6 +485,22 @@ representation. The compiler tracks the checked produced type of each `Expr`
 internally; there is no source-level `Expr<T>` and no generic macro type
 parameter.
 
+Macro bodies build expression values with quote forms. The reader accepts both
+prefix shorthand and the equivalent list-headed forms:
+
+```lisp test=ignore name=macro-quote-surface reason="typed macro expansion is staged across #1133-#1140"
+'form        ; (quote form)
+`form        ; (quasiquote form)
+,expr        ; (unquote expr), valid inside quasiquote
+,@expr       ; (unquote-splicing expr), valid in quasiquote list positions
+```
+
+`quote` produces an `Expr` for the template without evaluating it.
+`quasiquote` produces an `Expr` while evaluating `unquote` operands as
+compile-time `Expr` values and inserting their checked AST. `unquote-splicing`
+evaluates to an `ExprList` and splices that list into the surrounding template
+list. `unquote` and `unquote-splicing` outside quasiquote are rejected.
+
 The source surface is:
 
 ```lisp test=ignore name=macro-defmacro-surface reason="typed macro declarations are specified before selfhost implementation"
@@ -944,18 +960,20 @@ exports, and qualified lookup.
 - Circular imports currently terminate by loading each module once; they are not rejected.
 - Import paths are normalized; importing via different relative paths to the same file deduplicates.
 - The repository's `stdlib/` directory is currently just source files. Importing
-  `stdlib/string.tl` works only when that path is reachable from the importing
-  file, such as by staging or copying the `stdlib/` directory next to the entry
-  source, unless the CLI is given one or more `--stdlib-root <dir>` options or
-  `TYPELISP_STDLIB_ROOT` is set.
+  `stdlib/string.tl` works when that path is reachable from the importing file,
+  such as by staging or copying the `stdlib/` directory next to the entry
+  source, when the CLI is given one or more `--stdlib-root <dir>` options, when
+  `TYPELISP_STDLIB_ROOT` is set, or from the compiler's embedded stdlib
+  fallback.
 - For relative imports that start with `stdlib/`, the loader first tries the
   importer-relative path. If that path cannot be loaded, each configured stdlib
   root is searched by stripping the leading `stdlib/` and joining the remainder
   to the root. Explicit `--stdlib-root` entries are searched before the optional
-  `TYPELISP_STDLIB_ROOT` fallback. Local project files therefore take precedence
-  over configured stdlib roots. Configured stdlib roots only serve normal
+  `TYPELISP_STDLIB_ROOT` fallback, and the embedded stdlib is searched last.
+  Local project files therefore take precedence over configured stdlib roots and
+  embedded modules. Configured and embedded stdlib fallbacks only serve normal
   relative suffixes under the root; suffixes containing components such as `..`
-  are not resolved through stdlib root fallback.
+  are not resolved through stdlib fallback.
 - The current stdlib source-tree layout and verification convention is
   documented in `stdlib/README.md`.
 - During package builds, imports of the form `pkg:<alias>/<path>` resolve
@@ -1221,12 +1239,15 @@ Example:
 (package
   (name "my-app")
   (version "0.1.0")
+  (kind "bin")
   (entry "src/main.tl")
   (dependencies
     (math "../math")))
 ```
 
-- `name`, `version`, and `entry` are required string fields.
+- `name`, `version`, `kind`, and `entry` are required string fields.
+- `kind` is either `"bin"` or `"lib"`. `bin` produces a native executable;
+  `lib` produces a static archive.
 - `dependencies` is optional. Each entry has an alias symbol and a string root
   path: `(alias "relative/or/absolute/path")`.
 - Dependency aliases use the same character rules as package names: ASCII
@@ -1238,15 +1259,17 @@ Example:
   through the same module loader and compiler pipeline as `compile`.
 - `typelisp build` without `--manifest-path` searches for `typelisp.pkg` from
   the current directory upward.
-- Build output is assembly under
-  `target/typelisp/<package-name>/<package-name>.s` in the package root.
+- Build outputs are written under `target/typelisp/<package-name>/` in the
+  package root. `bin` packages produce `<package-name>` on Linux and
+  `<package-name>.exe` on Windows. `lib` packages produce `lib<package-name>.a`
+  on Linux and `<package-name>.lib` on Windows.
 - Package-root-qualified imports use the reserved string prefix
   `pkg:<alias>/...`, for example `(import "pkg:math/src/lib.tl")`.
 - This first package layer has no registry, semantic-version solving,
   transitive manifest loading, implicit preludes, lockfile, workspace model, or
-  native executable build promise for package manifests. Namespace isolation and
-  qualified symbol access are specified by the selfhost module model in section
-  4.4, not by package resolution itself.
+  dynamic/shared library output. Namespace isolation and qualified symbol access
+  are specified by the selfhost module model in section 4.4, not by package
+  resolution itself.
 
 ### 4.6 `(defenum ...)` and `(defstruct ...)`
 
@@ -3211,7 +3234,7 @@ Commands:
   compile           Generate assembly (.s)
   build <file.tl>   Compile, assemble, and link a native executable
   run               Compile, assemble, link, and run binary
-  build             Build nearest typelisp.pkg to package assembly
+  build             Build nearest typelisp.pkg artifact
   test              Run inline `(test ...)` items
 
 Options:
@@ -3240,8 +3263,8 @@ Options:
 
 For source-file builds, the default executable path is the source path with the
 `.tl` extension removed on Linux and with `.exe` on Windows. Source-file
-`build` does not run the executable. The package build form continues to write
-deterministic package assembly rather than native executables.
+`build` does not run the executable. The package build form writes the artifact
+selected by `typelisp.pkg`'s `kind` field.
 
 Linux native build/run uses `as` and `ld`. Windows native build/run uses
 `clang --target=x86_64-pc-windows-msvc` and `lld-link`, links against the CRT,

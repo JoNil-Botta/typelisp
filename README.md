@@ -187,9 +187,11 @@ are ordinary modules imported with explicit paths such as
 `(import "stdlib/string.tl")`. `check`, `compile`, `build <file.tl>`, and `run`
 also accept `--stdlib-root <dir>` for resolving `stdlib/...` imports from a
 configured source tree. `TYPELISP_STDLIB_ROOT` can provide an optional fallback
-root after explicit CLI roots; prefer `--stdlib-root` for CI, bootstrap, and
-reproducible scripts. See [stdlib/README.md](stdlib/README.md) for the current
-stdlib layout and verification conventions.
+root after explicit CLI roots. If no local path or configured root provides the
+module, the compiler falls back to its embedded copy of the checked-in stdlib.
+Prefer `--stdlib-root` for CI, bootstrap, and reproducible scripts. See
+[stdlib/README.md](stdlib/README.md) for the current stdlib layout and
+verification conventions.
 
 Local packages can be described with a std-only S-expression manifest named
 `typelisp.pkg`:
@@ -198,6 +200,7 @@ Local packages can be described with a std-only S-expression manifest named
 (package
   (name "my-app")
   (version "0.1.0")
+  (kind "bin")
   (entry "src/main.tl")
   (dependencies
     (math "../math")))
@@ -207,21 +210,22 @@ Local packages can be described with a std-only S-expression manifest named
 file to a native executable without running it. Without `-o`, the executable is
 written next to the source path with the `.tl` extension removed. `typelisp
 build [--manifest-path path/to/typelisp.pkg]` remains package-oriented: it
-resolves `entry` relative to the manifest directory and writes assembly under
-`target/typelisp/<package-name>/<package-name>.s`. Dependency paths may be
-relative to that same package root or absolute. Inside a package build, imports
-of the form `(import "pkg:math/src/lib.tl")` resolve from the dependency root
-declared for alias `math`; ordinary string imports remain relative to the
-importing file, and `stdlib/...` imports keep their local-first then
-configured-root behavior.
+resolves `entry` relative to the manifest directory and writes outputs under
+`target/typelisp/<package-name>/`. `kind "bin"` builds a native executable named
+after the package; `kind "lib"` builds a static archive (`lib<name>.a` on Linux,
+`<name>.lib` on Windows). Dependency paths may be relative to that same package
+root or absolute. Inside a package build, imports of the form `(import
+"pkg:math/src/lib.tl")` resolve from the dependency root declared for alias
+`math`; ordinary string imports remain relative to the importing file, and
+`stdlib/...` imports keep their local-first then configured-root then embedded
+fallback behavior.
 
 Under the legacy loader, imported package definitions share the same flat
 top-level namespace as local modules, so duplicate value or type names fail
 through the existing duplicate definition diagnostics. The package slice still
-has no registry, version solving, lockfile, workspace model, or native
-executable build promise for package manifests; namespace isolation and
-qualified symbol lookup are specified for the selfhost module model in
-`SPEC.md`.
+has no registry, version solving, lockfile, or workspace model; namespace
+isolation and qualified symbol lookup are specified for the selfhost module
+model in `SPEC.md`.
 
 Documentation comments can contain checked examples. `typelisp doc --test
 <file.tl>` extracts fenced `typelisp` or `tl` blocks from `;#` module docs and
@@ -410,8 +414,17 @@ Compiler self-test and smoke-driver conventions are documented in
 Published stage0 compilers for local no-Rust checks can be fetched with
 [`scripts/fetch-stage0.sh`](scripts/fetch-stage0.sh), or
 [`scripts/fetch-stage0.ps1`](scripts/fetch-stage0.ps1) from PowerShell. Both
-default to `target/stage0/`. To run the same no-Rust stage0 verification gate
-used by CI, run
+default to `target/stage0/`. Linux fetches prefer the versioned
+`typelisp-stage0-linux-bundle.tar.gz` asset when a release provides it and fall
+back to the legacy `typelisp-stage0-linux` executable for older releases; both
+forms still install the command as `target/stage0/typelisp`. To reproduce the
+bundle staging path locally on Linux after a release build, run:
+
+```sh
+scripts/stage-linux-stage0-bundle.sh target/release/typelisp typelisp-stage0-linux-bundle.tar.gz
+```
+
+To run the same no-Rust stage0 verification gate used by CI, run
 `scripts/verify-no-rust-stage0.sh`; it fetches `stage0-latest` when
 `TYPELISP_BIN` is unset and prevents accidental Cargo fallback. On Linux, that
 wrapper uses the published compiler only as the bootstrap seed, checks the
@@ -491,7 +504,7 @@ typelisp repl                     # Start minimal stdio REPL (.help, .type, .exi
 typelisp compile        file.tl    # Generate assembly (.s); -o <path>, --target <target>, --emit-ir, --backend-mode <mode>
 typelisp build          file.tl    # Build native executable; -o <path>, --target <target>, --backend-mode <mode>
 typelisp run            file.tl    # Compile, assemble, link, and run; --target <target>, --backend-mode <mode>
-typelisp build                    # Build nearest typelisp.pkg to package assembly; --target <target>, --backend-mode <mode>
+typelisp build                    # Build nearest typelisp.pkg artifact; --target <target>, --backend-mode <mode>
 typelisp fmt            file.tl    # Format source in place; --check reports changes without writing
 typelisp test           file.tl    # Run inline `(test ...)` items; --check type-checks the generated harness
 ```
@@ -515,7 +528,7 @@ can run locally. Windows native builds use the Windows x64 ABI, a CRT-linked
 runtime helper policy, and the `clang` + `lld-link` toolchain.
 
 The selfhost source-file build/run tools (`selfhost/build.tl --direct`,
-`selfhost/run.tl --direct`) and the Rust-owned package build (`typelisp build
+`selfhost/run.tl --direct`) and package build (`typelisp build
 [--manifest-path <typelisp.pkg>]`) accept `--opt-level 0|1|2|3`. When omitted,
 the optimizer runs, matching the prior default; `--opt-level 0` builds without
 the IR optimizer (faster compiles, larger/slower code) while `1|2|3` run it.

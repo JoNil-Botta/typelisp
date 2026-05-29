@@ -329,6 +329,10 @@
         (compiler-live-value-vars index)
         (compiler-live-value-vars len))]
     [(IrInstrCall _ _ args _) (compiler-live-value-list-vars args)]
+    [(IrInstrCallIndirect _ func args _)
+      (compiler-live-set-union
+        (compiler-live-value-vars func)
+        (compiler-live-value-list-vars args))]
     [(IrInstrTailCall _ args _) (compiler-live-value-list-vars args)]
     [(IrInstrStore _ value _) (compiler-live-value-vars value)]
     [(IrInstrBranch cond _ _) (compiler-live-value-vars cond)]
@@ -365,6 +369,8 @@
       (CompilerLiveI64Cons dst CompilerLiveI64Nil)]
     [(IrInstrTailMask dst _ _ _) (CompilerLiveI64Cons dst CompilerLiveI64Nil)]
     [(IrInstrCall dst _ _ _) (CompilerLiveI64Cons dst CompilerLiveI64Nil)]
+    [(IrInstrCallIndirect dst _ _ _)
+      (CompilerLiveI64Cons dst CompilerLiveI64Nil)]
     [(IrInstrPhi dst _ _) (CompilerLiveI64Cons dst CompilerLiveI64Nil)]
     [_ CompilerLiveI64Nil]))
 

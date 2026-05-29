@@ -120,7 +120,7 @@ coverage map.
 ### Published stage0 artifact
 
 After each merge to `main`, the `Bootstrap Stage0` workflow publishes Linux and
-Windows compiler binaries to the `stage0-latest` release and to an immutable
+Windows compiler assets to the `stage0-latest` release and to an immutable
 `stage0-*` release. Fetch the compiler with:
 
 ```sh
@@ -130,9 +130,27 @@ TYPELISP_BIN=./target/stage0/typelisp ./scripts/verify-selfhost.sh
 
 Use `scripts/fetch-stage0.sh <stage0-tag>` to pin an immutable artifact. The
 script downloads the host platform asset, verifies the file is non-empty,
-checks `SHA256SUMS` when the release provides it, and installs the binary under
-`target/stage0/`. The script uses release asset URLs instead of fetching git
-tags, so the mutable `stage0-latest` tag cannot be stale or clobber a local tag.
+checks `SHA256SUMS` when the release provides it, and installs the command under
+`target/stage0/`. On Linux it first tries the versioned
+`typelisp-stage0-linux-bundle.tar.gz` asset, validates its
+`STAGE0_BUNDLE` manifest and required wrapper/runtime paths, then installs the
+bundle so the command remains `target/stage0/typelisp`. Older releases without
+the bundle continue to install the legacy single-file `typelisp-stage0-linux`
+asset. The script uses release asset URLs instead of fetching git tags, so the
+mutable `stage0-latest` tag cannot be stale or clobber a local tag.
+
+The bundled Linux stage0 asset is created with:
+
+```sh
+cargo build --release
+scripts/stage-linux-stage0-bundle.sh target/release/typelisp typelisp-stage0-linux-bundle.tar.gz
+```
+
+The archive contains `STAGE0_BUNDLE`, a relocatable root `typelisp` launcher,
+`scripts/stage1-typelisp-wrapper.sh`, the TypeLisp-built stage1 compiler under
+`lib/stage1/`, prebuilt stage1 doc/build/repl drivers, and the `selfhost/` and
+`stdlib/` trees needed by the wrapper. Release `SHA256SUMS` covers the exact
+archive that `fetch-stage0` downloads.
 
 The complete local no-Rust gate is:
 

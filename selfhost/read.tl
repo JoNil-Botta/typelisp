@@ -137,6 +137,33 @@
 (define (advance [cur : (Array i64)]) : unit
   (array-set! cur 0 (+ (cur-pos cur) 1)))
 
+(define (read-prefix-tag? [t : i64]) : bool
+  (or
+    (= t (tag-quote))
+    (or (= t (tag-backtick)) (or (= t (tag-comma)) (= t (tag-comma-at))))))
+
+(define (read-prefix-symbol [t : i64]) : String
+  (cond
+    [(= t (tag-quote)) "quote"]
+    [(= t (tag-backtick)) "quasiquote"]
+    [(= t (tag-comma)) "unquote"]
+    [(= t (tag-comma-at)) "unquote-splicing"]
+    [else "quote"]))
+
+(define (read-prefix-form [name : String] [form : Sexpr]) : Sexpr
+  (SCons (SSym name) (SCons form SNil)))
+
+(define (read-prefix-spanned-form
+  [name : String]
+  [prefix-span : SourceSpan]
+  [form : SpannedSexpr]) : SpannedSexpr
+  (let
+    [span : SourceSpan (merge-spans prefix-span (spanned-sexpr-span form))]
+    (SpSCons
+      (SpSSym name prefix-span)
+      (SpSCons form (SpSNil (spanned-sexpr-span form)) span)
+      span)))
+
 ;; --------------------------------------------------------------------------
 ;; The reader proper: `read-form` and `read-list`, mutually recursive.
 ;; --------------------------------------------------------------------------
@@ -201,6 +228,15 @@
             (begin
               (advance cur)
               (read-bracket-list-spanned-result toks cur span))]
+          [(read-prefix-tag? t)
+            (let
+              [name : String (read-prefix-symbol t)]
+              (begin
+                (advance cur)
+                (match (read-form-spanned-result toks cur)
+                  [(OkSpannedSexpr form)
+                    (OkSpannedSexpr (read-prefix-spanned-form name span form))]
+                  [(ErrSpannedSexpr err) (ErrSpannedSexpr err)])))]
           [(= t (tag-rparen))
             (ErrSpannedSexpr (SourceError "reader: unexpected ')'" span))]
           [(= t (tag-rbracket))
@@ -319,6 +355,14 @@
         (begin
           (advance cur)
           (read-bracket-list-result toks cur))]
+      [(read-prefix-tag? t)
+        (let
+          [name : String (read-prefix-symbol t)]
+          (begin
+            (advance cur)
+            (match (read-form-result toks cur)
+              [(OkSexpr form) (OkSexpr (read-prefix-form name form))]
+              [(ErrSexpr message) (ErrSexpr message)])))]
       [(= t (tag-rparen)) (ErrSexpr "reader: unexpected ')'")]
       [(= t (tag-rbracket)) (ErrSexpr "reader: unexpected ']'")]
       ;; tag-end (or anything else): premature end of stream.

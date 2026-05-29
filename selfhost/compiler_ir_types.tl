@@ -47,6 +47,7 @@
   (IrValueVar i64)
   (IrValueGlobal String)
   (IrValueGlobalAddr String)
+  (IrValueFunction String)
   (IrValueI64 i64)
   (IrValueF64 String)
   (IrValueBool bool)
@@ -130,6 +131,7 @@
     AstType)
   (IrInstrTailMask i64 CompilerIrValue CompilerIrValue i64)
   (IrInstrCall i64 String CompilerIrValueList AstType)
+  (IrInstrCallIndirect i64 CompilerIrValue CompilerIrValueList AstType)
   (IrInstrTailCall String CompilerIrValueList AstType)
   (IrInstrStore String CompilerIrValue AstType)
   (IrInstrJump String)
@@ -259,6 +261,7 @@
     [(IrValueVar id) (string-append "%" (int->string id))]
     [(IrValueGlobal name) (string-append "@" name)]
     [(IrValueGlobalAddr name) (string-append "&@" name)]
+    [(IrValueFunction name) (string-append "fn@" name)]
     [(IrValueI64 value) (int->string value)]
     [(IrValueF64 value) value]
     [(IrValueBool value)
@@ -401,6 +404,7 @@
     [(IrInstrVectorStore _ _ _ _ _) IrEffectMemoryWrite]
     [(IrInstrPredicatedStore _ _ _ _ _ _) IrEffectMemoryWrite]
     [(IrInstrCall _ name _ _) (compiler-ir-direct-call-effect name)]
+    [(IrInstrCallIndirect _ _ _ _) IrEffectUnknown]
     [(IrInstrBoundsCheck _ _ _) IrEffectControlFlow]
     [(IrInstrTailCall _ _ _) IrEffectControlFlow]
     [(IrInstrJump _) IrEffectControlFlow]
@@ -628,6 +632,11 @@
         spans
         (compiler-source-spans-value-key function dst)
         span)]
+    [(IrInstrCallIndirect dst _ _ _)
+      (compiler-source-spans-insert-instr-entry
+        spans
+        (compiler-source-spans-value-key function dst)
+        span)]
     [(IrInstrStore name _ _)
       (compiler-source-spans-insert-instr-entry
         spans
@@ -728,6 +737,10 @@
             instr-entries
             (compiler-source-spans-value-key function dst))]
         [(IrInstrCall dst _ _ _)
+          (compiler-source-spans-entry-list-lookup
+            instr-entries
+            (compiler-source-spans-value-key function dst))]
+        [(IrInstrCallIndirect dst _ _ _)
           (compiler-source-spans-entry-list-lookup
             instr-entries
             (compiler-source-spans-value-key function dst))]
@@ -975,6 +988,7 @@
     [(IrValueVar id) (compiler-ir-cat3 "%" (int->string id) "")]
     [(IrValueGlobal name) (compiler-ir-cat3 "@" name "")]
     [(IrValueGlobalAddr name) (compiler-ir-cat3 "&@" name "")]
+    [(IrValueFunction name) (compiler-ir-cat3 "fn@" name "")]
     [(IrValueI64 n) (int->string n)]
     [(IrValueF64 n) n]
     [(IrValueBool b)

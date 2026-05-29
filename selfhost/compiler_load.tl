@@ -1053,7 +1053,7 @@
 
 ;;; --- typelisp.pkg manifest parser (#834, slice 1) ---------------------------
 ;;; Parse a `typelisp.pkg` manifest, an S-expression of the form
-;;;   (package (name "...") (version "...") (entry "...")
+;;;   (package (name "...") (version "...") (kind "bin") (entry "...")
 ;;;            (dependencies (alias "path") ...))
 ;;; into a structured value, mirroring `src/package.rs::parse_manifest`'s field
 ;;; set and diagnostics. Reuses the selfhost reader (`lex` + `read-result`, both
@@ -1070,10 +1070,16 @@
   (CompilerPkgDepNil)
   (CompilerPkgDepCons CompilerPkgDep CompilerPkgDepList))
 
+;;; Package artifact kind: binary executable or static library.
+(defenum CompilerPkgKind
+  (CompilerPkgKindBin)
+  (CompilerPkgKindLib))
+
 ;;; A parsed `typelisp.pkg` manifest.
 (defstruct CompilerPkgManifest
   (name String)
   (version String)
+  (kind CompilerPkgKind)
   (entry String)
   (deps CompilerPkgDepList))
 
@@ -1086,6 +1092,11 @@
 (defenum ResultPkgString
   (OkPkgString String)
   (ErrPkgString String))
+
+;;; Internal: a parsed package kind, or a diagnostic.
+(defenum ResultCompilerPkgKind
+  (OkCompilerPkgKind CompilerPkgKind)
+  (ErrCompilerPkgKind String))
 
 ;;; Internal: a parsed dependency list, or a diagnostic.
 (defenum ResultCompilerPkgDepList
@@ -1181,6 +1192,16 @@
           "manifest field `"
           (string-append fname "` must have a string value")))]))
 
+(define (compiler-load-manifest-kind-value [ftail : Sexpr]) : ResultCompilerPkgKind
+  (match (compiler-load-manifest-string-value ftail "kind")
+    [(ErrPkgString m) (ErrCompilerPkgKind m)]
+    [(OkPkgString val)
+      (if (string-eq val "bin")
+        (OkCompilerPkgKind (CompilerPkgKindBin))
+        (if (string-eq val "lib")
+          (OkCompilerPkgKind (CompilerPkgKindLib))
+          (ErrCompilerPkgKind "manifest field `kind` must be `bin` or `lib`")))]))
+
 (define (compiler-load-manifest-cons-dep
   [alias : String]
   [path : String]
@@ -1239,6 +1260,8 @@
   [has-name : bool]
   [version : String]
   [has-version : bool]
+  [kind : CompilerPkgKind]
+  [has-kind : bool]
   [entry : String]
   [has-entry : bool]
   [has-deps : bool]
@@ -1257,6 +1280,8 @@
           (ErrCompilerPkgManifest "manifest missing required field `version`")]
         [(string-eq version "")
           (ErrCompilerPkgManifest "manifest field `version` must not be empty")]
+        [(not has-kind)
+          (ErrCompilerPkgManifest "manifest missing required field `kind`")]
         [(not has-entry)
           (ErrCompilerPkgManifest "manifest missing required field `entry`")]
         [(string-eq entry "")
@@ -1265,7 +1290,8 @@
           (ErrCompilerPkgManifest
             "manifest field `entry` must be a normal relative path below the manifest directory")]
         [else
-          (OkCompilerPkgManifest (CompilerPkgManifest name version entry deps))])]
+          (OkCompilerPkgManifest
+            (CompilerPkgManifest name version kind entry deps))])]
     [(SCons field rest)
       (match field
         [(SCons fhead ftail)
@@ -1285,6 +1311,8 @@
                           has-name
                           version
                           has-version
+                          kind
+                          has-kind
                           entry
                           has-entry
                           true
@@ -1301,6 +1329,8 @@
                           true
                           version
                           has-version
+                          kind
+                          has-kind
                           entry
                           has-entry
                           has-deps
@@ -1316,6 +1346,26 @@
                           rest
                           name
                           has-name
+                          val
+                          true
+                          kind
+                          has-kind
+                          entry
+                          has-entry
+                          has-deps
+                          deps)]))]
+                [(string-eq fname "kind")
+                  (if has-kind
+                    (ErrCompilerPkgManifest "duplicate manifest field `kind`")
+                    (match (compiler-load-manifest-kind-value ftail)
+                      [(ErrCompilerPkgKind m) (ErrCompilerPkgManifest m)]
+                      [(OkCompilerPkgKind val)
+                        (compiler-load-manifest-fields
+                          rest
+                          name
+                          has-name
+                          version
+                          has-version
                           val
                           true
                           entry
@@ -1334,6 +1384,8 @@
                           has-name
                           version
                           has-version
+                          kind
+                          has-kind
                           val
                           true
                           has-deps
@@ -1366,6 +1418,8 @@
               false
               ""
               false
+              (CompilerPkgKindBin)
+              false
               ""
               false
               false
@@ -1387,23 +1441,29 @@
 ;;; count.
 (define (compiler-load-manifest-valid-full-ok?) : bool
   (match (compiler-load-parse-manifest
-    "(package (name \"demo\") (version \"0.1.0\") (entry \"src/main.tl\") (dependencies (math \"../math\") (util \"../util\")))")
+    "(package (name \"demo\") (version \"0.1.0\") (kind \"bin\") (entry \"src/main.tl\") (dependencies (math \"../math\") (util \"../util\")))")
     [(OkCompilerPkgManifest m)
       (and
         (string-eq (struct-get m name) "demo")
         (and
           (string-eq (struct-get m version) "0.1.0")
-          (and
-            (string-eq (struct-get m entry) "src/main.tl")
-            (= (compiler-pkg-dep-list-count (struct-get m deps)) 2))))]
+          (match (struct-get m kind)
+            [(CompilerPkgKindBin)
+              (and
+                (string-eq (struct-get m entry) "src/main.tl")
+                (= (compiler-pkg-dep-list-count (struct-get m deps)) 2))]
+            [(CompilerPkgKindLib) false])))]
     [(ErrCompilerPkgManifest _) false]))
 
 ;;; Self-test: a manifest without a `dependencies` field parses with no deps.
 (define (compiler-load-manifest-valid-nodeps-ok?) : bool
   (match (compiler-load-parse-manifest
-    "(package (name \"x\") (version \"1\") (entry \"e.tl\"))")
+    "(package (name \"x\") (version \"1\") (kind \"lib\") (entry \"e.tl\"))")
     [(OkCompilerPkgManifest m)
-      (= (compiler-pkg-dep-list-count (struct-get m deps)) 0)]
+      (match (struct-get m kind)
+        [(CompilerPkgKindLib)
+          (= (compiler-pkg-dep-list-count (struct-get m deps)) 0)]
+        [(CompilerPkgKindBin) false])]
     [(ErrCompilerPkgManifest _) false]))
 
 ;;; True when parsing `source` fails with exactly the `expected` diagnostic.
@@ -1415,43 +1475,51 @@
 (define (compiler-load-pkg-manifest-validation-ok?) : bool
   (and
     (compiler-load-manifest-rejects?
-      "(package (name \"demo\") (name \"again\") (version \"1\") (entry \"e.tl\"))"
+      "(package (name \"demo\") (name \"again\") (version \"1\") (kind \"bin\") (entry \"e.tl\"))"
       "duplicate manifest field `name`")
     (and
       (compiler-load-manifest-rejects?
-        "(package (name \"\") (version \"1\") (entry \"e.tl\"))"
+        "(package (name \"\") (version \"1\") (kind \"bin\") (entry \"e.tl\"))"
         "manifest field `name` must not be empty")
       (and
         (compiler-load-manifest-rejects?
-          "(package (name \"bad.name\") (version \"1\") (entry \"e.tl\"))"
+          "(package (name \"bad.name\") (version \"1\") (kind \"bin\") (entry \"e.tl\"))"
           "manifest field `name` may only contain ASCII letters, digits, '-' and '_'")
         (and
           (compiler-load-manifest-rejects?
-            "(package (name \"x\") (version \"\") (entry \"e.tl\"))"
+            "(package (name \"x\") (version \"\") (kind \"bin\") (entry \"e.tl\"))"
             "manifest field `version` must not be empty")
           (and
             (compiler-load-manifest-rejects?
-              "(package (name \"x\") (version \"1\") (entry \"\"))"
-              "manifest field `entry` must not be empty")
+              "(package (name \"x\") (version \"1\") (kind \"bad\") (entry \"e.tl\"))"
+              "manifest field `kind` must be `bin` or `lib`")
             (and
               (compiler-load-manifest-rejects?
-                "(package (name \"x\") (version \"1\") (entry \"../main.tl\"))"
-                "manifest field `entry` must be a normal relative path below the manifest directory")
+                "(package (name \"x\") (version \"1\") (kind \"bin\") (kind \"lib\") (entry \"e.tl\"))"
+                "duplicate manifest field `kind`")
               (and
                 (compiler-load-manifest-rejects?
-                  "(package (name \"x\") (version \"1\") (entry \"e.tl\") (dependencies (math \"a\")) (dependencies (util \"b\")))"
-                  "duplicate manifest field `dependencies`")
+                  "(package (name \"x\") (version \"1\") (kind \"bin\") (entry \"\"))"
+                  "manifest field `entry` must not be empty")
                 (and
                   (compiler-load-manifest-rejects?
-                    "(package (name \"x\") (version \"1\") (entry \"e.tl\") (dependencies (math \"a\") (math \"b\")))"
-                    "duplicate dependency alias `math`")
+                    "(package (name \"x\") (version \"1\") (kind \"bin\") (entry \"../main.tl\"))"
+                    "manifest field `entry` must be a normal relative path below the manifest directory")
                   (and
                     (compiler-load-manifest-rejects?
-                      "(package (name \"x\") (version \"1\") (entry \"e.tl\") (dependencies (bad.alias \"a\")))"
-                      "dependency alias may only contain ASCII letters, digits, '-' and '_'")
-                    (compiler-load-manifest-rejects?
-                      "(package (name \"x\") (version \"1\") (entry \"e.tl\") (dependencies (math \"\")))"
-                      "manifest dependency `math` path must not be empty")))))))))))
+                      "(package (name \"x\") (version \"1\") (kind \"bin\") (entry \"e.tl\") (dependencies (math \"a\")) (dependencies (util \"b\")))"
+                      "duplicate manifest field `dependencies`")
+                    (and
+                      (compiler-load-manifest-rejects?
+                        "(package (name \"x\") (version \"1\") (kind \"bin\") (entry \"e.tl\") (dependencies (math \"a\") (math \"b\")))"
+                        "duplicate dependency alias `math`")
+                      (and
+                        (compiler-load-manifest-rejects?
+                          "(package (name \"x\") (version \"1\") (kind \"bin\") (entry \"e.tl\") (dependencies (bad.alias \"a\")))"
+                          "dependency alias may only contain ASCII letters, digits, '-' and '_'")
+                        (compiler-load-manifest-rejects?
+                          "(package (name \"x\") (version \"1\") (kind \"bin\") (entry \"e.tl\") (dependencies (math \"\")))"
+                          "manifest dependency `math` path must not be empty")))))))))))))
 
 ;;; Aggregate manifest-parser self-test (#834).
 (define (compiler-load-pkg-manifest-ok?) : bool
@@ -1461,21 +1529,25 @@
       (compiler-load-manifest-valid-nodeps-ok?)
       (and
         (compiler-load-manifest-rejects?
-          "(package (version \"1\") (entry \"e.tl\"))"
+          "(package (version \"1\") (kind \"bin\") (entry \"e.tl\"))"
           "manifest missing required field `name`")
         (and
           (compiler-load-manifest-rejects?
-            "(package (name \"x\") (entry \"e.tl\"))"
+            "(package (name \"x\") (kind \"bin\") (entry \"e.tl\"))"
             "manifest missing required field `version`")
           (and
             (compiler-load-manifest-rejects?
-              "(package (name \"x\") (version \"1\"))"
-              "manifest missing required field `entry`")
+              "(package (name \"x\") (version \"1\") (entry \"e.tl\"))"
+              "manifest missing required field `kind`")
             (and
               (compiler-load-manifest-rejects?
-                "(module foo)"
-                "expected `package` form, got `module`")
-              (compiler-load-pkg-manifest-validation-ok?))))))))
+                "(package (name \"x\") (version \"1\") (kind \"bin\"))"
+                "manifest missing required field `entry`")
+              (and
+                (compiler-load-manifest-rejects?
+                  "(module foo)"
+                  "expected `package` form, got `module`")
+                (compiler-load-pkg-manifest-validation-ok?)))))))))
 
 ;;; --- pkg:<alias>/... import resolution (#834, slice 2) ----------------------
 ;;; Resolve a `pkg:<alias>/<rest>` import against a parsed manifest's dependency

@@ -35,11 +35,16 @@ jobs:
           file typelisp-stage0-linux
           ls -lh typelisp-stage0-linux
 
+      - name: Stage bundled Linux stage0
+        run: scripts/stage-linux-stage0-bundle.sh target/release/typelisp typelisp-stage0-linux-bundle.tar.gz
+
       - name: Upload stage0 artifact
         uses: actions/upload-artifact@v4
         with:
           name: stage0-linux
-          path: typelisp-stage0-linux
+          path: |
+            typelisp-stage0-linux
+            typelisp-stage0-linux-bundle.tar.gz
           if-no-files-found: error
 
   build-windows:
@@ -85,11 +90,12 @@ jobs:
       - name: Verify staged assets
         run: |
           test -s stage0-artifacts/typelisp-stage0-linux
+          test -s stage0-artifacts/typelisp-stage0-linux-bundle.tar.gz
           test -s stage0-artifacts/typelisp-stage0-windows.exe
           chmod +x stage0-artifacts/typelisp-stage0-linux
           (
             cd stage0-artifacts
-            sha256sum typelisp-stage0-linux typelisp-stage0-windows.exe > SHA256SUMS
+            sha256sum typelisp-stage0-linux typelisp-stage0-linux-bundle.tar.gz typelisp-stage0-windows.exe > SHA256SUMS
             sha256sum -c SHA256SUMS
           )
           file stage0-artifacts/typelisp-stage0-linux
@@ -105,6 +111,7 @@ jobs:
 
           Assets:
           - typelisp-stage0-linux
+          - typelisp-stage0-linux-bundle.tar.gz
           - typelisp-stage0-windows.exe
           - SHA256SUMS
           EOF
@@ -116,6 +123,7 @@ jobs:
             --repo "$GITHUB_REPOSITORY" \
             --target "${{ github.sha }}" \
             stage0-artifacts/typelisp-stage0-linux \
+            stage0-artifacts/typelisp-stage0-linux-bundle.tar.gz \
             stage0-artifacts/typelisp-stage0-windows.exe \
             stage0-artifacts/SHA256SUMS
 
@@ -145,6 +153,7 @@ jobs:
 
           Stable asset URLs:
           - https://github.com/${{ github.repository }}/releases/download/stage0-latest/typelisp-stage0-linux
+          - https://github.com/${{ github.repository }}/releases/download/stage0-latest/typelisp-stage0-linux-bundle.tar.gz
           - https://github.com/${{ github.repository }}/releases/download/stage0-latest/typelisp-stage0-windows.exe
           - https://github.com/${{ github.repository }}/releases/download/stage0-latest/SHA256SUMS
           EOF
@@ -156,5 +165,6 @@ jobs:
             --repo "$GITHUB_REPOSITORY" \
             --target "${{ github.sha }}" \
             stage0-artifacts/typelisp-stage0-linux \
+            stage0-artifacts/typelisp-stage0-linux-bundle.tar.gz \
             stage0-artifacts/typelisp-stage0-windows.exe \
             stage0-artifacts/SHA256SUMS

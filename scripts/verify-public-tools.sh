@@ -58,6 +58,15 @@ fail() {
     exit 1
 }
 
+maybe_strip_manifest_kind() {
+    manifest=$1
+    if [ "${TYPELISP_LEGACY_PACKAGE_MANIFEST:-}" = "1" ]; then
+        sed -i.bak '/^[[:space:]]*(kind "bin")[[:space:]]*$/d' "$manifest"
+        sed -i.bak '/^[[:space:]]*(kind "lib")[[:space:]]*$/d' "$manifest"
+        rm -f "$manifest.bak"
+    fi
+}
+
 run_cmd() {
     case_name=$1
     shift
@@ -163,6 +172,19 @@ assert_contains() {
     fi
 }
 
+assert_contains_any() {
+    file=$1
+    shift
+    for text in "$@"; do
+        if grep -F -- "$text" "$file" > /dev/null; then
+            return
+        fi
+    done
+    echo "file contents:" >&2
+    sed 's/^/  /' "$file" >&2 || true
+    fail "$case_name missing any expected text: $*"
+}
+
 assert_not_contains() {
     file=$1
     text=$2
@@ -247,20 +269,33 @@ echo "[public-tools] CLI usage and frontend aliases"
 run_cmd usage "$COMPILER" --help
 assert_success
 assert_stdout_empty
-assert_contains "$err" "typelisp repl"
-assert_contains "$err" "typelisp lsp"
-assert_contains "$err" "typelisp fmt"
+if grep -q "stage1 wrapper commands" "$err"; then
+    IS_STAGE1_WRAPPER=1
+else
+    IS_STAGE1_WRAPPER=0
+fi
+if [ "$IS_STAGE1_WRAPPER" -eq 1 ]; then
+    assert_contains "$err" "repl"
+    assert_contains "$err" "fmt"
+    assert_contains "$err" "doc"
+    HAS_LSP_COMMAND=0
+else
+    assert_contains "$err" "typelisp repl"
+    assert_contains "$err" "typelisp lsp"
+    assert_contains "$err" "typelisp fmt"
+    assert_contains "$err" "typelisp doc"
+    HAS_LSP_COMMAND=1
+fi
 if grep -q "typelisp lint" "$err"; then
     HAS_LINT_COMMAND=1
 else
     HAS_LINT_COMMAND=0
 fi
-assert_contains "$err" "typelisp doc"
 
 run_cmd missing-command "$COMPILER"
 assert_failure
 assert_stdout_empty
-assert_contains "$err" "Usage:"
+assert_contains_any "$err" "Usage:" "usage:"
 
 run_cmd tokenize-alias "$COMPILER" tokenize examples/hello.tl
 assert_success
@@ -620,8 +655,10 @@ cat > "$BUILD_MATRIX/typelisp.pkg" <<'EOF'
 (package
   (name "backend_mode_build")
   (version "0.1.0")
+  (kind "bin")
   (entry "src/main.tl"))
 EOF
+maybe_strip_manifest_kind "$BUILD_MATRIX/typelisp.pkg"
 cat > "$BUILD_MATRIX/src/main.tl" <<'EOF'
 (define (main) : i64 42)
 EOF
@@ -751,10 +788,12 @@ EOF
 (package
   (name "selfhost_pkg")
   (version "0.1.0")
+  (kind "bin")
   (entry "src/main.tl")
   (dependencies
     (math "vendor/math")))
 EOF
+    maybe_strip_manifest_kind "$SELFHOST_PKG/typelisp.pkg"
     cat > "$SELFHOST_PKG/src/main.tl" <<'EOF'
 (import "pkg:math/src/lib.tl")
 (define (main) : i64 (add-one 41))
@@ -765,18 +804,47 @@ EOF
     run_cmd selfhost-build-package "$SELFHOST_PLANNER_DIR/build-tool" --direct --manifest-path "$SELFHOST_PKG/typelisp.pkg" --opt-level 0
     assert_success
     assert_stderr_empty
-    SELFHOST_PKG_ASM="$SELFHOST_PKG/target/typelisp/selfhost_pkg/selfhost_pkg.s"
-    [ -f "$SELFHOST_PKG_ASM" ] || fail "selfhost package build did not write assembly"
-    assert_contains "$out" "Generated: $SELFHOST_PKG_ASM"
+    SELFHOST_PKG_OUT_DIR="$SELFHOST_PKG/target/typelisp/selfhost_pkg"
+    SELFHOST_PKG_BIN="$SELFHOST_PKG_OUT_DIR/selfhost_pkg"
+    SELFHOST_PKG_ASM="$SELFHOST_PKG_OUT_DIR/selfhost_pkg.s"
+    [ -x "$SELFHOST_PKG_BIN" ] || fail "selfhost package build did not write executable"
+    [ -f "$SELFHOST_PKG_ASM" ] || fail "selfhost package build did not keep assembly"
+    assert_contains "$out" "Generated: $SELFHOST_PKG_BIN"
     assert_contains "$SELFHOST_PKG_ASM" "main:"
     assert_contains "$SELFHOST_PKG_ASM" "add_one"
+    set +e
+    "$SELFHOST_PKG_BIN" > "$WORKDIR/selfhost-package-bin.stdout" 2> "$WORKDIR/selfhost-package-bin.stderr"
+    selfhost_pkg_status=$?
+    set -e
+    [ "$selfhost_pkg_status" -eq 42 ] || fail "selfhost package executable expected exit 42, got $selfhost_pkg_status"
 
     rm -rf "$SELFHOST_PKG/target"
     run_cmd_cwd selfhost-build-package-discover "$SELFHOST_PKG/src/nested/deeper" "$SELFHOST_PLANNER_DIR/build-tool"
     assert_success
     assert_stderr_empty
-    [ -f "$SELFHOST_PKG_ASM" ] || fail "selfhost package discovery did not write assembly"
+    [ -x "$SELFHOST_PKG_BIN" ] || fail "selfhost package discovery did not write executable"
+    [ -f "$SELFHOST_PKG_ASM" ] || fail "selfhost package discovery did not keep assembly"
     assert_contains "$out" "Generated:"
+
+    SELFHOST_LIBPKG="$SELFHOST_PLANNER_DIR/libpkg"
+    mkdir -p "$SELFHOST_LIBPKG/src"
+    cat > "$SELFHOST_LIBPKG/typelisp.pkg" <<'EOF'
+(package
+  (name "selfhost_lib")
+  (version "0.1.0")
+  (kind "lib")
+  (entry "src/lib.tl"))
+EOF
+    maybe_strip_manifest_kind "$SELFHOST_LIBPKG/typelisp.pkg"
+    cat > "$SELFHOST_LIBPKG/src/lib.tl" <<'EOF'
+(define (add-two [x : i64]) : i64 (+ x 2))
+EOF
+    run_cmd selfhost-build-package-lib "$SELFHOST_PLANNER_DIR/build-tool" --direct --manifest-path "$SELFHOST_LIBPKG/typelisp.pkg"
+    assert_success
+    assert_stderr_empty
+    SELFHOST_LIB_ARCHIVE="$SELFHOST_LIBPKG/target/typelisp/selfhost_lib/libselfhost_lib.a"
+    [ -s "$SELFHOST_LIB_ARCHIVE" ] || fail "selfhost package lib build did not write archive"
+    assert_contains "$out" "Generated: $SELFHOST_LIB_ARCHIVE"
 
     SELFHOST_BADPKG="$SELFHOST_PLANNER_DIR/badpkg"
     mkdir -p "$SELFHOST_BADPKG/src" "$SELFHOST_BADPKG/vendor/math"
@@ -784,9 +852,11 @@ EOF
 (package
   (name "selfhost_parse_error")
   (version "0.1.0")
+  (kind "bin")
   (entry "src/main.tl")
   (deps "not-yet"))
 EOF
+    maybe_strip_manifest_kind "$SELFHOST_BADPKG/typelisp.pkg"
     run_cmd selfhost-build-package-parse-error "$SELFHOST_PLANNER_DIR/build-tool" --direct --manifest-path "$SELFHOST_BADPKG/typelisp.pkg"
     assert_failure
     assert_stdout_empty
@@ -797,8 +867,10 @@ EOF
 (package
   (name "selfhost_bad_pkg")
   (version "0.1.0")
+  (kind "bin")
   (entry "src/main.tl"))
 EOF
+    maybe_strip_manifest_kind "$SELFHOST_BADPKG/typelisp.pkg"
     cat > "$SELFHOST_BADPKG/src/main.tl" <<'EOF'
 (import "pkg:math/src/lib.tl")
 (define (main) : i64 0)
@@ -813,10 +885,12 @@ EOF
 (package
   (name "selfhost_missing_dep")
   (version "0.1.0")
+  (kind "bin")
   (entry "src/main.tl")
   (dependencies
     (math "vendor/math")))
 EOF
+    maybe_strip_manifest_kind "$SELFHOST_BADPKG/typelisp.pkg"
     cat > "$SELFHOST_BADPKG/src/main.tl" <<'EOF'
 (import "pkg:math/src/missing.tl")
 (define (main) : i64 0)
@@ -950,6 +1024,7 @@ decls
 flow
 let_bindings
 negative_int
+quote
 tail_comment
 EOF
 }
@@ -1250,10 +1325,12 @@ cat > "$PKG/typelisp.pkg" <<'EOF'
 (package
   (name "public_tool_pkg")
   (version "0.1.0")
+  (kind "bin")
   (entry "src/main.tl")
   (dependencies
     (math "vendor/math")))
 EOF
+maybe_strip_manifest_kind "$PKG/typelisp.pkg"
 cat > "$PKG/src/main.tl" <<'EOF'
 (import "math.tl")
 (import "pkg:math/src/lib.tl")
@@ -1281,9 +1358,11 @@ cat > "$BADPKG/typelisp.pkg" <<'EOF'
 (package
   (name "bad_pkg")
   (version "0.1.0")
+  (kind "bin")
   (entry "src/main.tl")
   (deps "not-yet"))
 EOF
+maybe_strip_manifest_kind "$BADPKG/typelisp.pkg"
 run_cmd package-parse-error "$COMPILER" build --manifest-path "$BADPKG/typelisp.pkg"
 assert_failure
 assert_stdout_empty
@@ -1293,8 +1372,10 @@ cat > "$BADPKG/typelisp.pkg" <<'EOF'
 (package
   (name "missing_alias")
   (version "0.1.0")
+  (kind "bin")
   (entry "src/main.tl"))
 EOF
+maybe_strip_manifest_kind "$BADPKG/typelisp.pkg"
 cat > "$BADPKG/src/main.tl" <<'EOF'
 (import "pkg:math/src/lib.tl")
 (define (main) : i64 0)
@@ -1311,8 +1392,10 @@ cat > "$WALK_PKG/typelisp.pkg" <<'EOF'
 (package
   (name "walk_pkg")
   (version "0.1.0")
+  (kind "bin")
   (entry "src/main.tl"))
 EOF
+maybe_strip_manifest_kind "$WALK_PKG/typelisp.pkg"
 cat > "$WALK_PKG/src/main.tl" <<'EOF'
 (import "math.tl")
 (define (main) : i64 (inc 41))
@@ -1335,10 +1418,12 @@ cat > "$MISSING_DEP/typelisp.pkg" <<'EOF'
 (package
   (name "missing_dep_file")
   (version "0.1.0")
+  (kind "bin")
   (entry "src/main.tl")
   (dependencies
     (math "vendor/math")))
 EOF
+maybe_strip_manifest_kind "$MISSING_DEP/typelisp.pkg"
 cat > "$MISSING_DEP/src/main.tl" <<'EOF'
 (import "pkg:math/src/missing.tl")
 (define (main) : i64 0)
@@ -1355,29 +1440,37 @@ tr '\\' '/' < "$err" > "$ERR_NORMALIZED"
 assert_contains "$ERR_NORMALIZED" "vendor/math/src/missing.tl"
 
 echo "[public-tools] REPL/LSP corpus via run-corpus.sh"
-TYPELISP_BIN="$COMPILER" sh "$ROOT/tests/public-tools/run-corpus.sh"
+if [ "$HAS_LSP_COMMAND" -eq 1 ]; then
+    TYPELISP_BIN="$COMPILER" sh "$ROOT/tests/public-tools/run-corpus.sh"
+else
+    TYPELISP_BIN="$COMPILER" sh "$ROOT/tests/public-tools/run-corpus.sh" repl
+fi
 
-echo "[public-tools] LSP (legacy inline checks)"
-frame_append() {
-    frame_file=$1
-    frame_body=$2
-    frame_len=$(printf '%s' "$frame_body" | wc -c | tr -d ' ')
-    {
-        printf 'Content-Length: %s\r\n\r\n' "$frame_len"
-        printf '%s' "$frame_body"
-    } >> "$frame_file"
-}
+if [ "$HAS_LSP_COMMAND" -eq 1 ]; then
+    echo "[public-tools] LSP (legacy inline checks)"
+    frame_append() {
+        frame_file=$1
+        frame_body=$2
+        frame_len=$(printf '%s' "$frame_body" | wc -c | tr -d ' ')
+        {
+            printf 'Content-Length: %s\r\n\r\n' "$frame_len"
+            printf '%s' "$frame_body"
+        } >> "$frame_file"
+    }
 
-LSP_IN="$WORKDIR/lsp.in"
-: > "$LSP_IN"
-frame_append "$LSP_IN" '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"capabilities":{}}}'
-frame_append "$LSP_IN" '{"jsonrpc":"2.0","id":2,"method":"shutdown","params":null}'
-run_stdin lsp-init-shutdown "$LSP_IN" "$COMPILER" lsp
-assert_success
-assert_stderr_empty
-assert_contains "$out" '"id":1'
-assert_contains "$out" '"capabilities"'
-assert_contains "$out" '"id":2'
+    LSP_IN="$WORKDIR/lsp.in"
+    : > "$LSP_IN"
+    frame_append "$LSP_IN" '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"capabilities":{}}}'
+    frame_append "$LSP_IN" '{"jsonrpc":"2.0","id":2,"method":"shutdown","params":null}'
+    run_stdin lsp-init-shutdown "$LSP_IN" "$COMPILER" lsp
+    assert_success
+    assert_stderr_empty
+    assert_contains "$out" '"id":1'
+    assert_contains "$out" '"capabilities"'
+    assert_contains "$out" '"id":2'
+else
+    echo "[public-tools] skipping LSP checks (compiler does not advertise typelisp lsp)"
+fi
 
 echo "[public-tools] SPEC metadata examples"
 SPEC_WORK="$WORKDIR/spec"

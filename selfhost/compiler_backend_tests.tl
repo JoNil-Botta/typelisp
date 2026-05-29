@@ -1695,6 +1695,149 @@
         true)]
     [(ErrCompilerBackend _) false]))
 
+(define (compiler-backend-narrow-binop-types
+  [lhs-ty : AstType]
+  [rhs-ty : AstType]) : CompilerRegVarTypeList
+  (CompilerRegVarTypeCons
+    (CompilerRegVarType 0 lhs-ty)
+    (CompilerRegVarTypeCons (CompilerRegVarType 1 rhs-ty) CompilerRegVarTypeNil)))
+
+(define (compiler-backend-narrow-binop-shape?
+  [op : CompilerIrBinOp]
+  [lhs-ty : AstType]
+  [rhs-ty : AstType]
+  [result-ty : AstType]
+  [needle : String]
+  [bad : String]) : bool
+  (match (compiler-backend-emit-binop
+    (compiler-backend-narrow-binop-types lhs-ty rhs-ty)
+    CompilerRegAssignmentNil
+    2
+    op
+    (IrValueVar 0)
+    (IrValueVar 1)
+    result-ty)
+    [(OkCompilerBackend asm)
+      (and
+        (compiler-backend-string-contains? asm needle)
+        (and
+          (if (string-eq bad "")
+            true
+            (not (compiler-backend-string-contains? asm bad)))
+          (not
+            (compiler-backend-string-contains?
+              asm
+              (compiler-backend-todo-marker)))))]
+    [(ErrCompilerBackend _) false]))
+
+;; Backend-owned narrow integer instruction selection coverage (#1393). These
+;; checks pin the operand width and signedness-sensitive forms that source-level
+;; execution tests do not distinguish.
+(define (compiler-backend-narrow-scalar-instr-ok?) : bool
+  (and
+    (backend-and8
+      (compiler-backend-narrow-binop-shape?
+        (IrBinAdd)
+        (AstTyI32)
+        (AstTyI32)
+        (AstTyI32)
+        "    addl %ebx, %eax\n"
+        "    addq %rbx, %rax\n")
+      (compiler-backend-narrow-binop-shape?
+        (IrBinMul)
+        (AstTyI32)
+        (AstTyI32)
+        (AstTyI32)
+        "    imull %ebx, %eax\n"
+        "    imulq %rbx, %rax\n")
+      (compiler-backend-narrow-binop-shape?
+        (IrBinDiv)
+        (AstTyI32)
+        (AstTyI32)
+        (AstTyI32)
+        "    cdq\n    idivl %ebx\n"
+        "    idivq %rbx\n")
+      (compiler-backend-narrow-binop-shape?
+        (IrBinAdd)
+        (AstTyI8)
+        (AstTyI8)
+        (AstTyI8)
+        "    addb %bl, %al\n"
+        "    addq %rbx, %rax\n")
+      (compiler-backend-narrow-binop-shape?
+        (IrBinSub)
+        (AstTyI8)
+        (AstTyI8)
+        (AstTyI8)
+        "    subb %bl, %al\n"
+        "    subq %rbx, %rax\n")
+      (compiler-backend-narrow-binop-shape?
+        (IrBinLt)
+        (AstTyI8)
+        (AstTyI8)
+        (AstTyBool)
+        "    cmpb %bl, %al\n    setl %al\n"
+        "    cmpq %rbx, %rax\n")
+      (compiler-backend-narrow-binop-shape?
+        (IrBinMod)
+        (AstTyI8)
+        (AstTyI8)
+        (AstTyI8)
+        "    cbw\n    idivb %bl\n    movb %ah, %al\n"
+        "    idivq %rbx\n")
+      (compiler-backend-narrow-binop-shape?
+        (IrBinBitAnd)
+        (AstTyI16)
+        (AstTyI16)
+        (AstTyI16)
+        "    andw %bx, %ax\n"
+        "    andq %rbx, %rax\n"))
+    (backend-and4
+      (compiler-backend-narrow-binop-shape?
+        (IrBinDiv)
+        (AstTyI16)
+        (AstTyI16)
+        (AstTyI16)
+        "    cwd\n    idivw %bx\n"
+        "    idivq %rbx\n")
+      (compiler-backend-narrow-binop-shape?
+        (IrBinMod)
+        (AstTyU8)
+        (AstTyU8)
+        (AstTyU8)
+        "    andw $0x00ff, %ax\n    divb %bl\n    movb %ah, %al\n"
+        "    idivq %rbx\n")
+      (and
+        (compiler-backend-narrow-binop-shape?
+          (IrBinShr)
+          (AstTyI8)
+          (AstTyU8)
+          (AstTyI8)
+          "    movq %rbx, %rcx\n    sarb %cl, %al\n"
+          "    sarq %cl, %rax\n")
+        (compiler-backend-narrow-binop-shape?
+          (IrBinShr)
+          (AstTyU8)
+          (AstTyU8)
+          (AstTyU8)
+          "    movq %rbx, %rcx\n    shrb %cl, %al\n"
+          "    sarb %cl, %al\n"))
+      (and
+        (compiler-backend-narrow-binop-shape?
+          (IrBinShl)
+          (AstTyU8)
+          (AstTyU8)
+          (AstTyU8)
+          "    movq %rbx, %rcx\n    shlb %cl, %al\n"
+          "    shlq %cl, %rax\n")
+        (compiler-backend-narrow-binop-shape?
+          (IrBinLt)
+          (AstTyU8)
+          (AstTyU8)
+          (AstTyBool)
+          "    cmpb %bl, %al\n    setb %al\n"
+          "    setl %al\n")))))
+
 (define (compiler-backend-f64-abi-source) : String
   "(define (half [x : f64]) : f64 (/ x 2.0))
 (define (callhalf [x : f64]) : f64 (half x))
@@ -1865,13 +2008,15 @@
                 (compiler-backend-module-symbol-ok?))
               (and
                 (compiler-backend-extern-metadata-symbol-ok?)
-                (and
-                  (backend-and4
-                    (compiler-backend-scalar-wide-ops-ok?)
-                    (compiler-backend-scalar-div-mod-ok?)
-                    (compiler-backend-f64-abi-ok?)
-                    (compiler-backend-aggregate-storage-shape-ok?))
-                  (compiler-backend-alloc-runtime-shape-ok?)))))))))
+                (backend-and8
+                  (compiler-backend-scalar-wide-ops-ok?)
+                  (compiler-backend-scalar-div-mod-ok?)
+                  (compiler-backend-narrow-scalar-instr-ok?)
+                  (compiler-backend-f64-abi-ok?)
+                  (compiler-backend-aggregate-storage-shape-ok?)
+                  (compiler-backend-alloc-runtime-shape-ok?)
+                  true
+                  true))))))))
     42
     (begin
       (panic "backend: smoke output mismatch")

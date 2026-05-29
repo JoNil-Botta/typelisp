@@ -37,6 +37,7 @@ tests/nullary_variant_call_compile.rs
 tests/optimization_benchmarks.rs
 tests/package_build.rs
 tests/parser_compile.rs
+tests/selfhost_optimizer_aggregate.rs
 tests/spec_examples.rs
 tests/sym_i64_env_compile.rs
 tests/tl_ast_compile.rs

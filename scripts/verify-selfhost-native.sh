@@ -328,6 +328,7 @@ verify_compiler_driver_pkg_import() {
 (package
   (name "selfhost_loader_pkg")
   (version "0.1.0")
+  (kind "bin")
   (entry "src/main.tl")
   (dependencies
     (math "vendor/math")))

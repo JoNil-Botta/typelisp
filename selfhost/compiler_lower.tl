@@ -7406,6 +7406,17 @@
     [_
       (ErrLowerValue (lower-diagnostic "lower: unsupported global initializer"))]))
 
+(define (lower-runtime-global-init-type? [ty : AstType]) : bool
+  (match ty
+    [(AstTyString) true]
+    [(AstTyDynArray _) true]
+    [(AstTyEnum _) true]
+    [(AstTyStruct _) true]
+    [_ false]))
+
+(define (lower-global-init-function-name [global-name : String]) : String
+  (string-append "__global_init_" global-name))
+
 ;; Record `name -> body span` into the provenance table (#605). A function whose
 ;;
 ;; body carries no source span leaves the table unchanged, so the backend simply
@@ -7466,24 +7477,55 @@
               (lower-module-local-names ctx names module)]
             (match (tc-top-decl-type decl-ctx decl)
               [(OkTcType ty)
-                (match (lower-global-value local-names expr)
-                  [(OkLowerValue value)
-                    (lower-decls-in-module
-                      ctx
-                      top-env
-                      rest
-                      (IrGlobalCons
-                        (IrGlobal
-                          (lower-current-decl-logical-name names module name)
-                          (tc-type-without-regions ty)
-                          value)
-                        globals)
-                      functions
-                      externs
-                      spans
-                      names
-                      module)]
-                  [(ErrLowerValue message) (ErrLowerDecls message)])]
+                (let
+                  [global-ty : AstType (tc-type-without-regions ty)]
+                  [global-name : String
+                    (lower-current-decl-logical-name names module name)]
+                  (match (lower-global-value local-names expr)
+                    [(OkLowerValue value)
+                      (lower-decls-in-module
+                        ctx
+                        top-env
+                        rest
+                        (IrGlobalCons
+                          (IrGlobal global-name global-ty value)
+                          globals)
+                        functions
+                        externs
+                        spans
+                        names
+                        module)]
+                    [(ErrLowerValue message)
+                      (if (lower-runtime-global-init-type? global-ty)
+                        (match (tc-module-local-env ctx top-env module)
+                          [(OkTcEnv local-top-env)
+                            (match (lower-function
+                              decl-ctx
+                              local-top-env
+                              (lower-global-init-function-name global-name)
+                              AstParamNil
+                              global-ty
+                              expr
+                              spans
+                              local-names)
+                              [(OkLowerFunction init-func init-spans)
+                                (lower-decls-in-module
+                                  ctx
+                                  top-env
+                                  rest
+                                  (IrGlobalCons
+                                    (IrGlobal global-name global-ty IrValueUnit)
+                                    globals)
+                                  (IrFunctionCons init-func functions)
+                                  externs
+                                  init-spans
+                                  names
+                                  module)]
+                              [(ErrLowerFunction init-message)
+                                (ErrLowerDecls init-message)])]
+                          [(ErrTcEnv env-message)
+                            (ErrLowerDecls (lower-diagnostic env-message))])
+                        (ErrLowerDecls message))]))]
               [(ErrTcType message) (ErrLowerDecls (lower-diagnostic message))]))]
         [(AstDeclExtern name metadata ty)
           (let

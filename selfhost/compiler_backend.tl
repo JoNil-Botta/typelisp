@@ -5735,6 +5735,7 @@
   [target : CompilerBackendTarget]
   [func : CompilerIrFunction]
   [functions : CompilerIrFunctionList]
+  [globals : CompilerIrGlobalList]
   [externs : CompilerIrExternList]
   [plan : CompilerBackendRuntimePlan]
   [spans : CompilerSourceSpans]) : ResultCompilerBackend
@@ -5812,14 +5813,22 @@
                                       name
                                       plan)
                                     (string-append
-                                      spills
+                                      (if (and
+                                        (compiler-backend-target-windows?
+                                          target)
+                                        (string-eq name "main"))
+                                        (compiler-backend-global-initializers
+                                          globals)
+                                        "")
                                       (string-append
-                                        body
-                                        (compiler-backend-return-epilogue
-                                          name
-                                          assignments
-                                          vars
-                                          blocks)))))
+                                        spills
+                                        (string-append
+                                          body
+                                          (compiler-backend-return-epilogue
+                                            name
+                                            assignments
+                                            vars
+                                            blocks))))))
                                 "\n")
                               "")))]
                       [(ErrCompilerBackend message)
@@ -5830,6 +5839,7 @@
   [target : CompilerBackendTarget]
   [functions : CompilerIrFunctionList]
   [all-functions : CompilerIrFunctionList]
+  [globals : CompilerIrGlobalList]
   [externs : CompilerIrExternList]
   [plan : CompilerBackendRuntimePlan]
   [spans : CompilerSourceSpans]
@@ -5841,6 +5851,7 @@
         target
         func
         all-functions
+        globals
         externs
         plan
         spans)
@@ -5849,6 +5860,7 @@
             target
             rest
             all-functions
+            globals
             externs
             plan
             spans
@@ -5858,6 +5870,7 @@
 (define (compiler-backend-emit-functions
   [target : CompilerBackendTarget]
   [functions : CompilerIrFunctionList]
+  [globals : CompilerIrGlobalList]
   [all-functions : CompilerIrFunctionList]
   [externs : CompilerIrExternList]
   [plan : CompilerBackendRuntimePlan]
@@ -5866,6 +5879,7 @@
     target
     functions
     all-functions
+    globals
     externs
     plan
     spans
@@ -6338,33 +6352,89 @@
           ""
           "backend: unsupported global initializer"))]))
 
-(define (compiler-backend-emit-global [global : CompilerIrGlobal]) : ResultCompilerBackend
-  (match global
-    [(IrGlobal name _ value)
-      (match (compiler-backend-global-value-asm value)
-        [(OkCompilerBackend value-asm)
-          (let
-            [symbol : String (compiler-backend-user-symbol name)]
-            (OkCompilerBackend
-              (backend-cat5
-                ".globl "
-                symbol
-                "\n"
-                (backend-cat3 symbol ":\n" value-asm)
-                "")))]
-        [(ErrCompilerBackend message) (ErrCompilerBackend message)])]))
+(define (compiler-backend-runtime-global?
+  [ty : AstType]
+  [value : CompilerIrValue]) : bool
+  (match value
+    [(IrValueUnit)
+      (match ty
+        [(AstTyUnit) false]
+        [_ true])]
+    [_ false]))
 
-(define (compiler-backend-emit-globals [globals : CompilerIrGlobalList]) : ResultCompilerBackend
+(define (compiler-backend-emit-runtime-global
+  [target : CompilerBackendTarget]
+  [symbol : String]) : String
+  (match target
+    [(BackendTargetLinux) (backend-cat3 "    .comm " symbol ", 8, 8\n")]
+    [(BackendTargetWindows) (backend-cat3 "    .comm " symbol ", 8, 3\n")]))
+
+(define (compiler-backend-emit-global
+  [target : CompilerBackendTarget]
+  [global : CompilerIrGlobal]) : ResultCompilerBackend
+  (match global
+    [(IrGlobal name ty value)
+      (let
+        [symbol : String (compiler-backend-user-symbol name)]
+        (if (compiler-backend-runtime-global? ty value)
+          (OkCompilerBackend
+            (backend-cat5
+              ".globl "
+              symbol
+              "\n"
+              (compiler-backend-emit-runtime-global target symbol)
+              ""))
+          (match (compiler-backend-global-value-asm value)
+            [(OkCompilerBackend value-asm)
+              (OkCompilerBackend
+                (backend-cat5
+                  ".globl "
+                  symbol
+                  "\n"
+                  (backend-cat3 symbol ":\n" value-asm)
+                  ""))]
+            [(ErrCompilerBackend message) (ErrCompilerBackend message)])))]))
+
+(define (compiler-backend-emit-globals
+  [target : CompilerBackendTarget]
+  [globals : CompilerIrGlobalList]) : ResultCompilerBackend
   (match globals
     [(IrGlobalNil) (OkCompilerBackend "")]
     [(IrGlobalCons global rest)
-      (match (compiler-backend-emit-global global)
+      (match (compiler-backend-emit-global target global)
         [(OkCompilerBackend head)
-          (match (compiler-backend-emit-globals rest)
+          (match (compiler-backend-emit-globals target rest)
             [(OkCompilerBackend tail)
               (OkCompilerBackend (string-append head tail))]
             [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
         [(ErrCompilerBackend message) (ErrCompilerBackend message)])]))
+
+(define (compiler-backend-global-init-name [global-name : String]) : String
+  (string-append "__global_init_" global-name))
+
+(define (compiler-backend-global-init-call [name : String]) : String
+  (let
+    [symbol : String (compiler-backend-user-symbol name)]
+    [init-symbol : String
+      (compiler-backend-user-symbol (compiler-backend-global-init-name name))]
+    (backend-cat5
+      "    call "
+      init-symbol
+      "\n"
+      (backend-cat3 "    movq %rax, " symbol "(%rip)\n")
+      "")))
+
+(define (compiler-backend-global-initializers [globals : CompilerIrGlobalList]) : String
+  (match globals
+    [(IrGlobalNil) ""]
+    [(IrGlobalCons global rest)
+      (match global
+        [(IrGlobal name ty value)
+          (string-append
+            (if (compiler-backend-runtime-global? ty value)
+              (compiler-backend-global-init-call name)
+              "")
+            (compiler-backend-global-initializers rest))])]))
 
 (define (compiler-backend-function-list-defines?
   [functions : CompilerIrFunctionList]
@@ -11695,7 +11765,10 @@ tl_windows_sdk_registry_install:
     [(BackendTargetLinux) ".text\n.globl _start\n"]
     [(BackendTargetWindows) ".text\n.globl main\n"]))
 
-(define (compiler-backend-entry [capture-argv : bool] [capture-env : bool]) : String
+(define (compiler-backend-entry
+  [capture-argv : bool]
+  [capture-env : bool]
+  [global-inits : String]) : String
   (if (or capture-argv capture-env)
     (string-append
       "_start:
@@ -11718,16 +11791,23 @@ tl_windows_sdk_registry_install:
     movq %rax, .L_tl_envp(%rip)
 ")
             "")
-          "    call main
+          (string-append
+            global-inits
+            "    call main
     movq %rax, %rdi
     movq $60, %rax
     syscall
-")))
-    "_start:\n    call main\n    movq %rax, %rdi\n    movq $60, %rax\n    syscall\n"))
+"))))
+    (string-append
+      "_start:\n"
+      (string-append
+        global-inits
+        "    call main\n    movq %rax, %rdi\n    movq $60, %rax\n    syscall\n"))))
 
 (define (compiler-backend-entry-for-target
   [target : CompilerBackendTarget]
-  [plan : CompilerBackendRuntimePlan]) : String
+  [plan : CompilerBackendRuntimePlan]
+  [globals : CompilerIrGlobalList]) : String
   (match target
     [(BackendTargetLinux)
       (match plan
@@ -11765,7 +11845,8 @@ tl_windows_sdk_registry_install:
             _)
           (compiler-backend-entry
             (or arg-count arg)
-            (or process-output (or env-var-exists env-var-value)))])]
+            (or process-output (or env-var-exists env-var-value))
+            (compiler-backend-global-initializers globals))])]
     [(BackendTargetWindows) ""]))
 
 (define (compiler-backend-target-windows? [target : CompilerBackendTarget]) : bool
@@ -11973,11 +12054,12 @@ tl_windows_sdk_registry_install:
       (if (compiler-backend-target-runtime-ok? target plan)
         (match program
           [(IrProgram globals functions externs)
-            (match (compiler-backend-emit-globals globals)
+            (match (compiler-backend-emit-globals target globals)
               [(OkCompilerBackend globals-asm)
                 (match (compiler-backend-emit-functions
                   target
                   functions
+                  globals
                   functions
                   externs
                   plan
@@ -12019,7 +12101,10 @@ tl_windows_sdk_registry_install:
                             (compiler-backend-runtime-functions-for-target
                               target
                               plan))
-                          (compiler-backend-entry-for-target target plan))]
+                          (compiler-backend-entry-for-target
+                            target
+                            plan
+                            globals))]
                       (OkCompilerBackend (text-buf-render buf)))]
                   [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
               [(ErrCompilerBackend message) (ErrCompilerBackend message)])])

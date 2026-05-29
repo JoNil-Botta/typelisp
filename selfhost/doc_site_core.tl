@@ -4,6 +4,8 @@
 ;; documentation extractor and HTML renderer for module contents.
 (import "doc_html.tl")
 
+(import "doc_md.tl")
+
 (defenum DocSiteModule
   (DocSiteModule String String))
 
@@ -19,6 +21,12 @@
 
 (define doc-site-stdlib-manifest-size : i64
   12)
+
+(define doc-site-repo-blob-root : String
+  "https://github.com/JoNil-Botta/typelisp/blob/main/")
+
+(define doc-site-repo-tree-root : String
+  "https://github.com/JoNil-Botta/typelisp/tree/main/")
 
 (define (doc-site-module-source [module : DocSiteModule]) : String
   (match module
@@ -79,7 +87,13 @@
 (define (doc-site-output-reserved? [output : String]) : bool
   (or
     (string-eq output "index.html")
-    (or (string-eq output "stdlib.html") (string-eq output "typelisp-docs.css"))))
+    (or
+      (string-eq output "readme.html")
+      (or
+        (string-eq output "spec.html")
+        (or
+          (string-eq output "stdlib.html")
+          (string-eq output "typelisp-docs.css"))))))
 
 (define (doc-site-output-list-has-duplicate? [modules : DocSiteModuleList]) : bool
   (match modules
@@ -123,6 +137,68 @@
     (if (doc-site-path-ends-separator? dir)
       (string-append dir leaf)
       (string-append (string-append dir "/") leaf))))
+
+(define (doc-site-string-prefix? [text : String] [prefix : String]) : bool
+  (doc-string-prefix-at? text prefix 0))
+
+(define (doc-site-href-anchor? [target : String]) : bool
+  (and (> (string-length target) 0) (= (string-ref target 0) ##')))
+
+(define (doc-site-href-external? [target : String]) : bool
+  (or
+    (doc-string-contains? target "://")
+    (doc-site-string-prefix? target "mailto:")))
+
+(define (doc-site-href-file-like? [target : String]) : bool
+  (doc-string-contains? target "."))
+
+(define (doc-site-repo-source-url [target : String]) : String
+  (string-append
+    (if (doc-site-href-file-like? target)
+      doc-site-repo-blob-root
+      doc-site-repo-tree-root)
+    target))
+
+(define (doc-site-rewrite-language-link-target [target : String]) : String
+  (cond
+    [(doc-site-href-anchor? target) target]
+    [(doc-site-href-external? target) target]
+    [(string-eq target "README.md") "readme.html"]
+    [(string-eq target "SPEC.md") "spec.html"]
+    [else (doc-site-repo-source-url target)]))
+
+(define (doc-site-rewrite-language-links [html : String]) : String
+  (let
+    [i : i64 0]
+    [n : i64 (string-length html)]
+    [out : String ""]
+    (begin
+      (while (< i n)
+        (if (doc-string-prefix-at? html "href=\"" i)
+          (let
+            [target-start : i64 (+ i 6)]
+            [target-end : i64 (md-find-char html target-start #"')]
+            (if (< target-end n)
+              (let
+                [target : String
+                  (substring html target-start (- target-end target-start))]
+                (begin
+                  (set!
+                    out
+                    (doc-html-cat5
+                      out
+                      "href=\""
+                      (doc-site-rewrite-language-link-target target)
+                      "\""
+                      ""))
+                  (set! i (+ target-end 1))))
+              (begin
+                (set! out (string-append out (substring html i 1)))
+                (set! i (+ i 1)))))
+          (begin
+            (set! out (string-append out (substring html i 1)))
+            (set! i (+ i 1)))))
+      out)))
 
 (define (doc-site-css) : String
   "body.tl-docs {
@@ -208,6 +284,9 @@ pre {
 .tl-doc-stdlib-tree ul {
   margin-top: 0.5rem;
 }
+.tl-doc-stdlib-tree > li + li {
+  margin-top: 0.75rem;
+}
 .tl-doc-tree-root,
 .tl-doc-tree-link {
   display: block;
@@ -241,6 +320,31 @@ pre {
 }
 .tl-doc-empty {
   color: #6b7280;
+}
+.tl-doc-language h1,
+.tl-doc-language h2,
+.tl-doc-language h3,
+.tl-doc-language h4,
+.tl-doc-language h5,
+.tl-doc-language h6 {
+  scroll-margin-top: 1rem;
+}
+.tl-doc-language table {
+  border-collapse: collapse;
+  width: 100%;
+  background: #ffffff;
+}
+.tl-doc-language th,
+.tl-doc-language td {
+  border: 1px solid #d9e2ec;
+  padding: 0.35rem 0.5rem;
+  vertical-align: top;
+}
+.tl-doc-language blockquote {
+  margin: 1rem 0;
+  border-left: 4px solid #94a3b8;
+  padding-left: 1rem;
+  color: #334155;
 }
 @media (max-width: 760px) {
   .tl-doc-shell {
@@ -307,6 +411,17 @@ pre {
     "<a class=\"tl-doc-tree-root is-current\" aria-current=\"page\" href=\"stdlib.html\">stdlib</a>\n"
     "<a class=\"tl-doc-tree-root\" href=\"stdlib.html\">stdlib</a>\n"))
 
+(define (doc-site-sidebar-language-entry
+  [href : String]
+  [label : String]
+  [current : String]) : String
+  (doc-html-cat5
+    "<li>"
+    (doc-site-sidebar-link-open href current)
+    (doc-html-escape label)
+    "</a></li>\n"
+    ""))
+
 (define (doc-site-sidebar-entry [module : DocSiteModule] [current : String]) : String
   (doc-html-cat5
     "<li>"
@@ -330,10 +445,15 @@ pre {
   [current : String]) : String
   (doc-html-cat5
     "<nav class=\"tl-doc-stdlib-sidebar\" aria-label=\"Stdlib module tree\">\n<ul class=\"tl-doc-stdlib-tree\">\n<li>"
-    (doc-site-sidebar-root-link current)
-    "<ul>\n"
-    (doc-site-sidebar-entries modules current)
-    "</ul>\n</li>\n</ul>\n</nav>\n"))
+    "<span class=\"tl-doc-tree-root\">Language</span>\n<ul>\n"
+    (doc-site-sidebar-language-entry "readme.html" "Overview" current)
+    (doc-site-sidebar-language-entry "spec.html" "Specification" current)
+    (doc-html-cat5
+      "</ul>\n</li>\n<li>"
+      (doc-site-sidebar-root-link current)
+      "<ul>\n"
+      (doc-site-sidebar-entries modules current)
+      "</ul>\n</li>\n</ul>\n</nav>\n")))
 
 (define (doc-site-render-page
   [title : String]
@@ -356,15 +476,33 @@ pre {
 (define (doc-site-render-index [modules : DocSiteModuleList] [current : String]) : String
   (doc-site-render-page
     "TypeLisp API"
-    "stdlib static site"
+    "language reference and stdlib API"
     modules
     current
-    (doc-html-cat5
-      "<nav class=\"tl-doc-site-nav\" aria-label=\"Stdlib modules\">\n<h2>Stdlib modules</h2>\n<ul>\n"
-      (doc-site-index-entries modules)
-      "</ul>\n</nav>\n"
-      ""
-      "")))
+    (string-append
+      "<nav class=\"tl-doc-site-nav\" aria-label=\"Language reference\">\n<h2>Language reference</h2>\n<ul>\n<li><a href=\"readme.html\">Project overview</a></li>\n<li><a href=\"spec.html\">Language specification</a></li>\n</ul>\n</nav>\n"
+      (doc-html-cat5
+        "<nav class=\"tl-doc-site-nav\" aria-label=\"Stdlib modules\">\n<h2>Stdlib modules</h2>\n<ul>\n"
+        (doc-site-index-entries modules)
+        "</ul>\n</nav>\n"
+        ""
+        ""))))
+
+(define (doc-site-render-language-page
+  [modules : DocSiteModuleList]
+  [source : String]
+  [output : String]
+  [title : String]
+  [markdown : String]) : String
+  (doc-site-render-page
+    title
+    source
+    modules
+    output
+    (doc-html-cat3
+      "<article class=\"tl-doc-language\">\n"
+      (doc-site-rewrite-language-links (md-render-html markdown))
+      "</article>\n")))
 
 (define (doc-site-render-module-page
   [modules : DocSiteModuleList]
@@ -388,6 +526,15 @@ pre {
       (begin
         (panic (string-append "doc-site: missing input module: " source))
         (doc-site-empty-docs)))))
+
+(define (doc-site-read-markdown [source : String]) : String
+  (let
+    [status : i64 (read-file-status source)]
+    (if (= status doc-site-status-ok)
+      (read-file source)
+      (begin
+        (panic (string-append "doc-site: missing language reference: " source))
+        ""))))
 
 (define (doc-site-write-file [path : String] [contents : String]) : unit
   (let
@@ -432,6 +579,21 @@ pre {
         (doc-site-write-module-page output-dir modules module)
         (doc-site-write-module-pages output-dir modules rest))]))
 
+(define (doc-site-write-language-page
+  [output-dir : String]
+  [modules : DocSiteModuleList]
+  [source : String]
+  [output : String]
+  [title : String]) : unit
+  (doc-site-write-file
+    (doc-site-path-join output-dir output)
+    (doc-site-render-language-page
+      modules
+      source
+      output
+      title
+      (doc-site-read-markdown source))))
+
 (define (doc-site-build [output-dir : String]) : i64
   (let
     [modules : DocSiteModuleList (doc-site-stdlib-modules)]
@@ -447,6 +609,18 @@ pre {
       (doc-site-write-file
         (doc-site-path-join output-dir "stdlib.html")
         (doc-site-render-index modules "stdlib.html"))
+      (doc-site-write-language-page
+        output-dir
+        modules
+        "README.md"
+        "readme.html"
+        "TypeLisp Overview")
+      (doc-site-write-language-page
+        output-dir
+        modules
+        "SPEC.md"
+        "spec.html"
+        "TypeLisp Language Reference")
       (doc-site-write-module-pages output-dir modules modules)
       0)))
 
@@ -460,6 +634,15 @@ pre {
   ";# Second smoke module docs.
 
 (define doc-site-second-hidden : i64 1)")
+
+(define (doc-site-language-smoke-source) : String
+  "# Language Reference
+
+See [the spec](SPEC.md) and [the builder](selfhost/doc_site.tl).
+
+```typelisp
+(define answer : i64 42)
+```")
 
 (define (doc-site-smoke-modules) : DocSiteModuleList
   (DocSiteModuleCons
@@ -489,11 +672,30 @@ pre {
         modules
         (DocSiteModule "stdlib/second.tl" "stdlib-second.html")
         (doc-extract-source (doc-site-second-smoke-source)))]
+    [language-page : String
+      (doc-site-render-language-page
+        modules
+        "README.md"
+        "readme.html"
+        "TypeLisp Overview"
+        (doc-site-language-smoke-source))]
     (begin
       (doc-html-require-contains
         index
         "<nav class=\"tl-doc-site-nav\" aria-label=\"Stdlib modules\">"
         "doc-site: site nav missing")
+      (doc-html-require-contains
+        index
+        "<nav class=\"tl-doc-site-nav\" aria-label=\"Language reference\">"
+        "doc-site: language nav missing")
+      (doc-html-require-contains
+        index
+        "href=\"readme.html\""
+        "doc-site: readme link missing")
+      (doc-html-require-contains
+        index
+        "href=\"spec.html\""
+        "doc-site: spec link missing")
       (doc-html-require-contains
         index
         "<nav class=\"tl-doc-stdlib-sidebar\" aria-label=\"Stdlib module tree\">"
@@ -546,6 +748,30 @@ pre {
         second-page
         "class=\"tl-doc-tree-link is-current\" aria-current=\"page\" href=\"stdlib-second.html\""
         "doc-site: second current sidebar link missing")
+      (doc-html-require-contains
+        language-page
+        "<title>TypeLisp Overview</title>"
+        "doc-site: language page title missing")
+      (doc-html-require-contains
+        language-page
+        "class=\"tl-doc-tree-link is-current\" aria-current=\"page\" href=\"readme.html\""
+        "doc-site: language current sidebar link missing")
+      (doc-html-require-contains
+        language-page
+        "<h1 id=\"tl-Language-32Reference\">Language Reference</h1>"
+        "doc-site: language heading anchor missing")
+      (doc-html-require-contains
+        language-page
+        "href=\"spec.html\""
+        "doc-site: language spec link rewrite missing")
+      (doc-html-require-contains
+        language-page
+        "href=\"https://github.com/JoNil-Botta/typelisp/blob/main/selfhost/doc_site.tl\""
+        "doc-site: language repo link rewrite missing")
+      (doc-html-require-contains
+        language-page
+        "<pre><code class=\"language-typelisp\">(define answer : i64 42)"
+        "doc-site: language code fence missing")
       (doc-html-require-contains
         (doc-site-css)
         ".tl-doc-header"

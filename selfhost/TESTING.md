@@ -157,14 +157,16 @@ keep that path as a local fallback only until #795 removes the Rust-owned stage0
 dependency.
 
 The current raw stage1 compiler implements source-file `compile`; the wrapper
-routes that command and implements `build`, `run`, `fmt`, `doc`, `doc --test`,
-and private `debug host-action` directly enough for the Linux capability smoke,
-deterministic assembly gate, selfhost compile manifest, stdlib documentation
-gate, and stdlib selfhost frontend verifier.
-Direct `selfhost/build.tl` package-build parity is covered by
-`scripts/verify-public-tools.sh`; top-level stage1 wrapper routing for package
-builds is still staged separately. Seed-only public-tool exceptions remain:
-`lint`, non-check `test`, package build wrapper routing, REPL/LSP, and full
+routes that command and implements source-file `build`, package `build`, `run`,
+`fmt`, `doc`, `doc --test`, `repl`, and private `debug host-action` directly
+enough for the Linux capability smoke, deterministic assembly gate, selfhost
+compile manifest, stdlib documentation gate, and stdlib selfhost frontend
+verifier. Package builds route through a cached selfhost `build.tl` driver, or
+through a prebuilt `TYPELISP_STAGE1_BUILD_BIN` in the no-Rust lane, and cover
+manifest-path and upward-discovery forms in `scripts/check-stage1-wrapper.sh`;
+direct selfhost package-build parity remains covered by
+`scripts/verify-public-tools.sh`. Seed-only public-tool exceptions remain:
+`lint`, non-check `test`, full REPL/LSP public-tool coverage, and full
 doc/integration gates still need either stage1-safe driver linking or dedicated
 wrapper routing before they can move off the seed compiler.
 

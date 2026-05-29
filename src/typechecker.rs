@@ -232,6 +232,14 @@ impl TypeChecker {
             Type::Func(vec![Type::I64, Type::I64], Box::new(Type::I64)),
         );
         globals.insert(
+            "file-write-status".into(),
+            Type::Func(vec![Type::I64, Type::String], Box::new(Type::I64)),
+        );
+        globals.insert(
+            "file-flush-status".into(),
+            Type::Func(vec![Type::I64], Box::new(Type::I64)),
+        );
+        globals.insert(
             "file-read-chunk-bytes".into(),
             Type::Func(vec![Type::I64], Box::new(Type::String)),
         );
@@ -461,6 +469,8 @@ impl TypeChecker {
                     | "file-open-status"
                     | "file-close-status"
                     | "file-read-chunk-status"
+                    | "file-write-status"
+                    | "file-flush-status"
                     | "file-read-chunk-bytes"
                     | "file-read-chunk-eof?"
                     | "fs-mkdir-status"
@@ -5735,6 +5745,8 @@ mod tests {
         assert!(check(r#"(define (f) : i64 (file-open-status "input.tl" 0))"#).is_ok());
         assert!(check("(define (f) : i64 (file-close-status 1))").is_ok());
         assert!(check("(define (f) : i64 (file-read-chunk-status 1 4))").is_ok());
+        assert!(check(r#"(define (f) : i64 (file-write-status 1 "x"))"#).is_ok());
+        assert!(check("(define (f) : i64 (file-flush-status 1))").is_ok());
         assert!(check("(define (f) : String (file-read-chunk-bytes 1))").is_ok());
         assert!(check("(define (f) : bool (file-read-chunk-eof? 1))").is_ok());
         assert!(check("(define (f) : i64 (file-open-status 42 0))").is_err());
@@ -5744,6 +5756,10 @@ mod tests {
         assert!(check("(define (f) : i64 (file-close-status))").is_err());
         assert!(check(r#"(define (f) : i64 (file-read-chunk-status "h" 4))"#).is_err());
         assert!(check(r#"(define (f) : i64 (file-read-chunk-status 1 "4"))"#).is_err());
+        assert!(check(r#"(define (f) : i64 (file-write-status "h" "x"))"#).is_err());
+        assert!(check("(define (f) : i64 (file-write-status 1 4))").is_err());
+        assert!(check("(define (f) : i64 (file-flush-status))").is_err());
+        assert!(check(r#"(define (f) : i64 (file-flush-status "h"))"#).is_err());
         assert!(check("(define (f) : String (file-read-chunk-bytes))").is_err());
         assert!(check(r#"(define (f) : bool (file-read-chunk-eof? "h"))"#).is_err());
     }
@@ -5826,14 +5842,18 @@ mod tests {
             (define (file-open-status [n : i64]) : i64 n)
             (define (file-close-status) : i64 3)
             (define (file-read-chunk-status [n : i64]) : i64 n)
+            (define (file-write-status [n : i64]) : i64 n)
+            (define (file-flush-status) : i64 11)
             (define (file-read-chunk-bytes) : i64 5)
             (define (file-read-chunk-eof? [n : i64]) : i64 n)
             (define (main) : i64
               (+ (file-open-status 7)
                 (+ (file-close-status)
                   (+ (file-read-chunk-status 8)
-                    (+ (file-read-chunk-bytes)
-                       (file-read-chunk-eof? 9))))))
+                    (+ (file-write-status 10)
+                      (+ (file-flush-status)
+                        (+ (file-read-chunk-bytes)
+                           (file-read-chunk-eof? 9))))))))
         "#;
         assert!(check(src).is_ok());
     }

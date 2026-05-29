@@ -86,6 +86,8 @@
     bool
     bool
     bool
+    bool
+    bool
     bool))
 
 ;; Backend code-generation target (#646). Linux/System V and Windows x64 are
@@ -5686,8 +5688,10 @@
           _
           _
           _
+          _
           arg-count
           arg
+          _
           _
           _
           _
@@ -6437,6 +6441,7 @@
   [flush-stdout : bool]
   [random-system-seed : bool]
   [windows-setup-instances : bool]
+  [windows-sdk-registry-install : bool]
   [env-var-exists : bool]
   [env-var-value : bool]
   [env-path-separator : bool]) : bool
@@ -6455,23 +6460,28 @@
         name
         "tl_random_system_seed"
         random-system-seed))
-    (backend-or4
+    (or
       (compiler-backend-provides-runtime-name?
         name
-        "tl_windows_setup_instances"
-        windows-setup-instances)
-      (compiler-backend-provides-runtime-name?
-        name
-        "env-var-exists?"
-        env-var-exists)
-      (compiler-backend-provides-runtime-name?
-        name
-        "env-var-value"
-        env-var-value)
-      (compiler-backend-provides-runtime-name?
-        name
-        "env-path-separator"
-        env-path-separator))))
+        "tl_windows_sdk_registry_install"
+        windows-sdk-registry-install)
+      (backend-or4
+        (compiler-backend-provides-runtime-name?
+          name
+          "tl_windows_setup_instances"
+          windows-setup-instances)
+        (compiler-backend-provides-runtime-name?
+          name
+          "env-var-exists?"
+          env-var-exists)
+        (compiler-backend-provides-runtime-name?
+          name
+          "env-var-value"
+          env-var-value)
+        (compiler-backend-provides-runtime-name?
+          name
+          "env-path-separator"
+          env-path-separator)))))
 
 (define (compiler-backend-plan-provides?
   [plan : CompilerBackendRuntimePlan]
@@ -6487,6 +6497,7 @@
         provides-int-to-string
         provides-abort
         provides-print-err
+        provides-print-str
         provides-arg-count
         provides-arg
         provides-read-file
@@ -6504,6 +6515,7 @@
         region-reset
         random-system-seed
         windows-setup-instances
+        windows-sdk-registry-install
         provides-env-var-exists
         provides-env-var-value
         provides-env-path-separator)
@@ -6570,49 +6582,62 @@
               ".L_tl_file_exists"
               provides-file-exists))
           (or
-            (backend-or8
-              (compiler-backend-provides-runtime-name?
-                name
-                "tl_process_output"
-                provides-process-output)
-              (compiler-backend-provides-runtime-name?
-                name
-                ".L_tl_read_file_status"
-                provides-read-file)
-              (compiler-backend-provides-runtime-name?
-                name
-                ".L_tl_write_file_status"
-                provides-write-file)
-              (compiler-backend-provides-runtime-name?
-                name
-                ".L_tl_append_file_status"
-                provides-write-file)
-              (compiler-backend-provides-runtime-name?
-                name
-                ".L_tl_file_exists_status"
-                provides-file-exists)
-              (compiler-backend-provides-runtime-name?
-                name
-                ".L_tl_file_open_status"
-                provides-file-handle)
-              (compiler-backend-provides-runtime-name?
-                name
-                ".L_tl_file_close_status"
-                provides-file-handle)
-              (compiler-backend-provides-runtime-name?
-                name
-                ".L_tl_file_read_chunk_status"
-                provides-file-read-chunk))
+            (compiler-backend-provides-runtime-name?
+              name
+              "tl_print_str"
+              provides-print-str)
             (or
-              (compiler-backend-provides-runtime-name?
-                name
-                ".L_tl_file_read_chunk_bytes"
-                provides-file-read-chunk)
-              (or
+              (backend-or8
                 (compiler-backend-provides-runtime-name?
                   name
-                  ".L_tl_file_read_chunk_eof"
-                  provides-file-read-chunk)
+                  "tl_process_output"
+                  provides-process-output)
+                (compiler-backend-provides-runtime-name?
+                  name
+                  ".L_tl_read_file_status"
+                  provides-read-file)
+                (compiler-backend-provides-runtime-name?
+                  name
+                  ".L_tl_write_file_status"
+                  provides-write-file)
+                (compiler-backend-provides-runtime-name?
+                  name
+                  ".L_tl_append_file_status"
+                  provides-write-file)
+                (compiler-backend-provides-runtime-name?
+                  name
+                  ".L_tl_file_exists_status"
+                  provides-file-exists)
+                (compiler-backend-provides-runtime-name?
+                  name
+                  ".L_tl_file_open_status"
+                  provides-file-handle)
+                (compiler-backend-provides-runtime-name?
+                  name
+                  ".L_tl_file_close_status"
+                  provides-file-handle)
+                (compiler-backend-provides-runtime-name?
+                  name
+                  ".L_tl_file_read_chunk_status"
+                  provides-file-read-chunk))
+              (or
+                (backend-or4
+                  (compiler-backend-provides-runtime-name?
+                    name
+                    ".L_tl_file_write_status"
+                    provides-file-handle)
+                  (compiler-backend-provides-runtime-name?
+                    name
+                    ".L_tl_file_flush_status"
+                    provides-file-handle)
+                  (compiler-backend-provides-runtime-name?
+                    name
+                    ".L_tl_file_read_chunk_bytes"
+                    provides-file-read-chunk)
+                  (compiler-backend-provides-runtime-name?
+                    name
+                    ".L_tl_file_read_chunk_eof"
+                    provides-file-read-chunk))
                 (or
                   (backend-or4
                     (compiler-backend-provides-runtime-name?
@@ -6661,6 +6686,7 @@
                         flush-stdout
                         random-system-seed
                         windows-setup-instances
+                        windows-sdk-registry-install
                         provides-env-var-exists
                         provides-env-var-value
                         provides-env-path-separator)))))))))]))
@@ -6685,6 +6711,8 @@
       (compiler-backend-function-list-defines? functions "tl_int_to_string")]
     [defines-print-err : bool
       (compiler-backend-function-list-defines? functions "tl_print_err")]
+    [defines-print-str : bool
+      (compiler-backend-function-list-defines? functions "tl_print_str")]
     [defines-region-mark : bool
       (compiler-backend-function-list-defines? functions "tl_region_mark")]
     [defines-region-reset : bool
@@ -6699,6 +6727,10 @@
       (compiler-backend-function-list-defines?
         functions
         "tl_windows_setup_instances")]
+    [defines-windows-sdk-registry-install : bool
+      (compiler-backend-function-list-defines?
+        functions
+        "tl_windows_sdk_registry_install")]
     [defines-env-var-exists : bool
       (compiler-backend-function-list-defines? functions "env-var-exists?")]
     [defines-env-var-value : bool
@@ -6723,6 +6755,8 @@
       (compiler-backend-extern-list-references? externs ".L_tl_abort")]
     [extern-print-err : bool
       (compiler-backend-extern-list-references? externs "tl_print_err")]
+    [extern-print-str : bool
+      (compiler-backend-extern-list-references? externs "tl_print_str")]
     [extern-arg-count : bool
       (compiler-backend-extern-list-references? externs ".L_tl_arg_count")]
     [extern-arg : bool
@@ -6761,6 +6795,14 @@
       (compiler-backend-extern-list-references?
         externs
         ".L_tl_file_read_chunk_status")]
+    [extern-file-write-status : bool
+      (compiler-backend-extern-list-references?
+        externs
+        ".L_tl_file_write_status")]
+    [extern-file-flush-status : bool
+      (compiler-backend-extern-list-references?
+        externs
+        ".L_tl_file_flush_status")]
     [extern-file-read-chunk-bytes : bool
       (compiler-backend-extern-list-references?
         externs
@@ -6803,6 +6845,10 @@
       (compiler-backend-extern-list-references?
         externs
         "tl_windows_setup_instances")]
+    [extern-windows-sdk-registry-install : bool
+      (compiler-backend-extern-list-references?
+        externs
+        "tl_windows_sdk_registry_install")]
     [extern-env-var-exists : bool
       (compiler-backend-extern-list-references? externs "env-var-exists?")]
     [extern-env-var-value : bool
@@ -6827,6 +6873,8 @@
       (compiler-backend-function-list-calls? functions ".L_tl_abort")]
     [calls-print-err : bool
       (compiler-backend-function-list-calls? functions "tl_print_err")]
+    [calls-print-str : bool
+      (compiler-backend-function-list-calls? functions "tl_print_str")]
     [calls-arg-count : bool
       (compiler-backend-function-list-calls? functions ".L_tl_arg_count")]
     [calls-arg : bool
@@ -6861,6 +6909,14 @@
       (compiler-backend-function-list-calls?
         functions
         ".L_tl_file_read_chunk_status")]
+    [calls-file-write-status : bool
+      (compiler-backend-function-list-calls?
+        functions
+        ".L_tl_file_write_status")]
+    [calls-file-flush-status : bool
+      (compiler-backend-function-list-calls?
+        functions
+        ".L_tl_file_flush_status")]
     [calls-file-read-chunk-bytes : bool
       (compiler-backend-function-list-calls?
         functions
@@ -6901,6 +6957,10 @@
       (compiler-backend-function-list-calls?
         functions
         "tl_windows_setup_instances")]
+    [calls-windows-sdk-registry-install : bool
+      (compiler-backend-function-list-calls?
+        functions
+        "tl_windows_sdk_registry_install")]
     [calls-env-var-exists : bool
       (compiler-backend-function-list-calls? functions "env-var-exists?")]
     [calls-env-var-value : bool
@@ -6926,6 +6986,8 @@
       [direct-abort : bool (or extern-abort calls-abort)]
       [needs-print-err : bool
         (and (not defines-print-err) (or extern-print-err calls-print-err))]
+      [needs-print-str : bool
+        (and (not defines-print-str) (or extern-print-str calls-print-str))]
       [needs-arg-count : bool (or extern-arg-count calls-arg-count)]
       [needs-arg : bool (or extern-arg calls-arg)]
       [needs-read-file : bool
@@ -6944,8 +7006,12 @@
           (or extern-file-exists-status calls-file-exists-status))]
       [needs-file-handle : bool
         (or
-          (or extern-file-open-status calls-file-open-status)
-          (or extern-file-close-status calls-file-close-status))]
+          (or
+            (or extern-file-open-status calls-file-open-status)
+            (or extern-file-close-status calls-file-close-status))
+          (or
+            (or extern-file-write-status calls-file-write-status)
+            (or extern-file-flush-status calls-file-flush-status)))]
       [needs-file-read-chunk : bool
         (or
           (or extern-file-read-chunk-status calls-file-read-chunk-status)
@@ -6990,6 +7056,12 @@
         (and
           (not defines-windows-setup-instances)
           (or extern-windows-setup-instances calls-windows-setup-instances))]
+      [needs-windows-sdk-registry-install : bool
+        (and
+          (not defines-windows-sdk-registry-install)
+          (or
+            extern-windows-sdk-registry-install
+            calls-windows-sdk-registry-install))]
       [needs-env-var-exists : bool
         (and
           (not defines-env-var-exists)
@@ -7023,22 +7095,20 @@
               needs-write-file
               needs-file-exists)
             (or
-              needs-file-handle
-              (or
+              (backend-or8
+                needs-file-handle
                 needs-file-read-chunk
-                (or
-                  needs-fs-runtime
-                  (or
-                    needs-process-output
-                    (or
-                      needs-read-line
-                      (or
-                        needs-read-bytes
-                        (or
-                          needs-random-system-seed
-                          (or
-                            needs-windows-setup-instances
-                            (or needs-env-var-value needs-env-path-separator))))))))))]
+                needs-fs-runtime
+                needs-process-output
+                needs-read-line
+                needs-read-bytes
+                needs-random-system-seed
+                needs-windows-setup-instances)
+              (backend-or4
+                needs-windows-sdk-registry-install
+                needs-env-var-value
+                needs-env-path-separator
+                false)))]
         (OkBackendRuntimePlan
           (BackendRuntimePlan
             needs-alloc
@@ -7050,6 +7120,7 @@
             needs-int-to-string
             needs-abort
             needs-print-err
+            needs-print-str
             needs-arg-count
             needs-arg
             needs-read-file
@@ -7067,6 +7138,7 @@
             needs-region-reset
             needs-random-system-seed
             needs-windows-setup-instances
+            needs-windows-sdk-registry-install
             needs-env-var-exists
             needs-env-var-value
             needs-env-path-separator))))))
@@ -7322,6 +7394,17 @@ tl_current_arena:
 "
     ""))
 
+(define (compiler-backend-runtime-windows-sdk-registry-install-data
+  [windows-sdk-registry-install : bool]) : String
+  (if windows-sdk-registry-install
+    "    .section .rodata
+.L_tl_windows_registry_unsupported_msg:
+    .ascii \"windows registry: unsupported on non-Windows targets\"
+    .set .L_tl_windows_registry_unsupported_msg_len, . - .L_tl_windows_registry_unsupported_msg
+
+"
+    ""))
+
 (define (compiler-backend-runtime-data-for-target
   [target : CompilerBackendTarget]
   [plan : CompilerBackendRuntimePlan]) : String
@@ -7329,6 +7412,7 @@ tl_current_arena:
     [(BackendRuntimePlan
         alloc
         oob
+        _
         _
         _
         _
@@ -7353,6 +7437,7 @@ tl_current_arena:
         region-reset
         random-system-seed
         windows-setup-instances
+        windows-sdk-registry-install
         env-var-exists
         env-var-value
         _)
@@ -7403,8 +7488,11 @@ tl_current_arena:
                               (string-append
                                 (compiler-backend-runtime-random-system-seed-data
                                   random-system-seed)
-                                (compiler-backend-runtime-windows-setup-instances-data
-                                  windows-setup-instances))))))))))))))]))
+                                (string-append
+                                  (compiler-backend-runtime-windows-setup-instances-data
+                                    windows-setup-instances)
+                                  (compiler-backend-runtime-windows-sdk-registry-install-data
+                                    windows-sdk-registry-install)))))))))))))))]))
 
 (define (compiler-backend-runtime-alloc-functions) : String
   "    .globl tl_alloc
@@ -7672,6 +7760,18 @@ tl_print_err:
     movq %rsi, %rdx
     movq %rdi, %rsi
     movq $2, %rdi
+    movq $1, %rax
+    syscall
+    ret
+
+")
+
+(define (compiler-backend-runtime-print-str-functions) : String
+  "    .globl tl_print_str
+tl_print_str:
+    movq %rsi, %rdx
+    movq %rdi, %rsi
+    movq $1, %rdi
     movq $1, %rax
     syscall
     ret
@@ -8513,6 +8613,115 @@ _tl_env_path_separator:
 
 ")
 
+(define (compiler-backend-runtime-file-write-status-functions) : String
+  ".L_tl_file_write_status:
+    push %rbp
+    mov %rsp, %rbp
+    push %rbx
+    push %r12
+    push %r13
+    push %r14
+    push %r15
+    movq %rdi, %rbx
+    movq %rsi, %r12
+    movq %rdx, %r13
+    cmpq $0, %r13
+    jl .L_tl_file_write_status_invalid
+    cmpq $1, %rbx
+    jl .L_tl_file_write_status_unsupported
+    cmpq $1024, %rbx
+    jge .L_tl_file_write_status_unsupported
+    leaq .L_tl_file_handle_states(%rip), %rcx
+    movq (%rcx,%rbx,8), %rax
+    cmpq $1, %rax
+    jne .L_tl_file_write_status_unsupported
+    leaq .L_tl_file_handle_modes(%rip), %rcx
+    movq (%rcx,%rbx,8), %rax
+    cmpq $0, %rax
+    je .L_tl_file_write_status_unsupported
+    testq %r13, %r13
+    jz .L_tl_file_write_status_ok
+    leaq .L_tl_file_handle_fds(%rip), %rcx
+    movq (%rcx,%rbx,8), %r14
+    xorq %r15, %r15
+.L_tl_file_write_status_loop:
+    cmpq %r13, %r15
+    jge .L_tl_file_write_status_ok
+    movq $1, %rax
+    movq %r14, %rdi
+    leaq (%r12,%r15), %rsi
+    movq %r13, %rdx
+    subq %r15, %rdx
+    syscall
+    testq %rax, %rax
+    js .L_tl_file_write_status_error_from_rax
+    testq %rax, %rax
+    jz .L_tl_file_write_status_io_error
+    addq %rax, %r15
+    jmp .L_tl_file_write_status_loop
+.L_tl_file_write_status_ok:
+    xorq %rax, %rax
+    jmp .L_tl_file_write_status_return
+.L_tl_file_write_status_error_from_rax:
+    negq %rax
+    jmp .L_tl_file_write_status_return
+.L_tl_file_write_status_invalid:
+    movq $22, %rax
+    jmp .L_tl_file_write_status_return
+.L_tl_file_write_status_io_error:
+    movq $5, %rax
+    jmp .L_tl_file_write_status_return
+.L_tl_file_write_status_unsupported:
+    movq $38, %rax
+.L_tl_file_write_status_return:
+    pop %r15
+    pop %r14
+    pop %r13
+    pop %r12
+    pop %rbx
+    pop %rbp
+    ret
+
+")
+
+(define (compiler-backend-runtime-file-flush-status-functions) : String
+  ".L_tl_file_flush_status:
+    push %rbp
+    mov %rsp, %rbp
+    push %rbx
+    movq %rdi, %rbx
+    cmpq $1, %rbx
+    jl .L_tl_file_flush_status_unsupported
+    cmpq $1024, %rbx
+    jge .L_tl_file_flush_status_unsupported
+    leaq .L_tl_file_handle_states(%rip), %rcx
+    movq (%rcx,%rbx,8), %rax
+    cmpq $1, %rax
+    jne .L_tl_file_flush_status_unsupported
+    leaq .L_tl_file_handle_modes(%rip), %rcx
+    movq (%rcx,%rbx,8), %rax
+    cmpq $0, %rax
+    je .L_tl_file_flush_status_unsupported
+    leaq .L_tl_file_handle_fds(%rip), %rcx
+    movq (%rcx,%rbx,8), %rdi
+    movq $74, %rax
+    syscall
+    testq %rax, %rax
+    js .L_tl_file_flush_status_error_from_rax
+    xorq %rax, %rax
+    jmp .L_tl_file_flush_status_return
+.L_tl_file_flush_status_error_from_rax:
+    negq %rax
+    jmp .L_tl_file_flush_status_return
+.L_tl_file_flush_status_unsupported:
+    movq $38, %rax
+.L_tl_file_flush_status_return:
+    pop %rbx
+    pop %rbp
+    ret
+
+")
+
 (define (compiler-backend-runtime-windows-file-handle-functions) : String
   ".L_tl_file_open_status:
     movq $-38, %rax
@@ -8522,15 +8731,25 @@ _tl_env_path_separator:
     movq $38, %rax
     ret
 
+.L_tl_file_write_status:
+    movq $38, %rax
+    ret
+
+.L_tl_file_flush_status:
+    movq $38, %rax
+    ret
+
 ")
 
 (define (compiler-backend-runtime-file-handle-functions
   [target : CompilerBackendTarget]) : String
   (if (compiler-backend-target-windows? target)
     (compiler-backend-runtime-windows-file-handle-functions)
-    (string-append
+    (backend-cat4
       (compiler-backend-runtime-file-open-status-functions)
-      (compiler-backend-runtime-file-close-status-functions))))
+      (compiler-backend-runtime-file-close-status-functions)
+      (compiler-backend-runtime-file-write-status-functions)
+      (compiler-backend-runtime-file-flush-status-functions))))
 
 (define (compiler-backend-runtime-file-read-chunk-status-functions) : String
   ".L_tl_file_read_chunk_status:
@@ -9593,6 +9812,23 @@ tl_print_err:
     movq %rdx, %r8
     movq %rcx, %rdx
     movq $2, %rcx
+    sub $32, %rsp
+    call _write
+    add $32, %rsp
+    mov %rbp, %rsp
+    pop %rbp
+    ret
+
+")
+
+(define (compiler-backend-runtime-windows-print-str-functions) : String
+  "    .globl tl_print_str
+tl_print_str:
+    push %rbp
+    mov %rsp, %rbp
+    movq %rdx, %r8
+    movq %rcx, %rdx
+    movq $1, %rcx
     sub $32, %rsp
     call _write
     add $32, %rsp
@@ -11018,6 +11254,82 @@ tl_windows_setup_instances:
 
 "))
 
+(define (compiler-backend-runtime-windows-sdk-registry-install-functions
+  [target : CompilerBackendTarget]) : String
+  (if (compiler-backend-target-windows? target)
+    "    .globl tl_windows_sdk_registry_install
+tl_windows_sdk_registry_install:
+    push %rbp
+    mov %rsp, %rbp
+    push %r12
+    push %r13
+    push %r14
+    sub $8, %rsp
+    movq $0, %r12
+    leaq .L_tl_windows_registry_unsupported_msg(%rip), %r13
+    movq $.L_tl_windows_registry_unsupported_msg_len, %r14
+    movq $16, %rcx
+    sub $32, %rsp
+    call tl_alloc
+    add $32, %rsp
+    movq %r13, 0(%rax)
+    movq %r14, 8(%rax)
+    movq %rax, %r13
+    movq $16, %rcx
+    sub $32, %rsp
+    call tl_alloc
+    add $32, %rsp
+    movq %r12, 0(%rax)
+    movq %r13, 8(%rax)
+    movq %rax, %r13
+    movq $16, %rcx
+    sub $32, %rsp
+    call tl_alloc
+    add $32, %rsp
+    movq $1, 0(%rax)
+    movq %r13, 8(%rax)
+    add $8, %rsp
+    pop %r14
+    pop %r13
+    pop %r12
+    pop %rbp
+    ret
+
+"
+    "    .globl tl_windows_sdk_registry_install
+tl_windows_sdk_registry_install:
+    push %rbp
+    mov %rsp, %rbp
+    push %r12
+    push %r13
+    push %r14
+    sub $8, %rsp
+    movq $0, %r12
+    leaq .L_tl_windows_registry_unsupported_msg(%rip), %r13
+    movq $.L_tl_windows_registry_unsupported_msg_len, %r14
+    movq $16, %rdi
+    call tl_alloc
+    movq %r13, 0(%rax)
+    movq %r14, 8(%rax)
+    movq %rax, %r13
+    movq $16, %rdi
+    call tl_alloc
+    movq %r12, 0(%rax)
+    movq %r13, 8(%rax)
+    movq %rax, %r13
+    movq $16, %rdi
+    call tl_alloc
+    movq $1, 0(%rax)
+    movq %r13, 8(%rax)
+    add $8, %rsp
+    pop %r14
+    pop %r13
+    pop %r12
+    pop %rbp
+    ret
+
+"))
+
 (define (compiler-backend-runtime-functions [plan : CompilerBackendRuntimePlan]) : String
   (compiler-backend-runtime-functions-for-target (BackendTargetLinux) plan))
 
@@ -11045,6 +11357,7 @@ tl_windows_setup_instances:
         int-to-string
         abort
         print-err
+        print-str
         arg-count
         arg
         read-file
@@ -11062,6 +11375,7 @@ tl_windows_setup_instances:
         region-reset
         random-system-seed
         windows-setup-instances
+        windows-sdk-registry-install
         env-var-exists
         env-var-value
         env-path-separator)
@@ -11119,6 +11433,12 @@ tl_windows_setup_instances:
             (if (compiler-backend-target-windows? target)
               (compiler-backend-runtime-windows-print-err-functions)
               (compiler-backend-runtime-print-err-functions))
+            "")]
+        [print-str-asm : String
+          (if print-str
+            (if (compiler-backend-target-windows? target)
+              (compiler-backend-runtime-windows-print-str-functions)
+              (compiler-backend-runtime-print-str-functions))
             "")]
         [arg-count-asm : String
           (if arg-count
@@ -11234,6 +11554,11 @@ tl_windows_setup_instances:
           (if windows-setup-instances
             (compiler-backend-runtime-windows-setup-instances-functions target)
             "")]
+        [windows-sdk-registry-install-asm : String
+          (if windows-sdk-registry-install
+            (compiler-backend-runtime-windows-sdk-registry-install-functions
+              target)
+            "")]
         [runtime-front-asm : String
           (backend-cat5
             alloc-asm
@@ -11249,11 +11574,13 @@ tl_windows_setup_instances:
             int-to-string-asm
             abort-asm)]
         [runtime-io-asm : String
-          (backend-cat5
-            print-err-asm
-            arg-count-asm
-            arg-asm
-            read-file-asm
+          (string-append
+            (backend-cat5
+              print-err-asm
+              print-str-asm
+              arg-count-asm
+              arg-asm
+              read-file-asm)
             read-file-status-asm)]
         [runtime-file-asm : String
           (backend-cat5
@@ -11270,7 +11597,11 @@ tl_windows_setup_instances:
             stdin-eof-asm
             flush-stdout-asm)]
         [random-and-windows-asm : String
-          (string-append random-system-seed-asm windows-setup-instances-asm)]
+          (string-append
+            random-system-seed-asm
+            (string-append
+              windows-setup-instances-asm
+              windows-sdk-registry-install-asm))]
         [env-var-exists-asm : String
           (compiler-backend-runtime-linux-only
             target
@@ -11393,6 +11724,7 @@ tl_windows_setup_instances:
             _
             _
             _
+            _
             arg-count
             arg
             _
@@ -11402,6 +11734,7 @@ tl_windows_setup_instances:
             _
             _
             process-output
+            _
             _
             _
             _
@@ -11436,6 +11769,7 @@ tl_windows_setup_instances:
         int-to-string
         abort
         print-err
+        print-str
         arg-count
         arg
         read-file
@@ -11453,6 +11787,7 @@ tl_windows_setup_instances:
         region-reset
         random-system-seed
         windows-setup-instances
+        windows-sdk-registry-install
         env-var-exists
         env-var-value
         env-path-separator)
@@ -11478,22 +11813,28 @@ tl_windows_setup_instances:
               file-handle
               file-read-chunk)
             (or
-              fs-runtime
+              print-str
               (or
-                process-output
+                fs-runtime
                 (or
-                  read-line
+                  process-output
                   (or
-                    (backend-or8
-                      read-bytes
-                      stdin-eof
-                      flush-stdout
-                      region-mark
-                      region-reset
-                      random-system-seed
-                      windows-setup-instances
-                      env-var-exists)
-                    (backend-or4 env-var-value env-path-separator false false))))))))]))
+                    read-line
+                    (or
+                      (backend-or8
+                        read-bytes
+                        stdin-eof
+                        flush-stdout
+                        region-mark
+                        region-reset
+                        random-system-seed
+                        windows-setup-instances
+                        windows-sdk-registry-install)
+                      (backend-or4
+                        env-var-exists
+                        env-var-value
+                        env-path-separator
+                        false)))))))))]))
 
 (define (compiler-backend-target-runtime-ok?
   [target : CompilerBackendTarget]
@@ -11523,8 +11864,10 @@ tl_windows_setup_instances:
           _
           _
           _
+          _
           region-mark
           region-reset
+          _
           _
           _
           env-var-exists
@@ -11793,23 +12136,33 @@ tl_windows_setup_instances:
                                     (AstTyI64))
                                   (IrExternCons
                                     (compiler-ir-extern-default
-                                      ".L_tl_file_read_chunk_bytes"
-                                      (AstTyString))
+                                      ".L_tl_file_write_status"
+                                      (AstTyI64))
                                     (IrExternCons
                                       (compiler-ir-extern-default
-                                        ".L_tl_file_read_chunk_eof"
-                                        (AstTyBool))
+                                        ".L_tl_file_flush_status"
+                                        (AstTyI64))
                                       (IrExternCons
                                         (compiler-ir-extern-default
-                                          "tl_process_output"
-                                          (AstTyFunc
-                                            (AstTypeCons (AstTyI64) AstTypeNil)
-                                            (AstTyI64)))
+                                          ".L_tl_file_read_chunk_bytes"
+                                          (AstTyString))
                                         (IrExternCons
                                           (compiler-ir-extern-default
-                                            "tl_random_system_seed"
-                                            (AstTyI64))
-                                          IrExternNil)))))))))))))))))))))
+                                            ".L_tl_file_read_chunk_eof"
+                                            (AstTyBool))
+                                          (IrExternCons
+                                            (compiler-ir-extern-default
+                                              "tl_process_output"
+                                              (AstTyFunc
+                                                (AstTypeCons
+                                                  (AstTyI64)
+                                                  AstTypeNil)
+                                                (AstTyI64)))
+                                            (IrExternCons
+                                              (compiler-ir-extern-default
+                                                "tl_random_system_seed"
+                                                (AstTyI64))
+                                              IrExternNil)))))))))))))))))))))))
 
 (define (compiler-backend-runtime-helper-program) : CompilerIrProgram
   (IrProgram
@@ -12022,9 +12375,17 @@ tl_windows_setup_instances:
               (compiler-backend-string-contains?
                 asm
                 ".L_tl_file_open_status:\n")
-              (compiler-backend-string-contains?
-                asm
-                ".L_tl_file_close_status:\n")))]
+              (and
+                (compiler-backend-string-contains?
+                  asm
+                  ".L_tl_file_close_status:\n")
+                (and
+                  (compiler-backend-string-contains?
+                    asm
+                    ".L_tl_file_write_status:\n")
+                  (compiler-backend-string-contains?
+                    asm
+                    ".L_tl_file_flush_status:\n")))))]
         [file-read-chunk-labels : bool
           (and
             (compiler-backend-string-contains?
@@ -12082,10 +12443,20 @@ tl_windows_setup_instances:
               (compiler-backend-string-contains?
                 asm
                 ".extern .L_tl_file_open_status\n"))
-            (not
-              (compiler-backend-string-contains?
-                asm
-                ".extern .L_tl_file_close_status\n")))]
+            (and
+              (not
+                (compiler-backend-string-contains?
+                  asm
+                  ".extern .L_tl_file_close_status\n"))
+              (and
+                (not
+                  (compiler-backend-string-contains?
+                    asm
+                    ".extern .L_tl_file_write_status\n"))
+                (not
+                  (compiler-backend-string-contains?
+                    asm
+                    ".extern .L_tl_file_flush_status\n")))))]
         [no-externs : bool
           (and
             (backend-and8
@@ -12188,19 +12559,25 @@ tl_windows_setup_instances:
     (+ handle (file-close-status handle))))")
     [(OkCompilerBackend asm)
       (and
-        (backend-and8
-          (compiler-backend-string-contains? asm ".L_tl_file_open_status:\n")
-          (compiler-backend-string-contains? asm ".L_tl_file_close_status:\n")
-          (compiler-backend-string-contains? asm ".L_tl_file_handle_next:\n")
-          (compiler-backend-string-contains? asm ".L_tl_file_handle_fds:\n")
-          (compiler-backend-string-contains? asm ".L_tl_file_handle_states:\n")
-          (compiler-backend-string-contains? asm "    call tl_alloc\n")
-          (compiler-backend-string-contains?
-            asm
-            "    call .L_tl_file_open_status\n")
-          (compiler-backend-string-contains?
-            asm
-            "    call .L_tl_file_close_status\n"))
+        (and
+          (backend-and8
+            (compiler-backend-string-contains? asm ".L_tl_file_open_status:\n")
+            (compiler-backend-string-contains? asm ".L_tl_file_close_status:\n")
+            (compiler-backend-string-contains? asm ".L_tl_file_handle_next:\n")
+            (compiler-backend-string-contains? asm ".L_tl_file_handle_fds:\n")
+            (compiler-backend-string-contains?
+              asm
+              ".L_tl_file_handle_states:\n")
+            (compiler-backend-string-contains? asm "    call tl_alloc\n")
+            (compiler-backend-string-contains?
+              asm
+              "    call .L_tl_file_open_status\n")
+            (compiler-backend-string-contains?
+              asm
+              "    call .L_tl_file_close_status\n"))
+          (and
+            (compiler-backend-string-contains? asm ".L_tl_file_write_status:\n")
+            (compiler-backend-string-contains? asm ".L_tl_file_flush_status:\n")))
         (and
           (not
             (compiler-backend-string-contains?

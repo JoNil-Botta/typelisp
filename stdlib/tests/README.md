@@ -28,10 +28,10 @@ Coverage notes:
   missing-parent write, empty-file, and existing-file paths without masking host
   I/O failures.
 - `io_file_handle.tl` covers `FileHandle` open/close success, streaming chunk
-  reads, zero-byte reads, EOF stickiness, negative counts, invalid/read-after-close
-  and write-only read failures, empty-path and missing-file open failures,
-  write-truncate creation/truncation, write-append preservation/creation, and
-  the Windows unsupported result.
+  reads, streaming writes/flush, zero-byte reads, EOF stickiness, negative
+  counts, invalid/read-after-close and mode-mismatch failures, empty-path and
+  missing-file open failures, write-truncate writes, write-append writes and
+  creation, and the Windows unsupported result.
 - `io_stdio_lines.tl` covers stdin line wrappers, blank-line vs EOF state,
   stdout/stderr write-line helpers, and stdout flushing with fixture stdin.
 - `io_stdio_bytes.tl` covers fixed-byte stdin wrappers, short reads at EOF, and

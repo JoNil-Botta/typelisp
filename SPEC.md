@@ -2498,6 +2498,8 @@ track (#809/#897/#911/#912) and the safe reference/ownership track (#182).
 | `file-open-status` | `String i64 → i64` | Open a runtime-managed file-handle slot; return a positive handle id on success or a negative host status code |
 | `file-close-status` | `i64 → i64` | Close a runtime-managed file-handle slot; return 0 on success or a positive host status code |
 | `file-read-chunk-status` | `i64 i64 → i64` | Read once from a runtime-managed handle into the per-handle last-read slot; return 0 on success or a positive host status code |
+| `file-write-status` | `i64 String → i64` | Write all bytes from a `String` to a runtime-managed write handle; return 0 on success or a positive host status code |
+| `file-flush-status` | `i64 → i64` | Flush a runtime-managed write handle; return 0 on success or a positive host status code |
 | `file-read-chunk-bytes` | `i64 → String` | Return the bytes stored by the last successful `file-read-chunk-status` call for a handle |
 | `file-read-chunk-eof?` | `i64 → bool` | Return the sticky EOF state stored by the last successful `file-read-chunk-status` call for a handle |
 | `read-stdin-line` | `→ String` | Read one stdin line without trailing newline; blank line returns `""` and does not set EOF |
@@ -2564,6 +2566,8 @@ They are not implemented by a separate C runtime.
 | `.L_tl_write_file` | Write whole file |
 | `.L_tl_file_open_status` | Open a runtime-managed file-handle slot |
 | `.L_tl_file_close_status` | Close a runtime-managed file-handle slot |
+| `.L_tl_file_write_status` | Write all bytes from a string to a runtime-managed write handle |
+| `.L_tl_file_flush_status` | Flush a runtime-managed write handle |
 | `.L_tl_abort` | Print and abort (used by `panic`/`error`) |
 | `tl_oob_abort` | Bounds-check trap |
 
@@ -2580,8 +2584,8 @@ They are not implemented by a separate C runtime.
 ### 6.4 Stdlib file I/O handles (v1)
 
 This section specifies the v1 source-level file-handle API for `stdlib/io.tl`.
-Open/close support is implemented by #1056; streaming reads are implemented by
-#1057, while streaming writes/flush (#1058) land incrementally. The handle API reuses the
+Open/close support is implemented by #1056, streaming reads are implemented by
+#1057, and streaming writes/flush are implemented by #1058. The handle API reuses the
 existing `IoError` model already in `stdlib/io.tl` (§9 catalogs the variants);
 it does not introduce a new error vocabulary.
 
@@ -2670,12 +2674,28 @@ buffer work should use a dedicated byte-slice/buffer type rather than mutable
 Returned chunk strings allocate in the active arena, the same as `read-file`
 and `StdinRead`.
 
-**Streaming writes / append (#1058).** Streaming writes are specified by #1058
-and reuse `ResultIoUnit`. `OpenWriteAppend` defines append semantics:
-create-if-missing, never truncate, and — where the host supports an append open
-mode (Linux `O_APPEND`) — each write lands at the current end of file. This
-matches the whole-file `try-append-file` helper, which uses the recoverable
-`append-file-status` runtime primitive instead of read-modify-write.
+**Streaming writes / append (#1058).** Streaming writes reuse `ResultIoUnit`:
+
+| Helper | Signature | Behavior |
+|--------|-----------|----------|
+| `file-write` | `FileHandle String → ResultIoUnit` | Write the complete string payload to a write-mode handle. |
+| `file-flush` | `FileHandle → ResultIoUnit` | Flush pending writes for a write-mode handle. |
+
+- `file-write` on an empty string succeeds without issuing a host write.
+- The runtime retries host short writes until all bytes are accepted. A host
+  error maps through `io-error-from-status`; a zero-byte host write before all
+  bytes are written maps to `IoSystemCode 5` / the common I/O error status.
+- Writing to an `OpenRead` handle returns `ErrIoUnit (IoUnsupported ...)`.
+- Writing or flushing a closed, invalid, or unsupported handle returns
+  `ErrIoUnit (IoUnsupported ...)`.
+- `file-flush` on an `OpenRead` handle returns `ErrIoUnit (IoUnsupported ...)`;
+  host flush failures map through `io-error-from-status`.
+- `OpenWriteTruncate` starts from an empty file and writes advance the handle's
+  file offset. `OpenWriteAppend` defines append semantics: create-if-missing,
+  never truncate, and — where the host supports an append open mode (Linux
+  `O_APPEND`) — each write lands at the current end of file. This matches the
+  whole-file `try-append-file` helper, which uses the recoverable
+  `append-file-status` runtime primitive instead of read-modify-write.
 
 **Platform policy.** Linux is the reference target and must implement all three
 modes plus streaming reads and writes. On Windows, the handle API either works
@@ -2684,10 +2704,10 @@ result for any mode or operation not yet implemented there, following the same
 pattern as the Windows `try-create-temp-dir` behavior. No operation panics for an
 unsupported platform; callers always receive an `IoError`.
 
-**Scope.** The #1056 open/close subset is implemented for the stdlib API and
-Rust stage0 backend, with Windows returning structured `IoUnsupported` results
-until native handle support lands. Streaming reads and writes remain specified
-follow-ups through #1057 and #1058.
+**Scope.** The #1056 open/close subset, #1057 streaming reads, and #1058
+streaming writes/flush are implemented for the stdlib API and Rust stage0
+backend, with Windows returning structured `IoUnsupported` results until native
+handle support lands.
 
 ---
 

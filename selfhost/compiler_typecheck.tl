@@ -1775,6 +1775,14 @@
         unit
         (set! ok false))
       (if (compiler-typecheck-ok?
+        "(define (f [h : i64] [c : String]) : i64 (file-write-status h c))")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-ok?
+        "(define (f [h : i64]) : i64 (file-flush-status h))")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-ok?
         "(define (f [h : i64]) : String (file-read-chunk-bytes h))")
         unit
         (set! ok false))
@@ -1805,6 +1813,16 @@
       (if (compiler-typecheck-error-ok?
         "(define (f) : i64 (file-close-status \"h\"))"
         "typecheck: argument type mismatch")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        "(define (f [h : i64]) : i64 (file-write-status h 5))"
+        "typecheck: argument type mismatch")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        "(define (f) : i64 (file-flush-status))"
+        "typecheck: arity mismatch")
         unit
         (set! ok false))
       (if (compiler-typecheck-error-ok?

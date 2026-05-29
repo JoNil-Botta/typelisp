@@ -262,7 +262,14 @@
       (+
         (string-length (substring s 0 1))
         (string-length (string-concat s \"!\"))))))
-(define (main) : i64 (parse-and-render \"42\"))")
+(define (emit-stdout [s : String]) : unit
+  (begin
+    (print-string s)
+    (print-str s)))
+(define (main) : i64
+  (begin
+    (emit-stdout \"42\")
+    (parse-and-render \"42\")))")
 
 (define (compiler-backend-string-runtime-ok?) : bool
   (match (compiler-backend-emit-source (compiler-backend-string-runtime-source))
@@ -299,10 +306,17 @@
               (compiler-backend-string-contains?
                 asm
                 ".extern tl_string_concat\n")))
-          (not
-            (compiler-backend-string-contains?
-              asm
-              (compiler-backend-todo-marker)))))]
+          (and
+            (backend-and4
+              (compiler-backend-string-contains? asm ".globl tl_print_str\n")
+              (compiler-backend-string-contains? asm "tl_print_str:\n")
+              (compiler-backend-string-contains? asm "    call tl_print_str\n")
+              (not
+                (compiler-backend-string-contains? asm ".extern tl_print_str\n")))
+            (not
+              (compiler-backend-string-contains?
+                asm
+                (compiler-backend-todo-marker))))))]
     [(ErrCompilerBackend _) false]))
 
 (define (compiler-backend-aggregate-ok?) : bool
@@ -1254,6 +1268,8 @@
       false
       false
       false
+      false
+      false
       false)
     IrFunctionNil
     IrExternNil
@@ -1473,6 +1489,37 @@
                         asm
                         "    movq %rax, .L_tl_envp(%rip)\n")
                       (compiler-backend-string-contains? asm "tl_alloc:\n")))))))))]
+    [(ErrCompilerBackend _) false]))
+
+(define (compiler-backend-windows-sdk-registry-runtime-source) : String
+  "(extern tl_windows_sdk_registry_install : (-> i64))
+(define (main) : i64 (tl_windows_sdk_registry_install))")
+
+(define (compiler-backend-windows-sdk-registry-runtime-ok?) : bool
+  (match (compiler-backend-emit-source
+    (compiler-backend-windows-sdk-registry-runtime-source))
+    [(OkCompilerBackend asm)
+      (and
+        (compiler-backend-string-contains?
+          asm
+          "tl_windows_sdk_registry_install:")
+        (and
+          (compiler-backend-string-contains?
+            asm
+            ".L_tl_windows_registry_unsupported_msg:")
+          (and
+            (compiler-backend-string-contains?
+              asm
+              "    call tl_windows_sdk_registry_install")
+            (and
+              (not
+                (compiler-backend-string-contains?
+                  asm
+                  ".extern tl_windows_sdk_registry_install"))
+              (not
+                (compiler-backend-string-contains?
+                  asm
+                  "_tl_tl_windows_sdk_registry_install"))))))]
     [(ErrCompilerBackend _) false]))
 
 (define (compiler-backend-append-file-status-ok?) : bool
@@ -2067,7 +2114,7 @@
                   (compiler-backend-win64-f64-abi-ok?)
                   (compiler-backend-aggregate-storage-shape-ok?)
                   (compiler-backend-alloc-runtime-shape-ok?)
-                  true))))))))
+                  (compiler-backend-windows-sdk-registry-runtime-ok?)))))))))
     42
     (begin
       (panic "backend: smoke output mismatch")

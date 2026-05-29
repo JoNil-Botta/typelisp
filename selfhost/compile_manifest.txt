@@ -93,6 +93,7 @@ decision|selfhost/ast_types.tl|legacy AST type declarations only; imported by se
 
 case|selfhost_build|selfhost/build.tl|assembly|skip|direct
 requires-stage0-mode|#1437 stage1 compiler resource blocker (imports build/run compiler driver)
+requires-stage0-symbol|file-read-chunk-status,file-write-status,file-flush-status,append-file-status
 contains|_tl_build_cli_config:
 contains|_tl_source_tool_build_source:
 contains|_tl_build_config:
@@ -107,6 +108,7 @@ end
 
 case|selfhost_build_run_core|selfhost/build_run_core.tl|assembly|skip|direct
 requires-stage0-mode|#1437 stage1 compiler resource blocker (imports compiler driver)
+requires-stage0-symbol|file-read-chunk-status,file-write-status,file-flush-status,append-file-status
 contains|_tl_source_tool_build_source:
 contains|_tl_source_tool_run_source:
 contains|_tl_source_tool_run_command:
@@ -436,6 +438,7 @@ end
 
 case|selfhost_doc|selfhost/doc.tl|assembly|exactly-one|direct
 requires-stage0-mode|#1437 stage1 compiler resource blocker (imports doctest checker)
+requires-stage0-symbol|file-read-chunk-status,file-write-status,file-flush-status,append-file-status
 contains|_tl_doc_generate_file:
 contains|_tl_doc_test_file:
 contains|_tl_doc_stdlib_roots:
@@ -539,6 +542,7 @@ end
 
 case|selfhost_doc_test|selfhost/doc_test.tl|assembly|skip|direct
 requires-stage0-mode|#1437 stage1 compiler resource blocker (imports compiler checker)
+requires-stage0-symbol|file-read-chunk-status,file-write-status,file-flush-status,append-file-status
 contains|_tl_doc_test_extract_source:
 contains|_tl_doc_test_parse_run_metadata:
 contains|_tl_doc_test_parse_output_spec:
@@ -551,6 +555,7 @@ end
 
 case|selfhost_doc_test_smoke|selfhost/doc_test_smoke.tl|assembly|exactly-one|direct
 requires-stage0-mode|#1437 stage1 compiler resource blocker (imports doctest checker)
+requires-stage0-symbol|file-read-chunk-status,file-write-status,file-flush-status,append-file-status
 contains|_tl_doc_test_smoke_all:
 contains|_tl_doc_test_run_smoke:
 end
@@ -648,7 +653,7 @@ end
 
 case|selfhost_lsp_frame|selfhost/lsp_frame.tl|assembly|skip|direct
 requires-stage0-mode|#1437 stage1 compiler resource blocker (imports compiler checker)
-requires-stage0-symbol|file-read-chunk-status,append-file-status
+requires-stage0-symbol|file-read-chunk-status,file-write-status,file-flush-status,append-file-status
 contains|_tl_lsp_frame_parse_content_length:
 contains|_tl_lsp_frame_read_message:
 contains|_tl_lsp_handle_message:
@@ -688,7 +693,7 @@ end
 
 case|selfhost_repl|selfhost/repl.tl|assembly|exactly-one|direct
 requires-stage0-mode|#1437 stage1 compiler resource blocker (imports typechecker)
-requires-stage0-symbol|file-read-chunk-status,append-file-status
+requires-stage0-symbol|file-read-chunk-status,file-write-status,file-flush-status,append-file-status
 contains|_tl_repl_loop:
 contains|_tl_repl_handle_input:
 contains|tl> 
@@ -696,6 +701,7 @@ end
 
 case|selfhost_run|selfhost/run.tl|assembly|skip|direct
 requires-stage0-mode|#1437 stage1 compiler resource blocker (imports build/run compiler driver)
+requires-stage0-symbol|file-read-chunk-status,file-write-status,file-flush-status,append-file-status
 contains|_tl_run_plan_config:
 contains|_tl_run_plan_render:
 contains|_tl_run_cli_config:
@@ -705,6 +711,7 @@ end
 
 case|selfhost_test|selfhost/test.tl|assembly|skip|direct
 requires-stage0-mode|#1437 stage1 compiler resource blocker (test driver imports compiler pipeline)
+requires-stage0-symbol|file-read-chunk-status,file-write-status,file-flush-status,append-file-status
 contains|_tl_tltest_run_config:
 contains|_tl_tltest_build_harness:
 contains|_tl_tltest_invalid_opt_level:

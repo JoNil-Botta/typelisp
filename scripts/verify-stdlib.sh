@@ -132,13 +132,13 @@ stdlib_test_manifest() {
 stdlib/tests/string_edges.tl|42|-|-
 stdlib/tests/json_helpers.tl|42|-|-
 stdlib/tests/json_parse_stringify.tl|42|-|-
-stdlib/tests/io_edges.tl|42|-|-|-|requires-stage0-symbol:file-read-chunk-status,append-file-status
-stdlib/tests/io_file_handle.tl|42|-|-|-|requires-stage0-symbol:file-read-chunk-status,append-file-status
-stdlib/tests/io_stdio_lines.tl|42|host-line:stdout-line|host-line:stderr-line|printf:alpha\n\nomega|requires-stage0-symbol:file-read-chunk-status,append-file-status
-stdlib/tests/io_stdio_bytes.tl|42|-|-|literal:abcdef|requires-stage0-symbol:file-read-chunk-status,append-file-status
+stdlib/tests/io_edges.tl|42|-|-|-|requires-stage0-symbol:file-read-chunk-status,file-write-status,file-flush-status,append-file-status
+stdlib/tests/io_file_handle.tl|42|-|-|-|requires-stage0-symbol:file-read-chunk-status,file-write-status,file-flush-status,append-file-status
+stdlib/tests/io_stdio_lines.tl|42|host-line:stdout-line|host-line:stderr-line|printf:alpha\n\nomega|requires-stage0-symbol:file-read-chunk-status,file-write-status,file-flush-status,append-file-status
+stdlib/tests/io_stdio_bytes.tl|42|-|-|literal:abcdef|requires-stage0-symbol:file-read-chunk-status,file-write-status,file-flush-status,append-file-status
 stdlib/tests/env_api.tl|42|-|-
 stdlib/tests/cpu_api.tl|42|-|-|-|requires-stage0-symbol:cpuid
-stdlib/tests/fs_api.tl|42|-|-|-|requires-stage0-symbol:file-read-chunk-status,append-file-status
+stdlib/tests/fs_api.tl|42|-|-|-|requires-stage0-symbol:file-read-chunk-status,file-write-status,file-flush-status,append-file-status
 stdlib/tests/hash_api.tl|42|-|-
 stdlib/tests/hashmap_api.tl|42|-|-
 stdlib/tests/process_api.tl|42|-|-
@@ -150,8 +150,8 @@ stdlib/tests/visual_studio_api.tl|42|-|-
 stdlib/tests/test_assert_success.tl|42|-|-
 stdlib/tests/test_assert_failure.tl|134|-|literal:stdlib test failure message
 stdlib/tests/windows_registry_api.tl|42|-|-|-|requires-stage0-symbol:tl_windows_sdk_registry_install
-stdlib/tests/windows_sdk_api.tl|42|-|-|-|requires-stage0-symbol:file-read-chunk-status,append-file-status,tl_windows_sdk_registry_install
-stdlib/tests/msvc_api.tl|42|-|-|-|requires-stage0-symbol:file-read-chunk-status,append-file-status,tl_windows_sdk_registry_install
+stdlib/tests/windows_sdk_api.tl|42|-|-|-|requires-stage0-symbol:file-read-chunk-status,file-write-status,file-flush-status,append-file-status,tl_windows_sdk_registry_install
+stdlib/tests/msvc_api.tl|42|-|-|-|requires-stage0-symbol:file-read-chunk-status,file-write-status,file-flush-status,append-file-status,tl_windows_sdk_registry_install
 EOF
 }
 

@@ -21,6 +21,8 @@ pub const FILE_EXISTS_STATUS_RUNTIME_SYMBOL: &str = ".L_tl_file_exists_status";
 pub const FILE_OPEN_STATUS_RUNTIME_SYMBOL: &str = ".L_tl_file_open_status";
 pub const FILE_CLOSE_STATUS_RUNTIME_SYMBOL: &str = ".L_tl_file_close_status";
 pub const FILE_READ_CHUNK_STATUS_RUNTIME_SYMBOL: &str = ".L_tl_file_read_chunk_status";
+pub const FILE_WRITE_STATUS_RUNTIME_SYMBOL: &str = ".L_tl_file_write_status";
+pub const FILE_FLUSH_STATUS_RUNTIME_SYMBOL: &str = ".L_tl_file_flush_status";
 pub const FILE_READ_CHUNK_BYTES_RUNTIME_SYMBOL: &str = ".L_tl_file_read_chunk_bytes";
 pub const FILE_READ_CHUNK_EOF_RUNTIME_SYMBOL: &str = ".L_tl_file_read_chunk_eof";
 pub const READ_STDIN_LINE_RUNTIME_SYMBOL: &str = ".L_tl_read_stdin_line";
@@ -383,6 +385,8 @@ pub fn classify_direct_call_effect(func: &str) -> IrEffect {
         | FILE_OPEN_STATUS_RUNTIME_SYMBOL
         | FILE_CLOSE_STATUS_RUNTIME_SYMBOL
         | FILE_READ_CHUNK_STATUS_RUNTIME_SYMBOL
+        | FILE_WRITE_STATUS_RUNTIME_SYMBOL
+        | FILE_FLUSH_STATUS_RUNTIME_SYMBOL
         | FILE_READ_CHUNK_BYTES_RUNTIME_SYMBOL
         | FILE_READ_CHUNK_EOF_RUNTIME_SYMBOL
         | READ_STDIN_LINE_RUNTIME_SYMBOL
@@ -1294,6 +1298,8 @@ mod tests {
             FILE_OPEN_STATUS_RUNTIME_SYMBOL,
             FILE_CLOSE_STATUS_RUNTIME_SYMBOL,
             FILE_READ_CHUNK_STATUS_RUNTIME_SYMBOL,
+            FILE_WRITE_STATUS_RUNTIME_SYMBOL,
+            FILE_FLUSH_STATUS_RUNTIME_SYMBOL,
             FILE_READ_CHUNK_BYTES_RUNTIME_SYMBOL,
             FILE_READ_CHUNK_EOF_RUNTIME_SYMBOL,
             READ_STDIN_LINE_RUNTIME_SYMBOL,

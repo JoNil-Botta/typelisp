@@ -96,6 +96,7 @@ should take borrowed text and which should return owned active-arena strings.
 | `try-append-file` | Appends through the recoverable runtime status helper. It preserves existing contents, creates missing files, does not allocate a concatenated temporary string, and uses best-effort host append semantics rather than truncating or rewriting the whole file. |
 | `file-open`, `file-close` | `file-open` returns `ResultIoFile` with an opaque runtime-managed `FileHandle` for `OpenRead`, `OpenWriteTruncate`, and `OpenWriteAppend`. The Linux runtime copies the path into active-arena storage for the host syscall and tracks handle state in a process-global table; Windows currently returns `IoUnsupported`. `file-close` releases a valid handle and returns `IoUnsupported` for invalid or already-closed handles. |
 | `file-read-chunk`, `file-read-bytes`, `file-read-eof?` | `file-read-chunk` reads up to the requested byte count from a read-mode `FileHandle` and returns `ResultIoRead` with active-arena `String` bytes plus the sticky EOF flag. Negative counts return `IoInvalidPath`; closed, invalid, write-only, and unsupported handles return `IoUnsupported`. The accessors are non-allocating field reads on `FileRead`. |
+| `file-write`, `file-flush` | `file-write` writes a `String` to an `OpenWriteTruncate` or `OpenWriteAppend` handle, retrying host short writes until complete or an error is reported. `file-flush` flushes a write-mode handle. Closed, invalid, read-only, and unsupported handles return `IoUnsupported`. |
 | `read-file-or` | Convenience wrapper over `try-read-file`; returns the caller-provided `fallback` for every structured error. |
 | `append-file` | Panic-on-error convenience wrapper over `try-append-file`; preserves existing contents and creates missing files through host append mode. |
 | `file-nonempty?` | Convenience wrapper over `try-read-file`; allocates a temporary active-arena `String` through `read-file` only when the path exists. |
@@ -139,8 +140,10 @@ implementation lands incrementally:
   `String` payload plus a sticky EOF flag, mirroring `StdinRead`). Chunk bytes
   allocate in the active arena and stay `String`-typed until a future
   byte-buffer/slice split lands.
-- **#1058** — streaming writes and flush, plus `OpenWriteAppend` handle
-  semantics that match the non-truncating `try-append-file` append primitive.
+- **#1058** — implemented: `file-write` and `file-flush` for write-mode
+  handles. `OpenWriteAppend` matches the non-truncating `try-append-file`
+  append primitive; Linux uses host append mode and Windows returns
+  `IoUnsupported` until native handle support lands.
 
 All handle helpers reuse the existing `IoError` model; mode violations, closed
 or invalid handles, and unsupported Windows operations return structured

@@ -27,6 +27,43 @@
 (defenum CompilerOptimizedProgram
   (CompilerOptimizedProgram CompilerIrProgram CompilerSourceSpans))
 
+(defenum OptAggregatePointer
+  (OptAggregatePointer i64 i64))
+
+(defenum OptAggregatePointerList
+  (OptAggregatePointerNil)
+  (OptAggregatePointerCons OptAggregatePointer OptAggregatePointerList))
+
+(defenum OptAggregateAccess
+  (OptAggregateStore i64 AstType)
+  (OptAggregateLoad i64 i64 AstType))
+
+(defenum OptAggregateAccessList
+  (OptAggregateAccessNil)
+  (OptAggregateAccessCons OptAggregateAccess OptAggregateAccessList))
+
+(defenum OptAggregateAllocCandidate
+  (OptAggregateAllocCandidate
+    i64
+    AstType
+    i64
+    OptAggregatePointerList
+    OptAggregateAccessList))
+
+(defenum OptAggregateAllocCandidateList
+  (OptAggregateAllocCandidateNil)
+  (OptAggregateAllocCandidateCons
+    OptAggregateAllocCandidate
+    OptAggregateAllocCandidateList))
+
+(defenum OptMaybeAggregateAlloc
+  (OptNoAggregateAlloc)
+  (OptSomeAggregateAlloc i64 AstType i64))
+
+(defenum OptAggregateScanResult
+  (OptAggregateScanOk OptAggregatePointerList OptAggregateAccessList)
+  (OptAggregateScanReject))
+
 (define compiler-optimize-level-default : i64
   1)
 
@@ -938,6 +975,484 @@
     [(IrBlockNil) (IrBlockNil)]
     [(IrBlockCons block rest)
       (IrBlockCons (opt-dce-block set block) (opt-dce-block-list set rest))]))
+
+;; --- aggregate allocation candidate analysis (#1487) ------------------------
+;;
+;; This is intentionally analysis-only. It recognizes heap aggregate allocations
+;; that stay local to a function and records the constant-offset derived pointers
+;; plus load/store accesses that a later scalar-replacement slice can consume.
+(define (opt-aggregate-fixed-type? [ty : AstType]) : bool
+  (match ty
+    [(AstTyStruct _) true]
+    [(AstTyEnum _) true]
+    [(AstTyTuple _) true]
+    [(AstTyArray _ _) true]
+    [_ false]))
+
+(define (opt-aggregate-tl-alloc-size [args : CompilerIrValueList]) : OptMaybeI64
+  (match args
+    [(IrValueCons value rest)
+      (match rest
+        [(IrValueNil)
+          (match value
+            [(IrValueI64 size) (OptSomeI64 size)]
+            [_ (OptNoI64)])]
+        [_ (OptNoI64)])]
+    [_ (OptNoI64)]))
+
+(define (opt-aggregate-direct-alloc [instr : CompilerIrInstr]) : OptMaybeAggregateAlloc
+  (match instr
+    [(IrInstrCall dst name args ty)
+      (if (and (string-eq name "tl_alloc") (opt-aggregate-fixed-type? ty))
+        (match (opt-aggregate-tl-alloc-size args)
+          [(OptSomeI64 size)
+            (if (> size 0)
+              (OptSomeAggregateAlloc dst ty size)
+              (OptNoAggregateAlloc))]
+          [(OptNoI64) (OptNoAggregateAlloc)])
+        (OptNoAggregateAlloc))]
+    [_ (OptNoAggregateAlloc)]))
+
+(define (opt-aggregate-pointer-list-lookup
+  [ptrs : OptAggregatePointerList]
+  [var : i64]) : OptMaybeI64
+  (match ptrs
+    [(OptAggregatePointerNil) (OptNoI64)]
+    [(OptAggregatePointerCons ptr rest)
+      (match ptr
+        [(OptAggregatePointer ptr-var offset)
+          (if (= ptr-var var)
+            (OptSomeI64 offset)
+            (opt-aggregate-pointer-list-lookup rest var))])]))
+
+(define (opt-aggregate-value-offset
+  [base : i64]
+  [ptrs : OptAggregatePointerList]
+  [value : CompilerIrValue]) : OptMaybeI64
+  (match value
+    [(IrValueVar var)
+      (if (= var base)
+        (OptSomeI64 0)
+        (opt-aggregate-pointer-list-lookup ptrs var))]
+    [_ (OptNoI64)]))
+
+(define (opt-aggregate-value-has-pointer?
+  [base : i64]
+  [ptrs : OptAggregatePointerList]
+  [value : CompilerIrValue]) : bool
+  (match (opt-aggregate-value-offset base ptrs value)
+    [(OptSomeI64 _) true]
+    [(OptNoI64) false]))
+
+(define (opt-aggregate-value-list-has-pointer?
+  [base : i64]
+  [ptrs : OptAggregatePointerList]
+  [values : CompilerIrValueList]) : bool
+  (match values
+    [(IrValueNil) false]
+    [(IrValueCons value rest)
+      (or
+        (opt-aggregate-value-has-pointer? base ptrs value)
+        (opt-aggregate-value-list-has-pointer? base ptrs rest))]))
+
+(define (opt-aggregate-maybe-value-has-pointer?
+  [base : i64]
+  [ptrs : OptAggregatePointerList]
+  [maybe : CompilerIrMaybeValue]) : bool
+  (match maybe
+    [(IrNoValue) false]
+    [(IrSomeValue value) (opt-aggregate-value-has-pointer? base ptrs value)]))
+
+(define (opt-aggregate-phi-inputs-have-pointer?
+  [base : i64]
+  [ptrs : OptAggregatePointerList]
+  [inputs : CompilerIrPhiInputList]) : bool
+  (match inputs
+    [(IrPhiInputNil) false]
+    [(IrPhiInputCons input rest)
+      (match input
+        [(IrPhiInput value _)
+          (or
+            (opt-aggregate-value-has-pointer? base ptrs value)
+            (opt-aggregate-phi-inputs-have-pointer? base ptrs rest))])]))
+
+(define (opt-aggregate-raw-var-is-pointer?
+  [base : i64]
+  [ptrs : OptAggregatePointerList]
+  [var : i64]) : bool
+  (or
+    (= var base)
+    (match (opt-aggregate-pointer-list-lookup ptrs var)
+      [(OptSomeI64 _) true]
+      [(OptNoI64) false])))
+
+(define (opt-aggregate-instr-has-pointer?
+  [instr : CompilerIrInstr]
+  [base : i64]
+  [ptrs : OptAggregatePointerList]) : bool
+  (match instr
+    [(IrInstrMov _ src _) (opt-aggregate-value-has-pointer? base ptrs src)]
+    [(IrInstrAddrOf _ src) (opt-aggregate-raw-var-is-pointer? base ptrs src)]
+    [(IrInstrGep _ src offset _)
+      (or
+        (opt-aggregate-value-has-pointer? base ptrs src)
+        (opt-aggregate-value-has-pointer? base ptrs offset))]
+    [(IrInstrLoad _ src _) (opt-aggregate-value-has-pointer? base ptrs src)]
+    [(IrInstrStorePtr ptr value _)
+      (or
+        (opt-aggregate-value-has-pointer? base ptrs ptr)
+        (opt-aggregate-value-has-pointer? base ptrs value))]
+    [(IrInstrBoundsCheck index length _)
+      (or
+        (opt-aggregate-value-has-pointer? base ptrs index)
+        (opt-aggregate-value-has-pointer? base ptrs length))]
+    [(IrInstrCast _ src _ _) (opt-aggregate-value-has-pointer? base ptrs src)]
+    [(IrInstrBinOp _ _ lhs rhs _)
+      (or
+        (opt-aggregate-value-has-pointer? base ptrs lhs)
+        (opt-aggregate-value-has-pointer? base ptrs rhs))]
+    [(IrInstrUnOp _ _ src _) (opt-aggregate-value-has-pointer? base ptrs src)]
+    [(IrInstrSplat _ src _ _) (opt-aggregate-value-has-pointer? base ptrs src)]
+    [(IrInstrVectorBinOp _ _ lhs rhs _ _)
+      (or
+        (opt-aggregate-value-has-pointer? base ptrs lhs)
+        (opt-aggregate-value-has-pointer? base ptrs rhs))]
+    [(IrInstrVectorReduce _ _ src _ _)
+      (opt-aggregate-value-has-pointer? base ptrs src)]
+    [(IrInstrVectorCompare _ _ lhs rhs _ _)
+      (or
+        (opt-aggregate-value-has-pointer? base ptrs lhs)
+        (opt-aggregate-value-has-pointer? base ptrs rhs))]
+    [(IrInstrMaskBinOp _ _ lhs rhs _)
+      (or
+        (opt-aggregate-value-has-pointer? base ptrs lhs)
+        (opt-aggregate-value-has-pointer? base ptrs rhs))]
+    [(IrInstrMaskNot _ src _) (opt-aggregate-value-has-pointer? base ptrs src)]
+    [(IrInstrMaskReduce _ _ src _)
+      (opt-aggregate-value-has-pointer? base ptrs src)]
+    [(IrInstrSelect _ mask on-true on-false _ _)
+      (or
+        (opt-aggregate-value-has-pointer? base ptrs mask)
+        (or
+          (opt-aggregate-value-has-pointer? base ptrs on-true)
+          (opt-aggregate-value-has-pointer? base ptrs on-false)))]
+    [(IrInstrVectorLoad _ vector-base index _ _)
+      (or
+        (opt-aggregate-value-has-pointer? base ptrs vector-base)
+        (opt-aggregate-value-has-pointer? base ptrs index))]
+    [(IrInstrVectorStore vector-base index value _ _)
+      (or
+        (opt-aggregate-value-has-pointer? base ptrs vector-base)
+        (or
+          (opt-aggregate-value-has-pointer? base ptrs index)
+          (opt-aggregate-value-has-pointer? base ptrs value)))]
+    [(IrInstrPredicatedStore store-base index value mask _ _)
+      (or
+        (opt-aggregate-value-has-pointer? base ptrs store-base)
+        (or
+          (opt-aggregate-value-has-pointer? base ptrs index)
+          (or
+            (opt-aggregate-value-has-pointer? base ptrs value)
+            (opt-aggregate-value-has-pointer? base ptrs mask))))]
+    [(IrInstrPredicatedLoad _ load-base index mask _ _)
+      (or
+        (opt-aggregate-value-has-pointer? base ptrs load-base)
+        (or
+          (opt-aggregate-value-has-pointer? base ptrs index)
+          (opt-aggregate-value-has-pointer? base ptrs mask)))]
+    [(IrInstrTailMask _ index length _)
+      (or
+        (opt-aggregate-value-has-pointer? base ptrs index)
+        (opt-aggregate-value-has-pointer? base ptrs length))]
+    [(IrInstrCall _ _ args _)
+      (opt-aggregate-value-list-has-pointer? base ptrs args)]
+    [(IrInstrTailCall _ args _)
+      (opt-aggregate-value-list-has-pointer? base ptrs args)]
+    [(IrInstrStore _ value _)
+      (opt-aggregate-value-has-pointer? base ptrs value)]
+    [(IrInstrBranch cond _ _) (opt-aggregate-value-has-pointer? base ptrs cond)]
+    [(IrInstrReturn maybe)
+      (opt-aggregate-maybe-value-has-pointer? base ptrs maybe)]
+    [(IrInstrPhi _ inputs _)
+      (opt-aggregate-phi-inputs-have-pointer? base ptrs inputs)]
+    [_ false]))
+
+(define (opt-aggregate-instrs-touch-candidate?
+  [instrs : CompilerIrInstrList]
+  [base : i64]
+  [ptrs : OptAggregatePointerList]) : bool
+  (match instrs
+    [(IrInstrNil) false]
+    [(IrInstrCons instr rest)
+      (or
+        (opt-aggregate-instr-has-pointer? instr base ptrs)
+        (opt-aggregate-instrs-touch-candidate? rest base ptrs))]))
+
+(define (opt-aggregate-instr-known-safe?
+  [instr : CompilerIrInstr]
+  [base : i64]
+  [ptrs : OptAggregatePointerList]) : bool
+  (match instr
+    [(IrInstrCall dst name _ _) (and (= dst base) (string-eq name "tl_alloc"))]
+    [(IrInstrGep _ src offset _)
+      (match (opt-aggregate-value-offset base ptrs src)
+        [(OptSomeI64 _)
+          (match offset
+            [(IrValueI64 _) true]
+            [_ false])]
+        [(OptNoI64) false])]
+    [(IrInstrLoad _ src _) (opt-aggregate-value-has-pointer? base ptrs src)]
+    [(IrInstrStorePtr ptr value _)
+      (and
+        (opt-aggregate-value-has-pointer? base ptrs ptr)
+        (not (opt-aggregate-value-has-pointer? base ptrs value)))]
+    [_ false]))
+
+(define (opt-aggregate-instr-crosses-unknown-effect?
+  [instr : CompilerIrInstr]
+  [base : i64]
+  [ptrs : OptAggregatePointerList]) : bool
+  (if (opt-aggregate-instr-known-safe? instr base ptrs)
+    false
+    (compiler-ir-effect-invalidates-cse? (compiler-ir-instr-effect instr))))
+
+(define (opt-aggregate-scan-instrs
+  [base : i64]
+  [ty : AstType]
+  [size : i64]
+  [instrs : CompilerIrInstrList]
+  [ptrs : OptAggregatePointerList]
+  [accesses : OptAggregateAccessList]
+  [seen-alloc : bool]) : OptAggregateScanResult
+  (match instrs
+    [(IrInstrNil)
+      (if seen-alloc
+        (OptAggregateScanOk ptrs accesses)
+        (OptAggregateScanReject))]
+    [(IrInstrCons instr rest)
+      (if (not seen-alloc)
+        (match (opt-aggregate-direct-alloc instr)
+          [(OptSomeAggregateAlloc dst alloc-ty alloc-size)
+            (if (and
+              (= dst base)
+              (and (= alloc-size size) (opt-type-eq alloc-ty ty)))
+              (opt-aggregate-scan-instrs base ty size rest ptrs accesses true)
+              (opt-aggregate-scan-instrs base ty size rest ptrs accesses false))]
+          [(OptNoAggregateAlloc)
+            (opt-aggregate-scan-instrs base ty size rest ptrs accesses false)])
+        (match instr
+          [(IrInstrGep dst src offset _)
+            (match (opt-aggregate-value-offset base ptrs src)
+              [(OptSomeI64 base-offset)
+                (match offset
+                  [(IrValueI64 field-offset)
+                    (opt-aggregate-scan-instrs
+                      base
+                      ty
+                      size
+                      rest
+                      (OptAggregatePointerCons
+                        (OptAggregatePointer dst (+ base-offset field-offset))
+                        ptrs)
+                      accesses
+                      true)]
+                  [_ (OptAggregateScanReject)])]
+              [(OptNoI64)
+                (if (opt-aggregate-value-has-pointer? base ptrs offset)
+                  (OptAggregateScanReject)
+                  (opt-aggregate-scan-instrs
+                    base
+                    ty
+                    size
+                    rest
+                    ptrs
+                    accesses
+                    true))])]
+          [(IrInstrLoad dst src load-ty)
+            (match (opt-aggregate-value-offset base ptrs src)
+              [(OptSomeI64 offset)
+                (opt-aggregate-scan-instrs
+                  base
+                  ty
+                  size
+                  rest
+                  ptrs
+                  (OptAggregateAccessCons
+                    (OptAggregateLoad dst offset load-ty)
+                    accesses)
+                  true)]
+              [(OptNoI64)
+                (if (opt-aggregate-instrs-touch-candidate? rest base ptrs)
+                  (OptAggregateScanReject)
+                  (opt-aggregate-scan-instrs
+                    base
+                    ty
+                    size
+                    rest
+                    ptrs
+                    accesses
+                    true))])]
+          [(IrInstrStorePtr ptr value store-ty)
+            (match (opt-aggregate-value-offset base ptrs ptr)
+              [(OptSomeI64 offset)
+                (if (opt-aggregate-value-has-pointer? base ptrs value)
+                  (OptAggregateScanReject)
+                  (opt-aggregate-scan-instrs
+                    base
+                    ty
+                    size
+                    rest
+                    ptrs
+                    (OptAggregateAccessCons
+                      (OptAggregateStore offset store-ty)
+                      accesses)
+                    true))]
+              [(OptNoI64)
+                (if (or
+                  (opt-aggregate-value-has-pointer? base ptrs value)
+                  (and
+                    (compiler-ir-effect-invalidates-cse?
+                      (compiler-ir-instr-effect instr))
+                    (opt-aggregate-instrs-touch-candidate? rest base ptrs)))
+                  (OptAggregateScanReject)
+                  (opt-aggregate-scan-instrs
+                    base
+                    ty
+                    size
+                    rest
+                    ptrs
+                    accesses
+                    true))])]
+          [_
+            (if (opt-aggregate-instr-has-pointer? instr base ptrs)
+              (OptAggregateScanReject)
+              (if (and
+                (opt-aggregate-instr-crosses-unknown-effect? instr base ptrs)
+                (opt-aggregate-instrs-touch-candidate? rest base ptrs))
+                (OptAggregateScanReject)
+                (opt-aggregate-scan-instrs base ty size rest ptrs accesses true)))]))]))
+
+(define (opt-aggregate-classify-one
+  [base : i64]
+  [ty : AstType]
+  [size : i64]
+  [instrs : CompilerIrInstrList]) : OptAggregateScanResult
+  (opt-aggregate-scan-instrs
+    base
+    ty
+    size
+    instrs
+    (OptAggregatePointerNil)
+    (OptAggregateAccessNil)
+    false))
+
+(define (opt-aggregate-candidates-from-instrs
+  [scan : CompilerIrInstrList]
+  [all : CompilerIrInstrList]) : OptAggregateAllocCandidateList
+  (match scan
+    [(IrInstrNil) (OptAggregateAllocCandidateNil)]
+    [(IrInstrCons instr rest)
+      (match (opt-aggregate-direct-alloc instr)
+        [(OptSomeAggregateAlloc base ty size)
+          (match (opt-aggregate-classify-one base ty size all)
+            [(OptAggregateScanOk ptrs accesses)
+              (OptAggregateAllocCandidateCons
+                (OptAggregateAllocCandidate base ty size ptrs accesses)
+                (opt-aggregate-candidates-from-instrs rest all))]
+            [(OptAggregateScanReject)
+              (opt-aggregate-candidates-from-instrs rest all)])]
+        [(OptNoAggregateAlloc) (opt-aggregate-candidates-from-instrs rest all)])]))
+
+(define (opt-aggregate-instr-list-append
+  [left : CompilerIrInstrList]
+  [right : CompilerIrInstrList]) : CompilerIrInstrList
+  (match left
+    [(IrInstrNil) right]
+    [(IrInstrCons head rest)
+      (IrInstrCons head (opt-aggregate-instr-list-append rest right))]))
+
+(define (opt-aggregate-flatten-blocks [blocks : CompilerIrBlockList]) : CompilerIrInstrList
+  (match blocks
+    [(IrBlockNil) (IrInstrNil)]
+    [(IrBlockCons block rest)
+      (match block
+        [(IrBlock _ instrs)
+          (opt-aggregate-instr-list-append
+            instrs
+            (opt-aggregate-flatten-blocks rest))])]))
+
+(define (opt-aggregate-allocation-candidates-function
+  [func : CompilerIrFunction]) : OptAggregateAllocCandidateList
+  (match func
+    [(IrFunction _ _ _ _ blocks)
+      (let
+        [instrs : CompilerIrInstrList (opt-aggregate-flatten-blocks blocks)]
+        (opt-aggregate-candidates-from-instrs instrs instrs))]))
+
+(define (opt-aggregate-candidate-list-append
+  [left : OptAggregateAllocCandidateList]
+  [right : OptAggregateAllocCandidateList]) : OptAggregateAllocCandidateList
+  (match left
+    [(OptAggregateAllocCandidateNil) right]
+    [(OptAggregateAllocCandidateCons head rest)
+      (OptAggregateAllocCandidateCons
+        head
+        (opt-aggregate-candidate-list-append rest right))]))
+
+(define (opt-aggregate-allocation-candidates-functions
+  [functions : CompilerIrFunctionList]) : OptAggregateAllocCandidateList
+  (match functions
+    [(IrFunctionNil) (OptAggregateAllocCandidateNil)]
+    [(IrFunctionCons func rest)
+      (opt-aggregate-candidate-list-append
+        (opt-aggregate-allocation-candidates-function func)
+        (opt-aggregate-allocation-candidates-functions rest))]))
+
+(define (opt-aggregate-allocation-candidates [program : CompilerIrProgram]) : OptAggregateAllocCandidateList
+  (match program
+    [(IrProgram _ functions _)
+      (opt-aggregate-allocation-candidates-functions functions)]))
+
+(define (opt-aggregate-candidate-list-count
+  [candidates : OptAggregateAllocCandidateList]) : i64
+  (match candidates
+    [(OptAggregateAllocCandidateNil) 0]
+    [(OptAggregateAllocCandidateCons _ rest)
+      (+ 1 (opt-aggregate-candidate-list-count rest))]))
+
+(define (opt-aggregate-pointer-list-count [ptrs : OptAggregatePointerList]) : i64
+  (match ptrs
+    [(OptAggregatePointerNil) 0]
+    [(OptAggregatePointerCons _ rest)
+      (+ 1 (opt-aggregate-pointer-list-count rest))]))
+
+(define (opt-aggregate-access-list-count [accesses : OptAggregateAccessList]) : i64
+  (match accesses
+    [(OptAggregateAccessNil) 0]
+    [(OptAggregateAccessCons _ rest)
+      (+ 1 (opt-aggregate-access-list-count rest))]))
+
+(define (opt-aggregate-access-list-load-count
+  [accesses : OptAggregateAccessList]) : i64
+  (match accesses
+    [(OptAggregateAccessNil) 0]
+    [(OptAggregateAccessCons access rest)
+      (+
+        (match access
+          [(OptAggregateLoad _ _ _) 1]
+          [_ 0])
+        (opt-aggregate-access-list-load-count rest))]))
+
+(define (opt-aggregate-access-list-store-count
+  [accesses : OptAggregateAccessList]) : i64
+  (match accesses
+    [(OptAggregateAccessNil) 0]
+    [(OptAggregateAccessCons access rest)
+      (+
+        (match access
+          [(OptAggregateStore _ _) 1]
+          [_ 0])
+        (opt-aggregate-access-list-store-count rest))]))
 
 ;; --- block-local common subexpression elimination (#546) --------------------
 ;;
@@ -4005,6 +4520,194 @@
     (and (compiler-optimize-spans-fold-ok?) (compiler-optimize-spans-cse-ok?)))
     42
     1))
+
+(define (opt-aggregate-test-alloc) : CompilerIrInstr
+  (IrInstrCall
+    1
+    "tl_alloc"
+    (IrValueCons (IrValueI64 16) IrValueNil)
+    (AstTyStruct "Pair")))
+
+(define (opt-aggregate-positive-instrs) : CompilerIrInstrList
+  (IrInstrCons
+    (opt-aggregate-test-alloc)
+    (IrInstrCons
+      (IrInstrGep 2 (IrValueVar 1) (IrValueI64 0) (AstTyU8))
+      (IrInstrCons
+        (IrInstrStorePtr (IrValueVar 2) (IrValueI64 10) (AstTyI64))
+        (IrInstrCons
+          (IrInstrGep 3 (IrValueVar 1) (IrValueI64 8) (AstTyU8))
+          (IrInstrCons
+            (IrInstrStorePtr (IrValueVar 3) (IrValueBool true) (AstTyBool))
+            (IrInstrCons
+              (IrInstrGep 4 (IrValueVar 1) (IrValueI64 0) (AstTyU8))
+              (IrInstrCons
+                (IrInstrLoad 5 (IrValueVar 4) (AstTyI64))
+                (IrInstrCons
+                  (IrInstrReturn (IrSomeValue (IrValueVar 5)))
+                  IrInstrNil)))))))))
+
+(define (opt-aggregate-returned-instrs) : CompilerIrInstrList
+  (IrInstrCons
+    (opt-aggregate-test-alloc)
+    (IrInstrCons (IrInstrReturn (IrSomeValue (IrValueVar 1))) IrInstrNil)))
+
+(define (opt-aggregate-passed-instrs) : CompilerIrInstrList
+  (IrInstrCons
+    (opt-aggregate-test-alloc)
+    (IrInstrCons
+      (IrInstrCall
+        2
+        "touch"
+        (IrValueCons (IrValueVar 1) IrValueNil)
+        (AstTyUnit))
+      (IrInstrCons (IrInstrReturn (IrSomeValue (IrValueI64 0))) IrInstrNil))))
+
+(define (opt-aggregate-global-store-instrs) : CompilerIrInstrList
+  (IrInstrCons
+    (opt-aggregate-test-alloc)
+    (IrInstrCons
+      (IrInstrStore "escaped" (IrValueVar 1) (AstTyU64))
+      (IrInstrCons (IrInstrReturn (IrSomeValue (IrValueI64 0))) IrInstrNil))))
+
+(define (opt-aggregate-store-through-other-instrs) : CompilerIrInstrList
+  (IrInstrCons
+    (opt-aggregate-test-alloc)
+    (IrInstrCons
+      (IrInstrStorePtr (IrValueVar 99) (IrValueVar 1) (AstTyU64))
+      (IrInstrCons (IrInstrReturn (IrSomeValue (IrValueI64 0))) IrInstrNil))))
+
+(define (opt-aggregate-unknown-offset-instrs) : CompilerIrInstrList
+  (IrInstrCons
+    (opt-aggregate-test-alloc)
+    (IrInstrCons
+      (IrInstrGep 2 (IrValueVar 1) (IrValueVar 9) (AstTyU8))
+      (IrInstrCons (IrInstrReturn (IrSomeValue (IrValueI64 0))) IrInstrNil))))
+
+(define (opt-aggregate-call-separated-instrs) : CompilerIrInstrList
+  (IrInstrCons
+    (opt-aggregate-test-alloc)
+    (IrInstrCons
+      (IrInstrGep 2 (IrValueVar 1) (IrValueI64 0) (AstTyU8))
+      (IrInstrCons
+        (IrInstrStorePtr (IrValueVar 2) (IrValueI64 10) (AstTyI64))
+        (IrInstrCons
+          (IrInstrCall 9 "touch" IrValueNil (AstTyUnit))
+          (IrInstrCons
+            (IrInstrGep 3 (IrValueVar 1) (IrValueI64 0) (AstTyU8))
+            (IrInstrCons
+              (IrInstrLoad 4 (IrValueVar 3) (AstTyI64))
+              (IrInstrCons
+                (IrInstrReturn (IrSomeValue (IrValueVar 4)))
+                IrInstrNil))))))))
+
+(define (opt-aggregate-predicated-memory-instrs) : CompilerIrInstrList
+  (IrInstrCons
+    (opt-aggregate-test-alloc)
+    (IrInstrCons
+      (IrInstrGep 2 (IrValueVar 1) (IrValueI64 0) (AstTyU8))
+      (IrInstrCons
+        (IrInstrStorePtr (IrValueVar 2) (IrValueI64 10) (AstTyI64))
+        (IrInstrCons
+          (IrInstrPredicatedLoad
+            8
+            (IrValueVar 99)
+            (IrValueI64 0)
+            (IrValueBool true)
+            4
+            (AstTyI64))
+          (IrInstrCons
+            (IrInstrGep 3 (IrValueVar 1) (IrValueI64 0) (AstTyU8))
+            (IrInstrCons
+              (IrInstrLoad 4 (IrValueVar 3) (AstTyI64))
+              (IrInstrCons
+                (IrInstrReturn (IrSomeValue (IrValueVar 4)))
+                IrInstrNil))))))))
+
+(define (opt-aggregate-phi-flowed-blocks) : CompilerIrBlockList
+  (IrBlockCons
+    (IrBlock
+      "entry"
+      (IrInstrCons
+        (opt-aggregate-test-alloc)
+        (IrInstrCons (IrInstrJump "join") IrInstrNil)))
+    (IrBlockCons
+      (IrBlock
+        "join"
+        (IrInstrCons
+          (IrInstrPhi
+            2
+            (IrPhiInputCons (IrPhiInput (IrValueVar 1) "entry") (IrPhiInputNil))
+            (AstTyU64))
+          (IrInstrCons (IrInstrReturn (IrSomeValue (IrValueI64 0))) IrInstrNil)))
+      IrBlockNil)))
+
+(define (opt-aggregate-no-candidates? [instrs : CompilerIrInstrList]) : bool
+  (=
+    (opt-aggregate-candidate-list-count
+      (opt-aggregate-allocation-candidates (opt-spans-program instrs)))
+    0))
+
+(define (opt-aggregate-phi-flowed-rejected?) : bool
+  (=
+    (opt-aggregate-candidate-list-count
+      (opt-aggregate-allocation-candidates
+        (IrProgram
+          IrGlobalNil
+          (IrFunctionCons
+            (IrFunction
+              "main"
+              IrParamNil
+              (AstTyI64)
+              4
+              (opt-aggregate-phi-flowed-blocks))
+            IrFunctionNil)
+          IrExternNil)))
+    0))
+
+(define (opt-aggregate-positive-classified?) : bool
+  (match (opt-aggregate-allocation-candidates
+    (opt-spans-program (opt-aggregate-positive-instrs)))
+    [(OptAggregateAllocCandidateCons candidate rest)
+      (match rest
+        [(OptAggregateAllocCandidateNil)
+          (match candidate
+            [(OptAggregateAllocCandidate base ty size ptrs accesses)
+              (and
+                (= base 1)
+                (and
+                  (= size 16)
+                  (and
+                    (opt-type-eq ty (AstTyStruct "Pair"))
+                    (and
+                      (= (opt-aggregate-pointer-list-count ptrs) 3)
+                      (and
+                        (= (opt-aggregate-access-list-count accesses) 3)
+                        (and
+                          (= (opt-aggregate-access-list-store-count accesses) 2)
+                          (= (opt-aggregate-access-list-load-count accesses) 1)))))))])]
+        [_ false])]
+    [_ false]))
+
+(define (compiler-optimize-aggregate-candidate-self-test) : i64
+  (cond
+    [(not (opt-aggregate-positive-classified?)) 1]
+    [(not (opt-aggregate-no-candidates? (opt-aggregate-returned-instrs))) 2]
+    [(not (opt-aggregate-no-candidates? (opt-aggregate-passed-instrs))) 3]
+    [(not (opt-aggregate-no-candidates? (opt-aggregate-global-store-instrs))) 4]
+    [(not
+        (opt-aggregate-no-candidates?
+          (opt-aggregate-store-through-other-instrs)))
+      5]
+    [(not (opt-aggregate-no-candidates? (opt-aggregate-unknown-offset-instrs)))
+      6]
+    [(not (opt-aggregate-no-candidates? (opt-aggregate-call-separated-instrs)))
+      7]
+    [(not (opt-aggregate-phi-flowed-rejected?)) 8]
+    [(not
+        (opt-aggregate-no-candidates? (opt-aggregate-predicated-memory-instrs)))
+      9]
+    [else 42]))
 
 (define (opt-count-cast-instrs [instrs : CompilerIrInstrList]) : i64
   (match instrs

@@ -7558,6 +7558,25 @@
               idx)
             (lower-param-list ctx rest (+ idx 1)))])]))
 
+(define (lower-supported-function-param-type? [ctx : TcContext] [ty : AstType]) : bool
+  (let
+    [resolved : AstType (tc-resolve-type ctx ty)]
+    (if (tc-type-contains-reference? resolved)
+      (lower-str-ref-type? ctx resolved)
+      true)))
+
+(define (lower-param-list-contains-unsupported-reference?
+  [ctx : TcContext]
+  [params : AstParamList]) : bool
+  (match params
+    [(AstParamNil) false]
+    [(AstParamCons param rest)
+      (match param
+        [(AstParam _ ty _)
+          (or
+            (not (lower-supported-function-param-type? ctx ty))
+            (lower-param-list-contains-unsupported-reference? ctx rest))])]))
+
 (define (lower-function
   [ctx : TcContext]
   [top-env : TcTypeEnv]
@@ -7568,7 +7587,7 @@
   [spans : CompilerSourceSpans]
   [names : LowerNameEnv]) : ResultLowerFunction
   (if (or
-    (tc-param-list-contains-reference? params)
+    (lower-param-list-contains-unsupported-reference? ctx params)
     (tc-type-contains-reference? (tc-resolve-type ctx ret)))
     (ErrLowerFunction (lower-diagnostic (lower-reference-support-message)))
     (let
@@ -8072,6 +8091,11 @@
 (define (main [n : i64]) : unit
   (take (& n)))")
 
+(define (compiler-lower-reference-return-source) : String
+  "(define (id [s : (& text str)]) : (& text str) s)
+(define (main [text : String]) : (& text str)
+  (id (& text)))")
+
 (define (compiler-lower-function-value-source) : String
   "(define (inc [x : i64]) : i64 (+ x 1))
 (define (apply1 [f : (-> i64 i64)] [x : i64]) : i64
@@ -8217,6 +8241,14 @@
           (+ (string->int (& digits))
             (+ (if (string-eq (& joined) (& extended)) 1 0)
               (cast (char-at (& spaced) 0) : i64))))))))")
+
+(define (compiler-lower-borrowed-str-param-source) : String
+  "(define (borrowed-score [path : (& path str)]) : i64
+  (begin
+    (print-string path)
+    (+ (string-length path) (file-exists-status path))))
+(define (main [path : String]) : i64
+  (borrowed-score (& path)))")
 
 (define (compiler-lower-string-shadow-source) : String
   "(define (string-length [s : String]) : i64 40)
@@ -9953,6 +9985,54 @@
               ok))])]
     [(ErrCompilerLower _) false]))
 
+(define (compiler-lower-borrowed-str-param-shape-ok?) : bool
+  (match (lower-compiler-source (compiler-lower-borrowed-str-param-source))
+    [(OkCompilerLower program _)
+      (match program
+        [(IrProgram _ functions _)
+          (let
+            [ok : bool true]
+            (begin
+              (if (>
+                (lower-test-function-call-count
+                  functions
+                  "main"
+                  "borrowed-score")
+                0)
+                unit
+                (set! ok false))
+              (if (=
+                (lower-test-function-call-count
+                  functions
+                  "borrowed-score"
+                  "tl_print_str")
+                1)
+                unit
+                (set! ok false))
+              (if (=
+                (lower-test-function-call-count
+                  functions
+                  "borrowed-score"
+                  ".L_tl_file_exists_status")
+                1)
+                unit
+                (set! ok false))
+              (if (>
+                (lower-test-function-gep-offset-count
+                  functions
+                  "borrowed-score"
+                  1)
+                0)
+                unit
+                (set! ok false))
+              (if (=
+                (lower-test-functions-call-count functions "string-length")
+                0)
+                unit
+                (set! ok false))
+              ok))])]
+    [(ErrCompilerLower _) false]))
+
 (define (compiler-lower-string-shadow-shape-ok? [src : String]) : bool
   (match (lower-compiler-source src)
     [(OkCompilerLower program _)
@@ -10494,6 +10574,9 @@
         (compiler-lower-string-runtime-source))
         unit
         (set! ok false))
+      (if (compiler-lower-borrowed-str-param-shape-ok?)
+        unit
+        (set! ok false))
       (if (compiler-lower-string-shadow-shape-ok?
         (compiler-lower-string-shadow-source))
         unit
@@ -10777,6 +10860,11 @@
         (set! ok false))
       (if (compiler-lower-error-ok?
         (compiler-lower-reference-source)
+        (lower-reference-support-message))
+        unit
+        (set! ok false))
+      (if (compiler-lower-error-ok?
+        (compiler-lower-reference-return-source)
         (lower-reference-support-message))
         unit
         (set! ok false))

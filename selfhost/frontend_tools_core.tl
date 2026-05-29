@@ -144,10 +144,10 @@
     (print-string text)
     (print-string "\"\n")))
 
-(define (front-print-char-token [c : char]) : unit
+(define (front-print-char-token-body [body : String]) : unit
   (begin
     (print-string "'")
-    (print-char c)
+    (print-string body)
     (print-string "'\n")))
 
 (defenum FrontScanStep
@@ -185,11 +185,12 @@
 
 (define (front-scan-char-token [src : String] [i : i64] [n : i64]) : FrontScanStep
   (match (char-literal-value-result src i n)
-    [(OkLexChar value)
+    [(OkLexChar _)
       (match (char-literal-end-result src i n)
         [(OkLexI64 end)
           (begin
-            (front-print-char-token value)
+            (front-print-char-token-body
+              (substring src (+ i 1) (- end (+ i 2))))
             (front-step-ok end))]
         [(ErrLexI64 message) (front-step-error message)])]
     [(ErrLexChar message) (front-step-error message)]))

@@ -778,6 +778,14 @@
           "(%rip), "
           reg
           "\n"))]
+    [(IrValueFunction name)
+      (OkCompilerBackend
+        (backend-cat5
+          "    leaq "
+          (compiler-backend-user-symbol name)
+          "(%rip), "
+          reg
+          "\n"))]
     [(IrValueI64 n)
       (OkCompilerBackend (compiler-backend-emit-load-i64-immediate n reg))]
     [(IrValueBool b)
@@ -3509,6 +3517,11 @@
               [(ErrCompilerBackend message)
                 (ErrCompilerBackend
                   (compiler-backend-apply-instr-diagnostic message instr-diag))])))]
+      [(IrInstrCallIndirect _ _ _ _)
+        (ErrCompilerBackend
+          (compiler-diagnostic-with-message
+            instr-diag
+            "backend: indirect calls are not supported yet"))]
       [(IrInstrTailCall name args ty)
         (match (compiler-backend-emit-tail-call
           target
@@ -6308,6 +6321,9 @@
       (OkCompilerBackend
         (backend-cat3 "    .quad " (compiler-backend-user-symbol name) "\n"))]
     [(IrValueGlobalAddr name)
+      (OkCompilerBackend
+        (backend-cat3 "    .quad " (compiler-backend-user-symbol name) "\n"))]
+    [(IrValueFunction name)
       (OkCompilerBackend
         (backend-cat3 "    .quad " (compiler-backend-user-symbol name) "\n"))]
     [(IrValueString text)

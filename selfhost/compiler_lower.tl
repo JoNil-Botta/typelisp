@@ -2172,6 +2172,40 @@
         (IrValueGlobal (lower-resolve-name state name))
         ty)]))
 
+(define (lower-function-type? [ty : AstType]) : bool
+  (match (tc-type-strip-region ty)
+    [(AstTyFunc _ _) true]
+    [_ false]))
+
+(define (lower-symbol-function-value?
+  [ctx : TcContext]
+  [state : LowerState]
+  [name : String]) : bool
+  (let
+    [symbols : CompilerSymbols (tc-context-symbols ctx)]
+    [resolved : String (lower-resolve-name state name)]
+    (match (compiler-symbols-lookup-value symbols resolved)
+      [(SomeI64 handle)
+        (or
+          (=
+            (compiler-symbol-handle-kind handle)
+            (compiler-symbol-kind-function-define))
+          (= (compiler-symbol-handle-kind handle) (compiler-symbol-kind-extern)))]
+      [(NoneI64) false])))
+
+(define (lower-function-value-or-var
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [name : String]
+  [ty : AstType]) : ResultLowerExpr
+  (if (and
+    (lower-function-type? ty)
+    (lower-symbol-function-value? ctx state name))
+    (OkLowerExpr
+      (LowerExpr state (IrValueFunction (lower-resolve-name state name)) ty))
+    (lower-var state env name ty)))
+
 (define (lower-return-maybe [value : CompilerIrValue] [ty : AstType]) : CompilerIrMaybeValue
   (match ty
     [(AstTyUnit) IrNoValue]
@@ -2725,9 +2759,10 @@
                       handle
                       AstExprNil
                       expr-ty)]
-                  [_ (lower-var state env name expr-ty)])]
-              [(ErrAstTypeList _) (lower-var state env name expr-ty)])]
-          [(NoneI64) (lower-var state env name expr-ty)]))]))
+                  [_ (lower-function-value-or-var ctx state env name expr-ty)])]
+              [(ErrAstTypeList _)
+                (lower-function-value-or-var ctx state env name expr-ty)])]
+          [(NoneI64) (lower-function-value-or-var ctx state env name expr-ty)]))]))
 
 (define (lower-expr
   [ctx : TcContext]
@@ -3529,6 +3564,37 @@
                 (lower-state-emit-at-expr allocated instr origin)
                 (IrValueVar var-id)
                 result-ty)))])]
+    [(ErrLowerArgs message) (ErrLowerExpr message)]))
+
+(define (lower-indirect-call-values
+  [state : LowerState]
+  [func-value : CompilerIrValue]
+  [values : CompilerIrValueList]
+  [result-ty : AstType]
+  [origin : AstExpr]) : ResultLowerExpr
+  (match (lower-state-alloc-var state)
+    [(LowerAlloc allocated var-id)
+      (let
+        [instr : CompilerIrInstr
+          (IrInstrCallIndirect var-id func-value values result-ty)]
+        (OkLowerExpr
+          (LowerExpr
+            (lower-state-emit-at-expr allocated instr origin)
+            (IrValueVar var-id)
+            result-ty)))]))
+
+(define (lower-indirect-call
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [func-value : CompilerIrValue]
+  [args : AstExprList]
+  [result-ty : AstType]
+  [origin : AstExpr]) : ResultLowerExpr
+  (match (lower-args ctx state env type-env args)
+    [(OkLowerArgs args-state values)
+      (lower-indirect-call-values args-state func-value values result-ty origin)]
     [(ErrLowerArgs message) (ErrLowerExpr message)]))
 
 (define (lower-substring-call
@@ -4696,104 +4762,153 @@
   [origin : AstExpr]) : ResultLowerExpr
   (match (ast-expr-unspan func)
     [(AstExprVar name)
-      ;; `array-length`/`length` on a dynamic array, and `string-length`/`length`
-      ;; on a String, load the fat value's length field directly instead of
-      ;; calling a runtime symbol (#528, #527). Other `length` argument types
-      ;; keep the ordinary direct-call path. `string-ref`/`char-at` likewise
-      ;; recover their String byte-index builtin here unless shadowed (#677).
-      (cond
-        [(and
-            (lower-builtin-call-available? ctx env name)
-            (tc-layout-query-name? name))
-          (ErrLowerExpr
-            (lower-diagnostic-at-expr
-              origin
-              (string-append
-                "lower: "
-                (string-append
-                  name
-                  " is compile-time only; wrap it in (comptime ...)"))))]
-        [(and
-            (lower-builtin-call-available? ctx env name)
-            (or (string-eq name "string-ref") (string-eq name "char-at")))
-          (lower-string-ref-call
-            ctx
-            state
-            env
-            type-env
-            name
-            args
-            result-ty
-            origin)]
-        [(and
-            (lower-builtin-call-available? ctx env name)
-            (or
-              (string-eq name "array-length")
-              (or (string-eq name "length") (string-eq name "string-length"))))
-          (lower-array-length ctx state env type-env name args result-ty origin)]
-        [(and
-            (lower-builtin-call-available? ctx env name)
-            (lower-string-runtime-builtin? name))
-          (lower-string-runtime-call
-            ctx
-            state
-            env
-            type-env
-            name
-            args
-            result-ty
-            origin)]
-        [(and
-            (lower-builtin-call-available? ctx env name)
-            (lower-stdio-builtin? name))
-          (lower-direct-call
-            ctx
-            state
-            env
-            type-env
-            (lower-stdio-runtime-name name)
-            args
-            result-ty
-            origin)]
-        [(and
-            (lower-builtin-call-available? ctx env name)
-            (lower-print-string-builtin? name))
-          (lower-message-runtime-call
-            ctx
-            state
-            env
-            type-env
-            args
-            name
-            "tl_print_str"
-            result-ty
-            "lower: print-string requires String"
-            origin)]
-        [(and
-            (lower-builtin-call-available? ctx env name)
-            (lower-bootstrap-runtime-builtin? name))
-          (lower-bootstrap-runtime-call
-            ctx
-            state
-            env
-            type-env
-            name
-            args
-            result-ty
-            origin)]
-        [else
-          (lower-call-non-builtin
-            ctx
-            state
-            env
-            type-env
-            name
-            args
-            result-ty
-            origin)])]
+      (match (sym-i64-lookup env name)
+        [(SomeI64 local-id)
+          (match (tc-expr ctx type-env func)
+            [(OkTcType fn-ty)
+              (if (lower-function-type? fn-ty)
+                (lower-indirect-call
+                  ctx
+                  state
+                  env
+                  type-env
+                  (IrValueVar local-id)
+                  args
+                  result-ty
+                  origin)
+                (ErrLowerExpr
+                  (lower-diagnostic-at-expr
+                    func
+                    "lower: call target is not a function")))]
+            [(ErrTcType message)
+              (ErrLowerExpr (lower-diagnostic-at-expr func message))])]
+        [(NoneI64)
+          ;; `array-length`/`length` on a dynamic array, and
+          ;; `string-length`/`length` on a String, load the fat value's length
+          ;; field directly instead of calling a runtime symbol (#528, #527).
+          ;; Other `length` argument types keep the ordinary direct-call path.
+          ;; `string-ref`/`char-at` likewise recover their String byte-index
+          ;; builtin here unless shadowed (#677).
+          (cond
+            [(and
+                (lower-builtin-call-available? ctx env name)
+                (tc-layout-query-name? name))
+              (ErrLowerExpr
+                (lower-diagnostic-at-expr
+                  origin
+                  (string-append
+                    "lower: "
+                    (string-append
+                      name
+                      " is compile-time only; wrap it in (comptime ...)"))))]
+            [(and
+                (lower-builtin-call-available? ctx env name)
+                (or (string-eq name "string-ref") (string-eq name "char-at")))
+              (lower-string-ref-call
+                ctx
+                state
+                env
+                type-env
+                name
+                args
+                result-ty
+                origin)]
+            [(and
+                (lower-builtin-call-available? ctx env name)
+                (or
+                  (string-eq name "array-length")
+                  (or
+                    (string-eq name "length")
+                    (string-eq name "string-length"))))
+              (lower-array-length
+                ctx
+                state
+                env
+                type-env
+                name
+                args
+                result-ty
+                origin)]
+            [(and
+                (lower-builtin-call-available? ctx env name)
+                (lower-string-runtime-builtin? name))
+              (lower-string-runtime-call
+                ctx
+                state
+                env
+                type-env
+                name
+                args
+                result-ty
+                origin)]
+            [(and
+                (lower-builtin-call-available? ctx env name)
+                (lower-stdio-builtin? name))
+              (lower-direct-call
+                ctx
+                state
+                env
+                type-env
+                (lower-stdio-runtime-name name)
+                args
+                result-ty
+                origin)]
+            [(and
+                (lower-builtin-call-available? ctx env name)
+                (lower-print-string-builtin? name))
+              (lower-message-runtime-call
+                ctx
+                state
+                env
+                type-env
+                args
+                name
+                "tl_print_str"
+                result-ty
+                "lower: print-string requires String"
+                origin)]
+            [(and
+                (lower-builtin-call-available? ctx env name)
+                (lower-bootstrap-runtime-builtin? name))
+              (lower-bootstrap-runtime-call
+                ctx
+                state
+                env
+                type-env
+                name
+                args
+                result-ty
+                origin)]
+            [else
+              (lower-call-non-builtin
+                ctx
+                state
+                env
+                type-env
+                name
+                args
+                result-ty
+                origin)])])]
     [_
-      (ErrLowerExpr
-        (lower-diagnostic-at-expr func "lower: only direct calls are supported"))]))
+      (match (lower-expr ctx state env type-env func)
+        [(OkLowerExpr lowered-func)
+          (match lowered-func
+            [(LowerExpr func-state func-value func-ty)
+              (if (lower-function-type? func-ty)
+                (lower-indirect-call
+                  ctx
+                  func-state
+                  env
+                  type-env
+                  func-value
+                  args
+                  result-ty
+                  origin)
+                (ErrLowerExpr
+                  (lower-diagnostic-at-expr
+                    func
+                    "lower: call target is not a function")))])]
+        [(ErrLowerExpr message) (ErrLowerExpr message)])]))
 
 ;; A dynamic-array value is a pointer to inline fat storage `{data_ptr, length}`
 ;; with the i64 length at byte offset 8. `Gep` scales the index by the element
@@ -4957,6 +5072,26 @@
                         arr-value
                         idx-off
                         elem-ty)])])])])]))
+
+;; Fixed arrays are inline element storage. Bounds check against the static
+;; length, then Gep directly from the array handle without loading dynamic-array
+;; fat fields.
+(define (lower-fixed-array-element-addr
+  [state : LowerState]
+  [arr-value : CompilerIrValue]
+  [idx-value : CompilerIrValue]
+  [idx-ty : AstType]
+  [elem-ty : AstType]
+  [elem-count : i64]) : LowerExpr
+  (match (lower-emit-cast state idx-value idx-ty (AstTyU64))
+    [(LowerExpr s1 idx-u _)
+      (match (lower-emit-cast s1 idx-value idx-ty (AstTyI64))
+        [(LowerExpr s2 idx-off _)
+          (lower-emit-gep
+            (lower-emit-bounds-check s2 idx-u (IrValueI64 elem-count))
+            arr-value
+            idx-off
+            elem-ty)])]))
 
 ;; `(make-array T len)` -> checked length, `tl_alloc` element buffer, and a
 ;; heap-backed dynamic-array fat value `{ ptr, len }`.
@@ -5145,11 +5280,49 @@
                     [(ErrTcType message)
                       (ErrLowerExpr (lower-diagnostic-at-expr index message))])])]
             [(ErrLowerExpr message) (ErrLowerExpr message)])]
-        [(AstTyArray _ _)
-          (ErrLowerExpr
-            (lower-diagnostic-at-expr
-              arr
-              "lower: fixed-array array-ref not yet supported"))]
+        [(AstTyArray elem-ty elem-count)
+          (let
+            [fixed-elem-ty : AstType (tc-type-without-regions elem-ty)]
+            (match (lower-expr ctx state env type-env arr)
+              [(OkLowerExpr arr-lowered)
+                (match arr-lowered
+                  [(LowerExpr arr-state arr-value _)
+                    (match (tc-expr ctx type-env index)
+                      [(OkTcType idx-ty)
+                        (match (lower-expr ctx arr-state env type-env index)
+                          [(OkLowerExpr idx-lowered)
+                            (match idx-lowered
+                              [(LowerExpr idx-state idx-value _)
+                                (match (lower-fixed-array-element-addr
+                                  idx-state
+                                  arr-value
+                                  idx-value
+                                  idx-ty
+                                  fixed-elem-ty
+                                  elem-count)
+                                  [(LowerExpr addr-state elem-ptr _)
+                                    (if (=
+                                      (lower-type-size ctx fixed-elem-ty)
+                                      0)
+                                      (OkLowerExpr
+                                        (LowerExpr
+                                          addr-state
+                                          IrValueUnit
+                                          fixed-elem-ty))
+                                      (match (lower-emit-load
+                                        addr-state
+                                        elem-ptr
+                                        fixed-elem-ty)
+                                        [(LowerExpr load-state load-value _)
+                                          (OkLowerExpr
+                                            (LowerExpr
+                                              load-state
+                                              load-value
+                                              fixed-elem-ty))]))])])]
+                          [(ErrLowerExpr message) (ErrLowerExpr message)])]
+                      [(ErrTcType message)
+                        (ErrLowerExpr (lower-diagnostic-at-expr index message))])])]
+              [(ErrLowerExpr message) (ErrLowerExpr message)]))]
         [_
           (ErrLowerExpr
             (lower-diagnostic-at-expr
@@ -5212,11 +5385,62 @@
                     [(ErrTcType message)
                       (ErrLowerExpr (lower-diagnostic-at-expr index message))])])]
             [(ErrLowerExpr message) (ErrLowerExpr message)])]
-        [(AstTyArray _ _)
-          (ErrLowerExpr
-            (lower-diagnostic-at-expr
-              arr
-              "lower: fixed-array array-set! not yet supported"))]
+        [(AstTyArray elem-ty elem-count)
+          (let
+            [fixed-elem-ty : AstType (tc-type-without-regions elem-ty)]
+            (match (lower-expr ctx state env type-env arr)
+              [(OkLowerExpr arr-lowered)
+                (match arr-lowered
+                  [(LowerExpr arr-state arr-value _)
+                    (match (tc-expr ctx type-env index)
+                      [(OkTcType idx-ty)
+                        (match (lower-expr ctx arr-state env type-env index)
+                          [(OkLowerExpr idx-lowered)
+                            (match idx-lowered
+                              [(LowerExpr idx-state idx-value _)
+                                (match (lower-expr
+                                  ctx
+                                  idx-state
+                                  env
+                                  type-env
+                                  value)
+                                  [(OkLowerExpr value-lowered)
+                                    (match value-lowered
+                                      [(LowerExpr value-state value-ir _)
+                                        (match (lower-fixed-array-element-addr
+                                          value-state
+                                          arr-value
+                                          idx-value
+                                          idx-ty
+                                          fixed-elem-ty
+                                          elem-count)
+                                          [(LowerExpr addr-state elem-ptr _)
+                                            (if (=
+                                              (lower-type-size
+                                                ctx
+                                                fixed-elem-ty)
+                                              0)
+                                              (OkLowerExpr
+                                                (LowerExpr
+                                                  addr-state
+                                                  IrValueUnit
+                                                  (AstTyUnit)))
+                                              (OkLowerExpr
+                                                (LowerExpr
+                                                  (lower-state-emit
+                                                    addr-state
+                                                    (IrInstrStorePtr
+                                                      elem-ptr
+                                                      value-ir
+                                                      fixed-elem-ty))
+                                                  IrValueUnit
+                                                  (AstTyUnit))))])])]
+                                  [(ErrLowerExpr message)
+                                    (ErrLowerExpr message)])])]
+                          [(ErrLowerExpr message) (ErrLowerExpr message)])]
+                      [(ErrTcType message)
+                        (ErrLowerExpr (lower-diagnostic-at-expr index message))])])]
+              [(ErrLowerExpr message) (ErrLowerExpr message)]))]
         [_
           (ErrLowerExpr
             (lower-diagnostic-at-expr
@@ -7554,6 +7778,15 @@
 (define (main [n : i64]) : unit
   (take (& n)))")
 
+(define (compiler-lower-function-value-source) : String
+  "(define (inc [x : i64]) : i64 (+ x 1))
+(define (apply1 [f : (-> i64 i64)] [x : i64]) : i64
+  (f x))
+(define (shadow-inc [inc : (-> i64 i64)] [x : i64]) : i64
+  (inc x))
+(define (main) : i64
+  (+ (apply1 inc 41) (shadow-inc inc 1)))")
+
 ;; `(comptime expr)` folds to a literal via the scalar CTFE evaluator (#719).
 ;; These fixtures exercise arithmetic, `if`, and `let` folds, plus the
 ;; runtime-variable and deferred-f64 (#735) rejection paths.
@@ -7618,10 +7851,22 @@
 (define (put [a : (Array i64)] [i : i64] [v : i64]) : unit (array-set! a i v))
 (define (main) : i64 0)")
 
+;; Fixed-array access lowers against inline array storage rather than the
+;; dynamic-array fat `{ptr, len}` layout.
+(define (compiler-lower-fixed-array-access-source) : String
+  "(define (get [a : (Array i64 3)] [i : i64]) : i64 (array-ref a i))
+(define (put [a : (Array i64 3)] [i : i64] [v : i64]) : unit (array-set! a i v))
+(define (main) : i64 0)")
+
 ;; `array-push!` lowers to checked arena reallocation, a runtime-length copy,
 ;; a tail store, and in-place fat `{ptr, len}` updates.
 (define (compiler-lower-array-push-source) : String
   "(define (grow [a : (Array i64)] [v : i64]) : unit (array-push! a v))
+(define (main) : i64 0)")
+
+;; Fixed arrays have no runtime capacity field and remain unsupported for push.
+(define (compiler-lower-fixed-array-push-source) : String
+  "(define (grow [a : (Array i64 3)] [v : i64]) : unit (array-push! a v))
 (define (main) : i64 0)")
 
 ;; `make-array` lowers to checked byte-count math, a `tl_alloc` element buffer,
@@ -7961,6 +8206,42 @@
         0)]
     [_ 0]))
 
+(define (lower-test-instr-indirect-call-count [instr : CompilerIrInstr]) : i64
+  (match instr
+    [(IrInstrCallIndirect _ _ _ _) 1]
+    [_ 0]))
+
+(define (lower-test-value-function-count
+  [value : CompilerIrValue]
+  [name : String]) : i64
+  (match value
+    [(IrValueFunction found)
+      (if (string-eq found name)
+        1
+        0)]
+    [_ 0]))
+
+(define (lower-test-value-list-function-count
+  [values : CompilerIrValueList]
+  [name : String]) : i64
+  (match values
+    [(IrValueNil) 0]
+    [(IrValueCons value rest)
+      (+
+        (lower-test-value-function-count value name)
+        (lower-test-value-list-function-count rest name))]))
+
+(define (lower-test-instr-call-arg-function-count
+  [instr : CompilerIrInstr]
+  [call-name : String]
+  [function-name : String]) : i64
+  (match instr
+    [(IrInstrCall _ found args _)
+      (if (string-eq found call-name)
+        (lower-test-value-list-function-count args function-name)
+        0)]
+    [_ 0]))
+
 (define (lower-test-instr-tail-call-count
   [instr : CompilerIrInstr]
   [name : String]) : i64
@@ -8134,6 +8415,25 @@
         (lower-test-instr-call-count instr name)
         (lower-test-instrs-call-count rest name))]))
 
+(define (lower-test-instrs-indirect-call-count [instrs : CompilerIrInstrList]) : i64
+  (match instrs
+    [(IrInstrNil) 0]
+    [(IrInstrCons instr rest)
+      (+
+        (lower-test-instr-indirect-call-count instr)
+        (lower-test-instrs-indirect-call-count rest))]))
+
+(define (lower-test-instrs-call-arg-function-count
+  [instrs : CompilerIrInstrList]
+  [call-name : String]
+  [function-name : String]) : i64
+  (match instrs
+    [(IrInstrNil) 0]
+    [(IrInstrCons instr rest)
+      (+
+        (lower-test-instr-call-arg-function-count instr call-name function-name)
+        (lower-test-instrs-call-arg-function-count rest call-name function-name))]))
+
 (define (lower-test-instrs-tail-call-count
   [instrs : CompilerIrInstrList]
   [name : String]) : i64
@@ -8249,6 +8549,35 @@
           (+
             (lower-test-instrs-call-count instrs name)
             (lower-test-blocks-call-count rest name))])]))
+
+(define (lower-test-blocks-indirect-call-count [blocks : CompilerIrBlockList]) : i64
+  (match blocks
+    [(IrBlockNil) 0]
+    [(IrBlockCons block rest)
+      (match block
+        [(IrBlock _ instrs)
+          (+
+            (lower-test-instrs-indirect-call-count instrs)
+            (lower-test-blocks-indirect-call-count rest))])]))
+
+(define (lower-test-blocks-call-arg-function-count
+  [blocks : CompilerIrBlockList]
+  [call-name : String]
+  [function-name : String]) : i64
+  (match blocks
+    [(IrBlockNil) 0]
+    [(IrBlockCons block rest)
+      (match block
+        [(IrBlock _ instrs)
+          (+
+            (lower-test-instrs-call-arg-function-count
+              instrs
+              call-name
+              function-name)
+            (lower-test-blocks-call-arg-function-count
+              rest
+              call-name
+              function-name))])]))
 
 (define (lower-test-blocks-tail-call-count
   [blocks : CompilerIrBlockList]
@@ -8402,6 +8731,39 @@
           (if (string-eq fname name)
             (lower-test-blocks-call-count blocks call-name)
             (lower-test-function-call-count rest name call-name))])]))
+
+(define (lower-test-function-indirect-call-count
+  [funcs : CompilerIrFunctionList]
+  [name : String]) : i64
+  (match funcs
+    [(IrFunctionNil) (- 0 1)]
+    [(IrFunctionCons func rest)
+      (match func
+        [(IrFunction fname _ _ _ blocks)
+          (if (string-eq fname name)
+            (lower-test-blocks-indirect-call-count blocks)
+            (lower-test-function-indirect-call-count rest name))])]))
+
+(define (lower-test-function-call-arg-function-count
+  [funcs : CompilerIrFunctionList]
+  [name : String]
+  [call-name : String]
+  [function-name : String]) : i64
+  (match funcs
+    [(IrFunctionNil) (- 0 1)]
+    [(IrFunctionCons func rest)
+      (match func
+        [(IrFunction fname _ _ _ blocks)
+          (if (string-eq fname name)
+            (lower-test-blocks-call-arg-function-count
+              blocks
+              call-name
+              function-name)
+            (lower-test-function-call-arg-function-count
+              rest
+              name
+              call-name
+              function-name))])]))
 
 (define (lower-test-function-tail-call-count
   [funcs : CompilerIrFunctionList]
@@ -9043,6 +9405,35 @@
             (> (lower-test-function-bounds-count functions "put") 0))])]
     [(ErrCompilerLower _) false]))
 
+(define (compiler-lower-fixed-array-access-shape-ok? [src : String]) : bool
+  (match (lower-compiler-source src)
+    [(OkCompilerLower program _)
+      (match program
+        [(IrProgram _ functions _)
+          (let
+            [ok : bool true]
+            (begin
+              (if (> (lower-test-function-bounds-count functions "get") 0)
+                unit
+                (set! ok false))
+              (if (> (lower-test-function-load-count functions "get") 0)
+                unit
+                (set! ok false))
+              (if (> (lower-test-function-bounds-count functions "put") 0)
+                unit
+                (set! ok false))
+              (if (= (lower-test-function-gep-offset-count functions "get" 1) 0)
+                unit
+                (set! ok false))
+              (if (= (lower-test-function-gep-offset-count functions "put" 1) 0)
+                unit
+                (set! ok false))
+              (if (> (lower-test-function-store-ptr-count functions "put") 0)
+                unit
+                (set! ok false))
+              ok))])]
+    [(ErrCompilerLower _) false]))
+
 (define (compiler-lower-array-push-shape-ok? [src : String]) : bool
   (match (lower-compiler-source src)
     [(OkCompilerLower program _)
@@ -9141,6 +9532,44 @@
                     (=
                       (lower-test-functions-call-count functions "tl_oob_abort")
                       0))))))])]
+    [(ErrCompilerLower _) false]))
+
+(define (compiler-lower-function-value-shape-ok?) : bool
+  (match (lower-compiler-source (compiler-lower-function-value-source))
+    [(OkCompilerLower program _)
+      (match program
+        [(IrProgram _ functions _)
+          (let
+            [ok : bool true]
+            (begin
+              (if (=
+                (lower-test-function-indirect-call-count functions "apply1")
+                1)
+                unit
+                (set! ok false))
+              (if (= (lower-test-function-call-count functions "apply1" "f") 0)
+                unit
+                (set! ok false))
+              (if (=
+                (lower-test-function-indirect-call-count functions "shadow-inc")
+                1)
+                unit
+                (set! ok false))
+              (if (=
+                (lower-test-function-call-count functions "shadow-inc" "inc")
+                0)
+                unit
+                (set! ok false))
+              (if (=
+                (lower-test-function-call-arg-function-count
+                  functions
+                  "main"
+                  "apply1"
+                  "inc")
+                1)
+                unit
+                (set! ok false))
+              ok))])]
     [(ErrCompilerLower _) false]))
 
 (define (compiler-lower-file-handle-status-shape-ok? [src : String]) : bool
@@ -9625,8 +10054,17 @@
         (compiler-lower-array-access-source))
         unit
         (set! ok false))
+      (if (compiler-lower-fixed-array-access-shape-ok?
+        (compiler-lower-fixed-array-access-source))
+        unit
+        (set! ok false))
       (if (compiler-lower-array-push-shape-ok?
         (compiler-lower-array-push-source))
+        unit
+        (set! ok false))
+      (if (compiler-lower-error-ok?
+        (compiler-lower-fixed-array-push-source)
+        "typecheck: array-push! requires dynamic array type")
         unit
         (set! ok false))
       (if (compiler-lower-make-array-shape-ok?
@@ -9634,6 +10072,9 @@
         unit
         (set! ok false))
       (if (compiler-lower-runtime-helper-tests-ok?)
+        unit
+        (set! ok false))
+      (if (compiler-lower-function-value-shape-ok?)
         unit
         (set! ok false))
       (if (compiler-lower-ok? (compiler-lower-aggregate-source))

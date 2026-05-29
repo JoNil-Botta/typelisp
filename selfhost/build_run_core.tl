@@ -151,6 +151,16 @@
       [(EnvSomeStringList paths) (source-tool-find-command-on-path tool paths)]
       [(EnvNoStringList) tool])))
 
+(define (source-tool-env-command-or-default
+  [name : String]
+  [default-command : String]) : String
+  (match (env-get name)
+    [(EnvSomeString value)
+      (if (string-eq value "")
+        default-command
+        value)]
+    [(EnvNoString) default-command]))
+
 (define (source-tool-replace-extension
   [input-path : String]
   [extension : String]) : String
@@ -335,7 +345,9 @@ _tl_print_string:
   [asm-path : String]
   [obj-path : String]) : ProcessCommand
   (process-command
-    (source-tool-resolve-command "clang")
+    (source-tool-env-command-or-default
+      "TYPELISP_WINDOWS_CLANG"
+      (source-tool-resolve-command "clang"))
     (process-args-cons
       "--target=x86_64-pc-windows-msvc"
       (process-args-cons

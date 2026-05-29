@@ -74,19 +74,16 @@ calling compiler/runtime primitives such as `substring`, `string-append`,
 `read-file`, `int->string`, and aggregate constructors. Those allocations use
 the active arena: the default program-lifetime arena outside any scoped arena,
 or the innermost scoped arena inside `(with-arena ...)`. The arena model uses
-the term "scoped arena" for this behavior; issue #801 tracks the source spelling
-migration from `(with-arena ...)` to `(with-arena ...)`.
+the term "scoped arena" for this behavior. Stdlib policy tests use
+`(with-arena ...)` as the executable witness for active-arena semantics.
 
-Until that spelling lands, stdlib policy tests use `(with-arena ...)` as the
-executable witness for the same active-arena semantics that `(with-arena ...)`
-will expose.
-
-Current function signatures cannot write arena lifetimes yet (#802), so stdlib
-APIs keep plain `String`/aggregate signatures. The checker conservatively tags
-aggregate results from stdlib calls made inside a scoped arena as arena-owned,
-which prevents those values from escaping the scope. When written arena
-lifetimes exist, stdlib signatures should distinguish owned arena results from
-returned caller-owned values.
+Written reference and arena lifetime syntax exists, but stdlib APIs still keep
+plain compatibility `String`/aggregate signatures until the borrowed `str`
+frontend and string API migration land (#1453/#1454/#1082). The checker
+conservatively tags aggregate results from stdlib calls made inside a scoped
+arena as arena-owned, which prevents those values from escaping the scope. The
+v1 `String`/`str` contract in `SPEC.md` classifies which future signatures
+should take borrowed text and which should return owned active-arena strings.
 
 | Functions | Allocation behavior |
 |-----------|---------------------|
@@ -102,7 +99,7 @@ returned caller-owned values.
 | `read-file-or` | Convenience wrapper over `try-read-file`; returns the caller-provided `fallback` for every structured error. |
 | `append-file` | Panic-on-error convenience wrapper over `try-append-file`; preserves existing contents and creates missing files through host append mode. |
 | `file-nonempty?` | Convenience wrapper over `try-read-file`; allocates a temporary active-arena `String` through `read-file` only when the path exists. |
-| `stdin-read-line`, `stdin-read-bytes` | Return `StdinRead` aggregates containing a runtime-allocated active-arena `String` plus the post-read sticky EOF state. Byte reads still use `String` storage until #807 adds byte-slice/string separation. |
+| `stdin-read-line`, `stdin-read-bytes` | Return `StdinRead` aggregates containing a runtime-allocated active-arena `String` plus the post-read sticky EOF state. Byte reads still use `String` storage until a future byte-buffer/slice split lands. |
 | `stdin-at-eof?`, `stdin-read-text`, `stdin-read-eof?`, `stdout-write`, `stderr-write`, `stdout-flush` | Non-allocating wrappers/accessors around runtime stdio primitives and `StdinRead` values. |
 | `stdout-write-line`, `stderr-write-line` | Allocate a newline-appended active-arena `String` via `string-append`, then write it to the target stream. |
 | `env-get`, `env-path-list`, `env-path-split`, `env-path-join` | Environment values and split/join results allocate fresh active-arena Strings/lists when runtime values are read or string pieces are created; missing variables return explicit `EnvNo*` options. |
@@ -123,8 +120,9 @@ codes remain available as `IoSystemCode`.
 
 No current stdlib function returns a borrow-typed `str`, mutates a
 caller-provided buffer in place, or manually calls `tl_region_mark` /
-`tl_region_reset`. Those policies should remain explicit when borrowed strings,
-mutable buffers, and unsafe reset APIs are added.
+`tl_region_reset`. `str` is specified as an immutable borrowed text referent,
+not a mutable buffer type; those policies should remain explicit when borrowed
+strings, mutable buffers, and unsafe reset APIs are added.
 
 ### File-handle API (v1, #1036)
 
@@ -139,8 +137,8 @@ implementation lands incrementally:
   waits for scoped cleanup support.
 - **#1057** — implemented: `file-read-chunk` returning `ResultIoRead` / `FileRead` (a
   `String` payload plus a sticky EOF flag, mirroring `StdinRead`). Chunk bytes
-  allocate in the active arena and stay `String`-typed until #807 adds a
-  byte-slice split.
+  allocate in the active arena and stay `String`-typed until a future
+  byte-buffer/slice split lands.
 - **#1058** — streaming writes and flush, plus `OpenWriteAppend` handle
   semantics that match the non-truncating `try-append-file` append primitive.
 

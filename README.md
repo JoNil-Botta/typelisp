@@ -343,6 +343,13 @@ enum values are pointer-shaped internally; structs are read-only today because
 [SPEC.md](SPEC.md) sections 4.6.2 and 7 for the precise current and specified
 model.
 
+`SPEC.md` also defines the v1 owned `String` / borrowed `str` direction:
+string literals remain owned `String` values, `str` is a borrowed-only referent
+used as `(& lifetime str)`, and borrowing a `String` place produces a borrowed
+`str` view. Implementation of the `str` frontend and stdlib API migration is
+still pending; current public builtins continue to use compatibility `String`
+signatures.
+
 The v1 reclamation direction keeps the program-lifetime arena as the default
 allocation target and does not add general per-object `free` or GC yet.
 `String` buffers, dynamic array storage, returned enum/struct storage, and

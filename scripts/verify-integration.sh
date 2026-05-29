@@ -227,13 +227,6 @@ with_arena_loop
 EOF
 }
 
-windows_selfhost_crash_skip() {
-    case "$1" in
-        compiler_typecheck_smoke | compiler_lower_smoke | compiler_backend_smoke) return 0 ;;
-        *) return 1 ;;
-    esac
-}
-
 validate_manifest() {
     _cases="$WORKDIR/manifest-cases.txt"
     _known="$WORKDIR/manifest-known.txt"
@@ -875,10 +868,6 @@ EOF
         exit 1
     fi
 
-    # #1270: this compile-heavy selfhost backend fixture currently exhausts the
-    # Windows crash retry guard when run through `typelisp run`.
-    echo "[windows-driver-primitives] skipping on windows pending #1270 (selfhost backend driver segfault)"
-
     echo "Windows backend fixture checks passed."
 }
 
@@ -887,18 +876,11 @@ validate_manifest
 failed=0
 ran=0
 skipped=0
-windows_crash_skipped=0
 
 while IFS='|' read -r name source want stdout_spec runtime_args deps extra || [ -n "$name" ]; do
     case "$name" in
         "" | \#*) continue ;;
     esac
-
-    if [ "$HOST_OS" = windows ] && windows_selfhost_crash_skip "$name"; then
-        echo "[integration] SKIP $name on windows pending #1270 (selfhost smoke executable segfault)"
-        windows_crash_skipped=$((windows_crash_skipped + 1))
-        continue
-    fi
 
     requires_symbol=
     expected_stderr_spec=-
@@ -1060,9 +1042,6 @@ fi
 
 if [ "$skipped" -gt 0 ]; then
     echo "integration verification: $skipped case(s) skipped (staged primitive awaiting no-Rust compiler support)"
-fi
-if [ "$windows_crash_skipped" -gt 0 ]; then
-    echo "integration verification: $windows_crash_skipped windows selfhost smoke case(s) skipped pending #1270"
 fi
 
 if [ "$HOST_OS" = linux ]; then

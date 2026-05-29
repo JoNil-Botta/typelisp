@@ -35,18 +35,6 @@ if [ ! -x "$COMPILER" ]; then
     exit 1
 fi
 
-# #1270: `typelisp doc --test` runs a selfhost driver (selfhost/doc_test.tl) as an
-# emitted binary that segfaults on Windows — the same non-ASLR selfhost-emitted
-# crash as `test --check` (both go through run_source_file_in_temp_dir ->
-# assemble_and_link, which already links /DYNAMICBASE:NO, so this is NOT the
-# emitted-binary ASLR bug #1262 fixes). It is ~100%-broken on Windows (zero
-# signal, pure blocker). Skip on Windows until #1270 is fixed; Linux still fully
-# verifies doc tests.
-if [ "$HOST_OS" = windows ]; then
-    echo "[doc-tests] skipping on windows pending #1270 (doc --test selfhost-driver segfault)"
-    exit 0
-fi
-
 WORKDIR="$ROOT/target/doc-test-verify"
 rm -rf "$WORKDIR"
 mkdir -p "$WORKDIR"
@@ -93,14 +81,20 @@ if [ ! -s "$DISCOVERED" ]; then
     echo "doc test verification found no documented TypeLisp files" >&2
     exit 1
 fi
-if [ "$runnable_count" -eq 0 ]; then
+if [ "$HOST_OS" = linux ] && [ "$runnable_count" -eq 0 ]; then
     echo "doc test verification found no runnable doctest files" >&2
     exit 1
 fi
 
 count=0
+runnable_skipped=0
 while IFS= read -r source; do
     [ -n "$source" ] || continue
+    if [ "$HOST_OS" = windows ] && has_runnable_doctest "$source"; then
+        echo "[doc-tests] skipping runnable doctests on windows: $source"
+        runnable_skipped=$((runnable_skipped + 1))
+        continue
+    fi
     count=$((count + 1))
     case_name=$(safe_name "$source")
     stdout="$WORKDIR/$case_name.stdout"
@@ -130,4 +124,11 @@ while IFS= read -r source; do
     fi
 done < "$DISCOVERED"
 
-echo "doc test verification passed for $count file(s), including $runnable_count runnable doctest file(s)"
+if [ "$HOST_OS" = windows ]; then
+    echo "doc test verification passed for $count non-runnable file(s) on windows"
+else
+    echo "doc test verification passed for $count file(s), including $runnable_count runnable doctest file(s)"
+fi
+if [ "$runnable_skipped" -gt 0 ]; then
+    echo "doc test verification skipped $runnable_skipped runnable doctest file(s) on windows"
+fi

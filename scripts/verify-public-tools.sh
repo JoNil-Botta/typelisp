@@ -58,6 +58,15 @@ fail() {
     exit 1
 }
 
+maybe_strip_manifest_kind() {
+    manifest=$1
+    if [ "${TYPELISP_LEGACY_PACKAGE_MANIFEST:-}" = "1" ]; then
+        sed -i.bak '/^[[:space:]]*(kind "bin")[[:space:]]*$/d' "$manifest"
+        sed -i.bak '/^[[:space:]]*(kind "lib")[[:space:]]*$/d' "$manifest"
+        rm -f "$manifest.bak"
+    fi
+}
+
 run_cmd() {
     case_name=$1
     shift
@@ -623,6 +632,7 @@ cat > "$BUILD_MATRIX/typelisp.pkg" <<'EOF'
   (kind "bin")
   (entry "src/main.tl"))
 EOF
+maybe_strip_manifest_kind "$BUILD_MATRIX/typelisp.pkg"
 cat > "$BUILD_MATRIX/src/main.tl" <<'EOF'
 (define (main) : i64 42)
 EOF
@@ -757,6 +767,7 @@ EOF
   (dependencies
     (math "vendor/math")))
 EOF
+    maybe_strip_manifest_kind "$SELFHOST_PKG/typelisp.pkg"
     cat > "$SELFHOST_PKG/src/main.tl" <<'EOF'
 (import "pkg:math/src/lib.tl")
 (define (main) : i64 (add-one 41))
@@ -798,6 +809,7 @@ EOF
   (kind "lib")
   (entry "src/lib.tl"))
 EOF
+    maybe_strip_manifest_kind "$SELFHOST_LIBPKG/typelisp.pkg"
     cat > "$SELFHOST_LIBPKG/src/lib.tl" <<'EOF'
 (define (add-two [x : i64]) : i64 (+ x 2))
 EOF
@@ -818,6 +830,7 @@ EOF
   (entry "src/main.tl")
   (deps "not-yet"))
 EOF
+    maybe_strip_manifest_kind "$SELFHOST_BADPKG/typelisp.pkg"
     run_cmd selfhost-build-package-parse-error "$SELFHOST_PLANNER_DIR/build-tool" --direct --manifest-path "$SELFHOST_BADPKG/typelisp.pkg"
     assert_failure
     assert_stdout_empty
@@ -831,6 +844,7 @@ EOF
   (kind "bin")
   (entry "src/main.tl"))
 EOF
+    maybe_strip_manifest_kind "$SELFHOST_BADPKG/typelisp.pkg"
     cat > "$SELFHOST_BADPKG/src/main.tl" <<'EOF'
 (import "pkg:math/src/lib.tl")
 (define (main) : i64 0)
@@ -850,6 +864,7 @@ EOF
   (dependencies
     (math "vendor/math")))
 EOF
+    maybe_strip_manifest_kind "$SELFHOST_BADPKG/typelisp.pkg"
     cat > "$SELFHOST_BADPKG/src/main.tl" <<'EOF'
 (import "pkg:math/src/missing.tl")
 (define (main) : i64 0)
@@ -1288,6 +1303,7 @@ cat > "$PKG/typelisp.pkg" <<'EOF'
   (dependencies
     (math "vendor/math")))
 EOF
+maybe_strip_manifest_kind "$PKG/typelisp.pkg"
 cat > "$PKG/src/main.tl" <<'EOF'
 (import "math.tl")
 (import "pkg:math/src/lib.tl")
@@ -1319,6 +1335,7 @@ cat > "$BADPKG/typelisp.pkg" <<'EOF'
   (entry "src/main.tl")
   (deps "not-yet"))
 EOF
+maybe_strip_manifest_kind "$BADPKG/typelisp.pkg"
 run_cmd package-parse-error "$COMPILER" build --manifest-path "$BADPKG/typelisp.pkg"
 assert_failure
 assert_stdout_empty
@@ -1331,6 +1348,7 @@ cat > "$BADPKG/typelisp.pkg" <<'EOF'
   (kind "bin")
   (entry "src/main.tl"))
 EOF
+maybe_strip_manifest_kind "$BADPKG/typelisp.pkg"
 cat > "$BADPKG/src/main.tl" <<'EOF'
 (import "pkg:math/src/lib.tl")
 (define (main) : i64 0)
@@ -1350,6 +1368,7 @@ cat > "$WALK_PKG/typelisp.pkg" <<'EOF'
   (kind "bin")
   (entry "src/main.tl"))
 EOF
+maybe_strip_manifest_kind "$WALK_PKG/typelisp.pkg"
 cat > "$WALK_PKG/src/main.tl" <<'EOF'
 (import "math.tl")
 (define (main) : i64 (inc 41))
@@ -1377,6 +1396,7 @@ cat > "$MISSING_DEP/typelisp.pkg" <<'EOF'
   (dependencies
     (math "vendor/math")))
 EOF
+maybe_strip_manifest_kind "$MISSING_DEP/typelisp.pkg"
 cat > "$MISSING_DEP/src/main.tl" <<'EOF'
 (import "pkg:math/src/missing.tl")
 (define (main) : i64 0)

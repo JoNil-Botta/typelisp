@@ -358,6 +358,8 @@ else
         [ "$STAGE1_HOST_ACTION_DRIVERS_AVAILABLE" -eq 0 ]; then
         echo
         echo "[no-rust-stage0] skipping seed public tool surface until staged runtime symbols land in stage0"
+    elif [ "$HOST_OS" = windows ]; then
+        run_with_compiler "$FRONT_GATE_TYPELISP_BIN" "public tool surface" env TYPELISP_LEGACY_PACKAGE_MANIFEST=1 scripts/verify-public-tools.sh
     else
         run_with_compiler "$FRONT_GATE_TYPELISP_BIN" "public tool surface" scripts/verify-public-tools.sh
     fi

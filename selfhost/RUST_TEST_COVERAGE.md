@@ -108,6 +108,10 @@ assertions remain under #1044.
   IR shapes. Comptime numeric folding remains covered by
   `compiler-lower-comptime-op-fold-tests-ok?` and
   `compiler-lower-comptime-fold-ok?`.
+- Direct self-tail-call rewriting and tail-context propagation through `let`,
+  final `begin`, `ann`, scalar `match`, and return-type-preserving casts are
+  covered by `compiler-lower-tail-call-shape-ok?`, including the negative
+  operand-position self-call case.
 - Scalar `foreach`, `spmd-reduce`, logical short-circuiting, raw-pointer
   operations, and pointer call-value lowering are covered by
   `compiler-lower-foreach-tests-ok?`,
@@ -120,8 +124,6 @@ Named remaining blockers:
 
 - Function values, noncapturing lambdas, capturing closures, closure heap
   descriptors/calls, and capture deep-copy details are split to #1418.
-- Direct self-tail-call rewriting and tail-context forms are split to #1419,
-  which is blocked until the selfhost IR can represent tail calls (#1411).
 - Tuple construction/ref, fixed-array set/ref, and `string-ref` emit-shape
   parity have focused follow-ups (#1414, #1416, #1417). Broader backend-only
   assembly assertions stay under #1044.

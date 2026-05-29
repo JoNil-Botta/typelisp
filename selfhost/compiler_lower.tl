@@ -1070,6 +1070,10 @@
   (match state
     [(LowerState _ _ label _ _ _ _ _) label]))
 
+(define (lower-state-current-function [state : LowerState]) : String
+  (match state
+    [(LowerState _ _ _ _ _ function _ _) function]))
+
 (define (lower-state-spans [state : LowerState]) : CompilerSourceSpans
   (match state
     [(LowerState _ _ _ _ _ _ spans _) spans]))
@@ -6330,6 +6334,413 @@
                 (IrValueVar var-id)
                 expr-ty))])])))
 
+(define (lower-tail-call-target?
+  [state : LowerState]
+  [env : SymI64Env]
+  [callee : AstExpr]) : bool
+  (match (ast-expr-unspan callee)
+    [(AstExprVar name)
+      (match (sym-i64-lookup env name)
+        [(SomeI64 _) false]
+        [(NoneI64)
+          (string-eq
+            (lower-resolve-name state name)
+            (lower-state-current-function state))])]
+    [_ false]))
+
+(define (lower-tail-let-bindings-candidate-env
+  [env : SymI64Env]
+  [bindings : AstLetBindingList]) : SymI64Env
+  (match bindings
+    [(AstLetBindingNil) env]
+    [(AstLetBindingCons binding rest)
+      (match binding
+        [(AstLetBinding name _ _)
+          (lower-tail-let-bindings-candidate-env (sym-i64-bind env name 0) rest)])]))
+
+(define (lower-tail-begin-candidate?
+  [state : LowerState]
+  [env : SymI64Env]
+  [exprs : AstExprList]) : bool
+  (match exprs
+    [(AstExprNil) false]
+    [(AstExprCons expr rest)
+      (match rest
+        [(AstExprNil) (lower-tail-expr-candidate? state env expr)]
+        [_ (lower-tail-begin-candidate? state env rest)])]))
+
+(define (lower-tail-match-arms-candidate?
+  [state : LowerState]
+  [env : SymI64Env]
+  [arms : AstMatchArmList]) : bool
+  (match arms
+    [(AstMatchArmNil) false]
+    [(AstMatchArmCons arm rest)
+      (match arm
+        [(AstMatchArm pat body)
+          (let
+            [body-env : SymI64Env
+              (match pat
+                [(AstPatBinding name) (sym-i64-bind env name 0)]
+                [_ env])]
+            (if (lower-tail-expr-candidate? state body-env body)
+              true
+              (lower-tail-match-arms-candidate? state env rest)))])]))
+
+(define (lower-tail-expr-candidate?
+  [state : LowerState]
+  [env : SymI64Env]
+  [expr : AstExpr]) : bool
+  (match expr
+    [(AstExprSpanned inner _) (lower-tail-expr-candidate? state env inner)]
+    [(AstExprAnn inner _) (lower-tail-expr-candidate? state env inner)]
+    [(AstExprCast inner _) (lower-tail-expr-candidate? state env inner)]
+    [(AstExprCall callee _) (lower-tail-call-target? state env callee)]
+    [(AstExprLet bindings body)
+      (lower-tail-expr-candidate?
+        state
+        (lower-tail-let-bindings-candidate-env env bindings)
+        body)]
+    [(AstExprBegin exprs) (lower-tail-begin-candidate? state env exprs)]
+    [(AstExprUnsafe exprs) (lower-tail-begin-candidate? state env exprs)]
+    [(AstExprIf _ then-branch else-branch)
+      (if (lower-tail-expr-candidate? state env then-branch)
+        true
+        (lower-tail-expr-candidate? state env else-branch))]
+    [(AstExprMatch _ arms) (lower-tail-match-arms-candidate? state env arms)]
+    [_ false]))
+
+(define (lower-return-expr
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [expr : AstExpr]
+  [ret-ty : AstType]) : ResultLowerState
+  (match (lower-expr ctx state env type-env expr)
+    [(OkLowerExpr lowered)
+      (match lowered
+        [(LowerExpr body-state value _)
+          (OkLowerState
+            (lower-state-emit
+              body-state
+              (IrInstrReturn (lower-return-maybe value ret-ty))))])]
+    [(ErrLowerExpr message) (ErrLowerState message)]))
+
+(define (lower-tail-call
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [callee : AstExpr]
+  [args : AstExprList]
+  [ret-ty : AstType]
+  [origin : AstExpr]) : ResultLowerState
+  (if (lower-tail-call-target? state env callee)
+    (match (lower-args ctx state env type-env args)
+      [(OkLowerArgs args-state values)
+        (OkLowerState
+          (lower-state-emit-at-expr
+            args-state
+            (IrInstrTailCall
+              (lower-state-current-function args-state)
+              values
+              ret-ty)
+            origin))]
+      [(ErrLowerArgs message) (ErrLowerState message)])
+    (lower-return-expr ctx state env type-env origin ret-ty)))
+
+(define (lower-tail-begin
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [exprs : AstExprList]
+  [ret-ty : AstType]) : ResultLowerState
+  (match exprs
+    [(AstExprNil)
+      (OkLowerState
+        (lower-state-emit
+          state
+          (IrInstrReturn (lower-return-maybe IrValueUnit ret-ty))))]
+    [(AstExprCons expr rest)
+      (match rest
+        [(AstExprNil) (lower-tail-expr ctx state env type-env expr ret-ty)]
+        [_
+          (match (lower-expr ctx state env type-env expr)
+            [(OkLowerExpr lowered)
+              (match lowered
+                [(LowerExpr next-state _ _)
+                  (lower-tail-begin ctx next-state env type-env rest ret-ty)])]
+            [(ErrLowerExpr message) (ErrLowerState message)])])]))
+
+(define (lower-tail-if
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [cond : AstExpr]
+  [then-branch : AstExpr]
+  [else-branch : AstExpr]
+  [ret-ty : AstType]) : ResultLowerState
+  (match (lower-expr ctx state env type-env cond)
+    [(OkLowerExpr cond-lowered)
+      (match cond-lowered
+        [(LowerExpr cond-state cond-value _)
+          (match (lower-state-fresh-label cond-state "if_then")
+            [(LowerLabel then-label-state then-label)
+              (match (lower-state-fresh-label then-label-state "if_else")
+                [(LowerLabel else-label-state else-label)
+                  (let
+                    [branch-state : LowerState
+                      (lower-state-emit
+                        else-label-state
+                        (IrInstrBranch cond-value then-label else-label))]
+                    (match (lower-tail-expr
+                      ctx
+                      (lower-state-finish-block branch-state then-label)
+                      env
+                      type-env
+                      then-branch
+                      ret-ty)
+                      [(OkLowerState then-state)
+                        (lower-tail-expr
+                          ctx
+                          (lower-state-finish-block then-state else-label)
+                          env
+                          type-env
+                          else-branch
+                          ret-ty)]
+                      [(ErrLowerState message) (ErrLowerState message)]))])])])]
+    [(ErrLowerExpr message) (ErrLowerState message)]))
+
+(define (lower-tail-match-arms
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [scrut-var : i64]
+  [scrut-ty : AstType]
+  [arms : AstMatchArmList]
+  [ret-ty : AstType]) : ResultLowerState
+  (match arms
+    [(AstMatchArmNil)
+      (ErrLowerState (lower-diagnostic "lower: match with no arms"))]
+    [(AstMatchArmCons arm rest)
+      (match rest
+        [(AstMatchArmNil)
+          (lower-tail-match-catch-all
+            ctx
+            state
+            env
+            type-env
+            scrut-var
+            scrut-ty
+            arm
+            ret-ty)]
+        [_
+          (match arm
+            [(AstMatchArm pat body)
+              (match pat
+                [(AstPatLiteral lit)
+                  (lower-tail-match-literal-arm
+                    ctx
+                    state
+                    env
+                    type-env
+                    scrut-var
+                    scrut-ty
+                    lit
+                    body
+                    rest
+                    ret-ty)]
+                [(AstPatBinding _)
+                  (lower-tail-match-catch-all
+                    ctx
+                    state
+                    env
+                    type-env
+                    scrut-var
+                    scrut-ty
+                    arm
+                    ret-ty)]
+                [(AstPatWildcard)
+                  (lower-tail-match-catch-all
+                    ctx
+                    state
+                    env
+                    type-env
+                    scrut-var
+                    scrut-ty
+                    arm
+                    ret-ty)]
+                [_
+                  (ErrLowerState
+                    (lower-diagnostic "lower: unsupported match pattern"))])])])]))
+
+(define (lower-tail-match-literal-arm
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [scrut-var : i64]
+  [scrut-ty : AstType]
+  [lit : AstLiteral]
+  [body : AstExpr]
+  [rest : AstMatchArmList]
+  [ret-ty : AstType]) : ResultLowerState
+  (match (lower-state-alloc-var state)
+    [(LowerAlloc eq-alloc eq-var)
+      (let
+        [eq-state : LowerState
+          (lower-state-emit
+            eq-alloc
+            (IrInstrBinOp
+              eq-var
+              IrBinEq
+              (IrValueVar scrut-var)
+              (lower-literal-value lit)
+              scrut-ty))]
+        (match (lower-state-fresh-label eq-state "match_arm")
+          [(LowerLabel body-label-state body-label)
+            (match (lower-state-fresh-label body-label-state "match_next")
+              [(LowerLabel next-label-state next-label)
+                (let
+                  [body-start : LowerState
+                    (lower-state-finish-block
+                      (lower-state-emit
+                        next-label-state
+                        (IrInstrBranch
+                          (IrValueVar eq-var)
+                          body-label
+                          next-label))
+                      body-label)]
+                  (match (lower-tail-expr
+                    ctx
+                    body-start
+                    env
+                    type-env
+                    body
+                    ret-ty)
+                    [(OkLowerState body-state)
+                      (lower-tail-match-arms
+                        ctx
+                        (lower-state-finish-block body-state next-label)
+                        env
+                        type-env
+                        scrut-var
+                        scrut-ty
+                        rest
+                        ret-ty)]
+                    [(ErrLowerState message) (ErrLowerState message)]))])]))]))
+
+(define (lower-tail-match-catch-all
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [scrut-var : i64]
+  [scrut-ty : AstType]
+  [arm : AstMatchArm]
+  [ret-ty : AstType]) : ResultLowerState
+  (match arm
+    [(AstMatchArm pat body)
+      (let
+        [body-env : SymI64Env
+          (match pat
+            [(AstPatBinding name) (sym-i64-bind env name scrut-var)]
+            [_ env])]
+        [body-type-env : TcTypeEnv
+          (match pat
+            [(AstPatBinding name) (tc-bind type-env name scrut-ty)]
+            [_ type-env])]
+        (lower-tail-expr ctx state body-env body-type-env body ret-ty))]))
+
+(define (lower-tail-match
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [scrutinee : AstExpr]
+  [arms : AstMatchArmList]
+  [ret-ty : AstType]
+  [origin : AstExpr]) : ResultLowerState
+  (match (lower-expr ctx state env type-env scrutinee)
+    [(OkLowerExpr scrut-lowered)
+      (match scrut-lowered
+        [(LowerExpr scrut-state scrut-value scrut-ty)
+          (match (tc-resolve-type ctx scrut-ty)
+            [(AstTyEnum _)
+              (lower-return-expr ctx state env type-env origin ret-ty)]
+            [_
+              (match (lower-state-alloc-var scrut-state)
+                [(LowerAlloc scrut-alloc scrut-var)
+                  (lower-tail-match-arms
+                    ctx
+                    (lower-state-emit
+                      scrut-alloc
+                      (IrInstrMov scrut-var scrut-value scrut-ty))
+                    env
+                    type-env
+                    scrut-var
+                    scrut-ty
+                    arms
+                    ret-ty)])])])]
+    [(ErrLowerExpr message) (ErrLowerState message)]))
+
+(define (lower-tail-expr
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [expr : AstExpr]
+  [ret-ty : AstType]) : ResultLowerState
+  (if (lower-tail-expr-candidate? state env expr)
+    (match expr
+      [(AstExprSpanned inner _)
+        (lower-tail-expr ctx state env type-env inner ret-ty)]
+      [(AstExprAnn inner _)
+        (lower-tail-expr ctx state env type-env inner ret-ty)]
+      [(AstExprCast inner _)
+        (match (tc-expr ctx type-env inner)
+          [(OkTcType inner-ty)
+            (if (tc-type-eq (tc-type-without-regions inner-ty) ret-ty)
+              (lower-tail-expr ctx state env type-env inner ret-ty)
+              (lower-return-expr ctx state env type-env expr ret-ty))]
+          [(ErrTcType message)
+            (ErrLowerState (lower-diagnostic-at-expr inner message))])]
+      [(AstExprCall callee args)
+        (lower-tail-call ctx state env type-env callee args ret-ty expr)]
+      [(AstExprLet bindings body)
+        (match (lower-let-bindings ctx state env type-env bindings)
+          [(OkLowerEnv binding-state body-env body-type-env)
+            (lower-tail-expr
+              ctx
+              binding-state
+              body-env
+              body-type-env
+              body
+              ret-ty)]
+          [(ErrLowerEnv message) (ErrLowerState message)])]
+      [(AstExprBegin exprs)
+        (lower-tail-begin ctx state env type-env exprs ret-ty)]
+      [(AstExprUnsafe exprs)
+        (lower-tail-begin ctx state env (tc-enter-unsafe type-env) exprs ret-ty)]
+      [(AstExprIf cond then-branch else-branch)
+        (lower-tail-if
+          ctx
+          state
+          env
+          type-env
+          cond
+          then-branch
+          else-branch
+          ret-ty)]
+      [(AstExprMatch scrutinee arms)
+        (lower-tail-match ctx state env type-env scrutinee arms ret-ty expr)]
+      [_ (lower-return-expr ctx state env type-env expr ret-ty)])
+    (lower-return-expr ctx state env type-env expr ret-ty)))
+
 (define (lower-param-count [params : AstParamList]) : i64
   (match params
     [(AstParamNil) 0]
@@ -6393,24 +6804,17 @@
             function-spans
             names)]
         [ret-ty : AstType (tc-type-without-regions (tc-resolve-type ctx ret))]
-        (match (lower-expr ctx state env type-env body)
-          [(OkLowerExpr lowered)
-            (match lowered
-              [(LowerExpr body-state value _)
-                (let
-                  [final-state : LowerState
-                    (lower-state-emit
-                      body-state
-                      (IrInstrReturn (lower-return-maybe value ret-ty)))]
-                  (OkLowerFunction
-                    (IrFunction
-                      logical-name
-                      (lower-param-list ctx params 0)
-                      ret-ty
-                      (lower-state-next-var final-state)
-                      (lower-state-build-blocks final-state))
-                    (lower-state-spans final-state)))])]
-          [(ErrLowerExpr message) (ErrLowerFunction message)])))))
+        (match (lower-tail-expr ctx state env type-env body ret-ty)
+          [(OkLowerState final-state)
+            (OkLowerFunction
+              (IrFunction
+                logical-name
+                (lower-param-list ctx params 0)
+                ret-ty
+                (lower-state-next-var final-state)
+                (lower-state-build-blocks final-state))
+              (lower-state-spans final-state))]
+          [(ErrLowerState message) (ErrLowerFunction message)])))))
 
 (define (lower-global-value [names : LowerNameEnv] [expr : AstExpr]) : ResultLowerValue
   (match expr
@@ -7175,6 +7579,16 @@
         0)]
     [_ 0]))
 
+(define (lower-test-instr-tail-call-count
+  [instr : CompilerIrInstr]
+  [name : String]) : i64
+  (match instr
+    [(IrInstrTailCall call-name _ _)
+      (if (string-eq call-name name)
+        1
+        0)]
+    [_ 0]))
+
 (define (lower-test-instr-store-ptr-count [instr : CompilerIrInstr]) : i64
   (match instr
     [(IrInstrStorePtr _ _ _) 1]
@@ -7338,6 +7752,16 @@
         (lower-test-instr-call-count instr name)
         (lower-test-instrs-call-count rest name))]))
 
+(define (lower-test-instrs-tail-call-count
+  [instrs : CompilerIrInstrList]
+  [name : String]) : i64
+  (match instrs
+    [(IrInstrNil) 0]
+    [(IrInstrCons instr rest)
+      (+
+        (lower-test-instr-tail-call-count instr name)
+        (lower-test-instrs-tail-call-count rest name))]))
+
 (define (lower-test-instrs-store-ptr-count [instrs : CompilerIrInstrList]) : i64
   (match instrs
     [(IrInstrNil) 0]
@@ -7443,6 +7867,18 @@
           (+
             (lower-test-instrs-call-count instrs name)
             (lower-test-blocks-call-count rest name))])]))
+
+(define (lower-test-blocks-tail-call-count
+  [blocks : CompilerIrBlockList]
+  [name : String]) : i64
+  (match blocks
+    [(IrBlockNil) 0]
+    [(IrBlockCons block rest)
+      (match block
+        [(IrBlock _ instrs)
+          (+
+            (lower-test-instrs-tail-call-count instrs name)
+            (lower-test-blocks-tail-call-count rest name))])]))
 
 (define (lower-test-blocks-store-ptr-count [blocks : CompilerIrBlockList]) : i64
   (match blocks
@@ -7571,6 +8007,32 @@
           (+
             (lower-test-blocks-call-count blocks name)
             (lower-test-functions-call-count rest name))])]))
+
+(define (lower-test-function-call-count
+  [funcs : CompilerIrFunctionList]
+  [name : String]
+  [call-name : String]) : i64
+  (match funcs
+    [(IrFunctionNil) (- 0 1)]
+    [(IrFunctionCons func rest)
+      (match func
+        [(IrFunction fname _ _ _ blocks)
+          (if (string-eq fname name)
+            (lower-test-blocks-call-count blocks call-name)
+            (lower-test-function-call-count rest name call-name))])]))
+
+(define (lower-test-function-tail-call-count
+  [funcs : CompilerIrFunctionList]
+  [name : String]
+  [call-name : String]) : i64
+  (match funcs
+    [(IrFunctionNil) (- 0 1)]
+    [(IrFunctionCons func rest)
+      (match func
+        [(IrFunction fname _ _ _ blocks)
+          (if (string-eq fname name)
+            (lower-test-blocks-tail-call-count blocks call-name)
+            (lower-test-function-tail-call-count rest name call-name))])]))
 
 (define (lower-test-function-store-ptr-count
   [funcs : CompilerIrFunctionList]
@@ -7884,6 +8346,68 @@
                 (set! ok false))
               ok))])]
     [(ErrCompilerLower _) false]))
+
+(define (compiler-lower-tail-simple-source) : String
+  "(define (loop [n : i64] [acc : i64]) : i64
+  (if (= n 0)
+    acc
+    (loop (- n 1) (+ acc 1))))
+(define (main) : i64 (loop 3 0))")
+
+(define (compiler-lower-tail-context-source) : String
+  "(define (loop [n : i64] [acc : i64]) : i64
+  (let
+    [next : i64 (- n 1)]
+    (begin
+      unit
+      (ann
+        (match n
+          [0 acc]
+          [_ (cast (loop next (+ acc 1)) : i64)])
+        : i64))))
+(define (main) : i64 (loop 3 0))")
+
+(define (compiler-lower-tail-operand-source) : String
+  "(define (loop [n : i64]) : i64
+  (+ 1 (loop (- n 1))))
+(define (main) : i64 (loop 3))")
+
+(define (compiler-lower-tail-simple-shape-ok?) : bool
+  (match (lower-compiler-source (compiler-lower-tail-simple-source))
+    [(OkCompilerLower program _)
+      (match program
+        [(IrProgram _ functions _)
+          (and
+            (= (lower-test-function-tail-call-count functions "loop" "loop") 1)
+            (= (lower-test-function-call-count functions "loop" "loop") 0))])]
+    [(ErrCompilerLower _) false]))
+
+(define (compiler-lower-tail-context-shape-ok?) : bool
+  (match (lower-compiler-source (compiler-lower-tail-context-source))
+    [(OkCompilerLower program _)
+      (match program
+        [(IrProgram _ functions _)
+          (and
+            (= (lower-test-function-tail-call-count functions "loop" "loop") 1)
+            (= (lower-test-function-call-count functions "loop" "loop") 0))])]
+    [(ErrCompilerLower _) false]))
+
+(define (compiler-lower-tail-operand-shape-ok?) : bool
+  (match (lower-compiler-source (compiler-lower-tail-operand-source))
+    [(OkCompilerLower program _)
+      (match program
+        [(IrProgram _ functions _)
+          (and
+            (= (lower-test-function-tail-call-count functions "loop" "loop") 0)
+            (> (lower-test-function-call-count functions "loop" "loop") 0))])]
+    [(ErrCompilerLower _) false]))
+
+(define (compiler-lower-tail-call-shape-ok?) : bool
+  (and
+    (compiler-lower-tail-simple-shape-ok?)
+    (and
+      (compiler-lower-tail-context-shape-ok?)
+      (compiler-lower-tail-operand-shape-ok?))))
 
 ;; CTFE fold verification (#719): a folded `(comptime ...)` lowers to a literal,
 ;; so the function body must contain a `Mov` of the expected i64 literal and no
@@ -8860,6 +9384,9 @@
         unit
         (set! ok false))
       (if (compiler-lower-numeric-shape-ok?)
+        unit
+        (set! ok false))
+      (if (compiler-lower-tail-call-shape-ok?)
         unit
         (set! ok false))
       (if (compiler-lower-foreach-tests-ok?)

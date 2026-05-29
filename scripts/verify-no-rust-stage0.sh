@@ -97,7 +97,8 @@ make_stage1_cli_wrapper() {
     stage1_bin=$1
     stage1_test_bin=${2:-}
     stage1_doc_bin=${3:-}
-    stage1_repl_bin=${4:-}
+    stage1_build_bin=${4:-}
+    stage1_repl_bin=${5:-}
     wrapper_dir="$ROOT/target/no-rust-stage1-wrapper"
     wrapper="$wrapper_dir/typelisp"
     rm -rf "$wrapper_dir"
@@ -111,6 +112,8 @@ TYPELISP_STAGE1_TEST_BIN='$stage1_test_bin'
 export TYPELISP_STAGE1_TEST_BIN
 TYPELISP_STAGE1_DOC_BIN='$stage1_doc_bin'
 export TYPELISP_STAGE1_DOC_BIN
+TYPELISP_STAGE1_BUILD_BIN='$stage1_build_bin'
+export TYPELISP_STAGE1_BUILD_BIN
 TYPELISP_STAGE1_REPL_BIN='$stage1_repl_bin'
 export TYPELISP_STAGE1_REPL_BIN
 TYPELISP_STAGE1_DRIVER_CACHE_DIR='$wrapper_dir/cache'
@@ -122,33 +125,44 @@ EOF
 }
 
 build_stage1_doc_driver() {
+    build_stage1_wrapper_driver "$1" doc selfhost/doc.tl selfhost-doc
+}
+
+build_stage1_build_driver() {
+    build_stage1_wrapper_driver "$1" build selfhost/build.tl selfhost-build
+}
+
+build_stage1_wrapper_driver() {
     seed=$1
-    driver_dir="$ROOT/target/no-rust-stage1-doc-driver"
-    asm="$driver_dir/selfhost-doc.s"
-    obj="$driver_dir/selfhost-doc.o"
-    bin="$driver_dir/selfhost-doc"
+    label=$2
+    source=$3
+    stem=$4
+    driver_dir="$ROOT/target/no-rust-stage1-$label-driver"
+    asm="$driver_dir/$stem.s"
+    obj="$driver_dir/$stem.o"
+    bin="$driver_dir/$stem"
 
     command -v as >/dev/null 2>&1 || {
-        echo "stage1 doc driver prebuild requires 'as'" >&2
+        echo "stage1 $label driver prebuild requires 'as'" >&2
         exit 1
     }
     command -v ld >/dev/null 2>&1 || {
-        echo "stage1 doc driver prebuild requires 'ld'" >&2
+        echo "stage1 $label driver prebuild requires 'ld'" >&2
         exit 1
     }
 
     rm -rf "$driver_dir"
     mkdir -p "$driver_dir"
-    if ! "$seed" compile "$ROOT/selfhost/doc.tl" -o "$asm" --target linux-x86_64 --backend-mode scalar --stdlib-root "$ROOT/stdlib" \
+    if ! "$seed" compile "$ROOT/$source" -o "$asm" --target linux-x86_64 --backend-mode scalar --stdlib-root "$ROOT/stdlib" \
         > "$driver_dir/compile.stdout" 2> "$driver_dir/compile.stderr"; then
-        echo "stage1 doc driver prebuild failed" >&2
+        echo "stage1 $label driver prebuild failed" >&2
         sed 's/^/  /' "$driver_dir/compile.stdout" >&2 || true
         sed 's/^/  /' "$driver_dir/compile.stderr" >&2 || true
         exit 1
     fi
     as "$asm" -o "$obj"
     ld "$obj" -o "$bin" -dynamic-linker /lib64/ld-linux-x86-64.so.2 -lc
-    ensure_executable "stage1 doc driver" "$bin"
+    ensure_executable "stage1 $label driver" "$bin"
     printf '%s\n' "$bin"
 }
 
@@ -210,8 +224,9 @@ if [ "$HOST_OS" = linux ]; then
     fi
     ensure_executable "stage1" "$TYPELISP_BIN"
     STAGE1_DOC_BIN=$(build_stage1_doc_driver "$SEED_TYPELISP_BIN")
+    STAGE1_BUILD_BIN=$(build_stage1_build_driver "$SEED_TYPELISP_BIN")
     STAGE1_REPL_BIN=$(build_stage1_repl_driver "$SEED_TYPELISP_BIN")
-    STAGE1_TYPELISP_BIN=$(make_stage1_cli_wrapper "$TYPELISP_BIN" "" "$STAGE1_DOC_BIN" "$STAGE1_REPL_BIN")
+    STAGE1_TYPELISP_BIN=$(make_stage1_cli_wrapper "$TYPELISP_BIN" "" "$STAGE1_DOC_BIN" "$STAGE1_BUILD_BIN" "$STAGE1_REPL_BIN")
     echo
     echo "[no-rust-stage0] stage1 CLI wrapper=$STAGE1_TYPELISP_BIN"
 else

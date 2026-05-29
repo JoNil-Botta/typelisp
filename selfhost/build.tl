@@ -36,7 +36,8 @@
     bool
     CompilerBackendTarget
     CompilerLoadRootList
-    i64))
+    i64
+    SourceToolLinkInputs))
 
 (defenum ResultBuildCliConfig
   (OkBuildCliConfig BuildCliConfig)
@@ -455,7 +456,12 @@
   [artifact-path : String]) : SourceToolCommandStatus
   (match kind
     [(CompilerPkgKindBin)
-      (source-tool-assemble-and-link target asm-path obj-path artifact-path)]
+      (source-tool-assemble-and-link
+        target
+        asm-path
+        obj-path
+        artifact-path
+        (source-tool-link-inputs-empty))]
     [(CompilerPkgKindLib)
       (source-tool-assemble-and-archive target asm-path obj-path artifact-path)]))
 
@@ -616,15 +622,33 @@
   (BuildCliOptionTarget)
   (BuildCliOptionBackendMode)
   (BuildCliOptionOptLevel)
+  (BuildCliOptionLinkLib)
+  (BuildCliOptionLinkSearch)
+  (BuildCliOptionLinkArg)
   (BuildCliOptionManifestPath)
   (BuildCliOptionOther))
+
+(define (build-cli-option-rest6 [current : String]) : BuildCliOption
+  (if (string-eq current "--link-arg")
+    (BuildCliOptionLinkArg)
+    (if (string-eq current "--manifest-path")
+      (BuildCliOptionManifestPath)
+      (BuildCliOptionOther))))
+
+(define (build-cli-option-rest5 [current : String]) : BuildCliOption
+  (if (string-eq current "--link-search")
+    (BuildCliOptionLinkSearch)
+    (build-cli-option-rest6 current)))
+
+(define (build-cli-option-rest4 [current : String]) : BuildCliOption
+  (if (string-eq current "--link-lib")
+    (BuildCliOptionLinkLib)
+    (build-cli-option-rest5 current)))
 
 (define (build-cli-option-rest3 [current : String]) : BuildCliOption
   (if (string-eq current "--opt-level")
     (BuildCliOptionOptLevel)
-    (if (string-eq current "--manifest-path")
-      (BuildCliOptionManifestPath)
-      (BuildCliOptionOther))))
+    (build-cli-option-rest4 current)))
 
 (define (build-cli-option-rest2 [current : String]) : BuildCliOption
   (if (string-eq current "--backend-mode")
@@ -655,7 +679,8 @@
   [has-output : bool]
   [target : CompilerBackendTarget]
   [stdlib-roots : CompilerLoadRootList]
-  [opt-level : i64]) : ResultBuildCliConfig
+  [opt-level : i64]
+  [link-inputs : SourceToolLinkInputs]) : ResultBuildCliConfig
   (if (>= idx count)
     (if has-source
       (OkBuildCliConfig
@@ -666,7 +691,8 @@
           has-output
           target
           stdlib-roots
-          opt-level))
+          opt-level
+          link-inputs))
       (if has-output
         (ErrBuildCliConfig "build: -o requires a source file argument")
         (ErrBuildCliConfig "build: expected source path")))
@@ -687,7 +713,8 @@
                 true
                 target
                 stdlib-roots
-                opt-level)))]
+                opt-level
+                link-inputs)))]
         [(BuildCliOptionStdlibRoot)
           (if (>= (+ idx 1) count)
             (ErrBuildCliConfig "build: --stdlib-root requires a value")
@@ -700,7 +727,8 @@
               has-output
               target
               (source-tool-root-list-append stdlib-roots (arg (+ idx 1)))
-              opt-level))]
+              opt-level
+              link-inputs))]
         [(BuildCliOptionTarget)
           (if (>= (+ idx 1) count)
             (ErrBuildCliConfig "build: --target requires a value")
@@ -717,7 +745,8 @@
                     has-output
                     parsed-target
                     stdlib-roots
-                    opt-level)]
+                    opt-level
+                    link-inputs)]
                 [(ErrSourceToolTarget _)
                   (ErrBuildCliConfig (build-cli-unknown-target value))])))]
         [(BuildCliOptionBackendMode)
@@ -736,7 +765,8 @@
                     has-output
                     target
                     stdlib-roots
-                    opt-level)]
+                    opt-level
+                    link-inputs)]
                 [(ErrSourceToolBackendMode message) (ErrBuildCliConfig message)])))]
         [(BuildCliOptionOptLevel)
           (if (>= (+ idx 1) count)
@@ -753,8 +783,53 @@
                   has-output
                   target
                   stdlib-roots
-                  (string->int value))
+                  (string->int value)
+                  link-inputs)
                 (ErrBuildCliConfig (build-cli-unknown-opt-level value)))))]
+        [(BuildCliOptionLinkLib)
+          (if (>= (+ idx 1) count)
+            (ErrBuildCliConfig "build: --link-lib requires a value")
+            (build-cli-parse-options
+              (+ idx 2)
+              count
+              source
+              has-source
+              output
+              has-output
+              target
+              stdlib-roots
+              opt-level
+              (source-tool-link-inputs-add-lib link-inputs (arg (+ idx 1)))))]
+        [(BuildCliOptionLinkSearch)
+          (if (>= (+ idx 1) count)
+            (ErrBuildCliConfig "build: --link-search requires a value")
+            (build-cli-parse-options
+              (+ idx 2)
+              count
+              source
+              has-source
+              output
+              has-output
+              target
+              stdlib-roots
+              opt-level
+              (source-tool-link-inputs-add-search-dir
+                link-inputs
+                (arg (+ idx 1)))))]
+        [(BuildCliOptionLinkArg)
+          (if (>= (+ idx 1) count)
+            (ErrBuildCliConfig "build: --link-arg requires a value")
+            (build-cli-parse-options
+              (+ idx 2)
+              count
+              source
+              has-source
+              output
+              has-output
+              target
+              stdlib-roots
+              opt-level
+              (source-tool-link-inputs-add-raw-arg link-inputs (arg (+ idx 1)))))]
         [(BuildCliOptionManifestPath)
           (if (>= (+ idx 1) count)
             (ErrBuildCliConfig "build: --manifest-path requires a value")
@@ -774,7 +849,8 @@
                 has-output
                 target
                 stdlib-roots
-                opt-level)))]))))
+                opt-level
+                link-inputs)))]))))
 
 (define (build-cli-config [count : i64]) : ResultBuildCliConfig
   (build-cli-config-from 1 count))
@@ -789,7 +865,8 @@
     false
     (source-tool-default-target)
     CompilerLoadRootNil
-    (compiler-optimize-default-level)))
+    (compiler-optimize-default-level)
+    (source-tool-link-inputs-empty)))
 
 (define (build-cli-main) : i64
   (match (build-cli-config (arg-count))
@@ -802,14 +879,16 @@
             has-output
             target
             stdlib-roots
-            opt-level)
+            opt-level
+            link-inputs)
           (source-tool-build-source
             source
             output
             has-output
             target
             stdlib-roots
-            opt-level)])]
+            opt-level
+            link-inputs)])]
     [(ErrBuildCliConfig message)
       (begin
         (print-error message)
@@ -829,14 +908,16 @@
                 has-output
                 target
                 stdlib-roots
-                opt-level)
+                opt-level
+                link-inputs)
               (source-tool-build-source
                 source
                 output
                 has-output
                 target
                 stdlib-roots
-                opt-level)])]
+                opt-level
+                link-inputs)])]
         [(ErrBuildCliConfig message)
           (begin
             (print-error message)

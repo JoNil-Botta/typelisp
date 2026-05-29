@@ -175,6 +175,31 @@ find_link() {
     return 1
 }
 
+find_lib() {
+    latest=
+    for candidate in \
+        "/c/Program Files/Microsoft Visual Studio/2022/Enterprise/VC/Tools/MSVC"/*/bin/Hostx64/x64/lib.exe \
+        "/c/Program Files/Microsoft Visual Studio/2022/Professional/VC/Tools/MSVC"/*/bin/Hostx64/x64/lib.exe \
+        "/c/Program Files/Microsoft Visual Studio/2022/Community/VC/Tools/MSVC"/*/bin/Hostx64/x64/lib.exe \
+        "/c/Program Files (x86)/Microsoft Visual Studio/2022/BuildTools/VC/Tools/MSVC"/*/bin/Hostx64/x64/lib.exe; do
+        if [ -x "$candidate" ]; then
+            latest=$candidate
+        fi
+    done
+
+    if [ -n "$latest" ]; then
+        printf '%s\n' "$latest"
+        return 0
+    fi
+
+    if command -v lib.exe >/dev/null 2>&1; then
+        command -v lib.exe
+        return 0
+    fi
+
+    return 1
+}
+
 configure_windows_link_env() {
     if [ -n "${TYPELISP_WINDOWS_LINK:-}" ]; then
         return 0
@@ -333,5 +358,130 @@ if [ "$run_status" -ne 42 ]; then
 fi
 assert_empty "$WORKDIR/run.stdout"
 assert_empty "$WORKDIR/run.stderr"
+
+LINK_LIB_DIR="$WORKDIR/native-lib"
+mkdir -p "$LINK_LIB_DIR"
+cat > "$LINK_LIB_DIR/ffi_add7.s" <<'EOF'
+    .text
+    .globl ffi_add7
+ffi_add7:
+    movq %rcx, %rax
+    addq $7, %rax
+    retq
+EOF
+cat > "$WORKDIR/link-main.tl" <<'EOF'
+(extern ffi_add7 : (-> i64 i64))
+(define (main) : i64 (ffi_add7 35))
+EOF
+LINK_SRC="$WORKDIR/link-main.tl"
+LINK_BIN="$WORKDIR/link-main.exe"
+LINK_BIN_DISPLAY=$LINK_BIN
+if command -v cygpath >/dev/null 2>&1; then
+    LINK_BIN_DISPLAY=$(cygpath -m "$LINK_BIN")
+fi
+
+echo "[windows-selfhost-msvc] create named link library"
+LIB_PATH=$(find_lib || true)
+if [ -z "$LIB_PATH" ]; then
+    fail "missing archiver: lib.exe"
+fi
+CLANG_RUN_PATH=$(find_clang || true)
+if [ -z "$CLANG_RUN_PATH" ]; then
+    CLANG_RUN_PATH=$TYPELISP_WINDOWS_CLANG
+fi
+"$CLANG_RUN_PATH" --target=x86_64-pc-windows-msvc -c \
+    "$LINK_LIB_DIR/ffi_add7.s" -o "$LINK_LIB_DIR/ffi_add7.obj"
+MSYS2_ARG_CONV_EXCL='*' "$LIB_PATH" /NOLOGO \
+    "/OUT:$(to_windows_path "$LINK_LIB_DIR/ffi_add7.lib")" \
+    "$(to_windows_path "$LINK_LIB_DIR/ffi_add7.obj")" \
+    > "$WORKDIR/link-lib.stdout" 2> "$WORKDIR/link-lib.stderr"
+assert_empty "$WORKDIR/link-lib.stderr"
+
+LINK_SEARCH=$(to_windows_path "$LINK_LIB_DIR")
+
+echo "[windows-selfhost-msvc] build --direct --link-lib"
+if ! "$COMPILER" run "$ROOT/selfhost/build.tl" --stdlib-root "$ROOT/stdlib" -- \
+    --direct "$LINK_SRC" --target windows-x86_64 -o "$LINK_BIN" \
+    --stdlib-root "$ROOT/stdlib" --link-search "$LINK_SEARCH" --link-lib ffi_add7 \
+    > "$WORKDIR/build-link.stdout" 2> "$WORKDIR/build-link.stderr"; then
+    sed 's/^/  /' "$WORKDIR/build-link.stdout" >&2 || true
+    sed 's/^/  /' "$WORKDIR/build-link.stderr" >&2 || true
+    fail "selfhost build --direct --link-lib failed"
+fi
+assert_contains "$WORKDIR/build-link.stdout" "Generated: $LINK_BIN_DISPLAY"
+assert_empty "$WORKDIR/build-link.stderr"
+[ -x "$LINK_BIN" ] || fail "selfhost link-input build did not write executable $LINK_BIN"
+
+set +e
+"$LINK_BIN" > "$WORKDIR/built-link.stdout" 2> "$WORKDIR/built-link.stderr"
+built_link_status=$?
+set -e
+if [ "$built_link_status" -ne 42 ]; then
+    sed 's/^/  /' "$WORKDIR/built-link.stdout" >&2 || true
+    sed 's/^/  /' "$WORKDIR/built-link.stderr" >&2 || true
+    fail "linked executable expected exit 42, got $built_link_status"
+fi
+assert_empty "$WORKDIR/built-link.stdout"
+assert_empty "$WORKDIR/built-link.stderr"
+
+echo "[windows-selfhost-msvc] run --direct --link-lib"
+set +e
+"$COMPILER" run "$ROOT/selfhost/run.tl" --stdlib-root "$ROOT/stdlib" -- \
+    --direct "$LINK_SRC" --target windows-x86_64 --stdlib-root "$ROOT/stdlib" \
+    --link-search "$LINK_SEARCH" --link-lib ffi_add7 \
+    > "$WORKDIR/run-link.stdout" 2> "$WORKDIR/run-link.stderr"
+run_link_status=$?
+set -e
+if [ "$run_link_status" -ne 42 ]; then
+    sed 's/^/  /' "$WORKDIR/run-link.stdout" >&2 || true
+    sed 's/^/  /' "$WORKDIR/run-link.stderr" >&2 || true
+    fail "selfhost run --direct --link-lib expected exit 42, got $run_link_status"
+fi
+assert_empty "$WORKDIR/run-link.stdout"
+assert_empty "$WORKDIR/run-link.stderr"
+
+PUBLIC_LINK_BIN="$WORKDIR/public-link-main.exe"
+PUBLIC_LINK_BIN_DISPLAY=$PUBLIC_LINK_BIN
+if command -v cygpath >/dev/null 2>&1; then
+    PUBLIC_LINK_BIN_DISPLAY=$(cygpath -m "$PUBLIC_LINK_BIN")
+fi
+
+echo "[windows-selfhost-msvc] public build --link-lib"
+if ! "$COMPILER" build "$LINK_SRC" --target windows-x86_64 -o "$PUBLIC_LINK_BIN" \
+    --stdlib-root "$ROOT/stdlib" --link-search "$LINK_SEARCH" --link-lib ffi_add7 \
+    > "$WORKDIR/public-build-link.stdout" 2> "$WORKDIR/public-build-link.stderr"; then
+    sed 's/^/  /' "$WORKDIR/public-build-link.stdout" >&2 || true
+    sed 's/^/  /' "$WORKDIR/public-build-link.stderr" >&2 || true
+    fail "public build --link-lib failed"
+fi
+assert_contains "$WORKDIR/public-build-link.stdout" "Generated: $PUBLIC_LINK_BIN_DISPLAY"
+assert_empty "$WORKDIR/public-build-link.stderr"
+
+set +e
+"$PUBLIC_LINK_BIN" > "$WORKDIR/public-built-link.stdout" 2> "$WORKDIR/public-built-link.stderr"
+public_built_link_status=$?
+set -e
+if [ "$public_built_link_status" -ne 42 ]; then
+    sed 's/^/  /' "$WORKDIR/public-built-link.stdout" >&2 || true
+    sed 's/^/  /' "$WORKDIR/public-built-link.stderr" >&2 || true
+    fail "public linked executable expected exit 42, got $public_built_link_status"
+fi
+assert_empty "$WORKDIR/public-built-link.stdout"
+assert_empty "$WORKDIR/public-built-link.stderr"
+
+echo "[windows-selfhost-msvc] public run --link-lib"
+set +e
+"$COMPILER" run "$LINK_SRC" --target windows-x86_64 --stdlib-root "$ROOT/stdlib" \
+    --link-search "$LINK_SEARCH" --link-lib ffi_add7 \
+    > "$WORKDIR/public-run-link.stdout" 2> "$WORKDIR/public-run-link.stderr"
+public_run_link_status=$?
+set -e
+if [ "$public_run_link_status" -ne 42 ]; then
+    sed 's/^/  /' "$WORKDIR/public-run-link.stdout" >&2 || true
+    sed 's/^/  /' "$WORKDIR/public-run-link.stderr" >&2 || true
+    fail "public run --link-lib expected exit 42, got $public_run_link_status"
+fi
+assert_empty "$WORKDIR/public-run-link.stdout"
+assert_empty "$WORKDIR/public-run-link.stderr"
 
 echo "windows selfhost MSVC link smoke passed"

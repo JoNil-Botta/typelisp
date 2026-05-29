@@ -29,6 +29,11 @@
   (OkSourceToolBackendMode)
   (ErrSourceToolBackendMode String))
 
+(defstruct SourceToolLinkInputs
+  (libs ProcessStringList)
+  (search-dirs ProcessStringList)
+  (raw-args ProcessStringList))
+
 (define (source-tool-cat3 [a : String] [b : String] [c : String]) : String
   (string-append a (string-append b c)))
 
@@ -106,6 +111,47 @@
       (+ idx 1)
       count
       (source-tool-args-append args (arg idx)))))
+
+(define (source-tool-link-inputs-empty) : SourceToolLinkInputs
+  (SourceToolLinkInputs
+    (process-args-empty)
+    (process-args-empty)
+    (process-args-empty)))
+
+(define (source-tool-link-inputs-libs [inputs : SourceToolLinkInputs]) : ProcessStringList
+  (struct-get inputs libs))
+
+(define (source-tool-link-inputs-search-dirs [inputs : SourceToolLinkInputs]) : ProcessStringList
+  (struct-get inputs search-dirs))
+
+(define (source-tool-link-inputs-raw-args [inputs : SourceToolLinkInputs]) : ProcessStringList
+  (struct-get inputs raw-args))
+
+(define (source-tool-link-inputs-add-lib
+  [inputs : SourceToolLinkInputs]
+  [name : String]) : SourceToolLinkInputs
+  (SourceToolLinkInputs
+    (source-tool-args-append (source-tool-link-inputs-libs inputs) name)
+    (source-tool-link-inputs-search-dirs inputs)
+    (source-tool-link-inputs-raw-args inputs)))
+
+(define (source-tool-link-inputs-add-search-dir
+  [inputs : SourceToolLinkInputs]
+  [dir : String]) : SourceToolLinkInputs
+  (SourceToolLinkInputs
+    (source-tool-link-inputs-libs inputs)
+    (source-tool-args-append (source-tool-link-inputs-search-dirs inputs) dir)
+    (source-tool-link-inputs-raw-args inputs)))
+
+(define (source-tool-link-inputs-add-raw-arg
+  [inputs : SourceToolLinkInputs]
+  [arg-value : String]) : SourceToolLinkInputs
+  (SourceToolLinkInputs
+    (source-tool-link-inputs-libs inputs)
+    (source-tool-link-inputs-search-dirs inputs)
+    (source-tool-args-append
+      (source-tool-link-inputs-raw-args inputs)
+      arg-value)))
 
 (define (source-tool-path-separator? [c : char]) : bool
   (or (= c #/') (= c #\\')))
@@ -374,7 +420,34 @@ _tl_print_string:
             "-o"
             (process-args-cons obj-path (process-args-empty))))))))
 
-(define (source-tool-linker-command [obj-path : String] [bin-path : String]) : ProcessCommand
+(define (source-tool-linux-link-search-args [dirs : ProcessStringList]) : ProcessStringList
+  (match dirs
+    [(ProcessStringNil) (process-args-empty)]
+    [(ProcessStringCons dir rest)
+      (process-args-cons
+        (string-append "-L" dir)
+        (source-tool-linux-link-search-args rest))]))
+
+(define (source-tool-linux-link-lib-args [libs : ProcessStringList]) : ProcessStringList
+  (match libs
+    [(ProcessStringNil) (process-args-empty)]
+    [(ProcessStringCons name rest)
+      (process-args-cons
+        (string-append "-l" name)
+        (source-tool-linux-link-lib-args rest))]))
+
+(define (source-tool-link-inputs-linux-args [inputs : SourceToolLinkInputs]) : ProcessStringList
+  (process-args-append
+    (source-tool-linux-link-search-args
+      (source-tool-link-inputs-search-dirs inputs))
+    (process-args-append
+      (source-tool-linux-link-lib-args (source-tool-link-inputs-libs inputs))
+      (source-tool-link-inputs-raw-args inputs))))
+
+(define (source-tool-linker-command
+  [obj-path : String]
+  [bin-path : String]
+  [link-inputs : SourceToolLinkInputs]) : ProcessCommand
   (process-command
     (source-tool-resolve-command "ld")
     (process-args-cons
@@ -387,7 +460,9 @@ _tl_print_string:
             "-dynamic-linker"
             (process-args-cons
               "/lib64/ld-linux-x86-64.so.2"
-              (process-args-cons "-lc" (process-args-empty)))))))))
+              (process-args-append
+                (source-tool-link-inputs-linux-args link-inputs)
+                (process-args-cons "-lc" (process-args-empty))))))))))
 
 (define (source-tool-windows-link-libs) : ProcessStringList
   (process-args-cons
@@ -402,9 +477,34 @@ _tl_print_string:
             "ole32.lib"
             (process-args-cons "oleaut32.lib" (process-args-empty))))))))
 
+(define (source-tool-windows-link-search-args [dirs : ProcessStringList]) : ProcessStringList
+  (match dirs
+    [(ProcessStringNil) (process-args-empty)]
+    [(ProcessStringCons dir rest)
+      (process-args-cons
+        (string-append "/LIBPATH:" dir)
+        (source-tool-windows-link-search-args rest))]))
+
+(define (source-tool-windows-link-lib-args [libs : ProcessStringList]) : ProcessStringList
+  (match libs
+    [(ProcessStringNil) (process-args-empty)]
+    [(ProcessStringCons name rest)
+      (process-args-cons
+        (string-append name ".lib")
+        (source-tool-windows-link-lib-args rest))]))
+
+(define (source-tool-link-inputs-windows-args [inputs : SourceToolLinkInputs]) : ProcessStringList
+  (process-args-append
+    (source-tool-windows-link-search-args
+      (source-tool-link-inputs-search-dirs inputs))
+    (process-args-append
+      (source-tool-windows-link-lib-args (source-tool-link-inputs-libs inputs))
+      (source-tool-link-inputs-raw-args inputs))))
+
 (define (source-tool-windows-linker-args
   [obj-path : String]
-  [bin-path : String]) : ProcessStringList
+  [bin-path : String]
+  [link-inputs : SourceToolLinkInputs]) : ProcessStringList
   (process-args-cons
     "/NOLOGO"
     (process-args-cons
@@ -417,11 +517,14 @@ _tl_print_string:
             "/DYNAMICBASE:NO"
             (process-args-cons
               "/STACK:16777216"
-              (source-tool-windows-link-libs))))))))
+              (process-args-append
+                (source-tool-link-inputs-windows-args link-inputs)
+                (source-tool-windows-link-libs)))))))))
 
 (define (source-tool-windows-linker-command
   [obj-path : String]
-  [bin-path : String]) : ResultSourceToolCommand
+  [bin-path : String]
+  [link-inputs : SourceToolLinkInputs]) : ResultSourceToolCommand
   (match (msvc-find-tool "x86_64-pc-windows-msvc" "link.exe")
     [(OkMsvcTool tool)
       (OkSourceToolCommand
@@ -430,7 +533,7 @@ _tl_print_string:
             (source-tool-env-command-or-default
               "TYPELISP_WINDOWS_LINK"
               (msvc-tool-executable tool))
-            (source-tool-windows-linker-args obj-path bin-path))
+            (source-tool-windows-linker-args obj-path bin-path link-inputs))
           (msvc-tool-process-env tool)))]
     [(ErrMsvcTool error)
       (ErrSourceToolCommand
@@ -511,15 +614,16 @@ _tl_print_string:
 (define (source-tool-link
   [target : CompilerBackendTarget]
   [obj-path : String]
-  [bin-path : String]) : SourceToolCommandStatus
+  [bin-path : String]
+  [link-inputs : SourceToolLinkInputs]) : SourceToolCommandStatus
   (match target
     [(BackendTargetLinux)
       (source-tool-run-command
         "linker"
         target
-        (source-tool-linker-command obj-path bin-path))]
+        (source-tool-linker-command obj-path bin-path link-inputs))]
     [(BackendTargetWindows)
-      (match (source-tool-windows-linker-command obj-path bin-path)
+      (match (source-tool-windows-linker-command obj-path bin-path link-inputs)
         [(OkSourceToolCommand command)
           (source-tool-run-command "linker" target command)]
         [(ErrSourceToolCommand message) (SourceToolCommandErr message)])]))
@@ -544,9 +648,11 @@ _tl_print_string:
   [target : CompilerBackendTarget]
   [asm-path : String]
   [obj-path : String]
-  [bin-path : String]) : SourceToolCommandStatus
+  [bin-path : String]
+  [link-inputs : SourceToolLinkInputs]) : SourceToolCommandStatus
   (match (source-tool-assemble target asm-path obj-path)
-    [(SourceToolCommandOk) (source-tool-link target obj-path bin-path)]
+    [(SourceToolCommandOk)
+      (source-tool-link target obj-path bin-path link-inputs)]
     [(SourceToolCommandErr message) (SourceToolCommandErr message)]))
 
 (define (source-tool-assemble-and-archive
@@ -565,6 +671,7 @@ _tl_print_string:
   [target : CompilerBackendTarget]
   [stdlib-roots : CompilerLoadRootList]
   [opt-level : i64]
+  [link-inputs : SourceToolLinkInputs]
   [temp-dir : String]) : i64
   (let
     [asm-path : String (source-tool-asm-path temp-dir source)]
@@ -594,7 +701,8 @@ _tl_print_string:
               target
               asm-path
               obj-path
-              bin-path)
+              bin-path
+              link-inputs)
               [(SourceToolCommandErr message)
                 (begin
                   (print-error message)
@@ -623,7 +731,8 @@ _tl_print_string:
   [has-output : bool]
   [target : CompilerBackendTarget]
   [stdlib-roots : CompilerLoadRootList]
-  [opt-level : i64]) : i64
+  [opt-level : i64]
+  [link-inputs : SourceToolLinkInputs]) : i64
   (match (source-tool-create-temp-dir "typelisp-build")
     [(OkSourceToolString temp-dir)
       (source-tool-build-source-in-temp
@@ -633,6 +742,7 @@ _tl_print_string:
         target
         stdlib-roots
         opt-level
+        link-inputs
         temp-dir)]
     [(ErrSourceToolString message)
       (begin
@@ -651,6 +761,7 @@ _tl_print_string:
   [stdlib-roots : CompilerLoadRootList]
   [runtime-args : ProcessStringList]
   [opt-level : i64]
+  [link-inputs : SourceToolLinkInputs]
   [temp-dir : String]) : i64
   (let
     [asm-path : String (source-tool-asm-path temp-dir source)]
@@ -677,7 +788,8 @@ _tl_print_string:
               target
               asm-path
               obj-path
-              bin-path)
+              bin-path
+              link-inputs)
               [(SourceToolCommandErr message)
                 (begin
                   (print-error message)
@@ -727,7 +839,8 @@ _tl_print_string:
   [target : CompilerBackendTarget]
   [stdlib-roots : CompilerLoadRootList]
   [runtime-args : ProcessStringList]
-  [opt-level : i64]) : i64
+  [opt-level : i64]
+  [link-inputs : SourceToolLinkInputs]) : i64
   (match (source-tool-create-temp-dir "typelisp-run")
     [(OkSourceToolString temp-dir)
       (source-tool-run-source-in-temp
@@ -736,6 +849,7 @@ _tl_print_string:
         stdlib-roots
         runtime-args
         opt-level
+        link-inputs
         temp-dir)]
     [(ErrSourceToolString message)
       (begin

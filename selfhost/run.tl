@@ -19,7 +19,8 @@
     CompilerBackendTarget
     CompilerLoadRootList
     ProcessStringList
-    i64))
+    i64
+    SourceToolLinkInputs))
 
 (defenum ResultRunCliConfig
   (OkRunCliConfig RunCliConfig)
@@ -210,10 +211,17 @@
   [target : CompilerBackendTarget]
   [stdlib-roots : CompilerLoadRootList]
   [runtime-args : ProcessStringList]
-  [opt-level : i64]) : ResultRunCliConfig
+  [opt-level : i64]
+  [link-inputs : SourceToolLinkInputs]) : ResultRunCliConfig
   (if (>= idx count)
     (OkRunCliConfig
-      (RunCliConfig source target stdlib-roots runtime-args opt-level))
+      (RunCliConfig
+        source
+        target
+        stdlib-roots
+        runtime-args
+        opt-level
+        link-inputs))
     (let
       [current : String (arg idx)]
       (cond
@@ -224,7 +232,8 @@
               target
               stdlib-roots
               (source-tool-args-from-argv (+ idx 1) count runtime-args)
-              opt-level))]
+              opt-level
+              link-inputs))]
         [(string-eq current "--target")
           (if (>= (+ idx 1) count)
             (ErrRunCliConfig "run: --target requires a value")
@@ -239,7 +248,8 @@
                     parsed-target
                     stdlib-roots
                     runtime-args
-                    opt-level)]
+                    opt-level
+                    link-inputs)]
                 [(ErrSourceToolTarget _)
                   (ErrRunCliConfig (run-cli-unknown-target value))])))]
         [(string-eq current "--backend-mode")
@@ -256,7 +266,8 @@
                     target
                     stdlib-roots
                     runtime-args
-                    opt-level)]
+                    opt-level
+                    link-inputs)]
                 [(ErrSourceToolBackendMode message) (ErrRunCliConfig message)])))]
         [(string-eq current "--opt-level")
           (if (>= (+ idx 1) count)
@@ -271,7 +282,8 @@
                   target
                   stdlib-roots
                   runtime-args
-                  (string->int value))
+                  (string->int value)
+                  link-inputs)
                 (ErrRunCliConfig (run-cli-unknown-opt-level value)))))]
         [(string-eq current "--stdlib-root")
           (if (>= (+ idx 1) count)
@@ -283,7 +295,46 @@
               target
               (source-tool-root-list-append stdlib-roots (arg (+ idx 1)))
               runtime-args
-              opt-level))]
+              opt-level
+              link-inputs))]
+        [(string-eq current "--link-lib")
+          (if (>= (+ idx 1) count)
+            (ErrRunCliConfig "run: --link-lib requires a value")
+            (run-cli-parse-options
+              (+ idx 2)
+              count
+              source
+              target
+              stdlib-roots
+              runtime-args
+              opt-level
+              (source-tool-link-inputs-add-lib link-inputs (arg (+ idx 1)))))]
+        [(string-eq current "--link-search")
+          (if (>= (+ idx 1) count)
+            (ErrRunCliConfig "run: --link-search requires a value")
+            (run-cli-parse-options
+              (+ idx 2)
+              count
+              source
+              target
+              stdlib-roots
+              runtime-args
+              opt-level
+              (source-tool-link-inputs-add-search-dir
+                link-inputs
+                (arg (+ idx 1)))))]
+        [(string-eq current "--link-arg")
+          (if (>= (+ idx 1) count)
+            (ErrRunCliConfig "run: --link-arg requires a value")
+            (run-cli-parse-options
+              (+ idx 2)
+              count
+              source
+              target
+              stdlib-roots
+              runtime-args
+              opt-level
+              (source-tool-link-inputs-add-raw-arg link-inputs (arg (+ idx 1)))))]
         [else
           (OkRunCliConfig
             (RunCliConfig
@@ -291,7 +342,8 @@
               target
               stdlib-roots
               (source-tool-args-from-argv idx count runtime-args)
-              opt-level))]))))
+              opt-level
+              link-inputs))]))))
 
 (define (run-cli-config [count : i64]) : ResultRunCliConfig
   (run-cli-config-from 1 count))
@@ -310,19 +362,27 @@
           (source-tool-default-target)
           CompilerLoadRootNil
           (process-args-empty)
-          (compiler-optimize-default-level))))))
+          (compiler-optimize-default-level)
+          (source-tool-link-inputs-empty))))))
 
 (define (run-cli-main) : i64
   (match (run-cli-config (arg-count))
     [(OkRunCliConfig config)
       (match config
-        [(RunCliConfig source target stdlib-roots runtime-args opt-level)
+        [(RunCliConfig
+            source
+            target
+            stdlib-roots
+            runtime-args
+            opt-level
+            link-inputs)
           (source-tool-run-source
             source
             target
             stdlib-roots
             runtime-args
-            opt-level)])]
+            opt-level
+            link-inputs)])]
     [(ErrRunCliConfig message)
       (begin
         (print-error message)
@@ -333,13 +393,20 @@
     (match (run-cli-config-from 2 (arg-count))
       [(OkRunCliConfig config)
         (match config
-          [(RunCliConfig source target stdlib-roots runtime-args opt-level)
+          [(RunCliConfig
+              source
+              target
+              stdlib-roots
+              runtime-args
+              opt-level
+              link-inputs)
             (source-tool-run-source
               source
               target
               stdlib-roots
               runtime-args
-              opt-level)])]
+              opt-level
+              link-inputs)])]
       [(ErrRunCliConfig message)
         (begin
           (print-error message)

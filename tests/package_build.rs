@@ -30,7 +30,7 @@ fn write_demo_package(root: &Path, package_name: &str) {
     fs::write(
         root.join("src").join("main.tl"),
         r#"(import "math.tl")
-(define (main) : i64 (inc 41))
+(define (main) : i64 (- (inc 41) 42))
 "#,
     )
     .expect("write package main");
@@ -48,8 +48,28 @@ fn expected_asm_path(root: &Path, package_name: &str) -> PathBuf {
         .join(format!("{}.s", package_name))
 }
 
+fn expected_bin_path(root: &Path, package_name: &str) -> PathBuf {
+    let file_name = if cfg!(windows) {
+        format!("{}.exe", package_name)
+    } else {
+        package_name.to_string()
+    };
+    root.join("target")
+        .join("typelisp")
+        .join(package_name)
+        .join(file_name)
+}
+
+fn host_missing_link_section() -> &'static str {
+    if cfg!(windows) {
+        r#"(windows-x86_64 (libs "__typelisp_missing_1516"))"#
+    } else {
+        r#"(linux-x86_64 (libs "__typelisp_missing_1516"))"#
+    }
+}
+
 #[test]
-fn package_build_manifest_path_writes_deterministic_assembly() {
+fn package_build_manifest_path_writes_native_executable() {
     let root = fresh_work_dir("manifest-path");
     write_demo_package(&root, "demo_pkg");
 
@@ -68,20 +88,79 @@ fn package_build_manifest_path_writes_deterministic_assembly() {
         stdout,
         stderr
     );
-    let asm_path = expected_asm_path(&root, "demo_pkg");
-    let printed_asm_path = fs::canonicalize(&asm_path).expect("canonicalize package asm path");
+    let bin_path = expected_bin_path(&root, "demo_pkg");
+    let printed_bin_path = fs::canonicalize(&bin_path).expect("canonicalize package bin path");
     assert!(
-        stdout.contains(&format!("Generated: {}", printed_asm_path.display())),
+        stdout.contains(&format!("Generated: {}", printed_bin_path.display())),
         "build stdout should name deterministic output path\nstdout:\n{}\nstderr:\n{}",
         stdout,
         stderr
     );
+    assert!(bin_path.exists(), "package build did not write executable");
+    let run = Command::new(&bin_path)
+        .output()
+        .expect("run package build executable");
+    assert!(
+        run.status.success(),
+        "package executable should exit 0\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&run.stdout),
+        String::from_utf8_lossy(&run.stderr)
+    );
+    let asm_path = expected_asm_path(&root, "demo_pkg");
     let asm = fs::read_to_string(&asm_path).expect("read package build assembly");
     assert!(asm.contains("main:"), "assembly missing main:\n{}", asm);
     assert!(
         asm.contains("_tl_inc:"),
         "assembly missing imported helper function:\n{}",
         asm
+    );
+}
+
+#[test]
+fn package_build_threads_manifest_link_inputs_to_linker() {
+    let root = fresh_work_dir("manifest-link-inputs");
+    fs::create_dir_all(root.join("src")).expect("create package src dir");
+    fs::write(
+        root.join("typelisp.pkg"),
+        format!(
+            r#"(package
+  (name "link_inputs_pkg")
+  (version "0.1.0")
+  (kind "bin")
+  (entry "src/main.tl")
+  (link
+    {}))
+"#,
+            host_missing_link_section()
+        ),
+    )
+    .expect("write package manifest");
+    fs::write(
+        root.join("src").join("main.tl"),
+        "(define (main) : i64 0)\n",
+    )
+    .expect("write package main");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_typelisp"))
+        .arg("build")
+        .arg("--manifest-path")
+        .arg(root.join("typelisp.pkg"))
+        .output()
+        .expect("run typelisp build with missing manifest link lib");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !output.status.success(),
+        "missing manifest link library unexpectedly succeeded\nstdout:\n{}\nstderr:\n{}",
+        stdout,
+        stderr
+    );
+    assert!(
+        stderr.contains("__typelisp_missing_1516") || stderr.contains("linker"),
+        "stderr should show the manifest link input reached the linker\nstdout:\n{}\nstderr:\n{}",
+        stdout,
+        stderr
     );
 }
 

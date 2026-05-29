@@ -52,6 +52,13 @@ pub struct NativeRunOutput {
     pub artifact_dir: Option<PathBuf>,
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct LinkInputs {
+    pub libs: Vec<String>,
+    pub search_paths: Vec<PathBuf>,
+    pub args: Vec<String>,
+}
+
 struct NativeTempDir {
     path: PathBuf,
 }
@@ -280,6 +287,7 @@ fn assemble_and_link(
     obj_path: &Path,
     bin_path: &Path,
     target: BackendTarget,
+    link_inputs: &LinkInputs,
 ) -> Result<(), NativeError> {
     let toolchain = target.toolchain();
 
@@ -334,6 +342,7 @@ fn assemble_and_link(
                 .arg(format!("/STACK:{WINDOWS_EXECUTABLE_STACK_SIZE}"));
         }
     }
+    add_link_inputs(&mut linker, target, link_inputs);
     for lib in toolchain.libraries {
         linker.arg(lib);
     }
@@ -346,6 +355,116 @@ fn assemble_and_link(
     }
 
     Ok(())
+}
+
+fn add_link_inputs(linker: &mut Command, target: BackendTarget, inputs: &LinkInputs) {
+    match target.os {
+        BackendOs::Linux => {
+            for path in &inputs.search_paths {
+                linker.arg(format!("-L{}", path.display()));
+            }
+            for lib in &inputs.libs {
+                linker.arg(format!("-l{}", lib));
+            }
+        }
+        BackendOs::Windows => {
+            for path in &inputs.search_paths {
+                linker.arg(format!("/LIBPATH:{}", path.display()));
+            }
+            for lib in &inputs.libs {
+                linker.arg(windows_link_library_arg(lib));
+            }
+        }
+    }
+    for arg in &inputs.args {
+        linker.arg(arg);
+    }
+}
+
+fn windows_link_library_arg(lib: &str) -> String {
+    if lib.to_ascii_lowercase().ends_with(".lib") {
+        lib.to_string()
+    } else {
+        format!("{lib}.lib")
+    }
+}
+
+fn assemble_and_archive(
+    asm_path: &Path,
+    obj_path: &Path,
+    archive_path: &Path,
+    target: BackendTarget,
+) -> Result<(), NativeError> {
+    let toolchain = target.toolchain();
+
+    create_parent_dirs(obj_path, "object output")?;
+    let mut assembler = Command::new(toolchain.assembler);
+    match target.os {
+        BackendOs::Linux => {
+            assembler.arg(asm_path).arg("-o").arg(obj_path);
+        }
+        BackendOs::Windows => {
+            assembler
+                .arg("--target=x86_64-pc-windows-msvc")
+                .arg("-c")
+                .arg(asm_path)
+                .arg("-o")
+                .arg(obj_path);
+        }
+    }
+    let status = command_status(assembler, "assembler", target)?;
+    if !status.success() {
+        return Err(NativeError::new(format!(
+            "Error: assembler '{}' failed for target {} with status {}",
+            toolchain.assembler, target, status
+        )));
+    }
+
+    create_parent_dirs(archive_path, "library output")?;
+    let archiver = match target.os {
+        BackendOs::Linux => {
+            let mut command = Command::new("ar");
+            command.arg("rcs").arg(archive_path).arg(obj_path);
+            command
+        }
+        BackendOs::Windows => {
+            let mut command = Command::new("llvm-lib");
+            command
+                .arg("/NOLOGO")
+                .arg(format!("/OUT:{}", archive_path.display()))
+                .arg(obj_path);
+            command
+        }
+    };
+    let archiver_name = archiver.get_program().to_string_lossy().into_owned();
+    let status = command_status(archiver, "archiver", target)?;
+    if !status.success() {
+        return Err(NativeError::new(format!(
+            "Error: archiver '{}' failed for target {} with status {}",
+            archiver_name, target, status
+        )));
+    }
+
+    Ok(())
+}
+
+pub fn assemble_source_assembly_to_executable(
+    asm_path: &Path,
+    obj_path: &Path,
+    bin_path: &Path,
+    target: BackendTarget,
+    link_inputs: &LinkInputs,
+) -> Result<(), NativeError> {
+    assemble_and_link(asm_path, obj_path, bin_path, target, link_inputs)
+}
+
+pub fn assemble_source_assembly_to_static_library(
+    asm_path: &Path,
+    obj_path: &Path,
+    archive_path: &Path,
+    target: BackendTarget,
+) -> Result<(), NativeError> {
+    assemble_and_archive(asm_path, obj_path, archive_path, target)
 }
 
 pub fn default_executable_path(file: &Path, target: BackendTarget) -> PathBuf {
@@ -391,7 +510,7 @@ pub fn compile_source_to_executable(
 ) -> Result<(), NativeError> {
     let asm = source_assembly(file, options, target, opt_level)?;
     write_file(asm_path, asm, "assembly output")?;
-    assemble_and_link(asm_path, obj_path, bin_path, target)
+    assemble_and_link(asm_path, obj_path, bin_path, target, &LinkInputs::default())
 }
 
 pub fn build_source_executable(
@@ -497,7 +616,13 @@ pub fn run_assembly_in_temp_dir(
     };
 
     write_file(&asm_path, assembly, "assembly input")?;
-    assemble_and_link(&asm_path, &obj_path, &bin_path, target)?;
+    assemble_and_link(
+        &asm_path,
+        &obj_path,
+        &bin_path,
+        target,
+        &LinkInputs::default(),
+    )?;
     let output = run_executable(&bin_path, runtime_args, target)?;
     Ok(NativeRunOutput {
         status: output.status,

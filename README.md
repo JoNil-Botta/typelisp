@@ -410,8 +410,17 @@ Compiler self-test and smoke-driver conventions are documented in
 Published stage0 compilers for local no-Rust checks can be fetched with
 [`scripts/fetch-stage0.sh`](scripts/fetch-stage0.sh), or
 [`scripts/fetch-stage0.ps1`](scripts/fetch-stage0.ps1) from PowerShell. Both
-default to `target/stage0/`. To run the same no-Rust stage0 verification gate
-used by CI, run
+default to `target/stage0/`. Linux fetches prefer the versioned
+`typelisp-stage0-linux-bundle.tar.gz` asset when a release provides it and fall
+back to the legacy `typelisp-stage0-linux` executable for older releases; both
+forms still install the command as `target/stage0/typelisp`. To reproduce the
+bundle staging path locally on Linux after a release build, run:
+
+```sh
+scripts/stage-linux-stage0-bundle.sh target/release/typelisp typelisp-stage0-linux-bundle.tar.gz
+```
+
+To run the same no-Rust stage0 verification gate used by CI, run
 `scripts/verify-no-rust-stage0.sh`; it fetches `stage0-latest` when
 `TYPELISP_BIN` is unset and prevents accidental Cargo fallback. On Linux, that
 wrapper uses the published compiler only as the bootstrap seed, checks the

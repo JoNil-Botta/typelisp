@@ -338,6 +338,9 @@
 (define (compiler-parse-tag-ty-mut-ref) : i64
   137)
 
+(define (compiler-parse-tag-ty-box) : i64
+  138)
+
 (define (compiler-parse-tag-expr-if) : i64
   200)
 
@@ -445,6 +448,12 @@
 
 (define (compiler-parse-tag-expr-int-to-ptr) : i64
   261)
+
+(define (compiler-parse-tag-expr-box) : i64
+  263)
+
+(define (compiler-parse-tag-expr-box-get) : i64
+  264)
 
 (define (compiler-parse-tag-lit-true) : i64
   300)
@@ -586,6 +595,7 @@
       (set! out (sym-i64-bind out "MutPtr" (compiler-parse-tag-ty-mut-ptr)))
       (set! out (sym-i64-bind out "&" (compiler-parse-tag-ty-ref)))
       (set! out (sym-i64-bind out "&mut" (compiler-parse-tag-ty-mut-ref)))
+      (set! out (sym-i64-bind out "Box" (compiler-parse-tag-ty-box)))
       out)))
 
 (define (compiler-parse-dispatch-exprs [e : SymI64Env]) : SymI64Env
@@ -662,6 +672,8 @@
       (set!
         out
         (sym-i64-bind out "int->ptr" (compiler-parse-tag-expr-int-to-ptr)))
+      (set! out (sym-i64-bind out "box" (compiler-parse-tag-expr-box)))
+      (set! out (sym-i64-bind out "box-get" (compiler-parse-tag-expr-box-get)))
       (set!
         out
         (sym-i64-bind out "with" (compiler-parse-tag-expr-with-resource)))
@@ -898,6 +910,13 @@
                   [(OkAstType elem-ty) (OkAstType (AstTyMutPtr elem-ty))]
                   [(ErrAstType message) (ErrAstType message)])]
               [_ (ErrAstType "parse: MutPtr expects exactly one type")])]
+          [(= tag (compiler-parse-tag-ty-box))
+            (match rest
+              [(SCons elem (SNil))
+                (match (parse-ast-type dispatch elem)
+                  [(OkAstType elem-ty) (OkAstType (AstTyBox elem-ty))]
+                  [(ErrAstType message) (ErrAstType message)])]
+              [_ (ErrAstType "parse: Box expects exactly one type")])]
           [(= tag (compiler-parse-tag-ty-ref))
             (parse-ast-reference-type dispatch rest false)]
           [(= tag (compiler-parse-tag-ty-mut-ref))
@@ -1751,6 +1770,24 @@
         [(ErrAstExpr message) (ErrAstExpr message)])]
     [_ (ErrAstExpr "parse: try expects exactly one expression")]))
 
+(define (parse-ast-box-like
+  [dispatch : SymI64Env]
+  [rest : SpannedSexpr]
+  [is-get : bool]) : ResultAstExpr
+  (match rest
+    [(SpSCons expr (SpSNil _) _)
+      (match (parse-ast-expr dispatch expr)
+        [(OkAstExpr parsed-expr)
+          (if is-get
+            (OkAstExpr (AstExprBoxGet parsed-expr))
+            (OkAstExpr (AstExprBox parsed-expr)))]
+        [(ErrAstExpr message) (ErrAstExpr message)])]
+    [_
+      (ErrAstExpr
+        (if is-get
+          "parse: box-get expects exactly one expression"
+          "parse: box expects exactly one expression"))]))
+
 ;; `(ptr-null : T)` - a colon followed by a pointer type, no leading expression.
 ;; The parser accepts any type here; the typechecker rejects non-pointer `T`.
 (define (parse-ast-ptr-null [dispatch : SymI64Env] [rest : SpannedSexpr]) : ResultAstExpr
@@ -2095,6 +2132,10 @@
     [(= tag (compiler-parse-tag-expr-with-resource))
       (parse-ast-with-resource dispatch rest)]
     [(= tag (compiler-parse-tag-expr-try)) (parse-ast-try dispatch rest)]
+    [(= tag (compiler-parse-tag-expr-box))
+      (parse-ast-box-like dispatch rest false)]
+    [(= tag (compiler-parse-tag-expr-box-get))
+      (parse-ast-box-like dispatch rest true)]
     [(= tag (compiler-parse-tag-expr-ptr-null))
       (parse-ast-ptr-null dispatch rest)]
     [(= tag (compiler-parse-tag-expr-ptr-null-check))
@@ -2881,6 +2922,14 @@
 (define (compiler-parse-raw-pointer-ops-ok?) : bool
   (compiler-parse-ok? (compiler-parse-raw-pointer-ops-source)))
 
+(define (compiler-parse-box-ok?) : bool
+  (and
+    (compiler-parse-ok? "(define (main) : (Box i64) (box 7))")
+    (and
+      (compiler-parse-ok? "(define (main [b : (Box i64)]) : i64 (box-get b))")
+      (compiler-parse-ok?
+        "(define (main) : i64 (with-arena r (let ([b : (in r (Box i64)) (box 7)]) (box-get b))))"))))
+
 (define (compiler-parse-reference-source) : String
   "(define (use [s : (& r String)] [view : (& r str)] [items : (&mut phase (Array i64))]) : unit unit)")
 
@@ -3283,6 +3332,32 @@
               "(define (main [p : (Ptr i64)]) : (Ptr u8) (ptr-cast p (Ptr u8)))"
               "parse: pointer cast expects (form expr : pointer-type)")))))))
 
+(define (compiler-parse-box-error-tests-ok?) : bool
+  (let
+    [ok : bool true]
+    (begin
+      (if (compiler-parse-error-ok?
+        "(define (main [p : (Box)]) : unit unit)"
+        "parse: Box expects exactly one type")
+        unit
+        (set! ok false))
+      (if (compiler-parse-error-ok?
+        "(define (main [p : (Box i64 bool)]) : unit unit)"
+        "parse: Box expects exactly one type")
+        unit
+        (set! ok false))
+      (if (compiler-parse-error-ok?
+        "(define (main) : (Box i64) (box))"
+        "parse: box expects exactly one expression")
+        unit
+        (set! ok false))
+      (if (compiler-parse-error-ok?
+        "(define (main [b : (Box i64)]) : i64 (box-get b b))"
+        "parse: box-get expects exactly one expression")
+        unit
+        (set! ok false))
+      ok)))
+
 (define (compiler-parse-extern-metadata-error-tests-ok?) : bool
   (and
     (compiler-parse-error-ok?
@@ -3413,7 +3488,9 @@
                       (compiler-parse-raw-pointer-error-tests-ok?)
                       (and
                         (compiler-parse-extern-metadata-error-tests-ok?)
-                        (compiler-parse-reference-error-tests-ok?)))))))))))))
+                        (and
+                          (compiler-parse-box-error-tests-ok?)
+                          (compiler-parse-reference-error-tests-ok?))))))))))))))
 
 ;; Top-level declaration parsing (#1072 / #1041): accept value/function `define`,
 ;; `extern`, `defenum`, `defstruct`, and `import`; reject malformed forms with
@@ -3856,10 +3933,12 @@
                                       (and
                                         (compiler-parse-raw-pointer-ops-ok?)
                                         (and
-                                          (compiler-parse-reference-ok?)
+                                          (compiler-parse-box-ok?)
                                           (and
-                                            (compiler-parse-borrow-ok?)
-                                            (compiler-parse-resource-with-shape-ok?))))))))))))))))))))
+                                            (compiler-parse-reference-ok?)
+                                            (and
+                                              (compiler-parse-borrow-ok?)
+                                              (compiler-parse-resource-with-shape-ok?)))))))))))))))))))))
         (if (and
           (compiler-parse-error-tests-ok?)
           (and

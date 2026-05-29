@@ -125,6 +125,8 @@
           (string-append " " (string-append (int->string count) ")"))))]
     [(AstTyDynArray elem)
       (string-append "(Array " (string-append (repl-type-render elem) ")"))]
+    [(AstTyBox elem)
+      (string-append "(Box " (string-append (repl-type-render elem) ")"))]
     [(AstTyPtr elem)
       (string-append "(Ptr " (string-append (repl-type-render elem) ")"))]
     [(AstTyMutPtr elem)

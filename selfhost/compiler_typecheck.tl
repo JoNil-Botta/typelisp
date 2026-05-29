@@ -671,6 +671,58 @@
       [(Text s) (string-length s)]
       [End 0])))")
 
+(define (compiler-typecheck-box-source) : String
+  "(define (main) : i64
+  (let
+    [b : (Box i64) (box 7)]
+    (box-get b)))")
+
+(define (compiler-typecheck-box-direct-source) : String
+  "(define (main) : i64 (box-get (box 7)))")
+
+(define (compiler-typecheck-box-region-source) : String
+  "(define (main) : i64
+  (with-arena r
+    (let
+      [b : (in r (Box i64)) (box 7)]
+      (box-get b))))")
+
+(define (compiler-typecheck-box-region-project-source) : String
+  "(define (main) : String
+  (with-arena r
+    (let
+      [b : (in r (Box String)) (box (int->string 41))]
+      (box-get b))))")
+
+(define (compiler-typecheck-box-get-non-box-source) : String
+  "(define (main) : i64 (box-get 1))")
+
+(define (compiler-typecheck-box-render-ok?) : bool
+  (and
+    (string-eq (tc-type-render (AstTyBox (AstTyI64))) "(Box i64)")
+    (and
+      (tc-type-eq (AstTyBox (AstTyRegion "r" (AstTyI64))) (AstTyBox (AstTyI64)))
+      (and
+        (tc-type-contains-region (AstTyBox (AstTyRegion "r" (AstTyString))) "r")
+        (tc-type-move-only? (AstTyBox (AstTyI64)))))))
+
+(define (compiler-typecheck-box-tests-ok?) : bool
+  (and
+    (compiler-typecheck-box-render-ok?)
+    (and
+      (compiler-typecheck-ok? (compiler-typecheck-box-source))
+      (and
+        (compiler-typecheck-ok? (compiler-typecheck-box-direct-source))
+        (and
+          (compiler-typecheck-ok? (compiler-typecheck-box-region-source))
+          (and
+            (compiler-typecheck-error-ok?
+              (compiler-typecheck-box-region-project-source)
+              "typecheck: region-tagged value cannot escape with-arena 'r'")
+            (compiler-typecheck-error-ok?
+              (compiler-typecheck-box-get-non-box-source)
+              "typecheck: box-get requires Box type")))))))
+
 (define (compiler-typecheck-region-tests-ok?) : bool
   (and
     (compiler-typecheck-ok? (compiler-typecheck-region-builtin-source))
@@ -950,14 +1002,16 @@
           (and
             (tc-type-move-only? (AstTyStruct "Box"))
             (and
-              (tc-type-move-only? (AstTyEnum "ResultI64"))
+              (tc-type-move-only? (AstTyBox (AstTyI64)))
               (and
-                (tc-type-move-only? (AstTyMutRef "phase" (AstTyI64)))
-                (tc-type-move-only?
-                  (AstTyTuple
-                    (AstTypeCons
-                      (AstTyStruct "Box")
-                      (AstTypeCons (AstTyDynArray (AstTyI64)) AstTypeNil))))))))))))
+                (tc-type-move-only? (AstTyEnum "ResultI64"))
+                (and
+                  (tc-type-move-only? (AstTyMutRef "phase" (AstTyI64)))
+                  (tc-type-move-only?
+                    (AstTyTuple
+                      (AstTypeCons
+                        (AstTyStruct "Box")
+                        (AstTypeCons (AstTyDynArray (AstTyI64)) AstTypeNil)))))))))))))
 
 (define (compiler-typecheck-move-kind-region-tests-ok?) : bool
   (and
@@ -2115,6 +2169,9 @@
     (if (compiler-typecheck-region-tests-ok?)
       unit
       (panic "typecheck: region tests failed"))
+    (if (compiler-typecheck-box-tests-ok?)
+      unit
+      (panic "typecheck: box tests failed"))
     (if (compiler-typecheck-result-try-tests-ok?)
       unit
       (panic "typecheck: result try tests failed"))

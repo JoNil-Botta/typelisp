@@ -229,6 +229,8 @@
         (compiler-ir-cat3 " " (int->string count) ")"))]
     [(AstTyDynArray elem)
       (compiler-ir-cat3 "(Array " (compiler-ir-type-render elem) ")")]
+    [(AstTyBox elem)
+      (compiler-ir-cat3 "(Box " (compiler-ir-type-render elem) ")")]
     [(AstTyRegion region inner)
       (compiler-ir-cat3
         "(Region "
@@ -941,6 +943,8 @@
         ")")]
     [(AstTyDynArray elem)
       (compiler-ir-cat3 "(Array " (compiler-ir-type-name elem) ")")]
+    [(AstTyBox elem)
+      (compiler-ir-cat3 "(Box " (compiler-ir-type-name elem) ")")]
     [(AstTyRegion region inner)
       (compiler-ir-cat5 "(in " region " " (compiler-ir-type-name inner) ")")]
     [(AstTyRef region inner)

@@ -951,6 +951,8 @@
         names
         (lower-reach-resource-bindings all-functions names state bindings)
         body)]
+    [(AstExprBox inner) (lower-reach-expr all-functions names state inner)]
+    [(AstExprBoxGet inner) (lower-reach-expr all-functions names state inner)]
     [(AstExprTypeLiteral _) state]
     [(AstExprComptime inner) (lower-reach-expr all-functions names state inner)]
     [(AstExprTry inner) (lower-reach-expr all-functions names state inner)]
@@ -1481,6 +1483,7 @@
     [(AstTyTuple _) 8]
     [(AstTyArray elem count) (* (lower-type-size ctx elem) count)]
     [(AstTyDynArray _) 8]
+    [(AstTyBox _) 8]
     [(AstTyPtr _) 8]
     [(AstTyMutPtr _) 8]
     [(AstTyRef _ _) 8]
@@ -1514,6 +1517,7 @@
     [(AstTyTuple _) 8]
     [(AstTyArray elem _) (lower-type-align ctx elem)]
     [(AstTyDynArray _) 8]
+    [(AstTyBox _) 8]
     [(AstTyPtr _) 8]
     [(AstTyMutPtr _) 8]
     [(AstTyRef _ _) 8]
@@ -2896,6 +2900,14 @@
     [(AstExprWithRegion _ body) (lower-with-arena ctx state env type-env body)]
     [(AstExprWithResource bindings body)
       (lower-with-resource ctx state env type-env bindings body)]
+    [(AstExprBox _)
+      (ErrLowerExpr
+        (lower-diagnostic-at-expr
+          origin
+          "lower: box allocation is not implemented"))]
+    [(AstExprBoxGet _)
+      (ErrLowerExpr
+        (lower-diagnostic-at-expr origin "lower: box-get is not implemented"))]
     [(AstExprTry inner) (lower-try ctx state env type-env inner origin)]
     ;; `(comptime expr)` folds to a literal via the scalar CTFE evaluator (#719).
     ;; Successful folds reuse the ordinary literal path; CTFE rejections (free
@@ -7517,6 +7529,12 @@
   "(define (main) : (Tuple i64 bool)
   (tuple 1 true))")
 
+(define (compiler-lower-box-unsupported-source) : String
+  "(define (main) : (Box i64) (box 7))")
+
+(define (compiler-lower-box-get-unsupported-source) : String
+  "(define (main [b : (Box i64)]) : i64 (box-get b))")
+
 (define (compiler-lower-reference-source) : String
   "(define (take [r : (& n i64)]) : unit unit)
 (define (main [n : i64]) : unit
@@ -9761,6 +9779,16 @@
       (if (compiler-lower-error-ok?
         (compiler-lower-unsupported-source)
         "lower: unsupported expression")
+        unit
+        (set! ok false))
+      (if (compiler-lower-error-ok?
+        (compiler-lower-box-unsupported-source)
+        "lower: box allocation is not implemented")
+        unit
+        (set! ok false))
+      (if (compiler-lower-error-ok?
+        (compiler-lower-box-get-unsupported-source)
+        "lower: box-get is not implemented")
         unit
         (set! ok false))
       (if (compiler-lower-error-ok?

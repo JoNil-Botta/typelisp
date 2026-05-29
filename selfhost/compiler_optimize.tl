@@ -1168,6 +1168,10 @@
       (match b
         [(AstTyDynArray b-item) (opt-type-eq a-item b-item)]
         [_ false])]
+    [(AstTyBox a-item)
+      (match b
+        [(AstTyBox b-item) (opt-type-eq a-item b-item)]
+        [_ false])]
     [(AstTyPtr a-item)
       (match b
         [(AstTyPtr b-item) (opt-type-eq a-item b-item)]

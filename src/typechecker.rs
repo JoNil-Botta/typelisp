@@ -2278,37 +2278,17 @@ impl TypeChecker {
             Expr::Cast { expr, ty } => {
                 let ty = self.resolve_type_checked(ty, span)?;
                 let expr_ty = self.check_expr(expr)?;
-                // Casts are only defined between scalar number-like types
-                // (integers and `char`, which is an 8-bit code unit here).
-                let castable = |t: &Type| t.is_integer() || matches!(t, Type::Char);
-                // Explicit `f64 <-> f32` conversions are supported (changing
-                // precision). Other floating-point casts (int <-> float) remain
-                // unsupported for now.
-                let float_to_float = matches!(
-                    (&expr_ty, &ty),
-                    (Type::F32, Type::F64)
-                        | (Type::F64, Type::F32)
-                        | (Type::F32, Type::F32)
-                        | (Type::F64, Type::F64)
-                );
-                let float_cast =
-                    matches!(expr_ty, Type::F32 | Type::F64) || matches!(ty, Type::F32 | Type::F64);
-                if float_cast && !float_to_float {
+                // Casts are defined across the scalar numeric types: integers,
+                // `char` (an 8-bit code unit), and floats (`f32`/`f64`). This
+                // covers integer widen/narrow/truncate, `f64<->f32` precision
+                // changes, and the full int<->float matrix (#1523). `bool` and
+                // non-scalar types are not castable.
+                let numeric =
+                    |t: &Type| t.is_integer() || matches!(t, Type::Char | Type::F32 | Type::F64);
+                if !numeric(&expr_ty) || !numeric(&ty) {
                     return Err(TypeError::at(
                         format!(
-                            "floating-point casts are not supported yet; casts currently support integer/char and f64<->f32 conversions only, got {} -> {}",
-                            expr_ty, ty
-                        ),
-                        span,
-                    ));
-                }
-                if float_to_float {
-                    return Ok(ty);
-                }
-                if !castable(&expr_ty) || !castable(&ty) {
-                    return Err(TypeError::at(
-                        format!(
-                            "cast requires integer/char source and target, got {} -> {}",
+                            "cast requires numeric (integer, char, or float) source and target, got {} -> {}",
                             expr_ty, ty
                         ),
                         span,
@@ -4842,12 +4822,13 @@ mod tests {
     }
 
     #[test]
-    fn test_typecheck_float_cast_diagnostic_is_explicit() {
-        let err = check("(define (main) : i64 (cast 3.5 : i64))").unwrap_err();
-        assert_eq!(
-            err.msg,
-            "floating-point casts are not supported yet; casts currently support integer/char and f64<->f32 conversions only, got f64 -> i64"
-        );
+    fn test_typecheck_int_float_casts_are_allowed() {
+        // #1523: the full int<->float matrix is now accepted.
+        assert!(check("(define (main) : i64 (cast 3.5 : i64))").is_ok());
+        assert!(check("(define (main) : f64 (cast 5 : f64))").is_ok());
+        assert!(check("(define (main) : f32 (cast 5 : f32))").is_ok());
+        assert!(check("(define (main) : i32 (cast 3.9 : i32))").is_ok());
+        assert!(check("(define (main) : u8 (cast 7.0 : u8))").is_ok());
     }
 
     #[test]
@@ -4932,7 +4913,7 @@ mod tests {
         let err = check("(define (main) : i64 (cast true : i64))").unwrap_err();
         assert_eq!(
             err.msg,
-            "cast requires integer/char source and target, got bool -> i64"
+            "cast requires numeric (integer, char, or float) source and target, got bool -> i64"
         );
     }
 

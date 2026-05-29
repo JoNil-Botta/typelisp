@@ -1605,9 +1605,8 @@
                   (compiler-typecheck-op-ok-cmp-eq-source))
                 (compiler-typecheck-ok? (compiler-typecheck-op-ok-call-source))))))))))
 
-;; Match / pattern type rules (#1042): arm-type agreement and unknown-variant
-;; rejection, plus accepting enum-payload, bool, and wildcard-on-scalar matches.
-;; Migrated from src/typechecker.rs unit coverage.
+;; Match / pattern type rules (#1042/#1538): Rust inline coverage migrated to
+;; selfhost-owned parser+typechecker fixtures.
 (define (compiler-typecheck-match-arm-mismatch-source) : String
   "(defenum E (A) (B))
 (define (main [e : E]) : i64 (match e [(A) 1] [(B) true]))")
@@ -1616,15 +1615,164 @@
   "(defenum E (A) (B))
 (define (main [e : E]) : i64 (match e [(A) 1] [(C) 2]))")
 
+(define (compiler-typecheck-match-bare-nullary-source) : String
+  "(defenum Color (Red) (Green))
+(define (main [c : Color]) : i64 (match c [Red 1] [Green 2]))")
+
+(define (compiler-typecheck-match-bare-unknown-source) : String
+  "(defenum Color (Red) (Green))
+(define (main [c : Color]) : i64 (match c [other 1] [_ 0]))")
+
+(define (compiler-typecheck-match-ok-wildcard-enum-source) : String
+  "(defenum E (A i64) (B))
+(define (main [e : E]) : i64 (match e [(A x) x] [_ 0]))")
+
+(define (compiler-typecheck-match-ok-nullary-call-source) : String
+  "(defenum Shape (Circle i64) (Square i64) (Nothing))
+(define (main) : i64
+  (match (Nothing) [(Circle r) r] [(Square w) w] [(Nothing) 0]))")
+
+(define (compiler-typecheck-match-bad-nullary-call-arity-source) : String
+  "(defenum Shape (Circle i64) (Square i64) (Nothing))
+(define (main) : i64
+  (match (Nothing 1) [(Circle r) r] [(Square w) w] [(Nothing) 0]))")
+
+(define (compiler-typecheck-match-bad-nullary-call-shadow-source) : String
+  "(defenum Shape (Nothing))
+(defenum Other (OtherV))
+(define (main [Nothing : Other]) : Other (Nothing))")
+
 (define (compiler-typecheck-match-ok-payload-source) : String
   "(defenum E (A i64) (B))
 (define (main [e : E]) : i64 (match e [(A x) x] [(B) 0]))")
+
+(define (compiler-typecheck-match-ok-string-payload-source) : String
+  "(defenum Token (TIdent String) (TEnd))
+(define (main [t : Token]) : i64
+  (match t [(TIdent s) (string-length s)] [(TEnd) 0]))")
+
+(define (compiler-typecheck-match-bad-string-payload-source) : String
+  "(defenum Token (TIdent String) (TEnd))
+(define (main [t : Token]) : i64
+  (match t [(TIdent s) s] [(TEnd) 0]))")
+
+(define (compiler-typecheck-match-ok-struct-payload-source) : String
+  "(defstruct Pos (line i64) (col i64))
+(defenum Tok (TPos Pos) (TEnd))
+(define (main [t : Tok]) : i64
+  (match t [(TPos p) (struct-get p line)] [(TEnd) -1]))")
+
+(define (compiler-typecheck-match-ok-nested-source) : String
+  "(defenum Sexpr (SInt i64) (SSym String) (SNil) (SCons Sexpr Sexpr))
+(define (main [s : Sexpr]) : i64
+  (match s [(SCons (SSym op) rest) (string-length op)] [_ 0]))")
+
+(define (compiler-typecheck-match-ok-nested-rest-source) : String
+  "(defenum Sexpr (SInt i64) (SSym String) (SNil) (SCons Sexpr Sexpr))
+(define (depth [s : Sexpr]) : i64
+  (match s [(SCons (SSym op) rest) (+ 1 (depth rest))] [_ 0]))")
+
+(define (compiler-typecheck-match-bad-nested-field-use-source) : String
+  "(defenum Sexpr (SInt i64) (SSym String) (SNil) (SCons Sexpr Sexpr))
+(define (main [s : Sexpr]) : i64
+  (match s [(SCons (SInt n) rest) (string-length n)] [_ 0]))")
+
+(define (compiler-typecheck-match-bad-nested-non-enum-source) : String
+  "(defenum Sexpr (SInt i64) (SNil))
+(define (main [s : Sexpr]) : i64 (match s [(SInt (SNil)) 1] [_ 0]))")
+
+(define (compiler-typecheck-match-ok-nested-literal-source) : String
+  "(defenum Sexpr (SInt i64) (SNil) (SCons Sexpr Sexpr))
+(define (main [s : Sexpr]) : i64
+  (match s [(SCons (SInt 0) rest) 1] [_ 0]))")
+
+(define (compiler-typecheck-match-bad-nested-literal-source) : String
+  "(defenum Sexpr (SInt i64) (SNil) (SCons Sexpr Sexpr))
+(define (main [s : Sexpr]) : i64
+  (match s [(SCons (SInt true) rest) 1] [_ 0]))")
+
+(define (compiler-typecheck-match-bad-flat-exhaustiveness-source) : String
+  "(defenum Sexpr (SInt i64) (SSym String) (SNil) (SCons Sexpr Sexpr))
+(define (main [s : Sexpr]) : i64
+  (match s [(SInt n) n] [(SSym x) 0] [(SNil) 0]))")
+
+(define (compiler-typecheck-match-bad-refutable-nested-source) : String
+  "(defenum Inner (Left i64) (Right i64))
+(defenum Outer (Outer Inner))
+(define (main [o : Outer]) : i64 (match o [(Outer (Left n)) n]))")
+
+(define (compiler-typecheck-match-ok-nested-fallback-source) : String
+  "(defenum Inner (Left i64) (Right i64))
+(defenum Outer (Outer Inner))
+(define (main [o : Outer]) : i64
+  (match o [(Outer (Left n)) n] [(Outer _) 0]))")
 
 (define (compiler-typecheck-match-ok-bool-source) : String
   "(define (main [b : bool]) : i64 (match b [true 1] [false 0]))")
 
 (define (compiler-typecheck-match-ok-wildcard-source) : String
   "(define (main) : i64 (match 1 [_ 0]))")
+
+(define (compiler-typecheck-match-ok-int-literals-source) : String
+  "(define (main [n : i64]) : i64 (match n [0 100] [1 200] [_ 0]))")
+
+(define (compiler-typecheck-match-ok-string-literals-source) : String
+  "(define (main [s : String]) : i64
+  (match s [\"if\" 10] [\"let\" 20] [_ 0]))")
+
+(define (compiler-typecheck-match-bad-string-exhaustive-source) : String
+  "(define (main [s : String]) : i64 (match s [\"if\" 10]))")
+
+(define (compiler-typecheck-match-bad-bool-exhaustive-source) : String
+  "(define (main [b : bool]) : i64 (match b [true 1]))")
+
+(define (compiler-typecheck-match-ok-bool-wildcard-source) : String
+  "(define (main [b : bool]) : i64 (match b [true 1] [_ 0]))")
+
+(define (compiler-typecheck-match-bad-scalar-exhaustive-source) : String
+  "(define (main [n : i64]) : i64 (match n [0 1] [1 2]))")
+
+(define (compiler-typecheck-match-bad-literal-type-source) : String
+  "(define (main [n : i64]) : i64 (match n [true 1] [_ 0]))")
+
+(define (compiler-typecheck-match-bad-scalar-arm-source) : String
+  "(define (main [n : i64]) : i64 (match n [0 1] [_ true]))")
+
+(define (compiler-typecheck-match-bad-unreachable-source) : String
+  "(define (main [n : i64]) : i64 (match n [_ 0] [1 2]))")
+
+(define (compiler-typecheck-match-ok-narrow-int-source) : String
+  "(define (main [n : u8]) : i64 (match n [0 1] [_ 0]))")
+
+(define (compiler-typecheck-match-bad-binding-arity-source) : String
+  "(defenum Shape (Circle i64) (Square i64))
+(define (main [s : Shape]) : i64 (match s [(Circle a b) 0] [_ 1]))")
+
+(define (compiler-typecheck-match-bad-maybe-exhaustive-source) : String
+  "(defenum MaybeI64 (NoneI64) (SomeI64 i64))
+(define (main [m : MaybeI64]) : i64 (match m [(SomeI64 v) v]))")
+
+(define (compiler-typecheck-match-bad-result-exhaustive-source) : String
+  "(defenum ResultI64 (OkI64 i64) (ErrI64 String))
+(define (main [r : ResultI64]) : i64 (match r [(OkI64 v) v]))")
+
+(define (compiler-typecheck-match-ok-recursive-list-source) : String
+  "(defenum List (Cons i64 List) (Nil))
+(define (main [l : List]) : i64 (match l [(Cons n rest) n] [(Nil) 0]))")
+
+(define (compiler-typecheck-match-ok-recursive-expr-source) : String
+  "(defenum Expr (ENum i64) (EAdd Expr Expr))
+(define (eval [e : Expr]) : i64
+  (match e [(ENum n) n] [(EAdd l r) (+ (eval l) (eval r))]))
+(define (main [e : Expr]) : i64 (eval e))")
+
+(define (compiler-typecheck-match-bad-recursive-tuple-source) : String
+  "(defenum Bad (V (Tuple Bad i64)) (Nil))
+(define (main [b : Bad]) : i64 0)")
+
+(define (compiler-typecheck-match-bad-recursive-array-source) : String
+  "(defenum Bad (V (Array Bad 2)) (Nil))
+(define (main [b : Bad]) : i64 0)")
 
 ;; A diverging arm (panic : never) must unify with a value arm rather than
 ;; being reported as a disagreement; mirrors never-in-if branch handling.
@@ -1633,23 +1781,274 @@
 (define (main [e : E]) : i64 (match e [(A) 1] [(B) (panic \"no\")]))")
 
 (define (compiler-typecheck-match-tests-ok?) : bool
-  (and
-    (compiler-typecheck-error-ok?
-      (compiler-typecheck-match-arm-mismatch-source)
-      "typecheck: match arms must agree")
-    (and
-      (compiler-typecheck-error-ok?
-        (compiler-typecheck-match-unknown-variant-source)
-        "typecheck: unknown variant C")
-      (and
-        (compiler-typecheck-ok? (compiler-typecheck-match-ok-payload-source))
+  (let
+    [ok : bool true]
+    (begin
+      (set!
+        ok
         (and
-          (compiler-typecheck-ok? (compiler-typecheck-match-ok-bool-source))
-          (and
-            (compiler-typecheck-ok?
-              (compiler-typecheck-match-ok-wildcard-source))
-            (compiler-typecheck-ok?
-              (compiler-typecheck-match-ok-never-arm-source))))))))
+          ok
+          (compiler-typecheck-error-ok?
+            (compiler-typecheck-match-arm-mismatch-source)
+            "typecheck: match arms must agree")))
+      (set!
+        ok
+        (and
+          ok
+          (compiler-typecheck-error-ok?
+            (compiler-typecheck-match-unknown-variant-source)
+            "typecheck: unknown variant C")))
+      (set!
+        ok
+        (and
+          ok
+          (compiler-typecheck-ok?
+            (compiler-typecheck-match-bare-nullary-source))))
+      (set!
+        ok
+        (and
+          ok
+          (compiler-typecheck-error-ok?
+            (compiler-typecheck-match-bare-unknown-source)
+            "typecheck: unknown variant other")))
+      (set!
+        ok
+        (and
+          ok
+          (compiler-typecheck-ok?
+            (compiler-typecheck-match-ok-wildcard-enum-source))))
+      (set!
+        ok
+        (and
+          ok
+          (compiler-typecheck-ok?
+            (compiler-typecheck-match-ok-nullary-call-source))))
+      (set!
+        ok
+        (and
+          ok
+          (compiler-typecheck-error-ok?
+            (compiler-typecheck-match-bad-nullary-call-arity-source)
+            "typecheck: arity mismatch")))
+      (set!
+        ok
+        (and
+          ok
+          (compiler-typecheck-error-ok?
+            (compiler-typecheck-match-bad-nullary-call-shadow-source)
+            "typecheck: call target is not a function")))
+      (set!
+        ok
+        (and
+          ok
+          (compiler-typecheck-ok? (compiler-typecheck-match-ok-payload-source))))
+      (set!
+        ok
+        (and
+          ok
+          (compiler-typecheck-ok?
+            (compiler-typecheck-match-ok-string-payload-source))))
+      (set!
+        ok
+        (and
+          ok
+          (compiler-typecheck-error-ok?
+            (compiler-typecheck-match-bad-string-payload-source)
+            "typecheck: match arms must agree")))
+      (set!
+        ok
+        (and
+          ok
+          (compiler-typecheck-ok?
+            (compiler-typecheck-match-ok-struct-payload-source))))
+      (set!
+        ok
+        (and
+          ok
+          (compiler-typecheck-ok? (compiler-typecheck-match-ok-nested-source))))
+      (set!
+        ok
+        (and
+          ok
+          (compiler-typecheck-ok?
+            (compiler-typecheck-match-ok-nested-rest-source))))
+      (set!
+        ok
+        (and
+          ok
+          (compiler-typecheck-error-ok?
+            (compiler-typecheck-match-bad-nested-field-use-source)
+            "typecheck: argument type mismatch")))
+      (set!
+        ok
+        (and
+          ok
+          (compiler-typecheck-error-ok?
+            (compiler-typecheck-match-bad-nested-non-enum-source)
+            "typecheck: nested variant pattern requires enum field")))
+      (set!
+        ok
+        (and
+          ok
+          (compiler-typecheck-ok?
+            (compiler-typecheck-match-ok-nested-literal-source))))
+      (set!
+        ok
+        (and
+          ok
+          (compiler-typecheck-error-ok?
+            (compiler-typecheck-match-bad-nested-literal-source)
+            "typecheck: literal pattern type mismatch")))
+      (set!
+        ok
+        (and
+          ok
+          (compiler-typecheck-error-ok?
+            (compiler-typecheck-match-bad-flat-exhaustiveness-source)
+            "typecheck: non-exhaustive match")))
+      (set!
+        ok
+        (and
+          ok
+          (compiler-typecheck-error-ok?
+            (compiler-typecheck-match-bad-refutable-nested-source)
+            "typecheck: non-exhaustive match")))
+      (set!
+        ok
+        (and
+          ok
+          (compiler-typecheck-ok?
+            (compiler-typecheck-match-ok-nested-fallback-source))))
+      (set!
+        ok
+        (and
+          ok
+          (compiler-typecheck-ok? (compiler-typecheck-match-ok-bool-source))))
+      (set!
+        ok
+        (and
+          ok
+          (compiler-typecheck-ok? (compiler-typecheck-match-ok-wildcard-source))))
+      (set!
+        ok
+        (and
+          ok
+          (compiler-typecheck-ok?
+            (compiler-typecheck-match-ok-int-literals-source))))
+      (set!
+        ok
+        (and
+          ok
+          (compiler-typecheck-ok?
+            (compiler-typecheck-match-ok-string-literals-source))))
+      (set!
+        ok
+        (and
+          ok
+          (compiler-typecheck-error-ok?
+            (compiler-typecheck-match-bad-string-exhaustive-source)
+            "typecheck: non-exhaustive match")))
+      (set!
+        ok
+        (and
+          ok
+          (compiler-typecheck-error-ok?
+            (compiler-typecheck-match-bad-bool-exhaustive-source)
+            "typecheck: non-exhaustive match")))
+      (set!
+        ok
+        (and
+          ok
+          (compiler-typecheck-ok?
+            (compiler-typecheck-match-ok-bool-wildcard-source))))
+      (set!
+        ok
+        (and
+          ok
+          (compiler-typecheck-error-ok?
+            (compiler-typecheck-match-bad-scalar-exhaustive-source)
+            "typecheck: non-exhaustive match")))
+      (set!
+        ok
+        (and
+          ok
+          (compiler-typecheck-error-ok?
+            (compiler-typecheck-match-bad-literal-type-source)
+            "typecheck: literal pattern type mismatch")))
+      (set!
+        ok
+        (and
+          ok
+          (compiler-typecheck-error-ok?
+            (compiler-typecheck-match-bad-scalar-arm-source)
+            "typecheck: match arms must agree")))
+      (set!
+        ok
+        (and
+          ok
+          (compiler-typecheck-error-ok?
+            (compiler-typecheck-match-bad-unreachable-source)
+            "typecheck: unreachable match arm after wildcard `_`")))
+      (set!
+        ok
+        (and
+          ok
+          (compiler-typecheck-ok?
+            (compiler-typecheck-match-ok-narrow-int-source))))
+      (set!
+        ok
+        (and
+          ok
+          (compiler-typecheck-error-ok?
+            (compiler-typecheck-match-bad-binding-arity-source)
+            "typecheck: pattern arity mismatch")))
+      (set!
+        ok
+        (and
+          ok
+          (compiler-typecheck-error-ok?
+            (compiler-typecheck-match-bad-maybe-exhaustive-source)
+            "typecheck: non-exhaustive match")))
+      (set!
+        ok
+        (and
+          ok
+          (compiler-typecheck-error-ok?
+            (compiler-typecheck-match-bad-result-exhaustive-source)
+            "typecheck: non-exhaustive match")))
+      (set!
+        ok
+        (and
+          ok
+          (compiler-typecheck-ok?
+            (compiler-typecheck-match-ok-recursive-list-source))))
+      (set!
+        ok
+        (and
+          ok
+          (compiler-typecheck-ok?
+            (compiler-typecheck-match-ok-recursive-expr-source))))
+      (set!
+        ok
+        (and
+          ok
+          (compiler-typecheck-error-ok?
+            (compiler-typecheck-match-bad-recursive-tuple-source)
+            "typecheck: recursive enum Bad (variant V) via an inline compound type is not yet supported; reference the enum directly (it is heap-pointer-indirected) - see #13")))
+      (set!
+        ok
+        (and
+          ok
+          (compiler-typecheck-error-ok?
+            (compiler-typecheck-match-bad-recursive-array-source)
+            "typecheck: recursive enum Bad (variant V) via an inline compound type is not yet supported; reference the enum directly (it is heap-pointer-indirected) - see #13")))
+      (set!
+        ok
+        (and
+          ok
+          (compiler-typecheck-ok?
+            (compiler-typecheck-match-ok-never-arm-source))))
+      ok)))
 
 (define (compiler-typecheck-string-builtin-ok-length-source) : String
   "(define (main) : i64 (string-length \"hi\"))")

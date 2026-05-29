@@ -36,8 +36,15 @@ WORKDIR="$ROOT/target/windows-selfhost-msvc-link"
 rm -rf "$WORKDIR"
 mkdir -p "$WORKDIR"
 
+WINDOWS_SDK_ROOT_POSIX=
+WINDOWS_SDK_VERSION_VALUE=
+
 SRC="$WORKDIR/tiny.tl"
 BIN="$WORKDIR/tiny.exe"
+BIN_DISPLAY=$BIN
+if command -v cygpath >/dev/null 2>&1; then
+    BIN_DISPLAY=$(cygpath -m "$BIN")
+fi
 
 cat > "$SRC" <<'EOF'
 (define (main) : i64
@@ -74,6 +81,149 @@ short_windows_path() {
         fi
     fi
     to_windows_path "$1"
+}
+
+find_windows_sdk_root() {
+    for candidate_dir in \
+        "/c/Program Files (x86)/Windows Kits/10" \
+        "/c/Program Files/Windows Kits/10"; do
+        if [ -d "$candidate_dir/Include" ] && [ -d "$candidate_dir/Lib" ]; then
+            printf '%s\n' "$candidate_dir"
+            return 0
+        fi
+    done
+
+    return 1
+}
+
+find_windows_sdk_version() {
+    sdk_root=$1
+    latest=
+    for include_dir in "$sdk_root"/Include/10.*; do
+        if [ -d "$include_dir/ucrt" ] &&
+            [ -d "$include_dir/um" ] &&
+            [ -d "$include_dir/shared" ]; then
+            version=$(basename "$include_dir")
+            if [ -z "$latest" ] || [ "$version" \> "$latest" ]; then
+                latest=$version
+            fi
+        fi
+    done
+    if [ -n "$latest" ]; then
+        printf '%s\n' "$latest"
+        return 0
+    fi
+
+    return 1
+}
+
+configure_windows_sdk_env() {
+    sdk_root=$(find_windows_sdk_root || true)
+    if [ -n "$sdk_root" ]; then
+        WINDOWS_SDK_ROOT_POSIX=$sdk_root
+    fi
+
+    if [ -n "$WINDOWS_SDK_ROOT_POSIX" ]; then
+        sdk_version=$(find_windows_sdk_version "$WINDOWS_SDK_ROOT_POSIX" || true)
+        if [ -n "$sdk_version" ]; then
+            WINDOWS_SDK_VERSION_VALUE=$sdk_version
+        fi
+    fi
+
+    if [ -z "${WindowsSdkDir:-}" ] && [ -n "$WINDOWS_SDK_ROOT_POSIX" ]; then
+        WindowsSdkDir=$(short_windows_path "$WINDOWS_SDK_ROOT_POSIX")
+        export WindowsSdkDir
+    fi
+    if [ -z "${WindowsSDKVersion:-}" ] && [ -n "$WINDOWS_SDK_VERSION_VALUE" ]; then
+        WindowsSDKVersion=$WINDOWS_SDK_VERSION_VALUE
+        export WindowsSDKVersion
+    fi
+
+    if [ -n "${WindowsSdkDir:-}" ] && [ -n "${WindowsSDKVersion:-}" ]; then
+        echo "[windows-selfhost-msvc] sdk=$WindowsSdkDir version=$WindowsSDKVersion"
+    fi
+}
+
+find_link() {
+    latest=
+    for candidate in \
+        "/c/Program Files/Microsoft Visual Studio/2022/Enterprise/VC/Tools/MSVC"/*/bin/Hostx64/x64/link.exe \
+        "/c/Program Files/Microsoft Visual Studio/2022/Professional/VC/Tools/MSVC"/*/bin/Hostx64/x64/link.exe \
+        "/c/Program Files/Microsoft Visual Studio/2022/Community/VC/Tools/MSVC"/*/bin/Hostx64/x64/link.exe \
+        "/c/Program Files (x86)/Microsoft Visual Studio/2022/BuildTools/VC/Tools/MSVC"/*/bin/Hostx64/x64/link.exe; do
+        if [ -x "$candidate" ]; then
+            latest=$candidate
+        fi
+    done
+
+    if [ -n "$latest" ]; then
+        printf '%s\n' "$latest"
+        return 0
+    fi
+
+    if command -v link.exe >/dev/null 2>&1; then
+        path_link=$(command -v link.exe)
+        case "$path_link" in
+            */Git/usr/bin/link.exe) ;;
+            *)
+                printf '%s\n' "$path_link"
+                return 0
+                ;;
+        esac
+    fi
+
+    return 1
+}
+
+configure_windows_link_env() {
+    if [ -n "${TYPELISP_WINDOWS_LINK:-}" ]; then
+        return 0
+    fi
+
+    link_path=$(find_link || true)
+    if [ -z "$link_path" ]; then
+        return 0
+    fi
+
+    TYPELISP_WINDOWS_LINK=$(short_windows_path "$link_path")
+    case "$TYPELISP_WINDOWS_LINK" in
+        *" "*) fail "linker path contains spaces after short-path conversion: $TYPELISP_WINDOWS_LINK" ;;
+    esac
+    export TYPELISP_WINDOWS_LINK
+    echo "[windows-selfhost-msvc] linker=$TYPELISP_WINDOWS_LINK"
+    configure_msvc_inherited_env "$link_path"
+}
+
+prepend_env_list() {
+    name=$1
+    value=$2
+    current=$(eval "printf '%s' \"\${$name:-}\"")
+    if [ -n "$current" ]; then
+        eval "$name=\"\$value;\$current\""
+    else
+        eval "$name=\"\$value\""
+    fi
+    export "$name"
+}
+
+configure_msvc_inherited_env() {
+    link_path=$1
+    if [ -z "$WINDOWS_SDK_ROOT_POSIX" ] || [ -z "$WINDOWS_SDK_VERSION_VALUE" ]; then
+        return 0
+    fi
+
+    link_dir=$(dirname "$link_path")
+    toolset_root=$(CDPATH= cd -- "$link_dir/../../.." && pwd)
+    sdk_root=$WINDOWS_SDK_ROOT_POSIX
+    sdk_version=$WINDOWS_SDK_VERSION_VALUE
+
+    prepend_env_list "LIB" "$(short_windows_path "$sdk_root/Lib/$sdk_version/um/x64")"
+    prepend_env_list "LIB" "$(short_windows_path "$sdk_root/Lib/$sdk_version/ucrt/x64")"
+    prepend_env_list "LIB" "$(short_windows_path "$toolset_root/lib/x64")"
+    prepend_env_list "INCLUDE" "$(short_windows_path "$sdk_root/Include/$sdk_version/shared")"
+    prepend_env_list "INCLUDE" "$(short_windows_path "$sdk_root/Include/$sdk_version/um")"
+    prepend_env_list "INCLUDE" "$(short_windows_path "$sdk_root/Include/$sdk_version/ucrt")"
+    prepend_env_list "INCLUDE" "$(short_windows_path "$toolset_root/include")"
 }
 
 find_clang() {
@@ -142,6 +292,8 @@ case "$TYPELISP_WINDOWS_CLANG" in
 esac
 export TYPELISP_WINDOWS_CLANG
 echo "[windows-selfhost-msvc] assembler=$TYPELISP_WINDOWS_CLANG"
+configure_windows_sdk_env
+configure_windows_link_env
 
 echo "[windows-selfhost-msvc] build --direct"
 if ! "$COMPILER" run "$ROOT/selfhost/build.tl" --stdlib-root "$ROOT/stdlib" -- \
@@ -151,7 +303,7 @@ if ! "$COMPILER" run "$ROOT/selfhost/build.tl" --stdlib-root "$ROOT/stdlib" -- \
     sed 's/^/  /' "$WORKDIR/build.stderr" >&2 || true
     fail "selfhost build --direct failed"
 fi
-assert_contains "$WORKDIR/build.stdout" "Generated: $BIN"
+assert_contains "$WORKDIR/build.stdout" "Generated: $BIN_DISPLAY"
 assert_empty "$WORKDIR/build.stderr"
 [ -x "$BIN" ] || fail "selfhost build did not write executable $BIN"
 

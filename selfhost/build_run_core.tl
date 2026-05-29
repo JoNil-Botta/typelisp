@@ -411,7 +411,9 @@ _tl_print_string:
       (OkSourceToolCommand
         (process-command-with-env-list
           (process-command
-            (msvc-tool-executable tool)
+            (source-tool-env-command-or-default
+              "TYPELISP_WINDOWS_LINK"
+              (msvc-tool-executable tool))
             (source-tool-windows-linker-args obj-path bin-path))
           (msvc-tool-process-env tool)))]
     [(ErrMsvcTool error)

@@ -1197,31 +1197,18 @@ cat > "$WORKDIR/inline_test_pass.tl" <<'EOF'
   (assert-i64-eq (inc 41) 42 "inc result"))
 EOF
 
-# #1270: `typelisp test` runs selfhost/test.tl as an emitted binary. The
-# selfhost-typechecker `--check` path is consistently broken on Windows, and
-# the run-mode planner can enter the same crash class as the typechecker grows.
-# Keep Linux as the authoritative inline-test behavior gate and leave Windows
-# normal compile coverage below.
-if [ "$HOST_OS" = windows ]; then
-    echo "[public-tools] skipping inline-test-check on windows pending #1270 (test --check selfhost-typechecker segfault)"
-else
-    run_cmd inline-test-check "$COMPILER" test --check "$WORKDIR/inline_test_pass.tl" --stdlib-root "$ROOT/stdlib"
-    assert_success
-    assert_stderr_empty
-    assert_contains "$out" "TypeLisp test typecheck passed: 1 test(s)"
-fi
+run_cmd inline-test-check "$COMPILER" test --check "$WORKDIR/inline_test_pass.tl" --stdlib-root "$ROOT/stdlib"
+assert_success
+assert_stderr_empty
+assert_contains "$out" "TypeLisp test typecheck passed: 1 test(s)"
 
-if [ "$HOST_OS" = windows ]; then
-    echo "[public-tools] skipping inline-test-run on windows pending #1270 (selfhost test driver segfault)"
-else
-    run_cmd inline-test-pass "$COMPILER" test "$WORKDIR/inline_test_pass.tl" --stdlib-root "$ROOT/stdlib"
-    assert_success
-    assert_stdout_empty
-    assert_contains "$err" "test inc-basic"
-    assert_contains "$err" "ok inc-basic"
-    assert_contains "$err" "TypeLisp tests passed: 1 test(s)"
-    [ ! -f "$WORKDIR/inline_test_pass.tl.test.s" ] || fail "typelisp test left scratch assembly behind"
-fi
+run_cmd inline-test-pass "$COMPILER" test "$WORKDIR/inline_test_pass.tl" --stdlib-root "$ROOT/stdlib"
+assert_success
+assert_stdout_empty
+assert_contains "$err" "test inc-basic"
+assert_contains "$err" "ok inc-basic"
+assert_contains "$err" "TypeLisp tests passed: 1 test(s)"
+[ ! -f "$WORKDIR/inline_test_pass.tl.test.s" ] || fail "typelisp test left scratch assembly behind"
 
 run_cmd inline-test-normal-compile "$COMPILER" compile "$WORKDIR/inline_test_pass.tl" -o "$WORKDIR/inline_test_pass.s" --stdlib-root "$ROOT/stdlib"
 assert_success
@@ -1236,36 +1223,25 @@ cat > "$WORKDIR/inline_test_fail.tl" <<'EOF'
   (assert-i64-eq 1 2 "inline failure message"))
 EOF
 
-if [ "$HOST_OS" = windows ]; then
-    echo "[public-tools] skipping inline-test-fail-run on windows pending #1270 (selfhost test driver segfault)"
-else
-    run_cmd inline-test-fail "$COMPILER" test "$WORKDIR/inline_test_fail.tl" --stdlib-root "$ROOT/stdlib"
-    assert_failure
-    assert_stdout_empty
-    assert_contains "$err" "test failing-case"
-    assert_contains "$err" "inline failure message"
-    assert_contains "$err" "typelisp test: test executable exited"
-    [ ! -f "$WORKDIR/inline_test_fail.tl.test.s" ] || fail "failing typelisp test left scratch assembly behind"
-fi
+run_cmd inline-test-fail "$COMPILER" test "$WORKDIR/inline_test_fail.tl" --stdlib-root "$ROOT/stdlib"
+assert_failure
+assert_stdout_empty
+assert_contains "$err" "test failing-case"
+assert_contains "$err" "inline failure message"
+assert_contains "$err" "typelisp test: test executable exited"
+[ ! -f "$WORKDIR/inline_test_fail.tl.test.s" ] || fail "failing typelisp test left scratch assembly behind"
 
-if [ "$HOST_OS" = windows ]; then
-    echo "[public-tools] skipping inline-test-no-tests-check on windows pending #1270 (test --check selfhost-typechecker segfault)"
-else
-    run_cmd inline-test-no-tests-check "$COMPILER" test --check "$ROOT/stdlib/windows_setup.tl" --stdlib-root "$ROOT/stdlib"
-    assert_success
-    assert_stderr_empty
-    assert_contains "$out" "TypeLisp test typecheck passed: 0 test(s)"
-fi
+run_cmd inline-test-no-tests-check "$COMPILER" test --check "$ROOT/stdlib/windows_setup.tl" --stdlib-root "$ROOT/stdlib"
+assert_success
+assert_stderr_empty
+assert_contains "$out" "TypeLisp test typecheck passed: 0 test(s)"
 
-if [ "$HOST_OS" = windows ]; then
-    echo "[public-tools] skipping inline-test-no-tests-run on windows pending #1270 (selfhost test driver segfault)"
-else
-    run_cmd inline-test-no-tests-run "$COMPILER" test "$ROOT/stdlib/windows_setup.tl" --stdlib-root "$ROOT/stdlib"
-    assert_success
-    assert_stdout_empty
-    assert_contains "$err" "TypeLisp tests passed: 0 test(s)"
-    [ ! -f "$ROOT/stdlib/windows_setup.tl.test.s" ] || fail "no-test typelisp test left scratch assembly behind"
-fi
+rm -f "$ROOT/stdlib/windows_setup.tl.test.s"
+run_cmd inline-test-no-tests-run "$COMPILER" test "$ROOT/stdlib/windows_setup.tl" --stdlib-root "$ROOT/stdlib"
+assert_success
+assert_stdout_empty
+assert_contains "$err" "TypeLisp tests passed: 0 test(s)"
+[ ! -f "$ROOT/stdlib/windows_setup.tl.test.s" ] || fail "no-test typelisp test left scratch assembly behind"
 
 echo "[public-tools] package build"
 PKG="$WORKDIR/pkg"

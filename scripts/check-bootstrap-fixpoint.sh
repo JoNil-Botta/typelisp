@@ -81,6 +81,50 @@ run_with_heartbeat() {
     return "$heartbeat_status"
 }
 
+assert_contains() {
+    file=$1
+    needle=$2
+    if ! grep -qF "$needle" "$file"; then
+        echo "expected '$needle' in $file" >&2
+        sed 's/^/  /' "$file" >&2 || true
+        exit 1
+    fi
+}
+
+run_stage1_cli_expect_failure() {
+    label=$1
+    shift
+    stdout="$WORKDIR/$label.stdout"
+    stderr="$WORKDIR/$label.stderr"
+    set +e
+    "$@" > "$stdout" 2> "$stderr"
+    status=$?
+    set -e
+    if [ "$status" -eq 0 ]; then
+        echo "stage1 CLI command unexpectedly succeeded: $label" >&2
+        echo "stdout:" >&2
+        sed 's/^/  /' "$stdout" >&2 || true
+        echo "stderr:" >&2
+        sed 's/^/  /' "$stderr" >&2 || true
+        exit 1
+    fi
+}
+
+run_stage1_cli_capture() {
+    label=$1
+    shift
+    stdout="$WORKDIR/$label.stdout"
+    stderr="$WORKDIR/$label.stderr"
+    if ! "$@" > "$stdout" 2> "$stderr"; then
+        echo "stage1 CLI command failed: $label" >&2
+        echo "stdout:" >&2
+        sed 's/^/  /' "$stdout" >&2 || true
+        echo "stderr:" >&2
+        sed 's/^/  /' "$stderr" >&2 || true
+        exit 1
+    fi
+}
+
 WORKDIR="$ROOT/target/bootstrap-fixpoint"
 rm -rf "$WORKDIR"
 mkdir -p "$WORKDIR"
@@ -92,6 +136,14 @@ STAGE2_ASM="$WORKDIR/stage2.s"
 STAGE2_OBJ="$WORKDIR/stage2.o"
 STAGE2_BIN="$WORKDIR/stage2"
 STAGE3_ASM="$WORKDIR/stage3.s"
+STAGE1_CLI_SRC="$WORKDIR/stage1_cli_smoke.tl"
+STAGE1_CLI_ASM="$WORKDIR/stage1_cli_smoke.s"
+STAGE1_CLI_DIRECT_ASM="$WORKDIR/stage1_cli_direct.s"
+STAGE1_CLI_IR="$WORKDIR/stage1_cli_smoke.ir"
+
+cat > "$STAGE1_CLI_SRC" <<'EOF'
+(define (main) : i64 42)
+EOF
 
 write_stage1_path() {
     if [ -n "${TYPELISP_BOOTSTRAP_STAGE1_PATH_FILE:-}" ]; then
@@ -102,12 +154,63 @@ write_stage1_path() {
     fi
 }
 
+check_stage1_compile_cli() {
+    echo "[bootstrap] stage1 compile CLI smoke"
+    run_stage1_cli_capture \
+        stage1-compile-command \
+        "$STAGE1_BIN" compile "$STAGE1_CLI_SRC" \
+        --target linux-x86_64 \
+        --backend-mode scalar \
+        --opt-level 0 \
+        --stdlib-root "$ROOT/stdlib" \
+        --stdlib-root "$ROOT/selfhost"
+    [ -s "$STAGE1_CLI_ASM" ] || {
+        echo "stage1 compile command did not write default assembly: $STAGE1_CLI_ASM" >&2
+        exit 1
+    }
+    assert_contains "$STAGE1_CLI_ASM" "main:"
+
+    run_stage1_cli_capture \
+        stage1-compile-direct \
+        "$STAGE1_BIN" "$STAGE1_CLI_SRC" -o "$STAGE1_CLI_DIRECT_ASM"
+    [ -s "$STAGE1_CLI_DIRECT_ASM" ] || {
+        echo "stage1 direct bootstrap form did not write assembly: $STAGE1_CLI_DIRECT_ASM" >&2
+        exit 1
+    }
+    assert_contains "$STAGE1_CLI_DIRECT_ASM" "main:"
+
+    run_stage1_cli_capture \
+        stage1-compile-emit-ir \
+        "$STAGE1_BIN" compile "$STAGE1_CLI_SRC" --emit-ir --stdlib-root "$ROOT/stdlib"
+    [ -s "$STAGE1_CLI_IR" ] || {
+        echo "stage1 compile --emit-ir did not write default IR: $STAGE1_CLI_IR" >&2
+        exit 1
+    }
+    assert_contains "$STAGE1_CLI_IR" "typelisp-ir-summary v1"
+
+    run_stage1_cli_capture stage1-help "$STAGE1_BIN" help
+    assert_contains "$WORKDIR/stage1-help.stderr" "typelisp compile <file.tl>"
+
+    run_stage1_cli_expect_failure stage1-missing-command "$STAGE1_BIN"
+    assert_contains "$WORKDIR/stage1-missing-command.stderr" "typelisp: expected command"
+    assert_contains "$WORKDIR/stage1-missing-command.stderr" "Usage:"
+
+    run_stage1_cli_expect_failure stage1-missing-source "$STAGE1_BIN" compile
+    assert_contains "$WORKDIR/stage1-missing-source.stderr" "compile: expected source path"
+
+    run_stage1_cli_expect_failure stage1-unknown-command "$STAGE1_BIN" check "$STAGE1_CLI_SRC"
+    assert_contains "$WORKDIR/stage1-unknown-command.stderr" "Unknown command: check"
+    assert_contains "$WORKDIR/stage1-unknown-command.stderr" "Usage:"
+}
+
 echo "[bootstrap] stage0 -> stage1.s"
 run_with_heartbeat "stage0 -> stage1.s" "$COMPILER" compile selfhost/compile.tl -o "$STAGE1_ASM"
 
 echo "[bootstrap] link stage1"
 as "$STAGE1_ASM" -o "$STAGE1_OBJ"
 ld "$STAGE1_OBJ" -o "$STAGE1_BIN"
+
+check_stage1_compile_cli
 
 if [ "${TYPELISP_BOOTSTRAP_STAGE1_ONLY:-}" = 1 ]; then
     write_stage1_path

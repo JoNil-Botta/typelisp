@@ -97,11 +97,27 @@
       (doc-html-escape-text doc-text)
       "</p></div>\n")))
 
-(define (doc-html-code-block [source : String]) : String
+(define (doc-html-code-block-meta-attr [meta : String]) : String
+  (if (= (string-length meta) 0)
+    ""
+    (doc-html-cat3 " data-meta=\"" (doc-html-escape meta) "\"")))
+
+(define (doc-html-code-block-with-info
+  [language : String]
+  [meta : String]
+  [source : String]) : String
   (doc-html-cat3
-    "<pre><code class=\"language-typelisp\">"
+    (doc-html-cat5
+      "<pre><code class=\"language-"
+      (doc-html-escape language)
+      "\""
+      (doc-html-code-block-meta-attr meta)
+      ">")
     (doc-html-escape source)
     "</code></pre>\n"))
+
+(define (doc-html-code-block [source : String]) : String
+  (doc-html-code-block-with-info "typelisp" "" source))
 
 (define (doc-html-item-nav-entry [item : DocItem]) : String
   (let

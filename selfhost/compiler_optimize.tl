@@ -1130,6 +1130,10 @@
       (match b
         [(AstTyString) true]
         [_ false])]
+    [(AstTyStr)
+      (match b
+        [(AstTyStr) true]
+        [_ false])]
     [(AstTyUnit)
       (match b
         [(AstTyUnit) true]
@@ -1141,6 +1145,10 @@
     [(AstTyExpr)
       (match b
         [(AstTyExpr) true]
+        [_ false])]
+    [(AstTyExprList)
+      (match b
+        [(AstTyExprList) true]
         [_ false])]
     [(AstTyFunc a-params a-ret)
       (match b

@@ -2,7 +2,8 @@
 set -eu
 
 # Smoke-test a TYPELISP_BIN-compatible stage1 wrapper on the Linux host-action
-# surface: compile, build, run, fmt, and debug host-action.
+# surface: compile, source/package build, run, repl, doc, test, fmt, and debug
+# host-action.
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
@@ -31,6 +32,7 @@ mkdir -p "$WORKDIR"
 
 SRC="$WORKDIR/smoke.tl"
 ASM="$WORKDIR/smoke.s"
+IR="$WORKDIR/smoke.ir"
 BIN="$WORKDIR/smoke-bin"
 HOST_ACTION_BIN="$WORKDIR/host action/out bin"
 SCRATCH_ASM="$WORKDIR/inline-test.s"
@@ -124,6 +126,38 @@ run_capture() {
     fi
 }
 
+run_stdin_capture() {
+    label=$1
+    input=$2
+    shift 2
+    stdout="$WORKDIR/$label.stdout"
+    stderr="$WORKDIR/$label.stderr"
+    if ! TYPELISP_STAGE1_HEARTBEAT_FD=3 "$@" 3>&2 < "$input" > "$stdout" 2> "$stderr"; then
+        echo "stage1 wrapper smoke command failed: $label" >&2
+        echo "stdout:" >&2
+        sed 's/^/  /' "$stdout" >&2 || true
+        echo "stderr:" >&2
+        sed 's/^/  /' "$stderr" >&2 || true
+        exit 1
+    fi
+}
+
+run_capture_cwd() {
+    label=$1
+    cwd=$2
+    shift 2
+    stdout="$WORKDIR/$label.stdout"
+    stderr="$WORKDIR/$label.stderr"
+    if ! (cd "$cwd" && TYPELISP_STAGE1_HEARTBEAT_FD=3 "$@") 3>&2 > "$stdout" 2> "$stderr"; then
+        echo "stage1 wrapper smoke command failed: $label" >&2
+        echo "stdout:" >&2
+        sed 's/^/  /' "$stdout" >&2 || true
+        echo "stderr:" >&2
+        sed 's/^/  /' "$stderr" >&2 || true
+        exit 1
+    fi
+}
+
 run_expect_failure() {
     label=$1
     shift
@@ -151,6 +185,19 @@ run_capture compile "$COMPILER" compile "$SRC" -o "$ASM"
 }
 assert_contains "$WORKDIR/compile.stdout" "Generated: $ASM"
 
+echo "[stage1-wrapper] compile --emit-ir"
+run_capture compile-ir "$COMPILER" compile "$SRC" --emit-ir
+[ -f "$IR" ] || {
+    echo "compile --emit-ir did not write $IR" >&2
+    exit 1
+}
+assert_contains "$WORKDIR/compile-ir.stdout" "Generated: $IR"
+assert_contains "$IR" "typelisp-ir-summary v1"
+
+run_expect_failure compile-missing-source "$COMPILER" compile
+assert_empty "$WORKDIR/compile-missing-source.stdout"
+assert_contains "$WORKDIR/compile-missing-source.stderr" "compile: expected source path"
+
 echo "[stage1-wrapper] build"
 run_capture build "$COMPILER" build "$SRC" -o "$BIN"
 [ -x "$BIN" ] || {
@@ -158,6 +205,46 @@ run_capture build "$COMPILER" build "$SRC" -o "$BIN"
     exit 1
 }
 assert_contains "$WORKDIR/build.stdout" "Generated: $BIN"
+
+echo "[stage1-wrapper] package build"
+PKG="$WORKDIR/pkg"
+mkdir -p "$PKG/src/nested/deeper" "$PKG/vendor/math/src"
+cat > "$PKG/typelisp.pkg" <<'EOF'
+(package
+  (name "stage1_pkg")
+  (version "0.1.0")
+  (entry "src/main.tl")
+  (dependencies
+    (math "vendor/math")))
+EOF
+cat > "$PKG/src/main.tl" <<'EOF'
+(import "pkg:math/src/lib.tl")
+(define (main) : i64 (add-one 41))
+EOF
+cat > "$PKG/vendor/math/src/lib.tl" <<'EOF'
+(define (add-one [x : i64]) : i64 (+ x 1))
+EOF
+PKG_ASM="$PKG/target/typelisp/stage1_pkg/stage1_pkg.s"
+run_capture build-package "$COMPILER" build --manifest-path "$PKG/typelisp.pkg" --opt-level 0
+[ -f "$PKG_ASM" ] || {
+    echo "package build did not write assembly $PKG_ASM" >&2
+    exit 1
+}
+assert_contains "$WORKDIR/build-package.stdout" "Generated: $PKG_ASM"
+assert_contains "$PKG_ASM" "main:"
+assert_contains "$PKG_ASM" "add_one"
+
+rm -rf "$PKG/target"
+run_capture_cwd build-package-discover "$PKG/src/nested/deeper" "$COMPILER" build
+[ -f "$PKG_ASM" ] || {
+    echo "package discovery did not write assembly $PKG_ASM" >&2
+    exit 1
+}
+assert_contains "$WORKDIR/build-package-discover.stdout" "Generated: ../../../target/typelisp/stage1_pkg/stage1_pkg.s"
+
+run_expect_failure build-package-missing "$COMPILER" build --manifest-path "$WORKDIR/missing.pkg"
+assert_empty "$WORKDIR/build-package-missing.stdout"
+assert_contains "$WORKDIR/build-package-missing.stderr" "cannot read package manifest"
 
 echo "[stage1-wrapper] run"
 set +e
@@ -182,6 +269,29 @@ if [ -s "$WORKDIR/run.stderr" ]; then
     sed 's/^/  /' "$WORKDIR/run.stderr" >&2 || true
     exit 1
 fi
+
+echo "[stage1-wrapper] repl"
+: > "$WORKDIR/repl-empty.in"
+run_stdin_capture repl-empty "$WORKDIR/repl-empty.in" "$COMPILER" repl
+assert_contains "$WORKDIR/repl-empty.stdout" "TypeLisp REPL. Type .help for commands."
+assert_contains "$WORKDIR/repl-empty.stdout" "tl> "
+assert_empty "$WORKDIR/repl-empty.stderr"
+
+cat > "$WORKDIR/repl-session.in" <<'EOF'
+.help
+.type true
+(+ 1 2)
+.exit
+EOF
+run_stdin_capture repl-session "$WORKDIR/repl-session.in" "$COMPILER" repl
+assert_contains "$WORKDIR/repl-session.stdout" "TypeLisp REPL commands:"
+assert_contains "$WORKDIR/repl-session.stdout" ".type <expr>"
+assert_contains "$WORKDIR/repl-session.stdout" "bool"
+assert_contains "$WORKDIR/repl-session.stderr" "REPL evaluation is not implemented yet"
+
+run_expect_failure repl-args "$COMPILER" repl unexpected
+assert_empty "$WORKDIR/repl-args.stdout"
+assert_contains "$WORKDIR/repl-args.stderr" "Error: repl does not accept arguments"
 
 echo "[stage1-wrapper] doc"
 if [ "${TYPELISP_STAGE1_SKIP_DOC_SMOKE:-}" = "1" ]; then

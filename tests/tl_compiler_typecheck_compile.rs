@@ -113,6 +113,8 @@ fn compiler_typecheck_tl_compiles_to_assembly() {
         "typecheck: region-tagged value cannot escape with-arena 'r'",
         "typecheck: region-tagged value cannot escape with-arena 'inner'",
         "typecheck: cannot pass region-tagged value to function parameter; region value would escape",
+        "typecheck: str is a borrowed string-slice referent; use (& lifetime str)",
+        "typecheck: mutable references to str are reserved; use immutable (& lifetime str)",
         "typecheck: match arms must agree",
         "typecheck: unknown variant ",
         "typecheck: unknown struct field ",
@@ -122,6 +124,12 @@ fn compiler_typecheck_tl_compiles_to_assembly() {
         "typecheck: try error type mismatch",
         "typecheck: with cleanup function type mismatch",
         "typecheck: with cleanup must be a direct function name",
+        "typecheck: ordinary let cannot own cleanup-required resource; use with",
+        "typecheck: cleanup-required resource would escape with scope",
+        "typecheck: cannot store cleanup-required resource in ordinary aggregate",
+        "typecheck: lambda cannot capture cleanup-required resource; resource value would escape",
+        "typecheck: cleanup-required resource already has a cleanup owner",
+        "typecheck: cannot store cleanup-required resource in longer-lived binding",
         "typecheck: smoke score mismatch",
         "(extern print-i64 : (-> i64 unit))",
         "[fixed : (Array i64 3) (array 1 2 3)]",
@@ -273,10 +281,9 @@ fn selfhost_check_tl_compiles_to_assembly() {
         "_tl_selfhost_check_parse_options:",
         "_tl_selfhost_check_file:",
         "_tl_compiler_check_file_with_roots:",
-        "_tl_compiler_check_source:",
         "_tl_compiler_load_file_with_path",
         "_tl_compiler_load_source:",
-        "_tl_typecheck_compiler_program:",
+        "_tl_typecheck_compiler_specialized_program_with_paths:",
     ] {
         assert_symbol(&asm, sym, "selfhost_check");
     }

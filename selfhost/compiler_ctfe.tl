@@ -772,7 +772,9 @@
     [(AstTyBool) "bool"]
     [(AstTyChar) "char"]
     [(AstTyString) "String"]
+    [(AstTyStr) "str"]
     [(AstTyExpr) "Expr"]
+    [(AstTyExprList) "ExprList"]
     [(AstTyUnit) "unit"]
     [(AstTyNever) "never"]
     [(AstTyFunc args ret)
@@ -837,7 +839,9 @@
     [(AstTyBool) "bool"]
     [(AstTyChar) "char"]
     [(AstTyString) "string"]
+    [(AstTyStr) "str"]
     [(AstTyExpr) "expr"]
+    [(AstTyExprList) "expr-list"]
     [(AstTyUnit) "unit"]
     [(AstTyNever) "never"]
     [(AstTyFunc _ _) "function"]
@@ -1050,7 +1054,9 @@
     [(AstTyChar) 1]
     [(AstTyUnit) 0]
     [(AstTyNever) 0]
+    [(AstTyStr) -1]
     [(AstTyExpr) -1]
+    [(AstTyExprList) -1]
     [(AstTyFunc _ _) 8]
     [(AstTyTuple _) 8]
     [(AstTyArray elem count)
@@ -1096,7 +1102,9 @@
     [(AstTyChar) 1]
     [(AstTyUnit) 1]
     [(AstTyNever) 1]
+    [(AstTyStr) -1]
     [(AstTyExpr) -1]
+    [(AstTyExprList) -1]
     [(AstTyFunc _ _) 8]
     [(AstTyTuple _) 8]
     [(AstTyArray elem _) (ctfe-type-align layouts elem)]
@@ -2683,6 +2691,10 @@
       (match b
         [(AstTyString) true]
         [_ false])]
+    [(AstTyStr)
+      (match b
+        [(AstTyStr) true]
+        [_ false])]
     [(AstTyUnit)
       (match b
         [(AstTyUnit) true]
@@ -2694,6 +2706,10 @@
     [(AstTyExpr)
       (match b
         [(AstTyExpr) true]
+        [_ false])]
+    [(AstTyExprList)
+      (match b
+        [(AstTyExprList) true]
         [_ false])]
     [(AstTyFunc a-args a-ret)
       (match b
@@ -2971,6 +2987,7 @@
     [maybe-ty : AstExpr (AstExprTypeLiteral (AstTyVar "Maybe"))]
     [array-ty : AstExpr (AstExprTypeLiteral (AstTyArray (AstTyI64) 4))]
     [dyn-array-ty : AstExpr (AstExprTypeLiteral (AstTyDynArray (AstTyBool)))]
+    [str-ref-ty : AstExpr (AstExprTypeLiteral (AstTyRef "r" (AstTyStr)))]
     [fn-ty : AstExpr
       (AstExprTypeLiteral
         (AstTyFunc
@@ -2988,6 +3005,12 @@
         (compiler-ctfe-call1 "type-key" (AstExprTypeLiteral (AstTyI64)))
         env
         "i64")
+        unit
+        (set! ok false))
+      (if (compiler-ctfe-eval-string-ok?
+        (compiler-ctfe-call1 "type-key" str-ref-ty)
+        env
+        "ref_r_str")
         unit
         (set! ok false))
       (if (compiler-ctfe-eval-string-ok?

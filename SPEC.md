@@ -214,6 +214,30 @@ narrower or unsigned integer is required. Floating-point literals are always
 - The stored `length` field is always non-negative.
 - Not valid as a global initializer.
 
+**Owned string:** `String`
+- `String` is an owned, immutable byte-string handle. The handle is a
+  pointer-sized aggregate value whose pointed-to inline storage is a
+  `{data_ptr, length}` pair.
+- String literals have type `String` in v1. Their bytes live in static
+  read-only data, but the source value is still an owned `String` handle, not a
+  borrowed `str`.
+- Runtime-created strings from `string-append`, `substring`, `read-file`,
+  `arg`, `int->string`, stdin/file reads, and stdlib helpers allocate fresh
+  `String` storage in the active arena.
+- `String` is move-only under the aggregate handle rules in section 4.6.2.
+  Non-consuming string operations are borrow-like compatibility operations
+  until the borrowed `str` API migration lands.
+
+**Borrowed string referent:** `str` (specified, selfhost pending)
+- `str` is an immutable borrowed byte-string referent. It is not a first-class
+  value type in v1.
+- Bare `str` is rejected in value positions: parameters, returns, locals,
+  globals, fields, enum payloads, tuple elements, and array element types.
+- The only accepted source form for borrowed text in v1 is an immutable
+  reference `(& lifetime str)`. Mutable string references `(&mut lifetime str)`
+  are reserved and rejected until mutable byte-buffer policy exists.
+- `str` is not NUL-terminated. Its length is carried with the borrowed view.
+
 ### 3.3 Function types
 
 `(-> arg1 arg2 ... ret)`
@@ -260,6 +284,74 @@ Safe code may mention raw pointer types, bind/copy/pass/return raw pointer
 values, call `extern` functions whose signatures contain raw pointers, construct
 typed null pointers, and test pointers for null. Safe code may not dereference,
 write through, offset, or cast raw pointers.
+
+#### 3.4.1 Arena-owned `(Box T)` indirection (specified, pending implementation)
+
+`(Box T)` is an explicit, safe, arena-owned indirection type. A box value is a
+pointer-shaped owning handle to storage that contains one `T`, allocated in the
+active arena. It is the source-level escape hatch for recursive aggregate
+layouts once structs and enums can opt into Rust-like inline representation.
+
+`(Box T)` is distinct from every other pointer-like surface:
+
+- `(Ptr T)` / `(MutPtr T)` are unsafe, nullable, copyable raw addresses for
+  FFI/runtime work. They do not own the pointed-to value.
+- `(& r T)` / `(&mut r T)` are non-owning checked references tied to an owner
+  lifetime or arena.
+- `(Box T)` owns the allocated `T` value. The box handle is move-only, not
+  copyable, and its storage is reclaimed only with the arena that owns it.
+
+Box type syntax is a built-in type constructor like `(Array T)`, `(Tuple ...)`,
+and raw pointer types. It is not source-level generics. The parser must reject
+malformed box types such as `(Box)`, `(Box A B)`, and `(Box T extra)` with a
+source-located type diagnostic.
+
+`(box expr)` allocates storage for the value produced by `expr` in the active
+arena and returns `(Box T)`, where `T` is the type of `expr`. In the
+program-lifetime default arena the result type is `(Box T)`. Inside
+`(with-arena r ...)`, allocation targets `r` and the result type is
+`(in r (Box T))`; it follows the same region escape rules as other
+arena-owned handles.
+
+`(box-get b)` projects the boxed value for read and pattern use. If `b` has
+type `(Box T)`, the projection has type `T`. If `b` has type `(in r (Box T))`,
+the projection has type `(in r T)` when `T` is region-taggable, otherwise `T`.
+The projection does not copy the box handle and does not by itself consume the
+box. Subsequent use of the projected value is still governed by the move rules:
+copyable `T` values may be copied out, but moving a move-only `T` out of a box
+is an aggregate path move and is rejected until the path-move and borrow slices
+define a sound operation. Immutable inspection through `box-get` is therefore
+v1's stable surface; destructive `box-take`, assignment through boxes, and
+mutable dereference are deferred to the mutable-reference/path-move work.
+
+Examples:
+
+```lisp test=ignore name=box-recursive-list reason="Box is specified before selfhost implementation"
+(defenum ListI64
+  (ListNil)
+  (ListCons i64 (Box ListI64)))
+
+(define one-two : ListI64
+  (ListCons 1 (box (ListCons 2 (box ListNil)))))
+```
+
+```lisp test=ignore name=box-recursive-tree reason="Box is specified before selfhost implementation"
+(defenum Tree
+  (Leaf i64)
+  (Node (Box Tree) (Box Tree)))
+
+(define small-tree : Tree
+  (Node (box (Leaf 1)) (box (Leaf 2))))
+```
+
+```lisp test=ignore name=box-get-copyable-field reason="Box is specified before selfhost implementation"
+(defstruct Counter
+  (label String)
+  (count i64))
+
+(define (boxed-count [c : (Box Counter)]) : i64
+  (struct-get (box-get c) count))
+```
 
 ### 3.5 User-defined types
 
@@ -452,16 +544,14 @@ underlying heap-allocated type. Region tags are a compile-time-only
 annotation; they do not change ABI representation, runtime size, or data
 layout. The tag exists solely to enable static escape checking.
 
-`(with-arena r ...)` is the migration spelling for this form and is accepted as
-an exact alias of `(with-arena r ...)` (#801): it produces the same scoped
-arena, the same `(in r T)` region tags, the same default-arena shadowing, and
-the same escape checking and `tl_region_mark` / `tl_region_reset` lowering.
-Allocations inside the body target the scoped arena, which shadows the
-program-lifetime default arena and is reset at scope exit.
+`(with-arena r ...)` creates the scoped arena, produces `(in r T)` region tags
+for allocations inside the body, shadows the program-lifetime default arena,
+and lowers to `tl_region_mark` / `tl_region_reset` around the body.
 
 **Region-taggable types** are the heap-allocated aggregate kinds whose storage
 can be created inside a region scope:
 - `String`
+- `(Box T)` - arena-owned boxed storage
 - `(Array T)` — dynamic array
 - Enum and struct values returned from functions inside the region
 - Tuple values (when tuple-by-value ABI support lands)
@@ -498,16 +588,15 @@ The selfhost compiler accepts written lifetime-bearing reference type forms:
 - `(&mut arena T)` is a mutable reference type to `T` tied to lifetime/arena
   name `arena`.
 - The lifetime name is a bare identifier. It matches the current
-  `(with-arena arena ...)` binder shape and the planned `(with-arena arena ...)`
-  spelling.
+  `(with-arena arena ...)` binder shape.
 - Immutable references are copyable pointer/provenance values. Copying an
   immutable reference aliases the same immutable referent and does not move or
   copy the referent.
 - Mutable reference expression syntax, mutable exclusivity, returned/stored
-  lifetime parameters, closure-capture details, non-lexical lifetimes, and
-  borrowed `str` semantics are follow-up borrow-checker work. Source programs
-  using reference types are rejected before lowering until the selfhost
-  borrow-checker slices land.
+  lifetime parameters, closure-capture details, and non-lexical lifetimes are
+  follow-up borrow-checker work. Borrowed `str` source semantics are specified
+  in section 3.11. Source programs using reference types are rejected before
+  lowering until the selfhost borrow-checker slices land.
 
 Immutable borrow expressions are specified as:
 
@@ -522,9 +611,11 @@ Immutable borrow expressions are specified as:
   lifetime/arena name to be `arena`; otherwise the checker reports a type error.
 - Borrow expressions are explicit. There is no implicit conversion from `T` to
   `(& arena T)` in v1.
-- The referent type is the place's value type. When the place type is an
-  arena-tagged wrapper `(in arena T)`, the reference type is `(& arena T)`, not
-  `(& arena (in arena T))`.
+- The referent type is the place's value type, except that borrowing a `String`
+  place produces `(& lifetime str)`. When the place type is an arena-tagged
+  wrapper `(in arena T)`, the reference type is `(& arena T)`, not
+  `(& arena (in arena T))`; for `(in arena String)`, the reference type is
+  `(& arena str)`.
 
 **Borrowable places in lexical v1.** The checker accepts immutable borrows of
 places whose owner/provenance is statically known:
@@ -610,13 +701,13 @@ shortening is #810.
 ```
 
 ```lisp test=ignore name=borrow-arena-owned-ok reason="borrow expressions are specified before selfhost implementation"
-(define (takes-string [s : (& phase String)]) : i64
+(define (takes-string [s : (& phase str)]) : i64
   0)
 
 (define (borrow-arena-owned) : i64
   (with-arena phase
     (let [s (int->string 42)]
-      (let [rs : (& phase String) (& phase s)]
+      (let [rs : (& phase str) (& phase s)]
         (takes-string rs)))))
 ```
 
@@ -632,7 +723,7 @@ shortening is #810.
 ```
 
 ```lisp test=ignore name=borrow-reject-arena-escape reason="negative example for future immutable borrow checker"
-(define (bad-arena-return) : (& phase String)
+(define (bad-arena-return) : (& phase str)
   (with-arena phase
     (let [s (int->string 42)]
       (& phase s))))
@@ -646,6 +737,128 @@ shortening is #810.
   (let [r (& n)]
     (lambda () (takes-captured r))))
 ```
+
+### 3.11 Owned `String` and borrowed `str` (v1 design)
+
+This section defines the source contract for the owned `String` / borrowed
+`str` split. The syntax and API migration are staged: `String` exists today,
+reference syntax exists in the selfhost checker, and `str` frontend/API support
+lands through #1453 and #1454. Until those implementation slices land, current
+compiler and stdlib signatures still use the compatibility `String` forms in
+section 6.1.
+
+#### Source model
+
+- `String` is the owned text value type. It is immutable, move-only, and may
+  own active-arena storage or refer to static read-only literal bytes.
+- `str` is a borrowed referent type, not a by-value type. A source program may
+  write `str` only as the referent of an immutable reference:
+  `(& lifetime str)`.
+- Bare `str` in a parameter, return, local binding, global, field, enum
+  payload, tuple element, or array element position is rejected.
+- `(&mut lifetime str)` is reserved and rejected in v1 because strings are
+  immutable. Mutable byte buffers should use a future buffer/slice type rather
+  than mutable `str`.
+- String literals keep type `String`. There is no static-borrowed string
+  literal type and no implicit static lifetime in v1.
+
+Borrowing a `String` place produces a borrowed `str` reference:
+
+```lisp test=ignore name=string-borrow-produces-str reason="borrowed str is specified before selfhost implementation"
+(define (text-len [text : (& input str)]) : i64
+  (string-length text))
+
+(define (borrow-owned-string [input : String]) : i64
+  (let [view : (& input str) (& input)]
+    (text-len view)))
+```
+
+Borrow expressions stay explicit. A call that expects `(& lifetime str)` does
+not implicitly borrow a `String` argument:
+
+```lisp test=ignore name=string-borrow-reject-implicit reason="negative example for future borrowed str checker"
+(define (text-len [text : (& input str)]) : i64
+  (string-length text))
+
+(define (bad-implicit-borrow [input : String]) : i64
+  (text-len input))
+```
+
+Bare `str` is rejected even when it appears to be used read-only:
+
+```lisp test=ignore name=string-borrow-reject-bare-str reason="negative example for future borrowed str checker"
+(define (bad-by-value-str [text : str]) : i64
+  0)
+```
+
+Returned and stored borrowed string lifetimes require the lifetime-parameter
+rules from #804. Until that slice lands, returning or storing a borrowed `str`
+is rejected unless the checker can prove the reference is purely local to the
+current lexical scope:
+
+```lisp test=ignore name=string-borrow-reject-stored-returned reason="returned/stored borrowed lifetimes are deferred to #804"
+(defstruct SavedText
+  (text (& input str)))
+
+(define (bad-return-borrow [input : String]) : (& input str)
+  (& input))
+```
+
+Arena escape checks apply to borrowed string views exactly like other
+references. A borrowed view of a scoped-arena `String` cannot escape the scoped
+arena:
+
+```lisp test=ignore name=string-borrow-reject-arena-escape reason="negative example for future borrowed str checker"
+(define (bad-scoped-text) : (& phase str)
+  (with-arena phase
+    (let [text : String (int->string 42)]
+      (& phase text))))
+```
+
+Borrowing a `String` is non-consuming. Moving the owner while a borrowed view is
+live is rejected by the move/borrow checker:
+
+```lisp test=ignore name=string-borrow-reject-move-while-borrowed reason="negative example for future move and borrowed str checker"
+(define (bad-move-while-borrowed [input : String]) : i64
+  (let [view : (& input str) (& input)]
+    (let [moved : String input]
+      (string-length view))))
+```
+
+#### API classification
+
+The current implementation still exposes `String` parameters for these
+builtins and stdlib helpers. After #1453/#1454, signatures should use
+borrowed `str` for non-consuming text inputs while preserving owned `String`
+results for allocation sites.
+
+| Category | Members | v1 ownership contract |
+|----------|---------|-----------------------|
+| Non-consuming text inspection | `string-length`/`length`, `string-ref`/`char-at`, `string-eq`/`string=?`, `string->int`, stdlib predicates such as `string-contains`, `string-contains-char`, and `is-string-prefix-at` | Accept borrowed `(& r str)` inputs and return scalars. They do not move or allocate text. |
+| Text output and diagnostics | `print-string`/`print-str`, `print-error`, `panic`/`error`, `stdout-write`, `stderr-write`, `write-file`, append/write status helpers, process stdin strings | Accept borrowed `(& r str)` text/path/message inputs. Host I/O may copy bytes outside the language heap but does not take TypeLisp ownership. |
+| Active-arena owned string results | `arg`, `read-file`, `file-read-chunk-bytes`, `read-stdin-line`, `read-stdin-bytes`, `int->string`, `string-append`/`string-concat`, `substring`/`string-slice`, stdlib trim/replacement helpers when they build text, env/path split/join helpers | Return owned `String` storage allocated in the active arena. Results created inside a scoped arena cannot escape that arena. |
+| Caller-provided fallback/result values | `stdlib/string.tl` `string-replace` when no match is found, `stdlib/io.tl` `read-file-or` fallback paths | Preserve the caller-owned value instead of allocating. Precise returned/stored lifetime signatures are deferred to #804; until then these remain conservatively checked. |
+| Mutable or binary byte storage | dynamic arrays today; future byte-buffer/slice work | Not modeled as `str`. `str` is immutable borrowed text/bytes and should not become the mutable buffer type. |
+
+#### ABI and lowering representation
+
+`String` keeps the current aggregate-handle representation: a pointer-sized
+source value points at a 16-byte string record containing `(data_ptr, length)`.
+The record may describe static literal bytes or active-arena storage.
+
+`(& lifetime str)` is a pointer-sized reference/provenance value whose referent
+is an immutable 16-byte `(data_ptr, length)` string view. Borrowing a `String`
+place may point the reference at the owned `String` record itself; borrowing a
+future substring/slice view may point at a compiler-created view record. The
+reference does not own, free, or extend the lifetime of the bytes. Its lifetime
+is enforced only by the source checker, and the runtime representation carries
+no NUL terminator guarantee.
+
+Lowering may pass `(& lifetime str)` to runtime helpers using the same
+pointer-sized reference slot shape as other immutable references. Runtime
+helpers that read text must consume the view's pointer and length and must not
+retain the view beyond the call unless a later API explicitly models that
+stored lifetime.
 
 ---
 
@@ -1237,6 +1450,7 @@ and marks the source place moved. Move-only types are:
 
 - `String`.
 - Dynamic arrays `(Array T)`.
+- Boxes `(Box T)`.
 - Fixed arrays `(Array T N)`.
 - Tuples `(Tuple ...)`.
 - Default-layout structs and enums.
@@ -1407,6 +1621,66 @@ The `match` consumes `m`; the `SomeName` arm owns `s` and can pass it to
 
 The first `match` moves `m`, so the second `match` is rejected as a
 use-after-move.
+
+#### 4.6.3 Recursive aggregate layout and boxed recursion (specified, pending implementation)
+
+Today, default TypeLisp structs and enums are pointer-shaped aggregate handles,
+so directly recursive enum payloads are finite in the current implementation.
+That is an implementation detail, not the long-term source contract. When an
+aggregate opts into Rust-like inline representation, the compiler must reject
+recursive-by-value storage cycles and require explicit indirection through
+`(Box T)`.
+
+The finite-layout rule is structural:
+
+- A field or enum payload may directly contain scalar, pointer, reference,
+  function, and other finite-size values according to the ordinary type rules.
+- A field or enum payload may contain `(Box T)` even when `T` is the aggregate
+  currently being defined, because the field stores only the owning box handle.
+- A field or enum payload that reaches the same inline aggregate type again
+  without crossing a box, raw pointer, or reference edge is an infinite layout
+  and must be rejected.
+- Mutually recursive inline aggregates are checked the same way: every cycle in
+  the aggregate layout graph must cross an explicit indirection edge.
+
+This rule does not switch default struct/enum layout by itself. It defines the
+source-level indirection required before later issues can add opt-in inline
+layout and migrate selfhost recursive data structures.
+
+```lisp test=ignore name=box-recursive-list-layout-ok reason="Box recursive layout is specified before implementation"
+(defenum ListI64
+  (ListNil)
+  (ListCons i64 (Box ListI64)))
+```
+
+```lisp test=ignore name=box-recursive-tree-layout-ok reason="Box recursive layout is specified before implementation"
+(defenum Tree
+  (Leaf i64)
+  (Node (Box Tree) (Box Tree)))
+```
+
+```lisp test=ignore name=box-reject-unboxed-recursion reason="negative example for future inline aggregate cycle checks"
+(defenum BadList
+  (BadNil)
+  (BadCons i64 BadList))
+```
+
+`BadList` is rejected for inline representation because `BadCons` contains a
+`BadList` payload by value. The accepted spelling is `(Box BadList)`.
+
+```lisp test=ignore name=box-reject-arena-escape reason="negative example for future Box region checks"
+(defenum ListI64
+  (ListNil)
+  (ListCons i64 (Box ListI64)))
+
+(define (bad-box-escape) : (Box ListI64)
+  (with-arena scratch
+    (box (ListCons 1 (box ListNil)))))
+```
+
+`bad-box-escape` is rejected because the outer `box` is allocated inside
+`scratch`, so its type is `(in scratch (Box ListI64))`; returning it would let
+arena-owned storage escape the scoped region.
 
 ---
 
@@ -2258,6 +2532,10 @@ track (#809/#897/#911/#912) and the safe reference/ownership track (#182).
   with unsigned arithmetic, so a negative `start`/`len` wraps to a huge value
   and traps.
 - The `char-at` operator is an alias for `string-ref`.
+- The table above records the currently implemented compatibility signatures.
+  The v1 owned `String` / borrowed `str` contract in section 3.11 changes
+  non-consuming text inputs to `(& lifetime str)` while preserving owned
+  `String` results for allocating operations.
 
 ### 6.2 Runtime functions (emitted by the backend)
 
@@ -2386,10 +2664,11 @@ payload plus a sticky `eof` flag):
 
 **Text vs. binary (v1).** Like `StdinRead`, `FileRead` carries chunk data as a
 `String`: a chunk is the raw bytes read, stored in a `String`, with no
-text/binary distinction in v1. This remains source-compatible but may gain a
-byte-slice/`str` variant after #807 splits owned text strings from
-borrowed/binary bytes. Returned chunk strings allocate in the active arena, the
-same as `read-file` and `StdinRead`.
+text/binary distinction in v1. This remains source-compatible; future binary
+buffer work should use a dedicated byte-slice/buffer type rather than mutable
+`str`, because section 3.11 defines `str` as immutable borrowed text/bytes.
+Returned chunk strings allocate in the active arena, the same as `read-file`
+and `StdinRead`.
 
 **Streaming writes / append (#1058).** Streaming writes are specified by #1058
 and reuse `ResultIoUnit`. `OpenWriteAppend` defines append semantics:
@@ -2416,8 +2695,9 @@ follow-ups through #1057 and #1058.
 
 TypeLisp currently has syntax/type-model support for written reference types
 (`(& arena T)` and `(&mut arena T)`) and SPEC-level immutable borrow expression
-rules (`(& place)` / `(& arena place)`), but the source-level borrow checker is
-not implemented yet. There is no implicit destructor, `drop`, `free`, or
+rules (`(& place)` / `(& arena place)`), including the borrowed `str` source
+contract in section 3.11, but the source-level borrow checker is not
+implemented yet. There is no implicit destructor, `drop`, `free`, or
 garbage-collector model. Section 4.6.2 specifies move-only aggregate handle
 ownership for v1 source semantics, but the current Rust compiler may still
 accept aggregate copies until the selfhost move checker lands. The
@@ -2494,41 +2774,43 @@ reclamation between phases.
 
 Allocation sites inside a `with-arena` scope target the active region:
 - String operations that create fresh storage (`substring`, `string-append`,
-  `string-concat`, `read-file`, `int->string`, `arg`), `make-array`, and
+  `string-concat`, `read-file`, `int->string`, `arg`), `make-array`, `box`, and
   returned aggregate storage from calls inside the region.
 - The body result must be region-free (scalars, or aggregates allocated *before*
   the `with-arena`).
 
 The arena-model terminology calls the default allocation target the
 program-lifetime arena and calls each nested `with-arena` body a scoped arena.
-The current source spelling remains `(with-arena ...)`; issue #801 tracks the
-planned `(with-arena ...)` spelling/alias. Unless a function explicitly says
-otherwise, allocation always uses the active arena: the innermost scoped arena,
-or the default program-lifetime arena when no scoped arena is active.
-Until the spelling migration lands, executable stdlib policy tests use
-`with-arena` to verify the same active-arena semantics.
+Unless a function explicitly says otherwise, allocation always uses the active
+arena: the innermost scoped arena, or the default program-lifetime arena when
+no scoped arena is active. Executable stdlib policy tests use `with-arena` to
+verify these active-arena semantics.
 
 #### Standard library and builtin allocation policy
 
-Current stdlib signatures cannot write arena lifetimes yet (#802), so the
-checker conservatively treats aggregate results from calls inside a scoped
+Written reference and arena lifetime syntax exists, but current stdlib
+signatures still use compatibility `String`/aggregate types until the borrowed
+`str` frontend and API migration land (#1453/#1454/#1082). The checker
+therefore conservatively treats aggregate results from calls inside a scoped
 arena as tagged with that arena. This is stricter than the future model for
 functions that may return caller-owned data, but it prevents active-arena
-values from escaping until explicit lifetime signatures exist.
+values from escaping until explicit lifetime signatures are attached to the
+stdlib surface.
 
 | Category | Members | Arena behavior |
 |----------|---------|----------------|
 | Non-allocating inspection | `length`/`array-length` on arrays, `length`/`string-length`, `string-ref`/`char-at`, `string-eq`/`string=?`, `string->int`, stdlib string predicates such as `string-contains` | Reads caller-provided handles and returns scalars. |
-| Returns active-arena owned data | `make-array`, `arg`, `read-file`, `file-read-chunk`, `read-stdin-line`, `read-stdin-bytes`, `string-append`/`string-concat`, `substring`/`string-slice`, `int->string`, stdlib trimming/replacement helpers when they build a new string | Fresh storage is allocated in the active arena and cannot escape a scoped arena. |
+| Returns active-arena owned data | `make-array`, `box`, `arg`, `read-file`, `file-read-chunk`, `read-stdin-line`, `read-stdin-bytes`, `string-append`/`string-concat`, `substring`/`string-slice`, `int->string`, stdlib trimming/replacement helpers when they build a new string | Fresh storage is allocated in the active arena and cannot escape a scoped arena. |
 | Returns caller-provided data | `stdlib/string.tl` `string-replace` when no match is found; `stdlib/io.tl` `read-file-or` when the path is missing | The current type system cannot express this borrowed/caller-owned distinction, so calls inside a scoped arena are still treated conservatively as arena-tagged aggregate results. |
 | Mutates caller-provided storage | `array-set!` | Mutates the array buffer named by the caller; it does not allocate. Region checks reject storing shorter-lived aggregate handles into longer-lived containers. |
 | Host/runtime IO | `print*`, `panic`/`error`, `flush-stdout`, `write-file`, `file-exists?`, stdlib IO helpers | Performs target IO; any temporary strings used by the helper allocate in the active arena. |
 
-No current stdlib function returns a borrow-typed `str`, because owned
-`String`/borrowed `str` is still tracked by #807. No current stdlib function
-manually resets arenas; safe scoped cleanup is owned by `with-arena`/the
-future `with-arena` form, while raw `tl_region_mark` and `tl_region_reset`
-remain low-level unsafe-by-convention helpers.
+The owned `String` / borrowed `str` source contract is specified in section
+3.11, but no current stdlib function has migrated to a borrow-typed `str`
+signature. No current stdlib function manually resets arenas; safe scoped
+cleanup is owned by `with-arena`, while raw
+`tl_region_mark` and `tl_region_reset` remain low-level unsafe-by-convention
+helpers.
 
 Nested `with-arena` forms create independent subregions whose values do not
 mix. Inner-region values cannot escape to the outer region; outer-region values
@@ -3225,6 +3507,7 @@ type          ::= "i64" | "i32" | "i16" | "i8"
                 | "u64" | "u32" | "u16" | "u8"
                 | "f64" | "f32" | "bool" | "char" | "unit"
                 | "String"
+                | "str"                               ; borrowed referent only
                 | "Expr" | "ExprList"               ; compile-time-only macro body values
                 | "(" "Tuple" type+ ")"
                 | "(" "Array" type [integer] ")"

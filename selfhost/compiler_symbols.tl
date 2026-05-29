@@ -10,7 +10,7 @@
 (import "sym_i64_env.tl")
 
 (defenum CompilerSymbols
-  (CompilerSymbols SymI64Env SymI64Env))
+  (CompilerSymbols SymI64Env SymI64Env SymI64Env))
 
 (defenum ResultCompilerSymbols
   (OkCompilerSymbols CompilerSymbols)
@@ -43,6 +43,9 @@
 
 (define (compiler-symbol-kind-struct-field) : i64
   7)
+
+(define (compiler-symbol-kind-defmacro) : i64
+  8)
 
 (define (compiler-symbol-handle-stride) : i64
   1000000000)
@@ -87,7 +90,7 @@
     (compiler-registry-handle-owner-index handle)))
 
 (define (compiler-symbols-empty) : CompilerSymbols
-  (CompilerSymbols (sym-i64-empty) (sym-i64-empty)))
+  (CompilerSymbols (sym-i64-empty) (sym-i64-empty) (sym-i64-empty)))
 
 (define (compiler-registries-empty) : CompilerRegistries
   (CompilerRegistries (sym-i64-empty) (sym-i64-empty)))
@@ -96,19 +99,31 @@
   [symbols : CompilerSymbols]
   [name : String]) : MaybeI64
   (match symbols
-    [(CompilerSymbols values _) (sym-i64-lookup values name)]))
+    [(CompilerSymbols values _ _) (sym-i64-lookup values name)]))
 
 (define (compiler-symbols-lookup-type
   [symbols : CompilerSymbols]
   [name : String]) : MaybeI64
   (match symbols
-    [(CompilerSymbols _ types) (sym-i64-lookup types name)]))
+    [(CompilerSymbols _ types _) (sym-i64-lookup types name)]))
+
+(define (compiler-symbols-lookup-macro
+  [symbols : CompilerSymbols]
+  [name : String]) : MaybeI64
+  (match symbols
+    [(CompilerSymbols _ _ macros) (sym-i64-lookup macros name)]))
 
 (define (compiler-symbols-duplicate-value-message [name : String]) : String
   (string-append "symbols: duplicate value declaration " name))
 
 (define (compiler-symbols-duplicate-type-message [name : String]) : String
   (string-append "symbols: duplicate type declaration " name))
+
+(define (compiler-symbols-duplicate-macro-message [name : String]) : String
+  (string-append "symbols: duplicate macro declaration " name))
+
+(define (compiler-symbols-duplicate-macro-value-message [name : String]) : String
+  (string-append "symbols: duplicate macro/value declaration " name))
 
 (define (compiler-registries-duplicate-variant-message [name : String]) : String
   (string-append "symbols: duplicate enum variant " name))
@@ -137,20 +152,30 @@
   [name : String]
   [handle : i64]) : CompilerSymbols
   (match symbols
-    [(CompilerSymbols values types)
+    [(CompilerSymbols values types macros)
       (if (sym-i64-contains values name)
         symbols
-        (CompilerSymbols (sym-i64-bind values name handle) types))]))
+        (CompilerSymbols (sym-i64-bind values name handle) types macros))]))
 
 (define (compiler-symbols-add-type-alias
   [symbols : CompilerSymbols]
   [name : String]
   [handle : i64]) : CompilerSymbols
   (match symbols
-    [(CompilerSymbols values types)
+    [(CompilerSymbols values types macros)
       (if (sym-i64-contains types name)
         symbols
-        (CompilerSymbols values (sym-i64-bind types name handle)))]))
+        (CompilerSymbols values (sym-i64-bind types name handle) macros))]))
+
+(define (compiler-symbols-add-macro-alias
+  [symbols : CompilerSymbols]
+  [name : String]
+  [handle : i64]) : CompilerSymbols
+  (match symbols
+    [(CompilerSymbols values types macros)
+      (if (sym-i64-contains macros name)
+        symbols
+        (CompilerSymbols values types (sym-i64-bind macros name handle)))]))
 
 (define (compiler-registries-add-variant-alias
   [registries : CompilerRegistries]
@@ -167,22 +192,39 @@
   [name : String]
   [handle : i64]) : ResultCompilerSymbols
   (match symbols
-    [(CompilerSymbols values types)
+    [(CompilerSymbols values types macros)
       (if (sym-i64-contains values name)
         (ErrCompilerSymbols (compiler-symbols-duplicate-value-message name))
-        (OkCompilerSymbols
-          (CompilerSymbols (sym-i64-bind values name handle) types)))]))
+        (if (sym-i64-contains macros name)
+          (ErrCompilerSymbols
+            (compiler-symbols-duplicate-macro-value-message name))
+          (OkCompilerSymbols
+            (CompilerSymbols (sym-i64-bind values name handle) types macros))))]))
 
 (define (compiler-symbols-add-type
   [symbols : CompilerSymbols]
   [name : String]
   [handle : i64]) : ResultCompilerSymbols
   (match symbols
-    [(CompilerSymbols values types)
+    [(CompilerSymbols values types macros)
       (if (sym-i64-contains types name)
         (ErrCompilerSymbols (compiler-symbols-duplicate-type-message name))
         (OkCompilerSymbols
-          (CompilerSymbols values (sym-i64-bind types name handle))))]))
+          (CompilerSymbols values (sym-i64-bind types name handle) macros)))]))
+
+(define (compiler-symbols-add-macro
+  [symbols : CompilerSymbols]
+  [name : String]
+  [handle : i64]) : ResultCompilerSymbols
+  (match symbols
+    [(CompilerSymbols values types macros)
+      (if (sym-i64-contains macros name)
+        (ErrCompilerSymbols (compiler-symbols-duplicate-macro-message name))
+        (if (sym-i64-contains values name)
+          (ErrCompilerSymbols
+            (compiler-symbols-duplicate-macro-value-message name))
+          (OkCompilerSymbols
+            (CompilerSymbols values types (sym-i64-bind macros name handle)))))]))
 
 (define (compiler-symbols-add-value-in-module
   [symbols : CompilerSymbols]
@@ -206,6 +248,18 @@
     (match (compiler-symbols-add-type symbols key handle)
       [(OkCompilerSymbols next)
         (OkCompilerSymbols (compiler-symbols-add-type-alias next name handle))]
+      [(ErrCompilerSymbols message) (ErrCompilerSymbols message)])))
+
+(define (compiler-symbols-add-macro-in-module
+  [symbols : CompilerSymbols]
+  [module : String]
+  [name : String]
+  [handle : i64]) : ResultCompilerSymbols
+  (let
+    [key : String (compiler-symbol-module-key module name)]
+    (match (compiler-symbols-add-macro symbols key handle)
+      [(OkCompilerSymbols next)
+        (OkCompilerSymbols (compiler-symbols-add-macro-alias next name handle))]
       [(ErrCompilerSymbols message) (ErrCompilerSymbols message)])))
 
 (define (compiler-symbols-add-decl
@@ -234,6 +288,12 @@
         (compiler-symbol-make-handle
           (compiler-symbol-kind-function-define)
           index))]
+    [(AstDeclDefMacro name _ _ _)
+      (compiler-symbols-add-macro-in-module
+        symbols
+        module
+        name
+        (compiler-symbol-make-handle (compiler-symbol-kind-defmacro) index))]
     [(AstDeclExtern name _ _)
       (compiler-symbols-add-value
         symbols
@@ -820,6 +880,14 @@
 (define (compiler-registries-duplicate-field-source) : String
   "(defstruct Pair (x i64) (x i64))")
 
+(define (compiler-symbols-macro-source) : String
+  "(defmacro (all [first : bool] [rest : bool ...]) : bool first)
+(define (main) : i64 0)")
+
+(define (compiler-symbols-duplicate-macro-value-source) : String
+  "(defmacro (same) : bool (expr-bool true))
+(define same : i64 1)")
+
 (define (compiler-symbols-duplicate-value-ok?) : bool
   (match (build-compiler-symbols-from-source
     (compiler-symbols-duplicate-value-source))
@@ -849,6 +917,38 @@
         message
         (compiler-registries-duplicate-field-message "Pair" "x"))]
     [(OkCompilerRegistries _) false]))
+
+(define (compiler-symbols-macro-namespace-ok?) : bool
+  (match (build-compiler-symbols-from-source (compiler-symbols-macro-source))
+    [(OkCompilerSymbols symbols)
+      (and
+        (=
+          (compiler-symbol-lookup-score
+            (compiler-symbols-lookup-macro symbols "all")
+            (compiler-symbol-kind-defmacro)
+            0)
+          1)
+        (and
+          (=
+            (compiler-symbols-miss-score
+              (compiler-symbols-lookup-value symbols "all"))
+            1)
+          (=
+            (compiler-symbol-lookup-score
+              (compiler-symbols-lookup-value symbols "main")
+              (compiler-symbol-kind-function-define)
+              1)
+            1)))]
+    [(ErrCompilerSymbols _) false]))
+
+(define (compiler-symbols-duplicate-macro-value-ok?) : bool
+  (match (build-compiler-symbols-from-source
+    (compiler-symbols-duplicate-macro-value-source))
+    [(ErrCompilerSymbols message)
+      (string-eq
+        message
+        (compiler-symbols-duplicate-macro-value-message "same"))]
+    [(OkCompilerSymbols _) false]))
 
 (define (compiler-registry-large-owner-handle-ok?) : bool
   (let
@@ -1006,7 +1106,11 @@
                             (compiler-registry-large-owner-handle-ok?)
                             (and
                               (compiler-symbols-comptime-decl-ok?)
-                              (compiler-symbols-module-scope-ok?)))))))))
+                              (and
+                                (compiler-symbols-module-scope-ok?)
+                                (and
+                                  (compiler-symbols-macro-namespace-ok?)
+                                  (compiler-symbols-duplicate-macro-value-ok?)))))))))))
                 42
                 (begin
                   (panic "symbols: smoke score mismatch")

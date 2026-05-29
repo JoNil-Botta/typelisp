@@ -3643,15 +3643,6 @@ fn selfhost_repl_type_rejects_empty_and_declaration_and_continues() {
     );
 }
 
-// #1270: the selfhost REPL type-check path runs selfhost code as an emitted
-// binary that segfaults ~100% on Windows (the same non-ASLR selfhost-driver
-// crash as `test --check`/`doc --test`/`check.tl`; distinct from the emitted
-// `*_smoke` ASLR crash this PR fixes). Ignore on Windows until #1270 is fixed;
-// it still runs on Linux.
-#[cfg_attr(
-    target_os = "windows",
-    ignore = "#1270: selfhost REPL typecheck segfaults on Windows"
-)]
 #[test]
 fn selfhost_repl_type_checks_without_running_code() {
     let output = run_selfhost_repl(
@@ -3667,10 +3658,6 @@ fn selfhost_repl_type_checks_without_running_code() {
 }
 
 #[test]
-#[cfg_attr(
-    target_os = "windows",
-    ignore = "#1270: selfhost REPL typecheck segfaults on Windows"
-)]
 fn selfhost_repl_multiline_declaration_persists_for_later_declarations() {
     let input = "\
 (define (inc [x : i64]) : i64

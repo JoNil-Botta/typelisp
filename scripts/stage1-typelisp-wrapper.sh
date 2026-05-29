@@ -5,13 +5,16 @@ set -eu
 # bootstrapped selfhost compiler binary.
 #
 # TYPELISP_STAGE1_BIN must point at the stage1 compiler executable
-# (`selfhost/compile.tl` compiled to native code). The wrapper supplies the
-# public `typelisp compile` spelling and executes private host-action plans
-# without routing back through the Rust CLI.
+# (`selfhost/compile.tl` compiled to native code). The raw stage1 compiler
+# accepts `compile`; this wrapper adds the rest of the public command surface
+# and executes private host-action plans without routing back through the Rust
+# CLI.
 
 STAGE1_BIN=${TYPELISP_STAGE1_BIN:-}
+STAGE1_BUILD_BIN=${TYPELISP_STAGE1_BUILD_BIN:-}
 STAGE1_TEST_BIN=${TYPELISP_STAGE1_TEST_BIN:-}
 STAGE1_DOC_BIN=${TYPELISP_STAGE1_DOC_BIN:-}
+STAGE1_REPL_BIN=${TYPELISP_STAGE1_REPL_BIN:-}
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 
 fail() {
@@ -24,7 +27,7 @@ usage() {
 usage: typelisp <command> [args...]
 
 stage1 wrapper commands:
-  compile, check, build, run, test, fmt, doc
+  compile, check, build, run, test, fmt, doc, repl
   debug check, debug host-action
 EOF
 }
@@ -149,7 +152,7 @@ compile_output_path() {
 compile_command() {
     require_stage1
     output=$(compile_output_path "$@")
-    "$STAGE1_BIN" "$@"
+    "$STAGE1_BIN" compile "$@"
     if [ -n "$output" ]; then
         echo "Generated: $output"
     fi
@@ -396,6 +399,10 @@ build_command() {
 
     source=
     output=
+    manifest=
+    has_output=0
+    has_manifest=0
+    has_opt_level=0
     target=linux-x86_64
     mode=scalar
     opt_level=
@@ -406,6 +413,7 @@ build_command() {
                 shift
                 [ "$#" -gt 0 ] || fail "build: -o requires a value"
                 output=$1
+                has_output=1
                 ;;
             --stdlib-root)
                 shift
@@ -425,10 +433,16 @@ build_command() {
             --opt-level)
                 shift
                 [ "$#" -gt 0 ] || fail "build: --opt-level requires a value"
+                [ "$has_opt_level" -eq 0 ] || fail "build: --opt-level was provided more than once"
                 opt_level=$1
+                has_opt_level=1
                 ;;
             --manifest-path)
-                fail "build: --manifest-path is not supported by the stage1 wrapper yet"
+                shift
+                [ "$#" -gt 0 ] || fail "build: --manifest-path requires a value"
+                [ "$has_manifest" -eq 0 ] || fail "build: --manifest-path was provided more than once"
+                manifest=$1
+                has_manifest=1
                 ;;
             -*)
                 fail "build: unknown flag $1"
@@ -443,9 +457,28 @@ build_command() {
         shift || break
     done
 
-    [ -n "$source" ] || fail "build: expected source path"
-    bin=$(compile_source_to_exe "$source" "$output" "$target" "$mode" "$opt_level" "$roots" "$workdir")
-    echo "Generated: $bin"
+    if [ -n "$source" ]; then
+        [ "$has_manifest" -eq 0 ] || fail "build: cannot combine a source file with --manifest-path"
+        bin=$(compile_source_to_exe "$source" "$output" "$target" "$mode" "$opt_level" "$roots" "$workdir")
+        echo "Generated: $bin"
+        return
+    fi
+
+    [ "$has_output" -eq 0 ] || fail "build: -o requires a source file argument"
+
+    set -- --target "$target" --backend-mode "$mode"
+    if [ "$has_manifest" -eq 1 ]; then
+        set -- --manifest-path "$manifest" "$@"
+    fi
+    if [ "$has_opt_level" -eq 1 ]; then
+        set -- "$@" --opt-level "$opt_level"
+    fi
+    while IFS= read -r root || [ -n "$root" ]; do
+        set -- "$@" --stdlib-root "$root"
+    done < "$roots"
+
+    driver=$(selfhost_build_driver)
+    "$driver" "$@"
 }
 
 run_command() {
@@ -619,6 +652,114 @@ selfhost_doc_driver() {
         heartbeat_log "[stage1-wrapper] building selfhost doc driver"
         run_with_heartbeat \
             "stage1-wrapper selfhost/doc.tl compile" \
+            compile_source_to_exe \
+            "$source" \
+            "$driver.tmp" \
+            linux-x86_64 \
+            scalar \
+            "" \
+            "$roots" \
+            "$build_dir" > /dev/null
+        mv "$driver.tmp" "$driver"
+        printf '%s\n' "$STAGE1_BIN" > "$marker"
+    fi
+
+    printf '%s\n' "$driver"
+}
+
+selfhost_repl_driver() {
+    require_stage1
+    require_linux_host_action
+
+    if [ -n "$STAGE1_REPL_BIN" ]; then
+        if [ ! -x "$STAGE1_REPL_BIN" ]; then
+            fail "stage1 repl driver is not executable: $STAGE1_REPL_BIN"
+        fi
+        printf '%s\n' "$STAGE1_REPL_BIN"
+        return
+    fi
+
+    cache_dir=${TYPELISP_STAGE1_DRIVER_CACHE_DIR:-"$ROOT/target/stage1-wrapper-cache"}
+    driver="$cache_dir/selfhost-repl"
+    marker="$cache_dir/stage1-bin.path"
+    build_dir="$cache_dir/repl-build"
+    roots="$build_dir/stdlib.roots"
+    source="$ROOT/selfhost/repl.tl"
+
+    rebuild=0
+    if [ ! -x "$driver" ]; then
+        rebuild=1
+    elif [ ! -f "$marker" ]; then
+        rebuild=1
+    elif [ "$(sed -n '1p' "$marker")" != "$STAGE1_BIN" ]; then
+        rebuild=1
+    elif [ "$STAGE1_BIN" -nt "$driver" ]; then
+        rebuild=1
+    elif [ "$source" -nt "$driver" ]; then
+        rebuild=1
+    fi
+
+    if [ "$rebuild" -eq 1 ]; then
+        rm -rf "$build_dir"
+        mkdir -p "$build_dir"
+        : > "$roots"
+        heartbeat_log "[stage1-wrapper] building selfhost repl driver"
+        run_with_heartbeat \
+            "stage1-wrapper selfhost/repl.tl compile" \
+            compile_source_to_exe \
+            "$source" \
+            "$driver.tmp" \
+            linux-x86_64 \
+            scalar \
+            "" \
+            "$roots" \
+            "$build_dir" > /dev/null
+        mv "$driver.tmp" "$driver"
+        printf '%s\n' "$STAGE1_BIN" > "$marker"
+    fi
+
+    printf '%s\n' "$driver"
+}
+
+selfhost_build_driver() {
+    require_stage1
+    require_linux_host_action
+
+    if [ -n "$STAGE1_BUILD_BIN" ]; then
+        if [ ! -x "$STAGE1_BUILD_BIN" ]; then
+            fail "stage1 build driver is not executable: $STAGE1_BUILD_BIN"
+        fi
+        printf '%s\n' "$STAGE1_BUILD_BIN"
+        return
+    fi
+
+    cache_dir=${TYPELISP_STAGE1_DRIVER_CACHE_DIR:-"$ROOT/target/stage1-wrapper-cache"}
+    driver="$cache_dir/selfhost-build"
+    marker="$cache_dir/selfhost-build.stage1-bin.path"
+    build_dir="$cache_dir/build-build"
+    roots="$build_dir/stdlib.roots"
+    source="$ROOT/selfhost/build.tl"
+
+    rebuild=0
+    if [ ! -x "$driver" ]; then
+        rebuild=1
+    elif [ ! -f "$marker" ]; then
+        rebuild=1
+    elif [ "$(sed -n '1p' "$marker")" != "$STAGE1_BIN" ]; then
+        rebuild=1
+    elif [ "$STAGE1_BIN" -nt "$driver" ]; then
+        rebuild=1
+    elif [ "$source" -nt "$driver" ]; then
+        rebuild=1
+    fi
+
+    if [ "$rebuild" -eq 1 ]; then
+        rm -rf "$build_dir"
+        mkdir -p "$build_dir"
+        : > "$roots"
+        heartbeat_log "[stage1-wrapper] building selfhost build driver"
+        run_with_heartbeat \
+            "stage1-wrapper selfhost/build.tl compile" \
             compile_source_to_exe \
             "$source" \
             "$driver.tmp" \
@@ -868,6 +1009,17 @@ doc_command() {
     esac
 }
 
+repl_command() {
+    if [ "$#" -ne 0 ]; then
+        echo "Error: repl does not accept arguments" >&2
+        usage
+        exit 1
+    fi
+
+    driver=$(selfhost_repl_driver)
+    "$driver"
+}
+
 debug_command() {
     [ "$#" -gt 0 ] || fail "Error: missing debug subcommand"
     case "$1" in
@@ -905,6 +1057,7 @@ case "$command" in
     test) test_command "$@" ;;
     fmt) fmt_command "$@" ;;
     doc) doc_command "$@" ;;
+    repl) repl_command "$@" ;;
     lint | tokenize | parse)
         fail "stage1 wrapper does not support '$command' yet; use the seed compiler for this gate"
         ;;

@@ -1,8 +1,10 @@
 ;; compile.tl - Command-shaped selfhost compile driver (#565).
 ;;
 ;; Wraps compiler_driver.tl's input/output API with the first selfhost compile
-;; CLI slice: `<file.tl> [-o <file>] [--emit-ir] [--target <target>]
+;; CLI slice: `compile <file.tl> [-o <file>] [--emit-ir] [--target <target>]
 ;; [--opt-level <0|1|2|3>] [--backend-mode scalar] [--stdlib-root <dir>...]`.
+;; The private bootstrap form `<file.tl> [compile options]` remains accepted so
+;; existing stage1->stage2 scripts can call the raw compiler directly.
 ;; `--backend-mode scalar` is accepted (the selfhost backend's native mode);
 ;; `avx2`/`avx512` remain Rust-driver-only for now and are rejected explicitly.
 ;; `--emit-ir` writes a deterministic TypeLisp-owned IR summary.
@@ -22,6 +24,11 @@
   (OkCompileCliConfig CompileCliConfig)
   (ErrCompileCliConfig String))
 
+(defenum CompileCliAction
+  (CompileCliRun CompileCliConfig)
+  (CompileCliHelp)
+  (CompileCliError String))
+
 (defenum ResultCompileCliTarget
   (OkCompileCliTarget CompilerBackendTarget)
   (ErrCompileCliTarget String))
@@ -34,6 +41,34 @@
 
 (define (compile-cli-flag? [value : String]) : bool
   (and (> (string-length value) 0) (= (string-ref value 0) #-')))
+
+(define (compile-cli-usage) : String
+  "Usage:\n  typelisp compile <file.tl> [-o <file>] [--emit-ir] [--target <target>] [--backend-mode <mode>] [--opt-level <0|1|2|3>] [--stdlib-root <dir>...]\n\nPrivate bootstrap form:\n  stage1 <file.tl> [compile options]")
+
+(define (compile-cli-message-with-usage [message : String]) : String
+  (string-append message (string-append "\n\n" (compile-cli-usage))))
+
+(define (compile-cli-source-like? [value : String]) : bool
+  (let
+    [n : i64 (string-length value)]
+    [i : i64 0]
+    [has-separator : bool false]
+    (begin
+      (while (< i n)
+        (begin
+          (if (compile-cli-path-separator? (string-ref value i))
+            (set! has-separator true)
+            (set! has-separator has-separator))
+          (set! i (+ i 1))))
+      (or
+        has-separator
+        (if (>= n 3)
+          (and
+            (= (string-ref value (- n 3)) #.')
+            (and
+              (= (string-ref value (- n 2)) #t')
+              (= (string-ref value (- n 1)) #l')))
+          false)))))
 
 (define (compile-cli-default-output-with-extension
   [input-path : String]
@@ -259,15 +294,15 @@
           (ErrCompileCliConfig
             (string-append "compile: unexpected argument " current))]))))
 
-(define (compile-cli-config [count : i64]) : ResultCompileCliConfig
-  (if (< count 2)
+(define (compile-cli-config-from [input-idx : i64] [count : i64]) : ResultCompileCliConfig
+  (if (>= input-idx count)
     (ErrCompileCliConfig "compile: expected source path")
     (let
-      [input-path : String (arg 1)]
+      [input-path : String (arg input-idx)]
       (if (compile-cli-flag? input-path)
         (ErrCompileCliConfig "compile: expected source path before flags")
         (compile-cli-parse-options
-          2
+          (+ input-idx 1)
           count
           input-path
           (compile-cli-default-output input-path)
@@ -279,9 +314,39 @@
           false
           (compiler-optimize-default-level))))))
 
+(define (compile-cli-config [count : i64]) : ResultCompileCliConfig
+  (compile-cli-config-from 1 count))
+
+(define (compile-cli-command-config [count : i64]) : ResultCompileCliConfig
+  (compile-cli-config-from 2 count))
+
+(define (compile-cli-dispatch [count : i64]) : CompileCliAction
+  (if (< count 2)
+    (CompileCliError
+      (compile-cli-message-with-usage "typelisp: expected command"))
+    (let
+      [command : String (arg 1)]
+      (cond
+        [(or
+            (string-eq command "help")
+            (or (string-eq command "--help") (string-eq command "-h")))
+          (CompileCliHelp)]
+        [(string-eq command "compile")
+          (match (compile-cli-command-config count)
+            [(OkCompileCliConfig config) (CompileCliRun config)]
+            [(ErrCompileCliConfig message) (CompileCliError message)])]
+        [(compile-cli-source-like? command)
+          (match (compile-cli-config count)
+            [(OkCompileCliConfig config) (CompileCliRun config)]
+            [(ErrCompileCliConfig message) (CompileCliError message)])]
+        [else
+          (CompileCliError
+            (compile-cli-message-with-usage
+              (string-append "Unknown command: " command)))]))))
+
 (define (main) : i64
-  (match (compile-cli-config (arg-count))
-    [(OkCompileCliConfig config)
+  (match (compile-cli-dispatch (arg-count))
+    [(CompileCliRun config)
       (match config
         [(CompileCliConfig
             input-path
@@ -310,7 +375,11 @@
                 output-path
                 stdlib-roots
                 opt-level)))])]
-    [(ErrCompileCliConfig message)
+    [(CompileCliHelp)
+      (begin
+        (print-error (compile-cli-usage))
+        0)]
+    [(CompileCliError message)
       (begin
         (print-error message)
         1)]))

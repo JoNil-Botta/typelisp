@@ -145,24 +145,28 @@ as the seed compiler. It installs failing `cargo` and `rustc` shims in `PATH` so
 the gate cannot silently fall back to Rust. On Linux it first runs
 the stage1-build path in `check-bootstrap-fixpoint.sh` with the seed compiler,
 then routes stage1 capability gates through `scripts/stage1-typelisp-wrapper.sh`.
-The wrapper gives the raw stage1 compiler the public `typelisp compile` and
-`typelisp doc` shapes and a no-Rust Linux host-action executor for source
-build/run and scratch assembly plans. Full public CLI gates still use the seed
-compiler until every public-tool exception is ported to the wrapper. On Windows
-it exports the seed compiler directly until native stage1 bootstrap/link support
-lands. The full stage2/stage3 fixpoint remains available through
-`check-bootstrap-fixpoint.sh`. The scripts that still run `cargo build --release`
-when `TYPELISP_BIN` is unset keep that path as a local fallback only until #795
-removes the Rust-owned stage0 dependency.
+The raw stage1 compiler accepts the public `typelisp compile` dispatcher form
+and keeps the private direct file form used by bootstrap scripts. The wrapper
+adds `typelisp doc` and a no-Rust Linux host-action executor for source build/run
+and scratch assembly plans. Full public CLI gates still use the seed compiler
+until every public-tool exception is ported to the wrapper. On Windows it exports
+the seed compiler directly until native stage1 bootstrap/link support lands. The
+full stage2/stage3 fixpoint remains available through `check-bootstrap-fixpoint.sh`.
+The scripts that still run `cargo build --release` when `TYPELISP_BIN` is unset
+keep that path as a local fallback only until #795 removes the Rust-owned stage0
+dependency.
 
-The current stage1 wrapper implements the source-file `compile`, `build`, `run`,
-`fmt`, `doc`, `doc --test`, and private `debug host-action` path directly enough
-for the Linux capability smoke, deterministic assembly gate, selfhost compile
-manifest, and stdlib documentation gate.
-Direct `selfhost/build.tl` package-build parity is covered by
-`scripts/verify-public-tools.sh`; top-level stage1 wrapper routing for package
-builds is still staged separately. Seed-only public-tool exceptions remain:
-`lint`, non-check `test`, package build wrapper routing, REPL/LSP, and full
+The current raw stage1 compiler implements source-file `compile`; the wrapper
+routes that command and implements source-file `build`, package `build`, `run`,
+`fmt`, `doc`, `doc --test`, `repl`, and private `debug host-action` directly
+enough for the Linux capability smoke, deterministic assembly gate, selfhost
+compile manifest, stdlib documentation gate, and stdlib selfhost frontend
+verifier. Package builds route through a cached selfhost `build.tl` driver, or
+through a prebuilt `TYPELISP_STAGE1_BUILD_BIN` in the no-Rust lane, and cover
+manifest-path and upward-discovery forms in `scripts/check-stage1-wrapper.sh`;
+direct selfhost package-build parity remains covered by
+`scripts/verify-public-tools.sh`. Seed-only public-tool exceptions remain:
+`lint`, non-check `test`, full REPL/LSP public-tool coverage, and full
 doc/integration gates still need either stage1-safe driver linking or dedicated
 wrapper routing before they can move off the seed compiler.
 
@@ -331,8 +335,9 @@ the artifact.
 Pull requests get Linux and Windows no-Rust coverage from
 `scripts/verify-no-rust-stage0.sh`. The Linux job first builds a fresh stage1
 compiler from published stage0, then smoke-tests the stage1 CLI/host-action
-wrapper, deterministic assembly, the selfhost compile manifest, and stdlib
-documentation through that wrapper. Public tools, repository doctests, inline
+wrapper, deterministic assembly, the selfhost compile manifest, stdlib
+documentation, and the stdlib selfhost frontend verifier through that wrapper.
+Public tools, repository doctests, inline
 tests, TypeLisp source format, native integration manifests, examples, stdlib
 modules, docs Pages build, selfhost native generated programs, and the selfhost
 external compiler corpus continue to use the seed compiler until their remaining

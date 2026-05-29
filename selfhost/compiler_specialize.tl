@@ -280,9 +280,11 @@
     [(AstTyBool) "bool"]
     [(AstTyChar) "char"]
     [(AstTyString) "String"]
+    [(AstTyStr) "str"]
     [(AstTyUnit) "unit"]
     [(AstTyNever) "never"]
     [(AstTyExpr) "Expr"]
+    [(AstTyExprList) "ExprList"]
     [(AstTyFunc args ret)
       (string-append
         "fn_"
@@ -356,7 +358,7 @@
     [(CtfeUnit) (ctfe-type-eq ty (AstTyUnit))]
     [(CtfeType _) false]
     [(CtfeExpr _ _) (ctfe-type-eq ty (AstTyExpr))]
-    [(CtfeExprList _) false]))
+    [(CtfeExprList _) (ctfe-type-eq ty (AstTyExprList))]))
 
 (define (spec-value-type-label [value : CompilerCtfeValue]) : String
   (match value
@@ -1906,6 +1908,13 @@
               (SpecSomeDecl (AstDeclDefFn name params ret rewritten))
               state2)]
           [(ErrSpecExpr diag) (ErrSpecDecl diag)]))]
+    [(AstDeclDefMacro name params ret body)
+      (match (spec-rewrite-expr body templates state)
+        [(OkSpecExpr rewritten state2)
+          (OkSpecDecl
+            (SpecSomeDecl (AstDeclDefMacro name params ret rewritten))
+            state2)]
+        [(ErrSpecExpr diag) (ErrSpecDecl diag)])]
     [_ (OkSpecDecl (SpecSomeDecl decl) state)]))
 
 (define (spec-rewrite-decls

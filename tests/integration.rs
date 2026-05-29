@@ -63,6 +63,7 @@ const SELFHOST_DOC_DRIVER_DEPS: &[&str] = &[
     "compiler_check_core.tl",
     "compiler_load.tl",
     "compiler_typecheck.tl",
+    "compiler_typecheck_core.tl",
     "compiler_specialize.tl",
     "compiler_ctfe.tl",
     "compiler_ir_types.tl",
@@ -80,6 +81,13 @@ const SELFHOST_DOC_DRIVER_DEPS: &[&str] = &[
     "stdlib/io.tl",
     "stdlib/string.tl",
     "stdlib/process.tl",
+];
+
+const SELFHOST_BUILD_RUN_CORE_STDLIB_DEPS: &[&str] = &[
+    "stdlib/msvc.tl",
+    "stdlib/windows_sdk.tl",
+    "stdlib/windows_registry.tl",
+    "stdlib/windows_setup.tl",
 ];
 
 #[test]
@@ -1275,6 +1283,7 @@ fn type_lisp_programs_compile_link_and_run_explicit_build() {
             stdout: "",
             deps: &[
                 "compiler_typecheck.tl",
+                "compiler_typecheck_core.tl",
                 "compiler_specialize.tl",
                 "compiler_ctfe.tl",
                 "compiler_symbols.tl",
@@ -1296,6 +1305,7 @@ fn type_lisp_programs_compile_link_and_run_explicit_build() {
             stdout: "",
             deps: &[
                 "compiler_typecheck.tl",
+                "compiler_typecheck_core.tl",
                 "compiler_specialize.tl",
                 "compiler_ctfe.tl",
                 "compiler_symbols.tl",
@@ -1336,6 +1346,7 @@ fn type_lisp_programs_compile_link_and_run_explicit_build() {
                 "compiler_check_core.tl",
                 "compiler_load.tl",
                 "compiler_typecheck.tl",
+                "compiler_typecheck_core.tl",
                 "compiler_specialize.tl",
                 "compiler_ctfe.tl",
                 "compiler_symbols.tl",
@@ -1361,6 +1372,7 @@ fn type_lisp_programs_compile_link_and_run_explicit_build() {
                 "compiler_specialize.tl",
                 "compiler_ir_types.tl",
                 "compiler_typecheck.tl",
+                "compiler_typecheck_core.tl",
                 "compiler_symbols.tl",
                 "compiler_parse_core.tl",
                 "compiler_diagnostic.tl",
@@ -1439,6 +1451,7 @@ fn type_lisp_programs_compile_link_and_run_explicit_build() {
                 "compiler_specialize.tl",
                 "compiler_ir_types.tl",
                 "compiler_typecheck.tl",
+                "compiler_typecheck_core.tl",
                 "compiler_symbols.tl",
                 "compiler_parse_core.tl",
                 "compiler_diagnostic.tl",
@@ -1479,6 +1492,7 @@ fn type_lisp_programs_compile_link_and_run_explicit_build() {
                 "compiler_check_core.tl",
                 "compiler_load.tl",
                 "compiler_typecheck.tl",
+                "compiler_typecheck_core.tl",
                 "compiler_specialize.tl",
                 "compiler_ctfe.tl",
                 "compiler_ir_types.tl",
@@ -1568,6 +1582,7 @@ fn selfhost_backend_stack_args_emit_assemble_link_and_run() {
             "compiler_specialize.tl",
             "compiler_ir_types.tl",
             "compiler_typecheck.tl",
+            "compiler_typecheck_core.tl",
             "compiler_symbols.tl",
             "compiler_parse_core.tl",
             "compiler_diagnostic.tl",
@@ -1951,6 +1966,7 @@ fn selfhost_compiler_driver_emits_deterministic_runnable_assembly() {
             "compiler_specialize.tl",
             "compiler_ir_types.tl",
             "compiler_typecheck.tl",
+            "compiler_typecheck_core.tl",
             "compiler_symbols.tl",
             "compiler_load.tl",
             "compiler_parse_core.tl",
@@ -2541,10 +2557,9 @@ fn selfhost_check_driver_reports_success_and_errors() {
         &selfhost_dir,
         &work_dir,
         &[
-            "compiler_check_core.tl",
+            "compiler_check_frontend_core.tl",
             "compiler_load.tl",
-            "compiler_typecheck.tl",
-            "compiler_specialize.tl",
+            "compiler_typecheck_core.tl",
             "compiler_ctfe.tl",
             "compiler_symbols.tl",
             "compiler_parse_core.tl",
@@ -5435,7 +5450,13 @@ fn copy_dep_file(dep_src: &Path, dep_dst: &Path, dep: &str) {
 }
 
 fn copy_case_deps(manifest_dir: &Path, source_dir: &Path, work_dir: &Path, deps: &[&str]) {
-    for dep in deps {
+    for dep in deps.iter().chain(
+        deps.iter()
+            .any(|dep| *dep == "build_run_core.tl")
+            .then_some(SELFHOST_BUILD_RUN_CORE_STDLIB_DEPS)
+            .unwrap_or(&[])
+            .iter(),
+    ) {
         let dep_src = dep_source_path(manifest_dir, source_dir, dep);
         let dep_dst = work_dir.join(dep);
         copy_dep_file(&dep_src, &dep_dst, dep);

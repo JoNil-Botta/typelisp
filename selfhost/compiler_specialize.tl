@@ -280,6 +280,7 @@
     [(AstTyBool) "bool"]
     [(AstTyChar) "char"]
     [(AstTyString) "String"]
+    [(AstTyStr) "str"]
     [(AstTyUnit) "unit"]
     [(AstTyNever) "never"]
     [(AstTyExpr) "Expr"]

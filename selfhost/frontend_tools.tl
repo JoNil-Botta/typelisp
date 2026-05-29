@@ -376,6 +376,7 @@
     [(AstTyBool) "Bool"]
     [(AstTyChar) "Char"]
     [(AstTyString) "String"]
+    [(AstTyStr) "Str"]
     [(AstTyUnit) "Unit"]
     [(AstTyNever) "Never"]
     [(AstTyExpr) "Expr"]

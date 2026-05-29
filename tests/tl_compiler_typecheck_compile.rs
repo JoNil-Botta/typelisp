@@ -113,6 +113,8 @@ fn compiler_typecheck_tl_compiles_to_assembly() {
         "typecheck: region-tagged value cannot escape with-arena 'r'",
         "typecheck: region-tagged value cannot escape with-arena 'inner'",
         "typecheck: cannot pass region-tagged value to function parameter; region value would escape",
+        "typecheck: str is a borrowed string-slice referent; use (& lifetime str)",
+        "typecheck: mutable references to str are reserved; use immutable (& lifetime str)",
         "typecheck: match arms must agree",
         "typecheck: unknown variant ",
         "typecheck: unknown struct field ",

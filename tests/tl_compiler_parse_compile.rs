@@ -135,6 +135,7 @@ fn compiler_parse_core_tl_compiles_to_assembly() {
         "(define (main) : f64 1.5)",
         "(with-arena r \\\"x\\\")",
         "(try (read))",
+        "(& r str)",
         "(define (main) : (in r String)",
         "(define)",
         "(cond",

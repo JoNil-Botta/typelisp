@@ -1312,6 +1312,7 @@
     [(AstTyEnum _) 8]
     [(AstTyStruct _) 8]
     [(AstTyString) 8]
+    [(AstTyStr) 8]
     [(AstTyVar _) 8]))
 
 (define (lower-type-align [ctx : TcContext] [ty : AstType]) : i64
@@ -1344,6 +1345,7 @@
     [(AstTyEnum _) 8]
     [(AstTyStruct _) 8]
     [(AstTyString) 8]
+    [(AstTyStr) 8]
     [(AstTyVar _) 8]))
 
 (define (lower-type-list-extent

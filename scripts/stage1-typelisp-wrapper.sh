@@ -14,6 +14,7 @@ STAGE1_BIN=${TYPELISP_STAGE1_BIN:-}
 STAGE1_TEST_BIN=${TYPELISP_STAGE1_TEST_BIN:-}
 STAGE1_DOC_BIN=${TYPELISP_STAGE1_DOC_BIN:-}
 STAGE1_REPL_BIN=${TYPELISP_STAGE1_REPL_BIN:-}
+STAGE1_FRONTEND_BIN=${TYPELISP_STAGE1_FRONTEND_BIN:-}
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 
 fail() {
@@ -23,11 +24,34 @@ fail() {
 
 usage() {
     cat >&2 <<'EOF'
-usage: typelisp <command> [args...]
+Usage:
+    typelisp debug tokenize <file.tl>    Show tokens
+    typelisp debug parse <file.tl>       Show AST
+    typelisp debug check <file.tl> [--stdlib-root <dir>...]
+    typelisp debug host-action           Execute an internal host-action plan read from stdin
+    typelisp compile <file.tl> [-o <file>] [--emit-ir] [--target <target>] [--backend-mode <mode>] [--stdlib-root <dir>...]
+    typelisp run <file.tl> [--target <target>] [--backend-mode <mode>] [--stdlib-root <dir>...] [-- args...]
+    typelisp build <file.tl> [-o <exe>] [--target <target>] [--backend-mode <mode>] [--stdlib-root <dir>...]
+    typelisp fmt [--check] <file.tl>... [--stdlib-root <dir>...]
+    typelisp test [--check] <file.tl> [--target <target>] [--opt-level <0|1|2|3>] [--stdlib-root <dir>...]
+    typelisp doc <file.tl> [-o <out.md>] [--stdlib-root <dir>...]
+    typelisp doc --test <file.tl> [--stdlib-root <dir>...]
+    typelisp repl
 
-stage1 wrapper commands:
-  compile, check, build, run, test, fmt, doc, repl
-  debug check, debug host-action
+Compatibility aliases:
+    typelisp tokenize <file.tl>
+    typelisp parse <file.tl>
+    typelisp check <file.tl> [--stdlib-root <dir>...]
+EOF
+}
+
+debug_usage() {
+    cat >&2 <<'EOF'
+Usage:
+    typelisp debug tokenize <file.tl>    Show tokens
+    typelisp debug parse <file.tl>       Show AST
+    typelisp debug check <file.tl> [--stdlib-root <dir>...]
+    typelisp debug host-action           Execute an internal host-action plan read from stdin
 EOF
 }
 
@@ -62,6 +86,15 @@ fmt_missing_file_argument() {
 fmt_unknown_flag() {
     echo "Error: unknown fmt flag: $1" >&2
     fmt_usage
+    exit 1
+}
+
+missing_file_argument() {
+    echo "Error: missing file argument" >&2
+    case "$1" in
+        debug) debug_usage ;;
+        *) usage ;;
+    esac
     exit 1
 }
 
@@ -158,12 +191,41 @@ compile_command() {
 }
 
 check_command() {
+    usage_kind=$1
+    shift
+    [ "$#" -gt 0 ] || missing_file_argument "$usage_kind"
+
     require_stage1
     tmp=${TMPDIR:-/tmp}/typelisp-stage1-check-$$
     rm -rf "$tmp"
     mkdir -p "$tmp"
+    roots="$tmp/stdlib.roots"
+    : > "$roots"
     trap 'rm -rf "$tmp"' EXIT HUP INT TERM
-    "$STAGE1_BIN" "$@" -o "$tmp/check.s"
+
+    source=$1
+    shift
+    while [ "$#" -gt 0 ]; do
+        case "$1" in
+            --stdlib-root)
+                shift
+                [ "$#" -gt 0 ] || fail "Error: --stdlib-root requires a value"
+                append_file_line "$roots" "$1"
+                ;;
+            *)
+                echo "Warning: unknown flag: $1" >&2
+                ;;
+        esac
+        shift || break
+    done
+
+    set -- "$source"
+    while IFS= read -r root || [ -n "$root" ]; do
+        set -- "$@" --stdlib-root "$root"
+    done < "$roots"
+    # Keep check on the stage1 compiler path until selfhost/check.tl is viable
+    # in the no-Rust stage1 lane (#1436).
+    "$STAGE1_BIN" compile "$@" -o "$tmp/check.s"
     echo "Type checking passed!"
 }
 
@@ -690,6 +752,70 @@ selfhost_repl_driver() {
     printf '%s\n' "$driver"
 }
 
+selfhost_frontend_driver() {
+    require_stage1
+    require_linux_host_action
+
+    if [ -n "$STAGE1_FRONTEND_BIN" ]; then
+        if [ ! -x "$STAGE1_FRONTEND_BIN" ]; then
+            fail "stage1 frontend driver is not executable: $STAGE1_FRONTEND_BIN"
+        fi
+        printf '%s\n' "$STAGE1_FRONTEND_BIN"
+        return
+    fi
+
+    cache_dir=${TYPELISP_STAGE1_DRIVER_CACHE_DIR:-"$ROOT/target/stage1-wrapper-cache"}
+    driver="$cache_dir/selfhost-frontend-tools"
+    marker="$cache_dir/frontend-stage1-bin.path"
+    build_dir="$cache_dir/frontend-build"
+    roots="$build_dir/stdlib.roots"
+    source="$ROOT/selfhost/frontend_tools.tl"
+
+    rebuild=0
+    if [ ! -x "$driver" ]; then
+        rebuild=1
+    elif [ ! -f "$marker" ]; then
+        rebuild=1
+    elif [ "$(sed -n '1p' "$marker")" != "$STAGE1_BIN" ]; then
+        rebuild=1
+    elif [ "$STAGE1_BIN" -nt "$driver" ]; then
+        rebuild=1
+    elif [ "$source" -nt "$driver" ]; then
+        rebuild=1
+    fi
+
+    if [ "$rebuild" -eq 1 ]; then
+        rm -rf "$build_dir"
+        mkdir -p "$build_dir"
+        : > "$roots"
+        heartbeat_log "[stage1-wrapper] building selfhost frontend driver"
+        run_with_heartbeat \
+            "stage1-wrapper selfhost/frontend_tools.tl compile" \
+            compile_source_to_exe \
+            "$source" \
+            "$driver.tmp" \
+            linux-x86_64 \
+            scalar \
+            "" \
+            "$roots" \
+            "$build_dir" > /dev/null
+        mv "$driver.tmp" "$driver"
+        printf '%s\n' "$STAGE1_BIN" > "$marker"
+    fi
+
+    printf '%s\n' "$driver"
+}
+
+frontend_command() {
+    usage_kind=$1
+    mode=$2
+    shift 2
+    [ "$#" -gt 0 ] || missing_file_argument "$usage_kind"
+
+    driver=$(selfhost_frontend_driver)
+    "$driver" "$mode" "$1"
+}
+
 emit_file() {
     path=$1
     if [ -s "$path" ]; then
@@ -936,8 +1062,20 @@ repl_command() {
 }
 
 debug_command() {
-    [ "$#" -gt 0 ] || fail "Error: missing debug subcommand"
+    if [ "$#" -eq 0 ]; then
+        echo "Error: missing debug subcommand" >&2
+        debug_usage
+        exit 1
+    fi
     case "$1" in
+        tokenize)
+            shift
+            frontend_command debug tokenize "$@"
+            ;;
+        parse)
+            shift
+            frontend_command debug parse "$@"
+            ;;
         host-action)
             plan=${TMPDIR:-/tmp}/typelisp-stage1-host-action-input-$$
             cat > "$plan"
@@ -945,13 +1083,15 @@ debug_command() {
             ;;
         check)
             shift
-            check_command "$@"
+            check_command debug "$@"
             ;;
         help | --help | -h)
-            usage
+            debug_usage
             ;;
         *)
-            fail "Unknown debug command: $1"
+            echo "Unknown debug command: $1" >&2
+            debug_usage
+            exit 1
             ;;
     esac
 }
@@ -966,14 +1106,16 @@ shift
 
 case "$command" in
     compile) compile_command "$@" ;;
-    check) check_command "$@" ;;
+    check) check_command main "$@" ;;
     build) build_command "$@" ;;
     run) run_command "$@" ;;
     test) test_command "$@" ;;
     fmt) fmt_command "$@" ;;
     doc) doc_command "$@" ;;
     repl) repl_command "$@" ;;
-    lint | tokenize | parse)
+    tokenize) frontend_command main tokenize "$@" ;;
+    parse) frontend_command main parse "$@" ;;
+    lint)
         fail "stage1 wrapper does not support '$command' yet; use the seed compiler for this gate"
         ;;
     debug) debug_command "$@" ;;

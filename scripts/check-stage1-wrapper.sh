@@ -1,8 +1,8 @@
 #!/usr/bin/env sh
 set -eu
 
-# Smoke-test a TYPELISP_BIN-compatible stage1 wrapper on the Linux host-action
-# surface: compile, build, run, repl, doc, test, fmt, and debug host-action.
+# Smoke-test a TYPELISP_BIN-compatible stage1 wrapper on the Linux command
+# surface covered by the no-Rust stage1 gate.
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
@@ -235,6 +235,86 @@ assert_contains "$WORKDIR/repl-session.stderr" "REPL evaluation is not implement
 run_expect_failure repl-args "$COMPILER" repl unexpected
 assert_empty "$WORKDIR/repl-args.stdout"
 assert_contains "$WORKDIR/repl-args.stderr" "Error: repl does not accept arguments"
+
+echo "[stage1-wrapper] frontend debug commands"
+run_capture tokenize-alias "$COMPILER" tokenize "$SRC"
+assert_empty "$WORKDIR/tokenize-alias.stderr"
+assert_contains "$WORKDIR/tokenize-alias.stdout" "("
+assert_contains "$WORKDIR/tokenize-alias.stdout" "define"
+
+run_capture tokenize-debug "$COMPILER" debug tokenize "$SRC"
+check_file_exact "$WORKDIR/tokenize-debug.stdout" "$WORKDIR/tokenize-alias.stdout"
+check_file_exact "$WORKDIR/tokenize-debug.stderr" "$WORKDIR/tokenize-alias.stderr"
+
+run_capture parse-alias "$COMPILER" parse "$SRC"
+assert_empty "$WORKDIR/parse-alias.stderr"
+assert_contains "$WORKDIR/parse-alias.stdout" "Program"
+assert_contains "$WORKDIR/parse-alias.stdout" "DefFn { name: \"main\""
+
+run_capture parse-debug "$COMPILER" debug parse "$SRC"
+check_file_exact "$WORKDIR/parse-debug.stdout" "$WORKDIR/parse-alias.stdout"
+check_file_exact "$WORKDIR/parse-debug.stderr" "$WORKDIR/parse-alias.stderr"
+
+run_capture check-alias "$COMPILER" check "$SRC"
+assert_empty "$WORKDIR/check-alias.stderr"
+assert_contains "$WORKDIR/check-alias.stdout" "Type checking passed!"
+
+run_capture check-debug "$COMPILER" debug check "$SRC"
+check_file_exact "$WORKDIR/check-debug.stdout" "$WORKDIR/check-alias.stdout"
+check_file_exact "$WORKDIR/check-debug.stderr" "$WORKDIR/check-alias.stderr"
+
+CHECK_STDLIB="$WORKDIR/check-stdlib"
+mkdir -p "$CHECK_STDLIB/app" "$CHECK_STDLIB/repo-stdlib"
+cat > "$CHECK_STDLIB/repo-stdlib/helper.tl" <<'EOF'
+(define (helper) : i64 42)
+EOF
+cat > "$CHECK_STDLIB/app/main.tl" <<'EOF'
+(import "stdlib/helper.tl")
+(define (main) : i64 (helper))
+EOF
+run_capture check-stdlib "$COMPILER" check "$CHECK_STDLIB/app/main.tl" --stdlib-root "$CHECK_STDLIB/repo-stdlib"
+assert_empty "$WORKDIR/check-stdlib.stderr"
+assert_contains "$WORKDIR/check-stdlib.stdout" "Type checking passed!"
+
+run_capture debug-check-stdlib "$COMPILER" debug check "$CHECK_STDLIB/app/main.tl" --stdlib-root "$CHECK_STDLIB/repo-stdlib"
+check_file_exact "$WORKDIR/debug-check-stdlib.stdout" "$WORKDIR/check-stdlib.stdout"
+check_file_exact "$WORKDIR/debug-check-stdlib.stderr" "$WORKDIR/check-stdlib.stderr"
+
+CHECK_PKG="$WORKDIR/check-package"
+mkdir -p "$CHECK_PKG/app/src" "$CHECK_PKG/dep"
+cat > "$CHECK_PKG/app/typelisp.pkg" <<'EOF'
+(package (name "stage1-check-app") (version "0.1.0") (entry "src/main.tl") (dependencies (dep "../dep")))
+EOF
+cat > "$CHECK_PKG/dep/helper.tl" <<'EOF'
+(define (pkg-helper) : i64 42)
+EOF
+cat > "$CHECK_PKG/app/src/main.tl" <<'EOF'
+(import "pkg:dep/helper.tl")
+(define (main) : i64 (pkg-helper))
+EOF
+run_capture check-package "$COMPILER" check "$CHECK_PKG/app/src/main.tl"
+assert_empty "$WORKDIR/check-package.stderr"
+assert_contains "$WORKDIR/check-package.stdout" "Type checking passed!"
+
+run_expect_failure debug-missing "$COMPILER" debug
+assert_empty "$WORKDIR/debug-missing.stdout"
+assert_contains "$WORKDIR/debug-missing.stderr" "Error: missing debug subcommand"
+assert_contains "$WORKDIR/debug-missing.stderr" "typelisp debug tokenize <file.tl>"
+
+run_expect_failure debug-unknown "$COMPILER" debug wat
+assert_empty "$WORKDIR/debug-unknown.stdout"
+assert_contains "$WORKDIR/debug-unknown.stderr" "Unknown debug command: wat"
+assert_contains "$WORKDIR/debug-unknown.stderr" "typelisp debug check <file.tl>"
+
+run_expect_failure tokenize-missing "$COMPILER" tokenize
+assert_empty "$WORKDIR/tokenize-missing.stdout"
+assert_contains "$WORKDIR/tokenize-missing.stderr" "Error: missing file argument"
+assert_contains "$WORKDIR/tokenize-missing.stderr" "typelisp tokenize <file.tl>"
+
+run_expect_failure debug-parse-missing "$COMPILER" debug parse
+assert_empty "$WORKDIR/debug-parse-missing.stdout"
+assert_contains "$WORKDIR/debug-parse-missing.stderr" "Error: missing file argument"
+assert_contains "$WORKDIR/debug-parse-missing.stderr" "typelisp debug parse <file.tl>"
 
 echo "[stage1-wrapper] doc"
 if [ "${TYPELISP_STAGE1_SKIP_DOC_SMOKE:-}" = "1" ]; then

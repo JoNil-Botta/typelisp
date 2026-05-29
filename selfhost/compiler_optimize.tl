@@ -7605,3 +7605,341 @@
                   [(not (= (opt-count-arith-instrs fixed-instrs) 2)) 4]
                   [(not (opt-program-eq optimized-program again-program)) 5]
                   [else 42])))))))))
+
+;; --- noalias / alias fact model (#1510) -------------------------------------
+;;
+;; Optimizer-internal alias facts for IR temporaries. INFRASTRUCTURE ONLY: this
+;; slice models facts and conservative invalidation and proves the conservatism
+;; with self-tests, but no optimization pass produces or consumes these facts
+;; yet, so optimizer output is unchanged. Later issues derive facts from
+;; borrow/move analysis (#1048/#1049/#1050/#806) and consume them in load/store,
+;; bounds-check, scalar-replacement, and loop passes.
+;;
+;; A fact binds an IR temporary (var id) to one of four deliberately
+;; conservative kinds:
+;;   - Unique       : a freshly allocated root no other tracked pointer aliases
+;;   - Derived base : a pointer derived from root/base var `base` by safe
+;;                    pointer arithmetic (Gep); it aliases only that root's
+;;                    allocation
+;;   - MayAlias     : unknown provenance; may alias anything tracked
+;;   - Invalidated  : a previously known fact a memory effect explicitly cleared
+;;
+;; Invalidation keys off `compiler-ir-instr-effect`: pure instructions keep the
+;; surrounding facts (and (re)bind only their destination), memory reads keep
+;; facts (the loaded value itself is MayAlias), and any instruction that can
+;; mutate or unknown-observe memory (stores, vector/predicated stores, direct
+;; and indirect calls, tail calls) conservatively clears ALL facts rather than
+;; assuming C-style noalias. Control-flow joins intersect the per-edge sets.
+(defenum OptAliasKind
+  (OptAliasUnique)
+  (OptAliasDerived i64)
+  (OptAliasMayAlias)
+  (OptAliasInvalidated))
+
+(defenum OptAliasFact
+  (OptAliasFact i64 OptAliasKind))
+
+(defenum OptAliasFacts
+  (OptAliasNil)
+  (OptAliasCons OptAliasFact OptAliasFacts))
+
+(defenum OptMaybeAliasKind
+  (OptNoAliasKind)
+  (OptSomeAliasKind OptAliasKind))
+
+(define (opt-alias-kind-eq [a : OptAliasKind] [b : OptAliasKind]) : bool
+  (match a
+    [(OptAliasUnique)
+      (match b
+        [(OptAliasUnique) true]
+        [_ false])]
+    [(OptAliasDerived ba)
+      (match b
+        [(OptAliasDerived bb) (= ba bb)]
+        [_ false])]
+    [(OptAliasMayAlias)
+      (match b
+        [(OptAliasMayAlias) true]
+        [_ false])]
+    [(OptAliasInvalidated)
+      (match b
+        [(OptAliasInvalidated) true]
+        [_ false])]))
+
+(define (opt-alias-fact-var [fact : OptAliasFact]) : i64
+  (match fact
+    [(OptAliasFact var _) var]))
+
+(define (opt-alias-fact-kind [fact : OptAliasFact]) : OptAliasKind
+  (match fact
+    [(OptAliasFact _ kind) kind]))
+
+(define (opt-alias-lookup [facts : OptAliasFacts] [var : i64]) : OptMaybeAliasKind
+  (match facts
+    [(OptAliasNil) (OptNoAliasKind)]
+    [(OptAliasCons fact rest)
+      (if (= (opt-alias-fact-var fact) var)
+        (OptSomeAliasKind (opt-alias-fact-kind fact))
+        (opt-alias-lookup rest var))]))
+
+;; Drop any binding for `var` (a redefined/escaped temporary).
+(define (opt-alias-remove-var [facts : OptAliasFacts] [var : i64]) : OptAliasFacts
+  (match facts
+    [(OptAliasNil) (OptAliasNil)]
+    [(OptAliasCons fact rest)
+      (if (= (opt-alias-fact-var fact) var)
+        (opt-alias-remove-var rest var)
+        (OptAliasCons fact (opt-alias-remove-var rest var)))]))
+
+;; Bind `var` to `kind`, replacing any prior binding for that var.
+(define (opt-alias-bind
+  [facts : OptAliasFacts]
+  [var : i64]
+  [kind : OptAliasKind]) : OptAliasFacts
+  (OptAliasCons (OptAliasFact var kind) (opt-alias-remove-var facts var)))
+
+(define (opt-alias-mark-unique [facts : OptAliasFacts] [var : i64]) : OptAliasFacts
+  (opt-alias-bind facts var (OptAliasUnique)))
+
+(define (opt-alias-mark-may-alias [facts : OptAliasFacts] [var : i64]) : OptAliasFacts
+  (opt-alias-bind facts var (OptAliasMayAlias)))
+
+(define (opt-alias-mark-invalidated [facts : OptAliasFacts] [var : i64]) : OptAliasFacts
+  (opt-alias-bind facts var (OptAliasInvalidated)))
+
+;; Copy a value's fact onto `dst` (Mov/Cast of a tracked var). An untracked
+;; source conservatively yields a MayAlias destination.
+(define (opt-alias-copy-var [facts : OptAliasFacts] [dst : i64] [src : i64]) : OptAliasFacts
+  (match (opt-alias-lookup facts src)
+    [(OptSomeAliasKind kind) (opt-alias-bind facts dst kind)]
+    [(OptNoAliasKind) (opt-alias-mark-may-alias facts dst)]))
+
+;; Derive `dst` through safe pointer arithmetic (Gep) from base var `base`.
+;; A unique or already-derived base propagates the underlying root; anything
+;; else is conservatively MayAlias.
+(define (opt-alias-derive-var [facts : OptAliasFacts] [dst : i64] [base : i64]) : OptAliasFacts
+  (match (opt-alias-lookup facts base)
+    [(OptSomeAliasKind kind)
+      (match kind
+        [(OptAliasUnique) (opt-alias-bind facts dst (OptAliasDerived base))]
+        [(OptAliasDerived root)
+          (opt-alias-bind facts dst (OptAliasDerived root))]
+        [(OptAliasMayAlias) (opt-alias-mark-may-alias facts dst)]
+        [(OptAliasInvalidated) (opt-alias-mark-may-alias facts dst)])]
+    [(OptNoAliasKind) (opt-alias-mark-may-alias facts dst)]))
+
+(define (opt-alias-contains?
+  [facts : OptAliasFacts]
+  [var : i64]
+  [kind : OptAliasKind]) : bool
+  (match (opt-alias-lookup facts var)
+    [(OptSomeAliasKind found) (opt-alias-kind-eq found kind)]
+    [(OptNoAliasKind) false]))
+
+(define (opt-alias-absent? [facts : OptAliasFacts] [var : i64]) : bool
+  (match (opt-alias-lookup facts var)
+    [(OptNoAliasKind) true]
+    [(OptSomeAliasKind _) false]))
+
+;; Conservative control-flow join: keep only facts that appear with an
+;; identical kind on both incoming edges.
+(define (opt-alias-intersect [a : OptAliasFacts] [b : OptAliasFacts]) : OptAliasFacts
+  (match a
+    [(OptAliasNil) (OptAliasNil)]
+    [(OptAliasCons fact rest)
+      (let
+        [rest2 : OptAliasFacts (opt-alias-intersect rest b)]
+        (if (opt-alias-contains?
+          b
+          (opt-alias-fact-var fact)
+          (opt-alias-fact-kind fact))
+          (OptAliasCons fact rest2)
+          rest2))]))
+
+(define (opt-alias-facts-len [facts : OptAliasFacts]) : i64
+  (match facts
+    [(OptAliasNil) 0]
+    [(OptAliasCons _ rest) (+ 1 (opt-alias-facts-len rest))]))
+
+;; A memory effect that can mutate or unknown-observe memory clears all facts.
+;; `Alloc` is the one MemoryWrite that instead binds a fresh unique root, so it
+;; is excluded by the caller below.
+(define (opt-alias-effect-clears-facts? [effect : CompilerIrEffect]) : bool
+  (match effect
+    [(IrEffectPure) false]
+    [(IrEffectMemoryRead) false]
+    [(IrEffectMemoryWrite) true]
+    [(IrEffectControlFlow) false]
+    [(IrEffectUnknown) true]))
+
+;; True when the instruction conservatively clears ALL alias facts. The
+;; call family is listed explicitly because a tail call carries a control-flow
+;; IR effect yet still mutates memory; `Alloc` is excluded because it binds a
+;; unique root instead of clearing.
+(define (opt-alias-instr-clears-all? [instr : CompilerIrInstr]) : bool
+  (match instr
+    [(IrInstrAlloc _ _) false]
+    [(IrInstrCall _ _ _ _) true]
+    [(IrInstrCallIndirect _ _ _ _) true]
+    [(IrInstrTailCall _ _ _) true]
+    [_ (opt-alias-effect-clears-facts? (compiler-ir-instr-effect instr))]))
+
+(define (opt-alias-update-gep
+  [facts : OptAliasFacts]
+  [dst : i64]
+  [base : CompilerIrValue]) : OptAliasFacts
+  (match base
+    [(IrValueVar base-var) (opt-alias-derive-var facts dst base-var)]
+    [_ (opt-alias-mark-may-alias facts dst)]))
+
+(define (opt-alias-update-copy
+  [facts : OptAliasFacts]
+  [dst : i64]
+  [value : CompilerIrValue]) : OptAliasFacts
+  (match value
+    [(IrValueVar src) (opt-alias-copy-var facts dst src)]
+    [_ (opt-alias-mark-may-alias facts dst)]))
+
+;; Transfer function for one instruction. Memory-mutating/unknown instructions
+;; clear all facts; otherwise pure value-producers (re)bind only their
+;; destination and the surrounding facts survive.
+(define (opt-alias-update-facts
+  [facts : OptAliasFacts]
+  [instr : CompilerIrInstr]) : OptAliasFacts
+  (if (opt-alias-instr-clears-all? instr)
+    (OptAliasNil)
+    (match instr
+      [(IrInstrAlloc dst _) (opt-alias-mark-unique facts dst)]
+      [(IrInstrGep dst base _ _) (opt-alias-update-gep facts dst base)]
+      [(IrInstrMov dst value _) (opt-alias-update-copy facts dst value)]
+      [(IrInstrCast dst value _ _) (opt-alias-update-copy facts dst value)]
+      [(IrInstrLoad dst _ _) (opt-alias-mark-may-alias facts dst)]
+      [(IrInstrAddrOf dst _) (opt-alias-mark-may-alias facts dst)]
+      [(IrInstrVectorLoad dst _ _ _ _) (opt-alias-mark-may-alias facts dst)]
+      [(IrInstrPredicatedLoad dst _ _ _ _ _)
+        (opt-alias-mark-may-alias facts dst)]
+      [_ facts])))
+
+(define (opt-alias-run [facts : OptAliasFacts] [instrs : CompilerIrInstrList]) : OptAliasFacts
+  (match instrs
+    [(IrInstrNil) facts]
+    [(IrInstrCons instr rest)
+      (opt-alias-run (opt-alias-update-facts facts instr) rest)]))
+
+;; --- noalias fact model self-test (#1510) -----------------------------------
+(define (opt-alias-test-unique-instrs) : CompilerIrInstrList
+  (IrInstrCons
+    (IrInstrAlloc 0 (AstTyI64))
+    (IrInstrCons
+      (IrInstrGep 1 (IrValueVar 0) (IrValueI64 8) (AstTyI64))
+      (IrInstrCons
+        (IrInstrBinOp 2 (IrBinAdd) (IrValueI64 1) (IrValueI64 2) (AstTyI64))
+        (IrInstrNil)))))
+
+(define (opt-alias-test-transitive-instrs) : CompilerIrInstrList
+  (IrInstrCons
+    (IrInstrAlloc 0 (AstTyI64))
+    (IrInstrCons
+      (IrInstrGep 1 (IrValueVar 0) (IrValueI64 8) (AstTyI64))
+      (IrInstrCons
+        (IrInstrGep 2 (IrValueVar 1) (IrValueI64 8) (AstTyI64))
+        (IrInstrNil)))))
+
+(define (opt-alias-test-load-instrs) : CompilerIrInstrList
+  (IrInstrCons
+    (IrInstrAlloc 0 (AstTyI64))
+    (IrInstrCons (IrInstrLoad 1 (IrValueVar 0) (AstTyI64)) (IrInstrNil))))
+
+(define (opt-alias-test-store-instrs) : CompilerIrInstrList
+  (IrInstrCons
+    (IrInstrAlloc 0 (AstTyI64))
+    (IrInstrCons
+      (IrInstrStorePtr (IrValueVar 0) (IrValueI64 5) (AstTyI64))
+      (IrInstrNil))))
+
+(define (opt-alias-test-call-instrs) : CompilerIrInstrList
+  (IrInstrCons
+    (IrInstrAlloc 0 (AstTyI64))
+    (IrInstrCons (IrInstrCall 9 "tl_noop" (IrValueNil) (AstTyI64)) (IrInstrNil))))
+
+(define (opt-alias-test-copy-instrs) : CompilerIrInstrList
+  (IrInstrCons
+    (IrInstrAlloc 0 (AstTyI64))
+    (IrInstrCons
+      (IrInstrMov 1 (IrValueVar 0) (AstTyI64))
+      (IrInstrCons (IrInstrMov 2 (IrValueI64 7) (AstTyI64)) (IrInstrNil)))))
+
+(define (opt-alias-join-facts-a) : OptAliasFacts
+  (opt-alias-bind
+    (opt-alias-bind
+      (opt-alias-bind (OptAliasNil) 0 (OptAliasUnique))
+      1
+      (OptAliasDerived 0))
+    2
+    (OptAliasMayAlias)))
+
+(define (opt-alias-join-facts-b) : OptAliasFacts
+  (opt-alias-bind
+    (opt-alias-bind
+      (opt-alias-bind (OptAliasNil) 0 (OptAliasUnique))
+      1
+      (OptAliasMayAlias))
+    3
+    (OptAliasUnique)))
+
+(define (opt-alias-sample-store) : CompilerIrInstr
+  (IrInstrStorePtr (IrValueVar 0) (IrValueI64 5) (AstTyI64)))
+
+(define (opt-alias-sample-tail-call) : CompilerIrInstr
+  (IrInstrTailCall "tl_noop" (IrValueNil) (AstTyI64)))
+
+(define (opt-alias-sample-binop) : CompilerIrInstr
+  (IrInstrBinOp 9 (IrBinAdd) (IrValueI64 1) (IrValueI64 2) (AstTyI64)))
+
+(define (compiler-optimize-alias-self-test) : i64
+  (let
+    [unique : OptAliasFacts
+      (opt-alias-run (OptAliasNil) (opt-alias-test-unique-instrs))]
+    [transitive : OptAliasFacts
+      (opt-alias-run (OptAliasNil) (opt-alias-test-transitive-instrs))]
+    [loaded : OptAliasFacts
+      (opt-alias-run (OptAliasNil) (opt-alias-test-load-instrs))]
+    [stored : OptAliasFacts
+      (opt-alias-run (OptAliasNil) (opt-alias-test-store-instrs))]
+    [called : OptAliasFacts
+      (opt-alias-run (OptAliasNil) (opt-alias-test-call-instrs))]
+    [copied : OptAliasFacts
+      (opt-alias-run (OptAliasNil) (opt-alias-test-copy-instrs))]
+    [joined : OptAliasFacts
+      (opt-alias-intersect (opt-alias-join-facts-a) (opt-alias-join-facts-b))]
+    [invalidated : OptAliasFacts
+      (opt-alias-mark-invalidated (opt-alias-mark-unique (OptAliasNil) 0) 0)]
+    (cond
+      ;; unique root + derived pointer + survival across a pure scalar instr
+      [(not (opt-alias-contains? unique 0 (OptAliasUnique))) 1]
+      [(not (opt-alias-contains? unique 1 (OptAliasDerived 0))) 2]
+      [(not (opt-alias-absent? unique 2)) 3]
+      [(not (= (opt-alias-facts-len unique) 2)) 4]
+      ;; transitive derive collapses to the underlying root
+      [(not (opt-alias-contains? transitive 2 (OptAliasDerived 0))) 5]
+      ;; memory read makes the loaded value MayAlias but keeps the root
+      [(not (opt-alias-contains? loaded 0 (OptAliasUnique))) 6]
+      [(not (opt-alias-contains? loaded 1 (OptAliasMayAlias))) 7]
+      ;; a raw-pointer store conservatively clears every fact
+      [(not (= (opt-alias-facts-len stored) 0)) 8]
+      [(not (opt-alias-instr-clears-all? (opt-alias-sample-store))) 9]
+      ;; calls and tail calls conservatively clear every fact
+      [(not (= (opt-alias-facts-len called) 0)) 10]
+      [(not (opt-alias-instr-clears-all? (opt-alias-sample-tail-call))) 11]
+      ;; copy through Mov preserves kind; a non-var move is MayAlias
+      [(not (opt-alias-contains? copied 1 (OptAliasUnique))) 12]
+      [(not (opt-alias-contains? copied 2 (OptAliasMayAlias))) 13]
+      ;; control-flow join intersects to agreeing facts only
+      [(not (= (opt-alias-facts-len joined) 1)) 14]
+      [(not (opt-alias-contains? joined 0 (OptAliasUnique))) 15]
+      [(opt-alias-contains? joined 1 (OptAliasDerived 0)) 16]
+      ;; a pure instruction never clears facts
+      [(opt-alias-instr-clears-all? (opt-alias-sample-binop)) 17]
+      ;; explicit invalidation tombstones a prior fact
+      [(not (opt-alias-contains? invalidated 0 (OptAliasInvalidated))) 18]
+      [else 42])))

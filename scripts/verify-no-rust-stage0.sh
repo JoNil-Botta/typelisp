@@ -103,6 +103,7 @@ make_stage1_cli_wrapper() {
     stage1_repl_bin=${5:-}
     stage1_lsp_bin=${6:-}
     stage1_lint_bin=${7:-}
+    stage1_format_bin=${8:-}
     wrapper_dir="$ROOT/target/no-rust-stage1-wrapper"
     wrapper="$wrapper_dir/typelisp"
     rm -rf "$wrapper_dir"
@@ -124,6 +125,8 @@ TYPELISP_STAGE1_LSP_BIN='$stage1_lsp_bin'
 export TYPELISP_STAGE1_LSP_BIN
 TYPELISP_STAGE1_LINT_BIN='$stage1_lint_bin'
 export TYPELISP_STAGE1_LINT_BIN
+TYPELISP_STAGE1_FORMAT_BIN='$stage1_format_bin'
+export TYPELISP_STAGE1_FORMAT_BIN
 TYPELISP_STAGE1_DRIVER_CACHE_DIR='$wrapper_dir/cache'
 export TYPELISP_STAGE1_DRIVER_CACHE_DIR
 exec '$ROOT/scripts/stage1-typelisp-wrapper.sh' "\$@"
@@ -150,6 +153,10 @@ build_stage1_lsp_driver() {
 
 build_stage1_lint_driver() {
     build_stage1_wrapper_driver "$1" lint selfhost/lint.tl selfhost-lint
+}
+
+build_stage1_format_driver() {
+    build_stage1_wrapper_driver "$1" format selfhost/format.tl selfhost-format
 }
 
 stage1_driver_staged_symbols() {
@@ -339,6 +346,7 @@ if [ "$HOST_OS" = linux ]; then
     STAGE1_BUILD_BIN=
     STAGE1_REPL_BIN=
     STAGE1_LINT_BIN=
+    STAGE1_FORMAT_BIN=
     STAGE1_TEST_BIN=
     STAGE1_LSP_BIN=
     STAGE1_HOST_ACTION_DRIVERS_AVAILABLE=0
@@ -380,8 +388,14 @@ if [ "$HOST_OS" = linux ]; then
         else
             STAGE1_LINT_BIN=$(build_stage1_lint_driver "$SEED_TYPELISP_BIN")
         fi
+        if [ -x "$BUNDLED_STAGE1_DRIVER_DIR/selfhost-format" ]; then
+            STAGE1_FORMAT_BIN="$BUNDLED_STAGE1_DRIVER_DIR/selfhost-format"
+            echo "[no-rust-stage0] using bundled stage1 format driver"
+        else
+            STAGE1_FORMAT_BIN=$(build_stage1_format_driver "$SEED_TYPELISP_BIN")
+        fi
     fi
-    STAGE1_TYPELISP_BIN=$(make_stage1_cli_wrapper "$TYPELISP_BIN" "$STAGE1_TEST_BIN" "$STAGE1_DOC_BIN" "$STAGE1_BUILD_BIN" "$STAGE1_REPL_BIN" "$STAGE1_LSP_BIN" "$STAGE1_LINT_BIN")
+    STAGE1_TYPELISP_BIN=$(make_stage1_cli_wrapper "$TYPELISP_BIN" "$STAGE1_TEST_BIN" "$STAGE1_DOC_BIN" "$STAGE1_BUILD_BIN" "$STAGE1_REPL_BIN" "$STAGE1_LSP_BIN" "$STAGE1_LINT_BIN" "$STAGE1_FORMAT_BIN")
     echo
     echo "[no-rust-stage0] stage1 CLI wrapper=$STAGE1_TYPELISP_BIN"
 else
@@ -414,6 +428,18 @@ if [ "$HOST_OS" = linux ] &&
     [ "$LINUX_SEED_STAGED_RUNTIME_GAP" -eq 1 ] &&
     [ "$STAGE1_HOST_ACTION_DRIVERS_AVAILABLE" -eq 1 ]; then
     FRONT_GATE_TYPELISP_BIN=$STAGE1_TYPELISP_BIN
+fi
+
+# Repository doctests run `typelisp doc --test`, which the stage1 wrapper serves
+# through the freshly bootstrapped selfhost doc driver (the same path the stdlib
+# documentation gate already uses). On Linux, route them through the wrapper
+# whenever the host-action drivers are available so this capability tier no
+# longer depends on the seed/published compiler (#1544). When the drivers are
+# unavailable the doctest gate is skipped below, so this binary is only used on
+# the wrapper-capable path.
+DOCTEST_TYPELISP_BIN=$FRONT_GATE_TYPELISP_BIN
+if [ "$HOST_OS" = linux ] && [ "$STAGE1_HOST_ACTION_DRIVERS_AVAILABLE" -eq 1 ]; then
+    DOCTEST_TYPELISP_BIN=$STAGE1_TYPELISP_BIN
 fi
 
 if [ "$WINDOWS_SEED_STAGED_RUNTIME_GAP" -eq 1 ]; then
@@ -449,7 +475,7 @@ else
         echo
         echo "[no-rust-stage0] skipping repository doctests until staged runtime symbols land in stage0"
     else
-        run_with_compiler "$FRONT_GATE_TYPELISP_BIN" "repository doctests" scripts/verify-doc-tests.sh
+        run_with_compiler "$DOCTEST_TYPELISP_BIN" "repository doctests" scripts/verify-doc-tests.sh
     fi
 fi
 if [ "$HOST_OS" = linux ] &&
@@ -507,7 +533,19 @@ else
 fi
 TYPELISP_BIN=$SEED_TYPELISP_BIN
 export TYPELISP_BIN
-run_gate "TypeLisp source formatting" scripts/check-tl-format.sh
+# The repository format gate runs `typelisp fmt --check` over the whole TypeLisp
+# corpus. On Linux, serve it through the stage1 wrapper's cached selfhost format
+# driver whenever the host-action drivers are available so the fmt capability
+# tier no longer depends on the seed/published compiler (#1544). The wrapper's
+# format driver is built once and reused across the batched invocations. When
+# the drivers are unavailable (or on Windows) the seed compiler keeps the gate.
+FORMAT_GATE_TYPELISP_BIN=$SEED_TYPELISP_BIN
+if [ "$HOST_OS" = linux ] && [ "$STAGE1_HOST_ACTION_DRIVERS_AVAILABLE" -eq 1 ]; then
+    FORMAT_GATE_TYPELISP_BIN=$STAGE1_TYPELISP_BIN
+fi
+run_with_compiler "$FORMAT_GATE_TYPELISP_BIN" "TypeLisp source formatting" scripts/check-tl-format.sh
+TYPELISP_BIN=$SEED_TYPELISP_BIN
+export TYPELISP_BIN
 if [ "$WINDOWS_SEED_STAGED_RUNTIME_GAP" -eq 1 ] ||
     [ "$LINUX_SEED_STAGED_RUNTIME_GAP" -eq 1 ] ||
     [ "$SEED_STAGE1_WRAPPER" -eq 1 ]; then

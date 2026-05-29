@@ -17,6 +17,7 @@ STAGE1_DOC_BIN=${TYPELISP_STAGE1_DOC_BIN:-}
 STAGE1_REPL_BIN=${TYPELISP_STAGE1_REPL_BIN:-}
 STAGE1_LSP_BIN=${TYPELISP_STAGE1_LSP_BIN:-}
 STAGE1_LINT_BIN=${TYPELISP_STAGE1_LINT_BIN:-}
+STAGE1_FORMAT_BIN=${TYPELISP_STAGE1_FORMAT_BIN:-}
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 
 fail() {
@@ -862,6 +863,60 @@ selfhost_lint_driver() {
     printf '%s\n' "$driver"
 }
 
+selfhost_format_driver() {
+    require_stage1
+    require_linux_host_action
+
+    if [ -n "$STAGE1_FORMAT_BIN" ]; then
+        if [ ! -x "$STAGE1_FORMAT_BIN" ]; then
+            fail "stage1 format driver is not executable: $STAGE1_FORMAT_BIN"
+        fi
+        printf '%s\n' "$STAGE1_FORMAT_BIN"
+        return
+    fi
+
+    cache_dir=${TYPELISP_STAGE1_DRIVER_CACHE_DIR:-"$ROOT/target/stage1-wrapper-cache"}
+    driver="$cache_dir/selfhost-format"
+    marker="$cache_dir/selfhost-format.stage1-bin.path"
+    build_dir="$cache_dir/format-build"
+    roots="$build_dir/stdlib.roots"
+    source="$ROOT/selfhost/format.tl"
+
+    rebuild=0
+    if [ ! -x "$driver" ]; then
+        rebuild=1
+    elif [ ! -f "$marker" ]; then
+        rebuild=1
+    elif [ "$(sed -n '1p' "$marker")" != "$STAGE1_BIN" ]; then
+        rebuild=1
+    elif [ "$STAGE1_BIN" -nt "$driver" ]; then
+        rebuild=1
+    elif [ "$source" -nt "$driver" ]; then
+        rebuild=1
+    fi
+
+    if [ "$rebuild" -eq 1 ]; then
+        rm -rf "$build_dir"
+        mkdir -p "$build_dir"
+        : > "$roots"
+        heartbeat_log "[stage1-wrapper] building selfhost format driver"
+        run_with_heartbeat \
+            "stage1-wrapper selfhost/format.tl compile" \
+            compile_source_to_exe \
+            "$source" \
+            "$driver.tmp" \
+            linux-x86_64 \
+            scalar \
+            "" \
+            "$roots" \
+            "$build_dir" > /dev/null
+        mv "$driver.tmp" "$driver"
+        printf '%s\n' "$STAGE1_BIN" > "$marker"
+    fi
+
+    printf '%s\n' "$driver"
+}
+
 selfhost_build_driver() {
     require_stage1
     require_linux_host_action
@@ -1056,8 +1111,14 @@ fmt_command() {
     fi
     cat "$files" >> "$runtime_args"
 
-    bin=$(compile_source_to_exe "$ROOT/selfhost/format.tl" "$workdir/format-bin" linux-x86_64 scalar "" "$roots" "$workdir")
-    run_executable_with_args "$bin" "$runtime_args"
+    # The self-hosted formatter does not resolve imports in the files it
+    # formats, so collected `--stdlib-root` values only influence how
+    # selfhost/format.tl itself is compiled. Build it once through the cached
+    # format driver (matching the doc/build/lint drivers) rather than
+    # recompiling it on every invocation, which matters for the repository
+    # format gate that formats hundreds of files in batches.
+    driver=$(selfhost_format_driver)
+    run_executable_with_args "$driver" "$runtime_args"
 }
 
 lint_command() {

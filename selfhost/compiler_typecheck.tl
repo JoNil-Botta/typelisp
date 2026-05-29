@@ -2137,6 +2137,30 @@
   "(defmacro (bad [x : bool]) : bool (expr-bool? x))
 (define (main) : i64 0)")
 
+(define (compiler-typecheck-quote-source) : String
+  "(define (mk [e : Expr]) : Expr `(if ,e true false))
+(define (body [xs : ExprList]) : Expr `(begin ,@xs))
+(define (main) : i64 0)")
+
+(define (compiler-typecheck-quote-bad-unquote-source) : String
+  "(define (bad [x : i64]) : Expr `(if ,x true false))
+(define (main) : i64 0)")
+
+(define (compiler-typecheck-quote-bad-splice-source) : String
+  "(define (bad [x : i64]) : Expr `(begin ,@x))
+(define (main) : i64 0)")
+
+(define (compiler-typecheck-quote-tests-ok?) : bool
+  (and
+    (compiler-typecheck-ok? (compiler-typecheck-quote-source))
+    (and
+      (compiler-typecheck-error-ok?
+        (compiler-typecheck-quote-bad-unquote-source)
+        "typecheck: unquote expects Expr")
+      (compiler-typecheck-error-ok?
+        (compiler-typecheck-quote-bad-splice-source)
+        "typecheck: unquote-splicing expects ExprList"))))
+
 (define (compiler-typecheck-defmacro-tests-ok?) : bool
   (and
     (compiler-typecheck-ok? (compiler-typecheck-defmacro-source))
@@ -2248,6 +2272,9 @@
     (if (compiler-typecheck-located-ok?)
       unit
       (panic "typecheck: located diagnostic test failed"))
+    (if (compiler-typecheck-quote-tests-ok?)
+      unit
+      (panic "typecheck: quote tests failed"))
     unit))
 
 (define (compiler-typecheck-self-test-builtins) : unit

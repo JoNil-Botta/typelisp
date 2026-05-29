@@ -955,6 +955,11 @@
     [(AstExprBoxGet inner) (lower-reach-expr all-functions names state inner)]
     [(AstExprTypeLiteral _) state]
     [(AstExprComptime inner) (lower-reach-expr all-functions names state inner)]
+    [(AstExprQuote _) state]
+    [(AstExprQuasiquote _) state]
+    [(AstExprUnquote inner) (lower-reach-expr all-functions names state inner)]
+    [(AstExprUnquoteSplicing inner)
+      (lower-reach-expr all-functions names state inner)]
     [(AstExprTry inner) (lower-reach-expr all-functions names state inner)]
     [(AstExprPtrNull _) state]
     [(AstExprPtrNullCheck value)
@@ -3011,6 +3016,22 @@
                 (lower-literal-value (ctfe-value-to-literal value))
                 expr-ty)])]
         [(ErrCtfe diag) (ErrLowerExpr diag)])]
+    [(AstExprQuote _)
+      (ErrLowerExpr
+        (lower-diagnostic-at-expr origin "Expr value is compile-time only"))]
+    [(AstExprQuasiquote _)
+      (ErrLowerExpr
+        (lower-diagnostic-at-expr origin "Expr value is compile-time only"))]
+    [(AstExprUnquote _)
+      (ErrLowerExpr
+        (lower-diagnostic-at-expr
+          origin
+          "unquote is only valid inside quasiquote"))]
+    [(AstExprUnquoteSplicing _)
+      (ErrLowerExpr
+        (lower-diagnostic-at-expr
+          origin
+          "unquote-splicing is only valid inside quasiquote"))]
     [(AstExprTypeLiteral ty)
       (ErrLowerExpr
         (lower-diagnostic-at-expr

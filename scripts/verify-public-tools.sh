@@ -976,6 +976,7 @@ decls
 flow
 let_bindings
 negative_int
+quote
 tail_comment
 EOF
 }

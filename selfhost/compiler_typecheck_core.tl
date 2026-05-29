@@ -1587,6 +1587,10 @@
         [(OkTcUnit) (tc-source-expr-list-policy-ok ctx body)]
         [(ErrTcUnit message) (ErrTcUnit message)])]
     [(AstExprComptime inner) (tc-source-expr-policy-ok ctx inner)]
+    [(AstExprQuote inner) (tc-source-expr-policy-ok ctx inner)]
+    [(AstExprQuasiquote inner) (tc-source-expr-policy-ok ctx inner)]
+    [(AstExprUnquote inner) (tc-source-expr-policy-ok ctx inner)]
+    [(AstExprUnquoteSplicing inner) (tc-source-expr-policy-ok ctx inner)]
     [(AstExprTry inner) (tc-source-expr-policy-ok ctx inner)]
     [(AstExprPtrNullCheck inner) (tc-source-expr-policy-ok ctx inner)]
     [(AstExprPtrRead ptr) (tc-source-expr-policy-ok ctx ptr)]
@@ -4059,6 +4063,13 @@
             [(TcSpmdExprInfo _ class next-spmd-env)
               (tc-spmd-finish expr-ty class next-spmd-env)])]
         [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)])]
+    [(AstExprQuote _) (tc-spmd-finish expr-ty TcSpmdUniform spmd-env)]
+    [(AstExprQuasiquote _) (tc-spmd-finish expr-ty TcSpmdUniform spmd-env)]
+    [(AstExprUnquote _)
+      (ErrTcSpmdExprInfo "typecheck: unquote is only valid inside quasiquote")]
+    [(AstExprUnquoteSplicing _)
+      (ErrTcSpmdExprInfo
+        "typecheck: unquote-splicing is only valid inside quasiquote")]
     [(AstExprTry inner)
       (match (tc-spmd-expr ctx env spmd-env inner)
         [(OkTcSpmdExprInfo info)
@@ -4362,6 +4373,10 @@
           (tc-resource-binding-list-add-bound-names bindings bound)))]
     [(AstExprTypeLiteral _) false]
     [(AstExprComptime inner) (tc-expr-uses-free-name? inner name bound)]
+    [(AstExprQuote inner) (tc-expr-uses-free-name? inner name bound)]
+    [(AstExprQuasiquote inner) (tc-expr-uses-free-name? inner name bound)]
+    [(AstExprUnquote inner) (tc-expr-uses-free-name? inner name bound)]
+    [(AstExprUnquoteSplicing inner) (tc-expr-uses-free-name? inner name bound)]
     [(AstExprTry inner) (tc-expr-uses-free-name? inner name bound)]
     [(AstExprPtrNull _) false]
     [(AstExprPtrNullCheck inner) (tc-expr-uses-free-name? inner name bound)]
@@ -5987,6 +6002,65 @@
         [_ (ErrTcType "typecheck: box-get requires Box type")])]
     [(ErrTcType message) (ErrTcType message)]))
 
+(define (tc-quasiquote-template-list-ok
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [exprs : AstExprList]) : ResultTcUnit
+  (match exprs
+    [(AstExprNil) OkTcUnit]
+    [(AstExprCons head rest)
+      (match (tc-quasiquote-template-ok ctx env head)
+        [(OkTcUnit) (tc-quasiquote-template-list-ok ctx env rest)]
+        [(ErrTcUnit message) (ErrTcUnit message)])]))
+
+(define (tc-quasiquote-template-ok
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [expr : AstExpr]) : ResultTcUnit
+  (match expr
+    [(AstExprSpanned inner _) (tc-quasiquote-template-ok ctx env inner)]
+    [(AstExprUnquote inner)
+      (match (tc-expr ctx env inner)
+        [(OkTcType ty)
+          (tc-expect ty (AstTyExpr) "typecheck: unquote expects Expr")]
+        [(ErrTcType message) (ErrTcUnit message)])]
+    [(AstExprUnquoteSplicing inner)
+      (match (tc-expr ctx env inner)
+        [(OkTcType ty)
+          (tc-expect
+            ty
+            (AstTyExprList)
+            "typecheck: unquote-splicing expects ExprList")]
+        [(ErrTcType message) (ErrTcUnit message)])]
+    [(AstExprBinary _ left right)
+      (match (tc-quasiquote-template-ok ctx env left)
+        [(OkTcUnit) (tc-quasiquote-template-ok ctx env right)]
+        [(ErrTcUnit message) (ErrTcUnit message)])]
+    [(AstExprUnary _ inner) (tc-quasiquote-template-ok ctx env inner)]
+    [(AstExprCall func args)
+      (match (tc-quasiquote-template-ok ctx env func)
+        [(OkTcUnit) (tc-quasiquote-template-list-ok ctx env args)]
+        [(ErrTcUnit message) (ErrTcUnit message)])]
+    [(AstExprIf cond then-branch else-branch)
+      (match (tc-quasiquote-template-ok ctx env cond)
+        [(OkTcUnit)
+          (match (tc-quasiquote-template-ok ctx env then-branch)
+            [(OkTcUnit) (tc-quasiquote-template-ok ctx env else-branch)]
+            [(ErrTcUnit message) (ErrTcUnit message)])]
+        [(ErrTcUnit message) (ErrTcUnit message)])]
+    [(AstExprTuple exprs) (tc-quasiquote-template-list-ok ctx env exprs)]
+    [(AstExprArray exprs) (tc-quasiquote-template-list-ok ctx env exprs)]
+    [(AstExprBegin exprs) (tc-quasiquote-template-list-ok ctx env exprs)]
+    [(AstExprUnsafe exprs) (tc-quasiquote-template-list-ok ctx env exprs)]
+    [(AstExprAnn inner _) (tc-quasiquote-template-ok ctx env inner)]
+    [(AstExprCast inner _) (tc-quasiquote-template-ok ctx env inner)]
+    [(AstExprBox inner) (tc-quasiquote-template-ok ctx env inner)]
+    [(AstExprBoxGet inner) (tc-quasiquote-template-ok ctx env inner)]
+    [(AstExprComptime inner) (tc-quasiquote-template-ok ctx env inner)]
+    [(AstExprQuote _) OkTcUnit]
+    [(AstExprQuasiquote inner) (tc-quasiquote-template-ok ctx env inner)]
+    [_ OkTcUnit]))
+
 (define (tc-expr [ctx : TcContext] [env : TcTypeEnv] [expr : AstExpr]) : ResultTcType
   (match expr
     [(AstExprSpanned inner _) (tc-expr ctx env inner)]
@@ -6470,6 +6544,15 @@
                     " is compile-time only")))]
             [(CtfeExprList _) (OkTcType (AstTyExprList))])]
         [(ErrCtfe diag) (ErrTcType (compiler-diagnostic-message diag))])]
+    [(AstExprQuote _) (OkTcType (AstTyExpr))]
+    [(AstExprQuasiquote template)
+      (match (tc-quasiquote-template-ok ctx env template)
+        [(OkTcUnit) (OkTcType (AstTyExpr))]
+        [(ErrTcUnit message) (ErrTcType message)])]
+    [(AstExprUnquote _)
+      (ErrTcType "typecheck: unquote is only valid inside quasiquote")]
+    [(AstExprUnquoteSplicing _)
+      (ErrTcType "typecheck: unquote-splicing is only valid inside quasiquote")]
     [(AstExprTry inner) (tc-try-expr ctx env inner)]
     [(AstExprPtrNull ty)
       (let

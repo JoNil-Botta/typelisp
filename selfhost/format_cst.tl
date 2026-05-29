@@ -8,6 +8,7 @@
 (defenum FormatCst
   (FmtCstAtom FormatToken)
   (FmtCstComment String)
+  (FmtCstPrefix FormatToken FormatCst)
   (FmtCstList FormatCstList)
   (FmtCstBracketList FormatCstList)
   (FmtCstForms FormatCstList))
@@ -31,6 +32,7 @@
   (match node
     [(FmtCstAtom _) 1]
     [(FmtCstComment _) 1]
+    [(FmtCstPrefix _ child) (+ 1 (fmt-cst-count child))]
     [(FmtCstList items) (+ 1 (fmt-cst-list-total items))]
     [(FmtCstBracketList items) (+ 1 (fmt-cst-list-total items))]
     [(FmtCstForms items) (+ 1 (fmt-cst-list-total items))]))
@@ -44,6 +46,7 @@
   (match node
     [(FmtCstAtom _) 0]
     [(FmtCstComment _) 1]
+    [(FmtCstPrefix _ child) (fmt-cst-comment-count child)]
     [(FmtCstList items) (fmt-cst-list-comment-count items)]
     [(FmtCstBracketList items) (fmt-cst-list-comment-count items)]
     [(FmtCstForms items) (fmt-cst-list-comment-count items)]))
@@ -58,6 +61,7 @@
   (match node
     [(FmtCstAtom _) 0]
     [(FmtCstComment _) 0]
+    [(FmtCstPrefix _ child) (fmt-cst-bracket-count child)]
     [(FmtCstList items) (fmt-cst-list-bracket-count items)]
     [(FmtCstBracketList items) (+ 1 (fmt-cst-list-bracket-count items))]
     [(FmtCstForms items) (fmt-cst-list-bracket-count items)]))
@@ -70,6 +74,13 @@
 
 (define (fmt-unexpected-closing [tag : i64]) : bool
   (or (= tag (fmt-tag-rparen)) (= tag (fmt-tag-rbracket))))
+
+(define (fmt-prefix-tag? [tag : i64]) : bool
+  (or
+    (= tag (fmt-tag-quote))
+    (or
+      (= tag (fmt-tag-backtick))
+      (or (= tag (fmt-tag-comma)) (= tag (fmt-tag-comma-at))))))
 
 (define (fmt-parse-seq
   [stream : FormatTokenStream]
@@ -111,6 +122,10 @@
             (FmtParsedCst (FmtCstBracketList items) next)])]
       [(= tag (fmt-tag-comment))
         (FmtParsedCst (FmtCstComment (format-token-text tok)) (+ idx 1))]
+      [(fmt-prefix-tag? tag)
+        (match (fmt-parse-one stream (+ idx 1))
+          [(FmtParsedCst child next)
+            (FmtParsedCst (FmtCstPrefix tok child) next)])]
       [(fmt-unexpected-closing tag)
         (begin
           (panic "format cst: unexpected closing delimiter")

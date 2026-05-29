@@ -223,6 +223,16 @@
   ;; Reserved compile-time evaluation form `(comptime expr)` (#718). Parsed and
   ;; type-checked (as the inner expression's type); evaluation lands in #719.
   (AstExprComptime AstExpr)
+  ;; Macro quote syntax (#1136). The reader desugars prefix quote tokens into
+  ;; these list-headed forms before parsing:
+  ;;   'x       -> (quote x)
+  ;;   `x       -> (quasiquote x)
+  ;;   ,x       -> (unquote x)
+  ;;   ,@xs     -> (unquote-splicing xs)
+  (AstExprQuote AstExpr)
+  (AstExprQuasiquote AstExpr)
+  (AstExprUnquote AstExpr)
+  (AstExprUnquoteSplicing AstExpr)
   ;; Narrow Result-like propagation form `(try expr)` (#903). The temporary
   ;; convention recognizes concrete enums with one `Ok*` and one `Err*`
   ;; variant, each carrying exactly one payload.
@@ -361,7 +371,11 @@
     [(AstExprPtrToInt _) 38]
     [(AstExprIntToPtr _ _) 39]
     [(AstExprBox _) 42]
-    [(AstExprBoxGet _) 43]))
+    [(AstExprBoxGet _) 43]
+    [(AstExprQuote _) 44]
+    [(AstExprQuasiquote _) 45]
+    [(AstExprUnquote _) 46]
+    [(AstExprUnquoteSplicing _) 47]))
 
 (define (ast-expr-unspan [expr : AstExpr]) : AstExpr
   (match expr

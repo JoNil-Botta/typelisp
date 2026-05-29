@@ -4,7 +4,8 @@ set -eu
 # verify-doc-site.sh - build and validate the selfhost docs site, no publish.
 # refs #873
 #
-# Builds the static stdlib/API HTML site via selfhost/doc_site.tl, runs the
+# Builds the static stdlib/API and language-reference HTML site via
+# selfhost/doc_site.tl, runs the
 # in-memory smoke driver, and validates the on-disk output contract: required
 # pages/assets exist, every local link resolves, every in-page/cross-page anchor
 # target exists, and pages reference the stylesheet. Escaping and manifest-count
@@ -135,7 +136,7 @@ if [ "$smoke_code" -ne 42 ]; then
 fi
 
 # Required pages and assets.
-for required in index.html stdlib.html typelisp-docs.css; do
+for required in index.html readme.html spec.html stdlib.html typelisp-docs.css; do
     [ -f "$SITE/$required" ] || fail "missing required output: $required"
 done
 
@@ -160,9 +161,17 @@ for page in $pages; do
         || fail "$(basename "$page") does not include the stdlib sidebar root"
     grep -q 'href="stdlib-io.html"' "$page" \
         || fail "$(basename "$page") does not include representative stdlib module links"
+    grep -q 'href="readme.html"' "$page" \
+        || fail "$(basename "$page") does not include the README language page link"
+    grep -q 'href="spec.html"' "$page" \
+        || fail "$(basename "$page") does not include the SPEC language page link"
 
     page_base=$(basename "$page")
     case "$page_base" in
+        readme.html | spec.html)
+            grep -q "class=\"tl-doc-tree-link is-current\" aria-current=\"page\" href=\"$page_base\"" "$page" \
+                || fail "$page_base does not mark its language sidebar link as current"
+            ;;
         stdlib.html)
             grep -q 'class="tl-doc-tree-root is-current" aria-current="page" href="stdlib.html"' "$page" \
                 || fail "$page_base does not mark the stdlib root as current"
@@ -203,5 +212,14 @@ for page in $pages; do
         esac
     done
 done
+
+grep -q 'id="tl-TypeLisp"' "$SITE/readme.html" \
+    || fail "readme.html is missing the TypeLisp heading anchor"
+grep -q 'id="tl-TypeLisp-32Language-32Specification"' "$SITE/spec.html" \
+    || fail "spec.html is missing the language specification heading anchor"
+grep -q 'href="spec.html"' "$SITE/readme.html" \
+    || fail "readme.html did not rewrite SPEC.md links to spec.html"
+grep -q 'href="https://github.com/JoNil-Botta/typelisp/blob/main/CONTRIBUTING.md"' "$SITE/readme.html" \
+    || fail "readme.html did not rewrite repository source links to GitHub"
 
 echo "doc-site verification passed: $stdlib_pages module page(s), $link_count local link(s) checked"

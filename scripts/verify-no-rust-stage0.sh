@@ -177,6 +177,11 @@ seed_has_staged_runtime_gap() {
     staged_runtime_symbol_in_files "$probe_dir/compile.stdout" "$probe_dir/compile.stderr"
 }
 
+compiler_is_stage1_wrapper() {
+    compiler=$1
+    "$compiler" --help 2>&1 | grep -q "stage1 wrapper commands"
+}
+
 show_stage1_driver_prebuild_failure() {
     label=$1
     driver_dir=$2
@@ -337,6 +342,11 @@ if [ "$HOST_OS" != linux ]; then
     STAGE1_HOST_ACTION_DRIVERS_AVAILABLE=0
     SEED_IS_STAGE1_BUNDLE=0
 fi
+SEED_STAGE1_WRAPPER=0
+if compiler_is_stage1_wrapper "$SEED_TYPELISP_BIN"; then
+    SEED_STAGE1_WRAPPER=1
+    echo "[no-rust-stage0] seed is a stage1 wrapper; full Rust CLI parity gates remain in the Rust lane"
+fi
 
 FRONT_GATE_TYPELISP_BIN=$SEED_TYPELISP_BIN
 if [ "$HOST_OS" = linux ] &&
@@ -360,6 +370,9 @@ else
         echo "[no-rust-stage0] skipping seed public tool surface until staged runtime symbols land in stage0"
     elif [ "$HOST_OS" = windows ]; then
         run_with_compiler "$FRONT_GATE_TYPELISP_BIN" "public tool surface" env TYPELISP_LEGACY_PACKAGE_MANIFEST=1 scripts/verify-public-tools.sh
+    elif [ "$SEED_STAGE1_WRAPPER" -eq 1 ]; then
+        echo
+        echo "[no-rust-stage0] skipping seed public tool surface until the bundled stage1 wrapper has full CLI parity"
     else
         run_with_compiler "$FRONT_GATE_TYPELISP_BIN" "public tool surface" scripts/verify-public-tools.sh
     fi
@@ -427,9 +440,11 @@ fi
 TYPELISP_BIN=$SEED_TYPELISP_BIN
 export TYPELISP_BIN
 run_gate "TypeLisp source formatting" scripts/check-tl-format.sh
-if [ "$WINDOWS_SEED_STAGED_RUNTIME_GAP" -eq 1 ] || [ "$LINUX_SEED_STAGED_RUNTIME_GAP" -eq 1 ]; then
+if [ "$WINDOWS_SEED_STAGED_RUNTIME_GAP" -eq 1 ] ||
+    [ "$LINUX_SEED_STAGED_RUNTIME_GAP" -eq 1 ] ||
+    [ "$SEED_STAGE1_WRAPPER" -eq 1 ]; then
     echo
-    echo "[no-rust-stage0] skipping seed build/run artifact gates until staged runtime symbols land in stage0:"
+    echo "[no-rust-stage0] skipping seed build/run artifact gates until staged runtime symbols and full seed CLI parity land in stage0:"
     echo "[no-rust-stage0]   native integration corpus, examples, stdlib modules and fixtures"
 elif [ "$HOST_OS" = linux ] && [ "$SEED_IS_STAGE1_BUNDLE" -eq 1 ]; then
     echo
@@ -442,9 +457,9 @@ else
 fi
 
 if [ "$HOST_OS" = linux ]; then
-    if [ "$LINUX_SEED_STAGED_RUNTIME_GAP" -eq 1 ]; then
+    if [ "$LINUX_SEED_STAGED_RUNTIME_GAP" -eq 1 ] || [ "$SEED_STAGE1_WRAPPER" -eq 1 ]; then
         echo
-        echo "[no-rust-stage0] skipping Linux seed build/run gates until staged runtime symbols land in stage0:"
+        echo "[no-rust-stage0] skipping Linux seed build/run gates until staged runtime symbols and full seed CLI parity land in stage0:"
         echo "[no-rust-stage0]   docs Pages build path, selfhost native generated programs,"
         echo "[no-rust-stage0]   selfhost external compiler corpus"
     elif [ "$SEED_IS_STAGE1_BUNDLE" -eq 1 ]; then

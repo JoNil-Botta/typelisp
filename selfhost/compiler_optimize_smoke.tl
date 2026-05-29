@@ -3,7 +3,8 @@
 ;; subexpression elimination, #545 copy propagation, #924 strength reduction,
 ;; #925 typed constant/cast folding, #926 CFG simplification, #930 bounds-check
 ;; elimination, #1347 CFG/dominance/SSA verification, opt-level policy, and
-;; #923 fixed-point iteration).
+;; #923 fixed-point iteration, and #1348 sparse conditional constant
+;; propagation).
 ;;
 ;; Folds constant arithmetic and typed scalar operations into `Mov` literals,
 ;; reduces safe algebraic identities, eliminates an unused pure temporary,
@@ -23,15 +24,17 @@
             (if (= (compiler-optimize-cse-self-test) 42)
               (if (= (compiler-optimize-copy-self-test) 42)
                 (if (= (compiler-optimize-bounds-self-test) 42)
-                  (if (= (compiler-optimize-cfg-self-test) 42)
-                    (if (= (compiler-optimize-ssa-self-test) 42)
-                      (if (= (compiler-optimize-level-self-test) 42)
-                        (if (= (compiler-optimize-fixed-point-self-test) 42)
-                          (if (= (compiler-optimize-global-dce-self-test) 42)
-                            (if (=
-                              (compiler-optimize-aggregate-candidate-self-test)
-                              42)
-                              (compiler-optimize-spans-self-test)
+                  (if (= (compiler-optimize-sccp-self-test) 42)
+                    (if (= (compiler-optimize-cfg-self-test) 42)
+                      (if (= (compiler-optimize-ssa-self-test) 42)
+                        (if (= (compiler-optimize-level-self-test) 42)
+                          (if (= (compiler-optimize-fixed-point-self-test) 42)
+                            (if (= (compiler-optimize-global-dce-self-test) 42)
+                              (if (=
+                                (compiler-optimize-aggregate-candidate-self-test)
+                                42)
+                                (compiler-optimize-spans-self-test)
+                                1)
                               1)
                             1)
                           1)

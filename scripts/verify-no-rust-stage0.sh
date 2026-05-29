@@ -6,8 +6,9 @@ set -eu
 # This script intentionally does not build the Rust compiler. It fetches the
 # published stage0 artifact when TYPELISP_BIN is unset, guards against
 # accidental cargo/rustc fallback by shadowing those commands with failing
-# shims, and on Linux runs capability checks against the freshly bootstrapped
-# stage1 compiler that passed the fixpoint gate.
+# shims. Linux runs capability checks against a freshly bootstrapped stage1
+# compiler; Windows runs the native MSVC link smoke and bootstrap fixpoint when
+# the published seed has the required staged runtime symbols.
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
@@ -19,9 +20,10 @@ usage: scripts/verify-no-rust-stage0.sh
 Runs the repository's no-Rust verification gate.
 If TYPELISP_BIN is unset, downloads stage0-latest with scripts/fetch-stage0.sh.
 On Linux, TYPELISP_BIN is the seed compiler: the script first runs the
-bootstrap fixpoint gate, then runs capability checks against the bootstrapped
-stage1 compiler. On Windows, it currently runs host-supported capability checks
-against the seed compiler until native stage1 bootstrap/link support lands.
+bootstrap stage1 build, then runs capability checks against the bootstrapped
+stage1 compiler. On Windows, TYPELISP_BIN is the seed compiler for capability
+checks and the script runs the native MSVC link smoke plus the bootstrap
+fixpoint gate when the seed has the required staged runtime symbols.
 EOF
 }
 
@@ -286,7 +288,6 @@ if [ "$HOST_OS" = linux ]; then
 else
     TYPELISP_BIN=$SEED_TYPELISP_BIN
     echo "[no-rust-stage0] capability compiler=$TYPELISP_BIN"
-    echo "[no-rust-stage0] Windows stage1 capability tier is deferred until native bootstrap/link support lands"
 fi
 TYPELISP_BIN=$SEED_TYPELISP_BIN
 export TYPELISP_BIN
@@ -346,9 +347,10 @@ else
     run_gate "deterministic assembly" scripts/check-deterministic-asm.sh
     if [ "$WINDOWS_SEED_STAGED_RUNTIME_GAP" -eq 1 ]; then
         echo
-        echo "[no-rust-stage0] skipping Windows selfhost MSVC link.exe build/run until the seed provides staged runtime symbols"
+        echo "[no-rust-stage0] skipping Windows selfhost MSVC link.exe build/run and bootstrap fixpoint until the seed provides staged runtime symbols"
     else
         run_gate "windows selfhost MSVC link.exe build/run" scripts/verify-windows-selfhost-msvc-link.sh
+        run_gate "windows bootstrap fixpoint" scripts/check-bootstrap-fixpoint.sh "$SEED_TYPELISP_BIN"
     fi
 fi
 TYPELISP_BIN=$SEED_TYPELISP_BIN

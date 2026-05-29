@@ -421,9 +421,32 @@ also accepts the public `compile <file.tl>` dispatcher form while preserving its
 private bootstrap file form. The wrapper smokes the stage1 `build`, `run`, and
 private `debug host-action` path on Linux. Full public CLI gates still use the
 seed compiler until every public-tool exception is ported to the wrapper. On
-Windows, the host-supported gates still run against the published stage0
-compiler until native stage1 bootstrap/link support lands. The full stage2/stage3
-fixpoint remains available through `scripts/check-bootstrap-fixpoint.sh`.
+Windows, the host-supported gates run against the published stage0 compiler and
+the no-Rust lane also runs the native MSVC link smoke plus the stage2/stage3
+Windows fixpoint when the seed has the required staged runtime symbols.
+
+The fixpoint gate is `scripts/check-bootstrap-fixpoint.sh`. On Linux it emits
+and compares Linux assembly through `as` and `ld`; on Git Bash/MSYS/Cygwin for
+Windows it emits `windows-x86_64` assembly, assembles with `clang
+--target=x86_64-pc-windows-msvc -c`, links compiler stages with MSVC
+`link.exe`, and compares `stage2.s` with `stage3.s`. From Git Bash:
+
+```sh
+scripts/fetch-stage0.sh
+scripts/check-bootstrap-fixpoint.sh target/stage0/typelisp.exe
+```
+
+From PowerShell, fetch the Windows stage0 and invoke the same script through
+`bash`:
+
+```powershell
+powershell -ep Bypass -f scripts\fetch-stage0.ps1
+bash scripts/check-bootstrap-fixpoint.sh target/stage0/typelisp.exe
+```
+
+Set `TYPELISP_WINDOWS_CLANG` or `TYPELISP_WINDOWS_LINK` to override tool
+discovery. The Windows path requires a Clang that accepts the MSVC target plus a
+Visual Studio/MSVC `link.exe` and Windows SDK installation.
 
 Smaller runnable examples, including `calc.tl`, remain in [`examples/`](examples).
 

@@ -149,12 +149,36 @@ The raw stage1 compiler accepts the public `typelisp compile` dispatcher form
 and keeps the private direct file form used by bootstrap scripts. The wrapper
 adds `typelisp doc` and a no-Rust Linux host-action executor for source build/run
 and scratch assembly plans. Full public CLI gates still use the seed compiler
-until every public-tool exception is ported to the wrapper. On Windows it exports
-the seed compiler directly until native stage1 bootstrap/link support lands. The
-full stage2/stage3 fixpoint remains available through `check-bootstrap-fixpoint.sh`.
+until every public-tool exception is ported to the wrapper. On Windows it uses
+the seed compiler for host-supported gates, then runs the native MSVC
+`link.exe` build/run smoke and the full stage2/stage3 Windows fixpoint when the
+seed has the required staged runtime symbols.
 The scripts that still run `cargo build --release` when `TYPELISP_BIN` is unset
 keep that path as a local fallback only until #795 removes the Rust-owned stage0
 dependency.
+
+`scripts/check-bootstrap-fixpoint.sh` is host-sensitive. Linux uses the existing
+`as` plus `ld` path and compares Linux `stage2.s` with `stage3.s`. Git
+Bash/MSYS/Cygwin on Windows emits `windows-x86_64` assembly, assembles each
+stage with `clang --target=x86_64-pc-windows-msvc -c`, links `stage1.exe` and
+`stage2.exe` with MSVC `link.exe`, runs both generated compilers, and compares
+the Windows `stage2.s` and `stage3.s` outputs. Local Windows prerequisites are
+Clang, Visual Studio/MSVC `link.exe`, and a Windows SDK; set
+`TYPELISP_WINDOWS_CLANG` or `TYPELISP_WINDOWS_LINK` to override discovery.
+
+Run it from Git Bash with:
+
+```sh
+scripts/fetch-stage0.sh
+scripts/check-bootstrap-fixpoint.sh target/stage0/typelisp.exe
+```
+
+Or fetch from PowerShell and invoke the shell script through `bash`:
+
+```powershell
+powershell -ep Bypass -f scripts\fetch-stage0.ps1
+bash scripts/check-bootstrap-fixpoint.sh target/stage0/typelisp.exe
+```
 
 The current raw stage1 compiler implements source-file `compile`; the wrapper
 routes that command and implements source-file `build`, package `build`, `run`,
@@ -346,9 +370,10 @@ tests, TypeLisp source format, native integration manifests, examples, stdlib
 modules, docs Pages build, selfhost native generated programs, and the selfhost
 external compiler corpus continue to use the seed compiler until their remaining
 public-tool and manifest exceptions are ported to the wrapper. The Windows job
-runs the host-supported gates against the published stage0 compiler and
-explicitly skips the Linux-only selfhost/docs checks until native stage1
-bootstrap/link support lands.
+runs the host-supported gates against the published stage0 compiler, verifies
+MSVC `link.exe` selfhost build/run support, runs the Windows bootstrap
+stage2/stage3 fixpoint, and explicitly skips the Linux-only selfhost/docs
+checks.
 
 The remaining Linux and Windows `cargo test`, `cargo fmt`, `cargo clippy`, and
 release integration jobs are temporary Rust reference coverage until #795.

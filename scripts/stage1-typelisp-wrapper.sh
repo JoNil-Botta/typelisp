@@ -16,6 +16,7 @@ STAGE1_TEST_BIN=${TYPELISP_STAGE1_TEST_BIN:-}
 STAGE1_DOC_BIN=${TYPELISP_STAGE1_DOC_BIN:-}
 STAGE1_REPL_BIN=${TYPELISP_STAGE1_REPL_BIN:-}
 STAGE1_LSP_BIN=${TYPELISP_STAGE1_LSP_BIN:-}
+STAGE1_LINT_BIN=${TYPELISP_STAGE1_LINT_BIN:-}
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 
 fail() {
@@ -36,6 +37,7 @@ stage1 wrapper commands:
   typelisp run <file.tl> [--target <target>] [--stdlib-root <dir>...] [-- args...]
   typelisp test [--check] <file.tl> [--stdlib-root <dir>...]
   typelisp fmt [--check] <file.tl>... [--stdlib-root <dir>...]
+  typelisp lint <file.tl> [--stdlib-root <dir>...]
   typelisp doc <file.tl> [-o <out.md>] [--stdlib-root <dir>...]
   typelisp repl
   typelisp lsp [--stdlib-root <dir>...]
@@ -73,6 +75,13 @@ fmt_usage() {
     cat >&2 <<'EOF'
 Usage:
     typelisp fmt [--check] <file.tl>... [--stdlib-root <dir>...]
+EOF
+}
+
+lint_usage() {
+    cat >&2 <<'EOF'
+Usage:
+    typelisp lint <file.tl> [--stdlib-root <dir>...]
 EOF
 }
 
@@ -799,6 +808,60 @@ selfhost_lsp_driver() {
     printf '%s\n' "$driver"
 }
 
+selfhost_lint_driver() {
+    require_stage1
+    require_linux_host_action
+
+    if [ -n "$STAGE1_LINT_BIN" ]; then
+        if [ ! -x "$STAGE1_LINT_BIN" ]; then
+            fail "stage1 lint driver is not executable: $STAGE1_LINT_BIN"
+        fi
+        printf '%s\n' "$STAGE1_LINT_BIN"
+        return
+    fi
+
+    cache_dir=${TYPELISP_STAGE1_DRIVER_CACHE_DIR:-"$ROOT/target/stage1-wrapper-cache"}
+    driver="$cache_dir/selfhost-lint"
+    marker="$cache_dir/selfhost-lint.stage1-bin.path"
+    build_dir="$cache_dir/lint-build"
+    roots="$build_dir/stdlib.roots"
+    source="$ROOT/selfhost/lint.tl"
+
+    rebuild=0
+    if [ ! -x "$driver" ]; then
+        rebuild=1
+    elif [ ! -f "$marker" ]; then
+        rebuild=1
+    elif [ "$(sed -n '1p' "$marker")" != "$STAGE1_BIN" ]; then
+        rebuild=1
+    elif [ "$STAGE1_BIN" -nt "$driver" ]; then
+        rebuild=1
+    elif [ "$source" -nt "$driver" ]; then
+        rebuild=1
+    fi
+
+    if [ "$rebuild" -eq 1 ]; then
+        rm -rf "$build_dir"
+        mkdir -p "$build_dir"
+        : > "$roots"
+        heartbeat_log "[stage1-wrapper] building selfhost lint driver"
+        run_with_heartbeat \
+            "stage1-wrapper selfhost/lint.tl compile" \
+            compile_source_to_exe \
+            "$source" \
+            "$driver.tmp" \
+            linux-x86_64 \
+            scalar \
+            "" \
+            "$roots" \
+            "$build_dir" > /dev/null
+        mv "$driver.tmp" "$driver"
+        printf '%s\n' "$STAGE1_BIN" > "$marker"
+    fi
+
+    printf '%s\n' "$driver"
+}
+
 selfhost_build_driver() {
     require_stage1
     require_linux_host_action
@@ -997,6 +1060,23 @@ fmt_command() {
     run_executable_with_args "$bin" "$runtime_args"
 }
 
+lint_command() {
+    if [ "$#" -eq 0 ]; then
+        echo "Error: missing file argument" >&2
+        lint_usage
+        exit 1
+    fi
+    case "$1" in
+        help | --help | -h)
+            lint_usage
+            return
+            ;;
+    esac
+
+    driver=$(selfhost_lint_driver)
+    "$driver" "$@"
+}
+
 doc_command() {
     if [ "$#" -eq 0 ]; then
         echo "Error: missing doc subcommand or file argument" >&2
@@ -1151,9 +1231,7 @@ case "$command" in
     doc) doc_command "$@" ;;
     repl) repl_command "$@" ;;
     lsp) lsp_command "$@" ;;
-    lint)
-        fail "stage1 wrapper does not support '$command' yet; use the seed compiler for this gate"
-        ;;
+    lint) lint_command "$@" ;;
     debug) debug_command "$@" ;;
     help | --help | -h) usage ;;
     *)

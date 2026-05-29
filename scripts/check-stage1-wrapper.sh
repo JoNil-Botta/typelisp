@@ -3,7 +3,7 @@ set -eu
 
 # Smoke-test a TYPELISP_BIN-compatible stage1 wrapper on the Linux host-action
 # surface: compile, tokenize, parse, check, source/package build, run, repl,
-# lsp, doc, test, fmt, and debug host-action.
+# lsp, doc, test, fmt, lint, and debug host-action.
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
@@ -668,6 +668,48 @@ printf '(define (' > "$WORKDIR/fmt-parse-error.tl"
 run_expect_failure fmt-parse-error "$COMPILER" fmt "$WORKDIR/fmt-parse-error.tl"
 assert_empty "$WORKDIR/fmt-parse-error.stdout"
 assert_nonempty "$WORKDIR/fmt-parse-error.stderr"
+
+echo "[stage1-wrapper] lint"
+run_capture lint-help "$COMPILER" lint help
+assert_empty "$WORKDIR/lint-help.stdout"
+assert_contains "$WORKDIR/lint-help.stderr" "typelisp lint <file.tl>"
+
+run_expect_failure lint-missing "$COMPILER" lint
+assert_empty "$WORKDIR/lint-missing.stdout"
+assert_contains "$WORKDIR/lint-missing.stderr" "Error: missing file argument"
+assert_contains "$WORKDIR/lint-missing.stderr" "typelisp lint <file.tl>"
+
+run_capture lint-clean "$COMPILER" lint "$SRC"
+assert_empty "$WORKDIR/lint-clean.stderr"
+assert_contains "$WORKDIR/lint-clean.stdout" "lint: 0 finding(s)"
+
+LINT_SRC="$WORKDIR/lint_ladder.tl"
+cat > "$LINT_SRC" <<'EOF'
+(define (classify [x : i64]) : i64
+  (if (= x 0)
+    10
+    (if (= x 1)
+      20
+      (if (= x 2)
+        30
+        0))))
+EOF
+run_capture lint-nested-if "$COMPILER" lint "$LINT_SRC"
+assert_empty "$WORKDIR/lint-nested-if.stderr"
+assert_contains "$WORKDIR/lint-nested-if.stdout" "lint_ladder.tl:"
+assert_contains "$WORKDIR/lint-nested-if.stdout" "nested if-ladder"
+assert_contains "$WORKDIR/lint-nested-if.stdout" "prefer cond"
+assert_contains "$WORKDIR/lint-nested-if.stdout" "match"
+assert_contains "$WORKDIR/lint-nested-if.stdout" "lint: 1 finding(s)"
+
+run_expect_failure lint-missing-file "$COMPILER" lint "$WORKDIR/missing-lint.tl"
+assert_empty "$WORKDIR/lint-missing-file.stdout"
+assert_nonempty "$WORKDIR/lint-missing-file.stderr"
+
+printf '(define (' > "$WORKDIR/lint-parse-error.tl"
+run_expect_failure lint-parse-error "$COMPILER" lint "$WORKDIR/lint-parse-error.tl"
+assert_empty "$WORKDIR/lint-parse-error.stdout"
+assert_nonempty "$WORKDIR/lint-parse-error.stderr"
 
 echo "[stage1-wrapper] debug host-action"
 mkdir -p "$(dirname -- "$HOST_ACTION_BIN")"

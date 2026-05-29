@@ -102,6 +102,7 @@ make_stage1_cli_wrapper() {
     stage1_build_bin=${4:-}
     stage1_repl_bin=${5:-}
     stage1_lsp_bin=${6:-}
+    stage1_lint_bin=${7:-}
     wrapper_dir="$ROOT/target/no-rust-stage1-wrapper"
     wrapper="$wrapper_dir/typelisp"
     rm -rf "$wrapper_dir"
@@ -121,6 +122,8 @@ TYPELISP_STAGE1_REPL_BIN='$stage1_repl_bin'
 export TYPELISP_STAGE1_REPL_BIN
 TYPELISP_STAGE1_LSP_BIN='$stage1_lsp_bin'
 export TYPELISP_STAGE1_LSP_BIN
+TYPELISP_STAGE1_LINT_BIN='$stage1_lint_bin'
+export TYPELISP_STAGE1_LINT_BIN
 TYPELISP_STAGE1_DRIVER_CACHE_DIR='$wrapper_dir/cache'
 export TYPELISP_STAGE1_DRIVER_CACHE_DIR
 exec '$ROOT/scripts/stage1-typelisp-wrapper.sh' "\$@"
@@ -143,6 +146,10 @@ build_stage1_repl_driver() {
 
 build_stage1_lsp_driver() {
     build_stage1_wrapper_driver "$1" lsp selfhost/lsp_frame.tl selfhost-lsp
+}
+
+build_stage1_lint_driver() {
+    build_stage1_wrapper_driver "$1" lint selfhost/lint.tl selfhost-lint
 }
 
 stage1_driver_staged_symbols() {
@@ -331,6 +338,7 @@ if [ "$HOST_OS" = linux ]; then
     STAGE1_DOC_BIN=
     STAGE1_BUILD_BIN=
     STAGE1_REPL_BIN=
+    STAGE1_LINT_BIN=
     STAGE1_TEST_BIN=
     STAGE1_LSP_BIN=
     STAGE1_HOST_ACTION_DRIVERS_AVAILABLE=0
@@ -365,7 +373,15 @@ if [ "$HOST_OS" = linux ]; then
     else
         echo "[no-rust-stage0] skipping eager stage1 doc/build/repl/lsp driver prebuild until staged runtime symbols land in stage0"
     fi
-    STAGE1_TYPELISP_BIN=$(make_stage1_cli_wrapper "$TYPELISP_BIN" "$STAGE1_TEST_BIN" "$STAGE1_DOC_BIN" "$STAGE1_BUILD_BIN" "$STAGE1_REPL_BIN" "$STAGE1_LSP_BIN")
+    if [ "$STAGE1_HOST_ACTION_DRIVERS_AVAILABLE" -eq 1 ]; then
+        if [ -x "$BUNDLED_STAGE1_DRIVER_DIR/selfhost-lint" ]; then
+            STAGE1_LINT_BIN="$BUNDLED_STAGE1_DRIVER_DIR/selfhost-lint"
+            echo "[no-rust-stage0] using bundled stage1 lint driver"
+        else
+            STAGE1_LINT_BIN=$(build_stage1_lint_driver "$SEED_TYPELISP_BIN")
+        fi
+    fi
+    STAGE1_TYPELISP_BIN=$(make_stage1_cli_wrapper "$TYPELISP_BIN" "$STAGE1_TEST_BIN" "$STAGE1_DOC_BIN" "$STAGE1_BUILD_BIN" "$STAGE1_REPL_BIN" "$STAGE1_LSP_BIN" "$STAGE1_LINT_BIN")
     echo
     echo "[no-rust-stage0] stage1 CLI wrapper=$STAGE1_TYPELISP_BIN"
 else

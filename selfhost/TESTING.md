@@ -159,8 +159,8 @@ dependency.
 The current raw stage1 compiler implements source-file `compile`; the wrapper
 routes that command and implements `build`, `run`, `fmt`, `doc`, `doc --test`,
 and private `debug host-action` directly enough for the Linux capability smoke,
-deterministic assembly gate, selfhost compile manifest, and stdlib documentation
-gate.
+deterministic assembly gate, selfhost compile manifest, stdlib documentation
+gate, and stdlib selfhost frontend verifier.
 Direct `selfhost/build.tl` package-build parity is covered by
 `scripts/verify-public-tools.sh`; top-level stage1 wrapper routing for package
 builds is still staged separately. Seed-only public-tool exceptions remain:
@@ -333,8 +333,9 @@ the artifact.
 Pull requests get Linux and Windows no-Rust coverage from
 `scripts/verify-no-rust-stage0.sh`. The Linux job first builds a fresh stage1
 compiler from published stage0, then smoke-tests the stage1 CLI/host-action
-wrapper, deterministic assembly, the selfhost compile manifest, and stdlib
-documentation through that wrapper. Public tools, repository doctests, inline
+wrapper, deterministic assembly, the selfhost compile manifest, stdlib
+documentation, and the stdlib selfhost frontend verifier through that wrapper.
+Public tools, repository doctests, inline
 tests, TypeLisp source format, native integration manifests, examples, stdlib
 modules, docs Pages build, selfhost native generated programs, and the selfhost
 external compiler corpus continue to use the seed compiler until their remaining

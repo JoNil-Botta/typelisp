@@ -182,6 +182,12 @@ Named remaining blockers:
   binding, nested refutability, enum/scalar/string/bool exhaustiveness, literal
   type checks, wildcard reachability, Maybe/Result matches, and direct vs
   inline-compound recursive enum cases.
+- #1523 adds temporary Rust stage0 tests for the numeric cast matrix:
+  typechecker accepts for int/char/f32/f64 casts plus backend emission of
+  `cvtsi2sd`/`cvtsi2ss` and `cvttsd2si`/`cvttss2si`. The no-Rust replacement
+  path remains the selfhost typechecker/backend coverage under #1042/#1044;
+  the Rust tests can be deleted once `compiler_typecheck.tl` and
+  `compiler_backend.tl` assert the same accepted casts and emit shapes.
 - #1507 adds embedded-stdlib Rust loader tests in `src/module.rs` for the
   temporary Rust stage0 fallback provider: manifest coverage for checked-in
   `stdlib/**/*.tl`, virtual canonical path round-tripping, final-fallback load,

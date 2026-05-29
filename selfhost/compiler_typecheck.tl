@@ -421,6 +421,37 @@
 (module main)
 (define (main) : i64 (get))")
 
+(define (compiler-typecheck-import-alias-source) : String
+  "(module data)
+(define (get) : i64 20)
+(defenum Maybe (None) (Some i64))
+(defstruct Point (x i64))
+(module main)
+(import \"data.tl\" module data :as d)
+(define (main) : i64
+  (+
+    (d/get)
+    (+
+      (let ([p : d/Point (d/Point 7)])
+        (struct-get p x))
+      (match (d/Some 3)
+        [(d/Some v) v]
+        [d/None 0]))))")
+
+(define (compiler-typecheck-import-alias-missing-source) : String
+  "(module data)
+(define (get) : i64 20)
+(module main)
+(import \"data.tl\" module data :as d)
+(define (main) : i64 (missing/get))")
+
+(define (compiler-typecheck-import-alias-missing-member-source) : String
+  "(module data)
+(define (get) : i64 20)
+(module main)
+(import \"data.tl\" module data :as d)
+(define (main) : i64 (d/missing))")
+
 (define (compiler-typecheck-repr-c-layout-source) : String
   "(defstruct Packet
   (:repr c)
@@ -527,34 +558,60 @@
             "typecheck: recursive repr c struct layout cycle involving Node"))))))
 
 (define (compiler-typecheck-nominal-tests-ok?) : bool
-  (and
-    (compiler-typecheck-ok? (compiler-typecheck-nominal-source))
-    (and
-      (compiler-typecheck-ok? (compiler-typecheck-comptime-decl-source))
-      (and
-        (compiler-typecheck-error-ok?
-          (compiler-typecheck-match-mismatch-source)
-          "typecheck: match arms must agree")
-        (and
-          (compiler-typecheck-error-ok?
-            (compiler-typecheck-unknown-variant-source)
-            "typecheck: unknown variant Other")
-          (and
-            (compiler-typecheck-error-ok?
-              (compiler-typecheck-unknown-field-source)
-              "typecheck: unknown struct field Point.z")
-            (and
-              (compiler-typecheck-error-ok?
-                (compiler-typecheck-duplicate-variant-source)
-                "symbols: duplicate enum variant Same")
-              (and
-                (compiler-typecheck-ok?
-                  (compiler-typecheck-module-qualified-source))
-                (and
-                  (compiler-typecheck-error-ok?
-                    (compiler-typecheck-module-unqualified-import-source)
-                    "typecheck: unbound name get")
-                  (compiler-typecheck-repr-c-tests-ok?))))))))))
+  (let
+    [ok : bool true]
+    (begin
+      (if (compiler-typecheck-ok? (compiler-typecheck-nominal-source))
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-ok? (compiler-typecheck-comptime-decl-source))
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        (compiler-typecheck-match-mismatch-source)
+        "typecheck: match arms must agree")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        (compiler-typecheck-unknown-variant-source)
+        "typecheck: unknown variant Other")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        (compiler-typecheck-unknown-field-source)
+        "typecheck: unknown struct field Point.z")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        (compiler-typecheck-duplicate-variant-source)
+        "symbols: duplicate enum variant Same")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-ok? (compiler-typecheck-module-qualified-source))
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        (compiler-typecheck-module-unqualified-import-source)
+        "typecheck: unbound name get")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-ok? (compiler-typecheck-import-alias-source))
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        (compiler-typecheck-import-alias-missing-source)
+        "typecheck: unbound name missing/get")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        (compiler-typecheck-import-alias-missing-member-source)
+        "typecheck: unbound name d/missing")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-repr-c-tests-ok?)
+        unit
+        (set! ok false))
+      ok)))
 
 (define (compiler-typecheck-region-builtin-source) : String
   "(define (main) : i64

@@ -339,6 +339,34 @@
     seen
     CompilerLoadRootNil))
 
+(define (compiler-load-alias-decl-list
+  [import-path : String]
+  [expected-module : AstMaybeModuleName]
+  [alias : AstMaybeImportAlias]
+  [rest : AstDeclList]) : AstDeclList
+  (match alias
+    [(AstSomeImportAlias _)
+      (AstDeclCons
+        (AstDeclImport (AstImportSpec import-path expected-module alias))
+        rest)]
+    [(AstNoImportAlias) rest]))
+
+(define (compiler-load-alias-path-list
+  [importer-path : String]
+  [alias : AstMaybeImportAlias]
+  [rest : AstDeclPathList]) : AstDeclPathList
+  (match alias
+    [(AstSomeImportAlias _) (AstDeclPathCons importer-path rest)]
+    [(AstNoImportAlias) rest]))
+
+(define (compiler-load-alias-module-list
+  [importer-module : String]
+  [alias : AstMaybeImportAlias]
+  [rest : AstDeclModuleList]) : AstDeclModuleList
+  (match alias
+    [(AstSomeImportAlias _) (AstDeclModuleCons importer-module rest)]
+    [(AstNoImportAlias) rest]))
+
 (define (compiler-load-decls-with-module-and-roots
   [decls : AstDeclList]
   [importer-path : String]
@@ -350,7 +378,7 @@
       (OkCompilerLoadWithPaths AstDeclNil AstDeclPathNil AstDeclModuleNil seen)]
     [(AstDeclCons decl rest)
       (match decl
-        [(AstDeclImport (AstImportSpec import-path expected-module _))
+        [(AstDeclImport (AstImportSpec import-path expected-module alias))
           (match (compiler-load-resolve-import-result-with-roots
             importer-path
             import-path
@@ -380,13 +408,23 @@
                       (OkCompilerLoadWithPaths
                         (compiler-load-decl-list-append
                           imported-decls
-                          rest-decls)
+                          (compiler-load-alias-decl-list
+                            resolved
+                            expected-module
+                            alias
+                            rest-decls))
                         (compiler-load-decl-path-list-append
                           imported-paths
-                          rest-paths)
+                          (compiler-load-alias-path-list
+                            importer-path
+                            alias
+                            rest-paths))
                         (compiler-load-decl-module-list-append
                           imported-modules
-                          rest-modules)
+                          (compiler-load-alias-module-list
+                            importer-module
+                            alias
+                            rest-modules))
                         rest-seen)]
                     [(ErrCompilerLoadWithPaths diag)
                       (ErrCompilerLoadWithPaths diag)])]
@@ -621,6 +659,33 @@
     [(AstDeclNil) 0]
     [(AstDeclCons _ rest) (+ 1 (compiler-load-decl-list-count rest))]))
 
+(define (compiler-load-decl-list-has-import-alias?
+  [decls : AstDeclList]
+  [target-module : String]
+  [target-alias : String]) : bool
+  (match decls
+    [(AstDeclNil) false]
+    [(AstDeclCons decl rest)
+      (match decl
+        [(AstDeclImport
+            (AstImportSpec
+              _
+              (AstSomeModuleName module-name)
+              (AstSomeImportAlias alias)))
+          (if (and
+            (string-eq module-name target-module)
+            (string-eq alias target-alias))
+            true
+            (compiler-load-decl-list-has-import-alias?
+              rest
+              target-module
+              target-alias))]
+        [_
+          (compiler-load-decl-list-has-import-alias?
+            rest
+            target-module
+            target-alias)])]))
+
 (define (compiler-load-two-modules?
   [modules : AstDeclModuleList]
   [want : String]) : bool
@@ -635,12 +700,24 @@
         first
         (AstDeclModuleCons
           second
-          (AstDeclModuleCons third (AstDeclModuleCons fourth AstDeclModuleNil))))
+          (AstDeclModuleCons
+            third
+            (AstDeclModuleCons
+              fourth
+              (AstDeclModuleCons
+                fifth
+                (AstDeclModuleCons sixth AstDeclModuleNil))))))
       (and
         (string-eq first "smoke.entry")
         (and
           (string-eq second "smoke.dep")
-          (and (string-eq third "smoke.dep") (string-eq fourth "smoke.entry"))))]
+          (and
+            (string-eq third "smoke.dep")
+            (and
+              (string-eq fourth "smoke.dep")
+              (and
+                (string-eq fifth "smoke.entry")
+                (string-eq sixth "smoke.entry"))))))]
     [_ false]))
 
 (define (compiler-load-normalize-ok?) : bool
@@ -723,7 +800,7 @@
       (sym-i64-empty))
       [(OkCompilerLoadWithPaths decls _ modules seen)
         (and
-          (= (compiler-load-decl-list-count decls) 4)
+          (= (compiler-load-decl-list-count decls) 6)
           (and
             (compiler-load-entry-cycle-modules? modules)
             (and
@@ -759,6 +836,24 @@
             (sym-i64-contains seen "target/compiler_load_legacy_dep.tl")))]
       [(ErrCompilerLoadWithPaths _) false])))
 
+(define (compiler-load-import-alias-preserved-ok?) : bool
+  (begin
+    (write-file
+      "target/cl_alias_dep.tl"
+      "(module alias.dep)
+(define (get) : i64 7)")
+    (write-file
+      "target/cl_alias_entry.tl"
+      "(import \"cl_alias_dep.tl\" module alias.dep :as dep)
+(module alias.entry)
+(define (main) : i64 (dep/get))")
+    (match (compiler-load-file-with-paths
+      "target/cl_alias_entry.tl"
+      (sym-i64-empty))
+      [(OkCompilerLoadWithPaths decls _ _ _)
+        (compiler-load-decl-list-has-import-alias? decls "alias.dep" "dep")]
+      [(ErrCompilerLoadWithPaths _) false])))
+
 ;; Diamond import dedup (#1074 / #1041): entry imports A and B, both of which
 ;; import C; C must load exactly once. Writes fixture modules under target/ and
 ;; loads through the file loader, mirroring the existing dedup/cycle self-test.
@@ -789,7 +884,7 @@
       (sym-i64-empty))
       [(OkCompilerLoadWithPaths decls _ _ seen)
         (and
-          (= (compiler-load-decl-list-count decls) 8)
+          (= (compiler-load-decl-list-count decls) 12)
           (and
             (sym-i64-contains seen "diamond.c")
             (and
@@ -826,7 +921,7 @@
       (sym-i64-empty))
       [(OkCompilerLoadWithPaths decls _ _ seen)
         (and
-          (= (compiler-load-decl-list-count decls) 8)
+          (= (compiler-load-decl-list-count decls) 11)
           (and
             (sym-i64-contains seen "tr.c")
             (and
@@ -1622,59 +1717,65 @@
             (if (compiler-load-seen-module-ok?)
               (if (compiler-load-file-import-dedup-cycle-ok?)
                 (if (compiler-load-file-fallback-path-dedup-ok?)
-                  (if (compiler-load-diamond-import-ok?)
-                    (if (compiler-load-transitive-import-ok?)
-                      (if (compiler-load-missing-import-ok?)
-                        (if (compiler-load-imported-parse-error-path-ok?)
-                          (if (compiler-load-imported-duplicate-module-path-ok?)
-                            (if (compiler-load-stdlib-root-fallback-ok?)
-                              (if (compiler-load-stdlib-searched-root-ok?)
-                                (if (compiler-load-stdlib-unresolved-ok?)
-                                  (if (compiler-load-pkg-manifest-ok?)
-                                    (if (compiler-load-pkg-resolve-ok?)
-                                      (if (compiler-load-pkg-parent-dir-ok?)
-                                        42
+                  (if (compiler-load-import-alias-preserved-ok?)
+                    (if (compiler-load-diamond-import-ok?)
+                      (if (compiler-load-transitive-import-ok?)
+                        (if (compiler-load-missing-import-ok?)
+                          (if (compiler-load-imported-parse-error-path-ok?)
+                            (if (compiler-load-imported-duplicate-module-path-ok?)
+                              (if (compiler-load-stdlib-root-fallback-ok?)
+                                (if (compiler-load-stdlib-searched-root-ok?)
+                                  (if (compiler-load-stdlib-unresolved-ok?)
+                                    (if (compiler-load-pkg-manifest-ok?)
+                                      (if (compiler-load-pkg-resolve-ok?)
+                                        (if (compiler-load-pkg-parent-dir-ok?)
+                                          42
+                                          (begin
+                                            (panic
+                                              "compiler-load: pkg parent-dir smoke mismatch")
+                                            0))
                                         (begin
                                           (panic
-                                            "compiler-load: pkg parent-dir smoke mismatch")
+                                            "compiler-load: pkg resolve smoke mismatch")
                                           0))
                                       (begin
                                         (panic
-                                          "compiler-load: pkg resolve smoke mismatch")
+                                          "compiler-load: pkg manifest smoke mismatch")
                                         0))
                                     (begin
                                       (panic
-                                        "compiler-load: pkg manifest smoke mismatch")
+                                        "compiler-load: stdlib unresolved smoke mismatch")
                                       0))
                                   (begin
                                     (panic
-                                      "compiler-load: stdlib unresolved smoke mismatch")
+                                      "compiler-load: stdlib searched root smoke mismatch")
                                     0))
                                 (begin
                                   (panic
-                                    "compiler-load: stdlib searched root smoke mismatch")
+                                    "compiler-load: stdlib root fallback smoke mismatch")
                                   0))
                               (begin
                                 (panic
-                                  "compiler-load: stdlib root fallback smoke mismatch")
+                                  "compiler-load: imported duplicate module path smoke mismatch")
                                 0))
                             (begin
                               (panic
-                                "compiler-load: imported duplicate module path smoke mismatch")
+                                "compiler-load: imported parse error path smoke mismatch")
                               0))
                           (begin
                             (panic
-                              "compiler-load: imported parse error path smoke mismatch")
+                              "compiler-load: missing import smoke mismatch")
                             0))
                         (begin
-                          (panic "compiler-load: missing import smoke mismatch")
+                          (panic
+                            "compiler-load: transitive import smoke mismatch")
                           0))
                       (begin
-                        (panic
-                          "compiler-load: transitive import smoke mismatch")
+                        (panic "compiler-load: diamond import smoke mismatch")
                         0))
                     (begin
-                      (panic "compiler-load: diamond import smoke mismatch")
+                      (panic
+                        "compiler-load: import alias preservation smoke mismatch")
                       0))
                   (begin
                     (panic "compiler-load: fallback path dedup smoke mismatch")

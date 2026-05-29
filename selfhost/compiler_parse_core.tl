@@ -2390,7 +2390,7 @@
   [tail : SpannedSexpr]) : ResultAstDecl
   (match tail
     [(SpSCons (SpSSym as-name _) (SpSCons (SpSSym alias _) (SpSNil _) _) _)
-      (if (string-eq as-name "as")
+      (if (or (string-eq as-name "as") (string-eq as-name ":as"))
         (parse-ast-import-spec path module-name (AstSomeImportAlias alias))
         (ErrAstDecl "parse: malformed import"))]
     [_ (ErrAstDecl "parse: malformed import")]))
@@ -2642,7 +2642,7 @@
     [(ErrAstProgram _) false]))
 
 (define (compiler-parse-import-metadata-ok?) : bool
-  (match (parse-ast-source "(import \"stdlib/io.tl\" module std.io as io)")
+  (match (parse-ast-source "(import \"stdlib/io.tl\" module std.io :as io)")
     [(OkAstProgram (AstProgram decls))
       (match decls
         [(AstDeclCons

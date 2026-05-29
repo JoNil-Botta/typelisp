@@ -57,13 +57,35 @@ to_unix_path() {
     fi
 }
 
-find_clang_dir() {
+to_windows_path() {
+    if command -v cygpath >/dev/null 2>&1; then
+        cygpath -w "$1"
+    else
+        printf '%s\n' "$1"
+    fi
+}
+
+short_windows_path() {
+    win_path=$(to_windows_path "$1")
+    if command -v cmd.exe >/dev/null 2>&1; then
+        short_path=$(cmd.exe //C "for %I in (\"$win_path\") do @echo %~sI" |
+            tr -d '\r' |
+            sed -n '1p')
+        if [ -n "$short_path" ]; then
+            printf '%s\n' "$short_path"
+            return 0
+        fi
+    fi
+    printf '%s\n' "$win_path"
+}
+
+find_clang() {
     if command -v clang.exe >/dev/null 2>&1; then
-        dirname -- "$(command -v clang.exe)"
+        command -v clang.exe
         return 0
     fi
     if command -v clang >/dev/null 2>&1; then
-        dirname -- "$(command -v clang)"
+        command -v clang
         return 0
     fi
 
@@ -74,7 +96,7 @@ find_clang_dir() {
         "/c/Program Files/Microsoft Visual Studio/2022/Community/VC/Tools/Llvm/x64/bin" \
         "/c/Program Files (x86)/Microsoft Visual Studio/2022/BuildTools/VC/Tools/Llvm/x64/bin"; do
         if [ -x "$candidate_dir/clang.exe" ]; then
-            printf '%s\n' "$candidate_dir"
+            printf '%s\n' "$candidate_dir/clang.exe"
             return 0
         fi
     done
@@ -84,7 +106,7 @@ find_clang_dir() {
             tr -d '\r' |
             sed -n '1p')
         if [ -n "$ps_clang" ]; then
-            dirname -- "$(to_unix_path "$ps_clang")"
+            to_unix_path "$ps_clang"
             return 0
         fi
     fi
@@ -112,14 +134,15 @@ assert_contains() {
 }
 
 if [ -z "${TYPELISP_WINDOWS_CLANG:-}" ]; then
-    CLANG_DIR=$(find_clang_dir || true)
-    if [ -z "$CLANG_DIR" ]; then
+    CLANG_PATH=$(find_clang || true)
+    if [ -z "$CLANG_PATH" ]; then
         fail "missing assembler: clang"
     fi
-    PATH="$CLANG_DIR:$PATH"
-    export PATH
-    TYPELISP_WINDOWS_CLANG=clang.exe
+    TYPELISP_WINDOWS_CLANG=$(short_windows_path "$CLANG_PATH")
 fi
+case "$TYPELISP_WINDOWS_CLANG" in
+    *" "*) fail "assembler path contains spaces after short-path conversion: $TYPELISP_WINDOWS_CLANG" ;;
+esac
 export TYPELISP_WINDOWS_CLANG
 echo "[windows-selfhost-msvc] assembler=$TYPELISP_WINDOWS_CLANG"
 

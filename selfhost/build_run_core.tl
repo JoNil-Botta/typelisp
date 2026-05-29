@@ -54,6 +54,11 @@
       (OkSourceToolTarget (BackendTargetWindows))
       (ErrSourceToolTarget (string-append "unknown target " value)))))
 
+(define (source-tool-target-supported? [target : CompilerBackendTarget]) : bool
+  (match target
+    [(BackendTargetLinux) true]
+    [(BackendTargetWindows) true]))
+
 (define (source-tool-backend-mode [command : String] [value : String]) : ResultSourceToolBackendMode
   (if (string-eq value "scalar")
     (OkSourceToolBackendMode)

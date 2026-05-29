@@ -24,7 +24,7 @@
   (let [x : i64 1] (array-set! items 0 (& x))))")
 
 (define (compiler-typecheck-reference-arena-store-escape-source) : String
-  "(define (main [items : (Array (& r String))]) : unit
+  "(define (main [items : (Array (& r str))]) : unit
   (with-arena r
     (let [s : String (int->string 1)]
       (array-set! items 0 (& s)))))")

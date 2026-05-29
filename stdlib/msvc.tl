@@ -14,19 +14,19 @@
 ;;;; (define tool : ResultMsvcTool
 ;;;;   (msvc-find-tool "x86_64-pc-windows-msvc" "link.exe"))
 ;;;; ```
-(import "stdlib/env.tl")
+(import "env.tl")
 
-(import "stdlib/io.tl")
+(import "io.tl")
 
-(import "stdlib/fs.tl")
+(import "fs.tl")
 
-(import "stdlib/process.tl")
+(import "process.tl")
 
-(import "stdlib/string.tl")
+(import "string.tl")
 
-(import "stdlib/windows_sdk.tl")
+(import "windows_sdk.tl")
 
-(import "stdlib/windows_setup.tl")
+(import "windows_setup.tl")
 
 ;;; Resolved MSVC tool: executable path plus the command-environment overrides.
 (defstruct MsvcTool

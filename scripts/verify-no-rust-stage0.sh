@@ -246,6 +246,7 @@ if [ "$HOST_OS" = linux ]; then
 else
     run_gate "selfhost compile manifest" scripts/verify-selfhost-compile-manifest.sh
     run_gate "deterministic assembly" scripts/check-deterministic-asm.sh
+    run_gate "windows selfhost MSVC link.exe build/run" scripts/verify-windows-selfhost-msvc-link.sh
 fi
 TYPELISP_BIN=$SEED_TYPELISP_BIN
 export TYPELISP_BIN

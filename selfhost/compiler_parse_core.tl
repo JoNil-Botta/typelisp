@@ -302,6 +302,9 @@
 (define (compiler-parse-tag-ty-string) : i64
   112)
 
+(define (compiler-parse-tag-ty-str) : i64
+  116)
+
 (define (compiler-parse-tag-unit) : i64
   113)
 
@@ -572,6 +575,7 @@
       (set! out (sym-i64-bind out "bool" (compiler-parse-tag-ty-bool)))
       (set! out (sym-i64-bind out "char" (compiler-parse-tag-ty-char)))
       (set! out (sym-i64-bind out "String" (compiler-parse-tag-ty-string)))
+      (set! out (sym-i64-bind out "str" (compiler-parse-tag-ty-str)))
       (set! out (sym-i64-bind out "unit" (compiler-parse-tag-unit)))
       (set! out (sym-i64-bind out "never" (compiler-parse-tag-ty-never)))
       (set! out (sym-i64-bind out "->" (compiler-parse-tag-ty-func)))
@@ -851,6 +855,7 @@
           [(= tag (compiler-parse-tag-ty-bool)) (OkAstType (AstTyBool))]
           [(= tag (compiler-parse-tag-ty-char)) (OkAstType (AstTyChar))]
           [(= tag (compiler-parse-tag-ty-string)) (OkAstType (AstTyString))]
+          [(= tag (compiler-parse-tag-ty-str)) (OkAstType (AstTyStr))]
           [(= tag (compiler-parse-tag-unit)) (OkAstType (AstTyUnit))]
           [(= tag (compiler-parse-tag-ty-never)) (OkAstType (AstTyNever))]
           [else (OkAstType (AstTyVar name))]))]
@@ -2877,7 +2882,7 @@
   (compiler-parse-ok? (compiler-parse-raw-pointer-ops-source)))
 
 (define (compiler-parse-reference-source) : String
-  "(define (use [s : (& r String)] [items : (&mut phase (Array i64))]) : unit unit)")
+  "(define (use [s : (& r String)] [view : (& r str)] [items : (&mut phase (Array i64))]) : unit unit)")
 
 (define (compiler-parse-reference-ok?) : bool
   (match (parse-ast-source (compiler-parse-reference-source))
@@ -2888,12 +2893,16 @@
             [(AstParamCons
                 (AstParam _ (AstTyRef region (AstTyString)) false)
                 (AstParamCons
-                  (AstParam
-                    _
-                    (AstTyMutRef phase (AstTyDynArray (AstTyI64)))
-                    false)
-                  AstParamNil))
-              (and (string-eq region "r") (string-eq phase "phase"))]
+                  (AstParam _ (AstTyRef view-region (AstTyStr)) false)
+                  (AstParamCons
+                    (AstParam
+                      _
+                      (AstTyMutRef phase (AstTyDynArray (AstTyI64)))
+                      false)
+                    AstParamNil)))
+              (and
+                (string-eq region "r")
+                (and (string-eq view-region "r") (string-eq phase "phase")))]
             [_ false])]
         [_ false])]
     [(ErrAstProgram _) false]))

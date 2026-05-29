@@ -702,20 +702,138 @@
   (with ([h 1 (close h)])
     h))")
 
+(define (compiler-typecheck-resource-with-nested-source) : String
+  "(define (close [h : i64]) : unit unit)
+(define (main) : i64
+  (with ([outer 1 close])
+    (with ([inner (+ outer 1) close])
+      (+ outer inner))))")
+
+(define (compiler-typecheck-resource-with-let-source) : String
+  "(define (close [h : i64]) : unit unit)
+(define (main) : i64
+  (with ([h 1 close])
+    (let ([copy h])
+      copy)))")
+
+(define (compiler-typecheck-resource-with-escape-source) : String
+  "(define (close [h : i64]) : unit unit)
+(define (main) : i64
+  (with ([h 1 close])
+    h))")
+
+(define (compiler-typecheck-resource-with-tuple-store-source) : String
+  "(define (close [h : i64]) : unit unit)
+(define (main) : i64
+  (with ([h 1 close])
+    (let ([t : (Tuple i64 i64) (tuple h 2)])
+      0)))")
+
+(define (compiler-typecheck-resource-with-array-store-source) : String
+  "(define (close [h : i64]) : unit unit)
+(define (main) : i64
+  (with ([h 1 close])
+    (let ([items : (Array i64 2) (array h 2)])
+      0)))")
+
+(define (compiler-typecheck-resource-with-struct-store-source) : String
+  "(defstruct Box (value i64))
+(define (close [h : i64]) : unit unit)
+(define (main) : i64
+  (with ([h 1 close])
+    (let ([box : Box (Box h)])
+      0)))")
+
+(define (compiler-typecheck-resource-with-enum-store-source) : String
+  "(defenum Maybe (Some i64))
+(define (close [h : i64]) : unit unit)
+(define (main) : i64
+  (with ([h 1 close])
+    (let ([m : Maybe (Some h)])
+      0)))")
+
+(define (compiler-typecheck-resource-with-lambda-capture-source) : String
+  "(define (close [h : i64]) : unit unit)
+(define (main) : i64
+  (with ([h 1 close])
+    ((lambda () : i64 h))))")
+
+(define (compiler-typecheck-resource-with-transfer-source) : String
+  "(define (close [h : i64]) : unit unit)
+(define (main) : i64
+  (with ([h 1 close]
+         [copy h close])
+    copy))")
+
+(define (compiler-typecheck-resource-with-assignment-source) : String
+  "(define (close [h : i64]) : unit unit)
+(define (main) : i64
+  (let ([slot : i64 0])
+    (with ([h 1 close])
+      (set! slot h))))")
+
+(define (compiler-typecheck-resource-with-shadow-source) : String
+  "(define (close [h : i64]) : unit unit)
+(define (main) : i64
+  (with ([h 1 close])
+    (let ([h : i64 2])
+      ((lambda () : i64 h)))))")
+
 (define (compiler-typecheck-resource-with-tests-ok?) : bool
   (and
     (compiler-typecheck-ok? (compiler-typecheck-resource-with-source))
     (and
-      (compiler-typecheck-error-ok?
-        (compiler-typecheck-resource-with-cleanup-mismatch-source)
-        "typecheck: with cleanup function type mismatch")
+      (compiler-typecheck-ok? (compiler-typecheck-resource-with-nested-source))
       (and
-        (compiler-typecheck-error-ok?
-          (compiler-typecheck-resource-with-cleanup-return-source)
-          "typecheck: with cleanup function type mismatch")
-        (compiler-typecheck-error-ok?
-          (compiler-typecheck-resource-with-cleanup-expression-source)
-          "typecheck: with cleanup must be a direct function name")))))
+        (compiler-typecheck-ok?
+          (compiler-typecheck-resource-with-shadow-source))
+        (and
+          (compiler-typecheck-error-ok?
+            (compiler-typecheck-resource-with-cleanup-mismatch-source)
+            "typecheck: with cleanup function type mismatch")
+          (and
+            (compiler-typecheck-error-ok?
+              (compiler-typecheck-resource-with-cleanup-return-source)
+              "typecheck: with cleanup function type mismatch")
+            (and
+              (compiler-typecheck-error-ok?
+                (compiler-typecheck-resource-with-cleanup-expression-source)
+                "typecheck: with cleanup must be a direct function name")
+              (and
+                (compiler-typecheck-error-ok?
+                  (compiler-typecheck-resource-with-let-source)
+                  "typecheck: ordinary let cannot own cleanup-required resource; use with")
+                (and
+                  (compiler-typecheck-error-ok?
+                    (compiler-typecheck-resource-with-escape-source)
+                    "typecheck: cleanup-required resource would escape with scope")
+                  (and
+                    (compiler-typecheck-error-ok?
+                      (compiler-typecheck-resource-with-tuple-store-source)
+                      "typecheck: cannot store cleanup-required resource in ordinary aggregate")
+                    (and
+                      (compiler-typecheck-error-ok?
+                        (compiler-typecheck-resource-with-array-store-source)
+                        "typecheck: cannot store cleanup-required resource in ordinary aggregate")
+                      (and
+                        (compiler-typecheck-error-ok?
+                          (compiler-typecheck-resource-with-struct-store-source)
+                          "typecheck: cannot store cleanup-required resource in ordinary aggregate")
+                        (and
+                          (compiler-typecheck-error-ok?
+                            (compiler-typecheck-resource-with-enum-store-source)
+                            "typecheck: cannot store cleanup-required resource in ordinary aggregate")
+                          (and
+                            (compiler-typecheck-error-ok?
+                              (compiler-typecheck-resource-with-lambda-capture-source)
+                              "typecheck: lambda cannot capture cleanup-required resource; resource value would escape")
+                            (and
+                              (compiler-typecheck-error-ok?
+                                (compiler-typecheck-resource-with-transfer-source)
+                                "typecheck: cleanup-required resource already has a cleanup owner")
+                              (compiler-typecheck-error-ok?
+                                (compiler-typecheck-resource-with-assignment-source)
+                                "typecheck: cannot store cleanup-required resource in longer-lived binding"))))))))))))))))
 
 (define (compiler-typecheck-result-try-tests-ok?) : bool
   (and
@@ -966,58 +1084,204 @@
 (define (compiler-typecheck-reference-mut-source) : String
   "(define (main [n : (&mut phase i64)]) : unit unit)")
 
+(define (compiler-typecheck-reference-str-source) : String
+  "(define (take [s : (& text str)]) : unit unit)
+(define (main [text : String]) : unit
+  (let [view : (& text str) (& text)]
+    (take view)))")
+
+(define (compiler-typecheck-reference-str-region-source) : String
+  "(define (take [s : (& r str)]) : unit unit)
+(define (main) : unit
+  (with-arena r
+    (let [text : String (int->string 41)]
+      (take (& r text)))))")
+
+(define (compiler-typecheck-str-value-source) : String
+  "(define (main [s : str]) : unit unit)")
+
+(define (compiler-typecheck-str-return-source) : String
+  "(define (main) : str \"x\")")
+
+(define (compiler-typecheck-str-local-source) : String
+  "(define (main) : unit (let [s : str \"x\"] unit))")
+
+(define (compiler-typecheck-str-global-source) : String
+  "(define bad : str \"x\")")
+
+(define (compiler-typecheck-str-field-source) : String
+  "(defstruct Bad (s str))")
+
+(define (compiler-typecheck-str-variant-source) : String
+  "(defenum Bad (S str))")
+
+(define (compiler-typecheck-str-mut-ref-source) : String
+  "(define (main [s : (&mut text str)]) : unit unit)")
+
 (define (compiler-typecheck-reference-render-ok?) : bool
-  (and
-    (string-eq (tc-type-render (AstTyRef "r" (AstTyString))) "(& r String)")
-    (and
+  (let
+    [string-ref-render-ok : bool
+      (string-eq (tc-type-render (AstTyRef "r" (AstTyString))) "(& r String)")]
+    [str-ref-render-ok : bool
+      (string-eq (tc-type-render (AstTyRef "r" (AstTyStr))) "(& r str)")]
+    [mut-ref-render-ok : bool
       (string-eq
         (tc-type-render (AstTyMutRef "phase" (AstTyDynArray (AstTyI64))))
-        "(&mut phase (Array i64))")
+        "(&mut phase (Array i64))")]
+    [str-eq-ok : bool (tc-type-eq (AstTyStr) (AstTyStr))]
+    [str-distinct-ok : bool (not (tc-type-eq (AstTyStr) (AstTyString)))]
+    [str-move-kind-ok : bool (tc-type-move-only? (AstTyStr))]
+    [str-ref-move-kind-ok : bool (tc-type-copyable? (AstTyRef "r" (AstTyStr)))]
+    [region-erased-eq-ok : bool
+      (tc-type-eq
+        (AstTyRef "r" (AstTyRegion "inner" (AstTyI64)))
+        (AstTyRef "r" (AstTyI64)))]
+    [region-distinct-ok : bool
+      (not (tc-type-eq (AstTyRef "r" (AstTyI64)) (AstTyRef "s" (AstTyI64))))]
+    [mut-distinct-ok : bool
+      (not (tc-type-eq (AstTyRef "r" (AstTyI64)) (AstTyMutRef "r" (AstTyI64))))]
+    [region-contains-ok : bool
+      (tc-type-contains-region (AstTyRef "r" (AstTyI64)) "r")]
+    [inner-region-contains-ok : bool
+      (tc-type-contains-region
+        (AstTyMutRef "phase" (AstTyRegion "inner" (AstTyString)))
+        "inner")]
+    (and
+      string-ref-render-ok
       (and
-        (tc-type-eq
-          (AstTyRef "r" (AstTyRegion "inner" (AstTyI64)))
-          (AstTyRef "r" (AstTyI64)))
+        str-ref-render-ok
         (and
-          (not (tc-type-eq (AstTyRef "r" (AstTyI64)) (AstTyRef "s" (AstTyI64))))
+          mut-ref-render-ok
           (and
-            (not
-              (tc-type-eq
-                (AstTyRef "r" (AstTyI64))
-                (AstTyMutRef "r" (AstTyI64))))
+            str-eq-ok
             (and
-              (tc-type-contains-region (AstTyRef "r" (AstTyI64)) "r")
-              (tc-type-contains-region
-                (AstTyMutRef "phase" (AstTyRegion "inner" (AstTyString)))
-                "inner"))))))))
+              str-distinct-ok
+              (and
+                str-move-kind-ok
+                (and
+                  str-ref-move-kind-ok
+                  (and
+                    region-erased-eq-ok
+                    (and
+                      region-distinct-ok
+                      (and
+                        mut-distinct-ok
+                        (and region-contains-ok inner-region-contains-ok)))))))))))))
 
 (define (compiler-typecheck-reference-tests-ok?) : bool
-  (and
-    (compiler-typecheck-reference-render-ok?)
-    (and
-      (compiler-typecheck-ok? (compiler-typecheck-reference-local-source))
-      (and
-        (compiler-typecheck-ok? (compiler-typecheck-reference-param-source))
-        (and
-          (compiler-typecheck-ok?
-            (compiler-typecheck-reference-projection-source))
-          (and
-            (compiler-typecheck-error-ok?
-              (compiler-typecheck-reference-temp-source)
-              "typecheck: borrow requires a local, parameter, or aggregate place")
-            (and
-              (compiler-typecheck-error-ok?
-                (compiler-typecheck-reference-mismatch-source)
-                "typecheck: borrow lifetime mismatch")
-              (and
-                (compiler-typecheck-error-ok?
-                  (compiler-typecheck-reference-return-source)
-                  "typecheck: returning references requires lifetime support (#804)")
-                (compiler-typecheck-error-ok?
-                  (compiler-typecheck-reference-mut-source)
-                  "typecheck: mutable reference types require mutable borrow checker support (#806)")))))))))
+  (let
+    [render-ok : bool (compiler-typecheck-reference-render-ok?)]
+    [local-ok : bool
+      (compiler-typecheck-ok? (compiler-typecheck-reference-local-source))]
+    [param-ok : bool
+      (compiler-typecheck-ok? (compiler-typecheck-reference-param-source))]
+    [projection-ok : bool
+      (compiler-typecheck-ok? (compiler-typecheck-reference-projection-source))]
+    [str-ok : bool
+      (compiler-typecheck-ok? (compiler-typecheck-reference-str-source))]
+    [str-region-ok : bool
+      (compiler-typecheck-ok? (compiler-typecheck-reference-str-region-source))]
+    [temp-error-ok : bool
+      (compiler-typecheck-error-ok?
+        (compiler-typecheck-reference-temp-source)
+        "typecheck: borrow requires a local, parameter, or aggregate place")]
+    [mismatch-error-ok : bool
+      (compiler-typecheck-error-ok?
+        (compiler-typecheck-reference-mismatch-source)
+        "typecheck: borrow lifetime mismatch")]
+    [return-error-ok : bool
+      (compiler-typecheck-error-ok?
+        (compiler-typecheck-reference-return-source)
+        "typecheck: returning references requires lifetime support (#804)")]
+    [mut-ref-error-ok : bool
+      (compiler-typecheck-error-ok?
+        (compiler-typecheck-reference-mut-source)
+        "typecheck: mutable reference types require mutable borrow checker support (#806)")]
+    [str-value-error-ok : bool
+      (compiler-typecheck-error-ok?
+        (compiler-typecheck-str-value-source)
+        (tc-source-str-value-policy-message))]
+    [str-return-error-ok : bool
+      (compiler-typecheck-error-ok?
+        (compiler-typecheck-str-return-source)
+        (tc-source-str-value-policy-message))]
+    [str-local-error-ok : bool
+      (compiler-typecheck-error-ok?
+        (compiler-typecheck-str-local-source)
+        (tc-source-str-value-policy-message))]
+    [str-global-error-ok : bool
+      (compiler-typecheck-error-ok?
+        (compiler-typecheck-str-global-source)
+        (tc-source-str-value-policy-message))]
+    [str-field-error-ok : bool
+      (compiler-typecheck-error-ok?
+        (compiler-typecheck-str-field-source)
+        (tc-source-str-value-policy-message))]
+    [str-variant-error-ok : bool
+      (compiler-typecheck-error-ok?
+        (compiler-typecheck-str-variant-source)
+        (tc-source-str-value-policy-message))]
+    [str-mut-ref-error-ok : bool
+      (compiler-typecheck-error-ok?
+        (compiler-typecheck-str-mut-ref-source)
+        (tc-source-str-mut-ref-policy-message))]
+    [ok : bool true]
+    (begin
+      (if render-ok
+        unit
+        (set! ok false))
+      (if local-ok
+        unit
+        (set! ok false))
+      (if param-ok
+        unit
+        (set! ok false))
+      (if projection-ok
+        unit
+        (set! ok false))
+      (if str-ok
+        unit
+        (set! ok false))
+      (if str-region-ok
+        unit
+        (set! ok false))
+      (if temp-error-ok
+        unit
+        (set! ok false))
+      (if mismatch-error-ok
+        unit
+        (set! ok false))
+      (if return-error-ok
+        unit
+        (set! ok false))
+      (if mut-ref-error-ok
+        unit
+        (set! ok false))
+      (if str-value-error-ok
+        unit
+        (set! ok false))
+      (if str-return-error-ok
+        unit
+        (set! ok false))
+      (if str-local-error-ok
+        unit
+        (set! ok false))
+      (if str-global-error-ok
+        unit
+        (set! ok false))
+      (if str-field-error-ok
+        unit
+        (set! ok false))
+      (if str-variant-error-ok
+        unit
+        (set! ok false))
+      (if str-mut-ref-error-ok
+        unit
+        (set! ok false))
+      ok)))
 
 ;; A type error whose offending expression (`missing`) is on source line 2, so
-;; the diagnostic must locate it there (not at the 1:1 fallback) â€” proving the
+;; the diagnostic must locate it there (not at the 1:1 fallback) — proving the
 ;; typechecker carries the nearest declaration-body `AstExprSpanned` span (#681).
 (define (compiler-typecheck-located-fn-source) : String
   "(define (main) : i64
@@ -1351,7 +1615,7 @@
           "(define (main [bs : (Array bool)] [n : i64]) : bool (spmd-reduce sum ([i : i64 0 n]) true (array-ref bs i)))"
           "typecheck: spmd-reduce sum requires an i32, i64, or f64 type")))))
 
-;; spmd-reduce purity rules (#1011, SPEC.md Â§5.16): the per-lane value
+;; spmd-reduce purity rules (#1011, SPEC.md §5.16): the per-lane value
 ;; expression accepts pure arithmetic over dynamic-array reads and the varying
 ;; index, but rejects writes (`array-set!`), function calls (also covers
 ;; `print*`/`panic`/file I/O and varying-argument user calls), varying control
@@ -1363,18 +1627,18 @@
     (and
       (compiler-typecheck-error-ok?
         "(define (main [xs : (Array i64)] [n : i64]) : i64 (spmd-reduce sum ([i : i64 0 n]) 0 (array-set! xs i 1)))"
-        "`array-set!` is not allowed inside a spmd-reduce value expression; the value expression must be free of writes and other side effects (SPEC.md Â§5.16)")
+        "`array-set!` is not allowed inside a spmd-reduce value expression; the value expression must be free of writes and other side effects (SPEC.md §5.16)")
       (and
         (compiler-typecheck-error-ok?
           "(define (helper [x : i64]) : i64 x) (define (main [n : i64]) : i64 (spmd-reduce sum ([i : i64 0 n]) 0 (helper i)))"
-          "function calls are not allowed inside a spmd-reduce value expression; side-effecting builtins and user calls with varying arguments are deferred in the first slice (SPEC.md Â§5.16)")
+          "function calls are not allowed inside a spmd-reduce value expression; side-effecting builtins and user calls with varying arguments are deferred in the first slice (SPEC.md §5.16)")
         (and
           (compiler-typecheck-error-ok?
             "(define (main [xs : (Array i64)] [n : i64]) : i64 (spmd-reduce sum ([i : i64 0 n]) 0 (if (< (array-ref xs i) 0) 0 1)))"
-            "varying control flow is not allowed inside a spmd-reduce value expression; the first slice has no varying if/while/match (SPEC.md Â§5.16)")
+            "varying control flow is not allowed inside a spmd-reduce value expression; the first slice has no varying if/while/match (SPEC.md §5.16)")
           (compiler-typecheck-error-ok?
             "(define (main [xs : (Array i64)] [ys : (Array i64)] [n : i64]) : i64 (spmd-reduce sum ([i : i64 0 n]) 0 (array-ref xs (array-ref ys i))))"
-            "indirect array indexing is not allowed inside a spmd-reduce value expression; gather/scatter is deferred in the first slice (SPEC.md Â§5.16)"))))))
+            "indirect array indexing is not allowed inside a spmd-reduce value expression; gather/scatter is deferred in the first slice (SPEC.md §5.16)"))))))
 
 ;; array-builtin signature rules (#1042): make-array length, array-ref array/index
 ;; types, and array-set! value-type agreement, with valid accepts.
@@ -1604,7 +1868,8 @@
               (+ (comptime (if (= (struct-field-type (type Point) 0) (type i64)) 1 0))
                  (+ (comptime (if (= (enum-variant-payload-type (type Maybe) 1 0) (type String)) 1 0))
                     (+ (comptime (array-length (type (Array i64 4))))
-                       (comptime (function-param-count (type (-> i64 bool String))))))))))))")
+                       (+ (comptime (if (string-eq (type-key (type (& r str))) \"ref_r_str\") 1 0))
+                          (comptime (function-param-count (type (-> i64 bool String)))))))))))))")
 
 (define (compiler-typecheck-reflection-runtime-source) : String
   "(define (main) : String (type-kind (type i64)))")

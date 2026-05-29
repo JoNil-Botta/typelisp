@@ -379,6 +379,7 @@
     [(AstTyUnit) "Unit"]
     [(AstTyNever) "Never"]
     [(AstTyExpr) "Expr"]
+    [(AstTyExprList) "ExprList"]
     [(AstTyFunc args ret)
       (front-cat3
         "Func(["
@@ -752,6 +753,14 @@
     [(AstDeclDefFn name _ ret body)
       (front-cat3
         "DefFn { name: \""
+        name
+        (front-cat3
+          "\", ret: "
+          (front-type-render ret)
+          (front-cat3 ", body: " (front-expr-render body) " }")))]
+    [(AstDeclDefMacro name _ ret body)
+      (front-cat3
+        "DefMacro { name: \""
         name
         (front-cat3
           "\", ret: "

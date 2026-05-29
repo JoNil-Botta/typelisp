@@ -243,6 +243,7 @@
   (match decl
     [(AstDeclDef name _ _) (string-eq name "main")]
     [(AstDeclDefFn name _ _ _) (string-eq name "main")]
+    [(AstDeclDefMacro _ _ _ _) false]
     [_ false]))
 
 (define (tltest-source-line [span : AstSourceSpan]) : i64
@@ -532,6 +533,7 @@
       (if (sym-i64-contains names name)
         (tltest-reach-mark-expr body names)
         names)]
+    [(AstDeclDefMacro _ _ _ _) names]
     [_ names]))
 
 (define (tltest-reach-mark-decls [decls : AstDeclList] [names : SymI64Env]) : SymI64Env
@@ -559,6 +561,7 @@
     [(AstDeclDef name _ _) (sym-i64-contains names name)]
     [(AstDeclDefFn name _ _ _) (sym-i64-contains names name)]
     [(AstDeclExtern name _ _) (sym-i64-contains names name)]
+    [(AstDeclDefMacro _ _ _ _) true]
     [_ true]))
 
 (define (tltest-prune-runtime-decls-in

@@ -773,6 +773,7 @@
     [(AstTyChar) "char"]
     [(AstTyString) "String"]
     [(AstTyExpr) "Expr"]
+    [(AstTyExprList) "ExprList"]
     [(AstTyUnit) "unit"]
     [(AstTyNever) "never"]
     [(AstTyFunc args ret)
@@ -838,6 +839,7 @@
     [(AstTyChar) "char"]
     [(AstTyString) "string"]
     [(AstTyExpr) "expr"]
+    [(AstTyExprList) "expr-list"]
     [(AstTyUnit) "unit"]
     [(AstTyNever) "never"]
     [(AstTyFunc _ _) "function"]
@@ -1051,6 +1053,7 @@
     [(AstTyUnit) 0]
     [(AstTyNever) 0]
     [(AstTyExpr) -1]
+    [(AstTyExprList) -1]
     [(AstTyFunc _ _) 8]
     [(AstTyTuple _) 8]
     [(AstTyArray elem count)
@@ -1097,6 +1100,7 @@
     [(AstTyUnit) 1]
     [(AstTyNever) 1]
     [(AstTyExpr) -1]
+    [(AstTyExprList) -1]
     [(AstTyFunc _ _) 8]
     [(AstTyTuple _) 8]
     [(AstTyArray elem _) (ctfe-type-align layouts elem)]
@@ -2694,6 +2698,10 @@
     [(AstTyExpr)
       (match b
         [(AstTyExpr) true]
+        [_ false])]
+    [(AstTyExprList)
+      (match b
+        [(AstTyExprList) true]
         [_ false])]
     [(AstTyFunc a-args a-ret)
       (match b

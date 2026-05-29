@@ -213,6 +213,7 @@
     [(AstTyUnit) "unit"]
     [(AstTyNever) "never"]
     [(AstTyExpr) "Expr"]
+    [(AstTyExprList) "ExprList"]
     [(AstTyFunc args ret)
       (compiler-ir-cat3
         "(-> "
@@ -920,6 +921,7 @@
     [(AstTyUnit) "unit"]
     [(AstTyNever) "never"]
     [(AstTyExpr) "Expr"]
+    [(AstTyExprList) "ExprList"]
     [(AstTyFunc args ret)
       (compiler-ir-cat4
         "(->"

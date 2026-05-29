@@ -1142,6 +1142,10 @@
       (match b
         [(AstTyExpr) true]
         [_ false])]
+    [(AstTyExprList)
+      (match b
+        [(AstTyExprList) true]
+        [_ false])]
     [(AstTyFunc a-params a-ret)
       (match b
         [(AstTyFunc b-params b-ret)

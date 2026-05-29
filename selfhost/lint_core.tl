@@ -263,6 +263,7 @@
   (match decl
     [(AstDeclDef _ _ body) (lint-walk-expr body threshold acc)]
     [(AstDeclDefFn _ _ _ body) (lint-walk-expr body threshold acc)]
+    [(AstDeclDefMacro _ _ _ body) (lint-walk-expr body threshold acc)]
     [(AstDeclTest _ body _) (lint-walk-expr body threshold acc)]
     [(AstDeclComptimeDecl inner) (lint-walk-decl inner threshold acc)]
     [(AstDeclModule _) acc]

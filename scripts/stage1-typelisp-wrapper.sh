@@ -12,6 +12,7 @@ set -eu
 STAGE1_BIN=${TYPELISP_STAGE1_BIN:-}
 STAGE1_TEST_BIN=${TYPELISP_STAGE1_TEST_BIN:-}
 STAGE1_DOC_BIN=${TYPELISP_STAGE1_DOC_BIN:-}
+STAGE1_REPL_BIN=${TYPELISP_STAGE1_REPL_BIN:-}
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 
 fail() {
@@ -24,7 +25,7 @@ usage() {
 usage: typelisp <command> [args...]
 
 stage1 wrapper commands:
-  compile, check, build, run, test, fmt, doc
+  compile, check, build, run, test, fmt, doc, repl
   debug check, debug host-action
 EOF
 }
@@ -634,6 +635,60 @@ selfhost_doc_driver() {
     printf '%s\n' "$driver"
 }
 
+selfhost_repl_driver() {
+    require_stage1
+    require_linux_host_action
+
+    if [ -n "$STAGE1_REPL_BIN" ]; then
+        if [ ! -x "$STAGE1_REPL_BIN" ]; then
+            fail "stage1 repl driver is not executable: $STAGE1_REPL_BIN"
+        fi
+        printf '%s\n' "$STAGE1_REPL_BIN"
+        return
+    fi
+
+    cache_dir=${TYPELISP_STAGE1_DRIVER_CACHE_DIR:-"$ROOT/target/stage1-wrapper-cache"}
+    driver="$cache_dir/selfhost-repl"
+    marker="$cache_dir/stage1-bin.path"
+    build_dir="$cache_dir/repl-build"
+    roots="$build_dir/stdlib.roots"
+    source="$ROOT/selfhost/repl.tl"
+
+    rebuild=0
+    if [ ! -x "$driver" ]; then
+        rebuild=1
+    elif [ ! -f "$marker" ]; then
+        rebuild=1
+    elif [ "$(sed -n '1p' "$marker")" != "$STAGE1_BIN" ]; then
+        rebuild=1
+    elif [ "$STAGE1_BIN" -nt "$driver" ]; then
+        rebuild=1
+    elif [ "$source" -nt "$driver" ]; then
+        rebuild=1
+    fi
+
+    if [ "$rebuild" -eq 1 ]; then
+        rm -rf "$build_dir"
+        mkdir -p "$build_dir"
+        : > "$roots"
+        heartbeat_log "[stage1-wrapper] building selfhost repl driver"
+        run_with_heartbeat \
+            "stage1-wrapper selfhost/repl.tl compile" \
+            compile_source_to_exe \
+            "$source" \
+            "$driver.tmp" \
+            linux-x86_64 \
+            scalar \
+            "" \
+            "$roots" \
+            "$build_dir" > /dev/null
+        mv "$driver.tmp" "$driver"
+        printf '%s\n' "$STAGE1_BIN" > "$marker"
+    fi
+
+    printf '%s\n' "$driver"
+}
+
 emit_file() {
     path=$1
     if [ -s "$path" ]; then
@@ -868,6 +923,17 @@ doc_command() {
     esac
 }
 
+repl_command() {
+    if [ "$#" -ne 0 ]; then
+        echo "Error: repl does not accept arguments" >&2
+        usage
+        exit 1
+    fi
+
+    driver=$(selfhost_repl_driver)
+    "$driver"
+}
+
 debug_command() {
     [ "$#" -gt 0 ] || fail "Error: missing debug subcommand"
     case "$1" in
@@ -905,6 +971,7 @@ case "$command" in
     test) test_command "$@" ;;
     fmt) fmt_command "$@" ;;
     doc) doc_command "$@" ;;
+    repl) repl_command "$@" ;;
     lint | tokenize | parse)
         fail "stage1 wrapper does not support '$command' yet; use the seed compiler for this gate"
         ;;

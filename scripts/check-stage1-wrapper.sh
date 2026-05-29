@@ -2,7 +2,7 @@
 set -eu
 
 # Smoke-test a TYPELISP_BIN-compatible stage1 wrapper on the Linux host-action
-# surface: compile, build, run, fmt, and debug host-action.
+# surface: compile, build, run, repl, doc, test, fmt, and debug host-action.
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
@@ -124,6 +124,22 @@ run_capture() {
     fi
 }
 
+run_stdin_capture() {
+    label=$1
+    input=$2
+    shift 2
+    stdout="$WORKDIR/$label.stdout"
+    stderr="$WORKDIR/$label.stderr"
+    if ! TYPELISP_STAGE1_HEARTBEAT_FD=3 "$@" 3>&2 < "$input" > "$stdout" 2> "$stderr"; then
+        echo "stage1 wrapper smoke command failed: $label" >&2
+        echo "stdout:" >&2
+        sed 's/^/  /' "$stdout" >&2 || true
+        echo "stderr:" >&2
+        sed 's/^/  /' "$stderr" >&2 || true
+        exit 1
+    fi
+}
+
 run_expect_failure() {
     label=$1
     shift
@@ -182,6 +198,29 @@ if [ -s "$WORKDIR/run.stderr" ]; then
     sed 's/^/  /' "$WORKDIR/run.stderr" >&2 || true
     exit 1
 fi
+
+echo "[stage1-wrapper] repl"
+: > "$WORKDIR/repl-empty.in"
+run_stdin_capture repl-empty "$WORKDIR/repl-empty.in" "$COMPILER" repl
+assert_contains "$WORKDIR/repl-empty.stdout" "TypeLisp REPL. Type .help for commands."
+assert_contains "$WORKDIR/repl-empty.stdout" "tl> "
+assert_empty "$WORKDIR/repl-empty.stderr"
+
+cat > "$WORKDIR/repl-session.in" <<'EOF'
+.help
+.type true
+(+ 1 2)
+.exit
+EOF
+run_stdin_capture repl-session "$WORKDIR/repl-session.in" "$COMPILER" repl
+assert_contains "$WORKDIR/repl-session.stdout" "TypeLisp REPL commands:"
+assert_contains "$WORKDIR/repl-session.stdout" ".type <expr>"
+assert_contains "$WORKDIR/repl-session.stdout" "bool"
+assert_contains "$WORKDIR/repl-session.stderr" "REPL evaluation is not implemented yet"
+
+run_expect_failure repl-args "$COMPILER" repl unexpected
+assert_empty "$WORKDIR/repl-args.stdout"
+assert_contains "$WORKDIR/repl-args.stderr" "Error: repl does not accept arguments"
 
 echo "[stage1-wrapper] doc"
 if [ "${TYPELISP_STAGE1_SKIP_DOC_SMOKE:-}" = "1" ]; then

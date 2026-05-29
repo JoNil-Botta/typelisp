@@ -1645,7 +1645,7 @@ The `match` consumes `m`; the `SomeName` arm owns `s` and can pass it to
 The first `match` moves `m`, so the second `match` is rejected as a
 use-after-move.
 
-#### 4.6.3 Recursive aggregate layout and boxed recursion (specified, pending implementation)
+#### 4.6.3 Recursive aggregate layout and boxed recursion (specified; finite analysis implemented)
 
 Today, default TypeLisp structs and enums are pointer-shaped aggregate handles,
 so directly recursive enum payloads are finite in the current implementation.
@@ -1668,15 +1668,17 @@ The finite-layout rule is structural:
 
 This rule does not switch default struct/enum layout by itself. It defines the
 source-level indirection required before later issues can add opt-in inline
-layout and migrate selfhost recursive data structures.
+layout and migrate selfhost recursive data structures. The selfhost typechecker
+has a reusable finite-layout analysis for this future inline-layout opt-in; the
+default handle-layout path still accepts today's recursive aggregate programs.
 
-```lisp test=ignore name=box-recursive-list-layout-ok reason="Box recursive layout is specified before implementation"
+```lisp test=ignore name=box-recursive-list-layout-ok reason="requires future inline aggregate layout mode"
 (defenum ListI64
   (ListNil)
   (ListCons i64 (Box ListI64)))
 ```
 
-```lisp test=ignore name=box-recursive-tree-layout-ok reason="Box recursive layout is specified before implementation"
+```lisp test=ignore name=box-recursive-tree-layout-ok reason="requires future inline aggregate layout mode"
 (defenum Tree
   (Leaf i64)
   (Node (Box Tree) (Box Tree)))

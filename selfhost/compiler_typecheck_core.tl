@@ -4828,6 +4828,117 @@
           (ErrTcStructDecl
             (string-append "typecheck: unknown struct " struct-name))])]))
 
+(define (tc-inline-aggregate-cycle-stack-render [stack : TcStringList]) : String
+  (match stack
+    [(TcStringNil) ""]
+    [(TcStringCons head rest)
+      (let
+        [tail : String (tc-inline-aggregate-cycle-stack-render rest)]
+        (if (string-eq tail "")
+          head
+          (tc-cat3 tail " -> " head)))]))
+
+(define (tc-inline-aggregate-cycle-path [stack : TcStringList] [name : String]) : String
+  (let
+    [prefix : String (tc-inline-aggregate-cycle-stack-render stack)]
+    (if (string-eq prefix "")
+      name
+      (tc-cat3 prefix " -> " name))))
+
+(define (tc-inline-aggregate-cycle-message
+  [name : String]
+  [stack : TcStringList]) : String
+  (tc-cat3
+    "typecheck: inline aggregate layout cycle "
+    (tc-inline-aggregate-cycle-path stack name)
+    (tc-cat3 "; insert (Box " name ") at the recursive edge")))
+
+(define (tc-inline-aggregate-type-list-finite-ok
+  [ctx : TcContext]
+  [types : AstTypeList]
+  [stack : TcStringList]) : ResultTcUnit
+  (match types
+    [(AstTypeNil) OkTcUnit]
+    [(AstTypeCons head rest)
+      (match (tc-inline-aggregate-type-finite-ok ctx head stack)
+        [(OkTcUnit) (tc-inline-aggregate-type-list-finite-ok ctx rest stack)]
+        [(ErrTcUnit message) (ErrTcUnit message)])]))
+
+(define (tc-inline-aggregate-fields-finite-ok
+  [ctx : TcContext]
+  [fields : AstFieldDefList]
+  [stack : TcStringList]) : ResultTcUnit
+  (match fields
+    [(AstFieldDefNil) OkTcUnit]
+    [(AstFieldDefCons field rest)
+      (match field
+        [(AstFieldDef _ ty _)
+          (match (tc-inline-aggregate-type-finite-ok ctx ty stack)
+            [(OkTcUnit) (tc-inline-aggregate-fields-finite-ok ctx rest stack)]
+            [(ErrTcUnit message) (ErrTcUnit message)])])]))
+
+(define (tc-inline-aggregate-variants-finite-ok
+  [ctx : TcContext]
+  [variants : AstVariantDefList]
+  [stack : TcStringList]) : ResultTcUnit
+  (match variants
+    [(AstVariantDefNil) OkTcUnit]
+    [(AstVariantDefCons variant rest)
+      (match variant
+        [(AstVariantDef _ fields)
+          (match (tc-inline-aggregate-type-list-finite-ok ctx fields stack)
+            [(OkTcUnit) (tc-inline-aggregate-variants-finite-ok ctx rest stack)]
+            [(ErrTcUnit message) (ErrTcUnit message)])])]))
+
+(define (tc-inline-aggregate-nominal-finite-ok
+  [ctx : TcContext]
+  [name : String]
+  [stack : TcStringList]) : ResultTcUnit
+  (if (tc-string-list-contains stack name)
+    (ErrTcUnit (tc-inline-aggregate-cycle-message name stack))
+    (match (compiler-symbols-lookup-type (tc-context-symbols ctx) name)
+      [(SomeI64 handle)
+        (if (=
+          (compiler-symbol-handle-kind handle)
+          (compiler-symbol-kind-defenum))
+          (match (tc-program-enum-variants (tc-context-program ctx) name)
+            [(OkAstVariantDefList variants)
+              (tc-inline-aggregate-variants-finite-ok
+                ctx
+                variants
+                (TcStringCons name stack))]
+            [(ErrAstVariantDefList message) (ErrTcUnit message)])
+          (if (=
+            (compiler-symbol-handle-kind handle)
+            (compiler-symbol-kind-defstruct))
+            (match (tc-struct-decl ctx name)
+              [(OkTcStructDecl decl)
+                (match decl
+                  [(TcStructDecl _ fields)
+                    (tc-inline-aggregate-fields-finite-ok
+                      ctx
+                      fields
+                      (TcStringCons name stack))])]
+              [(ErrTcStructDecl message) (ErrTcUnit message)])
+            (ErrTcUnit (string-append "typecheck: unknown aggregate " name))))]
+      [(NoneI64)
+        (ErrTcUnit (string-append "typecheck: unknown aggregate " name))])))
+
+(define (tc-inline-aggregate-type-finite-ok
+  [ctx : TcContext]
+  [ty : AstType]
+  [stack : TcStringList]) : ResultTcUnit
+  (match (tc-type-strip-region (tc-resolve-type ctx ty))
+    [(AstTyTuple elems)
+      (tc-inline-aggregate-type-list-finite-ok ctx elems stack)]
+    [(AstTyArray elem _) (tc-inline-aggregate-type-finite-ok ctx elem stack)]
+    [(AstTyEnum name) (tc-inline-aggregate-nominal-finite-ok ctx name stack)]
+    [(AstTyStruct name) (tc-inline-aggregate-nominal-finite-ok ctx name stack)]
+    [_ OkTcUnit]))
+
+(define (tc-inline-aggregate-layout-finite-ok [ctx : TcContext] [name : String]) : ResultTcUnit
+  (tc-inline-aggregate-nominal-finite-ok ctx name TcStringNil))
+
 (define (tc-repr-c-unsupported-field-message
   [owner : String]
   [field : String]

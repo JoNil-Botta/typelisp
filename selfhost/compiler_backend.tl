@@ -88,6 +88,8 @@
     bool
     bool
     bool
+    bool
+    bool
     bool))
 
 ;; Backend code-generation target (#646). Linux/System V and Windows x64 are
@@ -5723,6 +5725,8 @@
           _
           _
           _
+          _
+          _
           _)
         (if (or arg-count arg)
           "    movq %rcx, .L_tl_argc(%rip)
@@ -6605,7 +6609,9 @@
         windows-sdk-registry-install
         provides-env-var-exists
         provides-env-var-value
-        provides-env-path-separator)
+        provides-env-path-separator
+        provides-div-abort
+        provides-shift-abort)
       (or
         (backend-or8
           (compiler-backend-provides-runtime-name? name "tl_alloc" alloc)
@@ -6766,17 +6772,29 @@
                           name
                           "tl_random_system_seed"
                           random-system-seed))
-                      (compiler-backend-plan-provides-tail?
-                        name
-                        read-bytes
-                        stdin-eof
-                        flush-stdout
-                        random-system-seed
-                        windows-setup-instances
-                        windows-sdk-registry-install
-                        provides-env-var-exists
-                        provides-env-var-value
-                        provides-env-path-separator)))))))))]))
+                      (or
+                        (compiler-backend-plan-provides-tail?
+                          name
+                          read-bytes
+                          stdin-eof
+                          flush-stdout
+                          random-system-seed
+                          windows-setup-instances
+                          windows-sdk-registry-install
+                          provides-env-var-exists
+                          provides-env-var-value
+                          provides-env-path-separator)
+                        (backend-or4
+                          (compiler-backend-provides-runtime-name?
+                            name
+                            "tl_div_abort"
+                            provides-div-abort)
+                          (compiler-backend-provides-runtime-name?
+                            name
+                            "tl_shift_abort"
+                            provides-shift-abort)
+                          false
+                          false))))))))))]))
 
 (define (compiler-backend-runtime-plan-for
   [functions : CompilerIrFunctionList]
@@ -6786,6 +6804,10 @@
       (compiler-backend-function-list-defines? functions "tl_alloc")]
     [defines-oob : bool
       (compiler-backend-function-list-defines? functions "tl_oob_abort")]
+    [defines-div-abort : bool
+      (compiler-backend-function-list-defines? functions "tl_div_abort")]
+    [defines-shift-abort : bool
+      (compiler-backend-function-list-defines? functions "tl_shift_abort")]
     [defines-substring : bool
       (compiler-backend-function-list-defines? functions "tl_substring")]
     [defines-concat : bool
@@ -6828,6 +6850,10 @@
       (compiler-backend-extern-list-references? externs "tl_alloc")]
     [extern-oob : bool
       (compiler-backend-extern-list-references? externs "tl_oob_abort")]
+    [extern-div-abort : bool
+      (compiler-backend-extern-list-references? externs "tl_div_abort")]
+    [extern-shift-abort : bool
+      (compiler-backend-extern-list-references? externs "tl_shift_abort")]
     [extern-substring : bool
       (compiler-backend-extern-list-references? externs "tl_substring")]
     [extern-concat : bool
@@ -6946,6 +6972,10 @@
       (compiler-backend-function-list-calls? functions "tl_alloc")]
     [calls-oob : bool
       (compiler-backend-function-list-calls? functions "tl_oob_abort")]
+    [calls-div-abort : bool
+      (compiler-backend-function-list-calls? functions "tl_div_abort")]
+    [calls-shift-abort : bool
+      (compiler-backend-function-list-calls? functions "tl_shift_abort")]
     [calls-substring : bool
       (compiler-backend-function-list-calls? functions "tl_substring")]
     [calls-concat : bool
@@ -7056,6 +7086,12 @@
       (compiler-backend-function-list-calls? functions "env-path-separator")]
     (let
       [needs-oob : bool (and (not defines-oob) (or extern-oob calls-oob))]
+      [needs-div-abort : bool
+        (and (not defines-div-abort) (or extern-div-abort calls-div-abort))]
+      [needs-shift-abort : bool
+        (and
+          (not defines-shift-abort)
+          (or extern-shift-abort calls-shift-abort))]
       [needs-substring : bool
         (and (not defines-substring) (or extern-substring calls-substring))]
       [needs-concat : bool
@@ -7228,7 +7264,9 @@
             needs-windows-sdk-registry-install
             needs-env-var-exists
             needs-env-var-value
-            needs-env-path-separator))))))
+            needs-env-path-separator
+            needs-div-abort
+            needs-shift-abort))))))
 
 (define (compiler-backend-runtime-plan [program : CompilerIrProgram]) : ResultBackendRuntimePlan
   (match program
@@ -7295,6 +7333,26 @@ tl_current_arena:
     .set .L_tl_oob_msg_len, . - .L_tl_oob_msg
 
 ")
+
+(define (compiler-backend-runtime-div-data [div-abort : bool]) : String
+  (if div-abort
+    "    .section .rodata
+.L_tl_div_msg:
+    .ascii \"tl: integer division or remainder error\\n\"
+    .set .L_tl_div_msg_len, . - .L_tl_div_msg
+
+"
+    ""))
+
+(define (compiler-backend-runtime-shift-data [shift-abort : bool]) : String
+  (if shift-abort
+    "    .section .rodata
+.L_tl_shift_msg:
+    .ascii \"tl: shift count out of range\\n\"
+    .set .L_tl_shift_msg_len, . - .L_tl_shift_msg
+
+"
+    ""))
 
 (define (compiler-backend-runtime-stdio-data
   [read-line : bool]
@@ -7527,7 +7585,9 @@ tl_current_arena:
         windows-sdk-registry-install
         env-var-exists
         env-var-value
-        _)
+        _
+        div-abort
+        shift-abort)
       (string-append
         (if alloc
           (compiler-backend-runtime-alloc-data-for-target target)
@@ -7539,47 +7599,53 @@ tl_current_arena:
             (compiler-backend-runtime-oob-data)
             "")
           (string-append
-            (if region-reset
-              (compiler-backend-runtime-region-reset-data)
-              "")
             (string-append
-              (compiler-backend-runtime-argv-data arg-count arg)
+              (compiler-backend-runtime-div-data div-abort)
+              (compiler-backend-runtime-shift-data shift-abort))
+            (string-append
+              (if region-reset
+                (compiler-backend-runtime-region-reset-data)
+                "")
               (string-append
-                (compiler-backend-runtime-read-file-data read-file)
+                (compiler-backend-runtime-argv-data arg-count arg)
                 (string-append
-                  (compiler-backend-runtime-write-file-data write-file)
+                  (compiler-backend-runtime-read-file-data read-file)
                   (string-append
-                    (compiler-backend-runtime-file-exists-data file-exists)
+                    (compiler-backend-runtime-write-file-data write-file)
                     (string-append
-                      (compiler-backend-runtime-file-handle-data
-                        target
-                        file-handle
-                        file-read-chunk)
+                      (compiler-backend-runtime-file-exists-data file-exists)
                       (string-append
-                        (compiler-backend-runtime-env-data
+                        (compiler-backend-runtime-file-handle-data
                           target
-                          (or process-output (or env-var-exists env-var-value)))
+                          file-handle
+                          file-read-chunk)
                         (string-append
-                          (compiler-backend-runtime-process-output-data
+                          (compiler-backend-runtime-env-data
                             target
-                            process-output)
+                            (or
+                              process-output
+                              (or env-var-exists env-var-value)))
                           (string-append
-                            (compiler-backend-runtime-stdio-data
-                              read-line
-                              read-bytes
-                              stdin-eof)
+                            (compiler-backend-runtime-process-output-data
+                              target
+                              process-output)
                             (string-append
-                              (compiler-backend-runtime-flush-stdout-data
-                                target
-                                flush-stdout)
+                              (compiler-backend-runtime-stdio-data
+                                read-line
+                                read-bytes
+                                stdin-eof)
                               (string-append
-                                (compiler-backend-runtime-random-system-seed-data
-                                  random-system-seed)
+                                (compiler-backend-runtime-flush-stdout-data
+                                  target
+                                  flush-stdout)
                                 (string-append
-                                  (compiler-backend-runtime-windows-setup-instances-data
-                                    windows-setup-instances)
-                                  (compiler-backend-runtime-windows-sdk-registry-install-data
-                                    windows-sdk-registry-install)))))))))))))))]))
+                                  (compiler-backend-runtime-random-system-seed-data
+                                    random-system-seed)
+                                  (string-append
+                                    (compiler-backend-runtime-windows-setup-instances-data
+                                      windows-setup-instances)
+                                    (compiler-backend-runtime-windows-sdk-registry-install-data
+                                      windows-sdk-registry-install))))))))))))))))]))
 
 (define (compiler-backend-runtime-alloc-functions) : String
   "    .globl tl_alloc
@@ -7824,6 +7890,34 @@ tl_oob_abort:
     syscall
     movq $60, %rax
     movq $134, %rdi
+    syscall
+
+")
+
+(define (compiler-backend-runtime-div-functions) : String
+  "    .globl tl_div_abort
+tl_div_abort:
+    movq $1, %rax
+    movq $2, %rdi
+    leaq .L_tl_div_msg(%rip), %rsi
+    movq $.L_tl_div_msg_len, %rdx
+    syscall
+    movq $60, %rax
+    movq $135, %rdi
+    syscall
+
+")
+
+(define (compiler-backend-runtime-shift-functions) : String
+  "    .globl tl_shift_abort
+tl_shift_abort:
+    movq $1, %rax
+    movq $2, %rdi
+    leaq .L_tl_shift_msg(%rip), %rsi
+    movq $.L_tl_shift_msg_len, %rdx
+    syscall
+    movq $60, %rax
+    movq $129, %rdi
     syscall
 
 ")
@@ -9875,6 +9969,20 @@ _tl_env_path_separator:
     ".L_tl_oob_msg_len"
     134))
 
+(define (compiler-backend-runtime-windows-div-functions) : String
+  (compiler-backend-runtime-windows-fixed-abort-functions
+    "tl_div_abort"
+    ".L_tl_div_msg"
+    ".L_tl_div_msg_len"
+    135))
+
+(define (compiler-backend-runtime-windows-shift-functions) : String
+  (compiler-backend-runtime-windows-fixed-abort-functions
+    "tl_shift_abort"
+    ".L_tl_shift_msg"
+    ".L_tl_shift_msg_len"
+    129))
+
 (define (compiler-backend-runtime-windows-abort-functions) : String
   ".L_tl_abort:
     push %rbp
@@ -11465,7 +11573,9 @@ tl_windows_sdk_registry_install:
         windows-sdk-registry-install
         env-var-exists
         env-var-value
-        env-path-separator)
+        env-path-separator
+        div-abort
+        shift-abort)
       (let
         [alloc-asm : String
           (if alloc
@@ -11478,6 +11588,18 @@ tl_windows_sdk_registry_install:
             (if (compiler-backend-target-windows? target)
               (compiler-backend-runtime-windows-oob-functions)
               (compiler-backend-runtime-oob-functions))
+            "")]
+        [div-abort-asm : String
+          (if div-abort
+            (if (compiler-backend-target-windows? target)
+              (compiler-backend-runtime-windows-div-functions)
+              (compiler-backend-runtime-div-functions))
+            "")]
+        [shift-abort-asm : String
+          (if shift-abort
+            (if (compiler-backend-target-windows? target)
+              (compiler-backend-runtime-windows-shift-functions)
+              (compiler-backend-runtime-shift-functions))
             "")]
         [substring-asm : String
           (if substring
@@ -11652,14 +11774,16 @@ tl_windows_sdk_registry_install:
             region-mark-asm
             region-reset-asm
             oob-asm
-            substring-asm)]
+            div-abort-asm)]
         [runtime-string-asm : String
-          (backend-cat5
-            concat-asm
-            string-eq-asm
-            string-to-int-asm
-            int-to-string-asm
-            abort-asm)]
+          (string-append
+            (backend-cat5
+              shift-abort-asm
+              substring-asm
+              concat-asm
+              string-eq-asm
+              string-to-int-asm)
+            (string-append int-to-string-asm abort-asm))]
         [runtime-io-asm : String
           (string-append
             (backend-cat5
@@ -11842,6 +11966,8 @@ tl_windows_sdk_registry_install:
             _
             env-var-exists
             env-var-value
+            _
+            _
             _)
           (compiler-backend-entry
             (or arg-count arg)
@@ -11888,7 +12014,9 @@ tl_windows_sdk_registry_install:
         windows-sdk-registry-install
         env-var-exists
         env-var-value
-        env-path-separator)
+        env-path-separator
+        div-abort
+        shift-abort)
       (not
         (or
           (backend-or8
@@ -11928,11 +12056,13 @@ tl_windows_sdk_registry_install:
                         random-system-seed
                         windows-setup-instances
                         windows-sdk-registry-install)
-                      (backend-or4
-                        env-var-exists
-                        env-var-value
-                        env-path-separator
-                        false)))))))))]))
+                      (or
+                        shift-abort
+                        (backend-or4
+                          env-var-exists
+                          env-var-value
+                          env-path-separator
+                          div-abort))))))))))]))
 
 (define (compiler-backend-target-runtime-ok?
   [target : CompilerBackendTarget]
@@ -11970,7 +12100,9 @@ tl_windows_sdk_registry_install:
           _
           env-var-exists
           env-var-value
-          env-path-separator)
+          env-path-separator
+          _
+          _)
         (not
           (or
             region-mark

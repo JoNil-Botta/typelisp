@@ -2645,8 +2645,77 @@
           (compiler-typecheck-move-branch-source)
           "typecheck: use of moved value `s`")))))
 
+;; --- declaration namespace / duplicate diagnostics (#1537) ------------------
+;; Migrated from src/typechecker.rs namespace coverage. These flow through
+;; build-compiler-symbols / build-compiler-registries during typechecking, so
+;; the no-Rust typecheck smoke exercises them. Two Rust namespace cases are NOT
+;; yet detected by the selfhost symbol table -- enum variants colliding with
+;; functions/defines/struct constructors, and builtin shadowing -- so they are
+;; left to the focused implementation blocker rather than asserted here.
+(define (compiler-typecheck-dup-function-source) : String
+  "(define (foo [x : i64]) : i64 x)
+(define (foo [y : i64]) : i64 y)
+(define (main) : i64 0)")
+
+(define (compiler-typecheck-define-function-collision-source) : String
+  "(define foo : i64 1)
+(define (foo [x : i64]) : i64 x)
+(define (main) : i64 0)")
+
+(define (compiler-typecheck-dup-struct-type-source) : String
+  "(defstruct Point (x i64))
+(defstruct Point (y i64))
+(define (main) : i64 0)")
+
+(define (compiler-typecheck-dup-enum-type-source) : String
+  "(defenum E (A))
+(defenum E (B))
+(define (main) : i64 0)")
+
+(define (compiler-typecheck-dup-extern-source) : String
+  "(extern f : (-> i64 i64))
+(extern f : (-> i64 i64))
+(define (main) : i64 0)")
+
+(define (compiler-typecheck-cross-module-mismatch-source) : String
+  "(module left)
+(define (helper [x : i64]) : i64 x)
+(module main)
+(define (main) : i64 (left/helper true))")
+
+;; Returns true when duplicate function/value, define/function collision,
+;; duplicate struct and enum type names, duplicate externs, and a cross-module
+;; wrong-argument-type call are all rejected with the expected diagnostics.
+(define (compiler-typecheck-namespace-tests-ok?) : bool
+  (and
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-dup-function-source)
+      "symbols: duplicate value declaration foo")
+    (and
+      (compiler-typecheck-error-ok?
+        (compiler-typecheck-define-function-collision-source)
+        "symbols: duplicate value declaration foo")
+      (and
+        (compiler-typecheck-error-ok?
+          (compiler-typecheck-dup-struct-type-source)
+          "symbols: duplicate type declaration Point")
+        (and
+          (compiler-typecheck-error-ok?
+            (compiler-typecheck-dup-enum-type-source)
+            "symbols: duplicate type declaration E")
+          (and
+            (compiler-typecheck-error-ok?
+              (compiler-typecheck-dup-extern-source)
+              "symbols: duplicate value declaration f")
+            (compiler-typecheck-error-ok?
+              (compiler-typecheck-cross-module-mismatch-source)
+              "typecheck: argument type mismatch")))))))
+
 (define (compiler-typecheck-self-test-diagnostics) : unit
   (begin
+    (if (compiler-typecheck-namespace-tests-ok?)
+      unit
+      (panic "typecheck: declaration namespace tests failed"))
     (if (compiler-typecheck-move-tests-ok?)
       unit
       (panic "typecheck: move checker tests failed"))

@@ -182,6 +182,14 @@ Named remaining blockers:
   binding, nested refutability, enum/scalar/string/bool exhaustiveness, literal
   type checks, wildcard reachability, Maybe/Result matches, and direct vs
   inline-compound recursive enum cases.
+- #1541 expands the selfhost-owned `src/typechecker.rs` scalar replacement in
+  `compiler-typecheck-scalar-parity-tests-ok?`: bool `not`/`and`/`or` and bool
+  equality, `cond` condition typing, narrow integer literal match rules,
+  contextual f32 literals, implicit f32-to-f64 widening, f32 arithmetic and
+  comparison, f64-to-f32/f32-to-f64 casts, nonliteral f64-to-f32 rejection, and
+  explicit float/non-float cast diagnostics. The exact/inexact f32 literal
+  warning-only Rust cases are documented but not mirrored because the current
+  selfhost typecheck result model has no warning channel.
 - #1507 adds embedded-stdlib Rust loader tests in `src/module.rs` for the
   temporary Rust stage0 fallback provider: manifest coverage for checked-in
   `stdlib/**/*.tl`, virtual canonical path round-tripping, final-fallback load,

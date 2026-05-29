@@ -334,7 +334,7 @@
                   (and
                     (compiler-typecheck-error-ok?
                       (compiler-typecheck-cast-bad-source)
-                      "typecheck: cast requires integer/char source and target")
+                      "typecheck: cast requires integer/char source and target, got bool -> i64")
                     (and
                       (compiler-typecheck-ok-score?
                         (compiler-typecheck-char-range-source)
@@ -1605,6 +1605,196 @@
                   (compiler-typecheck-op-ok-cmp-eq-source))
                 (compiler-typecheck-ok? (compiler-typecheck-op-ok-call-source))))))))))
 
+;; Scalar/bool/float/cast parity (#1541): remaining Rust typechecker unit
+;; coverage for bool operators/equality, cond condition typing, narrow integer
+;; literal match rules, contextual f32 literals, f32 arithmetic/comparison, and
+;; f64<->f32-only float casts.
+(define (compiler-typecheck-scalar-bool-ok-source) : String
+  "(define (both [a : bool] [b : bool]) : bool (and (not a) (or a b)))
+(define (eq [a : bool] [b : bool]) : bool (= a b))
+(define (main [a : bool] [b : bool]) : bool (or (both a b) (eq a b)))")
+
+(define (compiler-typecheck-scalar-not-bad-source) : String
+  "(define (main) : bool (not 5))")
+
+(define (compiler-typecheck-scalar-and-bad-source) : String
+  "(define (main [a : bool]) : bool (and a 1))")
+
+(define (compiler-typecheck-scalar-or-bad-source) : String
+  "(define (main [a : bool]) : bool (or 1 a))")
+
+(define (compiler-typecheck-scalar-bool-eq-bad-source) : String
+  "(define (main [a : bool]) : bool (= a 1))")
+
+(define (compiler-typecheck-scalar-cond-ok-source) : String
+  "(define (main [x : i64]) : i64 (cond [(= x 0) 1] [else 2]))")
+
+(define (compiler-typecheck-scalar-cond-bad-source) : String
+  "(define (main) : i64 (cond [1 2] [else 3]))")
+
+(define (compiler-typecheck-scalar-narrow-match-source) : String
+  "(define (narrow-u8 [n : u8]) : i64 (match n [0 1] [_ 0]))
+(define (narrow-i16 [n : i16]) : i64 (match n [0 1] [_ 0]))
+(define (main [n : u8]) : i64 (narrow-u8 n))")
+
+(define (compiler-typecheck-scalar-narrow-match-bad-source) : String
+  "(define (main [n : u8]) : i64 (match n [true 1] [_ 0]))")
+
+(define (compiler-typecheck-scalar-f32-context-source) : String
+  "(define gx : f32 1.0)
+(define (id [x : f32]) : f32 x)
+(define (ret) : f32 1.0)
+(define (annotated) : f32 (ann 1.0 : f32))
+(define (call) : f32 (id 2.0))
+(define (array-first) : f32
+  (let
+    [a : (Array f32 2) (array 1.0 2.0)]
+    (array-ref a 0)))")
+
+(define (compiler-typecheck-scalar-f32-to-f64-source) : String
+  "(define (ret [x : f32]) : f64 x)
+(define (arg [x : f64]) : f64 x)
+(define (call [x : f32]) : f64 (arg x))
+(define (branch [x : f32] [flag : bool]) : f64 (if flag x 2.0))")
+
+(define (compiler-typecheck-scalar-f64-to-f32-bad-source) : String
+  "(define (main [x : f64]) : f32 x)")
+
+(define (compiler-typecheck-scalar-f32-arithmetic-source) : String
+  "(define (compute [a : f32] [b : f32]) : bool
+  (let
+    [sum : f32 (+ a 1.0)]
+    [diff : f32 (- a b)]
+    [prod : f32 (* a b)]
+    [quot : f32 (/ a b)]
+    (< (+ sum (+ diff (+ prod quot))) b)))")
+
+(define (compiler-typecheck-scalar-f64-to-f32-cast-source) : String
+  "(define (main) : f32 (cast 3.5 : f32))")
+
+(define (compiler-typecheck-scalar-f32-to-f64-cast-source) : String
+  "(define (main [x : f32]) : f64 (cast x : f64))")
+
+(define (compiler-typecheck-scalar-float-cast-bad-source) : String
+  "(define (main) : i64 (cast 3.5 : i64))")
+
+(define (compiler-typecheck-scalar-bool-cast-bad-source) : String
+  "(define (main) : i64 (cast true : i64))")
+
+(define (compiler-typecheck-scalar-parity-tests-ok?) : bool
+  (let
+    [ok : bool true]
+    (begin
+      (set!
+        ok
+        (and
+          ok
+          (compiler-typecheck-ok? (compiler-typecheck-scalar-bool-ok-source))))
+      (set!
+        ok
+        (and
+          ok
+          (compiler-typecheck-error-ok?
+            (compiler-typecheck-scalar-not-bad-source)
+            "typecheck: not expects bool")))
+      (set!
+        ok
+        (and
+          ok
+          (compiler-typecheck-error-ok?
+            (compiler-typecheck-scalar-and-bad-source)
+            "typecheck: boolean operator expects bool operands")))
+      (set!
+        ok
+        (and
+          ok
+          (compiler-typecheck-error-ok?
+            (compiler-typecheck-scalar-or-bad-source)
+            "typecheck: boolean operator expects bool operands")))
+      (set!
+        ok
+        (and
+          ok
+          (compiler-typecheck-error-ok?
+            (compiler-typecheck-scalar-bool-eq-bad-source)
+            "typecheck: equality operands must match")))
+      (set!
+        ok
+        (and
+          ok
+          (compiler-typecheck-ok? (compiler-typecheck-scalar-cond-ok-source))))
+      (set!
+        ok
+        (and
+          ok
+          (compiler-typecheck-error-ok?
+            (compiler-typecheck-scalar-cond-bad-source)
+            "typecheck: if condition must be bool")))
+      (set!
+        ok
+        (and
+          ok
+          (compiler-typecheck-ok?
+            (compiler-typecheck-scalar-narrow-match-source))))
+      (set!
+        ok
+        (and
+          ok
+          (compiler-typecheck-error-ok?
+            (compiler-typecheck-scalar-narrow-match-bad-source)
+            "typecheck: literal pattern type mismatch")))
+      (set!
+        ok
+        (and
+          ok
+          (compiler-typecheck-ok?
+            (compiler-typecheck-scalar-f32-context-source))))
+      (set!
+        ok
+        (and
+          ok
+          (compiler-typecheck-ok? (compiler-typecheck-scalar-f32-to-f64-source))))
+      (set!
+        ok
+        (and
+          ok
+          (compiler-typecheck-error-ok?
+            (compiler-typecheck-scalar-f64-to-f32-bad-source)
+            "typecheck: return type mismatch")))
+      (set!
+        ok
+        (and
+          ok
+          (compiler-typecheck-ok?
+            (compiler-typecheck-scalar-f32-arithmetic-source))))
+      (set!
+        ok
+        (and
+          ok
+          (compiler-typecheck-ok?
+            (compiler-typecheck-scalar-f64-to-f32-cast-source))))
+      (set!
+        ok
+        (and
+          ok
+          (compiler-typecheck-ok?
+            (compiler-typecheck-scalar-f32-to-f64-cast-source))))
+      (set!
+        ok
+        (and
+          ok
+          (compiler-typecheck-error-ok?
+            (compiler-typecheck-scalar-float-cast-bad-source)
+            "typecheck: floating-point casts are not supported yet; casts currently support integer/char and f64<->f32 conversions only, got f64 -> i64")))
+      (set!
+        ok
+        (and
+          ok
+          (compiler-typecheck-error-ok?
+            (compiler-typecheck-scalar-bool-cast-bad-source)
+            "typecheck: cast requires integer/char source and target, got bool -> i64")))
+      ok)))
+
 ;; Match / pattern type rules (#1042/#1538): Rust inline coverage migrated to
 ;; selfhost-owned parser+typechecker fixtures.
 (define (compiler-typecheck-match-arm-mismatch-source) : String
@@ -2190,10 +2380,10 @@
           (and
             (compiler-typecheck-error-ok?
               "(define (f [x : f64]) : i64 (cast x : i64))"
-              "typecheck: cast requires integer/char source and target")
+              "typecheck: floating-point casts are not supported yet; casts currently support integer/char and f64<->f32 conversions only, got f64 -> i64")
             (compiler-typecheck-error-ok?
               "(define (f [b : bool]) : i64 (cast b : i64))"
-              "typecheck: cast requires integer/char source and target")))))))
+              "typecheck: cast requires integer/char source and target, got bool -> i64")))))))
 
 ;; spmd-reduce operator/type rules (#1011, SPEC 5.15): `sum` accepts i32/i64/f64,
 ;; `min`/`max` accept i32/i64, `all`/`any` accept bool. (The varying-value
@@ -2588,6 +2778,9 @@
     (if (compiler-typecheck-operator-tests-ok?)
       unit
       (panic "typecheck: operator/arity tests failed"))
+    (if (compiler-typecheck-scalar-parity-tests-ok?)
+      unit
+      (panic "typecheck: scalar bool/float/cast parity tests failed"))
     (if (compiler-typecheck-match-tests-ok?)
       unit
       (panic "typecheck: match/pattern tests failed"))

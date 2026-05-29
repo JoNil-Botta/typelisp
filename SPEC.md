@@ -2508,8 +2508,6 @@ track (#809/#897/#911/#912) and the safe reference/ownership track (#182).
 | `length` | `String → i64` | Get string byte length |
 | `array-length` | `(Array t) → i64` | Get dynamic array length |
 | `make-array` | `type i64 → (Array type)` | Allocate dynamic array element buffer; invalid lengths trap |
-| `box` | `t → (Box t)` | Allocate one owned value in the active arena |
-| `box-get` | `(Box t) → t` | Project boxed storage for read/pattern use under move rules |
 | `array-ref` | `(Array t) i64 → t` | Read dynamic or fixed array element (bounds checked) |
 | `array-set!` | `(Array t) i64 t → unit` | Write dynamic or fixed array element (bounds checked) |
 | `string-ref` | `String i64 → char` | Read byte from string (bounds checked) |

@@ -387,8 +387,7 @@
     [(ErrCompilerBackend _) false]))
 
 ;; Backend-owned replacement for representative aggregate storage emit-shape
-;; checks from the Rust backend suite (#1354). Non-constant aggregate globals
-;; remain blocked on selfhost lowering (#1388).
+;; checks from the Rust backend suite (#1354/#1413).
 (define (compiler-backend-aggregate-return-source) : String
   "(defenum Shape (Circle i64) (Square i64) (Nothing))
 (defstruct Point (x i64) (y i64))
@@ -417,8 +416,76 @@
           (compiler-backend-string-contains? asm (compiler-backend-todo-marker))))]
     [(ErrCompilerBackend _) false]))
 
+(define (compiler-backend-aggregate-global-init-source) : String
+  "(defenum MaybeI64 (Some i64) (None))
+(defstruct Pair (x i64) (y i64))
+(defstruct Nested (label String) (choice MaybeI64))
+
+(define greeting : String (string-concat \"he\" \"llo\"))
+(define choice : MaybeI64 (Some 8))
+(define pair : Pair (Pair 10 11))
+(define cells : (Array i64) (make-array i64 3))
+(define nested : Nested (Nested (string-concat \"o\" \"k\") (Some 3)))
+
+(define (main) : i64
+  (+ (+ (+ (string-length greeting) (length cells))
+        (+ (struct-get pair x) (struct-get pair y)))
+     (+ (match choice [(Some n) n] [None 0])
+        (+ (string-length (struct-get nested label))
+           (match (struct-get nested choice) [(Some n) n] [None 0])))))")
+
+(define (compiler-backend-runtime-global-shape-ok?
+  [asm : String]
+  [name : String]) : bool
+  (let
+    [symbol : String (string-append "_tl_" name)]
+    [init-symbol : String (string-append "_tl___global_init_" name)]
+    (and
+      (backend-and4
+        (compiler-backend-string-contains?
+          asm
+          (backend-cat3 "    .comm " symbol ", 8, 8\n"))
+        (compiler-backend-string-contains?
+          asm
+          (backend-cat3 "    call " init-symbol "\n"))
+        (compiler-backend-string-contains?
+          asm
+          (backend-cat3 "    movq %rax, " symbol "(%rip)\n"))
+        (compiler-backend-string-contains?
+          asm
+          (backend-cat3 init-symbol ":\n" "")))
+      (compiler-backend-string-contains?
+        asm
+        (backend-cat3 "    movq " symbol "(%rip), %rax\n")))))
+
+(define (compiler-backend-aggregate-global-init-shape-ok?) : bool
+  (match (compiler-backend-emit-source
+    (compiler-backend-aggregate-global-init-source))
+    [(OkCompilerBackend asm)
+      (and
+        (backend-and8
+          (compiler-backend-runtime-global-shape-ok? asm "greeting")
+          (compiler-backend-runtime-global-shape-ok? asm "choice")
+          (compiler-backend-runtime-global-shape-ok? asm "pair")
+          (compiler-backend-runtime-global-shape-ok? asm "cells")
+          (compiler-backend-runtime-global-shape-ok? asm "nested")
+          (compiler-backend-string-contains?
+            asm
+            "_start:\n    call _tl___global_init_greeting\n")
+          (compiler-backend-string-contains?
+            asm
+            "    movq %rax, _tl_nested(%rip)\n    call main\n")
+          (not
+            (compiler-backend-string-contains?
+              asm
+              (compiler-backend-todo-marker))))
+        true)]
+    [(ErrCompilerBackend _) false]))
+
 (define (compiler-backend-aggregate-storage-shape-ok?) : bool
-  (compiler-backend-aggregate-return-shape-ok?))
+  (and
+    (compiler-backend-aggregate-return-shape-ok?)
+    (compiler-backend-aggregate-global-init-shape-ok?)))
 
 (define (compiler-backend-enum-match-ok?) : bool
   (match (compiler-backend-emit-source (compiler-backend-enum-match-source))

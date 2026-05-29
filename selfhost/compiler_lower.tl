@@ -1785,6 +1785,37 @@
       (match (lower-load-at-offset ptr-state value 8 (AstTyI64))
         [(LowerExpr len-state len _) (LowerStringFields len-state ptr len)])]))
 
+(define (lower-str-ref-type? [ctx : TcContext] [ty : AstType]) : bool
+  (match (tc-type-strip-region (tc-resolve-type ctx ty))
+    [(AstTyRef _ inner)
+      (match (tc-type-strip-region (tc-resolve-type ctx inner))
+        [(AstTyStr) true]
+        [_ false])]
+    [_ false]))
+
+(define (lower-string-handle-type? [ctx : TcContext] [ty : AstType]) : bool
+  (match (tc-type-strip-region (tc-resolve-type ctx ty))
+    [(AstTyString) true]
+    [_ (lower-str-ref-type? ctx ty)]))
+
+(define (lower-borrowed-str-expr
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [inner : AstExpr]
+  [origin : AstExpr]
+  [expr-ty : AstType]) : ResultLowerExpr
+  (if (lower-str-ref-type? ctx expr-ty)
+    (match (lower-expr ctx state env type-env inner)
+      [(OkLowerExpr lowered)
+        (match lowered
+          [(LowerExpr inner-state value _)
+            (OkLowerExpr (LowerExpr inner-state value expr-ty))])]
+      [(ErrLowerExpr message) (ErrLowerExpr message)])
+    (ErrLowerExpr
+      (lower-diagnostic-at-expr origin (lower-reference-support-message)))))
+
 (define (lower-store-values
   [ctx : TcContext]
   [state : LowerState]
@@ -2746,9 +2777,8 @@
               (OkLowerExpr
                 (lower-cast-value inner-state value inner-ty expr-ty))])]
         [(ErrLowerExpr message) (ErrLowerExpr message)])]
-    [(AstExprBorrow _ _)
-      (ErrLowerExpr
-        (lower-diagnostic-at-expr origin (lower-reference-support-message)))]
+    [(AstExprBorrow _ inner)
+      (lower-borrowed-str-expr ctx state env type-env inner origin expr-ty)]
     [(AstExprUnary op inner)
       (match (lower-expr ctx state env type-env inner)
         [(OkLowerExpr lowered)
@@ -3198,28 +3228,24 @@
     [(OkLowerExpr lowered-str)
       (match lowered-str
         [(LowerExpr str-state str-value str-ty)
-          (match (tc-resolve-type ctx str-ty)
-            [(AstTyString)
-              (match (lower-expr ctx str-state env type-env index)
-                [(OkLowerExpr lowered-index)
-                  (match lowered-index
-                    [(LowerExpr index-state index-raw index-ty)
-                      (match (lower-cast-value
-                        index-state
-                        index-raw
-                        index-ty
-                        (AstTyI64))
-                        [(LowerExpr index-i-state index-value _)
-                          (lower-string-ref-load
-                            index-i-state
-                            str-value
-                            index-value)])])]
-                [(ErrLowerExpr message) (ErrLowerExpr message)])]
-            [_
-              (ErrLowerExpr
-                (lower-diagnostic-at-expr
-                  str
-                  "lower: string-ref requires String"))])])]
+          (if (lower-string-handle-type? ctx str-ty)
+            (match (lower-expr ctx str-state env type-env index)
+              [(OkLowerExpr lowered-index)
+                (match lowered-index
+                  [(LowerExpr index-state index-raw index-ty)
+                    (match (lower-cast-value
+                      index-state
+                      index-raw
+                      index-ty
+                      (AstTyI64))
+                      [(LowerExpr index-i-state index-value _)
+                        (lower-string-ref-load
+                          index-i-state
+                          str-value
+                          index-value)])])]
+              [(ErrLowerExpr message) (ErrLowerExpr message)])
+            (ErrLowerExpr
+              (lower-diagnostic-at-expr str "lower: string-ref requires String")))])]
     [(ErrLowerExpr message) (ErrLowerExpr message)]))
 
 (define (lower-substring-call-runtime
@@ -3380,48 +3406,44 @@
     [(OkLowerExpr lowered-str)
       (match lowered-str
         [(LowerExpr str-state str-value str-ty)
-          (match (tc-resolve-type ctx str-ty)
-            [(AstTyString)
-              (match (lower-string-fields str-state str-value)
-                [(LowerStringFields fields-state src-ptr src-len)
-                  (match (lower-expr ctx fields-state env type-env start)
-                    [(OkLowerExpr lowered-start)
-                      (match lowered-start
-                        [(LowerExpr start-state start-raw start-ty)
-                          (match (lower-cast-value
-                            start-state
-                            start-raw
-                            start-ty
-                            (AstTyI64))
-                            [(LowerExpr start-i-state start-value _)
-                              (match (lower-expr
-                                ctx
-                                start-i-state
-                                env
-                                type-env
-                                len)
-                                [(OkLowerExpr lowered-len)
-                                  (match lowered-len
-                                    [(LowerExpr len-state len-raw len-ty)
-                                      (match (lower-cast-value
-                                        len-state
-                                        len-raw
-                                        len-ty
-                                        (AstTyI64))
-                                        [(LowerExpr len-i-state len-value _)
-                                          (lower-substring-bounds-checked
-                                            len-i-state
-                                            src-ptr
-                                            src-len
-                                            start-value
-                                            len-value)])])]
-                                [(ErrLowerExpr message) (ErrLowerExpr message)])])])]
-                    [(ErrLowerExpr message) (ErrLowerExpr message)])])]
-            [_
-              (ErrLowerExpr
-                (lower-diagnostic-at-expr
-                  str
-                  "lower: substring requires String"))])])]
+          (if (lower-string-handle-type? ctx str-ty)
+            (match (lower-string-fields str-state str-value)
+              [(LowerStringFields fields-state src-ptr src-len)
+                (match (lower-expr ctx fields-state env type-env start)
+                  [(OkLowerExpr lowered-start)
+                    (match lowered-start
+                      [(LowerExpr start-state start-raw start-ty)
+                        (match (lower-cast-value
+                          start-state
+                          start-raw
+                          start-ty
+                          (AstTyI64))
+                          [(LowerExpr start-i-state start-value _)
+                            (match (lower-expr
+                              ctx
+                              start-i-state
+                              env
+                              type-env
+                              len)
+                              [(OkLowerExpr lowered-len)
+                                (match lowered-len
+                                  [(LowerExpr len-state len-raw len-ty)
+                                    (match (lower-cast-value
+                                      len-state
+                                      len-raw
+                                      len-ty
+                                      (AstTyI64))
+                                      [(LowerExpr len-i-state len-value _)
+                                        (lower-substring-bounds-checked
+                                          len-i-state
+                                          src-ptr
+                                          src-len
+                                          start-value
+                                          len-value)])])]
+                              [(ErrLowerExpr message) (ErrLowerExpr message)])])])]
+                  [(ErrLowerExpr message) (ErrLowerExpr message)])])
+            (ErrLowerExpr
+              (lower-diagnostic-at-expr str "lower: substring requires String")))])]
     [(ErrLowerExpr message) (ErrLowerExpr message)]))
 
 (define (lower-string-concat
@@ -3435,59 +3457,51 @@
     [(OkLowerExpr lowered-left)
       (match lowered-left
         [(LowerExpr left-state left-value left-ty)
-          (match (tc-resolve-type ctx left-ty)
-            [(AstTyString)
-              (match (lower-expr ctx left-state env type-env right)
-                [(OkLowerExpr lowered-right)
-                  (match lowered-right
-                    [(LowerExpr right-state right-value right-ty)
-                      (match (tc-resolve-type ctx right-ty)
-                        [(AstTyString)
-                          (match (lower-string-fields right-state left-value)
+          (if (lower-string-handle-type? ctx left-ty)
+            (match (lower-expr ctx left-state env type-env right)
+              [(OkLowerExpr lowered-right)
+                (match lowered-right
+                  [(LowerExpr right-state right-value right-ty)
+                    (if (lower-string-handle-type? ctx right-ty)
+                      (match (lower-string-fields right-state left-value)
+                        [(LowerStringFields left-fields-state left-ptr left-len)
+                          (match (lower-string-fields
+                            left-fields-state
+                            right-value)
                             [(LowerStringFields
-                                left-fields-state
-                                left-ptr
-                                left-len)
-                              (match (lower-string-fields
-                                left-fields-state
-                                right-value)
-                                [(LowerStringFields
-                                    done-fields-state
-                                    right-ptr
-                                    right-len)
-                                  (match (lower-state-alloc-var
-                                    done-fields-state)
-                                    [(LowerAlloc allocated var-id)
-                                      (OkLowerExpr
-                                        (LowerExpr
-                                          (lower-state-emit
-                                            allocated
-                                            (IrInstrCall
-                                              var-id
-                                              "tl_string_concat"
+                                done-fields-state
+                                right-ptr
+                                right-len)
+                              (match (lower-state-alloc-var done-fields-state)
+                                [(LowerAlloc allocated var-id)
+                                  (OkLowerExpr
+                                    (LowerExpr
+                                      (lower-state-emit
+                                        allocated
+                                        (IrInstrCall
+                                          var-id
+                                          "tl_string_concat"
+                                          (IrValueCons
+                                            left-ptr
+                                            (IrValueCons
+                                              left-len
                                               (IrValueCons
-                                                left-ptr
+                                                right-ptr
                                                 (IrValueCons
-                                                  left-len
-                                                  (IrValueCons
-                                                    right-ptr
-                                                    (IrValueCons
-                                                      right-len
-                                                      IrValueNil))))
-                                              (AstTyString)))
-                                          (IrValueVar var-id)
-                                          (AstTyString)))])])])]
-                        [_
-                          (ErrLowerExpr
-                            (lower-diagnostic-at-expr
-                              right
-                              "lower: string-concat requires String"))])])]
-                [(ErrLowerExpr message) (ErrLowerExpr message)])]
-            [_
-              (ErrLowerExpr
-                (lower-diagnostic-at-expr
-                  left
-                  "lower: string-concat requires String"))])])]
+                                                  right-len
+                                                  IrValueNil))))
+                                          (AstTyString)))
+                                      (IrValueVar var-id)
+                                      (AstTyString)))])])])
+                      (ErrLowerExpr
+                        (lower-diagnostic-at-expr
+                          right
+                          "lower: string-concat requires String")))])]
+              [(ErrLowerExpr message) (ErrLowerExpr message)])
+            (ErrLowerExpr
+              (lower-diagnostic-at-expr
+                left
+                "lower: string-concat requires String")))])]
     [(ErrLowerExpr message) (ErrLowerExpr message)]))
 
 (define (lower-direct-call
@@ -3586,16 +3600,15 @@
     [(OkLowerExpr lowered)
       (match lowered
         [(LowerExpr arg-state arg-value arg-ty)
-          (match (tc-resolve-type ctx arg-ty)
-            [(AstTyString)
-              (match (lower-string-fields arg-state arg-value)
-                [(LowerStringFields fields-state ptr len)
-                  (lower-runtime-call-values
-                    fields-state
-                    runtime-name
-                    (IrValueCons ptr (IrValueCons len IrValueNil))
-                    result-ty)])]
-            [_ (ErrLowerExpr (lower-diagnostic-at-expr arg message))])])]
+          (if (lower-string-handle-type? ctx arg-ty)
+            (match (lower-string-fields arg-state arg-value)
+              [(LowerStringFields fields-state ptr len)
+                (lower-runtime-call-values
+                  fields-state
+                  runtime-name
+                  (IrValueCons ptr (IrValueCons len IrValueNil))
+                  result-ty)])
+            (ErrLowerExpr (lower-diagnostic-at-expr arg message)))])]
     [(ErrLowerExpr message) (ErrLowerExpr message)]))
 
 (define (lower-string-to-int-call
@@ -4804,17 +4817,18 @@
           (match (tc-type-strip-region arr-ty)
             [(AstTyDynArray _)
               (lower-array-length-load ctx state env type-env arr)]
-            [(AstTyString) (lower-array-length-load ctx state env type-env arr)]
             [_
-              (lower-direct-call
-                ctx
-                state
-                env
-                type-env
-                name
-                args
-                result-ty
-                origin)])]
+              (if (lower-string-handle-type? ctx arr-ty)
+                (lower-array-length-load ctx state env type-env arr)
+                (lower-direct-call
+                  ctx
+                  state
+                  env
+                  type-env
+                  name
+                  args
+                  result-ty
+                  origin))])]
         [(ErrTcType _)
           (lower-direct-call ctx state env type-env name args result-ty origin)])]
     [_ (lower-direct-call ctx state env type-env name args result-ty origin)]))
@@ -7628,20 +7642,29 @@
 (define (compiler-lower-string-length-source) : String
   "(define (str-len [s : String]) : i64 (string-length s))
 (define (str-len-alias [s : String]) : i64 (length s))
+(define (str-len-borrow [s : String]) : i64 (string-length (& s)))
+(define (str-len-alias-borrow [s : String]) : i64 (length (& s)))
 (define (main) : i64 0)")
 
 (define (compiler-lower-string-runtime-source) : String
   "(define (main) : i64
   (let
-    [joined : String (string-append \"foo\" \"bar\")]
-    [mid : String (substring \"abcdef\" 2 3)]
-    [extended : String (string-concat mid \"!\")]
+    [left : String \"foo\"]
+    [right : String \"bar\"]
+    [joined : String (string-append (& left) (& right))]
+    [mid : String (substring (& joined) 2 3)]
+    [bang : String \"!\"]
+    [extended : String (string-concat (& mid) (& bang))]
+    [spaced : String \" x\"]
+    [digits : String \"7\"]
     (begin
-      (print-string joined)
-      (print-str extended)
-      (+ (string-length joined)
-        (+ (string-length extended)
-          (cast (char-at \" x\" 0) : i64))))))")
+      (print-string (& joined))
+      (print-str (& extended))
+      (+ (string-length (& joined))
+        (+ (string-length (& extended))
+          (+ (string->int (& digits))
+            (+ (if (string-eq (& joined) (& extended)) 1 0)
+              (cast (char-at (& spaced) 0) : i64))))))))")
 
 (define (compiler-lower-string-shadow-source) : String
   "(define (string-length [s : String]) : i64 40)
@@ -7664,15 +7687,18 @@
 (define (compiler-lower-file-handle-status-source) : String
   "(define (main) : i64
   (let
-    [handle : i64 (file-open-status \"input.txt\" 0)]
+    [path : String \"input.txt\"]
+    [suffix : String \"x\"]
+    [chunk : String \"chunk\"]
+    [handle : i64 (file-open-status (& path) 0)]
     (+ handle
-      (+ (append-file-status \"input.txt\" \"x\")
+      (+ (append-file-status (& path) (& suffix))
         (+ (file-read-chunk-status handle 4)
-          (+ (file-write-status handle \"chunk\")
+          (+ (file-write-status handle (& chunk))
             (+ (file-flush-status handle)
               (+ (string-length (file-read-chunk-bytes handle))
                 (+ (if (file-read-chunk-eof? handle) 1 0)
-                   (file-close-status handle)))))))))")
+                   (file-close-status handle))))))))))")
 
 (define (compiler-lower-fs-status-source) : String
   "(define (main) : i64

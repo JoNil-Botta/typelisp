@@ -1220,6 +1220,11 @@
   (let [view : (& text str) (& text)]
     (take view)))")
 
+(define (compiler-typecheck-reference-str-no-implicit-source) : String
+  "(define (take [s : (& text str)]) : unit unit)
+(define (main [text : String]) : unit
+  (take text))")
+
 (define (compiler-typecheck-reference-str-region-source) : String
   "(define (take [s : (& r str)]) : unit unit)
 (define (main) : unit
@@ -1309,6 +1314,10 @@
       (compiler-typecheck-ok? (compiler-typecheck-reference-projection-source))]
     [str-ok : bool
       (compiler-typecheck-ok? (compiler-typecheck-reference-str-source))]
+    [str-no-implicit-error-ok : bool
+      (compiler-typecheck-error-ok?
+        (compiler-typecheck-reference-str-no-implicit-source)
+        "typecheck: argument type mismatch")]
     [str-region-ok : bool
       (compiler-typecheck-ok? (compiler-typecheck-reference-str-region-source))]
     [temp-error-ok : bool
@@ -1383,6 +1392,9 @@
         unit
         (set! ok false))
       (if str-ok
+        unit
+        (set! ok false))
+      (if str-no-implicit-error-ok
         unit
         (set! ok false))
       (if str-region-ok
@@ -1651,8 +1663,30 @@
 (define (compiler-typecheck-string-builtin-ok-eq-source) : String
   "(define (f) : bool (string-eq \"a\" \"b\"))")
 
+(define (compiler-typecheck-string-builtin-borrowed-source) : String
+  "(define (main [text : String] [other : String]) : i64
+  (begin
+    (print-string (& text))
+    (print-str (& text))
+    (print-error (& other))
+    (+ (string-length (& text))
+      (+ (length (& text))
+        (+ (cast (string-ref (& text) 0) : i64)
+          (+ (if (string-eq (& text) (& other)) 1 0)
+             (string->int (& text))))))))")
+
+(define (compiler-typecheck-string-builtin-borrowed-alloc-source) : String
+  "(define (main [left : String] [right : String]) : String
+  (let
+    [joined : String (string-append (& left) (& right))]
+    [slice : String (substring (& joined) 0 1)]
+    (string-concat (& slice) (string-slice (& right) 0 1))))")
+
 (define (compiler-typecheck-string-builtin-bad-arg-source) : String
   "(define (main) : i64 (string-length 5))")
+
+(define (compiler-typecheck-string-builtin-bad-array-source) : String
+  "(define (main [items : (Array i64)]) : i64 (string-length items))")
 
 (define (compiler-typecheck-string-builtin-tests-ok?) : bool
   (and
@@ -1667,9 +1701,19 @@
         (and
           (compiler-typecheck-ok?
             (compiler-typecheck-string-builtin-ok-eq-source))
-          (compiler-typecheck-error-ok?
-            (compiler-typecheck-string-builtin-bad-arg-source)
-            "typecheck: argument type mismatch"))))))
+          (and
+            (compiler-typecheck-ok?
+              (compiler-typecheck-string-builtin-borrowed-source))
+            (and
+              (compiler-typecheck-ok?
+                (compiler-typecheck-string-builtin-borrowed-alloc-source))
+              (and
+                (compiler-typecheck-error-ok?
+                  (compiler-typecheck-string-builtin-bad-arg-source)
+                  "typecheck: argument type mismatch")
+                (compiler-typecheck-error-ok?
+                  (compiler-typecheck-string-builtin-bad-array-source)
+                  "typecheck: argument type mismatch")))))))))
 
 ;; Bootstrap argv builtin signature rules (#1042): `arg-count` returns i64 and
 ;; `arg` accepts an i64 index and returns String. User declarations may shadow
@@ -1862,7 +1906,18 @@
         unit
         (set! ok false))
       (if (compiler-typecheck-ok?
+        "(define (f [p : String]) : String (read-file (& p)))")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-ok?
         "(define (f [p : String] [c : String]) : unit (write-file p c))")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-ok?
+        "(define (f [p : String] [c : String]) : i64
+  (begin
+    (write-file (& p) (& c))
+    (file-open-status (& p) 0)))")
         unit
         (set! ok false))
       (if (compiler-typecheck-ok?

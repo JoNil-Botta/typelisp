@@ -2053,6 +2053,87 @@ Cross-lane operations:
   to implement `spmd-reduce`; those primitives are not user-denotable source
   operations.
 
+Runtime-dispatched SIMD variants:
+
+Runtime dispatch is declared with a top-level `defdispatch` item. The logical
+name is the callable API; each variant names an ordinary top-level function
+compiled for one backend mode.
+
+```lisp test=ignore name=simd-dispatch-declaration reason="runtime SIMD dispatch declarations are specified before parser/lowerer implementation"
+(define (add-arrays-scalar [a : (Array i64)]
+                           [b : (Array i64)]
+                           [out : (Array i64)]
+                           [n : i64]) : unit
+  (foreach ([i : i64 0 n])
+    (array-set! out i (+ (array-ref a i) (array-ref b i)))))
+
+(define (add-arrays-avx2 [a : (Array i64)]
+                         [b : (Array i64)]
+                         [out : (Array i64)]
+                         [n : i64]) : unit
+  (foreach ([i : i64 0 n])
+    (array-set! out i (+ (array-ref a i) (array-ref b i)))))
+
+(define (add-arrays-avx512 [a : (Array i64)]
+                           [b : (Array i64)]
+                           [out : (Array i64)]
+                           [n : i64]) : unit
+  (foreach ([i : i64 0 n])
+    (array-set! out i (+ (array-ref a i) (array-ref b i)))))
+
+(defdispatch add-arrays
+  (scalar add-arrays-scalar)
+  (avx2 add-arrays-avx2)
+  (avx512 add-arrays-avx512))
+
+(define (main [a : (Array i64)]
+              [b : (Array i64)]
+              [out : (Array i64)]
+              [n : i64]) : unit
+  (add-arrays a b out n))
+```
+
+Rules:
+
+- The first item in each variant pair is an ISA name: `scalar`, `avx2`, or
+  `avx512`. `avx512` means AVX-512 Foundation plus the OS ZMM/opmask state
+  needed to execute it.
+- `scalar` is required and is the fallback on every target.
+- `avx2` and `avx512` are optional. Unknown ISA names are rejected.
+- Variant item order is not semantic. The resolver always prefers the best
+  runnable listed variant in this order: `avx512`, then `avx2`, then `scalar`.
+- All variants must be top-level functions with identical parameter and return
+  types. The logical dispatch name has that same function type.
+- The scalar variant is compiled in scalar mode. ISA variants are compiled with
+  their declared backend mode; unsupported body shapes produce backend-mode
+  diagnostics rather than silently changing semantics.
+- A call to the logical name type-checks like a call to the shared signature.
+  Lowering may emit a small wrapper, an indirect call through a cached function
+  pointer, or equivalent target code, but the selected body must produce the
+  same observable result as the scalar body for all safe programs.
+- Feature detection happens on the first call to each logical dispatch function
+  and the selected target is cached for the life of the process. An
+  implementation may instead resolve at program startup if that has the same
+  observable behavior.
+- Selection may use the same CPUID/XGETBV capability checks exposed by
+  `stdlib/cpu.tl` (`cpu-runs-avx2?`, `cpu-runs-avx512f?`), but ordinary user
+  code does not need to import `stdlib/cpu.tl` or call those helpers to use a
+  dispatched function.
+- Variant selection runs no user variant body and performs no user-visible I/O.
+  It may read CPU/OS capability state and update hidden dispatch-cache storage.
+- A dispatch declaration creates a value-namespace binding for the logical name.
+  It conflicts with an existing value declaration of that name.
+- Variant functions are ordinary declarations. Exporting the dispatch exports
+  only the logical name; variant functions are exported only if explicitly
+  exported as values. Imported modules call the logical name through the normal
+  qualified or selected import rules.
+- Diagnostics must cover missing scalar fallback, duplicate variants for the
+  same ISA, unsupported ISA names, unknown variant function names, mismatched
+  signatures, using the logical dispatch name as one of its own variants, and
+  using another dispatch declaration as a variant in v1. The last two rules
+  avoid recursive dispatch declarations until resolver cycles have a specified
+  model.
+
 Unsupported in the initial SPMD surface:
 
 - Public vector types, public mask types, `program-index`, and `program-count`.
@@ -2062,7 +2143,7 @@ Unsupported in the initial SPMD surface:
 - Varying `if`/`while`, early exits, `break`, and `continue`.
 - User-defined function calls with varying arguments or varying returns.
 - Struct, enum, tuple, string, function, and nested array lane values.
-- Task parallelism, multicore scheduling, CPU dispatch, and AVX-specific codegen.
+- Task parallelism, multicore scheduling, and public AVX-specific intrinsics.
 
 Negative examples for later parser/typechecker tests:
 
@@ -3037,6 +3118,7 @@ not the future safe reference/borrow model (#182), not a replacement for
 | Cleanup-owning aggregate declarations | Specified for structs and reserved for enums; parser/typechecker/lowering support pending |
 | SPMD / SIMD `foreach` | Scalar reference lowering implemented; AVX2 supports a first contiguous map/zip subset |
 | SPMD reductions and public cross-lane ops | Source semantics specified; parser/typechecker/lowering/backend support pending |
+| Runtime SIMD dispatch (`defdispatch`) | Source semantics specified; parser/typechecker/lowering/backend support pending |
 | Windows region helpers | `tl_region_mark`/`tl_region_reset` are Linux-only |
 | Complete source locations for all semantic errors | Partial |
 | REPL evaluation | Minimal stdio command loop exists; form evaluation is not implemented |
@@ -3251,7 +3333,9 @@ Options:
   run --backend-mode <mode>
   build --backend-mode <mode>
                           Select scalar, avx2, or avx512 backend mode;
-                          scalar is the only implemented mode
+                          scalar is the default, avx2 supports the first
+                          contiguous foreach map/zip subset, and avx512 is
+                          reserved until that backend lands
   test --check <file.tl>
                           Type-check the generated inline test harness without
                           assembling or running it
@@ -3451,6 +3535,7 @@ program       ::= top-level*
 
 top-level     ::= define-var
                 | define-func
+                | dispatch-decl
                 | defmacro
                 | extern-decl
                 | module-decl
@@ -3462,6 +3547,9 @@ top-level     ::= define-var
 
 define-var    ::= "(" "define" ident [":" type] expr ")"
 define-func   ::= "(" "define" "(" ident param* ")" [":" type] expr ")"
+dispatch-decl ::= "(" "defdispatch" ident dispatch-variant+ ")"
+dispatch-variant ::= "(" dispatch-isa ident ")"
+dispatch-isa  ::= "scalar" | "avx2" | "avx512"
 defmacro      ::= "(" "defmacro" "(" ident macro-operand* ")" ":" type expr+ ")"
 macro-operand ::= "[" ident ":" type "]"
                 | "[" ident ":" type "..." "]"      ; variadic final operand only

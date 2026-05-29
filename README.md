@@ -311,7 +311,11 @@ are still rejected.
 SPMD/SIMD `foreach` is documented in [SPEC.md section 5.15](SPEC.md). The
 compiler parses and type-checks the first source form and lowers it to scalar
 reference loops; `--backend-mode avx2` supports a first contiguous map/zip
-subset. `spmd-reduce` reduction semantics are specified but not implemented yet.
+subset. Runtime-dispatched SIMD variants are specified with `defdispatch`:
+ordinary calls resolve once per process to AVX-512, AVX2, or scalar fallback
+using the `stdlib/cpu.tl` capability checks. Parser/compiler support for
+`defdispatch` is pending. `spmd-reduce` reduction semantics are specified but
+not implemented yet.
 
 ### Builtins
 
@@ -520,6 +524,11 @@ later `.type` commands; TypeLisp evaluation is planned in follow-up work.
 `scalar` is the default. `avx2` supports a first contiguous SPMD `foreach`
 map/zip subset and otherwise falls back or rejects unsupported vector IR;
 `avx512` parses but is rejected until that backend lands.
+
+The language-level runtime dispatch design is specified as `defdispatch` in
+`SPEC.md`: one logical function can list scalar, AVX2, and AVX-512 variant
+functions, with scalar required as the fallback. Ordinary calls do not need to
+manually call CPU detection helpers.
 
 `compile`, `run`, source-file `build`, and `test` accept
 `--target linux-x86_64|windows-x86_64`. Linux is the default output target for

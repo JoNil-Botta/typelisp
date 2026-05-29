@@ -295,6 +295,31 @@
         [(ErrCompilerDriver diag)
           (ErrSourceToolString (compiler-diagnostic-render diag))])]))
 
+(define (source-tool-emit-package-assembly
+  [source : String]
+  [target : CompilerBackendTarget]
+  [stdlib-roots : CompilerLoadRootList]
+  [opt-level : i64]
+  [manifest-dir : String]
+  [deps : CompilerPkgDepList]) : ResultSourceToolString
+  (match (try-read-file source)
+    [(ErrIoString error)
+      (ErrSourceToolString
+        (source-tool-cannot-read-module-message source error))]
+    [(OkIoString _)
+      (match (compiler-driver-emit-package-file-with-target-roots-and-level
+        source
+        target
+        true
+        stdlib-roots
+        opt-level
+        manifest-dir
+        deps)
+        [(OkCompilerDriver asm)
+          (OkSourceToolString (source-tool-augment-assembly asm))]
+        [(ErrCompilerDriver diag)
+          (ErrSourceToolString (compiler-diagnostic-render diag))])]))
+
 (define (source-tool-print-string-runtime) : String
   "
     .globl _tl_print_string
@@ -391,20 +416,28 @@ _tl_print_string:
             "-o"
             (process-args-cons obj-path (process-args-empty))))))))
 
-(define (source-tool-linker-command [obj-path : String] [bin-path : String]) : ProcessCommand
+(define (source-tool-linker-command-with-libs
+  [obj-path : String]
+  [bin-path : String]
+  [libs : ProcessStringList]) : ProcessCommand
   (process-command
     (source-tool-resolve-command "ld")
     (process-args-cons
       obj-path
-      (process-args-cons
-        "-o"
+      (process-args-append
+        libs
         (process-args-cons
-          bin-path
+          "-o"
           (process-args-cons
-            "-dynamic-linker"
+            bin-path
             (process-args-cons
-              "/lib64/ld-linux-x86-64.so.2"
-              (process-args-cons "-lc" (process-args-empty)))))))))
+              "-dynamic-linker"
+              (process-args-cons
+                "/lib64/ld-linux-x86-64.so.2"
+                (process-args-cons "-lc" (process-args-empty))))))))))
+
+(define (source-tool-linker-command [obj-path : String] [bin-path : String]) : ProcessCommand
+  (source-tool-linker-command-with-libs obj-path bin-path (process-args-empty)))
 
 (define (source-tool-windows-link-libs) : ProcessStringList
   (process-args-cons
@@ -419,26 +452,46 @@ _tl_print_string:
             "ole32.lib"
             (process-args-cons "oleaut32.lib" (process-args-empty))))))))
 
-(define (source-tool-windows-linker-args
+(define (source-tool-windows-linker-args-with-libs
   [obj-path : String]
-  [bin-path : String]) : ProcessStringList
+  [bin-path : String]
+  [libs : ProcessStringList]) : ProcessStringList
   (process-args-cons
     "/NOLOGO"
     (process-args-cons
       obj-path
-      (process-args-cons
-        (string-append "/OUT:" bin-path)
+      (process-args-append
+        libs
         (process-args-cons
-          "/SUBSYSTEM:CONSOLE"
+          (string-append "/OUT:" bin-path)
           (process-args-cons
-            "/DYNAMICBASE:NO"
+            "/SUBSYSTEM:CONSOLE"
             (process-args-cons
-              "/STACK:16777216"
-              (source-tool-windows-link-libs))))))))
+              "/DYNAMICBASE:NO"
+              (process-args-cons
+                "/STACK:16777216"
+                (source-tool-windows-link-libs)))))))))
+
+(define (source-tool-windows-linker-args
+  [obj-path : String]
+  [bin-path : String]) : ProcessStringList
+  (source-tool-windows-linker-args-with-libs
+    obj-path
+    bin-path
+    (process-args-empty)))
 
 (define (source-tool-windows-linker-command
   [obj-path : String]
   [bin-path : String]) : ResultSourceToolCommand
+  (source-tool-windows-linker-command-with-libs
+    obj-path
+    bin-path
+    (process-args-empty)))
+
+(define (source-tool-windows-linker-command-with-libs
+  [obj-path : String]
+  [bin-path : String]
+  [libs : ProcessStringList]) : ResultSourceToolCommand
   (match (msvc-find-tool "x86_64-pc-windows-msvc" "link.exe")
     [(OkMsvcTool tool)
       (OkSourceToolCommand
@@ -447,7 +500,7 @@ _tl_print_string:
             (source-tool-env-command-or-default
               "TYPELISP_WINDOWS_LINK"
               (msvc-tool-executable tool))
-            (source-tool-windows-linker-args obj-path bin-path))
+            (source-tool-windows-linker-args-with-libs obj-path bin-path libs))
           (msvc-tool-process-env tool)))]
     [(ErrMsvcTool error)
       (ErrSourceToolCommand
@@ -529,14 +582,24 @@ _tl_print_string:
   [target : CompilerBackendTarget]
   [obj-path : String]
   [bin-path : String]) : SourceToolCommandStatus
+  (source-tool-link-with-libs target obj-path bin-path (process-args-empty)))
+
+(define (source-tool-link-with-libs
+  [target : CompilerBackendTarget]
+  [obj-path : String]
+  [bin-path : String]
+  [libs : ProcessStringList]) : SourceToolCommandStatus
   (match target
     [(BackendTargetLinux)
       (source-tool-run-command
         "linker"
         target
-        (source-tool-linker-command obj-path bin-path))]
+        (source-tool-linker-command-with-libs obj-path bin-path libs))]
     [(BackendTargetWindows)
-      (match (source-tool-windows-linker-command obj-path bin-path)
+      (match (source-tool-windows-linker-command-with-libs
+        obj-path
+        bin-path
+        libs)
         [(OkSourceToolCommand command)
           (source-tool-run-command "linker" target command)]
         [(ErrSourceToolCommand message) (SourceToolCommandErr message)])]))
@@ -562,8 +625,22 @@ _tl_print_string:
   [asm-path : String]
   [obj-path : String]
   [bin-path : String]) : SourceToolCommandStatus
+  (source-tool-assemble-and-link-with-libs
+    target
+    asm-path
+    obj-path
+    bin-path
+    (process-args-empty)))
+
+(define (source-tool-assemble-and-link-with-libs
+  [target : CompilerBackendTarget]
+  [asm-path : String]
+  [obj-path : String]
+  [bin-path : String]
+  [libs : ProcessStringList]) : SourceToolCommandStatus
   (match (source-tool-assemble target asm-path obj-path)
-    [(SourceToolCommandOk) (source-tool-link target obj-path bin-path)]
+    [(SourceToolCommandOk)
+      (source-tool-link-with-libs target obj-path bin-path libs)]
     [(SourceToolCommandErr message) (SourceToolCommandErr message)]))
 
 (define (source-tool-assemble-and-archive

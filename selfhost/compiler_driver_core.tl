@@ -95,6 +95,36 @@
         [(ErrCompilerLower diag) (ErrCompilerDriver diag)])]
     [(ErrCompilerLoadWithPaths diag) (ErrCompilerDriver diag)]))
 
+(define (compiler-driver-emit-package-file-with-target-roots-and-level
+  [input-path : String]
+  [target : CompilerBackendTarget]
+  [has-target : bool]
+  [stdlib-roots : CompilerLoadRootList]
+  [opt-level : i64]
+  [manifest-dir : String]
+  [deps : CompilerPkgDepList]) : ResultCompilerDriver
+  (match (compiler-load-package-file-with-paths-and-roots
+    input-path
+    (sym-i64-empty)
+    stdlib-roots
+    manifest-dir
+    deps)
+    [(OkCompilerLoadWithPaths decls paths _ _)
+      (match (lower-compiler-program-with-decl-paths
+        input-path
+        (AstProgram decls)
+        paths)
+        [(OkCompilerLower program spans)
+          (compiler-driver-emit-lowered-with-level
+            input-path
+            program
+            spans
+            target
+            has-target
+            opt-level)]
+        [(ErrCompilerLower diag) (ErrCompilerDriver diag)])]
+    [(ErrCompilerLoadWithPaths diag) (ErrCompilerDriver diag)]))
+
 (define (compiler-driver-ir-summary-line [name : String] [value : i64]) : String
   (string-append
     name

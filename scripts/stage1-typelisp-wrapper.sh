@@ -24,11 +24,21 @@ fail() {
 
 usage() {
     cat >&2 <<'EOF'
-usage: typelisp <command> [args...]
+Usage: typelisp <command> [args...]
 
 stage1 wrapper commands:
-  compile, check, tokenize, parse, build, run, test, fmt, doc, repl
-  debug tokenize, debug parse, debug check, debug host-action
+  typelisp compile <file.tl> [-o <out.s>] [--target <target>] [--stdlib-root <dir>...]
+  typelisp check <file.tl> [--stdlib-root <dir>...]
+  typelisp tokenize <file.tl>
+  typelisp parse <file.tl>
+  typelisp build <file.tl> [-o <out>] [--target <target>] [--stdlib-root <dir>...]
+  typelisp run <file.tl> [--target <target>] [--stdlib-root <dir>...] [-- args...]
+  typelisp test [--check] <file.tl> [--stdlib-root <dir>...]
+  typelisp fmt [--check] <file.tl>... [--stdlib-root <dir>...]
+  typelisp doc <file.tl> [-o <out.md>] [--stdlib-root <dir>...]
+  typelisp repl
+  typelisp debug tokenize|parse|check <file.tl> [--stdlib-root <dir>...]
+  typelisp debug host-action
 EOF
 }
 

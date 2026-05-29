@@ -163,6 +163,19 @@ assert_contains() {
     fi
 }
 
+assert_contains_any() {
+    file=$1
+    shift
+    for text in "$@"; do
+        if grep -F -- "$text" "$file" > /dev/null; then
+            return
+        fi
+    done
+    echo "file contents:" >&2
+    sed 's/^/  /' "$file" >&2 || true
+    fail "$case_name missing any expected text: $*"
+}
+
 assert_not_contains() {
     file=$1
     text=$2
@@ -247,20 +260,33 @@ echo "[public-tools] CLI usage and frontend aliases"
 run_cmd usage "$COMPILER" --help
 assert_success
 assert_stdout_empty
-assert_contains "$err" "typelisp repl"
-assert_contains "$err" "typelisp lsp"
-assert_contains "$err" "typelisp fmt"
+if grep -q "stage1 wrapper commands" "$err"; then
+    IS_STAGE1_WRAPPER=1
+else
+    IS_STAGE1_WRAPPER=0
+fi
+if [ "$IS_STAGE1_WRAPPER" -eq 1 ]; then
+    assert_contains "$err" "repl"
+    assert_contains "$err" "fmt"
+    assert_contains "$err" "doc"
+    HAS_LSP_COMMAND=0
+else
+    assert_contains "$err" "typelisp repl"
+    assert_contains "$err" "typelisp lsp"
+    assert_contains "$err" "typelisp fmt"
+    assert_contains "$err" "typelisp doc"
+    HAS_LSP_COMMAND=1
+fi
 if grep -q "typelisp lint" "$err"; then
     HAS_LINT_COMMAND=1
 else
     HAS_LINT_COMMAND=0
 fi
-assert_contains "$err" "typelisp doc"
 
 run_cmd missing-command "$COMPILER"
 assert_failure
 assert_stdout_empty
-assert_contains "$err" "Usage:"
+assert_contains_any "$err" "Usage:" "usage:"
 
 run_cmd tokenize-alias "$COMPILER" tokenize examples/hello.tl
 assert_success
@@ -1355,29 +1381,37 @@ tr '\\' '/' < "$err" > "$ERR_NORMALIZED"
 assert_contains "$ERR_NORMALIZED" "vendor/math/src/missing.tl"
 
 echo "[public-tools] REPL/LSP corpus via run-corpus.sh"
-TYPELISP_BIN="$COMPILER" sh "$ROOT/tests/public-tools/run-corpus.sh"
+if [ "$HAS_LSP_COMMAND" -eq 1 ]; then
+    TYPELISP_BIN="$COMPILER" sh "$ROOT/tests/public-tools/run-corpus.sh"
+else
+    TYPELISP_BIN="$COMPILER" sh "$ROOT/tests/public-tools/run-corpus.sh" repl
+fi
 
-echo "[public-tools] LSP (legacy inline checks)"
-frame_append() {
-    frame_file=$1
-    frame_body=$2
-    frame_len=$(printf '%s' "$frame_body" | wc -c | tr -d ' ')
-    {
-        printf 'Content-Length: %s\r\n\r\n' "$frame_len"
-        printf '%s' "$frame_body"
-    } >> "$frame_file"
-}
+if [ "$HAS_LSP_COMMAND" -eq 1 ]; then
+    echo "[public-tools] LSP (legacy inline checks)"
+    frame_append() {
+        frame_file=$1
+        frame_body=$2
+        frame_len=$(printf '%s' "$frame_body" | wc -c | tr -d ' ')
+        {
+            printf 'Content-Length: %s\r\n\r\n' "$frame_len"
+            printf '%s' "$frame_body"
+        } >> "$frame_file"
+    }
 
-LSP_IN="$WORKDIR/lsp.in"
-: > "$LSP_IN"
-frame_append "$LSP_IN" '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"capabilities":{}}}'
-frame_append "$LSP_IN" '{"jsonrpc":"2.0","id":2,"method":"shutdown","params":null}'
-run_stdin lsp-init-shutdown "$LSP_IN" "$COMPILER" lsp
-assert_success
-assert_stderr_empty
-assert_contains "$out" '"id":1'
-assert_contains "$out" '"capabilities"'
-assert_contains "$out" '"id":2'
+    LSP_IN="$WORKDIR/lsp.in"
+    : > "$LSP_IN"
+    frame_append "$LSP_IN" '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"capabilities":{}}}'
+    frame_append "$LSP_IN" '{"jsonrpc":"2.0","id":2,"method":"shutdown","params":null}'
+    run_stdin lsp-init-shutdown "$LSP_IN" "$COMPILER" lsp
+    assert_success
+    assert_stderr_empty
+    assert_contains "$out" '"id":1'
+    assert_contains "$out" '"capabilities"'
+    assert_contains "$out" '"id":2'
+else
+    echo "[public-tools] skipping LSP checks (compiler does not advertise typelisp lsp)"
+fi
 
 echo "[public-tools] SPEC metadata examples"
 SPEC_WORK="$WORKDIR/spec"

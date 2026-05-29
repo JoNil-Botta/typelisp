@@ -184,9 +184,14 @@ impl<'a> Parser<'a> {
                 self.advance()?;
                 self.parse_import()
             }
+            Token::Ident(s) if s == "include-str" => {
+                let span = self.span();
+                self.advance()?;
+                self.parse_include_str(span)
+            }
             _ => Err(ParseError {
                 msg: format!(
-                    "expected define, extern, defenum, defstruct, comptime-decl, import or test, got {:?}",
+                    "expected define, extern, defenum, defstruct, comptime-decl, import, include-str or test, got {:?}",
                     self.current
                 ),
                 span: self.span(),
@@ -300,6 +305,29 @@ impl<'a> Parser<'a> {
         };
         self.expect(Token::RParen)?;
         Ok(Decl::Import(path))
+    }
+
+    /// (include-str name "path") — embeds the UTF-8 contents of `path` as a
+    /// string-valued global `name`. The path is resolved by the module loader
+    /// (relative to the including file, same as imports); the parser only
+    /// validates the syntactic shape.
+    fn parse_include_str(&mut self, span: Span) -> Result<Decl, ParseError> {
+        let name = self.expect_ident()?;
+        let path = match &self.current {
+            Token::String(s) => {
+                let p = s.clone();
+                self.advance()?;
+                p
+            }
+            _ => {
+                return Err(ParseError {
+                    msg: format!("expected include-str path string, got {:?}", self.current),
+                    span: self.span(),
+                });
+            }
+        };
+        self.expect(Token::RParen)?;
+        Ok(Decl::IncludeStr { name, path, span })
     }
 
     fn parse_test(&mut self, span: Span) -> Result<Decl, ParseError> {
@@ -1221,6 +1249,40 @@ mod tests {
     fn test_parse_import_requires_string() {
         // A bare identifier where the path string is expected is a parse error.
         assert!(parse("(import foo)").is_err());
+    }
+
+    #[test]
+    fn test_parse_include_str() {
+        let prog = parse("(include-str banner \"banner.txt\")").unwrap();
+        assert_eq!(prog.decls.len(), 1);
+        match &prog.decls[0] {
+            Decl::IncludeStr { name, path, .. } => {
+                assert_eq!(name, "banner");
+                assert_eq!(path, "banner.txt");
+            }
+            other => panic!("expected IncludeStr, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_parse_include_str_then_define() {
+        let prog =
+            parse("(include-str msg \"msg.txt\")\n(define (n) : i64 (string-length msg))").unwrap();
+        assert_eq!(prog.decls.len(), 2);
+        assert!(
+            matches!(&prog.decls[0], Decl::IncludeStr { name, path, .. } if name == "msg" && path == "msg.txt")
+        );
+        assert!(matches!(&prog.decls[1], Decl::DefFn { name, .. } if name == "n"));
+    }
+
+    #[test]
+    fn test_parse_include_str_requires_name_and_string() {
+        // Missing the path string is a parse error.
+        assert!(parse("(include-str banner)").is_err());
+        // A bare identifier where the path string is expected is a parse error.
+        assert!(parse("(include-str banner banner)").is_err());
+        // Missing the binding name (path string in name position) is an error.
+        assert!(parse("(include-str \"banner.txt\")").is_err());
     }
 
     #[test]

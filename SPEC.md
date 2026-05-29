@@ -1211,6 +1211,25 @@ lookup and visibility, while backend calls use the declaration's exact external
 symbol. Runtime helper symbols and backend-local labels are likewise outside
 module-prefixing and must not be accidentally rewritten as user declarations.
 
+#### 4.4.6 `(include-str name "path")` — embed a text file
+
+Embeds the UTF-8 text contents of `path` as a string-valued global `name`,
+equivalent to writing `(define name : String "…")` with the file's exact bytes
+as a string literal. This is a module-loader directive, not a runtime operation:
+the loader reads the file and expands the directive into an ordinary
+string-valued `define` before typechecking, lowering, and codegen, so later
+stages only ever see a normal global.
+
+- Text-only: the file is read as UTF-8 source payload. Binary includes and
+  arbitrary resource packaging are out of scope for this directive.
+- `path` is resolved exactly like an `import` path (§4.4): relative paths resolve
+  from the including file's directory, and `stdlib/...` paths use the same
+  stdlib-root / embedded-provider precedence and the same parent-escape (`..`)
+  rejection. The included file is read as raw text — it is not parsed as a
+  module, runs no imports or tests, and does not participate in import
+  deduplication.
+- An include failure reports both the including file and the requested path.
+
 ### 4.5 `(test name body...)` - inline test item
 
 Declares a source-owned inline test. The name is an identifier. The body must

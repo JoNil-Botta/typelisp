@@ -15,8 +15,9 @@
 //! resolution) is unit-testable with an in-memory file map, requiring no real
 //! filesystem. The driver uses [`FsSource`], backed by `std::fs`/`std::path`.
 
-use crate::ast::{Decl, Program};
+use crate::ast::{Decl, Expr, Literal, Program};
 use crate::parser::{ParseError, parse_with_file_id};
+use crate::types::Type;
 use std::collections::{BTreeMap, HashSet};
 use std::io;
 use std::path::{Component, Path, PathBuf};
@@ -914,8 +915,26 @@ fn load_module(
     }
 
     for decl in prog.decls {
-        if !matches!(decl, Decl::Import(_)) {
-            decls.push(decl);
+        match decl {
+            // Import directives were already resolved & recursed into above.
+            Decl::Import(_) => {}
+            // Expand `(include-str name "path")` into an ordinary string-valued
+            // global so downstream stages only ever see a normal `Decl::Def`.
+            // The path is resolved exactly like an import (relative to this
+            // module, with the same stdlib-root/embedded-provider precedence and
+            // parent-escape rejection), but the target is read as raw UTF-8 text
+            // rather than parsed as a module.
+            Decl::IncludeStr { name, path, .. } => {
+                let (target_canon, request) = resolve_import_canonical(canon, &path, src, options)?;
+                let contents = read_module_source(&target_canon, src, options)
+                    .map_err(|e| io_load_error(&target_canon, e, Some(&request)))?;
+                decls.push(Decl::Def {
+                    name,
+                    ty: Some(Type::String),
+                    value: Expr::Literal(Literal::String(contents)),
+                });
+            }
+            other => decls.push(other),
         }
     }
 
@@ -1014,7 +1033,10 @@ mod tests {
                 | Decl::Extern { name, .. }
                 | Decl::DefEnum { name, .. }
                 | Decl::DefStruct { name, .. } => Some(name.clone()),
-                Decl::Import(_) | Decl::ComptimeDecl { .. } | Decl::Test { .. } => None,
+                Decl::Import(_)
+                | Decl::IncludeStr { .. }
+                | Decl::ComptimeDecl { .. }
+                | Decl::Test { .. } => None,
             })
             .collect()
     }
@@ -1036,6 +1058,80 @@ mod tests {
                 .decls
                 .iter()
                 .any(|d| matches!(d, Decl::Import(_)))
+        );
+    }
+
+    #[test]
+    fn include_str_expands_to_string_global() {
+        let src = MapSource::new(&[
+            ("greeting.txt", "hello"),
+            (
+                "entry.tl",
+                "(include-str greeting \"greeting.txt\")\n(define (n) : i64 (string-length greeting))",
+            ),
+        ]);
+        let loaded = load_program(Path::new("entry.tl"), &src).unwrap();
+        // The directive does not survive into the combined program.
+        assert!(
+            !loaded
+                .program
+                .decls
+                .iter()
+                .any(|d| matches!(d, Decl::IncludeStr { .. }))
+        );
+        // It became a string-valued global holding the file's exact contents.
+        let (ty, value) = loaded
+            .program
+            .decls
+            .iter()
+            .find_map(|d| match d {
+                Decl::Def { name, ty, value } if name == "greeting" => Some((ty, value)),
+                _ => None,
+            })
+            .expect("greeting global");
+        assert!(matches!(ty, Some(Type::String)));
+        assert!(matches!(value, Expr::Literal(Literal::String(s)) if s == "hello"));
+    }
+
+    #[test]
+    fn include_str_resolves_relative_to_including_file() {
+        // The include path is resolved relative to the including file's dir,
+        // exactly like an import.
+        let src = MapSource::new(&[
+            ("sub/data.txt", "payload"),
+            (
+                "sub/mod.tl",
+                "(include-str data \"data.txt\")\n(define (n) : i64 (string-length data))",
+            ),
+            (
+                "entry.tl",
+                "(import \"sub/mod.tl\")\n(define (e) : i64 (n))",
+            ),
+        ]);
+        let loaded = load_program(Path::new("entry.tl"), &src).unwrap();
+        let value = loaded
+            .program
+            .decls
+            .iter()
+            .find_map(|d| match d {
+                Decl::Def { name, value, .. } if name == "data" => Some(value),
+                _ => None,
+            })
+            .expect("data global");
+        assert!(matches!(value, Expr::Literal(Literal::String(s)) if s == "payload"));
+    }
+
+    #[test]
+    fn include_str_missing_file_reports_path() {
+        let src = MapSource::new(&[(
+            "entry.tl",
+            "(include-str x \"nope.txt\")\n(define (n) : i64 (string-length x))",
+        )]);
+        let err = load_program(Path::new("entry.tl"), &src).unwrap_err();
+        let msg = format!("{err:?}");
+        assert!(
+            msg.contains("nope.txt"),
+            "include failure should name the requested path, got: {msg}"
         );
     }
 

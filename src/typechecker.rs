@@ -1160,7 +1160,10 @@ impl TypeChecker {
                 // wrappers are expanded by `ExpandedProgram::from_program`, so
                 // neither survives into this expanded stream. Arms kept for
                 // exhaustiveness.
-                Decl::Import(_) | Decl::ComptimeDecl { .. } | Decl::Test { .. } => vec![],
+                Decl::Import(_)
+                | Decl::IncludeStr { .. }
+                | Decl::ComptimeDecl { .. }
+                | Decl::Test { .. } => vec![],
             };
             for (name, span) in value_names {
                 if self.builtin_names.contains(&name) {
@@ -1375,7 +1378,10 @@ impl TypeChecker {
                 // Import directives are stripped by the module-graph loader
                 // before typecheck; `comptime-decl` wrappers are expanded by
                 // `ExpandedProgram::from_program`. Neither reaches this arm.
-                Decl::Import(_) | Decl::ComptimeDecl { .. } | Decl::Test { .. } => {}
+                Decl::Import(_)
+                | Decl::IncludeStr { .. }
+                | Decl::ComptimeDecl { .. }
+                | Decl::Test { .. } => {}
             }
         }
 

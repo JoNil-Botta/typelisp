@@ -164,6 +164,17 @@ pub enum Decl {
     /// from the concatenated `Program` before typecheck/lower/codegen, so the
     /// downstream stages never act on them.
     Import(String),
+    /// (include-str name "path") — a directive consumed by the module-graph
+    /// loader, not a codegen declaration. It embeds the UTF-8 text contents of
+    /// `path` (resolved like an import, relative to the including file with the
+    /// same stdlib-root/embedded-provider precedence) as a string-valued global
+    /// `name`. The loader expands it into an ordinary `Decl::Def` with a string
+    /// literal before typecheck/lower/codegen, so downstream stages never see it.
+    IncludeStr {
+        name: Symbol,
+        path: String,
+        span: Span,
+    },
     /// `(comptime-decl (defstruct ...))` / `(comptime-decl (defenum ...))` — a
     /// declaration-position comptime template. In this first slice the payload
     /// is restricted to a single literal `defstruct`/`defenum`; declaration
@@ -398,6 +409,7 @@ impl Decl {
             Decl::DefFn { body, .. } => body.span(),
             Decl::ComptimeDecl { span, .. } => *span,
             Decl::Test { span, .. } => *span,
+            Decl::IncludeStr { span, .. } => *span,
             Decl::Extern { .. }
             | Decl::DefEnum { .. }
             | Decl::DefStruct { .. }
@@ -424,6 +436,7 @@ impl Decl {
             Decl::DefEnum { .. } => "enum",
             Decl::DefStruct { .. } => "struct",
             Decl::Import(_) => "import",
+            Decl::IncludeStr { .. } => "include-str",
             Decl::ComptimeDecl { .. } => "comptime-decl",
             Decl::Test { .. } => "test",
         }

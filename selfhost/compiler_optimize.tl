@@ -740,6 +740,7 @@
     [(IrInstrPredicatedLoad dst _ _ _ _ _) (opt-invalidate-def env dst instr)]
     [(IrInstrTailMask dst _ _ _) (opt-invalidate-def env dst instr)]
     [(IrInstrCall dst name args ty) (opt-invalidate-def env dst instr)]
+    [(IrInstrCallIndirect dst _ _ _) (opt-invalidate-def env dst instr)]
     [(IrInstrTailCall _ _ _) (OptInstrResult env instr)]
     [(IrInstrPhi dst inputs ty) (opt-invalidate-def env dst instr)]
     [_ (OptInstrResult env instr)]))
@@ -797,6 +798,7 @@
     [(IrInstrPredicatedLoad dst _ _ _ _ _) (opt-invalidate-def env dst instr)]
     [(IrInstrTailMask dst _ _ _) (opt-invalidate-def env dst instr)]
     [(IrInstrCall dst name args ty) (opt-invalidate-def env dst instr)]
+    [(IrInstrCallIndirect dst _ _ _) (opt-invalidate-def env dst instr)]
     [(IrInstrTailCall _ _ _) (OptInstrResult env instr)]
     [(IrInstrPhi dst inputs ty) (opt-invalidate-def env dst instr)]
     [_ (OptInstrResult env instr)]))
@@ -866,6 +868,8 @@
       (opt-collect-value-uses (opt-collect-value-uses set l) r)]
     [(IrInstrUnOp _ _ src _) (opt-collect-value-uses set src)]
     [(IrInstrCall _ _ args _) (opt-collect-value-list-uses set args)]
+    [(IrInstrCallIndirect _ func args _)
+      (opt-collect-value-list-uses (opt-collect-value-uses set func) args)]
     [(IrInstrTailCall _ args _) (opt-collect-value-list-uses set args)]
     [(IrInstrStore _ value _) (opt-collect-value-uses set value)]
     ;; Pointer/memory ops carry operand uses too; missing any of these would let
@@ -1552,6 +1556,10 @@
       (match b
         [(IrValueGlobalAddr gb) (string-eq ga gb)]
         [_ false])]
+    [(IrValueFunction fa)
+      (match b
+        [(IrValueFunction fb) (string-eq fa fb)]
+        [_ false])]
     [(IrValueI64 na)
       (match b
         [(IrValueI64 nb) (= na nb)]
@@ -1989,6 +1997,15 @@
               (string-eq aname bname)
               (and (opt-value-list-eq aargs bargs) (opt-type-eq aty bty))))]
         [_ false])]
+    [(IrInstrCallIndirect ad afunc aargs aty)
+      (match b
+        [(IrInstrCallIndirect bd bfunc bargs bty)
+          (and
+            (= ad bd)
+            (and
+              (opt-value-eq afunc bfunc)
+              (and (opt-value-list-eq aargs bargs) (opt-type-eq aty bty))))]
+        [_ false])]
     [(IrInstrTailCall aname aargs aty)
       (match b
         [(IrInstrTailCall bname bargs bty)
@@ -2277,6 +2294,7 @@
       (OptCseResult (opt-expr-invalidate-var table dst) instr)]
     ;; Calls, stores, and control flow clear all available expressions.
     [(IrInstrCall _ _ _ _) (OptCseResult (OptExprNil) instr)]
+    [(IrInstrCallIndirect _ _ _ _) (OptCseResult (OptExprNil) instr)]
     [(IrInstrTailCall _ _ _) (OptCseResult (OptExprNil) instr)]
     [(IrInstrStore _ _ _) (OptCseResult (OptExprNil) instr)]
     [(IrInstrStorePtr _ _ _) (OptCseResult (OptExprNil) instr)]
@@ -2348,7 +2366,8 @@
     [(IrValueF64 _) false]
     [(IrValueString _) false]
     [(IrValueGlobal _) false]
-    [(IrValueGlobalAddr _) false]))
+    [(IrValueGlobalAddr _) false]
+    [(IrValueFunction _) false]))
 
 (define (opt-copy-resolve [env : OptCopyEnv] [value : CompilerIrValue]) : CompilerIrValue
   (match value
@@ -2409,6 +2428,12 @@
     [(IrInstrTailMask _ _ _ _) instr]
     [(IrInstrCall dst name args ty)
       (IrInstrCall dst name (opt-copy-subst-value-list env args) ty)]
+    [(IrInstrCallIndirect dst func args ty)
+      (IrInstrCallIndirect
+        dst
+        (opt-copy-resolve env func)
+        (opt-copy-subst-value-list env args)
+        ty)]
     [(IrInstrTailCall name args ty)
       (IrInstrTailCall name (opt-copy-subst-value-list env args) ty)]
     [(IrInstrStore name value ty)
@@ -2466,6 +2491,7 @@
     [(IrInstrPredicatedLoad dst _ _ _ _ _) (opt-copy-invalidate-var env dst)]
     [(IrInstrTailMask dst _ _ _) (opt-copy-invalidate-var env dst)]
     [(IrInstrCall dst _ _ _) (opt-copy-invalidate-var env dst)]
+    [(IrInstrCallIndirect dst _ _ _) (opt-copy-invalidate-var env dst)]
     [(IrInstrPhi dst _ _) (opt-copy-invalidate-var env dst)]
     [_ env]))
 
@@ -2568,6 +2594,7 @@
       (opt-bounds-invalidate-var facts dst)]
     [(IrInstrTailMask dst _ _ _) (opt-bounds-invalidate-var facts dst)]
     [(IrInstrCall _ _ _ _) (OptBoundsNil)]
+    [(IrInstrCallIndirect _ _ _ _) (OptBoundsNil)]
     [(IrInstrTailCall _ _ _) (OptBoundsNil)]
     [(IrInstrStore _ _ _) (OptBoundsNil)]
     [(IrInstrStorePtr _ _ _) (OptBoundsNil)]
@@ -3315,6 +3342,10 @@
         (opt-verify-value-use defs doms length block-label pos))]
     [(IrInstrCall _ _ args _)
       (opt-verify-value-list-uses defs doms args block-label pos)]
+    [(IrInstrCallIndirect _ func args _)
+      (opt-verify-two
+        (opt-verify-value-use defs doms func block-label pos)
+        (opt-verify-value-list-uses defs doms args block-label pos))]
     [(IrInstrTailCall _ args _)
       (opt-verify-value-list-uses defs doms args block-label pos)]
     [(IrInstrStore _ value _)
@@ -3791,6 +3822,7 @@
   [value : CompilerIrValue]) : OptReachState
   (match value
     [(IrValueGlobal name) (opt-reach-add-function functions state name)]
+    [(IrValueFunction name) (opt-reach-add-function functions state name)]
     [_ state]))
 
 (define (opt-reach-value-list
@@ -3895,6 +3927,11 @@
         functions
         (opt-reach-value-list functions state args)
         name)]
+    [(IrInstrCallIndirect _ func args _)
+      (opt-reach-value-list
+        functions
+        (opt-reach-value functions state func)
+        args)]
     [(IrInstrTailCall name args _)
       (opt-reach-add-function
         functions

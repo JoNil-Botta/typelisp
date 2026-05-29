@@ -150,7 +150,7 @@ fn compiler_lower_tl_compiles_to_assembly() {
 
     for message in [
         "lower: unsupported expression",
-        "lower: only direct calls are supported",
+        "lower: call target is not a function",
         "lower: assignment to unknown local ",
         "lower: smoke score mismatch",
         "(while (< x 45)",

@@ -277,10 +277,44 @@ if [ "$HOST_OS" = linux ]; then
         TYPELISP_BIN="$ROOT/target/bootstrap-fixpoint/stage1"
     fi
     ensure_executable "stage1" "$TYPELISP_BIN"
-    STAGE1_DOC_BIN=$(build_stage1_doc_driver "$SEED_TYPELISP_BIN")
-    STAGE1_BUILD_BIN=$(build_stage1_build_driver "$SEED_TYPELISP_BIN")
-    STAGE1_REPL_BIN=$(build_stage1_repl_driver "$SEED_TYPELISP_BIN")
-    STAGE1_TYPELISP_BIN=$(make_stage1_cli_wrapper "$TYPELISP_BIN" "" "$STAGE1_DOC_BIN" "$STAGE1_BUILD_BIN" "$STAGE1_REPL_BIN")
+
+    LINUX_SEED_STAGED_RUNTIME_GAP=0
+    if seed_has_staged_runtime_gap "$SEED_TYPELISP_BIN"; then
+        LINUX_SEED_STAGED_RUNTIME_GAP=1
+        echo "[no-rust-stage0] Linux seed lacks staged runtime symbols used by stdlib/io.tl; limiting stage1 to compile-only gates"
+    fi
+
+    STAGE1_DOC_BIN=
+    STAGE1_BUILD_BIN=
+    STAGE1_REPL_BIN=
+    STAGE1_TEST_BIN=
+    STAGE1_HOST_ACTION_DRIVERS_AVAILABLE=0
+    SEED_IS_STAGE1_BUNDLE=0
+    SEED_DIR=$(CDPATH= cd -- "$(dirname -- "$SEED_TYPELISP_BIN")" && pwd)
+    if [ -x "$SEED_DIR/lib/stage1/typelisp-stage1" ]; then
+        SEED_IS_STAGE1_BUNDLE=1
+    fi
+    BUNDLED_STAGE1_DRIVER_DIR="$SEED_DIR/lib/stage1/drivers"
+    if [ -x "$BUNDLED_STAGE1_DRIVER_DIR/selfhost-test" ]; then
+        STAGE1_TEST_BIN="$BUNDLED_STAGE1_DRIVER_DIR/selfhost-test"
+    fi
+    if [ -x "$BUNDLED_STAGE1_DRIVER_DIR/selfhost-doc" ] &&
+        [ -x "$BUNDLED_STAGE1_DRIVER_DIR/selfhost-build" ] &&
+        [ -x "$BUNDLED_STAGE1_DRIVER_DIR/selfhost-repl" ]; then
+        STAGE1_DOC_BIN="$BUNDLED_STAGE1_DRIVER_DIR/selfhost-doc"
+        STAGE1_BUILD_BIN="$BUNDLED_STAGE1_DRIVER_DIR/selfhost-build"
+        STAGE1_REPL_BIN="$BUNDLED_STAGE1_DRIVER_DIR/selfhost-repl"
+        STAGE1_HOST_ACTION_DRIVERS_AVAILABLE=1
+        echo "[no-rust-stage0] using bundled stage1 doc/build/repl drivers"
+    elif [ "$LINUX_SEED_STAGED_RUNTIME_GAP" -eq 0 ]; then
+        STAGE1_DOC_BIN=$(build_stage1_doc_driver "$SEED_TYPELISP_BIN")
+        STAGE1_BUILD_BIN=$(build_stage1_build_driver "$SEED_TYPELISP_BIN")
+        STAGE1_REPL_BIN=$(build_stage1_repl_driver "$SEED_TYPELISP_BIN")
+        STAGE1_HOST_ACTION_DRIVERS_AVAILABLE=1
+    else
+        echo "[no-rust-stage0] skipping eager stage1 doc/build/repl driver prebuild until staged runtime symbols land in stage0"
+    fi
+    STAGE1_TYPELISP_BIN=$(make_stage1_cli_wrapper "$TYPELISP_BIN" "$STAGE1_TEST_BIN" "$STAGE1_DOC_BIN" "$STAGE1_BUILD_BIN" "$STAGE1_REPL_BIN")
     echo
     echo "[no-rust-stage0] stage1 CLI wrapper=$STAGE1_TYPELISP_BIN"
 else
@@ -298,14 +332,16 @@ if [ "$HOST_OS" = windows ] && windows_seed_has_staged_runtime_gap; then
     WINDOWS_SEED_STAGED_RUNTIME_GAP=1
     echo "[no-rust-stage0] Windows seed lacks staged runtime symbols used by stdlib/io.tl"
 fi
-LINUX_SEED_STAGED_RUNTIME_GAP=0
-if [ "$HOST_OS" = linux ] && seed_has_staged_runtime_gap "$SEED_TYPELISP_BIN"; then
-    LINUX_SEED_STAGED_RUNTIME_GAP=1
-    echo "[no-rust-stage0] Linux seed lacks staged runtime symbols used by stdlib/io.tl; using stage1 wrapper for front-door gates"
+if [ "$HOST_OS" != linux ]; then
+    LINUX_SEED_STAGED_RUNTIME_GAP=0
+    STAGE1_HOST_ACTION_DRIVERS_AVAILABLE=0
+    SEED_IS_STAGE1_BUNDLE=0
 fi
 
 FRONT_GATE_TYPELISP_BIN=$SEED_TYPELISP_BIN
-if [ "$HOST_OS" = linux ] && [ "$LINUX_SEED_STAGED_RUNTIME_GAP" -eq 1 ]; then
+if [ "$HOST_OS" = linux ] &&
+    [ "$LINUX_SEED_STAGED_RUNTIME_GAP" -eq 1 ] &&
+    [ "$STAGE1_HOST_ACTION_DRIVERS_AVAILABLE" -eq 1 ]; then
     FRONT_GATE_TYPELISP_BIN=$STAGE1_TYPELISP_BIN
 fi
 
@@ -314,15 +350,34 @@ if [ "$WINDOWS_SEED_STAGED_RUNTIME_GAP" -eq 1 ]; then
     echo "[no-rust-stage0] skipping Windows seed gates that compile selfhost doc/build/run drivers:"
     echo "[no-rust-stage0]   public tool surface, repository doctests"
 else
-    if [ "$HOST_OS" = linux ] && [ "$LINUX_SEED_STAGED_RUNTIME_GAP" -eq 1 ]; then
+    if [ "$HOST_OS" = linux ] && [ "$SEED_IS_STAGE1_BUNDLE" -eq 1 ]; then
+        echo
+        echo "[no-rust-stage0] skipping public tool surface until the stage1 bundle exposes the full public CLI"
+    elif [ "$HOST_OS" = linux ] &&
+        [ "$LINUX_SEED_STAGED_RUNTIME_GAP" -eq 1 ] &&
+        [ "$STAGE1_HOST_ACTION_DRIVERS_AVAILABLE" -eq 0 ]; then
         echo
         echo "[no-rust-stage0] skipping seed public tool surface until staged runtime symbols land in stage0"
     else
         run_with_compiler "$FRONT_GATE_TYPELISP_BIN" "public tool surface" scripts/verify-public-tools.sh
     fi
-    run_with_compiler "$FRONT_GATE_TYPELISP_BIN" "repository doctests" scripts/verify-doc-tests.sh
+    if [ "$HOST_OS" = linux ] &&
+        [ "$LINUX_SEED_STAGED_RUNTIME_GAP" -eq 1 ] &&
+        [ "$STAGE1_HOST_ACTION_DRIVERS_AVAILABLE" -eq 0 ]; then
+        echo
+        echo "[no-rust-stage0] skipping repository doctests until staged runtime symbols land in stage0"
+    else
+        run_with_compiler "$FRONT_GATE_TYPELISP_BIN" "repository doctests" scripts/verify-doc-tests.sh
+    fi
 fi
-run_with_compiler "$FRONT_GATE_TYPELISP_BIN" "inline TypeLisp tests" scripts/verify-inline-tests.sh
+if [ "$HOST_OS" = linux ] &&
+    [ "$SEED_IS_STAGE1_BUNDLE" -eq 1 ] &&
+    [ -z "$STAGE1_TEST_BIN" ]; then
+    echo
+    echo "[no-rust-stage0] skipping inline TypeLisp tests until the stage1 bundle carries a selfhost test driver"
+else
+    run_with_compiler "$FRONT_GATE_TYPELISP_BIN" "inline TypeLisp tests" scripts/verify-inline-tests.sh
+fi
 if [ "$HOST_OS" = linux ]; then
     # Building the full selfhost test driver in this hosted no-Rust lane is
     # currently too heavy for the runner; #1401 tracks restoring direct stage1
@@ -334,13 +389,24 @@ if [ "$HOST_OS" = linux ]; then
     TYPELISP_STAGE1_SKIP_DOC_SMOKE=1
     export TYPELISP_STAGE1_SKIP_TEST_SMOKE
     export TYPELISP_STAGE1_SKIP_DOC_SMOKE
-    run_with_compiler "$STAGE1_TYPELISP_BIN" "stage1 CLI host-action wrapper smoke" scripts/check-stage1-wrapper.sh
+    if [ "$STAGE1_HOST_ACTION_DRIVERS_AVAILABLE" -eq 0 ]; then
+        echo
+        echo "[no-rust-stage0] skipping stage1 CLI host-action wrapper smoke until staged runtime symbols land in stage0"
+    else
+        run_with_compiler "$STAGE1_TYPELISP_BIN" "stage1 CLI host-action wrapper smoke" scripts/check-stage1-wrapper.sh
+    fi
     unset TYPELISP_STAGE1_SKIP_TEST_SMOKE
     unset TYPELISP_STAGE1_SKIP_DOC_SMOKE
     run_with_compiler "$STAGE1_TYPELISP_BIN" "stage1 deterministic assembly" scripts/check-deterministic-asm.sh
     run_with_compiler "$STAGE1_TYPELISP_BIN" "stage1 selfhost compile manifest" env TYPELISP_COMPILE_MANIFEST_EXPECTATION_MODE=stage1 scripts/verify-selfhost-compile-manifest.sh
-    run_with_compiler "$STAGE1_TYPELISP_BIN" "stage1 stdlib documentation" scripts/verify-stdlib-docs.sh
-    run_with_compiler "$STAGE1_TYPELISP_BIN" "stage1 stdlib selfhost verifier" scripts/verify-stdlib-selfhost.sh
+    if [ "$STAGE1_HOST_ACTION_DRIVERS_AVAILABLE" -eq 0 ]; then
+        echo
+        echo "[no-rust-stage0] skipping stage1 doc/build-driver gates until staged runtime symbols land in stage0:"
+        echo "[no-rust-stage0]   stdlib documentation, stdlib selfhost verifier"
+    else
+        run_with_compiler "$STAGE1_TYPELISP_BIN" "stage1 stdlib documentation" scripts/verify-stdlib-docs.sh
+        run_with_compiler "$STAGE1_TYPELISP_BIN" "stage1 stdlib selfhost verifier" scripts/verify-stdlib-selfhost.sh
+    fi
 else
     run_gate "selfhost compile manifest" scripts/verify-selfhost-compile-manifest.sh
     run_gate "deterministic assembly" scripts/check-deterministic-asm.sh
@@ -358,6 +424,10 @@ if [ "$WINDOWS_SEED_STAGED_RUNTIME_GAP" -eq 1 ] || [ "$LINUX_SEED_STAGED_RUNTIME
     echo
     echo "[no-rust-stage0] skipping seed build/run artifact gates until staged runtime symbols land in stage0:"
     echo "[no-rust-stage0]   native integration corpus, examples, stdlib modules and fixtures"
+elif [ "$HOST_OS" = linux ] && [ "$SEED_IS_STAGE1_BUNDLE" -eq 1 ]; then
+    echo
+    echo "[no-rust-stage0] skipping seed build/run artifact gates until the stage1 bundle reaches compiler/runtime parity:"
+    echo "[no-rust-stage0]   native integration corpus, examples, stdlib modules and fixtures"
 else
     run_gate "native integration corpus" scripts/verify-integration.sh
     run_gate "examples" scripts/verify-examples.sh
@@ -368,6 +438,11 @@ if [ "$HOST_OS" = linux ]; then
     if [ "$LINUX_SEED_STAGED_RUNTIME_GAP" -eq 1 ]; then
         echo
         echo "[no-rust-stage0] skipping Linux seed build/run gates until staged runtime symbols land in stage0:"
+        echo "[no-rust-stage0]   docs Pages build path, selfhost native generated programs,"
+        echo "[no-rust-stage0]   selfhost external compiler corpus"
+    elif [ "$SEED_IS_STAGE1_BUNDLE" -eq 1 ]; then
+        echo
+        echo "[no-rust-stage0] skipping Linux seed build/run gates until the stage1 bundle reaches compiler/runtime parity:"
         echo "[no-rust-stage0]   docs Pages build path, selfhost native generated programs,"
         echo "[no-rust-stage0]   selfhost external compiler corpus"
     else

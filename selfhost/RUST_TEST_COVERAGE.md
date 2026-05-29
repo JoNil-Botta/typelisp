@@ -122,8 +122,11 @@ assertions remain under #1044.
 
 Named remaining blockers:
 
-- Function values, noncapturing lambdas, capturing closures, closure heap
-  descriptors/calls, and capture deep-copy details are split to #1418.
+- Function-valued lowerer calls (function-parameter call, named function as a
+  value, and local function values shadowing top-level functions) are covered by
+  `compiler-lower-function-value-shape-ok?`.
+- Noncapturing lambdas, capturing closures, closure heap descriptors/calls, and
+  capture deep-copy details remain split to #1418.
 - Tuple construction/ref, fixed-array set/ref, and `string-ref` emit-shape
   parity have focused follow-ups (#1414, #1416, #1417). Broader backend-only
   assembly assertions stay under #1044.

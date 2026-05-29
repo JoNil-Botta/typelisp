@@ -1420,6 +1420,82 @@
                 (tc-source-variant-list-policy-ok ctx rest))]
             [(ErrTcUnit message) (ErrTcUnit message)])])]))
 
+(define (tc-type-list-mentions-enum?
+  [ctx : TcContext]
+  [types : AstTypeList]
+  [enum-name : String]) : bool
+  (match types
+    [(AstTypeNil) false]
+    [(AstTypeCons head tail)
+      (or
+        (tc-type-mentions-enum? ctx head enum-name)
+        (tc-type-list-mentions-enum? ctx tail enum-name))]))
+
+(define (tc-type-mentions-enum?
+  [ctx : TcContext]
+  [ty : AstType]
+  [enum-name : String]) : bool
+  (match (tc-type-strip-region (tc-resolve-type ctx ty))
+    [(AstTyEnum name) (string-eq name enum-name)]
+    [(AstTyTuple elems) (tc-type-list-mentions-enum? ctx elems enum-name)]
+    [(AstTyArray elem _) (tc-type-mentions-enum? ctx elem enum-name)]
+    [_ false]))
+
+(define (tc-type-mentions-enum-indirectly?
+  [ctx : TcContext]
+  [ty : AstType]
+  [enum-name : String]) : bool
+  (match (tc-type-strip-region (tc-resolve-type ctx ty))
+    [(AstTyTuple elems) (tc-type-list-mentions-enum? ctx elems enum-name)]
+    [(AstTyArray elem _) (tc-type-mentions-enum? ctx elem enum-name)]
+    [_ false]))
+
+(define (tc-recursive-enum-inline-message
+  [enum-name : String]
+  [variant-name : String]) : String
+  (string-append
+    "typecheck: recursive enum "
+    (string-append
+      enum-name
+      (string-append
+        " (variant "
+        (string-append
+          variant-name
+          ") via an inline compound type is not yet supported; reference the enum directly (it is heap-pointer-indirected) - see #13")))))
+
+(define (tc-recursive-enum-variant-inline-policy-ok
+  [ctx : TcContext]
+  [enum-name : String]
+  [variant-name : String]
+  [fields : AstTypeList]) : ResultTcUnit
+  (match fields
+    [(AstTypeNil) OkTcUnit]
+    [(AstTypeCons field rest)
+      (if (tc-type-mentions-enum-indirectly? ctx field enum-name)
+        (ErrTcUnit (tc-recursive-enum-inline-message enum-name variant-name))
+        (tc-recursive-enum-variant-inline-policy-ok
+          ctx
+          enum-name
+          variant-name
+          rest))]))
+
+(define (tc-recursive-enum-inline-policy-ok
+  [ctx : TcContext]
+  [enum-name : String]
+  [variants : AstVariantDefList]) : ResultTcUnit
+  (match variants
+    [(AstVariantDefNil) OkTcUnit]
+    [(AstVariantDefCons variant rest)
+      (match variant
+        [(AstVariantDef variant-name fields)
+          (match (tc-recursive-enum-variant-inline-policy-ok
+            ctx
+            enum-name
+            variant-name
+            fields)
+            [(OkTcUnit) (tc-recursive-enum-inline-policy-ok ctx enum-name rest)]
+            [(ErrTcUnit message) (ErrTcUnit message)])])]))
+
 (define (tc-source-pattern-list-policy-ok
   [ctx : TcContext]
   [patterns : AstPatternList]) : ResultTcUnit
@@ -1636,8 +1712,14 @@
             [(ErrTcUnit message) (ErrTcUnit message)])]
         [(ErrTcUnit message) (ErrTcUnit message)])]
     [(AstDeclExtern _ _ ty) (tc-source-type-policy-ok ctx ty)]
-    [(AstDeclDefEnum _ variants)
-      (tc-source-variant-list-policy-ok ctx variants)]
+    [(AstDeclDefEnum name variants)
+      (match (tc-source-variant-list-policy-ok ctx variants)
+        [(OkTcUnit)
+          (tc-recursive-enum-inline-policy-ok
+            ctx
+            (compiler-symbol-module-key (tc-context-module ctx) name)
+            variants)]
+        [(ErrTcUnit message) (ErrTcUnit message)])]
     [(AstDeclDefStruct name repr _ fields)
       (match (tc-source-field-list-policy-ok ctx fields)
         [(OkTcUnit)
@@ -2821,6 +2903,37 @@
     [(AstExprVar name) (TcSomeString name)]
     [_ (TcNoString)]))
 
+(define (tc-nullary-variant-call-expr
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [func : AstExpr]
+  [enum-name : String]
+  [ret : AstType]) : ResultTcType
+  (match (tc-expr-var-name func)
+    [(TcSomeString name)
+      (match (compiler-registries-lookup-variant
+        (tc-context-registries ctx)
+        (tc-variant-name-for-enum enum-name name))
+        [(SomeI64 handle)
+          (match (tc-variant-owner-name ctx handle)
+            [(OkTcString owner)
+              (if (string-eq owner enum-name)
+                (match (compiler-registries-variant-fields
+                  (tc-context-program ctx)
+                  handle)
+                  [(OkAstTypeList fields)
+                    (match fields
+                      [(AstTypeNil) (OkTcType (tc-tag-active-region env ret))]
+                      [_ (ErrTcType "typecheck: arity mismatch")])]
+                  [(ErrAstTypeList message) (ErrTcType message)])
+                (ErrTcType "typecheck: call target is not a function"))]
+            [(ErrTcString message) (ErrTcType message)])]
+        [(NoneI64)
+          (if (tc-name-qualified? name)
+            (OkTcType (tc-tag-active-region env ret))
+            (ErrTcType "typecheck: call target is not a function"))])]
+    [(TcNoString) (ErrTcType "typecheck: call target is not a function")]))
+
 (define (tc-call-region-args-allowed-for-func
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -2959,14 +3072,16 @@
               (match (tc-check-call-args ctx env args params false (AstNoType))
                 [(OkTcUnit) (OkTcType (tc-tag-active-region env ret))]
                 [(ErrTcUnit message) (ErrTcType message)])]
-            [(AstTyEnum _)
+            [(AstTyEnum enum-name)
               (match args
-                [(AstExprNil) (OkTcType (tc-tag-active-region env inner))]
+                [(AstExprNil)
+                  (tc-nullary-variant-call-expr ctx env func enum-name inner)]
                 [_ (ErrTcType "typecheck: arity mismatch")])]
             [_ (ErrTcType "typecheck: call target is not a function")])]
-        [(AstTyEnum _)
+        [(AstTyEnum enum-name)
           (match args
-            [(AstExprNil) (OkTcType (tc-tag-active-region env fn-ty))]
+            [(AstExprNil)
+              (tc-nullary-variant-call-expr ctx env func enum-name fn-ty)]
             [_ (ErrTcType "typecheck: arity mismatch")])]
         [_ (ErrTcType "typecheck: call target is not a function")])]
     [(ErrTcType message) (ErrTcType message)]))
@@ -5715,6 +5830,45 @@
                 (tc-match-arms-cover-bool? rest want))]
             [_ (tc-match-arms-cover-bool? rest want)])])]))
 
+(define (tc-match-pattern-catchall-for-type?
+  [ctx : TcContext]
+  [scrut-ty : AstType]
+  [pattern : AstPattern]) : bool
+  (match (tc-type-strip-region (tc-resolve-type ctx scrut-ty))
+    [(AstTyEnum _)
+      (match pattern
+        [(AstPatWildcard) true]
+        [_ false])]
+    [_
+      (match pattern
+        [(AstPatWildcard) true]
+        [(AstPatBinding _) true]
+        [_ false])]))
+
+(define (tc-match-arm-reachability-loop
+  [ctx : TcContext]
+  [scrut-ty : AstType]
+  [arms : AstMatchArmList]
+  [seen-catchall : bool]) : ResultTcUnit
+  (match arms
+    [(AstMatchArmNil) OkTcUnit]
+    [(AstMatchArmCons arm rest)
+      (if seen-catchall
+        (ErrTcUnit "typecheck: unreachable match arm after wildcard `_`")
+        (match arm
+          [(AstMatchArm pattern _)
+            (tc-match-arm-reachability-loop
+              ctx
+              scrut-ty
+              rest
+              (tc-match-pattern-catchall-for-type? ctx scrut-ty pattern))]))]))
+
+(define (tc-match-arm-reachability-ok
+  [ctx : TcContext]
+  [scrut-ty : AstType]
+  [arms : AstMatchArmList]) : ResultTcUnit
+  (tc-match-arm-reachability-loop ctx scrut-ty arms false))
+
 (define (tc-match-exhaustive?
   [ctx : TcContext]
   [scrut-ty : AstType]
@@ -5738,12 +5892,15 @@
   [env : TcTypeEnv]
   [scrut-ty : AstType]
   [arms : AstMatchArmList]) : ResultTcType
-  (match (tc-check-match-arm-types ctx env scrut-ty arms)
-    [(OkTcType result-ty)
-      (if (tc-match-exhaustive? ctx scrut-ty arms)
-        (OkTcType result-ty)
-        (ErrTcType "typecheck: non-exhaustive match"))]
-    [(ErrTcType message) (ErrTcType message)]))
+  (match (tc-match-arm-reachability-ok ctx scrut-ty arms)
+    [(OkTcUnit)
+      (match (tc-check-match-arm-types ctx env scrut-ty arms)
+        [(OkTcType result-ty)
+          (if (tc-match-exhaustive? ctx scrut-ty arms)
+            (OkTcType result-ty)
+            (ErrTcType "typecheck: non-exhaustive match"))]
+        [(ErrTcType message) (ErrTcType message)])]
+    [(ErrTcUnit message) (ErrTcType message)]))
 
 ;; spmd-reduce operator/type rules (#1011, SPEC 5.15): the init/value/result type
 ;; must be in the operator's supported set -- `sum` over i32/i64/f64, `min`/`max`

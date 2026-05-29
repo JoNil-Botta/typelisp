@@ -176,6 +176,12 @@ Named remaining blockers:
 
 ### 2026-05-29 Inline Additions
 
+- #1538 expands the selfhost-owned `src/typechecker.rs` match/pattern
+  replacement in `compiler-typecheck-match-tests-ok?`: nullary variant call
+  forms and shadowing, bare/nullary enum patterns, string/struct/nested payload
+  binding, nested refutability, enum/scalar/string/bool exhaustiveness, literal
+  type checks, wildcard reachability, Maybe/Result matches, and direct vs
+  inline-compound recursive enum cases.
 - #1507 adds embedded-stdlib Rust loader tests in `src/module.rs` for the
   temporary Rust stage0 fallback provider: manifest coverage for checked-in
   `stdlib/**/*.tl`, virtual canonical path round-tripping, final-fallback load,

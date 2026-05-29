@@ -2281,6 +2281,33 @@
 (define (compiler-typecheck-lambda-bad-ret-source) : String
   "(define (main) : i64 (begin (lambda ([x : i64]) : bool x) 0))")
 
+;; Closure capture typing (#1542, migrated from src/typechecker.rs): a lambda
+;; that reads outer locals/params type-checks like its declared `(-> ...)` type.
+;; Covers scalar, multi-scalar, String, struct capture, and aggregate-returning
+;; lambdas — the capture shapes the selfhost typechecker currently accepts.
+(define (compiler-typecheck-lambda-capture-scalar-source) : String
+  "(define (main) : i64 (let [n : i64 7] (let [g : (-> i64) (lambda () : i64 n)] (g))))")
+
+(define (compiler-typecheck-lambda-capture-multi-source) : String
+  "(define (main) : i64
+  (let [a : i64 3] (let [b : i64 4]
+    (let [g : (-> i64) (lambda () : i64 (+ a b))] (g)))))")
+
+(define (compiler-typecheck-lambda-capture-string-source) : String
+  "(define (main) : i64
+  (let [s : String \"hi\"]
+    (let [g : (-> i64) (lambda () : i64 (string-length s))] (g))))")
+
+(define (compiler-typecheck-lambda-capture-struct-source) : String
+  "(defstruct P (a i64))
+(define (main) : i64
+  (let [p : P (P 9)] (let [g : (-> P) (lambda () : P p)] (struct-get (g) a))))")
+
+(define (compiler-typecheck-lambda-aggregate-return-source) : String
+  "(defstruct P (a i64))
+(define (main) : i64
+  (let [mk : (-> P) (lambda () : P (P 5))] (struct-get (mk) a)))")
+
 (define (compiler-typecheck-lambda-tests-ok?) : bool
   (and
     (compiler-typecheck-ok? (compiler-typecheck-lambda-ok-typed-source))
@@ -2289,9 +2316,24 @@
       (and
         (compiler-typecheck-ok?
           (compiler-typecheck-lambda-ok-inferred-ret-source))
-        (compiler-typecheck-error-ok?
-          (compiler-typecheck-lambda-bad-ret-source)
-          "typecheck: lambda return type mismatch")))))
+        (and
+          (compiler-typecheck-error-ok?
+            (compiler-typecheck-lambda-bad-ret-source)
+            "typecheck: lambda return type mismatch")
+          (and
+            (compiler-typecheck-ok?
+              (compiler-typecheck-lambda-capture-scalar-source))
+            (and
+              (compiler-typecheck-ok?
+                (compiler-typecheck-lambda-capture-multi-source))
+              (and
+                (compiler-typecheck-ok?
+                  (compiler-typecheck-lambda-capture-string-source))
+                (and
+                  (compiler-typecheck-ok?
+                    (compiler-typecheck-lambda-capture-struct-source))
+                  (compiler-typecheck-ok?
+                    (compiler-typecheck-lambda-aggregate-return-source)))))))))))
 
 (define (compiler-typecheck-cast-tests-ok?) : bool
   (and

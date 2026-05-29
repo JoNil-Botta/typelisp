@@ -369,7 +369,7 @@ else
         echo
         echo "[no-rust-stage0] skipping seed public tool surface until staged runtime symbols land in stage0"
     elif [ "$HOST_OS" = windows ]; then
-        run_with_compiler "$FRONT_GATE_TYPELISP_BIN" "public tool surface" env TYPELISP_LEGACY_PACKAGE_MANIFEST=1 scripts/verify-public-tools.sh
+        run_with_compiler "$FRONT_GATE_TYPELISP_BIN" "public tool surface" scripts/verify-public-tools.sh
     elif [ "$SEED_STAGE1_WRAPPER" -eq 1 ]; then
         echo
         echo "[no-rust-stage0] skipping seed public tool surface until the bundled stage1 wrapper has full CLI parity"

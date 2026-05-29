@@ -101,6 +101,7 @@ make_stage1_cli_wrapper() {
     stage1_doc_bin=${3:-}
     stage1_build_bin=${4:-}
     stage1_repl_bin=${5:-}
+    stage1_lsp_bin=${6:-}
     wrapper_dir="$ROOT/target/no-rust-stage1-wrapper"
     wrapper="$wrapper_dir/typelisp"
     rm -rf "$wrapper_dir"
@@ -118,6 +119,8 @@ TYPELISP_STAGE1_BUILD_BIN='$stage1_build_bin'
 export TYPELISP_STAGE1_BUILD_BIN
 TYPELISP_STAGE1_REPL_BIN='$stage1_repl_bin'
 export TYPELISP_STAGE1_REPL_BIN
+TYPELISP_STAGE1_LSP_BIN='$stage1_lsp_bin'
+export TYPELISP_STAGE1_LSP_BIN
 TYPELISP_STAGE1_DRIVER_CACHE_DIR='$wrapper_dir/cache'
 export TYPELISP_STAGE1_DRIVER_CACHE_DIR
 exec '$ROOT/scripts/stage1-typelisp-wrapper.sh' "\$@"
@@ -136,6 +139,10 @@ build_stage1_build_driver() {
 
 build_stage1_repl_driver() {
     build_stage1_wrapper_driver "$1" repl selfhost/repl.tl selfhost-repl
+}
+
+build_stage1_lsp_driver() {
+    build_stage1_wrapper_driver "$1" lsp selfhost/lsp_frame.tl selfhost-lsp
 }
 
 stage1_driver_staged_symbols() {
@@ -325,6 +332,7 @@ if [ "$HOST_OS" = linux ]; then
     STAGE1_BUILD_BIN=
     STAGE1_REPL_BIN=
     STAGE1_TEST_BIN=
+    STAGE1_LSP_BIN=
     STAGE1_HOST_ACTION_DRIVERS_AVAILABLE=0
     SEED_IS_STAGE1_BUNDLE=0
     SEED_DIR=$(CDPATH= cd -- "$(dirname -- "$SEED_TYPELISP_BIN")" && pwd)
@@ -341,17 +349,23 @@ if [ "$HOST_OS" = linux ]; then
         STAGE1_DOC_BIN="$BUNDLED_STAGE1_DRIVER_DIR/selfhost-doc"
         STAGE1_BUILD_BIN="$BUNDLED_STAGE1_DRIVER_DIR/selfhost-build"
         STAGE1_REPL_BIN="$BUNDLED_STAGE1_DRIVER_DIR/selfhost-repl"
+        if [ -x "$BUNDLED_STAGE1_DRIVER_DIR/selfhost-lsp" ]; then
+            STAGE1_LSP_BIN="$BUNDLED_STAGE1_DRIVER_DIR/selfhost-lsp"
+        elif [ "$LINUX_SEED_STAGED_RUNTIME_GAP" -eq 0 ]; then
+            STAGE1_LSP_BIN=$(build_stage1_lsp_driver "$SEED_TYPELISP_BIN")
+        fi
         STAGE1_HOST_ACTION_DRIVERS_AVAILABLE=1
         echo "[no-rust-stage0] using bundled stage1 doc/build/repl drivers"
     elif [ "$LINUX_SEED_STAGED_RUNTIME_GAP" -eq 0 ]; then
         STAGE1_DOC_BIN=$(build_stage1_doc_driver "$SEED_TYPELISP_BIN")
         STAGE1_BUILD_BIN=$(build_stage1_build_driver "$SEED_TYPELISP_BIN")
         STAGE1_REPL_BIN=$(build_stage1_repl_driver "$SEED_TYPELISP_BIN")
+        STAGE1_LSP_BIN=$(build_stage1_lsp_driver "$SEED_TYPELISP_BIN")
         STAGE1_HOST_ACTION_DRIVERS_AVAILABLE=1
     else
-        echo "[no-rust-stage0] skipping eager stage1 doc/build/repl driver prebuild until staged runtime symbols land in stage0"
+        echo "[no-rust-stage0] skipping eager stage1 doc/build/repl/lsp driver prebuild until staged runtime symbols land in stage0"
     fi
-    STAGE1_TYPELISP_BIN=$(make_stage1_cli_wrapper "$TYPELISP_BIN" "$STAGE1_TEST_BIN" "$STAGE1_DOC_BIN" "$STAGE1_BUILD_BIN" "$STAGE1_REPL_BIN")
+    STAGE1_TYPELISP_BIN=$(make_stage1_cli_wrapper "$TYPELISP_BIN" "$STAGE1_TEST_BIN" "$STAGE1_DOC_BIN" "$STAGE1_BUILD_BIN" "$STAGE1_REPL_BIN" "$STAGE1_LSP_BIN")
     echo
     echo "[no-rust-stage0] stage1 CLI wrapper=$STAGE1_TYPELISP_BIN"
 else

@@ -278,13 +278,16 @@ if [ "$IS_STAGE1_WRAPPER" -eq 1 ]; then
     assert_contains "$err" "repl"
     assert_contains "$err" "fmt"
     assert_contains "$err" "doc"
-    HAS_LSP_COMMAND=0
 else
     assert_contains "$err" "typelisp repl"
     assert_contains "$err" "typelisp lsp"
     assert_contains "$err" "typelisp fmt"
     assert_contains "$err" "typelisp doc"
+fi
+if grep -q "typelisp lsp" "$err"; then
     HAS_LSP_COMMAND=1
+else
+    HAS_LSP_COMMAND=0
 fi
 if grep -q "typelisp lint" "$err"; then
     HAS_LINT_COMMAND=1

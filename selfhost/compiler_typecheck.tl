@@ -645,6 +645,14 @@
         true
         (tc-string-list-overlaps? rest b))]))
 
+(define (tc-string-list-all-in? [items : TcStringList] [allowed : TcStringList]) : bool
+  (match items
+    [(TcStringNil) true]
+    [(TcStringCons item rest)
+      (and
+        (tc-string-list-contains allowed item)
+        (tc-string-list-all-in? rest allowed))]))
+
 (define (tc-env-binding-matches-lifetime?
   [key : String]
   [ty : AstType]
@@ -928,6 +936,41 @@
           (or
             (tc-type-contains-reference? ty)
             (tc-param-list-contains-reference? rest))])]))
+
+(define (tc-param-list-reference-return-lifetimes-into
+  [ctx : TcContext]
+  [params : AstParamList]
+  [out : TcStringList]) : TcStringList
+  (match params
+    [(AstParamNil) out]
+    [(AstParamCons param rest)
+      (match param
+        [(AstParam name ty _)
+          (tc-param-list-reference-return-lifetimes-into
+            ctx
+            rest
+            (tc-type-collect-reference-lifetimes-into
+              (tc-resolve-type ctx ty)
+              (tc-string-list-add out name)))])]))
+
+(define (tc-reference-return-lifetimes-allowed?
+  [ctx : TcContext]
+  [params : AstParamList]
+  [ret : AstType]) : bool
+  (tc-string-list-all-in?
+    (tc-type-collect-reference-lifetimes (tc-resolve-type ctx ret))
+    (tc-param-list-reference-return-lifetimes-into ctx params TcStringNil)))
+
+(define (tc-reference-return-policy-ok
+  [ctx : TcContext]
+  [params : AstParamList]
+  [ret : AstType]) : ResultTcUnit
+  (if (tc-type-contains-reference? (tc-resolve-type ctx ret))
+    (if (tc-reference-return-lifetimes-allowed? ctx params ret)
+      OkTcUnit
+      (ErrTcUnit
+        "typecheck: returned reference lifetime must be tied to a parameter"))
+    OkTcUnit))
 
 (define (tc-type-list-collect-regions
   [types : AstTypeList]
@@ -1316,10 +1359,12 @@
         [(OkTcUnit)
           (match (tc-source-maybe-type-policy-ok ctx maybe-ret)
             [(OkTcUnit)
-              (if (tc-maybe-type-contains-reference? maybe-ret)
-                (ErrTcUnit
-                  "typecheck: returning references requires lifetime support (#804)")
-                (tc-source-expr-policy-ok ctx body))]
+              (match maybe-ret
+                [(AstSomeType ret)
+                  (match (tc-reference-return-policy-ok ctx params ret)
+                    [(OkTcUnit) (tc-source-expr-policy-ok ctx body)]
+                    [(ErrTcUnit message) (ErrTcUnit message)])]
+                [(AstNoType) (tc-source-expr-policy-ok ctx body)])]
             [(ErrTcUnit message) (ErrTcUnit message)])]
         [(ErrTcUnit message) (ErrTcUnit message)])]
     [(AstExprTuple exprs) (tc-source-expr-list-policy-ok ctx exprs)]
@@ -1403,10 +1448,9 @@
         [(OkTcUnit)
           (match (tc-source-type-policy-ok ctx ret)
             [(OkTcUnit)
-              (if (tc-type-contains-reference? (tc-resolve-type ctx ret))
-                (ErrTcUnit
-                  "typecheck: returning references requires lifetime support (#804)")
-                (tc-source-expr-policy-ok ctx body))]
+              (match (tc-reference-return-policy-ok ctx params ret)
+                [(OkTcUnit) (tc-source-expr-policy-ok ctx body)]
+                [(ErrTcUnit message) (ErrTcUnit message)])]
             [(ErrTcUnit message) (ErrTcUnit message)])]
         [(ErrTcUnit message) (ErrTcUnit message)])]
     [(AstDeclExtern _ _ ty) (tc-source-type-policy-ok ctx ty)]
@@ -6703,6 +6747,19 @@
   "(define (main [n : i64]) : (& n i64)
   (& n))")
 
+(define (compiler-typecheck-reference-return-param-ref-source) : String
+  "(define (id [r : (& n i64)]) : (& n i64) r)
+(define (main [n : i64]) : (& n i64)
+  (id (& n)))")
+
+(define (compiler-typecheck-reference-return-untied-source) : String
+  "(define (main [n : i64]) : (& other i64)
+  (& n))")
+
+(define (compiler-typecheck-reference-return-local-escape-source) : String
+  "(define (main [n : i64]) : (& n i64)
+  (let [x : i64 1] (& x)))")
+
 (define (compiler-typecheck-reference-mut-source) : String
   "(define (main [n : (&mut phase i64)]) : unit unit)")
 
@@ -6730,31 +6787,46 @@
                 (AstTyMutRef "phase" (AstTyRegion "inner" (AstTyString)))
                 "inner"))))))))
 
+(define (compiler-typecheck-reference-positive-tests-ok?) : bool
+  (and
+    (compiler-typecheck-ok? (compiler-typecheck-reference-local-source))
+    (and
+      (compiler-typecheck-ok? (compiler-typecheck-reference-param-source))
+      (and
+        (compiler-typecheck-ok?
+          (compiler-typecheck-reference-projection-source))
+        (and
+          (compiler-typecheck-ok? (compiler-typecheck-reference-return-source))
+          (compiler-typecheck-ok?
+            (compiler-typecheck-reference-return-param-ref-source)))))))
+
+(define (compiler-typecheck-reference-negative-tests-ok?) : bool
+  (and
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-reference-temp-source)
+      "typecheck: borrow requires a local, parameter, or aggregate place")
+    (and
+      (compiler-typecheck-error-ok?
+        (compiler-typecheck-reference-mismatch-source)
+        "typecheck: borrow lifetime mismatch")
+      (and
+        (compiler-typecheck-error-ok?
+          (compiler-typecheck-reference-return-untied-source)
+          "typecheck: returned reference lifetime must be tied to a parameter")
+        (and
+          (compiler-typecheck-error-ok?
+            (compiler-typecheck-reference-return-local-escape-source)
+            "typecheck: reference value would escape lexical scope")
+          (compiler-typecheck-error-ok?
+            (compiler-typecheck-reference-mut-source)
+            "typecheck: mutable reference types require mutable borrow checker support (#806)"))))))
+
 (define (compiler-typecheck-reference-tests-ok?) : bool
   (and
     (compiler-typecheck-reference-render-ok?)
     (and
-      (compiler-typecheck-ok? (compiler-typecheck-reference-local-source))
-      (and
-        (compiler-typecheck-ok? (compiler-typecheck-reference-param-source))
-        (and
-          (compiler-typecheck-ok?
-            (compiler-typecheck-reference-projection-source))
-          (and
-            (compiler-typecheck-error-ok?
-              (compiler-typecheck-reference-temp-source)
-              "typecheck: borrow requires a local, parameter, or aggregate place")
-            (and
-              (compiler-typecheck-error-ok?
-                (compiler-typecheck-reference-mismatch-source)
-                "typecheck: borrow lifetime mismatch")
-              (and
-                (compiler-typecheck-error-ok?
-                  (compiler-typecheck-reference-return-source)
-                  "typecheck: returning references requires lifetime support (#804)")
-                (compiler-typecheck-error-ok?
-                  (compiler-typecheck-reference-mut-source)
-                  "typecheck: mutable reference types require mutable borrow checker support (#806)")))))))))
+      (compiler-typecheck-reference-positive-tests-ok?)
+      (compiler-typecheck-reference-negative-tests-ok?))))
 
 ;; A type error whose offending expression (`missing`) is on source line 2, so
 ;; the diagnostic must locate it there (not at the 1:1 fallback) — proving the

@@ -202,15 +202,20 @@ The current raw stage1 compiler implements source-file `compile`; the wrapper
 routes that command and implements source-file `build`, package `build`, `run`,
 `fmt`, `doc`, `doc --test`, `repl`, and private `debug host-action` directly
 enough for the Linux capability smoke, deterministic assembly gate, selfhost
-compile manifest, stdlib documentation gate, and stdlib selfhost frontend
-verifier. Package builds route through a cached selfhost `build.tl` driver, or
+compile manifest, stdlib documentation gate, stdlib selfhost frontend verifier,
+repository doctest gate, and TypeLisp source format gate. The `fmt` command
+routes through a cached selfhost `format.tl` driver, or through a prebuilt
+`TYPELISP_STAGE1_FORMAT_BIN` in the no-Rust lane, so the repository format gate
+does not recompile the formatter on every batched invocation. Package builds
+route through a cached selfhost `build.tl` driver, or
 through a prebuilt `TYPELISP_STAGE1_BUILD_BIN` in the no-Rust lane, and cover
 manifest-path and upward-discovery forms in `scripts/check-stage1-wrapper.sh`;
 direct selfhost package-build parity remains covered by
 `scripts/verify-public-tools.sh`. Seed-only public-tool exceptions remain:
-`lint`, non-check `test`, full REPL/LSP public-tool coverage, and full
-doc/integration gates still need either stage1-safe driver linking or dedicated
-wrapper routing before they can move off the seed compiler.
+`lint`, non-check `test`, full REPL/LSP public-tool coverage, and the
+`scripts/verify-public-tools.sh` surface gate still need either stage1-safe
+driver linking or dedicated wrapper routing before they can move off the seed
+compiler.
 
 ### Staged backend primitives (#1114)
 
@@ -327,7 +332,10 @@ TypeLisp fenced examples, then runs
 `typelisp doc --test` for each file with `--stdlib-root`. This gate is
 intentionally separate from `cargo test` and does not use a hand-maintained file
 manifest, so adding documented TypeLisp source with fenced examples
-automatically adds doctest coverage.
+automatically adds doctest coverage. In the Linux no-Rust lane it runs through
+the stage1 wrapper's selfhost doc driver (the same driver used by the stdlib
+documentation gate) whenever the wrapper host-action drivers are available, and
+falls back to the seed compiler otherwise.
 
 ### Repository inline-test gate
 
@@ -382,9 +390,11 @@ Pull requests get Linux and Windows no-Rust coverage from
 `scripts/verify-no-rust-stage0.sh`. The Linux job first builds a fresh stage1
 compiler from published stage0, then smoke-tests the stage1 CLI/host-action
 wrapper, deterministic assembly, the selfhost compile manifest, stdlib
-documentation, and the stdlib selfhost frontend verifier through that wrapper.
-Public tools, repository doctests, inline
-tests, TypeLisp source format, native integration manifests, examples, stdlib
+documentation, the stdlib selfhost frontend verifier, the repository doctest
+gate, and the TypeLisp source format gate through that wrapper (the doctest and
+format gates fall back to the seed compiler only when the wrapper host-action
+drivers are unavailable). Public tools, inline
+tests, native integration manifests, examples, stdlib
 modules, docs Pages build, selfhost native generated programs, and the selfhost
 external compiler corpus continue to use the seed compiler until their remaining
 public-tool and manifest exceptions are ported to the wrapper. The Windows job

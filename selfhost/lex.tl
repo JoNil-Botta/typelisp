@@ -415,6 +415,13 @@
       [(is-space c) (OkLexI64 (+ i 1))]
       [(or (= c #(') (= c #[')) (OkLexI64 (+ i 1))]
       [(or (= c #)') (= c #]')) (OkLexI64 (+ i 1))]
+      [(or (= c #'') (= c #`')) (OkLexI64 (+ i 1))]
+      [(= c #,')
+        (if (< (+ i 1) n)
+          (if (= (string-ref src (+ i 1)) #@')
+            (OkLexI64 (+ i 2))
+            (OkLexI64 (+ i 1)))
+          (OkLexI64 (+ i 1)))]
       [(= c #"')
         (let
           [start : i64 (+ i 1)]
@@ -502,6 +509,33 @@
                 (array-set! toks count TRBracket)
                 (set! count (+ count 1))
                 (set! i (+ i 1)))]
+            [(= c #'')
+              (begin
+                (array-set! starts count i)
+                (array-set! toks count TQuote)
+                (set! count (+ count 1))
+                (set! i (+ i 1)))]
+            [(= c #`')
+              (begin
+                (array-set! starts count i)
+                (array-set! toks count TBacktick)
+                (set! count (+ count 1))
+                (set! i (+ i 1)))]
+            [(= c #,')
+              (begin
+                (array-set! starts count i)
+                (if (< (+ i 1) n)
+                  (if (= (string-ref src (+ i 1)) #@')
+                    (begin
+                      (array-set! toks count TCommaAt)
+                      (set! i (+ i 2)))
+                    (begin
+                      (array-set! toks count TComma)
+                      (set! i (+ i 1))))
+                  (begin
+                    (array-set! toks count TComma)
+                    (set! i (+ i 1))))
+                (set! count (+ count 1)))]
             [(= c #"')
               ; '"' - a string literal
               (let
@@ -878,6 +912,20 @@
             (lex-string-source (lex-backslash-quote-source-inner))
             (string-append slash quote)))))))
 
+(define (lex-quote-prefix-tokens-ok?) : bool
+  (match (lex-result "`(if ,x ,@xs)")
+    [(OkTokens toks)
+      (and
+        (= (token-tag (array-ref toks 0)) (tag-backtick))
+        (and
+          (= (token-tag (array-ref toks 3)) (tag-comma))
+          (and
+            (= (token-tag (array-ref toks 5)) (tag-comma-at))
+            (and
+              (= (token-tag (array-ref toks 7)) (tag-rparen))
+              (= (token-tag (array-ref toks 8)) (tag-end))))))]
+    [(ErrTokens _) false]))
+
 (define (lex-span-positions-ok? [s : (Array SpannedToken)]) : bool
   (let
     [ok : bool true]
@@ -931,7 +979,11 @@
                   (lex-percent-symbol-ok?)
                   (and
                     (lex-ampersand-symbol-ok?)
-                    (and (lex-float-token-ok?) (lex-negative-int-token-ok?)))))))))
+                    (and
+                      (lex-float-token-ok?)
+                      (and
+                        (lex-negative-int-token-ok?)
+                        (lex-quote-prefix-tokens-ok?))))))))))
         42
         1)]
     [(ErrSpannedTokens _) 2]))

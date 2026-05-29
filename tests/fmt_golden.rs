@@ -29,6 +29,7 @@ const NEGATIVE_INT_EXPECTED: &str = "(define (main) : i64\n  -128)";
 // (here also next to a `#('` delimiter char literal) must push the close onto
 // its own line, not append it to the comment where it would be swallowed.
 const TAIL_COMMENT_EXPECTED: &str = "(define (open-paren) : char\n  (begin\n    #('\n    ;; the closing parens below must not be swallowed by this comment\n    ))";
+const QUOTE_EXPECTED: &str = "(define (mk [e : Expr]) : Expr\n  `(if ,e\n    true\n    false))\n\n(define (body [xs : ExprList]) : Expr\n  `(begin\n    ,@xs))";
 const LET_BINDINGS_EXPECTED: &str = r#"(define (one) : i64
   (let
     [x : i64 1]
@@ -93,6 +94,7 @@ fn fmt_produces_golden_output_and_is_idempotent() {
             ("char_literal", CHAR_LITERAL_EXPECTED),
             ("negative_int", NEGATIVE_INT_EXPECTED),
             ("tail_comment", TAIL_COMMENT_EXPECTED),
+            ("quote", QUOTE_EXPECTED),
         ];
 
         for (name, expected) in cases {

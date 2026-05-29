@@ -657,6 +657,14 @@
       (front-cat3 "TypeLiteral { ty: " (front-type-render ty) " }")]
     [(AstExprComptime inner)
       (front-cat3 "Comptime { expr: " (front-expr-render inner) " }")]
+    [(AstExprQuote inner)
+      (front-cat3 "Quote { expr: " (front-expr-render inner) " }")]
+    [(AstExprQuasiquote inner)
+      (front-cat3 "Quasiquote { expr: " (front-expr-render inner) " }")]
+    [(AstExprUnquote inner)
+      (front-cat3 "Unquote { expr: " (front-expr-render inner) " }")]
+    [(AstExprUnquoteSplicing inner)
+      (front-cat3 "UnquoteSplicing { expr: " (front-expr-render inner) " }")]
     [(AstExprTry inner)
       (front-cat3 "Try { expr: " (front-expr-render inner) " }")]
     [(AstExprPtrNull ty)

@@ -339,6 +339,14 @@
   (OkCtfe CompilerCtfeValue i64)
   (ErrCtfe CompilerDiagnostic))
 
+(defenum ResultCtfeQuoteExpr
+  (OkCtfeQuoteExpr AstExpr AstType i64)
+  (ErrCtfeQuoteExpr CompilerDiagnostic))
+
+(defenum ResultCtfeQuoteExprList
+  (OkCtfeQuoteExprList AstExprList i64)
+  (ErrCtfeQuoteExprList CompilerDiagnostic))
+
 (define (ctfe-fuel-limit) : i64
   10000)
 
@@ -386,6 +394,10 @@
     [(AstExprWithResource _ _) "with"]
     [(AstExprTypeLiteral _) "type literal"]
     [(AstExprComptime _) "comptime"]
+    [(AstExprQuote _) "quote"]
+    [(AstExprQuasiquote _) "quasiquote"]
+    [(AstExprUnquote _) "unquote"]
+    [(AstExprUnquoteSplicing _) "unquote-splicing"]
     [(AstExprTry _) "try"]
     [(AstExprPtrNull _) "ptr-null"]
     [(AstExprPtrNullCheck _) "ptr-null?"]
@@ -1030,6 +1042,16 @@
     [(AstExprBegin exprs) (ctfe-eval-begin exprs env fuel)]
     [(AstExprUnsafe exprs) (ctfe-eval-begin exprs env fuel)]
     [(AstExprCall func args) (ctfe-eval-call func args expr env fuel)]
+    [(AstExprQuote template) (ctfe-eval-quote template env fuel false)]
+    [(AstExprQuasiquote template) (ctfe-eval-quote template env fuel true)]
+    [(AstExprUnquote _)
+      (ErrCtfe
+        (ctfe-diagnostic-at-expr expr "unquote is only valid inside quasiquote"))]
+    [(AstExprUnquoteSplicing _)
+      (ErrCtfe
+        (ctfe-diagnostic-at-expr
+          expr
+          "unquote-splicing is only valid inside quasiquote"))]
     [_
       (ErrCtfe
         (ctfe-diagnostic-at-expr
@@ -2267,6 +2289,229 @@
             [_ (ctfe-eval-begin rest env head-fuel)])]
         [(ErrCtfe diag) (ErrCtfe diag)])]))
 
+;; --- quote / quasiquote -----------------------------------------------------
+(define (ctfe-quote-literal-type [lit : AstLiteral]) : AstType
+  (match lit
+    [(AstLitInt _) (AstTyI64)]
+    [(AstLitFloat _) (AstTyF64)]
+    [(AstLitBool _) (AstTyBool)]
+    [(AstLitChar _) (AstTyChar)]
+    [(AstLitString _) (AstTyString)]
+    [(AstLitUnit) (AstTyUnit)]))
+
+(define (ctfe-expr-list-append [left : AstExprList] [right : AstExprList]) : AstExprList
+  (match left
+    [(AstExprNil) right]
+    [(AstExprCons head rest)
+      (AstExprCons head (ctfe-expr-list-append rest right))]))
+
+(define (ctfe-quote-if-type
+  [cond-ty : AstType]
+  [then-ty : AstType]
+  [else-ty : AstType]) : AstType
+  (if (and (ctfe-type-eq cond-ty (AstTyBool)) (ctfe-type-eq then-ty else-ty))
+    then-ty
+    (AstTyExpr)))
+
+(define (ctfe-eval-unquote-expr
+  [inner : AstExpr]
+  [origin : AstExpr]
+  [env : CtfeEnv]
+  [fuel : i64]) : ResultCtfeQuoteExpr
+  (match (compiler-ctfe-eval inner env fuel)
+    [(OkCtfe value next-fuel)
+      (match value
+        [(CtfeExpr node ty) (OkCtfeQuoteExpr node ty next-fuel)]
+        [_
+          (ErrCtfeQuoteExpr
+            (ctfe-diagnostic-at-expr origin "unquote expects Expr"))])]
+    [(ErrCtfe diag) (ErrCtfeQuoteExpr diag)]))
+
+(define (ctfe-eval-unquote-splice
+  [inner : AstExpr]
+  [origin : AstExpr]
+  [env : CtfeEnv]
+  [fuel : i64]) : ResultCtfeQuoteExprList
+  (match (compiler-ctfe-eval inner env fuel)
+    [(OkCtfe value next-fuel)
+      (match value
+        [(CtfeExprList exprs) (OkCtfeQuoteExprList exprs next-fuel)]
+        [_
+          (ErrCtfeQuoteExprList
+            (ctfe-diagnostic-at-expr origin "unquote-splicing expects ExprList"))])]
+    [(ErrCtfe diag) (ErrCtfeQuoteExprList diag)]))
+
+(define (ctfe-quote-expr-list
+  [exprs : AstExprList]
+  [env : CtfeEnv]
+  [fuel : i64]
+  [quasiquote : bool]) : ResultCtfeQuoteExprList
+  (match exprs
+    [(AstExprNil) (OkCtfeQuoteExprList AstExprNil fuel)]
+    [(AstExprCons head rest)
+      (match (ast-expr-unspan head)
+        [(AstExprUnquoteSplicing inner)
+          (if quasiquote
+            (match (ctfe-eval-unquote-splice inner head env fuel)
+              [(OkCtfeQuoteExprList splice splice-fuel)
+                (match (ctfe-quote-expr-list rest env splice-fuel quasiquote)
+                  [(OkCtfeQuoteExprList quoted-rest rest-fuel)
+                    (OkCtfeQuoteExprList
+                      (ctfe-expr-list-append splice quoted-rest)
+                      rest-fuel)]
+                  [(ErrCtfeQuoteExprList diag) (ErrCtfeQuoteExprList diag)])]
+              [(ErrCtfeQuoteExprList diag) (ErrCtfeQuoteExprList diag)])
+            (match (ctfe-quote-expr head env fuel quasiquote)
+              [(OkCtfeQuoteExpr quoted-head _ head-fuel)
+                (match (ctfe-quote-expr-list rest env head-fuel quasiquote)
+                  [(OkCtfeQuoteExprList quoted-rest rest-fuel)
+                    (OkCtfeQuoteExprList
+                      (AstExprCons quoted-head quoted-rest)
+                      rest-fuel)]
+                  [(ErrCtfeQuoteExprList diag) (ErrCtfeQuoteExprList diag)])]
+              [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExprList diag)]))]
+        [_
+          (match (ctfe-quote-expr head env fuel quasiquote)
+            [(OkCtfeQuoteExpr quoted-head _ head-fuel)
+              (match (ctfe-quote-expr-list rest env head-fuel quasiquote)
+                [(OkCtfeQuoteExprList quoted-rest rest-fuel)
+                  (OkCtfeQuoteExprList
+                    (AstExprCons quoted-head quoted-rest)
+                    rest-fuel)]
+                [(ErrCtfeQuoteExprList diag) (ErrCtfeQuoteExprList diag)])]
+            [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExprList diag)])])]))
+
+(define (ctfe-quote-expr
+  [expr : AstExpr]
+  [env : CtfeEnv]
+  [fuel : i64]
+  [quasiquote : bool]) : ResultCtfeQuoteExpr
+  (match expr
+    [(AstExprSpanned inner span)
+      (match (ctfe-quote-expr inner env fuel quasiquote)
+        [(OkCtfeQuoteExpr node ty next-fuel)
+          (OkCtfeQuoteExpr (AstExprSpanned node span) ty next-fuel)]
+        [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExpr diag)])]
+    [(AstExprLiteral lit)
+      (OkCtfeQuoteExpr expr (ctfe-quote-literal-type lit) fuel)]
+    [(AstExprVar _) (OkCtfeQuoteExpr expr (AstTyExpr) fuel)]
+    [(AstExprBinary op left right)
+      (match (ctfe-quote-expr left env fuel quasiquote)
+        [(OkCtfeQuoteExpr quoted-left _ left-fuel)
+          (match (ctfe-quote-expr right env left-fuel quasiquote)
+            [(OkCtfeQuoteExpr quoted-right _ right-fuel)
+              (OkCtfeQuoteExpr
+                (AstExprBinary op quoted-left quoted-right)
+                (AstTyExpr)
+                right-fuel)]
+            [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExpr diag)])]
+        [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExpr diag)])]
+    [(AstExprUnary op inner)
+      (match (ctfe-quote-expr inner env fuel quasiquote)
+        [(OkCtfeQuoteExpr quoted _ next-fuel)
+          (OkCtfeQuoteExpr (AstExprUnary op quoted) (AstTyExpr) next-fuel)]
+        [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExpr diag)])]
+    [(AstExprCall func args)
+      (match (ctfe-quote-expr func env fuel quasiquote)
+        [(OkCtfeQuoteExpr quoted-func _ func-fuel)
+          (match (ctfe-quote-expr-list args env func-fuel quasiquote)
+            [(OkCtfeQuoteExprList quoted-args args-fuel)
+              (OkCtfeQuoteExpr
+                (AstExprCall quoted-func quoted-args)
+                (AstTyExpr)
+                args-fuel)]
+            [(ErrCtfeQuoteExprList diag) (ErrCtfeQuoteExpr diag)])]
+        [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExpr diag)])]
+    [(AstExprIf cond then-branch else-branch)
+      (match (ctfe-quote-expr cond env fuel quasiquote)
+        [(OkCtfeQuoteExpr quoted-cond cond-ty cond-fuel)
+          (match (ctfe-quote-expr then-branch env cond-fuel quasiquote)
+            [(OkCtfeQuoteExpr quoted-then then-ty then-fuel)
+              (match (ctfe-quote-expr else-branch env then-fuel quasiquote)
+                [(OkCtfeQuoteExpr quoted-else else-ty else-fuel)
+                  (OkCtfeQuoteExpr
+                    (AstExprIf quoted-cond quoted-then quoted-else)
+                    (ctfe-quote-if-type cond-ty then-ty else-ty)
+                    else-fuel)]
+                [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExpr diag)])]
+            [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExpr diag)])]
+        [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExpr diag)])]
+    [(AstExprTuple exprs)
+      (match (ctfe-quote-expr-list exprs env fuel quasiquote)
+        [(OkCtfeQuoteExprList quoted next-fuel)
+          (OkCtfeQuoteExpr (AstExprTuple quoted) (AstTyExpr) next-fuel)]
+        [(ErrCtfeQuoteExprList diag) (ErrCtfeQuoteExpr diag)])]
+    [(AstExprArray exprs)
+      (match (ctfe-quote-expr-list exprs env fuel quasiquote)
+        [(OkCtfeQuoteExprList quoted next-fuel)
+          (OkCtfeQuoteExpr (AstExprArray quoted) (AstTyExpr) next-fuel)]
+        [(ErrCtfeQuoteExprList diag) (ErrCtfeQuoteExpr diag)])]
+    [(AstExprBegin exprs)
+      (match (ctfe-quote-expr-list exprs env fuel quasiquote)
+        [(OkCtfeQuoteExprList quoted next-fuel)
+          (OkCtfeQuoteExpr (AstExprBegin quoted) (AstTyExpr) next-fuel)]
+        [(ErrCtfeQuoteExprList diag) (ErrCtfeQuoteExpr diag)])]
+    [(AstExprUnsafe exprs)
+      (match (ctfe-quote-expr-list exprs env fuel quasiquote)
+        [(OkCtfeQuoteExprList quoted next-fuel)
+          (OkCtfeQuoteExpr (AstExprUnsafe quoted) (AstTyExpr) next-fuel)]
+        [(ErrCtfeQuoteExprList diag) (ErrCtfeQuoteExpr diag)])]
+    [(AstExprAnn inner ty)
+      (match (ctfe-quote-expr inner env fuel quasiquote)
+        [(OkCtfeQuoteExpr quoted _ next-fuel)
+          (OkCtfeQuoteExpr (AstExprAnn quoted ty) ty next-fuel)]
+        [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExpr diag)])]
+    [(AstExprCast inner ty)
+      (match (ctfe-quote-expr inner env fuel quasiquote)
+        [(OkCtfeQuoteExpr quoted _ next-fuel)
+          (OkCtfeQuoteExpr (AstExprCast quoted ty) ty next-fuel)]
+        [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExpr diag)])]
+    [(AstExprBox inner)
+      (match (ctfe-quote-expr inner env fuel quasiquote)
+        [(OkCtfeQuoteExpr quoted _ next-fuel)
+          (OkCtfeQuoteExpr (AstExprBox quoted) (AstTyExpr) next-fuel)]
+        [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExpr diag)])]
+    [(AstExprBoxGet inner)
+      (match (ctfe-quote-expr inner env fuel quasiquote)
+        [(OkCtfeQuoteExpr quoted _ next-fuel)
+          (OkCtfeQuoteExpr (AstExprBoxGet quoted) (AstTyExpr) next-fuel)]
+        [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExpr diag)])]
+    [(AstExprComptime inner)
+      (match (ctfe-quote-expr inner env fuel quasiquote)
+        [(OkCtfeQuoteExpr quoted ty next-fuel)
+          (OkCtfeQuoteExpr (AstExprComptime quoted) ty next-fuel)]
+        [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExpr diag)])]
+    [(AstExprUnquote inner)
+      (if quasiquote
+        (ctfe-eval-unquote-expr inner expr env fuel)
+        (match (ctfe-quote-expr inner env fuel quasiquote)
+          [(OkCtfeQuoteExpr quoted _ next-fuel)
+            (OkCtfeQuoteExpr (AstExprUnquote quoted) (AstTyExpr) next-fuel)]
+          [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExpr diag)]))]
+    [(AstExprUnquoteSplicing inner)
+      (if quasiquote
+        (ErrCtfeQuoteExpr
+          (ctfe-diagnostic-at-expr
+            expr
+            "unquote-splicing is only valid in a quasiquote list"))
+        (match (ctfe-quote-expr inner env fuel quasiquote)
+          [(OkCtfeQuoteExpr quoted _ next-fuel)
+            (OkCtfeQuoteExpr
+              (AstExprUnquoteSplicing quoted)
+              (AstTyExpr)
+              next-fuel)]
+          [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExpr diag)]))]
+    [_ (OkCtfeQuoteExpr expr (AstTyExpr) fuel)]))
+
+(define (ctfe-eval-quote
+  [template : AstExpr]
+  [env : CtfeEnv]
+  [fuel : i64]
+  [quasiquote : bool]) : ResultCtfe
+  (match (ctfe-quote-expr template env fuel quasiquote)
+    [(OkCtfeQuoteExpr node ty next-fuel) (OkCtfe (CtfeExpr node ty) next-fuel)]
+    [(ErrCtfeQuoteExpr diag) (ErrCtfe diag)]))
+
 ;; --- expr constructors and inspectors (#1137) --------------------------------
 ;; Macro transformers need to build and pattern-match AST nodes at comptime.
 ;; These constructors / inspectors cover the forms needed by v1 macros
@@ -2394,6 +2639,22 @@
     [(AstExprBoxGet a-inner)
       (match b
         [(AstExprBoxGet b-inner) (ctfe-expr-eq a-inner b-inner)]
+        [_ false])]
+    [(AstExprQuote a-inner)
+      (match b
+        [(AstExprQuote b-inner) (ctfe-expr-eq a-inner b-inner)]
+        [_ false])]
+    [(AstExprQuasiquote a-inner)
+      (match b
+        [(AstExprQuasiquote b-inner) (ctfe-expr-eq a-inner b-inner)]
+        [_ false])]
+    [(AstExprUnquote a-inner)
+      (match b
+        [(AstExprUnquote b-inner) (ctfe-expr-eq a-inner b-inner)]
+        [_ false])]
+    [(AstExprUnquoteSplicing a-inner)
+      (match b
+        [(AstExprUnquoteSplicing b-inner) (ctfe-expr-eq a-inner b-inner)]
         [_ false])]
     [(AstExprSpanned a-inner _) (ctfe-expr-eq a-inner b)]
     [_ false]))
@@ -3287,6 +3548,54 @@
       env
       "expr-if condition must produce bool")))
 
+(define (compiler-ctfe-quote-syntax-ok?) : bool
+  (let
+    [true-lit : AstExpr (AstExprLiteral (AstLitBool true))]
+    [false-lit : AstExpr (AstExprLiteral (AstLitBool false))]
+    [flag-var : AstExpr (AstExprVar "flag")]
+    [spliced : AstExprList
+      (AstExprCons true-lit (AstExprCons false-lit AstExprNil))]
+    [env : CtfeEnv
+      (ctfe-env-extend
+        (ctfe-env-extend
+          (ctfe-env-empty)
+          "cond"
+          (CtfeExpr flag-var (AstTyBool)))
+        "xs"
+        (CtfeExprList spliced))]
+    [quoted-bool : AstExpr (AstExprQuote true-lit)]
+    [qq-if : AstExpr
+      (AstExprQuasiquote
+        (AstExprIf (AstExprUnquote (AstExprVar "cond")) true-lit false-lit))]
+    [qq-splice : AstExpr
+      (AstExprQuasiquote
+        (AstExprBegin
+          (AstExprCons (AstExprUnquoteSplicing (AstExprVar "xs")) AstExprNil)))]
+    (and
+      (match (compiler-ctfe-eval quoted-bool env (ctfe-fuel-limit))
+        [(OkCtfe value _)
+          (match value
+            [(CtfeExpr node ty)
+              (and (ctfe-type-eq ty (AstTyBool)) (ctfe-expr-eq node true-lit))]
+            [_ false])]
+        [(ErrCtfe _) false])
+      (and
+        (match (compiler-ctfe-eval qq-if env (ctfe-fuel-limit))
+          [(OkCtfe value _)
+            (match value
+              [(CtfeExpr node ty)
+                (and
+                  (ctfe-type-eq ty (AstTyBool))
+                  (ctfe-expr-eq node (AstExprIf flag-var true-lit false-lit)))]
+              [_ false])]
+          [(ErrCtfe _) false])
+        (match (compiler-ctfe-eval qq-splice env (ctfe-fuel-limit))
+          [(OkCtfe value _)
+            (match value
+              [(CtfeExpr node _) (ctfe-expr-eq node (AstExprBegin spliced))]
+              [_ false])]
+          [(ErrCtfe _) false])))))
+
 (define (compiler-ctfe-self-test) : i64
   (if (compiler-ctfe-type-literal-ok?)
     (if (compiler-ctfe-type-comparison-ok?)
@@ -3299,7 +3608,9 @@
                   (if (compiler-ctfe-checked-expr-constructors-ok?)
                     (if (compiler-ctfe-checked-expr-inspectors-ok?)
                       (if (compiler-ctfe-checked-expr-rejects-non-bool-cond-ok?)
-                        42
+                        (if (compiler-ctfe-quote-syntax-ok?)
+                          42
+                          1)
                         1)
                       1)
                     1)

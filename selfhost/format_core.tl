@@ -86,6 +86,10 @@
   (match node
     [(FmtCstAtom tok) (doc-text (format-token-text tok))]
     [(FmtCstComment text) (doc-text text)]
+    [(FmtCstPrefix tok child)
+      (doc-append
+        (doc-text (format-token-text tok))
+        (format-core-cst-doc child))]
     [(FmtCstList items) (format-core-delimited-doc "(" items ")")]
     [(FmtCstBracketList items) (format-core-delimited-doc "[" items "]")]
     [(FmtCstForms items) (format-core-forms-doc items)]))

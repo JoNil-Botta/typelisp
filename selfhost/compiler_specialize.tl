@@ -1219,6 +1219,26 @@
         [(OkSpecExpr rewritten state2)
           (OkSpecExpr (AstExprIntToPtr rewritten ty) state2)]
         [(ErrSpecExpr diag) (ErrSpecExpr diag)])]
+    [(AstExprQuote inner)
+      (match (spec-rewrite-expr inner templates state)
+        [(OkSpecExpr rewritten state2)
+          (OkSpecExpr (AstExprQuote rewritten) state2)]
+        [(ErrSpecExpr diag) (ErrSpecExpr diag)])]
+    [(AstExprQuasiquote inner)
+      (match (spec-rewrite-expr inner templates state)
+        [(OkSpecExpr rewritten state2)
+          (OkSpecExpr (AstExprQuasiquote rewritten) state2)]
+        [(ErrSpecExpr diag) (ErrSpecExpr diag)])]
+    [(AstExprUnquote inner)
+      (match (spec-rewrite-expr inner templates state)
+        [(OkSpecExpr rewritten state2)
+          (OkSpecExpr (AstExprUnquote rewritten) state2)]
+        [(ErrSpecExpr diag) (ErrSpecExpr diag)])]
+    [(AstExprUnquoteSplicing inner)
+      (match (spec-rewrite-expr inner templates state)
+        [(OkSpecExpr rewritten state2)
+          (OkSpecExpr (AstExprUnquoteSplicing rewritten) state2)]
+        [(ErrSpecExpr diag) (ErrSpecExpr diag)])]
     [(AstExprBorrow _ _) (OkSpecExpr expr state)]))
 
 (define (spec-substitute-values-expr [expr : AstExpr] [subs : SpecValueSubst]) : ResultSpecSubExpr
@@ -1498,6 +1518,24 @@
       (match (spec-substitute-values-expr value subs)
         [(OkSpecSubExpr rewritten)
           (OkSpecSubExpr (AstExprIntToPtr rewritten ty))]
+        [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
+    [(AstExprQuote inner)
+      (match (spec-substitute-values-expr inner subs)
+        [(OkSpecSubExpr rewritten) (OkSpecSubExpr (AstExprQuote rewritten))]
+        [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
+    [(AstExprQuasiquote inner)
+      (match (spec-substitute-values-expr inner subs)
+        [(OkSpecSubExpr rewritten)
+          (OkSpecSubExpr (AstExprQuasiquote rewritten))]
+        [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
+    [(AstExprUnquote inner)
+      (match (spec-substitute-values-expr inner subs)
+        [(OkSpecSubExpr rewritten) (OkSpecSubExpr (AstExprUnquote rewritten))]
+        [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
+    [(AstExprUnquoteSplicing inner)
+      (match (spec-substitute-values-expr inner subs)
+        [(OkSpecSubExpr rewritten)
+          (OkSpecSubExpr (AstExprUnquoteSplicing rewritten))]
         [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
     [(AstExprBorrow _ _) (OkSpecSubExpr expr)]))
 
@@ -1851,6 +1889,24 @@
         [(OkSpecSubExpr rewritten)
           (OkSpecSubExpr
             (AstExprIntToPtr rewritten (spec-substitute-type ty subs)))]
+        [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
+    [(AstExprQuote inner)
+      (match (spec-substitute-types-expr inner subs)
+        [(OkSpecSubExpr rewritten) (OkSpecSubExpr (AstExprQuote rewritten))]
+        [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
+    [(AstExprQuasiquote inner)
+      (match (spec-substitute-types-expr inner subs)
+        [(OkSpecSubExpr rewritten)
+          (OkSpecSubExpr (AstExprQuasiquote rewritten))]
+        [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
+    [(AstExprUnquote inner)
+      (match (spec-substitute-types-expr inner subs)
+        [(OkSpecSubExpr rewritten) (OkSpecSubExpr (AstExprUnquote rewritten))]
+        [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
+    [(AstExprUnquoteSplicing inner)
+      (match (spec-substitute-types-expr inner subs)
+        [(OkSpecSubExpr rewritten)
+          (OkSpecSubExpr (AstExprUnquoteSplicing rewritten))]
         [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
     [(AstExprBorrow _ _) (OkSpecSubExpr expr)]))
 

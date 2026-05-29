@@ -455,6 +455,18 @@
 (define (compiler-parse-tag-expr-box-get) : i64
   264)
 
+(define (compiler-parse-tag-expr-quote) : i64
+  265)
+
+(define (compiler-parse-tag-expr-quasiquote) : i64
+  266)
+
+(define (compiler-parse-tag-expr-unquote) : i64
+  267)
+
+(define (compiler-parse-tag-expr-unquote-splicing) : i64
+  268)
+
 (define (compiler-parse-tag-lit-true) : i64
   300)
 
@@ -677,6 +689,17 @@
       (set!
         out
         (sym-i64-bind out "with" (compiler-parse-tag-expr-with-resource)))
+      (set! out (sym-i64-bind out "quote" (compiler-parse-tag-expr-quote)))
+      (set!
+        out
+        (sym-i64-bind out "quasiquote" (compiler-parse-tag-expr-quasiquote)))
+      (set! out (sym-i64-bind out "unquote" (compiler-parse-tag-expr-unquote)))
+      (set!
+        out
+        (sym-i64-bind
+          out
+          "unquote-splicing"
+          (compiler-parse-tag-expr-unquote-splicing)))
       out)))
 
 (define (compiler-parse-dispatch-patterns [e : SymI64Env]) : SymI64Env
@@ -870,6 +893,7 @@
           [(= tag (compiler-parse-tag-ty-str)) (OkAstType (AstTyStr))]
           [(= tag (compiler-parse-tag-unit)) (OkAstType (AstTyUnit))]
           [(= tag (compiler-parse-tag-ty-never)) (OkAstType (AstTyNever))]
+          [(= tag (compiler-parse-tag-ty-expr)) (OkAstType (AstTyExpr))]
           [else (OkAstType (AstTyVar name))]))]
     [(SCons (SSym head) rest)
       (let
@@ -2087,6 +2111,25 @@
     [(OkAstExprList exprs) (OkAstExpr (AstExprArray exprs))]
     [(ErrAstExprList message) (ErrAstExpr message)]))
 
+(define (parse-ast-quote-like
+  [dispatch : SymI64Env]
+  [tag : i64]
+  [rest : SpannedSexpr]) : ResultAstExpr
+  (match rest
+    [(SpSCons expr (SpSNil _) _)
+      (match (parse-ast-expr dispatch expr)
+        [(OkAstExpr parsed)
+          (cond
+            [(= tag (compiler-parse-tag-expr-quote))
+              (OkAstExpr (AstExprQuote parsed))]
+            [(= tag (compiler-parse-tag-expr-quasiquote))
+              (OkAstExpr (AstExprQuasiquote parsed))]
+            [(= tag (compiler-parse-tag-expr-unquote))
+              (OkAstExpr (AstExprUnquote parsed))]
+            [else (OkAstExpr (AstExprUnquoteSplicing parsed))])]
+        [(ErrAstExpr message) (ErrAstExpr message)])]
+    [_ (ErrAstExpr "parse: quote form expects exactly one expression")]))
+
 (define (parse-ast-list-expr-tag
   [dispatch : SymI64Env]
   [tag : i64]
@@ -2131,6 +2174,14 @@
       (parse-ast-with-region dispatch rest)]
     [(= tag (compiler-parse-tag-expr-with-resource))
       (parse-ast-with-resource dispatch rest)]
+    [(= tag (compiler-parse-tag-expr-quote))
+      (parse-ast-quote-like dispatch tag rest)]
+    [(= tag (compiler-parse-tag-expr-quasiquote))
+      (parse-ast-quote-like dispatch tag rest)]
+    [(= tag (compiler-parse-tag-expr-unquote))
+      (parse-ast-quote-like dispatch tag rest)]
+    [(= tag (compiler-parse-tag-expr-unquote-splicing))
+      (parse-ast-quote-like dispatch tag rest)]
     [(= tag (compiler-parse-tag-expr-try)) (parse-ast-try dispatch rest)]
     [(= tag (compiler-parse-tag-expr-box))
       (parse-ast-box-like dispatch rest false)]
@@ -3795,6 +3846,42 @@
                         "(define (main) : i64 (with ((h (open) close)) 42))"
                         "parse: with binding must use bracket syntax"))))))))))))
 
+(define (compiler-parse-quote-syntax-shape-ok?) : bool
+  (match (parse-ast-source
+    "(define (mk [e : Expr]) : Expr `(if ,e true false))")
+    [(OkAstProgram (AstProgram decls))
+      (match decls
+        [(AstDeclCons (AstDeclDefFn _ _ ret-ty body) AstDeclNil)
+          (and
+            (match ret-ty
+              [(AstTyVar name) (string-eq name "Expr")]
+              [_ false])
+            (match (ast-expr-unspan body)
+              [(AstExprQuasiquote template)
+                (match (ast-expr-unspan template)
+                  [(AstExprIf cond _ _)
+                    (match (ast-expr-unspan cond)
+                      [(AstExprUnquote unquoted)
+                        (match (ast-expr-unspan unquoted)
+                          [(AstExprVar name) (string-eq name "e")]
+                          [_ false])]
+                      [_ false])]
+                  [_ false])]
+              [_ false]))]
+        [_ false])]
+    [(ErrAstProgram _) false]))
+
+(define (compiler-parse-quote-syntax-tests-ok?) : bool
+  (and
+    (compiler-parse-quote-syntax-shape-ok?)
+    (and
+      (compiler-parse-ok? "(define x : Expr '(+ 1 2))")
+      (and
+        (compiler-parse-ok? "(define x : Expr `(begin ,@xs))")
+        (compiler-parse-error-ok?
+          "(define x : Expr (quote))"
+          "parse: quote form expects exactly one expression")))))
+
 ;; REPL-item parsing (#1072 / #1041): `parse-ast-repl-source` accepts a single
 ;; top-level declaration, a parenthesized expression, or a bare expression, and
 ;; rejects trailing tokens and a malformed expression. Mirrors the Rust
@@ -3938,7 +4025,9 @@
                                             (compiler-parse-reference-ok?)
                                             (and
                                               (compiler-parse-borrow-ok?)
-                                              (compiler-parse-resource-with-shape-ok?)))))))))))))))))))))
+                                              (and
+                                                (compiler-parse-resource-with-shape-ok?)
+                                                (compiler-parse-quote-syntax-shape-ok?))))))))))))))))))))))
         (if (and
           (compiler-parse-error-tests-ok?)
           (and
@@ -3965,7 +4054,9 @@
                                 (compiler-parse-comptime-param-tests-ok?)
                                 (and
                                   (compiler-parse-defmacro-tests-ok?)
-                                  (compiler-parse-resource-with-tests-ok?))))))))))))))
+                                  (and
+                                    (compiler-parse-resource-with-tests-ok?)
+                                    (compiler-parse-quote-syntax-tests-ok?)))))))))))))))
           42
           (begin
             (panic "parse: error-path self-tests failed")

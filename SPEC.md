@@ -485,6 +485,22 @@ representation. The compiler tracks the checked produced type of each `Expr`
 internally; there is no source-level `Expr<T>` and no generic macro type
 parameter.
 
+Macro bodies build expression values with quote forms. The reader accepts both
+prefix shorthand and the equivalent list-headed forms:
+
+```lisp test=ignore name=macro-quote-surface reason="typed macro expansion is staged across #1133-#1140"
+'form        ; (quote form)
+`form        ; (quasiquote form)
+,expr        ; (unquote expr), valid inside quasiquote
+,@expr       ; (unquote-splicing expr), valid in quasiquote list positions
+```
+
+`quote` produces an `Expr` for the template without evaluating it.
+`quasiquote` produces an `Expr` while evaluating `unquote` operands as
+compile-time `Expr` values and inserting their checked AST. `unquote-splicing`
+evaluates to an `ExprList` and splices that list into the surrounding template
+list. `unquote` and `unquote-splicing` outside quasiquote are rejected.
+
 The source surface is:
 
 ```lisp test=ignore name=macro-defmacro-surface reason="typed macro declarations are specified before selfhost implementation"

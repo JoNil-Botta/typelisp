@@ -41,7 +41,11 @@
   (TChar char)
   (TFloat String)
   (TLBracket)
-  (TRBracket))
+  (TRBracket)
+  (TQuote)
+  (TBacktick)
+  (TComma)
+  (TCommaAt))
 
 ;; Source locations are 1-based line/column pairs. The end position is
 ;; exclusive, so a one-character token at line 1 column 1 spans 1:1 -> 1:2.
@@ -106,7 +110,11 @@
     [(TChar _) 7]
     [(TFloat _) 8]
     [(TLBracket) 9]
-    [(TRBracket) 10]))
+    [(TRBracket) 10]
+    [(TQuote) 11]
+    [(TBacktick) 12]
+    [(TComma) 13]
+    [(TCommaAt) 14]))
 
 ;; Integer payload of a TInt token (0 for any other kind): projects the literal
 ;; value back out of the enum, the way a parser reads a numeric literal.
@@ -121,7 +129,11 @@
     [(TChar _) 0]
     [(TFloat _) 0]
     [(TLBracket) 0]
-    [(TRBracket) 0]))
+    [(TRBracket) 0]
+    [(TQuote) 0]
+    [(TBacktick) 0]
+    [(TComma) 0]
+    [(TCommaAt) 0]))
 
 ;; Symbol text of a TSym token (the empty string for any other kind): projects
 ;; the sliced lexeme back out of the enum, the way a parser reads a symbol/name.
@@ -136,7 +148,11 @@
     [(TChar _) ""]
     [(TFloat _) ""]
     [(TLBracket) ""]
-    [(TRBracket) ""]))
+    [(TRBracket) ""]
+    [(TQuote) ""]
+    [(TBacktick) ""]
+    [(TComma) ""]
+    [(TCommaAt) ""]))
 
 ;; String text of a TStr token (the empty string for any other kind): projects
 ;; the sliced inner text of a `"..."` literal back out of the enum, the way a
@@ -153,7 +169,11 @@
     [(TChar _) ""]
     [(TFloat _) ""]
     [(TLBracket) ""]
-    [(TRBracket) ""]))
+    [(TRBracket) ""]
+    [(TQuote) ""]
+    [(TBacktick) ""]
+    [(TComma) ""]
+    [(TCommaAt) ""]))
 
 ;; Float literal text of a TFloat token (the empty string for any other kind):
 ;; the selfhost frontend carries source spelling until backend emission, so it
@@ -169,7 +189,11 @@
     [(TChar _) ""]
     [(TFloat s) s]
     [(TLBracket) ""]
-    [(TRBracket) ""]))
+    [(TRBracket) ""]
+    [(TQuote) ""]
+    [(TBacktick) ""]
+    [(TComma) ""]
+    [(TCommaAt) ""]))
 
 ;; Character payload of a TChar token (NUL for any other kind): projects the
 ;; read character back out of the enum while keeping char atoms distinct from
@@ -185,7 +209,11 @@
     [(TChar c) c]
     [(TFloat _) #\nul']
     [(TLBracket) #\nul']
-    [(TRBracket) #\nul']))
+    [(TRBracket) #\nul']
+    [(TQuote) #\nul']
+    [(TBacktick) #\nul']
+    [(TComma) #\nul']
+    [(TCommaAt) #\nul']))
 
 ;; A token paired with the 1-based source line and column where its lexeme
 ;; begins (#599). The reader/parser recover positions from these so later
@@ -248,3 +276,15 @@
 
 (define (tag-rbracket) : i64
   10)
+
+(define (tag-quote) : i64
+  11)
+
+(define (tag-backtick) : i64
+  12)
+
+(define (tag-comma) : i64
+  13)
+
+(define (tag-comma-at) : i64
+  14)

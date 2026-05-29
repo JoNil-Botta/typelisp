@@ -51,6 +51,10 @@ fn frontend_tools_tl_compiles_to_assembly() {
         !asm.contains("# TODO"),
         "frontend_tools assembly still contains a # TODO marker:\n{asm}",
     );
+    assert!(
+        !asm.contains("_tl_print_char") && !asm.contains("tl_print_char"),
+        "frontend_tools should preserve char token spelling without print-char runtime calls:\n{asm}",
+    );
     assert_eq!(
         asm.matches("\nmain:").count() + usize::from(asm.starts_with("main:")),
         1,

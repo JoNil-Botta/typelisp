@@ -2425,6 +2425,21 @@
 ;; `i64`, a `bool` comparison is a `bool`, and a `let`/`if` body keeps its type);
 ;; `comptime` cannot reference a runtime variable, and a comptime result that
 ;; disagrees with the surrounding type is rejected like any other mismatch.
+;; Type-literal and comptime-parameter rules (#1540, migrated from
+;; src/typechecker.rs): a scalar `comptime` parameter type-checks/specializes,
+;; and a `(type ...)` literal is compile-time only — it cannot be observed as a
+;; runtime value. (Type-valued comptime parameters / `type` kind positions remain
+;; rejected as source-level type parameters pending the comptime-generation work
+;; in #893; covering their accepted-specialization shape is a #893 follow-up.)
+(define (compiler-typecheck-type-literal-tests-ok?) : bool
+  (and
+    (compiler-typecheck-ok?
+      "(define (twice [comptime n : i64]) : i64 (* n 2))
+(define (main) : i64 (twice 21))")
+    (compiler-typecheck-error-ok?
+      "(define (main) : i64 (begin (type i64) 0))"
+      "type value i64 is compile-time only")))
+
 (define (compiler-typecheck-comptime-tests-ok?) : bool
   (and
     (compiler-typecheck-ok? "(define (main) : i64 (comptime (+ 1 2)))")
@@ -2982,6 +2997,9 @@
     (if (compiler-typecheck-comptime-tests-ok?)
       unit
       (panic "typecheck: comptime tests failed"))
+    (if (compiler-typecheck-type-literal-tests-ok?)
+      unit
+      (panic "typecheck: type-literal tests failed"))
     (if (compiler-typecheck-io-builtin-tests-ok?)
       unit
       (panic "typecheck: io builtin tests failed"))

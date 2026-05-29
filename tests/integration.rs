@@ -2565,6 +2565,8 @@ fn selfhost_check_driver_reports_success_and_errors() {
             "compiler_parse_core.tl",
             "compiler_diagnostic.tl",
             "compiler_ast_types.tl",
+            "compiler_ir_types.tl",
+            "compiler_optimize.tl",
             "sym_i64_env.tl",
             "read.tl",
             "lex.tl",

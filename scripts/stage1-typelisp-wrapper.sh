@@ -5,9 +5,10 @@ set -eu
 # bootstrapped selfhost compiler binary.
 #
 # TYPELISP_STAGE1_BIN must point at the stage1 compiler executable
-# (`selfhost/compile.tl` compiled to native code). The wrapper supplies the
-# public `typelisp compile` spelling and executes private host-action plans
-# without routing back through the Rust CLI.
+# (`selfhost/compile.tl` compiled to native code). The raw stage1 compiler
+# accepts `compile`; this wrapper adds the rest of the public command surface
+# and executes private host-action plans without routing back through the Rust
+# CLI.
 
 STAGE1_BIN=${TYPELISP_STAGE1_BIN:-}
 STAGE1_TEST_BIN=${TYPELISP_STAGE1_TEST_BIN:-}
@@ -149,7 +150,7 @@ compile_output_path() {
 compile_command() {
     require_stage1
     output=$(compile_output_path "$@")
-    "$STAGE1_BIN" "$@"
+    "$STAGE1_BIN" compile "$@"
     if [ -n "$output" ]; then
         echo "Generated: $output"
     fi

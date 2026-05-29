@@ -145,20 +145,22 @@ as the seed compiler. It installs failing `cargo` and `rustc` shims in `PATH` so
 the gate cannot silently fall back to Rust. On Linux it first runs
 the stage1-build path in `check-bootstrap-fixpoint.sh` with the seed compiler,
 then routes stage1 capability gates through `scripts/stage1-typelisp-wrapper.sh`.
-The wrapper gives the raw stage1 compiler the public `typelisp compile` and
-`typelisp doc` shapes and a no-Rust Linux host-action executor for source
-build/run and scratch assembly plans. Full public CLI gates still use the seed
-compiler until every public-tool exception is ported to the wrapper. On Windows
-it exports the seed compiler directly until native stage1 bootstrap/link support
-lands. The full stage2/stage3 fixpoint remains available through
-`check-bootstrap-fixpoint.sh`. The scripts that still run `cargo build --release`
-when `TYPELISP_BIN` is unset keep that path as a local fallback only until #795
-removes the Rust-owned stage0 dependency.
+The raw stage1 compiler accepts the public `typelisp compile` dispatcher form
+and keeps the private direct file form used by bootstrap scripts. The wrapper
+adds `typelisp doc` and a no-Rust Linux host-action executor for source build/run
+and scratch assembly plans. Full public CLI gates still use the seed compiler
+until every public-tool exception is ported to the wrapper. On Windows it exports
+the seed compiler directly until native stage1 bootstrap/link support lands. The
+full stage2/stage3 fixpoint remains available through `check-bootstrap-fixpoint.sh`.
+The scripts that still run `cargo build --release` when `TYPELISP_BIN` is unset
+keep that path as a local fallback only until #795 removes the Rust-owned stage0
+dependency.
 
-The current stage1 wrapper implements the source-file `compile`, `build`, `run`,
-`fmt`, `doc`, `doc --test`, and private `debug host-action` path directly enough
-for the Linux capability smoke, deterministic assembly gate, selfhost compile
-manifest, and stdlib documentation gate.
+The current raw stage1 compiler implements source-file `compile`; the wrapper
+routes that command and implements `build`, `run`, `fmt`, `doc`, `doc --test`,
+and private `debug host-action` directly enough for the Linux capability smoke,
+deterministic assembly gate, selfhost compile manifest, and stdlib documentation
+gate.
 Direct `selfhost/build.tl` package-build parity is covered by
 `scripts/verify-public-tools.sh`; top-level stage1 wrapper routing for package
 builds is still staged separately. Seed-only public-tool exceptions remain:

@@ -75,7 +75,11 @@ as "$STAGE1_ASM" -o "$STAGE1_OBJ"
 ld "$STAGE1_OBJ" -o "$STAGE1_BIN"
 
 echo "[bootstrap-smoke] stage1 compiles comptime type fixture"
-"$STAGE1_BIN" "$SMOKE_SRC" -o "$SMOKE_ASM"
+"$STAGE1_BIN" compile "$SMOKE_SRC" -o "$SMOKE_ASM" \
+    --target linux-x86_64 \
+    --backend-mode scalar \
+    --opt-level 1 \
+    --stdlib-root "$ROOT/stdlib"
 
 echo "[bootstrap-smoke] link fixture"
 as "$SMOKE_ASM" -o "$SMOKE_OBJ"

@@ -33,7 +33,9 @@
                               (if (=
                                 (compiler-optimize-aggregate-candidate-self-test)
                                 42)
-                                (compiler-optimize-spans-self-test)
+                                (if (= (compiler-optimize-spans-self-test) 42)
+                                  (compiler-optimize-gvn-self-test)
+                                  1)
                                 1)
                               1)
                             1)

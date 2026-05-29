@@ -4236,6 +4236,283 @@
 (define (optimize-function-max-iterations) : i64
   10)
 
+;; --- cross-block global value numbering (#1349) -----------------------------
+;;
+;; Block-local CSE (`opt-cse-instr`) and copy propagation already collapse
+;; redundant pure scalar expressions within a single basic block. This pass
+;; lifts that to dominated blocks: a pure `BinOp`/`UnOp` is replaced by a `Mov`
+;; from an equal expression computed in a strictly dominating block, after which
+;; the existing copy propagation/DCE remove the dead intermediate. The IR is
+;; non-SSA, so a value computed in a dominating block is only reusable at a use
+;; if neither the result nor any operand can be reassigned between the two
+;; points. The conservative-but-sound v1 condition is "exactly one value source"
+;; per var: the value-source count = number of definitions plus one if the var
+;; is a function parameter. A var with exactly one source has a single,
+;; unchanging value throughout the function, so dominance alone authorizes the
+;; reuse. Vars with two or more sources (a reassigned local, or a parameter that
+;; is later overwritten) are excluded. Only `BinOp`/`UnOp` over single-source
+;; operands and a single-source result are numbered; loads, stores, allocations,
+;; calls, and other effectful or many-sourced instructions are left untouched.
+;; Phi inputs belong to predecessor edges and are never rewritten. Sibling
+;; expressions never global-CSE because a join block is not strictly dominated by
+;; either arm.
+(defenum OptGvnDefs
+  (OptGvnDefsNil)
+  (OptGvnDefsCons i64 OptGvnDefs))
+
+(defenum OptGvnEntry
+  (OptGvnEntry OptExprKey i64 String))
+
+(defenum OptGvnMap
+  (OptGvnMapNil)
+  (OptGvnMapCons OptGvnEntry OptGvnMap))
+
+;; Number of times `var` appears as a definition site (instruction destination
+;; or seeded parameter) in the collected value-source list.
+(define (opt-gvn-count [sources : OptGvnDefs] [var : i64]) : i64
+  (match sources
+    [(OptGvnDefsNil) 0]
+    [(OptGvnDefsCons id rest)
+      (if (= id var)
+        (+ 1 (opt-gvn-count rest var))
+        (opt-gvn-count rest var))]))
+
+;; A var is reusable across dominance only when it has exactly one value source.
+(define (opt-gvn-stable-var? [sources : OptGvnDefs] [var : i64]) : bool
+  (= (opt-gvn-count sources var) 1))
+
+;; Operand values that hold a single unchanging value: literals and single-source
+;; vars. Globals, global addresses, function references, and float/string
+;; literals are excluded to match the existing copy-propagation conservatism.
+(define (opt-gvn-value-stable? [sources : OptGvnDefs] [value : CompilerIrValue]) : bool
+  (match value
+    [(IrValueVar id) (opt-gvn-stable-var? sources id)]
+    [(IrValueI64 _) true]
+    [(IrValueBool _) true]
+    [(IrValueChar _) true]
+    [(IrValueUnit) true]
+    [(IrValueF64 _) false]
+    [(IrValueString _) false]
+    [(IrValueGlobal _) false]
+    [(IrValueGlobalAddr _) false]
+    [(IrValueFunction _) false]))
+
+;; The destination var of a defining instruction, or -1 for instructions that do
+;; not define a var. Mirrors the instruction set handled by `opt-cse-instr`.
+(define (opt-gvn-instr-dst [instr : CompilerIrInstr]) : i64
+  (match instr
+    [(IrInstrMov dst _ _) dst]
+    [(IrInstrAlloc dst _) dst]
+    [(IrInstrAddrOf dst _) dst]
+    [(IrInstrGep dst _ _ _) dst]
+    [(IrInstrLoad dst _ _) dst]
+    [(IrInstrCast dst _ _ _) dst]
+    [(IrInstrBinOp dst _ _ _ _) dst]
+    [(IrInstrUnOp dst _ _ _) dst]
+    [(IrInstrLaneId dst _ _) dst]
+    [(IrInstrSplat dst _ _ _) dst]
+    [(IrInstrVectorBinOp dst _ _ _ _ _) dst]
+    [(IrInstrVectorReduce dst _ _ _ _) dst]
+    [(IrInstrVectorCompare dst _ _ _ _ _) dst]
+    [(IrInstrMaskBinOp dst _ _ _ _) dst]
+    [(IrInstrMaskNot dst _ _) dst]
+    [(IrInstrMaskReduce dst _ _ _) dst]
+    [(IrInstrSelect dst _ _ _ _ _) dst]
+    [(IrInstrVectorLoad dst _ _ _ _) dst]
+    [(IrInstrPredicatedLoad dst _ _ _ _ _) dst]
+    [(IrInstrTailMask dst _ _ _) dst]
+    [(IrInstrCall dst _ _ _) dst]
+    [(IrInstrCallIndirect dst _ _ _) dst]
+    [(IrInstrPhi dst _ _) dst]
+    [(IrInstrStorePtr _ _ _) (- 0 1)]
+    [(IrInstrBoundsCheck _ _ _) (- 0 1)]
+    [(IrInstrVectorStore _ _ _ _ _) (- 0 1)]
+    [(IrInstrPredicatedStore _ _ _ _ _ _) (- 0 1)]
+    [(IrInstrTailCall _ _ _) (- 0 1)]
+    [(IrInstrStore _ _ _) (- 0 1)]
+    [(IrInstrJump _) (- 0 1)]
+    [(IrInstrBranch _ _ _) (- 0 1)]
+    [(IrInstrReturn _) (- 0 1)]))
+
+(define (opt-gvn-sources-params
+  [params : CompilerIrParamList]
+  [acc : OptGvnDefs]) : OptGvnDefs
+  (match params
+    [(IrParamNil) acc]
+    [(IrParamCons param rest)
+      (match param
+        [(IrParam _ _ id) (opt-gvn-sources-params rest (OptGvnDefsCons id acc))])]))
+
+(define (opt-gvn-sources-instrs
+  [instrs : CompilerIrInstrList]
+  [acc : OptGvnDefs]) : OptGvnDefs
+  (match instrs
+    [(IrInstrNil) acc]
+    [(IrInstrCons instr rest)
+      (let
+        [dst : i64 (opt-gvn-instr-dst instr)]
+        (opt-gvn-sources-instrs
+          rest
+          (if (= dst (- 0 1))
+            acc
+            (OptGvnDefsCons dst acc))))]))
+
+(define (opt-gvn-sources-blocks
+  [blocks : CompilerIrBlockList]
+  [acc : OptGvnDefs]) : OptGvnDefs
+  (match blocks
+    [(IrBlockNil) acc]
+    [(IrBlockCons block rest)
+      (match block
+        [(IrBlock _ instrs)
+          (opt-gvn-sources-blocks rest (opt-gvn-sources-instrs instrs acc))])]))
+
+;; Record a `BinOp`/`UnOp` whose result and operands are all single-source as an
+;; available value keyed by its expression and tagged with its defining block.
+(define (opt-gvn-record
+  [instr : CompilerIrInstr]
+  [label : String]
+  [sources : OptGvnDefs]
+  [acc : OptGvnMap]) : OptGvnMap
+  (match instr
+    [(IrInstrBinOp dst op l r _)
+      (if (and
+        (opt-gvn-stable-var? sources dst)
+        (and
+          (opt-gvn-value-stable? sources l)
+          (opt-gvn-value-stable? sources r)))
+        (OptGvnMapCons (OptGvnEntry (OptBinKey op l r) dst label) acc)
+        acc)]
+    [(IrInstrUnOp dst op v _)
+      (if (and
+        (opt-gvn-stable-var? sources dst)
+        (opt-gvn-value-stable? sources v))
+        (OptGvnMapCons (OptGvnEntry (OptUnKey op v) dst label) acc)
+        acc)]
+    [_ acc]))
+
+(define (opt-gvn-build-map-instrs
+  [sources : OptGvnDefs]
+  [label : String]
+  [instrs : CompilerIrInstrList]
+  [acc : OptGvnMap]) : OptGvnMap
+  (match instrs
+    [(IrInstrNil) acc]
+    [(IrInstrCons instr rest)
+      (opt-gvn-build-map-instrs
+        sources
+        label
+        rest
+        (opt-gvn-record instr label sources acc))]))
+
+(define (opt-gvn-build-map-blocks
+  [sources : OptGvnDefs]
+  [blocks : CompilerIrBlockList]
+  [acc : OptGvnMap]) : OptGvnMap
+  (match blocks
+    [(IrBlockNil) acc]
+    [(IrBlockCons block rest)
+      (match block
+        [(IrBlock label instrs)
+          (opt-gvn-build-map-blocks
+            sources
+            rest
+            (opt-gvn-build-map-instrs sources label instrs acc))])]))
+
+;; Find the result var of an available expression matching `key` whose defining
+;; block strictly dominates `use-label`, or -1 if none qualifies.
+(define (opt-gvn-lookup
+  [table : OptGvnMap]
+  [doms : OptDomTable]
+  [use-label : String]
+  [key : OptExprKey]) : i64
+  (match table
+    [(OptGvnMapNil) (- 0 1)]
+    [(OptGvnMapCons entry rest)
+      (match entry
+        [(OptGvnEntry ekey evar elabel)
+          (if (and
+            (opt-expr-key-eq ekey key)
+            (opt-dom-strict-dominates? doms elabel use-label))
+            evar
+            (opt-gvn-lookup rest doms use-label key))])]))
+
+(define (opt-gvn-rewrite-instr
+  [table : OptGvnMap]
+  [doms : OptDomTable]
+  [sources : OptGvnDefs]
+  [use-label : String]
+  [instr : CompilerIrInstr]) : CompilerIrInstr
+  (match instr
+    [(IrInstrBinOp dst op l r ty)
+      (if (and
+        (opt-gvn-value-stable? sources l)
+        (opt-gvn-value-stable? sources r))
+        (let
+          [earlier : i64
+            (opt-gvn-lookup table doms use-label (OptBinKey op l r))]
+          (if (and (not (= earlier (- 0 1))) (not (= earlier dst)))
+            (IrInstrMov dst (IrValueVar earlier) ty)
+            instr))
+        instr)]
+    [(IrInstrUnOp dst op v ty)
+      (if (opt-gvn-value-stable? sources v)
+        (let
+          [earlier : i64 (opt-gvn-lookup table doms use-label (OptUnKey op v))]
+          (if (and (not (= earlier (- 0 1))) (not (= earlier dst)))
+            (IrInstrMov dst (IrValueVar earlier) ty)
+            instr))
+        instr)]
+    [_ instr]))
+
+(define (opt-gvn-rewrite-instrs
+  [table : OptGvnMap]
+  [doms : OptDomTable]
+  [sources : OptGvnDefs]
+  [use-label : String]
+  [instrs : CompilerIrInstrList]) : CompilerIrInstrList
+  (match instrs
+    [(IrInstrNil) (IrInstrNil)]
+    [(IrInstrCons instr rest)
+      (IrInstrCons
+        (opt-gvn-rewrite-instr table doms sources use-label instr)
+        (opt-gvn-rewrite-instrs table doms sources use-label rest))]))
+
+(define (opt-gvn-rewrite-block
+  [table : OptGvnMap]
+  [doms : OptDomTable]
+  [sources : OptGvnDefs]
+  [block : CompilerIrBlock]) : CompilerIrBlock
+  (match block
+    [(IrBlock label instrs)
+      (IrBlock label (opt-gvn-rewrite-instrs table doms sources label instrs))]))
+
+(define (opt-gvn-rewrite-blocks
+  [table : OptGvnMap]
+  [doms : OptDomTable]
+  [sources : OptGvnDefs]
+  [blocks : CompilerIrBlockList]) : CompilerIrBlockList
+  (match blocks
+    [(IrBlockNil) (IrBlockNil)]
+    [(IrBlockCons block rest)
+      (IrBlockCons
+        (opt-gvn-rewrite-block table doms sources block)
+        (opt-gvn-rewrite-blocks table doms sources rest))]))
+
+;; Replace dominated repeated pure scalar expressions with a copy from the first
+;; dominating value; existing copy propagation and DCE remove the dead copies.
+(define (opt-gvn-blocks
+  [params : CompilerIrParamList]
+  [blocks : CompilerIrBlockList]) : CompilerIrBlockList
+  (let
+    [doms : OptDomTable (opt-cfg-dominators blocks)]
+    [sources : OptGvnDefs
+      (opt-gvn-sources-blocks
+        blocks
+        (opt-gvn-sources-params params (OptGvnDefsNil)))]
+    [table : OptGvnMap (opt-gvn-build-map-blocks sources blocks (OptGvnMapNil))]
+    (opt-gvn-rewrite-blocks table doms sources blocks)))
+
 (define (optimize-block [block : CompilerIrBlock]) : CompilerIrBlock
   (match block
     [(IrBlock label instrs)
@@ -4279,17 +4556,19 @@
       (let
         [folded : CompilerIrBlockList (optimize-block-list blocks)]
         (let
-          [sccp : CompilerIrBlockList (opt-sccp-blocks params folded)]
+          [gvn : CompilerIrBlockList (opt-gvn-blocks params folded)]
           (let
-            [cfg : CompilerIrBlockList (opt-cfg-simplify-blocks sccp)]
+            [sccp : CompilerIrBlockList (opt-sccp-blocks params gvn)]
             (let
-              [used : OptUsedSet (opt-collect-blocks-uses (OptUsedNil) cfg)]
-              (IrFunction
-                name
-                params
-                ret-ty
-                frame
-                (opt-dce-block-list used cfg))))))]))
+              [cfg : CompilerIrBlockList (opt-cfg-simplify-blocks sccp)]
+              (let
+                [used : OptUsedSet (opt-collect-blocks-uses (OptUsedNil) cfg)]
+                (IrFunction
+                  name
+                  params
+                  ret-ty
+                  frame
+                  (opt-dce-block-list used cfg)))))))]))
 
 (define (optimize-function-once-fast [func : CompilerIrFunction]) : CompilerIrFunction
   (match func
@@ -5947,6 +6226,175 @@
               3)
             2)
           1)))))
+
+;; --- cross-block GVN self-tests (#1349) -------------------------------------
+(define (opt-gvn-test-params) : CompilerIrParamList
+  (IrParamCons
+    (IrParam "a" (AstTyI64) 0)
+    (IrParamCons (IrParam "b" (AstTyI64) 1) (IrParamNil))))
+
+(define (opt-gvn-count-binops-blocks [blocks : CompilerIrBlockList]) : i64
+  (match blocks
+    [(IrBlockNil) 0]
+    [(IrBlockCons block rest)
+      (match block
+        [(IrBlock _ instrs)
+          (+ (opt-count-arith-instrs instrs) (opt-gvn-count-binops-blocks rest))])]))
+
+;; Diamond: `a + b` computed in the entry block and recomputed in the
+;; post-dominating join. The entry strictly dominates the join, so the join's
+;; expression is rewritten to a copy and the binop count drops from 2 to 1.
+(define (opt-gvn-diamond-blocks) : CompilerIrBlockList
+  (IrBlockCons
+    (IrBlock
+      "entry"
+      (IrInstrCons
+        (IrInstrBinOp 10 (IrBinAdd) (IrValueVar 0) (IrValueVar 1) (AstTyI64))
+        (IrInstrCons (IrInstrBranch (IrValueVar 0) "l" "r") (IrInstrNil))))
+    (IrBlockCons
+      (IrBlock "l" (IrInstrCons (IrInstrJump "j") (IrInstrNil)))
+      (IrBlockCons
+        (IrBlock "r" (IrInstrCons (IrInstrJump "j") (IrInstrNil)))
+        (IrBlockCons
+          (IrBlock
+            "j"
+            (IrInstrCons
+              (IrInstrBinOp
+                11
+                (IrBinAdd)
+                (IrValueVar 0)
+                (IrValueVar 1)
+                (AstTyI64))
+              (IrInstrCons
+                (IrInstrReturn (IrSomeValue (IrValueVar 11)))
+                (IrInstrNil))))
+          (IrBlockNil))))))
+
+;; Two sibling arms each compute `a + b`, and the join recomputes it. Neither arm
+;; strictly dominates the join, so no cross-block CSE fires and all 3 binops stay.
+(define (opt-gvn-siblings-blocks) : CompilerIrBlockList
+  (IrBlockCons
+    (IrBlock
+      "entry"
+      (IrInstrCons (IrInstrBranch (IrValueVar 0) "l" "r") (IrInstrNil)))
+    (IrBlockCons
+      (IrBlock
+        "l"
+        (IrInstrCons
+          (IrInstrBinOp 10 (IrBinAdd) (IrValueVar 0) (IrValueVar 1) (AstTyI64))
+          (IrInstrCons (IrInstrJump "j") (IrInstrNil))))
+      (IrBlockCons
+        (IrBlock
+          "r"
+          (IrInstrCons
+            (IrInstrBinOp
+              11
+              (IrBinAdd)
+              (IrValueVar 0)
+              (IrValueVar 1)
+              (AstTyI64))
+            (IrInstrCons (IrInstrJump "j") (IrInstrNil))))
+        (IrBlockCons
+          (IrBlock
+            "j"
+            (IrInstrCons
+              (IrInstrBinOp
+                12
+                (IrBinAdd)
+                (IrValueVar 0)
+                (IrValueVar 1)
+                (AstTyI64))
+              (IrInstrCons
+                (IrInstrReturn (IrSomeValue (IrValueVar 12)))
+                (IrInstrNil))))
+          (IrBlockNil))))))
+
+;; The shared operand `v2` is reassigned in each block, so it has two value
+;; sources and is not stable. Even though the entry dominates the join, the two
+;; `v0 + v2` expressions compute different values and must not be CSE'd: 2 binops.
+(define (opt-gvn-redef-blocks) : CompilerIrBlockList
+  (IrBlockCons
+    (IrBlock
+      "entry"
+      (IrInstrCons
+        (IrInstrMov 2 (IrValueI64 5) (AstTyI64))
+        (IrInstrCons
+          (IrInstrBinOp 10 (IrBinAdd) (IrValueVar 0) (IrValueVar 2) (AstTyI64))
+          (IrInstrCons (IrInstrJump "j") (IrInstrNil)))))
+    (IrBlockCons
+      (IrBlock
+        "j"
+        (IrInstrCons
+          (IrInstrMov 2 (IrValueI64 7) (AstTyI64))
+          (IrInstrCons
+            (IrInstrBinOp
+              11
+              (IrBinAdd)
+              (IrValueVar 0)
+              (IrValueVar 2)
+              (AstTyI64))
+            (IrInstrCons
+              (IrInstrReturn (IrSomeValue (IrValueVar 11)))
+              (IrInstrNil)))))
+      (IrBlockNil))))
+
+;; Loop: the header computes `a + b` and the body recomputes it. The header
+;; strictly dominates the body, so the body's expression is rewritten: 2 -> 1.
+(define (opt-gvn-loop-blocks) : CompilerIrBlockList
+  (IrBlockCons
+    (IrBlock "entry" (IrInstrCons (IrInstrJump "h") (IrInstrNil)))
+    (IrBlockCons
+      (IrBlock
+        "h"
+        (IrInstrCons
+          (IrInstrBinOp 10 (IrBinAdd) (IrValueVar 0) (IrValueVar 1) (AstTyI64))
+          (IrInstrCons
+            (IrInstrBranch (IrValueVar 0) "body" "exit")
+            (IrInstrNil))))
+      (IrBlockCons
+        (IrBlock
+          "body"
+          (IrInstrCons
+            (IrInstrBinOp
+              11
+              (IrBinAdd)
+              (IrValueVar 0)
+              (IrValueVar 1)
+              (AstTyI64))
+            (IrInstrCons (IrInstrJump "h") (IrInstrNil))))
+        (IrBlockCons
+          (IrBlock
+            "exit"
+            (IrInstrCons
+              (IrInstrReturn (IrSomeValue (IrValueVar 10)))
+              (IrInstrNil)))
+          (IrBlockNil))))))
+
+;; Returns 42 only when cross-block GVN rewrites dominated repeats (diamond and
+;; loop drop to 1 binop), leaves non-dominating siblings alone (3 binops), and
+;; refuses to CSE across a reassigned operand (2 binops).
+(define (compiler-optimize-gvn-self-test) : i64
+  (if (=
+    (opt-gvn-count-binops-blocks
+      (opt-gvn-blocks (opt-gvn-test-params) (opt-gvn-diamond-blocks)))
+    1)
+    (if (=
+      (opt-gvn-count-binops-blocks
+        (opt-gvn-blocks (opt-gvn-test-params) (opt-gvn-siblings-blocks)))
+      3)
+      (if (=
+        (opt-gvn-count-binops-blocks
+          (opt-gvn-blocks (opt-gvn-test-params) (opt-gvn-redef-blocks)))
+        2)
+        (if (=
+          (opt-gvn-count-binops-blocks
+            (opt-gvn-blocks (opt-gvn-test-params) (opt-gvn-loop-blocks)))
+          1)
+          42
+          4)
+        3)
+      2)
+    1))
 
 ;; Returns the lhs var id of the `BinOp` whose destination is `dst`, or -1 if it
 ;; is absent or its lhs is not a var. Used to inspect copy-propagation rewrites.

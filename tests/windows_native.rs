@@ -12,6 +12,13 @@ struct Case {
     args: &'static [&'static str],
 }
 
+const SELFHOST_BUILD_RUN_CORE_STDLIB_DEPS: &[&str] = &[
+    "stdlib/msvc.tl",
+    "stdlib/windows_sdk.tl",
+    "stdlib/windows_registry.tl",
+    "stdlib/windows_setup.tl",
+];
+
 /// Windows exit codes that indicate a process crash rather than a clean failure.
 /// 0xC0000005 (access violation, -1073741819) and 0xC000001D (illegal
 /// instruction, -1073741795) are the #1204 intermittent native-segfault codes;
@@ -465,10 +472,7 @@ fn selfhost_compile_driver_runs_as_windows_native_executable() {
     );
 }
 
-// #1270: this compile-heavy selfhost backend fixture currently exhausts the
-// Windows crash retry guard when run through `typelisp run`.
 #[test]
-#[ignore = "#1270: selfhost backend driver fixture segfaults on Windows"]
 fn selfhost_backend_windows_driver_primitives_emit_assemble_link_and_run() {
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let work_dir = manifest_dir
@@ -782,6 +786,7 @@ fn native_cases() -> Vec<Case> {
             "",
             &[
                 "compiler_typecheck.tl",
+                "compiler_typecheck_core.tl",
                 "compiler_specialize.tl",
                 "compiler_ctfe.tl",
                 "compiler_symbols.tl",
@@ -800,6 +805,7 @@ fn native_cases() -> Vec<Case> {
             "",
             &[
                 "compiler_typecheck.tl",
+                "compiler_typecheck_core.tl",
                 "compiler_specialize.tl",
                 "compiler_ctfe.tl",
                 "compiler_symbols.tl",
@@ -836,6 +842,7 @@ fn native_cases() -> Vec<Case> {
                 "compiler_check_core.tl",
                 "compiler_load.tl",
                 "compiler_typecheck.tl",
+                "compiler_typecheck_core.tl",
                 "compiler_specialize.tl",
                 "compiler_ctfe.tl",
                 "compiler_symbols.tl",
@@ -857,6 +864,7 @@ fn native_cases() -> Vec<Case> {
                 "compiler_ctfe.tl",
                 "compiler_specialize.tl",
                 "compiler_typecheck.tl",
+                "compiler_typecheck_core.tl",
                 "compiler_ir_types.tl",
                 "compiler_symbols.tl",
                 "compiler_parse_core.tl",
@@ -892,6 +900,7 @@ fn native_cases() -> Vec<Case> {
                 "compiler_ctfe.tl",
                 "compiler_specialize.tl",
                 "compiler_typecheck.tl",
+                "compiler_typecheck_core.tl",
                 "compiler_ir_types.tl",
                 "compiler_symbols.tl",
                 "compiler_parse_core.tl",
@@ -926,6 +935,7 @@ fn native_cases() -> Vec<Case> {
                 "compiler_check_core.tl",
                 "compiler_load.tl",
                 "compiler_typecheck.tl",
+                "compiler_typecheck_core.tl",
                 "compiler_specialize.tl",
                 "compiler_ctfe.tl",
                 "compiler_ir_types.tl",
@@ -1146,7 +1156,13 @@ fn dep_source_path(manifest_dir: &Path, source_dir: &Path, dep: &str) -> PathBuf
 }
 
 fn copy_case_deps(manifest_dir: &Path, source_dir: &Path, work_dir: &Path, deps: &[&str]) {
-    for dep in deps {
+    for dep in deps.iter().chain(
+        deps.iter()
+            .any(|dep| *dep == "build_run_core.tl")
+            .then_some(SELFHOST_BUILD_RUN_CORE_STDLIB_DEPS)
+            .unwrap_or(&[])
+            .iter(),
+    ) {
         let dep_src = dep_source_path(manifest_dir, source_dir, dep);
         let dep_dst = work_dir.join(dep);
         copy_tl_source_mkdirs(&dep_src, &dep_dst);

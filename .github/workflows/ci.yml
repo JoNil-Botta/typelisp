@@ -34,16 +34,6 @@ jobs:
             name: No-Rust Stage0 Verification (windows-latest)
             os: windows-latest
             timeout_minutes: 30
-          - suite: typelisp-lint
-            name: TypeLisp Lint (linux)
-            os: ubuntu-latest
-            timeout_minutes: 30
-            stage0_bin: target/stage0/typelisp
-          - suite: typelisp-lint
-            name: TypeLisp Lint (windows-latest)
-            os: windows-latest
-            timeout_minutes: 30
-            stage0_bin: target/stage0/typelisp.exe
           - suite: rust
             name: Test + Integration
             os: ubuntu-latest
@@ -65,16 +55,6 @@ jobs:
         if: ${{ matrix.suite == 'no-rust-stage0' && matrix.os == 'windows-latest' }}
         shell: bash
         run: scripts/verify-no-rust-stage0.sh
-
-      - name: Fetch published stage0 compiler
-        if: ${{ matrix.suite == 'typelisp-lint' }}
-        shell: bash
-        run: scripts/fetch-stage0.sh
-
-      - name: Run TypeLisp lint gate
-        if: ${{ matrix.suite == 'typelisp-lint' }}
-        shell: bash
-        run: TYPELISP_BIN=${{ matrix.stage0_bin }} TYPELISP_LINT_JOBS=8 scripts/check-tl-lint.sh
 
       # Temporary Rust reference coverage until #795 removes the Rust-owned
       # stage0 dependency. These steps build and test the Rust compiler, while
@@ -147,6 +127,11 @@ jobs:
       - name: Build release
         if: ${{ matrix.suite == 'rust' }}
         run: cargo build --release
+
+      - name: Run TypeLisp lint gate
+        if: ${{ matrix.suite == 'rust' }}
+        shell: bash
+        run: TYPELISP_BIN=${{ matrix.release_bin }} TYPELISP_LINT_JOBS=8 scripts/check-tl-lint.sh
 
       - name: Test CLI commands
         if: ${{ matrix.suite == 'rust' }}

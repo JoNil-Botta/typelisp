@@ -1859,6 +1859,57 @@
         true)]
     [(ErrCompilerBackend _) false]))
 
+;; Windows f64 ABI emit-shape coverage (#1456): the first four positional
+;; f64 args use xmm0..xmm3, the fifth is stacked after the 32-byte shadow
+;; space, and f64 returns remain in xmm0.
+(define (compiler-backend-win64-f64-abi-source) : String
+  "(define (sum5
+  [a : f64]
+  [b : f64]
+  [c : f64]
+  [d : f64]
+  [e : f64]) : f64
+  (+ (+ (+ (+ a b) c) d) e))
+
+(define (call5 [x : f64]) : f64
+  (sum5 x 2.0 3.0 4.0 5.0))
+
+(define (main) : i64
+  (if (< (call5 1.0) 16.0) 42 0))")
+
+(define (compiler-backend-win64-f64-abi-ok?) : bool
+  (match (compiler-backend-emit-source-for-target
+    (compiler-backend-win64-f64-abi-source)
+    (BackendTargetWindows))
+    [(OkCompilerBackend asm)
+      (and
+        (backend-and8
+          (compiler-backend-string-contains? asm "    movsd %xmm0, -8(%rbp)\n")
+          (compiler-backend-string-contains? asm "    movsd %xmm1, -16(%rbp)\n")
+          (compiler-backend-string-contains? asm "    movsd %xmm2, -24(%rbp)\n")
+          (compiler-backend-string-contains? asm "    movsd %xmm3, -32(%rbp)\n")
+          (compiler-backend-string-contains? asm "    subq $112, %rsp\n")
+          (compiler-backend-string-contains?
+            asm
+            "    movsd -48(%rbp), %xmm15\n")
+          (compiler-backend-string-contains? asm "    movsd %xmm15, 32(%rsp)\n")
+          (compiler-backend-string-contains? asm "    movsd 48(%rbp), %xmm0\n"))
+        (and
+          (compiler-backend-string-contains?
+            asm
+            "    call _tl_call5\n    movsd %xmm0, -16(%rbp)\n")
+          (and
+            (compiler-backend-string-contains? asm "    call _tl_sum5\n")
+            (and
+              (not (compiler-backend-string-contains? asm "too many call args"))
+              (and
+                (not (compiler-backend-string-contains? asm "    syscall"))
+                (not
+                  (compiler-backend-string-contains?
+                    asm
+                    (compiler-backend-todo-marker))))))))]
+    [(ErrCompilerBackend _) false]))
+
 ;; #750: a SysV call with seven integer args no longer rejects as "too many
 ;; call args". The 7th arg spills: 16-byte call space is reserved, the spilled
 ;; value is staged through %r11 and stored at 0(%rsp), and `add8` reads its
@@ -2013,9 +2064,9 @@
                   (compiler-backend-scalar-div-mod-ok?)
                   (compiler-backend-narrow-scalar-instr-ok?)
                   (compiler-backend-f64-abi-ok?)
+                  (compiler-backend-win64-f64-abi-ok?)
                   (compiler-backend-aggregate-storage-shape-ok?)
                   (compiler-backend-alloc-runtime-shape-ok?)
-                  true
                   true))))))))
     42
     (begin

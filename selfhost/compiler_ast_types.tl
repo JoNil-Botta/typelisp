@@ -68,6 +68,7 @@
   (AstTyBool)
   (AstTyChar)
   (AstTyString)
+  (AstTyStr)
   (AstTyUnit)
   (AstTyNever)
   ;; User-facing macro code-as-data type (#1135). This is a single concrete
@@ -294,6 +295,7 @@
     [(AstTyBool) 11]
     [(AstTyChar) 12]
     [(AstTyString) 13]
+    [(AstTyStr) 30]
     [(AstTyUnit) 14]
     [(AstTyNever) 15]
     [(AstTyExpr) 16]

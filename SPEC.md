@@ -285,6 +285,74 @@ values, call `extern` functions whose signatures contain raw pointers, construct
 typed null pointers, and test pointers for null. Safe code may not dereference,
 write through, offset, or cast raw pointers.
 
+#### 3.4.1 Arena-owned `(Box T)` indirection (specified, pending implementation)
+
+`(Box T)` is an explicit, safe, arena-owned indirection type. A box value is a
+pointer-shaped owning handle to storage that contains one `T`, allocated in the
+active arena. It is the source-level escape hatch for recursive aggregate
+layouts once structs and enums can opt into Rust-like inline representation.
+
+`(Box T)` is distinct from every other pointer-like surface:
+
+- `(Ptr T)` / `(MutPtr T)` are unsafe, nullable, copyable raw addresses for
+  FFI/runtime work. They do not own the pointed-to value.
+- `(& r T)` / `(&mut r T)` are non-owning checked references tied to an owner
+  lifetime or arena.
+- `(Box T)` owns the allocated `T` value. The box handle is move-only, not
+  copyable, and its storage is reclaimed only with the arena that owns it.
+
+Box type syntax is a built-in type constructor like `(Array T)`, `(Tuple ...)`,
+and raw pointer types. It is not source-level generics. The parser must reject
+malformed box types such as `(Box)`, `(Box A B)`, and `(Box T extra)` with a
+source-located type diagnostic.
+
+`(box expr)` allocates storage for the value produced by `expr` in the active
+arena and returns `(Box T)`, where `T` is the type of `expr`. In the
+program-lifetime default arena the result type is `(Box T)`. Inside
+`(with-arena r ...)`, allocation targets `r` and the result type is
+`(in r (Box T))`; it follows the same region escape rules as other
+arena-owned handles.
+
+`(box-get b)` projects the boxed value for read and pattern use. If `b` has
+type `(Box T)`, the projection has type `T`. If `b` has type `(in r (Box T))`,
+the projection has type `(in r T)` when `T` is region-taggable, otherwise `T`.
+The projection does not copy the box handle and does not by itself consume the
+box. Subsequent use of the projected value is still governed by the move rules:
+copyable `T` values may be copied out, but moving a move-only `T` out of a box
+is an aggregate path move and is rejected until the path-move and borrow slices
+define a sound operation. Immutable inspection through `box-get` is therefore
+v1's stable surface; destructive `box-take`, assignment through boxes, and
+mutable dereference are deferred to the mutable-reference/path-move work.
+
+Examples:
+
+```lisp test=ignore name=box-recursive-list reason="Box is specified before selfhost implementation"
+(defenum ListI64
+  (ListNil)
+  (ListCons i64 (Box ListI64)))
+
+(define one-two : ListI64
+  (ListCons 1 (box (ListCons 2 (box ListNil)))))
+```
+
+```lisp test=ignore name=box-recursive-tree reason="Box is specified before selfhost implementation"
+(defenum Tree
+  (Leaf i64)
+  (Node (Box Tree) (Box Tree)))
+
+(define small-tree : Tree
+  (Node (box (Leaf 1)) (box (Leaf 2))))
+```
+
+```lisp test=ignore name=box-get-copyable-field reason="Box is specified before selfhost implementation"
+(defstruct Counter
+  (label String)
+  (count i64))
+
+(define (boxed-count [c : (Box Counter)]) : i64
+  (struct-get (box-get c) count))
+```
+
 ### 3.5 User-defined types
 
 #### 3.5.1 Enums (sum types)
@@ -483,6 +551,7 @@ and lowers to `tl_region_mark` / `tl_region_reset` around the body.
 **Region-taggable types** are the heap-allocated aggregate kinds whose storage
 can be created inside a region scope:
 - `String`
+- `(Box T)` - arena-owned boxed storage
 - `(Array T)` — dynamic array
 - Enum and struct values returned from functions inside the region
 - Tuple values (when tuple-by-value ABI support lands)
@@ -1381,6 +1450,7 @@ and marks the source place moved. Move-only types are:
 
 - `String`.
 - Dynamic arrays `(Array T)`.
+- Boxes `(Box T)`.
 - Fixed arrays `(Array T N)`.
 - Tuples `(Tuple ...)`.
 - Default-layout structs and enums.
@@ -1551,6 +1621,66 @@ The `match` consumes `m`; the `SomeName` arm owns `s` and can pass it to
 
 The first `match` moves `m`, so the second `match` is rejected as a
 use-after-move.
+
+#### 4.6.3 Recursive aggregate layout and boxed recursion (specified, pending implementation)
+
+Today, default TypeLisp structs and enums are pointer-shaped aggregate handles,
+so directly recursive enum payloads are finite in the current implementation.
+That is an implementation detail, not the long-term source contract. When an
+aggregate opts into Rust-like inline representation, the compiler must reject
+recursive-by-value storage cycles and require explicit indirection through
+`(Box T)`.
+
+The finite-layout rule is structural:
+
+- A field or enum payload may directly contain scalar, pointer, reference,
+  function, and other finite-size values according to the ordinary type rules.
+- A field or enum payload may contain `(Box T)` even when `T` is the aggregate
+  currently being defined, because the field stores only the owning box handle.
+- A field or enum payload that reaches the same inline aggregate type again
+  without crossing a box, raw pointer, or reference edge is an infinite layout
+  and must be rejected.
+- Mutually recursive inline aggregates are checked the same way: every cycle in
+  the aggregate layout graph must cross an explicit indirection edge.
+
+This rule does not switch default struct/enum layout by itself. It defines the
+source-level indirection required before later issues can add opt-in inline
+layout and migrate selfhost recursive data structures.
+
+```lisp test=ignore name=box-recursive-list-layout-ok reason="Box recursive layout is specified before implementation"
+(defenum ListI64
+  (ListNil)
+  (ListCons i64 (Box ListI64)))
+```
+
+```lisp test=ignore name=box-recursive-tree-layout-ok reason="Box recursive layout is specified before implementation"
+(defenum Tree
+  (Leaf i64)
+  (Node (Box Tree) (Box Tree)))
+```
+
+```lisp test=ignore name=box-reject-unboxed-recursion reason="negative example for future inline aggregate cycle checks"
+(defenum BadList
+  (BadNil)
+  (BadCons i64 BadList))
+```
+
+`BadList` is rejected for inline representation because `BadCons` contains a
+`BadList` payload by value. The accepted spelling is `(Box BadList)`.
+
+```lisp test=ignore name=box-reject-arena-escape reason="negative example for future Box region checks"
+(defenum ListI64
+  (ListNil)
+  (ListCons i64 (Box ListI64)))
+
+(define (bad-box-escape) : (Box ListI64)
+  (with-arena scratch
+    (box (ListCons 1 (box ListNil)))))
+```
+
+`bad-box-escape` is rejected because the outer `box` is allocated inside
+`scratch`, so its type is `(in scratch (Box ListI64))`; returning it would let
+arena-owned storage escape the scoped region.
 
 ---
 
@@ -2644,7 +2774,7 @@ reclamation between phases.
 
 Allocation sites inside a `with-arena` scope target the active region:
 - String operations that create fresh storage (`substring`, `string-append`,
-  `string-concat`, `read-file`, `int->string`, `arg`), `make-array`, and
+  `string-concat`, `read-file`, `int->string`, `arg`), `make-array`, `box`, and
   returned aggregate storage from calls inside the region.
 - The body result must be region-free (scalars, or aggregates allocated *before*
   the `with-arena`).
@@ -2670,7 +2800,7 @@ stdlib surface.
 | Category | Members | Arena behavior |
 |----------|---------|----------------|
 | Non-allocating inspection | `length`/`array-length` on arrays, `length`/`string-length`, `string-ref`/`char-at`, `string-eq`/`string=?`, `string->int`, stdlib string predicates such as `string-contains` | Reads caller-provided handles and returns scalars. |
-| Returns active-arena owned data | `make-array`, `arg`, `read-file`, `file-read-chunk`, `read-stdin-line`, `read-stdin-bytes`, `string-append`/`string-concat`, `substring`/`string-slice`, `int->string`, stdlib trimming/replacement helpers when they build a new string | Fresh storage is allocated in the active arena and cannot escape a scoped arena. |
+| Returns active-arena owned data | `make-array`, `box`, `arg`, `read-file`, `file-read-chunk`, `read-stdin-line`, `read-stdin-bytes`, `string-append`/`string-concat`, `substring`/`string-slice`, `int->string`, stdlib trimming/replacement helpers when they build a new string | Fresh storage is allocated in the active arena and cannot escape a scoped arena. |
 | Returns caller-provided data | `stdlib/string.tl` `string-replace` when no match is found; `stdlib/io.tl` `read-file-or` when the path is missing | The current type system cannot express this borrowed/caller-owned distinction, so calls inside a scoped arena are still treated conservatively as arena-tagged aggregate results. |
 | Mutates caller-provided storage | `array-set!` | Mutates the array buffer named by the caller; it does not allocate. Region checks reject storing shorter-lived aggregate handles into longer-lived containers. |
 | Host/runtime IO | `print*`, `panic`/`error`, `flush-stdout`, `write-file`, `file-exists?`, stdlib IO helpers | Performs target IO; any temporary strings used by the helper allocate in the active arena. |

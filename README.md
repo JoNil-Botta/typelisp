@@ -118,6 +118,7 @@ i64 i32 i16 i8   u64 u32 u16 u8   f64   bool   char   unit   String
 (Array t)         ; dynamic, runtime-sized array
 (Array t n)       ; fixed-size array (literals/ref/set compile; returns rejected)
 (Tuple t1 t2 ...) ; local tuple literals/ref compile; params/returns rejected
+(Box t)           ; specified arena-owned indirection for recursive aggregates
 (-> arg... ret)   ; function type
 Name              ; a defenum / defstruct nominal type
 ```
@@ -149,12 +150,18 @@ Implemented today: `define` (variable / function), `defenum`, `defstruct`,
 `module`, `export`, and `defmacro`; those are pending implementation slices.
 
 ```lisp
-(defenum Tree (Leaf i64) (Node Tree Tree))   ; recursive enums supported
+(defenum Tree (Leaf i64) (Node (Box Tree) (Box Tree))) ; future inline-safe recursion
 (defstruct Pair (fst i64) (snd i64))
 (extern foreign-add : (-> i64 i64 i64))
 (extern local-add (:abi c) (:symbol "foreign_add_exact") : (-> i64 i64 i64))
 (import "lib/util.tl")                        ; relative, deduped; cycles load once
 ```
+
+The current default struct/enum representation is still compiler-owned and
+pointer-shaped, so existing recursive enums remain implementation-compatible.
+The specified path toward Rust-like inline aggregate layout uses explicit
+`(Box T)` fields/payloads for recursion; direct recursive-by-value inline
+cycles will be rejected once that opt-in layout lands.
 
 `extern` defaults to the target C ABI with the linker symbol equal to the local
 name. `(:symbol "...")` can bind a local TypeLisp declaration to an exact
@@ -349,6 +356,14 @@ used as `(& lifetime str)`, and borrowing a `String` place produces a borrowed
 `str` view. Implementation of the `str` frontend and stdlib API migration is
 still pending; current public builtins continue to use compatibility `String`
 signatures.
+
+`(Box T)` is specified as a safe, move-only, arena-owned indirection handle:
+`(box expr)` allocates `expr` in the active arena, and `(box-get b)` projects
+the boxed value for read/pattern use under the move rules. A box allocated
+inside `(with-arena r ...)` is typed as `(in r (Box T))` and cannot escape that
+scope. This does not change default aggregate layout by itself; it provides the
+explicit indirection needed before recursive structs/enums can opt into inline
+storage.
 
 The v1 reclamation direction keeps the program-lifetime arena as the default
 allocation target and does not add general per-object `free` or GC yet.

@@ -2670,7 +2670,7 @@ impl X86_64Backend {
                 "_fileno",
                 "_lseeki64",
                 "_read",
-                "_spawnv",
+                "_spawnvp",
                 "fclose",
                 "fflush",
                 "tmpfile",
@@ -7323,7 +7323,7 @@ impl X86_64Backend {
         self.emit("    movq $0, %rcx");
         self.emit("    movq %r12, %rdx");
         self.emit("    movq %r14, %r8");
-        self.emit_call("_spawnv");
+        self.emit_call("_spawnvp");
         self.emit("    movslq %eax, %r15");
         self.emit("    jmp .L_tl_process_output_restore_after_spawn");
 
@@ -16955,7 +16955,7 @@ mod tests {
             "_fileno",
             "_lseeki64",
             "_read",
-            "_spawnv",
+            "_spawnvp",
             "fclose",
             "fflush",
             "tmpfile",
@@ -16967,7 +16967,7 @@ mod tests {
             );
         }
         for snippet in [
-            "    call _spawnv",
+            "    call _spawnvp",
             "    call _dup2",
             "    call tmpfile",
             ".L_tl_process_copy_c_string:",

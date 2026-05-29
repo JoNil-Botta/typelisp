@@ -106,6 +106,7 @@ fs.tl
 hash.tl
 hashmap.tl
 json.tl
+list.tl
 msvc.tl
 process.tl
 random.tl
@@ -141,6 +142,7 @@ stdlib/tests/cpu_api.tl|42|-|-|-|requires-stage0-symbol:cpuid
 stdlib/tests/fs_api.tl|42|-|-|-|requires-stage0-symbol:file-read-chunk-status,file-write-status,file-flush-status,append-file-status
 stdlib/tests/hash_api.tl|42|-|-
 stdlib/tests/hashmap_api.tl|42|-|-
+stdlib/tests/list_api.tl|42|-|-
 stdlib/tests/process_api.tl|42|-|-
 stdlib/tests/process_runtime.tl|42|-|-
 stdlib/tests/random_api.tl|42|-|-|-|requires-stage0-symbol:tl_random_system_seed

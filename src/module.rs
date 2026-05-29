@@ -34,6 +34,7 @@ mod embedded_stdlib {
         ("hashmap.tl", include_str!("../stdlib/hashmap.tl")),
         ("io.tl", include_str!("../stdlib/io.tl")),
         ("json.tl", include_str!("../stdlib/json.tl")),
+        ("list.tl", include_str!("../stdlib/list.tl")),
         ("msvc.tl", include_str!("../stdlib/msvc.tl")),
         ("process.tl", include_str!("../stdlib/process.tl")),
         ("random.tl", include_str!("../stdlib/random.tl")),
@@ -91,6 +92,10 @@ mod embedded_stdlib {
         (
             "tests/json_parse_stringify.tl",
             include_str!("../stdlib/tests/json_parse_stringify.tl"),
+        ),
+        (
+            "tests/list_api.tl",
+            include_str!("../stdlib/tests/list_api.tl"),
         ),
         (
             "tests/msvc_api.tl",

@@ -68,7 +68,8 @@ to_windows_path() {
 short_windows_path() {
     win_path=$(to_windows_path "$1")
     if command -v cmd.exe >/dev/null 2>&1; then
-        short_path=$(MSYS2_ARG_CONV_EXCL='*' cmd.exe /C "for %I in (\"$win_path\") do @echo %~sI" |
+        short_path=$(TYPELISP_SHORT_PATH_INPUT="$win_path" MSYS2_ARG_CONV_EXCL='*' \
+            cmd.exe /C 'for %I in ("%TYPELISP_SHORT_PATH_INPUT%") do @echo %~sI' |
             tr -d '\r' |
             sed -n '1p')
         if [ -n "$short_path" ]; then

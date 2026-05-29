@@ -557,6 +557,119 @@
             (compiler-typecheck-repr-c-recursive-source)
             "typecheck: recursive repr c struct layout cycle involving Node"))))))
 
+(define (compiler-typecheck-inline-layout-result [src : String] [name : String]) : ResultTcUnit
+  (match (parse-ast-source src)
+    [(OkAstProgram program)
+      (match (build-compiler-symbols program)
+        [(OkCompilerSymbols symbols)
+          (match (build-compiler-registries program)
+            [(OkCompilerRegistries registries)
+              (let
+                [ctx : TcContext (TcContext program symbols registries "")]
+                (tc-inline-aggregate-layout-finite-ok ctx name))]
+            [(ErrCompilerRegistries message) (ErrTcUnit message)])]
+        [(ErrCompilerSymbols message) (ErrTcUnit message)])]
+    [(ErrAstProgram message) (ErrTcUnit message)]))
+
+(define (compiler-typecheck-inline-layout-ok? [src : String] [name : String]) : bool
+  (match (compiler-typecheck-inline-layout-result src name)
+    [(OkTcUnit) true]
+    [(ErrTcUnit _) false]))
+
+(define (compiler-typecheck-inline-layout-error-ok?
+  [src : String]
+  [name : String]
+  [want : String]) : bool
+  (match (compiler-typecheck-inline-layout-result src name)
+    [(ErrTcUnit message) (string-eq message want)]
+    [(OkTcUnit) false]))
+
+(define (compiler-typecheck-inline-boxed-list-source) : String
+  "(defenum ListI64
+  (ListNil)
+  (ListCons i64 (Box ListI64)))")
+
+(define (compiler-typecheck-inline-boxed-tree-source) : String
+  "(defenum Tree
+  (Leaf i64)
+  (Node (Box Tree) (Box Tree)))")
+
+(define (compiler-typecheck-inline-pointer-boundaries-source) : String
+  "(defstruct Node
+  (name String)
+  (children (Array Node))
+  (next (Box Node))
+  (raw (Ptr Node))
+  (raw-mut (MutPtr Node))
+  (ref (& phase Node))
+  (ref-mut (&mut phase Node))
+  (visit (-> Node Node)))")
+
+(define (compiler-typecheck-inline-unboxed-list-source) : String
+  "(defenum BadList
+  (BadNil)
+  (BadCons i64 BadList))")
+
+(define (compiler-typecheck-inline-mutual-struct-source) : String
+  "(defstruct A (b B))
+(defstruct B (a A))")
+
+(define (compiler-typecheck-inline-fixed-array-source) : String
+  "(defstruct BadFixed
+  (items (Array BadFixed 2)))")
+
+(define (compiler-typecheck-inline-tuple-source) : String
+  "(defstruct BadTuple
+  (item (Tuple i64 BadTuple)))")
+
+(define (compiler-typecheck-inline-region-wrapper-source) : String
+  "(defstruct BadRegion
+  (next (in phase BadRegion)))")
+
+(define (compiler-typecheck-inline-layout-tests-ok?) : bool
+  (and
+    (compiler-typecheck-ok?
+      (tc-cat3
+        (compiler-typecheck-inline-unboxed-list-source)
+        "\n"
+        "(define (main [x : BadList]) : i64 0)"))
+    (and
+      (compiler-typecheck-inline-layout-ok?
+        (compiler-typecheck-inline-boxed-list-source)
+        "ListI64")
+      (and
+        (compiler-typecheck-inline-layout-ok?
+          (compiler-typecheck-inline-boxed-tree-source)
+          "Tree")
+        (and
+          (compiler-typecheck-inline-layout-ok?
+            (compiler-typecheck-inline-pointer-boundaries-source)
+            "Node")
+          (and
+            (compiler-typecheck-inline-layout-error-ok?
+              (compiler-typecheck-inline-unboxed-list-source)
+              "BadList"
+              "typecheck: inline aggregate layout cycle BadList -> BadList; insert (Box BadList) at the recursive edge")
+            (and
+              (compiler-typecheck-inline-layout-error-ok?
+                (compiler-typecheck-inline-mutual-struct-source)
+                "A"
+                "typecheck: inline aggregate layout cycle A -> B -> A; insert (Box A) at the recursive edge")
+              (and
+                (compiler-typecheck-inline-layout-error-ok?
+                  (compiler-typecheck-inline-fixed-array-source)
+                  "BadFixed"
+                  "typecheck: inline aggregate layout cycle BadFixed -> BadFixed; insert (Box BadFixed) at the recursive edge")
+                (and
+                  (compiler-typecheck-inline-layout-error-ok?
+                    (compiler-typecheck-inline-tuple-source)
+                    "BadTuple"
+                    "typecheck: inline aggregate layout cycle BadTuple -> BadTuple; insert (Box BadTuple) at the recursive edge")
+                  (compiler-typecheck-inline-layout-error-ok?
+                    (compiler-typecheck-inline-region-wrapper-source)
+                    "BadRegion"
+                    "typecheck: inline aggregate layout cycle BadRegion -> BadRegion; insert (Box BadRegion) at the recursive edge"))))))))))
+
 (define (compiler-typecheck-nominal-tests-ok?) : bool
   (let
     [ok : bool true]
@@ -609,6 +722,9 @@
         unit
         (set! ok false))
       (if (compiler-typecheck-repr-c-tests-ok?)
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-inline-layout-tests-ok?)
         unit
         (set! ok false))
       ok)))

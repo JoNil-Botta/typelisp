@@ -116,7 +116,6 @@ contains|.L_tl_fs_mkdir_status:
 end
 
 case|selfhost_check|selfhost/check.tl|assembly|exactly-one|direct
-requires-stage0-mode|#1437 stage1 compiler resource blocker (imports typechecker)
 contains|_tl_selfhost_check_config:
 contains|_tl_selfhost_check_file:
 contains|_tl_compiler_check_file_with_roots:
@@ -227,6 +226,12 @@ requires-stage0-mode|#1437 stage1 compiler resource blocker (library root)
 contains|_tl_compiler_check_file:
 contains|_tl_compiler_check_file_with_roots:
 contains|_tl_compiler_check_source_with_roots:
+end
+
+case|selfhost_compiler_check_frontend_core|selfhost/compiler_check_frontend_core.tl|assembly|skip|direct
+contains|_tl_compiler_check_file:
+contains|_tl_compiler_check_file_with_roots:
+contains|_tl_typecheck_compiler_specialized_program_with_paths:
 end
 
 case|selfhost_compiler_check_smoke|selfhost/compiler_check_smoke.tl|assembly|exactly-one|direct
@@ -409,6 +414,14 @@ case|selfhost_compiler_typecheck|selfhost/compiler_typecheck.tl|assembly|skip|di
 requires-stage0-mode|#1437 stage1 compiler resource blocker (library root)
 contains|_tl_typecheck_compiler_program:
 contains|_tl_compiler_typecheck_self_test:
+contains|_tl_tc_source_type_policy_message:
+contains|extern ABI c does not support
+contains|typecheck: return type mismatch
+contains|source-level type parameters
+end
+
+case|selfhost_compiler_typecheck_core|selfhost/compiler_typecheck_core.tl|assembly|skip|direct
+contains|_tl_typecheck_compiler_specialized_program_with_paths:
 contains|_tl_tc_source_type_policy_message:
 contains|extern ABI c does not support
 contains|typecheck: return type mismatch

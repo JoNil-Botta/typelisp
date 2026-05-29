@@ -1,5 +1,5 @@
 ;; check.tl - Short-lived selfhost typecheck CLI driver.
-(import "compiler_check_core.tl")
+(import "compiler_check_frontend_core.tl")
 
 (defenum SelfhostCheckConfig
   (SelfhostCheckConfig String CompilerLoadRootList))

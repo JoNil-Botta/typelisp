@@ -281,10 +281,9 @@ fn selfhost_check_tl_compiles_to_assembly() {
         "_tl_selfhost_check_parse_options:",
         "_tl_selfhost_check_file:",
         "_tl_compiler_check_file_with_roots:",
-        "_tl_compiler_check_source:",
         "_tl_compiler_load_file_with_path",
         "_tl_compiler_load_source:",
-        "_tl_typecheck_compiler_program:",
+        "_tl_typecheck_compiler_specialized_program_with_paths:",
     ] {
         assert_symbol(&asm, sym, "selfhost_check");
     }

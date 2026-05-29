@@ -92,8 +92,9 @@ download_asset() {
     target="$TMP_DIR/$asset"
     if curl -fsSL "$BASE_URL/$asset" -o "$target"; then
         if [ ! -s "$target" ]; then
-            echo "downloaded stage0 asset is empty: $asset" >&2
-            exit 1
+            echo "[stage0] downloaded stage0 asset is empty (possibly mid-republish): $asset" >&2
+            rm -f "$target"
+            return 1
         fi
         ASSET=$asset
         ASSET_TMP=$target
@@ -182,36 +183,80 @@ install_linux_bundle() {
     cp -R "$install_tmp"/. "$OUT_DIR"/
 }
 
-if [ -n "$BUNDLE_ASSET" ]; then
-    echo "[stage0] downloading $BUNDLE_ASSET from $REPO@$TAG"
-    if download_asset "$BUNDLE_ASSET"; then
-        ASSET_KIND=bundle
+# Download the host asset (Linux: bundle first, single fallback) plus the
+# SHA256SUMS manifest, and verify them together. Returns non-zero on any
+# transient miss so the caller can retry the whole download+verify as one unit.
+#
+# The mutable stage0-latest release is republished by delete-then-recreate on
+# every push to main (see .github/workflows/bootstrap-stage0.yml). That swap is
+# not atomic, so a concurrent fetch can momentarily observe a 404 (the asset is
+# gone between delete and recreate, or a later asset has not finished uploading)
+# or a checksum mismatch (the asset and SHA256SUMS get read from different
+# republish generations). Re-fetching both together on a fresh attempt rides out
+# that window instead of failing the whole No-Rust gate.
+fetch_and_verify() {
+    ASSET=
+    ASSET_TMP=
+    ASSET_KIND=single
+
+    if [ -n "$BUNDLE_ASSET" ]; then
+        echo "[stage0] downloading $BUNDLE_ASSET from $REPO@$TAG"
+        if download_asset "$BUNDLE_ASSET"; then
+            ASSET_KIND=bundle
+        else
+            echo "[stage0] bundled Linux stage0 asset not present yet; trying $SINGLE_ASSET"
+        fi
+    fi
+
+    if [ -z "$ASSET" ]; then
+        echo "[stage0] downloading $SINGLE_ASSET from $REPO@$TAG"
+        if ! download_asset "$SINGLE_ASSET"; then
+            echo "[stage0] could not download $BASE_URL/$SINGLE_ASSET" >&2
+            return 1
+        fi
+    fi
+
+    if curl -fsSL "$BASE_URL/SHA256SUMS" -o "$SUMS_TMP" 2>/dev/null; then
+        if ! command -v sha256sum >/dev/null 2>&1; then
+            echo "SHA256SUMS is published but sha256sum is not available" >&2
+            exit 1
+        fi
+        if ! grep "  $ASSET\$" "$SUMS_TMP" > "$SUMS_SELECTED"; then
+            echo "[stage0] SHA256SUMS does not yet list $ASSET (republish in progress?)" >&2
+            return 1
+        fi
+        if ! (cd "$TMP_DIR" && sha256sum -c "$(basename "$SUMS_SELECTED")"); then
+            echo "[stage0] SHA256SUMS verification failed for $ASSET (republish in progress?)" >&2
+            return 1
+        fi
     else
-        echo "[stage0] bundled Linux stage0 asset not found; falling back to $SINGLE_ASSET"
+        echo "[stage0] warning: SHA256SUMS not found for $TAG; verified non-empty asset only" >&2
     fi
-fi
 
-if [ -z "$ASSET" ]; then
-    echo "[stage0] downloading $SINGLE_ASSET from $REPO@$TAG"
-    if ! download_asset "$SINGLE_ASSET"; then
-        echo "failed to download $BASE_URL/$SINGLE_ASSET" >&2
-        exit 1
-    fi
-fi
+    return 0
+}
 
-if curl -fsSL "$BASE_URL/SHA256SUMS" -o "$SUMS_TMP" 2>/dev/null; then
-    if ! command -v sha256sum >/dev/null 2>&1; then
-        echo "SHA256SUMS is published but sha256sum is not available" >&2
+FETCH_ATTEMPTS=${TYPELISP_STAGE0_FETCH_ATTEMPTS:-6}
+FETCH_RETRY_DELAY=${TYPELISP_STAGE0_FETCH_RETRY_DELAY:-5}
+case "$FETCH_ATTEMPTS" in '' | *[!0-9]*) FETCH_ATTEMPTS=6 ;; esac
+case "$FETCH_RETRY_DELAY" in '' | *[!0-9]*) FETCH_RETRY_DELAY=5 ;; esac
+
+attempt=1
+while :; do
+    if fetch_and_verify; then
+        break
+    fi
+    if [ "$attempt" -ge "$FETCH_ATTEMPTS" ]; then
+        echo "failed to fetch a consistent stage0 from $REPO@$TAG after $attempt attempt(s)" >&2
+        echo "(stage0-latest may be mid-republish, or the asset is genuinely missing)" >&2
         exit 1
     fi
-    if ! grep "  $ASSET\$" "$SUMS_TMP" > "$SUMS_SELECTED"; then
-        echo "SHA256SUMS does not contain $ASSET" >&2
-        exit 1
-    fi
-    (cd "$TMP_DIR" && sha256sum -c "$(basename "$SUMS_SELECTED")")
-else
-    echo "[stage0] warning: SHA256SUMS not found for $TAG; verified non-empty asset only" >&2
-fi
+    echo "[stage0] attempt $attempt/$FETCH_ATTEMPTS did not yield a consistent release (likely a stage0-latest republish in progress); retrying in ${FETCH_RETRY_DELAY}s" >&2
+    attempt=$((attempt + 1))
+    rm -rf "$TMP_DIR"
+    mkdir -p "$TMP_DIR"
+    sleep "$FETCH_RETRY_DELAY"
+done
 
 if [ "$ASSET_KIND" = bundle ]; then
     echo "[stage0] installing bundled Linux stage0 asset"

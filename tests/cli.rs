@@ -2005,83 +2005,83 @@ fn selfhost_compile_cli_driver_writes_assembly_and_reports_errors() {
 
 #[cfg(target_os = "linux")]
 #[test]
-fn selfhost_test_planner_threads_opt_level_into_harness_compile() {
+fn selfhost_test_driver_runs_inline_harness_directly_and_accepts_opt_level() {
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let driver_source = manifest_dir.join("selfhost").join("test.tl");
     let dir = fixture_dir("selfhost-test-opt-level");
     let driver_bin = dir.join("selfhost-test");
     compile_selfhost_binary(&driver_source, &driver_bin);
+    let stdlib_root = manifest_dir.join("stdlib");
+    let stdlib_arg = stdlib_root.to_str().expect("stdlib path is utf-8");
 
     let source = dir.join("inline-opt.tl");
     fs::write(
         &source,
-        "(extern sink : (-> i64 unit))\n(test folded\n  (sink (+ 20 22)))\n",
+        "(import \"stdlib/test.tl\")\n\n(define (value) : i64 (+ 20 22))\n\n(test folded\n  (assert-i64-eq (value) 42 \"folded result\"))\n",
     )
     .expect("write inline opt-level test source");
     let source_arg = source.to_str().expect("source path is utf-8");
-    let scratch_asm = PathBuf::from(format!("{source_arg}.test.s"));
 
-    let default = driver_output(&driver_bin, &[source_arg]);
+    let default = driver_output(&driver_bin, &[source_arg, "--stdlib-root", stdlib_arg]);
     assert!(
         default.status.success(),
         "selfhost test default opt level failed\nstdout:\n{}\nstderr:\n{}",
         stdout(&default),
         stderr(&default)
     );
-    assert_eq!(stderr(&default), "");
+    assert_eq!(stdout(&default), "");
     assert!(
-        stdout(&default).contains("run-scratch-assembly"),
-        "stdout:\n{}",
-        stdout(&default)
+        stderr(&default).contains("test folded"),
+        "stderr:\n{}",
+        stderr(&default)
     );
-    let default_text =
-        fs::read_to_string(&scratch_asm).expect("read default inline test harness asm");
+    assert!(
+        stderr(&default).contains("ok folded"),
+        "stderr:\n{}",
+        stderr(&default)
+    );
+    assert!(
+        stderr(&default).contains("TypeLisp tests passed: 1 test(s)"),
+        "stderr:\n{}",
+        stderr(&default)
+    );
 
-    let mut opt_level_texts = Vec::new();
     for level in ["0", "1", "2", "3"] {
-        let _ = fs::remove_file(&scratch_asm);
-        let output = driver_output(&driver_bin, &[source_arg, "--opt-level", level]);
+        let output = driver_output(
+            &driver_bin,
+            &[
+                source_arg,
+                "--stdlib-root",
+                stdlib_arg,
+                "--opt-level",
+                level,
+            ],
+        );
         assert!(
             output.status.success(),
             "selfhost test --opt-level {level} failed\nstdout:\n{}\nstderr:\n{}",
             stdout(&output),
             stderr(&output)
         );
-        assert_eq!(stderr(&output), "");
+        assert_eq!(stdout(&output), "");
         assert!(
-            stdout(&output).contains("run-scratch-assembly"),
-            "stdout:\n{}",
-            stdout(&output)
-        );
-        opt_level_texts.push(
-            fs::read_to_string(&scratch_asm)
-                .unwrap_or_else(|err| panic!("read test opt-level {level} asm: {err}")),
+            stderr(&output).contains("TypeLisp tests passed: 1 test(s)"),
+            "stderr:\n{}",
+            stderr(&output)
         );
     }
 
-    assert!(
-        opt_level_texts[0].contains("    movq $20, %rax\n")
-            && opt_level_texts[0].contains("    movq $22, %rax\n")
-            && opt_level_texts[0].contains("    addq %rbx, %rax\n")
-            && opt_level_texts[0].contains("    call sink\n"),
-        "test opt-level 0 should leave lowered arithmetic in harness assembly:\n{}",
-        opt_level_texts[0]
+    let check = driver_output(
+        &driver_bin,
+        &[
+            source_arg,
+            "--check",
+            "--stdlib-root",
+            stdlib_arg,
+            "--opt-level",
+            "3",
+        ],
     );
-    assert!(
-        opt_level_texts[2].contains("    movq $42, %rdi\n    call sink\n"),
-        "test opt-level 2 should fold harness arithmetic:\n{}",
-        opt_level_texts[2]
-    );
-    assert_eq!(
-        default_text, opt_level_texts[1],
-        "omitted test --opt-level should use the shared default level 1"
-    );
-    assert_eq!(
-        opt_level_texts[2], opt_level_texts[3],
-        "test opt-level 3 is currently documented as level-2 equivalent"
-    );
-
-    let check = driver_output(&driver_bin, &[source_arg, "--check", "--opt-level", "3"]);
     assert!(
         check.status.success(),
         "selfhost test --check --opt-level failed\nstdout:\n{}\nstderr:\n{}",
@@ -2118,6 +2118,45 @@ fn selfhost_test_planner_threads_opt_level_into_harness_compile() {
         stderr(&invalid_opt).contains("test: invalid --opt-level 4; expected 0, 1, 2, or 3"),
         "stderr:\n{}",
         stderr(&invalid_opt)
+    );
+}
+
+#[cfg(target_os = "windows")]
+#[test]
+fn test_run_inline_harness_is_explicitly_unsupported_on_windows() {
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let dir = fixture_dir("test-inline-windows-unsupported");
+    let source = dir.join("inline.tl");
+    fs::write(
+        &source,
+        "(import \"stdlib/test.tl\")\n\n(test windows-direct\n  (assert-i64-eq 1 1 \"windows check still works\"))\n",
+    )
+    .expect("write inline Windows unsupported fixture");
+    let source_arg = source.to_str().expect("source path is utf-8");
+    let stdlib_root = manifest_dir.join("stdlib");
+    let stdlib_arg = stdlib_root.to_str().expect("stdlib path is utf-8");
+
+    let check = typelisp(&["test", "--check", source_arg, "--stdlib-root", stdlib_arg]);
+    assert!(
+        check.status.success(),
+        "test --check failed\nstdout:\n{}\nstderr:\n{}",
+        stdout(&check),
+        stderr(&check)
+    );
+    assert_eq!(
+        stdout(&check).replace("\r\n", "\n"),
+        "TypeLisp test typecheck passed: 1 test(s)\n"
+    );
+    assert_eq!(stderr(&check), "");
+
+    let run = typelisp(&["test", source_arg, "--stdlib-root", stdlib_arg]);
+    assert!(!run.status.success(), "test run unexpectedly succeeded");
+    assert_eq!(stdout(&run), "");
+    assert!(
+        stderr(&run)
+            .contains("test: direct inline harness execution is unsupported on windows-x86_64"),
+        "stderr:\n{}",
+        stderr(&run)
     );
 }
 

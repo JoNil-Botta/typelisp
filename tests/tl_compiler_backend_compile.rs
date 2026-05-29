@@ -543,23 +543,27 @@ fn build_and_run_planners_compile_to_assembly() {
     for sym in [
         "_tl_tltest_config:",
         "_tl_tltest_parse_options:",
-        "_tl_tltest_run_plan:",
+        "_tl_tltest_run_direct:",
+        "_tl_tltest_run_harness_in_temp:",
         "_tl_tltest_invalid_opt_level:",
+        "_tl_source_tool_assemble_and_link:",
+        "_tl_source_tool_run_executable:",
         "_tl_optimize_program_with_level:",
         "_tl_compiler_backend_emit_program_with_spans_for_target:",
-        "_tl_host_plan_netline:",
     ] {
         assert_symbol(&test_asm, sym, "test planner");
     }
     for message in [
-        "typelisp-host-plan v1\\n",
-        "action",
-        "run-scratch-assembly",
         "test: expected source path",
         "test: --opt-level requires a value",
         "test: --opt-level was provided more than once",
         "test: invalid --opt-level ",
         "; expected 0, 1, 2, or 3",
+        "test: direct inline harness execution is unsupported on windows-x86_64",
+        "typelisp test: test executable exited with exit status: ",
+        "test: failed to write assembly artifact",
+        "Error: failed to run test executable '",
+        "test: failed to create temp dir: ",
     ] {
         assert_message(&test_asm, message, "test planner");
     }

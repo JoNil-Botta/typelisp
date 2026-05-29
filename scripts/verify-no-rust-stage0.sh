@@ -488,14 +488,17 @@ else
 fi
 if [ "$HOST_OS" = linux ]; then
     # Building the full selfhost test driver in this hosted no-Rust lane is
-    # currently too heavy for the runner; #1401 tracks restoring direct stage1
-    # test-command coverage without the host-action driver path.
-    TYPELISP_STAGE1_SKIP_TEST_SMOKE=1
+    # currently too heavy for the runner. When the stage1 bundle carries the
+    # driver, run the wrapper's direct test-command smoke instead of the old
+    # host-action plan path.
+    if [ -z "$STAGE1_TEST_BIN" ]; then
+        TYPELISP_STAGE1_SKIP_TEST_SMOKE=1
+        export TYPELISP_STAGE1_SKIP_TEST_SMOKE
+    fi
     # Building the full selfhost doc driver through stage1 is also too heavy
     # for this hosted lane; #1437 tracks restoring direct stage1 coverage for
     # compiler-sized selfhost drivers.
     TYPELISP_STAGE1_SKIP_DOC_SMOKE=1
-    export TYPELISP_STAGE1_SKIP_TEST_SMOKE
     export TYPELISP_STAGE1_SKIP_DOC_SMOKE
     if [ "$SEED_IS_STAGE1_BUNDLE" -eq 1 ]; then
         TYPELISP_STAGE1_SKIP_PACKAGE_SMOKE=1

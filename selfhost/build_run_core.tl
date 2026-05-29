@@ -129,6 +129,19 @@
     tool
     (fs-path-join dir tool)))
 
+(define (source-tool-path-command-exists? [candidate : String]) : bool
+  (match (try-file-exists? candidate)
+    [(OkIoBool exists) exists]
+    [(ErrIoBool _) false]))
+
+(define (source-tool-windows-host?) : bool
+  (string-eq (env-path-separator) ";"))
+
+(define (source-tool-windows-exe-candidate [candidate : String]) : String
+  (if (source-tool-windows-host?)
+    (string-append candidate ".exe")
+    candidate))
+
 (define (source-tool-find-command-on-path
   [tool : String]
   [paths : EnvStringList]) : String
@@ -137,12 +150,16 @@
     [(EnvStringCons dir rest)
       (let
         [candidate : String (source-tool-path-entry-command dir tool)]
-        (match (try-file-exists? candidate)
-          [(OkIoBool exists)
-            (if exists
-              candidate
-              (source-tool-find-command-on-path tool rest))]
-          [(ErrIoBool _) (source-tool-find-command-on-path tool rest)]))]))
+        (if (source-tool-path-command-exists? candidate)
+          candidate
+          (let
+            [exe-candidate : String
+              (source-tool-windows-exe-candidate candidate)]
+            (if (and
+              (not (string-eq exe-candidate candidate))
+              (source-tool-path-command-exists? exe-candidate))
+              exe-candidate
+              (source-tool-find-command-on-path tool rest)))))]))
 
 (define (source-tool-resolve-command [tool : String]) : String
   (if (source-tool-has-path-separator? tool)

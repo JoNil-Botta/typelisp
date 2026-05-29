@@ -510,8 +510,8 @@ pub fn parse_plan(text: &str) -> Result<HostActionPlan, PlanError> {
 fn load_options(stdlib_roots: &[PathBuf]) -> LoadOptions {
     // The selfhost planner is responsible for resolving and including every
     // stdlib root (including any from the environment) in the plan, so the host
-    // boundary uses exactly the roots it is given and does not consult the
-    // environment again.
+    // boundary does not consult the environment again. Embedded stdlib fallback
+    // remains available after the explicit plan roots.
     LoadOptions {
         stdlib_roots: stdlib_roots.to_vec(),
         ..LoadOptions::default()

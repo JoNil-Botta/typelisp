@@ -187,9 +187,11 @@ are ordinary modules imported with explicit paths such as
 `(import "stdlib/string.tl")`. `check`, `compile`, `build <file.tl>`, and `run`
 also accept `--stdlib-root <dir>` for resolving `stdlib/...` imports from a
 configured source tree. `TYPELISP_STDLIB_ROOT` can provide an optional fallback
-root after explicit CLI roots; prefer `--stdlib-root` for CI, bootstrap, and
-reproducible scripts. See [stdlib/README.md](stdlib/README.md) for the current
-stdlib layout and verification conventions.
+root after explicit CLI roots. If no local path or configured root provides the
+module, the compiler falls back to its embedded copy of the checked-in stdlib.
+Prefer `--stdlib-root` for CI, bootstrap, and reproducible scripts. See
+[stdlib/README.md](stdlib/README.md) for the current stdlib layout and
+verification conventions.
 
 Local packages can be described with a std-only S-expression manifest named
 `typelisp.pkg`:
@@ -213,7 +215,7 @@ relative to that same package root or absolute. Inside a package build, imports
 of the form `(import "pkg:math/src/lib.tl")` resolve from the dependency root
 declared for alias `math`; ordinary string imports remain relative to the
 importing file, and `stdlib/...` imports keep their local-first then
-configured-root behavior.
+configured-root then embedded fallback behavior.
 
 Under the legacy loader, imported package definitions share the same flat
 top-level namespace as local modules, so duplicate value or type names fail

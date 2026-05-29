@@ -1250,6 +1250,108 @@ fn debug_check_matches_top_level_alias_with_stdlib_root() {
 }
 
 #[test]
+fn check_uses_embedded_stdlib_without_root_or_env() {
+    let dir = fixture_dir("embedded-stdlib-check");
+    let source = dir.join("main.tl");
+    fs::write(
+        &source,
+        r#"
+(import "stdlib/string.tl")
+
+(define (main) : i64
+  (if (string-contains "hello" "ell") 42 1))
+"#,
+    )
+    .expect("write embedded stdlib check source");
+
+    let output = run_with_crash_retry(|| {
+        Command::new(env!("CARGO_BIN_EXE_typelisp"))
+            .arg("check")
+            .arg(&source)
+            .env_remove("TYPELISP_STDLIB_ROOT")
+            .output()
+            .expect("run embedded stdlib check")
+    });
+
+    assert!(output.status.success(), "stderr:\n{}", stderr(&output));
+    assert_eq!(stdout(&output), "Type checking passed!\n");
+    assert_eq!(stderr(&output), "");
+}
+
+#[test]
+fn compile_uses_embedded_stdlib_without_root_or_env() {
+    let dir = fixture_dir("embedded-stdlib-compile");
+    let source = dir.join("main.tl");
+    let output_path = dir.join("main.ir");
+    fs::write(
+        &source,
+        r#"
+(import "stdlib/string.tl")
+
+(define (main) : i64
+  (if (string-contains "hello" "ell") 42 1))
+"#,
+    )
+    .expect("write embedded stdlib compile source");
+
+    let output = run_with_crash_retry(|| {
+        Command::new(env!("CARGO_BIN_EXE_typelisp"))
+            .arg("compile")
+            .arg(&source)
+            .arg("--emit-ir")
+            .arg("-o")
+            .arg(&output_path)
+            .env_remove("TYPELISP_STDLIB_ROOT")
+            .output()
+            .expect("run embedded stdlib compile")
+    });
+
+    assert!(output.status.success(), "stderr:\n{}", stderr(&output));
+    assert_eq!(stderr(&output), "");
+    assert!(output_path.exists(), "compile did not write IR output");
+}
+
+#[test]
+fn missing_embedded_stdlib_import_reports_fallback_state() {
+    let dir = fixture_dir("embedded-stdlib-missing");
+    let source = dir.join("main.tl");
+    fs::write(
+        &source,
+        r#"
+(import "stdlib/not-here.tl")
+
+(define (main) : i64 0)
+"#,
+    )
+    .expect("write missing embedded stdlib source");
+
+    let output = run_with_crash_retry(|| {
+        Command::new(env!("CARGO_BIN_EXE_typelisp"))
+            .arg("check")
+            .arg(&source)
+            .env_remove("TYPELISP_STDLIB_ROOT")
+            .output()
+            .expect("run missing embedded stdlib check")
+    });
+
+    assert!(
+        !output.status.success(),
+        "missing stdlib import unexpectedly succeeded"
+    );
+    assert_eq!(stdout(&output), "");
+    assert!(
+        stderr(&output).contains("searched stdlib roots: none"),
+        "stderr:\n{}",
+        stderr(&output)
+    );
+    assert!(
+        stderr(&output).contains("embedded stdlib: available"),
+        "stderr:\n{}",
+        stderr(&output)
+    );
+}
+
+#[test]
 fn compile_accepts_explicit_scalar_backend_mode() {
     let dir = fixture_dir("backend-mode-scalar");
     let source = write_main_source(&dir);

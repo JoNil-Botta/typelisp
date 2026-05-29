@@ -2869,10 +2869,10 @@ fn check_rejects_stdlib_text_buf_render_escape_from_nested_region() {
 }
 
 #[test]
-fn check_reports_explicit_unsupported_float_cast_diagnostic() {
-    let dir = fixture_dir("unsupported-float-cast");
+fn check_reports_explicit_non_numeric_cast_diagnostic() {
+    let dir = fixture_dir("non-numeric-cast");
     let source = dir.join("main.tl");
-    fs::write(&source, "(define (main) : i64 (cast 3.5 : i64))\n").expect("write source");
+    fs::write(&source, "(define (main) : i64 (cast true : i64))\n").expect("write source");
     let source_arg = source.to_str().expect("source path is utf-8");
 
     let output = typelisp(&["check", source_arg]);
@@ -2881,16 +2881,11 @@ fn check_reports_explicit_unsupported_float_cast_diagnostic() {
     assert_eq!(stdout(&output), "");
     let stderr = stderr(&output);
     assert!(
-        stderr.contains("floating-point casts are not supported yet"),
+        stderr.contains("cast requires numeric (integer, char, or float) source and target"),
         "stderr:\n{}",
         stderr
     );
-    assert!(
-        stderr.contains("casts currently support integer/char and f64<->f32 conversions only"),
-        "stderr:\n{}",
-        stderr
-    );
-    assert!(stderr.contains("got f64 -> i64"), "stderr:\n{}", stderr);
+    assert!(stderr.contains("got bool -> i64"), "stderr:\n{}", stderr);
     assert!(stderr.contains("error[E0200]"), "stderr:\n{}", stderr);
 }
 

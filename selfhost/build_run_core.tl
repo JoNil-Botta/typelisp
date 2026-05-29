@@ -202,6 +202,22 @@
     [(BackendTargetLinux) ""]
     [(BackendTargetWindows) ".exe"]))
 
+(define (source-tool-static-library-extension [target : CompilerBackendTarget]) : String
+  (match target
+    [(BackendTargetLinux) ".a"]
+    [(BackendTargetWindows) ".lib"]))
+
+(define (source-tool-static-library-filename
+  [name : String]
+  [target : CompilerBackendTarget]) : String
+  (match target
+    [(BackendTargetLinux)
+      (string-append
+        "lib"
+        (string-append name (source-tool-static-library-extension target)))]
+    [(BackendTargetWindows)
+      (string-append name (source-tool-static-library-extension target))]))
+
 (define (source-tool-artifact-stem [source : String]) : String
   (source-tool-replace-extension (fs-basename source) ""))
 
@@ -422,6 +438,45 @@ _tl_print_string:
           "Error: failed to resolve linker 'link.exe' for target windows-x86_64: "
           (msvc-error-message error)))]))
 
+(define (source-tool-archiver-command
+  [obj-path : String]
+  [archive-path : String]) : ProcessCommand
+  (process-command
+    (source-tool-resolve-command "ar")
+    (process-args-cons
+      "rcs"
+      (process-args-cons
+        archive-path
+        (process-args-cons obj-path (process-args-empty))))))
+
+(define (source-tool-windows-archiver-args
+  [obj-path : String]
+  [archive-path : String]) : ProcessStringList
+  (process-args-cons
+    "/NOLOGO"
+    (process-args-cons
+      (string-append "/OUT:" archive-path)
+      (process-args-cons obj-path (process-args-empty)))))
+
+(define (source-tool-windows-archiver-command
+  [obj-path : String]
+  [archive-path : String]) : ResultSourceToolCommand
+  (match (msvc-find-tool "x86_64-pc-windows-msvc" "lib.exe")
+    [(OkMsvcTool tool)
+      (OkSourceToolCommand
+        (process-command-with-env-list
+          (process-command
+            (source-tool-env-command-or-default
+              "TYPELISP_WINDOWS_LIB"
+              (msvc-tool-executable tool))
+            (source-tool-windows-archiver-args obj-path archive-path))
+          (msvc-tool-process-env tool)))]
+    [(ErrMsvcTool error)
+      (ErrSourceToolCommand
+        (string-append
+          "Error: failed to resolve archiver 'lib.exe' for target windows-x86_64: "
+          (msvc-error-message error)))]))
+
 (define (source-tool-clean-temp
   [temp-dir : String]
   [asm-path : String]
@@ -437,34 +492,71 @@ _tl_print_string:
     (try-remove-dir-if-exists temp-dir)
     unit))
 
+(define (source-tool-assemble
+  [target : CompilerBackendTarget]
+  [asm-path : String]
+  [obj-path : String]) : SourceToolCommandStatus
+  (match target
+    [(BackendTargetLinux)
+      (source-tool-run-command
+        "assembler"
+        target
+        (source-tool-assembler-command asm-path obj-path))]
+    [(BackendTargetWindows)
+      (source-tool-run-command
+        "assembler"
+        target
+        (source-tool-windows-assembler-command asm-path obj-path))]))
+
+(define (source-tool-link
+  [target : CompilerBackendTarget]
+  [obj-path : String]
+  [bin-path : String]) : SourceToolCommandStatus
+  (match target
+    [(BackendTargetLinux)
+      (source-tool-run-command
+        "linker"
+        target
+        (source-tool-linker-command obj-path bin-path))]
+    [(BackendTargetWindows)
+      (match (source-tool-windows-linker-command obj-path bin-path)
+        [(OkSourceToolCommand command)
+          (source-tool-run-command "linker" target command)]
+        [(ErrSourceToolCommand message) (SourceToolCommandErr message)])]))
+
+(define (source-tool-archive
+  [target : CompilerBackendTarget]
+  [obj-path : String]
+  [archive-path : String]) : SourceToolCommandStatus
+  (match target
+    [(BackendTargetLinux)
+      (source-tool-run-command
+        "archiver"
+        target
+        (source-tool-archiver-command obj-path archive-path))]
+    [(BackendTargetWindows)
+      (match (source-tool-windows-archiver-command obj-path archive-path)
+        [(OkSourceToolCommand command)
+          (source-tool-run-command "archiver" target command)]
+        [(ErrSourceToolCommand message) (SourceToolCommandErr message)])]))
+
 (define (source-tool-assemble-and-link
   [target : CompilerBackendTarget]
   [asm-path : String]
   [obj-path : String]
   [bin-path : String]) : SourceToolCommandStatus
-  (match target
-    [(BackendTargetLinux)
-      (match (source-tool-run-command
-        "assembler"
-        target
-        (source-tool-assembler-command asm-path obj-path))
-        [(SourceToolCommandOk)
-          (source-tool-run-command
-            "linker"
-            target
-            (source-tool-linker-command obj-path bin-path))]
-        [(SourceToolCommandErr message) (SourceToolCommandErr message)])]
-    [(BackendTargetWindows)
-      (match (source-tool-run-command
-        "assembler"
-        target
-        (source-tool-windows-assembler-command asm-path obj-path))
-        [(SourceToolCommandOk)
-          (match (source-tool-windows-linker-command obj-path bin-path)
-            [(OkSourceToolCommand command)
-              (source-tool-run-command "linker" target command)]
-            [(ErrSourceToolCommand message) (SourceToolCommandErr message)])]
-        [(SourceToolCommandErr message) (SourceToolCommandErr message)])]))
+  (match (source-tool-assemble target asm-path obj-path)
+    [(SourceToolCommandOk) (source-tool-link target obj-path bin-path)]
+    [(SourceToolCommandErr message) (SourceToolCommandErr message)]))
+
+(define (source-tool-assemble-and-archive
+  [target : CompilerBackendTarget]
+  [asm-path : String]
+  [obj-path : String]
+  [archive-path : String]) : SourceToolCommandStatus
+  (match (source-tool-assemble target asm-path obj-path)
+    [(SourceToolCommandOk) (source-tool-archive target obj-path archive-path)]
+    [(SourceToolCommandErr message) (SourceToolCommandErr message)]))
 
 (define (source-tool-build-source-in-temp
   [source : String]

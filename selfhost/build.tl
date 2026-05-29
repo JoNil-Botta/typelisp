@@ -3,7 +3,8 @@
 ;; Source-file builds still emit a private `typelisp-host-plan v1` build-source
 ;; plan for Rust's `typelisp debug host-action` boundary. Package builds are
 ;; handled in-process by the selfhost compiler: parse/discover `typelisp.pkg`,
-;; emit assembly for the manifest entry, and write target/typelisp/<name>/<name>.s.
+;; emit assembly for the manifest entry, and produce the package artifact
+;; selected by manifest kind.
 ;; `--direct` builds source files with stdlib fs/process helpers.
 (import "host_plan.tl")
 
@@ -381,10 +382,45 @@
       "typelisp")
     name))
 
-(define (build-package-output-path [manifest-dir : String] [name : String]) : String
+(define (build-package-asm-path [manifest-dir : String] [name : String]) : String
   (compiler-load-join-root-path
     (build-package-output-dir manifest-dir name)
     (string-append name ".s")))
+
+(define (build-package-obj-path
+  [manifest-dir : String]
+  [name : String]
+  [target : CompilerBackendTarget]) : String
+  (compiler-load-join-root-path
+    (build-package-output-dir manifest-dir name)
+    (string-append
+      name
+      (string-append "." (source-tool-object-extension target)))))
+
+(define (build-package-bin-path
+  [manifest-dir : String]
+  [name : String]
+  [target : CompilerBackendTarget]) : String
+  (compiler-load-join-root-path
+    (build-package-output-dir manifest-dir name)
+    (string-append name (source-tool-executable-extension target))))
+
+(define (build-package-lib-path
+  [manifest-dir : String]
+  [name : String]
+  [target : CompilerBackendTarget]) : String
+  (compiler-load-join-root-path
+    (build-package-output-dir manifest-dir name)
+    (source-tool-static-library-filename name target)))
+
+(define (build-package-artifact-path
+  [manifest-dir : String]
+  [name : String]
+  [kind : CompilerPkgKind]
+  [target : CompilerBackendTarget]) : String
+  (match kind
+    [(CompilerPkgKindBin) (build-package-bin-path manifest-dir name target)]
+    [(CompilerPkgKindLib) (build-package-lib-path manifest-dir name target)]))
 
 (define (build-mkdir-ok? [path : String]) : bool
   (let
@@ -411,6 +447,18 @@
     mode
     " requires the Rust build driver until selfhost SIMD support (#1014)"))
 
+(define (build-package-artifact-status
+  [kind : CompilerPkgKind]
+  [target : CompilerBackendTarget]
+  [asm-path : String]
+  [obj-path : String]
+  [artifact-path : String]) : SourceToolCommandStatus
+  (match kind
+    [(CompilerPkgKindBin)
+      (source-tool-assemble-and-link target asm-path obj-path artifact-path)]
+    [(CompilerPkgKindLib)
+      (source-tool-assemble-and-archive target asm-path obj-path artifact-path)]))
+
 (define (build-package-emit
   [manifest-path : String]
   [manifest : CompilerPkgManifest]
@@ -431,7 +479,11 @@
             manifest-dir
             (struct-get manifest entry))]
         [name : String (struct-get manifest name)]
-        [output-path : String (build-package-output-path manifest-dir name)]
+        [kind : CompilerPkgKind (struct-get manifest kind)]
+        [asm-path : String (build-package-asm-path manifest-dir name)]
+        [obj-path : String (build-package-obj-path manifest-dir name target)]
+        [artifact-path : String
+          (build-package-artifact-path manifest-dir name kind target)]
         (if (not (build-ensure-package-output-dirs manifest-dir name))
           (begin
             (print-error
@@ -439,21 +491,40 @@
                 "build: failed to create package output directory "
                 (build-package-output-dir manifest-dir name)))
             1)
-          (match (compiler-driver-emit-file-with-target-roots-and-level
+          (match (source-tool-emit-assembly
             entry-path
             target
-            has-target
             stdlib-roots
             opt-level)
-            [(ErrCompilerDriver diag)
+            [(ErrSourceToolString message)
               (begin
-                (print-error (compiler-diagnostic-render diag))
+                (print-error message)
                 1)]
-            [(OkCompilerDriver asm)
-              (begin
-                (write-file output-path asm)
-                (print-string (string-append "Generated: " output-path))
-                0)])))]))
+            [(OkSourceToolString asm)
+              (match (source-tool-write-file
+                asm-path
+                asm
+                "build: failed to write package assembly")
+                [(SourceToolCommandErr message)
+                  (begin
+                    (print-error message)
+                    1)]
+                [(SourceToolCommandOk)
+                  (match (build-package-artifact-status
+                    kind
+                    target
+                    asm-path
+                    obj-path
+                    artifact-path)
+                    [(SourceToolCommandErr message)
+                      (begin
+                        (print-error message)
+                        1)]
+                    [(SourceToolCommandOk)
+                      (begin
+                        (print-string
+                          (string-append "Generated: " artifact-path))
+                        0)])])])))]))
 
 (define (build-package-from-path
   [manifest-path : String]

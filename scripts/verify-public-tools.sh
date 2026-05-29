@@ -620,6 +620,7 @@ cat > "$BUILD_MATRIX/typelisp.pkg" <<'EOF'
 (package
   (name "backend_mode_build")
   (version "0.1.0")
+  (kind "bin")
   (entry "src/main.tl"))
 EOF
 cat > "$BUILD_MATRIX/src/main.tl" <<'EOF'
@@ -751,6 +752,7 @@ EOF
 (package
   (name "selfhost_pkg")
   (version "0.1.0")
+  (kind "bin")
   (entry "src/main.tl")
   (dependencies
     (math "vendor/math")))
@@ -765,18 +767,46 @@ EOF
     run_cmd selfhost-build-package "$SELFHOST_PLANNER_DIR/build-tool" --direct --manifest-path "$SELFHOST_PKG/typelisp.pkg" --opt-level 0
     assert_success
     assert_stderr_empty
-    SELFHOST_PKG_ASM="$SELFHOST_PKG/target/typelisp/selfhost_pkg/selfhost_pkg.s"
-    [ -f "$SELFHOST_PKG_ASM" ] || fail "selfhost package build did not write assembly"
-    assert_contains "$out" "Generated: $SELFHOST_PKG_ASM"
+    SELFHOST_PKG_OUT_DIR="$SELFHOST_PKG/target/typelisp/selfhost_pkg"
+    SELFHOST_PKG_BIN="$SELFHOST_PKG_OUT_DIR/selfhost_pkg"
+    SELFHOST_PKG_ASM="$SELFHOST_PKG_OUT_DIR/selfhost_pkg.s"
+    [ -x "$SELFHOST_PKG_BIN" ] || fail "selfhost package build did not write executable"
+    [ -f "$SELFHOST_PKG_ASM" ] || fail "selfhost package build did not keep assembly"
+    assert_contains "$out" "Generated: $SELFHOST_PKG_BIN"
     assert_contains "$SELFHOST_PKG_ASM" "main:"
     assert_contains "$SELFHOST_PKG_ASM" "add_one"
+    set +e
+    "$SELFHOST_PKG_BIN" > "$WORKDIR/selfhost-package-bin.stdout" 2> "$WORKDIR/selfhost-package-bin.stderr"
+    selfhost_pkg_status=$?
+    set -e
+    [ "$selfhost_pkg_status" -eq 42 ] || fail "selfhost package executable expected exit 42, got $selfhost_pkg_status"
 
     rm -rf "$SELFHOST_PKG/target"
     run_cmd_cwd selfhost-build-package-discover "$SELFHOST_PKG/src/nested/deeper" "$SELFHOST_PLANNER_DIR/build-tool"
     assert_success
     assert_stderr_empty
-    [ -f "$SELFHOST_PKG_ASM" ] || fail "selfhost package discovery did not write assembly"
+    [ -x "$SELFHOST_PKG_BIN" ] || fail "selfhost package discovery did not write executable"
+    [ -f "$SELFHOST_PKG_ASM" ] || fail "selfhost package discovery did not keep assembly"
     assert_contains "$out" "Generated:"
+
+    SELFHOST_LIBPKG="$SELFHOST_PLANNER_DIR/libpkg"
+    mkdir -p "$SELFHOST_LIBPKG/src"
+    cat > "$SELFHOST_LIBPKG/typelisp.pkg" <<'EOF'
+(package
+  (name "selfhost_lib")
+  (version "0.1.0")
+  (kind "lib")
+  (entry "src/lib.tl"))
+EOF
+    cat > "$SELFHOST_LIBPKG/src/lib.tl" <<'EOF'
+(define (add-two [x : i64]) : i64 (+ x 2))
+EOF
+    run_cmd selfhost-build-package-lib "$SELFHOST_PLANNER_DIR/build-tool" --direct --manifest-path "$SELFHOST_LIBPKG/typelisp.pkg"
+    assert_success
+    assert_stderr_empty
+    SELFHOST_LIB_ARCHIVE="$SELFHOST_LIBPKG/target/typelisp/selfhost_lib/libselfhost_lib.a"
+    [ -s "$SELFHOST_LIB_ARCHIVE" ] || fail "selfhost package lib build did not write archive"
+    assert_contains "$out" "Generated: $SELFHOST_LIB_ARCHIVE"
 
     SELFHOST_BADPKG="$SELFHOST_PLANNER_DIR/badpkg"
     mkdir -p "$SELFHOST_BADPKG/src" "$SELFHOST_BADPKG/vendor/math"
@@ -784,6 +814,7 @@ EOF
 (package
   (name "selfhost_parse_error")
   (version "0.1.0")
+  (kind "bin")
   (entry "src/main.tl")
   (deps "not-yet"))
 EOF
@@ -797,6 +828,7 @@ EOF
 (package
   (name "selfhost_bad_pkg")
   (version "0.1.0")
+  (kind "bin")
   (entry "src/main.tl"))
 EOF
     cat > "$SELFHOST_BADPKG/src/main.tl" <<'EOF'
@@ -813,6 +845,7 @@ EOF
 (package
   (name "selfhost_missing_dep")
   (version "0.1.0")
+  (kind "bin")
   (entry "src/main.tl")
   (dependencies
     (math "vendor/math")))
@@ -1250,6 +1283,7 @@ cat > "$PKG/typelisp.pkg" <<'EOF'
 (package
   (name "public_tool_pkg")
   (version "0.1.0")
+  (kind "bin")
   (entry "src/main.tl")
   (dependencies
     (math "vendor/math")))
@@ -1281,6 +1315,7 @@ cat > "$BADPKG/typelisp.pkg" <<'EOF'
 (package
   (name "bad_pkg")
   (version "0.1.0")
+  (kind "bin")
   (entry "src/main.tl")
   (deps "not-yet"))
 EOF
@@ -1293,6 +1328,7 @@ cat > "$BADPKG/typelisp.pkg" <<'EOF'
 (package
   (name "missing_alias")
   (version "0.1.0")
+  (kind "bin")
   (entry "src/main.tl"))
 EOF
 cat > "$BADPKG/src/main.tl" <<'EOF'
@@ -1311,6 +1347,7 @@ cat > "$WALK_PKG/typelisp.pkg" <<'EOF'
 (package
   (name "walk_pkg")
   (version "0.1.0")
+  (kind "bin")
   (entry "src/main.tl"))
 EOF
 cat > "$WALK_PKG/src/main.tl" <<'EOF'
@@ -1335,6 +1372,7 @@ cat > "$MISSING_DEP/typelisp.pkg" <<'EOF'
 (package
   (name "missing_dep_file")
   (version "0.1.0")
+  (kind "bin")
   (entry "src/main.tl")
   (dependencies
     (math "vendor/math")))

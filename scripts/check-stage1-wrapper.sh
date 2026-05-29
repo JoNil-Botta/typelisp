@@ -270,6 +270,7 @@ cat > "$PKG/typelisp.pkg" <<'EOF'
 (package
   (name "stage1_pkg")
   (version "0.1.0")
+  (kind "bin")
   (entry "src/main.tl")
   (dependencies
     (math "vendor/math")))
@@ -281,23 +282,61 @@ EOF
 cat > "$PKG/vendor/math/src/lib.tl" <<'EOF'
 (define (add-one [x : i64]) : i64 (+ x 1))
 EOF
-PKG_ASM="$PKG/target/typelisp/stage1_pkg/stage1_pkg.s"
+PKG_OUT_DIR="$PKG/target/typelisp/stage1_pkg"
+PKG_BIN="$PKG_OUT_DIR/stage1_pkg"
+PKG_ASM="$PKG_OUT_DIR/stage1_pkg.s"
 run_capture build-package "$COMPILER" build --manifest-path "$PKG/typelisp.pkg" --opt-level 0
-[ -f "$PKG_ASM" ] || {
-    echo "package build did not write assembly $PKG_ASM" >&2
+[ -x "$PKG_BIN" ] || {
+    echo "package build did not write executable $PKG_BIN" >&2
     exit 1
 }
-assert_contains "$WORKDIR/build-package.stdout" "Generated: $PKG_ASM"
+[ -f "$PKG_ASM" ] || {
+    echo "package build did not keep assembly side artifact $PKG_ASM" >&2
+    exit 1
+}
+assert_contains "$WORKDIR/build-package.stdout" "Generated: $PKG_BIN"
 assert_contains "$PKG_ASM" "main:"
 assert_contains "$PKG_ASM" "add_one"
+set +e
+"$PKG_BIN" > "$WORKDIR/build-package-bin.stdout" 2> "$WORKDIR/build-package-bin.stderr"
+pkg_bin_status=$?
+set -e
+if [ "$pkg_bin_status" -ne 42 ]; then
+    echo "package executable expected exit 42, got $pkg_bin_status" >&2
+    exit 1
+fi
 
 rm -rf "$PKG/target"
 run_capture_cwd build-package-discover "$PKG/src/nested/deeper" "$COMPILER" build
-[ -f "$PKG_ASM" ] || {
-    echo "package discovery did not write assembly $PKG_ASM" >&2
+[ -x "$PKG_BIN" ] || {
+    echo "package discovery did not write executable $PKG_BIN" >&2
     exit 1
 }
-assert_contains "$WORKDIR/build-package-discover.stdout" "Generated: ../../../target/typelisp/stage1_pkg/stage1_pkg.s"
+[ -f "$PKG_ASM" ] || {
+    echo "package discovery did not keep assembly side artifact $PKG_ASM" >&2
+    exit 1
+}
+assert_contains "$WORKDIR/build-package-discover.stdout" "Generated: ../../../target/typelisp/stage1_pkg/stage1_pkg"
+
+LIBPKG="$WORKDIR/libpkg"
+mkdir -p "$LIBPKG/src"
+cat > "$LIBPKG/typelisp.pkg" <<'EOF'
+(package
+  (name "stage1_lib")
+  (version "0.1.0")
+  (kind "lib")
+  (entry "src/lib.tl"))
+EOF
+cat > "$LIBPKG/src/lib.tl" <<'EOF'
+(define (add-two [x : i64]) : i64 (+ x 2))
+EOF
+LIB_ARCHIVE="$LIBPKG/target/typelisp/stage1_lib/libstage1_lib.a"
+run_capture build-package-lib "$COMPILER" build --manifest-path "$LIBPKG/typelisp.pkg"
+[ -s "$LIB_ARCHIVE" ] || {
+    echo "package lib build did not write static archive $LIB_ARCHIVE" >&2
+    exit 1
+}
+assert_contains "$WORKDIR/build-package-lib.stdout" "Generated: $LIB_ARCHIVE"
 
 run_expect_failure build-package-missing "$COMPILER" build --manifest-path "$WORKDIR/missing.pkg"
 assert_empty "$WORKDIR/build-package-missing.stdout"

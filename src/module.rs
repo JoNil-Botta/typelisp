@@ -36,6 +36,7 @@ mod embedded_stdlib {
         ("json.tl", include_str!("../stdlib/json.tl")),
         ("msvc.tl", include_str!("../stdlib/msvc.tl")),
         ("process.tl", include_str!("../stdlib/process.tl")),
+        ("queue.tl", include_str!("../stdlib/queue.tl")),
         ("random.tl", include_str!("../stdlib/random.tl")),
         ("string.tl", include_str!("../stdlib/string.tl")),
         ("test.tl", include_str!("../stdlib/test.tl")),
@@ -103,6 +104,10 @@ mod embedded_stdlib {
         (
             "tests/process_runtime.tl",
             include_str!("../stdlib/tests/process_runtime.tl"),
+        ),
+        (
+            "tests/queue_api.tl",
+            include_str!("../stdlib/tests/queue_api.tl"),
         ),
         (
             "tests/random_api.tl",

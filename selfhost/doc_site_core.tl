@@ -141,6 +141,20 @@
 (define (doc-site-string-prefix? [text : String] [prefix : String]) : bool
   (doc-string-prefix-at? text prefix 0))
 
+(define (doc-site-find-prefix [text : String] [prefix : String] [from : i64]) : i64
+  (let
+    [i : i64 from]
+    [n : i64 (string-length text)]
+    [found : i64 (string-length text)]
+    (begin
+      (while (and (< i n) (= found n))
+        (begin
+          (if (doc-string-prefix-at? text prefix i)
+            (set! found i)
+            unit)
+          (set! i (+ i 1))))
+      found)))
+
 (define (doc-site-href-anchor? [target : String]) : bool
   (and (> (string-length target) 0) (= (string-ref target 0) ##')))
 
@@ -169,35 +183,43 @@
 
 (define (doc-site-rewrite-language-links [html : String]) : String
   (let
-    [i : i64 0]
+    [cursor : i64 0]
     [n : i64 (string-length html)]
     [out : String ""]
     (begin
-      (while (< i n)
-        (if (doc-string-prefix-at? html "href=\"" i)
-          (let
-            [target-start : i64 (+ i 6)]
-            [target-end : i64 (md-find-char html target-start #"')]
-            (if (< target-end n)
-              (let
-                [target : String
-                  (substring html target-start (- target-end target-start))]
+      (while (< cursor n)
+        (let
+          [href-start : i64 (doc-site-find-prefix html "href=\"" cursor)]
+          (if (< href-start n)
+            (let
+              [target-start : i64 (+ href-start 6)]
+              [target-end : i64 (md-find-char html target-start #"')]
+              (if (< target-end n)
+                (let
+                  [target : String
+                    (substring html target-start (- target-end target-start))]
+                  (begin
+                    (set!
+                      out
+                      (doc-html-cat5
+                        (string-append
+                          out
+                          (substring html cursor (- href-start cursor)))
+                        "href=\""
+                        (doc-site-rewrite-language-link-target target)
+                        "\""
+                        ""))
+                    (set! cursor (+ target-end 1))))
                 (begin
                   (set!
                     out
-                    (doc-html-cat5
-                      out
-                      "href=\""
-                      (doc-site-rewrite-language-link-target target)
-                      "\""
-                      ""))
-                  (set! i (+ target-end 1))))
-              (begin
-                (set! out (string-append out (substring html i 1)))
-                (set! i (+ i 1)))))
-          (begin
-            (set! out (string-append out (substring html i 1)))
-            (set! i (+ i 1)))))
+                    (string-append out (substring html cursor (- n cursor))))
+                  (set! cursor n))))
+            (begin
+              (set!
+                out
+                (string-append out (substring html cursor (- n cursor))))
+              (set! cursor n)))))
       out)))
 
 (define (doc-site-css) : String

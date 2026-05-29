@@ -45,49 +45,19 @@ reject_diag() {
 # #1246); more headroom keeps the crash-only retry effective.
 ATTEMPTS="${VERIFY_STDLIB_SELFHOST_ATTEMPTS:-6}"
 
-# #1270: `typelisp run selfhost/check.tl` runs the selfhost parser+typechecker as
-# an emitted binary that segfaults ~100% on Windows on its typecheck path — the
-# same non-ASLR selfhost-emitted-driver crash as `test --check` / `doc --test`
-# (the binary already links /DYNAMICBASE:NO, so it is NOT the emitted-binary ASLR
-# bug #1262 fixes). The crash is effectively deterministic per witness, so the
-# retry guard above is exhausted on every one. Skip on Windows until #1270 is
-# fixed; Linux still fully verifies the selfhost-frontend witnesses.
-if [ "$HOST_OS" = windows ]; then
-    echo "skipping stdlib selfhost-frontend witnesses on windows pending #1270 (check.tl selfhost-typechecker segfault)"
-    exit 0
-fi
-
-command -v as >/dev/null 2>&1 || {
-    echo "missing assembler: as" >&2
-    exit 1
-}
-command -v ld >/dev/null 2>&1 || {
-    echo "missing linker: ld" >&2
-    exit 1
-}
-
 WORKDIR="$ROOT/target/stdlib-selfhost-verify"
 rm -rf "$WORKDIR"
 mkdir -p "$WORKDIR"
 CHECK_BIN="$WORKDIR/check"
-CHECK_ASM="$WORKDIR/check.s"
-CHECK_OBJ="$WORKDIR/check.o"
+[ "$HOST_OS" = windows ] && CHECK_BIN="$WORKDIR/check.exe"
 CHECK_OUT="$WORKDIR/check.compile.out"
 CHECK_ERR="$WORKDIR/check.compile.err"
+BUILD_TARGET=linux-x86_64
+[ "$HOST_OS" = windows ] && BUILD_TARGET=windows-x86_64
 
-if ! "$COMPILER" compile selfhost/check.tl --stdlib-root "$ROOT/stdlib" -o "$CHECK_ASM" >"$CHECK_OUT" 2>"$CHECK_ERR"; then
-    echo "FAIL: selfhost/check.tl compile failed" >&2
-    sed 's/^/  /' "$CHECK_ERR" >&2 || true
-    exit 1
-fi
-if ! as "$CHECK_ASM" -o "$CHECK_OBJ" >>"$CHECK_OUT" 2>>"$CHECK_ERR"; then
-    echo "FAIL: selfhost/check.tl assemble failed" >&2
-    sed 's/^/  /' "$CHECK_ERR" >&2 || true
-    exit 1
-fi
-if ! ld "$CHECK_OBJ" -o "$CHECK_BIN" -dynamic-linker /lib64/ld-linux-x86-64.so.2 -lc \
-    >>"$CHECK_OUT" 2>>"$CHECK_ERR"; then
-    echo "FAIL: selfhost/check.tl link failed" >&2
+if ! "$COMPILER" build selfhost/check.tl --target "$BUILD_TARGET" \
+    --stdlib-root "$ROOT/stdlib" -o "$CHECK_BIN" >"$CHECK_OUT" 2>"$CHECK_ERR"; then
+    echo "FAIL: selfhost/check.tl build failed" >&2
     sed 's/^/  /' "$CHECK_ERR" >&2 || true
     exit 1
 fi

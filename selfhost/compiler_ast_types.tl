@@ -80,6 +80,7 @@
   (AstTyTuple AstTypeList)
   (AstTyArray AstType i64)
   (AstTyDynArray AstType)
+  (AstTyBox AstType)
   (AstTyRegion String AstType)
   (AstTyRef String AstType)
   (AstTyMutRef String AstType)
@@ -215,6 +216,8 @@
   (AstExprStructGet AstExpr String)
   (AstExprWithRegion String AstExprList)
   (AstExprWithResource AstResourceBindingList AstExprList)
+  (AstExprBox AstExpr)
+  (AstExprBoxGet AstExpr)
   ;; Compile-time-only type value literal: `(type T)`.
   (AstExprTypeLiteral AstType)
   ;; Reserved compile-time evaluation form `(comptime expr)` (#718). Parsed and
@@ -311,7 +314,8 @@
     [(AstTyStruct _) 25]
     [(AstTyVar _) 26]
     [(AstTyPtr _) 27]
-    [(AstTyMutPtr _) 28]))
+    [(AstTyMutPtr _) 28]
+    [(AstTyBox _) 31]))
 
 (define (ast-expr-tag [expr : AstExpr]) : i64
   (match expr
@@ -355,7 +359,9 @@
     [(AstExprPtrOffset _ _) 36]
     [(AstExprPtrCast _ _) 37]
     [(AstExprPtrToInt _) 38]
-    [(AstExprIntToPtr _ _) 39]))
+    [(AstExprIntToPtr _ _) 39]
+    [(AstExprBox _) 42]
+    [(AstExprBoxGet _) 43]))
 
 (define (ast-expr-unspan [expr : AstExpr]) : AstExpr
   (match expr

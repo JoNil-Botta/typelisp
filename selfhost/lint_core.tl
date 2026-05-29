@@ -242,6 +242,8 @@
         body
         threshold
         (lint-walk-resource-bindings bindings threshold acc))]
+    [(AstExprBox inner) (lint-walk-expr inner threshold acc)]
+    [(AstExprBoxGet inner) (lint-walk-expr inner threshold acc)]
     [(AstExprComptime inner) (lint-walk-expr inner threshold acc)]
     [(AstExprTry inner) (lint-walk-expr inner threshold acc)]
     [(AstExprPtrNull _) acc]

@@ -7277,6 +7277,359 @@
     [(OkTcMove _) OkTcUnit]
     [(ErrTcMove message) (ErrTcUnit message)]))
 
+;; --- macro expansion phase (#1139) ------------------------------------------
+;;
+;; Pipeline: parse -> EXPAND -> typecheck. When a call head names a `defmacro`,
+;; the unevaluated operand forms are passed as `Expr` values (CtfeExpr) to the
+;; transformer, which is run via CTFE; the produced `Expr` is spliced at the
+;; call site and re-expanded to a fixpoint (depth-limited). Macro calls in
+;; ordinary evaluated positions are expanded; quoted/quasiquoted code is left
+;; as data. Programs without macro calls pass through unchanged. The normal
+;; typechecker then runs over the expanded program as the post-expansion safety
+;; net. Call-site signature checking (operand types from the macro's declared
+;; signature, with a call-site span) is a follow-up; this slice provides arity
+;; checking and relies on the post-expansion typecheck for operand-type errors.
+(defenum MacroMaybeDecl
+  (MacroNoDecl)
+  (MacroSomeDecl AstMacroParamList AstExpr))
+
+(defenum ResultMacroExpr
+  (OkMacroExpr AstExpr)
+  (ErrMacroExpr CompilerDiagnostic))
+
+(defenum ResultMacroExprList
+  (OkMacroExprList AstExprList)
+  (ErrMacroExprList CompilerDiagnostic))
+
+(defenum ResultMacroEnv
+  (OkMacroEnv CtfeEnv)
+  (ErrMacroEnv CompilerDiagnostic))
+
+(defenum ResultMacroDecl
+  (OkMacroDecl AstDecl)
+  (ErrMacroDecl CompilerDiagnostic))
+
+(defenum ResultMacroDecls
+  (OkMacroDecls AstDeclList)
+  (ErrMacroDecls CompilerDiagnostic))
+
+(defenum ResultMacroExpand
+  (OkMacroExpand AstProgram)
+  (ErrMacroExpand CompilerDiagnostic))
+
+(define (macro-expand-depth-limit) : i64
+  64)
+
+(define (macro-find-decl [decls : AstDeclList] [name : String]) : MacroMaybeDecl
+  (match decls
+    [(AstDeclNil) (MacroNoDecl)]
+    [(AstDeclCons decl rest)
+      (match decl
+        [(AstDeclDefMacro mname params _ body)
+          (if (string-eq mname name)
+            (MacroSomeDecl params body)
+            (macro-find-decl rest name))]
+        [_ (macro-find-decl rest name)])]))
+
+;; If `func` is a bare reference to a defined macro, return that macro's decl.
+(define (macro-call-decl [func : AstExpr] [decls : AstDeclList]) : MacroMaybeDecl
+  (match func
+    [(AstExprSpanned inner _) (macro-call-decl inner decls)]
+    [(AstExprVar name) (macro-find-decl decls name)]
+    [_ (MacroNoDecl)]))
+
+;; Bind the unevaluated operand forms to the macro parameters as `Expr` values.
+;; A trailing variadic parameter collects the remaining operands as an ExprList.
+(define (macro-bind-params
+  [params : AstMacroParamList]
+  [args : AstExprList]
+  [env : CtfeEnv]
+  [call-expr : AstExpr]) : ResultMacroEnv
+  (match params
+    [(AstMacroParamNil)
+      (match args
+        [(AstExprNil) (OkMacroEnv env)]
+        [_
+          (ErrMacroEnv
+            (ctfe-diagnostic-at-expr
+              call-expr
+              "macro call has too many arguments"))])]
+    [(AstMacroParamCons param rest-params)
+      (match param
+        [(AstMacroParam pname pty variadic)
+          (if variadic
+            (OkMacroEnv (CtfeEnvCons pname (CtfeExprList args) env))
+            (match args
+              [(AstExprNil)
+                (ErrMacroEnv
+                  (ctfe-diagnostic-at-expr
+                    call-expr
+                    "macro call has too few arguments"))]
+              [(AstExprCons arg rest-args)
+                (macro-bind-params
+                  rest-params
+                  rest-args
+                  (CtfeEnvCons pname (CtfeExpr arg pty) env)
+                  call-expr)]))])]))
+
+;; Run a macro transformer via CTFE and re-expand its produced form to a fixpoint.
+(define (macro-expand-call
+  [decls : AstDeclList]
+  [params : AstMacroParamList]
+  [body : AstExpr]
+  [args : AstExprList]
+  [depth : i64]
+  [call-expr : AstExpr]) : ResultMacroExpr
+  (match (macro-bind-params
+    params
+    args
+    (CtfeEnvNil CtfeLayoutInfoNil CtfeReflectInfoNil)
+    call-expr)
+    [(OkMacroEnv env)
+      (match (ctfe-eval-node body env (ctfe-fuel-limit))
+        [(OkCtfe value _)
+          (match value
+            [(CtfeExpr expanded _)
+              (macro-expand-expr decls (+ depth 1) expanded)]
+            [_
+              (ErrMacroExpr
+                (ctfe-diagnostic-at-expr
+                  call-expr
+                  "macro transformer did not produce an Expr"))])]
+        [(ErrCtfe diag) (ErrMacroExpr diag)])]
+    [(ErrMacroEnv diag) (ErrMacroExpr diag)]))
+
+(define (macro-expand-exprs
+  [decls : AstDeclList]
+  [depth : i64]
+  [exprs : AstExprList]) : ResultMacroExprList
+  (match exprs
+    [(AstExprNil) (OkMacroExprList (AstExprNil))]
+    [(AstExprCons head rest)
+      (match (macro-expand-expr decls depth head)
+        [(OkMacroExpr nhead)
+          (match (macro-expand-exprs decls depth rest)
+            [(OkMacroExprList nrest)
+              (OkMacroExprList (AstExprCons nhead nrest))]
+            [(ErrMacroExprList diag) (ErrMacroExprList diag)])]
+        [(ErrMacroExpr diag) (ErrMacroExprList diag)])]))
+
+(define (macro-expand-arms
+  [decls : AstDeclList]
+  [depth : i64]
+  [arms : AstMatchArmList]) : AstMatchArmList
+  (match arms
+    [(AstMatchArmNil) (AstMatchArmNil)]
+    [(AstMatchArmCons arm rest)
+      (match arm
+        [(AstMatchArm pattern body)
+          (match (macro-expand-expr decls depth body)
+            [(OkMacroExpr nbody)
+              (AstMatchArmCons
+                (AstMatchArm pattern nbody)
+                (macro-expand-arms decls depth rest))]
+            [(ErrMacroExpr _)
+              (AstMatchArmCons arm (macro-expand-arms decls depth rest))])])]))
+
+(define (macro-expand-bindings
+  [decls : AstDeclList]
+  [depth : i64]
+  [bindings : AstLetBindingList]) : AstLetBindingList
+  (match bindings
+    [(AstLetBindingNil) (AstLetBindingNil)]
+    [(AstLetBindingCons binding rest)
+      (match binding
+        [(AstLetBinding name maybe-ty init)
+          (match (macro-expand-expr decls depth init)
+            [(OkMacroExpr ninit)
+              (AstLetBindingCons
+                (AstLetBinding name maybe-ty ninit)
+                (macro-expand-bindings decls depth rest))]
+            [(ErrMacroExpr _)
+              (AstLetBindingCons
+                binding
+                (macro-expand-bindings decls depth rest))])])]))
+
+(define (macro-expand-expr [decls : AstDeclList] [depth : i64] [expr : AstExpr]) : ResultMacroExpr
+  (if (< (macro-expand-depth-limit) depth)
+    (ErrMacroExpr
+      (ctfe-diagnostic-at-expr expr "macro expansion exceeded depth limit"))
+    (match expr
+      [(AstExprSpanned inner span)
+        (match (macro-expand-expr decls depth inner)
+          [(OkMacroExpr ninner) (OkMacroExpr (AstExprSpanned ninner span))]
+          [(ErrMacroExpr diag) (ErrMacroExpr diag)])]
+      [(AstExprCall func args)
+        (match (macro-call-decl func decls)
+          [(MacroSomeDecl params body)
+            (macro-expand-call decls params body args depth expr)]
+          [(MacroNoDecl)
+            (match (macro-expand-expr decls depth func)
+              [(OkMacroExpr nfunc)
+                (match (macro-expand-exprs decls depth args)
+                  [(OkMacroExprList nargs)
+                    (OkMacroExpr (AstExprCall nfunc nargs))]
+                  [(ErrMacroExprList diag) (ErrMacroExpr diag)])]
+              [(ErrMacroExpr diag) (ErrMacroExpr diag)])])]
+      [(AstExprBinary op left right)
+        (match (macro-expand-expr decls depth left)
+          [(OkMacroExpr nleft)
+            (match (macro-expand-expr decls depth right)
+              [(OkMacroExpr nright)
+                (OkMacroExpr (AstExprBinary op nleft nright))]
+              [(ErrMacroExpr diag) (ErrMacroExpr diag)])]
+          [(ErrMacroExpr diag) (ErrMacroExpr diag)])]
+      [(AstExprUnary op inner)
+        (match (macro-expand-expr decls depth inner)
+          [(OkMacroExpr ninner) (OkMacroExpr (AstExprUnary op ninner))]
+          [(ErrMacroExpr diag) (ErrMacroExpr diag)])]
+      [(AstExprIf cond then-branch else-branch)
+        (match (macro-expand-expr decls depth cond)
+          [(OkMacroExpr ncond)
+            (match (macro-expand-expr decls depth then-branch)
+              [(OkMacroExpr nthen)
+                (match (macro-expand-expr decls depth else-branch)
+                  [(OkMacroExpr nelse)
+                    (OkMacroExpr (AstExprIf ncond nthen nelse))]
+                  [(ErrMacroExpr diag) (ErrMacroExpr diag)])]
+              [(ErrMacroExpr diag) (ErrMacroExpr diag)])]
+          [(ErrMacroExpr diag) (ErrMacroExpr diag)])]
+      [(AstExprLet bindings body)
+        (match (macro-expand-expr decls depth body)
+          [(OkMacroExpr nbody)
+            (OkMacroExpr
+              (AstExprLet (macro-expand-bindings decls depth bindings) nbody))]
+          [(ErrMacroExpr diag) (ErrMacroExpr diag)])]
+      [(AstExprBegin exprs)
+        (match (macro-expand-exprs decls depth exprs)
+          [(OkMacroExprList nexprs) (OkMacroExpr (AstExprBegin nexprs))]
+          [(ErrMacroExprList diag) (ErrMacroExpr diag)])]
+      [(AstExprUnsafe exprs)
+        (match (macro-expand-exprs decls depth exprs)
+          [(OkMacroExprList nexprs) (OkMacroExpr (AstExprUnsafe nexprs))]
+          [(ErrMacroExprList diag) (ErrMacroExpr diag)])]
+      [(AstExprTuple exprs)
+        (match (macro-expand-exprs decls depth exprs)
+          [(OkMacroExprList nexprs) (OkMacroExpr (AstExprTuple nexprs))]
+          [(ErrMacroExprList diag) (ErrMacroExpr diag)])]
+      [(AstExprArray exprs)
+        (match (macro-expand-exprs decls depth exprs)
+          [(OkMacroExprList nexprs) (OkMacroExpr (AstExprArray nexprs))]
+          [(ErrMacroExprList diag) (ErrMacroExpr diag)])]
+      [(AstExprMatch scrut arms)
+        (match (macro-expand-expr decls depth scrut)
+          [(OkMacroExpr nscrut)
+            (OkMacroExpr
+              (AstExprMatch nscrut (macro-expand-arms decls depth arms)))]
+          [(ErrMacroExpr diag) (ErrMacroExpr diag)])]
+      [(AstExprWhile cond body)
+        (match (macro-expand-expr decls depth cond)
+          [(OkMacroExpr ncond)
+            (match (macro-expand-expr decls depth body)
+              [(OkMacroExpr nbody) (OkMacroExpr (AstExprWhile ncond nbody))]
+              [(ErrMacroExpr diag) (ErrMacroExpr diag)])]
+          [(ErrMacroExpr diag) (ErrMacroExpr diag)])]
+      [(AstExprForeach index index-ty start end body)
+        (match (macro-expand-expr decls depth start)
+          [(OkMacroExpr nstart)
+            (match (macro-expand-expr decls depth end)
+              [(OkMacroExpr nend)
+                (match (macro-expand-expr decls depth body)
+                  [(OkMacroExpr nbody)
+                    (OkMacroExpr
+                      (AstExprForeach index index-ty nstart nend nbody))]
+                  [(ErrMacroExpr diag) (ErrMacroExpr diag)])]
+              [(ErrMacroExpr diag) (ErrMacroExpr diag)])]
+          [(ErrMacroExpr diag) (ErrMacroExpr diag)])]
+      [(AstExprLambda params ret body)
+        (match (macro-expand-expr decls depth body)
+          [(OkMacroExpr nbody) (OkMacroExpr (AstExprLambda params ret nbody))]
+          [(ErrMacroExpr diag) (ErrMacroExpr diag)])]
+      [(AstExprAnn inner ty)
+        (match (macro-expand-expr decls depth inner)
+          [(OkMacroExpr ninner) (OkMacroExpr (AstExprAnn ninner ty))]
+          [(ErrMacroExpr diag) (ErrMacroExpr diag)])]
+      [(AstExprCast inner ty)
+        (match (macro-expand-expr decls depth inner)
+          [(OkMacroExpr ninner) (OkMacroExpr (AstExprCast ninner ty))]
+          [(ErrMacroExpr diag) (ErrMacroExpr diag)])]
+      [(AstExprStructGet inner field)
+        (match (macro-expand-expr decls depth inner)
+          [(OkMacroExpr ninner) (OkMacroExpr (AstExprStructGet ninner field))]
+          [(ErrMacroExpr diag) (ErrMacroExpr diag)])]
+      [(AstExprArrayRef array index)
+        (match (macro-expand-expr decls depth array)
+          [(OkMacroExpr narray)
+            (match (macro-expand-expr decls depth index)
+              [(OkMacroExpr nindex)
+                (OkMacroExpr (AstExprArrayRef narray nindex))]
+              [(ErrMacroExpr diag) (ErrMacroExpr diag)])]
+          [(ErrMacroExpr diag) (ErrMacroExpr diag)])]
+      [(AstExprArraySet array index value)
+        (match (macro-expand-expr decls depth array)
+          [(OkMacroExpr narray)
+            (match (macro-expand-expr decls depth index)
+              [(OkMacroExpr nindex)
+                (match (macro-expand-expr decls depth value)
+                  [(OkMacroExpr nvalue)
+                    (OkMacroExpr (AstExprArraySet narray nindex nvalue))]
+                  [(ErrMacroExpr diag) (ErrMacroExpr diag)])]
+              [(ErrMacroExpr diag) (ErrMacroExpr diag)])]
+          [(ErrMacroExpr diag) (ErrMacroExpr diag)])]
+      [(AstExprBox inner)
+        (match (macro-expand-expr decls depth inner)
+          [(OkMacroExpr ninner) (OkMacroExpr (AstExprBox ninner))]
+          [(ErrMacroExpr diag) (ErrMacroExpr diag)])]
+      [(AstExprBoxGet inner)
+        (match (macro-expand-expr decls depth inner)
+          [(OkMacroExpr ninner) (OkMacroExpr (AstExprBoxGet ninner))]
+          [(ErrMacroExpr diag) (ErrMacroExpr diag)])]
+      [(AstExprComptime inner)
+        (match (macro-expand-expr decls depth inner)
+          [(OkMacroExpr ninner) (OkMacroExpr (AstExprComptime ninner))]
+          [(ErrMacroExpr diag) (ErrMacroExpr diag)])]
+      [(AstExprSet name rhs)
+        (match (macro-expand-expr decls depth rhs)
+          [(OkMacroExpr nrhs) (OkMacroExpr (AstExprSet name nrhs))]
+          [(ErrMacroExpr diag) (ErrMacroExpr diag)])]
+      [_ (OkMacroExpr expr)])))
+
+(define (macro-expand-decl [decls : AstDeclList] [decl : AstDecl]) : ResultMacroDecl
+  (match decl
+    [(AstDeclDef name maybe-ty expr)
+      (match (macro-expand-expr decls 0 expr)
+        [(OkMacroExpr nexpr) (OkMacroDecl (AstDeclDef name maybe-ty nexpr))]
+        [(ErrMacroExpr diag) (ErrMacroDecl diag)])]
+    [(AstDeclDefFn name params ret body)
+      (match (macro-expand-expr decls 0 body)
+        [(OkMacroExpr nbody) (OkMacroDecl (AstDeclDefFn name params ret nbody))]
+        [(ErrMacroExpr diag) (ErrMacroDecl diag)])]
+    [(AstDeclTest name expr span)
+      (match (macro-expand-expr decls 0 expr)
+        [(OkMacroExpr nexpr) (OkMacroDecl (AstDeclTest name nexpr span))]
+        [(ErrMacroExpr diag) (ErrMacroDecl diag)])]
+    [_ (OkMacroDecl decl)]))
+
+(define (macro-expand-decls [orig-decls : AstDeclList] [decls : AstDeclList]) : ResultMacroDecls
+  (match decls
+    [(AstDeclNil) (OkMacroDecls (AstDeclNil))]
+    [(AstDeclCons decl rest)
+      (match (macro-expand-decl orig-decls decl)
+        [(OkMacroDecl ndecl)
+          (match (macro-expand-decls orig-decls rest)
+            [(OkMacroDecls nrest) (OkMacroDecls (AstDeclCons ndecl nrest))]
+            [(ErrMacroDecls diag) (ErrMacroDecls diag)])]
+        [(ErrMacroDecl diag) (ErrMacroDecls diag)])]))
+
+;; Expand all macro calls in a parsed program before typechecking. Macros are
+;; resolved against the program's own top-level `defmacro` declarations.
+(define (macro-expand-program [program : AstProgram]) : ResultMacroExpand
+  (match program
+    [(AstProgram decls)
+      (match (macro-expand-decls decls decls)
+        [(OkMacroDecls ndecls) (OkMacroExpand (AstProgram ndecls))]
+        [(ErrMacroDecls diag) (ErrMacroExpand diag)])]))
+
 (define (tc-check-decl [ctx : TcContext] [top-env : TcTypeEnv] [decl : AstDecl]) : ResultTcUnit
   (match decl
     [(AstDeclDef _ maybe-ty expr)

@@ -154,9 +154,9 @@ for page in $pages; do
     grep -q 'href="typelisp-docs.css"' "$page" \
         || fail "$(basename "$page") does not reference typelisp-docs.css"
 
-    # Each page should expose the persistent stdlib module tree sidebar.
-    grep -q '<nav class="tl-doc-stdlib-sidebar" aria-label="Stdlib module tree">' "$page" \
-        || fail "$(basename "$page") does not include the stdlib module sidebar"
+    # Each page should expose the persistent composed documentation sidebar.
+    grep -q '<nav class="tl-doc-stdlib-sidebar" aria-label="Documentation tree">' "$page" \
+        || fail "$(basename "$page") does not include the documentation sidebar"
     grep -q 'href="stdlib.html">stdlib</a>' "$page" \
         || fail "$(basename "$page") does not include the stdlib sidebar root"
     grep -q 'href="stdlib-io.html"' "$page" \

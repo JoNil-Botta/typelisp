@@ -1,7 +1,8 @@
-;; doc_site_core.tl - Static stdlib/API HTML site builder core (#964).
+;; doc_site_core.tl - Static documentation site builder core (#964, #1296).
 ;;
-;; The site builder owns only the directory/page layout. It reuses the selfhost
-;; documentation extractor and HTML renderer for module contents.
+;; The TypeLisp site composition layer combines language guides and reusable API
+;; trees. API pages still use the source/module documentation extractor and HTML
+;; renderer without hard-coding TypeLisp guide-page knowledge into that path.
 (import "doc_html.tl")
 
 (import "doc_md.tl")
@@ -12,6 +13,24 @@
 (defenum DocSiteModuleList
   (DocSiteModuleNil)
   (DocSiteModuleCons DocSiteModule DocSiteModuleList))
+
+(defenum DocSiteGuidePage
+  (DocSiteGuidePage String String String String))
+
+(defenum DocSiteGuidePageList
+  (DocSiteGuidePageNil)
+  (DocSiteGuidePageCons DocSiteGuidePage DocSiteGuidePageList))
+
+(defenum DocSiteApiTree
+  (DocSiteApiTree String String DocSiteModuleList))
+
+(defenum DocSiteSection
+  (DocSiteGuideSection String DocSiteGuidePageList)
+  (DocSiteApiTreeSection DocSiteApiTree))
+
+(defenum DocSiteSectionList
+  (DocSiteSectionNil)
+  (DocSiteSectionCons DocSiteSection DocSiteSectionList))
 
 (define doc-site-status-ok : i64
   0)
@@ -35,6 +54,34 @@
 (define (doc-site-module-output [module : DocSiteModule]) : String
   (match module
     [(DocSiteModule _ output) output]))
+
+(define (doc-site-guide-title [guide : DocSiteGuidePage]) : String
+  (match guide
+    [(DocSiteGuidePage title _ _ _) title]))
+
+(define (doc-site-guide-source [guide : DocSiteGuidePage]) : String
+  (match guide
+    [(DocSiteGuidePage _ source _ _) source]))
+
+(define (doc-site-guide-output [guide : DocSiteGuidePage]) : String
+  (match guide
+    [(DocSiteGuidePage _ _ output _) output]))
+
+(define (doc-site-guide-label [guide : DocSiteGuidePage]) : String
+  (match guide
+    [(DocSiteGuidePage _ _ _ label) label]))
+
+(define (doc-site-api-tree-root [tree : DocSiteApiTree]) : String
+  (match tree
+    [(DocSiteApiTree root _ _) root]))
+
+(define (doc-site-api-tree-output [tree : DocSiteApiTree]) : String
+  (match tree
+    [(DocSiteApiTree _ output _) output]))
+
+(define (doc-site-api-tree-modules [tree : DocSiteApiTree]) : DocSiteModuleList
+  (match tree
+    [(DocSiteApiTree _ _ modules) modules]))
 
 (define (doc-site-stdlib-modules) : DocSiteModuleList
   (DocSiteModuleCons
@@ -68,6 +115,27 @@
                             "stdlib/windows_sdk.tl"
                             "stdlib-windows-sdk.html")
                           DocSiteModuleNil)))))))))))))
+
+(define (doc-site-language-guides) : DocSiteGuidePageList
+  (DocSiteGuidePageCons
+    (DocSiteGuidePage "TypeLisp Overview" "README.md" "readme.html" "Overview")
+    (DocSiteGuidePageCons
+      (DocSiteGuidePage
+        "TypeLisp Language Reference"
+        "SPEC.md"
+        "spec.html"
+        "Specification")
+      DocSiteGuidePageNil)))
+
+(define (doc-site-stdlib-api-tree) : DocSiteApiTree
+  (DocSiteApiTree "stdlib" "stdlib.html" (doc-site-stdlib-modules)))
+
+(define (doc-site-typelisp-sections) : DocSiteSectionList
+  (DocSiteSectionCons
+    (DocSiteGuideSection "Language" (doc-site-language-guides))
+    (DocSiteSectionCons
+      (DocSiteApiTreeSection (doc-site-stdlib-api-tree))
+      DocSiteSectionNil)))
 
 (define (doc-site-module-list-count [modules : DocSiteModuleList]) : i64
   (match modules
@@ -173,15 +241,66 @@
       doc-site-repo-tree-root)
     target))
 
-(define (doc-site-rewrite-language-link-target [target : String]) : String
+(define (doc-site-guide-output-for-source
+  [target : String]
+  [guides : DocSiteGuidePageList]) : String
+  (match guides
+    [(DocSiteGuidePageNil) ""]
+    [(DocSiteGuidePageCons guide rest)
+      (if (string-eq target (doc-site-guide-source guide))
+        (doc-site-guide-output guide)
+        (doc-site-guide-output-for-source target rest))]))
+
+(define (doc-site-module-output-for-source
+  [target : String]
+  [modules : DocSiteModuleList]) : String
+  (match modules
+    [(DocSiteModuleNil) ""]
+    [(DocSiteModuleCons module rest)
+      (if (string-eq target (doc-site-module-source module))
+        (doc-site-module-output module)
+        (doc-site-module-output-for-source target rest))]))
+
+(define (doc-site-section-output-for-source
+  [target : String]
+  [section : DocSiteSection]) : String
+  (match section
+    [(DocSiteGuideSection _ guides)
+      (doc-site-guide-output-for-source target guides)]
+    [(DocSiteApiTreeSection tree)
+      (doc-site-module-output-for-source
+        target
+        (doc-site-api-tree-modules tree))]))
+
+(define (doc-site-sections-output-for-source
+  [target : String]
+  [sections : DocSiteSectionList]) : String
+  (match sections
+    [(DocSiteSectionNil) ""]
+    [(DocSiteSectionCons section rest)
+      (let
+        [output : String (doc-site-section-output-for-source target section)]
+        (if (> (string-length output) 0)
+          output
+          (doc-site-sections-output-for-source target rest)))]))
+
+(define (doc-site-rewrite-language-link-target
+  [sections : DocSiteSectionList]
+  [target : String]) : String
   (cond
     [(doc-site-href-anchor? target) target]
     [(doc-site-href-external? target) target]
-    [(string-eq target "README.md") "readme.html"]
-    [(string-eq target "SPEC.md") "spec.html"]
-    [else (doc-site-repo-source-url target)]))
+    [else
+      (let
+        [site-target : String
+          (doc-site-sections-output-for-source target sections)]
+        (if (> (string-length site-target) 0)
+          site-target
+          (doc-site-repo-source-url target)))]))
 
-(define (doc-site-rewrite-language-links [html : String]) : String
+(define (doc-site-rewrite-language-links
+  [sections : DocSiteSectionList]
+  [html : String]) : String
   (let
     [cursor : i64 0]
     [n : i64 (string-length html)]
@@ -206,7 +325,7 @@
                           out
                           (substring html cursor (- href-start cursor)))
                         "href=\""
-                        (doc-site-rewrite-language-link-target target)
+                        (doc-site-rewrite-language-link-target sections target)
                         "\""
                         ""))
                     (set! cursor (+ target-end 1))))
@@ -379,7 +498,7 @@ pre {
   }
 }")
 
-(define (doc-site-index-entry [module : DocSiteModule]) : String
+(define (doc-site-index-module-entry [module : DocSiteModule]) : String
   (doc-html-cat5
     "<li><a href=\""
     (doc-html-escape (doc-site-module-output module))
@@ -387,13 +506,69 @@ pre {
     (doc-html-escape (doc-site-module-source module))
     "</code></a></li>\n"))
 
-(define (doc-site-index-entries [modules : DocSiteModuleList]) : String
+(define (doc-site-index-module-entries [modules : DocSiteModuleList]) : String
   (match modules
     [(DocSiteModuleNil) ""]
     [(DocSiteModuleCons module rest)
       (string-append
-        (doc-site-index-entry module)
-        (doc-site-index-entries rest))]))
+        (doc-site-index-module-entry module)
+        (doc-site-index-module-entries rest))]))
+
+(define (doc-site-index-guide-entry [guide : DocSiteGuidePage]) : String
+  (doc-html-cat5
+    "<li><a href=\""
+    (doc-html-escape (doc-site-guide-output guide))
+    "\">"
+    (doc-html-escape (doc-site-guide-label guide))
+    "</a></li>\n"))
+
+(define (doc-site-index-guide-entries [guides : DocSiteGuidePageList]) : String
+  (match guides
+    [(DocSiteGuidePageNil) ""]
+    [(DocSiteGuidePageCons guide rest)
+      (string-append
+        (doc-site-index-guide-entry guide)
+        (doc-site-index-guide-entries rest))]))
+
+(define (doc-site-render-guide-index-section
+  [title : String]
+  [guides : DocSiteGuidePageList]) : String
+  (doc-html-cat3
+    (doc-html-cat5
+      "<nav class=\"tl-doc-site-nav\" aria-label=\""
+      (doc-html-escape title)
+      "\">\n<h2>"
+      (doc-html-escape title)
+      "</h2>\n<ul>\n")
+    (doc-site-index-guide-entries guides)
+    "</ul>\n</nav>\n"))
+
+(define (doc-site-render-api-index-section [tree : DocSiteApiTree]) : String
+  (let
+    [root : String (doc-site-api-tree-root tree)]
+    (doc-html-cat3
+      (doc-html-cat5
+        "<nav class=\"tl-doc-site-nav\" aria-label=\""
+        (doc-html-escape root)
+        " API\">\n<h2>"
+        (doc-html-escape root)
+        "</h2>\n<ul>\n")
+      (doc-site-index-module-entries (doc-site-api-tree-modules tree))
+      "</ul>\n</nav>\n")))
+
+(define (doc-site-render-index-section [section : DocSiteSection]) : String
+  (match section
+    [(DocSiteGuideSection title guides)
+      (doc-site-render-guide-index-section title guides)]
+    [(DocSiteApiTreeSection tree) (doc-site-render-api-index-section tree)]))
+
+(define (doc-site-render-index-sections [sections : DocSiteSectionList]) : String
+  (match sections
+    [(DocSiteSectionNil) ""]
+    [(DocSiteSectionCons section rest)
+      (string-append
+        (doc-site-render-index-section section)
+        (doc-site-render-index-sections rest))]))
 
 (define (doc-site-module-label [module : DocSiteModule]) : String
   (let
@@ -428,23 +603,47 @@ pre {
       (doc-html-escape href)
       "\">")))
 
-(define (doc-site-sidebar-root-link [current : String]) : String
-  (if (string-eq current "stdlib.html")
-    "<a class=\"tl-doc-tree-root is-current\" aria-current=\"page\" href=\"stdlib.html\">stdlib</a>\n"
-    "<a class=\"tl-doc-tree-root\" href=\"stdlib.html\">stdlib</a>\n"))
-
-(define (doc-site-sidebar-language-entry
+(define (doc-site-sidebar-root-link
   [href : String]
   [label : String]
   [current : String]) : String
+  (if (string-eq href current)
+    (doc-html-cat5
+      "<a class=\"tl-doc-tree-root is-current\" aria-current=\"page\" href=\""
+      (doc-html-escape href)
+      "\">"
+      (doc-html-escape label)
+      "</a>\n")
+    (doc-html-cat5
+      "<a class=\"tl-doc-tree-root\" href=\""
+      (doc-html-escape href)
+      "\">"
+      (doc-html-escape label)
+      "</a>\n")))
+
+(define (doc-site-sidebar-guide-entry
+  [guide : DocSiteGuidePage]
+  [current : String]) : String
   (doc-html-cat5
     "<li>"
-    (doc-site-sidebar-link-open href current)
-    (doc-html-escape label)
+    (doc-site-sidebar-link-open (doc-site-guide-output guide) current)
+    (doc-html-escape (doc-site-guide-label guide))
     "</a></li>\n"
     ""))
 
-(define (doc-site-sidebar-entry [module : DocSiteModule] [current : String]) : String
+(define (doc-site-sidebar-guide-entries
+  [guides : DocSiteGuidePageList]
+  [current : String]) : String
+  (match guides
+    [(DocSiteGuidePageNil) ""]
+    [(DocSiteGuidePageCons guide rest)
+      (string-append
+        (doc-site-sidebar-guide-entry guide current)
+        (doc-site-sidebar-guide-entries rest current))]))
+
+(define (doc-site-sidebar-module-entry
+  [module : DocSiteModule]
+  [current : String]) : String
   (doc-html-cat5
     "<li>"
     (doc-site-sidebar-link-open (doc-site-module-output module) current)
@@ -452,42 +651,74 @@ pre {
     (doc-html-escape (doc-site-module-label module))
     "</code></a></li>\n"))
 
-(define (doc-site-sidebar-entries
+(define (doc-site-sidebar-module-entries
   [modules : DocSiteModuleList]
   [current : String]) : String
   (match modules
     [(DocSiteModuleNil) ""]
     [(DocSiteModuleCons module rest)
       (string-append
-        (doc-site-sidebar-entry module current)
-        (doc-site-sidebar-entries rest current))]))
+        (doc-site-sidebar-module-entry module current)
+        (doc-site-sidebar-module-entries rest current))]))
 
-(define (doc-site-stdlib-sidebar
-  [modules : DocSiteModuleList]
+(define (doc-site-sidebar-guide-section
+  [title : String]
+  [guides : DocSiteGuidePageList]
   [current : String]) : String
   (doc-html-cat5
-    "<nav class=\"tl-doc-stdlib-sidebar\" aria-label=\"Stdlib module tree\">\n<ul class=\"tl-doc-stdlib-tree\">\n<li>"
-    "<span class=\"tl-doc-tree-root\">Language</span>\n<ul>\n"
-    (doc-site-sidebar-language-entry "readme.html" "Overview" current)
-    (doc-site-sidebar-language-entry "spec.html" "Specification" current)
-    (doc-html-cat5
-      "</ul>\n</li>\n<li>"
-      (doc-site-sidebar-root-link current)
+    "<li><span class=\"tl-doc-tree-root\">"
+    (doc-html-escape title)
+    "</span>\n<ul>\n"
+    (doc-site-sidebar-guide-entries guides current)
+    "</ul>\n</li>\n"))
+
+(define (doc-site-sidebar-api-tree [tree : DocSiteApiTree] [current : String]) : String
+  (doc-html-cat3
+    "<li>"
+    (doc-site-sidebar-root-link
+      (doc-site-api-tree-output tree)
+      (doc-site-api-tree-root tree)
+      current)
+    (doc-html-cat3
       "<ul>\n"
-      (doc-site-sidebar-entries modules current)
-      "</ul>\n</li>\n</ul>\n</nav>\n")))
+      (doc-site-sidebar-module-entries (doc-site-api-tree-modules tree) current)
+      "</ul>\n</li>\n")))
+
+(define (doc-site-sidebar-section [section : DocSiteSection] [current : String]) : String
+  (match section
+    [(DocSiteGuideSection title guides)
+      (doc-site-sidebar-guide-section title guides current)]
+    [(DocSiteApiTreeSection tree) (doc-site-sidebar-api-tree tree current)]))
+
+(define (doc-site-sidebar-sections
+  [sections : DocSiteSectionList]
+  [current : String]) : String
+  (match sections
+    [(DocSiteSectionNil) ""]
+    [(DocSiteSectionCons section rest)
+      (string-append
+        (doc-site-sidebar-section section current)
+        (doc-site-sidebar-sections rest current))]))
+
+(define (doc-site-sidebar [sections : DocSiteSectionList] [current : String]) : String
+  (doc-html-cat5
+    "<nav class=\"tl-doc-stdlib-sidebar\" aria-label=\"Documentation tree\">\n<ul class=\"tl-doc-stdlib-tree\">\n"
+    (doc-site-sidebar-sections sections current)
+    "</ul>\n</nav>\n"
+    ""
+    ""))
 
 (define (doc-site-render-page
   [title : String]
   [subtitle : String]
-  [modules : DocSiteModuleList]
+  [sections : DocSiteSectionList]
   [current : String]
   [body : String]) : String
   (doc-html-cat5
     (doc-html-page-open title)
-    (doc-html-header "TypeLisp API" subtitle)
+    (doc-html-header "TypeLisp Docs" subtitle)
     "<div class=\"tl-doc-shell\">\n"
-    (doc-site-stdlib-sidebar modules current)
+    (doc-site-sidebar sections current)
     (doc-html-cat5
       "<main class=\"tl-doc-content\">\n"
       body
@@ -495,39 +726,42 @@ pre {
       (doc-html-page-close)
       "")))
 
-(define (doc-site-render-index [modules : DocSiteModuleList] [current : String]) : String
+(define (doc-site-render-index
+  [sections : DocSiteSectionList]
+  [current : String]) : String
   (doc-site-render-page
-    "TypeLisp API"
-    "language reference and stdlib API"
-    modules
+    "TypeLisp Docs"
+    "language guides and API reference"
+    sections
     current
-    (string-append
-      "<nav class=\"tl-doc-site-nav\" aria-label=\"Language reference\">\n<h2>Language reference</h2>\n<ul>\n<li><a href=\"readme.html\">Project overview</a></li>\n<li><a href=\"spec.html\">Language specification</a></li>\n</ul>\n</nav>\n"
-      (doc-html-cat5
-        "<nav class=\"tl-doc-site-nav\" aria-label=\"Stdlib modules\">\n<h2>Stdlib modules</h2>\n<ul>\n"
-        (doc-site-index-entries modules)
-        "</ul>\n</nav>\n"
-        ""
-        ""))))
+    (doc-site-render-index-sections sections)))
 
-(define (doc-site-render-language-page
-  [modules : DocSiteModuleList]
-  [source : String]
-  [output : String]
-  [title : String]
+(define (doc-site-render-guide-page
+  [sections : DocSiteSectionList]
+  [guide : DocSiteGuidePage]
   [markdown : String]) : String
   (doc-site-render-page
-    title
-    source
-    modules
-    output
+    (doc-site-guide-title guide)
+    (doc-site-guide-source guide)
+    sections
+    (doc-site-guide-output guide)
     (doc-html-cat3
       "<article class=\"tl-doc-language\">\n"
-      (doc-site-rewrite-language-links (md-render-html markdown))
+      (doc-site-rewrite-language-links sections (md-render-html markdown))
       "</article>\n")))
 
+(define (doc-site-render-api-tree-index
+  [sections : DocSiteSectionList]
+  [tree : DocSiteApiTree]) : String
+  (doc-site-render-page
+    (doc-html-cat3 "TypeLisp API: " (doc-site-api-tree-root tree) "")
+    (doc-site-api-tree-root tree)
+    sections
+    (doc-site-api-tree-output tree)
+    (doc-site-render-api-index-section tree)))
+
 (define (doc-site-render-module-page
-  [modules : DocSiteModuleList]
+  [sections : DocSiteSectionList]
   [module : DocSiteModule]
   [docs : DocExtraction]) : String
   (let
@@ -536,7 +770,7 @@ pre {
     (doc-site-render-page
       title
       source
-      modules
+      sections
       (doc-site-module-output module)
       (doc-html-module-section (DocModule source docs)))))
 
@@ -579,7 +813,7 @@ pre {
 
 (define (doc-site-write-module-page
   [output-dir : String]
-  [modules : DocSiteModuleList]
+  [sections : DocSiteSectionList]
   [module : DocSiteModule]) : unit
   (let
     [source : String (doc-site-module-source module)]
@@ -588,62 +822,89 @@ pre {
     [docs : DocExtraction (doc-site-read-module-docs source)]
     (doc-site-write-file
       output
-      (doc-site-render-module-page modules module docs))))
+      (doc-site-render-module-page sections module docs))))
 
 (define (doc-site-write-module-pages
   [output-dir : String]
-  [modules : DocSiteModuleList]
+  [sections : DocSiteSectionList]
   [remaining : DocSiteModuleList]) : unit
   (match remaining
     [(DocSiteModuleNil) unit]
     [(DocSiteModuleCons module rest)
       (begin
-        (doc-site-write-module-page output-dir modules module)
-        (doc-site-write-module-pages output-dir modules rest))]))
+        (doc-site-write-module-page output-dir sections module)
+        (doc-site-write-module-pages output-dir sections rest))]))
 
-(define (doc-site-write-language-page
+(define (doc-site-write-guide-page
   [output-dir : String]
-  [modules : DocSiteModuleList]
-  [source : String]
-  [output : String]
-  [title : String]) : unit
+  [sections : DocSiteSectionList]
+  [guide : DocSiteGuidePage]) : unit
   (doc-site-write-file
-    (doc-site-path-join output-dir output)
-    (doc-site-render-language-page
-      modules
-      source
-      output
-      title
-      (doc-site-read-markdown source))))
+    (doc-site-path-join output-dir (doc-site-guide-output guide))
+    (doc-site-render-guide-page
+      sections
+      guide
+      (doc-site-read-markdown (doc-site-guide-source guide)))))
+
+(define (doc-site-write-guide-pages
+  [output-dir : String]
+  [sections : DocSiteSectionList]
+  [guides : DocSiteGuidePageList]) : unit
+  (match guides
+    [(DocSiteGuidePageNil) unit]
+    [(DocSiteGuidePageCons guide rest)
+      (begin
+        (doc-site-write-guide-page output-dir sections guide)
+        (doc-site-write-guide-pages output-dir sections rest))]))
+
+(define (doc-site-write-api-tree
+  [output-dir : String]
+  [sections : DocSiteSectionList]
+  [tree : DocSiteApiTree]) : unit
+  (begin
+    (doc-site-write-file
+      (doc-site-path-join output-dir (doc-site-api-tree-output tree))
+      (doc-site-render-api-tree-index sections tree))
+    (doc-site-write-module-pages
+      output-dir
+      sections
+      (doc-site-api-tree-modules tree))))
+
+(define (doc-site-write-section
+  [output-dir : String]
+  [sections : DocSiteSectionList]
+  [section : DocSiteSection]) : unit
+  (match section
+    [(DocSiteGuideSection _ guides)
+      (doc-site-write-guide-pages output-dir sections guides)]
+    [(DocSiteApiTreeSection tree)
+      (doc-site-write-api-tree output-dir sections tree)]))
+
+(define (doc-site-write-sections
+  [output-dir : String]
+  [sections : DocSiteSectionList]
+  [remaining : DocSiteSectionList]) : unit
+  (match remaining
+    [(DocSiteSectionNil) unit]
+    [(DocSiteSectionCons section rest)
+      (begin
+        (doc-site-write-section output-dir sections section)
+        (doc-site-write-sections output-dir sections rest))]))
 
 (define (doc-site-build [output-dir : String]) : i64
   (let
-    [modules : DocSiteModuleList (doc-site-stdlib-modules)]
+    [sections : DocSiteSectionList (doc-site-typelisp-sections)]
+    [stdlib : DocSiteApiTree (doc-site-stdlib-api-tree)]
     (begin
-      (doc-site-validate-stdlib-manifest modules)
+      (doc-site-validate-stdlib-manifest (doc-site-api-tree-modules stdlib))
       (doc-site-ensure-dir output-dir)
       (doc-site-write-file
         (doc-site-path-join output-dir "typelisp-docs.css")
         (doc-site-css))
       (doc-site-write-file
         (doc-site-path-join output-dir "index.html")
-        (doc-site-render-index modules "index.html"))
-      (doc-site-write-file
-        (doc-site-path-join output-dir "stdlib.html")
-        (doc-site-render-index modules "stdlib.html"))
-      (doc-site-write-language-page
-        output-dir
-        modules
-        "README.md"
-        "readme.html"
-        "TypeLisp Overview")
-      (doc-site-write-language-page
-        output-dir
-        modules
-        "SPEC.md"
-        "spec.html"
-        "TypeLisp Language Reference")
-      (doc-site-write-module-pages output-dir modules modules)
+        (doc-site-render-index sections "index.html"))
+      (doc-site-write-sections output-dir sections sections)
       0)))
 
 (define (doc-site-smoke-source) : String
@@ -660,7 +921,7 @@ pre {
 (define (doc-site-language-smoke-source) : String
   "# Language Reference
 
-See [the spec](SPEC.md) and [the builder](selfhost/doc_site.tl).
+See [the spec](SPEC.md), [the second module](stdlib/second.tl), and [the builder](selfhost/doc_site.tl).
 
 ```typelisp
 (define answer : i64 42)
@@ -673,6 +934,27 @@ See [the spec](SPEC.md) and [the builder](selfhost/doc_site.tl).
       (DocSiteModule "stdlib/second.tl" "stdlib-second.html")
       DocSiteModuleNil)))
 
+(define (doc-site-smoke-guides) : DocSiteGuidePageList
+  (DocSiteGuidePageCons
+    (DocSiteGuidePage "TypeLisp Overview" "README.md" "readme.html" "Overview")
+    (DocSiteGuidePageCons
+      (DocSiteGuidePage
+        "TypeLisp Language Reference"
+        "SPEC.md"
+        "spec.html"
+        "Specification")
+      DocSiteGuidePageNil)))
+
+(define (doc-site-smoke-api-tree) : DocSiteApiTree
+  (DocSiteApiTree "stdlib" "stdlib.html" (doc-site-smoke-modules)))
+
+(define (doc-site-smoke-sections) : DocSiteSectionList
+  (DocSiteSectionCons
+    (DocSiteGuideSection "Language" (doc-site-smoke-guides))
+    (DocSiteSectionCons
+      (DocSiteApiTreeSection (doc-site-smoke-api-tree))
+      DocSiteSectionNil)))
+
 (define (doc-site-require [ok : bool] [message : String]) : bool
   (if ok
     true
@@ -682,33 +964,35 @@ See [the spec](SPEC.md) and [the builder](selfhost/doc_site.tl).
 
 (define (doc-site-smoke) : i64
   (let
-    [modules : DocSiteModuleList (doc-site-smoke-modules)]
-    [index : String (doc-site-render-index modules "index.html")]
+    [sections : DocSiteSectionList (doc-site-smoke-sections)]
+    [index : String (doc-site-render-index sections "index.html")]
     [page : String
       (doc-site-render-module-page
-        modules
+        sections
         (DocSiteModule "stdlib/smoke<&>.tl" "stdlib-smoke.html")
         (doc-extract-source (doc-site-smoke-source)))]
     [second-page : String
       (doc-site-render-module-page
-        modules
+        sections
         (DocSiteModule "stdlib/second.tl" "stdlib-second.html")
         (doc-extract-source (doc-site-second-smoke-source)))]
     [language-page : String
-      (doc-site-render-language-page
-        modules
-        "README.md"
-        "readme.html"
-        "TypeLisp Overview"
+      (doc-site-render-guide-page
+        sections
+        (DocSiteGuidePage
+          "TypeLisp Overview"
+          "README.md"
+          "readme.html"
+          "Overview")
         (doc-site-language-smoke-source))]
     (begin
       (doc-html-require-contains
         index
-        "<nav class=\"tl-doc-site-nav\" aria-label=\"Stdlib modules\">"
+        "<nav class=\"tl-doc-site-nav\" aria-label=\"stdlib API\">"
         "doc-site: site nav missing")
       (doc-html-require-contains
         index
-        "<nav class=\"tl-doc-site-nav\" aria-label=\"Language reference\">"
+        "<nav class=\"tl-doc-site-nav\" aria-label=\"Language\">"
         "doc-site: language nav missing")
       (doc-html-require-contains
         index
@@ -720,7 +1004,7 @@ See [the spec](SPEC.md) and [the builder](selfhost/doc_site.tl).
         "doc-site: spec link missing")
       (doc-html-require-contains
         index
-        "<nav class=\"tl-doc-stdlib-sidebar\" aria-label=\"Stdlib module tree\">"
+        "<nav class=\"tl-doc-stdlib-sidebar\" aria-label=\"Documentation tree\">"
         "doc-site: sidebar missing")
       (doc-html-require-contains
         index
@@ -786,6 +1070,10 @@ See [the spec](SPEC.md) and [the builder](selfhost/doc_site.tl).
         language-page
         "href=\"spec.html\""
         "doc-site: language spec link rewrite missing")
+      (doc-html-require-contains
+        language-page
+        "href=\"stdlib-second.html\""
+        "doc-site: language api link rewrite missing")
       (doc-html-require-contains
         language-page
         "href=\"https://github.com/JoNil-Botta/typelisp/blob/main/selfhost/doc_site.tl\""

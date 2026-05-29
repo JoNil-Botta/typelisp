@@ -2230,6 +2230,34 @@
           (compiler-backend-string-contains? asm (compiler-backend-todo-marker))))]
     [(ErrCompilerBackend _) false]))
 
+;; Backend emit-shape coverage for arena-owned boxes (#1443). `(box 42)`
+;; allocates `size-of(i64)` = 8 bytes via `tl_alloc` and stores the boxed value
+;; into that storage; `(box-get b)` loads the value back through the box pointer.
+;; Boxes reuse the existing `tl_alloc` / pointer store/load paths (no new IR or
+;; runtime), so this locks down that the allocation, store, and load shapes are
+;; emitted with no `# TODO` placeholder.
+(define (compiler-backend-box-source) : String
+  "(define (main) : i64
+  (let
+    [b : (Box i64) (box 42)]
+    (box-get b)))")
+
+(define (compiler-backend-box-ok?) : bool
+  (match (compiler-backend-emit-source (compiler-backend-box-source))
+    [(OkCompilerBackend asm)
+      (backend-and4
+        ;; (box 42): allocate size-of(i64)=8 bytes for the box storage,
+        (compiler-backend-string-contains?
+          asm
+          "    movq $8, %rdi\n    call tl_alloc\n")
+        ;; store the boxed value (materialized in %rax) into the box pointer,
+        (compiler-backend-string-contains? asm "    movq %rax, (%r10)\n")
+        ;; (box-get b): load the boxed value back through the box pointer.
+        (compiler-backend-string-contains? asm "    movq (%r10), %rax\n")
+        (not
+          (compiler-backend-string-contains? asm (compiler-backend-todo-marker))))]
+    [(ErrCompilerBackend _) false]))
+
 (define (compiler-backend-self-test) : i64
   (if (and
     (backend-and8
@@ -2280,7 +2308,9 @@
                 (and
                   (compiler-backend-string-ref-shape-ok?)
                   (and
-                    (compiler-backend-raw-pointer-fixture-shape-ok?)
+                    (and
+                      (compiler-backend-raw-pointer-fixture-shape-ok?)
+                      (compiler-backend-box-ok?))
                     (backend-and8
                       (compiler-backend-scalar-wide-ops-ok?)
                       (compiler-backend-scalar-div-mod-ok?)

@@ -40,6 +40,11 @@ installed-root discovery, namespace isolation, or an implicit prelude.
 - `process.tl`: process command/output/error data model for selfhost tools.
   Runtime execution currently returns structured unsupported diagnostics rather
   than using Rust host actions. Import it with `(import "stdlib/process.tl")`.
+- `queue.tl`: growable `i64` queue/deque (collections v1, #1549) over a
+  circular `(Array i64)`: `i64-deque-with-capacity` / `-new` / `-push-back` /
+  `-push-front` / `-pop-front` / `-pop-back` / `-peek-front` / `-peek-back` /
+  `-get` / `-len` / `-capacity`, with wraparound growth and explicit empty-pop
+  results. Import it with `(import "stdlib/queue.tl")`.
 - `random.tl`: deterministic, seeded, non-cryptographic random helpers and
   weighted-index selection for selfhost tools, plus an OS-entropy seed source.
   Import it with `(import "stdlib/random.tl")`.

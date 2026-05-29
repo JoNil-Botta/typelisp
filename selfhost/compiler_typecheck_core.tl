@@ -6690,6 +6690,325 @@
           [(ErrTcUnit message) (ErrTcUnit message)])]
       [(ErrTcType message) (ErrTcUnit message)])))
 
+;; --- whole-local move checker (#1048) ---------------------------------------
+;;
+;; Reject use-after-move for move-only whole locals/parameters in source
+;; evaluation order. This first slice is deliberately SOUND (it never reports a
+;; false positive) by under-approximating: it tracks only the unambiguous move
+;; sites for whole places -- `let` initialization from a move-only variable and
+;; `set!` of a move-only variable into another slot -- and flags a later read of
+;; a definitely-moved place. Every position where move/borrow state is uncertain
+;; (function-call arguments, loop-carried state, match scrutinees, aggregate
+;; paths) is treated as "not moved", deferring those move sites to follow-up
+;; slices (#1049 path moves, #1050 move-while-borrowed) rather than risking a
+;; spurious rejection of existing valid code. Reads never move; branches merge by
+;; union (a place moved on any arm is moved afterward); loops and lambdas discard
+;; their body's moves for the post-state because they may run zero times or be
+;; deferred. Reassigning a slot with `set!` clears its moved mark.
+(defenum TcMovedSet
+  (TcMovedNil)
+  (TcMovedCons String TcMovedSet))
+
+(defenum TcMoveResult
+  (OkTcMove TcMovedSet)
+  (ErrTcMove String))
+
+(defenum TcMoveBindings
+  (OkTcMoveBindings TcTypeEnv TcMovedSet TcMovedSet)
+  (ErrTcMoveBindings String))
+
+(define (tc-moved-contains? [set : TcMovedSet] [name : String]) : bool
+  (match set
+    [(TcMovedNil) false]
+    [(TcMovedCons n rest)
+      (if (string-eq n name)
+        true
+        (tc-moved-contains? rest name))]))
+
+(define (tc-moved-add [set : TcMovedSet] [name : String]) : TcMovedSet
+  (if (tc-moved-contains? set name)
+    set
+    (TcMovedCons name set)))
+
+(define (tc-moved-remove [set : TcMovedSet] [name : String]) : TcMovedSet
+  (match set
+    [(TcMovedNil) (TcMovedNil)]
+    [(TcMovedCons n rest)
+      (if (string-eq n name)
+        (tc-moved-remove rest name)
+        (TcMovedCons n (tc-moved-remove rest name)))]))
+
+(define (tc-moved-union [a : TcMovedSet] [b : TcMovedSet]) : TcMovedSet
+  (match a
+    [(TcMovedNil) b]
+    [(TcMovedCons n rest) (tc-moved-union rest (tc-moved-add b n))]))
+
+(define (tc-move-var-move-only? [env : TcTypeEnv] [name : String]) : bool
+  (match (tc-lookup env name)
+    [(OkTcType ty) (tc-type-move-only? ty)]
+    [(ErrTcType _) false]))
+
+;; The bare variable named by an init/rhs expression, unwrapping spans and
+;; annotations, or none if the expression is not a whole-variable reference.
+(define (tc-move-bare-var [expr : AstExpr]) : TcMaybeString
+  (match expr
+    [(AstExprSpanned inner _) (tc-move-bare-var inner)]
+    [(AstExprAnn inner _) (tc-move-bare-var inner)]
+    [(AstExprVar name) (TcSomeString name)]
+    [_ (TcNoString)]))
+
+(define (tc-move-binding-type
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [maybe-ty : AstMaybeType]
+  [init : AstExpr]) : AstType
+  (match maybe-ty
+    [(AstSomeType t) (tc-resolve-type ctx t)]
+    [(AstNoType)
+      (match (tc-expr ctx env init)
+        [(OkTcType t) t]
+        [(ErrTcType _) (AstTyI64)])]))
+
+;; The names that are genuine local/parameter bindings, seeded from a function's
+;; parameter list. Only these are tracked as movable places; enum constructors,
+;; globals, and function references share the variable syntax but are never moved.
+(define (tc-move-params-locals [params : AstParamList] [acc : TcMovedSet]) : TcMovedSet
+  (match params
+    [(AstParamNil) acc]
+    [(AstParamCons param rest)
+      (match param
+        [(AstParam name _ _)
+          (tc-move-params-locals rest (tc-moved-add acc name))])]))
+
+;; Mark the source variable moved when an init/rhs is a bare move-only variable
+;; that names a tracked local/parameter (not an enum constructor or global).
+(define (tc-move-after-bind
+  [env : TcTypeEnv]
+  [locals : TcMovedSet]
+  [moved : TcMovedSet]
+  [init : AstExpr]) : TcMovedSet
+  (match (tc-move-bare-var init)
+    [(TcSomeString v)
+      (if (and (tc-moved-contains? locals v) (tc-move-var-move-only? env v))
+        (tc-moved-add moved v)
+        moved)]
+    [(TcNoString) moved]))
+
+(define (tc-move-check-exprs
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [locals : TcMovedSet]
+  [moved : TcMovedSet]
+  [exprs : AstExprList]) : TcMoveResult
+  (match exprs
+    [(AstExprNil) (OkTcMove moved)]
+    [(AstExprCons head rest)
+      (match (tc-move-check-expr ctx env locals moved head)
+        [(OkTcMove moved1) (tc-move-check-exprs ctx env locals moved1 rest)]
+        [(ErrTcMove message) (ErrTcMove message)])]))
+
+(define (tc-move-check-let-bindings
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [locals : TcMovedSet]
+  [moved : TcMovedSet]
+  [bindings : AstLetBindingList]) : TcMoveBindings
+  (match bindings
+    [(AstLetBindingNil) (OkTcMoveBindings env moved locals)]
+    [(AstLetBindingCons binding rest)
+      (match binding
+        [(AstLetBinding name maybe-ty init)
+          (match (tc-move-check-expr ctx env locals moved init)
+            [(OkTcMove moved1)
+              (tc-move-check-let-bindings
+                ctx
+                (tc-bind env name (tc-move-binding-type ctx env maybe-ty init))
+                (tc-moved-add locals name)
+                (tc-moved-remove
+                  (tc-move-after-bind env locals moved1 init)
+                  name)
+                rest)]
+            [(ErrTcMove message) (ErrTcMoveBindings message)])])]))
+
+;; Each arm is checked from the same post-scrutinee state; results are unioned so
+;; a place moved on any arm is considered moved after the match.
+(define (tc-move-check-arms
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [locals : TcMovedSet]
+  [moved : TcMovedSet]
+  [arms : AstMatchArmList]) : TcMoveResult
+  (match arms
+    [(AstMatchArmNil) (OkTcMove moved)]
+    [(AstMatchArmCons arm rest)
+      (match arm
+        [(AstMatchArm _ body)
+          (match (tc-move-check-expr ctx env locals moved body)
+            [(OkTcMove arm-moved)
+              (match (tc-move-check-arms ctx env locals moved rest)
+                [(OkTcMove rest-moved)
+                  (OkTcMove (tc-moved-union arm-moved rest-moved))]
+                [(ErrTcMove message) (ErrTcMove message)])]
+            [(ErrTcMove message) (ErrTcMove message)])])]))
+
+(define (tc-move-check-expr
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [locals : TcMovedSet]
+  [moved : TcMovedSet]
+  [expr : AstExpr]) : TcMoveResult
+  (match expr
+    [(AstExprSpanned inner _) (tc-move-check-expr ctx env locals moved inner)]
+    [(AstExprLiteral _) (OkTcMove moved)]
+    [(AstExprVar name)
+      (if (tc-moved-contains? moved name)
+        (ErrTcMove
+          (string-append
+            (string-append "typecheck: use of moved value `" name)
+            "`"))
+        (OkTcMove moved))]
+    [(AstExprBinary _ left right)
+      (match (tc-move-check-expr ctx env locals moved left)
+        [(OkTcMove moved1) (tc-move-check-expr ctx env locals moved1 right)]
+        [(ErrTcMove message) (ErrTcMove message)])]
+    [(AstExprUnary _ inner) (tc-move-check-expr ctx env locals moved inner)]
+    [(AstExprCall func args)
+      (match (tc-move-check-expr ctx env locals moved func)
+        [(OkTcMove moved1) (tc-move-check-exprs ctx env locals moved1 args)]
+        [(ErrTcMove message) (ErrTcMove message)])]
+    [(AstExprIf cond then-branch else-branch)
+      (match (tc-move-check-expr ctx env locals moved cond)
+        [(OkTcMove movedc)
+          (match (tc-move-check-expr ctx env locals movedc then-branch)
+            [(OkTcMove movedt)
+              (match (tc-move-check-expr ctx env locals movedc else-branch)
+                [(OkTcMove movede) (OkTcMove (tc-moved-union movedt movede))]
+                [(ErrTcMove message) (ErrTcMove message)])]
+            [(ErrTcMove message) (ErrTcMove message)])]
+        [(ErrTcMove message) (ErrTcMove message)])]
+    [(AstExprLet bindings body)
+      (match (tc-move-check-let-bindings ctx env locals moved bindings)
+        [(OkTcMoveBindings env2 moved2 locals2)
+          (tc-move-check-expr ctx env2 locals2 moved2 body)]
+        [(ErrTcMoveBindings message) (ErrTcMove message)])]
+    [(AstExprLambda _ _ body)
+      (match (tc-move-check-expr ctx env locals moved body)
+        [(OkTcMove _) (OkTcMove moved)]
+        [(ErrTcMove message) (ErrTcMove message)])]
+    [(AstExprTuple exprs) (tc-move-check-exprs ctx env locals moved exprs)]
+    [(AstExprTupleRef inner _) (tc-move-check-expr ctx env locals moved inner)]
+    [(AstExprArray exprs) (tc-move-check-exprs ctx env locals moved exprs)]
+    [(AstExprMakeArray _ inner) (tc-move-check-expr ctx env locals moved inner)]
+    [(AstExprArrayRef array index)
+      (match (tc-move-check-expr ctx env locals moved array)
+        [(OkTcMove moved1) (tc-move-check-expr ctx env locals moved1 index)]
+        [(ErrTcMove message) (ErrTcMove message)])]
+    [(AstExprArraySet array index value)
+      (match (tc-move-check-expr ctx env locals moved array)
+        [(OkTcMove moved1)
+          (match (tc-move-check-expr ctx env locals moved1 index)
+            [(OkTcMove moved2) (tc-move-check-expr ctx env locals moved2 value)]
+            [(ErrTcMove message) (ErrTcMove message)])]
+        [(ErrTcMove message) (ErrTcMove message)])]
+    [(AstExprArrayPush array value)
+      (match (tc-move-check-expr ctx env locals moved array)
+        [(OkTcMove moved1) (tc-move-check-expr ctx env locals moved1 value)]
+        [(ErrTcMove message) (ErrTcMove message)])]
+    [(AstExprStringRef str index)
+      (match (tc-move-check-expr ctx env locals moved str)
+        [(OkTcMove moved1) (tc-move-check-expr ctx env locals moved1 index)]
+        [(ErrTcMove message) (ErrTcMove message)])]
+    [(AstExprWhile cond body)
+      (match (tc-move-check-expr ctx env locals moved cond)
+        [(OkTcMove movedc)
+          (match (tc-move-check-expr ctx env locals movedc body)
+            [(OkTcMove _) (OkTcMove movedc)]
+            [(ErrTcMove message) (ErrTcMove message)])]
+        [(ErrTcMove message) (ErrTcMove message)])]
+    [(AstExprBegin exprs) (tc-move-check-exprs ctx env locals moved exprs)]
+    [(AstExprUnsafe exprs) (tc-move-check-exprs ctx env locals moved exprs)]
+    [(AstExprSet name rhs)
+      (match (tc-move-check-expr ctx env locals moved rhs)
+        [(OkTcMove moved1)
+          (OkTcMove
+            (tc-moved-remove (tc-move-after-bind env locals moved1 rhs) name))]
+        [(ErrTcMove message) (ErrTcMove message)])]
+    [(AstExprAnn inner _) (tc-move-check-expr ctx env locals moved inner)]
+    [(AstExprCast inner _) (tc-move-check-expr ctx env locals moved inner)]
+    [(AstExprBorrow _ inner) (tc-move-check-expr ctx env locals moved inner)]
+    [(AstExprMatch scrut arms)
+      (match (tc-move-check-expr ctx env locals moved scrut)
+        [(OkTcMove moveds) (tc-move-check-arms ctx env locals moveds arms)]
+        [(ErrTcMove message) (ErrTcMove message)])]
+    [(AstExprForeach index index-ty start end body)
+      (match (tc-move-check-expr ctx env locals moved start)
+        [(OkTcMove moved1)
+          (match (tc-move-check-expr ctx env locals moved1 end)
+            [(OkTcMove moved2)
+              (match (tc-move-check-expr
+                ctx
+                (tc-bind env index (tc-resolve-type ctx index-ty))
+                (tc-moved-add locals index)
+                moved2
+                body)
+                [(OkTcMove _) (OkTcMove moved2)]
+                [(ErrTcMove message) (ErrTcMove message)])]
+            [(ErrTcMove message) (ErrTcMove message)])]
+        [(ErrTcMove message) (ErrTcMove message)])]
+    [(AstExprSpmdReduce _ _ _ a b c d)
+      (match (tc-move-check-expr ctx env locals moved a)
+        [(OkTcMove m1)
+          (match (tc-move-check-expr ctx env locals m1 b)
+            [(OkTcMove m2)
+              (match (tc-move-check-expr ctx env locals m2 c)
+                [(OkTcMove m3) (tc-move-check-expr ctx env locals m3 d)]
+                [(ErrTcMove message) (ErrTcMove message)])]
+            [(ErrTcMove message) (ErrTcMove message)])]
+        [(ErrTcMove message) (ErrTcMove message)])]
+    [(AstExprStructGet inner _) (tc-move-check-expr ctx env locals moved inner)]
+    [(AstExprWithRegion _ exprs)
+      (tc-move-check-exprs ctx env locals moved exprs)]
+    [(AstExprWithResource _ exprs)
+      (tc-move-check-exprs ctx env locals moved exprs)]
+    [(AstExprBox inner) (tc-move-check-expr ctx env locals moved inner)]
+    [(AstExprBoxGet inner) (tc-move-check-expr ctx env locals moved inner)]
+    [(AstExprTypeLiteral _) (OkTcMove moved)]
+    [(AstExprComptime inner) (tc-move-check-expr ctx env locals moved inner)]
+    [(AstExprQuote _) (OkTcMove moved)]
+    [(AstExprQuasiquote _) (OkTcMove moved)]
+    [(AstExprUnquote _) (OkTcMove moved)]
+    [(AstExprUnquoteSplicing _) (OkTcMove moved)]
+    [(AstExprTry inner) (tc-move-check-expr ctx env locals moved inner)]
+    [(AstExprPtrNull _) (OkTcMove moved)]
+    [(AstExprPtrNullCheck inner)
+      (tc-move-check-expr ctx env locals moved inner)]
+    [(AstExprPtrRead inner) (tc-move-check-expr ctx env locals moved inner)]
+    [(AstExprPtrWrite ptr value)
+      (match (tc-move-check-expr ctx env locals moved ptr)
+        [(OkTcMove moved1) (tc-move-check-expr ctx env locals moved1 value)]
+        [(ErrTcMove message) (ErrTcMove message)])]
+    [(AstExprPtrOffset ptr offset)
+      (match (tc-move-check-expr ctx env locals moved ptr)
+        [(OkTcMove moved1) (tc-move-check-expr ctx env locals moved1 offset)]
+        [(ErrTcMove message) (ErrTcMove message)])]
+    [(AstExprPtrCast inner _) (tc-move-check-expr ctx env locals moved inner)]
+    [(AstExprPtrToInt inner) (tc-move-check-expr ctx env locals moved inner)]
+    [(AstExprIntToPtr inner _) (tc-move-check-expr ctx env locals moved inner)]))
+
+(define (tc-move-check-body
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [params : AstParamList]
+  [body : AstExpr]) : ResultTcUnit
+  (match (tc-move-check-expr
+    ctx
+    env
+    (tc-move-params-locals params (TcMovedNil))
+    (TcMovedNil)
+    body)
+    [(OkTcMove _) OkTcUnit]
+    [(ErrTcMove message) (ErrTcUnit message)]))
+
 (define (tc-check-decl [ctx : TcContext] [top-env : TcTypeEnv] [decl : AstDecl]) : ResultTcUnit
   (match decl
     [(AstDeclDef _ maybe-ty expr)
@@ -6720,7 +7039,7 @@
               got
               (tc-resolve-type ctx ret)
               "typecheck: return type mismatch")
-              [(OkTcUnit) OkTcUnit]
+              [(OkTcUnit) (tc-move-check-body ctx env params body)]
               [(ErrTcUnit message) (ErrTcUnit message)])]
           [(ErrTcType message) (ErrTcUnit message)]))]
     [(AstDeclDefMacro _ params ret body)

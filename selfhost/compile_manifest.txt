@@ -210,10 +210,9 @@ contains|_tl_lower_compiler_source:
 end
 
 case|selfhost_compiler_bounds_check_smoke|selfhost/compiler_bounds_check_smoke.tl|assembly|exactly-one|direct
-requires-stage0-mode|#1437 stage1 compiler resource blocker (imports backend)
 contains|_tl_bounds_check_smoke_program:
 contains|_tl_compiler_backend_emit_program:
-contains|_tl_optimize_program:
+contains|_tl_optimize_program_with_level:
 end
 
 case|selfhost_compiler_backend_stack_args_fixture|selfhost/compiler_backend_stack_args_fixture.tl|assembly|exactly-one|direct
@@ -224,7 +223,6 @@ contains|linux-x86_64
 end
 
 case|selfhost_compiler_check_core|selfhost/compiler_check_core.tl|assembly|skip|direct
-requires-stage0-mode|#1437 stage1 compiler resource blocker (library root)
 contains|_tl_compiler_check_file:
 contains|_tl_compiler_check_file_with_roots:
 contains|_tl_compiler_check_source_with_roots:
@@ -237,10 +235,8 @@ contains|_tl_typecheck_compiler_specialized_program_with_paths:
 end
 
 case|selfhost_compiler_check_smoke|selfhost/compiler_check_smoke.tl|assembly|exactly-one|direct
-requires-stage0-mode|#1437 stage1 compiler resource blocker (imports typechecker)
 contains|_tl_compiler_check_self_test:
 contains|_tl_compiler_load_self_test:
-contains|_tl_compiler_check_file:
 contains|_tl_compiler_check_source:
 end
 
@@ -300,7 +296,6 @@ contains|_tl_compiler_ir_tail_call_render_ok_question:
 end
 
 case|selfhost_compiler_typecheck_reflection_smoke|selfhost/compiler_typecheck_reflection_smoke.tl|assembly|exactly-one|direct
-requires-stage0-mode|#1437 stage1 compiler resource blocker (imports typechecker)
 contains|_tl_compiler_typecheck_reflection_tests_ok_question:
 end
 
@@ -331,13 +326,11 @@ contains|lower: unsupported expression
 end
 
 case|selfhost_compiler_lower_smoke|selfhost/compiler_lower_smoke.tl|assembly|exactly-one|direct
-requires-stage0-mode|#1437 stage1 compiler resource blocker (imports typechecker)
 contains|_tl_compiler_lower_self_test:
 contains|_tl_lower_compiler_source:
 end
 
 case|selfhost_compiler_optimize|selfhost/compiler_optimize.tl|assembly|skip|direct
-requires-stage0-mode|#1437 stage1 compiler resource blocker (imports IR types)
 contains|_tl_optimize_program:
 contains|_tl_optimize_program_with_level:
 contains|_tl_opt_fold_instrs:
@@ -352,7 +345,6 @@ contains|_tl_opt_verify_function:
 end
 
 case|selfhost_compiler_optimize_smoke|selfhost/compiler_optimize_smoke.tl|assembly|exactly-one|direct
-requires-stage0-mode|#1437 stage1 compiler resource blocker (imports optimizer/IR)
 contains|_tl_compiler_optimize_self_test:
 contains|_tl_compiler_optimize_strength_self_test:
 contains|_tl_compiler_optimize_bounds_self_test:
@@ -389,7 +381,6 @@ contains|_tl_compiler_reg_plan_function:
 end
 
 case|selfhost_compiler_specialize|selfhost/compiler_specialize.tl|assembly|skip|direct
-requires-stage0-mode|#1437 stage1 compiler resource blocker (specializer/type-value pipeline)
 contains|_tl_compiler_specialize_program:
 contains|_tl_compiler_specialize_self_test:
 contains|__tl_specialized_alloc_type_i64_none
@@ -397,7 +388,6 @@ contains|specialize: expected type value
 end
 
 case|selfhost_compiler_specialize_smoke|selfhost/compiler_specialize_smoke.tl|assembly|exactly-one|direct
-requires-stage0-mode|#1437 stage1 compiler resource blocker (imports specializer)
 contains|_tl_compiler_specialize_self_test:
 contains|_tl_compiler_specialize_program:
 end
@@ -413,7 +403,6 @@ contains|_tl_compiler_symbols_self_test:
 end
 
 case|selfhost_compiler_typecheck|selfhost/compiler_typecheck.tl|assembly|skip|direct
-requires-stage0-mode|#1437 stage1 compiler resource blocker (library root)
 contains|_tl_typecheck_compiler_program:
 contains|_tl_compiler_typecheck_self_test:
 contains|_tl_tc_source_type_policy_message:
@@ -431,7 +420,6 @@ contains|source-level type parameters
 end
 
 case|selfhost_compiler_typecheck_smoke|selfhost/compiler_typecheck_smoke.tl|assembly|exactly-one|direct
-requires-stage0-mode|#1437 stage1 compiler resource blocker (imports typechecker)
 contains|_tl_compiler_typecheck_self_test:
 contains|_tl_typecheck_compiler_program:
 end
@@ -658,7 +646,6 @@ contains|1.5
 end
 
 case|selfhost_lsp_frame|selfhost/lsp_frame.tl|assembly|skip|direct
-requires-stage0-mode|#1437 stage1 compiler resource blocker (imports compiler checker)
 requires-stage0-symbol|file-read-chunk-status,file-write-status,file-flush-status,append-file-status
 contains|_tl_lsp_frame_parse_content_length:
 contains|_tl_lsp_frame_read_message:
@@ -698,7 +685,6 @@ contains|reader: unterminated list (missing ')')
 end
 
 case|selfhost_repl|selfhost/repl.tl|assembly|exactly-one|direct
-requires-stage0-mode|#1437 stage1 compiler resource blocker (imports typechecker)
 requires-stage0-symbol|file-read-chunk-status,file-write-status,file-flush-status,append-file-status
 contains|_tl_repl_loop:
 contains|_tl_repl_handle_input:

@@ -149,6 +149,11 @@ jobs:
         shell: bash
         run: TYPELISP_BIN=${{ matrix.release_bin }} scripts/verify-public-tools.sh
 
+      - name: Verify safety corpus
+        if: ${{ matrix.suite == 'rust' }}
+        shell: bash
+        run: TYPELISP_BIN=${{ matrix.release_bin }} scripts/verify-safety-corpus.sh
+
       - name: Verify scalar-vs-SIMD SPMD execution comparison
         if: ${{ matrix.suite == 'rust' }}
         shell: bash

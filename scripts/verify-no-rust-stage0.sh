@@ -497,12 +497,13 @@ if [ "$WINDOWS_SEED_STAGED_RUNTIME_GAP" -eq 1 ] ||
     [ "$SEED_STAGE1_WRAPPER" -eq 1 ]; then
     echo
     echo "[no-rust-stage0] skipping seed build/run artifact gates until staged runtime symbols and full seed CLI parity land in stage0:"
-    echo "[no-rust-stage0]   native integration corpus, examples, stdlib modules and fixtures"
+    echo "[no-rust-stage0]   safety corpus, native integration corpus, examples, stdlib modules and fixtures"
 elif [ "$HOST_OS" = linux ] && [ "$SEED_IS_STAGE1_BUNDLE" -eq 1 ]; then
     echo
     echo "[no-rust-stage0] skipping seed build/run artifact gates until the stage1 bundle reaches compiler/runtime parity:"
-    echo "[no-rust-stage0]   native integration corpus, examples, stdlib modules and fixtures"
+    echo "[no-rust-stage0]   safety corpus, native integration corpus, examples, stdlib modules and fixtures"
 else
+    run_gate "safety corpus" scripts/verify-safety-corpus.sh
     run_gate "native integration corpus" scripts/verify-integration.sh
     run_gate "examples" scripts/verify-examples.sh
     run_gate "stdlib modules and fixtures" scripts/verify-stdlib.sh

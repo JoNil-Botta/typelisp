@@ -55,9 +55,11 @@ ACTUAL="$WORKDIR/findings.actual"
 # units:
 #   - selfhost/tests/ contains external compiler corpus snippets and errors.
 #   - tests/format_golden/ intentionally preserves formatter fixture text.
+#   - tests/safety/ includes intentional check-fail/runtime-trap corpus inputs.
 git ls-files '*.tl' \
     | grep -v '^selfhost/tests/' \
     | grep -v '^tests/format_golden/' \
+    | grep -v '^tests/safety/' \
     | sort > "$FILES"
 
 if [ ! -s "$FILES" ]; then

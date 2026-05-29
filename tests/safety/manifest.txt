@@ -1,0 +1,34 @@
+# id|mode|source|expected-code-or--|stderr-contains-or--
+# mode is check-ok, check-fail, run-exit, or run-trap.
+#
+# This corpus consolidates the SPEC.md "Safe code: no undefined behavior"
+# contract into no-Rust fixtures. Comments name the safety area each fixture
+# locks down.
+
+# Integer overflow wraps; supported integer/char casts have defined results.
+integer_wrap_cast_defined|run-exit|tests/safety/integer_wrap_cast_defined.tl|42|-
+
+# Checked integer operations trap deterministically for invalid operands.
+division_by_zero_trap|run-trap|tests/safety/division_by_zero_trap.tl|135|tl: integer division or remainder error
+shift_count_trap|run-trap|tests/safety/shift_count_trap.tl|129|tl: shift count out of range
+
+# Array/string/generated collection bounds trap rather than reading invalid memory.
+array_bounds_trap|run-trap|tests/safety/array_bounds_trap.tl|134|tl: array index out of bounds
+string_bounds_trap|run-trap|tests/safety/string_bounds_trap.tl|134|tl: array index out of bounds
+make_array_negative_trap|run-trap|tests/safety/make_array_negative_trap.tl|134|tl: array index out of bounds
+
+# Defined safe-code areas that should remain accepted.
+bounds_spmd_comptime_defined|run-exit|tests/safety/bounds_spmd_comptime_defined.tl|42|-
+reference_region_defined|check-ok|tests/safety/reference_region_defined.tl|-|-
+raw_pointer_values_defined|check-ok|tests/safety/raw_pointer_values_defined.tl|-|-
+
+# Static rejection areas.
+unsupported_cast_reject|check-fail|tests/safety/unsupported_cast_reject.tl|-|cast requires integer/char source and target
+unbound_variable_reject|check-fail|tests/safety/unbound_variable_reject.tl|-|unbound name missing
+region_escape_reject|check-fail|tests/safety/region_escape_reject.tl|-|cannot escape with-arena
+mutable_reference_reject|check-fail|tests/safety/mutable_reference_reject.tl|-|mutable reference types require mutable borrow checker support
+safe_raw_pointer_read_reject|check-fail|tests/safety/safe_raw_pointer_read_reject.tl|-|ptr-read requires unsafe context
+spmd_outer_mutation_reject|check-fail|tests/safety/spmd_outer_mutation_reject.tl|-|foreach cannot set binding declared outside foreach
+invalid_struct_field_reject|check-fail|tests/safety/invalid_struct_field_reject.tl|-|unknown struct field Point.z
+foreign_abi_metadata_reject|check-fail|tests/safety/foreign_abi_metadata_reject.tl|-|unknown extern metadata
+runtime_type_literal_reject|check-fail|tests/safety/runtime_type_literal_reject.tl|-|type value i64 is compile-time only

@@ -8,9 +8,6 @@
 # Integer overflow wraps; supported integer/char casts have defined results.
 integer_wrap_cast_defined|run-exit|tests/safety/integer_wrap_cast_defined.tl|42|-
 
-# Int<->float casts have defined results (float->int truncates toward zero).
-numeric_cast_defined|run-exit|tests/safety/numeric_cast_defined.tl|42|-
-
 # Checked integer operations trap deterministically for invalid operands.
 division_by_zero_trap|run-trap|tests/safety/division_by_zero_trap.tl|135|tl: integer division or remainder error
 shift_count_trap|run-trap|tests/safety/shift_count_trap.tl|129|tl: shift count out of range
@@ -26,7 +23,7 @@ reference_region_defined|check-ok|tests/safety/reference_region_defined.tl|-|-
 raw_pointer_values_defined|check-ok|tests/safety/raw_pointer_values_defined.tl|-|-
 
 # Static rejection areas.
-unsupported_cast_reject|check-fail|tests/safety/unsupported_cast_reject.tl|-|cast requires integer/char source and target
+unsupported_cast_reject|check-fail|tests/safety/unsupported_cast_reject.tl|-|cast requires scalar numeric (integer/char/float) source and target
 unbound_variable_reject|check-fail|tests/safety/unbound_variable_reject.tl|-|unbound name missing
 region_escape_reject|check-fail|tests/safety/region_escape_reject.tl|-|cannot escape with-arena
 mutable_reference_reject|check-fail|tests/safety/mutable_reference_reject.tl|-|mutable reference types require mutable borrow checker support

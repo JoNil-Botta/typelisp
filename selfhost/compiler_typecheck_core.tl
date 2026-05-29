@@ -130,6 +130,42 @@
   (OkCompilerTypecheck CompilerTypecheckSummary)
   (ErrCompilerTypecheck CompilerDiagnostic))
 
+(defenum ResultCompilerMacroExpand
+  (OkCompilerMacroExpand AstProgram AstDeclPathList)
+  (ErrCompilerMacroExpand CompilerDiagnostic))
+
+(defenum ResultMacroExpandDecls
+  (OkMacroExpandDecls AstDeclList)
+  (ErrMacroExpandDecls CompilerDiagnostic))
+
+(defenum ResultMacroExpandDecl
+  (OkMacroExpandDecl AstDecl)
+  (ErrMacroExpandDecl CompilerDiagnostic))
+
+(defenum ResultMacroExpandExpr
+  (OkMacroExpandExpr AstExpr)
+  (ErrMacroExpandExpr CompilerDiagnostic))
+
+(defenum ResultMacroExpandExprList
+  (OkMacroExpandExprList AstExprList)
+  (ErrMacroExpandExprList CompilerDiagnostic))
+
+(defenum ResultMacroExpandLetBindings
+  (OkMacroExpandLetBindings AstLetBindingList TcTypeEnv)
+  (ErrMacroExpandLetBindings CompilerDiagnostic))
+
+(defenum ResultMacroExpandResourceBindings
+  (OkMacroExpandResourceBindings AstResourceBindingList)
+  (ErrMacroExpandResourceBindings CompilerDiagnostic))
+
+(defenum ResultMacroExpandMatchArms
+  (OkMacroExpandMatchArms AstMatchArmList)
+  (ErrMacroExpandMatchArms CompilerDiagnostic))
+
+(defenum ResultMacroExpandArgEnv
+  (OkMacroExpandArgEnv CtfeEnv)
+  (ErrMacroExpandArgEnv CompilerDiagnostic))
+
 (define (tc-context-with-module [ctx : TcContext] [module : String]) : TcContext
   (match ctx
     [(TcContext program symbols registries _)
@@ -7306,7 +7342,771 @@
                     (ErrCompilerTypecheck
                       (compiler-diagnostic-with-path diag decl-path))))])]))]))
 
-(define (typecheck-compiler-specialized-program-with-paths
+(define (macro-expand-max-depth) : i64
+  64)
+
+(define (macro-expand-diagnostic-with-path
+  [diag : CompilerDiagnostic]
+  [path : String]) : CompilerDiagnostic
+  (if (or
+    (string-eq path "")
+    (not (string-eq (compiler-diagnostic-path diag) "")))
+    diag
+    (compiler-diagnostic-with-path diag path)))
+
+(define (macro-expand-lookup-name [ctx : TcContext] [name : String]) : MaybeI64
+  (match ctx
+    [(TcContext _ symbols _ module)
+      (let
+        [lookup-name : String
+          (if (and (> (string-length module) 0) (not (tc-name-qualified? name)))
+            (compiler-symbol-module-key module name)
+            name)]
+        (compiler-symbols-lookup-macro symbols lookup-name))]))
+
+(define (macro-expand-call-callee-name [func : AstExpr]) : TcMaybeString
+  (match func
+    [(AstExprSpanned inner _) (macro-expand-call-callee-name inner)]
+    [(AstExprVar name) (TcSomeString name)]
+    [_ (TcNoString)]))
+
+(define (macro-expand-expr-error [expr : AstExpr] [message : String]) : ResultMacroExpandExpr
+  (ErrMacroExpandExpr (tc-expr-diag expr message)))
+
+(define (macro-expand-arg-env-error [expr : AstExpr] [message : String]) : ResultMacroExpandArgEnv
+  (ErrMacroExpandArgEnv (tc-expr-diag expr message)))
+
+(define (macro-expand-diagnostic-at-span
+  [diag : CompilerDiagnostic]
+  [span : AstSourceSpan]) : CompilerDiagnostic
+  (CompilerDiagnostic
+    (compiler-diagnostic-path diag)
+    (struct-get span start-line)
+    (struct-get span start-col)
+    (compiler-diagnostic-message diag)))
+
+(define (macro-expand-check-operand
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [arg : AstExpr]
+  [want : AstType]) : ResultMacroExpandArgEnv
+  (match (tc-expr ctx env arg)
+    [(OkTcType got)
+      (match (tc-expect
+        got
+        (tc-resolve-type ctx want)
+        "typecheck: macro operand type mismatch")
+        [(OkTcUnit) (OkMacroExpandArgEnv (tc-ctfe-env ctx))]
+        [(ErrTcUnit message) (macro-expand-arg-env-error arg message)])]
+    [(ErrTcType message) (macro-expand-arg-env-error arg message)]))
+
+(define (macro-expand-check-variadic-operands
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [args : AstExprList]
+  [want : AstType]) : ResultMacroExpandArgEnv
+  (match args
+    [(AstExprNil) (OkMacroExpandArgEnv (tc-ctfe-env ctx))]
+    [(AstExprCons head rest)
+      (match (macro-expand-check-operand ctx env head want)
+        [(OkMacroExpandArgEnv _)
+          (macro-expand-check-variadic-operands ctx env rest want)]
+        [(ErrMacroExpandArgEnv diag) (ErrMacroExpandArgEnv diag)])]))
+
+(define (macro-expand-bind-args
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [ctfe-env : CtfeEnv]
+  [params : AstMacroParamList]
+  [args : AstExprList]) : ResultMacroExpandArgEnv
+  (match params
+    [(AstMacroParamNil)
+      (match args
+        [(AstExprNil) (OkMacroExpandArgEnv ctfe-env)]
+        [(AstExprCons extra _)
+          (macro-expand-arg-env-error extra "typecheck: macro arity mismatch")])]
+    [(AstMacroParamCons param rest-params)
+      (match param
+        [(AstMacroParam name ty variadic)
+          (if variadic
+            (match (macro-expand-check-variadic-operands ctx env args ty)
+              [(OkMacroExpandArgEnv _)
+                (OkMacroExpandArgEnv
+                  (ctfe-env-extend ctfe-env name (CtfeExprList args)))]
+              [(ErrMacroExpandArgEnv diag) (ErrMacroExpandArgEnv diag)])
+            (match args
+              [(AstExprCons arg rest-args)
+                (match (tc-expr ctx env arg)
+                  [(OkTcType got)
+                    (match (tc-expect
+                      got
+                      (tc-resolve-type ctx ty)
+                      "typecheck: macro operand type mismatch")
+                      [(OkTcUnit)
+                        (macro-expand-bind-args
+                          ctx
+                          env
+                          (ctfe-env-extend
+                            ctfe-env
+                            name
+                            (CtfeExpr arg (tc-resolve-type ctx ty)))
+                          rest-params
+                          rest-args)]
+                      [(ErrTcUnit message)
+                        (macro-expand-arg-env-error arg message)])]
+                  [(ErrTcType message) (macro-expand-arg-env-error arg message)])]
+              [(AstExprNil)
+                (ErrMacroExpandArgEnv
+                  (tc-diag-at-start "typecheck: macro arity mismatch"))]))])]))
+
+(define (macro-expand-result-type-ok
+  [ctx : TcContext]
+  [origin : AstExpr]
+  [ret : AstType]
+  [value : CompilerCtfeValue]) : ResultMacroExpandExpr
+  (match value
+    [(CtfeExpr expanded produced)
+      (if (tc-type-compatible?
+        (tc-resolve-type ctx ret)
+        (tc-resolve-type ctx produced))
+        (OkMacroExpandExpr expanded)
+        (macro-expand-expr-error
+          origin
+          "typecheck: macro expansion result type mismatch"))]
+    [_
+      (macro-expand-expr-error origin "typecheck: macro body must return Expr")]))
+
+(define (macro-expand-invoke
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [origin : AstExpr]
+  [macro-name : String]
+  [args : AstExprList]
+  [depth : i64]) : ResultMacroExpandExpr
+  (if (<= depth 0)
+    (macro-expand-expr-error
+      origin
+      "typecheck: macro expansion depth limit exceeded")
+    (match (macro-expand-lookup-name ctx macro-name)
+      [(SomeI64 handle)
+        (if (=
+          (compiler-symbol-handle-kind handle)
+          (compiler-symbol-kind-defmacro))
+          (match (compiler-program-decl-at-index
+            (tc-context-program ctx)
+            (compiler-symbol-handle-index handle))
+            [(OkAstDecl decl)
+              (match decl
+                [(AstDeclDefMacro _ params ret body)
+                  (match (macro-expand-bind-args
+                    ctx
+                    env
+                    (tc-ctfe-env ctx)
+                    params
+                    args)
+                    [(OkMacroExpandArgEnv call-env)
+                      (match (compiler-ctfe-eval
+                        body
+                        call-env
+                        (ctfe-fuel-limit))
+                        [(OkCtfe value _)
+                          (match (macro-expand-result-type-ok
+                            ctx
+                            origin
+                            ret
+                            value)
+                            [(OkMacroExpandExpr expanded)
+                              (macro-expand-expr ctx env expanded (- depth 1))]
+                            [(ErrMacroExpandExpr diag)
+                              (ErrMacroExpandExpr diag)])]
+                        [(ErrCtfe diag) (ErrMacroExpandExpr diag)])]
+                    [(ErrMacroExpandArgEnv diag) (ErrMacroExpandExpr diag)])]
+                [_
+                  (macro-expand-expr-error
+                    origin
+                    "typecheck: macro symbol owner is not defmacro")])]
+            [(ErrAstDecl message) (macro-expand-expr-error origin message)])
+          (macro-expand-expr-error
+            origin
+            "typecheck: macro symbol owner is not defmacro"))]
+      [(NoneI64) (macro-expand-expr-error origin "typecheck: macro not found")])))
+
+(define (macro-expand-expr-list
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [exprs : AstExprList]
+  [depth : i64]) : ResultMacroExpandExprList
+  (match exprs
+    [(AstExprNil) (OkMacroExpandExprList AstExprNil)]
+    [(AstExprCons head rest)
+      (match (macro-expand-expr ctx env head depth)
+        [(OkMacroExpandExpr expanded-head)
+          (match (macro-expand-expr-list ctx env rest depth)
+            [(OkMacroExpandExprList expanded-rest)
+              (OkMacroExpandExprList (AstExprCons expanded-head expanded-rest))]
+            [(ErrMacroExpandExprList diag) (ErrMacroExpandExprList diag)])]
+        [(ErrMacroExpandExpr diag) (ErrMacroExpandExprList diag)])]))
+
+(define (macro-expand-let-binding-type
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [maybe-ty : AstMaybeType]
+  [init : AstExpr]) : ResultTcType
+  (match maybe-ty
+    [(AstSomeType ty) (OkTcType (tc-resolve-type ctx ty))]
+    [(AstNoType) (tc-expr ctx env init)]))
+
+(define (macro-expand-let-bindings
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [bindings : AstLetBindingList]
+  [depth : i64]) : ResultMacroExpandLetBindings
+  (match bindings
+    [(AstLetBindingNil) (OkMacroExpandLetBindings AstLetBindingNil env)]
+    [(AstLetBindingCons binding rest)
+      (match binding
+        [(AstLetBinding name maybe-ty init)
+          (match (macro-expand-expr ctx env init depth)
+            [(OkMacroExpandExpr expanded-init)
+              (match (macro-expand-let-binding-type
+                ctx
+                env
+                maybe-ty
+                expanded-init)
+                [(OkTcType bound-ty)
+                  (match (macro-expand-let-bindings
+                    ctx
+                    (tc-bind env name bound-ty)
+                    rest
+                    depth)
+                    [(OkMacroExpandLetBindings expanded-rest final-env)
+                      (OkMacroExpandLetBindings
+                        (AstLetBindingCons
+                          (AstLetBinding name maybe-ty expanded-init)
+                          expanded-rest)
+                        final-env)]
+                    [(ErrMacroExpandLetBindings diag)
+                      (ErrMacroExpandLetBindings diag)])]
+                [(ErrTcType message)
+                  (ErrMacroExpandLetBindings
+                    (tc-expr-diag expanded-init message))])]
+            [(ErrMacroExpandExpr diag) (ErrMacroExpandLetBindings diag)])])]))
+
+(define (macro-expand-resource-bindings
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [bindings : AstResourceBindingList]
+  [depth : i64]) : ResultMacroExpandResourceBindings
+  (match bindings
+    [(AstResourceBindingNil)
+      (OkMacroExpandResourceBindings AstResourceBindingNil)]
+    [(AstResourceBindingCons binding rest)
+      (match binding
+        [(AstResourceBinding name init cleanup)
+          (match (macro-expand-expr ctx env init depth)
+            [(OkMacroExpandExpr expanded-init)
+              (match (macro-expand-expr ctx env cleanup depth)
+                [(OkMacroExpandExpr expanded-cleanup)
+                  (match (macro-expand-resource-bindings ctx env rest depth)
+                    [(OkMacroExpandResourceBindings expanded-rest)
+                      (OkMacroExpandResourceBindings
+                        (AstResourceBindingCons
+                          (AstResourceBinding
+                            name
+                            expanded-init
+                            expanded-cleanup)
+                          expanded-rest))]
+                    [(ErrMacroExpandResourceBindings diag)
+                      (ErrMacroExpandResourceBindings diag)])]
+                [(ErrMacroExpandExpr diag)
+                  (ErrMacroExpandResourceBindings diag)])]
+            [(ErrMacroExpandExpr diag) (ErrMacroExpandResourceBindings diag)])])]))
+
+(define (macro-expand-match-arms
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [scrut-ty : AstType]
+  [arms : AstMatchArmList]
+  [depth : i64]) : ResultMacroExpandMatchArms
+  (match arms
+    [(AstMatchArmNil) (OkMacroExpandMatchArms AstMatchArmNil)]
+    [(AstMatchArmCons arm rest)
+      (match arm
+        [(AstMatchArm pattern body)
+          (match (tc-bind-match-pattern ctx env scrut-ty pattern)
+            [(OkTcEnv arm-env)
+              (match (macro-expand-expr ctx arm-env body depth)
+                [(OkMacroExpandExpr expanded-body)
+                  (match (macro-expand-match-arms ctx env scrut-ty rest depth)
+                    [(OkMacroExpandMatchArms expanded-rest)
+                      (OkMacroExpandMatchArms
+                        (AstMatchArmCons
+                          (AstMatchArm pattern expanded-body)
+                          expanded-rest))]
+                    [(ErrMacroExpandMatchArms diag)
+                      (ErrMacroExpandMatchArms diag)])]
+                [(ErrMacroExpandExpr diag) (ErrMacroExpandMatchArms diag)])]
+            [(ErrTcEnv message)
+              (ErrMacroExpandMatchArms (tc-expr-diag body message))])])]))
+
+(define (macro-expand-expr
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [expr : AstExpr]
+  [depth : i64]) : ResultMacroExpandExpr
+  (match expr
+    [(AstExprSpanned inner span)
+      (match (macro-expand-expr ctx env inner depth)
+        [(OkMacroExpandExpr expanded)
+          (OkMacroExpandExpr (AstExprSpanned expanded span))]
+        [(ErrMacroExpandExpr diag)
+          (ErrMacroExpandExpr (macro-expand-diagnostic-at-span diag span))])]
+    [(AstExprLiteral _) (OkMacroExpandExpr expr)]
+    [(AstExprVar _) (OkMacroExpandExpr expr)]
+    [(AstExprTypeLiteral _) (OkMacroExpandExpr expr)]
+    [(AstExprBinary op left right)
+      (match (macro-expand-expr ctx env left depth)
+        [(OkMacroExpandExpr expanded-left)
+          (match (macro-expand-expr ctx env right depth)
+            [(OkMacroExpandExpr expanded-right)
+              (OkMacroExpandExpr
+                (AstExprBinary op expanded-left expanded-right))]
+            [(ErrMacroExpandExpr diag) (ErrMacroExpandExpr diag)])]
+        [(ErrMacroExpandExpr diag) (ErrMacroExpandExpr diag)])]
+    [(AstExprUnary op inner)
+      (match (macro-expand-expr ctx env inner depth)
+        [(OkMacroExpandExpr expanded)
+          (OkMacroExpandExpr (AstExprUnary op expanded))]
+        [(ErrMacroExpandExpr diag) (ErrMacroExpandExpr diag)])]
+    [(AstExprCall func args)
+      (match (macro-expand-call-callee-name func)
+        [(TcSomeString name)
+          (match (macro-expand-lookup-name ctx name)
+            [(SomeI64 _) (macro-expand-invoke ctx env expr name args depth)]
+            [(NoneI64)
+              (match (macro-expand-expr ctx env func depth)
+                [(OkMacroExpandExpr expanded-func)
+                  (match (macro-expand-expr-list ctx env args depth)
+                    [(OkMacroExpandExprList expanded-args)
+                      (OkMacroExpandExpr
+                        (AstExprCall expanded-func expanded-args))]
+                    [(ErrMacroExpandExprList diag) (ErrMacroExpandExpr diag)])]
+                [(ErrMacroExpandExpr diag) (ErrMacroExpandExpr diag)])])]
+        [(TcNoString)
+          (match (macro-expand-expr ctx env func depth)
+            [(OkMacroExpandExpr expanded-func)
+              (match (macro-expand-expr-list ctx env args depth)
+                [(OkMacroExpandExprList expanded-args)
+                  (OkMacroExpandExpr (AstExprCall expanded-func expanded-args))]
+                [(ErrMacroExpandExprList diag) (ErrMacroExpandExpr diag)])]
+            [(ErrMacroExpandExpr diag) (ErrMacroExpandExpr diag)])])]
+    [(AstExprIf cond then-branch else-branch)
+      (match (macro-expand-expr ctx env cond depth)
+        [(OkMacroExpandExpr expanded-cond)
+          (match (macro-expand-expr ctx env then-branch depth)
+            [(OkMacroExpandExpr expanded-then)
+              (match (macro-expand-expr ctx env else-branch depth)
+                [(OkMacroExpandExpr expanded-else)
+                  (OkMacroExpandExpr
+                    (AstExprIf expanded-cond expanded-then expanded-else))]
+                [(ErrMacroExpandExpr diag) (ErrMacroExpandExpr diag)])]
+            [(ErrMacroExpandExpr diag) (ErrMacroExpandExpr diag)])]
+        [(ErrMacroExpandExpr diag) (ErrMacroExpandExpr diag)])]
+    [(AstExprLet bindings body)
+      (match (macro-expand-let-bindings ctx env bindings depth)
+        [(OkMacroExpandLetBindings expanded-bindings body-env)
+          (match (macro-expand-expr ctx body-env body depth)
+            [(OkMacroExpandExpr expanded-body)
+              (OkMacroExpandExpr (AstExprLet expanded-bindings expanded-body))]
+            [(ErrMacroExpandExpr diag) (ErrMacroExpandExpr diag)])]
+        [(ErrMacroExpandLetBindings diag) (ErrMacroExpandExpr diag)])]
+    [(AstExprLambda params maybe-ret body)
+      (let
+        [lambda-env : TcTypeEnv
+          (match maybe-ret
+            [(AstSomeType ret)
+              (tc-bind-return-type
+                (tc-bind-params ctx env params)
+                (tc-resolve-type ctx ret))]
+            [(AstNoType)
+              (tc-bind-return-type (tc-bind-params ctx env params) (AstTyNever))])]
+        (match (macro-expand-expr ctx lambda-env body depth)
+          [(OkMacroExpandExpr expanded-body)
+            (OkMacroExpandExpr (AstExprLambda params maybe-ret expanded-body))]
+          [(ErrMacroExpandExpr diag) (ErrMacroExpandExpr diag)]))]
+    [(AstExprTuple exprs)
+      (match (macro-expand-expr-list ctx env exprs depth)
+        [(OkMacroExpandExprList expanded)
+          (OkMacroExpandExpr (AstExprTuple expanded))]
+        [(ErrMacroExpandExprList diag) (ErrMacroExpandExpr diag)])]
+    [(AstExprTupleRef inner index)
+      (match (macro-expand-expr ctx env inner depth)
+        [(OkMacroExpandExpr expanded)
+          (OkMacroExpandExpr (AstExprTupleRef expanded index))]
+        [(ErrMacroExpandExpr diag) (ErrMacroExpandExpr diag)])]
+    [(AstExprArray exprs)
+      (match (macro-expand-expr-list ctx env exprs depth)
+        [(OkMacroExpandExprList expanded)
+          (OkMacroExpandExpr (AstExprArray expanded))]
+        [(ErrMacroExpandExprList diag) (ErrMacroExpandExpr diag)])]
+    [(AstExprMakeArray elem-ty len)
+      (match (macro-expand-expr ctx env len depth)
+        [(OkMacroExpandExpr expanded)
+          (OkMacroExpandExpr (AstExprMakeArray elem-ty expanded))]
+        [(ErrMacroExpandExpr diag) (ErrMacroExpandExpr diag)])]
+    [(AstExprArrayRef array index)
+      (match (macro-expand-expr ctx env array depth)
+        [(OkMacroExpandExpr expanded-array)
+          (match (macro-expand-expr ctx env index depth)
+            [(OkMacroExpandExpr expanded-index)
+              (OkMacroExpandExpr
+                (AstExprArrayRef expanded-array expanded-index))]
+            [(ErrMacroExpandExpr diag) (ErrMacroExpandExpr diag)])]
+        [(ErrMacroExpandExpr diag) (ErrMacroExpandExpr diag)])]
+    [(AstExprArraySet array index value)
+      (match (macro-expand-expr ctx env array depth)
+        [(OkMacroExpandExpr expanded-array)
+          (match (macro-expand-expr ctx env index depth)
+            [(OkMacroExpandExpr expanded-index)
+              (match (macro-expand-expr ctx env value depth)
+                [(OkMacroExpandExpr expanded-value)
+                  (OkMacroExpandExpr
+                    (AstExprArraySet
+                      expanded-array
+                      expanded-index
+                      expanded-value))]
+                [(ErrMacroExpandExpr diag) (ErrMacroExpandExpr diag)])]
+            [(ErrMacroExpandExpr diag) (ErrMacroExpandExpr diag)])]
+        [(ErrMacroExpandExpr diag) (ErrMacroExpandExpr diag)])]
+    [(AstExprArrayPush array value)
+      (match (macro-expand-expr ctx env array depth)
+        [(OkMacroExpandExpr expanded-array)
+          (match (macro-expand-expr ctx env value depth)
+            [(OkMacroExpandExpr expanded-value)
+              (OkMacroExpandExpr
+                (AstExprArrayPush expanded-array expanded-value))]
+            [(ErrMacroExpandExpr diag) (ErrMacroExpandExpr diag)])]
+        [(ErrMacroExpandExpr diag) (ErrMacroExpandExpr diag)])]
+    [(AstExprStringRef str index)
+      (match (macro-expand-expr ctx env str depth)
+        [(OkMacroExpandExpr expanded-str)
+          (match (macro-expand-expr ctx env index depth)
+            [(OkMacroExpandExpr expanded-index)
+              (OkMacroExpandExpr (AstExprStringRef expanded-str expanded-index))]
+            [(ErrMacroExpandExpr diag) (ErrMacroExpandExpr diag)])]
+        [(ErrMacroExpandExpr diag) (ErrMacroExpandExpr diag)])]
+    [(AstExprWhile cond body)
+      (match (macro-expand-expr ctx env cond depth)
+        [(OkMacroExpandExpr expanded-cond)
+          (match (macro-expand-expr ctx env body depth)
+            [(OkMacroExpandExpr expanded-body)
+              (OkMacroExpandExpr (AstExprWhile expanded-cond expanded-body))]
+            [(ErrMacroExpandExpr diag) (ErrMacroExpandExpr diag)])]
+        [(ErrMacroExpandExpr diag) (ErrMacroExpandExpr diag)])]
+    [(AstExprBegin exprs)
+      (match (macro-expand-expr-list ctx env exprs depth)
+        [(OkMacroExpandExprList expanded)
+          (OkMacroExpandExpr (AstExprBegin expanded))]
+        [(ErrMacroExpandExprList diag) (ErrMacroExpandExpr diag)])]
+    [(AstExprUnsafe exprs)
+      (match (macro-expand-expr-list ctx (tc-enter-unsafe env) exprs depth)
+        [(OkMacroExpandExprList expanded)
+          (OkMacroExpandExpr (AstExprUnsafe expanded))]
+        [(ErrMacroExpandExprList diag) (ErrMacroExpandExpr diag)])]
+    [(AstExprSet name value)
+      (match (macro-expand-expr ctx env value depth)
+        [(OkMacroExpandExpr expanded)
+          (OkMacroExpandExpr (AstExprSet name expanded))]
+        [(ErrMacroExpandExpr diag) (ErrMacroExpandExpr diag)])]
+    [(AstExprAnn inner ty)
+      (match (macro-expand-expr ctx env inner depth)
+        [(OkMacroExpandExpr expanded)
+          (OkMacroExpandExpr (AstExprAnn expanded ty))]
+        [(ErrMacroExpandExpr diag) (ErrMacroExpandExpr diag)])]
+    [(AstExprCast inner ty)
+      (match (macro-expand-expr ctx env inner depth)
+        [(OkMacroExpandExpr expanded)
+          (OkMacroExpandExpr (AstExprCast expanded ty))]
+        [(ErrMacroExpandExpr diag) (ErrMacroExpandExpr diag)])]
+    [(AstExprBorrow lifetime place)
+      (match (macro-expand-expr ctx env place depth)
+        [(OkMacroExpandExpr expanded)
+          (OkMacroExpandExpr (AstExprBorrow lifetime expanded))]
+        [(ErrMacroExpandExpr diag) (ErrMacroExpandExpr diag)])]
+    [(AstExprMatch scrutinee arms)
+      (match (macro-expand-expr ctx env scrutinee depth)
+        [(OkMacroExpandExpr expanded-scrutinee)
+          (match (tc-expr ctx env expanded-scrutinee)
+            [(OkTcType scrut-ty)
+              (match (macro-expand-match-arms ctx env scrut-ty arms depth)
+                [(OkMacroExpandMatchArms expanded-arms)
+                  (OkMacroExpandExpr
+                    (AstExprMatch expanded-scrutinee expanded-arms))]
+                [(ErrMacroExpandMatchArms diag) (ErrMacroExpandExpr diag)])]
+            [(ErrTcType message)
+              (ErrMacroExpandExpr (tc-expr-diag expanded-scrutinee message))])]
+        [(ErrMacroExpandExpr diag) (ErrMacroExpandExpr diag)])]
+    [(AstExprForeach index index-ty start end body)
+      (let
+        [index-env : TcTypeEnv
+          (tc-bind env index (tc-resolve-type ctx index-ty))]
+        (match (macro-expand-expr ctx env start depth)
+          [(OkMacroExpandExpr expanded-start)
+            (match (macro-expand-expr ctx env end depth)
+              [(OkMacroExpandExpr expanded-end)
+                (match (macro-expand-expr ctx index-env body depth)
+                  [(OkMacroExpandExpr expanded-body)
+                    (OkMacroExpandExpr
+                      (AstExprForeach
+                        index
+                        index-ty
+                        expanded-start
+                        expanded-end
+                        expanded-body))]
+                  [(ErrMacroExpandExpr diag) (ErrMacroExpandExpr diag)])]
+              [(ErrMacroExpandExpr diag) (ErrMacroExpandExpr diag)])]
+          [(ErrMacroExpandExpr diag) (ErrMacroExpandExpr diag)]))]
+    [(AstExprSpmdReduce op index index-ty start end init value)
+      (let
+        [index-env : TcTypeEnv
+          (tc-bind env index (tc-resolve-type ctx index-ty))]
+        (match (macro-expand-expr ctx env start depth)
+          [(OkMacroExpandExpr expanded-start)
+            (match (macro-expand-expr ctx env end depth)
+              [(OkMacroExpandExpr expanded-end)
+                (match (macro-expand-expr ctx env init depth)
+                  [(OkMacroExpandExpr expanded-init)
+                    (match (macro-expand-expr ctx index-env value depth)
+                      [(OkMacroExpandExpr expanded-value)
+                        (OkMacroExpandExpr
+                          (AstExprSpmdReduce
+                            op
+                            index
+                            index-ty
+                            expanded-start
+                            expanded-end
+                            expanded-init
+                            expanded-value))]
+                      [(ErrMacroExpandExpr diag) (ErrMacroExpandExpr diag)])]
+                  [(ErrMacroExpandExpr diag) (ErrMacroExpandExpr diag)])]
+              [(ErrMacroExpandExpr diag) (ErrMacroExpandExpr diag)])]
+          [(ErrMacroExpandExpr diag) (ErrMacroExpandExpr diag)]))]
+    [(AstExprStructGet receiver field)
+      (match (macro-expand-expr ctx env receiver depth)
+        [(OkMacroExpandExpr expanded)
+          (OkMacroExpandExpr (AstExprStructGet expanded field))]
+        [(ErrMacroExpandExpr diag) (ErrMacroExpandExpr diag)])]
+    [(AstExprWithRegion region body)
+      (match (macro-expand-expr-list ctx (tc-push-region env region) body depth)
+        [(OkMacroExpandExprList expanded)
+          (OkMacroExpandExpr (AstExprWithRegion region expanded))]
+        [(ErrMacroExpandExprList diag) (ErrMacroExpandExpr diag)])]
+    [(AstExprWithResource bindings body)
+      (match (macro-expand-resource-bindings ctx env bindings depth)
+        [(OkMacroExpandResourceBindings expanded-bindings)
+          (match (tc-resource-bindings ctx env expanded-bindings)
+            [(OkTcEnv body-env)
+              (match (macro-expand-expr-list ctx body-env body depth)
+                [(OkMacroExpandExprList expanded-body)
+                  (OkMacroExpandExpr
+                    (AstExprWithResource expanded-bindings expanded-body))]
+                [(ErrMacroExpandExprList diag) (ErrMacroExpandExpr diag)])]
+            [(ErrTcEnv message)
+              (ErrMacroExpandExpr (tc-expr-diag expr message))])]
+        [(ErrMacroExpandResourceBindings diag) (ErrMacroExpandExpr diag)])]
+    [(AstExprBox inner)
+      (match (macro-expand-expr ctx env inner depth)
+        [(OkMacroExpandExpr expanded) (OkMacroExpandExpr (AstExprBox expanded))]
+        [(ErrMacroExpandExpr diag) (ErrMacroExpandExpr diag)])]
+    [(AstExprBoxGet inner)
+      (match (macro-expand-expr ctx env inner depth)
+        [(OkMacroExpandExpr expanded)
+          (OkMacroExpandExpr (AstExprBoxGet expanded))]
+        [(ErrMacroExpandExpr diag) (ErrMacroExpandExpr diag)])]
+    [(AstExprComptime inner)
+      (match (macro-expand-expr ctx env inner depth)
+        [(OkMacroExpandExpr expanded)
+          (OkMacroExpandExpr (AstExprComptime expanded))]
+        [(ErrMacroExpandExpr diag) (ErrMacroExpandExpr diag)])]
+    [(AstExprQuote _) (OkMacroExpandExpr expr)]
+    [(AstExprQuasiquote _) (OkMacroExpandExpr expr)]
+    [(AstExprUnquote _) (OkMacroExpandExpr expr)]
+    [(AstExprUnquoteSplicing _) (OkMacroExpandExpr expr)]
+    [(AstExprTry inner)
+      (match (macro-expand-expr ctx env inner depth)
+        [(OkMacroExpandExpr expanded) (OkMacroExpandExpr (AstExprTry expanded))]
+        [(ErrMacroExpandExpr diag) (ErrMacroExpandExpr diag)])]
+    [(AstExprPtrNull _) (OkMacroExpandExpr expr)]
+    [(AstExprPtrNullCheck inner)
+      (match (macro-expand-expr ctx env inner depth)
+        [(OkMacroExpandExpr expanded)
+          (OkMacroExpandExpr (AstExprPtrNullCheck expanded))]
+        [(ErrMacroExpandExpr diag) (ErrMacroExpandExpr diag)])]
+    [(AstExprPtrRead ptr)
+      (match (macro-expand-expr ctx env ptr depth)
+        [(OkMacroExpandExpr expanded)
+          (OkMacroExpandExpr (AstExprPtrRead expanded))]
+        [(ErrMacroExpandExpr diag) (ErrMacroExpandExpr diag)])]
+    [(AstExprPtrWrite ptr value)
+      (match (macro-expand-expr ctx env ptr depth)
+        [(OkMacroExpandExpr expanded-ptr)
+          (match (macro-expand-expr ctx env value depth)
+            [(OkMacroExpandExpr expanded-value)
+              (OkMacroExpandExpr (AstExprPtrWrite expanded-ptr expanded-value))]
+            [(ErrMacroExpandExpr diag) (ErrMacroExpandExpr diag)])]
+        [(ErrMacroExpandExpr diag) (ErrMacroExpandExpr diag)])]
+    [(AstExprPtrOffset ptr offset)
+      (match (macro-expand-expr ctx env ptr depth)
+        [(OkMacroExpandExpr expanded-ptr)
+          (match (macro-expand-expr ctx env offset depth)
+            [(OkMacroExpandExpr expanded-offset)
+              (OkMacroExpandExpr
+                (AstExprPtrOffset expanded-ptr expanded-offset))]
+            [(ErrMacroExpandExpr diag) (ErrMacroExpandExpr diag)])]
+        [(ErrMacroExpandExpr diag) (ErrMacroExpandExpr diag)])]
+    [(AstExprPtrCast ptr target)
+      (match (macro-expand-expr ctx env ptr depth)
+        [(OkMacroExpandExpr expanded)
+          (OkMacroExpandExpr (AstExprPtrCast expanded target))]
+        [(ErrMacroExpandExpr diag) (ErrMacroExpandExpr diag)])]
+    [(AstExprPtrToInt ptr)
+      (match (macro-expand-expr ctx env ptr depth)
+        [(OkMacroExpandExpr expanded)
+          (OkMacroExpandExpr (AstExprPtrToInt expanded))]
+        [(ErrMacroExpandExpr diag) (ErrMacroExpandExpr diag)])]
+    [(AstExprIntToPtr value target)
+      (match (macro-expand-expr ctx env value depth)
+        [(OkMacroExpandExpr expanded)
+          (OkMacroExpandExpr (AstExprIntToPtr expanded target))]
+        [(ErrMacroExpandExpr diag) (ErrMacroExpandExpr diag)])]))
+
+(define (macro-expand-decl
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [decl : AstDecl]
+  [depth : i64]) : ResultMacroExpandDecl
+  (match decl
+    [(AstDeclDef name maybe-ty expr)
+      (match (macro-expand-expr ctx env expr depth)
+        [(OkMacroExpandExpr expanded)
+          (OkMacroExpandDecl (AstDeclDef name maybe-ty expanded))]
+        [(ErrMacroExpandExpr diag) (ErrMacroExpandDecl diag)])]
+    [(AstDeclDefFn name params ret body)
+      (let
+        [body-env : TcTypeEnv
+          (tc-bind-return-type
+            (tc-bind-params ctx env params)
+            (tc-resolve-type ctx ret))]
+        (match (macro-expand-expr ctx body-env body depth)
+          [(OkMacroExpandExpr expanded)
+            (OkMacroExpandDecl (AstDeclDefFn name params ret expanded))]
+          [(ErrMacroExpandExpr diag) (ErrMacroExpandDecl diag)]))]
+    [(AstDeclTest name expr span)
+      (match (macro-expand-expr ctx env expr depth)
+        [(OkMacroExpandExpr expanded)
+          (OkMacroExpandDecl (AstDeclTest name expanded span))]
+        [(ErrMacroExpandExpr diag) (ErrMacroExpandDecl diag)])]
+    [(AstDeclComptimeDecl template)
+      (match (macro-expand-decl ctx env template depth)
+        [(OkMacroExpandDecl expanded)
+          (OkMacroExpandDecl (AstDeclComptimeDecl expanded))]
+        [(ErrMacroExpandDecl diag) (ErrMacroExpandDecl diag)])]
+    [_ (OkMacroExpandDecl decl)]))
+
+(define (macro-expand-decls-in-module
+  [ctx : TcContext]
+  [top-env : TcTypeEnv]
+  [decls : AstDeclList]
+  [paths : AstDeclPathList]
+  [module : String]
+  [depth : i64]) : ResultMacroExpandDecls
+  (match decls
+    [(AstDeclNil) (OkMacroExpandDecls AstDeclNil)]
+    [(AstDeclCons decl rest)
+      (let
+        [decl-path : String
+          (match paths
+            [(AstDeclPathCons path _) path]
+            [(AstDeclPathNil) ""])]
+        [rest-paths : AstDeclPathList
+          (match paths
+            [(AstDeclPathCons _ path-rest) path-rest]
+            [(AstDeclPathNil) AstDeclPathNil])]
+        (match decl
+          [(AstDeclModule next-module)
+            (match (macro-expand-decls-in-module
+              ctx
+              top-env
+              rest
+              rest-paths
+              next-module
+              depth)
+              [(OkMacroExpandDecls expanded-rest)
+                (OkMacroExpandDecls (AstDeclCons decl expanded-rest))]
+              [(ErrMacroExpandDecls diag) (ErrMacroExpandDecls diag)])]
+          [_
+            (match (tc-module-local-env ctx top-env module)
+              [(OkTcEnv local-env)
+                (let
+                  [decl-ctx : TcContext (tc-context-with-module ctx module)]
+                  (match (macro-expand-decl decl-ctx local-env decl depth)
+                    [(OkMacroExpandDecl expanded-decl)
+                      (match (macro-expand-decls-in-module
+                        ctx
+                        top-env
+                        rest
+                        rest-paths
+                        module
+                        depth)
+                        [(OkMacroExpandDecls expanded-rest)
+                          (OkMacroExpandDecls
+                            (AstDeclCons expanded-decl expanded-rest))]
+                        [(ErrMacroExpandDecls diag) (ErrMacroExpandDecls diag)])]
+                    [(ErrMacroExpandDecl diag)
+                      (ErrMacroExpandDecls
+                        (macro-expand-diagnostic-with-path diag decl-path))]))]
+              [(ErrTcEnv message)
+                (ErrMacroExpandDecls
+                  (macro-expand-diagnostic-with-path
+                    (tc-decl-diag decl message)
+                    decl-path))])]))]))
+
+(define (compiler-macro-expand-program-with-paths
+  [program : AstProgram]
+  [paths : AstDeclPathList]) : ResultCompilerMacroExpand
+  (match (build-compiler-symbols program)
+    [(OkCompilerSymbols symbols)
+      (match (build-compiler-registries program)
+        [(OkCompilerRegistries registries)
+          (let
+            [ctx : TcContext (TcContext program symbols registries "")]
+            (match (tc-program-source-types-policy-ok ctx program)
+              [(OkTcUnit)
+                (match (tc-build-top-env ctx program)
+                  [(OkTcEnv top-env)
+                    (match program
+                      [(AstProgram decls)
+                        (match (macro-expand-decls-in-module
+                          ctx
+                          top-env
+                          decls
+                          paths
+                          ""
+                          (macro-expand-max-depth))
+                          [(OkMacroExpandDecls expanded)
+                            (OkCompilerMacroExpand (AstProgram expanded) paths)]
+                          [(ErrMacroExpandDecls diag)
+                            (ErrCompilerMacroExpand diag)])])]
+                  [(ErrTcEnv message)
+                    (ErrCompilerMacroExpand (tc-diag-at-start message))])]
+              [(ErrTcUnit message)
+                (ErrCompilerMacroExpand (tc-diag-at-start message))]))]
+        [(ErrCompilerRegistries message)
+          (ErrCompilerMacroExpand (tc-diag-at-start message))])]
+    [(ErrCompilerSymbols message)
+      (ErrCompilerMacroExpand (tc-diag-at-start message))]))
+
+(define (typecheck-compiler-expanded-program-with-paths
   [program : AstProgram]
   [paths : AstDeclPathList]) : ResultCompilerTypecheck
   (match (build-compiler-symbols program)
@@ -7335,3 +8135,11 @@
           (ErrCompilerTypecheck (tc-diag-at-start message))])]
     [(ErrCompilerSymbols message)
       (ErrCompilerTypecheck (tc-diag-at-start message))]))
+
+(define (typecheck-compiler-specialized-program-with-paths
+  [program : AstProgram]
+  [paths : AstDeclPathList]) : ResultCompilerTypecheck
+  (match (compiler-macro-expand-program-with-paths program paths)
+    [(OkCompilerMacroExpand expanded expanded-paths)
+      (typecheck-compiler-expanded-program-with-paths expanded expanded-paths)]
+    [(ErrCompilerMacroExpand diag) (ErrCompilerTypecheck diag)]))

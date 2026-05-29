@@ -7689,41 +7689,46 @@
 (define (lower-compiler-program-unlocated [program : AstProgram]) : ResultCompilerLower
   (match (compiler-specialize-program program)
     [(OkSpecProgram specialized)
-      (match (typecheck-compiler-specialized-program-with-paths
+      (match (compiler-macro-expand-program-with-paths
         specialized
         AstDeclPathNil)
-        [(OkCompilerTypecheck _)
-          (match (build-compiler-symbols specialized)
-            [(OkCompilerSymbols symbols)
-              (match (build-compiler-registries specialized)
-                [(OkCompilerRegistries registries)
-                  (let
-                    [ctx : TcContext
-                      (TcContext specialized symbols registries "")]
-                    (match (tc-build-top-env ctx specialized)
-                      [(OkTcEnv top-env)
-                        (let
-                          [alias-names : LowerNameEnv
-                            (match specialized
-                              [(AstProgram decls)
-                                (lower-name-env-with-import-aliases
-                                  decls
-                                  AstDeclPathNil
-                                  "<source>"
-                                  LowerNameNil
-                                  false)])]
-                          (lower-compiler-program-checked-with-names
-                            ctx
-                            top-env
-                            specialized
-                            alias-names))]
-                      [(ErrTcEnv message)
-                        (ErrCompilerLower (lower-diagnostic message))]))]
-                [(ErrCompilerRegistries message)
+        [(OkCompilerMacroExpand expanded _)
+          (match (typecheck-compiler-specialized-program-with-paths
+            expanded
+            AstDeclPathNil)
+            [(OkCompilerTypecheck _)
+              (match (build-compiler-symbols expanded)
+                [(OkCompilerSymbols symbols)
+                  (match (build-compiler-registries expanded)
+                    [(OkCompilerRegistries registries)
+                      (let
+                        [ctx : TcContext
+                          (TcContext expanded symbols registries "")]
+                        (match (tc-build-top-env ctx expanded)
+                          [(OkTcEnv top-env)
+                            (let
+                              [alias-names : LowerNameEnv
+                                (match expanded
+                                  [(AstProgram decls)
+                                    (lower-name-env-with-import-aliases
+                                      decls
+                                      AstDeclPathNil
+                                      "<source>"
+                                      LowerNameNil
+                                      false)])]
+                              (lower-compiler-program-checked-with-names
+                                ctx
+                                top-env
+                                expanded
+                                alias-names))]
+                          [(ErrTcEnv message)
+                            (ErrCompilerLower (lower-diagnostic message))]))]
+                    [(ErrCompilerRegistries message)
+                      (ErrCompilerLower (lower-diagnostic message))])]
+                [(ErrCompilerSymbols message)
                   (ErrCompilerLower (lower-diagnostic message))])]
-            [(ErrCompilerSymbols message)
-              (ErrCompilerLower (lower-diagnostic message))])]
-        [(ErrCompilerTypecheck diag) (ErrCompilerLower diag)])]
+            [(ErrCompilerTypecheck diag) (ErrCompilerLower diag)])]
+        [(ErrCompilerMacroExpand diag) (ErrCompilerLower diag)])]
     [(ErrSpecProgram diag) (ErrCompilerLower diag)]))
 
 (define (lower-compiler-program-with-path
@@ -7750,53 +7755,65 @@
           (lower-name-env-from-decls decls paths entry-path LowerNameNil)])]
     (match (compiler-specialize-program program)
       [(OkSpecProgram specialized)
-        (match (if needs-specialization
-          (LowerPrunedProgram specialized specialized-paths)
-          (lower-prune-unreachable-functions
-            entry-path
-            specialized
-            specialized-paths
-            names))
-          [(LowerPrunedProgram checked-program checked-paths)
-            (match (typecheck-compiler-specialized-program-with-paths
-              checked-program
-              checked-paths)
-              [(OkCompilerTypecheck _)
-                (match (build-compiler-symbols checked-program)
-                  [(OkCompilerSymbols symbols)
-                    (match (build-compiler-registries checked-program)
-                      [(OkCompilerRegistries registries)
-                        (let
-                          [ctx : TcContext
-                            (TcContext checked-program symbols registries "")]
-                          (match (tc-build-top-env ctx checked-program)
-                            [(OkTcEnv top-env)
-                              (match (lower-compiler-program-checked-with-names
-                                ctx
-                                top-env
-                                checked-program
-                                names)
-                                [(OkCompilerLower ir spans)
-                                  (OkCompilerLower ir spans)]
-                                [(ErrCompilerLower diag)
+        (match (compiler-macro-expand-program-with-paths
+          specialized
+          specialized-paths)
+          [(OkCompilerMacroExpand expanded expanded-paths)
+            (match (if needs-specialization
+              (LowerPrunedProgram expanded expanded-paths)
+              (lower-prune-unreachable-functions
+                entry-path
+                expanded
+                expanded-paths
+                names))
+              [(LowerPrunedProgram checked-program checked-paths)
+                (match (typecheck-compiler-specialized-program-with-paths
+                  checked-program
+                  checked-paths)
+                  [(OkCompilerTypecheck _)
+                    (match (build-compiler-symbols checked-program)
+                      [(OkCompilerSymbols symbols)
+                        (match (build-compiler-registries checked-program)
+                          [(OkCompilerRegistries registries)
+                            (let
+                              [ctx : TcContext
+                                (TcContext
+                                  checked-program
+                                  symbols
+                                  registries
+                                  "")]
+                              (match (tc-build-top-env ctx checked-program)
+                                [(OkTcEnv top-env)
+                                  (match (lower-compiler-program-checked-with-names
+                                    ctx
+                                    top-env
+                                    checked-program
+                                    names)
+                                    [(OkCompilerLower ir spans)
+                                      (OkCompilerLower ir spans)]
+                                    [(ErrCompilerLower diag)
+                                      (ErrCompilerLower
+                                        (lower-diagnostic-with-path
+                                          diag
+                                          entry-path))])]
+                                [(ErrTcEnv message)
                                   (ErrCompilerLower
-                                    (lower-diagnostic-with-path diag entry-path))])]
-                            [(ErrTcEnv message)
-                              (ErrCompilerLower
-                                (lower-diagnostic-with-path
-                                  (lower-diagnostic message)
-                                  entry-path))]))]
-                      [(ErrCompilerRegistries message)
+                                    (lower-diagnostic-with-path
+                                      (lower-diagnostic message)
+                                      entry-path))]))]
+                          [(ErrCompilerRegistries message)
+                            (ErrCompilerLower
+                              (lower-diagnostic-with-path
+                                (lower-diagnostic message)
+                                entry-path))])]
+                      [(ErrCompilerSymbols message)
                         (ErrCompilerLower
                           (lower-diagnostic-with-path
                             (lower-diagnostic message)
                             entry-path))])]
-                  [(ErrCompilerSymbols message)
-                    (ErrCompilerLower
-                      (lower-diagnostic-with-path
-                        (lower-diagnostic message)
-                        entry-path))])]
-              [(ErrCompilerTypecheck diag) (ErrCompilerLower diag)])])]
+                  [(ErrCompilerTypecheck diag) (ErrCompilerLower diag)])])]
+          [(ErrCompilerMacroExpand diag)
+            (ErrCompilerLower (lower-diagnostic-with-path diag entry-path))])]
       [(ErrSpecProgram diag)
         (ErrCompilerLower (lower-diagnostic-with-path diag entry-path))])))
 

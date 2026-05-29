@@ -2571,6 +2571,58 @@
         (compiler-typecheck-defmacro-body-type-source)
         "typecheck: macro body must return Expr"))))
 
+(define (compiler-typecheck-macro-expand-source) : String
+  "(defmacro (choose [cond : bool] [lhs : i64] [rhs : i64]) : i64
+  `(if ,cond ,lhs ,rhs))
+(define (main [flag : bool]) : i64
+  (choose flag 1 2))")
+
+(define (compiler-typecheck-macro-callsite-type-error-source) : String
+  "(defmacro (choose [cond : bool] [lhs : i64] [rhs : i64]) : i64
+  `(if ,cond ,lhs ,rhs))
+(define (main) : i64
+  (choose 1 2 3))")
+
+(define (compiler-typecheck-macro-recursive-source) : String
+  "(defmacro (again [x : i64]) : i64
+  `(ann (again ,x) : i64))
+(define (main [n : i64]) : i64
+  (again n))")
+
+(define (compiler-typecheck-macro-post-expansion-failure-source) : String
+  "(defmacro (bad [x : i64]) : i64
+  `(ann missing : i64))
+(define (main [n : i64]) : i64
+  (bad n))")
+
+(define (compiler-typecheck-macro-expansion-tests-ok?) : bool
+  (and
+    (compiler-typecheck-ok? (compiler-typecheck-macro-expand-source))
+    (and
+      (compiler-typecheck-error-ok?
+        (compiler-typecheck-macro-callsite-type-error-source)
+        "typecheck: macro operand type mismatch")
+      (and
+        (compiler-typecheck-macro-callsite-span-ok?)
+        (and
+          (compiler-typecheck-error-ok?
+            (compiler-typecheck-macro-recursive-source)
+            "typecheck: macro expansion depth limit exceeded")
+          (compiler-typecheck-error-ok?
+            (compiler-typecheck-macro-post-expansion-failure-source)
+            "typecheck: unbound name missing"))))))
+
+(define (compiler-typecheck-macro-callsite-span-ok?) : bool
+  (match (typecheck-compiler-source
+    (compiler-typecheck-macro-callsite-type-error-source))
+    [(ErrCompilerTypecheck diag)
+      (and
+        (string-eq
+          (compiler-diagnostic-message diag)
+          "typecheck: macro operand type mismatch")
+        (= (compiler-diagnostic-line diag) 4))]
+    [(OkCompilerTypecheck _) false]))
+
 (define (compiler-typecheck-self-test-basics) : unit
   (begin
     (if (compiler-typecheck-ptr-null-tests-ok?)
@@ -2814,6 +2866,11 @@
       unit
       (begin
         (panic "typecheck: defmacro tests failed")
+        unit))
+    (if (compiler-typecheck-macro-expansion-tests-ok?)
+      unit
+      (begin
+        (panic "typecheck: macro expansion tests failed")
         unit))))
 
 (define (compiler-typecheck-self-test) : i64

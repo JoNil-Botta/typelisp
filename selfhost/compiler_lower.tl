@@ -2970,14 +2970,8 @@
     [(AstExprWithRegion _ body) (lower-with-arena ctx state env type-env body)]
     [(AstExprWithResource bindings body)
       (lower-with-resource ctx state env type-env bindings body)]
-    [(AstExprBox _)
-      (ErrLowerExpr
-        (lower-diagnostic-at-expr
-          origin
-          "lower: box allocation is not implemented"))]
-    [(AstExprBoxGet _)
-      (ErrLowerExpr
-        (lower-diagnostic-at-expr origin "lower: box-get is not implemented"))]
+    [(AstExprBox inner) (lower-box ctx state env type-env inner expr-ty)]
+    [(AstExprBoxGet inner) (lower-box-get ctx state env type-env inner expr-ty)]
     [(AstExprTry inner) (lower-try ctx state env type-env inner origin)]
     ;; `(comptime expr)` folds to a literal via the scalar CTFE evaluator (#719).
     ;; Successful folds reuse the ordinary literal path; CTFE rejections (free
@@ -3231,6 +3225,48 @@
                 (lower-diagnostic-at-expr
                   receiver
                   "lower: struct-get requires struct"))])])]
+    [(ErrLowerExpr message) (ErrLowerExpr message)]))
+
+;; Lower `(box expr)` (#1443): evaluate `expr`, reserve arena storage sized for
+;; its (pointer-shaped) value via `tl_alloc`, store the value at offset 0, and
+;; return the box handle (the storage pointer) typed as the `(Box T)` result.
+(define (lower-box
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [inner : AstExpr]
+  [result-ty : AstType]) : ResultLowerExpr
+  (match (lower-expr ctx state env type-env inner)
+    [(OkLowerExpr lowered)
+      (match lowered
+        [(LowerExpr inner-state inner-value inner-ty)
+          (match (lower-reserve-heap-storage
+            inner-state
+            (lower-type-size ctx inner-ty)
+            result-ty)
+            [(LowerExpr base-state base _)
+              (OkLowerExpr
+                (LowerExpr
+                  (lower-store-at-offset base-state base 0 inner-value inner-ty)
+                  base
+                  result-ty))])])]
+    [(ErrLowerExpr message) (ErrLowerExpr message)]))
+
+;; Lower `(box-get b)` (#1443): evaluate the box handle and load the boxed value
+;; of type `T` (the result type) from offset 0 of the box storage.
+(define (lower-box-get
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [inner : AstExpr]
+  [result-ty : AstType]) : ResultLowerExpr
+  (match (lower-expr ctx state env type-env inner)
+    [(OkLowerExpr lowered)
+      (match lowered
+        [(LowerExpr box-state box-value _)
+          (OkLowerExpr (lower-load-at-offset box-state box-value 0 result-ty))])]
     [(ErrLowerExpr message) (ErrLowerExpr message)]))
 
 (define (lower-string-ref-byte
@@ -7830,10 +7866,10 @@
   "(define (main) : (Tuple i64 bool)
   (tuple 1 true))")
 
-(define (compiler-lower-box-unsupported-source) : String
-  "(define (main) : (Box i64) (box 7))")
+(define (compiler-lower-box-source) : String
+  "(define (main) : i64 (box-get (box 7)))")
 
-(define (compiler-lower-box-get-unsupported-source) : String
+(define (compiler-lower-box-get-source) : String
   "(define (main [b : (Box i64)]) : i64 (box-get b))")
 
 (define (compiler-lower-reference-source) : String
@@ -10311,14 +10347,10 @@
         "lower: unsupported expression")
         unit
         (set! ok false))
-      (if (compiler-lower-error-ok?
-        (compiler-lower-box-unsupported-source)
-        "lower: box allocation is not implemented")
+      (if (compiler-lower-ok? (compiler-lower-box-source))
         unit
         (set! ok false))
-      (if (compiler-lower-error-ok?
-        (compiler-lower-box-get-unsupported-source)
-        "lower: box-get is not implemented")
+      (if (compiler-lower-ok? (compiler-lower-box-get-source))
         unit
         (set! ok false))
       (if (compiler-lower-error-ok?

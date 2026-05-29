@@ -1,14 +1,15 @@
-;; doc_md.tl - Constrained-Markdown scanner and inline-span renderer for #871's
+;; doc_md.tl - Constrained-Markdown scanner and HTML renderer for #871's
 ;; language reference renderer (#1276). Splits the SPEC.md/README.md subset into
-;; typed blocks and converts inline constructs to escaped HTML:
+;; typed blocks and converts block/inline constructs to escaped HTML:
 ;;   `code`  -> <code>...</code>
 ;;   *em*    -> <em>...</em>     (also _em_)
 ;;   [t](u)  -> <a href="u">t</a>
 ;; All other text is HTML-escaped. An unmatched/degenerate marker (an opening
 ;; backtick/`*`/`_`/`[` with no valid closer) is emitted literally (escaped),
-;; never dropped. Block->HTML rendering is the sibling #1277 slice.
+;; never dropped.
 ;;
-;; Reuses `doc-html-escape` (entity escaping for & < > ") from doc_html.tl.
+;; Reuses `doc-html-escape` (entity escaping for & < > ") from doc_html.tl and
+;; `doc-render-anchor` from doc_render.tl via doc_html.tl.
 (import "doc_html.tl")
 
 (defenum MdStringList
@@ -843,6 +844,194 @@
                 (set! i (+ i 1)))])))
       out)))
 
+;;; Render a heading with the same deterministic anchor scheme used by API docs.
+(define (md-render-heading [level : i64] [text : String]) : String
+  (let
+    [level-text : String (int->string level)]
+    [anchor : String (doc-render-anchor text)]
+    (doc-html-cat5
+      "<h"
+      level-text
+      " id=\""
+      (doc-html-escape anchor)
+      (doc-html-cat5 "\">" (md-render-inline text) "</h" level-text ">\n"))))
+
+(define (md-render-paragraph [text : String]) : String
+  (doc-html-cat3 "<p>" (md-render-inline text) "</p>\n"))
+
+(define (md-render-inline-lines [lines : MdStringList]) : String
+  (match lines
+    [(MdStringNil) ""]
+    [(MdStringCons head rest)
+      (match rest
+        [(MdStringNil) (md-render-inline head)]
+        [_
+          (doc-html-cat3
+            (md-render-inline head)
+            "<br>\n"
+            (md-render-inline-lines rest))])]))
+
+(define (md-render-blockquote [lines : MdStringList]) : String
+  (doc-html-cat5
+    "<blockquote>\n<p>"
+    (md-render-inline-lines lines)
+    "</p>\n"
+    "</blockquote>\n"
+    ""))
+
+(define (md-render-list-items [items : MdStringList]) : String
+  (match items
+    [(MdStringNil) ""]
+    [(MdStringCons head rest)
+      (doc-html-cat4
+        "<li>"
+        (md-render-inline head)
+        "</li>\n"
+        (md-render-list-items rest))]))
+
+(define (md-render-bullet-list [items : MdStringList]) : String
+  (doc-html-cat3 "<ul>\n" (md-render-list-items items) "</ul>\n"))
+
+(define (md-render-numbered-list [items : MdStringList]) : String
+  (doc-html-cat3 "<ol>\n" (md-render-list-items items) "</ol>\n"))
+
+(define (md-render-code-fence [lang : String] [meta : String] [body : String]) : String
+  (doc-html-code-block-with-info lang meta body))
+
+(define (md-render-table-header-cells [cells : MdStringList]) : String
+  (match cells
+    [(MdStringNil) ""]
+    [(MdStringCons head rest)
+      (doc-html-cat4
+        "<th>"
+        (md-render-inline head)
+        "</th>"
+        (md-render-table-header-cells rest))]))
+
+(define (md-render-table-data-cells [cells : MdStringList]) : String
+  (match cells
+    [(MdStringNil) ""]
+    [(MdStringCons head rest)
+      (doc-html-cat4
+        "<td>"
+        (md-render-inline head)
+        "</td>"
+        (md-render-table-data-cells rest))]))
+
+(define (md-render-table-row [row : MdTableRow]) : String
+  (match row
+    [(MdTableRow cells)
+      (doc-html-cat3 "<tr>" (md-render-table-data-cells cells) "</tr>\n")]))
+
+(define (md-render-table-rows [rows : MdTableRowList]) : String
+  (match rows
+    [(MdTableRowNil) ""]
+    [(MdTableRowCons row rest)
+      (string-append (md-render-table-row row) (md-render-table-rows rest))]))
+
+(define (md-render-table [header : MdStringList] [rows : MdTableRowList]) : String
+  (doc-html-cat5
+    "<table>\n<thead>\n<tr>"
+    (md-render-table-header-cells header)
+    "</tr>\n</thead>\n<tbody>\n"
+    (md-render-table-rows rows)
+    "</tbody>\n</table>\n"))
+
+(define (md-render-block [block : MdBlock]) : String
+  (match block
+    [(MdHeading level text) (md-render-heading level text)]
+    [(MdParagraph text) (md-render-paragraph text)]
+    [(MdBlockquote lines) (md-render-blockquote lines)]
+    [(MdBulletList items) (md-render-bullet-list items)]
+    [(MdNumberedList items) (md-render-numbered-list items)]
+    [(MdCodeFence lang meta body) (md-render-code-fence lang meta body)]
+    [(MdTable header rows) (md-render-table header rows)]
+    [(MdBlank) ""]))
+
+(define (md-render-blocks [blocks : MdBlockList]) : String
+  (match blocks
+    [(MdBlockNil) ""]
+    [(MdBlockCons head rest)
+      (string-append (md-render-block head) (md-render-blocks rest))]))
+
+(define (md-render-html [src : String]) : String
+  (md-render-blocks (md-scan-blocks src)))
+
+(define (md-string-contains-at?
+  [haystack : String]
+  [needle : String]
+  [start : i64]) : bool
+  (let
+    [h : i64 (string-length haystack)]
+    [n : i64 (string-length needle)]
+    [i : i64 0]
+    [ok : bool true]
+    (if (> (+ start n) h)
+      false
+      (begin
+        (while (and ok (< i n))
+          (if (= (string-ref haystack (+ start i)) (string-ref needle i))
+            (set! i (+ i 1))
+            (set! ok false)))
+        ok))))
+
+(define (md-string-contains? [haystack : String] [needle : String]) : bool
+  (let
+    [h : i64 (string-length haystack)]
+    [n : i64 (string-length needle)]
+    [i : i64 0]
+    [found : bool false]
+    (if (= n 0)
+      true
+      (begin
+        (while (and (not found) (<= (+ i n) h))
+          (if (md-string-contains-at? haystack needle i)
+            (set! found true)
+            (set! i (+ i 1))))
+        found))))
+
+(define (md-render-block-smoke-result [fixture : String] [blocks : MdBlockList]) : i64
+  (let
+    [html : String (md-render-blocks blocks)]
+    (if (md-string-contains?
+      html
+      (doc-html-cat5
+        "<h1 id=\""
+        (doc-render-anchor "Title `x`")
+        "\">Title <code>x</code></h1>\n"
+        ""
+        ""))
+      (if (md-string-contains?
+        (md-render-block (MdHeading 6 "Deep Heading"))
+        "<h6 id=\"tl-Deep-32Heading\">Deep Heading</h6>\n")
+        (if (md-string-contains? html "<p>Paragraph with <em>em</em></p>\n")
+          (if (md-string-contains?
+            html
+            "<blockquote>\n<p>quote <a href=\"b\">a</a><br>\nsecond</p>\n</blockquote>\n")
+            (if (md-string-contains?
+              html
+              "<ul>\n<li>one</li>\n<li>two</li>\n</ul>\n")
+              (if (md-string-contains?
+                html
+                "<ol>\n<li>first</li>\n<li>second</li>\n</ol>\n")
+                (if (md-string-contains?
+                  html
+                  "<pre><code class=\"language-typelisp\" data-meta=\"run expect=42\">(define x : i64 1)\n; &lt;tag&gt; &amp; value\n</code></pre>\n")
+                  (if (md-string-contains?
+                    html
+                    "<table>\n<thead>\n<tr><th>Name</th><th>Type</th></tr>\n</thead>\n<tbody>\n<tr><td>x</td><td>i64</td></tr>\n</tbody>\n</table>\n")
+                    (if (string-eq (md-render-html fixture) html)
+                      42
+                      117)
+                    116)
+                  115)
+                114)
+              113)
+            112)
+          111)
+        110)
+      109)))
+
 ;; ---- self-test (driven by doc_md_smoke.tl) ----
 (define (compiler-doc-md-block-self-test) : i64
   (let
@@ -858,7 +1047,7 @@
               (string-append
                 "1. first\n2. second\n"
                 (string-append
-                  "```typelisp run expect=42\n(define x : i64 1)\n```\n"
+                  "```typelisp run expect=42\n(define x : i64 1)\n; <tag> & value\n```\n"
                   "| Name | Type |\n| --- | --- |\n| x | i64 |\n"))))))]
     [blocks : MdBlockList (md-scan-blocks fixture)]
     (if (= (md-block-list-count blocks) 8)
@@ -873,9 +1062,9 @@
                     6
                     "typelisp"
                     "run expect=42"
-                    "(define x : i64 1)\n")
+                    "(define x : i64 1)\n; <tag> & value\n")
                     (if (md-check-table1? blocks 7 "Name" "Type" "x" "i64")
-                      42
+                      (md-render-block-smoke-result fixture blocks)
                       108)
                     107)
                   106)

@@ -1081,6 +1081,25 @@
   "(define (main [n : i64]) : (& n i64)
   (& n))")
 
+(define (compiler-typecheck-reference-return-param-ref-source) : String
+  "(define (id [r : (& n i64)]) : (& n i64) r)
+(define (main [n : i64]) : (& n i64)
+  (id (& n)))")
+
+(define (compiler-typecheck-reference-return-untied-source) : String
+  "(define (main [n : i64]) : (& other i64)
+  (& n))")
+
+(define (compiler-typecheck-reference-return-local-escape-source) : String
+  "(define (main [n : i64]) : (& n i64)
+  (let [x : i64 1] (& x)))")
+
+(define (compiler-typecheck-reference-lambda-return-source) : String
+  "(define (main [n : i64]) : i64
+  (begin
+    (lambda ([x : i64]) : (& x i64) (& x))
+    n))")
+
 (define (compiler-typecheck-reference-mut-source) : String
   "(define (main [n : (&mut phase i64)]) : unit unit)")
 
@@ -1189,9 +1208,22 @@
       (compiler-typecheck-error-ok?
         (compiler-typecheck-reference-mismatch-source)
         "typecheck: borrow lifetime mismatch")]
-    [return-error-ok : bool
+    [return-ok : bool
+      (compiler-typecheck-ok? (compiler-typecheck-reference-return-source))]
+    [return-param-ref-ok : bool
+      (compiler-typecheck-ok?
+        (compiler-typecheck-reference-return-param-ref-source))]
+    [return-untied-error-ok : bool
       (compiler-typecheck-error-ok?
-        (compiler-typecheck-reference-return-source)
+        (compiler-typecheck-reference-return-untied-source)
+        "typecheck: returned reference lifetime must be tied to a parameter")]
+    [return-local-escape-error-ok : bool
+      (compiler-typecheck-error-ok?
+        (compiler-typecheck-reference-return-local-escape-source)
+        "typecheck: reference value would escape lexical scope")]
+    [lambda-return-error-ok : bool
+      (compiler-typecheck-error-ok?
+        (compiler-typecheck-reference-lambda-return-source)
         "typecheck: returning references requires lifetime support (#804)")]
     [mut-ref-error-ok : bool
       (compiler-typecheck-error-ok?
@@ -1251,7 +1283,19 @@
       (if mismatch-error-ok
         unit
         (set! ok false))
-      (if return-error-ok
+      (if return-ok
+        unit
+        (set! ok false))
+      (if return-param-ref-ok
+        unit
+        (set! ok false))
+      (if return-untied-error-ok
+        unit
+        (set! ok false))
+      (if return-local-escape-error-ok
+        unit
+        (set! ok false))
+      (if lambda-return-error-ok
         unit
         (set! ok false))
       (if mut-ref-error-ok

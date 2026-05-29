@@ -717,6 +717,14 @@
         true
         (tc-string-list-overlaps? rest b))]))
 
+(define (tc-string-list-all-in? [items : TcStringList] [allowed : TcStringList]) : bool
+  (match items
+    [(TcStringNil) true]
+    [(TcStringCons item rest)
+      (and
+        (tc-string-list-contains allowed item)
+        (tc-string-list-all-in? rest allowed))]))
+
 (define (tc-env-binding-matches-lifetime?
   [key : String]
   [ty : AstType]
@@ -1000,6 +1008,41 @@
           (or
             (tc-type-contains-reference? ty)
             (tc-param-list-contains-reference? rest))])]))
+
+(define (tc-param-list-reference-return-lifetimes-into
+  [ctx : TcContext]
+  [params : AstParamList]
+  [out : TcStringList]) : TcStringList
+  (match params
+    [(AstParamNil) out]
+    [(AstParamCons param rest)
+      (match param
+        [(AstParam name ty _)
+          (tc-param-list-reference-return-lifetimes-into
+            ctx
+            rest
+            (tc-type-collect-reference-lifetimes-into
+              (tc-resolve-type ctx ty)
+              (tc-string-list-add out name)))])]))
+
+(define (tc-reference-return-lifetimes-allowed?
+  [ctx : TcContext]
+  [params : AstParamList]
+  [ret : AstType]) : bool
+  (tc-string-list-all-in?
+    (tc-type-collect-reference-lifetimes (tc-resolve-type ctx ret))
+    (tc-param-list-reference-return-lifetimes-into ctx params TcStringNil)))
+
+(define (tc-reference-return-policy-ok
+  [ctx : TcContext]
+  [params : AstParamList]
+  [ret : AstType]) : ResultTcUnit
+  (if (tc-type-contains-reference? (tc-resolve-type ctx ret))
+    (if (tc-reference-return-lifetimes-allowed? ctx params ret)
+      OkTcUnit
+      (ErrTcUnit
+        "typecheck: returned reference lifetime must be tied to a parameter"))
+    OkTcUnit))
 
 (define (tc-type-list-collect-regions
   [types : AstTypeList]
@@ -1502,10 +1545,9 @@
         [(OkTcUnit)
           (match (tc-source-type-policy-ok ctx ret)
             [(OkTcUnit)
-              (if (tc-type-contains-reference? (tc-resolve-type ctx ret))
-                (ErrTcUnit
-                  "typecheck: returning references requires lifetime support (#804)")
-                (tc-source-expr-policy-ok ctx body))]
+              (match (tc-reference-return-policy-ok ctx params ret)
+                [(OkTcUnit) (tc-source-expr-policy-ok ctx body)]
+                [(ErrTcUnit message) (ErrTcUnit message)])]
             [(ErrTcUnit message) (ErrTcUnit message)])]
         [(ErrTcUnit message) (ErrTcUnit message)])]
     [(AstDeclDefMacro _ params ret body)

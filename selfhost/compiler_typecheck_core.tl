@@ -7621,14 +7621,26 @@
             [(ErrMacroDecls diag) (ErrMacroDecls diag)])]
         [(ErrMacroDecl diag) (ErrMacroDecls diag)])]))
 
-;; Expand all macro calls in a parsed program before typechecking. Macros are
-;; resolved against the program's own top-level `defmacro` declarations.
+;; Whether a program declares any macros at all.
+(define (macro-program-has-macros? [decls : AstDeclList]) : bool
+  (match decls
+    [(AstDeclNil) false]
+    [(AstDeclCons decl rest)
+      (match decl
+        [(AstDeclDefMacro _ _ _ _) true]
+        [_ (macro-program-has-macros? rest)])]))
+
+;; Expand all macro calls in a parsed program before typechecking. Programs that
+;; declare no macros are returned unchanged without rebuilding the AST, so the
+;; expansion phase adds no allocation for the common (macro-free) case.
 (define (macro-expand-program [program : AstProgram]) : ResultMacroExpand
   (match program
     [(AstProgram decls)
-      (match (macro-expand-decls decls decls)
-        [(OkMacroDecls ndecls) (OkMacroExpand (AstProgram ndecls))]
-        [(ErrMacroDecls diag) (ErrMacroExpand diag)])]))
+      (if (macro-program-has-macros? decls)
+        (match (macro-expand-decls decls decls)
+          [(OkMacroDecls ndecls) (OkMacroExpand (AstProgram ndecls))]
+          [(ErrMacroDecls diag) (ErrMacroExpand diag)])
+        (OkMacroExpand program))]))
 
 (define (tc-check-decl [ctx : TcContext] [top-env : TcTypeEnv] [decl : AstDecl]) : ResultTcUnit
   (match decl

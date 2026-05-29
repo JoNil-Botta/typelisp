@@ -40,7 +40,7 @@ reject_diag() {
 # fail this gate. Retry an UNEXPECTED outcome a few times: a transient segfault
 # clears on retry, while a genuine regression reproduces across every attempt and
 # still fails.
-# Default 6 (not 3): this gate makes ~23 separate check.tl invocations, so the
+# Default 6 (not 3): this gate makes many separate check.tl invocations, so the
 # #1204 Windows segfault can exhaust 3 attempts on one of them (observed on PR
 # #1246); more headroom keeps the crash-only retry effective.
 ATTEMPTS="${VERIFY_STDLIB_SELFHOST_ATTEMPTS:-6}"

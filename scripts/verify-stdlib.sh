@@ -3,6 +3,10 @@ set -eu
 
 # verify-stdlib.sh - verify canonical stdlib modules through --stdlib-root.
 # refs #285, #814, #863
+#
+# TYPELISP_STDLIB_VERIFY_MODE=borrowed-str checks only fixtures that require the
+# borrowed-`str` parser/typechecker path; no-Rust Linux runs that mode through a
+# freshly bootstrapped stage1 wrapper while the default mode remains seed-safe.
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
@@ -32,6 +36,26 @@ if [ ! -x "$COMPILER" ]; then
     echo "typelisp compiler is not executable: $COMPILER" >&2
     exit 1
 fi
+
+STDLIB_VERIFY_MODE=${TYPELISP_STDLIB_VERIFY_MODE:-default}
+RUN_REGULAR=0
+RUN_BORROWED_STR=0
+case "$STDLIB_VERIFY_MODE" in
+    default)
+        RUN_REGULAR=1
+        ;;
+    borrowed-str)
+        RUN_BORROWED_STR=1
+        ;;
+    all)
+        RUN_REGULAR=1
+        RUN_BORROWED_STR=1
+        ;;
+    *)
+        echo "unknown TYPELISP_STDLIB_VERIFY_MODE '$STDLIB_VERIFY_MODE' (expected default, borrowed-str, or all)" >&2
+        exit 1
+        ;;
+esac
 
 # Build a fixture .tl to a runnable binary and run it (host-aware) with the
 # supplied stdin file, capturing the program exit code in `got` and writing
@@ -174,6 +198,16 @@ stdlib/tests/arena_policy_escape_text_buf.tl|fail|cannot escape with-arena 'inne
 EOF
 }
 
+# Fixtures in this manifest require the borrowed-`str` parser/typechecker path.
+# The default stdlib gate stays seed-compatible; no-Rust Linux runs this manifest
+# through the freshly bootstrapped stage1 wrapper with
+# TYPELISP_STDLIB_VERIFY_MODE=borrowed-str.
+stdlib_borrowed_str_check_manifest() {
+    cat <<'EOF'
+stdlib/tests/borrowed_str_gate.tl|pass|-
+EOF
+}
+
 WORKDIR="$ROOT/target/stdlib-verify"
 rm -rf "$WORKDIR"
 mkdir -p "$WORKDIR"
@@ -200,14 +234,17 @@ fi
 
 TEST_MANIFEST="$WORKDIR/stdlib-test-manifest.psv"
 CHECK_MANIFEST="$WORKDIR/stdlib-check-manifest.psv"
+BORROWED_STR_CHECK_MANIFEST="$WORKDIR/stdlib-borrowed-str-check-manifest.psv"
 TEST_EXPECTED="$WORKDIR/expected-stdlib-tests.txt"
 TEST_ACTUAL="$WORKDIR/actual-stdlib-tests.txt"
 
 stdlib_test_manifest > "$TEST_MANIFEST"
 stdlib_check_manifest > "$CHECK_MANIFEST"
+stdlib_borrowed_str_check_manifest > "$BORROWED_STR_CHECK_MANIFEST"
 {
     sed '/^#/d;/^$/d;s/|.*$//' "$TEST_MANIFEST"
     sed '/^#/d;/^$/d;s/|.*$//' "$CHECK_MANIFEST"
+    sed '/^#/d;/^$/d;s/|.*$//' "$BORROWED_STR_CHECK_MANIFEST"
 } | sort > "$TEST_EXPECTED"
 find stdlib/tests -type f -name '*.tl' | sort > "$TEST_ACTUAL"
 
@@ -374,6 +411,7 @@ export WindowsSDKVersion="$SDK_VERSION"
 
 passed=0
 skipped=0
+if [ "$RUN_REGULAR" -eq 1 ]; then
 while IFS='|' read -r fixture want stdout_spec stderr_spec stdin_spec extra; do
     case "$fixture" in
         '' | \#*) continue ;;
@@ -451,8 +489,13 @@ while IFS='|' read -r fixture want stdout_spec stderr_spec stdin_spec extra; do
 
     passed=$((passed + 1))
 done < "$TEST_MANIFEST"
+else
+    echo "[stdlib] skipping regular runnable fixtures (mode=$STDLIB_VERIFY_MODE)"
+fi
 
 checked=0
+run_check_manifest() {
+    _manifest=$1
 while IFS='|' read -r fixture want stderr_snippet extra; do
     case "$fixture" in
         '' | \#*) continue ;;
@@ -532,7 +575,20 @@ while IFS='|' read -r fixture want stderr_snippet extra; do
     fi
 
     checked=$((checked + 1))
-done < "$CHECK_MANIFEST"
+done < "$_manifest"
+}
+
+if [ "$RUN_REGULAR" -eq 1 ]; then
+    run_check_manifest "$CHECK_MANIFEST"
+else
+    echo "[stdlib] skipping regular check fixtures (mode=$STDLIB_VERIFY_MODE)"
+fi
+
+if [ "$RUN_BORROWED_STR" -eq 1 ]; then
+    run_check_manifest "$BORROWED_STR_CHECK_MANIFEST"
+else
+    echo "[stdlib] skipping borrowed-str check fixtures (mode=$STDLIB_VERIFY_MODE)"
+fi
 
 module_count=$(wc -l < "$EXPECTED" | tr -d ' ')
 
@@ -540,4 +596,4 @@ if [ "$skipped" -gt 0 ]; then
     echo "stdlib verification: $skipped runnable fixture(s) skipped (staged primitive awaiting no-Rust compiler support)"
 fi
 
-echo "stdlib verification passed for $module_count module(s), $passed runnable fixture(s), $checked check fixture(s)"
+echo "stdlib verification passed for $module_count module(s), $passed runnable fixture(s), $checked check fixture(s) (mode=$STDLIB_VERIFY_MODE)"

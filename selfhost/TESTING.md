@@ -320,13 +320,41 @@ Each new corpus file must be listed in the script manifest. See
 [`selfhost/tests/README.md`](tests/README.md) for the corpus layout and local
 runner commands.
 
+### Stdlib module and fixture gate
+
+`scripts/verify-stdlib.sh` owns the canonical stdlib module manifest and the
+`stdlib/tests/` fixture manifest. Its default mode is seed-compatible: it runs
+the ordinary runnable fixtures and check-only fixtures through `TYPELISP_BIN`
+with `--stdlib-root`, preserving staged-symbol skips for rows that need runtime
+primitives not yet present in the published seed.
+
+Borrowed-`str` syntax is checked by an explicit stage1-capable mode:
+
+```sh
+TYPELISP_BIN=target/no-rust-stage1-wrapper/typelisp \
+  TYPELISP_STDLIB_VERIFY_MODE=borrowed-str \
+  scripts/verify-stdlib.sh
+```
+
+That mode checks only `stdlib/tests/borrowed_str_gate.tl`, which imports the
+borrowed-string migration targets and contains a `(& lifetime str)` parameter
+plus an explicit borrow call. The Linux no-Rust gate runs this mode through the
+freshly bootstrapped stage1 wrapper so stdlib modules can adopt borrowed
+signatures before the published stage0 seed is refreshed. Use
+`TYPELISP_STDLIB_VERIFY_MODE=all` locally to run both the default fixture set
+and the borrowed-`str` source gate with one compiler.
+
 ### Stdlib documentation gate
 
 `scripts/verify-stdlib-docs.sh` discovers every `stdlib/*.tl` module, requires
 module and item documentation comments, generates Markdown through
 `typelisp doc`, and runs `typelisp doc --test` with `--stdlib-root`. The script
 is separate from `cargo test` so the Linux no-Rust gate can run it through the
-stage1 wrapper's selfhost doc driver.
+stage1 wrapper's selfhost doc driver. Repository-wide doctests still use the
+public-tool route until the remaining wrapper work in #1544 lands, so
+borrowed-syntax stdlib examples should be covered by this stdlib docs gate or
+by the borrowed-`str` stdlib source gate above rather than relying only on the
+repository doctest sweep.
 
 ### Repository doctest gate
 
@@ -404,7 +432,9 @@ seed, until stage1 checked trap helpers are available; the doctest, format, and
 generated-program gates fall back only when the wrapper host-action drivers are
 unavailable. Public tools, native integration manifests, examples, and stdlib
 modules continue to use the seed compiler until their remaining public-tool and
-manifest exceptions are ported to the wrapper. The Windows job
+manifest exceptions are ported to the wrapper. The borrowed-`str` stdlib source
+routing is the stage1-backed exception for stdlib syntax migration work. The
+Windows job
 runs the host-supported gates against the published stage0 compiler, verifies
 MSVC `link.exe` selfhost build/run support, runs the Windows bootstrap
 stage2/stage3 fixpoint, and explicitly skips the Linux-only selfhost/docs

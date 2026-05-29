@@ -562,6 +562,7 @@ if [ "$HOST_OS" = linux ]; then
     unset TYPELISP_STAGE1_SKIP_PACKAGE_SMOKE
     run_with_compiler "$STAGE1_TYPELISP_BIN" "stage1 deterministic assembly" scripts/check-deterministic-asm.sh
     run_with_compiler "$STAGE1_TYPELISP_BIN" "stage1 selfhost compile manifest" env TYPELISP_COMPILE_MANIFEST_EXPECTATION_MODE=stage1 scripts/verify-selfhost-compile-manifest.sh
+    run_with_compiler "$STAGE1_TYPELISP_BIN" "stage1 stdlib borrowed-str source gate" env TYPELISP_STDLIB_VERIFY_MODE=borrowed-str scripts/verify-stdlib.sh
     if [ "$STAGE1_HOST_ACTION_DRIVERS_AVAILABLE" -eq 0 ]; then
         echo
         echo "[no-rust-stage0] skipping stage1 doc/build-driver gates until staged runtime symbols land in stage0:"

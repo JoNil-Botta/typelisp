@@ -33,7 +33,7 @@ use module::{
     load_program_with_options,
 };
 use optimizer::Optimizer;
-use package::{PackageError, discover_manifest, load_manifest};
+use package::{PackageError, PackageKind, PackageLinkInputs, discover_manifest, load_manifest};
 use typechecker::TypeChecker;
 
 const TYPELISP_STDLIB_ROOT_ENV: &str = "TYPELISP_STDLIB_ROOT";
@@ -1072,7 +1072,7 @@ fn parse_build_options(args: &[String], mut i: usize) -> BuildRequest {
     let mut output = None;
     let mut manifest_path = None;
     let mut stdlib_roots = Vec::new();
-    let mut target = BackendTarget::default();
+    let mut target = native::host_target();
     let mut opt_level: Option<native::OptLevel> = None;
 
     while i < args.len() {
@@ -1216,6 +1216,14 @@ fn build_source_executable_or_exit(
         target,
         native::OptLevel::DEFAULT,
     ))
+}
+
+fn package_link_inputs_for_native(inputs: PackageLinkInputs) -> native::LinkInputs {
+    native::LinkInputs {
+        libs: inputs.libs,
+        search_paths: inputs.search_paths,
+        args: inputs.args,
+    }
 }
 
 fn native_or_exit<T>(result: Result<T, native::NativeError>) -> T {
@@ -1442,13 +1450,37 @@ fn run_cli() {
                         let loaded = load_or_exit(&manifest.entry_path(), &options);
                         let lowered = optimized_ir_or_exit(&loaded, target, opt_level);
                         let asm = assembly_or_exit(&lowered, &loaded.sources, target);
-                        let output_path = manifest.output_asm_path();
-                        if let Some(parent) = output_path.parent() {
+                        let asm_path = manifest.output_asm_path();
+                        let obj_path = manifest.output_obj_path(target);
+                        let artifact_path = manifest.output_artifact_path(target);
+                        if let Some(parent) = asm_path.parent() {
                             fs::create_dir_all(parent)
                                 .expect("Failed to create package output directory");
                         }
-                        fs::write(&output_path, asm).expect("Failed to write package assembly");
-                        println!("Generated: {}", output_path.display());
+                        fs::write(&asm_path, asm).expect("Failed to write package assembly");
+                        match manifest.kind {
+                            PackageKind::Bin => {
+                                let link_inputs = package_link_inputs_for_native(
+                                    manifest.link_inputs_for_target(target),
+                                );
+                                native_or_exit(native::assemble_source_assembly_to_executable(
+                                    &asm_path,
+                                    &obj_path,
+                                    &artifact_path,
+                                    target,
+                                    &link_inputs,
+                                ));
+                            }
+                            PackageKind::Lib => {
+                                native_or_exit(native::assemble_source_assembly_to_static_library(
+                                    &asm_path,
+                                    &obj_path,
+                                    &artifact_path,
+                                    target,
+                                ));
+                            }
+                        }
+                        println!("Generated: {}", artifact_path.display());
                     }
                 }
             }

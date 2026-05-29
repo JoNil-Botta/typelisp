@@ -173,11 +173,14 @@ Stdlib modules are imported explicitly:
 For imports whose path starts with `stdlib/`, the loader first tries the path
 relative to the importing file. If that local path cannot be loaded, each
 configured stdlib root is searched by stripping the leading `stdlib/` and
-joining the remaining suffix to the root.
+joining the remaining suffix to the root. If no configured root provides the
+module, the compiler uses its embedded copy of the checked-in stdlib as the
+final fallback.
 
 That means local project files take precedence over configured stdlib roots.
-Configured stdlib roots only serve normal relative suffixes below the root;
-paths such as `stdlib/../outside.tl` are not resolved through root fallback.
+Configured stdlib roots take precedence over embedded modules. Configured and
+embedded stdlib fallbacks only serve normal relative suffixes below the root;
+paths such as `stdlib/../outside.tl` are not resolved through fallback.
 When compiling or checking sources outside the repository tree, prefer passing
 the repository stdlib directory explicitly:
 
@@ -190,12 +193,13 @@ typelisp test path/to/main.tl --stdlib-root /path/to/typelisp/stdlib
 
 For ad-hoc local commands, `TYPELISP_STDLIB_ROOT=/path/to/typelisp/stdlib`
 provides an optional fallback root. Explicit `--stdlib-root` values are searched
-before that environment fallback, so scripts and CI should keep passing
-`--stdlib-root` when they need reproducible resolution.
+before that environment fallback, and both are searched before the embedded
+stdlib, so scripts and CI should keep passing `--stdlib-root` when they need
+reproducible resolution.
 
 Copying or staging `stdlib/` next to an entry source still works because imports
 remain filesystem paths, but `--stdlib-root` is the canonical way to verify root
-lookup behavior.
+lookup and override behavior.
 
 The assertion helpers in `stdlib/test.tl` are also intended for inline
 `(test ...)` items. They do not allocate on success; failures call `panic` with
@@ -213,23 +217,26 @@ fixtures are discovered without a manifest edit.
    import path.
 4. Add the new top-level `.tl` file to `scripts/verify-stdlib.sh`'s module
    manifest.
-5. Add focused fixtures under `stdlib/tests/` and list them in
+5. Add new stdlib `.tl` files, including test fixtures, to the embedded stdlib
+   manifest in `src/module.rs` so installed compiler binaries can use them
+   through embedded stdlib fallback.
+6. Add focused fixtures under `stdlib/tests/` and list them in
    `scripts/verify-stdlib.sh`'s runnable test manifest with expected
    exit/stdout/stderr or check-only manifest with expected pass/fail behavior.
-6. Add inline `(test ...)` items next to declarations when the check belongs to
+7. Add inline `(test ...)` items next to declarations when the check belongs to
    a specific stdlib API; `scripts/verify-inline-tests.sh` discovers them
    automatically.
-7. Document the intended public API coverage in `stdlib/tests/README.md`.
-8. Add `;;;;` module docs, attached `;;;` item docs for every public top-level
+8. Document the intended public API coverage in `stdlib/tests/README.md`.
+9. Add `;;;;` module docs, attached `;;;` item docs for every public top-level
    declaration, allocation-behavior notes for allocating APIs, an update to the
    arena allocation classification table above, and at least one checked doctest
    example that runs with `--stdlib-root`.
-9. Run `scripts/verify-stdlib-docs.sh` to generate Markdown and run doctests
+10. Run `scripts/verify-stdlib-docs.sh` to generate Markdown and run doctests
    for every stdlib module.
-10. Run `scripts/verify-doc-tests.sh` to confirm the repository-wide doctest
+11. Run `scripts/verify-doc-tests.sh` to confirm the repository-wide doctest
    discovery gate picks up the new documented module without a manifest edit.
-11. Run `scripts/verify-inline-tests.sh` if the module adds inline tests.
-12. Link user-facing docs or tests to the new module when appropriate.
+12. Run `scripts/verify-inline-tests.sh` if the module adds inline tests.
+13. Link user-facing docs or tests to the new module when appropriate.
 
 The verifier intentionally fails when a new top-level `stdlib/*.tl` module or a
 new `stdlib/tests/*.tl` fixture is not listed in its corresponding manifest.

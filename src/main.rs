@@ -118,7 +118,10 @@ fn assembly_or_exit(
 /// into one `Program`, or print a diagnostic and exit. The returned source map
 /// lets later semantic diagnostics render against the originating module.
 fn load_or_exit(entry: &Path, options: &LoadOptions) -> LoadedProgram {
-    let loaded = if options.stdlib_roots.is_empty() && options.package_roots.is_empty() {
+    let loaded = if options.stdlib_roots.is_empty()
+        && options.package_roots.is_empty()
+        && options.embedded_stdlib
+    {
         load_program(entry, &FsSource)
     } else {
         load_program_with_options(entry, &FsSource, options)
@@ -199,8 +202,10 @@ fn print_usage() {
     );
     eprintln!("    --target <target>              linux-x86_64 or windows-x86_64");
     eprintln!("    --manifest-path <file>         Package manifest for build");
-    eprintln!("    --stdlib-root <dir>            Search root for stdlib/... imports");
-    eprintln!("    TYPELISP_STDLIB_ROOT           Optional fallback root for stdlib/... imports");
+    eprintln!(
+        "    --stdlib-root <dir>            Search root for stdlib/... imports before env/embedded fallback"
+    );
+    eprintln!("    TYPELISP_STDLIB_ROOT           Optional fallback root before embedded stdlib");
     eprintln!();
     eprintln!("Options for compile:");
     eprintln!("    -o <file>                      Output assembly file");

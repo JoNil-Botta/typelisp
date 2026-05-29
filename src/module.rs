@@ -21,6 +21,238 @@ use std::collections::{BTreeMap, HashSet};
 use std::io;
 use std::path::{Component, Path, PathBuf};
 
+mod embedded_stdlib {
+    use std::path::{Component, Path, PathBuf};
+
+    pub const VIRTUAL_ROOT: &str = "$typelisp-embedded-stdlib";
+
+    const ENTRIES: &[(&str, &str)] = &[
+        ("cpu.tl", include_str!("../stdlib/cpu.tl")),
+        ("env.tl", include_str!("../stdlib/env.tl")),
+        ("fs.tl", include_str!("../stdlib/fs.tl")),
+        ("hash.tl", include_str!("../stdlib/hash.tl")),
+        ("hashmap.tl", include_str!("../stdlib/hashmap.tl")),
+        ("io.tl", include_str!("../stdlib/io.tl")),
+        ("json.tl", include_str!("../stdlib/json.tl")),
+        ("msvc.tl", include_str!("../stdlib/msvc.tl")),
+        ("process.tl", include_str!("../stdlib/process.tl")),
+        ("random.tl", include_str!("../stdlib/random.tl")),
+        ("string.tl", include_str!("../stdlib/string.tl")),
+        ("test.tl", include_str!("../stdlib/test.tl")),
+        (
+            "tests/arena_policy.tl",
+            include_str!("../stdlib/tests/arena_policy.tl"),
+        ),
+        (
+            "tests/arena_policy_escape_string.tl",
+            include_str!("../stdlib/tests/arena_policy_escape_string.tl"),
+        ),
+        (
+            "tests/arena_policy_escape_text_buf.tl",
+            include_str!("../stdlib/tests/arena_policy_escape_text_buf.tl"),
+        ),
+        (
+            "tests/cpu_api.tl",
+            include_str!("../stdlib/tests/cpu_api.tl"),
+        ),
+        (
+            "tests/env_api.tl",
+            include_str!("../stdlib/tests/env_api.tl"),
+        ),
+        ("tests/fs_api.tl", include_str!("../stdlib/tests/fs_api.tl")),
+        (
+            "tests/hash_api.tl",
+            include_str!("../stdlib/tests/hash_api.tl"),
+        ),
+        (
+            "tests/hashmap_api.tl",
+            include_str!("../stdlib/tests/hashmap_api.tl"),
+        ),
+        (
+            "tests/io_edges.tl",
+            include_str!("../stdlib/tests/io_edges.tl"),
+        ),
+        (
+            "tests/io_file_handle.tl",
+            include_str!("../stdlib/tests/io_file_handle.tl"),
+        ),
+        (
+            "tests/io_stdio_bytes.tl",
+            include_str!("../stdlib/tests/io_stdio_bytes.tl"),
+        ),
+        (
+            "tests/io_stdio_lines.tl",
+            include_str!("../stdlib/tests/io_stdio_lines.tl"),
+        ),
+        (
+            "tests/json_helpers.tl",
+            include_str!("../stdlib/tests/json_helpers.tl"),
+        ),
+        (
+            "tests/json_parse_stringify.tl",
+            include_str!("../stdlib/tests/json_parse_stringify.tl"),
+        ),
+        (
+            "tests/msvc_api.tl",
+            include_str!("../stdlib/tests/msvc_api.tl"),
+        ),
+        (
+            "tests/process_api.tl",
+            include_str!("../stdlib/tests/process_api.tl"),
+        ),
+        (
+            "tests/process_runtime.tl",
+            include_str!("../stdlib/tests/process_runtime.tl"),
+        ),
+        (
+            "tests/random_api.tl",
+            include_str!("../stdlib/tests/random_api.tl"),
+        ),
+        (
+            "tests/string_edges.tl",
+            include_str!("../stdlib/tests/string_edges.tl"),
+        ),
+        (
+            "tests/test_assert_failure.tl",
+            include_str!("../stdlib/tests/test_assert_failure.tl"),
+        ),
+        (
+            "tests/test_assert_success.tl",
+            include_str!("../stdlib/tests/test_assert_success.tl"),
+        ),
+        (
+            "tests/text_buf_api.tl",
+            include_str!("../stdlib/tests/text_buf_api.tl"),
+        ),
+        (
+            "tests/vector_api.tl",
+            include_str!("../stdlib/tests/vector_api.tl"),
+        ),
+        (
+            "tests/visual_studio_api.tl",
+            include_str!("../stdlib/tests/visual_studio_api.tl"),
+        ),
+        (
+            "tests/windows_registry_api.tl",
+            include_str!("../stdlib/tests/windows_registry_api.tl"),
+        ),
+        (
+            "tests/windows_sdk_api.tl",
+            include_str!("../stdlib/tests/windows_sdk_api.tl"),
+        ),
+        ("text_buf.tl", include_str!("../stdlib/text_buf.tl")),
+        ("vector.tl", include_str!("../stdlib/vector.tl")),
+        (
+            "windows_registry.tl",
+            include_str!("../stdlib/windows_registry.tl"),
+        ),
+        ("windows_sdk.tl", include_str!("../stdlib/windows_sdk.tl")),
+        (
+            "windows_setup.tl",
+            include_str!("../stdlib/windows_setup.tl"),
+        ),
+    ];
+
+    pub fn is_available() -> bool {
+        !ENTRIES.is_empty()
+    }
+
+    #[cfg(test)]
+    pub fn module_keys() -> impl Iterator<Item = &'static str> {
+        ENTRIES.iter().map(|(key, _)| *key)
+    }
+
+    pub fn read_suffix(suffix: &Path) -> Option<&'static str> {
+        let key = module_key(suffix)?;
+        read_key(&key)
+    }
+
+    pub fn canonical_path(suffix: &Path) -> Option<PathBuf> {
+        read_suffix(suffix)?;
+        Some(PathBuf::from(VIRTUAL_ROOT).join(suffix))
+    }
+
+    pub fn is_canonical_path(path: &Path) -> bool {
+        path.starts_with(Path::new(VIRTUAL_ROOT))
+    }
+
+    pub fn read_canonical(path: &Path) -> Option<&'static str> {
+        let suffix = path.strip_prefix(Path::new(VIRTUAL_ROOT)).ok()?;
+        read_suffix(suffix)
+    }
+
+    fn read_key(key: &str) -> Option<&'static str> {
+        ENTRIES
+            .iter()
+            .find_map(|(entry_key, source)| (*entry_key == key).then_some(*source))
+    }
+
+    fn module_key(path: &Path) -> Option<String> {
+        let mut parts = Vec::new();
+        for component in path.components() {
+            match component {
+                Component::Normal(part) => parts.push(part.to_str()?.to_string()),
+                _ => return None,
+            }
+        }
+        if parts.is_empty() {
+            None
+        } else {
+            Some(parts.join("/"))
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+        use std::collections::BTreeSet;
+
+        #[test]
+        fn embedded_manifest_covers_checked_in_stdlib_sources() {
+            let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("stdlib");
+            let mut expected = Vec::new();
+            collect_tl_files(&root, &root, &mut expected);
+
+            let expected = expected.into_iter().collect::<BTreeSet<_>>();
+            let actual = module_keys().map(String::from).collect::<BTreeSet<_>>();
+            assert_eq!(actual, expected);
+        }
+
+        #[test]
+        fn embedded_paths_round_trip_through_virtual_canonical_path() {
+            let suffix = Path::new("tests").join("string_edges.tl");
+            let canon = canonical_path(&suffix).expect("embedded stdlib test fixture");
+            assert!(is_canonical_path(&canon));
+            assert_eq!(
+                read_canonical(&canon),
+                read_suffix(Path::new("tests/string_edges.tl"))
+            );
+        }
+
+        fn collect_tl_files(root: &Path, dir: &Path, out: &mut Vec<String>) {
+            for entry in std::fs::read_dir(dir).expect("read stdlib directory") {
+                let entry = entry.expect("read stdlib entry");
+                let path = entry.path();
+                if path.is_dir() {
+                    collect_tl_files(root, &path, out);
+                } else if path.extension().and_then(|ext| ext.to_str()) == Some("tl") {
+                    let rel = path
+                        .strip_prefix(root)
+                        .expect("stdlib file below stdlib root")
+                        .components()
+                        .map(|component| match component {
+                            Component::Normal(part) => part.to_str().expect("utf-8 stdlib path"),
+                            _ => panic!("unexpected stdlib path component: {}", path.display()),
+                        })
+                        .collect::<Vec<_>>()
+                        .join("/");
+                    out.push(rel);
+                }
+            }
+        }
+    }
+}
+
 /// Abstraction over the filesystem so the loader can be driven by an in-memory
 /// map in tests. The driver uses [`FsSource`]; tests use a `HashMap`-backed
 /// source (see the test module).
@@ -46,12 +278,24 @@ impl ModuleSource for FsSource {
     }
 }
 
-/// Optional module-loader behavior. The default keeps imports as plain
-/// importer-relative or absolute filesystem paths.
-#[derive(Debug, Clone, Default)]
+/// Optional module-loader behavior. The default keeps ordinary imports as plain
+/// importer-relative or absolute filesystem paths and enables the checked-in
+/// embedded stdlib as the final fallback for `stdlib/...` imports.
+#[derive(Debug, Clone)]
 pub struct LoadOptions {
     pub stdlib_roots: Vec<PathBuf>,
     pub package_roots: BTreeMap<String, PathBuf>,
+    pub embedded_stdlib: bool,
+}
+
+impl Default for LoadOptions {
+    fn default() -> Self {
+        LoadOptions {
+            stdlib_roots: Vec::new(),
+            package_roots: BTreeMap::new(),
+            embedded_stdlib: true,
+        }
+    }
 }
 
 /// One source file loaded into a whole-program compilation.
@@ -85,6 +329,7 @@ pub enum LoadError {
         import_path: String,
         resolved_path: PathBuf,
         searched_stdlib_roots: Vec<PathBuf>,
+        embedded_stdlib_available: bool,
         source: io::Error,
     },
     /// A `pkg:<alias>/...` import referenced an alias absent from the current
@@ -123,6 +368,7 @@ impl std::fmt::Display for LoadError {
                 import_path,
                 resolved_path,
                 searched_stdlib_roots,
+                embedded_stdlib_available,
                 source,
             } => {
                 let base = if let Some(alias) = package_import_alias(import_path) {
@@ -143,7 +389,27 @@ impl std::fmt::Display for LoadError {
                         source
                     )
                 };
-                if searched_stdlib_roots.is_empty() {
+                if stdlib_import_suffix(import_path).is_some() {
+                    let roots = if searched_stdlib_roots.is_empty() {
+                        "none".to_string()
+                    } else {
+                        searched_stdlib_roots
+                            .iter()
+                            .map(|root| root.display().to_string())
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    };
+                    let embedded = if *embedded_stdlib_available {
+                        "available"
+                    } else {
+                        "unavailable"
+                    };
+                    write!(
+                        f,
+                        "{}; searched stdlib roots: {}; embedded stdlib: {}",
+                        base, roots, embedded
+                    )
+                } else if searched_stdlib_roots.is_empty() {
                     write!(f, "{}", base)
                 } else {
                     let roots = searched_stdlib_roots
@@ -214,6 +480,7 @@ struct ImportRequest {
     import_path: String,
     resolved_path: PathBuf,
     searched_stdlib_roots: Vec<PathBuf>,
+    embedded_stdlib_available: bool,
 }
 
 fn io_load_error(path: &Path, source: io::Error, request: Option<&ImportRequest>) -> LoadError {
@@ -223,6 +490,7 @@ fn io_load_error(path: &Path, source: io::Error, request: Option<&ImportRequest>
             import_path: request.import_path.clone(),
             resolved_path: request.resolved_path.clone(),
             searched_stdlib_roots: request.searched_stdlib_roots.clone(),
+            embedded_stdlib_available: request.embedded_stdlib_available,
             source,
         },
         None => LoadError::Io {
@@ -312,6 +580,8 @@ fn resolve_import_canonical(
 
     let primary_target = resolve_import(importer, import_path);
     let stdlib_suffix = stdlib_import_suffix(import_path);
+    let embedded_stdlib_available =
+        stdlib_suffix.is_some() && options.embedded_stdlib && embedded_stdlib::is_available();
     let searched_stdlib_roots = if stdlib_suffix.is_some() {
         options.stdlib_roots.clone()
     } else {
@@ -322,12 +592,49 @@ fn resolve_import_canonical(
         import_path: import_path.to_string(),
         resolved_path: primary_target.clone(),
         searched_stdlib_roots: searched_stdlib_roots.clone(),
+        embedded_stdlib_available,
     };
+
+    if options.embedded_stdlib && embedded_stdlib::is_canonical_path(&primary_target) {
+        if embedded_stdlib::read_canonical(&primary_target).is_some() {
+            return Ok((primary_target, primary_request));
+        }
+        let primary_error = io::Error::new(
+            io::ErrorKind::NotFound,
+            format!("{}", primary_target.display()),
+        );
+        if let Some(suffix) = &stdlib_suffix {
+            if let Some(resolved) = try_stdlib_roots(
+                importer,
+                import_path,
+                suffix,
+                src,
+                &searched_stdlib_roots,
+                embedded_stdlib_available,
+            ) {
+                return Ok(resolved);
+            }
+            if let Some(resolved) = try_embedded_stdlib(
+                importer,
+                import_path,
+                suffix,
+                &searched_stdlib_roots,
+                embedded_stdlib_available,
+            ) {
+                return Ok(resolved);
+            }
+        }
+        return Err(io_load_error(
+            &primary_target,
+            primary_error,
+            Some(&primary_request),
+        ));
+    }
 
     match src.canonicalize(&primary_target) {
         Ok(primary_canon) => {
             if let Some(suffix) = &stdlib_suffix
-                && !options.stdlib_roots.is_empty()
+                && (!options.stdlib_roots.is_empty() || embedded_stdlib_available)
             {
                 match src.read(&primary_canon) {
                     Ok(_) => return Ok((primary_canon, primary_request)),
@@ -338,6 +645,16 @@ fn resolve_import_canonical(
                             suffix,
                             src,
                             &searched_stdlib_roots,
+                            embedded_stdlib_available,
+                        ) {
+                            return Ok(resolved);
+                        }
+                        if let Some(resolved) = try_embedded_stdlib(
+                            importer,
+                            import_path,
+                            suffix,
+                            &searched_stdlib_roots,
+                            embedded_stdlib_available,
                         ) {
                             return Ok(resolved);
                         }
@@ -352,11 +669,26 @@ fn resolve_import_canonical(
             Ok((primary_canon, primary_request))
         }
         Err(primary_error) => {
-            if let Some(suffix) = stdlib_suffix
-                && let Some(resolved) =
-                    try_stdlib_roots(importer, import_path, &suffix, src, &searched_stdlib_roots)
-            {
-                return Ok(resolved);
+            if let Some(suffix) = stdlib_suffix {
+                if let Some(resolved) = try_stdlib_roots(
+                    importer,
+                    import_path,
+                    &suffix,
+                    src,
+                    &searched_stdlib_roots,
+                    embedded_stdlib_available,
+                ) {
+                    return Ok(resolved);
+                }
+                if let Some(resolved) = try_embedded_stdlib(
+                    importer,
+                    import_path,
+                    &suffix,
+                    &searched_stdlib_roots,
+                    embedded_stdlib_available,
+                ) {
+                    return Ok(resolved);
+                }
             }
             Err(io_load_error(
                 &primary_target,
@@ -391,6 +723,7 @@ fn resolve_package_import_canonical(
         import_path: import_path.to_string(),
         resolved_path: target.clone(),
         searched_stdlib_roots: Vec::new(),
+        embedded_stdlib_available: false,
     };
 
     if !is_safe_package_import_suffix(suffix) {
@@ -416,6 +749,7 @@ fn try_stdlib_roots(
     suffix: &Path,
     src: &dyn ModuleSource,
     searched_stdlib_roots: &[PathBuf],
+    embedded_stdlib_available: bool,
 ) -> Option<(PathBuf, ImportRequest)> {
     if !is_safe_stdlib_root_suffix(suffix) {
         return None;
@@ -428,6 +762,7 @@ fn try_stdlib_roots(
             import_path: import_path.to_string(),
             resolved_path: target.clone(),
             searched_stdlib_roots: searched_stdlib_roots.to_vec(),
+            embedded_stdlib_available,
         };
         let Ok(canon) = src.canonicalize(&target) else {
             continue;
@@ -437,6 +772,41 @@ fn try_stdlib_roots(
         }
     }
     None
+}
+
+fn try_embedded_stdlib(
+    importer: &Path,
+    import_path: &str,
+    suffix: &Path,
+    searched_stdlib_roots: &[PathBuf],
+    embedded_stdlib_available: bool,
+) -> Option<(PathBuf, ImportRequest)> {
+    if !embedded_stdlib_available || !is_safe_stdlib_root_suffix(suffix) {
+        return None;
+    }
+
+    let target = embedded_stdlib::canonical_path(suffix)?;
+    let request = ImportRequest {
+        importer: importer.to_path_buf(),
+        import_path: import_path.to_string(),
+        resolved_path: target.clone(),
+        searched_stdlib_roots: searched_stdlib_roots.to_vec(),
+        embedded_stdlib_available,
+    };
+    Some((target, request))
+}
+
+fn read_module_source(
+    canon: &Path,
+    src: &dyn ModuleSource,
+    options: &LoadOptions,
+) -> io::Result<String> {
+    if options.embedded_stdlib
+        && let Some(source) = embedded_stdlib::read_canonical(canon)
+    {
+        return Ok(source.to_string());
+    }
+    src.read(canon)
 }
 
 /// Load the module graph rooted at `entry`, returning a single combined
@@ -501,9 +871,8 @@ fn load_module(
         return Ok(());
     }
 
-    let text = src
-        .read(canon)
-        .map_err(|e| io_load_error(canon, e, request))?;
+    let text =
+        read_module_source(canon, src, options).map_err(|e| io_load_error(canon, e, request))?;
     let file_id = sources.len() as u32;
     sources.push(SourceFile {
         id: file_id,
@@ -574,6 +943,10 @@ mod tests {
             .iter()
             .map(|(alias, path)| ((*alias).to_string(), PathBuf::from(path)))
             .collect()
+    }
+
+    fn embedded_path(suffix: &str) -> PathBuf {
+        PathBuf::from(embedded_stdlib::VIRTUAL_ROOT).join(suffix)
     }
 
     /// Lexically normalize a path: collapse `.` and `foo/..` segments without
@@ -815,6 +1188,76 @@ mod tests {
     }
 
     #[test]
+    fn embedded_stdlib_import_is_final_fallback() {
+        let src = MapSource::new(&[(
+            "work/main.tl",
+            "(import \"stdlib/string.tl\")\n(define (main) : i64 0)",
+        )]);
+
+        let loaded = load_program(Path::new("work/main.tl"), &src).unwrap();
+        assert!(
+            loaded
+                .sources
+                .iter()
+                .any(|source| source.path == embedded_path("string.tl"))
+        );
+        assert!(
+            decl_names(&loaded.program)
+                .iter()
+                .any(|name| name == "string-contains")
+        );
+    }
+
+    #[test]
+    fn embedded_stdlib_keeps_relative_imports_inside_virtual_root() {
+        let src = MapSource::new(&[(
+            "work/main.tl",
+            "(import \"stdlib/fs.tl\")\n(define (main) : i64 0)",
+        )]);
+
+        let loaded = load_program(Path::new("work/main.tl"), &src).unwrap();
+        for suffix in ["env.tl", "io.tl", "string.tl", "fs.tl"] {
+            assert!(
+                loaded
+                    .sources
+                    .iter()
+                    .any(|source| source.path == embedded_path(suffix)),
+                "missing embedded source {} in {:?}",
+                suffix,
+                loaded
+                    .sources
+                    .iter()
+                    .map(|source| source.path.clone())
+                    .collect::<Vec<_>>()
+            );
+        }
+    }
+
+    #[test]
+    fn embedded_stdlib_import_dedups_by_virtual_identity() {
+        let src = MapSource::new(&[
+            (
+                "work/main.tl",
+                "(import \"stdlib/string.tl\")\n(import \"dep.tl\")\n(define (main) : i64 0)",
+            ),
+            (
+                "work/dep.tl",
+                "(import \"stdlib/string.tl\")\n(define (dep) : i64 0)",
+            ),
+        ]);
+
+        let loaded = load_program(Path::new("work/main.tl"), &src).unwrap();
+        assert_eq!(
+            loaded
+                .sources
+                .iter()
+                .filter(|source| source.path == embedded_path("string.tl"))
+                .count(),
+            1
+        );
+    }
+
+    #[test]
     fn local_stdlib_parent_dir_import_still_resolves_relative_to_importer() {
         let src = MapSource::new(&[
             (
@@ -866,6 +1309,7 @@ mod tests {
                 import_path,
                 resolved_path,
                 searched_stdlib_roots,
+                embedded_stdlib_available,
                 source,
             } => {
                 assert_eq!(importer, &PathBuf::from("work/main.tl"));
@@ -878,6 +1322,7 @@ mod tests {
                         .join("outside.tl")
                 );
                 assert_eq!(searched_stdlib_roots, &vec![PathBuf::from("repo-stdlib")]);
+                assert!(*embedded_stdlib_available);
                 assert_eq!(source.kind(), io::ErrorKind::NotFound);
             }
             other => panic!("expected ImportIo error, got {:?}", other),
@@ -1034,12 +1479,14 @@ mod tests {
                 import_path,
                 resolved_path,
                 searched_stdlib_roots,
+                embedded_stdlib_available,
                 source,
             } => {
                 assert_eq!(importer, &PathBuf::from("app/src/main.tl"));
                 assert_eq!(import_path, "pkg:math/src/missing.tl");
                 assert_eq!(resolved_path, &PathBuf::from("deps/math/src/missing.tl"));
                 assert!(searched_stdlib_roots.is_empty());
+                assert!(!*embedded_stdlib_available);
                 assert_eq!(source.kind(), io::ErrorKind::NotFound);
             }
             other => panic!("expected ImportIo, got {:?}", other),
@@ -1137,12 +1584,14 @@ mod tests {
                 import_path,
                 resolved_path,
                 searched_stdlib_roots,
+                embedded_stdlib_available,
                 source,
             } => {
                 assert_eq!(importer, PathBuf::from("entry.tl"));
                 assert_eq!(import_path, "nope.tl");
                 assert_eq!(resolved_path, PathBuf::from("nope.tl"));
                 assert!(searched_stdlib_roots.is_empty());
+                assert!(!embedded_stdlib_available);
                 assert_eq!(source.kind(), io::ErrorKind::NotFound);
             }
             other => panic!("expected ImportIo error, got {:?}", other),
@@ -1153,7 +1602,7 @@ mod tests {
     fn missing_stdlib_import_reports_import_context() {
         let src = MapSource::new(&[(
             "work/main.tl",
-            "(import \"stdlib/string.tl\")\n(define (main) : i64 0)",
+            "(import \"stdlib/not-here.tl\")\n(define (main) : i64 0)",
         )]);
         let err = load_program(Path::new("work/main.tl"), &src).unwrap_err();
         let (importer_display, resolved_display) = match &err {
@@ -1162,12 +1611,14 @@ mod tests {
                 import_path,
                 resolved_path,
                 searched_stdlib_roots,
+                embedded_stdlib_available,
                 source,
             } => {
                 assert_eq!(importer, &PathBuf::from("work/main.tl"));
-                assert_eq!(import_path, "stdlib/string.tl");
-                assert_eq!(resolved_path, &PathBuf::from("work/stdlib/string.tl"));
+                assert_eq!(import_path, "stdlib/not-here.tl");
+                assert_eq!(resolved_path, &PathBuf::from("work/stdlib/not-here.tl"));
                 assert!(searched_stdlib_roots.is_empty());
+                assert!(*embedded_stdlib_available);
                 assert_eq!(source.kind(), io::ErrorKind::NotFound);
                 (
                     importer.display().to_string(),
@@ -1179,7 +1630,7 @@ mod tests {
 
         let rendered = err.to_string();
         assert!(
-            rendered.contains("stdlib/string.tl"),
+            rendered.contains("stdlib/not-here.tl"),
             "diagnostic should include requested import:\n{}",
             rendered
         );
@@ -1198,13 +1649,23 @@ mod tests {
             "diagnostic should identify the import failure:\n{}",
             rendered
         );
+        assert!(
+            rendered.contains("searched stdlib roots: none"),
+            "diagnostic should identify empty stdlib roots:\n{}",
+            rendered
+        );
+        assert!(
+            rendered.contains("embedded stdlib: available"),
+            "diagnostic should identify embedded stdlib availability:\n{}",
+            rendered
+        );
     }
 
     #[test]
     fn missing_stdlib_import_reports_searched_roots() {
         let src = MapSource::new(&[(
             "work/main.tl",
-            "(import \"stdlib/string.tl\")\n(define (main) : i64 0)",
+            "(import \"stdlib/not-here.tl\")\n(define (main) : i64 0)",
         )]);
         let options = LoadOptions {
             stdlib_roots: vec![PathBuf::from("repo-stdlib")],
@@ -1218,12 +1679,14 @@ mod tests {
                 import_path,
                 resolved_path,
                 searched_stdlib_roots,
+                embedded_stdlib_available,
                 source,
             } => {
                 assert_eq!(importer, &PathBuf::from("work/main.tl"));
-                assert_eq!(import_path, "stdlib/string.tl");
-                assert_eq!(resolved_path, &PathBuf::from("work/stdlib/string.tl"));
+                assert_eq!(import_path, "stdlib/not-here.tl");
+                assert_eq!(resolved_path, &PathBuf::from("work/stdlib/not-here.tl"));
                 assert_eq!(searched_stdlib_roots, &vec![PathBuf::from("repo-stdlib")]);
+                assert!(*embedded_stdlib_available);
                 assert_eq!(source.kind(), io::ErrorKind::NotFound);
             }
             other => panic!("expected ImportIo error, got {:?}", other),
@@ -1232,7 +1695,7 @@ mod tests {
         let rendered = err.to_string();
         let rendered_normalized = rendered.replace('\\', "/");
         assert!(
-            rendered_normalized.contains("work/stdlib/string.tl"),
+            rendered_normalized.contains("work/stdlib/not-here.tl"),
             "diagnostic should include importer-relative resolved path:\n{}",
             rendered
         );
@@ -1278,12 +1741,14 @@ mod tests {
                 import_path,
                 resolved_path,
                 searched_stdlib_roots,
+                embedded_stdlib_available,
                 source,
             } => {
                 assert_eq!(importer, PathBuf::from("entry.tl"));
                 assert_eq!(import_path, "blocked.tl");
                 assert_eq!(resolved_path, PathBuf::from("blocked.tl"));
                 assert!(searched_stdlib_roots.is_empty());
+                assert!(!embedded_stdlib_available);
                 assert_eq!(source.kind(), io::ErrorKind::PermissionDenied);
                 assert_eq!(source.to_string(), "blocked read");
             }

@@ -113,7 +113,10 @@ fn format_diagnostic_from_sources(diag: &diagnostic::Diagnostic, sources: &[Sour
 }
 
 fn load_source(entry: &Path, options: &LoadOptions) -> Result<LoadedProgram, NativeError> {
-    let loaded = if options.stdlib_roots.is_empty() && options.package_roots.is_empty() {
+    let loaded = if options.stdlib_roots.is_empty()
+        && options.package_roots.is_empty()
+        && options.embedded_stdlib
+    {
         load_program(entry, &FsSource)
     } else {
         load_program_with_options(entry, &FsSource, options)

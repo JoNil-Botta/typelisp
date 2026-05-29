@@ -162,6 +162,7 @@ fn evaluate_expr<W: Write, E: Write>(
     let options = LoadOptions {
         stdlib_roots: Vec::new(),
         package_roots: BTreeMap::new(),
+        embedded_stdlib: true,
     };
     match native::run_scratch_source(&program, &options, &[], native::host_target()) {
         Ok(output) => {

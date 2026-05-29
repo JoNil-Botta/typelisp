@@ -944,18 +944,20 @@ exports, and qualified lookup.
 - Circular imports currently terminate by loading each module once; they are not rejected.
 - Import paths are normalized; importing via different relative paths to the same file deduplicates.
 - The repository's `stdlib/` directory is currently just source files. Importing
-  `stdlib/string.tl` works only when that path is reachable from the importing
-  file, such as by staging or copying the `stdlib/` directory next to the entry
-  source, unless the CLI is given one or more `--stdlib-root <dir>` options or
-  `TYPELISP_STDLIB_ROOT` is set.
+  `stdlib/string.tl` works when that path is reachable from the importing file,
+  such as by staging or copying the `stdlib/` directory next to the entry
+  source, when the CLI is given one or more `--stdlib-root <dir>` options, when
+  `TYPELISP_STDLIB_ROOT` is set, or from the compiler's embedded stdlib
+  fallback.
 - For relative imports that start with `stdlib/`, the loader first tries the
   importer-relative path. If that path cannot be loaded, each configured stdlib
   root is searched by stripping the leading `stdlib/` and joining the remainder
   to the root. Explicit `--stdlib-root` entries are searched before the optional
-  `TYPELISP_STDLIB_ROOT` fallback. Local project files therefore take precedence
-  over configured stdlib roots. Configured stdlib roots only serve normal
+  `TYPELISP_STDLIB_ROOT` fallback, and the embedded stdlib is searched last.
+  Local project files therefore take precedence over configured stdlib roots and
+  embedded modules. Configured and embedded stdlib fallbacks only serve normal
   relative suffixes under the root; suffixes containing components such as `..`
-  are not resolved through stdlib root fallback.
+  are not resolved through stdlib fallback.
 - The current stdlib source-tree layout and verification convention is
   documented in `stdlib/README.md`.
 - During package builds, imports of the form `pkg:<alias>/<path>` resolve

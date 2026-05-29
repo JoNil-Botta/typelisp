@@ -82,6 +82,13 @@ const SELFHOST_DOC_DRIVER_DEPS: &[&str] = &[
     "stdlib/process.tl",
 ];
 
+const SELFHOST_BUILD_RUN_CORE_STDLIB_DEPS: &[&str] = &[
+    "stdlib/msvc.tl",
+    "stdlib/windows_sdk.tl",
+    "stdlib/windows_registry.tl",
+    "stdlib/windows_setup.tl",
+];
+
 #[test]
 fn type_lisp_programs_compile_link_and_run() {
     let cases = [
@@ -5435,7 +5442,13 @@ fn copy_dep_file(dep_src: &Path, dep_dst: &Path, dep: &str) {
 }
 
 fn copy_case_deps(manifest_dir: &Path, source_dir: &Path, work_dir: &Path, deps: &[&str]) {
-    for dep in deps {
+    for dep in deps.iter().chain(
+        deps.iter()
+            .any(|dep| *dep == "build_run_core.tl")
+            .then_some(SELFHOST_BUILD_RUN_CORE_STDLIB_DEPS)
+            .unwrap_or(&[])
+            .iter(),
+    ) {
         let dep_src = dep_source_path(manifest_dir, source_dir, dep);
         let dep_dst = work_dir.join(dep);
         copy_dep_file(&dep_src, &dep_dst, dep);

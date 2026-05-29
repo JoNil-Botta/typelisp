@@ -2584,7 +2584,7 @@ impl X86_64Backend {
             }
         }
         if self.emits_alloc_runtime {
-            externs.insert("malloc");
+            externs.insert("VirtualAlloc");
             externs.insert("_write");
             externs.insert("exit");
         }
@@ -3476,6 +3476,15 @@ impl X86_64Backend {
     /// `mmap` on the first allocation.
     fn generate_alloc_runtime_data(&mut self) {
         if self.target.runtime_policy().emits_windows_runtime_helpers {
+            // Windows: a zero-initialized `.data` slot for the "no arena yet"
+            // sentinel. The rest of the Windows runtime never emits `.bss`, so
+            // an initialized `.data` quad keeps the COFF output on paths the
+            // toolchain already exercises.
+            self.emit("    .data");
+            self.emit("    .balign 8");
+            self.emit("tl_current_arena:");
+            self.emit("    .quad 0");
+            self.emit("");
             return;
         }
 
@@ -4095,22 +4104,94 @@ impl X86_64Backend {
         self.emit("");
     }
 
+    /// Emit the Windows bump-pointer arena allocator `tl_alloc(size) -> ptr`.
+    ///
+    /// Mirrors the System V allocator's tracked-arena design but reserves and
+    /// commits arenas with `VirtualAlloc` (no libc) under the Win64 ABI instead
+    /// of the `mmap` syscall. This replaces the previous `malloc`-per-allocation
+    /// shim, which never freed and so churned/fragmented the CRT heap; under CI
+    /// memory pressure that shim could intermittently return NULL or corrupt
+    /// heap state, surfacing as the transient "tl: allocation failed" / segfault
+    /// flake (#1204).
+    ///
+    /// Win64 ABI: the byte count arrives in `%rcx`, the pointer leaves in `%rax`.
+    /// `%rbx` (aligned request) and `%rsi` (arena length) are non-volatile and so
+    /// survive the `VirtualAlloc` call; both are saved and restored. Arena header
+    /// layout matches the System V allocator: 0 = previous arena, 8 = payload
+    /// base, 16 = current bump pointer, 24 = one-past-the-end pointer.
     fn generate_windows_alloc_runtime_functions(&mut self) {
         self.emit("    .globl tl_alloc");
         self.emit("tl_alloc:");
         self.emit("    push %rbp");
         self.emit("    mov %rsp, %rbp");
-        self.emit("    testq %rcx, %rcx");
-        self.emit("    jg .L_tl_alloc_win_size_ready");
-        self.emit("    movq $1, %rcx");
-        self.emit(".L_tl_alloc_win_size_ready:");
-        self.emit_call("malloc");
+        self.emit("    push %rbx");
+        self.emit("    push %rsi");
+        // 32-byte shadow space for the VirtualAlloc call. After `push %rbp` and
+        // the two further pushes, %rsp is 16-aligned, so reserving 32 bytes keeps
+        // it 16-aligned (the call then lands the callee at the required %rsp%16==8).
+        self.emit("    sub $32, %rsp");
+        // Round the request up to an 8-byte boundary: size = (size + 7) & ~7.
+        self.emit("    addq $7, %rcx");
+        self.emit("    jc .L_tl_alloc_abort");
+        self.emit("    andq $-8, %rcx");
+        self.emit("    movq %rcx, %rbx");
+        // If no arena has been mapped yet, go map one.
+        self.emit("    movq tl_current_arena(%rip), %r10");
+        self.emit("    testq %r10, %r10");
+        self.emit("    jz .L_tl_alloc_win_new_arena");
+        // Fast path: new_ptr = bump + size; if new_ptr <= end, commit and return.
+        self.emit("    movq 16(%r10), %rax");
+        self.emit("    movq %rax, %rcx");
+        self.emit("    addq %rbx, %rcx");
+        self.emit("    jc .L_tl_alloc_win_new_arena");
+        self.emit("    cmpq 24(%r10), %rcx");
+        self.emit("    ja .L_tl_alloc_win_new_arena");
+        self.emit("    movq %rcx, 16(%r10)");
+        self.emit("    addq $32, %rsp");
+        self.emit("    popq %rsi");
+        self.emit("    popq %rbx");
+        self.emit("    popq %rbp");
+        self.emit("    ret");
+        self.emit(".L_tl_alloc_win_new_arena:");
+        // Arena length = max(64 MiB, aligned request + 32-byte header).
+        self.emit("    movq $0x4000000, %rdx");
+        self.emit("    movq %rbx, %rcx");
+        self.emit("    addq $32, %rcx");
+        self.emit("    jc .L_tl_alloc_abort");
+        self.emit("    cmpq %rdx, %rcx");
+        self.emit("    jbe .L_tl_alloc_win_len_ready");
+        self.emit("    movq %rcx, %rdx");
+        self.emit(".L_tl_alloc_win_len_ready:");
+        // VirtualAlloc(NULL, len, MEM_COMMIT|MEM_RESERVE = 0x3000, PAGE_READWRITE = 0x04).
+        self.emit("    movq %rdx, %rsi");
+        self.emit("    xorq %rcx, %rcx");
+        self.emit("    movq %rsi, %rdx");
+        self.emit("    movq $0x3000, %r8");
+        self.emit("    movq $0x4, %r9");
+        self.emit("    call VirtualAlloc");
         self.emit("    testq %rax, %rax");
         self.emit("    jz .L_tl_alloc_abort");
-        self.emit("    mov %rbp, %rsp");
-        self.emit("    pop %rbp");
+        // Initialize the arena record at the mapping base; payload follows the
+        // 32-byte header. end = base + len; bump = payload + size; return payload.
+        self.emit("    movq %rax, %r10");
+        self.emit("    movq %rax, %rcx");
+        self.emit("    addq %rsi, %rcx");
+        self.emit("    movq tl_current_arena(%rip), %rdx");
+        self.emit("    movq %rdx, 0(%r10)");
+        self.emit("    leaq 32(%r10), %rdx");
+        self.emit("    movq %rdx, 8(%r10)");
+        self.emit("    movq %rcx, 24(%r10)");
+        self.emit("    movq %rdx, %rax");
+        self.emit("    addq %rbx, %rdx");
+        self.emit("    movq %rdx, 16(%r10)");
+        self.emit("    movq %r10, tl_current_arena(%rip)");
+        self.emit("    addq $32, %rsp");
+        self.emit("    popq %rsi");
+        self.emit("    popq %rbx");
+        self.emit("    popq %rbp");
         self.emit("    ret");
         self.emit(".L_tl_alloc_abort:");
+        // Self-contained trap: write the diagnostic to stderr (fd 2), then exit(134).
         self.emit("    movq $2, %rcx");
         self.emit("    leaq .L_tl_alloc_msg(%rip), %rdx");
         self.emit("    movq $.L_tl_alloc_msg_len, %r8");
@@ -12734,7 +12815,7 @@ mod tests {
     }
 
     #[test]
-    fn test_windows_target_allocator_and_allocating_string_helpers_use_crt() {
+    fn test_windows_target_allocator_uses_virtualalloc_bump_arena() {
         let asm = compile_ok_for_target(
             r#"
             (define (main) : i64
@@ -12748,13 +12829,19 @@ mod tests {
         );
 
         assert_windows_runtime_has_no_linux_syscalls(&asm);
-        assert!(asm.contains("    .extern malloc"), "asm:\n{}", asm);
+        // The allocator is now a VirtualAlloc-backed bump arena, not a
+        // malloc-per-allocation shim (#1204).
+        assert!(asm.contains("    .extern VirtualAlloc"), "asm:\n{}", asm);
+        assert!(!asm.contains("    .extern malloc"), "asm:\n{}", asm);
+        assert!(!asm.contains("    call malloc"), "asm:\n{}", asm);
         assert!(asm.contains("    .extern exit"), "asm:\n{}", asm);
         assert!(asm.contains("    .extern _write"), "asm:\n{}", asm);
         assert!(asm.contains("tl_alloc:"), "asm:\n{}", asm);
-        assert!(asm.contains("    call malloc"), "asm:\n{}", asm);
+        assert!(asm.contains("    call VirtualAlloc"), "asm:\n{}", asm);
         assert!(asm.contains("    jz .L_tl_alloc_abort"), "asm:\n{}", asm);
-        assert!(!asm.contains("tl_current_arena:"), "asm:\n{}", asm);
+        // Windows now carries the tracked-arena state pointer like System V.
+        assert!(asm.contains("tl_current_arena:"), "asm:\n{}", asm);
+        // VirtualAlloc is a normal call, not the Linux `mmap` syscall.
         assert!(!asm.contains("    movq $9, %rax"), "asm:\n{}", asm);
         assert!(asm.contains("tl_int_to_string:"), "asm:\n{}", asm);
         assert!(asm.contains("tl_substring:"), "asm:\n{}", asm);

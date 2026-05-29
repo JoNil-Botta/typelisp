@@ -124,9 +124,8 @@ Name              ; a defenum / defstruct nominal type
 ```
 
 `f32` is in the type system but rejected by backend validation today.
-Raw pointer types `(Ptr T)` and `(MutPtr T)` plus `(unsafe ...)` are specified
-for the v1 FFI surface in [SPEC.md §3.4](SPEC.md) and §5.20, but implementation
-is still pending.
+Raw pointer types `(Ptr T)` and `(MutPtr T)` plus `(unsafe ...)` are implemented
+for the v1 FFI surface described in [SPEC.md](SPEC.md) sections 3.4 and 5.20.
 
 ### Abstraction policy
 
@@ -346,8 +345,8 @@ pointer-sized handles in the IR/ABI, but those handles are not checked language
 references. The v1 raw pointer design is now specified as explicit unsafe
 syntax:
 `(Ptr T)`/`(MutPtr T)` are nullable, copyable pointer-sized values, and
-dereference/write/offset/cast operations require `(unsafe ...)`. That surface is
-for FFI/runtime work and is not implemented yet; it is not the future safe
+dereference/write/offset/cast operations require `(unsafe ...)`. The selfhost
+compiler implements that surface for FFI/runtime work; it is not the future safe
 reference/borrow model.
 
 `String` values are immutable at the source level. Dynamic arrays are mutable
@@ -560,7 +559,7 @@ map/zip path all compile to native code. See the
 nested fixed-array captures, tail calls, tuple/fixed-array by-value returns,
 `f32` codegen, general GC/free, ownership/borrowing, and later SPMD/SIMD
 reductions/cross-lane work). Raw pointer types and unsafe pointer operations are
-specified but not implemented.
+implemented, while C-string/address-of ergonomics remain follow-up FFI work.
 
 ## Contributing
 

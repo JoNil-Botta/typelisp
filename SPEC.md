@@ -251,14 +251,13 @@ narrower or unsigned integer is required. Floating-point literals are always
   evaluate to closure descriptor values. Supported captures are scalars,
   function values, `String`, dynamic arrays, and tuples of scalars (see §5.14).
 
-### 3.4 Raw pointer types (v1 design; implementation pending)
+### 3.4 Raw pointer types (v1 design; implemented)
 
-Raw pointer syntax is specified for the v1 FFI/low-level memory surface, but the
-parser, typechecker, lowerer, and backend do not implement it yet (#809/#896).
-The design is intentionally separate from safe references and borrowing (#182):
-raw pointers are explicit unsafe values, not checked references.
+Raw pointer syntax is implemented for the v1 FFI/low-level memory surface. The
+design is intentionally separate from safe references and borrowing (#182): raw
+pointers are explicit unsafe values, not checked references.
 
-```lisp test=ignore name=raw-pointer-type-template reason="raw pointer syntax is specified before implementation"
+```lisp test=ignore name=raw-pointer-type-template reason="requires the selfhost raw-pointer checker path"
 (extern read-byte : (-> (Ptr u8) u8))
 (extern write-byte : (-> (MutPtr u8) u8 unit))
 ```
@@ -276,7 +275,7 @@ Type forms:
 - Raw pointer values are pointer-sized, nullable, freely copyable ABI values.
   Copying a pointer copies only the address.
 - There is no implicit conversion between `Ptr` and `MutPtr` in v1. Use the
-  explicit unsafe `ptr-cast` operation when the implementation lands.
+  explicit unsafe `ptr-cast` operation.
 - `T` may be any backend ABI value type that can be loaded or stored as a
   value. Tuple and fixed-array by-value ABI limitations still apply.
 
@@ -942,7 +941,7 @@ Example:
 (extern local-add (:abi c) (:symbol "foreign_add_exact") : (-> i64 i64 i64))
 ```
 
-```lisp test=ignore name=extern-raw-pointer-signature reason="raw pointer syntax is specified before implementation"
+```lisp test=ignore name=extern-raw-pointer-signature reason="requires the selfhost raw-pointer checker path"
 (extern strlen : (-> (Ptr u8) u64))
 (extern fill-bytes : (-> (MutPtr u8) u64 u8 unit))
 ```
@@ -2536,14 +2535,13 @@ only owns the bound value and invokes one cleanup function per binding.
 
 ---
 
-### 5.20 `(unsafe body ...)` and raw pointer operations (v1 design; implementation pending)
+### 5.20 `(unsafe body ...)` and raw pointer operations (v1 design; implemented)
 
 `unsafe` is the v1 source marker for operations whose safety cannot be proven by
-the TypeLisp typechecker. It is specified before implementation (#809/#896).
-The form is an expression block like `begin`: it evaluates one or more body
-expressions in order and returns the last value.
+the TypeLisp typechecker. The form is an expression block like `begin`: it
+evaluates one or more body expressions in order and returns the last value.
 
-```lisp test=ignore name=unsafe-pointer-read-example reason="raw pointer syntax is specified before implementation"
+```lisp test=ignore name=unsafe-pointer-read-example reason="requires an external pointer provider"
 (extern first-byte : (-> (Ptr u8)))
 
 (define (main) : i64
@@ -3112,8 +3110,8 @@ not the future safe reference/borrow model (#182), not a replacement for
 | Mutable captures (`set!` to captured names) in lambdas | Not implemented |
 | Tail call optimization | Not implemented |
 | `struct-set!` | Not implemented |
-| Raw pointer types and `(unsafe ...)` | Specified for v1; parser/typechecker/lowering/backend implementation pending (#809/#896) |
-| Raw pointer dereference/write/offset/cast | Specified unsafe operations; implementation pending (#809/#897/#911/#912) |
+| Raw pointer types and `(unsafe ...)` | Implemented v1 parser/typechecker/lowering/backend surface |
+| Raw pointer dereference/write/offset/cast | Implemented unsafe v1 operations; address-of, C-string helpers, volatile/atomic access, and borrow-checked references remain follow-ups |
 | Garbage collection / general `free` | Not implemented; allocation is process-lifetime by default with unsafe explicit region reset for tool-owned phase boundaries |
 | Move-only aggregate handle checking | Specified for v1 source semantics; selfhost checker implementation pending (#1048/#1049) |
 | `(with ...)` scoped non-memory resource cleanup | Specified and reserved; parser/typechecker/lowering support pending |
@@ -3512,9 +3510,9 @@ fields are rejected before lowering.
     0))
 ```
 
-### Raw pointer FFI sketch (specified, not implemented)
+### Raw pointer FFI sketch
 
-```lisp test=ignore name=raw-pointer-ffi-sketch reason="raw pointer syntax is specified before implementation"
+```lisp test=ignore name=raw-pointer-ffi-sketch reason="requires an external pointer provider"
 (extern c-buffer : (-> (MutPtr u8)))
 
 (define (main) : i64
@@ -3599,15 +3597,15 @@ expr          ::= literal
                 | "(" "with-arena" ident expr+ ")"
                 | "(" "with" "(" resource-binding* ")" expr+ ")"
                 | borrow-expr                 ; specified, not implemented
-                | "(" "unsafe" expr+ ")"       ; specified, not implemented
-                | "(" "ptr-null" ":" ptr-type ")"      ; specified, not implemented
-                | "(" "ptr-null?" expr ")"             ; specified, not implemented
-                | "(" "ptr-read" expr ")"              ; specified, not implemented
-                | "(" "ptr-write!" expr expr ")"       ; specified, not implemented
-                | "(" "ptr-offset" expr expr ")"       ; specified, not implemented
-                | "(" "ptr-cast" expr ":" ptr-type ")" ; specified, not implemented
-                | "(" "ptr->int" expr ")"              ; specified, not implemented
-                | "(" "int->ptr" expr ":" ptr-type ")" ; specified, not implemented
+                | "(" "unsafe" expr+ ")"
+                | "(" "ptr-null" ":" ptr-type ")"
+                | "(" "ptr-null?" expr ")"
+                | "(" "ptr-read" expr ")"
+                | "(" "ptr-write!" expr expr ")"
+                | "(" "ptr-offset" expr expr ")"
+                | "(" "ptr-cast" expr ":" ptr-type ")"
+                | "(" "ptr->int" expr ")"
+                | "(" "int->ptr" expr ":" ptr-type ")"
                 | "(" "comptime" expr ")"
                 | "(" "type" type ")"
                 | "(" "size-of" expr ")"

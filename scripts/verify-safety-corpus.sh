@@ -39,6 +39,26 @@ if [ ! -x "$COMPILER" ]; then
     exit 1
 fi
 
+if [ "$HOST_OS" = linux ]; then
+    command -v as >/dev/null 2>&1 || {
+        echo "missing assembler: as" >&2
+        exit 1
+    }
+    command -v ld >/dev/null 2>&1 || {
+        echo "missing linker: ld" >&2
+        exit 1
+    }
+else
+    command -v clang >/dev/null 2>&1 || {
+        echo "missing assembler: clang" >&2
+        exit 1
+    }
+    command -v lld-link >/dev/null 2>&1 || {
+        echo "missing linker: lld-link" >&2
+        exit 1
+    }
+fi
+
 MANIFEST=${TYPELISP_SAFETY_MANIFEST:-tests/safety/manifest.txt}
 if [ ! -f "$MANIFEST" ]; then
     echo "safety corpus manifest does not exist: $MANIFEST" >&2
@@ -128,6 +148,77 @@ safe_name() {
     printf '%s' "$1" | sed 's#[/\\:]#_#g'
 }
 
+show_stream_if_nonempty() {
+    label=$1
+    file=$2
+    if [ -s "$file" ]; then
+        echo "$label:" >&2
+        sed 's/^/  /' "$file" >&2 || true
+    fi
+}
+
+build_case_program() {
+    case_id=$1
+    case_name=$2
+    source=$3
+    case_dir="$WORKDIR/$case_name"
+    mkdir -p "$case_dir"
+    build_out="$case_dir/build.out"
+    build_err="$case_dir/build.err"
+
+    if [ "$HOST_OS" = windows ]; then
+        case_source="$case_dir/$(basename "$source")"
+        cp "$source" "$case_source"
+        program="$case_dir/$case_name.exe"
+        run_case "$build_out" "$build_err" 0 \
+            "$COMPILER" build "$case_source" \
+            --target "$BUILD_TARGET" \
+            --stdlib-root "$ROOT/stdlib" \
+            -o "$program"
+        if [ "$code" -ne 0 ]; then
+            show_stream_if_nonempty stdout "$build_out"
+            show_stream_if_nonempty stderr "$build_err"
+            fail "$case_id build failed with exit $code"
+        fi
+    else
+        asm="$case_dir/$case_name.s"
+        obj="$case_dir/$case_name.o"
+        program="$case_dir/$case_name"
+        run_case "$build_out" "$build_err" 0 \
+            "$COMPILER" compile "$source" \
+            --target "$BUILD_TARGET" \
+            --stdlib-root "$ROOT/stdlib" \
+            -o "$asm"
+        if [ "$code" -ne 0 ]; then
+            show_stream_if_nonempty stdout "$build_out"
+            show_stream_if_nonempty stderr "$build_err"
+            fail "$case_id compile failed with exit $code"
+        fi
+        if ! as "$asm" -o "$obj" >> "$build_out" 2>> "$build_err"; then
+            show_stream_if_nonempty stdout "$build_out"
+            show_stream_if_nonempty stderr "$build_err"
+            fail "$case_id assemble failed"
+        fi
+        if ! ld "$obj" -o "$program" -dynamic-linker /lib64/ld-linux-x86-64.so.2 -lc \
+            >> "$build_out" 2>> "$build_err"; then
+            show_stream_if_nonempty stdout "$build_out"
+            show_stream_if_nonempty stderr "$build_err"
+            fail "$case_id link failed"
+        fi
+    fi
+}
+
+run_program_case() {
+    case_id=$1
+    case_name=$2
+    source=$3
+    out=$4
+    err=$5
+    expected_code=$6
+    build_case_program "$case_id" "$case_name" "$source"
+    run_case "$out" "$err" "$expected_code" "$program"
+}
+
 build_selfhost_checker
 
 checked=0
@@ -160,13 +251,13 @@ while IFS='|' read -r case_id mode source expected_code stderr_contains; do
             ;;
         run-exit)
             echo "[safety-corpus] run-exit $case_id"
-            run_case "$out" "$err" "$expected_code" "$COMPILER" run "$source" --stdlib-root "$ROOT/stdlib"
+            run_program_case "$case_id" "$case_name" "$source" "$out" "$err" "$expected_code"
             [ "$code" -eq "$expected_code" ] || fail "$case_id expected run exit $expected_code, got $code"
             assert_empty "$err" || fail "$case_id expected empty stderr"
             ;;
         run-trap)
             echo "[safety-corpus] run-trap $case_id"
-            run_case "$out" "$err" "$expected_code" "$COMPILER" run "$source" --stdlib-root "$ROOT/stdlib"
+            run_program_case "$case_id" "$case_name" "$source" "$out" "$err" "$expected_code"
             [ "$code" -eq "$expected_code" ] || fail "$case_id expected trap exit $expected_code, got $code"
             [ "$stderr_contains" != "-" ] || fail "$case_id run-trap missing stderr expectation"
             assert_contains "$err" "$stderr_contains" || fail "$case_id trap stderr did not match expectation"

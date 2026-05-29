@@ -72,7 +72,7 @@ echo "[bootstrap-smoke] stage0 -> stage1.s"
 
 echo "[bootstrap-smoke] link stage1"
 as "$STAGE1_ASM" -o "$STAGE1_OBJ"
-ld "$STAGE1_OBJ" -o "$STAGE1_BIN"
+ld "$STAGE1_OBJ" -o "$STAGE1_BIN" -dynamic-linker /lib64/ld-linux-x86-64.so.2 -lc
 
 echo "[bootstrap-smoke] stage1 compiles comptime type fixture"
 "$STAGE1_BIN" compile "$SMOKE_SRC" -o "$SMOKE_ASM" \
@@ -83,7 +83,7 @@ echo "[bootstrap-smoke] stage1 compiles comptime type fixture"
 
 echo "[bootstrap-smoke] link fixture"
 as "$SMOKE_ASM" -o "$SMOKE_OBJ"
-ld "$SMOKE_OBJ" -o "$SMOKE_BIN"
+ld "$SMOKE_OBJ" -o "$SMOKE_BIN" -dynamic-linker /lib64/ld-linux-x86-64.so.2 -lc
 
 echo "[bootstrap-smoke] run fixture"
 set +e

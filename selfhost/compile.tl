@@ -8,7 +8,11 @@
 ;; `--backend-mode scalar` is accepted (the selfhost backend's native mode);
 ;; `avx2`/`avx512` remain Rust-driver-only for now and are rejected explicitly.
 ;; `--emit-ir` writes a deterministic TypeLisp-owned IR summary.
+(import "compiler_check_frontend_core.tl")
+
 (import "compiler_driver_core.tl")
+
+(import "frontend_tools_core.tl")
 
 (defenum CompileCliConfig
   (CompileCliConfig
@@ -26,8 +30,15 @@
 
 (defenum CompileCliAction
   (CompileCliRun CompileCliConfig)
+  (CompileCliCheck String CompilerLoadRootList)
+  (CompileCliTokenize String)
+  (CompileCliParse String)
   (CompileCliHelp)
   (CompileCliError String))
+
+(defenum ResultCompileCliCheckConfig
+  (OkCompileCliCheckConfig String CompilerLoadRootList)
+  (ErrCompileCliCheckConfig String))
 
 (defenum ResultCompileCliTarget
   (OkCompileCliTarget CompilerBackendTarget)
@@ -43,10 +54,16 @@
   (and (> (string-length value) 0) (= (string-ref value 0) #-')))
 
 (define (compile-cli-usage) : String
-  "Usage:\n  typelisp compile <file.tl> [-o <file>] [--emit-ir] [--target <target>] [--backend-mode <mode>] [--opt-level <0|1|2|3>] [--stdlib-root <dir>...]\n\nPrivate bootstrap form:\n  stage1 <file.tl> [compile options]")
+  "Usage:\n  typelisp debug tokenize <file.tl>    Show tokens\n  typelisp debug parse <file.tl>       Show AST\n  typelisp debug check <file.tl> [--stdlib-root <dir>...]\n  typelisp tokenize <file.tl>\n  typelisp parse <file.tl>\n  typelisp check <file.tl> [--stdlib-root <dir>...]\n  typelisp compile <file.tl> [-o <file>] [--emit-ir] [--target <target>] [--backend-mode <mode>] [--opt-level <0|1|2|3>] [--stdlib-root <dir>...]\n\nPrivate bootstrap form:\n  stage1 <file.tl> [compile options]")
 
 (define (compile-cli-message-with-usage [message : String]) : String
   (string-append message (string-append "\n\n" (compile-cli-usage))))
+
+(define (compile-cli-debug-usage) : String
+  "Usage:\n    typelisp debug tokenize <file.tl>    Show tokens\n    typelisp debug parse <file.tl>       Show AST\n    typelisp debug check <file.tl> [--stdlib-root <dir>...]\n    typelisp debug host-action           Execute a selfhost build/run plan read from stdin (internal)")
+
+(define (compile-cli-debug-message-with-usage [message : String]) : String
+  (string-append message (string-append "\n\n" (compile-cli-debug-usage))))
 
 (define (compile-cli-source-like? [value : String]) : bool
   (let
@@ -320,6 +337,96 @@
 (define (compile-cli-command-config [count : i64]) : ResultCompileCliConfig
   (compile-cli-config-from 2 count))
 
+(define (compile-cli-check-parse-options
+  [idx : i64]
+  [count : i64]
+  [input-path : String]
+  [stdlib-roots : CompilerLoadRootList]) : ResultCompileCliCheckConfig
+  (if (>= idx count)
+    (OkCompileCliCheckConfig input-path stdlib-roots)
+    (let
+      [current : String (arg idx)]
+      (if (string-eq current "--stdlib-root")
+        (if (>= (+ idx 1) count)
+          (ErrCompileCliCheckConfig "Error: --stdlib-root requires a value")
+          (compile-cli-check-parse-options
+            (+ idx 2)
+            count
+            input-path
+            (compile-cli-root-list-append stdlib-roots (arg (+ idx 1)))))
+        (begin
+          (print-error (string-append "Warning: unknown flag: " current))
+          (compile-cli-check-parse-options
+            (+ idx 1)
+            count
+            input-path
+            stdlib-roots))))))
+
+(define (compile-cli-check-config-from
+  [input-idx : i64]
+  [count : i64]
+  [missing-message : String]) : ResultCompileCliCheckConfig
+  (if (>= input-idx count)
+    (ErrCompileCliCheckConfig missing-message)
+    (compile-cli-check-parse-options
+      (+ input-idx 1)
+      count
+      (arg input-idx)
+      CompilerLoadRootNil)))
+
+(define (compile-cli-top-level-check-config [count : i64]) : ResultCompileCliCheckConfig
+  (compile-cli-check-config-from
+    2
+    count
+    (compile-cli-message-with-usage "Error: missing file argument")))
+
+(define (compile-cli-debug-check-config [count : i64]) : ResultCompileCliCheckConfig
+  (compile-cli-check-config-from
+    3
+    count
+    (compile-cli-debug-message-with-usage "Error: missing file argument")))
+
+(define (compile-cli-top-level-path-action [command : String] [count : i64]) : CompileCliAction
+  (if (< count 3)
+    (CompileCliError
+      (compile-cli-message-with-usage "Error: missing file argument"))
+    (if (string-eq command "tokenize")
+      (CompileCliTokenize (arg 2))
+      (CompileCliParse (arg 2)))))
+
+(define (compile-cli-debug-path-action [command : String] [count : i64]) : CompileCliAction
+  (if (< count 4)
+    (CompileCliError
+      (compile-cli-debug-message-with-usage "Error: missing file argument"))
+    (if (string-eq command "tokenize")
+      (CompileCliTokenize (arg 3))
+      (CompileCliParse (arg 3)))))
+
+(define (compile-cli-debug-dispatch [count : i64]) : CompileCliAction
+  (if (< count 3)
+    (CompileCliError
+      (compile-cli-debug-message-with-usage "Error: missing debug subcommand"))
+    (let
+      [command : String (arg 2)]
+      (cond
+        [(string-eq command "tokenize")
+          (compile-cli-debug-path-action command count)]
+        [(string-eq command "parse")
+          (compile-cli-debug-path-action command count)]
+        [(string-eq command "check")
+          (match (compile-cli-debug-check-config count)
+            [(OkCompileCliCheckConfig input-path roots)
+              (CompileCliCheck input-path roots)]
+            [(ErrCompileCliCheckConfig message) (CompileCliError message)])]
+        [(or
+            (string-eq command "help")
+            (or (string-eq command "--help") (string-eq command "-h")))
+          (CompileCliError (compile-cli-debug-usage))]
+        [else
+          (CompileCliError
+            (compile-cli-debug-message-with-usage
+              (string-append "Unknown debug command: " command)))]))))
+
 (define (compile-cli-dispatch [count : i64]) : CompileCliAction
   (if (< count 2)
     (CompileCliError
@@ -335,6 +442,14 @@
           (match (compile-cli-command-config count)
             [(OkCompileCliConfig config) (CompileCliRun config)]
             [(ErrCompileCliConfig message) (CompileCliError message)])]
+        [(or (string-eq command "tokenize") (string-eq command "parse"))
+          (compile-cli-top-level-path-action command count)]
+        [(string-eq command "check")
+          (match (compile-cli-top-level-check-config count)
+            [(OkCompileCliCheckConfig input-path roots)
+              (CompileCliCheck input-path roots)]
+            [(ErrCompileCliCheckConfig message) (CompileCliError message)])]
+        [(string-eq command "debug") (compile-cli-debug-dispatch count)]
         [(compile-cli-source-like? command)
           (match (compile-cli-config count)
             [(OkCompileCliConfig config) (CompileCliRun config)]
@@ -375,6 +490,18 @@
                 output-path
                 stdlib-roots
                 opt-level)))])]
+    [(CompileCliCheck input-path stdlib-roots)
+      (match (compiler-check-file-with-roots input-path stdlib-roots)
+        [(OkCompilerCheck _)
+          (begin
+            (print-string "Type checking passed!\n")
+            0)]
+        [(ErrCompilerCheck diag)
+          (begin
+            (print-error (compiler-diagnostic-render diag))
+            1)])]
+    [(CompileCliTokenize input-path) (front-tokenize-file input-path)]
+    [(CompileCliParse input-path) (front-parse-file input-path)]
     [(CompileCliHelp)
       (begin
         (print-error (compile-cli-usage))

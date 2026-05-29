@@ -66,18 +66,14 @@ to_windows_path() {
 }
 
 short_windows_path() {
-    win_path=$(to_windows_path "$1")
-    if command -v cmd.exe >/dev/null 2>&1; then
-        short_path=$(TYPELISP_SHORT_PATH_INPUT="$win_path" MSYS2_ARG_CONV_EXCL='*' \
-            cmd.exe /C 'for %I in ("%TYPELISP_SHORT_PATH_INPUT%") do @echo %~sI' |
-            tr -d '\r' |
-            sed -n '1p')
+    if command -v cygpath >/dev/null 2>&1; then
+        short_path=$(cygpath -d "$1" 2>/dev/null || true)
         if [ -n "$short_path" ]; then
             printf '%s\n' "$short_path"
             return 0
         fi
     fi
-    printf '%s\n' "$win_path"
+    to_windows_path "$1"
 }
 
 find_clang() {

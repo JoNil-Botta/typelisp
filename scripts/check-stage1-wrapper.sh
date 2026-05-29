@@ -31,6 +31,7 @@ mkdir -p "$WORKDIR"
 
 SRC="$WORKDIR/smoke.tl"
 ASM="$WORKDIR/smoke.s"
+IR="$WORKDIR/smoke.ir"
 BIN="$WORKDIR/smoke-bin"
 HOST_ACTION_BIN="$WORKDIR/host action/out bin"
 SCRATCH_ASM="$WORKDIR/inline-test.s"
@@ -166,6 +167,19 @@ run_capture compile "$COMPILER" compile "$SRC" -o "$ASM"
     exit 1
 }
 assert_contains "$WORKDIR/compile.stdout" "Generated: $ASM"
+
+echo "[stage1-wrapper] compile --emit-ir"
+run_capture compile-ir "$COMPILER" compile "$SRC" --emit-ir
+[ -f "$IR" ] || {
+    echo "compile --emit-ir did not write $IR" >&2
+    exit 1
+}
+assert_contains "$WORKDIR/compile-ir.stdout" "Generated: $IR"
+assert_contains "$IR" "typelisp-ir-summary v1"
+
+run_expect_failure compile-missing-source "$COMPILER" compile
+assert_empty "$WORKDIR/compile-missing-source.stdout"
+assert_contains "$WORKDIR/compile-missing-source.stderr" "compile: expected source path"
 
 echo "[stage1-wrapper] build"
 run_capture build "$COMPILER" build "$SRC" -o "$BIN"

@@ -52,6 +52,10 @@
   (CompilerBackendNoLabel)
   (CompilerBackendSomeLabel String))
 
+(defenum CompilerBackendMaybeSignature
+  (CompilerBackendNoSignature)
+  (CompilerBackendSomeSignature AstTypeList AstType))
+
 (defenum ResultCompilerBackend
   (OkCompilerBackend String)
   (ErrCompilerBackend CompilerDiagnostic))
@@ -539,6 +543,12 @@
     "main"
     (string-append "_tl_" (compiler-backend-asm-safe-symbol name))))
 
+(define (compiler-backend-closure-descriptor-label [name : String]) : String
+  (string-append ".L_tl_fn_desc_" (compiler-backend-asm-safe-symbol name)))
+
+(define (compiler-backend-closure-entry-label [name : String]) : String
+  (string-append ".L_tl_fn_entry_" (compiler-backend-asm-safe-symbol name)))
+
 (define (compiler-backend-runtime-user-symbol? [name : String]) : bool
   (or
     (string-eq name "env-var-exists?")
@@ -784,7 +794,7 @@
       (OkCompilerBackend
         (backend-cat5
           "    leaq "
-          (compiler-backend-user-symbol name)
+          (compiler-backend-closure-descriptor-label name)
           "(%rip), "
           reg
           "\n"))]
@@ -1093,6 +1103,7 @@
     [(IrValueChar _) (CompilerRegSomeType (AstTyChar))]
     [(IrValueF64 _) (CompilerRegSomeType (AstTyF64))]
     [(IrValueString _) (CompilerRegSomeType (AstTyString))]
+    [(IrValueFunction _) (CompilerRegSomeType (AstTyU64))]
     [_ (CompilerRegNoType)]))
 
 (define (compiler-backend-binop-compare-result? [op : CompilerIrBinOp]) : bool
@@ -2433,6 +2444,28 @@
         [(IrParam _ ty _)
           (AstTypeCons ty (compiler-backend-param-type-list rest))])]))
 
+(define (compiler-backend-type-list-count [types : AstTypeList]) : i64
+  (match types
+    [(AstTypeNil) 0]
+    [(AstTypeCons _ rest) (+ 1 (compiler-backend-type-list-count rest))]))
+
+(define (compiler-backend-param-list-from-types
+  [types : AstTypeList]
+  [idx : i64]) : CompilerIrParamList
+  (match types
+    [(AstTypeNil) IrParamNil]
+    [(AstTypeCons ty rest)
+      (IrParamCons
+        (IrParam (string-append "arg" (int->string idx)) ty idx)
+        (compiler-backend-param-list-from-types rest (+ idx 1)))]))
+
+(define (compiler-backend-var-value-list [count : i64] [idx : i64]) : CompilerIrValueList
+  (if (>= idx count)
+    IrValueNil
+    (IrValueCons
+      (IrValueVar idx)
+      (compiler-backend-var-value-list count (+ idx 1)))))
+
 (define (compiler-backend-function-param-types
   [functions : CompilerIrFunctionList]
   [name : String]) : AstTypeList
@@ -2458,6 +2491,45 @@
               [(AstTyFunc args _) args]
               [_ AstTypeNil])
             (compiler-backend-extern-param-types rest name))])]))
+
+(define (compiler-backend-function-signature
+  [functions : CompilerIrFunctionList]
+  [name : String]) : CompilerBackendMaybeSignature
+  (match functions
+    [(IrFunctionNil) (CompilerBackendNoSignature)]
+    [(IrFunctionCons func rest)
+      (match func
+        [(IrFunction fname params ret-ty _ _)
+          (if (string-eq fname name)
+            (CompilerBackendSomeSignature
+              (compiler-backend-param-type-list params)
+              ret-ty)
+            (compiler-backend-function-signature rest name))])]))
+
+(define (compiler-backend-extern-signature
+  [externs : CompilerIrExternList]
+  [name : String]) : CompilerBackendMaybeSignature
+  (match externs
+    [(IrExternNil) (CompilerBackendNoSignature)]
+    [(IrExternCons item rest)
+      (match item
+        [(IrExtern extern-name ty _ _)
+          (if (string-eq extern-name name)
+            (match ty
+              [(AstTyFunc args ret-ty)
+                (CompilerBackendSomeSignature args ret-ty)]
+              [_ (CompilerBackendNoSignature)])
+            (compiler-backend-extern-signature rest name))])]))
+
+(define (compiler-backend-signature
+  [functions : CompilerIrFunctionList]
+  [externs : CompilerIrExternList]
+  [name : String]) : CompilerBackendMaybeSignature
+  (match (compiler-backend-function-signature functions name)
+    [(CompilerBackendSomeSignature args ret-ty)
+      (CompilerBackendSomeSignature args ret-ty)]
+    [(CompilerBackendNoSignature)
+      (compiler-backend-extern-signature externs name)]))
 
 (define (compiler-backend-call-param-types
   [name : String]
@@ -2540,15 +2612,37 @@
   [target : CompilerBackendTarget]
   [args : CompilerIrValueList]
   [types : AstTypeList]) : i64
+  (compiler-backend-call-arg-space-from target args types 0 0 0))
+
+(define (compiler-backend-call-arg-space-from
+  [target : CompilerBackendTarget]
+  [args : CompilerIrValueList]
+  [types : AstTypeList]
+  [int-idx : i64]
+  [float-idx : i64]
+  [position : i64]) : i64
   (let
     [stack-count : i64
-      (compiler-backend-call-stack-arg-count target args types 0 0 0 0)]
+      (compiler-backend-call-stack-arg-count
+        target
+        args
+        types
+        int-idx
+        float-idx
+        position
+        0)]
     (match target
       [(BackendTargetWindows) 0]
       [(BackendTargetLinux)
         (if (= stack-count 0)
           0
           (compiler-backend-round-up-16 (* stack-count 8)))])))
+
+(define (compiler-backend-closure-call-arg-space
+  [target : CompilerBackendTarget]
+  [args : CompilerIrValueList]
+  [types : AstTypeList]) : i64
+  (compiler-backend-call-arg-space-from target args types 1 0 1))
 
 (define (compiler-backend-windows-stack-arg-space [args : CompilerIrValueList]) : i64
   (let
@@ -2557,9 +2651,18 @@
       (compiler-backend-round-up-16 (* (- arg-count 4) 8))
       0)))
 
+(define (compiler-backend-windows-closure-stack-arg-space
+  [args : CompilerIrValueList]) : i64
+  (let
+    [arg-count : i64 (+ 1 (compiler-backend-ir-value-list-count args))]
+    (if (> arg-count 4)
+      (compiler-backend-round-up-16 (* (- arg-count 4) 8))
+      0)))
+
 (define (compiler-backend-instr-needs-outgoing-space? [instr : CompilerIrInstr]) : bool
   (match instr
     [(IrInstrCall _ _ _ _) true]
+    [(IrInstrCallIndirect _ _ _ _) true]
     [(IrInstrBoundsCheck _ _ _) true]
     [_ false]))
 
@@ -2586,6 +2689,8 @@
 (define (compiler-backend-instr-outgoing-stack-space [instr : CompilerIrInstr]) : i64
   (match instr
     [(IrInstrCall _ _ args _) (compiler-backend-windows-stack-arg-space args)]
+    [(IrInstrCallIndirect _ _ args _)
+      (compiler-backend-windows-closure-stack-arg-space args)]
     [_ 0]))
 
 (define (compiler-backend-instrs-outgoing-stack-space
@@ -3519,11 +3624,18 @@
               [(ErrCompilerBackend message)
                 (ErrCompilerBackend
                   (compiler-backend-apply-instr-diagnostic message instr-diag))])))]
-      [(IrInstrCallIndirect _ _ _ _)
-        (ErrCompilerBackend
-          (compiler-diagnostic-with-message
-            instr-diag
-            "backend: indirect calls are not supported yet"))]
+      [(IrInstrCallIndirect dst func args ty)
+        (compiler-backend-emit-indirect-call
+          target
+          dst
+          func
+          args
+          ty
+          assignments
+          types
+          functions
+          externs
+          instr-diag)]
       [(IrInstrTailCall name args ty)
         (match (compiler-backend-emit-tail-call
           target
@@ -4344,6 +4456,90 @@
                       vars
                       blocks))
                   ""))))]
+        [(ErrCompilerBackend message)
+          (ErrCompilerBackend
+            (compiler-backend-apply-instr-diagnostic message instr-diag))]))))
+
+(define (compiler-backend-indirect-call-param-types
+  [types : CompilerRegVarTypeList]
+  [func : CompilerIrValue]
+  [functions : CompilerIrFunctionList]
+  [externs : CompilerIrExternList]) : AstTypeList
+  (match func
+    [(IrValueFunction name)
+      (match (compiler-backend-signature functions externs name)
+        [(CompilerBackendSomeSignature param-types _) param-types]
+        [(CompilerBackendNoSignature) AstTypeNil])]
+    [_
+      (match (compiler-backend-value-type types func)
+        [(CompilerRegSomeType ty)
+          (match ty
+            [(AstTyFunc param-types _) param-types]
+            [_ AstTypeNil])]
+        [(CompilerRegNoType) AstTypeNil])]))
+
+(define (compiler-backend-emit-indirect-call
+  [target : CompilerBackendTarget]
+  [dst : i64]
+  [func : CompilerIrValue]
+  [args : CompilerIrValueList]
+  [ty : AstType]
+  [assignments : CompilerRegAssignmentList]
+  [types : CompilerRegVarTypeList]
+  [functions : CompilerIrFunctionList]
+  [externs : CompilerIrExternList]
+  [instr-diag : CompilerDiagnostic]) : ResultCompilerBackend
+  (let
+    [param-types : AstTypeList
+      (compiler-backend-indirect-call-param-types types func functions externs)]
+    (let
+      [call-space : i64
+        (compiler-backend-closure-call-arg-space target args param-types)]
+      (match (compiler-backend-emit-call-args
+        target
+        assignments
+        args
+        param-types
+        1
+        0
+        1
+        0
+        instr-diag)
+        [(OkCompilerBackend args-asm)
+          (match (compiler-backend-emit-load-value-with-plan
+            assignments
+            func
+            "%r11")
+            [(OkCompilerBackend func-asm)
+              (match (compiler-backend-target-arg-reg target 0)
+                [(OkBackendReg env-reg)
+                  (OkCompilerBackend
+                    (string-append
+                      (compiler-backend-emit-call-space-sub call-space)
+                      (string-append
+                        args-asm
+                        (string-append
+                          func-asm
+                          (backend-cat5
+                            "    movq 8(%r11), "
+                            env-reg
+                            "\n    movq (%r11), %rax\n    call *%rax\n"
+                            (string-append
+                              (compiler-backend-emit-call-space-add call-space)
+                              (compiler-backend-emit-store-typed-var-with-plan
+                                assignments
+                                dst
+                                (if (compiler-backend-f64-type? ty)
+                                  "%xmm0"
+                                  "%rax")
+                                ty))
+                            "")))))]
+                [(ErrBackendReg message)
+                  (ErrCompilerBackend
+                    (compiler-diagnostic-with-message instr-diag message))])]
+            [(ErrCompilerBackend message)
+              (ErrCompilerBackend
+                (compiler-backend-apply-instr-diagnostic message instr-diag))])]
         [(ErrCompilerBackend message)
           (ErrCompilerBackend
             (compiler-backend-apply-instr-diagnostic message instr-diag))]))))
@@ -5889,6 +6085,180 @@
     spans
     (text-buf-empty)))
 
+(define (compiler-backend-emit-closure-descriptor-entry [name : String]) : String
+  (backend-cat5
+    (compiler-backend-closure-descriptor-label name)
+    ":\n    .quad "
+    (compiler-backend-closure-entry-label name)
+    "\n    .quad 0\n"
+    ""))
+
+(define (compiler-backend-emit-closure-descriptor-entries
+  [names : BackendStringList]
+  [functions : CompilerIrFunctionList]
+  [externs : CompilerIrExternList]) : String
+  (match names
+    [(BackendStringNil) ""]
+    [(BackendStringCons name rest)
+      (string-append
+        (match (compiler-backend-signature functions externs name)
+          [(CompilerBackendSomeSignature _ _)
+            (compiler-backend-emit-closure-descriptor-entry name)]
+          [(CompilerBackendNoSignature) ""])
+        (compiler-backend-emit-closure-descriptor-entries
+          rest
+          functions
+          externs))]))
+
+(define (compiler-backend-emit-closure-descriptors
+  [names : BackendStringList]
+  [functions : CompilerIrFunctionList]
+  [externs : CompilerIrExternList]) : String
+  (match names
+    [(BackendStringNil) ""]
+    [_
+      (string-append
+        "    .section .rodata\n    .balign 8\n"
+        (compiler-backend-emit-closure-descriptor-entries
+          names
+          functions
+          externs))]))
+
+(define (compiler-backend-closure-adapter-outgoing-frame-space
+  [target : CompilerBackendTarget]
+  [args : CompilerIrValueList]) : i64
+  (match target
+    [(BackendTargetLinux) 0]
+    [(BackendTargetWindows)
+      (compiler-backend-round-up-16
+        (+
+          (compiler-backend-outgoing-shadow-space target)
+          (compiler-backend-windows-stack-arg-space args)))]))
+
+(define (compiler-backend-emit-closure-entry-adapter
+  [target : CompilerBackendTarget]
+  [name : String]
+  [param-types : AstTypeList]
+  [ret-ty : AstType]
+  [plan : CompilerBackendRuntimePlan]
+  [functions : CompilerIrFunctionList]
+  [externs : CompilerIrExternList]) : ResultCompilerBackend
+  (let
+    [params : CompilerIrParamList
+      (compiler-backend-param-list-from-types param-types 0)]
+    [vars : i64 (compiler-backend-type-list-count param-types)]
+    [args : CompilerIrValueList
+      (compiler-backend-var-value-list
+        (compiler-backend-type-list-count param-types)
+        0)]
+    (let
+      [frame : i64
+        (+
+          (compiler-backend-frame-size
+            (compiler-backend-frame-slots vars CompilerRegAssignmentNil))
+          (compiler-backend-closure-adapter-outgoing-frame-space target args))]
+      [call-space : i64
+        (compiler-backend-call-arg-space target args param-types)]
+      [diag : CompilerDiagnostic (compiler-diagnostic-at-start "" "")]
+      (match (compiler-backend-emit-param-spills
+        target
+        CompilerRegAssignmentNil
+        params
+        1
+        0
+        1
+        0)
+        [(OkCompilerBackend spills)
+          (match (compiler-backend-emit-call-args
+            target
+            CompilerRegAssignmentNil
+            args
+            param-types
+            0
+            0
+            0
+            0
+            diag)
+            [(OkCompilerBackend args-asm)
+              (OkCompilerBackend
+                (backend-cat5
+                  (compiler-backend-closure-entry-label name)
+                  ":\n    pushq %rbp\n    movq %rsp, %rbp\n"
+                  (compiler-backend-emit-stack-sub target frame)
+                  (string-append
+                    spills
+                    (string-append
+                      (compiler-backend-emit-call-space-sub call-space)
+                      (string-append
+                        args-asm
+                        (backend-cat5
+                          "    call "
+                          (compiler-backend-call-symbol
+                            name
+                            plan
+                            functions
+                            externs)
+                          "\n"
+                          (string-append
+                            (compiler-backend-emit-call-space-add call-space)
+                            "    movq %rbp, %rsp\n    popq %rbp\n    ret\n\n")
+                          ""))))
+                  ""))]
+            [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
+        [(ErrCompilerBackend message) (ErrCompilerBackend message)]))))
+
+(define (compiler-backend-emit-closure-entry-adapters-into
+  [target : CompilerBackendTarget]
+  [names : BackendStringList]
+  [functions : CompilerIrFunctionList]
+  [externs : CompilerIrExternList]
+  [plan : CompilerBackendRuntimePlan]
+  [buf : TextBuf]) : ResultCompilerBackend
+  (match names
+    [(BackendStringNil) (OkCompilerBackend (text-buf-render buf))]
+    [(BackendStringCons name rest)
+      (match (compiler-backend-signature functions externs name)
+        [(CompilerBackendSomeSignature param-types ret-ty)
+          (match (compiler-backend-emit-closure-entry-adapter
+            target
+            name
+            param-types
+            ret-ty
+            plan
+            functions
+            externs)
+            [(OkCompilerBackend head)
+              (compiler-backend-emit-closure-entry-adapters-into
+                target
+                rest
+                functions
+                externs
+                plan
+                (text-buf-append buf head))]
+            [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
+        [(CompilerBackendNoSignature)
+          (compiler-backend-emit-closure-entry-adapters-into
+            target
+            rest
+            functions
+            externs
+            plan
+            buf)])]))
+
+(define (compiler-backend-emit-closure-entry-adapters
+  [target : CompilerBackendTarget]
+  [names : BackendStringList]
+  [functions : CompilerIrFunctionList]
+  [externs : CompilerIrExternList]
+  [plan : CompilerBackendRuntimePlan]) : ResultCompilerBackend
+  (compiler-backend-emit-closure-entry-adapters-into
+    target
+    names
+    functions
+    externs
+    plan
+    (text-buf-empty)))
+
 (define (compiler-backend-string-list-contains?
   [strings : BackendStringList]
   [text : String]) : bool
@@ -5913,6 +6283,190 @@
   (if (compiler-backend-string-list-contains? strings text)
     strings
     (compiler-backend-string-list-append strings text)))
+
+(define (compiler-backend-collect-value-function
+  [functions : BackendStringList]
+  [value : CompilerIrValue]) : BackendStringList
+  (match value
+    [(IrValueFunction name) (compiler-backend-string-list-add functions name)]
+    [_ functions]))
+
+(define (compiler-backend-collect-value-list-functions
+  [functions : BackendStringList]
+  [values : CompilerIrValueList]) : BackendStringList
+  (match values
+    [(IrValueNil) functions]
+    [(IrValueCons value rest)
+      (compiler-backend-collect-value-list-functions
+        (compiler-backend-collect-value-function functions value)
+        rest)]))
+
+(define (compiler-backend-collect-phi-functions
+  [functions : BackendStringList]
+  [inputs : CompilerIrPhiInputList]) : BackendStringList
+  (match inputs
+    [(IrPhiInputNil) functions]
+    [(IrPhiInputCons input rest)
+      (match input
+        [(IrPhiInput value _)
+          (compiler-backend-collect-phi-functions
+            (compiler-backend-collect-value-function functions value)
+            rest)])]))
+
+(define (compiler-backend-collect-instr-functions
+  [functions : BackendStringList]
+  [instr : CompilerIrInstr]) : BackendStringList
+  (match instr
+    [(IrInstrMov _ src _)
+      (compiler-backend-collect-value-function functions src)]
+    [(IrInstrBinOp _ _ lhs rhs _)
+      (compiler-backend-collect-value-function
+        (compiler-backend-collect-value-function functions lhs)
+        rhs)]
+    [(IrInstrUnOp _ _ src _)
+      (compiler-backend-collect-value-function functions src)]
+    [(IrInstrCall _ _ args _)
+      (compiler-backend-collect-value-list-functions functions args)]
+    [(IrInstrCallIndirect _ func args _)
+      (compiler-backend-collect-value-list-functions
+        (compiler-backend-collect-value-function functions func)
+        args)]
+    [(IrInstrTailCall _ args _)
+      (compiler-backend-collect-value-list-functions functions args)]
+    [(IrInstrBranch cond _ _)
+      (compiler-backend-collect-value-function functions cond)]
+    [(IrInstrReturn maybe)
+      (match maybe
+        [(IrNoValue) functions]
+        [(IrSomeValue value)
+          (compiler-backend-collect-value-function functions value)])]
+    [(IrInstrPhi _ inputs _)
+      (compiler-backend-collect-phi-functions functions inputs)]
+    [(IrInstrGep _ base offset _)
+      (compiler-backend-collect-value-function
+        (compiler-backend-collect-value-function functions base)
+        offset)]
+    [(IrInstrLoad _ src _)
+      (compiler-backend-collect-value-function functions src)]
+    [(IrInstrStore _ src _)
+      (compiler-backend-collect-value-function functions src)]
+    [(IrInstrStorePtr dst src _)
+      (compiler-backend-collect-value-function
+        (compiler-backend-collect-value-function functions dst)
+        src)]
+    [(IrInstrCast _ src _ _)
+      (compiler-backend-collect-value-function functions src)]
+    [(IrInstrBoundsCheck index len _)
+      (compiler-backend-collect-value-function
+        (compiler-backend-collect-value-function functions index)
+        len)]
+    [(IrInstrVectorBinOp _ _ lhs rhs _ _)
+      (compiler-backend-collect-value-function
+        (compiler-backend-collect-value-function functions lhs)
+        rhs)]
+    [(IrInstrVectorReduce _ _ src _ _)
+      (compiler-backend-collect-value-function functions src)]
+    [(IrInstrVectorCompare _ _ lhs rhs _ _)
+      (compiler-backend-collect-value-function
+        (compiler-backend-collect-value-function functions lhs)
+        rhs)]
+    [(IrInstrMaskBinOp _ _ lhs rhs _)
+      (compiler-backend-collect-value-function
+        (compiler-backend-collect-value-function functions lhs)
+        rhs)]
+    [(IrInstrMaskNot _ src _)
+      (compiler-backend-collect-value-function functions src)]
+    [(IrInstrMaskReduce _ _ src _)
+      (compiler-backend-collect-value-function functions src)]
+    [(IrInstrSelect _ mask on-true on-false _ _)
+      (compiler-backend-collect-value-function
+        (compiler-backend-collect-value-function
+          (compiler-backend-collect-value-function functions mask)
+          on-true)
+        on-false)]
+    [(IrInstrVectorLoad _ base index _ _)
+      (compiler-backend-collect-value-function
+        (compiler-backend-collect-value-function functions base)
+        index)]
+    [(IrInstrVectorStore base index value _ _)
+      (compiler-backend-collect-value-function
+        (compiler-backend-collect-value-function
+          (compiler-backend-collect-value-function functions base)
+          index)
+        value)]
+    [(IrInstrPredicatedStore base index value mask _ _)
+      (compiler-backend-collect-value-function
+        (compiler-backend-collect-value-function
+          (compiler-backend-collect-value-function
+            (compiler-backend-collect-value-function functions base)
+            index)
+          value)
+        mask)]
+    [(IrInstrPredicatedLoad _ base index mask _ _)
+      (compiler-backend-collect-value-function
+        (compiler-backend-collect-value-function
+          (compiler-backend-collect-value-function functions base)
+          index)
+        mask)]
+    [(IrInstrTailMask _ index len _)
+      (compiler-backend-collect-value-function
+        (compiler-backend-collect-value-function functions index)
+        len)]
+    [_ functions]))
+
+(define (compiler-backend-collect-instr-list-functions
+  [functions : BackendStringList]
+  [instrs : CompilerIrInstrList]) : BackendStringList
+  (match instrs
+    [(IrInstrNil) functions]
+    [(IrInstrCons instr rest)
+      (compiler-backend-collect-instr-list-functions
+        (compiler-backend-collect-instr-functions functions instr)
+        rest)]))
+
+(define (compiler-backend-collect-block-functions
+  [functions : BackendStringList]
+  [blocks : CompilerIrBlockList]) : BackendStringList
+  (match blocks
+    [(IrBlockNil) functions]
+    [(IrBlockCons block rest)
+      (match block
+        [(IrBlock _ instrs)
+          (compiler-backend-collect-block-functions
+            (compiler-backend-collect-instr-list-functions functions instrs)
+            rest)])]))
+
+(define (compiler-backend-collect-function-functions
+  [names : BackendStringList]
+  [functions : CompilerIrFunctionList]) : BackendStringList
+  (match functions
+    [(IrFunctionNil) names]
+    [(IrFunctionCons func rest)
+      (match func
+        [(IrFunction _ _ _ _ blocks)
+          (compiler-backend-collect-function-functions
+            (compiler-backend-collect-block-functions names blocks)
+            rest)])]))
+
+(define (compiler-backend-collect-global-functions
+  [names : BackendStringList]
+  [globals : CompilerIrGlobalList]) : BackendStringList
+  (match globals
+    [(IrGlobalNil) names]
+    [(IrGlobalCons global rest)
+      (match global
+        [(IrGlobal _ _ value)
+          (compiler-backend-collect-global-functions
+            (compiler-backend-collect-value-function names value)
+            rest)])]))
+
+(define (compiler-backend-collect-program-functions
+  [program : CompilerIrProgram]) : BackendStringList
+  (match program
+    [(IrProgram globals functions _)
+      (compiler-backend-collect-function-functions
+        (compiler-backend-collect-global-functions BackendStringNil globals)
+        functions)]))
 
 (define (compiler-backend-collect-value-string
   [strings : BackendStringList]
@@ -6343,7 +6897,10 @@
         (backend-cat3 "    .quad " (compiler-backend-user-symbol name) "\n"))]
     [(IrValueFunction name)
       (OkCompilerBackend
-        (backend-cat3 "    .quad " (compiler-backend-user-symbol name) "\n"))]
+        (backend-cat3
+          "    .quad "
+          (compiler-backend-closure-descriptor-label name)
+          "\n"))]
     [(IrValueString text)
       (OkCompilerBackend
         (backend-cat3
@@ -12198,14 +12755,21 @@ tl_windows_sdk_registry_install:
                   spans)
                   [(OkCompilerBackend functions-asm)
                     (let
-                      [strings : BackendStringList
-                        (compiler-backend-collect-program-strings program)]
-                      [floats : BackendStringList
-                        (compiler-backend-collect-program-f64s program)]
-                      [buf : TextBuf
-                        (text-buf-append
-                          (text-buf-append
-                            (text-buf-append
+                      [closure-names : BackendStringList
+                        (compiler-backend-collect-program-functions program)]
+                      (match (compiler-backend-emit-closure-entry-adapters
+                        target
+                        closure-names
+                        functions
+                        externs
+                        plan)
+                        [(OkCompilerBackend closure-adapters-asm)
+                          (let
+                            [strings : BackendStringList
+                              (compiler-backend-collect-program-strings program)]
+                            [floats : BackendStringList
+                              (compiler-backend-collect-program-f64s program)]
+                            [buf : TextBuf
                               (text-buf-append
                                 (text-buf-append
                                   (text-buf-append
@@ -12214,30 +12778,45 @@ tl_windows_sdk_registry_install:
                                         (text-buf-append
                                           (text-buf-append
                                             (text-buf-append
-                                              (text-buf-empty)
-                                              ".data\n")
-                                            globals-asm)
-                                          (compiler-backend-emit-string-rodata
-                                            strings))
-                                        (compiler-backend-emit-f64-rodata
-                                          floats))
-                                      (compiler-backend-runtime-data-for-target
-                                        target
-                                        plan))
-                                    (compiler-backend-emit-externs externs plan))
-                                  (compiler-backend-runtime-externs-for-target
+                                              (text-buf-append
+                                                (text-buf-append
+                                                  (text-buf-append
+                                                    (text-buf-append
+                                                      (text-buf-empty)
+                                                      ".data\n")
+                                                    globals-asm)
+                                                  (compiler-backend-emit-string-rodata
+                                                    strings))
+                                                (compiler-backend-emit-f64-rodata
+                                                  floats))
+                                              (compiler-backend-emit-closure-descriptors
+                                                closure-names
+                                                functions
+                                                externs))
+                                            (compiler-backend-runtime-data-for-target
+                                              target
+                                              plan))
+                                          (compiler-backend-emit-externs
+                                            externs
+                                            plan))
+                                        (compiler-backend-runtime-externs-for-target
+                                          target
+                                          plan))
+                                      (compiler-backend-target-entry-text
+                                        target))
+                                    functions-asm)
+                                  closure-adapters-asm)
+                                (string-append
+                                  (compiler-backend-runtime-functions-for-target
                                     target
-                                    plan))
-                                (compiler-backend-target-entry-text target))
-                              functions-asm)
-                            (compiler-backend-runtime-functions-for-target
-                              target
-                              plan))
-                          (compiler-backend-entry-for-target
-                            target
-                            plan
-                            globals))]
-                      (OkCompilerBackend (text-buf-render buf)))]
+                                    plan)
+                                  (compiler-backend-entry-for-target
+                                    target
+                                    plan
+                                    globals)))]
+                            (OkCompilerBackend (text-buf-render buf)))]
+                        [(ErrCompilerBackend message)
+                          (ErrCompilerBackend message)]))]
                   [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
               [(ErrCompilerBackend message) (ErrCompilerBackend message)])])
         (ErrCompilerBackend

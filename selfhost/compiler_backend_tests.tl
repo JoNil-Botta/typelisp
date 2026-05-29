@@ -533,6 +533,156 @@
     (compiler-backend-aggregate-return-shape-ok?)
     (compiler-backend-aggregate-global-init-shape-ok?)))
 
+;; Backend-owned replacement for closure/lambda emit-shape checks (#1415).
+;; The source uses synthetic lambda lowered names because AstExprLambda lowering
+;; is tracked separately; this pins the backend descriptor, adapter, and
+;; indirect-call shape produced by the same IR names.
+(define (compiler-backend-closure-literal-source) : String
+  "(define (__tl_lambda_main_0 [x : i64]) : i64 (+ x 1))
+(define (main) : i64
+  (let ([f : (-> i64 i64) __tl_lambda_main_0])
+    (f 41)))")
+
+(define (compiler-backend-closure-inferred-source) : String
+  "(define (__tl_lambda_main_0 [x : i64]) : i64
+  (let ([y : i64 (+ x 1)])
+    y))
+(define (main) : i64
+  (let ([f : (-> i64 i64) __tl_lambda_main_0])
+    (f 41)))")
+
+(define (compiler-backend-closure-aggregate-return-source) : String
+  "(defenum Box (BoxI i64))
+(defstruct Pair (x i64) (y i64))
+
+(define (__tl_lambda_main_0) : String \"hello\")
+(define (__tl_lambda_main_1) : Box (BoxI 11))
+(define (__tl_lambda_main_2) : (Array i64) (make-array i64 13))
+(define (__tl_lambda_main_3) : Pair (Pair 1 13))
+
+(define (main) : i64
+  (let ([mk-string : (-> String) __tl_lambda_main_0]
+        [mk-enum : (-> Box) __tl_lambda_main_1]
+        [mk-array : (-> (Array i64)) __tl_lambda_main_2]
+        [mk-struct : (-> Pair) __tl_lambda_main_3])
+    (+ (string-length (mk-string))
+       (+ (match (mk-enum) [(BoxI n) n])
+          (+ (array-length (mk-array))
+             (struct-get (mk-struct) y))))))")
+
+(define (compiler-backend-closure-literal-shape-ok?) : bool
+  (match (compiler-backend-emit-source
+    (compiler-backend-closure-literal-source))
+    [(OkCompilerBackend asm)
+      (and
+        (backend-and8
+          (compiler-backend-string-contains? asm "_tl___tl_lambda_main_0:\n")
+          (compiler-backend-string-contains?
+            asm
+            ".L_tl_fn_desc___tl_lambda_main_0:\n")
+          (compiler-backend-string-contains?
+            asm
+            "    .quad .L_tl_fn_entry___tl_lambda_main_0\n")
+          (compiler-backend-string-contains?
+            asm
+            ".L_tl_fn_entry___tl_lambda_main_0:\n")
+          (compiler-backend-string-contains?
+            asm
+            "    call _tl___tl_lambda_main_0\n")
+          (compiler-backend-string-contains?
+            asm
+            "    leaq .L_tl_fn_desc___tl_lambda_main_0(%rip), ")
+          (compiler-backend-string-contains? asm "    call *%rax\n")
+          (compiler-backend-string-contains? asm "    movq (%r11), %rax\n"))
+        (and
+          (compiler-backend-string-contains? asm "    movq 8(%r11), %rdi\n")
+          (not
+            (compiler-backend-string-contains?
+              asm
+              (compiler-backend-todo-marker)))))]
+    [(ErrCompilerBackend _) false]))
+
+(define (compiler-backend-closure-inferred-shape-ok?) : bool
+  (match (compiler-backend-emit-source
+    (compiler-backend-closure-inferred-source))
+    [(OkCompilerBackend asm)
+      (backend-and4
+        (compiler-backend-string-contains? asm "_tl___tl_lambda_main_0:\n")
+        (compiler-backend-string-contains?
+          asm
+          "    call _tl___tl_lambda_main_0\n")
+        (compiler-backend-string-contains? asm "    call *%rax\n")
+        (not
+          (compiler-backend-string-contains? asm (compiler-backend-todo-marker))))]
+    [(ErrCompilerBackend _) false]))
+
+(define (compiler-backend-closure-aggregate-return-shape-ok?) : bool
+  (match (compiler-backend-emit-source
+    (compiler-backend-closure-aggregate-return-source))
+    [(OkCompilerBackend asm)
+      (and
+        (backend-and8
+          (compiler-backend-string-contains? asm "_tl___tl_lambda_main_0:\n")
+          (compiler-backend-string-contains? asm "_tl___tl_lambda_main_1:\n")
+          (compiler-backend-string-contains? asm "_tl___tl_lambda_main_2:\n")
+          (compiler-backend-string-contains? asm "_tl___tl_lambda_main_3:\n")
+          (compiler-backend-string-contains?
+            asm
+            ".L_tl_fn_desc___tl_lambda_main_0:\n")
+          (compiler-backend-string-contains?
+            asm
+            ".L_tl_fn_desc___tl_lambda_main_1:\n")
+          (compiler-backend-string-contains?
+            asm
+            ".L_tl_fn_desc___tl_lambda_main_2:\n")
+          (compiler-backend-string-contains?
+            asm
+            ".L_tl_fn_desc___tl_lambda_main_3:\n"))
+        (and
+          (backend-and8
+            (compiler-backend-string-contains?
+              asm
+              ".L_tl_fn_entry___tl_lambda_main_0:\n")
+            (compiler-backend-string-contains?
+              asm
+              ".L_tl_fn_entry___tl_lambda_main_1:\n")
+            (compiler-backend-string-contains?
+              asm
+              ".L_tl_fn_entry___tl_lambda_main_2:\n")
+            (compiler-backend-string-contains?
+              asm
+              ".L_tl_fn_entry___tl_lambda_main_3:\n")
+            (compiler-backend-string-contains?
+              asm
+              "    .quad .L_tl_fn_entry___tl_lambda_main_0\n")
+            (compiler-backend-string-contains?
+              asm
+              "    .quad .L_tl_fn_entry___tl_lambda_main_1\n")
+            (compiler-backend-string-contains?
+              asm
+              "    .quad .L_tl_fn_entry___tl_lambda_main_2\n")
+            (compiler-backend-string-contains?
+              asm
+              "    .quad .L_tl_fn_entry___tl_lambda_main_3\n"))
+          (and
+            (backend-and4
+              (compiler-backend-string-contains? asm "tl_alloc:\n")
+              (>= (compiler-backend-string-count asm "    call tl_alloc\n") 4)
+              (>= (compiler-backend-string-count asm "    call *%rax\n") 4)
+              (not
+                (compiler-backend-string-contains?
+                  asm
+                  (compiler-backend-todo-marker))))
+            true)))]
+    [(ErrCompilerBackend _) false]))
+
+(define (compiler-backend-closure-emit-shape-ok?) : bool
+  (and
+    (compiler-backend-closure-literal-shape-ok?)
+    (and
+      (compiler-backend-closure-inferred-shape-ok?)
+      (compiler-backend-closure-aggregate-return-shape-ok?))))
+
 (define (compiler-backend-enum-match-ok?) : bool
   (match (compiler-backend-emit-source (compiler-backend-enum-match-source))
     [(OkCompilerBackend asm)
@@ -2450,15 +2600,17 @@
                     (compiler-backend-box-ok?))
                   (and
                     (compiler-backend-checked-trap-emit-shape-ok?)
-                    (backend-and8
-                      (compiler-backend-scalar-wide-ops-ok?)
-                      (compiler-backend-scalar-div-mod-ok?)
-                      (compiler-backend-narrow-scalar-instr-ok?)
-                      (compiler-backend-f64-abi-ok?)
-                      (compiler-backend-win64-f64-abi-ok?)
-                      (compiler-backend-aggregate-storage-shape-ok?)
-                      (compiler-backend-alloc-runtime-shape-ok?)
-                      (compiler-backend-windows-sdk-registry-runtime-ok?)))))))))))
+                    (and
+                      (compiler-backend-closure-emit-shape-ok?)
+                      (backend-and8
+                        (compiler-backend-scalar-wide-ops-ok?)
+                        (compiler-backend-scalar-div-mod-ok?)
+                        (compiler-backend-narrow-scalar-instr-ok?)
+                        (compiler-backend-f64-abi-ok?)
+                        (compiler-backend-win64-f64-abi-ok?)
+                        (compiler-backend-aggregate-storage-shape-ok?)
+                        (compiler-backend-alloc-runtime-shape-ok?)
+                        (compiler-backend-windows-sdk-registry-runtime-ok?))))))))))))
     42
     (begin
       (panic "backend: smoke output mismatch")

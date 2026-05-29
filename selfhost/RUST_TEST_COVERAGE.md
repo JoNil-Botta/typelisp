@@ -68,9 +68,12 @@ coverage through `compiler-backend-aggregate-storage-shape-ok?`,
 `compiler-backend-alloc-runtime-shape-ok?`, and `compiler_backend_smoke.tl`.
 #1413 adds non-constant String/enum/struct/dynamic-array global initializer
 emit-shape coverage through `compiler-backend-aggregate-global-init-shape-ok?`.
+#1415 adds function-valued closure descriptor, entry-adapter, indirect-call,
+and aggregate-returning synthetic lambda-name emit-shape coverage through
+`compiler-backend-closure-emit-shape-ok?` in `compiler_backend_smoke.tl`.
 #1416 adds fixed-array set/ref backend emit-shape coverage through
-`compiler-backend-fixed-array-shape-ok?`. Tuple/closure emit-shapes remain split
-to #1388.
+`compiler-backend-fixed-array-shape-ok?`. Tuple emit-shapes remain split to
+#1414.
 
 ### src/lower.rs Non-SIMD Audit (#1405)
 
@@ -139,7 +142,8 @@ Named remaining blockers:
   calls, and unit-returning calls) is covered by
   `compiler-lower-noncapturing-lambda-tests-ok?` (#1552).
 - Capturing closures, closure heap descriptors/calls, and capture deep-copy
-  details remain split to #1418.
+  details remain split to #1418; backend descriptor/call emission is covered by
+  `compiler-backend-closure-emit-shape-ok?` (#1415).
 - Tuple construction/ref emit-shape parity has focused follow-up #1414.
   Fixed-array set/ref backend emit-shape parity is covered by
   `compiler-backend-fixed-array-shape-ok?` (#1416). Broader backend-only

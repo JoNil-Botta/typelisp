@@ -621,6 +621,40 @@ run_linux_backend_fixtures() {
         exit 1
     fi
 
+    _raw_ptr_dir="$WORKDIR/backend-raw-pointer"
+    mkdir -p "$_raw_ptr_dir"
+    _raw_ptr_asm="$_raw_ptr_dir/raw_pointer.s"
+    _raw_ptr_obj="$_raw_ptr_dir/raw_pointer.o"
+    _raw_ptr_bin="$_raw_ptr_dir/raw_pointer"
+    _raw_ptr_driver="$_raw_ptr_dir/raw_pointer_fixture_driver"
+
+    echo "[backend-raw-pointer] emit -> assemble -> link -> run"
+    build_linux_fixture_driver backend-raw-pointer-driver \
+        selfhost/compiler_backend_raw_pointer_fixture.tl "$_raw_ptr_driver"
+    "$_raw_ptr_driver" "$_raw_ptr_asm" linux-x86_64
+    for _snippet in \
+        "_tl_write_i64:" \
+        "_tl_read_i64:" \
+        "call _tl_write_i64" \
+        "call _tl_read_i64" \
+        "call tl_alloc" \
+        "tl_alloc:" \
+        "movq (%r10), %rax"
+    do
+        assert_contains "$_raw_ptr_asm" "$_snippet" backend-raw-pointer
+    done
+    assert_not_contains "$_raw_ptr_asm" "# TODO" backend-raw-pointer
+    as "$_raw_ptr_asm" -o "$_raw_ptr_obj"
+    ld "$_raw_ptr_obj" -o "$_raw_ptr_bin"
+    set +e
+    "$_raw_ptr_bin" > "$_raw_ptr_dir/raw_pointer.stdout" 2> "$_raw_ptr_dir/raw_pointer.stderr"
+    _got=$?
+    set -e
+    if [ "$_got" -ne 42 ] || [ -s "$_raw_ptr_dir/raw_pointer.stdout" ] || [ -s "$_raw_ptr_dir/raw_pointer.stderr" ]; then
+        echo "FAIL: backend raw-pointer fixture expected exit 42 with no output, got $_got" >&2
+        exit 1
+    fi
+
     echo "Backend runtime fixture checks passed."
 }
 

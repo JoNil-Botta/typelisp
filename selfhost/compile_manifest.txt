@@ -185,7 +185,7 @@ contains|backend: too many call args
 not-contains|backend: Windows runtime helpers not yet implemented (#648)
 end
 
-decision|selfhost/compiler_backend_tests.tl|backend smoke-test helper module imported by selfhost/compiler_backend_smoke.tl and stack-args fixture; no direct CLI/main compile case
+decision|selfhost/compiler_backend_tests.tl|backend smoke-test helper module imported by selfhost/compiler_backend_smoke.tl and backend fixture drivers; no direct CLI/main compile case
 
 case|selfhost_compiler_backend_runtime_fixture|selfhost/compiler_backend_runtime_fixture.tl|assembly|skip|direct
 requires-stage0-mode|#1437 stage1 compiler resource blocker (imports backend)
@@ -219,6 +219,14 @@ end
 case|selfhost_compiler_backend_stack_args_fixture|selfhost/compiler_backend_stack_args_fixture.tl|assembly|exactly-one|direct
 requires-stage0-mode|#1437 stage1 compiler resource blocker (imports backend)
 contains|_tl_compiler_backend_stack_args_fixture_for_name:
+contains|windows-x86_64
+contains|linux-x86_64
+end
+
+case|selfhost_compiler_backend_raw_pointer_fixture|selfhost/compiler_backend_raw_pointer_fixture.tl|assembly|exactly-one|direct
+requires-stage0-mode|#1437 stage1 compiler resource blocker (imports backend)
+contains|_tl_compiler_backend_raw_pointer_fixture_for_name:
+contains|_tl_compiler_backend_raw_pointer_fixture_emit:
 contains|windows-x86_64
 contains|linux-x86_64
 end

@@ -138,6 +138,52 @@
     (compiler-backend-stack-args-fixture-source)
     target))
 
+(define (compiler-backend-raw-pointer-fixture-source) : String
+  "(extern tl_alloc : (-> i64 (MutPtr u8)))
+
+(define (write-i64 [p : (MutPtr i64)] [offset : i64] [value : i64]) : unit
+  (unsafe
+    (ptr-write! (ptr-offset p offset) value)))
+
+(define (read-i64 [p : (MutPtr i64)] [offset : i64]) : i64
+  (unsafe
+    (ptr-read (ptr-offset (ptr-cast p : (Ptr i64)) offset))))
+
+(define (zero-address-ok?) : bool
+  (unsafe
+    (= (ptr->int (ptr-null : (Ptr u8))) (cast 0 : u64))))
+
+(define (zero-roundtrip-ok?) : bool
+  (ptr-null? (unsafe (int->ptr 0 : (Ptr u8)))))
+
+(define (main) : i64
+  (let
+    [keep : (Array i64) (make-array i64 1)]
+    (let
+      [bytes : (MutPtr u8) (tl_alloc 24)]
+      (let
+        [items : (MutPtr i64) (unsafe (ptr-cast bytes : (MutPtr i64)))]
+        (begin
+          (array-set! keep 0 0)
+          (write-i64 items 0 7)
+          (write-i64 items 1 35)
+          (write-i64 items 2 100)
+          (if (ptr-null? items)
+            1
+            (if (zero-roundtrip-ok?)
+              (if (zero-address-ok?)
+                (if (= (read-i64 items 2) 100)
+                  (+ (+ (read-i64 items 0) (read-i64 items 1)) (array-ref keep 0))
+                  2)
+                3)
+              4)))))))")
+
+(define (compiler-backend-raw-pointer-fixture-emit
+  [target : CompilerBackendTarget]) : ResultCompilerBackend
+  (compiler-backend-emit-source-for-target
+    (compiler-backend-raw-pointer-fixture-source)
+    target))
+
 (define (compiler-backend-string-source) : String
   "(define greeting : String \"hi\")
 (define (main) : String \"hi\")")
@@ -2169,6 +2215,21 @@
         (compiler-backend-stack-mixed-args-ok?)
         (compiler-backend-stack-windows-args-ok?)))))
 
+(define (compiler-backend-raw-pointer-fixture-shape-ok?) : bool
+  (match (compiler-backend-raw-pointer-fixture-emit (BackendTargetLinux))
+    [(OkCompilerBackend asm)
+      (backend-and8
+        (compiler-backend-string-contains? asm "_tl_write_i64:")
+        (compiler-backend-string-contains? asm "_tl_read_i64:")
+        (compiler-backend-string-contains? asm "    call _tl_write_i64\n")
+        (compiler-backend-string-contains? asm "    call _tl_read_i64\n")
+        (compiler-backend-string-contains? asm "    call tl_alloc\n")
+        (compiler-backend-string-contains? asm "tl_alloc:")
+        (compiler-backend-string-contains? asm "    movq (%r10), %rax\n")
+        (not
+          (compiler-backend-string-contains? asm (compiler-backend-todo-marker))))]
+    [(ErrCompilerBackend _) false]))
+
 (define (compiler-backend-self-test) : i64
   (if (and
     (backend-and8
@@ -2218,15 +2279,17 @@
                 (compiler-backend-extern-metadata-symbol-ok?)
                 (and
                   (compiler-backend-string-ref-shape-ok?)
-                  (backend-and8
-                    (compiler-backend-scalar-wide-ops-ok?)
-                    (compiler-backend-scalar-div-mod-ok?)
-                    (compiler-backend-narrow-scalar-instr-ok?)
-                    (compiler-backend-f64-abi-ok?)
-                    (compiler-backend-win64-f64-abi-ok?)
-                    (compiler-backend-aggregate-storage-shape-ok?)
-                    (compiler-backend-alloc-runtime-shape-ok?)
-                    (compiler-backend-windows-sdk-registry-runtime-ok?))))))))))
+                  (and
+                    (compiler-backend-raw-pointer-fixture-shape-ok?)
+                    (backend-and8
+                      (compiler-backend-scalar-wide-ops-ok?)
+                      (compiler-backend-scalar-div-mod-ok?)
+                      (compiler-backend-narrow-scalar-instr-ok?)
+                      (compiler-backend-f64-abi-ok?)
+                      (compiler-backend-win64-f64-abi-ok?)
+                      (compiler-backend-aggregate-storage-shape-ok?)
+                      (compiler-backend-alloc-runtime-shape-ok?)
+                      (compiler-backend-windows-sdk-registry-runtime-ok?)))))))))))
     42
     (begin
       (panic "backend: smoke output mismatch")

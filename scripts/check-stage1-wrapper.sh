@@ -2,8 +2,8 @@
 set -eu
 
 # Smoke-test a TYPELISP_BIN-compatible stage1 wrapper on the Linux host-action
-# surface: compile, source/package build, run, repl, doc, test, fmt, and debug
-# host-action.
+# surface: compile, tokenize, parse, check, source/package build, run, repl,
+# doc, test, fmt, and debug host-action.
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
@@ -197,6 +197,63 @@ assert_contains "$IR" "typelisp-ir-summary v1"
 run_expect_failure compile-missing-source "$COMPILER" compile
 assert_empty "$WORKDIR/compile-missing-source.stdout"
 assert_contains "$WORKDIR/compile-missing-source.stderr" "compile: expected source path"
+
+echo "[stage1-wrapper] frontend aliases"
+run_capture tokenize "$COMPILER" tokenize "$SRC"
+assert_empty "$WORKDIR/tokenize.stderr"
+assert_contains "$WORKDIR/tokenize.stdout" "define"
+assert_contains "$WORKDIR/tokenize.stdout" "main"
+cp "$WORKDIR/tokenize.stdout" "$WORKDIR/tokenize.expected"
+
+run_capture debug-tokenize "$COMPILER" debug tokenize "$SRC"
+assert_empty "$WORKDIR/debug-tokenize.stderr"
+cmp -s "$WORKDIR/debug-tokenize.stdout" "$WORKDIR/tokenize.expected" || fail "debug tokenize differs from tokenize"
+
+run_capture parse "$COMPILER" parse "$SRC"
+assert_empty "$WORKDIR/parse.stderr"
+assert_contains "$WORKDIR/parse.stdout" "Program"
+assert_contains "$WORKDIR/parse.stdout" "DefFn"
+cp "$WORKDIR/parse.stdout" "$WORKDIR/parse.expected"
+
+run_capture debug-parse "$COMPILER" debug parse "$SRC"
+assert_empty "$WORKDIR/debug-parse.stderr"
+cmp -s "$WORKDIR/debug-parse.stdout" "$WORKDIR/parse.expected" || fail "debug parse differs from parse"
+
+run_capture check "$COMPILER" check "$SRC"
+assert_empty "$WORKDIR/check.stderr"
+assert_contains "$WORKDIR/check.stdout" "Type checking passed!"
+
+CHECK_ROOT="$WORKDIR/check-root"
+mkdir -p "$CHECK_ROOT/app" "$CHECK_ROOT/repo-stdlib"
+cat > "$CHECK_ROOT/repo-stdlib/helper.tl" <<'EOF'
+(define (helper) : i64 42)
+EOF
+cat > "$CHECK_ROOT/app/main.tl" <<'EOF'
+(import "stdlib/helper.tl")
+(define (main) : i64 (helper))
+EOF
+run_capture check-stdlib-root "$COMPILER" check "$CHECK_ROOT/app/main.tl" --stdlib-root "$CHECK_ROOT/repo-stdlib"
+assert_empty "$WORKDIR/check-stdlib-root.stderr"
+assert_contains "$WORKDIR/check-stdlib-root.stdout" "Type checking passed!"
+cp "$WORKDIR/check-stdlib-root.stdout" "$WORKDIR/check-stdlib-root.expected"
+
+run_capture debug-check-stdlib-root "$COMPILER" debug check "$CHECK_ROOT/app/main.tl" --stdlib-root "$CHECK_ROOT/repo-stdlib"
+assert_empty "$WORKDIR/debug-check-stdlib-root.stderr"
+cmp -s "$WORKDIR/debug-check-stdlib-root.stdout" "$WORKDIR/check-stdlib-root.expected" || fail "debug check differs from check"
+
+run_expect_failure debug-missing "$COMPILER" debug
+assert_empty "$WORKDIR/debug-missing.stdout"
+assert_contains "$WORKDIR/debug-missing.stderr" "Error: missing debug subcommand"
+assert_contains "$WORKDIR/debug-missing.stderr" "typelisp debug tokenize <file.tl>"
+
+run_expect_failure debug-unknown "$COMPILER" debug wat
+assert_empty "$WORKDIR/debug-unknown.stdout"
+assert_contains "$WORKDIR/debug-unknown.stderr" "Unknown debug command: wat"
+assert_contains "$WORKDIR/debug-unknown.stderr" "typelisp debug check <file.tl>"
+
+run_expect_failure tokenize-missing "$COMPILER" tokenize
+assert_empty "$WORKDIR/tokenize-missing.stdout"
+assert_contains "$WORKDIR/tokenize-missing.stderr" "Error: missing file argument"
 
 echo "[stage1-wrapper] build"
 run_capture build "$COMPILER" build "$SRC" -o "$BIN"

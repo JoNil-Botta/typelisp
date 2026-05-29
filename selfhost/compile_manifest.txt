@@ -623,6 +623,12 @@ contains|_tl_front_parse_file:
 contains|frontend-tools: expected mode tokenize
 end
 
+case|selfhost_frontend_tools_core|selfhost/frontend_tools_core.tl|assembly|skip|direct
+contains|_tl_front_tokenize_file:
+contains|_tl_front_parse_file:
+contains|frontend-tools: expected mode tokenize
+end
+
 case|selfhost_host_plan|selfhost/host_plan.tl|assembly|skip|direct
 contains|_tl_host_plan_header:
 contains|_tl_host_plan_netline:

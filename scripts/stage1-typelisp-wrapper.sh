@@ -6,9 +6,9 @@ set -eu
 #
 # TYPELISP_STAGE1_BIN must point at the stage1 compiler executable
 # (`selfhost/compile.tl` compiled to native code). The raw stage1 compiler
-# accepts `compile`; this wrapper adds the rest of the public command surface
-# and executes private host-action plans without routing back through the Rust
-# CLI.
+# accepts compile/frontend/check commands; this wrapper adds the rest of the
+# public command surface and executes private host-action plans without routing
+# back through the Rust CLI.
 
 STAGE1_BIN=${TYPELISP_STAGE1_BIN:-}
 STAGE1_BUILD_BIN=${TYPELISP_STAGE1_BUILD_BIN:-}
@@ -27,8 +27,18 @@ usage() {
 usage: typelisp <command> [args...]
 
 stage1 wrapper commands:
-  compile, check, build, run, test, fmt, doc, repl
-  debug check, debug host-action
+  compile, check, tokenize, parse, build, run, test, fmt, doc, repl
+  debug tokenize, debug parse, debug check, debug host-action
+EOF
+}
+
+debug_usage() {
+    cat >&2 <<'EOF'
+Usage:
+    typelisp debug tokenize <file.tl>    Show tokens
+    typelisp debug parse <file.tl>       Show AST
+    typelisp debug check <file.tl> [--stdlib-root <dir>...]
+    typelisp debug host-action           Execute a selfhost build/run plan read from stdin (internal)
 EOF
 }
 
@@ -160,12 +170,14 @@ compile_command() {
 
 check_command() {
     require_stage1
-    tmp=${TMPDIR:-/tmp}/typelisp-stage1-check-$$
-    rm -rf "$tmp"
-    mkdir -p "$tmp"
-    trap 'rm -rf "$tmp"' EXIT HUP INT TERM
-    "$STAGE1_BIN" "$@" -o "$tmp/check.s"
-    echo "Type checking passed!"
+    "$STAGE1_BIN" check "$@"
+}
+
+frontend_command() {
+    command=$1
+    shift
+    require_stage1
+    "$STAGE1_BIN" "$command" "$@"
 }
 
 link_asm() {
@@ -1021,22 +1033,30 @@ repl_command() {
 }
 
 debug_command() {
-    [ "$#" -gt 0 ] || fail "Error: missing debug subcommand"
+    if [ "$#" -eq 0 ]; then
+        echo "Error: missing debug subcommand" >&2
+        debug_usage
+        exit 1
+    fi
     case "$1" in
         host-action)
             plan=${TMPDIR:-/tmp}/typelisp-stage1-host-action-input-$$
             cat > "$plan"
             execute_plan_file "$plan"
             ;;
-        check)
+        tokenize | parse | check)
+            subcommand=$1
             shift
-            check_command "$@"
+            require_stage1
+            "$STAGE1_BIN" debug "$subcommand" "$@"
             ;;
         help | --help | -h)
-            usage
+            debug_usage
             ;;
         *)
-            fail "Unknown debug command: $1"
+            echo "Unknown debug command: $1" >&2
+            debug_usage
+            exit 1
             ;;
     esac
 }
@@ -1052,13 +1072,14 @@ shift
 case "$command" in
     compile) compile_command "$@" ;;
     check) check_command "$@" ;;
+    tokenize | parse) frontend_command "$command" "$@" ;;
     build) build_command "$@" ;;
     run) run_command "$@" ;;
     test) test_command "$@" ;;
     fmt) fmt_command "$@" ;;
     doc) doc_command "$@" ;;
     repl) repl_command "$@" ;;
-    lint | tokenize | parse)
+    lint)
         fail "stage1 wrapper does not support '$command' yet; use the seed compiler for this gate"
         ;;
     debug) debug_command "$@" ;;

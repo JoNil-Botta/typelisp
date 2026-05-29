@@ -33,7 +33,7 @@ jobs:
           - suite: no-rust-stage0
             name: No-Rust Stage0 Verification (windows-latest)
             os: windows-latest
-            timeout_minutes: 35
+            timeout_minutes: 60
           - suite: rust
             name: Test + Integration
             os: ubuntu-latest

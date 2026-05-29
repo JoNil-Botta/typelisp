@@ -41,6 +41,9 @@ installed-root discovery, namespace isolation, or an implicit prelude.
   iteration is a follow-up. Import it with `(import "stdlib/hashmap.tl")`.
 - `json.tl`: JSON value parser and serializer for tool protocols and data
   exchange. Import it with `(import "stdlib/json.tl")`.
+- `list.tl`: monomorphic `StringList` and `StringListBuilder` helpers for
+  common cons-list workflows, with reverse/append/count and array conversion
+  helpers. Import it with `(import "stdlib/list.tl")`.
 - `process.tl`: process command/output/error data model for selfhost tools.
   Runtime execution currently returns structured unsupported diagnostics rather
   than using Rust host actions. Import it with `(import "stdlib/process.tl")`.
@@ -115,6 +118,7 @@ should take borrowed text and which should return owned active-arena strings.
 | `env-get`, `env-path-list`, `env-path-split`, `env-path-join` | Environment values and split/join results allocate fresh active-arena Strings/lists when runtime values are read or string pieces are created; missing variables return explicit `EnvNo*` options. |
 | `fs-path-join`, `fs-dirname`, `fs-basename`, `fs-extension`, `try-mkdir`, `try-remove-file`, `try-remove-dir`, `try-create-temp-dir` | Path joins allocate active-arena Strings when a separator is inserted or duplicate separator is removed. `fs-dirname`/`fs-basename`/`fs-extension` are pure separator-agnostic string helpers (no allocation beyond the returned substring; `fs-extension` operates on the basename and treats a leading-dot name as extensionless). Recoverable filesystem helpers map runtime status codes into `IoError`; `try-mkdir` works on Linux and Windows. Linux temp directories are created under `$TMPDIR` or `/tmp` with process-id and retry suffixes. Windows temp directories are created under `%TEMP%`, `%TMP%`, or `.` with process-id and retry suffixes; cleanup helpers still return `IoUnsupported` on Windows. |
 | `hash-*` helpers | Deterministic, non-cryptographic hash and key equality helpers are non-allocating. Hashes are stable bucket hints only; collection users must still compare colliding candidate keys with the matching equality predicate. |
+| `string-list-*` helpers | Construct immutable `StringList` cons nodes and `StringListBuilder` values in the active arena. `string-list-reverse`, `-reverse-onto`, `-append`, `-from-array`, and builder build helpers allocate fresh list spines; `string-list-to-array` allocates a fresh active-arena `(Array String)` and copies the string handles into it. |
 | `process-*` helpers | Construct process command/output/error aggregates in the active arena. Ordered argv append helpers allocate list nodes; validators inspect executable/env/cwd metadata and reject invalid env names. On Linux, `process-run` and `process-output` execute directly through the backend runtime, preserving inherited environment entries, replacing entries named by env overrides, honoring cwd, and feeding string stdin. Unsupported targets return structured errors. |
 | `random-*` helpers | Construct deterministic RNG state, draw/result aggregates, and weight-list cons nodes in the active arena. Draws are deterministic from caller-provided seeds and do not read host entropy. `random-system-seed` reads host entropy through the backend, normalizes the returned seed, and returns a `ResultSystemSeed` aggregate in the active arena; `random-from-system` constructs and returns a new `RandomState` aggregate in the active arena. |
 | `assert-*` helpers in `test.tl` | Non-allocating checks on success; failures call `panic` with the caller-provided message. |
@@ -169,6 +173,7 @@ Stdlib modules are imported explicitly:
 (import "stdlib/hashmap.tl")
 (import "stdlib/io.tl")
 (import "stdlib/json.tl")
+(import "stdlib/list.tl")
 (import "stdlib/msvc.tl")
 (import "stdlib/process.tl")
 (import "stdlib/random.tl")

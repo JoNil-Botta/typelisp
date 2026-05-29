@@ -1,0 +1,168 @@
+(import "stdlib/list.tl")
+
+(import "stdlib/test.tl")
+
+(define (assert-string-list-empty [items : StringList] [message : String]) : unit
+  (match items
+    [(StringNil) unit]
+    [_ (panic message)]))
+
+(define (assert-string-list1
+  [items : StringList]
+  [first : String]
+  [message : String]) : unit
+  (match items
+    [(StringCons a rest)
+      (match rest
+        [(StringNil) (assert-string-eq a first message)]
+        [_ (panic message)])]
+    [_ (panic message)]))
+
+(define (assert-string-list3
+  [items : StringList]
+  [first : String]
+  [second : String]
+  [third : String]
+  [message : String]) : unit
+  (match items
+    [(StringCons a rest)
+      (match rest
+        [(StringCons b more)
+          (match more
+            [(StringCons c tail)
+              (match tail
+                [(StringNil)
+                  (begin
+                    (assert-string-eq a first message)
+                    (assert-string-eq b second message)
+                    (assert-string-eq c third message))]
+                [_ (panic message)])]
+            [_ (panic message)])]
+        [_ (panic message)])]
+    [_ (panic message)]))
+
+(define (assert-string-list4
+  [items : StringList]
+  [first : String]
+  [second : String]
+  [third : String]
+  [fourth : String]
+  [message : String]) : unit
+  (match items
+    [(StringCons a rest)
+      (match rest
+        [(StringCons b more)
+          (match more
+            [(StringCons c tail)
+              (match tail
+                [(StringCons d end)
+                  (match end
+                    [(StringNil)
+                      (begin
+                        (assert-string-eq a first message)
+                        (assert-string-eq b second message)
+                        (assert-string-eq c third message)
+                        (assert-string-eq d fourth message))]
+                    [_ (panic message)])]
+                [_ (panic message)])]
+            [_ (panic message)])]
+        [_ (panic message)])]
+    [_ (panic message)]))
+
+(define (assert-string-array3
+  [items : (Array String)]
+  [first : String]
+  [second : String]
+  [third : String]
+  [message : String]) : unit
+  (begin
+    (assert-i64-eq (array-length items) 3 message)
+    (assert-string-eq (array-ref items 0) first message)
+    (assert-string-eq (array-ref items 1) second message)
+    (assert-string-eq (array-ref items 2) third message)))
+
+(define (make-source-array) : (Array String)
+  (let
+    [items : (Array String) (make-array String 4)]
+    (begin
+      (array-set! items 0 "red")
+      (array-set! items 1 "green")
+      (array-set! items 2 "blue")
+      (array-set! items 3 "ignored")
+      items)))
+
+(define (main) : i64
+  (let
+    [built : StringList
+      (string-list-builder-build
+        (string-list-builder-push
+          (string-list-builder-push
+            (string-list-builder-push (string-list-builder-empty) "alpha")
+            "beta")
+          "gamma"))]
+    [source : (Array String) (make-source-array)]
+    (begin
+      (assert-string-list-empty (string-list-empty) "string-list empty")
+      (assert-string-list1
+        (string-list-single "one")
+        "one"
+        "string-list single")
+      (assert-i64-eq
+        (string-list-count (string-list-empty))
+        0
+        "string-list empty count")
+      (assert-i64-eq
+        (string-list-builder-count
+          (string-list-builder-push (string-list-builder-empty) "one"))
+        1
+        "builder count")
+      (assert-i64-eq (string-list-count built) 3 "string-list built count")
+      (assert-string-list3 built "alpha" "beta" "gamma" "builder order")
+      (assert-string-list3
+        (string-list-reverse
+          (StringCons
+            "third"
+            (StringCons "second" (StringCons "first" (StringNil)))))
+        "first"
+        "second"
+        "third"
+        "reverse order")
+      (assert-string-list3
+        (string-list-append
+          (StringCons "left" (StringCons "middle" (StringNil)))
+          (string-list-single "right"))
+        "left"
+        "middle"
+        "right"
+        "append order")
+      (assert-string-list3
+        (string-list-builder-build-onto
+          (string-list-builder-push (string-list-builder-empty) "head")
+          (StringCons "tail1" (StringCons "tail2" (StringNil))))
+        "head"
+        "tail1"
+        "tail2"
+        "build onto")
+      (assert-string-list3
+        (string-list-from-array source 3)
+        "red"
+        "green"
+        "blue"
+        "from array")
+      (assert-string-list4
+        (string-list-from-array source 99)
+        "red"
+        "green"
+        "blue"
+        "ignored"
+        "from array clamp")
+      (assert-string-list-empty
+        (string-list-from-array source -1)
+        "from array negative")
+      (assert-string-array3
+        (string-list-to-array built)
+        "alpha"
+        "beta"
+        "gamma"
+        "to array")
+      42)))

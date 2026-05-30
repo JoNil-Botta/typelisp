@@ -17,8 +17,23 @@
 ;;; sentinel when the node carried no location, e.g. a synthesized expression).
 (defstruct LintFinding
   (message String)
+  (rule-id String)
   (depth i64)
   (span AstSourceSpan))
+
+;;; Stable rule id for the nested-`if`-ladder rule. Rule ids are the suppression
+;;; key (`;; lint-allow: <rule-id>`) and the registry key, so they must stay
+;;; stable across releases.
+(define (lint-rule-nested-if-ladder-id) : String
+  "nested-if-ladder")
+
+;;; Rule registry suggestion layer: the structured suggestion text for a rule
+;;; id, independent of the rendered message. A second rule plugs in here without
+;;; touching the public driver. Unknown ids return the empty string.
+(define (lint-rule-suggestion [rule-id : String]) : String
+  (if (string-eq rule-id (lint-rule-nested-if-ladder-id))
+    "prefer cond (value/guard ladders) or match (variant dispatch)"
+    ""))
 
 ;;; Immutable list of findings.
 (defenum LintFindingList
@@ -56,6 +71,7 @@
 (define (lint-ladder-finding [depth : i64] [span : AstSourceSpan]) : LintFinding
   (LintFinding
     "nested if-ladder: chain of if/else-if; prefer cond (value/guard ladders) or match (variant dispatch)"
+    (lint-rule-nested-if-ladder-id)
     depth
     span))
 
@@ -398,4 +414,12 @@
                 "lint: spanned ladder finding should carry its head start-line")))]
         [(LintFindingNil)
           (panic "lint: spanned ladder should produce a finding")])
+      (if (string-eq
+        (lint-rule-suggestion (lint-rule-nested-if-ladder-id))
+        "prefer cond (value/guard ladders) or match (variant dispatch)")
+        unit
+        (panic "lint: nested-if-ladder suggestion should be registered"))
+      (if (string-eq (lint-rule-suggestion "unknown-rule") "")
+        unit
+        (panic "lint: unknown rule should have no suggestion"))
       42)))

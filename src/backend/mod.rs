@@ -3903,6 +3903,12 @@ impl X86_64Backend {
     }
 
     fn emit_utf16z_data(&mut self, label: &str, text: &str) {
+        // UTF-16 string data must be at least 2-byte aligned. These strings are
+        // passed to Windows `*W` APIs (e.g. `RegQueryValueExW`), whose kernel
+        // wide-string probe faults with ERROR_NOACCESS on an odd address. Force
+        // 2-byte alignment so preceding byte-granular data (other interned
+        // strings, length words) can never leave the label at an odd offset.
+        self.emit("    .balign 2");
         self.emit(&format!("{}:", label));
         for unit in text.encode_utf16() {
             self.emit(&format!("    .word {}", unit));
@@ -17063,6 +17069,17 @@ mod tests {
         ] {
             assert!(asm.contains(snippet), "missing {snippet}; asm:\n{}", asm);
         }
+        // The UTF-16 value-name strings must be 2-byte aligned: they are passed
+        // to `RegQueryValueExW`, whose kernel wide-string probe faults with
+        // ERROR_NOACCESS on an odd address. Without an explicit `.balign 2`,
+        // preceding byte-granular `.rodata` (e.g. interned print-string
+        // literals) can land the label at an odd offset and break registry
+        // discovery at runtime.
+        assert!(
+            asm.contains("    .balign 2\n.L_tl_windows_sdk_registry_kits_root10_value:"),
+            "KitsRoot10 UTF-16 value-name string must be preceded by `.balign 2`; asm:\n{}",
+            asm
+        );
     }
 
     #[test]

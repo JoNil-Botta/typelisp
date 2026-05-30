@@ -1961,6 +1961,8 @@
     true
     (match (tc-type-strip-region ty)
       [(AstTyChar) true]
+      [(AstTyF64) true]
+      [(AstTyF32) true]
       [_ false])))
 
 (define (tc-raw-pointer-type? [ty : AstType]) : bool
@@ -6644,7 +6646,7 @@
             (tc-castable-type? (tc-resolve-type ctx ty)))
             (OkTcType (tc-resolve-type ctx ty))
             (ErrTcType
-              "typecheck: cast requires integer/char source and target"))]
+              "typecheck: cast requires scalar numeric (integer/char/float) source and target"))]
         [(ErrTcType message) (ErrTcType message)])]
     [(AstExprBorrow lifetime place) (tc-borrow-expr ctx env lifetime place)]
     [(AstExprUnary op inner)

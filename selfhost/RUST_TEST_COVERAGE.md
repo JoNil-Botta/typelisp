@@ -76,6 +76,15 @@ emit-shape coverage through `compiler-backend-aggregate-global-init-shape-ok?`.
 `compiler-backend-fixed-array-shape-ok?`. Tuple/closure emit-shapes remain split
 to #1388.
 
+### 2026-05-30 Selfhost Cast Mirror (#1576)
+
+- `compiler-typecheck-cast-tests-ok?` now mirrors the scalar numeric cast
+  matrix: integer/char, int<->float, and f32<->f64 casts are accepted while
+  bool-source casts keep the scalar-numeric rejection.
+- `compiler-backend-numeric-cast-shape-ok?` mirrors the Rust backend cast
+  instruction families: `cvtsi2sdq`/`cvtsi2ssq`, `cvttsd2siq`/`cvttss2siq`,
+  and `cvtsd2ss`/`cvtss2sd`.
+
 ### src/lower.rs Non-SIMD Audit (#1405)
 
 This is the current mapping for the non-SIMD `src/lower.rs` Rust inline tests

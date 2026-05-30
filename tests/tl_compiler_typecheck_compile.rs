@@ -102,7 +102,7 @@ fn compiler_typecheck_tl_compiles_to_assembly() {
         "typecheck: tuple index out of bounds",
         "typecheck: array elements must have same type",
         "typecheck: string index must be integer",
-        "typecheck: cast requires integer/char source and target",
+        "typecheck: cast requires scalar numeric (integer/char/float) source and target",
         "typecheck: foreach body must be unit",
         "typecheck: foreach if condition must be uniform",
         "typecheck: foreach while condition must be uniform",

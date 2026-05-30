@@ -482,6 +482,27 @@ fn run_selfhost_driver(driver_relative: &str, args: &[String]) -> native::Native
     ))
 }
 
+fn run_selfhost_source_driver(
+    driver_relative: &str,
+    options: &LoadOptions,
+    runtime_args: &[String],
+) -> native::NativeRunOutput {
+    let driver = selfhost_driver_path(driver_relative);
+    let mut args = vec![
+        "--direct".to_string(),
+        driver.display().to_string(),
+        "--target".to_string(),
+        native::host_target().as_str().to_string(),
+    ];
+    for root in &options.stdlib_roots {
+        args.push("--stdlib-root".to_string());
+        args.push(root.display().to_string());
+    }
+    args.push("--".to_string());
+    args.extend_from_slice(runtime_args);
+    run_selfhost_driver("selfhost/run.tl", &args)
+}
+
 #[cfg(not(target_os = "linux"))]
 fn host_plan_driver_args(args: &[String]) -> Vec<String> {
     let mut runtime_args = vec!["--host-plan".to_string()];
@@ -618,11 +639,6 @@ fn run_fmt_command(args: &[String]) {
         missing_file_argument(print_fmt_usage);
     }
 
-    let driver = find_selfhost_file("selfhost/format.tl").unwrap_or_else(|| {
-        eprintln!("Error: could not find selfhost/format.tl in the repo or near the executable");
-        std::process::exit(1);
-    });
-
     let options = load_options_with_env_stdlib_root(stdlib_roots);
     let mut runtime_args = Vec::new();
     if check {
@@ -630,12 +646,7 @@ fn run_fmt_command(args: &[String]) {
     }
     runtime_args.extend(files.iter().map(|file| file.display().to_string()));
 
-    let output = native_or_exit(native::run_source_file_in_temp_dir(
-        &driver,
-        &options,
-        &runtime_args,
-        native::host_target(),
-    ));
+    let output = run_selfhost_source_driver("selfhost/format.tl", &options, &runtime_args);
     write_stream_or_exit(io::stdout(), &output.stdout, "stdout");
     write_stream_or_exit(io::stderr(), &output.stderr, "stderr");
     if !output.status.success() {
@@ -880,24 +891,14 @@ fn run_doc_command(args: &[String]) {
         "--test" | "test" => {
             let file = command_file_arg(args, 3, print_doc_usage);
             let options = parse_stdlib_roots(args, 4);
-            let driver = find_selfhost_file("selfhost/doc.tl").unwrap_or_else(|| {
-                eprintln!(
-                    "Error: could not find selfhost/doc.tl in the repo or near the executable"
-                );
-                std::process::exit(1);
-            });
 
             let mut runtime_args = vec!["--test".to_string(), file.display().to_string()];
             for root in &options.stdlib_roots {
                 runtime_args.push("--stdlib-root".to_string());
                 runtime_args.push(root.display().to_string());
             }
-            let output = native_or_exit(native::run_source_file_in_temp_dir(
-                &driver,
-                &options,
-                runtime_args.as_slice(),
-                native::host_target(),
-            ));
+            let output =
+                run_selfhost_source_driver("selfhost/doc.tl", &options, runtime_args.as_slice());
             write_stream_or_exit(
                 io::stdout(),
                 &normalize_crlf_bytes(&output.stdout),
@@ -938,13 +939,6 @@ fn run_doc_command(args: &[String]) {
             }
 
             let output_path = output.unwrap_or_else(|| file.with_extension("md"));
-            let driver = find_selfhost_file("selfhost/doc.tl").unwrap_or_else(|| {
-                eprintln!(
-                    "Error: could not find selfhost/doc.tl in the repo or near the executable"
-                );
-                std::process::exit(1);
-            });
-
             let options = load_options_with_env_stdlib_root(stdlib_roots);
             let loaded = load_or_exit(&file, &options);
             let mut runtime_args = loaded
@@ -953,12 +947,8 @@ fn run_doc_command(args: &[String]) {
                 .map(|source| source.path.display().to_string())
                 .collect::<Vec<_>>();
             runtime_args.push(output_path.display().to_string());
-            let output = native_or_exit(native::run_source_file_in_temp_dir(
-                &driver,
-                &options,
-                runtime_args.as_slice(),
-                BackendTarget::default(),
-            ));
+            let output =
+                run_selfhost_source_driver("selfhost/doc.tl", &options, runtime_args.as_slice());
             write_stream_or_exit(io::stdout(), &output.stdout, "stdout");
             write_stream_or_exit(io::stderr(), &output.stderr, "stderr");
             if let Some(code) = output.status.code()
@@ -1218,9 +1208,18 @@ fn normalize_crlf_bytes(bytes: &[u8]) -> Vec<u8> {
     let mut normalized = Vec::with_capacity(bytes.len());
     let mut i = 0;
     while i < bytes.len() {
-        if bytes[i] == b'\r' && i + 1 < bytes.len() && bytes[i + 1] == b'\n' {
-            normalized.push(b'\n');
-            i += 2;
+        if bytes[i] == b'\r' {
+            let mut j = i;
+            while j < bytes.len() && bytes[j] == b'\r' {
+                j += 1;
+            }
+            if j < bytes.len() && bytes[j] == b'\n' {
+                normalized.push(b'\n');
+                i = j + 1;
+            } else {
+                normalized.push(bytes[i]);
+                i += 1;
+            }
         } else {
             normalized.push(bytes[i]);
             i += 1;

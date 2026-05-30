@@ -1726,6 +1726,31 @@
                       (compiler-backend-string-contains? asm "tl_alloc:\n")))))))))]
     [(ErrCompilerBackend _) false]))
 
+(define (compiler-backend-windows-env-runtime-ok?) : bool
+  (match (compiler-backend-emit-source-for-target
+    (compiler-backend-env-runtime-source)
+    (BackendTargetWindows))
+    [(OkCompilerBackend asm)
+      (and
+        (compiler-backend-string-contains? asm "_tl_env_var_exists_question:\n")
+        (and
+          (compiler-backend-string-contains? asm "_tl_env_var_value:\n")
+          (and
+            (compiler-backend-string-contains? asm "_tl_env_path_separator:\n")
+            (and
+              (compiler-backend-string-contains? asm "    .extern getenv\n")
+              (and
+                (compiler-backend-string-contains? asm "    .extern strlen\n")
+                (and
+                  (compiler-backend-string-contains? asm "    call getenv\n")
+                  (and
+                    (compiler-backend-string-contains? asm "    call strlen\n")
+                    (and
+                      (compiler-backend-string-contains? asm "    movb $59,")
+                      (not
+                        (compiler-backend-string-contains? asm ".L_tl_envp:\n"))))))))))]
+    [(ErrCompilerBackend _) false]))
+
 (define (compiler-backend-windows-sdk-registry-runtime-source) : String
   "(extern tl_windows_sdk_registry_install : (-> i64))
 (define (main) : i64 (tl_windows_sdk_registry_install))")
@@ -2491,7 +2516,9 @@
                 (compiler-backend-runtime-coexist-ok?)
                 (compiler-backend-module-symbol-ok?))
               (and
-                (compiler-backend-extern-metadata-symbol-ok?)
+                (and
+                  (compiler-backend-windows-env-runtime-ok?)
+                  (compiler-backend-extern-metadata-symbol-ok?))
                 (and
                   (backend-and4
                     (compiler-backend-string-ref-shape-ok?)

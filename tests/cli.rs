@@ -16,6 +16,19 @@ fn fixture_dir(name: &str) -> PathBuf {
     dir
 }
 
+fn external_fixture_dir(name: &str) -> PathBuf {
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("system time before unix epoch")
+        .as_nanos();
+    let dir = std::env::temp_dir().join(format!(
+        "typelisp-cli-{name}-{}-{nonce}",
+        std::process::id()
+    ));
+    fs::create_dir_all(&dir).expect("create external CLI fixture directory");
+    dir
+}
+
 // The selfhost programs these tests spawn (the selfhost LSP frame tool and the
 // selfhost compile driver) intermittently SEGFAULT on Windows CI with no useful
 // output (#1204). `is_crash_exit` recognizes ONLY a transient crash exit so the
@@ -193,6 +206,19 @@ fn typelisp_with_path(args: &[&str], path: &std::path::Path) -> Output {
             .output()
             .expect("run typelisp CLI")
     })
+}
+
+fn isolated_typelisp_binary(dir: &std::path::Path) -> PathBuf {
+    let bin_dir = dir.join("isolated-bin");
+    fs::create_dir_all(&bin_dir).expect("create isolated binary dir");
+    let exe_name = if cfg!(target_os = "windows") {
+        "typelisp.exe"
+    } else {
+        "typelisp"
+    };
+    let isolated = bin_dir.join(exe_name);
+    fs::copy(env!("CARGO_BIN_EXE_typelisp"), &isolated).expect("copy typelisp binary");
+    isolated
 }
 
 fn lsp_frame(payload: &str) -> String {
@@ -3288,6 +3314,29 @@ fn doc_test_uses_stdlib_root_for_imports() {
 }
 
 #[test]
+fn doc_test_accepts_source_path_with_spaces() {
+    let dir = fixture_dir("doc-test-spaced-path");
+    let spaced = dir.join("with space");
+    fs::create_dir_all(&spaced).expect("create spaced doc dir");
+    let source = spaced.join("docs file.tl");
+    fs::write(
+        &source,
+        r#";;;; Spaced path docs.
+;;;; ```typelisp
+;;;; (define (main) : i64 42)
+;;;; ```
+"#,
+    )
+    .expect("write doctest source");
+
+    let output = typelisp(&["doc", "--test", source.to_str().unwrap()]);
+
+    assert!(output.status.success(), "stderr:\n{}", stderr(&output));
+    assert_eq!(stdout(&output), "Doc tests passed: 1 example(s)\n");
+    assert_doctest_temp_cleaned(&source);
+}
+
+#[test]
 #[cfg(any(target_os = "linux", target_os = "windows"))]
 fn fmt_formats_source_files_in_place() {
     let dir = fixture_dir("fmt-in-place");
@@ -3323,6 +3372,83 @@ fn fmt_formats_source_files_in_place() {
 
 #[test]
 #[cfg(any(target_os = "linux", target_os = "windows"))]
+fn fmt_formats_source_file_with_spaces_in_path() {
+    let dir = fixture_dir("fmt-spaced-path");
+    let spaced = dir.join("with space");
+    fs::create_dir_all(&spaced).expect("create spaced fmt dir");
+    let source = spaced.join("main file.tl");
+    let original = r#"(define (main [x : i64]) : i64 (begin (print-string "x") x))"#;
+    let expected = r#"(define (main [x : i64]) : i64
+  (begin
+    (print-string "x")
+    x))"#;
+    fs::write(&source, original).expect("write source");
+
+    let output = typelisp(&["fmt", source.to_str().unwrap()]);
+
+    assert!(output.status.success(), "stderr:\n{}", stderr(&output));
+    assert_eq!(stdout(&output), "");
+    assert_eq!(stderr(&output), "");
+    assert_eq!(
+        fs::read_to_string(&source).expect("read formatted source"),
+        expected
+    );
+}
+
+#[test]
+#[cfg(any(target_os = "linux", target_os = "windows"))]
+fn fmt_reports_missing_selfhost_driver_at_public_boundary() {
+    let dir = external_fixture_dir("fmt-missing-selfhost-driver");
+    let isolated = isolated_typelisp_binary(&dir);
+    let work_dir = dir.join("work");
+    fs::create_dir_all(&work_dir).expect("create isolated work dir");
+    let source = work_dir.join("main.tl");
+    fs::write(&source, "(define (main) : i64 0)\n").expect("write source");
+
+    let output = run_with_crash_retry(|| {
+        Command::new(&isolated)
+            .args(["fmt", source.to_str().unwrap()])
+            .current_dir(&work_dir)
+            .output()
+            .expect("run isolated typelisp")
+    });
+
+    assert!(!output.status.success(), "stdout:\n{}", stdout(&output));
+    assert_eq!(stdout(&output), "");
+    assert!(
+        stderr(&output).contains("could not find selfhost/format.tl"),
+        "stderr:\n{}",
+        stderr(&output)
+    );
+}
+
+#[test]
+#[cfg(any(target_os = "linux", target_os = "windows"))]
+fn fmt_reports_missing_assembler_at_public_boundary() {
+    let dir = fixture_dir("fmt-missing-assembler");
+    let empty_path = dir.join("empty-path");
+    fs::create_dir_all(&empty_path).expect("create empty PATH dir");
+    let source = dir.join("main.tl");
+    fs::write(&source, "(define (main) : i64 0)\n").expect("write source");
+
+    let output = typelisp_with_path(&["fmt", source.to_str().unwrap()], &empty_path);
+
+    assert!(!output.status.success());
+    assert_eq!(stdout(&output), "");
+    let expected = if cfg!(target_os = "windows") {
+        "Error: failed to run assembler 'clang' for target windows-x86_64:"
+    } else {
+        "Error: failed to run assembler 'as' for target linux-x86_64:"
+    };
+    assert!(
+        stderr(&output).contains(expected),
+        "stderr:\n{}",
+        stderr(&output)
+    );
+}
+
+#[test]
+#[cfg(any(target_os = "linux", target_os = "windows"))]
 fn fmt_check_reports_changes_without_writing() {
     let dir = fixture_dir("fmt-check");
     let source = dir.join("main.tl");
@@ -3345,7 +3471,7 @@ fn fmt_check_reports_changes_without_writing() {
 }
 
 #[test]
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "windows"))]
 fn doc_generates_markdown_for_source_file() {
     let dir = fixture_dir("doc-generate");
     let source = dir.join("simple.tl");
@@ -3378,11 +3504,35 @@ fn doc_generates_markdown_for_source_file() {
 }
 
 #[test]
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "windows"))]
 fn doc_generates_markdown_with_custom_output() {
     let dir = fixture_dir("doc-generate-custom");
     let source = dir.join("input.tl");
     let out = dir.join("custom.md");
+    fs::write(
+        &source,
+        r#";: Single item.
+(define x : i64 1)
+"#,
+    )
+    .expect("write doc source");
+
+    let output = typelisp(&["doc", source.to_str().unwrap(), "-o", out.to_str().unwrap()]);
+
+    assert!(output.status.success(), "stderr:\n{}", stderr(&output));
+    assert!(out.is_file(), "expected custom output markdown file");
+    let md = fs::read_to_string(&out).expect("read output markdown");
+    assert!(md.contains("x"), "expected item name in markdown");
+}
+
+#[test]
+#[cfg(any(target_os = "linux", target_os = "windows"))]
+fn doc_generates_markdown_with_spaced_paths() {
+    let dir = fixture_dir("doc-generate-spaced-path");
+    let spaced = dir.join("with space");
+    fs::create_dir_all(&spaced).expect("create spaced doc dir");
+    let source = spaced.join("input file.tl");
+    let out = spaced.join("custom output.md");
     fs::write(
         &source,
         r#";: Single item.

@@ -1323,7 +1323,7 @@
   [asm-path : String]
   [obj-path : String]
   [bin-path : String]) : DocTestMaybeFailure
-  (match (source-tool-run-executable bin-path (process-args-empty))
+  (match (source-tool-run-executable bin-path target (process-args-empty))
     [(OkProcessOutput output)
       (begin
         (source-tool-clean-temp temp-dir asm-path obj-path bin-path true)

@@ -95,70 +95,6 @@ run_gate() {
     "$@"
 }
 
-make_stage1_cli_wrapper() {
-    stage1_bin=$1
-    stage1_test_bin=${2:-}
-    stage1_doc_bin=${3:-}
-    stage1_build_bin=${4:-}
-    stage1_repl_bin=${5:-}
-    stage1_lsp_bin=${6:-}
-    stage1_lint_bin=${7:-}
-    stage1_format_bin=${8:-}
-    wrapper_dir="$ROOT/target/no-rust-stage1-wrapper"
-    wrapper="$wrapper_dir/typelisp"
-    rm -rf "$wrapper_dir"
-    mkdir -p "$wrapper_dir"
-    cat > "$wrapper" <<EOF
-#!/usr/bin/env sh
-set -eu
-TYPELISP_STAGE1_BIN='$stage1_bin'
-export TYPELISP_STAGE1_BIN
-TYPELISP_STAGE1_TEST_BIN='$stage1_test_bin'
-export TYPELISP_STAGE1_TEST_BIN
-TYPELISP_STAGE1_DOC_BIN='$stage1_doc_bin'
-export TYPELISP_STAGE1_DOC_BIN
-TYPELISP_STAGE1_BUILD_BIN='$stage1_build_bin'
-export TYPELISP_STAGE1_BUILD_BIN
-TYPELISP_STAGE1_REPL_BIN='$stage1_repl_bin'
-export TYPELISP_STAGE1_REPL_BIN
-TYPELISP_STAGE1_LSP_BIN='$stage1_lsp_bin'
-export TYPELISP_STAGE1_LSP_BIN
-TYPELISP_STAGE1_LINT_BIN='$stage1_lint_bin'
-export TYPELISP_STAGE1_LINT_BIN
-TYPELISP_STAGE1_FORMAT_BIN='$stage1_format_bin'
-export TYPELISP_STAGE1_FORMAT_BIN
-TYPELISP_STAGE1_DRIVER_CACHE_DIR='$wrapper_dir/cache'
-export TYPELISP_STAGE1_DRIVER_CACHE_DIR
-exec '$ROOT/scripts/stage1-typelisp-wrapper.sh' "\$@"
-EOF
-    chmod +x "$wrapper"
-    printf '%s\n' "$wrapper"
-}
-
-build_stage1_doc_driver() {
-    build_stage1_wrapper_driver "$1" doc selfhost/doc.tl selfhost-doc
-}
-
-build_stage1_build_driver() {
-    build_stage1_wrapper_driver "$1" build selfhost/build.tl selfhost-build
-}
-
-build_stage1_repl_driver() {
-    build_stage1_wrapper_driver "$1" repl selfhost/repl.tl selfhost-repl
-}
-
-build_stage1_lsp_driver() {
-    build_stage1_wrapper_driver "$1" lsp selfhost/lsp_frame.tl selfhost-lsp
-}
-
-build_stage1_lint_driver() {
-    build_stage1_wrapper_driver "$1" lint selfhost/lint.tl selfhost-lint
-}
-
-build_stage1_format_driver() {
-    build_stage1_wrapper_driver "$1" format selfhost/format.tl selfhost-format
-}
-
 stage1_driver_staged_symbols() {
     printf '%s\n' \
         file-read-chunk-status \
@@ -211,72 +147,6 @@ show_stage1_driver_prebuild_failure() {
     echo "stage1 $label driver prebuild failed" >&2
     sed 's/^/  /' "$driver_dir/compile.stdout" >&2 || true
     sed 's/^/  /' "$driver_dir/compile.stderr" >&2 || true
-}
-
-try_build_stage1_wrapper_driver() {
-    compiler=$1
-    label=$2
-    source=$3
-    stem=$4
-    driver_dir=$5
-    asm="$driver_dir/$stem.s"
-    obj="$driver_dir/$stem.o"
-    bin="$driver_dir/$stem"
-
-    rm -rf "$driver_dir"
-    mkdir -p "$driver_dir"
-    if ! "$compiler" compile "$ROOT/$source" -o "$asm" --target linux-x86_64 --backend-mode scalar --stdlib-root "$ROOT/stdlib" \
-        > "$driver_dir/compile.stdout" 2> "$driver_dir/compile.stderr"; then
-        return 1
-    fi
-    if ! as "$asm" -o "$obj" >> "$driver_dir/compile.stdout" 2>> "$driver_dir/compile.stderr"; then
-        return 1
-    fi
-    if ! ld "$obj" -o "$bin" -dynamic-linker /lib64/ld-linux-x86-64.so.2 -lc \
-        >> "$driver_dir/compile.stdout" 2>> "$driver_dir/compile.stderr"; then
-        return 1
-    fi
-    ensure_executable "stage1 $label driver" "$bin"
-    printf '%s\n' "$bin"
-}
-
-build_stage1_wrapper_driver() {
-    seed=$1
-    label=$2
-    source=$3
-    stem=$4
-    driver_dir="$ROOT/target/no-rust-stage1-$label-driver"
-    asm="$driver_dir/$stem.s"
-    obj="$driver_dir/$stem.o"
-    bin="$driver_dir/$stem"
-
-    command -v as >/dev/null 2>&1 || {
-        echo "stage1 $label driver prebuild requires 'as'" >&2
-        exit 1
-    }
-    command -v ld >/dev/null 2>&1 || {
-        echo "stage1 $label driver prebuild requires 'ld'" >&2
-        exit 1
-    }
-
-    if try_build_stage1_wrapper_driver "$seed" "$label" "$source" "$stem" "$driver_dir"; then
-        return 0
-    fi
-
-    # The seed compiler can lag behind freshly added runtime primitives while
-    # the current selfhost compiler already knows them. Keep the seed path for
-    # speed, but retry with the bootstrapped stage1 compiler for that staged
-    # symbol gap so no-Rust verification can cover the rest of the change.
-    if [ -n "${TYPELISP_BIN:-}" ] && [ "$seed" != "$TYPELISP_BIN" ] &&
-        stage1_driver_prebuild_failed_for_staged_symbol "$driver_dir"; then
-        echo "stage1 $label driver prebuild with seed hit a staged runtime symbol; retrying with stage1 compiler" >&2
-        if try_build_stage1_wrapper_driver "$TYPELISP_BIN" "$label" "$source" "$stem" "$driver_dir"; then
-            return 0
-        fi
-    fi
-
-    show_stage1_driver_prebuild_failure "$label" "$driver_dir"
-    exit 1
 }
 
 run_with_compiler() {
@@ -397,55 +267,26 @@ if [ "$HOST_OS" = linux ]; then
     STAGE1_TEST_BIN=
     STAGE1_LSP_BIN=
     STAGE1_HOST_ACTION_DRIVERS_AVAILABLE=0
+    # cli.tl is the single stage0 binary with every toolchain command in-process,
+    # so the gates run it directly instead of building per-command driver
+    # binaries and a dispatch wrapper. STAGE1_TEST_BIN stays empty (as it always
+    # was for a non-bundle seed), so the separate test-driver gates stay skipped;
+    # STAGE1_HOST_ACTION_DRIVERS_AVAILABLE follows the staged-runtime-symbol gap.
     SEED_IS_STAGE1_BUNDLE=0
-    SEED_DIR=$(CDPATH= cd -- "$(dirname -- "$SEED_TYPELISP_BIN")" && pwd)
-    if [ -x "$SEED_DIR/lib/stage1/typelisp-stage1" ]; then
-        SEED_IS_STAGE1_BUNDLE=1
-    fi
-    BUNDLED_STAGE1_DRIVER_DIR="$SEED_DIR/lib/stage1/drivers"
-    if [ -x "$BUNDLED_STAGE1_DRIVER_DIR/selfhost-test" ]; then
-        STAGE1_TEST_BIN="$BUNDLED_STAGE1_DRIVER_DIR/selfhost-test"
-        echo "[no-rust-stage0] using bundled stage1 test driver"
-    fi
-    if [ -x "$BUNDLED_STAGE1_DRIVER_DIR/selfhost-doc" ] &&
-        [ -x "$BUNDLED_STAGE1_DRIVER_DIR/selfhost-build" ] &&
-        [ -x "$BUNDLED_STAGE1_DRIVER_DIR/selfhost-repl" ]; then
-        STAGE1_DOC_BIN="$BUNDLED_STAGE1_DRIVER_DIR/selfhost-doc"
-        STAGE1_BUILD_BIN="$BUNDLED_STAGE1_DRIVER_DIR/selfhost-build"
-        STAGE1_REPL_BIN="$BUNDLED_STAGE1_DRIVER_DIR/selfhost-repl"
-        if [ -x "$BUNDLED_STAGE1_DRIVER_DIR/selfhost-lsp" ]; then
-            STAGE1_LSP_BIN="$BUNDLED_STAGE1_DRIVER_DIR/selfhost-lsp"
-        elif [ "$LINUX_SEED_STAGED_RUNTIME_GAP" -eq 0 ]; then
-            STAGE1_LSP_BIN=$(build_stage1_lsp_driver "$SEED_TYPELISP_BIN")
-        fi
-        STAGE1_HOST_ACTION_DRIVERS_AVAILABLE=1
-        echo "[no-rust-stage0] using bundled stage1 doc/build/repl drivers"
-    elif [ "$LINUX_SEED_STAGED_RUNTIME_GAP" -eq 0 ]; then
-        STAGE1_DOC_BIN=$(build_stage1_doc_driver "$SEED_TYPELISP_BIN")
-        STAGE1_BUILD_BIN=$(build_stage1_build_driver "$SEED_TYPELISP_BIN")
-        STAGE1_REPL_BIN=$(build_stage1_repl_driver "$SEED_TYPELISP_BIN")
-        STAGE1_LSP_BIN=$(build_stage1_lsp_driver "$SEED_TYPELISP_BIN")
+    STAGE1_DOC_BIN=$SEED_TYPELISP_BIN
+    STAGE1_BUILD_BIN=$SEED_TYPELISP_BIN
+    STAGE1_REPL_BIN=$SEED_TYPELISP_BIN
+    STAGE1_LSP_BIN=$SEED_TYPELISP_BIN
+    STAGE1_LINT_BIN=$SEED_TYPELISP_BIN
+    STAGE1_FORMAT_BIN=$SEED_TYPELISP_BIN
+    if [ "$LINUX_SEED_STAGED_RUNTIME_GAP" -eq 0 ]; then
         STAGE1_HOST_ACTION_DRIVERS_AVAILABLE=1
     else
-        echo "[no-rust-stage0] skipping eager stage1 doc/build/repl/lsp driver prebuild until staged runtime symbols land in stage0"
+        STAGE1_HOST_ACTION_DRIVERS_AVAILABLE=0
+        echo "[no-rust-stage0] seed lacks staged runtime symbols; toolchain gates limited to compile-only"
     fi
-    if [ "$STAGE1_HOST_ACTION_DRIVERS_AVAILABLE" -eq 1 ]; then
-        if [ -x "$BUNDLED_STAGE1_DRIVER_DIR/selfhost-lint" ]; then
-            STAGE1_LINT_BIN="$BUNDLED_STAGE1_DRIVER_DIR/selfhost-lint"
-            echo "[no-rust-stage0] using bundled stage1 lint driver"
-        else
-            STAGE1_LINT_BIN=$(build_stage1_lint_driver "$SEED_TYPELISP_BIN")
-        fi
-        if [ -x "$BUNDLED_STAGE1_DRIVER_DIR/selfhost-format" ]; then
-            STAGE1_FORMAT_BIN="$BUNDLED_STAGE1_DRIVER_DIR/selfhost-format"
-            echo "[no-rust-stage0] using bundled stage1 format driver"
-        else
-            STAGE1_FORMAT_BIN=$(build_stage1_format_driver "$SEED_TYPELISP_BIN")
-        fi
-    fi
-    STAGE1_TYPELISP_BIN=$(make_stage1_cli_wrapper "$TYPELISP_BIN" "$STAGE1_TEST_BIN" "$STAGE1_DOC_BIN" "$STAGE1_BUILD_BIN" "$STAGE1_REPL_BIN" "$STAGE1_LSP_BIN" "$STAGE1_LINT_BIN" "$STAGE1_FORMAT_BIN")
-    echo
-    echo "[no-rust-stage0] stage1 CLI wrapper=$STAGE1_TYPELISP_BIN"
+    STAGE1_TYPELISP_BIN=$SEED_TYPELISP_BIN
+    echo "[no-rust-stage0] single-binary cli.tl stage0; toolchain gates run it directly"
 else
     TYPELISP_BIN=$SEED_TYPELISP_BIN
     echo "[no-rust-stage0] capability compiler=$TYPELISP_BIN"

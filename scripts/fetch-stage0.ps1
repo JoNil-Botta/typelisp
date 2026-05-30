@@ -27,158 +27,12 @@ $IsLinuxHost = ((Get-Variable IsLinux -ValueOnly -ErrorAction SilentlyContinue) 
 
 if ($IsWindowsHost) {
     $SingleAsset = "typelisp-stage0-windows.exe"
-    $BundleAsset = $null
     $Output = "typelisp.exe"
 } elseif ($IsLinuxHost) {
     $SingleAsset = "typelisp-stage0-linux"
-    $BundleAsset = "typelisp-stage0-linux-bundle.tar.gz"
     $Output = "typelisp"
 } else {
     throw "stage0 fetch is unsupported on this host"
-}
-
-function Join-Stage0BundlePath {
-    param(
-        [Parameter(Mandatory = $true)]
-        [string] $Root,
-
-        [Parameter(Mandatory = $true)]
-        [string] $RelativePath
-    )
-
-    $Path = $Root
-    foreach ($Part in ($RelativePath -split "/")) {
-        $Path = Join-Path $Path $Part
-    }
-    $Path
-}
-
-function Install-LinuxStage0Bundle {
-    param(
-        [Parameter(Mandatory = $true)]
-        [string] $Archive,
-
-        [Parameter(Mandatory = $true)]
-        [string] $OutputDirFull,
-
-        [Parameter(Mandatory = $true)]
-        [string] $Dest,
-
-        [Parameter(Mandatory = $true)]
-        [string] $TempDir
-    )
-
-    if (-not (Get-Command tar -ErrorAction SilentlyContinue)) {
-        throw "Linux stage0 bundle install requires tar"
-    }
-
-    $ExtractDir = Join-Path $TempDir "extract"
-    $InstallTmp = Join-Path $TempDir "install"
-    New-Item -ItemType Directory -Path $ExtractDir -Force -Confirm:$false | Out-Null
-    New-Item -ItemType Directory -Path $InstallTmp -Force -Confirm:$false | Out-Null
-
-    & tar -xzf $Archive -C $ExtractDir
-    if ($LASTEXITCODE -ne 0) {
-        throw "failed to extract Linux stage0 bundle"
-    }
-
-    $WrappedRoot = Join-Path $ExtractDir "typelisp-stage0-linux-bundle"
-    $BundleRoot = if (Test-Path -LiteralPath $WrappedRoot -PathType Container) {
-        $WrappedRoot
-    } else {
-        $ExtractDir
-    }
-
-    $Manifest = Join-Stage0BundlePath $BundleRoot "STAGE0_BUNDLE"
-    if (-not (Test-Path -LiteralPath $Manifest -PathType Leaf)) {
-        throw "Linux stage0 bundle is missing STAGE0_BUNDLE manifest"
-    }
-    $FirstLine = Get-Content -LiteralPath $Manifest -TotalCount 1
-    if ($FirstLine -ne "typelisp-stage0-bundle v1") {
-        throw "unsupported Linux stage0 bundle manifest: $FirstLine"
-    }
-
-    $RequiredPaths = @(
-        "typelisp",
-        "scripts/stage1-typelisp-wrapper.sh",
-        "lib/stage1/typelisp-stage1",
-        "lib/stage1/drivers/selfhost-doc",
-        "lib/stage1/drivers/selfhost-build",
-        "lib/stage1/drivers/selfhost-repl"
-    )
-    foreach ($Required in $RequiredPaths) {
-        $Path = Join-Stage0BundlePath $BundleRoot $Required
-        if (-not (Test-Path -LiteralPath $Path)) {
-            throw "Linux stage0 bundle is missing required path: $Required"
-        }
-    }
-
-    $RequiredFiles = @(
-        "typelisp",
-        "scripts/stage1-typelisp-wrapper.sh",
-        "lib/stage1/typelisp-stage1",
-        "lib/stage1/drivers/selfhost-doc",
-        "lib/stage1/drivers/selfhost-build",
-        "lib/stage1/drivers/selfhost-repl"
-    )
-    foreach ($Required in $RequiredFiles) {
-        $Path = Join-Stage0BundlePath $BundleRoot $Required
-        if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
-            throw "Linux stage0 bundle required path is not a file: $Required"
-        }
-        if ((Get-Item -LiteralPath $Path).Length -le 0) {
-            throw "Linux stage0 bundle contains an empty required file: $Required"
-        }
-    }
-    $OptionalFiles = @(
-        "lib/stage1/drivers/selfhost-lsp",
-        "lib/stage1/drivers/selfhost-test"
-    )
-    foreach ($Optional in $OptionalFiles) {
-        $Path = Join-Stage0BundlePath $BundleRoot $Optional
-        if (Test-Path -LiteralPath $Path) {
-            if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
-                throw "Linux stage0 bundle optional path is not a file: $Optional"
-            }
-            if ((Get-Item -LiteralPath $Path).Length -le 0) {
-                throw "Linux stage0 bundle contains an empty optional file: $Optional"
-            }
-        }
-    }
-    foreach ($Required in @("selfhost", "stdlib")) {
-        $Path = Join-Stage0BundlePath $BundleRoot $Required
-        if (-not (Test-Path -LiteralPath $Path -PathType Container)) {
-            throw "Linux stage0 bundle is missing required directory: $Required"
-        }
-    }
-
-    Get-ChildItem -LiteralPath $BundleRoot -Force |
-        ForEach-Object { Copy-Item -LiteralPath $_.FullName -Destination $InstallTmp -Recurse -Force -Confirm:$false }
-
-    Remove-Item -LiteralPath $Dest -Force -ErrorAction SilentlyContinue
-    Remove-Item -LiteralPath (Join-Path $OutputDirFull "STAGE0_BUNDLE") -Force -ErrorAction SilentlyContinue
-    Remove-Item -LiteralPath (Join-Stage0BundlePath $OutputDirFull "lib/stage1") -Recurse -Force -ErrorAction SilentlyContinue
-    Remove-Item -LiteralPath (Join-Stage0BundlePath $OutputDirFull "scripts/stage1-typelisp-wrapper.sh") -Force -ErrorAction SilentlyContinue
-
-    Get-ChildItem -LiteralPath $InstallTmp -Force |
-        ForEach-Object { Copy-Item -LiteralPath $_.FullName -Destination $OutputDirFull -Recurse -Force -Confirm:$false }
-
-    $ExecutablePaths = @(
-        "typelisp",
-        "scripts/stage1-typelisp-wrapper.sh",
-        "lib/stage1/typelisp-stage1",
-        "lib/stage1/drivers/selfhost-doc",
-        "lib/stage1/drivers/selfhost-build",
-        "lib/stage1/drivers/selfhost-repl"
-    )
-    foreach ($Optional in $OptionalFiles) {
-        if (Test-Path -LiteralPath (Join-Stage0BundlePath $OutputDirFull $Optional) -PathType Leaf) {
-            $ExecutablePaths += $Optional
-        }
-    }
-    foreach ($Executable in $ExecutablePaths) {
-        & chmod +x (Join-Stage0BundlePath $OutputDirFull $Executable)
-    }
 }
 
 $Root = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot "..")).Path
@@ -199,7 +53,6 @@ try {
     $Dest = Join-Path $OutputDirFull $Output
     $Asset = $null
     $AssetTmp = $null
-    $AssetKind = "single"
 
     function Download-Stage0Asset {
         param([Parameter(Mandatory = $true)] [string] $AssetName)
@@ -214,30 +67,6 @@ try {
         } catch {
             Remove-Item -LiteralPath $Target -Force -ErrorAction SilentlyContinue
             throw
-        }
-    }
-
-    if ($BundleAsset) {
-        Write-Host "[stage0] downloading $BundleAsset from $Repo@$Tag"
-        try {
-            $AssetTmp = Download-Stage0Asset -AssetName $BundleAsset
-            $Asset = $BundleAsset
-            $AssetKind = "bundle"
-        } catch {
-            $StatusCode = $null
-            $Response = $null
-            if ($_.Exception.PSObject.Properties.Name -contains "Response") {
-                $Response = $_.Exception.Response
-            }
-            if ($null -ne $Response -and ($Response.PSObject.Properties.Name -contains "StatusCode")) {
-                $StatusCode = [int] $Response.StatusCode
-            }
-            if ($StatusCode -eq 404) {
-                Write-Host "[stage0] bundled Linux stage0 asset not found; falling back to $SingleAsset"
-                $AssetTmp = $null
-            } else {
-                throw ("failed to download {0}/{1}: {2}" -f $BaseUrl, $BundleAsset, $_.Exception.Message)
-            }
         }
     }
 
@@ -279,17 +108,12 @@ try {
         }
     }
 
-    if ($AssetKind -eq "bundle") {
-        Write-Host "[stage0] installing bundled Linux stage0 asset"
-        Install-LinuxStage0Bundle -Archive $AssetTmp -OutputDirFull $OutputDirFull -Dest $Dest -TempDir $TempDir
-    } else {
-        Move-Item -LiteralPath $AssetTmp -Destination $Dest -Force -Confirm:$false
+    Move-Item -LiteralPath $AssetTmp -Destination $Dest -Force -Confirm:$false
 
-        if ($IsWindowsHost) {
-            Unblock-File -LiteralPath $Dest -ErrorAction SilentlyContinue
-        } else {
-            & chmod +x $Dest
-        }
+    if ($IsWindowsHost) {
+        Unblock-File -LiteralPath $Dest -ErrorAction SilentlyContinue
+    } else {
+        & chmod +x $Dest
     }
 
     if ((Get-Item -LiteralPath $Dest).Length -le 0) {

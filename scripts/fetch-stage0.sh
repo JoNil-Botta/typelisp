@@ -104,108 +104,6 @@ download_asset() {
     return 1
 }
 
-install_linux_bundle() {
-    archive=$1
-    if ! command -v tar >/dev/null 2>&1; then
-        echo "Linux stage0 bundle install requires tar" >&2
-        exit 1
-    fi
-
-    extract_dir="$TMP_DIR/extract"
-    install_tmp="$TMP_DIR/install"
-    mkdir -p "$extract_dir" "$install_tmp"
-    if ! tar -xzf "$archive" -C "$extract_dir"; then
-        echo "failed to extract Linux stage0 bundle: $ASSET" >&2
-        exit 1
-    fi
-
-    if [ -d "$extract_dir/typelisp-stage0-linux-bundle" ]; then
-        bundle_root="$extract_dir/typelisp-stage0-linux-bundle"
-    else
-        bundle_root="$extract_dir"
-    fi
-
-    manifest="$bundle_root/STAGE0_BUNDLE"
-    if [ ! -s "$manifest" ]; then
-        echo "Linux stage0 bundle is missing STAGE0_BUNDLE manifest" >&2
-        exit 1
-    fi
-    first=$(sed -n '1p' "$manifest")
-    if [ "$first" != "typelisp-stage0-bundle v1" ]; then
-        echo "unsupported Linux stage0 bundle manifest: $first" >&2
-        exit 1
-    fi
-
-    for required in \
-        typelisp \
-        scripts/stage1-typelisp-wrapper.sh \
-        lib/stage1/typelisp-stage1 \
-        lib/stage1/drivers/selfhost-doc \
-        lib/stage1/drivers/selfhost-build \
-        lib/stage1/drivers/selfhost-repl
-    do
-        if [ ! -e "$bundle_root/$required" ]; then
-            echo "Linux stage0 bundle is missing required path: $required" >&2
-            exit 1
-        fi
-    done
-    for required_file in \
-        typelisp \
-        scripts/stage1-typelisp-wrapper.sh \
-        lib/stage1/typelisp-stage1 \
-        lib/stage1/drivers/selfhost-doc \
-        lib/stage1/drivers/selfhost-build \
-        lib/stage1/drivers/selfhost-repl
-    do
-        if [ ! -s "$bundle_root/$required_file" ]; then
-            echo "Linux stage0 bundle contains an empty required file: $required_file" >&2
-            exit 1
-        fi
-    done
-    for optional_file in \
-        lib/stage1/drivers/selfhost-lsp \
-        lib/stage1/drivers/selfhost-test
-    do
-        if [ -e "$bundle_root/$optional_file" ]; then
-            if [ ! -f "$bundle_root/$optional_file" ]; then
-                echo "Linux stage0 bundle optional path is not a file: $optional_file" >&2
-                exit 1
-            fi
-            if [ ! -s "$bundle_root/$optional_file" ]; then
-                echo "Linux stage0 bundle contains an empty optional file: $optional_file" >&2
-                exit 1
-            fi
-        fi
-    done
-    for required_dir in selfhost stdlib; do
-        if [ ! -d "$bundle_root/$required_dir" ]; then
-            echo "Linux stage0 bundle is missing required directory: $required_dir" >&2
-            exit 1
-        fi
-    done
-
-    cp -R "$bundle_root"/. "$install_tmp"/
-    chmod +x \
-        "$install_tmp/typelisp" \
-        "$install_tmp/scripts/stage1-typelisp-wrapper.sh" \
-        "$install_tmp/lib/stage1/typelisp-stage1" \
-        "$install_tmp/lib/stage1/drivers/selfhost-doc" \
-        "$install_tmp/lib/stage1/drivers/selfhost-build" \
-        "$install_tmp/lib/stage1/drivers/selfhost-repl"
-    for optional_executable in \
-        "$install_tmp/lib/stage1/drivers/selfhost-lsp" \
-        "$install_tmp/lib/stage1/drivers/selfhost-test"
-    do
-        if [ -f "$optional_executable" ]; then
-            chmod +x "$optional_executable"
-        fi
-    done
-
-    rm -f "$DEST" "$OUT_DIR/STAGE0_BUNDLE"
-    rm -rf "$OUT_DIR/lib/stage1" "$OUT_DIR/scripts/stage1-typelisp-wrapper.sh"
-    cp -R "$install_tmp"/. "$OUT_DIR"/
-}
-
 # Download the host asset (Linux: bundle first, single fallback) plus the
 # SHA256SUMS manifest, and verify them together. Returns non-zero on any
 # transient miss so the caller can retry the whole download+verify as one unit.
@@ -281,14 +179,9 @@ while :; do
     sleep "$FETCH_RETRY_DELAY"
 done
 
-if [ "$ASSET_KIND" = bundle ]; then
-    echo "[stage0] installing bundled Linux stage0 asset"
-    install_linux_bundle "$ASSET_TMP"
-else
-    mv "$ASSET_TMP" "$DEST"
-    if [ "$NEED_EXEC" -eq 1 ]; then
-        chmod +x "$DEST"
-    fi
+mv "$ASSET_TMP" "$DEST"
+if [ "$NEED_EXEC" -eq 1 ]; then
+    chmod +x "$DEST"
 fi
 
 if [ ! -s "$DEST" ]; then

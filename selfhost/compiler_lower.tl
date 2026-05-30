@@ -3165,6 +3165,10 @@
       (lower-string-ref ctx state env type-env str index)]
     [(AstExprStructGet receiver field)
       (lower-struct-get ctx state env type-env receiver field expr-ty)]
+    [(AstExprTuple elements)
+      (lower-tuple ctx state env type-env elements expr-ty)]
+    [(AstExprTupleRef tuple-expr index)
+      (lower-tuple-ref ctx state env type-env tuple-expr index)]
     [(AstExprMakeArray elem-ty len)
       (lower-make-array ctx state env type-env elem-ty len)]
     [(AstExprArrayRef arr index)
@@ -3388,6 +3392,96 @@
     [_
       (ErrLowerExpr
         (lower-diagnostic-at-expr origin "lower: unsupported expression"))]))
+
+;; Offset + element type of tuple element `index`, walking the element type list
+;; with the same alignment cursor `lower-store-values` uses (#1583).
+(define (lower-tuple-element-info
+  [ctx : TcContext]
+  [types : AstTypeList]
+  [index : i64]
+  [cursor : i64]) : ResultLowerFieldInfo
+  (match types
+    [(AstTypeNil)
+      (ErrLowerFieldInfo (lower-diagnostic "lower: tuple index out of bounds"))]
+    [(AstTypeCons ty rest)
+      (let
+        [resolved : AstType (tc-resolve-type ctx ty)]
+        (let
+          [offset : i64 (lower-align-up cursor (lower-type-align ctx resolved))]
+          (if (= index 0)
+            (OkLowerFieldInfo (LowerFieldInfo offset resolved))
+            (lower-tuple-element-info
+              ctx
+              rest
+              (- index 1)
+              (+ offset (lower-type-size ctx resolved))))))]))
+
+;; Lower `(tuple e0 .. en)` (#1583) as an anonymous positional aggregate:
+;; allocate storage for the element types, store each element at its aligned
+;; offset, and return the tuple handle (mirrors struct construction).
+(define (lower-tuple
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [elements : AstExprList]
+  [result-ty : AstType]) : ResultLowerExpr
+  (match (tc-resolve-type ctx result-ty)
+    [(AstTyTuple elem-types)
+      (match (lower-args-as ctx state env type-env elements elem-types)
+        [(OkLowerArgs args-state values)
+          (match (lower-reserve-heap-storage
+            args-state
+            (lower-type-list-storage-size ctx elem-types)
+            result-ty)
+            [(LowerExpr base-state base _)
+              (match (lower-store-values
+                ctx
+                base-state
+                base
+                values
+                elem-types
+                0)
+                [(OkLowerState done-state)
+                  (OkLowerExpr (LowerExpr done-state base result-ty))]
+                [(ErrLowerState message) (ErrLowerExpr message)])])]
+        [(ErrLowerArgs message) (ErrLowerExpr message)])]
+    [_
+      (ErrLowerExpr
+        (lower-diagnostic "lower: tuple construction requires a tuple type"))]))
+
+;; Lower `(tuple-ref t i)` (#1583): load element `i` of type `T` from the tuple
+;; storage at its computed offset.
+(define (lower-tuple-ref
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [tuple-expr : AstExpr]
+  [index : i64]) : ResultLowerExpr
+  (match (lower-expr ctx state env type-env tuple-expr)
+    [(OkLowerExpr lowered)
+      (match lowered
+        [(LowerExpr tuple-state tuple-value tuple-ty)
+          (match (tc-resolve-type ctx tuple-ty)
+            [(AstTyTuple elem-types)
+              (match (lower-tuple-element-info ctx elem-types index 0)
+                [(OkLowerFieldInfo info)
+                  (match info
+                    [(LowerFieldInfo offset elem-ty)
+                      (OkLowerExpr
+                        (lower-load-at-offset
+                          tuple-state
+                          tuple-value
+                          offset
+                          elem-ty))])]
+                [(ErrLowerFieldInfo message) (ErrLowerExpr message)])]
+            [_
+              (ErrLowerExpr
+                (lower-diagnostic-at-expr
+                  tuple-expr
+                  "lower: tuple-ref requires a tuple"))])])]
+    [(ErrLowerExpr message) (ErrLowerExpr message)]))
 
 (define (lower-struct-get
   [ctx : TcContext]
@@ -8690,9 +8784,8 @@
 (define answer : i64 42)
 (define (main) : i64 answer)")
 
-(define (compiler-lower-unsupported-source) : String
-  "(define (main) : (Tuple i64 bool)
-  (tuple 1 true))")
+(define (compiler-lower-tuple-source) : String
+  "(define (main) : i64 (tuple-ref (tuple 1 true) 0))")
 
 (define (compiler-lower-box-source) : String
   "(define (main) : i64 (box-get (box 7)))")
@@ -11730,9 +11823,7 @@
         "typecheck: if branches must match")
         unit
         (set! ok false))
-      (if (compiler-lower-error-ok?
-        (compiler-lower-unsupported-source)
-        "lower: unsupported expression")
+      (if (compiler-lower-ok? (compiler-lower-tuple-source))
         unit
         (set! ok false))
       (if (compiler-lower-ok? (compiler-lower-box-source))

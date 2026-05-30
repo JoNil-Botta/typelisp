@@ -1954,7 +1954,7 @@ fn selfhost_compile_cli_driver_writes_assembly_and_reports_errors() {
     let lower_asm = dir.join("lower.s");
     fs::write(
         &lower_source,
-        "(define (main) : (Tuple i64 bool)\n  (tuple 1 true))\n",
+        "(define (main) : (Array i64 3)\n  (array 1 2 3))\n",
     )
     .expect("write lowerer-error source");
     let lower_source_arg = lower_source

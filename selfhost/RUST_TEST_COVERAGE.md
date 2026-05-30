@@ -105,8 +105,9 @@ under #1044.
   `compiler-lower-enum-match-shape-ok?`, `compiler-lower-result-try-shape-ok?`,
   `compiler-lower-array-access-shape-ok?`,
   `compiler-lower-make-array-shape-ok?`, `compiler-lower-region-shape-ok?`,
-  `compiler-lower-repr-c-shape-ok?`, plus the aggregate/enum/string payload
-  accepted sources in `compiler-lower-front-half-tests-ok?`.
+  `compiler-lower-repr-c-shape-ok?`, `compiler-lower-tuple-source`, plus the
+  aggregate/enum/string payload accepted sources in
+  `compiler-lower-front-half-tests-ok?`.
 - Typed numeric ops are covered by `compiler-lower-numeric-shape-ok?`, which
   checks bitwise operators, shifts, f64 arithmetic/comparison, and scalar cast
   IR shapes. Comptime numeric folding remains covered by
@@ -140,7 +141,8 @@ Named remaining blockers:
   `compiler-lower-noncapturing-lambda-tests-ok?` (#1552).
 - Capturing closures, closure heap descriptors/calls, and capture deep-copy
   details remain split to #1418.
-- Tuple construction/ref emit-shape parity has focused follow-up #1414.
+- Tuple construction/ref lowerer coverage is in `compiler-lower-tuple-source`
+  (#1583); backend emit-shape parity remains the focused follow-up #1414.
   Fixed-array set/ref backend emit-shape parity is covered by
   `compiler-backend-fixed-array-shape-ok?` (#1416). Broader backend-only
   assembly assertions stay under #1044.

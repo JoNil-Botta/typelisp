@@ -440,7 +440,8 @@
 (defenum CompilerSourceSpans
   (CompilerSourceSpans
     CompilerSourceSpansEntryList
-    CompilerSourceSpansEntryList))
+    CompilerSourceSpansEntryList
+    i64))
 
 (defenum CompilerMaybeSourceSpan
   (CompilerNoSourceSpan)
@@ -449,12 +450,13 @@
 (define (compiler-source-spans-empty) : CompilerSourceSpans
   (CompilerSourceSpans
     (CompilerSourceSpansEntryNil)
-    (CompilerSourceSpansEntryNil)))
+    (CompilerSourceSpansEntryNil)
+    0))
 
 (define (compiler-source-spans-clear-instrs [spans : CompilerSourceSpans]) : CompilerSourceSpans
   (match spans
-    [(CompilerSourceSpans entries _)
-      (CompilerSourceSpans entries (CompilerSourceSpansEntryNil))]))
+    [(CompilerSourceSpans entries _ _)
+      (CompilerSourceSpans entries (CompilerSourceSpansEntryNil) 0)]))
 
 (define (compiler-source-spans-entry-list-append
   [entries : CompilerSourceSpansEntryList]
@@ -475,12 +477,13 @@
   [name : String]
   [span : AstSourceSpan]) : CompilerSourceSpans
   (match spans
-    [(CompilerSourceSpans entries instr-entries)
+    [(CompilerSourceSpans entries instr-entries instr-count)
       (CompilerSourceSpans
         (compiler-source-spans-entry-list-append
           entries
           (CompilerSourceSpansEntry name span))
-        instr-entries)]))
+        instr-entries
+        instr-count)]))
 
 (define (compiler-source-spans-entry-list-lookup
   [entries : CompilerSourceSpansEntryList]
@@ -498,7 +501,7 @@
   [spans : CompilerSourceSpans]
   [name : String]) : CompilerMaybeSourceSpan
   (match spans
-    [(CompilerSourceSpans entries _)
+    [(CompilerSourceSpans entries _ _)
       (compiler-source-spans-entry-list-lookup entries name)]))
 
 (define (compiler-source-spans-value-key [function : String] [var-id : i64]) : String
@@ -514,12 +517,13 @@
   [key : String]
   [span : AstSourceSpan]) : CompilerSourceSpans
   (match spans
-    [(CompilerSourceSpans entries instr-entries)
+    [(CompilerSourceSpans entries instr-entries instr-count)
       (CompilerSourceSpans
         entries
-        (compiler-source-spans-entry-list-append
-          instr-entries
-          (CompilerSourceSpansEntry key span)))]))
+        (CompilerSourceSpansEntryCons
+          (CompilerSourceSpansEntry key span)
+          instr-entries)
+        (+ instr-count 1))]))
 
 (define (compiler-source-spans-insert-instr
   [spans : CompilerSourceSpans]
@@ -654,7 +658,7 @@
   [function : String]
   [instr : CompilerIrInstr]) : CompilerMaybeSourceSpan
   (match spans
-    [(CompilerSourceSpans _ instr-entries)
+    [(CompilerSourceSpans _ instr-entries _)
       (match instr
         [(IrInstrMov dst _ _)
           (compiler-source-spans-entry-list-lookup
@@ -764,13 +768,18 @@
 
 (define (compiler-source-spans-count [spans : CompilerSourceSpans]) : i64
   (match spans
-    [(CompilerSourceSpans entries _)
+    [(CompilerSourceSpans entries _ _)
       (compiler-source-spans-entry-list-count entries)]))
 
 (define (compiler-source-spans-instr-count [spans : CompilerSourceSpans]) : i64
   (match spans
-    [(CompilerSourceSpans _ instr-entries)
-      (compiler-source-spans-entry-list-count instr-entries)]))
+    [(CompilerSourceSpans _ _ instr-count) instr-count]))
+
+(define (compiler-source-spans-instr-count-at-least?
+  [spans : CompilerSourceSpans]
+  [minimum : i64]) : bool
+  (match spans
+    [(CompilerSourceSpans _ _ instr-count) (>= instr-count minimum)]))
 
 (defenum CompilerIrSummary
   (CompilerIrSummary i64 i64 i64 i64 i64 i64))

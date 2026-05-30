@@ -107,6 +107,10 @@ require_stage1() {
     fi
 }
 
+raise_stack_limit() {
+    ulimit -s unlimited 2>/dev/null || true
+}
+
 require_linux_host_action() {
     case "$(uname -s)" in
         Linux*) ;;
@@ -1277,6 +1281,8 @@ if [ "$#" -eq 0 ]; then
     usage
     exit 2
 fi
+
+raise_stack_limit
 
 command=$1
 shift

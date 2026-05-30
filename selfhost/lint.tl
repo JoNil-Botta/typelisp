@@ -12,8 +12,8 @@
   (match (selfhost-lint-config (arg-count))
     [(OkSelfhostLintConfig config)
       (match config
-        [(SelfhostLintConfig input-path stdlib-roots)
-          (selfhost-lint-file input-path stdlib-roots)])]
+        [(SelfhostLintConfig input-path stdlib-roots enforcing)
+          (selfhost-lint-file input-path stdlib-roots enforcing)])]
     [(ErrSelfhostLintConfig message)
       (begin
         (print-error (string-append message "\n"))

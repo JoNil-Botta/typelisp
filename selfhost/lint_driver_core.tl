@@ -8,8 +8,10 @@
 
 (import "lint_core.tl")
 
+;; Parsed lint CLI config: input path, stdlib roots, and whether `--check`
+;; enforcing mode was requested (exit non-zero when findings are present).
 (defenum SelfhostLintConfig
-  (SelfhostLintConfig String CompilerLoadRootList))
+  (SelfhostLintConfig String CompilerLoadRootList bool))
 
 (defenum ResultSelfhostLintConfig
   (OkSelfhostLintConfig SelfhostLintConfig)
@@ -30,25 +32,37 @@
   [idx : i64]
   [count : i64]
   [input-path : String]
-  [stdlib-roots : CompilerLoadRootList]) : ResultSelfhostLintConfig
+  [stdlib-roots : CompilerLoadRootList]
+  [enforcing : bool]) : ResultSelfhostLintConfig
   (if (>= idx count)
-    (OkSelfhostLintConfig (SelfhostLintConfig input-path stdlib-roots))
+    (OkSelfhostLintConfig
+      (SelfhostLintConfig input-path stdlib-roots enforcing))
     (let
       [current : String (arg idx)]
-      (if (string-eq current "--stdlib-root")
-        (if (>= (+ idx 1) count)
-          (ErrSelfhostLintConfig
-            "selfhost-lint: --stdlib-root requires a value")
+      (cond
+        [(string-eq current "--check")
           (selfhost-lint-parse-options
-            (+ idx 2)
+            (+ idx 1)
             count
             input-path
-            (selfhost-lint-root-list-append stdlib-roots (arg (+ idx 1)))))
-        (if (selfhost-lint-flag? current)
+            stdlib-roots
+            true)]
+        [(string-eq current "--stdlib-root")
+          (if (>= (+ idx 1) count)
+            (ErrSelfhostLintConfig
+              "selfhost-lint: --stdlib-root requires a value")
+            (selfhost-lint-parse-options
+              (+ idx 2)
+              count
+              input-path
+              (selfhost-lint-root-list-append stdlib-roots (arg (+ idx 1)))
+              enforcing))]
+        [(selfhost-lint-flag? current)
           (ErrSelfhostLintConfig
-            (string-append "selfhost-lint: unknown flag " current))
+            (string-append "selfhost-lint: unknown flag " current))]
+        [else
           (ErrSelfhostLintConfig
-            (string-append "selfhost-lint: unexpected argument " current)))))))
+            (string-append "selfhost-lint: unexpected argument " current))]))))
 
 (define (selfhost-lint-config [count : i64]) : ResultSelfhostLintConfig
   (if (< count 2)
@@ -58,7 +72,12 @@
       (if (selfhost-lint-flag? input-path)
         (ErrSelfhostLintConfig
           "selfhost-lint: expected input path before flags")
-        (selfhost-lint-parse-options 2 count input-path CompilerLoadRootNil)))))
+        (selfhost-lint-parse-options
+          2
+          count
+          input-path
+          CompilerLoadRootNil
+          false)))))
 
 ;; Render one finding as `path:line:col: message` (line/col from the flagged
 ;; node's source span; 0:0 only for synthesized nodes that carry no location).
@@ -187,9 +206,18 @@
 
 ;; Lint a file on disk: print its findings + a summary; return 0 (warn-only), or
 ;; 1 when the file could not be loaded.
+;; Exit code for the file driver after a successful lint: `--check` enforcing
+;; mode exits 1 when any finding remains; warn-only mode (the default) and a
+;; clean file both exit 0. Parse/load failures exit 1 independently of this.
+(define (selfhost-lint-enforce-exit [enforcing : bool] [finding-count : i64]) : i64
+  (if (and enforcing (> finding-count 0))
+    1
+    0))
+
 (define (selfhost-lint-file
   [input-path : String]
-  [stdlib-roots : CompilerLoadRootList]) : i64
+  [stdlib-roots : CompilerLoadRootList]
+  [enforcing : bool]) : i64
   (let
     [source : String (read-file input-path)]
     (match (parse-ast-source-diagnostic input-path source)
@@ -205,7 +233,9 @@
                 (string-append
                   (int->string (lint-finding-list-count findings))
                   " finding(s)\n")))
-            0))]
+            (selfhost-lint-enforce-exit
+              enforcing
+              (lint-finding-list-count findings))))]
       [(ErrAstProgramDiagnostic diag)
         (begin
           (print-error (compiler-diagnostic-render diag))
@@ -228,6 +258,17 @@
             50
             0))))))")
 
+;; The reported ladder finding has depth 5 and a real source line.
+(define (selfhost-lint-driver-finding-ok? [findings : LintFindingList]) : bool
+  (match findings
+    [(LintFindingCons finding _)
+      (let
+        [fspan : AstSourceSpan (struct-get finding span)]
+        (and
+          (= (struct-get finding depth) 5)
+          (> (struct-get fspan start-line) 0)))]
+    [(LintFindingNil) false]))
+
 (define (compiler-lint-driver-self-test) : i64
   (let
     [findings : LintFindingList
@@ -235,15 +276,12 @@
         "lint_driver_self_test.tl"
         (selfhost-lint-ladder-source)
         CompilerLoadRootNil)]
-    (if (= (lint-finding-list-count findings) 1)
-      (match findings
-        [(LintFindingCons finding _)
-          (let
-            [fspan : AstSourceSpan (struct-get finding span)]
-            (if (= (struct-get finding depth) 5)
-              (if (> (struct-get fspan start-line) 0)
-                42
-                1)
-              2))]
-        [(LintFindingNil) 3])
-      4)))
+    (cond
+      [(not (= (lint-finding-list-count findings) 1)) 4]
+      [(not (selfhost-lint-driver-finding-ok? findings)) 5]
+      ;; enforcing (`--check`) mode exits 1 when findings remain, 0 when clean
+      [(not (= (selfhost-lint-enforce-exit true 1) 1)) 6]
+      [(not (= (selfhost-lint-enforce-exit true 0) 0)) 7]
+      ;; warn-only mode (default) exits 0 even with findings
+      [(not (= (selfhost-lint-enforce-exit false 1) 0)) 8]
+      [else 42])))

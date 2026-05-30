@@ -3,12 +3,6 @@
 
 (import "compiler_ast_types.tl")
 
-(defstruct CompilerDiagnostic
-  (path String)
-  (line i64)
-  (col i64)
-  (message String))
-
 (defenum CompilerDiagnosticLevel
   (CompilerDiagnosticError)
   (CompilerDiagnosticWarning)
@@ -18,39 +12,160 @@
   (CompilerDiagnosticNoString)
   (CompilerDiagnosticSomeString String))
 
+(defstruct CompilerDiagnosticSpan
+  (path String)
+  (start-line i64)
+  (start-col i64)
+  (end-line i64)
+  (end-col i64))
+
+(defstruct CompilerDiagnosticLabel
+  (span CompilerDiagnosticSpan)
+  (label CompilerDiagnosticMaybeString))
+
+(defenum CompilerDiagnosticLabelList
+  (CompilerDiagnosticLabelNil)
+  (CompilerDiagnosticLabelCons
+    CompilerDiagnosticLabel
+    CompilerDiagnosticLabelList))
+
+(defenum CompilerDiagnosticNoteList
+  (CompilerDiagnosticNoteNil)
+  (CompilerDiagnosticNoteCons String CompilerDiagnosticNoteList))
+
+(defstruct CompilerDiagnostic
+  (message String)
+  (level CompilerDiagnosticLevel)
+  (code CompilerDiagnosticMaybeString)
+  (category CompilerDiagnosticMaybeString)
+  (primary CompilerDiagnosticSpan)
+  (help CompilerDiagnosticMaybeString)
+  (secondary CompilerDiagnosticLabelList)
+  (notes CompilerDiagnosticNoteList))
+
 (define (compiler-diagnostic-cat3
   [left : String]
   [middle : String]
   [right : String]) : String
   (string-append left (string-append middle right)))
 
+(define (compiler-diagnostic-span-path [span : CompilerDiagnosticSpan]) : String
+  (struct-get span path))
+
+(define (compiler-diagnostic-span-start-line [span : CompilerDiagnosticSpan]) : i64
+  (struct-get span start-line))
+
+(define (compiler-diagnostic-span-start-col [span : CompilerDiagnosticSpan]) : i64
+  (struct-get span start-col))
+
+(define (compiler-diagnostic-span-end-line [span : CompilerDiagnosticSpan]) : i64
+  (struct-get span end-line))
+
+(define (compiler-diagnostic-span-end-col [span : CompilerDiagnosticSpan]) : i64
+  (struct-get span end-col))
+
 (define (compiler-diagnostic-path [diag : CompilerDiagnostic]) : String
-  (struct-get diag path))
+  (compiler-diagnostic-span-path (struct-get diag primary)))
 
 (define (compiler-diagnostic-line [diag : CompilerDiagnostic]) : i64
-  (struct-get diag line))
+  (compiler-diagnostic-span-start-line (struct-get diag primary)))
 
 (define (compiler-diagnostic-col [diag : CompilerDiagnostic]) : i64
-  (struct-get diag col))
+  (compiler-diagnostic-span-start-col (struct-get diag primary)))
 
 (define (compiler-diagnostic-message [diag : CompilerDiagnostic]) : String
   (struct-get diag message))
+
+(define (compiler-diagnostic-end-line [diag : CompilerDiagnostic]) : i64
+  (compiler-diagnostic-span-end-line (struct-get diag primary)))
+
+(define (compiler-diagnostic-end-col [diag : CompilerDiagnostic]) : i64
+  (compiler-diagnostic-span-end-col (struct-get diag primary)))
+
+(define (compiler-diagnostic-level [diag : CompilerDiagnostic]) : CompilerDiagnosticLevel
+  (struct-get diag level))
+
+(define (compiler-diagnostic-code [diag : CompilerDiagnostic]) : CompilerDiagnosticMaybeString
+  (struct-get diag code))
+
+(define (compiler-diagnostic-category [diag : CompilerDiagnostic]) : CompilerDiagnosticMaybeString
+  (struct-get diag category))
+
+(define (compiler-diagnostic-help [diag : CompilerDiagnostic]) : CompilerDiagnosticMaybeString
+  (struct-get diag help))
+
+(define (compiler-diagnostic-secondary-spans [diag : CompilerDiagnostic]) : CompilerDiagnosticLabelList
+  (struct-get diag secondary))
+
+(define (compiler-diagnostic-notes [diag : CompilerDiagnostic]) : CompilerDiagnosticNoteList
+  (struct-get diag notes))
+
+(define (compiler-diagnostic-primary-span [diag : CompilerDiagnostic]) : CompilerDiagnosticSpan
+  (struct-get diag primary))
+
+(define (compiler-diagnostic-new
+  [message : String]
+  [level : CompilerDiagnosticLevel]
+  [code : CompilerDiagnosticMaybeString]
+  [category : CompilerDiagnosticMaybeString]
+  [primary : CompilerDiagnosticSpan]
+  [help : CompilerDiagnosticMaybeString]
+  [secondary : CompilerDiagnosticLabelList]
+  [notes : CompilerDiagnosticNoteList]) : CompilerDiagnostic
+  (CompilerDiagnostic message level code category primary help secondary notes))
+
+(define (compiler-diagnostic-simple
+  [path : String]
+  [line : i64]
+  [col : i64]
+  [message : String]) : CompilerDiagnostic
+  (compiler-diagnostic-new
+    message
+    CompilerDiagnosticError
+    CompilerDiagnosticNoString
+    CompilerDiagnosticNoString
+    (CompilerDiagnosticSpan path line col line col)
+    CompilerDiagnosticNoString
+    CompilerDiagnosticLabelNil
+    CompilerDiagnosticNoteNil))
 
 (define (compiler-diagnostic-from-span
   [path : String]
   [span : SourceSpan]
   [message : String]) : CompilerDiagnostic
-  (CompilerDiagnostic path (span-start-line span) (span-start-col span) message))
+  (compiler-diagnostic-new
+    message
+    CompilerDiagnosticError
+    CompilerDiagnosticNoString
+    CompilerDiagnosticNoString
+    (CompilerDiagnosticSpan
+      path
+      (span-start-line span)
+      (span-start-col span)
+      (span-end-line span)
+      (span-end-col span))
+    CompilerDiagnosticNoString
+    CompilerDiagnosticLabelNil
+    CompilerDiagnosticNoteNil))
 
 (define (compiler-diagnostic-from-ast-span
   [path : String]
   [span : AstSourceSpan]
   [message : String]) : CompilerDiagnostic
-  (CompilerDiagnostic
-    path
-    (struct-get span start-line)
-    (struct-get span start-col)
-    message))
+  (compiler-diagnostic-new
+    message
+    CompilerDiagnosticError
+    CompilerDiagnosticNoString
+    CompilerDiagnosticNoString
+    (CompilerDiagnosticSpan
+      path
+      (struct-get span start-line)
+      (struct-get span start-col)
+      (struct-get span end-line)
+      (struct-get span end-col))
+    CompilerDiagnosticNoString
+    CompilerDiagnosticLabelNil
+    CompilerDiagnosticNoteNil))
 
 (define (compiler-diagnostic-from-source-error
   [path : String]
@@ -61,16 +176,119 @@
     (source-error-message err)))
 
 (define (compiler-diagnostic-at-start [path : String] [message : String]) : CompilerDiagnostic
-  (CompilerDiagnostic path 1 1 message))
+  (compiler-diagnostic-simple path 1 1 message))
 
 (define (compiler-diagnostic-with-path
   [diag : CompilerDiagnostic]
   [path : String]) : CompilerDiagnostic
-  (CompilerDiagnostic
-    path
-    (compiler-diagnostic-line diag)
-    (compiler-diagnostic-col diag)
-    (compiler-diagnostic-message diag)))
+  (compiler-diagnostic-new
+    (compiler-diagnostic-message diag)
+    (compiler-diagnostic-level diag)
+    (compiler-diagnostic-code diag)
+    (compiler-diagnostic-category diag)
+    (CompilerDiagnosticSpan
+      path
+      (compiler-diagnostic-line diag)
+      (compiler-diagnostic-col diag)
+      (compiler-diagnostic-end-line diag)
+      (compiler-diagnostic-end-col diag))
+    (compiler-diagnostic-help diag)
+    (compiler-diagnostic-secondary-spans diag)
+    (compiler-diagnostic-notes diag)))
+
+(define (compiler-diagnostic-with-level
+  [diag : CompilerDiagnostic]
+  [level : CompilerDiagnosticLevel]) : CompilerDiagnostic
+  (compiler-diagnostic-new
+    (compiler-diagnostic-message diag)
+    level
+    (compiler-diagnostic-code diag)
+    (compiler-diagnostic-category diag)
+    (compiler-diagnostic-primary-span diag)
+    (compiler-diagnostic-help diag)
+    (compiler-diagnostic-secondary-spans diag)
+    (compiler-diagnostic-notes diag)))
+
+(define (compiler-diagnostic-with-code
+  [diag : CompilerDiagnostic]
+  [code : String]) : CompilerDiagnostic
+  (compiler-diagnostic-new
+    (compiler-diagnostic-message diag)
+    (compiler-diagnostic-level diag)
+    (CompilerDiagnosticSomeString code)
+    (compiler-diagnostic-category diag)
+    (compiler-diagnostic-primary-span diag)
+    (compiler-diagnostic-help diag)
+    (compiler-diagnostic-secondary-spans diag)
+    (compiler-diagnostic-notes diag)))
+
+(define (compiler-diagnostic-with-category
+  [diag : CompilerDiagnostic]
+  [category : String]) : CompilerDiagnostic
+  (compiler-diagnostic-new
+    (compiler-diagnostic-message diag)
+    (compiler-diagnostic-level diag)
+    (compiler-diagnostic-code diag)
+    (CompilerDiagnosticSomeString category)
+    (compiler-diagnostic-primary-span diag)
+    (compiler-diagnostic-help diag)
+    (compiler-diagnostic-secondary-spans diag)
+    (compiler-diagnostic-notes diag)))
+
+(define (compiler-diagnostic-with-help
+  [diag : CompilerDiagnostic]
+  [help : String]) : CompilerDiagnostic
+  (compiler-diagnostic-new
+    (compiler-diagnostic-message diag)
+    (compiler-diagnostic-level diag)
+    (compiler-diagnostic-code diag)
+    (compiler-diagnostic-category diag)
+    (compiler-diagnostic-primary-span diag)
+    (CompilerDiagnosticSomeString help)
+    (compiler-diagnostic-secondary-spans diag)
+    (compiler-diagnostic-notes diag)))
+
+(define (compiler-diagnostic-with-secondary
+  [diag : CompilerDiagnostic]
+  [span : CompilerDiagnosticSpan]
+  [label : CompilerDiagnosticMaybeString]) : CompilerDiagnostic
+  (compiler-diagnostic-new
+    (compiler-diagnostic-message diag)
+    (compiler-diagnostic-level diag)
+    (compiler-diagnostic-code diag)
+    (compiler-diagnostic-category diag)
+    (compiler-diagnostic-primary-span diag)
+    (compiler-diagnostic-help diag)
+    (CompilerDiagnosticLabelCons
+      (CompilerDiagnosticLabel span label)
+      (compiler-diagnostic-secondary-spans diag))
+    (compiler-diagnostic-notes diag)))
+
+(define (compiler-diagnostic-with-note
+  [diag : CompilerDiagnostic]
+  [note : String]) : CompilerDiagnostic
+  (compiler-diagnostic-new
+    (compiler-diagnostic-message diag)
+    (compiler-diagnostic-level diag)
+    (compiler-diagnostic-code diag)
+    (compiler-diagnostic-category diag)
+    (compiler-diagnostic-primary-span diag)
+    (compiler-diagnostic-help diag)
+    (compiler-diagnostic-secondary-spans diag)
+    (CompilerDiagnosticNoteCons note (compiler-diagnostic-notes diag))))
+
+(define (compiler-diagnostic-with-primary-span
+  [diag : CompilerDiagnostic]
+  [span : CompilerDiagnosticSpan]) : CompilerDiagnostic
+  (compiler-diagnostic-new
+    (compiler-diagnostic-message diag)
+    (compiler-diagnostic-level diag)
+    (compiler-diagnostic-code diag)
+    (compiler-diagnostic-category diag)
+    span
+    (compiler-diagnostic-help diag)
+    (compiler-diagnostic-secondary-spans diag)
+    (compiler-diagnostic-notes diag)))
 
 ;; Reuse a diagnostic's location (path/line/col) with a new message. Used by the
 ;;
@@ -78,11 +296,15 @@
 (define (compiler-diagnostic-with-message
   [diag : CompilerDiagnostic]
   [message : String]) : CompilerDiagnostic
-  (CompilerDiagnostic
-    (compiler-diagnostic-path diag)
-    (compiler-diagnostic-line diag)
-    (compiler-diagnostic-col diag)
-    message))
+  (compiler-diagnostic-new
+    message
+    (compiler-diagnostic-level diag)
+    (compiler-diagnostic-code diag)
+    (compiler-diagnostic-category diag)
+    (compiler-diagnostic-primary-span diag)
+    (compiler-diagnostic-help diag)
+    (compiler-diagnostic-secondary-spans diag)
+    (compiler-diagnostic-notes diag)))
 
 (define (compiler-diagnostic-render [diag : CompilerDiagnostic]) : String
   (string-append
@@ -243,7 +465,7 @@
       (compiler-diagnostic-cat3 "   = help: " text "\n")]
     [CompilerDiagnosticNoString ""]))
 
-(define (compiler-diagnostic-render-source
+(define (compiler-diagnostic-render-source-with-metadata
   [diag : CompilerDiagnostic]
   [source : String]
   [level : CompilerDiagnosticLevel]
@@ -259,10 +481,20 @@
           (compiler-diagnostic-render-source-snippet diag source)
           (compiler-diagnostic-render-help help))))))
 
+(define (compiler-diagnostic-render-source
+  [diag : CompilerDiagnostic]
+  [source : String]) : String
+  (compiler-diagnostic-render-source-with-metadata
+    diag
+    source
+    (compiler-diagnostic-level diag)
+    (compiler-diagnostic-code diag)
+    (compiler-diagnostic-help diag)))
+
 (define (compiler-diagnostic-render-ok?) : bool
   (string-eq
     (compiler-diagnostic-render
-      (CompilerDiagnostic "demo.tl" 3 7 "parse: malformed define"))
+      (compiler-diagnostic-simple "demo.tl" 3 7 "parse: malformed define"))
     "demo.tl:3:7: parse: malformed define"))
 
 (define (compiler-diagnostic-source-error-ok?) : bool
@@ -283,7 +515,7 @@
 
 (define (compiler-diagnostic-rewrite-ok?) : bool
   (let
-    [diag : CompilerDiagnostic (CompilerDiagnostic "old.tl" 1 2 "old")]
+    [diag : CompilerDiagnostic (compiler-diagnostic-simple "old.tl" 1 2 "old")]
     [moved : CompilerDiagnostic (compiler-diagnostic-with-path diag "new.tl")]
     [rewritten : CompilerDiagnostic
       (compiler-diagnostic-with-message moved "new message")]
@@ -298,32 +530,66 @@
 (define (compiler-diagnostic-source-render-ok?) : bool
   (let
     [diag : CompilerDiagnostic
-      (CompilerDiagnostic "test.tl" 3 6 "type mismatch")]
+      (compiler-diagnostic-with-help
+        (compiler-diagnostic-with-code
+          (compiler-diagnostic-simple "test.tl" 3 6 "type mismatch")
+          "E0001")
+        "expected i64, found bool")]
     [source : String "(define x true)\n(define y 42)\n(+ x y)\n"]
-    [out : String
-      (compiler-diagnostic-render-source
-        diag
-        source
-        CompilerDiagnosticError
-        (CompilerDiagnosticSomeString "E0001")
-        (CompilerDiagnosticSomeString "expected i64, found bool"))]
+    [out : String (compiler-diagnostic-render-source diag source)]
     (compiler-diagnostic-string-eq?
       out
       "error[E0001]: type mismatch\n  --> test.tl:3:6\n   |\n 3 | (+ x y)\n   |      ^\n   = help: expected i64, found bool\n")))
 
 (define (compiler-diagnostic-source-render-minimal-ok?) : bool
   (let
-    [diag : CompilerDiagnostic (CompilerDiagnostic "lib.tl" 1 1 "heads up")]
-    [out : String
-      (compiler-diagnostic-render-source
-        diag
-        "x\n"
-        CompilerDiagnosticWarning
-        CompilerDiagnosticNoString
-        CompilerDiagnosticNoString)]
+    [diag : CompilerDiagnostic
+      (compiler-diagnostic-with-level
+        (compiler-diagnostic-simple "lib.tl" 1 1 "heads up")
+        CompilerDiagnosticWarning)]
+    [out : String (compiler-diagnostic-render-source diag "x\n")]
     (compiler-diagnostic-string-eq?
       out
       "warning: heads up\n  --> lib.tl:1:1\n   |\n 1 | x\n   | ^\n")))
+
+(define (compiler-diagnostic-end-span-ok?) : bool
+  (let
+    [diag : CompilerDiagnostic
+      (compiler-diagnostic-from-span
+        "input.tl"
+        (SourceSpan 2 3 2 9)
+        "wide token")]
+    [moved : CompilerDiagnostic (compiler-diagnostic-with-path diag "moved.tl")]
+    (and
+      (= (compiler-diagnostic-end-line moved) 2)
+      (and
+        (= (compiler-diagnostic-end-col moved) 9)
+        (string-eq (compiler-diagnostic-path moved) "moved.tl")))))
+
+(define (compiler-diagnostic-metadata-ok?) : bool
+  (let
+    [diag : CompilerDiagnostic
+      (compiler-diagnostic-with-note
+        (compiler-diagnostic-with-secondary
+          (compiler-diagnostic-with-category
+            (compiler-diagnostic-with-code
+              (compiler-diagnostic-simple "meta.tl" 1 2 "metadata")
+              "E1234")
+            "typecheck")
+          (CompilerDiagnosticSpan "other.tl" 4 5 4 8)
+          (CompilerDiagnosticSomeString "related"))
+        "first note")]
+    (match (compiler-diagnostic-secondary-spans diag)
+      [(CompilerDiagnosticLabelCons label _)
+        (match (compiler-diagnostic-notes diag)
+          [(CompilerDiagnosticNoteCons note _)
+            (and
+              (string-eq note "first note")
+              (match (compiler-diagnostic-code diag)
+                [(CompilerDiagnosticSomeString code) (string-eq code "E1234")]
+                [CompilerDiagnosticNoString false]))]
+          [CompilerDiagnosticNoteNil false])]
+      [CompilerDiagnosticLabelNil false])))
 
 (define (compiler-diagnostic-self-test) : i64
   (if (compiler-diagnostic-render-ok?)
@@ -331,7 +597,11 @@
       (if (compiler-diagnostic-rewrite-ok?)
         (if (and
           (compiler-diagnostic-source-render-ok?)
-          (compiler-diagnostic-source-render-minimal-ok?))
+          (and
+            (compiler-diagnostic-source-render-minimal-ok?)
+            (and
+              (compiler-diagnostic-end-span-ok?)
+              (compiler-diagnostic-metadata-ok?))))
           42
           4)
         3)

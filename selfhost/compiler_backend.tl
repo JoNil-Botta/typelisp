@@ -13670,6 +13670,35 @@ tl_windows_sdk_registry_install:
       [(BackendTargetWindows) ".text\n.globl main\n"])
     ".text\n"))
 
+;; Run main on a fresh 1 GiB mmap'd stack, then exit(main()). The compiler
+;; recurses far deeper than the default 8 MiB stack rlimit allows — type-directed
+;; `clone` of large IR values during arena escapes (#1633) is the worst case — so
+;; a self-hosted compiler segfaults compiling a large program on the default
+;; stack. argc/argv/envp are already captured into globals before this runs, so
+;; switching %rsp is safe (main reads them from globals, not the stack). A failed
+;; mmap (negative result) keeps the original stack; the unmapped page below the
+;; region turns any overflow into a clean SIGSEGV rather than silent corruption.
+(define (compiler-backend-entry-call-main) : String
+  "    movq $0x40000000, %rsi
+    xorq %rdi, %rdi
+    movq $3, %rdx
+    movq $0x22, %r10
+    movq $-1, %r8
+    xorq %r9, %r9
+    movq $9, %rax
+    syscall
+    testq %rax, %rax
+    js .L_tl_main_keep_stack
+    addq $0x40000000, %rax
+    andq $-16, %rax
+    movq %rax, %rsp
+.L_tl_main_keep_stack:
+    call main
+    movq %rax, %rdi
+    movq $60, %rax
+    syscall
+")
+
 (define (compiler-backend-entry
   [capture-argv : bool]
   [capture-env : bool]
@@ -13698,16 +13727,12 @@ tl_windows_sdk_registry_install:
             "")
           (string-append
             global-inits
-            "    call main
-    movq %rax, %rdi
-    movq $60, %rax
-    syscall
-"))))
+            (compiler-backend-entry-call-main)))))
     (string-append
       "_start:\n"
       (string-append
         global-inits
-        "    call main\n    movq %rax, %rdi\n    movq $60, %rax\n    syscall\n"))))
+        (compiler-backend-entry-call-main)))))
 
 (define (compiler-backend-entry-for-target
   [target : CompilerBackendTarget]

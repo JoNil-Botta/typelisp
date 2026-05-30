@@ -23,7 +23,7 @@ reference_region_defined|check-ok|tests/safety/reference_region_defined.tl|-|-
 raw_pointer_values_defined|check-ok|tests/safety/raw_pointer_values_defined.tl|-|-
 
 # Static rejection areas.
-unsupported_cast_reject|check-fail|tests/safety/unsupported_cast_reject.tl|-|cast requires integer/char source and target
+unsupported_cast_reject|check-fail|tests/safety/unsupported_cast_reject.tl|-|cast requires
 unbound_variable_reject|check-fail|tests/safety/unbound_variable_reject.tl|-|unbound name missing
 region_escape_reject|check-fail|tests/safety/region_escape_reject.tl|-|cannot escape with-arena
 mutable_reference_reject|check-fail|tests/safety/mutable_reference_reject.tl|-|mutable reference types require mutable borrow checker support

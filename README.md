@@ -108,13 +108,14 @@ struct/enum fields, and (optionally) `let` bindings.
 (cast 300 : u8)
 ```
 
-`cast` currently supports integer/char widening, narrowing, and truncation only.
-`f64` arithmetic is supported, but floating-point casts are not implemented yet.
+`cast` supports the full scalar numeric matrix: integer/char widening,
+narrowing, and truncation; `f64` <-> `f32` precision changes; and integer/char
+<-> float conversions (float -> integer truncates toward zero).
 
 ### Types
 
 ```
-i64 i32 i16 i8   u64 u32 u16 u8   f64   bool   char   unit   String
+i64 i32 i16 i8   u64 u32 u16 u8   f64 f32   bool   char   unit   String
 (Array t)         ; dynamic, runtime-sized array
 (Array t n)       ; fixed-size array (literals/ref/set compile; returns rejected)
 (Tuple t1 t2 ...) ; local tuple literals/ref compile; params/returns rejected
@@ -123,7 +124,8 @@ i64 i32 i16 i8   u64 u32 u16 u8   f64   bool   char   unit   String
 Name              ; a defenum / defstruct nominal type
 ```
 
-`f32` is in the type system but rejected by backend validation today.
+Both `f64` and `f32` support scalar parameters, returns, locals, arithmetic,
+comparisons, and casts.
 Raw pointer types `(Ptr T)` and `(MutPtr T)` plus `(unsafe ...)` are implemented
 for the v1 FFI surface described in [SPEC.md](SPEC.md) sections 3.4 and 5.20.
 

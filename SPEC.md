@@ -37,8 +37,8 @@ accepted safe code as having behavior outside this table.
 | Integer `+`, `-`, `*`, and `neg` overflow | Defined wrap | Wrap modulo 2^N for the result type width; signed results interpret the wrapped bits as two's-complement values. See section 5.4 and #1101. |
 | Integer `/` and `%` invalid operands | Deterministic runtime trap | Divisor zero and signed minimum divided/remaindered by `-1` trap through the integer division/remainder abort path. See section 5.4 and #1101. |
 | Integer shift counts | Deterministic runtime trap | `shl`/`shr` trap when the count is negative or not less than the left operand's bit width. See section 5.4. |
-| Supported integer/`char` casts | Defined result | Integer/integer and integer/`char` casts use the defined truncation, sign-extension, and zero-extension rules. See section 3.8 and #1101. |
-| Unsupported casts | Static reject | Unsupported cast families, including floating-point casts until they are specified, are rejected before lowering. See section 3.8 and #1101. |
+| Scalar numeric casts | Defined result | Integer/integer, integer/`char`, `f64` ↔ `f32`, and integer/`char` ↔ float casts use defined truncation, sign/zero-extension, and round-to-nearest/truncate-toward-zero rules. See section 3.8 and #1101. |
+| Non-numeric casts | Static reject | Casts touching non-numeric types are rejected before lowering. See section 3.8 and #1101. |
 | Array, string, slice, and generated collection bounds | Deterministic runtime trap | Out-of-bounds indexing, invalid slice ranges, negative dynamic-array lengths, and allocation byte-count overflow trap through the bounds-check abort path. SPMD inactive tail lanes do not perform bounds checks or memory accesses. See sections 5.15 and 6.1. |
 | Initialized-before-use and no use-after-move | Static reject | Safe code cannot read an uninitialized place or a place whose move-only value has been moved. Move-only aggregate semantics are specified in section 4.6.2 and #1046; enforcement is tracked by #1048 and #805. |
 | Borrow/reference validity and arena escape | Static reject | Safe references and region-tagged aggregate handles cannot outlive their lifetime/arena, be returned or stored into a longer-lived slot, or be captured by an escaping closure. Current region-tagged escape checks are in sections 3.9, 5.16, and 7.3; immutable borrow rules are owned by #1033/#1034/#1035. |
@@ -183,7 +183,7 @@ narrower or unsigned integer is required. Floating-point literals are always
 | `u16` | 2 bytes | Unsigned 16-bit |
 | `u8`  | 1 byte  | Unsigned 8-bit |
 | `f64` | 8 bytes | IEEE-754 double precision |
-| `f32` | 4 bytes | Parsed/typechecked in some positions, rejected by backend validation |
+| `f32` | 4 bytes | IEEE-754 single precision |
 | `bool`| 1 byte  | `true` (1) or `false` (0) |
 | `char`| 1 byte  | Single ASCII/byte value |
 | `unit`| 0 bytes | Sentinels for "no value" (similar to `void` or `()`) |
@@ -414,8 +414,7 @@ slice exists.
 V1 `repr c` fields are restricted to ABI-safe types:
 
 - Fixed-width scalar types supported by the backend: `i8`, `u8`, `i16`, `u16`,
-  `i32`, `u32`, `i64`, `u64`, `f64`, `bool`, and `char`. `f32` remains rejected
-  until the backend supports it.
+  `i32`, `u32`, `i64`, `u64`, `f64`, `f32`, `bool`, and `char`.
 - Raw pointer types once the raw-pointer surface is implemented (#809/#896).
 - Nested structs that are themselves marked `repr c`.
 
@@ -546,9 +545,15 @@ introducing new user-visible bindings.
   integer sources.
 - `char` → integer: zero-extends the byte value.
 - Integer → `char`: truncates to the low byte.
-- Floating-point casts are not supported yet. `f64` arithmetic, comparison,
-  arguments, returns, and `print-float` are supported, but `(cast ...)`
-  currently accepts only integer/char source and target types.
+- `f64` ↔ `f32`: precision conversions (`f64` → `f32` rounds to binary32,
+  `f32` → `f64` widens exactly).
+- Integer/`char` → float: produces the nearest representable float (the source
+  is treated as a signed value).
+- Float → integer/`char`: truncates toward zero, then keeps the low N bits of
+  the target width. The runtime result of converting a float outside the target
+  range is unspecified but defined (it does not trap or invoke UB).
+- Casts are defined across the full scalar numeric matrix (integers, `char`,
+  `f32`, `f64`); casts touching non-numeric types are statically rejected.
 - No implicit conversions.
 
 ### 3.9 Region-tagged types (v1)
@@ -924,7 +929,7 @@ escaped consistently. Ordinary TypeLisp declarations still use module-prefixed
 Extern signatures may use backend-supported scalar values, `unit`, function
 pointers, raw pointers, and pointer-sized TypeLisp runtime handles such as
 `String`, dynamic arrays, structs, and enums. Tuple values, fixed arrays,
-references, regions, `f32`, and other unsupported aggregate forms are rejected
+references, regions, and unsupported aggregate forms are rejected
 for extern parameters and returns; pass a raw pointer when a foreign API needs
 aggregate storage.
 
@@ -1768,7 +1773,7 @@ All operators are prefix functions (or special forms):
   wrapped bits.
 - Bitwise and shift operators accept integer operands and return the left-hand
   operand type.
-- `+`, `-`, `*`, `/` also operate on `f64`; `%` on floating-point values is
+- `+`, `-`, `*`, `/` also operate on `f64` and `f32`; `%` on floating-point values is
   rejected by backend validation.
 - Integer `/` and `%` trap at runtime when the divisor is zero, or when a
   signed dividend is the minimum value for its width and the divisor is `-1`
@@ -1845,8 +1850,9 @@ as the head of the final `cond` arm.
 
 ### 5.12 `(cast expr : type)` — type conversion
 
-See §3.8. Casts currently cover integer/char widening, narrowing, and
-truncation only; floating-point conversions are deferred.
+See §3.8. Casts cover the full scalar numeric matrix: integer/`char`
+widening, narrowing, and truncation; `f64` ↔ `f32` precision changes; and
+integer/`char` ↔ float conversions (float → integer truncates toward zero).
 
 ### 5.13 `(match scrutinee [pattern expr] ...)` — pattern matching
 

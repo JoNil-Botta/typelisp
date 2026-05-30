@@ -162,6 +162,21 @@ install_linux_bundle() {
             exit 1
         fi
     done
+    for optional_file in \
+        lib/stage1/drivers/selfhost-lsp \
+        lib/stage1/drivers/selfhost-test
+    do
+        if [ -e "$bundle_root/$optional_file" ]; then
+            if [ ! -f "$bundle_root/$optional_file" ]; then
+                echo "Linux stage0 bundle optional path is not a file: $optional_file" >&2
+                exit 1
+            fi
+            if [ ! -s "$bundle_root/$optional_file" ]; then
+                echo "Linux stage0 bundle contains an empty optional file: $optional_file" >&2
+                exit 1
+            fi
+        fi
+    done
     for required_dir in selfhost stdlib; do
         if [ ! -d "$bundle_root/$required_dir" ]; then
             echo "Linux stage0 bundle is missing required directory: $required_dir" >&2
@@ -177,6 +192,14 @@ install_linux_bundle() {
         "$install_tmp/lib/stage1/drivers/selfhost-doc" \
         "$install_tmp/lib/stage1/drivers/selfhost-build" \
         "$install_tmp/lib/stage1/drivers/selfhost-repl"
+    for optional_executable in \
+        "$install_tmp/lib/stage1/drivers/selfhost-lsp" \
+        "$install_tmp/lib/stage1/drivers/selfhost-test"
+    do
+        if [ -f "$optional_executable" ]; then
+            chmod +x "$optional_executable"
+        fi
+    done
 
     rm -f "$DEST" "$OUT_DIR/STAGE0_BUNDLE"
     rm -rf "$OUT_DIR/lib/stage1" "$OUT_DIR/scripts/stage1-typelisp-wrapper.sh"

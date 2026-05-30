@@ -130,6 +130,21 @@ function Install-LinuxStage0Bundle {
             throw "Linux stage0 bundle contains an empty required file: $Required"
         }
     }
+    $OptionalFiles = @(
+        "lib/stage1/drivers/selfhost-lsp",
+        "lib/stage1/drivers/selfhost-test"
+    )
+    foreach ($Optional in $OptionalFiles) {
+        $Path = Join-Stage0BundlePath $BundleRoot $Optional
+        if (Test-Path -LiteralPath $Path) {
+            if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
+                throw "Linux stage0 bundle optional path is not a file: $Optional"
+            }
+            if ((Get-Item -LiteralPath $Path).Length -le 0) {
+                throw "Linux stage0 bundle contains an empty optional file: $Optional"
+            }
+        }
+    }
     foreach ($Required in @("selfhost", "stdlib")) {
         $Path = Join-Stage0BundlePath $BundleRoot $Required
         if (-not (Test-Path -LiteralPath $Path -PathType Container)) {
@@ -156,6 +171,11 @@ function Install-LinuxStage0Bundle {
         "lib/stage1/drivers/selfhost-build",
         "lib/stage1/drivers/selfhost-repl"
     )
+    foreach ($Optional in $OptionalFiles) {
+        if (Test-Path -LiteralPath (Join-Stage0BundlePath $OutputDirFull $Optional) -PathType Leaf) {
+            $ExecutablePaths += $Optional
+        }
+    }
     foreach ($Executable in $ExecutablePaths) {
         & chmod +x (Join-Stage0BundlePath $OutputDirFull $Executable)
     }

@@ -166,11 +166,13 @@ DOC_DRIVER=$(build_driver "$SEED_TYPELISP_BIN" "$STAGE1_BIN" doc selfhost/doc.tl
 BUILD_DRIVER=$(build_driver "$SEED_TYPELISP_BIN" "$STAGE1_BIN" build selfhost/build.tl selfhost-build)
 REPL_DRIVER=$(build_driver "$SEED_TYPELISP_BIN" "$STAGE1_BIN" repl selfhost/repl.tl selfhost-repl)
 LSP_DRIVER=$(build_driver "$SEED_TYPELISP_BIN" "$STAGE1_BIN" lsp selfhost/lsp_frame.tl selfhost-lsp)
+TEST_DRIVER=$(build_driver "$SEED_TYPELISP_BIN" "$STAGE1_BIN" test selfhost/test.tl selfhost-test)
 
 cp "$DOC_DRIVER" "$BUNDLE_DIR/lib/stage1/drivers/selfhost-doc"
 cp "$BUILD_DRIVER" "$BUNDLE_DIR/lib/stage1/drivers/selfhost-build"
 cp "$REPL_DRIVER" "$BUNDLE_DIR/lib/stage1/drivers/selfhost-repl"
 cp "$LSP_DRIVER" "$BUNDLE_DIR/lib/stage1/drivers/selfhost-lsp"
+cp "$TEST_DRIVER" "$BUNDLE_DIR/lib/stage1/drivers/selfhost-test"
 
 cat > "$BUNDLE_DIR/STAGE0_BUNDLE" <<'EOF'
 typelisp-stage0-bundle v1
@@ -182,6 +184,7 @@ driver doc lib/stage1/drivers/selfhost-doc
 driver build lib/stage1/drivers/selfhost-build
 driver repl lib/stage1/drivers/selfhost-repl
 driver lsp lib/stage1/drivers/selfhost-lsp
+driver test lib/stage1/drivers/selfhost-test
 source-tree selfhost
 stdlib stdlib
 EOF
@@ -200,6 +203,8 @@ TYPELISP_STAGE1_REPL_BIN="$SELF_DIR/lib/stage1/drivers/selfhost-repl"
 export TYPELISP_STAGE1_REPL_BIN
 TYPELISP_STAGE1_LSP_BIN="$SELF_DIR/lib/stage1/drivers/selfhost-lsp"
 export TYPELISP_STAGE1_LSP_BIN
+TYPELISP_STAGE1_TEST_BIN="$SELF_DIR/lib/stage1/drivers/selfhost-test"
+export TYPELISP_STAGE1_TEST_BIN
 TYPELISP_STAGE1_DRIVER_CACHE_DIR="$SELF_DIR/lib/stage1/cache"
 export TYPELISP_STAGE1_DRIVER_CACHE_DIR
 exec "$SELF_DIR/scripts/stage1-typelisp-wrapper.sh" "$@"
@@ -212,7 +217,8 @@ chmod +x \
     "$BUNDLE_DIR/lib/stage1/drivers/selfhost-doc" \
     "$BUNDLE_DIR/lib/stage1/drivers/selfhost-build" \
     "$BUNDLE_DIR/lib/stage1/drivers/selfhost-repl" \
-    "$BUNDLE_DIR/lib/stage1/drivers/selfhost-lsp"
+    "$BUNDLE_DIR/lib/stage1/drivers/selfhost-lsp" \
+    "$BUNDLE_DIR/lib/stage1/drivers/selfhost-test"
 
 mkdir -p "$(dirname -- "$OUT_ARCHIVE_ABS")"
 rm -f "$OUT_ARCHIVE_ABS"

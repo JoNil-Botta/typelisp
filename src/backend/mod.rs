@@ -3365,7 +3365,9 @@ impl X86_64Backend {
         self.emit("tl_print_i64:");
         self.emit("    push %rbp");
         self.emit("    mov %rsp, %rbp");
-        self.emit("    sub $48, %rsp");
+        // The digit buffer grows down from -1(%rbp) (up to ~21 bytes); reserve
+        // 64 so the 32-byte _write shadow space at the bottom never overlaps it.
+        self.emit("    sub $64, %rsp");
         self.emit("    leaq -1(%rbp), %r10");
         self.emit("    movb $10, (%r10)");
         self.emit("    movq %rcx, %rax");
@@ -3414,6 +3416,7 @@ impl X86_64Backend {
         self.emit("tl_print_bool:");
         self.emit("    push %rbp");
         self.emit("    mov %rsp, %rbp");
+        self.emit("    sub $32, %rsp"); // Win64 shadow space for _write
         self.emit("    testb %cl, %cl");
         self.emit("    jz .L_tl_print_bool_win_false");
         self.emit("    leaq .L_tl_bool_true(%rip), %rdx");
@@ -3434,6 +3437,7 @@ impl X86_64Backend {
         self.emit("tl_print_f64:");
         self.emit("    push %rbp");
         self.emit("    mov %rsp, %rbp");
+        self.emit("    sub $32, %rsp"); // Win64 shadow space for printf/fflush
         self.emit("    movsd %xmm0, %xmm1");
         self.emit("    movq %xmm0, %rdx");
         self.emit("    leaq .L_tl_fmt_f64(%rip), %rcx");
@@ -3449,7 +3453,8 @@ impl X86_64Backend {
         self.emit("tl_print_char:");
         self.emit("    push %rbp");
         self.emit("    mov %rsp, %rbp");
-        self.emit("    sub $16, %rsp");
+        // 32 bytes shadow space for _write plus the 1-byte char local at -1.
+        self.emit("    sub $48, %rsp");
         self.emit("    movb %cl, -1(%rbp)");
         self.emit("    leaq -1(%rbp), %rdx");
         self.emit("    movq $1, %r8");
@@ -4743,6 +4748,13 @@ impl X86_64Backend {
         self.emit(&format!("{}:", symbol));
         self.emit("    push %rbp");
         self.emit("    mov %rsp, %rbp");
+        // Reserve 32 bytes of Win64 shadow space before `_write`. `_write` to a
+        // pipe (e.g. when this process's stdout/stderr is captured by a parent)
+        // routes through `WriteFile`, which homes its register arguments into
+        // the caller-provided shadow area; without this reservation those
+        // stores land on the saved rbp and this helper's return address at
+        // [rbp+8] and corrupt the `ret`. `mov %rbp,%rsp` undoes the reservation.
+        self.emit("    sub $32, %rsp");
         self.emit("    movq %rdx, %r8");
         self.emit("    movq %rcx, %rdx");
         self.emit(&format!("    movq ${}, %rcx", fd));
@@ -7693,7 +7705,10 @@ impl X86_64Backend {
         self.emit("    push %r13");
         self.emit("    push %r14");
         self.emit("    push %r15");
-        self.emit("    sub $8, %rsp");
+        // Reserve 32 bytes of Win64 shadow space (kept 16-aligned: 5 pushes +
+        // 40 = 80) so `__p__environ` and other callees home their arguments
+        // below the saved registers instead of clobbering them.
+        self.emit("    sub $40, %rsp");
         self.emit("    movq %rcx, %r12"); // override list
         // No overrides -> return NULL (inherit current environment).
         self.emit("    testq %r12, %r12");
@@ -7773,7 +7788,7 @@ impl X86_64Backend {
         self.emit(".L_tl_process_win_envp_null:");
         self.emit("    xorq %rax, %rax");
         self.emit(".L_tl_process_win_envp_return:");
-        self.emit("    add $8, %rsp");
+        self.emit("    add $40, %rsp");
         self.emit("    pop %r15");
         self.emit("    pop %r14");
         self.emit("    pop %r13");
@@ -7792,6 +7807,13 @@ impl X86_64Backend {
         self.emit("    push %r12");
         self.emit("    push %r13");
         self.emit("    push %r14");
+        // Reserve 32 bytes of Win64 shadow space below the saved registers.
+        // The called CRT functions (`_lseeki64`, `_read`) may home their
+        // register arguments into the caller-provided shadow area; without
+        // this reservation those stores land on the pushed rbx/r12/r13/r14
+        // slots, which the epilogue then pops back as garbage and corrupts the
+        // caller. rsp stays 16-aligned (4 pushes + 32 are both multiples of 16).
+        self.emit("    sub $32, %rsp");
         self.emit("    movq %rcx, %rbx");
         self.emit("    movq %rbx, %rcx");
         self.emit("    xorq %rdx, %rdx");
@@ -7833,6 +7855,7 @@ impl X86_64Backend {
         self.emit(".L_tl_process_read_fd_to_string_error:");
         self.emit("    xorq %rax, %rax");
         self.emit(".L_tl_process_read_fd_to_string_done:");
+        self.emit("    add $32, %rsp");
         self.emit("    pop %r14");
         self.emit("    pop %r13");
         self.emit("    pop %r12");
@@ -8782,7 +8805,11 @@ impl X86_64Backend {
 
     fn generate_windows_process_close_temp_files_runtime_function(&mut self) {
         self.emit(".L_tl_process_close_temp_files:");
-        self.emit("    sub $8, %rsp");
+        // Reserve 32 bytes of Win64 shadow space (plus 8 for 16-alignment) so
+        // the `fclose`/`_close` callees home their arguments below this helper's
+        // own return address instead of overwriting it. This helper has no rbp
+        // frame of its own and reads the FILE*/fd locals from the caller's rbp.
+        self.emit("    sub $40, %rsp");
         self.emit("    movq -48(%rbp), %rcx");
         self.emit("    testq %rcx, %rcx");
         self.emit("    jz .L_tl_process_close_temp_stderr");
@@ -8807,7 +8834,7 @@ impl X86_64Backend {
         self.emit_call("_close");
         self.emit("    movq $-1, -88(%rbp)");
         self.emit(".L_tl_process_close_all_done:");
-        self.emit("    add $8, %rsp");
+        self.emit("    add $40, %rsp");
         self.emit("    ret");
         self.emit("");
     }
@@ -9510,6 +9537,13 @@ impl X86_64Backend {
         self.emit(&format!("{}:", FLUSH_STDOUT_RUNTIME_SYMBOL));
         self.emit("    push %rbp");
         self.emit("    mov %rsp, %rbp");
+        // Reserve 32 bytes of Win64 shadow space before calling `fflush`.
+        // Without it the callee's argument-home stores land on the saved rbp
+        // and this function's return address at [rbp+8]; `fflush(NULL)` on a
+        // pipe (the captured-output case) does enough work to home its args
+        // and corrupts the return address, crashing the `ret`. `mov %rbp,%rsp`
+        // in the epilogue undoes this reservation.
+        self.emit("    sub $32, %rsp");
         self.emit("    xorq %rcx, %rcx");
         self.emit_call("fflush");
         self.emit("    testl %eax, %eax");

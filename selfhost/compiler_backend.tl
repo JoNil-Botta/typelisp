@@ -7381,7 +7381,21 @@
           "env-path-separator"
           env-path-separator)))))
 
+;; The first-class arena runtime helpers are always emitted (#1633), so they are
+;; provided runtime symbols (resolve to their raw names, not the mangled
+;; `_tl_tl_arena_*`).
 (define (compiler-backend-plan-provides?
+  [plan : CompilerBackendRuntimePlan]
+  [name : String]) : bool
+  (or
+    (backend-or4
+      (string-eq name "tl_arena_make")
+      (string-eq name "tl_arena_current")
+      (string-eq name "tl_arena_set")
+      (string-eq name "tl_arena_destroy"))
+    (compiler-backend-plan-provides-rest? plan name)))
+
+(define (compiler-backend-plan-provides-rest?
   [plan : CompilerBackendRuntimePlan]
   [name : String]) : bool
   (match plan
@@ -8531,6 +8545,141 @@ tl_region_mark:
     ret
 .L_tl_region_mark_zero:
     xorq %rax, %rax
+    ret
+
+")
+
+;; First-class arena runtime (#1633). `tl_arena_make` maps a fresh INDEPENDENT
+;; 64 MiB arena chain (prev-link 0) and returns its header WITHOUT changing the
+;; active arena. `tl_arena_current`/`tl_arena_set` read/write the active arena.
+;; `tl_arena_destroy` releases an arena's whole chain (prev-links to 0). Arena
+;; header is the same 32-byte record as tl_alloc {0:prev, 8:base, 16:bump,
+;; 24:end}. System V (mmap=9 / munmap=11) flavor.
+(define (compiler-backend-runtime-arena-functions) : String
+  "    .globl tl_arena_current
+tl_arena_current:
+    movq tl_current_arena(%rip), %rax
+    ret
+
+    .globl tl_arena_set
+tl_arena_set:
+    movq %rdi, tl_current_arena(%rip)
+    ret
+
+    .globl tl_arena_make
+tl_arena_make:
+    movq $0x4000000, %rsi
+    xorq %rdi, %rdi
+    movq $3, %rdx
+    movq $0x22, %r10
+    movq $-1, %r8
+    xorq %r9, %r9
+    movq $9, %rax
+    syscall
+    testq %rax, %rax
+    js .L_tl_arena_make_abort
+    movq $0, 0(%rax)
+    leaq 32(%rax), %rcx
+    movq %rcx, 8(%rax)
+    movq %rcx, 16(%rax)
+    movq %rax, %rcx
+    addq $0x4000000, %rcx
+    movq %rcx, 24(%rax)
+    ret
+.L_tl_arena_make_abort:
+    movq $60, %rax
+    movq $134, %rdi
+    syscall
+
+    .globl tl_arena_destroy
+tl_arena_destroy:
+    push %rbx
+    movq %rdi, %rbx
+.L_tl_arena_destroy_loop:
+    testq %rbx, %rbx
+    jz .L_tl_arena_destroy_done
+    movq 0(%rbx), %r8
+    push %r8
+    movq 24(%rbx), %rsi
+    subq %rbx, %rsi
+    movq %rbx, %rdi
+    movq $11, %rax
+    syscall
+    pop %r8
+    movq %r8, %rbx
+    jmp .L_tl_arena_destroy_loop
+.L_tl_arena_destroy_done:
+    pop %rbx
+    ret
+
+")
+
+;; Windows flavor: VirtualAlloc/VirtualFree under the Win64 ABI. The arg arrives
+;; in %rcx; a 32-byte shadow space is reserved before each call. A mapping
+;; failure traps via `ud2` (no libc dependency).
+(define (compiler-backend-runtime-windows-arena-functions) : String
+  "    .globl tl_arena_current
+tl_arena_current:
+    movq tl_current_arena(%rip), %rax
+    ret
+
+    .globl tl_arena_set
+tl_arena_set:
+    movq %rcx, tl_current_arena(%rip)
+    ret
+
+    .globl tl_arena_make
+tl_arena_make:
+    push %rbp
+    mov %rsp, %rbp
+    push %rbx
+    push %rsi
+    sub $32, %rsp
+    xorq %rcx, %rcx
+    movq $0x4000000, %rdx
+    movq $0x3000, %r8
+    movq $0x4, %r9
+    call VirtualAlloc
+    testq %rax, %rax
+    jz .L_tl_arena_make_win_abort
+    movq $0, 0(%rax)
+    leaq 32(%rax), %rcx
+    movq %rcx, 8(%rax)
+    movq %rcx, 16(%rax)
+    movq %rax, %rcx
+    addq $0x4000000, %rcx
+    movq %rcx, 24(%rax)
+    add $32, %rsp
+    popq %rsi
+    popq %rbx
+    popq %rbp
+    ret
+.L_tl_arena_make_win_abort:
+    ud2
+
+    .globl tl_arena_destroy
+tl_arena_destroy:
+    push %rbp
+    mov %rsp, %rbp
+    push %rbx
+    push %rsi
+    sub $32, %rsp
+    movq %rcx, %rsi
+.L_tl_arena_destroy_win_loop:
+    testq %rsi, %rsi
+    jz .L_tl_arena_destroy_win_done
+    movq 0(%rsi), %rbx
+    movq %rsi, %rcx
+    xorq %rdx, %rdx
+    movq $0x8000, %r8
+    call VirtualFree
+    movq %rbx, %rsi
+    jmp .L_tl_arena_destroy_win_loop
+.L_tl_arena_destroy_win_done:
+    add $32, %rsp
+    popq %rsi
+    popq %rbx
+    popq %rbp
     ret
 
 ")
@@ -13387,13 +13536,19 @@ tl_windows_sdk_registry_install:
             (compiler-backend-runtime-windows-sdk-registry-install-functions
               target)
             "")]
+        [arena-asm : String
+          (if (compiler-backend-target-windows? target)
+            (compiler-backend-runtime-windows-arena-functions)
+            (compiler-backend-runtime-arena-functions))]
         [runtime-front-asm : String
-          (backend-cat5
-            alloc-asm
-            region-mark-asm
-            region-reset-asm
-            oob-asm
-            div-abort-asm)]
+          (string-append
+            arena-asm
+            (backend-cat5
+              alloc-asm
+              region-mark-asm
+              region-reset-asm
+              oob-asm
+              div-abort-asm))]
         [runtime-string-asm : String
           (string-append
             (backend-cat5

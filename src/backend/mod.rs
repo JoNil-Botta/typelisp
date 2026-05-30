@@ -554,8 +554,9 @@ pub struct X86_64Backend {
 /// `Branch`/`Jump`/`Phi`) and scalar `let`/`set!` locals (`Alloc`/`Store`/`Load`
 /// against a local's stack slot) over integer/bool/char/f64 scalars.
 ///
-/// Constructs that are lowered but NOT yet selected to assembly (f32 values,
-/// pointer dereferences through computed addresses and `Global` operands)
+/// Constructs that are lowered but NOT yet selected to assembly (by-value
+/// tuple/fixed-array ABI, pointer dereferences through computed addresses and
+/// `Global` operands)
 /// are rejected here with a clear message instead of being silently
 /// miscompiled (they would otherwise fall through to a `# TODO` comment and
 /// produce wrong code).
@@ -591,7 +592,8 @@ fn unsupported_function_message(func_name: &str, what: &str) -> String {
          The x86_64 backend currently supports scalar arithmetic, comparisons, \
          unary/binary operators, direct function calls, recursion, control flow \
          (if/while), indirect calls through function-pointer values and scalar \
-         let/set! locals. F32 values and by-value tuple/fixed-array ABI are \
+         let/set! locals, and scalar f32/f64 floating-point values (XMM ABI, \
+         arithmetic, comparisons, and casts). By-value tuple/fixed-array ABI is \
          not yet wired.",
         func_name, what
     )

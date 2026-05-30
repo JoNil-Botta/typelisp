@@ -66,7 +66,10 @@
   [input-path : String]
   [stdlib-roots : CompilerLoadRootList]) : i64
   (match (compiler-check-file-with-roots input-path stdlib-roots)
-    [(OkCompilerCheck _) 0]
+    [(OkCompilerCheck _)
+      (begin
+        (print-string "Type checking passed!\n")
+        0)]
     [(ErrCompilerCheck diag)
       (begin
         (print-error (compiler-diagnostic-render diag))

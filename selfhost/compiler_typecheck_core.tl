@@ -309,7 +309,25 @@
     [(AstTyStruct name) name]
     [(AstTyVar name) name]))
 
+;; First-class arena primitives (#1633). The opaque `arena` handle is an i64
+;; pointer. `clone` is registered separately (it is type-directed: its result is
+;; its argument's type) in the call typechecker, not here.
+(define (tc-arena-builtins-env [env : TcTypeEnv]) : TcTypeEnv
+  (let
+    [out : TcTypeEnv env]
+    (begin
+      (set! out (tc-bind out "arena-make" (tc-fn0 (AstTyI64))))
+      (set! out (tc-bind out "arena-destroy" (tc-fn1 (AstTyI64) (AstTyUnit))))
+      (set! out (tc-bind out "arena-current" (tc-fn0 (AstTyI64))))
+      (set! out (tc-bind out "arena-set!" (tc-fn1 (AstTyI64) (AstTyUnit))))
+      (set! out (tc-bind out "arena-mark" (tc-fn0 (AstTyI64))))
+      (set! out (tc-bind out "arena-rewind" (tc-fn1 (AstTyI64) (AstTyUnit))))
+      out)))
+
 (define (tc-default-env) : TcTypeEnv
+  (tc-arena-builtins-env (tc-default-env-base)))
+
+(define (tc-default-env-base) : TcTypeEnv
   (let
     [e0 : TcTypeEnv (tc-empty-env)]
     (let
@@ -3705,6 +3723,17 @@
       "typecheck: "
       (string-append name " is compile-time only; wrap it in (comptime ...)"))))
 
+;; `(clone x)` deep-copies x into the current arena (#1633). Type-directed: the
+;; result is the argument's type, stripped of any inner-region tag (the copy
+;; lands in the enclosing arena, not the source's region).
+(define (tc-clone-call [ctx : TcContext] [env : TcTypeEnv] [args : AstExprList]) : ResultTcType
+  (match args
+    [(AstExprCons arg (AstExprNil))
+      (match (tc-expr ctx env arg)
+        [(OkTcType arg-ty) (OkTcType (tc-type-without-regions arg-ty))]
+        [(ErrTcType message) (ErrTcType message)])]
+    [_ (ErrTcType "typecheck: clone expects exactly one argument")]))
+
 (define (tc-call-or-array-length
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -3731,6 +3760,8 @@
             (ctfe-reflection-query-name? name)
             (not (tc-name-bound? env name)))
           (tc-reflection-query-runtime-call name)]
+        [(and (string-eq name "clone") (not (tc-name-bound? env name)))
+          (tc-clone-call ctx env args)]
         [else (tc-call-expr ctx env func args)])]
     [_ (tc-call-expr ctx env func args)]))
 
@@ -8146,6 +8177,43 @@
   [summary : CompilerTypecheckSummary]) : ResultCompilerTypecheck
   (tc-check-decls-with-paths-in-module ctx top-env decls paths summary ""))
 
+;; Per-declaration arena escape for typechecking (#1633). Checking one decl
+;; allocates type-inference scratch (unification temporaries, per-expression
+;; environment extensions) that the bump allocator never frees. We check each
+;; decl inside its own scratch arena and reclaim it afterward; the result is just
+;; `OkTcUnit` (nullary — nothing escapes) or an `ErrTcUnit` String (deep-cloned
+;; into the enclosing arena before the scratch is freed). The kept top-level type
+;; environment and the AST both live in the enclosing arena and are only read, so
+;; nothing dangles. Typecheck verdicts are unchanged (same diagnostics/summary).
+(define (tc-check-decl-escaping
+  [ctx : TcContext]
+  [top-env : TcTypeEnv]
+  [decl : AstDecl]) : ResultTcUnit
+  (let
+    [enclosing : i64 (arena-current)]
+    (let
+      [scratch : i64 (arena-make)]
+      (begin
+        (arena-set! scratch)
+        (match (tc-check-decl ctx top-env decl)
+          [(OkTcUnit)
+            (let
+              [scratch-head : i64 (arena-current)]
+              (begin
+                (arena-set! enclosing)
+                (arena-destroy scratch-head)
+                (OkTcUnit)))]
+          [(ErrTcUnit message)
+            (let
+              [scratch-head : i64 (arena-current)]
+              (begin
+                (arena-set! enclosing)
+                (let
+                  [escaped : String (clone message)]
+                  (begin
+                    (arena-destroy scratch-head)
+                    (ErrTcUnit escaped)))))])))))
+
 (define (tc-check-decls-with-paths-in-module
   [ctx : TcContext]
   [top-env : TcTypeEnv]
@@ -8179,7 +8247,7 @@
               [(OkTcEnv local-env)
                 (let
                   [decl-ctx : TcContext (tc-context-with-module ctx module)]
-                  (match (tc-check-decl decl-ctx local-env decl)
+                  (match (tc-check-decl-escaping decl-ctx local-env decl)
                     [(OkTcUnit)
                       (tc-check-decls-with-paths-in-module
                         ctx

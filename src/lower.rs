@@ -114,6 +114,10 @@ struct ProgramLowerer {
     enums: ast::EnumRegistry,
     structs: ast::StructRegistry,
     source_spans: SourceSpans,
+    /// Resolved types requested by `(clone x)` call sites across all functions
+    /// (#1633). After lowering every user function, one recursive `clone$<ty>`
+    /// helper is synthesized per type (transitively, deduped) and appended.
+    clone_types_needed: HashSet<Type>,
 }
 
 impl ProgramLowerer {
@@ -129,6 +133,7 @@ impl ProgramLowerer {
             enums: ast::EnumRegistry::default(),
             structs: ast::StructRegistry::default(),
             source_spans: SourceSpans::default(),
+            clone_types_needed: HashSet::new(),
         }
     }
 
@@ -344,6 +349,7 @@ impl ProgramLowerer {
                             .insert(init_fn_name, value.span());
                         self.functions.push(lowered_fn.function);
                         self.functions.extend(lowered_fn.synthetic_functions);
+                        self.clone_types_needed.extend(lowered_fn.clone_types_needed);
                     }
                     self.globals.push((name.clone(), val_ty, init_value));
                 }
@@ -365,6 +371,7 @@ impl ProgramLowerer {
                         .insert(name.clone(), body.span());
                     self.functions.push(lowered_fn.function);
                     self.functions.extend(lowered_fn.synthetic_functions);
+                    self.clone_types_needed.extend(lowered_fn.clone_types_needed);
                 }
                 ast::Decl::Extern { name, ty } => {
                     self.externs.push((name.clone(), self.resolve_type(ty)));
@@ -383,6 +390,11 @@ impl ProgramLowerer {
                 ast::Decl::Test { .. } => {}
             }
         }
+
+        // Emit one recursive deep-clone helper per aggregate type any `(clone x)`
+        // requested, now that every user function (and its clone requests) is
+        // lowered (#1633).
+        self.generate_clone_helpers();
 
         LoweredProgram {
             program: Program {
@@ -403,6 +415,131 @@ impl ProgramLowerer {
     ) -> LoweredFunction {
         let fn_lowerer = FnLowerer::new(name, params, ret, self.fn_context());
         fn_lowerer.lower_body(body, ret)
+    }
+
+    /// Synthesize one recursive `clone$T` function for every aggregate type a
+    /// `(clone x)` call requested, transitively and deduplicated (#1633). Each
+    /// helper reconstructs the value via `match`, recursively `(clone …)`-ing
+    /// every field, so the whole graph is copied into the current arena. Run
+    /// after all user functions are lowered.
+    fn generate_clone_helpers(&mut self) {
+        let mut worklist: Vec<Type> = self.clone_types_needed.iter().cloned().collect();
+        let mut emitted: HashSet<String> = HashSet::new();
+        while let Some(t) = worklist.pop() {
+            let fname = clone_fn_name(&t);
+            if !emitted.insert(fname.clone()) {
+                continue;
+            }
+            let body = match &t {
+                Type::Enum(name) => self.build_clone_enum_ast(name),
+                Type::Struct(name) => self.build_clone_struct_ast(name),
+                // Tuple clone helpers are not yet emitted (unused); `lower_clone`
+                // panics first if one is ever requested.
+                _ => continue,
+            };
+            let lowered =
+                self.lower_function(&fname, &[("__clone_src".to_string(), t.clone())], &t, &body);
+            self.functions.push(lowered.function);
+            self.functions.extend(lowered.synthetic_functions);
+            for nt in lowered.clone_types_needed {
+                if !emitted.contains(&clone_fn_name(&nt)) {
+                    worklist.push(nt);
+                }
+            }
+        }
+    }
+
+    /// Build the body AST of `clone$<enum>`: a `match` over every variant that
+    /// reconstructs it with each field deep-cloned via `(clone field)`. Scalar
+    /// fields make `(clone f)` an identity; aggregate/String fields recurse.
+    fn build_clone_enum_ast(&self, enum_name: &str) -> ast::Expr {
+        let variants = self
+            .enums
+            .variants(enum_name)
+            .map(|v| v.to_vec())
+            .unwrap_or_default();
+        let mut arms = Vec::new();
+        for variant in &variants {
+            let binders: Vec<String> =
+                (0..variant.fields.len()).map(|i| format!("__f{}", i)).collect();
+            let pat = ast::Pattern::Variant {
+                name: variant.name.clone(),
+                args: binders
+                    .iter()
+                    .map(|b| ast::Pattern::Binding(b.clone()))
+                    .collect(),
+            };
+            let body = if binders.is_empty() {
+                // Nullary variant: a bare reference constructs it.
+                ast::Expr::Var(variant.name.clone())
+            } else {
+                let ctor_args: Vec<ast::Expr> = binders
+                    .iter()
+                    .map(|b| ast::Expr::Call {
+                        func: Box::new(ast::Expr::Var("clone".to_string())),
+                        args: vec![ast::Expr::Var(b.clone())],
+                    })
+                    .collect();
+                ast::Expr::Call {
+                    func: Box::new(ast::Expr::Var(variant.name.clone())),
+                    args: ctor_args,
+                }
+            };
+            arms.push((pat, body));
+        }
+        ast::Expr::Match {
+            scrutinee: Box::new(ast::Expr::Var("__clone_src".to_string())),
+            arms,
+        }
+    }
+
+    /// Build the body AST of `clone$<struct>`: reconstruct the struct via its
+    /// positional constructor with each field deep-cloned through `(clone
+    /// (struct-get src field))`. Scalar fields make `(clone …)` an identity.
+    fn build_clone_struct_ast(&self, struct_name: &str) -> ast::Expr {
+        let fields = self
+            .structs
+            .fields(struct_name)
+            .map(|fields| fields.to_vec())
+            .unwrap_or_default();
+        let ctor_args: Vec<ast::Expr> = fields
+            .iter()
+            .map(|f| ast::Expr::Call {
+                func: Box::new(ast::Expr::Var("clone".to_string())),
+                args: vec![ast::Expr::StructGet {
+                    expr: Box::new(ast::Expr::Var("__clone_src".to_string())),
+                    field: f.name.clone(),
+                }],
+            })
+            .collect();
+        ast::Expr::Call {
+            func: Box::new(ast::Expr::Var(struct_name.to_string())),
+            args: ctor_args,
+        }
+    }
+}
+
+/// Stable symbol name for the synthesized recursive deep-clone of `ty` (#1633).
+fn clone_fn_name(ty: &Type) -> String {
+    let raw = format!("__tl_clone_{}", mangle_type(ty));
+    raw.chars()
+        .map(|c| if c.is_ascii_alphanumeric() || c == '_' { c } else { '_' })
+        .collect()
+}
+
+/// Deterministic, collision-resistant mangling of a type into a symbol fragment.
+fn mangle_type(ty: &Type) -> String {
+    match ty {
+        Type::Enum(n) => format!("e_{}", n),
+        Type::Struct(n) => format!("s_{}", n),
+        Type::Tuple(elems) => {
+            let parts: Vec<String> = elems.iter().map(mangle_type).collect();
+            format!("t{}_{}_", elems.len(), parts.join("_"))
+        }
+        Type::String => "str".to_string(),
+        Type::DynArray(e) => format!("da_{}_", mangle_type(e)),
+        Type::Array(e, n) => format!("arr{}_{}_", n, mangle_type(e)),
+        other => format!("{:?}", other),
     }
 }
 
@@ -477,6 +614,10 @@ struct FnLowerer {
     lambda_counter: usize,
     captures: HashMap<String, CaptureInfo>,
     capture_env_var: Option<VarId>,
+    /// Resolved types for which a `(clone x)` call site requested a recursive
+    /// deep-clone helper (#1633). Bubbles up to the `ProgramLowerer`, which
+    /// synthesizes one `clone$<ty>` function per type (transitively, once).
+    clone_types_needed: HashSet<Type>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -530,6 +671,7 @@ struct CaptureEnv {
 struct LoweredFunction {
     function: Function,
     synthetic_functions: Vec<Function>,
+    clone_types_needed: HashSet<Type>,
 }
 
 /// The kind of escaping aggregate whose constructor storage may be
@@ -742,6 +884,7 @@ impl FnLowerer {
             lambda_counter: 0,
             captures,
             capture_env_var,
+            clone_types_needed: HashSet::new(),
         }
     }
 
@@ -1135,6 +1278,7 @@ impl FnLowerer {
         LoweredFunction {
             function,
             synthetic_functions: self.synthetic_functions,
+            clone_types_needed: self.clone_types_needed,
         }
     }
 
@@ -1418,6 +1562,7 @@ impl FnLowerer {
         let lowered = lambda_lowerer.lower_body(body, &ret_ty);
         self.synthetic_functions.extend(lowered.synthetic_functions);
         self.synthetic_functions.push(lowered.function);
+        self.clone_types_needed.extend(lowered.clone_types_needed);
         if captures.is_empty() {
             Value::Function(name)
         } else {
@@ -1692,6 +1837,50 @@ impl FnLowerer {
             ty: Type::U64,
         });
         desc
+    }
+
+    /// Lower `(clone val)` for a value of (resolved) type `ty` (#1633). The copy
+    /// is allocated into the **current** arena, so it survives the rewind/destroy
+    /// of the source's arena. Scalars are immediate (returned as-is); a `String`
+    /// copies its byte buffer with `tl_substring(ptr, 0, len)`; an aggregate
+    /// dispatches to a synthesized recursive `clone$T` (queued for emission).
+    fn lower_clone(&mut self, val: Value, ty: &Type) -> Value {
+        let rty = self.resolve_type(ty);
+        match &rty {
+            Type::String => {
+                let (ptr, len) = self.load_string_fields(&val);
+                let dst = self.builder.fresh_var();
+                self.builder.emit(Instruction::Call {
+                    dst: Some(dst),
+                    func: "tl_substring".to_string(),
+                    args: vec![Value::Var(ptr), Value::ConstI64(0), Value::Var(len)],
+                    ty: Type::String,
+                });
+                self.record_local(dst, Type::String);
+                Value::Var(dst)
+            }
+            Type::Enum(_) | Type::Struct(_) => {
+                self.clone_types_needed.insert(rty.clone());
+                let dst = self.builder.fresh_var();
+                self.builder.emit(Instruction::Call {
+                    dst: Some(dst),
+                    func: clone_fn_name(&rty),
+                    args: vec![val],
+                    ty: rty.clone(),
+                });
+                self.record_local(dst, rty.clone());
+                Value::Var(dst)
+            }
+            // Tuple/array clone helpers are not yet generated (the compiler IR and
+            // span tables use none — they are enums, structs, strings, scalars).
+            // Reject at lowering with a clear message rather than emitting a call
+            // to an undefined symbol (link error) or silently sharing a buffer.
+            Type::Tuple(_) | Type::DynArray(_) | Type::Array(_, _) => {
+                panic!("(clone ...) of aggregate type {:?} is not yet supported", rty)
+            }
+            // Scalars, functions, unit: immediate values, nothing to deep-copy.
+            _ => val,
+        }
     }
 
     fn snapshot_capture_value_to_heap(&mut self, handle: &Value, storage_ty: Type) -> Value {
@@ -3929,6 +4118,67 @@ impl FnLowerer {
             });
             self.record_local(dst, Type::I64);
             return Value::Var(dst);
+        }
+
+        // First-class arena primitives (#1633). Each lowers to a direct runtime
+        // call. `arena-mark`/`arena-rewind` reuse the existing region runtime
+        // (they snapshot/rewind the *current* arena's bump). The opaque `arena`
+        // handle is an i64 pointer to an independent arena chain.
+        if let ast::Expr::Var(name) = func.unspan()
+            && args.is_empty()
+            && (name == "arena-make" || name == "arena-current" || name == "arena-mark")
+            && !self.has_local_value(name)
+            && !self.function_types.contains_key(name)
+        {
+            let runtime = match name.as_str() {
+                "arena-make" => "tl_arena_make",
+                "arena-current" => "tl_arena_current",
+                _ => "tl_region_mark",
+            };
+            let dst = self.builder.fresh_var();
+            self.builder.emit(Instruction::Call {
+                dst: Some(dst),
+                func: runtime.to_string(),
+                args: vec![],
+                ty: Type::I64,
+            });
+            self.record_local(dst, Type::I64);
+            return Value::Var(dst);
+        }
+        if let ast::Expr::Var(name) = func.unspan()
+            && args.len() == 1
+            && (name == "arena-destroy" || name == "arena-set!" || name == "arena-rewind")
+            && !self.has_local_value(name)
+            && !self.function_types.contains_key(name)
+        {
+            let runtime = match name.as_str() {
+                "arena-destroy" => "tl_arena_destroy",
+                "arena-set!" => "tl_arena_set",
+                _ => "tl_region_reset",
+            };
+            let arg_raw = self.lower_expr_as(&args[0], &Type::I64);
+            let arg = self.cast_value(arg_raw, Type::I64);
+            self.builder.emit(Instruction::Call {
+                dst: None,
+                func: runtime.to_string(),
+                args: vec![arg],
+                ty: Type::Unit,
+            });
+            return Value::ConstUnit;
+        }
+
+        // `(clone x)` deep-copies `x` into the current arena (#1633). Scalars
+        // are returned as-is; a String copies its byte buffer via `tl_substring`;
+        // an aggregate (enum) dispatches to a synthesized recursive `clone$T`.
+        if let ast::Expr::Var(name) = func.unspan()
+            && name == "clone"
+            && args.len() == 1
+            && !self.has_local_value(name)
+            && !self.function_types.contains_key(name)
+        {
+            let arg_ty = self.resolve_type(&self.infer_expr_type(&args[0]));
+            let arg_val = self.lower_expr_as(&args[0], &arg_ty);
+            return self.lower_clone(arg_val, &arg_ty);
         }
 
         // `(cpuid leaf subleaf)` executes the CPUID instruction and returns
@@ -6643,6 +6893,7 @@ impl FnLowerer {
             LoweredFunction {
                 function,
                 synthetic_functions: self.synthetic_functions,
+                clone_types_needed: self.clone_types_needed,
             },
             result,
         )

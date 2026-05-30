@@ -149,6 +149,31 @@ impl TypeChecker {
             "arg".into(),
             Type::Func(vec![Type::I64], Box::new(Type::String)),
         );
+        // First-class arena primitives (#1633). An `arena` handle is an opaque
+        // i64 pointer to an independent arena chain. `(arena-make)` mmaps a fresh
+        // chain; `(arena-destroy a)` frees it; `(arena-current)` reads and
+        // `(arena-set! a)` writes the active allocation arena; `(arena-mark)` /
+        // `(arena-rewind m)` snapshot and rewind the current arena's bump
+        // (reusing the region runtime). `(clone x)` deep-copies `x` into the
+        // current arena — registered separately as a type-directed special form.
+        globals.insert("arena-make".into(), Type::Func(vec![], Box::new(Type::I64)));
+        globals.insert(
+            "arena-destroy".into(),
+            Type::Func(vec![Type::I64], Box::new(Type::Unit)),
+        );
+        globals.insert(
+            "arena-current".into(),
+            Type::Func(vec![], Box::new(Type::I64)),
+        );
+        globals.insert(
+            "arena-set!".into(),
+            Type::Func(vec![Type::I64], Box::new(Type::Unit)),
+        );
+        globals.insert("arena-mark".into(), Type::Func(vec![], Box::new(Type::I64)));
+        globals.insert(
+            "arena-rewind".into(),
+            Type::Func(vec![Type::I64], Box::new(Type::Unit)),
+        );
         // `(string-length s)` / `(length s)` -> the byte length of a string.
         globals.insert(
             "string-length".into(),
@@ -381,7 +406,11 @@ impl TypeChecker {
             "char-at".into(),
             Type::Func(vec![Type::String, Type::I64], Box::new(Type::Char)),
         );
-        let builtin_names = globals.keys().cloned().collect();
+        let mut builtin_names: HashSet<String> = globals.keys().cloned().collect();
+        // `clone` is a type-directed special form (its result type is its
+        // argument's type), so it cannot live in `globals` as a fixed `Func`,
+        // but it must still participate in unshadowed-builtin resolution.
+        builtin_names.insert("clone".into());
         TypeChecker {
             env: vec![globals],
             func_ret: None,
@@ -1742,6 +1771,20 @@ impl TypeChecker {
                 // binding nor a user-defined top-level function (#677). A
                 // shadowing user definition falls through to the ordinary call
                 // path below and is checked against its own signature.
+                // `(clone x)` deep-copies `x` into the current arena (#1633).
+                // Type-directed: the result has the argument's type, but stripped
+                // of any inner-region tag, since the copy lands in the enclosing
+                // (current) arena rather than the source's region. Without the
+                // strip a value cloned out of an inner arena would falsely trip
+                // the with-arena escape check.
+                if let Expr::Var(name) = func.unspan()
+                    && name == "clone"
+                    && args.len() == 1
+                    && self.is_unshadowed_builtin("clone")
+                {
+                    let arg_ty = self.check_expr(&args[0])?;
+                    return Ok(arg_ty.without_regions());
+                }
                 if let Expr::Var(name) = func.unspan()
                     && (name == "string-ref" || name == "char-at")
                     && args.len() == 2

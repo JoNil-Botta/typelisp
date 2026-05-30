@@ -47,6 +47,10 @@ const FLUSH_STDOUT_RUNTIME_SYMBOL: &str = ".L_tl_flush_stdout";
 const RANDOM_SYSTEM_SEED_RUNTIME_SYMBOL: &str = "tl_random_system_seed";
 const REGION_MARK_RUNTIME_SYMBOL: &str = "tl_region_mark";
 const REGION_RESET_RUNTIME_SYMBOL: &str = "tl_region_reset";
+const ARENA_MAKE_RUNTIME_SYMBOL: &str = "tl_arena_make";
+const ARENA_CURRENT_RUNTIME_SYMBOL: &str = "tl_arena_current";
+const ARENA_SET_RUNTIME_SYMBOL: &str = "tl_arena_set";
+const ARENA_DESTROY_RUNTIME_SYMBOL: &str = "tl_arena_destroy";
 const CPUID_RUNTIME_SYMBOL: &str = "tl_cpuid";
 const XGETBV_RUNTIME_SYMBOL: &str = "tl_xgetbv";
 const WINDOWS_STACK_PROBE_THRESHOLD: i32 = 4096;
@@ -413,6 +417,14 @@ pub struct X86_64Backend {
     /// records. Mark reads `tl_current_arena`; reset may unmap newer arenas.
     needs_region_mark_runtime: bool,
     needs_region_reset_runtime: bool,
+    /// Whether the program references the first-class arena helpers (#1633):
+    /// `tl_arena_make` (mmap a fresh INDEPENDENT chain), `tl_arena_current` /
+    /// `tl_arena_set` (read/write the active arena), `tl_arena_destroy` (free a
+    /// chain). All operate on the same 32-byte arena header as `tl_alloc`.
+    needs_arena_make_runtime: bool,
+    needs_arena_current_runtime: bool,
+    needs_arena_set_runtime: bool,
+    needs_arena_destroy_runtime: bool,
     /// Whether the backend must emit the raw `tl_alloc` runtime body. This is
     /// true when IR calls resolve to the allocator runtime, or when another
     /// backend runtime helper calls raw `tl_alloc` internally.
@@ -2015,6 +2027,10 @@ impl X86_64Backend {
             needs_alloc_runtime: false,
             needs_region_mark_runtime: false,
             needs_region_reset_runtime: false,
+            needs_arena_make_runtime: false,
+            needs_arena_current_runtime: false,
+            needs_arena_set_runtime: false,
+            needs_arena_destroy_runtime: false,
             emits_alloc_runtime: false,
             needs_oob_runtime: false,
             needs_div_runtime: false,
@@ -2092,6 +2108,12 @@ impl X86_64Backend {
         self.needs_alloc_runtime = Self::needs_alloc_runtime(program);
         self.needs_region_mark_runtime = Self::needs_region_mark_runtime(program);
         self.needs_region_reset_runtime = Self::needs_region_reset_runtime(program);
+        self.needs_arena_make_runtime = Self::needs_named_runtime(program, ARENA_MAKE_RUNTIME_SYMBOL);
+        self.needs_arena_current_runtime =
+            Self::needs_named_runtime(program, ARENA_CURRENT_RUNTIME_SYMBOL);
+        self.needs_arena_set_runtime = Self::needs_named_runtime(program, ARENA_SET_RUNTIME_SYMBOL);
+        self.needs_arena_destroy_runtime =
+            Self::needs_named_runtime(program, ARENA_DESTROY_RUNTIME_SYMBOL);
         self.needs_oob_runtime = Self::needs_oob_runtime(program);
         self.needs_div_runtime = Self::needs_div_runtime(program);
         self.needs_shift_runtime = Self::needs_shift_runtime(program);
@@ -2170,11 +2192,17 @@ impl X86_64Backend {
         let needs_stdin_data = self.needs_read_stdin_line_runtime
             || self.needs_read_stdin_bytes_runtime
             || self.needs_stdin_eof_runtime;
-        let needs_region_runtime =
-            self.needs_region_mark_runtime || self.needs_region_reset_runtime;
+        let needs_region_runtime = self.needs_region_mark_runtime
+            || self.needs_region_reset_runtime
+            || self.needs_arena_make_runtime
+            || self.needs_arena_current_runtime
+            || self.needs_arena_set_runtime
+            || self.needs_arena_destroy_runtime;
         let needs_linux_syscall_runtime = needs_print_runtime
             || self.emits_alloc_runtime
             || self.needs_region_reset_runtime
+            || self.needs_arena_make_runtime
+            || self.needs_arena_destroy_runtime
             || self.needs_oob_runtime
             || self.needs_div_runtime
             || self.needs_shift_runtime
@@ -2278,6 +2306,10 @@ impl X86_64Backend {
                 || (self.emits_alloc_runtime && symbol == "tl_alloc")
                 || (self.needs_region_mark_runtime && symbol == REGION_MARK_RUNTIME_SYMBOL)
                 || (self.needs_region_reset_runtime && symbol == REGION_RESET_RUNTIME_SYMBOL)
+                || (self.needs_arena_make_runtime && symbol == ARENA_MAKE_RUNTIME_SYMBOL)
+                || (self.needs_arena_current_runtime && symbol == ARENA_CURRENT_RUNTIME_SYMBOL)
+                || (self.needs_arena_set_runtime && symbol == ARENA_SET_RUNTIME_SYMBOL)
+                || (self.needs_arena_destroy_runtime && symbol == ARENA_DESTROY_RUNTIME_SYMBOL)
                 || (self.needs_oob_runtime && symbol == "tl_oob_abort")
                 || (self.needs_div_runtime && symbol == "tl_div_abort")
                 || (self.needs_shift_runtime && symbol == "tl_shift_abort")
@@ -2352,6 +2384,18 @@ impl X86_64Backend {
         }
         if self.needs_region_reset_runtime {
             self.generate_region_reset_runtime_function();
+        }
+        if self.needs_arena_make_runtime {
+            self.generate_arena_make_runtime_function();
+        }
+        if self.needs_arena_current_runtime {
+            self.generate_arena_current_runtime_function();
+        }
+        if self.needs_arena_set_runtime {
+            self.generate_arena_set_runtime_function();
+        }
+        if self.needs_arena_destroy_runtime {
+            self.generate_arena_destroy_runtime_function();
         }
         if self.needs_oob_runtime {
             self.generate_oob_runtime_functions();
@@ -2593,6 +2637,14 @@ impl X86_64Backend {
             externs.insert("VirtualFree");
             externs.insert("_write");
             externs.insert("exit");
+        }
+        if self.needs_arena_make_runtime {
+            externs.insert("VirtualAlloc");
+            externs.insert("_write");
+            externs.insert("exit");
+        }
+        if self.needs_arena_destroy_runtime {
+            externs.insert("VirtualFree");
         }
         if self.needs_oob_runtime
             || self.needs_div_runtime
@@ -4037,6 +4089,157 @@ impl X86_64Backend {
         self.emit("    ret");
         self.emit(".L_tl_region_mark_zero:");
         self.emit("    xorq %rax, %rax");
+        self.emit("    ret");
+        self.emit("");
+    }
+
+    /// `tl_arena_current() -> arena` returns the active arena header pointer
+    /// (#1633). Target-agnostic: a single load of the global.
+    fn generate_arena_current_runtime_function(&mut self) {
+        self.emit(&format!("    .globl {}", ARENA_CURRENT_RUNTIME_SYMBOL));
+        self.emit(&format!("{}:", ARENA_CURRENT_RUNTIME_SYMBOL));
+        self.emit("    movq tl_current_arena(%rip), %rax");
+        self.emit("    ret");
+        self.emit("");
+    }
+
+    /// `tl_arena_set(arena)` makes `arena` the active allocation arena (#1633).
+    /// The handle arrives in the first integer arg register (`%rdi` System V,
+    /// `%rcx` Win64).
+    fn generate_arena_set_runtime_function(&mut self) {
+        let arg = if self.target.runtime_policy().emits_windows_runtime_helpers {
+            "%rcx"
+        } else {
+            "%rdi"
+        };
+        self.emit(&format!("    .globl {}", ARENA_SET_RUNTIME_SYMBOL));
+        self.emit(&format!("{}:", ARENA_SET_RUNTIME_SYMBOL));
+        self.emit(&format!("    movq {}, tl_current_arena(%rip)", arg));
+        self.emit("    ret");
+        self.emit("");
+    }
+
+    /// `tl_arena_make() -> arena` maps a fresh, INDEPENDENT 64 MiB arena chain
+    /// (prev-link 0) and returns its header, WITHOUT changing the active arena
+    /// (#1633). Because the chain self-terminates at 0, a later `arena-rewind`
+    /// (region reset) or `tl_arena_destroy` walks only this chain and never
+    /// crosses into the enclosing arena.
+    fn generate_arena_make_runtime_function(&mut self) {
+        if self.target.runtime_policy().emits_windows_runtime_helpers {
+            self.emit(&format!("    .globl {}", ARENA_MAKE_RUNTIME_SYMBOL));
+            self.emit(&format!("{}:", ARENA_MAKE_RUNTIME_SYMBOL));
+            self.emit("    push %rbp");
+            self.emit("    mov %rsp, %rbp");
+            self.emit("    push %rbx");
+            self.emit("    push %rsi");
+            self.emit("    sub $32, %rsp");
+            // VirtualAlloc(NULL, 64 MiB, MEM_COMMIT|MEM_RESERVE = 0x3000, PAGE_READWRITE = 0x04).
+            self.emit("    xorq %rcx, %rcx");
+            self.emit("    movq $0x4000000, %rdx");
+            self.emit("    movq $0x3000, %r8");
+            self.emit("    movq $0x4, %r9");
+            self.emit("    call VirtualAlloc");
+            self.emit("    testq %rax, %rax");
+            self.emit("    jz .L_tl_arena_make_win_abort");
+            // Header: prev=0, base=bump=+32, end=+64 MiB. Return header in %rax.
+            self.emit("    movq $0, 0(%rax)");
+            self.emit("    leaq 32(%rax), %rcx");
+            self.emit("    movq %rcx, 8(%rax)");
+            self.emit("    movq %rcx, 16(%rax)");
+            self.emit("    movq %rax, %rcx");
+            self.emit("    addq $0x4000000, %rcx");
+            self.emit("    movq %rcx, 24(%rax)");
+            self.emit("    add $32, %rsp");
+            self.emit("    popq %rsi");
+            self.emit("    popq %rbx");
+            self.emit("    popq %rbp");
+            self.emit("    ret");
+            self.emit(".L_tl_arena_make_win_abort:");
+            self.emit("    movq $134, %rcx");
+            self.emit_call("exit");
+            self.emit("");
+            return;
+        }
+        self.emit(&format!("    .globl {}", ARENA_MAKE_RUNTIME_SYMBOL));
+        self.emit(&format!("{}:", ARENA_MAKE_RUNTIME_SYMBOL));
+        // mmap(NULL, 64 MiB, PROT_READ|PROT_WRITE = 3, MAP_PRIVATE|MAP_ANONYMOUS = 0x22, -1, 0).
+        self.emit("    movq $0x4000000, %rsi");
+        self.emit("    xorq %rdi, %rdi");
+        self.emit("    movq $3, %rdx");
+        self.emit("    movq $0x22, %r10");
+        self.emit("    movq $-1, %r8");
+        self.emit("    xorq %r9, %r9");
+        self.emit("    movq $9, %rax");
+        self.emit("    syscall");
+        self.emit("    testq %rax, %rax");
+        self.emit("    js .L_tl_arena_make_abort");
+        self.emit("    movq $0, 0(%rax)");
+        self.emit("    leaq 32(%rax), %rcx");
+        self.emit("    movq %rcx, 8(%rax)");
+        self.emit("    movq %rcx, 16(%rax)");
+        self.emit("    movq %rax, %rcx");
+        self.emit("    addq $0x4000000, %rcx");
+        self.emit("    movq %rcx, 24(%rax)");
+        self.emit("    ret");
+        self.emit(".L_tl_arena_make_abort:");
+        self.emit("    movq $60, %rax");
+        self.emit("    movq $134, %rdi");
+        self.emit("    syscall");
+        self.emit("");
+    }
+
+    /// `tl_arena_destroy(arena)` releases every mapping in `arena`'s chain,
+    /// walking prev-links (offset 0) to the 0 terminator (#1633). The handle
+    /// arrives in `%rdi` (System V) / `%rcx` (Win64). Safe to call after an
+    /// `arena-rewind`, which already reclaimed any overflow arenas.
+    fn generate_arena_destroy_runtime_function(&mut self) {
+        if self.target.runtime_policy().emits_windows_runtime_helpers {
+            self.emit(&format!("    .globl {}", ARENA_DESTROY_RUNTIME_SYMBOL));
+            self.emit(&format!("{}:", ARENA_DESTROY_RUNTIME_SYMBOL));
+            self.emit("    push %rbp");
+            self.emit("    mov %rsp, %rbp");
+            self.emit("    push %rbx");
+            self.emit("    push %rsi");
+            self.emit("    sub $32, %rsp");
+            self.emit("    movq %rcx, %rsi");
+            self.emit(".L_tl_arena_destroy_win_loop:");
+            self.emit("    testq %rsi, %rsi");
+            self.emit("    jz .L_tl_arena_destroy_win_done");
+            self.emit("    movq 0(%rsi), %rbx");
+            self.emit("    movq %rsi, %rcx");
+            self.emit("    xorq %rdx, %rdx");
+            self.emit("    movq $0x8000, %r8");
+            self.emit("    call VirtualFree");
+            self.emit("    movq %rbx, %rsi");
+            self.emit("    jmp .L_tl_arena_destroy_win_loop");
+            self.emit(".L_tl_arena_destroy_win_done:");
+            self.emit("    add $32, %rsp");
+            self.emit("    popq %rsi");
+            self.emit("    popq %rbx");
+            self.emit("    popq %rbp");
+            self.emit("    ret");
+            self.emit("");
+            return;
+        }
+        self.emit(&format!("    .globl {}", ARENA_DESTROY_RUNTIME_SYMBOL));
+        self.emit(&format!("{}:", ARENA_DESTROY_RUNTIME_SYMBOL));
+        self.emit("    push %rbx");
+        self.emit("    movq %rdi, %rbx");
+        self.emit(".L_tl_arena_destroy_loop:");
+        self.emit("    testq %rbx, %rbx");
+        self.emit("    jz .L_tl_arena_destroy_done");
+        self.emit("    movq 0(%rbx), %r8");
+        self.emit("    push %r8");
+        self.emit("    movq 24(%rbx), %rsi");
+        self.emit("    subq %rbx, %rsi");
+        self.emit("    movq %rbx, %rdi");
+        self.emit("    movq $11, %rax");
+        self.emit("    syscall");
+        self.emit("    pop %r8");
+        self.emit("    movq %r8, %rbx");
+        self.emit("    jmp .L_tl_arena_destroy_loop");
+        self.emit(".L_tl_arena_destroy_done:");
+        self.emit("    pop %rbx");
         self.emit("    ret");
         self.emit("");
     }
@@ -12013,6 +12216,14 @@ impl X86_64Backend {
             REGION_MARK_RUNTIME_SYMBOL.into()
         } else if name == REGION_RESET_RUNTIME_SYMBOL && self.needs_region_reset_runtime {
             REGION_RESET_RUNTIME_SYMBOL.into()
+        } else if name == ARENA_MAKE_RUNTIME_SYMBOL && self.needs_arena_make_runtime {
+            ARENA_MAKE_RUNTIME_SYMBOL.into()
+        } else if name == ARENA_CURRENT_RUNTIME_SYMBOL && self.needs_arena_current_runtime {
+            ARENA_CURRENT_RUNTIME_SYMBOL.into()
+        } else if name == ARENA_SET_RUNTIME_SYMBOL && self.needs_arena_set_runtime {
+            ARENA_SET_RUNTIME_SYMBOL.into()
+        } else if name == ARENA_DESTROY_RUNTIME_SYMBOL && self.needs_arena_destroy_runtime {
+            ARENA_DESTROY_RUNTIME_SYMBOL.into()
         } else if name == "tl_oob_abort" && self.needs_oob_runtime {
             // The backend-provided abort runtime resolves to its raw symbol.
             "tl_oob_abort".into()

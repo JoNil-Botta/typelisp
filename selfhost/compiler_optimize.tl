@@ -5505,15 +5505,58 @@
 (define (optimize-function-list [funcs : CompilerIrFunctionList]) : CompilerIrFunctionList
   (optimize-function-list-with-level funcs (compiler-optimize-default-level)))
 
+;; Per-function arena escape (#1633). The optimizer fixpoint allocates up to
+;; ~80 throwaway IR copies per function (10 iterations x ~8 passes), none freed
+;; by the bump allocator. To cap peak memory we run each function's optimization
+;; in a reusable scratch arena, deep-`clone` only the final result back into the
+;; enclosing (program) arena, then rewind the scratch — so a single function's
+;; transient generations are reclaimed before the next function is processed.
 (define (optimize-function-list-with-level
   [funcs : CompilerIrFunctionList]
   [level : i64]) : CompilerIrFunctionList
+  (if (= level 0)
+    funcs
+    (let [scratch : i64 (arena-make)]
+      (let [result : CompilerIrFunctionList
+             (optimize-function-list-escaping funcs level scratch)]
+        (begin
+          (arena-destroy scratch)
+          result)))))
+
+(define (optimize-function-list-escaping
+  [funcs : CompilerIrFunctionList]
+  [level : i64]
+  [scratch : i64]) : CompilerIrFunctionList
   (match funcs
     [(IrFunctionNil) (IrFunctionNil)]
     [(IrFunctionCons func rest)
       (IrFunctionCons
-        (optimize-function-with-level func level)
-        (optimize-function-list-with-level rest level))]))
+        (optimize-function-escaping func level scratch)
+        (optimize-function-list-escaping rest level scratch))]))
+
+;; Optimize one function inside `scratch`, then escape the result by deep-cloning
+;; it into the enclosing arena and rewinding `scratch` for reuse. The enclosing
+;; arena is captured fresh on entry, so the grown head is never stale across the
+;; recursion and no overflow arenas leak.
+(define (optimize-function-escaping
+  [func : CompilerIrFunction]
+  [level : i64]
+  [scratch : i64]) : CompilerIrFunction
+  (let [enclosing : i64 (arena-current)]
+    (begin
+      (arena-set! scratch)
+      (let [mark : i64 (arena-mark)]
+        (let [raw : CompilerIrFunction (optimize-function-with-level func level)]
+          (let [scratch-head : i64 (arena-current)]
+            (begin
+              (arena-set! enclosing)
+              (let [escaped : CompilerIrFunction (clone raw)]
+                (let [new-enclosing : i64 (arena-current)]
+                  (begin
+                    (arena-set! scratch-head)
+                    (arena-rewind mark)
+                    (arena-set! new-enclosing)
+                    escaped))))))))))
 
 (defenum OptStringSet
   (OptStringNil)

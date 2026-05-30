@@ -6235,6 +6235,56 @@
                         (ErrCompilerBackend message)]))]
                 [(ErrCompilerBackend message) (ErrCompilerBackend message)])))))]))
 
+;; Per-function arena escape for the backend (#1633). Emitting one function's
+;; assembly allocates per-instruction transient strings (right-associative
+;; string-append) that the bump allocator never frees — the ~5 GB the backend
+;; phase adds. We emit each function inside its own scratch arena, deep-`clone`
+;; ONLY the resulting assembly String into the enclosing arena, then destroy the
+;; scratch — reclaiming the per-function transient. `clone` of a String copies
+;; the same bytes, so the assembled program text is byte-identical.
+(define (compiler-backend-emit-function-escaping
+  [target : CompilerBackendTarget]
+  [func : CompilerIrFunction]
+  [all-functions : CompilerIrFunctionList]
+  [globals : CompilerIrGlobalList]
+  [externs : CompilerIrExternList]
+  [plan : CompilerBackendRuntimePlan]
+  [spans : CompilerSourceSpans]) : ResultCompilerBackend
+  (let
+    [enclosing : i64 (arena-current)]
+    (let
+      [scratch : i64 (arena-make)]
+      (begin
+        (arena-set! scratch)
+        (match (compiler-backend-emit-function
+          target
+          func
+          all-functions
+          globals
+          externs
+          plan
+          spans)
+          [(OkCompilerBackend asm)
+            (let
+              [scratch-head : i64 (arena-current)]
+              (begin
+                (arena-set! enclosing)
+                (let
+                  [escaped : String (clone asm)]
+                  (begin
+                    (arena-destroy scratch-head)
+                    (OkCompilerBackend escaped)))))]
+          [(ErrCompilerBackend message)
+            (let
+              [scratch-head : i64 (arena-current)]
+              (begin
+                (arena-set! enclosing)
+                (let
+                  [escaped : CompilerDiagnostic (clone message)]
+                  (begin
+                    (arena-destroy scratch-head)
+                    (ErrCompilerBackend escaped)))))])))))
+
 (define (compiler-backend-emit-functions-into
   [target : CompilerBackendTarget]
   [functions : CompilerIrFunctionList]
@@ -6247,7 +6297,7 @@
   (match functions
     [(IrFunctionNil) (OkCompilerBackend (text-buf-render buf))]
     [(IrFunctionCons func rest)
-      (match (compiler-backend-emit-function
+      (match (compiler-backend-emit-function-escaping
         target
         func
         all-functions

@@ -2737,6 +2737,63 @@
     [(string-eq name "string-append") true]
     [else (string-eq name "string-concat")]))
 
+;; First-class arena primitives (#1633). arena-mark/arena-rewind reuse the
+;; existing region runtime (they snapshot/rewind the current arena's bump).
+(define (lower-arena-builtin? [name : String]) : bool
+  (cond
+    [(string-eq name "arena-make") true]
+    [(string-eq name "arena-current") true]
+    [(string-eq name "arena-mark") true]
+    [(string-eq name "arena-set!") true]
+    [(string-eq name "arena-destroy") true]
+    [else (string-eq name "arena-rewind")]))
+
+(define (lower-arena-builtin-nullary? [name : String]) : bool
+  (or
+    (string-eq name "arena-make")
+    (or (string-eq name "arena-current") (string-eq name "arena-mark"))))
+
+(define (lower-arena-builtin-symbol [name : String]) : String
+  (cond
+    [(string-eq name "arena-make") "tl_arena_make"]
+    [(string-eq name "arena-current") "tl_arena_current"]
+    [(string-eq name "arena-mark") "tl_region_mark"]
+    [(string-eq name "arena-set!") "tl_arena_set"]
+    [(string-eq name "arena-destroy") "tl_arena_destroy"]
+    [else "tl_region_reset"]))
+
+(define (lower-arena-builtin-call
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [name : String]
+  [args : AstExprList]
+  [result-ty : AstType]) : ResultLowerExpr
+  (if (lower-arena-builtin-nullary? name)
+    (lower-runtime-call-values
+      state
+      (lower-arena-builtin-symbol name)
+      IrValueNil
+      result-ty)
+    (match args
+      [(AstExprCons arg (AstExprNil))
+        (match (lower-expr ctx state env type-env arg)
+          [(OkLowerExpr lowered)
+            (match lowered
+              [(LowerExpr arg-state arg-value arg-ty)
+                (match (lower-cast-value arg-state arg-value arg-ty (AstTyI64))
+                  [(LowerExpr cast-state cast-value _)
+                    (lower-runtime-call-values
+                      cast-state
+                      (lower-arena-builtin-symbol name)
+                      (IrValueCons cast-value IrValueNil)
+                      result-ty)])])]
+          [(ErrLowerExpr message) (ErrLowerExpr message)])]
+      [_
+        (ErrLowerExpr
+          (lower-diagnostic "lower: arena builtin expects one argument"))])))
+
 (define (lower-bootstrap-runtime-builtin? [name : String]) : bool
   (cond
     [(string-eq name "string-eq") true]
@@ -5283,6 +5340,17 @@
                 result-ty
                 "lower: print-string requires String"
                 origin)]
+            [(and
+                (lower-builtin-call-available? ctx env name)
+                (lower-arena-builtin? name))
+              (lower-arena-builtin-call
+                ctx
+                state
+                env
+                type-env
+                name
+                args
+                result-ty)]
             [(and
                 (lower-builtin-call-available? ctx env name)
                 (lower-bootstrap-runtime-builtin? name))
@@ -8363,6 +8431,64 @@
       (compiler-source-spans-insert spans name span)]
     [(CompilerNoSourceSpan) spans]))
 
+;; Per-function arena escape for lowering (#1633). Lowering one function allocates
+;; a fresh LowerState plus all the transient IR/AST-walk scratch that the bump
+;; allocator never frees; across thousands of functions this is the ~9 GB the
+;; lower phase adds. We lower each function inside its own scratch arena, deep-
+;; `clone` ONLY the produced IR function list into the enclosing (program) arena,
+;; then destroy the scratch — reclaiming the per-function transient. The growing
+;; spans side-table is DROPPED (returns the unchanged input spans): it never
+;; affects emitted assembly, only backend-error source locations, and cloning the
+;; monotonically-growing accumulator per function would be O(n^2). `enclosing` is
+;; captured fresh and `scratch`'s grown head re-read before destroy so nothing
+;; leaks. Output stays byte-identical (same proof as the optimizer escape).
+(define (lower-function-escaping
+  [ctx : TcContext]
+  [top-env : TcTypeEnv]
+  [logical-name : String]
+  [params : AstParamList]
+  [ret : AstType]
+  [body : AstExpr]
+  [spans : CompilerSourceSpans]
+  [names : LowerNameEnv]
+  [mode : CompilerLowerMode]) : ResultLowerFunction
+  (let
+    [enclosing : i64 (arena-current)]
+    (let
+      [scratch : i64 (arena-make)]
+      (begin
+        (arena-set! scratch)
+        (match (lower-function
+          ctx
+          top-env
+          logical-name
+          params
+          ret
+          body
+          spans
+          names
+          mode)
+          [(OkLowerFunction fns _function-spans)
+            (let
+              [scratch-head : i64 (arena-current)]
+              (begin
+                (arena-set! enclosing)
+                (let
+                  [escaped-fns : CompilerIrFunctionList (clone fns)]
+                  (begin
+                    (arena-destroy scratch-head)
+                    (OkLowerFunction escaped-fns spans)))))]
+          [(ErrLowerFunction message)
+            (let
+              [scratch-head : i64 (arena-current)]
+              (begin
+                (arena-set! enclosing)
+                (let
+                  [escaped-message : CompilerDiagnostic (clone message)]
+                  (begin
+                    (arena-destroy scratch-head)
+                    (ErrLowerFunction escaped-message)))))])))))
+
 (define (lower-decls
   [ctx : TcContext]
   [top-env : TcTypeEnv]
@@ -8435,7 +8561,7 @@
                       (if (lower-runtime-global-init-type? global-ty)
                         (match (tc-module-local-env ctx top-env module)
                           [(OkTcEnv local-top-env)
-                            (match (lower-function
+                            (match (lower-function-escaping
                               decl-ctx
                               local-top-env
                               (lower-global-init-function-name global-name)
@@ -8497,7 +8623,7 @@
               (lower-module-local-names ctx names module)]
             (match (tc-module-local-env ctx top-env module)
               [(OkTcEnv local-top-env)
-                (match (lower-function
+                (match (lower-function-escaping
                   decl-ctx
                   local-top-env
                   (lower-current-decl-logical-name names module name)

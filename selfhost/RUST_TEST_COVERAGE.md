@@ -199,6 +199,13 @@ Named remaining blockers:
   explicit float/non-float cast diagnostics. The exact/inexact f32 literal
   warning-only Rust cases are documented but not mirrored because the current
   selfhost typecheck result model has no warning channel.
+- #1626 extends the same `compiler-typecheck-scalar-parity-tests-ok?` suite with
+  contextual scalar literals that flow through tuple element types and through a
+  begin's final expression: float literals in `(tuple ... )` resolve to the
+  declared `f32` element type, and a tail float literal in `(begin ... 1.0)`
+  resolves to the function's `f32` return type. The expected-type propagation is
+  implemented in `tc-expr-with-expected-or-actual` (tuple/begin arms) in
+  `compiler_typecheck_core.tl`.
 - #1507 adds embedded-stdlib Rust loader tests in `src/module.rs` for the
   temporary Rust stage0 fallback provider: manifest coverage for checked-in
   `stdlib/**/*.tl`, virtual canonical path round-tripping, final-fallback load,

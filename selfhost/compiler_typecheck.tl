@@ -1832,6 +1832,18 @@
 (define (compiler-typecheck-scalar-bool-cast-bad-source) : String
   "(define (main) : i64 (cast true : i64))")
 
+;; Contextual scalar literals also flow through tuple element types (#1626):
+;; the float literals resolve to f32 against the declared tuple element types.
+(define (compiler-typecheck-scalar-tuple-context-source) : String
+  "(define (pair) : (Tuple f32 bool) (tuple 1.0 true))
+(define (first) : f32
+  (tuple-ref (ann (tuple 1.0 true) : (Tuple f32 bool)) 0))")
+
+;; ... and through a begin's final expression (#1626): the tail float literal
+;; resolves to f32 against the function return type.
+(define (compiler-typecheck-scalar-begin-context-source) : String
+  "(define (f) : f32 (begin 1 1.0))")
+
 (define (compiler-typecheck-scalar-parity-tests-ok?) : bool
   (let
     [ok : bool true]
@@ -1947,6 +1959,18 @@
           (compiler-typecheck-error-ok?
             (compiler-typecheck-scalar-bool-cast-bad-source)
             "typecheck: cast requires scalar numeric (integer/char/float) source and target")))
+      (set!
+        ok
+        (and
+          ok
+          (compiler-typecheck-ok?
+            (compiler-typecheck-scalar-tuple-context-source))))
+      (set!
+        ok
+        (and
+          ok
+          (compiler-typecheck-ok?
+            (compiler-typecheck-scalar-begin-context-source))))
       ok)))
 
 ;; Match / pattern type rules (#1042/#1538): Rust inline coverage migrated to

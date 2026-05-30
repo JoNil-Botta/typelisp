@@ -2858,6 +2858,85 @@
         [(ErrTcUnit message) (ErrTcType message)])]
     [(ErrTcType message) (ErrTcType message)]))
 
+(define (tc-type-list-len [types : AstTypeList]) : i64
+  (match types
+    [(AstTypeNil) 0]
+    [(AstTypeCons _ rest) (+ 1 (tc-type-list-len rest))]))
+
+;; Flow each tuple element into its expected element type so contextual
+;; literals (e.g. f32 floats) resolve against the tuple's declared element
+;; type instead of their default. Returns the resolved element types.
+(define (tc-check-tuple-elements-with-expected
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [exprs : AstExprList]
+  [types : AstTypeList]) : ResultTcTypeList
+  (match exprs
+    [(AstExprNil)
+      (match types
+        [(AstTypeNil) (OkTcTypeList AstTypeNil)]
+        [_ (ErrTcTypeList "typecheck: tuple element type mismatch")])]
+    [(AstExprCons expr rest-exprs)
+      (match types
+        [(AstTypeCons want rest-types)
+          (match (tc-expr-with-expected-or-actual ctx env expr want)
+            [(OkTcType got)
+              (match (tc-expect
+                got
+                want
+                "typecheck: tuple element type mismatch")
+                [(OkTcUnit)
+                  (match (tc-check-tuple-elements-with-expected
+                    ctx
+                    env
+                    rest-exprs
+                    rest-types)
+                    [(OkTcTypeList rest-result)
+                      (OkTcTypeList
+                        (AstTypeCons
+                          (tc-contextual-result-type want got)
+                          rest-result))]
+                    [(ErrTcTypeList message) (ErrTcTypeList message)])]
+                [(ErrTcUnit message) (ErrTcTypeList message)])]
+            [(ErrTcType message) (ErrTcTypeList message)])]
+        [(AstTypeNil) (ErrTcTypeList "typecheck: tuple element type mismatch")])]))
+
+(define (tc-expr-tuple-with-expected-or-actual
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [exprs : AstExprList]
+  [expected-elems : AstTypeList]) : ResultTcType
+  (if (= (tc-expr-list-len exprs) (tc-type-list-len expected-elems))
+    (match (tc-ensure-cleanup-resource-not-stored-list env exprs)
+      [(OkTcUnit)
+        (match (tc-check-tuple-elements-with-expected
+          ctx
+          env
+          exprs
+          expected-elems)
+          [(OkTcTypeList result-elems) (OkTcType (AstTyTuple result-elems))]
+          [(ErrTcTypeList message) (ErrTcType message)])]
+      [(ErrTcUnit message) (ErrTcType message)])
+    (tc-expr ctx env (AstExprTuple exprs))))
+
+;; Flow the expected type into a begin's final expression so a contextual
+;; literal in tail position resolves against it; non-final expressions keep
+;; the non-contextual policy (any type is allowed).
+(define (tc-begin-list-with-expected
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [exprs : AstExprList]
+  [expected : AstType]) : ResultTcType
+  (match exprs
+    [(AstExprNil) (OkTcType (AstTyUnit))]
+    [(AstExprCons expr rest)
+      (match rest
+        [(AstExprNil) (tc-expr-with-expected-or-actual ctx env expr expected)]
+        [_
+          (match (tc-expr ctx env expr)
+            [(OkTcType _) (tc-begin-list-with-expected ctx env rest expected)]
+            [(ErrTcType message) (ErrTcType message)])])]))
+
 (define (tc-expr-with-expected-or-actual
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -2879,6 +2958,12 @@
         [(AstTyArray elem-ty len)
           (tc-expr-array-with-expected-or-actual ctx env exprs elem-ty len)]
         [_ (tc-expr ctx env expr)])]
+    [(AstExprTuple exprs)
+      (match (tc-type-strip-region expected)
+        [(AstTyTuple expected-elems)
+          (tc-expr-tuple-with-expected-or-actual ctx env exprs expected-elems)]
+        [_ (tc-expr ctx env expr)])]
+    [(AstExprBegin exprs) (tc-begin-list-with-expected ctx env exprs expected)]
     [_
       (if (and
         (tc-type-eq (tc-type-strip-region expected) (AstTyF32))

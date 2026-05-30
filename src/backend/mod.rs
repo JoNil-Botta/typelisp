@@ -2108,7 +2108,8 @@ impl X86_64Backend {
         self.needs_alloc_runtime = Self::needs_alloc_runtime(program);
         self.needs_region_mark_runtime = Self::needs_region_mark_runtime(program);
         self.needs_region_reset_runtime = Self::needs_region_reset_runtime(program);
-        self.needs_arena_make_runtime = Self::needs_named_runtime(program, ARENA_MAKE_RUNTIME_SYMBOL);
+        self.needs_arena_make_runtime =
+            Self::needs_named_runtime(program, ARENA_MAKE_RUNTIME_SYMBOL);
         self.needs_arena_current_runtime =
             Self::needs_named_runtime(program, ARENA_CURRENT_RUNTIME_SYMBOL);
         self.needs_arena_set_runtime = Self::needs_named_runtime(program, ARENA_SET_RUNTIME_SYMBOL);

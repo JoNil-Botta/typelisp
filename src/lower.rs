@@ -349,7 +349,8 @@ impl ProgramLowerer {
                             .insert(init_fn_name, value.span());
                         self.functions.push(lowered_fn.function);
                         self.functions.extend(lowered_fn.synthetic_functions);
-                        self.clone_types_needed.extend(lowered_fn.clone_types_needed);
+                        self.clone_types_needed
+                            .extend(lowered_fn.clone_types_needed);
                     }
                     self.globals.push((name.clone(), val_ty, init_value));
                 }
@@ -371,7 +372,8 @@ impl ProgramLowerer {
                         .insert(name.clone(), body.span());
                     self.functions.push(lowered_fn.function);
                     self.functions.extend(lowered_fn.synthetic_functions);
-                    self.clone_types_needed.extend(lowered_fn.clone_types_needed);
+                    self.clone_types_needed
+                        .extend(lowered_fn.clone_types_needed);
                 }
                 ast::Decl::Extern { name, ty } => {
                     self.externs.push((name.clone(), self.resolve_type(ty)));
@@ -460,8 +462,9 @@ impl ProgramLowerer {
             .unwrap_or_default();
         let mut arms = Vec::new();
         for variant in &variants {
-            let binders: Vec<String> =
-                (0..variant.fields.len()).map(|i| format!("__f{}", i)).collect();
+            let binders: Vec<String> = (0..variant.fields.len())
+                .map(|i| format!("__f{}", i))
+                .collect();
             let pat = ast::Pattern::Variant {
                 name: variant.name.clone(),
                 args: binders
@@ -523,7 +526,13 @@ impl ProgramLowerer {
 fn clone_fn_name(ty: &Type) -> String {
     let raw = format!("__tl_clone_{}", mangle_type(ty));
     raw.chars()
-        .map(|c| if c.is_ascii_alphanumeric() || c == '_' { c } else { '_' })
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
         .collect()
 }
 
@@ -1876,7 +1885,10 @@ impl FnLowerer {
             // Reject at lowering with a clear message rather than emitting a call
             // to an undefined symbol (link error) or silently sharing a buffer.
             Type::Tuple(_) | Type::DynArray(_) | Type::Array(_, _) => {
-                panic!("(clone ...) of aggregate type {:?} is not yet supported", rty)
+                panic!(
+                    "(clone ...) of aggregate type {:?} is not yet supported",
+                    rty
+                )
             }
             // Scalars, functions, unit: immediate values, nothing to deep-copy.
             _ => val,

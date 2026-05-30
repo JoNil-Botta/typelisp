@@ -4930,12 +4930,13 @@
   [key : String]
   [span : AstSourceSpan]) : CompilerSourceSpans
   (match spans
-    [(CompilerSourceSpans entries instr-entries)
+    [(CompilerSourceSpans entries instr-entries instr-count)
       (CompilerSourceSpans
         entries
         (CompilerSourceSpansEntryCons
           (CompilerSourceSpansEntry key span)
-          instr-entries))]))
+          instr-entries)
+        (+ instr-count 1))]))
 
 (define (opt-remap-spans-prepend-instr
   [spans : CompilerSourceSpans]
@@ -5121,7 +5122,7 @@
         rest)]))
 
 (define (opt-remap-spans-fast-path? [source-spans : CompilerSourceSpans]) : bool
-  (> (compiler-source-spans-instr-count source-spans) 2048))
+  (compiler-source-spans-instr-count-at-least? source-spans 2049))
 
 (define (opt-remap-spans-program
   [source-spans : CompilerSourceSpans]

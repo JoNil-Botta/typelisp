@@ -92,11 +92,9 @@ end
 decision|selfhost/ast_types.tl|legacy AST type declarations only; imported by selfhost/ast.tl and has no functions to compile directly
 
 case|selfhost_build|selfhost/build.tl|assembly|skip|direct
-requires-stage0-mode|#1437 stage1 compiler resource blocker (imports build/run compiler driver)
 requires-stage0-symbol|file-read-chunk-status,file-write-status,file-flush-status,append-file-status
-contains|_tl_build_cli_config:
+contains|_tl_build_cli_config_from:
 contains|_tl_source_tool_build_source:
-contains|_tl_build_config:
 contains|_tl_build_config_from:
 contains|_tl_build_source_plan_render:
 contains|_tl_build_package:
@@ -107,7 +105,6 @@ contains|Generated:
 end
 
 case|selfhost_build_run_core|selfhost/build_run_core.tl|assembly|skip|direct
-requires-stage0-mode|#1437 stage1 compiler resource blocker (imports compiler driver)
 requires-stage0-symbol|file-read-chunk-status,file-write-status,file-flush-status,append-file-status
 contains|_tl_source_tool_build_source:
 contains|_tl_source_tool_run_source:
@@ -127,17 +124,12 @@ contains|selfhost-check: --stdlib-root requires a value
 end
 
 case|selfhost_compile|selfhost/compile.tl|assembly|exactly-one|direct
-requires-stage0-mode|#1437 stage1->stage2 resource blocker
 contains|_tl_compile_cli_config:
 contains|_tl_compile_cli_target:
 contains|_tl_compile_cli_invalid_opt_level:
 contains|_tl_compile_cli_backend_mode:
 contains|_tl_compile_cli_root_list_append:
-contains|_tl_compiler_driver_compile_file:
-contains|_tl_compiler_driver_compile_file_with_roots:
 contains|_tl_compiler_driver_compile_file_with_roots_and_level:
-contains|_tl_compiler_driver_compile_file_for_target:
-contains|_tl_compiler_driver_compile_file_for_target_with_roots:
 contains|_tl_compiler_driver_compile_file_for_target_with_roots_and_level:
 contains|_tl_compiler_driver_emit_ir_summary_file_with_roots_and_level:
 contains|_tl_compiler_backend_emit_program_with_spans_for_target:
@@ -169,7 +161,6 @@ contains|_tl_compiler_ast_smoke:
 end
 
 case|selfhost_compiler_backend|selfhost/compiler_backend.tl|assembly|skip|direct
-requires-stage0-mode|#1437 stage1 compiler resource blocker
 contains|_tl_compiler_backend_emit_source:
 contains|_tl_compiler_backend_emit_program_for_target:
 contains|_tl_compiler_backend_extern_metadata_symbol_ok_question:
@@ -188,21 +179,18 @@ end
 decision|selfhost/compiler_backend_tests.tl|backend smoke-test helper module imported by selfhost/compiler_backend_smoke.tl and backend fixture drivers; no direct CLI/main compile case
 
 case|selfhost_compiler_backend_runtime_fixture|selfhost/compiler_backend_runtime_fixture.tl|assembly|skip|direct
-requires-stage0-mode|#1437 stage1 compiler resource blocker (imports backend)
 contains|_tl_compiler_backend_runtime_fixture_emit:
 contains|_tl_compiler_backend_runtime_helper_program:
 contains|_tl_compiler_backend_emit_program:
 end
 
 case|selfhost_compiler_backend_windows_driver_fixture|selfhost/compiler_backend_windows_driver_fixture.tl|assembly|skip|direct
-requires-stage0-mode|#1437 stage1 compiler resource blocker (imports backend)
 contains|_tl_compiler_backend_windows_driver_runtime_source:
 contains|_tl_compiler_backend_emit_source_for_target:
 contains|compiler-backend-windows-driver-fixture: expected output path
 end
 
 case|selfhost_compiler_backend_smoke|selfhost/compiler_backend_smoke.tl|assembly|exactly-one|direct
-requires-stage0-mode|#1437 stage1 compiler resource blocker (imports backend)
 contains|_tl_compiler_backend_self_test:
 contains|_tl_compiler_backend_env_runtime_ok_question:
 contains|_tl_compiler_backend_emit_source:
@@ -216,14 +204,12 @@ contains|_tl_optimize_program_with_level:
 end
 
 case|selfhost_compiler_backend_stack_args_fixture|selfhost/compiler_backend_stack_args_fixture.tl|assembly|exactly-one|direct
-requires-stage0-mode|#1437 stage1 compiler resource blocker (imports backend)
 contains|_tl_compiler_backend_stack_args_fixture_for_name:
 contains|windows-x86_64
 contains|linux-x86_64
 end
 
 case|selfhost_compiler_backend_raw_pointer_fixture|selfhost/compiler_backend_raw_pointer_fixture.tl|assembly|exactly-one|direct
-requires-stage0-mode|#1437 stage1 compiler resource blocker (imports backend)
 contains|_tl_compiler_backend_raw_pointer_fixture_for_name:
 contains|_tl_compiler_backend_raw_pointer_fixture_emit:
 contains|windows-x86_64
@@ -267,15 +253,13 @@ contains|_tl_compiler_diagnostic_self_test:
 end
 
 case|selfhost_compiler_driver|selfhost/compiler_driver.tl|assembly|exactly-one|direct
-requires-stage0-mode|#1437 stage1 compiler resource blocker (imports backend)
 contains|_tl_compiler_driver_compile_file:
 contains|_tl_compiler_driver_emit_file:
-contains|_tl_compiler_load_file:
+contains|_tl_compiler_load_file_with_paths_and_roots:
 contains|compiler-driver: expected input and output paths
 end
 
 case|selfhost_compiler_driver_core|selfhost/compiler_driver_core.tl|assembly|skip|direct
-requires-stage0-mode|#1437 stage1 compiler resource blocker (imports backend)
 contains|_tl_compiler_driver_compile_file:
 contains|_tl_compiler_driver_compile_file_with_roots_and_level:
 contains|_tl_compiler_driver_compile_file_for_target:
@@ -326,7 +310,6 @@ contains|_tl_compiler_load_self_test:
 end
 
 case|selfhost_compiler_lower|selfhost/compiler_lower.tl|assembly|skip|direct
-requires-stage0-mode|#1437 stage1 compiler resource blocker (imports typechecker)
 contains|_tl_lower_compiler_source:
 contains|_tl_lower_compiler_program_checked:
 contains|_tl_compiler_lower_self_test:
@@ -433,7 +416,6 @@ contains|_tl_typecheck_compiler_program:
 end
 
 case|selfhost_doc|selfhost/doc.tl|assembly|exactly-one|direct
-requires-stage0-mode|#1437 stage1 compiler resource blocker (imports doctest checker)
 requires-stage0-symbol|file-read-chunk-status,file-write-status,file-flush-status,append-file-status
 contains|_tl_doc_generate_file:
 contains|_tl_doc_test_file:
@@ -537,7 +519,6 @@ contains|_tl_doc_render_markdown:
 end
 
 case|selfhost_doc_test|selfhost/doc_test.tl|assembly|skip|direct
-requires-stage0-mode|#1437 stage1 compiler resource blocker (imports compiler checker)
 requires-stage0-symbol|file-read-chunk-status,file-write-status,file-flush-status,append-file-status
 contains|_tl_doc_test_extract_source:
 contains|_tl_doc_test_parse_run_metadata:
@@ -550,7 +531,6 @@ contains|was expected to fail
 end
 
 case|selfhost_doc_test_smoke|selfhost/doc_test_smoke.tl|assembly|exactly-one|direct
-requires-stage0-mode|#1437 stage1 compiler resource blocker (imports doctest checker)
 requires-stage0-symbol|file-read-chunk-status,file-write-status,file-flush-status,append-file-status
 contains|_tl_doc_test_smoke_all:
 contains|_tl_doc_test_run_smoke:
@@ -700,17 +680,15 @@ contains|tl>
 end
 
 case|selfhost_run|selfhost/run.tl|assembly|skip|direct
-requires-stage0-mode|#1437 stage1 compiler resource blocker (imports build/run compiler driver)
 requires-stage0-symbol|file-read-chunk-status,file-write-status,file-flush-status,append-file-status
-contains|_tl_run_plan_config:
+contains|_tl_run_plan_config_from:
 contains|_tl_run_plan_render:
-contains|_tl_run_cli_config:
+contains|_tl_run_cli_config_from:
 contains|_tl_source_tool_run_source:
 contains|run: expected source path
 end
 
 case|selfhost_test|selfhost/test.tl|assembly|skip|direct
-requires-stage0-mode|#1437 stage1 compiler resource blocker (test driver imports compiler pipeline)
 requires-stage0-symbol|file-read-chunk-status,file-write-status,file-flush-status,append-file-status
 contains|_tl_tltest_run_config:
 contains|_tl_tltest_build_harness:

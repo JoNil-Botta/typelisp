@@ -7891,7 +7891,9 @@
   [program : AstProgram]) : ResultCompilerLower
   (lower-compiler-program-checked-with-names ctx top-env program LowerNameNil))
 
-(define (lower-compiler-program-unlocated [program : AstProgram]) : ResultCompilerLower
+;; Public lower entrypoints own the parse -> expand -> specialize -> typecheck
+;; boundary. Internal `expanded` helpers assume macro expansion has already run.
+(define (lower-compiler-expanded-program-unlocated [program : AstProgram]) : ResultCompilerLower
   (match (compiler-specialize-program program)
     [(OkSpecProgram specialized)
       (match (typecheck-compiler-specialized-program-with-paths
@@ -7931,6 +7933,12 @@
         [(ErrCompilerTypecheck diag) (ErrCompilerLower diag)])]
     [(ErrSpecProgram diag) (ErrCompilerLower diag)]))
 
+(define (lower-compiler-program-unlocated [program : AstProgram]) : ResultCompilerLower
+  (match (macro-expand-program program)
+    [(OkMacroExpand expanded)
+      (lower-compiler-expanded-program-unlocated expanded)]
+    [(ErrMacroExpand diag) (ErrCompilerLower diag)]))
+
 (define (lower-compiler-program-with-path
   [path : String]
   [program : AstProgram]) : ResultCompilerLower
@@ -7939,7 +7947,7 @@
     [(ErrCompilerLower diag)
       (ErrCompilerLower (lower-diagnostic-with-path diag path))]))
 
-(define (lower-compiler-program-with-decl-paths
+(define (lower-compiler-expanded-program-with-decl-paths
   [entry-path : String]
   [program : AstProgram]
   [paths : AstDeclPathList]) : ResultCompilerLower
@@ -8005,6 +8013,19 @@
       [(ErrSpecProgram diag)
         (ErrCompilerLower (lower-diagnostic-with-path diag entry-path))])))
 
+(define (lower-compiler-program-with-decl-paths
+  [entry-path : String]
+  [program : AstProgram]
+  [paths : AstDeclPathList]) : ResultCompilerLower
+  (match (macro-expand-program program)
+    [(OkMacroExpand expanded)
+      (lower-compiler-expanded-program-with-decl-paths
+        entry-path
+        expanded
+        paths)]
+    [(ErrMacroExpand diag)
+      (ErrCompilerLower (lower-diagnostic-with-path diag entry-path))]))
+
 (define (lower-compiler-program [program : AstProgram]) : ResultCompilerLower
   (lower-compiler-program-with-path "<source>" program))
 
@@ -8030,6 +8051,16 @@
       (while (< x 45)
         (set! x (+ x 1)))
       (if flag x 0))))")
+
+(define (compiler-lower-macro-expand-source) : String
+  "(defmacro (and2 [lhs : bool] [rhs : bool]) : bool
+  (expr-if lhs rhs (expr-bool false)))
+(define (main) : i64 (if (and2 true true) 1 0))")
+
+(define (compiler-lower-macro-arity-source) : String
+  "(defmacro (and2 [lhs : bool] [rhs : bool]) : bool
+  (expr-if lhs rhs (expr-bool false)))
+(define (main) : i64 (if (and2 true) 1 0))")
 
 (define (compiler-lower-unsupported-source) : String
   "(define (main) : (Tuple i64 bool)
@@ -10488,6 +10519,14 @@
         unit
         (set! ok false))
       (if (compiler-lower-ok-summary? (compiler-lower-smoke-source))
+        unit
+        (set! ok false))
+      (if (compiler-lower-ok? (compiler-lower-macro-expand-source))
+        unit
+        (set! ok false))
+      (if (compiler-lower-error-ok?
+        (compiler-lower-macro-arity-source)
+        "macro call has too few arguments")
         unit
         (set! ok false))
       (if (compiler-lower-spans-ok? (compiler-lower-smoke-source))

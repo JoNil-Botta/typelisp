@@ -190,6 +190,8 @@ fn print_usage() {
     );
     eprintln!("    typelisp doc <file.tl> [-o <out.md>] [--stdlib-root <dir>...]");
     eprintln!("    typelisp doc --test <file.tl> [--stdlib-root <dir>...]");
+    eprintln!("    typelisp new [--lib] <name>    Scaffold a new package in <name>/");
+    eprintln!("    typelisp init [--lib] <name>   Scaffold a package in the current directory");
     eprintln!();
     eprintln!("Compatibility aliases:");
     eprintln!("    typelisp tokenize <file.tl>");
@@ -1444,6 +1446,34 @@ fn run_cli() {
             {
                 let outcome =
                     execute_selfhost_host_action_driver("selfhost/run.tl", &args[2..], "run");
+                finish_host_action_outcome(outcome);
+            }
+        }
+        cmd @ ("new" | "init") => {
+            // Package scaffolding (#1160) is selfhost-owned in selfhost/scaffold.tl.
+            // It performs host file I/O (mkdir + write) as it runs, so it must be
+            // *executed* (its host actions run inline) rather than treated as a
+            // host-action planner. Route it through `selfhost/run.tl` exactly like
+            // the `run` command does, building the argv
+            //   run selfhost/scaffold.tl -- <new|init> <args...>
+            // so scaffold sees `<new|init>` as its first program argument.
+            // Resolve scaffold.tl next to the executable / in the repo so the path
+            // does not depend on the user's working directory (run.tl reads the
+            // program path relative to cwd).
+            let scaffold_path = selfhost_driver_path("selfhost/scaffold.tl");
+            let mut run_args: Vec<String> = Vec::with_capacity(args.len());
+            run_args.push(scaffold_path.to_string_lossy().into_owned());
+            run_args.push("--".to_string());
+            run_args.push(cmd.to_string());
+            run_args.extend_from_slice(&args[2..]);
+            #[cfg(target_os = "linux")]
+            {
+                execute_selfhost_tool_driver_and_exit("selfhost/run.tl", &run_args, "run");
+            }
+            #[cfg(not(target_os = "linux"))]
+            {
+                let outcome =
+                    execute_selfhost_host_action_driver("selfhost/run.tl", &run_args, "run");
                 finish_host_action_outcome(outcome);
             }
         }

@@ -8164,6 +8164,262 @@ _tl_env_path_separator:
 
 ")
 
+;; Windows variant of `_tl_env_path_separator`: builds the 1-char `;` String
+;; (Windows PATH separator, byte 59) instead of `:`. Win64 ABI: tl_alloc takes
+;; the size in %rcx and needs 32-byte shadow space at each call (its slow path
+;; calls VirtualAlloc). Returns a String fat-value {ptr@0, len@8} in %rax.
+(define (compiler-backend-runtime-windows-env-path-separator-functions) : String
+  "    .globl _tl_env_path_separator
+_tl_env_path_separator:
+    push %rbp
+    mov %rsp, %rbp
+    push %r12
+    sub $8, %rsp
+    movq $1, %rcx
+    sub $32, %rsp
+    call tl_alloc
+    add $32, %rsp
+    movq %rax, %r12
+    movb $59, (%r12)
+    movq $16, %rcx
+    sub $32, %rsp
+    call tl_alloc
+    add $32, %rsp
+    movq %r12, 0(%rax)
+    movq $1, 8(%rax)
+    add $8, %rsp
+    pop %r12
+    pop %rbp
+    ret
+
+")
+
+;; Windows variant of `_tl_env_var_exists_question`. The Linux helper walks the
+;; SysV stack-captured environment array (.L_tl_envp), which is never populated
+;; on Windows, so this uses the CRT `getenv`. ABI: the String argument arrives
+;; as a pointer to a {ptr,len} fat-value in %rcx (dereferenced 0(%rcx)/8(%rcx),
+;; mirroring the Linux helper's 0(%rdi)/8(%rdi)). Copies the name into a fresh
+;; NUL-terminated buffer, calls getenv, and returns bool (i64 0/1) in %rax.
+(define (compiler-backend-runtime-windows-env-var-exists-functions) : String
+  "    .globl _tl_env_var_exists_question
+_tl_env_var_exists_question:
+    push %rbp
+    mov %rsp, %rbp
+    push %rbx
+    push %r12
+    push %r13
+    sub $8, %rsp
+    movq 0(%rcx), %rbx
+    movq 8(%rcx), %r12
+    cmpq $0, %r12
+    jl .L_tl_env_var_exists_win_false
+    movq %r12, %rax
+    addq $1, %rax
+    js .L_tl_env_var_exists_win_false
+    movq %rax, %rcx
+    sub $32, %rsp
+    call tl_alloc
+    add $32, %rsp
+    movq %rax, %r13
+    xorq %r10, %r10
+.L_tl_env_var_exists_win_name_copy_loop:
+    cmpq %r12, %r10
+    jge .L_tl_env_var_exists_win_name_copy_done
+    movzbl (%rbx,%r10), %edx
+    movb %dl, (%r13,%r10)
+    incq %r10
+    jmp .L_tl_env_var_exists_win_name_copy_loop
+.L_tl_env_var_exists_win_name_copy_done:
+    movb $0, (%r13,%r12)
+    movq %r13, %rcx
+    sub $32, %rsp
+    call getenv
+    add $32, %rsp
+    testq %rax, %rax
+    setne %al
+    movzbq %al, %rax
+    jmp .L_tl_env_var_exists_win_return
+.L_tl_env_var_exists_win_false:
+    xorq %rax, %rax
+.L_tl_env_var_exists_win_return:
+    add $8, %rsp
+    pop %r13
+    pop %r12
+    pop %rbx
+    pop %rbp
+    ret
+
+")
+
+;; Windows variant of `_tl_env_var_value`. Like env-var-exists, uses the CRT
+;; `getenv` (the Linux `.L_tl_envp` walk is unavailable on Windows). The String
+;; name arrives as a pointer to a {ptr,len} fat-value in %rcx. Copies the name
+;; into a NUL-terminated buffer, getenv -> char* (NULL if unset), strlen, copies
+;; the value into a fresh buffer, and returns a String fat-value {ptr,len} in
+;; %rax (the empty String {0,0} when unset), matching the Linux helper.
+(define (compiler-backend-runtime-windows-env-var-value-functions) : String
+  "    .globl _tl_env_var_value
+_tl_env_var_value:
+    push %rbp
+    mov %rsp, %rbp
+    push %rbx
+    push %r12
+    push %r13
+    sub $8, %rsp
+    movq 0(%rcx), %rbx
+    movq 8(%rcx), %r12
+    cmpq $0, %r12
+    jl .L_tl_env_var_value_win_empty
+    movq %r12, %rcx
+    addq $1, %rcx
+    js .L_tl_env_var_value_win_empty
+    sub $32, %rsp
+    call tl_alloc
+    add $32, %rsp
+    movq %rax, %r13
+    xorq %rcx, %rcx
+.L_tl_env_var_value_win_name_copy_loop:
+    cmpq %r12, %rcx
+    jge .L_tl_env_var_value_win_name_copy_done
+    movzbl (%rbx,%rcx), %edx
+    movb %dl, (%r13,%rcx)
+    incq %rcx
+    jmp .L_tl_env_var_value_win_name_copy_loop
+.L_tl_env_var_value_win_name_copy_done:
+    movb $0, (%r13,%r12)
+    movq %r13, %rcx
+    sub $32, %rsp
+    call getenv
+    add $32, %rsp
+    testq %rax, %rax
+    jz .L_tl_env_var_value_win_empty
+    movq %rax, %rbx
+    movq %rbx, %rcx
+    sub $32, %rsp
+    call strlen
+    add $32, %rsp
+    movq %rax, %r12
+    movq %r12, %rcx
+    sub $32, %rsp
+    call tl_alloc
+    add $32, %rsp
+    movq %rax, %r13
+    xorq %rcx, %rcx
+.L_tl_env_var_value_win_copy_loop:
+    cmpq %r12, %rcx
+    jge .L_tl_env_var_value_win_fat
+    movzbl (%rbx,%rcx), %edx
+    movb %dl, (%r13,%rcx)
+    incq %rcx
+    jmp .L_tl_env_var_value_win_copy_loop
+.L_tl_env_var_value_win_empty:
+    xorq %r12, %r12
+    xorq %r13, %r13
+.L_tl_env_var_value_win_fat:
+    movq $16, %rcx
+    sub $32, %rsp
+    call tl_alloc
+    add $32, %rsp
+    movq %r13, 0(%rax)
+    movq %r12, 8(%rax)
+    add $8, %rsp
+    pop %r13
+    pop %r12
+    pop %rbx
+    pop %rbp
+    ret
+
+")
+
+;; Windows variant of `tl_region_reset`. Identical arena-walk structure to the
+;; Linux helper (offsets: 0=prev arena, 8=usable base, 16=bump pointer, 24=end;
+;; the arena header sits at the VirtualAlloc base). The only difference is how
+;; newer arenas are released: Linux uses `munmap`, Windows uses
+;; `VirtualFree(lpAddress=arena, dwSize=0, dwFreeType=MEM_RELEASE=0x8000)` — the
+;; arena node address is exactly the VirtualAlloc base, so MEM_RELEASE frees the
+;; whole chunk. Arg (the mark) arrives in %rcx.
+(define (compiler-backend-runtime-windows-region-reset-functions) : String
+  "    .globl tl_region_reset
+tl_region_reset:
+    push %rbp
+    mov %rsp, %rbp
+    push %rbx
+    push %r12
+    push %r13
+    push %r14
+    sub $8, %rsp
+    movq %rcx, %r12
+    testq %r12, %r12
+    jz .L_tl_region_reset_win_all
+    movq tl_current_arena(%rip), %r13
+    testq %r13, %r13
+    jz .L_tl_region_reset_win_invalid
+.L_tl_region_reset_win_find:
+    movq 8(%r13), %rax
+    cmpq %rax, %r12
+    jb .L_tl_region_reset_win_next
+    movq 24(%r13), %rax
+    cmpq %rax, %r12
+    jbe .L_tl_region_reset_win_found
+.L_tl_region_reset_win_next:
+    movq 0(%r13), %r13
+    testq %r13, %r13
+    jnz .L_tl_region_reset_win_find
+    jmp .L_tl_region_reset_win_invalid
+.L_tl_region_reset_win_invalid:
+    movq $2, %rcx
+    leaq .L_tl_region_reset_msg(%rip), %rdx
+    movq $.L_tl_region_reset_msg_len, %r8
+    sub $32, %rsp
+    call _write
+    add $32, %rsp
+    movq $134, %rcx
+    sub $32, %rsp
+    call exit
+.L_tl_region_reset_win_found:
+    movq tl_current_arena(%rip), %r14
+.L_tl_region_reset_win_drop:
+    cmpq %r13, %r14
+    je .L_tl_region_reset_win_restore
+    movq 0(%r14), %rbx
+    movq %r14, %rcx
+    xorq %rdx, %rdx
+    movq $0x8000, %r8
+    sub $32, %rsp
+    call VirtualFree
+    add $32, %rsp
+    movq %rbx, %r14
+    jmp .L_tl_region_reset_win_drop
+.L_tl_region_reset_win_restore:
+    movq %r12, 16(%r13)
+    movq %r13, tl_current_arena(%rip)
+    jmp .L_tl_region_reset_win_done
+.L_tl_region_reset_win_all:
+    movq tl_current_arena(%rip), %r14
+    movq $0, tl_current_arena(%rip)
+.L_tl_region_reset_win_all_drop:
+    testq %r14, %r14
+    jz .L_tl_region_reset_win_done
+    movq 0(%r14), %rbx
+    movq %r14, %rcx
+    xorq %rdx, %rdx
+    movq $0x8000, %r8
+    sub $32, %rsp
+    call VirtualFree
+    add $32, %rsp
+    movq %rbx, %r14
+    jmp .L_tl_region_reset_win_all_drop
+.L_tl_region_reset_win_done:
+    add $8, %rsp
+    pop %r14
+    pop %r13
+    pop %r12
+    pop %rbx
+    pop %rbp
+    ret
+
+")
+
 (define (compiler-backend-runtime-read-file-functions) : String
   ".L_tl_read_file:
     push %rbp
@@ -11744,15 +12000,15 @@ tl_windows_sdk_registry_install:
               (compiler-backend-runtime-flush-stdout-functions))
             "")]
         [region-mark-asm : String
-          (compiler-backend-runtime-linux-only
-            target
-            region-mark
-            (compiler-backend-runtime-region-mark-functions))]
+          (if region-mark
+            (compiler-backend-runtime-region-mark-functions)
+            "")]
         [region-reset-asm : String
-          (compiler-backend-runtime-linux-only
-            target
-            region-reset
-            (compiler-backend-runtime-region-reset-functions))]
+          (if region-reset
+            (if (compiler-backend-target-windows? target)
+              (compiler-backend-runtime-windows-region-reset-functions)
+              (compiler-backend-runtime-region-reset-functions))
+            "")]
         [random-system-seed-asm : String
           (if random-system-seed
             (if (compiler-backend-target-windows? target)
@@ -11814,20 +12070,23 @@ tl_windows_sdk_registry_install:
               windows-setup-instances-asm
               windows-sdk-registry-install-asm))]
         [env-var-exists-asm : String
-          (compiler-backend-runtime-linux-only
-            target
-            env-var-exists
-            (compiler-backend-runtime-env-var-exists-functions))]
+          (if env-var-exists
+            (if (compiler-backend-target-windows? target)
+              (compiler-backend-runtime-windows-env-var-exists-functions)
+              (compiler-backend-runtime-env-var-exists-functions))
+            "")]
         [env-var-value-asm : String
-          (compiler-backend-runtime-linux-only
-            target
-            env-var-value
-            (compiler-backend-runtime-env-var-value-functions))]
+          (if env-var-value
+            (if (compiler-backend-target-windows? target)
+              (compiler-backend-runtime-windows-env-var-value-functions)
+              (compiler-backend-runtime-env-var-value-functions))
+            "")]
         [env-path-separator-asm : String
-          (compiler-backend-runtime-linux-only
-            target
-            env-path-separator
-            (compiler-backend-runtime-env-path-separator-functions))]
+          (if env-path-separator
+            (if (compiler-backend-target-windows? target)
+              (compiler-backend-runtime-windows-env-path-separator-functions)
+              (compiler-backend-runtime-env-path-separator-functions))
+            "")]
         (backend-cat5
           runtime-front-asm
           runtime-string-asm
@@ -12064,51 +12323,17 @@ tl_windows_sdk_registry_install:
                           env-path-separator
                           div-abort))))))))))]))
 
+;; All runtime helpers the backend can be asked to emit now have a Windows
+;; variant (region mark/reset and the env-var/env-path helpers were the last
+;; Windows-unsupported ones; see the *-windows-* runtime functions above), so no
+;; plan is rejected on either target. The `plan` parameter is retained for the
+;; signature shape and possible future target-specific gating.
 (define (compiler-backend-target-runtime-ok?
   [target : CompilerBackendTarget]
   [plan : CompilerBackendRuntimePlan]) : bool
-  (if (compiler-backend-target-windows? target)
-    (match plan
-      [(BackendRuntimePlan
-          _
-          _
-          _
-          _
-          _
-          _
-          _
-          _
-          _
-          _
-          _
-          _
-          _
-          _
-          _
-          _
-          _
-          _
-          _
-          _
-          _
-          _
-          _
-          region-mark
-          region-reset
-          _
-          _
-          _
-          env-var-exists
-          env-var-value
-          env-path-separator
-          _
-          _)
-        (not
-          (or
-            region-mark
-            (or
-              region-reset
-              (or env-var-exists (or env-var-value env-path-separator)))))])
+  (let
+    [_ : CompilerBackendTarget target]
+    [_plan : CompilerBackendRuntimePlan plan]
     true))
 
 (define (compiler-backend-runtime-externs-for-target
@@ -12135,10 +12360,27 @@ tl_windows_sdk_registry_install:
     .extern GetCurrentProcessId
 "
           ""))
-      (if (compiler-backend-plan-provides? plan "tl_random_system_seed")
-        "    .extern SystemFunction036
+      (string-append
+        (if (compiler-backend-plan-provides? plan "tl_random_system_seed")
+          "    .extern SystemFunction036
 "
-        ""))
+          "")
+        (string-append
+          ;; getenv/strlen back the Windows env-var helpers (the Linux variants
+          ;; walk the SysV stack envp, which is absent on Windows).
+          (if (or
+            (compiler-backend-plan-provides? plan "env-var-value")
+            (compiler-backend-plan-provides? plan "env-var-exists?"))
+            "    .extern getenv
+    .extern strlen
+"
+            "")
+          ;; VirtualFree(MEM_RELEASE) releases newer arenas in the Windows
+          ;; tl_region_reset (the Linux variant uses the munmap syscall).
+          (if (compiler-backend-plan-provides? plan "tl_region_reset")
+            "    .extern VirtualFree
+"
+            ""))))
     ""))
 
 ;; Emit a full program for `target`. Windows x64 has ABI-correct user function

@@ -1,8 +1,14 @@
 name: Bootstrap Stage0
 
-# On every merge to main, build release binaries and publish them as permanent
-# GitHub releases. A lightweight "stage0-latest" release is recreated with the
-# same assets, giving CI a stable download URL while permanent releases remain.
+# On every merge to main, build the self-hosted single-binary stage0 compiler
+# (cli.tl, compiled by the in-repo Rust seed) and publish it as permanent GitHub
+# releases. A lightweight "stage0-latest" release is recreated with the same
+# assets, giving CI a stable download URL while permanent releases remain.
+#
+# The stage0 is now a SINGLE cli.tl binary per OS (no bundle / per-command driver
+# wrappers): cli.tl is the unified toolchain (compile/build/run/check/fmt/lint/
+# test/doc + the bare-file bootstrap form). It finds stdlib via --stdlib-root
+# against the repo checkout until the stdlib is embedded into the binary.
 
 on:
   push:
@@ -25,26 +31,28 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Build release
+      - name: Build Rust seed compiler
         run: cargo build --release
 
-      - name: Stage binary
+      - name: Build self-hosted cli.tl stage0 binary
         run: |
-          cp target/release/typelisp typelisp-stage0-linux
+          target/release/typelisp build selfhost/cli.tl -o typelisp-stage0-linux \
+            --stdlib-root stdlib --stdlib-root selfhost --opt-level 2
           strip typelisp-stage0-linux
           file typelisp-stage0-linux
           ls -lh typelisp-stage0-linux
 
-      - name: Stage bundled Linux stage0
-        run: scripts/stage-linux-stage0-bundle.sh target/release/typelisp typelisp-stage0-linux-bundle.tar.gz
+      - name: Smoke-check the stage0 binary
+        run: |
+          ./typelisp-stage0-linux compile selfhost/compile.tl -o /tmp/stage0-smoke.s \
+            --target linux-x86_64 --stdlib-root stdlib --stdlib-root selfhost
+          test -s /tmp/stage0-smoke.s
 
       - name: Upload stage0 artifact
         uses: actions/upload-artifact@v4
         with:
           name: stage0-linux
-          path: |
-            typelisp-stage0-linux
-            typelisp-stage0-linux-bundle.tar.gz
+          path: typelisp-stage0-linux
           if-no-files-found: error
 
   build-windows:
@@ -56,13 +64,14 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Build release
+      - name: Build Rust seed compiler
         run: cargo build --release
 
-      - name: Stage binary
+      - name: Build self-hosted cli.tl stage0 binary
         shell: pwsh
         run: |
-          Copy-Item .\target\release\typelisp.exe .\typelisp-stage0-windows.exe
+          .\target\release\typelisp.exe build selfhost\cli.tl -o typelisp-stage0-windows.exe `
+            --stdlib-root stdlib --stdlib-root selfhost --opt-level 2
           Get-Item .\typelisp-stage0-windows.exe
 
       - name: Upload stage0 artifact
@@ -90,12 +99,11 @@ jobs:
       - name: Verify staged assets
         run: |
           test -s stage0-artifacts/typelisp-stage0-linux
-          test -s stage0-artifacts/typelisp-stage0-linux-bundle.tar.gz
           test -s stage0-artifacts/typelisp-stage0-windows.exe
           chmod +x stage0-artifacts/typelisp-stage0-linux
           (
             cd stage0-artifacts
-            sha256sum typelisp-stage0-linux typelisp-stage0-linux-bundle.tar.gz typelisp-stage0-windows.exe > SHA256SUMS
+            sha256sum typelisp-stage0-linux typelisp-stage0-windows.exe > SHA256SUMS
             sha256sum -c SHA256SUMS
           )
           file stage0-artifacts/typelisp-stage0-linux
@@ -107,11 +115,10 @@ jobs:
         run: |
           tag="stage0-$(date -u +%Y%m%d-%H%M%S)-r${{ github.run_id }}"
           notes="$(cat <<EOF
-          Bootstrap compiler built from commit ${{ github.sha }}.
+          Self-hosted cli.tl stage0 compiler built from commit ${{ github.sha }}.
 
           Assets:
           - typelisp-stage0-linux
-          - typelisp-stage0-linux-bundle.tar.gz
           - typelisp-stage0-windows.exe
           - SHA256SUMS
           EOF
@@ -123,7 +130,6 @@ jobs:
             --repo "$GITHUB_REPOSITORY" \
             --target "${{ github.sha }}" \
             stage0-artifacts/typelisp-stage0-linux \
-            stage0-artifacts/typelisp-stage0-linux-bundle.tar.gz \
             stage0-artifacts/typelisp-stage0-windows.exe \
             stage0-artifacts/SHA256SUMS
 
@@ -147,13 +153,12 @@ jobs:
           git push origin :refs/tags/stage0-latest 2>/dev/null || true
 
           notes="$(cat <<EOF
-          Latest bootstrap compiler built from commit ${{ github.sha }}.
+          Latest self-hosted cli.tl stage0 compiler built from commit ${{ github.sha }}.
 
           Permanent copy: $PERMANENT_TAG
 
           Stable asset URLs:
           - https://github.com/${{ github.repository }}/releases/download/stage0-latest/typelisp-stage0-linux
-          - https://github.com/${{ github.repository }}/releases/download/stage0-latest/typelisp-stage0-linux-bundle.tar.gz
           - https://github.com/${{ github.repository }}/releases/download/stage0-latest/typelisp-stage0-windows.exe
           - https://github.com/${{ github.repository }}/releases/download/stage0-latest/SHA256SUMS
           EOF
@@ -165,6 +170,5 @@ jobs:
             --repo "$GITHUB_REPOSITORY" \
             --target "${{ github.sha }}" \
             stage0-artifacts/typelisp-stage0-linux \
-            stage0-artifacts/typelisp-stage0-linux-bundle.tar.gz \
             stage0-artifacts/typelisp-stage0-windows.exe \
             stage0-artifacts/SHA256SUMS

@@ -8114,30 +8114,28 @@
 
 (define (compiler-backend-runtime-alloc-data-for-target
   [target : CompilerBackendTarget]) : String
-  (string-append
-    "    .section .bss
-    .balign 8
-tl_current_arena:
-    .zero 8
-
-"
-    "    .section .rodata
+  "    .section .rodata
 .L_tl_alloc_msg:
     .byte 116,108,58,32,97,108,108,111,99,97,116,105,111,110,32,102,97,105,108,101,100,10
     .set .L_tl_alloc_msg_len, . - .L_tl_alloc_msg
 
-"))
+")
 
+;; `tl_current_arena` is the live bump-arena pointer shared by tl_alloc, the
+;; region runtime, and the first-class arena builtins (#1633). Because the arena
+;; asm (tl_arena_current/set/make/destroy) is emitted UNCONDITIONALLY, this bss
+;; slot must be too — even a non-allocating program references it via
+;; tl_arena_current, and would otherwise fail to link with `unresolved external
+;; symbol tl_current_arena`. Emitted exactly once here (both targets); the
+;; alloc/region data no longer redefine it (which would be a duplicate symbol).
 (define (compiler-backend-runtime-arena-data-for-target
   [target : CompilerBackendTarget]) : String
-  (if (compiler-backend-target-windows? target)
-    ""
-    "    .section .bss
+  "    .section .bss
     .balign 8
 tl_current_arena:
     .zero 8
 
-"))
+")
 
 (define (compiler-backend-runtime-region-reset-data) : String
   "    .section .rodata
@@ -8410,10 +8408,10 @@ tl_current_arena:
         div-abort
         shift-abort)
       (string-append
-        (if alloc
-          (compiler-backend-runtime-alloc-data-for-target target)
-          (if (or region-mark region-reset)
-            (compiler-backend-runtime-arena-data-for-target target)
+        (string-append
+          (compiler-backend-runtime-arena-data-for-target target)
+          (if alloc
+            (compiler-backend-runtime-alloc-data-for-target target)
             ""))
         (string-append
           (if oob

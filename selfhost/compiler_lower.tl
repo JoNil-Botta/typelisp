@@ -8662,7 +8662,10 @@
   [program : AstProgram]) : ResultCompilerLower
   (lower-compiler-program-checked-with-names ctx top-env program LowerNameNil))
 
-(define (lower-compiler-program-unlocated-mode
+;; Internal `expanded` workers assume macro expansion has already run; the
+;; public `-mode` wrappers below own the expand -> specialize -> typecheck
+;; boundary so every lowering path (scalar and SPMD) expands exactly once.
+(define (lower-compiler-expanded-program-unlocated-mode
   [program : AstProgram]
   [mode : CompilerLowerMode]) : ResultCompilerLower
   (match (compiler-specialize-program program)
@@ -8705,6 +8708,14 @@
         [(ErrCompilerTypecheck diag) (ErrCompilerLower diag)])]
     [(ErrSpecProgram diag) (ErrCompilerLower diag)]))
 
+(define (lower-compiler-program-unlocated-mode
+  [program : AstProgram]
+  [mode : CompilerLowerMode]) : ResultCompilerLower
+  (match (macro-expand-program program)
+    [(OkMacroExpand expanded)
+      (lower-compiler-expanded-program-unlocated-mode expanded mode)]
+    [(ErrMacroExpand diag) (ErrCompilerLower diag)]))
+
 (define (lower-compiler-program-unlocated [program : AstProgram]) : ResultCompilerLower
   (lower-compiler-program-unlocated-mode program (CompilerLowerScalar)))
 
@@ -8722,7 +8733,7 @@
   [program : AstProgram]) : ResultCompilerLower
   (lower-compiler-program-with-path-mode path program (CompilerLowerScalar)))
 
-(define (lower-compiler-program-with-decl-paths-mode
+(define (lower-compiler-expanded-program-with-decl-paths-mode
   [entry-path : String]
   [program : AstProgram]
   [paths : AstDeclPathList]
@@ -8790,6 +8801,21 @@
       [(ErrSpecProgram diag)
         (ErrCompilerLower (lower-diagnostic-with-path diag entry-path))])))
 
+(define (lower-compiler-program-with-decl-paths-mode
+  [entry-path : String]
+  [program : AstProgram]
+  [paths : AstDeclPathList]
+  [mode : CompilerLowerMode]) : ResultCompilerLower
+  (match (macro-expand-program program)
+    [(OkMacroExpand expanded)
+      (lower-compiler-expanded-program-with-decl-paths-mode
+        entry-path
+        expanded
+        paths
+        mode)]
+    [(ErrMacroExpand diag)
+      (ErrCompilerLower (lower-diagnostic-with-path diag entry-path))]))
+
 (define (lower-compiler-program-with-decl-paths
   [entry-path : String]
   [program : AstProgram]
@@ -8842,6 +8868,16 @@
   "(export (value answer))
 (define answer : i64 42)
 (define (main) : i64 answer)")
+
+(define (compiler-lower-macro-expand-source) : String
+  "(defmacro (and2 [lhs : bool] [rhs : bool]) : bool
+  (expr-if lhs rhs (expr-bool false)))
+(define (main) : i64 (if (and2 true true) 1 0))")
+
+(define (compiler-lower-macro-arity-source) : String
+  "(defmacro (and2 [lhs : bool] [rhs : bool]) : bool
+  (expr-if lhs rhs (expr-bool false)))
+(define (main) : i64 (if (and2 true) 1 0))")
 
 ;; A still-unsupported expression for the lower-error path: the `(array ...)`
 ;; literal type-checks but the selfhost lowerer has no emission for it yet (tuple
@@ -11658,6 +11694,14 @@
         unit
         (set! ok false))
       (if (compiler-lower-ok-summary? (compiler-lower-smoke-source))
+        unit
+        (set! ok false))
+      (if (compiler-lower-ok? (compiler-lower-macro-expand-source))
+        unit
+        (set! ok false))
+      (if (compiler-lower-error-ok?
+        (compiler-lower-macro-arity-source)
+        "macro call has too few arguments")
         unit
         (set! ok false))
       (if (compiler-lower-spans-ok? (compiler-lower-smoke-source))

@@ -743,6 +743,7 @@
                       [(SourceToolCommandOk)
                         (match (source-tool-run-executable
                           bin-path
+                          target
                           (process-args-empty))
                           [(OkProcessOutput output)
                             (let

@@ -8068,6 +8068,57 @@ _tl_env_var_exists_question:
 
 ")
 
+(define (compiler-backend-runtime-windows-env-var-exists-functions) : String
+  "    .globl _tl_env_var_exists_question
+_tl_env_var_exists_question:
+    push %rbp
+    mov %rsp, %rbp
+    push %rbx
+    push %r12
+    push %r13
+    sub $8, %rsp
+    movq 0(%rcx), %rbx
+    movq 8(%rcx), %r12
+    cmpq $0, %r12
+    jl .L_tl_env_var_exists_false
+    movq %r12, %rax
+    addq $1, %rax
+    js .L_tl_env_var_exists_false
+    movq %rax, %rcx
+    sub $32, %rsp
+    call tl_alloc
+    add $32, %rsp
+    movq %rax, %r13
+    xorq %rcx, %rcx
+.L_tl_env_var_exists_name_copy_loop:
+    cmpq %r12, %rcx
+    jge .L_tl_env_var_exists_name_copy_done
+    movzbl (%rbx,%rcx), %edx
+    movb %dl, (%r13,%rcx)
+    incq %rcx
+    jmp .L_tl_env_var_exists_name_copy_loop
+.L_tl_env_var_exists_name_copy_done:
+    movb $0, (%r13,%r12)
+    movq %r13, %rcx
+    sub $32, %rsp
+    call getenv
+    add $32, %rsp
+    testq %rax, %rax
+    setne %al
+    movzbq %al, %rax
+    jmp .L_tl_env_var_exists_return
+.L_tl_env_var_exists_false:
+    xorq %rax, %rax
+.L_tl_env_var_exists_return:
+    add $8, %rsp
+    pop %r13
+    pop %r12
+    pop %rbx
+    pop %rbp
+    ret
+
+")
+
 (define (compiler-backend-runtime-env-var-value-functions) : String
   "    .globl _tl_env_var_value
 _tl_env_var_value:
@@ -8142,6 +8193,81 @@ _tl_env_var_value:
 
 ")
 
+(define (compiler-backend-runtime-windows-env-var-value-functions) : String
+  "    .globl _tl_env_var_value
+_tl_env_var_value:
+    push %rbp
+    mov %rsp, %rbp
+    push %rbx
+    push %r12
+    push %r13
+    sub $8, %rsp
+    movq 0(%rcx), %rbx
+    movq 8(%rcx), %r12
+    cmpq $0, %r12
+    jl .L_tl_env_var_value_empty
+    movq %r12, %rax
+    addq $1, %rax
+    js .L_tl_env_var_value_empty
+    movq %rax, %rcx
+    sub $32, %rsp
+    call tl_alloc
+    add $32, %rsp
+    movq %rax, %r13
+    xorq %rcx, %rcx
+.L_tl_env_var_value_name_copy_loop:
+    cmpq %r12, %rcx
+    jge .L_tl_env_var_value_name_copy_done
+    movzbl (%rbx,%rcx), %edx
+    movb %dl, (%r13,%rcx)
+    incq %rcx
+    jmp .L_tl_env_var_value_name_copy_loop
+.L_tl_env_var_value_name_copy_done:
+    movb $0, (%r13,%r12)
+    movq %r13, %rcx
+    sub $32, %rsp
+    call getenv
+    add $32, %rsp
+    testq %rax, %rax
+    jz .L_tl_env_var_value_empty
+    movq %rax, %rbx
+    movq %rbx, %rcx
+    sub $32, %rsp
+    call strlen
+    add $32, %rsp
+    movq %rax, %r12
+    movq %r12, %rcx
+    sub $32, %rsp
+    call tl_alloc
+    add $32, %rsp
+    movq %rax, %r13
+    xorq %rcx, %rcx
+.L_tl_env_var_value_copy_loop:
+    cmpq %r12, %rcx
+    jge .L_tl_env_var_value_fat
+    movzbl (%rbx,%rcx), %edx
+    movb %dl, (%r13,%rcx)
+    incq %rcx
+    jmp .L_tl_env_var_value_copy_loop
+.L_tl_env_var_value_empty:
+    xorq %r12, %r12
+    xorq %r13, %r13
+.L_tl_env_var_value_fat:
+    movq $16, %rcx
+    sub $32, %rsp
+    call tl_alloc
+    add $32, %rsp
+    movq %r13, 0(%rax)
+    movq %r12, 8(%rax)
+    add $8, %rsp
+    pop %r13
+    pop %r12
+    pop %rbx
+    pop %rbp
+    ret
+
+")
+
 (define (compiler-backend-runtime-env-path-separator-functions) : String
   "    .globl _tl_env_path_separator
 _tl_env_path_separator:
@@ -8155,6 +8281,32 @@ _tl_env_path_separator:
     movb $58, (%r12)
     movq $16, %rdi
     call tl_alloc
+    movq %r12, 0(%rax)
+    movq $1, 8(%rax)
+    add $8, %rsp
+    pop %r12
+    pop %rbp
+    ret
+
+")
+
+(define (compiler-backend-runtime-windows-env-path-separator-functions) : String
+  "    .globl _tl_env_path_separator
+_tl_env_path_separator:
+    push %rbp
+    mov %rsp, %rbp
+    push %r12
+    sub $8, %rsp
+    movq $1, %rcx
+    sub $32, %rsp
+    call tl_alloc
+    add $32, %rsp
+    movq %rax, %r12
+    movb $59, (%r12)
+    movq $16, %rcx
+    sub $32, %rsp
+    call tl_alloc
+    add $32, %rsp
     movq %r12, 0(%rax)
     movq $1, 8(%rax)
     add $8, %rsp
@@ -11814,20 +11966,23 @@ tl_windows_sdk_registry_install:
               windows-setup-instances-asm
               windows-sdk-registry-install-asm))]
         [env-var-exists-asm : String
-          (compiler-backend-runtime-linux-only
-            target
-            env-var-exists
-            (compiler-backend-runtime-env-var-exists-functions))]
+          (if env-var-exists
+            (if (compiler-backend-target-windows? target)
+              (compiler-backend-runtime-windows-env-var-exists-functions)
+              (compiler-backend-runtime-env-var-exists-functions))
+            "")]
         [env-var-value-asm : String
-          (compiler-backend-runtime-linux-only
-            target
-            env-var-value
-            (compiler-backend-runtime-env-var-value-functions))]
+          (if env-var-value
+            (if (compiler-backend-target-windows? target)
+              (compiler-backend-runtime-windows-env-var-value-functions)
+              (compiler-backend-runtime-env-var-value-functions))
+            "")]
         [env-path-separator-asm : String
-          (compiler-backend-runtime-linux-only
-            target
-            env-path-separator
-            (compiler-backend-runtime-env-path-separator-functions))]
+          (if env-path-separator
+            (if (compiler-backend-target-windows? target)
+              (compiler-backend-runtime-windows-env-path-separator-functions)
+              (compiler-backend-runtime-env-path-separator-functions))
+            "")]
         (backend-cat5
           runtime-front-asm
           runtime-string-asm
@@ -12098,17 +12253,12 @@ tl_windows_sdk_registry_install:
           _
           _
           _
-          env-var-exists
-          env-var-value
-          env-path-separator
+          _
+          _
+          _
           _
           _)
-        (not
-          (or
-            region-mark
-            (or
-              region-reset
-              (or env-var-exists (or env-var-value env-path-separator)))))])
+        (not (or region-mark region-reset))])
     true))
 
 (define (compiler-backend-runtime-externs-for-target
@@ -12135,10 +12285,18 @@ tl_windows_sdk_registry_install:
     .extern GetCurrentProcessId
 "
           ""))
-      (if (compiler-backend-plan-provides? plan "tl_random_system_seed")
-        "    .extern SystemFunction036
+      (string-append
+        (if (or
+          (compiler-backend-plan-provides? plan "env-var-exists?")
+          (compiler-backend-plan-provides? plan "env-var-value"))
+          "    .extern getenv
+    .extern strlen
 "
-        ""))
+          "")
+        (if (compiler-backend-plan-provides? plan "tl_random_system_seed")
+          "    .extern SystemFunction036
+"
+          "")))
     ""))
 
 ;; Emit a full program for `target`. Windows x64 has ABI-correct user function

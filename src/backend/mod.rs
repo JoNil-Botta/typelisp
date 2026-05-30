@@ -158,12 +158,18 @@ impl BackendTarget {
     }
 
     /// Whether this target provides the `tl_region_mark`/`tl_region_reset`
-    /// runtime helpers. They exist only for linux-x86_64 System V today, so on
-    /// other targets `(with-arena ...)` lowers without a reset (SPEC §7.6).
+    /// runtime helpers. linux-x86_64 System V reclaims via `munmap`; windows-x86_64
+    /// reclaims its `VirtualAlloc` arenas via `VirtualFree` (#1524). On any other
+    /// target `(with-arena ...)` lowers without a reset (SPEC §7.6).
     pub const fn supports_region_runtime(self) -> bool {
         matches!(
             (self.arch, self.os, self.abi),
             (BackendArch::X86_64, BackendOs::Linux, BackendAbi::SystemV)
+                | (
+                    BackendArch::X86_64,
+                    BackendOs::Windows,
+                    BackendAbi::WindowsX64
+                )
         )
     }
 
@@ -2590,6 +2596,11 @@ impl X86_64Backend {
             externs.insert("_write");
             externs.insert("exit");
         }
+        if self.needs_region_reset_runtime {
+            externs.insert("VirtualFree");
+            externs.insert("_write");
+            externs.insert("exit");
+        }
         if self.needs_oob_runtime
             || self.needs_div_runtime
             || self.needs_shift_runtime
@@ -4026,6 +4037,10 @@ impl X86_64Backend {
     }
 
     fn generate_region_reset_runtime_function(&mut self) {
+        if self.target.runtime_policy().emits_windows_runtime_helpers {
+            self.generate_windows_region_reset_runtime_function();
+            return;
+        }
         self.emit(&format!("    .globl {}", REGION_RESET_RUNTIME_SYMBOL));
         self.emit(&format!("{}:", REGION_RESET_RUNTIME_SYMBOL));
         self.emit("    push %rbx");
@@ -4103,6 +4118,102 @@ impl X86_64Backend {
         self.emit("    movq $60, %rax");
         self.emit("    movq $134, %rdi");
         self.emit("    syscall");
+        self.emit("");
+    }
+
+    /// Emit the Windows `tl_region_reset(mark)` runtime helper (#1524).
+    ///
+    /// Mirrors the System V reset, but reclaims arenas with `VirtualFree(base, 0,
+    /// MEM_RELEASE)` instead of `munmap` and traps via `_write`/`exit` instead of
+    /// raw syscalls. Win64 ABI: the mark arrives in `%rcx`. Loop state is kept in
+    /// non-volatile registers (`%r12` mark, `%r13` target/walker, `%r14` walker,
+    /// `%rbx` saved previous link) so it survives each `VirtualFree` call; all are
+    /// saved and restored. `tl_region_mark` is target-agnostic and shared.
+    fn generate_windows_region_reset_runtime_function(&mut self) {
+        self.emit(&format!("    .globl {}", REGION_RESET_RUNTIME_SYMBOL));
+        self.emit(&format!("{}:", REGION_RESET_RUNTIME_SYMBOL));
+        self.emit("    push %rbp");
+        self.emit("    mov %rsp, %rbp");
+        // Save the non-volatile registers used as loop state. With %rbp plus four
+        // more pushes, %rsp is 16-aligned; the 32-byte shadow reservation keeps it
+        // aligned so each VirtualFree call lands the callee at %rsp%16==8.
+        self.emit("    push %rbx");
+        self.emit("    push %r12");
+        self.emit("    push %r13");
+        self.emit("    push %r14");
+        self.emit("    sub $32, %rsp");
+        self.emit("    movq %rcx, %r12");
+        self.emit("    testq %r12, %r12");
+        self.emit("    jz .L_tl_region_reset_win_all");
+        // Find the arena whose payload range [base, end] contains the mark.
+        self.emit("    movq tl_current_arena(%rip), %r13");
+        self.emit("    testq %r13, %r13");
+        self.emit("    jz .L_tl_region_reset_win_invalid");
+        self.emit(".L_tl_region_reset_win_find:");
+        self.emit("    movq 8(%r13), %rax");
+        self.emit("    cmpq %rax, %r12");
+        self.emit("    jb .L_tl_region_reset_win_next");
+        self.emit("    movq 24(%r13), %rax");
+        self.emit("    cmpq %rax, %r12");
+        self.emit("    jbe .L_tl_region_reset_win_found");
+        self.emit(".L_tl_region_reset_win_next:");
+        self.emit("    movq 0(%r13), %r13");
+        self.emit("    testq %r13, %r13");
+        self.emit("    jnz .L_tl_region_reset_win_find");
+        self.emit("    jmp .L_tl_region_reset_win_invalid");
+        // Release every arena newer than the marked one, then restore its bump.
+        self.emit(".L_tl_region_reset_win_found:");
+        self.emit("    movq tl_current_arena(%rip), %r14");
+        self.emit(".L_tl_region_reset_win_drop:");
+        self.emit("    cmpq %r13, %r14");
+        self.emit("    je .L_tl_region_reset_win_restore");
+        self.emit("    movq 0(%r14), %rbx");
+        self.emit("    movq %r14, %rcx");
+        self.emit("    xorq %rdx, %rdx");
+        self.emit("    movq $0x8000, %r8");
+        self.emit("    call VirtualFree");
+        self.emit("    movq %rbx, %r14");
+        self.emit("    jmp .L_tl_region_reset_win_drop");
+        self.emit(".L_tl_region_reset_win_restore:");
+        self.emit("    movq %r12, 16(%r13)");
+        self.emit("    movq %r13, tl_current_arena(%rip)");
+        self.emit("    addq $32, %rsp");
+        self.emit("    popq %r14");
+        self.emit("    popq %r13");
+        self.emit("    popq %r12");
+        self.emit("    popq %rbx");
+        self.emit("    popq %rbp");
+        self.emit("    ret");
+        // A zero mark discards every current arena and returns to lazy-init.
+        self.emit(".L_tl_region_reset_win_all:");
+        self.emit("    movq tl_current_arena(%rip), %r14");
+        self.emit("    movq $0, tl_current_arena(%rip)");
+        self.emit(".L_tl_region_reset_win_all_loop:");
+        self.emit("    testq %r14, %r14");
+        self.emit("    jz .L_tl_region_reset_win_done");
+        self.emit("    movq 0(%r14), %rbx");
+        self.emit("    movq %r14, %rcx");
+        self.emit("    xorq %rdx, %rdx");
+        self.emit("    movq $0x8000, %r8");
+        self.emit("    call VirtualFree");
+        self.emit("    movq %rbx, %r14");
+        self.emit("    jmp .L_tl_region_reset_win_all_loop");
+        self.emit(".L_tl_region_reset_win_done:");
+        self.emit("    addq $32, %rsp");
+        self.emit("    popq %r14");
+        self.emit("    popq %r13");
+        self.emit("    popq %r12");
+        self.emit("    popq %rbx");
+        self.emit("    popq %rbp");
+        self.emit("    ret");
+        // Invalid mark: report and trap with exit(134), like the System V path.
+        self.emit(".L_tl_region_reset_win_invalid:");
+        self.emit("    movq $2, %rcx");
+        self.emit("    leaq .L_tl_region_reset_msg(%rip), %rdx");
+        self.emit("    movq $.L_tl_region_reset_msg_len, %r8");
+        self.emit_call("_write");
+        self.emit("    movq $134, %rcx");
+        self.emit_call("exit");
         self.emit("");
     }
 
@@ -11719,7 +11830,7 @@ fn validate_target_runtime_support(program: &Program, target: BackendTarget) -> 
 
     if needs_region_runtime && !target.supports_region_runtime() {
         return Err(
-            "backend: tl_region_mark/tl_region_reset runtime helpers are only supported for linux-x86_64-system-v targets"
+            "backend: tl_region_mark/tl_region_reset runtime helpers are only supported for linux-x86_64-system-v and windows-x86_64 targets"
                 .into(),
         );
     }
@@ -16206,19 +16317,26 @@ mod tests {
     }
 
     #[test]
-    fn test_windows_target_rejects_region_runtime_helpers() {
-        let err = generate_assembly_for_target(
+    fn test_windows_target_emits_region_runtime_helpers_with_virtualfree() {
+        // #1524: the Windows backend now reclaims its VirtualAlloc arenas, so
+        // `(with-arena ...)` lowers to mark/reset like System V (no longer
+        // rejected). Reset uses VirtualFree(base, 0, MEM_RELEASE) rather than
+        // `munmap`, and never emits a Linux syscall.
+        let asm = generate_assembly_for_target(
             &program_calling_region_helpers(),
             BackendTarget::windows_x86_64(),
         )
-        .expect_err("windows target should reject region helpers");
+        .expect("windows target should support region helpers (#1524)");
 
-        assert!(
-            err.contains("tl_region_mark/tl_region_reset"),
-            "error: {}",
-            err
-        );
-        assert!(err.contains("linux-x86_64-system-v"), "error: {}", err);
+        assert_windows_runtime_has_no_linux_syscalls(&asm);
+        assert!(asm.contains("tl_region_mark:"), "asm:\n{}", asm);
+        assert!(asm.contains("tl_region_reset:"), "asm:\n{}", asm);
+        assert!(asm.contains("    call VirtualFree"), "asm:\n{}", asm);
+        assert!(asm.contains("    .extern VirtualFree"), "asm:\n{}", asm);
+        // MEM_RELEASE free type.
+        assert!(asm.contains("    movq $0x8000, %r8"), "asm:\n{}", asm);
+        // The tracked-arena state pointer backs both mark and reset.
+        assert!(asm.contains("tl_current_arena:"), "asm:\n{}", asm);
     }
 
     #[test]

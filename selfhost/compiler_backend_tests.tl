@@ -1426,6 +1426,8 @@
       false
       false
       false
+      false
+      false
       false)
     IrFunctionNil
     IrExternNil
@@ -1882,8 +1884,7 @@
       (compiler-backend-todo-marker))))
 
 ;; Backend-owned scalar instruction emit-shape coverage for stable wide integer
-;; forms (#1353). Narrow typed instruction selection and checked trap emission
-;; are kept as explicit follow-up work in the coverage map.
+;; forms (#1353).
 (define (compiler-backend-scalar-wide-source) : String
   "(define (xor64 [a : i64] [b : i64]) : i64 (bit-xor a b))
 (define (shl64 [a : i64] [b : i64]) : i64 (shl a b))
@@ -1925,6 +1926,113 @@
         true
         true
         true)]
+    [(ErrCompilerBackend _) false]))
+
+(define (compiler-backend-checked-trap-entry-block) : CompilerIrBlock
+  (IrBlock
+    "entry"
+    (IrInstrCons
+      (IrInstrBinOp 0 (IrBinEq) (IrValueI64 0) (IrValueI64 0) (AstTyI64))
+      (IrInstrCons
+        (IrInstrBranch (IrValueVar 0) "div_trap" "div_ok")
+        IrInstrNil))))
+
+(define (compiler-backend-checked-trap-div-block) : CompilerIrBlock
+  (IrBlock
+    "div_trap"
+    (IrInstrCons
+      (IrInstrCall 1 "tl_div_abort" IrValueNil (AstTyUnit))
+      (IrInstrCons (IrInstrJump "div_ok") IrInstrNil))))
+
+(define (compiler-backend-checked-trap-div-ok-block) : CompilerIrBlock
+  (IrBlock
+    "div_ok"
+    (IrInstrCons
+      (IrInstrBinOp 2 (IrBinDiv) (IrValueI64 42) (IrValueI64 6) (AstTyI64))
+      (IrInstrCons
+        (IrInstrBinOp 3 (IrBinMod) (IrValueI64 22) (IrValueI64 7) (AstTyI64))
+        (IrInstrCons
+          (IrInstrBinOp 4 (IrBinEq) (IrValueI64 64) (IrValueI64 64) (AstTyI64))
+          (IrInstrCons
+            (IrInstrBranch (IrValueVar 4) "shift_trap" "shift_ok")
+            IrInstrNil))))))
+
+(define (compiler-backend-checked-trap-shift-block) : CompilerIrBlock
+  (IrBlock
+    "shift_trap"
+    (IrInstrCons
+      (IrInstrCall 5 "tl_shift_abort" IrValueNil (AstTyUnit))
+      (IrInstrCons (IrInstrJump "shift_ok") IrInstrNil))))
+
+(define (compiler-backend-checked-trap-shift-ok-block) : CompilerIrBlock
+  (IrBlock
+    "shift_ok"
+    (IrInstrCons
+      (IrInstrBinOp 6 (IrBinShl) (IrValueI64 1) (IrValueI64 2) (AstTyI64))
+      (IrInstrCons (IrInstrReturn (IrSomeValue (IrValueVar 6))) IrInstrNil))))
+
+(define (compiler-backend-checked-trap-blocks) : CompilerIrBlockList
+  (IrBlockCons
+    (compiler-backend-checked-trap-entry-block)
+    (IrBlockCons
+      (compiler-backend-checked-trap-div-block)
+      (IrBlockCons
+        (compiler-backend-checked-trap-div-ok-block)
+        (IrBlockCons
+          (compiler-backend-checked-trap-shift-block)
+          (IrBlockCons
+            (compiler-backend-checked-trap-shift-ok-block)
+            IrBlockNil))))))
+
+(define (compiler-backend-checked-trap-program) : CompilerIrProgram
+  (IrProgram
+    IrGlobalNil
+    (IrFunctionCons
+      (IrFunction
+        "main"
+        IrParamNil
+        (AstTyI64)
+        8
+        (compiler-backend-checked-trap-blocks))
+      IrFunctionNil)
+    IrExternNil))
+
+(define (compiler-backend-checked-trap-asm-shape-ok? [asm : String]) : bool
+  (let
+    [trap-branches : bool
+      (backend-and4
+        (compiler-backend-string-contains? asm ".Lmain_div_trap:\n")
+        (compiler-backend-string-contains? asm ".Lmain_shift_trap:\n")
+        (compiler-backend-string-contains? asm "    call tl_div_abort\n")
+        (compiler-backend-string-contains? asm "    call tl_shift_abort\n"))]
+    [helper-shapes : bool
+      (backend-and8
+        (compiler-backend-string-contains? asm ".globl tl_div_abort\n")
+        (compiler-backend-string-contains? asm "tl_div_abort:\n")
+        (compiler-backend-string-contains? asm ".L_tl_div_msg:")
+        (compiler-backend-string-contains? asm "movq $135, %rdi\n")
+        (compiler-backend-string-contains? asm ".globl tl_shift_abort\n")
+        (compiler-backend-string-contains? asm "tl_shift_abort:\n")
+        (compiler-backend-string-contains? asm ".L_tl_shift_msg:")
+        (compiler-backend-string-contains? asm "movq $129, %rdi\n"))]
+    [op-shapes : bool
+      (backend-and4
+        (compiler-backend-string-contains? asm "    idivq %rbx\n")
+        (compiler-backend-string-contains? asm "    movq %rdx, %rax\n")
+        (compiler-backend-string-contains? asm "    shlq $2, %rax\n")
+        (not
+          (compiler-backend-string-contains? asm (compiler-backend-todo-marker))))]
+    [no-externs : bool
+      (backend-and4
+        (not (compiler-backend-string-contains? asm ".extern tl_div_abort\n"))
+        (not (compiler-backend-string-contains? asm ".extern tl_shift_abort\n"))
+        (not (compiler-backend-string-contains? asm "_tl_tl_div_abort"))
+        (not (compiler-backend-string-contains? asm "_tl_tl_shift_abort")))]
+    (and trap-branches (and helper-shapes (and op-shapes no-externs)))))
+
+(define (compiler-backend-checked-trap-emit-shape-ok?) : bool
+  (match (compiler-backend-emit-program (compiler-backend-checked-trap-program))
+    [(OkCompilerBackend asm) (compiler-backend-checked-trap-asm-shape-ok? asm)]
     [(ErrCompilerBackend _) false]))
 
 (define (compiler-backend-narrow-binop-types
@@ -2340,15 +2448,17 @@
                     (compiler-backend-fixed-array-shape-ok?)
                     (compiler-backend-raw-pointer-fixture-shape-ok?)
                     (compiler-backend-box-ok?))
-                  (backend-and8
-                    (compiler-backend-scalar-wide-ops-ok?)
-                    (compiler-backend-scalar-div-mod-ok?)
-                    (compiler-backend-narrow-scalar-instr-ok?)
-                    (compiler-backend-f64-abi-ok?)
-                    (compiler-backend-win64-f64-abi-ok?)
-                    (compiler-backend-aggregate-storage-shape-ok?)
-                    (compiler-backend-alloc-runtime-shape-ok?)
-                    (compiler-backend-windows-sdk-registry-runtime-ok?))))))))))
+                  (and
+                    (compiler-backend-checked-trap-emit-shape-ok?)
+                    (backend-and8
+                      (compiler-backend-scalar-wide-ops-ok?)
+                      (compiler-backend-scalar-div-mod-ok?)
+                      (compiler-backend-narrow-scalar-instr-ok?)
+                      (compiler-backend-f64-abi-ok?)
+                      (compiler-backend-win64-f64-abi-ok?)
+                      (compiler-backend-aggregate-storage-shape-ok?)
+                      (compiler-backend-alloc-runtime-shape-ok?)
+                      (compiler-backend-windows-sdk-registry-runtime-ok?)))))))))))
     42
     (begin
       (panic "backend: smoke output mismatch")

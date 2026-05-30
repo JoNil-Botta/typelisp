@@ -109,6 +109,7 @@ impl Specializer {
                 | Decl::DefEnum { .. }
                 | Decl::DefStruct { .. }
                 | Decl::Import(_)
+                | Decl::IncludeStr { .. }
                 // Declaration-position comptime templates are expanded by
                 // `ExpandedProgram::from_program` (typecheck) and flattened by
                 // the lowerer; specialization carries them through unchanged.

@@ -313,6 +313,8 @@ impl ProgramLowerer {
                 ast::Decl::DefEnum { .. } => {}
                 // Imports are stripped by the loader before lowering; defensive.
                 ast::Decl::Import(_) => {}
+                // include-str is expanded into a Def by the loader; defensive.
+                ast::Decl::IncludeStr { .. } => {}
                 // Flattened away above; arm kept for exhaustiveness.
                 ast::Decl::ComptimeDecl { .. } => {}
                 // Inline tests are stripped before production lowering.
@@ -373,6 +375,8 @@ impl ProgramLowerer {
                 ast::Decl::DefStruct { .. } => {}
                 // Imports are stripped by the loader before lowering; defensive.
                 ast::Decl::Import(_) => {}
+                // include-str is expanded into a Def by the loader; defensive.
+                ast::Decl::IncludeStr { .. } => {}
                 // Flattened away above; arm kept for exhaustiveness.
                 ast::Decl::ComptimeDecl { .. } => {}
                 // Inline tests are stripped before production lowering.

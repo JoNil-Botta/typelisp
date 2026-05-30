@@ -2390,7 +2390,8 @@ fn selfhost_build_run_tools_execute_source_files() {
 
     let package_root = dir.join("pkg");
     let package_src = package_root.join("src");
-    let package_dep = package_root.join("vendor").join("math").join("src");
+    let package_dep_root = package_root.join("vendor").join("math");
+    let package_dep = package_dep_root.join("src");
     fs::create_dir_all(&package_src).expect("create selfhost package src");
     fs::create_dir_all(&package_dep).expect("create selfhost package dep");
     fs::write(
@@ -2412,6 +2413,16 @@ fn selfhost_build_run_tools_execute_source_files() {
 "#,
     )
     .expect("write selfhost package main");
+    fs::write(
+        package_dep_root.join("typelisp.pkg"),
+        r#"(package
+  (name "selfhost_cli_math")
+  (version "0.1.0")
+  (kind "lib")
+  (entry "src/lib.tl"))
+"#,
+    )
+    .expect("write selfhost package dep manifest");
     fs::write(
         package_dep.join("lib.tl"),
         "(define (add-one [x : i64]) : i64 (+ x 1))\n",
@@ -2444,6 +2455,11 @@ fn selfhost_build_run_tools_execute_source_files() {
         .join("selfhost_cli_pkg");
     let package_asm = package_dir.join("selfhost_cli_pkg.s");
     let package_bin = package_dir.join("selfhost_cli_pkg");
+    let package_dep_archive = package_dep_root
+        .join("target")
+        .join("typelisp")
+        .join("selfhost_cli_math")
+        .join("libselfhost_cli_math.a");
     assert!(
         package_bin.exists(),
         "selfhost package build did not write executable"
@@ -2451,6 +2467,22 @@ fn selfhost_build_run_tools_execute_source_files() {
     assert!(
         package_asm.exists(),
         "selfhost package build did not keep assembly side artifact"
+    );
+    assert!(
+        package_dep_archive.exists(),
+        "selfhost package build did not write dependency archive"
+    );
+    let package_asm_text =
+        fs::read_to_string(&package_asm).expect("read selfhost package assembly artifact");
+    assert!(
+        package_asm_text.contains(".extern _tl_lib_u2etl_colon_colonadd_one"),
+        "consumer assembly should reference dependency as extern:\n{}",
+        package_asm_text
+    );
+    assert!(
+        !package_asm_text.contains("_tl_lib_u2etl_colon_colonadd_one:"),
+        "consumer assembly should not define dependency function:\n{}",
+        package_asm_text
     );
     let package_run = Command::new(&package_bin)
         .output()

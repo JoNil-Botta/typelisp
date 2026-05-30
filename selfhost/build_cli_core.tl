@@ -50,6 +50,10 @@
   (OkBuildManifest CompilerPkgManifest)
   (ErrBuildManifest String))
 
+(defenum ResultBuildLibs
+  (OkBuildLibs ProcessStringList)
+  (ErrBuildLibs String))
+
 (define build-default-opt-level : i64
   2)
 
@@ -422,6 +426,116 @@
     [(CompilerPkgKindBin) (build-package-bin-path manifest-dir name target)]
     [(CompilerPkgKindLib) (build-package-lib-path manifest-dir name target)]))
 
+(define (build-package-kind-lib? [kind : CompilerPkgKind]) : bool
+  (match kind
+    [(CompilerPkgKindLib) true]
+    [_ false]))
+
+(define (build-package-kind-entry? [kind : CompilerPkgKind]) : bool
+  (match kind
+    [(CompilerPkgKindBin) true]
+    [(CompilerPkgKindLib) false]))
+
+(define (build-package-dep-root [manifest-dir : String] [dep : CompilerPkgDep]) : String
+  (compiler-load-normalize-path
+    (compiler-load-join-root-path manifest-dir (struct-get dep path))))
+
+(define (build-package-dep-manifest-path
+  [manifest-dir : String]
+  [dep : CompilerPkgDep]) : String
+  (compiler-load-join-root-path
+    (build-package-dep-root manifest-dir dep)
+    "typelisp.pkg"))
+
+(define (build-package-dep-artifact
+  [manifest-dir : String]
+  [dep : CompilerPkgDep]
+  [target : CompilerBackendTarget]
+  [target-text : String]
+  [has-target : bool]
+  [opt-level : i64]
+  [stdlib-roots : CompilerLoadRootList]
+  [fuel : i64]) : ResultBuildLibs
+  (if (<= fuel 0)
+    (ErrBuildLibs "build: dependency graph is too deep or cyclic")
+    (let
+      [dep-manifest-path : String
+        (build-package-dep-manifest-path manifest-dir dep)]
+      (match (build-load-manifest dep-manifest-path)
+        [(ErrBuildManifest message)
+          (ErrBuildLibs
+            (string-append
+              "dependency `"
+              (string-append
+                (struct-get dep alias)
+                (string-append "`: " message))))]
+        [(OkBuildManifest dep-manifest)
+          (let
+            [dep-kind : CompilerPkgKind (struct-get dep-manifest kind)]
+            (if (not (build-package-kind-lib? dep-kind))
+              (ErrBuildLibs
+                (string-append
+                  "build: dependency `"
+                  (string-append
+                    (struct-get dep alias)
+                    "` must be a lib package")))
+              (let
+                [dep-dir : String (compiler-load-dirname dep-manifest-path)]
+                [dep-name : String (struct-get dep-manifest name)]
+                [dep-artifact : String
+                  (build-package-artifact-path dep-dir dep-name dep-kind target)]
+                [dep-status : i64
+                  (build-package-emit-with-fuel
+                    dep-manifest-path
+                    dep-manifest
+                    target-text
+                    has-target
+                    opt-level
+                    stdlib-roots
+                    (- fuel 1))]
+                (if (= dep-status 0)
+                  (OkBuildLibs (process-args-single dep-artifact))
+                  (ErrBuildLibs
+                    (string-append
+                      "build: dependency `"
+                      (string-append (struct-get dep alias) "` failed")))))))]))))
+
+(define (build-package-deps-artifacts
+  [manifest-dir : String]
+  [deps : CompilerPkgDepList]
+  [target : CompilerBackendTarget]
+  [target-text : String]
+  [has-target : bool]
+  [opt-level : i64]
+  [stdlib-roots : CompilerLoadRootList]
+  [fuel : i64]) : ResultBuildLibs
+  (match deps
+    [(CompilerPkgDepNil) (OkBuildLibs (process-args-empty))]
+    [(CompilerPkgDepCons dep rest)
+      (match (build-package-dep-artifact
+        manifest-dir
+        dep
+        target
+        target-text
+        has-target
+        opt-level
+        stdlib-roots
+        fuel)
+        [(ErrBuildLibs message) (ErrBuildLibs message)]
+        [(OkBuildLibs dep-libs)
+          (match (build-package-deps-artifacts
+            manifest-dir
+            rest
+            target
+            target-text
+            has-target
+            opt-level
+            stdlib-roots
+            fuel)
+            [(ErrBuildLibs message) (ErrBuildLibs message)]
+            [(OkBuildLibs rest-libs)
+              (OkBuildLibs (process-args-append dep-libs rest-libs))])])]))
+
 (define (build-mkdir-ok? [path : String]) : bool
   (let
     [status : i64 (fs-mkdir-status path)]
@@ -452,20 +566,27 @@
   [target : CompilerBackendTarget]
   [asm-path : String]
   [obj-path : String]
-  [artifact-path : String]) : SourceToolCommandStatus
+  [artifact-path : String]
+  [dep-libs : ProcessStringList]) : SourceToolCommandStatus
   (match kind
     [(CompilerPkgKindBin)
-      (source-tool-assemble-and-link target asm-path obj-path artifact-path)]
+      (source-tool-assemble-and-link-with-libs
+        target
+        asm-path
+        obj-path
+        artifact-path
+        dep-libs)]
     [(CompilerPkgKindLib)
       (source-tool-assemble-and-archive target asm-path obj-path artifact-path)]))
 
-(define (build-package-emit
+(define (build-package-emit-with-fuel
   [manifest-path : String]
   [manifest : CompilerPkgManifest]
   [target-text : String]
   [has-target : bool]
   [opt-level : i64]
-  [stdlib-roots : CompilerLoadRootList]) : i64
+  [stdlib-roots : CompilerLoadRootList]
+  [fuel : i64]) : i64
   (match (build-parse-target target-text)
     [(ErrBuildTarget message)
       (begin
@@ -491,40 +612,74 @@
                 "build: failed to create package output directory "
                 (build-package-output-dir manifest-dir name)))
             1)
-          (match (source-tool-emit-assembly
-            entry-path
+          (match (build-package-deps-artifacts
+            manifest-dir
+            (struct-get manifest deps)
             target
+            target-text
+            has-target
+            opt-level
             stdlib-roots
-            opt-level)
-            [(ErrSourceToolString message)
+            fuel)
+            [(ErrBuildLibs message)
               (begin
                 (print-error message)
                 1)]
-            [(OkSourceToolString asm)
-              (match (source-tool-write-file
-                asm-path
-                asm
-                "build: failed to write package assembly")
-                [(SourceToolCommandErr message)
+            [(OkBuildLibs dep-libs)
+              (match (source-tool-emit-package-assembly
+                entry-path
+                target
+                stdlib-roots
+                opt-level
+                manifest-dir
+                (struct-get manifest deps)
+                (build-package-kind-entry? kind))
+                [(ErrSourceToolString message)
                   (begin
                     (print-error message)
                     1)]
-                [(SourceToolCommandOk)
-                  (match (build-package-artifact-status
-                    kind
-                    target
+                [(OkSourceToolString asm)
+                  (match (source-tool-write-file
                     asm-path
-                    obj-path
-                    artifact-path)
+                    asm
+                    "build: failed to write package assembly")
                     [(SourceToolCommandErr message)
                       (begin
                         (print-error message)
                         1)]
                     [(SourceToolCommandOk)
-                      (begin
-                        (print-string
-                          (string-append "Generated: " artifact-path))
-                        0)])])])))]))
+                      (match (build-package-artifact-status
+                        kind
+                        target
+                        asm-path
+                        obj-path
+                        artifact-path
+                        dep-libs)
+                        [(SourceToolCommandErr message)
+                          (begin
+                            (print-error message)
+                            1)]
+                        [(SourceToolCommandOk)
+                          (begin
+                            (print-string
+                              (string-append "Generated: " artifact-path))
+                            0)])])])])))]))
+
+(define (build-package-emit
+  [manifest-path : String]
+  [manifest : CompilerPkgManifest]
+  [target-text : String]
+  [has-target : bool]
+  [opt-level : i64]
+  [stdlib-roots : CompilerLoadRootList]) : i64
+  (build-package-emit-with-fuel
+    manifest-path
+    manifest
+    target-text
+    has-target
+    opt-level
+    stdlib-roots
+    64))
 
 (define (build-package-from-path
   [manifest-path : String]

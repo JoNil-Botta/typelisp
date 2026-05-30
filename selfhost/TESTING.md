@@ -203,19 +203,24 @@ routes that command and implements source-file `build`, package `build`, `run`,
 `fmt`, `doc`, `doc --test`, `repl`, and private `debug host-action` directly
 enough for the Linux capability smoke, deterministic assembly gate, selfhost
 compile manifest, safety corpus, stdlib documentation gate, stdlib selfhost
-frontend verifier, repository doctest gate, and TypeLisp source format gate. The
-`fmt` command routes through a cached selfhost `format.tl` driver, or through a
-prebuilt `TYPELISP_STAGE1_FORMAT_BIN` in the no-Rust lane, so the repository
-format gate does not recompile the formatter on every batched invocation.
-Package builds route through a cached selfhost `build.tl` driver, or
-through a prebuilt `TYPELISP_STAGE1_BUILD_BIN` in the no-Rust lane, and cover
-manifest-path and upward-discovery forms in `scripts/check-stage1-wrapper.sh`;
-direct selfhost package-build parity remains covered by
-`scripts/verify-public-tools.sh`. Seed-only public-tool exceptions remain:
-`lint`, non-check `test`, full REPL/LSP public-tool coverage, and the
-`scripts/verify-public-tools.sh` surface gate still need either stage1-safe
-driver linking or dedicated wrapper routing before they can move off the seed
-compiler.
+frontend verifier, repository doctest gate, TypeLisp source format gate, docs
+Pages build path, selfhost native generated-program gate, and the external
+selfhost compiler corpus. The safety gate falls back to a legacy seed, or skips
+a stage1-bundle seed, until stage1 checked trap helpers are available. The
+generated-program gates run through the wrapper only when the Linux host-action
+drivers are available; old artifacts or missing-driver paths keep an explicit
+seed fallback or skip tied to #1327. The `fmt` command routes through a cached
+selfhost `format.tl` driver, or through a prebuilt
+`TYPELISP_STAGE1_FORMAT_BIN` in the no-Rust lane, so the repository format gate
+does not recompile the formatter on every batched invocation. Package builds
+route through a cached selfhost `build.tl` driver, or through a prebuilt
+`TYPELISP_STAGE1_BUILD_BIN` in the no-Rust lane, and cover manifest-path and
+upward-discovery forms in `scripts/check-stage1-wrapper.sh`; direct selfhost
+package-build parity remains covered by `scripts/verify-public-tools.sh`.
+Seed-only public-tool exceptions remain: `lint`, non-check `test`, full
+REPL/LSP public-tool coverage, and the `scripts/verify-public-tools.sh` surface
+gate still need either stage1-safe driver linking or dedicated wrapper routing
+before they can move off the seed compiler.
 
 ### Staged backend primitives (#1114)
 
@@ -391,15 +396,15 @@ Pull requests get Linux and Windows no-Rust coverage from
 compiler from published stage0, then smoke-tests the stage1 CLI/host-action
 wrapper, deterministic assembly, the selfhost compile manifest, stdlib
 documentation, the stdlib selfhost frontend verifier, the safety corpus, the
-repository doctest gate, and the TypeLisp source format gate through that
-wrapper (the safety gate falls back to a legacy seed, or skips a stage1-bundle
-seed, until stage1 checked trap helpers are available; the doctest/format gates
-fall back only when the wrapper host-action drivers are unavailable). Public
-tools, inline
-tests, native integration manifests, examples, stdlib
-modules, docs Pages build, selfhost native generated programs, and the selfhost
-external compiler corpus continue to use the seed compiler until their remaining
-public-tool and manifest exceptions are ported to the wrapper. The Windows job
+repository doctest gate, runnable inline tests when a bundled test driver is
+present, the TypeLisp source format gate, docs Pages build, selfhost native
+generated programs, and the selfhost external compiler corpus through that
+wrapper. The safety gate falls back to a legacy seed, or skips a stage1-bundle
+seed, until stage1 checked trap helpers are available; the doctest, format, and
+generated-program gates fall back only when the wrapper host-action drivers are
+unavailable. Public tools, native integration manifests, examples, and stdlib
+modules continue to use the seed compiler until their remaining public-tool and
+manifest exceptions are ported to the wrapper. The Windows job
 runs the host-supported gates against the published stage0 compiler, verifies
 MSVC `link.exe` selfhost build/run support, runs the Windows bootstrap
 stage2/stage3 fixpoint, and explicitly skips the Linux-only selfhost/docs

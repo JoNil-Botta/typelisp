@@ -3094,8 +3094,100 @@
       (panic "typecheck: quote tests failed"))
     unit))
 
+;; Runtime builtin signature + shadowing coverage (#1539, migrated from
+;; src/typechecker.rs). `print-string`/`print-str`/`print-error` take a `String`;
+;; `xgetbv` takes an integer; `cpuid` takes integers; `string-ref`/`char-at`
+;; require an integer index. A user declaration may shadow a builtin and its own
+;; signature then wins. (`array-push` and the stdin `read-byte`/`read-line`
+;; helpers have no selfhost typechecker builtin yet — selfhost reports
+;; `unbound name ...` for them — so those Rust cases are left to a follow-up
+;; blocker rather than asserted here.)
+(define (compiler-typecheck-runtime-builtin-print-string-ok-source) : String
+  "(define (main) : i64 (begin (print-string \"hi\") 0))")
+
+(define (compiler-typecheck-runtime-builtin-print-str-ok-source) : String
+  "(define (main) : i64 (begin (print-str \"hi\") 0))")
+
+(define (compiler-typecheck-runtime-builtin-print-error-ok-source) : String
+  "(define (main) : i64 (begin (print-error \"hi\") 0))")
+
+(define (compiler-typecheck-runtime-builtin-xgetbv-ok-source) : String
+  "(define (main) : i64 (begin (xgetbv 0) 0))")
+
+(define (compiler-typecheck-runtime-builtin-shadow-source) : String
+  "(define (print-string [x : i64]) : i64 x)
+(define (main) : i64 (print-string 5))")
+
+(define (compiler-typecheck-runtime-builtin-print-string-bad-source) : String
+  "(define (main) : i64 (begin (print-string 42) 0))")
+
+(define (compiler-typecheck-runtime-builtin-print-str-bad-source) : String
+  "(define (main) : i64 (begin (print-str 42) 0))")
+
+(define (compiler-typecheck-runtime-builtin-print-error-bad-source) : String
+  "(define (main) : i64 (begin (print-error 42) 0))")
+
+(define (compiler-typecheck-runtime-builtin-xgetbv-bad-source) : String
+  "(define (main) : i64 (begin (xgetbv \"x\") 0))")
+
+(define (compiler-typecheck-runtime-builtin-cpuid-bad-source) : String
+  "(define (main) : i64 (cpuid \"x\"))")
+
+(define (compiler-typecheck-runtime-builtin-string-ref-bad-index-source) : String
+  "(define (main) : i64 (string-ref \"abc\" \"x\"))")
+
+(define (compiler-typecheck-runtime-builtin-char-at-bad-index-source) : String
+  "(define (main) : i64 (char-at \"abc\" \"x\"))")
+
+(define (compiler-typecheck-runtime-builtin-tests-ok?) : bool
+  (and
+    (compiler-typecheck-ok?
+      (compiler-typecheck-runtime-builtin-print-string-ok-source))
+    (and
+      (compiler-typecheck-ok?
+        (compiler-typecheck-runtime-builtin-print-str-ok-source))
+      (and
+        (compiler-typecheck-ok?
+          (compiler-typecheck-runtime-builtin-print-error-ok-source))
+        (and
+          (compiler-typecheck-ok?
+            (compiler-typecheck-runtime-builtin-xgetbv-ok-source))
+          (and
+            (compiler-typecheck-ok?
+              (compiler-typecheck-runtime-builtin-shadow-source))
+            (and
+              (compiler-typecheck-error-ok?
+                (compiler-typecheck-runtime-builtin-print-string-bad-source)
+                "typecheck: argument type mismatch")
+              (and
+                (compiler-typecheck-error-ok?
+                  (compiler-typecheck-runtime-builtin-print-str-bad-source)
+                  "typecheck: argument type mismatch")
+                (and
+                  (compiler-typecheck-error-ok?
+                    (compiler-typecheck-runtime-builtin-print-error-bad-source)
+                    "typecheck: argument type mismatch")
+                  (and
+                    (compiler-typecheck-error-ok?
+                      (compiler-typecheck-runtime-builtin-xgetbv-bad-source)
+                      "typecheck: argument type mismatch")
+                    (and
+                      (compiler-typecheck-error-ok?
+                        (compiler-typecheck-runtime-builtin-cpuid-bad-source)
+                        "typecheck: argument type mismatch")
+                      (and
+                        (compiler-typecheck-error-ok?
+                          (compiler-typecheck-runtime-builtin-string-ref-bad-index-source)
+                          "typecheck: string index must be integer")
+                        (compiler-typecheck-error-ok?
+                          (compiler-typecheck-runtime-builtin-char-at-bad-index-source)
+                          "typecheck: string index must be integer")))))))))))))
+
 (define (compiler-typecheck-self-test-builtins) : unit
   (begin
+    (if (compiler-typecheck-runtime-builtin-tests-ok?)
+      unit
+      (panic "typecheck: runtime builtin tests failed"))
     (if (compiler-typecheck-string-builtin-tests-ok?)
       unit
       (panic "typecheck: string builtin tests failed"))

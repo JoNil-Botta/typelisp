@@ -128,8 +128,11 @@ Named remaining blockers:
 - Function-valued lowerer calls (function-parameter call, named function as a
   value, and local function values shadowing top-level functions) are covered by
   `compiler-lower-function-value-shape-ok?`.
-- Noncapturing lambdas, capturing closures, closure heap descriptors/calls, and
-  capture deep-copy details remain split to #1418.
+- Noncapturing lambda lowering (returned function values, immediate indirect
+  calls, and unit-returning calls) is covered by
+  `compiler-lower-noncapturing-lambda-tests-ok?` (#1552).
+- Capturing closures, closure heap descriptors/calls, and capture deep-copy
+  details remain split to #1418.
 - Tuple construction/ref emit-shape parity has focused follow-up #1414.
   Fixed-array set/ref backend emit-shape parity is covered by
   `compiler-backend-fixed-array-shape-ok?` (#1416). Broader backend-only

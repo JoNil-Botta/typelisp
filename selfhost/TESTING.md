@@ -203,7 +203,8 @@ routes that command and implements source-file `build`, package `build`, `run`,
 `fmt`, `doc`, `doc --test`, `repl`, and private `debug host-action` directly
 enough for the Linux capability smoke, deterministic assembly gate, selfhost
 compile manifest, stdlib documentation gate, stdlib selfhost frontend verifier,
-repository doctest gate, and TypeLisp source format gate. The `fmt` command
+the borrowed-str stdlib verifier, repository doctest gate, and TypeLisp source
+format gate. The `fmt` command
 routes through a cached selfhost `format.tl` driver, or through a prebuilt
 `TYPELISP_STAGE1_FORMAT_BIN` in the no-Rust lane, so the repository format gate
 does not recompile the formatter on every batched invocation. Package builds
@@ -322,6 +323,14 @@ module and item documentation comments, generates Markdown through
 `typelisp doc`, and runs `typelisp doc --test` with `--stdlib-root`. The script
 is separate from `cargo test` so the Linux no-Rust gate can run it through the
 stage1 wrapper's selfhost doc driver.
+
+`scripts/verify-stdlib.sh` remains the seed/public compiler build-run verifier
+by default. Borrowed `(& lifetime str)` syntax is checked through its explicit
+`TYPELISP_STDLIB_BORROWED_STR_GATE=1` mode; the Linux no-Rust gate runs that
+mode with `TYPELISP_STDLIB_BORROWED_STR_ONLY=1` through the stage1 wrapper, so
+borrowed-str stdlib fixtures can land before the published seed compiler parses
+the syntax. Windows no-Rust stdlib build-run coverage is still seed-only until
+the Windows lane has a stage1 wrapper path for these gates.
 
 ### Repository doctest gate
 

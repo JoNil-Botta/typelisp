@@ -33,6 +33,27 @@ if [ ! -x "$COMPILER" ]; then
     exit 1
 fi
 
+BORROWED_STR_GATE=${TYPELISP_STDLIB_BORROWED_STR_GATE:-0}
+BORROWED_STR_ONLY=${TYPELISP_STDLIB_BORROWED_STR_ONLY:-0}
+case "$BORROWED_STR_GATE" in
+    0 | 1) ;;
+    *)
+        echo "TYPELISP_STDLIB_BORROWED_STR_GATE must be 0 or 1" >&2
+        exit 2
+        ;;
+esac
+case "$BORROWED_STR_ONLY" in
+    0 | 1) ;;
+    *)
+        echo "TYPELISP_STDLIB_BORROWED_STR_ONLY must be 0 or 1" >&2
+        exit 2
+        ;;
+esac
+if [ "$BORROWED_STR_ONLY" -eq 1 ] && [ "$BORROWED_STR_GATE" -ne 1 ]; then
+    echo "TYPELISP_STDLIB_BORROWED_STR_ONLY requires TYPELISP_STDLIB_BORROWED_STR_GATE=1" >&2
+    exit 2
+fi
+
 # Build a fixture .tl to a runnable binary and run it (host-aware) with the
 # supplied stdin file, capturing the program exit code in `got` and writing
 # program stdout/stderr to <stem>.stdout / <stem>.stderr. Linux uses GNU as/ld;
@@ -174,6 +195,16 @@ stdlib/tests/arena_policy_escape_text_buf.tl|fail|cannot escape with-arena 'inne
 EOF
 }
 
+# Check-only fixtures that intentionally require borrowed `(& lifetime str)`
+# syntax. Published seed/stage0 compilers may reject this syntax while the
+# freshly bootstrapped stage1 wrapper accepts it, so these rows run only when
+# TYPELISP_STDLIB_BORROWED_STR_GATE=1 is set by the caller (#1557).
+stdlib_borrowed_str_check_manifest() {
+    cat <<'EOF'
+stdlib/tests/borrowed_str_api.tl|pass|-
+EOF
+}
+
 WORKDIR="$ROOT/target/stdlib-verify"
 rm -rf "$WORKDIR"
 mkdir -p "$WORKDIR"
@@ -200,14 +231,17 @@ fi
 
 TEST_MANIFEST="$WORKDIR/stdlib-test-manifest.psv"
 CHECK_MANIFEST="$WORKDIR/stdlib-check-manifest.psv"
+BORROWED_CHECK_MANIFEST="$WORKDIR/stdlib-borrowed-str-check-manifest.psv"
 TEST_EXPECTED="$WORKDIR/expected-stdlib-tests.txt"
 TEST_ACTUAL="$WORKDIR/actual-stdlib-tests.txt"
 
 stdlib_test_manifest > "$TEST_MANIFEST"
 stdlib_check_manifest > "$CHECK_MANIFEST"
+stdlib_borrowed_str_check_manifest > "$BORROWED_CHECK_MANIFEST"
 {
     sed '/^#/d;/^$/d;s/|.*$//' "$TEST_MANIFEST"
     sed '/^#/d;/^$/d;s/|.*$//' "$CHECK_MANIFEST"
+    sed '/^#/d;/^$/d;s/|.*$//' "$BORROWED_CHECK_MANIFEST"
 } | sort > "$TEST_EXPECTED"
 find stdlib/tests -type f -name '*.tl' | sort > "$TEST_ACTUAL"
 
@@ -374,86 +408,92 @@ export WindowsSDKVersion="$SDK_VERSION"
 
 passed=0
 skipped=0
-while IFS='|' read -r fixture want stdout_spec stderr_spec stdin_spec extra; do
-    case "$fixture" in
-        '' | \#*) continue ;;
-    esac
+if [ "$BORROWED_STR_ONLY" -eq 0 ]; then
+    while IFS='|' read -r fixture want stdout_spec stderr_spec stdin_spec extra; do
+        case "$fixture" in
+            '' | \#*) continue ;;
+        esac
 
-    requires_symbol=
-    case "${extra:-}" in
-        '') ;;
-        requires-stage0-symbol:*) requires_symbol=${extra#requires-stage0-symbol:} ;;
-        *)
-            echo "FAIL: malformed stdlib test manifest row has too many fields: $fixture" >&2
-            exit 1
-            ;;
-    esac
+        requires_symbol=
+        case "${extra:-}" in
+            '') ;;
+            requires-stage0-symbol:*) requires_symbol=${extra#requires-stage0-symbol:} ;;
+            *)
+                echo "FAIL: malformed stdlib test manifest row has too many fields: $fixture" >&2
+                exit 1
+                ;;
+        esac
 
-    if [ -z "${stdin_spec:-}" ]; then
-        stdin_spec=-
-    fi
-
-    if [ -z "$want" ] || [ -z "$stdout_spec" ] || [ -z "$stderr_spec" ]; then
-        echo "FAIL: malformed stdlib test manifest row: $fixture" >&2
-        exit 1
-    fi
-
-    case "$fixture" in
-        stdlib/tests/*.tl) ;;
-        *)
-            echo "FAIL: stdlib test fixture must live under stdlib/tests/: $fixture" >&2
-            exit 1
-            ;;
-    esac
-
-    if [ ! -f "$fixture" ]; then
-        echo "FAIL: stdlib test fixture is missing: $fixture" >&2
-        exit 1
-    fi
-
-    case_id=$(printf '%s' "$fixture" | sed 's#/#_#g;s#\.tl$##')
-    copied="$TEST_COPY_ROOT/$fixture"
-    mkdir -p "$(dirname "$copied")"
-    cp "$fixture" "$copied"
-
-    stem="$RUN_ROOT/$case_id"
-    stdout="$stem.stdout"
-    stderr="$stem.stderr"
-    stdin="$stem.stdin"
-    materialize_stream "$fixture" stdin "$stdin_spec" "$stdin"
-
-    echo "[stdlib] building+running $fixture (--stdlib-root)"
-    stdlib_build_run "$copied" "$stem" "$stdin"
-
-    if [ "$build_status" -ne 0 ]; then
-        if stdlib_should_skip_staged "$requires_symbol" "$stem.build.err"; then
-            echo "[stdlib] SKIP $fixture (awaiting no-Rust compiler support for '$requires_symbol')"
-            skipped=$((skipped + 1))
-            continue
+        if [ -z "${stdin_spec:-}" ]; then
+            stdin_spec=-
         fi
-        echo "FAIL: $fixture failed to build" >&2
-        sed 's/^/  /' "$stem.build.err" >&2 || true
-        exit 1
-    fi
 
-    if [ -n "$requires_symbol" ]; then
-        echo "[stdlib] NOTE: $fixture built with the current compiler; once the no-Rust compiler path provides '$requires_symbol', drop the requires-stage0-symbol marker" >&2
-    fi
+        if [ -z "$want" ] || [ -z "$stdout_spec" ] || [ -z "$stderr_spec" ]; then
+            echo "FAIL: malformed stdlib test manifest row: $fixture" >&2
+            exit 1
+        fi
 
-    if [ "$got" -ne "$want" ]; then
-        echo "FAIL: $fixture expected exit $want, got $got" >&2
-        show_streams "$stdout" "$stderr"
-        exit 1
-    fi
+        case "$fixture" in
+            stdlib/tests/*.tl) ;;
+            *)
+                echo "FAIL: stdlib test fixture must live under stdlib/tests/: $fixture" >&2
+                exit 1
+                ;;
+        esac
 
-    compare_stream "$fixture" stdout "$stdout_spec" "$stdout" "$stdout" "$stderr"
-    compare_stream "$fixture" stderr "$stderr_spec" "$stderr" "$stdout" "$stderr"
+        if [ ! -f "$fixture" ]; then
+            echo "FAIL: stdlib test fixture is missing: $fixture" >&2
+            exit 1
+        fi
 
-    passed=$((passed + 1))
-done < "$TEST_MANIFEST"
+        case_id=$(printf '%s' "$fixture" | sed 's#/#_#g;s#\.tl$##')
+        copied="$TEST_COPY_ROOT/$fixture"
+        mkdir -p "$(dirname "$copied")"
+        cp "$fixture" "$copied"
+
+        stem="$RUN_ROOT/$case_id"
+        stdout="$stem.stdout"
+        stderr="$stem.stderr"
+        stdin="$stem.stdin"
+        materialize_stream "$fixture" stdin "$stdin_spec" "$stdin"
+
+        echo "[stdlib] building+running $fixture (--stdlib-root)"
+        stdlib_build_run "$copied" "$stem" "$stdin"
+
+        if [ "$build_status" -ne 0 ]; then
+            if stdlib_should_skip_staged "$requires_symbol" "$stem.build.err"; then
+                echo "[stdlib] SKIP $fixture (awaiting no-Rust compiler support for '$requires_symbol')"
+                skipped=$((skipped + 1))
+                continue
+            fi
+            echo "FAIL: $fixture failed to build" >&2
+            sed 's/^/  /' "$stem.build.err" >&2 || true
+            exit 1
+        fi
+
+        if [ -n "$requires_symbol" ]; then
+            echo "[stdlib] NOTE: $fixture built with the current compiler; once the no-Rust compiler path provides '$requires_symbol', drop the requires-stage0-symbol marker" >&2
+        fi
+
+        if [ "$got" -ne "$want" ]; then
+            echo "FAIL: $fixture expected exit $want, got $got" >&2
+            show_streams "$stdout" "$stderr"
+            exit 1
+        fi
+
+        compare_stream "$fixture" stdout "$stdout_spec" "$stdout" "$stdout" "$stderr"
+        compare_stream "$fixture" stderr "$stderr_spec" "$stderr" "$stdout" "$stderr"
+
+        passed=$((passed + 1))
+    done < "$TEST_MANIFEST"
+else
+    echo "[stdlib] borrowed-str-only mode: skipping runnable stdlib fixtures"
+fi
 
 checked=0
-while IFS='|' read -r fixture want stderr_snippet extra; do
+stdlib_run_check_manifest() {
+    _manifest=$1
+    while IFS='|' read -r fixture want stderr_snippet extra; do
     case "$fixture" in
         '' | \#*) continue ;;
     esac
@@ -532,12 +572,38 @@ while IFS='|' read -r fixture want stderr_snippet extra; do
     fi
 
     checked=$((checked + 1))
-done < "$CHECK_MANIFEST"
+    done < "$_manifest"
+}
+
+if [ "$BORROWED_STR_ONLY" -eq 0 ]; then
+    stdlib_run_check_manifest "$CHECK_MANIFEST"
+else
+    echo "[stdlib] borrowed-str-only mode: skipping standard check fixtures"
+fi
+
+borrowed_checked=0
+borrowed_skipped=0
+if [ "$BORROWED_STR_GATE" -eq 1 ]; then
+    before_borrowed=$checked
+    stdlib_run_check_manifest "$BORROWED_CHECK_MANIFEST"
+    borrowed_checked=$((checked - before_borrowed))
+else
+    borrowed_skipped=$(sed '/^#/d;/^$/d' "$BORROWED_CHECK_MANIFEST" | wc -l | tr -d ' ')
+    if [ "$borrowed_skipped" -gt 0 ]; then
+        echo "[stdlib] SKIP $borrowed_skipped borrowed-str check fixture(s); set TYPELISP_STDLIB_BORROWED_STR_GATE=1 with a borrowed-str-capable compiler"
+    fi
+fi
 
 module_count=$(wc -l < "$EXPECTED" | tr -d ' ')
 
 if [ "$skipped" -gt 0 ]; then
     echo "stdlib verification: $skipped runnable fixture(s) skipped (staged primitive awaiting no-Rust compiler support)"
+fi
+if [ "$borrowed_checked" -gt 0 ]; then
+    echo "stdlib verification: $borrowed_checked borrowed-str check fixture(s) verified"
+fi
+if [ "$borrowed_skipped" -gt 0 ]; then
+    echo "stdlib verification: $borrowed_skipped borrowed-str check fixture(s) skipped"
 fi
 
 echo "stdlib verification passed for $module_count module(s), $passed runnable fixture(s), $checked check fixture(s)"

@@ -519,6 +519,7 @@ if [ "$HOST_OS" = linux ]; then
     else
         run_with_compiler "$STAGE1_TYPELISP_BIN" "stage1 stdlib documentation" scripts/verify-stdlib-docs.sh
         run_with_compiler "$STAGE1_TYPELISP_BIN" "stage1 stdlib selfhost verifier" scripts/verify-stdlib-selfhost.sh
+        run_with_compiler "$STAGE1_TYPELISP_BIN" "stage1 stdlib borrowed-str verifier" env TYPELISP_STDLIB_BORROWED_STR_GATE=1 TYPELISP_STDLIB_BORROWED_STR_ONLY=1 scripts/verify-stdlib.sh
     fi
 else
     run_gate "selfhost compile manifest" scripts/verify-selfhost-compile-manifest.sh

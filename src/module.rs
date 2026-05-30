@@ -54,6 +54,10 @@ mod embedded_stdlib {
             include_str!("../stdlib/tests/arena_policy_escape_text_buf.tl"),
         ),
         (
+            "tests/borrowed_str_gate.tl",
+            include_str!("../stdlib/tests/borrowed_str_gate.tl"),
+        ),
+        (
             "tests/cpu_api.tl",
             include_str!("../stdlib/tests/cpu_api.tl"),
         ),

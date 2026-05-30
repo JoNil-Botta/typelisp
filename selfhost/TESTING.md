@@ -328,6 +328,22 @@ module and item documentation comments, generates Markdown through
 is separate from `cargo test` so the Linux no-Rust gate can run it through the
 stage1 wrapper's selfhost doc driver.
 
+### Stdlib borrowed-str source gate
+
+`scripts/verify-stdlib.sh` owns the canonical stdlib module/test manifest. Its
+check-only manifest supports a `requires-borrowed-str-capable` marker for
+fixtures that use `(& lifetime str)` syntax before the published seed compiler
+can parse it. Set `TYPELISP_STDLIB_BORROWED_STR_BIN` to route only those marked
+rows through a borrowed-capable compiler, usually the Linux no-Rust stage1
+wrapper.
+
+The Linux no-Rust lane always runs `scripts/verify-stdlib.sh
+--borrowed-str-only` with `TYPELISP_BIN` set to the stage1 wrapper, then uses
+`TYPELISP_STDLIB_BORROWED_STR_BIN` when the full seed-backed stdlib build/run
+gate is eligible. Windows no-Rust remains seed-backed until a Windows
+borrowed-capable stage1 wrapper exists; the borrowed row is skipped there rather
+than blocking unrelated runnable stdlib fixtures.
+
 ### Repository doctest gate
 
 `scripts/verify-doc-tests.sh` discovers documented `.tl` files under
@@ -340,7 +356,9 @@ manifest, so adding documented TypeLisp source with fenced examples
 automatically adds doctest coverage. In the Linux no-Rust lane it runs through
 the stage1 wrapper's selfhost doc driver (the same driver used by the stdlib
 documentation gate) whenever the wrapper host-action drivers are available, and
-falls back to the seed compiler otherwise.
+falls back to the seed compiler otherwise. That fallback is retained only for
+older artifacts; stdlib doctests that exercise borrowed-`str` signatures require
+the stage1 doc driver path.
 
 ### Repository inline-test gate
 

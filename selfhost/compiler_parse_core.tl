@@ -132,6 +132,14 @@
   (OkAstExprList AstExprList)
   (ErrAstExprList String))
 
+(defenum ResultAstExportItem
+  (OkAstExportItem AstExportItem)
+  (ErrAstExportItem String))
+
+(defenum ResultAstExportItemList
+  (OkAstExportItemList AstExportItemList)
+  (ErrAstExportItemList String))
+
 (defenum ResultAstDecl
   (OkAstDecl AstDecl)
   (ErrAstDecl String))
@@ -503,6 +511,9 @@
 (define (compiler-parse-tag-decl-defmacro) : i64
   408)
 
+(define (compiler-parse-tag-decl-export) : i64
+  409)
+
 (define (compiler-parse-dispatch-binops [e : SymI64Env]) : SymI64Env
   (let
     [e1 : SymI64Env (sym-i64-bind e "+" (compiler-parse-tag-bin-add))]
@@ -736,10 +747,13 @@
                 (let
                   [e8 : SymI64Env
                     (sym-i64-bind e7 "test" (compiler-parse-tag-decl-test))]
-                  (sym-i64-bind
-                    e8
-                    "defmacro"
-                    (compiler-parse-tag-decl-defmacro)))))))))))
+                  (let
+                    [e9 : SymI64Env
+                      (sym-i64-bind
+                        e8
+                        "defmacro"
+                        (compiler-parse-tag-decl-defmacro))]
+                    (sym-i64-bind e9 "export" (compiler-parse-tag-decl-export))))))))))))
 
 (define (compiler-parse-dispatch-env) : SymI64Env
   (compiler-parse-dispatch-decls
@@ -2519,6 +2533,67 @@
     [(SpSCons (SpSStr path _) tail _) (parse-ast-import-tail path tail)]
     [_ (ErrAstDecl "parse: malformed import")]))
 
+(define (parse-ast-export-item [item : SpannedSexpr]) : ResultAstExportItem
+  (match item
+    [(SpSCons (SpSSym kind _) rest _)
+      (cond
+        [(string-eq kind "value")
+          (match rest
+            [(SpSCons (SpSSym name _) (SpSNil _) _)
+              (OkAstExportItem (AstExportValue name))]
+            [_ (ErrAstExportItem "parse: malformed export item")])]
+        [(string-eq kind "type")
+          (match rest
+            [(SpSCons (SpSSym name _) (SpSNil _) _)
+              (OkAstExportItem (AstExportType name))]
+            [_ (ErrAstExportItem "parse: malformed export item")])]
+        [(string-eq kind "macro")
+          (match rest
+            [(SpSCons (SpSSym name _) (SpSNil _) _)
+              (OkAstExportItem (AstExportMacro name))]
+            [_ (ErrAstExportItem "parse: malformed export item")])]
+        [(string-eq kind "constructor")
+          (match rest
+            [(SpSCons (SpSSym name _) (SpSNil _) _)
+              (OkAstExportItem (AstExportConstructor name))]
+            [_ (ErrAstExportItem "parse: malformed export item")])]
+        [(string-eq kind "field")
+          (match rest
+            [(SpSCons
+                (SpSSym type-name _)
+                (SpSCons (SpSSym field-name _) (SpSNil _) _)
+                _)
+              (OkAstExportItem (AstExportField type-name field-name))]
+            [_ (ErrAstExportItem "parse: malformed export item")])]
+        [(string-eq kind "variant")
+          (match rest
+            [(SpSCons (SpSSym name _) (SpSNil _) _)
+              (OkAstExportItem (AstExportVariant name))]
+            [_ (ErrAstExportItem "parse: malformed export item")])]
+        [else (ErrAstExportItem "parse: unknown export item kind")])]
+    [_ (ErrAstExportItem "parse: malformed export item")]))
+
+(define (parse-ast-export-item-list [items : SpannedSexpr]) : ResultAstExportItemList
+  (match items
+    [(SpSNil _) (OkAstExportItemList AstExportItemNil)]
+    [(SpSCons item rest _)
+      (match (parse-ast-export-item item)
+        [(OkAstExportItem parsed)
+          (match (parse-ast-export-item-list rest)
+            [(OkAstExportItemList parsed-rest)
+              (OkAstExportItemList (AstExportItemCons parsed parsed-rest))]
+            [(ErrAstExportItemList message) (ErrAstExportItemList message)])]
+        [(ErrAstExportItem message) (ErrAstExportItemList message)])]
+    [_ (ErrAstExportItemList "parse: malformed export item")]))
+
+(define (parse-ast-export [rest : SpannedSexpr]) : ResultAstDecl
+  (match rest
+    [(SpSNil _) (ErrAstDecl "parse: export needs at least one item")]
+    [_
+      (match (parse-ast-export-item-list rest)
+        [(OkAstExportItemList items) (OkAstDecl (AstDeclExport items))]
+        [(ErrAstExportItemList message) (ErrAstDecl message)])]))
+
 (define (parse-ast-test-body [exprs : AstExprList]) : AstExpr
   (match exprs
     [(AstExprCons only (AstExprNil)) only]
@@ -2579,6 +2654,7 @@
             (parse-ast-defmacro dispatch rest)]
           [(= tag (compiler-parse-tag-decl-import)) (parse-ast-import rest)]
           [(= tag (compiler-parse-tag-decl-module)) (parse-ast-module rest)]
+          [(= tag (compiler-parse-tag-decl-export)) (parse-ast-export rest)]
           [(= tag (compiler-parse-tag-decl-comptime-decl))
             (parse-ast-comptime-decl dispatch rest)]
           [(= tag (compiler-parse-tag-decl-test))
@@ -2747,6 +2823,49 @@
           (and
             (string-eq path "stdlib/io.tl")
             (and (string-eq module-name "std.io") (string-eq alias "io")))]
+        [_ false])]
+    [(ErrAstProgram _) false]))
+
+(define (compiler-parse-export-decl-ok?) : bool
+  (match (parse-ast-source
+    "(export
+  (value make-point)
+  (type Point)
+  (macro and2)
+  (constructor Point)
+  (field Point x)
+  (variant Some))")
+    [(OkAstProgram (AstProgram decls))
+      (match decls
+        [(AstDeclCons (AstDeclExport items) AstDeclNil)
+          (match items
+            [(AstExportItemCons
+                (AstExportValue value-name)
+                (AstExportItemCons
+                  (AstExportType type-name)
+                  (AstExportItemCons
+                    (AstExportMacro macro-name)
+                    (AstExportItemCons
+                      (AstExportConstructor ctor-name)
+                      (AstExportItemCons
+                        (AstExportField field-type field-name)
+                        (AstExportItemCons
+                          (AstExportVariant variant-name)
+                          AstExportItemNil))))))
+              (and
+                (string-eq value-name "make-point")
+                (and
+                  (string-eq type-name "Point")
+                  (and
+                    (string-eq macro-name "and2")
+                    (and
+                      (string-eq ctor-name "Point")
+                      (and
+                        (string-eq field-type "Point")
+                        (and
+                          (string-eq field-name "x")
+                          (string-eq variant-name "Some")))))))]
+            [_ false])]
         [_ false])]
     [(ErrAstProgram _) false]))
 
@@ -3228,6 +3347,15 @@
 (define (compiler-parse-malformed-module-source) : String
   "(module)")
 
+(define (compiler-parse-empty-export-source) : String
+  "(export)")
+
+(define (compiler-parse-malformed-export-item-source) : String
+  "(export (field Point))")
+
+(define (compiler-parse-unknown-export-kind-source) : String
+  "(export (namespace x))")
+
 (define (compiler-parse-malformed-import-source) : String
   "(import \"stdlib/io.tl\" as)")
 
@@ -3320,6 +3448,19 @@
       (compiler-parse-error-ok?
         (compiler-parse-comptime-decl-extra-source)
         "parse: comptime-decl expects exactly one template"))))
+
+(define (compiler-parse-export-error-tests-ok?) : bool
+  (and
+    (compiler-parse-error-ok?
+      (compiler-parse-empty-export-source)
+      "parse: export needs at least one item")
+    (and
+      (compiler-parse-error-ok?
+        (compiler-parse-malformed-export-item-source)
+        "parse: malformed export item")
+      (compiler-parse-error-ok?
+        (compiler-parse-unknown-export-kind-source)
+        "parse: unknown export item kind"))))
 
 (define (compiler-parse-flat-let-call-body-ok?) : bool
   (match (parse-ast-source
@@ -4004,30 +4145,32 @@
                       (and
                         (compiler-parse-import-metadata-ok?)
                         (and
-                          (compiler-parse-flat-let-call-body-ok?)
+                          (compiler-parse-export-decl-ok?)
                           (and
-                            (compiler-parse-inline-test-ok?)
+                            (compiler-parse-flat-let-call-body-ok?)
                             (and
-                              (compiler-parse-try-ok?)
+                              (compiler-parse-inline-test-ok?)
                               (and
-                                (compiler-parse-repr-c-ok?)
+                                (compiler-parse-try-ok?)
                                 (and
-                                  (compiler-parse-cleanup-metadata-ok?)
+                                  (compiler-parse-repr-c-ok?)
                                   (and
-                                    (compiler-parse-raw-pointer-ok?)
+                                    (compiler-parse-cleanup-metadata-ok?)
                                     (and
-                                      (compiler-parse-extern-metadata-ok?)
+                                      (compiler-parse-raw-pointer-ok?)
                                       (and
-                                        (compiler-parse-raw-pointer-ops-ok?)
+                                        (compiler-parse-extern-metadata-ok?)
                                         (and
-                                          (compiler-parse-box-ok?)
+                                          (compiler-parse-raw-pointer-ops-ok?)
                                           (and
-                                            (compiler-parse-reference-ok?)
+                                            (compiler-parse-box-ok?)
                                             (and
-                                              (compiler-parse-borrow-ok?)
+                                              (compiler-parse-reference-ok?)
                                               (and
-                                                (compiler-parse-resource-with-shape-ok?)
-                                                (compiler-parse-quote-syntax-shape-ok?))))))))))))))))))))))
+                                                (compiler-parse-borrow-ok?)
+                                                (and
+                                                  (compiler-parse-resource-with-shape-ok?)
+                                                  (compiler-parse-quote-syntax-shape-ok?)))))))))))))))))))))))
         (if (and
           (compiler-parse-error-tests-ok?)
           (and
@@ -4056,7 +4199,9 @@
                                   (compiler-parse-defmacro-tests-ok?)
                                   (and
                                     (compiler-parse-resource-with-tests-ok?)
-                                    (compiler-parse-quote-syntax-tests-ok?)))))))))))))))
+                                    (and
+                                      (compiler-parse-quote-syntax-tests-ok?)
+                                      (compiler-parse-export-error-tests-ok?))))))))))))))))
           42
           (begin
             (panic "parse: error-path self-tests failed")

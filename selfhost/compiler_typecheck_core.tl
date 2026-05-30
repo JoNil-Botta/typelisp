@@ -1230,6 +1230,8 @@
       (match decl
         [(AstDeclImport _)
           (tc-nominal-owner-name-list rest target index module)]
+        [(AstDeclExport _)
+          (tc-nominal-owner-name-list rest target index module)]
         [(AstDeclModule next-module)
           (tc-nominal-owner-name-list rest target index next-module)]
         [(AstDeclTest _ _ _)
@@ -1732,6 +1734,7 @@
             OkTcUnit)]
         [(ErrTcUnit message) (ErrTcUnit message)])]
     [(AstDeclImport _) OkTcUnit]
+    [(AstDeclExport _) OkTcUnit]
     [(AstDeclModule _) OkTcUnit]
     [(AstDeclTest _ body _) (tc-source-expr-policy-ok ctx body)]
     [(AstDeclComptimeDecl template) (tc-source-decl-policy-ok ctx template)]))
@@ -2486,6 +2489,8 @@
             [_ (tc-build-top-env-list-in-module ctx rest env module)])]
         [(AstDeclImport _)
           (tc-build-top-env-list-in-module ctx rest env module)]
+        [(AstDeclExport _)
+          (tc-build-top-env-list-in-module ctx rest env module)]
         [(AstDeclTest _ _ _)
           (tc-build-top-env-list-in-module ctx rest env module)])]))
 
@@ -2572,6 +2577,14 @@
             alias
             next-module)]
         [(AstDeclImport _)
+          (tc-bind-import-alias-module-list
+            ctx
+            rest
+            env
+            target-module
+            alias
+            module)]
+        [(AstDeclExport _)
           (tc-bind-import-alias-module-list
             ctx
             rest
@@ -5354,6 +5367,8 @@
     [(AstDeclCons decl rest)
       (match decl
         [(AstDeclImport _)
+          (tc-variant-owner-name-list rest target index module)]
+        [(AstDeclExport _)
           (tc-variant-owner-name-list rest target index module)]
         [(AstDeclModule next-module)
           (tc-variant-owner-name-list rest target index next-module)]

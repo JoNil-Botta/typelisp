@@ -475,15 +475,6 @@ check_stage1_compile_cli() {
     assert_contains "$STAGE1_CLI_ASM" "main:"
 
     run_stage1_cli_capture \
-        stage1-compile-direct \
-        "$STAGE1_BIN" "$STAGE1_CLI_SRC" -o "$STAGE1_CLI_DIRECT_ASM" --target "$BOOTSTRAP_TARGET"
-    [ -s "$STAGE1_CLI_DIRECT_ASM" ] || {
-        echo "stage1 direct bootstrap form did not write assembly: $STAGE1_CLI_DIRECT_ASM" >&2
-        exit 1
-    }
-    assert_contains "$STAGE1_CLI_DIRECT_ASM" "main:"
-
-    run_stage1_cli_capture \
         stage1-compile-emit-ir \
         "$STAGE1_BIN" compile "$STAGE1_CLI_SRC" --emit-ir --target "$BOOTSTRAP_TARGET" --stdlib-root "$ROOT/stdlib"
     [ -s "$STAGE1_CLI_IR" ] || {
@@ -558,12 +549,12 @@ if [ "${TYPELISP_BOOTSTRAP_STAGE1_ONLY:-}" = 1 ]; then
 fi
 
 echo "[bootstrap] stage1 -> stage2.s"
-run_with_heartbeat "stage1 -> stage2.s" "$STAGE1_BIN" selfhost/compile.tl -o "$STAGE2_ASM" --target "$BOOTSTRAP_TARGET"
+run_with_heartbeat "stage1 -> stage2.s" "$STAGE1_BIN" compile selfhost/compile.tl -o "$STAGE2_ASM" --target "$BOOTSTRAP_TARGET"
 
 assemble_and_link "stage2" "$STAGE2_ASM" "$STAGE2_OBJ" "$STAGE2_BIN"
 
 echo "[bootstrap] stage2 -> stage3.s"
-run_with_heartbeat "stage2 -> stage3.s" "$STAGE2_BIN" selfhost/compile.tl -o "$STAGE3_ASM" --target "$BOOTSTRAP_TARGET"
+run_with_heartbeat "stage2 -> stage3.s" "$STAGE2_BIN" compile selfhost/compile.tl -o "$STAGE3_ASM" --target "$BOOTSTRAP_TARGET"
 
 echo "[bootstrap] compare stage2.s and stage3.s"
 if ! cmp -s "$STAGE2_ASM" "$STAGE3_ASM"; then

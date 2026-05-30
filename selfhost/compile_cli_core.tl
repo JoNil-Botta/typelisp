@@ -61,7 +61,7 @@
   (and (> (string-length value) 0) (= (string-ref value 0) #-')))
 
 (define (compile-cli-usage) : String
-  "Usage:\n  typelisp debug tokenize <file.tl>    Show tokens\n  typelisp debug parse <file.tl>       Show AST\n  typelisp debug check <file.tl> [--stdlib-root <dir>...]\n  typelisp tokenize <file.tl>\n  typelisp parse <file.tl>\n  typelisp check <file.tl> [--stdlib-root <dir>...]\n  typelisp compile <file.tl> [-o <file>] [--emit-ir] [--target <target>] [--backend-mode <mode>] [--opt-level <0|1|2|3>] [--stdlib-root <dir>...]\n\nPrivate bootstrap form:\n  stage1 <file.tl> [compile options]")
+  "Usage:\n  typelisp debug tokenize <file.tl>    Show tokens\n  typelisp debug parse <file.tl>       Show AST\n  typelisp debug check <file.tl> [--stdlib-root <dir>...]\n  typelisp tokenize <file.tl>\n  typelisp parse <file.tl>\n  typelisp check <file.tl> [--stdlib-root <dir>...]\n  typelisp compile <file.tl> [-o <file>] [--emit-ir] [--target <target>] [--backend-mode <mode>] [--opt-level <0|1|2|3>] [--stdlib-root <dir>...]")
 
 (define (compile-cli-message-with-usage [message : String]) : String
   (string-append message (string-append "\n\n" (compile-cli-usage))))
@@ -71,28 +71,6 @@
 
 (define (compile-cli-debug-message-with-usage [message : String]) : String
   (string-append message (string-append "\n\n" (compile-cli-debug-usage))))
-
-(define (compile-cli-source-like? [value : String]) : bool
-  (let
-    [n : i64 (string-length value)]
-    [i : i64 0]
-    [has-separator : bool false]
-    (begin
-      (while (< i n)
-        (begin
-          (if (compile-cli-path-separator? (string-ref value i))
-            (set! has-separator true)
-            (set! has-separator has-separator))
-          (set! i (+ i 1))))
-      (or
-        has-separator
-        (if (>= n 3)
-          (and
-            (= (string-ref value (- n 3)) #.')
-            (and
-              (= (string-ref value (- n 2)) #t')
-              (= (string-ref value (- n 1)) #l')))
-          false)))))
 
 (define (compile-cli-default-output-with-extension
   [input-path : String]
@@ -338,9 +316,6 @@
           false
           (compiler-optimize-default-level))))))
 
-(define (compile-cli-config [count : i64]) : ResultCompileCliConfig
-  (compile-cli-config-from 1 count))
-
 (define (compile-cli-command-config [count : i64]) : ResultCompileCliConfig
   (compile-cli-config-from 2 count))
 
@@ -457,10 +432,6 @@
               (CompileCliCheck input-path roots)]
             [(ErrCompileCliCheckConfig message) (CompileCliError message)])]
         [(string-eq command "debug") (compile-cli-debug-dispatch count)]
-        [(compile-cli-source-like? command)
-          (match (compile-cli-config count)
-            [(OkCompileCliConfig config) (CompileCliRun config)]
-            [(ErrCompileCliConfig message) (CompileCliError message)])]
         [else
           (CompileCliError
             (compile-cli-message-with-usage

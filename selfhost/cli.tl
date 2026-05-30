@@ -127,11 +127,6 @@ Options for doc:
     [(string-eq command "repl") (cli-pending "repl" "#1641")]
     [(string-eq command "new") (cli-pending "new" "#1642")]
     [(string-eq command "init") (cli-pending "init" "#1642")]
-    ;; Private bootstrap form: `typelisp <file.tl> [compile options]` (no
-    ;; subcommand) compiles the file directly, matching compile.tl. This lets
-    ;; cli.tl be the single stage0 binary the bootstrap drives (#1638) — the
-    ;; stage1->stage2 fixpoint invokes the stage binary as `<stage> <file.tl>`.
-    [(compile-cli-source-like? command) (compile-cli-run count)]
     [else
       (begin
         (print-error (string-append "typelisp: unknown subcommand " command))

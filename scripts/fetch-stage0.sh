@@ -51,8 +51,6 @@ esac
 
 case "$(uname -s)" in
     Linux*)
-        # The stage0 is a single self-hosted cli.tl binary (#1638); the legacy
-        # per-command-driver bundle is gone, so only the single asset is fetched.
         SINGLE_ASSET=typelisp-stage0-linux
         BUNDLE_ASSET=
         OUTPUT=typelisp

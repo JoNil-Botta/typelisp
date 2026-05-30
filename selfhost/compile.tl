@@ -8,7 +8,7 @@
 ;; `--backend-mode scalar` is accepted (the selfhost backend's native mode);
 ;; `avx2`/`avx512` remain Rust-driver-only for now and are rejected explicitly.
 ;; `--emit-ir` writes a deterministic TypeLisp-owned IR summary.
-(import "compiler_check_frontend_core.tl")
+(import "compiler_check_core.tl")
 
 (import "compiler_driver_core.tl")
 

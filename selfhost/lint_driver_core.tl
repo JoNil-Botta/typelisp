@@ -64,20 +64,25 @@
           (ErrSelfhostLintConfig
             (string-append "selfhost-lint: unexpected argument " current))]))))
 
-(define (selfhost-lint-config [count : i64]) : ResultSelfhostLintConfig
-  (if (< count 2)
+;; Parse the `lint` config from arguments starting at `start` (the index of the
+;; input path); options follow at `start+1`. `count` is `(arg-count)`.
+(define (selfhost-lint-config-from [start : i64] [count : i64]) : ResultSelfhostLintConfig
+  (if (< count (+ start 1))
     (ErrSelfhostLintConfig "selfhost-lint: expected input path")
     (let
-      [input-path : String (arg 1)]
+      [input-path : String (arg start)]
       (if (selfhost-lint-flag? input-path)
         (ErrSelfhostLintConfig
           "selfhost-lint: expected input path before flags")
         (selfhost-lint-parse-options
-          2
+          (+ start 1)
           count
           input-path
           CompilerLoadRootNil
           false)))))
+
+(define (selfhost-lint-config [count : i64]) : ResultSelfhostLintConfig
+  (selfhost-lint-config-from 1 count))
 
 ;; Render one finding as `path:line:col: message` (line/col from the flagged
 ;; node's source span; 0:0 only for synthesized nodes that carry no location).
@@ -280,6 +285,18 @@
         (begin
           (print-error (compiler-diagnostic-render diag))
           1)])))
+
+;; Run the `lint` command over arguments starting at `start`.
+(define (selfhost-lint-run-from [start : i64] [count : i64]) : i64
+  (match (selfhost-lint-config-from start count)
+    [(OkSelfhostLintConfig config)
+      (match config
+        [(SelfhostLintConfig input-path stdlib-roots enforcing)
+          (selfhost-lint-file input-path stdlib-roots enforcing)])]
+    [(ErrSelfhostLintConfig message)
+      (begin
+        (print-error (string-append message "\n"))
+        2)]))
 
 ;; ---- self-test (driven by lint_driver_smoke.tl) ----
 ;; A five-deep value-dispatch if-ladder (length 5 >= the default threshold of 3),

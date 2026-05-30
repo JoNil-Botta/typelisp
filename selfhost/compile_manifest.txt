@@ -104,6 +104,34 @@ contains|could not find typelisp.pkg
 contains|Generated:
 end
 
+# Unified pure-TypeLisp toolchain dispatcher (single self-hosted entry point for
+# build/run/check/fmt/lint/test/doc). Each subcommand routes through its
+# `*-run-from` entry in a shared main-free `*_cli_core.tl` module, so the
+# dispatcher's assembly must reference every command's runner.
+case|selfhost_cli|selfhost/cli.tl|assembly|exactly-one|direct
+requires-stage0-symbol|file-read-chunk-status,file-write-status,file-flush-status,append-file-status
+contains|_tl_cli_dispatch:
+contains|_tl_build_run_from:
+contains|_tl_run_run_from:
+contains|_tl_selfhost_check_run_from:
+contains|_tl_fmt_run_from:
+contains|_tl_selfhost_lint_run_from:
+contains|_tl_tltest_run_from:
+contains|_tl_doc_run_from:
+contains|typelisp: expected a subcommand
+end
+
+# Per-command logic modules shared by the unified dispatcher (selfhost/cli.tl)
+# and each standalone driver. Main-less; compiled transitively through their
+# driver's case (and the selfhost_cli case), so they get a decision row rather
+# than a standalone compile case.
+decision|selfhost/build_cli_core.tl|build command logic (#622/#1339): arg parsing, --direct/--host-plan/manifest dispatch, source/package build; main-less, imported by selfhost/build.tl and selfhost/cli.tl and exercised through the selfhost_build and selfhost_cli cases
+decision|selfhost/run_cli_core.tl|run command logic: arg parsing and --direct/--host-plan dispatch; main-less, imported by selfhost/run.tl and selfhost/cli.tl and exercised through the selfhost_run and selfhost_cli cases
+decision|selfhost/check_cli_core.tl|check (typecheck) command logic: arg parsing and full-frontend file check; main-less, imported by selfhost/check.tl and selfhost/cli.tl and exercised through the selfhost_check and selfhost_cli cases
+decision|selfhost/format_cli_core.tl|fmt command logic (#522): --check vs rewrite over input paths; main-less, imported by selfhost/format.tl and selfhost/cli.tl and exercised through the selfhost_format and selfhost_cli cases
+decision|selfhost/test_cli_core.tl|test command logic: config parsing and test run dispatch; main-less, imported by selfhost/test.tl and selfhost/cli.tl and exercised through the selfhost_test and selfhost_cli cases
+decision|selfhost/doc_cli_core.tl|doc command logic: kind dispatch (test/html/load/default) with a base-offset arg model; main-less, imported by selfhost/doc.tl and selfhost/cli.tl and exercised through the selfhost_doc and selfhost_cli cases
+
 case|selfhost_build_run_core|selfhost/build_run_core.tl|assembly|skip|direct
 requires-stage0-symbol|file-read-chunk-status,file-write-status,file-flush-status,append-file-status
 contains|_tl_source_tool_build_source:
@@ -220,12 +248,6 @@ case|selfhost_compiler_check_core|selfhost/compiler_check_core.tl|assembly|skip|
 contains|_tl_compiler_check_file:
 contains|_tl_compiler_check_file_with_roots:
 contains|_tl_compiler_check_source_with_roots:
-end
-
-case|selfhost_compiler_check_frontend_core|selfhost/compiler_check_frontend_core.tl|assembly|skip|direct
-contains|_tl_compiler_check_file:
-contains|_tl_compiler_check_file_with_roots:
-contains|_tl_typecheck_compiler_specialized_program_with_paths:
 end
 
 case|selfhost_compiler_check_smoke|selfhost/compiler_check_smoke.tl|assembly|exactly-one|direct

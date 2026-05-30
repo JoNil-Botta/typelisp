@@ -183,7 +183,7 @@ narrower or unsigned integer is required. Floating-point literals are always
 | `u16` | 2 bytes | Unsigned 16-bit |
 | `u8`  | 1 byte  | Unsigned 8-bit |
 | `f64` | 8 bytes | IEEE-754 double precision |
-| `f32` | 4 bytes | Parsed/typechecked in some positions, rejected by backend validation |
+| `f32` | 4 bytes | IEEE-754 single precision |
 | `bool`| 1 byte  | `true` (1) or `false` (0) |
 | `char`| 1 byte  | Single ASCII/byte value |
 | `unit`| 0 bytes | Sentinels for "no value" (similar to `void` or `()`) |
@@ -414,8 +414,7 @@ slice exists.
 V1 `repr c` fields are restricted to ABI-safe types:
 
 - Fixed-width scalar types supported by the backend: `i8`, `u8`, `i16`, `u16`,
-  `i32`, `u32`, `i64`, `u64`, `f64`, `bool`, and `char`. `f32` remains rejected
-  until the backend supports it.
+  `i32`, `u32`, `i64`, `u64`, `f64`, `f32`, `bool`, and `char`.
 - Raw pointer types once the raw-pointer surface is implemented (#809/#896).
 - Nested structs that are themselves marked `repr c`.
 
@@ -930,7 +929,7 @@ escaped consistently. Ordinary TypeLisp declarations still use module-prefixed
 Extern signatures may use backend-supported scalar values, `unit`, function
 pointers, raw pointers, and pointer-sized TypeLisp runtime handles such as
 `String`, dynamic arrays, structs, and enums. Tuple values, fixed arrays,
-references, regions, `f32`, and other unsupported aggregate forms are rejected
+references, regions, and unsupported aggregate forms are rejected
 for extern parameters and returns; pass a raw pointer when a foreign API needs
 aggregate storage.
 
@@ -1774,7 +1773,7 @@ All operators are prefix functions (or special forms):
   wrapped bits.
 - Bitwise and shift operators accept integer operands and return the left-hand
   operand type.
-- `+`, `-`, `*`, `/` also operate on `f64`; `%` on floating-point values is
+- `+`, `-`, `*`, `/` also operate on `f64` and `f32`; `%` on floating-point values is
   rejected by backend validation.
 - Integer `/` and `%` trap at runtime when the divisor is zero, or when a
   signed dividend is the minimum value for its width and the divisor is `-1`

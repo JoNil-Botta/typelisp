@@ -10804,43 +10804,597 @@ tl_string_concat:
 
 (define (compiler-backend-runtime-windows-process-output-functions) : String
   "tl_process_output:
-    leaq .L_tl_process_unsupported_msg(%rip), %rcx
-    movq $.L_tl_process_unsupported_msg_len, %rdx
-    movq $3, %r8
-    jmp .L_tl_process_make_error_win
-
-.L_tl_process_make_error_win:
     push %rbp
     mov %rsp, %rbp
     push %rbx
     push %r12
     push %r13
-    sub $40, %rsp
+    push %r14
+    push %r15
+    sub $104, %rsp
+    movq %rcx, %rbx
+    movq $0, -48(%rbp)
+    movq $0, -56(%rbp)
+    movq $0, -64(%rbp)
+    movq $0, -72(%rbp)
+    movq $-1, -80(%rbp)
+    movq $-1, -88(%rbp)
+    movq 0(%rbx), %rcx
+    call .L_tl_process_copy_c_string
+    movq %rax, %r12
+    movq $1, %r13
+    movq 8(%rbx), %r14
+.L_tl_process_count_argv:
+    testq %r14, %r14
+    jz .L_tl_process_count_argv_done
+    cmpq $1, 0(%r14)
+    jne .L_tl_process_count_argv_done
+    incq %r13
+    movq 16(%r14), %r14
+    jmp .L_tl_process_count_argv
+.L_tl_process_count_argv_done:
+    movq %r13, %rcx
+    incq %rcx
+    shlq $3, %rcx
+    call tl_alloc
+    movq %rax, %r14
+    movq 0(%rbx), %rcx
+    call .L_tl_process_copy_c_string_quoted
+    movq %rax, 0(%r14)
+    movq 8(%rbx), %r13
+    movq $1, %r15
+.L_tl_process_fill_argv:
+    testq %r13, %r13
+    jz .L_tl_process_fill_argv_done
+    cmpq $1, 0(%r13)
+    jne .L_tl_process_fill_argv_done
+    movq 8(%r13), %rcx
+    call .L_tl_process_copy_c_string_quoted
+    movq %rax, (%r14,%r15,8)
+    incq %r15
+    movq 16(%r13), %r13
+    jmp .L_tl_process_fill_argv
+.L_tl_process_fill_argv_done:
+    movq $0, (%r14,%r15,8)
+    movq %r14, -96(%rbp)
+    movq 24(%rbx), %rcx
+    call .L_tl_process_win_envp_from_overrides
+    movq %rax, -104(%rbp)
+    movq -96(%rbp), %r14
+    call tmpfile
+    testq %rax, %rax
+    jz .L_tl_process_output_wait_failed_close
+    movq %rax, -48(%rbp)
+    movq %rax, %rcx
+    call _fileno
+    testl %eax, %eax
+    js .L_tl_process_output_wait_failed_close
+    movslq %eax, %rax
+    movq %rax, -56(%rbp)
+    call tmpfile
+    testq %rax, %rax
+    jz .L_tl_process_output_wait_failed_close
+    movq %rax, -64(%rbp)
+    movq %rax, %rcx
+    call _fileno
+    testl %eax, %eax
+    js .L_tl_process_output_wait_failed_close
+    movslq %eax, %rax
+    movq %rax, -72(%rbp)
+    movq $1, %rcx
+    call _dup
+    testl %eax, %eax
+    js .L_tl_process_output_wait_failed_close
+    movslq %eax, %rax
+    movq %rax, -80(%rbp)
+    movq $2, %rcx
+    call _dup
+    testl %eax, %eax
+    js .L_tl_process_output_wait_failed_close
+    movslq %eax, %rax
+    movq %rax, -88(%rbp)
+    xorq %rcx, %rcx
+    call fflush
+    movq -56(%rbp), %rcx
+    movq $1, %rdx
+    call _dup2
+    testl %eax, %eax
+    js .L_tl_process_output_restore_wait_failed
+    movq -72(%rbp), %rcx
+    movq $2, %rdx
+    call _dup2
+    testl %eax, %eax
+    js .L_tl_process_output_restore_wait_failed
+    movq $0, %rcx
+    movq %r12, %rdx
+    movq %r14, %r8
+    movq -104(%rbp), %r9
+    call _spawnvpe
+    movslq %eax, %r15
+    jmp .L_tl_process_output_restore_after_spawn
+.L_tl_process_output_restore_wait_failed:
+    movq -80(%rbp), %rcx
+    cmpq $0, %rcx
+    jl .L_tl_process_output_restore_wait_stderr
+    movq $1, %rdx
+    call _dup2
+    movq -80(%rbp), %rcx
+    call _close
+    movq $-1, -80(%rbp)
+.L_tl_process_output_restore_wait_stderr:
+    movq -88(%rbp), %rcx
+    cmpq $0, %rcx
+    jl .L_tl_process_output_wait_failed_close
+    movq $2, %rdx
+    call _dup2
+    movq -88(%rbp), %rcx
+    call _close
+    movq $-1, -88(%rbp)
+    jmp .L_tl_process_output_wait_failed_close
+.L_tl_process_output_restore_after_spawn:
+    movq -80(%rbp), %rcx
+    movq $1, %rdx
+    call _dup2
+    movq -80(%rbp), %rcx
+    call _close
+    movq $-1, -80(%rbp)
+    movq -88(%rbp), %rcx
+    movq $2, %rdx
+    call _dup2
+    movq -88(%rbp), %rcx
+    call _close
+    movq $-1, -88(%rbp)
+    cmpq $0, %r15
+    jl .L_tl_process_output_spawn_failed_close
+    movq -56(%rbp), %rcx
+    call .L_tl_process_read_fd_to_string
+    testq %rax, %rax
+    jz .L_tl_process_output_wait_failed_close
+    movq %rax, -96(%rbp)
+    movq -72(%rbp), %rcx
+    call .L_tl_process_read_fd_to_string
+    testq %rax, %rax
+    jz .L_tl_process_output_wait_failed_close
+    movq %rax, -104(%rbp)
+    call .L_tl_process_close_temp_files
+    movq $24, %rcx
+    call tl_alloc
+    movq %r15, 0(%rax)
+    movq -96(%rbp), %rdx
+    movq %rdx, 8(%rax)
+    movq -104(%rbp), %rdx
+    movq %rdx, 16(%rax)
+    movq %rax, %r12
+    movq $16, %rcx
+    call tl_alloc
+    movq $0, 0(%rax)
+    movq %r12, 8(%rax)
+    jmp .L_tl_process_output_epilogue
+.L_tl_process_output_spawn_failed_close:
+    call .L_tl_process_close_temp_files
+    movq $1, %rcx
+    leaq .L_tl_process_spawn_msg(%rip), %rdx
+    movq $.L_tl_process_spawn_msg_len, %r8
+    call .L_tl_process_error_result
+    jmp .L_tl_process_output_epilogue
+.L_tl_process_output_wait_failed_close:
+    call .L_tl_process_close_temp_files
+    movq $2, %rcx
+    leaq .L_tl_process_wait_msg(%rip), %rdx
+    movq $.L_tl_process_wait_msg_len, %r8
+    call .L_tl_process_error_result
+    jmp .L_tl_process_output_epilogue
+.L_tl_process_output_epilogue:
+    add $104, %rsp
+    pop %r15
+    pop %r14
+    pop %r13
+    pop %r12
+    pop %rbx
+    pop %rbp
+    ret
+
+.L_tl_process_copy_c_string:
+    push %rbp
+    mov %rsp, %rbp
+    push %rbx
+    push %r12
+    push %r13
+    sub $8, %rsp
+    movq 0(%rcx), %rbx
+    movq 8(%rcx), %r12
+    movq %r12, %rcx
+    incq %rcx
+    call tl_alloc
+    movq %rax, %r13
+    xorq %r10, %r10
+.L_tl_process_copy_c_string_loop:
+    cmpq %r12, %r10
+    jge .L_tl_process_copy_c_string_done
+    movzbl (%rbx,%r10), %edx
+    movb %dl, (%r13,%r10)
+    incq %r10
+    jmp .L_tl_process_copy_c_string_loop
+.L_tl_process_copy_c_string_done:
+    movb $0, (%r13,%r12)
+    movq %r13, %rax
+    add $8, %rsp
+    pop %r13
+    pop %r12
+    pop %rbx
+    pop %rbp
+    ret
+
+.L_tl_process_copy_c_string_quoted:
+    push %rbp
+    mov %rsp, %rbp
+    push %rbx
+    push %r12
+    push %r13
+    push %r14
+    sub $8, %rsp
+    movq 0(%rcx), %rbx
+    movq 8(%rcx), %r12
+    xorq %r14, %r14
+    xorq %r10, %r10
+.L_tl_process_quote_scan:
+    cmpq %r12, %r10
+    jge .L_tl_process_quote_scan_done
+    cmpb $0x20, (%rbx,%r10)
+    jne .L_tl_process_quote_scan_next
+    movq $1, %r14
+    jmp .L_tl_process_quote_scan_done
+.L_tl_process_quote_scan_next:
+    incq %r10
+    jmp .L_tl_process_quote_scan
+.L_tl_process_quote_scan_done:
+    movq %r12, %rcx
+    incq %rcx
+    testq %r14, %r14
+    jz .L_tl_process_quote_alloc
+    addq $2, %rcx
+.L_tl_process_quote_alloc:
+    call tl_alloc
+    movq %rax, %r13
+    xorq %r10, %r10
+    testq %r14, %r14
+    jz .L_tl_process_quote_body
+    movb $0x22, (%r13)
+    movq $1, %r10
+.L_tl_process_quote_body:
+    xorq %r11, %r11
+.L_tl_process_quote_body_loop:
+    cmpq %r12, %r11
+    jge .L_tl_process_quote_body_done
+    movzbl (%rbx,%r11), %edx
+    movb %dl, (%r13,%r10)
+    incq %r10
+    incq %r11
+    jmp .L_tl_process_quote_body_loop
+.L_tl_process_quote_body_done:
+    testq %r14, %r14
+    jz .L_tl_process_quote_terminate
+    movb $0x22, (%r13,%r10)
+    incq %r10
+.L_tl_process_quote_terminate:
+    movb $0, (%r13,%r10)
+    movq %r13, %rax
+    add $8, %rsp
+    pop %r14
+    pop %r13
+    pop %r12
+    pop %rbx
+    pop %rbp
+    ret
+
+.L_tl_process_win_env_entry_matches:
+    push %rbp
+    mov %rsp, %rbp
+    push %rbx
+    push %r12
+    push %r13
+    push %r14
+    push %r15
+    sub $8, %rsp
+    movq %rcx, %rbx
+    movq %rdx, %r12
+.L_tl_process_win_env_match_loop:
+    testq %r12, %r12
+    jz .L_tl_process_win_env_match_false
+    cmpq $1, 0(%r12)
+    jne .L_tl_process_win_env_match_false
+    movq 8(%r12), %rax
+    movq 0(%rax), %r13
+    movq 8(%rax), %r14
+    xorq %r15, %r15
+.L_tl_process_win_env_match_char:
+    cmpq %r14, %r15
+    jge .L_tl_process_win_env_match_check_eq
+    movzbl (%r13,%r15), %eax
+    movzbl (%rbx,%r15), %ecx
+    cmpb %cl, %al
+    jne .L_tl_process_win_env_match_next
+    incq %r15
+    jmp .L_tl_process_win_env_match_char
+.L_tl_process_win_env_match_check_eq:
+    movzbl (%rbx,%r14), %eax
+    cmpb $61, %al
+    jne .L_tl_process_win_env_match_next
+    movq $1, %rax
+    jmp .L_tl_process_win_env_match_return
+.L_tl_process_win_env_match_next:
+    movq 24(%r12), %r12
+    jmp .L_tl_process_win_env_match_loop
+.L_tl_process_win_env_match_false:
+    xorq %rax, %rax
+.L_tl_process_win_env_match_return:
+    add $8, %rsp
+    pop %r15
+    pop %r14
+    pop %r13
+    pop %r12
+    pop %rbx
+    pop %rbp
+    ret
+
+.L_tl_process_win_env_cstring:
+    push %rbp
+    mov %rsp, %rbp
+    push %rbx
+    push %r12
+    push %r13
+    push %r14
+    push %r15
+    sub $8, %rsp
+    movq 0(%rcx), %r12
+    movq 8(%rcx), %rbx
+    movq 0(%rdx), %r14
+    movq 8(%rdx), %r13
+    movq %rbx, %rcx
+    addq %r13, %rcx
+    addq $2, %rcx
+    call tl_alloc
+    movq %rax, %r15
+    xorq %rcx, %rcx
+.L_tl_process_win_env_cs_name:
+    cmpq %rbx, %rcx
+    jge .L_tl_process_win_env_cs_name_done
+    movzbl (%r12,%rcx), %eax
+    movb %al, (%r15,%rcx)
+    incq %rcx
+    jmp .L_tl_process_win_env_cs_name
+.L_tl_process_win_env_cs_name_done:
+    movb $61, (%r15,%rbx)
+    xorq %rcx, %rcx
+.L_tl_process_win_env_cs_value:
+    cmpq %r13, %rcx
+    jge .L_tl_process_win_env_cs_value_done
+    movzbl (%r14,%rcx), %eax
+    leaq 1(%rbx,%rcx), %rdx
+    movb %al, (%r15,%rdx)
+    incq %rcx
+    jmp .L_tl_process_win_env_cs_value
+.L_tl_process_win_env_cs_value_done:
+    leaq 1(%rbx,%r13), %rdx
+    movb $0, (%r15,%rdx)
+    movq %r15, %rax
+    add $8, %rsp
+    pop %r15
+    pop %r14
+    pop %r13
+    pop %r12
+    pop %rbx
+    pop %rbp
+    ret
+
+.L_tl_process_win_envp_from_overrides:
+    push %rbp
+    mov %rsp, %rbp
+    push %rbx
+    push %r12
+    push %r13
+    push %r14
+    push %r15
+    sub $8, %rsp
     movq %rcx, %r12
-    movq %rdx, %r13
-    movq %r8, %rbx
+    testq %r12, %r12
+    jz .L_tl_process_win_envp_null
+    cmpq $1, 0(%r12)
+    jne .L_tl_process_win_envp_null
+    call __p__environ
+    movq (%rax), %rbx
+    xorq %r13, %r13
+    testq %rbx, %rbx
+    jz .L_tl_process_win_envp_count_overrides
+.L_tl_process_win_envp_count_inh:
+    movq (%rbx,%r13,8), %rax
+    testq %rax, %rax
+    jz .L_tl_process_win_envp_count_overrides
+    incq %r13
+    jmp .L_tl_process_win_envp_count_inh
+.L_tl_process_win_envp_count_overrides:
+    xorq %r14, %r14
+    movq %r12, %r15
+.L_tl_process_win_envp_count_ov:
+    testq %r15, %r15
+    jz .L_tl_process_win_envp_alloc
+    cmpq $1, 0(%r15)
+    jne .L_tl_process_win_envp_alloc
+    incq %r14
+    movq 24(%r15), %r15
+    jmp .L_tl_process_win_envp_count_ov
+.L_tl_process_win_envp_alloc:
+    movq %r13, %rcx
+    addq %r14, %rcx
+    incq %rcx
+    shlq $3, %rcx
+    call tl_alloc
+    movq %rax, %r15
+    xorq %r14, %r14
+    testq %rbx, %rbx
+    jz .L_tl_process_win_envp_copy_ov_start
+.L_tl_process_win_envp_copy_inh:
+    movq (%rbx), %rcx
+    testq %rcx, %rcx
+    jz .L_tl_process_win_envp_copy_ov_start
+    movq %r12, %rdx
+    call .L_tl_process_win_env_entry_matches
+    testq %rax, %rax
+    jne .L_tl_process_win_envp_skip_inh
+    movq (%rbx), %rax
+    movq %rax, (%r15,%r14,8)
+    incq %r14
+.L_tl_process_win_envp_skip_inh:
+    addq $8, %rbx
+    jmp .L_tl_process_win_envp_copy_inh
+.L_tl_process_win_envp_copy_ov_start:
+    movq %r12, %rbx
+.L_tl_process_win_envp_copy_ov:
+    testq %rbx, %rbx
+    jz .L_tl_process_win_envp_done
+    cmpq $1, 0(%rbx)
+    jne .L_tl_process_win_envp_done
+    movq 8(%rbx), %rcx
+    movq 16(%rbx), %rdx
+    call .L_tl_process_win_env_cstring
+    movq %rax, (%r15,%r14,8)
+    incq %r14
+    movq 24(%rbx), %rbx
+    jmp .L_tl_process_win_envp_copy_ov
+.L_tl_process_win_envp_done:
+    movq $0, (%r15,%r14,8)
+    movq %r15, %rax
+    jmp .L_tl_process_win_envp_return
+.L_tl_process_win_envp_null:
+    xorq %rax, %rax
+.L_tl_process_win_envp_return:
+    add $8, %rsp
+    pop %r15
+    pop %r14
+    pop %r13
+    pop %r12
+    pop %rbx
+    pop %rbp
+    ret
+
+.L_tl_process_read_fd_to_string:
+    push %rbp
+    mov %rsp, %rbp
+    push %rbx
+    push %r12
+    push %r13
+    push %r14
+    movq %rcx, %rbx
+    movq %rbx, %rcx
+    xorq %rdx, %rdx
+    movq $2, %r8
+    call _lseeki64
+    cmpq $0, %rax
+    jl .L_tl_process_read_fd_to_string_error
+    movq %rax, %r12
+    movq %rbx, %rcx
+    xorq %rdx, %rdx
+    xorq %r8, %r8
+    call _lseeki64
+    cmpq $0, %rax
+    jl .L_tl_process_read_fd_to_string_error
+    movq %r12, %rcx
+    call tl_alloc
+    movq %rax, %r13
+    xorq %r14, %r14
+.L_tl_process_read_fd_to_string_loop:
+    cmpq %r12, %r14
+    jge .L_tl_process_read_fd_to_string_fat
+    movq %rbx, %rcx
+    leaq (%r13,%r14), %rdx
+    movq %r12, %r8
+    subq %r14, %r8
+    call _read
+    testl %eax, %eax
+    js .L_tl_process_read_fd_to_string_error
+    jz .L_tl_process_read_fd_to_string_fat
+    movslq %eax, %rax
+    addq %rax, %r14
+    jmp .L_tl_process_read_fd_to_string_loop
+.L_tl_process_read_fd_to_string_fat:
+    movq $16, %rcx
+    call tl_alloc
+    movq %r13, 0(%rax)
+    movq %r14, 8(%rax)
+    jmp .L_tl_process_read_fd_to_string_done
+.L_tl_process_read_fd_to_string_error:
+    xorq %rax, %rax
+.L_tl_process_read_fd_to_string_done:
+    pop %r14
+    pop %r13
+    pop %r12
+    pop %rbx
+    pop %rbp
+    ret
+
+.L_tl_process_error_result:
+    push %rbp
+    mov %rsp, %rbp
+    push %rbx
+    push %r12
+    push %r13
+    push %r14
+    push %r15
+    sub $8, %rsp
+    movq %rcx, %rbx
+    movq %rdx, %r12
+    movq %r8, %r13
     movq $16, %rcx
     call tl_alloc
     movq %r12, 0(%rax)
     movq %r13, 8(%rax)
-    movq %rax, %r12
+    movq %rax, %r14
     movq $16, %rcx
     call tl_alloc
     movq %rbx, 0(%rax)
-    movq %r12, 8(%rax)
-    movq %rax, %r12
+    movq %r14, 8(%rax)
+    movq %rax, %r15
     movq $16, %rcx
     call tl_alloc
     movq $1, 0(%rax)
-    movq %r12, 8(%rax)
-    add $40, %rsp
+    movq %r15, 8(%rax)
+    add $8, %rsp
+    pop %r15
+    pop %r14
     pop %r13
     pop %r12
     pop %rbx
-    mov %rbp, %rsp
     pop %rbp
     ret
 
+.L_tl_process_close_temp_files:
+    sub $8, %rsp
+    movq -48(%rbp), %rcx
+    testq %rcx, %rcx
+    jz .L_tl_process_close_temp_stderr
+    call fclose
+    movq $0, -48(%rbp)
+.L_tl_process_close_temp_stderr:
+    movq -64(%rbp), %rcx
+    testq %rcx, %rcx
+    jz .L_tl_process_close_temp_done
+    call fclose
+    movq $0, -64(%rbp)
+.L_tl_process_close_temp_done:
+    movq -80(%rbp), %rcx
+    cmpq $0, %rcx
+    jl .L_tl_process_close_saved_stderr
+    call _close
+    movq $-1, -80(%rbp)
+.L_tl_process_close_saved_stderr:
+    movq -88(%rbp), %rcx
+    cmpq $0, %rcx
+    jl .L_tl_process_close_all_done
+    call _close
+    movq $-1, -88(%rbp)
+.L_tl_process_close_all_done:
+    add $8, %rsp
+    ret
 ")
 
 (define (compiler-backend-runtime-process-output-functions) : String
@@ -12366,19 +12920,36 @@ tl_windows_sdk_registry_install:
 "
           "")
         (string-append
-          ;; getenv/strlen back the Windows env-var helpers (the Linux variants
-          ;; walk the SysV stack envp, which is absent on Windows).
-          (if (or
-            (compiler-backend-plan-provides? plan "env-var-value")
-            (compiler-backend-plan-provides? plan "env-var-exists?"))
-            "    .extern getenv
+          (string-append
+            ;; getenv/strlen back the Windows env-var helpers (the Linux
+            ;; variants walk the SysV stack envp, which is absent on Windows).
+            (if (or
+              (compiler-backend-plan-provides? plan "env-var-value")
+              (compiler-backend-plan-provides? plan "env-var-exists?"))
+              "    .extern getenv
     .extern strlen
 "
-            "")
-          ;; VirtualFree(MEM_RELEASE) releases newer arenas in the Windows
-          ;; tl_region_reset (the Linux variant uses the munmap syscall).
-          (if (compiler-backend-plan-provides? plan "tl_region_reset")
-            "    .extern VirtualFree
+              "")
+            ;; VirtualFree(MEM_RELEASE) releases newer arenas in the Windows
+            ;; tl_region_reset (the Linux variant uses the munmap syscall).
+            (if (compiler-backend-plan-provides? plan "tl_region_reset")
+              "    .extern VirtualFree
+"
+              ""))
+          ;; The Windows tl_process_output spawns the child via _spawnvpe with a
+          ;; constructed env block (__p__environ + getenv/strlen above) and
+          ;; captures stdout/stderr through CRT temp files (tmpfile/_fileno/_dup/
+          ;; _dup2/fclose). The Linux variant uses raw syscalls instead.
+          (if (compiler-backend-plan-provides? plan "tl_process_output")
+            "    .extern _spawnvpe
+    .extern __p__environ
+    .extern getenv
+    .extern strlen
+    .extern tmpfile
+    .extern fclose
+    .extern _fileno
+    .extern _dup
+    .extern _dup2
 "
             ""))))
     ""))

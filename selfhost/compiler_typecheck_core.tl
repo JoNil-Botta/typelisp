@@ -16,6 +16,10 @@
   (OkTcType AstType)
   (ErrTcType String))
 
+(defenum ResultTcMaybeType
+  (OkTcMaybeType AstMaybeType)
+  (ErrTcMaybeType String))
+
 (defenum ResultTcTypeList
   (OkTcTypeList AstTypeList)
   (ErrTcTypeList String))
@@ -1910,7 +1914,14 @@
 (define (tc-type-compatible? [expected : AstType] [actual : AstType]) : bool
   (if (tc-never-type? actual)
     true
-    (tc-type-eq expected actual)))
+    (if (tc-type-eq expected actual)
+      true
+      (match (tc-type-strip-region expected)
+        [(AstTyF64)
+          (match (tc-type-strip-region actual)
+            [(AstTyF32) true]
+            [_ false])]
+        [_ false]))))
 
 (define (tc-merge-branch-type [a : AstType] [b : AstType]) : ResultTcType
   (cond
@@ -1928,6 +1939,8 @@
               (match b-regions
                 [(TcStringNil) (OkTcType a)]
                 [_ (ErrTcType "typecheck: if branches must match")])])))]
+    [(tc-type-compatible? a b) (OkTcType a)]
+    [(tc-type-compatible? b a) (OkTcType b)]
     [else (ErrTcType "typecheck: if branches must match")]))
 
 (define (tc-integer-type? [ty : AstType]) : bool
@@ -1945,6 +1958,7 @@
 (define (tc-float-type? [ty : AstType]) : bool
   (match (tc-type-strip-region ty)
     [(AstTyF64) true]
+    [(AstTyF32) true]
     [_ false]))
 
 (define (tc-ordered-comparison-type? [ty : AstType]) : bool
@@ -2247,7 +2261,7 @@
   (match exprs
     [(AstExprNil) OkTcUnit]
     [(AstExprCons expr rest)
-      (match (tc-expr ctx env expr)
+      (match (tc-expr-with-expected-or-actual ctx env expr elem-ty)
         [(OkTcType ty)
           (match (tc-expect
             ty
@@ -2256,6 +2270,203 @@
             [(OkTcUnit) (tc-check-array-rest ctx env rest elem-ty)]
             [(ErrTcUnit message) (ErrTcUnit message)])]
         [(ErrTcType message) (ErrTcUnit message)])]))
+
+(define (tc-type-list-len [types : AstTypeList]) : i64
+  (match types
+    [(AstTypeNil) 0]
+    [(AstTypeCons _ rest) (+ 1 (tc-type-list-len rest))]))
+
+(define (tc-contextual-result-type [expected : AstType] [actual : AstType]) : AstType
+  (if (tc-type-contains-any-region actual)
+    actual
+    expected))
+
+(define (tc-f32-type? [ty : AstType]) : bool
+  (match (tc-type-strip-region ty)
+    [(AstTyF32) true]
+    [_ false]))
+
+(define (tc-float-literal-expr? [expr : AstExpr]) : bool
+  (match (ast-expr-unspan expr)
+    [(AstExprLiteral lit)
+      (match lit
+        [(AstLitFloat _) true]
+        [_ false])]
+    [_ false]))
+
+(define (tc-check-array-elements-with-expected
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [exprs : AstExprList]
+  [elem-ty : AstType]) : ResultTcUnit
+  (match exprs
+    [(AstExprNil) OkTcUnit]
+    [(AstExprCons expr rest)
+      (match (tc-expr-with-expected-or-actual ctx env expr elem-ty)
+        [(OkTcType got)
+          (match (tc-expect
+            got
+            elem-ty
+            "typecheck: array elements must have same type")
+            [(OkTcUnit)
+              (tc-check-array-elements-with-expected ctx env rest elem-ty)]
+            [(ErrTcUnit message) (ErrTcUnit message)])]
+        [(ErrTcType message) (ErrTcUnit message)])]))
+
+(define (tc-check-tuple-elements-with-expected
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [exprs : AstExprList]
+  [types : AstTypeList]) : ResultTcTypeList
+  (match exprs
+    [(AstExprNil)
+      (match types
+        [(AstTypeNil) (OkTcTypeList AstTypeNil)]
+        [_ (ErrTcTypeList "typecheck: tuple element type mismatch")])]
+    [(AstExprCons expr rest-exprs)
+      (match types
+        [(AstTypeCons want rest-types)
+          (match (tc-expr-with-expected-or-actual ctx env expr want)
+            [(OkTcType got)
+              (match (tc-expect
+                got
+                want
+                "typecheck: tuple element type mismatch")
+                [(OkTcUnit)
+                  (match (tc-check-tuple-elements-with-expected
+                    ctx
+                    env
+                    rest-exprs
+                    rest-types)
+                    [(OkTcTypeList rest-result)
+                      (OkTcTypeList
+                        (AstTypeCons
+                          (tc-contextual-result-type want got)
+                          rest-result))]
+                    [(ErrTcTypeList message) (ErrTcTypeList message)])]
+                [(ErrTcUnit message) (ErrTcTypeList message)])]
+            [(ErrTcType message) (ErrTcTypeList message)])]
+        [(AstTypeNil) (ErrTcTypeList "typecheck: tuple element type mismatch")])]))
+
+(define (tc-begin-list-with-expected
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [exprs : AstExprList]
+  [expected : AstType]) : ResultTcType
+  (match exprs
+    [(AstExprNil) (OkTcType (AstTyUnit))]
+    [(AstExprCons expr rest)
+      (match rest
+        [(AstExprNil) (tc-expr-with-expected-or-actual ctx env expr expected)]
+        [_
+          (match (tc-expr ctx env expr)
+            [(OkTcType _) (tc-begin-list-with-expected ctx env rest expected)]
+            [(ErrTcType message) (ErrTcType message)])])]))
+
+(define (tc-try-expr-with-expected
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [expr : AstExpr]
+  [expected : AstType]) : ResultTcMaybeType
+  (match (ast-expr-unspan expr)
+    [(AstExprLiteral lit)
+      (match lit
+        [(AstLitFloat _)
+          (if (tc-f32-type? expected)
+            (OkTcMaybeType (AstSomeType expected))
+            (OkTcMaybeType (AstNoType)))]
+        [_ (OkTcMaybeType (AstNoType))])]
+    [(AstExprArray elems)
+      (match (tc-type-strip-region expected)
+        [(AstTyArray elem-ty len)
+          (if (= len (tc-expr-list-len elems))
+            (match (tc-ensure-cleanup-resource-not-stored-list env elems)
+              [(OkTcUnit)
+                (match (tc-check-array-elements-with-expected
+                  ctx
+                  env
+                  elems
+                  elem-ty)
+                  [(OkTcUnit) (OkTcMaybeType (AstSomeType expected))]
+                  [(ErrTcUnit message) (ErrTcMaybeType message)])]
+              [(ErrTcUnit message) (ErrTcMaybeType message)])
+            (OkTcMaybeType (AstNoType)))]
+        [_ (OkTcMaybeType (AstNoType))])]
+    [(AstExprTuple elems)
+      (match (tc-type-strip-region expected)
+        [(AstTyTuple expected-elems)
+          (if (= (tc-type-list-len expected-elems) (tc-expr-list-len elems))
+            (match (tc-ensure-cleanup-resource-not-stored-list env elems)
+              [(OkTcUnit)
+                (match (tc-check-tuple-elements-with-expected
+                  ctx
+                  env
+                  elems
+                  expected-elems)
+                  [(OkTcTypeList result-elems)
+                    (OkTcMaybeType (AstSomeType (AstTyTuple result-elems)))]
+                  [(ErrTcTypeList message) (ErrTcMaybeType message)])]
+              [(ErrTcUnit message) (ErrTcMaybeType message)])
+            (OkTcMaybeType (AstNoType)))]
+        [_ (OkTcMaybeType (AstNoType))])]
+    [(AstExprIf cond then-branch else-branch)
+      (match (tc-expr ctx env cond)
+        [(OkTcType cond-ty)
+          (match (tc-expect
+            cond-ty
+            (AstTyBool)
+            "typecheck: if condition must be bool")
+            [(OkTcUnit)
+              (match (tc-expr-with-expected-or-actual
+                ctx
+                env
+                then-branch
+                expected)
+                [(OkTcType then-ty)
+                  (match (tc-expr-with-expected-or-actual
+                    ctx
+                    env
+                    else-branch
+                    expected)
+                    [(OkTcType else-ty)
+                      (if (and
+                        (tc-type-compatible? expected then-ty)
+                        (tc-type-compatible? expected else-ty))
+                        (OkTcMaybeType (AstSomeType expected))
+                        (OkTcMaybeType (AstNoType)))]
+                    [(ErrTcType message) (ErrTcMaybeType message)])]
+                [(ErrTcType message) (ErrTcMaybeType message)])]
+            [(ErrTcUnit message) (ErrTcMaybeType message)])]
+        [(ErrTcType message) (ErrTcMaybeType message)])]
+    [(AstExprBegin exprs)
+      (match (tc-begin-list-with-expected ctx env exprs expected)
+        [(OkTcType ty) (OkTcMaybeType (AstSomeType ty))]
+        [(ErrTcType message) (ErrTcMaybeType message)])]
+    [_ (OkTcMaybeType (AstNoType))]))
+
+(define (tc-expr-with-expected-or-actual
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [expr : AstExpr]
+  [expected : AstType]) : ResultTcType
+  (match (tc-try-expr-with-expected ctx env expr expected)
+    [(OkTcMaybeType maybe)
+      (match maybe
+        [(AstSomeType ty) (OkTcType ty)]
+        [(AstNoType)
+          (match (tc-expr ctx env expr)
+            [(OkTcType actual)
+              (if (tc-type-compatible? expected actual)
+                (OkTcType (tc-contextual-result-type expected actual))
+                (if (and
+                  (tc-f32-type? expected)
+                  (and
+                    (tc-type-eq actual (AstTyF64))
+                    (tc-float-literal-expr? expr)))
+                  (OkTcType expected)
+                  (OkTcType actual)))]
+            [(ErrTcType message) (ErrTcType message)])])]
+    [(ErrTcMaybeType message) (ErrTcType message)]))
 
 (define (tc-bind-params
   [ctx : TcContext]
@@ -2995,7 +3206,7 @@
     [(AstExprCons arg rest-args)
       (match params
         [(AstTypeCons want rest-params)
-          (match (tc-expr ctx env arg)
+          (match (tc-expr-with-expected-or-actual ctx env arg want)
             [(OkTcType got)
               (match (tc-expect got want "typecheck: argument type mismatch")
                 [(OkTcUnit)
@@ -3052,7 +3263,7 @@
     [(AstExprCons arg rest-args)
       (match params
         [(AstTypeCons want rest-params)
-          (match (tc-expr ctx env arg)
+          (match (tc-expr-with-expected-or-actual ctx env arg want)
             [(OkTcType got)
               (match (tc-expect got want "typecheck: argument type mismatch")
                 [(OkTcUnit) (tc-check-args ctx env rest-args rest-params)]
@@ -3527,42 +3738,55 @@
     [(AstLetBindingCons binding rest)
       (match binding
         [(AstLetBinding name maybe-ty init)
-          (match (tc-expr ctx env init)
-            [(OkTcType init-ty)
-              (match maybe-ty
-                [(AstSomeType want)
-                  (match (tc-expect
-                    init-ty
-                    (tc-resolve-type ctx want)
-                    "typecheck: let binding type mismatch")
-                    [(OkTcUnit)
-                      (match (tc-ensure-cleanup-resource-not-let-bound env init)
-                        [(OkTcUnit)
-                          (match (tc-ensure-reference-value-can-bind
-                            env
-                            init-ty)
-                            [(OkTcUnit)
-                              (tc-let-bindings
-                                ctx
-                                (tc-bind
-                                  env
-                                  name
-                                  (if (tc-type-contains-any-region init-ty)
-                                    init-ty
-                                    (tc-resolve-type ctx want)))
-                                rest)]
-                            [(ErrTcUnit message) (ErrTcEnv message)])]
-                        [(ErrTcUnit message) (ErrTcEnv message)])]
-                    [(ErrTcUnit message) (ErrTcEnv message)])]
-                [(AstNoType)
+          (match maybe-ty
+            [(AstSomeType want)
+              (tc-let-binding-with-type
+                ctx
+                env
+                name
+                (tc-resolve-type ctx want)
+                init
+                rest)]
+            [(AstNoType)
+              (match (tc-expr ctx env init)
+                [(OkTcType init-ty)
                   (match (tc-ensure-cleanup-resource-not-let-bound env init)
                     [(OkTcUnit)
                       (match (tc-ensure-reference-value-can-bind env init-ty)
                         [(OkTcUnit)
                           (tc-let-bindings ctx (tc-bind env name init-ty) rest)]
                         [(ErrTcUnit message) (ErrTcEnv message)])]
-                    [(ErrTcUnit message) (ErrTcEnv message)])])]
-            [(ErrTcType message) (ErrTcEnv message)])])]))
+                    [(ErrTcUnit message) (ErrTcEnv message)])]
+                [(ErrTcType message) (ErrTcEnv message)])])])]))
+
+(define (tc-let-binding-with-type
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [name : String]
+  [want : AstType]
+  [init : AstExpr]
+  [rest : AstLetBindingList]) : ResultTcEnv
+  (match (tc-expr-with-expected-or-actual ctx env init want)
+    [(OkTcType init-ty)
+      (match (tc-expect init-ty want "typecheck: let binding type mismatch")
+        [(OkTcUnit)
+          (match (tc-ensure-cleanup-resource-not-let-bound env init)
+            [(OkTcUnit)
+              (match (tc-ensure-reference-value-can-bind env init-ty)
+                [(OkTcUnit)
+                  (tc-let-bindings
+                    ctx
+                    (tc-bind
+                      env
+                      name
+                      (if (tc-type-contains-any-region init-ty)
+                        init-ty
+                        want))
+                    rest)]
+                [(ErrTcUnit message) (ErrTcEnv message)])]
+            [(ErrTcUnit message) (ErrTcEnv message)])]
+        [(ErrTcUnit message) (ErrTcEnv message)])]
+    [(ErrTcType message) (ErrTcEnv message)]))
 
 (define (tc-resource-cleanup-direct-name-ok [cleanup : AstExpr]) : ResultTcUnit
   (match (ast-expr-unspan cleanup)
@@ -6348,19 +6572,18 @@
             (tc-type-render (tc-resolve-type ctx ty))
             " is compile-time only")))]
     [(AstExprAnn inner ty)
-      (match (tc-expr ctx env inner)
-        [(OkTcType got)
-          (match (tc-expect
-            got
-            (tc-resolve-type ctx ty)
-            "typecheck: annotation type mismatch")
-            [(OkTcUnit)
-              (OkTcType
-                (if (tc-type-contains-any-region got)
-                  got
-                  (tc-resolve-type ctx ty)))]
-            [(ErrTcUnit message) (ErrTcType message)])]
-        [(ErrTcType message) (ErrTcType message)])]
+      (let
+        [want : AstType (tc-resolve-type ctx ty)]
+        (match (tc-expr-with-expected-or-actual ctx env inner want)
+          [(OkTcType got)
+            (match (tc-expect got want "typecheck: annotation type mismatch")
+              [(OkTcUnit)
+                (OkTcType
+                  (if (tc-type-contains-any-region got)
+                    got
+                    want))]
+              [(ErrTcUnit message) (ErrTcType message)])]
+          [(ErrTcType message) (ErrTcType message)]))]
     [(AstExprLet bindings body)
       (match (tc-let-bindings ctx env bindings)
         [(OkTcEnv next-env)
@@ -6387,7 +6610,14 @@
                   (tc-bind-return-type
                     (tc-bind-params ctx env params)
                     (AstTyNever))])]
-            (match (tc-expr ctx lambda-env body)
+            (match (match maybe-ret
+              [(AstSomeType ret)
+                (tc-expr-with-expected-or-actual
+                  ctx
+                  lambda-env
+                  body
+                  (tc-resolve-type ctx ret))]
+              [(AstNoType) (tc-expr ctx lambda-env body)])
               [(OkTcType body-ty)
                 (if (tc-type-contains-any-region body-ty)
                   (ErrTcType
@@ -6480,7 +6710,11 @@
               (if (tc-integer-type? index-ty)
                 (match (tc-type-strip-region array-ty)
                   [(AstTyArray elem-ty _)
-                    (match (tc-expr ctx env value)
+                    (match (tc-expr-with-expected-or-actual
+                      ctx
+                      env
+                      value
+                      elem-ty)
                       [(OkTcType value-ty)
                         (match (tc-expect
                           value-ty
@@ -6510,7 +6744,11 @@
                           [(ErrTcUnit message) (ErrTcType message)])]
                       [(ErrTcType message) (ErrTcType message)])]
                   [(AstTyDynArray elem-ty)
-                    (match (tc-expr ctx env value)
+                    (match (tc-expr-with-expected-or-actual
+                      ctx
+                      env
+                      value
+                      elem-ty)
                       [(OkTcType value-ty)
                         (match (tc-expect
                           value-ty
@@ -6548,7 +6786,7 @@
         [(OkTcType array-ty)
           (match (tc-type-strip-region array-ty)
             [(AstTyDynArray elem-ty)
-              (match (tc-expr ctx env value)
+              (match (tc-expr-with-expected-or-actual ctx env value elem-ty)
                 [(OkTcType value-ty)
                   (match (tc-expect
                     value-ty
@@ -6610,7 +6848,7 @@
     [(AstExprSet name value)
       (match (tc-lookup env name)
         [(OkTcType var-ty)
-          (match (tc-expr ctx env value)
+          (match (tc-expr-with-expected-or-actual ctx env value var-ty)
             [(OkTcType value-ty)
               (match (tc-expect
                 value-ty
@@ -6654,7 +6892,7 @@
     [(AstExprBinary op left right)
       (match (tc-expr ctx env left)
         [(OkTcType left-ty)
-          (match (tc-expr ctx env right)
+          (match (tc-expr-with-expected-or-actual ctx env right left-ty)
             [(OkTcType right-ty) (tc-binop-type op left-ty right-ty)]
             [(ErrTcType message) (ErrTcType message)])]
         [(ErrTcType message) (ErrTcType message)])]
@@ -7653,15 +7891,21 @@
     [(AstDeclDef _ maybe-ty expr)
       (match maybe-ty
         [(AstSomeType want)
-          (match (tc-expr ctx top-env expr)
-            [(OkTcType got)
-              (match (tc-expect
-                got
-                (tc-resolve-type ctx want)
-                "typecheck: value definition type mismatch")
-                [(OkTcUnit) OkTcUnit]
-                [(ErrTcUnit message) (ErrTcUnit message)])]
-            [(ErrTcType message) (ErrTcUnit message)])]
+          (let
+            [resolved-want : AstType (tc-resolve-type ctx want)]
+            (match (tc-expr-with-expected-or-actual
+              ctx
+              top-env
+              expr
+              resolved-want)
+              [(OkTcType got)
+                (match (tc-expect
+                  got
+                  resolved-want
+                  "typecheck: value definition type mismatch")
+                  [(OkTcUnit) OkTcUnit]
+                  [(ErrTcUnit message) (ErrTcUnit message)])]
+              [(ErrTcType message) (ErrTcUnit message)]))]
         [(AstNoType)
           (match (tc-expr ctx top-env expr)
             [(OkTcType _) OkTcUnit]
@@ -7672,7 +7916,11 @@
           (tc-bind-return-type
             (tc-bind-params ctx top-env params)
             (tc-resolve-type ctx ret))]
-        (match (tc-expr ctx env body)
+        (match (tc-expr-with-expected-or-actual
+          ctx
+          env
+          body
+          (tc-resolve-type ctx ret))
           [(OkTcType got)
             (match (tc-expect
               got

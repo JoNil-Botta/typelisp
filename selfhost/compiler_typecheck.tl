@@ -1696,6 +1696,41 @@
   "(define (add [a : i64] [b : i64]) : i64 (+ a b))
 (define (main) : i64 (add 2 3))")
 
+(define (compiler-typecheck-contextual-f32-literals-source) : String
+  "(define gx : f32 1.0)
+(define (id [x : f32]) : f32 x)
+(define (ret) : f32 1.0)
+(define (annotated) : f32 (ann 1.0 : f32))
+(define (call) : f32 (id 2.0))
+(define (branch [flag : bool]) : f32 (if flag 1.0 2.0))
+(define (tupled) : f32 (tuple-ref (ann (tuple 1.0 true) : (Tuple f32 bool)) 0))
+(define (array-first) : f32
+  (let [a : (Array f32 2) (array 1.0 2.0)] (array-ref a 0)))")
+
+(define (compiler-typecheck-implicit-f32-to-f64-source) : String
+  "(define (ret [x : f32]) : f64 x)
+(define (arg [x : f64]) : f64 x)
+(define (call [x : f32]) : f64 (arg x))
+(define (branch [x : f32] [flag : bool]) : f64 (if flag x 2.0))")
+
+(define (compiler-typecheck-nonliteral-f64-to-f32-source) : String
+  "(define (main [x : f64]) : f32 x)")
+
+(define (compiler-typecheck-f32-arithmetic-source) : String
+  "(define (compute [a : f32] [b : f32]) : bool
+  (< (+ a b) b))")
+
+(define (compiler-typecheck-contextual-scalar-tests-ok?) : bool
+  (and
+    (compiler-typecheck-ok? (compiler-typecheck-contextual-f32-literals-source))
+    (and
+      (compiler-typecheck-ok? (compiler-typecheck-implicit-f32-to-f64-source))
+      (and
+        (compiler-typecheck-ok? (compiler-typecheck-f32-arithmetic-source))
+        (compiler-typecheck-error-ok?
+          (compiler-typecheck-nonliteral-f64-to-f32-source)
+          "typecheck: return type mismatch")))))
+
 (define (compiler-typecheck-operator-tests-ok?) : bool
   (and
     (compiler-typecheck-error-ok?
@@ -2771,6 +2806,9 @@
     (if (compiler-typecheck-operator-tests-ok?)
       unit
       (panic "typecheck: operator/arity tests failed"))
+    (if (compiler-typecheck-contextual-scalar-tests-ok?)
+      unit
+      (panic "typecheck: contextual scalar literal tests failed"))
     (if (compiler-typecheck-match-tests-ok?)
       unit
       (panic "typecheck: match/pattern tests failed"))

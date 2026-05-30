@@ -63,6 +63,12 @@ Total inline Rust `#[test]` items under `src/`: 933.
 | `src/lsp.rs` | 0 | The `typelisp lsp` server: JSON-RPC framing (`Content-Length` headers, JSON parsing), open-document tracking (`textDocument/didOpen`/`didChange`/`didClose`), the initialize/capabilities handshake, and the publish-diagnostics loop. No inline `#[test]` items — behavior is witnessed by `tests/tl_lsp_frame_compile.rs`. | `selfhost/lsp_frame.tl` + #789 own the selfhost LSP framing/server port; #845 owns public protocol-behavior coverage. The public `typelisp lsp` still runs the Rust server (selfhost routing pending #789). | Partial |
 | `src/repl.rs` | 0 | The `typelisp repl` input loop: multiline paren-balancing, session declaration/source persistence (top-level decls are remembered and type-checked before the session is mutated), and bare-expression evaluation by compiling a scratch program. No inline `#[test]` items — behavior is witnessed by `tests/tl_repl_compile.rs`. | `selfhost/repl.tl` + #1026 (selfhost REPL eval) / #1027 (route public `repl` through selfhost). The public `typelisp repl` still runs the Rust loop (selfhost routing pending #1026/#1027). | Partial |
 
+#1626 adds selfhost contextual scalar literal coverage through
+`compiler-typecheck-contextual-scalar-tests-ok?`: `f32` float literals in
+expected contexts, nonliteral `f32` to `f64`, nonliteral `f64` to `f32`
+rejection, and `f32` arithmetic/comparison. Rust inexact-`f32` literal warning
+capture remains Rust-only until selfhost grows a warning channel.
+
 #1354 adds backend aggregate-return storage and allocator runtime emit-shape
 coverage through `compiler-backend-aggregate-storage-shape-ok?`,
 `compiler-backend-alloc-runtime-shape-ok?`, and `compiler_backend_smoke.tl`.

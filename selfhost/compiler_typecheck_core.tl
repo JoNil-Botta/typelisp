@@ -7301,12 +7301,11 @@
 ;; ordinary evaluated positions are expanded; quoted/quasiquoted code is left
 ;; as data. Programs without macro calls pass through unchanged. The normal
 ;; typechecker then runs over the expanded program as the post-expansion safety
-;; net. Call-site signature checking (operand types from the macro's declared
-;; signature, with a call-site span) is a follow-up; this slice provides arity
-;; checking and relies on the post-expansion typecheck for operand-type errors.
+;; net. Call-site arity and operand signature checks run before the transformer
+;; so obvious operand type errors are reported at the macro call site.
 (defenum MacroMaybeDecl
   (MacroNoDecl)
-  (MacroSomeDecl AstMacroParamList AstExpr))
+  (MacroSomeDecl AstMacroParamList AstType AstExpr))
 
 (defenum ResultMacroExpr
   (OkMacroExpr AstExpr)
@@ -7316,9 +7315,21 @@
   (OkMacroExprList AstExprList)
   (ErrMacroExprList CompilerDiagnostic))
 
+(defenum ResultMacroArms
+  (OkMacroArms AstMatchArmList)
+  (ErrMacroArms CompilerDiagnostic))
+
+(defenum ResultMacroLetBindings
+  (OkMacroLetBindings AstLetBindingList TcTypeEnv)
+  (ErrMacroLetBindings CompilerDiagnostic))
+
 (defenum ResultMacroEnv
   (OkMacroEnv CtfeEnv)
   (ErrMacroEnv CompilerDiagnostic))
+
+(defenum ResultMacroCheck
+  (OkMacroCheck)
+  (ErrMacroCheck CompilerDiagnostic))
 
 (defenum ResultMacroDecl
   (OkMacroDecl AstDecl)
@@ -7340,9 +7351,9 @@
     [(AstDeclNil) (MacroNoDecl)]
     [(AstDeclCons decl rest)
       (match decl
-        [(AstDeclDefMacro mname params _ body)
+        [(AstDeclDefMacro mname params ret body)
           (if (string-eq mname name)
-            (MacroSomeDecl params body)
+            (MacroSomeDecl params ret body)
             (macro-find-decl rest name))]
         [_ (macro-find-decl rest name)])]))
 
@@ -7353,9 +7364,52 @@
     [(AstExprVar name) (macro-find-decl decls name)]
     [_ (MacroNoDecl)]))
 
+(define (macro-operand-mismatch-message [expected : AstType] [actual : AstType]) : String
+  (tc-cat3
+    "typecheck: macro operand type mismatch: expected "
+    (tc-type-render expected)
+    (tc-cat3 ", got " (tc-type-render actual) "")))
+
+(define (macro-check-operand
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [expected : AstType]
+  [arg : AstExpr]) : ResultMacroCheck
+  (let
+    [resolved-expected : AstType (tc-resolve-type ctx expected)]
+    (match (tc-expr ctx env arg)
+      [(OkTcType actual)
+        (if (tc-type-compatible? resolved-expected actual)
+          OkMacroCheck
+          (ErrMacroCheck
+            (tc-expr-diag
+              arg
+              (macro-operand-mismatch-message resolved-expected actual))))]
+      [(ErrTcType message)
+        (ErrMacroCheck
+          (tc-expr-diag
+            arg
+            (string-append
+              "typecheck: macro operand typecheck failed: "
+              message)))])))
+
+(define (macro-check-variadic-operands
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [expected : AstType]
+  [args : AstExprList]) : ResultMacroCheck
+  (match args
+    [(AstExprNil) OkMacroCheck]
+    [(AstExprCons head rest)
+      (match (macro-check-operand ctx env expected head)
+        [(OkMacroCheck) (macro-check-variadic-operands ctx env expected rest)]
+        [(ErrMacroCheck diag) (ErrMacroCheck diag)])]))
+
 ;; Bind the unevaluated operand forms to the macro parameters as `Expr` values.
 ;; A trailing variadic parameter collects the remaining operands as an ExprList.
 (define (macro-bind-params
+  [ctx : TcContext]
+  [type-env : TcTypeEnv]
   [params : AstMacroParamList]
   [args : AstExprList]
   [env : CtfeEnv]
@@ -7373,7 +7427,10 @@
       (match param
         [(AstMacroParam pname pty variadic)
           (if variadic
-            (OkMacroEnv (CtfeEnvCons pname (CtfeExprList args) env))
+            (match (macro-check-variadic-operands ctx type-env pty args)
+              [(OkMacroCheck)
+                (OkMacroEnv (CtfeEnvCons pname (CtfeExprList args) env))]
+              [(ErrMacroCheck diag) (ErrMacroEnv diag)])
             (match args
               [(AstExprNil)
                 (ErrMacroEnv
@@ -7381,31 +7438,51 @@
                     call-expr
                     "macro call has too few arguments"))]
               [(AstExprCons arg rest-args)
-                (macro-bind-params
-                  rest-params
-                  rest-args
-                  (CtfeEnvCons pname (CtfeExpr arg pty) env)
-                  call-expr)]))])]))
+                (match (macro-check-operand ctx type-env pty arg)
+                  [(OkMacroCheck)
+                    (macro-bind-params
+                      ctx
+                      type-env
+                      rest-params
+                      rest-args
+                      (CtfeEnvCons
+                        pname
+                        (CtfeExpr arg (tc-resolve-type ctx pty))
+                        env)
+                      call-expr)]
+                  [(ErrMacroCheck diag) (ErrMacroEnv diag)])]))])]))
 
 ;; Run a macro transformer via CTFE and re-expand its produced form to a fixpoint.
 (define (macro-expand-call
+  [ctx : TcContext]
+  [type-env : TcTypeEnv]
   [decls : AstDeclList]
   [params : AstMacroParamList]
+  [ret : AstType]
   [body : AstExpr]
   [args : AstExprList]
   [depth : i64]
   [call-expr : AstExpr]) : ResultMacroExpr
   (match (macro-bind-params
+    ctx
+    type-env
     params
     args
-    (CtfeEnvNil CtfeLayoutInfoNil CtfeReflectInfoNil)
+    (tc-ctfe-env ctx)
     call-expr)
     [(OkMacroEnv env)
       (match (ctfe-eval-node body env (ctfe-fuel-limit))
         [(OkCtfe value _)
           (match value
-            [(CtfeExpr expanded _)
-              (macro-expand-expr decls (+ depth 1) expanded)]
+            [(CtfeExpr expanded produced)
+              (if (tc-type-compatible?
+                (tc-resolve-type ctx ret)
+                (tc-resolve-type ctx produced))
+                (macro-expand-expr ctx type-env decls (+ depth 1) expanded)
+                (ErrMacroExpr
+                  (ctfe-diagnostic-at-expr
+                    call-expr
+                    "typecheck: macro expansion produced type does not match declaration")))]
             [_
               (ErrMacroExpr
                 (ctfe-diagnostic-at-expr
@@ -7415,223 +7492,288 @@
     [(ErrMacroEnv diag) (ErrMacroExpr diag)]))
 
 (define (macro-expand-exprs
+  [ctx : TcContext]
+  [env : TcTypeEnv]
   [decls : AstDeclList]
   [depth : i64]
   [exprs : AstExprList]) : ResultMacroExprList
   (match exprs
     [(AstExprNil) (OkMacroExprList (AstExprNil))]
     [(AstExprCons head rest)
-      (match (macro-expand-expr decls depth head)
+      (match (macro-expand-expr ctx env decls depth head)
         [(OkMacroExpr nhead)
-          (match (macro-expand-exprs decls depth rest)
+          (match (macro-expand-exprs ctx env decls depth rest)
             [(OkMacroExprList nrest)
               (OkMacroExprList (AstExprCons nhead nrest))]
             [(ErrMacroExprList diag) (ErrMacroExprList diag)])]
         [(ErrMacroExpr diag) (ErrMacroExprList diag)])]))
 
 (define (macro-expand-arms
+  [ctx : TcContext]
+  [env : TcTypeEnv]
   [decls : AstDeclList]
   [depth : i64]
-  [arms : AstMatchArmList]) : AstMatchArmList
+  [scrut-ty : AstType]
+  [arms : AstMatchArmList]) : ResultMacroArms
   (match arms
-    [(AstMatchArmNil) (AstMatchArmNil)]
+    [(AstMatchArmNil) (OkMacroArms (AstMatchArmNil))]
     [(AstMatchArmCons arm rest)
       (match arm
         [(AstMatchArm pattern body)
-          (match (macro-expand-expr decls depth body)
-            [(OkMacroExpr nbody)
-              (AstMatchArmCons
-                (AstMatchArm pattern nbody)
-                (macro-expand-arms decls depth rest))]
-            [(ErrMacroExpr _)
-              (AstMatchArmCons arm (macro-expand-arms decls depth rest))])])]))
+          (match (tc-bind-match-pattern ctx env scrut-ty pattern)
+            [(OkTcEnv arm-env)
+              (match (macro-expand-expr ctx arm-env decls depth body)
+                [(OkMacroExpr nbody)
+                  (match (macro-expand-arms ctx env decls depth scrut-ty rest)
+                    [(OkMacroArms nrest)
+                      (OkMacroArms
+                        (AstMatchArmCons (AstMatchArm pattern nbody) nrest))]
+                    [(ErrMacroArms diag) (ErrMacroArms diag)])]
+                [(ErrMacroExpr diag) (ErrMacroArms diag)])]
+            [(ErrTcEnv message) (ErrMacroArms (tc-expr-diag body message))])])]))
 
 (define (macro-expand-bindings
+  [ctx : TcContext]
+  [env : TcTypeEnv]
   [decls : AstDeclList]
   [depth : i64]
-  [bindings : AstLetBindingList]) : AstLetBindingList
+  [bindings : AstLetBindingList]) : ResultMacroLetBindings
   (match bindings
-    [(AstLetBindingNil) (AstLetBindingNil)]
+    [(AstLetBindingNil) (OkMacroLetBindings (AstLetBindingNil) env)]
     [(AstLetBindingCons binding rest)
       (match binding
         [(AstLetBinding name maybe-ty init)
-          (match (macro-expand-expr decls depth init)
+          (match (macro-expand-expr ctx env decls depth init)
             [(OkMacroExpr ninit)
-              (AstLetBindingCons
-                (AstLetBinding name maybe-ty ninit)
-                (macro-expand-bindings decls depth rest))]
-            [(ErrMacroExpr _)
-              (AstLetBindingCons
-                binding
-                (macro-expand-bindings decls depth rest))])])]))
+              (match (tc-let-bindings
+                ctx
+                env
+                (AstLetBindingCons
+                  (AstLetBinding name maybe-ty ninit)
+                  AstLetBindingNil))
+                [(OkTcEnv next-env)
+                  (match (macro-expand-bindings ctx next-env decls depth rest)
+                    [(OkMacroLetBindings nrest final-env)
+                      (OkMacroLetBindings
+                        (AstLetBindingCons
+                          (AstLetBinding name maybe-ty ninit)
+                          nrest)
+                        final-env)]
+                    [(ErrMacroLetBindings diag) (ErrMacroLetBindings diag)])]
+                [(ErrTcEnv message)
+                  (ErrMacroLetBindings (tc-expr-diag ninit message))])]
+            [(ErrMacroExpr diag) (ErrMacroLetBindings diag)])])]))
 
-(define (macro-expand-expr [decls : AstDeclList] [depth : i64] [expr : AstExpr]) : ResultMacroExpr
+(define (macro-expand-expr
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [decls : AstDeclList]
+  [depth : i64]
+  [expr : AstExpr]) : ResultMacroExpr
   (if (< (macro-expand-depth-limit) depth)
     (ErrMacroExpr
       (ctfe-diagnostic-at-expr expr "macro expansion exceeded depth limit"))
     (match expr
       [(AstExprSpanned inner span)
-        (match (macro-expand-expr decls depth inner)
+        (match (macro-expand-expr ctx env decls depth inner)
           [(OkMacroExpr ninner) (OkMacroExpr (AstExprSpanned ninner span))]
           [(ErrMacroExpr diag) (ErrMacroExpr diag)])]
       [(AstExprCall func args)
         (match (macro-call-decl func decls)
-          [(MacroSomeDecl params body)
-            (macro-expand-call decls params body args depth expr)]
+          [(MacroSomeDecl params ret body)
+            (macro-expand-call ctx env decls params ret body args depth expr)]
           [(MacroNoDecl)
-            (match (macro-expand-expr decls depth func)
+            (match (macro-expand-expr ctx env decls depth func)
               [(OkMacroExpr nfunc)
-                (match (macro-expand-exprs decls depth args)
+                (match (macro-expand-exprs ctx env decls depth args)
                   [(OkMacroExprList nargs)
                     (OkMacroExpr (AstExprCall nfunc nargs))]
                   [(ErrMacroExprList diag) (ErrMacroExpr diag)])]
               [(ErrMacroExpr diag) (ErrMacroExpr diag)])])]
       [(AstExprBinary op left right)
-        (match (macro-expand-expr decls depth left)
+        (match (macro-expand-expr ctx env decls depth left)
           [(OkMacroExpr nleft)
-            (match (macro-expand-expr decls depth right)
+            (match (macro-expand-expr ctx env decls depth right)
               [(OkMacroExpr nright)
                 (OkMacroExpr (AstExprBinary op nleft nright))]
               [(ErrMacroExpr diag) (ErrMacroExpr diag)])]
           [(ErrMacroExpr diag) (ErrMacroExpr diag)])]
       [(AstExprUnary op inner)
-        (match (macro-expand-expr decls depth inner)
+        (match (macro-expand-expr ctx env decls depth inner)
           [(OkMacroExpr ninner) (OkMacroExpr (AstExprUnary op ninner))]
           [(ErrMacroExpr diag) (ErrMacroExpr diag)])]
       [(AstExprIf cond then-branch else-branch)
-        (match (macro-expand-expr decls depth cond)
+        (match (macro-expand-expr ctx env decls depth cond)
           [(OkMacroExpr ncond)
-            (match (macro-expand-expr decls depth then-branch)
+            (match (macro-expand-expr ctx env decls depth then-branch)
               [(OkMacroExpr nthen)
-                (match (macro-expand-expr decls depth else-branch)
+                (match (macro-expand-expr ctx env decls depth else-branch)
                   [(OkMacroExpr nelse)
                     (OkMacroExpr (AstExprIf ncond nthen nelse))]
                   [(ErrMacroExpr diag) (ErrMacroExpr diag)])]
               [(ErrMacroExpr diag) (ErrMacroExpr diag)])]
           [(ErrMacroExpr diag) (ErrMacroExpr diag)])]
       [(AstExprLet bindings body)
-        (match (macro-expand-expr decls depth body)
-          [(OkMacroExpr nbody)
-            (OkMacroExpr
-              (AstExprLet (macro-expand-bindings decls depth bindings) nbody))]
-          [(ErrMacroExpr diag) (ErrMacroExpr diag)])]
+        (match (macro-expand-bindings ctx env decls depth bindings)
+          [(OkMacroLetBindings nbindings body-env)
+            (match (macro-expand-expr ctx body-env decls depth body)
+              [(OkMacroExpr nbody) (OkMacroExpr (AstExprLet nbindings nbody))]
+              [(ErrMacroExpr diag) (ErrMacroExpr diag)])]
+          [(ErrMacroLetBindings diag) (ErrMacroExpr diag)])]
       [(AstExprBegin exprs)
-        (match (macro-expand-exprs decls depth exprs)
+        (match (macro-expand-exprs ctx env decls depth exprs)
           [(OkMacroExprList nexprs) (OkMacroExpr (AstExprBegin nexprs))]
           [(ErrMacroExprList diag) (ErrMacroExpr diag)])]
       [(AstExprUnsafe exprs)
-        (match (macro-expand-exprs decls depth exprs)
+        (match (macro-expand-exprs ctx env decls depth exprs)
           [(OkMacroExprList nexprs) (OkMacroExpr (AstExprUnsafe nexprs))]
           [(ErrMacroExprList diag) (ErrMacroExpr diag)])]
       [(AstExprTuple exprs)
-        (match (macro-expand-exprs decls depth exprs)
+        (match (macro-expand-exprs ctx env decls depth exprs)
           [(OkMacroExprList nexprs) (OkMacroExpr (AstExprTuple nexprs))]
           [(ErrMacroExprList diag) (ErrMacroExpr diag)])]
       [(AstExprArray exprs)
-        (match (macro-expand-exprs decls depth exprs)
+        (match (macro-expand-exprs ctx env decls depth exprs)
           [(OkMacroExprList nexprs) (OkMacroExpr (AstExprArray nexprs))]
           [(ErrMacroExprList diag) (ErrMacroExpr diag)])]
       [(AstExprMatch scrut arms)
-        (match (macro-expand-expr decls depth scrut)
+        (match (macro-expand-expr ctx env decls depth scrut)
           [(OkMacroExpr nscrut)
-            (OkMacroExpr
-              (AstExprMatch nscrut (macro-expand-arms decls depth arms)))]
+            (match (tc-expr ctx env nscrut)
+              [(OkTcType scrut-ty)
+                (match (macro-expand-arms ctx env decls depth scrut-ty arms)
+                  [(OkMacroArms narms)
+                    (OkMacroExpr (AstExprMatch nscrut narms))]
+                  [(ErrMacroArms diag) (ErrMacroExpr diag)])]
+              [(ErrTcType message) (ErrMacroExpr (tc-expr-diag nscrut message))])]
           [(ErrMacroExpr diag) (ErrMacroExpr diag)])]
       [(AstExprWhile cond body)
-        (match (macro-expand-expr decls depth cond)
+        (match (macro-expand-expr ctx env decls depth cond)
           [(OkMacroExpr ncond)
-            (match (macro-expand-expr decls depth body)
+            (match (macro-expand-expr ctx env decls depth body)
               [(OkMacroExpr nbody) (OkMacroExpr (AstExprWhile ncond nbody))]
               [(ErrMacroExpr diag) (ErrMacroExpr diag)])]
           [(ErrMacroExpr diag) (ErrMacroExpr diag)])]
       [(AstExprForeach index index-ty start end body)
-        (match (macro-expand-expr decls depth start)
+        (match (macro-expand-expr ctx env decls depth start)
           [(OkMacroExpr nstart)
-            (match (macro-expand-expr decls depth end)
+            (match (macro-expand-expr ctx env decls depth end)
               [(OkMacroExpr nend)
-                (match (macro-expand-expr decls depth body)
+                (match (macro-expand-expr
+                  ctx
+                  (tc-bind env index (tc-resolve-type ctx index-ty))
+                  decls
+                  depth
+                  body)
                   [(OkMacroExpr nbody)
                     (OkMacroExpr
                       (AstExprForeach index index-ty nstart nend nbody))]
                   [(ErrMacroExpr diag) (ErrMacroExpr diag)])]
               [(ErrMacroExpr diag) (ErrMacroExpr diag)])]
           [(ErrMacroExpr diag) (ErrMacroExpr diag)])]
-      [(AstExprLambda params ret body)
-        (match (macro-expand-expr decls depth body)
-          [(OkMacroExpr nbody) (OkMacroExpr (AstExprLambda params ret nbody))]
+      [(AstExprLambda params maybe-ret body)
+        (match (macro-expand-expr
+          ctx
+          (match maybe-ret
+            [(AstSomeType ret)
+              (tc-bind-return-type
+                (tc-bind-params ctx env params)
+                (tc-resolve-type ctx ret))]
+            [(AstNoType)
+              (tc-bind-return-type (tc-bind-params ctx env params) (AstTyNever))])
+          decls
+          depth
+          body)
+          [(OkMacroExpr nbody)
+            (OkMacroExpr (AstExprLambda params maybe-ret nbody))]
           [(ErrMacroExpr diag) (ErrMacroExpr diag)])]
       [(AstExprAnn inner ty)
-        (match (macro-expand-expr decls depth inner)
+        (match (macro-expand-expr ctx env decls depth inner)
           [(OkMacroExpr ninner) (OkMacroExpr (AstExprAnn ninner ty))]
           [(ErrMacroExpr diag) (ErrMacroExpr diag)])]
       [(AstExprCast inner ty)
-        (match (macro-expand-expr decls depth inner)
+        (match (macro-expand-expr ctx env decls depth inner)
           [(OkMacroExpr ninner) (OkMacroExpr (AstExprCast ninner ty))]
           [(ErrMacroExpr diag) (ErrMacroExpr diag)])]
       [(AstExprStructGet inner field)
-        (match (macro-expand-expr decls depth inner)
+        (match (macro-expand-expr ctx env decls depth inner)
           [(OkMacroExpr ninner) (OkMacroExpr (AstExprStructGet ninner field))]
           [(ErrMacroExpr diag) (ErrMacroExpr diag)])]
       [(AstExprArrayRef array index)
-        (match (macro-expand-expr decls depth array)
+        (match (macro-expand-expr ctx env decls depth array)
           [(OkMacroExpr narray)
-            (match (macro-expand-expr decls depth index)
+            (match (macro-expand-expr ctx env decls depth index)
               [(OkMacroExpr nindex)
                 (OkMacroExpr (AstExprArrayRef narray nindex))]
               [(ErrMacroExpr diag) (ErrMacroExpr diag)])]
           [(ErrMacroExpr diag) (ErrMacroExpr diag)])]
       [(AstExprArraySet array index value)
-        (match (macro-expand-expr decls depth array)
+        (match (macro-expand-expr ctx env decls depth array)
           [(OkMacroExpr narray)
-            (match (macro-expand-expr decls depth index)
+            (match (macro-expand-expr ctx env decls depth index)
               [(OkMacroExpr nindex)
-                (match (macro-expand-expr decls depth value)
+                (match (macro-expand-expr ctx env decls depth value)
                   [(OkMacroExpr nvalue)
                     (OkMacroExpr (AstExprArraySet narray nindex nvalue))]
                   [(ErrMacroExpr diag) (ErrMacroExpr diag)])]
               [(ErrMacroExpr diag) (ErrMacroExpr diag)])]
           [(ErrMacroExpr diag) (ErrMacroExpr diag)])]
       [(AstExprBox inner)
-        (match (macro-expand-expr decls depth inner)
+        (match (macro-expand-expr ctx env decls depth inner)
           [(OkMacroExpr ninner) (OkMacroExpr (AstExprBox ninner))]
           [(ErrMacroExpr diag) (ErrMacroExpr diag)])]
       [(AstExprBoxGet inner)
-        (match (macro-expand-expr decls depth inner)
+        (match (macro-expand-expr ctx env decls depth inner)
           [(OkMacroExpr ninner) (OkMacroExpr (AstExprBoxGet ninner))]
           [(ErrMacroExpr diag) (ErrMacroExpr diag)])]
       [(AstExprComptime inner)
-        (match (macro-expand-expr decls depth inner)
+        (match (macro-expand-expr ctx env decls depth inner)
           [(OkMacroExpr ninner) (OkMacroExpr (AstExprComptime ninner))]
           [(ErrMacroExpr diag) (ErrMacroExpr diag)])]
       [(AstExprSet name rhs)
-        (match (macro-expand-expr decls depth rhs)
+        (match (macro-expand-expr ctx env decls depth rhs)
           [(OkMacroExpr nrhs) (OkMacroExpr (AstExprSet name nrhs))]
           [(ErrMacroExpr diag) (ErrMacroExpr diag)])]
       [_ (OkMacroExpr expr)])))
 
-(define (macro-expand-decl [decls : AstDeclList] [decl : AstDecl]) : ResultMacroDecl
+(define (macro-expand-decl
+  [ctx : TcContext]
+  [top-env : TcTypeEnv]
+  [decls : AstDeclList]
+  [decl : AstDecl]) : ResultMacroDecl
   (match decl
     [(AstDeclDef name maybe-ty expr)
-      (match (macro-expand-expr decls 0 expr)
+      (match (macro-expand-expr ctx top-env decls 0 expr)
         [(OkMacroExpr nexpr) (OkMacroDecl (AstDeclDef name maybe-ty nexpr))]
         [(ErrMacroExpr diag) (ErrMacroDecl diag)])]
     [(AstDeclDefFn name params ret body)
-      (match (macro-expand-expr decls 0 body)
+      (match (macro-expand-expr
+        ctx
+        (tc-bind-return-type
+          (tc-bind-params ctx top-env params)
+          (tc-resolve-type ctx ret))
+        decls
+        0
+        body)
         [(OkMacroExpr nbody) (OkMacroDecl (AstDeclDefFn name params ret nbody))]
         [(ErrMacroExpr diag) (ErrMacroDecl diag)])]
     [(AstDeclTest name expr span)
-      (match (macro-expand-expr decls 0 expr)
+      (match (macro-expand-expr ctx top-env decls 0 expr)
         [(OkMacroExpr nexpr) (OkMacroDecl (AstDeclTest name nexpr span))]
         [(ErrMacroExpr diag) (ErrMacroDecl diag)])]
     [_ (OkMacroDecl decl)]))
 
-(define (macro-expand-decls [orig-decls : AstDeclList] [decls : AstDeclList]) : ResultMacroDecls
+(define (macro-expand-decls
+  [ctx : TcContext]
+  [top-env : TcTypeEnv]
+  [orig-decls : AstDeclList]
+  [decls : AstDeclList]) : ResultMacroDecls
   (match decls
     [(AstDeclNil) (OkMacroDecls (AstDeclNil))]
     [(AstDeclCons decl rest)
-      (match (macro-expand-decl orig-decls decl)
+      (match (macro-expand-decl ctx top-env orig-decls decl)
         [(OkMacroDecl ndecl)
-          (match (macro-expand-decls orig-decls rest)
+          (match (macro-expand-decls ctx top-env orig-decls rest)
             [(OkMacroDecls nrest) (OkMacroDecls (AstDeclCons ndecl nrest))]
             [(ErrMacroDecls diag) (ErrMacroDecls diag)])]
         [(ErrMacroDecl diag) (ErrMacroDecls diag)])]))
@@ -7652,9 +7794,24 @@
   (match program
     [(AstProgram decls)
       (if (macro-program-has-macros? decls)
-        (match (macro-expand-decls decls decls)
-          [(OkMacroDecls ndecls) (OkMacroExpand (AstProgram ndecls))]
-          [(ErrMacroDecls diag) (ErrMacroExpand diag)])
+        (match (build-compiler-symbols program)
+          [(OkCompilerSymbols symbols)
+            (match (build-compiler-registries program)
+              [(OkCompilerRegistries registries)
+                (let
+                  [ctx : TcContext (TcContext program symbols registries "")]
+                  (match (tc-build-top-env ctx program)
+                    [(OkTcEnv top-env)
+                      (match (macro-expand-decls ctx top-env decls decls)
+                        [(OkMacroDecls ndecls)
+                          (OkMacroExpand (AstProgram ndecls))]
+                        [(ErrMacroDecls diag) (ErrMacroExpand diag)])]
+                    [(ErrTcEnv message)
+                      (ErrMacroExpand (tc-diag-at-start message))]))]
+              [(ErrCompilerRegistries message)
+                (ErrMacroExpand (tc-diag-at-start message))])]
+          [(ErrCompilerSymbols message)
+            (ErrMacroExpand (tc-diag-at-start message))])
         (OkMacroExpand program))]))
 
 (define (tc-check-decl [ctx : TcContext] [top-env : TcTypeEnv] [decl : AstDecl]) : ResultTcUnit

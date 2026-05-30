@@ -148,9 +148,9 @@ scripts/stage-linux-stage0-bundle.sh target/release/typelisp typelisp-stage0-lin
 
 The archive contains `STAGE0_BUNDLE`, a relocatable root `typelisp` launcher,
 `scripts/stage1-typelisp-wrapper.sh`, the TypeLisp-built stage1 compiler under
-`lib/stage1/`, prebuilt stage1 doc/build/repl drivers, and the `selfhost/` and
-`stdlib/` trees needed by the wrapper. Release `SHA256SUMS` covers the exact
-archive that `fetch-stage0` downloads.
+`lib/stage1/`, prebuilt stage1 doc/build/repl/test drivers, and the `selfhost/`
+and `stdlib/` trees needed by the wrapper. Release `SHA256SUMS` covers the
+exact archive that `fetch-stage0` downloads.
 
 The complete local no-Rust gate is:
 
@@ -200,25 +200,29 @@ bash scripts/check-bootstrap-fixpoint.sh target/stage0/typelisp.exe
 
 The current raw stage1 compiler implements source-file `compile`; the wrapper
 routes that command and implements source-file `build`, package `build`, `run`,
-`fmt`, `doc`, `doc --test`, `repl`, and private `debug host-action` directly
-enough for the Linux capability smoke, deterministic assembly gate, selfhost
-compile manifest, safety corpus, stdlib documentation gate, stdlib selfhost
-frontend verifier, repository doctest gate, TypeLisp source format gate, docs
-Pages build path, selfhost native generated-program gate, and the external
-selfhost compiler corpus. The safety gate falls back to a legacy seed, or skips
-a stage1-bundle seed, until stage1 checked trap helpers are available. The
-generated-program gates run through the wrapper only when the Linux host-action
-drivers are available; old artifacts or missing-driver paths keep an explicit
-seed fallback or skip tied to #1327. The `fmt` command routes through a cached
-selfhost `format.tl` driver, or through a prebuilt
-`TYPELISP_STAGE1_FORMAT_BIN` in the no-Rust lane, so the repository format gate
-does not recompile the formatter on every batched invocation. Package builds
-route through a cached selfhost `build.tl` driver, or through a prebuilt
-`TYPELISP_STAGE1_BUILD_BIN` in the no-Rust lane, and cover manifest-path and
-upward-discovery forms in `scripts/check-stage1-wrapper.sh`; direct selfhost
-package-build parity remains covered by `scripts/verify-public-tools.sh`.
-Seed-only public-tool exceptions remain: `lint`, non-check `test`, full
-REPL/LSP public-tool coverage, and the `scripts/verify-public-tools.sh` surface
+`test`, `fmt`, `doc`, `doc --test`, `repl`, and private `debug host-action`
+directly enough for the Linux capability smoke, deterministic assembly gate,
+selfhost compile manifest, safety corpus, stdlib documentation gate, stdlib
+selfhost frontend verifier, repository doctest gate, repository inline-test
+gate, TypeLisp source format gate, docs Pages build path, selfhost native
+generated-program gate, and the external selfhost compiler corpus. The safety
+gate falls back to a legacy seed, or skips a stage1-bundle seed, until stage1
+checked trap helpers are available. The generated-program gates run through the
+wrapper only when the Linux host-action drivers are available; old artifacts or
+missing-driver paths keep an explicit seed fallback or skip tied to #1327. The
+`test` command routes through a cached selfhost `test.tl` driver, or through a
+prebuilt `TYPELISP_STAGE1_TEST_BIN` in the no-Rust lane; hosted no-Rust gates
+use the prebuilt driver when the downloaded stage1 bundle carries it and keep an
+explicit skip for older bundles. The `fmt` command routes through a cached
+selfhost `format.tl` driver, or through a prebuilt `TYPELISP_STAGE1_FORMAT_BIN`
+in the no-Rust lane, so the repository format gate does not recompile the
+formatter on every batched invocation. Package builds route through a cached
+selfhost `build.tl` driver, or through a prebuilt `TYPELISP_STAGE1_BUILD_BIN` in
+the no-Rust lane, and cover manifest-path and upward-discovery forms in
+`scripts/check-stage1-wrapper.sh`; direct selfhost package-build parity remains
+covered by `scripts/verify-public-tools.sh`. Seed-only public-tool exceptions
+remain: `lint`, full REPL/LSP public-tool coverage, and the
+`scripts/verify-public-tools.sh` surface
 gate still need either stage1-safe driver linking or dedicated wrapper routing
 before they can move off the seed compiler.
 
@@ -346,11 +350,14 @@ falls back to the seed compiler otherwise.
 
 `scripts/verify-inline-tests.sh` discovers `.tl` files with top-level
 `(test ...)` items under `selfhost/`, `stdlib/`, `tests/integration/`,
-`tools/`, `tests/inline/`, and `examples/`. For each discovered file it type-checks and
-then runs the generated inline-test harness with `--stdlib-root`, reporting the
-source path and test-runner output in CI logs. This gate is separate from
-doctests, manifest corpora, and smoke drivers so source-owned checks can be
-added next to the declarations they exercise.
+`tools/`, `tests/inline/`, and `examples/`. For each discovered file it
+type-checks and then runs the generated inline-test harness with
+`--stdlib-root`, reporting the source path and test-runner output in CI logs.
+This gate is separate from doctests, manifest corpora, and smoke drivers so
+source-owned checks can be added next to the declarations they exercise. In the
+Linux no-Rust lane it runs through the stage1 wrapper when the downloaded bundle
+provides the prebuilt selfhost test driver; older seed bundles keep an explicit
+skip until the driver is present.
 
 ### Stdlib API site
 
@@ -396,19 +403,19 @@ Pull requests get Linux and Windows no-Rust coverage from
 compiler from published stage0, then smoke-tests the stage1 CLI/host-action
 wrapper, deterministic assembly, the selfhost compile manifest, stdlib
 documentation, the stdlib selfhost frontend verifier, the safety corpus, the
-repository doctest gate, runnable inline tests when a bundled test driver is
-present, the TypeLisp source format gate, docs Pages build, selfhost native
+repository doctest gate, repository inline-test gate when a bundled test driver
+is present, the TypeLisp source format gate, docs Pages build, selfhost native
 generated programs, and the selfhost external compiler corpus through that
 wrapper. The safety gate falls back to a legacy seed, or skips a stage1-bundle
-seed, until stage1 checked trap helpers are available; the doctest, format, and
+seed, until stage1 checked trap helpers are available; the inline-test gate
+skips only when the bundle lacks `selfhost-test`, and the doctest, format, and
 generated-program gates fall back only when the wrapper host-action drivers are
 unavailable. Public tools, native integration manifests, examples, and stdlib
 modules continue to use the seed compiler until their remaining public-tool and
-manifest exceptions are ported to the wrapper. The Windows job
-runs the host-supported gates against the published stage0 compiler, verifies
-MSVC `link.exe` selfhost build/run support, runs the Windows bootstrap
-stage2/stage3 fixpoint, and explicitly skips the Linux-only selfhost/docs
-checks.
+manifest exceptions are ported to the wrapper. The Windows job runs the
+host-supported gates against the published stage0 compiler, verifies MSVC
+`link.exe` selfhost build/run support, runs the Windows bootstrap stage2/stage3
+fixpoint, and explicitly skips the Linux-only selfhost/docs checks.
 
 The remaining Linux and Windows `cargo test`, `cargo fmt`, `cargo clippy`, and
 release integration jobs are temporary Rust reference coverage until #795.

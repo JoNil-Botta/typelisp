@@ -405,6 +405,7 @@ if [ "$HOST_OS" = linux ]; then
     BUNDLED_STAGE1_DRIVER_DIR="$SEED_DIR/lib/stage1/drivers"
     if [ -x "$BUNDLED_STAGE1_DRIVER_DIR/selfhost-test" ]; then
         STAGE1_TEST_BIN="$BUNDLED_STAGE1_DRIVER_DIR/selfhost-test"
+        echo "[no-rust-stage0] using bundled stage1 test driver"
     fi
     if [ -x "$BUNDLED_STAGE1_DRIVER_DIR/selfhost-doc" ] &&
         [ -x "$BUNDLED_STAGE1_DRIVER_DIR/selfhost-build" ] &&
@@ -489,6 +490,15 @@ if [ "$HOST_OS" = linux ] && [ "$STAGE1_HOST_ACTION_DRIVERS_AVAILABLE" -eq 1 ]; 
     DOCTEST_TYPELISP_BIN=$STAGE1_TYPELISP_BIN
 fi
 
+# Repository inline tests run `typelisp test`, which the stage1 wrapper can
+# serve through the prebuilt selfhost test driver when a fresh bundle carries
+# one (#1609). Older seed bundles do not have that driver, so keep their
+# explicit skip below instead of compiling selfhost/test.tl in the hosted lane.
+INLINE_TEST_TYPELISP_BIN=$FRONT_GATE_TYPELISP_BIN
+if [ "$HOST_OS" = linux ] && [ -n "$STAGE1_TEST_BIN" ]; then
+    INLINE_TEST_TYPELISP_BIN=$STAGE1_TYPELISP_BIN
+fi
+
 if [ "$WINDOWS_SEED_STAGED_RUNTIME_GAP" -eq 1 ]; then
     echo
     echo "[no-rust-stage0] skipping Windows seed gates that compile selfhost doc/build/run drivers:"
@@ -529,9 +539,9 @@ if [ "$HOST_OS" = linux ] &&
     [ "$SEED_IS_STAGE1_BUNDLE" -eq 1 ] &&
     [ -z "$STAGE1_TEST_BIN" ]; then
     echo
-    echo "[no-rust-stage0] skipping inline TypeLisp tests until the stage1 bundle carries a selfhost test driver"
+    echo "[no-rust-stage0] skipping inline TypeLisp tests until the stage1 bundle carries a selfhost test driver (#1609)"
 else
-    run_with_compiler "$FRONT_GATE_TYPELISP_BIN" "inline TypeLisp tests" scripts/verify-inline-tests.sh
+    run_with_compiler "$INLINE_TEST_TYPELISP_BIN" "inline TypeLisp tests" scripts/verify-inline-tests.sh
 fi
 if [ "$HOST_OS" = linux ]; then
     # Building the full selfhost test driver in this hosted no-Rust lane is

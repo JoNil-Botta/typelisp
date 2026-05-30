@@ -3006,25 +3006,53 @@
 
 ;; --- macro expansion phase (#1139) ------------------------------------------
 ;; A macro call in an evaluated position is expanded before typechecking; the
-;; spliced form must then typecheck. Arity is checked during expansion.
+;; spliced form must then typecheck. Arity and operand types are checked at the
+;; call site before the transformer runs.
 (define (compiler-typecheck-macro-expand-source) : String
   "(defmacro (and2 [lhs : bool] [rhs : bool]) : bool
   (expr-if lhs rhs (expr-bool false)))
-(define (main) : i64 (if (and2 true true) 1 0))")
+(define (main) : i64
+  (let ([flag : bool true])
+    (if (and2 flag true) 1 0)))")
 
 (define (compiler-typecheck-macro-expand-arity-source) : String
   "(defmacro (and2 [lhs : bool] [rhs : bool]) : bool
   (expr-if lhs rhs (expr-bool false)))
 (define (main) : i64 (if (and2 true) 1 0))")
 
-;; Returns true when a macro call expands and the result typechecks, and when a
-;; too-few-arguments macro call is rejected during expansion.
+(define (compiler-typecheck-macro-expand-operand-source) : String
+  "(defmacro (ignore-bool [value : bool]) : bool
+  (expr-bool true))
+(define (main) : i64 (if (ignore-bool 1) 1 0))")
+
+(define (compiler-typecheck-macro-expand-variadic-operand-source) : String
+  "(defmacro (first [head : bool] [rest : bool ...]) : bool head)
+(define (main) : i64 (if (first true 1) 1 0))")
+
+(define (compiler-typecheck-macro-expand-depth-source) : String
+  "(defmacro (again) : Expr `(again))
+(define (main) : i64 (again))")
+
+;; Returns true when a macro call expands and the result typechecks, and when
+;; arity plus operand-type errors are rejected during expansion at the call site.
 (define (compiler-typecheck-macro-expand-tests-ok?) : bool
   (and
     (compiler-typecheck-ok? (compiler-typecheck-macro-expand-source))
-    (compiler-typecheck-error-ok?
-      (compiler-typecheck-macro-expand-arity-source)
-      "macro call has too few arguments")))
+    (and
+      (compiler-typecheck-error-ok?
+        (compiler-typecheck-macro-expand-arity-source)
+        "macro call has too few arguments")
+      (and
+        (compiler-typecheck-error-ok?
+          (compiler-typecheck-macro-expand-operand-source)
+          "typecheck: macro operand type mismatch: expected bool, got i64")
+        (and
+          (compiler-typecheck-error-ok?
+            (compiler-typecheck-macro-expand-variadic-operand-source)
+            "typecheck: macro operand type mismatch: expected bool, got i64")
+          (compiler-typecheck-error-ok?
+            (compiler-typecheck-macro-expand-depth-source)
+            "macro expansion exceeded depth limit"))))))
 
 (define (compiler-typecheck-self-test-basics) : unit
   (begin

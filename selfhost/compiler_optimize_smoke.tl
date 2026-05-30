@@ -38,9 +38,17 @@
                                 (if (=
                                   (compiler-optimize-aggregate-promote-self-test)
                                   42)
-                                  (if (= (compiler-optimize-spans-self-test) 42)
-                                    (if (= (compiler-optimize-gvn-self-test) 42)
-                                      (compiler-optimize-alias-self-test)
+                                  (if (=
+                                    (compiler-optimize-aggregate-sroa-self-test)
+                                    42)
+                                    (if (=
+                                      (compiler-optimize-spans-self-test)
+                                      42)
+                                      (if (=
+                                        (compiler-optimize-gvn-self-test)
+                                        42)
+                                        (compiler-optimize-alias-self-test)
+                                        1)
                                       1)
                                     1)
                                   1)

@@ -356,6 +356,7 @@ contains|_tl_compiler_optimize_level_self_test:
 contains|_tl_compiler_optimize_ssa_self_test:
 contains|_tl_compiler_optimize_aggregate_promote_self_test:
 contains|_tl_compiler_optimize_global_value_number_self_test:
+contains|_tl_compiler_optimize_aggregate_sroa_self_test:
 contains|_tl_opt_cfg_dominators:
 contains|_tl_opt_verify_function:
 end
@@ -369,6 +370,7 @@ contains|_tl_compiler_optimize_level_self_test:
 contains|_tl_compiler_optimize_ssa_self_test:
 contains|_tl_compiler_optimize_aggregate_promote_self_test:
 contains|_tl_compiler_optimize_global_value_number_self_test:
+contains|_tl_compiler_optimize_aggregate_sroa_self_test:
 end
 
 case|selfhost_compiler_parse_core|selfhost/compiler_parse_core.tl|assembly|skip|direct

@@ -6,17 +6,20 @@
 (define (typecheck-compiler-program-with-paths
   [program : AstProgram]
   [paths : AstDeclPathList]) : ResultCompilerTypecheck
-  (let
-    [specialized-paths : AstDeclPathList
-      (if (compiler-specialize-needed? program)
-        AstDeclPathNil
-        paths)]
-    (match (compiler-specialize-program program)
-      [(OkSpecProgram specialized)
-        (typecheck-compiler-specialized-program-with-paths
-          specialized
-          specialized-paths)]
-      [(ErrSpecProgram diag) (ErrCompilerTypecheck diag)])))
+  (match (macro-expand-program program)
+    [(OkMacroExpand expanded)
+      (let
+        [specialized-paths : AstDeclPathList
+          (if (compiler-specialize-needed? expanded)
+            AstDeclPathNil
+            paths)]
+        (match (compiler-specialize-program expanded)
+          [(OkSpecProgram specialized)
+            (typecheck-compiler-specialized-program-with-paths
+              specialized
+              specialized-paths)]
+          [(ErrSpecProgram diag) (ErrCompilerTypecheck diag)]))]
+    [(ErrMacroExpand diag) (ErrCompilerTypecheck diag)]))
 
 (define (typecheck-compiler-program [program : AstProgram]) : ResultCompilerTypecheck
   (typecheck-compiler-program-with-paths program AstDeclPathNil))
@@ -2729,6 +2732,28 @@
         (compiler-typecheck-defmacro-body-type-source)
         "typecheck: macro body must return Expr"))))
 
+;; --- macro expansion phase (#1139) ------------------------------------------
+;; A macro call in an evaluated position is expanded before typechecking; the
+;; spliced form must then typecheck. Arity is checked during expansion.
+(define (compiler-typecheck-macro-expand-source) : String
+  "(defmacro (and2 [lhs : bool] [rhs : bool]) : bool
+  (expr-if lhs rhs (expr-bool false)))
+(define (main) : i64 (if (and2 true true) 1 0))")
+
+(define (compiler-typecheck-macro-expand-arity-source) : String
+  "(defmacro (and2 [lhs : bool] [rhs : bool]) : bool
+  (expr-if lhs rhs (expr-bool false)))
+(define (main) : i64 (if (and2 true) 1 0))")
+
+;; Returns true when a macro call expands and the result typechecks, and when a
+;; too-few-arguments macro call is rejected during expansion.
+(define (compiler-typecheck-macro-expand-tests-ok?) : bool
+  (and
+    (compiler-typecheck-ok? (compiler-typecheck-macro-expand-source))
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-macro-expand-arity-source)
+      "macro call has too few arguments")))
+
 (define (compiler-typecheck-self-test-basics) : unit
   (begin
     (if (compiler-typecheck-ptr-null-tests-ok?)
@@ -2972,6 +2997,11 @@
       unit
       (begin
         (panic "typecheck: defmacro tests failed")
+        unit))
+    (if (compiler-typecheck-macro-expand-tests-ok?)
+      unit
+      (begin
+        (panic "typecheck: macro expansion tests failed")
         unit))))
 
 (define (compiler-typecheck-self-test) : i64

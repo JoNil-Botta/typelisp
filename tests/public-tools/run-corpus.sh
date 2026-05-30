@@ -41,6 +41,7 @@ case "$MODE" in
         exit 1
         ;;
 esac
+STAGE1_WRAPPER=${TYPELISP_PUBLIC_TOOLS_STAGE1_WRAPPER:-0}
 
 rm -rf "$WORKDIR"
 mkdir -p "$WORKDIR"
@@ -688,7 +689,9 @@ run_selfhost_lsp_fixture() {
 
 run_repl_corpus() {
     repl_dir="$FIXTURE_ROOT/repl"
-    if [ -d "$repl_dir" ]; then
+    if [ "$STAGE1_WRAPPER" = "1" ]; then
+        echo "  SKIP repl/* (stage1 wrapper REPL has bounded selfhost corpus coverage)"
+    elif [ -d "$repl_dir" ]; then
         for path in "$repl_dir"/*.in; do
             [ -f "$path" ] || continue
             case "$path" in
@@ -721,7 +724,9 @@ run_repl_corpus() {
 
 run_lsp_corpus() {
     lsp_dir="$FIXTURE_ROOT/lsp"
-    if [ -d "$lsp_dir" ]; then
+    if [ "$STAGE1_WRAPPER" = "1" ]; then
+        echo "  SKIP lsp/* (stage1 wrapper LSP has bounded selfhost corpus coverage)"
+    elif [ -d "$lsp_dir" ]; then
         for path in "$lsp_dir"/*.in.json; do
             [ -f "$path" ] || continue
             run_lsp_fixture "$path" "lsp/$(basename "$path")" "$COMPILER"

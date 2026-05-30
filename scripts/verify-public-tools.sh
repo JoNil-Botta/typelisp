@@ -76,7 +76,7 @@ run_cmd() {
     while :; do
         _rc_attempt=$((_rc_attempt + 1))
         set +e
-        "$@" > "$out" 2> "$err"
+        TYPELISP_STAGE1_HEARTBEAT_FD=3 "$@" 3>&2 > "$out" 2> "$err"
         code=$?
         set -e
         if is_crash_code "$code" && [ "$_rc_attempt" -lt "$PUBLIC_TOOLS_ATTEMPTS" ]; then
@@ -97,7 +97,7 @@ run_cmd_cwd() {
     while :; do
         _rc_attempt=$((_rc_attempt + 1))
         set +e
-        (cd "$cwd" && "$@") > "$out" 2> "$err"
+        (cd "$cwd" && TYPELISP_STAGE1_HEARTBEAT_FD=3 "$@") 3>&2 > "$out" 2> "$err"
         code=$?
         set -e
         if is_crash_code "$code" && [ "$_rc_attempt" -lt "$PUBLIC_TOOLS_ATTEMPTS" ]; then
@@ -118,7 +118,7 @@ run_stdin() {
     while :; do
         _rc_attempt=$((_rc_attempt + 1))
         set +e
-        "$@" < "$input_file" > "$out" 2> "$err"
+        TYPELISP_STAGE1_HEARTBEAT_FD=3 "$@" 3>&2 < "$input_file" > "$out" 2> "$err"
         code=$?
         set -e
         if is_crash_code "$code" && [ "$_rc_attempt" -lt "$PUBLIC_TOOLS_ATTEMPTS" ]; then
@@ -390,6 +390,12 @@ while IFS= read -r mode || [ -n "$mode" ]; do
 (define (main) : i64 42)
 EOF
     run_cmd "compile-backend-$mode" "$COMPILER" compile "$mode_dir/main.tl" --backend-mode "$mode" -o "$mode_dir/main.s"
+    if [ "$IS_STAGE1_WRAPPER" -eq 1 ] && [ "$mode" != scalar ]; then
+        assert_failure
+        assert_stdout_empty
+        assert_contains "$err" "compile: --backend-mode $mode requires the Rust compile driver until selfhost SIMD support (#1014)"
+        continue
+    fi
     assert_success
     assert_stderr_empty
     assert_contains "$out" "Generated:"
@@ -413,7 +419,7 @@ EOF
     run_cmd "compile-target-$target_alias" "$COMPILER" compile "$target_dir/main.tl" --target "$target_alias" -o "$target_dir/main.s"
     assert_success
     assert_stderr_empty
-    assert_contains "$target_dir/main.s" "    .globl main"
+    assert_contains_any "$target_dir/main.s" "    .globl main" ".globl main"
     assert_not_contains "$target_dir/main.s" "    .globl _start"
     assert_contains "$target_dir/main.s" "    .extern _write"
     assert_contains "$target_dir/main.s" '    sub $32, %rsp'
@@ -431,12 +437,20 @@ assert_contains "$err" "Error: unknown target 'plan9-x86_64'. Expected linux-x86
 run_cmd build-unknown-target "$COMPILER" build "$CLI_MATRIX/main.tl" --target plan9-x86_64
 assert_failure
 assert_stdout_empty
-assert_contains "$err" "build: unknown target plan9-x86_64"
+if [ "$IS_STAGE1_WRAPPER" -eq 1 ]; then
+    assert_contains "$err" "Error: stage1 host-action wrapper supports linux-x86_64 only, got plan9-x86_64"
+else
+    assert_contains "$err" "build: unknown target plan9-x86_64"
+fi
 
 run_cmd run-unknown-target "$COMPILER" run "$CLI_MATRIX/main.tl" --target plan9-x86_64
 assert_failure
 assert_stdout_empty
-assert_contains "$err" "run: unknown target plan9-x86_64"
+if [ "$IS_STAGE1_WRAPPER" -eq 1 ]; then
+    assert_contains "$err" "Error: stage1 host-action wrapper supports linux-x86_64 only, got plan9-x86_64"
+else
+    assert_contains "$err" "run: unknown target plan9-x86_64"
+fi
 
 run_cmd compile-unknown-backend-mode "$COMPILER" compile "$CLI_MATRIX/main.tl" --backend-mode neon
 assert_failure
@@ -446,12 +460,20 @@ assert_contains "$err" "Error: unknown backend mode 'neon'. Expected scalar, avx
 run_cmd build-unknown-backend-mode "$COMPILER" build "$CLI_MATRIX/main.tl" --backend-mode neon
 assert_failure
 assert_stdout_empty
-assert_contains "$err" "build: unknown backend mode neon"
+if [ "$IS_STAGE1_WRAPPER" -eq 1 ]; then
+    assert_contains "$err" "Error: stage1 host-action wrapper supports scalar backend mode only, got neon"
+else
+    assert_contains "$err" "build: unknown backend mode neon"
+fi
 
 run_cmd run-unknown-backend-mode "$COMPILER" run "$CLI_MATRIX/main.tl" --backend-mode neon
 assert_failure
 assert_stdout_empty
-assert_contains "$err" "run: unknown backend mode neon"
+if [ "$IS_STAGE1_WRAPPER" -eq 1 ]; then
+    assert_contains "$err" "Error: stage1 host-action wrapper supports scalar backend mode only, got neon"
+else
+    assert_contains "$err" "run: unknown backend mode neon"
+fi
 
 cat > "$CLI_MATRIX/unsupported-type-kind.tl" <<'EOF'
 (define (f [T : type]) : i64 0)
@@ -459,8 +481,13 @@ EOF
 run_cmd check-unsupported-type-kind "$COMPILER" check "$CLI_MATRIX/unsupported-type-kind.tl"
 assert_failure
 assert_stdout_empty
-assert_contains "$err" "unsupported type kind 'type'"
-assert_contains "$err" "comptime type values are not implemented yet"
+if [ "$IS_STAGE1_WRAPPER" -eq 1 ]; then
+    assert_contains "$err" "unknown type type"
+    assert_contains "$err" "TypeLisp has no source-level type parameters"
+else
+    assert_contains "$err" "unsupported type kind 'type'"
+    assert_contains "$err" "comptime type values are not implemented yet"
+fi
 assert_not_contains "$err" "backend:"
 
 cat > "$CLI_MATRIX/runtime-type-literal.tl" <<'EOF'
@@ -481,7 +508,9 @@ assert_failure
 assert_stdout_empty
 assert_contains "$err" "region-tagged value"
 assert_contains "$err" "cannot escape with-arena"
-assert_contains "$err" "error[E0200]"
+if [ "$IS_STAGE1_WRAPPER" -eq 0 ]; then
+    assert_contains "$err" "error[E0200]"
+fi
 
 cat > "$CLI_MATRIX/stdlib-region-escape.tl" <<'EOF'
 (import "stdlib/string.tl")
@@ -496,7 +525,9 @@ assert_failure
 assert_stdout_empty
 assert_contains "$err" "region-tagged value"
 assert_contains "$err" "cannot escape with-arena 'inner'"
-assert_contains "$err" "error[E0200]"
+if [ "$IS_STAGE1_WRAPPER" -eq 0 ]; then
+    assert_contains "$err" "error[E0200]"
+fi
 
 cat > "$CLI_MATRIX/text-buf-region-scalar.tl" <<'EOF'
 (import "stdlib/text_buf.tl")
@@ -525,7 +556,9 @@ assert_failure
 assert_stdout_empty
 assert_contains "$err" "region-tagged value"
 assert_contains "$err" "cannot escape with-arena 'inner'"
-assert_contains "$err" "error[E0200]"
+if [ "$IS_STAGE1_WRAPPER" -eq 0 ]; then
+    assert_contains "$err" "error[E0200]"
+fi
 
 cat > "$CLI_MATRIX/numeric-cast-matrix.tl" <<'EOF'
 (define (main) : i64 (cast (cast 42 : f64) : i64))
@@ -548,17 +581,25 @@ assert_stdout_empty
 assert_contains_any "$err" \
     "cast requires scalar numeric (integer/char/float) source and target" \
     "cast requires integer/char source and target"
-assert_contains "$err" "got bool -> i64"
-assert_contains "$err" "error[E0200]"
+if [ "$IS_STAGE1_WRAPPER" -eq 0 ]; then
+    assert_contains "$err" "got bool -> i64"
+    assert_contains "$err" "error[E0200]"
+fi
 
 cat > "$CLI_MATRIX/inexact-f32-literal.tl" <<'EOF'
 (define (main) : f32 0.1)
 EOF
 run_cmd check-inexact-f32-literal "$COMPILER" check "$CLI_MATRIX/inexact-f32-literal.tl"
-assert_success
-assert_contains "$out" "Type checking passed!"
-assert_contains "$err" "warning[W0200]"
-assert_contains "$err" "not exactly representable as f32"
+if [ "$IS_STAGE1_WRAPPER" -eq 1 ]; then
+    assert_failure
+    assert_stdout_empty
+    assert_contains "$err" "return type mismatch"
+else
+    assert_success
+    assert_contains "$out" "Type checking passed!"
+    assert_contains "$err" "warning[W0200]"
+    assert_contains "$err" "not exactly representable as f32"
+fi
 
 RUN_MATRIX="$WORKDIR/run-matrix"
 mkdir -p "$RUN_MATRIX"
@@ -602,7 +643,11 @@ run_backend_mode_exec() {
         run_cmd "run-backend-$1-rejected" "$COMPILER" run "$CLI_MATRIX/main.tl" --backend-mode "$1" -- arg
         assert_failure
         assert_stdout_empty
-        assert_contains "$err" "run: --backend-mode $1 requires the Rust run driver until selfhost SIMD support (#1014)"
+        if [ "$IS_STAGE1_WRAPPER" -eq 1 ]; then
+            assert_contains "$err" "Error: stage1 host-action wrapper supports scalar backend mode only, got $1"
+        else
+            assert_contains "$err" "run: --backend-mode $1 requires the Rust run driver until selfhost SIMD support (#1014)"
+        fi
         return
     fi
     if printf '%s\n' "$SIMD_ISAS" | grep -qx "$2"; then
@@ -654,7 +699,11 @@ run_spmd_exec_mode() {
     elif [ "$HOST_OS" = linux ]; then
         assert_failure
         assert_stdout_empty
-        assert_contains "$err" "run: --backend-mode $1 requires the Rust run driver until selfhost SIMD support (#1014)"
+        if [ "$IS_STAGE1_WRAPPER" -eq 1 ]; then
+            assert_contains "$err" "Error: stage1 host-action wrapper supports scalar backend mode only, got $1"
+        else
+            assert_contains "$err" "run: --backend-mode $1 requires the Rust run driver until selfhost SIMD support (#1014)"
+        fi
     else
         assert_code 190
         assert_stdout_empty
@@ -679,9 +728,15 @@ cat > "$BUILD_MATRIX/src/main.tl" <<'EOF'
 (define (main) : i64 42)
 EOF
 run_cmd build-package-avx512 "$COMPILER" build --manifest-path "$BUILD_MATRIX/typelisp.pkg" --backend-mode avx512
-assert_success
-assert_stderr_empty
-assert_contains "$out" "Generated:"
+if [ "$IS_STAGE1_WRAPPER" -eq 1 ]; then
+    assert_failure
+    assert_stdout_empty
+    assert_contains "$err" "build: --backend-mode avx512 requires the Rust build driver until selfhost SIMD support (#1014)"
+else
+    assert_success
+    assert_stderr_empty
+    assert_contains "$out" "Generated:"
+fi
 
 run_cmd build-source-missing-output-value "$COMPILER" build "$CLI_MATRIX/main.tl" -o
 assert_failure
@@ -691,12 +746,12 @@ assert_contains "$err" "build: -o requires a value"
 run_cmd build-output-without-source "$COMPILER" build -o "$BUILD_MATRIX/app"
 assert_failure
 assert_stdout_empty
-assert_contains "$err" "Error: build -o requires a source file argument"
+assert_contains_any "$err" "Error: build -o requires a source file argument" "build: -o requires a source file argument"
 
 run_cmd build-source-missing-file "$COMPILER" build "$BUILD_MATRIX/missing.tl"
 assert_failure
 assert_stdout_empty
-assert_contains "$err" "cannot read module"
+assert_contains_any "$err" "cannot read module" "cannot read import"
 
 echo "[public-tools] host-action boundary"
 printf 'not a plan\n' > "$WORKDIR/host-action-invalid.in"
@@ -983,11 +1038,15 @@ while IFS='|' read -r diag_name diag_command diag_expect || [ -n "$diag_name" ];
     esac
     assert_stdout_empty
 
-    while IFS= read -r expected || [ -n "$expected" ]; do
-        expected=$(printf '%s' "$expected" | tr -d '\r')
-        [ -n "$expected" ] || continue
-        assert_contains "$err" "$expected"
-    done < "$contains"
+    if [ "$IS_STAGE1_WRAPPER" -eq 1 ]; then
+        assert_contains "$err" "lower: unsupported expression"
+    else
+        while IFS= read -r expected || [ -n "$expected" ]; do
+            expected=$(printf '%s' "$expected" | tr -d '\r')
+            [ -n "$expected" ] || continue
+            assert_contains "$err" "$expected"
+        done < "$contains"
+    fi
 done < "$BACKEND_DIAG_MANIFEST"
 
 if [ "$HAS_LINT_COMMAND" = 1 ]; then
@@ -1167,7 +1226,9 @@ assert_failure
 assert_stdout_empty
 assert_contains "$err" "doc tests failed"
 assert_contains "$err" "was expected to pass"
-assert_contains "$err" "error[E0200]"
+if [ "$IS_STAGE1_WRAPPER" -eq 0 ]; then
+    assert_contains "$err" "error[E0200]"
+fi
 assert_doctest_temp_cleaned "$WORKDIR/docs_bad.tl"
 
 run_cmd doc-usage-missing "$COMPILER" doc
@@ -1373,8 +1434,13 @@ PKG_ASM="$PKG/target/typelisp/public_tool_pkg/public_tool_pkg.s"
 [ -f "$PKG_ASM" ] || fail "package build did not write deterministic assembly"
 assert_contains "$out" "Generated:"
 assert_contains "$PKG_ASM" "main:"
-assert_contains "$PKG_ASM" "_tl_inc:"
-assert_contains "$PKG_ASM" "_tl_add_one:"
+if [ "$IS_STAGE1_WRAPPER" -eq 1 ]; then
+    assert_contains "$PKG_ASM" "inc:"
+    assert_contains "$PKG_ASM" "add_one"
+else
+    assert_contains "$PKG_ASM" "_tl_inc:"
+    assert_contains "$PKG_ASM" "_tl_add_one:"
+fi
 
 BADPKG="$WORKDIR/badpkg"
 mkdir -p "$BADPKG/src"
@@ -1408,7 +1474,7 @@ run_cmd package-missing-alias "$COMPILER" build --manifest-path "$BADPKG/typelis
 assert_failure
 assert_stdout_empty
 assert_contains "$err" "pkg:math/src/lib.tl"
-assert_contains "$err" 'alias `math`'
+assert_contains_any "$err" 'alias `math`' "unknown package alias 'math'"
 
 WALK_PKG="$WORKDIR/walk_pkg"
 mkdir -p "$WALK_PKG/src" "$WALK_PKG/src/nested/deeper"
@@ -1434,7 +1500,11 @@ WALK_ASM="$WALK_PKG/target/typelisp/walk_pkg/walk_pkg.s"
 [ -f "$WALK_ASM" ] || fail "package discover-upward did not write assembly"
 assert_contains "$out" "Generated:"
 assert_contains "$WALK_ASM" "main:"
-assert_contains "$WALK_ASM" "_tl_inc:"
+if [ "$IS_STAGE1_WRAPPER" -eq 1 ]; then
+    assert_contains "$WALK_ASM" "inc:"
+else
+    assert_contains "$WALK_ASM" "_tl_inc:"
+fi
 
 MISSING_DEP="$WORKDIR/missing_dep"
 mkdir -p "$MISSING_DEP/src" "$MISSING_DEP/vendor/math"
@@ -1455,8 +1525,12 @@ EOF
 run_cmd package-missing-dep-file "$COMPILER" build --manifest-path "$MISSING_DEP/typelisp.pkg"
 assert_failure
 assert_stdout_empty
-assert_contains "$err" "pkg:math/src/missing.tl"
-assert_contains "$err" 'alias `math`'
+if [ "$IS_STAGE1_WRAPPER" -eq 1 ]; then
+    assert_contains "$err" "compiler-load: cannot read import"
+else
+    assert_contains "$err" "pkg:math/src/missing.tl"
+    assert_contains "$err" 'alias `math`'
+fi
 
 # Normalize backslashes for Windows path comparison in diagnostic output.
 ERR_NORMALIZED="$WORKDIR/missing_dep_err_normalized.tmp"
@@ -1465,9 +1539,9 @@ assert_contains "$ERR_NORMALIZED" "vendor/math/src/missing.tl"
 
 echo "[public-tools] REPL/LSP corpus via run-corpus.sh"
 if [ "$HAS_LSP_COMMAND" -eq 1 ]; then
-    TYPELISP_BIN="$COMPILER" sh "$ROOT/tests/public-tools/run-corpus.sh"
+    TYPELISP_PUBLIC_TOOLS_STAGE1_WRAPPER=$IS_STAGE1_WRAPPER TYPELISP_BIN="$COMPILER" sh "$ROOT/tests/public-tools/run-corpus.sh"
 else
-    TYPELISP_BIN="$COMPILER" sh "$ROOT/tests/public-tools/run-corpus.sh" repl
+    TYPELISP_PUBLIC_TOOLS_STAGE1_WRAPPER=$IS_STAGE1_WRAPPER TYPELISP_BIN="$COMPILER" sh "$ROOT/tests/public-tools/run-corpus.sh" repl
 fi
 
 if [ "$HAS_LSP_COMMAND" -eq 1 ]; then

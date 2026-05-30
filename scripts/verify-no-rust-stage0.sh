@@ -489,19 +489,30 @@ if [ "$HOST_OS" = linux ] && [ "$STAGE1_HOST_ACTION_DRIVERS_AVAILABLE" -eq 1 ]; 
     DOCTEST_TYPELISP_BIN=$STAGE1_TYPELISP_BIN
 fi
 
+# The public-tool corpus is the broadest CLI behavior witness. On Linux, run it
+# against the freshly bootstrapped stage1 wrapper whenever the wrapper's
+# host-action drivers are available. The seed path below is only a compatibility
+# fallback for old artifacts or missing drivers (#1327).
+PUBLIC_TOOLS_TYPELISP_BIN=$FRONT_GATE_TYPELISP_BIN
+PUBLIC_TOOLS_LABEL="public tool surface"
+if [ "$HOST_OS" = linux ] && [ "$STAGE1_HOST_ACTION_DRIVERS_AVAILABLE" -eq 1 ]; then
+    PUBLIC_TOOLS_TYPELISP_BIN=$STAGE1_TYPELISP_BIN
+    PUBLIC_TOOLS_LABEL="stage1 public tool surface"
+fi
+
 if [ "$WINDOWS_SEED_STAGED_RUNTIME_GAP" -eq 1 ]; then
     echo
     echo "[no-rust-stage0] skipping Windows seed gates that compile selfhost doc/build/run drivers:"
     echo "[no-rust-stage0]   public tool surface, repository doctests"
 else
-    if [ "$HOST_OS" = linux ] && [ "$SEED_IS_STAGE1_BUNDLE" -eq 1 ]; then
-        echo
-        echo "[no-rust-stage0] skipping public tool surface until the stage1 bundle exposes the full public CLI"
+    if [ "$HOST_OS" = linux ] &&
+        [ "$STAGE1_HOST_ACTION_DRIVERS_AVAILABLE" -eq 1 ]; then
+        run_with_compiler "$PUBLIC_TOOLS_TYPELISP_BIN" "$PUBLIC_TOOLS_LABEL" scripts/verify-public-tools.sh
     elif [ "$HOST_OS" = linux ] &&
         [ "$LINUX_SEED_STAGED_RUNTIME_GAP" -eq 1 ] &&
         [ "$STAGE1_HOST_ACTION_DRIVERS_AVAILABLE" -eq 0 ]; then
         echo
-        echo "[no-rust-stage0] skipping seed public tool surface until staged runtime symbols land in stage0"
+        echo "[no-rust-stage0] skipping seed public tool surface until stage1 host-action drivers are available (#1327)"
     elif [ "$HOST_OS" = windows ]; then
         if compiler_rejects_package_kind_manifest "$FRONT_GATE_TYPELISP_BIN"; then
             echo
@@ -510,11 +521,21 @@ else
         else
             run_with_compiler "$FRONT_GATE_TYPELISP_BIN" "public tool surface" scripts/verify-public-tools.sh
         fi
+    elif [ "$SEED_IS_STAGE1_BUNDLE" -eq 1 ]; then
+        echo
+        echo "[no-rust-stage0] skipping public tool surface until bundled stage1 host-action drivers are available (#1327)"
     elif [ "$SEED_STAGE1_WRAPPER" -eq 1 ]; then
         echo
-        echo "[no-rust-stage0] skipping seed public tool surface until the bundled stage1 wrapper has full CLI parity"
+        echo "[no-rust-stage0] skipping seed public tool surface until stage1 wrapper host-action drivers are available (#1327)"
     else
-        run_with_compiler "$FRONT_GATE_TYPELISP_BIN" "public tool surface" scripts/verify-public-tools.sh
+        echo
+        echo "[no-rust-stage0] falling back to seed for public tool surface; stage1 host-action drivers are unavailable (#1327)"
+        if compiler_rejects_package_kind_manifest "$PUBLIC_TOOLS_TYPELISP_BIN"; then
+            echo "[no-rust-stage0] seed rejects package kind; using legacy package manifests for public tool surface"
+            run_with_compiler "$PUBLIC_TOOLS_TYPELISP_BIN" "$PUBLIC_TOOLS_LABEL" env TYPELISP_LEGACY_PACKAGE_MANIFEST=1 scripts/verify-public-tools.sh
+        else
+            run_with_compiler "$PUBLIC_TOOLS_TYPELISP_BIN" "$PUBLIC_TOOLS_LABEL" scripts/verify-public-tools.sh
+        fi
     fi
     if [ "$HOST_OS" = linux ] &&
         [ "$LINUX_SEED_STAGED_RUNTIME_GAP" -eq 1 ] &&

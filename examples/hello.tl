@@ -4,5 +4,5 @@
     1
     (* n (factorial (- n 1)))))
 
-(define result
+(define (main) : i64
   (factorial 5))

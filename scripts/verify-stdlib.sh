@@ -7,6 +7,40 @@ set -eu
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
 
+usage() {
+    cat >&2 <<'EOF'
+usage: scripts/verify-stdlib.sh [--borrowed-str-only]
+
+Verifies canonical stdlib modules and fixtures through --stdlib-root.
+Set TYPELISP_STDLIB_BORROWED_STR_BIN to route fixtures marked
+requires-borrowed-str-capable through a compiler path that can parse/check
+`(& lifetime str)` signatures, such as the Linux no-Rust stage1 wrapper. In
+full mode, marked rows are skipped unless that variable is set.
+EOF
+}
+
+BORROWED_STR_ONLY=0
+case "$#" in
+    0) ;;
+    1)
+        case "$1" in
+            --borrowed-str-only) BORROWED_STR_ONLY=1 ;;
+            -h | --help)
+                usage
+                exit 0
+                ;;
+            *)
+                usage
+                exit 2
+                ;;
+        esac
+        ;;
+    *)
+        usage
+        exit 2
+        ;;
+esac
+
 # Linux verifies through the GNU `as`/`ld` pipeline; Windows (Git Bash / MSYS /
 # Cygwin on the CI runner) verifies through the host-default native toolchain
 # (`typelisp build` -> `clang`/`lld-link`), mirroring tests/windows_native.rs.
@@ -27,9 +61,20 @@ else
     COMPILER="$ROOT/target/release/typelisp"
     [ "$HOST_OS" = windows ] && COMPILER="$COMPILER.exe"
 fi
+BORROWED_STR_COMPILER=$COMPILER
+BORROWED_STR_COMPILER_EXPLICIT=0
+if [ -n "${TYPELISP_STDLIB_BORROWED_STR_BIN:-}" ]; then
+    BORROWED_STR_COMPILER=$TYPELISP_STDLIB_BORROWED_STR_BIN
+    BORROWED_STR_COMPILER_EXPLICIT=1
+fi
 
 if [ ! -x "$COMPILER" ]; then
     echo "typelisp compiler is not executable: $COMPILER" >&2
+    exit 1
+fi
+if { [ "$BORROWED_STR_COMPILER_EXPLICIT" -eq 1 ] || [ "$BORROWED_STR_ONLY" -eq 1 ]; } &&
+    [ ! -x "$BORROWED_STR_COMPILER" ]; then
+    echo "borrowed-str capable compiler is not executable: $BORROWED_STR_COMPILER" >&2
     exit 1
 fi
 
@@ -160,17 +205,21 @@ EOF
 }
 
 # Pipe-separated check-only fixture manifest:
-#   fixture-path|expected-status|expected-stderr-snippet
+#   fixture-path|expected-status|expected-stderr-snippet|optional-capability
 #
 # Use these for stdlib fixtures that only need the typechecker, including
 # platform-independent with-arena policy tests. The expected status is `fail`
 # or `pass`; failure rows must include a diagnostic substring that should
-# appear on stderr. Pass rows may use "-" for the diagnostic field.
+# appear on stderr. Pass rows may use "-" for the diagnostic field. A row marked
+# `requires-borrowed-str-capable` runs through TYPELISP_STDLIB_BORROWED_STR_BIN
+# when it is set, allowing no-Rust gates to use the stage1 wrapper for source
+# that the published seed compiler cannot parse yet.
 stdlib_check_manifest() {
     cat <<'EOF'
 stdlib/tests/arena_policy.tl|pass|-
 stdlib/tests/arena_policy_escape_string.tl|fail|cannot escape with-arena 'inner'
 stdlib/tests/arena_policy_escape_text_buf.tl|fail|cannot escape with-arena 'inner'
+stdlib/tests/borrowed_str_gate.tl|pass|-|requires-borrowed-str-capable
 EOF
 }
 
@@ -374,6 +423,7 @@ export WindowsSDKVersion="$SDK_VERSION"
 
 passed=0
 skipped=0
+if [ "$BORROWED_STR_ONLY" -eq 0 ]; then
 while IFS='|' read -r fixture want stdout_spec stderr_spec stdin_spec extra; do
     case "$fixture" in
         '' | \#*) continue ;;
@@ -451,17 +501,13 @@ while IFS='|' read -r fixture want stdout_spec stderr_spec stdin_spec extra; do
 
     passed=$((passed + 1))
 done < "$TEST_MANIFEST"
+fi
 
 checked=0
 while IFS='|' read -r fixture want stderr_snippet extra; do
     case "$fixture" in
         '' | \#*) continue ;;
     esac
-
-    if [ -n "${extra:-}" ]; then
-        echo "FAIL: malformed stdlib check manifest row has too many fields: $fixture" >&2
-        exit 1
-    fi
 
     if [ -z "$want" ] || [ -z "$stderr_snippet" ]; then
         echo "FAIL: malformed stdlib check manifest row: $fixture" >&2
@@ -481,6 +527,37 @@ while IFS='|' read -r fixture want stderr_snippet extra; do
             exit 1
             ;;
     esac
+
+    check_compiler=$COMPILER
+    check_label=--stdlib-root
+    borrowed_str_row=0
+    case "${extra:-}" in
+        '')
+            ;;
+        requires-borrowed-str-capable)
+            check_compiler=$BORROWED_STR_COMPILER
+            check_label="--stdlib-root, borrowed-str-capable"
+            borrowed_str_row=1
+            ;;
+        *)
+            echo "FAIL: malformed stdlib check manifest capability for $fixture: $extra" >&2
+            exit 1
+            ;;
+    esac
+
+    if [ "$BORROWED_STR_ONLY" -eq 1 ] && [ "$borrowed_str_row" -eq 0 ]; then
+        continue
+    fi
+    if [ "${TYPELISP_STDLIB_SKIP_BORROWED_STR:-0}" = 1 ] && [ "$borrowed_str_row" -eq 1 ]; then
+        echo "[stdlib] SKIP $fixture (no borrowed-str capable compiler on this host)"
+        continue
+    fi
+    if [ "$borrowed_str_row" -eq 1 ] &&
+        [ "$BORROWED_STR_ONLY" -eq 0 ] &&
+        [ "$BORROWED_STR_COMPILER_EXPLICIT" -eq 0 ]; then
+        echo "[stdlib] SKIP $fixture (set TYPELISP_STDLIB_BORROWED_STR_BIN to verify borrowed-str syntax)"
+        continue
+    fi
 
     case "$fixture" in
         stdlib/tests/*.tl) ;;
@@ -504,9 +581,9 @@ while IFS='|' read -r fixture want stderr_snippet extra; do
     stdout="$stem.stdout"
     stderr="$stem.stderr"
 
-    echo "[stdlib] checking $fixture (--stdlib-root)"
+    echo "[stdlib] checking $fixture ($check_label)"
     set +e
-    "$COMPILER" check "$copied" --stdlib-root "$ROOT/stdlib" \
+    "$check_compiler" check "$copied" --stdlib-root "$ROOT/stdlib" \
         > "$stdout" 2> "$stderr"
     got=$?
     set -e
@@ -533,6 +610,15 @@ while IFS='|' read -r fixture want stderr_snippet extra; do
 
     checked=$((checked + 1))
 done < "$CHECK_MANIFEST"
+
+if [ "$BORROWED_STR_ONLY" -eq 1 ]; then
+    if [ "$checked" -eq 0 ]; then
+        echo "stdlib borrowed-str verification did not run any fixture" >&2
+        exit 1
+    fi
+    echo "stdlib borrowed-str verification passed for $checked check fixture(s)"
+    exit 0
+fi
 
 module_count=$(wc -l < "$EXPECTED" | tr -d ' ')
 

@@ -499,6 +499,12 @@ if [ "$HOST_OS" = linux ] && [ -n "$STAGE1_TEST_BIN" ]; then
     INLINE_TEST_TYPELISP_BIN=$STAGE1_TYPELISP_BIN
 fi
 
+# Borrowed-str stdlib source gate (#1557): verify the borrowed-str stdlib
+# fixtures through the bootstrapped stage1 compiler on Linux.
+if [ "$HOST_OS" = linux ]; then
+    run_with_compiler "$STAGE1_TYPELISP_BIN" "stage1 stdlib borrowed-str source gate" scripts/verify-stdlib.sh --borrowed-str-only
+fi
+
 if [ "$WINDOWS_SEED_STAGED_RUNTIME_GAP" -eq 1 ]; then
     echo
     echo "[no-rust-stage0] skipping Windows seed gates that compile selfhost doc/build/run drivers:"
@@ -661,7 +667,11 @@ elif [ "$HOST_OS" = linux ] && [ "$SEED_IS_STAGE1_BUNDLE" -eq 1 ]; then
 else
     run_gate "native integration corpus" scripts/verify-integration.sh
     run_gate "examples" scripts/verify-examples.sh
-    run_gate "stdlib modules and fixtures" scripts/verify-stdlib.sh
+    if [ "$HOST_OS" = linux ]; then
+        run_gate "stdlib modules and fixtures" env TYPELISP_STDLIB_BORROWED_STR_BIN="$STAGE1_TYPELISP_BIN" scripts/verify-stdlib.sh
+    else
+        run_gate "stdlib modules and fixtures" env TYPELISP_STDLIB_SKIP_BORROWED_STR=1 scripts/verify-stdlib.sh
+    fi
 fi
 
 if [ "$HOST_OS" = linux ]; then

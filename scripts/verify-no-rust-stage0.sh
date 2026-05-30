@@ -317,6 +317,53 @@ EOF
     return 1
 }
 
+stage1_safety_corpus_supported() {
+    compiler=$1
+    probe_dir="$ROOT/target/no-rust-stage1-safety-probe"
+    rm -rf "$probe_dir"
+    mkdir -p "$probe_dir"
+    asm="$probe_dir/division_by_zero_trap.s"
+    obj="$probe_dir/division_by_zero_trap.o"
+    bin="$probe_dir/division_by_zero_trap"
+
+    if ! "$compiler" compile "$ROOT/tests/safety/division_by_zero_trap.tl" \
+        --target linux-x86_64 \
+        --stdlib-root "$ROOT/stdlib" \
+        -o "$asm" \
+        > "$probe_dir/compile.stdout" 2> "$probe_dir/compile.stderr"; then
+        echo "[no-rust-stage0] stage1 safety probe compile failed"
+        sed 's/^/  /' "$probe_dir/compile.stdout" >&2 || true
+        sed 's/^/  /' "$probe_dir/compile.stderr" >&2 || true
+        return 1
+    fi
+    if ! as "$asm" -o "$obj" > "$probe_dir/assemble.stdout" 2> "$probe_dir/assemble.stderr"; then
+        echo "[no-rust-stage0] stage1 safety probe assemble failed"
+        sed 's/^/  /' "$probe_dir/assemble.stdout" >&2 || true
+        sed 's/^/  /' "$probe_dir/assemble.stderr" >&2 || true
+        return 1
+    fi
+    if ! ld "$obj" -o "$bin" -dynamic-linker /lib64/ld-linux-x86-64.so.2 -lc \
+        > "$probe_dir/link.stdout" 2> "$probe_dir/link.stderr"; then
+        echo "[no-rust-stage0] stage1 safety probe link failed"
+        sed 's/^/  /' "$probe_dir/link.stdout" >&2 || true
+        sed 's/^/  /' "$probe_dir/link.stderr" >&2 || true
+        return 1
+    fi
+
+    set +e
+    "$bin" > "$probe_dir/run.stdout" 2> "$probe_dir/run.stderr"
+    probe_status=$?
+    set -e
+    if [ "$probe_status" -ne 135 ] ||
+        ! grep -qF "tl: integer division or remainder error" "$probe_dir/run.stderr"; then
+        echo "[no-rust-stage0] stage1 safety probe expected div-zero trap exit 135"
+        sed 's/^/  /' "$probe_dir/run.stdout" >&2 || true
+        sed 's/^/  /' "$probe_dir/run.stderr" >&2 || true
+        return 1
+    fi
+    return 0
+}
+
 echo "[no-rust-stage0] host=$HOST_OS seed=$SEED_TYPELISP_BIN"
 
 if [ "$HOST_OS" = linux ]; then
@@ -549,18 +596,59 @@ fi
 run_with_compiler "$FORMAT_GATE_TYPELISP_BIN" "TypeLisp source formatting" scripts/check-tl-format.sh
 TYPELISP_BIN=$SEED_TYPELISP_BIN
 export TYPELISP_BIN
+
+# The safety corpus is a build/run capability gate, but its fixtures are small
+# enough to run through the freshly bootstrapped stage1 wrapper when the Linux
+# host-action drivers and checked-trap helpers are available (#1267). Keep the
+# seed path only for older artifacts or hosts where the wrapper cannot execute
+# native programs yet.
+SAFETY_GATE_TYPELISP_BIN=$SEED_TYPELISP_BIN
+SAFETY_GATE_LABEL="safety corpus"
+SAFETY_GATE_STAGE1_PROBE_FAILED=0
+if [ "$HOST_OS" = linux ] && [ "$STAGE1_HOST_ACTION_DRIVERS_AVAILABLE" -eq 1 ]; then
+    if stage1_safety_corpus_supported "$STAGE1_TYPELISP_BIN"; then
+        SAFETY_GATE_TYPELISP_BIN=$STAGE1_TYPELISP_BIN
+        SAFETY_GATE_LABEL="stage1 safety corpus"
+    else
+        SAFETY_GATE_STAGE1_PROBE_FAILED=1
+    fi
+fi
+if [ "$WINDOWS_SEED_STAGED_RUNTIME_GAP" -eq 1 ]; then
+    echo
+    echo "[no-rust-stage0] skipping Windows safety corpus until the seed provides staged runtime symbols"
+elif [ "$HOST_OS" = linux ] &&
+    [ "$SAFETY_GATE_STAGE1_PROBE_FAILED" -eq 1 ] &&
+    { [ "$SEED_STAGE1_WRAPPER" -eq 1 ] || [ "$SEED_IS_STAGE1_BUNDLE" -eq 1 ]; }; then
+    echo
+    echo "[no-rust-stage0] skipping safety corpus until stage1 checked trap helpers land (#1455)"
+elif [ "$HOST_OS" = linux ] &&
+    [ "$STAGE1_HOST_ACTION_DRIVERS_AVAILABLE" -eq 0 ] &&
+    { [ "$LINUX_SEED_STAGED_RUNTIME_GAP" -eq 1 ] ||
+        [ "$SEED_STAGE1_WRAPPER" -eq 1 ] ||
+        [ "$SEED_IS_STAGE1_BUNDLE" -eq 1 ]; }; then
+    echo
+    echo "[no-rust-stage0] skipping safety corpus until stage1 host-action drivers are available"
+else
+    if [ "$HOST_OS" = linux ] && [ "$SAFETY_GATE_STAGE1_PROBE_FAILED" -eq 1 ]; then
+        echo
+        echo "[no-rust-stage0] using seed safety corpus until stage1 checked trap helpers land (#1455)"
+    fi
+    run_with_compiler "$SAFETY_GATE_TYPELISP_BIN" "$SAFETY_GATE_LABEL" scripts/verify-safety-corpus.sh
+fi
+TYPELISP_BIN=$SEED_TYPELISP_BIN
+export TYPELISP_BIN
+
 if [ "$WINDOWS_SEED_STAGED_RUNTIME_GAP" -eq 1 ] ||
     [ "$LINUX_SEED_STAGED_RUNTIME_GAP" -eq 1 ] ||
     [ "$SEED_STAGE1_WRAPPER" -eq 1 ]; then
     echo
     echo "[no-rust-stage0] skipping seed build/run artifact gates until staged runtime symbols and full seed CLI parity land in stage0:"
-    echo "[no-rust-stage0]   safety corpus, native integration corpus, examples, stdlib modules and fixtures"
+    echo "[no-rust-stage0]   native integration corpus, examples, stdlib modules and fixtures"
 elif [ "$HOST_OS" = linux ] && [ "$SEED_IS_STAGE1_BUNDLE" -eq 1 ]; then
     echo
     echo "[no-rust-stage0] skipping seed build/run artifact gates until the stage1 bundle reaches compiler/runtime parity:"
-    echo "[no-rust-stage0]   safety corpus, native integration corpus, examples, stdlib modules and fixtures"
+    echo "[no-rust-stage0]   native integration corpus, examples, stdlib modules and fixtures"
 else
-    run_gate "safety corpus" scripts/verify-safety-corpus.sh
     run_gate "native integration corpus" scripts/verify-integration.sh
     run_gate "examples" scripts/verify-examples.sh
     run_gate "stdlib modules and fixtures" scripts/verify-stdlib.sh

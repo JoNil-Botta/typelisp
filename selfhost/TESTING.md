@@ -202,12 +202,12 @@ The current raw stage1 compiler implements source-file `compile`; the wrapper
 routes that command and implements source-file `build`, package `build`, `run`,
 `fmt`, `doc`, `doc --test`, `repl`, and private `debug host-action` directly
 enough for the Linux capability smoke, deterministic assembly gate, selfhost
-compile manifest, stdlib documentation gate, stdlib selfhost frontend verifier,
-repository doctest gate, and TypeLisp source format gate. The `fmt` command
-routes through a cached selfhost `format.tl` driver, or through a prebuilt
-`TYPELISP_STAGE1_FORMAT_BIN` in the no-Rust lane, so the repository format gate
-does not recompile the formatter on every batched invocation. Package builds
-route through a cached selfhost `build.tl` driver, or
+compile manifest, safety corpus, stdlib documentation gate, stdlib selfhost
+frontend verifier, repository doctest gate, and TypeLisp source format gate. The
+`fmt` command routes through a cached selfhost `format.tl` driver, or through a
+prebuilt `TYPELISP_STAGE1_FORMAT_BIN` in the no-Rust lane, so the repository
+format gate does not recompile the formatter on every batched invocation.
+Package builds route through a cached selfhost `build.tl` driver, or
 through a prebuilt `TYPELISP_STAGE1_BUILD_BIN` in the no-Rust lane, and cover
 manifest-path and upward-discovery forms in `scripts/check-stage1-wrapper.sh`;
 direct selfhost package-build parity remains covered by
@@ -390,10 +390,12 @@ Pull requests get Linux and Windows no-Rust coverage from
 `scripts/verify-no-rust-stage0.sh`. The Linux job first builds a fresh stage1
 compiler from published stage0, then smoke-tests the stage1 CLI/host-action
 wrapper, deterministic assembly, the selfhost compile manifest, stdlib
-documentation, the stdlib selfhost frontend verifier, the repository doctest
-gate, and the TypeLisp source format gate through that wrapper (the doctest and
-format gates fall back to the seed compiler only when the wrapper host-action
-drivers are unavailable). Public tools, inline
+documentation, the stdlib selfhost frontend verifier, the safety corpus, the
+repository doctest gate, and the TypeLisp source format gate through that
+wrapper (the safety gate falls back to a legacy seed, or skips a stage1-bundle
+seed, until stage1 checked trap helpers are available; the doctest/format gates
+fall back only when the wrapper host-action drivers are unavailable). Public
+tools, inline
 tests, native integration manifests, examples, stdlib
 modules, docs Pages build, selfhost native generated programs, and the selfhost
 external compiler corpus continue to use the seed compiler until their remaining

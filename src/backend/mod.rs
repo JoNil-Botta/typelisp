@@ -2670,7 +2670,8 @@ impl X86_64Backend {
                 "_fileno",
                 "_lseeki64",
                 "_read",
-                "_spawnvp",
+                "_spawnvpe",
+                "__p__environ",
                 "fclose",
                 "fflush",
                 "tmpfile",
@@ -7244,6 +7245,11 @@ impl X86_64Backend {
 
         // Build a null-terminated executable path and argv array. argv[0] is the
         // executable, followed by the ProcessStringList entries, then NULL.
+        // %r12 holds the UNQUOTED executable path: it is also passed to
+        // `_spawnvp` as the lookup `name`, which must not carry surrounding
+        // quotes. The argv[0] slot stored into the array below uses the quoted
+        // copy so a space-containing executable path survives command-line
+        // tokenization in the child.
         self.emit("    movq 0(%rbx), %rcx");
         self.emit_call(".L_tl_process_copy_c_string");
         self.emit("    movq %rax, %r12");
@@ -7263,7 +7269,10 @@ impl X86_64Backend {
         self.emit("    shlq $3, %rcx");
         self.emit_call("tl_alloc");
         self.emit("    movq %rax, %r14");
-        self.emit("    movq %r12, 0(%r14)");
+        // argv[0]: store the quoted copy of the executable path.
+        self.emit("    movq 0(%rbx), %rcx");
+        self.emit_call(".L_tl_process_copy_c_string_quoted");
+        self.emit("    movq %rax, 0(%r14)");
         self.emit("    movq 8(%rbx), %r13");
         self.emit("    movq $1, %r15");
         self.emit(".L_tl_process_fill_argv:");
@@ -7272,13 +7281,25 @@ impl X86_64Backend {
         self.emit("    cmpq $1, 0(%r13)");
         self.emit("    jne .L_tl_process_fill_argv_done");
         self.emit("    movq 8(%r13), %rcx");
-        self.emit_call(".L_tl_process_copy_c_string");
+        self.emit_call(".L_tl_process_copy_c_string_quoted");
         self.emit("    movq %rax, (%r14,%r15,8)");
         self.emit("    incq %r15");
         self.emit("    movq 16(%r13), %r13");
         self.emit("    jmp .L_tl_process_fill_argv");
         self.emit(".L_tl_process_fill_argv_done:");
         self.emit("    movq $0, (%r14,%r15,8)");
+        self.emit("    movq %r14, -96(%rbp)"); // preserve argv pointer
+
+        // Build the child environment block from the ProcessEnvList overrides
+        // (e.g. the MSVC `LIB`/`INCLUDE`/`PATH` from `msvc-find-tool`) merged
+        // over the inherited environment, and pass it to `_spawnvpe`. This
+        // leaves THIS process's own environment untouched (unlike `_putenv_s`).
+        // Returns NULL when there are no overrides, so `_spawnvpe` then inherits
+        // the current environment unchanged.
+        self.emit("    movq 24(%rbx), %rcx"); // env override list head
+        self.emit_call(".L_tl_process_win_envp_from_overrides");
+        self.emit("    movq %rax, -104(%rbp)"); // child envp (NULL if no overrides)
+        self.emit("    movq -96(%rbp), %r14"); // restore argv pointer
 
         // Capture stdout/stderr via temporary files, then restore this process's
         // descriptors immediately after the child exits.
@@ -7326,10 +7347,11 @@ impl X86_64Backend {
         self.emit_call("_dup2");
         self.emit("    testl %eax, %eax");
         self.emit("    js .L_tl_process_output_restore_wait_failed");
-        self.emit("    movq $0, %rcx");
-        self.emit("    movq %r12, %rdx");
-        self.emit("    movq %r14, %r8");
-        self.emit_call("_spawnvp");
+        self.emit("    movq $0, %rcx"); // _P_WAIT
+        self.emit("    movq %r12, %rdx"); // cmdname (unquoted exe path)
+        self.emit("    movq %r14, %r8"); // argv
+        self.emit("    movq -104(%rbp), %r9"); // envp (NULL => inherit current)
+        self.emit_call("_spawnvpe");
         self.emit("    movslq %eax, %r15");
         self.emit("    jmp .L_tl_process_output_restore_after_spawn");
 
@@ -7453,6 +7475,307 @@ impl X86_64Backend {
         self.emit("    movb $0, (%r13,%r12)");
         self.emit("    movq %r13, %rax");
         self.emit("    add $8, %rsp");
+        self.emit("    pop %r13");
+        self.emit("    pop %r12");
+        self.emit("    pop %rbx");
+        self.emit("    pop %rbp");
+        self.emit("    ret");
+        self.emit("");
+
+        // Copy a TL fat-string `{ptr,len}` (in %rcx) to a fresh NUL-terminated
+        // C string, wrapping it in double quotes when it contains a space.
+        //
+        // `_spawnvp` builds the child command line by joining argv with single
+        // spaces and performs NO quoting, so an argv element containing a space
+        // (e.g. a `C:\Program Files\...\link.exe` toolchain path or output
+        // path) is otherwise re-split by the child. The selfhost build/run
+        // drivers only pass plain filesystem paths and flags (no embedded
+        // quotes or trailing backslash-before-quote), so simple surrounding
+        // double quotes round-trip exactly through CommandLineToArgvW.
+        // Falls back to the unquoted copy when there is no space.
+        self.emit(".L_tl_process_copy_c_string_quoted:");
+        self.emit("    push %rbp");
+        self.emit("    mov %rsp, %rbp");
+        self.emit("    push %rbx");
+        self.emit("    push %r12");
+        self.emit("    push %r13");
+        self.emit("    push %r14");
+        self.emit("    sub $8, %rsp"); // keep rsp 16-aligned across the 5 pushes
+        self.emit("    movq 0(%rcx), %rbx"); // source byte pointer
+        self.emit("    movq 8(%rcx), %r12"); // source length
+        // Scan for a space (0x20). %r14 = quote flag (0 = none, 1 = quote).
+        self.emit("    xorq %r14, %r14");
+        self.emit("    xorq %r10, %r10");
+        self.emit(".L_tl_process_quote_scan:");
+        self.emit("    cmpq %r12, %r10");
+        self.emit("    jge .L_tl_process_quote_scan_done");
+        self.emit("    cmpb $0x20, (%rbx,%r10)");
+        self.emit("    jne .L_tl_process_quote_scan_next");
+        self.emit("    movq $1, %r14");
+        self.emit("    jmp .L_tl_process_quote_scan_done");
+        self.emit(".L_tl_process_quote_scan_next:");
+        self.emit("    incq %r10");
+        self.emit("    jmp .L_tl_process_quote_scan");
+        self.emit(".L_tl_process_quote_scan_done:");
+        // Allocate len + 1, plus 2 more when quoting (open + close quote).
+        self.emit("    movq %r12, %rcx");
+        self.emit("    incq %rcx");
+        self.emit("    testq %r14, %r14");
+        self.emit("    jz .L_tl_process_quote_alloc");
+        self.emit("    addq $2, %rcx");
+        self.emit(".L_tl_process_quote_alloc:");
+        self.emit_call("tl_alloc");
+        self.emit("    movq %rax, %r13"); // destination
+        // %r10 = write cursor; if quoting, emit the leading quote first.
+        self.emit("    xorq %r10, %r10");
+        self.emit("    testq %r14, %r14");
+        self.emit("    jz .L_tl_process_quote_body");
+        self.emit("    movb $0x22, (%r13)");
+        self.emit("    movq $1, %r10");
+        self.emit(".L_tl_process_quote_body:");
+        self.emit("    xorq %r11, %r11"); // source index
+        self.emit(".L_tl_process_quote_body_loop:");
+        self.emit("    cmpq %r12, %r11");
+        self.emit("    jge .L_tl_process_quote_body_done");
+        self.emit("    movzbl (%rbx,%r11), %edx");
+        self.emit("    movb %dl, (%r13,%r10)");
+        self.emit("    incq %r10");
+        self.emit("    incq %r11");
+        self.emit("    jmp .L_tl_process_quote_body_loop");
+        self.emit(".L_tl_process_quote_body_done:");
+        self.emit("    testq %r14, %r14");
+        self.emit("    jz .L_tl_process_quote_terminate");
+        self.emit("    movb $0x22, (%r13,%r10)"); // trailing quote
+        self.emit("    incq %r10");
+        self.emit(".L_tl_process_quote_terminate:");
+        self.emit("    movb $0, (%r13,%r10)"); // NUL
+        self.emit("    movq %r13, %rax");
+        self.emit("    add $8, %rsp");
+        self.emit("    pop %r14");
+        self.emit("    pop %r13");
+        self.emit("    pop %r12");
+        self.emit("    pop %rbx");
+        self.emit("    pop %rbp");
+        self.emit("    ret");
+        self.emit("");
+
+        self.generate_windows_process_envp_runtime_functions();
+    }
+
+    /// Emit the Windows env-block builder used by `tl_process_output`.
+    ///
+    /// `.L_tl_process_win_envp_from_overrides(%rcx = ProcessEnvList)` builds a
+    /// `char**` environment block (array of NUL-terminated `NAME=VALUE` C
+    /// strings, NULL-terminated) that merges the override list over the
+    /// inherited environment (`__p__environ()`): an inherited entry whose name
+    /// equals an override name is dropped, then every override is appended as
+    /// `NAME=VALUE`. Returns NULL when the override list is empty, so the caller
+    /// passes NULL to `_spawnvpe` and the child inherits the current
+    /// environment unchanged. The current process environment is never mutated.
+    fn generate_windows_process_envp_runtime_functions(&mut self) {
+        // bool .L_tl_process_win_env_entry_matches(%rcx = "NAME=VAL" cstr,
+        //                                          %rdx = ProcessEnvList)
+        // True when the inherited entry's NAME (up to '=') equals any override
+        // name. Compares the override name bytes against the entry, requiring
+        // the entry to have '=' exactly at the name length.
+        self.emit(".L_tl_process_win_env_entry_matches:");
+        self.emit("    push %rbp");
+        self.emit("    mov %rsp, %rbp");
+        self.emit("    push %rbx");
+        self.emit("    push %r12");
+        self.emit("    push %r13");
+        self.emit("    push %r14");
+        self.emit("    push %r15");
+        self.emit("    sub $8, %rsp");
+        self.emit("    movq %rcx, %rbx"); // entry cstr
+        self.emit("    movq %rdx, %r12"); // override list
+        self.emit(".L_tl_process_win_env_match_loop:");
+        self.emit("    testq %r12, %r12");
+        self.emit("    jz .L_tl_process_win_env_match_false");
+        self.emit("    cmpq $1, 0(%r12)");
+        self.emit("    jne .L_tl_process_win_env_match_false");
+        // override name fat-string at 8(%r12): ptr@0, len@8
+        self.emit("    movq 8(%r12), %rax");
+        self.emit("    movq 0(%rax), %r13"); // name ptr
+        self.emit("    movq 8(%rax), %r14"); // name len
+        self.emit("    xorq %r15, %r15"); // index
+        self.emit(".L_tl_process_win_env_match_char:");
+        self.emit("    cmpq %r14, %r15");
+        self.emit("    jge .L_tl_process_win_env_match_check_eq");
+        self.emit("    movzbl (%r13,%r15), %eax");
+        self.emit("    movzbl (%rbx,%r15), %ecx");
+        self.emit("    cmpb %cl, %al");
+        self.emit("    jne .L_tl_process_win_env_match_next");
+        self.emit("    incq %r15");
+        self.emit("    jmp .L_tl_process_win_env_match_char");
+        self.emit(".L_tl_process_win_env_match_check_eq:");
+        // entry byte at name length must be '=' for an exact name match
+        self.emit("    movzbl (%rbx,%r14), %eax");
+        self.emit("    cmpb $61, %al");
+        self.emit("    jne .L_tl_process_win_env_match_next");
+        self.emit("    movq $1, %rax");
+        self.emit("    jmp .L_tl_process_win_env_match_return");
+        self.emit(".L_tl_process_win_env_match_next:");
+        self.emit("    movq 24(%r12), %r12");
+        self.emit("    jmp .L_tl_process_win_env_match_loop");
+        self.emit(".L_tl_process_win_env_match_false:");
+        self.emit("    xorq %rax, %rax");
+        self.emit(".L_tl_process_win_env_match_return:");
+        self.emit("    add $8, %rsp");
+        self.emit("    pop %r15");
+        self.emit("    pop %r14");
+        self.emit("    pop %r13");
+        self.emit("    pop %r12");
+        self.emit("    pop %rbx");
+        self.emit("    pop %rbp");
+        self.emit("    ret");
+        self.emit("");
+
+        // char* .L_tl_process_win_env_cstring(%rcx = name String, %rdx = value
+        // String) -> a fresh "NAME=VALUE" NUL-terminated C string.
+        self.emit(".L_tl_process_win_env_cstring:");
+        self.emit("    push %rbp");
+        self.emit("    mov %rsp, %rbp");
+        self.emit("    push %rbx");
+        self.emit("    push %r12");
+        self.emit("    push %r13");
+        self.emit("    push %r14");
+        self.emit("    push %r15");
+        self.emit("    sub $8, %rsp");
+        self.emit("    movq 0(%rcx), %r12"); // name ptr
+        self.emit("    movq 8(%rcx), %rbx"); // name len
+        self.emit("    movq 0(%rdx), %r14"); // value ptr
+        self.emit("    movq 8(%rdx), %r13"); // value len
+        self.emit("    movq %rbx, %rcx");
+        self.emit("    addq %r13, %rcx");
+        self.emit("    addq $2, %rcx"); // '=' + NUL
+        self.emit_call("tl_alloc");
+        self.emit("    movq %rax, %r15");
+        self.emit("    xorq %rcx, %rcx");
+        self.emit(".L_tl_process_win_env_cs_name:");
+        self.emit("    cmpq %rbx, %rcx");
+        self.emit("    jge .L_tl_process_win_env_cs_name_done");
+        self.emit("    movzbl (%r12,%rcx), %eax");
+        self.emit("    movb %al, (%r15,%rcx)");
+        self.emit("    incq %rcx");
+        self.emit("    jmp .L_tl_process_win_env_cs_name");
+        self.emit(".L_tl_process_win_env_cs_name_done:");
+        self.emit("    movb $61, (%r15,%rbx)"); // '='
+        self.emit("    xorq %rcx, %rcx");
+        self.emit(".L_tl_process_win_env_cs_value:");
+        self.emit("    cmpq %r13, %rcx");
+        self.emit("    jge .L_tl_process_win_env_cs_value_done");
+        self.emit("    movzbl (%r14,%rcx), %eax");
+        self.emit("    leaq 1(%rbx,%rcx), %rdx");
+        self.emit("    movb %al, (%r15,%rdx)");
+        self.emit("    incq %rcx");
+        self.emit("    jmp .L_tl_process_win_env_cs_value");
+        self.emit(".L_tl_process_win_env_cs_value_done:");
+        self.emit("    leaq 1(%rbx,%r13), %rdx");
+        self.emit("    movb $0, (%r15,%rdx)");
+        self.emit("    movq %r15, %rax");
+        self.emit("    add $8, %rsp");
+        self.emit("    pop %r15");
+        self.emit("    pop %r14");
+        self.emit("    pop %r13");
+        self.emit("    pop %r12");
+        self.emit("    pop %rbx");
+        self.emit("    pop %rbp");
+        self.emit("    ret");
+        self.emit("");
+
+        // char** .L_tl_process_win_envp_from_overrides(%rcx = ProcessEnvList)
+        self.emit(".L_tl_process_win_envp_from_overrides:");
+        self.emit("    push %rbp");
+        self.emit("    mov %rsp, %rbp");
+        self.emit("    push %rbx");
+        self.emit("    push %r12");
+        self.emit("    push %r13");
+        self.emit("    push %r14");
+        self.emit("    push %r15");
+        self.emit("    sub $8, %rsp");
+        self.emit("    movq %rcx, %r12"); // override list
+        // No overrides -> return NULL (inherit current environment).
+        self.emit("    testq %r12, %r12");
+        self.emit("    jz .L_tl_process_win_envp_null");
+        self.emit("    cmpq $1, 0(%r12)");
+        self.emit("    jne .L_tl_process_win_envp_null");
+        // Fetch inherited environment: __p__environ() -> char*** ; *ret = char**.
+        self.emit_call("__p__environ");
+        self.emit("    movq (%rax), %rbx"); // inherited char** (may be NULL)
+        // Count inherited entries (%r13).
+        self.emit("    xorq %r13, %r13");
+        self.emit("    testq %rbx, %rbx");
+        self.emit("    jz .L_tl_process_win_envp_count_overrides");
+        self.emit(".L_tl_process_win_envp_count_inh:");
+        self.emit("    movq (%rbx,%r13,8), %rax");
+        self.emit("    testq %rax, %rax");
+        self.emit("    jz .L_tl_process_win_envp_count_overrides");
+        self.emit("    incq %r13");
+        self.emit("    jmp .L_tl_process_win_envp_count_inh");
+        // Count overrides (%r14).
+        self.emit(".L_tl_process_win_envp_count_overrides:");
+        self.emit("    xorq %r14, %r14");
+        self.emit("    movq %r12, %r15");
+        self.emit(".L_tl_process_win_envp_count_ov:");
+        self.emit("    testq %r15, %r15");
+        self.emit("    jz .L_tl_process_win_envp_alloc");
+        self.emit("    cmpq $1, 0(%r15)");
+        self.emit("    jne .L_tl_process_win_envp_alloc");
+        self.emit("    incq %r14");
+        self.emit("    movq 24(%r15), %r15");
+        self.emit("    jmp .L_tl_process_win_envp_count_ov");
+        // Allocate (inherited + overrides + 1) pointers.
+        self.emit(".L_tl_process_win_envp_alloc:");
+        self.emit("    movq %r13, %rcx");
+        self.emit("    addq %r14, %rcx");
+        self.emit("    incq %rcx");
+        self.emit("    shlq $3, %rcx");
+        self.emit_call("tl_alloc");
+        self.emit("    movq %rax, %r15"); // output array
+        self.emit("    xorq %r14, %r14"); // write index
+        // Copy inherited entries not overridden.
+        self.emit("    testq %rbx, %rbx");
+        self.emit("    jz .L_tl_process_win_envp_copy_ov_start");
+        self.emit(".L_tl_process_win_envp_copy_inh:");
+        self.emit("    movq (%rbx), %rcx");
+        self.emit("    testq %rcx, %rcx");
+        self.emit("    jz .L_tl_process_win_envp_copy_ov_start");
+        self.emit("    movq %r12, %rdx");
+        self.emit_call(".L_tl_process_win_env_entry_matches");
+        self.emit("    testq %rax, %rax");
+        self.emit("    jne .L_tl_process_win_envp_skip_inh");
+        self.emit("    movq (%rbx), %rax");
+        self.emit("    movq %rax, (%r15,%r14,8)");
+        self.emit("    incq %r14");
+        self.emit(".L_tl_process_win_envp_skip_inh:");
+        self.emit("    addq $8, %rbx");
+        self.emit("    jmp .L_tl_process_win_envp_copy_inh");
+        // Append overrides as NAME=VALUE.
+        self.emit(".L_tl_process_win_envp_copy_ov_start:");
+        self.emit("    movq %r12, %rbx");
+        self.emit(".L_tl_process_win_envp_copy_ov:");
+        self.emit("    testq %rbx, %rbx");
+        self.emit("    jz .L_tl_process_win_envp_done");
+        self.emit("    cmpq $1, 0(%rbx)");
+        self.emit("    jne .L_tl_process_win_envp_done");
+        self.emit("    movq 8(%rbx), %rcx"); // name String
+        self.emit("    movq 16(%rbx), %rdx"); // value String
+        self.emit_call(".L_tl_process_win_env_cstring");
+        self.emit("    movq %rax, (%r15,%r14,8)");
+        self.emit("    incq %r14");
+        self.emit("    movq 24(%rbx), %rbx");
+        self.emit("    jmp .L_tl_process_win_envp_copy_ov");
+        self.emit(".L_tl_process_win_envp_done:");
+        self.emit("    movq $0, (%r15,%r14,8)"); // NULL terminator
+        self.emit("    movq %r15, %rax");
+        self.emit("    jmp .L_tl_process_win_envp_return");
+        self.emit(".L_tl_process_win_envp_null:");
+        self.emit("    xorq %rax, %rax");
+        self.emit(".L_tl_process_win_envp_return:");
+        self.emit("    add $8, %rsp");
+        self.emit("    pop %r15");
+        self.emit("    pop %r14");
         self.emit("    pop %r13");
         self.emit("    pop %r12");
         self.emit("    pop %rbx");
@@ -16961,7 +17284,8 @@ mod tests {
             "_fileno",
             "_lseeki64",
             "_read",
-            "_spawnvp",
+            "_spawnvpe",
+            "__p__environ",
             "fclose",
             "fflush",
             "tmpfile",
@@ -16973,10 +17297,17 @@ mod tests {
             );
         }
         for snippet in [
-            "    call _spawnvp",
+            "    call _spawnvpe",
             "    call _dup2",
             "    call tmpfile",
             ".L_tl_process_copy_c_string:",
+            // argv elements (incl. the executable path) are quoted so that a
+            // space-containing path/arg survives `_spawnvpe`'s command-line join.
+            ".L_tl_process_copy_c_string_quoted:",
+            // a child environment block is constructed (LIB/INCLUDE/PATH
+            // overrides merged over the inherited environment) and passed to
+            // `_spawnvpe`, leaving this process's own environment untouched.
+            ".L_tl_process_win_envp_from_overrides:",
             ".L_tl_process_read_fd_to_string:",
             ".L_tl_process_error_result:",
         ] {

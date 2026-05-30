@@ -11395,7 +11395,7 @@ tl_string_concat:
     push %r13
     push %r14
     push %r15
-    sub $8, %rsp
+    sub $40, %rsp
     movq %rcx, %r12
     testq %r12, %r12
     jz .L_tl_process_win_envp_null
@@ -11468,7 +11468,7 @@ tl_string_concat:
 .L_tl_process_win_envp_null:
     xorq %rax, %rax
 .L_tl_process_win_envp_return:
-    add $8, %rsp
+    add $40, %rsp
     pop %r15
     pop %r14
     pop %r13
@@ -11484,6 +11484,7 @@ tl_string_concat:
     push %r12
     push %r13
     push %r14
+    sub $32, %rsp
     movq %rcx, %rbx
     movq %rbx, %rcx
     xorq %rdx, %rdx
@@ -11525,6 +11526,7 @@ tl_string_concat:
 .L_tl_process_read_fd_to_string_error:
     xorq %rax, %rax
 .L_tl_process_read_fd_to_string_done:
+    add $32, %rsp
     pop %r14
     pop %r13
     pop %r12
@@ -11568,7 +11570,7 @@ tl_string_concat:
     ret
 
 .L_tl_process_close_temp_files:
-    sub $8, %rsp
+    sub $40, %rsp
     movq -48(%rbp), %rcx
     testq %rcx, %rcx
     jz .L_tl_process_close_temp_stderr
@@ -11593,7 +11595,7 @@ tl_string_concat:
     call _close
     movq $-1, -88(%rbp)
 .L_tl_process_close_all_done:
-    add $8, %rsp
+    add $40, %rsp
     ret
 ")
 

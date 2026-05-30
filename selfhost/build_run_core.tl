@@ -301,7 +301,8 @@
   [stdlib-roots : CompilerLoadRootList]
   [opt-level : i64]
   [manifest-dir : String]
-  [deps : CompilerPkgDepList]) : ResultSourceToolString
+  [deps : CompilerPkgDepList]
+  [emit-entry : bool]) : ResultSourceToolString
   (match (try-read-file source)
     [(ErrIoString error)
       (ErrSourceToolString
@@ -314,7 +315,8 @@
         stdlib-roots
         opt-level
         manifest-dir
-        deps)
+        deps
+        emit-entry)
         [(OkCompilerDriver asm)
           (OkSourceToolString (source-tool-augment-assembly asm))]
         [(ErrCompilerDriver diag)

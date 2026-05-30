@@ -11884,10 +11884,14 @@ tl_windows_sdk_registry_install:
 
 ;; Program entry section and global symbol. Linux links the bare `_start`;
 ;; Windows links `main` through the CRT. (The Windows entry body is #647.)
-(define (compiler-backend-target-entry-text [target : CompilerBackendTarget]) : String
-  (match target
-    [(BackendTargetLinux) ".text\n.globl _start\n"]
-    [(BackendTargetWindows) ".text\n.globl main\n"]))
+(define (compiler-backend-target-entry-text
+  [target : CompilerBackendTarget]
+  [emit-entry : bool]) : String
+  (if emit-entry
+    (match target
+      [(BackendTargetLinux) ".text\n.globl _start\n"]
+      [(BackendTargetWindows) ".text\n.globl main\n"])
+    ".text\n"))
 
 (define (compiler-backend-entry
   [capture-argv : bool]
@@ -12158,7 +12162,8 @@ tl_windows_sdk_registry_install:
   (compiler-backend-emit-program-target
     program
     target
-    (compiler-source-spans-empty)))
+    (compiler-source-spans-empty)
+    true))
 
 (define (compiler-backend-emit-program [program : CompilerIrProgram]) : ResultCompilerBackend
   (compiler-backend-emit-program-for-target program (BackendTargetLinux)))
@@ -12169,18 +12174,36 @@ tl_windows_sdk_registry_install:
 (define (compiler-backend-emit-program-with-spans
   [program : CompilerIrProgram]
   [spans : CompilerSourceSpans]) : ResultCompilerBackend
-  (compiler-backend-emit-program-target program (BackendTargetLinux) spans))
+  (compiler-backend-emit-program-target program (BackendTargetLinux) spans true))
+
+(define (compiler-backend-emit-program-with-spans-and-entry
+  [program : CompilerIrProgram]
+  [spans : CompilerSourceSpans]
+  [emit-entry : bool]) : ResultCompilerBackend
+  (compiler-backend-emit-program-target
+    program
+    (BackendTargetLinux)
+    spans
+    emit-entry))
 
 (define (compiler-backend-emit-program-with-spans-for-target
   [program : CompilerIrProgram]
   [spans : CompilerSourceSpans]
   [target : CompilerBackendTarget]) : ResultCompilerBackend
-  (compiler-backend-emit-program-target program target spans))
+  (compiler-backend-emit-program-target program target spans true))
+
+(define (compiler-backend-emit-program-with-spans-for-target-and-entry
+  [program : CompilerIrProgram]
+  [spans : CompilerSourceSpans]
+  [target : CompilerBackendTarget]
+  [emit-entry : bool]) : ResultCompilerBackend
+  (compiler-backend-emit-program-target program target spans emit-entry))
 
 (define (compiler-backend-emit-program-target
   [program : CompilerIrProgram]
   [target : CompilerBackendTarget]
-  [spans : CompilerSourceSpans]) : ResultCompilerBackend
+  [spans : CompilerSourceSpans]
+  [emit-entry : bool]) : ResultCompilerBackend
   (match (compiler-backend-runtime-plan program)
     [(OkBackendRuntimePlan plan)
       (if (compiler-backend-target-runtime-ok? target plan)
@@ -12228,15 +12251,19 @@ tl_windows_sdk_registry_install:
                                   (compiler-backend-runtime-externs-for-target
                                     target
                                     plan))
-                                (compiler-backend-target-entry-text target))
+                                (compiler-backend-target-entry-text
+                                  target
+                                  emit-entry))
                               functions-asm)
                             (compiler-backend-runtime-functions-for-target
                               target
                               plan))
-                          (compiler-backend-entry-for-target
-                            target
-                            plan
-                            globals))]
+                          (if emit-entry
+                            (compiler-backend-entry-for-target
+                              target
+                              plan
+                              globals)
+                            ""))]
                       (OkCompilerBackend (text-buf-render buf)))]
                   [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
               [(ErrCompilerBackend message) (ErrCompilerBackend message)])])

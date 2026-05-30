@@ -32,14 +32,35 @@
   [target : CompilerBackendTarget]
   [has-target : bool]
   [opt-level : i64]) : ResultCompilerDriver
+  (compiler-driver-emit-lowered-with-level-and-entry
+    input-path
+    program
+    spans
+    target
+    has-target
+    opt-level
+    true))
+
+(define (compiler-driver-emit-lowered-with-level-and-entry
+  [input-path : String]
+  [program : CompilerIrProgram]
+  [spans : CompilerSourceSpans]
+  [target : CompilerBackendTarget]
+  [has-target : bool]
+  [opt-level : i64]
+  [emit-entry : bool]) : ResultCompilerDriver
   (match (optimize-program-with-spans-and-level program spans opt-level)
     [(CompilerOptimizedProgram optimized optimized-spans)
       (match (if has-target
-        (compiler-backend-emit-program-with-spans-for-target
+        (compiler-backend-emit-program-with-spans-for-target-and-entry
           optimized
           optimized-spans
-          target)
-        (compiler-backend-emit-program-with-spans optimized optimized-spans))
+          target
+          emit-entry)
+        (compiler-backend-emit-program-with-spans-and-entry
+          optimized
+          optimized-spans
+          emit-entry))
         [(OkCompilerBackend asm) (OkCompilerDriver asm)]
         [(ErrCompilerBackend diag)
           (ErrCompilerDriver (compiler-diagnostic-with-path diag input-path))])]))
@@ -102,7 +123,8 @@
   [stdlib-roots : CompilerLoadRootList]
   [opt-level : i64]
   [manifest-dir : String]
-  [deps : CompilerPkgDepList]) : ResultCompilerDriver
+  [deps : CompilerPkgDepList]
+  [emit-entry : bool]) : ResultCompilerDriver
   (match (compiler-load-package-file-with-paths-and-roots
     input-path
     (sym-i64-empty)
@@ -115,13 +137,14 @@
         (AstProgram decls)
         paths)
         [(OkCompilerLower program spans)
-          (compiler-driver-emit-lowered-with-level
+          (compiler-driver-emit-lowered-with-level-and-entry
             input-path
             program
             spans
             target
             has-target
-            opt-level)]
+            opt-level
+            emit-entry)]
         [(ErrCompilerLower diag) (ErrCompilerDriver diag)])]
     [(ErrCompilerLoadWithPaths diag) (ErrCompilerDriver diag)]))
 

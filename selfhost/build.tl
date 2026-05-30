@@ -431,6 +431,11 @@
     [(CompilerPkgKindLib) true]
     [_ false]))
 
+(define (build-package-kind-entry? [kind : CompilerPkgKind]) : bool
+  (match kind
+    [(CompilerPkgKindBin) true]
+    [(CompilerPkgKindLib) false]))
+
 (define (build-package-dep-root [manifest-dir : String] [dep : CompilerPkgDep]) : String
   (compiler-load-normalize-path
     (compiler-load-join-root-path manifest-dir (struct-get dep path))))
@@ -627,7 +632,8 @@
                 stdlib-roots
                 opt-level
                 manifest-dir
-                (struct-get manifest deps))
+                (struct-get manifest deps)
+                (build-package-kind-entry? kind))
                 [(ErrSourceToolString message)
                   (begin
                     (print-error message)

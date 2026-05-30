@@ -3140,6 +3140,10 @@
       (lower-array-set ctx state env type-env arr index value)]
     [(AstExprArrayPush arr value)
       (lower-array-push ctx state env type-env arr value)]
+    [(AstExprTuple values)
+      (lower-tuple ctx state env type-env values expr-ty origin)]
+    [(AstExprTupleRef tuple-expr index)
+      (lower-tuple-ref ctx state env type-env tuple-expr index expr-ty)]
     [(AstExprWithRegion _ body) (lower-with-arena ctx state env type-env body)]
     [(AstExprWithResource bindings body)
       (lower-with-resource ctx state env type-env bindings body)]
@@ -3440,6 +3444,155 @@
       (match lowered
         [(LowerExpr box-state box-value _)
           (OkLowerExpr (lower-load-at-offset box-state box-value 0 result-ty))])]
+    [(ErrLowerExpr message) (ErrLowerExpr message)]))
+
+;; Locate the byte offset and resolved type of tuple element `target` within the
+;; element-type list, laying fields out exactly like a struct over those types
+;; (each field aligned to its own alignment). Mirrors `lower-field-info-from-list`
+;; but indexes by position rather than name.
+(define (lower-tuple-elem-info
+  [ctx : TcContext]
+  [types : AstTypeList]
+  [target : i64]
+  [index : i64]
+  [cursor : i64]) : ResultLowerFieldInfo
+  (match types
+    [(AstTypeNil)
+      (ErrLowerFieldInfo
+        (lower-diagnostic "lower: tuple-ref index out of range"))]
+    [(AstTypeCons ty rest)
+      (let
+        [resolved : AstType (tc-resolve-type ctx ty)]
+        [offset : i64 (lower-align-up cursor (lower-type-align ctx resolved))]
+        (if (= index target)
+          (OkLowerFieldInfo (LowerFieldInfo offset resolved))
+          (lower-tuple-elem-info
+            ctx
+            rest
+            target
+            (+ index 1)
+            (+ offset (lower-type-size ctx resolved)))))]))
+
+;; Evaluate each tuple element (preserving side effects even for zero-sized
+;; elements) and store the sized ones into the aggregate at their field offset,
+;; threading the lowering state. Mirrors the per-field store loop of `lower-box`
+;; generalized over the element-type list.
+(define (lower-tuple-store-elems
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [base : CompilerIrValue]
+  [values : AstExprList]
+  [types : AstTypeList]
+  [cursor : i64]) : ResultLowerState
+  (match values
+    [(AstExprNil) (OkLowerState state)]
+    [(AstExprCons value rest-values)
+      (match types
+        [(AstTypeNil)
+          (ErrLowerState (lower-diagnostic "lower: tuple arity mismatch"))]
+        [(AstTypeCons ty rest-types)
+          (let
+            [resolved : AstType (tc-resolve-type ctx ty)]
+            [offset : i64
+              (lower-align-up cursor (lower-type-align ctx resolved))]
+            [size : i64 (lower-type-size ctx resolved)]
+            (match (lower-expr ctx state env type-env value)
+              [(OkLowerExpr lowered)
+                (match lowered
+                  [(LowerExpr elem-state elem-value _)
+                    (lower-tuple-store-elems
+                      ctx
+                      (if (> size 0)
+                        (lower-store-at-offset
+                          elem-state
+                          base
+                          offset
+                          elem-value
+                          resolved)
+                        elem-state)
+                      env
+                      type-env
+                      base
+                      rest-values
+                      rest-types
+                      (+ offset size))])]
+              [(ErrLowerExpr message) (ErrLowerState message)]))])]))
+
+;; Lower `(tuple v0 v1 ...)`: reserve struct-shaped aggregate storage for the
+;; element types, store each element at its field offset, and return the storage
+;; pointer typed as the tuple. The tuple value is pointer-shaped (size 8), like a
+;; struct/box handle. Mirrors `src/lower.rs` `lower_tuple`.
+(define (lower-tuple
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [values : AstExprList]
+  [result-ty : AstType]
+  [origin : AstExpr]) : ResultLowerExpr
+  (match (tc-resolve-type ctx result-ty)
+    [(AstTyTuple elem-tys)
+      (match (lower-reserve-heap-storage
+        state
+        (lower-type-list-storage-size ctx elem-tys)
+        result-ty)
+        [(LowerExpr base-state base _)
+          (match (lower-tuple-store-elems
+            ctx
+            base-state
+            env
+            type-env
+            base
+            values
+            elem-tys
+            0)
+            [(OkLowerState final-state)
+              (OkLowerExpr (LowerExpr final-state base result-ty))]
+            [(ErrLowerState message) (ErrLowerExpr message)])])]
+    [_
+      (ErrLowerExpr
+        (lower-diagnostic-at-expr origin "lower: tuple requires tuple type"))]))
+
+;; Lower `(tuple-ref t i)`: evaluate the tuple, compute element `i`'s offset, and
+;; load it (returning the unit value for a zero-sized element, which was never
+;; stored). Mirrors `src/lower.rs` `lower_tuple_ref`.
+(define (lower-tuple-ref
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [tuple-expr : AstExpr]
+  [index : i64]
+  [result-ty : AstType]) : ResultLowerExpr
+  (match (lower-expr ctx state env type-env tuple-expr)
+    [(OkLowerExpr lowered)
+      (match lowered
+        [(LowerExpr tuple-state tuple-value tuple-ty)
+          (match (tc-resolve-type ctx tuple-ty)
+            [(AstTyTuple elem-tys)
+              (match (lower-tuple-elem-info ctx elem-tys index 0 0)
+                [(OkLowerFieldInfo info)
+                  (match info
+                    [(LowerFieldInfo offset elem-ty)
+                      (if (> (lower-type-size ctx elem-ty) 0)
+                        (match (lower-load-at-offset
+                          tuple-state
+                          tuple-value
+                          offset
+                          elem-ty)
+                          [(LowerExpr load-state load-value _)
+                            (OkLowerExpr
+                              (LowerExpr load-state load-value result-ty))])
+                        (OkLowerExpr
+                          (LowerExpr tuple-state IrValueUnit result-ty)))])]
+                [(ErrLowerFieldInfo message) (ErrLowerExpr message)])]
+            [_
+              (ErrLowerExpr
+                (lower-diagnostic-at-expr
+                  tuple-expr
+                  "lower: tuple-ref requires tuple"))])])]
     [(ErrLowerExpr message) (ErrLowerExpr message)]))
 
 (define (lower-string-ref-byte
@@ -8057,9 +8210,12 @@
 (define answer : i64 42)
 (define (main) : i64 answer)")
 
+;; A still-unsupported expression for the lower-error path: the `(array ...)`
+;; literal type-checks but the selfhost lowerer has no emission for it yet (tuple
+;; construction, the former example here, now lowers via #1583).
 (define (compiler-lower-unsupported-source) : String
-  "(define (main) : (Tuple i64 bool)
-  (tuple 1 true))")
+  "(define (main) : (Array i64 3)
+  (array 1 2 3))")
 
 (define (compiler-lower-box-source) : String
   "(define (main) : i64 (box-get (box 7)))")
@@ -8299,6 +8455,28 @@
   (Pair (Point x (+ x 1))))
 (define (main) : i64
   (get-y (make-point 20 22)))")
+
+;; Tuple construction + ref lowering (#1583): `(tuple true 42)` reserves
+;; struct-shaped aggregate storage and stores each element at its field offset;
+;; `(tuple-ref t 1)` gep+loads the indexed element. The whole computation lives
+;; in `main` so it is not pruned as unreachable.
+(define (compiler-lower-tuple-source) : String
+  "(define (main) : i64
+  (let
+    [t : (Tuple bool i64) (tuple true 42)]
+    (tuple-ref t 1)))")
+
+;; `main` must lower with both element stores (bool + i64 each written into the
+;; aggregate) and a load for the `tuple-ref`.
+(define (compiler-lower-tuple-shape-ok?) : bool
+  (match (lower-compiler-source (compiler-lower-tuple-source))
+    [(OkCompilerLower program _)
+      (match program
+        [(IrProgram _ functions _)
+          (and
+            (>= (lower-test-function-store-ptr-count functions "main") 2)
+            (>= (lower-test-function-load-count functions "main") 1))])]
+    [(ErrCompilerLower _) false]))
 
 (define (compiler-lower-comptime-decl-source) : String
   "(comptime-decl (defstruct Point (x i64) (y i64)))
@@ -10599,6 +10777,9 @@
         unit
         (set! ok false))
       (if (compiler-lower-ok? (compiler-lower-aggregate-source))
+        unit
+        (set! ok false))
+      (if (compiler-lower-tuple-shape-ok?)
         unit
         (set! ok false))
       (if (compiler-lower-ok? (compiler-lower-comptime-decl-source))

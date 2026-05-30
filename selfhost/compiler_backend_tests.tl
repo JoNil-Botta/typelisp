@@ -1475,6 +1475,35 @@
       (compiler-backend-string-contains? asm "call tl_oob_abort")]
     [(ErrCompilerBackend _) false]))
 
+;; Fixed-size array set/ref emit-shape coverage (#1416). The source takes the
+;; fixed array as a parameter because fixed-array literals still have separate
+;; lowerer coverage; this exercises backend emission for fixed-array indexing.
+(define (compiler-backend-fixed-array-source) : String
+  "(define (use-fixed [a : (Array i64 3)]) : i64
+  (begin
+    (array-set! a 0 42)
+    (array-ref a 0)))
+(define (main) : i64 0)")
+
+(define (compiler-backend-fixed-array-shape-ok?) : bool
+  (match (compiler-backend-emit-source (compiler-backend-fixed-array-source))
+    [(OkCompilerBackend asm)
+      (and
+        (backend-and8
+          (compiler-backend-string-contains? asm "_tl_use_fixed:\n")
+          (compiler-backend-string-contains? asm "    movq $3, %r11\n")
+          (compiler-backend-string-contains? asm "    cmpq %r11, %rax\n")
+          (compiler-backend-string-contains? asm "    call tl_oob_abort\n")
+          (compiler-backend-string-contains?
+            asm
+            "    leaq (%rax,%rbx,8), %rax\n")
+          (compiler-backend-string-contains? asm "    movq %rax, (%r10)\n")
+          (compiler-backend-string-contains? asm "    movq (%r10), %rax\n")
+          (compiler-backend-string-contains? asm "tl_oob_abort:\n"))
+        (not
+          (compiler-backend-string-contains? asm (compiler-backend-todo-marker))))]
+    [(ErrCompilerBackend _) false]))
+
 (define (compiler-backend-make-array-source) : String
   "(define (main) : i64
   (let
@@ -2306,20 +2335,20 @@
               (and
                 (compiler-backend-extern-metadata-symbol-ok?)
                 (and
-                  (compiler-backend-string-ref-shape-ok?)
-                  (and
-                    (and
-                      (compiler-backend-raw-pointer-fixture-shape-ok?)
-                      (compiler-backend-box-ok?))
-                    (backend-and8
-                      (compiler-backend-scalar-wide-ops-ok?)
-                      (compiler-backend-scalar-div-mod-ok?)
-                      (compiler-backend-narrow-scalar-instr-ok?)
-                      (compiler-backend-f64-abi-ok?)
-                      (compiler-backend-win64-f64-abi-ok?)
-                      (compiler-backend-aggregate-storage-shape-ok?)
-                      (compiler-backend-alloc-runtime-shape-ok?)
-                      (compiler-backend-windows-sdk-registry-runtime-ok?)))))))))))
+                  (backend-and4
+                    (compiler-backend-string-ref-shape-ok?)
+                    (compiler-backend-fixed-array-shape-ok?)
+                    (compiler-backend-raw-pointer-fixture-shape-ok?)
+                    (compiler-backend-box-ok?))
+                  (backend-and8
+                    (compiler-backend-scalar-wide-ops-ok?)
+                    (compiler-backend-scalar-div-mod-ok?)
+                    (compiler-backend-narrow-scalar-instr-ok?)
+                    (compiler-backend-f64-abi-ok?)
+                    (compiler-backend-win64-f64-abi-ok?)
+                    (compiler-backend-aggregate-storage-shape-ok?)
+                    (compiler-backend-alloc-runtime-shape-ok?)
+                    (compiler-backend-windows-sdk-registry-runtime-ok?))))))))))
     42
     (begin
       (panic "backend: smoke output mismatch")

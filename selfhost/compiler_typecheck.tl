@@ -394,6 +394,38 @@
 (defenum Right (Same))
 (define (main) : i64 0)")
 
+(define (compiler-typecheck-variant-function-collision-source) : String
+  "(defenum A (Foo))
+(define (Foo [x : i64]) : i64 x)")
+
+(define (compiler-typecheck-variant-define-collision-source) : String
+  "(defenum A (Foo))
+(define Foo : i64 42)")
+
+(define (compiler-typecheck-variant-extern-collision-source) : String
+  "(defenum A (Foo))
+(extern Foo : (-> i64 i64))")
+
+(define (compiler-typecheck-variant-struct-collision-source) : String
+  "(defenum A (Foo))
+(defstruct Foo (x i64))")
+
+(define (compiler-typecheck-struct-function-collision-source) : String
+  "(defstruct Point (x i64))
+(define (Point [x : i64]) : i64 x)")
+
+(define (compiler-typecheck-struct-define-collision-source) : String
+  "(defstruct Point (x i64))
+(define Point : i64 42)")
+
+(define (compiler-typecheck-struct-extern-collision-source) : String
+  "(defstruct Point (x i64))
+(extern Point : (-> i64 i64))")
+
+(define (compiler-typecheck-builtin-shadow-source) : String
+  "(define (string-length [n : i64]) : i64 n)
+(define (main) : i64 (string-length 7))")
+
 (define (compiler-typecheck-module-qualified-source) : String
   "(module left)
 (define same : i64 20)
@@ -2896,11 +2928,9 @@
 
 ;; --- declaration namespace / duplicate diagnostics (#1537) ------------------
 ;; Migrated from src/typechecker.rs namespace coverage. These flow through
-;; build-compiler-symbols / build-compiler-registries during typechecking, so
-;; the no-Rust typecheck smoke exercises them. Two Rust namespace cases are NOT
-;; yet detected by the selfhost symbol table -- enum variants colliding with
-;; functions/defines/struct constructors, and builtin shadowing -- so they are
-;; left to the focused implementation blocker rather than asserted here.
+;; build-compiler-symbols / build-compiler-registries during typechecking, so the
+;; no-Rust typecheck smoke exercises them. Builtin shadowing remains accepted to
+;; match the Rust reference behavior from #677.
 (define (compiler-typecheck-dup-function-source) : String
   "(define (foo [x : i64]) : i64 x)
 (define (foo [y : i64]) : i64 y)
@@ -2933,8 +2963,10 @@
 (define (main) : i64 (left/helper true))")
 
 ;; Returns true when duplicate function/value, define/function collision,
-;; duplicate struct and enum type names, duplicate externs, and a cross-module
+;; duplicate struct and enum type names, duplicate externs, enum variants and
+;; struct constructors colliding with value declarations, and a cross-module
 ;; wrong-argument-type call are all rejected with the expected diagnostics.
+;; Builtin shadowing is asserted as accepted.
 (define (compiler-typecheck-namespace-tests-ok?) : bool
   (and
     (compiler-typecheck-error-ok?
@@ -2956,9 +2988,40 @@
             (compiler-typecheck-error-ok?
               (compiler-typecheck-dup-extern-source)
               "symbols: duplicate value declaration f")
-            (compiler-typecheck-error-ok?
-              (compiler-typecheck-cross-module-mismatch-source)
-              "typecheck: argument type mismatch")))))))
+            (and
+              (compiler-typecheck-error-ok?
+                (compiler-typecheck-variant-function-collision-source)
+                "symbols: duplicate value declaration Foo")
+              (and
+                (compiler-typecheck-error-ok?
+                  (compiler-typecheck-variant-define-collision-source)
+                  "symbols: duplicate value declaration Foo")
+                (and
+                  (compiler-typecheck-error-ok?
+                    (compiler-typecheck-variant-extern-collision-source)
+                    "symbols: duplicate value declaration Foo")
+                  (and
+                    (compiler-typecheck-error-ok?
+                      (compiler-typecheck-variant-struct-collision-source)
+                      "symbols: duplicate value declaration Foo")
+                    (and
+                      (compiler-typecheck-error-ok?
+                        (compiler-typecheck-struct-function-collision-source)
+                        "symbols: duplicate value declaration Point")
+                      (and
+                        (compiler-typecheck-error-ok?
+                          (compiler-typecheck-struct-define-collision-source)
+                          "symbols: duplicate value declaration Point")
+                        (and
+                          (compiler-typecheck-error-ok?
+                            (compiler-typecheck-struct-extern-collision-source)
+                            "symbols: duplicate value declaration Point")
+                          (and
+                            (compiler-typecheck-ok?
+                              (compiler-typecheck-builtin-shadow-source))
+                            (compiler-typecheck-error-ok?
+                              (compiler-typecheck-cross-module-mismatch-source)
+                              "typecheck: argument type mismatch")))))))))))))))
 
 (define (compiler-typecheck-self-test-diagnostics) : unit
   (begin

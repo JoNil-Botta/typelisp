@@ -1264,7 +1264,10 @@
       (doc-test-run-command-captured
         "linker"
         target
-        (source-tool-linker-command obj-path bin-path))]
+        (source-tool-linker-command
+          obj-path
+          bin-path
+          (source-tool-link-inputs-empty)))]
     [(SourceToolCommandErr message) (SourceToolCommandErr message)]))
 
 (define (doc-test-emit-runnable-assembly

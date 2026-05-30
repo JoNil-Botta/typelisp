@@ -731,7 +731,8 @@
                       target
                       asm-path
                       obj-path
-                      bin-path)
+                      bin-path
+                      (source-tool-link-inputs-empty))
                       [(SourceToolCommandErr message)
                         (begin
                           (print-error message)

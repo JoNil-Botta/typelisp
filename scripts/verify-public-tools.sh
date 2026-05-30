@@ -814,6 +814,7 @@ if [ "$HOST_OS" = linux ]; then
     mkdir -p "$SELFHOST_PLANNER_DIR/with space" "$SELFHOST_PLANNER_DIR/stdlib one"
     command -v as >/dev/null 2>&1 || fail "missing assembler: as"
     command -v ld >/dev/null 2>&1 || fail "missing linker: ld"
+    command -v ar >/dev/null 2>&1 || fail "missing archiver: ar"
     build_linux_cli_tool selfhost-build-tool selfhost/build.tl "$SELFHOST_PLANNER_DIR/build-tool"
     build_linux_cli_tool selfhost-run-tool selfhost/run.tl "$SELFHOST_PLANNER_DIR/run-tool"
 
@@ -829,6 +830,59 @@ EOF
     [ -f "$PLANNER_OUTPUT" ] || fail "selfhost build tool did not write executable"
     run_cmd selfhost-build-tool-output "$PLANNER_OUTPUT"
     assert_code 23
+    assert_stderr_empty
+
+    LINK_LIB_DIR="$SELFHOST_PLANNER_DIR/native-lib"
+    mkdir -p "$LINK_LIB_DIR"
+    cat > "$LINK_LIB_DIR/ffi_add7.s" <<'EOF'
+    .globl ffi_add7
+ffi_add7:
+    movq %rdi, %rax
+    addq $7, %rax
+    ret
+EOF
+    run_cmd link-lib-assemble as "$LINK_LIB_DIR/ffi_add7.s" -o "$LINK_LIB_DIR/ffi_add7.o"
+    assert_success
+    assert_stdout_empty
+    assert_stderr_empty
+    run_cmd link-lib-archive ar rcs "$LINK_LIB_DIR/libffi_add7.a" "$LINK_LIB_DIR/ffi_add7.o"
+    assert_success
+    assert_stdout_empty
+    assert_stderr_empty
+
+    LINK_SOURCE="$SELFHOST_PLANNER_DIR/with space/link file.tl"
+    LINK_OUTPUT="$SELFHOST_PLANNER_DIR/with space/link program"
+    cat > "$LINK_SOURCE" <<'EOF'
+(extern ffi_add7 : (-> i64 i64))
+(define (main) : i64 (ffi_add7 35))
+EOF
+    run_cmd public-compile-link-flags "$COMPILER" compile "$LINK_SOURCE" -o "$SELFHOST_PLANNER_DIR/link.s" --link-search "$LINK_LIB_DIR" --link-lib ffi_add7 --link-arg ignored
+    assert_success
+    assert_stderr_empty
+    assert_contains "$out" "Generated: $SELFHOST_PLANNER_DIR/link.s"
+    run_cmd selfhost-build-tool-link-lib "$SELFHOST_PLANNER_DIR/build-tool" --direct "$LINK_SOURCE" -o "$LINK_OUTPUT" --target linux-x86_64 --backend-mode scalar --link-search "$LINK_LIB_DIR" --link-lib ffi_add7
+    assert_success
+    assert_stderr_empty
+    assert_contains "$out" "Generated: $LINK_OUTPUT"
+    run_cmd selfhost-build-tool-link-output "$LINK_OUTPUT"
+    assert_code 42
+    assert_stderr_empty
+    run_cmd selfhost-run-tool-link-lib "$SELFHOST_PLANNER_DIR/run-tool" --direct "$LINK_SOURCE" --target linux-x86_64 --backend-mode scalar --link-search "$LINK_LIB_DIR" --link-lib ffi_add7
+    assert_code 42
+    assert_stdout_empty
+    assert_stderr_empty
+
+    PUBLIC_LINK_OUTPUT="$SELFHOST_PLANNER_DIR/with space/public link program"
+    run_cmd public-build-link-lib "$COMPILER" build "$LINK_SOURCE" -o "$PUBLIC_LINK_OUTPUT" --target linux-x86_64 --link-search "$LINK_LIB_DIR" --link-lib ffi_add7
+    assert_success
+    assert_stderr_empty
+    assert_contains "$out" "Generated: $PUBLIC_LINK_OUTPUT"
+    run_cmd public-build-link-output "$PUBLIC_LINK_OUTPUT"
+    assert_code 42
+    assert_stderr_empty
+    run_cmd public-run-link-lib "$COMPILER" run "$LINK_SOURCE" --target linux-x86_64 --link-search "$LINK_LIB_DIR" --link-lib ffi_add7
+    assert_code 42
+    assert_stdout_empty
     assert_stderr_empty
 
     run_cmd selfhost-build-tool-avx2-rejected "$SELFHOST_PLANNER_DIR/build-tool" --direct "$PLANNER_SOURCE" -o "$SELFHOST_PLANNER_DIR/with space/avx2 program" --target linux-x86_64 --backend-mode avx2

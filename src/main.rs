@@ -200,6 +200,11 @@ fn print_usage() {
     eprintln!();
     eprintln!("    --emit-ir                      Emit intermediate representation");
     eprintln!(
+        "    --link-lib <name>              Link a named native library for source build/run"
+    );
+    eprintln!("    --link-search <dir>            Add a native linker library search directory");
+    eprintln!("    --link-arg <arg>               Pass a raw native linker argument");
+    eprintln!(
         "    --backend-mode <mode>          scalar, avx2, or avx512; avx2/avx512 support simple foreach maps"
     );
     eprintln!("    --target <target>              linux-x86_64 or windows-x86_64");
@@ -484,7 +489,6 @@ fn host_plan_driver_args(args: &[String]) -> Vec<String> {
     runtime_args
 }
 
-#[cfg(target_os = "linux")]
 fn direct_driver_args(args: &[String]) -> Vec<String> {
     let mut runtime_args = vec!["--direct".to_string()];
     runtime_args.extend_from_slice(args);
@@ -543,7 +547,6 @@ fn execute_selfhost_host_action_driver(
     native_or_exit(host_action::execute_plan(&plan))
 }
 
-#[cfg(target_os = "linux")]
 fn execute_selfhost_tool_driver_and_exit(
     driver_relative: &str,
     args: &[String],
@@ -1124,13 +1127,25 @@ fn build_args_have_manifest_path(args: &[String], start: usize) -> bool {
 fn build_args_have_source_file(args: &[String], mut i: usize) -> bool {
     while i < args.len() {
         match args[i].as_str() {
-            "-o" | "--target" | "--backend-mode" | "--stdlib-root" | "--opt-level" => {
-                i += 2;
-            }
+            "-o" | "--target" | "--backend-mode" | "--stdlib-root" | "--opt-level"
+            | "--link-lib" | "--link-search" | "--link-arg" => i += 2,
             flag if flag.starts_with('-') => {
                 i += 1;
             }
             _ => return true,
+        }
+    }
+    false
+}
+
+#[cfg(not(target_os = "linux"))]
+fn args_have_link_inputs(args: &[String], start: usize) -> bool {
+    for arg in &args[start..] {
+        if arg == "--" {
+            return false;
+        }
+        if matches!(arg.as_str(), "--link-lib" | "--link-search" | "--link-arg") {
+            return true;
         }
     }
     false
@@ -1327,6 +1342,14 @@ fn run_cli() {
                     }
                     target = parse_backend_target(&args[i + 1]).with_mode(target.mode);
                     i += 2;
+                } else if matches!(
+                    args[i].as_str(),
+                    "--link-lib" | "--link-search" | "--link-arg"
+                ) {
+                    if i + 1 >= args.len() {
+                        missing_option_value(&args[i]);
+                    }
+                    i += 2;
                 } else {
                     eprintln!("Warning: unknown flag: {}", args[i]);
                     i += 1;
@@ -1357,12 +1380,20 @@ fn run_cli() {
                 }
                 #[cfg(not(target_os = "linux"))]
                 {
-                    let outcome = execute_selfhost_host_action_driver(
-                        "selfhost/build.tl",
-                        &args[2..],
-                        "build",
-                    );
-                    finish_host_action_outcome(outcome);
+                    if args_have_link_inputs(&args, 2) {
+                        execute_selfhost_tool_driver_and_exit(
+                            "selfhost/build.tl",
+                            &args[2..],
+                            "build",
+                        );
+                    } else {
+                        let outcome = execute_selfhost_host_action_driver(
+                            "selfhost/build.tl",
+                            &args[2..],
+                            "build",
+                        );
+                        finish_host_action_outcome(outcome);
+                    }
                 }
             } else {
                 match parse_build_options(&args, 2) {
@@ -1444,9 +1475,13 @@ fn run_cli() {
             }
             #[cfg(not(target_os = "linux"))]
             {
-                let outcome =
-                    execute_selfhost_host_action_driver("selfhost/run.tl", &args[2..], "run");
-                finish_host_action_outcome(outcome);
+                if args_have_link_inputs(&args, 2) {
+                    execute_selfhost_tool_driver_and_exit("selfhost/run.tl", &args[2..], "run");
+                } else {
+                    let outcome =
+                        execute_selfhost_host_action_driver("selfhost/run.tl", &args[2..], "run");
+                    finish_host_action_outcome(outcome);
+                }
             }
         }
         cmd @ ("new" | "init") => {

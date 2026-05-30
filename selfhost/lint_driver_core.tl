@@ -157,6 +157,44 @@
         start
         source-len))))
 
+;; True when line `line` (1-based) of `source` contains a `lint-allow: <rule-id>`
+;; directive (as in `;; lint-allow: nested-if-ladder`). Scans the single line and
+;; stops at its newline; `and`/`or` are not short-circuiting, so the `string-ref`
+;; is guarded by the loop's `stop` flag rather than the bounds test.
+(define (selfhost-lint-line-allows?
+  [source : String]
+  [line : i64]
+  [rule-id : String]) : bool
+  (let
+    [needle : String (string-append "lint-allow: " rule-id)]
+    [source-len : i64 (string-length source)]
+    [line-start : i64 (selfhost-lint-line-start-index source line)]
+    [found : bool false]
+    [idx : i64 line-start]
+    [stop : bool false]
+    (begin
+      (while (and (< idx source-len) (not stop))
+        (if (= (string-ref source idx) #\newline')
+          (set! stop true)
+          (if (selfhost-lint-prefix-at? source idx needle)
+            (begin
+              (set! found true)
+              (set! stop true))
+            (set! idx (+ idx 1)))))
+      found)))
+
+;; A finding is suppressed when the line immediately above its flagged form
+;; carries `;; lint-allow: <its-rule-id>`. Findings on line 1 have no line above
+;; and cannot be suppressed this way.
+(define (selfhost-lint-suppressed? [source : String] [finding : LintFinding]) : bool
+  (let
+    [span : AstSourceSpan (struct-get finding span)]
+    [line : i64 (struct-get span start-line)]
+    [rule-id : String (struct-get finding rule-id)]
+    (if (<= line 1)
+      false
+      (selfhost-lint-line-allows? source (- line 1) rule-id))))
+
 (define (selfhost-lint-cond-origin? [source : String] [span : AstSourceSpan]) : bool
   (let
     [line : i64 (struct-get span start-line)]
@@ -179,7 +217,9 @@
       (let
         [filtered-rest : LintFindingList
           (selfhost-lint-filter-cond-origins source rest)]
-        (if (selfhost-lint-cond-origin? source (struct-get finding span))
+        (if (or
+          (selfhost-lint-cond-origin? source (struct-get finding span))
+          (selfhost-lint-suppressed? source finding))
           filtered-rest
           (LintFindingCons finding filtered-rest)))]))
 
@@ -258,27 +298,91 @@
             50
             0))))))")
 
-;; The reported ladder finding has depth 5 and a real source line.
-(define (selfhost-lint-driver-finding-ok? [findings : LintFindingList]) : bool
+;; Same ladder, but with a `;; lint-allow: nested-if-ladder` directive on the
+;; line immediately above the flagged `if` - the finding must be suppressed.
+(define (selfhost-lint-suppressed-ladder-source) : String
+  "(define (classify [x : i64]) : i64
+  ;; lint-allow: nested-if-ladder
+  (if (= x 0)
+    10
+    (if (= x 1)
+      20
+      (if (= x 2)
+        30
+        0))))")
+
+;; A directive for a different rule id must not suppress this rule.
+(define (selfhost-lint-wrong-allow-ladder-source) : String
+  "(define (classify [x : i64]) : i64
+  ;; lint-allow: other-rule
+  (if (= x 0)
+    10
+    (if (= x 1)
+      20
+      (if (= x 2)
+        30
+        0))))")
+
+;; A clean source with no nested-`if` ladder - zero findings.
+(define (selfhost-lint-clean-source) : String
+  "(define (inc [x : i64]) : i64 (+ x 1))")
+
+;; Number of findings reported for `source` (after cond-origin + suppression
+;; filtering), via the public source-lint path.
+(define (selfhost-lint-source-finding-count [source : String]) : i64
+  (lint-finding-list-count
+    (selfhost-lint-source-with-roots
+      "lint_driver_self_test.tl"
+      source
+      CompilerLoadRootNil)))
+
+;; The reported ladder finding has depth 5, a stable rule id, and a real source
+;; line.
+(define (selfhost-lint-reported-finding-ok? [findings : LintFindingList]) : bool
   (match findings
     [(LintFindingCons finding _)
       (let
         [fspan : AstSourceSpan (struct-get finding span)]
         (and
           (= (struct-get finding depth) 5)
-          (> (struct-get fspan start-line) 0)))]
+          (and
+            (> (struct-get fspan start-line) 0)
+            (string-eq
+              (struct-get finding rule-id)
+              (lint-rule-nested-if-ladder-id)))))]
     [(LintFindingNil) false]))
 
 (define (compiler-lint-driver-self-test) : i64
   (let
-    [findings : LintFindingList
+    [reported : LintFindingList
       (selfhost-lint-source-with-roots
         "lint_driver_self_test.tl"
         (selfhost-lint-ladder-source)
         CompilerLoadRootNil)]
     (cond
-      [(not (= (lint-finding-list-count findings) 1)) 4]
-      [(not (selfhost-lint-driver-finding-ok? findings)) 5]
+      ;; one reported finding, carrying the rule id / depth / span
+      [(not (= (lint-finding-list-count reported) 1)) 1]
+      [(not (selfhost-lint-reported-finding-ok? reported)) 2]
+      ;; one suppressed finding (`;; lint-allow: nested-if-ladder`) -> none reported
+      [(not
+          (=
+            (selfhost-lint-source-finding-count
+              (selfhost-lint-suppressed-ladder-source))
+            0))
+        3]
+      ;; a directive for a different rule id does not suppress this rule
+      [(not
+          (=
+            (selfhost-lint-source-finding-count
+              (selfhost-lint-wrong-allow-ladder-source))
+            1))
+        4]
+      ;; one clean file -> none reported
+      [(not
+          (=
+            (selfhost-lint-source-finding-count (selfhost-lint-clean-source))
+            0))
+        5]
       ;; enforcing (`--check`) mode exits 1 when findings remain, 0 when clean
       [(not (= (selfhost-lint-enforce-exit true 1) 1)) 6]
       [(not (= (selfhost-lint-enforce-exit true 0) 0)) 7]

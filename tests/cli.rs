@@ -1952,9 +1952,13 @@ fn selfhost_compile_cli_driver_writes_assembly_and_reports_errors() {
 
     let lower_source = dir.join("lower.tl");
     let lower_asm = dir.join("lower.s");
+    // An `(array ...)` literal type-checks but the selfhost lowerer has no
+    // emission for it yet, so the driver fails with `lower: unsupported
+    // expression` at the literal. (Tuples — the former example here — now lower
+    // via #1583.)
     fs::write(
         &lower_source,
-        "(define (main) : (Tuple i64 bool)\n  (tuple 1 true))\n",
+        "(define (main) : (Array i64 3)\n  (array 1 2 3))\n",
     )
     .expect("write lowerer-error source");
     let lower_source_arg = lower_source

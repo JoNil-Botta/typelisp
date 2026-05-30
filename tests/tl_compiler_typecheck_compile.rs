@@ -277,7 +277,8 @@ fn selfhost_check_tl_compiles_to_assembly() {
     );
 
     for sym in [
-        "_tl_selfhost_check_config:",
+        "_tl_selfhost_check_config_from:",
+        "_tl_selfhost_check_run_from:",
         "_tl_selfhost_check_parse_options:",
         "_tl_selfhost_check_file:",
         "_tl_compiler_check_file_with_roots:",

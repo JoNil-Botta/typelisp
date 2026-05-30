@@ -143,7 +143,8 @@ contains|.L_tl_fs_mkdir_status:
 end
 
 case|selfhost_check|selfhost/check.tl|assembly|exactly-one|direct
-contains|_tl_selfhost_check_config:
+contains|_tl_selfhost_check_config_from:
+contains|_tl_selfhost_check_run_from:
 contains|_tl_selfhost_check_file:
 contains|_tl_compiler_check_file_with_roots:
 contains|_tl_compiler_load_file_with_path

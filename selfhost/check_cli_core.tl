@@ -62,9 +62,6 @@
           input-path
           CompilerLoadRootNil)))))
 
-(define (selfhost-check-config [count : i64]) : ResultSelfhostCheckConfig
-  (selfhost-check-config-from 1 count))
-
 (define (selfhost-check-file
   [input-path : String]
   [stdlib-roots : CompilerLoadRootList]) : i64

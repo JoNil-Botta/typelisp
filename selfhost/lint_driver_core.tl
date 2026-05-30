@@ -81,9 +81,6 @@
           CompilerLoadRootNil
           false)))))
 
-(define (selfhost-lint-config [count : i64]) : ResultSelfhostLintConfig
-  (selfhost-lint-config-from 1 count))
-
 ;; Render one finding as `path:line:col: message` (line/col from the flagged
 ;; node's source span; 0:0 only for synthesized nodes that carry no location).
 (define (selfhost-lint-render-finding [path : String] [finding : LintFinding]) : String

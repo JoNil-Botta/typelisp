@@ -204,9 +204,6 @@
     (compiler-optimize-default-level)
     TestModeRun))
 
-(define (tltest-config [count : i64]) : ResultTestConfig
-  (tltest-config-from 1 count))
-
 (define (tltest-decl-list-reverse-in [items : AstDeclList] [out : AstDeclList]) : AstDeclList
   (match items
     [(AstDeclNil) out]

@@ -1,9 +1,11 @@
-;; test.tl - Selfhost inline test runner planner (#940).
+;; test.tl - Selfhost inline test runner (#940).
 ;;
 ;; Discovers `(test name body...)` declarations through the selfhost loader,
 ;; lowers them into private unit-returning functions plus a generated `main`,
-;; and emits a private host-action plan whose assembly is assembled/linked/run
-;; by the Rust host boundary. Normal compile paths ignore `AstDeclTest`.
+;; then assembles, links, and runs that generated harness directly. Normal
+;; compile paths ignore `AstDeclTest`.
+(import "build_run_core.tl")
+
 (import "compiler_backend.tl")
 
 (import "compiler_load.tl")
@@ -11,8 +13,6 @@
 (import "compiler_optimize.tl")
 
 (import "compiler_typecheck.tl")
-
-(import "host_plan.tl")
 
 (defenum TestMode
   (TestModeRun)
@@ -45,16 +45,29 @@
   (CompilerLoadRootCons root roots))
 
 (define (tltest-unknown-target [value : String]) : String
-  (host-plan-cat3 "test: unknown target " value ""))
+  (source-tool-cat3 "test: unknown target " value ""))
 
 (define (tltest-unknown-mode [value : String]) : String
-  (host-plan-cat3 "test: unknown backend mode " value ""))
+  (source-tool-cat3 "test: unknown backend mode " value ""))
 
 (define (tltest-unsupported-mode [value : String]) : String
-  (host-plan-cat3 "test: backend mode " value " is not implemented"))
+  (source-tool-cat3 "test: backend mode " value " is not implemented"))
 
 (define (tltest-invalid-opt-level [value : String]) : String
-  (host-plan-cat3 "test: invalid --opt-level " value "; expected 0, 1, 2, or 3"))
+  (source-tool-cat3
+    "test: invalid --opt-level "
+    value
+    "; expected 0, 1, 2, or 3"))
+
+(define (tltest-target-valid? [value : String]) : bool
+  (match (source-tool-target value)
+    [(OkSourceToolTarget _) true]
+    [(ErrSourceToolTarget _) false]))
+
+(define (tltest-backend-mode-valid? [value : String]) : bool
+  (or
+    (string-eq value "scalar")
+    (or (string-eq value "avx2") (string-eq value "avx512"))))
 
 (define (tltest-parse-options
   [idx : i64]
@@ -91,7 +104,7 @@
             (ErrTestConfig "test: --target requires a value")
             (let
               [value : String (arg (+ idx 1))]
-              (if (host-plan-target-valid? value)
+              (if (tltest-target-valid? value)
                 (tltest-parse-options
                   (+ idx 2)
                   count
@@ -109,7 +122,7 @@
             (ErrTestConfig "test: --backend-mode requires a value")
             (let
               [value : String (arg (+ idx 1))]
-              (if (host-plan-backend-mode-valid? value)
+              (if (tltest-backend-mode-valid? value)
                 (if (string-eq value "scalar")
                   (tltest-parse-options
                     (+ idx 2)
@@ -160,7 +173,7 @@
                       test-mode)]
                   [(ErrCompilerOptimizeLevel)
                     (ErrTestConfig (tltest-invalid-opt-level value))]))))]
-        [(host-plan-flag? current)
+        [(source-tool-flag? current)
           (ErrTestConfig (string-append "test: unknown flag " current))]
         [has-source (ErrTestConfig "test: accepts only one source file")]
         [else
@@ -641,27 +654,6 @@
                   (AstDeclPathCons source AstDeclPathNil)))
               count)]))]))
 
-(define (tltest-backend-target [target : String]) : CompilerBackendTarget
-  (if (or
-    (string-eq target "windows-x86_64")
-    (string-eq target "windows_x86_64"))
-    (BackendTargetWindows)
-    (BackendTargetLinux)))
-
-(define (tltest-scratch-asm-path [source : String]) : String
-  (string-append source ".test.s"))
-
-(define (tltest-plan [asm-path : String] [target : String] [mode : String]) : String
-  (string-append
-    (host-plan-header)
-    (string-append
-      (host-plan-word-line "action" "run-scratch-assembly")
-      (string-append
-        (host-plan-netline "scratch-assembly-path" asm-path)
-        (string-append
-          (host-plan-word-line "target" target)
-          (string-append (host-plan-word-line "backend-mode" mode) "end\n"))))))
-
 (define (tltest-check-only
   [program : AstProgram]
   [paths : AstDeclPathList]
@@ -679,36 +671,160 @@
         (print-error (compiler-diagnostic-render diag))
         1)]))
 
-(define (tltest-run-plan
+(define (tltest-stderr-ends-with-newline? [text : String]) : bool
+  (let
+    [n : i64 (string-length text)]
+    (if (= n 0)
+      true
+      (let
+        [last : char (string-ref text (- n 1))]
+        (or (= last #\newline') (= last #\return'))))))
+
+(define (tltest-report-child-status [output : ProcessOutput]) : unit
+  (begin
+    (if (tltest-stderr-ends-with-newline? (process-output-stderr output))
+      unit
+      (print-error "\n"))
+    (print-error
+      (string-append
+        "typelisp test: test executable exited with exit status: "
+        (string-append (int->string (process-output-status output)) "\n")))))
+
+(define (tltest-run-harness-in-temp
+  [source : String]
+  [program : AstProgram]
+  [paths : AstDeclPathList]
+  [target : CompilerBackendTarget]
+  [opt-level : i64]
+  [temp-dir : String]) : i64
+  (let
+    [asm-path : String (source-tool-asm-path temp-dir source)]
+    [obj-path : String (source-tool-obj-path temp-dir source target)]
+    [bin-path : String (source-tool-temp-bin-path temp-dir source target)]
+    (match (lower-compiler-program-with-decl-paths source program paths)
+      [(OkCompilerLower ir spans)
+        (match (optimize-program-with-spans-and-level ir spans opt-level)
+          [(CompilerOptimizedProgram optimized optimized-spans)
+            (match (compiler-backend-emit-program-with-spans-for-target
+              optimized
+              optimized-spans
+              target)
+              [(OkCompilerBackend asm)
+                (match (source-tool-write-file
+                  asm-path
+                  asm
+                  "test: failed to write assembly artifact")
+                  [(SourceToolCommandErr message)
+                    (begin
+                      (print-error message)
+                      (source-tool-clean-temp
+                        temp-dir
+                        asm-path
+                        obj-path
+                        bin-path
+                        true)
+                      1)]
+                  [(SourceToolCommandOk)
+                    (match (source-tool-assemble-and-link
+                      target
+                      asm-path
+                      obj-path
+                      bin-path)
+                      [(SourceToolCommandErr message)
+                        (begin
+                          (print-error message)
+                          (source-tool-clean-temp
+                            temp-dir
+                            asm-path
+                            obj-path
+                            bin-path
+                            true)
+                          1)]
+                      [(SourceToolCommandOk)
+                        (match (source-tool-run-executable
+                          bin-path
+                          (process-args-empty))
+                          [(OkProcessOutput output)
+                            (let
+                              [status : i64 (process-output-status output)]
+                              (begin
+                                (source-tool-forward-output output)
+                                (if (= status 0)
+                                  unit
+                                  (tltest-report-child-status output))
+                                (source-tool-clean-temp
+                                  temp-dir
+                                  asm-path
+                                  obj-path
+                                  bin-path
+                                  true)
+                                status))]
+                          [(ErrProcessOutput error)
+                            (begin
+                              (print-error
+                                (string-append
+                                  (string-append
+                                    "Error: failed to run test executable '"
+                                    bin-path)
+                                  (string-append
+                                    "': "
+                                    (process-error-message error))))
+                              (source-tool-clean-temp
+                                temp-dir
+                                asm-path
+                                obj-path
+                                bin-path
+                                true)
+                              1)])])])]
+              [(ErrCompilerBackend diag)
+                (begin
+                  (print-error (compiler-diagnostic-render diag))
+                  (source-tool-clean-temp
+                    temp-dir
+                    asm-path
+                    obj-path
+                    bin-path
+                    true)
+                  1)])])]
+      [(ErrCompilerLower diag)
+        (begin
+          (print-error (compiler-diagnostic-render diag))
+          (source-tool-clean-temp temp-dir asm-path obj-path bin-path true)
+          1)])))
+
+(define (tltest-run-direct
   [source : String]
   [program : AstProgram]
   [paths : AstDeclPathList]
   [target : String]
-  [mode : String]
   [opt-level : i64]) : i64
-  (match (lower-compiler-program-with-decl-paths source program paths)
-    [(OkCompilerLower ir spans)
-      (match (optimize-program-with-spans-and-level ir spans opt-level)
-        [(CompilerOptimizedProgram optimized optimized-spans)
-          (match (compiler-backend-emit-program-with-spans-for-target
-            optimized
-            optimized-spans
-            (tltest-backend-target target))
-            [(OkCompilerBackend asm)
-              (let
-                [asm-path : String (tltest-scratch-asm-path source)]
-                (begin
-                  (write-file asm-path asm)
-                  (print-string (tltest-plan asm-path target mode))
-                  0))]
-            [(ErrCompilerBackend diag)
-              (begin
-                (print-error (compiler-diagnostic-render diag))
-                1)])])]
-    [(ErrCompilerLower diag)
+  (match (source-tool-target target)
+    [(ErrSourceToolTarget _)
       (begin
-        (print-error (compiler-diagnostic-render diag))
-        1)]))
+        (print-error (tltest-unknown-target target))
+        1)]
+    [(OkSourceToolTarget backend-target)
+      (match backend-target
+        [(BackendTargetWindows)
+          (begin
+            (print-error
+              "test: direct inline harness execution is unsupported on windows-x86_64")
+            1)]
+        [(BackendTargetLinux)
+          (match (source-tool-create-temp-dir "typelisp-test")
+            [(OkSourceToolString temp-dir)
+              (tltest-run-harness-in-temp
+                source
+                program
+                paths
+                backend-target
+                opt-level
+                temp-dir)]
+            [(ErrSourceToolString message)
+              (begin
+                (print-error
+                  (string-append "test: failed to create temp dir: " message))
+                1)])])]))
 
 (define (tltest-no-tests-check [decls : AstDeclList] [paths : AstDeclPathList]) : i64
   (match (typecheck-compiler-program-with-paths (AstProgram decls) paths)
@@ -729,14 +845,12 @@
   :
   i64
   ;; With no inline tests there is no source harness to validate here. `test
-  ;; --check` owns source typechecking; run mode only needs the zero-test runner
-  ;; plan so the Rust host-action boundary can keep its normal contract.
-  (tltest-run-plan
+  ;; --check` owns source typechecking; run mode only needs the zero-test runner.
+  (tltest-run-direct
     source
     (AstProgram (AstDeclCons (tltest-main-decl InlineTestNil 0) AstDeclNil))
     (AstDeclPathCons source AstDeclPathNil)
     target
-    mode
     opt-level))
 
 (define (tltest-run-config [config : TestConfig]) : i64
@@ -758,12 +872,11 @@
                   [(TestModeCheck)
                     (tltest-check-only program harness-paths count)]
                   [(TestModeRun)
-                    (tltest-run-plan
+                    (tltest-run-direct
                       source
                       program
                       harness-paths
                       target
-                      mode
                       opt-level)]))])]
         [(ErrCompilerLoadWithPaths diag)
           (begin

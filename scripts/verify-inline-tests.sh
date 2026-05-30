@@ -96,6 +96,7 @@ fi
 file_count=0
 test_count=0
 skipped=0
+run_skipped=0
 while IFS= read -r source; do
     [ -n "$source" ] || continue
     file_count=$((file_count + 1))
@@ -137,6 +138,13 @@ while IFS= read -r source; do
         exit 1
     fi
 
+    if [ "$HOST_OS" = windows ]; then
+        echo "[inline-tests] SKIP run $source ($case_tests test(s); direct inline harness execution unsupported on Windows)"
+        run_skipped=$((run_skipped + 1))
+        test_count=$((test_count + case_tests))
+        continue
+    fi
+
     echo "[inline-tests] run $source ($case_tests test(s))"
     if run_with_retry "$run_stdout" "$run_stderr" \
         "${VERIFY_INLINE_TESTS_ATTEMPTS:-6}" \
@@ -168,5 +176,12 @@ done < "$DISCOVERED"
 if [ "$skipped" -gt 0 ]; then
     echo "inline test verification: $skipped file(s) skipped (staged primitive awaiting no-Rust compiler support)"
 fi
+if [ "$run_skipped" -gt 0 ]; then
+    echo "inline test verification: run phase skipped for $run_skipped file(s) on Windows"
+fi
 
-echo "inline test verification passed for $test_count test(s) in $file_count file(s)"
+if [ "$HOST_OS" = windows ]; then
+    echo "inline test verification passed check-only for $test_count test(s) in $file_count file(s)"
+else
+    echo "inline test verification passed for $test_count test(s) in $file_count file(s)"
+fi

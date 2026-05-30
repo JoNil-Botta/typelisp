@@ -1280,13 +1280,17 @@ assert_success
 assert_stderr_empty
 assert_contains "$out" "TypeLisp test typecheck passed: 1 test(s)"
 
-run_cmd inline-test-pass "$COMPILER" test "$WORKDIR/inline_test_pass.tl" --stdlib-root "$ROOT/stdlib"
-assert_success
-assert_stdout_empty
-assert_contains "$err" "test inc-basic"
-assert_contains "$err" "ok inc-basic"
-assert_contains "$err" "TypeLisp tests passed: 1 test(s)"
-[ ! -f "$WORKDIR/inline_test_pass.tl.test.s" ] || fail "typelisp test left scratch assembly behind"
+if [ "$HOST_OS" = linux ]; then
+    run_cmd inline-test-pass "$COMPILER" test "$WORKDIR/inline_test_pass.tl" --stdlib-root "$ROOT/stdlib"
+    assert_success
+    assert_stdout_empty
+    assert_contains "$err" "test inc-basic"
+    assert_contains "$err" "ok inc-basic"
+    assert_contains "$err" "TypeLisp tests passed: 1 test(s)"
+    [ ! -f "$WORKDIR/inline_test_pass.tl.test.s" ] || fail "typelisp test left scratch assembly behind"
+else
+    echo "[public-tools] skipping inline test run checks on $HOST_OS"
+fi
 
 run_cmd inline-test-normal-compile "$COMPILER" compile "$WORKDIR/inline_test_pass.tl" -o "$WORKDIR/inline_test_pass.s" --stdlib-root "$ROOT/stdlib"
 assert_success
@@ -1294,32 +1298,36 @@ assert_stderr_empty
 assert_contains "$out" "Generated:"
 assert_not_contains "$WORKDIR/inline_test_pass.s" "__tl_inline_test"
 
-cat > "$WORKDIR/inline_test_fail.tl" <<'EOF'
+if [ "$HOST_OS" = linux ]; then
+    cat > "$WORKDIR/inline_test_fail.tl" <<'EOF'
 (import "stdlib/test.tl")
 
 (test failing-case
   (assert-i64-eq 1 2 "inline failure message"))
 EOF
 
-run_cmd inline-test-fail "$COMPILER" test "$WORKDIR/inline_test_fail.tl" --stdlib-root "$ROOT/stdlib"
-assert_failure
-assert_stdout_empty
-assert_contains "$err" "test failing-case"
-assert_contains "$err" "inline failure message"
-assert_contains "$err" "typelisp test: test executable exited"
-[ ! -f "$WORKDIR/inline_test_fail.tl.test.s" ] || fail "failing typelisp test left scratch assembly behind"
+    run_cmd inline-test-fail "$COMPILER" test "$WORKDIR/inline_test_fail.tl" --stdlib-root "$ROOT/stdlib"
+    assert_failure
+    assert_stdout_empty
+    assert_contains "$err" "test failing-case"
+    assert_contains "$err" "inline failure message"
+    assert_contains "$err" "typelisp test: test executable exited"
+    [ ! -f "$WORKDIR/inline_test_fail.tl.test.s" ] || fail "failing typelisp test left scratch assembly behind"
+fi
 
 run_cmd inline-test-no-tests-check "$COMPILER" test --check "$ROOT/stdlib/windows_setup.tl" --stdlib-root "$ROOT/stdlib"
 assert_success
 assert_stderr_empty
 assert_contains "$out" "TypeLisp test typecheck passed: 0 test(s)"
 
-rm -f "$ROOT/stdlib/windows_setup.tl.test.s"
-run_cmd inline-test-no-tests-run "$COMPILER" test "$ROOT/stdlib/windows_setup.tl" --stdlib-root "$ROOT/stdlib"
-assert_success
-assert_stdout_empty
-assert_contains "$err" "TypeLisp tests passed: 0 test(s)"
-[ ! -f "$ROOT/stdlib/windows_setup.tl.test.s" ] || fail "no-test typelisp test left scratch assembly behind"
+if [ "$HOST_OS" = linux ]; then
+    rm -f "$ROOT/stdlib/windows_setup.tl.test.s"
+    run_cmd inline-test-no-tests-run "$COMPILER" test "$ROOT/stdlib/windows_setup.tl" --stdlib-root "$ROOT/stdlib"
+    assert_success
+    assert_stdout_empty
+    assert_contains "$err" "TypeLisp tests passed: 0 test(s)"
+    [ ! -f "$ROOT/stdlib/windows_setup.tl.test.s" ] || fail "no-test typelisp test left scratch assembly behind"
+fi
 
 echo "[public-tools] package build"
 PKG="$WORKDIR/pkg"

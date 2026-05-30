@@ -692,14 +692,19 @@ case|selfhost_test|selfhost/test.tl|assembly|skip|direct
 requires-stage0-symbol|file-read-chunk-status,file-write-status,file-flush-status,append-file-status
 contains|_tl_tltest_run_config:
 contains|_tl_tltest_build_harness:
+contains|_tl_tltest_run_direct:
+contains|_tl_tltest_run_harness_in_temp:
 contains|_tl_tltest_invalid_opt_level:
+contains|_tl_source_tool_assemble_and_link:
+contains|_tl_source_tool_run_executable:
 contains|_tl_optimize_program_with_level:
 contains|_tl_compiler_backend_emit_program_with_spans_for_target:
-contains|run-scratch-assembly
-contains|scratch-assembly-path
 contains|test: expected source path
 contains|test: --opt-level requires a value
 contains|test: invalid --opt-level
+contains|test: direct inline harness execution is unsupported on windows-x86_64
+contains|typelisp test: test executable exited with exit status:
+contains|test: failed to write assembly artifact
 end
 
 case|selfhost_sym_i64_env|selfhost/sym_i64_env.tl|assembly|skip|direct

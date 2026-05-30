@@ -587,16 +587,6 @@ run_command() {
     run_executable_with_args "$bin" "$runtime_args"
 }
 
-test_args_have_check() {
-    while [ "$#" -gt 0 ]; do
-        if [ "$1" = "--check" ]; then
-            return 0
-        fi
-        shift
-    done
-    return 1
-}
-
 selfhost_test_driver() {
     require_stage1
     require_linux_host_action
@@ -975,29 +965,6 @@ selfhost_build_driver() {
     printf '%s\n' "$driver"
 }
 
-emit_file() {
-    path=$1
-    if [ -s "$path" ]; then
-        cat "$path"
-    fi
-}
-
-emit_file_stderr() {
-    path=$1
-    if [ -s "$path" ]; then
-        cat "$path" >&2
-    fi
-}
-
-stderr_ends_with_newline() {
-    path=$1
-    if [ ! -s "$path" ]; then
-        return 0
-    fi
-    last=$(tail -c 1 "$path" | od -An -tx1 | tr -d ' \n')
-    [ "$last" = "0a" ] || [ "$last" = "0d" ]
-}
-
 test_command() {
     if [ "$#" -eq 0 ]; then
         echo "Error: missing file argument" >&2
@@ -1012,50 +979,7 @@ test_command() {
     esac
 
     driver=$(selfhost_test_driver)
-    workdir=${TMPDIR:-/tmp}/typelisp-stage1-test-$$
-    rm -rf "$workdir"
-    mkdir -p "$workdir"
-    trap 'rm -rf "$workdir"' EXIT HUP INT TERM
-
-    plan="$workdir/test.plan"
-    driver_stderr="$workdir/test-driver.stderr"
-
-    set +e
-    "$driver" "$@" > "$plan" 2> "$driver_stderr"
-    driver_status=$?
-    set -e
-
-    if test_args_have_check "$@"; then
-        emit_file "$plan"
-        emit_file_stderr "$driver_stderr"
-        exit "$driver_status"
-    fi
-
-    if [ "$driver_status" -ne 0 ]; then
-        emit_file "$plan"
-        emit_file_stderr "$driver_stderr"
-        exit "$driver_status"
-    fi
-
-    run_stdout="$workdir/test-run.stdout"
-    run_stderr="$workdir/test-run.stderr"
-    set +e
-    execute_plan_file "$plan" > "$run_stdout" 2> "$run_stderr"
-    run_status=$?
-    set -e
-
-    emit_file "$run_stdout"
-    emit_file_stderr "$run_stderr"
-    if [ "$run_status" -ne 0 ]; then
-        if grep -q '^Error: ' "$run_stderr"; then
-            exit "$run_status"
-        fi
-        if ! stderr_ends_with_newline "$run_stderr"; then
-            printf '\n' >&2
-        fi
-        echo "typelisp test: test executable exited with exit status: $run_status" >&2
-        exit "$run_status"
-    fi
+    exec "$driver" "$@"
 }
 
 fmt_command() {

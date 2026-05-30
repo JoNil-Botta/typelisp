@@ -679,10 +679,6 @@ fn run_lint_command(args: &[String]) {
     }
 }
 
-fn test_args_are_check(args: &[String]) -> bool {
-    args.iter().skip(2).any(|arg| arg == "--check")
-}
-
 struct TestRequest {
     source: PathBuf,
     options: LoadOptions,
@@ -860,61 +856,10 @@ fn run_test_command(args: &[String]) {
         native::host_target(),
     ));
 
-    if test_args_are_check(args) {
-        write_stream_or_exit(io::stdout(), &output.stdout, "stdout");
-        write_stream_or_exit(io::stderr(), &output.stderr, "stderr");
-        if !output.status.success() {
-            std::process::exit(output.status.code().unwrap_or(1));
-        }
-        return;
-    }
-
-    if !output.status.success() {
-        write_stream_or_exit(io::stdout(), &output.stdout, "stdout");
-        write_stream_or_exit(io::stderr(), &output.stderr, "stderr");
-        std::process::exit(output.status.code().unwrap_or(1));
-    }
-
+    write_stream_or_exit(io::stdout(), &output.stdout, "stdout");
     write_stream_or_exit(io::stderr(), &output.stderr, "stderr");
-    let plan_text = match String::from_utf8(output.stdout) {
-        Ok(plan_text) => plan_text,
-        Err(err) => {
-            eprintln!("Error: selfhost test runner emitted non-UTF-8 host-action plan: {err}");
-            std::process::exit(1);
-        }
-    };
-    let plan = match host_action::parse_plan(&plan_text) {
-        Ok(plan) => plan,
-        Err(err) => {
-            eprintln!("Error: invalid selfhost test host-action plan: {err}");
-            std::process::exit(1);
-        }
-    };
-
-    match native_or_exit(host_action::execute_plan(&plan)) {
-        host_action::HostActionOutcome::Ran(run_output) => {
-            write_stream_or_exit(io::stdout(), &run_output.stdout, "stdout");
-            write_stream_or_exit(io::stderr(), &run_output.stderr, "stderr");
-            if !run_output.status.success() {
-                if !run_output.stderr.is_empty()
-                    && !matches!(run_output.stderr.last(), Some(b'\n' | b'\r'))
-                {
-                    eprintln!();
-                }
-                eprintln!(
-                    "typelisp test: test executable exited with {}",
-                    run_output.status
-                );
-                std::process::exit(run_output.status.code().unwrap_or(1));
-            }
-        }
-        host_action::HostActionOutcome::Built { output_path } => {
-            eprintln!(
-                "Error: selfhost test runner unexpectedly built '{}'",
-                output_path.display()
-            );
-            std::process::exit(1);
-        }
+    if !output.status.success() {
+        std::process::exit(output.status.code().unwrap_or(1));
     }
 }
 

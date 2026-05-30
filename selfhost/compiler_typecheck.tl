@@ -1724,6 +1724,46 @@
                   (compiler-typecheck-op-ok-cmp-eq-source))
                 (compiler-typecheck-ok? (compiler-typecheck-op-ok-call-source))))))))))
 
+;; Boolean-operator and `cond` type rules (#1541, migrating scalar/bool
+;; `src/typechecker.rs` coverage): `and`/`or` require bool operands ("boolean
+;; operator expects bool operands"), `not` requires a bool ("not expects bool"),
+;; bool equality is accepted, and `cond` — desugared to nested `if` in the parser
+;; — reuses the `if` condition rule ("if condition must be bool") and arm-type
+;; rule ("if branches must match").
+(define (compiler-typecheck-bool-cond-tests-ok?) : bool
+  (and
+    (compiler-typecheck-ok?
+      "(define (f [a : bool] [b : bool]) : bool (and a b))")
+    (and
+      (compiler-typecheck-ok?
+        "(define (f [a : bool] [b : bool]) : bool (or a b))")
+      (and
+        (compiler-typecheck-ok? "(define (f [a : bool]) : bool (not a))")
+        (and
+          (compiler-typecheck-ok? "(define (f) : bool (= true false))")
+          (and
+            (compiler-typecheck-ok?
+              "(define (f [a : bool]) : i64 (cond [a 1] [else 0]))")
+            (and
+              (compiler-typecheck-error-ok?
+                "(define (f) : bool (and true 5))"
+                "typecheck: boolean operator expects bool operands")
+              (and
+                (compiler-typecheck-error-ok?
+                  "(define (f) : bool (or 1 true))"
+                  "typecheck: boolean operator expects bool operands")
+                (and
+                  (compiler-typecheck-error-ok?
+                    "(define (f) : bool (not 5))"
+                    "typecheck: not expects bool")
+                  (and
+                    (compiler-typecheck-error-ok?
+                      "(define (f) : i64 (cond [5 1] [else 0]))"
+                      "typecheck: if condition must be bool")
+                    (compiler-typecheck-error-ok?
+                      "(define (f [a : bool]) : i64 (cond [a true] [else 0]))"
+                      "typecheck: if branches must match")))))))))))
+
 ;; Match / pattern type rules (#1042/#1538): Rust inline coverage migrated to
 ;; selfhost-owned parser+typechecker fixtures.
 (define (compiler-typecheck-match-arm-mismatch-source) : String
@@ -2771,6 +2811,9 @@
     (if (compiler-typecheck-operator-tests-ok?)
       unit
       (panic "typecheck: operator/arity tests failed"))
+    (if (compiler-typecheck-bool-cond-tests-ok?)
+      unit
+      (panic "typecheck: boolean-operator/cond tests failed"))
     (if (compiler-typecheck-match-tests-ok?)
       unit
       (panic "typecheck: match/pattern tests failed"))

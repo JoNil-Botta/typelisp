@@ -28,6 +28,18 @@ RUNS=${BENCH_RUNS:-5}
 CLANG_OPT=${BENCH_CLANG_OPT:--O2}
 FILTER=${BENCH_FILTER:-}
 
+# `--smoke` (#1099): build + run ONE benchmark and assert TypeLisp and C agree
+# on observable output, then stop — no timing runs. This is a fast correctness
+# smoke for CI (a few seconds), NOT a performance gate. Defaults to the small
+# `arith_loop` benchmark when no BENCH_FILTER is set.
+SMOKE=0
+for _arg in "$@"; do
+    [ "$_arg" = "--smoke" ] && SMOKE=1
+done
+if [ "$SMOKE" = 1 ] && [ -z "$FILTER" ]; then
+    FILTER=arith_loop
+fi
+
 HOST_OS=linux
 EXE=
 TARGET_ARGS=
@@ -165,6 +177,13 @@ for bench_tl in benchmarks/*/bench.tl; do
     if [ "$tl_code" != "$c_code" ]; then
         echo "FAIL: $name observable output differs (typelisp exit $tl_code, C exit $c_code)" >&2
         exit 1
+    fi
+
+    # Smoke mode: the build + correctness gate above is the whole check. Report
+    # and stop before any timing so CI stays fast and timing-noise-free.
+    if [ "$SMOKE" = 1 ]; then
+        printf 'smoke OK: %s — typelisp and C agree on exit %s (build+run only, no timing)\n' "$name" "$tl_code"
+        break
     fi
 
     set -- $(time_runs "$tl_bin")

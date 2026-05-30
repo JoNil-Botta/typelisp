@@ -58,6 +58,19 @@ that contains both `bench.tl` and `baseline.c`.
 bash scripts/bench.sh
 ```
 
+For CI (and a quick local sanity check), `--smoke` builds and runs a single
+small benchmark (`arith_loop` by default; override with `BENCH_FILTER`) and
+asserts the TypeLisp and C binaries agree on observable output, skipping all
+timing. It is a fast correctness check, not a performance gate:
+
+```sh
+bash scripts/bench.sh --smoke
+```
+
+The `.github/workflows/bench-smoke.yml` workflow runs exactly this on Linux,
+manually (`workflow_dispatch`) or nightly — separate from the required CI checks
+so noisy wall-clock timing never blocks a merge (#929, #1099).
+
 Requirements:
 
 - a `typelisp` compiler (set `TYPELISP_BIN`, else `cargo build --release` is used),

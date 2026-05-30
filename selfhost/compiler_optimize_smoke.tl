@@ -3,16 +3,16 @@
 ;; subexpression elimination, #545 copy propagation, #924 strength reduction,
 ;; #925 typed constant/cast folding, #926 CFG simplification, #930 bounds-check
 ;; elimination, #1347 CFG/dominance/SSA verification, opt-level policy, and
-;; #923 fixed-point iteration, and #1348 sparse conditional constant
-;; propagation).
+;; #923 fixed-point iteration, #1348 sparse conditional constant propagation,
+;; and #1489 aggregate stack promotion.
 ;;
 ;; Folds constant arithmetic and typed scalar operations into `Mov` literals,
 ;; reduces safe algebraic identities, eliminates an unused pure temporary,
 ;; eliminates a repeated pure expression, propagates block-local copies, removes
 ;; duplicate proven bounds checks, simplifies constant control flow, validates
-;; CFG/dominance/SSA utility invariants, selects optimization policies by level,
-;; and reruns the pass pipeline to a fixed point; returns 42 only when every
-;; self-test passes.
+;; CFG/dominance/SSA utility invariants, stack-promotes safe local aggregate
+;; storage, selects optimization policies by level, and reruns the pass pipeline
+;; to a fixed point; returns 42 only when every self-test passes.
 (import "compiler_optimize.tl")
 
 (define (main) : i64
@@ -33,9 +33,13 @@
                               (if (=
                                 (compiler-optimize-aggregate-candidate-self-test)
                                 42)
-                                (if (= (compiler-optimize-spans-self-test) 42)
-                                  (if (= (compiler-optimize-gvn-self-test) 42)
-                                    (compiler-optimize-alias-self-test)
+                                (if (=
+                                  (compiler-optimize-aggregate-promote-self-test)
+                                  42)
+                                  (if (= (compiler-optimize-spans-self-test) 42)
+                                    (if (= (compiler-optimize-gvn-self-test) 42)
+                                      (compiler-optimize-alias-self-test)
+                                      1)
                                     1)
                                   1)
                                 1)

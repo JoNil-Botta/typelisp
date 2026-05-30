@@ -64,6 +64,18 @@
   (OptAggregateScanOk OptAggregatePointerList OptAggregateAccessList)
   (OptAggregateScanReject))
 
+(defenum OptAggregatePromoteSlot
+  (OptAggregatePromoteSlot i64 i64))
+
+(defenum OptAggregatePromoteSlotList
+  (OptAggregatePromoteSlotNil)
+  (OptAggregatePromoteSlotCons
+    OptAggregatePromoteSlot
+    OptAggregatePromoteSlotList))
+
+(defenum OptAggregatePromoteBuild
+  (OptAggregatePromoteBuild OptAggregatePromoteSlotList i64))
+
 (define compiler-optimize-level-default : i64
   1)
 
@@ -1457,6 +1469,114 @@
           [(OptAggregateStore _ _) 1]
           [_ 0])
         (opt-aggregate-access-list-store-count rest))]))
+
+;; --- aggregate stack promotion (#1489) --------------------------------------
+;;
+;; Reuse the non-escaping aggregate classifier, but keep this first promotion
+;; slice conservative: only fixed handle-shaped structs/enums/tuples are moved
+;; onto local frame storage. Dynamic arrays and array payloads stay heap-backed.
+;;
+;; The backend frame model exposes 8-byte slots. To preserve positive byte
+;; offsets from the aggregate base, the address points at the lowest-addressed
+;; reserved slot; offset +8 then walks back toward earlier reserved slots.
+(define (opt-aggregate-stack-promote-type? [ty : AstType]) : bool
+  (match ty
+    [(AstTyStruct _) true]
+    [(AstTyEnum _) true]
+    [(AstTyTuple _) true]
+    [_ false]))
+
+(define (opt-aggregate-stack-slot-count [size : i64]) : i64
+  (/ (+ size 7) 8))
+
+(define (opt-aggregate-promote-build
+  [candidates : OptAggregateAllocCandidateList]
+  [next-frame : i64]) : OptAggregatePromoteBuild
+  (match candidates
+    [(OptAggregateAllocCandidateNil)
+      (OptAggregatePromoteBuild (OptAggregatePromoteSlotNil) next-frame)]
+    [(OptAggregateAllocCandidateCons candidate rest)
+      (match candidate
+        [(OptAggregateAllocCandidate base ty size _ _)
+          (if (opt-aggregate-stack-promote-type? ty)
+            (let
+              [slots : i64 (opt-aggregate-stack-slot-count size)]
+              [storage : i64 (+ next-frame (- slots 1))]
+              [after-frame : i64 (+ next-frame slots)]
+              (match (opt-aggregate-promote-build rest after-frame)
+                [(OptAggregatePromoteBuild rest-slots final-frame)
+                  (OptAggregatePromoteBuild
+                    (OptAggregatePromoteSlotCons
+                      (OptAggregatePromoteSlot base storage)
+                      rest-slots)
+                    final-frame)]))
+            (opt-aggregate-promote-build rest next-frame))])]))
+
+(define (opt-aggregate-promote-lookup
+  [slots : OptAggregatePromoteSlotList]
+  [base : i64]) : OptMaybeI64
+  (match slots
+    [(OptAggregatePromoteSlotNil) (OptNoI64)]
+    [(OptAggregatePromoteSlotCons slot rest)
+      (match slot
+        [(OptAggregatePromoteSlot found storage)
+          (if (= found base)
+            (OptSomeI64 storage)
+            (opt-aggregate-promote-lookup rest base))])]))
+
+(define (opt-aggregate-promote-rewrite-instr
+  [slots : OptAggregatePromoteSlotList]
+  [instr : CompilerIrInstr]) : CompilerIrInstrList
+  (match (opt-aggregate-direct-alloc instr)
+    [(OptSomeAggregateAlloc base ty _)
+      (match (opt-aggregate-promote-lookup slots base)
+        [(OptSomeI64 storage)
+          (IrInstrCons
+            (IrInstrAlloc storage ty)
+            (IrInstrCons (IrInstrAddrOf base storage) IrInstrNil))]
+        [(OptNoI64) (IrInstrCons instr IrInstrNil)])]
+    [(OptNoAggregateAlloc) (IrInstrCons instr IrInstrNil)]))
+
+(define (opt-aggregate-promote-instrs
+  [slots : OptAggregatePromoteSlotList]
+  [instrs : CompilerIrInstrList]) : CompilerIrInstrList
+  (match instrs
+    [(IrInstrNil) (IrInstrNil)]
+    [(IrInstrCons instr rest)
+      (opt-aggregate-instr-list-append
+        (opt-aggregate-promote-rewrite-instr slots instr)
+        (opt-aggregate-promote-instrs slots rest))]))
+
+(define (opt-aggregate-promote-block
+  [slots : OptAggregatePromoteSlotList]
+  [block : CompilerIrBlock]) : CompilerIrBlock
+  (match block
+    [(IrBlock label instrs)
+      (IrBlock label (opt-aggregate-promote-instrs slots instrs))]))
+
+(define (opt-aggregate-promote-blocks
+  [slots : OptAggregatePromoteSlotList]
+  [blocks : CompilerIrBlockList]) : CompilerIrBlockList
+  (match blocks
+    [(IrBlockNil) (IrBlockNil)]
+    [(IrBlockCons block rest)
+      (IrBlockCons
+        (opt-aggregate-promote-block slots block)
+        (opt-aggregate-promote-blocks slots rest))]))
+
+(define (opt-aggregate-stack-promote-function [func : CompilerIrFunction]) : CompilerIrFunction
+  (match func
+    [(IrFunction name params ret-ty frame blocks)
+      (match (opt-aggregate-promote-build
+        (opt-aggregate-allocation-candidates-function func)
+        frame)
+        [(OptAggregatePromoteBuild slots promoted-frame)
+          (IrFunction
+            name
+            params
+            ret-ty
+            promoted-frame
+            (opt-aggregate-promote-blocks slots blocks))])]))
 
 ;; --- block-local common subexpression elimination (#546) --------------------
 ;;
@@ -4556,19 +4676,27 @@
       (let
         [folded : CompilerIrBlockList (optimize-block-list blocks)]
         (let
-          [gvn : CompilerIrBlockList (opt-gvn-blocks params folded)]
-          (let
-            [sccp : CompilerIrBlockList (opt-sccp-blocks params gvn)]
-            (let
-              [cfg : CompilerIrBlockList (opt-cfg-simplify-blocks sccp)]
+          [promoted : CompilerIrFunction
+            (opt-aggregate-stack-promote-function
+              (IrFunction name params ret-ty frame folded))]
+          (match promoted
+            [(IrFunction _ _ _ promoted-frame promoted-blocks)
               (let
-                [used : OptUsedSet (opt-collect-blocks-uses (OptUsedNil) cfg)]
-                (IrFunction
-                  name
-                  params
-                  ret-ty
-                  frame
-                  (opt-dce-block-list used cfg)))))))]))
+                [gvn : CompilerIrBlockList
+                  (opt-gvn-blocks params promoted-blocks)]
+                (let
+                  [sccp : CompilerIrBlockList (opt-sccp-blocks params gvn)]
+                  (let
+                    [cfg : CompilerIrBlockList (opt-cfg-simplify-blocks sccp)]
+                    (let
+                      [used : OptUsedSet
+                        (opt-collect-blocks-uses (OptUsedNil) cfg)]
+                      (IrFunction
+                        name
+                        params
+                        ret-ty
+                        promoted-frame
+                        (opt-dce-block-list used cfg))))))])))]))
 
 (define (optimize-function-once-fast [func : CompilerIrFunction]) : CompilerIrFunction
   (match func
@@ -5609,6 +5737,122 @@
         (opt-aggregate-no-candidates? (opt-aggregate-predicated-memory-instrs)))
       9]
     [else 42]))
+
+(define (opt-aggregate-array-local-instrs) : CompilerIrInstrList
+  (IrInstrCons
+    (IrInstrCall
+      1
+      "tl_alloc"
+      (IrValueCons (IrValueI64 16) IrValueNil)
+      (AstTyArray (AstTyI64) 2))
+    (IrInstrCons
+      (IrInstrGep 2 (IrValueVar 1) (IrValueI64 0) (AstTyU8))
+      (IrInstrCons
+        (IrInstrStorePtr
+          (IrValueVar 2)
+          (IrValueVar 9)
+          (AstTyArray (AstTyI64) 2))
+        (IrInstrCons
+          (IrInstrGep 3 (IrValueVar 1) (IrValueI64 0) (AstTyU8))
+          (IrInstrCons
+            (IrInstrLoad 4 (IrValueVar 3) (AstTyArray (AstTyI64) 2))
+            (IrInstrCons
+              (IrInstrReturn (IrSomeValue (IrValueI64 0)))
+              IrInstrNil)))))))
+
+(define (opt-count-tl-alloc-calls [instrs : CompilerIrInstrList]) : i64
+  (match instrs
+    [(IrInstrNil) 0]
+    [(IrInstrCons instr rest)
+      (+
+        (match instr
+          [(IrInstrCall _ name _ _)
+            (if (string-eq name "tl_alloc")
+              1
+              0)]
+          [_ 0])
+        (opt-count-tl-alloc-calls rest))]))
+
+(define (opt-count-ir-alloc-instrs [instrs : CompilerIrInstrList]) : i64
+  (match instrs
+    [(IrInstrNil) 0]
+    [(IrInstrCons instr rest)
+      (+
+        (match instr
+          [(IrInstrAlloc _ _) 1]
+          [_ 0])
+        (opt-count-ir-alloc-instrs rest))]))
+
+(define (opt-count-addr-of-instrs [instrs : CompilerIrInstrList]) : i64
+  (match instrs
+    [(IrInstrNil) 0]
+    [(IrInstrCons instr rest)
+      (+
+        (match instr
+          [(IrInstrAddrOf _ _) 1]
+          [_ 0])
+        (opt-count-addr-of-instrs rest))]))
+
+(define (opt-aggregate-promote-test-function [instrs : CompilerIrInstrList]) : CompilerIrFunction
+  (opt-aggregate-stack-promote-function (opt-spans-function instrs)))
+
+(define (opt-aggregate-promote-test-instrs [instrs : CompilerIrInstrList]) : CompilerIrInstrList
+  (match (opt-aggregate-promote-test-function instrs)
+    [(IrFunction _ _ _ _ blocks)
+      (match blocks
+        [(IrBlockCons block _)
+          (match block
+            [(IrBlock _ optimized) optimized])]
+        [(IrBlockNil) IrInstrNil])]))
+
+(define (opt-aggregate-promote-test-frame [instrs : CompilerIrInstrList]) : i64
+  (match (opt-aggregate-promote-test-function instrs)
+    [(IrFunction _ _ _ frame _) frame]))
+
+(define (compiler-optimize-aggregate-promote-self-test) : i64
+  (let
+    [positive : CompilerIrInstrList
+      (opt-aggregate-promote-test-instrs (opt-aggregate-positive-instrs))]
+    [returned : CompilerIrInstrList
+      (opt-aggregate-promote-test-instrs (opt-aggregate-returned-instrs))]
+    [passed : CompilerIrInstrList
+      (opt-aggregate-promote-test-instrs (opt-aggregate-passed-instrs))]
+    [stored : CompilerIrInstrList
+      (opt-aggregate-promote-test-instrs (opt-aggregate-global-store-instrs))]
+    [unknown-offset : CompilerIrInstrList
+      (opt-aggregate-promote-test-instrs (opt-aggregate-unknown-offset-instrs))]
+    [call-separated : CompilerIrInstrList
+      (opt-aggregate-promote-test-instrs (opt-aggregate-call-separated-instrs))]
+    [array-local : CompilerIrInstrList
+      (opt-aggregate-promote-test-instrs (opt-aggregate-array-local-instrs))]
+    [level0 : CompilerIrProgram
+      (optimize-program-with-level
+        (opt-spans-program (opt-aggregate-positive-instrs))
+        0)]
+    [level2 : CompilerIrProgram
+      (optimize-program-with-level
+        (opt-spans-program (opt-aggregate-positive-instrs))
+        2)]
+    (cond
+      [(not (= (opt-count-tl-alloc-calls positive) 0)) 1]
+      [(not (= (opt-count-ir-alloc-instrs positive) 1)) 2]
+      [(not (= (opt-count-addr-of-instrs positive) 1)) 3]
+      [(not
+          (=
+            (opt-aggregate-promote-test-frame (opt-aggregate-positive-instrs))
+            6))
+        4]
+      [(not (= (opt-count-tl-alloc-calls returned) 1)) 5]
+      [(not (= (opt-count-tl-alloc-calls passed) 1)) 6]
+      [(not (= (opt-count-tl-alloc-calls stored) 1)) 7]
+      [(not (= (opt-count-tl-alloc-calls unknown-offset) 1)) 8]
+      [(not (= (opt-count-tl-alloc-calls call-separated) 1)) 9]
+      [(not (= (opt-count-tl-alloc-calls array-local) 1)) 10]
+      [(not (= (opt-count-tl-alloc-calls (opt-program-first-instrs level0)) 1))
+        11]
+      [(not (= (opt-count-tl-alloc-calls (opt-program-first-instrs level2)) 0))
+        12]
+      [else 42])))
 
 (define (opt-count-cast-instrs [instrs : CompilerIrInstrList]) : i64
   (match instrs

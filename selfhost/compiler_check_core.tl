@@ -70,10 +70,29 @@
 (define (main) : i64
   (match selected [(AstTyI64) 42] [_ 0]))")
 
+(define (compiler-check-export-source) : String
+  "(export
+  (value answer)
+  (type Pair)
+  (constructor Pair)
+  (field Pair left)
+  (variant Present))
+(defstruct Pair (left i64))
+(defenum Maybe (Present i64))
+(define answer : i64 42)
+(define (main) : i64 answer)")
+
 (define (compiler-check-virtual-import-ok?) : bool
   (match (compiler-check-source
     "selfhost/virtual_entry.tl"
     (compiler-check-virtual-import-source))
+    [(OkCompilerCheck summary) (> (compiler-typecheck-summary-score summary) 0)]
+    [(ErrCompilerCheck _) false]))
+
+(define (compiler-check-export-ok?) : bool
+  (match (compiler-check-source
+    "selfhost/export_entry.tl"
+    (compiler-check-export-source))
     [(OkCompilerCheck summary) (> (compiler-typecheck-summary-score summary) 0)]
     [(ErrCompilerCheck _) false]))
 
@@ -107,14 +126,18 @@
 (define (compiler-check-self-test) : i64
   (if (= (compiler-load-self-test) 42)
     (if (compiler-check-virtual-import-ok?)
-      (if (compiler-check-virtual-error-ok?)
-        (if (compiler-check-seen-root-ok?)
-          42
+      (if (compiler-check-export-ok?)
+        (if (compiler-check-virtual-error-ok?)
+          (if (compiler-check-seen-root-ok?)
+            42
+            (begin
+              (panic "compiler-check: seen root smoke mismatch")
+              0))
           (begin
-            (panic "compiler-check: seen root smoke mismatch")
+            (panic "compiler-check: virtual diagnostic smoke mismatch")
             0))
         (begin
-          (panic "compiler-check: virtual diagnostic smoke mismatch")
+          (panic "compiler-check: export smoke mismatch")
           0))
       (begin
         (panic "compiler-check: virtual import smoke mismatch")

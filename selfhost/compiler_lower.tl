@@ -515,6 +515,16 @@
               alias
               module
               path-aware)]
+          [(AstDeclExport _)
+            (lower-name-env-add-module-aliases
+              rest
+              rest-paths
+              entry-path
+              names
+              target-module
+              alias
+              module
+              path-aware)]
           [(AstDeclTest _ _ _)
             (lower-name-env-add-module-aliases
               rest
@@ -7636,6 +7646,17 @@
             spans
             names
             module)]
+        [(AstDeclExport _)
+          (lower-decls-in-module
+            ctx
+            top-env
+            rest
+            globals
+            functions
+            externs
+            spans
+            names
+            module)]
         [(AstDeclModule next-module)
           (lower-decls-in-module
             ctx
@@ -7861,6 +7882,11 @@
       (while (< x 45)
         (set! x (+ x 1)))
       (if flag x 0))))")
+
+(define (compiler-lower-export-source) : String
+  "(export (value answer))
+(define answer : i64 42)
+(define (main) : i64 answer)")
 
 (define (compiler-lower-unsupported-source) : String
   "(define (main) : (Tuple i64 bool)
@@ -10116,6 +10142,9 @@
         unit
         (set! ok false))
       (if (compiler-lower-ok? (compiler-lower-enum-nested-payload-source))
+        unit
+        (set! ok false))
+      (if (compiler-lower-ok? (compiler-lower-export-source))
         unit
         (set! ok false))
       (if (compiler-lower-ok? (compiler-lower-result-try-source))

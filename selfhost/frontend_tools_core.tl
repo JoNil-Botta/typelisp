@@ -752,6 +752,30 @@
 (define (front-field-list-render [fields : AstFieldDefList]) : String
   (front-cat3 "[" (front-field-list-items-render fields) "]"))
 
+(define (front-export-item-render [item : AstExportItem]) : String
+  (match item
+    [(AstExportValue name) (front-cat3 "Value(\"" name "\")")]
+    [(AstExportType name) (front-cat3 "Type(\"" name "\")")]
+    [(AstExportMacro name) (front-cat3 "Macro(\"" name "\")")]
+    [(AstExportConstructor name) (front-cat3 "Constructor(\"" name "\")")]
+    [(AstExportField type-name field-name)
+      (front-cat3 "Field(\"" type-name (front-cat3 "\", \"" field-name "\")"))]
+    [(AstExportVariant name) (front-cat3 "Variant(\"" name "\")")]))
+
+(define (front-export-item-list-items-render [items : AstExportItemList]) : String
+  (match items
+    [(AstExportItemNil) ""]
+    [(AstExportItemCons item (AstExportItemNil))
+      (front-export-item-render item)]
+    [(AstExportItemCons item rest)
+      (front-cat3
+        (front-export-item-render item)
+        ", "
+        (front-export-item-list-items-render rest))]))
+
+(define (front-export-item-list-render [items : AstExportItemList]) : String
+  (front-cat3 "[" (front-export-item-list-items-render items) "]"))
+
 (define (front-decl-render [decl : AstDecl]) : String
   (match decl
     [(AstDeclModule name) (front-cat3 "Module(\"" name "\")")]
@@ -804,6 +828,8 @@
             (front-struct-cleanup-render cleanup)
             (front-cat3 ", fields: " (front-field-list-render fields) " }"))))]
     [(AstDeclImport spec) (front-import-render spec)]
+    [(AstDeclExport items)
+      (front-cat3 "Export { items: " (front-export-item-list-render items) " }")]
     [(AstDeclTest name body _)
       (front-cat3
         "Test { name: \""

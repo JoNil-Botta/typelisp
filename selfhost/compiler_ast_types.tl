@@ -266,6 +266,18 @@
 (defenum AstImportSpec
   (AstImportSpec String AstMaybeModuleName AstMaybeImportAlias))
 
+(defenum AstExportItem
+  (AstExportValue String)
+  (AstExportType String)
+  (AstExportMacro String)
+  (AstExportConstructor String)
+  (AstExportField String String)
+  (AstExportVariant String))
+
+(defenum AstExportItemList
+  (AstExportItemNil)
+  (AstExportItemCons AstExportItem AstExportItemList))
+
 (defenum AstDecl
   (AstDeclModule String)
   (AstDeclDef String AstMaybeType AstExpr)
@@ -275,6 +287,7 @@
   (AstDeclDefEnum String AstVariantDefList)
   (AstDeclDefStruct String AstStructRepr AstStructCleanup AstFieldDefList)
   (AstDeclImport AstImportSpec)
+  (AstDeclExport AstExportItemList)
   (AstDeclTest String AstExpr AstSourceSpan)
   (AstDeclComptimeDecl AstDecl))
 
@@ -393,7 +406,8 @@
     [(AstDeclImport _) 6]
     [(AstDeclTest _ _ _) 7]
     [(AstDeclComptimeDecl _) 8]
-    [(AstDeclModule _) 9]))
+    [(AstDeclModule _) 9]
+    [(AstDeclExport _) 11]))
 
 (define (ast-struct-repr-c? [repr : AstStructRepr]) : bool
   (match repr

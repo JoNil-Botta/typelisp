@@ -313,8 +313,32 @@
 (define (compiler-backend-emit-store-var [var-id : i64] [reg : String]) : String
   (backend-cat5 "    movq " reg ", " (compiler-backend-slot var-id) "\n"))
 
+(define (compiler-backend-float-type? [ty : AstType]) : bool
+  (match ty
+    [(AstTyF64) true]
+    [(AstTyF32) true]
+    [_ false]))
+
+(define (compiler-backend-float-move [ty : AstType]) : String
+  (match ty
+    [(AstTyF32) "movss"]
+    [_ "movsd"]))
+
+(define (compiler-backend-float-type-name [ty : AstType]) : String
+  (match ty
+    [(AstTyF32) "f32"]
+    [_ "f64"]))
+
+(define (compiler-backend-emit-store-float-var
+  [var-id : i64]
+  [reg : String]
+  [ty : AstType]) : String
+  (string-append
+    (backend-cat5 "    " (compiler-backend-float-move ty) " " reg ", ")
+    (string-append (compiler-backend-slot var-id) "\n")))
+
 (define (compiler-backend-emit-store-xmm-var [var-id : i64] [reg : String]) : String
-  (backend-cat5 "    movsd " reg ", " (compiler-backend-slot var-id) "\n"))
+  (compiler-backend-emit-store-float-var var-id reg (AstTyF64)))
 
 (define (compiler-backend-emit-load-var-with-plan
   [assignments : CompilerRegAssignmentList]
@@ -357,46 +381,78 @@
             "\n")])]
     [(CompilerRegNoLocation) (compiler-backend-emit-store-var var-id reg)]))
 
+(define (compiler-backend-emit-load-float-var-with-plan
+  [assignments : CompilerRegAssignmentList]
+  [var-id : i64]
+  [ty : AstType]
+  [reg : String]) : String
+  (let
+    [mov : String (compiler-backend-float-move ty)]
+    (match (compiler-reg-assignment-lookup assignments var-id)
+      [(CompilerRegSomeLocation location)
+        (match location
+          [(CompilerRegRegister home)
+            (if (string-eq home reg)
+              ""
+              (backend-cat5 "    " mov (backend-cat3 " " home ", ") reg "\n"))]
+          [(CompilerRegSpill offset)
+            (backend-cat5
+              "    "
+              mov
+              (backend-cat3 " " (compiler-backend-frame-offset offset) ", ")
+              reg
+              "\n")])]
+      [(CompilerRegNoLocation)
+        (backend-cat5
+          "    "
+          mov
+          (backend-cat3 " " (compiler-backend-slot var-id) ", ")
+          reg
+          "\n")])))
+
 (define (compiler-backend-emit-load-f64-var-with-plan
   [assignments : CompilerRegAssignmentList]
   [var-id : i64]
   [reg : String]) : String
-  (match (compiler-reg-assignment-lookup assignments var-id)
-    [(CompilerRegSomeLocation location)
-      (match location
-        [(CompilerRegRegister home)
-          (if (string-eq home reg)
-            ""
-            (backend-cat5 "    movsd " home ", " reg "\n"))]
-        [(CompilerRegSpill offset)
-          (backend-cat5
-            "    movsd "
-            (compiler-backend-frame-offset offset)
-            ", "
-            reg
-            "\n")])]
-    [(CompilerRegNoLocation)
-      (backend-cat5 "    movsd " (compiler-backend-slot var-id) ", " reg "\n")]))
+  (compiler-backend-emit-load-float-var-with-plan
+    assignments
+    var-id
+    (AstTyF64)
+    reg))
+
+(define (compiler-backend-emit-store-float-var-with-plan
+  [assignments : CompilerRegAssignmentList]
+  [var-id : i64]
+  [reg : String]
+  [ty : AstType]) : String
+  (let
+    [mov : String (compiler-backend-float-move ty)]
+    (match (compiler-reg-assignment-lookup assignments var-id)
+      [(CompilerRegSomeLocation location)
+        (match location
+          [(CompilerRegRegister home)
+            (if (string-eq home reg)
+              ""
+              (backend-cat5 "    " mov (backend-cat3 " " reg ", ") home "\n"))]
+          [(CompilerRegSpill offset)
+            (backend-cat5
+              "    "
+              mov
+              (backend-cat3 " " reg ", ")
+              (compiler-backend-frame-offset offset)
+              "\n")])]
+      [(CompilerRegNoLocation)
+        (compiler-backend-emit-store-float-var var-id reg ty)])))
 
 (define (compiler-backend-emit-store-f64-var-with-plan
   [assignments : CompilerRegAssignmentList]
   [var-id : i64]
   [reg : String]) : String
-  (match (compiler-reg-assignment-lookup assignments var-id)
-    [(CompilerRegSomeLocation location)
-      (match location
-        [(CompilerRegRegister home)
-          (if (string-eq home reg)
-            ""
-            (backend-cat5 "    movsd " reg ", " home "\n"))]
-        [(CompilerRegSpill offset)
-          (backend-cat5
-            "    movsd "
-            reg
-            ", "
-            (compiler-backend-frame-offset offset)
-            "\n")])]
-    [(CompilerRegNoLocation) (compiler-backend-emit-store-xmm-var var-id reg)]))
+  (compiler-backend-emit-store-float-var-with-plan
+    assignments
+    var-id
+    reg
+    (AstTyF64)))
 
 (define (compiler-backend-emit-save-callee-reg
   [assignments : CompilerRegAssignmentList]
@@ -723,33 +779,53 @@
 (define (compiler-backend-f64-label [text : String]) : String
   (string-append ".L_tl_f64_" (compiler-backend-string-label-suffix text)))
 
+(define (compiler-backend-emit-load-float-value-with-plan
+  [assignments : CompilerRegAssignmentList]
+  [value : CompilerIrValue]
+  [ty : AstType]
+  [reg : String]) : ResultCompilerBackend
+  (let
+    [mov : String (compiler-backend-float-move ty)]
+    (match value
+      [(IrValueVar id)
+        (OkCompilerBackend
+          (compiler-backend-emit-load-float-var-with-plan assignments id ty reg))]
+      [(IrValueGlobal name)
+        (OkCompilerBackend
+          (backend-cat5
+            "    "
+            mov
+            (backend-cat3 " " (compiler-backend-user-symbol name) "(%rip), ")
+            reg
+            "\n"))]
+      [(IrValueF64 text)
+        (if (compiler-backend-f64-type? ty)
+          (OkCompilerBackend
+            (backend-cat5
+              "    movsd "
+              (compiler-backend-f64-label text)
+              "(%rip), "
+              reg
+              "\n"))
+          (ErrCompilerBackend
+            (compiler-diagnostic-at-start "" "backend: expected f32 value")))]
+      [_
+        (ErrCompilerBackend
+          (compiler-diagnostic-at-start
+            ""
+            (string-append
+              "backend: expected "
+              (string-append (compiler-backend-float-type-name ty) " value"))))])))
+
 (define (compiler-backend-emit-load-f64-value-with-plan
   [assignments : CompilerRegAssignmentList]
   [value : CompilerIrValue]
   [reg : String]) : ResultCompilerBackend
-  (match value
-    [(IrValueVar id)
-      (OkCompilerBackend
-        (compiler-backend-emit-load-f64-var-with-plan assignments id reg))]
-    [(IrValueGlobal name)
-      (OkCompilerBackend
-        (backend-cat5
-          "    movsd "
-          (compiler-backend-user-symbol name)
-          "(%rip), "
-          reg
-          "\n"))]
-    [(IrValueF64 text)
-      (OkCompilerBackend
-        (backend-cat5
-          "    movsd "
-          (compiler-backend-f64-label text)
-          "(%rip), "
-          reg
-          "\n"))]
-    [_
-      (ErrCompilerBackend
-        (compiler-diagnostic-at-start "" "backend: expected f64 value"))]))
+  (compiler-backend-emit-load-float-value-with-plan
+    assignments
+    value
+    (AstTyF64)
+    reg))
 
 (define (compiler-backend-emit-load-i64-immediate [n : i64] [reg : String]) : String
   (if (= n 0)
@@ -2352,32 +2428,156 @@
           ""
           "backend: non-immediate fused gep store"))]))
 
+(define (compiler-backend-float-precision-cast-asm
+  [from-ty : AstType]
+  [to-ty : AstType]) : String
+  (match from-ty
+    [(AstTyF64)
+      (match to-ty
+        [(AstTyF32) "    cvtsd2ss %xmm0, %xmm0\n"]
+        [_ ""])]
+    [(AstTyF32)
+      (match to-ty
+        [(AstTyF64) "    cvtss2sd %xmm0, %xmm0\n"]
+        [_ ""])]
+    [_ ""]))
+
+(define (compiler-backend-int-to-float-cast-asm [to-ty : AstType]) : String
+  (match to-ty
+    [(AstTyF32) "    cvtsi2ssq %rax, %xmm0\n"]
+    [_ "    cvtsi2sdq %rax, %xmm0\n"]))
+
+(define (compiler-backend-float-to-int-cast-asm [from-ty : AstType]) : String
+  (match from-ty
+    [(AstTyF32) "    cvttss2siq %xmm0, %rax\n"]
+    [_ "    cvttsd2siq %xmm0, %rax\n"]))
+
+(define (compiler-backend-emit-float-to-float-cast
+  [assignments : CompilerRegAssignmentList]
+  [dst : i64]
+  [src : CompilerIrValue]
+  [from-ty : AstType]
+  [to-ty : AstType]) : ResultCompilerBackend
+  (match (compiler-backend-emit-load-float-value-with-plan
+    assignments
+    src
+    from-ty
+    "%xmm0")
+    [(OkCompilerBackend load)
+      (OkCompilerBackend
+        (string-append
+          load
+          (string-append
+            (compiler-backend-float-precision-cast-asm from-ty to-ty)
+            (compiler-backend-emit-store-float-var-with-plan
+              assignments
+              dst
+              "%xmm0"
+              to-ty))))]
+    [(ErrCompilerBackend message) (ErrCompilerBackend message)]))
+
+(define (compiler-backend-emit-int-to-float-cast
+  [assignments : CompilerRegAssignmentList]
+  [dst : i64]
+  [src : CompilerIrValue]
+  [from-ty : AstType]
+  [to-ty : AstType]) : ResultCompilerBackend
+  (match (compiler-backend-emit-load-typed-value-with-plan
+    assignments
+    src
+    from-ty)
+    [(OkCompilerBackend load)
+      (OkCompilerBackend
+        (string-append
+          load
+          (string-append
+            (compiler-backend-int-to-float-cast-asm to-ty)
+            (compiler-backend-emit-store-float-var-with-plan
+              assignments
+              dst
+              "%xmm0"
+              to-ty))))]
+    [(ErrCompilerBackend message) (ErrCompilerBackend message)]))
+
+(define (compiler-backend-emit-float-to-int-cast
+  [assignments : CompilerRegAssignmentList]
+  [dst : i64]
+  [src : CompilerIrValue]
+  [from-ty : AstType]
+  [to-ty : AstType]) : ResultCompilerBackend
+  (match (compiler-backend-emit-load-float-value-with-plan
+    assignments
+    src
+    from-ty
+    "%xmm0")
+    [(OkCompilerBackend load)
+      (OkCompilerBackend
+        (string-append
+          load
+          (string-append
+            (compiler-backend-float-to-int-cast-asm from-ty)
+            (compiler-backend-emit-store-typed-var-with-plan
+              assignments
+              dst
+              "%rax"
+              to-ty))))]
+    [(ErrCompilerBackend message) (ErrCompilerBackend message)]))
+
 (define (compiler-backend-emit-cast
   [assignments : CompilerRegAssignmentList]
   [dst : i64]
   [src : CompilerIrValue]
   [from-ty : AstType]
   [to-ty : AstType]) : ResultCompilerBackend
-  (if (and
-    (opt-type-eq from-ty to-ty)
-    (compiler-backend-value-same-home? assignments dst src))
-    (OkCompilerBackend "")
-    (match (compiler-backend-emit-load-typed-value-with-plan
-      assignments
-      src
-      from-ty)
-      [(OkCompilerBackend load)
-        (OkCompilerBackend
-          (string-append
-            load
-            (compiler-backend-emit-store-typed-var-with-plan
-              assignments
-              dst
-              (if (compiler-backend-f64-type? to-ty)
-                "%xmm0"
-                "%rax")
-              to-ty)))]
-      [(ErrCompilerBackend message) (ErrCompilerBackend message)])))
+  (cond
+    [(and
+        (opt-type-eq from-ty to-ty)
+        (compiler-backend-value-same-home? assignments dst src))
+      (OkCompilerBackend "")]
+    [(and
+        (compiler-backend-float-type? from-ty)
+        (compiler-backend-float-type? to-ty))
+      (compiler-backend-emit-float-to-float-cast
+        assignments
+        dst
+        src
+        from-ty
+        to-ty)]
+    [(and
+        (not (compiler-backend-float-type? from-ty))
+        (compiler-backend-float-type? to-ty))
+      (compiler-backend-emit-int-to-float-cast
+        assignments
+        dst
+        src
+        from-ty
+        to-ty)]
+    [(and
+        (compiler-backend-float-type? from-ty)
+        (not (compiler-backend-float-type? to-ty)))
+      (compiler-backend-emit-float-to-int-cast
+        assignments
+        dst
+        src
+        from-ty
+        to-ty)]
+    [else
+      (match (compiler-backend-emit-load-typed-value-with-plan
+        assignments
+        src
+        from-ty)
+        [(OkCompilerBackend load)
+          (OkCompilerBackend
+            (string-append
+              load
+              (compiler-backend-emit-store-typed-var-with-plan
+                assignments
+                dst
+                (if (compiler-backend-f64-type? to-ty)
+                  "%xmm0"
+                  "%rax")
+                to-ty)))]
+        [(ErrCompilerBackend message) (ErrCompilerBackend message)])]))
 
 (define (compiler-backend-ir-value-list-count [args : CompilerIrValueList]) : i64
   (match args

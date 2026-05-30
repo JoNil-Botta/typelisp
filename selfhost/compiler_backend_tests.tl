@@ -1465,6 +1465,31 @@
                 (IrInstrBoundsCheck (IrValueVar 1) (IrValueVar 2) "bounds_ok")
                 "    jb .L_tl_test_bounds_ok\n"))))))))
 
+(define (compiler-backend-numeric-cast-shape-ok?) : bool
+  (and
+    (compiler-backend-instr-contains?
+      (IrInstrCast 6 (IrValueVar 5) (AstTyI64) (AstTyF64))
+      "    cvtsi2sdq %rax, %xmm0\n")
+    (and
+      (compiler-backend-instr-contains?
+        (IrInstrCast 6 (IrValueVar 5) (AstTyI64) (AstTyF32))
+        "    cvtsi2ssq %rax, %xmm0\n")
+      (and
+        (compiler-backend-instr-contains?
+          (IrInstrCast 6 (IrValueVar 5) (AstTyF64) (AstTyI64))
+          "    cvttsd2siq %xmm0, %rax\n")
+        (and
+          (compiler-backend-instr-contains?
+            (IrInstrCast 6 (IrValueVar 5) (AstTyF32) (AstTyI32))
+            "    cvttss2siq %xmm0, %rax\n")
+          (and
+            (compiler-backend-instr-contains?
+              (IrInstrCast 6 (IrValueVar 5) (AstTyF64) (AstTyF32))
+              "    cvtsd2ss %xmm0, %xmm0\n")
+            (compiler-backend-instr-contains?
+              (IrInstrCast 6 (IrValueVar 5) (AstTyF32) (AstTyF64))
+              "    cvtss2sd %xmm0, %xmm0\n")))))))
+
 ;; A source exercising `array-ref`, used to confirm the lowerer's bounds-check
 ;; trap (#528) reaches the backend as a `call tl_oob_abort`.
 (define (compiler-backend-array-access-source) : String
@@ -2404,7 +2429,9 @@
       (compiler-backend-source-ok? (compiler-backend-smoke-source))
       (compiler-backend-deterministic-ok? (compiler-backend-smoke-source))
       (compiler-backend-string-ok?)
-      (compiler-backend-memory-op-ok?)
+      (and
+        (compiler-backend-memory-op-ok?)
+        (compiler-backend-numeric-cast-shape-ok?))
       (compiler-backend-aggregate-ok?))
     (and
       (backend-and8

@@ -337,7 +337,7 @@
                   (and
                     (compiler-typecheck-error-ok?
                       (compiler-typecheck-cast-bad-source)
-                      "typecheck: cast requires integer/char source and target")
+                      "typecheck: cast requires scalar numeric (integer/char/float) source and target")
                     (and
                       (compiler-typecheck-ok-score?
                         (compiler-typecheck-char-range-source)
@@ -2349,12 +2349,20 @@
           (compiler-typecheck-ok?
             "(define (f [c : char]) : i64 (cast c : i64))")
           (and
-            (compiler-typecheck-error-ok?
-              "(define (f [x : f64]) : i64 (cast x : i64))"
-              "typecheck: cast requires integer/char source and target")
-            (compiler-typecheck-error-ok?
-              "(define (f [b : bool]) : i64 (cast b : i64))"
-              "typecheck: cast requires integer/char source and target")))))))
+            (compiler-typecheck-ok?
+              "(define (f [x : f64]) : i64 (cast x : i64))")
+            (and
+              (compiler-typecheck-ok?
+                "(define (f [x : i64]) : f64 (cast x : f64))")
+              (and
+                (compiler-typecheck-ok?
+                  "(define (f [x : f64]) : f32 (cast x : f32))")
+                (and
+                  (compiler-typecheck-ok?
+                    "(define (f [x : f32]) : f64 (cast x : f64))")
+                  (compiler-typecheck-error-ok?
+                    "(define (f [b : bool]) : i64 (cast b : i64))"
+                    "typecheck: cast requires scalar numeric (integer/char/float) source and target"))))))))))
 
 ;; spmd-reduce operator/type rules (#1011, SPEC 5.15): `sum` accepts i32/i64/f64,
 ;; `min`/`max` accept i32/i64, `all`/`any` accept bool. (The varying-value

@@ -655,23 +655,32 @@ else
 fi
 
 if [ "$HOST_OS" = linux ]; then
-    if [ "$LINUX_SEED_STAGED_RUNTIME_GAP" -eq 1 ] || [ "$SEED_STAGE1_WRAPPER" -eq 1 ]; then
+    if [ "$STAGE1_HOST_ACTION_DRIVERS_AVAILABLE" -eq 1 ]; then
+        DOC_SITE_OUT="$ROOT/target/no-rust-docs-pages-site"
+        export DOC_SITE_OUT
+        run_with_compiler "$STAGE1_TYPELISP_BIN" "stage1 docs Pages build path" scripts/verify-doc-site.sh
+        unset DOC_SITE_OUT
+        run_with_compiler "$STAGE1_TYPELISP_BIN" "stage1 selfhost native generated programs" scripts/verify-selfhost-native.sh
+        run_with_compiler "$STAGE1_TYPELISP_BIN" "stage1 selfhost external compiler corpus" scripts/verify-selfhost.sh
+    elif [ "$LINUX_SEED_STAGED_RUNTIME_GAP" -eq 1 ] || [ "$SEED_STAGE1_WRAPPER" -eq 1 ]; then
         echo
-        echo "[no-rust-stage0] skipping Linux seed build/run gates until staged runtime symbols and full seed CLI parity land in stage0:"
+        echo "[no-rust-stage0] skipping Linux stage1 generated gates until wrapper host-action drivers are available (#1327):"
         echo "[no-rust-stage0]   docs Pages build path, selfhost native generated programs,"
         echo "[no-rust-stage0]   selfhost external compiler corpus"
     elif [ "$SEED_IS_STAGE1_BUNDLE" -eq 1 ]; then
         echo
-        echo "[no-rust-stage0] skipping Linux seed build/run gates until the stage1 bundle reaches compiler/runtime parity:"
+        echo "[no-rust-stage0] skipping Linux stage1 generated gates until bundled host-action drivers are available (#1327):"
         echo "[no-rust-stage0]   docs Pages build path, selfhost native generated programs,"
         echo "[no-rust-stage0]   selfhost external compiler corpus"
     else
+        echo
+        echo "[no-rust-stage0] falling back to seed for Linux generated gates; stage1 host-action drivers are unavailable (#1327)"
         DOC_SITE_OUT="$ROOT/target/no-rust-docs-pages-site"
         export DOC_SITE_OUT
-        run_gate "docs Pages build path" scripts/verify-doc-site.sh
+        run_gate "seed docs Pages build path" scripts/verify-doc-site.sh
         unset DOC_SITE_OUT
-        run_gate "selfhost native generated programs" scripts/verify-selfhost-native.sh
-        run_gate "selfhost external compiler corpus" scripts/verify-selfhost.sh
+        run_gate "seed selfhost native generated programs" scripts/verify-selfhost-native.sh
+        run_gate "seed selfhost external compiler corpus" scripts/verify-selfhost.sh
     fi
 else
     echo

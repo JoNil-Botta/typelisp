@@ -74,9 +74,10 @@ to #1388.
 
 ### src/lower.rs Non-SIMD Audit (#1405)
 
-This is the current mapping for the non-SIMD `src/lower.rs` Rust inline tests.
-SIMD vector/mask lowering remains under #1014, and backend assembly/codegen
-assertions remain under #1044.
+This is the current mapping for the non-SIMD `src/lower.rs` Rust inline tests
+plus the first AVX2 SPMD `foreach` lowerer slice. Remaining SIMD vector/mask
+lowering stays under #1014, and backend assembly/codegen assertions remain
+under #1044.
 
 - Basic function/body/control-flow lowering (`test_lower_simple_function`,
   `if`, `while`, `begin`, `let`, `set!`, params/no-params/void, nested calls,
@@ -122,6 +123,12 @@ assertions remain under #1044.
   `compiler-lower-and-or-short-circuit-shape-ok?`,
   `compiler-lower-raw-pointer-ops-ok?`, and
   `compiler-lower-raw-pointer-call-value-shape-ok?`.
+- The first AVX2 `foreach` map lowering slice is covered by
+  `compiler-lower-avx2-foreach-map-shape-ok?` and
+  `compiler-lower-avx2-foreach-fallback-stays-scalar-ok?`: i64/i32/f64
+  contiguous add maps emit private vector load/binop/store IR with the expected
+  lane counts, scalar mode emits no vector IR, and unsupported AVX2 shapes fall
+  back to scalar lowering.
 
 Named remaining blockers:
 
@@ -137,7 +144,7 @@ Named remaining blockers:
   Fixed-array set/ref backend emit-shape parity is covered by
   `compiler-backend-fixed-array-shape-ok?` (#1416). Broader backend-only
   assembly assertions stay under #1044.
-- SIMD `foreach`/SPMD vector and mask lowering stays under #1014.
+- Remaining SIMD `foreach`/SPMD vector and mask lowering stays under #1014.
 
 ### 2026-05-26 Inline Additions
 

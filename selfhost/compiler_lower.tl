@@ -9220,6 +9220,32 @@
     [(IrInstrVectorStore _ _ _ _ _) 1]
     [_ 0]))
 
+(define (lower-test-vector-shape?
+  [actual-lanes : i64]
+  [actual-ty : AstType]
+  [lanes : i64]
+  [elem-ty : AstType]) : bool
+  (and (= actual-lanes lanes) (tc-type-eq actual-ty elem-ty)))
+
+(define (lower-test-instr-vector-shape-count
+  [instr : CompilerIrInstr]
+  [lanes : i64]
+  [elem-ty : AstType]) : i64
+  (match instr
+    [(IrInstrVectorLoad _ _ _ actual-lanes actual-ty)
+      (if (lower-test-vector-shape? actual-lanes actual-ty lanes elem-ty)
+        1
+        0)]
+    [(IrInstrVectorBinOp _ _ _ _ actual-lanes actual-ty)
+      (if (lower-test-vector-shape? actual-lanes actual-ty lanes elem-ty)
+        1
+        0)]
+    [(IrInstrVectorStore _ _ _ actual-lanes actual-ty)
+      (if (lower-test-vector-shape? actual-lanes actual-ty lanes elem-ty)
+        1
+        0)]
+    [_ 0]))
+
 (define (lower-test-instr-u64-mov-count [instr : CompilerIrInstr]) : i64
   (match instr
     [(IrInstrMov _ _ ty)
@@ -9467,6 +9493,17 @@
         (lower-test-instr-vector-store-count instr)
         (lower-test-instrs-vector-store-count rest))]))
 
+(define (lower-test-instrs-vector-shape-count
+  [instrs : CompilerIrInstrList]
+  [lanes : i64]
+  [elem-ty : AstType]) : i64
+  (match instrs
+    [(IrInstrNil) 0]
+    [(IrInstrCons instr rest)
+      (+
+        (lower-test-instr-vector-shape-count instr lanes elem-ty)
+        (lower-test-instrs-vector-shape-count rest lanes elem-ty))]))
+
 (define (lower-test-instrs-u64-mov-count [instrs : CompilerIrInstrList]) : i64
   (match instrs
     [(IrInstrNil) 0]
@@ -9683,6 +9720,19 @@
           (+
             (lower-test-instrs-vector-store-count instrs)
             (lower-test-blocks-vector-store-count rest))])]))
+
+(define (lower-test-blocks-vector-shape-count
+  [blocks : CompilerIrBlockList]
+  [lanes : i64]
+  [elem-ty : AstType]) : i64
+  (match blocks
+    [(IrBlockNil) 0]
+    [(IrBlockCons block rest)
+      (match block
+        [(IrBlock _ instrs)
+          (+
+            (lower-test-instrs-vector-shape-count instrs lanes elem-ty)
+            (lower-test-blocks-vector-shape-count rest lanes elem-ty))])]))
 
 (define (lower-test-blocks-u64-mov-count [blocks : CompilerIrBlockList]) : i64
   (match blocks
@@ -9951,6 +10001,20 @@
           (if (string-eq fname name)
             (lower-test-blocks-vector-store-count blocks)
             (lower-test-function-vector-store-count rest name))])]))
+
+(define (lower-test-function-vector-shape-count
+  [funcs : CompilerIrFunctionList]
+  [name : String]
+  [lanes : i64]
+  [elem-ty : AstType]) : i64
+  (match funcs
+    [(IrFunctionNil) (- 0 1)]
+    [(IrFunctionCons func rest)
+      (match func
+        [(IrFunction fname _ _ _ blocks)
+          (if (string-eq fname name)
+            (lower-test-blocks-vector-shape-count blocks lanes elem-ty)
+            (lower-test-function-vector-shape-count rest name lanes elem-ty))])]))
 
 (define (lower-test-function-u64-mov-count
   [funcs : CompilerIrFunctionList]
@@ -11009,21 +11073,71 @@
     ([i : i64 0 n])
     (array-set! out i (+ (array-ref a i) (array-ref b i)))))")
 
-(define (compiler-lower-avx2-foreach-map-shape-ok?) : bool
-  (match (lower-compiler-source-with-mode
-    (compiler-lower-avx2-foreach-map-source)
-    (CompilerLowerAvx2))
+(define (compiler-lower-avx2-foreach-map-i32-source) : String
+  "(define (fill [a : (Array i32)] [b : (Array i32)] [out : (Array i32)] [n : i64]) : unit
+  (foreach
+    ([i : i64 0 n])
+    (array-set! out i (+ (array-ref a i) (array-ref b i)))))")
+
+(define (compiler-lower-avx2-foreach-map-f64-source) : String
+  "(define (fill [a : (Array f64)] [b : (Array f64)] [out : (Array f64)] [n : i64]) : unit
+  (foreach
+    ([i : i64 0 n])
+    (array-set! out i (+ (array-ref a i) (array-ref b i)))))")
+
+(define (compiler-lower-avx2-foreach-scalar-fallback-source) : String
+  "(define (fill [a : (Array i64)] [out : (Array i64)] [n : i64]) : unit
+  (foreach
+    ([i : i64 0 n])
+    (array-set! out i (+ (array-ref a i) 1))))")
+
+(define (compiler-lower-avx2-foreach-map-source-shape-ok?
+  [src : String]
+  [elem-ty : AstType]
+  [lanes : i64]) : bool
+  (match (lower-compiler-source-with-mode src (CompilerLowerAvx2))
     [(OkCompilerLower program _)
       (match program
         [(IrProgram _ functions _)
-          (and
-            (= (lower-test-function-vector-load-count functions "fill") 2)
+          (let
+            [load-count : i64
+              (lower-test-function-vector-load-count functions "fill")]
+            [binop-count : i64
+              (lower-test-function-vector-binop-count functions "fill")]
+            [store-count : i64
+              (lower-test-function-vector-store-count functions "fill")]
+            [shape-count : i64
+              (lower-test-function-vector-shape-count
+                functions
+                "fill"
+                lanes
+                elem-ty)]
+            [tail-store-count : i64
+              (lower-test-function-store-ptr-count functions "fill")]
             (and
-              (= (lower-test-function-vector-binop-count functions "fill") 1)
+              (= load-count 2)
               (and
-                (= (lower-test-function-vector-store-count functions "fill") 1)
-                (> (lower-test-function-store-ptr-count functions "fill") 0))))])]
+                (= binop-count 1)
+                (and
+                  (= store-count 1)
+                  (and (= shape-count 4) (> tail-store-count 0))))))])]
     [(ErrCompilerLower _) false]))
+
+(define (compiler-lower-avx2-foreach-map-shape-ok?) : bool
+  (and
+    (compiler-lower-avx2-foreach-map-source-shape-ok?
+      (compiler-lower-avx2-foreach-map-source)
+      (AstTyI64)
+      4)
+    (and
+      (compiler-lower-avx2-foreach-map-source-shape-ok?
+        (compiler-lower-avx2-foreach-map-i32-source)
+        (AstTyI32)
+        8)
+      (compiler-lower-avx2-foreach-map-source-shape-ok?
+        (compiler-lower-avx2-foreach-map-f64-source)
+        (AstTyF64)
+        4))))
 
 (define (compiler-lower-scalar-foreach-stays-scalar-ok?) : bool
   (match (lower-compiler-source (compiler-lower-avx2-foreach-map-source))
@@ -11031,6 +11145,20 @@
       (match program
         [(IrProgram _ functions _)
           (= (lower-test-function-vector-load-count functions "fill") 0)])]
+    [(ErrCompilerLower _) false]))
+
+(define (compiler-lower-avx2-foreach-fallback-stays-scalar-ok?) : bool
+  (match (lower-compiler-source-with-mode
+    (compiler-lower-avx2-foreach-scalar-fallback-source)
+    (CompilerLowerAvx2))
+    [(OkCompilerLower program _)
+      (match program
+        [(IrProgram _ functions _)
+          (and
+            (= (lower-test-function-vector-load-count functions "fill") 0)
+            (and
+              (= (lower-test-function-vector-binop-count functions "fill") 0)
+              (= (lower-test-function-vector-store-count functions "fill") 0)))])]
     [(ErrCompilerLower _) false]))
 
 (define (compiler-lower-foreach-tests-ok?) : bool
@@ -11051,7 +11179,9 @@
               "(define (main) : i64 (begin (foreach ([i : i64 0 3]) unit) 0))")
             (and
               (compiler-lower-avx2-foreach-map-shape-ok?)
-              (compiler-lower-scalar-foreach-stays-scalar-ok?))))))))
+              (and
+                (compiler-lower-scalar-foreach-stays-scalar-ok?)
+                (compiler-lower-avx2-foreach-fallback-stays-scalar-ok?)))))))))
 
 ;; `spmd-reduce` sum lowering (#1013): integer and f64 sum reductions lower (to
 ;; an accumulator loop, so `main` holds the guard branch + fold/increment

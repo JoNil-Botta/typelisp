@@ -10,6 +10,8 @@
 
 (import "compiler_ir_types.tl")
 
+(import "compiler_clone.tl")
+
 (import "compiler_ctfe.tl")
 
 (defenum LowerNameEnv
@@ -1158,9 +1160,11 @@
                 next-module
                 reachable))]
           [(AstDeclDefFn name _ _ _)
-            (if (lower-string-set-contains?
-              reachable
-              (lower-decl-logical-name entry-path decl-path module name))
+            (if (or
+              (lower-name-has-clone-prefix? name)
+              (lower-string-set-contains?
+                reachable
+                (lower-decl-logical-name entry-path decl-path module name)))
               (AstDeclCons
                 decl
                 (lower-filter-reachable-decls-in-module
@@ -1241,6 +1245,33 @@
                 module
                 reachable))]))]))
 
+;; The synthesized clone$<T> helpers (compiler_clone.tl) are reached only via
+;; the `(clone x)` forms, which are not lowered to `clone$<T>` calls until after
+;; this pre-lowering prune. So we seed them as reachability roots here; the
+;; post-lowering optimizer prune (which sees the lowered calls) removes any that
+;; are unused. #1633.
+(define (lower-name-has-clone-prefix? [name : String]) : bool
+  (if (>= (string-length name) 6)
+    (string-eq (substring name 0 6) "clone$")
+    false))
+
+(define (lower-reach-add-clone-helpers
+  [all-functions : LowerStringSet]
+  [decls : AstDeclList]
+  [state : LowerReachState]) : LowerReachState
+  (match decls
+    [(AstDeclNil) state]
+    [(AstDeclCons decl rest)
+      (match decl
+        [(AstDeclDefFn name _ _ _)
+          (lower-reach-add-clone-helpers
+            all-functions
+            rest
+            (if (lower-name-has-clone-prefix? name)
+              (lower-reach-add-logical all-functions state name)
+              state))]
+        [_ (lower-reach-add-clone-helpers all-functions rest state)])]))
+
 (define (lower-prune-unreachable-functions
   [entry-path : String]
   [program : AstProgram]
@@ -1261,10 +1292,13 @@
             (lower-reach-global-decls
               all-functions
               names
-              (lower-reach-add-logical
+              (lower-reach-add-clone-helpers
                 all-functions
-                (LowerReachState LowerStringNil LowerStringNil)
-                "main")
+                decls
+                (lower-reach-add-logical
+                  all-functions
+                  (LowerReachState LowerStringNil LowerStringNil)
+                  "main"))
               decls))
             [(LowerReachState reachable _)
               (LowerPrunedProgram
@@ -2793,6 +2827,67 @@
       [_
         (ErrLowerExpr
           (lower-diagnostic "lower: arena builtin expects one argument"))])))
+
+;; Lower `(clone x)` (#1633): the canonical deep-copy / arena-escape. A String
+;; copies its buffer via `substring`; a named aggregate (enum/struct) dispatches
+;; to the synthesized `clone$<Name>` helper (see compiler_clone.tl); a scalar is
+;; returned as-is. The first lowering of `arg` is only used to read its type; for
+;; the String path `substring` re-lowers it (the dead copy is removed by DCE).
+(define (lower-clone-named
+  [state : LowerState]
+  [env : SymI64Env]
+  [name : String]
+  [value : CompilerIrValue]
+  [ty : AstType]) : ResultLowerExpr
+  (match (lower-state-alloc-var state)
+    [(LowerAlloc allocated var-id)
+      (OkLowerExpr
+        (LowerExpr
+          (lower-state-emit
+            allocated
+            (IrInstrCall
+              var-id
+              (lower-resolve-call-name allocated env (clone-helper-name name))
+              (IrValueCons value IrValueNil)
+              ty))
+          (IrValueVar var-id)
+          ty))]))
+
+(define (lower-clone-dispatch
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [arg : AstExpr]
+  [value : CompilerIrValue]
+  [ty : AstType]) : ResultLowerExpr
+  (match (tc-resolve-type ctx ty)
+    [(AstTyString)
+      (lower-substring
+        ctx
+        state
+        env
+        type-env
+        arg
+        (AstExprLiteral (AstLitInt 0))
+        (AstExprCall (AstExprVar "string-length") (AstExprCons arg AstExprNil)))]
+    [(AstTyEnum name) (lower-clone-named state env name value ty)]
+    [(AstTyStruct name) (lower-clone-named state env name value ty)]
+    [(AstTyVar name) (lower-clone-named state env name value ty)]
+    [_ (OkLowerExpr (LowerExpr state value ty))]))
+
+(define (lower-clone-call
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [arg : AstExpr]) : ResultLowerExpr
+  (match (lower-expr ctx state env type-env arg)
+    [(OkLowerExpr lowered)
+      (match lowered
+        [(LowerExpr arg-state arg-value arg-ty)
+          (lower-clone-dispatch ctx arg-state env type-env arg arg-value arg-ty)])]
+    [(ErrLowerExpr message) (ErrLowerExpr message)]))
 
 (define (lower-bootstrap-runtime-builtin? [name : String]) : bool
   (cond
@@ -5340,6 +5435,15 @@
                 result-ty
                 "lower: print-string requires String"
                 origin)]
+            [(and
+                (lower-builtin-call-available? ctx env name)
+                (string-eq name "clone"))
+              (match args
+                [(AstExprCons arg (AstExprNil))
+                  (lower-clone-call ctx state env type-env arg)]
+                [_
+                  (ErrLowerExpr
+                    (lower-diagnostic "lower: clone expects one argument"))])]
             [(and
                 (lower-builtin-call-available? ctx env name)
                 (lower-arena-builtin? name))
@@ -8936,7 +9040,7 @@
     [(OkMacroExpand expanded)
       (lower-compiler-expanded-program-with-decl-paths-mode
         entry-path
-        expanded
+        (clone-augment-program expanded)
         paths
         mode)]
     [(ErrMacroExpand diag)

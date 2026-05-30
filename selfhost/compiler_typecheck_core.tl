@@ -148,11 +148,7 @@
 (define (tc-expr-diag [expr : AstExpr] [message : String]) : CompilerDiagnostic
   (match expr
     [(AstExprSpanned _ span)
-      (CompilerDiagnostic
-        ""
-        (struct-get span start-line)
-        (struct-get span start-col)
-        message)]
+      (compiler-diagnostic-from-ast-span "" span message)]
     [_ (tc-diag-at-start message)]))
 
 ;; Locate an error at the nearest available declaration body span. A top-level
@@ -163,12 +159,7 @@
     [(AstDeclDef _ _ expr) (tc-expr-diag expr message)]
     [(AstDeclDefFn _ _ _ body) (tc-expr-diag body message)]
     [(AstDeclDefMacro _ _ _ body) (tc-expr-diag body message)]
-    [(AstDeclTest _ _ span)
-      (CompilerDiagnostic
-        ""
-        (struct-get span start-line)
-        (struct-get span start-col)
-        message)]
+    [(AstDeclTest _ _ span) (compiler-diagnostic-from-ast-span "" span message)]
     [(AstDeclComptimeDecl template) (tc-decl-diag template message)]
     [_ (tc-diag-at-start message)]))
 

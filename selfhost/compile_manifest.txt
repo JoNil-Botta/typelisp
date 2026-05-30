@@ -131,6 +131,8 @@ decision|selfhost/check_cli_core.tl|check (typecheck) command logic: arg parsing
 decision|selfhost/format_cli_core.tl|fmt command logic (#522): --check vs rewrite over input paths; main-less, imported by selfhost/format.tl and selfhost/cli.tl and exercised through the selfhost_format and selfhost_cli cases
 decision|selfhost/test_cli_core.tl|test command logic: config parsing and test run dispatch; main-less, imported by selfhost/test.tl and selfhost/cli.tl and exercised through the selfhost_test and selfhost_cli cases
 decision|selfhost/doc_cli_core.tl|doc command logic: kind dispatch (test/html/load/default) with a base-offset arg model; main-less, imported by selfhost/doc.tl and selfhost/cli.tl and exercised through the selfhost_doc and selfhost_cli cases
+decision|selfhost/compile_cli_core.tl|compile/tokenize/parse/debug command logic (#565/#1639): arg parsing and compile/tokenize/parse/check/debug dispatch + execution (compile-cli-run); main-less, imported by selfhost/compile.tl and selfhost/cli.tl and exercised through the selfhost_compile and selfhost_cli cases
+decision|selfhost/compiler_clone.tl|type-directed clone$<Type> helper synthesis (#1633): least-fixpoint clone-ability over the type graph plus match-reconstruct/tail-recursive AST generation for (clone x); main-less, imported by selfhost/compiler_lower.tl and exercised through the selfhost_compiler_lower case
 
 case|selfhost_build_run_core|selfhost/build_run_core.tl|assembly|skip|direct
 requires-stage0-symbol|file-read-chunk-status,file-write-status,file-flush-status,append-file-status

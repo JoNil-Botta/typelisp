@@ -13723,14 +13723,10 @@ tl_windows_sdk_registry_install:
     movq %rax, .L_tl_envp(%rip)
 ")
             "")
-          (string-append
-            global-inits
-            (compiler-backend-entry-call-main)))))
+          (string-append global-inits (compiler-backend-entry-call-main)))))
     (string-append
       "_start:\n"
-      (string-append
-        global-inits
-        (compiler-backend-entry-call-main)))))
+      (string-append global-inits (compiler-backend-entry-call-main)))))
 
 (define (compiler-backend-entry-for-target
   [target : CompilerBackendTarget]

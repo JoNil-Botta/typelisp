@@ -5516,9 +5516,11 @@
   [level : i64]) : CompilerIrFunctionList
   (if (= level 0)
     funcs
-    (let [scratch : i64 (arena-make)]
-      (let [result : CompilerIrFunctionList
-             (optimize-function-list-escaping funcs level scratch)]
+    (let
+      [scratch : i64 (arena-make)]
+      (let
+        [result : CompilerIrFunctionList
+          (optimize-function-list-escaping funcs level scratch)]
         (begin
           (arena-destroy scratch)
           result)))))
@@ -5542,16 +5544,22 @@
   [func : CompilerIrFunction]
   [level : i64]
   [scratch : i64]) : CompilerIrFunction
-  (let [enclosing : i64 (arena-current)]
+  (let
+    [enclosing : i64 (arena-current)]
     (begin
       (arena-set! scratch)
-      (let [mark : i64 (arena-mark)]
-        (let [raw : CompilerIrFunction (optimize-function-with-level func level)]
-          (let [scratch-head : i64 (arena-current)]
+      (let
+        [mark : i64 (arena-mark)]
+        (let
+          [raw : CompilerIrFunction (optimize-function-with-level func level)]
+          (let
+            [scratch-head : i64 (arena-current)]
             (begin
               (arena-set! enclosing)
-              (let [escaped : CompilerIrFunction (clone raw)]
-                (let [new-enclosing : i64 (arena-current)]
+              (let
+                [escaped : CompilerIrFunction (clone raw)]
+                (let
+                  [new-enclosing : i64 (arena-current)]
                   (begin
                     (arena-set! scratch-head)
                     (arena-rewind mark)

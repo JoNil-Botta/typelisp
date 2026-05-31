@@ -378,12 +378,18 @@ else
         echo
         echo "[no-rust-stage0] skipping seed public tool surface until stage1 host-action drivers are available (#1327)"
     elif [ "$HOST_OS" = windows ]; then
+        # The single-binary cli.tl Windows seed emits host-plans for build/run and
+        # is silent on compile (no `Generated:`); STAGE1_HOST_ACTION_DRIVERS_AVAILABLE
+        # is always 0 on Windows, so disable the build/run/host-action/`Generated:`
+        # public-tool cases here too while keeping compile/check/fmt/lint/test/doc
+        # coverage. The in-process host-action executor is tracked in #1645 (#1327).
+        echo
+        echo "[no-rust-stage0] running Windows seed public tool surface with host-action gates disabled; build/run/host-action drivers pending in-process executor (#1327)"
         if compiler_rejects_package_kind_manifest "$FRONT_GATE_TYPELISP_BIN"; then
-            echo
             echo "[no-rust-stage0] Windows seed rejects package kind; using legacy package manifests for public tool surface"
-            run_with_compiler "$FRONT_GATE_TYPELISP_BIN" "public tool surface" env TYPELISP_LEGACY_PACKAGE_MANIFEST=1 scripts/verify-public-tools.sh
+            run_with_compiler "$FRONT_GATE_TYPELISP_BIN" "public tool surface" env TYPELISP_LEGACY_PACKAGE_MANIFEST=1 TYPELISP_PUBLIC_TOOLS_HOST_ACTION_ENABLED=0 scripts/verify-public-tools.sh
         else
-            run_with_compiler "$FRONT_GATE_TYPELISP_BIN" "public tool surface" scripts/verify-public-tools.sh
+            run_with_compiler "$FRONT_GATE_TYPELISP_BIN" "public tool surface" env TYPELISP_PUBLIC_TOOLS_HOST_ACTION_ENABLED=0 scripts/verify-public-tools.sh
         fi
     elif [ "$SEED_IS_STAGE1_BUNDLE" -eq 1 ]; then
         echo
@@ -465,11 +471,26 @@ if [ "$HOST_OS" = linux ]; then
         run_with_compiler "$STAGE1_TYPELISP_BIN" "stage1 stdlib selfhost verifier" scripts/verify-stdlib-selfhost.sh
     fi
 else
-    run_gate "selfhost compile manifest" scripts/verify-selfhost-compile-manifest.sh
+    # The single-binary cli.tl seed emits module-qualified symbols (the stage1
+    # mangling, `_tl_<mod>_u2etl_colon_colon<fn>`), which only the manifest's
+    # stage1 expectation mode accepts; stage0 mode expects the bare Rust-backend
+    # labels. STAGE1_HOST_ACTION_DRIVERS_AVAILABLE is always 0 on Windows, so the
+    # seed is always cli.tl here (#1327).
+    run_gate "selfhost compile manifest" env TYPELISP_COMPILE_MANIFEST_EXPECTATION_MODE=stage1 scripts/verify-selfhost-compile-manifest.sh
     run_gate "deterministic assembly" scripts/check-deterministic-asm.sh
     if [ "$WINDOWS_SEED_STAGED_RUNTIME_GAP" -eq 1 ]; then
         echo
         echo "[no-rust-stage0] skipping Windows selfhost MSVC link.exe build/run and bootstrap fixpoint until the seed provides staged runtime symbols"
+    elif [ "$STAGE1_HOST_ACTION_DRIVERS_AVAILABLE" -eq 0 ]; then
+        # Single-binary cli.tl seed: the MSVC link.exe gate drives `run --direct`
+        # (a host-action cli.tl emits as a plan, not an execution), and the Windows
+        # bootstrap fixpoint links a selfhost-built stage1 with only a 16 MB stack
+        # reserve (/STACK:16777216), which a selfhost-built compiler overflows on
+        # the larger selfhost sources. Both are deferred to the in-process
+        # host-action executor / Windows self-reproduction follow-up (#1645/#1327).
+        # The Linux lane keeps the bootstrap fixpoint as the self-reproduction gate.
+        echo
+        echo "[no-rust-stage0] skipping Windows selfhost MSVC link.exe build/run and bootstrap fixpoint for the single-binary cli.tl seed (host-action executor pending; #1645/#1327)"
     else
         run_gate "windows selfhost MSVC link.exe build/run" scripts/verify-windows-selfhost-msvc-link.sh
         run_gate "windows bootstrap fixpoint" scripts/check-bootstrap-fixpoint.sh "$SEED_TYPELISP_BIN"
@@ -522,11 +543,12 @@ elif [ "$HOST_OS" = linux ] &&
         [ "$SEED_IS_STAGE1_BUNDLE" -eq 1 ]; }; then
     echo
     echo "[no-rust-stage0] skipping safety corpus until stage1 host-action drivers are available"
-elif [ "$HOST_OS" = linux ] && [ "$STAGE1_HOST_ACTION_DRIVERS_AVAILABLE" -eq 0 ]; then
+elif [ "$STAGE1_HOST_ACTION_DRIVERS_AVAILABLE" -eq 0 ]; then
     # The safety corpus assembles, links, and runs native trap fixtures. The
-    # single-binary cli.tl seed emits host-plans rather than executing build/run,
-    # so it cannot drive this gate. Skip until the in-process host-action executor
-    # lands (#1327). The compile-only safety check (division_by_zero_trap emitting
+    # single-binary cli.tl seed (Linux or Windows, where the drivers flag is
+    # always 0) emits host-plans rather than executing build/run, so it cannot
+    # drive this gate. Skip until the in-process host-action executor lands
+    # (#1327). The compile-only safety check (division_by_zero_trap emitting
     # valid .s) is still implicitly exercised by stage1_safety_corpus_supported's
     # probe path on driver-capable seeds.
     echo
@@ -551,13 +573,14 @@ elif [ "$HOST_OS" = linux ] && [ "$SEED_IS_STAGE1_BUNDLE" -eq 1 ]; then
     echo
     echo "[no-rust-stage0] skipping seed build/run artifact gates until the stage1 bundle reaches compiler/runtime parity:"
     echo "[no-rust-stage0]   native integration corpus, examples, stdlib modules and fixtures"
-elif [ "$HOST_OS" = linux ] && [ "$STAGE1_HOST_ACTION_DRIVERS_AVAILABLE" -eq 0 ]; then
+elif [ "$STAGE1_HOST_ACTION_DRIVERS_AVAILABLE" -eq 0 ]; then
     # These gates build and run native programs (integration corpus, examples,
     # stdlib fixtures via `typelisp build`/`run`). The single-binary cli.tl seed
-    # emits host-plans rather than executing build/run, so it cannot drive them.
-    # Skip until the in-process host-action executor lands (#1327). cli.tl's
-    # compile/check coverage for these sources stays exercised by the deterministic
-    # assembly + selfhost compile manifest gates and the borrowed-str check gate.
+    # (Linux or Windows, where the drivers flag is always 0) emits host-plans
+    # rather than executing build/run, so it cannot drive them. Skip until the
+    # in-process host-action executor lands (#1327). cli.tl's compile/check
+    # coverage for these sources stays exercised by the deterministic assembly +
+    # selfhost compile manifest gates and the borrowed-str check gate.
     echo
     echo "[no-rust-stage0] skipping seed build/run artifact gates; building/running native programs needs the in-process host-action executor (#1327):"
     echo "[no-rust-stage0]   native integration corpus, examples, stdlib modules and fixtures"

@@ -1286,6 +1286,12 @@ while IFS= read -r fmt_name; do
     check_file_exact "$WORKDIR/$fmt_name.tl" "$WORKDIR/$fmt_name.expected"
 done < "$WORKDIR/format-expected.txt"
 
+# On windows the Rust host's `doc`/`doc --test` driver build deadlocks on the
+# cmd /C wrapper (#1650); the self-hosted doc path is covered by the no-Rust
+# gate, so skip this section on windows rather than hang.
+if [ "$HOST_OS" = windows ]; then
+    echo "[public-tools] skipping doc and doctest commands on windows (Rust host doc spawn deadlocks; #1650)"
+else
 echo "[public-tools] doc and doctest commands"
 cat > "$WORKDIR/docs.tl" <<'EOF'
 ;;;; Module docs.
@@ -1396,6 +1402,7 @@ if [ "$SELFHOST_FRONTEND_DIAGNOSTICS" -eq 1 ]; then
 else
     assert_contains "$err" "Usage:"
     assert_contains "$err" "typelisp doc --test <file.tl>"
+fi
 fi
 
 # Doc *generation* (`doc <src> -o <out>` markdown/HTML) is a pending gap in the

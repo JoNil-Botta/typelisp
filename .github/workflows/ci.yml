@@ -10,14 +10,12 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
-env:
-  CARGO_TERM_COLOR: always
-  RUSTFLAGS: "-D warnings"
-
 jobs:
-  # TypeLisp-owned gates must stay cross-platform. Individual scripts may skip
-  # explicitly documented Linux-only or Windows-blocked coverage, but CI should
-  # keep both OS entries wired by default.
+  # TypeLisp is self-hosted: there is no Rust compiler to build. The single
+  # verification flow fetches the published self-hosted stage0 (cli.tl) and runs
+  # every gate through it (and, on Linux, through a freshly bootstrapped stage1).
+  # The gate stays cross-platform; individual scripts may skip explicitly
+  # documented Linux-only or Windows-blocked coverage.
   ci:
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.os }}
@@ -26,234 +24,25 @@ jobs:
       fail-fast: true
       matrix:
         include:
-          - suite: no-rust-stage0
-            name: No-Rust Stage0 Verification (linux)
+          - name: Stage0 Verification (linux)
             os: ubuntu-latest
             timeout_minutes: 35
-          - suite: no-rust-stage0
-            name: No-Rust Stage0 Verification (windows-latest)
+          - name: Stage0 Verification (windows-latest)
             os: windows-latest
             timeout_minutes: 60
-          - suite: rust
-            name: Test + Integration
-            os: ubuntu-latest
-            timeout_minutes: 180
-            release_bin: ./target/release/typelisp
-          # The windows Rust reference leg runs the native build->run corpora,
-          # which spawn clang+link+the executable per fixture (~1 min each on the
-          # windows runner). Give it a very large wall-clock so it can finish;
-          # this leg is a required check today and is removed by the no-Rust
-          # transition.
-          - suite: rust
-            name: Test + Integration (windows-latest)
-            os: windows-latest
-            timeout_minutes: 350
-            release_bin: ./target/release/typelisp.exe
     steps:
       - uses: actions/checkout@v4
 
-      - name: Run no-Rust bootstrap + stage1 capability gate
-        if: ${{ matrix.suite == 'no-rust-stage0' && matrix.os == 'ubuntu-latest' }}
-        run: scripts/verify-no-rust-stage0.sh
-
-      - name: Run no-Rust stage0 gate
-        if: ${{ matrix.suite == 'no-rust-stage0' && matrix.os == 'windows-latest' }}
-        shell: bash
-        run: scripts/verify-no-rust-stage0.sh
-
-      # Temporary Rust reference coverage until #795 removes the Rust-owned
-      # stage0 dependency. These steps build and test the Rust compiler, while
-      # TypeLisp verification scripts run once through the release compiler.
-      - name: Fetch PR base
-        if: ${{ matrix.suite == 'rust' && matrix.os == 'ubuntu-latest' && github.event_name == 'pull_request' }}
-        run: |
-          base_sha="$(git cat-file -p HEAD | sed -n 's/^parent //p' | head -n 1)"
-          if [ -z "$base_sha" ]; then
-            base_sha="${{ github.event.pull_request.base.sha }}"
-          fi
-          git fetch --no-tags --depth=1 origin "$base_sha:refs/remotes/origin/pr-base"
-
       - name: Check implementation language allowlist
-        if: ${{ matrix.suite == 'rust' && matrix.os == 'ubuntu-latest' }}
+        if: ${{ matrix.os == 'ubuntu-latest' }}
         run: scripts/check-implementation-languages.sh
 
-      - name: Check selfhost contribution guardrail
-        if: ${{ matrix.suite == 'rust' && matrix.os == 'ubuntu-latest' && github.event_name == 'pull_request' }}
-        env:
-          SELFHOST_GUARDRAIL_PR_BODY: ${{ github.event.pull_request.body }}
-        run: SELFHOST_GUARDRAIL_BASE=origin/pr-base scripts/check-selfhost-guardrail.sh
-
-      - name: Check Rust test coverage map
-        if: ${{ matrix.suite == 'rust' && matrix.os == 'ubuntu-latest' && github.event_name == 'pull_request' }}
-        run: RUST_TEST_COVERAGE_BASE=origin/pr-base scripts/check-rust-test-coverage-map.sh
-
-      - name: Verify zero dependencies
-        if: ${{ matrix.suite == 'rust' }}
-        shell: bash
-        run: |
-          if grep -qE '^\[dependencies\]|^\[dev-dependencies\]' Cargo.toml; then
-            echo "ERROR: Cargo.toml contains dependencies. TypeLisp must have zero third-party crates."
-            exit 1
-          fi
-          echo "OK: No third-party dependencies found."
-
       - name: Check native toolchain
-        if: ${{ matrix.suite == 'rust' && matrix.os == 'ubuntu-latest' }}
+        if: ${{ matrix.os == 'ubuntu-latest' }}
         run: |
           command -v as
           command -v ld
 
-      - name: Install Rust
-        if: ${{ matrix.suite == 'rust' }}
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Cache cargo dependencies
-        if: ${{ matrix.suite == 'rust' }}
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-
-      - name: Check formatting
-        if: ${{ matrix.suite == 'rust' }}
-        run: cargo fmt -- --check
-
-      - name: Run clippy
-        if: ${{ matrix.suite == 'rust' }}
-        run: cargo clippy -- -D warnings
-
-      - name: Run tests
-        if: ${{ matrix.suite == 'rust' }}
-        run: cargo test --verbose
-
-      - name: Build release
-        if: ${{ matrix.suite == 'rust' }}
-        run: cargo build --release
-
-      - name: Run TypeLisp lint gate
-        if: ${{ matrix.suite == 'rust' }}
+      - name: Run self-hosted stage0 verification gate
         shell: bash
-        run: TYPELISP_BIN=${{ matrix.release_bin }} TYPELISP_LINT_JOBS=8 scripts/check-tl-lint.sh
-
-      - name: Test CLI commands
-        if: ${{ matrix.suite == 'rust' }}
-        shell: bash
-        run: |
-          mkdir -p test_programs
-          echo '(define x : i64 42)' > test_programs/basic.tl
-          ${{ matrix.release_bin }} tokenize test_programs/basic.tl
-          ${{ matrix.release_bin }} parse test_programs/basic.tl
-          ${{ matrix.release_bin }} check test_programs/basic.tl
-          ${{ matrix.release_bin }} compile tests/integration/factorial.tl -o target/ci-frontend-smoke.s
-
-      - name: Verify public tools with Rust-built compiler
-        if: ${{ matrix.suite == 'rust' }}
-        shell: bash
-        run: TYPELISP_BIN=${{ matrix.release_bin }} scripts/verify-public-tools.sh
-
-      - name: Verify safety corpus
-        if: ${{ matrix.suite == 'rust' }}
-        shell: bash
-        run: TYPELISP_BIN=${{ matrix.release_bin }} scripts/verify-safety-corpus.sh
-
-      - name: Verify scalar-vs-SIMD SPMD execution comparison
-        if: ${{ matrix.suite == 'rust' }}
-        shell: bash
-        run: TYPELISP_BIN=${{ matrix.release_bin }} scripts/verify-spmd-simd.sh
-
-      - name: Verify TypeLisp doctests with Rust-built compiler
-        if: ${{ matrix.suite == 'rust' && matrix.os != 'windows-latest' }}
-        shell: bash
-        run: TYPELISP_BIN=${{ matrix.release_bin }} scripts/verify-doc-tests.sh
-
-      - name: Verify inline TypeLisp tests with Rust-built compiler
-        if: ${{ matrix.suite == 'rust' }}
-        shell: bash
-        run: TYPELISP_BIN=${{ matrix.release_bin }} scripts/verify-inline-tests.sh
-
-      - name: Verify selfhost compile manifest with Rust-built compiler
-        if: ${{ matrix.suite == 'rust' }}
-        shell: bash
-        run: TYPELISP_BIN=${{ matrix.release_bin }} scripts/verify-selfhost-compile-manifest.sh
-
-      - name: Verify stdlib witnesses through the selfhost frontend
-        if: ${{ matrix.suite == 'rust' }}
-        shell: bash
-        run: TYPELISP_BIN=${{ matrix.release_bin }} scripts/verify-stdlib-selfhost.sh
-
-      - name: Test type checker
-        if: ${{ matrix.suite == 'rust' }}
-        shell: bash
-        run: |
-          cat > test_programs/factorial.tl << 'EOF'
-          (define (factorial [n : i64]) : i64
-            (if (= n 0)
-                1
-                (* n (factorial (- n 1)))))
-          EOF
-          ${{ matrix.release_bin }} check test_programs/factorial.tl
-
-      - name: Test type error detection
-        if: ${{ matrix.suite == 'rust' }}
-        shell: bash
-        run: |
-          cat > test_programs/bad.tl << 'EOF'
-          (define (bad [a : i64] [b : bool]) : i64 (+ a b))
-          EOF
-          if ${{ matrix.release_bin }} check test_programs/bad.tl; then
-            echo "Expected type error but got success"
-            exit 1
-          fi
-          echo "Correctly detected type error"
-
-      - name: Verify integration corpus
-        if: ${{ matrix.suite == 'rust' }}
-        shell: bash
-        run: TYPELISP_BIN=${{ matrix.release_bin }} ./scripts/verify-integration.sh
-
-      - name: Verify selfhost native generated programs
-        if: ${{ matrix.suite == 'rust' }}
-        shell: bash
-        run: TYPELISP_BIN=${{ matrix.release_bin }} ./scripts/verify-selfhost-native.sh
-
-      - name: Compile and verify all examples
-        if: ${{ matrix.suite == 'rust' }}
-        shell: bash
-        run: TYPELISP_BIN=${{ matrix.release_bin }} ./scripts/verify-examples.sh
-
-      - name: Verify stdlib modules
-        if: ${{ matrix.suite == 'rust' }}
-        shell: bash
-        run: TYPELISP_BIN=${{ matrix.release_bin }} ./scripts/verify-stdlib.sh
-
-      - name: Verify stdlib documentation
-        if: ${{ matrix.suite == 'rust' }}
-        shell: bash
-        run: TYPELISP_BIN=${{ matrix.release_bin }} ./scripts/verify-stdlib-docs.sh
-
-      - name: Verify docs Pages build path (no publish)
-        if: ${{ matrix.suite == 'rust' && matrix.os == 'ubuntu-latest' }}
-        run: DOC_SITE_OUT=target/ci-docs-pages-site TYPELISP_BIN=${{ matrix.release_bin }} scripts/verify-doc-site.sh
-
-      - name: Check TypeLisp source formatting
-        if: ${{ matrix.suite == 'rust' }}
-        shell: bash
-        run: TYPELISP_BIN=${{ matrix.release_bin }} ./scripts/check-tl-format.sh
-
-      - name: Run selfhost verification
-        if: ${{ matrix.suite == 'rust' }}
-        shell: bash
-        run: TYPELISP_BIN=${{ matrix.release_bin }} ./scripts/verify-selfhost.sh
-
-      - name: Run bootstrap smoke check
-        if: ${{ matrix.suite == 'rust' }}
-        shell: bash
-        run: TYPELISP_BIN=${{ matrix.release_bin }} ./scripts/check-bootstrap-smoke.sh
-
-      - name: Check deterministic assembly output
-        if: ${{ matrix.suite == 'rust' }}
-        shell: bash
-        run: TYPELISP_BIN=${{ matrix.release_bin }} scripts/check-deterministic-asm.sh
+        run: scripts/verify-no-rust-stage0.sh

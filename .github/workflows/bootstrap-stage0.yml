@@ -1,14 +1,27 @@
 name: Bootstrap Stage0
 
-# On every merge to main, build the self-hosted single-binary stage0 compiler
-# (cli.tl, compiled by the in-repo Rust seed) and publish it as permanent GitHub
-# releases. A lightweight "stage0-latest" release is recreated with the same
-# assets, giving CI a stable download URL while permanent releases remain.
+# On every merge to main, rebuild the self-hosted single-binary stage0 compiler
+# (cli.tl) and publish it as permanent GitHub releases. A lightweight
+# "stage0-latest" release is recreated with the same assets, giving CI a stable
+# download URL while permanent releases remain.
 #
-# The stage0 is now a SINGLE cli.tl binary per OS (no bundle / per-command driver
-# wrappers): cli.tl is the unified toolchain (compile/build/run/check/fmt/lint/
-# test/doc + the bare-file bootstrap form). It finds stdlib via --stdlib-root
-# against the repo checkout until the stdlib is embedded into the binary.
+# Self-perpetuation (no Rust): there is no Rust seed compiler anymore. The new
+# stage0 is built by FETCHING THE PREVIOUSLY PUBLISHED stage0 (the last cli.tl
+# binary, via scripts/fetch-stage0.sh) and using THAT compiler to compile
+# selfhost/cli.tl to assembly, then assembling + linking it into the next stage0
+# binary. Each published stage0 thus builds its successor.
+#
+# IMPORTANT: the published self-hosted stage0's `build` command emits a host
+# action plan (real on-disk build/run is deferred to #1645), so it cannot build
+# itself in-process. Bootstrap therefore uses `compile` (frontend + backend ->
+# .s) and the host toolchain (as/ld on Linux; clang + MSVC link.exe on Windows)
+# to assemble and link the binary, the same flow as
+# scripts/check-bootstrap-fixpoint.sh.
+#
+# The stage0 is a SINGLE cli.tl binary per OS: cli.tl is the unified toolchain
+# (compile/build/run/check/fmt/lint/test/doc + the bare-file bootstrap form). It
+# finds stdlib via --stdlib-root against the repo checkout until the stdlib is
+# embedded into the binary.
 
 on:
   push:
@@ -17,10 +30,6 @@ on:
 permissions:
   contents: write
 
-env:
-  CARGO_TERM_COLOR: always
-  RUSTFLAGS: "-D warnings"
-
 jobs:
   build-linux:
     name: Build Stage0 (Linux)
@@ -28,21 +37,21 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Build Rust seed compiler
-        run: cargo build --release
-
-      - name: Build self-hosted cli.tl stage0 binary
+      - name: Check native toolchain
         run: |
-          target/release/typelisp build selfhost/cli.tl -o typelisp-stage0-linux \
-            --stdlib-root stdlib --stdlib-root selfhost --opt-level 2
-          strip typelisp-stage0-linux
+          command -v as
+          command -v ld
+
+      - name: Fetch previously published stage0 (seed)
+        run: scripts/fetch-stage0.sh
+
+      - name: Build the new stage0 binary from the previous stage0
+        run: |
+          scripts/build-stage0.sh target/stage0/typelisp typelisp-stage0-linux
           file typelisp-stage0-linux
           ls -lh typelisp-stage0-linux
 
-      - name: Smoke-check the stage0 binary
+      - name: Smoke-check the new stage0 binary
         run: |
           ./typelisp-stage0-linux compile selfhost/compile.tl -o /tmp/stage0-smoke.s \
             --target linux-x86_64 --stdlib-root stdlib --stdlib-root selfhost
@@ -61,18 +70,24 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+      - name: Fetch previously published stage0 (seed)
+        shell: bash
+        run: scripts/fetch-stage0.sh
 
-      - name: Build Rust seed compiler
-        run: cargo build --release
-
-      - name: Build self-hosted cli.tl stage0 binary
-        shell: pwsh
+      - name: Build the new stage0 binary from the previous stage0
+        shell: bash
         run: |
-          .\target\release\typelisp.exe build selfhost\cli.tl -o typelisp-stage0-windows.exe `
-            --stdlib-root stdlib --stdlib-root selfhost --opt-level 2
-          Get-Item .\typelisp-stage0-windows.exe
+          # build-stage0.sh discovers clang + MSVC link.exe + the Windows SDK the
+          # same way the bootstrap fixpoint gate does (scripts/lib-native-link.sh).
+          scripts/build-stage0.sh target/stage0/typelisp.exe typelisp-stage0-windows.exe
+          ls -l typelisp-stage0-windows.exe
+
+      - name: Smoke-check the new stage0 binary
+        shell: bash
+        run: |
+          ./typelisp-stage0-windows.exe compile selfhost/compile.tl -o /tmp/stage0-smoke.s \
+            --target windows-x86_64 --stdlib-root stdlib --stdlib-root selfhost
+          test -s /tmp/stage0-smoke.s
 
       - name: Upload stage0 artifact
         uses: actions/upload-artifact@v4

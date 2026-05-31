@@ -17,6 +17,9 @@ cond|tests/integration/cond.tl|42|-|-|-
 control_flow|tests/integration/control_flow.tl|15|-|-|-
 div_zero_trap|tests/integration/div_zero_trap.tl|135|-|-|-|expected-stderr:tl: integer division or remainder error\n
 enum_match|tests/integration/enum_match.tl|42|-|-|-
+make_array_negative_trap|tests/integration/make_array_negative_trap.tl|134|-|-|-|expected-stderr:tl: array index out of bounds\n
+make_array_overflow_trap|tests/integration/make_array_overflow_trap.tl|134|-|-|-|expected-stderr:tl: array index out of bounds\n
+make_array_zero|tests/integration/make_array_zero.tl|0|-|-|-
 enum_string_payload|tests/integration/enum_string_payload.tl|5|-|-|-
 f32_scalar|tests/integration/f32_scalar.tl|42|-|-|-
 factorial|tests/integration/factorial.tl|120|-|-|-
@@ -52,6 +55,16 @@ nullary_variant_call|tests/integration/nullary_variant_call.tl|42|-|-|-
 overflow_casts|tests/integration/overflow_casts.tl|0|-|-|-
 parser|tests/integration/parser.tl|14|-|-|-
 process_runtime|tests/integration/process_runtime.tl|42|-|-|stdlib/process.tl stdlib/test.tl
+read_file_missing_trap|tests/integration/read_file_missing_trap.tl|134|-|-|-|expected-stderr:tl: read-file failed\n
+write_file_invalid_trap|tests/integration/write_file_invalid_trap.tl|134|-|-|-|expected-stderr:tl: write-file failed\n
+selfhost_argv_oob|tests/integration/selfhost_argv_oob.tl|134|-|-|-|expected-stderr:tl: argv index out of bounds\n
+tl_alloc_huge_trap|tests/integration/tl_alloc_huge_trap.tl|134|-|-|-|expected-stderr:tl: allocation failed\n
+stdin_bytes_negative_trap|tests/integration/stdin_bytes_negative_trap.tl|134|-|-|-|expected-stderr:tl: stdin failed\n
+region_mark_zero|tests/integration/region_mark_zero.tl|42|-|-|-
+region_reset_zero|tests/integration/region_reset_zero.tl|44|-|-|-
+region_reset_discard|tests/integration/region_reset_discard.tl|3|-|-|-
+region_reset_preserve|tests/integration/region_reset_preserve.tl|62|-|-|-
+region_reset_invalid_trap|tests/integration/region_reset_invalid_trap.tl|134|-|-|-|expected-stderr:tl: invalid region mark\n
 print|tests/integration/print.tl|0|42\nfalse\n|-|-
 print_char|tests/integration/print_char.tl|0|A\n|-|-
 print_string|tests/integration/print_string.tl|0|hello\nworld\n|-|-

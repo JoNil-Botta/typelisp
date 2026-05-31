@@ -24,10 +24,10 @@ jobs:
       fail-fast: true
       matrix:
         include:
-          - name: Stage0 Verification (linux)
+          - name: Test + Integration
             os: ubuntu-latest
             timeout_minutes: 35
-          - name: Stage0 Verification (windows-latest)
+          - name: Test + Integration (windows-latest)
             os: windows-latest
             timeout_minutes: 60
     steps:
@@ -43,6 +43,6 @@ jobs:
           command -v as
           command -v ld
 
-      - name: Run self-hosted stage0 verification gate
+      - name: Stage0 verification
         shell: bash
         run: scripts/verify-no-rust-stage0.sh

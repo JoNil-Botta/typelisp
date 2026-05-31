@@ -512,6 +512,22 @@ run_with_compiler "$FORMAT_GATE_TYPELISP_BIN" "TypeLisp source formatting" scrip
 TYPELISP_BIN=$SEED_TYPELISP_BIN
 export TYPELISP_BIN
 
+# The repository lint gate runs `typelisp lint` over the whole tracked TypeLisp
+# corpus and fails CI on any finding (the public `typelisp lint` is warn-only;
+# this gate enforces a clean baseline, refs #1164). Like fmt/check, `lint` is an
+# in-process frontend command that needs no host-action drivers, so it runs
+# directly on the seed/stage1 compiler; mirror the format gate's selection. The
+# old Rust CI ran this gate (TYPELISP_LINT_JOBS=8); keep it here so unifying CI
+# into the no-Rust gate does not silently drop repository lint enforcement.
+LINT_GATE_TYPELISP_BIN=$SEED_TYPELISP_BIN
+if [ "$HOST_OS" = linux ] && [ "$STAGE1_HOST_ACTION_DRIVERS_AVAILABLE" -eq 1 ]; then
+    LINT_GATE_TYPELISP_BIN=$STAGE1_TYPELISP_BIN
+fi
+run_with_compiler "$LINT_GATE_TYPELISP_BIN" "TypeLisp source lint" \
+    env TYPELISP_LINT_JOBS="${TYPELISP_LINT_JOBS:-8}" scripts/check-tl-lint.sh
+TYPELISP_BIN=$SEED_TYPELISP_BIN
+export TYPELISP_BIN
+
 # The safety corpus is a build/run capability gate, but its fixtures are small
 # enough to run through the freshly bootstrapped stage1 wrapper when the Linux
 # host-action drivers and checked-trap helpers are available (#1267). Keep the

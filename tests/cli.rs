@@ -1564,7 +1564,10 @@ fn selfhost_compile_cli_driver_writes_assembly_and_reports_errors() {
     let source_arg = source.to_str().expect("source path is utf-8");
     let explicit_asm_arg = explicit_asm.to_str().expect("explicit asm path is utf-8");
 
-    let explicit = driver_output(&driver_bin, &[source_arg, "-o", explicit_asm_arg]);
+    let explicit = driver_output(
+        &driver_bin,
+        &["compile", source_arg, "-o", explicit_asm_arg],
+    );
     assert!(
         explicit.status.success(),
         "selfhost compile -o failed\nstdout:\n{}\nstderr:\n{}",
@@ -1605,6 +1608,7 @@ fn selfhost_compile_cli_driver_writes_assembly_and_reports_errors() {
     let stdlib_compile = driver_output(
         &driver_bin,
         &[
+            "compile",
             stdlib_source_arg,
             "--stdlib-root",
             stdlib_root_arg,
@@ -1634,6 +1638,7 @@ fn selfhost_compile_cli_driver_writes_assembly_and_reports_errors() {
     let explicit_linux = driver_output(
         &driver_bin,
         &[
+            "compile",
             source_arg,
             "--target",
             "linux-x86_64",
@@ -1661,6 +1666,7 @@ fn selfhost_compile_cli_driver_writes_assembly_and_reports_errors() {
     let windows = driver_output(
         &driver_bin,
         &[
+            "compile",
             source_arg,
             "--target",
             "windows-x86_64",
@@ -1705,7 +1711,12 @@ fn selfhost_compile_cli_driver_writes_assembly_and_reports_errors() {
         .expect("comptime type asm path is utf-8");
     let comptime_type = driver_output(
         &driver_bin,
-        &[comptime_type_source_arg, "-o", comptime_type_asm_arg],
+        &[
+            "compile",
+            comptime_type_source_arg,
+            "-o",
+            comptime_type_asm_arg,
+        ],
     );
     assert!(
         comptime_type.status.success(),
@@ -1730,7 +1741,10 @@ fn selfhost_compile_cli_driver_writes_assembly_and_reports_errors() {
     .expect("write region source");
     let region_source_arg = region_source.to_str().expect("region source path is utf-8");
     let region_asm_arg = region_asm.to_str().expect("region asm path is utf-8");
-    let region_ok = driver_output(&driver_bin, &[region_source_arg, "-o", region_asm_arg]);
+    let region_ok = driver_output(
+        &driver_bin,
+        &["compile", region_source_arg, "-o", region_asm_arg],
+    );
     assert!(
         region_ok.status.success(),
         "selfhost compile region source failed\nstdout:\n{}\nstderr:\n{}",
@@ -1755,7 +1769,7 @@ fn selfhost_compile_cli_driver_writes_assembly_and_reports_errors() {
     let default_source_arg = default_source
         .to_str()
         .expect("default source path is utf-8");
-    let default = driver_output(&driver_bin, &[default_source_arg]);
+    let default = driver_output(&driver_bin, &["compile", default_source_arg]);
     assert!(
         default.status.success(),
         "selfhost compile default output failed\nstdout:\n{}\nstderr:\n{}",
@@ -1776,7 +1790,10 @@ fn selfhost_compile_cli_driver_writes_assembly_and_reports_errors() {
     let opt_default_asm_arg = opt_default_asm
         .to_str()
         .expect("opt default asm path is utf-8");
-    let opt_default = driver_output(&driver_bin, &[opt_source_arg, "-o", opt_default_asm_arg]);
+    let opt_default = driver_output(
+        &driver_bin,
+        &["compile", opt_source_arg, "-o", opt_default_asm_arg],
+    );
     assert!(
         opt_default.status.success(),
         "selfhost compile default opt level failed\nstdout:\n{}\nstderr:\n{}",
@@ -1791,7 +1808,14 @@ fn selfhost_compile_cli_driver_writes_assembly_and_reports_errors() {
         let asm_arg = asm_path.to_str().expect("opt-level asm path is utf-8");
         let output = driver_output(
             &driver_bin,
-            &[opt_source_arg, "--opt-level", level, "-o", asm_arg],
+            &[
+                "compile",
+                opt_source_arg,
+                "--opt-level",
+                level,
+                "-o",
+                asm_arg,
+            ],
         );
         assert!(
             output.status.success(),
@@ -1823,7 +1847,7 @@ fn selfhost_compile_cli_driver_writes_assembly_and_reports_errors() {
         "opt-level 3 is currently documented as level-2 equivalent"
     );
 
-    let missing_opt = driver_output(&driver_bin, &[opt_source_arg, "--opt-level"]);
+    let missing_opt = driver_output(&driver_bin, &["compile", opt_source_arg, "--opt-level"]);
     assert!(!missing_opt.status.success());
     assert_eq!(stdout(&missing_opt), "");
     assert!(
@@ -1834,7 +1858,14 @@ fn selfhost_compile_cli_driver_writes_assembly_and_reports_errors() {
 
     let duplicate_opt = driver_output(
         &driver_bin,
-        &[opt_source_arg, "--opt-level", "1", "--opt-level", "2"],
+        &[
+            "compile",
+            opt_source_arg,
+            "--opt-level",
+            "1",
+            "--opt-level",
+            "2",
+        ],
     );
     assert!(!duplicate_opt.status.success());
     assert_eq!(stdout(&duplicate_opt), "");
@@ -1844,7 +1875,10 @@ fn selfhost_compile_cli_driver_writes_assembly_and_reports_errors() {
         stderr(&duplicate_opt)
     );
 
-    let invalid_opt = driver_output(&driver_bin, &[opt_source_arg, "--opt-level", "4"]);
+    let invalid_opt = driver_output(
+        &driver_bin,
+        &["compile", opt_source_arg, "--opt-level", "4"],
+    );
     assert!(!invalid_opt.status.success());
     assert_eq!(stdout(&invalid_opt), "");
     assert!(
@@ -1860,6 +1894,7 @@ fn selfhost_compile_cli_driver_writes_assembly_and_reports_errors() {
     let bad_target = driver_output(
         &driver_bin,
         &[
+            "compile",
             source_arg,
             "--target",
             "plan9-x86_64",
@@ -1885,7 +1920,7 @@ fn selfhost_compile_cli_driver_writes_assembly_and_reports_errors() {
     let explicit_ir_arg = explicit_ir.to_str().expect("explicit ir path is utf-8");
     let emit_ir = driver_output(
         &driver_bin,
-        &[source_arg, "--emit-ir", "-o", explicit_ir_arg],
+        &["compile", source_arg, "--emit-ir", "-o", explicit_ir_arg],
     );
     assert!(
         emit_ir.status.success(),
@@ -1908,7 +1943,7 @@ fn selfhost_compile_cli_driver_writes_assembly_and_reports_errors() {
         );
     }
 
-    let default_ir = driver_output(&driver_bin, &[source_arg, "--emit-ir"]);
+    let default_ir = driver_output(&driver_bin, &["compile", source_arg, "--emit-ir"]);
     assert!(
         default_ir.status.success(),
         "selfhost compile default --emit-ir failed\nstdout:\n{}\nstderr:\n{}",
@@ -1933,7 +1968,7 @@ fn selfhost_compile_cli_driver_writes_assembly_and_reports_errors() {
     fs::write(&bad_source, "(define (main) : i64 true)\n").expect("write bad source");
     let bad_source_arg = bad_source.to_str().expect("bad source path is utf-8");
     let bad_asm_arg = bad_asm.to_str().expect("bad asm path is utf-8");
-    let failure = driver_output(&driver_bin, &[bad_source_arg, "-o", bad_asm_arg]);
+    let failure = driver_output(&driver_bin, &["compile", bad_source_arg, "-o", bad_asm_arg]);
     assert!(!failure.status.success());
     assert_eq!(stdout(&failure), "");
     assert!(
@@ -1961,7 +1996,7 @@ fn selfhost_compile_cli_driver_writes_assembly_and_reports_errors() {
         .expect("bad region asm path is utf-8");
     let bad_region = driver_output(
         &driver_bin,
-        &[bad_region_source_arg, "-o", bad_region_asm_arg],
+        &["compile", bad_region_source_arg, "-o", bad_region_asm_arg],
     );
     assert!(!bad_region.status.success());
     assert_eq!(stdout(&bad_region), "");
@@ -1991,7 +2026,10 @@ fn selfhost_compile_cli_driver_writes_assembly_and_reports_errors() {
         .to_str()
         .expect("lowerer-error source path is utf-8");
     let lower_asm_arg = lower_asm.to_str().expect("lowerer-error asm path is utf-8");
-    let lower_failure = driver_output(&driver_bin, &[lower_source_arg, "-o", lower_asm_arg]);
+    let lower_failure = driver_output(
+        &driver_bin,
+        &["compile", lower_source_arg, "-o", lower_asm_arg],
+    );
     assert!(!lower_failure.status.success());
     assert_eq!(stdout(&lower_failure), "");
     let expected = format!(
@@ -2017,7 +2055,7 @@ fn selfhost_compile_cli_driver_writes_assembly_and_reports_errors() {
     let malformed_asm_arg = malformed_asm.to_str().expect("malformed asm path is utf-8");
     let parse_failure = driver_output(
         &driver_bin,
-        &[malformed_source_arg, "-o", malformed_asm_arg],
+        &["compile", malformed_source_arg, "-o", malformed_asm_arg],
     );
     assert!(!parse_failure.status.success());
     assert_eq!(stdout(&parse_failure), "");

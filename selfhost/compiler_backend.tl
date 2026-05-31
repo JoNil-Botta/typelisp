@@ -8122,15 +8122,19 @@
 ")
 
 ;; `tl_current_arena` is the live bump-arena pointer shared by tl_alloc, the
-;; region runtime, and the first-class arena builtins (#1633). Because the arena
-;; asm (tl_arena_current/set/make/destroy) is emitted UNCONDITIONALLY, this bss
-;; slot must be too — even a non-allocating program references it via
-;; tl_arena_current, and would otherwise fail to link with `unresolved external
-;; symbol tl_current_arena`. Emitted exactly once here (both targets); the
-;; alloc/region data no longer redefine it (which would be a duplicate symbol).
+;; region runtime, and the first-class arena builtins (#1633). It is the
+;; program's SINGLE active-arena slot, so it must resolve to exactly one storage
+;; location per executable. It is emitted as a WEAK bss definition: every object
+;; defines it, and the linker keeps one shared 8-byte slot (weak definitions do
+;; not collide). This keeps the arena coherent across a multi-object link (a
+;; package plus its dependency .a archive) instead of giving each object its own
+;; pointer, while still emitting the `tl_current_arena:` label (a non-allocating
+;; program references it via tl_arena_current). The arena primitive functions
+;; below are emitted `.weak` for the same one-definition-per-exe reason.
 (define (compiler-backend-runtime-arena-data-for-target
   [target : CompilerBackendTarget]) : String
-  "    .section .bss
+  "    .weak tl_current_arena
+    .section .bss
     .balign 8
 tl_current_arena:
     .zero 8
@@ -8553,18 +8557,25 @@ tl_region_mark:
 ;; `tl_arena_destroy` releases an arena's whole chain (prev-links to 0). Arena
 ;; header is the same 32-byte record as tl_alloc {0:prev, 8:base, 16:bump,
 ;; 24:end}. System V (mmap=9 / munmap=11) flavor.
+;;
+;; These are WEAK symbols. They are emitted unconditionally in every object, so a
+;; multi-object link (e.g. a package plus its dependency .a archive) would hit
+;; `multiple definition of tl_arena_*` if they were `.globl`. Weak linkage lets
+;; the linker keep exactly one definition per executable, so every object's calls
+;; bind to the same arena primitives operating on the single shared (`.comm`)
+;; `tl_current_arena` slot — the arena stays coherent across objects.
 (define (compiler-backend-runtime-arena-functions) : String
-  "    .globl tl_arena_current
+  "    .weak tl_arena_current
 tl_arena_current:
     movq tl_current_arena(%rip), %rax
     ret
 
-    .globl tl_arena_set
+    .weak tl_arena_set
 tl_arena_set:
     movq %rdi, tl_current_arena(%rip)
     ret
 
-    .globl tl_arena_make
+    .weak tl_arena_make
 tl_arena_make:
     movq $0x4000000, %rsi
     xorq %rdi, %rdi
@@ -8589,7 +8600,7 @@ tl_arena_make:
     movq $134, %rdi
     syscall
 
-    .globl tl_arena_destroy
+    .weak tl_arena_destroy
 tl_arena_destroy:
     push %rbx
     movq %rdi, %rbx
@@ -8616,17 +8627,17 @@ tl_arena_destroy:
 ;; in %rcx; a 32-byte shadow space is reserved before each call. A mapping
 ;; failure traps via `ud2` (no libc dependency).
 (define (compiler-backend-runtime-windows-arena-functions) : String
-  "    .globl tl_arena_current
+  "    .weak tl_arena_current
 tl_arena_current:
     movq tl_current_arena(%rip), %rax
     ret
 
-    .globl tl_arena_set
+    .weak tl_arena_set
 tl_arena_set:
     movq %rcx, tl_current_arena(%rip)
     ret
 
-    .globl tl_arena_make
+    .weak tl_arena_make
 tl_arena_make:
     push %rbp
     mov %rsp, %rbp
@@ -8655,7 +8666,7 @@ tl_arena_make:
 .L_tl_arena_make_win_abort:
     ud2
 
-    .globl tl_arena_destroy
+    .weak tl_arena_destroy
 tl_arena_destroy:
     push %rbp
     mov %rsp, %rbp

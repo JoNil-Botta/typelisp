@@ -451,12 +451,7 @@ _tl_print_string:
 (define (source-tool-command-for-target
   [target : CompilerBackendTarget]
   [command : ProcessCommand]) : ProcessCommand
-  (match target
-    [(BackendTargetWindows)
-      (if (source-tool-windows-command-needs-cmd? command)
-        (source-tool-windows-cmd-command command)
-        command)]
-    [(BackendTargetLinux) command]))
+  command)
 
 (define (source-tool-windows-args-contain-space? [args : ProcessStringList]) : bool
   (match args

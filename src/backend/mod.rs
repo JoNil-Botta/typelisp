@@ -2718,15 +2718,18 @@ impl X86_64Backend {
         if self.needs_process_output_runtime {
             for symbol in [
                 "_close",
-                "_dup",
-                "_dup2",
                 "_fileno",
+                "_get_osfhandle",
                 "_lseeki64",
                 "_read",
-                "_spawnvpe",
                 "__p__environ",
+                "CloseHandle",
+                "CreateProcessA",
+                "GetExitCodeProcess",
+                "GetStdHandle",
+                "SetHandleInformation",
+                "WaitForSingleObject",
                 "fclose",
-                "fflush",
                 "tmpfile",
             ] {
                 externs.insert(symbol);
@@ -7450,7 +7453,7 @@ impl X86_64Backend {
         self.emit("    push %r13");
         self.emit("    push %r14");
         self.emit("    push %r15");
-        self.emit("    sub $104, %rsp");
+        self.emit("    sub $168, %rsp");
         self.emit("    movq %rcx, %rbx");
         self.emit("    movq $0, -48(%rbp)");
         self.emit("    movq $0, -56(%rbp)");
@@ -7461,11 +7464,12 @@ impl X86_64Backend {
 
         // Build a null-terminated executable path and argv array. argv[0] is the
         // executable, followed by the ProcessStringList entries, then NULL.
-        // %r12 holds the UNQUOTED executable path: it is also passed to
-        // `_spawnvp` as the lookup `name`, which must not carry surrounding
+        // %r12 holds the UNQUOTED executable path: it is passed to
+        // CreateProcessA as `lpApplicationName` (the exact module path, located
+        // directly with no PATH search), which must not carry surrounding
         // quotes. The argv[0] slot stored into the array below uses the quoted
         // copy so a space-containing executable path survives command-line
-        // tokenization in the child.
+        // tokenization when the child re-parses `lpCommandLine`.
         self.emit("    movq 0(%rbx), %rcx");
         self.emit_call(".L_tl_process_copy_c_string");
         self.emit("    movq %rax, %r12");
@@ -7506,19 +7510,23 @@ impl X86_64Backend {
         self.emit("    movq $0, (%r14,%r15,8)");
         self.emit("    movq %r14, -96(%rbp)"); // preserve argv pointer
 
-        // Build the child environment block from the ProcessEnvList overrides
-        // (e.g. the MSVC `LIB`/`INCLUDE`/`PATH` from `msvc-find-tool`) merged
-        // over the inherited environment, and pass it to `_spawnvpe`. This
-        // leaves THIS process's own environment untouched (unlike `_putenv_s`).
-        // Returns NULL when there are no overrides, so `_spawnvpe` then inherits
-        // the current environment unchanged.
+        // Build the child environment from the ProcessEnvList overrides (e.g.
+        // the MSVC `LIB`/`INCLUDE`/`PATH` from `msvc-find-tool`) merged over the
+        // inherited environment. This builds a char** array; it is flattened
+        // into a contiguous CreateProcessA block below. Leaves THIS process's
+        // own environment untouched (unlike `_putenv_s`). Returns NULL when
+        // there are no overrides, so the child inherits the current environment.
         self.emit("    movq 24(%rbx), %rcx"); // env override list head
         self.emit_call(".L_tl_process_win_envp_from_overrides");
         self.emit("    movq %rax, -104(%rbp)"); // child envp (NULL if no overrides)
         self.emit("    movq -96(%rbp), %r14"); // restore argv pointer
 
-        // Capture stdout/stderr via temporary files, then restore this process's
-        // descriptors immediately after the child exits.
+        // Capture stdout/stderr via temporary files; the child inherits them as
+        // its std handles through CreateProcessA's STARTUPINFO. We use
+        // CreateProcessA rather than `_spawnvpe` because the UCRT `_spawn*` family
+        // intermittently crashes under concurrent process spawning (a CRT bug,
+        // reproducible from plain C with the same link flags); CreateProcessA is
+        // immune and lets us pass the merged MSVC env block explicitly.
         self.emit_call("tmpfile");
         self.emit("    testq %rax, %rax");
         self.emit("    jz .L_tl_process_output_wait_failed_close");
@@ -7539,71 +7547,39 @@ impl X86_64Backend {
         self.emit("    js .L_tl_process_output_wait_failed_close");
         self.emit("    movslq %eax, %rax");
         self.emit("    movq %rax, -72(%rbp)");
-        self.emit("    movq $1, %rcx");
-        self.emit_call("_dup");
-        self.emit("    testl %eax, %eax");
-        self.emit("    js .L_tl_process_output_wait_failed_close");
-        self.emit("    movslq %eax, %rax");
-        self.emit("    movq %rax, -80(%rbp)");
-        self.emit("    movq $2, %rcx");
-        self.emit_call("_dup");
-        self.emit("    testl %eax, %eax");
-        self.emit("    js .L_tl_process_output_wait_failed_close");
-        self.emit("    movslq %eax, %rax");
-        self.emit("    movq %rax, -88(%rbp)");
-        self.emit("    xorq %rcx, %rcx");
-        self.emit_call("fflush");
+        // Inheritable OS handles for the two temp files.
         self.emit("    movq -56(%rbp), %rcx");
-        self.emit("    movq $1, %rdx");
-        self.emit_call("_dup2");
-        self.emit("    testl %eax, %eax");
-        self.emit("    js .L_tl_process_output_restore_wait_failed");
+        self.emit_call("_get_osfhandle");
+        self.emit("    movq %rax, -112(%rbp)"); // hStdOut
         self.emit("    movq -72(%rbp), %rcx");
-        self.emit("    movq $2, %rdx");
-        self.emit_call("_dup2");
-        self.emit("    testl %eax, %eax");
-        self.emit("    js .L_tl_process_output_restore_wait_failed");
-        self.emit("    movq $0, %rcx"); // _P_WAIT
-        self.emit("    movq %r12, %rdx"); // cmdname (unquoted exe path)
-        self.emit("    movq %r14, %r8"); // argv
-        self.emit("    movq -104(%rbp), %r9"); // envp (NULL => inherit current)
-        self.emit_call("_spawnvpe");
-        self.emit("    movslq %eax, %r15");
-        self.emit("    jmp .L_tl_process_output_restore_after_spawn");
-
-        self.emit(".L_tl_process_output_restore_wait_failed:");
-        self.emit("    movq -80(%rbp), %rcx");
-        self.emit("    cmpq $0, %rcx");
-        self.emit("    jl .L_tl_process_output_restore_wait_stderr");
+        self.emit_call("_get_osfhandle");
+        self.emit("    movq %rax, -120(%rbp)"); // hStdErr
+        self.emit("    movq -112(%rbp), %rcx");
         self.emit("    movq $1, %rdx");
-        self.emit_call("_dup2");
-        self.emit("    movq -80(%rbp), %rcx");
-        self.emit_call("_close");
-        self.emit("    movq $-1, -80(%rbp)");
-        self.emit(".L_tl_process_output_restore_wait_stderr:");
-        self.emit("    movq -88(%rbp), %rcx");
-        self.emit("    cmpq $0, %rcx");
-        self.emit("    jl .L_tl_process_output_wait_failed_close");
-        self.emit("    movq $2, %rdx");
-        self.emit_call("_dup2");
-        self.emit("    movq -88(%rbp), %rcx");
-        self.emit_call("_close");
-        self.emit("    movq $-1, -88(%rbp)");
-        self.emit("    jmp .L_tl_process_output_wait_failed_close");
-
-        self.emit(".L_tl_process_output_restore_after_spawn:");
-        self.emit("    movq -80(%rbp), %rcx");
+        self.emit("    movq $1, %r8");
+        self.emit_call("SetHandleInformation");
+        self.emit("    movq -120(%rbp), %rcx");
         self.emit("    movq $1, %rdx");
-        self.emit_call("_dup2");
-        self.emit("    movq -80(%rbp), %rcx");
-        self.emit_call("_close");
-        self.emit("    movq $-1, -80(%rbp)");
-        self.emit("    movq -88(%rbp), %rcx");
-        self.emit("    movq $2, %rdx");
-        self.emit_call("_dup2");
-        self.emit("    movq -88(%rbp), %rcx");
-        self.emit_call("_close");
-        self.emit("    movq $-1, -88(%rbp)");
+        self.emit("    movq $1, %r8");
+        self.emit_call("SetHandleInformation");
+        // Contiguous environment block (NULL => inherit) + command line.
+        self.emit("    movq -104(%rbp), %rcx");
+        self.emit_call(".L_tl_process_envp_to_block");
+        self.emit("    movq %rax, -128(%rbp)");
+        self.emit("    movq -96(%rbp), %rcx");
+        self.emit_call(".L_tl_process_argv_to_cmdline");
+        self.emit("    movq %rax, -136(%rbp)");
+        // CreateProcessA + wait. %r12 = unquoted exe path (lpApplicationName).
+        // hStdErr is passed in the scratch register %r10 rather than a 5th stack
+        // slot: the stack-arg home is fragile across this frame, whereas %r10
+        // survives the `call` and the callee prologue untouched.
+        self.emit("    movq %r12, %rcx");
+        self.emit("    movq -136(%rbp), %rdx");
+        self.emit("    movq -128(%rbp), %r8");
+        self.emit("    movq -112(%rbp), %r9"); // hStdOut
+        self.emit("    movq -120(%rbp), %r10"); // hStdErr
+        self.emit_call(".L_tl_process_create_and_wait");
+        self.emit("    movq %rax, %r15");
         self.emit("    cmpq $0, %r15");
         self.emit("    jl .L_tl_process_output_spawn_failed_close");
 
@@ -7649,7 +7625,227 @@ impl X86_64Backend {
         self.emit("    jmp .L_tl_process_output_epilogue");
 
         self.emit(".L_tl_process_output_epilogue:");
-        self.emit("    add $104, %rsp");
+        self.emit("    add $168, %rsp");
+        self.emit("    pop %r15");
+        self.emit("    pop %r14");
+        self.emit("    pop %r13");
+        self.emit("    pop %r12");
+        self.emit("    pop %rbx");
+        self.emit("    pop %rbp");
+        self.emit("    ret");
+        self.emit("");
+
+        // Convert a null-terminated char** env array (%rcx) into a contiguous
+        // CreateProcessA environment block "k=v\\0k=v\\0\\0" allocated in the
+        // arena. Returns NULL when the array pointer is NULL (=> child inherits).
+        self.emit(".L_tl_process_envp_to_block:");
+        self.emit("    push %rbp");
+        self.emit("    mov %rsp, %rbp");
+        self.emit("    push %rbx");
+        self.emit("    push %r12");
+        self.emit("    push %r13");
+        self.emit("    push %r14");
+        self.emit("    sub $32, %rsp");
+        self.emit("    testq %rcx, %rcx");
+        self.emit("    jz .L_tl_etb_null");
+        self.emit("    movq %rcx, %rbx");
+        self.emit("    movq $1, %r12"); // total size (1 for final NUL)
+        self.emit("    movq %rbx, %r13");
+        self.emit(".L_tl_etb_size_loop:");
+        self.emit("    movq (%r13), %r8");
+        self.emit("    testq %r8, %r8");
+        self.emit("    jz .L_tl_etb_size_done");
+        self.emit("    xorq %r9, %r9");
+        self.emit(".L_tl_etb_size_strlen:");
+        self.emit("    cmpb $0, (%r8,%r9)");
+        self.emit("    je .L_tl_etb_size_strlen_done");
+        self.emit("    incq %r9");
+        self.emit("    jmp .L_tl_etb_size_strlen");
+        self.emit(".L_tl_etb_size_strlen_done:");
+        self.emit("    incq %r9");
+        self.emit("    addq %r9, %r12");
+        self.emit("    addq $8, %r13");
+        self.emit("    jmp .L_tl_etb_size_loop");
+        self.emit(".L_tl_etb_size_done:");
+        self.emit("    movq %r12, %rcx");
+        self.emit_call("tl_alloc");
+        self.emit("    movq %rax, %r14"); // block
+        self.emit("    movq %rbx, %r13");
+        self.emit("    xorq %r12, %r12"); // write offset
+        self.emit(".L_tl_etb_copy_loop:");
+        self.emit("    movq (%r13), %r8");
+        self.emit("    testq %r8, %r8");
+        self.emit("    jz .L_tl_etb_copy_done");
+        self.emit("    xorq %r9, %r9");
+        self.emit(".L_tl_etb_copy_bytes:");
+        self.emit("    movzbl (%r8,%r9), %eax");
+        self.emit("    movb %al, (%r14,%r12)");
+        self.emit("    incq %r12");
+        self.emit("    testb %al, %al");
+        self.emit("    jz .L_tl_etb_copy_entry_done");
+        self.emit("    incq %r9");
+        self.emit("    jmp .L_tl_etb_copy_bytes");
+        self.emit(".L_tl_etb_copy_entry_done:");
+        self.emit("    addq $8, %r13");
+        self.emit("    jmp .L_tl_etb_copy_loop");
+        self.emit(".L_tl_etb_copy_done:");
+        self.emit("    movb $0, (%r14,%r12)");
+        self.emit("    movq %r14, %rax");
+        self.emit("    jmp .L_tl_etb_ret");
+        self.emit(".L_tl_etb_null:");
+        self.emit("    xorq %rax, %rax");
+        self.emit(".L_tl_etb_ret:");
+        self.emit("    add $32, %rsp");
+        self.emit("    pop %r14");
+        self.emit("    pop %r13");
+        self.emit("    pop %r12");
+        self.emit("    pop %rbx");
+        self.emit("    pop %rbp");
+        self.emit("    ret");
+        self.emit("");
+
+        // Join a null-terminated char** argv array (%rcx) into a single
+        // space-separated, NUL-terminated command line allocated in the arena.
+        // argv entries are already individually quoted.
+        self.emit(".L_tl_process_argv_to_cmdline:");
+        self.emit("    push %rbp");
+        self.emit("    mov %rsp, %rbp");
+        self.emit("    push %rbx");
+        self.emit("    push %r12");
+        self.emit("    push %r13");
+        self.emit("    push %r14");
+        self.emit("    sub $32, %rsp");
+        self.emit("    movq %rcx, %rbx");
+        self.emit("    movq $1, %r12");
+        self.emit("    movq %rbx, %r13");
+        self.emit(".L_tl_atc_size_loop:");
+        self.emit("    movq (%r13), %r8");
+        self.emit("    testq %r8, %r8");
+        self.emit("    jz .L_tl_atc_size_done");
+        self.emit("    xorq %r9, %r9");
+        self.emit(".L_tl_atc_size_strlen:");
+        self.emit("    cmpb $0, (%r8,%r9)");
+        self.emit("    je .L_tl_atc_size_strlen_done");
+        self.emit("    incq %r9");
+        self.emit("    jmp .L_tl_atc_size_strlen");
+        self.emit(".L_tl_atc_size_strlen_done:");
+        self.emit("    incq %r9");
+        self.emit("    addq %r9, %r12");
+        self.emit("    addq $8, %r13");
+        self.emit("    jmp .L_tl_atc_size_loop");
+        self.emit(".L_tl_atc_size_done:");
+        self.emit("    movq %r12, %rcx");
+        self.emit_call("tl_alloc");
+        self.emit("    movq %rax, %r14");
+        self.emit("    movq %rbx, %r13");
+        self.emit("    xorq %r12, %r12");
+        self.emit(".L_tl_atc_copy_loop:");
+        self.emit("    movq (%r13), %r8");
+        self.emit("    testq %r8, %r8");
+        self.emit("    jz .L_tl_atc_copy_done");
+        self.emit("    testq %r12, %r12");
+        self.emit("    jz .L_tl_atc_copy_nospace");
+        self.emit("    movb $0x20, (%r14,%r12)");
+        self.emit("    incq %r12");
+        self.emit(".L_tl_atc_copy_nospace:");
+        self.emit("    xorq %r9, %r9");
+        self.emit(".L_tl_atc_copy_bytes:");
+        self.emit("    movzbl (%r8,%r9), %eax");
+        self.emit("    testb %al, %al");
+        self.emit("    jz .L_tl_atc_copy_entry_done");
+        self.emit("    movb %al, (%r14,%r12)");
+        self.emit("    incq %r12");
+        self.emit("    incq %r9");
+        self.emit("    jmp .L_tl_atc_copy_bytes");
+        self.emit(".L_tl_atc_copy_entry_done:");
+        self.emit("    addq $8, %r13");
+        self.emit("    jmp .L_tl_atc_copy_loop");
+        self.emit(".L_tl_atc_copy_done:");
+        self.emit("    movb $0, (%r14,%r12)");
+        self.emit("    movq %r14, %rax");
+        self.emit("    add $32, %rsp");
+        self.emit("    pop %r14");
+        self.emit("    pop %r13");
+        self.emit("    pop %r12");
+        self.emit("    pop %rbx");
+        self.emit("    pop %rbp");
+        self.emit("    ret");
+        self.emit("");
+
+        // CreateProcessA + WaitForSingleObject + GetExitCodeProcess.
+        // %rcx=exe, %rdx=cmdline, %r8=env block, %r9=hStdOut, %r10=hStdErr.
+        // Returns the child exit code in %rax, or -1 on CreateProcess failure.
+        self.emit(".L_tl_process_create_and_wait:");
+        self.emit("    push %rbp");
+        self.emit("    mov %rsp, %rbp");
+        self.emit("    push %rbx");
+        self.emit("    push %r12");
+        self.emit("    push %r13");
+        self.emit("    push %r14");
+        self.emit("    push %r15");
+        self.emit("    sub $264, %rsp");
+        self.emit("    movq %rcx, %rbx"); // exe
+        self.emit("    movq %rdx, %r12"); // cmdline
+        self.emit("    movq %r8, %r13"); // env block
+        self.emit("    movq %r9, %r14"); // hStdOut
+        self.emit("    movq %r10, %r15"); // hStdErr (scratch-reg arg)
+        // Zero STARTUPINFO (104 bytes at -160(%rbp)) via 13 qwords.
+        self.emit("    leaq -160(%rbp), %rax");
+        self.emit("    movq $13, %rcx");
+        self.emit(".L_tl_cpw_zero:");
+        self.emit("    movq $0, (%rax)");
+        self.emit("    addq $8, %rax");
+        self.emit("    decq %rcx");
+        self.emit("    jnz .L_tl_cpw_zero");
+        self.emit("    movl $104, -160(%rbp)"); // si.cb
+        self.emit("    movl $256, -100(%rbp)"); // si.dwFlags = STARTF_USESTDHANDLES
+        self.emit("    movq $-10, %rcx"); // STD_INPUT_HANDLE
+        self.emit_call("GetStdHandle");
+        self.emit("    movq %rax, -80(%rbp)"); // si.hStdInput
+        self.emit("    movq %r14, -72(%rbp)"); // si.hStdOutput
+        self.emit("    movq %r15, -64(%rbp)"); // si.hStdError
+        self.emit("    movq $0, -184(%rbp)"); // PROCESS_INFORMATION.hProcess
+        self.emit("    movq $0, -176(%rbp)"); // .hThread
+        self.emit("    movq $0, -168(%rbp)"); // .dwProcessId/.dwThreadId
+        self.emit("    movq %rbx, %rcx"); // lpApplicationName
+        self.emit("    movq %r12, %rdx"); // lpCommandLine
+        self.emit("    xorq %r8, %r8"); // lpProcessAttributes
+        self.emit("    xorq %r9, %r9"); // lpThreadAttributes
+        self.emit("    movq $1, 32(%rsp)"); // bInheritHandles = TRUE
+        self.emit("    movq $0, 40(%rsp)"); // dwCreationFlags
+        self.emit("    movq %r13, 48(%rsp)"); // lpEnvironment
+        self.emit("    movq $0, 56(%rsp)"); // lpCurrentDirectory
+        self.emit("    leaq -160(%rbp), %rax");
+        self.emit("    movq %rax, 64(%rsp)"); // lpStartupInfo
+        self.emit("    leaq -184(%rbp), %rax");
+        self.emit("    movq %rax, 72(%rsp)"); // lpProcessInformation
+        // Raw `call` (NOT emit_call): the 6 stack args (32..72(%rsp)) above are
+        // placed relative to the CURRENT %rsp. emit_call would emit its own
+        // `sub $32, %rsp` shadow-space adjustment first, shifting those args 32
+        // bytes so CreateProcessA reads lpStartupInfo from the bInheritHandles
+        // slot (=> lpStartupInfo=1 => AV in CreateProcessInternalA). The 32-byte
+        // shadow + arg block is already reserved in this frame's `sub $264`.
+        self.emit("    call CreateProcessA");
+        self.emit("    testl %eax, %eax");
+        self.emit("    jz .L_tl_cpw_fail");
+        self.emit("    movq -184(%rbp), %rcx"); // hProcess
+        self.emit("    movq $-1, %rdx"); // INFINITE
+        self.emit_call("WaitForSingleObject");
+        self.emit("    movq $0, -192(%rbp)");
+        self.emit("    movq -184(%rbp), %rcx");
+        self.emit("    leaq -192(%rbp), %rdx");
+        self.emit_call("GetExitCodeProcess");
+        self.emit("    movq -184(%rbp), %rcx");
+        self.emit_call("CloseHandle");
+        self.emit("    movq -176(%rbp), %rcx");
+        self.emit_call("CloseHandle");
+        self.emit("    movl -192(%rbp), %eax");
+        self.emit("    movslq %eax, %rax");
+        self.emit("    jmp .L_tl_cpw_done");
+        self.emit(".L_tl_cpw_fail:");
+        self.emit("    movq $-1, %rax");
+        self.emit(".L_tl_cpw_done:");
+        self.emit("    add $264, %rsp");
         self.emit("    pop %r15");
         self.emit("    pop %r14");
         self.emit("    pop %r13");
@@ -7701,10 +7897,11 @@ impl X86_64Backend {
         // Copy a TL fat-string `{ptr,len}` (in %rcx) to a fresh NUL-terminated
         // C string, wrapping it in double quotes when it contains a space.
         //
-        // `_spawnvp` builds the child command line by joining argv with single
-        // spaces and performs NO quoting, so an argv element containing a space
-        // (e.g. a `C:\Program Files\...\link.exe` toolchain path or output
-        // path) is otherwise re-split by the child. The selfhost build/run
+        // `.L_tl_process_argv_to_cmdline` builds the child command line by
+        // joining argv with single spaces and performs NO quoting itself, so an
+        // argv element containing a space (e.g. a `C:\Program Files\...\link.exe`
+        // toolchain path or output path) is otherwise re-split by the child. The
+        // selfhost build/run
         // drivers only pass plain filesystem paths and flags (no embedded
         // quotes or trailing backslash-before-quote), so simple surrounding
         // double quotes round-trip exactly through CommandLineToArgvW.
@@ -7786,8 +7983,9 @@ impl X86_64Backend {
     /// inherited environment (`__p__environ()`): an inherited entry whose name
     /// equals an override name is dropped, then every override is appended as
     /// `NAME=VALUE`. Returns NULL when the override list is empty, so the caller
-    /// passes NULL to `_spawnvpe` and the child inherits the current
-    /// environment unchanged. The current process environment is never mutated.
+    /// passes a NULL environment to CreateProcessA and the child inherits the
+    /// current environment unchanged. The current process environment is never
+    /// mutated.
     fn generate_windows_process_envp_runtime_functions(&mut self) {
         // bool .L_tl_process_win_env_entry_matches(%rcx = "NAME=VAL" cstr,
         //                                          %rdx = ProcessEnvList)
@@ -17525,15 +17723,18 @@ mod tests {
         assert!(asm.contains("tl_alloc:"), "asm:\n{}", asm);
         for symbol in [
             "_close",
-            "_dup",
-            "_dup2",
             "_fileno",
+            "_get_osfhandle",
             "_lseeki64",
             "_read",
-            "_spawnvpe",
             "__p__environ",
+            "CloseHandle",
+            "CreateProcessA",
+            "GetExitCodeProcess",
+            "GetStdHandle",
+            "SetHandleInformation",
+            "WaitForSingleObject",
             "fclose",
-            "fflush",
             "tmpfile",
         ] {
             assert!(
@@ -17542,18 +17743,38 @@ mod tests {
                 asm
             );
         }
-        for snippet in [
+        // The process executor spawns via CreateProcessA, never the UCRT
+        // `_spawn*` family: that family intermittently crashes under concurrent
+        // spawning (a CRT bug in its narrow->wide environment construction,
+        // reproducible from plain C). Lock that out so it cannot regress.
+        for forbidden in [
+            "    .extern _spawnvpe",
             "    call _spawnvpe",
+            "    .extern _dup2",
             "    call _dup2",
+        ] {
+            assert!(
+                !asm.contains(forbidden),
+                "must not emit {forbidden}; asm:\n{}",
+                asm
+            );
+        }
+        for snippet in [
+            "    call CreateProcessA",
+            "    call WaitForSingleObject",
             "    call tmpfile",
             ".L_tl_process_copy_c_string:",
             // argv elements (incl. the executable path) are quoted so that a
-            // space-containing path/arg survives `_spawnvpe`'s command-line join.
+            // space-containing path/arg survives command-line tokenization.
             ".L_tl_process_copy_c_string_quoted:",
             // a child environment block is constructed (LIB/INCLUDE/PATH
-            // overrides merged over the inherited environment) and passed to
-            // `_spawnvpe`, leaving this process's own environment untouched.
+            // overrides merged over the inherited environment) and flattened
+            // into a contiguous CreateProcessA block, leaving this process's own
+            // environment untouched.
             ".L_tl_process_win_envp_from_overrides:",
+            ".L_tl_process_envp_to_block:",
+            ".L_tl_process_argv_to_cmdline:",
+            ".L_tl_process_create_and_wait:",
             ".L_tl_process_read_fd_to_string:",
             ".L_tl_process_error_result:",
         ] {

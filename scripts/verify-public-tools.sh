@@ -336,6 +336,70 @@ assert_success
 assert_stderr_empty
 assert_contains "$out" "Program"
 
+# `debug tokenize` emits the public frontend token spellings one-per-line. Assert
+# the exact stream for a representative signature so the selfhost lexer's spelling
+# (parens, brackets, `:`, type names, operators) stays byte-stable. Ports the
+# Rust `tokenize_preserves_public_frontend_token_spellings` CLI test (tests/cli.rs).
+TOKENIZE_SPELLING_DIR="$WORKDIR/tokenize-spelling"
+mkdir -p "$TOKENIZE_SPELLING_DIR"
+cat > "$TOKENIZE_SPELLING_DIR/main.tl" <<'EOF'
+(define (main [x : i64]) : i64 (+ x 1))
+EOF
+run_cmd tokenize-spelling "$COMPILER" debug tokenize "$TOKENIZE_SPELLING_DIR/main.tl"
+assert_success
+assert_stderr_empty
+printf '(\ndefine\n(\nmain\n[\nx\n:\ni64\n]\n)\n:\ni64\n(\n+\nx\n1\n)\n)\n' \
+    > "$TOKENIZE_SPELLING_DIR/expected.txt"
+tr -d '\r' < "$out" > "$TOKENIZE_SPELLING_DIR/actual.txt"
+check_file_exact "$TOKENIZE_SPELLING_DIR/actual.txt" "$TOKENIZE_SPELLING_DIR/expected.txt"
+
+# `debug parse` prints a `Program {` summary with the trivial `main` DefFn and
+# its integer literal body. Ports the Rust `parse_prints_selfhost_program_summary`
+# CLI test (tests/cli.rs).
+PARSE_SUMMARY_DIR="$WORKDIR/parse-summary"
+mkdir -p "$PARSE_SUMMARY_DIR"
+cat > "$PARSE_SUMMARY_DIR/main.tl" <<'EOF'
+(define (main) : i64 42)
+EOF
+run_cmd parse-summary "$COMPILER" debug parse "$PARSE_SUMMARY_DIR/main.tl"
+assert_success
+assert_stderr_empty
+assert_contains "$out" "Program {"
+assert_contains "$out" 'DefFn { name: "main"'
+assert_contains "$out" "Literal(Int(42))"
+
+# `debug parse` renders the newer selfhost AST forms (ComptimeDecl,
+# DefStruct/field `:cleanup`, TypeLiteral{Array}, WithRegion, SpmdReduce,
+# ArrayRef) in the Rust-Debug-style text. Ports the Rust
+# `parse_renders_newer_selfhost_ast_forms` CLI test (tests/cli.rs). The Rust
+# test also asserts top-level `parse` == `debug parse`; the no-Rust cli.tl
+# removed the top-level `parse` alias (#1638), so only the canonical `debug
+# parse` rendering is exercised here.
+PARSE_NEWFORMS_DIR="$WORKDIR/parse-newforms"
+mkdir -p "$PARSE_NEWFORMS_DIR"
+cat > "$PARSE_NEWFORMS_DIR/main.tl" <<'EOF'
+(comptime-decl
+  (defstruct Point
+    (:cleanup close-point)
+    (x i64 (:cleanup close-x))))
+(define (main [n : i64] [xs : (Array i64)]) : i64
+  (begin
+    (comptime (type (Array i64 4)))
+    (with-arena r (int->string 41))
+    (spmd-reduce sum ([i : i64 0 n]) 0 (array-ref xs i))))
+EOF
+run_cmd parse-newforms "$COMPILER" debug parse "$PARSE_NEWFORMS_DIR/main.tl"
+assert_success
+assert_stderr_empty
+assert_contains "$out" "ComptimeDecl { template: DefStruct"
+assert_contains "$out" 'cleanup: Some("close-point")'
+assert_contains "$out" 'cleanup: Some("close-x")'
+assert_contains "$out" "TypeLiteral { ty: Array(I64, 4) }"
+assert_contains "$out" 'WithRegion { region: "r"'
+assert_contains "$out" "SpmdReduce { op: Sum"
+assert_contains "$out" 'index: "i"'
+assert_contains "$out" 'value: ArrayRef { expr: Var("xs"), index: Var("i") }'
+
 run_cmd check-hello "$COMPILER" check examples/hello.tl
 assert_success
 assert_stderr_empty
@@ -1120,6 +1184,53 @@ EOF
     assert_failure
     assert_stdout_empty
     assert_contains "$err" "build: unknown opt level '9'; expected 0, 1, 2, or 3"
+
+    # Opt-level forwarding is observable in the emitted package assembly: a
+    # constant-foldable multiply `(* 6 7)` folds to a constant at the default
+    # opt level (no `imul`), while `--opt-level 0` skips the optimizer so the
+    # multiply survives as `imul`. `--opt-level 2` optimizes like the default,
+    # and `--opt-level` with no value is rejected. Mirrors the package_build.rs
+    # opt-level-zero / explicit-default / missing-value coverage.
+    SELFHOST_OPTPKG="$SELFHOST_PLANNER_DIR/optpkg"
+    mkdir -p "$SELFHOST_OPTPKG/src"
+    cat > "$SELFHOST_OPTPKG/typelisp.pkg" <<'EOF'
+(package
+  (name "selfhost_opt_pkg")
+  (version "0.1.0")
+  (kind "bin")
+  (entry "src/main.tl"))
+EOF
+    maybe_strip_manifest_kind "$SELFHOST_OPTPKG/typelisp.pkg"
+    cat > "$SELFHOST_OPTPKG/src/main.tl" <<'EOF'
+(define (main) : i64 (* 6 7))
+EOF
+    SELFHOST_OPT_ASM="$SELFHOST_OPTPKG/target/typelisp/selfhost_opt_pkg/selfhost_opt_pkg.s"
+
+    rm -rf "$SELFHOST_OPTPKG/target"
+    run_cmd selfhost-build-package-opt-default "$SELFHOST_PLANNER_DIR/build-tool" --direct --manifest-path "$SELFHOST_OPTPKG/typelisp.pkg"
+    assert_success
+    assert_stderr_empty
+    [ -f "$SELFHOST_OPT_ASM" ] || fail "selfhost opt package default build did not keep assembly"
+    assert_not_contains "$SELFHOST_OPT_ASM" "imul"
+
+    rm -rf "$SELFHOST_OPTPKG/target"
+    run_cmd selfhost-build-package-opt-zero "$SELFHOST_PLANNER_DIR/build-tool" --direct --manifest-path "$SELFHOST_OPTPKG/typelisp.pkg" --opt-level 0
+    assert_success
+    assert_stderr_empty
+    [ -f "$SELFHOST_OPT_ASM" ] || fail "selfhost opt package --opt-level 0 build did not keep assembly"
+    assert_contains "$SELFHOST_OPT_ASM" "imul"
+
+    rm -rf "$SELFHOST_OPTPKG/target"
+    run_cmd selfhost-build-package-opt-two "$SELFHOST_PLANNER_DIR/build-tool" --direct --manifest-path "$SELFHOST_OPTPKG/typelisp.pkg" --opt-level 2
+    assert_success
+    assert_stderr_empty
+    [ -f "$SELFHOST_OPT_ASM" ] || fail "selfhost opt package --opt-level 2 build did not keep assembly"
+    assert_not_contains "$SELFHOST_OPT_ASM" "imul"
+
+    run_cmd selfhost-build-package-opt-missing "$SELFHOST_PLANNER_DIR/build-tool" --direct --manifest-path "$SELFHOST_OPTPKG/typelisp.pkg" --opt-level
+    assert_failure
+    assert_stdout_empty
+    assert_contains "$err" "build: --opt-level requires a value"
 
     run_cmd selfhost-build-package-mode-staged "$SELFHOST_PLANNER_DIR/build-tool" --direct --manifest-path "$SELFHOST_PKG/typelisp.pkg" --backend-mode avx2
     assert_failure

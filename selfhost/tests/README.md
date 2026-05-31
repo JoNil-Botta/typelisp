@@ -43,7 +43,7 @@ TYPELISP_BIN=./target/stage0/typelisp ./scripts/verify-selfhost.sh
 ./scripts/verify-selfhost.sh
 
 # Or reuse an already-built compiler:
-TYPELISP_BIN=./target/release/typelisp ./scripts/verify-selfhost.sh
+TYPELISP_BIN=./target/stage0/typelisp ./scripts/verify-selfhost.sh
 ```
 
 The same step runs in the `integration` CI job. These cases are also exercised

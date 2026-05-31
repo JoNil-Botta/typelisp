@@ -1,11 +1,9 @@
 # Selfhost compiler testing
 
 This guide describes the testing convention for compiler-facing TypeLisp code
-under `selfhost/`. The self-hosted compiler is still built in layers, so tests
+under `selfhost/`. The self-hosted compiler is built in layers, so tests
 are also layered: keep each case at the lowest layer that proves the behavior,
 then add runnable or end-to-end coverage only when that extra boundary matters.
-The Rust harness replacement map lives in
-[`RUST_TEST_COVERAGE.md`](RUST_TEST_COVERAGE.md).
 
 The broader work is tracked by the parity umbrella
 [#641](https://github.com/JoNil-Botta/typelisp/issues/641), the selfhost CI
@@ -45,7 +43,7 @@ self-test, and return `42` only when the checks pass. Examples include
 
 Use a smoke driver when the module is main-less or when CI needs to compile and
 run the module through the TypeLisp executable boundary. If a new smoke driver
-imports additional selfhost files, keep the Rust staging lists in sync.
+imports additional selfhost files, keep the compile manifest in sync (see below).
 
 ### Inline tests
 
@@ -68,35 +66,17 @@ auto-discovers top-level inline tests under `selfhost/`, `stdlib/`, `tools/`,
 unbuildable, and failing inline tests all fail CI without a hand-maintained
 manifest update.
 
-### Temporary Rust compile tests
-
-The `tests/tl_*_compile.rs` files are temporary cross-platform proof that
-stage0 Rust TypeLisp can compile selfhost sources to assembly. These tests
-usually assert that generated assembly has no TODO marker, has exactly one
-`main` where expected, and contains important symbols for the module or smoke
-driver. They remain useful while Cargo is still the required CI path, but every
-Rust test file must have an explicit no-Rust replacement entry in
-[`RUST_TEST_COVERAGE.md`](RUST_TEST_COVERAGE.md).
-
-Add or update one of these tests when adding a new compiler module, smoke
-driver, or required import only as a temporary bridge. The same PR must update
-the replacement map with the planned selfhost/script coverage or link a
-follow-up issue. If the source should compile or run on Windows, also update
-`tests/integration/native-windows.manifest` or the Windows backend fixture checks
-in `scripts/verify-integration.sh`.
-
 ### Selfhost compile manifest
 
-The no-Rust replacement for compile/symbol smoke coverage is
+Compile/symbol smoke coverage is driven by
 [`compile_manifest.txt`](compile_manifest.txt), checked by
 [`../scripts/verify-selfhost-compile-manifest.sh`](../scripts/verify-selfhost-compile-manifest.sh).
 The runner compiles each manifest case with an already-built TypeLisp compiler,
 rejects generated `# TODO` assembly, applies the case's `main:` label policy,
 and checks representative symbol/literal markers in the emitted assembly.
-By default those markers are checked in `stage0` mode, preserving the exact
-Rust-stage0 symbol coverage used by the reference `Test` jobs. The Linux
-no-Rust capability tier also runs the same manifest through the freshly
-bootstrapped stage1 compiler with
+By default those markers are checked in `stage0` mode (the published seed's
+symbol coverage). The Linux capability tier also runs the same manifest through
+the freshly bootstrapped stage1 compiler with
 `TYPELISP_COMPILE_MANIFEST_EXPECTATION_MODE=stage1`; in that mode `_tl_foo`
 symbol markers also accept the selfhost compiler's module-qualified
 `_tl_<module>_u2etl_colon_colonfoo` labels without changing the manifest list.
@@ -109,13 +89,12 @@ have an explicit compile-coverage decision. Staged cases cover integration
 drivers whose imports need temporary sibling names, such as the text buffer and
 symbol-table drivers.
 
-### No-Rust replacement policy
+### Coverage policy
 
-New behavior should first get TypeLisp-owned coverage: a module-local self-test,
-a smoke driver, a corpus fixture, or a shell/script runner that uses an existing
-TypeLisp compiler artifact. Add Rust tests only when they are explicitly
-temporary stage0 reference coverage, and record the deletion path in the
-coverage map.
+New behavior should get TypeLisp-owned coverage: a module-local self-test, a
+smoke driver, a corpus fixture, or a shell/script runner that uses an existing
+TypeLisp compiler artifact. All implementation and test logic is TypeLisp; the
+toolchain has no other-language sources.
 
 ### Published stage0 artifact
 
@@ -131,8 +110,10 @@ TYPELISP_BIN=./target/stage0/typelisp ./scripts/verify-selfhost.sh
 Each published asset is a single self-hosted `selfhost/cli.tl` binary
 (`typelisp-stage0-linux`, `typelisp-stage0-windows.exe`) that handles every
 toolchain command (compile/build/run/check/fmt/lint/test/doc, plus
-`debug host-action`) in-process. The `Bootstrap Stage0` workflow builds it from
-the in-repo Rust seed with `typelisp build selfhost/cli.tl`.
+`debug host-action`) in-process. The `Bootstrap Stage0` workflow is
+self-perpetuating: it fetches the previously published stage0 and uses it to
+build the next stage0 via [`../scripts/build-stage0.sh`](../scripts/build-stage0.sh)
+(`compile selfhost/cli.tl` + native link). There is no Rust seed.
 
 Use `scripts/fetch-stage0.sh <stage0-tag>` to pin an immutable artifact. The
 script downloads the host platform asset, verifies the file is non-empty,
@@ -140,19 +121,19 @@ checks `SHA256SUMS` when the release provides it, and installs the command under
 `target/stage0/`. It uses release asset URLs instead of fetching git tags, so the
 mutable `stage0-latest` tag cannot be stale or clobber a local tag.
 
-The complete local no-Rust gate is:
+The complete local verification gate is:
 
 ```sh
 scripts/verify-no-rust-stage0.sh
 ```
 
 That script fetches `stage0-latest` when `TYPELISP_BIN` is unset and treats it
-as the seed compiler. It installs failing `cargo` and `rustc` shims in `PATH` so
-the gate cannot silently fall back to Rust. On Linux it first runs
-the stage1-build path in `check-bootstrap-fixpoint.sh` with the seed compiler,
-then runs the stage1 capability gates against the freshly bootstrapped stage1
-compiler directly. Because `cli.tl` is the unified toolchain, those gates invoke
-the bootstrapped compiler's own `compile`, `build`, `run`, `test`, `fmt`,
+as the seed compiler. It installs failing `cargo` and `rustc` shims in `PATH` as
+defense-in-depth so no gate can shell out to a language toolchain. On Linux it
+first runs the stage1-build path in `check-bootstrap-fixpoint.sh` with the seed
+compiler, then runs the stage1 capability gates against the freshly bootstrapped
+stage1 compiler directly. Because `cli.tl` is the unified toolchain, those gates
+invoke the bootstrapped compiler's own `compile`, `build`, `run`, `test`, `fmt`,
 `lint`, `doc`, `doc --test`, `repl`, `lsp`, and `debug host-action` commands.
 On Linux, the public-tool surface and other host-action gates run against the
 bootstrapped stage1 compiler whenever it provides the staged runtime symbols;
@@ -160,9 +141,10 @@ the seed path remains only as an old-artifact fallback tied to #1327. On Windows
 it uses the seed compiler for host-supported gates, then runs the native MSVC
 `link.exe` build/run smoke and the full stage2/stage3 Windows fixpoint when the
 seed has the required staged runtime symbols.
-The scripts that still run `cargo build --release` when `TYPELISP_BIN` is unset
-keep that path as a local fallback only until #795 removes the Rust-owned stage0
-dependency.
+
+The verify-*/check-* scripts that previously fell back to `cargo build` when
+`TYPELISP_BIN` is unset now fetch the published stage0 instead (via
+`scripts/lib-stage0.sh`); CI always passes `TYPELISP_BIN` explicitly.
 
 `scripts/check-bootstrap-fixpoint.sh` is host-sensitive. Linux uses the existing
 `as` plus `ld` path and compares Linux `stage2.s` with `stage3.s`. Git
@@ -196,9 +178,7 @@ frontend verifier, repository doctest gate, TypeLisp source format gate, docs
 Pages build path, selfhost native generated-program gate, and the external
 selfhost compiler corpus. The public-tool path covers command usage/errors,
 scalar build/run/package behavior, formatter, lint, docs/doctests, SPEC examples,
-and bounded selfhost REPL/LSP fixtures. It keeps narrow documented differences for
-Rust-only SIMD/vector backend behavior, Rust backend diagnostic wording, and
-legacy Rust REPL/LSP eval fixtures. The safety gate falls back to the seed until
+and bounded selfhost REPL/LSP fixtures. The safety gate falls back to the seed until
 stage1 checked trap helpers are available. Generated program gates run through the
 bootstrapped stage1 compiler only when the Linux host-action drivers are available;
 old artifacts or missing-driver paths keep an explicit seed fallback or skip tied
@@ -206,18 +186,17 @@ to #1327.
 
 ### Staged backend primitives (#1114)
 
-The Linux no-Rust gate now runs capability checks with a freshly bootstrapped
+The Linux gate runs capability checks with a freshly bootstrapped
 stage1 compiler, so source-only selfhost changes should not need a staging
 marker just because the published `stage0-latest` artifact lags `main`.
-`requires-stage0-symbol` is now a historical marker name for the narrower
-Class-B case: a backend/runtime primitive that the no-Rust compiler path cannot
-emit yet, usually because a new Rust helper has not been mirrored in
-`selfhost/compiler_backend.tl` or because the Windows no-Rust path is still
-driven directly by published stage0.
+`requires-stage0-symbol` covers the narrower case of a backend/runtime
+primitive that the *published* stage0 (the seed/Windows-driving compiler) cannot
+emit yet, even though the in-tree `selfhost/compiler_backend.tl` source already
+implements it. The marker lets such a row land before the next stage0 republish
+catches up.
 
-Mark a test that exercises such a staged symbol so the no-Rust gate skips it
-only when the build failure mentions that symbol (the Rust-built `Test` job
-still runs it):
+Mark a test that exercises such a staged symbol so the gate skips it
+only when the build failure mentions that symbol:
 
 - `scripts/verify-stdlib.sh`: add a sixth manifest field
   `requires-stage0-symbol:<name>` to the runnable test row, e.g.
@@ -233,14 +212,15 @@ still runs it):
 A marked test is skipped **only** when its build fails and `<name>` appears in
 the build/typecheck output (the undefined-symbol signal); any other build
 failure still fails the gate, and unmarked tests are unaffected. Once the
-no-Rust compiler path provides the symbol, the marked test builds and runs
+published stage0 provides the symbol, the marked test builds and runs
 normally (with a "drop the marker" notice from the manifest-based verifiers).
 
-Workflow: introduce the primitive + marked stdlib, inline, or native integration
-coverage in one PR only when the selfhost no-Rust path cannot emit the primitive
-yet, then drop the `requires-stage0-symbol` marker in the PR that mirrors the
-primitive into that path. For Windows-only staging, drop the marker after the
-published Windows stage0 path can build the marked row normally.
+Workflow: introduce the primitive in `selfhost/compiler_backend.tl` plus the
+marked stdlib, inline, or native integration coverage in one PR when the
+published stage0 cannot emit the primitive yet, then drop the
+`requires-stage0-symbol` marker once a stage0 republish carries it. For
+Windows-only staging, drop the marker after the published Windows stage0 path can
+build the marked row normally.
 
 For new selfhost tests:
 
@@ -257,13 +237,11 @@ For new selfhost tests:
 - Add public command, package, docs, LSP, REPL, formatter, or platform cases to
   `scripts/verify-public-tools.sh` or the narrower verification script that
   owns that layer.
-- If a temporary Rust test is still needed, update
-  `RUST_TEST_COVERAGE.md` in the same PR with the replacement path.
 
 ### Native integration tests
 
 `scripts/verify-integration.sh` contains the heavier native checks that build
-and run TypeLisp programs outside the Rust harness. Linux uses the explicit
+and run TypeLisp programs as native executables. Linux uses the explicit
 `compile -> as -> ld` path; Windows Git Bash/MSYS/Cygwin uses `typelisp build
 --target windows-x86_64` and a small PowerShell runner to preserve native
 Windows exit codes. Use this layer for behavior that only shows up after
@@ -280,8 +258,8 @@ are too low-level for a manifest row.
 ### Selfhost native generated programs
 
 `scripts/verify-selfhost-native.sh` covers Linux-only cases where a selfhost
-TypeLisp driver emits assembly that must then assemble, link, and run outside
-the Rust harness. It builds `selfhost/compiler_driver.tl`, verifies generated
+TypeLisp driver emits assembly that must then assemble, link, and run as a native
+executable. It builds `selfhost/compiler_driver.tl`, verifies generated
 file-to-file assembly for multi-file imports, stdlib imports, runtime helpers,
 dynamic arrays, traps, and stack-argument call shape, and also runs the printed
 assembly from `selfhost/emit.tl` and `selfhost/parse.tl`.
@@ -306,9 +284,8 @@ runner commands.
 
 `scripts/verify-stdlib-docs.sh` discovers every `stdlib/*.tl` module, requires
 module and item documentation comments, generates Markdown through
-`typelisp doc`, and runs `typelisp doc --test` with `--stdlib-root`. The script
-is separate from `cargo test` so the Linux no-Rust gate can run it through the
-stage1 wrapper's selfhost doc driver.
+`typelisp doc`, and runs `typelisp doc --test` with `--stdlib-root`. The Linux
+gate runs it through the stage1 wrapper's selfhost doc driver.
 
 ### Repository doctest gate
 
@@ -316,9 +293,8 @@ stage1 wrapper's selfhost doc driver.
 `stdlib/`, `selfhost/`, `examples/`, and `tests/` by scanning for public
 canonical `;#`/`;:` doc comments (legacy `;;;;`/`;;;` are still accepted) or
 TypeLisp fenced examples, then runs
-`typelisp doc --test` for each file with `--stdlib-root`. This gate is
-intentionally separate from `cargo test` and does not use a hand-maintained file
-manifest, so adding documented TypeLisp source with fenced examples
+`typelisp doc --test` for each file with `--stdlib-root`. This gate does not
+use a hand-maintained file manifest, so adding documented TypeLisp source with fenced examples
 automatically adds doctest coverage. In the Linux no-Rust lane it runs through
 the stage1 wrapper's selfhost doc driver (the same driver used by the stdlib
 documentation gate) whenever the wrapper host-action drivers are available, and
@@ -360,7 +336,7 @@ check that required pages/assets exist and every local link and anchor
 resolves), run the non-publishing verifier:
 
 ```sh
-TYPELISP_BIN=target/debug/typelisp scripts/verify-doc-site.sh
+TYPELISP_BIN=target/stage0/typelisp scripts/verify-doc-site.sh
 ```
 
 It builds into `target/doc-site-verify/`, with native builder logs and objects
@@ -373,8 +349,9 @@ the artifact.
 
 ### CI expectations
 
-Pull requests get Linux and Windows no-Rust coverage from
-`scripts/verify-no-rust-stage0.sh`. The Linux job first builds a fresh stage1
+Pull requests get Linux and Windows coverage from the single self-hosted
+verification gate `scripts/verify-no-rust-stage0.sh` (wired in
+[`../.github/workflows/ci.yml`](../.github/workflows/ci.yml)). The Linux job first builds a fresh stage1
 compiler from published stage0, then runs the public-tool surface, smoke-tests
 the stage1 CLI/host-action commands, deterministic assembly, the selfhost compile
 manifest, stdlib documentation, the stdlib selfhost frontend verifier, the
@@ -392,24 +369,19 @@ verifies MSVC `link.exe` selfhost build/run support, runs the Windows bootstrap
 stage2/stage3 fixpoint, and explicitly skips the Linux-only selfhost/docs
 checks.
 
-The remaining Linux and Windows `cargo test`, `cargo fmt`, `cargo clippy`, and
-release integration jobs are temporary Rust reference coverage until #795.
-
-For a selfhost compiler change, a typical local check is:
+For a selfhost compiler change, a typical local check (after
+`scripts/fetch-stage0.sh`, with `tl=target/stage0/typelisp[.exe]`) is:
 
 ```sh
-cargo fmt
-cargo test --test tl_compiler_parse_compile
-cargo test --test tl_compiler_lower_compile
-cargo test --test tl_compiler_backend_compile
-TYPELISP_BIN=./target/debug/typelisp ./scripts/verify-selfhost-compile-manifest.sh
-TYPELISP_BIN=./target/debug/typelisp ./scripts/check-tl-format.sh
-TYPELISP_BIN=./target/debug/typelisp ./scripts/check-tl-lint.sh
-TYPELISP_BIN=./target/debug/typelisp ./scripts/verify-public-tools.sh
-TYPELISP_BIN=./target/debug/typelisp ./scripts/verify-stdlib-docs.sh
-TYPELISP_BIN=./target/debug/typelisp ./scripts/verify-doc-tests.sh
-TYPELISP_BIN=./target/debug/typelisp ./scripts/verify-inline-tests.sh
-TYPELISP_BIN=./target/debug/typelisp ./scripts/verify-selfhost.sh
+$tl fmt --check selfhost/<changed>.tl
+TYPELISP_BIN=$tl ./scripts/verify-selfhost-compile-manifest.sh
+TYPELISP_BIN=$tl ./scripts/check-tl-format.sh
+TYPELISP_BIN=$tl ./scripts/check-tl-lint.sh
+TYPELISP_BIN=$tl ./scripts/verify-public-tools.sh
+TYPELISP_BIN=$tl ./scripts/verify-stdlib-docs.sh
+TYPELISP_BIN=$tl ./scripts/verify-doc-tests.sh
+TYPELISP_BIN=$tl ./scripts/verify-inline-tests.sh
+TYPELISP_BIN=$tl ./scripts/verify-selfhost.sh
 scripts/verify-no-rust-stage0.sh
 ```
 
@@ -423,13 +395,10 @@ Linux environment.
 ## Checklist for new coverage
 
 - Pick the smallest useful layer: module-local assertion, smoke driver, external
-  corpus case, script runner, or temporary Rust bridge test with a recorded
-  no-Rust replacement.
+  corpus case, or script runner.
 - Add or extend a module-local `*-self-test` for compiler internals that can be
   checked structurally.
 - Add or update a `*_smoke.tl` wrapper when the self-test should be executable.
-- If a temporary Rust compile test is still required, update the matching
-  `tests/tl_*_compile.rs` test and the replacement map in the same PR.
 - Keep dependency staging in sync for `tests/integration/native-*.manifest` and
   the host fixture sections in `scripts/verify-integration.sh` whenever imports
   change.
@@ -439,7 +408,6 @@ Linux environment.
   picked up automatically by `scripts/verify-inline-tests.sh`.
 - Keep `selfhost/compile_manifest.txt` in sync with top-level selfhost sources
   and compile/symbol smoke expectations.
-- Update `RUST_TEST_COVERAGE.md` whenever adding or changing Rust tests.
 - Prefer naming conventions and representative examples in docs and comments;
   avoid maintaining long file lists that will go stale.
-- Run the focused tests for the layer touched, plus `cargo fmt`.
+- Run the focused tests for the layer touched, plus `typelisp fmt --check`.

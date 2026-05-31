@@ -28,7 +28,7 @@ The corpus emphasizes the cases where SIMD bugs hide:
 ```sh
 # Uses the release compiler unless TYPELISP_BIN is set.
 scripts/verify-spmd-simd.sh
-TYPELISP_BIN=./target/release/typelisp scripts/verify-spmd-simd.sh
+TYPELISP_BIN=./target/stage0/typelisp scripts/verify-spmd-simd.sh
 ```
 
 SIMD modes are gated by `scripts/detect-simd-isa.sh` (real CPUID capability, not

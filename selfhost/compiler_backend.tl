@@ -11776,7 +11776,7 @@ tl_string_concat:
     push %r13
     push %r14
     push %r15
-    sub $104, %rsp
+    sub $168, %rsp
     movq %rcx, %rbx
     movq $0, -48(%rbp)
     movq $0, -56(%rbp)
@@ -11785,7 +11785,9 @@ tl_string_concat:
     movq $-1, -80(%rbp)
     movq $-1, -88(%rbp)
     movq 0(%rbx), %rcx
+    sub $32, %rsp
     call .L_tl_process_copy_c_string
+    add $32, %rsp
     movq %rax, %r12
     movq $1, %r13
     movq 8(%rbx), %r14
@@ -11801,10 +11803,14 @@ tl_string_concat:
     movq %r13, %rcx
     incq %rcx
     shlq $3, %rcx
+    sub $32, %rsp
     call tl_alloc
+    add $32, %rsp
     movq %rax, %r14
     movq 0(%rbx), %rcx
+    sub $32, %rsp
     call .L_tl_process_copy_c_string_quoted
+    add $32, %rsp
     movq %rax, 0(%r14)
     movq 8(%rbx), %r13
     movq $1, %r15
@@ -11814,7 +11820,9 @@ tl_string_concat:
     cmpq $1, 0(%r13)
     jne .L_tl_process_fill_argv_done
     movq 8(%r13), %rcx
+    sub $32, %rsp
     call .L_tl_process_copy_c_string_quoted
+    add $32, %rsp
     movq %rax, (%r14,%r15,8)
     incq %r15
     movq 16(%r13), %r13
@@ -11823,107 +11831,101 @@ tl_string_concat:
     movq $0, (%r14,%r15,8)
     movq %r14, -96(%rbp)
     movq 24(%rbx), %rcx
+    sub $32, %rsp
     call .L_tl_process_win_envp_from_overrides
+    add $32, %rsp
     movq %rax, -104(%rbp)
     movq -96(%rbp), %r14
+    sub $32, %rsp
     call tmpfile
+    add $32, %rsp
     testq %rax, %rax
     jz .L_tl_process_output_wait_failed_close
     movq %rax, -48(%rbp)
     movq %rax, %rcx
+    sub $32, %rsp
     call _fileno
+    add $32, %rsp
     testl %eax, %eax
     js .L_tl_process_output_wait_failed_close
     movslq %eax, %rax
     movq %rax, -56(%rbp)
+    sub $32, %rsp
     call tmpfile
+    add $32, %rsp
     testq %rax, %rax
     jz .L_tl_process_output_wait_failed_close
     movq %rax, -64(%rbp)
     movq %rax, %rcx
+    sub $32, %rsp
     call _fileno
+    add $32, %rsp
     testl %eax, %eax
     js .L_tl_process_output_wait_failed_close
     movslq %eax, %rax
     movq %rax, -72(%rbp)
-    movq $1, %rcx
-    call _dup
-    testl %eax, %eax
-    js .L_tl_process_output_wait_failed_close
-    movslq %eax, %rax
-    movq %rax, -80(%rbp)
-    movq $2, %rcx
-    call _dup
-    testl %eax, %eax
-    js .L_tl_process_output_wait_failed_close
-    movslq %eax, %rax
-    movq %rax, -88(%rbp)
-    xorq %rcx, %rcx
-    call fflush
     movq -56(%rbp), %rcx
-    movq $1, %rdx
-    call _dup2
-    testl %eax, %eax
-    js .L_tl_process_output_restore_wait_failed
+    sub $32, %rsp
+    call _get_osfhandle
+    add $32, %rsp
+    movq %rax, -112(%rbp)
     movq -72(%rbp), %rcx
-    movq $2, %rdx
-    call _dup2
-    testl %eax, %eax
-    js .L_tl_process_output_restore_wait_failed
-    movq $0, %rcx
-    movq %r12, %rdx
-    movq %r14, %r8
-    movq -104(%rbp), %r9
-    call _spawnvpe
-    movslq %eax, %r15
-    jmp .L_tl_process_output_restore_after_spawn
-.L_tl_process_output_restore_wait_failed:
-    movq -80(%rbp), %rcx
-    cmpq $0, %rcx
-    jl .L_tl_process_output_restore_wait_stderr
+    sub $32, %rsp
+    call _get_osfhandle
+    add $32, %rsp
+    movq %rax, -120(%rbp)
+    movq -112(%rbp), %rcx
     movq $1, %rdx
-    call _dup2
-    movq -80(%rbp), %rcx
-    call _close
-    movq $-1, -80(%rbp)
-.L_tl_process_output_restore_wait_stderr:
-    movq -88(%rbp), %rcx
-    cmpq $0, %rcx
-    jl .L_tl_process_output_wait_failed_close
-    movq $2, %rdx
-    call _dup2
-    movq -88(%rbp), %rcx
-    call _close
-    movq $-1, -88(%rbp)
-    jmp .L_tl_process_output_wait_failed_close
-.L_tl_process_output_restore_after_spawn:
-    movq -80(%rbp), %rcx
+    movq $1, %r8
+    sub $32, %rsp
+    call SetHandleInformation
+    add $32, %rsp
+    movq -120(%rbp), %rcx
     movq $1, %rdx
-    call _dup2
-    movq -80(%rbp), %rcx
-    call _close
-    movq $-1, -80(%rbp)
-    movq -88(%rbp), %rcx
-    movq $2, %rdx
-    call _dup2
-    movq -88(%rbp), %rcx
-    call _close
-    movq $-1, -88(%rbp)
+    movq $1, %r8
+    sub $32, %rsp
+    call SetHandleInformation
+    add $32, %rsp
+    movq -104(%rbp), %rcx
+    sub $32, %rsp
+    call .L_tl_process_envp_to_block
+    add $32, %rsp
+    movq %rax, -128(%rbp)
+    movq -96(%rbp), %rcx
+    sub $32, %rsp
+    call .L_tl_process_argv_to_cmdline
+    add $32, %rsp
+    movq %rax, -136(%rbp)
+    movq %r12, %rcx
+    movq -136(%rbp), %rdx
+    movq -128(%rbp), %r8
+    movq -112(%rbp), %r9
+    movq -120(%rbp), %r10
+    sub $32, %rsp
+    call .L_tl_process_create_and_wait
+    add $32, %rsp
+    movq %rax, %r15
     cmpq $0, %r15
     jl .L_tl_process_output_spawn_failed_close
     movq -56(%rbp), %rcx
+    sub $32, %rsp
     call .L_tl_process_read_fd_to_string
+    add $32, %rsp
     testq %rax, %rax
     jz .L_tl_process_output_wait_failed_close
     movq %rax, -96(%rbp)
     movq -72(%rbp), %rcx
+    sub $32, %rsp
     call .L_tl_process_read_fd_to_string
+    add $32, %rsp
     testq %rax, %rax
     jz .L_tl_process_output_wait_failed_close
     movq %rax, -104(%rbp)
     call .L_tl_process_close_temp_files
     movq $24, %rcx
+    sub $32, %rsp
     call tl_alloc
+    add $32, %rsp
     movq %r15, 0(%rax)
     movq -96(%rbp), %rdx
     movq %rdx, 8(%rax)
@@ -11931,7 +11933,9 @@ tl_string_concat:
     movq %rdx, 16(%rax)
     movq %rax, %r12
     movq $16, %rcx
+    sub $32, %rsp
     call tl_alloc
+    add $32, %rsp
     movq $0, 0(%rax)
     movq %r12, 8(%rax)
     jmp .L_tl_process_output_epilogue
@@ -11940,17 +11944,236 @@ tl_string_concat:
     movq $1, %rcx
     leaq .L_tl_process_spawn_msg(%rip), %rdx
     movq $.L_tl_process_spawn_msg_len, %r8
+    sub $32, %rsp
     call .L_tl_process_error_result
+    add $32, %rsp
     jmp .L_tl_process_output_epilogue
 .L_tl_process_output_wait_failed_close:
     call .L_tl_process_close_temp_files
     movq $2, %rcx
     leaq .L_tl_process_wait_msg(%rip), %rdx
     movq $.L_tl_process_wait_msg_len, %r8
+    sub $32, %rsp
     call .L_tl_process_error_result
+    add $32, %rsp
     jmp .L_tl_process_output_epilogue
 .L_tl_process_output_epilogue:
-    add $104, %rsp
+    add $168, %rsp
+    pop %r15
+    pop %r14
+    pop %r13
+    pop %r12
+    pop %rbx
+    pop %rbp
+    ret
+
+.L_tl_process_envp_to_block:
+    push %rbp
+    mov %rsp, %rbp
+    push %rbx
+    push %r12
+    push %r13
+    push %r14
+    sub $32, %rsp
+    testq %rcx, %rcx
+    jz .L_tl_etb_null
+    movq %rcx, %rbx
+    movq $1, %r12
+    movq %rbx, %r13
+.L_tl_etb_size_loop:
+    movq (%r13), %r8
+    testq %r8, %r8
+    jz .L_tl_etb_size_done
+    xorq %r9, %r9
+.L_tl_etb_size_strlen:
+    cmpb $0, (%r8,%r9)
+    je .L_tl_etb_size_strlen_done
+    incq %r9
+    jmp .L_tl_etb_size_strlen
+.L_tl_etb_size_strlen_done:
+    incq %r9
+    addq %r9, %r12
+    addq $8, %r13
+    jmp .L_tl_etb_size_loop
+.L_tl_etb_size_done:
+    movq %r12, %rcx
+    sub $32, %rsp
+    call tl_alloc
+    add $32, %rsp
+    movq %rax, %r14
+    movq %rbx, %r13
+    xorq %r12, %r12
+.L_tl_etb_copy_loop:
+    movq (%r13), %r8
+    testq %r8, %r8
+    jz .L_tl_etb_copy_done
+    xorq %r9, %r9
+.L_tl_etb_copy_bytes:
+    movzbl (%r8,%r9), %eax
+    movb %al, (%r14,%r12)
+    incq %r12
+    testb %al, %al
+    jz .L_tl_etb_copy_entry_done
+    incq %r9
+    jmp .L_tl_etb_copy_bytes
+.L_tl_etb_copy_entry_done:
+    addq $8, %r13
+    jmp .L_tl_etb_copy_loop
+.L_tl_etb_copy_done:
+    movb $0, (%r14,%r12)
+    movq %r14, %rax
+    jmp .L_tl_etb_ret
+.L_tl_etb_null:
+    xorq %rax, %rax
+.L_tl_etb_ret:
+    add $32, %rsp
+    pop %r14
+    pop %r13
+    pop %r12
+    pop %rbx
+    pop %rbp
+    ret
+
+.L_tl_process_argv_to_cmdline:
+    push %rbp
+    mov %rsp, %rbp
+    push %rbx
+    push %r12
+    push %r13
+    push %r14
+    sub $32, %rsp
+    movq %rcx, %rbx
+    movq $1, %r12
+    movq %rbx, %r13
+.L_tl_atc_size_loop:
+    movq (%r13), %r8
+    testq %r8, %r8
+    jz .L_tl_atc_size_done
+    xorq %r9, %r9
+.L_tl_atc_size_strlen:
+    cmpb $0, (%r8,%r9)
+    je .L_tl_atc_size_strlen_done
+    incq %r9
+    jmp .L_tl_atc_size_strlen
+.L_tl_atc_size_strlen_done:
+    incq %r9
+    addq %r9, %r12
+    addq $8, %r13
+    jmp .L_tl_atc_size_loop
+.L_tl_atc_size_done:
+    movq %r12, %rcx
+    sub $32, %rsp
+    call tl_alloc
+    add $32, %rsp
+    movq %rax, %r14
+    movq %rbx, %r13
+    xorq %r12, %r12
+.L_tl_atc_copy_loop:
+    movq (%r13), %r8
+    testq %r8, %r8
+    jz .L_tl_atc_copy_done
+    testq %r12, %r12
+    jz .L_tl_atc_copy_nospace
+    movb $0x20, (%r14,%r12)
+    incq %r12
+.L_tl_atc_copy_nospace:
+    xorq %r9, %r9
+.L_tl_atc_copy_bytes:
+    movzbl (%r8,%r9), %eax
+    testb %al, %al
+    jz .L_tl_atc_copy_entry_done
+    movb %al, (%r14,%r12)
+    incq %r12
+    incq %r9
+    jmp .L_tl_atc_copy_bytes
+.L_tl_atc_copy_entry_done:
+    addq $8, %r13
+    jmp .L_tl_atc_copy_loop
+.L_tl_atc_copy_done:
+    movb $0, (%r14,%r12)
+    movq %r14, %rax
+    add $32, %rsp
+    pop %r14
+    pop %r13
+    pop %r12
+    pop %rbx
+    pop %rbp
+    ret
+
+.L_tl_process_create_and_wait:
+    push %rbp
+    mov %rsp, %rbp
+    push %rbx
+    push %r12
+    push %r13
+    push %r14
+    push %r15
+    sub $264, %rsp
+    movq %rcx, %rbx
+    movq %rdx, %r12
+    movq %r8, %r13
+    movq %r9, %r14
+    movq %r10, %r15
+    leaq -160(%rbp), %rax
+    movq $13, %rcx
+.L_tl_cpw_zero:
+    movq $0, (%rax)
+    addq $8, %rax
+    decq %rcx
+    jnz .L_tl_cpw_zero
+    movl $104, -160(%rbp)
+    movl $256, -100(%rbp)
+    movq $-10, %rcx
+    sub $32, %rsp
+    call GetStdHandle
+    add $32, %rsp
+    movq %rax, -80(%rbp)
+    movq %r14, -72(%rbp)
+    movq %r15, -64(%rbp)
+    movq $0, -184(%rbp)
+    movq $0, -176(%rbp)
+    movq $0, -168(%rbp)
+    movq %rbx, %rcx
+    movq %r12, %rdx
+    xorq %r8, %r8
+    xorq %r9, %r9
+    movq $1, 32(%rsp)
+    movq $0, 40(%rsp)
+    movq %r13, 48(%rsp)
+    movq $0, 56(%rsp)
+    leaq -160(%rbp), %rax
+    movq %rax, 64(%rsp)
+    leaq -184(%rbp), %rax
+    movq %rax, 72(%rsp)
+    call CreateProcessA
+    testl %eax, %eax
+    jz .L_tl_cpw_fail
+    movq -184(%rbp), %rcx
+    movq $-1, %rdx
+    sub $32, %rsp
+    call WaitForSingleObject
+    add $32, %rsp
+    movq $0, -192(%rbp)
+    movq -184(%rbp), %rcx
+    leaq -192(%rbp), %rdx
+    sub $32, %rsp
+    call GetExitCodeProcess
+    add $32, %rsp
+    movq -184(%rbp), %rcx
+    sub $32, %rsp
+    call CloseHandle
+    add $32, %rsp
+    movq -176(%rbp), %rcx
+    sub $32, %rsp
+    call CloseHandle
+    add $32, %rsp
+    movl -192(%rbp), %eax
+    movslq %eax, %rax
+    jmp .L_tl_cpw_done
+.L_tl_cpw_fail:
+    movq $-1, %rax
+.L_tl_cpw_done:
+    add $264, %rsp
     pop %r15
     pop %r14
     pop %r13
@@ -13934,20 +14157,24 @@ tl_windows_sdk_registry_install:
               "    .extern VirtualFree
 "
               ""))
-          ;; The Windows tl_process_output spawns the child via _spawnvpe with a
-          ;; constructed env block (__p__environ + getenv/strlen above) and
-          ;; captures stdout/stderr through CRT temp files (tmpfile/_fileno/_dup/
-          ;; _dup2/fclose). The Linux variant uses raw syscalls instead.
+          ;; The Windows tl_process_output spawns the child via CreateProcessA
+          ;; with a constructed contiguous env block (__p__environ above) and
+          ;; captures stdout/stderr through CRT temp files made inheritable
+          ;; (tmpfile/_fileno/_get_osfhandle/SetHandleInformation), waiting via
+          ;; WaitForSingleObject/GetExitCodeProcess/CloseHandle. The Linux
+          ;; variant uses raw syscalls instead.
           (if (compiler-backend-plan-provides? plan "tl_process_output")
-            "    .extern _spawnvpe
-    .extern __p__environ
-    .extern getenv
-    .extern strlen
+            "    .extern __p__environ
     .extern tmpfile
     .extern fclose
     .extern _fileno
-    .extern _dup
-    .extern _dup2
+    .extern _get_osfhandle
+    .extern SetHandleInformation
+    .extern CreateProcessA
+    .extern WaitForSingleObject
+    .extern GetExitCodeProcess
+    .extern CloseHandle
+    .extern GetStdHandle
 "
             ""))))
     ""))

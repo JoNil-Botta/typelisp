@@ -300,27 +300,17 @@ assert_failure
 assert_stdout_empty
 assert_contains_any "$err" "Usage:" "usage:"
 
-run_cmd tokenize-alias "$COMPILER" tokenize examples/hello.tl
-assert_success
-assert_stderr_empty
-cp "$out" "$WORKDIR/tokenize-alias.expected"
-
+# tokenize/parse are reached via their canonical `debug` forms; the top-level
+# compatibility aliases were removed from the unified cli.tl dispatcher (#1638).
 run_cmd tokenize-debug "$COMPILER" debug tokenize examples/hello.tl
 assert_success
 assert_stderr_empty
-cmp -s "$out" "$WORKDIR/tokenize-alias.expected" || fail "debug tokenize differs from public alias"
 assert_contains "$out" "("
 assert_contains "$out" "define"
-
-run_cmd parse-alias "$COMPILER" parse examples/hello.tl
-assert_success
-assert_stderr_empty
-cp "$out" "$WORKDIR/parse-alias.expected"
 
 run_cmd parse-debug "$COMPILER" debug parse examples/hello.tl
 assert_success
 assert_stderr_empty
-cmp -s "$out" "$WORKDIR/parse-alias.expected" || fail "debug parse differs from public alias"
 assert_contains "$out" "Program"
 
 run_cmd check-hello "$COMPILER" check examples/hello.tl

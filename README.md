@@ -416,29 +416,30 @@ TypeLisp*:
 
 Compiler self-test and smoke-driver conventions are documented in
 [`selfhost/TESTING.md`](selfhost/TESTING.md).
+The published stage0 is a single self-hosted [`selfhost/cli.tl`](selfhost/cli.tl)
+binary per OS (`typelisp-stage0-linux`, `typelisp-stage0-windows.exe`) that
+handles every toolchain command in-process. The `Bootstrap Stage0` workflow
+([`.github/workflows/bootstrap-stage0.yml`](.github/workflows/bootstrap-stage0.yml))
+builds it from the in-repo Rust seed and publishes it to the `stage0-latest` and
+immutable `stage0-*` releases. To reproduce that build locally after `cargo build
+--release`, run:
+
+```sh
+target/release/typelisp build selfhost/cli.tl -o typelisp-stage0-linux
+```
+
 Published stage0 compilers for local no-Rust checks can be fetched with
 [`scripts/fetch-stage0.sh`](scripts/fetch-stage0.sh), or
 [`scripts/fetch-stage0.ps1`](scripts/fetch-stage0.ps1) from PowerShell. Both
-default to `target/stage0/`. Linux fetches prefer the versioned
-`typelisp-stage0-linux-bundle.tar.gz` asset when a release provides it and fall
-back to the legacy `typelisp-stage0-linux` executable for older releases; both
-forms still install the command as `target/stage0/typelisp`. To reproduce the
-bundle staging path locally on Linux after a release build, run:
-
-```sh
-scripts/stage-linux-stage0-bundle.sh target/release/typelisp typelisp-stage0-linux-bundle.tar.gz
-```
+download the single host asset and install it as the command under
+`target/stage0/`.
 
 To run the same no-Rust stage0 verification gate used by CI, run
 `scripts/verify-no-rust-stage0.sh`; it fetches `stage0-latest` when
 `TYPELISP_BIN` is unset and prevents accidental Cargo fallback. On Linux, that
-wrapper uses the published compiler only as the bootstrap seed, checks the
-stage0-to-stage1 bootstrap, then runs deterministic assembly through the freshly
-bootstrapped stage1 compiler via a no-Rust CLI wrapper. The raw stage1 compiler
-also accepts the public `compile <file.tl>` dispatcher form while preserving its
-private bootstrap file form. The wrapper smokes the stage1 `build`, `run`, and
-private `debug host-action` path on Linux. Full public CLI gates still use the
-seed compiler until every public-tool exception is ported to the wrapper. On
+gate uses the published compiler as the bootstrap seed, checks the
+stage0-to-stage1 bootstrap, then runs deterministic assembly and the toolchain
+capability gates through the freshly bootstrapped stage1 compiler directly. On
 Windows, the host-supported gates run against the published stage0 compiler and
 the no-Rust lane also runs the native MSVC link smoke plus the stage2/stage3
 Windows fixpoint when the seed has the required staged runtime symbols.

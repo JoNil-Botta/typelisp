@@ -10,6 +10,9 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
+permissions:
+  contents: read
+
 jobs:
   # TypeLisp is self-hosted: there is no Rust compiler to build. The single
   # verification flow fetches the published self-hosted stage0 (cli.tl) and runs
@@ -26,7 +29,7 @@ jobs:
         include:
           - name: Test + Integration
             os: ubuntu-latest
-            timeout_minutes: 35
+            timeout_minutes: 55
           - name: Test + Integration (windows-latest)
             os: windows-latest
             timeout_minutes: 60
@@ -34,7 +37,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Check implementation language allowlist
-        if: ${{ matrix.os == 'ubuntu-latest' }}
+        shell: bash
         run: scripts/check-implementation-languages.sh
 
       - name: Check native toolchain

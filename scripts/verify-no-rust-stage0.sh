@@ -236,16 +236,19 @@ stage1_safety_corpus_supported() {
 
 echo "[no-rust-stage0] host=$HOST_OS seed=$SEED_TYPELISP_BIN"
 
+run_with_compiler "$SEED_TYPELISP_BIN" "TypeLisp source formatting" scripts/check-tl-format.sh
+run_with_compiler "$SEED_TYPELISP_BIN" "TypeLisp source lint" \
+    env TYPELISP_LINT_JOBS="${TYPELISP_LINT_JOBS:-8}" scripts/check-tl-lint.sh
+TYPELISP_BIN=$SEED_TYPELISP_BIN
+export TYPELISP_BIN
+
 if [ "$HOST_OS" = linux ]; then
     STAGE1_PATH_FILE="$ROOT/target/no-rust-stage0-stage1.path"
     rm -f "$STAGE1_PATH_FILE"
     TYPELISP_BOOTSTRAP_STAGE1_PATH_FILE=$STAGE1_PATH_FILE
-    TYPELISP_BOOTSTRAP_STAGE1_ONLY=1
     export TYPELISP_BOOTSTRAP_STAGE1_PATH_FILE
-    export TYPELISP_BOOTSTRAP_STAGE1_ONLY
-    run_gate "bootstrap stage1 build" scripts/check-bootstrap-fixpoint.sh "$SEED_TYPELISP_BIN"
+    run_gate "bootstrap stage1->stage2->stage3 fixpoint" scripts/check-bootstrap-fixpoint.sh "$SEED_TYPELISP_BIN"
     unset TYPELISP_BOOTSTRAP_STAGE1_PATH_FILE
-    unset TYPELISP_BOOTSTRAP_STAGE1_ONLY
     if [ -s "$STAGE1_PATH_FILE" ]; then
         TYPELISP_BIN=$(sed -n '1p' "$STAGE1_PATH_FILE")
     else
@@ -496,35 +499,6 @@ else
         run_gate "windows bootstrap fixpoint" scripts/check-bootstrap-fixpoint.sh "$SEED_TYPELISP_BIN"
     fi
 fi
-TYPELISP_BIN=$SEED_TYPELISP_BIN
-export TYPELISP_BIN
-# The repository format gate runs `typelisp fmt --check` over the whole TypeLisp
-# corpus. On Linux, serve it through the stage1 wrapper's cached selfhost format
-# driver whenever the host-action drivers are available so the fmt capability
-# tier no longer depends on the seed/published compiler (#1544). The wrapper's
-# format driver is built once and reused across the batched invocations. When
-# the drivers are unavailable (or on Windows) the seed compiler keeps the gate.
-FORMAT_GATE_TYPELISP_BIN=$SEED_TYPELISP_BIN
-if [ "$HOST_OS" = linux ] && [ "$STAGE1_HOST_ACTION_DRIVERS_AVAILABLE" -eq 1 ]; then
-    FORMAT_GATE_TYPELISP_BIN=$STAGE1_TYPELISP_BIN
-fi
-run_with_compiler "$FORMAT_GATE_TYPELISP_BIN" "TypeLisp source formatting" scripts/check-tl-format.sh
-TYPELISP_BIN=$SEED_TYPELISP_BIN
-export TYPELISP_BIN
-
-# The repository lint gate runs `typelisp lint` over the whole tracked TypeLisp
-# corpus and fails CI on any finding (the public `typelisp lint` is warn-only;
-# this gate enforces a clean baseline, refs #1164). Like fmt/check, `lint` is an
-# in-process frontend command that needs no host-action drivers, so it runs
-# directly on the seed/stage1 compiler; mirror the format gate's selection. The
-# old Rust CI ran this gate (TYPELISP_LINT_JOBS=8); keep it here so unifying CI
-# into the no-Rust gate does not silently drop repository lint enforcement.
-LINT_GATE_TYPELISP_BIN=$SEED_TYPELISP_BIN
-if [ "$HOST_OS" = linux ] && [ "$STAGE1_HOST_ACTION_DRIVERS_AVAILABLE" -eq 1 ]; then
-    LINT_GATE_TYPELISP_BIN=$STAGE1_TYPELISP_BIN
-fi
-run_with_compiler "$LINT_GATE_TYPELISP_BIN" "TypeLisp source lint" \
-    env TYPELISP_LINT_JOBS="${TYPELISP_LINT_JOBS:-8}" scripts/check-tl-lint.sh
 TYPELISP_BIN=$SEED_TYPELISP_BIN
 export TYPELISP_BIN
 

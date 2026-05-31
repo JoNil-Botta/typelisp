@@ -30,6 +30,10 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: stage0-bootstrap
+  cancel-in-progress: false
+
 jobs:
   build-linux:
     name: Build Stage0 (Linux)
@@ -56,6 +60,15 @@ jobs:
           ./typelisp-stage0-linux compile selfhost/compile.tl -o /tmp/stage0-smoke.s \
             --target linux-x86_64 --stdlib-root stdlib --stdlib-root selfhost
           test -s /tmp/stage0-smoke.s
+
+      - name: Fixpoint-verify the new stage0 self-reproduces
+        run: scripts/check-bootstrap-fixpoint.sh "$PWD/typelisp-stage0-linux"
+
+      - name: Corpus-check the new stage0
+        run: |
+          for module in stdlib/io.tl stdlib/string.tl stdlib/fs.tl stdlib/env.tl; do
+            ./typelisp-stage0-linux check "$module" --stdlib-root stdlib
+          done
 
       - name: Upload stage0 artifact
         uses: actions/upload-artifact@v4

@@ -53,6 +53,7 @@ const SELFHOST_DOC_DRIVER_DEPS: &[&str] = &[
     "doc_extract.tl",
     "format_tokens.tl",
     "doc_test.tl",
+    "doc_cli_core.tl",
     "build_run_core.tl",
     "compiler_driver_core.tl",
     "compiler_backend.tl",
@@ -60,6 +61,7 @@ const SELFHOST_DOC_DRIVER_DEPS: &[&str] = &[
     "compiler_regalloc.tl",
     "compiler_liveness.tl",
     "compiler_lower.tl",
+    "compiler_clone.tl",
     "compiler_check_core.tl",
     "compiler_load.tl",
     "compiler_typecheck.tl",
@@ -1368,6 +1370,7 @@ fn type_lisp_programs_compile_link_and_run_explicit_build() {
             stdout: "",
             deps: &[
                 "compiler_lower.tl",
+                "compiler_clone.tl",
                 "compiler_ctfe.tl",
                 "compiler_specialize.tl",
                 "compiler_ir_types.tl",
@@ -1447,6 +1450,7 @@ fn type_lisp_programs_compile_link_and_run_explicit_build() {
                 "compiler_regalloc.tl",
                 "compiler_liveness.tl",
                 "compiler_lower.tl",
+                "compiler_clone.tl",
                 "compiler_ctfe.tl",
                 "compiler_specialize.tl",
                 "compiler_ir_types.tl",
@@ -1489,6 +1493,7 @@ fn type_lisp_programs_compile_link_and_run_explicit_build() {
                 "compiler_regalloc.tl",
                 "compiler_liveness.tl",
                 "compiler_lower.tl",
+                "compiler_clone.tl",
                 "compiler_check_core.tl",
                 "compiler_load.tl",
                 "compiler_typecheck.tl",
@@ -1578,6 +1583,7 @@ fn selfhost_backend_stack_args_emit_assemble_link_and_run() {
             "compiler_regalloc.tl",
             "compiler_liveness.tl",
             "compiler_lower.tl",
+            "compiler_clone.tl",
             "compiler_ctfe.tl",
             "compiler_specialize.tl",
             "compiler_ir_types.tl",
@@ -1962,6 +1968,7 @@ fn selfhost_compiler_driver_emits_deterministic_runnable_assembly() {
             "compiler_liveness.tl",
             "compiler_optimize.tl",
             "compiler_lower.tl",
+            "compiler_clone.tl",
             "compiler_ctfe.tl",
             "compiler_specialize.tl",
             "compiler_ir_types.tl",
@@ -2599,7 +2606,7 @@ fn selfhost_check_driver_reports_success_and_errors() {
     );
     assert_eq!(
         String::from_utf8_lossy(&ok.stdout),
-        "",
+        "Type checking passed!\n",
         "selfhost check success wrote stdout"
     );
     assert_eq!(
@@ -2627,7 +2634,7 @@ fn selfhost_check_driver_reports_success_and_errors() {
     );
     assert_eq!(
         String::from_utf8_lossy(&imports.stdout),
-        "",
+        "Type checking passed!\n",
         "selfhost check lex/optimizer imports wrote stdout"
     );
     assert_eq!(

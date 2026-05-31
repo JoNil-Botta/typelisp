@@ -18,10 +18,23 @@
 case|integration_calc|tests/integration/calc.tl|assembly|exactly-one|direct
 contains|_tl_lex:
 contains|_tl_parse:
+contains|_tl_parse_expr:
+contains|_tl_parse_term:
+contains|_tl_parse_factor:
+contains|_tl_expect:
+contains|_tl_advance:
 contains|_tl_eval:
 contains|_tl_token_tag:
+contains|_tl_token_int:
 contains|call tl_alloc
 contains|call tl_oob_abort
+contains|call .L_tl_abort
+contains|call _tl_lex
+contains|call _tl_parse
+contains|call _tl_parse_expr
+contains|call _tl_parse_term
+contains|call _tl_parse_factor
+contains|call _tl_eval
 end
 
 case|integration_lexer|tests/integration/lexer.tl|assembly|present|direct
@@ -37,22 +50,40 @@ contains|_tl_parse_expr:
 contains|_tl_parse_term:
 contains|_tl_parse_factor:
 contains|_tl_eval:
+contains|_tl_expect:
+contains|_tl_advance:
+contains|_tl_token_tag:
+contains|_tl_token_int:
 contains|parser: unexpected token
+contains|call tl_alloc
+contains|call tl_oob_abort
+contains|call .L_tl_abort
+contains|call _tl_parse_term
+contains|call _tl_parse_factor
+contains|call _tl_parse_expr
+contains|call _tl_eval
 end
 
 case|integration_maybe_result|tests/integration/maybe_result.tl|assembly|present|direct
 contains|_tl_find_answer:
+contains|_tl_read_small:
 contains|_tl_maybe_score:
 contains|_tl_result_score:
 contains|tl_string_eq:
+contains|call tl_string_eq
 contains|tl_string_concat:
+contains|call tl_string_concat
+contains|call tl_alloc
 end
 
 case|integration_nested_eval|tests/integration/nested_eval.tl|assembly|present|direct
 contains|_tl_eval_sexpr:
 contains|_tl_sexpr_head:
+contains|_tl_sexpr_tail:
 contains|match_nested
+contains|tl_string_eq:
 contains|call _tl_eval_sexpr
+contains|.L_tl_abort
 end
 
 case|integration_nullary_variant_call|tests/integration/nullary_variant_call.tl|assembly|skip|direct
@@ -383,6 +414,7 @@ contains|_tl_compiler_parse_abstraction_policy_message:
 contains|parse: unknown extern ABI
 contains|parse: malformed define
 contains|source-level generics or traits
+count-at-least|call _tl_compiler_parse_dispatch_env|1
 end
 
 case|selfhost_compiler_parse_smoke|selfhost/compiler_parse_smoke.tl|assembly|exactly-one|direct
@@ -449,8 +481,26 @@ end
 case|selfhost_doc|selfhost/doc.tl|assembly|exactly-one|direct
 requires-stage0-symbol|file-read-chunk-status,file-write-status,file-flush-status,append-file-status
 contains|_tl_doc_generate_file:
+contains|_tl_doc_generate_html_file:
+contains|_tl_doc_generate_html_module_graph:
 contains|_tl_doc_test_file:
+contains|_tl_doc_test_run_file:
+contains|_tl_doc_test_run_report_render:
+contains|_tl_doc_render_markdown:
+contains|_tl_doc_html_render_module_page:
+contains|_tl_doc_html_render_module_graph:
+contains|_tl_doc_extract_source:
+contains|_tl_format_lex:
 contains|_tl_doc_stdlib_roots:
+contains|.L_tl_arg_count:
+contains|.L_tl_arg:
+contains|.L_tl_read_file:
+contains|.L_tl_write_file:
+contains|Doc tests passed:
+contains|doc tests failed:
+contains|doc: expected --test input path
+contains|doc: expected --html input and output paths
+contains|<!doctype html>
 contains|doc: expected input and output paths
 end
 
@@ -458,11 +508,29 @@ case|selfhost_doc_extract|selfhost/doc_extract.tl|assembly|skip|direct
 contains|_tl_doc_extract_file:
 contains|_tl_doc_extract_source:
 contains|_tl_doc_extract_smoke:
+contains|_tl_doc_decl_info:
+contains|_tl_doc_scan_form_end:
+contains|_tl_format_lex:
+contains|_tl_format_token_tag:
+contains|_tl_format_token_text:
+contains|doc-extract: module doc smoke mismatch
+contains|doc-extract: item count smoke mismatch
+contains|doc-extract: item doc smoke mismatch
+contains|;# Module title
+contains|;: answer doc
+contains|;; ordinary comment ignored
+contains|(define answer : i64 42)
+contains|(define (main [argc : i64])
+contains|;: EOF unattached
+contains|Module title\nsecond module line\nlater module
+contains|;;;; Legacy module
+contains|;;; legacy item
 end
 
 case|selfhost_doc_extract_smoke|selfhost/doc_extract_smoke.tl|assembly|exactly-one|direct
 contains|_tl_doc_extract_smoke:
 contains|_tl_doc_extract_source:
+contains|_tl_format_lex:
 end
 
 case|selfhost_doc_html|selfhost/doc_html.tl|assembly|skip|direct
@@ -552,12 +620,29 @@ end
 case|selfhost_doc_test|selfhost/doc_test.tl|assembly|skip|direct
 requires-stage0-symbol|file-read-chunk-status,file-write-status,file-flush-status,append-file-status
 contains|_tl_doc_test_extract_source:
+contains|_tl_doc_test_extract_file:
 contains|_tl_doc_test_parse_run_metadata:
 contains|_tl_doc_test_parse_output_spec:
+contains|_tl_doc_test_parse_fence_info:
+contains|_tl_doc_test_scan_doc_block:
+contains|_tl_doc_test_supported_item_declaration_question:
+contains|_tl_doc_test_run_source:
 contains|_tl_doc_test_run_source_with_roots:
+contains|_tl_doc_test_check_example:
+contains|_tl_doc_test_run_examples:
+contains|_tl_doc_test_errors_to_failures:
+contains|_tl_doc_test_run_failure_render:
+contains|_tl_doc_test_run_smoke:
+contains|_tl_doc_test_smoke_all:
 contains|unsupported TypeLisp doctest option
 contains|doctest-exit metadata must be an integer
 contains|TypeLisp doctest options `run` and `expect-error` cannot be combined
+contains|runnable TypeLisp doctest requires doctest-exit metadata
+contains|empty TypeLisp doctest fence
+contains|unterminated TypeLisp doctest fence
+contains|E0200
+contains|doc-test: example metadata mismatch
+contains|doc-test-run: unexpected-error mismatch
 contains|was expected to fail
 end
 
@@ -565,6 +650,8 @@ case|selfhost_doc_test_smoke|selfhost/doc_test_smoke.tl|assembly|exactly-one|dir
 requires-stage0-symbol|file-read-chunk-status,file-write-status,file-flush-status,append-file-status
 contains|_tl_doc_test_smoke_all:
 contains|_tl_doc_test_run_smoke:
+contains|_tl_doc_test_smoke:
+contains|_tl_doc_test_parse_fence_info:
 end
 
 case|selfhost_emit|selfhost/emit.tl|assembly|exactly-one|direct
@@ -583,7 +670,54 @@ case|selfhost_eval|selfhost/eval.tl|assembly|exactly-one|direct
 contains|_tl_eval_sexpr_result:
 contains|_tl_run_program:
 contains|_tl_apply_value_result:
+contains|call tl_alloc
+contains|match_nested
+contains|_tl_read_form:
+contains|_tl_lex:
+contains|_tl_token_str:
+contains|_tl_as_int:
+contains|_tl_as_str:
+contains|_tl_apply_value:
+contains|_tl_env_has:
+contains|_tl_bind_args_onto:
+contains|_tl_print_value:
+contains|_tl_print_list_tail:
+contains|_tl_eval_list:
+contains|_tl_eval_seq:
+contains|tl_string_eq:
+contains|tl_string_concat:
+contains|tl_substring:
+contains|tl_int_to_string:
+contains|tl_string_to_int:
+contains|tl_print_str:
+contains|tl_print_i64:
+contains|.string "lambda"
+contains|.string "if"
+contains|.string "begin"
+contains|.string "list"
+contains|.string "cons"
+contains|.string "car"
+contains|.string "cdr"
+contains|.string "pair?"
+contains|.string "null?"
+contains|.string "print"
+contains|.string "define"
+contains|.string "string-length"
+contains|.string "substring"
+contains|.string "string-eq"
+contains|.string "int->string"
+contains|.string "string->int"
+contains|.string "string-append"
+contains|.string " . "
 contains|eval: unbound variable
+contains|eval: too few arguments in call
+contains|eval: a non-final top-level form must be a (define ...)
+not-contains|_tl_sexpr_sym:
+not-contains|_tl_seq:
+not-contains|_tl_sum_list:
+not-contains|eval: strings not supported
+count-at-least|call _tl_eval_sexpr|2
+count-at-least|call _tl_print_value|2
 end
 
 case|selfhost_format|selfhost/format.tl|assembly|exactly-one|direct
@@ -627,7 +761,13 @@ end
 case|selfhost_frontend_tools|selfhost/frontend_tools.tl|assembly|exactly-one|direct
 contains|_tl_front_tokenize_file:
 contains|_tl_front_parse_file:
+contains|_tl_front_scan_token:
+contains|_tl_front_program_render:
+contains|_tl_parse_ast_source_diagnostic:
+contains|_tl_lex_spanned_result:
 contains|frontend-tools: expected mode tokenize
+not-contains|_tl_print_char
+not-contains|tl_print_char
 end
 
 case|selfhost_frontend_tools_core|selfhost/frontend_tools_core.tl|assembly|skip|direct
@@ -662,6 +802,20 @@ contains|_tl_lex:
 contains|_tl_lex_result:
 contains|_tl_token_tag:
 contains|1.5
+contains|call tl_substring
+contains|call tl_string_to_int
+contains|call tl_oob_abort
+contains|lexer: unterminated string literal
+contains|lexer: unterminated character literal
+contains|lexer: unknown named character literal
+contains|lexer: unexpected character
+contains|(% n 16)
+contains|3.14
+contains|_tl_scan_number_end:
+contains|_tl_scan_symbol_end:
+contains|_tl_named_char_result:
+contains|_tl_count_floats:
+contains|_tl_count_chars:
 end
 
 case|selfhost_lsp_frame|selfhost/lsp_frame.tl|assembly|skip|direct
@@ -707,7 +861,18 @@ case|selfhost_repl|selfhost/repl.tl|assembly|exactly-one|direct
 requires-stage0-symbol|file-read-chunk-status,file-write-status,file-flush-status,append-file-status
 contains|_tl_repl_loop:
 contains|_tl_repl_handle_input:
-contains|tl> 
+contains|_tl_repl_banner:
+contains|_tl_repl_help_text:
+contains|_tl_repl_prompt:
+contains|_tl_repl_dot_command_question:
+contains|_tl_repl_type_command:
+contains|_tl_repl_type_render:
+contains|_tl_repl_handle_type_command:
+contains|_tl_repl_handle_line:
+contains|.L_tl_read_stdin_line
+contains|.L_tl_stdin_eof
+contains|.L_tl_flush_stdout
+contains|tl>
 end
 
 case|selfhost_run|selfhost/run.tl|assembly|skip|direct
@@ -747,6 +912,9 @@ end
 case|selfhost_text_buf|selfhost/text_buf.tl|assembly|skip|direct
 contains|_tl_text_buf_empty:
 contains|_tl_text_buf_append:
+contains|_tl_text_chunk_list_concat:
+contains|_tl_text_buf_append_buffer:
+contains|_tl_text_chunks_render_rev:
 contains|_tl_text_buf_render:
 end
 
@@ -782,4 +950,54 @@ contains|_tl_scaffold_new:
 contains|_tl_scaffold_init:
 contains|_tl_scaffold_emit:
 contains|scaffold: usage
+end
+
+# Optimization-benchmark codegen smoke. Mirrors the dropped Rust
+# optimization_benchmark_manifest_and_tl_sources_compile harness: each of the 11
+# benchmark TypeLisp sources must compile to assembly that defines main: with no
+# backend "# TODO" (the runner auto-rejects "# TODO"). Sources live outside
+# selfhost/ so they are not subject to check_selfhost_manifest_sync().
+
+case|bench_opt_arithmetic_loops|benchmarks/optimization/tl/arithmetic_loops.tl|assembly|exactly-one|direct
+contains|main:
+end
+
+case|bench_opt_array_sum|benchmarks/optimization/tl/array_sum.tl|assembly|exactly-one|direct
+contains|main:
+end
+
+case|bench_opt_string_scan|benchmarks/optimization/tl/string_scan.tl|assembly|exactly-one|direct
+contains|main:
+end
+
+case|bench_opt_runtime_string_eq|benchmarks/optimization/tl/runtime_string_eq.tl|assembly|exactly-one|direct
+contains|main:
+end
+
+case|bench_opt_runtime_string_ops|benchmarks/optimization/tl/runtime_string_ops.tl|assembly|exactly-one|direct
+contains|main:
+end
+
+case|bench_opt_runtime_string_int|benchmarks/optimization/tl/runtime_string_int.tl|assembly|exactly-one|direct
+contains|main:
+end
+
+case|bench_opt_runtime_path_helpers|benchmarks/optimization/tl/runtime_path_helpers.tl|assembly|exactly-one|direct
+contains|main:
+end
+
+case|bench_opt_function_calls|benchmarks/optimization/tl/function_calls.tl|assembly|exactly-one|direct
+contains|main:
+end
+
+case|bench_opt_recursion_tail|benchmarks/optimization/tl/recursion_tail.tl|assembly|exactly-one|direct
+contains|main:
+end
+
+case|bench_opt_struct_enum_dispatch|benchmarks/optimization/tl/struct_enum_dispatch.tl|assembly|exactly-one|direct
+contains|main:
+end
+
+case|bench_opt_allocation_heavy|benchmarks/optimization/tl/allocation_heavy.tl|assembly|exactly-one|direct
+contains|main:
 end

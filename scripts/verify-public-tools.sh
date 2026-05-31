@@ -988,6 +988,13 @@ EOF
     cat > "$SELFHOST_PKG/vendor/math/src/lib.tl" <<'EOF'
 (define (add-one [x : i64]) : i64 (+ x 1))
 EOF
+    cat > "$SELFHOST_PKG/vendor/math/typelisp.pkg" <<'EOF'
+(package
+  (name "math")
+  (version "0.1.0")
+  (kind "lib"))
+EOF
+    maybe_strip_manifest_kind "$SELFHOST_PKG/vendor/math/typelisp.pkg"
     run_cmd selfhost-build-package "$SELFHOST_PLANNER_DIR/build-tool" --direct --manifest-path "$SELFHOST_PKG/typelisp.pkg" --opt-level 0
     assert_success
     assert_stderr_empty
@@ -1078,6 +1085,13 @@ EOF
     (math "vendor/math")))
 EOF
     maybe_strip_manifest_kind "$SELFHOST_BADPKG/typelisp.pkg"
+    cat > "$SELFHOST_BADPKG/vendor/math/typelisp.pkg" <<'EOF'
+(package
+  (name "math")
+  (version "0.1.0")
+  (kind "lib"))
+EOF
+    maybe_strip_manifest_kind "$SELFHOST_BADPKG/vendor/math/typelisp.pkg"
     cat > "$SELFHOST_BADPKG/src/main.tl" <<'EOF'
 (import "pkg:math/src/missing.tl")
 (define (main) : i64 0)
@@ -1701,6 +1715,13 @@ cat > "$MISSING_DEP/typelisp.pkg" <<'EOF'
     (math "vendor/math")))
 EOF
 maybe_strip_manifest_kind "$MISSING_DEP/typelisp.pkg"
+cat > "$MISSING_DEP/vendor/math/typelisp.pkg" <<'EOF'
+(package
+  (name "math")
+  (version "0.1.0")
+  (kind "lib"))
+EOF
+maybe_strip_manifest_kind "$MISSING_DEP/vendor/math/typelisp.pkg"
 cat > "$MISSING_DEP/src/main.tl" <<'EOF'
 (import "pkg:math/src/missing.tl")
 (define (main) : i64 0)

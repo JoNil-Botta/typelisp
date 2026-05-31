@@ -1603,6 +1603,13 @@ EOF
 cat > "$PKG/vendor/math/src/lib.tl" <<'EOF'
 (define (add-one [x : i64]) : i64 (+ x 1))
 EOF
+cat > "$PKG/vendor/math/typelisp.pkg" <<'EOF'
+(package
+  (name "math")
+  (version "0.1.0")
+  (kind "lib"))
+EOF
+maybe_strip_manifest_kind "$PKG/vendor/math/typelisp.pkg"
 run_cmd package-build "$COMPILER" build --manifest-path "$PKG/typelisp.pkg"
 assert_success
 assert_stderr_empty

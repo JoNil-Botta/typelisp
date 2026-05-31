@@ -8123,32 +8123,22 @@
 
 ;; `tl_current_arena` is the live bump-arena pointer shared by tl_alloc, the
 ;; region runtime, and the first-class arena builtins (#1633). It is the
-;; program's SINGLE active-arena slot. On LINUX it is emitted as a WEAK bss
-;; definition so a multi-object link (a package plus its dependency .a archive)
-;; keeps exactly one shared slot per executable instead of giving each object its
-;; own pointer, while still emitting the `tl_current_arena:` label. On WINDOWS it
-;; stays a plain local bss slot: weak COFF symbols are not linked correctly by
-;; MSVC link.exe (they break single-object selfhost programs), and Windows
-;; multi-object package sharing is deferred. The arena primitive functions follow
-;; the same Linux-weak / Windows-globl split.
+;; program's SINGLE active-arena slot, emitted as a single `.globl` bss
+;; definition for both targets. Like the arena primitives, the runtime lives in
+;; exactly ONE object per executable (the entry object, `emit-entry=true`);
+;; library/dependency objects (`emit-entry=false`) emit none of the runtime and
+;; reference this slot as an extern, so a multi-object link (a package plus its
+;; dependency .a archive) resolves to the single shared slot — no duplicate
+;; definition.
 (define (compiler-backend-runtime-arena-data-for-target
   [target : CompilerBackendTarget]) : String
-  (match target
-    [(BackendTargetLinux)
-      "    .weak tl_current_arena
+  "    .globl tl_current_arena
     .section .bss
     .balign 8
 tl_current_arena:
     .zero 8
 
-"]
-    [(BackendTargetWindows)
-      "    .section .bss
-    .balign 8
-tl_current_arena:
-    .zero 8
-
-"]))
+")
 
 (define (compiler-backend-runtime-region-reset-data) : String
   "    .section .rodata
@@ -8567,24 +8557,25 @@ tl_region_mark:
 ;; header is the same 32-byte record as tl_alloc {0:prev, 8:base, 16:bump,
 ;; 24:end}. System V (mmap=9 / munmap=11) flavor.
 ;;
-;; These are WEAK symbols. They are emitted unconditionally in every object, so a
-;; multi-object link (e.g. a package plus its dependency .a archive) would hit
-;; `multiple definition of tl_arena_*` if they were `.globl`. Weak linkage lets
-;; the linker keep exactly one definition per executable, so every object's calls
-;; bind to the same arena primitives operating on the single shared (`.comm`)
-;; `tl_current_arena` slot — the arena stays coherent across objects.
+;; These are `.globl` symbols. The runtime (arena primitives, tl_alloc, the
+;; region runtime, and the `tl_current_arena` slot) is emitted in exactly ONE
+;; object per executable — the entry/executable object (`emit-entry=true`).
+;; Library/dependency objects (`emit-entry=false`) emit none of the runtime and
+;; reference these symbols as externs, so a multi-object link (a package plus its
+;; dependency .a archive) resolves every object's calls to the single definition
+;; in the entry object — no `multiple definition` collision.
 (define (compiler-backend-runtime-arena-functions) : String
-  "    .weak tl_arena_current
+  "    .globl tl_arena_current
 tl_arena_current:
     movq tl_current_arena(%rip), %rax
     ret
 
-    .weak tl_arena_set
+    .globl tl_arena_set
 tl_arena_set:
     movq %rdi, tl_current_arena(%rip)
     ret
 
-    .weak tl_arena_make
+    .globl tl_arena_make
 tl_arena_make:
     movq $0x4000000, %rsi
     xorq %rdi, %rdi
@@ -8609,7 +8600,7 @@ tl_arena_make:
     movq $134, %rdi
     syscall
 
-    .weak tl_arena_destroy
+    .globl tl_arena_destroy
 tl_arena_destroy:
     push %rbx
     movq %rdi, %rbx
@@ -14075,9 +14066,11 @@ tl_windows_sdk_registry_install:
                                                 closure-names
                                                 functions
                                                 externs))
-                                            (compiler-backend-runtime-data-for-target
-                                              target
-                                              plan))
+                                            (if emit-entry
+                                              (compiler-backend-runtime-data-for-target
+                                                target
+                                                plan)
+                                              ""))
                                           (compiler-backend-emit-externs
                                             externs
                                             plan))
@@ -14090,9 +14083,11 @@ tl_windows_sdk_registry_install:
                                     functions-asm)
                                   closure-adapters-asm)
                                 (string-append
-                                  (compiler-backend-runtime-functions-for-target
-                                    target
-                                    plan)
+                                  (if emit-entry
+                                    (compiler-backend-runtime-functions-for-target
+                                      target
+                                      plan)
+                                    "")
                                   (if emit-entry
                                     (compiler-backend-entry-for-target
                                       target

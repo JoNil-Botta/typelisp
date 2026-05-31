@@ -8123,23 +8123,32 @@
 
 ;; `tl_current_arena` is the live bump-arena pointer shared by tl_alloc, the
 ;; region runtime, and the first-class arena builtins (#1633). It is the
-;; program's SINGLE active-arena slot, so it must resolve to exactly one storage
-;; location per executable. It is emitted as a WEAK bss definition: every object
-;; defines it, and the linker keeps one shared 8-byte slot (weak definitions do
-;; not collide). This keeps the arena coherent across a multi-object link (a
-;; package plus its dependency .a archive) instead of giving each object its own
-;; pointer, while still emitting the `tl_current_arena:` label (a non-allocating
-;; program references it via tl_arena_current). The arena primitive functions
-;; below are emitted `.weak` for the same one-definition-per-exe reason.
+;; program's SINGLE active-arena slot. On LINUX it is emitted as a WEAK bss
+;; definition so a multi-object link (a package plus its dependency .a archive)
+;; keeps exactly one shared slot per executable instead of giving each object its
+;; own pointer, while still emitting the `tl_current_arena:` label. On WINDOWS it
+;; stays a plain local bss slot: weak COFF symbols are not linked correctly by
+;; MSVC link.exe (they break single-object selfhost programs), and Windows
+;; multi-object package sharing is deferred. The arena primitive functions follow
+;; the same Linux-weak / Windows-globl split.
 (define (compiler-backend-runtime-arena-data-for-target
   [target : CompilerBackendTarget]) : String
-  "    .weak tl_current_arena
+  (match target
+    [(BackendTargetLinux)
+      "    .weak tl_current_arena
     .section .bss
     .balign 8
 tl_current_arena:
     .zero 8
 
-")
+"]
+    [(BackendTargetWindows)
+      "    .section .bss
+    .balign 8
+tl_current_arena:
+    .zero 8
+
+"]))
 
 (define (compiler-backend-runtime-region-reset-data) : String
   "    .section .rodata
@@ -8627,17 +8636,17 @@ tl_arena_destroy:
 ;; in %rcx; a 32-byte shadow space is reserved before each call. A mapping
 ;; failure traps via `ud2` (no libc dependency).
 (define (compiler-backend-runtime-windows-arena-functions) : String
-  "    .weak tl_arena_current
+  "    .globl tl_arena_current
 tl_arena_current:
     movq tl_current_arena(%rip), %rax
     ret
 
-    .weak tl_arena_set
+    .globl tl_arena_set
 tl_arena_set:
     movq %rcx, tl_current_arena(%rip)
     ret
 
-    .weak tl_arena_make
+    .globl tl_arena_make
 tl_arena_make:
     push %rbp
     mov %rsp, %rbp
@@ -8666,7 +8675,7 @@ tl_arena_make:
 .L_tl_arena_make_win_abort:
     ud2
 
-    .weak tl_arena_destroy
+    .globl tl_arena_destroy
 tl_arena_destroy:
     push %rbp
     mov %rsp, %rbp

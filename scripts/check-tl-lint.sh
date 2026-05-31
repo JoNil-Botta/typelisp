@@ -5,7 +5,7 @@ set -eu
 #
 # Local usage:
 #   scripts/check-tl-lint.sh
-#   TYPELISP_BIN=./target/release/typelisp scripts/check-tl-lint.sh
+#   TYPELISP_BIN=./target/stage0/typelisp scripts/check-tl-lint.sh
 #
 # The public `typelisp lint` command is warn-only so cleanup can happen in
 # normal reviewable slices. This gate makes CI fail for any finding.
@@ -28,9 +28,10 @@ esac
 if [ -n "${TYPELISP_BIN:-}" ]; then
     COMPILER=$TYPELISP_BIN
 else
-    cargo build --release --quiet
-    COMPILER="$ROOT/target/release/typelisp"
-    [ "$HOST_OS" = windows ] && COMPILER="$COMPILER.exe"
+    # No-Rust fallback for local development: fetch the published
+    # self-hosted stage0 (CI always passes a compiler via TYPELISP_BIN).
+    . "$ROOT/scripts/lib-stage0.sh"
+    COMPILER=$(resolve_stage0_compiler "$ROOT") || exit 1
 fi
 
 case "$COMPILER" in

@@ -5,7 +5,7 @@ set -eu
 #
 # Local usage:
 #   scripts/check-tl-format.sh
-#   TYPELISP_BIN=./target/release/typelisp scripts/check-tl-format.sh
+#   TYPELISP_BIN=./target/stage0/typelisp scripts/check-tl-format.sh
 #
 # The check runs the self-hosted formatter through `typelisp fmt --check` over
 # the checked-in TypeLisp corpus. CI must not rewrite files; run
@@ -33,9 +33,10 @@ esac
 if [ -n "${TYPELISP_BIN:-}" ]; then
     COMPILER=$TYPELISP_BIN
 else
-    cargo build --release --quiet
-    COMPILER="$ROOT/target/release/typelisp"
-    [ "$HOST_OS" = windows ] && COMPILER="$COMPILER.exe"
+    # No-Rust fallback for local development: fetch the published
+    # self-hosted stage0 (CI always passes a compiler via TYPELISP_BIN).
+    . "$ROOT/scripts/lib-stage0.sh"
+    COMPILER=$(resolve_stage0_compiler "$ROOT") || exit 1
 fi
 
 if [ ! -x "$COMPILER" ]; then

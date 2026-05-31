@@ -16,7 +16,7 @@ set -eu
 # C baseline on both. The TypeLisp-vs-C ratio is only comparable within one host.
 #
 # Env:
-#   TYPELISP_BIN     compiler path (else `cargo build --release` is used)
+#   TYPELISP_BIN     compiler path (else the published stage0 is fetched)
 #   BENCH_RUNS       timed runs per program (default 5)
 #   BENCH_CLANG_OPT  clang optimization level (default -O2)
 #   BENCH_FILTER     only run benchmarks whose name contains this substring
@@ -59,8 +59,10 @@ esac
 if [ -n "${TYPELISP_BIN:-}" ]; then
     COMPILER=$TYPELISP_BIN
 else
-    cargo build --release --quiet
-    COMPILER="$ROOT/target/release/typelisp$EXE"
+    # No-Rust fallback for local development: fetch the published
+    # self-hosted stage0 (CI always passes a compiler via TYPELISP_BIN).
+    . "$ROOT/scripts/lib-stage0.sh"
+    COMPILER=$(resolve_stage0_compiler "$ROOT") || exit 1
 fi
 [ -x "$COMPILER" ] || {
     echo "typelisp compiler is not executable: $COMPILER" >&2

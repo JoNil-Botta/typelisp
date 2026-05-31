@@ -17,7 +17,7 @@ set -eu
 #
 # Usage:
 #   scripts/verify-spmd-simd.sh
-#   TYPELISP_BIN=./target/release/typelisp scripts/verify-spmd-simd.sh
+#   TYPELISP_BIN=./target/stage0/typelisp scripts/verify-spmd-simd.sh
 #
 # On the fleet's AVX-512 Windows box (the only AVX-512 machine), run from Git
 # Bash / MSYS with clang on PATH; detect-simd-isa.sh reports `avx2`+`avx512f`
@@ -40,9 +40,10 @@ esac
 if [ -n "${TYPELISP_BIN:-}" ]; then
     COMPILER=$TYPELISP_BIN
 else
-    cargo build --release --quiet
-    COMPILER="$ROOT/target/release/typelisp"
-    [ "$HOST_OS" = windows ] && COMPILER="$COMPILER.exe"
+    # No-Rust fallback for local development: fetch the published
+    # self-hosted stage0 (CI always passes a compiler via TYPELISP_BIN).
+    . "$ROOT/scripts/lib-stage0.sh"
+    COMPILER=$(resolve_stage0_compiler "$ROOT") || exit 1
 fi
 
 if [ ! -x "$COMPILER" ]; then

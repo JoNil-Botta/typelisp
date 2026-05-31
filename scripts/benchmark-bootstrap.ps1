@@ -251,16 +251,15 @@ if ($script:Target -eq "windows-x86_64" -or $script:Target -eq "windows_x86_64")
 }
 
 if ([string]::IsNullOrWhiteSpace($Compiler)) {
-    Require-Command "cargo"
-    Write-Host "Building release stage0 with Cargo (not timed)..."
-    & cargo build --release --quiet
+    Write-Host "Fetching published self-hosted stage0 (not timed)..."
+    & (Join-Path $PSScriptRoot "fetch-stage0.ps1")
     if ($LASTEXITCODE -ne 0) {
-        throw "cargo build --release failed with exit code $LASTEXITCODE"
+        throw "fetch-stage0.ps1 failed with exit code $LASTEXITCODE"
     }
     $Compiler = if (Test-WindowsHost) {
-        Join-Path $script:Root "target\release\typelisp.exe"
+        Join-Path $script:Root "target\stage0\typelisp.exe"
     } else {
-        Join-Path $script:Root "target/release/typelisp"
+        Join-Path $script:Root "target/stage0/typelisp"
     }
 }
 $stage0Compiler = Resolve-Tool $Compiler

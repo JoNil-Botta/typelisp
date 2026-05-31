@@ -1,9 +1,9 @@
 #!/usr/bin/env sh
 set -eu
 
-# No-Rust REPL and LSP corpus runner for tests/public-tools/.
+# Self-hosted REPL and LSP corpus runner for tests/public-tools/.
 # Usage:
-#   TYPELISP_BIN=./target/release/typelisp tests/public-tools/run-corpus.sh [repl|lsp]
+#   TYPELISP_BIN=./target/stage0/typelisp tests/public-tools/run-corpus.sh [repl|lsp]
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
 FIXTURE_ROOT="$ROOT/tests/public-tools"
@@ -19,8 +19,9 @@ esac
 if [ -n "${TYPELISP_BIN:-}" ]; then
     COMPILER=$TYPELISP_BIN
 else
-    COMPILER="$ROOT/target/release/typelisp"
-    [ "$HOST_OS" = windows ] && COMPILER="$COMPILER.exe"
+    # No-Rust fallback: fetch the published stage0 (CI passes TYPELISP_BIN).
+    . "$ROOT/scripts/lib-stage0.sh"
+    COMPILER=$(resolve_stage0_compiler "$ROOT") || exit 1
 fi
 
 case "$COMPILER" in

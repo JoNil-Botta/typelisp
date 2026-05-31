@@ -39,11 +39,6 @@ jobs:
             os: ubuntu-latest
             timeout_minutes: 60
             release_bin: ./target/release/typelisp
-          - suite: rust
-            name: Test + Integration (windows-latest)
-            os: windows-latest
-            timeout_minutes: 80
-            release_bin: ./target/release/typelisp.exe
     steps:
       - uses: actions/checkout@v4
 

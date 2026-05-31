@@ -39,6 +39,11 @@ jobs:
             os: ubuntu-latest
             timeout_minutes: 60
             release_bin: ./target/release/typelisp
+          - suite: rust
+            name: Test + Integration (windows-latest)
+            os: windows-latest
+            timeout_minutes: 80
+            release_bin: ./target/release/typelisp.exe
     steps:
       - uses: actions/checkout@v4
 
@@ -155,7 +160,7 @@ jobs:
         run: TYPELISP_BIN=${{ matrix.release_bin }} scripts/verify-spmd-simd.sh
 
       - name: Verify TypeLisp doctests with Rust-built compiler
-        if: ${{ matrix.suite == 'rust' }}
+        if: ${{ matrix.suite == 'rust' && matrix.os != 'windows-latest' }}
         shell: bash
         run: TYPELISP_BIN=${{ matrix.release_bin }} scripts/verify-doc-tests.sh
 

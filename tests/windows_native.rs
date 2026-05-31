@@ -165,7 +165,7 @@ fn selfhost_backend_windows_runtime_helpers_emit_assemble_link_and_run() {
         "\n.L_tl_stdin_eof:\n",
         "\n.L_tl_flush_stdout:\n",
         "\ntl_process_output:\n",
-        ".L_tl_process_make_error_win:\n",
+        ".L_tl_process_output_spawn_failed_close:\n",
         "process: runtime execution is not supported on this target",
         "\n.L_tl_argc:\n",
         "\n.L_tl_argv:\n",
@@ -326,6 +326,7 @@ fn selfhost_compile_driver_runs_as_windows_native_executable() {
     let asm_path = work_dir.join("main.s");
     fs::write(&source, "(define (main) : i64 42)\n").expect("write source");
     let output = Command::new(&driver_bin)
+        .arg("compile")
         .arg(&source)
         .arg("-o")
         .arg(&asm_path)
@@ -349,6 +350,7 @@ fn selfhost_compile_driver_runs_as_windows_native_executable() {
 
     let explicit_linux_asm = work_dir.join("main-linux.s");
     let explicit_linux = Command::new(&driver_bin)
+        .arg("compile")
         .arg(&source)
         .arg("--target")
         .arg("linux-x86_64")
@@ -373,6 +375,7 @@ fn selfhost_compile_driver_runs_as_windows_native_executable() {
 
     let windows_asm = work_dir.join("main-windows.s");
     let windows = Command::new(&driver_bin)
+        .arg("compile")
         .arg(&source)
         .arg("--target")
         .arg("windows-x86_64")
@@ -400,6 +403,7 @@ fn selfhost_compile_driver_runs_as_windows_native_executable() {
 
     let bad_target_asm = work_dir.join("bad-target.s");
     let bad_target = Command::new(&driver_bin)
+        .arg("compile")
         .arg(&source)
         .arg("--target")
         .arg("plan9-x86_64")
@@ -431,6 +435,7 @@ fn selfhost_compile_driver_runs_as_windows_native_executable() {
     )
     .expect("write comptime type source");
     let comptime_type = Command::new(&driver_bin)
+        .arg("compile")
         .arg(&comptime_type_source)
         .arg("-o")
         .arg(&comptime_type_asm)
@@ -454,6 +459,7 @@ fn selfhost_compile_driver_runs_as_windows_native_executable() {
     fs::write(&bad_source, "(define (main) : i64 true)\n").expect("write bad source");
     let _ = fs::remove_file(&bad_asm);
     let bad = Command::new(&driver_bin)
+        .arg("compile")
         .arg(&bad_source)
         .arg("-o")
         .arg(&bad_asm)

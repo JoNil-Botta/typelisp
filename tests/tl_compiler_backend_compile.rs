@@ -437,7 +437,7 @@ fn compile_tl_compiles_to_assembly() {
     );
 
     for sym in [
-        "_tl_compile_cli_config:",
+        "_tl_compile_cli_config_from:",
         "_tl_compile_cli_parse_options:",
         "_tl_compile_cli_target:",
         "_tl_compile_cli_default_output_with_extension:",
@@ -541,7 +541,7 @@ fn build_and_run_planners_compile_to_assembly() {
         compile_selfhost_source("test.tl", "tl-test-planner-compile-test", "test_planner.s");
     assert_no_todo(&test_asm, "test planner");
     for sym in [
-        "_tl_tltest_config:",
+        "_tl_tltest_config_from:",
         "_tl_tltest_parse_options:",
         "_tl_tltest_run_direct:",
         "_tl_tltest_run_harness_in_temp:",

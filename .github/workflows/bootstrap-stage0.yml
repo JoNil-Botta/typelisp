@@ -102,6 +102,13 @@ jobs:
             --target windows-x86_64 --stdlib-root stdlib --stdlib-root selfhost
           test -s /tmp/stage0-smoke.s
 
+      - name: Corpus-check the new stage0 (frontend only)
+        shell: bash
+        run: |
+          for module in stdlib/io.tl stdlib/string.tl stdlib/fs.tl stdlib/env.tl selfhost/compile.tl; do
+            ./typelisp-stage0-windows.exe check "$module" --stdlib-root stdlib --stdlib-root selfhost
+          done
+
       - name: Upload stage0 artifact
         uses: actions/upload-artifact@v4
         with:

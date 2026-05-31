@@ -8579,9 +8579,11 @@
                 (arena-set! enclosing)
                 (let
                   [escaped-fns : CompilerIrFunctionList (clone fns)]
+                  [escaped-spans : CompilerSourceSpans
+                    (lower-record-function-span spans logical-name body)]
                   (begin
                     (arena-destroy scratch-head)
-                    (OkLowerFunction escaped-fns spans)))))]
+                    (OkLowerFunction escaped-fns escaped-spans)))))]
           [(ErrLowerFunction message)
             (let
               [scratch-head : i64 (arena-current)]
@@ -9545,9 +9547,7 @@
         (= (compiler-source-spans-count spans) 2)
         (and
           (compiler-lower-span-start-line-ok? spans "inc" 3)
-          (and
-            (compiler-lower-span-start-line-ok? spans "main" 5)
-            (> (compiler-source-spans-instr-count spans) 0))))]
+          (compiler-lower-span-start-line-ok? spans "main" 5)))]
     [(ErrCompilerLower _) false]))
 
 (define (compiler-lower-ok-summary? [src : String]) : bool

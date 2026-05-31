@@ -2105,7 +2105,7 @@ fn selfhost_compiler_driver_emits_deterministic_runnable_assembly() {
         "main:\n",
         "    call _tl_helper_u2etl_colon_colonhelper\n",
         "_tl_shared_u2etl_colon_colonshared(%rip)",
-        "_start:\n    call main\n",
+        ".L_tl_main_keep_stack:\n    call main\n",
     ] {
         assert!(
             asm.contains(snippet),
@@ -2569,6 +2569,8 @@ fn selfhost_check_driver_reports_success_and_errors() {
             "compiler_typecheck.tl",
             "compiler_typecheck_core.tl",
             "compiler_specialize.tl",
+            "compiler_optimize.tl",
+            "compiler_ir_types.tl",
             "compiler_load.tl",
             "compiler_ctfe.tl",
             "compiler_symbols.tl",

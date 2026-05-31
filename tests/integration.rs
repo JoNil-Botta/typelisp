@@ -2768,7 +2768,10 @@ fn selfhost_check_driver_reports_success_and_errors() {
         String::from_utf8_lossy(&stdlib_ok.stdout),
         String::from_utf8_lossy(&stdlib_ok.stderr)
     );
-    assert_eq!(String::from_utf8_lossy(&stdlib_ok.stdout), "");
+    assert_eq!(
+        String::from_utf8_lossy(&stdlib_ok.stdout),
+        "Type checking passed!\n"
+    );
     assert_eq!(String::from_utf8_lossy(&stdlib_ok.stderr), "");
 }
 

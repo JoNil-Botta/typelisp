@@ -520,7 +520,7 @@
             "_start:\n    call _tl___global_init_greeting\n")
           (compiler-backend-string-contains?
             asm
-            "    movq %rax, _tl_nested(%rip)\n    call main\n")
+            ".L_tl_main_keep_stack:\n    call main\n")
           (not
             (compiler-backend-string-contains?
               asm

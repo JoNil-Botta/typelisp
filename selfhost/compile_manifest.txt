@@ -118,7 +118,7 @@ contains|_tl_fmt_run_from:
 contains|_tl_selfhost_lint_run_from:
 contains|_tl_tltest_run_from:
 contains|_tl_doc_run_from:
-contains|typelisp: expected a subcommand
+contains|typelisp: unknown subcommand
 end
 
 # Per-command logic modules shared by the unified dispatcher (selfhost/cli.tl)
@@ -155,7 +155,7 @@ contains|selfhost-check: --stdlib-root requires a value
 end
 
 case|selfhost_compile|selfhost/compile.tl|assembly|exactly-one|direct
-contains|_tl_compile_cli_config:
+contains|_tl_compile_cli_config_from:
 contains|_tl_compile_cli_target:
 contains|_tl_compile_cli_invalid_opt_level:
 contains|_tl_compile_cli_backend_mode:
@@ -163,7 +163,7 @@ contains|_tl_compile_cli_root_list_append:
 contains|_tl_compiler_driver_compile_file_with_roots_and_level:
 contains|_tl_compiler_driver_compile_file_for_target_with_roots_and_level:
 contains|_tl_compiler_driver_emit_ir_summary_file_with_roots_and_level:
-contains|_tl_compiler_backend_emit_program_with_spans_for_target:
+contains|_tl_compiler_backend_emit_program_with_spans_for_target_and_entry:
 contains|compile: expected source path
 contains|compile: --target requires a value
 contains|compile: --stdlib-root requires a value

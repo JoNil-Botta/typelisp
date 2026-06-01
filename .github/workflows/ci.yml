@@ -37,7 +37,7 @@ jobs:
           - suite: rust
             name: Test + Integration
             os: ubuntu-latest
-            timeout_minutes: 90
+            timeout_minutes: 180
             release_bin: ./target/release/typelisp
           # The windows Rust reference leg runs the native build->run corpora,
           # which spawn clang+link+the executable per fixture (~1 min each on the

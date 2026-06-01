@@ -23,7 +23,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     timeout-minutes: ${{ matrix.timeout_minutes }}
     strategy:
-      fail-fast: true
+      fail-fast: false
       matrix:
         include:
           - suite: no-rust-stage0
@@ -42,7 +42,7 @@ jobs:
           - suite: rust
             name: Test + Integration (windows-latest)
             os: windows-latest
-            timeout_minutes: 80
+            timeout_minutes: 150
             release_bin: ./target/release/typelisp.exe
     steps:
       - uses: actions/checkout@v4

@@ -762,7 +762,14 @@
                                   obj-path
                                   bin-path
                                   true)
-                                status))]
+                                ;; A failed test executable (including one that
+                                ;; panics/aborts, which exits 134) is a test
+                                ;; FAILURE, not a host crash: report the raw
+                                ;; status above, but exit cleanly with 1 so CI
+                                ;; does not retry it as a transient #1204 segfault.
+                                (if (= status 0)
+                                  0
+                                  1)))]
                           [(ErrProcessOutput error)
                             (begin
                               (print-error

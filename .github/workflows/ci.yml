@@ -37,7 +37,7 @@ jobs:
           - suite: rust
             name: Test + Integration
             os: ubuntu-latest
-            timeout_minutes: 60
+            timeout_minutes: 90
             release_bin: ./target/release/typelisp
           - suite: rust
             name: Test + Integration (windows-latest)

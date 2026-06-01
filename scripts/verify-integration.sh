@@ -887,7 +887,7 @@ run_windows_backend_fixtures() {
         echo "FAIL: windows-selfhost-compile-driver default target got exit $got" >&2
         exit 1
     fi
-    assert_empty_file "$_driver_stdout" windows-selfhost-compile-driver-stdout
+    assert_contains "$_driver_stdout" "Generated:" windows-selfhost-compile-driver-stdout
     assert_empty_file "$_driver_stderr" windows-selfhost-compile-driver-stderr
     assert_contains "$_driver_asm" ".globl main" windows-selfhost-compile-driver
     assert_contains "$_driver_asm" "main:" windows-selfhost-compile-driver
@@ -899,7 +899,7 @@ run_windows_backend_fixtures() {
         echo "FAIL: windows-selfhost-compile-driver explicit Linux target got exit $got" >&2
         exit 1
     fi
-    assert_empty_file "$_driver_stdout" windows-selfhost-compile-driver-linux-stdout
+    assert_contains "$_driver_stdout" "Generated:" windows-selfhost-compile-driver-linux-stdout
     assert_empty_file "$_driver_stderr" windows-selfhost-compile-driver-linux-stderr
     if ! cmp -s "$_driver_asm" "$_driver_linux_asm"; then
         echo "FAIL: explicit Linux target should match default selfhost compile output" >&2
@@ -912,7 +912,7 @@ run_windows_backend_fixtures() {
         echo "FAIL: windows-selfhost-compile-driver Windows target got exit $got" >&2
         exit 1
     fi
-    assert_empty_file "$_driver_stdout" windows-selfhost-compile-driver-windows-stdout
+    assert_contains "$_driver_stdout" "Generated:" windows-selfhost-compile-driver-windows-stdout
     assert_empty_file "$_driver_stderr" windows-selfhost-compile-driver-windows-stderr
     assert_contains "$_driver_windows_asm" ".globl main" windows-selfhost-compile-driver-windows
     assert_not_contains "$_driver_windows_asm" ".globl _start" windows-selfhost-compile-driver-windows
@@ -945,6 +945,8 @@ EOF
         echo "FAIL: windows-selfhost-compile-driver comptime type source got exit $got" >&2
         exit 1
     fi
+    assert_contains "$_driver_stdout" "Generated:" windows-selfhost-compile-driver-comptime-stdout
+    assert_empty_file "$_driver_stderr" windows-selfhost-compile-driver-comptime-stderr
     assert_contains "$_comptime_asm" "__tl_specialized_alloc_type_i64_none" \
         windows-selfhost-compile-driver-comptime
 

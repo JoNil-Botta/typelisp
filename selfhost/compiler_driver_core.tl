@@ -272,6 +272,8 @@
     [(OkCompilerDriver asm)
       (begin
         (write-file output-path asm)
+        (print-string
+          (string-append "Generated: " (string-append output-path "\n")))
         0)]
     [(ErrCompilerDriver diag)
       (begin

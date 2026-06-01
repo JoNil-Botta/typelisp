@@ -1,11 +1,9 @@
 ;; build_cli_core.tl - Selfhost build command logic (#622, #1339).
 ;;
-;; Source-file builds still emit a private `typelisp-host-plan v1` build-source
-;; plan for Rust's `typelisp debug host-action` boundary. Package builds are
-;; handled in-process by the selfhost compiler: parse/discover `typelisp.pkg`,
-;; emit assembly for the manifest entry, and produce the package artifact
-;; selected by manifest kind.
-;; `--direct` builds source files with stdlib fs/process helpers.
+;; Source-file builds assemble and link in-process through stdlib fs/process
+;; helpers. Package builds are handled in-process by the selfhost compiler:
+;; parse/discover `typelisp.pkg`, emit assembly for the manifest entry, and
+;; produce the package artifact selected by manifest kind.
 (import "host_plan.tl")
 
 (import "build_run_core.tl")
@@ -1044,38 +1042,43 @@
         (print-error message)
         1)]))
 
+;; Build a source file directly. Manifest builds use the older package parser so
+;; `typelisp build` can still discover `typelisp.pkg` from the working tree.
+(define (build-source-direct-from [idx : i64] [count : i64]) : i64
+  (match (build-cli-config-from idx count)
+    [(OkBuildCliConfig config)
+      (match config
+        [(BuildCliConfig
+            source
+            _
+            output
+            has-output
+            target
+            stdlib-roots
+            opt-level
+            link-inputs)
+          (source-tool-build-source
+            source
+            output
+            has-output
+            target
+            stdlib-roots
+            opt-level
+            link-inputs)])]
+    [(ErrBuildCliConfig message)
+      (begin
+        (print-error message)
+        1)]))
+
+(define (build-direct-from [start : i64] [count : i64]) : i64
+  (if (or (<= count start) (build-args-contain-manifest? start count))
+    (build-main-from start)
+    (build-source-direct-from start count)))
+
 ;; Run the `build` command over arguments starting at `start` (the index of the
-;; first argument after any subcommand name). Mirrors the standalone driver's
-;; mode handling: `--direct` builds in-process via stdlib fs/process helpers,
-;; `--host-plan` emits a host-action plan, and the bare form emits a plan too.
+;; first argument after any subcommand name). `--direct` remains accepted as a
+;; compatibility no-op; the bare form also builds in-process.
 (define (build-run-from [start : i64] [count : i64]) : i64
   (if (and (> count start) (string-eq (arg start) "--direct"))
-    (if (build-args-contain-manifest? (+ start 1) count)
-      (build-main-from (+ start 1))
-      (match (build-cli-config-from (+ start 1) count)
-        [(OkBuildCliConfig config)
-          (match config
-            [(BuildCliConfig
-                source
-                _
-                output
-                has-output
-                target
-                stdlib-roots
-                opt-level
-                link-inputs)
-              (source-tool-build-source
-                source
-                output
-                has-output
-                target
-                stdlib-roots
-                opt-level
-                link-inputs)])]
-        [(ErrBuildCliConfig message)
-          (begin
-            (print-error message)
-            1)]))
-    (if (and (> count start) (string-eq (arg start) "--host-plan"))
-      (build-main-from (+ start 1))
-      (build-main-from start))))
+    (build-direct-from (+ start 1) count)
+    (build-direct-from start count)))

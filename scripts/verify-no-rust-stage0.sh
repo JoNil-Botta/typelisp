@@ -290,6 +290,14 @@ run_with_compiler "$SEED_TYPELISP_BIN" "TypeLisp source lint" \
 TYPELISP_BIN=$SEED_TYPELISP_BIN
 export TYPELISP_BIN
 
+SELFHOST_CLI_BIN="$ROOT/target/no-rust-stage0-cli/typelisp"
+if [ "$HOST_OS" = windows ]; then
+    SELFHOST_CLI_BIN="$SELFHOST_CLI_BIN.exe"
+fi
+run_gate "fresh selfhost cli build" scripts/build-stage0.sh "$SEED_TYPELISP_BIN" "$SELFHOST_CLI_BIN"
+ensure_executable "fresh selfhost cli" "$SELFHOST_CLI_BIN"
+run_with_compiler "$SELFHOST_CLI_BIN" "fresh selfhost cli build/run and chooser smoke" scripts/verify-selfhost-cli-build-run.sh
+
 if [ "$HOST_OS" = linux ]; then
     STAGE1_PATH_FILE="$ROOT/target/no-rust-stage0-stage1.path"
     rm -f "$STAGE1_PATH_FILE"
@@ -459,13 +467,8 @@ else
         echo
         echo "[no-rust-stage0] skipping seed public tool surface until stage1 host-action drivers are available (#1327)"
     elif [ "$HOST_OS" = windows ]; then
-        # The single-binary cli.tl Windows seed emits host-plans for build/run and
-        # is silent on compile (no `Generated:`); STAGE1_HOST_ACTION_DRIVERS_AVAILABLE
-        # is always 0 on Windows, so disable the build/run/host-action/`Generated:`
-        # public-tool cases here too while keeping compile/check/fmt/lint/test/doc
-        # coverage. The in-process host-action executor is tracked in #1645 (#1327).
         echo
-        echo "[no-rust-stage0] running Windows seed public tool surface with host-action gates disabled; build/run/host-action drivers pending in-process executor (#1327)"
+        echo "[no-rust-stage0] running Windows seed public tool surface with selfhost compatibility gates"
         if compiler_rejects_package_kind_manifest "$FRONT_GATE_TYPELISP_BIN"; then
             echo "[no-rust-stage0] Windows seed rejects package kind; using legacy package manifests for public tool surface"
             run_with_compiler "$FRONT_GATE_TYPELISP_BIN" "public tool surface" env TYPELISP_LEGACY_PACKAGE_MANIFEST=1 TYPELISP_PUBLIC_TOOLS_HOST_ACTION_ENABLED=0 scripts/verify-public-tools.sh
@@ -479,13 +482,8 @@ else
         echo
         echo "[no-rust-stage0] skipping seed public tool surface until stage1 wrapper host-action drivers are available (#1327)"
     else
-        # Single-binary cli.tl seed: STAGE1_HOST_ACTION_DRIVERS_AVAILABLE=0 means
-        # cli.tl emits host-plans for build/run instead of executing them, so the
-        # public-tool surface runs with TYPELISP_PUBLIC_TOOLS_HOST_ACTION_ENABLED=0
-        # to skip the build/run/host-action/`Generated:`-output cases while keeping
-        # the compile/check/fmt/lint/test(--check)/doc coverage (#1327).
         echo
-        echo "[no-rust-stage0] running seed public tool surface with host-action gates disabled; build/run/host-action drivers pending in-process executor (#1327)"
+        echo "[no-rust-stage0] running seed public tool surface with selfhost compatibility gates"
         if compiler_rejects_package_kind_manifest "$PUBLIC_TOOLS_TYPELISP_BIN"; then
             echo "[no-rust-stage0] seed rejects package kind; using legacy package manifests for public tool surface"
             run_with_compiler "$PUBLIC_TOOLS_TYPELISP_BIN" "$PUBLIC_TOOLS_LABEL" env TYPELISP_LEGACY_PACKAGE_MANIFEST=1 TYPELISP_PUBLIC_TOOLS_HOST_ACTION_ENABLED=0 scripts/verify-public-tools.sh

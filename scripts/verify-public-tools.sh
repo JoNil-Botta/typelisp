@@ -50,17 +50,11 @@ if [ ! -x "$COMPILER" ]; then
     exit 1
 fi
 
-# Host-action capability gate (#1327). The single-binary cli.tl stage0 is self-
-# contained for compile/check/fmt/lint/test/doc and runs `test`/runnable
-# `doc --test` in-process, but it is NOT self-contained for `build`/`run`/
-# `debug host-action` (it emits a `typelisp-host-plan` for a host executor) and
-# it is silent on `compile`/`doc -o` (`doc -o` generation is additionally a
-# pending gap), so the `Generated:` CLI output and the native-tool build helpers
-# are unavailable. The no-Rust gate sets TYPELISP_PUBLIC_TOOLS_HOST_ACTION_ENABLED=0
-# for that seed to skip those build/run/host-action/`Generated:`-output cases
-# while keeping compile(.s)/check/fmt/lint/test/doc-test coverage. Defaults to 1
-# so the Rust and stage1-wrapper lanes keep full coverage.
-HOST_ACTION_ENABLED="${TYPELISP_PUBLIC_TOOLS_HOST_ACTION_ENABLED:-1}"
+# Extended compatibility gate. The selfhost lane sets this to 0 because it still
+# differs from the retired Rust/stage1-wrapper lanes for SIMD compile/run,
+# generated docs, and package diagnostics. Focused direct build/run coverage
+# lives in scripts/verify-selfhost-cli-build-run.sh.
+HOST_ACTION_ENABLED="${TYPELISP_PUBLIC_TOOLS_HOST_ACTION_ENABLED:-0}"
 
 WORKDIR="$ROOT/target/public-tool-verify"
 rm -rf "$WORKDIR"
@@ -408,9 +402,6 @@ assert_contains "$out" "Type checking passed!"
 run_cmd compile-hello "$COMPILER" compile examples/hello.tl -o "$WORKDIR/hello.s"
 assert_success
 assert_stderr_empty
-# cli.tl `compile` is silent on stdout (no `Generated:`); keep the .s/main: check
-# and only assert the `Generated:` CLI line when host-action output is available
-# (Rust/wrapper lanes) (#1327).
 if [ "$HOST_ACTION_ENABLED" -eq 1 ]; then
     assert_contains "$out" "Generated:"
 fi
@@ -480,8 +471,7 @@ EOF
     fi
     # The single-binary cli.tl seed has no SIMD compile driver, so non-scalar
     # `compile --backend-mode` is rejected with the #1014 message just like the
-    # stage1 wrapper. Scalar still emits a valid `.s` but cli.tl is silent (no
-    # `Generated:`). Keep full SIMD-asm coverage on the Rust/wrapper lanes (#1327).
+    # stage1 wrapper. Keep full SIMD-asm coverage on the Rust/wrapper lanes.
     if [ "$HOST_ACTION_ENABLED" -eq 0 ] && [ "$mode" != scalar ]; then
         assert_failure
         assert_stdout_empty
@@ -702,11 +692,9 @@ else
     assert_contains "$err" "not exactly representable as f32"
 fi
 
-# `run`-execution coverage. The single-binary cli.tl seed emits a host-plan for
-# `run` instead of executing the program (and does not reject non-scalar SIMD
-# `run` at the CLI), so the no-Rust gate disables this whole block via
-# TYPELISP_PUBLIC_TOOLS_HOST_ACTION_ENABLED=0 until the in-process host-action
-# executor lands (#1327). The Rust and stage1-wrapper lanes keep full coverage.
+# Extended `run` execution coverage retained for lanes that support the legacy
+# Rust/SIMD expectations. Current selfhost direct build/run coverage lives in
+# scripts/verify-selfhost-cli-build-run.sh, which runs against a fresh cli.tl.
 if [ "$HOST_ACTION_ENABLED" -eq 1 ]; then
 RUN_MATRIX="$WORKDIR/run-matrix"
 mkdir -p "$RUN_MATRIX"
@@ -821,7 +809,7 @@ run_spmd_exec_mode scalar -
 run_spmd_exec_mode avx2 avx2
 run_spmd_exec_mode avx512 avx512f
 else
-    echo "[public-tools] skipping run-execution coverage (host-action drivers disabled; #1327)"
+    echo "[public-tools] skipping extended run-execution coverage (legacy compatibility lane disabled)"
 fi
 
 BUILD_MATRIX="$WORKDIR/build-matrix"
@@ -861,11 +849,6 @@ assert_failure
 assert_stdout_empty
 assert_contains_any "$err" "Error: build -o requires a source file argument" "build: -o requires a source file argument"
 
-# cli.tl defers source reads to the host executor, so `build` of a missing
-# source emits a host-plan (exit 0) rather than a read error; the missing-file
-# diagnostic only surfaces once the executor runs. Skip until then (#1327). The
-# argument-validation build errors above are still checked because cli.tl parses
-# those before emitting a plan.
 if [ "$HOST_ACTION_ENABLED" -eq 1 ]; then
     run_cmd build-source-missing-file "$COMPILER" build "$BUILD_MATRIX/missing.tl"
     assert_failure
@@ -873,69 +856,10 @@ if [ "$HOST_ACTION_ENABLED" -eq 1 ]; then
     assert_contains_any "$err" "cannot read module" "cannot read import"
 fi
 
-# Host-action boundary + selfhost build/run/doc planner tools. The single-binary
-# cli.tl stage0 has no in-process `debug host-action` executor (it reports
-# "Unknown debug command: host-action") and is silent on `compile` (the planner
-# build helpers assert `Generated:`), so the no-Rust gate disables this entire
-# block via TYPELISP_PUBLIC_TOOLS_HOST_ACTION_ENABLED=0 until the executor lands
-# (#1327). The Rust and stage1-wrapper lanes keep full coverage.
+# Standalone selfhost build/run tool executables. The public cli.tl path above is
+# the primary surface; these Linux-only checks keep the shared build/run cores
+# covered as separate compiled tools.
 if [ "$HOST_ACTION_ENABLED" -eq 1 ]; then
-echo "[public-tools] host-action boundary"
-printf 'not a plan\n' > "$WORKDIR/host-action-invalid.in"
-run_stdin host-action-invalid "$WORKDIR/host-action-invalid.in" "$COMPILER" debug host-action
-assert_code 1
-assert_stdout_empty
-assert_contains "$err" "invalid host-action plan"
-
-HOST_ACTION_DIR="$WORKDIR/host action"
-mkdir -p "$HOST_ACTION_DIR"
-cat > "$HOST_ACTION_DIR/main.tl" <<'EOF'
-(define (main) : i64 11)
-EOF
-if [ "$HOST_OS" = windows ]; then
-    HOST_ACTION_TARGET=windows-x86_64
-    HOST_ACTION_EXE="$HOST_ACTION_DIR/the program.exe"
-else
-    HOST_ACTION_TARGET=linux-x86_64
-    HOST_ACTION_EXE="$HOST_ACTION_DIR/the program"
-fi
-HOST_ACTION_SOURCE_PLAN=$(host_plan_path "$HOST_ACTION_DIR/main.tl")
-HOST_ACTION_EXE_PLAN=$(host_plan_path "$HOST_ACTION_EXE")
-{
-    printf 'typelisp-host-plan v1\n'
-    printf 'action build-source\n'
-    printf 'source %s\n' "$(host_netstring "$HOST_ACTION_SOURCE_PLAN")"
-    printf 'output %s\n' "$(host_netstring "$HOST_ACTION_EXE_PLAN")"
-    printf 'target %s\n' "$HOST_ACTION_TARGET"
-    printf 'backend-mode scalar\n'
-    printf 'end\n'
-} > "$WORKDIR/host-action-build.in"
-run_stdin host-action-build "$WORKDIR/host-action-build.in" "$COMPILER" debug host-action
-assert_success
-assert_contains "$out" "Generated: $HOST_ACTION_EXE_PLAN"
-[ -f "$HOST_ACTION_EXE" ] || fail "host-action build did not write executable with spaced path"
-
-cat > "$HOST_ACTION_DIR/run.tl" <<'EOF'
-(define (main) : i64
-  (begin
-    (print-string "from-plan")
-    13))
-EOF
-HOST_ACTION_RUN_SOURCE_PLAN=$(host_plan_path "$HOST_ACTION_DIR/run.tl")
-{
-    printf 'typelisp-host-plan v1\n'
-    printf 'action run-source\n'
-    printf 'source %s\n' "$(host_netstring "$HOST_ACTION_RUN_SOURCE_PLAN")"
-    printf 'target %s\n' "$HOST_ACTION_TARGET"
-    printf 'backend-mode scalar\n'
-    printf 'runtime-arg %s\n' "$(host_netstring "arg with spaces")"
-    printf 'end\n'
-} > "$WORKDIR/host-action-run.in"
-run_stdin host-action-run "$WORKDIR/host-action-run.in" "$COMPILER" debug host-action
-assert_code 13
-assert_stderr_empty
-assert_contains "$out" "from-plan"
-
 if [ "$HOST_OS" = linux ]; then
     SELFHOST_PLANNER_DIR="$WORKDIR/selfhost-planners"
     mkdir -p "$SELFHOST_PLANNER_DIR/with space" "$SELFHOST_PLANNER_DIR/stdlib one"
@@ -983,10 +907,6 @@ EOF
 (extern ffi_add7 : (-> i64 i64))
 (define (main) : i64 (ffi_add7 35))
 EOF
-    run_cmd public-compile-link-flags "$COMPILER" compile "$LINK_SOURCE" -o "$SELFHOST_PLANNER_DIR/link.s" --link-search "$LINK_LIB_DIR" --link-lib ffi_add7 --link-arg ignored
-    assert_success
-    assert_stderr_empty
-    assert_contains "$out" "Generated: $SELFHOST_PLANNER_DIR/link.s"
     run_cmd selfhost-build-tool-link-lib "$SELFHOST_PLANNER_DIR/build-tool" --direct "$LINK_SOURCE" -o "$LINK_OUTPUT" --target linux-x86_64 --backend-mode scalar --link-search "$LINK_LIB_DIR" --link-lib ffi_add7
     assert_success
     assert_stderr_empty
@@ -1245,7 +1165,7 @@ else
     echo "[public-tools] skipping selfhost build/run tool executables on $HOST_OS"
 fi
 else
-    echo "[public-tools] skipping host-action boundary and selfhost build/run planner tools (host-action drivers disabled; #1327)"
+    echo "[public-tools] skipping selfhost build/run tool executables (native build/run disabled)"
 fi
 
 echo "[public-tools] backend diagnostics"
@@ -1669,7 +1589,6 @@ fi
 run_cmd inline-test-normal-compile "$COMPILER" compile "$WORKDIR/inline_test_pass.tl" -o "$WORKDIR/inline_test_pass.s" --stdlib-root "$ROOT/stdlib"
 assert_success
 assert_stderr_empty
-# cli.tl `compile` is silent (no `Generated:`); keep the emitted-.s assertion.
 if [ "$HOST_ACTION_ENABLED" -eq 1 ]; then
     assert_contains "$out" "Generated:"
 fi

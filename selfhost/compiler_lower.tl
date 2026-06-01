@@ -4358,6 +4358,90 @@
         [(ErrLowerExpr message) (ErrLowerExpr message)])]
     [_ (lower-direct-call ctx state env type-env "print" args result-ty origin)]))
 
+;; `(print-newline)` writes a single newline; lower it to `(print-string
+;; <newline>)`, reusing the existing string runtime path (no dedicated runtime).
+(define (lower-print-newline-call
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [args : AstExprList]
+  [result-ty : AstType]
+  [origin : AstExpr]) : ResultLowerExpr
+  (match args
+    [(AstExprNil)
+      (lower-expr
+        ctx
+        state
+        env
+        type-env
+        (AstExprCall
+          (AstExprVar "print-string")
+          (AstExprCons
+            (AstExprLiteral (AstLitString (lower-print-newline-text)))
+            AstExprNil)))]
+    [_
+      (lower-direct-call
+        ctx
+        state
+        env
+        type-env
+        "print-newline"
+        args
+        result-ty
+        origin)]))
+
+;; `(print-bool b)` writes `true`/`false` followed by a newline (matching the
+;; print family's line-terminating behavior). Lower it to a conditional pair of
+;; `print-string` calls plus the shared newline, all proven runtime paths.
+(define (lower-print-bool-call
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [args : AstExprList]
+  [result-ty : AstType]
+  [origin : AstExpr]) : ResultLowerExpr
+  (match args
+    [(AstExprCons flag (AstExprNil))
+      (match (lower-if
+        ctx
+        state
+        env
+        type-env
+        flag
+        (AstExprCall
+          (AstExprVar "print-string")
+          (AstExprCons (AstExprLiteral (AstLitString "true")) AstExprNil))
+        (AstExprCall
+          (AstExprVar "print-string")
+          (AstExprCons (AstExprLiteral (AstLitString "false")) AstExprNil))
+        (AstTyUnit))
+        [(OkLowerExpr word-printed)
+          (match word-printed
+            [(LowerExpr word-state _ _)
+              (lower-expr
+                ctx
+                word-state
+                env
+                type-env
+                (AstExprCall
+                  (AstExprVar "print-string")
+                  (AstExprCons
+                    (AstExprLiteral (AstLitString (lower-print-newline-text)))
+                    AstExprNil)))])]
+        [(ErrLowerExpr message) (ErrLowerExpr message)])]
+    [_
+      (lower-direct-call
+        ctx
+        state
+        env
+        type-env
+        "print-bool"
+        args
+        result-ty
+        origin)]))
+
 (define (lower-arg-count-call
   [ctx : TcContext]
   [state : LowerState]
@@ -5489,6 +5573,28 @@
                 (lower-builtin-call-available? ctx env name)
                 (string-eq name "print"))
               (lower-print-call ctx state env type-env args result-ty origin)]
+            [(and
+                (lower-builtin-call-available? ctx env name)
+                (string-eq name "print-newline"))
+              (lower-print-newline-call
+                ctx
+                state
+                env
+                type-env
+                args
+                result-ty
+                origin)]
+            [(and
+                (lower-builtin-call-available? ctx env name)
+                (string-eq name "print-bool"))
+              (lower-print-bool-call
+                ctx
+                state
+                env
+                type-env
+                args
+                result-ty
+                origin)]
             [(and
                 (lower-builtin-call-available? ctx env name)
                 (string-eq name "clone"))

@@ -1042,7 +1042,7 @@ EOF
     assert_contains "$out" "Generated: $SELFHOST_LIB_ARCHIVE"
 
     SELFHOST_BADPKG="$SELFHOST_PLANNER_DIR/badpkg"
-    mkdir -p "$SELFHOST_BADPKG/src" "$SELFHOST_BADPKG/vendor/math"
+    mkdir -p "$SELFHOST_BADPKG/src" "$SELFHOST_BADPKG/vendor/math/src"
     cat > "$SELFHOST_BADPKG/typelisp.pkg" <<'EOF'
 (package
   (name "selfhost_parse_error")
@@ -1094,6 +1094,9 @@ EOF
   (entry "src/lib.tl"))
 EOF
     maybe_strip_manifest_kind "$SELFHOST_BADPKG/vendor/math/typelisp.pkg"
+    cat > "$SELFHOST_BADPKG/vendor/math/src/lib.tl" <<'EOF'
+(define (add-one [x : i64]) : i64 (+ x 1))
+EOF
     cat > "$SELFHOST_BADPKG/src/main.tl" <<'EOF'
 (import "pkg:math/src/missing.tl")
 (define (main) : i64 0)
@@ -1707,7 +1710,7 @@ else
 fi
 
 MISSING_DEP="$WORKDIR/missing_dep"
-mkdir -p "$MISSING_DEP/src" "$MISSING_DEP/vendor/math"
+mkdir -p "$MISSING_DEP/src" "$MISSING_DEP/vendor/math/src"
 cat > "$MISSING_DEP/typelisp.pkg" <<'EOF'
 (package
   (name "missing_dep_file")
@@ -1726,6 +1729,9 @@ cat > "$MISSING_DEP/vendor/math/typelisp.pkg" <<'EOF'
   (entry "src/lib.tl"))
 EOF
 maybe_strip_manifest_kind "$MISSING_DEP/vendor/math/typelisp.pkg"
+cat > "$MISSING_DEP/vendor/math/src/lib.tl" <<'EOF'
+(define (add-one [x : i64]) : i64 (+ x 1))
+EOF
 cat > "$MISSING_DEP/src/main.tl" <<'EOF'
 (import "pkg:math/src/missing.tl")
 (define (main) : i64 0)

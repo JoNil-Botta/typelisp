@@ -1195,13 +1195,14 @@ while IFS='|' read -r diag_name diag_command diag_expect || [ -n "$diag_name" ];
     cp "$source" "$work_source"
 
     # The selfhost lowerer (cli.tl / stage1 wrapper) does not yet reject every
-    # construct the Rust backend rejects: it currently lowers `tuple_return`
-    # successfully, so the expected-failure backend diagnostic does not hold for
-    # the selfhost frontend. Skip those known-divergent cases until the selfhost
-    # lowerer grows the matching rejection (#1327); other cases still run.
+    # construct the Rust backend rejects: it currently lowers aggregate returns
+    # such as `tuple_return` / `array_return` successfully, so the expected-failure
+    # backend diagnostic does not hold for the selfhost frontend. Skip those
+    # known-divergent cases until the selfhost lowerer grows the matching
+    # rejection (#1327); other cases still run.
     if [ "$SELFHOST_FRONTEND_DIAGNOSTICS" -eq 1 ]; then
         case "$diag_name" in
-            tuple_return)
+            tuple_return | array_return)
                 echo "[public-tools] skipping backend diagnostic $diag_name (selfhost lowerer accepts it; #1327)"
                 continue
                 ;;

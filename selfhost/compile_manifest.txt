@@ -484,7 +484,7 @@ contains|_tl_doc_generate_file:
 contains|_tl_doc_generate_html_file:
 contains|_tl_doc_generate_html_module_graph:
 contains|_tl_doc_test_file:
-contains|_tl_doc_test_run_file:
+contains|_tl_doc_test_run_file_with_roots:
 contains|_tl_doc_test_run_report_render:
 contains|_tl_doc_render_markdown:
 contains|_tl_doc_html_render_module_page:
@@ -675,22 +675,20 @@ contains|match_nested
 contains|_tl_read_form:
 contains|_tl_lex:
 contains|_tl_token_str:
-contains|_tl_as_int:
-contains|_tl_as_str:
-contains|_tl_apply_value:
+contains|_tl_as_int_result:
+contains|_tl_as_str_result:
 contains|_tl_env_has:
-contains|_tl_bind_args_onto:
+contains|_tl_bind_args_onto_result:
 contains|_tl_print_value:
 contains|_tl_print_list_tail:
-contains|_tl_eval_list:
-contains|_tl_eval_seq:
+contains|_tl_eval_list_result:
+contains|_tl_eval_seq_result:
 contains|tl_string_eq:
 contains|tl_string_concat:
 contains|tl_substring:
 contains|tl_int_to_string:
 contains|tl_string_to_int:
 contains|tl_print_str:
-contains|tl_print_i64:
 contains|.string "lambda"
 contains|.string "if"
 contains|.string "begin"

@@ -255,6 +255,11 @@ if [ "$HOST_OS" = linux ]; then
         TYPELISP_BIN="$ROOT/target/bootstrap-fixpoint/stage1"
     fi
     ensure_executable "stage1" "$TYPELISP_BIN"
+    # The freshly bootstrapped stage1 (from selfhost/compile.tl: the compiler-only
+    # entry, so it has `compile`/`check` but NOT the build/run/doc/test commands).
+    # Capture it immutably and reuse it for the compile-path gates so we actually
+    # exercise the artifact we just built, instead of re-running the fetched seed.
+    BOOTSTRAPPED_STAGE1=$TYPELISP_BIN
 
     LINUX_SEED_STAGED_RUNTIME_GAP=0
     if seed_has_staged_runtime_gap "$SEED_TYPELISP_BIN"; then
@@ -295,8 +300,13 @@ if [ "$HOST_OS" = linux ]; then
     if [ "$LINUX_SEED_STAGED_RUNTIME_GAP" -ne 0 ]; then
         echo "[no-rust-stage0] seed lacks staged runtime symbols; toolchain gates limited to compile-only"
     fi
-    STAGE1_TYPELISP_BIN=$SEED_TYPELISP_BIN
-    echo "[no-rust-stage0] single-binary cli.tl stage0; build/run/host-action gates skipped pending in-process executor (#1327); compile/check/fmt/lint/test/doc gates run it directly"
+    # Route the compile-path 'stage1' gates (deterministic asm, compile manifest,
+    # borrowed-str check) at the freshly bootstrapped stage1, not the fetched
+    # seed, so the artifact we built is what gets exercised. The build/run/doc
+    # command gates still need a runner with the build/run/doc commands (built in
+    # the BUILD-RUNNERS phase below); until those exist the flag stays 0.
+    STAGE1_TYPELISP_BIN=$BOOTSTRAPPED_STAGE1
+    echo "[no-rust-stage0] stage1 compile-path gates run the freshly bootstrapped stage1; build/run/doc command gates pending runner build (#1327)"
 else
     TYPELISP_BIN=$SEED_TYPELISP_BIN
     echo "[no-rust-stage0] capability compiler=$TYPELISP_BIN"

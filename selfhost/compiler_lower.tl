@@ -4308,6 +4308,56 @@
         result-ty
         origin)]))
 
+;; A single newline byte, produced as an embedded string literal (the lexer has
+;; no `\n` escape, so the backend uses embedded newlines the same way for its
+;; emitted assembly). Used to terminate the line printed by the `print` builtin.
+(define (lower-print-newline-text) : String
+  "
+")
+
+;; The bare `print` builtin (i64 -> unit) has no dedicated runtime symbol of its
+;; own; lower it to the already-supported `(print-string (int->string n))`
+;; followed by a trailing newline (`print` always ends the line). Both halves
+;; reuse the proven int->string / print-string runtime paths via `lower-expr`,
+;; which re-typechecks the synthesized calls, so no new codegen is introduced.
+(define (lower-print-call
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [args : AstExprList]
+  [result-ty : AstType]
+  [origin : AstExpr]) : ResultLowerExpr
+  (match args
+    [(AstExprCons number-arg (AstExprNil))
+      (match (lower-expr
+        ctx
+        state
+        env
+        type-env
+        (AstExprCall
+          (AstExprVar "print-string")
+          (AstExprCons
+            (AstExprCall
+              (AstExprVar "int->string")
+              (AstExprCons number-arg AstExprNil))
+            AstExprNil)))
+        [(OkLowerExpr decimal-printed)
+          (match decimal-printed
+            [(LowerExpr decimal-state _ _)
+              (lower-expr
+                ctx
+                decimal-state
+                env
+                type-env
+                (AstExprCall
+                  (AstExprVar "print-string")
+                  (AstExprCons
+                    (AstExprLiteral (AstLitString (lower-print-newline-text)))
+                    AstExprNil)))])]
+        [(ErrLowerExpr message) (ErrLowerExpr message)])]
+    [_ (lower-direct-call ctx state env type-env "print" args result-ty origin)]))
+
 (define (lower-arg-count-call
   [ctx : TcContext]
   [state : LowerState]
@@ -5435,6 +5485,10 @@
                 result-ty
                 "lower: print-string requires String"
                 origin)]
+            [(and
+                (lower-builtin-call-available? ctx env name)
+                (string-eq name "print"))
+              (lower-print-call ctx state env type-env args result-ty origin)]
             [(and
                 (lower-builtin-call-available? ctx env name)
                 (string-eq name "clone"))

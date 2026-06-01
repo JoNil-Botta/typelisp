@@ -26,10 +26,10 @@ esac
 if [ -n "${TYPELISP_BIN:-}" ]; then
     COMPILER=$TYPELISP_BIN
 else
-    # Fallback only for local development; CI should pass a fetched stage0
-    # compiler through TYPELISP_BIN until #793/#795 remove Rust stage0.
-    cargo build --release --quiet
-    COMPILER="$ROOT/target/release/typelisp"
+    # No-Rust fallback for local development: fetch the published
+    # self-hosted stage0 (CI always passes a compiler via TYPELISP_BIN).
+    . "$ROOT/scripts/lib-stage0.sh"
+    COMPILER=$(resolve_stage0_compiler "$ROOT") || exit 1
 fi
 
 if [ ! -x "$COMPILER" ]; then

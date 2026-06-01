@@ -43,9 +43,9 @@ Each fixture has a `.json` input file and a `.check` assertion file:
 From the repository root:
 
 ```bash
-# Requires TYPELISP_BIN or builds release compiler
-cargo build --release
-TYPELISP_BIN=./target/release/typelisp ./scripts/verify-public-tools.sh
+# Set TYPELISP_BIN, or the script fetches the published stage0 automatically.
+scripts/fetch-stage0.sh
+TYPELISP_BIN=./target/stage0/typelisp ./scripts/verify-public-tools.sh
 ```
 
 The REPL and LSP fixtures are exercised by `run-corpus.sh`, which is called by

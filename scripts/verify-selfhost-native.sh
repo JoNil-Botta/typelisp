@@ -21,9 +21,10 @@ esac
 if [ -n "${TYPELISP_BIN:-}" ]; then
     COMPILER=$TYPELISP_BIN
 else
-    # Local fallback only. CI should pass an already-built compiler artifact.
-    cargo build --release --quiet
-    COMPILER="$ROOT/target/release/typelisp"
+    # No-Rust fallback for local development: fetch the published
+    # self-hosted stage0 (CI always passes a compiler via TYPELISP_BIN).
+    . "$ROOT/scripts/lib-stage0.sh"
+    COMPILER=$(resolve_stage0_compiler "$ROOT") || exit 1
 fi
 
 if [ ! -x "$COMPILER" ]; then
@@ -559,6 +560,49 @@ verify_parse_printed_program() {
     assemble_link_run_asm tl-parse-printed "$_asm" 1 - - 0
 }
 
+# eval.tl evaluates a source string passed as its single program argument and
+# reports recoverable runtime errors (type errors, unbound variables, arity
+# mismatches) with exit 1 and a diagnostic on stderr, writing nothing to stdout.
+# This is the native runtime-behavior witness for the eval driver; its
+# compilation/determinism is already covered by the selfhost_eval compile
+# manifest case.
+run_eval_driver_expect_error() {
+    _driver=$1
+    _label=$2
+    _source=$3
+    _want_stderr=$4
+    _stdout="$WORKDIR/$_label.eval.stdout"
+    _stderr="$WORKDIR/$_label.eval.stderr"
+
+    set +e
+    "$_driver" "$_source" > "$_stdout" 2> "$_stderr"
+    _got=$?
+    set -e
+    if [ "$_got" -ne 1 ]; then
+        echo "FAIL: $_label eval driver expected exit 1, got $_got" >&2
+        if [ -s "$_stdout" ]; then sed 's/^/  stdout: /' "$_stdout" >&2; fi
+        if [ -s "$_stderr" ]; then sed 's/^/  stderr: /' "$_stderr" >&2; fi
+        exit 1
+    fi
+    assert_empty "$_stdout" "$_label eval driver stdout"
+    assert_contains "$_stderr" "$_want_stderr" "$_label eval driver stderr"
+}
+
+verify_eval_driver_errors() {
+    _dir="$WORKDIR/generated-eval"
+    mkdir -p "$_dir"
+    _bin="$_dir/eval"
+
+    compile_selfhost_binary eval-driver selfhost/eval.tl "$_bin"
+    echo "[selfhost-native] eval.tl recoverable error reporting"
+    run_eval_driver_expect_error "$_bin" eval-type-mismatch \
+        '(+ "a" 1)' "type error: expected int"
+    run_eval_driver_expect_error "$_bin" eval-unbound-variable \
+        'missing' "eval: unbound variable"
+    run_eval_driver_expect_error "$_bin" eval-arity-mismatch \
+        '(define (id x) x) (id)' "eval: too few arguments in call"
+}
+
 DRIVER="$WORKDIR/compiler-driver/compiler-driver"
 build_selfhost_compiler_driver "$DRIVER"
 verify_compiler_driver_stack_args "$DRIVER"
@@ -569,5 +613,6 @@ verify_compiler_driver_stdlib_json "$DRIVER"
 verify_compiler_driver_arrays_and_traps "$DRIVER"
 verify_emit_printed_program
 verify_parse_printed_program
+verify_eval_driver_errors
 
 echo "selfhost native verification passed"

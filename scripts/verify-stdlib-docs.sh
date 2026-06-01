@@ -7,7 +7,10 @@ set -eu
 # generator through a native compile/run path, which is Linux-only until the doc
 # command grows target selection. The doctest subcommand runs through
 # `selfhost/doc.tl`; keep this script separate from public CLI smoke coverage
-# because it sweeps every canonical stdlib module.
+# because it sweeps every canonical stdlib module. In the Linux no-Rust lane,
+# this script is run with TYPELISP_BIN pointing at the stage1 wrapper so future
+# stdlib borrowed-`str` signatures are parsed by the selfhost doc/check path
+# instead of the published seed compiler.
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
@@ -23,8 +26,10 @@ esac
 if [ -n "${TYPELISP_BIN:-}" ]; then
     COMPILER=$TYPELISP_BIN
 else
-    cargo build --release --quiet
-    COMPILER="$ROOT/target/release/typelisp"
+    # No-Rust fallback for local development: fetch the published
+    # self-hosted stage0 (CI always passes a compiler via TYPELISP_BIN).
+    . "$ROOT/scripts/lib-stage0.sh"
+    COMPILER=$(resolve_stage0_compiler "$ROOT") || exit 1
 fi
 
 if [ ! -x "$COMPILER" ]; then

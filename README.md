@@ -1,17 +1,17 @@
 # TypeLisp
 
 A statically typed Lisp/Scheme dialect that compiles directly to native
-x86_64 assembly for Linux and Windows. Written in Rust with **zero third-party
-dependencies** (`std` only).
+x86_64 assembly for Linux and Windows. **Self-hosted**: the compiler is written
+in TypeLisp and compiles itself, with **zero third-party dependencies**.
 
 ## Goals and inspirations
 
 Current implementation goals:
 
 - **Typed**: Every expression has a known type at compile time. No runtime type tagging.
-- **Native**: Compiles straight to x86_64 assembly, then native toolchains produce executables. Linux uses `as` + `ld`; Windows uses `clang` + `lld-link`. No bytecode VM, no interpreter, no garbage collector.
-- **Zero dependencies**: Built with Rust `std` only. No third-party crates.
-- **Self-hostable front end**: A lexer, s-expression reader, and tree-walking evaluator for TypeLisp are themselves written in TypeLisp (see [`selfhost/`](selfhost)).
+- **Native**: Compiles straight to x86_64 assembly, then native toolchains produce executables. Linux uses `as` + `ld`; Windows uses `clang` + MSVC `link.exe`. No bytecode VM, no interpreter, no garbage collector.
+- **Self-hosted**: The compiler, tooling, and stdlib are written in TypeLisp (see [`selfhost/`](selfhost) and [`stdlib/`](stdlib)). The published stage0 compiler is a single self-hosted binary that builds its own successor; there is no Rust (or other-language) implementation in the toolchain.
+- **Zero dependencies**: No third-party packages. The only build inputs are the native assembler/linker toolchain.
 
 Language direction:
 
@@ -32,10 +32,9 @@ Language direction:
   resolution and prefixes TypeLisp linker symbols; see #950, #952, and #953.
 - Use an arena-based memory model with a default program-lifetime arena and
   scoped `(with-arena ...)` allocation regions (#801).
-- Land new language features in the selfhost compiler, not as new Rust compiler
-  product surface. The Rust implementation is the stage0/compiler bridge while
-  the public toolchain moves toward TypeLisp-built components (#666, #784, #787,
-  #795).
+- Land new language features in the self-hosted compiler ([`selfhost/`](selfhost)).
+  The toolchain is fully self-hosted (#666, #795); each published stage0 binary
+  builds its successor.
 
 The language-direction bullets above are future goals. The rest of this README
 describes current behavior unless it explicitly says a feature is planned.
@@ -45,18 +44,22 @@ describes current behavior unless it explicitly says a feature is planned.
 ```bash
 git clone https://github.com/JoNil-Botta/typelisp
 cd typelisp
-cargo build --release
+
+# Fetch the published self-hosted stage0 compiler for this host. It installs as
+# target/stage0/typelisp (Linux) or target/stage0/typelisp.exe (Windows).
+scripts/fetch-stage0.sh            # or: powershell -ep Bypass -f scripts\fetch-stage0.ps1
+tl=target/stage0/typelisp          # tl=target/stage0/typelisp.exe on Windows
 
 # Type-check, compile, build, or run a program.
-# Linux build/run require `as`/`ld`; Windows target build/run require `clang`/`lld-link`.
-./target/release/typelisp debug check examples/hello.tl
-./target/release/typelisp fmt --check examples/hello.tl
-./target/release/typelisp compile examples/hello.tl     # writes examples/hello.s
-./target/release/typelisp build   examples/hello.tl     # writes examples/hello
-./target/release/typelisp run     examples/hello.tl
-./target/release/typelisp test --check examples/hello.tl
-./target/release/typelisp run     examples/hello.tl --target windows-x86_64
-./target/release/typelisp build                         # builds nearest typelisp.pkg
+# Linux build/run require `as`/`ld`; Windows target build/run require `clang`/MSVC `link.exe`.
+$tl debug check examples/hello.tl
+$tl fmt --check examples/hello.tl
+$tl compile examples/hello.tl     # writes examples/hello.s
+$tl build   examples/hello.tl     # writes examples/hello
+$tl run     examples/hello.tl
+$tl test --check examples/hello.tl
+$tl run     examples/hello.tl --target windows-x86_64
+$tl build                         # builds nearest typelisp.pkg
 ```
 
 ## Example
@@ -169,8 +172,8 @@ name. `(:symbol "...")` can bind a local TypeLisp declaration to an exact
 foreign linker symbol without applying the `_tl_` prefix used for ordinary
 TypeLisp declarations.
 
-The Rust stage0 loader still uses the legacy flat import model: imported
-definitions merge into one top-level namespace. The selfhost module direction is
+The compiler still uses the legacy flat import model: imported
+definitions merge into one top-level namespace. The module direction is
 private-by-default modules with canonical identities, `(export ...)`, import
 aliases, and qualified names such as `math/add`; see `SPEC.md` section 4.4 for
 the specified migration contract. Macro exports/imports use the same module
@@ -233,8 +236,8 @@ Documentation comments can contain checked examples. `typelisp doc --test
 attached `;:` item docs, writes each example to a deterministic temporary
 source file, type-checks it, and removes the temporary directory before exiting.
 The self-hosted Markdown generator can render one source file through
-`typelisp run selfhost/doc.tl -- input.tl output.md`; import-graph traversal and
-Rust CLI plumbing are separate follow-up work.
+`typelisp run selfhost/doc.tl -- input.tl output.md`; import-graph traversal is
+separate follow-up work.
 
 ```lisp
 ;# ```typelisp
@@ -341,7 +344,7 @@ move-only aggregate handle semantics and the reserved immutable borrow
 expression forms `(& place)` / `(& arena place)` for the selfhost checker:
 scalars, raw pointers, and non-capturing function values are copyable, while
 `String`, arrays, tuples, structs, enums, and capturing closures move in
-by-value positions. The current Rust-stage compiler may still accept aggregate
+by-value positions. The current compiler may still accept aggregate
 copies until that checker lands. Aggregate values are implemented as
 pointer-sized handles in the IR/ABI, but those handles are not checked language
 references. The v1 raw pointer design is now specified as explicit unsafe
@@ -416,32 +419,44 @@ TypeLisp*:
 
 Compiler self-test and smoke-driver conventions are documented in
 [`selfhost/TESTING.md`](selfhost/TESTING.md).
-Published stage0 compilers for local no-Rust checks can be fetched with
-[`scripts/fetch-stage0.sh`](scripts/fetch-stage0.sh), or
-[`scripts/fetch-stage0.ps1`](scripts/fetch-stage0.ps1) from PowerShell. Both
-default to `target/stage0/`. Linux fetches prefer the versioned
-`typelisp-stage0-linux-bundle.tar.gz` asset when a release provides it and fall
-back to the legacy `typelisp-stage0-linux` executable for older releases; both
-forms still install the command as `target/stage0/typelisp`. To reproduce the
-bundle staging path locally on Linux after a release build, run:
+The published stage0 is a single self-hosted [`selfhost/cli.tl`](selfhost/cli.tl)
+binary per OS (`typelisp-stage0-linux`, `typelisp-stage0-windows.exe`) that
+handles every toolchain command in-process. The `Bootstrap Stage0` workflow
+([`.github/workflows/bootstrap-stage0.yml`](.github/workflows/bootstrap-stage0.yml))
+is **self-perpetuating with no Rust**: on each merge to `main` it fetches the
+previously published stage0, uses *that* compiler to build the next stage0 from
+`selfhost/cli.tl`, and publishes the result to the `stage0-latest` and immutable
+`stage0-*` releases. Each stage0 therefore builds its own successor. To reproduce
+that build locally, run [`scripts/build-stage0.sh`](scripts/build-stage0.sh) with
+a fetched stage0 as the seed:
 
 ```sh
-scripts/stage-linux-stage0-bundle.sh target/release/typelisp typelisp-stage0-linux-bundle.tar.gz
+scripts/fetch-stage0.sh
+scripts/build-stage0.sh target/stage0/typelisp typelisp-stage0-linux   # Linux
+scripts/build-stage0.sh target/stage0/typelisp.exe typelisp-stage0-windows.exe  # Windows (Git Bash)
 ```
 
-To run the same no-Rust stage0 verification gate used by CI, run
+`build-stage0.sh` compiles `selfhost/cli.tl` to assembly with the seed and links
+it through the host toolchain (`as`/`ld` on Linux; `clang` + MSVC `link.exe` on
+Windows). The published stage0's `build` command emits a host-action plan rather
+than building in-process (on-disk build/run is deferred to #1645), so the
+self-build uses the `compile` path plus the native linker.
+
+Published stage0 compilers can be fetched with
+[`scripts/fetch-stage0.sh`](scripts/fetch-stage0.sh), or
+[`scripts/fetch-stage0.ps1`](scripts/fetch-stage0.ps1) from PowerShell. Both
+download the single host asset and install it as the command under
+`target/stage0/`.
+
+To run the same stage0 verification gate used by CI, run
 `scripts/verify-no-rust-stage0.sh`; it fetches `stage0-latest` when
-`TYPELISP_BIN` is unset and prevents accidental Cargo fallback. On Linux, that
-wrapper uses the published compiler only as the bootstrap seed, checks the
-stage0-to-stage1 bootstrap, then runs deterministic assembly through the freshly
-bootstrapped stage1 compiler via a no-Rust CLI wrapper. The raw stage1 compiler
-also accepts the public `compile <file.tl>` dispatcher form while preserving its
-private bootstrap file form. The wrapper smokes the stage1 `build`, `run`, and
-private `debug host-action` path on Linux. Full public CLI gates still use the
-seed compiler until every public-tool exception is ported to the wrapper. On
-Windows, the host-supported gates run against the published stage0 compiler and
-the no-Rust lane also runs the native MSVC link smoke plus the stage2/stage3
-Windows fixpoint when the seed has the required staged runtime symbols.
+`TYPELISP_BIN` is unset. On Linux, that gate uses the published compiler as the
+bootstrap seed, checks the stage0-to-stage1 bootstrap, then runs deterministic
+assembly and the toolchain capability gates through the freshly bootstrapped
+stage1 compiler directly. On Windows, the host-supported gates run against the
+published stage0 compiler and the gate also runs the native MSVC link smoke plus
+the stage2/stage3 Windows fixpoint when the seed has the required staged runtime
+symbols.
 
 The fixpoint gate is `scripts/check-bootstrap-fixpoint.sh`. On Linux it emits
 and compares Linux assembly through `as` and `ld`; on Git Bash/MSYS/Cygwin for
@@ -566,9 +581,10 @@ implemented, while C-string/address-of ergonomics remain follow-up FFI work.
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md). Two standing policies to note: TypeLisp
-uses **Rust `std` only** (no third-party crates), and **syntax changes carry no
-aliases** — when a spelling changes, every usage migrates and the old form is
-removed in the same change rather than kept as a parallel parser path.
+is **self-hosted with zero dependencies** (implementation, tooling, and tests are
+written in TypeLisp), and **syntax changes carry no aliases** — when a spelling
+changes, every usage migrates and the old form is removed in the same change
+rather than kept as a parallel parser path.
 
 ## License
 

@@ -53,8 +53,10 @@ if [ -n "$compiler_arg" ]; then
 elif [ -n "${TYPELISP_BIN:-}" ]; then
     COMPILER=$TYPELISP_BIN
 else
-    cargo build --quiet
-    COMPILER="$ROOT/target/debug/typelisp"
+    # No-Rust fallback for local development: fetch the published
+    # self-hosted stage0 (CI always passes a compiler via TYPELISP_BIN).
+    . "$ROOT/scripts/lib-stage0.sh"
+    COMPILER=$(resolve_stage0_compiler "$ROOT") || exit 1
 fi
 
 if [ ! -x "$COMPILER" ]; then

@@ -4,6 +4,9 @@ set -eu
 # verify-doc-tests.sh - auto-discover documented TypeLisp sources and run
 # `typelisp doc --test` for each one. This intentionally uses a built compiler
 # from TYPELISP_BIN so CI can run it without relying on the Rust test harness.
+# In the Linux no-Rust lane, TYPELISP_BIN is the stage1 wrapper whenever the
+# doc driver is available; seed fallback is only a compatibility path for older
+# artifacts and cannot verify future stdlib borrowed-`str` doctests.
 # refs #946
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
@@ -25,9 +28,10 @@ esac
 if [ -n "${TYPELISP_BIN:-}" ]; then
     COMPILER=$TYPELISP_BIN
 else
-    cargo build --release --quiet
-    COMPILER="$ROOT/target/release/typelisp"
-    [ "$HOST_OS" = windows ] && COMPILER="$COMPILER.exe"
+    # No-Rust fallback for local development: fetch the published
+    # self-hosted stage0 (CI always passes a compiler via TYPELISP_BIN).
+    . "$ROOT/scripts/lib-stage0.sh"
+    COMPILER=$(resolve_stage0_compiler "$ROOT") || exit 1
 fi
 
 if [ ! -x "$COMPILER" ]; then

@@ -1,8 +1,8 @@
 name: Publish Docs
 
 # Build the selfhost docs site and publish it to GitHub Pages on pushes to the
-# default branch (main). Pull requests only build + validate the site without
-# publishing; that is handled by the "Verify docs site" step in ci.yml. Refs #874.
+# default branch (main). There is no PR-time docs-site validation gate yet
+# (#1327/#1645). Refs #874.
 #
 # The site is generated entirely by the selfhost builder selfhost/doc_site.tl,
 # compiled with the published stage0 compiler fetched via scripts/fetch-stage0.sh

@@ -1,9 +1,9 @@
 #!/usr/bin/env sh
 set -eu
 
-# No-Rust REPL and LSP corpus runner for tests/public-tools/.
+# Self-hosted REPL and LSP corpus runner for tests/public-tools/.
 # Usage:
-#   TYPELISP_BIN=./target/release/typelisp tests/public-tools/run-corpus.sh [repl|lsp]
+#   TYPELISP_BIN=./target/stage0/typelisp tests/public-tools/run-corpus.sh [repl|lsp]
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
 FIXTURE_ROOT="$ROOT/tests/public-tools"
@@ -19,8 +19,9 @@ esac
 if [ -n "${TYPELISP_BIN:-}" ]; then
     COMPILER=$TYPELISP_BIN
 else
-    COMPILER="$ROOT/target/release/typelisp"
-    [ "$HOST_OS" = windows ] && COMPILER="$COMPILER.exe"
+    # No-Rust fallback: fetch the published stage0 (CI passes TYPELISP_BIN).
+    . "$ROOT/scripts/lib-stage0.sh"
+    COMPILER=$(resolve_stage0_compiler "$ROOT") || exit 1
 fi
 
 case "$COMPILER" in
@@ -41,6 +42,7 @@ case "$MODE" in
         exit 1
         ;;
 esac
+STAGE1_WRAPPER=${TYPELISP_PUBLIC_TOOLS_STAGE1_WRAPPER:-0}
 
 rm -rf "$WORKDIR"
 mkdir -p "$WORKDIR"
@@ -688,7 +690,9 @@ run_selfhost_lsp_fixture() {
 
 run_repl_corpus() {
     repl_dir="$FIXTURE_ROOT/repl"
-    if [ -d "$repl_dir" ]; then
+    if [ "$STAGE1_WRAPPER" = "1" ]; then
+        echo "  SKIP repl/* (stage1 wrapper REPL has bounded selfhost corpus coverage)"
+    elif [ -d "$repl_dir" ]; then
         for path in "$repl_dir"/*.in; do
             [ -f "$path" ] || continue
             case "$path" in
@@ -721,7 +725,9 @@ run_repl_corpus() {
 
 run_lsp_corpus() {
     lsp_dir="$FIXTURE_ROOT/lsp"
-    if [ -d "$lsp_dir" ]; then
+    if [ "$STAGE1_WRAPPER" = "1" ]; then
+        echo "  SKIP lsp/* (stage1 wrapper LSP has bounded selfhost corpus coverage)"
+    elif [ -d "$lsp_dir" ]; then
         for path in "$lsp_dir"/*.in.json; do
             [ -f "$path" ] || continue
             run_lsp_fixture "$path" "lsp/$(basename "$path")" "$COMPILER"

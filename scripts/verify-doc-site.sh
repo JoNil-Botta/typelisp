@@ -11,7 +11,7 @@ set -eu
 # target exists, and pages reference the stylesheet. Escaping and manifest-count
 # behavior is asserted authoritatively by selfhost/doc_site_smoke.tl.
 #
-# This is independent of `cargo test`: it drives the published/staged selfhost
+# It drives the published/staged selfhost
 # compiler. CI runs it on pull requests and default-branch pushes WITHOUT
 # deploying; #874 consumes it as the gate before the Pages publish step. Set
 # DOC_SITE_OUT to choose the generated-site directory and DOC_SITE_WORK to
@@ -19,7 +19,7 @@ set -eu
 #
 # Linux builds the native ELF site builder (GNU as/ld). Windows (Git Bash / MSYS
 # / Cygwin) builds a host-default native program. Set TYPELISP_BIN to a
-# prebuilt/staged compiler, otherwise a local `cargo build --release` is used.
+# prebuilt/staged compiler, otherwise the published stage0 is fetched.
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
@@ -41,8 +41,10 @@ esac
 if [ -n "${TYPELISP_BIN:-}" ]; then
     COMPILER=$TYPELISP_BIN
 else
-    cargo build --release --quiet
-    COMPILER="$ROOT/target/release/typelisp$EXE"
+    # No-Rust fallback for local development: fetch the published
+    # self-hosted stage0 (CI always passes a compiler via TYPELISP_BIN).
+    . "$ROOT/scripts/lib-stage0.sh"
+    COMPILER=$(resolve_stage0_compiler "$ROOT") || exit 1
 fi
 [ -x "$COMPILER" ] || {
     echo "typelisp compiler is not executable: $COMPILER" >&2

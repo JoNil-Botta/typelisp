@@ -317,8 +317,32 @@
 (define (compiler-backend-emit-store-var [var-id : i64] [reg : String]) : String
   (backend-cat5 "    movq " reg ", " (compiler-backend-slot var-id) "\n"))
 
+(define (compiler-backend-float-type? [ty : AstType]) : bool
+  (match ty
+    [(AstTyF64) true]
+    [(AstTyF32) true]
+    [_ false]))
+
+(define (compiler-backend-float-move [ty : AstType]) : String
+  (match ty
+    [(AstTyF32) "movss"]
+    [_ "movsd"]))
+
+(define (compiler-backend-float-type-name [ty : AstType]) : String
+  (match ty
+    [(AstTyF32) "f32"]
+    [_ "f64"]))
+
+(define (compiler-backend-emit-store-float-var
+  [var-id : i64]
+  [reg : String]
+  [ty : AstType]) : String
+  (string-append
+    (backend-cat5 "    " (compiler-backend-float-move ty) " " reg ", ")
+    (string-append (compiler-backend-slot var-id) "\n")))
+
 (define (compiler-backend-emit-store-xmm-var [var-id : i64] [reg : String]) : String
-  (backend-cat5 "    movsd " reg ", " (compiler-backend-slot var-id) "\n"))
+  (compiler-backend-emit-store-float-var var-id reg (AstTyF64)))
 
 (define (compiler-backend-emit-load-var-with-plan
   [assignments : CompilerRegAssignmentList]
@@ -361,46 +385,78 @@
             "\n")])]
     [(CompilerRegNoLocation) (compiler-backend-emit-store-var var-id reg)]))
 
+(define (compiler-backend-emit-load-float-var-with-plan
+  [assignments : CompilerRegAssignmentList]
+  [var-id : i64]
+  [ty : AstType]
+  [reg : String]) : String
+  (let
+    [mov : String (compiler-backend-float-move ty)]
+    (match (compiler-reg-assignment-lookup assignments var-id)
+      [(CompilerRegSomeLocation location)
+        (match location
+          [(CompilerRegRegister home)
+            (if (string-eq home reg)
+              ""
+              (backend-cat5 "    " mov (backend-cat3 " " home ", ") reg "\n"))]
+          [(CompilerRegSpill offset)
+            (backend-cat5
+              "    "
+              mov
+              (backend-cat3 " " (compiler-backend-frame-offset offset) ", ")
+              reg
+              "\n")])]
+      [(CompilerRegNoLocation)
+        (backend-cat5
+          "    "
+          mov
+          (backend-cat3 " " (compiler-backend-slot var-id) ", ")
+          reg
+          "\n")])))
+
 (define (compiler-backend-emit-load-f64-var-with-plan
   [assignments : CompilerRegAssignmentList]
   [var-id : i64]
   [reg : String]) : String
-  (match (compiler-reg-assignment-lookup assignments var-id)
-    [(CompilerRegSomeLocation location)
-      (match location
-        [(CompilerRegRegister home)
-          (if (string-eq home reg)
-            ""
-            (backend-cat5 "    movsd " home ", " reg "\n"))]
-        [(CompilerRegSpill offset)
-          (backend-cat5
-            "    movsd "
-            (compiler-backend-frame-offset offset)
-            ", "
-            reg
-            "\n")])]
-    [(CompilerRegNoLocation)
-      (backend-cat5 "    movsd " (compiler-backend-slot var-id) ", " reg "\n")]))
+  (compiler-backend-emit-load-float-var-with-plan
+    assignments
+    var-id
+    (AstTyF64)
+    reg))
+
+(define (compiler-backend-emit-store-float-var-with-plan
+  [assignments : CompilerRegAssignmentList]
+  [var-id : i64]
+  [reg : String]
+  [ty : AstType]) : String
+  (let
+    [mov : String (compiler-backend-float-move ty)]
+    (match (compiler-reg-assignment-lookup assignments var-id)
+      [(CompilerRegSomeLocation location)
+        (match location
+          [(CompilerRegRegister home)
+            (if (string-eq home reg)
+              ""
+              (backend-cat5 "    " mov (backend-cat3 " " reg ", ") home "\n"))]
+          [(CompilerRegSpill offset)
+            (backend-cat5
+              "    "
+              mov
+              (backend-cat3 " " reg ", ")
+              (compiler-backend-frame-offset offset)
+              "\n")])]
+      [(CompilerRegNoLocation)
+        (compiler-backend-emit-store-float-var var-id reg ty)])))
 
 (define (compiler-backend-emit-store-f64-var-with-plan
   [assignments : CompilerRegAssignmentList]
   [var-id : i64]
   [reg : String]) : String
-  (match (compiler-reg-assignment-lookup assignments var-id)
-    [(CompilerRegSomeLocation location)
-      (match location
-        [(CompilerRegRegister home)
-          (if (string-eq home reg)
-            ""
-            (backend-cat5 "    movsd " reg ", " home "\n"))]
-        [(CompilerRegSpill offset)
-          (backend-cat5
-            "    movsd "
-            reg
-            ", "
-            (compiler-backend-frame-offset offset)
-            "\n")])]
-    [(CompilerRegNoLocation) (compiler-backend-emit-store-xmm-var var-id reg)]))
+  (compiler-backend-emit-store-float-var-with-plan
+    assignments
+    var-id
+    reg
+    (AstTyF64)))
 
 (define (compiler-backend-emit-save-callee-reg
   [assignments : CompilerRegAssignmentList]
@@ -733,33 +789,53 @@
 (define (compiler-backend-f64-label [text : String]) : String
   (string-append ".L_tl_f64_" (compiler-backend-string-label-suffix text)))
 
+(define (compiler-backend-emit-load-float-value-with-plan
+  [assignments : CompilerRegAssignmentList]
+  [value : CompilerIrValue]
+  [ty : AstType]
+  [reg : String]) : ResultCompilerBackend
+  (let
+    [mov : String (compiler-backend-float-move ty)]
+    (match value
+      [(IrValueVar id)
+        (OkCompilerBackend
+          (compiler-backend-emit-load-float-var-with-plan assignments id ty reg))]
+      [(IrValueGlobal name)
+        (OkCompilerBackend
+          (backend-cat5
+            "    "
+            mov
+            (backend-cat3 " " (compiler-backend-user-symbol name) "(%rip), ")
+            reg
+            "\n"))]
+      [(IrValueF64 text)
+        (if (compiler-backend-f64-type? ty)
+          (OkCompilerBackend
+            (backend-cat5
+              "    movsd "
+              (compiler-backend-f64-label text)
+              "(%rip), "
+              reg
+              "\n"))
+          (ErrCompilerBackend
+            (compiler-diagnostic-at-start "" "backend: expected f32 value")))]
+      [_
+        (ErrCompilerBackend
+          (compiler-diagnostic-at-start
+            ""
+            (string-append
+              "backend: expected "
+              (string-append (compiler-backend-float-type-name ty) " value"))))])))
+
 (define (compiler-backend-emit-load-f64-value-with-plan
   [assignments : CompilerRegAssignmentList]
   [value : CompilerIrValue]
   [reg : String]) : ResultCompilerBackend
-  (match value
-    [(IrValueVar id)
-      (OkCompilerBackend
-        (compiler-backend-emit-load-f64-var-with-plan assignments id reg))]
-    [(IrValueGlobal name)
-      (OkCompilerBackend
-        (backend-cat5
-          "    movsd "
-          (compiler-backend-user-symbol name)
-          "(%rip), "
-          reg
-          "\n"))]
-    [(IrValueF64 text)
-      (OkCompilerBackend
-        (backend-cat5
-          "    movsd "
-          (compiler-backend-f64-label text)
-          "(%rip), "
-          reg
-          "\n"))]
-    [_
-      (ErrCompilerBackend
-        (compiler-diagnostic-at-start "" "backend: expected f64 value"))]))
+  (compiler-backend-emit-load-float-value-with-plan
+    assignments
+    value
+    (AstTyF64)
+    reg))
 
 (define (compiler-backend-emit-load-i64-immediate [n : i64] [reg : String]) : String
   (if (= n 0)
@@ -1155,16 +1231,31 @@
         [(CompilerRegNoType) false])]
     [_ false]))
 
+(define (compiler-backend-value-float?
+  [types : CompilerRegVarTypeList]
+  [value : CompilerIrValue]) : bool
+  (match value
+    [(IrValueF64 _) true]
+    [(IrValueVar id)
+      (match (compiler-reg-var-type-lookup types id)
+        [(CompilerRegSomeType ty) (compiler-backend-float-type? ty)]
+        [(CompilerRegNoType) false])]
+    [_ false]))
+
+;; True when a binary op operates on floating-point values (f32 OR f64), so it
+;; must use the scalar-SSE path (xmm registers, addss/addsd, ucomiss/ucomisd)
+;; instead of the integer path. The operand precision is recovered separately
+;; via compiler-backend-binop-operand-ty.
 (define (compiler-backend-binop-f64?
   [types : CompilerRegVarTypeList]
   [lhs : CompilerIrValue]
   [rhs : CompilerIrValue]
   [ty : AstType]) : bool
-  (if (compiler-backend-f64-type? ty)
+  (if (compiler-backend-float-type? ty)
     true
-    (if (compiler-backend-value-f64? types lhs)
+    (if (compiler-backend-value-float? types lhs)
       true
-      (compiler-backend-value-f64? types rhs))))
+      (compiler-backend-value-float? types rhs))))
 
 (define (compiler-backend-int-instruction-suffix [ty : AstType]) : String
   (let
@@ -1451,33 +1542,85 @@
     [(IrUnNot) "    testq %rax, %rax\n    sete %al\n    movzbl %al, %eax\n"]
     [(IrUnBitNot) "    notq %rax\n"]))
 
+;; Scalar floating-point binary ops. `fty` selects single (`ss`, f32) vs double
+;; (`sd`, f64) precision; comparisons use ucomiss/ucomisd accordingly. Operands
+;; are in %xmm0 (lhs) and %xmm1 (rhs); arithmetic leaves the result in %xmm0,
+;; comparisons leave a 0/1 in %eax.
+(define (compiler-backend-float-binop-asm
+  [op : CompilerIrBinOp]
+  [fty : AstType]) : ResultCompilerBackend
+  (let
+    [s : String
+      (if (compiler-backend-f64-type? fty)
+        "sd"
+        "ss")]
+    [c : String
+      (if (compiler-backend-f64-type? fty)
+        "ucomisd"
+        "ucomiss")]
+    (match op
+      [(IrBinAdd)
+        (OkCompilerBackend
+          (string-append "    add" (string-append s " %xmm1, %xmm0\n")))]
+      [(IrBinSub)
+        (OkCompilerBackend
+          (string-append "    sub" (string-append s " %xmm1, %xmm0\n")))]
+      [(IrBinMul)
+        (OkCompilerBackend
+          (string-append "    mul" (string-append s " %xmm1, %xmm0\n")))]
+      [(IrBinDiv)
+        (OkCompilerBackend
+          (string-append "    div" (string-append s " %xmm1, %xmm0\n")))]
+      [(IrBinEq)
+        (OkCompilerBackend
+          (string-append
+            "    "
+            (string-append
+              c
+              " %xmm1, %xmm0\n    sete %al\n    movzbl %al, %eax\n")))]
+      [(IrBinNe)
+        (OkCompilerBackend
+          (string-append
+            "    "
+            (string-append
+              c
+              " %xmm1, %xmm0\n    setne %al\n    movzbl %al, %eax\n")))]
+      [(IrBinLt)
+        (OkCompilerBackend
+          (string-append
+            "    "
+            (string-append
+              c
+              " %xmm1, %xmm0\n    setb %al\n    movzbl %al, %eax\n")))]
+      [(IrBinLe)
+        (OkCompilerBackend
+          (string-append
+            "    "
+            (string-append
+              c
+              " %xmm1, %xmm0\n    setbe %al\n    movzbl %al, %eax\n")))]
+      [(IrBinGt)
+        (OkCompilerBackend
+          (string-append
+            "    "
+            (string-append
+              c
+              " %xmm1, %xmm0\n    seta %al\n    movzbl %al, %eax\n")))]
+      [(IrBinGe)
+        (OkCompilerBackend
+          (string-append
+            "    "
+            (string-append
+              c
+              " %xmm1, %xmm0\n    setae %al\n    movzbl %al, %eax\n")))]
+      [_
+        (ErrCompilerBackend
+          (compiler-diagnostic-at-start
+            ""
+            "backend: unsupported float binary op"))])))
+
 (define (compiler-backend-f64-binop-asm [op : CompilerIrBinOp]) : ResultCompilerBackend
-  (match op
-    [(IrBinAdd) (OkCompilerBackend "    addsd %xmm1, %xmm0\n")]
-    [(IrBinSub) (OkCompilerBackend "    subsd %xmm1, %xmm0\n")]
-    [(IrBinMul) (OkCompilerBackend "    mulsd %xmm1, %xmm0\n")]
-    [(IrBinDiv) (OkCompilerBackend "    divsd %xmm1, %xmm0\n")]
-    [(IrBinEq)
-      (OkCompilerBackend
-        "    ucomisd %xmm1, %xmm0\n    sete %al\n    movzbl %al, %eax\n")]
-    [(IrBinNe)
-      (OkCompilerBackend
-        "    ucomisd %xmm1, %xmm0\n    setne %al\n    movzbl %al, %eax\n")]
-    [(IrBinLt)
-      (OkCompilerBackend
-        "    ucomisd %xmm1, %xmm0\n    setb %al\n    movzbl %al, %eax\n")]
-    [(IrBinLe)
-      (OkCompilerBackend
-        "    ucomisd %xmm1, %xmm0\n    setbe %al\n    movzbl %al, %eax\n")]
-    [(IrBinGt)
-      (OkCompilerBackend
-        "    ucomisd %xmm1, %xmm0\n    seta %al\n    movzbl %al, %eax\n")]
-    [(IrBinGe)
-      (OkCompilerBackend
-        "    ucomisd %xmm1, %xmm0\n    setae %al\n    movzbl %al, %eax\n")]
-    [_
-      (ErrCompilerBackend
-        (compiler-diagnostic-at-start "" "backend: unsupported f64 binary op"))]))
+  (compiler-backend-float-binop-asm op (AstTyF64)))
 
 (define (compiler-backend-f64-unop-asm [op : CompilerIrUnOp]) : ResultCompilerBackend
   (match op
@@ -1497,37 +1640,42 @@
   [rhs : CompilerIrValue]
   [ty : AstType]) : ResultCompilerBackend
   (if (compiler-backend-binop-f64? types lhs rhs ty)
-    (match (compiler-backend-emit-load-f64-value-with-plan
-      assignments
-      lhs
-      "%xmm0")
-      [(OkCompilerBackend lhs-asm)
-        (match (compiler-backend-emit-load-f64-value-with-plan
-          assignments
-          rhs
-          "%xmm1")
-          [(OkCompilerBackend rhs-asm)
-            (match (compiler-backend-f64-binop-asm op)
-              [(OkCompilerBackend op-asm)
-                (OkCompilerBackend
-                  (string-append
-                    lhs-asm
+    (let
+      [fty : AstType (compiler-backend-binop-operand-ty types op lhs rhs ty)]
+      (match (compiler-backend-emit-load-float-value-with-plan
+        assignments
+        lhs
+        fty
+        "%xmm0")
+        [(OkCompilerBackend lhs-asm)
+          (match (compiler-backend-emit-load-float-value-with-plan
+            assignments
+            rhs
+            fty
+            "%xmm1")
+            [(OkCompilerBackend rhs-asm)
+              (match (compiler-backend-float-binop-asm op fty)
+                [(OkCompilerBackend op-asm)
+                  (OkCompilerBackend
                     (string-append
-                      rhs-asm
+                      lhs-asm
                       (string-append
-                        op-asm
-                        (if (compiler-backend-f64-type? ty)
-                          (compiler-backend-emit-store-f64-var-with-plan
-                            assignments
-                            dst
-                            "%xmm0")
-                          (compiler-backend-emit-store-var-with-plan
-                            assignments
-                            dst
-                            "%rax"))))))]
-              [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
-          [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
-      [(ErrCompilerBackend message) (ErrCompilerBackend message)])
+                        rhs-asm
+                        (string-append
+                          op-asm
+                          (if (compiler-backend-float-type? ty)
+                            (compiler-backend-emit-store-float-var-with-plan
+                              assignments
+                              dst
+                              "%xmm0"
+                              ty)
+                            (compiler-backend-emit-store-var-with-plan
+                              assignments
+                              dst
+                              "%rax"))))))]
+                [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
+            [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
+        [(ErrCompilerBackend message) (ErrCompilerBackend message)]))
     (let
       [operand-ty : AstType
         (compiler-backend-binop-operand-ty types op lhs rhs ty)]
@@ -1601,25 +1749,31 @@
     [return-tail : String
       (compiler-backend-return-tail source-function assignments vars blocks)]
     (if (compiler-backend-binop-f64? types lhs rhs ty)
-      (match (compiler-backend-emit-load-f64-value-with-plan
-        assignments
-        lhs
-        "%xmm0")
-        [(OkCompilerBackend lhs-asm)
-          (match (compiler-backend-emit-load-f64-value-with-plan
-            assignments
-            rhs
-            "%xmm1")
-            [(OkCompilerBackend rhs-asm)
-              (match (compiler-backend-f64-binop-asm op)
-                [(OkCompilerBackend op-asm)
-                  (OkCompilerBackend
-                    (string-append
-                      lhs-asm
-                      (string-append rhs-asm (string-append op-asm return-tail))))]
-                [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
-            [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
-        [(ErrCompilerBackend message) (ErrCompilerBackend message)])
+      (let
+        [fty : AstType (compiler-backend-binop-operand-ty types op lhs rhs ty)]
+        (match (compiler-backend-emit-load-float-value-with-plan
+          assignments
+          lhs
+          fty
+          "%xmm0")
+          [(OkCompilerBackend lhs-asm)
+            (match (compiler-backend-emit-load-float-value-with-plan
+              assignments
+              rhs
+              fty
+              "%xmm1")
+              [(OkCompilerBackend rhs-asm)
+                (match (compiler-backend-float-binop-asm op fty)
+                  [(OkCompilerBackend op-asm)
+                    (OkCompilerBackend
+                      (string-append
+                        lhs-asm
+                        (string-append
+                          rhs-asm
+                          (string-append op-asm return-tail))))]
+                  [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
+              [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
+          [(ErrCompilerBackend message) (ErrCompilerBackend message)]))
       (let
         [operand-ty : AstType
           (compiler-backend-binop-operand-ty types op lhs rhs ty)]
@@ -2363,32 +2517,156 @@
           ""
           "backend: non-immediate fused gep store"))]))
 
+(define (compiler-backend-float-precision-cast-asm
+  [from-ty : AstType]
+  [to-ty : AstType]) : String
+  (match from-ty
+    [(AstTyF64)
+      (match to-ty
+        [(AstTyF32) "    cvtsd2ss %xmm0, %xmm0\n"]
+        [_ ""])]
+    [(AstTyF32)
+      (match to-ty
+        [(AstTyF64) "    cvtss2sd %xmm0, %xmm0\n"]
+        [_ ""])]
+    [_ ""]))
+
+(define (compiler-backend-int-to-float-cast-asm [to-ty : AstType]) : String
+  (match to-ty
+    [(AstTyF32) "    cvtsi2ssq %rax, %xmm0\n"]
+    [_ "    cvtsi2sdq %rax, %xmm0\n"]))
+
+(define (compiler-backend-float-to-int-cast-asm [from-ty : AstType]) : String
+  (match from-ty
+    [(AstTyF32) "    cvttss2siq %xmm0, %rax\n"]
+    [_ "    cvttsd2siq %xmm0, %rax\n"]))
+
+(define (compiler-backend-emit-float-to-float-cast
+  [assignments : CompilerRegAssignmentList]
+  [dst : i64]
+  [src : CompilerIrValue]
+  [from-ty : AstType]
+  [to-ty : AstType]) : ResultCompilerBackend
+  (match (compiler-backend-emit-load-float-value-with-plan
+    assignments
+    src
+    from-ty
+    "%xmm0")
+    [(OkCompilerBackend load)
+      (OkCompilerBackend
+        (string-append
+          load
+          (string-append
+            (compiler-backend-float-precision-cast-asm from-ty to-ty)
+            (compiler-backend-emit-store-float-var-with-plan
+              assignments
+              dst
+              "%xmm0"
+              to-ty))))]
+    [(ErrCompilerBackend message) (ErrCompilerBackend message)]))
+
+(define (compiler-backend-emit-int-to-float-cast
+  [assignments : CompilerRegAssignmentList]
+  [dst : i64]
+  [src : CompilerIrValue]
+  [from-ty : AstType]
+  [to-ty : AstType]) : ResultCompilerBackend
+  (match (compiler-backend-emit-load-typed-value-with-plan
+    assignments
+    src
+    from-ty)
+    [(OkCompilerBackend load)
+      (OkCompilerBackend
+        (string-append
+          load
+          (string-append
+            (compiler-backend-int-to-float-cast-asm to-ty)
+            (compiler-backend-emit-store-float-var-with-plan
+              assignments
+              dst
+              "%xmm0"
+              to-ty))))]
+    [(ErrCompilerBackend message) (ErrCompilerBackend message)]))
+
+(define (compiler-backend-emit-float-to-int-cast
+  [assignments : CompilerRegAssignmentList]
+  [dst : i64]
+  [src : CompilerIrValue]
+  [from-ty : AstType]
+  [to-ty : AstType]) : ResultCompilerBackend
+  (match (compiler-backend-emit-load-float-value-with-plan
+    assignments
+    src
+    from-ty
+    "%xmm0")
+    [(OkCompilerBackend load)
+      (OkCompilerBackend
+        (string-append
+          load
+          (string-append
+            (compiler-backend-float-to-int-cast-asm from-ty)
+            (compiler-backend-emit-store-typed-var-with-plan
+              assignments
+              dst
+              "%rax"
+              to-ty))))]
+    [(ErrCompilerBackend message) (ErrCompilerBackend message)]))
+
 (define (compiler-backend-emit-cast
   [assignments : CompilerRegAssignmentList]
   [dst : i64]
   [src : CompilerIrValue]
   [from-ty : AstType]
   [to-ty : AstType]) : ResultCompilerBackend
-  (if (and
-    (opt-type-eq from-ty to-ty)
-    (compiler-backend-value-same-home? assignments dst src))
-    (OkCompilerBackend "")
-    (match (compiler-backend-emit-load-typed-value-with-plan
-      assignments
-      src
-      from-ty)
-      [(OkCompilerBackend load)
-        (OkCompilerBackend
-          (string-append
-            load
-            (compiler-backend-emit-store-typed-var-with-plan
-              assignments
-              dst
-              (if (compiler-backend-f64-type? to-ty)
-                "%xmm0"
-                "%rax")
-              to-ty)))]
-      [(ErrCompilerBackend message) (ErrCompilerBackend message)])))
+  (cond
+    [(and
+        (opt-type-eq from-ty to-ty)
+        (compiler-backend-value-same-home? assignments dst src))
+      (OkCompilerBackend "")]
+    [(and
+        (compiler-backend-float-type? from-ty)
+        (compiler-backend-float-type? to-ty))
+      (compiler-backend-emit-float-to-float-cast
+        assignments
+        dst
+        src
+        from-ty
+        to-ty)]
+    [(and
+        (not (compiler-backend-float-type? from-ty))
+        (compiler-backend-float-type? to-ty))
+      (compiler-backend-emit-int-to-float-cast
+        assignments
+        dst
+        src
+        from-ty
+        to-ty)]
+    [(and
+        (compiler-backend-float-type? from-ty)
+        (not (compiler-backend-float-type? to-ty)))
+      (compiler-backend-emit-float-to-int-cast
+        assignments
+        dst
+        src
+        from-ty
+        to-ty)]
+    [else
+      (match (compiler-backend-emit-load-typed-value-with-plan
+        assignments
+        src
+        from-ty)
+        [(OkCompilerBackend load)
+          (OkCompilerBackend
+            (string-append
+              load
+              (compiler-backend-emit-store-typed-var-with-plan
+                assignments
+                dst
+                (if (compiler-backend-f64-type? to-ty)
+                  "%xmm0"
+                  "%rax")
+                to-ty)))]
+        [(ErrCompilerBackend message) (ErrCompilerBackend message)])]))
 
 (define (compiler-backend-ir-value-list-count [args : CompilerIrValueList]) : i64
   (match args
@@ -6035,6 +6313,56 @@
                         (ErrCompilerBackend message)]))]
                 [(ErrCompilerBackend message) (ErrCompilerBackend message)])))))]))
 
+;; Per-function arena escape for the backend (#1633). Emitting one function's
+;; assembly allocates per-instruction transient strings (right-associative
+;; string-append) that the bump allocator never frees — the ~5 GB the backend
+;; phase adds. We emit each function inside its own scratch arena, deep-`clone`
+;; ONLY the resulting assembly String into the enclosing arena, then destroy the
+;; scratch — reclaiming the per-function transient. `clone` of a String copies
+;; the same bytes, so the assembled program text is byte-identical.
+(define (compiler-backend-emit-function-escaping
+  [target : CompilerBackendTarget]
+  [func : CompilerIrFunction]
+  [all-functions : CompilerIrFunctionList]
+  [globals : CompilerIrGlobalList]
+  [externs : CompilerIrExternList]
+  [plan : CompilerBackendRuntimePlan]
+  [spans : CompilerSourceSpans]) : ResultCompilerBackend
+  (let
+    [enclosing : i64 (arena-current)]
+    (let
+      [scratch : i64 (arena-make)]
+      (begin
+        (arena-set! scratch)
+        (match (compiler-backend-emit-function
+          target
+          func
+          all-functions
+          globals
+          externs
+          plan
+          spans)
+          [(OkCompilerBackend asm)
+            (let
+              [scratch-head : i64 (arena-current)]
+              (begin
+                (arena-set! enclosing)
+                (let
+                  [escaped : String (clone asm)]
+                  (begin
+                    (arena-destroy scratch-head)
+                    (OkCompilerBackend escaped)))))]
+          [(ErrCompilerBackend message)
+            (let
+              [scratch-head : i64 (arena-current)]
+              (begin
+                (arena-set! enclosing)
+                (let
+                  [escaped : CompilerDiagnostic (clone message)]
+                  (begin
+                    (arena-destroy scratch-head)
+                    (ErrCompilerBackend escaped)))))])))))
+
 (define (compiler-backend-emit-functions-into
   [target : CompilerBackendTarget]
   [functions : CompilerIrFunctionList]
@@ -6047,7 +6375,7 @@
   (match functions
     [(IrFunctionNil) (OkCompilerBackend (text-buf-render buf))]
     [(IrFunctionCons func rest)
-      (match (compiler-backend-emit-function
+      (match (compiler-backend-emit-function-escaping
         target
         func
         all-functions
@@ -7131,7 +7459,21 @@
           "env-path-separator"
           env-path-separator)))))
 
+;; The first-class arena runtime helpers are always emitted (#1633), so they are
+;; provided runtime symbols (resolve to their raw names, not the mangled
+;; `_tl_tl_arena_*`).
 (define (compiler-backend-plan-provides?
+  [plan : CompilerBackendRuntimePlan]
+  [name : String]) : bool
+  (or
+    (backend-or4
+      (string-eq name "tl_arena_make")
+      (string-eq name "tl_arena_current")
+      (string-eq name "tl_arena_set")
+      (string-eq name "tl_arena_destroy"))
+    (compiler-backend-plan-provides-rest? plan name)))
+
+(define (compiler-backend-plan-provides-rest?
   [plan : CompilerBackendRuntimePlan]
   [name : String]) : bool
   (match plan
@@ -7850,30 +8192,31 @@
 
 (define (compiler-backend-runtime-alloc-data-for-target
   [target : CompilerBackendTarget]) : String
-  (string-append
-    "    .section .bss
-    .balign 8
-tl_current_arena:
-    .zero 8
-
-"
-    "    .section .rodata
+  "    .section .rodata
 .L_tl_alloc_msg:
     .byte 116,108,58,32,97,108,108,111,99,97,116,105,111,110,32,102,97,105,108,101,100,10
     .set .L_tl_alloc_msg_len, . - .L_tl_alloc_msg
 
-"))
+")
 
+;; `tl_current_arena` is the live bump-arena pointer shared by tl_alloc, the
+;; region runtime, and the first-class arena builtins (#1633). It is the
+;; program's SINGLE active-arena slot, emitted as a single `.globl` bss
+;; definition for both targets. Like the arena primitives, the runtime lives in
+;; exactly ONE object per executable (the entry object, `emit-entry=true`);
+;; library/dependency objects (`emit-entry=false`) emit none of the runtime and
+;; reference this slot as an extern, so a multi-object link (a package plus its
+;; dependency .a archive) resolves to the single shared slot — no duplicate
+;; definition.
 (define (compiler-backend-runtime-arena-data-for-target
   [target : CompilerBackendTarget]) : String
-  (if (compiler-backend-target-windows? target)
-    ""
-    "    .section .bss
+  "    .globl tl_current_arena
+    .section .bss
     .balign 8
 tl_current_arena:
     .zero 8
 
-"))
+")
 
 (define (compiler-backend-runtime-region-reset-data) : String
   "    .section .rodata
@@ -8146,10 +8489,10 @@ tl_current_arena:
         div-abort
         shift-abort)
       (string-append
-        (if alloc
-          (compiler-backend-runtime-alloc-data-for-target target)
-          (if (or region-mark region-reset)
-            (compiler-backend-runtime-arena-data-for-target target)
+        (string-append
+          (compiler-backend-runtime-arena-data-for-target target)
+          (if alloc
+            (compiler-backend-runtime-alloc-data-for-target target)
             ""))
         (string-append
           (if oob
@@ -8281,6 +8624,149 @@ tl_region_mark:
     ret
 .L_tl_region_mark_zero:
     xorq %rax, %rax
+    ret
+
+")
+
+;; First-class arena runtime (#1633). `tl_arena_make` maps a fresh INDEPENDENT
+;; 64 MiB arena chain (prev-link 0) and returns its header WITHOUT changing the
+;; active arena. `tl_arena_current`/`tl_arena_set` read/write the active arena.
+;; `tl_arena_destroy` releases an arena's whole chain (prev-links to 0). Arena
+;; header is the same 32-byte record as tl_alloc {0:prev, 8:base, 16:bump,
+;; 24:end}. System V (mmap=9 / munmap=11) flavor.
+;;
+;; These are `.globl` symbols. The runtime (arena primitives, tl_alloc, the
+;; region runtime, and the `tl_current_arena` slot) is emitted in exactly ONE
+;; object per executable — the entry/executable object (`emit-entry=true`).
+;; Library/dependency objects (`emit-entry=false`) emit none of the runtime and
+;; reference these symbols as externs, so a multi-object link (a package plus its
+;; dependency .a archive) resolves every object's calls to the single definition
+;; in the entry object — no `multiple definition` collision.
+(define (compiler-backend-runtime-arena-functions) : String
+  "    .globl tl_arena_current
+tl_arena_current:
+    movq tl_current_arena(%rip), %rax
+    ret
+
+    .globl tl_arena_set
+tl_arena_set:
+    movq %rdi, tl_current_arena(%rip)
+    ret
+
+    .globl tl_arena_make
+tl_arena_make:
+    movq $0x4000000, %rsi
+    xorq %rdi, %rdi
+    movq $3, %rdx
+    movq $0x22, %r10
+    movq $-1, %r8
+    xorq %r9, %r9
+    movq $9, %rax
+    syscall
+    testq %rax, %rax
+    js .L_tl_arena_make_abort
+    movq $0, 0(%rax)
+    leaq 32(%rax), %rcx
+    movq %rcx, 8(%rax)
+    movq %rcx, 16(%rax)
+    movq %rax, %rcx
+    addq $0x4000000, %rcx
+    movq %rcx, 24(%rax)
+    ret
+.L_tl_arena_make_abort:
+    movq $60, %rax
+    movq $134, %rdi
+    syscall
+
+    .globl tl_arena_destroy
+tl_arena_destroy:
+    push %rbx
+    movq %rdi, %rbx
+.L_tl_arena_destroy_loop:
+    testq %rbx, %rbx
+    jz .L_tl_arena_destroy_done
+    movq 0(%rbx), %r8
+    push %r8
+    movq 24(%rbx), %rsi
+    subq %rbx, %rsi
+    movq %rbx, %rdi
+    movq $11, %rax
+    syscall
+    pop %r8
+    movq %r8, %rbx
+    jmp .L_tl_arena_destroy_loop
+.L_tl_arena_destroy_done:
+    pop %rbx
+    ret
+
+")
+
+;; Windows flavor: VirtualAlloc/VirtualFree under the Win64 ABI. The arg arrives
+;; in %rcx; a 32-byte shadow space is reserved before each call. A mapping
+;; failure traps via `ud2` (no libc dependency).
+(define (compiler-backend-runtime-windows-arena-functions) : String
+  "    .globl tl_arena_current
+tl_arena_current:
+    movq tl_current_arena(%rip), %rax
+    ret
+
+    .globl tl_arena_set
+tl_arena_set:
+    movq %rcx, tl_current_arena(%rip)
+    ret
+
+    .globl tl_arena_make
+tl_arena_make:
+    push %rbp
+    mov %rsp, %rbp
+    push %rbx
+    push %rsi
+    sub $32, %rsp
+    xorq %rcx, %rcx
+    movq $0x4000000, %rdx
+    movq $0x3000, %r8
+    movq $0x4, %r9
+    call VirtualAlloc
+    testq %rax, %rax
+    jz .L_tl_arena_make_win_abort
+    movq $0, 0(%rax)
+    leaq 32(%rax), %rcx
+    movq %rcx, 8(%rax)
+    movq %rcx, 16(%rax)
+    movq %rax, %rcx
+    addq $0x4000000, %rcx
+    movq %rcx, 24(%rax)
+    add $32, %rsp
+    popq %rsi
+    popq %rbx
+    popq %rbp
+    ret
+.L_tl_arena_make_win_abort:
+    ud2
+
+    .globl tl_arena_destroy
+tl_arena_destroy:
+    push %rbp
+    mov %rsp, %rbp
+    push %rbx
+    push %rsi
+    sub $32, %rsp
+    movq %rcx, %rsi
+.L_tl_arena_destroy_win_loop:
+    testq %rsi, %rsi
+    jz .L_tl_arena_destroy_win_done
+    movq 0(%rsi), %rbx
+    movq %rsi, %rcx
+    xorq %rdx, %rdx
+    movq $0x8000, %r8
+    call VirtualFree
+    movq %rbx, %rsi
+    jmp .L_tl_arena_destroy_win_loop
+.L_tl_arena_destroy_win_done:
+    add $32, %rsp
+    popq %rsi
+    popq %rbx
+    popq %rbp
     ret
 
 ")
@@ -8716,6 +9202,262 @@ _tl_env_path_separator:
     movq $1, 8(%rax)
     add $8, %rsp
     pop %r12
+    pop %rbp
+    ret
+
+")
+
+;; Windows variant of `_tl_env_path_separator`: builds the 1-char `;` String
+;; (Windows PATH separator, byte 59) instead of `:`. Win64 ABI: tl_alloc takes
+;; the size in %rcx and needs 32-byte shadow space at each call (its slow path
+;; calls VirtualAlloc). Returns a String fat-value {ptr@0, len@8} in %rax.
+(define (compiler-backend-runtime-windows-env-path-separator-functions) : String
+  "    .globl _tl_env_path_separator
+_tl_env_path_separator:
+    push %rbp
+    mov %rsp, %rbp
+    push %r12
+    sub $8, %rsp
+    movq $1, %rcx
+    sub $32, %rsp
+    call tl_alloc
+    add $32, %rsp
+    movq %rax, %r12
+    movb $59, (%r12)
+    movq $16, %rcx
+    sub $32, %rsp
+    call tl_alloc
+    add $32, %rsp
+    movq %r12, 0(%rax)
+    movq $1, 8(%rax)
+    add $8, %rsp
+    pop %r12
+    pop %rbp
+    ret
+
+")
+
+;; Windows variant of `_tl_env_var_exists_question`. The Linux helper walks the
+;; SysV stack-captured environment array (.L_tl_envp), which is never populated
+;; on Windows, so this uses the CRT `getenv`. ABI: the String argument arrives
+;; as a pointer to a {ptr,len} fat-value in %rcx (dereferenced 0(%rcx)/8(%rcx),
+;; mirroring the Linux helper's 0(%rdi)/8(%rdi)). Copies the name into a fresh
+;; NUL-terminated buffer, calls getenv, and returns bool (i64 0/1) in %rax.
+(define (compiler-backend-runtime-windows-env-var-exists-functions) : String
+  "    .globl _tl_env_var_exists_question
+_tl_env_var_exists_question:
+    push %rbp
+    mov %rsp, %rbp
+    push %rbx
+    push %r12
+    push %r13
+    sub $8, %rsp
+    movq 0(%rcx), %rbx
+    movq 8(%rcx), %r12
+    cmpq $0, %r12
+    jl .L_tl_env_var_exists_win_false
+    movq %r12, %rax
+    addq $1, %rax
+    js .L_tl_env_var_exists_win_false
+    movq %rax, %rcx
+    sub $32, %rsp
+    call tl_alloc
+    add $32, %rsp
+    movq %rax, %r13
+    xorq %r10, %r10
+.L_tl_env_var_exists_win_name_copy_loop:
+    cmpq %r12, %r10
+    jge .L_tl_env_var_exists_win_name_copy_done
+    movzbl (%rbx,%r10), %edx
+    movb %dl, (%r13,%r10)
+    incq %r10
+    jmp .L_tl_env_var_exists_win_name_copy_loop
+.L_tl_env_var_exists_win_name_copy_done:
+    movb $0, (%r13,%r12)
+    movq %r13, %rcx
+    sub $32, %rsp
+    call getenv
+    add $32, %rsp
+    testq %rax, %rax
+    setne %al
+    movzbq %al, %rax
+    jmp .L_tl_env_var_exists_win_return
+.L_tl_env_var_exists_win_false:
+    xorq %rax, %rax
+.L_tl_env_var_exists_win_return:
+    add $8, %rsp
+    pop %r13
+    pop %r12
+    pop %rbx
+    pop %rbp
+    ret
+
+")
+
+;; Windows variant of `_tl_env_var_value`. Like env-var-exists, uses the CRT
+;; `getenv` (the Linux `.L_tl_envp` walk is unavailable on Windows). The String
+;; name arrives as a pointer to a {ptr,len} fat-value in %rcx. Copies the name
+;; into a NUL-terminated buffer, getenv -> char* (NULL if unset), strlen, copies
+;; the value into a fresh buffer, and returns a String fat-value {ptr,len} in
+;; %rax (the empty String {0,0} when unset), matching the Linux helper.
+(define (compiler-backend-runtime-windows-env-var-value-functions) : String
+  "    .globl _tl_env_var_value
+_tl_env_var_value:
+    push %rbp
+    mov %rsp, %rbp
+    push %rbx
+    push %r12
+    push %r13
+    sub $8, %rsp
+    movq 0(%rcx), %rbx
+    movq 8(%rcx), %r12
+    cmpq $0, %r12
+    jl .L_tl_env_var_value_win_empty
+    movq %r12, %rcx
+    addq $1, %rcx
+    js .L_tl_env_var_value_win_empty
+    sub $32, %rsp
+    call tl_alloc
+    add $32, %rsp
+    movq %rax, %r13
+    xorq %rcx, %rcx
+.L_tl_env_var_value_win_name_copy_loop:
+    cmpq %r12, %rcx
+    jge .L_tl_env_var_value_win_name_copy_done
+    movzbl (%rbx,%rcx), %edx
+    movb %dl, (%r13,%rcx)
+    incq %rcx
+    jmp .L_tl_env_var_value_win_name_copy_loop
+.L_tl_env_var_value_win_name_copy_done:
+    movb $0, (%r13,%r12)
+    movq %r13, %rcx
+    sub $32, %rsp
+    call getenv
+    add $32, %rsp
+    testq %rax, %rax
+    jz .L_tl_env_var_value_win_empty
+    movq %rax, %rbx
+    movq %rbx, %rcx
+    sub $32, %rsp
+    call strlen
+    add $32, %rsp
+    movq %rax, %r12
+    movq %r12, %rcx
+    sub $32, %rsp
+    call tl_alloc
+    add $32, %rsp
+    movq %rax, %r13
+    xorq %rcx, %rcx
+.L_tl_env_var_value_win_copy_loop:
+    cmpq %r12, %rcx
+    jge .L_tl_env_var_value_win_fat
+    movzbl (%rbx,%rcx), %edx
+    movb %dl, (%r13,%rcx)
+    incq %rcx
+    jmp .L_tl_env_var_value_win_copy_loop
+.L_tl_env_var_value_win_empty:
+    xorq %r12, %r12
+    xorq %r13, %r13
+.L_tl_env_var_value_win_fat:
+    movq $16, %rcx
+    sub $32, %rsp
+    call tl_alloc
+    add $32, %rsp
+    movq %r13, 0(%rax)
+    movq %r12, 8(%rax)
+    add $8, %rsp
+    pop %r13
+    pop %r12
+    pop %rbx
+    pop %rbp
+    ret
+
+")
+
+;; Windows variant of `tl_region_reset`. Identical arena-walk structure to the
+;; Linux helper (offsets: 0=prev arena, 8=usable base, 16=bump pointer, 24=end;
+;; the arena header sits at the VirtualAlloc base). The only difference is how
+;; newer arenas are released: Linux uses `munmap`, Windows uses
+;; `VirtualFree(lpAddress=arena, dwSize=0, dwFreeType=MEM_RELEASE=0x8000)` — the
+;; arena node address is exactly the VirtualAlloc base, so MEM_RELEASE frees the
+;; whole chunk. Arg (the mark) arrives in %rcx.
+(define (compiler-backend-runtime-windows-region-reset-functions) : String
+  "    .globl tl_region_reset
+tl_region_reset:
+    push %rbp
+    mov %rsp, %rbp
+    push %rbx
+    push %r12
+    push %r13
+    push %r14
+    sub $8, %rsp
+    movq %rcx, %r12
+    testq %r12, %r12
+    jz .L_tl_region_reset_win_all
+    movq tl_current_arena(%rip), %r13
+    testq %r13, %r13
+    jz .L_tl_region_reset_win_invalid
+.L_tl_region_reset_win_find:
+    movq 8(%r13), %rax
+    cmpq %rax, %r12
+    jb .L_tl_region_reset_win_next
+    movq 24(%r13), %rax
+    cmpq %rax, %r12
+    jbe .L_tl_region_reset_win_found
+.L_tl_region_reset_win_next:
+    movq 0(%r13), %r13
+    testq %r13, %r13
+    jnz .L_tl_region_reset_win_find
+    jmp .L_tl_region_reset_win_invalid
+.L_tl_region_reset_win_invalid:
+    movq $2, %rcx
+    leaq .L_tl_region_reset_msg(%rip), %rdx
+    movq $.L_tl_region_reset_msg_len, %r8
+    sub $32, %rsp
+    call _write
+    add $32, %rsp
+    movq $134, %rcx
+    sub $32, %rsp
+    call exit
+.L_tl_region_reset_win_found:
+    movq tl_current_arena(%rip), %r14
+.L_tl_region_reset_win_drop:
+    cmpq %r13, %r14
+    je .L_tl_region_reset_win_restore
+    movq 0(%r14), %rbx
+    movq %r14, %rcx
+    xorq %rdx, %rdx
+    movq $0x8000, %r8
+    sub $32, %rsp
+    call VirtualFree
+    add $32, %rsp
+    movq %rbx, %r14
+    jmp .L_tl_region_reset_win_drop
+.L_tl_region_reset_win_restore:
+    movq %r12, 16(%r13)
+    movq %r13, tl_current_arena(%rip)
+    jmp .L_tl_region_reset_win_done
+.L_tl_region_reset_win_all:
+    movq tl_current_arena(%rip), %r14
+    movq $0, tl_current_arena(%rip)
+.L_tl_region_reset_win_all_drop:
+    testq %r14, %r14
+    jz .L_tl_region_reset_win_done
+    movq 0(%r14), %rbx
+    movq %r14, %rcx
+    xorq %rdx, %rdx
+    movq $0x8000, %r8
+    sub $32, %rsp
+    call VirtualFree
+    add $32, %rsp
+    movq %rbx, %r14
+    jmp .L_tl_region_reset_win_all_drop
+.L_tl_region_reset_win_done:
+    add $8, %rsp
+    pop %r14
+    pop %r13
+    pop %r12
+    pop %rbx
     pop %rbp
     ret
 
@@ -11105,43 +11847,822 @@ tl_string_concat:
 
 (define (compiler-backend-runtime-windows-process-output-functions) : String
   "tl_process_output:
-    leaq .L_tl_process_unsupported_msg(%rip), %rcx
-    movq $.L_tl_process_unsupported_msg_len, %rdx
-    movq $3, %r8
-    jmp .L_tl_process_make_error_win
-
-.L_tl_process_make_error_win:
     push %rbp
     mov %rsp, %rbp
     push %rbx
     push %r12
     push %r13
+    push %r14
+    push %r15
+    sub $168, %rsp
+    movq %rcx, %rbx
+    movq $0, -48(%rbp)
+    movq $0, -56(%rbp)
+    movq $0, -64(%rbp)
+    movq $0, -72(%rbp)
+    movq $-1, -80(%rbp)
+    movq $-1, -88(%rbp)
+    movq 0(%rbx), %rcx
+    sub $32, %rsp
+    call .L_tl_process_copy_c_string
+    add $32, %rsp
+    movq %rax, %r12
+    movq $1, %r13
+    movq 8(%rbx), %r14
+.L_tl_process_count_argv:
+    testq %r14, %r14
+    jz .L_tl_process_count_argv_done
+    cmpq $1, 0(%r14)
+    jne .L_tl_process_count_argv_done
+    incq %r13
+    movq 16(%r14), %r14
+    jmp .L_tl_process_count_argv
+.L_tl_process_count_argv_done:
+    movq %r13, %rcx
+    incq %rcx
+    shlq $3, %rcx
+    sub $32, %rsp
+    call tl_alloc
+    add $32, %rsp
+    movq %rax, %r14
+    movq 0(%rbx), %rcx
+    sub $32, %rsp
+    call .L_tl_process_copy_c_string_quoted
+    add $32, %rsp
+    movq %rax, 0(%r14)
+    movq 8(%rbx), %r13
+    movq $1, %r15
+.L_tl_process_fill_argv:
+    testq %r13, %r13
+    jz .L_tl_process_fill_argv_done
+    cmpq $1, 0(%r13)
+    jne .L_tl_process_fill_argv_done
+    movq 8(%r13), %rcx
+    sub $32, %rsp
+    call .L_tl_process_copy_c_string_quoted
+    add $32, %rsp
+    movq %rax, (%r14,%r15,8)
+    incq %r15
+    movq 16(%r13), %r13
+    jmp .L_tl_process_fill_argv
+.L_tl_process_fill_argv_done:
+    movq $0, (%r14,%r15,8)
+    movq %r14, -96(%rbp)
+    movq 24(%rbx), %rcx
+    sub $32, %rsp
+    call .L_tl_process_win_envp_from_overrides
+    add $32, %rsp
+    movq %rax, -104(%rbp)
+    movq -96(%rbp), %r14
+    sub $32, %rsp
+    call tmpfile
+    add $32, %rsp
+    testq %rax, %rax
+    jz .L_tl_process_output_wait_failed_close
+    movq %rax, -48(%rbp)
+    movq %rax, %rcx
+    sub $32, %rsp
+    call _fileno
+    add $32, %rsp
+    testl %eax, %eax
+    js .L_tl_process_output_wait_failed_close
+    movslq %eax, %rax
+    movq %rax, -56(%rbp)
+    sub $32, %rsp
+    call tmpfile
+    add $32, %rsp
+    testq %rax, %rax
+    jz .L_tl_process_output_wait_failed_close
+    movq %rax, -64(%rbp)
+    movq %rax, %rcx
+    sub $32, %rsp
+    call _fileno
+    add $32, %rsp
+    testl %eax, %eax
+    js .L_tl_process_output_wait_failed_close
+    movslq %eax, %rax
+    movq %rax, -72(%rbp)
+    movq -56(%rbp), %rcx
+    sub $32, %rsp
+    call _get_osfhandle
+    add $32, %rsp
+    movq %rax, -112(%rbp)
+    movq -72(%rbp), %rcx
+    sub $32, %rsp
+    call _get_osfhandle
+    add $32, %rsp
+    movq %rax, -120(%rbp)
+    movq -112(%rbp), %rcx
+    movq $1, %rdx
+    movq $1, %r8
+    sub $32, %rsp
+    call SetHandleInformation
+    add $32, %rsp
+    movq -120(%rbp), %rcx
+    movq $1, %rdx
+    movq $1, %r8
+    sub $32, %rsp
+    call SetHandleInformation
+    add $32, %rsp
+    movq -104(%rbp), %rcx
+    sub $32, %rsp
+    call .L_tl_process_envp_to_block
+    add $32, %rsp
+    movq %rax, -128(%rbp)
+    movq -96(%rbp), %rcx
+    sub $32, %rsp
+    call .L_tl_process_argv_to_cmdline
+    add $32, %rsp
+    movq %rax, -136(%rbp)
+    movq %r12, %rcx
+    movq -136(%rbp), %rdx
+    movq -128(%rbp), %r8
+    movq -112(%rbp), %r9
+    movq -120(%rbp), %r10
+    sub $32, %rsp
+    call .L_tl_process_create_and_wait
+    add $32, %rsp
+    movq %rax, %r15
+    cmpq $0, %r15
+    jl .L_tl_process_output_spawn_failed_close
+    movq -56(%rbp), %rcx
+    sub $32, %rsp
+    call .L_tl_process_read_fd_to_string
+    add $32, %rsp
+    testq %rax, %rax
+    jz .L_tl_process_output_wait_failed_close
+    movq %rax, -96(%rbp)
+    movq -72(%rbp), %rcx
+    sub $32, %rsp
+    call .L_tl_process_read_fd_to_string
+    add $32, %rsp
+    testq %rax, %rax
+    jz .L_tl_process_output_wait_failed_close
+    movq %rax, -104(%rbp)
+    call .L_tl_process_close_temp_files
+    movq $24, %rcx
+    sub $32, %rsp
+    call tl_alloc
+    add $32, %rsp
+    movq %r15, 0(%rax)
+    movq -96(%rbp), %rdx
+    movq %rdx, 8(%rax)
+    movq -104(%rbp), %rdx
+    movq %rdx, 16(%rax)
+    movq %rax, %r12
+    movq $16, %rcx
+    sub $32, %rsp
+    call tl_alloc
+    add $32, %rsp
+    movq $0, 0(%rax)
+    movq %r12, 8(%rax)
+    jmp .L_tl_process_output_epilogue
+.L_tl_process_output_spawn_failed_close:
+    call .L_tl_process_close_temp_files
+    movq $1, %rcx
+    leaq .L_tl_process_spawn_msg(%rip), %rdx
+    movq $.L_tl_process_spawn_msg_len, %r8
+    sub $32, %rsp
+    call .L_tl_process_error_result
+    add $32, %rsp
+    jmp .L_tl_process_output_epilogue
+.L_tl_process_output_wait_failed_close:
+    call .L_tl_process_close_temp_files
+    movq $2, %rcx
+    leaq .L_tl_process_wait_msg(%rip), %rdx
+    movq $.L_tl_process_wait_msg_len, %r8
+    sub $32, %rsp
+    call .L_tl_process_error_result
+    add $32, %rsp
+    jmp .L_tl_process_output_epilogue
+.L_tl_process_output_epilogue:
+    add $168, %rsp
+    pop %r15
+    pop %r14
+    pop %r13
+    pop %r12
+    pop %rbx
+    pop %rbp
+    ret
+
+.L_tl_process_envp_to_block:
+    push %rbp
+    mov %rsp, %rbp
+    push %rbx
+    push %r12
+    push %r13
+    push %r14
+    sub $32, %rsp
+    testq %rcx, %rcx
+    jz .L_tl_etb_null
+    movq %rcx, %rbx
+    movq $1, %r12
+    movq %rbx, %r13
+.L_tl_etb_size_loop:
+    movq (%r13), %r8
+    testq %r8, %r8
+    jz .L_tl_etb_size_done
+    xorq %r9, %r9
+.L_tl_etb_size_strlen:
+    cmpb $0, (%r8,%r9)
+    je .L_tl_etb_size_strlen_done
+    incq %r9
+    jmp .L_tl_etb_size_strlen
+.L_tl_etb_size_strlen_done:
+    incq %r9
+    addq %r9, %r12
+    addq $8, %r13
+    jmp .L_tl_etb_size_loop
+.L_tl_etb_size_done:
+    movq %r12, %rcx
+    sub $32, %rsp
+    call tl_alloc
+    add $32, %rsp
+    movq %rax, %r14
+    movq %rbx, %r13
+    xorq %r12, %r12
+.L_tl_etb_copy_loop:
+    movq (%r13), %r8
+    testq %r8, %r8
+    jz .L_tl_etb_copy_done
+    xorq %r9, %r9
+.L_tl_etb_copy_bytes:
+    movzbl (%r8,%r9), %eax
+    movb %al, (%r14,%r12)
+    incq %r12
+    testb %al, %al
+    jz .L_tl_etb_copy_entry_done
+    incq %r9
+    jmp .L_tl_etb_copy_bytes
+.L_tl_etb_copy_entry_done:
+    addq $8, %r13
+    jmp .L_tl_etb_copy_loop
+.L_tl_etb_copy_done:
+    movb $0, (%r14,%r12)
+    movq %r14, %rax
+    jmp .L_tl_etb_ret
+.L_tl_etb_null:
+    xorq %rax, %rax
+.L_tl_etb_ret:
+    add $32, %rsp
+    pop %r14
+    pop %r13
+    pop %r12
+    pop %rbx
+    pop %rbp
+    ret
+
+.L_tl_process_argv_to_cmdline:
+    push %rbp
+    mov %rsp, %rbp
+    push %rbx
+    push %r12
+    push %r13
+    push %r14
+    sub $32, %rsp
+    movq %rcx, %rbx
+    movq $1, %r12
+    movq %rbx, %r13
+.L_tl_atc_size_loop:
+    movq (%r13), %r8
+    testq %r8, %r8
+    jz .L_tl_atc_size_done
+    xorq %r9, %r9
+.L_tl_atc_size_strlen:
+    cmpb $0, (%r8,%r9)
+    je .L_tl_atc_size_strlen_done
+    incq %r9
+    jmp .L_tl_atc_size_strlen
+.L_tl_atc_size_strlen_done:
+    incq %r9
+    addq %r9, %r12
+    addq $8, %r13
+    jmp .L_tl_atc_size_loop
+.L_tl_atc_size_done:
+    movq %r12, %rcx
+    sub $32, %rsp
+    call tl_alloc
+    add $32, %rsp
+    movq %rax, %r14
+    movq %rbx, %r13
+    xorq %r12, %r12
+.L_tl_atc_copy_loop:
+    movq (%r13), %r8
+    testq %r8, %r8
+    jz .L_tl_atc_copy_done
+    testq %r12, %r12
+    jz .L_tl_atc_copy_nospace
+    movb $0x20, (%r14,%r12)
+    incq %r12
+.L_tl_atc_copy_nospace:
+    xorq %r9, %r9
+.L_tl_atc_copy_bytes:
+    movzbl (%r8,%r9), %eax
+    testb %al, %al
+    jz .L_tl_atc_copy_entry_done
+    movb %al, (%r14,%r12)
+    incq %r12
+    incq %r9
+    jmp .L_tl_atc_copy_bytes
+.L_tl_atc_copy_entry_done:
+    addq $8, %r13
+    jmp .L_tl_atc_copy_loop
+.L_tl_atc_copy_done:
+    movb $0, (%r14,%r12)
+    movq %r14, %rax
+    add $32, %rsp
+    pop %r14
+    pop %r13
+    pop %r12
+    pop %rbx
+    pop %rbp
+    ret
+
+.L_tl_process_create_and_wait:
+    push %rbp
+    mov %rsp, %rbp
+    push %rbx
+    push %r12
+    push %r13
+    push %r14
+    push %r15
+    sub $264, %rsp
+    movq %rcx, %rbx
+    movq %rdx, %r12
+    movq %r8, %r13
+    movq %r9, %r14
+    movq %r10, %r15
+    leaq -160(%rbp), %rax
+    movq $13, %rcx
+.L_tl_cpw_zero:
+    movq $0, (%rax)
+    addq $8, %rax
+    decq %rcx
+    jnz .L_tl_cpw_zero
+    movl $104, -160(%rbp)
+    movl $256, -100(%rbp)
+    movq $-10, %rcx
+    sub $32, %rsp
+    call GetStdHandle
+    add $32, %rsp
+    movq %rax, -80(%rbp)
+    movq %r14, -72(%rbp)
+    movq %r15, -64(%rbp)
+    movq $0, -184(%rbp)
+    movq $0, -176(%rbp)
+    movq $0, -168(%rbp)
+    movq %rbx, %rcx
+    movq %r12, %rdx
+    xorq %r8, %r8
+    xorq %r9, %r9
+    movq $1, 32(%rsp)
+    movq $0, 40(%rsp)
+    movq %r13, 48(%rsp)
+    movq $0, 56(%rsp)
+    leaq -160(%rbp), %rax
+    movq %rax, 64(%rsp)
+    leaq -184(%rbp), %rax
+    movq %rax, 72(%rsp)
+    call CreateProcessA
+    testl %eax, %eax
+    jz .L_tl_cpw_fail
+    movq -184(%rbp), %rcx
+    movq $-1, %rdx
+    sub $32, %rsp
+    call WaitForSingleObject
+    add $32, %rsp
+    movq $0, -192(%rbp)
+    movq -184(%rbp), %rcx
+    leaq -192(%rbp), %rdx
+    sub $32, %rsp
+    call GetExitCodeProcess
+    add $32, %rsp
+    movq -184(%rbp), %rcx
+    sub $32, %rsp
+    call CloseHandle
+    add $32, %rsp
+    movq -176(%rbp), %rcx
+    sub $32, %rsp
+    call CloseHandle
+    add $32, %rsp
+    movl -192(%rbp), %eax
+    movslq %eax, %rax
+    jmp .L_tl_cpw_done
+.L_tl_cpw_fail:
+    movq $-1, %rax
+.L_tl_cpw_done:
+    add $264, %rsp
+    pop %r15
+    pop %r14
+    pop %r13
+    pop %r12
+    pop %rbx
+    pop %rbp
+    ret
+
+.L_tl_process_copy_c_string:
+    push %rbp
+    mov %rsp, %rbp
+    push %rbx
+    push %r12
+    push %r13
+    sub $8, %rsp
+    movq 0(%rcx), %rbx
+    movq 8(%rcx), %r12
+    movq %r12, %rcx
+    incq %rcx
+    call tl_alloc
+    movq %rax, %r13
+    xorq %r10, %r10
+.L_tl_process_copy_c_string_loop:
+    cmpq %r12, %r10
+    jge .L_tl_process_copy_c_string_done
+    movzbl (%rbx,%r10), %edx
+    movb %dl, (%r13,%r10)
+    incq %r10
+    jmp .L_tl_process_copy_c_string_loop
+.L_tl_process_copy_c_string_done:
+    movb $0, (%r13,%r12)
+    movq %r13, %rax
+    add $8, %rsp
+    pop %r13
+    pop %r12
+    pop %rbx
+    pop %rbp
+    ret
+
+.L_tl_process_copy_c_string_quoted:
+    push %rbp
+    mov %rsp, %rbp
+    push %rbx
+    push %r12
+    push %r13
+    push %r14
+    sub $8, %rsp
+    movq 0(%rcx), %rbx
+    movq 8(%rcx), %r12
+    xorq %r14, %r14
+    xorq %r10, %r10
+.L_tl_process_quote_scan:
+    cmpq %r12, %r10
+    jge .L_tl_process_quote_scan_done
+    cmpb $0x20, (%rbx,%r10)
+    jne .L_tl_process_quote_scan_next
+    movq $1, %r14
+    jmp .L_tl_process_quote_scan_done
+.L_tl_process_quote_scan_next:
+    incq %r10
+    jmp .L_tl_process_quote_scan
+.L_tl_process_quote_scan_done:
+    movq %r12, %rcx
+    incq %rcx
+    testq %r14, %r14
+    jz .L_tl_process_quote_alloc
+    addq $2, %rcx
+.L_tl_process_quote_alloc:
+    call tl_alloc
+    movq %rax, %r13
+    xorq %r10, %r10
+    testq %r14, %r14
+    jz .L_tl_process_quote_body
+    movb $0x22, (%r13)
+    movq $1, %r10
+.L_tl_process_quote_body:
+    xorq %r11, %r11
+.L_tl_process_quote_body_loop:
+    cmpq %r12, %r11
+    jge .L_tl_process_quote_body_done
+    movzbl (%rbx,%r11), %edx
+    movb %dl, (%r13,%r10)
+    incq %r10
+    incq %r11
+    jmp .L_tl_process_quote_body_loop
+.L_tl_process_quote_body_done:
+    testq %r14, %r14
+    jz .L_tl_process_quote_terminate
+    movb $0x22, (%r13,%r10)
+    incq %r10
+.L_tl_process_quote_terminate:
+    movb $0, (%r13,%r10)
+    movq %r13, %rax
+    add $8, %rsp
+    pop %r14
+    pop %r13
+    pop %r12
+    pop %rbx
+    pop %rbp
+    ret
+
+.L_tl_process_win_env_entry_matches:
+    push %rbp
+    mov %rsp, %rbp
+    push %rbx
+    push %r12
+    push %r13
+    push %r14
+    push %r15
+    sub $8, %rsp
+    movq %rcx, %rbx
+    movq %rdx, %r12
+.L_tl_process_win_env_match_loop:
+    testq %r12, %r12
+    jz .L_tl_process_win_env_match_false
+    cmpq $1, 0(%r12)
+    jne .L_tl_process_win_env_match_false
+    movq 8(%r12), %rax
+    movq 0(%rax), %r13
+    movq 8(%rax), %r14
+    xorq %r15, %r15
+.L_tl_process_win_env_match_char:
+    cmpq %r14, %r15
+    jge .L_tl_process_win_env_match_check_eq
+    movzbl (%r13,%r15), %eax
+    movzbl (%rbx,%r15), %ecx
+    cmpb %cl, %al
+    jne .L_tl_process_win_env_match_next
+    incq %r15
+    jmp .L_tl_process_win_env_match_char
+.L_tl_process_win_env_match_check_eq:
+    movzbl (%rbx,%r14), %eax
+    cmpb $61, %al
+    jne .L_tl_process_win_env_match_next
+    movq $1, %rax
+    jmp .L_tl_process_win_env_match_return
+.L_tl_process_win_env_match_next:
+    movq 24(%r12), %r12
+    jmp .L_tl_process_win_env_match_loop
+.L_tl_process_win_env_match_false:
+    xorq %rax, %rax
+.L_tl_process_win_env_match_return:
+    add $8, %rsp
+    pop %r15
+    pop %r14
+    pop %r13
+    pop %r12
+    pop %rbx
+    pop %rbp
+    ret
+
+.L_tl_process_win_env_cstring:
+    push %rbp
+    mov %rsp, %rbp
+    push %rbx
+    push %r12
+    push %r13
+    push %r14
+    push %r15
+    sub $8, %rsp
+    movq 0(%rcx), %r12
+    movq 8(%rcx), %rbx
+    movq 0(%rdx), %r14
+    movq 8(%rdx), %r13
+    movq %rbx, %rcx
+    addq %r13, %rcx
+    addq $2, %rcx
+    call tl_alloc
+    movq %rax, %r15
+    xorq %rcx, %rcx
+.L_tl_process_win_env_cs_name:
+    cmpq %rbx, %rcx
+    jge .L_tl_process_win_env_cs_name_done
+    movzbl (%r12,%rcx), %eax
+    movb %al, (%r15,%rcx)
+    incq %rcx
+    jmp .L_tl_process_win_env_cs_name
+.L_tl_process_win_env_cs_name_done:
+    movb $61, (%r15,%rbx)
+    xorq %rcx, %rcx
+.L_tl_process_win_env_cs_value:
+    cmpq %r13, %rcx
+    jge .L_tl_process_win_env_cs_value_done
+    movzbl (%r14,%rcx), %eax
+    leaq 1(%rbx,%rcx), %rdx
+    movb %al, (%r15,%rdx)
+    incq %rcx
+    jmp .L_tl_process_win_env_cs_value
+.L_tl_process_win_env_cs_value_done:
+    leaq 1(%rbx,%r13), %rdx
+    movb $0, (%r15,%rdx)
+    movq %r15, %rax
+    add $8, %rsp
+    pop %r15
+    pop %r14
+    pop %r13
+    pop %r12
+    pop %rbx
+    pop %rbp
+    ret
+
+.L_tl_process_win_envp_from_overrides:
+    push %rbp
+    mov %rsp, %rbp
+    push %rbx
+    push %r12
+    push %r13
+    push %r14
+    push %r15
     sub $40, %rsp
     movq %rcx, %r12
-    movq %rdx, %r13
-    movq %r8, %rbx
+    testq %r12, %r12
+    jz .L_tl_process_win_envp_null
+    cmpq $1, 0(%r12)
+    jne .L_tl_process_win_envp_null
+    call __p__environ
+    movq (%rax), %rbx
+    xorq %r13, %r13
+    testq %rbx, %rbx
+    jz .L_tl_process_win_envp_count_overrides
+.L_tl_process_win_envp_count_inh:
+    movq (%rbx,%r13,8), %rax
+    testq %rax, %rax
+    jz .L_tl_process_win_envp_count_overrides
+    incq %r13
+    jmp .L_tl_process_win_envp_count_inh
+.L_tl_process_win_envp_count_overrides:
+    xorq %r14, %r14
+    movq %r12, %r15
+.L_tl_process_win_envp_count_ov:
+    testq %r15, %r15
+    jz .L_tl_process_win_envp_alloc
+    cmpq $1, 0(%r15)
+    jne .L_tl_process_win_envp_alloc
+    incq %r14
+    movq 24(%r15), %r15
+    jmp .L_tl_process_win_envp_count_ov
+.L_tl_process_win_envp_alloc:
+    movq %r13, %rcx
+    addq %r14, %rcx
+    incq %rcx
+    shlq $3, %rcx
+    call tl_alloc
+    movq %rax, %r15
+    xorq %r14, %r14
+    testq %rbx, %rbx
+    jz .L_tl_process_win_envp_copy_ov_start
+.L_tl_process_win_envp_copy_inh:
+    movq (%rbx), %rcx
+    testq %rcx, %rcx
+    jz .L_tl_process_win_envp_copy_ov_start
+    movq %r12, %rdx
+    call .L_tl_process_win_env_entry_matches
+    testq %rax, %rax
+    jne .L_tl_process_win_envp_skip_inh
+    movq (%rbx), %rax
+    movq %rax, (%r15,%r14,8)
+    incq %r14
+.L_tl_process_win_envp_skip_inh:
+    addq $8, %rbx
+    jmp .L_tl_process_win_envp_copy_inh
+.L_tl_process_win_envp_copy_ov_start:
+    movq %r12, %rbx
+.L_tl_process_win_envp_copy_ov:
+    testq %rbx, %rbx
+    jz .L_tl_process_win_envp_done
+    cmpq $1, 0(%rbx)
+    jne .L_tl_process_win_envp_done
+    movq 8(%rbx), %rcx
+    movq 16(%rbx), %rdx
+    call .L_tl_process_win_env_cstring
+    movq %rax, (%r15,%r14,8)
+    incq %r14
+    movq 24(%rbx), %rbx
+    jmp .L_tl_process_win_envp_copy_ov
+.L_tl_process_win_envp_done:
+    movq $0, (%r15,%r14,8)
+    movq %r15, %rax
+    jmp .L_tl_process_win_envp_return
+.L_tl_process_win_envp_null:
+    xorq %rax, %rax
+.L_tl_process_win_envp_return:
+    add $40, %rsp
+    pop %r15
+    pop %r14
+    pop %r13
+    pop %r12
+    pop %rbx
+    pop %rbp
+    ret
+
+.L_tl_process_read_fd_to_string:
+    push %rbp
+    mov %rsp, %rbp
+    push %rbx
+    push %r12
+    push %r13
+    push %r14
+    sub $32, %rsp
+    movq %rcx, %rbx
+    movq %rbx, %rcx
+    xorq %rdx, %rdx
+    movq $2, %r8
+    call _lseeki64
+    cmpq $0, %rax
+    jl .L_tl_process_read_fd_to_string_error
+    movq %rax, %r12
+    movq %rbx, %rcx
+    xorq %rdx, %rdx
+    xorq %r8, %r8
+    call _lseeki64
+    cmpq $0, %rax
+    jl .L_tl_process_read_fd_to_string_error
+    movq %r12, %rcx
+    call tl_alloc
+    movq %rax, %r13
+    xorq %r14, %r14
+.L_tl_process_read_fd_to_string_loop:
+    cmpq %r12, %r14
+    jge .L_tl_process_read_fd_to_string_fat
+    movq %rbx, %rcx
+    leaq (%r13,%r14), %rdx
+    movq %r12, %r8
+    subq %r14, %r8
+    call _read
+    testl %eax, %eax
+    js .L_tl_process_read_fd_to_string_error
+    jz .L_tl_process_read_fd_to_string_fat
+    movslq %eax, %rax
+    addq %rax, %r14
+    jmp .L_tl_process_read_fd_to_string_loop
+.L_tl_process_read_fd_to_string_fat:
+    movq $16, %rcx
+    call tl_alloc
+    movq %r13, 0(%rax)
+    movq %r14, 8(%rax)
+    jmp .L_tl_process_read_fd_to_string_done
+.L_tl_process_read_fd_to_string_error:
+    xorq %rax, %rax
+.L_tl_process_read_fd_to_string_done:
+    add $32, %rsp
+    pop %r14
+    pop %r13
+    pop %r12
+    pop %rbx
+    pop %rbp
+    ret
+
+.L_tl_process_error_result:
+    push %rbp
+    mov %rsp, %rbp
+    push %rbx
+    push %r12
+    push %r13
+    push %r14
+    push %r15
+    sub $8, %rsp
+    movq %rcx, %rbx
+    movq %rdx, %r12
+    movq %r8, %r13
     movq $16, %rcx
     call tl_alloc
     movq %r12, 0(%rax)
     movq %r13, 8(%rax)
-    movq %rax, %r12
+    movq %rax, %r14
     movq $16, %rcx
     call tl_alloc
     movq %rbx, 0(%rax)
-    movq %r12, 8(%rax)
-    movq %rax, %r12
+    movq %r14, 8(%rax)
+    movq %rax, %r15
     movq $16, %rcx
     call tl_alloc
     movq $1, 0(%rax)
-    movq %r12, 8(%rax)
-    add $40, %rsp
+    movq %r15, 8(%rax)
+    add $8, %rsp
+    pop %r15
+    pop %r14
     pop %r13
     pop %r12
     pop %rbx
-    mov %rbp, %rsp
     pop %rbp
     ret
 
+.L_tl_process_close_temp_files:
+    sub $40, %rsp
+    movq -48(%rbp), %rcx
+    testq %rcx, %rcx
+    jz .L_tl_process_close_temp_stderr
+    call fclose
+    movq $0, -48(%rbp)
+.L_tl_process_close_temp_stderr:
+    movq -64(%rbp), %rcx
+    testq %rcx, %rcx
+    jz .L_tl_process_close_temp_done
+    call fclose
+    movq $0, -64(%rbp)
+.L_tl_process_close_temp_done:
+    movq -80(%rbp), %rcx
+    cmpq $0, %rcx
+    jl .L_tl_process_close_saved_stderr
+    call _close
+    movq $-1, -80(%rbp)
+.L_tl_process_close_saved_stderr:
+    movq -88(%rbp), %rcx
+    cmpq $0, %rcx
+    jl .L_tl_process_close_all_done
+    call _close
+    movq $-1, -88(%rbp)
+.L_tl_process_close_all_done:
+    add $40, %rsp
+    ret
 ")
 
 (define (compiler-backend-runtime-process-output-functions) : String
@@ -12301,15 +13822,15 @@ tl_windows_sdk_registry_install:
               (compiler-backend-runtime-flush-stdout-functions))
             "")]
         [region-mark-asm : String
-          (compiler-backend-runtime-linux-only
-            target
-            region-mark
-            (compiler-backend-runtime-region-mark-functions))]
+          (if region-mark
+            (compiler-backend-runtime-region-mark-functions)
+            "")]
         [region-reset-asm : String
-          (compiler-backend-runtime-linux-only
-            target
-            region-reset
-            (compiler-backend-runtime-region-reset-functions))]
+          (if region-reset
+            (if (compiler-backend-target-windows? target)
+              (compiler-backend-runtime-windows-region-reset-functions)
+              (compiler-backend-runtime-region-reset-functions))
+            "")]
         [random-system-seed-asm : String
           (if random-system-seed
             (if (compiler-backend-target-windows? target)
@@ -12325,13 +13846,19 @@ tl_windows_sdk_registry_install:
             (compiler-backend-runtime-windows-sdk-registry-install-functions
               target)
             "")]
+        [arena-asm : String
+          (if (compiler-backend-target-windows? target)
+            (compiler-backend-runtime-windows-arena-functions)
+            (compiler-backend-runtime-arena-functions))]
         [runtime-front-asm : String
-          (backend-cat5
-            alloc-asm
-            region-mark-asm
-            region-reset-asm
-            oob-asm
-            div-abort-asm)]
+          (string-append
+            arena-asm
+            (backend-cat5
+              alloc-asm
+              region-mark-asm
+              region-reset-asm
+              oob-asm
+              div-abort-asm))]
         [runtime-string-asm : String
           (string-append
             (backend-cat5
@@ -12371,20 +13898,23 @@ tl_windows_sdk_registry_install:
               windows-setup-instances-asm
               windows-sdk-registry-install-asm))]
         [env-var-exists-asm : String
-          (compiler-backend-runtime-linux-only
-            target
-            env-var-exists
-            (compiler-backend-runtime-env-var-exists-functions))]
+          (if env-var-exists
+            (if (compiler-backend-target-windows? target)
+              (compiler-backend-runtime-windows-env-var-exists-functions)
+              (compiler-backend-runtime-env-var-exists-functions))
+            "")]
         [env-var-value-asm : String
-          (compiler-backend-runtime-linux-only
-            target
-            env-var-value
-            (compiler-backend-runtime-env-var-value-functions))]
+          (if env-var-value
+            (if (compiler-backend-target-windows? target)
+              (compiler-backend-runtime-windows-env-var-value-functions)
+              (compiler-backend-runtime-env-var-value-functions))
+            "")]
         [env-path-separator-asm : String
-          (compiler-backend-runtime-linux-only
-            target
-            env-path-separator
-            (compiler-backend-runtime-env-path-separator-functions))]
+          (if env-path-separator
+            (if (compiler-backend-target-windows? target)
+              (compiler-backend-runtime-windows-env-path-separator-functions)
+              (compiler-backend-runtime-env-path-separator-functions))
+            "")]
         (backend-cat5
           runtime-front-asm
           runtime-string-asm
@@ -12441,10 +13971,43 @@ tl_windows_sdk_registry_install:
 
 ;; Program entry section and global symbol. Linux links the bare `_start`;
 ;; Windows links `main` through the CRT. (The Windows entry body is #647.)
-(define (compiler-backend-target-entry-text [target : CompilerBackendTarget]) : String
-  (match target
-    [(BackendTargetLinux) ".text\n.globl _start\n"]
-    [(BackendTargetWindows) ".text\n.globl main\n"]))
+(define (compiler-backend-target-entry-text
+  [target : CompilerBackendTarget]
+  [emit-entry : bool]) : String
+  (if emit-entry
+    (match target
+      [(BackendTargetLinux) ".text\n.globl _start\n"]
+      [(BackendTargetWindows) ".text\n.globl main\n"])
+    ".text\n"))
+
+;; Run main on a fresh 1 GiB mmap'd stack, then exit(main()). The compiler
+;; recurses far deeper than the default 8 MiB stack rlimit allows — type-directed
+;; `clone` of large IR values during arena escapes (#1633) is the worst case — so
+;; a self-hosted compiler segfaults compiling a large program on the default
+;; stack. argc/argv/envp are already captured into globals before this runs, so
+;; switching %rsp is safe (main reads them from globals, not the stack). A failed
+;; mmap (negative result) keeps the original stack; the unmapped page below the
+;; region turns any overflow into a clean SIGSEGV rather than silent corruption.
+(define (compiler-backend-entry-call-main) : String
+  "    movq $0x40000000, %rsi
+    xorq %rdi, %rdi
+    movq $3, %rdx
+    movq $0x22, %r10
+    movq $-1, %r8
+    xorq %r9, %r9
+    movq $9, %rax
+    syscall
+    testq %rax, %rax
+    js .L_tl_main_keep_stack
+    addq $0x40000000, %rax
+    andq $-16, %rax
+    movq %rax, %rsp
+.L_tl_main_keep_stack:
+    call main
+    movq %rax, %rdi
+    movq $60, %rax
+    syscall
+")
 
 (define (compiler-backend-entry
   [capture-argv : bool]
@@ -12472,18 +14035,10 @@ tl_windows_sdk_registry_install:
     movq %rax, .L_tl_envp(%rip)
 ")
             "")
-          (string-append
-            global-inits
-            "    call main
-    movq %rax, %rdi
-    movq $60, %rax
-    syscall
-"))))
+          (string-append global-inits (compiler-backend-entry-call-main)))))
     (string-append
       "_start:\n"
-      (string-append
-        global-inits
-        "    call main\n    movq %rax, %rdi\n    movq $60, %rax\n    syscall\n"))))
+      (string-append global-inits (compiler-backend-entry-call-main)))))
 
 (define (compiler-backend-entry-for-target
   [target : CompilerBackendTarget]
@@ -12621,51 +14176,17 @@ tl_windows_sdk_registry_install:
                           env-path-separator
                           div-abort))))))))))]))
 
+;; All runtime helpers the backend can be asked to emit now have a Windows
+;; variant (region mark/reset and the env-var/env-path helpers were the last
+;; Windows-unsupported ones; see the *-windows-* runtime functions above), so no
+;; plan is rejected on either target. The `plan` parameter is retained for the
+;; signature shape and possible future target-specific gating.
 (define (compiler-backend-target-runtime-ok?
   [target : CompilerBackendTarget]
   [plan : CompilerBackendRuntimePlan]) : bool
-  (if (compiler-backend-target-windows? target)
-    (match plan
-      [(BackendRuntimePlan
-          _
-          _
-          _
-          _
-          _
-          _
-          _
-          _
-          _
-          _
-          _
-          _
-          _
-          _
-          _
-          _
-          _
-          _
-          _
-          _
-          _
-          _
-          _
-          region-mark
-          region-reset
-          _
-          _
-          _
-          env-var-exists
-          env-var-value
-          env-path-separator
-          _
-          _)
-        (not
-          (or
-            region-mark
-            (or
-              region-reset
-              (or env-var-exists (or env-var-value env-path-separator)))))])
+  (let
+    [_ : CompilerBackendTarget target]
+    [_plan : CompilerBackendRuntimePlan plan]
     true))
 
 (define (compiler-backend-runtime-externs-for-target
@@ -12692,10 +14213,48 @@ tl_windows_sdk_registry_install:
     .extern GetCurrentProcessId
 "
           ""))
-      (if (compiler-backend-plan-provides? plan "tl_random_system_seed")
-        "    .extern SystemFunction036
+      (string-append
+        (if (compiler-backend-plan-provides? plan "tl_random_system_seed")
+          "    .extern SystemFunction036
 "
-        ""))
+          "")
+        (string-append
+          (string-append
+            ;; getenv/strlen back the Windows env-var helpers (the Linux
+            ;; variants walk the SysV stack envp, which is absent on Windows).
+            (if (or
+              (compiler-backend-plan-provides? plan "env-var-value")
+              (compiler-backend-plan-provides? plan "env-var-exists?"))
+              "    .extern getenv
+    .extern strlen
+"
+              "")
+            ;; VirtualFree(MEM_RELEASE) releases newer arenas in the Windows
+            ;; tl_region_reset (the Linux variant uses the munmap syscall).
+            (if (compiler-backend-plan-provides? plan "tl_region_reset")
+              "    .extern VirtualFree
+"
+              ""))
+          ;; The Windows tl_process_output spawns the child via CreateProcessA
+          ;; with a constructed contiguous env block (__p__environ above) and
+          ;; captures stdout/stderr through CRT temp files made inheritable
+          ;; (tmpfile/_fileno/_get_osfhandle/SetHandleInformation), waiting via
+          ;; WaitForSingleObject/GetExitCodeProcess/CloseHandle. The Linux
+          ;; variant uses raw syscalls instead.
+          (if (compiler-backend-plan-provides? plan "tl_process_output")
+            "    .extern __p__environ
+    .extern tmpfile
+    .extern fclose
+    .extern _fileno
+    .extern _get_osfhandle
+    .extern SetHandleInformation
+    .extern CreateProcessA
+    .extern WaitForSingleObject
+    .extern GetExitCodeProcess
+    .extern CloseHandle
+    .extern GetStdHandle
+"
+            ""))))
     ""))
 
 ;; Emit a full program for `target`. Windows x64 has ABI-correct user function
@@ -12715,7 +14274,8 @@ tl_windows_sdk_registry_install:
   (compiler-backend-emit-program-target
     program
     target
-    (compiler-source-spans-empty)))
+    (compiler-source-spans-empty)
+    true))
 
 (define (compiler-backend-emit-program [program : CompilerIrProgram]) : ResultCompilerBackend
   (compiler-backend-emit-program-for-target program (BackendTargetLinux)))
@@ -12726,18 +14286,36 @@ tl_windows_sdk_registry_install:
 (define (compiler-backend-emit-program-with-spans
   [program : CompilerIrProgram]
   [spans : CompilerSourceSpans]) : ResultCompilerBackend
-  (compiler-backend-emit-program-target program (BackendTargetLinux) spans))
+  (compiler-backend-emit-program-target program (BackendTargetLinux) spans true))
+
+(define (compiler-backend-emit-program-with-spans-and-entry
+  [program : CompilerIrProgram]
+  [spans : CompilerSourceSpans]
+  [emit-entry : bool]) : ResultCompilerBackend
+  (compiler-backend-emit-program-target
+    program
+    (BackendTargetLinux)
+    spans
+    emit-entry))
 
 (define (compiler-backend-emit-program-with-spans-for-target
   [program : CompilerIrProgram]
   [spans : CompilerSourceSpans]
   [target : CompilerBackendTarget]) : ResultCompilerBackend
-  (compiler-backend-emit-program-target program target spans))
+  (compiler-backend-emit-program-target program target spans true))
+
+(define (compiler-backend-emit-program-with-spans-for-target-and-entry
+  [program : CompilerIrProgram]
+  [spans : CompilerSourceSpans]
+  [target : CompilerBackendTarget]
+  [emit-entry : bool]) : ResultCompilerBackend
+  (compiler-backend-emit-program-target program target spans emit-entry))
 
 (define (compiler-backend-emit-program-target
   [program : CompilerIrProgram]
   [target : CompilerBackendTarget]
-  [spans : CompilerSourceSpans]) : ResultCompilerBackend
+  [spans : CompilerSourceSpans]
+  [emit-entry : bool]) : ResultCompilerBackend
   (match (compiler-backend-runtime-plan program)
     [(OkBackendRuntimePlan plan)
       (if (compiler-backend-target-runtime-ok? target plan)
@@ -12793,9 +14371,11 @@ tl_windows_sdk_registry_install:
                                                 closure-names
                                                 functions
                                                 externs))
-                                            (compiler-backend-runtime-data-for-target
-                                              target
-                                              plan))
+                                            (if emit-entry
+                                              (compiler-backend-runtime-data-for-target
+                                                target
+                                                plan)
+                                              ""))
                                           (compiler-backend-emit-externs
                                             externs
                                             plan))
@@ -12803,17 +14383,22 @@ tl_windows_sdk_registry_install:
                                           target
                                           plan))
                                       (compiler-backend-target-entry-text
-                                        target))
+                                        target
+                                        emit-entry))
                                     functions-asm)
                                   closure-adapters-asm)
                                 (string-append
-                                  (compiler-backend-runtime-functions-for-target
-                                    target
-                                    plan)
-                                  (compiler-backend-entry-for-target
-                                    target
-                                    plan
-                                    globals)))]
+                                  (if emit-entry
+                                    (compiler-backend-runtime-functions-for-target
+                                      target
+                                      plan)
+                                    "")
+                                  (if emit-entry
+                                    (compiler-backend-entry-for-target
+                                      target
+                                      plan
+                                      globals)
+                                    "")))]
                             (OkCompilerBackend (text-buf-render buf)))]
                         [(ErrCompilerBackend message)
                           (ErrCompilerBackend message)]))]

@@ -4,51 +4,35 @@ Thanks for your interest! This is a learning project — all contributions welco
 
 ## Development Setup
 
-1. Install [Rust](https://rustup.rs/) (latest stable)
-2. Clone the repo: `git clone https://github.com/JoNil-Botta/typelisp`
-3. Build: `cargo build`
-4. Run tests: `cargo test`
+1. Clone the repo: `git clone https://github.com/JoNil-Botta/typelisp`
+2. Fetch the published self-hosted stage0 compiler: `scripts/fetch-stage0.sh`
+   (or `powershell -ep Bypass -f scripts\fetch-stage0.ps1` on Windows). It
+   installs as `target/stage0/typelisp` (Linux) or `target/stage0/typelisp.exe`
+   (Windows).
+3. You also need a native toolchain: `as` + `ld` on Linux, or `clang` + MSVC
+   `link.exe` + a Windows SDK on Windows, for build/run.
+4. Run the verification gate: `scripts/verify-no-rust-stage0.sh`.
+
+TypeLisp is **fully self-hosted**: the compiler compiles itself. There is no
+Rust (or other-language) compiler — see the self-perpetuating bootstrap in
+[`.github/workflows/bootstrap-stage0.yml`](.github/workflows/bootstrap-stage0.yml)
+and the README's stage0 section.
 
 ## Zero Dependencies Rule
 
-**TypeLisp uses only Rust `std`. No third-party crates allowed.**
-
-This keeps the project simple, auditable, and free from supply-chain risk. If you need functionality that isn't in std, implement it.
-
-## Selfhost-First Rule
-
-New compiler, tooling, runtime, and stdlib feature surface should land in
-TypeLisp-owned paths first: `selfhost/`, `stdlib/`, TypeLisp fixtures, or
-verification scripts. Do not add new Rust-owned feature surface unless the PR is
-explicitly tied to a no-Rust migration issue or includes the paired TypeLisp
-implementation path.
-
-This policy supports the self-hosting tracker
-[#666](https://github.com/JoNil-Botta/typelisp/issues/666) and final Rust
-cutover issue [#795](https://github.com/JoNil-Botta/typelisp/issues/795).
-
-Acceptable Rust exceptions are:
-
-- Deleting Rust as TypeLisp coverage replaces it.
-- Keeping stage0 alive temporarily while a selfhost replacement lands.
-- Adding parity tests while the paired TypeLisp implementation or no-Rust
-  harness is being introduced.
-- Changing Rust only to route behavior into selfhost or stdlib code.
-
-When a PR changes Rust-owned files such as `src/**/*.rs`, `tests/**/*.rs`,
-`tools/**/*.rs`, `Cargo.toml`, or `Cargo.lock`, fill in the PR template's
-`Selfhost-Guardrail:` line with either the paired `selfhost/...` or `stdlib/...`
-path, or the temporary bootstrap/migration reason and issue link.
+**TypeLisp has no third-party dependencies.** The only build inputs are the
+native assembler/linker toolchain. This keeps the project simple, auditable, and
+free from supply-chain risk. If you need functionality that isn't available,
+implement it in TypeLisp.
 
 ## Implementation Languages Rule
 
 **Implementation, tooling, tests, and build logic must be written in TypeLisp
-(`.tl`) by default.** Rust, C, Python, POSIX shell, PowerShell, and any other
-programming language are not permitted for those purposes unless a path
-exception below applies. This formalizes the self-hosted, no-Rust direction
-([#795](https://github.com/JoNil-Botta/typelisp/issues/795)) as an explicit,
-enforceable rule (see
-[#1171](https://github.com/JoNil-Botta/typelisp/issues/1171)).
+(`.tl`).** Any other programming language is not permitted for those purposes
+unless a path exception below applies. This is the self-hosted direction
+([#795](https://github.com/JoNil-Botta/typelisp/issues/795),
+[#666](https://github.com/JoNil-Botta/typelisp/issues/666)) as an explicit,
+enforced rule.
 
 Permitted **non-code** (config/markup/data, not implementation languages):
 GitHub Actions YAML, JSON / `.manifest` / `.expected` / `.in` / `.contains` test
@@ -64,16 +48,9 @@ Path exceptions:
   benchmark harness exists to compare TypeLisp *against* clang-compiled C.
 - **`tools/vs-code-extension/**`** - editor-API client code.
 
-Enforcement is staged (warn-then-enforce, like the lint gate
-[#1164](https://github.com/JoNil-Botta/typelisp/issues/1164)): the rule cannot
-hard-fail while the Rust stage0 still exists. Rust is retired through the
-no-Rust cutover (#795, tracked under
-[#666](https://github.com/JoNil-Botta/typelisp/issues/666)); the C `cpuid` probe
-through [#1168](https://github.com/JoNil-Botta/typelisp/issues/1168). The
-`tests/public-tools/` Python runner was migrated by #1171. The
-`scripts/check-implementation-languages.sh` CI allowlist gate honors the path
-exceptions above, keeps the current Rust stage0 baselined, and fails on new
-unbaselined forbidden-language files.
+The `scripts/check-implementation-languages.sh` CI gate honors the path
+exceptions above and **fails on any new forbidden-language file** outside them,
+enforcing the TypeLisp-only policy.
 
 ## No Syntax Aliases Rule
 
@@ -96,14 +73,15 @@ origin (the `with-region` → `with-arena` convergence).
 
 ## Before Submitting
 
-- `cargo fmt` — format your code
-- `cargo clippy` — fix warnings
-- `cargo test` — ensure tests pass
-- `cargo check` — ensure zero compiler warnings (CI will fail on warnings)
-- Verify `Cargo.toml` has no `[dependencies]` or `[dev-dependencies]` sections (CI will fail if any are present)
+Set `TYPELISP_BIN=target/stage0/typelisp` (or `.exe` on Windows) after
+`scripts/fetch-stage0.sh`, then:
+
+- `$TYPELISP_BIN fmt --check <files>` — format your TypeLisp source
+- `TYPELISP_BIN=$TYPELISP_BIN scripts/check-tl-lint.sh` — fix lint findings
+- `scripts/verify-no-rust-stage0.sh` — run the full verification gate CI uses
 - For selfhost compiler changes, follow [`selfhost/TESTING.md`](selfhost/TESTING.md)
-  when choosing module self-tests, smoke drivers, Rust compile tests, and
-  integration coverage.
+  when choosing module self-tests, smoke drivers, inline tests, and integration
+  coverage.
 
 ## Picking Work
 
@@ -121,15 +99,18 @@ origin (the `with-region` → `with-arena` convergence).
 
 ## Architecture Notes
 
-- `src/lexer.rs` — tokenizes source code
-- `src/parser.rs` — builds AST from tokens
-- `src/ast.rs` — AST data structures
-- `src/types.rs` — type system
-- `src/typechecker.rs` — Hindley-Milner-ish type inference
-- `src/ir.rs` — 3-address intermediate representation
-- `src/optimizer.rs` — IR optimization passes
-- `src/backend/` — x86_64 code generation
-- `src/runtime/` — minimal runtime (alloc, print, panic)
+The compiler is written in TypeLisp under [`selfhost/`](selfhost). Key modules:
+
+- `selfhost/lexer.tl` — tokenizes source code
+- `selfhost/compiler_parse_core.tl` — builds the AST from tokens
+- `selfhost/compiler_typecheck.tl` — type inference and checking
+- `selfhost/compiler_lower.tl` — lowering to the 3-address IR
+- `selfhost/compiler_optimize.tl` — IR optimization passes
+- `selfhost/compiler_backend.tl` — x86_64 code generation
+- `selfhost/cli.tl` — the unified toolchain CLI (the published stage0 binary)
+- `selfhost/compile.tl` — the minimal compile entry point used by the bootstrap
+
+See [`selfhost/TESTING.md`](selfhost/TESTING.md) for the testing conventions.
 
 ## Questions?
 

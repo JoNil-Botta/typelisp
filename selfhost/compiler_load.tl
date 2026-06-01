@@ -37,6 +37,10 @@
   (CompilerLoadNoModuleId)
   (CompilerLoadSomeModuleId String))
 
+(defenum CompilerLoadMaybeDecl
+  (CompilerLoadNoDecl)
+  (CompilerLoadSomeDecl AstDecl))
+
 (defenum ResultCompilerLoadModuleId
   (OkCompilerLoadModuleId String)
   (ErrCompilerLoadModuleId CompilerDiagnostic))
@@ -653,6 +657,464 @@
   [stdlib-roots : CompilerLoadRootList]) : ResultCompilerLoad
   (compiler-load-drop-paths
     (compiler-load-file-with-paths-and-roots path seen stdlib-roots)))
+
+(define (compiler-load-package-hex-digit [n : i64]) : String
+  (cond
+    [(= n 0) "0"]
+    [(= n 1) "1"]
+    [(= n 2) "2"]
+    [(= n 3) "3"]
+    [(= n 4) "4"]
+    [(= n 5) "5"]
+    [(= n 6) "6"]
+    [(= n 7) "7"]
+    [(= n 8) "8"]
+    [(= n 9) "9"]
+    [(= n 10) "a"]
+    [(= n 11) "b"]
+    [(= n 12) "c"]
+    [(= n 13) "d"]
+    [(= n 14) "e"]
+    [else "f"]))
+
+(define (compiler-load-package-hex-byte [n : i64]) : String
+  (string-append
+    (compiler-load-package-hex-digit (/ n 16))
+    (compiler-load-package-hex-digit (% n 16))))
+
+(define (compiler-load-package-symbol-char
+  [text : String]
+  [idx : i64]
+  [c : char]) : String
+  (cond
+    [(or
+        (and (>= c #A') (<= c #Z'))
+        (or
+          (and (>= c #a') (<= c #z'))
+          (or (and (>= c #0') (<= c #9')) (= c #_'))))
+      (substring text idx 1)]
+    [(= c #-') "_"]
+    [(= c #?') "_question"]
+    [(= c #!') "_bang"]
+    [(= c #+') "_plus"]
+    [(= c #*') "_star"]
+    [(= c #/') "_slash"]
+    [(= c #=') "_eq"]
+    [(= c #<') "_lt"]
+    [(= c #>') "_gt"]
+    [(= c #:') "_colon"]
+    [else
+      (string-append
+        "_u"
+        (compiler-load-package-hex-byte (compiler-load-char-code-at text idx)))]))
+
+(define (compiler-load-package-asm-safe-symbol [name : String]) : String
+  (let
+    [i : i64 0]
+    [n : i64 (string-length name)]
+    [out : String ""]
+    (begin
+      (while (< i n)
+        (begin
+          (set!
+            out
+            (string-append
+              out
+              (compiler-load-package-symbol-char name i (string-ref name i))))
+          (set! i (+ i 1))))
+      out)))
+
+(define (compiler-load-package-user-symbol [name : String]) : String
+  (if (string-eq name "main")
+    "main"
+    (string-append "_tl_" (compiler-load-package-asm-safe-symbol name))))
+
+(define (compiler-load-package-module-key [module : String] [name : String]) : String
+  (if (= (string-length module) 0)
+    name
+    (string-append module (string-append "/" name))))
+
+(define (compiler-load-package-module-id
+  [entry-path : String]
+  [decl-path : String]) : String
+  (let
+    [base : String (compiler-load-dirname entry-path)]
+    [base-len : i64 (string-length base)]
+    [decl-len : i64 (string-length decl-path)]
+    (if (and (> base-len 0) (compiler-load-string-prefix-at? decl-path base 0))
+      (substring decl-path base-len (- decl-len base-len))
+      decl-path)))
+
+(define (compiler-load-package-module-logical-name
+  [entry-path : String]
+  [decl-path : String]
+  [source-name : String]) : String
+  (if (and (string-eq decl-path entry-path) (string-eq source-name "main"))
+    "main"
+    (string-append
+      (string-append
+        (compiler-load-package-module-id entry-path decl-path)
+        "::")
+      source-name)))
+
+(define (compiler-load-package-entry-main?
+  [entry-path : String]
+  [decl-path : String]
+  [module : String]
+  [source-name : String]) : bool
+  (and
+    (and (string-eq decl-path entry-path) (string-eq source-name "main"))
+    (or (string-eq module "") (string-eq module "main"))))
+
+(define (compiler-load-package-decl-logical-name
+  [entry-path : String]
+  [decl-path : String]
+  [module : String]
+  [source-name : String]) : String
+  (if (compiler-load-package-entry-main?
+    entry-path
+    decl-path
+    module
+    source-name)
+    "main"
+    (if (string-eq module "")
+      (compiler-load-package-module-logical-name
+        entry-path
+        decl-path
+        source-name)
+      (compiler-load-package-module-logical-name
+        entry-path
+        decl-path
+        (compiler-load-package-module-key module source-name)))))
+
+(define (compiler-load-param-type-list [params : AstParamList]) : AstTypeList
+  (match params
+    [(AstParamNil) AstTypeNil]
+    [(AstParamCons param rest)
+      (match param
+        [(AstParam _ ty _)
+          (AstTypeCons ty (compiler-load-param-type-list rest))])]))
+
+(define (compiler-load-package-def-fn-extern
+  [entry-path : String]
+  [decl-path : String]
+  [module : String]
+  [name : String]
+  [params : AstParamList]
+  [ret : AstType]) : AstDecl
+  (let
+    [logical : String
+      (compiler-load-package-decl-logical-name entry-path decl-path module name)]
+    (AstDeclExtern
+      name
+      (AstExternMetadata
+        (AstExternAbiC)
+        (compiler-load-package-user-symbol logical))
+      (AstTyFunc (compiler-load-param-type-list params) ret))))
+
+(define (compiler-load-package-transform-decl
+  [entry-path : String]
+  [decl-path : String]
+  [module : String]
+  [decl : AstDecl]) : CompilerLoadMaybeDecl
+  (match decl
+    [(AstDeclDefFn name params ret _)
+      (CompilerLoadSomeDecl
+        (compiler-load-package-def-fn-extern
+          entry-path
+          decl-path
+          module
+          name
+          params
+          ret))]
+    [(AstDeclDefStruct _ _ _ _) (CompilerLoadSomeDecl decl)]
+    [(AstDeclModule _) (CompilerLoadSomeDecl decl)]
+    [(AstDeclComptimeDecl template)
+      (match (compiler-load-package-transform-decl
+        entry-path
+        decl-path
+        module
+        template)
+        [(CompilerLoadSomeDecl transformed)
+          (CompilerLoadSomeDecl (AstDeclComptimeDecl transformed))]
+        [(CompilerLoadNoDecl) (CompilerLoadNoDecl)])]
+    [_ (CompilerLoadNoDecl)]))
+
+(define (compiler-load-path-list-head-or
+  [paths : AstDeclPathList]
+  [fallback : String]) : String
+  (match paths
+    [(AstDeclPathCons path _) path]
+    [(AstDeclPathNil) fallback]))
+
+(define (compiler-load-path-list-tail [paths : AstDeclPathList]) : AstDeclPathList
+  (match paths
+    [(AstDeclPathCons _ rest) rest]
+    [(AstDeclPathNil) AstDeclPathNil]))
+
+(define (compiler-load-package-extern-decls
+  [entry-path : String]
+  [decls : AstDeclList]
+  [paths : AstDeclPathList]
+  [seen : SymI64Env]
+  [module : String]) : ResultCompilerLoadWithPaths
+  (match decls
+    [(AstDeclNil)
+      (OkCompilerLoadWithPaths AstDeclNil AstDeclPathNil AstDeclModuleNil seen)]
+    [(AstDeclCons decl rest)
+      (let
+        [decl-path : String (compiler-load-path-list-head-or paths entry-path)]
+        [rest-paths : AstDeclPathList (compiler-load-path-list-tail paths)]
+        [next-module : String
+          (match decl
+            [(AstDeclModule name) name]
+            [_ module])]
+        (match (compiler-load-package-extern-decls
+          entry-path
+          rest
+          rest-paths
+          seen
+          next-module)
+          [(OkCompilerLoadWithPaths
+              rest-decls
+              rest-decl-paths
+              rest-modules
+              rest-seen)
+            (match (compiler-load-package-transform-decl
+              entry-path
+              decl-path
+              module
+              decl)
+              [(CompilerLoadSomeDecl transformed)
+                (OkCompilerLoadWithPaths
+                  (AstDeclCons transformed rest-decls)
+                  (AstDeclPathCons decl-path rest-decl-paths)
+                  (AstDeclModuleCons module rest-modules)
+                  rest-seen)]
+              [(CompilerLoadNoDecl)
+                (OkCompilerLoadWithPaths
+                  rest-decls
+                  rest-decl-paths
+                  rest-modules
+                  rest-seen)])]
+          [(ErrCompilerLoadWithPaths diag) (ErrCompilerLoadWithPaths diag)]))]))
+
+(define (compiler-load-package-entry-path-for-source [source-path : String]) : ResultPkgResolve
+  (match (compiler-load-discover-manifest source-path)
+    [(CompilerLoadNoPath)
+      (ErrPkgResolve
+        (string-append
+          "compiler-load: dependency package manifest not found for "
+          source-path))]
+    [(CompilerLoadSomePath manifest-path)
+      (match (compiler-load-parse-manifest (read-file manifest-path))
+        [(ErrCompilerPkgManifest message)
+          (ErrPkgResolve
+            (string-append
+              "compiler-load: invalid dependency package manifest '"
+              (string-append manifest-path (string-append "': " message))))]
+        [(OkCompilerPkgManifest manifest)
+          (OkPkgResolve
+            (compiler-load-normalize-path
+              (compiler-load-join-root-path
+                (compiler-load-dirname manifest-path)
+                (struct-get manifest entry))))])]))
+
+(define (compiler-load-package-externs-from-import
+  [resolved : String]
+  [seen : SymI64Env]
+  [stdlib-roots : CompilerLoadRootList]
+  [expected-module : AstMaybeModuleName]) : ResultCompilerLoadWithPaths
+  (match (compiler-load-package-entry-path-for-source resolved)
+    [(ErrPkgResolve message)
+      (ErrCompilerLoadWithPaths (compiler-diagnostic-at-start resolved message))]
+    [(OkPkgResolve entry-path)
+      (match (compiler-load-file-with-paths-and-roots-expect
+        resolved
+        seen
+        stdlib-roots
+        expected-module)
+        [(OkCompilerLoadWithPaths imported-decls imported-paths _ import-seen)
+          (compiler-load-package-extern-decls
+            entry-path
+            imported-decls
+            imported-paths
+            import-seen
+            "")]
+        [(ErrCompilerLoadWithPaths diag) (ErrCompilerLoadWithPaths diag)])]))
+
+(define (compiler-load-package-decls-with-module-and-roots
+  [decls : AstDeclList]
+  [importer-path : String]
+  [importer-module : String]
+  [seen : SymI64Env]
+  [stdlib-roots : CompilerLoadRootList]
+  [manifest-dir : String]
+  [deps : CompilerPkgDepList]) : ResultCompilerLoadWithPaths
+  (match decls
+    [(AstDeclNil)
+      (OkCompilerLoadWithPaths AstDeclNil AstDeclPathNil AstDeclModuleNil seen)]
+    [(AstDeclCons decl rest)
+      (match decl
+        [(AstDeclImport (AstImportSpec import-path expected-module alias))
+          (match (if (compiler-load-pkg-import? import-path)
+            (compiler-load-resolve-pkg-import import-path manifest-dir deps)
+            (compiler-load-resolve-import-result-with-roots
+              importer-path
+              import-path
+              stdlib-roots))
+            [(OkPkgResolve resolved)
+              (match (if (compiler-load-pkg-import? import-path)
+                (compiler-load-package-externs-from-import
+                  resolved
+                  seen
+                  stdlib-roots
+                  expected-module)
+                (compiler-load-package-file-with-paths-and-roots-expect
+                  resolved
+                  seen
+                  stdlib-roots
+                  expected-module
+                  manifest-dir
+                  deps))
+                [(OkCompilerLoadWithPaths
+                    imported-decls
+                    imported-paths
+                    imported-modules
+                    import-seen)
+                  (match (compiler-load-package-decls-with-module-and-roots
+                    rest
+                    importer-path
+                    importer-module
+                    import-seen
+                    stdlib-roots
+                    manifest-dir
+                    deps)
+                    [(OkCompilerLoadWithPaths
+                        rest-decls
+                        rest-paths
+                        rest-modules
+                        rest-seen)
+                      (OkCompilerLoadWithPaths
+                        (compiler-load-decl-list-append
+                          imported-decls
+                          (compiler-load-alias-decl-list
+                            resolved
+                            expected-module
+                            alias
+                            rest-decls))
+                        (compiler-load-decl-path-list-append
+                          imported-paths
+                          (compiler-load-alias-path-list
+                            importer-path
+                            alias
+                            rest-paths))
+                        (compiler-load-decl-module-list-append
+                          imported-modules
+                          (compiler-load-alias-module-list
+                            importer-module
+                            alias
+                            rest-modules))
+                        rest-seen)]
+                    [(ErrCompilerLoadWithPaths diag)
+                      (ErrCompilerLoadWithPaths diag)])]
+                [(ErrCompilerLoadWithPaths diag)
+                  (ErrCompilerLoadWithPaths diag)])]
+            [(ErrPkgResolve message)
+              (ErrCompilerLoadWithPaths
+                (compiler-diagnostic-at-start importer-path message))])]
+        [_
+          (match (compiler-load-package-decls-with-module-and-roots
+            rest
+            importer-path
+            importer-module
+            seen
+            stdlib-roots
+            manifest-dir
+            deps)
+            [(OkCompilerLoadWithPaths
+                rest-decls
+                rest-paths
+                rest-modules
+                rest-seen)
+              (OkCompilerLoadWithPaths
+                (AstDeclCons decl rest-decls)
+                (AstDeclPathCons importer-path rest-paths)
+                (AstDeclModuleCons importer-module rest-modules)
+                rest-seen)]
+            [(ErrCompilerLoadWithPaths diag) (ErrCompilerLoadWithPaths diag)])])]))
+
+(define (compiler-load-package-program-with-paths-and-roots-expect
+  [path : String]
+  [program : AstProgram]
+  [seen : SymI64Env]
+  [stdlib-roots : CompilerLoadRootList]
+  [expected-module : AstMaybeModuleName]
+  [manifest-dir : String]
+  [deps : CompilerPkgDepList]) : ResultCompilerLoadWithPaths
+  (match program
+    [(AstProgram decls)
+      (match (compiler-load-decls-module-id path decls)
+        [(OkCompilerLoadModuleId module-id)
+          (match (compiler-load-check-expected-module
+            path
+            expected-module
+            module-id)
+            [(OkCompilerLoadModuleId _)
+              (if (sym-i64-contains seen module-id)
+                (OkCompilerLoadWithPaths
+                  AstDeclNil
+                  AstDeclPathNil
+                  AstDeclModuleNil
+                  seen)
+                (compiler-load-package-decls-with-module-and-roots
+                  decls
+                  path
+                  module-id
+                  (sym-i64-bind seen module-id 1)
+                  stdlib-roots
+                  manifest-dir
+                  deps))]
+            [(ErrCompilerLoadModuleId diag) (ErrCompilerLoadWithPaths diag)])]
+        [(ErrCompilerLoadModuleId diag) (ErrCompilerLoadWithPaths diag)])]))
+
+(define (compiler-load-package-file-with-paths-and-roots-expect
+  [path : String]
+  [seen : SymI64Env]
+  [stdlib-roots : CompilerLoadRootList]
+  [expected-module : AstMaybeModuleName]
+  [manifest-dir : String]
+  [deps : CompilerPkgDepList]) : ResultCompilerLoadWithPaths
+  (if (file-exists? path)
+    (match (parse-ast-source-diagnostic path (read-file path))
+      [(OkAstProgramDiagnostic program)
+        (compiler-load-package-program-with-paths-and-roots-expect
+          path
+          program
+          seen
+          stdlib-roots
+          expected-module
+          manifest-dir
+          deps)]
+      [(ErrAstProgramDiagnostic diag) (ErrCompilerLoadWithPaths diag)])
+    (ErrCompilerLoadWithPaths
+      (compiler-diagnostic-at-start
+        path
+        (string-append "compiler-load: cannot read import " path)))))
+
+(define (compiler-load-package-file-with-paths-and-roots
+  [path : String]
+  [seen : SymI64Env]
+  [stdlib-roots : CompilerLoadRootList]
+  [manifest-dir : String]
+  [deps : CompilerPkgDepList]) : ResultCompilerLoadWithPaths
+  (compiler-load-package-file-with-paths-and-roots-expect
+    path
+    seen
+    stdlib-roots
+    AstNoModuleName
+    manifest-dir
+    deps))
 
 (define (compiler-load-decl-list-count [decls : AstDeclList]) : i64
   (match decls

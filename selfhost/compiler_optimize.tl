@@ -4,6 +4,7 @@
 ;; Runs between lowering (`lower-compiler-program`) and backend emission
 ;; (`compiler-backend-emit-program`). It performs conservative, scalar-only
 ;; local rewrites: constant folding, algebraic strength reduction, CSE, copy
+;; propagation, conservative global value numbering/cross-block copy
 ;; propagation, redundant bounds-check elimination, conservative CFG
 ;; simplification, and DCE.
 ;;
@@ -17,9 +18,7 @@
 ;; - Tracking is block-local (reset per block), so no value is folded across a
 ;;   control-flow edge.
 ;;
-;; Out of scope: broad aggregate/String/array IR optimization. The only
-;; aggregate rewrite here is a conservative scalar field load replacement for
-;; classifier-approved non-escaping aggregate allocations.
+;; Out of scope: aggregate/String/array IR optimization.
 (import "compiler_ir_types.tl")
 
 (defenum ResultCompilerOptimizeLevel
@@ -66,6 +65,7 @@
   (OptAggregateScanOk OptAggregatePointerList OptAggregateAccessList)
   (OptAggregateScanReject))
 
+;; Aggregate field-load SROA (#1562) supporting types.
 (defenum OptAggregateLocation
   (OptNoAggregateLocation)
   (OptSomeAggregateLocation i64 i64))
@@ -80,6 +80,18 @@
 
 (defenum OptAggregateSroaResult
   (OptAggregateSroaResult OptAggregateFieldFacts CompilerIrInstr))
+
+(defenum OptAggregatePromoteSlot
+  (OptAggregatePromoteSlot i64 i64))
+
+(defenum OptAggregatePromoteSlotList
+  (OptAggregatePromoteSlotNil)
+  (OptAggregatePromoteSlotCons
+    OptAggregatePromoteSlot
+    OptAggregatePromoteSlotList))
+
+(defenum OptAggregatePromoteBuild
+  (OptAggregatePromoteBuild OptAggregatePromoteSlotList i64))
 
 (define compiler-optimize-level-default : i64
   1)
@@ -959,12 +971,25 @@
         [(IrBlock _ instrs)
           (opt-collect-blocks-uses (opt-collect-instrs-uses set instrs) rest)])]))
 
+;; Division, modulo, and shift can trap at runtime (zero divisor, signed
+;; MIN / -1, shift count out of range), so a BinOp using one of those operators
+;; is NOT pure: dropping it as dead would elide the trap the safe-code contract
+;; requires. These ops must stay in the IR even when their result is unused.
+(define (opt-binop-traps? [op : CompilerIrBinOp]) : bool
+  (match op
+    [(IrBinDiv) true]
+    [(IrBinMod) true]
+    [(IrBinShl) true]
+    [(IrBinShr) true]
+    [_ false]))
+
 ;; A pure temporary-producing instruction is dead when its result var is unused.
 ;; Calls (side-effecting) and control-flow instructions are never dead here.
 (define (opt-instr-dead? [set : OptUsedSet] [instr : CompilerIrInstr]) : bool
   (match instr
     [(IrInstrMov dst _ _) (not (opt-used-contains set dst))]
-    [(IrInstrBinOp dst _ _ _ _) (not (opt-used-contains set dst))]
+    [(IrInstrBinOp dst op _ _ _)
+      (and (not (opt-binop-traps? op)) (not (opt-used-contains set dst)))]
     [(IrInstrUnOp dst _ _ _) (not (opt-used-contains set dst))]
     [(IrInstrPhi dst _ _) (not (opt-used-contains set dst))]
     [(IrInstrLaneId dst _ _) (not (opt-used-contains set dst))]
@@ -1475,14 +1500,118 @@
           [_ 0])
         (opt-aggregate-access-list-store-count rest))]))
 
-;; --- aggregate scalar replacement (#1488) -----------------------------------
+;; --- aggregate stack promotion (#1489) --------------------------------------
 ;;
-;; First slice: use the non-escaping aggregate classifier above, then track
-;; block-local stores into known constant-offset field pointers. A later load
-;; from the same candidate field can be rewritten to a scalar `Mov` if no
-;; barrier or overwrite has invalidated the fact. This intentionally does not
-;; remove the allocation or stores; existing copy propagation and DCE clean up
-;; only the newly dead scalar moves in later optimizer iterations.
+;; Reuse the non-escaping aggregate classifier, but keep this first promotion
+;; slice conservative: only fixed handle-shaped structs/enums/tuples are moved
+;; onto local frame storage. Dynamic arrays and array payloads stay heap-backed.
+;;
+;; The backend frame model exposes 8-byte slots. To preserve positive byte
+;; offsets from the aggregate base, the address points at the lowest-addressed
+;; reserved slot; offset +8 then walks back toward earlier reserved slots.
+(define (opt-aggregate-stack-promote-type? [ty : AstType]) : bool
+  (match ty
+    [(AstTyStruct _) true]
+    [(AstTyEnum _) true]
+    [(AstTyTuple _) true]
+    [_ false]))
+
+(define (opt-aggregate-stack-slot-count [size : i64]) : i64
+  (/ (+ size 7) 8))
+
+(define (opt-aggregate-promote-build
+  [candidates : OptAggregateAllocCandidateList]
+  [next-frame : i64]) : OptAggregatePromoteBuild
+  (match candidates
+    [(OptAggregateAllocCandidateNil)
+      (OptAggregatePromoteBuild (OptAggregatePromoteSlotNil) next-frame)]
+    [(OptAggregateAllocCandidateCons candidate rest)
+      (match candidate
+        [(OptAggregateAllocCandidate base ty size _ _)
+          (if (opt-aggregate-stack-promote-type? ty)
+            (let
+              [slots : i64 (opt-aggregate-stack-slot-count size)]
+              [storage : i64 (+ next-frame (- slots 1))]
+              [after-frame : i64 (+ next-frame slots)]
+              (match (opt-aggregate-promote-build rest after-frame)
+                [(OptAggregatePromoteBuild rest-slots final-frame)
+                  (OptAggregatePromoteBuild
+                    (OptAggregatePromoteSlotCons
+                      (OptAggregatePromoteSlot base storage)
+                      rest-slots)
+                    final-frame)]))
+            (opt-aggregate-promote-build rest next-frame))])]))
+
+(define (opt-aggregate-promote-lookup
+  [slots : OptAggregatePromoteSlotList]
+  [base : i64]) : OptMaybeI64
+  (match slots
+    [(OptAggregatePromoteSlotNil) (OptNoI64)]
+    [(OptAggregatePromoteSlotCons slot rest)
+      (match slot
+        [(OptAggregatePromoteSlot found storage)
+          (if (= found base)
+            (OptSomeI64 storage)
+            (opt-aggregate-promote-lookup rest base))])]))
+
+(define (opt-aggregate-promote-rewrite-instr
+  [slots : OptAggregatePromoteSlotList]
+  [instr : CompilerIrInstr]) : CompilerIrInstrList
+  (match (opt-aggregate-direct-alloc instr)
+    [(OptSomeAggregateAlloc base ty _)
+      (match (opt-aggregate-promote-lookup slots base)
+        [(OptSomeI64 storage)
+          (IrInstrCons
+            (IrInstrAlloc storage ty)
+            (IrInstrCons (IrInstrAddrOf base storage) IrInstrNil))]
+        [(OptNoI64) (IrInstrCons instr IrInstrNil)])]
+    [(OptNoAggregateAlloc) (IrInstrCons instr IrInstrNil)]))
+
+(define (opt-aggregate-promote-instrs
+  [slots : OptAggregatePromoteSlotList]
+  [instrs : CompilerIrInstrList]) : CompilerIrInstrList
+  (match instrs
+    [(IrInstrNil) (IrInstrNil)]
+    [(IrInstrCons instr rest)
+      (opt-aggregate-instr-list-append
+        (opt-aggregate-promote-rewrite-instr slots instr)
+        (opt-aggregate-promote-instrs slots rest))]))
+
+(define (opt-aggregate-promote-block
+  [slots : OptAggregatePromoteSlotList]
+  [block : CompilerIrBlock]) : CompilerIrBlock
+  (match block
+    [(IrBlock label instrs)
+      (IrBlock label (opt-aggregate-promote-instrs slots instrs))]))
+
+(define (opt-aggregate-promote-blocks
+  [slots : OptAggregatePromoteSlotList]
+  [blocks : CompilerIrBlockList]) : CompilerIrBlockList
+  (match blocks
+    [(IrBlockNil) (IrBlockNil)]
+    [(IrBlockCons block rest)
+      (IrBlockCons
+        (opt-aggregate-promote-block slots block)
+        (opt-aggregate-promote-blocks slots rest))]))
+
+(define (opt-aggregate-stack-promote-function [func : CompilerIrFunction]) : CompilerIrFunction
+  (match func
+    [(IrFunction name params ret-ty frame blocks)
+      (match (opt-aggregate-promote-build
+        (opt-aggregate-allocation-candidates-function func)
+        frame)
+        [(OptAggregatePromoteBuild slots promoted-frame)
+          (IrFunction
+            name
+            params
+            ret-ty
+            promoted-frame
+            (opt-aggregate-promote-blocks slots blocks))])]))
+
+;; --- aggregate field-load scalar replacement (SROA, #1562) -------------------
+;; Replaces loads of fields from non-escaping aggregate allocations with the
+;; scalar value last stored to that field. Runs after stack promotion so it
+;; handles aggregates that promotion left in memory.
 (define (opt-aggregate-scalar-replace-type? [ty : AstType]) : bool
   (if (opt-int-or-char-type? ty)
     true
@@ -3759,6 +3888,480 @@
   (match program
     [(IrProgram _ functions _) (opt-verify-function-list functions)]))
 
+;; --- conservative global value numbering / cross-block copies (#1349) -------
+;;
+;; This pass is deliberately SSA-gated. If the function verifier cannot prove
+;; single definitions and dominance for every use, the pass leaves the function
+;; unchanged and the existing block-local optimizer still runs. For verified
+;; functions, a copy/expression fact is available only in the defining block
+;; after the defining instruction, or in a block dominated by the definition's
+;; block. Phi inputs are edge uses and are intentionally not rewritten.
+(defenum OptGlobalExprKey
+  (OptGlobalMovKey CompilerIrValue AstType)
+  (OptGlobalGepKey CompilerIrValue CompilerIrValue AstType)
+  (OptGlobalCastKey CompilerIrValue AstType AstType)
+  (OptGlobalBinKey CompilerIrBinOp CompilerIrValue CompilerIrValue AstType)
+  (OptGlobalUnKey CompilerIrUnOp CompilerIrValue AstType))
+
+(defenum OptMaybeGlobalExprKey
+  (OptNoGlobalExprKey)
+  (OptSomeGlobalExprKey OptGlobalExprKey))
+
+(defenum OptGlobalExprFact
+  (OptGlobalExprFact OptGlobalExprKey i64 String i64))
+
+(defenum OptGlobalExprFacts
+  (OptGlobalExprNil)
+  (OptGlobalExprCons OptGlobalExprFact OptGlobalExprFacts))
+
+(defenum OptGlobalCopyFact
+  (OptGlobalCopyFact i64 CompilerIrValue String i64))
+
+(defenum OptGlobalCopyFacts
+  (OptGlobalCopyNil)
+  (OptGlobalCopyCons OptGlobalCopyFact OptGlobalCopyFacts))
+
+(define (opt-global-expr-key-eq [a : OptGlobalExprKey] [b : OptGlobalExprKey]) : bool
+  (match a
+    [(OptGlobalMovKey av aty)
+      (match b
+        [(OptGlobalMovKey bv bty)
+          (and (opt-value-eq av bv) (opt-type-eq aty bty))]
+        [_ false])]
+    [(OptGlobalGepKey abase aoff aty)
+      (match b
+        [(OptGlobalGepKey bbase boff bty)
+          (and
+            (opt-value-eq abase bbase)
+            (and (opt-value-eq aoff boff) (opt-type-eq aty bty)))]
+        [_ false])]
+    [(OptGlobalCastKey av afrom ato)
+      (match b
+        [(OptGlobalCastKey bv bfrom bto)
+          (and
+            (opt-value-eq av bv)
+            (and (opt-type-eq afrom bfrom) (opt-type-eq ato bto)))]
+        [_ false])]
+    [(OptGlobalBinKey aop al ar aty)
+      (match b
+        [(OptGlobalBinKey bop bl br bty)
+          (and
+            (opt-binop-eq aop bop)
+            (and
+              (opt-value-eq al bl)
+              (and (opt-value-eq ar br) (opt-type-eq aty bty))))]
+        [_ false])]
+    [(OptGlobalUnKey aop av aty)
+      (match b
+        [(OptGlobalUnKey bop bv bty)
+          (and
+            (opt-unop-eq aop bop)
+            (and (opt-value-eq av bv) (opt-type-eq aty bty)))]
+        [_ false])]))
+
+(define (opt-global-key-for-instr [instr : CompilerIrInstr]) : OptMaybeGlobalExprKey
+  (match instr
+    [(IrInstrMov _ src ty)
+      (if (opt-copy-safe-source? src)
+        (OptSomeGlobalExprKey (OptGlobalMovKey src ty))
+        (OptNoGlobalExprKey))]
+    [(IrInstrGep _ base offset ty)
+      (OptSomeGlobalExprKey (OptGlobalGepKey base offset ty))]
+    [(IrInstrCast _ src from-ty to-ty)
+      (OptSomeGlobalExprKey (OptGlobalCastKey src from-ty to-ty))]
+    [(IrInstrBinOp _ op lhs rhs ty)
+      (OptSomeGlobalExprKey (OptGlobalBinKey op lhs rhs ty))]
+    [(IrInstrUnOp _ op src ty)
+      (OptSomeGlobalExprKey (OptGlobalUnKey op src ty))]
+    [_ (OptNoGlobalExprKey)]))
+
+(define (opt-global-fact-available?
+  [def-block : String]
+  [def-pos : i64]
+  [use-block : String]
+  [use-pos : i64]
+  [doms : OptDomTable]) : bool
+  (if (string-eq def-block use-block)
+    (< def-pos use-pos)
+    (opt-dom-dominates? doms def-block use-block)))
+
+(define (opt-global-copy-facts-from-instrs
+  [block-label : String]
+  [pos : i64]
+  [instrs : CompilerIrInstrList]
+  [tail : OptGlobalCopyFacts]) : OptGlobalCopyFacts
+  (match instrs
+    [(IrInstrNil) tail]
+    [(IrInstrCons instr rest)
+      (let
+        [rest-facts : OptGlobalCopyFacts
+          (opt-global-copy-facts-from-instrs block-label (+ pos 1) rest tail)]
+        (match instr
+          [(IrInstrMov dst src _)
+            (if (and
+              (opt-copy-safe-source? src)
+              (not (opt-value-is-var? src dst)))
+              (OptGlobalCopyCons
+                (OptGlobalCopyFact dst src block-label pos)
+                rest-facts)
+              rest-facts)]
+          [_ rest-facts]))]))
+
+(define (opt-global-copy-facts-from-blocks
+  [blocks : CompilerIrBlockList]
+  [tail : OptGlobalCopyFacts]) : OptGlobalCopyFacts
+  (match blocks
+    [(IrBlockNil) tail]
+    [(IrBlockCons block rest)
+      (let
+        [rest-facts : OptGlobalCopyFacts
+          (opt-global-copy-facts-from-blocks rest tail)]
+        (match block
+          [(IrBlock label instrs)
+            (opt-global-copy-facts-from-instrs label 1 instrs rest-facts)]))]))
+
+(define (opt-global-copy-lookup
+  [facts : OptGlobalCopyFacts]
+  [var : i64]
+  [doms : OptDomTable]
+  [use-block : String]
+  [use-pos : i64]) : CompilerIrMaybeValue
+  (match facts
+    [(OptGlobalCopyNil) (IrNoValue)]
+    [(OptGlobalCopyCons fact rest)
+      (match fact
+        [(OptGlobalCopyFact dst src def-block def-pos)
+          (if (and
+            (= dst var)
+            (opt-global-fact-available?
+              def-block
+              def-pos
+              use-block
+              use-pos
+              doms))
+            (IrSomeValue src)
+            (opt-global-copy-lookup rest var doms use-block use-pos))])]))
+
+(define (opt-global-copy-resolve-depth
+  [facts : OptGlobalCopyFacts]
+  [doms : OptDomTable]
+  [use-block : String]
+  [use-pos : i64]
+  [value : CompilerIrValue]
+  [remaining : i64]) : CompilerIrValue
+  (if (<= remaining 0)
+    value
+    (match value
+      [(IrValueVar id)
+        (match (opt-global-copy-lookup facts id doms use-block use-pos)
+          [(IrSomeValue replacement)
+            (opt-global-copy-resolve-depth
+              facts
+              doms
+              use-block
+              use-pos
+              replacement
+              (- remaining 1))]
+          [(IrNoValue) value])]
+      [_ value])))
+
+(define (opt-global-copy-resolve
+  [facts : OptGlobalCopyFacts]
+  [doms : OptDomTable]
+  [use-block : String]
+  [use-pos : i64]
+  [value : CompilerIrValue]) : CompilerIrValue
+  (opt-global-copy-resolve-depth facts doms use-block use-pos value 8))
+
+(define (opt-global-copy-subst-value-list
+  [facts : OptGlobalCopyFacts]
+  [doms : OptDomTable]
+  [use-block : String]
+  [use-pos : i64]
+  [values : CompilerIrValueList]) : CompilerIrValueList
+  (match values
+    [(IrValueNil) (IrValueNil)]
+    [(IrValueCons value rest)
+      (IrValueCons
+        (opt-global-copy-resolve facts doms use-block use-pos value)
+        (opt-global-copy-subst-value-list facts doms use-block use-pos rest))]))
+
+(define (opt-global-copy-subst-instr
+  [facts : OptGlobalCopyFacts]
+  [doms : OptDomTable]
+  [block-label : String]
+  [pos : i64]
+  [instr : CompilerIrInstr]) : CompilerIrInstr
+  (match instr
+    [(IrInstrMov dst src ty)
+      (IrInstrMov
+        dst
+        (opt-global-copy-resolve facts doms block-label pos src)
+        ty)]
+    [(IrInstrGep dst base offset ty)
+      (IrInstrGep
+        dst
+        (opt-global-copy-resolve facts doms block-label pos base)
+        (opt-global-copy-resolve facts doms block-label pos offset)
+        ty)]
+    [(IrInstrLoad dst src ty)
+      (IrInstrLoad
+        dst
+        (opt-global-copy-resolve facts doms block-label pos src)
+        ty)]
+    [(IrInstrStorePtr ptr value ty)
+      (IrInstrStorePtr
+        (opt-global-copy-resolve facts doms block-label pos ptr)
+        (opt-global-copy-resolve facts doms block-label pos value)
+        ty)]
+    [(IrInstrBoundsCheck index length ok-label)
+      (IrInstrBoundsCheck
+        (opt-global-copy-resolve facts doms block-label pos index)
+        (opt-global-copy-resolve facts doms block-label pos length)
+        ok-label)]
+    [(IrInstrCast dst src from-ty to-ty)
+      (IrInstrCast
+        dst
+        (opt-global-copy-resolve facts doms block-label pos src)
+        from-ty
+        to-ty)]
+    [(IrInstrBinOp dst op lhs rhs ty)
+      (IrInstrBinOp
+        dst
+        op
+        (opt-global-copy-resolve facts doms block-label pos lhs)
+        (opt-global-copy-resolve facts doms block-label pos rhs)
+        ty)]
+    [(IrInstrUnOp dst op src ty)
+      (IrInstrUnOp
+        dst
+        op
+        (opt-global-copy-resolve facts doms block-label pos src)
+        ty)]
+    [(IrInstrSplat dst src lanes ty)
+      (IrInstrSplat
+        dst
+        (opt-global-copy-resolve facts doms block-label pos src)
+        lanes
+        ty)]
+    [(IrInstrCall dst name args ty)
+      (IrInstrCall
+        dst
+        name
+        (opt-global-copy-subst-value-list facts doms block-label pos args)
+        ty)]
+    [(IrInstrCallIndirect dst func args ty)
+      (IrInstrCallIndirect
+        dst
+        (opt-global-copy-resolve facts doms block-label pos func)
+        (opt-global-copy-subst-value-list facts doms block-label pos args)
+        ty)]
+    [(IrInstrTailCall name args ty)
+      (IrInstrTailCall
+        name
+        (opt-global-copy-subst-value-list facts doms block-label pos args)
+        ty)]
+    [(IrInstrStore name value ty)
+      (IrInstrStore
+        name
+        (opt-global-copy-resolve facts doms block-label pos value)
+        ty)]
+    [(IrInstrBranch cond true-label false-label)
+      (IrInstrBranch
+        (opt-global-copy-resolve facts doms block-label pos cond)
+        true-label
+        false-label)]
+    [(IrInstrReturn maybe)
+      (match maybe
+        [(IrSomeValue value)
+          (IrInstrReturn
+            (IrSomeValue
+              (opt-global-copy-resolve facts doms block-label pos value)))]
+        [(IrNoValue) instr])]
+    [(IrInstrVectorBinOp _ _ _ _ _ _) instr]
+    [(IrInstrVectorReduce _ _ _ _ _) instr]
+    [(IrInstrVectorCompare _ _ _ _ _ _) instr]
+    [(IrInstrMaskBinOp _ _ _ _ _) instr]
+    [(IrInstrMaskNot _ _ _) instr]
+    [(IrInstrMaskReduce _ _ _ _) instr]
+    [(IrInstrSelect _ _ _ _ _ _) instr]
+    [(IrInstrVectorLoad _ _ _ _ _) instr]
+    [(IrInstrVectorStore _ _ _ _ _) instr]
+    [(IrInstrPredicatedStore _ _ _ _ _ _) instr]
+    [(IrInstrPredicatedLoad _ _ _ _ _ _) instr]
+    [(IrInstrTailMask _ _ _ _) instr]
+    [(IrInstrAddrOf _ _) instr]
+    [(IrInstrAlloc _ _) instr]
+    [(IrInstrLaneId _ _ _) instr]
+    [(IrInstrJump _) instr]
+    [(IrInstrPhi _ _ _) instr]))
+
+(define (opt-global-copy-instrs
+  [facts : OptGlobalCopyFacts]
+  [doms : OptDomTable]
+  [block-label : String]
+  [pos : i64]
+  [instrs : CompilerIrInstrList]) : CompilerIrInstrList
+  (match instrs
+    [(IrInstrNil) (IrInstrNil)]
+    [(IrInstrCons instr rest)
+      (IrInstrCons
+        (opt-global-copy-subst-instr facts doms block-label pos instr)
+        (opt-global-copy-instrs facts doms block-label (+ pos 1) rest))]))
+
+(define (opt-global-copy-blocks
+  [facts : OptGlobalCopyFacts]
+  [doms : OptDomTable]
+  [blocks : CompilerIrBlockList]) : CompilerIrBlockList
+  (match blocks
+    [(IrBlockNil) (IrBlockNil)]
+    [(IrBlockCons block rest)
+      (match block
+        [(IrBlock label instrs)
+          (IrBlockCons
+            (IrBlock label (opt-global-copy-instrs facts doms label 1 instrs))
+            (opt-global-copy-blocks facts doms rest))])]))
+
+(define (opt-global-expr-facts-from-instrs
+  [block-label : String]
+  [pos : i64]
+  [instrs : CompilerIrInstrList]
+  [tail : OptGlobalExprFacts]) : OptGlobalExprFacts
+  (match instrs
+    [(IrInstrNil) tail]
+    [(IrInstrCons instr rest)
+      (let
+        [rest-facts : OptGlobalExprFacts
+          (opt-global-expr-facts-from-instrs block-label (+ pos 1) rest tail)]
+        (match (opt-global-key-for-instr instr)
+          [(OptSomeGlobalExprKey key)
+            (match (opt-instr-def-var instr)
+              [(OptSomeI64 dst)
+                (OptGlobalExprCons
+                  (OptGlobalExprFact key dst block-label pos)
+                  rest-facts)]
+              [(OptNoI64) rest-facts])]
+          [(OptNoGlobalExprKey) rest-facts]))]))
+
+(define (opt-global-expr-facts-from-blocks
+  [blocks : CompilerIrBlockList]
+  [tail : OptGlobalExprFacts]) : OptGlobalExprFacts
+  (match blocks
+    [(IrBlockNil) tail]
+    [(IrBlockCons block rest)
+      (let
+        [rest-facts : OptGlobalExprFacts
+          (opt-global-expr-facts-from-blocks rest tail)]
+        (match block
+          [(IrBlock label instrs)
+            (opt-global-expr-facts-from-instrs label 1 instrs rest-facts)]))]))
+
+(define (opt-global-expr-lookup
+  [facts : OptGlobalExprFacts]
+  [key : OptGlobalExprKey]
+  [dst : i64]
+  [doms : OptDomTable]
+  [use-block : String]
+  [use-pos : i64]) : CompilerIrMaybeValue
+  (match facts
+    [(OptGlobalExprNil) (IrNoValue)]
+    [(OptGlobalExprCons fact rest)
+      (match fact
+        [(OptGlobalExprFact fact-key fact-dst def-block def-pos)
+          (if (and
+            (not (= fact-dst dst))
+            (and
+              (opt-global-expr-key-eq fact-key key)
+              (opt-global-fact-available?
+                def-block
+                def-pos
+                use-block
+                use-pos
+                doms)))
+            (IrSomeValue (IrValueVar fact-dst))
+            (opt-global-expr-lookup rest key dst doms use-block use-pos))])]))
+
+(define (opt-global-cse-instr
+  [facts : OptGlobalExprFacts]
+  [doms : OptDomTable]
+  [block-label : String]
+  [pos : i64]
+  [instr : CompilerIrInstr]) : CompilerIrInstr
+  (match (opt-global-key-for-instr instr)
+    [(OptSomeGlobalExprKey key)
+      (match (opt-instr-def-var instr)
+        [(OptSomeI64 dst)
+          (match (opt-global-expr-lookup facts key dst doms block-label pos)
+            [(IrSomeValue earlier)
+              (match instr
+                [(IrInstrMov _ _ ty) (IrInstrMov dst earlier ty)]
+                [(IrInstrGep _ _ _ ty) (IrInstrMov dst earlier ty)]
+                [(IrInstrCast _ _ _ to-ty) (IrInstrMov dst earlier to-ty)]
+                [(IrInstrBinOp _ _ _ _ ty) (IrInstrMov dst earlier ty)]
+                [(IrInstrUnOp _ _ _ ty) (IrInstrMov dst earlier ty)]
+                [_ instr])]
+            [(IrNoValue) instr])]
+        [(OptNoI64) instr])]
+    [(OptNoGlobalExprKey) instr]))
+
+(define (opt-global-cse-instrs
+  [facts : OptGlobalExprFacts]
+  [doms : OptDomTable]
+  [block-label : String]
+  [pos : i64]
+  [instrs : CompilerIrInstrList]) : CompilerIrInstrList
+  (match instrs
+    [(IrInstrNil) (IrInstrNil)]
+    [(IrInstrCons instr rest)
+      (IrInstrCons
+        (opt-global-cse-instr facts doms block-label pos instr)
+        (opt-global-cse-instrs facts doms block-label (+ pos 1) rest))]))
+
+(define (opt-global-cse-blocks
+  [facts : OptGlobalExprFacts]
+  [doms : OptDomTable]
+  [blocks : CompilerIrBlockList]) : CompilerIrBlockList
+  (match blocks
+    [(IrBlockNil) (IrBlockNil)]
+    [(IrBlockCons block rest)
+      (match block
+        [(IrBlock label instrs)
+          (IrBlockCons
+            (IrBlock label (opt-global-cse-instrs facts doms label 1 instrs))
+            (opt-global-cse-blocks facts doms rest))])]))
+
+(define (opt-global-value-number-blocks [blocks : CompilerIrBlockList]) : CompilerIrBlockList
+  (let
+    [doms : OptDomTable (opt-cfg-dominators blocks)]
+    [copy-facts : OptGlobalCopyFacts
+      (opt-global-copy-facts-from-blocks blocks (OptGlobalCopyNil))]
+    (let
+      [copied : CompilerIrBlockList
+        (opt-global-copy-blocks copy-facts doms blocks)]
+      (let
+        [expr-facts : OptGlobalExprFacts
+          (opt-global-expr-facts-from-blocks copied (OptGlobalExprNil))]
+        (let
+          [cse : CompilerIrBlockList
+            (opt-global-cse-blocks expr-facts doms copied)]
+          (let
+            [cse-copy-facts : OptGlobalCopyFacts
+              (opt-global-copy-facts-from-blocks cse (OptGlobalCopyNil))]
+            (opt-global-copy-blocks cse-copy-facts doms cse)))))))
+
+(define (opt-global-value-number-function [func : CompilerIrFunction]) : CompilerIrFunction
+  (match (opt-verify-function func)
+    [(OkCompilerOptimizeVerify)
+      (match func
+        [(IrFunction name params ret-ty frame blocks)
+          (IrFunction
+            name
+            params
+            ret-ty
+            frame
+            (opt-global-value-number-blocks blocks))])]
+    [(ErrCompilerOptimizeVerify _) func]))
+
 (define (opt-cfg-fold-branch [instr : CompilerIrInstr]) : CompilerIrInstr
   (match instr
     [(IrInstrBranch cond true-label false-label)
@@ -4835,26 +5438,47 @@
       (let
         [folded : CompilerIrBlockList (optimize-block-list blocks)]
         (let
-          [aggregate-sroa : CompilerIrFunction
-            (opt-aggregate-sroa-function
+          [promoted : CompilerIrFunction
+            (opt-aggregate-stack-promote-function
               (IrFunction name params ret-ty frame folded))]
-          (match aggregate-sroa
-            [(IrFunction _ _ _ _ sroa-blocks)
-              (let
-                [gvn : CompilerIrBlockList (opt-gvn-blocks params sroa-blocks)]
-                (let
-                  [sccp : CompilerIrBlockList (opt-sccp-blocks params gvn)]
+          (match promoted
+            [(IrFunction _ _ _ promoted-frame promoted-blocks)
+              ;; Aggregate field-load SROA (#1562) runs on the post-promotion
+              ;; blocks/frame (it leaves the frame unchanged), so the slots stay
+              ;; consistent with the later #1530 global-GVN pass below.
+              (match (opt-aggregate-sroa-function
+                (IrFunction name params ret-ty promoted-frame promoted-blocks))
+                [(IrFunction _ _ _ _ sroa-blocks)
                   (let
-                    [cfg : CompilerIrBlockList (opt-cfg-simplify-blocks sccp)]
+                    [gvn : CompilerIrBlockList
+                      (opt-gvn-blocks params sroa-blocks)]
                     (let
-                      [used : OptUsedSet
-                        (opt-collect-blocks-uses (OptUsedNil) cfg)]
-                      (IrFunction
-                        name
-                        params
-                        ret-ty
-                        frame
-                        (opt-dce-block-list used cfg))))))])))]))
+                      [sccp : CompilerIrBlockList (opt-sccp-blocks params gvn)]
+                      (let
+                        [cfg : CompilerIrBlockList
+                          (opt-cfg-simplify-blocks sccp)]
+                        ;; Cross-block global value numbering + copy propagation
+                        ;; (#1530) runs after local GVN/SCCP/CFG cleanup, on the
+                        ;; post-stack-promotion frame so its slots stay consistent
+                        ;; with the promoted blocks.
+                        (let
+                          [global : CompilerIrFunction
+                            (opt-global-value-number-function
+                              (IrFunction name params ret-ty promoted-frame cfg))]
+                          (let
+                            [global-blocks : CompilerIrBlockList
+                              (opt-function-blocks global)]
+                            (let
+                              [used : OptUsedSet
+                                (opt-collect-blocks-uses
+                                  (OptUsedNil)
+                                  global-blocks)]
+                              (IrFunction
+                                name
+                                params
+                                ret-ty
+                                promoted-frame
+                                (opt-dce-block-list used global-blocks))))))))])])))]))
 
 (define (optimize-function-once-fast [func : CompilerIrFunction]) : CompilerIrFunction
   (match func
@@ -4894,15 +5518,66 @@
 (define (optimize-function-list [funcs : CompilerIrFunctionList]) : CompilerIrFunctionList
   (optimize-function-list-with-level funcs (compiler-optimize-default-level)))
 
+;; Per-function arena escape (#1633). The optimizer fixpoint allocates up to
+;; ~80 throwaway IR copies per function (10 iterations x ~8 passes), none freed
+;; by the bump allocator. To cap peak memory we run each function's optimization
+;; in a reusable scratch arena, deep-`clone` only the final result back into the
+;; enclosing (program) arena, then rewind the scratch — so a single function's
+;; transient generations are reclaimed before the next function is processed.
 (define (optimize-function-list-with-level
   [funcs : CompilerIrFunctionList]
   [level : i64]) : CompilerIrFunctionList
+  (if (= level 0)
+    funcs
+    (let
+      [scratch : i64 (arena-make)]
+      (let
+        [result : CompilerIrFunctionList
+          (optimize-function-list-escaping funcs level scratch)]
+        (begin
+          (arena-destroy scratch)
+          result)))))
+
+(define (optimize-function-list-escaping
+  [funcs : CompilerIrFunctionList]
+  [level : i64]
+  [scratch : i64]) : CompilerIrFunctionList
   (match funcs
     [(IrFunctionNil) (IrFunctionNil)]
     [(IrFunctionCons func rest)
       (IrFunctionCons
-        (optimize-function-with-level func level)
-        (optimize-function-list-with-level rest level))]))
+        (optimize-function-escaping func level scratch)
+        (optimize-function-list-escaping rest level scratch))]))
+
+;; Optimize one function inside `scratch`, then escape the result by deep-cloning
+;; it into the enclosing arena and rewinding `scratch` for reuse. The enclosing
+;; arena is captured fresh on entry, so the grown head is never stale across the
+;; recursion and no overflow arenas leak.
+(define (optimize-function-escaping
+  [func : CompilerIrFunction]
+  [level : i64]
+  [scratch : i64]) : CompilerIrFunction
+  (let
+    [enclosing : i64 (arena-current)]
+    (begin
+      (arena-set! scratch)
+      (let
+        [mark : i64 (arena-mark)]
+        (let
+          [raw : CompilerIrFunction (optimize-function-with-level func level)]
+          (let
+            [scratch-head : i64 (arena-current)]
+            (begin
+              (arena-set! enclosing)
+              (let
+                [escaped : CompilerIrFunction (clone raw)]
+                (let
+                  [new-enclosing : i64 (arena-current)]
+                  (begin
+                    (arena-set! scratch-head)
+                    (arena-rewind mark)
+                    (arena-set! new-enclosing)
+                    escaped))))))))))
 
 (defenum OptStringSet
   (OptStringNil)
@@ -5895,6 +6570,122 @@
         (opt-aggregate-no-candidates? (opt-aggregate-predicated-memory-instrs)))
       9]
     [else 42]))
+
+(define (opt-aggregate-array-local-instrs) : CompilerIrInstrList
+  (IrInstrCons
+    (IrInstrCall
+      1
+      "tl_alloc"
+      (IrValueCons (IrValueI64 16) IrValueNil)
+      (AstTyArray (AstTyI64) 2))
+    (IrInstrCons
+      (IrInstrGep 2 (IrValueVar 1) (IrValueI64 0) (AstTyU8))
+      (IrInstrCons
+        (IrInstrStorePtr
+          (IrValueVar 2)
+          (IrValueVar 9)
+          (AstTyArray (AstTyI64) 2))
+        (IrInstrCons
+          (IrInstrGep 3 (IrValueVar 1) (IrValueI64 0) (AstTyU8))
+          (IrInstrCons
+            (IrInstrLoad 4 (IrValueVar 3) (AstTyArray (AstTyI64) 2))
+            (IrInstrCons
+              (IrInstrReturn (IrSomeValue (IrValueI64 0)))
+              IrInstrNil)))))))
+
+(define (opt-count-tl-alloc-calls [instrs : CompilerIrInstrList]) : i64
+  (match instrs
+    [(IrInstrNil) 0]
+    [(IrInstrCons instr rest)
+      (+
+        (match instr
+          [(IrInstrCall _ name _ _)
+            (if (string-eq name "tl_alloc")
+              1
+              0)]
+          [_ 0])
+        (opt-count-tl-alloc-calls rest))]))
+
+(define (opt-count-ir-alloc-instrs [instrs : CompilerIrInstrList]) : i64
+  (match instrs
+    [(IrInstrNil) 0]
+    [(IrInstrCons instr rest)
+      (+
+        (match instr
+          [(IrInstrAlloc _ _) 1]
+          [_ 0])
+        (opt-count-ir-alloc-instrs rest))]))
+
+(define (opt-count-addr-of-instrs [instrs : CompilerIrInstrList]) : i64
+  (match instrs
+    [(IrInstrNil) 0]
+    [(IrInstrCons instr rest)
+      (+
+        (match instr
+          [(IrInstrAddrOf _ _) 1]
+          [_ 0])
+        (opt-count-addr-of-instrs rest))]))
+
+(define (opt-aggregate-promote-test-function [instrs : CompilerIrInstrList]) : CompilerIrFunction
+  (opt-aggregate-stack-promote-function (opt-spans-function instrs)))
+
+(define (opt-aggregate-promote-test-instrs [instrs : CompilerIrInstrList]) : CompilerIrInstrList
+  (match (opt-aggregate-promote-test-function instrs)
+    [(IrFunction _ _ _ _ blocks)
+      (match blocks
+        [(IrBlockCons block _)
+          (match block
+            [(IrBlock _ optimized) optimized])]
+        [(IrBlockNil) IrInstrNil])]))
+
+(define (opt-aggregate-promote-test-frame [instrs : CompilerIrInstrList]) : i64
+  (match (opt-aggregate-promote-test-function instrs)
+    [(IrFunction _ _ _ frame _) frame]))
+
+(define (compiler-optimize-aggregate-promote-self-test) : i64
+  (let
+    [positive : CompilerIrInstrList
+      (opt-aggregate-promote-test-instrs (opt-aggregate-positive-instrs))]
+    [returned : CompilerIrInstrList
+      (opt-aggregate-promote-test-instrs (opt-aggregate-returned-instrs))]
+    [passed : CompilerIrInstrList
+      (opt-aggregate-promote-test-instrs (opt-aggregate-passed-instrs))]
+    [stored : CompilerIrInstrList
+      (opt-aggregate-promote-test-instrs (opt-aggregate-global-store-instrs))]
+    [unknown-offset : CompilerIrInstrList
+      (opt-aggregate-promote-test-instrs (opt-aggregate-unknown-offset-instrs))]
+    [call-separated : CompilerIrInstrList
+      (opt-aggregate-promote-test-instrs (opt-aggregate-call-separated-instrs))]
+    [array-local : CompilerIrInstrList
+      (opt-aggregate-promote-test-instrs (opt-aggregate-array-local-instrs))]
+    [level0 : CompilerIrProgram
+      (optimize-program-with-level
+        (opt-spans-program (opt-aggregate-positive-instrs))
+        0)]
+    [level2 : CompilerIrProgram
+      (optimize-program-with-level
+        (opt-spans-program (opt-aggregate-positive-instrs))
+        2)]
+    (cond
+      [(not (= (opt-count-tl-alloc-calls positive) 0)) 1]
+      [(not (= (opt-count-ir-alloc-instrs positive) 1)) 2]
+      [(not (= (opt-count-addr-of-instrs positive) 1)) 3]
+      [(not
+          (=
+            (opt-aggregate-promote-test-frame (opt-aggregate-positive-instrs))
+            6))
+        4]
+      [(not (= (opt-count-tl-alloc-calls returned) 1)) 5]
+      [(not (= (opt-count-tl-alloc-calls passed) 1)) 6]
+      [(not (= (opt-count-tl-alloc-calls stored) 1)) 7]
+      [(not (= (opt-count-tl-alloc-calls unknown-offset) 1)) 8]
+      [(not (= (opt-count-tl-alloc-calls call-separated) 1)) 9]
+      [(not (= (opt-count-tl-alloc-calls array-local) 1)) 10]
+      [(not (= (opt-count-tl-alloc-calls (opt-program-first-instrs level0)) 1))
+        11]
+      [(not (= (opt-count-tl-alloc-calls (opt-program-first-instrs level2)) 0))
+        12]
+      [else 42])))
 
 (define (opt-aggregate-repeated-load-instrs) : CompilerIrInstrList
   (IrInstrCons
@@ -7450,6 +8241,94 @@
               (opt-blocks-mov-dst-i64-value rest dst fallback)
               value))])]))
 
+(define (opt-count-cast-blocks [blocks : CompilerIrBlockList]) : i64
+  (match blocks
+    [(IrBlockNil) 0]
+    [(IrBlockCons block rest)
+      (match block
+        [(IrBlock _ instrs)
+          (+ (opt-count-cast-instrs instrs) (opt-count-cast-blocks rest))])]))
+
+(define (opt-count-gep-instrs [instrs : CompilerIrInstrList]) : i64
+  (match instrs
+    [(IrInstrNil) 0]
+    [(IrInstrCons instr rest)
+      (+
+        (match instr
+          [(IrInstrGep _ _ _ _) 1]
+          [_ 0])
+        (opt-count-gep-instrs rest))]))
+
+(define (opt-count-gep-blocks [blocks : CompilerIrBlockList]) : i64
+  (match blocks
+    [(IrBlockNil) 0]
+    [(IrBlockCons block rest)
+      (match block
+        [(IrBlock _ instrs)
+          (+ (opt-count-gep-instrs instrs) (opt-count-gep-blocks rest))])]))
+
+(define (opt-count-load-instrs [instrs : CompilerIrInstrList]) : i64
+  (match instrs
+    [(IrInstrNil) 0]
+    [(IrInstrCons instr rest)
+      (+
+        (match instr
+          [(IrInstrLoad _ _ _) 1]
+          [_ 0])
+        (opt-count-load-instrs rest))]))
+
+(define (opt-count-load-blocks [blocks : CompilerIrBlockList]) : i64
+  (match blocks
+    [(IrBlockNil) 0]
+    [(IrBlockCons block rest)
+      (match block
+        [(IrBlock _ instrs)
+          (+ (opt-count-load-instrs instrs) (opt-count-load-blocks rest))])]))
+
+(define (opt-blocks-binop-lhs-var
+  [blocks : CompilerIrBlockList]
+  [dst : i64]
+  [fallback : i64]) : i64
+  (match blocks
+    [(IrBlockNil) fallback]
+    [(IrBlockCons block rest)
+      (match block
+        [(IrBlock _ instrs)
+          (let
+            [value : i64 (opt-copy-binop-lhs-var instrs dst)]
+            (if (= value (- 0 1))
+              (opt-blocks-binop-lhs-var rest dst fallback)
+              value))])]))
+
+(define (opt-blocks-mov-src-var
+  [blocks : CompilerIrBlockList]
+  [dst : i64]
+  [fallback : i64]) : i64
+  (match blocks
+    [(IrBlockNil) fallback]
+    [(IrBlockCons block rest)
+      (match block
+        [(IrBlock _ instrs)
+          (let
+            [value : i64 (opt-mov-src-var instrs dst fallback)]
+            (if (= value fallback)
+              (opt-blocks-mov-src-var rest dst fallback)
+              value))])]))
+
+(define (opt-mov-src-var
+  [instrs : CompilerIrInstrList]
+  [dst : i64]
+  [fallback : i64]) : i64
+  (match instrs
+    [(IrInstrNil) fallback]
+    [(IrInstrCons instr rest)
+      (match instr
+        [(IrInstrMov mov-dst (IrValueVar src) _)
+          (if (= mov-dst dst)
+            src
+            (opt-mov-src-var rest dst fallback))]
+        [_ (opt-mov-src-var rest dst fallback)])]))
+
 (define (opt-cfg-test-function [blocks : CompilerIrBlockList]) : CompilerIrFunction
   (IrFunction "cfg" (IrParamNil) (AstTyI64) 16 blocks))
 
@@ -7458,6 +8337,258 @@
 
 (define (opt-sccp-loop-params) : CompilerIrParamList
   (IrParamCons (IrParam "cond" (AstTyBool) 4) (IrParamNil)))
+
+(define (opt-gvn-scalar-params) : CompilerIrParamList
+  (IrParamCons
+    (IrParam "cond" (AstTyBool) 0)
+    (IrParamCons
+      (IrParam "lhs" (AstTyI64) 1)
+      (IrParamCons (IrParam "rhs" (AstTyI64) 2) (IrParamNil)))))
+
+(define (opt-gvn-pointer-params) : CompilerIrParamList
+  (IrParamCons (IrParam "ptr" (AstTyI64) 1) (IrParamNil)))
+
+(define (opt-gvn-function
+  [name : String]
+  [params : CompilerIrParamList]
+  [ret-ty : AstType]
+  [blocks : CompilerIrBlockList]) : CompilerIrFunction
+  (IrFunction name params ret-ty 16 blocks))
+
+(define (opt-gvn-dominated-diamond-blocks) : CompilerIrBlockList
+  (IrBlockCons
+    (IrBlock
+      "entry"
+      (IrInstrCons
+        (IrInstrBinOp 3 (IrBinAdd) (IrValueVar 1) (IrValueVar 2) (AstTyI64))
+        (IrInstrCons (IrInstrBranch (IrValueVar 0) "then" "else") (IrInstrNil))))
+    (IrBlockCons
+      (IrBlock
+        "then"
+        (IrInstrCons
+          (IrInstrBinOp 4 (IrBinAdd) (IrValueVar 1) (IrValueVar 2) (AstTyI64))
+          (IrInstrCons (IrInstrJump "join") (IrInstrNil))))
+      (IrBlockCons
+        (IrBlock
+          "else"
+          (IrInstrCons
+            (IrInstrBinOp 5 (IrBinAdd) (IrValueVar 1) (IrValueVar 2) (AstTyI64))
+            (IrInstrCons (IrInstrJump "join") (IrInstrNil))))
+        (IrBlockCons
+          (IrBlock
+            "join"
+            (IrInstrCons
+              (IrInstrPhi
+                6
+                (IrPhiInputCons
+                  (IrPhiInput (IrValueVar 4) "then")
+                  (IrPhiInputCons
+                    (IrPhiInput (IrValueVar 5) "else")
+                    (IrPhiInputNil)))
+                (AstTyI64))
+              (IrInstrCons
+                (IrInstrReturn (IrSomeValue (IrValueVar 6)))
+                (IrInstrNil))))
+          (IrBlockNil))))))
+
+(define (opt-gvn-sibling-blocks) : CompilerIrBlockList
+  (IrBlockCons
+    (IrBlock
+      "entry"
+      (IrInstrCons (IrInstrBranch (IrValueVar 0) "then" "else") (IrInstrNil)))
+    (IrBlockCons
+      (IrBlock
+        "then"
+        (IrInstrCons
+          (IrInstrBinOp 3 (IrBinAdd) (IrValueVar 1) (IrValueVar 2) (AstTyI64))
+          (IrInstrCons
+            (IrInstrReturn (IrSomeValue (IrValueVar 3)))
+            (IrInstrNil))))
+      (IrBlockCons
+        (IrBlock
+          "else"
+          (IrInstrCons
+            (IrInstrBinOp 4 (IrBinAdd) (IrValueVar 1) (IrValueVar 2) (AstTyI64))
+            (IrInstrCons
+              (IrInstrReturn (IrSomeValue (IrValueVar 4)))
+              (IrInstrNil))))
+        (IrBlockNil)))))
+
+(define (opt-gvn-phi-loop-blocks) : CompilerIrBlockList
+  (IrBlockCons
+    (IrBlock "entry" (IrInstrCons (IrInstrJump "loop") (IrInstrNil)))
+    (IrBlockCons
+      (IrBlock
+        "loop"
+        (IrInstrCons
+          (IrInstrPhi
+            5
+            (IrPhiInputCons
+              (IrPhiInput (IrValueVar 1) "entry")
+              (IrPhiInputCons
+                (IrPhiInput (IrValueVar 4) "body")
+                (IrPhiInputNil)))
+            (AstTyI64))
+          (IrInstrCons
+            (IrInstrBinOp 3 (IrBinAdd) (IrValueVar 5) (IrValueVar 2) (AstTyI64))
+            (IrInstrCons
+              (IrInstrBranch (IrValueVar 0) "body" "exit")
+              (IrInstrNil)))))
+      (IrBlockCons
+        (IrBlock
+          "body"
+          (IrInstrCons
+            (IrInstrBinOp 4 (IrBinAdd) (IrValueVar 5) (IrValueVar 2) (AstTyI64))
+            (IrInstrCons (IrInstrJump "loop") (IrInstrNil))))
+        (IrBlockCons
+          (IrBlock
+            "exit"
+            (IrInstrCons
+              (IrInstrReturn (IrSomeValue (IrValueVar 3)))
+              (IrInstrNil)))
+          (IrBlockNil))))))
+
+(define (opt-gvn-load-barrier-blocks) : CompilerIrBlockList
+  (IrBlockCons
+    (IrBlock
+      "entry"
+      (IrInstrCons
+        (IrInstrLoad 3 (IrValueVar 1) (AstTyI64))
+        (IrInstrCons (IrInstrJump "use") (IrInstrNil))))
+    (IrBlockCons
+      (IrBlock
+        "use"
+        (IrInstrCons
+          (IrInstrLoad 4 (IrValueVar 1) (AstTyI64))
+          (IrInstrCons
+            (IrInstrReturn (IrSomeValue (IrValueVar 4)))
+            (IrInstrNil))))
+      (IrBlockNil))))
+
+(define (opt-gvn-copy-blocks) : CompilerIrBlockList
+  (IrBlockCons
+    (IrBlock
+      "entry"
+      (IrInstrCons
+        (IrInstrMov 3 (IrValueVar 1) (AstTyI64))
+        (IrInstrCons (IrInstrJump "use") (IrInstrNil))))
+    (IrBlockCons
+      (IrBlock
+        "use"
+        (IrInstrCons
+          (IrInstrBinOp 4 (IrBinAdd) (IrValueVar 3) (IrValueI64 1) (AstTyI64))
+          (IrInstrCons
+            (IrInstrReturn (IrSomeValue (IrValueVar 4)))
+            (IrInstrNil))))
+      (IrBlockNil))))
+
+(define (opt-gvn-cast-blocks) : CompilerIrBlockList
+  (IrBlockCons
+    (IrBlock
+      "entry"
+      (IrInstrCons
+        (IrInstrCast 3 (IrValueVar 1) (AstTyI64) (AstTyI32))
+        (IrInstrCons (IrInstrJump "use") (IrInstrNil))))
+    (IrBlockCons
+      (IrBlock
+        "use"
+        (IrInstrCons
+          (IrInstrCast 4 (IrValueVar 1) (AstTyI64) (AstTyI32))
+          (IrInstrCons
+            (IrInstrReturn (IrSomeValue (IrValueVar 4)))
+            (IrInstrNil))))
+      (IrBlockNil))))
+
+(define (opt-gvn-gep-blocks) : CompilerIrBlockList
+  (IrBlockCons
+    (IrBlock
+      "entry"
+      (IrInstrCons
+        (IrInstrGep 3 (IrValueVar 1) (IrValueI64 8) (AstTyU8))
+        (IrInstrCons (IrInstrJump "use") (IrInstrNil))))
+    (IrBlockCons
+      (IrBlock
+        "use"
+        (IrInstrCons
+          (IrInstrGep 4 (IrValueVar 1) (IrValueI64 8) (AstTyU8))
+          (IrInstrCons
+            (IrInstrReturn (IrSomeValue (IrValueVar 4)))
+            (IrInstrNil))))
+      (IrBlockNil))))
+
+(define (compiler-optimize-global-value-number-self-test) : i64
+  (let
+    [dominated : CompilerIrBlockList
+      (opt-function-blocks
+        (optimize-function
+          (opt-gvn-function
+            "gvn_dominated"
+            (opt-gvn-scalar-params)
+            (AstTyI64)
+            (opt-gvn-dominated-diamond-blocks))))]
+    [sibling : CompilerIrBlockList
+      (opt-function-blocks
+        (optimize-function
+          (opt-gvn-function
+            "gvn_sibling"
+            (opt-gvn-scalar-params)
+            (AstTyI64)
+            (opt-gvn-sibling-blocks))))]
+    [loop : CompilerIrBlockList
+      (opt-function-blocks
+        (optimize-function
+          (opt-gvn-function
+            "gvn_loop"
+            (opt-gvn-scalar-params)
+            (AstTyI64)
+            (opt-gvn-phi-loop-blocks))))]
+    [loads : CompilerIrBlockList
+      (opt-function-blocks
+        (optimize-function
+          (opt-gvn-function
+            "gvn_loads"
+            (opt-gvn-pointer-params)
+            (AstTyI64)
+            (opt-gvn-load-barrier-blocks))))]
+    [copy : CompilerIrBlockList
+      (opt-function-blocks
+        (optimize-function
+          (opt-gvn-function
+            "gvn_copy"
+            (opt-gvn-pointer-params)
+            (AstTyI64)
+            (opt-gvn-copy-blocks))))]
+    [cast : CompilerIrBlockList
+      (opt-function-blocks
+        (optimize-function
+          (opt-gvn-function
+            "gvn_cast"
+            (opt-gvn-pointer-params)
+            (AstTyI32)
+            (opt-gvn-cast-blocks))))]
+    [gep : CompilerIrBlockList
+      (opt-function-blocks
+        (optimize-function
+          (opt-gvn-function
+            "gvn_gep"
+            (opt-gvn-pointer-params)
+            (AstTyU8)
+            (opt-gvn-gep-blocks))))]
+    (cond
+      [(not (= (opt-count-arith-blocks dominated) 1)) 1]
+      [(not (= (opt-blocks-mov-src-var dominated 4 (- 0 1)) 3)) 2]
+      [(not (= (opt-blocks-mov-src-var dominated 5 (- 0 1)) 3)) 3]
+      [(not (= (opt-count-arith-blocks sibling) 2)) 4]
+      [(not (= (opt-count-arith-blocks loop) 1)) 5]
+      [(not (= (opt-blocks-mov-src-var loop 4 (- 0 1)) 3)) 6]
+      [(not (= (opt-count-load-blocks loads) 2)) 7]
+      [(not (= (opt-blocks-binop-lhs-var copy 4 (- 0 1)) 1)) 8]
+      [(not (= (opt-count-mov-dst-blocks copy 3) 0)) 9]
+      [(not (= (opt-count-cast-blocks cast) 1)) 10]
+      [(not (= (opt-count-mov-dst-blocks cast 4) 0)) 11]
+      [(not (= (opt-count-gep-blocks gep) 1)) 12]
+      [(not (= (opt-count-mov-dst-blocks gep 4) 0)) 13]
+      [else 42])))
 
 (define (opt-sccp-cross-block-blocks) : CompilerIrBlockList
   (IrBlockCons

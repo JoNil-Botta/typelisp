@@ -3,7 +3,7 @@
 # accepted (or correctly rejected) by the SELFHOST compiler frontend
 # (selfhost/check.tl: parse + typecheck via the selfhost parser/typechecker),
 # complementing scripts/verify-stdlib.sh which drives the same witnesses through
-# the Rust compiler. Part of #842 (prove stdlib modules with the selfhost
+# the full self-hosted compiler. Part of #842 (prove stdlib modules with the selfhost
 # compiler). This slice covers the selfhost frontend (parse + typecheck);
 # selfhost compile+run of witnesses remains future work on #842.
 set -euo pipefail
@@ -11,12 +11,19 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
-COMPILER="${TYPELISP_BIN:-target/release/typelisp}"
 HOST_OS=linux
 case "$(uname -s)" in
     Linux*) HOST_OS=linux ;;
     MINGW* | MSYS* | CYGWIN*) HOST_OS=windows ;;
 esac
+if [ -n "${TYPELISP_BIN:-}" ]; then
+    COMPILER="$TYPELISP_BIN"
+else
+    # No-Rust fallback for local development: fetch the published self-hosted
+    # stage0 (CI always passes a compiler via TYPELISP_BIN).
+    . "$ROOT/scripts/lib-stage0.sh"
+    COMPILER="$(resolve_stage0_compiler "$ROOT")" || exit 1
+fi
 case "$COMPILER" in
     *.exe) ;;
     *) [ "$HOST_OS" = windows ] && COMPILER="$COMPILER.exe" ;;

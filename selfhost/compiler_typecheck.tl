@@ -337,7 +337,7 @@
                   (and
                     (compiler-typecheck-error-ok?
                       (compiler-typecheck-cast-bad-source)
-                      "typecheck: cast requires integer/char source and target")
+                      "typecheck: cast requires scalar numeric (integer/char/float) source and target")
                     (and
                       (compiler-typecheck-ok-score?
                         (compiler-typecheck-char-range-source)
@@ -393,6 +393,38 @@
   "(defenum Left (Same))
 (defenum Right (Same))
 (define (main) : i64 0)")
+
+(define (compiler-typecheck-variant-function-collision-source) : String
+  "(defenum A (Foo))
+(define (Foo [x : i64]) : i64 x)")
+
+(define (compiler-typecheck-variant-define-collision-source) : String
+  "(defenum A (Foo))
+(define Foo : i64 42)")
+
+(define (compiler-typecheck-variant-extern-collision-source) : String
+  "(defenum A (Foo))
+(extern Foo : (-> i64 i64))")
+
+(define (compiler-typecheck-variant-struct-collision-source) : String
+  "(defenum A (Foo))
+(defstruct Foo (x i64))")
+
+(define (compiler-typecheck-struct-function-collision-source) : String
+  "(defstruct Point (x i64))
+(define (Point [x : i64]) : i64 x)")
+
+(define (compiler-typecheck-struct-define-collision-source) : String
+  "(defstruct Point (x i64))
+(define Point : i64 42)")
+
+(define (compiler-typecheck-struct-extern-collision-source) : String
+  "(defstruct Point (x i64))
+(extern Point : (-> i64 i64))")
+
+(define (compiler-typecheck-builtin-shadow-source) : String
+  "(define (string-length [n : i64]) : i64 n)
+(define (main) : i64 (string-length 7))")
 
 (define (compiler-typecheck-module-qualified-source) : String
   "(module left)
@@ -1724,45 +1756,222 @@
                   (compiler-typecheck-op-ok-cmp-eq-source))
                 (compiler-typecheck-ok? (compiler-typecheck-op-ok-call-source))))))))))
 
-;; Boolean-operator and `cond` type rules (#1541, migrating scalar/bool
-;; `src/typechecker.rs` coverage): `and`/`or` require bool operands ("boolean
-;; operator expects bool operands"), `not` requires a bool ("not expects bool"),
-;; bool equality is accepted, and `cond` — desugared to nested `if` in the parser
-;; — reuses the `if` condition rule ("if condition must be bool") and arm-type
-;; rule ("if branches must match").
-(define (compiler-typecheck-bool-cond-tests-ok?) : bool
-  (and
-    (compiler-typecheck-ok?
-      "(define (f [a : bool] [b : bool]) : bool (and a b))")
-    (and
-      (compiler-typecheck-ok?
-        "(define (f [a : bool] [b : bool]) : bool (or a b))")
-      (and
-        (compiler-typecheck-ok? "(define (f [a : bool]) : bool (not a))")
+;; Scalar/bool/float/cast parity (#1541): remaining Rust typechecker unit
+;; coverage for bool operators/equality, cond condition typing, narrow integer
+;; literal match rules, contextual f32 literals, f32 arithmetic/comparison, and
+;; f64<->f32-only float casts.
+(define (compiler-typecheck-scalar-bool-ok-source) : String
+  "(define (both [a : bool] [b : bool]) : bool (and (not a) (or a b)))
+(define (eq [a : bool] [b : bool]) : bool (= a b))
+(define (main [a : bool] [b : bool]) : bool (or (both a b) (eq a b)))")
+
+(define (compiler-typecheck-scalar-not-bad-source) : String
+  "(define (main) : bool (not 5))")
+
+(define (compiler-typecheck-scalar-and-bad-source) : String
+  "(define (main [a : bool]) : bool (and a 1))")
+
+(define (compiler-typecheck-scalar-or-bad-source) : String
+  "(define (main [a : bool]) : bool (or 1 a))")
+
+(define (compiler-typecheck-scalar-bool-eq-bad-source) : String
+  "(define (main [a : bool]) : bool (= a 1))")
+
+(define (compiler-typecheck-scalar-cond-ok-source) : String
+  "(define (main [x : i64]) : i64 (cond [(= x 0) 1] [else 2]))")
+
+(define (compiler-typecheck-scalar-cond-bad-source) : String
+  "(define (main) : i64 (cond [1 2] [else 3]))")
+
+(define (compiler-typecheck-scalar-narrow-match-source) : String
+  "(define (narrow-u8 [n : u8]) : i64 (match n [0 1] [_ 0]))
+(define (narrow-i16 [n : i16]) : i64 (match n [0 1] [_ 0]))
+(define (main [n : u8]) : i64 (narrow-u8 n))")
+
+(define (compiler-typecheck-scalar-narrow-match-bad-source) : String
+  "(define (main [n : u8]) : i64 (match n [true 1] [_ 0]))")
+
+(define (compiler-typecheck-scalar-f32-context-source) : String
+  "(define gx : f32 1.0)
+(define (id [x : f32]) : f32 x)
+(define (ret) : f32 1.0)
+(define (annotated) : f32 (ann 1.0 : f32))
+(define (call) : f32 (id 2.0))
+(define (array-first) : f32
+  (let
+    [a : (Array f32 2) (array 1.0 2.0)]
+    (array-ref a 0)))")
+
+(define (compiler-typecheck-scalar-f32-to-f64-source) : String
+  "(define (ret [x : f32]) : f64 x)
+(define (arg [x : f64]) : f64 x)
+(define (call [x : f32]) : f64 (arg x))
+(define (branch [x : f32] [flag : bool]) : f64 (if flag x 2.0))")
+
+(define (compiler-typecheck-scalar-f64-to-f32-bad-source) : String
+  "(define (main [x : f64]) : f32 x)")
+
+(define (compiler-typecheck-scalar-f32-arithmetic-source) : String
+  "(define (compute [a : f32] [b : f32]) : bool
+  (let
+    [sum : f32 (+ a 1.0)]
+    [diff : f32 (- a b)]
+    [prod : f32 (* a b)]
+    [quot : f32 (/ a b)]
+    (< (+ sum (+ diff (+ prod quot))) b)))")
+
+(define (compiler-typecheck-scalar-f64-to-f32-cast-source) : String
+  "(define (main) : f32 (cast 3.5 : f32))")
+
+(define (compiler-typecheck-scalar-f32-to-f64-cast-source) : String
+  "(define (main [x : f32]) : f64 (cast x : f64))")
+
+(define (compiler-typecheck-scalar-float-cast-bad-source) : String
+  "(define (main) : i64 (cast 3.5 : i64))")
+
+(define (compiler-typecheck-scalar-bool-cast-bad-source) : String
+  "(define (main) : i64 (cast true : i64))")
+
+;; Contextual scalar literals also flow through tuple element types (#1626):
+;; the float literals resolve to f32 against the declared tuple element types.
+(define (compiler-typecheck-scalar-tuple-context-source) : String
+  "(define (pair) : (Tuple f32 bool) (tuple 1.0 true))
+(define (first) : f32
+  (tuple-ref (ann (tuple 1.0 true) : (Tuple f32 bool)) 0))")
+
+;; ... and through a begin's final expression (#1626): the tail float literal
+;; resolves to f32 against the function return type.
+(define (compiler-typecheck-scalar-begin-context-source) : String
+  "(define (f) : f32 (begin 1 1.0))")
+
+(define (compiler-typecheck-scalar-parity-tests-ok?) : bool
+  (let
+    [ok : bool true]
+    (begin
+      (set!
+        ok
         (and
-          (compiler-typecheck-ok? "(define (f) : bool (= true false))")
-          (and
-            (compiler-typecheck-ok?
-              "(define (f [a : bool]) : i64 (cond [a 1] [else 0]))")
-            (and
-              (compiler-typecheck-error-ok?
-                "(define (f) : bool (and true 5))"
-                "typecheck: boolean operator expects bool operands")
-              (and
-                (compiler-typecheck-error-ok?
-                  "(define (f) : bool (or 1 true))"
-                  "typecheck: boolean operator expects bool operands")
-                (and
-                  (compiler-typecheck-error-ok?
-                    "(define (f) : bool (not 5))"
-                    "typecheck: not expects bool")
-                  (and
-                    (compiler-typecheck-error-ok?
-                      "(define (f) : i64 (cond [5 1] [else 0]))"
-                      "typecheck: if condition must be bool")
-                    (compiler-typecheck-error-ok?
-                      "(define (f [a : bool]) : i64 (cond [a true] [else 0]))"
-                      "typecheck: if branches must match")))))))))))
+          ok
+          (compiler-typecheck-ok? (compiler-typecheck-scalar-bool-ok-source))))
+      (set!
+        ok
+        (and
+          ok
+          (compiler-typecheck-error-ok?
+            (compiler-typecheck-scalar-not-bad-source)
+            "typecheck: not expects bool")))
+      (set!
+        ok
+        (and
+          ok
+          (compiler-typecheck-error-ok?
+            (compiler-typecheck-scalar-and-bad-source)
+            "typecheck: boolean operator expects bool operands")))
+      (set!
+        ok
+        (and
+          ok
+          (compiler-typecheck-error-ok?
+            (compiler-typecheck-scalar-or-bad-source)
+            "typecheck: boolean operator expects bool operands")))
+      (set!
+        ok
+        (and
+          ok
+          (compiler-typecheck-error-ok?
+            (compiler-typecheck-scalar-bool-eq-bad-source)
+            "typecheck: equality operands must match")))
+      (set!
+        ok
+        (and
+          ok
+          (compiler-typecheck-ok? (compiler-typecheck-scalar-cond-ok-source))))
+      (set!
+        ok
+        (and
+          ok
+          (compiler-typecheck-error-ok?
+            (compiler-typecheck-scalar-cond-bad-source)
+            "typecheck: if condition must be bool")))
+      (set!
+        ok
+        (and
+          ok
+          (compiler-typecheck-ok?
+            (compiler-typecheck-scalar-narrow-match-source))))
+      (set!
+        ok
+        (and
+          ok
+          (compiler-typecheck-error-ok?
+            (compiler-typecheck-scalar-narrow-match-bad-source)
+            "typecheck: literal pattern type mismatch")))
+      (set!
+        ok
+        (and
+          ok
+          (compiler-typecheck-ok?
+            (compiler-typecheck-scalar-f32-context-source))))
+      (set!
+        ok
+        (and
+          ok
+          (compiler-typecheck-ok? (compiler-typecheck-scalar-f32-to-f64-source))))
+      (set!
+        ok
+        (and
+          ok
+          (compiler-typecheck-error-ok?
+            (compiler-typecheck-scalar-f64-to-f32-bad-source)
+            "typecheck: return type mismatch")))
+      (set!
+        ok
+        (and
+          ok
+          (compiler-typecheck-ok?
+            (compiler-typecheck-scalar-f32-arithmetic-source))))
+      (set!
+        ok
+        (and
+          ok
+          (compiler-typecheck-ok?
+            (compiler-typecheck-scalar-f64-to-f32-cast-source))))
+      (set!
+        ok
+        (and
+          ok
+          (compiler-typecheck-ok?
+            (compiler-typecheck-scalar-f32-to-f64-cast-source))))
+      ;; Float -> int casts now truncate toward zero under the full numeric cast
+      ;; matrix (#1576), so `(cast 3.5 : i64)` is accepted rather than rejected.
+      (set!
+        ok
+        (and
+          ok
+          (compiler-typecheck-ok?
+            (compiler-typecheck-scalar-float-cast-bad-source))))
+      ;; A non-numeric (bool) cast source is still rejected, with the cast-matrix
+      ;; diagnostic.
+      (set!
+        ok
+        (and
+          ok
+          (compiler-typecheck-error-ok?
+            (compiler-typecheck-scalar-bool-cast-bad-source)
+            "typecheck: cast requires scalar numeric (integer/char/float) source and target")))
+      (set!
+        ok
+        (and
+          ok
+          (compiler-typecheck-ok?
+            (compiler-typecheck-scalar-tuple-context-source))))
+      (set!
+        ok
+        (and
+          ok
+          (compiler-typecheck-ok?
+            (compiler-typecheck-scalar-begin-context-source))))
+      ok)))
 
 ;; Match / pattern type rules (#1042/#1538): Rust inline coverage migrated to
 ;; selfhost-owned parser+typechecker fixtures.
@@ -2389,12 +2598,20 @@
           (compiler-typecheck-ok?
             "(define (f [c : char]) : i64 (cast c : i64))")
           (and
-            (compiler-typecheck-error-ok?
-              "(define (f [x : f64]) : i64 (cast x : i64))"
-              "typecheck: cast requires integer/char source and target")
-            (compiler-typecheck-error-ok?
-              "(define (f [b : bool]) : i64 (cast b : i64))"
-              "typecheck: cast requires integer/char source and target")))))))
+            (compiler-typecheck-ok?
+              "(define (f [x : f64]) : i64 (cast x : i64))")
+            (and
+              (compiler-typecheck-ok?
+                "(define (f [x : i64]) : f64 (cast x : f64))")
+              (and
+                (compiler-typecheck-ok?
+                  "(define (f [x : f64]) : f32 (cast x : f32))")
+                (and
+                  (compiler-typecheck-ok?
+                    "(define (f [x : f32]) : f64 (cast x : f64))")
+                  (compiler-typecheck-error-ok?
+                    "(define (f [b : bool]) : i64 (cast b : i64))"
+                    "typecheck: cast requires scalar numeric (integer/char/float) source and target"))))))))))
 
 ;; spmd-reduce operator/type rules (#1011, SPEC 5.15): `sum` accepts i32/i64/f64,
 ;; `min`/`max` accept i32/i64, `all`/`any` accept bool. (The varying-value
@@ -2854,9 +3071,9 @@
     (if (compiler-typecheck-operator-tests-ok?)
       unit
       (panic "typecheck: operator/arity tests failed"))
-    (if (compiler-typecheck-bool-cond-tests-ok?)
+    (if (compiler-typecheck-scalar-parity-tests-ok?)
       unit
-      (panic "typecheck: boolean-operator/cond tests failed"))
+      (panic "typecheck: scalar bool/float/cast parity tests failed"))
     (if (compiler-typecheck-match-tests-ok?)
       unit
       (panic "typecheck: match/pattern tests failed"))
@@ -2916,11 +3133,9 @@
 
 ;; --- declaration namespace / duplicate diagnostics (#1537) ------------------
 ;; Migrated from src/typechecker.rs namespace coverage. These flow through
-;; build-compiler-symbols / build-compiler-registries during typechecking, so
-;; the no-Rust typecheck smoke exercises them. Two Rust namespace cases are NOT
-;; yet detected by the selfhost symbol table -- enum variants colliding with
-;; functions/defines/struct constructors, and builtin shadowing -- so they are
-;; left to the focused implementation blocker rather than asserted here.
+;; build-compiler-symbols / build-compiler-registries during typechecking, so the
+;; no-Rust typecheck smoke exercises them. Builtin shadowing remains accepted to
+;; match the Rust reference behavior from #677.
 (define (compiler-typecheck-dup-function-source) : String
   "(define (foo [x : i64]) : i64 x)
 (define (foo [y : i64]) : i64 y)
@@ -2953,8 +3168,10 @@
 (define (main) : i64 (left/helper true))")
 
 ;; Returns true when duplicate function/value, define/function collision,
-;; duplicate struct and enum type names, duplicate externs, and a cross-module
+;; duplicate struct and enum type names, duplicate externs, enum variants and
+;; struct constructors colliding with value declarations, and a cross-module
 ;; wrong-argument-type call are all rejected with the expected diagnostics.
+;; Builtin shadowing is asserted as accepted.
 (define (compiler-typecheck-namespace-tests-ok?) : bool
   (and
     (compiler-typecheck-error-ok?
@@ -2976,9 +3193,40 @@
             (compiler-typecheck-error-ok?
               (compiler-typecheck-dup-extern-source)
               "symbols: duplicate value declaration f")
-            (compiler-typecheck-error-ok?
-              (compiler-typecheck-cross-module-mismatch-source)
-              "typecheck: argument type mismatch")))))))
+            (and
+              (compiler-typecheck-error-ok?
+                (compiler-typecheck-variant-function-collision-source)
+                "symbols: duplicate value declaration Foo")
+              (and
+                (compiler-typecheck-error-ok?
+                  (compiler-typecheck-variant-define-collision-source)
+                  "symbols: duplicate value declaration Foo")
+                (and
+                  (compiler-typecheck-error-ok?
+                    (compiler-typecheck-variant-extern-collision-source)
+                    "symbols: duplicate value declaration Foo")
+                  (and
+                    (compiler-typecheck-error-ok?
+                      (compiler-typecheck-variant-struct-collision-source)
+                      "symbols: duplicate value declaration Foo")
+                    (and
+                      (compiler-typecheck-error-ok?
+                        (compiler-typecheck-struct-function-collision-source)
+                        "symbols: duplicate value declaration Point")
+                      (and
+                        (compiler-typecheck-error-ok?
+                          (compiler-typecheck-struct-define-collision-source)
+                          "symbols: duplicate value declaration Point")
+                        (and
+                          (compiler-typecheck-error-ok?
+                            (compiler-typecheck-struct-extern-collision-source)
+                            "symbols: duplicate value declaration Point")
+                          (and
+                            (compiler-typecheck-ok?
+                              (compiler-typecheck-builtin-shadow-source))
+                            (compiler-typecheck-error-ok?
+                              (compiler-typecheck-cross-module-mismatch-source)
+                              "typecheck: argument type mismatch")))))))))))))))
 
 (define (compiler-typecheck-self-test-diagnostics) : unit
   (begin
@@ -3051,8 +3299,100 @@
       (panic "typecheck: quote tests failed"))
     unit))
 
+;; Runtime builtin signature + shadowing coverage (#1539, migrated from
+;; src/typechecker.rs). `print-string`/`print-str`/`print-error` take a `String`;
+;; `xgetbv` takes an integer; `cpuid` takes integers; `string-ref`/`char-at`
+;; require an integer index. A user declaration may shadow a builtin and its own
+;; signature then wins. (`array-push` and the stdin `read-byte`/`read-line`
+;; helpers have no selfhost typechecker builtin yet — selfhost reports
+;; `unbound name ...` for them — so those Rust cases are left to a follow-up
+;; blocker rather than asserted here.)
+(define (compiler-typecheck-runtime-builtin-print-string-ok-source) : String
+  "(define (main) : i64 (begin (print-string \"hi\") 0))")
+
+(define (compiler-typecheck-runtime-builtin-print-str-ok-source) : String
+  "(define (main) : i64 (begin (print-str \"hi\") 0))")
+
+(define (compiler-typecheck-runtime-builtin-print-error-ok-source) : String
+  "(define (main) : i64 (begin (print-error \"hi\") 0))")
+
+(define (compiler-typecheck-runtime-builtin-xgetbv-ok-source) : String
+  "(define (main) : i64 (begin (xgetbv 0) 0))")
+
+(define (compiler-typecheck-runtime-builtin-shadow-source) : String
+  "(define (print-string [x : i64]) : i64 x)
+(define (main) : i64 (print-string 5))")
+
+(define (compiler-typecheck-runtime-builtin-print-string-bad-source) : String
+  "(define (main) : i64 (begin (print-string 42) 0))")
+
+(define (compiler-typecheck-runtime-builtin-print-str-bad-source) : String
+  "(define (main) : i64 (begin (print-str 42) 0))")
+
+(define (compiler-typecheck-runtime-builtin-print-error-bad-source) : String
+  "(define (main) : i64 (begin (print-error 42) 0))")
+
+(define (compiler-typecheck-runtime-builtin-xgetbv-bad-source) : String
+  "(define (main) : i64 (begin (xgetbv \"x\") 0))")
+
+(define (compiler-typecheck-runtime-builtin-cpuid-bad-source) : String
+  "(define (main) : i64 (cpuid \"x\"))")
+
+(define (compiler-typecheck-runtime-builtin-string-ref-bad-index-source) : String
+  "(define (main) : i64 (string-ref \"abc\" \"x\"))")
+
+(define (compiler-typecheck-runtime-builtin-char-at-bad-index-source) : String
+  "(define (main) : i64 (char-at \"abc\" \"x\"))")
+
+(define (compiler-typecheck-runtime-builtin-tests-ok?) : bool
+  (and
+    (compiler-typecheck-ok?
+      (compiler-typecheck-runtime-builtin-print-string-ok-source))
+    (and
+      (compiler-typecheck-ok?
+        (compiler-typecheck-runtime-builtin-print-str-ok-source))
+      (and
+        (compiler-typecheck-ok?
+          (compiler-typecheck-runtime-builtin-print-error-ok-source))
+        (and
+          (compiler-typecheck-ok?
+            (compiler-typecheck-runtime-builtin-xgetbv-ok-source))
+          (and
+            (compiler-typecheck-ok?
+              (compiler-typecheck-runtime-builtin-shadow-source))
+            (and
+              (compiler-typecheck-error-ok?
+                (compiler-typecheck-runtime-builtin-print-string-bad-source)
+                "typecheck: argument type mismatch")
+              (and
+                (compiler-typecheck-error-ok?
+                  (compiler-typecheck-runtime-builtin-print-str-bad-source)
+                  "typecheck: argument type mismatch")
+                (and
+                  (compiler-typecheck-error-ok?
+                    (compiler-typecheck-runtime-builtin-print-error-bad-source)
+                    "typecheck: argument type mismatch")
+                  (and
+                    (compiler-typecheck-error-ok?
+                      (compiler-typecheck-runtime-builtin-xgetbv-bad-source)
+                      "typecheck: argument type mismatch")
+                    (and
+                      (compiler-typecheck-error-ok?
+                        (compiler-typecheck-runtime-builtin-cpuid-bad-source)
+                        "typecheck: argument type mismatch")
+                      (and
+                        (compiler-typecheck-error-ok?
+                          (compiler-typecheck-runtime-builtin-string-ref-bad-index-source)
+                          "typecheck: string index must be integer")
+                        (compiler-typecheck-error-ok?
+                          (compiler-typecheck-runtime-builtin-char-at-bad-index-source)
+                          "typecheck: string index must be integer")))))))))))))
+
 (define (compiler-typecheck-self-test-builtins) : unit
   (begin
+    (if (compiler-typecheck-runtime-builtin-tests-ok?)
+      unit
+      (panic "typecheck: runtime builtin tests failed"))
     (if (compiler-typecheck-string-builtin-tests-ok?)
       unit
       (panic "typecheck: string builtin tests failed"))

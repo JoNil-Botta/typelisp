@@ -10,6 +10,8 @@
 
 (import "compiler_ir_types.tl")
 
+(import "compiler_clone.tl")
+
 (import "compiler_ctfe.tl")
 
 (defenum LowerNameEnv
@@ -1158,9 +1160,11 @@
                 next-module
                 reachable))]
           [(AstDeclDefFn name _ _ _)
-            (if (lower-string-set-contains?
-              reachable
-              (lower-decl-logical-name entry-path decl-path module name))
+            (if (or
+              (lower-name-has-clone-prefix? name)
+              (lower-string-set-contains?
+                reachable
+                (lower-decl-logical-name entry-path decl-path module name)))
               (AstDeclCons
                 decl
                 (lower-filter-reachable-decls-in-module
@@ -1241,6 +1245,33 @@
                 module
                 reachable))]))]))
 
+;; The synthesized clone$<T> helpers (compiler_clone.tl) are reached only via
+;; the `(clone x)` forms, which are not lowered to `clone$<T>` calls until after
+;; this pre-lowering prune. So we seed them as reachability roots here; the
+;; post-lowering optimizer prune (which sees the lowered calls) removes any that
+;; are unused. #1633.
+(define (lower-name-has-clone-prefix? [name : String]) : bool
+  (if (>= (string-length name) 6)
+    (string-eq (substring name 0 6) "clone$")
+    false))
+
+(define (lower-reach-add-clone-helpers
+  [all-functions : LowerStringSet]
+  [decls : AstDeclList]
+  [state : LowerReachState]) : LowerReachState
+  (match decls
+    [(AstDeclNil) state]
+    [(AstDeclCons decl rest)
+      (match decl
+        [(AstDeclDefFn name _ _ _)
+          (lower-reach-add-clone-helpers
+            all-functions
+            rest
+            (if (lower-name-has-clone-prefix? name)
+              (lower-reach-add-logical all-functions state name)
+              state))]
+        [_ (lower-reach-add-clone-helpers all-functions rest state)])]))
+
 (define (lower-prune-unreachable-functions
   [entry-path : String]
   [program : AstProgram]
@@ -1261,10 +1292,13 @@
             (lower-reach-global-decls
               all-functions
               names
-              (lower-reach-add-logical
+              (lower-reach-add-clone-helpers
                 all-functions
-                (LowerReachState LowerStringNil LowerStringNil)
-                "main")
+                decls
+                (lower-reach-add-logical
+                  all-functions
+                  (LowerReachState LowerStringNil LowerStringNil)
+                  "main"))
               decls))
             [(LowerReachState reachable _)
               (LowerPrunedProgram
@@ -2318,14 +2352,19 @@
     [(AstTyFunc _ _) true]
     [_ false]))
 
+;; The symbol table is keyed by the module key (module/name) and the bare source
+;; name alias, never by the `::` logical/mangled name returned by
+;; lower-resolve-name. Look up the bare source name so a function used as a value
+;; lowers to IrValueFunction (its closure-descriptor address) instead of falling
+;; through to IrValueGlobal (which would load the function's code bytes and
+;; miscompile an indirect call through it).
 (define (lower-symbol-function-value?
   [ctx : TcContext]
   [state : LowerState]
   [name : String]) : bool
   (let
     [symbols : CompilerSymbols (tc-context-symbols ctx)]
-    [resolved : String (lower-resolve-name state name)]
-    (match (compiler-symbols-lookup-value symbols resolved)
+    (match (compiler-symbols-lookup-value symbols name)
       [(SomeI64 handle)
         (or
           (=
@@ -2736,6 +2775,124 @@
     [(string-eq name "string-slice") true]
     [(string-eq name "string-append") true]
     [else (string-eq name "string-concat")]))
+
+;; First-class arena primitives (#1633). arena-mark/arena-rewind reuse the
+;; existing region runtime (they snapshot/rewind the current arena's bump).
+(define (lower-arena-builtin? [name : String]) : bool
+  (cond
+    [(string-eq name "arena-make") true]
+    [(string-eq name "arena-current") true]
+    [(string-eq name "arena-mark") true]
+    [(string-eq name "arena-set!") true]
+    [(string-eq name "arena-destroy") true]
+    [else (string-eq name "arena-rewind")]))
+
+(define (lower-arena-builtin-nullary? [name : String]) : bool
+  (or
+    (string-eq name "arena-make")
+    (or (string-eq name "arena-current") (string-eq name "arena-mark"))))
+
+(define (lower-arena-builtin-symbol [name : String]) : String
+  (cond
+    [(string-eq name "arena-make") "tl_arena_make"]
+    [(string-eq name "arena-current") "tl_arena_current"]
+    [(string-eq name "arena-mark") "tl_region_mark"]
+    [(string-eq name "arena-set!") "tl_arena_set"]
+    [(string-eq name "arena-destroy") "tl_arena_destroy"]
+    [else "tl_region_reset"]))
+
+(define (lower-arena-builtin-call
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [name : String]
+  [args : AstExprList]
+  [result-ty : AstType]) : ResultLowerExpr
+  (if (lower-arena-builtin-nullary? name)
+    (lower-runtime-call-values
+      state
+      (lower-arena-builtin-symbol name)
+      IrValueNil
+      result-ty)
+    (match args
+      [(AstExprCons arg (AstExprNil))
+        (match (lower-expr ctx state env type-env arg)
+          [(OkLowerExpr lowered)
+            (match lowered
+              [(LowerExpr arg-state arg-value arg-ty)
+                (match (lower-cast-value arg-state arg-value arg-ty (AstTyI64))
+                  [(LowerExpr cast-state cast-value _)
+                    (lower-runtime-call-values
+                      cast-state
+                      (lower-arena-builtin-symbol name)
+                      (IrValueCons cast-value IrValueNil)
+                      result-ty)])])]
+          [(ErrLowerExpr message) (ErrLowerExpr message)])]
+      [_
+        (ErrLowerExpr
+          (lower-diagnostic "lower: arena builtin expects one argument"))])))
+
+;; Lower `(clone x)` (#1633): the canonical deep-copy / arena-escape. A String
+;; copies its buffer via `substring`; a named aggregate (enum/struct) dispatches
+;; to the synthesized `clone$<Name>` helper (see compiler_clone.tl); a scalar is
+;; returned as-is. The first lowering of `arg` is only used to read its type; for
+;; the String path `substring` re-lowers it (the dead copy is removed by DCE).
+(define (lower-clone-named
+  [state : LowerState]
+  [env : SymI64Env]
+  [name : String]
+  [value : CompilerIrValue]
+  [ty : AstType]) : ResultLowerExpr
+  (match (lower-state-alloc-var state)
+    [(LowerAlloc allocated var-id)
+      (OkLowerExpr
+        (LowerExpr
+          (lower-state-emit
+            allocated
+            (IrInstrCall
+              var-id
+              (lower-resolve-call-name allocated env (clone-helper-name name))
+              (IrValueCons value IrValueNil)
+              ty))
+          (IrValueVar var-id)
+          ty))]))
+
+(define (lower-clone-dispatch
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [arg : AstExpr]
+  [value : CompilerIrValue]
+  [ty : AstType]) : ResultLowerExpr
+  (match (tc-resolve-type ctx ty)
+    [(AstTyString)
+      (lower-substring
+        ctx
+        state
+        env
+        type-env
+        arg
+        (AstExprLiteral (AstLitInt 0))
+        (AstExprCall (AstExprVar "string-length") (AstExprCons arg AstExprNil)))]
+    [(AstTyEnum name) (lower-clone-named state env name value ty)]
+    [(AstTyStruct name) (lower-clone-named state env name value ty)]
+    [(AstTyVar name) (lower-clone-named state env name value ty)]
+    [_ (OkLowerExpr (LowerExpr state value ty))]))
+
+(define (lower-clone-call
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [arg : AstExpr]) : ResultLowerExpr
+  (match (lower-expr ctx state env type-env arg)
+    [(OkLowerExpr lowered)
+      (match lowered
+        [(LowerExpr arg-state arg-value arg-ty)
+          (lower-clone-dispatch ctx arg-state env type-env arg arg-value arg-ty)])]
+    [(ErrLowerExpr message) (ErrLowerExpr message)]))
 
 (define (lower-bootstrap-runtime-builtin? [name : String]) : bool
   (cond
@@ -3167,12 +3324,18 @@
       (lower-struct-get ctx state env type-env receiver field expr-ty)]
     [(AstExprMakeArray elem-ty len)
       (lower-make-array ctx state env type-env elem-ty len)]
+    [(AstExprArray values)
+      (lower-array-literal ctx state env type-env values expr-ty origin)]
     [(AstExprArrayRef arr index)
       (lower-array-ref ctx state env type-env arr index)]
     [(AstExprArraySet arr index value)
       (lower-array-set ctx state env type-env arr index value)]
     [(AstExprArrayPush arr value)
       (lower-array-push ctx state env type-env arr value)]
+    [(AstExprTuple values)
+      (lower-tuple ctx state env type-env values expr-ty origin)]
+    [(AstExprTupleRef tuple-expr index)
+      (lower-tuple-ref ctx state env type-env tuple-expr index expr-ty)]
     [(AstExprWithRegion _ body) (lower-with-arena ctx state env type-env body)]
     [(AstExprWithResource bindings body)
       (lower-with-resource ctx state env type-env bindings body)]
@@ -3473,6 +3636,241 @@
       (match lowered
         [(LowerExpr box-state box-value _)
           (OkLowerExpr (lower-load-at-offset box-state box-value 0 result-ty))])]
+    [(ErrLowerExpr message) (ErrLowerExpr message)]))
+
+;; Locate the byte offset and resolved type of tuple element `target` within the
+;; element-type list, laying fields out exactly like a struct over those types
+;; (each field aligned to its own alignment). Mirrors `lower-field-info-from-list`
+;; but indexes by position rather than name.
+(define (lower-tuple-elem-info
+  [ctx : TcContext]
+  [types : AstTypeList]
+  [target : i64]
+  [index : i64]
+  [cursor : i64]) : ResultLowerFieldInfo
+  (match types
+    [(AstTypeNil)
+      (ErrLowerFieldInfo
+        (lower-diagnostic "lower: tuple-ref index out of range"))]
+    [(AstTypeCons ty rest)
+      (let
+        [resolved : AstType (tc-resolve-type ctx ty)]
+        [offset : i64 (lower-align-up cursor (lower-type-align ctx resolved))]
+        (if (= index target)
+          (OkLowerFieldInfo (LowerFieldInfo offset resolved))
+          (lower-tuple-elem-info
+            ctx
+            rest
+            target
+            (+ index 1)
+            (+ offset (lower-type-size ctx resolved)))))]))
+
+;; Evaluate each tuple element (preserving side effects even for zero-sized
+;; elements) and store the sized ones into the aggregate at their field offset,
+;; threading the lowering state. Mirrors the per-field store loop of `lower-box`
+;; generalized over the element-type list.
+(define (lower-tuple-store-elems
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [base : CompilerIrValue]
+  [values : AstExprList]
+  [types : AstTypeList]
+  [cursor : i64]) : ResultLowerState
+  (match values
+    [(AstExprNil) (OkLowerState state)]
+    [(AstExprCons value rest-values)
+      (match types
+        [(AstTypeNil)
+          (ErrLowerState (lower-diagnostic "lower: tuple arity mismatch"))]
+        [(AstTypeCons ty rest-types)
+          (let
+            [resolved : AstType (tc-resolve-type ctx ty)]
+            [offset : i64
+              (lower-align-up cursor (lower-type-align ctx resolved))]
+            [size : i64 (lower-type-size ctx resolved)]
+            (match (lower-expr ctx state env type-env value)
+              [(OkLowerExpr lowered)
+                (match lowered
+                  [(LowerExpr elem-state elem-value _)
+                    (lower-tuple-store-elems
+                      ctx
+                      (if (> size 0)
+                        (lower-store-at-offset
+                          elem-state
+                          base
+                          offset
+                          elem-value
+                          resolved)
+                        elem-state)
+                      env
+                      type-env
+                      base
+                      rest-values
+                      rest-types
+                      (+ offset size))])]
+              [(ErrLowerExpr message) (ErrLowerState message)]))])]))
+
+;; Lower `(tuple v0 v1 ...)`: reserve struct-shaped aggregate storage for the
+;; element types, store each element at its field offset, and return the storage
+;; pointer typed as the tuple. The tuple value is pointer-shaped (size 8), like a
+;; struct/box handle. Mirrors `src/lower.rs` `lower_tuple`.
+(define (lower-tuple
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [values : AstExprList]
+  [result-ty : AstType]
+  [origin : AstExpr]) : ResultLowerExpr
+  (match (tc-resolve-type ctx result-ty)
+    [(AstTyTuple elem-tys)
+      (match (lower-reserve-heap-storage
+        state
+        (lower-type-list-storage-size ctx elem-tys)
+        result-ty)
+        [(LowerExpr base-state base _)
+          (match (lower-tuple-store-elems
+            ctx
+            base-state
+            env
+            type-env
+            base
+            values
+            elem-tys
+            0)
+            [(OkLowerState final-state)
+              (OkLowerExpr (LowerExpr final-state base result-ty))]
+            [(ErrLowerState message) (ErrLowerExpr message)])])]
+    [_
+      (ErrLowerExpr
+        (lower-diagnostic-at-expr origin "lower: tuple requires tuple type"))]))
+
+;; Evaluate each fixed-array-literal element (preserving side effects even for
+;; zero-sized elements) and store the sized ones at `index * elem-size` into the
+;; reserved inline storage, threading the lowering state. Mirrors
+;; `lower-tuple-store-elems`, specialized to a single homogeneous element type.
+(define (lower-array-literal-store-elems
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [base : CompilerIrValue]
+  [values : AstExprList]
+  [elem-ty : AstType]
+  [elem-size : i64]
+  [offset : i64]) : ResultLowerState
+  (match values
+    [(AstExprNil) (OkLowerState state)]
+    [(AstExprCons value rest-values)
+      (match (lower-expr ctx state env type-env value)
+        [(OkLowerExpr lowered)
+          (match lowered
+            [(LowerExpr elem-state elem-value _)
+              (lower-array-literal-store-elems
+                ctx
+                (if (> elem-size 0)
+                  (lower-store-at-offset
+                    elem-state
+                    base
+                    offset
+                    elem-value
+                    elem-ty)
+                  elem-state)
+                env
+                type-env
+                base
+                rest-values
+                elem-ty
+                elem-size
+                (+ offset elem-size))])]
+        [(ErrLowerExpr message) (ErrLowerState message)])]))
+
+;; Lower `(array v0 v1 ...)`: reserve inline storage for `count` elements of the
+;; element type, store each element at `index * elem-size`, and return the
+;; storage pointer typed as the fixed array. A fixed-array value is pointer-
+;; shaped (a pointer to inline storage), matching `array-ref`/`array-set!`, which
+;; index off the same base. Mirrors `src/lower.rs` `lower_array_literal`.
+(define (lower-array-literal
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [values : AstExprList]
+  [result-ty : AstType]
+  [origin : AstExpr]) : ResultLowerExpr
+  (match (tc-resolve-type ctx result-ty)
+    [(AstTyArray elem-ty count)
+      (let
+        [resolved-elem : AstType (tc-resolve-type ctx elem-ty)]
+        [elem-size : i64 (lower-type-size ctx elem-ty)]
+        (let
+          [storage-size : i64
+            (lower-align-up
+              (if (= (* count elem-size) 0)
+                1
+                (* count elem-size))
+              8)]
+          (match (lower-reserve-heap-storage state storage-size result-ty)
+            [(LowerExpr base-state base _)
+              (match (lower-array-literal-store-elems
+                ctx
+                base-state
+                env
+                type-env
+                base
+                values
+                resolved-elem
+                elem-size
+                0)
+                [(OkLowerState final-state)
+                  (OkLowerExpr (LowerExpr final-state base result-ty))]
+                [(ErrLowerState message) (ErrLowerExpr message)])])))]
+    [_
+      (ErrLowerExpr
+        (lower-diagnostic-at-expr
+          origin
+          "lower: array literal requires fixed-array type"))]))
+
+;; Lower `(tuple-ref t i)`: evaluate the tuple, compute element `i`'s offset, and
+;; load it (returning the unit value for a zero-sized element, which was never
+;; stored). Mirrors `src/lower.rs` `lower_tuple_ref`.
+(define (lower-tuple-ref
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [tuple-expr : AstExpr]
+  [index : i64]
+  [result-ty : AstType]) : ResultLowerExpr
+  (match (lower-expr ctx state env type-env tuple-expr)
+    [(OkLowerExpr lowered)
+      (match lowered
+        [(LowerExpr tuple-state tuple-value tuple-ty)
+          (match (tc-resolve-type ctx tuple-ty)
+            [(AstTyTuple elem-tys)
+              (match (lower-tuple-elem-info ctx elem-tys index 0 0)
+                [(OkLowerFieldInfo info)
+                  (match info
+                    [(LowerFieldInfo offset elem-ty)
+                      (if (> (lower-type-size ctx elem-ty) 0)
+                        (match (lower-load-at-offset
+                          tuple-state
+                          tuple-value
+                          offset
+                          elem-ty)
+                          [(LowerExpr load-state load-value _)
+                            (OkLowerExpr
+                              (LowerExpr load-state load-value result-ty))])
+                        (OkLowerExpr
+                          (LowerExpr tuple-state IrValueUnit result-ty)))])]
+                [(ErrLowerFieldInfo message) (ErrLowerExpr message)])]
+            [_
+              (ErrLowerExpr
+                (lower-diagnostic-at-expr
+                  tuple-expr
+                  "lower: tuple-ref requires tuple"))])])]
     [(ErrLowerExpr message) (ErrLowerExpr message)]))
 
 (define (lower-string-ref-byte
@@ -3999,6 +4397,140 @@
         env
         type-env
         "int->string"
+        args
+        result-ty
+        origin)]))
+
+;; A single newline byte, produced as an embedded string literal (the lexer has
+;; no `\n` escape, so the backend uses embedded newlines the same way for its
+;; emitted assembly). Used to terminate the line printed by the `print` builtin.
+(define (lower-print-newline-text) : String
+  "
+")
+
+;; The bare `print` builtin (i64 -> unit) has no dedicated runtime symbol of its
+;; own; lower it to the already-supported `(print-string (int->string n))`
+;; followed by a trailing newline (`print` always ends the line). Both halves
+;; reuse the proven int->string / print-string runtime paths via `lower-expr`,
+;; which re-typechecks the synthesized calls, so no new codegen is introduced.
+(define (lower-print-call
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [args : AstExprList]
+  [result-ty : AstType]
+  [origin : AstExpr]) : ResultLowerExpr
+  (match args
+    [(AstExprCons number-arg (AstExprNil))
+      (match (lower-expr
+        ctx
+        state
+        env
+        type-env
+        (AstExprCall
+          (AstExprVar "print-string")
+          (AstExprCons
+            (AstExprCall
+              (AstExprVar "int->string")
+              (AstExprCons number-arg AstExprNil))
+            AstExprNil)))
+        [(OkLowerExpr decimal-printed)
+          (match decimal-printed
+            [(LowerExpr decimal-state _ _)
+              (lower-expr
+                ctx
+                decimal-state
+                env
+                type-env
+                (AstExprCall
+                  (AstExprVar "print-string")
+                  (AstExprCons
+                    (AstExprLiteral (AstLitString (lower-print-newline-text)))
+                    AstExprNil)))])]
+        [(ErrLowerExpr message) (ErrLowerExpr message)])]
+    [_ (lower-direct-call ctx state env type-env "print" args result-ty origin)]))
+
+;; `(print-newline)` writes a single newline; lower it to `(print-string
+;; <newline>)`, reusing the existing string runtime path (no dedicated runtime).
+(define (lower-print-newline-call
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [args : AstExprList]
+  [result-ty : AstType]
+  [origin : AstExpr]) : ResultLowerExpr
+  (match args
+    [(AstExprNil)
+      (lower-expr
+        ctx
+        state
+        env
+        type-env
+        (AstExprCall
+          (AstExprVar "print-string")
+          (AstExprCons
+            (AstExprLiteral (AstLitString (lower-print-newline-text)))
+            AstExprNil)))]
+    [_
+      (lower-direct-call
+        ctx
+        state
+        env
+        type-env
+        "print-newline"
+        args
+        result-ty
+        origin)]))
+
+;; `(print-bool b)` writes `true`/`false` followed by a newline (matching the
+;; print family's line-terminating behavior). Lower it to a conditional pair of
+;; `print-string` calls plus the shared newline, all proven runtime paths.
+(define (lower-print-bool-call
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [args : AstExprList]
+  [result-ty : AstType]
+  [origin : AstExpr]) : ResultLowerExpr
+  (match args
+    [(AstExprCons flag (AstExprNil))
+      (match (lower-if
+        ctx
+        state
+        env
+        type-env
+        flag
+        (AstExprCall
+          (AstExprVar "print-string")
+          (AstExprCons (AstExprLiteral (AstLitString "true")) AstExprNil))
+        (AstExprCall
+          (AstExprVar "print-string")
+          (AstExprCons (AstExprLiteral (AstLitString "false")) AstExprNil))
+        (AstTyUnit))
+        [(OkLowerExpr word-printed)
+          (match word-printed
+            [(LowerExpr word-state _ _)
+              (lower-expr
+                ctx
+                word-state
+                env
+                type-env
+                (AstExprCall
+                  (AstExprVar "print-string")
+                  (AstExprCons
+                    (AstExprLiteral (AstLitString (lower-print-newline-text)))
+                    AstExprNil)))])]
+        [(ErrLowerExpr message) (ErrLowerExpr message)])]
+    [_
+      (lower-direct-call
+        ctx
+        state
+        env
+        type-env
+        "print-bool"
         args
         result-ty
         origin)]))
@@ -5130,6 +5662,52 @@
                 result-ty
                 "lower: print-string requires String"
                 origin)]
+            [(and
+                (lower-builtin-call-available? ctx env name)
+                (string-eq name "print"))
+              (lower-print-call ctx state env type-env args result-ty origin)]
+            [(and
+                (lower-builtin-call-available? ctx env name)
+                (string-eq name "print-newline"))
+              (lower-print-newline-call
+                ctx
+                state
+                env
+                type-env
+                args
+                result-ty
+                origin)]
+            [(and
+                (lower-builtin-call-available? ctx env name)
+                (string-eq name "print-bool"))
+              (lower-print-bool-call
+                ctx
+                state
+                env
+                type-env
+                args
+                result-ty
+                origin)]
+            [(and
+                (lower-builtin-call-available? ctx env name)
+                (string-eq name "clone"))
+              (match args
+                [(AstExprCons arg (AstExprNil))
+                  (lower-clone-call ctx state env type-env arg)]
+                [_
+                  (ErrLowerExpr
+                    (lower-diagnostic "lower: clone expects one argument"))])]
+            [(and
+                (lower-builtin-call-available? ctx env name)
+                (lower-arena-builtin? name))
+              (lower-arena-builtin-call
+                ctx
+                state
+                env
+                type-env
+                name
+                args
+                result-ty)]
             [(and
                 (lower-builtin-call-available? ctx env name)
                 (lower-bootstrap-runtime-builtin? name))
@@ -8185,14 +8763,6 @@
     [_
       (ErrLowerValue (lower-diagnostic "lower: unsupported global initializer"))]))
 
-(define (lower-runtime-global-init-type? [ty : AstType]) : bool
-  (match ty
-    [(AstTyString) true]
-    [(AstTyDynArray _) true]
-    [(AstTyEnum _) true]
-    [(AstTyStruct _) true]
-    [_ false]))
-
 (define (lower-global-init-function-name [global-name : String]) : String
   (string-append "__global_init_" global-name))
 
@@ -8209,6 +8779,66 @@
     [(CompilerSomeSourceSpan span)
       (compiler-source-spans-insert spans name span)]
     [(CompilerNoSourceSpan) spans]))
+
+;; Per-function arena escape for lowering (#1633). Lowering one function allocates
+;; a fresh LowerState plus all the transient IR/AST-walk scratch that the bump
+;; allocator never frees; across thousands of functions this is the ~9 GB the
+;; lower phase adds. We lower each function inside its own scratch arena, deep-
+;; `clone` ONLY the produced IR function list into the enclosing (program) arena,
+;; then destroy the scratch — reclaiming the per-function transient. The growing
+;; spans side-table is DROPPED (returns the unchanged input spans): it never
+;; affects emitted assembly, only backend-error source locations, and cloning the
+;; monotonically-growing accumulator per function would be O(n^2). `enclosing` is
+;; captured fresh and `scratch`'s grown head re-read before destroy so nothing
+;; leaks. Output stays byte-identical (same proof as the optimizer escape).
+(define (lower-function-escaping
+  [ctx : TcContext]
+  [top-env : TcTypeEnv]
+  [logical-name : String]
+  [params : AstParamList]
+  [ret : AstType]
+  [body : AstExpr]
+  [spans : CompilerSourceSpans]
+  [names : LowerNameEnv]
+  [mode : CompilerLowerMode]) : ResultLowerFunction
+  (let
+    [enclosing : i64 (arena-current)]
+    (let
+      [scratch : i64 (arena-make)]
+      (begin
+        (arena-set! scratch)
+        (match (lower-function
+          ctx
+          top-env
+          logical-name
+          params
+          ret
+          body
+          spans
+          names
+          mode)
+          [(OkLowerFunction fns _function-spans)
+            (let
+              [scratch-head : i64 (arena-current)]
+              (begin
+                (arena-set! enclosing)
+                (let
+                  [escaped-fns : CompilerIrFunctionList (clone fns)]
+                  [escaped-spans : CompilerSourceSpans
+                    (lower-record-function-span spans logical-name body)]
+                  (begin
+                    (arena-destroy scratch-head)
+                    (OkLowerFunction escaped-fns escaped-spans)))))]
+          [(ErrLowerFunction message)
+            (let
+              [scratch-head : i64 (arena-current)]
+              (begin
+                (arena-set! enclosing)
+                (let
+                  [escaped-message : CompilerDiagnostic (clone message)]
+                  (begin
+                    (arena-destroy scratch-head)
+                    (ErrLowerFunction escaped-message)))))])))))
 
 (define (lower-decls
   [ctx : TcContext]
@@ -8257,63 +8887,70 @@
             [decl-ctx : TcContext (tc-context-with-module ctx module)]
             [local-names : LowerNameEnv
               (lower-module-local-names ctx names module)]
-            (match (tc-top-decl-type decl-ctx decl)
-              [(OkTcType ty)
-                (let
-                  [global-ty : AstType (tc-type-without-regions ty)]
-                  [global-name : String
-                    (lower-current-decl-logical-name names module name)]
-                  (match (lower-global-value local-names expr)
-                    [(OkLowerValue value)
-                      (lower-decls-in-module
-                        ctx
-                        top-env
-                        rest
-                        (IrGlobalCons
-                          (IrGlobal global-name global-ty value)
-                          globals)
-                        functions
-                        externs
-                        spans
-                        names
-                        mode
-                        module)]
-                    [(ErrLowerValue message)
-                      (if (lower-runtime-global-init-type? global-ty)
-                        (match (tc-module-local-env ctx top-env module)
-                          [(OkTcEnv local-top-env)
-                            (match (lower-function
-                              decl-ctx
-                              local-top-env
-                              (lower-global-init-function-name global-name)
-                              AstParamNil
-                              global-ty
-                              expr
-                              spans
-                              local-names
-                              mode)
-                              [(OkLowerFunction init-funcs init-spans)
-                                (lower-decls-in-module
-                                  ctx
-                                  top-env
-                                  rest
-                                  (IrGlobalCons
-                                    (IrGlobal global-name global-ty IrValueUnit)
-                                    globals)
-                                  (lower-function-list-append
-                                    init-funcs
-                                    functions)
-                                  externs
-                                  init-spans
-                                  names
-                                  mode
-                                  module)]
-                              [(ErrLowerFunction init-message)
-                                (ErrLowerDecls init-message)])]
-                          [(ErrTcEnv env-message)
-                            (ErrLowerDecls (lower-diagnostic env-message))])
-                        (ErrLowerDecls message))]))]
-              [(ErrTcType message) (ErrLowerDecls (lower-diagnostic message))]))]
+            (match (tc-module-local-env ctx top-env module)
+              [(OkTcEnv local-top-env)
+                (match (tc-top-decl-type-with-env decl-ctx local-top-env decl)
+                  [(OkTcType ty)
+                    (let
+                      [global-ty : AstType (tc-type-without-regions ty)]
+                      [global-name : String
+                        (lower-current-decl-logical-name names module name)]
+                      (match (lower-global-value local-names expr)
+                        [(OkLowerValue value)
+                          (lower-decls-in-module
+                            ctx
+                            top-env
+                            rest
+                            (IrGlobalCons
+                              (IrGlobal global-name global-ty value)
+                              globals)
+                            functions
+                            externs
+                            spans
+                            names
+                            mode
+                            module)]
+                        ;; A global whose initializer is not a compile-time
+                        ;; constant is evaluated at startup by a hidden
+                        ;; `__global_init_<name>` function whose return value the
+                        ;; backend stores into the global before `main`. This
+                        ;; applies to any non-unit type (scalars as well as
+                        ;; aggregates), mirroring the former Rust lowerer, which
+                        ;; emits an init function whenever `extract_const` yields
+                        ;; no constant.
+                        [(ErrLowerValue _)
+                          (match (lower-function-escaping
+                            decl-ctx
+                            local-top-env
+                            (lower-global-init-function-name global-name)
+                            AstParamNil
+                            global-ty
+                            expr
+                            spans
+                            local-names
+                            mode)
+                            [(OkLowerFunction init-funcs init-spans)
+                              (lower-decls-in-module
+                                ctx
+                                top-env
+                                rest
+                                (IrGlobalCons
+                                  (IrGlobal global-name global-ty IrValueUnit)
+                                  globals)
+                                (lower-function-list-append
+                                  init-funcs
+                                  functions)
+                                externs
+                                init-spans
+                                names
+                                mode
+                                module)]
+                            [(ErrLowerFunction init-message)
+                              (ErrLowerDecls init-message)])]))]
+                  [(ErrTcType message)
+                    (ErrLowerDecls (lower-diagnostic message))])]
+              [(ErrTcEnv env-message)
+                (ErrLowerDecls (lower-diagnostic env-message))]))]
         [(AstDeclExtern name metadata ty)
           (let
             [decl-ctx : TcContext (tc-context-with-module ctx module)]
@@ -8344,7 +8981,7 @@
               (lower-module-local-names ctx names module)]
             (match (tc-module-local-env ctx top-env module)
               [(OkTcEnv local-top-env)
-                (match (lower-function
+                (match (lower-function-escaping
                   decl-ctx
                   local-top-env
                   (lower-current-decl-logical-name names module name)
@@ -8509,7 +9146,10 @@
   [program : AstProgram]) : ResultCompilerLower
   (lower-compiler-program-checked-with-names ctx top-env program LowerNameNil))
 
-(define (lower-compiler-program-unlocated-mode
+;; Internal `expanded` workers assume macro expansion has already run; the
+;; public `-mode` wrappers below own the expand -> specialize -> typecheck
+;; boundary so every lowering path (scalar and SPMD) expands exactly once.
+(define (lower-compiler-expanded-program-unlocated-mode
   [program : AstProgram]
   [mode : CompilerLowerMode]) : ResultCompilerLower
   (match (compiler-specialize-program program)
@@ -8552,6 +9192,14 @@
         [(ErrCompilerTypecheck diag) (ErrCompilerLower diag)])]
     [(ErrSpecProgram diag) (ErrCompilerLower diag)]))
 
+(define (lower-compiler-program-unlocated-mode
+  [program : AstProgram]
+  [mode : CompilerLowerMode]) : ResultCompilerLower
+  (match (macro-expand-program program)
+    [(OkMacroExpand expanded)
+      (lower-compiler-expanded-program-unlocated-mode expanded mode)]
+    [(ErrMacroExpand diag) (ErrCompilerLower diag)]))
+
 (define (lower-compiler-program-unlocated [program : AstProgram]) : ResultCompilerLower
   (lower-compiler-program-unlocated-mode program (CompilerLowerScalar)))
 
@@ -8569,7 +9217,7 @@
   [program : AstProgram]) : ResultCompilerLower
   (lower-compiler-program-with-path-mode path program (CompilerLowerScalar)))
 
-(define (lower-compiler-program-with-decl-paths-mode
+(define (lower-compiler-expanded-program-with-decl-paths-mode
   [entry-path : String]
   [program : AstProgram]
   [paths : AstDeclPathList]
@@ -8637,6 +9285,21 @@
       [(ErrSpecProgram diag)
         (ErrCompilerLower (lower-diagnostic-with-path diag entry-path))])))
 
+(define (lower-compiler-program-with-decl-paths-mode
+  [entry-path : String]
+  [program : AstProgram]
+  [paths : AstDeclPathList]
+  [mode : CompilerLowerMode]) : ResultCompilerLower
+  (match (macro-expand-program program)
+    [(OkMacroExpand expanded)
+      (lower-compiler-expanded-program-with-decl-paths-mode
+        entry-path
+        (clone-augment-program expanded)
+        paths
+        mode)]
+    [(ErrMacroExpand diag)
+      (ErrCompilerLower (lower-diagnostic-with-path diag entry-path))]))
+
 (define (lower-compiler-program-with-decl-paths
   [entry-path : String]
   [program : AstProgram]
@@ -8690,9 +9353,22 @@
 (define answer : i64 42)
 (define (main) : i64 answer)")
 
-(define (compiler-lower-unsupported-source) : String
-  "(define (main) : (Tuple i64 bool)
-  (tuple 1 true))")
+(define (compiler-lower-macro-expand-source) : String
+  "(defmacro (and2 [lhs : bool] [rhs : bool]) : bool
+  (expr-if lhs rhs (expr-bool false)))
+(define (main) : i64 (if (and2 true true) 1 0))")
+
+(define (compiler-lower-macro-arity-source) : String
+  "(defmacro (and2 [lhs : bool] [rhs : bool]) : bool
+  (expr-if lhs rhs (expr-bool false)))
+(define (main) : i64 (if (and2 true) 1 0))")
+
+;; A fixed-array literal `(array ...)`: it type-checks to `(Array i64 N)` and now
+;; lowers to inline storage with each element stored at its offset, returning the
+;; storage pointer (the same representation `array-ref`/`array-set!` index off).
+(define (compiler-lower-array-literal-source) : String
+  "(define (main) : (Array i64 3)
+  (array 1 2 3))")
 
 (define (compiler-lower-box-source) : String
   "(define (main) : i64 (box-get (box 7)))")
@@ -8946,6 +9622,28 @@
 (define (main) : i64
   (get-y (make-point 20 22)))")
 
+;; Tuple construction + ref lowering (#1583): `(tuple true 42)` reserves
+;; struct-shaped aggregate storage and stores each element at its field offset;
+;; `(tuple-ref t 1)` gep+loads the indexed element. The whole computation lives
+;; in `main` so it is not pruned as unreachable.
+(define (compiler-lower-tuple-source) : String
+  "(define (main) : i64
+  (let
+    [t : (Tuple bool i64) (tuple true 42)]
+    (tuple-ref t 1)))")
+
+;; `main` must lower with both element stores (bool + i64 each written into the
+;; aggregate) and a load for the `tuple-ref`.
+(define (compiler-lower-tuple-shape-ok?) : bool
+  (match (lower-compiler-source (compiler-lower-tuple-source))
+    [(OkCompilerLower program _)
+      (match program
+        [(IrProgram _ functions _)
+          (and
+            (>= (lower-test-function-store-ptr-count functions "main") 2)
+            (>= (lower-test-function-load-count functions "main") 1))])]
+    [(ErrCompilerLower _) false]))
+
 (define (compiler-lower-comptime-decl-source) : String
   "(comptime-decl (defstruct Point (x i64) (y i64)))
 (comptime-decl (defenum Shape (Nothing) (Circle i64) (Pair Point)))
@@ -9101,9 +9799,7 @@
         (= (compiler-source-spans-count spans) 2)
         (and
           (compiler-lower-span-start-line-ok? spans "inc" 3)
-          (and
-            (compiler-lower-span-start-line-ok? spans "main" 5)
-            (> (compiler-source-spans-instr-count spans) 0))))]
+          (compiler-lower-span-start-line-ok? spans "main" 5)))]
     [(ErrCompilerLower _) false]))
 
 (define (compiler-lower-ok-summary? [src : String]) : bool
@@ -11482,6 +12178,14 @@
       (if (compiler-lower-ok-summary? (compiler-lower-smoke-source))
         unit
         (set! ok false))
+      (if (compiler-lower-ok? (compiler-lower-macro-expand-source))
+        unit
+        (set! ok false))
+      (if (compiler-lower-error-ok?
+        (compiler-lower-macro-arity-source)
+        "macro call has too few arguments")
+        unit
+        (set! ok false))
       (if (compiler-lower-spans-ok? (compiler-lower-smoke-source))
         unit
         (set! ok false))
@@ -11565,6 +12269,9 @@
         unit
         (set! ok false))
       (if (compiler-lower-ok? (compiler-lower-aggregate-source))
+        unit
+        (set! ok false))
+      (if (compiler-lower-tuple-shape-ok?)
         unit
         (set! ok false))
       (if (compiler-lower-ok? (compiler-lower-comptime-decl-source))
@@ -11730,9 +12437,7 @@
         "typecheck: if branches must match")
         unit
         (set! ok false))
-      (if (compiler-lower-error-ok?
-        (compiler-lower-unsupported-source)
-        "lower: unsupported expression")
+      (if (compiler-lower-ok? (compiler-lower-array-literal-source))
         unit
         (set! ok false))
       (if (compiler-lower-ok? (compiler-lower-box-source))

@@ -201,6 +201,27 @@
           (OkCompilerSymbols
             (CompilerSymbols (sym-i64-bind values name handle) types macros))))]))
 
+(define (compiler-symbols-add-variant-value
+  [symbols : CompilerSymbols]
+  [name : String]
+  [handle : i64]) : ResultCompilerSymbols
+  (match symbols
+    [(CompilerSymbols values types macros)
+      (match (sym-i64-lookup values name)
+        [(SomeI64 existing)
+          (if (=
+            (compiler-symbol-handle-kind existing)
+            (compiler-symbol-kind-enum-variant))
+            (ErrCompilerSymbols
+              (compiler-registries-duplicate-variant-message name))
+            (ErrCompilerSymbols (compiler-symbols-duplicate-value-message name)))]
+        [(NoneI64)
+          (if (sym-i64-contains macros name)
+            (ErrCompilerSymbols
+              (compiler-symbols-duplicate-macro-value-message name))
+            (OkCompilerSymbols
+              (CompilerSymbols (sym-i64-bind values name handle) types macros)))])]))
+
 (define (compiler-symbols-add-type
   [symbols : CompilerSymbols]
   [name : String]
@@ -249,6 +270,50 @@
       [(OkCompilerSymbols next)
         (OkCompilerSymbols (compiler-symbols-add-type-alias next name handle))]
       [(ErrCompilerSymbols message) (ErrCompilerSymbols message)])))
+
+(define (compiler-symbols-add-variant-value-in-module
+  [symbols : CompilerSymbols]
+  [module : String]
+  [name : String]
+  [enum-index : i64]
+  [variant-index : i64]) : ResultCompilerSymbols
+  (let
+    [key : String (compiler-symbol-module-key module name)]
+    [handle : i64
+      (compiler-registry-make-handle
+        (compiler-symbol-kind-enum-variant)
+        enum-index
+        variant-index)]
+    (match (compiler-symbols-add-variant-value symbols key handle)
+      [(OkCompilerSymbols next)
+        (OkCompilerSymbols (compiler-symbols-add-value-alias next name handle))]
+      [(ErrCompilerSymbols message) (ErrCompilerSymbols message)])))
+
+(define (compiler-symbols-add-variant-values-in-module
+  [symbols : CompilerSymbols]
+  [module : String]
+  [variants : AstVariantDefList]
+  [enum-index : i64]
+  [variant-index : i64]) : ResultCompilerSymbols
+  (match variants
+    [(AstVariantDefNil) (OkCompilerSymbols symbols)]
+    [(AstVariantDefCons variant rest)
+      (match variant
+        [(AstVariantDef name _)
+          (match (compiler-symbols-add-variant-value-in-module
+            symbols
+            module
+            name
+            enum-index
+            variant-index)
+            [(OkCompilerSymbols next)
+              (compiler-symbols-add-variant-values-in-module
+                next
+                module
+                rest
+                enum-index
+                (+ variant-index 1))]
+            [(ErrCompilerSymbols message) (ErrCompilerSymbols message)])])]))
 
 (define (compiler-symbols-add-macro-in-module
   [symbols : CompilerSymbols]
@@ -299,24 +364,63 @@
         symbols
         name
         (compiler-symbol-make-handle (compiler-symbol-kind-extern) index))]
-    [(AstDeclDefEnum name _)
-      (compiler-symbols-add-type-in-module
+    [(AstDeclDefEnum name variants)
+      (match (compiler-symbols-add-type-in-module
         symbols
         module
         name
-        (compiler-symbol-make-handle (compiler-symbol-kind-defenum) index))]
+        (compiler-symbol-make-handle (compiler-symbol-kind-defenum) index))
+        [(OkCompilerSymbols next)
+          (compiler-symbols-add-variant-values-in-module
+            next
+            module
+            variants
+            index
+            0)]
+        [(ErrCompilerSymbols message) (ErrCompilerSymbols message)])]
     [(AstDeclDefStruct name _ _ _)
-      (compiler-symbols-add-type-in-module
+      (match (compiler-symbols-add-type-in-module
         symbols
         module
         name
-        (compiler-symbol-make-handle (compiler-symbol-kind-defstruct) index))]
+        (compiler-symbol-make-handle (compiler-symbol-kind-defstruct) index))
+        [(OkCompilerSymbols next)
+          (compiler-symbols-add-value-in-module
+            next
+            module
+            name
+            (compiler-symbol-make-handle (compiler-symbol-kind-defstruct) index))]
+        [(ErrCompilerSymbols message) (ErrCompilerSymbols message)])]
     [(AstDeclImport _) (OkCompilerSymbols symbols)]
     [(AstDeclExport _) (OkCompilerSymbols symbols)]
     [(AstDeclModule _) (OkCompilerSymbols symbols)]
     [(AstDeclTest _ _ _) (OkCompilerSymbols symbols)]
     [(AstDeclComptimeDecl template)
       (compiler-symbols-add-decl-in-module symbols module template index)]))
+
+(define (compiler-symbols-add-variant-value-aliases
+  [symbols : CompilerSymbols]
+  [alias : String]
+  [variants : AstVariantDefList]
+  [enum-index : i64]
+  [variant-index : i64]) : CompilerSymbols
+  (match variants
+    [(AstVariantDefNil) symbols]
+    [(AstVariantDefCons variant rest)
+      (match variant
+        [(AstVariantDef name _)
+          (compiler-symbols-add-variant-value-aliases
+            (compiler-symbols-add-value-alias
+              symbols
+              (compiler-symbol-module-key alias name)
+              (compiler-registry-make-handle
+                (compiler-symbol-kind-enum-variant)
+                enum-index
+                variant-index))
+            alias
+            rest
+            enum-index
+            (+ variant-index 1))])]))
 
 (define (compiler-symbols-add-decl-alias-in-module
   [symbols : CompilerSymbols]
@@ -346,14 +450,22 @@
         symbols
         (compiler-symbol-module-key alias name)
         (compiler-symbol-make-handle (compiler-symbol-kind-extern) index))]
-    [(AstDeclDefEnum name _)
-      (compiler-symbols-add-type-alias
-        symbols
-        (compiler-symbol-module-key alias name)
-        (compiler-symbol-make-handle (compiler-symbol-kind-defenum) index))]
+    [(AstDeclDefEnum name variants)
+      (compiler-symbols-add-variant-value-aliases
+        (compiler-symbols-add-type-alias
+          symbols
+          (compiler-symbol-module-key alias name)
+          (compiler-symbol-make-handle (compiler-symbol-kind-defenum) index))
+        alias
+        variants
+        index
+        0)]
     [(AstDeclDefStruct name _ _ _)
-      (compiler-symbols-add-type-alias
-        symbols
+      (compiler-symbols-add-value-alias
+        (compiler-symbols-add-type-alias
+          symbols
+          (compiler-symbol-module-key alias name)
+          (compiler-symbol-make-handle (compiler-symbol-kind-defstruct) index))
         (compiler-symbol-module-key alias name)
         (compiler-symbol-make-handle (compiler-symbol-kind-defstruct) index))]
     [(AstDeclComptimeDecl template)
@@ -1127,29 +1239,46 @@
       0)
     (+
       (compiler-symbol-lookup-score
-        (compiler-symbols-lookup-type symbols "Maybe")
-        (compiler-symbol-kind-defenum)
-        1)
+        (compiler-symbols-lookup-value symbols "Point")
+        (compiler-symbol-kind-defstruct)
+        0)
       (+
         (compiler-symbol-lookup-score
-          (compiler-symbols-lookup-value symbols "print-string")
-          (compiler-symbol-kind-extern)
-          2)
+          (compiler-symbols-lookup-type symbols "Maybe")
+          (compiler-symbol-kind-defenum)
+          1)
         (+
-          (compiler-symbol-lookup-score
-            (compiler-symbols-lookup-value symbols "answer")
-            (compiler-symbol-kind-value-define)
-            3)
+          (compiler-registry-lookup-score
+            (compiler-symbols-lookup-value symbols "None")
+            (compiler-symbol-kind-enum-variant)
+            1
+            0)
           (+
-            (compiler-symbol-lookup-score
-              (compiler-symbols-lookup-value symbols "main")
-              (compiler-symbol-kind-function-define)
-              4)
+            (compiler-registry-lookup-score
+              (compiler-symbols-lookup-value symbols "Some")
+              (compiler-symbol-kind-enum-variant)
+              1
+              1)
             (+
-              (compiler-symbols-miss-score
-                (compiler-symbols-lookup-value symbols "stdlib/test.tl"))
-              (compiler-symbols-miss-score
-                (compiler-symbols-lookup-type symbols "missing")))))))))
+              (compiler-symbol-lookup-score
+                (compiler-symbols-lookup-value symbols "print-string")
+                (compiler-symbol-kind-extern)
+                2)
+              (+
+                (compiler-symbol-lookup-score
+                  (compiler-symbols-lookup-value symbols "answer")
+                  (compiler-symbol-kind-value-define)
+                  3)
+                (+
+                  (compiler-symbol-lookup-score
+                    (compiler-symbols-lookup-value symbols "main")
+                    (compiler-symbol-kind-function-define)
+                    4)
+                  (+
+                    (compiler-symbols-miss-score
+                      (compiler-symbols-lookup-value symbols "stdlib/test.tl"))
+                    (compiler-symbols-miss-score
+                      (compiler-symbols-lookup-type symbols "missing"))))))))))))
 
 (define (compiler-registries-smoke-score
   [program : AstProgram]
@@ -1231,6 +1360,34 @@
   "(defmacro (same) : bool (expr-bool true))
 (define same : i64 1)")
 
+(define (compiler-symbols-variant-function-collision-source) : String
+  "(defenum A (Foo))
+(define (Foo [x : i64]) : i64 x)")
+
+(define (compiler-symbols-variant-define-collision-source) : String
+  "(defenum A (Foo))
+(define Foo : i64 42)")
+
+(define (compiler-symbols-variant-extern-collision-source) : String
+  "(defenum A (Foo))
+(extern Foo : (-> i64 i64))")
+
+(define (compiler-symbols-variant-struct-collision-source) : String
+  "(defenum A (Foo))
+(defstruct Foo (x i64))")
+
+(define (compiler-symbols-struct-function-collision-source) : String
+  "(defstruct Point (x i64))
+(define (Point [x : i64]) : i64 x)")
+
+(define (compiler-symbols-struct-define-collision-source) : String
+  "(defstruct Point (x i64))
+(define Point : i64 42)")
+
+(define (compiler-symbols-struct-extern-collision-source) : String
+  "(defstruct Point (x i64))
+(extern Point : (-> i64 i64))")
+
 (define (compiler-symbols-duplicate-value-ok?) : bool
   (match (build-compiler-symbols-from-source
     (compiler-symbols-duplicate-value-source))
@@ -1244,6 +1401,44 @@
     [(ErrCompilerSymbols message)
       (string-eq message (compiler-symbols-duplicate-type-message "Point"))]
     [(OkCompilerSymbols _) false]))
+
+(define (compiler-symbols-duplicate-value-error-ok?
+  [src : String]
+  [name : String]) : bool
+  (match (build-compiler-symbols-from-source src)
+    [(ErrCompilerSymbols message)
+      (string-eq message (compiler-symbols-duplicate-value-message name))]
+    [(OkCompilerSymbols _) false]))
+
+(define (compiler-symbols-variant-value-collisions-ok?) : bool
+  (and
+    (compiler-symbols-duplicate-value-error-ok?
+      (compiler-symbols-variant-function-collision-source)
+      "Foo")
+    (and
+      (compiler-symbols-duplicate-value-error-ok?
+        (compiler-symbols-variant-define-collision-source)
+        "Foo")
+      (and
+        (compiler-symbols-duplicate-value-error-ok?
+          (compiler-symbols-variant-extern-collision-source)
+          "Foo")
+        (compiler-symbols-duplicate-value-error-ok?
+          (compiler-symbols-variant-struct-collision-source)
+          "Foo")))))
+
+(define (compiler-symbols-struct-value-collisions-ok?) : bool
+  (and
+    (compiler-symbols-duplicate-value-error-ok?
+      (compiler-symbols-struct-function-collision-source)
+      "Point")
+    (and
+      (compiler-symbols-duplicate-value-error-ok?
+        (compiler-symbols-struct-define-collision-source)
+        "Point")
+      (compiler-symbols-duplicate-value-error-ok?
+        (compiler-symbols-struct-extern-collision-source)
+        "Point"))))
 
 (define (compiler-registries-duplicate-variant-ok?) : bool
   (match (build-compiler-registries-from-source
@@ -1487,7 +1682,7 @@
           (match (build-compiler-registries program)
             [(OkCompilerRegistries registries)
               (if (and
-                (= (compiler-symbols-smoke-score symbols) 7)
+                (= (compiler-symbols-smoke-score symbols) 10)
                 (and
                   (= (compiler-registries-smoke-score program registries) 8)
                   (and
@@ -1495,20 +1690,24 @@
                     (and
                       (compiler-symbols-duplicate-type-ok?)
                       (and
-                        (compiler-registries-duplicate-variant-ok?)
+                        (compiler-symbols-variant-value-collisions-ok?)
                         (and
-                          (compiler-registries-duplicate-field-ok?)
+                          (compiler-symbols-struct-value-collisions-ok?)
                           (and
-                            (compiler-registry-large-owner-handle-ok?)
+                            (compiler-registries-duplicate-variant-ok?)
                             (and
-                              (compiler-symbols-comptime-decl-ok?)
+                              (compiler-registries-duplicate-field-ok?)
                               (and
-                                (compiler-symbols-module-scope-ok?)
+                                (compiler-registry-large-owner-handle-ok?)
                                 (and
-                                  (compiler-symbols-import-alias-ok?)
+                                  (compiler-symbols-comptime-decl-ok?)
                                   (and
-                                    (compiler-symbols-macro-namespace-ok?)
-                                    (compiler-symbols-duplicate-macro-value-ok?))))))))))))
+                                    (compiler-symbols-module-scope-ok?)
+                                    (and
+                                      (compiler-symbols-import-alias-ok?)
+                                      (and
+                                        (compiler-symbols-macro-namespace-ok?)
+                                        (compiler-symbols-duplicate-macro-value-ok?))))))))))))))
                 42
                 (begin
                   (panic "symbols: smoke score mismatch")

@@ -73,7 +73,7 @@ so noisy wall-clock timing never blocks a merge (#929, #1099).
 
 Requirements:
 
-- a `typelisp` compiler (set `TYPELISP_BIN`, else `cargo build --release` is used),
+- a `typelisp` compiler (set `TYPELISP_BIN`, else the published stage0 is fetched),
 - `clang` (the C baseline compiler),
 - on Linux, `as` and `ld` (used by `typelisp build`).
 
@@ -100,9 +100,8 @@ selfhosted compiler. It times stage0 building stage1, uses that stage1 once to
 seed stage2, then times stage2 building stage3. The stage1 seed build is not
 included in the summary. Compile-to-assembly is reported separately from
 assemble/link time and the full native build time. If `TYPELISP_BIN` is unset,
-the script runs
-`cargo build --release` first, but that seed build is not included in the
-benchmark timings.
+the script fetches the published stage0 first, but that fetch is not included in
+the benchmark timings.
 
 Useful knobs:
 

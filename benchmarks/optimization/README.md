@@ -7,7 +7,7 @@ not correctness CI gates.
 Run on Linux from the repository root:
 
 ```sh
-TYPELISP_BIN=./target/release/typelisp ./scripts/run-optimization-benchmarks.sh
+TYPELISP_BIN=./target/stage0/typelisp ./scripts/run-optimization-benchmarks.sh
 ```
 
 The runner defaults to compiling TypeLisp benchmark sources through the
@@ -18,8 +18,8 @@ generated Linux x86_64 assembly. Set `TYPELISP_BENCH_SELFHOST=0` or pass
 Requirements:
 
 - Linux with `as`, `ld`, `clang`, `awk`, `wc`, and `date +%s%N`.
-- A built TypeLisp compiler via `TYPELISP_BIN`, or Cargo available so the
-  script can build `target/release/typelisp`.
+- A TypeLisp compiler via `TYPELISP_BIN`, otherwise the published stage0 is
+  fetched into `target/stage0/typelisp`.
 - A quiet machine. Wall-clock timings are noisy; compare best-of runs and rerun
   when ratios are close.
 

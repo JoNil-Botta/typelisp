@@ -33,7 +33,8 @@ case "$(uname -s)" in
         if [ -n "${TYPELISP_BIN:-}" ]; then
             COMPILER=$TYPELISP_BIN
         else
-            COMPILER="$ROOT/target/release/typelisp.exe"
+            . "$ROOT/scripts/lib-stage0.sh"
+            COMPILER=$(resolve_stage0_compiler "$ROOT") || exit 1
         fi
         PROBE_SRC="$ROOT/scripts/detect_simd_isa.tl"
         PROBE_EXE="${TMPDIR:-/tmp}/tl-simd-cpuid-probe.exe"

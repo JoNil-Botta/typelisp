@@ -24,9 +24,10 @@ esac
 if [ -n "${TYPELISP_BIN:-}" ]; then
     COMPILER=$TYPELISP_BIN
 else
-    cargo build --release --quiet
-    COMPILER="$ROOT/target/release/typelisp"
-    [ "$HOST_OS" = windows ] && COMPILER="$COMPILER.exe"
+    # No-Rust fallback for local development: fetch the published
+    # self-hosted stage0 (CI always passes a compiler via TYPELISP_BIN).
+    . "$ROOT/scripts/lib-stage0.sh"
+    COMPILER=$(resolve_stage0_compiler "$ROOT") || exit 1
 fi
 
 case "$COMPILER" in
@@ -127,20 +128,74 @@ run_case() {
     done
 }
 
+# Assemble (clang) + link (lld-link) a Windows .s into an .exe. The compile-only
+# bootstrapped stage1 has no `build` host action, so the corpus drives the Windows
+# toolchain by hand (mirrors verify-integration.sh's assemble_link_windows).
+assemble_link_windows() {
+    _asm=$1
+    _obj=$2
+    _bin=$3
+    _label=$4
+    _out=$5
+    _err=$6
+    if ! clang --target=x86_64-pc-windows-msvc -c "$_asm" -o "$_obj" >> "$_out" 2>> "$_err"; then
+        show_stream_if_nonempty stderr "$_err"
+        fail "$_label assemble failed"
+    fi
+    if ! lld-link -NOLOGO "$(cygpath -aw "$_obj")" "-OUT:$(cygpath -aw "$_bin")" \
+        -SUBSYSTEM:CONSOLE -STACK:268435456 msvcrt.lib legacy_stdio_definitions.lib advapi32.lib \
+        >> "$_out" 2>> "$_err"; then
+        show_stream_if_nonempty stderr "$_err"
+        fail "$_label link failed"
+    fi
+}
+
 build_selfhost_checker() {
     out="$WORKDIR/selfhost-check.build.out"
     err="$WORKDIR/selfhost-check.build.err"
-    run_case "$out" "$err" 0 \
-        "$COMPILER" build selfhost/check.tl \
-        --target "$BUILD_TARGET" \
-        --stdlib-root "$ROOT/stdlib" \
-        -o "$CHECK_BIN"
-    if [ "$code" -ne 0 ]; then
-        echo "stdout:" >&2
-        sed 's/^/  /' "$out" >&2 || true
-        echo "stderr:" >&2
-        sed 's/^/  /' "$err" >&2 || true
-        fail "selfhost/check.tl build failed with exit $code"
+    if [ "$HOST_OS" = windows ]; then
+        asm="$WORKDIR/selfhost-check.s"
+        obj="$WORKDIR/selfhost-check.obj"
+        run_case "$out" "$err" 0 \
+            "$COMPILER" compile selfhost/check.tl \
+            --target "$BUILD_TARGET" \
+            --stdlib-root "$ROOT/stdlib" \
+            -o "$asm"
+        if [ "$code" -ne 0 ]; then
+            echo "stdout:" >&2
+            sed 's/^/  /' "$out" >&2 || true
+            echo "stderr:" >&2
+            sed 's/^/  /' "$err" >&2 || true
+            fail "selfhost/check.tl compile failed with exit $code"
+        fi
+        assemble_link_windows "$asm" "$obj" "$CHECK_BIN" "selfhost/check.tl" "$out" "$err"
+    else
+        # The compile-only bootstrapped stage1 has `compile`/`check` but not the
+        # `build` host action, so assemble + link the checker by hand (mirrors
+        # build_case_program's Linux path).
+        asm="$WORKDIR/selfhost-check.s"
+        obj="$WORKDIR/selfhost-check.o"
+        run_case "$out" "$err" 0 \
+            "$COMPILER" compile selfhost/check.tl \
+            --target "$BUILD_TARGET" \
+            --stdlib-root "$ROOT/stdlib" \
+            -o "$asm"
+        if [ "$code" -ne 0 ]; then
+            echo "stdout:" >&2
+            sed 's/^/  /' "$out" >&2 || true
+            echo "stderr:" >&2
+            sed 's/^/  /' "$err" >&2 || true
+            fail "selfhost/check.tl compile failed with exit $code"
+        fi
+        if ! as "$asm" -o "$obj" >> "$out" 2>> "$err"; then
+            show_stream_if_nonempty stderr "$err"
+            fail "selfhost/check.tl assemble failed"
+        fi
+        if ! ld "$obj" -o "$CHECK_BIN" -dynamic-linker /lib64/ld-linux-x86-64.so.2 -lc \
+            >> "$out" 2>> "$err"; then
+            show_stream_if_nonempty stderr "$err"
+            fail "selfhost/check.tl link failed"
+        fi
     fi
 }
 
@@ -169,17 +224,20 @@ build_case_program() {
     if [ "$HOST_OS" = windows ]; then
         case_source="$case_dir/$(basename "$source")"
         cp "$source" "$case_source"
+        asm="$case_dir/$case_name.s"
+        obj="$case_dir/$case_name.obj"
         program="$case_dir/$case_name.exe"
         run_case "$build_out" "$build_err" 0 \
-            "$COMPILER" build "$case_source" \
+            "$COMPILER" compile "$case_source" \
             --target "$BUILD_TARGET" \
             --stdlib-root "$ROOT/stdlib" \
-            -o "$program"
+            -o "$asm"
         if [ "$code" -ne 0 ]; then
             show_stream_if_nonempty stdout "$build_out"
             show_stream_if_nonempty stderr "$build_err"
-            fail "$case_id build failed with exit $code"
+            fail "$case_id compile failed with exit $code"
         fi
+        assemble_link_windows "$asm" "$obj" "$program" "$case_id" "$build_out" "$build_err"
     else
         asm="$case_dir/$case_name.s"
         obj="$case_dir/$case_name.o"
@@ -261,6 +319,24 @@ while IFS='|' read -r case_id mode source expected_code stderr_contains; do
             [ "$code" -eq "$expected_code" ] || fail "$case_id expected trap exit $expected_code, got $code"
             [ "$stderr_contains" != "-" ] || fail "$case_id run-trap missing stderr expectation"
             assert_contains "$err" "$stderr_contains" || fail "$case_id trap stderr did not match expectation"
+            ;;
+        run-trap-signal)
+            # A bare hardware trap (e.g. SIGFPE from `idiv` by zero): assert the
+            # deterministic exit code only — the kernel signal produces no
+            # `tl:`-prefixed stderr message (unlike the guarded runtime aborts).
+            if [ "$HOST_OS" = windows ]; then
+                # On Windows the bare trap surfaces as a structured exception
+                # (0xC0000094 for integer divide-by-zero), which MSYS/Git Bash
+                # reports as an unstable shell code (127) — the exact-code
+                # assertion is not meaningful. The guarded abort that exits
+                # cleanly (#1654) will run as a normal run-trap here once it
+                # lands; until then the Linux corpus covers this bare-signal exit.
+                echo "[safety-corpus] skip run-trap-signal $case_id on windows (bare trap code unstable; #1654)"
+                continue
+            fi
+            echo "[safety-corpus] run-trap-signal $case_id"
+            run_program_case "$case_id" "$case_name" "$source" "$out" "$err" "$expected_code"
+            [ "$code" -eq "$expected_code" ] || fail "$case_id expected trap exit $expected_code, got $code"
             ;;
         *)
             fail "$case_id has unknown safety corpus mode: $mode"

@@ -23,9 +23,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-
       - name: Install clang
         run: sudo apt-get update && sudo apt-get install -y clang
 
@@ -35,11 +32,11 @@ jobs:
           command -v ld
           command -v clang
 
-      - name: Build compiler
-        run: cargo build --release
+      - name: Fetch published stage0 compiler
+        run: scripts/fetch-stage0.sh
 
       - name: Benchmark build/run smoke
         # `--smoke` builds + runs a single small benchmark (arith_loop by
         # default) and checks TypeLisp vs C agree on observable output; it skips
         # all timing, so it is fast and free of perf flake.
-        run: TYPELISP_BIN=target/release/typelisp bash scripts/bench.sh --smoke
+        run: TYPELISP_BIN=target/stage0/typelisp bash scripts/bench.sh --smoke

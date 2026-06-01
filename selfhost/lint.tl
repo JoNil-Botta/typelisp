@@ -4,17 +4,12 @@
 ;; exits 0 even with findings (CI enforcement is layered on per #1164); a load
 ;; failure exits 1, and bad arguments exit 2.
 ;;
+;; The command logic lives in `lint_driver_core.tl` so the unified `cli.tl`
+;; dispatcher can share it without a duplicate `main`.
+;;
 ;; Run directly (until the public `typelisp lint` subcommand lands):
 ;;   typelisp run selfhost/lint.tl -- <file.tl> [--stdlib-root <dir>]...
 (import "lint_driver_core.tl")
 
 (define (main) : i64
-  (match (selfhost-lint-config (arg-count))
-    [(OkSelfhostLintConfig config)
-      (match config
-        [(SelfhostLintConfig input-path stdlib-roots enforcing)
-          (selfhost-lint-file input-path stdlib-roots enforcing)])]
-    [(ErrSelfhostLintConfig message)
-      (begin
-        (print-error (string-append message "\n"))
-        2)]))
+  (selfhost-lint-run-from 1 (arg-count)))

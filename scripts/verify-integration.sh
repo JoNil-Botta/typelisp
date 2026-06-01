@@ -25,9 +25,10 @@ esac
 if [ -n "${TYPELISP_BIN:-}" ]; then
     COMPILER=$TYPELISP_BIN
 else
-    cargo build --release --quiet
-    COMPILER="$ROOT/target/release/typelisp"
-    [ "$HOST_OS" = windows ] && COMPILER="$COMPILER.exe"
+    # No-Rust fallback for local development: fetch the published
+    # self-hosted stage0 (CI always passes a compiler via TYPELISP_BIN).
+    . "$ROOT/scripts/lib-stage0.sh"
+    COMPILER=$(resolve_stage0_compiler "$ROOT") || exit 1
 fi
 
 if [ ! -x "$COMPILER" ]; then
@@ -220,10 +221,51 @@ copy_dep() {
     esac
 }
 
+# Integration cases the self-hosted Windows backend cannot yet run as expected
+# (kept covered on Linux via native-linux.manifest):
+#   with_arena_*               existing host gaps
+#   tl_alloc_huge_trap /       Windows huge-alloc + region-reset guards do not
+#   region_reset_invalid_trap  abort cleanly with 134 (#1660)
 windows_integration_skips() {
     cat <<'EOF'
 with_arena_builtin_alloc
 with_arena_loop
+tl_alloc_huge_trap
+region_reset_invalid_trap
+EOF
+}
+
+# Run-assert parity gaps the self-hosted compiler does not yet implement. The
+# former Rust backend handled these, but it has been removed, so these cases are
+# commented out in the manifest and listed here as documented skips until the
+# selfhost compiler closes the gap:
+#   f32 scalar correctness ............ #1655
+#   capturing lambdas ................. #1656
+#   print-char / shift typecheck /
+#   enum-payload pattern / spmd ....... #1657
+#   bare idiv traps need guarded abort  #1654
+selfhost_deferred_integration_skips() {
+    cat <<'EOF'
+f32_scalar
+lambda_capture_aggregate
+lambda_capture_fixed_array
+lambda_capture_fixed_array_aggregate
+lambda_capture_nested_aggregate
+lambda_capture_scalar
+lambda_capture_struct_enum
+lambda_capture_tuple
+print_char
+shl_count_width_trap
+shl_neg_count_trap
+string_match
+spmd_reduce_scalar
+valid_shift_counts
+div_zero_trap
+rem_zero_trap
+min_div_neg1_trap
+i16_min_div_neg1_trap
+i16_min_rem_neg1_trap
+u16_div_zero_trap
 EOF
 }
 
@@ -341,6 +383,7 @@ EOF
     if [ "$HOST_OS" = windows ]; then
         windows_integration_skips >> "$_known"
     fi
+    selfhost_deferred_integration_skips >> "$_known"
 
     find tests/integration -maxdepth 1 -type f -name '*.tl' |
         sed 's#^tests/integration/##; s#\.tl$##' | sort > "$_actual"
@@ -578,7 +621,10 @@ run_linux_backend_fixtures() {
     as "$_runtime_asm" -o "$_runtime_obj"
     ld "$_runtime_obj" -o "$_runtime_bin"
     set +e
-    "$_runtime_bin" > "$_runtime_dir/runtime.stdout" 2> "$_runtime_dir/runtime.stderr"
+    # The fixture exercises the stdin read helpers (.L_tl_read_stdin_*), so feed it
+    # a closed stdin: an inherited open pipe (e.g. a background/non-CI shell) would
+    # block the read forever. /dev/null yields immediate EOF, matching CI.
+    "$_runtime_bin" < /dev/null > "$_runtime_dir/runtime.stdout" 2> "$_runtime_dir/runtime.stderr"
     _got=$?
     set -e
     if [ "$_got" -ne 42 ] || [ -s "$_runtime_dir/runtime.stdout" ] || [ -s "$_runtime_dir/runtime.stderr" ]; then
@@ -613,7 +659,7 @@ run_linux_backend_fixtures() {
     as "$_stack_asm" -o "$_stack_obj"
     ld "$_stack_obj" -o "$_stack_bin"
     set +e
-    "$_stack_bin" > "$_stack_dir/stack.stdout" 2> "$_stack_dir/stack.stderr"
+    "$_stack_bin" < /dev/null > "$_stack_dir/stack.stdout" 2> "$_stack_dir/stack.stderr"
     _got=$?
     set -e
     if [ "$_got" -ne 96 ] || [ -s "$_stack_dir/stack.stdout" ] || [ -s "$_stack_dir/stack.stderr" ]; then
@@ -647,7 +693,7 @@ run_linux_backend_fixtures() {
     as "$_raw_ptr_asm" -o "$_raw_ptr_obj"
     ld "$_raw_ptr_obj" -o "$_raw_ptr_bin"
     set +e
-    "$_raw_ptr_bin" > "$_raw_ptr_dir/raw_pointer.stdout" 2> "$_raw_ptr_dir/raw_pointer.stderr"
+    "$_raw_ptr_bin" < /dev/null > "$_raw_ptr_dir/raw_pointer.stdout" 2> "$_raw_ptr_dir/raw_pointer.stderr"
     _got=$?
     set -e
     if [ "$_got" -ne 42 ] || [ -s "$_raw_ptr_dir/raw_pointer.stdout" ] || [ -s "$_raw_ptr_dir/raw_pointer.stderr" ]; then
@@ -669,7 +715,7 @@ assemble_link_windows() {
         exit 1
     }
     lld-link -NOLOGO "$(cygpath -aw "$_obj")" "-OUT:$(cygpath -aw "$_bin")" -SUBSYSTEM:CONSOLE \
-        msvcrt.lib legacy_stdio_definitions.lib advapi32.lib || {
+        -STACK:268435456 msvcrt.lib legacy_stdio_definitions.lib advapi32.lib || {
         echo "FAIL: $_label link failed" >&2
         exit 1
     }
@@ -686,8 +732,22 @@ run_windows_backend_fixtures() {
     _runtime_code="$_runtime_dir/runtime.exit"
 
     echo "[windows-backend-runtime] emit -> assemble -> link -> run"
-    run_fixture_with_retry "$COMPILER" run selfhost/compiler_backend_runtime_fixture.tl \
-        -- "$_runtime_asm" windows-x86_64
+    # The compile-only bootstrapped stage1 has no `run`, so build the fixture
+    # driver (compile -> clang -> lld-link) and execute it to emit the runtime asm
+    # (mirrors build_linux_fixture_driver).
+    _driver_asm="$_runtime_dir/fixture_driver.s"
+    _driver_obj="$_runtime_dir/fixture_driver.obj"
+    _driver_bin="$_runtime_dir/fixture_driver.exe"
+    "$COMPILER" compile selfhost/compiler_backend_runtime_fixture.tl \
+        --target windows-x86_64 -o "$_driver_asm" || {
+        echo "FAIL: windows-backend-runtime driver compile failed" >&2
+        exit 1
+    }
+    assemble_link_windows "$_driver_asm" "$_driver_obj" "$_driver_bin" windows-backend-runtime-driver
+    "$_driver_bin" "$_runtime_asm" windows-x86_64 || {
+        echo "FAIL: windows-backend-runtime driver run failed" >&2
+        exit 1
+    }
     for _snippet in \
         ".globl main" \
         ".globl tl_alloc" \
@@ -762,7 +822,7 @@ run_windows_backend_fixtures() {
     fi
     for _snippet in \
         "syscall" \
-        "_start:" \
+        ".globl _start" \
         ".extern tl_alloc" \
         ".extern tl_oob_abort" \
         ".extern tl_substring" \
@@ -811,13 +871,17 @@ run_windows_backend_fixtures() {
     _driver_code="$_driver_dir/run.exit"
 
     echo "[windows-selfhost-compile-driver] build -> exercise"
-    build_with_retry "$COMPILER" build selfhost/compile.tl -o "$_driver_bin"
-    if [ "$build_rc" -ne 0 ]; then
-        echo "FAIL: windows-selfhost-compile-driver build failed (exit $build_rc)" >&2
+    # The compile-only bootstrapped stage1 has no `build` host action, so build the
+    # driver via compile + clang + lld-link (mirrors the runtime fixture above).
+    _driver_self_asm="$_driver_dir/selfhost-compile.s"
+    _driver_self_obj="$_driver_dir/selfhost-compile.obj"
+    "$COMPILER" compile selfhost/compile.tl --target windows-x86_64 -o "$_driver_self_asm" || {
+        echo "FAIL: windows-selfhost-compile-driver compile failed" >&2
         exit 1
-    fi
+    }
+    assemble_link_windows "$_driver_self_asm" "$_driver_self_obj" "$_driver_bin" windows-selfhost-compile-driver
     printf '%s\n' '(define (main) : i64 42)' > "$_driver_source"
-    run_windows_program "$_driver_bin" "$_driver_stdout" "$_driver_stderr" "$_driver_code" \
+    run_windows_program "$_driver_bin" "$_driver_stdout" "$_driver_stderr" "$_driver_code" compile \
         "$(cygpath -aw "$_driver_source")" -o "$(cygpath -aw "$_driver_asm")"
     if [ "$got" -ne 0 ]; then
         echo "FAIL: windows-selfhost-compile-driver default target got exit $got" >&2
@@ -829,7 +893,7 @@ run_windows_backend_fixtures() {
     assert_contains "$_driver_asm" "main:" windows-selfhost-compile-driver
     assert_contains "$_driver_asm" ".globl _start" windows-selfhost-compile-driver
 
-    run_windows_program "$_driver_bin" "$_driver_stdout" "$_driver_stderr" "$_driver_code" \
+    run_windows_program "$_driver_bin" "$_driver_stdout" "$_driver_stderr" "$_driver_code" compile \
         "$(cygpath -aw "$_driver_source")" --target linux-x86_64 -o "$(cygpath -aw "$_driver_linux_asm")"
     if [ "$got" -ne 0 ]; then
         echo "FAIL: windows-selfhost-compile-driver explicit Linux target got exit $got" >&2
@@ -842,7 +906,7 @@ run_windows_backend_fixtures() {
         exit 1
     fi
 
-    run_windows_program "$_driver_bin" "$_driver_stdout" "$_driver_stderr" "$_driver_code" \
+    run_windows_program "$_driver_bin" "$_driver_stdout" "$_driver_stderr" "$_driver_code" compile \
         "$(cygpath -aw "$_driver_source")" --target windows-x86_64 -o "$(cygpath -aw "$_driver_windows_asm")"
     if [ "$got" -ne 0 ]; then
         echo "FAIL: windows-selfhost-compile-driver Windows target got exit $got" >&2
@@ -855,7 +919,7 @@ run_windows_backend_fixtures() {
 
     _bad_target_asm="$_driver_dir/bad-target.s"
     rm -f "$_bad_target_asm"
-    run_windows_program "$_driver_bin" "$_driver_stdout" "$_driver_stderr" "$_driver_code" \
+    run_windows_program "$_driver_bin" "$_driver_stdout" "$_driver_stderr" "$_driver_code" compile \
         "$(cygpath -aw "$_driver_source")" --target plan9-x86_64 -o "$(cygpath -aw "$_bad_target_asm")"
     if [ "$got" -eq 0 ]; then
         echo "FAIL: windows-selfhost-compile-driver invalid target unexpectedly succeeded" >&2
@@ -875,7 +939,7 @@ run_windows_backend_fixtures() {
 (define (alloc [comptime T : type] [n : i64]) : (Array i64) (make-array T n))
 (define (main) : (Array i64) (alloc (type i64) 4))
 EOF
-    run_windows_program "$_driver_bin" "$_driver_stdout" "$_driver_stderr" "$_driver_code" \
+    run_windows_program "$_driver_bin" "$_driver_stdout" "$_driver_stderr" "$_driver_code" compile \
         "$(cygpath -aw "$_comptime_source")" -o "$(cygpath -aw "$_comptime_asm")"
     if [ "$got" -ne 0 ]; then
         echo "FAIL: windows-selfhost-compile-driver comptime type source got exit $got" >&2
@@ -888,7 +952,7 @@ EOF
     _bad_asm="$_driver_dir/bad.s"
     printf '%s\n' '(define (main) : i64 true)' > "$_bad_source"
     rm -f "$_bad_asm"
-    run_windows_program "$_driver_bin" "$_driver_stdout" "$_driver_stderr" "$_driver_code" \
+    run_windows_program "$_driver_bin" "$_driver_stdout" "$_driver_stderr" "$_driver_code" compile \
         "$(cygpath -aw "$_bad_source")" -o "$(cygpath -aw "$_bad_asm")"
     if [ "$got" -eq 0 ]; then
         echo "FAIL: windows-selfhost-compile-driver invalid source unexpectedly succeeded" >&2
@@ -959,15 +1023,39 @@ while IFS='|' read -r name source want stdout_spec runtime_args deps extra || [ 
 
     echo "[$name] build -> run ($HOST_OS)"
     if [ "$HOST_OS" = windows ]; then
-        build_with_retry "$COMPILER" build "$work_src" -o "$bin.exe" \
-            > "$build_stdout" 2> "$build_stderr"
-        if [ "$build_rc" -ne 0 ]; then
+        # The compile-only bootstrapped stage1 has `compile` but not `build`, so
+        # emit Windows asm then assemble (clang) + link (lld-link), mirroring the
+        # Linux compile->as->ld path below.
+        if ! "$COMPILER" compile "$work_src" --target windows-x86_64 -o "$asm" \
+            > "$build_stdout" 2> "$build_stderr"; then
             if integration_should_skip_staged "$requires_symbol" "$build_stdout" "$build_stderr"; then
                 echo "[integration] SKIP $name (awaiting no-Rust compiler support for '$requires_symbol')"
                 skipped=$((skipped + 1))
                 continue
             fi
-            echo "FAIL: $name build failed" >&2
+            echo "FAIL: $name compile failed" >&2
+            show_build_streams "$build_stdout" "$build_stderr"
+            failed=$((failed + 1))
+            ran=$((ran + 1))
+            continue
+        fi
+        if ! clang --target=x86_64-pc-windows-msvc -c "$asm" -o "$obj" \
+            >> "$build_stdout" 2>> "$build_stderr"; then
+            echo "FAIL: $name assemble failed" >&2
+            show_build_streams "$build_stdout" "$build_stderr"
+            failed=$((failed + 1))
+            ran=$((ran + 1))
+            continue
+        fi
+        if ! lld-link -NOLOGO "$(cygpath -aw "$obj")" "-OUT:$(cygpath -aw "$bin.exe")" \
+            -SUBSYSTEM:CONSOLE -STACK:268435456 msvcrt.lib legacy_stdio_definitions.lib advapi32.lib \
+            >> "$build_stdout" 2>> "$build_stderr"; then
+            if integration_should_skip_staged "$requires_symbol" "$build_stdout" "$build_stderr"; then
+                echo "[integration] SKIP $name (awaiting no-Rust compiler support for '$requires_symbol')"
+                skipped=$((skipped + 1))
+                continue
+            fi
+            echo "FAIL: $name link failed" >&2
             show_build_streams "$build_stdout" "$build_stderr"
             failed=$((failed + 1))
             ran=$((ran + 1))

@@ -57,6 +57,16 @@ assert_contains() {
     fi
 }
 
+assert_not_contains() {
+    file=$1
+    needle=$2
+    if grep -qF "$needle" "$file"; then
+        echo "did not expect '$needle' in $file" >&2
+        sed 's/^/  /' "$file" >&2 || true
+        exit 1
+    fi
+}
+
 assert_empty() {
     file=$1
     [ ! -s "$file" ] || {
@@ -313,12 +323,20 @@ EOF
 (import "pkg:math/src/lib.tl")
 (define (main) : i64 (add-one 41))
 EOF
+    cat > "$PKG/vendor/math/typelisp.pkg" <<'EOF'
+(package
+  (name "stage1_math")
+  (version "0.1.0")
+  (kind "lib")
+  (entry "src/lib.tl"))
+EOF
     cat > "$PKG/vendor/math/src/lib.tl" <<'EOF'
 (define (add-one [x : i64]) : i64 (+ x 1))
 EOF
     PKG_OUT_DIR="$PKG/target/typelisp/stage1_pkg"
     PKG_BIN="$PKG_OUT_DIR/stage1_pkg"
     PKG_ASM="$PKG_OUT_DIR/stage1_pkg.s"
+    MATH_ARCHIVE="$PKG/vendor/math/target/typelisp/stage1_math/libstage1_math.a"
     run_capture build-package "$COMPILER" build --manifest-path "$PKG/typelisp.pkg" --opt-level 0
     [ -x "$PKG_BIN" ] || {
         echo "package build did not write executable $PKG_BIN" >&2
@@ -328,9 +346,15 @@ EOF
         echo "package build did not keep assembly side artifact $PKG_ASM" >&2
         exit 1
     }
+    [ -s "$MATH_ARCHIVE" ] || {
+        echo "package build did not write dependency archive $MATH_ARCHIVE" >&2
+        exit 1
+    }
+    assert_contains "$WORKDIR/build-package.stdout" "Generated: $MATH_ARCHIVE"
     assert_contains "$WORKDIR/build-package.stdout" "Generated: $PKG_BIN"
     assert_contains "$PKG_ASM" "main:"
-    assert_contains "$PKG_ASM" "add_one"
+    assert_contains "$PKG_ASM" ".extern _tl_lib_u2etl_colon_colonadd_one"
+    assert_not_contains "$PKG_ASM" "_tl_lib_u2etl_colon_colonadd_one:"
     set +e
     "$PKG_BIN" > "$WORKDIR/build-package-bin.stdout" 2> "$WORKDIR/build-package-bin.stderr"
     pkg_bin_status=$?

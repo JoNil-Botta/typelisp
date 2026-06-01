@@ -2352,14 +2352,19 @@
     [(AstTyFunc _ _) true]
     [_ false]))
 
+;; The symbol table is keyed by the module key (module/name) and the bare source
+;; name alias, never by the `::` logical/mangled name returned by
+;; lower-resolve-name. Look up the bare source name so a function used as a value
+;; lowers to IrValueFunction (its closure-descriptor address) instead of falling
+;; through to IrValueGlobal (which would load the function's code bytes and
+;; miscompile an indirect call through it).
 (define (lower-symbol-function-value?
   [ctx : TcContext]
   [state : LowerState]
   [name : String]) : bool
   (let
     [symbols : CompilerSymbols (tc-context-symbols ctx)]
-    [resolved : String (lower-resolve-name state name)]
-    (match (compiler-symbols-lookup-value symbols resolved)
+    (match (compiler-symbols-lookup-value symbols name)
       [(SomeI64 handle)
         (or
           (=

@@ -239,6 +239,49 @@ stage1_safety_corpus_supported() {
     return 0
 }
 
+# Windows analog of stage1_safety_corpus_supported: can the bootstrapped Windows
+# stage1 compile -> clang -> lld-link -> RUN a native program? Uses a normal
+# exit-42 fixture (not a trap: bare hardware traps surface as Windows structured
+# exceptions whose shell exit code is unstable under MSYS/Git Bash).
+stage1_can_compile_native_windows() {
+    compiler=$1
+    probe_dir="$ROOT/target/no-rust-stage1-win-probe"
+    rm -rf "$probe_dir"
+    mkdir -p "$probe_dir"
+    asm="$probe_dir/probe.s"
+    obj="$probe_dir/probe.obj"
+    bin="$probe_dir/probe.exe"
+    if ! "$compiler" compile "$ROOT/tests/safety/integer_wrap_cast_defined.tl" \
+        --target windows-x86_64 --stdlib-root "$ROOT/stdlib" -o "$asm" \
+        > "$probe_dir/compile.out" 2>&1; then
+        echo "[no-rust-stage0] windows stage1 compile-native probe compile failed"
+        sed 's/^/  /' "$probe_dir/compile.out" >&2 || true
+        return 1
+    fi
+    if ! clang --target=x86_64-pc-windows-msvc -c "$asm" -o "$obj" \
+        > "$probe_dir/asm.out" 2>&1; then
+        echo "[no-rust-stage0] windows stage1 compile-native probe assemble failed"
+        sed 's/^/  /' "$probe_dir/asm.out" >&2 || true
+        return 1
+    fi
+    if ! lld-link -NOLOGO "$(cygpath -aw "$obj")" "-OUT:$(cygpath -aw "$bin")" \
+        -SUBSYSTEM:CONSOLE msvcrt.lib legacy_stdio_definitions.lib advapi32.lib \
+        > "$probe_dir/link.out" 2>&1; then
+        echo "[no-rust-stage0] windows stage1 compile-native probe link failed"
+        sed 's/^/  /' "$probe_dir/link.out" >&2 || true
+        return 1
+    fi
+    set +e
+    "$bin" < /dev/null > "$probe_dir/run.out" 2>&1
+    probe_status=$?
+    set -e
+    if [ "$probe_status" -ne 42 ]; then
+        echo "[no-rust-stage0] windows stage1 compile-native probe expected exit 42, got $probe_status"
+        return 1
+    fi
+    return 0
+}
+
 echo "[no-rust-stage0] host=$HOST_OS seed=$SEED_TYPELISP_BIN"
 
 run_with_compiler "$SEED_TYPELISP_BIN" "TypeLisp source formatting" scripts/check-tl-format.sh
@@ -520,19 +563,33 @@ else
     if [ "$WINDOWS_SEED_STAGED_RUNTIME_GAP" -eq 1 ]; then
         echo
         echo "[no-rust-stage0] skipping Windows selfhost MSVC link.exe build/run and bootstrap fixpoint until the seed provides staged runtime symbols"
-    elif [ "$STAGE1_HOST_ACTION_DRIVERS_AVAILABLE" -eq 0 ]; then
-        # Single-binary cli.tl seed: the MSVC link.exe gate drives `run --direct`
-        # (a host-action cli.tl emits as a plan, not an execution), and the Windows
-        # bootstrap fixpoint links a selfhost-built stage1 with only a 16 MB stack
-        # reserve (/STACK:16777216), which a selfhost-built compiler overflows on
-        # the larger selfhost sources. Both are deferred to the in-process
-        # host-action executor / Windows self-reproduction follow-up (#1645/#1327).
-        # The Linux lane keeps the bootstrap fixpoint as the self-reproduction gate.
-        echo
-        echo "[no-rust-stage0] skipping Windows selfhost MSVC link.exe build/run and bootstrap fixpoint for the single-binary cli.tl seed (host-action executor pending; #1645/#1327)"
     else
+        # The Windows stage2 self-compile allocation ceiling (#1601) is fixed on
+        # this branch (it is based on the 1601 branch), and lib-native-link.sh
+        # links each bootstrap stage at a 256 MB stack reserve (not the old 16 MB
+        # /STACK), so the Windows self-reproduction fixpoint converges. Run it,
+        # capture the bootstrapped Windows stage1, and reuse it for the run-assert
+        # tiers below so the gate executes real Windows binaries built by the
+        # artifact we just produced.
         run_gate "windows selfhost MSVC link.exe build/run" scripts/verify-windows-selfhost-msvc-link.sh
+        WINDOWS_STAGE1_PATH_FILE="$ROOT/target/no-rust-stage0-win-stage1.path"
+        rm -f "$WINDOWS_STAGE1_PATH_FILE"
+        TYPELISP_BOOTSTRAP_STAGE1_PATH_FILE=$WINDOWS_STAGE1_PATH_FILE
+        export TYPELISP_BOOTSTRAP_STAGE1_PATH_FILE
         run_gate "windows bootstrap fixpoint" scripts/check-bootstrap-fixpoint.sh "$SEED_TYPELISP_BIN"
+        unset TYPELISP_BOOTSTRAP_STAGE1_PATH_FILE
+        if [ -s "$WINDOWS_STAGE1_PATH_FILE" ]; then
+            BOOTSTRAPPED_STAGE1=$(sed -n '1p' "$WINDOWS_STAGE1_PATH_FILE")
+            ensure_executable "windows stage1" "$BOOTSTRAPPED_STAGE1"
+            if stage1_can_compile_native_windows "$BOOTSTRAPPED_STAGE1"; then
+                STAGE1_CAN_COMPILE_NATIVE=1
+                echo "[no-rust-stage0] windows stage1 compile->clang->lld-link->run capability confirmed; run-assert tiers execute on the bootstrapped stage1"
+            else
+                echo "[no-rust-stage0] windows stage1 compile-native probe failed; run-assert tiers stay skipped"
+            fi
+        else
+            echo "[no-rust-stage0] windows fixpoint did not persist a stage1 path; run-assert tiers stay skipped"
+        fi
     fi
 fi
 TYPELISP_BIN=$SEED_TYPELISP_BIN
@@ -545,7 +602,7 @@ export TYPELISP_BIN
 # native programs yet.
 SAFETY_GATE_TYPELISP_BIN=$SEED_TYPELISP_BIN
 SAFETY_GATE_LABEL="safety corpus"
-if [ "$HOST_OS" = linux ] && [ "$STAGE1_CAN_COMPILE_NATIVE" -eq 1 ]; then
+if [ "$STAGE1_CAN_COMPILE_NATIVE" -eq 1 ]; then
     # The freshly bootstrapped stage1 compiles + assembles + links + runs native
     # programs (confirmed by the compile-native probe above), so exercise the
     # safety corpus's trap/exit fixtures on the artifact we built, not the seed.
@@ -568,12 +625,13 @@ fi
 TYPELISP_BIN=$SEED_TYPELISP_BIN
 export TYPELISP_BIN
 
-if [ "$HOST_OS" = linux ] && [ "$STAGE1_CAN_COMPILE_NATIVE" -eq 1 ]; then
+if [ "$STAGE1_CAN_COMPILE_NATIVE" -eq 1 ]; then
     # The bootstrapped stage1 compiles + assembles + links + runs native programs
     # (compile-native probe confirmed), so run the integration corpus and examples
-    # on the artifact we built via compile -> as -> ld -> run, instead of skipping.
-    # stdlib fixtures additionally drive `typelisp build`/`run` host actions, so
-    # they stay deferred until the in-process host-action executor lands (#1327).
+    # on the artifact we built via compile -> assemble -> link -> run (as/ld on
+    # Linux, clang/lld-link on Windows), instead of skipping. stdlib fixtures
+    # additionally drive `typelisp build`/`run` host actions, so they stay deferred
+    # until the in-process host-action executor lands (#1327).
     run_with_compiler "$BOOTSTRAPPED_STAGE1" "stage1 native integration corpus" scripts/verify-integration.sh
     run_with_compiler "$BOOTSTRAPPED_STAGE1" "stage1 examples" scripts/verify-examples.sh
     echo

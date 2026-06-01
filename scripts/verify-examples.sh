@@ -81,8 +81,14 @@ for source in "$ROOT/examples/"*.tl; do
     bin="$WORKDIR/$name"
 
     if [ "$HOST_OS" = windows ]; then
-        echo "[$name] building (host default)"
-        "$COMPILER" build "$WORKDIR/$name.tl" -o "$bin.exe"
+        # The compile-only bootstrapped stage1 has `compile` but not `build`, so
+        # emit Windows asm then assemble + link with clang + lld-link (mirrors
+        # verify-integration.sh's assemble_link_windows).
+        echo "[$name] compiling (windows-x86_64)"
+        "$COMPILER" compile "$WORKDIR/$name.tl" --target windows-x86_64 -o "$asm"
+        clang --target=x86_64-pc-windows-msvc -c "$asm" -o "$obj"
+        lld-link -NOLOGO "$(cygpath -aw "$obj")" "-OUT:$(cygpath -aw "$bin.exe")" \
+            -SUBSYSTEM:CONSOLE -STACK:268435456 msvcrt.lib legacy_stdio_definitions.lib advapi32.lib
 
         echo "[$name] running -> expect exit $want"
         set +e

@@ -1103,7 +1103,10 @@ EOF
 EOF
     run_cmd selfhost-build-package-missing-dep "$SELFHOST_PLANNER_DIR/build-tool" --direct --manifest-path "$SELFHOST_BADPKG/typelisp.pkg"
     assert_failure
-    assert_stdout_empty
+    # The selfhost --direct planner builds the path dependency's archive first
+    # (emitting its `Generated:` line) before resolving the entry package's
+    # imports, so stdout carries the dependency build, not nothing. The failure
+    # is the missing import below.
     assert_contains "$err" "compiler-load: cannot read import"
     assert_contains "$err" "vendor/math/src/missing.tl"
 

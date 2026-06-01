@@ -711,18 +711,20 @@
             (and
               (compiler-backend-string-contains? asm "    movq %r12, -")
               (and
-                (compiler-backend-string-contains? asm "    movq %rax, %r8\n")
+                (compiler-backend-string-contains? asm "    movq %rax, %r12\n")
                 (and
-                  (compiler-backend-string-contains? asm "    movq %r8, %rax\n")
+                  (compiler-backend-string-contains?
+                    asm
+                    "    movq %r12, %rax\n")
                   (and
                     (not
                       (compiler-backend-string-contains?
                         asm
-                        "    movq %rdi, %r8\n"))
+                        "    movq %rdi, %r12\n"))
                     (not
                       (compiler-backend-string-contains?
                         asm
-                        "    movq %rsi, %r8\n")))))))))]
+                        "    movq %rsi, %r12\n")))))))))]
     [(ErrCompilerBackend _) false]))
 
 (define (compiler-backend-regalloc-f64-ok?) : bool

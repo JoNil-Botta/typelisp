@@ -89,18 +89,23 @@
 (define (compiler-reg-stack-slot-offset [var : i64]) : i64
   (- 0 (* 8 (+ var 1))))
 
+;; Allocatable integer register pool. Only callee-saved registers are admitted:
+;; a value whose live interval spans a call keeps its home across that call
+;; because the callee preserves these registers, so no spill/reload around the
+;; call is needed. The former pool also offered %r8/%r9, which are caller-saved
+;; under both SysV and Win64 and are clobbered by an intervening call — a value
+;; homed there and read after the call (e.g. the first operand of `(+ a (f))`)
+;; would silently observe garbage. The four registers below are exactly those
+;; the backend prologue/epilogue save and restore. Mirrors the former Rust
+;; backend's `SYSV_ALLOCATABLE_INTEGER_REGS` (callee-saved only).
 (define (compiler-reg-sysv-integer-registers) : CompilerRegStringList
   (CompilerRegStringCons
-    "%r8"
+    "%r12"
     (CompilerRegStringCons
-      "%r9"
+      "%r13"
       (CompilerRegStringCons
-        "%r12"
-        (CompilerRegStringCons
-          "%r13"
-          (CompilerRegStringCons
-            "%r14"
-            (CompilerRegStringCons "%r15" CompilerRegStringNil)))))))
+        "%r14"
+        (CompilerRegStringCons "%r15" CompilerRegStringNil)))))
 
 (define (compiler-reg-sysv-caller-saved-integer-registers) : CompilerRegStringList
   (CompilerRegStringCons
@@ -1735,10 +1740,10 @@
         (and
           (compiler-reg-location-register?
             (compiler-reg-assignment-lookup assignments 0)
-            "%r8")
+            "%r12")
           (compiler-reg-location-register?
             (compiler-reg-assignment-lookup assignments 1)
-            "%r8")))]))
+            "%r12")))]))
 
 (define (compiler-reg-f64-reuse-ok?) : bool
   (match (compiler-reg-plan-function (compiler-reg-f64-reuse-function))
@@ -1756,18 +1761,20 @@
 (define (compiler-reg-overlap-spill-ok?) : bool
   (match (compiler-reg-plan-function (compiler-reg-overlap-function))
     [(CompilerRegPlan assignments _ _)
+      ;; Seven simultaneously live values against a four-register callee-saved
+      ;; pool: the first four take %r12..%r15 and the remaining three spill.
       (and
         (= (compiler-reg-assignment-count assignments) 7)
         (and
-          (= (compiler-reg-spill-count assignments) 1)
+          (= (compiler-reg-spill-count assignments) 3)
           (and
             (compiler-reg-location-register?
-              (compiler-reg-assignment-lookup assignments 4)
-              "%r14")
+              (compiler-reg-assignment-lookup assignments 3)
+              "%r15")
             (and
-              (compiler-reg-location-register?
-                (compiler-reg-assignment-lookup assignments 5)
-                "%r15")
+              (compiler-reg-location-spill-offset?
+                (compiler-reg-assignment-lookup assignments 4)
+                (compiler-reg-stack-slot-offset 4))
               (compiler-reg-location-spill-offset?
                 (compiler-reg-assignment-lookup assignments 6)
                 (compiler-reg-stack-slot-offset 6))))))]))
@@ -1810,7 +1817,7 @@
             (compiler-reg-unassigned? assignments 0)
             (compiler-reg-location-register?
               (compiler-reg-assignment-lookup assignments 2)
-              "%r8"))))]))
+              "%r12"))))]))
 
 (define (compiler-reg-f64-call-live-ok?) : bool
   (match (compiler-reg-plan-function (compiler-reg-f64-call-live-function))
@@ -1840,7 +1847,7 @@
               (compiler-reg-unassigned? assignments 1)
               (compiler-reg-location-register?
                 (compiler-reg-assignment-lookup assignments 3)
-                "%r8")))))]))
+                "%r12")))))]))
 
 (define (compiler-reg-f64-call-arg-ok?) : bool
   (match (compiler-reg-plan-function (compiler-reg-f64-call-arg-function))
@@ -1888,7 +1895,7 @@
               "%xmm2")
             (compiler-reg-location-register?
               (compiler-reg-assignment-lookup assignments 5)
-              "%r8"))]
+              "%r12"))]
         (and marked (and unassigned homes)))]))
 
 (define (compiler-reg-same-location?
@@ -1974,13 +1981,22 @@
                   (compiler-reg-string-list-count
                     (compiler-reg-sysv-integer-registers))
                   (compiler-reg-string-list-count win-callees)))
+              ;; The allocatable pool admits only callee-saved registers, so a
+              ;; value homed there survives an intervening call. It must never
+              ;; offer a caller-saved register such as %r8/%r9.
               (and
                 (compiler-reg-string-list-contains?
                   (compiler-reg-sysv-integer-registers)
-                  "%r8")
-                (compiler-reg-string-list-contains?
-                  (compiler-reg-sysv-integer-registers)
-                  "%r9")))))))))
+                  "%r12")
+                (and
+                  (not
+                    (compiler-reg-string-list-contains?
+                      (compiler-reg-sysv-integer-registers)
+                      "%r8"))
+                  (not
+                    (compiler-reg-string-list-contains?
+                      (compiler-reg-sysv-integer-registers)
+                      "%r9")))))))))))
 
 (define (compiler-reg-xmm-clobbers-ok?) : bool
   (let

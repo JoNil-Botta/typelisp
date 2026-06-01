@@ -2358,6 +2358,29 @@
     [(AstDeclExtern _ _ ty) (OkTcType (tc-resolve-type ctx ty))]
     [_ (ErrTcType "typecheck: declaration has no value type")]))
 
+;; Like `tc-top-decl-type`, but infers an un-annotated top-level `define`'s type
+;; from its initializer expression when it is neither a literal nor an annotated
+;; expression. The `env` carries the bindings of all preceding declarations
+;; (functions, enum/struct constructors, earlier globals), so a global such as
+;; `(define result (factorial 5))` or `(define pair (Pair 10 11))` resolves
+;; through the ordinary expression typechecker instead of demanding an
+;; annotation. This mirrors the former Rust typechecker, whose first pass over
+;; the declarations runs `check_expr(value)` for an un-annotated `Decl::Def`.
+(define (tc-top-decl-type-with-env
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [decl : AstDecl]) : ResultTcType
+  (match decl
+    [(AstDeclDef _ maybe-ty expr)
+      (match maybe-ty
+        [(AstSomeType ty) (OkTcType (tc-resolve-type ctx ty))]
+        [(AstNoType)
+          (match (ast-expr-unspan expr)
+            [(AstExprLiteral lit) (OkTcType (tc-literal-type lit))]
+            [(AstExprAnn _ ty) (OkTcType (tc-resolve-type ctx ty))]
+            [_ (tc-expr ctx env expr)])])]
+    [_ (tc-top-decl-type ctx decl)]))
+
 (define (tc-field-type-list [ctx : TcContext] [fields : AstFieldDefList]) : AstTypeList
   (match fields
     [(AstFieldDefNil) AstTypeNil]
@@ -2431,7 +2454,10 @@
         [(AstDeclModule next-module)
           (tc-build-top-env-list-in-module ctx rest env next-module)]
         [(AstDeclDef name _ _)
-          (match (tc-top-decl-type (tc-context-with-module ctx module) decl)
+          (match (tc-top-decl-type-with-env
+            (tc-context-with-module ctx module)
+            env
+            decl)
             [(OkTcType ty)
               (tc-build-top-env-list-in-module
                 ctx
@@ -2720,7 +2746,7 @@
   [decl : AstDecl]) : ResultTcEnv
   (match decl
     [(AstDeclDef name _ _)
-      (match (tc-top-decl-type ctx decl)
+      (match (tc-top-decl-type-with-env ctx env decl)
         [(OkTcType ty) (OkTcEnv (tc-bind env name ty))]
         [(ErrTcType message) (ErrTcEnv message)])]
     [(AstDeclDefFn name _ _ _)

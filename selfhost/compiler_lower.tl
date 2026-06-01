@@ -3324,6 +3324,8 @@
       (lower-struct-get ctx state env type-env receiver field expr-ty)]
     [(AstExprMakeArray elem-ty len)
       (lower-make-array ctx state env type-env elem-ty len)]
+    [(AstExprArray values)
+      (lower-array-literal ctx state env type-env values expr-ty origin)]
     [(AstExprArrayRef arr index)
       (lower-array-ref ctx state env type-env arr index)]
     [(AstExprArraySet arr index value)
@@ -3744,6 +3746,92 @@
     [_
       (ErrLowerExpr
         (lower-diagnostic-at-expr origin "lower: tuple requires tuple type"))]))
+
+;; Evaluate each fixed-array-literal element (preserving side effects even for
+;; zero-sized elements) and store the sized ones at `index * elem-size` into the
+;; reserved inline storage, threading the lowering state. Mirrors
+;; `lower-tuple-store-elems`, specialized to a single homogeneous element type.
+(define (lower-array-literal-store-elems
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [base : CompilerIrValue]
+  [values : AstExprList]
+  [elem-ty : AstType]
+  [elem-size : i64]
+  [offset : i64]) : ResultLowerState
+  (match values
+    [(AstExprNil) (OkLowerState state)]
+    [(AstExprCons value rest-values)
+      (match (lower-expr ctx state env type-env value)
+        [(OkLowerExpr lowered)
+          (match lowered
+            [(LowerExpr elem-state elem-value _)
+              (lower-array-literal-store-elems
+                ctx
+                (if (> elem-size 0)
+                  (lower-store-at-offset
+                    elem-state
+                    base
+                    offset
+                    elem-value
+                    elem-ty)
+                  elem-state)
+                env
+                type-env
+                base
+                rest-values
+                elem-ty
+                elem-size
+                (+ offset elem-size))])]
+        [(ErrLowerExpr message) (ErrLowerState message)])]))
+
+;; Lower `(array v0 v1 ...)`: reserve inline storage for `count` elements of the
+;; element type, store each element at `index * elem-size`, and return the
+;; storage pointer typed as the fixed array. A fixed-array value is pointer-
+;; shaped (a pointer to inline storage), matching `array-ref`/`array-set!`, which
+;; index off the same base. Mirrors `src/lower.rs` `lower_array_literal`.
+(define (lower-array-literal
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [values : AstExprList]
+  [result-ty : AstType]
+  [origin : AstExpr]) : ResultLowerExpr
+  (match (tc-resolve-type ctx result-ty)
+    [(AstTyArray elem-ty count)
+      (let
+        [resolved-elem : AstType (tc-resolve-type ctx elem-ty)]
+        [elem-size : i64 (lower-type-size ctx elem-ty)]
+        (let
+          [storage-size : i64
+            (lower-align-up
+              (if (= (* count elem-size) 0)
+                1
+                (* count elem-size))
+              8)]
+          (match (lower-reserve-heap-storage state storage-size result-ty)
+            [(LowerExpr base-state base _)
+              (match (lower-array-literal-store-elems
+                ctx
+                base-state
+                env
+                type-env
+                base
+                values
+                resolved-elem
+                elem-size
+                0)
+                [(OkLowerState final-state)
+                  (OkLowerExpr (LowerExpr final-state base result-ty))]
+                [(ErrLowerState message) (ErrLowerExpr message)])])))]
+    [_
+      (ErrLowerExpr
+        (lower-diagnostic-at-expr
+          origin
+          "lower: array literal requires fixed-array type"))]))
 
 ;; Lower `(tuple-ref t i)`: evaluate the tuple, compute element `i`'s offset, and
 ;; load it (returning the unit value for a zero-sized element, which was never
@@ -8675,14 +8763,6 @@
     [_
       (ErrLowerValue (lower-diagnostic "lower: unsupported global initializer"))]))
 
-(define (lower-runtime-global-init-type? [ty : AstType]) : bool
-  (match ty
-    [(AstTyString) true]
-    [(AstTyDynArray _) true]
-    [(AstTyEnum _) true]
-    [(AstTyStruct _) true]
-    [_ false]))
-
 (define (lower-global-init-function-name [global-name : String]) : String
   (string-append "__global_init_" global-name))
 
@@ -8807,63 +8887,70 @@
             [decl-ctx : TcContext (tc-context-with-module ctx module)]
             [local-names : LowerNameEnv
               (lower-module-local-names ctx names module)]
-            (match (tc-top-decl-type decl-ctx decl)
-              [(OkTcType ty)
-                (let
-                  [global-ty : AstType (tc-type-without-regions ty)]
-                  [global-name : String
-                    (lower-current-decl-logical-name names module name)]
-                  (match (lower-global-value local-names expr)
-                    [(OkLowerValue value)
-                      (lower-decls-in-module
-                        ctx
-                        top-env
-                        rest
-                        (IrGlobalCons
-                          (IrGlobal global-name global-ty value)
-                          globals)
-                        functions
-                        externs
-                        spans
-                        names
-                        mode
-                        module)]
-                    [(ErrLowerValue message)
-                      (if (lower-runtime-global-init-type? global-ty)
-                        (match (tc-module-local-env ctx top-env module)
-                          [(OkTcEnv local-top-env)
-                            (match (lower-function-escaping
-                              decl-ctx
-                              local-top-env
-                              (lower-global-init-function-name global-name)
-                              AstParamNil
-                              global-ty
-                              expr
-                              spans
-                              local-names
-                              mode)
-                              [(OkLowerFunction init-funcs init-spans)
-                                (lower-decls-in-module
-                                  ctx
-                                  top-env
-                                  rest
-                                  (IrGlobalCons
-                                    (IrGlobal global-name global-ty IrValueUnit)
-                                    globals)
-                                  (lower-function-list-append
-                                    init-funcs
-                                    functions)
-                                  externs
-                                  init-spans
-                                  names
-                                  mode
-                                  module)]
-                              [(ErrLowerFunction init-message)
-                                (ErrLowerDecls init-message)])]
-                          [(ErrTcEnv env-message)
-                            (ErrLowerDecls (lower-diagnostic env-message))])
-                        (ErrLowerDecls message))]))]
-              [(ErrTcType message) (ErrLowerDecls (lower-diagnostic message))]))]
+            (match (tc-module-local-env ctx top-env module)
+              [(OkTcEnv local-top-env)
+                (match (tc-top-decl-type-with-env decl-ctx local-top-env decl)
+                  [(OkTcType ty)
+                    (let
+                      [global-ty : AstType (tc-type-without-regions ty)]
+                      [global-name : String
+                        (lower-current-decl-logical-name names module name)]
+                      (match (lower-global-value local-names expr)
+                        [(OkLowerValue value)
+                          (lower-decls-in-module
+                            ctx
+                            top-env
+                            rest
+                            (IrGlobalCons
+                              (IrGlobal global-name global-ty value)
+                              globals)
+                            functions
+                            externs
+                            spans
+                            names
+                            mode
+                            module)]
+                        ;; A global whose initializer is not a compile-time
+                        ;; constant is evaluated at startup by a hidden
+                        ;; `__global_init_<name>` function whose return value the
+                        ;; backend stores into the global before `main`. This
+                        ;; applies to any non-unit type (scalars as well as
+                        ;; aggregates), mirroring the former Rust lowerer, which
+                        ;; emits an init function whenever `extract_const` yields
+                        ;; no constant.
+                        [(ErrLowerValue _)
+                          (match (lower-function-escaping
+                            decl-ctx
+                            local-top-env
+                            (lower-global-init-function-name global-name)
+                            AstParamNil
+                            global-ty
+                            expr
+                            spans
+                            local-names
+                            mode)
+                            [(OkLowerFunction init-funcs init-spans)
+                              (lower-decls-in-module
+                                ctx
+                                top-env
+                                rest
+                                (IrGlobalCons
+                                  (IrGlobal global-name global-ty IrValueUnit)
+                                  globals)
+                                (lower-function-list-append
+                                  init-funcs
+                                  functions)
+                                externs
+                                init-spans
+                                names
+                                mode
+                                module)]
+                            [(ErrLowerFunction init-message)
+                              (ErrLowerDecls init-message)])]))]
+                  [(ErrTcType message)
+                    (ErrLowerDecls (lower-diagnostic message))])]
+              [(ErrTcEnv env-message)
+                (ErrLowerDecls (lower-diagnostic env-message))]))]
         [(AstDeclExtern name metadata ty)
           (let
             [decl-ctx : TcContext (tc-context-with-module ctx module)]
@@ -9276,10 +9363,10 @@
   (expr-if lhs rhs (expr-bool false)))
 (define (main) : i64 (if (and2 true) 1 0))")
 
-;; A still-unsupported expression for the lower-error path: the `(array ...)`
-;; literal type-checks but the selfhost lowerer has no emission for it yet (tuple
-;; construction, the former example here, now lowers via #1583).
-(define (compiler-lower-unsupported-source) : String
+;; A fixed-array literal `(array ...)`: it type-checks to `(Array i64 N)` and now
+;; lowers to inline storage with each element stored at its offset, returning the
+;; storage pointer (the same representation `array-ref`/`array-set!` index off).
+(define (compiler-lower-array-literal-source) : String
   "(define (main) : (Array i64 3)
   (array 1 2 3))")
 
@@ -12350,9 +12437,7 @@
         "typecheck: if branches must match")
         unit
         (set! ok false))
-      (if (compiler-lower-error-ok?
-        (compiler-lower-unsupported-source)
-        "lower: unsupported expression")
+      (if (compiler-lower-ok? (compiler-lower-array-literal-source))
         unit
         (set! ok false))
       (if (compiler-lower-ok? (compiler-lower-box-source))

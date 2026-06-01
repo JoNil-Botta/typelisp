@@ -131,17 +131,46 @@ run_case() {
 build_selfhost_checker() {
     out="$WORKDIR/selfhost-check.build.out"
     err="$WORKDIR/selfhost-check.build.err"
-    run_case "$out" "$err" 0 \
-        "$COMPILER" build selfhost/check.tl \
-        --target "$BUILD_TARGET" \
-        --stdlib-root "$ROOT/stdlib" \
-        -o "$CHECK_BIN"
-    if [ "$code" -ne 0 ]; then
-        echo "stdout:" >&2
-        sed 's/^/  /' "$out" >&2 || true
-        echo "stderr:" >&2
-        sed 's/^/  /' "$err" >&2 || true
-        fail "selfhost/check.tl build failed with exit $code"
+    if [ "$HOST_OS" = windows ]; then
+        run_case "$out" "$err" 0 \
+            "$COMPILER" build selfhost/check.tl \
+            --target "$BUILD_TARGET" \
+            --stdlib-root "$ROOT/stdlib" \
+            -o "$CHECK_BIN"
+        if [ "$code" -ne 0 ]; then
+            echo "stdout:" >&2
+            sed 's/^/  /' "$out" >&2 || true
+            echo "stderr:" >&2
+            sed 's/^/  /' "$err" >&2 || true
+            fail "selfhost/check.tl build failed with exit $code"
+        fi
+    else
+        # The compile-only bootstrapped stage1 has `compile`/`check` but not the
+        # `build` host action, so assemble + link the checker by hand (mirrors
+        # build_case_program's Linux path).
+        asm="$WORKDIR/selfhost-check.s"
+        obj="$WORKDIR/selfhost-check.o"
+        run_case "$out" "$err" 0 \
+            "$COMPILER" compile selfhost/check.tl \
+            --target "$BUILD_TARGET" \
+            --stdlib-root "$ROOT/stdlib" \
+            -o "$asm"
+        if [ "$code" -ne 0 ]; then
+            echo "stdout:" >&2
+            sed 's/^/  /' "$out" >&2 || true
+            echo "stderr:" >&2
+            sed 's/^/  /' "$err" >&2 || true
+            fail "selfhost/check.tl compile failed with exit $code"
+        fi
+        if ! as "$asm" -o "$obj" >> "$out" 2>> "$err"; then
+            show_stream_if_nonempty stderr "$err"
+            fail "selfhost/check.tl assemble failed"
+        fi
+        if ! ld "$obj" -o "$CHECK_BIN" -dynamic-linker /lib64/ld-linux-x86-64.so.2 -lc \
+            >> "$out" 2>> "$err"; then
+            show_stream_if_nonempty stderr "$err"
+            fail "selfhost/check.tl link failed"
+        fi
     fi
 }
 

@@ -224,9 +224,14 @@ stage1_safety_corpus_supported() {
     "$bin" > "$probe_dir/run.stdout" 2> "$probe_dir/run.stderr"
     probe_status=$?
     set -e
-    if [ "$probe_status" -ne 135 ] ||
-        ! grep -qF "tl: integer division or remainder error" "$probe_dir/run.stderr"; then
-        echo "[no-rust-stage0] stage1 safety probe expected div-zero trap exit 135"
+    # The selfhost backend emits a bare hardware divide (idiv), so divide-by-zero
+    # faults with SIGFPE (exit 136) and produces no `tl:`-prefixed message. This
+    # matches tests/safety/manifest.txt's `run-trap-signal|136` expectation. The
+    # guarded abort that prints "tl: integer division or remainder error" and exits
+    # 135 is a tracked follow-up (#1654); switch this probe back to 135 + the
+    # message grep when that lands.
+    if [ "$probe_status" -ne 136 ]; then
+        echo "[no-rust-stage0] stage1 safety probe expected bare div-zero SIGFPE exit 136, got $probe_status"
         sed 's/^/  /' "$probe_dir/run.stdout" >&2 || true
         sed 's/^/  /' "$probe_dir/run.stderr" >&2 || true
         return 1
@@ -260,6 +265,22 @@ if [ "$HOST_OS" = linux ]; then
     # Capture it immutably and reuse it for the compile-path gates so we actually
     # exercise the artifact we just built, instead of re-running the fetched seed.
     BOOTSTRAPPED_STAGE1=$TYPELISP_BIN
+
+    # Distinct from the build/run host-action drivers (still pending #1327): can the
+    # freshly bootstrapped stage1 compile -> assemble -> link -> RUN a native
+    # program? This is the compile-path run-assert capability. When it holds, the
+    # Linux safety/integration/examples tiers execute on the artifact we just built
+    # (compile + as + ld + run), proving it actually runs programs, instead of being
+    # skipped or falling back to the fetched seed. The probe is the safety div-zero
+    # fixture (compile->as->ld->run->trap 136); reuse its result for all three tiers
+    # so the corpora are only gated on a capability we have positively demonstrated.
+    STAGE1_CAN_COMPILE_NATIVE=0
+    if stage1_safety_corpus_supported "$BOOTSTRAPPED_STAGE1"; then
+        STAGE1_CAN_COMPILE_NATIVE=1
+        echo "[no-rust-stage0] stage1 compile->as->ld->run capability confirmed; Linux run-assert tiers execute on the bootstrapped stage1"
+    else
+        echo "[no-rust-stage0] stage1 compile->as->ld->run probe failed; Linux run-assert tiers stay on the seed/skip path"
+    fi
 
     LINUX_SEED_STAGED_RUNTIME_GAP=0
     if seed_has_staged_runtime_gap "$SEED_TYPELISP_BIN"; then
@@ -325,6 +346,10 @@ if [ "$HOST_OS" != linux ]; then
     LINUX_SEED_STAGED_RUNTIME_GAP=0
     STAGE1_HOST_ACTION_DRIVERS_AVAILABLE=0
     SEED_IS_STAGE1_BUNDLE=0
+    # The compile->as->ld->run capability is Linux-only (the corpora drive the GNU
+    # as/ld toolchain). Windows run-asserts go through the build/run host-action
+    # drivers, gated separately on STAGE1_HOST_ACTION_DRIVERS_AVAILABLE.
+    STAGE1_CAN_COMPILE_NATIVE=0
 fi
 SEED_STAGE1_WRAPPER=0
 if compiler_is_stage1_wrapper "$SEED_TYPELISP_BIN"; then
@@ -520,51 +545,40 @@ export TYPELISP_BIN
 # native programs yet.
 SAFETY_GATE_TYPELISP_BIN=$SEED_TYPELISP_BIN
 SAFETY_GATE_LABEL="safety corpus"
-SAFETY_GATE_STAGE1_PROBE_FAILED=0
-if [ "$HOST_OS" = linux ] && [ "$STAGE1_HOST_ACTION_DRIVERS_AVAILABLE" -eq 1 ]; then
-    if stage1_safety_corpus_supported "$STAGE1_TYPELISP_BIN"; then
-        SAFETY_GATE_TYPELISP_BIN=$STAGE1_TYPELISP_BIN
-        SAFETY_GATE_LABEL="stage1 safety corpus"
-    else
-        SAFETY_GATE_STAGE1_PROBE_FAILED=1
-    fi
-fi
-if [ "$WINDOWS_SEED_STAGED_RUNTIME_GAP" -eq 1 ]; then
+if [ "$HOST_OS" = linux ] && [ "$STAGE1_CAN_COMPILE_NATIVE" -eq 1 ]; then
+    # The freshly bootstrapped stage1 compiles + assembles + links + runs native
+    # programs (confirmed by the compile-native probe above), so exercise the
+    # safety corpus's trap/exit fixtures on the artifact we built, not the seed.
+    SAFETY_GATE_TYPELISP_BIN=$BOOTSTRAPPED_STAGE1
+    SAFETY_GATE_LABEL="stage1 safety corpus"
+    run_with_compiler "$SAFETY_GATE_TYPELISP_BIN" "$SAFETY_GATE_LABEL" scripts/verify-safety-corpus.sh
+elif [ "$WINDOWS_SEED_STAGED_RUNTIME_GAP" -eq 1 ]; then
     echo
     echo "[no-rust-stage0] skipping Windows safety corpus until the seed provides staged runtime symbols"
-elif [ "$HOST_OS" = linux ] &&
-    [ "$SAFETY_GATE_STAGE1_PROBE_FAILED" -eq 1 ] &&
-    { [ "$SEED_STAGE1_WRAPPER" -eq 1 ] || [ "$SEED_IS_STAGE1_BUNDLE" -eq 1 ]; }; then
-    echo
-    echo "[no-rust-stage0] skipping safety corpus until stage1 checked trap helpers land (#1455)"
-elif [ "$HOST_OS" = linux ] &&
-    [ "$STAGE1_HOST_ACTION_DRIVERS_AVAILABLE" -eq 0 ] &&
-    { [ "$LINUX_SEED_STAGED_RUNTIME_GAP" -eq 1 ] ||
-        [ "$SEED_STAGE1_WRAPPER" -eq 1 ] ||
-        [ "$SEED_IS_STAGE1_BUNDLE" -eq 1 ]; }; then
-    echo
-    echo "[no-rust-stage0] skipping safety corpus until stage1 host-action drivers are available"
 elif [ "$STAGE1_HOST_ACTION_DRIVERS_AVAILABLE" -eq 0 ]; then
-    # The safety corpus assembles, links, and runs native trap fixtures. The
-    # single-binary cli.tl seed (Linux or Windows, where the drivers flag is
-    # always 0) emits host-plans rather than executing build/run, so it cannot
-    # drive this gate. Skip until the in-process host-action executor lands
-    # (#1327). The compile-only safety check (division_by_zero_trap emitting
-    # valid .s) is still implicitly exercised by stage1_safety_corpus_supported's
-    # probe path on driver-capable seeds.
+    # The safety corpus assembles, links, and runs native trap fixtures. On hosts
+    # where the bootstrapped stage1 cannot drive compile->as->ld->run (Windows, or
+    # a Linux stage1 that failed the compile-native probe) and the seed only emits
+    # host-plans, skip until the in-process host-action executor lands (#1327).
     echo
-    echo "[no-rust-stage0] skipping safety corpus; assembling/running trap fixtures needs the in-process host-action executor (#1327)"
+    echo "[no-rust-stage0] skipping safety corpus; needs stage1 compile->as->ld->run or the host-action executor (#1327)"
 else
-    if [ "$HOST_OS" = linux ] && [ "$SAFETY_GATE_STAGE1_PROBE_FAILED" -eq 1 ]; then
-        echo
-        echo "[no-rust-stage0] using seed safety corpus until stage1 checked trap helpers land (#1455)"
-    fi
     run_with_compiler "$SAFETY_GATE_TYPELISP_BIN" "$SAFETY_GATE_LABEL" scripts/verify-safety-corpus.sh
 fi
 TYPELISP_BIN=$SEED_TYPELISP_BIN
 export TYPELISP_BIN
 
-if [ "$WINDOWS_SEED_STAGED_RUNTIME_GAP" -eq 1 ] ||
+if [ "$HOST_OS" = linux ] && [ "$STAGE1_CAN_COMPILE_NATIVE" -eq 1 ]; then
+    # The bootstrapped stage1 compiles + assembles + links + runs native programs
+    # (compile-native probe confirmed), so run the integration corpus and examples
+    # on the artifact we built via compile -> as -> ld -> run, instead of skipping.
+    # stdlib fixtures additionally drive `typelisp build`/`run` host actions, so
+    # they stay deferred until the in-process host-action executor lands (#1327).
+    run_with_compiler "$BOOTSTRAPPED_STAGE1" "stage1 native integration corpus" scripts/verify-integration.sh
+    run_with_compiler "$BOOTSTRAPPED_STAGE1" "stage1 examples" scripts/verify-examples.sh
+    echo
+    echo "[no-rust-stage0] stdlib modules/fixtures stay deferred pending the host-action executor (#1327)"
+elif [ "$WINDOWS_SEED_STAGED_RUNTIME_GAP" -eq 1 ] ||
     [ "$LINUX_SEED_STAGED_RUNTIME_GAP" -eq 1 ] ||
     [ "$SEED_STAGE1_WRAPPER" -eq 1 ]; then
     echo

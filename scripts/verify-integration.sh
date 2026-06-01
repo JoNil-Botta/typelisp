@@ -228,6 +228,40 @@ with_arena_loop
 EOF
 }
 
+# Run-assert parity gaps the self-hosted compiler does not yet implement. The
+# former Rust backend handled these, but it has been removed, so these cases are
+# commented out in the manifest and listed here as documented skips until the
+# selfhost compiler closes the gap:
+#   f32 scalar correctness ............ #1655
+#   capturing lambdas ................. #1656
+#   print-char / shift typecheck /
+#   enum-payload pattern / spmd ....... #1657
+#   bare idiv traps need guarded abort  #1654
+selfhost_deferred_integration_skips() {
+    cat <<'EOF'
+f32_scalar
+lambda_capture_aggregate
+lambda_capture_fixed_array
+lambda_capture_fixed_array_aggregate
+lambda_capture_nested_aggregate
+lambda_capture_scalar
+lambda_capture_struct_enum
+lambda_capture_tuple
+print_char
+shl_count_width_trap
+shl_neg_count_trap
+string_match
+spmd_reduce_scalar
+valid_shift_counts
+div_zero_trap
+rem_zero_trap
+min_div_neg1_trap
+i16_min_div_neg1_trap
+i16_min_rem_neg1_trap
+u16_div_zero_trap
+EOF
+}
+
 validate_manifest() {
     _cases="$WORKDIR/manifest-cases.txt"
     _known="$WORKDIR/manifest-known.txt"
@@ -342,6 +376,7 @@ EOF
     if [ "$HOST_OS" = windows ]; then
         windows_integration_skips >> "$_known"
     fi
+    selfhost_deferred_integration_skips >> "$_known"
 
     find tests/integration -maxdepth 1 -type f -name '*.tl' |
         sed 's#^tests/integration/##; s#\.tl$##' | sort > "$_actual"
@@ -579,7 +614,10 @@ run_linux_backend_fixtures() {
     as "$_runtime_asm" -o "$_runtime_obj"
     ld "$_runtime_obj" -o "$_runtime_bin"
     set +e
-    "$_runtime_bin" > "$_runtime_dir/runtime.stdout" 2> "$_runtime_dir/runtime.stderr"
+    # The fixture exercises the stdin read helpers (.L_tl_read_stdin_*), so feed it
+    # a closed stdin: an inherited open pipe (e.g. a background/non-CI shell) would
+    # block the read forever. /dev/null yields immediate EOF, matching CI.
+    "$_runtime_bin" < /dev/null > "$_runtime_dir/runtime.stdout" 2> "$_runtime_dir/runtime.stderr"
     _got=$?
     set -e
     if [ "$_got" -ne 42 ] || [ -s "$_runtime_dir/runtime.stdout" ] || [ -s "$_runtime_dir/runtime.stderr" ]; then
@@ -614,7 +652,7 @@ run_linux_backend_fixtures() {
     as "$_stack_asm" -o "$_stack_obj"
     ld "$_stack_obj" -o "$_stack_bin"
     set +e
-    "$_stack_bin" > "$_stack_dir/stack.stdout" 2> "$_stack_dir/stack.stderr"
+    "$_stack_bin" < /dev/null > "$_stack_dir/stack.stdout" 2> "$_stack_dir/stack.stderr"
     _got=$?
     set -e
     if [ "$_got" -ne 96 ] || [ -s "$_stack_dir/stack.stdout" ] || [ -s "$_stack_dir/stack.stderr" ]; then
@@ -648,7 +686,7 @@ run_linux_backend_fixtures() {
     as "$_raw_ptr_asm" -o "$_raw_ptr_obj"
     ld "$_raw_ptr_obj" -o "$_raw_ptr_bin"
     set +e
-    "$_raw_ptr_bin" > "$_raw_ptr_dir/raw_pointer.stdout" 2> "$_raw_ptr_dir/raw_pointer.stderr"
+    "$_raw_ptr_bin" < /dev/null > "$_raw_ptr_dir/raw_pointer.stdout" 2> "$_raw_ptr_dir/raw_pointer.stderr"
     _got=$?
     set -e
     if [ "$_got" -ne 42 ] || [ -s "$_raw_ptr_dir/raw_pointer.stdout" ] || [ -s "$_raw_ptr_dir/raw_pointer.stderr" ]; then

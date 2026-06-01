@@ -875,8 +875,8 @@ end
 
 case|selfhost_run|selfhost/run.tl|assembly|skip|direct
 requires-stage0-symbol|file-read-chunk-status,file-write-status,file-flush-status,append-file-status
-contains|_tl_run_plan_config_from:
-contains|_tl_run_plan_render:
+contains|_tl_run_direct_from:
+contains|_tl_run_run_from:
 contains|_tl_run_cli_config_from:
 contains|_tl_source_tool_run_source:
 contains|run: expected source path

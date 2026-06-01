@@ -822,7 +822,7 @@ run_windows_backend_fixtures() {
     fi
     for _snippet in \
         "syscall" \
-        "_start:" \
+        ".globl _start" \
         ".extern tl_alloc" \
         ".extern tl_oob_abort" \
         ".extern tl_substring" \
@@ -881,7 +881,7 @@ run_windows_backend_fixtures() {
     }
     assemble_link_windows "$_driver_self_asm" "$_driver_self_obj" "$_driver_bin" windows-selfhost-compile-driver
     printf '%s\n' '(define (main) : i64 42)' > "$_driver_source"
-    run_windows_program "$_driver_bin" "$_driver_stdout" "$_driver_stderr" "$_driver_code" \
+    run_windows_program "$_driver_bin" "$_driver_stdout" "$_driver_stderr" "$_driver_code" compile \
         "$(cygpath -aw "$_driver_source")" -o "$(cygpath -aw "$_driver_asm")"
     if [ "$got" -ne 0 ]; then
         echo "FAIL: windows-selfhost-compile-driver default target got exit $got" >&2
@@ -893,7 +893,7 @@ run_windows_backend_fixtures() {
     assert_contains "$_driver_asm" "main:" windows-selfhost-compile-driver
     assert_contains "$_driver_asm" ".globl _start" windows-selfhost-compile-driver
 
-    run_windows_program "$_driver_bin" "$_driver_stdout" "$_driver_stderr" "$_driver_code" \
+    run_windows_program "$_driver_bin" "$_driver_stdout" "$_driver_stderr" "$_driver_code" compile \
         "$(cygpath -aw "$_driver_source")" --target linux-x86_64 -o "$(cygpath -aw "$_driver_linux_asm")"
     if [ "$got" -ne 0 ]; then
         echo "FAIL: windows-selfhost-compile-driver explicit Linux target got exit $got" >&2
@@ -906,7 +906,7 @@ run_windows_backend_fixtures() {
         exit 1
     fi
 
-    run_windows_program "$_driver_bin" "$_driver_stdout" "$_driver_stderr" "$_driver_code" \
+    run_windows_program "$_driver_bin" "$_driver_stdout" "$_driver_stderr" "$_driver_code" compile \
         "$(cygpath -aw "$_driver_source")" --target windows-x86_64 -o "$(cygpath -aw "$_driver_windows_asm")"
     if [ "$got" -ne 0 ]; then
         echo "FAIL: windows-selfhost-compile-driver Windows target got exit $got" >&2
@@ -919,7 +919,7 @@ run_windows_backend_fixtures() {
 
     _bad_target_asm="$_driver_dir/bad-target.s"
     rm -f "$_bad_target_asm"
-    run_windows_program "$_driver_bin" "$_driver_stdout" "$_driver_stderr" "$_driver_code" \
+    run_windows_program "$_driver_bin" "$_driver_stdout" "$_driver_stderr" "$_driver_code" compile \
         "$(cygpath -aw "$_driver_source")" --target plan9-x86_64 -o "$(cygpath -aw "$_bad_target_asm")"
     if [ "$got" -eq 0 ]; then
         echo "FAIL: windows-selfhost-compile-driver invalid target unexpectedly succeeded" >&2
@@ -939,7 +939,7 @@ run_windows_backend_fixtures() {
 (define (alloc [comptime T : type] [n : i64]) : (Array i64) (make-array T n))
 (define (main) : (Array i64) (alloc (type i64) 4))
 EOF
-    run_windows_program "$_driver_bin" "$_driver_stdout" "$_driver_stderr" "$_driver_code" \
+    run_windows_program "$_driver_bin" "$_driver_stdout" "$_driver_stderr" "$_driver_code" compile \
         "$(cygpath -aw "$_comptime_source")" -o "$(cygpath -aw "$_comptime_asm")"
     if [ "$got" -ne 0 ]; then
         echo "FAIL: windows-selfhost-compile-driver comptime type source got exit $got" >&2
@@ -952,7 +952,7 @@ EOF
     _bad_asm="$_driver_dir/bad.s"
     printf '%s\n' '(define (main) : i64 true)' > "$_bad_source"
     rm -f "$_bad_asm"
-    run_windows_program "$_driver_bin" "$_driver_stdout" "$_driver_stderr" "$_driver_code" \
+    run_windows_program "$_driver_bin" "$_driver_stdout" "$_driver_stderr" "$_driver_code" compile \
         "$(cygpath -aw "$_bad_source")" -o "$(cygpath -aw "$_bad_asm")"
     if [ "$got" -eq 0 ]; then
         echo "FAIL: windows-selfhost-compile-driver invalid source unexpectedly succeeded" >&2

@@ -1231,16 +1231,31 @@
         [(CompilerRegNoType) false])]
     [_ false]))
 
+(define (compiler-backend-value-float?
+  [types : CompilerRegVarTypeList]
+  [value : CompilerIrValue]) : bool
+  (match value
+    [(IrValueF64 _) true]
+    [(IrValueVar id)
+      (match (compiler-reg-var-type-lookup types id)
+        [(CompilerRegSomeType ty) (compiler-backend-float-type? ty)]
+        [(CompilerRegNoType) false])]
+    [_ false]))
+
+;; True when a binary op operates on floating-point values (f32 OR f64), so it
+;; must use the scalar-SSE path (xmm registers, addss/addsd, ucomiss/ucomisd)
+;; instead of the integer path. The operand precision is recovered separately
+;; via compiler-backend-binop-operand-ty.
 (define (compiler-backend-binop-f64?
   [types : CompilerRegVarTypeList]
   [lhs : CompilerIrValue]
   [rhs : CompilerIrValue]
   [ty : AstType]) : bool
-  (if (compiler-backend-f64-type? ty)
+  (if (compiler-backend-float-type? ty)
     true
-    (if (compiler-backend-value-f64? types lhs)
+    (if (compiler-backend-value-float? types lhs)
       true
-      (compiler-backend-value-f64? types rhs))))
+      (compiler-backend-value-float? types rhs))))
 
 (define (compiler-backend-int-instruction-suffix [ty : AstType]) : String
   (let
@@ -1527,33 +1542,85 @@
     [(IrUnNot) "    testq %rax, %rax\n    sete %al\n    movzbl %al, %eax\n"]
     [(IrUnBitNot) "    notq %rax\n"]))
 
+;; Scalar floating-point binary ops. `fty` selects single (`ss`, f32) vs double
+;; (`sd`, f64) precision; comparisons use ucomiss/ucomisd accordingly. Operands
+;; are in %xmm0 (lhs) and %xmm1 (rhs); arithmetic leaves the result in %xmm0,
+;; comparisons leave a 0/1 in %eax.
+(define (compiler-backend-float-binop-asm
+  [op : CompilerIrBinOp]
+  [fty : AstType]) : ResultCompilerBackend
+  (let
+    [s : String
+      (if (compiler-backend-f64-type? fty)
+        "sd"
+        "ss")]
+    [c : String
+      (if (compiler-backend-f64-type? fty)
+        "ucomisd"
+        "ucomiss")]
+    (match op
+      [(IrBinAdd)
+        (OkCompilerBackend
+          (string-append "    add" (string-append s " %xmm1, %xmm0\n")))]
+      [(IrBinSub)
+        (OkCompilerBackend
+          (string-append "    sub" (string-append s " %xmm1, %xmm0\n")))]
+      [(IrBinMul)
+        (OkCompilerBackend
+          (string-append "    mul" (string-append s " %xmm1, %xmm0\n")))]
+      [(IrBinDiv)
+        (OkCompilerBackend
+          (string-append "    div" (string-append s " %xmm1, %xmm0\n")))]
+      [(IrBinEq)
+        (OkCompilerBackend
+          (string-append
+            "    "
+            (string-append
+              c
+              " %xmm1, %xmm0\n    sete %al\n    movzbl %al, %eax\n")))]
+      [(IrBinNe)
+        (OkCompilerBackend
+          (string-append
+            "    "
+            (string-append
+              c
+              " %xmm1, %xmm0\n    setne %al\n    movzbl %al, %eax\n")))]
+      [(IrBinLt)
+        (OkCompilerBackend
+          (string-append
+            "    "
+            (string-append
+              c
+              " %xmm1, %xmm0\n    setb %al\n    movzbl %al, %eax\n")))]
+      [(IrBinLe)
+        (OkCompilerBackend
+          (string-append
+            "    "
+            (string-append
+              c
+              " %xmm1, %xmm0\n    setbe %al\n    movzbl %al, %eax\n")))]
+      [(IrBinGt)
+        (OkCompilerBackend
+          (string-append
+            "    "
+            (string-append
+              c
+              " %xmm1, %xmm0\n    seta %al\n    movzbl %al, %eax\n")))]
+      [(IrBinGe)
+        (OkCompilerBackend
+          (string-append
+            "    "
+            (string-append
+              c
+              " %xmm1, %xmm0\n    setae %al\n    movzbl %al, %eax\n")))]
+      [_
+        (ErrCompilerBackend
+          (compiler-diagnostic-at-start
+            ""
+            "backend: unsupported float binary op"))])))
+
 (define (compiler-backend-f64-binop-asm [op : CompilerIrBinOp]) : ResultCompilerBackend
-  (match op
-    [(IrBinAdd) (OkCompilerBackend "    addsd %xmm1, %xmm0\n")]
-    [(IrBinSub) (OkCompilerBackend "    subsd %xmm1, %xmm0\n")]
-    [(IrBinMul) (OkCompilerBackend "    mulsd %xmm1, %xmm0\n")]
-    [(IrBinDiv) (OkCompilerBackend "    divsd %xmm1, %xmm0\n")]
-    [(IrBinEq)
-      (OkCompilerBackend
-        "    ucomisd %xmm1, %xmm0\n    sete %al\n    movzbl %al, %eax\n")]
-    [(IrBinNe)
-      (OkCompilerBackend
-        "    ucomisd %xmm1, %xmm0\n    setne %al\n    movzbl %al, %eax\n")]
-    [(IrBinLt)
-      (OkCompilerBackend
-        "    ucomisd %xmm1, %xmm0\n    setb %al\n    movzbl %al, %eax\n")]
-    [(IrBinLe)
-      (OkCompilerBackend
-        "    ucomisd %xmm1, %xmm0\n    setbe %al\n    movzbl %al, %eax\n")]
-    [(IrBinGt)
-      (OkCompilerBackend
-        "    ucomisd %xmm1, %xmm0\n    seta %al\n    movzbl %al, %eax\n")]
-    [(IrBinGe)
-      (OkCompilerBackend
-        "    ucomisd %xmm1, %xmm0\n    setae %al\n    movzbl %al, %eax\n")]
-    [_
-      (ErrCompilerBackend
-        (compiler-diagnostic-at-start "" "backend: unsupported f64 binary op"))]))
+  (compiler-backend-float-binop-asm op (AstTyF64)))
 
 (define (compiler-backend-f64-unop-asm [op : CompilerIrUnOp]) : ResultCompilerBackend
   (match op
@@ -1573,37 +1640,42 @@
   [rhs : CompilerIrValue]
   [ty : AstType]) : ResultCompilerBackend
   (if (compiler-backend-binop-f64? types lhs rhs ty)
-    (match (compiler-backend-emit-load-f64-value-with-plan
-      assignments
-      lhs
-      "%xmm0")
-      [(OkCompilerBackend lhs-asm)
-        (match (compiler-backend-emit-load-f64-value-with-plan
-          assignments
-          rhs
-          "%xmm1")
-          [(OkCompilerBackend rhs-asm)
-            (match (compiler-backend-f64-binop-asm op)
-              [(OkCompilerBackend op-asm)
-                (OkCompilerBackend
-                  (string-append
-                    lhs-asm
+    (let
+      [fty : AstType (compiler-backend-binop-operand-ty types op lhs rhs ty)]
+      (match (compiler-backend-emit-load-float-value-with-plan
+        assignments
+        lhs
+        fty
+        "%xmm0")
+        [(OkCompilerBackend lhs-asm)
+          (match (compiler-backend-emit-load-float-value-with-plan
+            assignments
+            rhs
+            fty
+            "%xmm1")
+            [(OkCompilerBackend rhs-asm)
+              (match (compiler-backend-float-binop-asm op fty)
+                [(OkCompilerBackend op-asm)
+                  (OkCompilerBackend
                     (string-append
-                      rhs-asm
+                      lhs-asm
                       (string-append
-                        op-asm
-                        (if (compiler-backend-f64-type? ty)
-                          (compiler-backend-emit-store-f64-var-with-plan
-                            assignments
-                            dst
-                            "%xmm0")
-                          (compiler-backend-emit-store-var-with-plan
-                            assignments
-                            dst
-                            "%rax"))))))]
-              [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
-          [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
-      [(ErrCompilerBackend message) (ErrCompilerBackend message)])
+                        rhs-asm
+                        (string-append
+                          op-asm
+                          (if (compiler-backend-float-type? ty)
+                            (compiler-backend-emit-store-float-var-with-plan
+                              assignments
+                              dst
+                              "%xmm0"
+                              ty)
+                            (compiler-backend-emit-store-var-with-plan
+                              assignments
+                              dst
+                              "%rax"))))))]
+                [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
+            [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
+        [(ErrCompilerBackend message) (ErrCompilerBackend message)]))
     (let
       [operand-ty : AstType
         (compiler-backend-binop-operand-ty types op lhs rhs ty)]
@@ -1677,25 +1749,31 @@
     [return-tail : String
       (compiler-backend-return-tail source-function assignments vars blocks)]
     (if (compiler-backend-binop-f64? types lhs rhs ty)
-      (match (compiler-backend-emit-load-f64-value-with-plan
-        assignments
-        lhs
-        "%xmm0")
-        [(OkCompilerBackend lhs-asm)
-          (match (compiler-backend-emit-load-f64-value-with-plan
-            assignments
-            rhs
-            "%xmm1")
-            [(OkCompilerBackend rhs-asm)
-              (match (compiler-backend-f64-binop-asm op)
-                [(OkCompilerBackend op-asm)
-                  (OkCompilerBackend
-                    (string-append
-                      lhs-asm
-                      (string-append rhs-asm (string-append op-asm return-tail))))]
-                [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
-            [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
-        [(ErrCompilerBackend message) (ErrCompilerBackend message)])
+      (let
+        [fty : AstType (compiler-backend-binop-operand-ty types op lhs rhs ty)]
+        (match (compiler-backend-emit-load-float-value-with-plan
+          assignments
+          lhs
+          fty
+          "%xmm0")
+          [(OkCompilerBackend lhs-asm)
+            (match (compiler-backend-emit-load-float-value-with-plan
+              assignments
+              rhs
+              fty
+              "%xmm1")
+              [(OkCompilerBackend rhs-asm)
+                (match (compiler-backend-float-binop-asm op fty)
+                  [(OkCompilerBackend op-asm)
+                    (OkCompilerBackend
+                      (string-append
+                        lhs-asm
+                        (string-append
+                          rhs-asm
+                          (string-append op-asm return-tail))))]
+                  [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
+              [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
+          [(ErrCompilerBackend message) (ErrCompilerBackend message)]))
       (let
         [operand-ty : AstType
           (compiler-backend-binop-operand-ty types op lhs rhs ty)]

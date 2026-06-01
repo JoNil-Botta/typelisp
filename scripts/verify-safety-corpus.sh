@@ -263,6 +263,14 @@ while IFS='|' read -r case_id mode source expected_code stderr_contains; do
             [ "$stderr_contains" != "-" ] || fail "$case_id run-trap missing stderr expectation"
             assert_contains "$err" "$stderr_contains" || fail "$case_id trap stderr did not match expectation"
             ;;
+        run-trap-signal)
+            # A bare hardware trap (e.g. SIGFPE from `idiv` by zero): assert the
+            # deterministic exit code only — the kernel signal produces no
+            # `tl:`-prefixed stderr message (unlike the guarded runtime aborts).
+            echo "[safety-corpus] run-trap-signal $case_id"
+            run_program_case "$case_id" "$case_name" "$source" "$out" "$err" "$expected_code"
+            [ "$code" -eq "$expected_code" ] || fail "$case_id expected trap exit $expected_code, got $code"
+            ;;
         *)
             fail "$case_id has unknown safety corpus mode: $mode"
             ;;

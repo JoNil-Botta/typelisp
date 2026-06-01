@@ -971,12 +971,25 @@
         [(IrBlock _ instrs)
           (opt-collect-blocks-uses (opt-collect-instrs-uses set instrs) rest)])]))
 
+;; Division, modulo, and shift can trap at runtime (zero divisor, signed
+;; MIN / -1, shift count out of range), so a BinOp using one of those operators
+;; is NOT pure: dropping it as dead would elide the trap the safe-code contract
+;; requires. These ops must stay in the IR even when their result is unused.
+(define (opt-binop-traps? [op : CompilerIrBinOp]) : bool
+  (match op
+    [(IrBinDiv) true]
+    [(IrBinMod) true]
+    [(IrBinShl) true]
+    [(IrBinShr) true]
+    [_ false]))
+
 ;; A pure temporary-producing instruction is dead when its result var is unused.
 ;; Calls (side-effecting) and control-flow instructions are never dead here.
 (define (opt-instr-dead? [set : OptUsedSet] [instr : CompilerIrInstr]) : bool
   (match instr
     [(IrInstrMov dst _ _) (not (opt-used-contains set dst))]
-    [(IrInstrBinOp dst _ _ _ _) (not (opt-used-contains set dst))]
+    [(IrInstrBinOp dst op _ _ _)
+      (and (not (opt-binop-traps? op)) (not (opt-used-contains set dst)))]
     [(IrInstrUnOp dst _ _ _) (not (opt-used-contains set dst))]
     [(IrInstrPhi dst _ _) (not (opt-used-contains set dst))]
     [(IrInstrLaneId dst _ _) (not (opt-used-contains set dst))]

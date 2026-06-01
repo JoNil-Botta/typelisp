@@ -871,11 +871,15 @@ run_windows_backend_fixtures() {
     _driver_code="$_driver_dir/run.exit"
 
     echo "[windows-selfhost-compile-driver] build -> exercise"
-    build_with_retry "$COMPILER" build selfhost/compile.tl -o "$_driver_bin"
-    if [ "$build_rc" -ne 0 ]; then
-        echo "FAIL: windows-selfhost-compile-driver build failed (exit $build_rc)" >&2
+    # The compile-only bootstrapped stage1 has no `build` host action, so build the
+    # driver via compile + clang + lld-link (mirrors the runtime fixture above).
+    _driver_self_asm="$_driver_dir/selfhost-compile.s"
+    _driver_self_obj="$_driver_dir/selfhost-compile.obj"
+    "$COMPILER" compile selfhost/compile.tl --target windows-x86_64 -o "$_driver_self_asm" || {
+        echo "FAIL: windows-selfhost-compile-driver compile failed" >&2
         exit 1
-    fi
+    }
+    assemble_link_windows "$_driver_self_asm" "$_driver_self_obj" "$_driver_bin" windows-selfhost-compile-driver
     printf '%s\n' '(define (main) : i64 42)' > "$_driver_source"
     run_windows_program "$_driver_bin" "$_driver_stdout" "$_driver_stderr" "$_driver_code" \
         "$(cygpath -aw "$_driver_source")" -o "$(cygpath -aw "$_driver_asm")"

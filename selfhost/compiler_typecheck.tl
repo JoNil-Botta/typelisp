@@ -1356,6 +1356,36 @@
   "(define (main [n : i64]) : (& n i64)
   (let [x : i64 1] (& x)))")
 
+(define (compiler-typecheck-reference-struct-field-source) : String
+  "(defstruct RefBox (value (& n i64)))
+(define (main [n : i64]) : i64
+  (let
+    [box : RefBox (RefBox (& n))]
+    (let [value : (& n i64) (struct-get box value)] 0)))")
+
+(define (compiler-typecheck-reference-enum-payload-source) : String
+  "(defenum RefOption (SomeRef (& n i64)) (NoRef))
+(define (main [n : i64]) : i64
+  (match (SomeRef (& n))
+    [(SomeRef value) 0]
+    [(NoRef) 1]))")
+
+(define (compiler-typecheck-reference-array-stored-source) : String
+  "(define (main [n : i64]) : i64
+  (let
+    [items : (Array (& n i64) 1) (array (& n))]
+    (let [value : (& n i64) (array-ref items 0)] 0)))")
+
+(define (compiler-typecheck-reference-struct-return-source) : String
+  "(defstruct RefBox (value (& n i64)))
+(define (main [n : i64]) : RefBox
+  (RefBox (& n)))")
+
+(define (compiler-typecheck-reference-struct-local-escape-source) : String
+  "(defstruct RefBox (value (& x i64)))
+(define (main) : RefBox
+  (let [x : i64 1] (RefBox (& x))))")
+
 (define (compiler-typecheck-reference-lambda-return-source) : String
   "(define (main [n : i64]) : i64
   (begin
@@ -1492,6 +1522,23 @@
       (compiler-typecheck-error-ok?
         (compiler-typecheck-reference-return-local-escape-source)
         "typecheck: reference value would escape lexical scope")]
+    [struct-field-ok : bool
+      (compiler-typecheck-ok?
+        (compiler-typecheck-reference-struct-field-source))]
+    [enum-payload-ok : bool
+      (compiler-typecheck-ok?
+        (compiler-typecheck-reference-enum-payload-source))]
+    [array-stored-ok : bool
+      (compiler-typecheck-ok?
+        (compiler-typecheck-reference-array-stored-source))]
+    [struct-return-error-ok : bool
+      (compiler-typecheck-error-ok?
+        (compiler-typecheck-reference-struct-return-source)
+        "typecheck: cannot store region-tagged value into return value; region value would escape")]
+    [struct-local-escape-error-ok : bool
+      (compiler-typecheck-error-ok?
+        (compiler-typecheck-reference-struct-local-escape-source)
+        "typecheck: reference value would escape lexical scope")]
     [lambda-return-error-ok : bool
       (compiler-typecheck-error-ok?
         (compiler-typecheck-reference-lambda-return-source)
@@ -1567,6 +1614,21 @@
         unit
         (set! ok false))
       (if return-local-escape-error-ok
+        unit
+        (set! ok false))
+      (if struct-field-ok
+        unit
+        (set! ok false))
+      (if enum-payload-ok
+        unit
+        (set! ok false))
+      (if array-stored-ok
+        unit
+        (set! ok false))
+      (if struct-return-error-ok
+        unit
+        (set! ok false))
+      (if struct-local-escape-error-ok
         unit
         (set! ok false))
       (if lambda-return-error-ok

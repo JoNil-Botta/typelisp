@@ -667,7 +667,18 @@ lifetime from the owner:
 For `(& name place)`, `name` must match the inferred lifetime. In function
 parameter types, lifetime names are signature-local binders for incoming
 references. Multiple parameters using the same name require the same caller
-lifetime. Returning or storing values tied to those names is deferred to #804.
+lifetime.
+
+The first #804 stored-reference slice accepts reference lifetimes written
+directly in structural container types and nominal aggregate declarations:
+fixed arrays such as `(Array (& n i64) 1)`, tuple elements, struct fields, and
+enum payloads. Those lifetimes are preserved through array-ref, tuple-ref,
+field access, constructors, and match bindings. A nominal constructor result
+that stores references carries hidden lifetime facts while it remains local;
+passing or returning such a nominal value is rejected until explicit nominal
+lifetime-argument syntax lands. Structural return types that expose the
+reference lifetime directly, such as `(& n T)`, `(Tuple (& n T))`, and
+`(Array (& n T) k)`, may return when the lifetime is tied to an input.
 
 **Lexical v1 lifetime rule.** A borrow created in v1 lives until the end of the
 innermost lexical scope that contains the borrow expression. Lexical scopes are

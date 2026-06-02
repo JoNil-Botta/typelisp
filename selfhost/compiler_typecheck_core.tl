@@ -850,7 +850,7 @@
   [env : TcTypeEnv]
   [value-ty : AstType]) : ResultTcUnit
   (let
-    [lifetimes : TcStringList (tc-type-collect-reference-lifetimes value-ty)]
+    [lifetimes : TcStringList (tc-type-collect-regions value-ty)]
     (if (tc-reference-lifetimes-visible? env lifetimes)
       OkTcUnit
       (ErrTcUnit "typecheck: reference value would escape lexical scope"))))
@@ -869,7 +869,7 @@
 (define (tc-ensure-reference-type-does-not-escape-names
   [ty : AstType]
   [names : TcStringList]) : ResultTcUnit
-  (if (tc-string-list-overlaps? (tc-type-collect-reference-lifetimes ty) names)
+  (if (tc-string-list-overlaps? (tc-type-collect-regions ty) names)
     (ErrTcUnit "typecheck: reference value would escape lexical scope")
     OkTcUnit))
 
@@ -1125,6 +1125,25 @@
   (match (tc-active-region env)
     [(TcSomeString region) (tc-tag-region region ty)]
     [(TcNoString) ty]))
+
+;; Nominal aggregate types have no lifetime-argument surface yet. Until they do,
+;; constructor results carry stored-reference lifetimes as local region facts so
+;; existing flow/escape checks can reject boundary escapes.
+(define (tc-tag-reference-lifetimes [lifetimes : TcStringList] [ty : AstType]) : AstType
+  (match lifetimes
+    [(TcStringNil) ty]
+    [(TcStringCons lifetime rest)
+      (tc-tag-region lifetime (tc-tag-reference-lifetimes rest ty))]))
+
+(define (tc-constructor-target-type
+  [env : TcTypeEnv]
+  [params : AstTypeList]
+  [ret : AstType]) : AstType
+  (tc-tag-active-region
+    env
+    (tc-tag-reference-lifetimes
+      (tc-type-list-collect-reference-lifetimes params TcStringNil)
+      ret)))
 
 (define (tc-project-from-region-container
   [container-ty : AstType]
@@ -1407,11 +1426,7 @@
       (match field
         [(AstFieldDef _ ty _)
           (match (tc-source-type-policy-ok ctx ty)
-            [(OkTcUnit)
-              (if (tc-type-contains-reference? (tc-resolve-type ctx ty))
-                (ErrTcUnit
-                  "typecheck: storing references in aggregate fields requires lifetime support (#804)")
-                (tc-source-field-list-policy-ok ctx rest))]
+            [(OkTcUnit) (tc-source-field-list-policy-ok ctx rest)]
             [(ErrTcUnit message) (ErrTcUnit message)])])]))
 
 (define (tc-source-variant-list-policy-ok
@@ -1423,12 +1438,7 @@
       (match variant
         [(AstVariantDef _ fields)
           (match (tc-source-type-list-policy-ok ctx fields)
-            [(OkTcUnit)
-              (if (tc-type-list-contains-reference?
-                (tc-resolve-type-list ctx fields))
-                (ErrTcUnit
-                  "typecheck: storing references in aggregate fields requires lifetime support (#804)")
-                (tc-source-variant-list-policy-ok ctx rest))]
+            [(OkTcUnit) (tc-source-variant-list-policy-ok ctx rest)]
             [(ErrTcUnit message) (ErrTcUnit message)])])]))
 
 (define (tc-type-list-mentions-enum?
@@ -3210,11 +3220,12 @@
   [ctx : TcContext]
   [env : TcTypeEnv]
   [func : AstExpr]
+  [params : AstTypeList]
   [ret : AstType]) : AstMaybeType
   (match (tc-expr-var-name func)
     [(TcSomeString name)
       (if (tc-constructor-name? ctx name)
-        (AstSomeType (tc-tag-active-region env ret))
+        (AstSomeType (tc-constructor-target-type env params ret))
         (AstNoType))]
     [(TcNoString) (AstNoType)]))
 
@@ -3229,7 +3240,7 @@
     [allow-region-args : bool
       (tc-call-region-args-allowed-for-func ctx env func)]
     [constructor-target : AstMaybeType
-      (tc-call-constructor-target-for-func ctx env func ret)]
+      (tc-call-constructor-target-for-func ctx env func params ret)]
     (match (tc-check-call-args
       ctx
       env
@@ -3237,7 +3248,10 @@
       params
       allow-region-args
       constructor-target)
-      [(OkTcUnit) (OkTcType (tc-tag-active-region env ret))]
+      [(OkTcUnit)
+        (match constructor-target
+          [(AstSomeType target) (OkTcType target)]
+          [(AstNoType) (OkTcType (tc-tag-active-region env ret))])]
       [(ErrTcUnit message) (ErrTcType message)])))
 
 (define (tc-check-call-args
@@ -6867,7 +6881,15 @@
                             array-ty
                             value-ty
                             "array")
-                            [(OkTcUnit) (OkTcType (AstTyUnit))]
+                            [(OkTcUnit)
+                              (match (tc-ensure-reference-value-can-store-in-place
+                                ctx
+                                env
+                                array
+                                value-ty
+                                "array")
+                                [(OkTcUnit) (OkTcType (AstTyUnit))]
+                                [(ErrTcUnit message) (ErrTcType message)])]
                             [(ErrTcUnit message) (ErrTcType message)])]
                         [(ErrTcUnit message) (ErrTcType message)])]
                     [(ErrTcUnit message) (ErrTcType message)])]
@@ -8127,7 +8149,12 @@
                 got
                 (tc-resolve-type ctx want)
                 "typecheck: value definition type mismatch")
-                [(OkTcUnit) OkTcUnit]
+                [(OkTcUnit)
+                  (tc-ensure-region-value-can-flow-into
+                    top-env
+                    (tc-resolve-type ctx want)
+                    got
+                    "top-level value")]
                 [(ErrTcUnit message) (ErrTcUnit message)])]
             [(ErrTcType message) (ErrTcUnit message)])]
         [(AstNoType)
@@ -8150,7 +8177,14 @@
               got
               (tc-resolve-type ctx ret)
               "typecheck: return type mismatch")
-              [(OkTcUnit) (tc-move-check-body ctx env params body)]
+              [(OkTcUnit)
+                (match (tc-ensure-region-value-can-flow-into
+                  env
+                  (tc-resolve-type ctx ret)
+                  got
+                  "return value")
+                  [(OkTcUnit) (tc-move-check-body ctx env params body)]
+                  [(ErrTcUnit message) (ErrTcUnit message)])]
               [(ErrTcUnit message) (ErrTcUnit message)])]
           [(ErrTcType message) (ErrTcUnit message)]))]
     [(AstDeclDefMacro _ params ret body)

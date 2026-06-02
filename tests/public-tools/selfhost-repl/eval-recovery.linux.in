@@ -1,0 +1,4 @@
+(define (double [x : i64]) : i64 (* x 2))
+(+ 1 true)
+(double 4)
+.exit

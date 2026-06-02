@@ -12,7 +12,7 @@
 ;;   - blank line         is skipped.
 ;;   - any other `.cmd`   reports an unknown command (to stderr).
 ;;   - declarations       are checked and persisted for later inputs.
-;;   - any other input    reports that evaluation is not implemented (to stderr).
+;;   - expressions         are checked, compiled as scratch source, and run.
 ;;
 ;; Multiline input is accumulated until its delimiters are complete. Parse and
 ;; type errors report diagnostics, discard only the failing input, and return to
@@ -21,12 +21,18 @@
 
 (import "compiler_typecheck.tl")
 
+(import "build_run_core.tl")
+
 (defenum ReplTypeCommand
   (ReplNoTypeCommand)
   (ReplTypeCommandExpr String))
 
 (defenum ReplLineResult
   (ReplLineResult String String))
+
+(defenum ResultReplString
+  (OkReplString String)
+  (ErrReplString String))
 
 (define (repl-banner) : String
   "TypeLisp REPL. Type .help for commands.\n")
@@ -159,6 +165,197 @@
 (define (repl-report-diagnostic [diag : CompilerDiagnostic]) : unit
   (stderr-write-line (compiler-diagnostic-render diag)))
 
+(define (repl-char-display-helpers-source) : String
+  "(define __tl_repl_ascii_printable_table : String
+  \" !\\\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\\\]^_`abcdefghijklmnopqrstuvwxyz{|}~\")
+
+(define (__tl_repl_char_string [c : char]) : String
+  (let
+    [code : i64 (cast c : i64)]
+    (cond
+      [(= code 9) \"\t\"]
+      [(= code 10) \"
+\"]
+      [(= code 13) \"\r\"]
+      [(and (>= code 32) (<= code 126))
+        (substring __tl_repl_ascii_printable_table (- code 32) 1)]
+      [else \"?\"])))
+
+(define (__tl_repl_print_char [c : char]) : unit
+  (begin
+    (print-string (__tl_repl_char_string c))
+    (print-newline)))
+
+")
+
+(define (repl-f64-display-helpers-source) : String
+  "(define (__tl_repl_trim_fraction_value [value : i64]) : i64
+  (if (and (> value 0) (= (% value 10) 0))
+    (__tl_repl_trim_fraction_value (/ value 10))
+    value))
+
+(define (__tl_repl_trim_fraction_divisor [value : i64] [divisor : i64]) : i64
+  (if (and (> value 0) (= (% value 10) 0))
+    (__tl_repl_trim_fraction_divisor (/ value 10) (/ divisor 10))
+    divisor))
+
+(define (__tl_repl_print_fraction_digits [value : i64] [divisor : i64]) : unit
+  (if (= divisor 0)
+    unit
+    (begin
+      (print-string (int->string (/ value divisor)))
+      (__tl_repl_print_fraction_digits (% value divisor) (/ divisor 10)))))
+
+(define (__tl_repl_print_f64_positive [x : f64]) : unit
+  (let
+    [whole : i64 (cast x : i64)]
+    [fraction : f64 (- x (cast whole : f64))]
+    [raw-scaled : i64 (cast (+ (* fraction 1000000.0) 0.5) : i64)]
+    [carry : bool (= raw-scaled 1000000)]
+    [shown-whole : i64 (if carry (+ whole 1) whole)]
+    [scaled : i64 (if carry 0 raw-scaled)]
+    (begin
+      (print-string (int->string shown-whole))
+      (if (= scaled 0)
+        unit
+        (let
+          [trimmed : i64 (__tl_repl_trim_fraction_value scaled)]
+          [divisor : i64 (__tl_repl_trim_fraction_divisor scaled 100000)]
+          (begin
+            (print-string \".\")
+            (__tl_repl_print_fraction_digits trimmed divisor))))
+      (print-newline))))
+
+(define (__tl_repl_print_f64 [x : f64]) : unit
+  (if (< x 0.0)
+    (begin
+      (print-string \"-\")
+      (__tl_repl_print_f64_positive (- 0.0 x)))
+    (__tl_repl_print_f64_positive x)))
+
+")
+
+(define (repl-display-helpers-source [ty : AstType]) : String
+  (match ty
+    [(AstTyF64) (repl-f64-display-helpers-source)]
+    [(AstTyChar) (repl-char-display-helpers-source)]
+    [_ ""]))
+
+(define (repl-display-body [ty : AstType] [expr-source : String]) : ResultReplString
+  (match ty
+    [(AstTyI64)
+      (OkReplString
+        (string-append "(print\n" (string-append expr-source "\n)")))]
+    [(AstTyBool)
+      (OkReplString
+        (string-append "(print-bool\n" (string-append expr-source "\n)")))]
+    [(AstTyF64)
+      (OkReplString
+        (string-append
+          "(__tl_repl_print_f64\n"
+          (string-append expr-source "\n)")))]
+    [(AstTyChar)
+      (OkReplString
+        (string-append
+          "(__tl_repl_print_char\n"
+          (string-append expr-source "\n)")))]
+    [(AstTyString)
+      (OkReplString
+        (string-append
+          "(begin\n  (print-string\n"
+          (string-append expr-source "\n  )\n  (print-newline))")))]
+    [(AstTyUnit) (OkReplString expr-source)]
+    [_
+      (ErrReplString
+        (string-append
+          "Error: cannot display a value of type "
+          (repl-type-render ty)))]))
+
+(define (repl-scratch-main-source [body : String]) : String
+  (string-append
+    "(define (main) : i64\n  (begin\n    "
+    (string-append body "\n    0))\n")))
+
+(define (repl-scratch-source
+  [session-source : String]
+  [expr-source : String]
+  [ty : AstType]) : ResultReplString
+  (match (repl-display-body ty expr-source)
+    [(OkReplString body)
+      (OkReplString
+        (string-append
+          session-source
+          (string-append
+            "\n"
+            (string-append
+              (repl-display-helpers-source ty)
+              (repl-scratch-main-source body)))))]
+    [(ErrReplString message) (ErrReplString message)]))
+
+(define (repl-clean-scratch-source [temp-dir : String] [source-path : String]) : unit
+  (begin
+    (try-remove-file-if-exists source-path)
+    (try-remove-dir-if-exists temp-dir)
+    unit))
+
+(define (repl-report-run-status [status : i64]) : unit
+  (if (= status 0)
+    unit
+    (begin
+      (stderr-write "\n")
+      (repl-print-error-line
+        (string-append
+          "REPL evaluation exited with status "
+          (int->string status))))))
+
+(define (repl-run-scratch-source [source : String]) : unit
+  (match (source-tool-create-temp-dir "typelisp-repl")
+    [(OkSourceToolString temp-dir)
+      (let
+        [source-path : String (fs-path-join temp-dir "repl_expr.tl")]
+        (match (source-tool-write-file
+          source-path
+          source
+          "repl: failed to write scratch source")
+          [(SourceToolCommandErr message)
+            (begin
+              (repl-print-error-line message)
+              (repl-clean-scratch-source temp-dir source-path))]
+          [(SourceToolCommandOk)
+            (let
+              [status : i64
+                (source-tool-run-source-in-temp
+                  source-path
+                  (source-tool-default-target)
+                  CompilerLoadRootNil
+                  (process-args-empty)
+                  (compiler-optimize-default-level)
+                  (source-tool-link-inputs-empty)
+                  temp-dir)]
+              (begin
+                (repl-clean-scratch-source temp-dir source-path)
+                (repl-report-run-status status)))]))]
+    [(ErrSourceToolString message)
+      (repl-print-error-line
+        (string-append "repl: failed to create scratch temp dir: " message))]))
+
+(define (repl-evaluate-expr
+  [session-source : String]
+  [expr-source : String]
+  [expr : AstExpr]) : unit
+  (match (parse-ast-source session-source)
+    [(OkAstProgram (AstProgram decls))
+      (match (typecheck-compiler-repl-expr decls expr)
+        [(OkTcType ty)
+          (match (repl-scratch-source session-source expr-source ty)
+            [(OkReplString scratch-source)
+              (repl-run-scratch-source scratch-source)]
+            [(ErrReplString message) (repl-print-error-line message)])]
+        [(ErrTcType message)
+          (repl-print-error-line (string-append "Error: " message))])]
+    [(ErrAstProgram message)
+      (repl-print-error-line (string-append "Error: " message))]))
+
 (define (repl-handle-type-command
   [session-source : String]
   [expr-source : String]) : unit
@@ -198,10 +395,9 @@
                 (begin
                   (repl-report-diagnostic diag)
                   session-source)]))]
-        [(AstReplExpr _)
+        [(AstReplExpr expr)
           (begin
-            (stderr-write
-              "REPL evaluation is not implemented yet. Type .help for commands.\n")
+            (repl-evaluate-expr session-source input expr)
             session-source)])]
     [(ErrAstReplItem message)
       (begin

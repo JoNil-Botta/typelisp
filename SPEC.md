@@ -3146,7 +3146,7 @@ not the future safe reference/borrow model (#182), not a replacement for
 | Runtime SIMD dispatch (`defdispatch`) | Source semantics specified; parser/typechecker/lowering/backend support pending |
 | Windows region helpers | `tl_region_mark`/`tl_region_reset` are Linux-only |
 | Complete source locations for all semantic errors | Partial |
-| REPL evaluation | Minimal stdio command loop exists; form evaluation is not implemented |
+| REPL evaluation | Selfhost REPL bare expressions run through scratch build/run execution; public selfhost CLI routing is still tracked separately |
 | Package manager | Not implemented |
 | LSP / IDE support | Stdio diagnostics server implemented; richer IDE features pending |
 
@@ -3382,11 +3382,13 @@ and emits a console `.exe`.
 `tokenize`, `parse`, and `check` are also accepted as top-level compatibility
 aliases for the corresponding `debug` commands.
 
-`repl` currently supports `.help`, `.type <expr>`, and `.exit`. Top-level
-declarations are remembered for later `.type` commands. `.type` parses and
+The selfhost `repl` driver supports `.help`, `.type <expr>`, and `.exit`.
+Top-level declarations are remembered for later commands. `.type` parses and
 typechecks the expression against the current session and prints the inferred
-type without compiling or running native code. Form evaluation is reserved for
-later work.
+type without compiling or running native code. Bare expressions are typechecked
+against the current session, compiled into a scratch `main`, run through the
+selfhost source build/run path, and discarded without becoming session
+declarations.
 
 ---
 

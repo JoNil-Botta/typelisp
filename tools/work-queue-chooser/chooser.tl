@@ -1,25 +1,25 @@
-;;;; work-queue-chooser/chooser.tl - TypeLisp work-queue chooser (#794).
-;;;;
-;;;; Reads the combined `{"prs":[...],"issues":[...]}` JSON from stdin, classifies
-;;;; each entry, skips PRs whose checks are still pending/running, weights the
-;;;; rest (PR review = 30, ready-for-implementation = 10, research/triage = 1,
-;;;; +50 for a p0 label, +3 for a p1 label), uses system entropy to make a
-;;;; weighted pick, and prints one action line:
-;;;;
-;;;;   review pr #N: Title
-;;;;   implement issue #N: Title
-;;;;   research/triage issue #N: Title
-;;;;
-;;;; Selection uses host entropy through `stdlib/random.tl`; JSON parsing uses
-;;;; `stdlib/json.tl`.
-;;;;
-;;;; Usage: `typelisp run tools/work-queue-chooser/chooser.tl --stdlib-root stdlib`
+;# work-queue-chooser/chooser.tl - TypeLisp work-queue chooser (#794).
+;#
+;# Reads the combined `{"prs":[...],"issues":[...]}` JSON from stdin, classifies
+;# each entry, skips PRs whose checks are still pending/running, weights the
+;# rest (PR review = 30, ready-for-implementation = 10, research/triage = 1,
+;# +50 for a p0 label, +3 for a p1 label), uses system entropy to make a
+;# weighted pick, and prints one action line:
+;#
+;#   review pr #N: Title
+;#   implement issue #N: Title
+;#   research/triage issue #N: Title
+;#
+;# Selection uses host entropy through `stdlib/random.tl`; JSON parsing uses
+;# `stdlib/json.tl`.
+;#
+;# Usage: `typelisp run tools/work-queue-chooser/chooser.tl --stdlib-root stdlib`
 (import "stdlib/json.tl")
 
 (import "stdlib/random.tl")
 
-;;; Kind tags: 0 = PR (review), 1 = ready-for-implementation issue (implement),
-;;; 2 = research/triage issue.
+;: Kind tags: 0 = PR (review), 1 = ready-for-implementation issue (implement),
+;: 2 = research/triage issue.
 (define kind-pr : i64
   0)
 
@@ -44,14 +44,14 @@
 (define p1-priority-bonus : i64
   3)
 
-;;; A classified work-queue candidate carrying its display fields and weight.
+;: A classified work-queue candidate carrying its display fields and weight.
 (defstruct Candidate
   (kind i64)
   (number i64)
   (title String)
   (weight i64))
 
-;;; Immutable list of candidates in source order (PRs first, then issues).
+;: Immutable list of candidates in source order (PRs first, then issues).
 (defenum CandList
   (CandNil)
   (CandCons Candidate CandList))
@@ -60,9 +60,9 @@
   (ChooserOk Candidate)
   (ChooserErr String))
 
-;;; Read all of stdin into a single String by repeated bounded reads until EOF.
-;;; The queue snapshot can exceed 64 KiB once PR check rollups and issue labels
-;;; accumulate, so use a larger request size for ordinary chooser payloads.
+;: Read all of stdin into a single String by repeated bounded reads until EOF.
+;: The queue snapshot can exceed 64 KiB once PR check rollups and issue labels
+;: accumulate, so use a larger request size for ordinary chooser payloads.
 (define stdin-read-size : i64
   1048576)
 
@@ -78,10 +78,10 @@
 (define (read-all-stdin) : String
   (read-all-stdin-acc ""))
 
-;;; PowerShell native pipelines on Windows can prefix stdin with a UTF-8 BOM, and
-;;; GitHub titles may include UTF-8 punctuation that the current byte-oriented
-;;; JSON parser cannot decode. The chooser only needs display text, so normalize
-;;; the queue snapshot to parser-safe ASCII while preserving JSON syntax.
+;: PowerShell native pipelines on Windows can prefix stdin with a UTF-8 BOM, and
+;: GitHub titles may include UTF-8 punctuation that the current byte-oriented
+;: JSON parser cannot decode. The chooser only needs display text, so normalize
+;: the queue snapshot to parser-safe ASCII while preserving JSON syntax.
 (define (chooser-char-code-at [text : String] [idx : i64]) : i64
   (cast (string-ref text idx) : i64))
 
@@ -124,7 +124,7 @@
             (set! i (+ i 1)))))
       (string-append out (substring input segment-start (- n segment-start))))))
 
-;;; Extract an i64 from a JSON number field, defaulting to 0 when absent/wrong.
+;: Extract an i64 from a JSON number field, defaulting to 0 when absent/wrong.
 (define (json-field-number [item : Json] [field : String]) : i64
   (match (json-object-get item field)
     [(JsonFound found)
@@ -133,7 +133,7 @@
         [_ 0])]
     [(JsonMissing) 0]))
 
-;;; Extract a String from a JSON string field, defaulting to "" when absent.
+;: Extract a String from a JSON string field, defaulting to "" when absent.
 (define (json-field-string [item : Json] [field : String]) : String
   (match (json-object-get item field)
     [(JsonFound found)
@@ -142,7 +142,7 @@
         [_ ""])]
     [(JsonMissing) ""]))
 
-;;; True when any object in `labels` has a `name` equal to `needle`.
+;: True when any object in `labels` has a `name` equal to `needle`.
 (define (label-list-has? [labels : JsonList] [needle : String]) : bool
   (match labels
     [(JsonListNil) false]
@@ -151,7 +151,7 @@
         true
         (label-list-has? rest needle))]))
 
-;;; Return the `labels` array of an issue, or an empty list when absent.
+;: Return the `labels` array of an issue, or an empty list when absent.
 (define (issue-label-list [item : Json]) : JsonList
   (match (json-object-get item "labels")
     [(JsonFound found)
@@ -160,7 +160,7 @@
         [_ (JsonListNil)])]
     [(JsonMissing) (JsonListNil)]))
 
-;;; Return the priority bonus for a label list. p0 takes precedence over p1.
+;: Return the priority bonus for a label list. p0 takes precedence over p1.
 (define (label-list-priority-bonus [labels : JsonList]) : i64
   (if (label-list-has? labels "p0")
     p0-priority-bonus
@@ -168,7 +168,7 @@
       p1-priority-bonus
       0)))
 
-;;; Build a PR candidate (kind = review, no labels considered).
+;: Build a PR candidate (kind = review, no labels considered).
 (define (pr-candidate [item : Json]) : Candidate
   (Candidate
     kind-pr
@@ -176,18 +176,18 @@
     (json-field-string item "title")
     review-weight))
 
-;;; Return true when a check run status is terminal; conclusions may pass/fail.
+;: Return true when a check run status is terminal; conclusions may pass/fail.
 (define (pr-check-status-complete? [status : String]) : bool
   (string-eq status "COMPLETED"))
 
-;;; Return true when a legacy status context state is terminal.
+;: Return true when a legacy status context state is terminal.
 (define (pr-check-state-complete? [state : String]) : bool
   (or
     (string-eq state "SUCCESS")
     (or (string-eq state "FAILURE") (string-eq state "ERROR"))))
 
-;;; Return true when a rollup entry is complete. Unknown entries do not block so
-;;; a missing check shape is treated like no checks rather than a pending check.
+;: Return true when a rollup entry is complete. Unknown entries do not block so
+;: a missing check shape is treated like no checks rather than a pending check.
 (define (pr-check-entry-complete? [entry : Json]) : bool
   (let
     [status : String (json-field-string entry "status")]
@@ -199,7 +199,7 @@
           (pr-check-state-complete? state)
           true)))))
 
-;;; Return true when every check rollup entry has reached a terminal state.
+;: Return true when every check rollup entry has reached a terminal state.
 (define (pr-check-list-complete? [checks : JsonList]) : bool
   (match checks
     [(JsonListNil) true]
@@ -208,8 +208,8 @@
         (pr-check-list-complete? rest)
         false)]))
 
-;;; Missing or empty `statusCheckRollup` means the PR has no checks and remains
-;;; eligible. Only explicitly pending/running entries are skipped.
+;: Missing or empty `statusCheckRollup` means the PR has no checks and remains
+;: eligible. Only explicitly pending/running entries are skipped.
 (define (pr-checks-complete? [item : Json]) : bool
   (match (json-object-get item "statusCheckRollup")
     [(JsonFound found)
@@ -218,8 +218,8 @@
         [_ true])]
     [(JsonMissing) true]))
 
-;;; Build an issue candidate, classifying ready-for-implementation vs triage and
-;;; adding the priority bonus.
+;: Build an issue candidate, classifying ready-for-implementation vs triage and
+;: adding the priority bonus.
 (define (issue-candidate [item : Json]) : Candidate
   (let
     [labels : JsonList (issue-label-list item)]
@@ -237,7 +237,7 @@
         (json-field-string item "title")
         (+ research-weight bonus)))))
 
-;;; Map a JSON array of PR objects to candidates, preserving source order.
+;: Map a JSON array of PR objects to candidates, preserving source order.
 (define (pr-candidates [items : JsonList]) : CandList
   (match items
     [(JsonListNil) (CandNil)]
@@ -248,20 +248,20 @@
           (CandCons (pr-candidate head) tail)
           tail))]))
 
-;;; Map a JSON array of issue objects to candidates, preserving source order.
+;: Map a JSON array of issue objects to candidates, preserving source order.
 (define (issue-candidates [items : JsonList]) : CandList
   (match items
     [(JsonListNil) (CandNil)]
     [(JsonListCons head rest)
       (CandCons (issue-candidate head) (issue-candidates rest))]))
 
-;;; Concatenate two candidate lists, preserving order.
+;: Concatenate two candidate lists, preserving order.
 (define (cand-append [front : CandList] [back : CandList]) : CandList
   (match front
     [(CandNil) back]
     [(CandCons head rest) (CandCons head (cand-append rest back))]))
 
-;;; Look up the JSON array stored at `field`, or an empty list when absent.
+;: Look up the JSON array stored at `field`, or an empty list when absent.
 (define (json-field-array [value : Json] [field : String]) : JsonList
   (match (json-object-get value field)
     [(JsonFound found)
@@ -270,22 +270,22 @@
         [_ (JsonListNil)])]
     [(JsonMissing) (JsonListNil)]))
 
-;;; Build the full candidate list: PR candidates first, then issue candidates.
+;: Build the full candidate list: PR candidates first, then issue candidates.
 (define (build-candidates [root : Json]) : CandList
   (cand-append
     (pr-candidates (json-field-array root "prs"))
     (issue-candidates (json-field-array root "issues"))))
 
-;;; Build the weight list from candidates, preserving order so a chosen weight
-;;; index maps back to the candidate at the same position.
+;: Build the weight list from candidates, preserving order so a chosen weight
+;: index maps back to the candidate at the same position.
 (define (cand-weights [cands : CandList]) : RandomWeightList
   (match cands
     [(CandNil) (random-weight-list-empty)]
     [(CandCons head rest)
       (random-weight-list-cons (struct-get head weight) (cand-weights rest))]))
 
-;;; Return the candidate at zero-based `index`, or a sentinel triage candidate
-;;; when out of range (should not happen for a valid weighted index).
+;: Return the candidate at zero-based `index`, or a sentinel triage candidate
+;: when out of range (should not happen for a valid weighted index).
 (define (cand-nth [cands : CandList] [index : i64]) : Candidate
   (match cands
     [(CandNil) (Candidate kind-triage 0 "" research-weight)]
@@ -294,7 +294,7 @@
         head
         (cand-nth rest (- index 1)))]))
 
-;;; Number of candidates in a list.
+;: Number of candidates in a list.
 (define (cand-count [cands : CandList]) : i64
   (match cands
     [(CandNil) 0]
@@ -351,7 +351,7 @@
             (panic "issue with only p1 should use p1 priority"))))]
     [(ErrJson _) (panic "test JSON should parse")]))
 
-;;; The action verb for a candidate kind.
+;: The action verb for a candidate kind.
 (define (action-name [kind : i64]) : String
   (if (= kind kind-pr)
     "review"
@@ -359,13 +359,13 @@
       "implement"
       "research/triage")))
 
-;;; The GitHub object word for a candidate kind.
+;: The GitHub object word for a candidate kind.
 (define (github-kind [kind : i64]) : String
   (if (= kind kind-pr)
     "pr"
     "issue"))
 
-;;; Render one candidate as the chooser's action line (without trailing newline).
+;: Render one candidate as the chooser's action line (without trailing newline).
 (define (candidate-line [cand : Candidate]) : String
   (string-append
     (string-append (action-name (struct-get cand kind)) " ")
@@ -375,8 +375,8 @@
         (int->string (struct-get cand number))
         (string-append ": " (struct-get cand title))))))
 
-;;; Choose one candidate from the input JSON, returning an error message on
-;;; invalid input or an empty candidate set.
+;: Choose one candidate from the input JSON, returning an error message on
+;: invalid input or an empty candidate set.
 (define (choose-candidate [text : String]) : ChooserResult
   (match (json-parse (chooser-normalize-json-input text))
     [(ErrJson message)

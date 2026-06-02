@@ -1,5 +1,5 @@
-;;; SPEC safe-code contract: references tied to visible lifetimes and scoped
-;;; arena allocations that return region-free scalars are valid safe code.
+;: SPEC safe-code contract: references tied to visible lifetimes and scoped
+;: arena allocations that return region-free scalars are valid safe code.
 (define (take-ref [r : (& n i64)]) : unit
   unit)
 

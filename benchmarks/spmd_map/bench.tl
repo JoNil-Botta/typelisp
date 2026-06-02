@@ -1,18 +1,18 @@
-;;;; benchmarks/spmd_map/bench.tl - SPMD elementwise-map micro-benchmark (#1125).
-;;;;
-;;;; Equivalent to benchmarks/spmd_map/baseline.c. Both run `reps` passes of an
-;;;; elementwise map `out[i] = a[i] + b[i] + r` over a fixed-size array using
-;;;; TypeLisp's data-parallel `foreach`, then fold one element of each pass into
-;;;; an accumulator and return its low byte as the process exit code. TypeLisp
-;;;; `+` wraps modulo 2^64 (SPEC), matching C `uint64_t`, so both programs
-;;;; produce the identical exit code on a given host.
-;;;;
-;;;; The array is kept small (fits in cache, modest memory) and the work is made
-;;;; runtime-dominant by an outer repetition loop. The per-pass `r` term makes
-;;;; each pass distinct so the compiler cannot hoist the kernel out of the loop,
-;;;; and the trip count `base-reps + (arg-count)` (arg-count is 1 with no extra
-;;;; arguments, matching C `argc`) keeps the result deterministic while
-;;;; preventing whole-loop constant folding.
+;# benchmarks/spmd_map/bench.tl - SPMD elementwise-map micro-benchmark (#1125).
+;#
+;# Equivalent to benchmarks/spmd_map/baseline.c. Both run `reps` passes of an
+;# elementwise map `out[i] = a[i] + b[i] + r` over a fixed-size array using
+;# TypeLisp's data-parallel `foreach`, then fold one element of each pass into
+;# an accumulator and return its low byte as the process exit code. TypeLisp
+;# `+` wraps modulo 2^64 (SPEC), matching C `uint64_t`, so both programs
+;# produce the identical exit code on a given host.
+;#
+;# The array is kept small (fits in cache, modest memory) and the work is made
+;# runtime-dominant by an outer repetition loop. The per-pass `r` term makes
+;# each pass distinct so the compiler cannot hoist the kernel out of the loop,
+;# and the trip count `base-reps + (arg-count)` (arg-count is 1 with no extra
+;# arguments, matching C `argc`) keeps the result deterministic while
+;# preventing whole-loop constant folding.
 (define array-len : i64
   4096)
 

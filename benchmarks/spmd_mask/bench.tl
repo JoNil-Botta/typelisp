@@ -1,17 +1,17 @@
-;;;; benchmarks/spmd_mask/bench.tl - SPMD masked-conditional micro-benchmark (#1125).
-;;;;
-;;;; Equivalent to benchmarks/spmd_mask/baseline.c. Both run `reps` passes of a
-;;;; data-dependent masked map over a fixed-size array using `foreach`:
-;;;;   out[i] = if (odd a[i]) then a[i] + r else a[i] - r
-;;;; then fold one element of each pass into an accumulator and return its low
-;;;; byte as the process exit code. TypeLisp `+`/`-` wrap modulo 2^64 (SPEC),
-;;;; matching C `uint64_t`, so both programs produce the identical exit code.
-;;;;
-;;;; The per-lane branch depends on the array contents (parity of a[i]), so this
-;;;; exercises a divergent/masked lane body — the SIMD-tail/active-lane case the
-;;;; #937 roadmap and #1014 vector-mask IR target — complementing spmd_map's and
-;;;; spmd_zip's uniform lane bodies. Runtime-opaque trip count and per-pass `r`
-;;;; keep the result deterministic while defeating constant folding and hoisting.
+;# benchmarks/spmd_mask/bench.tl - SPMD masked-conditional micro-benchmark (#1125).
+;#
+;# Equivalent to benchmarks/spmd_mask/baseline.c. Both run `reps` passes of a
+;# data-dependent masked map over a fixed-size array using `foreach`:
+;#   out[i] = if (odd a[i]) then a[i] + r else a[i] - r
+;# then fold one element of each pass into an accumulator and return its low
+;# byte as the process exit code. TypeLisp `+`/`-` wrap modulo 2^64 (SPEC),
+;# matching C `uint64_t`, so both programs produce the identical exit code.
+;#
+;# The per-lane branch depends on the array contents (parity of a[i]), so this
+;# exercises a divergent/masked lane body — the SIMD-tail/active-lane case the
+;# #937 roadmap and #1014 vector-mask IR target — complementing spmd_map's and
+;# spmd_zip's uniform lane bodies. Runtime-opaque trip count and per-pass `r`
+;# keep the result deterministic while defeating constant folding and hoisting.
 (define array-len : i64
   4096)
 

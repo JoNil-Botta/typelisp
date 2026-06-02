@@ -241,7 +241,7 @@ fixtures are discovered without a manifest edit.
    a specific stdlib API; `scripts/verify-inline-tests.sh` discovers them
    automatically.
 8. Document the intended public API coverage in `stdlib/tests/README.md`.
-9. Add `;;;;` module docs, attached `;;;` item docs for every public top-level
+9. Add `;#` module docs, attached `;:` item docs for every public top-level
    declaration, allocation-behavior notes for allocating APIs, an update to the
    arena allocation classification table above, and at least one checked doctest
    example that runs with `--stdlib-root`.

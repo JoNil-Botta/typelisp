@@ -729,8 +729,8 @@
               (set! pos next))]))
       (md-block-list-reverse blocks))))
 
-;;; Index of the first `target` char at or after `from`; returns the string
-;;; length (a never-an-index sentinel) when there is no such character.
+;: Index of the first `target` char at or after `from`; returns the string
+;: length (a never-an-index sentinel) when there is no such character.
 (define (md-find-char [text : String] [from : i64] [target : char]) : i64
   (let
     [i : i64 from]
@@ -747,12 +747,12 @@
           (set! i (+ i 1))))
       found)))
 
-;;; HTML-escape the single character at `idx` (reuses the doc_html entity escaper).
+;: HTML-escape the single character at `idx` (reuses the doc_html entity escaper).
 (define (md-escape-char [text : String] [idx : i64]) : String
   (doc-html-escape (substring text idx 1)))
 
-;;; Render a well-formed `[label](url)` link given the `[` at `lbracket`, the `]`
-;;; at `jclose`, and the `)` at `kclose`. Label and URL are HTML-escaped.
+;: Render a well-formed `[label](url)` link given the `[` at `lbracket`, the `]`
+;: at `jclose`, and the `)` at `kclose`. Label and URL are HTML-escaped.
 (define (md-render-link
   [text : String]
   [lbracket : i64]
@@ -766,8 +766,8 @@
       (doc-html-escape (substring text (+ jclose 2) (- kclose (+ jclose 2))))]
     (doc-html-cat5 "<a href=\"" url "\">" label "</a>")))
 
-;;; Inline-render `text` to HTML: `code`, *em*/_em_, [t](u), everything else
-;;; HTML-escaped; unmatched markers are emitted literally.
+;: Inline-render `text` to HTML: `code`, *em*/_em_, [t](u), everything else
+;: HTML-escaped; unmatched markers are emitted literally.
 (define (md-render-inline [text : String]) : String
   (let
     [i : i64 0]
@@ -844,7 +844,7 @@
                 (set! i (+ i 1)))])))
       out)))
 
-;;; Render a heading with the same deterministic anchor scheme used by API docs.
+;: Render a heading with the same deterministic anchor scheme used by API docs.
 (define (md-render-heading [level : i64] [text : String]) : String
   (let
     [level-text : String (int->string level)]

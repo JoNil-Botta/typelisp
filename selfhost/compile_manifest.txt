@@ -530,8 +530,6 @@ contains|(define answer : i64 42)
 contains|(define (main [argc : i64])
 contains|;: EOF unattached
 contains|Module title\nsecond module line\nlater module
-contains|;;;; Legacy module
-contains|;;; legacy item
 end
 
 case|selfhost_doc_extract_smoke|selfhost/doc_extract_smoke.tl|assembly|exactly-one|direct

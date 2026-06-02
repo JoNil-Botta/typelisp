@@ -1,5 +1,5 @@
-;;; SPEC safe-code contract: in-bounds collection access, checked aggregate
-;;; construction, race-free SPMD, and valid comptime values have defined results.
+;: SPEC safe-code contract: in-bounds collection access, checked aggregate
+;: construction, race-free SPMD, and valid comptime values have defined results.
 (defstruct Point
   (x i64)
   (y i64))

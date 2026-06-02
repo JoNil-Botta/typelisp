@@ -3,8 +3,7 @@
 ;; Public docs use explicit semicolon markers:
 ;;   ;#   module/file doc line, collected separately
 ;;   ;:   outer item doc line, attached to the next supported top-level item
-;; Legacy `;;;;` module docs and `;;;` item docs remain accepted while the
-;; repository migrates. `;;` and `;` ordinary comments are ignored.
+;; `;;` and `;` ordinary comments are ignored.
 ;;
 ;; Item doc lines stay pending across blank physical lines because the
 ;; self-hosted formatter may separate doc comment lines. Ordinary comments,
@@ -201,18 +200,12 @@
 (define (doc-module-doc-prefix-len [src : String] [line-start : i64]) : i64
   (if (doc-string-prefix-at? src ";#" line-start)
     2
-    (if (doc-string-prefix-at? src ";;;;" line-start)
-      4
-      0)))
+    0))
 
 (define (doc-item-doc-prefix-len [src : String] [line-start : i64]) : i64
   (if (doc-string-prefix-at? src ";:" line-start)
     2
-    (if (doc-string-prefix-at? src ";;;" line-start)
-      (if (doc-string-prefix-at? src ";;;;" line-start)
-        0
-        3)
-      0)))
+    0))
 
 (define (doc-scan-string-end [src : String] [start : i64] [n : i64]) : i64
   (let
@@ -464,12 +457,6 @@
 (defstruct Point (x i64) (y i64))
 ;: EOF unattached")
 
-(define (doc-extract-legacy-smoke-source) : String
-  ";;;; Legacy module
-;;; legacy item
-(define legacy : i64 1)
-")
-
 (define (doc-item-ok?
   [item : DocItem]
   [kind-tag : i64]
@@ -522,29 +509,7 @@
         "Module title\nsecond module line\nlater module")
         (if (= (doc-item-list-count items) 5)
           (if (doc-extract-smoke-items-ok? items)
-            (match (doc-extract-source (doc-extract-legacy-smoke-source))
-              [(DocExtraction legacy-module legacy-items)
-                (if (string-eq legacy-module "Legacy module")
-                  (if (= (doc-item-list-count legacy-items) 1)
-                    (match legacy-items
-                      [(DocItemCons legacy DocItemNil)
-                        (if (doc-item-ok?
-                          legacy
-                          1
-                          "legacy"
-                          "legacy item"
-                          "(define legacy : i64 1)")
-                          42
-                          (begin
-                            (panic "doc-extract: legacy item mismatch")
-                            0))]
-                      [_ 0])
-                    (begin
-                      (panic "doc-extract: legacy item count mismatch")
-                      0))
-                  (begin
-                    (panic "doc-extract: legacy module doc mismatch")
-                    0))])
+            42
             (begin
               (panic "doc-extract: item doc smoke mismatch")
               0))

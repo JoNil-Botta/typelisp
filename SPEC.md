@@ -120,8 +120,7 @@ comments before the main Rust lexer discards comments:
 - `;:` starts an outer item documentation line attached to the next supported
   top-level item: value `define`, function `define`, `extern`, `defenum`, or
   `defstruct`.
-- Legacy `;;;;` module docs and `;;;` item docs remain accepted during the
-  migration, but `;#` and `;:` are the canonical spellings.
+- `;#` and `;:` are the only public documentation comment syntaxes.
 - `;` and `;;` remain ordinary comments and are not public documentation.
 - Outer item doc lines must be contiguous. A blank line, ordinary comment,
   module doc, unsupported top-level form, or unrelated source text clears the

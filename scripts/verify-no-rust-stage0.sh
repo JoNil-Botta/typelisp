@@ -636,6 +636,7 @@ if [ "$STAGE1_CAN_COMPILE_NATIVE" -eq 1 ]; then
     run_with_compiler "$BOOTSTRAPPED_STAGE1" "stage1 native integration corpus" scripts/verify-integration.sh
     run_with_compiler "$BOOTSTRAPPED_STAGE1" "stage1 examples" scripts/verify-examples.sh
     if [ "$HOST_OS" = linux ]; then
+        run_with_compiler "$BOOTSTRAPPED_STAGE1" "stage1 SPMD SIMD comparison" scripts/verify-spmd-simd.sh
         run_with_compiler "$BOOTSTRAPPED_STAGE1" "stage1 stdlib modules and fixtures" \
             env TYPELISP_STDLIB_BORROWED_STR_BIN="$BOOTSTRAPPED_STAGE1" scripts/verify-stdlib.sh
     else

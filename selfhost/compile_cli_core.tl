@@ -6,8 +6,8 @@
 ;; plus `tokenize`/`parse`/`check`/`debug …`.
 ;; The private bootstrap form `<file.tl> [compile options]` remains accepted so
 ;; existing stage1->stage2 scripts can call the raw compiler directly.
-;; `--backend-mode scalar` is accepted (the selfhost backend's native mode);
-;; `avx2`/`avx512` remain Rust-driver-only for now and are rejected explicitly.
+;; `--backend-mode scalar` and `avx2` are accepted by the selfhost compiler.
+;; `avx512` remains staged behind follow-up selfhost SIMD backend work.
 ;; `--emit-ir` writes a deterministic TypeLisp-owned IR summary.
 ;;
 ;; This is a main-free core (like the other `*_cli_core.tl` modules): the entry
@@ -29,6 +29,7 @@
     bool
     CompilerBackendTarget
     CompilerLoadRootList
+    CompilerBackendMode
     i64))
 
 (defenum ResultCompileCliConfig
@@ -124,28 +125,28 @@
     "; expected 0, 1, 2, or 3"))
 
 ;; `--backend-mode` parity with Rust (which accepts scalar/avx2/avx512). The
-;; selfhost backend is scalar-only, so `scalar` is its native mode and is
-;; accepted as a no-op; `avx2`/`avx512` are valid modes that still need the Rust
-;; driver until selfhost SIMD lands (#1014); anything else is an unknown mode
-;; (message matches the Rust driver).
+;; selfhost compiler now owns the first AVX2 slice; `avx512` is still an
+;; unsupported valid mode while the tail-mask/predicated backend work lands.
 (defenum ResultCompileCliBackendMode
-  (OkCompileCliBackendMode)
+  (OkCompileCliBackendMode CompilerBackendMode)
   (ErrCompileCliBackendMode String))
 
 (define (compile-cli-backend-mode [value : String]) : ResultCompileCliBackendMode
-  (if (string-eq value "scalar")
-    (OkCompileCliBackendMode)
-    (if (or (string-eq value "avx2") (string-eq value "avx512"))
+  (cond
+    [(string-eq value "scalar") (OkCompileCliBackendMode (BackendModeScalar))]
+    [(string-eq value "avx2") (OkCompileCliBackendMode (BackendModeAvx2))]
+    [(string-eq value "avx512")
       (ErrCompileCliBackendMode
         (compile-cli-cat3
           "compile: --backend-mode "
           value
-          " requires the Rust compile driver until selfhost SIMD support (#1014)"))
+          " requires the Rust compile driver until selfhost SIMD support (#1014)"))]
+    [else
       (ErrCompileCliBackendMode
         (compile-cli-cat3
           "Error: unknown backend mode '"
           value
-          "'. Expected scalar, avx2, or avx512")))))
+          "'. Expected scalar, avx2, or avx512"))]))
 
 (define (compile-cli-root-list-append
   [roots : CompilerLoadRootList]
@@ -166,7 +167,8 @@
   [stdlib-roots : CompilerLoadRootList]
   [emit-ir : bool]
   [has-opt-level : bool]
-  [opt-level : i64]) : ResultCompileCliConfig
+  [opt-level : i64]
+  [backend-mode : CompilerBackendMode]) : ResultCompileCliConfig
   (if (>= idx count)
     (OkCompileCliConfig
       (CompileCliConfig
@@ -178,6 +180,7 @@
         has-target
         target
         stdlib-roots
+        backend-mode
         opt-level))
     (let
       [current : String (arg idx)]
@@ -198,7 +201,8 @@
                 stdlib-roots
                 emit-ir
                 has-opt-level
-                opt-level)))]
+                opt-level
+                backend-mode)))]
         [(string-eq current "--stdlib-root")
           (if (>= (+ idx 1) count)
             (ErrCompileCliConfig "compile: --stdlib-root requires a value")
@@ -213,7 +217,8 @@
               (compile-cli-root-list-append stdlib-roots (arg (+ idx 1)))
               emit-ir
               has-opt-level
-              opt-level))]
+              opt-level
+              backend-mode))]
         [(string-eq current "--target")
           (if (>= (+ idx 1) count)
             (ErrCompileCliConfig "compile: --target requires a value")
@@ -233,7 +238,8 @@
                     stdlib-roots
                     emit-ir
                     has-opt-level
-                    opt-level)]
+                    opt-level
+                    backend-mode)]
                 [(ErrCompileCliTarget message) (ErrCompileCliConfig message)])))]
         [(string-eq current "--opt-level")
           (if (>= (+ idx 1) count)
@@ -256,14 +262,15 @@
                       stdlib-roots
                       emit-ir
                       true
-                      parsed-level)]
+                      parsed-level
+                      backend-mode)]
                   [(ErrCompilerOptimizeLevel)
                     (ErrCompileCliConfig (compile-cli-invalid-opt-level value))]))))]
         [(string-eq current "--backend-mode")
           (if (>= (+ idx 1) count)
             (ErrCompileCliConfig "compile: --backend-mode requires a value")
             (match (compile-cli-backend-mode (arg (+ idx 1)))
-              [(OkCompileCliBackendMode)
+              [(OkCompileCliBackendMode parsed-mode)
                 (compile-cli-parse-options
                   (+ idx 2)
                   count
@@ -275,7 +282,8 @@
                   stdlib-roots
                   emit-ir
                   has-opt-level
-                  opt-level)]
+                  opt-level
+                  parsed-mode)]
               [(ErrCompileCliBackendMode message) (ErrCompileCliConfig message)]))]
         [(string-eq current "--emit-ir")
           (compile-cli-parse-options
@@ -289,7 +297,8 @@
             stdlib-roots
             true
             has-opt-level
-            opt-level)]
+            opt-level
+            backend-mode)]
         [(compile-cli-flag? current)
           (ErrCompileCliConfig (string-append "compile: unknown flag " current))]
         [else
@@ -314,7 +323,8 @@
           CompilerLoadRootNil
           false
           false
-          (compiler-optimize-default-level))))))
+          (compiler-optimize-default-level)
+          (BackendModeScalar))))))
 
 (define (compile-cli-command-config [count : i64]) : ResultCompileCliConfig
   (compile-cli-config-from 2 count))
@@ -448,6 +458,7 @@
             has-target
             target
             stdlib-roots
+            backend-mode
             opt-level)
           (if emit-ir
             (compiler-driver-write-result
@@ -457,17 +468,19 @@
                 opt-level)
               output-path)
             (if has-target
-              (compiler-driver-compile-file-for-target-with-roots-and-level
+              (compiler-driver-compile-file-for-target-with-roots-level-and-mode
                 input-path
                 output-path
                 target
                 stdlib-roots
-                opt-level)
-              (compiler-driver-compile-file-with-roots-and-level
+                opt-level
+                backend-mode)
+              (compiler-driver-compile-file-with-roots-level-and-mode
                 input-path
                 output-path
                 stdlib-roots
-                opt-level)))])]
+                opt-level
+                backend-mode)))])]
     [(CompileCliCheck input-path stdlib-roots)
       (match (compiler-check-file-with-roots input-path stdlib-roots)
         [(OkCompilerCheck _)

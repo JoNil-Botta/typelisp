@@ -196,10 +196,10 @@ contains|_tl_compile_cli_target:
 contains|_tl_compile_cli_invalid_opt_level:
 contains|_tl_compile_cli_backend_mode:
 contains|_tl_compile_cli_root_list_append:
-contains|_tl_compiler_driver_compile_file_with_roots_and_level:
-contains|_tl_compiler_driver_compile_file_for_target_with_roots_and_level:
+contains|_tl_compiler_driver_compile_file_with_roots_level_and_mode:
+contains|_tl_compiler_driver_compile_file_for_target_with_roots_level_and_mode:
 contains|_tl_compiler_driver_emit_ir_summary_file_with_roots_and_level:
-contains|_tl_compiler_backend_emit_program_with_spans_for_target_and_entry:
+contains|_tl_compiler_backend_emit_program_target_with_mode:
 contains|compile: expected source path
 contains|compile: --target requires a value
 contains|compile: --stdlib-root requires a value
@@ -322,14 +322,14 @@ end
 
 case|selfhost_compiler_driver_core|selfhost/compiler_driver_core.tl|assembly|skip|direct
 contains|_tl_compiler_driver_compile_file:
-contains|_tl_compiler_driver_compile_file_with_roots_and_level:
+contains|_tl_compiler_driver_compile_file_with_roots_level_and_mode:
 contains|_tl_compiler_driver_compile_file_for_target:
 contains|_tl_compiler_driver_emit_file:
-contains|_tl_compiler_driver_emit_file_with_target_roots_and_level:
+contains|_tl_compiler_driver_emit_file_with_target_roots_level_and_mode:
 contains|_tl_compiler_driver_emit_file_for_target:
 contains|_tl_compiler_driver_emit_ir_summary_file_with_roots_and_level:
 contains|_tl_compiler_driver_ir_summary_render:
-contains|_tl_compiler_backend_emit_program_with_spans_for_target:
+contains|_tl_compiler_backend_emit_program_target_with_mode:
 contains|_tl_compiler_backend_emit_source:
 end
 
@@ -897,7 +897,7 @@ contains|_tl_tltest_invalid_opt_level:
 contains|_tl_source_tool_assemble_and_link:
 contains|_tl_source_tool_run_executable:
 contains|_tl_optimize_program_with_level:
-contains|_tl_compiler_backend_emit_program_with_spans_for_target:
+contains|_tl_compiler_backend_emit_program_target_with_mode:
 contains|test: expected source path
 contains|test: --opt-level requires a value
 contains|test: invalid --opt-level

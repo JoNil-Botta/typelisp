@@ -240,25 +240,25 @@ EOF
 # commented out in the manifest and listed here as documented skips until the
 # selfhost compiler closes the gap or the published stage0 carries the support:
 #   enum-payload pattern / spmd ....... #1657
-#   bare idiv traps need guarded abort  #1654
 # Immutable-reference native smoke fixtures are covered by
 # verify-selfhost-native.sh until the published stage0 includes #1720.
 selfhost_deferred_integration_skips() {
     cat <<'EOF'
+f32_scalar
+lambda_capture_aggregate
+lambda_capture_fixed_array
+lambda_capture_fixed_array_aggregate
+lambda_capture_nested_aggregate
+lambda_capture_scalar
+lambda_capture_struct_enum
+lambda_capture_tuple
+print_char
 ref_fixed_array_return
 ref_param_identity
 ref_return
 ref_tuple_return
-shl_count_width_trap
-shl_neg_count_trap
 string_match
 spmd_reduce_scalar
-div_zero_trap
-rem_zero_trap
-min_div_neg1_trap
-i16_min_div_neg1_trap
-i16_min_rem_neg1_trap
-u16_div_zero_trap
 EOF
 }
 

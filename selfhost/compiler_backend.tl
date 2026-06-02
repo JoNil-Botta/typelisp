@@ -2220,58 +2220,137 @@
       lhs
       (backend-cat4 "\n    " setcc " %al\n    movzbl %al, %eax\n" ""))))
 
+(define (compiler-backend-binop-cmp-reg-asm
+  [ty : AstType]
+  [rhs : String]
+  [lhs : String]) : String
+  (string-append
+    (backend-cat5
+      "    cmp"
+      (compiler-backend-int-instruction-suffix ty)
+      " "
+      rhs
+      ", ")
+    (string-append lhs "\n")))
+
+(define (compiler-backend-emit-load-i64-absolute [n : i64] [reg : String]) : String
+  (backend-cat5 "    movabsq $" (int->string n) ", " reg "\n"))
+
+(define (compiler-backend-signed-min-value [ty : AstType]) : i64
+  (let
+    [size : i64 (compiler-backend-type-size ty)]
+    (cond
+      [(= size 1) (- 0 128)]
+      [(= size 2) (- 0 32768)]
+      [(= size 4) (- 0 2147483648)]
+      [else (- (- 0 9223372036854775807) 1)])))
+
+(define (compiler-backend-div-zero-guard-asm [ty : AstType]) : String
+  (let
+    [rhs : String (compiler-backend-sized-reg "%rbx" ty)]
+    (string-append
+      (compiler-backend-binop-reg-asm "test" ty rhs rhs)
+      "    jne 1f\n    call tl_div_abort\n1:\n")))
+
+(define (compiler-backend-div-overflow-guard-asm [ty : AstType]) : String
+  (if (compiler-backend-type-signed? ty)
+    (let
+      [lhs : String (compiler-backend-sized-reg "%rax" ty)]
+      [rhs : String (compiler-backend-sized-reg "%rbx" ty)]
+      [min-reg : String (compiler-backend-sized-reg "%r10" ty)]
+      [neg-one-reg : String (compiler-backend-sized-reg "%r11" ty)]
+      (string-append
+        (compiler-backend-emit-load-i64-absolute
+          (compiler-backend-signed-min-value ty)
+          "%r10")
+        (string-append
+          (compiler-backend-binop-cmp-reg-asm ty min-reg lhs)
+          (string-append
+            "    jne 1f\n"
+            (string-append
+              (compiler-backend-emit-load-i64-absolute (- 0 1) "%r11")
+              (string-append
+                (compiler-backend-binop-cmp-reg-asm ty neg-one-reg rhs)
+                "    jne 1f\n    call tl_div_abort\n1:\n"))))))
+    ""))
+
+(define (compiler-backend-divmod-guard-asm [ty : AstType]) : String
+  (string-append
+    (compiler-backend-div-zero-guard-asm ty)
+    (compiler-backend-div-overflow-guard-asm ty)))
+
 (define (compiler-backend-binop-divmod-asm
   [ty : AstType]
   [want-remainder : bool]) : String
   (let
     [size : i64 (compiler-backend-type-size ty)]
     [signed : bool (compiler-backend-type-signed? ty)]
-    (cond
-      [(= size 1)
-        (string-append
-          (if signed
-            "    cbw\n    idivb %bl\n"
-            "    andw $0x00ff, %ax\n    divb %bl\n")
-          (if want-remainder
-            "    movb %ah, %al\n"
-            ""))]
-      [(= size 2)
-        (string-append
-          (if signed
-            "    cwd\n    idivw %bx\n"
-            "    xorw %dx, %dx\n    divw %bx\n")
-          (if want-remainder
-            "    movw %dx, %ax\n"
-            ""))]
-      [(= size 4)
-        (string-append
-          (if signed
-            "    cdq\n    idivl %ebx\n"
-            "    xorl %edx, %edx\n    divl %ebx\n")
-          (if want-remainder
-            "    movl %edx, %eax\n"
-            ""))]
-      [else
-        (string-append
-          (if signed
-            "    cqto\n    idivq %rbx\n"
-            "    xorq %rdx, %rdx\n    divq %rbx\n")
-          (if want-remainder
-            "    movq %rdx, %rax\n"
-            ""))])))
+    (string-append
+      (compiler-backend-divmod-guard-asm ty)
+      (cond
+        [(= size 1)
+          (string-append
+            (if signed
+              "    cbw\n    idivb %bl\n"
+              "    andw $0x00ff, %ax\n    divb %bl\n")
+            (if want-remainder
+              "    movb %ah, %al\n"
+              ""))]
+        [(= size 2)
+          (string-append
+            (if signed
+              "    cwd\n    idivw %bx\n"
+              "    xorw %dx, %dx\n    divw %bx\n")
+            (if want-remainder
+              "    movw %dx, %ax\n"
+              ""))]
+        [(= size 4)
+          (string-append
+            (if signed
+              "    cdq\n    idivl %ebx\n"
+              "    xorl %edx, %edx\n    divl %ebx\n")
+            (if want-remainder
+              "    movl %edx, %eax\n"
+              ""))]
+        [else
+          (string-append
+            (if signed
+              "    cqto\n    idivq %rbx\n"
+              "    xorq %rdx, %rdx\n    divq %rbx\n")
+            (if want-remainder
+              "    movq %rdx, %rax\n"
+              ""))]))))
+
+(define (compiler-backend-shift-count-width [ty : AstType]) : i64
+  (* (compiler-backend-type-size ty) 8))
+
+(define (compiler-backend-shift-count-valid? [count : i64] [ty : AstType]) : bool
+  (and (>= count 0) (< count (compiler-backend-shift-count-width ty))))
+
+(define (compiler-backend-shift-guard-asm [ty : AstType]) : String
+  (string-append
+    "    testq %rbx, %rbx\n    jge 1f\n    call tl_shift_abort\n1:\n"
+    (backend-cat5
+      "    cmpq $"
+      (int->string (compiler-backend-shift-count-width ty))
+      ", %rbx\n    jb 1f\n    call tl_shift_abort\n1:\n"
+      ""
+      "")))
 
 (define (compiler-backend-binop-shift-asm
   [mnemonic : String]
   [ty : AstType]
   [lhs : String]) : String
   (string-append
-    "    movq %rbx, %rcx\n"
-    (backend-cat5
-      "    "
-      mnemonic
-      (compiler-backend-int-instruction-suffix ty)
-      " %cl, "
-      (backend-cat3 lhs "\n" ""))))
+    (compiler-backend-shift-guard-asm ty)
+    (string-append
+      "    movq %rbx, %rcx\n"
+      (backend-cat5
+        "    "
+        mnemonic
+        (compiler-backend-int-instruction-suffix ty)
+        " %cl, "
+        (backend-cat3 lhs "\n" "")))))
 
 (define (compiler-backend-binop-asm [op : CompilerIrBinOp] [ty : AstType]) : String
   (let
@@ -2355,15 +2434,20 @@
 (define (compiler-backend-binop-immediate-shift-asm
   [mnemonic : String]
   [ty : AstType]
-  [imm : String]) : String
-  (string-append
-    (backend-cat5
-      "    "
-      mnemonic
-      (compiler-backend-int-instruction-suffix ty)
-      " "
-      imm)
-    (backend-cat3 ", " (compiler-backend-sized-reg "%rax" ty) "\n")))
+  [imm : String]) : CompilerBackendMaybeAsm
+  (let
+    [count : i64 (string->int (substring imm 1 (- (string-length imm) 1)))]
+    (if (compiler-backend-shift-count-valid? count ty)
+      (CompilerBackendSomeAsm
+        (string-append
+          (backend-cat5
+            "    "
+            mnemonic
+            (compiler-backend-int-instruction-suffix ty)
+            " "
+            imm)
+          (backend-cat3 ", " (compiler-backend-sized-reg "%rax" ty) "\n")))
+      (CompilerBackendNoAsm))))
 
 (define (compiler-backend-binop-immediate-reg-asm
   [mnemonic : String]
@@ -2448,17 +2532,14 @@
     [(IrBinBitXor)
       (CompilerBackendSomeAsm
         (compiler-backend-binop-immediate-reg-asm "xor" ty imm))]
-    [(IrBinShl)
-      (CompilerBackendSomeAsm
-        (compiler-backend-binop-immediate-shift-asm "shl" ty imm))]
+    [(IrBinShl) (compiler-backend-binop-immediate-shift-asm "shl" ty imm)]
     [(IrBinShr)
-      (CompilerBackendSomeAsm
-        (compiler-backend-binop-immediate-shift-asm
-          (if (compiler-backend-type-signed? ty)
-            "sar"
-            "shr")
-          ty
-          imm))]
+      (compiler-backend-binop-immediate-shift-asm
+        (if (compiler-backend-type-signed? ty)
+          "sar"
+          "shr")
+        ty
+        imm)]
     [_ (CompilerBackendNoAsm)]))
 
 (define (compiler-backend-unop-asm [op : CompilerIrUnOp]) : String
@@ -8466,6 +8547,99 @@
             true
             (compiler-backend-function-list-calls? rest name))])]))
 
+(define (compiler-backend-binop-needs-div-abort?
+  [op : CompilerIrBinOp]
+  [ty : AstType]) : bool
+  (if (compiler-backend-float-type? ty)
+    false
+    (match op
+      [(IrBinDiv) true]
+      [(IrBinMod) true]
+      [_ false])))
+
+(define (compiler-backend-binop-needs-shift-abort?
+  [op : CompilerIrBinOp]
+  [ty : AstType]) : bool
+  (if (compiler-backend-float-type? ty)
+    false
+    (match op
+      [(IrBinShl) true]
+      [(IrBinShr) true]
+      [_ false])))
+
+(define (compiler-backend-instr-needs-div-abort? [instr : CompilerIrInstr]) : bool
+  (match instr
+    [(IrInstrBinOp _ op _ _ ty) (compiler-backend-binop-needs-div-abort? op ty)]
+    [_ false]))
+
+(define (compiler-backend-instr-needs-shift-abort? [instr : CompilerIrInstr]) : bool
+  (match instr
+    [(IrInstrBinOp _ op _ _ ty)
+      (compiler-backend-binop-needs-shift-abort? op ty)]
+    [_ false]))
+
+(define (compiler-backend-instr-list-needs-div-abort?
+  [instrs : CompilerIrInstrList]) : bool
+  (match instrs
+    [(IrInstrNil) false]
+    [(IrInstrCons instr rest)
+      (if (compiler-backend-instr-needs-div-abort? instr)
+        true
+        (compiler-backend-instr-list-needs-div-abort? rest))]))
+
+(define (compiler-backend-instr-list-needs-shift-abort?
+  [instrs : CompilerIrInstrList]) : bool
+  (match instrs
+    [(IrInstrNil) false]
+    [(IrInstrCons instr rest)
+      (if (compiler-backend-instr-needs-shift-abort? instr)
+        true
+        (compiler-backend-instr-list-needs-shift-abort? rest))]))
+
+(define (compiler-backend-block-list-needs-div-abort?
+  [blocks : CompilerIrBlockList]) : bool
+  (match blocks
+    [(IrBlockNil) false]
+    [(IrBlockCons block rest)
+      (match block
+        [(IrBlock _ instrs)
+          (if (compiler-backend-instr-list-needs-div-abort? instrs)
+            true
+            (compiler-backend-block-list-needs-div-abort? rest))])]))
+
+(define (compiler-backend-block-list-needs-shift-abort?
+  [blocks : CompilerIrBlockList]) : bool
+  (match blocks
+    [(IrBlockNil) false]
+    [(IrBlockCons block rest)
+      (match block
+        [(IrBlock _ instrs)
+          (if (compiler-backend-instr-list-needs-shift-abort? instrs)
+            true
+            (compiler-backend-block-list-needs-shift-abort? rest))])]))
+
+(define (compiler-backend-function-list-needs-div-abort?
+  [functions : CompilerIrFunctionList]) : bool
+  (match functions
+    [(IrFunctionNil) false]
+    [(IrFunctionCons func rest)
+      (match func
+        [(IrFunction _ _ _ _ blocks)
+          (if (compiler-backend-block-list-needs-div-abort? blocks)
+            true
+            (compiler-backend-function-list-needs-div-abort? rest))])]))
+
+(define (compiler-backend-function-list-needs-shift-abort?
+  [functions : CompilerIrFunctionList]) : bool
+  (match functions
+    [(IrFunctionNil) false]
+    [(IrFunctionCons func rest)
+      (match func
+        [(IrFunction _ _ _ _ blocks)
+          (if (compiler-backend-block-list-needs-shift-abort? blocks)
+            true
+            (compiler-backend-function-list-needs-shift-abort? rest))])]))
+
 (define (compiler-backend-provides-runtime-name?
   [name : String]
   [candidate : String]
@@ -9082,43 +9256,40 @@
       (compiler-backend-function-list-calls? functions "env-var-value")]
     [calls-env-path-separator : bool
       (compiler-backend-function-list-calls? functions "env-path-separator")]
-    [needs-oob : bool (and (not defines-oob) (or extern-oob calls-oob))]
-    [needs-div-abort : bool
-      (and (not defines-div-abort) (or extern-div-abort calls-div-abort))]
-    [needs-shift-abort : bool
-      (and (not defines-shift-abort) (or extern-shift-abort calls-shift-abort))]
-    [needs-substring : bool
-      (and (not defines-substring) (or extern-substring calls-substring))]
-    [needs-concat : bool
-      (and (not defines-concat) (or extern-concat calls-concat))]
-    [needs-string-eq : bool
-      (and (not defines-string-eq) (or extern-string-eq calls-string-eq))]
-    [needs-string-to-int : bool
-      (and
-        (not defines-string-to-int)
-        (or extern-string-to-int calls-string-to-int))]
-    [needs-int-to-string : bool
-      (and
-        (not defines-int-to-string)
-        (or extern-int-to-string calls-int-to-string))]
-    [direct-abort : bool (or extern-abort calls-abort)]
-    [needs-print-err : bool
-      (and (not defines-print-err) (or extern-print-err calls-print-err))]
-    [needs-print-str : bool
-      (and (not defines-print-str) (or extern-print-str calls-print-str))]
-    [needs-print-char : bool
-      (and (not defines-print-char) (or extern-print-char calls-print-char))]
-    [needs-print-f64 : bool
-      (and (not defines-print-f64) (or extern-print-f64 calls-print-f64))]
-    [needs-arg-count : bool (or extern-arg-count calls-arg-count)]
-    [needs-arg : bool (or extern-arg calls-arg)]
-    [needs-read-file : bool
-      (or
-        (or extern-read-file calls-read-file)
-        (or extern-read-file-status calls-read-file-status))]
-    [needs-write-file : bool
-      (or
-        (or extern-write-file calls-write-file)
+    (let
+      [needs-oob : bool (and (not defines-oob) (or extern-oob calls-oob))]
+      [needs-div-abort : bool
+        (or
+          (compiler-backend-function-list-needs-div-abort? functions)
+          (and (not defines-div-abort) (or extern-div-abort calls-div-abort)))]
+      [needs-shift-abort : bool
+        (or
+          (compiler-backend-function-list-needs-shift-abort? functions)
+          (and
+            (not defines-shift-abort)
+            (or extern-shift-abort calls-shift-abort)))]
+      [needs-substring : bool
+        (and (not defines-substring) (or extern-substring calls-substring))]
+      [needs-concat : bool
+        (and (not defines-concat) (or extern-concat calls-concat))]
+      [needs-string-eq : bool
+        (and (not defines-string-eq) (or extern-string-eq calls-string-eq))]
+      [needs-string-to-int : bool
+        (and
+          (not defines-string-to-int)
+          (or extern-string-to-int calls-string-to-int))]
+      [needs-int-to-string : bool
+        (and
+          (not defines-int-to-string)
+          (or extern-int-to-string calls-int-to-string))]
+      [direct-abort : bool (or extern-abort calls-abort)]
+      [needs-print-err : bool
+        (and (not defines-print-err) (or extern-print-err calls-print-err))]
+      [needs-print-str : bool
+        (and (not defines-print-str) (or extern-print-str calls-print-str))]
+      [needs-arg-count : bool (or extern-arg-count calls-arg-count)]
+      [needs-arg : bool (or extern-arg calls-arg)]
+      [needs-read-file : bool
         (or
           (or extern-write-file-status calls-write-file-status)
           (or extern-append-file-status calls-append-file-status)))]

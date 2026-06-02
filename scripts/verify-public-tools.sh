@@ -301,10 +301,16 @@ else
     assert_contains "$err" "typelisp fmt"
     assert_contains "$err" "typelisp doc"
 fi
-if grep -q "typelisp lsp" "$err"; then
+USAGE_ERR=$err
+if grep -q "typelisp lsp" "$USAGE_ERR"; then
     HAS_LSP_COMMAND=1
 else
     HAS_LSP_COMMAND=0
+fi
+if grep -q "typelisp lint" "$USAGE_ERR"; then
+    HAS_LINT_COMMAND=1
+else
+    HAS_LINT_COMMAND=0
 fi
 if [ "$HAS_LSP_COMMAND" -eq 1 ]; then
     LSP_COMMAND_PROBE="$WORKDIR/lsp-command-probe.in"
@@ -313,11 +319,6 @@ if [ "$HAS_LSP_COMMAND" -eq 1 ]; then
     if grep -F "not yet available" "$err" >/dev/null; then
         HAS_LSP_COMMAND=0
     fi
-fi
-if grep -q "typelisp lint" "$err"; then
-    HAS_LINT_COMMAND=1
-else
-    HAS_LINT_COMMAND=0
 fi
 
 run_cmd missing-command "$COMPILER"

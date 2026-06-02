@@ -32,12 +32,12 @@
   (MissingLspJsonText))
 
 (defenum LspDocumentLookup
-  (FoundLspDocument String String)
+  (FoundLspDocument String String String)
   (MissingLspDocument))
 
 (defenum LspDocumentList
   (LspDocumentNil)
-  (LspDocumentCons String String String LspDocumentList))
+  (LspDocumentCons String String String String LspDocumentList))
 
 (defenum LspHandleResult
   (LspContinue LspDocumentList)
@@ -318,36 +318,40 @@
   [docs : LspDocumentList]
   [uri : String]
   [path : String]
-  [text : String]) : LspDocumentList
+  [text : String]
+  [diagnostic-uri : String]) : LspDocumentList
   (match docs
-    [(LspDocumentNil) (LspDocumentCons uri path text LspDocumentNil)]
-    [(LspDocumentCons item-uri item-path item-text rest)
+    [(LspDocumentNil)
+      (LspDocumentCons uri path text diagnostic-uri LspDocumentNil)]
+    [(LspDocumentCons item-uri item-path item-text item-diagnostic-uri rest)
       (if (string-eq item-uri uri)
-        (LspDocumentCons uri path text rest)
+        (LspDocumentCons uri path text diagnostic-uri rest)
         (LspDocumentCons
           item-uri
           item-path
           item-text
-          (lsp-documents-set rest uri path text)))]))
+          item-diagnostic-uri
+          (lsp-documents-set rest uri path text diagnostic-uri)))]))
 
 (define (lsp-documents-remove [docs : LspDocumentList] [uri : String]) : LspDocumentList
   (match docs
     [(LspDocumentNil) LspDocumentNil]
-    [(LspDocumentCons item-uri item-path item-text rest)
+    [(LspDocumentCons item-uri item-path item-text item-diagnostic-uri rest)
       (if (string-eq item-uri uri)
         rest
         (LspDocumentCons
           item-uri
           item-path
           item-text
+          item-diagnostic-uri
           (lsp-documents-remove rest uri)))]))
 
 (define (lsp-documents-lookup [docs : LspDocumentList] [uri : String]) : LspDocumentLookup
   (match docs
     [(LspDocumentNil) MissingLspDocument]
-    [(LspDocumentCons item-uri item-path item-text rest)
+    [(LspDocumentCons item-uri item-path item-text item-diagnostic-uri rest)
       (if (string-eq item-uri uri)
-        (FoundLspDocument item-path item-text)
+        (FoundLspDocument item-path item-text item-diagnostic-uri)
         (lsp-documents-lookup rest uri))]))
 
 (define (lsp-hex-value [c : char]) : i64
@@ -555,13 +559,43 @@
     uri
     (JsonListCons (lsp-diagnostic 1 1 message) JsonListNil)))
 
+(define (lsp-clear-stale-diagnostic
+  [docs : LspDocumentList]
+  [uri : String]
+  [next-diagnostic-uri : String]) : unit
+  (match (lsp-documents-lookup docs uri)
+    [(FoundLspDocument _ _ old-diagnostic-uri)
+      (if (or
+        (string-eq old-diagnostic-uri "")
+        (or
+          (string-eq old-diagnostic-uri uri)
+          (string-eq old-diagnostic-uri next-diagnostic-uri)))
+        unit
+        (lsp-publish-diagnostics old-diagnostic-uri JsonListNil))]
+    [(MissingLspDocument) unit]))
+
+(define (lsp-clear-close-diagnostics [docs : LspDocumentList] [uri : String]) : unit
+  (match (lsp-documents-lookup docs uri)
+    [(FoundLspDocument _ _ old-diagnostic-uri)
+      (begin
+        (lsp-publish-diagnostics uri JsonListNil)
+        (if (or
+          (string-eq old-diagnostic-uri "")
+          (string-eq old-diagnostic-uri uri))
+          unit
+          (lsp-publish-diagnostics old-diagnostic-uri JsonListNil)))]
+    [(MissingLspDocument) (lsp-publish-diagnostics uri JsonListNil)]))
+
 (define (lsp-analyze-document
   [uri : String]
   [path : String]
   [text : String]
-  [stdlib-roots : CompilerLoadRootList]) : unit
+  [stdlib-roots : CompilerLoadRootList]) : String
   (match (compiler-check-source-with-roots path text stdlib-roots)
-    [(OkCompilerCheck _) (lsp-publish-diagnostics uri JsonListNil)]
+    [(OkCompilerCheck _)
+      (begin
+        (lsp-publish-diagnostics uri JsonListNil)
+        "")]
     [(ErrCompilerCheck diag)
       (let
         [diag-uri : String (lsp-diagnostic-uri uri path diag)]
@@ -571,7 +605,8 @@
             (lsp-publish-diagnostics uri JsonListNil))
           (lsp-publish-diagnostics
             diag-uri
-            (JsonListCons (lsp-compiler-diagnostic diag) JsonListNil))))]))
+            (JsonListCons (lsp-compiler-diagnostic diag) JsonListNil))
+          diag-uri))]))
 
 (define (lsp-first-change-text [params : Json]) : LspJsonText
   (match (json-object-get params "contentChanges")
@@ -597,10 +632,12 @@
             (match (lsp-file-uri-to-path uri)
               [(OkLspUriPath path)
                 (let
+                  [diagnostic-uri : String
+                    (lsp-analyze-document uri path text stdlib-roots)]
                   [next-docs : LspDocumentList
-                    (lsp-documents-set docs uri path text)]
+                    (lsp-documents-set docs uri path text diagnostic-uri)]
                   (begin
-                    (lsp-analyze-document uri path text stdlib-roots)
+                    (lsp-clear-stale-diagnostic docs uri diagnostic-uri)
                     (LspContinue next-docs)))]
               [(ErrLspUriPath message)
                 (begin
@@ -622,10 +659,12 @@
               (match (lsp-file-uri-to-path uri)
                 [(OkLspUriPath path)
                   (let
+                    [diagnostic-uri : String
+                      (lsp-analyze-document uri path text stdlib-roots)]
                     [next-docs : LspDocumentList
-                      (lsp-documents-set docs uri path text)]
+                      (lsp-documents-set docs uri path text diagnostic-uri)]
                     (begin
-                      (lsp-analyze-document uri path text stdlib-roots)
+                      (lsp-clear-stale-diagnostic docs uri diagnostic-uri)
                       (LspContinue next-docs)))]
                 [(ErrLspUriPath message)
                   (begin
@@ -633,7 +672,7 @@
                     (LspContinue docs))])]
             [(MissingLspJsonText)
               (match (lsp-documents-lookup docs uri)
-                [(FoundLspDocument path text)
+                [(FoundLspDocument path text _)
                   (begin
                     (lsp-analyze-document uri path text stdlib-roots)
                     (LspContinue docs))]
@@ -647,7 +686,7 @@
       (match (lsp-json-string-field document "uri")
         [(OkLspJsonText uri)
           (begin
-            (lsp-publish-diagnostics uri JsonListNil)
+            (lsp-clear-close-diagnostics docs uri)
             (LspContinue (lsp-documents-remove docs uri)))]
         [(MissingLspJsonText) (LspContinue docs)])]
     [(JsonMissing) (LspContinue docs)]))

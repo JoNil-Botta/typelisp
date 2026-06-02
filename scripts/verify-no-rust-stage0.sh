@@ -468,9 +468,9 @@ else
         echo "[no-rust-stage0] running Windows seed public tool surface with selfhost compatibility gates"
         if compiler_rejects_package_kind_manifest "$FRONT_GATE_TYPELISP_BIN"; then
             echo "[no-rust-stage0] Windows seed rejects package kind; using legacy package manifests for public tool surface"
-            run_with_compiler "$FRONT_GATE_TYPELISP_BIN" "public tool surface" env TYPELISP_LEGACY_PACKAGE_MANIFEST=1 TYPELISP_PUBLIC_TOOLS_HOST_ACTION_ENABLED=0 scripts/verify-public-tools.sh
+            run_with_compiler "$FRONT_GATE_TYPELISP_BIN" "public tool surface" env TYPELISP_LEGACY_PACKAGE_MANIFEST=1 TYPELISP_PUBLIC_TOOLS_HOST_ACTION_ENABLED=0 TYPELISP_PUBLIC_TOOLS_SKIP_CURRENT_LSP_IMPORT_CLEAR=1 scripts/verify-public-tools.sh
         else
-            run_with_compiler "$FRONT_GATE_TYPELISP_BIN" "public tool surface" env TYPELISP_PUBLIC_TOOLS_HOST_ACTION_ENABLED=0 scripts/verify-public-tools.sh
+            run_with_compiler "$FRONT_GATE_TYPELISP_BIN" "public tool surface" env TYPELISP_PUBLIC_TOOLS_HOST_ACTION_ENABLED=0 TYPELISP_PUBLIC_TOOLS_SKIP_CURRENT_LSP_IMPORT_CLEAR=1 scripts/verify-public-tools.sh
         fi
     elif [ "$SEED_IS_STAGE1_BUNDLE" -eq 1 ]; then
         echo
@@ -483,9 +483,9 @@ else
         echo "[no-rust-stage0] running seed public tool surface with selfhost compatibility gates"
         if compiler_rejects_package_kind_manifest "$PUBLIC_TOOLS_TYPELISP_BIN"; then
             echo "[no-rust-stage0] seed rejects package kind; using legacy package manifests for public tool surface"
-            run_with_compiler "$PUBLIC_TOOLS_TYPELISP_BIN" "$PUBLIC_TOOLS_LABEL" env TYPELISP_LEGACY_PACKAGE_MANIFEST=1 TYPELISP_PUBLIC_TOOLS_HOST_ACTION_ENABLED=0 scripts/verify-public-tools.sh
+            run_with_compiler "$PUBLIC_TOOLS_TYPELISP_BIN" "$PUBLIC_TOOLS_LABEL" env TYPELISP_LEGACY_PACKAGE_MANIFEST=1 TYPELISP_PUBLIC_TOOLS_HOST_ACTION_ENABLED=0 TYPELISP_PUBLIC_TOOLS_SKIP_CURRENT_LSP_IMPORT_CLEAR=1 scripts/verify-public-tools.sh
         else
-            run_with_compiler "$PUBLIC_TOOLS_TYPELISP_BIN" "$PUBLIC_TOOLS_LABEL" env TYPELISP_PUBLIC_TOOLS_HOST_ACTION_ENABLED=0 scripts/verify-public-tools.sh
+            run_with_compiler "$PUBLIC_TOOLS_TYPELISP_BIN" "$PUBLIC_TOOLS_LABEL" env TYPELISP_PUBLIC_TOOLS_HOST_ACTION_ENABLED=0 TYPELISP_PUBLIC_TOOLS_SKIP_CURRENT_LSP_IMPORT_CLEAR=1 scripts/verify-public-tools.sh
         fi
     fi
     if [ "$HOST_OS" = linux ] &&

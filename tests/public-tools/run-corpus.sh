@@ -43,6 +43,7 @@ case "$MODE" in
         ;;
 esac
 STAGE1_WRAPPER=${TYPELISP_PUBLIC_TOOLS_STAGE1_WRAPPER:-0}
+SKIP_CURRENT_LSP_IMPORT_CLEAR=${TYPELISP_PUBLIC_TOOLS_SKIP_CURRENT_LSP_IMPORT_CLEAR:-0}
 
 rm -rf "$WORKDIR"
 mkdir -p "$WORKDIR"
@@ -241,8 +242,7 @@ function decode(s,    i, n, ch, esc, out) {
                 raw = raw ch substr(rest, i + 1, 1)
                 i++
             } else if (ch == "\"") {
-                last = decode(raw)
-                found = 1
+                print decode(raw)
                 rest = substr(rest, i + 1)
                 break
             } else {
@@ -250,9 +250,6 @@ function decode(s,    i, n, ch, esc, out) {
             }
         }
     }
-}
-END {
-    if (found) print last
 }
 '
 }
@@ -730,7 +727,16 @@ run_lsp_corpus() {
     elif [ -d "$lsp_dir" ]; then
         for path in "$lsp_dir"/*.in.json; do
             [ -f "$path" ] || continue
-            run_lsp_fixture "$path" "lsp/$(basename "$path")" "$COMPILER"
+            fixture_name=$(basename "$path")
+            case "$fixture_name" in
+                clear-imports-change.in.json | clear-imports-close.in.json)
+                    if [ "$SKIP_CURRENT_LSP_IMPORT_CLEAR" = "1" ]; then
+                        printf '  SKIP lsp/%s (seed LSP lacks current import diagnostic clearing; #1733)\n' "$fixture_name"
+                        continue
+                    fi
+                    ;;
+            esac
+            run_lsp_fixture "$path" "lsp/$fixture_name" "$COMPILER"
         done
     fi
 

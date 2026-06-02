@@ -100,7 +100,8 @@ stage1_driver_staged_symbols() {
         file-read-chunk-status \
         file-write-status \
         file-flush-status \
-        append-file-status
+        append-file-status \
+        fs-rename-status
 }
 
 stage1_driver_prebuild_failed_for_staged_symbol() {
@@ -127,13 +128,19 @@ seed_has_staged_runtime_gap() {
     probe_dir="$ROOT/target/no-rust-stage0-staged-probe"
     rm -rf "$probe_dir"
     mkdir -p "$probe_dir"
-    set +e
-    "$compiler" check "$ROOT/stdlib/io.tl" --stdlib-root "$ROOT/stdlib" \
-        > "$probe_dir/compile.stdout" 2> "$probe_dir/compile.stderr"
-    probe_code=$?
-    set -e
-    [ "$probe_code" -ne 0 ] || return 1
-    staged_runtime_symbol_in_files "$probe_dir/compile.stdout" "$probe_dir/compile.stderr"
+    for source in "$ROOT/stdlib/io.tl" "$ROOT/stdlib/fs.tl"; do
+        safe_source=$(printf '%s' "$source" | sed 's#[/\\:]#_#g')
+        set +e
+        "$compiler" check "$source" --stdlib-root "$ROOT/stdlib" \
+            > "$probe_dir/$safe_source.stdout" 2> "$probe_dir/$safe_source.stderr"
+        probe_code=$?
+        set -e
+        if [ "$probe_code" -ne 0 ] &&
+            staged_runtime_symbol_in_files "$probe_dir/$safe_source.stdout" "$probe_dir/$safe_source.stderr"; then
+            return 0
+        fi
+    done
+    return 1
 }
 
 compiler_is_stage1_wrapper() {
@@ -336,7 +343,7 @@ if [ "$HOST_OS" = linux ]; then
     LINUX_SEED_STAGED_RUNTIME_GAP=0
     if seed_has_staged_runtime_gap "$SEED_TYPELISP_BIN"; then
         LINUX_SEED_STAGED_RUNTIME_GAP=1
-        echo "[no-rust-stage0] Linux seed lacks staged runtime symbols used by stdlib/io.tl; limiting stage1 to compile-only gates"
+        echo "[no-rust-stage0] Linux seed lacks staged runtime symbols used by stdlib modules; limiting stage1 to compile-only gates"
     fi
 
     STAGE1_DOC_BIN=
@@ -388,7 +395,7 @@ export TYPELISP_NO_RUST_STAGE0
 WINDOWS_SEED_STAGED_RUNTIME_GAP=0
 if [ "$HOST_OS" = windows ] && windows_seed_has_staged_runtime_gap; then
     WINDOWS_SEED_STAGED_RUNTIME_GAP=1
-    echo "[no-rust-stage0] Windows seed lacks staged runtime symbols used by stdlib/io.tl"
+    echo "[no-rust-stage0] Windows seed lacks staged runtime symbols used by stdlib modules"
 fi
 if [ "$HOST_OS" != linux ]; then
     LINUX_SEED_STAGED_RUNTIME_GAP=0

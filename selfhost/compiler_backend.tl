@@ -1848,9 +1848,7 @@
               " %xmm1, %xmm0\n    setae %al\n    movzbl %al, %eax\n")))]
       [_
         (ErrCompilerBackend
-          (compiler-diagnostic-at-start
-            ""
-            "backend: unsupported float binary op"))])))
+          (compiler-diagnostic-at-start "" "backend: unsupported f64 binary op"))])))
 
 (define (compiler-backend-f64-binop-asm [op : CompilerIrBinOp]) : ResultCompilerBackend
   (compiler-backend-float-binop-asm op (AstTyF64)))
@@ -7921,7 +7919,7 @@
                     ".L_tl_file_read_chunk_eof"
                     provides-file-read-chunk))
                 (or
-                  (backend-or4
+                  (backend-or8
                     (compiler-backend-provides-runtime-name?
                       name
                       ".L_tl_fs_mkdir_status"
@@ -7936,8 +7934,15 @@
                       provides-fs)
                     (compiler-backend-provides-runtime-name?
                       name
+                      ".L_tl_fs_rename_status"
+                      provides-fs)
+                    (compiler-backend-provides-runtime-name?
+                      name
                       ".L_tl_fs_process_id"
-                      provides-fs))
+                      provides-fs)
+                    false
+                    false
+                    false)
                   (or
                     (compiler-backend-provides-runtime-name?
                       name
@@ -8123,6 +8128,10 @@
       (compiler-backend-extern-list-references?
         externs
         ".L_tl_fs_remove_dir_status")]
+    [extern-fs-rename-status : bool
+      (compiler-backend-extern-list-references?
+        externs
+        ".L_tl_fs_rename_status")]
     [extern-fs-process-id : bool
       (compiler-backend-extern-list-references? externs ".L_tl_fs_process_id")]
     [extern-read-line : bool
@@ -8241,6 +8250,8 @@
       (compiler-backend-function-list-calls?
         functions
         ".L_tl_fs_remove_dir_status")]
+    [calls-fs-rename-status : bool
+      (compiler-backend-function-list-calls? functions ".L_tl_fs_rename_status")]
     [calls-fs-process-id : bool
       (compiler-backend-function-list-calls? functions ".L_tl_fs_process_id")]
     [calls-read-line : bool
@@ -8334,16 +8345,24 @@
               (or extern-file-read-chunk-eof calls-file-read-chunk-eof))))]
       [needs-fs-runtime : bool
         (or
-          (backend-or4
+          (backend-or8
             extern-fs-mkdir-status
             extern-fs-remove-file-status
             extern-fs-remove-dir-status
-            extern-fs-process-id)
-          (backend-or4
+            extern-fs-rename-status
+            extern-fs-process-id
+            false
+            false
+            false)
+          (backend-or8
             calls-fs-mkdir-status
             calls-fs-remove-file-status
             calls-fs-remove-dir-status
-            calls-fs-process-id))]
+            calls-fs-rename-status
+            calls-fs-process-id
+            false
+            false
+            false))]
       [needs-read-line : bool (or extern-read-line calls-read-line)]
       [needs-read-bytes : bool (or extern-read-bytes calls-read-bytes)]
       [needs-stdin-eof : bool (or extern-stdin-eof calls-stdin-eof)]
@@ -10840,6 +10859,76 @@ tl_region_reset:
     pop %rbp
     ret
 
+.L_tl_fs_rename_status:
+    push %rbp
+    mov %rsp, %rbp
+    push %rbx
+    push %r12
+    push %r13
+    push %r14
+    push %r15
+    sub $8, %rsp
+    movq %rdi, %rbx
+    movq %rsi, %r12
+    movq %rdx, %r13
+    movq %rcx, %r14
+    cmpq $0, %r12
+    jl .L_tl_fs_rename_status_invalid
+    cmpq $0, %r14
+    jl .L_tl_fs_rename_status_invalid
+    movq %r12, %rdi
+    addq $1, %rdi
+    js .L_tl_fs_rename_status_invalid
+    call tl_alloc
+    movq %rax, %r15
+    xorq %rcx, %rcx
+.L_tl_fs_rename_status_source_copy_loop:
+    cmpq %r12, %rcx
+    jge .L_tl_fs_rename_status_source_copy_done
+    movzbl (%rbx,%rcx), %edx
+    movb %dl, (%r15,%rcx)
+    incq %rcx
+    jmp .L_tl_fs_rename_status_source_copy_loop
+.L_tl_fs_rename_status_source_copy_done:
+    movb $0, (%r15,%r12)
+    movq %r14, %rdi
+    addq $1, %rdi
+    js .L_tl_fs_rename_status_invalid
+    call tl_alloc
+    movq %rax, %r10
+    xorq %rcx, %rcx
+.L_tl_fs_rename_status_destination_copy_loop:
+    cmpq %r14, %rcx
+    jge .L_tl_fs_rename_status_destination_copy_done
+    movzbl (%r13,%rcx), %edx
+    movb %dl, (%r10,%rcx)
+    incq %rcx
+    jmp .L_tl_fs_rename_status_destination_copy_loop
+.L_tl_fs_rename_status_destination_copy_done:
+    movb $0, (%r10,%r14)
+    movq $82, %rax
+    movq %r15, %rdi
+    movq %r10, %rsi
+    syscall
+    testq %rax, %rax
+    js .L_tl_fs_rename_status_error_from_rax
+    xorq %rax, %rax
+    jmp .L_tl_fs_rename_status_return
+.L_tl_fs_rename_status_error_from_rax:
+    negq %rax
+    jmp .L_tl_fs_rename_status_return
+.L_tl_fs_rename_status_invalid:
+    movq $22, %rax
+.L_tl_fs_rename_status_return:
+    add $8, %rsp
+    pop %r15
+    pop %r14
+    pop %r13
+    pop %r12
+    pop %rbx
+    pop %rbp
+    ret
+
 .L_tl_fs_process_id:
     movq $39, %rax
     syscall
@@ -10913,6 +11002,10 @@ tl_region_reset:
     ret
 
 .L_tl_fs_remove_dir_status:
+    movq $38, %rax
+    ret
+
+.L_tl_fs_rename_status:
     movq $38, %rax
     ret
 

@@ -3283,6 +3283,7 @@
     [(string-eq name "fs-mkdir-status") true]
     [(string-eq name "fs-remove-file-status") true]
     [(string-eq name "fs-remove-dir-status") true]
+    [(string-eq name "fs-rename-status") true]
     [(string-eq name "fs-process-id") true]
     [(string-eq name "panic") true]
     [(string-eq name "error") true]
@@ -4751,6 +4752,51 @@
             (ErrLowerExpr (lower-diagnostic-at-expr arg message)))])]
     [(ErrLowerExpr message) (ErrLowerExpr message)]))
 
+(define (lower-two-string-runtime-call
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [left : AstExpr]
+  [right : AstExpr]
+  [runtime-name : String]
+  [result-ty : AstType]
+  [message : String]) : ResultLowerExpr
+  (match (lower-expr ctx state env type-env left)
+    [(OkLowerExpr lowered-left)
+      (match lowered-left
+        [(LowerExpr left-state left-value left-ty)
+          (if (lower-string-handle-type? ctx left-ty)
+            (match (lower-expr ctx left-state env type-env right)
+              [(OkLowerExpr lowered-right)
+                (match lowered-right
+                  [(LowerExpr right-state right-value right-ty)
+                    (if (lower-string-handle-type? ctx right-ty)
+                      (match (lower-string-fields right-state left-value)
+                        [(LowerStringFields left-fields-state left-ptr left-len)
+                          (match (lower-string-fields
+                            left-fields-state
+                            right-value)
+                            [(LowerStringFields
+                                done-fields-state
+                                right-ptr
+                                right-len)
+                              (lower-runtime-call-values
+                                done-fields-state
+                                runtime-name
+                                (IrValueCons
+                                  left-ptr
+                                  (IrValueCons
+                                    left-len
+                                    (IrValueCons
+                                      right-ptr
+                                      (IrValueCons right-len IrValueNil))))
+                                result-ty)])])
+                      (ErrLowerExpr (lower-diagnostic-at-expr right message)))])]
+              [(ErrLowerExpr message) (ErrLowerExpr message)])
+            (ErrLowerExpr (lower-diagnostic-at-expr left message)))])]
+    [(ErrLowerExpr message) (ErrLowerExpr message)]))
+
 (define (lower-string-to-int-call
   [ctx : TcContext]
   [state : LowerState]
@@ -5136,6 +5182,37 @@
         result-ty
         (string-append (string-append "lower: " name) " requires String"))]
     [_ (lower-direct-call ctx state env type-env name args result-ty origin)]))
+
+(define (lower-fs-rename-status-call
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [args : AstExprList]
+  [result-ty : AstType]
+  [origin : AstExpr]) : ResultLowerExpr
+  (match args
+    [(AstExprCons source (AstExprCons destination (AstExprNil)))
+      (lower-two-string-runtime-call
+        ctx
+        state
+        env
+        type-env
+        source
+        destination
+        ".L_tl_fs_rename_status"
+        result-ty
+        "lower: fs-rename-status requires String")]
+    [_
+      (lower-direct-call
+        ctx
+        state
+        env
+        type-env
+        "fs-rename-status"
+        args
+        result-ty
+        origin)]))
 
 (define (lower-fs-process-id-call
   [ctx : TcContext]
@@ -5812,6 +5889,8 @@
         args
         result-ty
         origin)]
+    [(string-eq name "fs-rename-status")
+      (lower-fs-rename-status-call ctx state env type-env args result-ty origin)]
     [(string-eq name "fs-process-id")
       (lower-fs-process-id-call ctx state env type-env args result-ty origin)]
     [(or (string-eq name "panic") (string-eq name "error"))
@@ -10048,7 +10127,10 @@
   (+ (fs-process-id)
     (+ (fs-mkdir-status \"target/typelisp-fs\")
       (+ (fs-remove-file-status \"target/typelisp-fs/artifact.o\")
-        (fs-remove-dir-status \"target/typelisp-fs\")))))")
+        (+ (fs-remove-dir-status \"target/typelisp-fs\")
+          (fs-rename-status
+            \"target/typelisp-fs/from name\"
+            \"target/typelisp-fs/to name\"))))))")
 
 (define (compiler-lower-raw-pointer-ops-source) : String
   "(extern raw-make : (-> (MutPtr i64)))
@@ -12363,19 +12445,31 @@
                   (=
                     (lower-test-functions-call-count
                       functions
-                      ".L_tl_fs_process_id")
+                      ".L_tl_fs_rename_status")
                     1)
                   (and
                     (=
                       (lower-test-functions-call-count
                         functions
-                        "fs-mkdir-status")
-                      0)
-                    (=
-                      (lower-test-functions-call-count
-                        functions
-                        "fs-process-id")
-                      0))))))])]
+                        ".L_tl_fs_process_id")
+                      1)
+                    (and
+                      (=
+                        (lower-test-functions-call-count
+                          functions
+                          "fs-mkdir-status")
+                        0)
+                      (and
+                        (=
+                          (lower-test-functions-call-count
+                            functions
+                            "fs-rename-status")
+                          0)
+                        (=
+                          (lower-test-functions-call-count
+                            functions
+                            "fs-process-id")
+                          0))))))))])]
     [(ErrCompilerLower _) false]))
 
 (define (compiler-lower-region-source) : String

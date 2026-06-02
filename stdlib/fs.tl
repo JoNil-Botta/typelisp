@@ -3,8 +3,8 @@
 ;;;; Provides recoverable temporary-directory, path-join, and cleanup helpers on
 ;;;; top of compiler/runtime primitives:
 ;;;;
-;;;; `fs-mkdir-status`, `fs-remove-file-status`, `fs-remove-dir-status`, and
-;;;; `fs-process-id`.
+;;;; `fs-mkdir-status`, `fs-remove-file-status`, `fs-remove-dir-status`,
+;;;; `fs-rename-status`, and `fs-process-id`.
 ;;;;
 ;;;; Usage: `(import "stdlib/fs.tl")`
 ;;;;
@@ -171,6 +171,19 @@
   (if (io-empty-path? path)
     (ErrIoUnit (IoInvalidPath path))
     (fs-status-result path (fs-remove-dir-status path))))
+
+;;; Rename `source` to `destination`, returning a structured status.
+;;;
+;;; Host replacement behavior is target-defined: Linux follows `rename(2)`,
+;;; while Windows currently reports `IoUnsupported`.
+(define (try-rename [source : String] [destination : String]) : ResultIoUnit
+  (if (io-empty-path? source)
+    (ErrIoUnit (IoInvalidPath source))
+    (if (io-empty-path? destination)
+      (ErrIoUnit (IoInvalidPath destination))
+      (fs-status-result
+        (string-append (string-append source " -> ") destination)
+        (fs-rename-status source destination)))))
 
 ;;; Remove a file if present. Missing paths are considered already cleaned.
 (define (try-remove-file-if-exists [path : String]) : ResultIoUnit

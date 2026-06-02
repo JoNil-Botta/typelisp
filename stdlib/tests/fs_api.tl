@@ -9,6 +9,21 @@
     [(OkIoUnit) unit]
     [(ErrIoUnit error) (panic (string-append message (io-error-message error)))]))
 
+(define (assert-not-found-unit [result : ResultIoUnit] [message : String]) : unit
+  (match result
+    [(OkIoUnit) (panic (string-append message "unexpected success"))]
+    [(ErrIoUnit error) (assert-true (io-error-not-found? error) message)]))
+
+(define (assert-invalid-unit [result : ResultIoUnit] [message : String]) : unit
+  (match result
+    [(OkIoUnit) (panic (string-append message "unexpected success"))]
+    [(ErrIoUnit error) (assert-true (io-error-invalid-path? error) message)]))
+
+(define (assert-unsupported-unit [result : ResultIoUnit] [message : String]) : unit
+  (match result
+    [(OkIoUnit) (panic (string-append message "unexpected success"))]
+    [(ErrIoUnit error) (assert-true (io-error-unsupported? error) message)]))
+
 (define (expect-ok-string [result : ResultIoString] [message : String]) : String
   (match result
     [(OkIoString value) value]
@@ -19,6 +34,15 @@
   (match (try-file-exists? path)
     [(OkIoBool exists) (assert-bool-eq exists expected message)]
     [(ErrIoBool error) (panic (string-append message (io-error-message error)))]))
+
+(define (assert-file-contents
+  [path : String]
+  [expected : String]
+  [message : String]) : unit
+  (match (try-read-file path)
+    [(OkIoString contents) (assert-string-eq contents expected message)]
+    [(ErrIoString error)
+      (panic (string-append message (io-error-message error)))]))
 
 ;; Windows supports temp-dir creation (mkdir + GetCurrentProcessId, #850) but
 ;; not yet removal/cleanup (remove-file/remove-dir are unsupported stubs), so the
@@ -57,6 +81,84 @@
       (if cleanup
         (assert-ok-unit (try-remove-dir dir) "mkdir-if-missing cleanup dir: ")
         unit))))
+
+(define (assert-linux-rename-api [root : String]) : unit
+  (let
+    [file-source : String (fs-path-join root "rename source with space.txt")]
+    [file-destination : String
+      (fs-path-join root "rename destination with space.txt")]
+    [replace-source : String (fs-path-join root "replace source.txt")]
+    [replace-destination : String (fs-path-join root "replace destination.txt")]
+    [dir-source : String (fs-path-join root "dir source with space")]
+    [dir-destination : String (fs-path-join root "dir destination with space")]
+    [missing-source : String (fs-path-join root "missing source.txt")]
+    [missing-destination : String (fs-path-join root "missing destination.txt")]
+    (begin
+      (assert-ok-unit
+        (try-write-file file-source "alpha")
+        "write rename source: ")
+      (assert-ok-unit
+        (try-rename file-source file-destination)
+        "rename file with spaces: ")
+      (assert-exists file-source false "renamed source is gone")
+      (assert-exists file-destination true "renamed destination exists")
+      (assert-file-contents
+        file-destination
+        "alpha"
+        "renamed destination preserves contents")
+      (assert-not-found-unit
+        (try-rename missing-source missing-destination)
+        "missing rename source is not found")
+      (assert-invalid-unit
+        (try-rename "" file-destination)
+        "empty rename source is invalid")
+      (assert-invalid-unit
+        (try-rename file-destination "")
+        "empty rename destination is invalid")
+      (assert-ok-unit
+        (try-write-file replace-source "replacement")
+        "write replacement source: ")
+      (assert-ok-unit
+        (try-write-file replace-destination "old")
+        "write replacement destination: ")
+      (assert-ok-unit
+        (try-rename replace-source replace-destination)
+        "rename replaces existing file: ")
+      (assert-exists replace-source false "replacement source is gone")
+      (assert-file-contents
+        replace-destination
+        "replacement"
+        "rename replacement policy overwrites destination")
+      (assert-ok-unit (try-mkdir dir-source) "create rename dir source: ")
+      (assert-ok-unit
+        (try-rename dir-source dir-destination)
+        "rename directory with spaces: ")
+      (assert-exists dir-source false "renamed directory source is gone")
+      (assert-exists
+        dir-destination
+        true
+        "renamed directory destination exists")
+      (assert-ok-unit
+        (try-remove-file file-destination)
+        "cleanup renamed file: ")
+      (assert-ok-unit
+        (try-remove-file replace-destination)
+        "cleanup replacement file: ")
+      (assert-ok-unit
+        (try-remove-dir dir-destination)
+        "cleanup renamed directory: "))))
+
+(define (assert-windows-rename-api) : unit
+  (begin
+    (assert-unsupported-unit
+      (try-rename "windows source" "windows destination")
+      "windows rename reports unsupported")
+    (assert-invalid-unit
+      (try-rename "" "windows destination")
+      "windows empty rename source is invalid")
+    (assert-invalid-unit
+      (try-rename "windows source" "")
+      "windows empty rename destination is invalid")))
 
 (define (main) : i64
   (let
@@ -114,6 +216,7 @@
                 (try-create-temp-dir "typelisp fs mkdir test")
                 "create temp dir mkdir: ")]
             (assert-mkdir-if-missing dir false))
+          (assert-windows-rename-api)
           42)
         (let
           [dir-a : String
@@ -124,6 +227,10 @@
             (expect-ok-string
               (try-create-temp-dir "typelisp fs test")
               "create temp dir b: ")]
+          [dir-c : String
+            (expect-ok-string
+              (try-create-temp-dir "typelisp fs rename test")
+              "create temp dir c: ")]
           [file-a : String (fs-path-join dir-a "artifact with space.s")]
           [file-b : String (fs-path-join dir-b "cleanup.obj")]
           (begin
@@ -157,4 +264,6 @@
               (try-remove-dir-if-exists dir-b)
               "cleanup missing temp dir b: ")
             (assert-invalid-temp-dir)
+            (assert-linux-rename-api dir-c)
+            (assert-ok-unit (try-remove-dir dir-c) "cleanup rename temp dir: ")
             42))))))

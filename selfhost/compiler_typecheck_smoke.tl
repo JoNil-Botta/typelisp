@@ -23,6 +23,14 @@
   "(define (main [x : i64] [items : (Array (& x i64))]) : unit
   (let [x : i64 1] (array-set! items 0 (& x))))")
 
+(define (compiler-typecheck-reference-array-push-ok-source) : String
+  "(define (main [x : i64] [items : (Array (& x i64))]) : unit
+  (array-push! items (& x)))")
+
+(define (compiler-typecheck-reference-array-push-escape-source) : String
+  "(define (main [x : i64] [items : (Array (& x i64))]) : unit
+  (let [x : i64 1] (array-push! items (& x))))")
+
 (define (compiler-typecheck-reference-arena-store-escape-source) : String
   "(define (main [items : (Array (& r str))]) : unit
   (with-arena r
@@ -51,12 +59,19 @@
             (compiler-typecheck-reference-container-escape-source)
             "typecheck: cannot store reference into longer-lived array; reference value would escape lexical scope")
           (and
-            (compiler-typecheck-error-ok?
-              (compiler-typecheck-reference-arena-store-escape-source)
-              "typecheck: cannot store reference into longer-lived array; reference value would escape lexical scope")
-            (compiler-typecheck-error-ok?
-              (compiler-typecheck-reference-lambda-capture-source)
-              "typecheck: lambda cannot capture immutable reference; reference value would escape lexical scope")))))))
+            (compiler-typecheck-ok?
+              (compiler-typecheck-reference-array-push-ok-source))
+            (and
+              (compiler-typecheck-error-ok?
+                (compiler-typecheck-reference-array-push-escape-source)
+                "typecheck: cannot store reference into longer-lived array; reference value would escape lexical scope")
+              (and
+                (compiler-typecheck-error-ok?
+                  (compiler-typecheck-reference-arena-store-escape-source)
+                  "typecheck: cannot store reference into longer-lived array; reference value would escape lexical scope")
+                (compiler-typecheck-error-ok?
+                  (compiler-typecheck-reference-lambda-capture-source)
+                  "typecheck: lambda cannot capture immutable reference; reference value would escape lexical scope")))))))))
 
 (define (main) : i64
   (begin

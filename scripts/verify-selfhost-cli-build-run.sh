@@ -92,8 +92,10 @@ assert_contains compile "$COMPILE_ASM" "main:"
 
 BUILD_SRC="$WORKDIR/build-main.tl"
 BUILD_EXE="$WORKDIR/built-program"
+BUILD_TARGET=linux-x86_64
 if [ "$HOST_OS" = windows ]; then
     BUILD_EXE="$BUILD_EXE.exe"
+    BUILD_TARGET=windows-x86_64
 fi
 cat > "$BUILD_SRC" <<'EOF'
 (define (main) : i64 19)
@@ -115,6 +117,43 @@ set -e
 assert_status built-program "$status" 19
 assert_empty built-program "$WORKDIR/built-program.out"
 assert_empty built-program "$WORKDIR/built-program.err"
+
+PKG_DIR="$WORKDIR/package-build"
+mkdir -p "$PKG_DIR/src"
+cat > "$PKG_DIR/typelisp.pkg" <<'EOF'
+(package
+  (name "cli_pkg_smoke")
+  (version "0.1.0")
+  (kind "bin")
+  (entry "src/main.tl"))
+EOF
+cat > "$PKG_DIR/src/main.tl" <<'EOF'
+(define (main) : i64 29)
+EOF
+PKG_EXE="$PKG_DIR/target/typelisp/cli_pkg_smoke/cli_pkg_smoke"
+if [ "$HOST_OS" = windows ]; then
+    PKG_EXE="$PKG_EXE.exe"
+fi
+
+set +e
+(
+    cd "$PKG_DIR"
+    "$COMPILER" build --target "$BUILD_TARGET" --opt-level 0 > "$WORKDIR/package-build.out" 2> "$WORKDIR/package-build.err"
+)
+status=$?
+set -e
+assert_status package-build "$status" 0
+assert_empty package-build "$WORKDIR/package-build.err"
+assert_contains package-build "$WORKDIR/package-build.out" "Generated:"
+[ -f "$PKG_EXE" ] || fail "package build did not write executable $PKG_EXE"
+
+set +e
+"$PKG_EXE" > "$WORKDIR/package-program.out" 2> "$WORKDIR/package-program.err"
+status=$?
+set -e
+assert_status package-program "$status" 29
+assert_empty package-program "$WORKDIR/package-program.out"
+assert_empty package-program "$WORKDIR/package-program.err"
 
 RUN_SRC="$WORKDIR/run-main.tl"
 cat > "$RUN_SRC" <<'EOF'

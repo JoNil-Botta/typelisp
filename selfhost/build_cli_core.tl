@@ -818,6 +818,18 @@
     (BuildCliOptionOutput)
     (build-cli-option-rest0 current)))
 
+(define (build-args-have-source? [idx : i64] [count : i64]) : bool
+  (if (>= idx count)
+    false
+    (let
+      [current : String (arg idx)]
+      (match (build-cli-option current)
+        [(BuildCliOptionOther)
+          (if (source-tool-flag? current)
+            (build-args-have-source? (+ idx 1) count)
+            true)]
+        [_ (build-args-have-source? (+ idx 2) count)]))))
+
 (define (build-cli-parse-options
   [idx : i64]
   [count : i64]
@@ -1071,7 +1083,9 @@
         1)]))
 
 (define (build-direct-from [start : i64] [count : i64]) : i64
-  (if (or (<= count start) (build-args-contain-manifest? start count))
+  (if (or
+    (build-args-contain-manifest? start count)
+    (not (build-args-have-source? start count)))
     (build-main-from start)
     (build-source-direct-from start count)))
 

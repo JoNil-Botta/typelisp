@@ -124,8 +124,7 @@ cat > "$PKG_DIR/typelisp.pkg" <<'EOF'
 (package
   (name "cli_pkg_smoke")
   (version "0.1.0")
-  (kind "bin")
-  (entry "src/main.tl"))
+  (kind bin))
 EOF
 cat > "$PKG_DIR/src/main.tl" <<'EOF'
 (define (main) : i64 29)
@@ -154,6 +153,63 @@ set -e
 assert_status package-program "$status" 29
 assert_empty package-program "$WORKDIR/package-program.out"
 assert_empty package-program "$WORKDIR/package-program.err"
+
+STATICLIB_DIR="$WORKDIR/staticlib-package-build"
+mkdir -p "$STATICLIB_DIR/src"
+cat > "$STATICLIB_DIR/typelisp.pkg" <<'EOF'
+(package
+  (name "cli_staticlib_smoke")
+  (version "0.1.0")
+  (kind staticlib))
+EOF
+cat > "$STATICLIB_DIR/src/lib.tl" <<'EOF'
+(define (static-answer) : i64 42)
+EOF
+STATICLIB_ARCHIVE="$STATICLIB_DIR/target/typelisp/cli_staticlib_smoke/libcli_staticlib_smoke.a"
+if [ "$HOST_OS" = windows ]; then
+    STATICLIB_ARCHIVE="$STATICLIB_DIR/target/typelisp/cli_staticlib_smoke/cli_staticlib_smoke.lib"
+fi
+
+set +e
+(
+    cd "$STATICLIB_DIR"
+    "$COMPILER" build --target "$BUILD_TARGET" > "$WORKDIR/staticlib-package-build.out" 2> "$WORKDIR/staticlib-package-build.err"
+)
+status=$?
+set -e
+assert_status staticlib-package-build "$status" 0
+assert_empty staticlib-package-build "$WORKDIR/staticlib-package-build.err"
+assert_contains staticlib-package-build "$WORKDIR/staticlib-package-build.out" "Generated:"
+[ -s "$STATICLIB_ARCHIVE" ] || fail "staticlib package build did not write archive $STATICLIB_ARCHIVE"
+
+STATICLIB_OVERRIDE="$WORKDIR/staticlib-entry-override"
+mkdir -p "$STATICLIB_OVERRIDE/custom"
+cat > "$STATICLIB_OVERRIDE/typelisp.pkg" <<'EOF'
+(package
+  (name "cli_staticlib_override")
+  (version "0.1.0")
+  (kind "staticlib")
+  (entry "custom/entry.tl"))
+EOF
+cat > "$STATICLIB_OVERRIDE/custom/entry.tl" <<'EOF'
+(define (override-answer) : i64 77)
+EOF
+STATICLIB_OVERRIDE_ARCHIVE="$STATICLIB_OVERRIDE/target/typelisp/cli_staticlib_override/libcli_staticlib_override.a"
+if [ "$HOST_OS" = windows ]; then
+    STATICLIB_OVERRIDE_ARCHIVE="$STATICLIB_OVERRIDE/target/typelisp/cli_staticlib_override/cli_staticlib_override.lib"
+fi
+
+set +e
+(
+    cd "$STATICLIB_OVERRIDE"
+    "$COMPILER" build --target "$BUILD_TARGET" > "$WORKDIR/staticlib-entry-override.out" 2> "$WORKDIR/staticlib-entry-override.err"
+)
+status=$?
+set -e
+assert_status staticlib-entry-override "$status" 0
+assert_empty staticlib-entry-override "$WORKDIR/staticlib-entry-override.err"
+assert_contains staticlib-entry-override "$WORKDIR/staticlib-entry-override.out" "Generated:"
+[ -s "$STATICLIB_OVERRIDE_ARCHIVE" ] || fail "staticlib package build did not honor explicit entry"
 
 RUN_SRC="$WORKDIR/run-main.tl"
 cat > "$RUN_SRC" <<'EOF'

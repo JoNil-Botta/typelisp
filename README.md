@@ -204,8 +204,6 @@ Local packages can be described with a std-only S-expression manifest named
 (package
   (name "my-app")
   (version "0.1.0")
-  (kind "bin")
-  (entry "src/main.tl")
   (dependencies
     (math "../math")))
 ```
@@ -215,10 +213,13 @@ file to a native executable without running it. Without `-o`, the executable is
 written next to the source path with the `.tl` extension removed. `typelisp
 build [--manifest-path path/to/typelisp.pkg]` remains package-oriented: it
 resolves `entry` relative to the manifest directory and writes outputs under
-`target/typelisp/<package-name>/`. `kind "bin"` builds a native executable named
-after the package; `kind "lib"` builds a static archive (`lib<name>.a` on Linux,
-`<name>.lib` on Windows). Dependency paths may be relative to that same package
-root or absolute. Inside a package build, imports of the form `(import
+`target/typelisp/<package-name>/`. Omitted `kind` defaults to `bin`; omitted
+`entry` defaults to `src/main.tl` for binaries and `src/lib.tl` for static
+libraries. `kind "bin"` builds a native executable named after the package;
+`kind "staticlib"` builds a static archive (`lib<name>.a` on Linux,
+`<name>.lib` on Windows). `kind "lib"` remains accepted as a compatibility
+alias. Dependency paths may be relative to that same package root or absolute.
+Inside a package build, imports of the form `(import
 "pkg:math/src/lib.tl")` resolve from the dependency root declared for alias
 `math`; ordinary string imports remain relative to the importing file, and
 `stdlib/...` imports keep their local-first then configured-root then embedded

@@ -1262,15 +1262,18 @@ Example:
 (package
   (name "my-app")
   (version "0.1.0")
-  (kind "bin")
-  (entry "src/main.tl")
   (dependencies
     (math "../math")))
 ```
 
-- `name`, `version`, `kind`, and `entry` are required string fields.
-- `kind` is either `"bin"` or `"lib"`. `bin` produces a native executable;
-  `lib` produces a static archive.
+- `name` and `version` are required string fields.
+- `kind` is optional and defaults to `bin`. When present, it accepts `bin` and
+  `staticlib` as symbols or strings; `lib` remains accepted as a compatibility
+  alias for `staticlib`. `bin` produces a native executable; `staticlib`
+  produces a static archive.
+- `entry` is optional. It defaults to `src/main.tl` for `bin` packages and
+  `src/lib.tl` for `staticlib` packages. An explicit `entry` string overrides
+  the convention default.
 - `dependencies` is optional. Each entry has an alias symbol and a string root
   path: `(alias "relative/or/absolute/path")`.
 - Dependency aliases use the same character rules as package names: ASCII
@@ -1284,8 +1287,8 @@ Example:
   the current directory upward.
 - Build outputs are written under `target/typelisp/<package-name>/` in the
   package root. `bin` packages produce `<package-name>` on Linux and
-  `<package-name>.exe` on Windows. `lib` packages produce `lib<package-name>.a`
-  on Linux and `<package-name>.lib` on Windows.
+  `<package-name>.exe` on Windows. `staticlib` packages produce
+  `lib<package-name>.a` on Linux and `<package-name>.lib` on Windows.
 - Package-root-qualified imports use the reserved string prefix
   `pkg:<alias>/...`, for example `(import "pkg:math/src/lib.tl")`.
 - This first package layer has no registry, semantic-version solving,

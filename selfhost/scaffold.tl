@@ -1,8 +1,9 @@
 ;; scaffold.tl - selfhost `typelisp new` / `typelisp init` driver (#1160).
 ;;
 ;; `new [--lib] <name>` creates a buildable package skeleton in a new `<name>/`
-;; directory: a `typelisp.pkg` manifest (with `kind` "bin" by default or "lib"
-;; with `--lib`) and a minimal entry source (`src/main.tl` or `src/lib.tl`).
+;; directory: a `typelisp.pkg` manifest (with `kind` "bin" by default or
+;; "staticlib" with `--lib`) and a minimal entry source (`src/main.tl` or
+;; `src/lib.tl`).
 ;; `init [--lib] <name>` scaffolds the manifest + entry source in the *current*
 ;; directory instead of a new one. Both refuse to clobber an existing manifest
 ;; or entry source.
@@ -32,7 +33,7 @@
   (and (> (string-length name) 0) (not (scaffold-name-bad-char? name 0))))
 
 ;; The `typelisp.pkg` manifest text, matching the `(package …)` form parsed by
-;; compiler_load.tl: name, version, kind ("bin"|"lib"), and entry path.
+;; compiler_load.tl: name, version, kind ("bin"|"staticlib"), and entry path.
 (define (scaffold-manifest [name : String] [kind : String] [entry : String]) : String
   (string-append
     "(package (name \""
@@ -86,7 +87,7 @@
   (let
     [kind : String
       (if is-lib
-        "lib"
+        "staticlib"
         "bin")]
     [entry : String
       (if is-lib

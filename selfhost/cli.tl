@@ -38,11 +38,10 @@
 
 (import "scaffold_cli_core.tl")
 
+(import "lsp_frame_core.tl")
+
 ;; Mirrors the Rust stage0 `print_usage` (src/main.rs) so the unified selfhost
-;; CLI presents the same help surface. Commands not yet routed here (lsp) are
-;; still listed for parity but report their tracking issue when invoked (see
-;; cli-pending), so the help matches stage0 without pretending the command works
-;; yet.
+;; CLI presents the same help surface as the published stage0 driver.
 (define (cli-help-text) : String
   "typelisp — A typed Lisp/Scheme dialect with x86_64 backend
 
@@ -126,8 +125,7 @@ Options for doc:
     ;; parse are reached via their canonical `debug` forms (no top-level aliases).
     [(string-eq command "compile") (compile-cli-run count)]
     [(string-eq command "debug") (compile-cli-run count)]
-    ;; Listed in the help for stage0 parity; wiring tracked under #1638.
-    [(string-eq command "lsp") (cli-pending "lsp" "#1640")]
+    [(string-eq command "lsp") (lsp-frame-run-from 2 count)]
     [(string-eq command "repl") (repl-run-from 2 count)]
     [(string-eq command "new") (scaffold-new-run-from 2 count)]
     [(string-eq command "init") (scaffold-init-run-from 2 count)]

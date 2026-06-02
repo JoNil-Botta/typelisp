@@ -5,7 +5,7 @@
 ;;;;
 ;;;; Primitives required from the compiler/runtime: `string-length`,
 ;;;; `string-ref`, `substring`, `string-append`, `string-eq`, and the imported
-;;;; sibling `text_buf.tl` buffer helpers.
+;;;; `stdlib/text_buf.tl` buffer helpers.
 ;;;;
 ;;;; Usage: `(import "stdlib/json.tl")`
 ;;;;
@@ -17,7 +17,7 @@
 ;;;; (import "stdlib/json.tl")
 ;;;; (define sample : String (json-stringify (JsonBool true)))
 ;;;; ```
-(import "text_buf.tl")
+(import "stdlib/text_buf.tl")
 
 ;;; Canonical JSON value model used by the stdlib parser and serializer.
 (defenum Json

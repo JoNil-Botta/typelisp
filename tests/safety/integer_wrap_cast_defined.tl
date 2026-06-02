@@ -1,5 +1,5 @@
-;;; SPEC safe-code contract: integer overflow wraps and supported casts are
-;;; defined, not undefined behavior.
+;: SPEC safe-code contract: integer overflow wraps and supported casts are
+;: defined, not undefined behavior.
 (define (add8 [a : i8] [b : i8]) : i8
   (+ a b))
 

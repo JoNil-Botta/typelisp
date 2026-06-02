@@ -1,4 +1,4 @@
-;;; SPEC safe-code contract: structs expose only declared fields.
+;: SPEC safe-code contract: structs expose only declared fields.
 (defstruct Point
   (x i64)
   (y i64))

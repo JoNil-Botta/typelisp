@@ -1364,15 +1364,15 @@ if [ "$HOST_OS" = windows ]; then
 else
 echo "[public-tools] doc and doctest commands"
 cat > "$WORKDIR/docs.tl" <<'EOF'
-;;;; Module docs.
-;;;; ```typelisp
-;;;; (define (main) : i64 42)
-;;;; ```
+;# Module docs.
+;# ```typelisp
+;# (define (main) : i64 42)
+;# ```
 
-;;; Item docs.
-;;; ```tl
-;;; (define answer : i64 42)
-;;; ```
+;: Item docs.
+;: ```tl
+;: (define answer : i64 42)
+;: ```
 (define documented : i64 1)
 EOF
 run_cmd doc-test-pass "$COMPILER" doc --test "$WORKDIR/docs.tl"
@@ -1382,10 +1382,10 @@ assert_contains "$out" "Doc tests passed: 2 example(s)"
 assert_doctest_temp_cleaned "$WORKDIR/docs.tl"
 
 cat > "$WORKDIR/docs_expected_error.tl" <<'EOF'
-;;;; Expected error.
-;;;; ```typelisp expect-error
-;;;; (define (bad) : i64 true)
-;;;; ```
+;# Expected error.
+;# ```typelisp expect-error
+;# (define (bad) : i64 true)
+;# ```
 EOF
 run_cmd doc-test-expected-error "$COMPILER" doc --test "$WORKDIR/docs_expected_error.tl"
 assert_success
@@ -1394,10 +1394,10 @@ assert_contains "$out" "Doc tests passed: 1 example(s)"
 assert_doctest_temp_cleaned "$WORKDIR/docs_expected_error.tl"
 
 cat > "$WORKDIR/docs_malformed.tl" <<'EOF'
-;;;; Bad fence.
-;;;; ```typelisp maybe
-;;;; (define (main) : i64 0)
-;;;; ```
+;# Bad fence.
+;# ```typelisp maybe
+;# (define (main) : i64 0)
+;# ```
 EOF
 run_cmd doc-test-malformed "$COMPILER" doc --test "$WORKDIR/docs_malformed.tl"
 assert_failure
@@ -1406,8 +1406,8 @@ assert_contains "$err" 'unsupported TypeLisp doctest option `maybe`'
 assert_doctest_temp_cleaned "$WORKDIR/docs_malformed.tl"
 
 cat > "$WORKDIR/docs_empty.tl" <<'EOF'
-;;;; Docs without fenced examples.
-;;; Item docs without fenced examples.
+;# Docs without fenced examples.
+;: Item docs without fenced examples.
 (define documented : i64 1)
 EOF
 run_cmd doc-test-empty "$COMPILER" doc --test "$WORKDIR/docs_empty.tl"
@@ -1422,11 +1422,11 @@ cat > "$DOC_STDLIB_ROOT/docfixture.tl" <<'EOF'
 (define stdlib-answer : i64 42)
 EOF
 cat > "$WORKDIR/docs_stdlib_root.tl" <<'EOF'
-;;;; Stdlib import example.
-;;;; ```typelisp
-;;;; (import "stdlib/docfixture.tl")
-;;;; (define (main) : i64 stdlib-answer)
-;;;; ```
+;# Stdlib import example.
+;# ```typelisp
+;# (import "stdlib/docfixture.tl")
+;# (define (main) : i64 stdlib-answer)
+;# ```
 EOF
 run_cmd doc-test-stdlib-root "$COMPILER" doc --test "$WORKDIR/docs_stdlib_root.tl" --stdlib-root "$DOC_STDLIB_ROOT"
 assert_success
@@ -1435,10 +1435,10 @@ assert_contains "$out" "Doc tests passed: 1 example(s)"
 assert_doctest_temp_cleaned "$WORKDIR/docs_stdlib_root.tl"
 
 cat > "$WORKDIR/docs_bad.tl" <<'EOF'
-;;;; Unexpected error.
-;;;; ```typelisp
-;;;; (define (bad) : i64 true)
-;;;; ```
+;# Unexpected error.
+;# ```typelisp
+;# (define (bad) : i64 true)
+;# ```
 EOF
 run_cmd doc-test-unexpected-error "$COMPILER" doc --test "$WORKDIR/docs_bad.tl"
 assert_failure
@@ -1482,9 +1482,9 @@ fi
 # until that lands (#1662). `doc --test` coverage above still runs on cli.tl.
 if [ "$HOST_OS" = linux ] && [ "$HOST_ACTION_ENABLED" -eq 1 ]; then
     cat > "$WORKDIR/doc_source.tl" <<'EOF'
-;;;; Module docs.
+;# Module docs.
 
-;;; Item docs.
+;: Item docs.
 (define answer : i64 42)
 EOF
     run_cmd doc-generate "$COMPILER" doc "$WORKDIR/doc_source.tl" -o "$WORKDIR/doc_source.md"
@@ -1497,7 +1497,7 @@ EOF
     DOC_CUSTOM_DIR="$WORKDIR/custom-doc-output"
     mkdir -p "$DOC_CUSTOM_DIR"
     cat > "$WORKDIR/doc_custom_input.tl" <<'EOF'
-;;; Single item.
+;: Single item.
 (define x : i64 1)
 EOF
     run_cmd doc-generate-custom "$COMPILER" doc "$WORKDIR/doc_custom_input.tl" -o "$DOC_CUSTOM_DIR/custom.md"
@@ -1514,25 +1514,25 @@ EOF
     DOC_GRAPH_OUT="$DOC_GRAPH_DIR/graph.md"
     mkdir -p "$DOC_GRAPH_STDLIB"
     cat > "$DOC_GRAPH_LOCAL" <<'EOF'
-;;;; Local module docs.
+;# Local module docs.
 
-;;; Local answer docs.
+;: Local answer docs.
 (define local-answer : i64 7)
 EOF
     cat > "$DOC_GRAPH_STDLIB_SOURCE" <<'EOF'
-;;;; Stdlib module docs.
+;# Stdlib module docs.
 
-;;; Stdlib answer docs.
+;: Stdlib answer docs.
 (define stdlib-answer : i64 35)
 EOF
     cat > "$DOC_GRAPH_ENTRY" <<'EOF'
-;;;; Entry module docs.
+;# Entry module docs.
 
 (import "local.tl")
 (import "local.tl")
 (import "stdlib/docfixture.tl")
 
-;;; Entry docs.
+;: Entry docs.
 (define (main) : i64 (+ local-answer stdlib-answer))
 EOF
     run_cmd doc-generate-module-graph "$COMPILER" doc "$DOC_GRAPH_ENTRY" -o "$DOC_GRAPH_OUT" --stdlib-root "$DOC_GRAPH_STDLIB"

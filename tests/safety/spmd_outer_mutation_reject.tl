@@ -1,4 +1,4 @@
-;;; SPEC safe-code contract: SPMD bodies cannot mutate shared outer bindings.
+;: SPEC safe-code contract: SPMD bodies cannot mutate shared outer bindings.
 (define (main [xs : (Array i64)] [n : i64]) : i64
   (let
     [sum : i64 0]

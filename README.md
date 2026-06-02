@@ -260,9 +260,8 @@ and may include `;; doctest-stdout: -` / `;; doctest-stderr: -` or
 compile and run through the self-hosted no-Rust build/run path and compare exact
 exit status, stdout, and stderr. Unsupported hosts report an unsupported
 runnable doctest diagnostic. Ordinary `;` and `;;` comments are not
-documentation and are ignored by the doctest scanner. Legacy `;;;;` and `;;;`
-doc comments remain accepted while the repository migrates, but `;#` and `;:`
-are the canonical spellings.
+documentation and are ignored by the doctest scanner. `;#` and `;:` are the
+only public documentation comment syntaxes.
 
 Inline tests can live next to source declarations as `(test name body...)`
 items. Normal `check`, `compile`, `build`, and `run` ignore them. `typelisp

@@ -494,28 +494,28 @@ else
     DOC_MD="$DOC_DIR/entry.md"
     mkdir -p "$DOC_STDLIB"
     cat > "$DOC_LOCAL" <<'EOF'
-;;;; Local module docs.
+;# Local module docs.
 
-;;; Local answer docs.
+;: Local answer docs.
 (define local-answer : i64 7)
 EOF
     cat > "$DOC_STDLIB_SOURCE" <<'EOF'
-;;;; Stdlib module docs.
+;# Stdlib module docs.
 
-;;; Stdlib answer docs.
+;: Stdlib answer docs.
 (define stdlib-answer : i64 35)
 EOF
     cat > "$DOC_ENTRY" <<'EOF'
-;;;; Entry module docs.
-;;;; ```typelisp
-;;;; (import "stdlib/docfixture.tl")
-;;;; (define (main) : i64 stdlib-answer)
-;;;; ```
+;# Entry module docs.
+;# ```typelisp
+;# (import "stdlib/docfixture.tl")
+;# (define (main) : i64 stdlib-answer)
+;# ```
 
 (import "local.tl")
 (import "stdlib/docfixture.tl")
 
-;;; Entry docs.
+;: Entry docs.
 (define (main) : i64 (+ local-answer stdlib-answer))
 EOF
     run_capture doc "$COMPILER" doc "$DOC_ENTRY" -o "$DOC_MD" --stdlib-root "$DOC_STDLIB"

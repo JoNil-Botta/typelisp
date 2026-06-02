@@ -51,11 +51,11 @@ fi
 
 check_source_docs() {
     module=$1
-    if ! grep -q '^;;;;' "$module"; then
+    if ! grep -q '^;#' "$module"; then
         echo "stdlib doc verification failed: $module has no module docs" >&2
         exit 1
     fi
-    if ! grep -q '^;;;[^;]' "$module"; then
+    if ! grep -q '^;:' "$module"; then
         echo "stdlib doc verification failed: $module has no item docs" >&2
         exit 1
     fi
@@ -64,11 +64,11 @@ check_source_docs() {
             pending_doc = 0
             missing = 0
         }
-        /^[[:space:]]*;;;;/ {
+        /^[[:space:]]*;#/ {
             pending_doc = 0
             next
         }
-        /^[[:space:]]*;;;($|[^;])/ {
+        /^[[:space:]]*;:/ {
             pending_doc = 1
             next
         }
@@ -155,7 +155,7 @@ done < "$MODULES"
 INDEX_SRC="$WORKDIR/stdlib_index.tl"
 INDEX_MD="$WORKDIR/stdlib_index.md"
 {
-    printf ';;;; Stdlib module index.\n\n'
+    printf ';# Stdlib module index.\n\n'
     while IFS= read -r module; do
         [ -n "$module" ] || continue
         printf '(import "stdlib/%s")\n' "$(basename "$module")"

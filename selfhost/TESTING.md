@@ -298,8 +298,7 @@ fallback/skip path is tied to #1662 and #1437.
 
 `scripts/verify-doc-tests.sh` discovers documented `.tl` files under
 `stdlib/`, `selfhost/`, `examples/`, and `tests/` by scanning for public
-canonical `;#`/`;:` doc comments (legacy `;;;;`/`;;;` are still accepted) or
-TypeLisp fenced examples, then runs
+canonical `;#`/`;:` doc comments or TypeLisp fenced examples, then runs
 `typelisp doc --test` for each file with `--stdlib-root`. This gate does not
 use a hand-maintained file manifest, so adding documented TypeLisp source with fenced examples
 automatically adds doctest coverage. In the Linux no-Rust lane it runs through

@@ -1,17 +1,17 @@
-;;;; benchmarks/string_scan/bench.tl - string-scan micro-benchmark (#1098).
-;;;;
-;;;; Equivalent to benchmarks/string_scan/baseline.c. Both walk a fixed ASCII
-;;;; string `rounds` times, folding every byte into a polynomial rolling hash
-;;;; (`acc = acc * 131 + byte`) over a wrapping 64-bit accumulator, and return
-;;;; the low byte as the process exit code. TypeLisp `+`/`*` wrap modulo 2^64
-;;;; (SPEC), matching C `uint64_t`, and the text is pure ASCII so each byte is a
-;;;; small non-negative code that matches C `(unsigned char)`; both programs
-;;;; therefore produce the identical exit code on a given host.
-;;;;
-;;;; The round count is `base-rounds + (arg-count)` (`arg-count` is 1 with no
-;;;; extra arguments, matching C `argc`), so the trip count is not a compile-time
-;;;; constant. The hash accumulator is carried across rounds, so the per-round
-;;;; scan is not loop-invariant and cannot be folded into a closed form.
+;# benchmarks/string_scan/bench.tl - string-scan micro-benchmark (#1098).
+;#
+;# Equivalent to benchmarks/string_scan/baseline.c. Both walk a fixed ASCII
+;# string `rounds` times, folding every byte into a polynomial rolling hash
+;# (`acc = acc * 131 + byte`) over a wrapping 64-bit accumulator, and return
+;# the low byte as the process exit code. TypeLisp `+`/`*` wrap modulo 2^64
+;# (SPEC), matching C `uint64_t`, and the text is pure ASCII so each byte is a
+;# small non-negative code that matches C `(unsigned char)`; both programs
+;# therefore produce the identical exit code on a given host.
+;#
+;# The round count is `base-rounds + (arg-count)` (`arg-count` is 1 with no
+;# extra arguments, matching C `argc`), so the trip count is not a compile-time
+;# constant. The hash accumulator is carried across rounds, so the per-round
+;# scan is not loop-invariant and cannot be folded into a closed form.
 (define scan-text : String
   "the quick brown fox jumps over the lazy dog 0123456789")
 

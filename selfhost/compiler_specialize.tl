@@ -2140,12 +2140,12 @@
           (spec-substitute-type (AstTyMutPtr (AstTyVar "T")) subs)
           (AstTyMutPtr (AstTyI64)))))))
 
-;;; Deterministic specialized name + stable specialization key (#1043, mirrors
-;;; src/specialize.rs deterministic-names / stable-keys coverage). The mangling
-;;; is a pure function of the template name and comptime argument values, so
-;;; identical args produce identical names, distinct type args never collide,
-;;; multi-value ordering is stable, and negative scalars / arbitrary strings
-;;; encode without punctuation that could break generated identifiers.
+;: Deterministic specialized name + stable specialization key (#1043, mirrors
+;: src/specialize.rs deterministic-names / stable-keys coverage). The mangling
+;: is a pure function of the template name and comptime argument values, so
+;: identical args produce identical names, distinct type args never collide,
+;: multi-value ordering is stable, and negative scalars / arbitrary strings
+;: encode without punctuation that could break generated identifiers.
 (define (compiler-specialize-name-key-ok?) : bool
   (let
     [vals-i64 : SpecValueList
@@ -2185,8 +2185,8 @@
                   (spec-specialized-name "name" vals-string)
                   "__tl_specialized_name_string_3_97_32_98_none")))))))))
 
-;;; Count function declarations named `name` in `decls` (specialized decls are
-;;; emitted as ordinary `AstDeclDefFn`s, so reuse means a count of exactly 1).
+;: Count function declarations named `name` in `decls` (specialized decls are
+;: emitted as ordinary `AstDeclDefFn`s, so reuse means a count of exactly 1).
 (define (compiler-specialize-decl-list-count-defs
   [decls : AstDeclList]
   [name : String]) : i64
@@ -2200,18 +2200,18 @@
             (compiler-specialize-decl-list-count-defs rest name))]
         [_ (compiler-specialize-decl-list-count-defs rest name)])]))
 
-;;; Two call sites that request the SAME specialization (`alloc` at `type i64`)
-;;; must share one generated decl via the specialization cache, not emit two.
+;: Two call sites that request the SAME specialization (`alloc` at `type i64`)
+;: must share one generated decl via the specialization cache, not emit two.
 (define (compiler-specialize-reuse-source) : String
   "(define (alloc [comptime T : type] [n : i64]) : (Array i64)
   (make-array T n))
 (define (main) : (Array i64)
   (begin (alloc (type i64) 4) (alloc (type i64) 8)))")
 
-;;; Specialization reuse (#1043, mirrors src/specialize.rs reuse coverage): two
-;;; identical `alloc (type i64)` requests collapse to a single shared
-;;; `__tl_specialized_alloc_type_i64_none` decl (the cache dedups by key) and the
-;;; `alloc` template is removed.
+;: Specialization reuse (#1043, mirrors src/specialize.rs reuse coverage): two
+;: identical `alloc (type i64)` requests collapse to a single shared
+;: `__tl_specialized_alloc_type_i64_none` decl (the cache dedups by key) and the
+;: `alloc` template is removed.
 (define (compiler-specialize-reuse-ok?) : bool
   (match (parse-ast-source (compiler-specialize-reuse-source))
     [(OkAstProgram program)
@@ -2229,11 +2229,11 @@
         [(ErrSpecProgram _) false])]
     [(ErrAstProgram _) false]))
 
-;;; Type substitution (#1043, mirrors src/specialize.rs substitution coverage):
-;;; `spec-substitute-type` replaces a mapped type variable with its bound type,
-;;; recurses through compound types (Ptr/DynArray/function), and leaves an
-;;; unmapped variable unchanged (the SpecNoString lookup branch). Complements
-;;; the single MutPtr case embedded in `compiler-specialize-raw-pointer-type-ok?`.
+;: Type substitution (#1043, mirrors src/specialize.rs substitution coverage):
+;: `spec-substitute-type` replaces a mapped type variable with its bound type,
+;: recurses through compound types (Ptr/DynArray/function), and leaves an
+;: unmapped variable unchanged (the SpecNoString lookup branch). Complements
+;: the single MutPtr case embedded in `compiler-specialize-raw-pointer-type-ok?`.
 (define (compiler-specialize-subst-ok?) : bool
   (let
     [subs : SpecTypeSubst (SpecTypeSubstCons "T" (AstTyI64) SpecTypeSubstNil)]
@@ -2263,10 +2263,10 @@
               (spec-type-key (spec-substitute-type (AstTyVar "U") subs))
               "var_U")))))))
 
-;;; Value (comptime-argument) substitution (#1043, mirrors src/specialize.rs
-;;; substitution coverage): `spec-substitute-values-expr` replaces a variable
-;;; bound to a comptime value with that value's literal, leaves unmapped
-;;; variables and literals unchanged, and recurses through compound expressions.
+;: Value (comptime-argument) substitution (#1043, mirrors src/specialize.rs
+;: substitution coverage): `spec-substitute-values-expr` replaces a variable
+;: bound to a comptime value with that value's literal, leaves unmapped
+;: variables and literals unchanged, and recurses through compound expressions.
 (define (compiler-specialize-value-subst-ok?) : bool
   (let
     [subs : SpecValueSubst

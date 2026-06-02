@@ -1,26 +1,26 @@
-;;;; String utility library for TypeLisp.
-;;;;
-;;;; Provides higher-level string operations built on compiler primitives:
-;;;; `string-length`, `string-ref`, `substring`, `string-append`, and
-;;;; `string-eq`.
-;;;;
-;;;; Usage: `(import "stdlib/string.tl")`
-;;;;
-;;;; ```typelisp
-;;;; (import "stdlib/string.tl")
-;;;; (define ok : bool (string-contains (string-trim "  alpha  ") "ph"))
-;;;; ```
-;;; Return true if the character is ASCII whitespace.
+;# String utility library for TypeLisp.
+;#
+;# Provides higher-level string operations built on compiler primitives:
+;# `string-length`, `string-ref`, `substring`, `string-append`, and
+;# `string-eq`.
+;#
+;# Usage: `(import "stdlib/string.tl")`
+;#
+;# ```typelisp
+;# (import "stdlib/string.tl")
+;# (define ok : bool (string-contains (string-trim "  alpha  ") "ph"))
+;# ```
+;: Return true if the character is ASCII whitespace.
 (define (is-char-whitespace [c : char]) : bool
   (or
     (char-eq c #\space')
     (or (char-eq c #\tab') (or (char-eq c #\newline') (char-eq c #\return')))))
 
-;;; Compare two chars for equality.
+;: Compare two chars for equality.
 (define (char-eq [a : char] [b : char]) : bool
   (= (cast a : i64) (cast b : i64)))
 
-;;; Trim leading whitespace from a string.
+;: Trim leading whitespace from a string.
 (define (string-trim-left [s : String]) : String
   (let
     [n : i64 (string-length s)]
@@ -34,7 +34,7 @@
             (set! done true)))
         (substring s i (- n i))))))
 
-;;; Trim trailing whitespace from a string.
+;: Trim trailing whitespace from a string.
 (define (string-trim-right [s : String]) : String
   (let
     [n : i64 (string-length s)]
@@ -48,11 +48,11 @@
             (set! done true)))
         (substring s 0 (+ i 1))))))
 
-;;; Trim whitespace from both ends.
+;: Trim whitespace from both ends.
 (define (string-trim [s : String]) : String
   (string-trim-left (string-trim-right s)))
 
-;;; Return true if haystack contains needle at any position.
+;: Return true if haystack contains needle at any position.
 (define (string-contains [haystack : String] [needle : String]) : bool
   (let
     [hlen : i64 (string-length haystack)]
@@ -71,7 +71,7 @@
                 (set! i (+ i 1))))
             found))))))
 
-;;; Return true if haystack contains the character c.
+;: Return true if haystack contains the character c.
 (define (string-contains-char [haystack : String] [c : char]) : bool
   (let
     [n : i64 (string-length haystack)]
@@ -84,10 +84,10 @@
           (set! i (+ i 1))))
       found)))
 
-;;; Replace first occurrence of old with new in s.
-;;;
-;;; Returns s unchanged if old is not present. Full multi-replace needs a string
-;;; builder.
+;: Replace first occurrence of old with new in s.
+;:
+;: Returns s unchanged if old is not present. Full multi-replace needs a string
+;: builder.
 (define (string-replace [s : String] [old : String] [new : String]) : String
   (if (string-contains s old)
     (let
@@ -105,7 +105,7 @@
           (substring s (+ i olen) (- (- hlen i) olen)))))
     s))
 
-;;; Return true if haystack has needle at position start.
+;: Return true if haystack has needle at position start.
 (define (is-string-prefix-at
   [haystack : String]
   [needle : String]

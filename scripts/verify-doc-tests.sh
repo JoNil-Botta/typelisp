@@ -59,7 +59,7 @@ for root in stdlib selfhost examples tests; do
 done | sort > "$CANDIDATES"
 
 has_public_docs_or_fences() {
-    grep -Eq '^[[:space:]]*;;;|```[[:space:]]*(typelisp|tl)([[:space:]]|$)' "$1"
+    grep -Eq '^[[:space:]]*(;#|;:)|```[[:space:]]*(typelisp|tl)([[:space:]]|$)' "$1"
 }
 
 has_runnable_doctest() {

@@ -192,7 +192,7 @@ prepare_cli_surface_files() {
     33))
 EOF
     cat > "$CLI_SURFACE_DOC_SRC" <<'EOF'
-;;;; Command surface doc smoke.
+;# Command surface doc smoke.
 (define (main) : i64
   0)
 EOF

@@ -1,17 +1,17 @@
-;;;; Windows SDK discovery helpers (#1016).
-;;;;
-;;;; This module models the Windows SDK include/lib/bin layout needed by the
-;;;; future MSVC linker environment. The first slice honors `WindowsSdkDir` and
-;;;; `WindowsSDKVersion` environment overrides and validates the resulting
-;;;; filesystem layout before registry probing. Registry-backed discovery uses
-;;;; the narrow `stdlib/windows_registry.tl` SDK install probe.
-;;;;
-;;;; Usage: `(import "stdlib/windows_sdk.tl")`
-;;;;
-;;;; ```typelisp
-;;;; (import "stdlib/windows_sdk.tl")
-;;;; (define sdk : ResultWindowsSdkLayout (windows-sdk-discover))
-;;;; ```
+;# Windows SDK discovery helpers (#1016).
+;#
+;# This module models the Windows SDK include/lib/bin layout needed by the
+;# future MSVC linker environment. The first slice honors `WindowsSdkDir` and
+;# `WindowsSDKVersion` environment overrides and validates the resulting
+;# filesystem layout before registry probing. Registry-backed discovery uses
+;# the narrow `stdlib/windows_registry.tl` SDK install probe.
+;#
+;# Usage: `(import "stdlib/windows_sdk.tl")`
+;#
+;# ```typelisp
+;# (import "stdlib/windows_sdk.tl")
+;# (define sdk : ResultWindowsSdkLayout (windows-sdk-discover))
+;# ```
 (import "env.tl")
 
 (import "io.tl")
@@ -20,7 +20,7 @@
 
 (import "windows_registry.tl")
 
-;;; Concrete Windows SDK paths needed by an x64 MSVC link environment.
+;: Concrete Windows SDK paths needed by an x64 MSVC link environment.
 (defstruct WindowsSdkLayout
   (root String)
   (version String)
@@ -31,56 +31,56 @@
   (lib-um-x64 String)
   (bin-x64 String))
 
-;;; Structured SDK discovery failures.
+;: Structured SDK discovery failures.
 (defenum WindowsSdkError
   (WindowsSdkUnsupported String)
   (WindowsSdkMissingEnvironment String)
   (WindowsSdkInvalidLayout String)
   (WindowsSdkRegistryUnavailable String))
 
-;;; Result type for SDK discovery.
+;: Result type for SDK discovery.
 (defenum ResultWindowsSdkLayout
   (OkWindowsSdkLayout WindowsSdkLayout)
   (ErrWindowsSdkLayout WindowsSdkError))
 
-;;; Optional string used by layout validation.
+;: Optional string used by layout validation.
 (defenum WindowsSdkMaybeString
   (WindowsSdkNoString)
   (WindowsSdkSomeString String))
 
-;;; Return the SDK root directory.
+;: Return the SDK root directory.
 (define (windows-sdk-root [layout : WindowsSdkLayout]) : String
   (struct-get layout root))
 
-;;; Return the SDK version directory name.
+;: Return the SDK version directory name.
 (define (windows-sdk-version [layout : WindowsSdkLayout]) : String
   (struct-get layout version))
 
-;;; Return the UCRT include directory.
+;: Return the UCRT include directory.
 (define (windows-sdk-include-ucrt [layout : WindowsSdkLayout]) : String
   (struct-get layout include-ucrt))
 
-;;; Return the UM include directory.
+;: Return the UM include directory.
 (define (windows-sdk-include-um [layout : WindowsSdkLayout]) : String
   (struct-get layout include-um))
 
-;;; Return the shared include directory.
+;: Return the shared include directory.
 (define (windows-sdk-include-shared [layout : WindowsSdkLayout]) : String
   (struct-get layout include-shared))
 
-;;; Return the x64 UCRT library directory.
+;: Return the x64 UCRT library directory.
 (define (windows-sdk-lib-ucrt-x64 [layout : WindowsSdkLayout]) : String
   (struct-get layout lib-ucrt-x64))
 
-;;; Return the x64 UM library directory.
+;: Return the x64 UM library directory.
 (define (windows-sdk-lib-um-x64 [layout : WindowsSdkLayout]) : String
   (struct-get layout lib-um-x64))
 
-;;; Return the x64 SDK tool directory.
+;: Return the x64 SDK tool directory.
 (define (windows-sdk-bin-x64 [layout : WindowsSdkLayout]) : String
   (struct-get layout bin-x64))
 
-;;; Render a discovery error as a diagnostic message.
+;: Render a discovery error as a diagnostic message.
 (define (windows-sdk-error-message [error : WindowsSdkError]) : String
   (match error
     [(WindowsSdkUnsupported message) message]
@@ -88,17 +88,17 @@
     [(WindowsSdkInvalidLayout message) message]
     [(WindowsSdkRegistryUnavailable message) message]))
 
-;;; Return true when the host path-list separator identifies Windows.
+;: Return true when the host path-list separator identifies Windows.
 (define (windows-sdk-host-windows?) : bool
   (string-eq (env-path-list-separator) ";"))
 
-;;; Return true when `c` is a path separator accepted by Windows.
+;: Return true when `c` is a path separator accepted by Windows.
 (define (windows-sdk-separator-char? [c : char]) : bool
   (if (char-eq c #/')
     true
     (char-eq c #\\')))
 
-;;; Return true when `text` ends with a path separator.
+;: Return true when `text` ends with a path separator.
 (define (windows-sdk-ends-with-separator? [text : String]) : bool
   (let
     [n : i64 (string-length text)]
@@ -106,7 +106,7 @@
       false
       (windows-sdk-separator-char? (string-ref text (- n 1))))))
 
-;;; Trim trailing path separators from `text`.
+;: Trim trailing path separators from `text`.
 (define (windows-sdk-trim-trailing-separators-from [text : String] [n : i64]) : String
   (if (= n 0)
     ""
@@ -114,17 +114,17 @@
       (windows-sdk-trim-trailing-separators-from text (- n 1))
       (substring text 0 n))))
 
-;;; Trim trailing path separators from `text`.
+;: Trim trailing path separators from `text`.
 (define (windows-sdk-trim-trailing-separators [text : String]) : String
   (windows-sdk-trim-trailing-separators-from text (string-length text)))
 
-;;; Pick a path separator compatible with `root`.
+;: Pick a path separator compatible with `root`.
 (define (windows-sdk-root-separator [root : String]) : String
   (if (string-contains root "/")
     "/"
     "\\"))
 
-;;; Join two path components without normalizing interior separators.
+;: Join two path components without normalizing interior separators.
 (define (windows-sdk-path-join2 [left : String] [right : String]) : String
   (let
     [clean-left : String (windows-sdk-trim-trailing-separators left)]
@@ -137,11 +137,11 @@
           (string-append clean-left (windows-sdk-root-separator clean-left))
           clean-right)))))
 
-;;; Join three path components.
+;: Join three path components.
 (define (windows-sdk-path-join3 [a : String] [b : String] [c : String]) : String
   (windows-sdk-path-join2 (windows-sdk-path-join2 a b) c))
 
-;;; Join four path components.
+;: Join four path components.
 (define (windows-sdk-path-join4
   [a : String]
   [b : String]
@@ -149,7 +149,7 @@
   [d : String]) : String
   (windows-sdk-path-join2 (windows-sdk-path-join3 a b c) d))
 
-;;; Join five path components.
+;: Join five path components.
 (define (windows-sdk-path-join5
   [a : String]
   [b : String]
@@ -158,7 +158,7 @@
   [e : String]) : String
   (windows-sdk-path-join2 (windows-sdk-path-join4 a b c d) e))
 
-;;; Build a layout from an SDK root and version string without probing it.
+;: Build a layout from an SDK root and version string without probing it.
 (define (windows-sdk-layout-from-root-version
   [root : String]
   [version : String]) : WindowsSdkLayout
@@ -175,13 +175,13 @@
       (windows-sdk-path-join5 clean-root "Lib" clean-version "um" "x64")
       (windows-sdk-path-join4 clean-root "bin" clean-version "x64"))))
 
-;;; Return true when a path exists, mapping probe errors to false.
+;: Return true when a path exists, mapping probe errors to false.
 (define (windows-sdk-path-exists? [path : String]) : bool
   (match (try-file-exists? path)
     [(OkIoBool exists) exists]
     [(ErrIoBool _) false]))
 
-;;; Return the first missing required directory in `layout`.
+;: Return the first missing required directory in `layout`.
 (define (windows-sdk-first-missing-path [layout : WindowsSdkLayout]) : WindowsSdkMaybeString
   (cond
     [(not (windows-sdk-path-exists? (windows-sdk-root layout)))
@@ -200,7 +200,7 @@
       (WindowsSdkSomeString (windows-sdk-bin-x64 layout))]
     [else (WindowsSdkNoString)]))
 
-;;; Validate a root/version pair and return a complete SDK layout.
+;: Validate a root/version pair and return a complete SDK layout.
 (define (windows-sdk-layout-from-root-version-checked
   [root : String]
   [version : String]) : ResultWindowsSdkLayout
@@ -220,7 +220,7 @@
               (WindowsSdkInvalidLayout
                 (string-append "windows-sdk: missing SDK path: " path)))])))))
 
-;;; Return true when at least one SDK override environment variable is present.
+;: Return true when at least one SDK override environment variable is present.
 (define (windows-sdk-env-present?) : bool
   (match (env-get "WindowsSdkDir")
     [(EnvSomeString _) true]
@@ -229,7 +229,7 @@
         [(EnvSomeString _) true]
         [(EnvNoString) false])]))
 
-;;; Discover and validate an SDK layout from environment overrides.
+;: Discover and validate an SDK layout from environment overrides.
 (define (windows-sdk-discover-from-env) : ResultWindowsSdkLayout
   (match (env-get "WindowsSdkDir")
     [(EnvNoString)
@@ -244,7 +244,7 @@
         [(EnvSomeString version)
           (windows-sdk-layout-from-root-version-checked root version)])]))
 
-;;; Validate a root/version pair found in the registry.
+;: Validate a root/version pair found in the registry.
 (define (windows-sdk-layout-from-registry-root-version-checked
   [root : String]
   [version : String]) : ResultWindowsSdkLayout
@@ -258,7 +258,7 @@
           "windows-sdk: registry SDK version is empty"))
       (windows-sdk-layout-from-root-version-checked root version))))
 
-;;; Discover and validate an SDK layout from the Windows registry.
+;: Discover and validate an SDK layout from the Windows registry.
 (define (windows-sdk-discover-from-registry) : ResultWindowsSdkLayout
   (match (windows-registry-sdk-install)
     [(OkWindowsRegistrySdkInstall install)
@@ -269,7 +269,7 @@
       (ErrWindowsSdkLayout
         (WindowsSdkRegistryUnavailable (windows-registry-error-message error)))]))
 
-;;; Discover the Windows SDK using environment overrides before registry probing.
+;: Discover the Windows SDK using environment overrides before registry probing.
 (define (windows-sdk-discover) : ResultWindowsSdkLayout
   (if (not (windows-sdk-host-windows?))
     (ErrWindowsSdkLayout

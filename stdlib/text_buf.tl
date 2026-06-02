@@ -106,10 +106,54 @@
     [(TextBufChunkCons chunk rest)
       (text-buf-chunks-render-rev rest (string-append chunk out))]))
 
+(define (text-buf-chunk-count [chunks : TextBufChunkList] [count : i64]) : i64
+  (match chunks
+    [(TextBufChunkNil) count]
+    [(TextBufChunkCons _ rest) (text-buf-chunk-count rest (+ count 1))]))
+
+(define (text-buf-chunks-fill-array-rev
+  [chunks : TextBufChunkList]
+  [items : (Array String)]
+  [index : i64]) : unit
+  (match chunks
+    [(TextBufChunkNil) unit]
+    [(TextBufChunkCons chunk rest)
+      (begin
+        (array-set! items index chunk)
+        (text-buf-chunks-fill-array-rev rest items (- index 1)))]))
+
+(define (text-buf-chunks-render-array-range
+  [items : (Array String)]
+  [lo : i64]
+  [hi : i64]) : String
+  (if (>= lo hi)
+    ""
+    (if (= (+ lo 1) hi)
+      (array-ref items lo)
+      (let
+        [mid : i64 (/ (+ lo hi) 2)]
+        (string-append
+          (text-buf-chunks-render-array-range items lo mid)
+          (text-buf-chunks-render-array-range items mid hi))))))
+
+(define (text-buf-chunks-render-balanced
+  [chunks : TextBufChunkList]
+  [count : i64]) : String
+  (let
+    [items : (Array String) (make-array String count)]
+    (begin
+      (text-buf-chunks-fill-array-rev chunks items (- count 1))
+      (text-buf-chunks-render-array-range items 0 count))))
+
 ;;; Render `buf` to an owned String allocated in the active arena.
 (define (text-buf-render [buf : TextBuf]) : String
   (match buf
-    [(TextBuf chunks _) (text-buf-chunks-render-rev chunks "")]))
+    [(TextBuf chunks _)
+      (let
+        [count : i64 (text-buf-chunk-count chunks 0)]
+        (if (> count 32)
+          (text-buf-chunks-render-balanced chunks count)
+          (text-buf-chunks-render-rev chunks "")))]))
 
 ;;; Return an empty buffer, leaving the old immutable `buf` value unchanged.
 (define (text-buf-clear [buf : TextBuf]) : TextBuf

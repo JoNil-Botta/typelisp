@@ -7,7 +7,7 @@
 
 (import "compiler_regalloc.tl")
 
-(import "text_buf.tl")
+(import "stdlib/text_buf.tl")
 
 (defenum ResultBackendReg
   (OkBackendReg String)

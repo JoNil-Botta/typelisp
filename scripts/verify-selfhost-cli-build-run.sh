@@ -116,6 +116,16 @@ run_cli_capture_in_dir() {
     set -e
 }
 
+lsp_frame_append() {
+    frame_file=$1
+    frame_body=$2
+    frame_len=$(printf '%s' "$frame_body" | wc -c | tr -d ' ')
+    {
+        printf 'Content-Length: %s\r\n\r\n' "$frame_len"
+        printf '%s' "$frame_body"
+    } >> "$frame_file"
+}
+
 cli_surface_label() {
     printf '%s' "$1" | tr ' /' '__'
 }
@@ -275,6 +285,21 @@ EOF
             assert_status "$label" "$status" 0
             assert_empty "$label" "$WORKDIR/$label.err"
             assert_contains "$label" "$WORKDIR/$label.out" "TypeLisp REPL commands:"
+            ;;
+        lsp)
+            lsp_in="$CLI_SURFACE_DIR/lsp-init-shutdown.in"
+            : > "$lsp_in"
+            lsp_frame_append "$lsp_in" '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"capabilities":{}}}'
+            lsp_frame_append "$lsp_in" '{"jsonrpc":"2.0","id":2,"method":"shutdown","params":null}'
+            set +e
+            "$COMPILER" lsp < "$lsp_in" > "$WORKDIR/$label.out" 2> "$WORKDIR/$label.err"
+            status=$?
+            set -e
+            assert_status "$label" "$status" 0
+            assert_empty "$label" "$WORKDIR/$label.err"
+            assert_contains "$label" "$WORKDIR/$label.out" '"id":1'
+            assert_contains "$label" "$WORKDIR/$label.out" '"textDocumentSync"'
+            assert_contains "$label" "$WORKDIR/$label.out" '"id":2'
             ;;
         new)
             run_cli_capture_in_dir "$label" "$CLI_SURFACE_DIR" "$COMPILER" new surface_new
@@ -656,5 +681,8 @@ assert_empty chooser "$WORKDIR/chooser.err"
 assert_contains chooser "$WORKDIR/chooser.out" "implement issue #1645: Host actions direct"
 
 run_cli_command_surface_matrix
+
+echo "[selfhost-cli-build-run] public LSP corpus via run-corpus.sh"
+TYPELISP_PUBLIC_TOOLS_STAGE1_WRAPPER=0 TYPELISP_BIN="$COMPILER" sh "$ROOT/tests/public-tools/run-corpus.sh" lsp
 
 echo "selfhost cli build/run smoke passed"

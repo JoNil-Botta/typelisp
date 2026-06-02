@@ -306,6 +306,14 @@ if grep -q "typelisp lsp" "$err"; then
 else
     HAS_LSP_COMMAND=0
 fi
+if [ "$HAS_LSP_COMMAND" -eq 1 ]; then
+    LSP_COMMAND_PROBE="$WORKDIR/lsp-command-probe.in"
+    printf 'X-Test: 1\r\n\r\n' > "$LSP_COMMAND_PROBE"
+    run_stdin lsp-command-probe "$LSP_COMMAND_PROBE" "$COMPILER" lsp
+    if grep -F "not yet available" "$err" >/dev/null; then
+        HAS_LSP_COMMAND=0
+    fi
+fi
 if grep -q "typelisp lint" "$err"; then
     HAS_LINT_COMMAND=1
 else
@@ -1788,39 +1796,32 @@ else
     echo "[public-tools] skipping package build coverage (host-action drivers disabled; #1662)"
 fi
 
-# REPL/LSP gates temporarily disabled: the unified cli.tl stage0 lists lsp and
-# repl in its help for stage0 parity, but they are still pending stubs (#1640
-# lsp, #1641 repl), so neither the REPL/LSP corpus nor the inline LSP
-# init/shutdown checks can pass yet. Re-enable (flip to 1) once lsp/repl are
-# wired into cli.tl — tracked in #1640.
-TYPELISP_PUBLIC_TOOLS_REPL_LSP_ENABLED=0
-echo "[public-tools] REPL/LSP corpus via run-corpus.sh"
-if [ "$TYPELISP_PUBLIC_TOOLS_REPL_LSP_ENABLED" -eq 1 ]; then
-    if [ "$HAS_LSP_COMMAND" -eq 1 ]; then
-        TYPELISP_PUBLIC_TOOLS_STAGE1_WRAPPER=$IS_STAGE1_WRAPPER TYPELISP_BIN="$COMPILER" sh "$ROOT/tests/public-tools/run-corpus.sh"
-    else
-        TYPELISP_PUBLIC_TOOLS_STAGE1_WRAPPER=$IS_STAGE1_WRAPPER TYPELISP_BIN="$COMPILER" sh "$ROOT/tests/public-tools/run-corpus.sh" repl
-    fi
+echo "[public-tools] LSP corpus via run-corpus.sh"
+if [ "$HAS_LSP_COMMAND" -eq 1 ]; then
+    TYPELISP_PUBLIC_TOOLS_STAGE1_WRAPPER=$IS_STAGE1_WRAPPER TYPELISP_BIN="$COMPILER" sh "$ROOT/tests/public-tools/run-corpus.sh" lsp
 else
-    echo "[public-tools] skipping REPL/LSP corpus (lsp/repl pending in cli.tl; #1640/#1641)"
-    if [ "$HOST_OS" = linux ]; then
-        echo "[public-tools] selfhost REPL corpus via run-corpus.sh"
-        TYPELISP_PUBLIC_TOOLS_STAGE1_WRAPPER=1 TYPELISP_BIN="$COMPILER" sh "$ROOT/tests/public-tools/run-corpus.sh" repl
-    else
-        echo "[public-tools] selfhost REPL scratch smoke on $HOST_OS"
-        SELFHOST_REPL_SMOKE="$WORKDIR/selfhost-repl-smoke.in"
-        cat > "$SELFHOST_REPL_SMOKE" <<'EOF'
+    echo "[public-tools] skipping LSP corpus (lsp command unavailable or pending)"
+fi
+
+echo "[public-tools] REPL corpus via run-corpus.sh"
+echo "[public-tools] skipping public REPL corpus (repl pending in cli.tl; #1641)"
+if [ "$HOST_OS" = linux ]; then
+    echo "[public-tools] selfhost REPL corpus via run-corpus.sh"
+    TYPELISP_PUBLIC_TOOLS_STAGE1_WRAPPER=1 TYPELISP_BIN="$COMPILER" sh "$ROOT/tests/public-tools/run-corpus.sh" repl
+else
+    echo "[public-tools] selfhost REPL scratch smoke on $HOST_OS"
+    SELFHOST_REPL_SMOKE="$WORKDIR/selfhost-repl-smoke.in"
+    cat > "$SELFHOST_REPL_SMOKE" <<'EOF'
 (+ 1 2) ; trailing comment must not swallow generated wrapper delimiters
 .exit
 EOF
-        run_stdin selfhost-repl-scratch-smoke "$SELFHOST_REPL_SMOKE" "$COMPILER" run "$ROOT/selfhost/repl.tl" --stdlib-root "$ROOT/stdlib"
-        assert_success
-        assert_contains "$out" "3"
-        assert_stderr_empty
-    fi
+    run_stdin selfhost-repl-scratch-smoke "$SELFHOST_REPL_SMOKE" "$COMPILER" run "$ROOT/selfhost/repl.tl" --stdlib-root "$ROOT/stdlib"
+    assert_success
+    assert_contains "$out" "3"
+    assert_stderr_empty
 fi
 
-if [ "$TYPELISP_PUBLIC_TOOLS_REPL_LSP_ENABLED" -eq 1 ] && [ "$HAS_LSP_COMMAND" -eq 1 ]; then
+if [ "$HAS_LSP_COMMAND" -eq 1 ]; then
     echo "[public-tools] LSP (legacy inline checks)"
     frame_append() {
         frame_file=$1
@@ -1843,7 +1844,7 @@ if [ "$TYPELISP_PUBLIC_TOOLS_REPL_LSP_ENABLED" -eq 1 ] && [ "$HAS_LSP_COMMAND" -
     assert_contains "$out" '"capabilities"'
     assert_contains "$out" '"id":2'
 else
-    echo "[public-tools] skipping LSP checks (lsp pending in cli.tl; #1640)"
+    echo "[public-tools] skipping LSP checks (lsp command unavailable or pending)"
 fi
 
 echo "[public-tools] SPEC metadata examples"

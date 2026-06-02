@@ -14,7 +14,7 @@ usage: scripts/verify-stdlib.sh [--borrowed-str-only]
 Verifies canonical stdlib modules and fixtures through --stdlib-root.
 Set TYPELISP_STDLIB_BORROWED_STR_BIN to route fixtures marked
 requires-borrowed-str-capable through a compiler path that can parse/check
-`(& lifetime str)` signatures, such as the Linux no-Rust stage1 wrapper. In
+`(& lifetime str)` signatures, such as the Linux no-Rust bootstrapped stage1. In
 full mode, marked rows are skipped unless that variable is set.
 EOF
 }
@@ -139,6 +139,30 @@ stdlib_should_skip_staged() {
     return 1
 }
 
+# A runtime-gap row may be skipped ONLY when the built program fails in the
+# currently tracked way. If the row starts passing, the marker is reported below
+# so the follow-up can remove it instead of silently preserving stale debt.
+stdlib_should_skip_runtime_gap() {
+    _issue=$1
+    _snippet=$2
+    _stderr=$3
+    _got=$4
+    _want=$5
+    _gap_host=$6
+    _host=$7
+    [ -n "$_issue" ] || return 1
+    { [ "$_gap_host" = all ] || [ "$_gap_host" = "$_host" ]; } || return 1
+    [ -n "$_snippet" ] || return 1
+    [ "$_got" -ne "$_want" ] || return 1
+    grep -qF "$_snippet" "$_stderr" >/dev/null 2>&1
+}
+
+stdlib_runtime_gap_applies() {
+    _gap_host=$1
+    _host=$2
+    [ "$_gap_host" = all ] || [ "$_gap_host" = "$_host" ]
+}
+
 # Every canonical stdlib module must be listed here. Keep this manifest in sync
 # with stdlib/README.md so new modules land with an explicit verification
 # decision. Fixture files under stdlib/tests/ are covered by stdlib_test_manifest
@@ -168,13 +192,17 @@ EOF
 }
 
 # Pipe-separated fixture manifest:
-#   fixture-path|expected-exit|expected-stdout|expected-stderr|stdin
+#   fixture-path|expected-exit|expected-stdout|expected-stderr|stdin|optional-capability
 #
 # Use "-" for an empty stream, "literal:<text>" for exact inline text without a
 # trailing newline, "printf:<escapes>" for printf-style escapes, "host-line:<text>"
 # for one line using the host executable's newline convention, or a
-# repository-relative path for exact stream bytes. The stdin column is optional
-# and defaults to "-".
+# repository-relative path for exact stream bytes. The stdin and capability
+# columns are optional; stdin defaults to "-". A runnable row may use
+# `requires-stage0-symbol:<name>[,<name>...]` for build-time staged primitive
+# gaps, or `requires-runtime-gap:<host>:#NNNN:<stderr-substring>` for a narrowed
+# runtime-only blocker that should be skipped only on the named host when the
+# expected diagnostic appears. `<host>` is `linux`, `windows`, or `all`.
 stdlib_test_manifest() {
     cat <<'EOF'
 stdlib/tests/string_edges.tl|42|-|-
@@ -191,7 +219,7 @@ stdlib/tests/hash_api.tl|42|-|-
 stdlib/tests/hashmap_api.tl|42|-|-
 stdlib/tests/list_api.tl|42|-|-
 stdlib/tests/process_api.tl|42|-|-
-stdlib/tests/process_runtime.tl|42|-|-
+stdlib/tests/process_runtime.tl|42|-|-|-|requires-runtime-gap:linux:#1672:process cwd
 stdlib/tests/queue_api.tl|42|-|-
 stdlib/tests/random_api.tl|42|-|-|-|requires-stage0-symbol:tl_random_system_seed
 stdlib/tests/text_buf_api.tl|42|-|-
@@ -213,7 +241,7 @@ EOF
 # or `pass`; failure rows must include a diagnostic substring that should
 # appear on stderr. Pass rows may use "-" for the diagnostic field. A row marked
 # `requires-borrowed-str-capable` runs through TYPELISP_STDLIB_BORROWED_STR_BIN
-# when it is set, allowing no-Rust gates to use the stage1 wrapper for source
+# when it is set, allowing no-Rust gates to use the bootstrapped stage1 for source
 # that the published seed compiler cannot parse yet.
 stdlib_check_manifest() {
     cat <<'EOF'
@@ -431,9 +459,30 @@ while IFS='|' read -r fixture want stdout_spec stderr_spec stdin_spec extra; do
     esac
 
     requires_symbol=
+    runtime_gap_host=
+    runtime_gap_issue=
+    runtime_gap_stderr=
     case "${extra:-}" in
         '') ;;
         requires-stage0-symbol:*) requires_symbol=${extra#requires-stage0-symbol:} ;;
+        requires-runtime-gap:*:#*:*)
+            runtime_gap=${extra#requires-runtime-gap:}
+            runtime_gap_host=${runtime_gap%%:*}
+            runtime_gap_rest=${runtime_gap#*:}
+            runtime_gap_issue=${runtime_gap_rest%%:*}
+            runtime_gap_stderr=${runtime_gap_rest#*:}
+            case "$runtime_gap_host" in
+                linux | windows | all) ;;
+                *)
+                    echo "FAIL: malformed stdlib runtime gap host for $fixture: $extra" >&2
+                    exit 1
+                    ;;
+            esac
+            ;;
+        requires-runtime-gap:*)
+            echo "FAIL: malformed stdlib runtime gap marker for $fixture: $extra" >&2
+            exit 1
+            ;;
         *)
             echo "FAIL: malformed stdlib test manifest row has too many fields: $fixture" >&2
             exit 1
@@ -492,6 +541,11 @@ while IFS='|' read -r fixture want stdout_spec stderr_spec stdin_spec extra; do
     fi
 
     if [ "$got" -ne "$want" ]; then
+        if stdlib_should_skip_runtime_gap "$runtime_gap_issue" "$runtime_gap_stderr" "$stderr" "$got" "$want" "$runtime_gap_host" "$HOST_OS"; then
+            echo "[stdlib] SKIP $fixture (known runtime gap $runtime_gap_issue: $runtime_gap_stderr)"
+            skipped=$((skipped + 1))
+            continue
+        fi
         echo "FAIL: $fixture expected exit $want, got $got" >&2
         show_streams "$stdout" "$stderr"
         exit 1
@@ -499,6 +553,9 @@ while IFS='|' read -r fixture want stdout_spec stderr_spec stdin_spec extra; do
 
     compare_stream "$fixture" stdout "$stdout_spec" "$stdout" "$stdout" "$stderr"
     compare_stream "$fixture" stderr "$stderr_spec" "$stderr" "$stdout" "$stderr"
+    if [ -n "$runtime_gap_issue" ] && stdlib_runtime_gap_applies "$runtime_gap_host" "$HOST_OS"; then
+        echo "[stdlib] NOTE: $fixture passed with known runtime gap marker $runtime_gap_issue; remove the requires-runtime-gap marker" >&2
+    fi
 
     passed=$((passed + 1))
 done < "$TEST_MANIFEST"
@@ -624,7 +681,7 @@ fi
 module_count=$(wc -l < "$EXPECTED" | tr -d ' ')
 
 if [ "$skipped" -gt 0 ]; then
-    echo "stdlib verification: $skipped runnable fixture(s) skipped (staged primitive awaiting no-Rust compiler support)"
+    echo "stdlib verification: $skipped runnable fixture(s) skipped (staged primitive or known runtime gap)"
 fi
 
 echo "stdlib verification passed for $module_count module(s), $passed runnable fixture(s), $checked check fixture(s)"

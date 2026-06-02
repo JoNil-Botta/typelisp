@@ -1670,7 +1670,7 @@
     [(AstTyExprList) 0]
     [(AstTyFunc _ _) 8]
     [(AstTyTuple _) 8]
-    [(AstTyArray elem count) (* (lower-type-size ctx elem) count)]
+    [(AstTyArray _ _) 8]
     [(AstTyDynArray _) 8]
     [(AstTyBox _) 8]
     [(AstTyPtr _) 8]
@@ -1704,7 +1704,7 @@
     [(AstTyExprList) 1]
     [(AstTyFunc _ _) 8]
     [(AstTyTuple _) 8]
-    [(AstTyArray elem _) (lower-type-align ctx elem)]
+    [(AstTyArray _ _) 8]
     [(AstTyDynArray _) 8]
     [(AstTyBox _) 8]
     [(AstTyPtr _) 8]
@@ -2449,18 +2449,11 @@
             true
             (lower-capture-list-contains-name? rest name))])]))
 
-(define (lower-aggregate-capture-message) : String
-  "lower: aggregate lambda captures require closure deep-copy lowering (#1554)")
-
 (define (lower-unsupported-capture-message) : String
   "lower: unsupported lambda capture type (#1553)")
 
 (define (lower-capture-support-message [ctx : TcContext] [ty : AstType]) : String
   (match (tc-type-strip-region (tc-resolve-type ctx ty))
-    [(AstTyTuple _) (lower-aggregate-capture-message)]
-    [(AstTyArray _ _) (lower-aggregate-capture-message)]
-    [(AstTyEnum _) (lower-aggregate-capture-message)]
-    [(AstTyStruct _) (lower-aggregate-capture-message)]
     [(AstTyRef _ _) (lower-reference-support-message)]
     [(AstTyMutRef _ _) (lower-reference-support-message)]
     [_ (lower-unsupported-capture-message)]))
@@ -2480,6 +2473,10 @@
     [(AstTyBool) true]
     [(AstTyChar) true]
     [(AstTyFunc _ _) true]
+    [(AstTyTuple _) true]
+    [(AstTyArray _ _) true]
+    [(AstTyEnum _) true]
+    [(AstTyStruct _) true]
     [(AstTyString) true]
     [(AstTyDynArray _) true]
     [_ false]))
@@ -2490,6 +2487,476 @@
       1
       cursor)
     8))
+
+(define (lower-capture-slot-type [ty : AstType]) : AstType
+  (match (tc-type-strip-region ty)
+    [(AstTyFunc _ _) (AstTyU64)]
+    [(AstTyTuple _) (AstTyU64)]
+    [(AstTyArray _ _) (AstTyU64)]
+    [(AstTyEnum _) (AstTyU64)]
+    [(AstTyStruct _) (AstTyU64)]
+    [(AstTyString) (AstTyU64)]
+    [(AstTyDynArray _) (AstTyU64)]
+    [_ ty]))
+
+(define (lower-fixed-array-storage-size
+  [ctx : TcContext]
+  [elem-ty : AstType]
+  [count : i64]) : i64
+  (let
+    [elem-size : i64 (lower-type-size ctx elem-ty)]
+    [extent : i64 (* count elem-size)]
+    (lower-align-up
+      (if (= extent 0)
+        1
+        extent)
+      8)))
+
+(define (lower-capture-snapshot-value
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [value : CompilerIrValue]
+  [ty : AstType]) : ResultLowerExpr
+  (match (tc-resolve-type ctx ty)
+    [(AstTyString) (lower-capture-snapshot-string-value state value)]
+    [(AstTyDynArray elem-ty)
+      (lower-capture-snapshot-dynarray-value
+        ctx
+        state
+        value
+        (tc-type-without-regions elem-ty)
+        ty)]
+    [(AstTyTuple elem-tys)
+      (lower-capture-snapshot-tuple-value
+        ctx
+        state
+        env
+        type-env
+        value
+        elem-tys
+        ty)]
+    [(AstTyArray elem-ty count)
+      (lower-capture-snapshot-fixed-array-value
+        ctx
+        state
+        env
+        type-env
+        value
+        (tc-type-without-regions elem-ty)
+        count
+        ty)]
+    [(AstTyStruct name)
+      (lower-capture-snapshot-struct-value ctx state env type-env value name ty)]
+    [(AstTyEnum name)
+      (lower-capture-snapshot-enum-value ctx state env type-env value name ty)]
+    [_ (OkLowerExpr (LowerExpr state value ty))]))
+
+(define (lower-capture-snapshot-string-value
+  [state : LowerState]
+  [value : CompilerIrValue]) : ResultLowerExpr
+  (match (lower-string-fields state value)
+    [(LowerStringFields fields-state ptr len)
+      (lower-substring-call-runtime fields-state ptr (IrValueI64 0) len)]))
+
+(define (lower-capture-snapshot-dynarray-copy
+  [state : LowerState]
+  [old-buf : CompilerIrValue]
+  [new-buf : CompilerIrValue]
+  [len : CompilerIrValue]
+  [elem-ty : AstType]
+  [elem-size : i64]) : LowerState
+  (if (= elem-size 0)
+    state
+    (lower-array-push-copy-loop state old-buf new-buf len elem-ty)))
+
+(define (lower-capture-snapshot-dynarray-finish
+  [state : LowerState]
+  [old-buf : CompilerIrValue]
+  [len : CompilerIrValue]
+  [elem-ty : AstType]
+  [elem-size : i64]
+  [buf-var : i64]
+  [result-ty : AstType]) : ResultLowerExpr
+  (match (lower-reserve-heap-storage state 16 result-ty)
+    [(LowerExpr arr-state arr-value _)
+      (let
+        [copied-state : LowerState
+          (lower-capture-snapshot-dynarray-copy
+            arr-state
+            old-buf
+            (IrValueVar buf-var)
+            len
+            elem-ty
+            elem-size)]
+        (OkLowerExpr
+          (LowerExpr
+            (lower-store-at-offset
+              (lower-store-at-offset
+                copied-state
+                arr-value
+                0
+                (IrValueVar buf-var)
+                (AstTyU64))
+              arr-value
+              8
+              len
+              (AstTyI64))
+            arr-value
+            result-ty)))]))
+
+(define (lower-capture-snapshot-dynarray-value
+  [ctx : TcContext]
+  [state : LowerState]
+  [value : CompilerIrValue]
+  [elem-ty : AstType]
+  [result-ty : AstType]) : ResultLowerExpr
+  (match (lower-load-at-offset state value 8 (AstTyI64))
+    [(LowerExpr len-state len _)
+      (match (lower-load-at-offset len-state value 0 (AstTyU64))
+        [(LowerExpr ptr-state old-buf _)
+          (let
+            [elem-size : i64 (lower-type-size ctx elem-ty)]
+            (match (if (= elem-size 0)
+              (LowerExpr ptr-state (IrValueI64 1) (AstTyI64))
+              (lower-emit-binop
+                ptr-state
+                IrBinMul
+                len
+                (IrValueI64 elem-size)
+                (AstTyI64)))
+              [(LowerExpr byte-state byte-count _)
+                (match (lower-state-alloc-var byte-state)
+                  [(LowerAlloc buf-alloc buf-var)
+                    (lower-capture-snapshot-dynarray-finish
+                      (lower-state-emit
+                        buf-alloc
+                        (IrInstrCall
+                          buf-var
+                          "tl_alloc"
+                          (IrValueCons byte-count IrValueNil)
+                          (AstTyU64)))
+                      old-buf
+                      len
+                      elem-ty
+                      elem-size
+                      buf-var
+                      result-ty)])]))])]))
+
+(define (lower-capture-snapshot-type-list
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [src : CompilerIrValue]
+  [dst : CompilerIrValue]
+  [types : AstTypeList]
+  [cursor : i64]) : ResultLowerState
+  (match types
+    [(AstTypeNil) (OkLowerState state)]
+    [(AstTypeCons ty rest)
+      (let
+        [resolved : AstType (tc-type-without-regions (tc-resolve-type ctx ty))]
+        (let
+          [offset : i64 (lower-align-up cursor (lower-type-align ctx resolved))]
+          [size : i64 (lower-type-size ctx resolved)]
+          (if (> size 0)
+            (match (lower-load-at-offset state src offset resolved)
+              [(LowerExpr load-state field-value _)
+                (match (lower-capture-snapshot-value
+                  ctx
+                  load-state
+                  env
+                  type-env
+                  field-value
+                  resolved)
+                  [(OkLowerExpr snap)
+                    (match snap
+                      [(LowerExpr snap-state snap-value _)
+                        (lower-capture-snapshot-type-list
+                          ctx
+                          (lower-store-at-offset
+                            snap-state
+                            dst
+                            offset
+                            snap-value
+                            resolved)
+                          env
+                          type-env
+                          src
+                          dst
+                          rest
+                          (+ offset size))])]
+                  [(ErrLowerExpr message) (ErrLowerState message)])])
+            (lower-capture-snapshot-type-list
+              ctx
+              state
+              env
+              type-env
+              src
+              dst
+              rest
+              (+ offset size)))))]))
+
+(define (lower-capture-snapshot-tuple-value
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [value : CompilerIrValue]
+  [elem-tys : AstTypeList]
+  [result-ty : AstType]) : ResultLowerExpr
+  (match (lower-reserve-heap-storage
+    state
+    (lower-type-list-storage-size ctx elem-tys)
+    result-ty)
+    [(LowerExpr dst-state dst _)
+      (match (lower-capture-snapshot-type-list
+        ctx
+        dst-state
+        env
+        type-env
+        value
+        dst
+        elem-tys
+        0)
+        [(OkLowerState done-state)
+          (OkLowerExpr (LowerExpr done-state dst result-ty))]
+        [(ErrLowerState message) (ErrLowerExpr message)])]))
+
+(define (lower-capture-snapshot-fixed-array-elems
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [src : CompilerIrValue]
+  [dst : CompilerIrValue]
+  [elem-ty : AstType]
+  [elem-size : i64]
+  [index : i64]
+  [count : i64]) : ResultLowerState
+  (if (>= index count)
+    (OkLowerState state)
+    (let
+      [offset : i64 (* index elem-size)]
+      (if (> elem-size 0)
+        (match (lower-load-at-offset state src offset elem-ty)
+          [(LowerExpr load-state elem-value _)
+            (match (lower-capture-snapshot-value
+              ctx
+              load-state
+              env
+              type-env
+              elem-value
+              elem-ty)
+              [(OkLowerExpr snap)
+                (match snap
+                  [(LowerExpr snap-state snap-value _)
+                    (lower-capture-snapshot-fixed-array-elems
+                      ctx
+                      (lower-store-at-offset
+                        snap-state
+                        dst
+                        offset
+                        snap-value
+                        elem-ty)
+                      env
+                      type-env
+                      src
+                      dst
+                      elem-ty
+                      elem-size
+                      (+ index 1)
+                      count)])]
+              [(ErrLowerExpr message) (ErrLowerState message)])])
+        (lower-capture-snapshot-fixed-array-elems
+          ctx
+          state
+          env
+          type-env
+          src
+          dst
+          elem-ty
+          elem-size
+          (+ index 1)
+          count)))))
+
+(define (lower-capture-snapshot-fixed-array-value
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [value : CompilerIrValue]
+  [elem-ty : AstType]
+  [count : i64]
+  [result-ty : AstType]) : ResultLowerExpr
+  (let
+    [elem-size : i64 (lower-type-size ctx elem-ty)]
+    (match (lower-reserve-heap-storage
+      state
+      (lower-fixed-array-storage-size ctx elem-ty count)
+      result-ty)
+      [(LowerExpr dst-state dst _)
+        (match (lower-capture-snapshot-fixed-array-elems
+          ctx
+          dst-state
+          env
+          type-env
+          value
+          dst
+          elem-ty
+          elem-size
+          0
+          count)
+          [(OkLowerState done-state)
+            (OkLowerExpr (LowerExpr done-state dst result-ty))]
+          [(ErrLowerState message) (ErrLowerExpr message)])])))
+
+(define (lower-capture-snapshot-struct-value
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [value : CompilerIrValue]
+  [struct-name : String]
+  [result-ty : AstType]) : ResultLowerExpr
+  (if (lower-struct-repr-c? ctx struct-name)
+    (ErrLowerExpr
+      (lower-diagnostic
+        "lower: repr-c aggregate lambda captures need repr-c snapshot lowering"))
+    (match (lower-struct-fields ctx struct-name)
+      [(OkAstFieldDefList fields)
+        (let
+          [field-types : AstTypeList (tc-field-type-list ctx fields)]
+          (match (lower-reserve-heap-storage
+            state
+            (lower-type-list-storage-size ctx field-types)
+            result-ty)
+            [(LowerExpr dst-state dst _)
+              (match (lower-capture-snapshot-type-list
+                ctx
+                dst-state
+                env
+                type-env
+                value
+                dst
+                field-types
+                0)
+                [(OkLowerState done-state)
+                  (OkLowerExpr (LowerExpr done-state dst result-ty))]
+                [(ErrLowerState message) (ErrLowerExpr message)])]))]
+      [(ErrAstFieldDefList message) (ErrLowerExpr (lower-diagnostic message))])))
+
+(define (lower-capture-snapshot-enum-variants
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [src : CompilerIrValue]
+  [dst : CompilerIrValue]
+  [tag : CompilerIrValue]
+  [variants : AstVariantDefList]
+  [index : i64]
+  [done-label : String]) : ResultLowerState
+  (match variants
+    [(AstVariantDefNil)
+      (OkLowerState
+        (lower-state-finish-block
+          (lower-state-emit state (IrInstrJump done-label))
+          done-label))]
+    [(AstVariantDefCons variant rest)
+      (match (lower-state-fresh-label state "capture_enum_variant")
+        [(LowerLabel variant-label-state variant-label)
+          (match (lower-state-fresh-label
+            variant-label-state
+            "capture_enum_next")
+            [(LowerLabel next-label-state next-label)
+              (match (lower-state-alloc-var next-label-state)
+                [(LowerAlloc cond-state cond-var)
+                  (let
+                    [branch-state : LowerState
+                      (lower-state-finish-block
+                        (lower-state-emit
+                          (lower-state-emit
+                            cond-state
+                            (IrInstrBinOp
+                              cond-var
+                              IrBinEq
+                              tag
+                              (IrValueI64 index)
+                              (AstTyBool)))
+                          (IrInstrBranch
+                            (IrValueVar cond-var)
+                            variant-label
+                            next-label))
+                        variant-label)]
+                    (match variant
+                      [(AstVariantDef _ fields)
+                        (match (lower-capture-snapshot-type-list
+                          ctx
+                          branch-state
+                          env
+                          type-env
+                          src
+                          dst
+                          fields
+                          8)
+                          [(OkLowerState copied-state)
+                            (lower-capture-snapshot-enum-variants
+                              ctx
+                              (lower-state-finish-block
+                                (lower-state-emit
+                                  copied-state
+                                  (IrInstrJump done-label))
+                                next-label)
+                              env
+                              type-env
+                              src
+                              dst
+                              tag
+                              rest
+                              (+ index 1)
+                              done-label)]
+                          [(ErrLowerState message) (ErrLowerState message)])]))])])])]))
+
+(define (lower-capture-snapshot-enum-value
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [value : CompilerIrValue]
+  [enum-name : String]
+  [result-ty : AstType]) : ResultLowerExpr
+  (match ctx
+    [(TcContext program _ _ _)
+      (match (tc-program-enum-variants program enum-name)
+        [(OkAstVariantDefList variants)
+          (match (lower-reserve-heap-storage
+            state
+            (lower-enum-storage-size ctx enum-name)
+            result-ty)
+            [(LowerExpr dst-state dst _)
+              (match (lower-load-at-offset dst-state value 0 (AstTyI64))
+                [(LowerExpr tag-state tag _)
+                  (match (lower-state-fresh-label tag-state "capture_enum_done")
+                    [(LowerLabel done-state done-label)
+                      (match (lower-capture-snapshot-enum-variants
+                        ctx
+                        (lower-store-at-offset done-state dst 0 tag (AstTyI64))
+                        env
+                        type-env
+                        value
+                        dst
+                        tag
+                        variants
+                        0
+                        done-label)
+                        [(OkLowerState final-state)
+                          (OkLowerExpr (LowerExpr final-state dst result-ty))]
+                        [(ErrLowerState message) (ErrLowerExpr message)])])])])]
+        [(ErrAstVariantDefList message)
+          (ErrLowerExpr (lower-diagnostic message))])]))
 
 (define (lower-capture-plan-scan
   [ctx : TcContext]
@@ -2526,15 +2993,16 @@
                 (tc-type-without-regions (tc-resolve-type ctx found-ty))]
               (if (lower-supported-capture-type? ctx capture-ty)
                 (let
+                  [slot-ty : AstType (lower-capture-slot-type capture-ty)]
                   [offset : i64
-                    (lower-align-up cursor (lower-type-align ctx capture-ty))]
+                    (lower-align-up cursor (lower-type-align ctx slot-ty))]
                   (lower-capture-plan-scan
                     ctx
                     rest
                     type-env
                     body
                     bound
-                    (+ offset (lower-type-size ctx capture-ty))
+                    (+ offset (lower-type-size ctx slot-ty))
                     (LowerCaptureCons
                       (LowerCapture name var-id capture-ty offset)
                       captures)
@@ -2562,23 +3030,90 @@
     origin))
 
 (define (lower-store-captures
+  [ctx : TcContext]
   [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
   [env-value : CompilerIrValue]
-  [captures : LowerCaptureList]) : LowerState
+  [captures : LowerCaptureList]) : ResultLowerState
   (match captures
-    [(LowerCaptureNil) state]
+    [(LowerCaptureNil) (OkLowerState state)]
     [(LowerCaptureCons capture rest)
       (match capture
         [(LowerCapture _ var-id capture-ty offset)
-          (lower-store-captures
-            (lower-store-at-offset
-              state
-              env-value
-              offset
-              (IrValueVar var-id)
-              capture-ty)
+          (match (lower-capture-snapshot-value
+            ctx
+            state
+            env
+            type-env
+            (IrValueVar var-id)
+            capture-ty)
+            [(OkLowerExpr snap)
+              (match snap
+                [(LowerExpr snap-state snap-value _)
+                  (lower-store-captures
+                    ctx
+                    (lower-store-at-offset
+                      snap-state
+                      env-value
+                      offset
+                      snap-value
+                      (lower-capture-slot-type capture-ty))
+                    env
+                    type-env
+                    env-value
+                    rest)])]
+            [(ErrLowerExpr message) (ErrLowerState message)])])]))
+
+(define (lower-store-capturing-lambda-descriptor
+  [state : LowerState]
+  [lambda-name : String]
+  [env-value : CompilerIrValue]
+  [expr-ty : AstType]) : LowerExpr
+  (match (lower-reserve-heap-storage state 16 expr-ty)
+    [(LowerExpr desc-state desc-value _)
+      (LowerExpr
+        (lower-store-at-offset
+          (lower-store-at-offset
+            desc-state
+            desc-value
+            0
+            (IrValueGlobalAddr lambda-name)
+            (AstTyU64))
+          desc-value
+          8
+          env-value
+          (AstTyU64))
+        desc-value
+        expr-ty)]))
+
+(define (lower-capturing-lambda-value
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [lambda-name : String]
+  [captures : LowerCaptureList]
+  [capture-size : i64]
+  [expr-ty : AstType]) : ResultLowerExpr
+  (match (lower-reserve-heap-storage state capture-size (AstTyU64))
+    [(LowerExpr env-state env-value _)
+      (match (lower-store-captures
+        ctx
+        env-state
+        env
+        type-env
+        env-value
+        captures)
+        [(OkLowerState captured-state)
+          (match (lower-store-capturing-lambda-descriptor
+            captured-state
+            lambda-name
             env-value
-            rest)])]))
+            expr-ty)
+            [(LowerExpr desc-state desc-value desc-ty)
+              (OkLowerExpr (LowerExpr desc-state desc-value desc-ty))])]
+        [(ErrLowerState message) (ErrLowerExpr message)])]))
 
 (define (lower-load-captures
   [state : LowerState]
@@ -2591,7 +3126,11 @@
     [(LowerCaptureCons capture rest)
       (match capture
         [(LowerCapture name _ capture-ty offset)
-          (match (lower-load-at-offset state env-value offset capture-ty)
+          (match (lower-load-at-offset
+            state
+            env-value
+            offset
+            (lower-capture-slot-type capture-ty))
             [(LowerExpr loaded-state loaded-value _)
               (match loaded-value
                 [(IrValueVar loaded-var)
@@ -2677,34 +3216,6 @@
                 [(ErrLowerState message) (ErrLowerFunction message)]))]
           [(ErrLowerEnv message) (ErrLowerFunction message)])))))
 
-(define (lower-capturing-lambda-value
-  [state : LowerState]
-  [lambda-name : String]
-  [captures : LowerCaptureList]
-  [capture-size : i64]
-  [expr-ty : AstType]) : LowerExpr
-  (match (lower-reserve-heap-storage state capture-size (AstTyU64))
-    [(LowerExpr env-state env-value _)
-      (match (lower-reserve-heap-storage
-        (lower-store-captures env-state env-value captures)
-        16
-        expr-ty)
-        [(LowerExpr desc-state desc-value _)
-          (LowerExpr
-            (lower-store-at-offset
-              (lower-store-at-offset
-                desc-state
-                desc-value
-                0
-                (IrValueGlobalAddr lambda-name)
-                (AstTyU64))
-              desc-value
-              8
-              env-value
-              (AstTyU64))
-            desc-value
-            expr-ty)])]))
-
 (define (lower-lambda-noncapturing
   [ctx : TcContext]
   [state : LowerState]
@@ -2775,16 +3286,23 @@
                     (lower-state-mode named-state))
                     [(OkLowerFunction lambda-functions lambda-spans)
                       (match (lower-capturing-lambda-value
+                        ctx
                         (lower-state-add-functions
                           named-state
                           lambda-functions
                           lambda-spans)
+                        env
+                        type-env
                         lambda-name
                         captures
                         capture-size
                         expr-ty)
-                        [(LowerExpr value-state value value-ty)
-                          (OkLowerExpr (LowerExpr value-state value value-ty))])]
+                        [(OkLowerExpr lowered)
+                          (match lowered
+                            [(LowerExpr value-state value value-ty)
+                              (OkLowerExpr
+                                (LowerExpr value-state value value-ty))])]
+                        [(ErrLowerExpr message) (ErrLowerExpr message)])]
                     [(ErrLowerFunction message) (ErrLowerExpr message)])])])])]))
 
 (define (lower-lambda
@@ -9941,6 +10459,29 @@
       (array-set! a 0 n)
       ((lambda () : i64 (+ (string-length s) (array-ref a 0)))))))")
 
+(define (compiler-lower-capturing-lambda-aggregate-source) : String
+  "(defstruct Point (x i64) (y i64))
+(defenum Shape (Rect i64 i64) (None))
+(define (main) : i64
+  (let
+    [t : (Tuple i64 i64) (tuple 5 99)]
+    [p : Point (Point 7 1)]
+    [a : (Array i64 2) (array 3 10)]
+    [s : Shape (Rect 4 5)]
+    ((lambda
+       ()
+       :
+       i64
+       (+
+         (tuple-ref t 0)
+         (+
+           (struct-get p x)
+           (+
+             (array-ref a 1)
+             (match s
+               [(Rect w h) (* w h)]
+               [(None) 0]))))))))")
+
 (define (compiler-lower-capturing-lambda-shadow-source) : String
   "(define (main) : i64
   (let
@@ -12286,6 +12827,36 @@
               ok))])]
     [(ErrCompilerLower _) false]))
 
+(define (compiler-lower-capturing-lambda-aggregate-shape-ok?) : bool
+  (match (lower-compiler-source
+    (compiler-lower-capturing-lambda-aggregate-source))
+    [(OkCompilerLower program _)
+      (match program
+        [(IrProgram _ functions _)
+          (let
+            [lambda-name : String "__tl_lambda_main_0"]
+            [ok : bool true]
+            (begin
+              (if (= (compiler-ir-function-list-count functions) 2)
+                unit
+                (set! ok false))
+              (if (=
+                (lower-test-function-indirect-call-count functions "main")
+                1)
+                unit
+                (set! ok false))
+              (if (>= (lower-test-functions-call-count functions "tl_alloc") 5)
+                unit
+                (set! ok false))
+              (if (>= (lower-test-function-store-ptr-count functions "main") 8)
+                unit
+                (set! ok false))
+              (if (>= (lower-test-function-load-count functions lambda-name) 4)
+                unit
+                (set! ok false))
+              ok))])]
+    [(ErrCompilerLower _) false]))
+
 (define (compiler-lower-capturing-lambda-shadow-shape-ok?) : bool
   (match (lower-compiler-source (compiler-lower-capturing-lambda-shadow-source))
     [(OkCompilerLower program _)
@@ -12303,7 +12874,9 @@
       (compiler-lower-capturing-lambda-function-value-shape-ok?)
       (and
         (compiler-lower-capturing-lambda-fat-handle-shape-ok?)
-        (compiler-lower-capturing-lambda-shadow-shape-ok?)))))
+        (and
+          (compiler-lower-capturing-lambda-aggregate-shape-ok?)
+          (compiler-lower-capturing-lambda-shadow-shape-ok?))))))
 
 (define (compiler-lower-file-handle-status-shape-ok? [src : String]) : bool
   (match (lower-compiler-source src)

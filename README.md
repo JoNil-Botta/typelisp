@@ -307,12 +307,11 @@ struct field.
 Named top-level functions and `lambda` literals can be passed as pointer-sized
 closure descriptor values. Non-capturing lambdas use static descriptors.
 Capturing lambdas snapshot supported captures into heap environments: scalars,
-function values, `String`, dynamic arrays, tuples/structs/enums (including ones
-with nested aggregate fields, which are recursively deep-copied), and a
-directly-captured scalar fixed array. The aggregate captures snapshot their
-storage onto the heap so the environment can outlive the creating frame.
-Aggregate-element / nested fixed-array captures and mutation of captured names
-are still rejected.
+function values, `String`, dynamic arrays, tuples/structs/enums, and fixed
+arrays, including nested aggregate and fixed-array contents that are recursively
+deep-copied. The aggregate captures snapshot their storage onto the heap so the
+environment can outlive the creating frame. Capturing aggregate-element
+references and mutation of captured names are still rejected.
 SPMD/SIMD `foreach` is documented in [SPEC.md section 5.15](SPEC.md). The
 compiler parses and type-checks the first source form and lowers it to scalar
 reference loops; `--backend-mode avx2` supports a first contiguous map/zip
@@ -573,8 +572,8 @@ x86_64 Linux/Windows backend targets. Integers, floats (`f64`), bool/char/unit,
 `extern`, multi-file modules, scalar `foreach`, and an initial AVX2 `foreach`
 map/zip path all compile to native code. See the
 [project roadmap](https://github.com/JoNil-Botta/typelisp/issues/8) and
-[SPEC.md §8](SPEC.md) for what is not yet supported (aggregate-element /
-nested fixed-array captures, tail calls, tuple/fixed-array by-value returns,
+[SPEC.md §8](SPEC.md) for what is not yet supported (aggregate-element
+reference captures, tail calls, tuple/fixed-array by-value returns,
 `f32` codegen, general GC/free, ownership/borrowing, and later SPMD/SIMD
 reductions/cross-lane work). Raw pointer types and unsafe pointer operations are
 implemented, while C-string/address-of ergonomics remain follow-up FFI work.

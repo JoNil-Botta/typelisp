@@ -3160,7 +3160,7 @@ not the future safe reference/borrow model (#182), not a replacement for
 | Runtime SIMD dispatch (`defdispatch`) | Source semantics specified; parser/typechecker/lowering/backend support pending |
 | Windows region helpers | `tl_region_mark`/`tl_region_reset` are Linux-only |
 | Complete source locations for all semantic errors | Partial |
-| REPL evaluation | Selfhost REPL bare expressions run through scratch build/run execution; public selfhost CLI routing is still tracked separately |
+| REPL evaluation | Selfhost REPL bare expressions run through scratch build/run execution; public selfhost CLI routing is implemented |
 | Package manager | Not implemented |
 | LSP / IDE support | Stdio diagnostics server implemented; richer IDE features pending |
 

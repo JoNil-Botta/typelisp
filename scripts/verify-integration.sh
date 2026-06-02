@@ -239,17 +239,11 @@ EOF
 # former Rust backend handled these, but it has been removed, so these cases are
 # commented out in the manifest and listed here as documented skips until the
 # selfhost compiler closes the gap:
-#   deep-copy aggregate lambda captures #1554/#1656
 #   print-char /
 #   enum-payload pattern / spmd ....... #1657
 #   bare idiv traps need guarded abort  #1654
 selfhost_deferred_integration_skips() {
     cat <<'EOF'
-lambda_capture_fixed_array
-lambda_capture_fixed_array_aggregate
-lambda_capture_nested_aggregate
-lambda_capture_struct_enum
-lambda_capture_tuple
 print_char
 shl_count_width_trap
 shl_neg_count_trap

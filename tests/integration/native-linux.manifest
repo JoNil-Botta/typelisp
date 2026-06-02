@@ -37,12 +37,12 @@ hello|tests/integration/hello.tl|42|-|-|-
 # run-assert deferred (bare idiv trap needs guarded abort, #1654): i16_min_rem_neg1_trap|tests/integration/i16_min_rem_neg1_trap.tl|136|-|-|-
 lambda_aggregate_returns|tests/integration/lambda_aggregate_returns.tl|42|-|-|-
 lambda_capture_aggregate|tests/integration/lambda_capture_aggregate.tl|42|-|-|-
-# run-assert deferred (deep-copy aggregate lambda captures, #1554/#1656): lambda_capture_fixed_array|tests/integration/lambda_capture_fixed_array.tl|42|-|-|-
-# run-assert deferred (deep-copy aggregate lambda captures, #1554/#1656): lambda_capture_fixed_array_aggregate|tests/integration/lambda_capture_fixed_array_aggregate.tl|42|-|-|-
-# run-assert deferred (deep-copy aggregate lambda captures, #1554/#1656): lambda_capture_nested_aggregate|tests/integration/lambda_capture_nested_aggregate.tl|42|-|-|-
+lambda_capture_fixed_array|tests/integration/lambda_capture_fixed_array.tl|42|-|-|-
+lambda_capture_fixed_array_aggregate|tests/integration/lambda_capture_fixed_array_aggregate.tl|42|-|-|-
+lambda_capture_nested_aggregate|tests/integration/lambda_capture_nested_aggregate.tl|42|-|-|-
 lambda_capture_scalar|tests/integration/lambda_capture_scalar.tl|42|-|-|-
-# run-assert deferred (deep-copy aggregate lambda captures, #1554/#1656): lambda_capture_struct_enum|tests/integration/lambda_capture_struct_enum.tl|42|-|-|-
-# run-assert deferred (deep-copy aggregate lambda captures, #1554/#1656): lambda_capture_tuple|tests/integration/lambda_capture_tuple.tl|42|-|-|-
+lambda_capture_struct_enum|tests/integration/lambda_capture_struct_enum.tl|42|-|-|-
+lambda_capture_tuple|tests/integration/lambda_capture_tuple.tl|42|-|-|-
 lambda_lift|tests/integration/lambda_lift.tl|42|-|-|-
 lexer|tests/integration/lexer.tl|12|-|-|-
 many_args|tests/integration/many_args.tl|36|-|-|-

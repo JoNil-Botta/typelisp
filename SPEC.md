@@ -3145,7 +3145,7 @@ not the future safe reference/borrow model (#182), not a replacement for
 | Tuple by-value ABI | Function parameters/returns rejected by backend validation |
 | Fixed-array by-value return | Rejected by backend validation |
 | Tuple/Struct/Enum/String globals | Rejected by backend validation |
-| Aggregate-element / nested fixed-array captures in lambdas | Not implemented (scalars, String, dynamic-array, recursively-nested tuple/struct/enum, and top-level scalar fixed-array captures work; tracked in #435/#571) |
+| Aggregate-element reference captures in lambdas | Not implemented (by-value captures work for scalars, String, dynamic arrays, tuples/structs/enums, and fixed arrays, including nested aggregate/fixed-array contents) |
 | Mutable captures (`set!` to captured names) in lambdas | Not implemented |
 | Tail call optimization | Not implemented |
 | `struct-set!` | Not implemented |

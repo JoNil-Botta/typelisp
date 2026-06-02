@@ -77,6 +77,42 @@
         (substring text i (- len i))
         ""))))
 
+(define (repl-line-ending? [c : char]) : bool
+  (or (= c #\return') (= c #\newline')))
+
+(define (repl-leading-utf8-bom? [text : String]) : bool
+  (if (< (string-length text) 3)
+    false
+    (and
+      (= (cast (string-ref text 0) : i64) 239)
+      (and
+        (= (cast (string-ref text 1) : i64) 187)
+        (= (cast (string-ref text 2) : i64) 191)))))
+
+(define (repl-trim-leading-utf8-bom [text : String]) : String
+  (if (repl-leading-utf8-bom? text)
+    (substring text 3 (- (string-length text) 3))
+    text))
+
+(define (repl-trim-right-line-ending [text : String]) : String
+  (let
+    [len : i64 (string-length text)]
+    [end : i64 (string-length text)]
+    [done : bool false]
+    (begin
+      (while (> len 0)
+        (if done
+          (set! len 0)
+          (if (repl-line-ending? (string-ref text (- len 1)))
+            (begin
+              (set! end (- len 1))
+              (set! len (- len 1)))
+            (set! done true))))
+      (substring text 0 end))))
+
+(define (repl-normalize-input-line [text : String]) : String
+  (repl-trim-right-line-ending (repl-trim-leading-utf8-bom text)))
+
 (define (repl-type-command [line : String]) : ReplTypeCommand
   (if (repl-string-prefix? line ".type")
     (if (= (string-length line) 5)
@@ -608,7 +644,7 @@
         (stderr-write "Error: incomplete REPL input at EOF\n"))
       (let
         [line-read : StdinRead (stdin-read-line)]
-        [line : String (stdin-read-text line-read)]
+        [line : String (repl-normalize-input-line (stdin-read-text line-read))]
         (if (and (string-eq pending "") (string-eq line ".exit"))
           unit
           (match (repl-handle-line session-source pending line)

@@ -659,6 +659,24 @@ assert_contains repl "$WORKDIR/repl.out" ".type <expr>"
 assert_contains repl "$WORKDIR/repl.out" "bool"
 assert_contains repl "$WORKDIR/repl.out" "3"
 
+printf '.help\r\n.exit\r\n' > "$WORKDIR/repl-crlf.in"
+set +e
+"$COMPILER" repl < "$WORKDIR/repl-crlf.in" > "$WORKDIR/repl-crlf.out" 2> "$WORKDIR/repl-crlf.err"
+status=$?
+set -e
+assert_status repl-crlf "$status" 0
+assert_empty repl-crlf "$WORKDIR/repl-crlf.err"
+assert_contains repl-crlf "$WORKDIR/repl-crlf.out" "TypeLisp REPL commands:"
+
+printf '\357\273\277.help\r\n.exit\r\n' > "$WORKDIR/repl-bom-crlf.in"
+set +e
+"$COMPILER" repl < "$WORKDIR/repl-bom-crlf.in" > "$WORKDIR/repl-bom-crlf.out" 2> "$WORKDIR/repl-bom-crlf.err"
+status=$?
+set -e
+assert_status repl-bom-crlf "$status" 0
+assert_empty repl-bom-crlf "$WORKDIR/repl-bom-crlf.err"
+assert_contains repl-bom-crlf "$WORKDIR/repl-bom-crlf.out" "TypeLisp REPL commands:"
+
 set +e
 "$COMPILER" repl unexpected > "$WORKDIR/repl-args.out" 2> "$WORKDIR/repl-args.err"
 status=$?

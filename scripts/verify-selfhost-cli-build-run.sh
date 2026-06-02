@@ -250,6 +250,19 @@ assert_active_cli_surface_command() {
             assert_empty "$label" "$WORKDIR/$label.err"
             assert_contains "$label" "$WORKDIR/$label.out" "Type checking passed!"
             ;;
+        repl)
+            cat > "$WORKDIR/$label.in" <<'EOF'
+.help
+.exit
+EOF
+            set +e
+            "$COMPILER" repl < "$WORKDIR/$label.in" > "$WORKDIR/$label.out" 2> "$WORKDIR/$label.err"
+            status=$?
+            set -e
+            assert_status "$label" "$status" 0
+            assert_empty "$label" "$WORKDIR/$label.err"
+            assert_contains "$label" "$WORKDIR/$label.out" "TypeLisp REPL commands:"
+            ;;
         *)
             fail "active cli surface command has no smoke assertion: $command"
             ;;

@@ -3716,10 +3716,11 @@
           (lower-diagnostic "lower: arena builtin expects one argument"))])))
 
 ;; Lower `(clone x)` (#1633): the canonical deep-copy / arena-escape. A String
-;; copies its buffer via `substring`; a named aggregate (enum/struct) dispatches
-;; to the synthesized `clone$<Name>` helper (see compiler_clone.tl); a scalar is
-;; returned as-is. The first lowering of `arg` is only used to read its type; for
-;; the String path `substring` re-lowers it (the dead copy is removed by DCE).
+;; copies its buffer through `tl_substring`; tuple, fixed-array, and dynamic-
+;; array values allocate fresh storage and recursively clone each element; named
+;; aggregates dispatch to synthesized `clone$<Name>` helpers (compiler_clone.tl)
+;; so recursive enum/struct values recurse at runtime instead of lower time; and
+;; scalar values are returned as-is.
 (define (lower-clone-named
   [state : LowerState]
   [env : SymI64Env]
@@ -3740,28 +3741,475 @@
           (IrValueVar var-id)
           ty))]))
 
+(define (lower-clone-scalar-type? [ty : AstType]) : bool
+  (match ty
+    [(AstTyI64) true]
+    [(AstTyI32) true]
+    [(AstTyI16) true]
+    [(AstTyI8) true]
+    [(AstTyU64) true]
+    [(AstTyU32) true]
+    [(AstTyU16) true]
+    [(AstTyU8) true]
+    [(AstTyF64) true]
+    [(AstTyF32) true]
+    [(AstTyBool) true]
+    [(AstTyChar) true]
+    [(AstTyUnit) true]
+    [(AstTyNever) true]
+    [_ false]))
+
+(define (lower-clone-type-list
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [src : CompilerIrValue]
+  [dst : CompilerIrValue]
+  [types : AstTypeList]
+  [cursor : i64]) : ResultLowerState
+  (match types
+    [(AstTypeNil) (OkLowerState state)]
+    [(AstTypeCons ty rest)
+      (let
+        [resolved : AstType (tc-type-without-regions (tc-resolve-type ctx ty))]
+        (let
+          [offset : i64 (lower-align-up cursor (lower-type-align ctx resolved))]
+          [size : i64 (lower-type-size ctx resolved)]
+          (if (> size 0)
+            (match (lower-load-at-offset state src offset resolved)
+              [(LowerExpr load-state field-value _)
+                (match (lower-clone-dispatch
+                  ctx
+                  load-state
+                  env
+                  type-env
+                  field-value
+                  resolved)
+                  [(OkLowerExpr cloned)
+                    (match cloned
+                      [(LowerExpr clone-state clone-value _)
+                        (lower-clone-type-list
+                          ctx
+                          (lower-store-at-offset
+                            clone-state
+                            dst
+                            offset
+                            clone-value
+                            resolved)
+                          env
+                          type-env
+                          src
+                          dst
+                          rest
+                          (+ offset size))])]
+                  [(ErrLowerExpr message) (ErrLowerState message)])])
+            (lower-clone-type-list
+              ctx
+              state
+              env
+              type-env
+              src
+              dst
+              rest
+              (+ offset size)))))]))
+
+(define (lower-clone-tuple-value
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [value : CompilerIrValue]
+  [elem-tys : AstTypeList]
+  [result-ty : AstType]) : ResultLowerExpr
+  (match (lower-reserve-heap-storage
+    state
+    (lower-type-list-storage-size ctx elem-tys)
+    result-ty)
+    [(LowerExpr dst-state dst _)
+      (match (lower-clone-type-list
+        ctx
+        dst-state
+        env
+        type-env
+        value
+        dst
+        elem-tys
+        0)
+        [(OkLowerState done-state)
+          (OkLowerExpr (LowerExpr done-state dst result-ty))]
+        [(ErrLowerState message) (ErrLowerExpr message)])]))
+
+(define (lower-clone-fixed-array-elems
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [src : CompilerIrValue]
+  [dst : CompilerIrValue]
+  [elem-ty : AstType]
+  [elem-size : i64]
+  [index : i64]
+  [count : i64]) : ResultLowerState
+  (if (>= index count)
+    (OkLowerState state)
+    (let
+      [offset : i64 (* index elem-size)]
+      (if (> elem-size 0)
+        (match (lower-load-at-offset state src offset elem-ty)
+          [(LowerExpr load-state elem-value _)
+            (match (lower-clone-dispatch
+              ctx
+              load-state
+              env
+              type-env
+              elem-value
+              elem-ty)
+              [(OkLowerExpr cloned)
+                (match cloned
+                  [(LowerExpr clone-state clone-value _)
+                    (lower-clone-fixed-array-elems
+                      ctx
+                      (lower-store-at-offset
+                        clone-state
+                        dst
+                        offset
+                        clone-value
+                        elem-ty)
+                      env
+                      type-env
+                      src
+                      dst
+                      elem-ty
+                      elem-size
+                      (+ index 1)
+                      count)])]
+              [(ErrLowerExpr message) (ErrLowerState message)])])
+        (lower-clone-fixed-array-elems
+          ctx
+          state
+          env
+          type-env
+          src
+          dst
+          elem-ty
+          elem-size
+          (+ index 1)
+          count)))))
+
+(define (lower-clone-fixed-array-value
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [value : CompilerIrValue]
+  [elem-ty : AstType]
+  [count : i64]
+  [result-ty : AstType]) : ResultLowerExpr
+  (let
+    [elem-size : i64 (lower-type-size ctx elem-ty)]
+    (match (lower-reserve-heap-storage
+      state
+      (lower-fixed-array-storage-size ctx elem-ty count)
+      result-ty)
+      [(LowerExpr dst-state dst _)
+        (match (lower-clone-fixed-array-elems
+          ctx
+          dst-state
+          env
+          type-env
+          value
+          dst
+          elem-ty
+          elem-size
+          0
+          count)
+          [(OkLowerState done-state)
+            (OkLowerExpr (LowerExpr done-state dst result-ty))]
+          [(ErrLowerState message) (ErrLowerExpr message)])])))
+
+(define (lower-clone-dynarray-advance
+  [state : LowerState]
+  [index-var : i64]
+  [header-label : String]
+  [exit-label : String]) : ResultLowerState
+  (match (lower-state-alloc-var state)
+    [(LowerAlloc inc-alloc inc-var)
+      (OkLowerState
+        (lower-state-finish-block
+          (lower-state-emit
+            (lower-state-emit
+              (lower-state-emit
+                inc-alloc
+                (IrInstrBinOp
+                  inc-var
+                  IrBinAdd
+                  (IrValueVar index-var)
+                  (IrValueI64 1)
+                  (AstTyI64)))
+              (IrInstrMov index-var (IrValueVar inc-var) (AstTyI64)))
+            (IrInstrJump header-label))
+          exit-label))]))
+
+(define (lower-clone-dynarray-store-and-advance
+  [state : LowerState]
+  [new-buf : CompilerIrValue]
+  [index-var : i64]
+  [header-label : String]
+  [exit-label : String]
+  [clone-value : CompilerIrValue]
+  [elem-ty : AstType]) : ResultLowerState
+  (match (lower-emit-gep state new-buf (IrValueVar index-var) elem-ty)
+    [(LowerExpr dst-gep-state dst-ptr _)
+      (lower-clone-dynarray-advance
+        (lower-state-emit
+          dst-gep-state
+          (IrInstrStorePtr dst-ptr clone-value elem-ty))
+        index-var
+        header-label
+        exit-label)]))
+
+(define (lower-clone-dynarray-copy-body
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [old-buf : CompilerIrValue]
+  [new-buf : CompilerIrValue]
+  [index-var : i64]
+  [header-label : String]
+  [exit-label : String]
+  [elem-ty : AstType]) : ResultLowerState
+  (match (lower-emit-gep state old-buf (IrValueVar index-var) elem-ty)
+    [(LowerExpr src-gep-state src-ptr _)
+      (match (lower-emit-load src-gep-state src-ptr elem-ty)
+        [(LowerExpr load-state elem-value _)
+          (match (lower-clone-dispatch
+            ctx
+            load-state
+            env
+            type-env
+            elem-value
+            elem-ty)
+            [(OkLowerExpr cloned)
+              (match cloned
+                [(LowerExpr clone-state clone-value _)
+                  (lower-clone-dynarray-store-and-advance
+                    clone-state
+                    new-buf
+                    index-var
+                    header-label
+                    exit-label
+                    clone-value
+                    elem-ty)])]
+            [(ErrLowerExpr message) (ErrLowerState message)])])]))
+
+(define (lower-clone-dynarray-copy-nonempty
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [old-buf : CompilerIrValue]
+  [new-buf : CompilerIrValue]
+  [len : CompilerIrValue]
+  [elem-ty : AstType]) : ResultLowerState
+  (match (lower-state-fresh-label state "clone_array_header")
+    [(LowerLabel header-label-state header-label)
+      (match (lower-state-fresh-label header-label-state "clone_array_body")
+        [(LowerLabel body-label-state body-label)
+          (match (lower-state-fresh-label body-label-state "clone_array_exit")
+            [(LowerLabel exit-label-state exit-label)
+              (match (lower-state-alloc-var exit-label-state)
+                [(LowerAlloc index-alloc index-var)
+                  (let
+                    [header-start : LowerState
+                      (lower-state-finish-block
+                        (lower-state-emit
+                          (lower-state-emit
+                            index-alloc
+                            (IrInstrMov index-var (IrValueI64 0) (AstTyI64)))
+                          (IrInstrJump header-label))
+                        header-label)]
+                    (match (lower-state-alloc-var header-start)
+                      [(LowerAlloc cond-alloc cond-var)
+                        (let
+                          [body-start : LowerState
+                            (lower-state-finish-block
+                              (lower-state-emit
+                                (lower-state-emit
+                                  cond-alloc
+                                  (IrInstrBinOp
+                                    cond-var
+                                    IrBinLt
+                                    (IrValueVar index-var)
+                                    len
+                                    (AstTyBool)))
+                                (IrInstrBranch
+                                  (IrValueVar cond-var)
+                                  body-label
+                                  exit-label))
+                              body-label)]
+                          (lower-clone-dynarray-copy-body
+                            ctx
+                            body-start
+                            env
+                            type-env
+                            old-buf
+                            new-buf
+                            index-var
+                            header-label
+                            exit-label
+                            elem-ty))]))])])])]))
+
+(define (lower-clone-dynarray-copy-loop
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [old-buf : CompilerIrValue]
+  [new-buf : CompilerIrValue]
+  [len : CompilerIrValue]
+  [elem-ty : AstType]
+  [elem-size : i64]) : ResultLowerState
+  (if (= elem-size 0)
+    (OkLowerState state)
+    (lower-clone-dynarray-copy-nonempty
+      ctx
+      state
+      env
+      type-env
+      old-buf
+      new-buf
+      len
+      elem-ty)))
+
+(define (lower-clone-dynarray-finish
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [old-buf : CompilerIrValue]
+  [len : CompilerIrValue]
+  [elem-ty : AstType]
+  [elem-size : i64]
+  [buf-var : i64]
+  [result-ty : AstType]) : ResultLowerExpr
+  (match (lower-reserve-heap-storage state 16 result-ty)
+    [(LowerExpr arr-state arr-value _)
+      (match (lower-clone-dynarray-copy-loop
+        ctx
+        arr-state
+        env
+        type-env
+        old-buf
+        (IrValueVar buf-var)
+        len
+        elem-ty
+        elem-size)
+        [(OkLowerState copied-state)
+          (OkLowerExpr
+            (LowerExpr
+              (lower-store-at-offset
+                (lower-store-at-offset
+                  copied-state
+                  arr-value
+                  0
+                  (IrValueVar buf-var)
+                  (AstTyU64))
+                arr-value
+                8
+                len
+                (AstTyI64))
+              arr-value
+              result-ty))]
+        [(ErrLowerState message) (ErrLowerExpr message)])]))
+
+(define (lower-clone-dynarray-value
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [value : CompilerIrValue]
+  [elem-ty : AstType]
+  [result-ty : AstType]) : ResultLowerExpr
+  (match (lower-load-at-offset state value 8 (AstTyI64))
+    [(LowerExpr len-state len _)
+      (match (lower-load-at-offset len-state value 0 (AstTyU64))
+        [(LowerExpr ptr-state old-buf _)
+          (let
+            [elem-size : i64 (lower-type-size ctx elem-ty)]
+            (match (if (= elem-size 0)
+              (LowerExpr ptr-state (IrValueI64 1) (AstTyI64))
+              (lower-emit-binop
+                ptr-state
+                IrBinMul
+                len
+                (IrValueI64 elem-size)
+                (AstTyI64)))
+              [(LowerExpr byte-state byte-count _)
+                (match (lower-state-alloc-var byte-state)
+                  [(LowerAlloc buf-alloc buf-var)
+                    (lower-clone-dynarray-finish
+                      ctx
+                      (lower-state-emit
+                        buf-alloc
+                        (IrInstrCall
+                          buf-var
+                          "tl_alloc"
+                          (IrValueCons byte-count IrValueNil)
+                          (AstTyU64)))
+                      env
+                      type-env
+                      old-buf
+                      len
+                      elem-ty
+                      elem-size
+                      buf-var
+                      result-ty)])]))])]))
+
 (define (lower-clone-dispatch
   [ctx : TcContext]
   [state : LowerState]
   [env : SymI64Env]
   [type-env : TcTypeEnv]
-  [arg : AstExpr]
   [value : CompilerIrValue]
   [ty : AstType]) : ResultLowerExpr
-  (match (tc-resolve-type ctx ty)
-    [(AstTyString)
-      (lower-substring
-        ctx
-        state
-        env
-        type-env
-        arg
-        (AstExprLiteral (AstLitInt 0))
-        (AstExprCall (AstExprVar "string-length") (AstExprCons arg AstExprNil)))]
-    [(AstTyEnum name) (lower-clone-named state env name value ty)]
-    [(AstTyStruct name) (lower-clone-named state env name value ty)]
-    [(AstTyVar name) (lower-clone-named state env name value ty)]
-    [_ (OkLowerExpr (LowerExpr state value ty))]))
+  (let
+    [clone-ty : AstType (tc-type-without-regions (tc-resolve-type ctx ty))]
+    (match clone-ty
+      [(AstTyString) (lower-capture-snapshot-string-value state value)]
+      [(AstTyTuple elem-tys)
+        (lower-clone-tuple-value ctx state env type-env value elem-tys clone-ty)]
+      [(AstTyArray elem-ty count)
+        (lower-clone-fixed-array-value
+          ctx
+          state
+          env
+          type-env
+          value
+          (tc-type-without-regions elem-ty)
+          count
+          clone-ty)]
+      [(AstTyDynArray elem-ty)
+        (lower-clone-dynarray-value
+          ctx
+          state
+          env
+          type-env
+          value
+          (tc-type-without-regions elem-ty)
+          clone-ty)]
+      [(AstTyEnum name) (lower-clone-named state env name value clone-ty)]
+      [(AstTyStruct name) (lower-clone-named state env name value clone-ty)]
+      [(AstTyVar name) (lower-clone-named state env name value clone-ty)]
+      [_
+        (if (lower-clone-scalar-type? clone-ty)
+          (OkLowerExpr (LowerExpr state value clone-ty))
+          (ErrLowerExpr
+            (lower-diagnostic
+              (string-append
+                "lower: clone unsupported type "
+                (tc-type-render clone-ty)))))])))
 
 (define (lower-clone-call
   [ctx : TcContext]
@@ -3773,7 +4221,7 @@
     [(OkLowerExpr lowered)
       (match lowered
         [(LowerExpr arg-state arg-value arg-ty)
-          (lower-clone-dispatch ctx arg-state env type-env arg arg-value arg-ty)])]
+          (lower-clone-dispatch ctx arg-state env type-env arg-value arg-ty)])]
     [(ErrLowerExpr message) (ErrLowerExpr message)]))
 
 (define (lower-bootstrap-runtime-builtin? [name : String]) : bool
@@ -10724,6 +11172,43 @@
     [t : (Tuple bool i64) (tuple true 42)]
     (tuple-ref t 1)))")
 
+(define (compiler-lower-clone-source) : String
+  "(defstruct Holder
+  (name String)
+  (fixed (Array String 2))
+  (items (Array String))
+  (pair (Tuple String String)))
+(defenum StringList
+  (SNil)
+  (SCons String StringList))
+(define (clone-tuple [items : (Array String)]) : (Tuple String (Array String))
+  (clone (tuple \"tuple\" items)))
+(define (clone-fixed) : (Array String 2)
+  (clone (array \"left\" \"right\")))
+(define (clone-dyn [items : (Array String)]) : (Array String)
+  (clone items))
+(define (clone-holder [items : (Array String)]) : Holder
+  (clone (Holder \"holder\" (array \"x\" \"y\") items (tuple \"p\" \"q\"))))
+(define (clone-list [list : StringList]) : StringList
+  (clone list))
+(define (main [n : i64] [list : StringList]) : i64
+  (let
+    [items1 : (Array String) (make-array String n)]
+    [items2 : (Array String) (make-array String n)]
+    [items3 : (Array String) (make-array String n)]
+    (begin
+      (clone-tuple items1)
+      (clone-dyn items2)
+      (clone-holder items3)
+      (clone-fixed)
+      (clone-list list)
+      0)))")
+
+(define (compiler-lower-clone-unsupported-source) : String
+  "(define (inc [x : i64]) : i64 (+ x 1))
+(define (main) : (-> i64 i64)
+  (clone inc))")
+
 ;; `main` must lower with both element stores (bool + i64 each written into the
 ;; aggregate) and a load for the `tuple-ref`.
 (define (compiler-lower-tuple-shape-ok?) : bool
@@ -10735,6 +11220,102 @@
             (>= (lower-test-function-store-ptr-count functions "main") 2)
             (>= (lower-test-function-load-count functions "main") 1))])]
     [(ErrCompilerLower _) false]))
+
+(define (compiler-lower-clone-shape-ok?) : bool
+  (match (parse-ast-source (compiler-lower-clone-source))
+    [(OkAstProgram ast)
+      (match (lower-compiler-program-with-decl-paths
+        "<source>"
+        ast
+        AstDeclPathNil)
+        [(OkCompilerLower program _)
+          (match program
+            [(IrProgram _ functions _)
+              (let
+                [ok : bool true]
+                (begin
+                  (if (>
+                    (lower-test-function-call-count
+                      functions
+                      "<source>::clone-tuple"
+                      "tl_substring")
+                    0)
+                    unit
+                    (set! ok false))
+                  (if (>
+                    (lower-test-function-call-count
+                      functions
+                      "<source>::clone-tuple"
+                      "tl_alloc")
+                    0)
+                    unit
+                    (set! ok false))
+                  (if (>
+                    (lower-test-function-call-count
+                      functions
+                      "<source>::clone-fixed"
+                      "tl_substring")
+                    1)
+                    unit
+                    (set! ok false))
+                  (if (>
+                    (lower-test-function-call-count
+                      functions
+                      "<source>::clone-dyn"
+                      "tl_alloc")
+                    1)
+                    unit
+                    (set! ok false))
+                  (if (>
+                    (lower-test-function-branch-count
+                      functions
+                      "<source>::clone-dyn")
+                    0)
+                    unit
+                    (set! ok false))
+                  (if (=
+                    (lower-test-function-call-count
+                      functions
+                      "<source>::clone-holder"
+                      "<source>::clone$Holder")
+                    1)
+                    unit
+                    (set! ok false))
+                  (if (=
+                    (lower-test-function-call-count
+                      functions
+                      "<source>::clone-list"
+                      "<source>::clone$StringList")
+                    1)
+                    unit
+                    (set! ok false))
+                  (if (>
+                    (lower-test-function-call-count
+                      functions
+                      "<source>::clone$Holder"
+                      "tl_substring")
+                    0)
+                    unit
+                    (set! ok false))
+                  (if (>
+                    (lower-test-function-call-count
+                      functions
+                      "<source>::clone$Holder"
+                      "tl_alloc")
+                    0)
+                    unit
+                    (set! ok false))
+                  (if (>
+                    (lower-test-function-call-count
+                      functions
+                      "<source>::clone$StringList$acc"
+                      "tl_substring")
+                    0)
+                    unit
+                    (set! ok false))
+                  ok))])]
+        [(ErrCompilerLower _) false])]
+    [(ErrAstProgram _) false]))
 
 (define (compiler-lower-comptime-decl-source) : String
   "(comptime-decl (defstruct Point (x i64) (y i64)))
@@ -13519,6 +14100,14 @@
         unit
         (set! ok false))
       (if (compiler-lower-tuple-shape-ok?)
+        unit
+        (set! ok false))
+      (if (compiler-lower-clone-shape-ok?)
+        unit
+        (set! ok false))
+      (if (compiler-lower-error-ok?
+        (compiler-lower-clone-unsupported-source)
+        "typecheck: clone unsupported type (-> i64 i64)")
         unit
         (set! ok false))
       (if (compiler-lower-ok? (compiler-lower-comptime-decl-source))

@@ -7,6 +7,7 @@ aggregate_globals|tests/integration/aggregate_globals.tl|42|-|-|-
 argv|tests/integration/argv.tl|7|alpha\n|alpha beta|-
 arithmetic|tests/integration/arithmetic.tl|47|-|-|-
 calc|tests/integration/calc.tl|14|-|-|token.tl
+clone_deep_copy|tests/integration/clone_deep_copy.tl|42|-|-|-|requires-stage0-symbol:_tl_clone_u24Bundle
 tl_emit|selfhost/emit.tl|0|@tests/golden/tl_emit_program.s|-|emit_core.tl ast_types.tl sym_i64_env.tl
 # run-assert deferred (selfhost parity follow-up #1654/#1655/#1656/#1657): tl_ast|selfhost/ast.tl|173|-|-|ast_types.tl read.tl lex.tl token.tl
 tl_lexer|selfhost/lexer.tl|19|-|-|lex.tl token.tl

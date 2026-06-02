@@ -14,6 +14,8 @@
 ;;   hippo
 ;;   abx
 ;; Exit code: 42
+(import "stdlib/io.tl")
+
 (import "stdlib/string.tl")
 
 (define (main) : i64

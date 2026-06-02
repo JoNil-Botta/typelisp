@@ -1,4 +1,6 @@
 ;; compiler_check_core.tl - Shared selfhost check/typecheck helpers (#723).
+(import "../stdlib/io.tl")
+
 (import "compiler_load.tl")
 
 (import "compiler_typecheck.tl")

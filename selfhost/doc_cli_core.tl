@@ -7,6 +7,8 @@
 ;;   typelisp run selfhost/doc.tl -- --html entry.tl imported.tl output.html
 ;;   typelisp run selfhost/doc.tl -- --test input.tl
 ;;   typelisp run selfhost/doc.tl -- --load input.tl output.md [--stdlib-root <dir>...]
+(import "../stdlib/io.tl")
+
 (import "doc_render.tl")
 
 (import "doc_html.tl")

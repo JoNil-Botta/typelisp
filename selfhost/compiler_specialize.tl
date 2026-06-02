@@ -1,4 +1,6 @@
 ;; compiler_specialize.tl - Selfhost comptime function specialization (#832).
+(import "../stdlib/io.tl")
+
 (import "compiler_ctfe.tl")
 
 (import "compiler_diagnostic.tl")

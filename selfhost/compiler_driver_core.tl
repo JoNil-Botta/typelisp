@@ -1,4 +1,6 @@
 ;; compiler_driver_core.tl - Import-aware selfhost compiler driver helpers.
+(import "../stdlib/io.tl")
+
 (import "compiler_backend.tl")
 
 (import "compiler_diagnostic.tl")
@@ -16,6 +18,25 @@
     [(BackendModeAvx2) (CompilerLowerAvx2)]
     [(BackendModeAvx512) (CompilerLowerAvx512)]
     [_ (CompilerLowerScalar)]))
+
+(define (compiler-driver-enable-linux-cfgs [cfgs : SymI64Env]) : SymI64Env
+  (compiler-cfg-enable
+    (compiler-cfg-enable
+      (compiler-cfg-enable (compiler-cfg-enable cfgs "linux") "unix")
+      "target-linux")
+    "os-linux"))
+
+(define (compiler-driver-enable-windows-cfgs [cfgs : SymI64Env]) : SymI64Env
+  (compiler-cfg-enable
+    (compiler-cfg-enable (compiler-cfg-enable cfgs "windows") "target-windows")
+    "os-windows"))
+
+(define (compiler-driver-target-cfgs
+  [target : CompilerBackendTarget]
+  [cfgs : SymI64Env]) : SymI64Env
+  (match target
+    [(BackendTargetLinux) (compiler-driver-enable-linux-cfgs cfgs)]
+    [(BackendTargetWindows) (compiler-driver-enable-windows-cfgs cfgs)]))
 
 (define (compiler-driver-emit-lowered
   [input-path : String]
@@ -157,7 +178,7 @@
     input-path
     (sym-i64-empty)
     stdlib-roots
-    cfgs)
+    (compiler-driver-target-cfgs target cfgs))
     [(OkCompilerLoadWithPaths decls paths _ _)
       (match (lower-compiler-program-with-decl-paths-mode
         input-path
@@ -189,12 +210,13 @@
   [manifest-dir : String]
   [deps : CompilerPkgDepList]
   [emit-entry : bool]) : ResultCompilerDriver
-  (match (compiler-load-package-file-with-paths-and-roots
+  (match (compiler-load-package-file-with-paths-and-roots-cfg
     input-path
     (sym-i64-empty)
     stdlib-roots
     manifest-dir
-    deps)
+    deps
+    (compiler-driver-target-cfgs target (compiler-cfg-empty)))
     [(OkCompilerLoadWithPaths decls paths _ _)
       (match (lower-compiler-program-with-decl-paths
         input-path
@@ -333,7 +355,7 @@
     input-path
     (sym-i64-empty)
     stdlib-roots
-    cfgs)
+    (compiler-driver-target-cfgs (BackendTargetLinux) cfgs))
     [(OkCompilerLoadWithPaths decls paths _ _)
       (match (lower-compiler-program-with-decl-paths
         input-path

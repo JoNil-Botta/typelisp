@@ -3,6 +3,8 @@
 ;; The formatter CLI logic, factored out of `format.tl` so both the standalone
 ;; `format.tl` driver and the unified `cli.tl` dispatcher can run the `fmt`
 ;; command without duplicating a `main`.
+(import "../stdlib/io.tl")
+
 (import "format_rules.tl")
 
 (define (fmt-format-file [check : bool] [path : String]) : i64

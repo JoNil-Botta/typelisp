@@ -20,6 +20,8 @@
 ;# inside one. No borrow-typed `str` API is exposed yet because the owned
 ;# `String` / borrowed `str` split is still tracked by #807.
 ;: Reversed chunk list. Each cons node is allocated in the active arena.
+(import "io.tl")
+
 (defenum TextBufChunkList
   (TextBufChunkNil)
   (TextBufChunkCons String TextBufChunkList))

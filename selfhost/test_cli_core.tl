@@ -4,6 +4,8 @@
 ;; lowers them into private unit-returning functions plus a generated `main`,
 ;; then assembles, links, and runs that generated harness directly. Normal
 ;; compile paths ignore `AstDeclTest`.
+(import "../stdlib/io.tl")
+
 (import "build_run_core.tl")
 
 (import "compiler_backend.tl")
@@ -868,32 +870,39 @@
 (define (tltest-run-config [config : TestConfig]) : i64
   (match config
     [(TestConfig source target mode roots opt-level test-mode)
-      (match (compiler-load-file-with-paths-and-roots
-        source
-        (sym-i64-empty)
-        roots)
-        [(OkCompilerLoadWithPaths decls paths _ _)
-          (match (tltest-build-harness source decls paths)
-            [(InlineHarness program harness-paths count)
-              (if (= count 0)
-                (match test-mode
-                  [(TestModeCheck) (tltest-no-tests-check decls paths)]
-                  [(TestModeRun)
-                    (tltest-no-tests-run source target mode opt-level)])
-                (match test-mode
-                  [(TestModeCheck)
-                    (tltest-check-only program harness-paths count)]
-                  [(TestModeRun)
-                    (tltest-run-direct
-                      source
-                      program
-                      harness-paths
-                      target
-                      opt-level)]))])]
-        [(ErrCompilerLoadWithPaths diag)
+      (match (source-tool-target target)
+        [(ErrSourceToolTarget _)
           (begin
-            (print-error (compiler-diagnostic-render diag))
-            1)])]))
+            (print-error (tltest-unknown-target target))
+            1)]
+        [(OkSourceToolTarget backend-target)
+          (match (compiler-load-file-with-paths-and-roots-cfg
+            source
+            (sym-i64-empty)
+            roots
+            (compiler-driver-target-cfgs backend-target (compiler-cfg-empty)))
+            [(OkCompilerLoadWithPaths decls paths _ _)
+              (match (tltest-build-harness source decls paths)
+                [(InlineHarness program harness-paths count)
+                  (if (= count 0)
+                    (match test-mode
+                      [(TestModeCheck) (tltest-no-tests-check decls paths)]
+                      [(TestModeRun)
+                        (tltest-no-tests-run source target mode opt-level)])
+                    (match test-mode
+                      [(TestModeCheck)
+                        (tltest-check-only program harness-paths count)]
+                      [(TestModeRun)
+                        (tltest-run-direct
+                          source
+                          program
+                          harness-paths
+                          target
+                          opt-level)]))])]
+            [(ErrCompilerLoadWithPaths diag)
+              (begin
+                (print-error (compiler-diagnostic-render diag))
+                1)])])]))
 
 ;; Run the `test` command over arguments starting at `start`.
 (define (tltest-run-from [start : i64] [count : i64]) : i64

@@ -1,4 +1,6 @@
 ;; frontend_tools_core.tl - Reusable selfhost tokenize/parse helpers (#796).
+(import "../stdlib/io.tl")
+
 (import "lex.tl")
 
 (import "compiler_parse_core.tl")

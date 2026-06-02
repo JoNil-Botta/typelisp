@@ -1,4 +1,6 @@
 ;; compiler_backend.tl - First selfhost CompilerIrProgram -> x86_64 .s emitter (#447).
+(import "../stdlib/io.tl")
+
 (import "compiler_lower.tl")
 
 (import "compiler_diagnostic.tl")
@@ -1417,9 +1419,16 @@
   (string-append ".L_tl_fn_entry_" (compiler-backend-asm-safe-symbol name)))
 
 (define (compiler-backend-runtime-user-symbol? [name : String]) : bool
-  (or
-    (string-eq name "env-var-exists?")
-    (or (string-eq name "env-var-value") (string-eq name "env-path-separator"))))
+  (string-eq name "env-path-separator"))
+
+(define (compiler-backend-link-symbol
+  [name : String]
+  [plan : CompilerBackendRuntimePlan]) : String
+  (if (compiler-backend-plan-provides? plan name)
+    (if (compiler-backend-runtime-user-symbol? name)
+      (compiler-backend-user-symbol name)
+      name)
+    (compiler-backend-asm-safe-symbol name)))
 
 (define (compiler-backend-call-symbol
   [name : String]
@@ -1438,7 +1447,7 @@
         (if (compiler-backend-runtime-user-symbol? name)
           (compiler-backend-user-symbol name)
           name)
-        (compiler-backend-asm-safe-symbol link-symbol)))
+        (compiler-backend-link-symbol link-symbol plan)))
     (if (and
       (compiler-backend-plan-provides? plan name)
       (not (compiler-backend-function-list-defines? functions name)))
@@ -8406,10 +8415,18 @@
     [(IrExternNil) false]
     [(IrExternCons item rest)
       (match item
-        [(IrExtern extern-name _ _ _ _)
-          (if (string-eq extern-name name)
+        [(IrExtern extern-name _ _ link-symbol _)
+          (if (or (string-eq extern-name name) (string-eq link-symbol name))
             true
             (compiler-backend-extern-list-references? rest name))])]))
+
+(define (compiler-backend-extern-list-references-alias?
+  [externs : CompilerIrExternList]
+  [canonical : String]
+  [alias : String]) : bool
+  (or
+    (compiler-backend-extern-list-references? externs canonical)
+    (compiler-backend-extern-list-references? externs alias)))
 
 (define (compiler-backend-extern-list-link-symbol
   [externs : CompilerIrExternList]
@@ -8472,6 +8489,13 @@
   [enabled : bool]) : bool
   (and (string-eq name candidate) enabled))
 
+(define (compiler-backend-provides-runtime-alias?
+  [name : String]
+  [canonical : String]
+  [alias : String]
+  [enabled : bool]) : bool
+  (and enabled (or (string-eq name canonical) (string-eq name alias))))
+
 (define (compiler-backend-plan-provides-tail?
   [name : String]
   [read-bytes : bool]
@@ -8485,14 +8509,20 @@
   [env-path-separator : bool]) : bool
   (or
     (backend-or4
-      (compiler-backend-provides-runtime-name?
+      (compiler-backend-provides-runtime-alias?
         name
         ".L_tl_read_stdin_bytes"
+        "tl_read_stdin_bytes"
         read-bytes)
-      (compiler-backend-provides-runtime-name? name ".L_tl_stdin_eof" stdin-eof)
-      (compiler-backend-provides-runtime-name?
+      (compiler-backend-provides-runtime-alias?
+        name
+        ".L_tl_stdin_eof"
+        "tl_stdin_eof"
+        stdin-eof)
+      (compiler-backend-provides-runtime-alias?
         name
         ".L_tl_flush_stdout"
+        "tl_flush_stdout"
         flush-stdout)
       (compiler-backend-provides-runtime-name?
         name
@@ -8510,11 +8540,11 @@
           windows-setup-instances)
         (compiler-backend-provides-runtime-name?
           name
-          "env-var-exists?"
+          "tl_env_var_exists"
           env-var-exists)
         (compiler-backend-provides-runtime-name?
           name
-          "env-var-value"
+          "tl_env_var_value"
           env-var-value)
         (compiler-backend-provides-runtime-name?
           name
@@ -8533,7 +8563,17 @@
       (string-eq name "tl_arena_current")
       (string-eq name "tl_arena_set")
       (string-eq name "tl_arena_destroy"))
-    (compiler-backend-plan-provides-rest? plan name)))
+    (or
+      (backend-or8
+        (string-eq name "tl_cpuid_eax")
+        (string-eq name "tl_cpuid_ebx")
+        (string-eq name "tl_cpuid_ecx")
+        (string-eq name "tl_cpuid_edx")
+        (string-eq name "tl_xgetbv")
+        false
+        false
+        false)
+      (compiler-backend-plan-provides-rest? plan name))))
 
 (define (compiler-backend-plan-provides-rest?
   [plan : CompilerBackendRuntimePlan]
@@ -8609,39 +8649,47 @@
               name
               "tl_int_to_string"
               provides-int-to-string)
-            (compiler-backend-provides-runtime-name?
+            (compiler-backend-provides-runtime-alias?
               name
               ".L_tl_abort"
+              "tl_abort_string"
               provides-abort)
-            (compiler-backend-provides-runtime-name?
+            (compiler-backend-provides-runtime-alias?
               name
               "tl_print_err"
+              "tl_print_error"
               provides-print-err)
-            (compiler-backend-provides-runtime-name?
+            (compiler-backend-provides-runtime-alias?
               name
               ".L_tl_arg_count"
+              "tl_arg_count"
               provides-arg-count)
-            (compiler-backend-provides-runtime-name?
+            (compiler-backend-provides-runtime-alias?
               name
               ".L_tl_arg"
+              "tl_arg"
               provides-arg)
-            (compiler-backend-provides-runtime-name?
+            (compiler-backend-provides-runtime-alias?
               name
               ".L_tl_read_file"
+              "tl_read_file"
               provides-read-file)
-            (compiler-backend-provides-runtime-name?
+            (compiler-backend-provides-runtime-alias?
               name
               ".L_tl_write_file"
+              "tl_write_file"
               provides-write-file)
-            (compiler-backend-provides-runtime-name?
+            (compiler-backend-provides-runtime-alias?
               name
               ".L_tl_file_exists"
+              "tl_file_exists"
               provides-file-exists))
           (or
             (backend-or4
-              (compiler-backend-provides-runtime-name?
+              (compiler-backend-provides-runtime-alias?
                 name
                 "tl_print_str"
+                "tl_print_string"
                 provides-print-str)
               (compiler-backend-provides-runtime-name?
                 name
@@ -8658,95 +8706,115 @@
                   name
                   "tl_process_output"
                   provides-process-output)
-                (compiler-backend-provides-runtime-name?
+                (compiler-backend-provides-runtime-alias?
                   name
                   ".L_tl_read_file_status"
+                  "tl_read_file_status"
                   provides-read-file)
-                (compiler-backend-provides-runtime-name?
+                (compiler-backend-provides-runtime-alias?
                   name
                   ".L_tl_write_file_status"
+                  "tl_write_file_status"
                   provides-write-file)
-                (compiler-backend-provides-runtime-name?
+                (compiler-backend-provides-runtime-alias?
                   name
                   ".L_tl_append_file_status"
+                  "tl_append_file_status"
                   provides-write-file)
-                (compiler-backend-provides-runtime-name?
+                (compiler-backend-provides-runtime-alias?
                   name
                   ".L_tl_file_exists_status"
+                  "tl_file_exists_status"
                   provides-file-exists)
-                (compiler-backend-provides-runtime-name?
+                (compiler-backend-provides-runtime-alias?
                   name
                   ".L_tl_file_open_status"
+                  "tl_file_open_status"
                   provides-file-handle)
-                (compiler-backend-provides-runtime-name?
+                (compiler-backend-provides-runtime-alias?
                   name
                   ".L_tl_file_close_status"
+                  "tl_file_close_status"
                   provides-file-handle)
-                (compiler-backend-provides-runtime-name?
+                (compiler-backend-provides-runtime-alias?
                   name
                   ".L_tl_file_read_chunk_status"
+                  "tl_file_read_chunk_status"
                   provides-file-read-chunk))
               (or
                 (backend-or4
-                  (compiler-backend-provides-runtime-name?
+                  (compiler-backend-provides-runtime-alias?
                     name
                     ".L_tl_file_write_status"
+                    "tl_file_write_status"
                     provides-file-handle)
-                  (compiler-backend-provides-runtime-name?
+                  (compiler-backend-provides-runtime-alias?
                     name
                     ".L_tl_file_flush_status"
+                    "tl_file_flush_status"
                     provides-file-handle)
-                  (compiler-backend-provides-runtime-name?
+                  (compiler-backend-provides-runtime-alias?
                     name
                     ".L_tl_file_read_chunk_bytes"
+                    "tl_file_read_chunk_bytes"
                     provides-file-read-chunk)
-                  (compiler-backend-provides-runtime-name?
+                  (compiler-backend-provides-runtime-alias?
                     name
                     ".L_tl_file_read_chunk_eof"
+                    "tl_file_read_chunk_eof"
                     provides-file-read-chunk))
                 (or
                   (backend-or8
-                    (compiler-backend-provides-runtime-name?
+                    (compiler-backend-provides-runtime-alias?
                       name
                       ".L_tl_fs_mkdir_status"
+                      "tl_fs_mkdir_status"
                       provides-fs)
-                    (compiler-backend-provides-runtime-name?
+                    (compiler-backend-provides-runtime-alias?
                       name
                       ".L_tl_fs_remove_file_status"
+                      "tl_fs_remove_file_status"
                       provides-fs)
-                    (compiler-backend-provides-runtime-name?
+                    (compiler-backend-provides-runtime-alias?
                       name
                       ".L_tl_fs_remove_dir_status"
+                      "tl_fs_remove_dir_status"
                       provides-fs)
-                    (compiler-backend-provides-runtime-name?
+                    (compiler-backend-provides-runtime-alias?
                       name
                       ".L_tl_fs_rename_status"
+                      "tl_fs_rename_status"
                       provides-fs)
-                    (compiler-backend-provides-runtime-name?
+                    (compiler-backend-provides-runtime-alias?
                       name
                       ".L_tl_fs_process_id"
+                      "tl_fs_process_id"
                       provides-fs)
                     false
                     false
                     false)
                   (or
-                    (compiler-backend-provides-runtime-name?
+                    (compiler-backend-provides-runtime-alias?
                       name
                       ".L_tl_read_stdin_line"
+                      "tl_read_stdin_line"
                       read-line)
                     (or
                       (backend-or4
-                        (compiler-backend-provides-runtime-name?
+                        (compiler-backend-provides-runtime-alias?
                           name
                           ".L_tl_read_stdin_bytes"
+                          "tl_read_stdin_bytes"
                           read-bytes)
-                        (compiler-backend-provides-runtime-name?
+                        (compiler-backend-provides-runtime-alias?
                           name
                           ".L_tl_stdin_eof"
+                          "tl_stdin_eof"
                           stdin-eof)
-                        (compiler-backend-provides-runtime-name?
+                        (compiler-backend-provides-runtime-alias?
                           name
                           ".L_tl_flush_stdout"
+                          "tl_flush_stdout"
                           flush-stdout)
                         (compiler-backend-provides-runtime-name?
                           name
@@ -8825,9 +8893,9 @@
         functions
         "tl_windows_sdk_registry_install")]
     [defines-env-var-exists : bool
-      (compiler-backend-function-list-defines? functions "env-var-exists?")]
+      (compiler-backend-function-list-defines? functions "tl_env_var_exists")]
     [defines-env-var-value : bool
-      (compiler-backend-function-list-defines? functions "env-var-value")]
+      (compiler-backend-function-list-defines? functions "tl_env_var_value")]
     [defines-env-path-separator : bool
       (compiler-backend-function-list-defines? functions "env-path-separator")]
     [extern-alloc : bool
@@ -8849,95 +8917,149 @@
     [extern-int-to-string : bool
       (compiler-backend-extern-list-references? externs "tl_int_to_string")]
     [extern-abort : bool
-      (compiler-backend-extern-list-references? externs ".L_tl_abort")]
+      (compiler-backend-extern-list-references-alias?
+        externs
+        ".L_tl_abort"
+        "tl_abort_string")]
     [extern-print-err : bool
-      (compiler-backend-extern-list-references? externs "tl_print_err")]
+      (compiler-backend-extern-list-references-alias?
+        externs
+        "tl_print_err"
+        "tl_print_error")]
     [extern-print-str : bool
-      (compiler-backend-extern-list-references? externs "tl_print_str")]
+      (compiler-backend-extern-list-references-alias?
+        externs
+        "tl_print_str"
+        "tl_print_string")]
     [extern-print-char : bool
       (compiler-backend-extern-list-references? externs "tl_print_char")]
     [extern-print-f64 : bool
       (compiler-backend-extern-list-references? externs "tl_print_f64")]
     [extern-arg-count : bool
-      (compiler-backend-extern-list-references? externs ".L_tl_arg_count")]
+      (compiler-backend-extern-list-references-alias?
+        externs
+        ".L_tl_arg_count"
+        "tl_arg_count")]
     [extern-arg : bool
-      (compiler-backend-extern-list-references? externs ".L_tl_arg")]
+      (compiler-backend-extern-list-references-alias?
+        externs
+        ".L_tl_arg"
+        "tl_arg")]
     [extern-read-file : bool
-      (compiler-backend-extern-list-references? externs ".L_tl_read_file")]
+      (compiler-backend-extern-list-references-alias?
+        externs
+        ".L_tl_read_file"
+        "tl_read_file")]
     [extern-write-file : bool
-      (compiler-backend-extern-list-references? externs ".L_tl_write_file")]
+      (compiler-backend-extern-list-references-alias?
+        externs
+        ".L_tl_write_file"
+        "tl_write_file")]
     [extern-file-exists : bool
-      (compiler-backend-extern-list-references? externs ".L_tl_file_exists")]
+      (compiler-backend-extern-list-references-alias?
+        externs
+        ".L_tl_file_exists"
+        "tl_file_exists")]
     [extern-read-file-status : bool
-      (compiler-backend-extern-list-references?
+      (compiler-backend-extern-list-references-alias?
         externs
-        ".L_tl_read_file_status")]
+        ".L_tl_read_file_status"
+        "tl_read_file_status")]
     [extern-write-file-status : bool
-      (compiler-backend-extern-list-references?
+      (compiler-backend-extern-list-references-alias?
         externs
-        ".L_tl_write_file_status")]
+        ".L_tl_write_file_status"
+        "tl_write_file_status")]
     [extern-append-file-status : bool
-      (compiler-backend-extern-list-references?
+      (compiler-backend-extern-list-references-alias?
         externs
-        ".L_tl_append_file_status")]
+        ".L_tl_append_file_status"
+        "tl_append_file_status")]
     [extern-file-exists-status : bool
-      (compiler-backend-extern-list-references?
+      (compiler-backend-extern-list-references-alias?
         externs
-        ".L_tl_file_exists_status")]
+        ".L_tl_file_exists_status"
+        "tl_file_exists_status")]
     [extern-file-open-status : bool
-      (compiler-backend-extern-list-references?
+      (compiler-backend-extern-list-references-alias?
         externs
-        ".L_tl_file_open_status")]
+        ".L_tl_file_open_status"
+        "tl_file_open_status")]
     [extern-file-close-status : bool
-      (compiler-backend-extern-list-references?
+      (compiler-backend-extern-list-references-alias?
         externs
-        ".L_tl_file_close_status")]
+        ".L_tl_file_close_status"
+        "tl_file_close_status")]
     [extern-file-read-chunk-status : bool
-      (compiler-backend-extern-list-references?
+      (compiler-backend-extern-list-references-alias?
         externs
-        ".L_tl_file_read_chunk_status")]
+        ".L_tl_file_read_chunk_status"
+        "tl_file_read_chunk_status")]
     [extern-file-write-status : bool
-      (compiler-backend-extern-list-references?
+      (compiler-backend-extern-list-references-alias?
         externs
-        ".L_tl_file_write_status")]
+        ".L_tl_file_write_status"
+        "tl_file_write_status")]
     [extern-file-flush-status : bool
-      (compiler-backend-extern-list-references?
+      (compiler-backend-extern-list-references-alias?
         externs
-        ".L_tl_file_flush_status")]
+        ".L_tl_file_flush_status"
+        "tl_file_flush_status")]
     [extern-file-read-chunk-bytes : bool
-      (compiler-backend-extern-list-references?
+      (compiler-backend-extern-list-references-alias?
         externs
-        ".L_tl_file_read_chunk_bytes")]
+        ".L_tl_file_read_chunk_bytes"
+        "tl_file_read_chunk_bytes")]
     [extern-file-read-chunk-eof : bool
-      (compiler-backend-extern-list-references?
+      (compiler-backend-extern-list-references-alias?
         externs
-        ".L_tl_file_read_chunk_eof")]
+        ".L_tl_file_read_chunk_eof"
+        "tl_file_read_chunk_eof")]
     [extern-fs-mkdir-status : bool
-      (compiler-backend-extern-list-references? externs ".L_tl_fs_mkdir_status")]
+      (compiler-backend-extern-list-references-alias?
+        externs
+        ".L_tl_fs_mkdir_status"
+        "tl_fs_mkdir_status")]
     [extern-fs-remove-file-status : bool
-      (compiler-backend-extern-list-references?
+      (compiler-backend-extern-list-references-alias?
         externs
-        ".L_tl_fs_remove_file_status")]
+        ".L_tl_fs_remove_file_status"
+        "tl_fs_remove_file_status")]
     [extern-fs-remove-dir-status : bool
-      (compiler-backend-extern-list-references?
+      (compiler-backend-extern-list-references-alias?
         externs
-        ".L_tl_fs_remove_dir_status")]
+        ".L_tl_fs_remove_dir_status"
+        "tl_fs_remove_dir_status")]
     [extern-fs-rename-status : bool
-      (compiler-backend-extern-list-references?
+      (compiler-backend-extern-list-references-alias?
         externs
-        ".L_tl_fs_rename_status")]
+        ".L_tl_fs_rename_status"
+        "tl_fs_rename_status")]
     [extern-fs-process-id : bool
-      (compiler-backend-extern-list-references? externs ".L_tl_fs_process_id")]
-    [extern-read-line : bool
-      (compiler-backend-extern-list-references? externs ".L_tl_read_stdin_line")]
-    [extern-read-bytes : bool
-      (compiler-backend-extern-list-references?
+      (compiler-backend-extern-list-references-alias?
         externs
-        ".L_tl_read_stdin_bytes")]
+        ".L_tl_fs_process_id"
+        "tl_fs_process_id")]
+    [extern-read-line : bool
+      (compiler-backend-extern-list-references-alias?
+        externs
+        ".L_tl_read_stdin_line"
+        "tl_read_stdin_line")]
+    [extern-read-bytes : bool
+      (compiler-backend-extern-list-references-alias?
+        externs
+        ".L_tl_read_stdin_bytes"
+        "tl_read_stdin_bytes")]
     [extern-stdin-eof : bool
-      (compiler-backend-extern-list-references? externs ".L_tl_stdin_eof")]
+      (compiler-backend-extern-list-references-alias?
+        externs
+        ".L_tl_stdin_eof"
+        "tl_stdin_eof")]
     [extern-flush-stdout : bool
-      (compiler-backend-extern-list-references? externs ".L_tl_flush_stdout")]
+      (compiler-backend-extern-list-references-alias?
+        externs
+        ".L_tl_flush_stdout"
+        "tl_flush_stdout")]
     [extern-process-output : bool
       (compiler-backend-extern-list-references? externs "tl_process_output")]
     [extern-region-mark : bool
@@ -8955,9 +9077,9 @@
         externs
         "tl_windows_sdk_registry_install")]
     [extern-env-var-exists : bool
-      (compiler-backend-extern-list-references? externs "env-var-exists?")]
+      (compiler-backend-extern-list-references? externs "tl_env_var_exists")]
     [extern-env-var-value : bool
-      (compiler-backend-extern-list-references? externs "env-var-value")]
+      (compiler-backend-extern-list-references? externs "tl_env_var_value")]
     [extern-env-path-separator : bool
       (compiler-backend-extern-list-references? externs "env-path-separator")]
     [calls-alloc : bool
@@ -9287,9 +9409,11 @@
     [(IrExternCons item rest)
       (match item
         [(IrExtern name _ _ link-symbol _)
-          (if (and
-            (string-eq name link-symbol)
-            (compiler-backend-plan-provides? plan name))
+          (if (or
+            (and
+              (string-eq name link-symbol)
+              (compiler-backend-plan-provides? plan name))
+            (compiler-backend-plan-provides? plan link-symbol))
             (compiler-backend-emit-externs rest plan)
             (backend-cat4
               ".extern "
@@ -10086,7 +10210,12 @@ tl_shift_abort:
 ")
 
 (define (compiler-backend-runtime-abort-functions) : String
-  ".L_tl_abort:
+  "    .globl tl_abort_string
+tl_abort_string:
+    movq 8(%rdi), %rsi
+    movq 0(%rdi), %rdi
+    jmp .L_tl_abort
+.L_tl_abort:
     movq %rsi, %rdx
     movq %rdi, %rsi
     movq $2, %rdi
@@ -10099,7 +10228,16 @@ tl_shift_abort:
 ")
 
 (define (compiler-backend-runtime-print-err-functions) : String
-  "    .globl tl_print_err
+  "    .globl tl_print_error
+tl_print_error:
+    movq 8(%rdi), %rdx
+    movq 0(%rdi), %rsi
+    movq $2, %rdi
+    movq $1, %rax
+    syscall
+    ret
+
+    .globl tl_print_err
 tl_print_err:
     movq %rsi, %rdx
     movq %rdi, %rsi
@@ -10111,7 +10249,16 @@ tl_print_err:
 ")
 
 (define (compiler-backend-runtime-print-str-functions) : String
-  "    .globl tl_print_str
+  "    .globl tl_print_string
+tl_print_string:
+    movq 8(%rdi), %rdx
+    movq 0(%rdi), %rsi
+    movq $1, %rdi
+    movq $1, %rax
+    syscall
+    ret
+
+    .globl tl_print_str
 tl_print_str:
     movq %rsi, %rdx
     movq %rdi, %rsi
@@ -10167,14 +10314,18 @@ tl_print_f64:
 ")
 
 (define (compiler-backend-runtime-arg-count-functions) : String
-  ".L_tl_arg_count:
+  "    .globl tl_arg_count
+tl_arg_count:
+.L_tl_arg_count:
     movq .L_tl_argc(%rip), %rax
     ret
 
 ")
 
 (define (compiler-backend-runtime-arg-functions) : String
-  ".L_tl_arg:
+  "    .globl tl_arg
+tl_arg:
+.L_tl_arg:
     push %rbp
     mov %rsp, %rbp
     push %rbx
@@ -10226,7 +10377,9 @@ tl_print_f64:
 ")
 
 (define (compiler-backend-runtime-env-var-exists-functions) : String
-  "    .globl _tl_env_var_exists_question
+  "    .globl tl_env_var_exists
+tl_env_var_exists:
+    .globl _tl_env_var_exists_question
 _tl_env_var_exists_question:
     push %rbp
     mov %rsp, %rbp
@@ -10276,7 +10429,9 @@ _tl_env_var_exists_question:
 ")
 
 (define (compiler-backend-runtime-env-var-value-functions) : String
-  "    .globl _tl_env_var_value
+  "    .globl tl_env_var_value
+tl_env_var_value:
+    .globl _tl_env_var_value
 _tl_env_var_value:
     push %rbp
     mov %rsp, %rbp
@@ -10408,7 +10563,9 @@ _tl_env_path_separator:
 ;; mirroring the Linux helper's 0(%rdi)/8(%rdi)). Copies the name into a fresh
 ;; NUL-terminated buffer, calls getenv, and returns bool (i64 0/1) in %rax.
 (define (compiler-backend-runtime-windows-env-var-exists-functions) : String
-  "    .globl _tl_env_var_exists_question
+  "    .globl tl_env_var_exists
+tl_env_var_exists:
+    .globl _tl_env_var_exists_question
 _tl_env_var_exists_question:
     push %rbp
     mov %rsp, %rbp
@@ -10465,7 +10622,9 @@ _tl_env_var_exists_question:
 ;; the value into a fresh buffer, and returns a String fat-value {ptr,len} in
 ;; %rax (the empty String {0,0} when unset), matching the Linux helper.
 (define (compiler-backend-runtime-windows-env-var-value-functions) : String
-  "    .globl _tl_env_var_value
+  "    .globl tl_env_var_value
+tl_env_var_value:
+    .globl _tl_env_var_value
 _tl_env_var_value:
     push %rbp
     mov %rsp, %rbp
@@ -10628,7 +10787,13 @@ tl_region_reset:
 ")
 
 (define (compiler-backend-runtime-read-file-functions) : String
-  ".L_tl_read_file:
+  "    .globl tl_read_file
+tl_read_file:
+    movq 0(%rdi), %rax
+    movq 8(%rdi), %rsi
+    movq %rax, %rdi
+    jmp .L_tl_read_file
+.L_tl_read_file:
     push %rbp
     mov %rsp, %rbp
     push %rbx
@@ -10712,7 +10877,16 @@ tl_region_reset:
 ")
 
 (define (compiler-backend-runtime-write-file-functions) : String
-  ".L_tl_write_file:
+  "    .globl tl_write_file
+tl_write_file:
+    movq %rsi, %r8
+    movq 0(%rdi), %r9
+    movq 8(%rdi), %rsi
+    movq 0(%r8), %rdx
+    movq 8(%r8), %rcx
+    movq %r9, %rdi
+    jmp .L_tl_write_file
+.L_tl_write_file:
     push %rbp
     mov %rsp, %rbp
     push %rbx
@@ -10783,7 +10957,13 @@ tl_region_reset:
 ")
 
 (define (compiler-backend-runtime-file-exists-functions) : String
-  ".L_tl_file_exists:
+  "    .globl tl_file_exists
+tl_file_exists:
+    movq 0(%rdi), %rax
+    movq 8(%rdi), %rsi
+    movq %rax, %rdi
+    jmp .L_tl_file_exists
+.L_tl_file_exists:
     push %rbp
     mov %rsp, %rbp
     push %rbx
@@ -10833,7 +11013,13 @@ tl_region_reset:
 ")
 
 (define (compiler-backend-runtime-read-file-status-functions) : String
-  ".L_tl_read_file_status:
+  "    .globl tl_read_file_status
+tl_read_file_status:
+    movq 0(%rdi), %rax
+    movq 8(%rdi), %rsi
+    movq %rax, %rdi
+    jmp .L_tl_read_file_status
+.L_tl_read_file_status:
     push %rbp
     mov %rsp, %rbp
     push %rbx
@@ -10919,7 +11105,16 @@ tl_region_reset:
 ")
 
 (define (compiler-backend-runtime-write-file-status-functions) : String
-  ".L_tl_write_file_status:
+  "    .globl tl_write_file_status
+tl_write_file_status:
+    movq %rsi, %r8
+    movq 0(%rdi), %r9
+    movq 8(%rdi), %rsi
+    movq 0(%r8), %rdx
+    movq 8(%r8), %rcx
+    movq %r9, %rdi
+    jmp .L_tl_write_file_status
+.L_tl_write_file_status:
     push %rbp
     mov %rsp, %rbp
     push %rbx
@@ -11004,7 +11199,16 @@ tl_region_reset:
 ")
 
 (define (compiler-backend-runtime-append-file-status-functions) : String
-  ".L_tl_append_file_status:
+  "    .globl tl_append_file_status
+tl_append_file_status:
+    movq %rsi, %r8
+    movq 0(%rdi), %r9
+    movq 8(%rdi), %rsi
+    movq 0(%r8), %rdx
+    movq 8(%r8), %rcx
+    movq %r9, %rdi
+    jmp .L_tl_append_file_status
+.L_tl_append_file_status:
     push %rbp
     mov %rsp, %rbp
     push %rbx
@@ -11089,7 +11293,13 @@ tl_region_reset:
 ")
 
 (define (compiler-backend-runtime-file-exists-status-functions) : String
-  ".L_tl_file_exists_status:
+  "    .globl tl_file_exists_status
+tl_file_exists_status:
+    movq 0(%rdi), %rax
+    movq 8(%rdi), %rsi
+    movq %rax, %rdi
+    jmp .L_tl_file_exists_status
+.L_tl_file_exists_status:
     push %rbp
     mov %rsp, %rbp
     push %rbx
@@ -11131,7 +11341,13 @@ tl_region_reset:
 ")
 
 (define (compiler-backend-runtime-file-open-status-functions) : String
-  ".L_tl_file_open_status:
+  "    .globl tl_file_open_status
+tl_file_open_status:
+    movq %rsi, %rdx
+    movq 8(%rdi), %rsi
+    movq 0(%rdi), %rdi
+    jmp .L_tl_file_open_status
+.L_tl_file_open_status:
     push %rbp
     mov %rsp, %rbp
     push %rbx
@@ -11222,7 +11438,9 @@ tl_region_reset:
 ")
 
 (define (compiler-backend-runtime-file-close-status-functions) : String
-  ".L_tl_file_close_status:
+  "    .globl tl_file_close_status
+tl_file_close_status:
+.L_tl_file_close_status:
     push %rbp
     mov %rsp, %rbp
     push %rbx
@@ -11258,7 +11476,12 @@ tl_region_reset:
 ")
 
 (define (compiler-backend-runtime-file-write-status-functions) : String
-  ".L_tl_file_write_status:
+  "    .globl tl_file_write_status
+tl_file_write_status:
+    movq 8(%rsi), %rdx
+    movq 0(%rsi), %rsi
+    jmp .L_tl_file_write_status
+.L_tl_file_write_status:
     push %rbp
     mov %rsp, %rbp
     push %rbx
@@ -11329,7 +11552,9 @@ tl_region_reset:
 ")
 
 (define (compiler-backend-runtime-file-flush-status-functions) : String
-  ".L_tl_file_flush_status:
+  "    .globl tl_file_flush_status
+tl_file_flush_status:
+.L_tl_file_flush_status:
     push %rbp
     mov %rsp, %rbp
     push %rbx
@@ -11367,18 +11592,26 @@ tl_region_reset:
 ")
 
 (define (compiler-backend-runtime-windows-file-handle-functions) : String
-  ".L_tl_file_open_status:
+  "    .globl tl_file_open_status
+tl_file_open_status:
+.L_tl_file_open_status:
     movq $-38, %rax
     ret
 
+    .globl tl_file_close_status
+tl_file_close_status:
 .L_tl_file_close_status:
     movq $38, %rax
     ret
 
+    .globl tl_file_write_status
+tl_file_write_status:
 .L_tl_file_write_status:
     movq $38, %rax
     ret
 
+    .globl tl_file_flush_status
+tl_file_flush_status:
 .L_tl_file_flush_status:
     movq $38, %rax
     ret
@@ -11396,7 +11629,9 @@ tl_region_reset:
       (compiler-backend-runtime-file-flush-status-functions))))
 
 (define (compiler-backend-runtime-file-read-chunk-status-functions) : String
-  ".L_tl_file_read_chunk_status:
+  "    .globl tl_file_read_chunk_status
+tl_file_read_chunk_status:
+.L_tl_file_read_chunk_status:
     push %rbp
     mov %rsp, %rbp
     push %rbx
@@ -11490,7 +11725,9 @@ tl_region_reset:
 ")
 
 (define (compiler-backend-runtime-file-read-chunk-bytes-functions) : String
-  ".L_tl_file_read_chunk_bytes:
+  "    .globl tl_file_read_chunk_bytes
+tl_file_read_chunk_bytes:
+.L_tl_file_read_chunk_bytes:
     push %rbp
     mov %rsp, %rbp
     push %rbx
@@ -11523,7 +11760,9 @@ tl_region_reset:
 ")
 
 (define (compiler-backend-runtime-file-read-chunk-eof-functions) : String
-  ".L_tl_file_read_chunk_eof:
+  "    .globl tl_file_read_chunk_eof
+tl_file_read_chunk_eof:
+.L_tl_file_read_chunk_eof:
     movq $1, %rax
     cmpq $1, %rdi
     jl .L_tl_file_read_chunk_eof_return
@@ -11537,10 +11776,14 @@ tl_region_reset:
 ")
 
 (define (compiler-backend-runtime-windows-file-read-chunk-functions) : String
-  ".L_tl_file_read_chunk_status:
+  "    .globl tl_file_read_chunk_status
+tl_file_read_chunk_status:
+.L_tl_file_read_chunk_status:
     movq $38, %rax
     ret
 
+    .globl tl_file_read_chunk_bytes
+tl_file_read_chunk_bytes:
 .L_tl_file_read_chunk_bytes:
     push %rbp
     mov %rsp, %rbp
@@ -11558,6 +11801,8 @@ tl_region_reset:
     pop %rbp
     ret
 
+    .globl tl_file_read_chunk_eof
+tl_file_read_chunk_eof:
 .L_tl_file_read_chunk_eof:
     movq $1, %rax
     ret
@@ -11575,7 +11820,13 @@ tl_region_reset:
         (compiler-backend-runtime-file-read-chunk-eof-functions)))))
 
 (define (compiler-backend-runtime-fs-functions) : String
-  ".L_tl_fs_mkdir_status:
+  "    .globl tl_fs_mkdir_status
+tl_fs_mkdir_status:
+    movq 0(%rdi), %rax
+    movq 8(%rdi), %rsi
+    movq %rax, %rdi
+    jmp .L_tl_fs_mkdir_status
+.L_tl_fs_mkdir_status:
     push %rbp
     mov %rsp, %rbp
     push %rbx
@@ -11622,6 +11873,12 @@ tl_region_reset:
     pop %rbp
     ret
 
+    .globl tl_fs_remove_file_status
+tl_fs_remove_file_status:
+    movq 0(%rdi), %rax
+    movq 8(%rdi), %rsi
+    movq %rax, %rdi
+    jmp .L_tl_fs_remove_file_status
 .L_tl_fs_remove_file_status:
     push %rbp
     mov %rsp, %rbp
@@ -11668,6 +11925,12 @@ tl_region_reset:
     pop %rbp
     ret
 
+    .globl tl_fs_remove_dir_status
+tl_fs_remove_dir_status:
+    movq 0(%rdi), %rax
+    movq 8(%rdi), %rsi
+    movq %rax, %rdi
+    jmp .L_tl_fs_remove_dir_status
 .L_tl_fs_remove_dir_status:
     push %rbp
     mov %rsp, %rbp
@@ -11714,6 +11977,15 @@ tl_region_reset:
     pop %rbp
     ret
 
+    .globl tl_fs_rename_status
+tl_fs_rename_status:
+    movq %rsi, %r8
+    movq 0(%rdi), %r9
+    movq 8(%rdi), %rsi
+    movq 0(%r8), %rdx
+    movq 8(%r8), %rcx
+    movq %r9, %rdi
+    jmp .L_tl_fs_rename_status
 .L_tl_fs_rename_status:
     push %rbp
     mov %rsp, %rbp
@@ -11784,6 +12056,8 @@ tl_region_reset:
     pop %rbp
     ret
 
+    .globl tl_fs_process_id
+tl_fs_process_id:
 .L_tl_fs_process_id:
     movq $39, %rax
     syscall
@@ -11792,7 +12066,12 @@ tl_region_reset:
 ")
 
 (define (compiler-backend-runtime-windows-fs-mkdir-status-functions) : String
-  ".L_tl_fs_mkdir_status:
+  "    .globl tl_fs_mkdir_status
+tl_fs_mkdir_status:
+    movq 8(%rcx), %rdx
+    movq 0(%rcx), %rcx
+    jmp .L_tl_fs_mkdir_status
+.L_tl_fs_mkdir_status:
     push %rbp
     mov %rsp, %rbp
     push %rbx
@@ -11850,7 +12129,12 @@ tl_region_reset:
 ")
 
 (define (compiler-backend-runtime-windows-fs-remove-file-status-functions) : String
-  ".L_tl_fs_remove_file_status:
+  "    .globl tl_fs_remove_file_status
+tl_fs_remove_file_status:
+    movq 8(%rcx), %rdx
+    movq 0(%rcx), %rcx
+    jmp .L_tl_fs_remove_file_status
+.L_tl_fs_remove_file_status:
     push %rbp
     mov %rsp, %rbp
     push %rbx
@@ -11908,7 +12192,12 @@ tl_region_reset:
 ")
 
 (define (compiler-backend-runtime-windows-fs-remove-dir-status-functions) : String
-  ".L_tl_fs_remove_dir_status:
+  "    .globl tl_fs_remove_dir_status
+tl_fs_remove_dir_status:
+    movq 8(%rcx), %rdx
+    movq 0(%rcx), %rcx
+    jmp .L_tl_fs_remove_dir_status
+.L_tl_fs_remove_dir_status:
     push %rbp
     mov %rsp, %rbp
     push %rbx
@@ -11972,10 +12261,14 @@ tl_region_reset:
       (string-append
         (compiler-backend-runtime-windows-fs-remove-file-status-functions)
         (compiler-backend-runtime-windows-fs-remove-dir-status-functions)))
-    ".L_tl_fs_rename_status:
+    "    .globl tl_fs_rename_status
+tl_fs_rename_status:
+.L_tl_fs_rename_status:
     movq $38, %rax
     ret
 
+    .globl tl_fs_process_id
+tl_fs_process_id:
 .L_tl_fs_process_id:
     push %rbp
     mov %rsp, %rbp
@@ -11995,7 +12288,12 @@ tl_region_reset:
     (compiler-backend-runtime-fs-functions)))
 
 (define (compiler-backend-runtime-windows-read-file-functions) : String
-  ".L_tl_read_file:
+  "    .globl tl_read_file
+tl_read_file:
+    movq 8(%rcx), %rdx
+    movq 0(%rcx), %rcx
+    jmp .L_tl_read_file
+.L_tl_read_file:
     push %rbp
     mov %rsp, %rbp
     push %rbx
@@ -12094,7 +12392,16 @@ tl_region_reset:
 ")
 
 (define (compiler-backend-runtime-windows-write-file-functions) : String
-  ".L_tl_write_file:
+  "    .globl tl_write_file
+tl_write_file:
+    movq %rdx, %r10
+    movq 0(%rcx), %r11
+    movq 8(%rcx), %rdx
+    movq 0(%r10), %r8
+    movq 8(%r10), %r9
+    movq %r11, %rcx
+    jmp .L_tl_write_file
+.L_tl_write_file:
     push %rbp
     mov %rsp, %rbp
     push %rbx
@@ -12174,7 +12481,12 @@ tl_region_reset:
 ")
 
 (define (compiler-backend-runtime-windows-file-exists-functions) : String
-  ".L_tl_file_exists:
+  "    .globl tl_file_exists
+tl_file_exists:
+    movq 8(%rcx), %rdx
+    movq 0(%rcx), %rcx
+    jmp .L_tl_file_exists
+.L_tl_file_exists:
     push %rbp
     mov %rsp, %rbp
     push %rbx
@@ -12228,7 +12540,12 @@ tl_region_reset:
 ")
 
 (define (compiler-backend-runtime-windows-read-file-status-functions) : String
-  ".L_tl_read_file_status:
+  "    .globl tl_read_file_status
+tl_read_file_status:
+    movq 8(%rcx), %rdx
+    movq 0(%rcx), %rcx
+    jmp .L_tl_read_file_status
+.L_tl_read_file_status:
     push %rbp
     mov %rsp, %rbp
     push %rbx
@@ -12317,7 +12634,16 @@ tl_region_reset:
 ")
 
 (define (compiler-backend-runtime-windows-write-file-status-functions) : String
-  ".L_tl_write_file_status:
+  "    .globl tl_write_file_status
+tl_write_file_status:
+    movq %rdx, %r10
+    movq 0(%rcx), %r11
+    movq 8(%rcx), %rdx
+    movq 0(%r10), %r8
+    movq 8(%r10), %r9
+    movq %r11, %rcx
+    jmp .L_tl_write_file_status
+.L_tl_write_file_status:
     push %rbp
     mov %rsp, %rbp
     push %rbx
@@ -12425,7 +12751,16 @@ tl_region_reset:
 ")
 
 (define (compiler-backend-runtime-windows-append-file-status-functions) : String
-  ".L_tl_append_file_status:
+  "    .globl tl_append_file_status
+tl_append_file_status:
+    movq %rdx, %r10
+    movq 0(%rcx), %r11
+    movq 8(%rcx), %rdx
+    movq 0(%r10), %r8
+    movq 8(%r10), %r9
+    movq %r11, %rcx
+    jmp .L_tl_append_file_status
+.L_tl_append_file_status:
     push %rbp
     mov %rsp, %rbp
     push %rbx
@@ -12533,7 +12868,12 @@ tl_region_reset:
 ")
 
 (define (compiler-backend-runtime-windows-file-exists-status-functions) : String
-  ".L_tl_file_exists_status:
+  "    .globl tl_file_exists_status
+tl_file_exists_status:
+    movq 8(%rcx), %rdx
+    movq 0(%rcx), %rcx
+    jmp .L_tl_file_exists_status
+.L_tl_file_exists_status:
     push %rbp
     mov %rsp, %rbp
     push %rbx
@@ -12633,7 +12973,12 @@ tl_region_reset:
     129))
 
 (define (compiler-backend-runtime-windows-abort-functions) : String
-  ".L_tl_abort:
+  "    .globl tl_abort_string
+tl_abort_string:
+    movq 8(%rcx), %rdx
+    movq 0(%rcx), %rcx
+    jmp .L_tl_abort
+.L_tl_abort:
     push %rbp
     mov %rsp, %rbp
     movq %rdx, %r8
@@ -12649,7 +12994,21 @@ tl_region_reset:
 ")
 
 (define (compiler-backend-runtime-windows-print-err-functions) : String
-  "    .globl tl_print_err
+  "    .globl tl_print_error
+tl_print_error:
+    push %rbp
+    mov %rsp, %rbp
+    movq 8(%rcx), %r8
+    movq 0(%rcx), %rdx
+    movq $2, %rcx
+    sub $32, %rsp
+    call _write
+    add $32, %rsp
+    mov %rbp, %rsp
+    pop %rbp
+    ret
+
+    .globl tl_print_err
 tl_print_err:
     push %rbp
     mov %rsp, %rbp
@@ -12666,7 +13025,21 @@ tl_print_err:
 ")
 
 (define (compiler-backend-runtime-windows-print-str-functions) : String
-  "    .globl tl_print_str
+  "    .globl tl_print_string
+tl_print_string:
+    push %rbp
+    mov %rsp, %rbp
+    movq 8(%rcx), %r8
+    movq 0(%rcx), %rdx
+    movq $1, %rcx
+    sub $32, %rsp
+    call _write
+    add $32, %rsp
+    mov %rbp, %rsp
+    pop %rbp
+    ret
+
+    .globl tl_print_str
 tl_print_str:
     push %rbp
     mov %rsp, %rbp
@@ -12732,14 +13105,18 @@ tl_print_f64:
 ")
 
 (define (compiler-backend-runtime-windows-arg-count-functions) : String
-  ".L_tl_arg_count:
+  "    .globl tl_arg_count
+tl_arg_count:
+.L_tl_arg_count:
     movq .L_tl_argc(%rip), %rax
     ret
 
 ")
 
 (define (compiler-backend-runtime-windows-arg-functions) : String
-  ".L_tl_arg:
+  "    .globl tl_arg
+tl_arg:
+.L_tl_arg:
     push %rbp
     mov %rsp, %rbp
     push %rbx
@@ -14758,7 +15135,9 @@ tl_string_concat:
 
 (define (compiler-backend-runtime-read-stdin-line-functions) : String
   (string-append
-    ".L_tl_read_stdin_line:
+    "    .globl tl_read_stdin_line
+tl_read_stdin_line:
+.L_tl_read_stdin_line:
     push %rbp
     mov %rsp, %rbp
     push %rbx
@@ -14828,7 +15207,9 @@ tl_string_concat:
 
 (define (compiler-backend-runtime-windows-read-stdin-line-functions) : String
   (string-append
-    ".L_tl_read_stdin_line:
+    "    .globl tl_read_stdin_line
+tl_read_stdin_line:
+.L_tl_read_stdin_line:
     push %rbp
     mov %rsp, %rbp
     push %rbx
@@ -14906,7 +15287,9 @@ tl_string_concat:
 
 (define (compiler-backend-runtime-read-stdin-bytes-functions) : String
   (string-append
-    ".L_tl_read_stdin_bytes:
+    "    .globl tl_read_stdin_bytes
+tl_read_stdin_bytes:
+.L_tl_read_stdin_bytes:
     push %rbp
     mov %rsp, %rbp
     push %rbx
@@ -14962,7 +15345,9 @@ tl_string_concat:
 
 (define (compiler-backend-runtime-windows-read-stdin-bytes-functions) : String
   (string-append
-    ".L_tl_read_stdin_bytes:
+    "    .globl tl_read_stdin_bytes
+tl_read_stdin_bytes:
+.L_tl_read_stdin_bytes:
     push %rbp
     mov %rsp, %rbp
     push %rbx
@@ -15023,20 +15408,26 @@ tl_string_concat:
     (string-append (compiler-backend-runtime-windows-stdin-abort) "\n")))
 
 (define (compiler-backend-runtime-stdin-eof-functions) : String
-  ".L_tl_stdin_eof:
+  "    .globl tl_stdin_eof
+tl_stdin_eof:
+.L_tl_stdin_eof:
     movq .L_tl_stdin_eof_flag(%rip), %rax
     ret
 
 ")
 
 (define (compiler-backend-runtime-flush-stdout-functions) : String
-  ".L_tl_flush_stdout:
+  "    .globl tl_flush_stdout
+tl_flush_stdout:
+.L_tl_flush_stdout:
     ret
 
 ")
 
 (define (compiler-backend-runtime-windows-flush-stdout-functions) : String
-  ".L_tl_flush_stdout:
+  "    .globl tl_flush_stdout
+tl_flush_stdout:
+.L_tl_flush_stdout:
     push %rbp
     mov %rsp, %rbp
     xorq %rcx, %rcx
@@ -15060,6 +15451,111 @@ tl_string_concat:
     call exit
 
 ")
+
+(define (compiler-backend-runtime-cpu-functions) : String
+  "    .globl tl_cpuid_eax
+tl_cpuid_eax:
+    push %rbx
+    movl %edi, %eax
+    movl %esi, %ecx
+    cpuid
+    pop %rbx
+    ret
+
+    .globl tl_cpuid_ebx
+tl_cpuid_ebx:
+    push %rbx
+    movl %edi, %eax
+    movl %esi, %ecx
+    cpuid
+    movl %ebx, %eax
+    pop %rbx
+    ret
+
+    .globl tl_cpuid_ecx
+tl_cpuid_ecx:
+    push %rbx
+    movl %edi, %eax
+    movl %esi, %ecx
+    cpuid
+    movl %ecx, %eax
+    pop %rbx
+    ret
+
+    .globl tl_cpuid_edx
+tl_cpuid_edx:
+    push %rbx
+    movl %edi, %eax
+    movl %esi, %ecx
+    cpuid
+    movl %edx, %eax
+    pop %rbx
+    ret
+
+    .globl tl_xgetbv
+tl_xgetbv:
+    movl %edi, %ecx
+    xgetbv
+    shlq $32, %rdx
+    orq %rdx, %rax
+    ret
+
+")
+
+(define (compiler-backend-runtime-windows-cpu-functions) : String
+  "    .globl tl_cpuid_eax
+tl_cpuid_eax:
+    push %rbx
+    movl %ecx, %eax
+    movl %edx, %ecx
+    cpuid
+    pop %rbx
+    ret
+
+    .globl tl_cpuid_ebx
+tl_cpuid_ebx:
+    push %rbx
+    movl %ecx, %eax
+    movl %edx, %ecx
+    cpuid
+    movl %ebx, %eax
+    pop %rbx
+    ret
+
+    .globl tl_cpuid_ecx
+tl_cpuid_ecx:
+    push %rbx
+    movl %ecx, %eax
+    movl %edx, %ecx
+    cpuid
+    movl %ecx, %eax
+    pop %rbx
+    ret
+
+    .globl tl_cpuid_edx
+tl_cpuid_edx:
+    push %rbx
+    movl %ecx, %eax
+    movl %edx, %ecx
+    cpuid
+    movl %edx, %eax
+    pop %rbx
+    ret
+
+    .globl tl_xgetbv
+tl_xgetbv:
+    xgetbv
+    shlq $32, %rdx
+    orq %rdx, %rax
+    ret
+
+")
+
+(define (compiler-backend-runtime-cpu-functions-for-target
+  [target : CompilerBackendTarget]) : String
+  (if (compiler-backend-target-windows? target)
+    (compiler-backend-runtime-windows-cpu-functions)
+    (compiler-backend-runtime-cpu-functions)))
 
 (define (compiler-backend-runtime-random-system-seed-functions) : String
   "    .globl tl_random_system_seed
@@ -15586,15 +16082,19 @@ tl_windows_sdk_registry_install:
           (if (compiler-backend-target-windows? target)
             (compiler-backend-runtime-windows-arena-functions)
             (compiler-backend-runtime-arena-functions))]
+        [cpu-asm : String
+          (compiler-backend-runtime-cpu-functions-for-target target)]
         [runtime-front-asm : String
           (string-append
             arena-asm
-            (backend-cat5
-              alloc-asm
-              region-mark-asm
-              region-reset-asm
-              oob-asm
-              div-abort-asm))]
+            (string-append
+              cpu-asm
+              (backend-cat5
+                alloc-asm
+                region-mark-asm
+                region-reset-asm
+                oob-asm
+                div-abort-asm)))]
         [runtime-string-asm : String
           (string-append
             (backend-cat5
@@ -15967,8 +16467,8 @@ tl_windows_sdk_registry_install:
             ;; getenv/strlen back the Windows env-var helpers (the Linux
             ;; variants walk the SysV stack envp, which is absent on Windows).
             (if (or
-              (compiler-backend-plan-provides? plan "env-var-value")
-              (compiler-backend-plan-provides? plan "env-var-exists?"))
+              (compiler-backend-plan-provides? plan "tl_env_var_value")
+              (compiler-backend-plan-provides? plan "tl_env_var_exists"))
               "    .extern getenv
     .extern strlen
 "

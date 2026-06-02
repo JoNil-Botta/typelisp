@@ -33,6 +33,8 @@
 ;; is a transitive import: the reader imports this module, which imports
 ;; `token.tl`; the loader's post-order DFS loads `token.tl` first, then this
 ;; module, then the reader.
+(import "../stdlib/io.tl")
+
 (import "token.tl")
 
 (defenum ResultTokens

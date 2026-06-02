@@ -18,6 +18,8 @@
 ;; the single full typechecker frontend (`compiler_check_core` ->
 ;; `compiler_typecheck`), so `check` does the same macro-expansion and
 ;; specialization as build/run/test.
+(import "../stdlib/io.tl")
+
 (import "build_cli_core.tl")
 
 (import "run_cli_core.tl")

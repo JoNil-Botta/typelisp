@@ -12,6 +12,28 @@
 ;# sign of the widening cast is irrelevant.
 ;#
 ;# Usage: `(import "stdlib/cpu.tl")`
+(extern tl_cpuid_eax : (-> i64 i64 i32))
+
+(extern tl_cpuid_ebx : (-> i64 i64 i32))
+
+(extern tl_cpuid_ecx : (-> i64 i64 i32))
+
+(extern tl_cpuid_edx : (-> i64 i64 i32))
+
+(extern tl_xgetbv : (-> i64 i64))
+
+;: Return CPUID registers for `leaf` and `subleaf` as (eax ebx ecx edx).
+(define (cpuid [leaf : i64] [subleaf : i64]) : (Tuple i32 i32 i32 i32)
+  (tuple
+    (tl_cpuid_eax leaf subleaf)
+    (tl_cpuid_ebx leaf subleaf)
+    (tl_cpuid_ecx leaf subleaf)
+    (tl_cpuid_edx leaf subleaf)))
+
+;: Return the 64-bit XCR value for `index`.
+(define (xgetbv [index : i64]) : i64
+  (tl_xgetbv index))
+
 ;: CPUID.1:ECX bit 27 = OSXSAVE: the OS enabled XSAVE and the XGETBV instruction.
 (define (cpu-osxsave?) : bool
   (let

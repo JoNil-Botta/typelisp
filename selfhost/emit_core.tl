@@ -1,4 +1,6 @@
 ;; emit_core.tl - Main-less M1 assembly emitter shared by demos/tests (#163).
+(import "../stdlib/io.tl")
+
 (import "ast_types.tl")
 
 (import "sym_i64_env.tl")

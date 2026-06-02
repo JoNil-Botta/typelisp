@@ -13,6 +13,8 @@
 ;#     42))
 ;# ```
 ;: Assert that `condition` is true, panicking with `message` when it is false.
+(import "io.tl")
+
 (define (assert-true [condition : bool] [message : String]) : unit
   (if condition
     unit

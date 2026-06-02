@@ -1,4 +1,6 @@
 ;; compiler_backend_tests.tl - Selfhost backend test helpers split from production backend.
+(import "../stdlib/io.tl")
+
 (import "compiler_backend.tl")
 
 (define (compiler-backend-smoke-source) : String
@@ -300,7 +302,12 @@
 ;; (#1044): source-level string builtins lower to direct calls, and the backend
 ;; emits each helper body instead of leaving an extern placeholder.
 (define (compiler-backend-string-runtime-source) : String
-  "(define (parse-and-render [s : String]) : i64
+  "(extern __tl_rt_print_string (:symbol \"tl_print_string\") : (-> String unit))
+(define (print-string [text : String]) : unit
+  (__tl_rt_print_string text))
+(define (print-str [text : String]) : unit
+  (print-string text))
+(define (parse-and-render [s : String]) : i64
   (+
     (string->int s)
     (+
@@ -354,11 +361,15 @@
                 ".extern tl_string_concat\n")))
           (and
             (backend-and4
-              (compiler-backend-string-contains? asm ".globl tl_print_str\n")
-              (compiler-backend-string-contains? asm "tl_print_str:\n")
-              (compiler-backend-string-contains? asm "    call tl_print_str\n")
+              (compiler-backend-string-contains? asm ".globl tl_print_string\n")
+              (compiler-backend-string-contains? asm "tl_print_string:\n")
+              (compiler-backend-string-contains?
+                asm
+                "    call tl_print_string\n")
               (not
-                (compiler-backend-string-contains? asm ".extern tl_print_str\n")))
+                (compiler-backend-string-contains?
+                  asm
+                  ".extern tl_print_string\n")))
             (not
               (compiler-backend-string-contains?
                 asm
@@ -2047,7 +2058,15 @@
     [(ErrCompilerBackend _) false]))
 
 (define (compiler-backend-env-runtime-source) : String
-  "(define (main) : i64
+  "(extern __tl_rt_env_var_exists (:symbol \"tl_env_var_exists\") : (-> String bool))
+(extern __tl_rt_env_var_value (:symbol \"tl_env_var_value\") : (-> String String))
+(define (env-var-exists? [name : String]) : bool
+  (__tl_rt_env_var_exists name))
+(define (env-var-value [name : String]) : String
+  (__tl_rt_env_var_value name))
+(define (env-path-separator) : String
+  \":\")
+(define (main) : i64
   (if (env-var-exists? \"TYPELISP_TEST_ENV\")
     (string-length (env-var-value \"TYPELISP_TEST_ENV\"))
     (string-length (env-path-separator))))")
@@ -2056,32 +2075,22 @@
   (match (compiler-backend-emit-source (compiler-backend-env-runtime-source))
     [(OkCompilerBackend asm)
       (and
-        (compiler-backend-string-contains? asm "_tl_env_var_exists_question:\n")
+        (compiler-backend-string-contains? asm "tl_env_var_exists:\n")
         (and
-          (compiler-backend-string-contains?
-            asm
-            "    call _tl_env_var_exists_question\n")
+          (compiler-backend-string-contains? asm "    call tl_env_var_exists\n")
           (and
-            (compiler-backend-string-contains? asm "_tl_env_var_value:\n")
+            (compiler-backend-string-contains? asm "tl_env_var_value:\n")
             (and
               (compiler-backend-string-contains?
                 asm
-                "    call _tl_env_var_value\n")
+                "    call tl_env_var_value\n")
               (and
-                (compiler-backend-string-contains?
-                  asm
-                  "_tl_env_path_separator:\n")
+                (compiler-backend-string-contains? asm ".L_tl_envp:\n")
                 (and
                   (compiler-backend-string-contains?
                     asm
-                    "    call _tl_env_path_separator\n")
-                  (and
-                    (compiler-backend-string-contains? asm ".L_tl_envp:\n")
-                    (and
-                      (compiler-backend-string-contains?
-                        asm
-                        "    movq %rax, .L_tl_envp(%rip)\n")
-                      (compiler-backend-string-contains? asm "tl_alloc:\n")))))))))]
+                    "    movq %rax, .L_tl_envp(%rip)\n")
+                  (compiler-backend-string-contains? asm "tl_alloc:\n")))))))]
     [(ErrCompilerBackend _) false]))
 
 (define (compiler-backend-windows-env-runtime-ok?) : bool
@@ -2090,23 +2099,18 @@
     (BackendTargetWindows))
     [(OkCompilerBackend asm)
       (and
-        (compiler-backend-string-contains? asm "_tl_env_var_exists_question:\n")
+        (compiler-backend-string-contains? asm "tl_env_var_exists:\n")
         (and
-          (compiler-backend-string-contains? asm "_tl_env_var_value:\n")
+          (compiler-backend-string-contains? asm "tl_env_var_value:\n")
           (and
-            (compiler-backend-string-contains? asm "_tl_env_path_separator:\n")
+            (compiler-backend-string-contains? asm "    .extern getenv\n")
             (and
-              (compiler-backend-string-contains? asm "    .extern getenv\n")
+              (compiler-backend-string-contains? asm "    .extern strlen\n")
               (and
-                (compiler-backend-string-contains? asm "    .extern strlen\n")
+                (compiler-backend-string-contains? asm "    call getenv\n")
                 (and
-                  (compiler-backend-string-contains? asm "    call getenv\n")
-                  (and
-                    (compiler-backend-string-contains? asm "    call strlen\n")
-                    (and
-                      (compiler-backend-string-contains? asm "    movb $59,")
-                      (not
-                        (compiler-backend-string-contains? asm ".L_tl_envp:\n"))))))))))]
+                  (compiler-backend-string-contains? asm "    call strlen\n")
+                  (not (compiler-backend-string-contains? asm ".L_tl_envp:\n"))))))))]
     [(ErrCompilerBackend _) false]))
 
 (define (compiler-backend-windows-sdk-registry-runtime-source) : String
@@ -2142,20 +2146,38 @@
 
 (define (compiler-backend-append-file-status-ok?) : bool
   (match (compiler-backend-emit-source
-    "(define (main) : i64 (append-file-status \"out.txt\" \"x\"))")
+    "(extern __tl_rt_append_file_status (:symbol \"tl_append_file_status\") : (-> String String i64))
+(define (append-file-status [path : String] [contents : String]) : i64
+  (__tl_rt_append_file_status path contents))
+(define (main) : i64 (append-file-status \"out.txt\" \"x\"))")
     [(OkCompilerBackend asm)
       (and
-        (compiler-backend-string-contains? asm ".L_tl_append_file_status:\n")
+        (compiler-backend-string-contains? asm "tl_append_file_status:\n")
         (and
           (compiler-backend-string-contains? asm "    movq $1089, %rdx\n")
           (not
             (compiler-backend-string-contains?
               asm
-              ".extern .L_tl_append_file_status\n"))))]
+              ".extern tl_append_file_status\n"))))]
     [(ErrCompilerBackend _) false]))
 
 (define (compiler-backend-fs-runtime-source) : String
-  "(define (main) : i64
+  "(extern __tl_rt_fs_mkdir_status (:symbol \"tl_fs_mkdir_status\") : (-> String i64))
+(extern __tl_rt_fs_remove_file_status (:symbol \"tl_fs_remove_file_status\") : (-> String i64))
+(extern __tl_rt_fs_remove_dir_status (:symbol \"tl_fs_remove_dir_status\") : (-> String i64))
+(extern __tl_rt_fs_rename_status (:symbol \"tl_fs_rename_status\") : (-> String String i64))
+(extern __tl_rt_fs_process_id (:symbol \"tl_fs_process_id\") : (-> i64))
+(define (fs-mkdir-status [path : String]) : i64
+  (__tl_rt_fs_mkdir_status path))
+(define (fs-remove-file-status [path : String]) : i64
+  (__tl_rt_fs_remove_file_status path))
+(define (fs-remove-dir-status [path : String]) : i64
+  (__tl_rt_fs_remove_dir_status path))
+(define (fs-rename-status [source : String] [destination : String]) : i64
+  (__tl_rt_fs_rename_status source destination))
+(define (fs-process-id) : i64
+  (__tl_rt_fs_process_id))
+(define (main) : i64
   (+ (fs-process-id)
     (+ (fs-mkdir-status \"target/typelisp-fs\")
       (+ (fs-remove-file-status \"target/typelisp-fs/artifact.o\")
@@ -2191,7 +2213,7 @@
               (not
                 (compiler-backend-string-contains?
                   asm
-                  ".extern .L_tl_fs_rename_status\n"))))))]
+                  ".extern tl_fs_rename_status\n"))))))]
     [(ErrCompilerBackend _) false]))
 
 (define (compiler-backend-windows-fs-runtime-ok?) : bool

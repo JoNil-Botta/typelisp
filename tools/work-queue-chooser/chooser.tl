@@ -16,6 +16,8 @@
 ;# Usage: `typelisp run tools/work-queue-chooser/chooser.tl --stdlib-root stdlib`
 (import "stdlib/json.tl")
 
+(import "stdlib/io.tl")
+
 (import "stdlib/random.tl")
 
 ;: Kind tags: 0 = PR (review), 1 = ready-for-implementation issue (implement),

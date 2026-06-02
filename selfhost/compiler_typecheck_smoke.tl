@@ -1,4 +1,6 @@
 ;; compiler_typecheck_smoke.tl - Runnable smoke for compiler_typecheck.tl (#426).
+(import "../stdlib/io.tl")
+
 (import "compiler_typecheck.tl")
 
 (define (compiler-typecheck-reference-nested-local-source) : String

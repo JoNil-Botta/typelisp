@@ -1,4 +1,6 @@
 ;; compiler_load.tl - Shared selfhost compiler source/import loader.
+(import "../stdlib/io.tl")
+
 (import "compiler_parse_core.tl")
 
 (import "compiler_diagnostic.tl")
@@ -1029,16 +1031,18 @@
   [resolved : String]
   [seen : SymI64Env]
   [stdlib-roots : CompilerLoadRootList]
-  [expected-module : AstMaybeModuleName]) : ResultCompilerLoadWithPaths
+  [expected-module : AstMaybeModuleName]
+  [cfgs : SymI64Env]) : ResultCompilerLoadWithPaths
   (match (compiler-load-package-entry-path-for-source resolved)
     [(ErrPkgResolve message)
       (ErrCompilerLoadWithPaths (compiler-diagnostic-at-start resolved message))]
     [(OkPkgResolve entry-path)
-      (match (compiler-load-file-with-paths-and-roots-expect
+      (match (compiler-load-file-with-paths-and-roots-expect-cfg
         resolved
         seen
         stdlib-roots
-        expected-module)
+        expected-module
+        cfgs)
         [(OkCompilerLoadWithPaths imported-decls imported-paths _ import-seen)
           (compiler-load-package-extern-decls
             entry-path
@@ -1055,7 +1059,8 @@
   [seen : SymI64Env]
   [stdlib-roots : CompilerLoadRootList]
   [manifest-dir : String]
-  [deps : CompilerPkgDepList]) : ResultCompilerLoadWithPaths
+  [deps : CompilerPkgDepList]
+  [cfgs : SymI64Env]) : ResultCompilerLoadWithPaths
   (match decls
     [(AstDeclNil)
       (OkCompilerLoadWithPaths AstDeclNil AstDeclPathNil AstDeclModuleNil seen)]
@@ -1074,14 +1079,16 @@
                   resolved
                   seen
                   stdlib-roots
-                  expected-module)
+                  expected-module
+                  cfgs)
                 (compiler-load-package-file-with-paths-and-roots-expect
                   resolved
                   seen
                   stdlib-roots
                   expected-module
                   manifest-dir
-                  deps))
+                  deps
+                  cfgs))
                 [(OkCompilerLoadWithPaths
                     imported-decls
                     imported-paths
@@ -1094,7 +1101,8 @@
                     import-seen
                     stdlib-roots
                     manifest-dir
-                    deps)
+                    deps
+                    cfgs)
                     [(OkCompilerLoadWithPaths
                         rest-decls
                         rest-paths
@@ -1136,7 +1144,8 @@
             seen
             stdlib-roots
             manifest-dir
-            deps)
+            deps
+            cfgs)
             [(OkCompilerLoadWithPaths
                 rest-decls
                 rest-paths
@@ -1156,7 +1165,8 @@
   [stdlib-roots : CompilerLoadRootList]
   [expected-module : AstMaybeModuleName]
   [manifest-dir : String]
-  [deps : CompilerPkgDepList]) : ResultCompilerLoadWithPaths
+  [deps : CompilerPkgDepList]
+  [cfgs : SymI64Env]) : ResultCompilerLoadWithPaths
   (match program
     [(AstProgram decls)
       (match (compiler-load-decls-module-id path decls)
@@ -1179,7 +1189,8 @@
                   (sym-i64-bind seen module-id 1)
                   stdlib-roots
                   manifest-dir
-                  deps))]
+                  deps
+                  cfgs))]
             [(ErrCompilerLoadModuleId diag) (ErrCompilerLoadWithPaths diag)])]
         [(ErrCompilerLoadModuleId diag) (ErrCompilerLoadWithPaths diag)])]))
 
@@ -1189,9 +1200,10 @@
   [stdlib-roots : CompilerLoadRootList]
   [expected-module : AstMaybeModuleName]
   [manifest-dir : String]
-  [deps : CompilerPkgDepList]) : ResultCompilerLoadWithPaths
+  [deps : CompilerPkgDepList]
+  [cfgs : SymI64Env]) : ResultCompilerLoadWithPaths
   (if (file-exists? path)
-    (match (parse-ast-source-diagnostic path (read-file path))
+    (match (parse-ast-source-diagnostic-with-cfg path (read-file path) cfgs)
       [(OkAstProgramDiagnostic program)
         (compiler-load-package-program-with-paths-and-roots-expect
           path
@@ -1200,7 +1212,8 @@
           stdlib-roots
           expected-module
           manifest-dir
-          deps)]
+          deps
+          cfgs)]
       [(ErrAstProgramDiagnostic diag) (ErrCompilerLoadWithPaths diag)])
     (ErrCompilerLoadWithPaths
       (compiler-diagnostic-at-start
@@ -1219,7 +1232,24 @@
     stdlib-roots
     AstNoModuleName
     manifest-dir
-    deps))
+    deps
+    (compiler-cfg-empty)))
+
+(define (compiler-load-package-file-with-paths-and-roots-cfg
+  [path : String]
+  [seen : SymI64Env]
+  [stdlib-roots : CompilerLoadRootList]
+  [manifest-dir : String]
+  [deps : CompilerPkgDepList]
+  [cfgs : SymI64Env]) : ResultCompilerLoadWithPaths
+  (compiler-load-package-file-with-paths-and-roots-expect
+    path
+    seen
+    stdlib-roots
+    AstNoModuleName
+    manifest-dir
+    deps
+    cfgs))
 
 (define (compiler-load-decl-list-count [decls : AstDeclList]) : i64
   (match decls

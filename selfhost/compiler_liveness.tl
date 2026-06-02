@@ -2,6 +2,8 @@
 ;;
 ;; This module keeps the selfhost liveness pass deterministic while storing
 ;; integer live sets as compact bitsets keyed by dense IR variable ids.
+(import "../stdlib/io.tl")
+
 (import "compiler_ir_types.tl")
 
 (defenum CompilerLiveI64Set

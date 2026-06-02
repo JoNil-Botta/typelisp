@@ -4241,30 +4241,7 @@
     [(string-eq name "string=?") true]
     [(string-eq name "string->int") true]
     [(string-eq name "int->string") true]
-    [(string-eq name "arg-count") true]
-    [(string-eq name "arg") true]
-    [(string-eq name "read-file") true]
-    [(string-eq name "read-file-status") true]
-    [(string-eq name "write-file") true]
-    [(string-eq name "write-file-status") true]
-    [(string-eq name "append-file-status") true]
-    [(string-eq name "file-exists?") true]
-    [(string-eq name "file-exists-status") true]
-    [(string-eq name "file-open-status") true]
-    [(string-eq name "file-close-status") true]
-    [(string-eq name "file-read-chunk-status") true]
-    [(string-eq name "file-write-status") true]
-    [(string-eq name "file-flush-status") true]
-    [(string-eq name "file-read-chunk-bytes") true]
-    [(string-eq name "file-read-chunk-eof?") true]
-    [(string-eq name "fs-mkdir-status") true]
-    [(string-eq name "fs-remove-file-status") true]
-    [(string-eq name "fs-remove-dir-status") true]
-    [(string-eq name "fs-rename-status") true]
-    [(string-eq name "fs-process-id") true]
-    [(string-eq name "panic") true]
-    [(string-eq name "error") true]
-    [else (string-eq name "print-error")]))
+    [else false]))
 
 (define (lower-print-string-builtin? [name : String]) : bool
   (or (string-eq name "print-string") (string-eq name "print-str")))
@@ -5878,11 +5855,37 @@
   "
 ")
 
-;; The bare `print` builtin (i64 -> unit) has no dedicated runtime symbol of its
-;; own; lower it to the already-supported `(print-string (int->string n))`
-;; followed by a trailing newline (`print` always ends the line). Both halves
-;; reuse the proven int->string / print-string runtime paths via `lower-expr`,
-;; which re-typechecks the synthesized calls, so no new codegen is introduced.
+(define (lower-print-string-value-call
+  [state : LowerState]
+  [value : CompilerIrValue]
+  [result-ty : AstType]) : ResultLowerExpr
+  (match (lower-string-fields state value)
+    [(LowerStringFields fields-state ptr len)
+      (lower-runtime-call-values
+        fields-state
+        "tl_print_string"
+        (IrValueCons ptr (IrValueCons len IrValueNil))
+        result-ty)]))
+
+(define (lower-print-literal-call
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [text : String]
+  [result-ty : AstType]) : ResultLowerExpr
+  (lower-one-string-runtime-call
+    ctx
+    state
+    env
+    type-env
+    (AstExprLiteral (AstLitString text))
+    "tl_print_string"
+    result-ty
+    "lower: print literal requires String"))
+
+;; The bare `print` builtin remains compiler-owned. It lowers through the
+;; runtime print ABI directly so it does not depend on the public stdlib wrapper.
 (define (lower-print-call
   [ctx : TcContext]
   [state : LowerState]
@@ -5893,36 +5896,36 @@
   [origin : AstExpr]) : ResultLowerExpr
   (match args
     [(AstExprCons number-arg (AstExprNil))
-      (match (lower-expr
+      (match (lower-int-to-string-call
         ctx
         state
         env
         type-env
-        (AstExprCall
-          (AstExprVar "print-string")
-          (AstExprCons
-            (AstExprCall
-              (AstExprVar "int->string")
-              (AstExprCons number-arg AstExprNil))
-            AstExprNil)))
+        (AstExprCons number-arg AstExprNil)
+        (AstTyString)
+        origin)
         [(OkLowerExpr decimal-printed)
           (match decimal-printed
-            [(LowerExpr decimal-state _ _)
-              (lower-expr
-                ctx
+            [(LowerExpr decimal-state decimal-value _)
+              (match (lower-print-string-value-call
                 decimal-state
-                env
-                type-env
-                (AstExprCall
-                  (AstExprVar "print-string")
-                  (AstExprCons
-                    (AstExprLiteral (AstLitString (lower-print-newline-text)))
-                    AstExprNil)))])]
+                decimal-value
+                (AstTyUnit))
+                [(OkLowerExpr decimal-output)
+                  (match decimal-output
+                    [(LowerExpr newline-state _ _)
+                      (lower-print-literal-call
+                        ctx
+                        newline-state
+                        env
+                        type-env
+                        (lower-print-newline-text)
+                        result-ty)])]
+                [(ErrLowerExpr message) (ErrLowerExpr message)])])]
         [(ErrLowerExpr message) (ErrLowerExpr message)])]
     [_ (lower-direct-call ctx state env type-env "print" args result-ty origin)]))
 
-;; `(print-newline)` writes a single newline; lower it to `(print-string
-;; <newline>)`, reusing the existing string runtime path (no dedicated runtime).
+;; `(print-newline)` writes a single newline through the runtime print ABI.
 (define (lower-print-newline-call
   [ctx : TcContext]
   [state : LowerState]
@@ -5933,16 +5936,13 @@
   [origin : AstExpr]) : ResultLowerExpr
   (match args
     [(AstExprNil)
-      (lower-expr
+      (lower-print-literal-call
         ctx
         state
         env
         type-env
-        (AstExprCall
-          (AstExprVar "print-string")
-          (AstExprCons
-            (AstExprLiteral (AstLitString (lower-print-newline-text)))
-            AstExprNil)))]
+        (lower-print-newline-text)
+        result-ty)]
     [_
       (lower-direct-call
         ctx
@@ -5955,8 +5955,7 @@
         origin)]))
 
 ;; `(print-bool b)` writes `true`/`false` followed by a newline (matching the
-;; print family's line-terminating behavior). Lower it to a conditional pair of
-;; `print-string` calls plus the shared newline, all proven runtime paths.
+;; print family's line-terminating behavior).
 (define (lower-print-bool-call
   [ctx : TcContext]
   [state : LowerState]
@@ -5973,26 +5972,27 @@
         env
         type-env
         flag
-        (AstExprCall
-          (AstExprVar "print-string")
-          (AstExprCons (AstExprLiteral (AstLitString "true")) AstExprNil))
-        (AstExprCall
-          (AstExprVar "print-string")
-          (AstExprCons (AstExprLiteral (AstLitString "false")) AstExprNil))
-        (AstTyUnit))
-        [(OkLowerExpr word-printed)
-          (match word-printed
-            [(LowerExpr word-state _ _)
-              (lower-expr
-                ctx
+        (AstExprLiteral (AstLitString "true"))
+        (AstExprLiteral (AstLitString "false"))
+        (AstTyString))
+        [(OkLowerExpr word-lowered)
+          (match word-lowered
+            [(LowerExpr word-state word-value _)
+              (match (lower-print-string-value-call
                 word-state
-                env
-                type-env
-                (AstExprCall
-                  (AstExprVar "print-string")
-                  (AstExprCons
-                    (AstExprLiteral (AstLitString (lower-print-newline-text)))
-                    AstExprNil)))])]
+                word-value
+                (AstTyUnit))
+                [(OkLowerExpr word-printed)
+                  (match word-printed
+                    [(LowerExpr newline-state _ _)
+                      (lower-print-literal-call
+                        ctx
+                        newline-state
+                        env
+                        type-env
+                        (lower-print-newline-text)
+                        result-ty)])]
+                [(ErrLowerExpr message) (ErrLowerExpr message)])])]
         [(ErrLowerExpr message) (ErrLowerExpr message)])]
     [_
       (lower-direct-call
@@ -6768,166 +6768,7 @@
       (lower-string-to-int-call ctx state env type-env args result-ty origin)]
     [(string-eq name "int->string")
       (lower-int-to-string-call ctx state env type-env args result-ty origin)]
-    [(string-eq name "arg-count")
-      (lower-arg-count-call ctx state env type-env args result-ty origin)]
-    [(string-eq name "arg")
-      (lower-arg-call ctx state env type-env args result-ty origin)]
-    [(string-eq name "read-file")
-      (lower-read-file-call ctx state env type-env args result-ty origin)]
-    [(string-eq name "read-file-status")
-      (lower-read-file-status-call ctx state env type-env args result-ty origin)]
-    [(string-eq name "write-file")
-      (lower-write-file-call ctx state env type-env args result-ty origin)]
-    [(string-eq name "write-file-status")
-      (lower-write-file-status-call
-        ctx
-        state
-        env
-        type-env
-        args
-        result-ty
-        origin)]
-    [(string-eq name "append-file-status")
-      (lower-append-file-status-call
-        ctx
-        state
-        env
-        type-env
-        args
-        result-ty
-        origin)]
-    [(string-eq name "file-exists?")
-      (lower-file-exists-call ctx state env type-env args result-ty origin)]
-    [(string-eq name "file-exists-status")
-      (lower-file-exists-status-call
-        ctx
-        state
-        env
-        type-env
-        args
-        result-ty
-        origin)]
-    [(string-eq name "file-open-status")
-      (lower-file-open-status-call ctx state env type-env args result-ty origin)]
-    [(string-eq name "file-close-status")
-      (lower-file-close-status-call
-        ctx
-        state
-        env
-        type-env
-        args
-        result-ty
-        origin)]
-    [(string-eq name "file-read-chunk-status")
-      (lower-file-read-chunk-status-call
-        ctx
-        state
-        env
-        type-env
-        args
-        result-ty
-        origin)]
-    [(string-eq name "file-write-status")
-      (lower-file-write-status-call
-        ctx
-        state
-        env
-        type-env
-        args
-        result-ty
-        origin)]
-    [(string-eq name "file-flush-status")
-      (lower-file-flush-status-call
-        ctx
-        state
-        env
-        type-env
-        args
-        result-ty
-        origin)]
-    [(string-eq name "file-read-chunk-bytes")
-      (lower-file-read-chunk-field-call
-        ctx
-        state
-        env
-        type-env
-        args
-        "file-read-chunk-bytes"
-        ".L_tl_file_read_chunk_bytes"
-        result-ty
-        origin)]
-    [(string-eq name "file-read-chunk-eof?")
-      (lower-file-read-chunk-field-call
-        ctx
-        state
-        env
-        type-env
-        args
-        "file-read-chunk-eof?"
-        ".L_tl_file_read_chunk_eof"
-        result-ty
-        origin)]
-    [(string-eq name "fs-mkdir-status")
-      (lower-fs-path-status-call
-        ctx
-        state
-        env
-        type-env
-        name
-        ".L_tl_fs_mkdir_status"
-        args
-        result-ty
-        origin)]
-    [(string-eq name "fs-remove-file-status")
-      (lower-fs-path-status-call
-        ctx
-        state
-        env
-        type-env
-        name
-        ".L_tl_fs_remove_file_status"
-        args
-        result-ty
-        origin)]
-    [(string-eq name "fs-remove-dir-status")
-      (lower-fs-path-status-call
-        ctx
-        state
-        env
-        type-env
-        name
-        ".L_tl_fs_remove_dir_status"
-        args
-        result-ty
-        origin)]
-    [(string-eq name "fs-rename-status")
-      (lower-fs-rename-status-call ctx state env type-env args result-ty origin)]
-    [(string-eq name "fs-process-id")
-      (lower-fs-process-id-call ctx state env type-env args result-ty origin)]
-    [(or (string-eq name "panic") (string-eq name "error"))
-      (lower-message-runtime-call
-        ctx
-        state
-        env
-        type-env
-        args
-        name
-        ".L_tl_abort"
-        result-ty
-        "lower: panic requires String"
-        origin)]
-    [else
-      (lower-message-runtime-call
-        ctx
-        state
-        env
-        type-env
-        args
-        "print-error"
-        "tl_print_err"
-        result-ty
-        "lower: print-error requires String"
-        origin)]))
+    [else (lower-direct-call ctx state env type-env name args result-ty origin)]))
 
 ;; Lower an unshadowed `(string-ref s i)` / `(char-at s i)` builtin call to the
 ;; bounds-checked String byte index. Since #677 the parser emits these names as

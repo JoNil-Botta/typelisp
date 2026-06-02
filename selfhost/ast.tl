@@ -1,4 +1,6 @@
 ;; ast.tl - Sexpr -> compiler AST parser for the M1 self-hosting slice (#154).
+(import "../stdlib/io.tl")
+
 (import "ast_types.tl")
 
 (import "read.tl")

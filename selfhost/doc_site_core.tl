@@ -3,6 +3,8 @@
 ;; The TypeLisp site composition layer combines language guides and reusable API
 ;; trees. API pages still use the source/module documentation extractor and HTML
 ;; renderer without hard-coding TypeLisp guide-page knowledge into that path.
+(import "../stdlib/io.tl")
+
 (import "doc_html.tl")
 
 (import "doc_md.tl")

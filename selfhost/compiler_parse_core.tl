@@ -4,6 +4,8 @@
 ;; compile_smoke AST. It stays parser-only: later #27 work can reuse the
 ;; parsed `AstProgram` for typechecking/lowering once those selfhost passes
 ;; exist.
+(import "../stdlib/io.tl")
+
 (import "compiler_ast_types.tl")
 
 (import "compiler_diagnostic.tl")

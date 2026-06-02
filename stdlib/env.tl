@@ -13,6 +13,22 @@
 ;# ```
 (import "string.tl")
 
+(extern tl_env_var_exists : (-> String bool))
+
+(extern tl_env_var_value : (-> String String))
+
+;: Return true when `name` is present in the process environment.
+(define (env-var-exists? [name : String]) : bool
+  (tl_env_var_exists name))
+
+;: Return the value of `name`, or an empty string when the variable is missing.
+(define (env-var-value [name : String]) : String
+  (tl_env_var_value name))
+
+;: Return the target platform PATH-list separator as a one-byte String.
+(define (env-path-separator) : String
+  (cfg windows ";" ":"))
+
 ;: Optional String result for environment lookups.
 (defenum EnvMaybeString
   (EnvNoString)

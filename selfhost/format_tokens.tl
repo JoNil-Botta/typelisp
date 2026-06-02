@@ -3,6 +3,8 @@
 ;; This lexer is separate from lex.tl because a formatter must keep source
 ;; spelling and comments. Whitespace is skipped for now; comments are retained
 ;; as trivia tokens so later layout rules can place them deliberately.
+(import "../stdlib/io.tl")
+
 (defenum FormatToken
   (FmtLParen)
   (FmtRParen)
@@ -140,30 +142,29 @@
   (or (= c #\space') (or (= c #\tab') (or (= c #\newline') (= c #\return')))))
 
 (define (fmt-is-symbol-punct [c : char]) : bool
-  (or
-    (= c #-')
-    (or
-      (= c #+')
-      (or
-        (= c #*')
-        (or
-          (= c #/')
-          (or
-            (= c #?')
-            (or
-              (= c #!')
-              (or
-                (= c #>')
-                (or
-                  (= c #<')
-                  (or
-                    (= c #=')
-                    (or
-                      (= c #_')
-                      (or (= c #$') (or (= c #.') (or (= c #%') (= c #&')))))))))))))))
+  (cond
+    [(= c #-') true]
+    [(= c #+') true]
+    [(= c #*') true]
+    [(= c #/') true]
+    [(= c #?') true]
+    [(= c #!') true]
+    [(= c #>') true]
+    [(= c #<') true]
+    [(= c #=') true]
+    [(= c #_') true]
+    [(= c #$') true]
+    [(= c #.') true]
+    [(= c #%') true]
+    [(= c #&') true]
+    [(= c #:') true]
+    [else false]))
 
 (define (fmt-is-symbol-char [c : char]) : bool
   (or (fmt-is-alpha c) (or (fmt-is-digit c) (fmt-is-symbol-punct c))))
+
+(define (fmt-colon-starts-symbol? [src : String] [i : i64] [n : i64]) : bool
+  (and (< (+ i 1) n) (fmt-is-symbol-char (string-ref src (+ i 1)))))
 
 (define (fmt-starts-number [src : String] [i : i64] [n : i64]) : bool
   (let
@@ -326,10 +327,20 @@
                 (set! count (+ count 1))
                 (set! i (+ i 1)))]
             [(= c #:')
-              (begin
-                (fmt-store-token tokens count (FmtColon))
-                (set! count (+ count 1))
-                (set! i (+ i 1)))]
+              (if (fmt-colon-starts-symbol? src i n)
+                (let
+                  [end : i64 (fmt-scan-symbol-end src i n)]
+                  (begin
+                    (fmt-store-token
+                      tokens
+                      count
+                      (FmtSymbol (substring src i (- end i))))
+                    (set! count (+ count 1))
+                    (set! i end)))
+                (begin
+                  (fmt-store-token tokens count (FmtColon))
+                  (set! count (+ count 1))
+                  (set! i (+ i 1))))]
             [(= c #'')
               (begin
                 (fmt-store-token tokens count (FmtQuote))

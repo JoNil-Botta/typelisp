@@ -10,6 +10,8 @@
 ;; Evaluation is purely functional: the environment is an immutable cons list
 ;; threaded through recursion, and the step budget ("fuel") is threaded through
 ;; results so the evaluator stays deterministic without a mutable counter.
+(import "../stdlib/io.tl")
+
 (import "compiler_ast_types.tl")
 
 (import "compiler_diagnostic.tl")

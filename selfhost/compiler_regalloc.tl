@@ -6,6 +6,8 @@
 ;; %rsp/%rbp and the emitter's hard scratch registers reserved, and only admit
 ;; caller-saved integer/XMM registers for values that cannot be clobbered by
 ;; call emission.
+(import "../stdlib/io.tl")
+
 (import "compiler_liveness.tl")
 
 (defenum CompilerRegStringList

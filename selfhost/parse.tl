@@ -8,6 +8,8 @@
 ;; `lex -> read -> parse -> emit-program` on an embedded source string and prints
 ;; the generated runnable `.s` when parsing succeeds.
 ;;
+(import "../stdlib/io.tl")
+
 (import "parse_core.tl")
 
 ;; main: run the whole self-hosted pipeline on a source string that exercises

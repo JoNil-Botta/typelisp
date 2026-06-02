@@ -13,6 +13,8 @@
 ;# and the trip count `base-reps + (arg-count)` (arg-count is 1 with no extra
 ;# arguments, matching C `argc`) keeps the result deterministic while
 ;# preventing whole-loop constant folding.
+(import "stdlib/io.tl")
+
 (define array-len : i64
   4096)
 

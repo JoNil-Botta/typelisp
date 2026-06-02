@@ -12,6 +12,8 @@
 ;; path where the target supports process execution. Each failure records the
 ;; source path, the fence's source line, the example index, and the rendered
 ;; diagnostic when one is available.
+(import "../stdlib/io.tl")
+
 (import "compiler_check_core.tl")
 
 (import "build_run_core.tl")

@@ -19,6 +19,8 @@
 ;;   control-flow edge.
 ;;
 ;; Out of scope: aggregate/String/array IR optimization.
+(import "../stdlib/io.tl")
+
 (import "compiler_ir_types.tl")
 
 (defenum ResultCompilerOptimizeLevel

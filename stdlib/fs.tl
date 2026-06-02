@@ -18,6 +18,36 @@
 
 (import "string.tl")
 
+(extern tl_fs_mkdir_status : (-> String i64))
+
+(extern tl_fs_remove_file_status : (-> String i64))
+
+(extern tl_fs_remove_dir_status : (-> String i64))
+
+(extern tl_fs_rename_status : (-> String String i64))
+
+(extern tl_fs_process_id : (-> i64))
+
+;: Return the host status code for creating a directory.
+(define (fs-mkdir-status [path : String]) : i64
+  (tl_fs_mkdir_status path))
+
+;: Return the host status code for removing a file.
+(define (fs-remove-file-status [path : String]) : i64
+  (tl_fs_remove_file_status path))
+
+;: Return the host status code for removing an empty directory.
+(define (fs-remove-dir-status [path : String]) : i64
+  (tl_fs_remove_dir_status path))
+
+;: Return the host status code for renaming a path.
+(define (fs-rename-status [source : String] [destination : String]) : i64
+  (tl_fs_rename_status source destination))
+
+;: Return the host process id.
+(define (fs-process-id) : i64
+  (tl_fs_process_id))
+
 ;: Common host status code for attempting to create an already-existing path.
 (define fs-status-already-exists : i64
   17)

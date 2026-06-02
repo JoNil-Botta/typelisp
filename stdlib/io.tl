@@ -1,17 +1,12 @@
 ;# File I/O utility library for TypeLisp (#702).
 ;#
-;# Provides higher-level file and stdio helpers built on the compiler/runtime
-;# I/O primitives, mirroring how `stdlib/string.tl` wraps string primitives.
+;# Provides file, argv, panic, and stdio helpers built from explicit externs
+;# to backend-emitted runtime symbols.
 ;#
-;# Primitives required from the compiler/runtime: `read-file`, `write-file`,
-;# `file-exists?`, `read-file-status`, `write-file-status`,
-;# `append-file-status`, `file-exists-status`, `file-open-status`,
-;# `file-close-status`, `file-read-chunk-status`,
-;# `file-write-status`, `file-flush-status`,
-;# `file-read-chunk-bytes`, `file-read-chunk-eof?`,
-;# `read-stdin-line`, `read-stdin-bytes`,
-;# `stdin-eof?`, `print-string`, `print-error`, `flush-stdout`,
-;# `int->string`, `string-append`, and `string-length`.
+;# Public runtime-facing functions such as `print-string`, `panic`, `arg`,
+;# `read-file`, `write-file`, file-handle status helpers, and stdin/stdout
+;# helpers are ordinary stdlib definitions in this module. Programs must import
+;# this module to use them.
 ;#
 ;# The `try-*` helpers return explicit monomorphic result enums. Host errors
 ;# are reported through status-code primitives and mapped into `IoError`.
@@ -37,6 +32,154 @@
 ;#     (stdout-write "hello from io\n")
 ;#     0))
 ;# ```
+(extern tl_print_string : (-> String unit))
+
+(extern tl_print_error : (-> String unit))
+
+(extern tl_abort_string : (-> String unit))
+
+(extern tl_arg_count : (-> i64))
+
+(extern tl_arg : (-> i64 String))
+
+(extern tl_read_file : (-> String String))
+
+(extern tl_read_file_status : (-> String i64))
+
+(extern tl_write_file : (-> String String unit))
+
+(extern tl_write_file_status : (-> String String i64))
+
+(extern tl_append_file_status : (-> String String i64))
+
+(extern tl_file_exists : (-> String bool))
+
+(extern tl_file_exists_status : (-> String i64))
+
+(extern tl_file_open_status : (-> String i64 i64))
+
+(extern tl_file_close_status : (-> i64 i64))
+
+(extern tl_file_read_chunk_status : (-> i64 i64 i64))
+
+(extern tl_file_write_status : (-> i64 String i64))
+
+(extern tl_file_flush_status : (-> i64 i64))
+
+(extern tl_file_read_chunk_bytes : (-> i64 String))
+
+(extern tl_file_read_chunk_eof : (-> i64 bool))
+
+(extern tl_read_stdin_line : (-> String))
+
+(extern tl_read_stdin_bytes : (-> i64 String))
+
+(extern tl_stdin_eof : (-> bool))
+
+(extern tl_flush_stdout : (-> unit))
+
+;: Return the number of process argv entries.
+(define (arg-count) : i64
+  (tl_arg_count))
+
+;: Return argv entry `index`, aborting on out-of-range indices.
+(define (arg [index : i64]) : String
+  (tl_arg index))
+
+;: Write a string to stdout without adding a newline.
+(define (print-string [text : String]) : unit
+  (tl_print_string text))
+
+;: Compatibility alias for `print-string`.
+(define (print-str [text : String]) : unit
+  (print-string text))
+
+;: Write a string to stderr without adding a newline.
+(define (print-error [text : String]) : unit
+  (tl_print_error text))
+
+;: Abort the process after writing `message` to stderr.
+(define (panic [message : String]) : never
+  (begin
+    (tl_abort_string message)
+    (panic message)))
+
+;: Alias for `panic`.
+(define (error [message : String]) : never
+  (panic message))
+
+;: Read a whole file, aborting on host read failure.
+(define (read-file [path : String]) : String
+  (tl_read_file path))
+
+;: Return the host status code for reading `path`.
+(define (read-file-status [path : String]) : i64
+  (tl_read_file_status path))
+
+;: Write a whole file, aborting on host write failure.
+(define (write-file [path : String] [contents : String]) : unit
+  (tl_write_file path contents))
+
+;: Return the host status code for writing `contents` to `path`.
+(define (write-file-status [path : String] [contents : String]) : i64
+  (tl_write_file_status path contents))
+
+;: Return the host status code for appending `contents` to `path`.
+(define (append-file-status [path : String] [contents : String]) : i64
+  (tl_append_file_status path contents))
+
+;: Return true when `path` exists, aborting on hard host probe failure.
+(define (file-exists? [path : String]) : bool
+  (tl_file_exists path))
+
+;: Return the host status code for probing `path`.
+(define (file-exists-status [path : String]) : i64
+  (tl_file_exists_status path))
+
+;: Return a runtime file handle id or negative status for opening `path`.
+(define (file-open-status [path : String] [mode : i64]) : i64
+  (tl_file_open_status path mode))
+
+;: Return the host status code for closing a runtime file handle id.
+(define (file-close-status [handle : i64]) : i64
+  (tl_file_close_status handle))
+
+;: Return the host status code for reading a chunk into the runtime handle cache.
+(define (file-read-chunk-status [handle : i64] [count : i64]) : i64
+  (tl_file_read_chunk_status handle count))
+
+;: Return the host status code for writing `contents` through a runtime handle.
+(define (file-write-status [handle : i64] [contents : String]) : i64
+  (tl_file_write_status handle contents))
+
+;: Return the host status code for flushing a runtime handle.
+(define (file-flush-status [handle : i64]) : i64
+  (tl_file_flush_status handle))
+
+;: Return bytes from the last successful runtime file chunk read.
+(define (file-read-chunk-bytes [handle : i64]) : String
+  (tl_file_read_chunk_bytes handle))
+
+;: Return the sticky EOF bit from the last successful runtime file chunk read.
+(define (file-read-chunk-eof? [handle : i64]) : bool
+  (tl_file_read_chunk_eof handle))
+
+;: Read one stdin line without the trailing newline.
+(define (read-stdin-line) : String
+  (tl_read_stdin_line))
+
+;: Read up to `count` bytes from stdin.
+(define (read-stdin-bytes [count : i64]) : String
+  (tl_read_stdin_bytes count))
+
+;: Return the sticky stdin EOF state.
+(define (stdin-eof?) : bool
+  (tl_stdin_eof))
+
+;: Flush stdout.
+(define (flush-stdout) : unit
+  (tl_flush_stdout))
+
 ;: Structured file I/O failures.
 ;:
 ;: `IoSystemCode` stores a target-specific positive error code and path.

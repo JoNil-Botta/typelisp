@@ -3,6 +3,8 @@
 ;; `format_core.tl` stays syntax-neutral. This module adds a deterministic
 ;; gofmt-like first pass for common TypeLisp special forms while still building
 ;; `Doc` values for width-aware rendering.
+(import "../stdlib/io.tl")
+
 (import "format_tokens.tl")
 
 (import "format_cst.tl")

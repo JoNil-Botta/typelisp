@@ -20,6 +20,8 @@
 ;# MINSTD/Park-Miller with Schrage constants, so it avoids signed `i64`
 ;# overflow and remains portable across current TypeLisp targets.
 ;: Pseudo-random generator state. Valid normalized seeds are in `1..2147483647`.
+(import "io.tl")
+
 (defstruct RandomState
   (seed i64))
 

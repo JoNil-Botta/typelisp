@@ -35,6 +35,8 @@
 ;; `token.tl` token model, so this single import transitively pulls in BOTH
 ;; the `lex` entry and the `Token` enum + token accessors/tag constants.
 ;; Resolved relative to this file, so it finds the co-located `lex.tl`.
+(import "../stdlib/io.tl")
+
 (import "lex.tl")
 
 ;; --------------------------------------------------------------------------

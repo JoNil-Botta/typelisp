@@ -92,6 +92,7 @@ tl_alloc|tests/integration/tl_alloc.tl|0|-|-|-
 tree|tests/integration/tree.tl|3|-|-|-
 tuple_values|tests/integration/tuple_values.tl|42|-|-|-
 # run-assert deferred (bare idiv trap needs guarded abort, #1654): u16_div_zero_trap|tests/integration/u16_div_zero_trap.tl|135|-|-|-|expected-stderr:tl: integer division or remainder error\n
+u64_float_casts|tests/integration/u64_float_casts.tl|0|-|-|-
 unit_functions|tests/integration/unit_functions.tl|7|-|-|-
 unit_main|tests/integration/unit_main.tl|0|-|-|-
 valid_shift_counts|tests/integration/valid_shift_counts.tl|42|-|-|-

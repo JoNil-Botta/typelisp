@@ -826,6 +826,8 @@
                 [(OkCompilerBackend asm) (string-eq asm "")]
                 [(ErrCompilerBackend _) false])
               (match (compiler-backend-emit-cast
+                "_tl_test"
+                "entry"
                 coalesced
                 2
                 (IrValueVar 0)
@@ -1696,29 +1698,31 @@
                 "    jb .L_tl_test_bounds_ok\n"))))))))
 
 (define (compiler-backend-numeric-cast-shape-ok?) : bool
-  (and
+  (backend-and8
     (compiler-backend-instr-contains?
       (IrInstrCast 6 (IrValueVar 5) (AstTyI64) (AstTyF64))
       "    cvtsi2sdq %rax, %xmm0\n")
-    (and
-      (compiler-backend-instr-contains?
-        (IrInstrCast 6 (IrValueVar 5) (AstTyI64) (AstTyF32))
-        "    cvtsi2ssq %rax, %xmm0\n")
-      (and
-        (compiler-backend-instr-contains?
-          (IrInstrCast 6 (IrValueVar 5) (AstTyF64) (AstTyI64))
-          "    cvttsd2siq %xmm0, %rax\n")
-        (and
-          (compiler-backend-instr-contains?
-            (IrInstrCast 6 (IrValueVar 5) (AstTyF32) (AstTyI32))
-            "    cvttss2siq %xmm0, %rax\n")
-          (and
-            (compiler-backend-instr-contains?
-              (IrInstrCast 6 (IrValueVar 5) (AstTyF64) (AstTyF32))
-              "    cvtsd2ss %xmm0, %xmm0\n")
-            (compiler-backend-instr-contains?
-              (IrInstrCast 6 (IrValueVar 5) (AstTyF32) (AstTyF64))
-              "    cvtss2sd %xmm0, %xmm0\n")))))))
+    (compiler-backend-instr-contains?
+      (IrInstrCast 6 (IrValueVar 5) (AstTyI64) (AstTyF32))
+      "    cvtsi2ssq %rax, %xmm0\n")
+    (compiler-backend-instr-contains?
+      (IrInstrCast 6 (IrValueVar 5) (AstTyU8) (AstTyF64))
+      "    cvtsi2sdq %rax, %xmm0\n")
+    (compiler-backend-instr-contains?
+      (IrInstrCast 6 (IrValueVar 5) (AstTyU64) (AstTyF64))
+      "    js .L_tl_test_cast_u64_float_entry_v6_high\n")
+    (compiler-backend-instr-contains?
+      (IrInstrCast 6 (IrValueVar 5) (AstTyU64) (AstTyF32))
+      "    addss %xmm0, %xmm0\n")
+    (compiler-backend-instr-contains?
+      (IrInstrCast 6 (IrValueVar 5) (AstTyF64) (AstTyI64))
+      "    cvttsd2siq %xmm0, %rax\n")
+    (compiler-backend-instr-contains?
+      (IrInstrCast 6 (IrValueVar 5) (AstTyF64) (AstTyF32))
+      "    cvtsd2ss %xmm0, %xmm0\n")
+    (compiler-backend-instr-contains?
+      (IrInstrCast 6 (IrValueVar 5) (AstTyF32) (AstTyF64))
+      "    cvtss2sd %xmm0, %xmm0\n")))
 
 ;; A source exercising `array-ref`, used to confirm the lowerer's bounds-check
 ;; trap (#528) reaches the backend as a `call tl_oob_abort`.

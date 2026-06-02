@@ -445,34 +445,40 @@
                                                       (tc-bind
                                                         (tc-bind
                                                           (tc-bind
-                                                            e18
-                                                            "file-exists?"
+                                                            (tc-bind
+                                                              e18
+                                                              "file-exists?"
+                                                              (tc-fn1
+                                                                (AstTyString)
+                                                                (AstTyBool)))
+                                                            "file-exists-status"
                                                             (tc-fn1
                                                               (AstTyString)
-                                                              (AstTyBool)))
-                                                          "file-exists-status"
-                                                          (tc-fn1
+                                                              (AstTyI64)))
+                                                          "file-open-status"
+                                                          (tc-fn2
                                                             (AstTyString)
+                                                            (AstTyI64)
                                                             (AstTyI64)))
-                                                        "file-open-status"
-                                                        (tc-fn2
-                                                          (AstTyString)
+                                                        "file-close-status"
+                                                        (tc-fn1
                                                           (AstTyI64)
                                                           (AstTyI64)))
-                                                      "file-close-status"
+                                                      "fs-mkdir-status"
                                                       (tc-fn1
-                                                        (AstTyI64)
+                                                        (AstTyString)
                                                         (AstTyI64)))
-                                                    "fs-mkdir-status"
+                                                    "fs-remove-file-status"
                                                     (tc-fn1
                                                       (AstTyString)
                                                       (AstTyI64)))
-                                                  "fs-remove-file-status"
+                                                  "fs-remove-dir-status"
                                                   (tc-fn1
                                                     (AstTyString)
                                                     (AstTyI64)))
-                                                "fs-remove-dir-status"
-                                                (tc-fn1
+                                                "fs-rename-status"
+                                                (tc-fn2
+                                                  (AstTyString)
                                                   (AstTyString)
                                                   (AstTyI64)))
                                               "fs-process-id"
@@ -3128,6 +3134,7 @@
     [(string-eq name "fs-mkdir-status") true]
     [(string-eq name "fs-remove-file-status") true]
     [(string-eq name "fs-remove-dir-status") true]
+    [(string-eq name "fs-rename-status") true]
     [(string-eq name "fs-process-id") true]
     [(string-eq name "panic") true]
     [(string-eq name "error") true]
@@ -3561,6 +3568,7 @@
     [(string-eq name "fs-mkdir-status") true]
     [(string-eq name "fs-remove-file-status") true]
     [(string-eq name "fs-remove-dir-status") true]
+    [(string-eq name "fs-rename-status") true]
     [(string-eq name "panic") true]
     [(string-eq name "error") true]
     [(string-eq name "env-var-exists?") true]
@@ -3602,6 +3610,8 @@
       (tc-string-i64-builtin-call ctx env args (AstTyI64))]
     [(string-eq name "file-write-status")
       (tc-i64-string-builtin-call ctx env args (AstTyI64))]
+    [(string-eq name "fs-rename-status")
+      (tc-two-string-handle-builtin-call ctx env args (AstTyI64))]
     [(or
         (string-eq name "fs-mkdir-status")
         (or

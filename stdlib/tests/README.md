@@ -42,6 +42,9 @@ Coverage notes:
 - `env_api.tl` covers missing, empty, and present environment variables,
   host-separator PATH splitting/joining, and explicit Windows `;` path-list
   behavior.
+- `fs_api.tl` covers path joins, dirname/basename/extension helpers, temp-dir
+  creation, recoverable cleanup helpers, Linux file/directory rename behavior,
+  missing and empty rename paths, and the Windows unsupported rename result.
 - `hash_api.tl` covers stable deterministic hashes, equal-values-same-hash
   checks, primitive key equality predicates, known collision behavior, hash
   range normalization, and string edge cases.

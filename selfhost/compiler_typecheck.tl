@@ -128,6 +128,7 @@
     (fs-mkdir-status s)
     (fs-remove-file-status s)
     (fs-remove-dir-status s)
+    (fs-rename-status s s)
     (fs-process-id)
     (string-append (substring s 0 (length s))
                    (int->string (string->int \"7\")))))")
@@ -2851,6 +2852,16 @@
         unit
         (set! ok false))
       (if (compiler-typecheck-ok?
+        "(define (f [from : String] [to : String]) : i64
+  (fs-rename-status from to))")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-ok?
+        "(define (f [from : String] [to : String]) : i64
+  (fs-rename-status (& from) (& to)))")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-ok?
         "(define (f [p : String]) : i64 (file-open-status p 0))")
         unit
         (set! ok false))
@@ -2896,6 +2907,16 @@
       (if (compiler-typecheck-error-ok?
         "(define (f [p : String]) : i64 (file-open-status p \"r\"))"
         "typecheck: argument type mismatch")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        "(define (f [from : String]) : i64 (fs-rename-status from 5))"
+        "typecheck: argument type mismatch")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        "(define (f [from : String]) : i64 (fs-rename-status from))"
+        "typecheck: arity mismatch")
         unit
         (set! ok false))
       (if (compiler-typecheck-error-ok?

@@ -47,7 +47,8 @@ Coverage notes:
   NUL rejection using an explicitly unsafe test-only string fixture.
 - `fs_api.tl` covers path joins, dirname/basename/extension helpers, temp-dir
   creation, recoverable cleanup helpers, Linux file/directory rename behavior,
-  missing and empty rename paths, and the Windows unsupported rename result.
+  directory iteration, missing and empty rename paths, and Windows unsupported
+  rename/read-dir results.
 - `hash_api.tl` covers stable deterministic hashes, equal-values-same-hash
   checks, primitive key equality predicates, known collision behavior, hash
   range normalization, and string edge cases.

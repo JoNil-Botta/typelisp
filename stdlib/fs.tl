@@ -4,7 +4,8 @@
 ;# top of compiler/runtime primitives:
 ;#
 ;# `fs-mkdir-status`, `fs-remove-file-status`, `fs-remove-dir-status`,
-;# `fs-rename-status`, and `fs-process-id`.
+;# `fs-rename-status`, `fs-read-dir-status`, `fs-read-dir`, and
+;# `fs-process-id`.
 ;#
 ;# Usage: `(import "stdlib/fs.tl")`
 ;#
@@ -16,7 +17,14 @@
 
 (import "io.tl")
 
+(import "list.tl")
+
 (import "string.tl")
+
+;: Result type for directory-listing APIs.
+(defenum ResultIoStringList
+  (OkIoStringList StringList)
+  (ErrIoStringList IoError))
 
 ;: Common host status code for attempting to create an already-existing path.
 (define fs-status-already-exists : i64
@@ -184,6 +192,45 @@
       (fs-status-result
         (string-append (string-append source " -> ") destination)
         (fs-rename-status source destination)))))
+
+;: Split the runtime's newline-delimited directory payload into entry names.
+(define (fs-read-dir-split [entries : String]) : StringList
+  (let
+    [n : i64 (string-length entries)]
+    [items : StringList (StringNil)]
+    [start : i64 0]
+    [i : i64 0]
+    (begin
+      (while (< i n)
+        (if (char-eq (string-ref entries i) #\newline')
+          (begin
+            (if (> i start)
+              (set!
+                items
+                (StringCons (substring entries start (- i start)) items))
+              unit)
+            (set! start (+ i 1))
+            (set! i (+ i 1)))
+          (set! i (+ i 1))))
+      (if (< start n)
+        (string-list-reverse
+          (StringCons (substring entries start (- n start)) items))
+        (string-list-reverse items)))))
+
+;: Read one directory and return entry names as a `StringList`.
+;:
+;: Entries are names only, not joined paths. The runtime filters `.` and `..`.
+;: Host directory order is preserved and not guaranteed to be stable; callers
+;: that need stable ordering should sort the returned list. The returned list
+;: spine and entry strings allocate in the active arena.
+(define (try-read-dir [path : String]) : ResultIoStringList
+  (if (io-empty-path? path)
+    (ErrIoStringList (IoInvalidPath path))
+    (let
+      [status : i64 (fs-read-dir-status path)]
+      (if (= status io-status-ok)
+        (OkIoStringList (fs-read-dir-split (fs-read-dir path)))
+        (ErrIoStringList (io-error-from-status path status))))))
 
 ;: Remove a file if present. Missing paths are considered already cleaned.
 (define (try-remove-file-if-exists [path : String]) : ResultIoUnit

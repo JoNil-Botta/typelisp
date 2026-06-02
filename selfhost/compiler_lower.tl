@@ -4664,6 +4664,8 @@
     [(string-eq name "fs-remove-file-status") true]
     [(string-eq name "fs-remove-dir-status") true]
     [(string-eq name "fs-rename-status") true]
+    [(string-eq name "fs-read-dir-status") true]
+    [(string-eq name "fs-read-dir") true]
     [(string-eq name "fs-process-id") true]
     [(string-eq name "panic") true]
     [(string-eq name "error") true]
@@ -7307,6 +7309,28 @@
         origin)]
     [(string-eq name "fs-rename-status")
       (lower-fs-rename-status-call ctx state env type-env args result-ty origin)]
+    [(string-eq name "fs-read-dir-status")
+      (lower-fs-path-status-call
+        ctx
+        state
+        env
+        type-env
+        name
+        ".L_tl_fs_read_dir_status"
+        args
+        result-ty
+        origin)]
+    [(string-eq name "fs-read-dir")
+      (lower-fs-path-status-call
+        ctx
+        state
+        env
+        type-env
+        name
+        ".L_tl_fs_read_dir"
+        args
+        result-ty
+        origin)]
     [(string-eq name "fs-process-id")
       (lower-fs-process-id-call ctx state env type-env args result-ty origin)]
     [(or (string-eq name "panic") (string-eq name "error"))
@@ -12659,9 +12683,11 @@
     (+ (fs-mkdir-status \"target/typelisp-fs\")
       (+ (fs-remove-file-status \"target/typelisp-fs/artifact.o\")
         (+ (fs-remove-dir-status \"target/typelisp-fs\")
-          (fs-rename-status
-            \"target/typelisp-fs/from name\"
-            \"target/typelisp-fs/to name\"))))))")
+          (+ (fs-rename-status
+              \"target/typelisp-fs/from name\"
+              \"target/typelisp-fs/to name\")
+            (+ (fs-read-dir-status \"target/typelisp-fs\")
+              (string-length (fs-read-dir \"target/typelisp-fs\")))))))))")
 
 (define (compiler-lower-raw-pointer-ops-source) : String
   "(extern raw-make : (-> (MutPtr i64)))
@@ -15485,25 +15511,49 @@
                     (=
                       (lower-test-functions-call-count
                         functions
-                        ".L_tl_fs_process_id")
+                        ".L_tl_fs_read_dir_status")
                       1)
                     (and
                       (=
                         (lower-test-functions-call-count
                           functions
-                          "fs-mkdir-status")
-                        0)
+                          ".L_tl_fs_read_dir")
+                        1)
                       (and
                         (=
                           (lower-test-functions-call-count
                             functions
-                            "fs-rename-status")
-                          0)
-                        (=
-                          (lower-test-functions-call-count
-                            functions
-                            "fs-process-id")
-                          0))))))))])]
+                            ".L_tl_fs_process_id")
+                          1)
+                        (and
+                          (=
+                            (lower-test-functions-call-count
+                              functions
+                              "fs-mkdir-status")
+                            0)
+                          (and
+                            (=
+                              (lower-test-functions-call-count
+                                functions
+                                "fs-rename-status")
+                              0)
+                            (and
+                              (=
+                                (lower-test-functions-call-count
+                                  functions
+                                  "fs-read-dir-status")
+                                0)
+                              (and
+                                (=
+                                  (lower-test-functions-call-count
+                                    functions
+                                    "fs-read-dir")
+                                  0)
+                                (=
+                                  (lower-test-functions-call-count
+                                    functions
+                                    "fs-process-id")
+                                  0))))))))))))])]
     [(ErrCompilerLower _) false]))
 
 (define (compiler-lower-region-source) : String

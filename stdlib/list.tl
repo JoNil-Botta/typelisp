@@ -49,6 +49,15 @@
     [(StringNil) 0]
     [(StringCons _ rest) (+ 1 (string-list-count rest))]))
 
+;: Return true when `items` contains `value`.
+(define (string-list-contains? [items : StringList] [value : String]) : bool
+  (match items
+    [(StringNil) false]
+    [(StringCons head rest)
+      (if (string-eq head value)
+        true
+        (string-list-contains? rest value))]))
+
 ;: Reverse `items` onto `acc`, allocating a fresh active-arena list spine.
 (define (string-list-reverse-onto [items : StringList] [acc : StringList]) : StringList
   (match items

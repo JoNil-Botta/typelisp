@@ -129,9 +129,11 @@
     (fs-remove-file-status s)
     (fs-remove-dir-status s)
     (fs-rename-status s s)
+    (fs-read-dir-status s)
     (fs-process-id)
-    (string-append (substring s 0 (length s))
-                   (int->string (string->int \"7\")))))")
+    (string-append (fs-read-dir s)
+      (string-append (substring s 0 (length s))
+                   (int->string (string->int \"7\"))))))")
 
 (define (compiler-typecheck-stdio-source) : String
   "(define (main) : i64

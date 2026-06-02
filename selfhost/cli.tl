@@ -34,9 +34,11 @@
 
 (import "compile_cli_core.tl")
 
+(import "repl_cli_core.tl")
+
 ;; Mirrors the Rust stage0 `print_usage` (src/main.rs) so the unified selfhost
-;; CLI presents the same help surface. Commands not yet routed here (lsp, repl,
-;; new, init) are still listed for parity but report their tracking issue when
+;; CLI presents the same help surface. Commands not yet routed here (lsp, new,
+;; init) are still listed for parity but report their tracking issue when
 ;; invoked (see cli-pending), so the help matches stage0 without pretending the
 ;; command works yet.
 (define (cli-help-text) : String
@@ -124,7 +126,7 @@ Options for doc:
     [(string-eq command "debug") (compile-cli-run count)]
     ;; Listed in the help for stage0 parity; wiring tracked under #1638.
     [(string-eq command "lsp") (cli-pending "lsp" "#1640")]
-    [(string-eq command "repl") (cli-pending "repl" "#1641")]
+    [(string-eq command "repl") (repl-run-from 2 count)]
     [(string-eq command "new") (cli-pending "new" "#1642")]
     [(string-eq command "init") (cli-pending "init" "#1642")]
     [else

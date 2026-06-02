@@ -136,7 +136,7 @@ contains|Generated:
 end
 
 # Unified pure-TypeLisp toolchain dispatcher (single self-hosted entry point for
-# build/run/check/fmt/lint/test/doc). Each subcommand routes through its
+# build/run/check/fmt/lint/test/doc/repl). Each subcommand routes through its
 # `*-run-from` entry in a shared main-free `*_cli_core.tl` module, so the
 # dispatcher's assembly must reference every command's runner.
 case|selfhost_cli|selfhost/cli.tl|assembly|exactly-one|direct
@@ -149,6 +149,7 @@ contains|_tl_fmt_run_from:
 contains|_tl_selfhost_lint_run_from:
 contains|_tl_tltest_run_from:
 contains|_tl_doc_run_from:
+contains|_tl_repl_run_from:
 contains|typelisp: unknown subcommand
 end
 
@@ -163,6 +164,7 @@ decision|selfhost/format_cli_core.tl|fmt command logic (#522): --check vs rewrit
 decision|selfhost/test_cli_core.tl|test command logic: config parsing and test run dispatch; main-less, imported by selfhost/test.tl and selfhost/cli.tl and exercised through the selfhost_test and selfhost_cli cases
 decision|selfhost/doc_cli_core.tl|doc command logic: kind dispatch (test/html/load/default) with a base-offset arg model; main-less, imported by selfhost/doc.tl and selfhost/cli.tl and exercised through the selfhost_doc and selfhost_cli cases
 decision|selfhost/compile_cli_core.tl|compile/tokenize/parse/debug command logic (#565/#1639): arg parsing and compile/tokenize/parse/check/debug dispatch + execution (compile-cli-run); main-less, imported by selfhost/compile.tl and selfhost/cli.tl and exercised through the selfhost_compile and selfhost_cli cases
+decision|selfhost/repl_cli_core.tl|REPL command logic (#1641): line loop, dot commands, type queries, and scratch expression execution; main-less, imported by selfhost/repl.tl and selfhost/cli.tl and exercised through the selfhost_repl and selfhost_cli cases
 decision|selfhost/compiler_clone.tl|type-directed clone$<Type> helper synthesis (#1633): least-fixpoint clone-ability over the type graph plus match-reconstruct/tail-recursive AST generation for (clone x); main-less, imported by selfhost/compiler_lower.tl and exercised through the selfhost_compiler_lower case
 
 case|selfhost_build_run_core|selfhost/build_run_core.tl|assembly|skip|direct

@@ -454,6 +454,32 @@ assert_status run "$status" 17
 assert_empty run "$WORKDIR/run.err"
 assert_contains run "$WORKDIR/run.out" "run-arg-ok"
 
+cat > "$WORKDIR/repl.in" <<'EOF'
+.help
+.type true
+(+ 1 2)
+.exit
+EOF
+
+set +e
+"$COMPILER" repl < "$WORKDIR/repl.in" > "$WORKDIR/repl.out" 2> "$WORKDIR/repl.err"
+status=$?
+set -e
+assert_status repl "$status" 0
+assert_empty repl "$WORKDIR/repl.err"
+assert_contains repl "$WORKDIR/repl.out" "TypeLisp REPL commands:"
+assert_contains repl "$WORKDIR/repl.out" ".type <expr>"
+assert_contains repl "$WORKDIR/repl.out" "bool"
+assert_contains repl "$WORKDIR/repl.out" "3"
+
+set +e
+"$COMPILER" repl unexpected > "$WORKDIR/repl-args.out" 2> "$WORKDIR/repl-args.err"
+status=$?
+set -e
+assert_status repl-args "$status" 1
+assert_empty repl-args "$WORKDIR/repl-args.out"
+assert_contains repl-args "$WORKDIR/repl-args.err" "Error: repl does not accept arguments"
+
 cat > "$WORKDIR/queue.json" <<'EOF'
 {"prs":[],"issues":[{"number":1645,"title":"Host actions direct","labels":[{"name":"ready-for-implementation"}]}]}
 EOF

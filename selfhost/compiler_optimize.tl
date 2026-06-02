@@ -5148,7 +5148,7 @@
   (OptFunctionPassResult CompilerIrFunction bool))
 
 (define (optimize-function-max-iterations) : i64
-  10)
+  2)
 
 ;; --- cross-block global value numbering (#1349) -----------------------------
 ;;

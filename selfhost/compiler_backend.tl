@@ -12786,6 +12786,16 @@ tl_string_concat:
     jl .L_tl_process_parent_stdin_done
     call .L_tl_process_close_fd
     movq $-1, -152(%rbp)
+    movq $1, -224(%rbp)
+    movq $0, -216(%rbp)
+    movq $0, -208(%rbp)
+    movq $0, -200(%rbp)
+    movq $13, %rdi
+    leaq -224(%rbp), %rsi
+    leaq -264(%rbp), %rdx
+    movq $8, %r10
+    movq $13, %rax
+    syscall
     movq -160(%rbp), %rdi
     movq -136(%rbp), %rsi
     movq -144(%rbp), %rdx
@@ -12794,8 +12804,17 @@ tl_string_concat:
     movq -160(%rbp), %rdi
     call .L_tl_process_close_fd
     movq $-1, -160(%rbp)
+    movq $13, %rdi
+    leaq -264(%rbp), %rsi
+    xorq %rdx, %rdx
+    movq $8, %r10
+    movq $13, %rax
+    syscall
     testq %r12, %r12
-    js .L_tl_process_wait_failed
+    jns .L_tl_process_parent_stdin_done
+    cmpq $-32, %r12
+    je .L_tl_process_parent_stdin_done
+    jmp .L_tl_process_wait_failed
 .L_tl_process_parent_stdin_done:
     movq -88(%rbp), %rdi
     leaq -184(%rbp), %rsi
@@ -12946,7 +12965,8 @@ tl_string_concat:
     subq %r14, %rdx
     syscall
     testq %rax, %rax
-    jle .L_tl_process_write_all_fail
+    jl .L_tl_process_write_all_return
+    jz .L_tl_process_write_all_fail
     addq %rax, %r14
     jmp .L_tl_process_write_all_loop
 .L_tl_process_write_all_ok:

@@ -503,10 +503,33 @@
   [point : i64]) : unit
   (match set
     [(CompilerLiveI64Nil) unit]
-    [(CompilerLiveI64Cons var rest)
+    [(CompilerLiveI64Cons chunk rest)
       (begin
-        (compiler-reg-extend-interval starts ends var point)
+        (compiler-reg-extend-set-word-bits
+          starts
+          ends
+          (compiler-live-set-chunk-bits chunk)
+          (*
+            (compiler-live-set-chunk-word-index chunk)
+            (compiler-live-set-word-bits))
+          0
+          point)
         (compiler-reg-extend-set starts ends rest point))]))
+
+(define (compiler-reg-extend-set-word-bits
+  [starts : (Array i64)]
+  [ends : (Array i64)]
+  [bits : i64]
+  [base : i64]
+  [bit : i64]
+  [point : i64]) : unit
+  (if (>= bit (compiler-live-set-word-bits))
+    unit
+    (begin
+      (if (= (bit-and bits (shl 1 bit)) 0)
+        unit
+        (compiler-reg-extend-interval starts ends (+ base bit) point))
+      (compiler-reg-extend-set-word-bits starts ends bits base (+ bit 1) point))))
 
 (define (compiler-reg-extend-instr
   [starts : (Array i64)]
@@ -543,7 +566,7 @@
             (compiler-reg-extend-instr
               starts
               ends
-              CompilerLiveI64Nil
+              (compiler-live-set-empty)
               point
               instr)
             (compiler-reg-live-intervals-instrs
@@ -767,7 +790,9 @@
             params
             (compiler-reg-call-arg-vars-blocks
               blocks
-              (compiler-reg-ineligible-non-scalars types CompilerLiveI64Nil)))))]))
+              (compiler-reg-ineligible-non-scalars
+                types
+                (compiler-live-set-empty))))))]))
 
 (define (compiler-reg-interval-before?
   [left : CompilerRegInterval]

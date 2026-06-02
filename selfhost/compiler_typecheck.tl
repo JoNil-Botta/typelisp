@@ -1786,6 +1786,18 @@
 (define (compiler-typecheck-op-ok-cmp-eq-source) : String
   "(define (main) : bool (and (< 1 2) (= 3 3)))")
 
+(define (compiler-typecheck-op-ok-shift-count-source) : String
+  "(define (main) : u64 (shr (cast -1 : u64) 63))")
+
+(define (compiler-typecheck-op-shift-count-bad-source) : String
+  "(define (main) : i64 (shl 1 true))")
+
+(define (compiler-typecheck-op-shift-left-bad-source) : String
+  "(define (main) : i64 (shl true 1))")
+
+(define (compiler-typecheck-op-bitwise-mismatch-source) : String
+  "(define (main) : u64 (bit-and (cast -1 : u64) 1))")
+
 (define (compiler-typecheck-op-ok-call-source) : String
   "(define (add [a : i64] [b : i64]) : i64 (+ a b))
 (define (main) : i64 (add 2 3))")
@@ -1816,7 +1828,23 @@
               (and
                 (compiler-typecheck-ok?
                   (compiler-typecheck-op-ok-cmp-eq-source))
-                (compiler-typecheck-ok? (compiler-typecheck-op-ok-call-source))))))))))
+                (and
+                  (compiler-typecheck-ok?
+                    (compiler-typecheck-op-ok-shift-count-source))
+                  (and
+                    (compiler-typecheck-error-ok?
+                      (compiler-typecheck-op-shift-count-bad-source)
+                      "typecheck: shift count must be integer")
+                    (and
+                      (compiler-typecheck-error-ok?
+                        (compiler-typecheck-op-shift-left-bad-source)
+                        "typecheck: shift left operand must be integer")
+                      (and
+                        (compiler-typecheck-error-ok?
+                          (compiler-typecheck-op-bitwise-mismatch-source)
+                          "typecheck: integer operator expects matching integer operands")
+                        (compiler-typecheck-ok?
+                          (compiler-typecheck-op-ok-call-source))))))))))))))
 
 ;; Scalar/bool/float/cast parity (#1541): remaining Rust typechecker unit
 ;; coverage for bool operators/equality, cond condition typing, narrow integer

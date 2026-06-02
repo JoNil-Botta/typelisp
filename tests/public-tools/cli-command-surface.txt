@@ -18,7 +18,7 @@ active|debug tokenize|-
 active|debug parse|-
 active|debug check|-
 active|repl|-
+active|new|-
+active|init|-
 pending|lsp|#1640
-pending|new|#1642
-pending|init|#1642
 retired|debug host-action|internal host-action debug command retired from public cli.tl parity (#1638)

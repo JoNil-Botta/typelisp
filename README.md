@@ -438,9 +438,8 @@ scripts/build-stage0.sh target/stage0/typelisp.exe typelisp-stage0-windows.exe  
 
 `build-stage0.sh` compiles `selfhost/cli.tl` to assembly with the seed and links
 it through the host toolchain (`as`/`ld` on Linux; `clang` + MSVC `link.exe` on
-Windows). The published stage0's `build` command emits a host-action plan rather
-than building in-process (on-disk build/run is deferred to #1645), so the
-self-build uses the `compile` path plus the native linker.
+Windows). The bootstrap path deliberately uses `compile` plus the native linker
+so a stage0 can build its successor without depending on its own `build` command.
 
 Published stage0 compilers can be fetched with
 [`scripts/fetch-stage0.sh`](scripts/fetch-stage0.sh), or

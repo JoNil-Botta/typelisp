@@ -67,7 +67,7 @@
   (string-append message (string-append "\n\n" (compile-cli-usage))))
 
 (define (compile-cli-debug-usage) : String
-  "Usage:\n    typelisp debug tokenize <file.tl>    Show tokens\n    typelisp debug parse <file.tl>       Show AST\n    typelisp debug check <file.tl> [--stdlib-root <dir>...]\n    typelisp debug host-action           Execute a selfhost build/run plan read from stdin (internal)")
+  "Usage:\n    typelisp debug tokenize <file.tl>    Show tokens\n    typelisp debug parse <file.tl>       Show AST\n    typelisp debug check <file.tl> [--stdlib-root <dir>...]")
 
 (define (compile-cli-debug-message-with-usage [message : String]) : String
   (string-append message (string-append "\n\n" (compile-cli-debug-usage))))

@@ -156,8 +156,8 @@ end
 # and each standalone driver. Main-less; compiled transitively through their
 # driver's case (and the selfhost_cli case), so they get a decision row rather
 # than a standalone compile case.
-decision|selfhost/build_cli_core.tl|build command logic (#622/#1339): arg parsing, --direct/--host-plan/manifest dispatch, source/package build; main-less, imported by selfhost/build.tl and selfhost/cli.tl and exercised through the selfhost_build and selfhost_cli cases
-decision|selfhost/run_cli_core.tl|run command logic: arg parsing and --direct/--host-plan dispatch; main-less, imported by selfhost/run.tl and selfhost/cli.tl and exercised through the selfhost_run and selfhost_cli cases
+decision|selfhost/build_cli_core.tl|build command logic (#622/#1339): arg parsing, source/package build, and direct source build execution; main-less, imported by selfhost/build.tl and selfhost/cli.tl and exercised through the selfhost_build and selfhost_cli cases
+decision|selfhost/run_cli_core.tl|run command logic: arg parsing and direct source run execution; main-less, imported by selfhost/run.tl and selfhost/cli.tl and exercised through the selfhost_run and selfhost_cli cases
 decision|selfhost/check_cli_core.tl|check (typecheck) command logic: arg parsing and full-frontend file check; main-less, imported by selfhost/check.tl and selfhost/cli.tl and exercised through the selfhost_check and selfhost_cli cases
 decision|selfhost/format_cli_core.tl|fmt command logic (#522): --check vs rewrite over input paths; main-less, imported by selfhost/format.tl and selfhost/cli.tl and exercised through the selfhost_format and selfhost_cli cases
 decision|selfhost/test_cli_core.tl|test command logic: config parsing and test run dispatch; main-less, imported by selfhost/test.tl and selfhost/cli.tl and exercised through the selfhost_test and selfhost_cli cases
@@ -875,8 +875,8 @@ end
 
 case|selfhost_run|selfhost/run.tl|assembly|skip|direct
 requires-stage0-symbol|file-read-chunk-status,file-write-status,file-flush-status,append-file-status
-contains|_tl_run_plan_config_from:
-contains|_tl_run_plan_render:
+contains|_tl_run_direct_from:
+contains|_tl_run_run_from:
 contains|_tl_run_cli_config_from:
 contains|_tl_source_tool_run_source:
 contains|run: expected source path

@@ -10,10 +10,9 @@ set -eu
 # used by .github/workflows/bootstrap-stage0.yml: each published stage0 builds
 # its successor.
 #
-# The published stage0's `build` command emits a host-action plan rather than
-# performing the build in-process (real on-disk build/run is deferred to #1645),
-# so this script uses `compile` + the native link path, matching
-# scripts/check-bootstrap-fixpoint.sh.
+# This script uses `compile` + the native link path, matching
+# scripts/check-bootstrap-fixpoint.sh, so stage0 publication does not depend on
+# an already-working `build` command in the seed compiler.
 #
 # usage: scripts/build-stage0.sh <seed-compiler> <output-binary>
 
@@ -40,6 +39,7 @@ configure_toolchain
 WORKDIR="$ROOT/target/build-stage0"
 rm -rf "$WORKDIR"
 mkdir -p "$WORKDIR"
+mkdir -p "$(dirname -- "$OUT")"
 
 ASM="$WORKDIR/cli.s"
 OBJ="$WORKDIR/cli.$NL_OBJ_EXT"

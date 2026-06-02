@@ -1,7 +1,7 @@
 ;; run_cli_core.tl - Selfhost run command logic.
 ;;
-;; `--direct` runs source files with stdlib fs/process helpers. The default
-;; host-plan mode preserves the private Rust/stage0 compatibility bridge.
+;; Source-file runs build and execute in-process through stdlib fs/process
+;; helpers. `--direct` remains accepted as a compatibility no-op.
 (import "host_plan.tl")
 
 (import "build_run_core.tl")
@@ -388,32 +388,33 @@
         (print-error message)
         1)]))
 
+(define (run-direct-from [idx : i64] [count : i64]) : i64
+  (match (run-cli-config-from idx count)
+    [(OkRunCliConfig config)
+      (match config
+        [(RunCliConfig
+            source
+            target
+            stdlib-roots
+            runtime-args
+            opt-level
+            link-inputs)
+          (source-tool-run-source
+            source
+            target
+            stdlib-roots
+            runtime-args
+            opt-level
+            link-inputs)])]
+    [(ErrRunCliConfig message)
+      (begin
+        (print-error message)
+        1)]))
+
 ;; Run the `run` command over arguments starting at `start` (the index of the
-;; first argument after any subcommand name). `--direct` builds and executes
-;; in-process; `--host-plan` and the bare form emit a host-action run plan.
+;; first argument after any subcommand name). The bare form builds and executes
+;; in-process.
 (define (run-run-from [start : i64] [count : i64]) : i64
   (if (and (> count start) (string-eq (arg start) "--direct"))
-    (match (run-cli-config-from (+ start 1) count)
-      [(OkRunCliConfig config)
-        (match config
-          [(RunCliConfig
-              source
-              target
-              stdlib-roots
-              runtime-args
-              opt-level
-              link-inputs)
-            (source-tool-run-source
-              source
-              target
-              stdlib-roots
-              runtime-args
-              opt-level
-              link-inputs)])]
-      [(ErrRunCliConfig message)
-        (begin
-          (print-error message)
-          1)])
-    (if (and (> count start) (string-eq (arg start) "--host-plan"))
-      (run-host-plan-main (+ start 1))
-      (run-host-plan-main start))))
+    (run-direct-from (+ start 1) count)
+    (run-direct-from start count)))

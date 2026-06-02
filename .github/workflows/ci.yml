@@ -29,7 +29,7 @@ jobs:
         include:
           - name: Test + Integration
             os: ubuntu-latest
-            timeout_minutes: 55
+            timeout_minutes: 65
           - name: Test + Integration (windows-latest)
             os: windows-latest
             timeout_minutes: 60

@@ -11,12 +11,11 @@ name: Bootstrap Stage0
 # selfhost/cli.tl to assembly, then assembling + linking it into the next stage0
 # binary. Each published stage0 thus builds its successor.
 #
-# IMPORTANT: the published self-hosted stage0's `build` command emits a host
-# action plan (real on-disk build/run is deferred to #1645), so it cannot build
-# itself in-process. Bootstrap therefore uses `compile` (frontend + backend ->
-# .s) and the host toolchain (as/ld on Linux; clang + MSVC link.exe on Windows)
-# to assemble and link the binary, the same flow as
-# scripts/check-bootstrap-fixpoint.sh.
+# IMPORTANT: bootstrap uses `compile` (frontend + backend -> .s) and the host
+# toolchain (as/ld on Linux; clang + MSVC link.exe on Windows) to assemble and
+# link the binary, the same flow as scripts/check-bootstrap-fixpoint.sh. Keeping
+# bootstrap on this explicit path avoids making stage0 self-reproduction depend
+# on its own `build` command.
 #
 # The stage0 is a SINGLE cli.tl binary per OS: cli.tl is the unified toolchain
 # (compile/build/run/check/fmt/lint/test/doc + the bare-file bootstrap form). It

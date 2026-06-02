@@ -531,9 +531,10 @@ typelisp test           file.tl    # Run inline `(test ...)` items; --check type
 The older top-level `tokenize`, `parse`, and `check` commands remain as
 compatibility aliases.
 
-The `repl` command currently provides a minimal stdio command loop. It supports
-`.help`, `.type <expr>`, and `.exit`. Top-level declarations are remembered for
-later `.type` commands; TypeLisp evaluation is planned in follow-up work.
+The selfhost REPL driver provides a stdio command loop for `.help`,
+`.type <expr>`, and `.exit`. Top-level declarations are remembered for later
+commands and bare expressions are evaluated by compiling a scratch program
+through the TypeLisp-owned build/run path.
 
 `compile`, `run`, and `build` accept `--backend-mode scalar|avx2|avx512`.
 `scalar` is the default. `avx2` supports a first contiguous SPMD `foreach`

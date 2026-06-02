@@ -1,0 +1,5 @@
+{
+  "exit": 0,
+  "stdout_contains": ["10", "true", "3.5", "Z", "hi"],
+  "stderr_exact": ""
+}

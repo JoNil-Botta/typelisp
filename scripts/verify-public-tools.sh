@@ -1803,6 +1803,21 @@ if [ "$TYPELISP_PUBLIC_TOOLS_REPL_LSP_ENABLED" -eq 1 ]; then
     fi
 else
     echo "[public-tools] skipping REPL/LSP corpus (lsp/repl pending in cli.tl; #1640/#1641)"
+    if [ "$HOST_OS" = linux ]; then
+        echo "[public-tools] selfhost REPL corpus via run-corpus.sh"
+        TYPELISP_PUBLIC_TOOLS_STAGE1_WRAPPER=1 TYPELISP_BIN="$COMPILER" sh "$ROOT/tests/public-tools/run-corpus.sh" repl
+    else
+        echo "[public-tools] selfhost REPL scratch smoke on $HOST_OS"
+        SELFHOST_REPL_SMOKE="$WORKDIR/selfhost-repl-smoke.in"
+        cat > "$SELFHOST_REPL_SMOKE" <<'EOF'
+(+ 1 2) ; trailing comment must not swallow generated wrapper delimiters
+.exit
+EOF
+        run_stdin selfhost-repl-scratch-smoke "$SELFHOST_REPL_SMOKE" "$COMPILER" run "$ROOT/selfhost/repl.tl" --stdlib-root "$ROOT/stdlib"
+        assert_success
+        assert_contains "$out" "3"
+        assert_stderr_empty
+    fi
 fi
 
 if [ "$TYPELISP_PUBLIC_TOOLS_REPL_LSP_ENABLED" -eq 1 ] && [ "$HAS_LSP_COMMAND" -eq 1 ]; then

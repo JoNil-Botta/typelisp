@@ -7,6 +7,8 @@
 
 (import "doc_md.tl")
 
+(import "../stdlib/fs.tl")
+
 (defenum DocSiteModule
   (DocSiteModule String String))
 
@@ -34,9 +36,6 @@
 
 (define doc-site-status-ok : i64
   0)
-
-(define doc-site-status-already-exists : i64
-  17)
 
 (define doc-site-stdlib-manifest-size : i64
   12)
@@ -190,21 +189,6 @@
     (if (doc-site-output-list-has-duplicate? modules)
       (doc-site-panic-unit "doc-site: duplicate output path in stdlib manifest")
       unit)))
-
-(define (doc-site-path-separator? [c : char]) : bool
-  (or (= c #/') (= c #\\')))
-
-(define (doc-site-path-ends-separator? [path : String]) : bool
-  (let
-    [n : i64 (string-length path)]
-    (and (> n 0) (doc-site-path-separator? (string-ref path (- n 1))))))
-
-(define (doc-site-path-join [dir : String] [leaf : String]) : String
-  (if (= (string-length dir) 0)
-    leaf
-    (if (doc-site-path-ends-separator? dir)
-      (string-append dir leaf)
-      (string-append (string-append dir "/") leaf))))
 
 (define (doc-site-string-prefix? [text : String] [prefix : String]) : bool
   (doc-string-prefix-at? text prefix 0))
@@ -581,7 +565,7 @@ pre {
       (begin
         (while (< i n)
           (begin
-            (if (doc-site-path-separator? (string-ref source i))
+            (if (fs-path-separator? (string-ref source i))
               (begin
                 (set! start (+ i 1))
                 (set! end n))
@@ -802,14 +786,11 @@ pre {
 (define (doc-site-ensure-dir [path : String]) : unit
   (if (= (string-length path) 0)
     (doc-site-panic-unit "doc-site: empty output directory")
-    (let
-      [status : i64 (fs-mkdir-status path)]
-      (if (or
-        (= status doc-site-status-ok)
-        (= status doc-site-status-already-exists))
-        unit
+    (match (try-mkdir-if-missing path)
+      [(OkIoUnit) unit]
+      [(ErrIoUnit _)
         (doc-site-panic-unit
-          (string-append "doc-site: could not create output directory: " path))))))
+          (string-append "doc-site: could not create output directory: " path))])))
 
 (define (doc-site-write-module-page
   [output-dir : String]
@@ -817,8 +798,7 @@ pre {
   [module : DocSiteModule]) : unit
   (let
     [source : String (doc-site-module-source module)]
-    [output : String
-      (doc-site-path-join output-dir (doc-site-module-output module))]
+    [output : String (fs-path-join output-dir (doc-site-module-output module))]
     [docs : DocExtraction (doc-site-read-module-docs source)]
     (doc-site-write-file
       output
@@ -840,7 +820,7 @@ pre {
   [sections : DocSiteSectionList]
   [guide : DocSiteGuidePage]) : unit
   (doc-site-write-file
-    (doc-site-path-join output-dir (doc-site-guide-output guide))
+    (fs-path-join output-dir (doc-site-guide-output guide))
     (doc-site-render-guide-page
       sections
       guide
@@ -863,7 +843,7 @@ pre {
   [tree : DocSiteApiTree]) : unit
   (begin
     (doc-site-write-file
-      (doc-site-path-join output-dir (doc-site-api-tree-output tree))
+      (fs-path-join output-dir (doc-site-api-tree-output tree))
       (doc-site-render-api-tree-index sections tree))
     (doc-site-write-module-pages
       output-dir
@@ -899,10 +879,10 @@ pre {
       (doc-site-validate-stdlib-manifest (doc-site-api-tree-modules stdlib))
       (doc-site-ensure-dir output-dir)
       (doc-site-write-file
-        (doc-site-path-join output-dir "typelisp-docs.css")
+        (fs-path-join output-dir "typelisp-docs.css")
         (doc-site-css))
       (doc-site-write-file
-        (doc-site-path-join output-dir "index.html")
+        (fs-path-join output-dir "index.html")
         (doc-site-render-index sections "index.html"))
       (doc-site-write-sections output-dir sections sections)
       0)))

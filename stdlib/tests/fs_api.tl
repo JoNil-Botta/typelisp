@@ -45,6 +45,19 @@
       (assert-true (io-error-invalid-path? error) "empty temp prefix invalid")]
     [(OkIoString _) (panic "empty temp prefix unexpectedly succeeded")]))
 
+(define (assert-mkdir-if-missing [parent : String] [cleanup : bool]) : unit
+  (let
+    [dir : String (fs-path-join parent "mkdir-if-missing")]
+    (begin
+      (assert-ok-unit (try-mkdir-if-missing dir) "mkdir-if-missing new dir: ")
+      (assert-exists dir true "mkdir-if-missing dir exists")
+      (assert-ok-unit
+        (try-mkdir-if-missing dir)
+        "mkdir-if-missing existing dir: ")
+      (if cleanup
+        (assert-ok-unit (try-remove-dir dir) "mkdir-if-missing cleanup dir: ")
+        unit))))
+
 (define (main) : i64
   (let
     [joined : String (fs-path-join "left path" "right file")]
@@ -95,6 +108,12 @@
       (if (fs-windows?)
         (begin
           (assert-created-temp-dir)
+          (let
+            [dir : String
+              (expect-ok-string
+                (try-create-temp-dir "typelisp fs mkdir test")
+                "create temp dir mkdir: ")]
+            (assert-mkdir-if-missing dir false))
           42)
         (let
           [dir-a : String
@@ -119,6 +138,7 @@
             (assert-ok-unit
               (try-write-file file-b "object")
               "write temp artifact b: ")
+            (assert-mkdir-if-missing dir-a true)
             (assert-exists file-a true "temp artifact a exists")
             (assert-ok-unit (try-remove-file file-a) "remove temp artifact a: ")
             (assert-exists file-a false "temp artifact a removed")

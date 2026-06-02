@@ -146,6 +146,20 @@
     (ErrIoUnit (IoInvalidPath path))
     (fs-status-result path (fs-mkdir-status path))))
 
+;;; Create `path` as a directory when it is missing.
+;;;
+;;; A pre-existing path reported by the host as already-created is accepted.
+(define (try-mkdir-if-missing [path : String]) : ResultIoUnit
+  (match (try-mkdir path)
+    [(OkIoUnit) OkIoUnit]
+    [(ErrIoUnit error)
+      (match error
+        [(IoSystemCode code _)
+          (if (= code fs-status-already-exists)
+            OkIoUnit
+            (ErrIoUnit error))]
+        [_ (ErrIoUnit error)])]))
+
 ;;; Remove a file path, returning a structured status.
 (define (try-remove-file [path : String]) : ResultIoUnit
   (if (io-empty-path? path)

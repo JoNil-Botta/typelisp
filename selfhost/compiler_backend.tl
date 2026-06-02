@@ -10615,18 +10615,130 @@ tl_region_reset:
 
 ")
 
+(define (compiler-backend-runtime-windows-fs-remove-file-status-functions) : String
+  ".L_tl_fs_remove_file_status:
+    push %rbp
+    mov %rsp, %rbp
+    push %rbx
+    push %r12
+    push %r13
+    sub $8, %rsp
+    movq %rcx, %rbx
+    movq %rdx, %r12
+    cmpq $0, %r12
+    jl .L_tl_fs_remove_file_status_win_invalid
+    movq %r12, %rcx
+    addq $1, %rcx
+    js .L_tl_fs_remove_file_status_win_invalid
+    sub $32, %rsp
+    call tl_alloc
+    add $32, %rsp
+    movq %rax, %r13
+    xorq %r10, %r10
+.L_tl_fs_remove_file_status_win_path_copy_loop:
+    cmpq %r12, %r10
+    jge .L_tl_fs_remove_file_status_win_path_copy_done
+    movzbl (%rbx,%r10), %edx
+    movb %dl, (%r13,%r10)
+    incq %r10
+    jmp .L_tl_fs_remove_file_status_win_path_copy_loop
+.L_tl_fs_remove_file_status_win_path_copy_done:
+    movb $0, (%r13,%r12)
+    movq %r13, %rcx
+    sub $32, %rsp
+    call _unlink
+    add $32, %rsp
+    testl %eax, %eax
+    js .L_tl_fs_remove_file_status_win_errno
+    xorq %rax, %rax
+    jmp .L_tl_fs_remove_file_status_win_return
+.L_tl_fs_remove_file_status_win_errno:
+    sub $32, %rsp
+    call _errno
+    add $32, %rsp
+    movslq (%rax), %rax
+    testq %rax, %rax
+    jne .L_tl_fs_remove_file_status_win_return
+    movq $1, %rax
+    jmp .L_tl_fs_remove_file_status_win_return
+.L_tl_fs_remove_file_status_win_invalid:
+    movq $22, %rax
+.L_tl_fs_remove_file_status_win_return:
+    add $8, %rsp
+    pop %r13
+    pop %r12
+    pop %rbx
+    pop %rbp
+    ret
+
+")
+
+(define (compiler-backend-runtime-windows-fs-remove-dir-status-functions) : String
+  ".L_tl_fs_remove_dir_status:
+    push %rbp
+    mov %rsp, %rbp
+    push %rbx
+    push %r12
+    push %r13
+    sub $8, %rsp
+    movq %rcx, %rbx
+    movq %rdx, %r12
+    cmpq $0, %r12
+    jl .L_tl_fs_remove_dir_status_win_invalid
+    movq %r12, %rcx
+    addq $1, %rcx
+    js .L_tl_fs_remove_dir_status_win_invalid
+    sub $32, %rsp
+    call tl_alloc
+    add $32, %rsp
+    movq %rax, %r13
+    xorq %r10, %r10
+.L_tl_fs_remove_dir_status_win_path_copy_loop:
+    cmpq %r12, %r10
+    jge .L_tl_fs_remove_dir_status_win_path_copy_done
+    movzbl (%rbx,%r10), %edx
+    movb %dl, (%r13,%r10)
+    incq %r10
+    jmp .L_tl_fs_remove_dir_status_win_path_copy_loop
+.L_tl_fs_remove_dir_status_win_path_copy_done:
+    movb $0, (%r13,%r12)
+    movq %r13, %rcx
+    sub $32, %rsp
+    call _rmdir
+    add $32, %rsp
+    testl %eax, %eax
+    js .L_tl_fs_remove_dir_status_win_errno
+    xorq %rax, %rax
+    jmp .L_tl_fs_remove_dir_status_win_return
+.L_tl_fs_remove_dir_status_win_errno:
+    sub $32, %rsp
+    call _errno
+    add $32, %rsp
+    movslq (%rax), %rax
+    testq %rax, %rax
+    jne .L_tl_fs_remove_dir_status_win_return
+    movq $1, %rax
+    jmp .L_tl_fs_remove_dir_status_win_return
+.L_tl_fs_remove_dir_status_win_invalid:
+    movq $22, %rax
+.L_tl_fs_remove_dir_status_win_return:
+    add $8, %rsp
+    pop %r13
+    pop %r12
+    pop %rbx
+    pop %rbp
+    ret
+
+")
+
 (define (compiler-backend-runtime-windows-fs-functions) : String
   (string-append
-    (compiler-backend-runtime-windows-fs-mkdir-status-functions)
-    ".L_tl_fs_remove_file_status:
-    movq $38, %rax
-    ret
-
-.L_tl_fs_remove_dir_status:
-    movq $38, %rax
-    ret
-
-.L_tl_fs_process_id:
+    (string-append
+      (compiler-backend-runtime-windows-fs-mkdir-status-functions)
+      (string-append
+        (compiler-backend-runtime-windows-fs-remove-file-status-functions)
+        (compiler-backend-runtime-windows-fs-remove-dir-status-functions)))
+    ".L_tl_fs_process_id:
     push %rbp
     mov %rsp, %rbp
     sub $32, %rsp
@@ -14210,6 +14322,8 @@ tl_windows_sdk_registry_install:
 "
         (if (compiler-backend-plan-provides? plan ".L_tl_fs_mkdir_status")
           "    .extern _mkdir
+    .extern _unlink
+    .extern _rmdir
     .extern GetCurrentProcessId
 "
           ""))

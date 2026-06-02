@@ -1485,7 +1485,7 @@
           (IrValueF64 "1.0")
           (IrValueF64 "2.0")
           (AstTyF64))
-        "backend: unsupported f64 binary op"
+        "backend: unsupported float binary op"
         34
         9)
       ;; #1044: an f64 unary op other than negation is rejected (mirrors the
@@ -1996,18 +1996,29 @@
             ".L_tl_fs_remove_dir_status:\n")
           (compiler-backend-string-contains? asm ".L_tl_fs_process_id:\n")
           (compiler-backend-string-contains? asm "    call _mkdir\n")
-          (compiler-backend-string-contains? asm "    call _errno\n")
-          (compiler-backend-string-contains?
-            asm
-            "    call GetCurrentProcessId\n")
-          (compiler-backend-string-contains? asm "    .extern _mkdir\n"))
+          (compiler-backend-string-contains? asm "    call _unlink\n")
+          (compiler-backend-string-contains? asm "    call _rmdir\n")
+          (compiler-backend-string-contains? asm "    call _errno\n"))
         (and
           (compiler-backend-string-contains?
             asm
-            "    .extern GetCurrentProcessId\n")
+            "    call GetCurrentProcessId\n")
           (and
-            (compiler-backend-string-contains? asm "    movq $38, %rax\n")
-            (not (compiler-backend-string-contains? asm "    syscall")))))]
+            (compiler-backend-string-contains? asm "    .extern _mkdir\n")
+            (and
+              (compiler-backend-string-contains? asm "    .extern _unlink\n")
+              (and
+                (compiler-backend-string-contains? asm "    .extern _rmdir\n")
+                (and
+                  (compiler-backend-string-contains?
+                    asm
+                    "    .extern GetCurrentProcessId\n")
+                  (and
+                    (not
+                      (compiler-backend-string-contains?
+                        asm
+                        "    movq $38, %rax\n"))
+                    (not (compiler-backend-string-contains? asm "    syscall")))))))))]
     [(ErrCompilerBackend _) false]))
 
 ;; A refutable literal payload match (#651) lowers to a payload comparison that

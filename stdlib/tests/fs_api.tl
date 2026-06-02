@@ -20,25 +20,6 @@
     [(OkIoBool exists) (assert-bool-eq exists expected message)]
     [(ErrIoBool error) (panic (string-append message (io-error-message error)))]))
 
-;; Windows supports temp-dir creation (mkdir + GetCurrentProcessId, #850) but
-;; not yet removal/cleanup (remove-file/remove-dir are unsupported stubs), so the
-;; Windows arm asserts a successful, unique, existing create rather than the full
-;; Linux create/write/remove lifecycle.
-(define (assert-created-temp-dir) : unit
-  (let
-    [dir-a : String
-      (expect-ok-string
-        (try-create-temp-dir "typelisp fs test")
-        "create temp dir a: ")]
-    [dir-b : String
-      (expect-ok-string
-        (try-create-temp-dir "typelisp fs test")
-        "create temp dir b: ")]
-    (begin
-      (assert-true (not (string-eq dir-a dir-b)) "temp directories are unique")
-      (assert-exists dir-a true "temp dir a exists")
-      (assert-exists dir-b true "temp dir b exists"))))
-
 (define (assert-invalid-temp-dir) : unit
   (match (try-create-temp-dir "")
     [(ErrIoString error)
@@ -92,49 +73,45 @@
         (fs-extension ".gitignore")
         ""
         "leading-dot name has no extension")
-      (if (fs-windows?)
+      (let
+        [dir-a : String
+          (expect-ok-string
+            (try-create-temp-dir "typelisp fs test")
+            "create temp dir a: ")]
+        [dir-b : String
+          (expect-ok-string
+            (try-create-temp-dir "typelisp fs test")
+            "create temp dir b: ")]
+        [file-a : String (fs-path-join dir-a "artifact with space.s")]
+        [file-b : String (fs-path-join dir-b "cleanup.obj")]
         (begin
-          (assert-created-temp-dir)
-          42)
-        (let
-          [dir-a : String
-            (expect-ok-string
-              (try-create-temp-dir "typelisp fs test")
-              "create temp dir a: ")]
-          [dir-b : String
-            (expect-ok-string
-              (try-create-temp-dir "typelisp fs test")
-              "create temp dir b: ")]
-          [file-a : String (fs-path-join dir-a "artifact with space.s")]
-          [file-b : String (fs-path-join dir-b "cleanup.obj")]
-          (begin
-            (assert-true
-              (not (string-eq dir-a dir-b))
-              "temp directories are unique")
-            (assert-exists dir-a true "temp dir a exists")
-            (assert-exists dir-b true "temp dir b exists")
-            (assert-ok-unit
-              (try-write-file file-a "assembly")
-              "write temp artifact a: ")
-            (assert-ok-unit
-              (try-write-file file-b "object")
-              "write temp artifact b: ")
-            (assert-exists file-a true "temp artifact a exists")
-            (assert-ok-unit (try-remove-file file-a) "remove temp artifact a: ")
-            (assert-exists file-a false "temp artifact a removed")
-            (assert-ok-unit (try-remove-dir dir-a) "remove temp dir a: ")
-            (assert-exists dir-a false "temp dir a removed")
-            (assert-ok-unit
-              (try-remove-file-if-exists file-b)
-              "cleanup temp artifact b: ")
-            (assert-ok-unit
-              (try-remove-file-if-exists file-b)
-              "cleanup missing temp artifact b: ")
-            (assert-ok-unit
-              (try-remove-dir-if-exists dir-b)
-              "cleanup temp dir b: ")
-            (assert-ok-unit
-              (try-remove-dir-if-exists dir-b)
-              "cleanup missing temp dir b: ")
-            (assert-invalid-temp-dir)
-            42))))))
+          (assert-true
+            (not (string-eq dir-a dir-b))
+            "temp directories are unique")
+          (assert-exists dir-a true "temp dir a exists")
+          (assert-exists dir-b true "temp dir b exists")
+          (assert-ok-unit
+            (try-write-file file-a "assembly")
+            "write temp artifact a: ")
+          (assert-ok-unit
+            (try-write-file file-b "object")
+            "write temp artifact b: ")
+          (assert-exists file-a true "temp artifact a exists")
+          (assert-ok-unit (try-remove-file file-a) "remove temp artifact a: ")
+          (assert-exists file-a false "temp artifact a removed")
+          (assert-ok-unit (try-remove-dir dir-a) "remove temp dir a: ")
+          (assert-exists dir-a false "temp dir a removed")
+          (assert-ok-unit
+            (try-remove-file-if-exists file-b)
+            "cleanup temp artifact b: ")
+          (assert-ok-unit
+            (try-remove-file-if-exists file-b)
+            "cleanup missing temp artifact b: ")
+          (assert-ok-unit
+            (try-remove-dir-if-exists dir-b)
+            "cleanup temp dir b: ")
+          (assert-ok-unit
+            (try-remove-dir-if-exists dir-b)
+            "cleanup missing temp dir b: ")
+          (assert-invalid-temp-dir)
+          42)))))

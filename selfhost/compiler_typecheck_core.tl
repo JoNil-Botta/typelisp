@@ -3056,6 +3056,8 @@
     [(AstBinSub) (tc-arithmetic-binop-type left right)]
     [(AstBinMul) (tc-arithmetic-binop-type left right)]
     [(AstBinDiv) (tc-arithmetic-binop-type left right)]
+    [(AstBinShl) (tc-shift-binop-type left right)]
+    [(AstBinShr) (tc-shift-binop-type left right)]
     [_ (tc-integer-binop-type left right)]))
 
 (define (tc-integer-binop-type [left : AstType] [right : AstType]) : ResultTcType
@@ -3067,6 +3069,13 @@
   (if (and (tc-float-type? left) (tc-type-eq left right))
     (OkTcType left)
     (tc-integer-binop-type left right)))
+
+(define (tc-shift-binop-type [left : AstType] [right : AstType]) : ResultTcType
+  (if (tc-integer-type? left)
+    (if (tc-integer-type? right)
+      (OkTcType left)
+      (ErrTcType "typecheck: shift count must be integer"))
+    (ErrTcType "typecheck: shift left operand must be integer")))
 
 (define (tc-compare-binop-type [left : AstType] [right : AstType]) : ResultTcType
   (if (and (tc-ordered-comparison-type? left) (tc-type-eq left right))

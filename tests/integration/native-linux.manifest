@@ -94,7 +94,7 @@ tuple_values|tests/integration/tuple_values.tl|42|-|-|-
 # run-assert deferred (bare idiv trap needs guarded abort, #1654): u16_div_zero_trap|tests/integration/u16_div_zero_trap.tl|136|-|-|-
 unit_functions|tests/integration/unit_functions.tl|7|-|-|-
 unit_main|tests/integration/unit_main.tl|0|-|-|-
-# run-assert deferred (shift operand typecheck gap, #1657): valid_shift_counts|tests/integration/valid_shift_counts.tl|42|-|-|-
+valid_shift_counts|tests/integration/valid_shift_counts.tl|42|-|-|-
 with_arena_builtin_alloc|tests/integration/with_arena_builtin_alloc.tl|2|-|-|-
 with_arena_loop|tests/integration/with_arena_loop.tl|42|-|-|-
 compiler_parse_smoke|selfhost/compiler_parse_smoke.tl|42|-|-|compiler_parse_core.tl compiler_diagnostic.tl compiler_ast_types.tl sym_i64_env.tl read.tl lex.tl token.tl

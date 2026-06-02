@@ -241,7 +241,7 @@ EOF
 # selfhost compiler closes the gap:
 #   f32 scalar correctness ............ #1655
 #   capturing lambdas ................. #1656
-#   print-char / shift typecheck /
+#   print-char /
 #   enum-payload pattern / spmd ....... #1657
 #   bare idiv traps need guarded abort  #1654
 selfhost_deferred_integration_skips() {
@@ -259,7 +259,6 @@ shl_count_width_trap
 shl_neg_count_trap
 string_match
 spmd_reduce_scalar
-valid_shift_counts
 div_zero_trap
 rem_zero_trap
 min_div_neg1_trap

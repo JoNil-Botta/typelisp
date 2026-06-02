@@ -1517,11 +1517,9 @@
 ;;; Parse a `typelisp.pkg` manifest, an S-expression of the form
 ;;;   (package (name "...") (version "...") (kind "bin") (entry "...")
 ;;;            (dependencies (alias "path") ...))
-;;; into a structured value, mirroring `src/package.rs::parse_manifest`'s field
-;;; set and diagnostics. Reuses the selfhost reader (`lex` + `read-result`, both
-;;; already reachable here via compiler_parse_core -> read.tl) instead of a
-;;; bespoke manifest tokenizer. `pkg:<alias>/...` resolution + loader
-;;; integration are slice 2; this slice is the parser + diagnostics.
+;;; into a structured value. Reuses the selfhost reader (`lex` + `read-result`,
+;;; both already reachable here via compiler_parse_core -> read.tl) instead of a
+;;; bespoke manifest tokenizer.
 ;;; A parsed dependency: an import alias and its package-root path.
 (defstruct CompilerPkgDep
   (alias String)
@@ -1654,15 +1652,29 @@
           "manifest field `"
           (string-append fname "` must have a string value")))]))
 
+(define (compiler-load-manifest-kind-token [val : String]) : ResultCompilerPkgKind
+  (if (string-eq val "bin")
+    (OkCompilerPkgKind (CompilerPkgKindBin))
+    (if (or (string-eq val "staticlib") (string-eq val "lib"))
+      (OkCompilerPkgKind (CompilerPkgKindLib))
+      (ErrCompilerPkgKind
+        "manifest field `kind` must be `bin`, `staticlib`, or `lib`"))))
+
 (define (compiler-load-manifest-kind-value [ftail : Sexpr]) : ResultCompilerPkgKind
-  (match (compiler-load-manifest-string-value ftail "kind")
-    [(ErrPkgString m) (ErrCompilerPkgKind m)]
-    [(OkPkgString val)
-      (if (string-eq val "bin")
-        (OkCompilerPkgKind (CompilerPkgKindBin))
-        (if (string-eq val "lib")
-          (OkCompilerPkgKind (CompilerPkgKindLib))
-          (ErrCompilerPkgKind "manifest field `kind` must be `bin` or `lib`")))]))
+  (match ftail
+    [(SCons vhead vrest)
+      (match vrest
+        [(SNil)
+          (match vhead
+            [(SStr val) (compiler-load-manifest-kind-token val)]
+            [(SSym val) (compiler-load-manifest-kind-token val)]
+            [_
+              (ErrCompilerPkgKind
+                "manifest field `kind` must have a string or symbol value")])]
+        [_ (ErrCompilerPkgKind "manifest field `kind` takes a single value")])]
+    [_
+      (ErrCompilerPkgKind
+        "manifest field `kind` must have a string or symbol value")]))
 
 (define (compiler-load-manifest-cons-dep
   [alias : String]
@@ -1714,8 +1726,14 @@
       (ErrCompilerPkgDepList
         "`dependencies` must be a list of `(alias \"path\")` entries")]))
 
-;;; Walk the package fields, accumulating name/version/entry/deps, then check
-;;; the three required string fields are present.
+(define (compiler-load-manifest-default-entry [kind : CompilerPkgKind]) : String
+  (match kind
+    [(CompilerPkgKindBin) "src/main.tl"]
+    [(CompilerPkgKindLib) "src/lib.tl"]))
+
+;;; Walk the package fields, accumulating name/version/kind/entry/deps, then
+;;; check required fields and synthesize convention defaults for omitted kind
+;;; and entry.
 (define (compiler-load-manifest-fields
   [fields : Sexpr]
   [name : String]
@@ -1730,30 +1748,32 @@
   [deps : CompilerPkgDepList]) : ResultCompilerPkgManifest
   (match fields
     [(SNil)
-      (cond
-        [(not has-name)
-          (ErrCompilerPkgManifest "manifest missing required field `name`")]
-        [(string-eq name "")
-          (ErrCompilerPkgManifest "manifest field `name` must not be empty")]
-        [(not (compiler-load-package-token-valid? name))
-          (ErrCompilerPkgManifest
-            "manifest field `name` may only contain ASCII letters, digits, '-' and '_'")]
-        [(not has-version)
-          (ErrCompilerPkgManifest "manifest missing required field `version`")]
-        [(string-eq version "")
-          (ErrCompilerPkgManifest "manifest field `version` must not be empty")]
-        [(not has-kind)
-          (ErrCompilerPkgManifest "manifest missing required field `kind`")]
-        [(not has-entry)
-          (ErrCompilerPkgManifest "manifest missing required field `entry`")]
-        [(string-eq entry "")
-          (ErrCompilerPkgManifest "manifest field `entry` must not be empty")]
-        [(not (compiler-load-normal-relative-entry? entry))
-          (ErrCompilerPkgManifest
-            "manifest field `entry` must be a normal relative path below the manifest directory")]
-        [else
-          (OkCompilerPkgManifest
-            (CompilerPkgManifest name version kind entry deps))])]
+      (let
+        [final-entry : String
+          (if has-entry
+            entry
+            (compiler-load-manifest-default-entry kind))]
+        (cond
+          [(not has-name)
+            (ErrCompilerPkgManifest "manifest missing required field `name`")]
+          [(string-eq name "")
+            (ErrCompilerPkgManifest "manifest field `name` must not be empty")]
+          [(not (compiler-load-package-token-valid? name))
+            (ErrCompilerPkgManifest
+              "manifest field `name` may only contain ASCII letters, digits, '-' and '_'")]
+          [(not has-version)
+            (ErrCompilerPkgManifest "manifest missing required field `version`")]
+          [(string-eq version "")
+            (ErrCompilerPkgManifest
+              "manifest field `version` must not be empty")]
+          [(string-eq final-entry "")
+            (ErrCompilerPkgManifest "manifest field `entry` must not be empty")]
+          [(not (compiler-load-normal-relative-entry? final-entry))
+            (ErrCompilerPkgManifest
+              "manifest field `entry` must be a normal relative path below the manifest directory")]
+          [else
+            (OkCompilerPkgManifest
+              (CompilerPkgManifest name version kind final-entry deps))]))]
     [(SCons field rest)
       (match field
         [(SCons fhead ftail)
@@ -1920,11 +1940,31 @@
 ;;; Self-test: a manifest without a `dependencies` field parses with no deps.
 (define (compiler-load-manifest-valid-nodeps-ok?) : bool
   (match (compiler-load-parse-manifest
-    "(package (name \"x\") (version \"1\") (kind \"lib\") (entry \"e.tl\"))")
+    "(package (name \"x\") (version \"1\") (kind staticlib))")
     [(OkCompilerPkgManifest m)
       (match (struct-get m kind)
         [(CompilerPkgKindLib)
-          (= (compiler-pkg-dep-list-count (struct-get m deps)) 0)]
+          (and
+            (string-eq (struct-get m entry) "src/lib.tl")
+            (= (compiler-pkg-dep-list-count (struct-get m deps)) 0))]
+        [(CompilerPkgKindBin) false])]
+    [(ErrCompilerPkgManifest _) false]))
+
+(define (compiler-load-manifest-default-bin-ok?) : bool
+  (match (compiler-load-parse-manifest
+    "(package (name \"default_bin\") (version \"1\"))")
+    [(OkCompilerPkgManifest m)
+      (match (struct-get m kind)
+        [(CompilerPkgKindBin) (string-eq (struct-get m entry) "src/main.tl")]
+        [(CompilerPkgKindLib) false])]
+    [(ErrCompilerPkgManifest _) false]))
+
+(define (compiler-load-manifest-entry-override-ok?) : bool
+  (match (compiler-load-parse-manifest
+    "(package (name \"override\") (version \"1\") (kind \"staticlib\") (entry \"custom/lib.tl\"))")
+    [(OkCompilerPkgManifest m)
+      (match (struct-get m kind)
+        [(CompilerPkgKindLib) (string-eq (struct-get m entry) "custom/lib.tl")]
         [(CompilerPkgKindBin) false])]
     [(ErrCompilerPkgManifest _) false]))
 
@@ -1954,7 +1994,7 @@
           (and
             (compiler-load-manifest-rejects?
               "(package (name \"x\") (version \"1\") (kind \"bad\") (entry \"e.tl\"))"
-              "manifest field `kind` must be `bin` or `lib`")
+              "manifest field `kind` must be `bin`, `staticlib`, or `lib`")
             (and
               (compiler-load-manifest-rejects?
                 "(package (name \"x\") (version \"1\") (kind \"bin\") (kind \"lib\") (entry \"e.tl\"))"
@@ -1990,21 +2030,17 @@
     (and
       (compiler-load-manifest-valid-nodeps-ok?)
       (and
-        (compiler-load-manifest-rejects?
-          "(package (version \"1\") (kind \"bin\") (entry \"e.tl\"))"
-          "manifest missing required field `name`")
+        (compiler-load-manifest-default-bin-ok?)
         (and
-          (compiler-load-manifest-rejects?
-            "(package (name \"x\") (kind \"bin\") (entry \"e.tl\"))"
-            "manifest missing required field `version`")
+          (compiler-load-manifest-entry-override-ok?)
           (and
             (compiler-load-manifest-rejects?
-              "(package (name \"x\") (version \"1\") (entry \"e.tl\"))"
-              "manifest missing required field `kind`")
+              "(package (version \"1\") (kind \"bin\") (entry \"e.tl\"))"
+              "manifest missing required field `name`")
             (and
               (compiler-load-manifest-rejects?
-                "(package (name \"x\") (version \"1\") (kind \"bin\"))"
-                "manifest missing required field `entry`")
+                "(package (name \"x\") (kind \"bin\") (entry \"e.tl\"))"
+                "manifest missing required field `version`")
               (and
                 (compiler-load-manifest-rejects?
                   "(module foo)"

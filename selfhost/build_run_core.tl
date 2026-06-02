@@ -677,6 +677,15 @@ _tl_print_string:
       (string-append "/OUT:" archive-path)
       (process-args-cons obj-path (process-args-empty)))))
 
+(define (source-tool-windows-archiver-fallback-command
+  [obj-path : String]
+  [archive-path : String]) : ProcessCommand
+  (process-command
+    (source-tool-env-command-or-default
+      "TYPELISP_WINDOWS_LIB"
+      (source-tool-resolve-command "llvm-lib"))
+    (source-tool-windows-archiver-args obj-path archive-path)))
+
 (define (source-tool-windows-archiver-command
   [obj-path : String]
   [archive-path : String]) : ResultSourceToolCommand
@@ -690,11 +699,9 @@ _tl_print_string:
               (msvc-tool-executable tool))
             (source-tool-windows-archiver-args obj-path archive-path))
           (msvc-tool-process-env tool)))]
-    [(ErrMsvcTool error)
-      (ErrSourceToolCommand
-        (string-append
-          "Error: failed to resolve archiver 'lib.exe' for target windows-x86_64: "
-          (msvc-error-message error)))]))
+    [(ErrMsvcTool _)
+      (OkSourceToolCommand
+        (source-tool-windows-archiver-fallback-command obj-path archive-path))]))
 
 (define (source-tool-clean-temp
   [temp-dir : String]

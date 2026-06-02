@@ -2774,6 +2774,49 @@
     [(AstTyF32) "    cvtsi2ssq %rax, %xmm0\n"]
     [_ "    cvtsi2sdq %rax, %xmm0\n"]))
 
+(define (compiler-backend-u64-to-float-cast-op [to-ty : AstType]) : String
+  (match to-ty
+    [(AstTyF32) "ss"]
+    [_ "sd"]))
+
+(define (compiler-backend-u64-to-float-cast-label
+  [current-label : String]
+  [dst : i64]
+  [suffix : String]) : String
+  (backend-cat5 "cast_u64_float_" current-label "_v" (int->string dst) suffix))
+
+(define (compiler-backend-u64-to-float-cast-asm
+  [function : String]
+  [current-label : String]
+  [dst : i64]
+  [to-ty : AstType]) : String
+  (let
+    [op : String (compiler-backend-u64-to-float-cast-op to-ty)]
+    [high-label : String
+      (compiler-backend-u64-to-float-cast-label current-label dst "_high")]
+    [done-label : String
+      (compiler-backend-u64-to-float-cast-label current-label dst "_done")]
+    [high-symbol : String (compiler-backend-asm-label function high-label)]
+    [done-symbol : String (compiler-backend-asm-label function done-label)]
+    (string-append
+      "    testq %rax, %rax\n"
+      (string-append
+        (backend-cat5 "    js " high-symbol "\n    cvtsi2" op "q %rax, %xmm0\n")
+        (string-append
+          (backend-cat3 "    jmp " done-symbol "\n")
+          (string-append
+            (backend-cat3 high-symbol ":\n" "")
+            (string-append
+              "    movq %rax, %r11\n    andq $1, %r11\n    shrq $1, %rax\n    orq %r11, %rax\n"
+              (string-append
+                (backend-cat5
+                  "    cvtsi2"
+                  op
+                  "q %rax, %xmm0\n    add"
+                  op
+                  " %xmm0, %xmm0\n")
+                (backend-cat3 done-symbol ":\n" "")))))))))
+
 (define (compiler-backend-float-to-int-cast-asm [from-ty : AstType]) : String
   (match from-ty
     [(AstTyF32) "    cvttss2siq %xmm0, %rax\n"]
@@ -2804,6 +2847,8 @@
     [(ErrCompilerBackend message) (ErrCompilerBackend message)]))
 
 (define (compiler-backend-emit-int-to-float-cast
+  [function : String]
+  [current-label : String]
   [assignments : CompilerRegAssignmentList]
   [dst : i64]
   [src : CompilerIrValue]
@@ -2818,7 +2863,14 @@
         (string-append
           load
           (string-append
-            (compiler-backend-int-to-float-cast-asm to-ty)
+            (match from-ty
+              [(AstTyU64)
+                (compiler-backend-u64-to-float-cast-asm
+                  function
+                  current-label
+                  dst
+                  to-ty)]
+              [_ (compiler-backend-int-to-float-cast-asm to-ty)])
             (compiler-backend-emit-store-float-var-with-plan
               assignments
               dst
@@ -2851,6 +2903,8 @@
     [(ErrCompilerBackend message) (ErrCompilerBackend message)]))
 
 (define (compiler-backend-emit-cast
+  [function : String]
+  [current-label : String]
   [assignments : CompilerRegAssignmentList]
   [dst : i64]
   [src : CompilerIrValue]
@@ -2874,6 +2928,8 @@
         (not (compiler-backend-float-type? from-ty))
         (compiler-backend-float-type? to-ty))
       (compiler-backend-emit-int-to-float-cast
+        function
+        current-label
         assignments
         dst
         src
@@ -4057,7 +4113,14 @@
             (ErrCompilerBackend
               (compiler-backend-apply-instr-diagnostic message instr-diag))])]
       [(IrInstrCast dst src from-ty to-ty)
-        (match (compiler-backend-emit-cast assignments dst src from-ty to-ty)
+        (match (compiler-backend-emit-cast
+          function
+          current-label
+          assignments
+          dst
+          src
+          from-ty
+          to-ty)
           [(OkCompilerBackend asm) (OkCompilerBackend asm)]
           [(ErrCompilerBackend message)
             (ErrCompilerBackend

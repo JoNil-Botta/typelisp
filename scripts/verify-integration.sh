@@ -462,6 +462,27 @@ assert_not_contains() {
     fi
 }
 
+check_u64_float_cast_asm() {
+    _asm=$1
+    _label="u64_float_casts assembly"
+    assert_contains "$_asm" "cast_u64_float_" "$_label"
+    assert_contains "$_asm" "    js " "$_label"
+    assert_contains "$_asm" "    movq %rax, %r11" "$_label"
+    assert_contains "$_asm" "    orq %r11, %rax" "$_label"
+    assert_contains "$_asm" "    addsd %xmm0, %xmm0" "$_label"
+    assert_contains "$_asm" "    addss %xmm0, %xmm0" "$_label"
+    assert_contains "$_asm" "    movzbq" "$_label"
+    if ! awk '
+        /u8_to_f64/ { in_u8 = 1 }
+        in_u8 && /ret/ { exit bad }
+        in_u8 && (/cast_u64_float_/ || /addsd %xmm0, %xmm0/ || /testq %rax, %rax/) { bad = 1 }
+        END { exit bad }
+    ' "$_asm"; then
+        echo "FAIL: $_label used the u64 high-bit path in u8_to_f64" >&2
+        exit 1
+    fi
+}
+
 assert_empty_file() {
     _file=$1
     _label=$2
@@ -1107,6 +1128,10 @@ while IFS='|' read -r name source want stdout_spec runtime_args deps extra || [ 
         "$bin" $(deps_or_empty "$runtime_args") > "$stdout" 2> "$stderr"
         got=$?
         set -e
+    fi
+
+    if [ "$name" = u64_float_casts ]; then
+        check_u64_float_cast_asm "$asm"
     fi
 
     if [ -n "$requires_symbol" ]; then

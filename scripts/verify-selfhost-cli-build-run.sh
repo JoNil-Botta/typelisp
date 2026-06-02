@@ -107,6 +107,10 @@ cli_surface_label() {
     printf '%s' "$1" | tr ' /' '__'
 }
 
+cli_surface_strip_cr() {
+    printf '%s' "$1" | tr -d '\r'
+}
+
 cli_surface_manifest_commands() {
     awk -F'|' '
         /^[[:space:]]*($|#)/ { next }
@@ -285,6 +289,9 @@ run_cli_command_surface_matrix() {
     assert_cli_surface_help_matches_manifest
     prepare_cli_surface_files
     while IFS='|' read -r kind command note || [ -n "$kind" ]; do
+        kind=$(cli_surface_strip_cr "$kind")
+        command=$(cli_surface_strip_cr "$command")
+        note=$(cli_surface_strip_cr "$note")
         case "$kind" in
             "" | \#*) continue ;;
             active) assert_active_cli_surface_command "$command" ;;

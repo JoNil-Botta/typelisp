@@ -102,6 +102,11 @@
   (BackendTargetLinux)
   (BackendTargetWindows))
 
+(defenum CompilerBackendMode
+  (BackendModeScalar)
+  (BackendModeAvx2)
+  (BackendModeAvx512))
+
 (defenum ResultBackendRuntimePlan
   (OkBackendRuntimePlan CompilerBackendRuntimePlan)
   (ErrBackendRuntimePlan String))
@@ -196,6 +201,206 @@
     (compiler-diagnostic-with-message
       instr-diag
       "backend: vector/mask IR emission is not implemented")))
+
+(define (compiler-backend-mode-prologue [mode : CompilerBackendMode]) : String
+  (match mode
+    [(BackendModeAvx2) "    vzeroupper\n"]
+    [_ ""]))
+
+(define (compiler-backend-avx2-shape-ok? [elem-ty : AstType] [lanes : i64]) : bool
+  (match elem-ty
+    [(AstTyI64) (= lanes 4)]
+    [(AstTyU64) (= lanes 4)]
+    [(AstTyF64) (= lanes 4)]
+    [(AstTyI32) (= lanes 8)]
+    [(AstTyU32) (= lanes 8)]
+    [_ false]))
+
+(define (compiler-backend-avx2-shape-diagnostic
+  [instr-diag : CompilerDiagnostic]
+  [elem-ty : AstType]
+  [lanes : i64]) : ResultCompilerBackend
+  (ErrCompilerBackend
+    (compiler-diagnostic-with-message
+      instr-diag
+      (backend-cat5
+        "backend: unsupported AVX2 vector shape "
+        (int->string lanes)
+        " x "
+        (compiler-ir-type-name elem-ty)
+        ""))))
+
+(define (compiler-backend-avx2-vector-reg [var : i64]) : String
+  (let
+    [slot : i64 (% var 8)]
+    (cond
+      [(= slot 0) "%ymm6"]
+      [(= slot 1) "%ymm7"]
+      [(= slot 2) "%ymm8"]
+      [(= slot 3) "%ymm9"]
+      [(= slot 4) "%ymm10"]
+      [(= slot 5) "%ymm11"]
+      [(= slot 6) "%ymm12"]
+      [else "%ymm13"])))
+
+(define (compiler-backend-vector-value-reg
+  [value : CompilerIrValue]
+  [role : String]
+  [instr-diag : CompilerDiagnostic]) : ResultBackendReg
+  (match value
+    [(IrValueVar var) (OkBackendReg (compiler-backend-avx2-vector-reg var))]
+    [_ (ErrBackendReg (string-append "backend: unsupported AVX2 vector " role))]))
+
+(define (compiler-backend-avx2-vector-move [elem-ty : AstType]) : String
+  (match elem-ty
+    [(AstTyF64) "vmovupd"]
+    [_ "vmovdqu"]))
+
+(define (compiler-backend-avx2-vector-binop-mnemonic
+  [op : CompilerIrBinOp]
+  [elem-ty : AstType]) : String
+  (match op
+    [(IrBinAdd)
+      (match elem-ty
+        [(AstTyI64) "vpaddq"]
+        [(AstTyU64) "vpaddq"]
+        [(AstTyI32) "vpaddd"]
+        [(AstTyU32) "vpaddd"]
+        [(AstTyF64) "vaddpd"]
+        [_ ""])]
+    [_ ""]))
+
+(define (compiler-backend-avx2-indexed-addr [elem-ty : AstType]) : String
+  (backend-cat5
+    "(%rax,%rcx,"
+    (int->string (compiler-backend-type-size elem-ty))
+    ")"
+    ""
+    ""))
+
+(define (compiler-backend-emit-avx2-base-index
+  [assignments : CompilerRegAssignmentList]
+  [base : CompilerIrValue]
+  [index : CompilerIrValue]) : ResultCompilerBackend
+  (match (compiler-backend-emit-load-value-with-plan assignments base "%rax")
+    [(OkCompilerBackend base-asm)
+      (match (compiler-backend-emit-load-value-with-plan
+        assignments
+        index
+        "%rcx")
+        [(OkCompilerBackend index-asm)
+          (OkCompilerBackend
+            (string-append
+              base-asm
+              (string-append "    movq 0(%rax), %rax\n" index-asm)))]
+        [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
+    [(ErrCompilerBackend message) (ErrCompilerBackend message)]))
+
+(define (compiler-backend-emit-avx2-vector-load
+  [assignments : CompilerRegAssignmentList]
+  [dst : i64]
+  [base : CompilerIrValue]
+  [index : CompilerIrValue]
+  [lanes : i64]
+  [elem-ty : AstType]
+  [instr-diag : CompilerDiagnostic]) : ResultCompilerBackend
+  (if (compiler-backend-avx2-shape-ok? elem-ty lanes)
+    (match (compiler-backend-emit-avx2-base-index assignments base index)
+      [(OkCompilerBackend addr-asm)
+        (OkCompilerBackend
+          (string-append
+            addr-asm
+            (backend-cat5
+              "    "
+              (compiler-backend-avx2-vector-move elem-ty)
+              " "
+              (compiler-backend-avx2-indexed-addr elem-ty)
+              (backend-cat5
+                ", "
+                (compiler-backend-avx2-vector-reg dst)
+                "\n"
+                ""
+                ""))))]
+      [(ErrCompilerBackend message)
+        (ErrCompilerBackend
+          (compiler-backend-apply-instr-diagnostic message instr-diag))])
+    (compiler-backend-avx2-shape-diagnostic instr-diag elem-ty lanes)))
+
+(define (compiler-backend-emit-avx2-vector-binop
+  [dst : i64]
+  [op : CompilerIrBinOp]
+  [lhs : CompilerIrValue]
+  [rhs : CompilerIrValue]
+  [lanes : i64]
+  [elem-ty : AstType]
+  [instr-diag : CompilerDiagnostic]) : ResultCompilerBackend
+  (if (compiler-backend-avx2-shape-ok? elem-ty lanes)
+    (let
+      [mnemonic : String
+        (compiler-backend-avx2-vector-binop-mnemonic op elem-ty)]
+      (if (= (string-length mnemonic) 0)
+        (ErrCompilerBackend
+          (compiler-diagnostic-with-message
+            instr-diag
+            "backend: unsupported AVX2 vector binary op"))
+        (match (compiler-backend-vector-value-reg lhs "lhs" instr-diag)
+          [(OkBackendReg lhs-reg)
+            (match (compiler-backend-vector-value-reg rhs "rhs" instr-diag)
+              [(OkBackendReg rhs-reg)
+                (OkCompilerBackend
+                  (backend-cat5
+                    "    "
+                    mnemonic
+                    " "
+                    rhs-reg
+                    (backend-cat5
+                      ", "
+                      lhs-reg
+                      ", "
+                      (compiler-backend-avx2-vector-reg dst)
+                      "\n")))]
+              [(ErrBackendReg message)
+                (ErrCompilerBackend
+                  (compiler-diagnostic-with-message instr-diag message))])]
+          [(ErrBackendReg message)
+            (ErrCompilerBackend
+              (compiler-diagnostic-with-message instr-diag message))])))
+    (compiler-backend-avx2-shape-diagnostic instr-diag elem-ty lanes)))
+
+(define (compiler-backend-emit-avx2-vector-store
+  [assignments : CompilerRegAssignmentList]
+  [base : CompilerIrValue]
+  [index : CompilerIrValue]
+  [value : CompilerIrValue]
+  [lanes : i64]
+  [elem-ty : AstType]
+  [instr-diag : CompilerDiagnostic]) : ResultCompilerBackend
+  (if (compiler-backend-avx2-shape-ok? elem-ty lanes)
+    (match (compiler-backend-vector-value-reg value "store value" instr-diag)
+      [(OkBackendReg value-reg)
+        (match (compiler-backend-emit-avx2-base-index assignments base index)
+          [(OkCompilerBackend addr-asm)
+            (OkCompilerBackend
+              (string-append
+                addr-asm
+                (backend-cat5
+                  "    "
+                  (compiler-backend-avx2-vector-move elem-ty)
+                  " "
+                  value-reg
+                  (backend-cat5
+                    ", "
+                    (compiler-backend-avx2-indexed-addr elem-ty)
+                    "\n"
+                    ""
+                    ""))))]
+          [(ErrCompilerBackend message)
+            (ErrCompilerBackend
+              (compiler-backend-apply-instr-diagnostic message instr-diag))])]
+      [(ErrBackendReg message)
+        (ErrCompilerBackend
+          (compiler-diagnostic-with-message instr-diag message))])
+    (compiler-backend-avx2-shape-diagnostic instr-diag elem-ty lanes)))
 
 (define (compiler-backend-round-up-16 [n : i64]) : i64
   (if (= n 0)
@@ -3834,8 +4039,15 @@
         (compiler-backend-vector-mask-unimplemented instr-diag)]
       [(IrInstrSplat _ _ _ _)
         (compiler-backend-vector-mask-unimplemented instr-diag)]
-      [(IrInstrVectorBinOp _ _ _ _ _ _)
-        (compiler-backend-vector-mask-unimplemented instr-diag)]
+      [(IrInstrVectorBinOp dst op lhs rhs lanes elem-ty)
+        (compiler-backend-emit-avx2-vector-binop
+          dst
+          op
+          lhs
+          rhs
+          lanes
+          elem-ty
+          instr-diag)]
       [(IrInstrVectorReduce _ _ _ _ _)
         (compiler-backend-vector-mask-unimplemented instr-diag)]
       [(IrInstrVectorCompare _ _ _ _ _ _)
@@ -3848,10 +4060,24 @@
         (compiler-backend-vector-mask-unimplemented instr-diag)]
       [(IrInstrSelect _ _ _ _ _ _)
         (compiler-backend-vector-mask-unimplemented instr-diag)]
-      [(IrInstrVectorLoad _ _ _ _ _)
-        (compiler-backend-vector-mask-unimplemented instr-diag)]
-      [(IrInstrVectorStore _ _ _ _ _)
-        (compiler-backend-vector-mask-unimplemented instr-diag)]
+      [(IrInstrVectorLoad dst base index lanes elem-ty)
+        (compiler-backend-emit-avx2-vector-load
+          assignments
+          dst
+          base
+          index
+          lanes
+          elem-ty
+          instr-diag)]
+      [(IrInstrVectorStore base index value lanes elem-ty)
+        (compiler-backend-emit-avx2-vector-store
+          assignments
+          base
+          index
+          value
+          lanes
+          elem-ty
+          instr-diag)]
       [(IrInstrPredicatedStore _ _ _ _ _ _)
         (compiler-backend-vector-mask-unimplemented instr-diag)]
       [(IrInstrPredicatedLoad _ _ _ _ _ _)
@@ -6211,6 +6437,7 @@
 
 (define (compiler-backend-emit-function
   [target : CompilerBackendTarget]
+  [mode : CompilerBackendMode]
   [func : CompilerIrFunction]
   [functions : CompilerIrFunctionList]
   [globals : CompilerIrGlobalList]
@@ -6282,31 +6509,33 @@
                                 ":\n    pushq %rbp\n    movq %rsp, %rbp\n"
                                 (compiler-backend-emit-stack-sub target frame)
                                 (string-append
-                                  (compiler-backend-emit-save-callee-regs
-                                    assignments
-                                    vars)
+                                  (compiler-backend-mode-prologue mode)
                                   (string-append
-                                    (compiler-backend-emit-windows-main-argv-capture
-                                      target
-                                      name
-                                      plan)
+                                    (compiler-backend-emit-save-callee-regs
+                                      assignments
+                                      vars)
                                     (string-append
-                                      (if (and
-                                        (compiler-backend-target-windows?
-                                          target)
-                                        (string-eq name "main"))
-                                        (compiler-backend-global-initializers
-                                          globals)
-                                        "")
+                                      (compiler-backend-emit-windows-main-argv-capture
+                                        target
+                                        name
+                                        plan)
                                       (string-append
-                                        spills
+                                        (if (and
+                                          (compiler-backend-target-windows?
+                                            target)
+                                          (string-eq name "main"))
+                                          (compiler-backend-global-initializers
+                                            globals)
+                                          "")
                                         (string-append
-                                          body
-                                          (compiler-backend-return-epilogue
-                                            name
-                                            assignments
-                                            vars
-                                            blocks))))))
+                                          spills
+                                          (string-append
+                                            body
+                                            (compiler-backend-return-epilogue
+                                              name
+                                              assignments
+                                              vars
+                                              blocks)))))))
                                 "\n")
                               "")))]
                       [(ErrCompilerBackend message)
@@ -6322,6 +6551,7 @@
 ;; the same bytes, so the assembled program text is byte-identical.
 (define (compiler-backend-emit-function-escaping
   [target : CompilerBackendTarget]
+  [mode : CompilerBackendMode]
   [func : CompilerIrFunction]
   [all-functions : CompilerIrFunctionList]
   [globals : CompilerIrGlobalList]
@@ -6336,6 +6566,7 @@
         (arena-set! scratch)
         (match (compiler-backend-emit-function
           target
+          mode
           func
           all-functions
           globals
@@ -6365,6 +6596,7 @@
 
 (define (compiler-backend-emit-functions-into
   [target : CompilerBackendTarget]
+  [mode : CompilerBackendMode]
   [functions : CompilerIrFunctionList]
   [all-functions : CompilerIrFunctionList]
   [globals : CompilerIrGlobalList]
@@ -6377,6 +6609,7 @@
     [(IrFunctionCons func rest)
       (match (compiler-backend-emit-function-escaping
         target
+        mode
         func
         all-functions
         globals
@@ -6386,6 +6619,7 @@
         [(OkCompilerBackend head)
           (compiler-backend-emit-functions-into
             target
+            mode
             rest
             all-functions
             globals
@@ -6397,6 +6631,7 @@
 
 (define (compiler-backend-emit-functions
   [target : CompilerBackendTarget]
+  [mode : CompilerBackendMode]
   [functions : CompilerIrFunctionList]
   [globals : CompilerIrGlobalList]
   [all-functions : CompilerIrFunctionList]
@@ -6405,6 +6640,7 @@
   [spans : CompilerSourceSpans]) : ResultCompilerBackend
   (compiler-backend-emit-functions-into
     target
+    mode
     functions
     all-functions
     globals
@@ -14639,6 +14875,19 @@ tl_windows_sdk_registry_install:
   [target : CompilerBackendTarget]
   [spans : CompilerSourceSpans]
   [emit-entry : bool]) : ResultCompilerBackend
+  (compiler-backend-emit-program-target-with-mode
+    program
+    target
+    (BackendModeScalar)
+    spans
+    emit-entry))
+
+(define (compiler-backend-emit-program-target-with-mode
+  [program : CompilerIrProgram]
+  [target : CompilerBackendTarget]
+  [mode : CompilerBackendMode]
+  [spans : CompilerSourceSpans]
+  [emit-entry : bool]) : ResultCompilerBackend
   (match (compiler-backend-runtime-plan program)
     [(OkBackendRuntimePlan plan)
       (if (compiler-backend-target-runtime-ok? target plan)
@@ -14648,6 +14897,7 @@ tl_windows_sdk_registry_install:
               [(OkCompilerBackend globals-asm)
                 (match (compiler-backend-emit-functions
                   target
+                  mode
                   functions
                   globals
                   functions

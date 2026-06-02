@@ -469,14 +469,20 @@ EOF
         assert_contains "$err" "compile: --backend-mode $mode requires the Rust compile driver until selfhost SIMD support (#1014)"
         continue
     fi
-    # The single-binary cli.tl seed has no SIMD compile driver, so non-scalar
-    # `compile --backend-mode` is rejected with the #1014 message just like the
-    # stage1 wrapper. Keep full SIMD-asm coverage on the Rust/wrapper lanes.
     if [ "$HOST_ACTION_ENABLED" -eq 0 ] && [ "$mode" != scalar ]; then
-        assert_failure
-        assert_stdout_empty
-        assert_contains "$err" "compile: --backend-mode $mode requires the Rust compile driver until selfhost SIMD support (#1014)"
-        continue
+        if grep -F -- "compile: --backend-mode $mode requires the Rust compile driver until selfhost SIMD support (#1014)" "$err" > /dev/null; then
+            assert_failure
+            assert_stdout_empty
+            continue
+        fi
+        # The selfhost direct compile path owns the AVX2 backend slice; AVX-512
+        # remains staged until mask/predicated memory emission lands.
+        if [ "$mode" = avx512 ]; then
+            assert_failure
+            assert_stdout_empty
+            assert_contains "$err" "compile: --backend-mode $mode requires the Rust compile driver until selfhost SIMD support (#1014)"
+            continue
+        fi
     fi
     assert_success
     assert_stderr_empty

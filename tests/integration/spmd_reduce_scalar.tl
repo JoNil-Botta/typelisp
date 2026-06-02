@@ -1,13 +1,17 @@
 ; Scalar reference lowering for `spmd-reduce` (#499). Each reduction is checked
-; against a hand-written foreach/set! loop (the scalar oracle) and against
+; against a hand-written while/set! loop (the scalar oracle) and against
 ; known constants, across reduction kinds, result types, and range lengths
 ; (0, < a likely lane width, and a non-divisible tail). `main` returns 42 only
 ; when every case agrees.
 (define (manual-sum [xs : (Array i64)] [n : i64]) : i64
   (let
     [acc : i64 0]
+    [i : i64 0]
     (begin
-      (foreach ([i : i64 0 n]) (set! acc (+ acc (array-ref xs i))))
+      (while (< i n)
+        (begin
+          (set! acc (+ acc (array-ref xs i)))
+          (set! i (+ i 1))))
       acc)))
 
 (define (reduce-sum [xs : (Array i64)] [n : i64]) : i64
@@ -16,12 +20,14 @@
 (define (manual-max [xs : (Array i64)] [n : i64] [seed : i64]) : i64
   (let
     [acc : i64 seed]
+    [i : i64 0]
     (begin
-      (foreach
-        ([i : i64 0 n])
-        (if (> (array-ref xs i) acc)
-          (set! acc (array-ref xs i))
-          (set! acc acc)))
+      (while (< i n)
+        (begin
+          (if (> (array-ref xs i) acc)
+            (set! acc (array-ref xs i))
+            (set! acc acc))
+          (set! i (+ i 1))))
       acc)))
 
 (define (reduce-max [xs : (Array i64)] [n : i64] [seed : i64]) : i64

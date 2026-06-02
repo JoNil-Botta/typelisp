@@ -21,7 +21,7 @@ make_array_negative_trap|tests/integration/make_array_negative_trap.tl|134|-|-|-
 make_array_overflow_trap|tests/integration/make_array_overflow_trap.tl|134|-|-|-|expected-stderr:tl: array index out of bounds\n
 make_array_zero|tests/integration/make_array_zero.tl|0|-|-|-
 enum_string_payload|tests/integration/enum_string_payload.tl|5|-|-|-
-# run-assert deferred (selfhost parity follow-up #1654/#1655/#1656/#1657): f32_scalar|tests/integration/f32_scalar.tl|42|-|-|-
+f32_scalar|tests/integration/f32_scalar.tl|42|-|-|-
 factorial|tests/integration/factorial.tl|120|-|-|-
 fibonacci|tests/integration/fibonacci.tl|13|-|-|-
 fixed_array|tests/integration/fixed_array.tl|42|-|-|-

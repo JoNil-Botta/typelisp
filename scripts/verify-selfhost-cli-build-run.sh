@@ -451,6 +451,124 @@ assert_empty staticlib-entry-override "$WORKDIR/staticlib-entry-override.err"
 assert_contains staticlib-entry-override "$WORKDIR/staticlib-entry-override.out" "Generated:"
 [ -s "$STATICLIB_OVERRIDE_ARCHIVE" ] || fail "staticlib package build did not honor explicit entry"
 
+SCAFFOLD_ROOT="$WORKDIR/scaffold"
+mkdir -p "$SCAFFOLD_ROOT"
+
+set +e
+(
+    cd "$SCAFFOLD_ROOT"
+    "$COMPILER" new cli_new_bin > "$WORKDIR/scaffold-new-bin.out" 2> "$WORKDIR/scaffold-new-bin.err"
+)
+status=$?
+set -e
+assert_status scaffold-new-bin "$status" 0
+assert_empty scaffold-new-bin "$WORKDIR/scaffold-new-bin.err"
+assert_contains scaffold-new-bin "$WORKDIR/scaffold-new-bin.out" "scaffold: created bin package cli_new_bin"
+NEW_BIN_DIR="$SCAFFOLD_ROOT/cli_new_bin"
+[ -f "$NEW_BIN_DIR/typelisp.pkg" ] || fail "new did not write bin manifest"
+[ -f "$NEW_BIN_DIR/src/main.tl" ] || fail "new did not write bin main source"
+assert_contains scaffold-new-bin-manifest "$NEW_BIN_DIR/typelisp.pkg" '(kind "bin")'
+assert_contains scaffold-new-bin-manifest "$NEW_BIN_DIR/typelisp.pkg" '(entry "src/main.tl")'
+
+NEW_BIN_EXE="$NEW_BIN_DIR/target/typelisp/cli_new_bin/cli_new_bin"
+if [ "$HOST_OS" = windows ]; then
+    NEW_BIN_EXE="$NEW_BIN_EXE.exe"
+fi
+set +e
+(
+    cd "$NEW_BIN_DIR"
+    "$COMPILER" build --target "$BUILD_TARGET" --opt-level 0 > "$WORKDIR/scaffold-new-bin-build.out" 2> "$WORKDIR/scaffold-new-bin-build.err"
+)
+status=$?
+set -e
+assert_status scaffold-new-bin-build "$status" 0
+assert_empty scaffold-new-bin-build "$WORKDIR/scaffold-new-bin-build.err"
+assert_contains scaffold-new-bin-build "$WORKDIR/scaffold-new-bin-build.out" "Generated:"
+[ -f "$NEW_BIN_EXE" ] || fail "new bin package build did not write executable"
+
+set +e
+"$NEW_BIN_EXE" > "$WORKDIR/scaffold-new-bin-program.out" 2> "$WORKDIR/scaffold-new-bin-program.err"
+status=$?
+set -e
+assert_status scaffold-new-bin-program "$status" 0
+assert_empty scaffold-new-bin-program "$WORKDIR/scaffold-new-bin-program.out"
+assert_empty scaffold-new-bin-program "$WORKDIR/scaffold-new-bin-program.err"
+
+set +e
+(
+    cd "$SCAFFOLD_ROOT"
+    "$COMPILER" new --lib cli_new_lib > "$WORKDIR/scaffold-new-lib.out" 2> "$WORKDIR/scaffold-new-lib.err"
+)
+status=$?
+set -e
+assert_status scaffold-new-lib "$status" 0
+assert_empty scaffold-new-lib "$WORKDIR/scaffold-new-lib.err"
+assert_contains scaffold-new-lib "$WORKDIR/scaffold-new-lib.out" "scaffold: created staticlib package cli_new_lib"
+NEW_LIB_DIR="$SCAFFOLD_ROOT/cli_new_lib"
+[ -f "$NEW_LIB_DIR/typelisp.pkg" ] || fail "new --lib did not write manifest"
+[ -f "$NEW_LIB_DIR/src/lib.tl" ] || fail "new --lib did not write lib source"
+assert_contains scaffold-new-lib-manifest "$NEW_LIB_DIR/typelisp.pkg" '(kind "staticlib")'
+assert_contains scaffold-new-lib-manifest "$NEW_LIB_DIR/typelisp.pkg" '(entry "src/lib.tl")'
+
+NEW_LIB_ARCHIVE="$NEW_LIB_DIR/target/typelisp/cli_new_lib/libcli_new_lib.a"
+if [ "$HOST_OS" = windows ]; then
+    NEW_LIB_ARCHIVE="$NEW_LIB_DIR/target/typelisp/cli_new_lib/cli_new_lib.lib"
+fi
+set +e
+(
+    cd "$NEW_LIB_DIR"
+    "$COMPILER" build --target "$BUILD_TARGET" > "$WORKDIR/scaffold-new-lib-build.out" 2> "$WORKDIR/scaffold-new-lib-build.err"
+)
+status=$?
+set -e
+assert_status scaffold-new-lib-build "$status" 0
+assert_empty scaffold-new-lib-build "$WORKDIR/scaffold-new-lib-build.err"
+assert_contains scaffold-new-lib-build "$WORKDIR/scaffold-new-lib-build.out" "Generated:"
+[ -s "$NEW_LIB_ARCHIVE" ] || fail "new --lib package build did not write archive"
+
+INIT_BIN_DIR="$SCAFFOLD_ROOT/init-bin"
+mkdir -p "$INIT_BIN_DIR"
+set +e
+(
+    cd "$INIT_BIN_DIR"
+    "$COMPILER" init cli_init_bin > "$WORKDIR/scaffold-init-bin.out" 2> "$WORKDIR/scaffold-init-bin.err"
+)
+status=$?
+set -e
+assert_status scaffold-init-bin "$status" 0
+assert_empty scaffold-init-bin "$WORKDIR/scaffold-init-bin.err"
+assert_contains scaffold-init-bin "$WORKDIR/scaffold-init-bin.out" "scaffold: created bin package cli_init_bin"
+[ -f "$INIT_BIN_DIR/typelisp.pkg" ] || fail "init did not write manifest"
+[ -f "$INIT_BIN_DIR/src/main.tl" ] || fail "init did not write main source"
+
+set +e
+(
+    cd "$INIT_BIN_DIR"
+    "$COMPILER" init cli_init_bin > "$WORKDIR/scaffold-init-clobber.out" 2> "$WORKDIR/scaffold-init-clobber.err"
+)
+status=$?
+set -e
+assert_status scaffold-init-clobber "$status" 1
+assert_empty scaffold-init-clobber "$WORKDIR/scaffold-init-clobber.out"
+assert_contains scaffold-init-clobber "$WORKDIR/scaffold-init-clobber.err" "scaffold: refusing to overwrite existing file: ./typelisp.pkg"
+
+INIT_LIB_DIR="$SCAFFOLD_ROOT/init-lib"
+mkdir -p "$INIT_LIB_DIR"
+set +e
+(
+    cd "$INIT_LIB_DIR"
+    "$COMPILER" init --lib cli_init_lib > "$WORKDIR/scaffold-init-lib.out" 2> "$WORKDIR/scaffold-init-lib.err"
+)
+status=$?
+set -e
+assert_status scaffold-init-lib "$status" 0
+assert_empty scaffold-init-lib "$WORKDIR/scaffold-init-lib.err"
+assert_contains scaffold-init-lib "$WORKDIR/scaffold-init-lib.out" "scaffold: created staticlib package cli_init_lib"
+[ -f "$INIT_LIB_DIR/typelisp.pkg" ] || fail "init --lib did not write manifest"
+[ -f "$INIT_LIB_DIR/src/lib.tl" ] || fail "init --lib did not write lib source"
+assert_contains scaffold-init-lib-manifest "$INIT_LIB_DIR/typelisp.pkg" '(kind "staticlib")'
+assert_contains scaffold-init-lib-manifest "$INIT_LIB_DIR/typelisp.pkg" '(entry "src/lib.tl")'
+
 RUN_SRC="$WORKDIR/run-main.tl"
 cat > "$RUN_SRC" <<'EOF'
 (define (main) : i64

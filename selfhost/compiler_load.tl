@@ -377,6 +377,21 @@
   [importer-module : String]
   [seen : SymI64Env]
   [stdlib-roots : CompilerLoadRootList]) : ResultCompilerLoadWithPaths
+  (compiler-load-decls-with-module-and-roots-cfg
+    decls
+    importer-path
+    importer-module
+    seen
+    stdlib-roots
+    (compiler-cfg-empty)))
+
+(define (compiler-load-decls-with-module-and-roots-cfg
+  [decls : AstDeclList]
+  [importer-path : String]
+  [importer-module : String]
+  [seen : SymI64Env]
+  [stdlib-roots : CompilerLoadRootList]
+  [cfgs : SymI64Env]) : ResultCompilerLoadWithPaths
   (match decls
     [(AstDeclNil)
       (OkCompilerLoadWithPaths AstDeclNil AstDeclPathNil AstDeclModuleNil seen)]
@@ -388,22 +403,24 @@
             import-path
             stdlib-roots)
             [(OkPkgResolve resolved)
-              (match (compiler-load-file-with-paths-and-roots-expect
+              (match (compiler-load-file-with-paths-and-roots-expect-cfg
                 resolved
                 seen
                 stdlib-roots
-                expected-module)
+                expected-module
+                cfgs)
                 [(OkCompilerLoadWithPaths
                     imported-decls
                     imported-paths
                     imported-modules
                     import-seen)
-                  (match (compiler-load-decls-with-module-and-roots
+                  (match (compiler-load-decls-with-module-and-roots-cfg
                     rest
                     importer-path
                     importer-module
                     import-seen
-                    stdlib-roots)
+                    stdlib-roots
+                    cfgs)
                     [(OkCompilerLoadWithPaths
                         rest-decls
                         rest-paths
@@ -438,12 +455,13 @@
               (ErrCompilerLoadWithPaths
                 (compiler-diagnostic-at-start importer-path message))])]
         [_
-          (match (compiler-load-decls-with-module-and-roots
+          (match (compiler-load-decls-with-module-and-roots-cfg
             rest
             importer-path
             importer-module
             seen
-            stdlib-roots)
+            stdlib-roots
+            cfgs)
             [(OkCompilerLoadWithPaths
                 rest-decls
                 rest-paths
@@ -461,6 +479,19 @@
   [importer-path : String]
   [seen : SymI64Env]
   [stdlib-roots : CompilerLoadRootList]) : ResultCompilerLoadWithPaths
+  (compiler-load-decls-with-paths-and-roots-cfg
+    decls
+    importer-path
+    seen
+    stdlib-roots
+    (compiler-cfg-empty)))
+
+(define (compiler-load-decls-with-paths-and-roots-cfg
+  [decls : AstDeclList]
+  [importer-path : String]
+  [seen : SymI64Env]
+  [stdlib-roots : CompilerLoadRootList]
+  [cfgs : SymI64Env]) : ResultCompilerLoadWithPaths
   (match (compiler-load-decls-module-id importer-path decls)
     [(OkCompilerLoadModuleId module-id)
       (if (sym-i64-contains seen module-id)
@@ -469,12 +500,13 @@
           AstDeclPathNil
           AstDeclModuleNil
           seen)
-        (compiler-load-decls-with-module-and-roots
+        (compiler-load-decls-with-module-and-roots-cfg
           decls
           importer-path
           module-id
           (sym-i64-bind seen module-id 1)
-          stdlib-roots))]
+          stdlib-roots
+          cfgs))]
     [(ErrCompilerLoadModuleId diag) (ErrCompilerLoadWithPaths diag)]))
 
 (define (compiler-load-decls
@@ -524,6 +556,21 @@
   [seen : SymI64Env]
   [stdlib-roots : CompilerLoadRootList]
   [expected-module : AstMaybeModuleName]) : ResultCompilerLoadWithPaths
+  (compiler-load-program-with-paths-and-roots-expect-cfg
+    path
+    program
+    seen
+    stdlib-roots
+    expected-module
+    (compiler-cfg-empty)))
+
+(define (compiler-load-program-with-paths-and-roots-expect-cfg
+  [path : String]
+  [program : AstProgram]
+  [seen : SymI64Env]
+  [stdlib-roots : CompilerLoadRootList]
+  [expected-module : AstMaybeModuleName]
+  [cfgs : SymI64Env]) : ResultCompilerLoadWithPaths
   (match program
     [(AstProgram decls)
       (match (compiler-load-decls-module-id path decls)
@@ -539,12 +586,13 @@
                   AstDeclPathNil
                   AstDeclModuleNil
                   seen)
-                (compiler-load-decls-with-module-and-roots
+                (compiler-load-decls-with-module-and-roots-cfg
                   decls
                   path
                   module-id
                   (sym-i64-bind seen module-id 1)
-                  stdlib-roots))]
+                  stdlib-roots
+                  cfgs))]
             [(ErrCompilerLoadModuleId diag) (ErrCompilerLoadWithPaths diag)])]
         [(ErrCompilerLoadModuleId diag) (ErrCompilerLoadWithPaths diag)])]))
 
@@ -585,20 +633,50 @@
     stdlib-roots
     AstNoModuleName))
 
+(define (compiler-load-source-with-paths-and-roots-cfg
+  [path : String]
+  [source : String]
+  [seen : SymI64Env]
+  [stdlib-roots : CompilerLoadRootList]
+  [cfgs : SymI64Env]) : ResultCompilerLoadWithPaths
+  (compiler-load-source-with-paths-and-roots-expect-cfg
+    path
+    source
+    seen
+    stdlib-roots
+    AstNoModuleName
+    cfgs))
+
 (define (compiler-load-source-with-paths-and-roots-expect
   [path : String]
   [source : String]
   [seen : SymI64Env]
   [stdlib-roots : CompilerLoadRootList]
   [expected-module : AstMaybeModuleName]) : ResultCompilerLoadWithPaths
-  (match (parse-ast-source-diagnostic path source)
+  (compiler-load-source-with-paths-and-roots-expect-cfg
+    path
+    source
+    seen
+    stdlib-roots
+    expected-module
+    (compiler-cfg-empty)))
+
+(define (compiler-load-source-with-paths-and-roots-expect-cfg
+  [path : String]
+  [source : String]
+  [seen : SymI64Env]
+  [stdlib-roots : CompilerLoadRootList]
+  [expected-module : AstMaybeModuleName]
+  [cfgs : SymI64Env]) : ResultCompilerLoadWithPaths
+  (match (parse-ast-source-diagnostic-with-cfg path source cfgs)
     [(OkAstProgramDiagnostic program)
-      (compiler-load-program-with-paths-and-roots-expect
+      (compiler-load-program-with-paths-and-roots-expect-cfg
         path
         program
         seen
         stdlib-roots
-        expected-module)]
+        expected-module
+        cfgs)]
     [(ErrAstProgramDiagnostic diag) (ErrCompilerLoadWithPaths diag)]))
 
 (define (compiler-load-source
@@ -628,20 +706,46 @@
     stdlib-roots
     AstNoModuleName))
 
+(define (compiler-load-file-with-paths-and-roots-cfg
+  [path : String]
+  [seen : SymI64Env]
+  [stdlib-roots : CompilerLoadRootList]
+  [cfgs : SymI64Env]) : ResultCompilerLoadWithPaths
+  (compiler-load-file-with-paths-and-roots-expect-cfg
+    path
+    seen
+    stdlib-roots
+    AstNoModuleName
+    cfgs))
+
 (define (compiler-load-file-with-paths-and-roots-expect
   [path : String]
   [seen : SymI64Env]
   [stdlib-roots : CompilerLoadRootList]
   [expected-module : AstMaybeModuleName]) : ResultCompilerLoadWithPaths
+  (compiler-load-file-with-paths-and-roots-expect-cfg
+    path
+    seen
+    stdlib-roots
+    expected-module
+    (compiler-cfg-empty)))
+
+(define (compiler-load-file-with-paths-and-roots-expect-cfg
+  [path : String]
+  [seen : SymI64Env]
+  [stdlib-roots : CompilerLoadRootList]
+  [expected-module : AstMaybeModuleName]
+  [cfgs : SymI64Env]) : ResultCompilerLoadWithPaths
   (if (file-exists? path)
-    (match (parse-ast-source-diagnostic path (read-file path))
+    (match (parse-ast-source-diagnostic-with-cfg path (read-file path) cfgs)
       [(OkAstProgramDiagnostic program)
-        (compiler-load-program-with-paths-and-roots-expect
+        (compiler-load-program-with-paths-and-roots-expect-cfg
           path
           program
           seen
           stdlib-roots
-          expected-module)]
+          expected-module
+          cfgs)]
       [(ErrAstProgramDiagnostic diag) (ErrCompilerLoadWithPaths diag)])
     (ErrCompilerLoadWithPaths
       (compiler-diagnostic-at-start
@@ -1244,6 +1348,37 @@
         [(AstDeclNil) true]
         [_ false])]
     [(ErrCompilerLoad _) false]))
+
+(define (compiler-load-cfg-import-ok?) : bool
+  (let
+    [source : String
+      "(module cfg.entry)
+(cfg missing (import \"definitely_missing.tl\"))
+(define value : i64 1)"]
+    [enabled-source : String
+      "(module cfg.entry.active)
+(cfg feature (import \"definitely_missing.tl\"))
+(define value : i64 1)"]
+    [feature-cfg : SymI64Env
+      (compiler-cfg-enable (compiler-cfg-empty) "feature")]
+    (and
+      (match (compiler-load-source-with-paths-and-roots-cfg
+        "src/main.tl"
+        source
+        (sym-i64-empty)
+        CompilerLoadRootNil
+        (compiler-cfg-empty))
+        [(OkCompilerLoadWithPaths decls _ _ _)
+          (= (compiler-load-decl-list-count decls) 2)]
+        [(ErrCompilerLoadWithPaths _) false])
+      (match (compiler-load-source-with-paths-and-roots-cfg
+        "src/main.tl"
+        enabled-source
+        (sym-i64-empty)
+        CompilerLoadRootNil
+        feature-cfg)
+        [(ErrCompilerLoadWithPaths _) true]
+        [(OkCompilerLoadWithPaths _ _ _ _) false]))))
 
 (define (compiler-load-file-import-dedup-cycle-ok?) : bool
   (begin
@@ -2285,73 +2420,77 @@
         (if (compiler-load-expected-module-conflict-ok?)
           (if (compiler-load-duplicate-module-ok?)
             (if (compiler-load-seen-module-ok?)
-              (if (compiler-load-file-import-dedup-cycle-ok?)
-                (if (compiler-load-file-fallback-path-dedup-ok?)
-                  (if (compiler-load-import-alias-preserved-ok?)
-                    (if (compiler-load-diamond-import-ok?)
-                      (if (compiler-load-transitive-import-ok?)
-                        (if (compiler-load-missing-import-ok?)
-                          (if (compiler-load-imported-parse-error-path-ok?)
-                            (if (compiler-load-imported-duplicate-module-path-ok?)
-                              (if (compiler-load-stdlib-root-fallback-ok?)
-                                (if (compiler-load-stdlib-searched-root-ok?)
-                                  (if (compiler-load-stdlib-unresolved-ok?)
-                                    (if (compiler-load-pkg-manifest-ok?)
-                                      (if (compiler-load-pkg-resolve-ok?)
-                                        (if (compiler-load-pkg-parent-dir-ok?)
-                                          42
+              (if (compiler-load-cfg-import-ok?)
+                (if (compiler-load-file-import-dedup-cycle-ok?)
+                  (if (compiler-load-file-fallback-path-dedup-ok?)
+                    (if (compiler-load-import-alias-preserved-ok?)
+                      (if (compiler-load-diamond-import-ok?)
+                        (if (compiler-load-transitive-import-ok?)
+                          (if (compiler-load-missing-import-ok?)
+                            (if (compiler-load-imported-parse-error-path-ok?)
+                              (if (compiler-load-imported-duplicate-module-path-ok?)
+                                (if (compiler-load-stdlib-root-fallback-ok?)
+                                  (if (compiler-load-stdlib-searched-root-ok?)
+                                    (if (compiler-load-stdlib-unresolved-ok?)
+                                      (if (compiler-load-pkg-manifest-ok?)
+                                        (if (compiler-load-pkg-resolve-ok?)
+                                          (if (compiler-load-pkg-parent-dir-ok?)
+                                            42
+                                            (begin
+                                              (panic
+                                                "compiler-load: pkg parent-dir smoke mismatch")
+                                              0))
                                           (begin
                                             (panic
-                                              "compiler-load: pkg parent-dir smoke mismatch")
+                                              "compiler-load: pkg resolve smoke mismatch")
                                             0))
                                         (begin
                                           (panic
-                                            "compiler-load: pkg resolve smoke mismatch")
+                                            "compiler-load: pkg manifest smoke mismatch")
                                           0))
                                       (begin
                                         (panic
-                                          "compiler-load: pkg manifest smoke mismatch")
+                                          "compiler-load: stdlib unresolved smoke mismatch")
                                         0))
                                     (begin
                                       (panic
-                                        "compiler-load: stdlib unresolved smoke mismatch")
+                                        "compiler-load: stdlib searched root smoke mismatch")
                                       0))
                                   (begin
                                     (panic
-                                      "compiler-load: stdlib searched root smoke mismatch")
+                                      "compiler-load: stdlib root fallback smoke mismatch")
                                     0))
                                 (begin
                                   (panic
-                                    "compiler-load: stdlib root fallback smoke mismatch")
+                                    "compiler-load: imported duplicate module path smoke mismatch")
                                   0))
                               (begin
                                 (panic
-                                  "compiler-load: imported duplicate module path smoke mismatch")
+                                  "compiler-load: imported parse error path smoke mismatch")
                                 0))
                             (begin
                               (panic
-                                "compiler-load: imported parse error path smoke mismatch")
+                                "compiler-load: missing import smoke mismatch")
                               0))
                           (begin
                             (panic
-                              "compiler-load: missing import smoke mismatch")
+                              "compiler-load: transitive import smoke mismatch")
                             0))
                         (begin
-                          (panic
-                            "compiler-load: transitive import smoke mismatch")
+                          (panic "compiler-load: diamond import smoke mismatch")
                           0))
                       (begin
-                        (panic "compiler-load: diamond import smoke mismatch")
+                        (panic
+                          "compiler-load: import alias preservation smoke mismatch")
                         0))
                     (begin
-                      (panic
-                        "compiler-load: import alias preservation smoke mismatch")
+                      (panic "compiler-load: fallback path dedup smoke mismatch")
                       0))
                   (begin
-                    (panic "compiler-load: fallback path dedup smoke mismatch")
+                    (panic "compiler-load: import dedup/cycle smoke mismatch")
                     0))
                 (begin
-                  (panic "compiler-load: import dedup/cycle smoke mismatch")
+                  (panic "compiler-load: cfg import smoke mismatch")
                   0))
               (begin
                 (panic "compiler-load: seen module smoke mismatch")

@@ -1199,11 +1199,11 @@ while IFS='|' read -r diag_name diag_command diag_expect || [ -n "$diag_name" ];
     # such as `tuple_return` / `array_return` successfully, so the expected-failure
     # backend diagnostic does not hold for the selfhost frontend. Skip those
     # known-divergent cases until the selfhost lowerer grows the matching
-    # rejection (#1327); other cases still run.
+    # rejection (#1699); other cases still run.
     if [ "$SELFHOST_FRONTEND_DIAGNOSTICS" -eq 1 ]; then
         case "$diag_name" in
             tuple_return | array_return)
-                echo "[public-tools] skipping backend diagnostic $diag_name (selfhost lowerer accepts it; #1327)"
+                echo "[public-tools] skipping backend diagnostic $diag_name (selfhost lowerer accepts it; #1699)"
                 continue
                 ;;
         esac

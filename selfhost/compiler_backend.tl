@@ -10076,8 +10076,72 @@ tl_profile_alloc_peak_bytes:
                                     (compiler-backend-runtime-windows-sdk-registry-install-data
                                       windows-sdk-registry-install))))))))))))))))]))
 
-(define (compiler-backend-runtime-alloc-functions) : String
-  "    .globl tl_alloc
+(define (compiler-backend-runtime-profile-alloc-account
+  [size-reg : String]
+  [done-label : String]
+  [profile : bool]) : String
+  (if profile
+    (string-append
+      (backend-cat5
+        "    addq "
+        size-reg
+        ", tl_profile_alloc_total_bytes(%rip)\n    addq "
+        size-reg
+        ", tl_profile_alloc_live_bytes(%rip)\n")
+      (backend-cat5
+        "    movq tl_profile_alloc_live_bytes(%rip), %r10\n    cmpq tl_profile_alloc_peak_bytes(%rip), %r10\n    jbe "
+        done-label
+        "\n    movq %r10, tl_profile_alloc_peak_bytes(%rip)\n"
+        done-label
+        ":\n"))
+    ""))
+
+(define (compiler-backend-runtime-profile-live-sub
+  [arena-reg : String]
+  [used-reg : String]
+  [profile : bool]) : String
+  (if profile
+    (backend-cat5
+      "    movq 16("
+      arena-reg
+      "), "
+      used-reg
+      (backend-cat5
+        "\n    subq 8("
+        arena-reg
+        "), "
+        used-reg
+        (backend-cat3
+          "\n    subq "
+          used-reg
+          ", tl_profile_alloc_live_bytes(%rip)\n")))
+    ""))
+
+(define (compiler-backend-runtime-profile-live-rewind
+  [arena-reg : String]
+  [mark-reg : String]
+  [used-reg : String]
+  [profile : bool]) : String
+  (if profile
+    (backend-cat5
+      "    movq 16("
+      arena-reg
+      "), "
+      used-reg
+      (backend-cat5
+        "\n    subq "
+        mark-reg
+        ", "
+        used-reg
+        (backend-cat3
+          "\n    subq "
+          used-reg
+          ", tl_profile_alloc_live_bytes(%rip)\n")))
+    ""))
+
+(define (compiler-backend-runtime-alloc-functions [profile : bool]) : String
+  (string-append
+    "    .globl tl_alloc
 tl_alloc:
     addq $7, %rdi
     jc .L_tl_alloc_abort
@@ -10093,7 +10157,14 @@ tl_alloc:
     cmpq 24(%r8), %rcx
     ja .L_tl_alloc_new_arena
     movq %rcx, 16(%r8)
-    ret
+"
+    (string-append
+      (string-append
+        (compiler-backend-runtime-profile-alloc-account
+          "%rsi"
+          ".L_tl_alloc_profile_fast_done"
+          profile)
+        "    ret
 .L_tl_alloc_new_arena:
     movq $0x4000000, %rdx
     movq %rsi, %rcx
@@ -10130,7 +10201,13 @@ tl_alloc:
     movq %rcx, 16(%rax)
     movq %rax, tl_current_arena(%rip)
     movq %r8, %rax
-    ret
+")
+      (string-append
+        (compiler-backend-runtime-profile-alloc-account
+          "%rsi"
+          ".L_tl_alloc_profile_new_done"
+          profile)
+        "    ret
 .L_tl_alloc_abort:
     movq $1, %rax
     movq $2, %rdi
@@ -10141,88 +10218,7 @@ tl_alloc:
     movq $134, %rdi
     syscall
 
-")
-
-(define (compiler-backend-runtime-profiled-alloc-functions) : String
-  "    .globl tl_alloc
-tl_alloc:
-    addq $7, %rdi
-    jc .L_tl_alloc_abort
-    andq $-8, %rdi
-    movq %rdi, %rsi
-    movq tl_current_arena(%rip), %r8
-    testq %r8, %r8
-    jz .L_tl_alloc_new_arena
-    movq 16(%r8), %rax
-    movq %rax, %rcx
-    addq %rsi, %rcx
-    jc .L_tl_alloc_abort
-    cmpq 24(%r8), %rcx
-    ja .L_tl_alloc_new_arena
-    movq %rcx, 16(%r8)
-    addq %rsi, tl_profile_alloc_total_bytes(%rip)
-    addq %rsi, tl_profile_alloc_live_bytes(%rip)
-    movq tl_profile_alloc_live_bytes(%rip), %r10
-    cmpq tl_profile_alloc_peak_bytes(%rip), %r10
-    jbe .L_tl_alloc_profile_fast_done
-    movq %r10, tl_profile_alloc_peak_bytes(%rip)
-.L_tl_alloc_profile_fast_done:
-    ret
-.L_tl_alloc_new_arena:
-    movq $0x4000000, %rdx
-    movq %rsi, %rcx
-    addq $32, %rcx
-    jc .L_tl_alloc_abort
-    cmpq %rdx, %rcx
-    jbe .L_tl_alloc_len_ready
-    movq %rcx, %rdx
-.L_tl_alloc_len_ready:
-    push %rdx
-    push %rsi
-    movq %rdx, %rsi
-    xorq %rdi, %rdi
-    movq $3, %rdx
-    movq $0x22, %r10
-    movq $-1, %r8
-    xorq %r9, %r9
-    movq $9, %rax
-    syscall
-    pop %rsi
-    pop %rdx
-    testq %rax, %rax
-    js .L_tl_alloc_abort
-    movq %rax, %rcx
-    addq %rdx, %rcx
-    jc .L_tl_alloc_abort
-    movq tl_current_arena(%rip), %r8
-    movq %r8, 0(%rax)
-    leaq 32(%rax), %r8
-    movq %r8, 8(%rax)
-    movq %rcx, 24(%rax)
-    movq %r8, %rcx
-    addq %rsi, %rcx
-    movq %rcx, 16(%rax)
-    movq %rax, tl_current_arena(%rip)
-    movq %r8, %rax
-    addq %rsi, tl_profile_alloc_total_bytes(%rip)
-    addq %rsi, tl_profile_alloc_live_bytes(%rip)
-    movq tl_profile_alloc_live_bytes(%rip), %r10
-    cmpq tl_profile_alloc_peak_bytes(%rip), %r10
-    jbe .L_tl_alloc_profile_new_done
-    movq %r10, tl_profile_alloc_peak_bytes(%rip)
-.L_tl_alloc_profile_new_done:
-    ret
-.L_tl_alloc_abort:
-    movq $1, %rax
-    movq $2, %rdi
-    leaq .L_tl_alloc_msg(%rip), %rsi
-    movq $.L_tl_alloc_msg_len, %rdx
-    syscall
-    movq $60, %rax
-    movq $134, %rdi
-    syscall
-
-")
+"))))
 
 (define (compiler-backend-runtime-region-mark-functions) : String
   "    .globl tl_region_mark
@@ -10252,8 +10248,9 @@ tl_region_mark:
 ;; reference these symbols as externs, so a multi-object link (a package plus its
 ;; dependency .a archive) resolves every object's calls to the single definition
 ;; in the entry object — no `multiple definition` collision.
-(define (compiler-backend-runtime-arena-functions) : String
-  "    .globl tl_arena_current
+(define (compiler-backend-runtime-arena-functions [profile : bool]) : String
+  (string-append
+    "    .globl tl_arena_current
 tl_arena_current:
     movq tl_current_arena(%rip), %rax
     ret
@@ -10301,7 +10298,10 @@ tl_arena_destroy:
     testq %rbx, %rbx
     jz .L_tl_arena_destroy_done
     movq 0(%rbx), %r8
-    push %r8
+"
+    (string-append
+      (compiler-backend-runtime-profile-live-sub "%rbx" "%r10" profile)
+      "    push %r8
     cmpq $0, .L_tl_arena_poison_enabled(%rip)
     je .L_tl_arena_destroy_unmap
     movq 8(%rbx), %rdi
@@ -10323,75 +10323,14 @@ tl_arena_destroy:
     pop %rbx
     ret
 
-")
-
-(define (compiler-backend-runtime-profiled-arena-functions) : String
-  "    .globl tl_arena_current
-tl_arena_current:
-    movq tl_current_arena(%rip), %rax
-    ret
-
-    .globl tl_arena_set
-tl_arena_set:
-    movq %rdi, tl_current_arena(%rip)
-    ret
-
-    .globl tl_arena_make
-tl_arena_make:
-    movq $0x4000000, %rsi
-    xorq %rdi, %rdi
-    movq $3, %rdx
-    movq $0x22, %r10
-    movq $-1, %r8
-    xorq %r9, %r9
-    movq $9, %rax
-    syscall
-    testq %rax, %rax
-    js .L_tl_arena_make_abort
-    movq $0, 0(%rax)
-    leaq 32(%rax), %rcx
-    movq %rcx, 8(%rax)
-    movq %rcx, 16(%rax)
-    movq %rax, %rcx
-    addq $0x4000000, %rcx
-    movq %rcx, 24(%rax)
-    ret
-.L_tl_arena_make_abort:
-    movq $60, %rax
-    movq $134, %rdi
-    syscall
-
-    .globl tl_arena_destroy
-tl_arena_destroy:
-    push %rbx
-    movq %rdi, %rbx
-.L_tl_arena_destroy_loop:
-    testq %rbx, %rbx
-    jz .L_tl_arena_destroy_done
-    movq 0(%rbx), %r8
-    movq 16(%rbx), %r10
-    subq 8(%rbx), %r10
-    subq %r10, tl_profile_alloc_live_bytes(%rip)
-    push %r8
-    movq 24(%rbx), %rsi
-    subq %rbx, %rsi
-    movq %rbx, %rdi
-    movq $11, %rax
-    syscall
-    pop %r8
-    movq %r8, %rbx
-    jmp .L_tl_arena_destroy_loop
-.L_tl_arena_destroy_done:
-    pop %rbx
-    ret
-
-")
+")))
 
 ;; Windows flavor: VirtualAlloc/VirtualFree under the Win64 ABI. The arg arrives
 ;; in %rcx; a 32-byte shadow space is reserved before each call. A mapping
 ;; failure traps via `ud2` (no libc dependency).
-(define (compiler-backend-runtime-windows-arena-functions) : String
-  "    .globl tl_arena_current
+(define (compiler-backend-runtime-windows-arena-functions [profile : bool]) : String
+  (string-append
+    "    .globl tl_arena_current
 tl_arena_current:
     movq tl_current_arena(%rip), %rax
     ret
@@ -10446,7 +10385,10 @@ tl_arena_destroy:
     testq %rsi, %rsi
     jz .L_tl_arena_destroy_win_done
     movq 0(%rsi), %rbx
-    movq %rsi, %rcx
+"
+    (string-append
+      (compiler-backend-runtime-profile-live-sub "%rsi" "%r10" profile)
+      "    movq %rsi, %rcx
     xorq %rdx, %rdx
     movq $0x8000, %r8
     call VirtualFree
@@ -10459,80 +10401,11 @@ tl_arena_destroy:
     popq %rbp
     ret
 
-")
+")))
 
-(define (compiler-backend-runtime-profiled-windows-arena-functions) : String
-  "    .globl tl_arena_current
-tl_arena_current:
-    movq tl_current_arena(%rip), %rax
-    ret
-
-    .globl tl_arena_set
-tl_arena_set:
-    movq %rcx, tl_current_arena(%rip)
-    ret
-
-    .globl tl_arena_make
-tl_arena_make:
-    push %rbp
-    mov %rsp, %rbp
-    push %rbx
-    push %rsi
-    sub $32, %rsp
-    xorq %rcx, %rcx
-    movq $0x4000000, %rdx
-    movq $0x3000, %r8
-    movq $0x4, %r9
-    call VirtualAlloc
-    testq %rax, %rax
-    jz .L_tl_arena_make_win_abort
-    movq $0, 0(%rax)
-    leaq 32(%rax), %rcx
-    movq %rcx, 8(%rax)
-    movq %rcx, 16(%rax)
-    movq %rax, %rcx
-    addq $0x4000000, %rcx
-    movq %rcx, 24(%rax)
-    add $32, %rsp
-    popq %rsi
-    popq %rbx
-    popq %rbp
-    ret
-.L_tl_arena_make_win_abort:
-    ud2
-
-    .globl tl_arena_destroy
-tl_arena_destroy:
-    push %rbp
-    mov %rsp, %rbp
-    push %rbx
-    push %rsi
-    sub $32, %rsp
-    movq %rcx, %rsi
-.L_tl_arena_destroy_win_loop:
-    testq %rsi, %rsi
-    jz .L_tl_arena_destroy_win_done
-    movq 0(%rsi), %rbx
-    movq 16(%rsi), %r10
-    subq 8(%rsi), %r10
-    subq %r10, tl_profile_alloc_live_bytes(%rip)
-    movq %rsi, %rcx
-    xorq %rdx, %rdx
-    movq $0x8000, %r8
-    call VirtualFree
-    movq %rbx, %rsi
-    jmp .L_tl_arena_destroy_win_loop
-.L_tl_arena_destroy_win_done:
-    add $32, %rsp
-    popq %rsi
-    popq %rbx
-    popq %rbp
-    ret
-
-")
-
-(define (compiler-backend-runtime-region-reset-functions) : String
-  "    .globl tl_region_reset
+(define (compiler-backend-runtime-region-reset-functions [profile : bool]) : String
+  (string-append
+    "    .globl tl_region_reset
 tl_region_reset:
     push %rbx
     movq %rdi, %rbx
@@ -10559,7 +10432,11 @@ tl_region_reset:
     cmpq %r8, %r9
     je .L_tl_region_reset_restore
     movq 0(%r9), %r10
-    cmpq $0, .L_tl_arena_poison_enabled(%rip)
+"
+    (string-append
+      (compiler-backend-runtime-profile-live-sub "%r9" "%r11" profile)
+      (string-append
+        "    cmpq $0, .L_tl_arena_poison_enabled(%rip)
     je .L_tl_region_reset_drop_newer_unmap
     movq 8(%r9), %rdi
     movq 24(%r9), %rcx
@@ -10580,7 +10457,15 @@ tl_region_reset:
     movq %r10, %r9
     jmp .L_tl_region_reset_drop_newer
 .L_tl_region_reset_restore:
-    cmpq $0, .L_tl_arena_poison_enabled(%rip)
+"
+        (string-append
+          (compiler-backend-runtime-profile-live-rewind
+            "%r8"
+            "%rbx"
+            "%r10"
+            profile)
+          (string-append
+            "    cmpq $0, .L_tl_arena_poison_enabled(%rip)
     je .L_tl_region_reset_restore_set
     movq 16(%r8), %rcx
     subq %rbx, %rcx
@@ -10600,7 +10485,10 @@ tl_region_reset:
     testq %r8, %r8
     jz .L_tl_region_reset_done
     movq 0(%r8), %r9
-    cmpq $0, .L_tl_arena_poison_enabled(%rip)
+"
+            (string-append
+              (compiler-backend-runtime-profile-live-sub "%r8" "%r10" profile)
+              "    cmpq $0, .L_tl_arena_poison_enabled(%rip)
     je .L_tl_region_reset_all_unmap
     movq 8(%r8), %rdi
     movq 24(%r8), %rcx
@@ -10630,93 +10518,11 @@ tl_region_reset:
     movq $134, %rdi
     syscall
 
-")
+")))))))
 
-(define (compiler-backend-runtime-profiled-region-reset-functions) : String
-  "    .globl tl_region_reset
-tl_region_reset:
-    push %rbx
-    movq %rdi, %rbx
-    testq %rbx, %rbx
-    jz .L_tl_region_reset_all
-    movq tl_current_arena(%rip), %r8
-    testq %r8, %r8
-    jz .L_tl_region_reset_invalid
-.L_tl_region_reset_find:
-    movq 8(%r8), %r9
-    cmpq %r9, %rbx
-    jb .L_tl_region_reset_next
-    movq 24(%r8), %r9
-    cmpq %r9, %rbx
-    jbe .L_tl_region_reset_found
-.L_tl_region_reset_next:
-    movq 0(%r8), %r8
-    testq %r8, %r8
-    jnz .L_tl_region_reset_find
-    jmp .L_tl_region_reset_invalid
-.L_tl_region_reset_found:
-    movq tl_current_arena(%rip), %r9
-.L_tl_region_reset_drop_newer:
-    cmpq %r8, %r9
-    je .L_tl_region_reset_restore
-    movq 0(%r9), %r10
-    movq 16(%r9), %r11
-    subq 8(%r9), %r11
-    subq %r11, tl_profile_alloc_live_bytes(%rip)
-    movq 24(%r9), %rsi
-    subq %r9, %rsi
-    movq %r9, %rdi
-    push %r8
-    push %r10
-    movq $11, %rax
-    syscall
-    pop %r10
-    pop %r8
-    movq %r10, %r9
-    jmp .L_tl_region_reset_drop_newer
-.L_tl_region_reset_restore:
-    movq 16(%r8), %r10
-    subq %rbx, %r10
-    subq %r10, tl_profile_alloc_live_bytes(%rip)
-    movq %rbx, 16(%r8)
-    movq %r8, tl_current_arena(%rip)
-    pop %rbx
-    ret
-.L_tl_region_reset_all:
-    movq tl_current_arena(%rip), %r8
-    movq $0, tl_current_arena(%rip)
-.L_tl_region_reset_all_loop:
-    testq %r8, %r8
-    jz .L_tl_region_reset_done
-    movq 0(%r8), %r9
-    movq 16(%r8), %r10
-    subq 8(%r8), %r10
-    subq %r10, tl_profile_alloc_live_bytes(%rip)
-    movq 24(%r8), %rsi
-    subq %r8, %rsi
-    movq %r8, %rdi
-    push %r9
-    movq $11, %rax
-    syscall
-    pop %r8
-    jmp .L_tl_region_reset_all_loop
-.L_tl_region_reset_done:
-    pop %rbx
-    ret
-.L_tl_region_reset_invalid:
-    movq $1, %rax
-    movq $2, %rdi
-    leaq .L_tl_region_reset_msg(%rip), %rsi
-    movq $.L_tl_region_reset_msg_len, %rdx
-    syscall
-    movq $60, %rax
-    movq $134, %rdi
-    syscall
-
-")
-
-(define (compiler-backend-runtime-windows-alloc-functions) : String
-  "    .globl tl_alloc
+(define (compiler-backend-runtime-windows-alloc-functions [profile : bool]) : String
+  (string-append
+    "    .globl tl_alloc
 tl_alloc:
     testq %rcx, %rcx
     jg .L_tl_alloc_win_size_ready
@@ -10736,7 +10542,14 @@ tl_alloc:
     cmpq 24(%r8), %r10
     ja .L_tl_alloc_new_arena_entry
     movq %r10, 16(%r8)
-    ret
+"
+    (string-append
+      (string-append
+        (compiler-backend-runtime-profile-alloc-account
+          "%r11"
+          ".L_tl_alloc_profile_win_fast_done"
+          profile)
+        "    ret
 .L_tl_alloc_new_arena_entry:
     push %rbp
     mov %rsp, %rbp
@@ -10780,6 +10593,13 @@ tl_alloc:
     movq %r10, 16(%rax)
     movq %rax, tl_current_arena(%rip)
     movq %r8, %rax
+")
+      (string-append
+        (compiler-backend-runtime-profile-alloc-account
+          "%r11"
+          ".L_tl_alloc_profile_win_new_done"
+          profile)
+        "
     mov %rbp, %rsp
     pop %rbp
     ret
@@ -10791,99 +10611,7 @@ tl_alloc:
     movq $134, %rcx
     call exit
 
-")
-
-(define (compiler-backend-runtime-profiled-windows-alloc-functions) : String
-  "    .globl tl_alloc
-tl_alloc:
-    testq %rcx, %rcx
-    jg .L_tl_alloc_win_size_ready
-    movq $1, %rcx
-.L_tl_alloc_win_size_ready:
-    addq $7, %rcx
-    jc .L_tl_alloc_enter_abort
-    andq $-8, %rcx
-    movq %rcx, %r11
-    movq tl_current_arena(%rip), %r8
-    testq %r8, %r8
-    jz .L_tl_alloc_new_arena_entry
-    movq 16(%r8), %rax
-    movq %rax, %r10
-    addq %r11, %r10
-    jc .L_tl_alloc_enter_abort
-    cmpq 24(%r8), %r10
-    ja .L_tl_alloc_new_arena_entry
-    movq %r10, 16(%r8)
-    addq %r11, tl_profile_alloc_total_bytes(%rip)
-    addq %r11, tl_profile_alloc_live_bytes(%rip)
-    movq tl_profile_alloc_live_bytes(%rip), %r10
-    cmpq tl_profile_alloc_peak_bytes(%rip), %r10
-    jbe .L_tl_alloc_profile_win_fast_done
-    movq %r10, tl_profile_alloc_peak_bytes(%rip)
-.L_tl_alloc_profile_win_fast_done:
-    ret
-.L_tl_alloc_new_arena_entry:
-    push %rbp
-    mov %rsp, %rbp
-    sub $48, %rsp
-    jmp .L_tl_alloc_new_arena
-.L_tl_alloc_enter_abort:
-    push %rbp
-    mov %rsp, %rbp
-    sub $48, %rsp
-    jmp .L_tl_alloc_abort
-.L_tl_alloc_new_arena:
-    movq %r11, -8(%rbp)
-    movq $0x4000000, %rdx
-    movq %r11, %rax
-    addq $32, %rax
-    jc .L_tl_alloc_abort
-    cmpq %rdx, %rax
-    jbe .L_tl_alloc_len_ready
-    movq %rax, %rdx
-.L_tl_alloc_len_ready:
-    movq %rdx, -16(%rbp)
-    xorq %rcx, %rcx
-    movq $0x3000, %r8
-    movq $4, %r9
-    call VirtualAlloc
-    testq %rax, %rax
-    jz .L_tl_alloc_abort
-    movq -16(%rbp), %rdx
-    movq -8(%rbp), %r11
-    movq %rax, %rcx
-    addq %rdx, %rcx
-    jc .L_tl_alloc_abort
-    movq tl_current_arena(%rip), %r8
-    movq %r8, 0(%rax)
-    leaq 32(%rax), %r8
-    movq %r8, 8(%rax)
-    movq %rcx, 24(%rax)
-    movq %r8, %r10
-    addq %r11, %r10
-    jc .L_tl_alloc_abort
-    movq %r10, 16(%rax)
-    movq %rax, tl_current_arena(%rip)
-    movq %r8, %rax
-    addq %r11, tl_profile_alloc_total_bytes(%rip)
-    addq %r11, tl_profile_alloc_live_bytes(%rip)
-    movq tl_profile_alloc_live_bytes(%rip), %r10
-    cmpq tl_profile_alloc_peak_bytes(%rip), %r10
-    jbe .L_tl_alloc_profile_win_new_done
-    movq %r10, tl_profile_alloc_peak_bytes(%rip)
-.L_tl_alloc_profile_win_new_done:
-    mov %rbp, %rsp
-    pop %rbp
-    ret
-.L_tl_alloc_abort:
-    movq $2, %rcx
-    leaq .L_tl_alloc_msg(%rip), %rdx
-    movq $.L_tl_alloc_msg_len, %r8
-    call _write
-    movq $134, %rcx
-    call exit
-
-")
+"))))
 
 (define (compiler-backend-runtime-oob-functions) : String
   "    .globl tl_oob_abort
@@ -11387,8 +11115,10 @@ _tl_env_var_value:
 ;; `VirtualFree(lpAddress=arena, dwSize=0, dwFreeType=MEM_RELEASE=0x8000)` — the
 ;; arena node address is exactly the VirtualAlloc base, so MEM_RELEASE frees the
 ;; whole chunk. Arg (the mark) arrives in %rcx.
-(define (compiler-backend-runtime-windows-region-reset-functions) : String
-  "    .globl tl_region_reset
+(define (compiler-backend-runtime-windows-region-reset-functions
+  [profile : bool]) : String
+  (string-append
+    "    .globl tl_region_reset
 tl_region_reset:
     push %rbp
     mov %rsp, %rbp
@@ -11431,7 +11161,11 @@ tl_region_reset:
     cmpq %r13, %r14
     je .L_tl_region_reset_win_restore
     movq 0(%r14), %rbx
-    movq %r14, %rcx
+"
+    (string-append
+      (compiler-backend-runtime-profile-live-sub "%r14" "%rax" profile)
+      (string-append
+        "    movq %r14, %rcx
     xorq %rdx, %rdx
     movq $0x8000, %r8
     sub $32, %rsp
@@ -11440,7 +11174,15 @@ tl_region_reset:
     movq %rbx, %r14
     jmp .L_tl_region_reset_win_drop
 .L_tl_region_reset_win_restore:
-    movq %r12, 16(%r13)
+"
+        (string-append
+          (compiler-backend-runtime-profile-live-rewind
+            "%r13"
+            "%r12"
+            "%rax"
+            profile)
+          (string-append
+            "    movq %r12, 16(%r13)
     movq %r13, tl_current_arena(%rip)
     jmp .L_tl_region_reset_win_done
 .L_tl_region_reset_win_all:
@@ -11450,7 +11192,10 @@ tl_region_reset:
     testq %r14, %r14
     jz .L_tl_region_reset_win_done
     movq 0(%r14), %rbx
-    movq %r14, %rcx
+"
+            (string-append
+              (compiler-backend-runtime-profile-live-sub "%r14" "%rax" profile)
+              "    movq %r14, %rcx
     xorq %rdx, %rdx
     movq $0x8000, %r8
     sub $32, %rsp
@@ -11467,98 +11212,7 @@ tl_region_reset:
     pop %rbp
     ret
 
-")
-
-(define (compiler-backend-runtime-profiled-windows-region-reset-functions) : String
-  "    .globl tl_region_reset
-tl_region_reset:
-    push %rbp
-    mov %rsp, %rbp
-    push %rbx
-    push %r12
-    push %r13
-    push %r14
-    sub $8, %rsp
-    movq %rcx, %r12
-    testq %r12, %r12
-    jz .L_tl_region_reset_win_all
-    movq tl_current_arena(%rip), %r13
-    testq %r13, %r13
-    jz .L_tl_region_reset_win_invalid
-.L_tl_region_reset_win_find:
-    movq 8(%r13), %rax
-    cmpq %rax, %r12
-    jb .L_tl_region_reset_win_next
-    movq 24(%r13), %rax
-    cmpq %rax, %r12
-    jbe .L_tl_region_reset_win_found
-.L_tl_region_reset_win_next:
-    movq 0(%r13), %r13
-    testq %r13, %r13
-    jnz .L_tl_region_reset_win_find
-    jmp .L_tl_region_reset_win_invalid
-.L_tl_region_reset_win_invalid:
-    movq $2, %rcx
-    leaq .L_tl_region_reset_msg(%rip), %rdx
-    movq $.L_tl_region_reset_msg_len, %r8
-    sub $32, %rsp
-    call _write
-    add $32, %rsp
-    movq $134, %rcx
-    sub $32, %rsp
-    call exit
-.L_tl_region_reset_win_found:
-    movq tl_current_arena(%rip), %r14
-.L_tl_region_reset_win_drop:
-    cmpq %r13, %r14
-    je .L_tl_region_reset_win_restore
-    movq 0(%r14), %rbx
-    movq 16(%r14), %rax
-    subq 8(%r14), %rax
-    subq %rax, tl_profile_alloc_live_bytes(%rip)
-    movq %r14, %rcx
-    xorq %rdx, %rdx
-    movq $0x8000, %r8
-    sub $32, %rsp
-    call VirtualFree
-    add $32, %rsp
-    movq %rbx, %r14
-    jmp .L_tl_region_reset_win_drop
-.L_tl_region_reset_win_restore:
-    movq 16(%r13), %rax
-    subq %r12, %rax
-    subq %rax, tl_profile_alloc_live_bytes(%rip)
-    movq %r12, 16(%r13)
-    movq %r13, tl_current_arena(%rip)
-    jmp .L_tl_region_reset_win_done
-.L_tl_region_reset_win_all:
-    movq tl_current_arena(%rip), %r14
-    movq $0, tl_current_arena(%rip)
-.L_tl_region_reset_win_all_drop:
-    testq %r14, %r14
-    jz .L_tl_region_reset_win_done
-    movq 0(%r14), %rbx
-    movq 16(%r14), %rax
-    subq 8(%r14), %rax
-    subq %rax, tl_profile_alloc_live_bytes(%rip)
-    movq %r14, %rcx
-    xorq %rdx, %rdx
-    movq $0x8000, %r8
-    sub $32, %rsp
-    call VirtualFree
-    add $32, %rsp
-    movq %rbx, %r14
-    jmp .L_tl_region_reset_win_all_drop
-.L_tl_region_reset_win_done:
-    add $8, %rsp
-    pop %r14
-    pop %r13
-    pop %r12
-    pop %rbx
-    pop %rbp
-    ret
-
-")
+")))))))
 
 (define (compiler-backend-runtime-profile-functions) : String
   "    .globl tl_profile_now_ms
@@ -16498,12 +16152,8 @@ tl_windows_sdk_registry_install:
         [alloc-asm : String
           (if alloc
             (if (compiler-backend-target-windows? target)
-              (if profile
-                (compiler-backend-runtime-profiled-windows-alloc-functions)
-                (compiler-backend-runtime-windows-alloc-functions))
-              (if profile
-                (compiler-backend-runtime-profiled-alloc-functions)
-                (compiler-backend-runtime-alloc-functions)))
+              (compiler-backend-runtime-windows-alloc-functions profile)
+              (compiler-backend-runtime-alloc-functions profile))
             "")]
         [oob-asm : String
           (if oob
@@ -16689,12 +16339,8 @@ tl_windows_sdk_registry_install:
         [region-reset-asm : String
           (if region-reset
             (if (compiler-backend-target-windows? target)
-              (if profile
-                (compiler-backend-runtime-profiled-windows-region-reset-functions)
-                (compiler-backend-runtime-windows-region-reset-functions))
-              (if profile
-                (compiler-backend-runtime-profiled-region-reset-functions)
-                (compiler-backend-runtime-region-reset-functions)))
+              (compiler-backend-runtime-windows-region-reset-functions profile)
+              (compiler-backend-runtime-region-reset-functions profile))
             "")]
         [random-system-seed-asm : String
           (if random-system-seed
@@ -16713,12 +16359,8 @@ tl_windows_sdk_registry_install:
             "")]
         [arena-asm : String
           (if (compiler-backend-target-windows? target)
-            (if profile
-              (compiler-backend-runtime-profiled-windows-arena-functions)
-              (compiler-backend-runtime-windows-arena-functions))
-            (if profile
-              (compiler-backend-runtime-profiled-arena-functions)
-              (compiler-backend-runtime-arena-functions)))]
+            (compiler-backend-runtime-windows-arena-functions profile)
+            (compiler-backend-runtime-arena-functions profile))]
         [profile-asm : String
           (compiler-backend-runtime-profile-functions-for-target target profile)]
         [runtime-front-asm : String

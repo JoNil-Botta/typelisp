@@ -218,7 +218,7 @@ run_compiler_driver() {
         if [ -s "$_stderr" ]; then sed 's/^/  stderr: /' "$_stderr" >&2; fi
         exit 1
     fi
-    assert_empty "$_stdout" "$_label driver stdout"
+    expect_stream "printf:Generated: $_asm\n" "$_stdout" "$_label.driver.stdout"
     assert_empty "$_stderr" "$_label driver stderr"
 }
 
@@ -529,6 +529,33 @@ verify_compiler_driver_immutable_refs() {
     done
 }
 
+verify_compiler_driver_recursive_box_list() {
+    _driver=$1
+    _dir="$WORKDIR/compiler-driver/recursive-box-list"
+    mkdir -p "$_dir"
+    _src="$_dir/input.tl"
+    _asm="$_dir/output.s"
+    cat > "$_src" <<'EOF'
+(defenum IntList
+  (Nil)
+  (Cons i64 (Box IntList)))
+
+(define (sum [xs : IntList]) : i64
+  (match xs
+    [(Nil) 0]
+    [(Cons head tail)
+      (+ head (sum (box-get tail)))]))
+
+(define (main) : i64
+  (sum (Cons 10 (box (Cons 30 (box (Cons 2 (box (Nil)))))))))
+EOF
+
+    echo "[selfhost-native] compiler_driver recursive Box list"
+    run_compiler_driver "$_driver" compiler-driver-recursive-box-list "$_src" "$_asm"
+    assert_contains "$_asm" "call tl_alloc" compiler-driver-recursive-box-list
+    assemble_link_run_asm compiler-driver-recursive-box-list "$_asm" 42 - - 1
+}
+
 verify_emit_printed_program() {
     _dir="$WORKDIR/generated-emit"
     mkdir -p "$_dir"
@@ -633,6 +660,7 @@ verify_compiler_driver_string_runtime "$DRIVER"
 verify_compiler_driver_stdlib_json "$DRIVER"
 verify_compiler_driver_arrays_and_traps "$DRIVER"
 verify_compiler_driver_immutable_refs "$DRIVER"
+verify_compiler_driver_recursive_box_list "$DRIVER"
 verify_emit_printed_program
 verify_parse_printed_program
 verify_eval_driver_errors

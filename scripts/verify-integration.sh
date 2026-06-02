@@ -239,14 +239,12 @@ EOF
 # former Rust backend handled these, but it has been removed, so these cases are
 # commented out in the manifest and listed here as documented skips until the
 # selfhost compiler closes the gap:
-#   f32 scalar correctness ............ #1655
-#   aggregate lambda captures ......... #1554/#1656
+#   deep-copy aggregate lambda captures #1554/#1656
 #   print-char /
 #   enum-payload pattern / spmd ....... #1657
 #   bare idiv traps need guarded abort  #1654
 selfhost_deferred_integration_skips() {
     cat <<'EOF'
-f32_scalar
 lambda_capture_fixed_array
 lambda_capture_fixed_array_aggregate
 lambda_capture_nested_aggregate

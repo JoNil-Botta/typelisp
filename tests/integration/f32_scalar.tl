@@ -1,7 +1,8 @@
 ;; refs #670: first executable scalar f32 slice. Exercises f32 parameters,
 ;; f32 locals, the f32 `+ - * /` arithmetic operators, an f32 comparison, an
-;; f32 return value, contextual f32 float literals, and an `f64 -> f32 -> f64`
-;; precision round-trip. Non-literal f64 -> f32 still uses an explicit cast.
+;; f32 return value, contextual f32 float literals including a stack-passed
+;; call argument, and an `f64 -> f32 -> f64` precision round-trip. Non-literal
+;; f64 -> f32 still uses an explicit cast.
 ;; `main` returns 42 only when every f32 result lands where IEEE-754 binary32
 ;; arithmetic says it should.
 ;; f32 parameters + arithmetic + an f32 return.
@@ -20,6 +21,20 @@
 ;; f32 comparison through a function boundary.
 (define (ltf [a : f32] [b : f32]) : bool
   (< a b))
+
+;; More than eight f32 arguments forces the ninth arg onto the System V stack
+;; (and past the fourth positional Win64 register slot).
+(define (ninthf
+  [a : f32]
+  [b : f32]
+  [c : f32]
+  [d : f32]
+  [e : f32]
+  [f : f32]
+  [g : f32]
+  [h : f32]
+  [i : f32]) : f32
+  i)
 
 ;; Round-trip an f64 through f32 and back. Narrowing to binary32 then widening
 ;; back to f64 is exact for values that fit in binary32 (like 2.5).
@@ -66,4 +81,10 @@
             (if (< 2.5 (roundtrip 2.5))
               100
               0))]
-        (+ rt (+ a (+ b c)))))))
+        ;; Contextual f32 literals through a call boundary, with the ninth
+        ;; argument stack-passed on System V.
+        [stack : i64
+          (if (ltf half (ninthf 1.0 1.0 1.0 1.0 1.0 1.0 1.0 1.0 3.0))
+            0
+            100)]
+        (+ stack (+ rt (+ a (+ b c))))))))

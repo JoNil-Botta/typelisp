@@ -1022,8 +1022,15 @@
               "(%rip), "
               reg
               "\n"))
-          (ErrCompilerBackend
-            (compiler-diagnostic-at-start "" "backend: expected f32 value")))]
+          (OkCompilerBackend
+            (string-append
+              (backend-cat5
+                "    movsd "
+                (compiler-backend-f64-label text)
+                "(%rip), "
+                reg
+                "\n")
+              (backend-cat5 "    cvtsd2ss " reg ", " reg "\n"))))]
       [_
         (ErrCompilerBackend
           (compiler-diagnostic-at-start
@@ -1133,8 +1140,19 @@
           (backend-cat3 "    movzbq " addr ", %rax\n"))]
       [else ""])))
 
+(define (compiler-backend-emit-load-float-memory
+  [addr : String]
+  [reg : String]
+  [ty : AstType]) : String
+  (backend-cat5
+    "    "
+    (compiler-backend-float-move ty)
+    (backend-cat3 " " addr ", ")
+    reg
+    "\n"))
+
 (define (compiler-backend-emit-load-f64-memory [addr : String] [reg : String]) : String
-  (backend-cat5 "    movsd " addr ", " reg "\n"))
+  (compiler-backend-emit-load-float-memory addr reg (AstTyF64)))
 
 (define (compiler-backend-reg-part [reg : String] [size : i64]) : String
   (cond
@@ -1278,8 +1296,14 @@
 
 (define (compiler-backend-emit-store-xmm-to-memory
   [addr : String]
-  [reg : String]) : String
-  (backend-cat5 "    movsd " reg ", " addr "\n"))
+  [reg : String]
+  [ty : AstType]) : String
+  (backend-cat5
+    "    "
+    (compiler-backend-float-move ty)
+    (backend-cat3 " " reg ", ")
+    addr
+    "\n"))
 
 (define (compiler-backend-store-immediate-mnemonic [ty : AstType]) : String
   (let
@@ -1295,7 +1319,7 @@
   [value : CompilerIrValue]
   [addr : String]
   [ty : AstType]) : CompilerBackendMaybeAsm
-  (if (compiler-backend-f64-type? ty)
+  (if (compiler-backend-float-type? ty)
     (CompilerBackendNoAsm)
     (match (compiler-backend-immediate-operand value)
       [(CompilerBackendSomeImmediate imm)
@@ -1317,16 +1341,20 @@
   [var-id : i64]
   [reg : String]
   [ty : AstType]) : String
-  (if (compiler-backend-f64-type? ty)
-    (compiler-backend-emit-store-f64-var-with-plan assignments var-id reg)
+  (if (compiler-backend-float-type? ty)
+    (compiler-backend-emit-store-float-var-with-plan assignments var-id reg ty)
     (compiler-backend-emit-store-var-with-plan assignments var-id reg)))
 
 (define (compiler-backend-emit-load-typed-value-with-plan
   [assignments : CompilerRegAssignmentList]
   [value : CompilerIrValue]
   [ty : AstType]) : ResultCompilerBackend
-  (if (compiler-backend-f64-type? ty)
-    (compiler-backend-emit-load-f64-value-with-plan assignments value "%xmm0")
+  (if (compiler-backend-float-type? ty)
+    (compiler-backend-emit-load-float-value-with-plan
+      assignments
+      value
+      ty
+      "%xmm0")
     (match value
       [(IrValueVar id)
         (match (compiler-reg-assignment-lookup assignments id)
@@ -2257,7 +2285,7 @@
 
 (define (compiler-backend-load-compare-type? [ty : AstType]) : bool
   (and
-    (not (compiler-backend-f64-type? ty))
+    (not (compiler-backend-float-type? ty))
     (= (compiler-backend-type-size ty) 8)))
 
 (define (compiler-backend-emit-compare-memory-address-flags
@@ -2581,15 +2609,16 @@
   (match (compiler-backend-emit-load-value-with-plan assignments src "%r10")
     [(OkCompilerBackend ptr-asm)
       (OkCompilerBackend
-        (if (compiler-backend-f64-type? ty)
+        (if (compiler-backend-float-type? ty)
           (string-append
             ptr-asm
             (string-append
-              (compiler-backend-emit-load-f64-memory "(%r10)" "%xmm0")
-              (compiler-backend-emit-store-f64-var-with-plan
+              (compiler-backend-emit-load-float-memory "(%r10)" "%xmm0" ty)
+              (compiler-backend-emit-store-float-var-with-plan
                 assignments
                 dst
-                "%xmm0")))
+                "%xmm0"
+                ty)))
           (string-append
             ptr-asm
             (string-append
@@ -2620,15 +2649,19 @@
           "%r10")
           [(OkCompilerBackend base-asm)
             (OkCompilerBackend
-              (if (compiler-backend-f64-type? load-ty)
+              (if (compiler-backend-float-type? load-ty)
                 (string-append
                   base-asm
                   (string-append
-                    (compiler-backend-emit-load-f64-memory addr "%xmm0")
-                    (compiler-backend-emit-store-f64-var-with-plan
+                    (compiler-backend-emit-load-float-memory
+                      addr
+                      "%xmm0"
+                      load-ty)
+                    (compiler-backend-emit-store-float-var-with-plan
                       assignments
                       dst
-                      "%xmm0")))
+                      "%xmm0"
+                      load-ty)))
                 (string-append
                   base-asm
                   (string-append
@@ -2665,10 +2698,11 @@
                   ptr-asm
                   (string-append
                     src-asm
-                    (if (compiler-backend-f64-type? ty)
+                    (if (compiler-backend-float-type? ty)
                       (compiler-backend-emit-store-xmm-to-memory
                         "(%r10)"
-                        "%xmm0")
+                        "%xmm0"
+                        ty)
                       (compiler-backend-emit-store-rax-to-memory "(%r10)" ty)))))]
             [(ErrCompilerBackend message) (ErrCompilerBackend message)])])]
     [(ErrCompilerBackend message) (ErrCompilerBackend message)]))
@@ -2707,10 +2741,11 @@
                         base-asm
                         (string-append
                           value-asm
-                          (if (compiler-backend-f64-type? store-ty)
+                          (if (compiler-backend-float-type? store-ty)
                             (compiler-backend-emit-store-xmm-to-memory
                               addr
-                              "%xmm0")
+                              "%xmm0"
+                              store-ty)
                             (compiler-backend-emit-store-rax-to-memory
                               addr
                               store-ty)))))]
@@ -2867,7 +2902,7 @@
               (compiler-backend-emit-store-typed-var-with-plan
                 assignments
                 dst
-                (if (compiler-backend-f64-type? to-ty)
+                (if (compiler-backend-float-type? to-ty)
                   "%xmm0"
                   "%rax")
                 to-ty)))]
@@ -2907,7 +2942,7 @@
 ;; bank is exhausted (rdi..r9 / xmm0..xmm7).
 (define (compiler-backend-stack-call-arg-for-banks?
   [target : CompilerBackendTarget]
-  [is-f64 : bool]
+  [is-float : bool]
   [int-idx : i64]
   [float-idx : i64]
   [position : i64]) : bool
@@ -2915,7 +2950,7 @@
     [(BackendTargetWindows)
       (>= position (compiler-backend-call-register-count target))]
     [(BackendTargetLinux)
-      (if is-f64
+      (if is-float
         (>= float-idx (compiler-backend-call-float-register-count target))
         (>= int-idx (compiler-backend-call-register-count target)))]))
 
@@ -3067,21 +3102,21 @@
             [(AstTypeCons _ tail) tail]
             [(AstTypeNil) AstTypeNil])]
         (let
-          [is-f64 : bool (compiler-backend-f64-type? arg-ty)]
+          [is-float : bool (compiler-backend-float-type? arg-ty)]
           (compiler-backend-call-stack-arg-count
             target
             rest
             rest-types
-            (if is-f64
+            (if is-float
               int-idx
               (+ int-idx 1))
-            (if is-f64
+            (if is-float
               (+ float-idx 1)
               float-idx)
             (+ position 1)
             (if (compiler-backend-stack-call-arg-for-banks?
               target
-              is-f64
+              is-float
               int-idx
               float-idx
               position)
@@ -3236,19 +3271,19 @@
             [(AstTypeCons _ tail) tail]
             [(AstTypeNil) AstTypeNil])]
         (let
-          [is-f64 : bool (compiler-backend-f64-type? arg-ty)]
+          [is-float : bool (compiler-backend-float-type? arg-ty)]
           (let
             [next-int : i64
-              (if is-f64
+              (if is-float
                 int-idx
                 (+ int-idx 1))]
             [next-float : i64
-              (if is-f64
+              (if is-float
                 (+ float-idx 1)
                 float-idx)]
             (if (compiler-backend-stack-call-arg-for-banks?
               target
-              is-f64
+              is-float
               int-idx
               float-idx
               position)
@@ -3256,10 +3291,11 @@
               ;; call arg uses (%xmm15 / %r11, matching the Rust backend) so an
               ;; earlier register arg in xmm0/%rax is never clobbered, then
               ;; store it at its %rsp offset.
-              (match (if is-f64
-                (compiler-backend-emit-load-f64-value-with-plan
+              (match (if is-float
+                (compiler-backend-emit-load-float-value-with-plan
                   assignments
                   value
+                  arg-ty
                   "%xmm15")
                 (compiler-backend-emit-load-value-with-plan
                   assignments
@@ -3280,8 +3316,12 @@
                       (OkCompilerBackend
                         (backend-cat5
                           head
-                          (if is-f64
-                            "    movsd %xmm15, "
+                          (if is-float
+                            (backend-cat4
+                              "    "
+                              (compiler-backend-float-move arg-ty)
+                              " %xmm15, "
+                              "")
                             "    movq %r11, ")
                           (int->string
                             (compiler-backend-outgoing-stack-arg-offset
@@ -3291,7 +3331,7 @@
                           tail))]
                     [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
                 [(ErrCompilerBackend message) (ErrCompilerBackend message)])
-              (match (if is-f64
+              (match (if is-float
                 (compiler-backend-target-float-arg-reg
                   target
                   (if (compiler-backend-target-windows? target)
@@ -3303,10 +3343,11 @@
                     position
                     int-idx)))
                 [(OkBackendReg reg)
-                  (match (if is-f64
-                    (compiler-backend-emit-load-f64-value-with-plan
+                  (match (if is-float
+                    (compiler-backend-emit-load-float-value-with-plan
                       assignments
                       value
+                      arg-ty
                       reg)
                     (compiler-backend-emit-load-value-with-plan
                       assignments
@@ -3495,7 +3536,7 @@
                 (compiler-backend-emit-store-typed-var-with-plan
                   assignments
                   dst
-                  (if (compiler-backend-f64-type? ty)
+                  (if (compiler-backend-float-type? ty)
                     "%xmm0"
                     "%rax")
                   ty)))]
@@ -3939,7 +3980,7 @@
             (compiler-backend-emit-store-typed-var-with-plan
               assignments
               dst
-              (if (compiler-backend-f64-type? ty)
+              (if (compiler-backend-float-type? ty)
                 "%xmm0"
                 "%rax")
               ty)))]
@@ -4120,7 +4161,7 @@
                           (compiler-backend-emit-store-typed-var-with-plan
                             assignments
                             dst
-                            (if (compiler-backend-f64-type? ty)
+                            (if (compiler-backend-float-type? ty)
                               "%xmm0"
                               "%rax")
                             ty))
@@ -4173,12 +4214,13 @@
                   (OkCompilerBackend
                     (string-append
                       load
-                      (if (compiler-backend-f64-type? ty)
-                        (backend-cat4
-                          "    movsd %xmm0, "
+                      (if (compiler-backend-float-type? ty)
+                        (backend-cat5
+                          "    "
+                          (compiler-backend-float-move ty)
+                          " %xmm0, "
                           (compiler-backend-user-symbol name)
-                          "(%rip)\n"
-                          "")
+                          "(%rip)\n")
                         (backend-cat4
                           "    movq %rax, "
                           (compiler-backend-user-symbol name)
@@ -5033,7 +5075,7 @@
                               (compiler-backend-emit-store-typed-var-with-plan
                                 assignments
                                 dst
-                                (if (compiler-backend-f64-type? ty)
+                                (if (compiler-backend-float-type? ty)
                                   "%xmm0"
                                   "%rax")
                                 ty))
@@ -6297,19 +6339,19 @@
       (match param
         [(IrParam _ ty var-id)
           (let
-            [is-f64 : bool (compiler-backend-f64-type? ty)]
+            [is-float : bool (compiler-backend-float-type? ty)]
             (let
               [next-int : i64
-                (if is-f64
+                (if is-float
                   int-idx
                   (+ int-idx 1))]
               [next-float : i64
-                (if is-f64
+                (if is-float
                   (+ float-idx 1)
                   float-idx)]
               (if (compiler-backend-stack-call-arg-for-banks?
                 target
-                is-f64
+                is-float
                 int-idx
                 float-idx
                 position)
@@ -6324,15 +6366,16 @@
                   [(OkCompilerBackend tail)
                     (OkCompilerBackend
                       (string-append
-                        (if is-f64
-                          (backend-cat4
-                            "    movsd "
+                        (if is-float
+                          (backend-cat5
+                            "    "
+                            (compiler-backend-float-move ty)
+                            " "
                             (int->string
                               (compiler-backend-incoming-stack-arg-offset
                                 target
                                 stack-idx))
-                            "(%rbp), %xmm0\n"
-                            "")
+                            "(%rbp), %xmm0\n")
                           (backend-cat4
                             "    movq "
                             (int->string
@@ -6345,13 +6388,13 @@
                           (compiler-backend-emit-store-typed-var-with-plan
                             assignments
                             var-id
-                            (if is-f64
+                            (if is-float
                               "%xmm0"
                               "%rax")
                             ty)
                           tail)))]
                   [(ErrCompilerBackend message) (ErrCompilerBackend message)])
-                (match (if is-f64
+                (match (if is-float
                   (compiler-backend-target-float-arg-reg
                     target
                     (if (compiler-backend-target-windows? target)
@@ -7436,7 +7479,9 @@
         "    .section .rodata\n"
         (compiler-backend-emit-f64-entries floats))]))
 
-(define (compiler-backend-global-value-asm [value : CompilerIrValue]) : ResultCompilerBackend
+(define (compiler-backend-global-value-asm
+  [ty : AstType]
+  [value : CompilerIrValue]) : ResultCompilerBackend
   (match value
     [(IrValueI64 n)
       (OkCompilerBackend (backend-cat3 "    .quad " (int->string n) "\n"))]
@@ -7452,7 +7497,9 @@
           "\n"))]
     [(IrValueUnit) (OkCompilerBackend "    .quad 0\n")]
     [(IrValueF64 text)
-      (OkCompilerBackend (backend-cat3 "    .double " text "\n"))]
+      (if (compiler-backend-f64-type? ty)
+        (OkCompilerBackend (backend-cat3 "    .double " text "\n"))
+        (OkCompilerBackend (backend-cat3 "    .float " text "\n")))]
     [(IrValueGlobal name)
       (OkCompilerBackend
         (backend-cat3 "    .quad " (compiler-backend-user-symbol name) "\n"))]
@@ -7509,7 +7556,7 @@
               "\n"
               (compiler-backend-emit-runtime-global target symbol)
               ""))
-          (match (compiler-backend-global-value-asm value)
+          (match (compiler-backend-global-value-asm ty value)
             [(OkCompilerBackend value-asm)
               (OkCompilerBackend
                 (backend-cat5
@@ -7537,7 +7584,7 @@
 (define (compiler-backend-global-init-name [global-name : String]) : String
   (string-append "__global_init_" global-name))
 
-(define (compiler-backend-global-init-call [name : String]) : String
+(define (compiler-backend-global-init-call [name : String] [ty : AstType]) : String
   (let
     [symbol : String (compiler-backend-user-symbol name)]
     [init-symbol : String
@@ -7546,7 +7593,14 @@
       "    call "
       init-symbol
       "\n"
-      (backend-cat3 "    movq %rax, " symbol "(%rip)\n")
+      (if (compiler-backend-float-type? ty)
+        (backend-cat5
+          "    "
+          (compiler-backend-float-move ty)
+          " %xmm0, "
+          symbol
+          "(%rip)\n")
+        (backend-cat3 "    movq %rax, " symbol "(%rip)\n"))
       "")))
 
 (define (compiler-backend-global-initializers [globals : CompilerIrGlobalList]) : String
@@ -7557,7 +7611,7 @@
         [(IrGlobal name ty value)
           (string-append
             (if (compiler-backend-runtime-global? ty value)
-              (compiler-backend-global-init-call name)
+              (compiler-backend-global-init-call name ty)
               "")
             (compiler-backend-global-initializers rest))])]))
 

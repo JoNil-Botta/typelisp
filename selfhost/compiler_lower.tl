@@ -1961,6 +1961,17 @@
             (IrValueVar var-id)
             to-ty)]))))
 
+(define (lower-coerce-value
+  [state : LowerState]
+  [value : CompilerIrValue]
+  [from-ty : AstType]
+  [to-ty : AstType]) : LowerExpr
+  (if (tc-type-eq from-ty to-ty)
+    (LowerExpr state value to-ty)
+    (if (tc-type-compatible? to-ty from-ty)
+      (lower-cast-value state value from-ty to-ty)
+      (LowerExpr state value to-ty))))
+
 (define (lower-oob-abort [state : LowerState]) : LowerState
   (match (lower-state-alloc-var state)
     [(LowerAlloc allocated var-id)
@@ -3302,22 +3313,25 @@
           (ErrLowerArgs (lower-diagnostic "lower: constructor arity mismatch"))])]
     [(AstExprCons arg rest-args)
       (match types
-        [(AstTypeCons _ rest-types)
-          (match (lower-expr ctx state env type-env arg)
-            [(OkLowerExpr lowered)
-              (match lowered
-                [(LowerExpr arg-state value _)
-                  (match (lower-args-as
-                    ctx
-                    arg-state
-                    env
-                    type-env
-                    rest-args
-                    rest-types)
-                    [(OkLowerArgs rest-state rest-values)
-                      (OkLowerArgs rest-state (IrValueCons value rest-values))]
-                    [(ErrLowerArgs message) (ErrLowerArgs message)])])]
-            [(ErrLowerExpr message) (ErrLowerArgs message)])]
+        [(AstTypeCons expected rest-types)
+          (let
+            [arg-ty : AstType
+              (tc-type-without-regions (tc-resolve-type ctx expected))]
+            (match (lower-expr-expected ctx state env type-env arg arg-ty arg)
+              [(OkLowerExpr lowered)
+                (match lowered
+                  [(LowerExpr arg-state value _)
+                    (match (lower-args-as
+                      ctx
+                      arg-state
+                      env
+                      type-env
+                      rest-args
+                      rest-types)
+                      [(OkLowerArgs rest-state rest-values)
+                        (OkLowerArgs rest-state (IrValueCons value rest-values))]
+                      [(ErrLowerArgs message) (ErrLowerArgs message)])])]
+              [(ErrLowerExpr message) (ErrLowerArgs message)]))]
         [(AstTypeNil)
           (ErrLowerArgs (lower-diagnostic "lower: constructor arity mismatch"))])]))
 
@@ -3517,7 +3531,7 @@
     [(AstExprVar name)
       (lower-var-or-nullary-variant ctx state env type-env name expr-ty)]
     [(AstExprAnn inner _)
-      (match (lower-expr ctx state env type-env inner)
+      (match (lower-expr-expected ctx state env type-env inner expr-ty origin)
         [(OkLowerExpr lowered)
           (match lowered
             [(LowerExpr inner-state value _)
@@ -3615,42 +3629,50 @@
     [(AstExprUnsafe exprs)
       (lower-begin ctx state env (tc-enter-unsafe type-env) exprs)]
     [(AstExprSet name value)
-      (match (lower-expr ctx state env type-env value)
-        [(OkLowerExpr lowered)
-          (match lowered
-            [(LowerExpr value-state value-ir value-ty)
-              (match (sym-i64-lookup env name)
-                [(SomeI64 id)
-                  (OkLowerExpr
-                    (LowerExpr
-                      (lower-state-emit-at-expr
-                        value-state
-                        (IrInstrMov id value-ir value-ty)
-                        origin)
-                      IrValueUnit
-                      expr-ty))]
-                [(NoneI64)
-                  (match (tc-lookup type-env name)
-                    [(OkTcType store-ty)
-                      (OkLowerExpr
-                        (LowerExpr
-                          (lower-state-emit-at-expr
-                            value-state
-                            (IrInstrStore
-                              (lower-resolve-name value-state name)
-                              value-ir
-                              store-ty)
-                            origin)
-                          IrValueUnit
-                          expr-ty))]
-                    [(ErrTcType _)
-                      (ErrLowerExpr
-                        (lower-diagnostic-at-expr
-                          origin
-                          (string-append
-                            "lower: assignment to unknown local "
-                            name)))])])])]
-        [(ErrLowerExpr message) (ErrLowerExpr message)])]
+      (match (tc-lookup type-env name)
+        [(OkTcType store-ty)
+          (let
+            [target-ty : AstType
+              (tc-type-without-regions (tc-resolve-type ctx store-ty))]
+            (match (lower-expr-expected
+              ctx
+              state
+              env
+              type-env
+              value
+              target-ty
+              value)
+              [(OkLowerExpr lowered)
+                (match lowered
+                  [(LowerExpr value-state value-ir _)
+                    (match (sym-i64-lookup env name)
+                      [(SomeI64 id)
+                        (OkLowerExpr
+                          (LowerExpr
+                            (lower-state-emit-at-expr
+                              value-state
+                              (IrInstrMov id value-ir target-ty)
+                              origin)
+                            IrValueUnit
+                            expr-ty))]
+                      [(NoneI64)
+                        (OkLowerExpr
+                          (LowerExpr
+                            (lower-state-emit-at-expr
+                              value-state
+                              (IrInstrStore
+                                (lower-resolve-name value-state name)
+                                value-ir
+                                target-ty)
+                              origin)
+                            IrValueUnit
+                            expr-ty))])])]
+              [(ErrLowerExpr message) (ErrLowerExpr message)]))]
+        [(ErrTcType _)
+          (ErrLowerExpr
+            (lower-diagnostic-at-expr
+              origin
+              (string-append "lower: assignment to unknown local " name)))])]
     [(AstExprIf cond then-branch else-branch)
       (lower-if ctx state env type-env cond then-branch else-branch expr-ty)]
     [(AstExprWhile cond body) (lower-while ctx state env type-env cond body)]
@@ -3904,6 +3926,32 @@
     [_
       (ErrLowerExpr
         (lower-diagnostic-at-expr origin "lower: unsupported expression"))]))
+
+(define (lower-expr-expected
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [expr : AstExpr]
+  [expected-ty : AstType]
+  [origin : AstExpr]) : ResultLowerExpr
+  (match expr
+    [(AstExprSpanned inner _)
+      (lower-expr-expected ctx state env type-env inner expected-ty origin)]
+    [(AstExprLiteral lit)
+      (lower-materialize-at-expr
+        state
+        (lower-literal-value lit)
+        expected-ty
+        origin)]
+    [_
+      (match (lower-expr ctx state env type-env expr)
+        [(OkLowerExpr lowered)
+          (match lowered
+            [(LowerExpr next-state value actual-ty)
+              (OkLowerExpr
+                (lower-coerce-value next-state value actual-ty expected-ty))])]
+        [(ErrLowerExpr message) (ErrLowerExpr message)])]))
 
 (define (lower-struct-get
   [ctx : TcContext]
@@ -4562,7 +4610,19 @@
   [args : AstExprList]
   [result-ty : AstType]
   [origin : AstExpr]) : ResultLowerExpr
-  (match (lower-args ctx state env type-env args)
+  (match (match (tc-lookup type-env name)
+    [(OkTcType fn-ty)
+      (match (tc-type-strip-region (tc-resolve-type ctx fn-ty))
+        [(AstTyFunc param-types _)
+          (lower-args-as
+            ctx
+            state
+            env
+            type-env
+            args
+            (tc-resolve-type-list ctx param-types))]
+        [_ (lower-args ctx state env type-env args)])]
+    [(ErrTcType _) (lower-args ctx state env type-env args)])
     [(OkLowerArgs args-state values)
       (match (lower-state-alloc-var args-state)
         [(LowerAlloc allocated var-id)
@@ -6939,6 +6999,25 @@
     [(AstSomeType ty) (tc-type-without-regions (tc-resolve-type ctx ty))]
     [(AstNoType) (tc-type-without-regions init-ty)]))
 
+(define (lower-let-init
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [maybe-ty : AstMaybeType]
+  [init : AstExpr]) : ResultLowerExpr
+  (match maybe-ty
+    [(AstSomeType ty)
+      (lower-expr-expected
+        ctx
+        state
+        env
+        type-env
+        init
+        (tc-type-without-regions (tc-resolve-type ctx ty))
+        init)]
+    [(AstNoType) (lower-expr ctx state env type-env init)]))
+
 (define (lower-let-bindings
   [ctx : TcContext]
   [state : LowerState]
@@ -6950,7 +7029,7 @@
     [(AstLetBindingCons binding rest)
       (match binding
         [(AstLetBinding name maybe-ty init)
-          (match (lower-expr ctx state env type-env init)
+          (match (lower-let-init ctx state env type-env maybe-ty init)
             [(OkLowerExpr lowered)
               (match lowered
                 [(LowerExpr init-state init-value init-ty)
@@ -8681,7 +8760,7 @@
   [type-env : TcTypeEnv]
   [expr : AstExpr]
   [ret-ty : AstType]) : ResultLowerState
-  (match (lower-expr ctx state env type-env expr)
+  (match (lower-expr-expected ctx state env type-env expr ret-ty expr)
     [(OkLowerExpr lowered)
       (match lowered
         [(LowerExpr body-state value _)

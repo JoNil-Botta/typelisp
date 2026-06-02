@@ -92,6 +92,22 @@
     (process-command "/usr/bin/cat" (process-args-empty))
     "stdin-from-typelisp"))
 
+(define (process-runtime-large-stdin) : String
+  (let
+    [text : String "a"]
+    [i : i64 0]
+    (begin
+      (while (< i 17)
+        (begin
+          (set! text (string-append text text))
+          (set! i (+ i 1))))
+      text)))
+
+(define (process-runtime-stdin-ignored-command) : ProcessCommand
+  (process-command-with-stdin
+    (process-command "/usr/bin/true" (process-args-empty))
+    (process-runtime-large-stdin)))
+
 (define (process-runtime-windows-command) : ProcessCommand
   (process-command
     "C:\\Windows\\System32\\cmd.exe"
@@ -150,6 +166,12 @@
         "stdin-from-typelisp"
         ""
         "process stdin")
+      (assert-process-ok
+        (process-output (process-runtime-stdin-ignored-command))
+        0
+        ""
+        ""
+        "process stdin ignored")
       (assert-process-ok
         (process-output (process-command "/usr/bin/false" (process-args-empty)))
         1

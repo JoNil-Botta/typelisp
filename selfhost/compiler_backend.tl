@@ -12674,7 +12674,7 @@ tl_string_concat:
     push %r13
     push %r14
     push %r15
-    subq $232, %rsp
+    subq $280, %rsp
     movq %rdi, -8(%rbp)
     movq 0(%rdi), %rdi
     call .L_tl_process_cstring_from_string
@@ -12711,6 +12711,43 @@ tl_string_concat:
     jmp .L_tl_process_fill_argv
 .L_tl_process_fill_argv_done:
     movq $0, (%r14,%r15,8)
+    movq $0, -120(%rbp)
+    movq -8(%rbp), %rax
+    movq 16(%rax), %r12
+    cmpq $1, 0(%r12)
+    jne .L_tl_process_cwd_done
+    movq 8(%r12), %rdi
+    call .L_tl_process_cstring_from_string
+    movq %rax, -120(%rbp)
+.L_tl_process_cwd_done:
+    movq -8(%rbp), %rax
+    movq 24(%rax), %rdi
+    call .L_tl_process_envp_from_overrides
+    movq %rax, -128(%rbp)
+    movq $0, -136(%rbp)
+    movq $0, -144(%rbp)
+    movq $-1, -152(%rbp)
+    movq $-1, -160(%rbp)
+    movq -8(%rbp), %rax
+    movq 32(%rax), %r12
+    cmpq $1, 0(%r12)
+    jne .L_tl_process_stdin_done
+    movq 8(%r12), %r12
+    movq 0(%r12), %rax
+    movq %rax, -136(%rbp)
+    movq 8(%r12), %rax
+    movq %rax, -144(%rbp)
+    leaq -192(%rbp), %rdi
+    movq $524288, %rsi
+    movq $293, %rax
+    syscall
+    testq %rax, %rax
+    js .L_tl_process_spawn_failed
+    movslq -192(%rbp), %rax
+    movq %rax, -152(%rbp)
+    movslq -188(%rbp), %rax
+    movq %rax, -160(%rbp)
+.L_tl_process_stdin_done:
     leaq .L_tl_process_stdout_name(%rip), %rdi
     xorq %rsi, %rsi
     movq $319, %rax
@@ -12743,6 +12780,42 @@ tl_string_concat:
     movq %rax, -88(%rbp)
     movq -80(%rbp), %rdi
     call .L_tl_process_close_fd
+    movq $-1, -80(%rbp)
+    movq -152(%rbp), %rdi
+    cmpq $0, %rdi
+    jl .L_tl_process_parent_stdin_done
+    call .L_tl_process_close_fd
+    movq $-1, -152(%rbp)
+    movq $1, -224(%rbp)
+    movq $0, -216(%rbp)
+    movq $0, -208(%rbp)
+    movq $0, -200(%rbp)
+    movq $13, %rdi
+    leaq -224(%rbp), %rsi
+    leaq -264(%rbp), %rdx
+    movq $8, %r10
+    movq $13, %rax
+    syscall
+    movq -160(%rbp), %rdi
+    movq -136(%rbp), %rsi
+    movq -144(%rbp), %rdx
+    call .L_tl_process_write_all
+    movq %rax, %r12
+    movq -160(%rbp), %rdi
+    call .L_tl_process_close_fd
+    movq $-1, -160(%rbp)
+    movq $13, %rdi
+    leaq -264(%rbp), %rsi
+    xorq %rdx, %rdx
+    movq $8, %r10
+    movq $13, %rax
+    syscall
+    testq %r12, %r12
+    jns .L_tl_process_parent_stdin_done
+    cmpq $-32, %r12
+    je .L_tl_process_parent_stdin_done
+    jmp .L_tl_process_wait_failed
+.L_tl_process_parent_stdin_done:
     movq -88(%rbp), %rdi
     leaq -184(%rbp), %rsi
     xorq %rdx, %rdx
@@ -12797,6 +12870,19 @@ tl_string_concat:
 .L_tl_process_child:
     movq -72(%rbp), %rdi
     call .L_tl_process_close_fd
+    movq -160(%rbp), %rdi
+    cmpq $0, %rdi
+    jl .L_tl_process_child_stdin_dup_done
+    call .L_tl_process_close_fd
+    movq -152(%rbp), %rdi
+    movq $0, %rsi
+    movq $33, %rax
+    syscall
+    testq %rax, %rax
+    js .L_tl_process_child_exec_failed
+    movq -152(%rbp), %rdi
+    call .L_tl_process_close_fd
+.L_tl_process_child_stdin_dup_done:
     movq -40(%rbp), %rdi
     movq $1, %rsi
     movq $33, %rax
@@ -12809,11 +12895,20 @@ tl_string_concat:
     call .L_tl_process_close_fd
     movq -56(%rbp), %rdi
     call .L_tl_process_close_fd
+    movq -120(%rbp), %rdi
+    testq %rdi, %rdi
+    jz .L_tl_process_child_cwd_done
+    movq $80, %rax
+    syscall
+    testq %rax, %rax
+    js .L_tl_process_child_exec_failed
+.L_tl_process_child_cwd_done:
     movq -16(%rbp), %rdi
     movq -32(%rbp), %rsi
-    movq .L_tl_envp(%rip), %rdx
+    movq -128(%rbp), %rdx
     movq $59, %rax
     syscall
+.L_tl_process_child_exec_failed:
     movq $1, %rax
     movq -80(%rbp), %rdi
     leaq .L_tl_process_exec_marker(%rip), %rsi
@@ -12834,7 +12929,7 @@ tl_string_concat:
     movq $2, %rdx
     call .L_tl_process_make_error
 .L_tl_process_return:
-    addq $232, %rsp
+    addq $280, %rsp
     pop %r15
     pop %r14
     pop %r13
@@ -12847,6 +12942,45 @@ tl_string_concat:
 .L_tl_process_close_fd:
     movq $3, %rax
     syscall
+    ret
+
+.L_tl_process_write_all:
+    push %rbp
+    movq %rsp, %rbp
+    push %rbx
+    push %r12
+    push %r13
+    push %r14
+    movq %rdi, %rbx
+    movq %rsi, %r12
+    movq %rdx, %r13
+    xorq %r14, %r14
+.L_tl_process_write_all_loop:
+    cmpq %r13, %r14
+    jge .L_tl_process_write_all_ok
+    movq $1, %rax
+    movq %rbx, %rdi
+    leaq (%r12,%r14), %rsi
+    movq %r13, %rdx
+    subq %r14, %rdx
+    syscall
+    testq %rax, %rax
+    jl .L_tl_process_write_all_return
+    jz .L_tl_process_write_all_fail
+    addq %rax, %r14
+    jmp .L_tl_process_write_all_loop
+.L_tl_process_write_all_ok:
+    xorq %rax, %rax
+    jmp .L_tl_process_write_all_return
+.L_tl_process_write_all_fail:
+    movq $-1, %rax
+.L_tl_process_write_all_return:
+    pop %r14
+    pop %r13
+    pop %r12
+    pop %rbx
+    movq %rbp, %rsp
+    pop %rbp
     ret
 
 .L_tl_process_seek_start:
@@ -12880,6 +13014,195 @@ tl_string_concat:
 .L_tl_process_cstring_done:
     movb $0, (%r14,%rbx)
     movq %r14, %rax
+    pop %r14
+    pop %r13
+    pop %r12
+    pop %rbx
+    movq %rbp, %rsp
+    pop %rbp
+    ret
+
+.L_tl_process_env_entry_matches:
+    push %rbp
+    movq %rsp, %rbp
+    push %rbx
+    push %r12
+    push %r13
+    push %r14
+    push %r15
+    push %rdi
+    subq $8, %rsp
+    movq %rdi, %rbx
+    movq %rsi, %r12
+.L_tl_process_env_match_loop:
+    cmpq $1, 0(%r12)
+    jne .L_tl_process_env_match_false
+    movq 8(%r12), %rax
+    movq 0(%rax), %r13
+    movq 8(%rax), %r14
+    xorq %r15, %r15
+.L_tl_process_env_match_char:
+    cmpq %r14, %r15
+    jge .L_tl_process_env_match_eq
+    movzbl (%r13,%r15), %eax
+    movzbl (%rbx,%r15), %ecx
+    cmpb %cl, %al
+    jne .L_tl_process_env_match_next
+    incq %r15
+    jmp .L_tl_process_env_match_char
+.L_tl_process_env_match_eq:
+    movzbl (%rbx,%r14), %eax
+    cmpb $61, %al
+    jne .L_tl_process_env_match_next
+    movq $1, %rax
+    jmp .L_tl_process_env_match_return
+.L_tl_process_env_match_next:
+    movq 24(%r12), %r12
+    jmp .L_tl_process_env_match_loop
+.L_tl_process_env_match_false:
+    xorq %rax, %rax
+.L_tl_process_env_match_return:
+    addq $8, %rsp
+    pop %rdi
+    pop %r15
+    pop %r14
+    pop %r13
+    pop %r12
+    pop %rbx
+    movq %rbp, %rsp
+    pop %rbp
+    ret
+
+.L_tl_process_env_cstring:
+    push %rbp
+    movq %rsp, %rbp
+    push %rbx
+    push %r12
+    push %r13
+    push %r14
+    push %r15
+    subq $8, %rsp
+    movq 0(%rdi), %r12
+    movq 8(%rdi), %rbx
+    movq 0(%rsi), %r14
+    movq 8(%rsi), %r13
+    movq %rbx, %rdi
+    addq %r13, %rdi
+    addq $2, %rdi
+    call tl_alloc
+    movq %rax, %r15
+    xorq %rcx, %rcx
+.L_tl_process_env_cs_name:
+    cmpq %rbx, %rcx
+    jge .L_tl_process_env_cs_name_done
+    movzbl (%r12,%rcx), %eax
+    movb %al, (%r15,%rcx)
+    incq %rcx
+    jmp .L_tl_process_env_cs_name
+.L_tl_process_env_cs_name_done:
+    movb $61, (%r15,%rbx)
+    xorq %rcx, %rcx
+.L_tl_process_env_cs_value:
+    cmpq %r13, %rcx
+    jge .L_tl_process_env_cs_value_done
+    movzbl (%r14,%rcx), %eax
+    leaq 1(%rbx,%rcx), %rdx
+    movb %al, (%r15,%rdx)
+    incq %rcx
+    jmp .L_tl_process_env_cs_value
+.L_tl_process_env_cs_value_done:
+    leaq 1(%rbx,%r13), %rdx
+    movb $0, (%r15,%rdx)
+    movq %r15, %rax
+    addq $8, %rsp
+    pop %r15
+    pop %r14
+    pop %r13
+    pop %r12
+    pop %rbx
+    movq %rbp, %rsp
+    pop %rbp
+    ret
+
+.L_tl_process_envp_from_overrides:
+    push %rbp
+    movq %rsp, %rbp
+    push %rbx
+    push %r12
+    push %r13
+    push %r14
+    push %r15
+    subq $8, %rsp
+    movq %rdi, %r12
+    cmpq $1, 0(%r12)
+    jne .L_tl_process_envp_inherited
+    movq .L_tl_envp(%rip), %rbx
+    xorq %r13, %r13
+.L_tl_process_envp_count_inh:
+    movq (%rbx), %rdi
+    testq %rdi, %rdi
+    jz .L_tl_process_envp_count_overrides
+    movq %r12, %rsi
+    call .L_tl_process_env_entry_matches
+    testq %rax, %rax
+    jne .L_tl_process_envp_count_inh_next
+    incq %r13
+.L_tl_process_envp_count_inh_next:
+    addq $8, %rbx
+    jmp .L_tl_process_envp_count_inh
+.L_tl_process_envp_count_overrides:
+    xorq %r14, %r14
+    movq %r12, %r15
+.L_tl_process_envp_count_ov:
+    cmpq $1, 0(%r15)
+    jne .L_tl_process_envp_alloc
+    incq %r14
+    movq 24(%r15), %r15
+    jmp .L_tl_process_envp_count_ov
+.L_tl_process_envp_alloc:
+    movq %r13, %rdi
+    addq %r14, %rdi
+    incq %rdi
+    shlq $3, %rdi
+    call tl_alloc
+    movq %rax, %r15
+    movq .L_tl_envp(%rip), %rbx
+    xorq %r14, %r14
+.L_tl_process_envp_copy_inh:
+    movq (%rbx), %rdi
+    testq %rdi, %rdi
+    jz .L_tl_process_envp_copy_ov_start
+    movq %r12, %rsi
+    call .L_tl_process_env_entry_matches
+    testq %rax, %rax
+    jne .L_tl_process_envp_copy_inh_next
+    movq (%rbx), %rax
+    movq %rax, (%r15,%r14,8)
+    incq %r14
+.L_tl_process_envp_copy_inh_next:
+    addq $8, %rbx
+    jmp .L_tl_process_envp_copy_inh
+.L_tl_process_envp_copy_ov_start:
+    movq %r12, %rbx
+.L_tl_process_envp_copy_ov:
+    cmpq $1, 0(%rbx)
+    jne .L_tl_process_envp_done
+    movq 8(%rbx), %rdi
+    movq 16(%rbx), %rsi
+    call .L_tl_process_env_cstring
+    movq %rax, (%r15,%r14,8)
+    incq %r14
+    movq 24(%rbx), %rbx
+    jmp .L_tl_process_envp_copy_ov
+.L_tl_process_envp_done:
+    movq $0, (%r15,%r14,8)
+    movq %r15, %rax
+    jmp .L_tl_process_envp_return
+.L_tl_process_envp_inherited:
+    movq .L_tl_envp(%rip), %rax
+.L_tl_process_envp_return:
+    addq $8, %rsp
+    pop %r15
     pop %r14
     pop %r13
     pop %r12
@@ -14804,7 +15127,7 @@ tl_windows_sdk_registry_install:
             (compiler-backend-string-contains? asm ".L_tl_flush_stdout:\n"))]
         [process-labels : bool
           (and
-            (backend-and4
+            (backend-and8
               (compiler-backend-string-contains? asm "tl_process_output:\n")
               (compiler-backend-string-contains?
                 asm
@@ -14812,7 +15135,15 @@ tl_windows_sdk_registry_install:
               (compiler-backend-string-contains?
                 asm
                 ".L_tl_process_exec_marker:")
-              (compiler-backend-string-contains? asm ".L_tl_envp:\n"))
+              (compiler-backend-string-contains? asm ".L_tl_envp:\n")
+              (compiler-backend-string-contains?
+                asm
+                ".L_tl_process_envp_from_overrides:\n")
+              (compiler-backend-string-contains?
+                asm
+                ".L_tl_process_write_all:\n")
+              (compiler-backend-string-contains? asm "    movq $80, %rax\n")
+              (compiler-backend-string-contains? asm "    movq $59, %rax\n"))
             (compiler-backend-string-contains? asm "process: spawn failed"))]
         [random-labels : bool
           (and

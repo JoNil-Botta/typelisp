@@ -60,6 +60,9 @@
   (OkCompilerBackend String)
   (ErrCompilerBackend CompilerDiagnostic))
 
+(defenum CompilerBackendRuntimeTailPlan
+  (BackendRuntimeTailPlan bool bool))
+
 (defenum CompilerBackendRuntimePlan
   (BackendRuntimePlan
     bool
@@ -97,7 +100,7 @@
     bool
     bool
     bool
-    bool))
+    CompilerBackendRuntimeTailPlan))
 
 ;; Backend code-generation target (#646). Linux/System V and Windows x64 are
 ;; both modeled here; target-specific runtime helpers are emitted below.
@@ -7336,7 +7339,7 @@
           _
           _
           _
-          _)
+          (BackendRuntimeTailPlan _ _))
         (if (or arg-count arg)
           "    movq %rcx, .L_tl_argc(%rip)
     movq %rdx, .L_tl_argv(%rip)
@@ -7389,7 +7392,7 @@
           _
           _
           _
-          _)
+          (BackendRuntimeTailPlan _ _))
         (string-append
           (if (or arg-count arg)
             "    movq %rdi, .L_tl_argc(%rip)
@@ -8749,6 +8752,19 @@
   [enabled : bool]) : bool
   (and (string-eq name candidate) enabled))
 
+(define (compiler-backend-provides-profile-runtime-name?
+  [name : String]
+  [enabled : bool]) : bool
+  (and
+    enabled
+    (or
+      (backend-or4
+        (string-eq name "tl_profile_now_ms")
+        (string-eq name "tl_profile_alloc_total")
+        (string-eq name "tl_profile_alloc_live")
+        (string-eq name "tl_profile_alloc_peak"))
+      (string-eq name "tl_profile_alloc_reset_peak"))))
+
 (define (compiler-backend-plan-provides-tail?
   [name : String]
   [read-bytes : bool]
@@ -8854,7 +8870,7 @@
         provides-env-path-separator
         provides-div-abort
         provides-shift-abort
-        provides-fs-current-dir)
+        (BackendRuntimeTailPlan provides-fs-current-dir provides-profile))
       (or
         (backend-or8
           (compiler-backend-provides-runtime-name? name "tl_alloc" alloc)
@@ -9059,7 +9075,9 @@
                             name
                             "tl_shift_abort"
                             provides-shift-abort)
-                          false
+                          (compiler-backend-provides-profile-runtime-name?
+                            name
+                            provides-profile)
                           false))))))))))]))
 
 (define (compiler-backend-runtime-plan-for
@@ -9116,6 +9134,24 @@
       (compiler-backend-function-list-defines? functions "env-var-value")]
     [defines-env-path-separator : bool
       (compiler-backend-function-list-defines? functions "env-path-separator")]
+    [defines-profile-now-ms : bool
+      (compiler-backend-function-list-defines? functions "tl_profile_now_ms")]
+    [defines-profile-alloc-total : bool
+      (compiler-backend-function-list-defines?
+        functions
+        "tl_profile_alloc_total")]
+    [defines-profile-alloc-live : bool
+      (compiler-backend-function-list-defines?
+        functions
+        "tl_profile_alloc_live")]
+    [defines-profile-alloc-peak : bool
+      (compiler-backend-function-list-defines?
+        functions
+        "tl_profile_alloc_peak")]
+    [defines-profile-alloc-reset-peak : bool
+      (compiler-backend-function-list-defines?
+        functions
+        "tl_profile_alloc_reset_peak")]
     [extern-alloc : bool
       (compiler-backend-extern-list-references? externs "tl_alloc")]
     [extern-oob : bool
@@ -9252,6 +9288,20 @@
       (compiler-backend-extern-list-references? externs "env-var-value")]
     [extern-env-path-separator : bool
       (compiler-backend-extern-list-references? externs "env-path-separator")]
+    [extern-profile-now-ms : bool
+      (compiler-backend-extern-list-references? externs "tl_profile_now_ms")]
+    [extern-profile-alloc-total : bool
+      (compiler-backend-extern-list-references?
+        externs
+        "tl_profile_alloc_total")]
+    [extern-profile-alloc-live : bool
+      (compiler-backend-extern-list-references? externs "tl_profile_alloc_live")]
+    [extern-profile-alloc-peak : bool
+      (compiler-backend-extern-list-references? externs "tl_profile_alloc_peak")]
+    [extern-profile-alloc-reset-peak : bool
+      (compiler-backend-extern-list-references?
+        externs
+        "tl_profile_alloc_reset_peak")]
     [calls-alloc : bool
       (compiler-backend-function-list-calls? functions "tl_alloc")]
     [calls-oob : bool
@@ -9380,6 +9430,18 @@
       (compiler-backend-function-list-calls? functions "env-var-value")]
     [calls-env-path-separator : bool
       (compiler-backend-function-list-calls? functions "env-path-separator")]
+    [calls-profile-now-ms : bool
+      (compiler-backend-function-list-calls? functions "tl_profile_now_ms")]
+    [calls-profile-alloc-total : bool
+      (compiler-backend-function-list-calls? functions "tl_profile_alloc_total")]
+    [calls-profile-alloc-live : bool
+      (compiler-backend-function-list-calls? functions "tl_profile_alloc_live")]
+    [calls-profile-alloc-peak : bool
+      (compiler-backend-function-list-calls? functions "tl_profile_alloc_peak")]
+    [calls-profile-alloc-reset-peak : bool
+      (compiler-backend-function-list-calls?
+        functions
+        "tl_profile_alloc_reset_peak")]
     [needs-oob : bool (and (not defines-oob) (or extern-oob calls-oob))]
     [needs-div-abort : bool
       (or
@@ -9546,6 +9608,24 @@
               needs-env-var-value
               needs-env-path-separator
               false))))]
+    [needs-profile : bool
+      (or
+        (backend-or4
+          (and
+            (not defines-profile-now-ms)
+            (or extern-profile-now-ms calls-profile-now-ms))
+          (and
+            (not defines-profile-alloc-total)
+            (or extern-profile-alloc-total calls-profile-alloc-total))
+          (and
+            (not defines-profile-alloc-live)
+            (or extern-profile-alloc-live calls-profile-alloc-live))
+          (and
+            (not defines-profile-alloc-peak)
+            (or extern-profile-alloc-peak calls-profile-alloc-peak)))
+        (and
+          (not defines-profile-alloc-reset-peak)
+          (or extern-profile-alloc-reset-peak calls-profile-alloc-reset-peak)))]
     (OkBackendRuntimePlan
       (BackendRuntimePlan
         needs-alloc
@@ -9583,7 +9663,7 @@
         needs-env-path-separator
         needs-div-abort
         needs-shift-abort
-        needs-fs-current-dir))))
+        (BackendRuntimeTailPlan needs-fs-current-dir needs-profile)))))
 
 (define (compiler-backend-runtime-plan [program : CompilerIrProgram]) : ResultBackendRuntimePlan
   (match program
@@ -9636,6 +9716,20 @@ tl_current_arena:
     .zero 8
 
 ")
+
+(define (compiler-backend-runtime-profile-data [profile : bool]) : String
+  (if profile
+    "    .section .bss
+    .balign 8
+tl_profile_alloc_total_bytes:
+    .zero 8
+tl_profile_alloc_live_bytes:
+    .zero 8
+tl_profile_alloc_peak_bytes:
+    .zero 8
+
+"
+    ""))
 
 (define (compiler-backend-runtime-region-reset-data) : String
   "    .section .rodata
@@ -9918,13 +10012,15 @@ tl_current_arena:
         _
         div-abort
         shift-abort
-        _)
+        (BackendRuntimeTailPlan _ profile))
       (string-append
         (string-append
           (compiler-backend-runtime-arena-data-for-target target)
-          (if alloc
-            (compiler-backend-runtime-alloc-data-for-target target)
-            ""))
+          (string-append
+            (compiler-backend-runtime-profile-data profile)
+            (if alloc
+              (compiler-backend-runtime-alloc-data-for-target target)
+              "")))
         (string-append
           (if oob
             (compiler-backend-runtime-oob-data)
@@ -10047,6 +10143,87 @@ tl_alloc:
 
 ")
 
+(define (compiler-backend-runtime-profiled-alloc-functions) : String
+  "    .globl tl_alloc
+tl_alloc:
+    addq $7, %rdi
+    jc .L_tl_alloc_abort
+    andq $-8, %rdi
+    movq %rdi, %rsi
+    movq tl_current_arena(%rip), %r8
+    testq %r8, %r8
+    jz .L_tl_alloc_new_arena
+    movq 16(%r8), %rax
+    movq %rax, %rcx
+    addq %rsi, %rcx
+    jc .L_tl_alloc_abort
+    cmpq 24(%r8), %rcx
+    ja .L_tl_alloc_new_arena
+    movq %rcx, 16(%r8)
+    addq %rsi, tl_profile_alloc_total_bytes(%rip)
+    addq %rsi, tl_profile_alloc_live_bytes(%rip)
+    movq tl_profile_alloc_live_bytes(%rip), %r10
+    cmpq tl_profile_alloc_peak_bytes(%rip), %r10
+    jbe .L_tl_alloc_profile_fast_done
+    movq %r10, tl_profile_alloc_peak_bytes(%rip)
+.L_tl_alloc_profile_fast_done:
+    ret
+.L_tl_alloc_new_arena:
+    movq $0x4000000, %rdx
+    movq %rsi, %rcx
+    addq $32, %rcx
+    jc .L_tl_alloc_abort
+    cmpq %rdx, %rcx
+    jbe .L_tl_alloc_len_ready
+    movq %rcx, %rdx
+.L_tl_alloc_len_ready:
+    push %rdx
+    push %rsi
+    movq %rdx, %rsi
+    xorq %rdi, %rdi
+    movq $3, %rdx
+    movq $0x22, %r10
+    movq $-1, %r8
+    xorq %r9, %r9
+    movq $9, %rax
+    syscall
+    pop %rsi
+    pop %rdx
+    testq %rax, %rax
+    js .L_tl_alloc_abort
+    movq %rax, %rcx
+    addq %rdx, %rcx
+    jc .L_tl_alloc_abort
+    movq tl_current_arena(%rip), %r8
+    movq %r8, 0(%rax)
+    leaq 32(%rax), %r8
+    movq %r8, 8(%rax)
+    movq %rcx, 24(%rax)
+    movq %r8, %rcx
+    addq %rsi, %rcx
+    movq %rcx, 16(%rax)
+    movq %rax, tl_current_arena(%rip)
+    movq %r8, %rax
+    addq %rsi, tl_profile_alloc_total_bytes(%rip)
+    addq %rsi, tl_profile_alloc_live_bytes(%rip)
+    movq tl_profile_alloc_live_bytes(%rip), %r10
+    cmpq tl_profile_alloc_peak_bytes(%rip), %r10
+    jbe .L_tl_alloc_profile_new_done
+    movq %r10, tl_profile_alloc_peak_bytes(%rip)
+.L_tl_alloc_profile_new_done:
+    ret
+.L_tl_alloc_abort:
+    movq $1, %rax
+    movq $2, %rdi
+    leaq .L_tl_alloc_msg(%rip), %rsi
+    movq $.L_tl_alloc_msg_len, %rdx
+    syscall
+    movq $60, %rax
+    movq $134, %rdi
+    syscall
+
+")
+
 (define (compiler-backend-runtime-region-mark-functions) : String
   "    .globl tl_region_mark
 tl_region_mark:
@@ -10148,6 +10325,68 @@ tl_arena_destroy:
 
 ")
 
+(define (compiler-backend-runtime-profiled-arena-functions) : String
+  "    .globl tl_arena_current
+tl_arena_current:
+    movq tl_current_arena(%rip), %rax
+    ret
+
+    .globl tl_arena_set
+tl_arena_set:
+    movq %rdi, tl_current_arena(%rip)
+    ret
+
+    .globl tl_arena_make
+tl_arena_make:
+    movq $0x4000000, %rsi
+    xorq %rdi, %rdi
+    movq $3, %rdx
+    movq $0x22, %r10
+    movq $-1, %r8
+    xorq %r9, %r9
+    movq $9, %rax
+    syscall
+    testq %rax, %rax
+    js .L_tl_arena_make_abort
+    movq $0, 0(%rax)
+    leaq 32(%rax), %rcx
+    movq %rcx, 8(%rax)
+    movq %rcx, 16(%rax)
+    movq %rax, %rcx
+    addq $0x4000000, %rcx
+    movq %rcx, 24(%rax)
+    ret
+.L_tl_arena_make_abort:
+    movq $60, %rax
+    movq $134, %rdi
+    syscall
+
+    .globl tl_arena_destroy
+tl_arena_destroy:
+    push %rbx
+    movq %rdi, %rbx
+.L_tl_arena_destroy_loop:
+    testq %rbx, %rbx
+    jz .L_tl_arena_destroy_done
+    movq 0(%rbx), %r8
+    movq 16(%rbx), %r10
+    subq 8(%rbx), %r10
+    subq %r10, tl_profile_alloc_live_bytes(%rip)
+    push %r8
+    movq 24(%rbx), %rsi
+    subq %rbx, %rsi
+    movq %rbx, %rdi
+    movq $11, %rax
+    syscall
+    pop %r8
+    movq %r8, %rbx
+    jmp .L_tl_arena_destroy_loop
+.L_tl_arena_destroy_done:
+    pop %rbx
+    ret
+
+")
+
 ;; Windows flavor: VirtualAlloc/VirtualFree under the Win64 ABI. The arg arrives
 ;; in %rcx; a 32-byte shadow space is reserved before each call. A mapping
 ;; failure traps via `ud2` (no libc dependency).
@@ -10207,6 +10446,76 @@ tl_arena_destroy:
     testq %rsi, %rsi
     jz .L_tl_arena_destroy_win_done
     movq 0(%rsi), %rbx
+    movq %rsi, %rcx
+    xorq %rdx, %rdx
+    movq $0x8000, %r8
+    call VirtualFree
+    movq %rbx, %rsi
+    jmp .L_tl_arena_destroy_win_loop
+.L_tl_arena_destroy_win_done:
+    add $32, %rsp
+    popq %rsi
+    popq %rbx
+    popq %rbp
+    ret
+
+")
+
+(define (compiler-backend-runtime-profiled-windows-arena-functions) : String
+  "    .globl tl_arena_current
+tl_arena_current:
+    movq tl_current_arena(%rip), %rax
+    ret
+
+    .globl tl_arena_set
+tl_arena_set:
+    movq %rcx, tl_current_arena(%rip)
+    ret
+
+    .globl tl_arena_make
+tl_arena_make:
+    push %rbp
+    mov %rsp, %rbp
+    push %rbx
+    push %rsi
+    sub $32, %rsp
+    xorq %rcx, %rcx
+    movq $0x4000000, %rdx
+    movq $0x3000, %r8
+    movq $0x4, %r9
+    call VirtualAlloc
+    testq %rax, %rax
+    jz .L_tl_arena_make_win_abort
+    movq $0, 0(%rax)
+    leaq 32(%rax), %rcx
+    movq %rcx, 8(%rax)
+    movq %rcx, 16(%rax)
+    movq %rax, %rcx
+    addq $0x4000000, %rcx
+    movq %rcx, 24(%rax)
+    add $32, %rsp
+    popq %rsi
+    popq %rbx
+    popq %rbp
+    ret
+.L_tl_arena_make_win_abort:
+    ud2
+
+    .globl tl_arena_destroy
+tl_arena_destroy:
+    push %rbp
+    mov %rsp, %rbp
+    push %rbx
+    push %rsi
+    sub $32, %rsp
+    movq %rcx, %rsi
+.L_tl_arena_destroy_win_loop:
+    testq %rsi, %rsi
+    jz .L_tl_arena_destroy_win_done
+    movq 0(%rsi), %rbx
+    movq 16(%rsi), %r10
+    subq 8(%rsi), %r10
+    subq %r10, tl_profile_alloc_live_bytes(%rip)
     movq %rsi, %rcx
     xorq %rdx, %rdx
     movq $0x8000, %r8
@@ -10323,6 +10632,89 @@ tl_region_reset:
 
 ")
 
+(define (compiler-backend-runtime-profiled-region-reset-functions) : String
+  "    .globl tl_region_reset
+tl_region_reset:
+    push %rbx
+    movq %rdi, %rbx
+    testq %rbx, %rbx
+    jz .L_tl_region_reset_all
+    movq tl_current_arena(%rip), %r8
+    testq %r8, %r8
+    jz .L_tl_region_reset_invalid
+.L_tl_region_reset_find:
+    movq 8(%r8), %r9
+    cmpq %r9, %rbx
+    jb .L_tl_region_reset_next
+    movq 24(%r8), %r9
+    cmpq %r9, %rbx
+    jbe .L_tl_region_reset_found
+.L_tl_region_reset_next:
+    movq 0(%r8), %r8
+    testq %r8, %r8
+    jnz .L_tl_region_reset_find
+    jmp .L_tl_region_reset_invalid
+.L_tl_region_reset_found:
+    movq tl_current_arena(%rip), %r9
+.L_tl_region_reset_drop_newer:
+    cmpq %r8, %r9
+    je .L_tl_region_reset_restore
+    movq 0(%r9), %r10
+    movq 16(%r9), %r11
+    subq 8(%r9), %r11
+    subq %r11, tl_profile_alloc_live_bytes(%rip)
+    movq 24(%r9), %rsi
+    subq %r9, %rsi
+    movq %r9, %rdi
+    push %r8
+    push %r10
+    movq $11, %rax
+    syscall
+    pop %r10
+    pop %r8
+    movq %r10, %r9
+    jmp .L_tl_region_reset_drop_newer
+.L_tl_region_reset_restore:
+    movq 16(%r8), %r10
+    subq %rbx, %r10
+    subq %r10, tl_profile_alloc_live_bytes(%rip)
+    movq %rbx, 16(%r8)
+    movq %r8, tl_current_arena(%rip)
+    pop %rbx
+    ret
+.L_tl_region_reset_all:
+    movq tl_current_arena(%rip), %r8
+    movq $0, tl_current_arena(%rip)
+.L_tl_region_reset_all_loop:
+    testq %r8, %r8
+    jz .L_tl_region_reset_done
+    movq 0(%r8), %r9
+    movq 16(%r8), %r10
+    subq 8(%r8), %r10
+    subq %r10, tl_profile_alloc_live_bytes(%rip)
+    movq 24(%r8), %rsi
+    subq %r8, %rsi
+    movq %r8, %rdi
+    push %r9
+    movq $11, %rax
+    syscall
+    pop %r8
+    jmp .L_tl_region_reset_all_loop
+.L_tl_region_reset_done:
+    pop %rbx
+    ret
+.L_tl_region_reset_invalid:
+    movq $1, %rax
+    movq $2, %rdi
+    leaq .L_tl_region_reset_msg(%rip), %rsi
+    movq $.L_tl_region_reset_msg_len, %rdx
+    syscall
+    movq $60, %rax
+    movq $134, %rdi
+    syscall
+
+")
+
 (define (compiler-backend-runtime-windows-alloc-functions) : String
   "    .globl tl_alloc
 tl_alloc:
@@ -10388,6 +10780,98 @@ tl_alloc:
     movq %r10, 16(%rax)
     movq %rax, tl_current_arena(%rip)
     movq %r8, %rax
+    mov %rbp, %rsp
+    pop %rbp
+    ret
+.L_tl_alloc_abort:
+    movq $2, %rcx
+    leaq .L_tl_alloc_msg(%rip), %rdx
+    movq $.L_tl_alloc_msg_len, %r8
+    call _write
+    movq $134, %rcx
+    call exit
+
+")
+
+(define (compiler-backend-runtime-profiled-windows-alloc-functions) : String
+  "    .globl tl_alloc
+tl_alloc:
+    testq %rcx, %rcx
+    jg .L_tl_alloc_win_size_ready
+    movq $1, %rcx
+.L_tl_alloc_win_size_ready:
+    addq $7, %rcx
+    jc .L_tl_alloc_enter_abort
+    andq $-8, %rcx
+    movq %rcx, %r11
+    movq tl_current_arena(%rip), %r8
+    testq %r8, %r8
+    jz .L_tl_alloc_new_arena_entry
+    movq 16(%r8), %rax
+    movq %rax, %r10
+    addq %r11, %r10
+    jc .L_tl_alloc_enter_abort
+    cmpq 24(%r8), %r10
+    ja .L_tl_alloc_new_arena_entry
+    movq %r10, 16(%r8)
+    addq %r11, tl_profile_alloc_total_bytes(%rip)
+    addq %r11, tl_profile_alloc_live_bytes(%rip)
+    movq tl_profile_alloc_live_bytes(%rip), %r10
+    cmpq tl_profile_alloc_peak_bytes(%rip), %r10
+    jbe .L_tl_alloc_profile_win_fast_done
+    movq %r10, tl_profile_alloc_peak_bytes(%rip)
+.L_tl_alloc_profile_win_fast_done:
+    ret
+.L_tl_alloc_new_arena_entry:
+    push %rbp
+    mov %rsp, %rbp
+    sub $48, %rsp
+    jmp .L_tl_alloc_new_arena
+.L_tl_alloc_enter_abort:
+    push %rbp
+    mov %rsp, %rbp
+    sub $48, %rsp
+    jmp .L_tl_alloc_abort
+.L_tl_alloc_new_arena:
+    movq %r11, -8(%rbp)
+    movq $0x4000000, %rdx
+    movq %r11, %rax
+    addq $32, %rax
+    jc .L_tl_alloc_abort
+    cmpq %rdx, %rax
+    jbe .L_tl_alloc_len_ready
+    movq %rax, %rdx
+.L_tl_alloc_len_ready:
+    movq %rdx, -16(%rbp)
+    xorq %rcx, %rcx
+    movq $0x3000, %r8
+    movq $4, %r9
+    call VirtualAlloc
+    testq %rax, %rax
+    jz .L_tl_alloc_abort
+    movq -16(%rbp), %rdx
+    movq -8(%rbp), %r11
+    movq %rax, %rcx
+    addq %rdx, %rcx
+    jc .L_tl_alloc_abort
+    movq tl_current_arena(%rip), %r8
+    movq %r8, 0(%rax)
+    leaq 32(%rax), %r8
+    movq %r8, 8(%rax)
+    movq %rcx, 24(%rax)
+    movq %r8, %r10
+    addq %r11, %r10
+    jc .L_tl_alloc_abort
+    movq %r10, 16(%rax)
+    movq %rax, tl_current_arena(%rip)
+    movq %r8, %rax
+    addq %r11, tl_profile_alloc_total_bytes(%rip)
+    addq %r11, tl_profile_alloc_live_bytes(%rip)
+    movq tl_profile_alloc_live_bytes(%rip), %r10
+    cmpq tl_profile_alloc_peak_bytes(%rip), %r10
+    jbe .L_tl_alloc_profile_win_new_done
+    movq %r10, tl_profile_alloc_peak_bytes(%rip)
+.L_tl_alloc_profile_win_new_done:
     mov %rbp, %rsp
     pop %rbp
     ret
@@ -10984,6 +11468,189 @@ tl_region_reset:
     ret
 
 ")
+
+(define (compiler-backend-runtime-profiled-windows-region-reset-functions) : String
+  "    .globl tl_region_reset
+tl_region_reset:
+    push %rbp
+    mov %rsp, %rbp
+    push %rbx
+    push %r12
+    push %r13
+    push %r14
+    sub $8, %rsp
+    movq %rcx, %r12
+    testq %r12, %r12
+    jz .L_tl_region_reset_win_all
+    movq tl_current_arena(%rip), %r13
+    testq %r13, %r13
+    jz .L_tl_region_reset_win_invalid
+.L_tl_region_reset_win_find:
+    movq 8(%r13), %rax
+    cmpq %rax, %r12
+    jb .L_tl_region_reset_win_next
+    movq 24(%r13), %rax
+    cmpq %rax, %r12
+    jbe .L_tl_region_reset_win_found
+.L_tl_region_reset_win_next:
+    movq 0(%r13), %r13
+    testq %r13, %r13
+    jnz .L_tl_region_reset_win_find
+    jmp .L_tl_region_reset_win_invalid
+.L_tl_region_reset_win_invalid:
+    movq $2, %rcx
+    leaq .L_tl_region_reset_msg(%rip), %rdx
+    movq $.L_tl_region_reset_msg_len, %r8
+    sub $32, %rsp
+    call _write
+    add $32, %rsp
+    movq $134, %rcx
+    sub $32, %rsp
+    call exit
+.L_tl_region_reset_win_found:
+    movq tl_current_arena(%rip), %r14
+.L_tl_region_reset_win_drop:
+    cmpq %r13, %r14
+    je .L_tl_region_reset_win_restore
+    movq 0(%r14), %rbx
+    movq 16(%r14), %rax
+    subq 8(%r14), %rax
+    subq %rax, tl_profile_alloc_live_bytes(%rip)
+    movq %r14, %rcx
+    xorq %rdx, %rdx
+    movq $0x8000, %r8
+    sub $32, %rsp
+    call VirtualFree
+    add $32, %rsp
+    movq %rbx, %r14
+    jmp .L_tl_region_reset_win_drop
+.L_tl_region_reset_win_restore:
+    movq 16(%r13), %rax
+    subq %r12, %rax
+    subq %rax, tl_profile_alloc_live_bytes(%rip)
+    movq %r12, 16(%r13)
+    movq %r13, tl_current_arena(%rip)
+    jmp .L_tl_region_reset_win_done
+.L_tl_region_reset_win_all:
+    movq tl_current_arena(%rip), %r14
+    movq $0, tl_current_arena(%rip)
+.L_tl_region_reset_win_all_drop:
+    testq %r14, %r14
+    jz .L_tl_region_reset_win_done
+    movq 0(%r14), %rbx
+    movq 16(%r14), %rax
+    subq 8(%r14), %rax
+    subq %rax, tl_profile_alloc_live_bytes(%rip)
+    movq %r14, %rcx
+    xorq %rdx, %rdx
+    movq $0x8000, %r8
+    sub $32, %rsp
+    call VirtualFree
+    add $32, %rsp
+    movq %rbx, %r14
+    jmp .L_tl_region_reset_win_all_drop
+.L_tl_region_reset_win_done:
+    add $8, %rsp
+    pop %r14
+    pop %r13
+    pop %r12
+    pop %rbx
+    pop %rbp
+    ret
+
+")
+
+(define (compiler-backend-runtime-profile-functions) : String
+  "    .globl tl_profile_now_ms
+tl_profile_now_ms:
+    subq $16, %rsp
+    movq $1, %rdi
+    movq %rsp, %rsi
+    movq $228, %rax
+    syscall
+    testq %rax, %rax
+    js .L_tl_profile_now_zero
+    movq 0(%rsp), %r8
+    imulq $1000, %r8, %r8
+    movq 8(%rsp), %rax
+    xorq %rdx, %rdx
+    movq $1000000, %rcx
+    divq %rcx
+    addq %r8, %rax
+    addq $16, %rsp
+    ret
+.L_tl_profile_now_zero:
+    xorq %rax, %rax
+    addq $16, %rsp
+    ret
+
+    .globl tl_profile_alloc_total
+tl_profile_alloc_total:
+    movq tl_profile_alloc_total_bytes(%rip), %rax
+    ret
+
+    .globl tl_profile_alloc_live
+tl_profile_alloc_live:
+    movq tl_profile_alloc_live_bytes(%rip), %rax
+    ret
+
+    .globl tl_profile_alloc_peak
+tl_profile_alloc_peak:
+    movq tl_profile_alloc_peak_bytes(%rip), %rax
+    ret
+
+    .globl tl_profile_alloc_reset_peak
+tl_profile_alloc_reset_peak:
+    movq tl_profile_alloc_live_bytes(%rip), %rax
+    movq %rax, tl_profile_alloc_peak_bytes(%rip)
+    xorq %rax, %rax
+    ret
+
+")
+
+(define (compiler-backend-runtime-windows-profile-functions) : String
+  "    .globl tl_profile_now_ms
+tl_profile_now_ms:
+    push %rbp
+    mov %rsp, %rbp
+    sub $32, %rsp
+    call GetTickCount64
+    mov %rbp, %rsp
+    pop %rbp
+    ret
+
+    .globl tl_profile_alloc_total
+tl_profile_alloc_total:
+    movq tl_profile_alloc_total_bytes(%rip), %rax
+    ret
+
+    .globl tl_profile_alloc_live
+tl_profile_alloc_live:
+    movq tl_profile_alloc_live_bytes(%rip), %rax
+    ret
+
+    .globl tl_profile_alloc_peak
+tl_profile_alloc_peak:
+    movq tl_profile_alloc_peak_bytes(%rip), %rax
+    ret
+
+    .globl tl_profile_alloc_reset_peak
+tl_profile_alloc_reset_peak:
+    movq tl_profile_alloc_live_bytes(%rip), %rax
+    movq %rax, tl_profile_alloc_peak_bytes(%rip)
+    xorq %rax, %rax
+    ret
+
+")
+
+(define (compiler-backend-runtime-profile-functions-for-target
+  [target : CompilerBackendTarget]
+  [profile : bool]) : String
+  (if profile
+    (if (compiler-backend-target-windows? target)
+      (compiler-backend-runtime-windows-profile-functions)
+      (compiler-backend-runtime-profile-functions))
+    ""))
 
 (define (compiler-backend-runtime-read-file-functions) : String
   ".L_tl_read_file:
@@ -15826,13 +16493,17 @@ tl_windows_sdk_registry_install:
         env-path-separator
         div-abort
         shift-abort
-        fs-current-dir)
+        (BackendRuntimeTailPlan fs-current-dir profile))
       (let
         [alloc-asm : String
           (if alloc
             (if (compiler-backend-target-windows? target)
-              (compiler-backend-runtime-windows-alloc-functions)
-              (compiler-backend-runtime-alloc-functions))
+              (if profile
+                (compiler-backend-runtime-profiled-windows-alloc-functions)
+                (compiler-backend-runtime-windows-alloc-functions))
+              (if profile
+                (compiler-backend-runtime-profiled-alloc-functions)
+                (compiler-backend-runtime-alloc-functions)))
             "")]
         [oob-asm : String
           (if oob
@@ -16018,8 +16689,12 @@ tl_windows_sdk_registry_install:
         [region-reset-asm : String
           (if region-reset
             (if (compiler-backend-target-windows? target)
-              (compiler-backend-runtime-windows-region-reset-functions)
-              (compiler-backend-runtime-region-reset-functions))
+              (if profile
+                (compiler-backend-runtime-profiled-windows-region-reset-functions)
+                (compiler-backend-runtime-windows-region-reset-functions))
+              (if profile
+                (compiler-backend-runtime-profiled-region-reset-functions)
+                (compiler-backend-runtime-region-reset-functions)))
             "")]
         [random-system-seed-asm : String
           (if random-system-seed
@@ -16038,17 +16713,25 @@ tl_windows_sdk_registry_install:
             "")]
         [arena-asm : String
           (if (compiler-backend-target-windows? target)
-            (compiler-backend-runtime-windows-arena-functions)
-            (compiler-backend-runtime-arena-functions))]
+            (if profile
+              (compiler-backend-runtime-profiled-windows-arena-functions)
+              (compiler-backend-runtime-windows-arena-functions))
+            (if profile
+              (compiler-backend-runtime-profiled-arena-functions)
+              (compiler-backend-runtime-arena-functions)))]
+        [profile-asm : String
+          (compiler-backend-runtime-profile-functions-for-target target profile)]
         [runtime-front-asm : String
           (string-append
             arena-asm
-            (backend-cat5
-              alloc-asm
-              region-mark-asm
-              region-reset-asm
-              oob-asm
-              div-abort-asm))]
+            (string-append
+              profile-asm
+              (backend-cat5
+                alloc-asm
+                region-mark-asm
+                region-reset-asm
+                oob-asm
+                div-abort-asm)))]
         [runtime-string-asm : String
           (string-append
             (backend-cat5
@@ -16293,7 +16976,7 @@ tl_windows_sdk_registry_install:
               _
               _
               _
-              _)
+              (BackendRuntimeTailPlan _ _))
             (compiler-backend-entry
               (or arg-count arg)
               (or process-output (or env-var-exists env-var-value))
@@ -16350,7 +17033,7 @@ tl_windows_sdk_registry_install:
         env-path-separator
         div-abort
         shift-abort
-        fs-current-dir)
+        (BackendRuntimeTailPlan fs-current-dir profile))
       (not
         (or
           (backend-or8
@@ -16365,40 +17048,38 @@ tl_windows_sdk_registry_install:
           (or
             (backend-or8
               print-err
+              print-str
               print-char
               print-f64
               arg-count
               arg
               read-file
-              write-file
-              file-exists)
+              write-file)
             (or
-              (or print-str file-handle)
+              (backend-or8
+                file-exists
+                file-handle
+                file-read-chunk
+                fs-runtime
+                process-output
+                read-line
+                read-bytes
+                stdin-eof)
               (or
-                (or fs-runtime file-read-chunk)
-                (or
-                  fs-current-dir
-                  (or
-                    process-output
-                    (or
-                      read-line
-                      (or
-                        (backend-or8
-                          read-bytes
-                          stdin-eof
-                          flush-stdout
-                          region-mark
-                          region-reset
-                          random-system-seed
-                          windows-setup-instances
-                          windows-sdk-registry-install)
-                        (or
-                          shift-abort
-                          (backend-or4
-                            env-var-exists
-                            env-var-value
-                            env-path-separator
-                            div-abort)))))))))))]))
+                (backend-or8
+                  flush-stdout
+                  region-mark
+                  region-reset
+                  random-system-seed
+                  windows-setup-instances
+                  windows-sdk-registry-install
+                  env-var-exists
+                  env-var-value)
+                (backend-or4
+                  env-path-separator
+                  div-abort
+                  shift-abort
+                  (or fs-current-dir profile)))))))]))
 
 ;; All runtime helpers the backend can be asked to emit now have a Windows
 ;; variant (region mark/reset and the env-var/env-path helpers were the last
@@ -16466,14 +17147,19 @@ tl_windows_sdk_registry_install:
               "    .extern _snprintf
 "
               "")
-            ;; The Windows tl_process_output spawns the child via CreateProcessA
-            ;; with a constructed contiguous env block (__p__environ above) and
-            ;; captures stdout/stderr through CRT temp files made inheritable
-            ;; (tmpfile/_fileno/_get_osfhandle/SetHandleInformation), waiting via
-            ;; WaitForSingleObject/GetExitCodeProcess/CloseHandle. The Linux
-            ;; variant uses raw syscalls instead.
-            (if (compiler-backend-plan-provides? plan "tl_process_output")
-              "    .extern __p__environ
+            (string-append
+              (if (compiler-backend-plan-provides? plan "tl_profile_now_ms")
+                "    .extern GetTickCount64
+"
+                "")
+              ;; The Windows tl_process_output spawns the child via CreateProcessA
+              ;; with a constructed contiguous env block (__p__environ above) and
+              ;; captures stdout/stderr through CRT temp files made inheritable
+              ;; (tmpfile/_fileno/_get_osfhandle/SetHandleInformation), waiting via
+              ;; WaitForSingleObject/GetExitCodeProcess/CloseHandle. The Linux
+              ;; variant uses raw syscalls instead.
+              (if (compiler-backend-plan-provides? plan "tl_process_output")
+                "    .extern __p__environ
     .extern tmpfile
     .extern fclose
     .extern _fileno
@@ -16485,7 +17171,7 @@ tl_windows_sdk_registry_install:
     .extern CloseHandle
     .extern GetStdHandle
 "
-              "")))))
+                ""))))))
     ""))
 
 ;; Emit a full program for `target`. Windows x64 has ABI-correct user function

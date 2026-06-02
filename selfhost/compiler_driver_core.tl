@@ -11,6 +11,136 @@
   (OkCompilerDriver String)
   (ErrCompilerDriver CompilerDiagnostic))
 
+(cfg
+  compile-profile
+  (define compiler-driver-profile-total-start-ms : i64
+    0))
+
+(cfg
+  compile-profile
+  (define compiler-driver-profile-total-start-total : i64
+    0))
+
+(cfg
+  compile-profile
+  (define compiler-driver-profile-total-start-live : i64
+    0))
+
+(cfg
+  compile-profile
+  (define compiler-driver-profile-phase-start-ms : i64
+    0))
+
+(cfg
+  compile-profile
+  (define compiler-driver-profile-phase-start-total : i64
+    0))
+
+(cfg
+  compile-profile
+  (define compiler-driver-profile-phase-start-live : i64
+    0))
+
+(cfg
+  compile-profile
+  (define compiler-driver-profile-best-peak : i64
+    0))
+
+(cfg
+  compile-profile
+  (define (compiler-driver-profile-max [left : i64] [right : i64]) : i64
+    (if (> left right)
+      left
+      right)))
+
+(cfg
+  compile-profile
+  (define (compiler-driver-profile-nonnegative [value : i64]) : i64
+    (if (< value 0)
+      0
+      value)))
+
+(cfg
+  compile-profile
+  (define (compiler-driver-profile-field [value : i64]) : String
+    (string-append "|" (int->string value))))
+
+(cfg
+  compile-profile
+  (define (compiler-driver-profile-line
+    [phase : String]
+    [elapsed-ms : i64]
+    [alloc-delta : i64]
+    [live-delta : i64]
+    [peak-delta : i64]) : String
+    (string-append
+      "compile-profile|"
+      (string-append
+        phase
+        (string-append
+          (compiler-driver-profile-field elapsed-ms)
+          (string-append
+            (compiler-driver-profile-field alloc-delta)
+            (string-append
+              (compiler-driver-profile-field live-delta)
+              (string-append (compiler-driver-profile-field peak-delta) "\n"))))))))
+
+(cfg
+  compile-profile
+  (define (compiler-driver-profile-start-phase) : unit
+    (begin
+      (set! compiler-driver-profile-phase-start-ms (profile-now-ms))
+      (set! compiler-driver-profile-phase-start-total (profile-alloc-total))
+      (set! compiler-driver-profile-phase-start-live (profile-alloc-live))
+      (profile-alloc-reset-peak))))
+
+(cfg
+  compile-profile
+  (define (compiler-driver-profile-finish-phase [phase : String]) : unit
+    (let
+      [end-ms : i64 (profile-now-ms)]
+      [end-total : i64 (profile-alloc-total)]
+      [end-live : i64 (profile-alloc-live)]
+      [peak-delta : i64
+        (compiler-driver-profile-nonnegative
+          (- (profile-alloc-peak) compiler-driver-profile-phase-start-live))]
+      (begin
+        (set!
+          compiler-driver-profile-best-peak
+          (compiler-driver-profile-max
+            compiler-driver-profile-best-peak
+            peak-delta))
+        (print-error
+          (compiler-driver-profile-line
+            phase
+            (- end-ms compiler-driver-profile-phase-start-ms)
+            (- end-total compiler-driver-profile-phase-start-total)
+            (- end-live compiler-driver-profile-phase-start-live)
+            peak-delta))))))
+
+(cfg
+  compile-profile
+  (define (compiler-driver-profile-start-total) : unit
+    (begin
+      (set! compiler-driver-profile-total-start-ms (profile-now-ms))
+      (set! compiler-driver-profile-total-start-total (profile-alloc-total))
+      (set! compiler-driver-profile-total-start-live (profile-alloc-live))
+      (set! compiler-driver-profile-best-peak 0)
+      (print-error
+        "compile-profile|phase|elapsed_ms|alloc_delta_bytes|live_delta_bytes|peak_live_delta_bytes\n")
+      (compiler-driver-profile-start-phase))))
+
+(cfg
+  compile-profile
+  (define (compiler-driver-profile-finish-total) : unit
+    (print-error
+      (compiler-driver-profile-line
+        "total"
+        (- (profile-now-ms) compiler-driver-profile-total-start-ms)
+        (- (profile-alloc-total) compiler-driver-profile-total-start-total)
+        (- (profile-alloc-live) compiler-driver-profile-total-start-live)
+        compiler-driver-profile-best-peak))))
+
 (define (compiler-driver-lower-mode-for-backend [mode : CompilerBackendMode]) : CompilerLowerMode
   (match mode
     [(BackendModeAvx2) (CompilerLowerAvx2)]
@@ -95,26 +225,43 @@
   [opt-level : i64]
   [emit-entry : bool]
   [crt-entry : bool]) : ResultCompilerDriver
-  (match (optimize-program-with-spans-and-level program spans opt-level)
-    [(CompilerOptimizedProgram optimized optimized-spans)
-      (match (if has-target
-        (compiler-backend-emit-program-target-with-mode-and-crt
-          optimized
-          target
-          mode
-          optimized-spans
-          emit-entry
-          crt-entry)
-        (compiler-backend-emit-program-target-with-mode-and-crt
-          optimized
-          (BackendTargetLinux)
-          mode
-          optimized-spans
-          emit-entry
-          crt-entry))
-        [(OkCompilerBackend asm) (OkCompilerDriver asm)]
-        [(ErrCompilerBackend diag)
-          (ErrCompilerDriver (compiler-diagnostic-with-path diag input-path))])]))
+  (begin
+    (cfg compile-profile (compiler-driver-profile-start-phase))
+    (match (optimize-program-with-spans-and-level program spans opt-level)
+      [(CompilerOptimizedProgram optimized optimized-spans)
+        (begin
+          (cfg
+            compile-profile
+            (compiler-driver-profile-finish-phase "optimize"))
+          (cfg compile-profile (compiler-driver-profile-start-phase))
+          (match (if has-target
+            (compiler-backend-emit-program-target-with-mode-and-crt
+              optimized
+              target
+              mode
+              optimized-spans
+              emit-entry
+              crt-entry)
+            (compiler-backend-emit-program-target-with-mode-and-crt
+              optimized
+              (BackendTargetLinux)
+              mode
+              optimized-spans
+              emit-entry
+              crt-entry))
+            [(OkCompilerBackend asm)
+              (begin
+                (cfg
+                  compile-profile
+                  (compiler-driver-profile-finish-phase "backend"))
+                (OkCompilerDriver asm))]
+            [(ErrCompilerBackend diag)
+              (begin
+                (cfg
+                  compile-profile
+                  (compiler-driver-profile-finish-phase "backend"))
+                (ErrCompilerDriver
+                  (compiler-diagnostic-with-path diag input-path)))]))])))
 
 (define (compiler-driver-emit-file-with-target
   [input-path : String]
@@ -214,33 +361,50 @@
   [mode : CompilerBackendMode]
   [cfgs : SymI64Env]
   [crt-entry : bool]) : ResultCompilerDriver
-  (match (compiler-load-file-with-paths-and-roots-cfg
-    input-path
-    (sym-i64-empty)
-    stdlib-roots
-    cfgs)
-    [(OkCompilerLoadWithPaths decls paths _ _)
-      (match (lower-compiler-program-with-decl-paths-mode
-        input-path
-        (AstProgram decls)
-        paths
-        (compiler-driver-lower-mode-for-backend mode))
-        ;; The lowering provenance side table (#605/#761) is remapped after
-        ;; optimization so backend diagnostics report surviving instruction
-        ;; locations when a rewrite can preserve them.
-        [(OkCompilerLower program spans)
-          (compiler-driver-emit-lowered-with-level-mode-entry-and-crt
+  (begin
+    (cfg compile-profile (compiler-driver-profile-start-total))
+    (match (compiler-load-file-with-paths-and-roots-cfg
+      input-path
+      (sym-i64-empty)
+      stdlib-roots
+      cfgs)
+      [(OkCompilerLoadWithPaths decls paths _ _)
+        (begin
+          (cfg compile-profile (compiler-driver-profile-finish-phase "load"))
+          (cfg compile-profile (compiler-driver-profile-start-phase))
+          (match (lower-compiler-program-with-decl-paths-mode
             input-path
-            program
-            spans
-            target
-            has-target
-            mode
-            opt-level
-            true
-            crt-entry)]
-        [(ErrCompilerLower diag) (ErrCompilerDriver diag)])]
-    [(ErrCompilerLoadWithPaths diag) (ErrCompilerDriver diag)]))
+            (AstProgram decls)
+            paths
+            (compiler-driver-lower-mode-for-backend mode))
+            ;; The lowering provenance side table (#605/#761) is remapped after
+            ;; optimization so backend diagnostics report surviving instruction
+            ;; locations when a rewrite can preserve them.
+            [(OkCompilerLower program spans)
+              (begin
+                (cfg
+                  compile-profile
+                  (compiler-driver-profile-finish-phase "lower"))
+                (compiler-driver-emit-lowered-with-level-mode-entry-and-crt
+                  input-path
+                  program
+                  spans
+                  target
+                  has-target
+                  mode
+                  opt-level
+                  true
+                  crt-entry))]
+            [(ErrCompilerLower diag)
+              (begin
+                (cfg
+                  compile-profile
+                  (compiler-driver-profile-finish-phase "lower"))
+                (ErrCompilerDriver diag))]))]
+      [(ErrCompilerLoadWithPaths diag)
+        (begin
+          (cfg compile-profile (compiler-driver-profile-finish-phase "load"))
+          (ErrCompilerDriver diag))])))
 
 (define (compiler-driver-emit-package-file-with-target-roots-and-level
   [input-path : String]
@@ -512,12 +676,16 @@
   (match result
     [(OkCompilerDriver asm)
       (begin
+        (cfg compile-profile (compiler-driver-profile-start-phase))
         (write-file output-path asm)
+        (cfg compile-profile (compiler-driver-profile-finish-phase "write"))
+        (cfg compile-profile (compiler-driver-profile-finish-total))
         (print-string
           (string-append "Generated: " (string-append output-path "\n")))
         0)]
     [(ErrCompilerDriver diag)
       (begin
+        (cfg compile-profile (compiler-driver-profile-finish-total))
         (print-error (compiler-diagnostic-render diag))
         1)]))
 

@@ -4323,6 +4323,38 @@
     [(string-eq name "arena-destroy") "tl_arena_destroy"]
     [else "tl_region_reset"]))
 
+(define (lower-profile-builtin? [name : String]) : bool
+  (cond
+    [(string-eq name "profile-now-ms") true]
+    [(string-eq name "profile-alloc-total") true]
+    [(string-eq name "profile-alloc-live") true]
+    [(string-eq name "profile-alloc-peak") true]
+    [else (string-eq name "profile-alloc-reset-peak")]))
+
+(define (lower-profile-builtin-symbol [name : String]) : String
+  (cond
+    [(string-eq name "profile-now-ms") "tl_profile_now_ms"]
+    [(string-eq name "profile-alloc-total") "tl_profile_alloc_total"]
+    [(string-eq name "profile-alloc-live") "tl_profile_alloc_live"]
+    [(string-eq name "profile-alloc-peak") "tl_profile_alloc_peak"]
+    [else "tl_profile_alloc_reset_peak"]))
+
+(define (lower-profile-builtin-call
+  [state : LowerState]
+  [name : String]
+  [args : AstExprList]
+  [result-ty : AstType]) : ResultLowerExpr
+  (match args
+    [(AstExprNil)
+      (lower-runtime-call-values
+        state
+        (lower-profile-builtin-symbol name)
+        IrValueNil
+        result-ty)]
+    [_
+      (ErrLowerExpr
+        (lower-diagnostic "lower: profile builtin expects no arguments"))]))
+
 (define (lower-arena-builtin-call
   [ctx : TcContext]
   [state : LowerState]
@@ -8061,6 +8093,10 @@
                 name
                 args
                 result-ty)]
+            [(and
+                (lower-builtin-call-available? ctx env name)
+                (lower-profile-builtin? name))
+              (lower-profile-builtin-call state name args result-ty)]
             [(and
                 (lower-builtin-call-available? ctx env name)
                 (lower-bootstrap-runtime-builtin? name))

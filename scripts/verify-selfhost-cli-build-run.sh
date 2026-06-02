@@ -40,6 +40,12 @@ WORKDIR="$ROOT/target/selfhost-cli-build-run"
 rm -rf "$WORKDIR"
 mkdir -p "$WORKDIR"
 
+CLI_SURFACE_MANIFEST="$ROOT/tests/public-tools/cli-command-surface.txt"
+CLI_SURFACE_DIR="$WORKDIR/cli-surface"
+CLI_SURFACE_SRC="$CLI_SURFACE_DIR/main.tl"
+CLI_SURFACE_RUN_SRC="$CLI_SURFACE_DIR/run-main.tl"
+CLI_SURFACE_DOC_SRC="$CLI_SURFACE_DIR/doc-main.tl"
+
 fail() {
     echo "FAIL: $*" >&2
     exit 1
@@ -73,6 +79,220 @@ assert_contains() {
         sed 's/^/  /' "$file" >&2 || true
         fail "$label missing expected text: $text"
     fi
+}
+
+assert_file_exists() {
+    label=$1
+    file=$2
+    [ -f "$file" ] || fail "$label expected file $file"
+}
+
+assert_file_nonempty() {
+    label=$1
+    file=$2
+    assert_file_exists "$label" "$file"
+    [ -s "$file" ] || fail "$label expected nonempty file $file"
+}
+
+run_cli_capture() {
+    label=$1
+    shift
+    set +e
+    "$@" > "$WORKDIR/$label.out" 2> "$WORKDIR/$label.err"
+    status=$?
+    set -e
+}
+
+cli_surface_label() {
+    printf '%s' "$1" | tr ' /' '__'
+}
+
+cli_surface_manifest_commands() {
+    awk -F'|' '
+        /^[[:space:]]*($|#)/ { next }
+        NF != 3 {
+            printf "cli surface manifest line %d must have 3 fields: %s\n", NR, $0 > "/dev/stderr"
+            exit 2
+        }
+        $1 != "active" && $1 != "pending" && $1 != "retired" {
+            printf "cli surface manifest line %d has invalid status: %s\n", NR, $1 > "/dev/stderr"
+            exit 2
+        }
+        $1 != "retired" { print $2 }
+    ' "$CLI_SURFACE_MANIFEST" | sort -u
+}
+
+cli_surface_help_commands() {
+    awk '
+        /^[[:space:]]+typelisp / {
+            if ($2 == "debug") {
+                print $2 " " $3
+            } else {
+                print $2
+            }
+        }
+    ' "$WORKDIR/cli-surface-help.err" | sort -u
+}
+
+assert_cli_surface_help_matches_manifest() {
+    run_cli_capture cli-surface-help "$COMPILER" --help
+    assert_status cli-surface-help "$status" 0
+    assert_empty cli-surface-help "$WORKDIR/cli-surface-help.out"
+    assert_contains cli-surface-help "$WORKDIR/cli-surface-help.err" "Usage:"
+
+    cli_surface_manifest_commands > "$WORKDIR/cli-surface-manifest.commands"
+    cli_surface_help_commands > "$WORKDIR/cli-surface-help.commands"
+    if ! cmp -s "$WORKDIR/cli-surface-manifest.commands" "$WORKDIR/cli-surface-help.commands"; then
+        echo "manifest commands:" >&2
+        sed 's/^/  /' "$WORKDIR/cli-surface-manifest.commands" >&2
+        echo "help commands:" >&2
+        sed 's/^/  /' "$WORKDIR/cli-surface-help.commands" >&2
+        if command -v diff >/dev/null 2>&1; then
+            diff -u "$WORKDIR/cli-surface-manifest.commands" "$WORKDIR/cli-surface-help.commands" >&2 || true
+        fi
+        fail "cli command surface manifest and --help output drifted"
+    fi
+}
+
+prepare_cli_surface_files() {
+    mkdir -p "$CLI_SURFACE_DIR"
+    printf '%s' '(define (main) : i64
+  0)' > "$CLI_SURFACE_SRC"
+    cat > "$CLI_SURFACE_RUN_SRC" <<'EOF'
+(define (main) : i64
+  (begin
+    (print-string (arg 1))
+    33))
+EOF
+    cat > "$CLI_SURFACE_DOC_SRC" <<'EOF'
+;;;; Command surface doc smoke.
+(define (main) : i64
+  0)
+EOF
+}
+
+assert_active_cli_surface_command() {
+    command=$1
+    label="cli-surface-active-$(cli_surface_label "$command")"
+    case "$command" in
+        build)
+            exe="$CLI_SURFACE_DIR/build-surface"
+            if [ "$HOST_OS" = windows ]; then
+                exe="$exe.exe"
+            fi
+            run_cli_capture "$label" "$COMPILER" build "$CLI_SURFACE_SRC" -o "$exe"
+            assert_status "$label" "$status" 0
+            assert_empty "$label" "$WORKDIR/$label.err"
+            assert_contains "$label" "$WORKDIR/$label.out" "Generated:"
+            assert_file_exists "$label" "$exe"
+            ;;
+        run)
+            run_cli_capture "$label" "$COMPILER" run "$CLI_SURFACE_RUN_SRC" -- "surface-run"
+            assert_status "$label" "$status" 33
+            assert_empty "$label" "$WORKDIR/$label.err"
+            assert_contains "$label" "$WORKDIR/$label.out" "surface-run"
+            ;;
+        check)
+            run_cli_capture "$label" "$COMPILER" check "$CLI_SURFACE_SRC"
+            assert_status "$label" "$status" 0
+            assert_empty "$label" "$WORKDIR/$label.err"
+            assert_contains "$label" "$WORKDIR/$label.out" "Type checking passed!"
+            ;;
+        fmt)
+            run_cli_capture "$label" "$COMPILER" fmt --check "$CLI_SURFACE_SRC"
+            assert_status "$label" "$status" 0
+            assert_empty "$label" "$WORKDIR/$label.err"
+            ;;
+        lint)
+            run_cli_capture "$label" "$COMPILER" lint "$CLI_SURFACE_SRC"
+            assert_status "$label" "$status" 0
+            ;;
+        test)
+            run_cli_capture "$label" "$COMPILER" test --check "$CLI_SURFACE_SRC"
+            assert_status "$label" "$status" 0
+            assert_empty "$label" "$WORKDIR/$label.err"
+            assert_contains "$label" "$WORKDIR/$label.out" "TypeLisp test typecheck passed"
+            ;;
+        doc)
+            doc_out="$CLI_SURFACE_DIR/doc.md"
+            run_cli_capture "$label" "$COMPILER" doc "$CLI_SURFACE_DOC_SRC" "$doc_out"
+            assert_status "$label" "$status" 0
+            assert_empty "$label" "$WORKDIR/$label.err"
+            assert_file_nonempty "$label" "$doc_out"
+            ;;
+        compile)
+            asm="$CLI_SURFACE_DIR/compile.s"
+            run_cli_capture "$label" "$COMPILER" compile "$CLI_SURFACE_SRC" -o "$asm"
+            assert_status "$label" "$status" 0
+            assert_empty "$label" "$WORKDIR/$label.err"
+            assert_contains "$label" "$WORKDIR/$label.out" "Generated:"
+            assert_contains "$label" "$asm" "main:"
+            ;;
+        "debug tokenize")
+            run_cli_capture "$label" "$COMPILER" debug tokenize "$CLI_SURFACE_SRC"
+            assert_status "$label" "$status" 0
+            assert_empty "$label" "$WORKDIR/$label.err"
+            assert_contains "$label" "$WORKDIR/$label.out" "define"
+            ;;
+        "debug parse")
+            run_cli_capture "$label" "$COMPILER" debug parse "$CLI_SURFACE_SRC"
+            assert_status "$label" "$status" 0
+            assert_empty "$label" "$WORKDIR/$label.err"
+            assert_contains "$label" "$WORKDIR/$label.out" "Program"
+            ;;
+        "debug check")
+            run_cli_capture "$label" "$COMPILER" debug check "$CLI_SURFACE_SRC"
+            assert_status "$label" "$status" 0
+            assert_empty "$label" "$WORKDIR/$label.err"
+            assert_contains "$label" "$WORKDIR/$label.out" "Type checking passed!"
+            ;;
+        *)
+            fail "active cli surface command has no smoke assertion: $command"
+            ;;
+    esac
+}
+
+assert_pending_cli_surface_command() {
+    command=$1
+    issue=$2
+    label="cli-surface-pending-$(cli_surface_label "$command")"
+    set -- $command
+    run_cli_capture "$label" "$COMPILER" "$@"
+    assert_status "$label" "$status" 1
+    assert_empty "$label" "$WORKDIR/$label.out"
+    assert_contains "$label" "$WORKDIR/$label.err" "typelisp: '$command' is not yet available in the selfhost CLI"
+    assert_contains "$label" "$WORKDIR/$label.err" "$issue"
+}
+
+assert_retired_cli_surface_command() {
+    command=$1
+    label="cli-surface-retired-$(cli_surface_label "$command")"
+    case "$command" in
+        "debug host-action")
+            run_cli_capture "$label" "$COMPILER" debug host-action
+            assert_status "$label" "$status" 1
+            assert_empty "$label" "$WORKDIR/$label.out"
+            assert_contains "$label" "$WORKDIR/$label.err" "Unknown debug command: host-action"
+            ;;
+        *)
+            fail "retired cli surface command has no assertion: $command"
+            ;;
+    esac
+}
+
+run_cli_command_surface_matrix() {
+    [ -f "$CLI_SURFACE_MANIFEST" ] || fail "missing cli command surface manifest: $CLI_SURFACE_MANIFEST"
+    assert_cli_surface_help_matches_manifest
+    prepare_cli_surface_files
+    while IFS='|' read -r kind command note || [ -n "$kind" ]; do
+        case "$kind" in
+            "" | \#*) continue ;;
+            active) assert_active_cli_surface_command "$command" ;;
+            pending) assert_pending_cli_surface_command "$command" "$note" ;;
+            retired) assert_retired_cli_surface_command "$command" ;;
+            *) fail "invalid cli command surface status: $kind" ;;
+        esac
+    done < "$CLI_SURFACE_MANIFEST"
 }
 
 COMPILE_SRC="$WORKDIR/compile-main.tl"
@@ -239,5 +459,7 @@ set -e
 assert_status chooser "$status" 0
 assert_empty chooser "$WORKDIR/chooser.err"
 assert_contains chooser "$WORKDIR/chooser.out" "implement issue #1645: Host actions direct"
+
+run_cli_command_surface_matrix
 
 echo "selfhost cli build/run smoke passed"

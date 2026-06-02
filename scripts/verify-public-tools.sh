@@ -1199,11 +1199,11 @@ while IFS='|' read -r diag_name diag_command diag_expect || [ -n "$diag_name" ];
     # such as `tuple_return` / `array_return` successfully, so the expected-failure
     # backend diagnostic does not hold for the selfhost frontend. Skip those
     # known-divergent cases until the selfhost lowerer grows the matching
-    # rejection (#1327); other cases still run.
+    # rejection (#1699); other cases still run.
     if [ "$SELFHOST_FRONTEND_DIAGNOSTICS" -eq 1 ]; then
         case "$diag_name" in
             tuple_return | array_return)
-                echo "[public-tools] skipping backend diagnostic $diag_name (selfhost lowerer accepts it; #1327)"
+                echo "[public-tools] skipping backend diagnostic $diag_name (selfhost lowerer accepts it; #1699)"
                 continue
                 ;;
         esac
@@ -1464,7 +1464,7 @@ fi
 # single-binary cli.tl stage0 (it aborts with `tl: read-file failed`), and the
 # selfhost-doc-tool build path needs the `Generated:` host-action output, so the
 # no-Rust gate disables this block via TYPELISP_PUBLIC_TOOLS_HOST_ACTION_ENABLED=0
-# until that lands (#1327). `doc --test` coverage above still runs on cli.tl.
+# until that lands (#1662). `doc --test` coverage above still runs on cli.tl.
 if [ "$HOST_OS" = linux ] && [ "$HOST_ACTION_ENABLED" -eq 1 ]; then
     cat > "$WORKDIR/doc_source.tl" <<'EOF'
 ;;;; Module docs.
@@ -1785,7 +1785,7 @@ ERR_NORMALIZED="$WORKDIR/missing_dep_err_normalized.tmp"
 tr '\\' '/' < "$err" > "$ERR_NORMALIZED"
 assert_contains "$ERR_NORMALIZED" "vendor/math/src/missing.tl"
 else
-    echo "[public-tools] skipping package build coverage (host-action drivers disabled; #1327)"
+    echo "[public-tools] skipping package build coverage (host-action drivers disabled; #1662)"
 fi
 
 # REPL/LSP gates temporarily disabled: the unified cli.tl stage0 lists lsp and
@@ -2090,7 +2090,7 @@ while IFS='|' read -r spec_name spec_mode spec_value; do
                 # coverage for the current selfhost cli lives in
                 # scripts/verify-selfhost-cli-build-run.sh. SPEC check/compile
                 # examples still run on cli.tl above.
-                echo "[public-tools] skipping SPEC run example $spec_name (host-action drivers disabled; #1327)"
+                echo "[public-tools] skipping SPEC run example $spec_name (host-action drivers disabled; #1662)"
                 continue
             fi
             run_cmd "spec-$spec_name" "$COMPILER" run "$SPEC_WORK/$spec_name.tl"

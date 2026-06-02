@@ -129,16 +129,16 @@ scripts/verify-no-rust-stage0.sh
 
 That script fetches `stage0-latest` when `TYPELISP_BIN` is unset and treats it
 as the seed compiler. It installs failing `cargo` and `rustc` shims in `PATH` as
-defense-in-depth so no gate can shell out to a language toolchain. On Linux it
-first runs the stage1-build path in `check-bootstrap-fixpoint.sh` with the seed
-compiler, then runs the stage1 capability gates against the freshly bootstrapped
-stage1 compiler directly. Because `cli.tl` is the unified toolchain, those gates
-invoke the bootstrapped compiler's own `compile`, `build`, `run`, `test`, `fmt`,
-`lint`, `doc`, `doc --test`, `repl`, `lsp`, and `debug host-action` commands.
-On Linux, the public-tool surface and other host-action gates run against the
-bootstrapped stage1 compiler whenever it provides the staged runtime symbols;
-the seed path remains only as an old-artifact fallback tied to #1327. On Windows
-it uses the seed compiler for host-supported gates, then runs the native MSVC
+defense-in-depth so no gate can shell out to a language toolchain. On every host
+it first builds a fresh `selfhost/cli.tl` binary from the seed and smoke-tests
+public `compile`, `build`, `run`, package build, staticlib build, and chooser
+execution through that fresh binary. On Linux it then runs the stage1-build path
+in `check-bootstrap-fixpoint.sh`, captures the freshly bootstrapped compile-only
+stage1 compiler, and routes compile-native capability gates through that
+artifact via `compile`/`check` plus the host `as`/`ld` pipeline. The old seed
+path remains only as an explicit fallback for old artifacts or missing command
+drivers, with the remaining command-tier gaps tracked by #1662. On Windows it
+uses the seed compiler for host-supported gates, then runs the native MSVC
 `link.exe` build/run smoke and the full stage2/stage3 Windows fixpoint when the
 seed has the required staged runtime symbols.
 
@@ -169,20 +169,17 @@ powershell -ep Bypass -f scripts\fetch-stage0.ps1
 bash scripts/check-bootstrap-fixpoint.sh target/stage0/typelisp.exe
 ```
 
-The bootstrapped stage1 `cli.tl` compiler serves source-file `compile`, source-file
-`build`, package `build`, `run`, `test`, `fmt`, `lint`, `doc`, `doc --test`,
-`repl`, `lsp`, and `debug host-action` in-process, directly enough for the Linux
-capability smoke, deterministic assembly gate, selfhost compile manifest,
-public-tool surface, safety corpus, stdlib documentation gate, stdlib selfhost
-frontend verifier, repository doctest gate, TypeLisp source format gate, docs
-Pages build path, selfhost native generated-program gate, and the external
-selfhost compiler corpus. The public-tool path covers command usage/errors,
-scalar build/run/package behavior, formatter, lint, docs/doctests, SPEC examples,
-and bounded selfhost REPL/LSP fixtures. The safety gate falls back to the seed until
-stage1 checked trap helpers are available. Generated program gates run through the
-bootstrapped stage1 compiler only when the Linux host-action drivers are available;
-old artifacts or missing-driver paths keep an explicit seed fallback or skip tied
-to #1327.
+The bootstrapped stage1 compiler captured by the no-Rust gate is intentionally
+compile-focused. It serves `compile` and `check` directly, which is enough for
+the Linux deterministic assembly gate, selfhost compile manifest, safety corpus,
+native integration corpus, examples, stdlib module/fixture verifier, and
+borrowed-str source gate. Those runnable corpora assemble and link with the host
+toolchain after stage1 emits assembly. Public `build`/`run`/package behavior and
+the chooser smoke are covered by the separately built fresh `cli.tl` binary on
+both Linux and Windows. Larger command-tier gates that require full
+`build`/`run`/`doc`/`test` execution from the bootstrapped stage1 stay on an
+explicit fallback or skip path until #1662 and the resource-heavy blockers such
+as #1437 are closed.
 
 ### Staged backend primitives (#1114)
 
@@ -215,6 +212,14 @@ failure still fails the gate, and unmarked tests are unaffected. Once the
 published stage0 provides the symbol, the marked test builds and runs
 normally (with a "drop the marker" notice from the manifest-based verifiers).
 
+For a stdlib runnable fixture with a narrowed runtime-only blocker, use
+`requires-runtime-gap:<host>:#NNNN:<stderr-substring>` as the sixth
+`scripts/verify-stdlib.sh` manifest field, where `<host>` is `linux`,
+`windows`, or `all`. That marker skips only on the named host when the row
+builds, exits with the wrong status, and stderr contains the tracked substring.
+If the row starts passing on that host, the verifier reports that the marker
+should be removed.
+
 Workflow: introduce the primitive in `selfhost/compiler_backend.tl` plus the
 marked stdlib, inline, or native integration coverage in one PR when the
 published stage0 cannot emit the primitive yet, then drop the
@@ -242,11 +247,11 @@ For new selfhost tests:
 
 `scripts/verify-integration.sh` contains the heavier native checks that build
 and run TypeLisp programs as native executables. Linux uses the explicit
-`compile -> as -> ld` path; Windows Git Bash/MSYS/Cygwin uses `typelisp build
---target windows-x86_64` and a small PowerShell runner to preserve native
-Windows exit codes. Use this layer for behavior that only shows up after
-execution: exit status, stdout/stderr, diagnostic rendering, deterministic file
-output, and import-aware driver behavior.
+`compile -> as -> ld` path; Windows Git Bash/MSYS/Cygwin uses
+`compile --target windows-x86_64`, `clang`, `lld-link`, and a small PowerShell
+runner to preserve native Windows exit codes. Use this layer for behavior that
+only shows up after execution: exit status, stdout/stderr, diagnostic rendering,
+deterministic file output, and import-aware driver behavior.
 
 The integration manifests live in `tests/integration/native-linux.manifest` and
 `tests/integration/native-windows.manifest`. When a program or smoke driver
@@ -284,8 +289,10 @@ runner commands.
 
 `scripts/verify-stdlib-docs.sh` discovers every `stdlib/*.tl` module, requires
 module and item documentation comments, generates Markdown through
-`typelisp doc`, and runs `typelisp doc --test` with `--stdlib-root`. The Linux
-gate runs it through the stage1 wrapper's selfhost doc driver.
+`typelisp doc`, and runs `typelisp doc --test` with `--stdlib-root`. It is a
+command-tier gate, so the Linux no-Rust lane runs it through the bootstrapped
+stage1 only when the doc command driver is available; otherwise the explicit
+fallback/skip path is tied to #1662 and #1437.
 
 ### Repository doctest gate
 
@@ -296,9 +303,8 @@ TypeLisp fenced examples, then runs
 `typelisp doc --test` for each file with `--stdlib-root`. This gate does not
 use a hand-maintained file manifest, so adding documented TypeLisp source with fenced examples
 automatically adds doctest coverage. In the Linux no-Rust lane it runs through
-the stage1 wrapper's selfhost doc driver (the same driver used by the stdlib
-documentation gate) whenever the wrapper host-action drivers are available, and
-falls back to the seed compiler otherwise.
+the bootstrapped stage1 doc command driver whenever that command tier is
+available, and falls back to the seed compiler otherwise (#1662).
 
 ### Repository inline-test gate
 
@@ -351,23 +357,21 @@ the artifact.
 
 Pull requests get Linux and Windows coverage from the single self-hosted
 verification gate `scripts/verify-no-rust-stage0.sh` (wired in
-[`../.github/workflows/ci.yml`](../.github/workflows/ci.yml)). The Linux job first builds a fresh stage1
-compiler from published stage0, then runs the public-tool surface, smoke-tests
-the stage1 CLI/host-action commands, deterministic assembly, the selfhost compile
-manifest, stdlib documentation, the stdlib selfhost frontend verifier, the
-safety corpus, the repository doctest gate, runnable inline tests when the seed
-provides a test driver, the TypeLisp source format gate, docs Pages build,
-selfhost native generated programs, and the selfhost external compiler corpus
-through that bootstrapped stage1 compiler. The safety gate falls back to the seed
-until stage1 checked trap helpers are available; the public-tool, doctest, format,
-and generated-program gates fall back only when the host-action drivers are
-unavailable. Native integration manifests, the standalone examples gate, and
-stdlib modules continue to use the seed compiler until their remaining
-manifest/runtime exceptions are ported to the bootstrapped stage1 path. The
-Windows job runs the host-supported gates against the published stage0 compiler,
-verifies MSVC `link.exe` selfhost build/run support, runs the Windows bootstrap
-stage2/stage3 fixpoint, and explicitly skips the Linux-only selfhost/docs
-checks.
+[`../.github/workflows/ci.yml`](../.github/workflows/ci.yml)). Both jobs first
+build a fresh `selfhost/cli.tl` binary from the published stage0 compiler and
+smoke-test public `compile`, `build`, `run`, package build, staticlib build, and
+the work-queue chooser through `typelisp run`. The Linux job then bootstraps a
+compile-only stage1 compiler and runs deterministic assembly, the selfhost
+compile manifest, borrowed-str source checks, the safety corpus, native
+integration manifests, standalone examples, and stdlib modules/fixtures through
+that bootstrapped artifact. Command-tier gates such as public-tool host-action
+coverage, stdlib documentation, doctests, inline tests, docs Pages build,
+selfhost native generated programs, and the external selfhost corpus use their
+explicit seed/fresh-cli fallback or skip paths until #1662 and related resource
+blockers are closed. The Windows job runs host-supported gates against the
+published stage0 compiler, verifies the fresh CLI build/run smoke, runs the
+Windows bootstrap stage2/stage3 fixpoint when staged runtime symbols are present,
+and explicitly skips the Linux-only selfhost/docs checks.
 
 For a selfhost compiler change, a typical local check (after
 `scripts/fetch-stage0.sh`, with `tl=target/stage0/typelisp[.exe]`) is:

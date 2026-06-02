@@ -5642,6 +5642,7 @@
   [value : CompilerIrValue]) : OptReachState
   (match value
     [(IrValueGlobal name) (opt-reach-add-function functions state name)]
+    [(IrValueGlobalAddr name) (opt-reach-add-function functions state name)]
     [(IrValueFunction name) (opt-reach-add-function functions state name)]
     [_ state]))
 

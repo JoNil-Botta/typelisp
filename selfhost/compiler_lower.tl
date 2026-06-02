@@ -59,6 +59,20 @@
   (LowerNoVectorMap)
   (LowerSomeVectorMap i64 i64 i64 CompilerIrBinOp AstType i64))
 
+(defenum LowerCapture
+  (LowerCapture String i64 AstType i64))
+
+(defenum LowerCaptureList
+  (LowerCaptureNil)
+  (LowerCaptureCons LowerCapture LowerCaptureList))
+
+(defenum LowerCapturePlan
+  (LowerCapturePlan LowerCaptureList i64))
+
+(defenum ResultLowerCapturePlan
+  (OkLowerCapturePlan LowerCapturePlan)
+  (ErrLowerCapturePlan CompilerDiagnostic))
+
 (defenum LowerAlloc
   (LowerAlloc LowerState i64))
 
@@ -2412,6 +2426,356 @@
             [_ (ErrTcType "lower: lambda did not typecheck as a function")])]
         [(ErrTcType message) (ErrTcType message)])]))
 
+(define (lower-capture-list-contains-name?
+  [captures : LowerCaptureList]
+  [name : String]) : bool
+  (match captures
+    [(LowerCaptureNil) false]
+    [(LowerCaptureCons capture rest)
+      (match capture
+        [(LowerCapture capture-name _ _ _)
+          (if (string-eq capture-name name)
+            true
+            (lower-capture-list-contains-name? rest name))])]))
+
+(define (lower-aggregate-capture-message) : String
+  "lower: aggregate lambda captures require closure deep-copy lowering (#1554)")
+
+(define (lower-unsupported-capture-message) : String
+  "lower: unsupported lambda capture type (#1553)")
+
+(define (lower-capture-support-message [ctx : TcContext] [ty : AstType]) : String
+  (match (tc-type-strip-region (tc-resolve-type ctx ty))
+    [(AstTyTuple _) (lower-aggregate-capture-message)]
+    [(AstTyArray _ _) (lower-aggregate-capture-message)]
+    [(AstTyEnum _) (lower-aggregate-capture-message)]
+    [(AstTyStruct _) (lower-aggregate-capture-message)]
+    [(AstTyRef _ _) (lower-reference-support-message)]
+    [(AstTyMutRef _ _) (lower-reference-support-message)]
+    [_ (lower-unsupported-capture-message)]))
+
+(define (lower-supported-capture-type? [ctx : TcContext] [ty : AstType]) : bool
+  (match (tc-type-strip-region (tc-resolve-type ctx ty))
+    [(AstTyI64) true]
+    [(AstTyU64) true]
+    [(AstTyF64) true]
+    [(AstTyI32) true]
+    [(AstTyU32) true]
+    [(AstTyF32) true]
+    [(AstTyI16) true]
+    [(AstTyU16) true]
+    [(AstTyI8) true]
+    [(AstTyU8) true]
+    [(AstTyBool) true]
+    [(AstTyChar) true]
+    [(AstTyFunc _ _) true]
+    [(AstTyString) true]
+    [(AstTyDynArray _) true]
+    [_ false]))
+
+(define (lower-capture-env-size [cursor : i64]) : i64
+  (lower-align-up
+    (if (= cursor 0)
+      1
+      cursor)
+    8))
+
+(define (lower-capture-plan-scan
+  [ctx : TcContext]
+  [outer-env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [body : AstExpr]
+  [bound : TcStringList]
+  [cursor : i64]
+  [captures : LowerCaptureList]
+  [origin : AstExpr]) : ResultLowerCapturePlan
+  (match outer-env
+    [(SymI64Nil)
+      (OkLowerCapturePlan
+        (LowerCapturePlan captures (lower-capture-env-size cursor)))]
+    [(SymI64Bind name var-id rest)
+      (if (or
+        (lower-capture-list-contains-name? captures name)
+        (not (tc-expr-uses-free-name? body name bound)))
+        (lower-capture-plan-scan
+          ctx
+          rest
+          type-env
+          body
+          bound
+          cursor
+          captures
+          origin)
+        (match (tc-lookup type-env name)
+          [(ErrTcType message)
+            (ErrLowerCapturePlan (lower-diagnostic-at-expr origin message))]
+          [(OkTcType found-ty)
+            (let
+              [capture-ty : AstType
+                (tc-type-without-regions (tc-resolve-type ctx found-ty))]
+              (if (lower-supported-capture-type? ctx capture-ty)
+                (let
+                  [offset : i64
+                    (lower-align-up cursor (lower-type-align ctx capture-ty))]
+                  (lower-capture-plan-scan
+                    ctx
+                    rest
+                    type-env
+                    body
+                    bound
+                    (+ offset (lower-type-size ctx capture-ty))
+                    (LowerCaptureCons
+                      (LowerCapture name var-id capture-ty offset)
+                      captures)
+                    origin))
+                (ErrLowerCapturePlan
+                  (lower-diagnostic-at-expr
+                    origin
+                    (lower-capture-support-message ctx capture-ty)))))]))]))
+
+(define (lower-capture-plan
+  [ctx : TcContext]
+  [outer-env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [params : AstParamList]
+  [body : AstExpr]
+  [origin : AstExpr]) : ResultLowerCapturePlan
+  (lower-capture-plan-scan
+    ctx
+    outer-env
+    type-env
+    body
+    (tc-param-bound-names params)
+    0
+    (LowerCaptureNil)
+    origin))
+
+(define (lower-store-captures
+  [state : LowerState]
+  [env-value : CompilerIrValue]
+  [captures : LowerCaptureList]) : LowerState
+  (match captures
+    [(LowerCaptureNil) state]
+    [(LowerCaptureCons capture rest)
+      (match capture
+        [(LowerCapture _ var-id capture-ty offset)
+          (lower-store-captures
+            (lower-store-at-offset
+              state
+              env-value
+              offset
+              (IrValueVar var-id)
+              capture-ty)
+            env-value
+            rest)])]))
+
+(define (lower-load-captures
+  [state : LowerState]
+  [env-value : CompilerIrValue]
+  [captures : LowerCaptureList]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]) : ResultLowerEnv
+  (match captures
+    [(LowerCaptureNil) (OkLowerEnv state env type-env)]
+    [(LowerCaptureCons capture rest)
+      (match capture
+        [(LowerCapture name _ capture-ty offset)
+          (match (lower-load-at-offset state env-value offset capture-ty)
+            [(LowerExpr loaded-state loaded-value _)
+              (match loaded-value
+                [(IrValueVar loaded-var)
+                  (lower-load-captures
+                    loaded-state
+                    env-value
+                    rest
+                    (sym-i64-bind env name loaded-var)
+                    (tc-bind type-env name capture-ty))]
+                [_
+                  (ErrLowerEnv
+                    (lower-diagnostic
+                      "lower: capture load did not materialize a variable"))])])])]))
+
+(define (lower-captured-param-list [ctx : TcContext] [params : AstParamList]) : CompilerIrParamList
+  (IrParamCons
+    (IrParam "__tl_env" (AstTyU64) 0)
+    (lower-param-list ctx params 1)))
+
+(define (lower-function-with-captures
+  [ctx : TcContext]
+  [top-env : TcTypeEnv]
+  [logical-name : String]
+  [params : AstParamList]
+  [ret : AstType]
+  [body : AstExpr]
+  [captures : LowerCaptureList]
+  [spans : CompilerSourceSpans]
+  [names : LowerNameEnv]
+  [mode : CompilerLowerMode]) : ResultLowerFunction
+  (if (or
+    (lower-param-list-contains-unsupported-reference? ctx params)
+    (tc-type-contains-reference? (tc-resolve-type ctx ret)))
+    (ErrLowerFunction (lower-diagnostic (lower-reference-support-message)))
+    (let
+      [param-count : i64 (+ 1 (lower-param-count params))]
+      (let
+        [function-spans : CompilerSourceSpans
+          (lower-record-function-span spans logical-name body)]
+        [state : LowerState
+          (LowerState
+            param-count
+            0
+            0
+            "entry"
+            IrInstrNil
+            IrBlockNil
+            IrFunctionNil
+            logical-name
+            function-spans
+            names
+            mode)]
+        [ret-ty : AstType (tc-type-without-regions (tc-resolve-type ctx ret))]
+        (match (lower-load-captures
+          state
+          (IrValueVar 0)
+          captures
+          (sym-i64-empty)
+          (tc-bind-return-type top-env ret-ty))
+          [(OkLowerEnv captured-state captured-env captured-type-env)
+            (let
+              [env : SymI64Env (lower-bind-params params 1 captured-env)]
+              [type-env : TcTypeEnv
+                (tc-bind-params ctx captured-type-env params)]
+              (match (lower-tail-expr
+                ctx
+                captured-state
+                env
+                type-env
+                body
+                ret-ty)
+                [(OkLowerState final-state)
+                  (OkLowerFunction
+                    (IrFunctionCons
+                      (IrFunction
+                        logical-name
+                        (lower-captured-param-list ctx params)
+                        ret-ty
+                        (lower-state-next-var final-state)
+                        (lower-state-build-blocks final-state))
+                      (lower-state-functions final-state))
+                    (lower-state-spans final-state))]
+                [(ErrLowerState message) (ErrLowerFunction message)]))]
+          [(ErrLowerEnv message) (ErrLowerFunction message)])))))
+
+(define (lower-capturing-lambda-value
+  [state : LowerState]
+  [lambda-name : String]
+  [captures : LowerCaptureList]
+  [capture-size : i64]
+  [expr-ty : AstType]) : LowerExpr
+  (match (lower-reserve-heap-storage state capture-size (AstTyU64))
+    [(LowerExpr env-state env-value _)
+      (match (lower-reserve-heap-storage
+        (lower-store-captures env-state env-value captures)
+        16
+        expr-ty)
+        [(LowerExpr desc-state desc-value _)
+          (LowerExpr
+            (lower-store-at-offset
+              (lower-store-at-offset
+                desc-state
+                desc-value
+                0
+                (IrValueGlobalAddr lambda-name)
+                (AstTyU64))
+              desc-value
+              8
+              env-value
+              (AstTyU64))
+            desc-value
+            expr-ty)])]))
+
+(define (lower-lambda-noncapturing
+  [ctx : TcContext]
+  [state : LowerState]
+  [type-env : TcTypeEnv]
+  [params : AstParamList]
+  [maybe-ret : AstMaybeType]
+  [body : AstExpr]
+  [origin : AstExpr]
+  [expr-ty : AstType]) : ResultLowerExpr
+  (match (lower-lambda-ret-type ctx type-env origin maybe-ret)
+    [(ErrTcType message)
+      (ErrLowerExpr (lower-diagnostic-at-expr origin message))]
+    [(OkTcType ret-ty)
+      (match (lower-state-fresh-lambda-name state)
+        [(LowerLambdaName named-state lambda-name)
+          (match (lower-function
+            ctx
+            type-env
+            lambda-name
+            params
+            ret-ty
+            body
+            (lower-state-spans named-state)
+            (lower-state-names named-state)
+            (lower-state-mode named-state))
+            [(OkLowerFunction lambda-functions lambda-spans)
+              (OkLowerExpr
+                (LowerExpr
+                  (lower-state-add-functions
+                    named-state
+                    lambda-functions
+                    lambda-spans)
+                  (IrValueFunction lambda-name)
+                  expr-ty))]
+            [(ErrLowerFunction message) (ErrLowerExpr message)])])]))
+
+(define (lower-lambda-capturing
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [params : AstParamList]
+  [maybe-ret : AstMaybeType]
+  [body : AstExpr]
+  [origin : AstExpr]
+  [expr-ty : AstType]) : ResultLowerExpr
+  (match (lower-lambda-ret-type ctx type-env origin maybe-ret)
+    [(ErrTcType message)
+      (ErrLowerExpr (lower-diagnostic-at-expr origin message))]
+    [(OkTcType ret-ty)
+      (match (lower-capture-plan ctx env type-env params body origin)
+        [(ErrLowerCapturePlan message) (ErrLowerExpr message)]
+        [(OkLowerCapturePlan plan)
+          (match plan
+            [(LowerCapturePlan captures capture-size)
+              (match (lower-state-fresh-lambda-name state)
+                [(LowerLambdaName named-state lambda-name)
+                  (match (lower-function-with-captures
+                    ctx
+                    type-env
+                    lambda-name
+                    params
+                    ret-ty
+                    body
+                    captures
+                    (lower-state-spans named-state)
+                    (lower-state-names named-state)
+                    (lower-state-mode named-state))
+                    [(OkLowerFunction lambda-functions lambda-spans)
+                      (match (lower-capturing-lambda-value
+                        (lower-state-add-functions
+                          named-state
+                          lambda-functions
+                          lambda-spans)
+                        lambda-name
+                        captures
+                        capture-size
+                        expr-ty)
+                        [(LowerExpr value-state value value-ty)
+                          (OkLowerExpr (LowerExpr value-state value value-ty))])]
+                    [(ErrLowerFunction message) (ErrLowerExpr message)])])])])]))
+
 (define (lower-lambda
   [ctx : TcContext]
   [state : LowerState]
@@ -2423,36 +2787,25 @@
   [origin : AstExpr]
   [expr-ty : AstType]) : ResultLowerExpr
   (if (lower-lambda-captures-env? env body (tc-param-bound-names params))
-    (ErrLowerExpr
-      (lower-diagnostic-at-expr
-        origin
-        "lower: capturing lambdas require closure lowering (#1418)"))
-    (match (lower-lambda-ret-type ctx type-env origin maybe-ret)
-      [(ErrTcType message)
-        (ErrLowerExpr (lower-diagnostic-at-expr origin message))]
-      [(OkTcType ret-ty)
-        (match (lower-state-fresh-lambda-name state)
-          [(LowerLambdaName named-state lambda-name)
-            (match (lower-function
-              ctx
-              type-env
-              lambda-name
-              params
-              ret-ty
-              body
-              (lower-state-spans named-state)
-              (lower-state-names named-state)
-              (lower-state-mode named-state))
-              [(OkLowerFunction lambda-functions lambda-spans)
-                (OkLowerExpr
-                  (LowerExpr
-                    (lower-state-add-functions
-                      named-state
-                      lambda-functions
-                      lambda-spans)
-                    (IrValueFunction lambda-name)
-                    expr-ty))]
-              [(ErrLowerFunction message) (ErrLowerExpr message)])])])))
+    (lower-lambda-capturing
+      ctx
+      state
+      env
+      type-env
+      params
+      maybe-ret
+      body
+      origin
+      expr-ty)
+    (lower-lambda-noncapturing
+      ctx
+      state
+      type-env
+      params
+      maybe-ret
+      body
+      origin
+      expr-ty)))
 
 (define (lower-return-maybe [value : CompilerIrValue] [ty : AstType]) : CompilerIrMaybeValue
   (match ty
@@ -9408,6 +9761,43 @@
 (define (main) : unit
   ((lambda () : unit (print-i64 1))))")
 
+(define (compiler-lower-capturing-lambda-scalar-source) : String
+  "(define (main) : i64
+  (let
+    [n : i64 10]
+    ((lambda ([x : i64]) : i64 (+ x n)) 32)))")
+
+(define (compiler-lower-capturing-lambda-function-value-source) : String
+  "(define (main) : i64
+  (let
+    [inc : (-> i64 i64) (lambda ([x : i64]) : i64 (+ x 1))]
+    [n : i64 9]
+    ((lambda ([x : i64]) : i64 (inc (+ x n))) 32)))")
+
+(define (compiler-lower-capturing-lambda-fat-handle-source) : String
+  "(define (main [n : i64]) : i64
+  (let
+    [s : String \"hello\"]
+    [a : (Array i64) (make-array i64 2)]
+    (begin
+      (array-set! a 0 n)
+      ((lambda () : i64 (+ (string-length s) (array-ref a 0)))))))")
+
+(define (compiler-lower-capturing-lambda-shadow-source) : String
+  "(define (main) : i64
+  (let
+    [n : i64 10]
+    ((lambda
+       ([x : i64])
+       :
+       i64
+       (+
+         n
+         (let
+           [n : i64 100]
+           (+ x n))))
+     32)))")
+
 ;; `(comptime expr)` folds to a literal via the scalar CTFE evaluator (#719).
 ;; These fixtures exercise arithmetic, `if`, and `let` folds, plus the
 ;; runtime-variable and deferred-f64 (#735) rejection paths.
@@ -11646,6 +12036,114 @@
       (compiler-lower-immediate-lambda-call-ok?)
       (compiler-lower-unit-lambda-call-ok?))))
 
+(define (compiler-lower-capturing-lambda-scalar-shape-ok?) : bool
+  (match (lower-compiler-source (compiler-lower-capturing-lambda-scalar-source))
+    [(OkCompilerLower program _)
+      (match program
+        [(IrProgram _ functions _)
+          (let
+            [lambda-name : String "__tl_lambda_main_0"]
+            [ok : bool true]
+            (begin
+              (if (= (compiler-ir-function-list-count functions) 2)
+                unit
+                (set! ok false))
+              (if (=
+                (lower-test-function-indirect-call-count functions "main")
+                1)
+                unit
+                (set! ok false))
+              (if (>= (lower-test-function-store-ptr-count functions "main") 3)
+                unit
+                (set! ok false))
+              (if (>= (lower-test-functions-call-count functions "tl_alloc") 2)
+                unit
+                (set! ok false))
+              (if (>= (lower-test-function-load-count functions lambda-name) 1)
+                unit
+                (set! ok false))
+              ok))])]
+    [(ErrCompilerLower _) false]))
+
+(define (compiler-lower-capturing-lambda-function-value-shape-ok?) : bool
+  (match (lower-compiler-source
+    (compiler-lower-capturing-lambda-function-value-source))
+    [(OkCompilerLower program _)
+      (match program
+        [(IrProgram _ functions _)
+          (let
+            [capturing-name : String "__tl_lambda_main_1"]
+            [ok : bool true]
+            (begin
+              (if (= (compiler-ir-function-list-count functions) 3)
+                unit
+                (set! ok false))
+              (if (=
+                (lower-test-function-indirect-call-count functions "main")
+                1)
+                unit
+                (set! ok false))
+              (if (>=
+                (lower-test-function-indirect-call-count
+                  functions
+                  capturing-name)
+                1)
+                unit
+                (set! ok false))
+              (if (>=
+                (lower-test-function-load-count functions capturing-name)
+                2)
+                unit
+                (set! ok false))
+              ok))])]
+    [(ErrCompilerLower _) false]))
+
+(define (compiler-lower-capturing-lambda-fat-handle-shape-ok?) : bool
+  (match (lower-compiler-source
+    (compiler-lower-capturing-lambda-fat-handle-source))
+    [(OkCompilerLower program _)
+      (match program
+        [(IrProgram _ functions _)
+          (let
+            [lambda-name : String "__tl_lambda_main_0"]
+            [ok : bool true]
+            (begin
+              (if (= (compiler-ir-function-list-count functions) 2)
+                unit
+                (set! ok false))
+              (if (=
+                (lower-test-function-indirect-call-count functions "main")
+                1)
+                unit
+                (set! ok false))
+              (if (>= (lower-test-functions-call-count functions "tl_alloc") 3)
+                unit
+                (set! ok false))
+              (if (>= (lower-test-function-load-count functions lambda-name) 2)
+                unit
+                (set! ok false))
+              ok))])]
+    [(ErrCompilerLower _) false]))
+
+(define (compiler-lower-capturing-lambda-shadow-shape-ok?) : bool
+  (match (lower-compiler-source (compiler-lower-capturing-lambda-shadow-source))
+    [(OkCompilerLower program _)
+      (match program
+        [(IrProgram _ functions _)
+          (and
+            (= (compiler-ir-function-list-count functions) 2)
+            (= (lower-test-function-indirect-call-count functions "main") 1))])]
+    [(ErrCompilerLower _) false]))
+
+(define (compiler-lower-capturing-lambda-tests-ok?) : bool
+  (and
+    (compiler-lower-capturing-lambda-scalar-shape-ok?)
+    (and
+      (compiler-lower-capturing-lambda-function-value-shape-ok?)
+      (and
+        (compiler-lower-capturing-lambda-fat-handle-shape-ok?)
+        (compiler-lower-capturing-lambda-shadow-shape-ok?)))))
+
 (define (compiler-lower-file-handle-status-shape-ok? [src : String]) : bool
   (match (lower-compiler-source src)
     [(OkCompilerLower program _)
@@ -12266,6 +12764,9 @@
         unit
         (set! ok false))
       (if (compiler-lower-noncapturing-lambda-tests-ok?)
+        unit
+        (set! ok false))
+      (if (compiler-lower-capturing-lambda-tests-ok?)
         unit
         (set! ok false))
       (if (compiler-lower-ok? (compiler-lower-aggregate-source))

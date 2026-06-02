@@ -1626,12 +1626,11 @@ if [ "$HOST_OS" = linux ]; then
     [ ! -f "$ROOT/stdlib/windows_setup.tl.test.s" ] || fail "no-test typelisp test left scratch assembly behind"
 fi
 
-# Package build coverage. `typelisp build --manifest-path` is a build operation:
-# the single-binary cli.tl stage0 emits a host-plan for valid packages, and its
-# selfhost package resolver diverges from the Rust path on the dependency-manifest
-# and missing-import diagnostics, so the no-Rust gate disables this whole section
-# via TYPELISP_PUBLIC_TOOLS_HOST_ACTION_ENABLED=0 until the in-process host-action
-# executor and package-build parity land (#1327). Rust/wrapper lanes keep coverage.
+# Package build coverage. This script still runs as an extended compatibility
+# gate in the no-Rust lane, so TYPELISP_PUBLIC_TOOLS_HOST_ACTION_ENABLED=0 skips
+# the package-heavy section while package-build diagnostics are brought to parity.
+# Focused direct build/run coverage for the current selfhost cli lives in
+# scripts/verify-selfhost-cli-build-run.sh.
 if [ "$HOST_ACTION_ENABLED" -eq 1 ]; then
 echo "[public-tools] package build"
 PKG="$WORKDIR/pkg"
@@ -2071,10 +2070,11 @@ while IFS='|' read -r spec_name spec_mode spec_value; do
                 continue
             fi
             if [ "$HOST_ACTION_ENABLED" -eq 0 ]; then
-                # cli.tl emits a host-plan for `run` instead of executing the
-                # example, so SPEC run examples are skipped until the in-process
-                # host-action executor lands (#1327). SPEC check/compile examples
-                # still run on cli.tl above.
+                # The no-Rust lane runs this script as an extended compatibility
+                # gate with host-action coverage disabled. Focused `typelisp run`
+                # coverage for the current selfhost cli lives in
+                # scripts/verify-selfhost-cli-build-run.sh. SPEC check/compile
+                # examples still run on cli.tl above.
                 echo "[public-tools] skipping SPEC run example $spec_name (host-action drivers disabled; #1327)"
                 continue
             fi

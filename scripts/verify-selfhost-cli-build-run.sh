@@ -103,6 +103,19 @@ run_cli_capture() {
     set -e
 }
 
+run_cli_capture_in_dir() {
+    label=$1
+    dir=$2
+    shift 2
+    set +e
+    (
+        cd "$dir"
+        "$@"
+    ) > "$WORKDIR/$label.out" 2> "$WORKDIR/$label.err"
+    status=$?
+    set -e
+}
+
 cli_surface_label() {
     printf '%s' "$1" | tr ' /' '__'
 }
@@ -262,6 +275,24 @@ EOF
             assert_status "$label" "$status" 0
             assert_empty "$label" "$WORKDIR/$label.err"
             assert_contains "$label" "$WORKDIR/$label.out" "TypeLisp REPL commands:"
+            ;;
+        new)
+            run_cli_capture_in_dir "$label" "$CLI_SURFACE_DIR" "$COMPILER" new surface_new
+            assert_status "$label" "$status" 0
+            assert_empty "$label" "$WORKDIR/$label.err"
+            assert_contains "$label" "$WORKDIR/$label.out" "scaffold: created bin package surface_new"
+            assert_file_exists "$label" "$CLI_SURFACE_DIR/surface_new/typelisp.pkg"
+            assert_file_exists "$label" "$CLI_SURFACE_DIR/surface_new/src/main.tl"
+            ;;
+        init)
+            init_dir="$CLI_SURFACE_DIR/surface_init"
+            mkdir -p "$init_dir"
+            run_cli_capture_in_dir "$label" "$init_dir" "$COMPILER" init surface_init
+            assert_status "$label" "$status" 0
+            assert_empty "$label" "$WORKDIR/$label.err"
+            assert_contains "$label" "$WORKDIR/$label.out" "scaffold: created bin package surface_init"
+            assert_file_exists "$label" "$init_dir/typelisp.pkg"
+            assert_file_exists "$label" "$init_dir/src/main.tl"
             ;;
         *)
             fail "active cli surface command has no smoke assertion: $command"

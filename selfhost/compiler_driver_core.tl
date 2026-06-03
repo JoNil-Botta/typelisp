@@ -325,68 +325,63 @@
   [cfgs : SymI64Env]) : ResultCompilerDriverLowered
   (let
     [enclosing : i64 (arena-current)]
-    (let
-      [scratch : i64 (arena-make)]
-      (begin
-        (unsafe (arena-set! scratch))
-        (match (compiler-load-file-with-paths-and-roots-cfg
-          input-path
-          (sym-i64-empty)
-          stdlib-roots
-          cfgs)
-          [(OkCompilerLoadWithPaths decls paths _ _)
-            (begin
-              (cfg
-                compile-profile
-                (compiler-driver-profile-finish-phase "load"))
-              (cfg compile-profile (compiler-driver-profile-start-phase))
-              (match (lower-compiler-program-with-decl-paths-mode
-                input-path
-                (AstProgram decls)
-                paths
-                (compiler-driver-lower-mode-for-backend mode))
-                [(OkCompilerLower program spans)
-                  (let
-                    [scratch-head : i64 (arena-current)]
-                    (begin
-                      (unsafe (arena-set! enclosing))
-                      (let
-                        [escaped-program : CompilerIrProgram (clone program)]
-                        [escaped-spans : CompilerSourceSpans (clone spans)]
-                        (begin
-                          (unsafe (arena-destroy scratch-head))
-                          (cfg
-                            compile-profile
-                            (compiler-driver-profile-finish-phase "lower"))
-                          (OkCompilerDriverLowered
-                            escaped-program
-                            escaped-spans)))))]
-                [(ErrCompilerLower diag)
-                  (let
-                    [scratch-head : i64 (arena-current)]
-                    (begin
-                      (unsafe (arena-set! enclosing))
-                      (let
-                        [escaped-diag : CompilerDiagnostic (clone diag)]
-                        (begin
-                          (unsafe (arena-destroy scratch-head))
-                          (cfg
-                            compile-profile
-                            (compiler-driver-profile-finish-phase "lower"))
-                          (ErrCompilerDriverLowered escaped-diag)))))]))]
-          [(ErrCompilerLoadWithPaths diag)
-            (let
-              [scratch-head : i64 (arena-current)]
-              (begin
-                (unsafe (arena-set! enclosing))
+    [scratch : i64 (arena-make)]
+    (begin
+      (unsafe (arena-set! scratch))
+      (match (compiler-load-file-with-paths-and-roots-cfg
+        input-path
+        (sym-i64-empty)
+        stdlib-roots
+        cfgs)
+        [(OkCompilerLoadWithPaths decls paths _ _)
+          (begin
+            (cfg compile-profile (compiler-driver-profile-finish-phase "load"))
+            (cfg compile-profile (compiler-driver-profile-start-phase))
+            (match (lower-compiler-program-with-decl-paths-mode
+              input-path
+              (AstProgram decls)
+              paths
+              (compiler-driver-lower-mode-for-backend mode))
+              [(OkCompilerLower program spans)
                 (let
-                  [escaped-diag : CompilerDiagnostic (clone diag)]
+                  [scratch-head : i64 (arena-current)]
                   (begin
-                    (unsafe (arena-destroy scratch-head))
-                    (cfg
-                      compile-profile
-                      (compiler-driver-profile-finish-phase "load"))
-                    (ErrCompilerDriverLowered escaped-diag)))))])))))
+                    (unsafe (arena-set! enclosing))
+                    (let
+                      [escaped-program : CompilerIrProgram (clone program)]
+                      [escaped-spans : CompilerSourceSpans (clone spans)]
+                      (begin
+                        (unsafe (arena-destroy scratch-head))
+                        (cfg
+                          compile-profile
+                          (compiler-driver-profile-finish-phase "lower"))
+                        (OkCompilerDriverLowered escaped-program escaped-spans)))))]
+              [(ErrCompilerLower diag)
+                (let
+                  [scratch-head : i64 (arena-current)]
+                  (begin
+                    (unsafe (arena-set! enclosing))
+                    (let
+                      [escaped-diag : CompilerDiagnostic (clone diag)]
+                      (begin
+                        (unsafe (arena-destroy scratch-head))
+                        (cfg
+                          compile-profile
+                          (compiler-driver-profile-finish-phase "lower"))
+                        (ErrCompilerDriverLowered escaped-diag)))))]))]
+        [(ErrCompilerLoadWithPaths diag)
+          (let
+            [scratch-head : i64 (arena-current)]
+            (begin
+              (unsafe (arena-set! enclosing))
+              (let
+                [escaped-diag : CompilerDiagnostic (clone diag)]
+                (begin
+                  (unsafe (arena-destroy scratch-head))
+                  (cfg
+                    compile-profile
+                    (compiler-driver-profile-finish-phase "load"))
+                  (ErrCompilerDriverLowered escaped-diag)))))]))))
 
 (define (compiler-driver-emit-file-with-target
   [input-path : String]

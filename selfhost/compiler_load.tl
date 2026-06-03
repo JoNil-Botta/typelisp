@@ -614,28 +614,26 @@
   [cfgs : SymI64Env]) : ResultAstProgramDiagnostic
   (let
     [enclosing : i64 (arena-current)]
-    (let
-      [parse-arena : i64 (arena-make)]
-      (begin
-        (unsafe (arena-set! parse-arena))
-        (compiler-load-parse-result-escape
-          enclosing
-          (arena-current)
-          (parse-ast-source-diagnostic-with-cfg path source cfgs))))))
+    [parse-arena : i64 (arena-make)]
+    (begin
+      (unsafe (arena-set! parse-arena))
+      (compiler-load-parse-result-escape
+        enclosing
+        (arena-current)
+        (parse-ast-source-diagnostic-with-cfg path source cfgs)))))
 
 (define (compiler-load-parse-file-diagnostic-escaping
   [path : String]
   [cfgs : SymI64Env]) : ResultAstProgramDiagnostic
   (let
     [enclosing : i64 (arena-current)]
-    (let
-      [parse-arena : i64 (arena-make)]
-      (begin
-        (unsafe (arena-set! parse-arena))
-        (compiler-load-parse-result-escape
-          enclosing
-          (arena-current)
-          (parse-ast-source-diagnostic-with-cfg path (read-file path) cfgs))))))
+    [parse-arena : i64 (arena-make)]
+    (begin
+      (unsafe (arena-set! parse-arena))
+      (compiler-load-parse-result-escape
+        enclosing
+        (arena-current)
+        (parse-ast-source-diagnostic-with-cfg path (read-file path) cfgs)))))
 
 (define (compiler-load-source-with-paths-and-roots-expect-cfg
   [path : String]

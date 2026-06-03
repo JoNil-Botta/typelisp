@@ -5511,23 +5511,21 @@
     [(IrFunction name params ret-ty frame blocks)
       (let
         [folded : CompilerIrBlockList (optimize-block-list blocks)]
-        (let
-          [promoted : CompilerIrFunction
-            (opt-aggregate-stack-promote-function
-              (IrFunction name params ret-ty frame folded))]
-          (match promoted
-            [(IrFunction _ _ _ promoted-frame promoted-blocks)
-              (let
-                [cfg : CompilerIrBlockList
-                  (opt-cfg-simplify-blocks promoted-blocks)]
-                (let
-                  [used : OptUsedSet (opt-collect-blocks-uses (OptUsedNil) cfg)]
-                  (IrFunction
-                    name
-                    params
-                    ret-ty
-                    promoted-frame
-                    (opt-dce-block-list used cfg))))])))]))
+        [promoted : CompilerIrFunction
+          (opt-aggregate-stack-promote-function
+            (IrFunction name params ret-ty frame folded))]
+        (match promoted
+          [(IrFunction _ _ _ promoted-frame promoted-blocks)
+            (let
+              [cfg : CompilerIrBlockList
+                (opt-cfg-simplify-blocks promoted-blocks)]
+              [used : OptUsedSet (opt-collect-blocks-uses (OptUsedNil) cfg)]
+              (IrFunction
+                name
+                params
+                ret-ty
+                promoted-frame
+                (opt-dce-block-list used cfg)))]))]))
 
 (define (optimize-function-once-fast [func : CompilerIrFunction]) : CompilerIrFunction
   (match func

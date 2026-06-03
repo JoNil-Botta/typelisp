@@ -141,6 +141,31 @@
       (try-rename "windows source" "")
       "windows empty rename destination is invalid")))
 
+(define (fs-test-drive-absolute? [path : String]) : bool
+  (and
+    (> (string-length path) 2)
+    (and (= (string-ref path 1) #:') (fs-path-separator? (string-ref path 2)))))
+
+(define (assert-current-dir-api) : unit
+  (match (try-current-dir)
+    [(OkIoString cwd)
+      (begin
+        (assert-true (> (string-length cwd) 0) "current dir is non-empty")
+        (assert-true
+          (if (fs-windows?)
+            (or (fs-path-starts-separator? cwd) (fs-test-drive-absolute? cwd))
+            (fs-path-starts-separator? cwd))
+          "current dir has rooted shape"))]
+    [(ErrIoString error)
+      (if (fs-windows?)
+        (assert-true
+          (io-error-unsupported? error)
+          "windows current dir may be unsupported")
+        (panic
+          (string-append
+            "linux current dir unexpectedly failed: "
+            (io-error-message error))))]))
+
 (define (main) : i64
   (let
     [joined : String (fs-path-join "left path" "right file")]
@@ -188,17 +213,8 @@
         (fs-extension ".gitignore")
         ""
         "leading-dot name has no extension")
-      (let
-        [dir-a : String
-          (expect-ok-string
-            (try-create-temp-dir "typelisp fs test")
-            "create temp dir a: ")]
-        [dir-b : String
-          (expect-ok-string
-            (try-create-temp-dir "typelisp fs test")
-            "create temp dir b: ")]
-        [file-a : String (fs-path-join dir-a "artifact with space.s")]
-        [file-b : String (fs-path-join dir-b "cleanup.obj")]
+      (assert-current-dir-api)
+      (if (fs-windows?)
         (begin
           (assert-true
             (not (string-eq dir-a dir-b))

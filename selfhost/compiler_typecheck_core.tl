@@ -424,95 +424,284 @@
                   (tc-bind
                     (tc-bind
                       (tc-bind
-                        e18
-                        "file-exists?"
-                        (tc-fn1 (AstTyString) (AstTyBool)))
-                      "file-exists-status"
-                      (tc-fn1 (AstTyString) (AstTyI64)))
-                    "file-open-status"
-                    (tc-fn2 (AstTyString) (AstTyI64) (AstTyI64)))
-                  "file-close-status"
-                  (tc-fn1 (AstTyI64) (AstTyI64)))
-                "fs-mkdir-status"
-                (tc-fn1 (AstTyString) (AstTyI64)))
-              "fs-remove-file-status"
-              (tc-fn1 (AstTyString) (AstTyI64)))
-            "fs-remove-dir-status"
-            (tc-fn1 (AstTyString) (AstTyI64)))
-          "fs-rename-status"
-          (tc-fn2 (AstTyString) (AstTyString) (AstTyI64)))
-        "fs-process-id"
-        (tc-fn0 (AstTyI64)))]
-    [e20 : TcTypeEnv
-      (tc-bind
-        (tc-bind
-          (tc-bind
-            (tc-bind
-              (tc-bind
-                (tc-bind
-                  (tc-bind
-                    (tc-bind
-                      e19
-                      "file-read-chunk-status"
-                      (tc-fn2 (AstTyI64) (AstTyI64) (AstTyI64)))
-                    "file-write-status"
-                    (tc-fn2 (AstTyI64) (AstTyString) (AstTyI64)))
-                  "file-flush-status"
-                  (tc-fn1 (AstTyI64) (AstTyI64)))
-                "file-read-chunk-bytes"
-                (tc-fn1 (AstTyI64) (AstTyString)))
-              "file-read-chunk-eof?"
-              (tc-fn1 (AstTyI64) (AstTyBool)))
-            "cpuid"
-            (tc-fn2
-              (AstTyI64)
-              (AstTyI64)
-              (AstTyTuple
-                (AstTypeCons
-                  (AstTyI32)
-                  (AstTypeCons
-                    (AstTyI32)
-                    (AstTypeCons
-                      (AstTyI32)
-                      (AstTypeCons (AstTyI32) (AstTypeNil))))))))
-          "xgetbv"
-          (tc-fn1 (AstTyI64) (AstTyI64)))
-        "substring"
-        (tc-fn3 (AstTyString) (AstTyI64) (AstTyI64) (AstTyString)))]
-    [e21 : TcTypeEnv
-      (tc-bind
-        e20
-        "string-slice"
-        (tc-fn3 (AstTyString) (AstTyI64) (AstTyI64) (AstTyString)))]
-    [e22 : TcTypeEnv
-      (tc-bind
-        e21
-        "string-append"
-        (tc-fn2 (AstTyString) (AstTyString) (AstTyString)))]
-    [e23 : TcTypeEnv
-      (tc-bind
-        e22
-        "string-concat"
-        (tc-fn2 (AstTyString) (AstTyString) (AstTyString)))]
-    [e24 : TcTypeEnv (tc-bind e23 "read-stdin-line" (tc-fn0 (AstTyString)))]
-    [e25 : TcTypeEnv
-      (tc-bind e24 "read-stdin-bytes" (tc-fn1 (AstTyI64) (AstTyString)))]
-    [e26 : TcTypeEnv (tc-bind e25 "stdin-eof?" (tc-fn0 (AstTyBool)))]
-    [e27 : TcTypeEnv (tc-bind e26 "flush-stdout" (tc-fn0 (AstTyUnit)))]
-    [e28 : TcTypeEnv (tc-bind e27 "panic" (tc-fn1 (AstTyString) (AstTyNever)))]
-    (tc-bind
-      (tc-bind
-        (tc-bind
-          (tc-bind
-            (tc-bind e28 "error" (tc-fn1 (AstTyString) (AstTyNever)))
-            "env-var-exists?"
-            (tc-fn1 (AstTyString) (AstTyBool)))
-          "env-var-value"
-          (tc-fn1 (AstTyString) (AstTyString)))
-        "env-path-separator"
-        (tc-fn0 (AstTyString)))
-      (tc-default-boundary-name)
-      (AstTyUnit))))
+                        e7
+                        "print-error"
+                        (tc-fn1 (AstTyString) (AstTyUnit)))]
+                    (let
+                      [e9 : TcTypeEnv
+                        (tc-bind e8 "arg-count" (tc-fn0 (AstTyI64)))]
+                      (let
+                        [e10 : TcTypeEnv
+                          (tc-bind e9 "arg" (tc-fn1 (AstTyI64) (AstTyString)))]
+                        (let
+                          [e11 : TcTypeEnv
+                            (tc-bind
+                              e10
+                              "string-length"
+                              (tc-fn1 (AstTyString) (AstTyI64)))]
+                          (let
+                            [e12 : TcTypeEnv
+                              (tc-bind
+                                e11
+                                "length"
+                                (tc-fn1 (AstTyString) (AstTyI64)))]
+                            (let
+                              [e13 : TcTypeEnv
+                                (tc-bind
+                                  e12
+                                  "string-eq"
+                                  (tc-fn2
+                                    (AstTyString)
+                                    (AstTyString)
+                                    (AstTyBool)))]
+                              (let
+                                [e14 : TcTypeEnv
+                                  (tc-bind
+                                    e13
+                                    "string=?"
+                                    (tc-fn2
+                                      (AstTyString)
+                                      (AstTyString)
+                                      (AstTyBool)))]
+                                (let
+                                  [e15 : TcTypeEnv
+                                    (tc-bind
+                                      e14
+                                      "string->int"
+                                      (tc-fn1 (AstTyString) (AstTyI64)))]
+                                  (let
+                                    [e16 : TcTypeEnv
+                                      (tc-bind
+                                        e15
+                                        "int->string"
+                                        (tc-fn1 (AstTyI64) (AstTyString)))]
+                                    (let
+                                      [e17 : TcTypeEnv
+                                        (tc-bind
+                                          e16
+                                          "read-file"
+                                          (tc-fn1 (AstTyString) (AstTyString)))]
+                                      (let
+                                        [e18 : TcTypeEnv
+                                          (tc-bind
+                                            (tc-bind
+                                              (tc-bind
+                                                (tc-bind
+                                                  e17
+                                                  "read-file-status"
+                                                  (tc-fn1
+                                                    (AstTyString)
+                                                    (AstTyI64)))
+                                                "write-file"
+                                                (tc-fn2
+                                                  (AstTyString)
+                                                  (AstTyString)
+                                                  (AstTyUnit)))
+                                              "write-file-status"
+                                              (tc-fn2
+                                                (AstTyString)
+                                                (AstTyString)
+                                                (AstTyI64)))
+                                            "append-file-status"
+                                            (tc-fn2
+                                              (AstTyString)
+                                              (AstTyString)
+                                              (AstTyI64)))]
+                                        (let
+                                          [e19 : TcTypeEnv
+                                            (tc-bind
+                                              (tc-bind
+                                                (tc-bind
+                                                  (tc-bind
+                                                    (tc-bind
+                                                      (tc-bind
+                                                        (tc-bind
+                                                          (tc-bind
+                                                            (tc-bind
+                                                              (tc-bind
+                                                                (tc-bind
+                                                                  e18
+                                                                  "file-exists?"
+                                                                  (tc-fn1
+                                                                    (AstTyString)
+                                                                    (AstTyBool)))
+                                                                "file-exists-status"
+                                                                (tc-fn1
+                                                                  (AstTyString)
+                                                                  (AstTyI64)))
+                                                              "file-open-status"
+                                                              (tc-fn2
+                                                                (AstTyString)
+                                                                (AstTyI64)
+                                                                (AstTyI64)))
+                                                            "file-close-status"
+                                                            (tc-fn1
+                                                              (AstTyI64)
+                                                              (AstTyI64)))
+                                                          "fs-mkdir-status"
+                                                          (tc-fn1
+                                                            (AstTyString)
+                                                            (AstTyI64)))
+                                                        "fs-remove-file-status"
+                                                        (tc-fn1
+                                                          (AstTyString)
+                                                          (AstTyI64)))
+                                                      "fs-remove-dir-status"
+                                                      (tc-fn1
+                                                        (AstTyString)
+                                                        (AstTyI64)))
+                                                    "fs-rename-status"
+                                                    (tc-fn2
+                                                      (AstTyString)
+                                                      (AstTyString)
+                                                      (AstTyI64)))
+                                                  "fs-process-id"
+                                                  (tc-fn0 (AstTyI64)))
+                                                "fs-current-dir-status"
+                                                (tc-fn0 (AstTyI64)))
+                                              "fs-current-dir"
+                                              (tc-fn0 (AstTyString)))]
+                                          (let
+                                            [e20 : TcTypeEnv
+                                              (tc-bind
+                                                (tc-bind
+                                                  (tc-bind
+                                                    (tc-bind
+                                                      (tc-bind
+                                                        (tc-bind
+                                                          (tc-bind
+                                                            (tc-bind
+                                                              e19
+                                                              "file-read-chunk-status"
+                                                              (tc-fn2
+                                                                (AstTyI64)
+                                                                (AstTyI64)
+                                                                (AstTyI64)))
+                                                            "file-write-status"
+                                                            (tc-fn2
+                                                              (AstTyI64)
+                                                              (AstTyString)
+                                                              (AstTyI64)))
+                                                          "file-flush-status"
+                                                          (tc-fn1
+                                                            (AstTyI64)
+                                                            (AstTyI64)))
+                                                        "file-read-chunk-bytes"
+                                                        (tc-fn1
+                                                          (AstTyI64)
+                                                          (AstTyString)))
+                                                      "file-read-chunk-eof?"
+                                                      (tc-fn1
+                                                        (AstTyI64)
+                                                        (AstTyBool)))
+                                                    "cpuid"
+                                                    (tc-fn2
+                                                      (AstTyI64)
+                                                      (AstTyI64)
+                                                      (AstTyTuple
+                                                        (AstTypeCons
+                                                          (AstTyI32)
+                                                          (AstTypeCons
+                                                            (AstTyI32)
+                                                            (AstTypeCons
+                                                              (AstTyI32)
+                                                              (AstTypeCons
+                                                                (AstTyI32)
+                                                                (AstTypeNil))))))))
+                                                  "xgetbv"
+                                                  (tc-fn1 (AstTyI64) (AstTyI64)))
+                                                "substring"
+                                                (tc-fn3
+                                                  (AstTyString)
+                                                  (AstTyI64)
+                                                  (AstTyI64)
+                                                  (AstTyString)))]
+                                            (let
+                                              [e21 : TcTypeEnv
+                                                (tc-bind
+                                                  e20
+                                                  "string-slice"
+                                                  (tc-fn3
+                                                    (AstTyString)
+                                                    (AstTyI64)
+                                                    (AstTyI64)
+                                                    (AstTyString)))]
+                                              (let
+                                                [e22 : TcTypeEnv
+                                                  (tc-bind
+                                                    e21
+                                                    "string-append"
+                                                    (tc-fn2
+                                                      (AstTyString)
+                                                      (AstTyString)
+                                                      (AstTyString)))]
+                                                (let
+                                                  [e23 : TcTypeEnv
+                                                    (tc-bind
+                                                      e22
+                                                      "string-concat"
+                                                      (tc-fn2
+                                                        (AstTyString)
+                                                        (AstTyString)
+                                                        (AstTyString)))]
+                                                  (let
+                                                    [e24 : TcTypeEnv
+                                                      (tc-bind
+                                                        e23
+                                                        "read-stdin-line"
+                                                        (tc-fn0 (AstTyString)))]
+                                                    (let
+                                                      [e25 : TcTypeEnv
+                                                        (tc-bind
+                                                          e24
+                                                          "read-stdin-bytes"
+                                                          (tc-fn1
+                                                            (AstTyI64)
+                                                            (AstTyString)))]
+                                                      (let
+                                                        [e26 : TcTypeEnv
+                                                          (tc-bind
+                                                            e25
+                                                            "stdin-eof?"
+                                                            (tc-fn0 (AstTyBool)))]
+                                                        (let
+                                                          [e27 : TcTypeEnv
+                                                            (tc-bind
+                                                              e26
+                                                              "flush-stdout"
+                                                              (tc-fn0
+                                                                (AstTyUnit)))]
+                                                          (let
+                                                            [e28 : TcTypeEnv
+                                                              (tc-bind
+                                                                e27
+                                                                "panic"
+                                                                (tc-fn1
+                                                                  (AstTyString)
+                                                                  (AstTyNever)))]
+                                                            (tc-bind
+                                                              (tc-bind
+                                                                (tc-bind
+                                                                  (tc-bind
+                                                                    (tc-bind
+                                                                      e28
+                                                                      "error"
+                                                                      (tc-fn1
+                                                                        (AstTyString)
+                                                                        (AstTyNever)))
+                                                                    "env-var-exists?"
+                                                                    (tc-fn1
+                                                                      (AstTyString)
+                                                                      (AstTyBool)))
+                                                                  "env-var-value"
+                                                                  (tc-fn1
+                                                                    (AstTyString)
+                                                                    (AstTyString)))
+                                                                "env-path-separator"
+                                                                (tc-fn0
+                                                                  (AstTyString)))
+                                                              (tc-default-boundary-name)
+                                                              (AstTyUnit))))))))))))))))))))))))))))))))
 
 (define (tc-macro-helper-env [env : TcTypeEnv]) : TcTypeEnv
   (let
@@ -3048,6 +3237,8 @@
     [(string-eq name "fs-remove-dir-status") true]
     [(string-eq name "fs-rename-status") true]
     [(string-eq name "fs-process-id") true]
+    [(string-eq name "fs-current-dir-status") true]
+    [(string-eq name "fs-current-dir") true]
     [(string-eq name "panic") true]
     [(string-eq name "error") true]
     [(string-eq name "env-var-exists?") true]

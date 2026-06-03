@@ -4665,6 +4665,8 @@
     [(string-eq name "fs-remove-dir-status") true]
     [(string-eq name "fs-rename-status") true]
     [(string-eq name "fs-process-id") true]
+    [(string-eq name "fs-current-dir-status") true]
+    [(string-eq name "fs-current-dir") true]
     [(string-eq name "panic") true]
     [(string-eq name "error") true]
     [else (string-eq name "print-error")]))
@@ -6656,6 +6658,54 @@
         result-ty
         origin)]))
 
+(define (lower-fs-current-dir-status-call
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [args : AstExprList]
+  [result-ty : AstType]
+  [origin : AstExpr]) : ResultLowerExpr
+  (match args
+    [(AstExprNil)
+      (lower-runtime-call-values
+        state
+        "tl_fs_current_dir_status"
+        IrValueNil
+        result-ty)]
+    [_
+      (lower-direct-call
+        ctx
+        state
+        env
+        type-env
+        "fs-current-dir-status"
+        args
+        result-ty
+        origin)]))
+
+(define (lower-fs-current-dir-call
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [args : AstExprList]
+  [result-ty : AstType]
+  [origin : AstExpr]) : ResultLowerExpr
+  (match args
+    [(AstExprNil)
+      (lower-runtime-call-values state "tl_fs_current_dir" IrValueNil result-ty)]
+    [_
+      (lower-direct-call
+        ctx
+        state
+        env
+        type-env
+        "fs-current-dir"
+        args
+        result-ty
+        origin)]))
+
 (define (lower-file-open-status-call
   [ctx : TcContext]
   [state : LowerState]
@@ -7309,6 +7359,17 @@
       (lower-fs-rename-status-call ctx state env type-env args result-ty origin)]
     [(string-eq name "fs-process-id")
       (lower-fs-process-id-call ctx state env type-env args result-ty origin)]
+    [(string-eq name "fs-current-dir-status")
+      (lower-fs-current-dir-status-call
+        ctx
+        state
+        env
+        type-env
+        args
+        result-ty
+        origin)]
+    [(string-eq name "fs-current-dir")
+      (lower-fs-current-dir-call ctx state env type-env args result-ty origin)]
     [(or (string-eq name "panic") (string-eq name "error"))
       (lower-message-runtime-call
         ctx
@@ -12655,13 +12716,15 @@
 
 (define (compiler-lower-fs-status-source) : String
   "(define (main) : i64
-  (+ (fs-process-id)
-    (+ (fs-mkdir-status \"target/typelisp-fs\")
-      (+ (fs-remove-file-status \"target/typelisp-fs/artifact.o\")
-        (+ (fs-remove-dir-status \"target/typelisp-fs\")
-          (fs-rename-status
-            \"target/typelisp-fs/from name\"
-            \"target/typelisp-fs/to name\"))))))")
+  (+ (fs-current-dir-status)
+    (+ (string-length (fs-current-dir))
+      (+ (fs-process-id)
+        (+ (fs-mkdir-status \"target/typelisp-fs\")
+          (+ (fs-remove-file-status \"target/typelisp-fs/artifact.o\")
+            (+ (fs-remove-dir-status \"target/typelisp-fs\")
+              (fs-rename-status
+                \"target/typelisp-fs/from name\"
+                \"target/typelisp-fs/to name\"))))))))")
 
 (define (compiler-lower-raw-pointer-ops-source) : String
   "(extern raw-make : (-> (MutPtr i64)))
@@ -15457,53 +15520,84 @@
     [(OkCompilerLower program _)
       (match program
         [(IrProgram _ functions _)
-          (and
-            (=
-              (lower-test-functions-call-count
-                functions
-                ".L_tl_fs_mkdir_status")
-              1)
-            (and
-              (=
+          (let
+            [ok : bool true]
+            (begin
+              (if (=
+                (lower-test-functions-call-count
+                  functions
+                  ".L_tl_fs_mkdir_status")
+                1)
+                unit
+                (set! ok false))
+              (if (=
                 (lower-test-functions-call-count
                   functions
                   ".L_tl_fs_remove_file_status")
                 1)
-              (and
-                (=
-                  (lower-test-functions-call-count
-                    functions
-                    ".L_tl_fs_remove_dir_status")
-                  1)
-                (and
-                  (=
-                    (lower-test-functions-call-count
-                      functions
-                      ".L_tl_fs_rename_status")
-                    1)
-                  (and
-                    (=
-                      (lower-test-functions-call-count
-                        functions
-                        ".L_tl_fs_process_id")
-                      1)
-                    (and
-                      (=
-                        (lower-test-functions-call-count
-                          functions
-                          "fs-mkdir-status")
-                        0)
-                      (and
-                        (=
-                          (lower-test-functions-call-count
-                            functions
-                            "fs-rename-status")
-                          0)
-                        (=
-                          (lower-test-functions-call-count
-                            functions
-                            "fs-process-id")
-                          0))))))))])]
+                unit
+                (set! ok false))
+              (if (=
+                (lower-test-functions-call-count
+                  functions
+                  ".L_tl_fs_remove_dir_status")
+                1)
+                unit
+                (set! ok false))
+              (if (=
+                (lower-test-functions-call-count
+                  functions
+                  ".L_tl_fs_rename_status")
+                1)
+                unit
+                (set! ok false))
+              (if (=
+                (lower-test-functions-call-count
+                  functions
+                  ".L_tl_fs_process_id")
+                1)
+                unit
+                (set! ok false))
+              (if (=
+                (lower-test-functions-call-count
+                  functions
+                  "tl_fs_current_dir_status")
+                1)
+                unit
+                (set! ok false))
+              (if (=
+                (lower-test-functions-call-count functions "tl_fs_current_dir")
+                1)
+                unit
+                (set! ok false))
+              (if (=
+                (lower-test-functions-call-count functions "fs-mkdir-status")
+                0)
+                unit
+                (set! ok false))
+              (if (=
+                (lower-test-functions-call-count functions "fs-rename-status")
+                0)
+                unit
+                (set! ok false))
+              (if (=
+                (lower-test-functions-call-count functions "fs-process-id")
+                0)
+                unit
+                (set! ok false))
+              (if (=
+                (lower-test-functions-call-count
+                  functions
+                  "fs-current-dir-status")
+                0)
+                unit
+                (set! ok false))
+              (if (=
+                (lower-test-functions-call-count functions "fs-current-dir")
+                0)
+                unit
+                (set! ok false))
+              ok))])]
     [(ErrCompilerLower _) false]))
 
 (define (compiler-lower-region-source) : String

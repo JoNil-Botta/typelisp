@@ -95,7 +95,6 @@
     bool
     bool
     bool
-    bool
     bool))
 
 ;; Backend code-generation target (#646). Linux/System V and Windows x64 are
@@ -7253,6 +7252,7 @@
           _
           _
           _
+          _
           _)
         (if (or arg-count arg)
           "    movq %rcx, .L_tl_argc(%rip)
@@ -8406,10 +8406,12 @@
     [(IrExternNil) false]
     [(IrExternCons item rest)
       (match item
-        [(IrExtern extern-name _ _ _ _)
+        [(IrExtern extern-name _ _ link-symbol)
           (if (string-eq extern-name name)
             true
-            (compiler-backend-extern-list-references? rest name))])]))
+            (if (string-eq link-symbol name)
+              true
+              (compiler-backend-extern-list-references? rest name)))])]))
 
 (define (compiler-backend-extern-list-link-symbol
   [externs : CompilerIrExternList]
@@ -8574,7 +8576,8 @@
         provides-env-var-value
         provides-env-path-separator
         provides-div-abort
-        provides-shift-abort)
+        provides-shift-abort
+        provides-fs-current-dir)
       (or
         (backend-or8
           (compiler-backend-provides-runtime-name? name "tl_alloc" alloc)
@@ -8726,8 +8729,14 @@
                       name
                       ".L_tl_fs_process_id"
                       provides-fs)
-                    false
-                    false
+                    (compiler-backend-provides-runtime-name?
+                      name
+                      "tl_fs_current_dir_status"
+                      provides-fs-current-dir)
+                    (compiler-backend-provides-runtime-name?
+                      name
+                      "tl_fs_current_dir"
+                      provides-fs-current-dir)
                     false)
                   (or
                     (compiler-backend-provides-runtime-name?
@@ -8928,6 +8937,12 @@
         ".L_tl_fs_rename_status")]
     [extern-fs-process-id : bool
       (compiler-backend-extern-list-references? externs ".L_tl_fs_process_id")]
+    [extern-fs-current-dir-status : bool
+      (compiler-backend-extern-list-references?
+        externs
+        "tl_fs_current_dir_status")]
+    [extern-fs-current-dir : bool
+      (compiler-backend-extern-list-references? externs "tl_fs_current_dir")]
     [extern-read-line : bool
       (compiler-backend-extern-list-references? externs ".L_tl_read_stdin_line")]
     [extern-read-bytes : bool
@@ -9052,6 +9067,12 @@
       (compiler-backend-function-list-calls? functions ".L_tl_fs_rename_status")]
     [calls-fs-process-id : bool
       (compiler-backend-function-list-calls? functions ".L_tl_fs_process_id")]
+    [calls-fs-current-dir-status : bool
+      (compiler-backend-function-list-calls?
+        functions
+        "tl_fs_current_dir_status")]
+    [calls-fs-current-dir : bool
+      (compiler-backend-function-list-calls? functions "tl_fs_current_dir")]
     [calls-read-line : bool
       (compiler-backend-function-list-calls? functions ".L_tl_read_stdin_line")]
     [calls-read-bytes : bool
@@ -9223,6 +9244,123 @@
           needs-file-exists)
         (or
           (backend-or8
+            extern-fs-mkdir-status
+            extern-fs-remove-file-status
+            extern-fs-remove-dir-status
+            extern-fs-rename-status
+            extern-fs-process-id
+            false
+            false
+            false)
+          (backend-or8
+            calls-fs-mkdir-status
+            calls-fs-remove-file-status
+            calls-fs-remove-dir-status
+            calls-fs-rename-status
+            calls-fs-process-id
+            false
+            false
+            false))]
+      [needs-fs-current-dir : bool
+        (or
+          (or extern-fs-current-dir-status extern-fs-current-dir)
+          (or calls-fs-current-dir-status calls-fs-current-dir))]
+      [needs-read-line : bool (or extern-read-line calls-read-line)]
+      [needs-read-bytes : bool (or extern-read-bytes calls-read-bytes)]
+      [needs-stdin-eof : bool (or extern-stdin-eof calls-stdin-eof)]
+      [needs-flush-stdout : bool (or extern-flush-stdout calls-flush-stdout)]
+      [needs-process-output : bool
+        (and
+          (not defines-process-output)
+          (or extern-process-output calls-process-output))]
+      [needs-region-mark : bool
+        (and
+          (not defines-region-mark)
+          (or extern-region-mark calls-region-mark))]
+      [needs-region-reset : bool
+        (and
+          (not defines-region-reset)
+          (or extern-region-reset calls-region-reset))]
+      [needs-random-system-seed : bool
+        (and
+          (not defines-random-system-seed)
+          (or extern-random-system-seed calls-random-system-seed))]
+      [needs-windows-setup-instances : bool
+        (and
+          (not defines-windows-setup-instances)
+          (or extern-windows-setup-instances calls-windows-setup-instances))]
+      [needs-windows-sdk-registry-install : bool
+        (and
+          (not defines-windows-sdk-registry-install)
+          (or
+            extern-windows-sdk-registry-install
+            calls-windows-sdk-registry-install))]
+      [needs-env-var-exists : bool
+        (and
+          (not defines-env-var-exists)
+          (or extern-env-var-exists calls-env-var-exists))]
+      [needs-env-var-value : bool
+        (and
+          (not defines-env-var-value)
+          (or extern-env-var-value calls-env-var-value))]
+      [needs-env-path-separator : bool
+        (and
+          (not defines-env-path-separator)
+          (or extern-env-path-separator calls-env-path-separator))]
+      [direct-alloc : bool
+        (and (not defines-alloc) (or extern-alloc calls-alloc))]
+      (let
+        [needs-abort : bool
+          (or
+            direct-abort
+            (or
+              needs-arg
+              (or needs-read-file (or needs-write-file needs-file-exists))))]
+        [needs-alloc : bool
+          (or
+            (backend-or8
+              direct-alloc
+              needs-int-to-string
+              needs-substring
+              needs-concat
+              needs-arg
+              needs-read-file
+              needs-write-file
+              needs-file-exists)
+            (or
+              (backend-or8
+                needs-file-handle
+                needs-file-read-chunk
+                needs-fs-runtime
+                needs-fs-current-dir
+                needs-process-output
+                needs-read-line
+                needs-read-bytes
+                needs-random-system-seed)
+              (or
+                needs-windows-setup-instances
+                (backend-or4
+                  needs-windows-sdk-registry-install
+                  needs-env-var-value
+                  needs-env-path-separator
+                  false))))]
+        (OkBackendRuntimePlan
+          (BackendRuntimePlan
+            needs-alloc
+            needs-oob
+            needs-substring
+            needs-concat
+            needs-string-eq
+            needs-string-to-int
+            needs-int-to-string
+            needs-abort
+            needs-print-err
+            needs-print-str
+            needs-arg-count
+            needs-arg
+            needs-read-file
+            needs-write-file
+            needs-file-exists
             needs-file-handle
             needs-file-read-chunk
             needs-fs-runtime
@@ -9235,44 +9373,9 @@
             needs-windows-sdk-registry-install
             needs-env-var-value
             needs-env-path-separator
-            false)))]
-    (OkBackendRuntimePlan
-      (BackendRuntimePlan
-        needs-alloc
-        needs-oob
-        needs-substring
-        needs-concat
-        needs-string-eq
-        needs-string-to-int
-        needs-int-to-string
-        needs-abort
-        needs-print-err
-        needs-print-str
-        needs-print-char
-        needs-print-f64
-        needs-arg-count
-        needs-arg
-        needs-read-file
-        needs-write-file
-        needs-file-exists
-        needs-file-handle
-        needs-file-read-chunk
-        needs-fs-runtime
-        needs-process-output
-        needs-read-line
-        needs-read-bytes
-        needs-stdin-eof
-        needs-flush-stdout
-        needs-region-mark
-        needs-region-reset
-        needs-random-system-seed
-        needs-windows-setup-instances
-        needs-windows-sdk-registry-install
-        needs-env-var-exists
-        needs-env-var-value
-        needs-env-path-separator
-        needs-div-abort
-        needs-shift-abort))))
+            needs-div-abort
+            needs-shift-abort
+            needs-fs-current-dir))))))
 
 (define (compiler-backend-runtime-plan [program : CompilerIrProgram]) : ResultBackendRuntimePlan
   (match program
@@ -9286,10 +9389,8 @@
     [(IrExternNil) ""]
     [(IrExternCons item rest)
       (match item
-        [(IrExtern name _ _ link-symbol _)
-          (if (and
-            (string-eq name link-symbol)
-            (compiler-backend-plan-provides? plan name))
+        [(IrExtern name _ _ link-symbol)
+          (if (compiler-backend-plan-provides? plan link-symbol)
             (compiler-backend-emit-externs rest plan)
             (backend-cat4
               ".extern "
@@ -9605,7 +9706,8 @@ tl_current_arena:
         env-var-value
         _
         div-abort
-        shift-abort)
+        shift-abort
+        _)
       (string-append
         (string-append
           (compiler-backend-runtime-arena-data-for-target target)
@@ -11791,6 +11893,66 @@ tl_region_reset:
 
 ")
 
+(define (compiler-backend-runtime-fs-current-dir-functions) : String
+  "tl_fs_current_dir_status:
+    push %rbp
+    mov %rsp, %rbp
+    push %rbx
+    sub $8, %rsp
+    movq $4096, %rdi
+    call tl_alloc
+    movq %rax, %rbx
+    movq $79, %rax
+    movq %rbx, %rdi
+    movq $4096, %rsi
+    syscall
+    testq %rax, %rax
+    js .L_tl_fs_current_dir_status_error_from_rax
+    xorq %rax, %rax
+    jmp .L_tl_fs_current_dir_status_return
+.L_tl_fs_current_dir_status_error_from_rax:
+    negq %rax
+.L_tl_fs_current_dir_status_return:
+    add $8, %rsp
+    pop %rbx
+    pop %rbp
+    ret
+
+tl_fs_current_dir:
+    push %rbp
+    mov %rsp, %rbp
+    push %rbx
+    push %r12
+    push %r13
+    sub $8, %rsp
+    movq $4096, %rdi
+    call tl_alloc
+    movq %rax, %rbx
+    movq $79, %rax
+    movq %rbx, %rdi
+    movq $4096, %rsi
+    syscall
+    testq %rax, %rax
+    js .L_tl_fs_current_dir_empty
+    decq %rax
+    movq %rax, %r12
+    jmp .L_tl_fs_current_dir_alloc_result
+.L_tl_fs_current_dir_empty:
+    xorq %r12, %r12
+.L_tl_fs_current_dir_alloc_result:
+    movq $16, %rdi
+    call tl_alloc
+    movq %rbx, 0(%rax)
+    movq %r12, 8(%rax)
+    add $8, %rsp
+    pop %r13
+    pop %r12
+    pop %rbx
+    pop %rbp
+    ret
+
+")
+
 (define (compiler-backend-runtime-windows-fs-mkdir-status-functions) : String
   ".L_tl_fs_mkdir_status:
     push %rbp
@@ -11987,6 +12149,36 @@ tl_region_reset:
     ret
 
 "))
+
+(define (compiler-backend-runtime-windows-fs-current-dir-functions) : String
+  "tl_fs_current_dir_status:
+    movq $38, %rax
+    ret
+
+tl_fs_current_dir:
+    push %rbp
+    mov %rsp, %rbp
+    push %rbx
+    sub $40, %rsp
+    xorq %rcx, %rcx
+    call tl_alloc
+    movq %rax, %rbx
+    movq $16, %rcx
+    call tl_alloc
+    movq %rbx, 0(%rax)
+    movq $0, 8(%rax)
+    add $40, %rsp
+    pop %rbx
+    pop %rbp
+    ret
+
+")
+
+(define (compiler-backend-runtime-fs-current-dir-functions-for-target
+  [target : CompilerBackendTarget]) : String
+  (if (compiler-backend-target-windows? target)
+    (compiler-backend-runtime-windows-fs-current-dir-functions)
+    (compiler-backend-runtime-fs-current-dir-functions)))
 
 (define (compiler-backend-runtime-fs-functions-for-target
   [target : CompilerBackendTarget]) : String
@@ -15377,7 +15569,8 @@ tl_windows_sdk_registry_install:
         env-var-value
         env-path-separator
         div-abort
-        shift-abort)
+        shift-abort
+        fs-current-dir)
       (let
         [alloc-asm : String
           (if alloc
@@ -15529,6 +15722,11 @@ tl_windows_sdk_registry_install:
           (if fs-runtime
             (compiler-backend-runtime-fs-functions-for-target target)
             "")]
+        [fs-current-dir-asm : String
+          (if fs-current-dir
+            (compiler-backend-runtime-fs-current-dir-functions-for-target
+              target)
+            "")]
         [process-output-asm : String
           (if process-output
             (if (compiler-backend-target-windows? target)
@@ -15661,7 +15859,7 @@ tl_windows_sdk_registry_install:
           (backend-cat5
             file-handle-asm
             file-read-chunk-asm
-            fs-asm
+            (string-append fs-asm fs-current-dir-asm)
             runtime-tail-asm
             (backend-cat5
               random-and-windows-asm
@@ -15820,6 +16018,7 @@ tl_windows_sdk_registry_install:
             env-var-value
             _
             _
+            _
             _)
           (compiler-backend-entry
             (or arg-count arg)
@@ -15870,7 +16069,8 @@ tl_windows_sdk_registry_install:
         env-var-value
         env-path-separator
         div-abort
-        shift-abort)
+        shift-abort
+        fs-current-dir)
       (not
         (or
           (backend-or8
@@ -15897,26 +16097,28 @@ tl_windows_sdk_registry_install:
               (or
                 (or fs-runtime file-read-chunk)
                 (or
-                  process-output
+                  fs-current-dir
                   (or
-                    read-line
+                    process-output
                     (or
-                      (backend-or8
-                        read-bytes
-                        stdin-eof
-                        flush-stdout
-                        region-mark
-                        region-reset
-                        random-system-seed
-                        windows-setup-instances
-                        windows-sdk-registry-install)
+                      read-line
                       (or
-                        shift-abort
-                        (backend-or4
-                          env-var-exists
-                          env-var-value
-                          env-path-separator
-                          div-abort))))))))))]))
+                        (backend-or8
+                          read-bytes
+                          stdin-eof
+                          flush-stdout
+                          region-mark
+                          region-reset
+                          random-system-seed
+                          windows-setup-instances
+                          windows-sdk-registry-install)
+                        (or
+                          shift-abort
+                          (backend-or4
+                            env-var-exists
+                            env-var-value
+                            env-path-separator
+                            div-abort)))))))))))]))
 
 ;; All runtime helpers the backend can be asked to emit now have a Windows
 ;; variant (region mark/reset and the env-var/env-path helpers were the last

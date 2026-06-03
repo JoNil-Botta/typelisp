@@ -14,6 +14,8 @@
 
 (import "compiler_ctfe.tl")
 
+(import "stdlib/hashmap.tl")
+
 (defenum LowerNameEnv
   (LowerNameNil)
   (LowerNameBind String String LowerNameEnv))
@@ -23,7 +25,7 @@
   (LowerStringCons String LowerStringSet))
 
 (defenum LowerReachState
-  (LowerReachState LowerStringSet LowerStringSet))
+  (LowerReachState StringI64Map LowerStringSet))
 
 (defenum LowerMaybeFunctionBody
   (LowerNoFunctionBody)
@@ -735,7 +737,7 @@
   [paths : AstDeclPathList]
   [entry-path : String]
   [module : String]
-  [out : LowerStringSet]) : LowerStringSet
+  [out : StringI64Map]) : StringI64Map
   (match decls
     [(AstDeclNil) out]
     [(AstDeclCons decl rest)
@@ -762,9 +764,10 @@
               rest-paths
               entry-path
               module
-              (lower-string-set-insert
+              (string-i64-map-put
                 out
-                (lower-decl-logical-name entry-path decl-path module name)))]
+                (lower-decl-logical-name entry-path decl-path module name)
+                1))]
           [_
             (lower-function-set-from-decls-in-module
               rest
@@ -776,30 +779,30 @@
 (define (lower-function-set-from-decls
   [decls : AstDeclList]
   [paths : AstDeclPathList]
-  [entry-path : String]) : LowerStringSet
+  [entry-path : String]) : StringI64Map
   (lower-function-set-from-decls-in-module
     decls
     paths
     entry-path
     ""
-    LowerStringNil))
+    (string-i64-map-with-capacity 8192)))
 
 (define (lower-reach-add-logical
-  [all-functions : LowerStringSet]
+  [all-functions : StringI64Map]
   [state : LowerReachState]
   [logical-name : String]) : LowerReachState
   (match state
     [(LowerReachState reachable worklist)
-      (if (lower-string-set-contains? all-functions logical-name)
-        (if (lower-string-set-contains? reachable logical-name)
+      (if (string-i64-map-contains? all-functions logical-name)
+        (if (string-i64-map-contains? reachable logical-name)
           state
           (LowerReachState
-            (LowerStringCons logical-name reachable)
+            (string-i64-map-put reachable logical-name 1)
             (LowerStringCons logical-name worklist)))
         state)]))
 
 (define (lower-reach-add-source
-  [all-functions : LowerStringSet]
+  [all-functions : StringI64Map]
   [names : LowerNameEnv]
   [state : LowerReachState]
   [source-name : String]) : LowerReachState
@@ -809,7 +812,7 @@
     (lower-name-env-resolve names source-name)))
 
 (define (lower-reach-expr-list
-  [all-functions : LowerStringSet]
+  [all-functions : StringI64Map]
   [names : LowerNameEnv]
   [state : LowerReachState]
   [exprs : AstExprList]) : LowerReachState
@@ -823,7 +826,7 @@
         rest)]))
 
 (define (lower-reach-let-bindings
-  [all-functions : LowerStringSet]
+  [all-functions : StringI64Map]
   [names : LowerNameEnv]
   [state : LowerReachState]
   [bindings : AstLetBindingList]) : LowerReachState
@@ -839,7 +842,7 @@
             rest)])]))
 
 (define (lower-reach-match-arms
-  [all-functions : LowerStringSet]
+  [all-functions : StringI64Map]
   [names : LowerNameEnv]
   [state : LowerReachState]
   [arms : AstMatchArmList]) : LowerReachState
@@ -855,7 +858,7 @@
             rest)])]))
 
 (define (lower-reach-resource-bindings
-  [all-functions : LowerStringSet]
+  [all-functions : StringI64Map]
   [names : LowerNameEnv]
   [state : LowerReachState]
   [bindings : AstResourceBindingList]) : LowerReachState
@@ -875,7 +878,7 @@
             rest)])]))
 
 (define (lower-reach-call-callee
-  [all-functions : LowerStringSet]
+  [all-functions : StringI64Map]
   [names : LowerNameEnv]
   [state : LowerReachState]
   [callee : AstExpr]) : LowerReachState
@@ -884,7 +887,7 @@
     [_ (lower-reach-expr all-functions names state callee)]))
 
 (define (lower-reach-expr
-  [all-functions : LowerStringSet]
+  [all-functions : StringI64Map]
   [names : LowerNameEnv]
   [state : LowerReachState]
   [expr : AstExpr]) : LowerReachState
@@ -1051,7 +1054,7 @@
       (lower-reach-expr all-functions names state value)]))
 
 (define (lower-reach-global-decls
-  [all-functions : LowerStringSet]
+  [all-functions : StringI64Map]
   [names : LowerNameEnv]
   [state : LowerReachState]
   [decls : AstDeclList]) : LowerReachState
@@ -1129,7 +1132,7 @@
   (lower-find-function-body-in-module decls paths entry-path "" target))
 
 (define (lower-reach-process
-  [all-functions : LowerStringSet]
+  [all-functions : StringI64Map]
   [names : LowerNameEnv]
   [decls : AstDeclList]
   [paths : AstDeclPathList]
@@ -1165,7 +1168,7 @@
   [paths : AstDeclPathList]
   [entry-path : String]
   [module : String]
-  [reachable : LowerStringSet]) : AstDeclList
+  [reachable : StringI64Map]) : AstDeclList
   (match decls
     [(AstDeclNil) AstDeclNil]
     [(AstDeclCons decl rest)
@@ -1191,7 +1194,7 @@
           [(AstDeclDefFn name _ _ _)
             (if (or
               (lower-name-has-clone-prefix? name)
-              (lower-string-set-contains?
+              (string-i64-map-contains?
                 reachable
                 (lower-decl-logical-name entry-path decl-path module name)))
               (AstDeclCons
@@ -1223,7 +1226,7 @@
   [paths : AstDeclPathList]
   [entry-path : String]
   [module : String]
-  [reachable : LowerStringSet]) : AstDeclPathList
+  [reachable : StringI64Map]) : AstDeclPathList
   (match decls
     [(AstDeclNil) AstDeclPathNil]
     [(AstDeclCons decl rest)
@@ -1247,7 +1250,7 @@
                 next-module
                 reachable))]
           [(AstDeclDefFn name _ _ _)
-            (if (lower-string-set-contains?
+            (if (string-i64-map-contains?
               reachable
               (lower-decl-logical-name entry-path decl-path module name))
               (AstDeclPathCons
@@ -1285,7 +1288,7 @@
     false))
 
 (define (lower-reach-add-clone-helpers
-  [all-functions : LowerStringSet]
+  [all-functions : StringI64Map]
   [decls : AstDeclList]
   [state : LowerReachState]) : LowerReachState
   (match decls
@@ -1309,9 +1312,9 @@
   (match program
     [(AstProgram decls)
       (let
-        [all-functions : LowerStringSet
+        [all-functions : StringI64Map
           (lower-function-set-from-decls decls paths entry-path)]
-        (if (lower-string-set-contains? all-functions "main")
+        (if (string-i64-map-contains? all-functions "main")
           (match (lower-reach-process
             all-functions
             names
@@ -1326,7 +1329,9 @@
                 decls
                 (lower-reach-add-logical
                   all-functions
-                  (LowerReachState LowerStringNil LowerStringNil)
+                  (LowerReachState
+                    (string-i64-map-with-capacity 8192)
+                    LowerStringNil)
                   "main"))
               decls))
             [(LowerReachState reachable _)

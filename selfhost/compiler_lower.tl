@@ -2007,6 +2007,49 @@
     [(AstTyString) true]
     [_ (lower-str-ref-type? ctx ty)]))
 
+(define (lower-supported-reference-referent-type?
+  [ctx : TcContext]
+  [ty : AstType]) : bool
+  (match (tc-type-strip-region (tc-resolve-type ctx ty))
+    [(AstTyI64) true]
+    [(AstTyU64) true]
+    [(AstTyF64) true]
+    [(AstTyI32) true]
+    [(AstTyU32) true]
+    [(AstTyF32) true]
+    [(AstTyI16) true]
+    [(AstTyU16) true]
+    [(AstTyI8) true]
+    [(AstTyU8) true]
+    [(AstTyBool) true]
+    [(AstTyChar) true]
+    [(AstTyStr) true]
+    [_ false]))
+
+(define (lower-supported-reference-type-list?
+  [ctx : TcContext]
+  [types : AstTypeList]) : bool
+  (match types
+    [(AstTypeNil) true]
+    [(AstTypeCons head rest)
+      (and
+        (lower-supported-reference-type? ctx head)
+        (lower-supported-reference-type-list? ctx rest))]))
+
+(define (lower-supported-reference-type? [ctx : TcContext] [ty : AstType]) : bool
+  (let
+    [resolved : AstType (tc-type-strip-region (tc-resolve-type ctx ty))]
+    (if (not (tc-type-contains-reference? resolved))
+      true
+      (match resolved
+        [(AstTyRef _ inner)
+          (lower-supported-reference-referent-type? ctx inner)]
+        [(AstTyMutRef _ _) false]
+        [(AstTyTuple elems) (lower-supported-reference-type-list? ctx elems)]
+        [(AstTyArray elem _) (lower-supported-reference-type? ctx elem)]
+        [(AstTyRegion _ inner) (lower-supported-reference-type? ctx inner)]
+        [_ false]))))
+
 (define (lower-borrowed-str-expr
   [ctx : TcContext]
   [state : LowerState]
@@ -2024,6 +2067,270 @@
       [(ErrLowerExpr message) (ErrLowerExpr message)])
     (ErrLowerExpr
       (lower-diagnostic-at-expr origin (lower-reference-support-message)))))
+
+(define (lower-borrow-copy-to-storage
+  [ctx : TcContext]
+  [state : LowerState]
+  [value : CompilerIrValue]
+  [referent-ty : AstType]
+  [result-ty : AstType]) : LowerExpr
+  (let
+    [resolved : AstType
+      (tc-type-without-regions (tc-resolve-type ctx referent-ty))]
+    [size : i64 (lower-type-size ctx resolved)]
+    (match (lower-reserve-heap-storage
+      state
+      (if (= size 0)
+        1
+        size)
+      result-ty)
+      [(LowerExpr base-state base _)
+        (LowerExpr
+          (if (> size 0)
+            (lower-store-at-offset base-state base 0 value resolved)
+            base-state)
+          base
+          result-ty)])))
+
+(define (lower-borrow-var-address
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [name : String]
+  [origin : AstExpr]
+  [result-ty : AstType]) : ResultLowerExpr
+  (match (tc-lookup type-env name)
+    [(OkTcType place-ty)
+      (if (tc-type-contains-reference? place-ty)
+        (ErrLowerExpr
+          (lower-diagnostic-at-expr origin (lower-reference-support-message)))
+        (let
+          [referent-ty : AstType (tc-borrow-referent-type place-ty)]
+          (match (sym-i64-lookup env name)
+            [(SomeI64 id)
+              (OkLowerExpr
+                (lower-borrow-copy-to-storage
+                  ctx
+                  state
+                  (IrValueVar id)
+                  referent-ty
+                  result-ty))]
+            [(NoneI64)
+              (OkLowerExpr
+                (LowerExpr
+                  state
+                  (IrValueGlobalAddr (lower-resolve-name state name))
+                  result-ty))])))]
+    [(ErrTcType message)
+      (ErrLowerExpr (lower-diagnostic-at-expr origin message))]))
+
+(define (lower-borrow-struct-field-address
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [receiver : AstExpr]
+  [field : String]
+  [origin : AstExpr]
+  [result-ty : AstType]) : ResultLowerExpr
+  (match (lower-expr ctx state env type-env receiver)
+    [(OkLowerExpr lowered)
+      (match lowered
+        [(LowerExpr receiver-state receiver-value receiver-ty)
+          (match (tc-resolve-type ctx receiver-ty)
+            [(AstTyStruct struct-name)
+              (match (lower-struct-field-info ctx struct-name field)
+                [(OkLowerFieldInfo info)
+                  (match info
+                    [(LowerFieldInfo offset _)
+                      (match (lower-gep-byte
+                        receiver-state
+                        receiver-value
+                        offset)
+                        [(LowerExpr ptr-state ptr _)
+                          (OkLowerExpr (LowerExpr ptr-state ptr result-ty))])])]
+                [(ErrLowerFieldInfo message) (ErrLowerExpr message)])]
+            [_
+              (ErrLowerExpr
+                (lower-diagnostic-at-expr
+                  origin
+                  "lower: struct-get borrow requires struct place"))])])]
+    [(ErrLowerExpr message) (ErrLowerExpr message)]))
+
+(define (lower-borrow-tuple-field-address
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [tuple-expr : AstExpr]
+  [index : i64]
+  [origin : AstExpr]
+  [result-ty : AstType]) : ResultLowerExpr
+  (match (lower-expr ctx state env type-env tuple-expr)
+    [(OkLowerExpr lowered)
+      (match lowered
+        [(LowerExpr tuple-state tuple-value tuple-ty)
+          (match (tc-resolve-type ctx tuple-ty)
+            [(AstTyTuple elem-tys)
+              (match (lower-tuple-elem-info ctx elem-tys index 0 0)
+                [(OkLowerFieldInfo info)
+                  (match info
+                    [(LowerFieldInfo offset _)
+                      (match (lower-gep-byte tuple-state tuple-value offset)
+                        [(LowerExpr ptr-state ptr _)
+                          (OkLowerExpr (LowerExpr ptr-state ptr result-ty))])])]
+                [(ErrLowerFieldInfo message) (ErrLowerExpr message)])]
+            [_
+              (ErrLowerExpr
+                (lower-diagnostic-at-expr
+                  origin
+                  "lower: tuple-ref borrow requires tuple place"))])])]
+    [(ErrLowerExpr message) (ErrLowerExpr message)]))
+
+(define (lower-borrow-array-element-address
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [arr : AstExpr]
+  [index : AstExpr]
+  [origin : AstExpr]
+  [result-ty : AstType]) : ResultLowerExpr
+  (match (tc-expr ctx type-env arr)
+    [(OkTcType arr-ty)
+      (match (tc-type-strip-region arr-ty)
+        [(AstTyDynArray elem-ty)
+          (match (lower-expr ctx state env type-env arr)
+            [(OkLowerExpr arr-lowered)
+              (match arr-lowered
+                [(LowerExpr arr-state arr-value _)
+                  (match (tc-expr ctx type-env index)
+                    [(OkTcType idx-ty)
+                      (match (lower-expr ctx arr-state env type-env index)
+                        [(OkLowerExpr idx-lowered)
+                          (match idx-lowered
+                            [(LowerExpr idx-state idx-value _)
+                              (match (lower-array-element-addr
+                                idx-state
+                                arr-value
+                                idx-value
+                                idx-ty
+                                (tc-type-without-regions elem-ty))
+                                [(LowerExpr addr-state elem-ptr _)
+                                  (OkLowerExpr
+                                    (LowerExpr addr-state elem-ptr result-ty))])])]
+                        [(ErrLowerExpr message) (ErrLowerExpr message)])]
+                    [(ErrTcType message)
+                      (ErrLowerExpr (lower-diagnostic-at-expr index message))])])]
+            [(ErrLowerExpr message) (ErrLowerExpr message)])]
+        [(AstTyArray elem-ty elem-count)
+          (let
+            [fixed-elem-ty : AstType (tc-type-without-regions elem-ty)]
+            (match (lower-expr ctx state env type-env arr)
+              [(OkLowerExpr arr-lowered)
+                (match arr-lowered
+                  [(LowerExpr arr-state arr-value _)
+                    (match (tc-expr ctx type-env index)
+                      [(OkTcType idx-ty)
+                        (match (lower-expr ctx arr-state env type-env index)
+                          [(OkLowerExpr idx-lowered)
+                            (match idx-lowered
+                              [(LowerExpr idx-state idx-value _)
+                                (match (lower-fixed-array-element-addr
+                                  idx-state
+                                  arr-value
+                                  idx-value
+                                  idx-ty
+                                  fixed-elem-ty
+                                  elem-count)
+                                  [(LowerExpr addr-state elem-ptr _)
+                                    (OkLowerExpr
+                                      (LowerExpr addr-state elem-ptr result-ty))])])]
+                          [(ErrLowerExpr message) (ErrLowerExpr message)])]
+                      [(ErrTcType message)
+                        (ErrLowerExpr (lower-diagnostic-at-expr index message))])])]
+              [(ErrLowerExpr message) (ErrLowerExpr message)]))]
+        [_
+          (ErrLowerExpr
+            (lower-diagnostic-at-expr
+              origin
+              "lower: array-ref borrow requires array place"))])]
+    [(ErrTcType message) (ErrLowerExpr (lower-diagnostic-at-expr arr message))]))
+
+(define (lower-borrow-place-address
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [place : AstExpr]
+  [origin : AstExpr]
+  [result-ty : AstType]) : ResultLowerExpr
+  (match (ast-expr-unspan place)
+    [(AstExprVar name)
+      (lower-borrow-var-address ctx state env type-env name origin result-ty)]
+    [(AstExprStructGet receiver field)
+      (lower-borrow-struct-field-address
+        ctx
+        state
+        env
+        type-env
+        receiver
+        field
+        origin
+        result-ty)]
+    [(AstExprTupleRef tuple-expr index)
+      (lower-borrow-tuple-field-address
+        ctx
+        state
+        env
+        type-env
+        tuple-expr
+        index
+        origin
+        result-ty)]
+    [(AstExprArrayRef arr index)
+      (lower-borrow-array-element-address
+        ctx
+        state
+        env
+        type-env
+        arr
+        index
+        origin
+        result-ty)]
+    [_
+      (ErrLowerExpr
+        (lower-diagnostic-at-expr
+          origin
+          "lower: borrow requires a local, parameter, or aggregate place"))]))
+
+(define (lower-borrow-expr
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [inner : AstExpr]
+  [origin : AstExpr]
+  [expr-ty : AstType]) : ResultLowerExpr
+  (if (lower-str-ref-type? ctx expr-ty)
+    (lower-borrowed-str-expr ctx state env type-env inner origin expr-ty)
+    (match (tc-type-strip-region (tc-resolve-type ctx expr-ty))
+      [(AstTyRef _ referent-ty)
+        (if (lower-supported-reference-referent-type? ctx referent-ty)
+          (lower-borrow-place-address
+            ctx
+            state
+            env
+            type-env
+            inner
+            origin
+            expr-ty)
+          (ErrLowerExpr
+            (lower-diagnostic-at-expr origin (lower-reference-support-message))))]
+      [_
+        (ErrLowerExpr
+          (lower-diagnostic-at-expr origin (lower-reference-support-message)))])))
 
 (define (lower-store-values
   [ctx : TcContext]
@@ -4524,7 +4831,7 @@
                 (lower-cast-value inner-state value inner-ty expr-ty))])]
         [(ErrLowerExpr message) (ErrLowerExpr message)])]
     [(AstExprBorrow _ inner)
-      (lower-borrowed-str-expr ctx state env type-env inner origin expr-ty)]
+      (lower-borrow-expr ctx state env type-env inner origin expr-ty)]
     [(AstExprUnary op inner)
       (match (lower-expr ctx state env type-env inner)
         [(OkLowerExpr lowered)
@@ -11171,11 +11478,7 @@
             (lower-param-list ctx rest (+ idx 1)))])]))
 
 (define (lower-supported-function-param-type? [ctx : TcContext] [ty : AstType]) : bool
-  (let
-    [resolved : AstType (tc-resolve-type ctx ty)]
-    (if (tc-type-contains-reference? resolved)
-      (lower-str-ref-type? ctx resolved)
-      true)))
+  (lower-supported-reference-type? ctx ty))
 
 (define (lower-param-list-contains-unsupported-reference?
   [ctx : TcContext]
@@ -11201,7 +11504,7 @@
   [mode : CompilerLowerMode]) : ResultLowerFunction
   (if (or
     (lower-param-list-contains-unsupported-reference? ctx params)
-    (tc-type-contains-reference? (tc-resolve-type ctx ret)))
+    (not (lower-supported-reference-type? ctx ret)))
     (ErrLowerFunction (lower-diagnostic (lower-reference-support-message)))
     (let
       [param-count : i64 (lower-param-count params)]
@@ -11872,9 +12175,37 @@
   (take (& n)))")
 
 (define (compiler-lower-reference-return-source) : String
-  "(define (id [s : (& text str)]) : (& text str) s)
-(define (main [text : String]) : (& text str)
-  (id (& text)))")
+  "(define (ref-return [n : i64]) : (& n i64) (& n))
+(define (ref-id [r : (& n i64)]) : (& n i64) r)
+(define (ref-tuple [n : i64]) : (Tuple (& n i64) i64)
+  (tuple (& n) 7))
+(define (ref-array [n : i64]) : (Array (& n i64) 1)
+  (array (& n)))
+(define (main [n : i64]) : i64
+  (begin
+    (ref-id (ref-return n))
+    (ref-tuple n)
+    (ref-array n)
+    42))")
+
+(define (compiler-lower-reference-place-source) : String
+  "(defstruct Pair (left i64) (right i64))
+(define (borrow-pair [p : Pair]) : (& p i64)
+  (& (struct-get p left)))
+(define (borrow-tuple [t : (Tuple i64 bool)]) : (& t i64)
+  (& (tuple-ref t 0)))
+(define (borrow-array [items : (Array i64 2)]) : (& items i64)
+  (& (array-ref items 0)))
+(define (main) : i64
+  (let
+    [p : Pair (Pair 40 2)]
+    [t : (Tuple i64 bool) (tuple 41 true)]
+    [items : (Array i64 2) (array 42 7)]
+    (begin
+      (borrow-pair p)
+      (borrow-tuple t)
+      (borrow-array items)
+      42)))")
 
 (define (compiler-lower-function-value-source) : String
   "(define (inc [x : i64]) : i64 (+ x 1))
@@ -14433,6 +14764,80 @@
               ok))])]
     [(ErrCompilerLower _) false]))
 
+(define (compiler-lower-reference-values-shape-ok?) : bool
+  (match (lower-compiler-source (compiler-lower-reference-return-source))
+    [(OkCompilerLower program _)
+      (match program
+        [(IrProgram _ functions _)
+          (let
+            [ok : bool true]
+            (begin
+              (if (>
+                (lower-test-function-call-count
+                  functions
+                  "ref-return"
+                  "tl_alloc")
+                0)
+                unit
+                (set! ok false))
+              (if (=
+                (lower-test-function-call-count functions "ref-id" "tl_alloc")
+                0)
+                unit
+                (set! ok false))
+              (if (>
+                (lower-test-function-store-ptr-count functions "ref-tuple")
+                1)
+                unit
+                (set! ok false))
+              (if (>
+                (lower-test-function-store-ptr-count functions "ref-array")
+                0)
+                unit
+                (set! ok false))
+              (if (=
+                (lower-test-function-return-count functions "ref-return")
+                1)
+                unit
+                (set! ok false))
+              (if (= (lower-test-function-return-count functions "ref-id") 1)
+                unit
+                (set! ok false))
+              ok))])]
+    [(ErrCompilerLower _) false]))
+
+(define (compiler-lower-reference-place-shape-ok?) : bool
+  (match (lower-compiler-source (compiler-lower-reference-place-source))
+    [(OkCompilerLower program _)
+      (match program
+        [(IrProgram _ functions _)
+          (let
+            [ok : bool true]
+            (begin
+              (if (>
+                (lower-test-function-gep-offset-count functions "borrow-pair" 0)
+                0)
+                unit
+                (set! ok false))
+              (if (>
+                (lower-test-function-gep-offset-count
+                  functions
+                  "borrow-tuple"
+                  0)
+                0)
+                unit
+                (set! ok false))
+              (if (>
+                (lower-test-function-bounds-count functions "borrow-array")
+                0)
+                unit
+                (set! ok false))
+              (if (= (lower-test-function-load-count functions "borrow-pair") 0)
+                unit
+                (set! ok false))
+              ok))])]
+    [(ErrCompilerLower _) false]))
+
 (define (compiler-lower-string-shadow-shape-ok? [src : String]) : bool
   (match (lower-compiler-source src)
     [(OkCompilerLower program _)
@@ -15705,14 +16110,13 @@
       (if (compiler-lower-ok? (compiler-lower-box-get-source))
         unit
         (set! ok false))
-      (if (compiler-lower-error-ok?
-        (compiler-lower-reference-source)
-        (lower-reference-support-message))
+      (if (compiler-lower-ok? (compiler-lower-reference-source))
         unit
         (set! ok false))
-      (if (compiler-lower-error-ok?
-        (compiler-lower-reference-return-source)
-        (lower-reference-support-message))
+      (if (compiler-lower-reference-values-shape-ok?)
+        unit
+        (set! ok false))
+      (if (compiler-lower-reference-place-shape-ok?)
         unit
         (set! ok false))
       (if (compiler-lower-comptime-fold-ok?

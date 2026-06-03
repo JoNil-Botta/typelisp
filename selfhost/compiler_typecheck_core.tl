@@ -123,6 +123,49 @@
   (OkTcReprCLayout TcReprCLayout)
   (ErrTcReprCLayout String))
 
+(defenum TcInlineFieldLayout
+  (TcInlineFieldLayout String AstType i64))
+
+(defenum TcInlineFieldLayoutList
+  (TcInlineFieldLayoutNil)
+  (TcInlineFieldLayoutCons TcInlineFieldLayout TcInlineFieldLayoutList))
+
+(defenum TcInlinePayloadLayout
+  (TcInlinePayloadLayout i64 AstType i64))
+
+(defenum TcInlinePayloadLayoutList
+  (TcInlinePayloadLayoutNil)
+  (TcInlinePayloadLayoutCons TcInlinePayloadLayout TcInlinePayloadLayoutList))
+
+(defenum TcInlineVariantLayout
+  (TcInlineVariantLayout String i64 i64 TcInlinePayloadLayoutList))
+
+(defenum TcInlineVariantLayoutList
+  (TcInlineVariantLayoutNil)
+  (TcInlineVariantLayoutCons TcInlineVariantLayout TcInlineVariantLayoutList))
+
+(defenum TcInlineFieldsLayout
+  (TcInlineFieldsLayout i64 i64 TcInlineFieldLayoutList))
+
+(defenum ResultTcInlineFieldsLayout
+  (OkTcInlineFieldsLayout TcInlineFieldsLayout)
+  (ErrTcInlineFieldsLayout String))
+
+(defenum TcInlinePayloadFieldsLayout
+  (TcInlinePayloadFieldsLayout i64 i64 TcInlinePayloadLayoutList))
+
+(defenum ResultTcInlinePayloadFieldsLayout
+  (OkTcInlinePayloadFieldsLayout TcInlinePayloadFieldsLayout)
+  (ErrTcInlinePayloadFieldsLayout String))
+
+(defenum TcInlineAggregateLayout
+  (TcInlineStructLayout i64 i64 TcInlineFieldLayoutList)
+  (TcInlineEnumLayout i64 i64 TcInlineVariantLayoutList))
+
+(defenum ResultTcInlineAggregateLayout
+  (OkTcInlineAggregateLayout TcInlineAggregateLayout)
+  (ErrTcInlineAggregateLayout String))
+
 (defenum CompilerTypecheckSummary
   (CompilerTypecheckSummary i64 i64 i64))
 
@@ -5114,6 +5157,124 @@
         (tc-repr-c-field-layout-offset field)
         (tc-repr-c-layout-field-offset rest name))]))
 
+(define (tc-inline-field-layout-name [field : TcInlineFieldLayout]) : String
+  (match field
+    [(TcInlineFieldLayout name _ _) name]))
+
+(define (tc-inline-field-layout-type [field : TcInlineFieldLayout]) : AstType
+  (match field
+    [(TcInlineFieldLayout _ ty _) ty]))
+
+(define (tc-inline-field-layout-offset [field : TcInlineFieldLayout]) : i64
+  (match field
+    [(TcInlineFieldLayout _ _ offset) offset]))
+
+(define (tc-inline-field-layout-list-offset
+  [fields : TcInlineFieldLayoutList]
+  [name : String]) : i64
+  (match fields
+    [(TcInlineFieldLayoutNil) -1]
+    [(TcInlineFieldLayoutCons field rest)
+      (if (string-eq (tc-inline-field-layout-name field) name)
+        (tc-inline-field-layout-offset field)
+        (tc-inline-field-layout-list-offset rest name))]))
+
+(define (tc-inline-payload-layout-index [payload : TcInlinePayloadLayout]) : i64
+  (match payload
+    [(TcInlinePayloadLayout index _ _) index]))
+
+(define (tc-inline-payload-layout-type [payload : TcInlinePayloadLayout]) : AstType
+  (match payload
+    [(TcInlinePayloadLayout _ ty _) ty]))
+
+(define (tc-inline-payload-layout-offset [payload : TcInlinePayloadLayout]) : i64
+  (match payload
+    [(TcInlinePayloadLayout _ _ offset) offset]))
+
+(define (tc-inline-payload-layout-list-offset
+  [payloads : TcInlinePayloadLayoutList]
+  [index : i64]) : i64
+  (match payloads
+    [(TcInlinePayloadLayoutNil) -1]
+    [(TcInlinePayloadLayoutCons payload rest)
+      (if (= (tc-inline-payload-layout-index payload) index)
+        (tc-inline-payload-layout-offset payload)
+        (tc-inline-payload-layout-list-offset rest index))]))
+
+(define (tc-inline-variant-layout-name [variant : TcInlineVariantLayout]) : String
+  (match variant
+    [(TcInlineVariantLayout name _ _ _) name]))
+
+(define (tc-inline-variant-layout-size [variant : TcInlineVariantLayout]) : i64
+  (match variant
+    [(TcInlineVariantLayout _ size _ _) size]))
+
+(define (tc-inline-variant-layout-align [variant : TcInlineVariantLayout]) : i64
+  (match variant
+    [(TcInlineVariantLayout _ _ align _) align]))
+
+(define (tc-inline-variant-layout-payloads [variant : TcInlineVariantLayout]) : TcInlinePayloadLayoutList
+  (match variant
+    [(TcInlineVariantLayout _ _ _ payloads) payloads]))
+
+(define (tc-inline-variant-layout-list-size
+  [variants : TcInlineVariantLayoutList]
+  [name : String]) : i64
+  (match variants
+    [(TcInlineVariantLayoutNil) -1]
+    [(TcInlineVariantLayoutCons variant rest)
+      (if (string-eq (tc-inline-variant-layout-name variant) name)
+        (tc-inline-variant-layout-size variant)
+        (tc-inline-variant-layout-list-size rest name))]))
+
+(define (tc-inline-variant-layout-list-payload-offset
+  [variants : TcInlineVariantLayoutList]
+  [name : String]
+  [index : i64]) : i64
+  (match variants
+    [(TcInlineVariantLayoutNil) -1]
+    [(TcInlineVariantLayoutCons variant rest)
+      (if (string-eq (tc-inline-variant-layout-name variant) name)
+        (tc-inline-payload-layout-list-offset
+          (tc-inline-variant-layout-payloads variant)
+          index)
+        (tc-inline-variant-layout-list-payload-offset rest name index))]))
+
+(define (tc-inline-aggregate-layout-size [layout : TcInlineAggregateLayout]) : i64
+  (match layout
+    [(TcInlineStructLayout size _ _) size]
+    [(TcInlineEnumLayout size _ _) size]))
+
+(define (tc-inline-aggregate-layout-align [layout : TcInlineAggregateLayout]) : i64
+  (match layout
+    [(TcInlineStructLayout _ align _) align]
+    [(TcInlineEnumLayout _ align _) align]))
+
+(define (tc-inline-aggregate-layout-field-offset
+  [layout : TcInlineAggregateLayout]
+  [name : String]) : i64
+  (match layout
+    [(TcInlineStructLayout _ _ fields)
+      (tc-inline-field-layout-list-offset fields name)]
+    [(TcInlineEnumLayout _ _ _) -1]))
+
+(define (tc-inline-aggregate-layout-variant-size
+  [layout : TcInlineAggregateLayout]
+  [name : String]) : i64
+  (match layout
+    [(TcInlineStructLayout _ _ _) -1]
+    [(TcInlineEnumLayout _ _ variants)
+      (tc-inline-variant-layout-list-size variants name)]))
+
+(define (tc-inline-aggregate-layout-variant-payload-offset
+  [layout : TcInlineAggregateLayout]
+  [name : String]
+  [index : i64]) : i64
+  (match layout
+    [(TcInlineStructLayout _ _ _) -1]
+    [(TcInlineEnumLayout _ _ variants)
+      (tc-inline-variant-layout-list-payload-offset variants name index)]))
+
 (define (tc-align-up [n : i64] [align : i64]) : i64
   (if (<= align 1)
     n
@@ -5259,6 +5420,346 @@
 
 (define (tc-inline-aggregate-layout-finite-ok [ctx : TcContext] [name : String]) : ResultTcUnit
   (tc-inline-aggregate-nominal-finite-ok ctx name TcStringNil))
+
+(define (tc-inline-aggregate-layout-info [size : i64] [align : i64]) : TcLayoutInfo
+  (TcLayoutInfo size align))
+
+(define (tc-inline-aggregate-pointer-layout-info) : TcLayoutInfo
+  (tc-inline-aggregate-layout-info 8 8))
+
+(define (tc-inline-aggregate-zero-layout-info) : TcLayoutInfo
+  (tc-inline-aggregate-layout-info 0 1))
+
+(define (tc-inline-aggregate-finish-layout [cursor : i64] [max-align : i64]) : TcLayoutInfo
+  (let
+    [align : i64
+      (if (= max-align 0)
+        1
+        max-align)]
+    (tc-inline-aggregate-layout-info (tc-align-up cursor align) align)))
+
+(define (tc-inline-aggregate-array-size
+  [elem-size : i64]
+  [elem-align : i64]
+  [count : i64]) : i64
+  (if (<= count 0)
+    0
+    (* (tc-align-up elem-size elem-align) count)))
+
+(define (tc-inline-aggregate-type-list-layout-info
+  [ctx : TcContext]
+  [types : AstTypeList]
+  [cursor : i64]
+  [max-align : i64]
+  [stack : TcStringList]) : ResultTcLayoutInfo
+  (match types
+    [(AstTypeNil)
+      (OkTcLayoutInfo (tc-inline-aggregate-finish-layout cursor max-align))]
+    [(AstTypeCons ty rest)
+      (match (tc-inline-aggregate-type-layout-with-stack ctx ty stack)
+        [(OkTcLayoutInfo info)
+          (let
+            [field-align : i64 (tc-layout-info-align info)]
+            [field-size : i64 (tc-layout-info-size info)]
+            [offset : i64 (tc-align-up cursor field-align)]
+            [next-cursor : i64 (+ offset field-size)]
+            [next-align : i64 (tc-max-i64 max-align field-align)]
+            (tc-inline-aggregate-type-list-layout-info
+              ctx
+              rest
+              next-cursor
+              next-align
+              stack))]
+        [(ErrTcLayoutInfo message) (ErrTcLayoutInfo message)])]))
+
+(define (tc-inline-aggregate-field-defs-layout
+  [ctx : TcContext]
+  [fields : AstFieldDefList]
+  [cursor : i64]
+  [max-align : i64]
+  [stack : TcStringList]) : ResultTcInlineFieldsLayout
+  (match fields
+    [(AstFieldDefNil)
+      (match (tc-inline-aggregate-finish-layout cursor max-align)
+        [(TcLayoutInfo size align)
+          (OkTcInlineFieldsLayout
+            (TcInlineFieldsLayout size align TcInlineFieldLayoutNil))])]
+    [(AstFieldDefCons field rest)
+      (match field
+        [(AstFieldDef name ty _)
+          (let
+            [resolved : AstType (tc-resolve-type ctx ty)]
+            (match (tc-inline-aggregate-type-layout-with-stack
+              ctx
+              resolved
+              stack)
+              [(OkTcLayoutInfo info)
+                (let
+                  [field-align : i64 (tc-layout-info-align info)]
+                  [field-size : i64 (tc-layout-info-size info)]
+                  [offset : i64 (tc-align-up cursor field-align)]
+                  [next-cursor : i64 (+ offset field-size)]
+                  [next-align : i64 (tc-max-i64 max-align field-align)]
+                  (match (tc-inline-aggregate-field-defs-layout
+                    ctx
+                    rest
+                    next-cursor
+                    next-align
+                    stack)
+                    [(OkTcInlineFieldsLayout rest-layout)
+                      (match rest-layout
+                        [(TcInlineFieldsLayout size align rest-fields)
+                          (OkTcInlineFieldsLayout
+                            (TcInlineFieldsLayout
+                              size
+                              align
+                              (TcInlineFieldLayoutCons
+                                (TcInlineFieldLayout name resolved offset)
+                                rest-fields)))])]
+                    [(ErrTcInlineFieldsLayout message)
+                      (ErrTcInlineFieldsLayout message)]))]
+              [(ErrTcLayoutInfo message) (ErrTcInlineFieldsLayout message)]))])]))
+
+(define (tc-inline-aggregate-payloads-layout
+  [ctx : TcContext]
+  [types : AstTypeList]
+  [index : i64]
+  [cursor : i64]
+  [max-align : i64]
+  [stack : TcStringList]) : ResultTcInlinePayloadFieldsLayout
+  (match types
+    [(AstTypeNil)
+      (match (tc-inline-aggregate-finish-layout cursor max-align)
+        [(TcLayoutInfo size align)
+          (OkTcInlinePayloadFieldsLayout
+            (TcInlinePayloadFieldsLayout size align TcInlinePayloadLayoutNil))])]
+    [(AstTypeCons ty rest)
+      (let
+        [resolved : AstType (tc-resolve-type ctx ty)]
+        (match (tc-inline-aggregate-type-layout-with-stack ctx resolved stack)
+          [(OkTcLayoutInfo info)
+            (let
+              [field-align : i64 (tc-layout-info-align info)]
+              [field-size : i64 (tc-layout-info-size info)]
+              [offset : i64 (tc-align-up cursor field-align)]
+              [next-cursor : i64 (+ offset field-size)]
+              [next-align : i64 (tc-max-i64 max-align field-align)]
+              (match (tc-inline-aggregate-payloads-layout
+                ctx
+                rest
+                (+ index 1)
+                next-cursor
+                next-align
+                stack)
+                [(OkTcInlinePayloadFieldsLayout rest-layout)
+                  (match rest-layout
+                    [(TcInlinePayloadFieldsLayout size align rest-payloads)
+                      (OkTcInlinePayloadFieldsLayout
+                        (TcInlinePayloadFieldsLayout
+                          size
+                          align
+                          (TcInlinePayloadLayoutCons
+                            (TcInlinePayloadLayout index resolved offset)
+                            rest-payloads)))])]
+                [(ErrTcInlinePayloadFieldsLayout message)
+                  (ErrTcInlinePayloadFieldsLayout message)]))]
+          [(ErrTcLayoutInfo message) (ErrTcInlinePayloadFieldsLayout message)]))]))
+
+(define (tc-inline-aggregate-struct-layout-with-stack
+  [ctx : TcContext]
+  [struct-name : String]
+  [stack : TcStringList]) : ResultTcInlineAggregateLayout
+  (if (tc-string-list-contains stack struct-name)
+    (ErrTcInlineAggregateLayout
+      (tc-inline-aggregate-cycle-message struct-name stack))
+    (match (tc-struct-decl ctx struct-name)
+      [(OkTcStructDecl decl)
+        (match decl
+          [(TcStructDecl _ fields)
+            (match (tc-inline-aggregate-field-defs-layout
+              ctx
+              fields
+              0
+              0
+              (TcStringCons struct-name stack))
+              [(OkTcInlineFieldsLayout layout)
+                (match layout
+                  [(TcInlineFieldsLayout size align fields-layout)
+                    (OkTcInlineAggregateLayout
+                      (TcInlineStructLayout size align fields-layout))])]
+              [(ErrTcInlineFieldsLayout message)
+                (ErrTcInlineAggregateLayout message)])])]
+      [(ErrTcStructDecl message) (ErrTcInlineAggregateLayout message)])))
+
+(define (tc-inline-aggregate-variants-layout
+  [ctx : TcContext]
+  [variants : AstVariantDefList]
+  [max-size : i64]
+  [max-align : i64]
+  [stack : TcStringList]) : ResultTcInlineAggregateLayout
+  (match variants
+    [(AstVariantDefNil)
+      (OkTcInlineAggregateLayout
+        (TcInlineEnumLayout
+          (tc-align-up max-size max-align)
+          max-align
+          TcInlineVariantLayoutNil))]
+    [(AstVariantDefCons variant rest)
+      (match variant
+        [(AstVariantDef variant-name fields)
+          (match (tc-inline-aggregate-payloads-layout ctx fields 0 8 8 stack)
+            [(OkTcInlinePayloadFieldsLayout payload-layout)
+              (match payload-layout
+                [(TcInlinePayloadFieldsLayout
+                    variant-size
+                    variant-align
+                    payloads)
+                  (let
+                    [next-size : i64 (tc-max-i64 max-size variant-size)]
+                    [next-align : i64 (tc-max-i64 max-align variant-align)]
+                    (match (tc-inline-aggregate-variants-layout
+                      ctx
+                      rest
+                      next-size
+                      next-align
+                      stack)
+                      [(OkTcInlineAggregateLayout rest-layout)
+                        (match rest-layout
+                          [(TcInlineEnumLayout
+                              enum-size
+                              enum-align
+                              rest-variants)
+                            (OkTcInlineAggregateLayout
+                              (TcInlineEnumLayout
+                                enum-size
+                                enum-align
+                                (TcInlineVariantLayoutCons
+                                  (TcInlineVariantLayout
+                                    variant-name
+                                    variant-size
+                                    variant-align
+                                    payloads)
+                                  rest-variants)))]
+                          [(TcInlineStructLayout _ _ _)
+                            (ErrTcInlineAggregateLayout
+                              "typecheck: internal inline enum layout mismatch")])]
+                      [(ErrTcInlineAggregateLayout message)
+                        (ErrTcInlineAggregateLayout message)]))])]
+            [(ErrTcInlinePayloadFieldsLayout message)
+              (ErrTcInlineAggregateLayout message)])])]))
+
+(define (tc-inline-aggregate-enum-layout-with-stack
+  [ctx : TcContext]
+  [enum-name : String]
+  [stack : TcStringList]) : ResultTcInlineAggregateLayout
+  (if (tc-string-list-contains stack enum-name)
+    (ErrTcInlineAggregateLayout
+      (tc-inline-aggregate-cycle-message enum-name stack))
+    (match (tc-program-enum-variants (tc-context-program ctx) enum-name)
+      [(OkAstVariantDefList variants)
+        (tc-inline-aggregate-variants-layout
+          ctx
+          variants
+          8
+          8
+          (TcStringCons enum-name stack))]
+      [(ErrAstVariantDefList message) (ErrTcInlineAggregateLayout message)])))
+
+(define (tc-inline-aggregate-layout-for-with-stack
+  [ctx : TcContext]
+  [name : String]
+  [stack : TcStringList]) : ResultTcInlineAggregateLayout
+  (match (compiler-symbols-lookup-type (tc-context-symbols ctx) name)
+    [(SomeI64 handle)
+      (if (=
+        (compiler-symbol-handle-kind handle)
+        (compiler-symbol-kind-defenum))
+        (tc-inline-aggregate-enum-layout-with-stack ctx name stack)
+        (if (=
+          (compiler-symbol-handle-kind handle)
+          (compiler-symbol-kind-defstruct))
+          (tc-inline-aggregate-struct-layout-with-stack ctx name stack)
+          (ErrTcInlineAggregateLayout
+            (string-append "typecheck: unknown aggregate " name))))]
+    [(NoneI64)
+      (ErrTcInlineAggregateLayout
+        (string-append "typecheck: unknown aggregate " name))]))
+
+(define (tc-inline-aggregate-type-layout-with-stack
+  [ctx : TcContext]
+  [ty : AstType]
+  [stack : TcStringList]) : ResultTcLayoutInfo
+  (match (tc-type-strip-region (tc-resolve-type ctx ty))
+    [(AstTyI64) (OkTcLayoutInfo (tc-inline-aggregate-layout-info 8 8))]
+    [(AstTyU64) (OkTcLayoutInfo (tc-inline-aggregate-layout-info 8 8))]
+    [(AstTyF64) (OkTcLayoutInfo (tc-inline-aggregate-layout-info 8 8))]
+    [(AstTyI32) (OkTcLayoutInfo (tc-inline-aggregate-layout-info 4 4))]
+    [(AstTyU32) (OkTcLayoutInfo (tc-inline-aggregate-layout-info 4 4))]
+    [(AstTyF32) (OkTcLayoutInfo (tc-inline-aggregate-layout-info 4 4))]
+    [(AstTyI16) (OkTcLayoutInfo (tc-inline-aggregate-layout-info 2 2))]
+    [(AstTyU16) (OkTcLayoutInfo (tc-inline-aggregate-layout-info 2 2))]
+    [(AstTyI8) (OkTcLayoutInfo (tc-inline-aggregate-layout-info 1 1))]
+    [(AstTyU8) (OkTcLayoutInfo (tc-inline-aggregate-layout-info 1 1))]
+    [(AstTyBool) (OkTcLayoutInfo (tc-inline-aggregate-layout-info 1 1))]
+    [(AstTyChar) (OkTcLayoutInfo (tc-inline-aggregate-layout-info 1 1))]
+    [(AstTyUnit) (OkTcLayoutInfo (tc-inline-aggregate-zero-layout-info))]
+    [(AstTyNever) (OkTcLayoutInfo (tc-inline-aggregate-zero-layout-info))]
+    [(AstTyExpr) (OkTcLayoutInfo (tc-inline-aggregate-zero-layout-info))]
+    [(AstTyExprList) (OkTcLayoutInfo (tc-inline-aggregate-zero-layout-info))]
+    [(AstTyFunc _ _) (OkTcLayoutInfo (tc-inline-aggregate-pointer-layout-info))]
+    [(AstTyDynArray _)
+      (OkTcLayoutInfo (tc-inline-aggregate-pointer-layout-info))]
+    [(AstTyBox _) (OkTcLayoutInfo (tc-inline-aggregate-pointer-layout-info))]
+    [(AstTyPtr _) (OkTcLayoutInfo (tc-inline-aggregate-pointer-layout-info))]
+    [(AstTyMutPtr _) (OkTcLayoutInfo (tc-inline-aggregate-pointer-layout-info))]
+    [(AstTyRef _ _) (OkTcLayoutInfo (tc-inline-aggregate-pointer-layout-info))]
+    [(AstTyMutRef _ _)
+      (OkTcLayoutInfo (tc-inline-aggregate-pointer-layout-info))]
+    [(AstTyRegion _ inner)
+      (tc-inline-aggregate-type-layout-with-stack ctx inner stack)]
+    [(AstTyString) (OkTcLayoutInfo (tc-inline-aggregate-pointer-layout-info))]
+    [(AstTyStr) (OkTcLayoutInfo (tc-inline-aggregate-pointer-layout-info))]
+    [(AstTyVar _) (OkTcLayoutInfo (tc-inline-aggregate-pointer-layout-info))]
+    [(AstTyTuple elems)
+      (tc-inline-aggregate-type-list-layout-info ctx elems 0 0 stack)]
+    [(AstTyArray elem count)
+      (match (tc-inline-aggregate-type-layout-with-stack ctx elem stack)
+        [(OkTcLayoutInfo elem-info)
+          (OkTcLayoutInfo
+            (TcLayoutInfo
+              (tc-inline-aggregate-array-size
+                (tc-layout-info-size elem-info)
+                (tc-layout-info-align elem-info)
+                count)
+              (tc-layout-info-align elem-info)))]
+        [(ErrTcLayoutInfo message) (ErrTcLayoutInfo message)])]
+    [(AstTyStruct name)
+      (match (tc-inline-aggregate-layout-for-with-stack ctx name stack)
+        [(OkTcInlineAggregateLayout layout)
+          (OkTcLayoutInfo
+            (TcLayoutInfo
+              (tc-inline-aggregate-layout-size layout)
+              (tc-inline-aggregate-layout-align layout)))]
+        [(ErrTcInlineAggregateLayout message) (ErrTcLayoutInfo message)])]
+    [(AstTyEnum name)
+      (match (tc-inline-aggregate-layout-for-with-stack ctx name stack)
+        [(OkTcInlineAggregateLayout layout)
+          (OkTcLayoutInfo
+            (TcLayoutInfo
+              (tc-inline-aggregate-layout-size layout)
+              (tc-inline-aggregate-layout-align layout)))]
+        [(ErrTcInlineAggregateLayout message) (ErrTcLayoutInfo message)])]))
+
+(define (tc-inline-aggregate-type-layout [ctx : TcContext] [ty : AstType]) : ResultTcLayoutInfo
+  (match (tc-inline-aggregate-type-finite-ok ctx ty TcStringNil)
+    [(OkTcUnit) (tc-inline-aggregate-type-layout-with-stack ctx ty TcStringNil)]
+    [(ErrTcUnit message) (ErrTcLayoutInfo message)]))
+
+(define (tc-inline-aggregate-layout-for [ctx : TcContext] [name : String]) : ResultTcInlineAggregateLayout
+  (match (tc-inline-aggregate-layout-finite-ok ctx name)
+    [(OkTcUnit)
+      (tc-inline-aggregate-layout-for-with-stack ctx name TcStringNil)]
+    [(ErrTcUnit message) (ErrTcInlineAggregateLayout message)]))
 
 (define (tc-repr-c-unsupported-field-message
   [owner : String]

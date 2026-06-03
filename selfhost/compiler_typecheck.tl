@@ -620,6 +620,185 @@
     [(ErrTcUnit message) (string-eq message want)]
     [(OkTcUnit) false]))
 
+(define (compiler-typecheck-inline-layout-query-source) : String
+  "(defstruct InlinePacket
+  (tag u8)
+  (count i64)
+  (flag bool)
+  (small u16))
+(defenum InlineChoice
+  (Empty)
+  (Byte u8)
+  (Wide u8 i64)
+  (Pair (Tuple u8 i32)))
+(defenum ListI64
+  (ListNil)
+  (ListCons i64 (Box ListI64)))
+(defenum Tree
+  (Leaf i64)
+  (Node (Box Tree) (Box Tree)))")
+
+(define (compiler-typecheck-inline-layout-query-ok?) : bool
+  (match (parse-ast-source (compiler-typecheck-inline-layout-query-source))
+    [(OkAstProgram program)
+      (match (build-compiler-symbols program)
+        [(OkCompilerSymbols symbols)
+          (match (build-compiler-registries program)
+            [(OkCompilerRegistries registries)
+              (let
+                [ctx : TcContext (TcContext program symbols registries "")]
+                [ok : bool true]
+                (begin
+                  (match (tc-inline-aggregate-layout-for ctx "InlinePacket")
+                    [(OkTcInlineAggregateLayout layout)
+                      (begin
+                        (if (= (tc-inline-aggregate-layout-size layout) 24)
+                          unit
+                          (set! ok false))
+                        (if (= (tc-inline-aggregate-layout-align layout) 8)
+                          unit
+                          (set! ok false))
+                        (if (=
+                          (tc-inline-aggregate-layout-field-offset layout "tag")
+                          0)
+                          unit
+                          (set! ok false))
+                        (if (=
+                          (tc-inline-aggregate-layout-field-offset
+                            layout
+                            "count")
+                          8)
+                          unit
+                          (set! ok false))
+                        (if (=
+                          (tc-inline-aggregate-layout-field-offset
+                            layout
+                            "flag")
+                          16)
+                          unit
+                          (set! ok false))
+                        (if (=
+                          (tc-inline-aggregate-layout-field-offset
+                            layout
+                            "small")
+                          18)
+                          unit
+                          (set! ok false)))]
+                    [(ErrTcInlineAggregateLayout _) (set! ok false)])
+                  (match (tc-inline-aggregate-layout-for ctx "InlineChoice")
+                    [(OkTcInlineAggregateLayout layout)
+                      (begin
+                        (if (= (tc-inline-aggregate-layout-size layout) 24)
+                          unit
+                          (set! ok false))
+                        (if (= (tc-inline-aggregate-layout-align layout) 8)
+                          unit
+                          (set! ok false))
+                        (if (=
+                          (tc-inline-aggregate-layout-variant-size
+                            layout
+                            "Empty")
+                          8)
+                          unit
+                          (set! ok false))
+                        (if (=
+                          (tc-inline-aggregate-layout-variant-size
+                            layout
+                            "Byte")
+                          16)
+                          unit
+                          (set! ok false))
+                        (if (=
+                          (tc-inline-aggregate-layout-variant-size
+                            layout
+                            "Wide")
+                          24)
+                          unit
+                          (set! ok false))
+                        (if (=
+                          (tc-inline-aggregate-layout-variant-payload-offset
+                            layout
+                            "Wide"
+                            0)
+                          8)
+                          unit
+                          (set! ok false))
+                        (if (=
+                          (tc-inline-aggregate-layout-variant-payload-offset
+                            layout
+                            "Wide"
+                            1)
+                          16)
+                          unit
+                          (set! ok false))
+                        (if (=
+                          (tc-inline-aggregate-layout-variant-payload-offset
+                            layout
+                            "Pair"
+                            0)
+                          8)
+                          unit
+                          (set! ok false)))]
+                    [(ErrTcInlineAggregateLayout _) (set! ok false)])
+                  (match (tc-inline-aggregate-layout-for ctx "ListI64")
+                    [(OkTcInlineAggregateLayout layout)
+                      (if (= (tc-inline-aggregate-layout-size layout) 24)
+                        unit
+                        (set! ok false))]
+                    [(ErrTcInlineAggregateLayout _) (set! ok false)])
+                  (match (tc-inline-aggregate-layout-for ctx "Tree")
+                    [(OkTcInlineAggregateLayout layout)
+                      (if (= (tc-inline-aggregate-layout-size layout) 24)
+                        unit
+                        (set! ok false))]
+                    [(ErrTcInlineAggregateLayout _) (set! ok false)])
+                  (match (tc-inline-aggregate-type-layout
+                    ctx
+                    (AstTyTuple (tc-type-list2 (AstTyU8) (AstTyI32))))
+                    [(OkTcLayoutInfo info)
+                      (if (and
+                        (= (tc-layout-info-size info) 8)
+                        (= (tc-layout-info-align info) 4))
+                        unit
+                        (set! ok false))]
+                    [(ErrTcLayoutInfo _) (set! ok false)])
+                  (match (tc-inline-aggregate-type-layout
+                    ctx
+                    (AstTyArray
+                      (AstTyTuple (tc-type-list2 (AstTyU8) (AstTyI32)))
+                      2))
+                    [(OkTcLayoutInfo info)
+                      (if (and
+                        (= (tc-layout-info-size info) 16)
+                        (= (tc-layout-info-align info) 4))
+                        unit
+                        (set! ok false))]
+                    [(ErrTcLayoutInfo _) (set! ok false)])
+                  (match (tc-inline-aggregate-type-layout
+                    ctx
+                    (AstTyBox (AstTyStruct "InlinePacket")))
+                    [(OkTcLayoutInfo info)
+                      (if (and
+                        (= (tc-layout-info-size info) 8)
+                        (= (tc-layout-info-align info) 8))
+                        unit
+                        (set! ok false))]
+                    [(ErrTcLayoutInfo _) (set! ok false)])
+                  (match (tc-inline-aggregate-type-layout
+                    ctx
+                    (AstTyDynArray (AstTyStruct "InlinePacket")))
+                    [(OkTcLayoutInfo info)
+                      (if (and
+                        (= (tc-layout-info-size info) 8)
+                        (= (tc-layout-info-align info) 8))
+                        unit
+                        (set! ok false))]
+                    [(ErrTcLayoutInfo _) (set! ok false)])
+                  ok))]
+            [(ErrCompilerRegistries _) false])]
+        [(ErrCompilerSymbols _) false])]
+    [(ErrAstProgram _) false]))
+
 (define (compiler-typecheck-inline-boxed-list-source) : String
   "(defenum ListI64
   (ListNil)
@@ -678,9 +857,11 @@
           (compiler-typecheck-inline-boxed-tree-source)
           "Tree")
         (and
-          (compiler-typecheck-inline-layout-ok?
-            (compiler-typecheck-inline-pointer-boundaries-source)
-            "Node")
+          (and
+            (compiler-typecheck-inline-layout-ok?
+              (compiler-typecheck-inline-pointer-boundaries-source)
+              "Node")
+            (compiler-typecheck-inline-layout-query-ok?))
           (and
             (compiler-typecheck-inline-layout-error-ok?
               (compiler-typecheck-inline-unboxed-list-source)

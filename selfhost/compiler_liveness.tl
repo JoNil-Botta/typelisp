@@ -1,9 +1,7 @@
 ;; compiler_liveness.tl - Self-hosted CompilerIrFunction liveness analysis (#553).
 ;;
-;; This module keeps the first selfhost liveness pass list-backed and
-;; deterministic. It mirrors the current Rust backend liveness shape closely
-;; enough for a later register-allocation planner to query block live-in,
-;; live-out, and instruction live-after sets.
+;; This module keeps the selfhost liveness pass deterministic while storing
+;; integer live sets as compact bitsets keyed by dense IR variable ids.
 (import "compiler_ir_types.tl")
 
 (defenum CompilerLiveI64Set
@@ -56,62 +54,190 @@
 (defenum CompilerLiveInstrScan
   (CompilerLiveInstrScan CompilerLiveInstrSetList CompilerLiveI64Set))
 
+(define (compiler-live-set-word-bits) : i64
+  31)
+
+(define (compiler-live-set-bits-mask) : i64
+  (- (shl 1 (compiler-live-set-word-bits)) 1))
+
+(define (compiler-live-set-word-index [value : i64]) : i64
+  (/ value (compiler-live-set-word-bits)))
+
+(define (compiler-live-set-bit-index [value : i64]) : i64
+  (% value (compiler-live-set-word-bits)))
+
+(define (compiler-live-set-bit-mask [value : i64]) : i64
+  (shl 1 (compiler-live-set-bit-index value)))
+
+(define (compiler-live-set-pack-word [word-index : i64] [bits : i64]) : i64
+  (bit-or (shl word-index (compiler-live-set-word-bits)) bits))
+
+(define (compiler-live-set-chunk-word-index [chunk : i64]) : i64
+  (shr chunk (compiler-live-set-word-bits)))
+
+(define (compiler-live-set-chunk-bits [chunk : i64]) : i64
+  (bit-and chunk (compiler-live-set-bits-mask)))
+
 (define (compiler-live-set-empty) : CompilerLiveI64Set
   CompilerLiveI64Nil)
 
-(define (compiler-live-set-contains? [set : CompilerLiveI64Set] [value : i64]) : bool
+(define (compiler-live-set-contains-word?
+  [set : CompilerLiveI64Set]
+  [word-index : i64]
+  [mask : i64]) : bool
   (match set
     [(CompilerLiveI64Nil) false]
-    [(CompilerLiveI64Cons head rest)
-      (if (= head value)
-        true
-        (if (> head value)
-          false
-          (compiler-live-set-contains? rest value)))]))
+    [(CompilerLiveI64Cons chunk rest)
+      (let
+        [head-index : i64 (compiler-live-set-chunk-word-index chunk)]
+        [bits : i64 (compiler-live-set-chunk-bits chunk)]
+        (if (= head-index word-index)
+          (not (= (bit-and bits mask) 0))
+          (if (> head-index word-index)
+            false
+            (compiler-live-set-contains-word? rest word-index mask))))]))
+
+(define (compiler-live-set-contains? [set : CompilerLiveI64Set] [value : i64]) : bool
+  (if (< value 0)
+    false
+    (let
+      [word-index : i64 (compiler-live-set-word-index value)]
+      [mask : i64 (compiler-live-set-bit-mask value)]
+      (compiler-live-set-contains-word? set word-index mask))))
+
+(define (compiler-live-set-insert-word
+  [set : CompilerLiveI64Set]
+  [word-index : i64]
+  [mask : i64]) : CompilerLiveI64Set
+  (match set
+    [(CompilerLiveI64Nil)
+      (CompilerLiveI64Cons
+        (compiler-live-set-pack-word word-index mask)
+        CompilerLiveI64Nil)]
+    [(CompilerLiveI64Cons chunk rest)
+      (let
+        [head-index : i64 (compiler-live-set-chunk-word-index chunk)]
+        [bits : i64 (compiler-live-set-chunk-bits chunk)]
+        (if (= head-index word-index)
+          (if (= (bit-and bits mask) 0)
+            (CompilerLiveI64Cons
+              (compiler-live-set-pack-word head-index (bit-or bits mask))
+              rest)
+            set)
+          (if (> head-index word-index)
+            (CompilerLiveI64Cons
+              (compiler-live-set-pack-word word-index mask)
+              set)
+            (CompilerLiveI64Cons
+              chunk
+              (compiler-live-set-insert-word rest word-index mask)))))]))
 
 (define (compiler-live-set-insert [set : CompilerLiveI64Set] [value : i64]) : CompilerLiveI64Set
+  (if (< value 0)
+    set
+    (let
+      [word-index : i64 (compiler-live-set-word-index value)]
+      [mask : i64 (compiler-live-set-bit-mask value)]
+      (compiler-live-set-insert-word set word-index mask))))
+
+(define (compiler-live-set-remove-word
+  [set : CompilerLiveI64Set]
+  [word-index : i64]
+  [mask : i64]) : CompilerLiveI64Set
   (match set
-    [(CompilerLiveI64Nil) (CompilerLiveI64Cons value CompilerLiveI64Nil)]
-    [(CompilerLiveI64Cons head rest)
-      (if (= head value)
-        set
-        (if (> head value)
-          (CompilerLiveI64Cons value set)
-          (CompilerLiveI64Cons head (compiler-live-set-insert rest value))))]))
+    [(CompilerLiveI64Nil) CompilerLiveI64Nil]
+    [(CompilerLiveI64Cons chunk rest)
+      (let
+        [head-index : i64 (compiler-live-set-chunk-word-index chunk)]
+        [bits : i64 (compiler-live-set-chunk-bits chunk)]
+        (if (= head-index word-index)
+          (let
+            [next-bits : i64 (bit-and bits (bit-xor mask -1))]
+            (if (= next-bits 0)
+              rest
+              (if (= next-bits bits)
+                set
+                (CompilerLiveI64Cons
+                  (compiler-live-set-pack-word head-index next-bits)
+                  rest))))
+          (if (> head-index word-index)
+            set
+            (CompilerLiveI64Cons
+              chunk
+              (compiler-live-set-remove-word rest word-index mask)))))]))
+
+(define (compiler-live-set-remove [set : CompilerLiveI64Set] [value : i64]) : CompilerLiveI64Set
+  (if (< value 0)
+    set
+    (let
+      [word-index : i64 (compiler-live-set-word-index value)]
+      [mask : i64 (compiler-live-set-bit-mask value)]
+      (compiler-live-set-remove-word set word-index mask))))
 
 (define (compiler-live-set-union
   [left : CompilerLiveI64Set]
   [right : CompilerLiveI64Set]) : CompilerLiveI64Set
   (match left
     [(CompilerLiveI64Nil) right]
-    [(CompilerLiveI64Cons head rest)
-      (match right
-        [(CompilerLiveI64Nil) left]
-        [(CompilerLiveI64Cons right-head right-rest)
-          (if (= head right-head)
-            (CompilerLiveI64Cons head (compiler-live-set-union rest right-rest))
-            (if (< head right-head)
-              (CompilerLiveI64Cons head (compiler-live-set-union rest right))
-              (CompilerLiveI64Cons
-                right-head
-                (compiler-live-set-union left right-rest))))])]))
+    [(CompilerLiveI64Cons left-chunk left-rest)
+      (let
+        [left-index : i64 (compiler-live-set-chunk-word-index left-chunk)]
+        [left-bits : i64 (compiler-live-set-chunk-bits left-chunk)]
+        (match right
+          [(CompilerLiveI64Nil) left]
+          [(CompilerLiveI64Cons right-chunk right-rest)
+            (let
+              [right-index : i64
+                (compiler-live-set-chunk-word-index right-chunk)]
+              [right-bits : i64 (compiler-live-set-chunk-bits right-chunk)]
+              (if (= left-index right-index)
+                (CompilerLiveI64Cons
+                  (compiler-live-set-pack-word
+                    left-index
+                    (bit-or left-bits right-bits))
+                  (compiler-live-set-union left-rest right-rest))
+                (if (< left-index right-index)
+                  (CompilerLiveI64Cons
+                    left-chunk
+                    (compiler-live-set-union left-rest right))
+                  (CompilerLiveI64Cons
+                    right-chunk
+                    (compiler-live-set-union left right-rest)))))]))]))
+
+(define (compiler-live-set-union-into
+  [left : CompilerLiveI64Set]
+  [right : CompilerLiveI64Set]) : CompilerLiveI64Set
+  (compiler-live-set-union left right))
 
 (define (compiler-live-set-minus
   [left : CompilerLiveI64Set]
   [right : CompilerLiveI64Set]) : CompilerLiveI64Set
   (match left
     [(CompilerLiveI64Nil) CompilerLiveI64Nil]
-    [(CompilerLiveI64Cons left-head left-rest)
-      (match right
-        [(CompilerLiveI64Nil) left]
-        [(CompilerLiveI64Cons right-head right-rest)
-          (if (= left-head right-head)
-            (compiler-live-set-minus left-rest right-rest)
-            (if (< left-head right-head)
-              (CompilerLiveI64Cons
-                left-head
-                (compiler-live-set-minus left-rest right))
-              (compiler-live-set-minus left right-rest)))])]))
+    [(CompilerLiveI64Cons left-chunk left-rest)
+      (let
+        [left-index : i64 (compiler-live-set-chunk-word-index left-chunk)]
+        [left-bits : i64 (compiler-live-set-chunk-bits left-chunk)]
+        (match right
+          [(CompilerLiveI64Nil) left]
+          [(CompilerLiveI64Cons right-chunk right-rest)
+            (let
+              [right-index : i64
+                (compiler-live-set-chunk-word-index right-chunk)]
+              [right-bits : i64 (compiler-live-set-chunk-bits right-chunk)]
+              (if (= left-index right-index)
+                (let
+                  [next-bits : i64 (bit-and left-bits (bit-xor right-bits -1))]
+                  (if (= next-bits 0)
+                    (compiler-live-set-minus left-rest right-rest)
+                    (CompilerLiveI64Cons
+                      (compiler-live-set-pack-word left-index next-bits)
+                      (compiler-live-set-minus left-rest right-rest))))
+                (if (< left-index right-index)
+                  (CompilerLiveI64Cons
+                    left-chunk
+                    (compiler-live-set-minus left-rest right))
+                  (compiler-live-set-minus left right-rest))))]))]))
 
 (define (compiler-live-set-eq?
   [left : CompilerLiveI64Set]
@@ -120,32 +246,74 @@
     [(CompilerLiveI64Nil)
       (match right
         [(CompilerLiveI64Nil) true]
-        [_ false])]
-    [(CompilerLiveI64Cons left-head left-rest)
+        [(CompilerLiveI64Cons _ _) false])]
+    [(CompilerLiveI64Cons left-chunk left-rest)
       (match right
-        [(CompilerLiveI64Cons right-head right-rest)
+        [(CompilerLiveI64Nil) false]
+        [(CompilerLiveI64Cons right-chunk right-rest)
           (and
-            (= left-head right-head)
-            (compiler-live-set-eq? left-rest right-rest))]
-        [_ false])]))
+            (= left-chunk right-chunk)
+            (compiler-live-set-eq? left-rest right-rest))])]))
+
+(define (compiler-live-set-word-count-bits [bits : i64] [bit : i64]) : i64
+  (if (>= bit (compiler-live-set-word-bits))
+    0
+    (+
+      (if (= (bit-and bits (shl 1 bit)) 0)
+        0
+        1)
+      (compiler-live-set-word-count-bits bits (+ bit 1)))))
 
 (define (compiler-live-set-count [set : CompilerLiveI64Set]) : i64
   (match set
     [(CompilerLiveI64Nil) 0]
-    [(CompilerLiveI64Cons _ rest) (+ 1 (compiler-live-set-count rest))]))
+    [(CompilerLiveI64Cons chunk rest)
+      (+
+        (compiler-live-set-word-count-bits
+          (compiler-live-set-chunk-bits chunk)
+          0)
+        (compiler-live-set-count rest))]))
+
+(define (compiler-live-set-score-word-desc
+  [bits : i64]
+  [base : i64]
+  [bit : i64]
+  [acc : i64]) : i64
+  (if (< bit 0)
+    acc
+    (compiler-live-set-score-word-desc
+      bits
+      base
+      (- bit 1)
+      (if (= (bit-and bits (shl 1 bit)) 0)
+        acc
+        (+ (+ base (+ bit 1)) (* 17 acc))))))
 
 (define (compiler-live-set-score [set : CompilerLiveI64Set]) : i64
   (match set
     [(CompilerLiveI64Nil) 0]
-    [(CompilerLiveI64Cons head rest)
-      (+ (+ head 1) (* 17 (compiler-live-set-score rest)))]))
+    [(CompilerLiveI64Cons chunk rest)
+      (compiler-live-set-score-word-desc
+        (compiler-live-set-chunk-bits chunk)
+        (*
+          (compiler-live-set-chunk-word-index chunk)
+          (compiler-live-set-word-bits))
+        (- (compiler-live-set-word-bits) 1)
+        (compiler-live-set-score rest))]))
+
+(define (compiler-live-set1 [a : i64]) : CompilerLiveI64Set
+  (compiler-live-set-insert (compiler-live-set-empty) a))
 
 (define (compiler-live-set2 [a : i64] [b : i64]) : CompilerLiveI64Set
-  (compiler-live-set-insert (compiler-live-set-insert CompilerLiveI64Nil a) b))
+  (compiler-live-set-insert
+    (compiler-live-set-insert (compiler-live-set-empty) a)
+    b))
 
 (define (compiler-live-set3 [a : i64] [b : i64] [c : i64]) : CompilerLiveI64Set
   (compiler-live-set-insert
-    (compiler-live-set-insert (compiler-live-set-insert CompilerLiveI64Nil a) b)
+    (compiler-live-set-insert
+      (compiler-live-set-insert (compiler-live-set-empty) a)
+      b)
     c))
 
 (define (compiler-live-set5 [a : i64] [b : i64] [c : i64] [d : i64] [e : i64]) : CompilerLiveI64Set
@@ -153,7 +321,7 @@
     (compiler-live-set-insert
       (compiler-live-set-insert
         (compiler-live-set-insert
-          (compiler-live-set-insert CompilerLiveI64Nil a)
+          (compiler-live-set-insert (compiler-live-set-empty) a)
           b)
         c)
       d)
@@ -171,7 +339,7 @@
       (compiler-live-set-insert
         (compiler-live-set-insert
           (compiler-live-set-insert
-            (compiler-live-set-insert CompilerLiveI64Nil a)
+            (compiler-live-set-insert (compiler-live-set-empty) a)
             b)
           c)
         d)
@@ -192,7 +360,7 @@
         (compiler-live-set-insert
           (compiler-live-set-insert
             (compiler-live-set-insert
-              (compiler-live-set-insert CompilerLiveI64Nil a)
+              (compiler-live-set-insert (compiler-live-set-empty) a)
               b)
             c)
           d)
@@ -227,12 +395,12 @@
 
 (define (compiler-live-value-vars [value : CompilerIrValue]) : CompilerLiveI64Set
   (match value
-    [(IrValueVar id) (CompilerLiveI64Cons id CompilerLiveI64Nil)]
-    [_ CompilerLiveI64Nil]))
+    [(IrValueVar id) (compiler-live-set1 id)]
+    [_ (compiler-live-set-empty)]))
 
 (define (compiler-live-value-list-vars [values : CompilerIrValueList]) : CompilerLiveI64Set
   (match values
-    [(IrValueNil) CompilerLiveI64Nil]
+    [(IrValueNil) (compiler-live-set-empty)]
     [(IrValueCons value rest)
       (compiler-live-set-union
         (compiler-live-value-vars value)
@@ -240,12 +408,12 @@
 
 (define (compiler-live-maybe-value-vars [value : CompilerIrMaybeValue]) : CompilerLiveI64Set
   (match value
-    [(IrNoValue) CompilerLiveI64Nil]
+    [(IrNoValue) (compiler-live-set-empty)]
     [(IrSomeValue inner) (compiler-live-value-vars inner)]))
 
 (define (compiler-live-phi-input-vars [inputs : CompilerIrPhiInputList]) : CompilerLiveI64Set
   (match inputs
-    [(IrPhiInputNil) CompilerLiveI64Nil]
+    [(IrPhiInputNil) (compiler-live-set-empty)]
     [(IrPhiInputCons input rest)
       (match input
         [(IrPhiInput value _)
@@ -256,8 +424,8 @@
 (define (compiler-live-instr-uses [instr : CompilerIrInstr]) : CompilerLiveI64Set
   (match instr
     [(IrInstrMov _ src _) (compiler-live-value-vars src)]
-    [(IrInstrAlloc _ _) CompilerLiveI64Nil]
-    [(IrInstrAddrOf _ src) (CompilerLiveI64Cons src CompilerLiveI64Nil)]
+    [(IrInstrAlloc _ _) (compiler-live-set-empty)]
+    [(IrInstrAddrOf _ src) (compiler-live-set1 src)]
     [(IrInstrGep _ base offset _)
       (compiler-live-set-union
         (compiler-live-value-vars base)
@@ -277,7 +445,7 @@
         (compiler-live-value-vars lhs)
         (compiler-live-value-vars rhs))]
     [(IrInstrUnOp _ _ src _) (compiler-live-value-vars src)]
-    [(IrInstrLaneId _ _ _) CompilerLiveI64Nil]
+    [(IrInstrLaneId _ _ _) (compiler-live-set-empty)]
     [(IrInstrSplat _ value _ _) (compiler-live-value-vars value)]
     [(IrInstrVectorBinOp _ _ lhs rhs _ _)
       (compiler-live-set-union
@@ -338,41 +506,34 @@
     [(IrInstrBranch cond _ _) (compiler-live-value-vars cond)]
     [(IrInstrReturn value) (compiler-live-maybe-value-vars value)]
     [(IrInstrPhi _ inputs _) (compiler-live-phi-input-vars inputs)]
-    [(IrInstrJump _) CompilerLiveI64Nil]))
+    [(IrInstrJump _) (compiler-live-set-empty)]))
 
 (define (compiler-live-instr-defs [instr : CompilerIrInstr]) : CompilerLiveI64Set
   (match instr
-    [(IrInstrMov dst _ _) (CompilerLiveI64Cons dst CompilerLiveI64Nil)]
-    [(IrInstrAlloc dst _) (CompilerLiveI64Cons dst CompilerLiveI64Nil)]
-    [(IrInstrAddrOf dst _) (CompilerLiveI64Cons dst CompilerLiveI64Nil)]
-    [(IrInstrGep dst _ _ _) (CompilerLiveI64Cons dst CompilerLiveI64Nil)]
-    [(IrInstrLoad dst _ _) (CompilerLiveI64Cons dst CompilerLiveI64Nil)]
-    [(IrInstrCast dst _ _ _) (CompilerLiveI64Cons dst CompilerLiveI64Nil)]
-    [(IrInstrBinOp dst _ _ _ _) (CompilerLiveI64Cons dst CompilerLiveI64Nil)]
-    [(IrInstrUnOp dst _ _ _) (CompilerLiveI64Cons dst CompilerLiveI64Nil)]
-    [(IrInstrLaneId dst _ _) (CompilerLiveI64Cons dst CompilerLiveI64Nil)]
-    [(IrInstrSplat dst _ _ _) (CompilerLiveI64Cons dst CompilerLiveI64Nil)]
-    [(IrInstrVectorBinOp dst _ _ _ _ _)
-      (CompilerLiveI64Cons dst CompilerLiveI64Nil)]
-    [(IrInstrVectorReduce dst _ _ _ _)
-      (CompilerLiveI64Cons dst CompilerLiveI64Nil)]
-    [(IrInstrVectorCompare dst _ _ _ _ _)
-      (CompilerLiveI64Cons dst CompilerLiveI64Nil)]
-    [(IrInstrMaskBinOp dst _ _ _ _)
-      (CompilerLiveI64Cons dst CompilerLiveI64Nil)]
-    [(IrInstrMaskNot dst _ _) (CompilerLiveI64Cons dst CompilerLiveI64Nil)]
-    [(IrInstrMaskReduce dst _ _ _) (CompilerLiveI64Cons dst CompilerLiveI64Nil)]
-    [(IrInstrSelect dst _ _ _ _ _) (CompilerLiveI64Cons dst CompilerLiveI64Nil)]
-    [(IrInstrVectorLoad dst _ _ _ _)
-      (CompilerLiveI64Cons dst CompilerLiveI64Nil)]
-    [(IrInstrPredicatedLoad dst _ _ _ _ _)
-      (CompilerLiveI64Cons dst CompilerLiveI64Nil)]
-    [(IrInstrTailMask dst _ _ _) (CompilerLiveI64Cons dst CompilerLiveI64Nil)]
-    [(IrInstrCall dst _ _ _) (CompilerLiveI64Cons dst CompilerLiveI64Nil)]
-    [(IrInstrCallIndirect dst _ _ _)
-      (CompilerLiveI64Cons dst CompilerLiveI64Nil)]
-    [(IrInstrPhi dst _ _) (CompilerLiveI64Cons dst CompilerLiveI64Nil)]
-    [_ CompilerLiveI64Nil]))
+    [(IrInstrMov dst _ _) (compiler-live-set1 dst)]
+    [(IrInstrAlloc dst _) (compiler-live-set1 dst)]
+    [(IrInstrAddrOf dst _) (compiler-live-set1 dst)]
+    [(IrInstrGep dst _ _ _) (compiler-live-set1 dst)]
+    [(IrInstrLoad dst _ _) (compiler-live-set1 dst)]
+    [(IrInstrCast dst _ _ _) (compiler-live-set1 dst)]
+    [(IrInstrBinOp dst _ _ _ _) (compiler-live-set1 dst)]
+    [(IrInstrUnOp dst _ _ _) (compiler-live-set1 dst)]
+    [(IrInstrLaneId dst _ _) (compiler-live-set1 dst)]
+    [(IrInstrSplat dst _ _ _) (compiler-live-set1 dst)]
+    [(IrInstrVectorBinOp dst _ _ _ _ _) (compiler-live-set1 dst)]
+    [(IrInstrVectorReduce dst _ _ _ _) (compiler-live-set1 dst)]
+    [(IrInstrVectorCompare dst _ _ _ _ _) (compiler-live-set1 dst)]
+    [(IrInstrMaskBinOp dst _ _ _ _) (compiler-live-set1 dst)]
+    [(IrInstrMaskNot dst _ _) (compiler-live-set1 dst)]
+    [(IrInstrMaskReduce dst _ _ _) (compiler-live-set1 dst)]
+    [(IrInstrSelect dst _ _ _ _ _) (compiler-live-set1 dst)]
+    [(IrInstrVectorLoad dst _ _ _ _) (compiler-live-set1 dst)]
+    [(IrInstrPredicatedLoad dst _ _ _ _ _) (compiler-live-set1 dst)]
+    [(IrInstrTailMask dst _ _ _) (compiler-live-set1 dst)]
+    [(IrInstrCall dst _ _ _) (compiler-live-set1 dst)]
+    [(IrInstrCallIndirect dst _ _ _) (compiler-live-set1 dst)]
+    [(IrInstrPhi dst _ _) (compiler-live-set1 dst)]
+    [_ (compiler-live-set-empty)]))
 
 (define (compiler-live-block-use-def-instrs
   [instrs : CompilerIrInstrList]
@@ -394,8 +555,8 @@
 (define (compiler-live-block-use-def [instrs : CompilerIrInstrList]) : CompilerLiveUseDef
   (compiler-live-block-use-def-instrs
     instrs
-    CompilerLiveI64Nil
-    CompilerLiveI64Nil))
+    (compiler-live-set-empty)
+    (compiler-live-set-empty)))
 
 (define (compiler-live-instr-list-last [instrs : CompilerIrInstrList]) : CompilerLiveMaybeInstr
   (match instrs
@@ -429,8 +590,8 @@
             label
             uses
             defs
-            CompilerLiveI64Nil
-            CompilerLiveI64Nil
+            (compiler-live-set-empty)
+            (compiler-live-set-empty)
             (compiler-live-block-successors block)
             CompilerLiveInstrSetNil)])]))
 
@@ -458,7 +619,7 @@
   [successors : CompilerLiveLabelSet]
   [blocks : CompilerLiveBlockList]) : CompilerLiveI64Set
   (match successors
-    [(CompilerLiveLabelNil) CompilerLiveI64Nil]
+    [(CompilerLiveLabelNil) (compiler-live-set-empty)]
     [(CompilerLiveLabelCons label rest)
       (let
         [rest-live : CompilerLiveI64Set
@@ -649,7 +810,7 @@
   [sets : CompilerLiveInstrSetList]
   [index : i64]) : CompilerLiveI64Set
   (match sets
-    [(CompilerLiveInstrSetNil) CompilerLiveI64Nil]
+    [(CompilerLiveInstrSetNil) (compiler-live-set-empty)]
     [(CompilerLiveInstrSetCons head rest)
       (if (= index 0)
         head
@@ -666,7 +827,7 @@
       (compiler-live-instr-set-list-nth
         (compiler-live-block-instr-after block)
         index)]
-    [(CompilerLiveNoBlock) CompilerLiveI64Nil]))
+    [(CompilerLiveNoBlock) (compiler-live-set-empty)]))
 
 (define (compiler-live-i64-ty) : AstType
   (AstTyI64))
@@ -869,19 +1030,19 @@
         (and
           (compiler-live-set-eq?
             (compiler-live-block-uses block)
-            (CompilerLiveI64Cons 2 CompilerLiveI64Nil))
+            (compiler-live-set1 2))
           (and
             (compiler-live-set-eq?
               (compiler-live-block-defs block)
-              (CompilerLiveI64Cons 0 (CompilerLiveI64Cons 1 CompilerLiveI64Nil)))
+              (compiler-live-set2 0 1))
             (and
               (compiler-live-set-eq?
                 (compiler-live-block-live-in block)
-                (CompilerLiveI64Cons 2 CompilerLiveI64Nil))
+                (compiler-live-set1 2))
               (and
                 (compiler-live-set-eq?
                   (compiler-live-block-live-out block)
-                  CompilerLiveI64Nil)
+                  (compiler-live-set-empty))
                 (and
                   (compiler-live-set-eq?
                     (compiler-live-after liveness "entry" 0)
@@ -889,10 +1050,10 @@
                   (and
                     (compiler-live-set-eq?
                       (compiler-live-after liveness "entry" 1)
-                      (CompilerLiveI64Cons 1 CompilerLiveI64Nil))
+                      (compiler-live-set1 1))
                     (compiler-live-set-eq?
                       (compiler-live-after liveness "entry" 2)
-                      CompilerLiveI64Nil)))))))]
+                      (compiler-live-set-empty))))))))]
       [(CompilerLiveNoBlock) false])))
 
 (define (compiler-live-branch-ok?) : bool
@@ -932,21 +1093,19 @@
         (and
           (compiler-live-set-eq?
             (compiler-live-block-uses block)
-            (CompilerLiveI64Cons 1 (CompilerLiveI64Cons 2 CompilerLiveI64Nil)))
+            (compiler-live-set2 1 2))
           (and
             (compiler-live-set-eq?
               (compiler-live-block-defs block)
-              (CompilerLiveI64Cons 3 CompilerLiveI64Nil))
+              (compiler-live-set1 3))
             (and
               (compiler-live-set-eq?
                 (compiler-live-block-live-in block)
-                (CompilerLiveI64Cons
-                  1
-                  (CompilerLiveI64Cons 2 CompilerLiveI64Nil)))
+                (compiler-live-set2 1 2))
               (and
                 (compiler-live-set-eq?
                   (compiler-live-after liveness "join" 0)
-                  (CompilerLiveI64Cons 3 CompilerLiveI64Nil))
+                  (compiler-live-set1 3))
                 (match (compiler-live-find-block
                   (compiler-live-function-blocks liveness)
                   "left")

@@ -1,0 +1,24 @@
+# status|command|issue-or-note
+#
+# This is the audited public command surface for the freshly built
+# selfhost/cli.tl binary in scripts/verify-selfhost-cli-build-run.sh.
+# `active` entries must have a lightweight smoke assertion in that script.
+# `pending` entries must be listed in help and return cli-pending diagnostics.
+# `retired` entries are documented internal/legacy commands and are not required
+# to appear in help.
+active|build|-
+active|run|-
+active|check|-
+active|fmt|-
+active|lint|-
+active|test|-
+active|doc|-
+active|compile|-
+active|debug tokenize|-
+active|debug parse|-
+active|debug check|-
+active|repl|-
+active|lsp|-
+active|new|-
+active|init|-
+retired|debug host-action|internal host-action debug command retired from public cli.tl parity (#1638)

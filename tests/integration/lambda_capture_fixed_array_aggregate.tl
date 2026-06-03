@@ -79,6 +79,14 @@
 (define (case-fixed-array-field) : bool
   (= ((make-chunk-reader)) 42))
 
+(define (case-fixed-array-field-mutated-after-capture) : bool
+  (let
+    [chunk : Chunk (Chunk (array 42 1 1))]
+    [f : (-> i64) (lambda () : i64 (array-ref (struct-get chunk items) 0))]
+    (begin
+      (array-set! (struct-get chunk items) 0 5)
+      (= (f) 42))))
+
 (define (make-names-reader) : (-> i64)
   (let
     [names : Names (Names (array "four" "letters"))]
@@ -98,8 +106,10 @@
     (if (case-point-array)
       (if (case-nested-array)
         (if (case-fixed-array-field)
-          (if (case-aggregate-array-field)
-            42
+          (if (case-fixed-array-field-mutated-after-capture)
+            (if (case-aggregate-array-field)
+              42
+              6)
             5)
           4)
         3)

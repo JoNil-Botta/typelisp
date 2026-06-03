@@ -239,27 +239,16 @@ EOF
 # former Rust backend handled these, but it has been removed, so these cases are
 # commented out in the manifest and listed here as documented skips until the
 # selfhost compiler closes the gap:
-#   f32 scalar correctness ............ #1655
-#   capturing lambdas ................. #1656
-#   print-char / shift typecheck /
+#   print-char /
 #   enum-payload pattern / spmd ....... #1657
 #   bare idiv traps need guarded abort  #1654
 selfhost_deferred_integration_skips() {
     cat <<'EOF'
-f32_scalar
-lambda_capture_aggregate
-lambda_capture_fixed_array
-lambda_capture_fixed_array_aggregate
-lambda_capture_nested_aggregate
-lambda_capture_scalar
-lambda_capture_struct_enum
-lambda_capture_tuple
 print_char
 shl_count_width_trap
 shl_neg_count_trap
 string_match
 spmd_reduce_scalar
-valid_shift_counts
 div_zero_trap
 rem_zero_trap
 min_div_neg1_trap
@@ -435,16 +424,20 @@ run_windows_program() {
     _stderr=$(cygpath -aw "$3")
     _code_posix=$4
     _code=$(cygpath -aw "$4")
-    shift 4
+    _expected_code=$5
+    shift 5
 
-    # Retry only a transient #1204 crash exit (132/134/139); a genuine
-    # crash-expecting case re-runs harmlessly and still returns the same code.
+    # Retry only a transient #1204 crash exit (132/134/139), but stop
+    # immediately when a crash-shaped exit is the case's expected result.
     _rwp_attempt=0
     while :; do
         _rwp_attempt=$((_rwp_attempt + 1))
         powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$PS_RUNNER_WIN" \
             "$_exe" "$_stdout" "$_stderr" "$_code" "$@"
         got=$(tr -d '\r\n' < "$_code_posix")
+        if [ "$_expected_code" != "-" ] && [ "$got" = "$_expected_code" ]; then
+            break
+        fi
         if is_crash_code "$got" && [ "$_rwp_attempt" -lt "$INTEGRATION_ATTEMPTS" ]; then
             echo "  retry ($_rwp_attempt/$INTEGRATION_ATTEMPTS): '$_exe' crash exit $got — likely transient (#1204)" >&2
         else
@@ -469,6 +462,27 @@ assert_not_contains() {
     _label=$3
     if grep -F "$_snippet" "$_file" >/dev/null 2>&1; then
         echo "FAIL: $_label contained forbidden snippet: $_snippet" >&2
+        exit 1
+    fi
+}
+
+check_u64_float_cast_asm() {
+    _asm=$1
+    _label="u64_float_casts assembly"
+    assert_contains "$_asm" "cast_u64_float_" "$_label"
+    assert_contains "$_asm" "    js " "$_label"
+    assert_contains "$_asm" "    movq %rax, %r11" "$_label"
+    assert_contains "$_asm" "    orq %r11, %rax" "$_label"
+    assert_contains "$_asm" "    addsd %xmm0, %xmm0" "$_label"
+    assert_contains "$_asm" "    addss %xmm0, %xmm0" "$_label"
+    assert_contains "$_asm" "    movzbq" "$_label"
+    if ! awk '
+        /u8_to_f64/ { in_u8 = 1 }
+        in_u8 && /ret/ { exit bad }
+        in_u8 && (/cast_u64_float_/ || /addsd %xmm0, %xmm0/ || /testq %rax, %rax/) { bad = 1 }
+        END { exit bad }
+    ' "$_asm"; then
+        echo "FAIL: $_label used the u64 high-bit path in u8_to_f64" >&2
         exit 1
     fi
 }
@@ -851,7 +865,7 @@ run_windows_backend_fixtures() {
         assert_not_contains "$_runtime_asm" "$_snippet" windows-backend-runtime
     done
     assemble_link_windows "$_runtime_asm" "$_runtime_obj" "$_runtime_bin" windows-backend-runtime
-    run_windows_program "$_runtime_bin" "$_runtime_stdout" "$_runtime_stderr" "$_runtime_code"
+    run_windows_program "$_runtime_bin" "$_runtime_stdout" "$_runtime_stderr" "$_runtime_code" 42
     if [ "$got" -ne 42 ]; then
         echo "FAIL: windows-backend-runtime expected exit 42, got $got" >&2
         exit 1
@@ -881,7 +895,7 @@ run_windows_backend_fixtures() {
     }
     assemble_link_windows "$_driver_self_asm" "$_driver_self_obj" "$_driver_bin" windows-selfhost-compile-driver
     printf '%s\n' '(define (main) : i64 42)' > "$_driver_source"
-    run_windows_program "$_driver_bin" "$_driver_stdout" "$_driver_stderr" "$_driver_code" compile \
+    run_windows_program "$_driver_bin" "$_driver_stdout" "$_driver_stderr" "$_driver_code" 0 compile \
         "$(cygpath -aw "$_driver_source")" -o "$(cygpath -aw "$_driver_asm")"
     if [ "$got" -ne 0 ]; then
         echo "FAIL: windows-selfhost-compile-driver default target got exit $got" >&2
@@ -893,7 +907,7 @@ run_windows_backend_fixtures() {
     assert_contains "$_driver_asm" "main:" windows-selfhost-compile-driver
     assert_contains "$_driver_asm" ".globl _start" windows-selfhost-compile-driver
 
-    run_windows_program "$_driver_bin" "$_driver_stdout" "$_driver_stderr" "$_driver_code" compile \
+    run_windows_program "$_driver_bin" "$_driver_stdout" "$_driver_stderr" "$_driver_code" 0 compile \
         "$(cygpath -aw "$_driver_source")" --target linux-x86_64 -o "$(cygpath -aw "$_driver_linux_asm")"
     if [ "$got" -ne 0 ]; then
         echo "FAIL: windows-selfhost-compile-driver explicit Linux target got exit $got" >&2
@@ -906,7 +920,7 @@ run_windows_backend_fixtures() {
         exit 1
     fi
 
-    run_windows_program "$_driver_bin" "$_driver_stdout" "$_driver_stderr" "$_driver_code" compile \
+    run_windows_program "$_driver_bin" "$_driver_stdout" "$_driver_stderr" "$_driver_code" 0 compile \
         "$(cygpath -aw "$_driver_source")" --target windows-x86_64 -o "$(cygpath -aw "$_driver_windows_asm")"
     if [ "$got" -ne 0 ]; then
         echo "FAIL: windows-selfhost-compile-driver Windows target got exit $got" >&2
@@ -919,7 +933,7 @@ run_windows_backend_fixtures() {
 
     _bad_target_asm="$_driver_dir/bad-target.s"
     rm -f "$_bad_target_asm"
-    run_windows_program "$_driver_bin" "$_driver_stdout" "$_driver_stderr" "$_driver_code" compile \
+    run_windows_program "$_driver_bin" "$_driver_stdout" "$_driver_stderr" "$_driver_code" - compile \
         "$(cygpath -aw "$_driver_source")" --target plan9-x86_64 -o "$(cygpath -aw "$_bad_target_asm")"
     if [ "$got" -eq 0 ]; then
         echo "FAIL: windows-selfhost-compile-driver invalid target unexpectedly succeeded" >&2
@@ -939,7 +953,7 @@ run_windows_backend_fixtures() {
 (define (alloc [comptime T : type] [n : i64]) : (Array i64) (make-array T n))
 (define (main) : (Array i64) (alloc (type i64) 4))
 EOF
-    run_windows_program "$_driver_bin" "$_driver_stdout" "$_driver_stderr" "$_driver_code" compile \
+    run_windows_program "$_driver_bin" "$_driver_stdout" "$_driver_stderr" "$_driver_code" 0 compile \
         "$(cygpath -aw "$_comptime_source")" -o "$(cygpath -aw "$_comptime_asm")"
     if [ "$got" -ne 0 ]; then
         echo "FAIL: windows-selfhost-compile-driver comptime type source got exit $got" >&2
@@ -954,7 +968,7 @@ EOF
     _bad_asm="$_driver_dir/bad.s"
     printf '%s\n' '(define (main) : i64 true)' > "$_bad_source"
     rm -f "$_bad_asm"
-    run_windows_program "$_driver_bin" "$_driver_stdout" "$_driver_stderr" "$_driver_code" compile \
+    run_windows_program "$_driver_bin" "$_driver_stdout" "$_driver_stderr" "$_driver_code" - compile \
         "$(cygpath -aw "$_bad_source")" -o "$(cygpath -aw "$_bad_asm")"
     if [ "$got" -eq 0 ]; then
         echo "FAIL: windows-selfhost-compile-driver invalid source unexpectedly succeeded" >&2
@@ -1065,7 +1079,7 @@ while IFS='|' read -r name source want stdout_spec runtime_args deps extra || [ 
         fi
         set +e
         # shellcheck disable=SC2086
-        run_windows_program "$bin.exe" "$stdout" "$stderr" "$code_file" $(deps_or_empty "$runtime_args")
+        run_windows_program "$bin.exe" "$stdout" "$stderr" "$code_file" "$want" $(deps_or_empty "$runtime_args")
         run_status=$?
         set -e
         if [ "$run_status" -ne 0 ]; then
@@ -1118,6 +1132,10 @@ while IFS='|' read -r name source want stdout_spec runtime_args deps extra || [ 
         "$bin" $(deps_or_empty "$runtime_args") > "$stdout" 2> "$stderr"
         got=$?
         set -e
+    fi
+
+    if [ "$name" = u64_float_casts ]; then
+        check_u64_float_cast_asm "$asm"
     fi
 
     if [ -n "$requires_symbol" ]; then

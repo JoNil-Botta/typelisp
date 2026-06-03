@@ -59,6 +59,24 @@
   (LowerNoVectorMap)
   (LowerSomeVectorMap i64 i64 i64 CompilerIrBinOp AstType i64))
 
+(defenum LowerMaybeVectorReduce
+  (LowerNoVectorReduce)
+  (LowerSomeVectorReduce i64 CompilerIrVectorReduceOp AstType i64))
+
+(defenum LowerCapture
+  (LowerCapture String i64 AstType i64))
+
+(defenum LowerCaptureList
+  (LowerCaptureNil)
+  (LowerCaptureCons LowerCapture LowerCaptureList))
+
+(defenum LowerCapturePlan
+  (LowerCapturePlan LowerCaptureList i64))
+
+(defenum ResultLowerCapturePlan
+  (OkLowerCapturePlan LowerCapturePlan)
+  (ErrLowerCapturePlan CompilerDiagnostic))
+
 (defenum LowerAlloc
   (LowerAlloc LowerState i64))
 
@@ -984,6 +1002,12 @@
       (lower-reach-expr all-functions names state value)]
     [(AstExprWithRegion _ exprs)
       (lower-reach-expr-list all-functions names state exprs)]
+    [(AstExprWithEscape scratch exprs)
+      (lower-reach-expr-list
+        all-functions
+        names
+        (lower-reach-expr all-functions names state scratch)
+        exprs)]
     [(AstExprWithResource bindings body)
       (lower-reach-expr-list
         all-functions
@@ -1656,7 +1680,7 @@
     [(AstTyExprList) 0]
     [(AstTyFunc _ _) 8]
     [(AstTyTuple _) 8]
-    [(AstTyArray elem count) (* (lower-type-size ctx elem) count)]
+    [(AstTyArray _ _) 8]
     [(AstTyDynArray _) 8]
     [(AstTyBox _) 8]
     [(AstTyPtr _) 8]
@@ -1690,7 +1714,7 @@
     [(AstTyExprList) 1]
     [(AstTyFunc _ _) 8]
     [(AstTyTuple _) 8]
-    [(AstTyArray elem _) (lower-type-align ctx elem)]
+    [(AstTyArray _ _) 8]
     [(AstTyDynArray _) 8]
     [(AstTyBox _) 8]
     [(AstTyPtr _) 8]
@@ -1946,6 +1970,17 @@
               (IrInstrCast var-id value ir-from-ty ir-to-ty))
             (IrValueVar var-id)
             to-ty)]))))
+
+(define (lower-coerce-value
+  [state : LowerState]
+  [value : CompilerIrValue]
+  [from-ty : AstType]
+  [to-ty : AstType]) : LowerExpr
+  (if (tc-type-eq from-ty to-ty)
+    (LowerExpr state value to-ty)
+    (if (tc-type-compatible? to-ty from-ty)
+      (lower-cast-value state value from-ty to-ty)
+      (LowerExpr state value to-ty))))
 
 (define (lower-oob-abort [state : LowerState]) : LowerState
   (match (lower-state-alloc-var state)
@@ -2412,6 +2447,874 @@
             [_ (ErrTcType "lower: lambda did not typecheck as a function")])]
         [(ErrTcType message) (ErrTcType message)])]))
 
+(define (lower-capture-list-contains-name?
+  [captures : LowerCaptureList]
+  [name : String]) : bool
+  (match captures
+    [(LowerCaptureNil) false]
+    [(LowerCaptureCons capture rest)
+      (match capture
+        [(LowerCapture capture-name _ _ _)
+          (if (string-eq capture-name name)
+            true
+            (lower-capture-list-contains-name? rest name))])]))
+
+(define (lower-unsupported-capture-message) : String
+  "lower: unsupported lambda capture type (#1553)")
+
+(define (lower-capture-support-message [ctx : TcContext] [ty : AstType]) : String
+  (match (tc-type-strip-region (tc-resolve-type ctx ty))
+    [(AstTyRef _ _) (lower-reference-support-message)]
+    [(AstTyMutRef _ _) (lower-reference-support-message)]
+    [_ (lower-unsupported-capture-message)]))
+
+(define (lower-supported-capture-type? [ctx : TcContext] [ty : AstType]) : bool
+  (match (tc-type-strip-region (tc-resolve-type ctx ty))
+    [(AstTyI64) true]
+    [(AstTyU64) true]
+    [(AstTyF64) true]
+    [(AstTyI32) true]
+    [(AstTyU32) true]
+    [(AstTyF32) true]
+    [(AstTyI16) true]
+    [(AstTyU16) true]
+    [(AstTyI8) true]
+    [(AstTyU8) true]
+    [(AstTyBool) true]
+    [(AstTyChar) true]
+    [(AstTyFunc _ _) true]
+    [(AstTyTuple _) true]
+    [(AstTyArray _ _) true]
+    [(AstTyEnum _) true]
+    [(AstTyStruct _) true]
+    [(AstTyString) true]
+    [(AstTyDynArray _) true]
+    [_ false]))
+
+(define (lower-capture-env-size [cursor : i64]) : i64
+  (lower-align-up
+    (if (= cursor 0)
+      1
+      cursor)
+    8))
+
+(define (lower-capture-slot-type [ty : AstType]) : AstType
+  (match (tc-type-strip-region ty)
+    [(AstTyFunc _ _) (AstTyU64)]
+    [(AstTyTuple _) (AstTyU64)]
+    [(AstTyArray _ _) (AstTyU64)]
+    [(AstTyEnum _) (AstTyU64)]
+    [(AstTyStruct _) (AstTyU64)]
+    [(AstTyString) (AstTyU64)]
+    [(AstTyDynArray _) (AstTyU64)]
+    [_ ty]))
+
+(define (lower-fixed-array-storage-size
+  [ctx : TcContext]
+  [elem-ty : AstType]
+  [count : i64]) : i64
+  (let
+    [elem-size : i64 (lower-type-size ctx elem-ty)]
+    [extent : i64 (* count elem-size)]
+    (lower-align-up
+      (if (= extent 0)
+        1
+        extent)
+      8)))
+
+(define (lower-capture-snapshot-value
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [value : CompilerIrValue]
+  [ty : AstType]) : ResultLowerExpr
+  (match (tc-resolve-type ctx ty)
+    [(AstTyString) (lower-capture-snapshot-string-value state value)]
+    [(AstTyDynArray elem-ty)
+      (lower-capture-snapshot-dynarray-value
+        ctx
+        state
+        value
+        (tc-type-without-regions elem-ty)
+        ty)]
+    [(AstTyTuple elem-tys)
+      (lower-capture-snapshot-tuple-value
+        ctx
+        state
+        env
+        type-env
+        value
+        elem-tys
+        ty)]
+    [(AstTyArray elem-ty count)
+      (lower-capture-snapshot-fixed-array-value
+        ctx
+        state
+        env
+        type-env
+        value
+        (tc-type-without-regions elem-ty)
+        count
+        ty)]
+    [(AstTyStruct name)
+      (lower-capture-snapshot-struct-value ctx state env type-env value name ty)]
+    [(AstTyEnum name)
+      (lower-capture-snapshot-enum-value ctx state env type-env value name ty)]
+    [_ (OkLowerExpr (LowerExpr state value ty))]))
+
+(define (lower-capture-snapshot-string-value
+  [state : LowerState]
+  [value : CompilerIrValue]) : ResultLowerExpr
+  (match (lower-string-fields state value)
+    [(LowerStringFields fields-state ptr len)
+      (lower-substring-call-runtime fields-state ptr (IrValueI64 0) len)]))
+
+(define (lower-capture-snapshot-dynarray-copy
+  [state : LowerState]
+  [old-buf : CompilerIrValue]
+  [new-buf : CompilerIrValue]
+  [len : CompilerIrValue]
+  [elem-ty : AstType]
+  [elem-size : i64]) : LowerState
+  (if (= elem-size 0)
+    state
+    (lower-array-push-copy-loop state old-buf new-buf len elem-ty)))
+
+(define (lower-capture-snapshot-dynarray-finish
+  [state : LowerState]
+  [old-buf : CompilerIrValue]
+  [len : CompilerIrValue]
+  [elem-ty : AstType]
+  [elem-size : i64]
+  [buf-var : i64]
+  [result-ty : AstType]) : ResultLowerExpr
+  (match (lower-reserve-heap-storage state 16 result-ty)
+    [(LowerExpr arr-state arr-value _)
+      (let
+        [copied-state : LowerState
+          (lower-capture-snapshot-dynarray-copy
+            arr-state
+            old-buf
+            (IrValueVar buf-var)
+            len
+            elem-ty
+            elem-size)]
+        (OkLowerExpr
+          (LowerExpr
+            (lower-store-at-offset
+              (lower-store-at-offset
+                copied-state
+                arr-value
+                0
+                (IrValueVar buf-var)
+                (AstTyU64))
+              arr-value
+              8
+              len
+              (AstTyI64))
+            arr-value
+            result-ty)))]))
+
+(define (lower-capture-snapshot-dynarray-value
+  [ctx : TcContext]
+  [state : LowerState]
+  [value : CompilerIrValue]
+  [elem-ty : AstType]
+  [result-ty : AstType]) : ResultLowerExpr
+  (match (lower-load-at-offset state value 8 (AstTyI64))
+    [(LowerExpr len-state len _)
+      (match (lower-load-at-offset len-state value 0 (AstTyU64))
+        [(LowerExpr ptr-state old-buf _)
+          (let
+            [elem-size : i64 (lower-type-size ctx elem-ty)]
+            (match (if (= elem-size 0)
+              (LowerExpr ptr-state (IrValueI64 1) (AstTyI64))
+              (lower-emit-binop
+                ptr-state
+                IrBinMul
+                len
+                (IrValueI64 elem-size)
+                (AstTyI64)))
+              [(LowerExpr byte-state byte-count _)
+                (match (lower-state-alloc-var byte-state)
+                  [(LowerAlloc buf-alloc buf-var)
+                    (lower-capture-snapshot-dynarray-finish
+                      (lower-state-emit
+                        buf-alloc
+                        (IrInstrCall
+                          buf-var
+                          "tl_alloc"
+                          (IrValueCons byte-count IrValueNil)
+                          (AstTyU64)))
+                      old-buf
+                      len
+                      elem-ty
+                      elem-size
+                      buf-var
+                      result-ty)])]))])]))
+
+(define (lower-capture-snapshot-type-list
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [src : CompilerIrValue]
+  [dst : CompilerIrValue]
+  [types : AstTypeList]
+  [cursor : i64]) : ResultLowerState
+  (match types
+    [(AstTypeNil) (OkLowerState state)]
+    [(AstTypeCons ty rest)
+      (let
+        [resolved : AstType (tc-type-without-regions (tc-resolve-type ctx ty))]
+        (let
+          [offset : i64 (lower-align-up cursor (lower-type-align ctx resolved))]
+          [size : i64 (lower-type-size ctx resolved)]
+          (if (> size 0)
+            (match (lower-load-at-offset state src offset resolved)
+              [(LowerExpr load-state field-value _)
+                (match (lower-capture-snapshot-value
+                  ctx
+                  load-state
+                  env
+                  type-env
+                  field-value
+                  resolved)
+                  [(OkLowerExpr snap)
+                    (match snap
+                      [(LowerExpr snap-state snap-value _)
+                        (lower-capture-snapshot-type-list
+                          ctx
+                          (lower-store-at-offset
+                            snap-state
+                            dst
+                            offset
+                            snap-value
+                            resolved)
+                          env
+                          type-env
+                          src
+                          dst
+                          rest
+                          (+ offset size))])]
+                  [(ErrLowerExpr message) (ErrLowerState message)])])
+            (lower-capture-snapshot-type-list
+              ctx
+              state
+              env
+              type-env
+              src
+              dst
+              rest
+              (+ offset size)))))]))
+
+(define (lower-capture-snapshot-tuple-value
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [value : CompilerIrValue]
+  [elem-tys : AstTypeList]
+  [result-ty : AstType]) : ResultLowerExpr
+  (match (lower-reserve-heap-storage
+    state
+    (lower-type-list-storage-size ctx elem-tys)
+    result-ty)
+    [(LowerExpr dst-state dst _)
+      (match (lower-capture-snapshot-type-list
+        ctx
+        dst-state
+        env
+        type-env
+        value
+        dst
+        elem-tys
+        0)
+        [(OkLowerState done-state)
+          (OkLowerExpr (LowerExpr done-state dst result-ty))]
+        [(ErrLowerState message) (ErrLowerExpr message)])]))
+
+(define (lower-capture-snapshot-fixed-array-elems
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [src : CompilerIrValue]
+  [dst : CompilerIrValue]
+  [elem-ty : AstType]
+  [elem-size : i64]
+  [index : i64]
+  [count : i64]) : ResultLowerState
+  (if (>= index count)
+    (OkLowerState state)
+    (let
+      [offset : i64 (* index elem-size)]
+      (if (> elem-size 0)
+        (match (lower-load-at-offset state src offset elem-ty)
+          [(LowerExpr load-state elem-value _)
+            (match (lower-capture-snapshot-value
+              ctx
+              load-state
+              env
+              type-env
+              elem-value
+              elem-ty)
+              [(OkLowerExpr snap)
+                (match snap
+                  [(LowerExpr snap-state snap-value _)
+                    (lower-capture-snapshot-fixed-array-elems
+                      ctx
+                      (lower-store-at-offset
+                        snap-state
+                        dst
+                        offset
+                        snap-value
+                        elem-ty)
+                      env
+                      type-env
+                      src
+                      dst
+                      elem-ty
+                      elem-size
+                      (+ index 1)
+                      count)])]
+              [(ErrLowerExpr message) (ErrLowerState message)])])
+        (lower-capture-snapshot-fixed-array-elems
+          ctx
+          state
+          env
+          type-env
+          src
+          dst
+          elem-ty
+          elem-size
+          (+ index 1)
+          count)))))
+
+(define (lower-capture-snapshot-fixed-array-value
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [value : CompilerIrValue]
+  [elem-ty : AstType]
+  [count : i64]
+  [result-ty : AstType]) : ResultLowerExpr
+  (let
+    [elem-size : i64 (lower-type-size ctx elem-ty)]
+    (match (lower-reserve-heap-storage
+      state
+      (lower-fixed-array-storage-size ctx elem-ty count)
+      result-ty)
+      [(LowerExpr dst-state dst _)
+        (match (lower-capture-snapshot-fixed-array-elems
+          ctx
+          dst-state
+          env
+          type-env
+          value
+          dst
+          elem-ty
+          elem-size
+          0
+          count)
+          [(OkLowerState done-state)
+            (OkLowerExpr (LowerExpr done-state dst result-ty))]
+          [(ErrLowerState message) (ErrLowerExpr message)])])))
+
+(define (lower-capture-snapshot-struct-value
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [value : CompilerIrValue]
+  [struct-name : String]
+  [result-ty : AstType]) : ResultLowerExpr
+  (if (lower-struct-repr-c? ctx struct-name)
+    (ErrLowerExpr
+      (lower-diagnostic
+        "lower: repr-c aggregate lambda captures need repr-c snapshot lowering"))
+    (match (lower-struct-fields ctx struct-name)
+      [(OkAstFieldDefList fields)
+        (let
+          [field-types : AstTypeList (tc-field-type-list ctx fields)]
+          (match (lower-reserve-heap-storage
+            state
+            (lower-type-list-storage-size ctx field-types)
+            result-ty)
+            [(LowerExpr dst-state dst _)
+              (match (lower-capture-snapshot-type-list
+                ctx
+                dst-state
+                env
+                type-env
+                value
+                dst
+                field-types
+                0)
+                [(OkLowerState done-state)
+                  (OkLowerExpr (LowerExpr done-state dst result-ty))]
+                [(ErrLowerState message) (ErrLowerExpr message)])]))]
+      [(ErrAstFieldDefList message) (ErrLowerExpr (lower-diagnostic message))])))
+
+(define (lower-capture-snapshot-enum-variants
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [src : CompilerIrValue]
+  [dst : CompilerIrValue]
+  [tag : CompilerIrValue]
+  [variants : AstVariantDefList]
+  [index : i64]
+  [done-label : String]) : ResultLowerState
+  (match variants
+    [(AstVariantDefNil)
+      (OkLowerState
+        (lower-state-finish-block
+          (lower-state-emit state (IrInstrJump done-label))
+          done-label))]
+    [(AstVariantDefCons variant rest)
+      (match (lower-state-fresh-label state "capture_enum_variant")
+        [(LowerLabel variant-label-state variant-label)
+          (match (lower-state-fresh-label
+            variant-label-state
+            "capture_enum_next")
+            [(LowerLabel next-label-state next-label)
+              (match (lower-state-alloc-var next-label-state)
+                [(LowerAlloc cond-state cond-var)
+                  (let
+                    [branch-state : LowerState
+                      (lower-state-finish-block
+                        (lower-state-emit
+                          (lower-state-emit
+                            cond-state
+                            (IrInstrBinOp
+                              cond-var
+                              IrBinEq
+                              tag
+                              (IrValueI64 index)
+                              (AstTyBool)))
+                          (IrInstrBranch
+                            (IrValueVar cond-var)
+                            variant-label
+                            next-label))
+                        variant-label)]
+                    (match variant
+                      [(AstVariantDef _ fields)
+                        (match (lower-capture-snapshot-type-list
+                          ctx
+                          branch-state
+                          env
+                          type-env
+                          src
+                          dst
+                          fields
+                          8)
+                          [(OkLowerState copied-state)
+                            (lower-capture-snapshot-enum-variants
+                              ctx
+                              (lower-state-finish-block
+                                (lower-state-emit
+                                  copied-state
+                                  (IrInstrJump done-label))
+                                next-label)
+                              env
+                              type-env
+                              src
+                              dst
+                              tag
+                              rest
+                              (+ index 1)
+                              done-label)]
+                          [(ErrLowerState message) (ErrLowerState message)])]))])])])]))
+
+(define (lower-capture-snapshot-enum-value
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [value : CompilerIrValue]
+  [enum-name : String]
+  [result-ty : AstType]) : ResultLowerExpr
+  (match ctx
+    [(TcContext program _ _ _)
+      (match (tc-program-enum-variants program enum-name)
+        [(OkAstVariantDefList variants)
+          (match (lower-reserve-heap-storage
+            state
+            (lower-enum-storage-size ctx enum-name)
+            result-ty)
+            [(LowerExpr dst-state dst _)
+              (match (lower-load-at-offset dst-state value 0 (AstTyI64))
+                [(LowerExpr tag-state tag _)
+                  (match (lower-state-fresh-label tag-state "capture_enum_done")
+                    [(LowerLabel done-state done-label)
+                      (match (lower-capture-snapshot-enum-variants
+                        ctx
+                        (lower-store-at-offset done-state dst 0 tag (AstTyI64))
+                        env
+                        type-env
+                        value
+                        dst
+                        tag
+                        variants
+                        0
+                        done-label)
+                        [(OkLowerState final-state)
+                          (OkLowerExpr (LowerExpr final-state dst result-ty))]
+                        [(ErrLowerState message) (ErrLowerExpr message)])])])])]
+        [(ErrAstVariantDefList message)
+          (ErrLowerExpr (lower-diagnostic message))])]))
+
+(define (lower-capture-plan-scan
+  [ctx : TcContext]
+  [outer-env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [body : AstExpr]
+  [bound : TcStringList]
+  [cursor : i64]
+  [captures : LowerCaptureList]
+  [origin : AstExpr]) : ResultLowerCapturePlan
+  (match outer-env
+    [(SymI64Nil)
+      (OkLowerCapturePlan
+        (LowerCapturePlan captures (lower-capture-env-size cursor)))]
+    [(SymI64Bind name var-id rest)
+      (if (or
+        (lower-capture-list-contains-name? captures name)
+        (not (tc-expr-uses-free-name? body name bound)))
+        (lower-capture-plan-scan
+          ctx
+          rest
+          type-env
+          body
+          bound
+          cursor
+          captures
+          origin)
+        (match (tc-lookup type-env name)
+          [(ErrTcType message)
+            (ErrLowerCapturePlan (lower-diagnostic-at-expr origin message))]
+          [(OkTcType found-ty)
+            (let
+              [capture-ty : AstType
+                (tc-type-without-regions (tc-resolve-type ctx found-ty))]
+              (if (lower-supported-capture-type? ctx capture-ty)
+                (let
+                  [slot-ty : AstType (lower-capture-slot-type capture-ty)]
+                  [offset : i64
+                    (lower-align-up cursor (lower-type-align ctx slot-ty))]
+                  (lower-capture-plan-scan
+                    ctx
+                    rest
+                    type-env
+                    body
+                    bound
+                    (+ offset (lower-type-size ctx slot-ty))
+                    (LowerCaptureCons
+                      (LowerCapture name var-id capture-ty offset)
+                      captures)
+                    origin))
+                (ErrLowerCapturePlan
+                  (lower-diagnostic-at-expr
+                    origin
+                    (lower-capture-support-message ctx capture-ty)))))]))]))
+
+(define (lower-capture-plan
+  [ctx : TcContext]
+  [outer-env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [params : AstParamList]
+  [body : AstExpr]
+  [origin : AstExpr]) : ResultLowerCapturePlan
+  (lower-capture-plan-scan
+    ctx
+    outer-env
+    type-env
+    body
+    (tc-param-bound-names params)
+    0
+    (LowerCaptureNil)
+    origin))
+
+(define (lower-store-captures
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [env-value : CompilerIrValue]
+  [captures : LowerCaptureList]) : ResultLowerState
+  (match captures
+    [(LowerCaptureNil) (OkLowerState state)]
+    [(LowerCaptureCons capture rest)
+      (match capture
+        [(LowerCapture _ var-id capture-ty offset)
+          (match (lower-capture-snapshot-value
+            ctx
+            state
+            env
+            type-env
+            (IrValueVar var-id)
+            capture-ty)
+            [(OkLowerExpr snap)
+              (match snap
+                [(LowerExpr snap-state snap-value _)
+                  (lower-store-captures
+                    ctx
+                    (lower-store-at-offset
+                      snap-state
+                      env-value
+                      offset
+                      snap-value
+                      (lower-capture-slot-type capture-ty))
+                    env
+                    type-env
+                    env-value
+                    rest)])]
+            [(ErrLowerExpr message) (ErrLowerState message)])])]))
+
+(define (lower-store-capturing-lambda-descriptor
+  [state : LowerState]
+  [lambda-name : String]
+  [env-value : CompilerIrValue]
+  [expr-ty : AstType]) : LowerExpr
+  (match (lower-reserve-heap-storage state 16 expr-ty)
+    [(LowerExpr desc-state desc-value _)
+      (LowerExpr
+        (lower-store-at-offset
+          (lower-store-at-offset
+            desc-state
+            desc-value
+            0
+            (IrValueGlobalAddr lambda-name)
+            (AstTyU64))
+          desc-value
+          8
+          env-value
+          (AstTyU64))
+        desc-value
+        expr-ty)]))
+
+(define (lower-capturing-lambda-value
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [lambda-name : String]
+  [captures : LowerCaptureList]
+  [capture-size : i64]
+  [expr-ty : AstType]) : ResultLowerExpr
+  (match (lower-reserve-heap-storage state capture-size (AstTyU64))
+    [(LowerExpr env-state env-value _)
+      (match (lower-store-captures
+        ctx
+        env-state
+        env
+        type-env
+        env-value
+        captures)
+        [(OkLowerState captured-state)
+          (match (lower-store-capturing-lambda-descriptor
+            captured-state
+            lambda-name
+            env-value
+            expr-ty)
+            [(LowerExpr desc-state desc-value desc-ty)
+              (OkLowerExpr (LowerExpr desc-state desc-value desc-ty))])]
+        [(ErrLowerState message) (ErrLowerExpr message)])]))
+
+(define (lower-load-captures
+  [state : LowerState]
+  [env-value : CompilerIrValue]
+  [captures : LowerCaptureList]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]) : ResultLowerEnv
+  (match captures
+    [(LowerCaptureNil) (OkLowerEnv state env type-env)]
+    [(LowerCaptureCons capture rest)
+      (match capture
+        [(LowerCapture name _ capture-ty offset)
+          (match (lower-load-at-offset
+            state
+            env-value
+            offset
+            (lower-capture-slot-type capture-ty))
+            [(LowerExpr loaded-state loaded-value _)
+              (match loaded-value
+                [(IrValueVar loaded-var)
+                  (lower-load-captures
+                    loaded-state
+                    env-value
+                    rest
+                    (sym-i64-bind env name loaded-var)
+                    (tc-bind type-env name capture-ty))]
+                [_
+                  (ErrLowerEnv
+                    (lower-diagnostic
+                      "lower: capture load did not materialize a variable"))])])])]))
+
+(define (lower-captured-param-list [ctx : TcContext] [params : AstParamList]) : CompilerIrParamList
+  (IrParamCons
+    (IrParam "__tl_env" (AstTyU64) 0)
+    (lower-param-list ctx params 1)))
+
+(define (lower-function-with-captures
+  [ctx : TcContext]
+  [top-env : TcTypeEnv]
+  [logical-name : String]
+  [params : AstParamList]
+  [ret : AstType]
+  [body : AstExpr]
+  [captures : LowerCaptureList]
+  [spans : CompilerSourceSpans]
+  [names : LowerNameEnv]
+  [mode : CompilerLowerMode]) : ResultLowerFunction
+  (if (or
+    (lower-param-list-contains-unsupported-reference? ctx params)
+    (tc-type-contains-reference? (tc-resolve-type ctx ret)))
+    (ErrLowerFunction (lower-diagnostic (lower-reference-support-message)))
+    (let
+      [param-count : i64 (+ 1 (lower-param-count params))]
+      (let
+        [function-spans : CompilerSourceSpans
+          (lower-record-function-span spans logical-name body)]
+        [state : LowerState
+          (LowerState
+            param-count
+            0
+            0
+            "entry"
+            IrInstrNil
+            IrBlockNil
+            IrFunctionNil
+            logical-name
+            function-spans
+            names
+            mode)]
+        [ret-ty : AstType (tc-type-without-regions (tc-resolve-type ctx ret))]
+        (match (lower-load-captures
+          state
+          (IrValueVar 0)
+          captures
+          (sym-i64-empty)
+          (tc-bind-return-type top-env ret-ty))
+          [(OkLowerEnv captured-state captured-env captured-type-env)
+            (let
+              [env : SymI64Env (lower-bind-params params 1 captured-env)]
+              [type-env : TcTypeEnv
+                (tc-bind-params ctx captured-type-env params)]
+              (match (lower-tail-expr
+                ctx
+                captured-state
+                env
+                type-env
+                body
+                ret-ty)
+                [(OkLowerState final-state)
+                  (OkLowerFunction
+                    (IrFunctionCons
+                      (IrFunction
+                        logical-name
+                        (lower-captured-param-list ctx params)
+                        ret-ty
+                        (lower-state-next-var final-state)
+                        (lower-state-build-blocks final-state))
+                      (lower-state-functions final-state))
+                    (lower-state-spans final-state))]
+                [(ErrLowerState message) (ErrLowerFunction message)]))]
+          [(ErrLowerEnv message) (ErrLowerFunction message)])))))
+
+(define (lower-lambda-noncapturing
+  [ctx : TcContext]
+  [state : LowerState]
+  [type-env : TcTypeEnv]
+  [params : AstParamList]
+  [maybe-ret : AstMaybeType]
+  [body : AstExpr]
+  [origin : AstExpr]
+  [expr-ty : AstType]) : ResultLowerExpr
+  (match (lower-lambda-ret-type ctx type-env origin maybe-ret)
+    [(ErrTcType message)
+      (ErrLowerExpr (lower-diagnostic-at-expr origin message))]
+    [(OkTcType ret-ty)
+      (match (lower-state-fresh-lambda-name state)
+        [(LowerLambdaName named-state lambda-name)
+          (match (lower-function
+            ctx
+            type-env
+            lambda-name
+            params
+            ret-ty
+            body
+            (lower-state-spans named-state)
+            (lower-state-names named-state)
+            (lower-state-mode named-state))
+            [(OkLowerFunction lambda-functions lambda-spans)
+              (OkLowerExpr
+                (LowerExpr
+                  (lower-state-add-functions
+                    named-state
+                    lambda-functions
+                    lambda-spans)
+                  (IrValueFunction lambda-name)
+                  expr-ty))]
+            [(ErrLowerFunction message) (ErrLowerExpr message)])])]))
+
+(define (lower-lambda-capturing
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [params : AstParamList]
+  [maybe-ret : AstMaybeType]
+  [body : AstExpr]
+  [origin : AstExpr]
+  [expr-ty : AstType]) : ResultLowerExpr
+  (match (lower-lambda-ret-type ctx type-env origin maybe-ret)
+    [(ErrTcType message)
+      (ErrLowerExpr (lower-diagnostic-at-expr origin message))]
+    [(OkTcType ret-ty)
+      (match (lower-capture-plan ctx env type-env params body origin)
+        [(ErrLowerCapturePlan message) (ErrLowerExpr message)]
+        [(OkLowerCapturePlan plan)
+          (match plan
+            [(LowerCapturePlan captures capture-size)
+              (match (lower-state-fresh-lambda-name state)
+                [(LowerLambdaName named-state lambda-name)
+                  (match (lower-function-with-captures
+                    ctx
+                    type-env
+                    lambda-name
+                    params
+                    ret-ty
+                    body
+                    captures
+                    (lower-state-spans named-state)
+                    (lower-state-names named-state)
+                    (lower-state-mode named-state))
+                    [(OkLowerFunction lambda-functions lambda-spans)
+                      (match (lower-capturing-lambda-value
+                        ctx
+                        (lower-state-add-functions
+                          named-state
+                          lambda-functions
+                          lambda-spans)
+                        env
+                        type-env
+                        lambda-name
+                        captures
+                        capture-size
+                        expr-ty)
+                        [(OkLowerExpr lowered)
+                          (match lowered
+                            [(LowerExpr value-state value value-ty)
+                              (OkLowerExpr
+                                (LowerExpr value-state value value-ty))])]
+                        [(ErrLowerExpr message) (ErrLowerExpr message)])]
+                    [(ErrLowerFunction message) (ErrLowerExpr message)])])])])]))
+
 (define (lower-lambda
   [ctx : TcContext]
   [state : LowerState]
@@ -2423,36 +3326,25 @@
   [origin : AstExpr]
   [expr-ty : AstType]) : ResultLowerExpr
   (if (lower-lambda-captures-env? env body (tc-param-bound-names params))
-    (ErrLowerExpr
-      (lower-diagnostic-at-expr
-        origin
-        "lower: capturing lambdas require closure lowering (#1418)"))
-    (match (lower-lambda-ret-type ctx type-env origin maybe-ret)
-      [(ErrTcType message)
-        (ErrLowerExpr (lower-diagnostic-at-expr origin message))]
-      [(OkTcType ret-ty)
-        (match (lower-state-fresh-lambda-name state)
-          [(LowerLambdaName named-state lambda-name)
-            (match (lower-function
-              ctx
-              type-env
-              lambda-name
-              params
-              ret-ty
-              body
-              (lower-state-spans named-state)
-              (lower-state-names named-state)
-              (lower-state-mode named-state))
-              [(OkLowerFunction lambda-functions lambda-spans)
-                (OkLowerExpr
-                  (LowerExpr
-                    (lower-state-add-functions
-                      named-state
-                      lambda-functions
-                      lambda-spans)
-                    (IrValueFunction lambda-name)
-                    expr-ty))]
-              [(ErrLowerFunction message) (ErrLowerExpr message)])])])))
+    (lower-lambda-capturing
+      ctx
+      state
+      env
+      type-env
+      params
+      maybe-ret
+      body
+      origin
+      expr-ty)
+    (lower-lambda-noncapturing
+      ctx
+      state
+      type-env
+      params
+      maybe-ret
+      body
+      origin
+      expr-ty)))
 
 (define (lower-return-maybe [value : CompilerIrValue] [ty : AstType]) : CompilerIrMaybeValue
   (match ty
@@ -2834,10 +3726,11 @@
           (lower-diagnostic "lower: arena builtin expects one argument"))])))
 
 ;; Lower `(clone x)` (#1633): the canonical deep-copy / arena-escape. A String
-;; copies its buffer via `substring`; a named aggregate (enum/struct) dispatches
-;; to the synthesized `clone$<Name>` helper (see compiler_clone.tl); a scalar is
-;; returned as-is. The first lowering of `arg` is only used to read its type; for
-;; the String path `substring` re-lowers it (the dead copy is removed by DCE).
+;; copies its buffer through `tl_substring`; tuple, fixed-array, and dynamic-
+;; array values allocate fresh storage and recursively clone each element; named
+;; aggregates dispatch to synthesized `clone$<Name>` helpers (compiler_clone.tl)
+;; so recursive enum/struct values recurse at runtime instead of lower time; and
+;; scalar values are returned as-is.
 (define (lower-clone-named
   [state : LowerState]
   [env : SymI64Env]
@@ -2858,24 +3751,492 @@
           (IrValueVar var-id)
           ty))]))
 
+(define (lower-clone-scalar-type? [ty : AstType]) : bool
+  (match ty
+    [(AstTyI64) true]
+    [(AstTyI32) true]
+    [(AstTyI16) true]
+    [(AstTyI8) true]
+    [(AstTyU64) true]
+    [(AstTyU32) true]
+    [(AstTyU16) true]
+    [(AstTyU8) true]
+    [(AstTyF64) true]
+    [(AstTyF32) true]
+    [(AstTyBool) true]
+    [(AstTyChar) true]
+    [(AstTyUnit) true]
+    [(AstTyNever) true]
+    [_ false]))
+
+(define (lower-clone-type-list
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [src : CompilerIrValue]
+  [dst : CompilerIrValue]
+  [types : AstTypeList]
+  [cursor : i64]) : ResultLowerState
+  (match types
+    [(AstTypeNil) (OkLowerState state)]
+    [(AstTypeCons ty rest)
+      (let
+        [resolved : AstType (tc-type-without-regions (tc-resolve-type ctx ty))]
+        (let
+          [offset : i64 (lower-align-up cursor (lower-type-align ctx resolved))]
+          [size : i64 (lower-type-size ctx resolved)]
+          (if (> size 0)
+            (match (lower-load-at-offset state src offset resolved)
+              [(LowerExpr load-state field-value _)
+                (match (lower-clone-dispatch
+                  ctx
+                  load-state
+                  env
+                  type-env
+                  field-value
+                  resolved)
+                  [(OkLowerExpr cloned)
+                    (match cloned
+                      [(LowerExpr clone-state clone-value _)
+                        (lower-clone-type-list
+                          ctx
+                          (lower-store-at-offset
+                            clone-state
+                            dst
+                            offset
+                            clone-value
+                            resolved)
+                          env
+                          type-env
+                          src
+                          dst
+                          rest
+                          (+ offset size))])]
+                  [(ErrLowerExpr message) (ErrLowerState message)])])
+            (lower-clone-type-list
+              ctx
+              state
+              env
+              type-env
+              src
+              dst
+              rest
+              (+ offset size)))))]))
+
+(define (lower-clone-tuple-value
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [value : CompilerIrValue]
+  [elem-tys : AstTypeList]
+  [result-ty : AstType]) : ResultLowerExpr
+  (match (lower-reserve-heap-storage
+    state
+    (lower-type-list-storage-size ctx elem-tys)
+    result-ty)
+    [(LowerExpr dst-state dst _)
+      (match (lower-clone-type-list
+        ctx
+        dst-state
+        env
+        type-env
+        value
+        dst
+        elem-tys
+        0)
+        [(OkLowerState done-state)
+          (OkLowerExpr (LowerExpr done-state dst result-ty))]
+        [(ErrLowerState message) (ErrLowerExpr message)])]))
+
+(define (lower-clone-fixed-array-elems
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [src : CompilerIrValue]
+  [dst : CompilerIrValue]
+  [elem-ty : AstType]
+  [elem-size : i64]
+  [index : i64]
+  [count : i64]) : ResultLowerState
+  (if (>= index count)
+    (OkLowerState state)
+    (let
+      [offset : i64 (* index elem-size)]
+      (if (> elem-size 0)
+        (match (lower-load-at-offset state src offset elem-ty)
+          [(LowerExpr load-state elem-value _)
+            (match (lower-clone-dispatch
+              ctx
+              load-state
+              env
+              type-env
+              elem-value
+              elem-ty)
+              [(OkLowerExpr cloned)
+                (match cloned
+                  [(LowerExpr clone-state clone-value _)
+                    (lower-clone-fixed-array-elems
+                      ctx
+                      (lower-store-at-offset
+                        clone-state
+                        dst
+                        offset
+                        clone-value
+                        elem-ty)
+                      env
+                      type-env
+                      src
+                      dst
+                      elem-ty
+                      elem-size
+                      (+ index 1)
+                      count)])]
+              [(ErrLowerExpr message) (ErrLowerState message)])])
+        (lower-clone-fixed-array-elems
+          ctx
+          state
+          env
+          type-env
+          src
+          dst
+          elem-ty
+          elem-size
+          (+ index 1)
+          count)))))
+
+(define (lower-clone-fixed-array-value
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [value : CompilerIrValue]
+  [elem-ty : AstType]
+  [count : i64]
+  [result-ty : AstType]) : ResultLowerExpr
+  (let
+    [elem-size : i64 (lower-type-size ctx elem-ty)]
+    (match (lower-reserve-heap-storage
+      state
+      (lower-fixed-array-storage-size ctx elem-ty count)
+      result-ty)
+      [(LowerExpr dst-state dst _)
+        (match (lower-clone-fixed-array-elems
+          ctx
+          dst-state
+          env
+          type-env
+          value
+          dst
+          elem-ty
+          elem-size
+          0
+          count)
+          [(OkLowerState done-state)
+            (OkLowerExpr (LowerExpr done-state dst result-ty))]
+          [(ErrLowerState message) (ErrLowerExpr message)])])))
+
+(define (lower-clone-dynarray-advance
+  [state : LowerState]
+  [index-var : i64]
+  [header-label : String]
+  [exit-label : String]) : ResultLowerState
+  (match (lower-state-alloc-var state)
+    [(LowerAlloc inc-alloc inc-var)
+      (OkLowerState
+        (lower-state-finish-block
+          (lower-state-emit
+            (lower-state-emit
+              (lower-state-emit
+                inc-alloc
+                (IrInstrBinOp
+                  inc-var
+                  IrBinAdd
+                  (IrValueVar index-var)
+                  (IrValueI64 1)
+                  (AstTyI64)))
+              (IrInstrMov index-var (IrValueVar inc-var) (AstTyI64)))
+            (IrInstrJump header-label))
+          exit-label))]))
+
+(define (lower-clone-dynarray-store-and-advance
+  [state : LowerState]
+  [new-buf : CompilerIrValue]
+  [index-var : i64]
+  [header-label : String]
+  [exit-label : String]
+  [clone-value : CompilerIrValue]
+  [elem-ty : AstType]) : ResultLowerState
+  (match (lower-emit-gep state new-buf (IrValueVar index-var) elem-ty)
+    [(LowerExpr dst-gep-state dst-ptr _)
+      (lower-clone-dynarray-advance
+        (lower-state-emit
+          dst-gep-state
+          (IrInstrStorePtr dst-ptr clone-value elem-ty))
+        index-var
+        header-label
+        exit-label)]))
+
+(define (lower-clone-dynarray-copy-body
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [old-buf : CompilerIrValue]
+  [new-buf : CompilerIrValue]
+  [index-var : i64]
+  [header-label : String]
+  [exit-label : String]
+  [elem-ty : AstType]) : ResultLowerState
+  (match (lower-emit-gep state old-buf (IrValueVar index-var) elem-ty)
+    [(LowerExpr src-gep-state src-ptr _)
+      (match (lower-emit-load src-gep-state src-ptr elem-ty)
+        [(LowerExpr load-state elem-value _)
+          (match (lower-clone-dispatch
+            ctx
+            load-state
+            env
+            type-env
+            elem-value
+            elem-ty)
+            [(OkLowerExpr cloned)
+              (match cloned
+                [(LowerExpr clone-state clone-value _)
+                  (lower-clone-dynarray-store-and-advance
+                    clone-state
+                    new-buf
+                    index-var
+                    header-label
+                    exit-label
+                    clone-value
+                    elem-ty)])]
+            [(ErrLowerExpr message) (ErrLowerState message)])])]))
+
+(define (lower-clone-dynarray-copy-nonempty
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [old-buf : CompilerIrValue]
+  [new-buf : CompilerIrValue]
+  [len : CompilerIrValue]
+  [elem-ty : AstType]) : ResultLowerState
+  (match (lower-state-fresh-label state "clone_array_header")
+    [(LowerLabel header-label-state header-label)
+      (match (lower-state-fresh-label header-label-state "clone_array_body")
+        [(LowerLabel body-label-state body-label)
+          (match (lower-state-fresh-label body-label-state "clone_array_exit")
+            [(LowerLabel exit-label-state exit-label)
+              (match (lower-state-alloc-var exit-label-state)
+                [(LowerAlloc index-alloc index-var)
+                  (let
+                    [header-start : LowerState
+                      (lower-state-finish-block
+                        (lower-state-emit
+                          (lower-state-emit
+                            index-alloc
+                            (IrInstrMov index-var (IrValueI64 0) (AstTyI64)))
+                          (IrInstrJump header-label))
+                        header-label)]
+                    (match (lower-state-alloc-var header-start)
+                      [(LowerAlloc cond-alloc cond-var)
+                        (let
+                          [body-start : LowerState
+                            (lower-state-finish-block
+                              (lower-state-emit
+                                (lower-state-emit
+                                  cond-alloc
+                                  (IrInstrBinOp
+                                    cond-var
+                                    IrBinLt
+                                    (IrValueVar index-var)
+                                    len
+                                    (AstTyBool)))
+                                (IrInstrBranch
+                                  (IrValueVar cond-var)
+                                  body-label
+                                  exit-label))
+                              body-label)]
+                          (lower-clone-dynarray-copy-body
+                            ctx
+                            body-start
+                            env
+                            type-env
+                            old-buf
+                            new-buf
+                            index-var
+                            header-label
+                            exit-label
+                            elem-ty))]))])])])]))
+
+(define (lower-clone-dynarray-copy-loop
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [old-buf : CompilerIrValue]
+  [new-buf : CompilerIrValue]
+  [len : CompilerIrValue]
+  [elem-ty : AstType]
+  [elem-size : i64]) : ResultLowerState
+  (if (= elem-size 0)
+    (OkLowerState state)
+    (lower-clone-dynarray-copy-nonempty
+      ctx
+      state
+      env
+      type-env
+      old-buf
+      new-buf
+      len
+      elem-ty)))
+
+(define (lower-clone-dynarray-finish
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [old-buf : CompilerIrValue]
+  [len : CompilerIrValue]
+  [elem-ty : AstType]
+  [elem-size : i64]
+  [buf-var : i64]
+  [result-ty : AstType]) : ResultLowerExpr
+  (match (lower-reserve-heap-storage state 16 result-ty)
+    [(LowerExpr arr-state arr-value _)
+      (match (lower-clone-dynarray-copy-loop
+        ctx
+        arr-state
+        env
+        type-env
+        old-buf
+        (IrValueVar buf-var)
+        len
+        elem-ty
+        elem-size)
+        [(OkLowerState copied-state)
+          (OkLowerExpr
+            (LowerExpr
+              (lower-store-at-offset
+                (lower-store-at-offset
+                  copied-state
+                  arr-value
+                  0
+                  (IrValueVar buf-var)
+                  (AstTyU64))
+                arr-value
+                8
+                len
+                (AstTyI64))
+              arr-value
+              result-ty))]
+        [(ErrLowerState message) (ErrLowerExpr message)])]))
+
+(define (lower-clone-dynarray-value
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [value : CompilerIrValue]
+  [elem-ty : AstType]
+  [result-ty : AstType]) : ResultLowerExpr
+  (match (lower-load-at-offset state value 8 (AstTyI64))
+    [(LowerExpr len-state len _)
+      (match (lower-load-at-offset len-state value 0 (AstTyU64))
+        [(LowerExpr ptr-state old-buf _)
+          (let
+            [elem-size : i64 (lower-type-size ctx elem-ty)]
+            (match (if (= elem-size 0)
+              (LowerExpr ptr-state (IrValueI64 1) (AstTyI64))
+              (lower-emit-binop
+                ptr-state
+                IrBinMul
+                len
+                (IrValueI64 elem-size)
+                (AstTyI64)))
+              [(LowerExpr byte-state byte-count _)
+                (match (lower-state-alloc-var byte-state)
+                  [(LowerAlloc buf-alloc buf-var)
+                    (lower-clone-dynarray-finish
+                      ctx
+                      (lower-state-emit
+                        buf-alloc
+                        (IrInstrCall
+                          buf-var
+                          "tl_alloc"
+                          (IrValueCons byte-count IrValueNil)
+                          (AstTyU64)))
+                      env
+                      type-env
+                      old-buf
+                      len
+                      elem-ty
+                      elem-size
+                      buf-var
+                      result-ty)])]))])]))
+
 (define (lower-clone-dispatch
   [ctx : TcContext]
   [state : LowerState]
   [env : SymI64Env]
   [type-env : TcTypeEnv]
-  [arg : AstExpr]
+  [value : CompilerIrValue]
+  [ty : AstType]) : ResultLowerExpr
+  (let
+    [clone-ty : AstType (tc-type-without-regions (tc-resolve-type ctx ty))]
+    (match clone-ty
+      [(AstTyString) (lower-capture-snapshot-string-value state value)]
+      [(AstTyTuple elem-tys)
+        (lower-clone-tuple-value ctx state env type-env value elem-tys clone-ty)]
+      [(AstTyArray elem-ty count)
+        (lower-clone-fixed-array-value
+          ctx
+          state
+          env
+          type-env
+          value
+          (tc-type-without-regions elem-ty)
+          count
+          clone-ty)]
+      [(AstTyDynArray elem-ty)
+        (lower-clone-dynarray-value
+          ctx
+          state
+          env
+          type-env
+          value
+          (tc-type-without-regions elem-ty)
+          clone-ty)]
+      [(AstTyEnum name) (lower-clone-named state env name value clone-ty)]
+      [(AstTyStruct name) (lower-clone-named state env name value clone-ty)]
+      [(AstTyVar name) (lower-clone-named state env name value clone-ty)]
+      [_
+        (if (lower-clone-scalar-type? clone-ty)
+          (OkLowerExpr (LowerExpr state value clone-ty))
+          (ErrLowerExpr
+            (lower-diagnostic
+              (string-append
+                "lower: clone unsupported type "
+                (tc-type-render clone-ty)))))])))
+
+(define (lower-clone-value-dispatch
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
   [value : CompilerIrValue]
   [ty : AstType]) : ResultLowerExpr
   (match (tc-resolve-type ctx ty)
     [(AstTyString)
-      (lower-substring
-        ctx
-        state
-        env
-        type-env
-        arg
-        (AstExprLiteral (AstLitInt 0))
-        (AstExprCall (AstExprVar "string-length") (AstExprCons arg AstExprNil)))]
+      (match (lower-string-fields state value)
+        [(LowerStringFields fields-state ptr len)
+          (lower-substring-bounds-checked
+            fields-state
+            ptr
+            len
+            (IrValueI64 0)
+            len)])]
     [(AstTyEnum name) (lower-clone-named state env name value ty)]
     [(AstTyStruct name) (lower-clone-named state env name value ty)]
     [(AstTyVar name) (lower-clone-named state env name value ty)]
@@ -2891,7 +4252,7 @@
     [(OkLowerExpr lowered)
       (match lowered
         [(LowerExpr arg-state arg-value arg-ty)
-          (lower-clone-dispatch ctx arg-state env type-env arg arg-value arg-ty)])]
+          (lower-clone-dispatch ctx arg-state env type-env arg-value arg-ty)])]
     [(ErrLowerExpr message) (ErrLowerExpr message)]))
 
 (define (lower-bootstrap-runtime-builtin? [name : String]) : bool
@@ -2919,6 +4280,7 @@
     [(string-eq name "fs-mkdir-status") true]
     [(string-eq name "fs-remove-file-status") true]
     [(string-eq name "fs-remove-dir-status") true]
+    [(string-eq name "fs-rename-status") true]
     [(string-eq name "fs-process-id") true]
     [(string-eq name "panic") true]
     [(string-eq name "error") true]
@@ -2949,22 +4311,25 @@
           (ErrLowerArgs (lower-diagnostic "lower: constructor arity mismatch"))])]
     [(AstExprCons arg rest-args)
       (match types
-        [(AstTypeCons _ rest-types)
-          (match (lower-expr ctx state env type-env arg)
-            [(OkLowerExpr lowered)
-              (match lowered
-                [(LowerExpr arg-state value _)
-                  (match (lower-args-as
-                    ctx
-                    arg-state
-                    env
-                    type-env
-                    rest-args
-                    rest-types)
-                    [(OkLowerArgs rest-state rest-values)
-                      (OkLowerArgs rest-state (IrValueCons value rest-values))]
-                    [(ErrLowerArgs message) (ErrLowerArgs message)])])]
-            [(ErrLowerExpr message) (ErrLowerArgs message)])]
+        [(AstTypeCons expected rest-types)
+          (let
+            [arg-ty : AstType
+              (tc-type-without-regions (tc-resolve-type ctx expected))]
+            (match (lower-expr-expected ctx state env type-env arg arg-ty arg)
+              [(OkLowerExpr lowered)
+                (match lowered
+                  [(LowerExpr arg-state value _)
+                    (match (lower-args-as
+                      ctx
+                      arg-state
+                      env
+                      type-env
+                      rest-args
+                      rest-types)
+                      [(OkLowerArgs rest-state rest-values)
+                        (OkLowerArgs rest-state (IrValueCons value rest-values))]
+                      [(ErrLowerArgs message) (ErrLowerArgs message)])])]
+              [(ErrLowerExpr message) (ErrLowerArgs message)]))]
         [(AstTypeNil)
           (ErrLowerArgs (lower-diagnostic "lower: constructor arity mismatch"))])]))
 
@@ -3164,7 +4529,7 @@
     [(AstExprVar name)
       (lower-var-or-nullary-variant ctx state env type-env name expr-ty)]
     [(AstExprAnn inner _)
-      (match (lower-expr ctx state env type-env inner)
+      (match (lower-expr-expected ctx state env type-env inner expr-ty origin)
         [(OkLowerExpr lowered)
           (match lowered
             [(LowerExpr inner-state value _)
@@ -3262,42 +4627,50 @@
     [(AstExprUnsafe exprs)
       (lower-begin ctx state env (tc-enter-unsafe type-env) exprs)]
     [(AstExprSet name value)
-      (match (lower-expr ctx state env type-env value)
-        [(OkLowerExpr lowered)
-          (match lowered
-            [(LowerExpr value-state value-ir value-ty)
-              (match (sym-i64-lookup env name)
-                [(SomeI64 id)
-                  (OkLowerExpr
-                    (LowerExpr
-                      (lower-state-emit-at-expr
-                        value-state
-                        (IrInstrMov id value-ir value-ty)
-                        origin)
-                      IrValueUnit
-                      expr-ty))]
-                [(NoneI64)
-                  (match (tc-lookup type-env name)
-                    [(OkTcType store-ty)
-                      (OkLowerExpr
-                        (LowerExpr
-                          (lower-state-emit-at-expr
-                            value-state
-                            (IrInstrStore
-                              (lower-resolve-name value-state name)
-                              value-ir
-                              store-ty)
-                            origin)
-                          IrValueUnit
-                          expr-ty))]
-                    [(ErrTcType _)
-                      (ErrLowerExpr
-                        (lower-diagnostic-at-expr
-                          origin
-                          (string-append
-                            "lower: assignment to unknown local "
-                            name)))])])])]
-        [(ErrLowerExpr message) (ErrLowerExpr message)])]
+      (match (tc-lookup type-env name)
+        [(OkTcType store-ty)
+          (let
+            [target-ty : AstType
+              (tc-type-without-regions (tc-resolve-type ctx store-ty))]
+            (match (lower-expr-expected
+              ctx
+              state
+              env
+              type-env
+              value
+              target-ty
+              value)
+              [(OkLowerExpr lowered)
+                (match lowered
+                  [(LowerExpr value-state value-ir _)
+                    (match (sym-i64-lookup env name)
+                      [(SomeI64 id)
+                        (OkLowerExpr
+                          (LowerExpr
+                            (lower-state-emit-at-expr
+                              value-state
+                              (IrInstrMov id value-ir target-ty)
+                              origin)
+                            IrValueUnit
+                            expr-ty))]
+                      [(NoneI64)
+                        (OkLowerExpr
+                          (LowerExpr
+                            (lower-state-emit-at-expr
+                              value-state
+                              (IrInstrStore
+                                (lower-resolve-name value-state name)
+                                value-ir
+                                target-ty)
+                              origin)
+                            IrValueUnit
+                            expr-ty))])])]
+              [(ErrLowerExpr message) (ErrLowerExpr message)]))]
+        [(ErrTcType _)
+          (ErrLowerExpr
+            (lower-diagnostic-at-expr
+              origin
+              (string-append "lower: assignment to unknown local " name)))])]
     [(AstExprIf cond then-branch else-branch)
       (lower-if ctx state env type-env cond then-branch else-branch expr-ty)]
     [(AstExprWhile cond body) (lower-while ctx state env type-env cond body)]
@@ -3337,6 +4710,8 @@
     [(AstExprTupleRef tuple-expr index)
       (lower-tuple-ref ctx state env type-env tuple-expr index expr-ty)]
     [(AstExprWithRegion _ body) (lower-with-arena ctx state env type-env body)]
+    [(AstExprWithEscape scratch body)
+      (lower-with-escape ctx state env type-env scratch body)]
     [(AstExprWithResource bindings body)
       (lower-with-resource ctx state env type-env bindings body)]
     [(AstExprBox inner) (lower-box ctx state env type-env inner expr-ty)]
@@ -3551,6 +4926,32 @@
     [_
       (ErrLowerExpr
         (lower-diagnostic-at-expr origin "lower: unsupported expression"))]))
+
+(define (lower-expr-expected
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [expr : AstExpr]
+  [expected-ty : AstType]
+  [origin : AstExpr]) : ResultLowerExpr
+  (match expr
+    [(AstExprSpanned inner _)
+      (lower-expr-expected ctx state env type-env inner expected-ty origin)]
+    [(AstExprLiteral lit)
+      (lower-materialize-at-expr
+        state
+        (lower-literal-value lit)
+        expected-ty
+        origin)]
+    [_
+      (match (lower-expr ctx state env type-env expr)
+        [(OkLowerExpr lowered)
+          (match lowered
+            [(LowerExpr next-state value actual-ty)
+              (OkLowerExpr
+                (lower-coerce-value next-state value actual-ty expected-ty))])]
+        [(ErrLowerExpr message) (ErrLowerExpr message)])]))
 
 (define (lower-struct-get
   [ctx : TcContext]
@@ -4209,7 +5610,19 @@
   [args : AstExprList]
   [result-ty : AstType]
   [origin : AstExpr]) : ResultLowerExpr
-  (match (lower-args ctx state env type-env args)
+  (match (match (tc-lookup type-env name)
+    [(OkTcType fn-ty)
+      (match (tc-type-strip-region (tc-resolve-type ctx fn-ty))
+        [(AstTyFunc param-types _)
+          (lower-args-as
+            ctx
+            state
+            env
+            type-env
+            args
+            (tc-resolve-type-list ctx param-types))]
+        [_ (lower-args ctx state env type-env args)])]
+    [(ErrTcType _) (lower-args ctx state env type-env args)])
     [(OkLowerArgs args-state values)
       (match (lower-state-alloc-var args-state)
         [(LowerAlloc allocated var-id)
@@ -4336,6 +5749,51 @@
                   (IrValueCons ptr (IrValueCons len IrValueNil))
                   result-ty)])
             (ErrLowerExpr (lower-diagnostic-at-expr arg message)))])]
+    [(ErrLowerExpr message) (ErrLowerExpr message)]))
+
+(define (lower-two-string-runtime-call
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [left : AstExpr]
+  [right : AstExpr]
+  [runtime-name : String]
+  [result-ty : AstType]
+  [message : String]) : ResultLowerExpr
+  (match (lower-expr ctx state env type-env left)
+    [(OkLowerExpr lowered-left)
+      (match lowered-left
+        [(LowerExpr left-state left-value left-ty)
+          (if (lower-string-handle-type? ctx left-ty)
+            (match (lower-expr ctx left-state env type-env right)
+              [(OkLowerExpr lowered-right)
+                (match lowered-right
+                  [(LowerExpr right-state right-value right-ty)
+                    (if (lower-string-handle-type? ctx right-ty)
+                      (match (lower-string-fields right-state left-value)
+                        [(LowerStringFields left-fields-state left-ptr left-len)
+                          (match (lower-string-fields
+                            left-fields-state
+                            right-value)
+                            [(LowerStringFields
+                                done-fields-state
+                                right-ptr
+                                right-len)
+                              (lower-runtime-call-values
+                                done-fields-state
+                                runtime-name
+                                (IrValueCons
+                                  left-ptr
+                                  (IrValueCons
+                                    left-len
+                                    (IrValueCons
+                                      right-ptr
+                                      (IrValueCons right-len IrValueNil))))
+                                result-ty)])])
+                      (ErrLowerExpr (lower-diagnostic-at-expr right message)))])]
+              [(ErrLowerExpr message) (ErrLowerExpr message)])
+            (ErrLowerExpr (lower-diagnostic-at-expr left message)))])]
     [(ErrLowerExpr message) (ErrLowerExpr message)]))
 
 (define (lower-string-to-int-call
@@ -4723,6 +6181,37 @@
         result-ty
         (string-append (string-append "lower: " name) " requires String"))]
     [_ (lower-direct-call ctx state env type-env name args result-ty origin)]))
+
+(define (lower-fs-rename-status-call
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [args : AstExprList]
+  [result-ty : AstType]
+  [origin : AstExpr]) : ResultLowerExpr
+  (match args
+    [(AstExprCons source (AstExprCons destination (AstExprNil)))
+      (lower-two-string-runtime-call
+        ctx
+        state
+        env
+        type-env
+        source
+        destination
+        ".L_tl_fs_rename_status"
+        result-ty
+        "lower: fs-rename-status requires String")]
+    [_
+      (lower-direct-call
+        ctx
+        state
+        env
+        type-env
+        "fs-rename-status"
+        args
+        result-ty
+        origin)]))
 
 (define (lower-fs-process-id-call
   [ctx : TcContext]
@@ -5399,6 +6888,8 @@
         args
         result-ty
         origin)]
+    [(string-eq name "fs-rename-status")
+      (lower-fs-rename-status-call ctx state env type-env args result-ty origin)]
     [(string-eq name "fs-process-id")
       (lower-fs-process-id-call ctx state env type-env args result-ty origin)]
     [(or (string-eq name "panic") (string-eq name "error"))
@@ -6586,6 +8077,25 @@
     [(AstSomeType ty) (tc-type-without-regions (tc-resolve-type ctx ty))]
     [(AstNoType) (tc-type-without-regions init-ty)]))
 
+(define (lower-let-init
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [maybe-ty : AstMaybeType]
+  [init : AstExpr]) : ResultLowerExpr
+  (match maybe-ty
+    [(AstSomeType ty)
+      (lower-expr-expected
+        ctx
+        state
+        env
+        type-env
+        init
+        (tc-type-without-regions (tc-resolve-type ctx ty))
+        init)]
+    [(AstNoType) (lower-expr ctx state env type-env init)]))
+
 (define (lower-let-bindings
   [ctx : TcContext]
   [state : LowerState]
@@ -6597,7 +8107,7 @@
     [(AstLetBindingCons binding rest)
       (match binding
         [(AstLetBinding name maybe-ty init)
-          (match (lower-expr ctx state env type-env init)
+          (match (lower-let-init ctx state env type-env maybe-ty init)
             [(OkLowerExpr lowered)
               (match lowered
                 [(LowerExpr init-state init-value init-ty)
@@ -6749,6 +8259,184 @@
                         value
                         body-ty))])])]
           [(ErrLowerExpr message) (ErrLowerExpr message)]))]))
+
+(define (lower-with-escape-final
+  [final-lowered : LowerExpr]
+  [escaped-value : CompilerIrValue]
+  [escaped-ty : AstType]) : ResultLowerExpr
+  (match final-lowered
+    [(LowerExpr final-state _ _)
+      (OkLowerExpr (LowerExpr final-state escaped-value escaped-ty))]))
+
+(define (lower-with-escape-rewind
+  [state : LowerState]
+  [mark-value : CompilerIrValue]
+  [new-enclosing-value : CompilerIrValue]
+  [escaped-value : CompilerIrValue]
+  [escaped-ty : AstType]) : ResultLowerExpr
+  (match (lower-runtime-call-values
+    state
+    "tl_region_reset"
+    (IrValueCons mark-value IrValueNil)
+    (AstTyUnit))
+    [(OkLowerExpr rewind-lowered)
+      (match rewind-lowered
+        [(LowerExpr rewind-state _ _)
+          (match (lower-runtime-call-values
+            rewind-state
+            "tl_arena_set"
+            (IrValueCons new-enclosing-value IrValueNil)
+            (AstTyUnit))
+            [(OkLowerExpr final-lowered)
+              (lower-with-escape-final final-lowered escaped-value escaped-ty)]
+            [(ErrLowerExpr message) (ErrLowerExpr message)])])]
+    [(ErrLowerExpr message) (ErrLowerExpr message)]))
+
+(define (lower-with-escape-cleanup
+  [state : LowerState]
+  [scratch-head-value : CompilerIrValue]
+  [mark-value : CompilerIrValue]
+  [escaped-value : CompilerIrValue]
+  [escaped-ty : AstType]) : ResultLowerExpr
+  (match (lower-runtime-call-values
+    state
+    "tl_arena_current"
+    IrValueNil
+    (AstTyI64))
+    [(OkLowerExpr new-enclosing-lowered)
+      (match new-enclosing-lowered
+        [(LowerExpr new-enclosing-state new-enclosing-value _)
+          (match (lower-runtime-call-values
+            new-enclosing-state
+            "tl_arena_set"
+            (IrValueCons scratch-head-value IrValueNil)
+            (AstTyUnit))
+            [(OkLowerExpr restore-scratch-lowered)
+              (match restore-scratch-lowered
+                [(LowerExpr restore-scratch-state _ _)
+                  (lower-with-escape-rewind
+                    restore-scratch-state
+                    mark-value
+                    new-enclosing-value
+                    escaped-value
+                    escaped-ty)])]
+            [(ErrLowerExpr message) (ErrLowerExpr message)])])]
+    [(ErrLowerExpr message) (ErrLowerExpr message)]))
+
+(define (lower-with-escape-clone
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [scratch-head-value : CompilerIrValue]
+  [mark-value : CompilerIrValue]
+  [body-value : CompilerIrValue]
+  [body-ty : AstType]) : ResultLowerExpr
+  (match (lower-clone-value-dispatch ctx state env body-value body-ty)
+    [(OkLowerExpr escaped-lowered)
+      (match escaped-lowered
+        [(LowerExpr escaped-state escaped-value escaped-ty)
+          (lower-with-escape-cleanup
+            escaped-state
+            scratch-head-value
+            mark-value
+            escaped-value
+            escaped-ty)])]
+    [(ErrLowerExpr message) (ErrLowerExpr message)]))
+
+(define (lower-with-escape-body
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [enclosing-value : CompilerIrValue]
+  [mark-value : CompilerIrValue]
+  [body : AstExprList]) : ResultLowerExpr
+  (match (lower-begin ctx state env type-env body)
+    [(OkLowerExpr body-lowered)
+      (match body-lowered
+        [(LowerExpr body-state body-value body-ty)
+          (match (lower-runtime-call-values
+            body-state
+            "tl_arena_current"
+            IrValueNil
+            (AstTyI64))
+            [(OkLowerExpr scratch-head-lowered)
+              (match scratch-head-lowered
+                [(LowerExpr scratch-head-state scratch-head-value _)
+                  (match (lower-runtime-call-values
+                    scratch-head-state
+                    "tl_arena_set"
+                    (IrValueCons enclosing-value IrValueNil)
+                    (AstTyUnit))
+                    [(OkLowerExpr restore-enclosing-lowered)
+                      (match restore-enclosing-lowered
+                        [(LowerExpr restore-state _ _)
+                          (lower-with-escape-clone
+                            ctx
+                            restore-state
+                            env
+                            scratch-head-value
+                            mark-value
+                            body-value
+                            body-ty)])]
+                    [(ErrLowerExpr message) (ErrLowerExpr message)])])]
+            [(ErrLowerExpr message) (ErrLowerExpr message)])])]
+    [(ErrLowerExpr message) (ErrLowerExpr message)]))
+
+(define (lower-with-escape
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [scratch : AstExpr]
+  [body : AstExprList]) : ResultLowerExpr
+  (match (lower-runtime-call-values
+    state
+    "tl_arena_current"
+    IrValueNil
+    (AstTyI64))
+    [(OkLowerExpr enclosing-lowered)
+      (match enclosing-lowered
+        [(LowerExpr enclosing-state enclosing-value _)
+          (match (lower-expr-expected
+            ctx
+            enclosing-state
+            env
+            type-env
+            scratch
+            (AstTyI64)
+            scratch)
+            [(OkLowerExpr scratch-lowered)
+              (match scratch-lowered
+                [(LowerExpr scratch-state scratch-value _)
+                  (match (lower-runtime-call-values
+                    scratch-state
+                    "tl_arena_set"
+                    (IrValueCons scratch-value IrValueNil)
+                    (AstTyUnit))
+                    [(OkLowerExpr set-scratch-lowered)
+                      (match set-scratch-lowered
+                        [(LowerExpr set-scratch-state _ _)
+                          (match (lower-runtime-call-values
+                            set-scratch-state
+                            "tl_region_mark"
+                            IrValueNil
+                            (AstTyU64))
+                            [(OkLowerExpr mark-lowered)
+                              (match mark-lowered
+                                [(LowerExpr mark-state mark-value _)
+                                  (lower-with-escape-body
+                                    ctx
+                                    mark-state
+                                    env
+                                    type-env
+                                    enclosing-value
+                                    mark-value
+                                    body)])]
+                            [(ErrLowerExpr message) (ErrLowerExpr message)])])]
+                    [(ErrLowerExpr message) (ErrLowerExpr message)])])]
+            [(ErrLowerExpr message) (ErrLowerExpr message)])])]
+    [(ErrLowerExpr message) (ErrLowerExpr message)]))
 
 (define (lower-if-merge
   [else-state : LowerState]
@@ -6947,6 +8635,14 @@
         (AstExprVar "0spmd-reduce-val")
         (AstExprVar "0spmd-reduce-acc")))))
 
+(define (spmd-reduce-acc-update-expr [op : AstReduceOp] [value : AstExpr]) : AstExpr
+  (match op
+    [(AstReduceSum) (spmd-reduce-acc-binop-update (AstBinAdd) value)]
+    [(AstReduceAll) (spmd-reduce-acc-binop-update (AstBinAnd) value)]
+    [(AstReduceAny) (spmd-reduce-acc-binop-update (AstBinOr) value)]
+    [(AstReduceMin) (spmd-reduce-acc-select-update (AstBinLt) value)]
+    [(AstReduceMax) (spmd-reduce-acc-select-update (AstBinGt) value)]))
+
 ;; Scalar `spmd-reduce` loop scaffold (#1013): desugar to an accumulator loop and
 ;; reuse the let/while/set lowering. `acc`/`end`/index are bound once before the
 ;; loop (so `init`/`end`/`start` evaluate exactly once); an empty range returns
@@ -7016,22 +8712,70 @@
   [end : AstExpr]
   [init : AstExpr]
   [value : AstExpr]) : ResultLowerExpr
-  (lower-spmd-reduce-scaffold
-    ctx
-    state
-    env
-    type-env
-    index
-    index-ty
-    start
-    end
-    init
-    (match op
-      [(AstReduceSum) (spmd-reduce-acc-binop-update (AstBinAdd) value)]
-      [(AstReduceAll) (spmd-reduce-acc-binop-update (AstBinAnd) value)]
-      [(AstReduceAny) (spmd-reduce-acc-binop-update (AstBinOr) value)]
-      [(AstReduceMin) (spmd-reduce-acc-select-update (AstBinLt) value)]
-      [(AstReduceMax) (spmd-reduce-acc-select-update (AstBinGt) value)])))
+  (let
+    [acc-update : AstExpr (spmd-reduce-acc-update-expr op value)]
+    (if (and
+      (lower-mode-avx2? (lower-state-mode state))
+      (lower-type-i64? index-ty))
+      (match (lower-simple-vector-reduce
+        (lower-state-mode state)
+        env
+        type-env
+        op
+        index
+        value)
+        [(LowerSomeVectorReduce _ _ _ _)
+          (lower-avx2-spmd-reduce-lowered
+            ctx
+            state
+            env
+            type-env
+            index-ty
+            start
+            end
+            init
+            op
+            (lower-simple-vector-reduce
+              (lower-state-mode state)
+              env
+              type-env
+              op
+              index
+              value))]
+        [LowerNoVectorReduce
+          (lower-spmd-reduce-scaffold
+            ctx
+            state
+            env
+            type-env
+            index
+            index-ty
+            start
+            end
+            init
+            acc-update)])
+      (lower-spmd-reduce-scaffold
+        ctx
+        state
+        env
+        type-env
+        index
+        index-ty
+        start
+        end
+        init
+        acc-update))))
+
+(define (lower-mode-simd? [mode : CompilerLowerMode]) : bool
+  (match mode
+    [(CompilerLowerAvx2) true]
+    [(CompilerLowerAvx512) true]
+    [_ false]))
+
+(define (lower-mode-avx512? [mode : CompilerLowerMode]) : bool
+  (match mode
+    [(CompilerLowerAvx512) true]
+    [_ false]))
 
 (define (lower-mode-avx2? [mode : CompilerLowerMode]) : bool
   (match mode
@@ -7043,13 +8787,24 @@
     [(AstTyI64) true]
     [_ false]))
 
-(define (lower-avx2-lanes-for-elem [ty : AstType]) : i64
-  (match (tc-type-without-regions ty)
-    [(AstTyI64) 4]
-    [(AstTyU64) 4]
-    [(AstTyF64) 4]
-    [(AstTyI32) 8]
-    [(AstTyU32) 8]
+(define (lower-simd-lanes-for-elem [mode : CompilerLowerMode] [ty : AstType]) : i64
+  (match mode
+    [(CompilerLowerAvx2)
+      (match (tc-type-without-regions ty)
+        [(AstTyI64) 4]
+        [(AstTyU64) 4]
+        [(AstTyF64) 4]
+        [(AstTyI32) 8]
+        [(AstTyU32) 8]
+        [_ 0])]
+    [(CompilerLowerAvx512)
+      (match (tc-type-without-regions ty)
+        [(AstTyI64) 8]
+        [(AstTyU64) 8]
+        [(AstTyF64) 8]
+        [(AstTyI32) 16]
+        [(AstTyU32) 16]
+        [_ 0])]
     [_ 0]))
 
 (define (lower-expr-is-var? [expr : AstExpr] [name : String]) : bool
@@ -7093,6 +8848,7 @@
     [_ LowerNoArrayVar]))
 
 (define (lower-simple-vector-map-value
+  [mode : CompilerLowerMode]
   [env : SymI64Env]
   [type-env : TcTypeEnv]
   [index : String]
@@ -7101,7 +8857,14 @@
   [value : AstExpr]) : LowerMaybeVectorMap
   (match value
     [(AstExprSpanned inner _)
-      (lower-simple-vector-map-value env type-env index dst-var dst-elem inner)]
+      (lower-simple-vector-map-value
+        mode
+        env
+        type-env
+        index
+        dst-var
+        dst-elem
+        inner)]
     [(AstExprBinary op lhs rhs)
       (match op
         [(AstBinAdd)
@@ -7110,7 +8873,7 @@
               (match (lower-array-ref-var-for-index env type-env rhs index)
                 [(LowerSomeArrayVar rhs-var rhs-elem)
                   (let
-                    [lanes : i64 (lower-avx2-lanes-for-elem lhs-elem)]
+                    [lanes : i64 (lower-simd-lanes-for-elem mode lhs-elem)]
                     (if (and
                       (> lanes 0)
                       (and
@@ -7130,18 +8893,20 @@
     [_ LowerNoVectorMap]))
 
 (define (lower-simple-vector-map
+  [mode : CompilerLowerMode]
   [env : SymI64Env]
   [type-env : TcTypeEnv]
   [index : String]
   [body : AstExpr]) : LowerMaybeVectorMap
   (match body
     [(AstExprSpanned inner _)
-      (lower-simple-vector-map env type-env index inner)]
+      (lower-simple-vector-map mode env type-env index inner)]
     [(AstExprArraySet arr set-index value)
       (if (lower-expr-is-var? set-index index)
         (match (lower-dynamic-array-var env type-env arr)
           [(LowerSomeArrayVar dst-var dst-elem)
             (lower-simple-vector-map-value
+              mode
               env
               type-env
               index
@@ -7151,6 +8916,63 @@
           [LowerNoArrayVar LowerNoVectorMap])
         LowerNoVectorMap)]
     [_ LowerNoVectorMap]))
+
+(define (lower-simple-vector-reduce
+  [mode : CompilerLowerMode]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [op : AstReduceOp]
+  [index : String]
+  [value : AstExpr]) : LowerMaybeVectorReduce
+  (if (lower-mode-avx2? mode)
+    (match value
+      [(AstExprSpanned inner _)
+        (lower-simple-vector-reduce mode env type-env op index inner)]
+      [(AstExprAnn inner _)
+        (lower-simple-vector-reduce mode env type-env op index inner)]
+      [_
+        (match (lower-array-ref-var-for-index env type-env value index)
+          [(LowerSomeArrayVar array-var elem-ty)
+            (let
+              [elem : AstType (tc-type-without-regions elem-ty)]
+              [lanes : i64 (lower-simd-lanes-for-elem mode elem)]
+              (match op
+                [(AstReduceSum)
+                  (match elem
+                    [(AstTyI64)
+                      (LowerSomeVectorReduce
+                        array-var
+                        (IrVectorReduceSum)
+                        elem
+                        lanes)]
+                    [(AstTyI32)
+                      (LowerSomeVectorReduce
+                        array-var
+                        (IrVectorReduceSum)
+                        elem
+                        lanes)]
+                    [_ LowerNoVectorReduce])]
+                [(AstReduceMin)
+                  (match elem
+                    [(AstTyI32)
+                      (LowerSomeVectorReduce
+                        array-var
+                        (IrVectorReduceMin)
+                        elem
+                        lanes)]
+                    [_ LowerNoVectorReduce])]
+                [(AstReduceMax)
+                  (match elem
+                    [(AstTyI32)
+                      (LowerSomeVectorReduce
+                        array-var
+                        (IrVectorReduceMax)
+                        elem
+                        lanes)]
+                    [_ LowerNoVectorReduce])]
+                [_ LowerNoVectorReduce]))]
+          [LowerNoArrayVar LowerNoVectorReduce])])
+    LowerNoVectorReduce))
 
 (define (lower-array-len-value
   [state : LowerState]
@@ -7185,6 +9007,457 @@
         (lower-state-emit s (IrInstrVectorBinOp v op lhs rhs lanes elem-ty))
         (IrValueVar v)
         elem-ty)]))
+
+(define (lower-emit-vector-reduce
+  [state : LowerState]
+  [op : CompilerIrVectorReduceOp]
+  [src : CompilerIrValue]
+  [lanes : i64]
+  [elem-ty : AstType]) : LowerExpr
+  (match (lower-state-alloc-var state)
+    [(LowerAlloc s v)
+      (LowerExpr
+        (lower-state-emit s (IrInstrVectorReduce v op src lanes elem-ty))
+        (IrValueVar v)
+        elem-ty)]))
+
+(define (lower-spmd-reduce-apply-update
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [op : AstReduceOp]
+  [acc-var : i64]
+  [elem-ty : AstType]
+  [value-var : i64]) : ResultLowerExpr
+  (lower-expr
+    ctx
+    state
+    (sym-i64-bind
+      (sym-i64-bind env "0spmd-reduce-acc" acc-var)
+      "0spmd-reduce-current"
+      value-var)
+    (tc-bind
+      (tc-bind type-env "0spmd-reduce-acc" elem-ty)
+      "0spmd-reduce-current"
+      elem-ty)
+    (spmd-reduce-acc-update-expr op (AstExprVar "0spmd-reduce-current"))))
+
+(define (lower-avx2-reduce-ok
+  [state : LowerState]
+  [index-var : i64]
+  [next-index : CompilerIrValue]
+  [end-value : CompilerIrValue]
+  [array-len : CompilerIrValue]
+  [lanes : i64]) : LowerExpr
+  (let
+    [s : LowerState state]
+    [ok : CompilerIrValue IrValueUnit]
+    [within : CompilerIrValue IrValueUnit]
+    (begin
+      (match (lower-emit-binop
+        s
+        (IrBinGe)
+        (IrValueVar index-var)
+        (IrValueI64 0)
+        (AstTyBool))
+        [(LowerExpr next-s value _)
+          (begin
+            (set! s next-s)
+            (set! ok value))])
+      (match (lower-emit-binop
+        s
+        (IrBinLe)
+        (IrValueVar index-var)
+        (IrValueI64 (- 9223372036854775807 lanes))
+        (AstTyBool))
+        [(LowerExpr next-s value _)
+          (begin
+            (set! s next-s)
+            (set! within value))])
+      (match (lower-emit-binop s (IrBinAnd) ok within (AstTyBool))
+        [(LowerExpr next-s value _)
+          (begin
+            (set! s next-s)
+            (set! ok value))])
+      (match (lower-emit-binop s (IrBinLe) next-index end-value (AstTyBool))
+        [(LowerExpr next-s value _)
+          (begin
+            (set! s next-s)
+            (set! within value))])
+      (match (lower-emit-binop s (IrBinAnd) ok within (AstTyBool))
+        [(LowerExpr next-s value _)
+          (begin
+            (set! s next-s)
+            (set! ok value))])
+      (match (lower-emit-binop s (IrBinLe) next-index array-len (AstTyBool))
+        [(LowerExpr next-s value _)
+          (begin
+            (set! s next-s)
+            (set! within value))])
+      (lower-emit-binop s (IrBinAnd) ok within (AstTyBool)))))
+
+(define (lower-avx2-reduce-vector-body
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [op : AstReduceOp]
+  [index-var : i64]
+  [next-index : CompilerIrValue]
+  [acc-var : i64]
+  [array-var : i64]
+  [vector-op : CompilerIrVectorReduceOp]
+  [elem-ty : AstType]
+  [lanes : i64]) : ResultLowerExpr
+  (match (lower-emit-vector-load
+    state
+    (IrValueVar array-var)
+    (IrValueVar index-var)
+    lanes
+    elem-ty)
+    [(LowerExpr load-state chunk-vec _)
+      (match (lower-emit-vector-reduce
+        load-state
+        vector-op
+        chunk-vec
+        lanes
+        elem-ty)
+        [(LowerExpr reduce-state reduced _)
+          (match reduced
+            [(IrValueVar reduced-var)
+              (match (lower-spmd-reduce-apply-update
+                ctx
+                reduce-state
+                env
+                type-env
+                op
+                acc-var
+                elem-ty
+                reduced-var)
+                [(OkLowerExpr update-lowered)
+                  (match update-lowered
+                    [(LowerExpr update-state _ _)
+                      (OkLowerExpr
+                        (LowerExpr
+                          (lower-state-emit
+                            update-state
+                            (IrInstrMov index-var next-index (AstTyI64)))
+                          IrValueUnit
+                          (AstTyUnit)))])]
+                [(ErrLowerExpr message) (ErrLowerExpr message)])]
+            [_
+              (ErrLowerExpr
+                (lower-diagnostic "lower: invalid vector reduce result"))])])]))
+
+(define (lower-spmd-reduce-scalar-tail-body
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [op : AstReduceOp]
+  [index-var : i64]
+  [index-ty : AstType]
+  [acc-var : i64]
+  [array-var : i64]
+  [elem-ty : AstType]) : ResultLowerExpr
+  (match (lower-array-element-addr
+    state
+    (IrValueVar array-var)
+    (IrValueVar index-var)
+    index-ty
+    elem-ty)
+    [(LowerExpr addr-state elem-ptr _)
+      (match (lower-emit-load addr-state elem-ptr elem-ty)
+        [(LowerExpr load-state loaded _)
+          (match loaded
+            [(IrValueVar loaded-var)
+              (match (lower-spmd-reduce-apply-update
+                ctx
+                load-state
+                env
+                type-env
+                op
+                acc-var
+                elem-ty
+                loaded-var)
+                [(OkLowerExpr update-lowered)
+                  (match update-lowered
+                    [(LowerExpr update-state _ _)
+                      (match (lower-state-alloc-var update-state)
+                        [(LowerAlloc inc-alloc inc-var)
+                          (OkLowerExpr
+                            (LowerExpr
+                              (lower-state-emit
+                                (lower-state-emit
+                                  inc-alloc
+                                  (IrInstrBinOp
+                                    inc-var
+                                    IrBinAdd
+                                    (IrValueVar index-var)
+                                    (IrValueI64 1)
+                                    index-ty))
+                                (IrInstrMov
+                                  index-var
+                                  (IrValueVar inc-var)
+                                  index-ty))
+                              IrValueUnit
+                              (AstTyUnit)))])])]
+                [(ErrLowerExpr message) (ErrLowerExpr message)])]
+            [_
+              (ErrLowerExpr
+                (lower-diagnostic "lower: invalid scalar reduce load"))])])]))
+
+(define (lower-avx2-spmd-reduce-build
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [index-ty : AstType]
+  [init-value : CompilerIrValue]
+  [end-value : CompilerIrValue]
+  [start-value : CompilerIrValue]
+  [op : AstReduceOp]
+  [array-var : i64]
+  [vector-op : CompilerIrVectorReduceOp]
+  [elem-ty : AstType]
+  [lanes : i64]) : ResultLowerExpr
+  (match (lower-state-alloc-var state)
+    [(LowerAlloc acc-alloc acc-var)
+      (match (lower-state-alloc-var
+        (lower-state-emit acc-alloc (IrInstrMov acc-var init-value elem-ty)))
+        [(LowerAlloc index-alloc index-var)
+          (let
+            [s : LowerState
+              (lower-state-emit
+                index-alloc
+                (IrInstrMov index-var start-value index-ty))]
+            [header-label : String ""]
+            [body-label : String ""]
+            [tail-header-label : String ""]
+            [tail-body-label : String ""]
+            [exit-label : String ""]
+            [array-len : CompilerIrValue IrValueUnit]
+            [next-index : CompilerIrValue IrValueUnit]
+            [vector-ok : CompilerIrValue IrValueUnit]
+            [tail-cond : CompilerIrValue IrValueUnit]
+            (begin
+              (match (lower-state-fresh-label s "spmd_reduce_avx2_header")
+                [(LowerLabel next-s label)
+                  (begin
+                    (set! s next-s)
+                    (set! header-label label))])
+              (match (lower-state-fresh-label s "spmd_reduce_avx2_body")
+                [(LowerLabel next-s label)
+                  (begin
+                    (set! s next-s)
+                    (set! body-label label))])
+              (match (lower-state-fresh-label s "spmd_reduce_tail_header")
+                [(LowerLabel next-s label)
+                  (begin
+                    (set! s next-s)
+                    (set! tail-header-label label))])
+              (match (lower-state-fresh-label s "spmd_reduce_tail_body")
+                [(LowerLabel next-s label)
+                  (begin
+                    (set! s next-s)
+                    (set! tail-body-label label))])
+              (match (lower-state-fresh-label s "spmd_reduce_exit")
+                [(LowerLabel next-s label)
+                  (begin
+                    (set! s next-s)
+                    (set! exit-label label))])
+              (match (lower-array-len-value s (IrValueVar array-var))
+                [(LowerExpr next-s value _)
+                  (begin
+                    (set! s next-s)
+                    (set! array-len value))])
+              (set!
+                s
+                (lower-state-finish-block
+                  (lower-state-emit s (IrInstrJump header-label))
+                  header-label))
+              (match (lower-emit-binop
+                s
+                (IrBinAdd)
+                (IrValueVar index-var)
+                (IrValueI64 lanes)
+                index-ty)
+                [(LowerExpr next-s value _)
+                  (begin
+                    (set! s next-s)
+                    (set! next-index value))])
+              (match (lower-avx2-reduce-ok
+                s
+                index-var
+                next-index
+                end-value
+                array-len
+                lanes)
+                [(LowerExpr next-s value _)
+                  (begin
+                    (set! s next-s)
+                    (set! vector-ok value))])
+              (set!
+                s
+                (lower-state-finish-block
+                  (lower-state-emit
+                    s
+                    (IrInstrBranch vector-ok body-label tail-header-label))
+                  body-label))
+              (match (lower-avx2-reduce-vector-body
+                ctx
+                s
+                env
+                type-env
+                op
+                index-var
+                next-index
+                acc-var
+                array-var
+                vector-op
+                elem-ty
+                lanes)
+                [(OkLowerExpr body-lowered)
+                  (match body-lowered
+                    [(LowerExpr body-state _ _)
+                      (begin
+                        (set! s body-state)
+                        (set!
+                          s
+                          (lower-state-finish-block
+                            (lower-state-emit s (IrInstrJump header-label))
+                            tail-header-label))
+                        (match (lower-emit-binop
+                          s
+                          (IrBinLt)
+                          (IrValueVar index-var)
+                          end-value
+                          (AstTyBool))
+                          [(LowerExpr next-s value _)
+                            (begin
+                              (set! s next-s)
+                              (set! tail-cond value))])
+                        (set!
+                          s
+                          (lower-state-finish-block
+                            (lower-state-emit
+                              s
+                              (IrInstrBranch
+                                tail-cond
+                                tail-body-label
+                                exit-label))
+                            tail-body-label))
+                        (match (lower-spmd-reduce-scalar-tail-body
+                          ctx
+                          s
+                          env
+                          type-env
+                          op
+                          index-var
+                          index-ty
+                          acc-var
+                          array-var
+                          elem-ty)
+                          [(OkLowerExpr tail-lowered)
+                            (match tail-lowered
+                              [(LowerExpr tail-state _ _)
+                                (OkLowerExpr
+                                  (LowerExpr
+                                    (lower-state-finish-block
+                                      (lower-state-emit
+                                        tail-state
+                                        (IrInstrJump tail-header-label))
+                                      exit-label)
+                                    (IrValueVar acc-var)
+                                    elem-ty))])]
+                          [(ErrLowerExpr message) (ErrLowerExpr message)]))])]
+                [(ErrLowerExpr message) (ErrLowerExpr message)])))])]))
+
+(define (lower-avx2-spmd-reduce-lowered
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [index-ty : AstType]
+  [start : AstExpr]
+  [end : AstExpr]
+  [init : AstExpr]
+  [op : AstReduceOp]
+  [plan : LowerMaybeVectorReduce]) : ResultLowerExpr
+  (match plan
+    [(LowerSomeVectorReduce array-var vector-op elem-ty lanes)
+      (match (lower-expr ctx state env type-env init)
+        [(OkLowerExpr init-lowered)
+          (match init-lowered
+            [(LowerExpr init-state init-value _)
+              (match (lower-expr ctx init-state env type-env end)
+                [(OkLowerExpr end-lowered)
+                  (match end-lowered
+                    [(LowerExpr end-state end-value _)
+                      (match (lower-expr ctx end-state env type-env start)
+                        [(OkLowerExpr start-lowered)
+                          (match start-lowered
+                            [(LowerExpr start-state start-value _)
+                              (lower-avx2-spmd-reduce-build
+                                ctx
+                                start-state
+                                env
+                                type-env
+                                index-ty
+                                init-value
+                                end-value
+                                start-value
+                                op
+                                array-var
+                                vector-op
+                                elem-ty
+                                lanes)])]
+                        [(ErrLowerExpr message) (ErrLowerExpr message)])])]
+                [(ErrLowerExpr message) (ErrLowerExpr message)])])]
+        [(ErrLowerExpr message) (ErrLowerExpr message)])]
+    [LowerNoVectorReduce
+      (ErrLowerExpr (lower-diagnostic "lower: missing vector reduce plan"))]))
+
+(define (lower-emit-tail-mask
+  [state : LowerState]
+  [index : CompilerIrValue]
+  [end-value : CompilerIrValue]
+  [lanes : i64]) : LowerExpr
+  (match (lower-state-alloc-var state)
+    [(LowerAlloc s v)
+      (LowerExpr
+        (lower-state-emit s (IrInstrTailMask v index end-value lanes))
+        (IrValueVar v)
+        (AstTyBool))]))
+
+(define (lower-emit-predicated-load
+  [state : LowerState]
+  [base : CompilerIrValue]
+  [index : CompilerIrValue]
+  [mask : CompilerIrValue]
+  [lanes : i64]
+  [elem-ty : AstType]) : LowerExpr
+  (match (lower-state-alloc-var state)
+    [(LowerAlloc s v)
+      (LowerExpr
+        (lower-state-emit
+          s
+          (IrInstrPredicatedLoad v base index mask lanes elem-ty))
+        (IrValueVar v)
+        elem-ty)]))
+
+(define (lower-emit-predicated-store
+  [state : LowerState]
+  [base : CompilerIrValue]
+  [index : CompilerIrValue]
+  [value : CompilerIrValue]
+  [mask : CompilerIrValue]
+  [lanes : i64]
+  [elem-ty : AstType]) : LowerState
+  (lower-state-emit
+    state
+    (IrInstrPredicatedStore base index value mask lanes elem-ty)))
 
 (define (lower-avx2-vector-map-body
   [state : LowerState]
@@ -7312,6 +9585,126 @@
             (set! within value))])
       (lower-emit-binop s (IrBinAnd) ok within (AstTyBool)))))
 
+(define (lower-avx512-tail-ok
+  [state : LowerState]
+  [index-var : i64]
+  [end-value : CompilerIrValue]
+  [out-len : CompilerIrValue]
+  [lhs-len : CompilerIrValue]
+  [rhs-len : CompilerIrValue]) : LowerExpr
+  (let
+    [s : LowerState state]
+    [ok : CompilerIrValue IrValueUnit]
+    [within : CompilerIrValue IrValueUnit]
+    (begin
+      (match (lower-emit-binop
+        s
+        (IrBinGe)
+        (IrValueVar index-var)
+        (IrValueI64 0)
+        (AstTyBool))
+        [(LowerExpr next-s value _)
+          (begin
+            (set! s next-s)
+            (set! ok value))])
+      (match (lower-emit-binop
+        s
+        (IrBinLe)
+        (IrValueVar index-var)
+        end-value
+        (AstTyBool))
+        [(LowerExpr next-s value _)
+          (begin
+            (set! s next-s)
+            (set! within value))])
+      (match (lower-emit-binop s (IrBinAnd) ok within (AstTyBool))
+        [(LowerExpr next-s value _)
+          (begin
+            (set! s next-s)
+            (set! ok value))])
+      (match (lower-emit-binop s (IrBinLe) end-value out-len (AstTyBool))
+        [(LowerExpr next-s value _)
+          (begin
+            (set! s next-s)
+            (set! within value))])
+      (match (lower-emit-binop s (IrBinAnd) ok within (AstTyBool))
+        [(LowerExpr next-s value _)
+          (begin
+            (set! s next-s)
+            (set! ok value))])
+      (match (lower-emit-binop s (IrBinLe) end-value lhs-len (AstTyBool))
+        [(LowerExpr next-s value _)
+          (begin
+            (set! s next-s)
+            (set! within value))])
+      (match (lower-emit-binop s (IrBinAnd) ok within (AstTyBool))
+        [(LowerExpr next-s value _)
+          (begin
+            (set! s next-s)
+            (set! ok value))])
+      (match (lower-emit-binop s (IrBinLe) end-value rhs-len (AstTyBool))
+        [(LowerExpr next-s value _)
+          (begin
+            (set! s next-s)
+            (set! within value))])
+      (lower-emit-binop s (IrBinAnd) ok within (AstTyBool)))))
+
+(define (lower-avx512-tail-map-body
+  [state : LowerState]
+  [index-var : i64]
+  [end-value : CompilerIrValue]
+  [plan : LowerMaybeVectorMap]) : LowerState
+  (match plan
+    [(LowerSomeVectorMap dst-array lhs-array rhs-array op elem-ty lanes)
+      (let
+        [s : LowerState state]
+        [mask : CompilerIrValue IrValueUnit]
+        [lhs-vec : CompilerIrValue IrValueUnit]
+        [rhs-vec : CompilerIrValue IrValueUnit]
+        [result-vec : CompilerIrValue IrValueUnit]
+        (begin
+          (match (lower-emit-tail-mask s (IrValueVar index-var) end-value lanes)
+            [(LowerExpr next-s value _)
+              (begin
+                (set! s next-s)
+                (set! mask value))])
+          (match (lower-emit-predicated-load
+            s
+            (IrValueVar lhs-array)
+            (IrValueVar index-var)
+            mask
+            lanes
+            elem-ty)
+            [(LowerExpr next-s value _)
+              (begin
+                (set! s next-s)
+                (set! lhs-vec value))])
+          (match (lower-emit-predicated-load
+            s
+            (IrValueVar rhs-array)
+            (IrValueVar index-var)
+            mask
+            lanes
+            elem-ty)
+            [(LowerExpr next-s value _)
+              (begin
+                (set! s next-s)
+                (set! rhs-vec value))])
+          (match (lower-emit-vector-binop s op lhs-vec rhs-vec lanes elem-ty)
+            [(LowerExpr next-s value _)
+              (begin
+                (set! s next-s)
+                (set! result-vec value))])
+          (lower-emit-predicated-store
+            s
+            (IrValueVar dst-array)
+            (IrValueVar index-var)
+            result-vec
+            mask
+            lanes
+            elem-ty)))]
+    [LowerNoVectorMap state]))
+
 ;; Scalar `foreach` lowering (#1012). `(foreach ([i : ty start end]) body)`
 ;; lowers to the half-open reference loop `i = start; while (i < end) { body;
 ;; i = i + 1 }`, yielding unit. `start` and `end` are each lowered exactly once
@@ -7415,6 +9808,8 @@
             [header-label : String ""]
             [body-label : String ""]
             [tail-header-label : String ""]
+            [tail-check-label : String ""]
+            [tail-mask-label : String ""]
             [tail-body-label : String ""]
             [exit-label : String ""]
             [out-len : CompilerIrValue IrValueUnit]
@@ -7423,6 +9818,7 @@
             [next-index : CompilerIrValue IrValueUnit]
             [vector-ok : CompilerIrValue IrValueUnit]
             [tail-cond : CompilerIrValue IrValueUnit]
+            [tail-safe : CompilerIrValue IrValueUnit]
             (begin
               (match (lower-state-fresh-label s "foreach_avx2_header")
                 [(LowerLabel next-s label)
@@ -7439,6 +9835,16 @@
                   (begin
                     (set! s next-s)
                     (set! tail-header-label label))])
+              (match (lower-state-fresh-label s "foreach_tail_check")
+                [(LowerLabel next-s label)
+                  (begin
+                    (set! s next-s)
+                    (set! tail-check-label label))])
+              (match (lower-state-fresh-label s "foreach_tail_mask")
+                [(LowerLabel next-s label)
+                  (begin
+                    (set! s next-s)
+                    (set! tail-mask-label label))])
               (match (lower-state-fresh-label s "foreach_tail_body")
                 [(LowerLabel next-s label)
                   (begin
@@ -7517,11 +9923,49 @@
                     (set! tail-cond value))])
               (set!
                 s
-                (lower-state-finish-block
-                  (lower-state-emit
+                (if (lower-mode-avx512? (lower-state-mode s))
+                  (lower-state-finish-block
+                    (lower-state-emit
+                      s
+                      (IrInstrBranch tail-cond tail-check-label exit-label))
+                    tail-check-label)
+                  (lower-state-finish-block
+                    (lower-state-emit
+                      s
+                      (IrInstrBranch tail-cond tail-body-label exit-label))
+                    tail-body-label)))
+              (if (lower-mode-avx512? (lower-state-mode s))
+                (begin
+                  (match (lower-avx512-tail-ok
                     s
-                    (IrInstrBranch tail-cond tail-body-label exit-label))
-                  tail-body-label))
+                    index-var
+                    end-value
+                    out-len
+                    lhs-len
+                    rhs-len)
+                    [(LowerExpr next-s value _)
+                      (begin
+                        (set! s next-s)
+                        (set! tail-safe value))])
+                  (set!
+                    s
+                    (lower-state-finish-block
+                      (lower-state-emit
+                        s
+                        (IrInstrBranch
+                          tail-safe
+                          tail-mask-label
+                          tail-body-label))
+                      tail-mask-label))
+                  (set!
+                    s
+                    (lower-avx512-tail-map-body s index-var end-value plan))
+                  (set!
+                    s
+                    (lower-state-finish-block
+                      (lower-state-emit s (IrInstrJump exit-label))
+                      tail-body-label)))
+                unit)
               (match (lower-expr
                 ctx
                 s
@@ -7578,9 +10022,14 @@
   [end-value : CompilerIrValue]
   [body : AstExpr]) : ResultLowerExpr
   (if (and
-    (lower-mode-avx2? (lower-state-mode state))
+    (lower-mode-simd? (lower-state-mode state))
     (lower-type-i64? index-ty))
-    (match (lower-simple-vector-map env type-env index body)
+    (match (lower-simple-vector-map
+      (lower-state-mode state)
+      env
+      type-env
+      index
+      body)
       [(LowerSomeVectorMap _ _ _ _ _ _)
         (lower-avx2-foreach-lowered
           ctx
@@ -7592,7 +10041,12 @@
           start-value
           end-value
           body
-          (lower-simple-vector-map env type-env index body))]
+          (lower-simple-vector-map
+            (lower-state-mode state)
+            env
+            type-env
+            index
+            body))]
       [LowerNoVectorMap
         (lower-scalar-foreach-lowered
           ctx
@@ -8328,7 +10782,7 @@
   [type-env : TcTypeEnv]
   [expr : AstExpr]
   [ret-ty : AstType]) : ResultLowerState
-  (match (lower-expr ctx state env type-env expr)
+  (match (lower-expr-expected ctx state env type-env expr ret-ty expr)
     [(OkLowerExpr lowered)
       (match lowered
         [(LowerExpr body-state value _)
@@ -8791,6 +11245,8 @@
 ;; monotonically-growing accumulator per function would be O(n^2). `enclosing` is
 ;; captured fresh and `scratch`'s grown head re-read before destroy so nothing
 ;; leaks. Output stays byte-identical (same proof as the optimizer escape).
+;; TODO(#1688): migrate this hand-rolled arena escape to `with-escape` after the
+;; bootstrapping stage0 parser supports the new form.
 (define (lower-function-escaping
   [ctx : TcContext]
   [top-env : TcTypeEnv]
@@ -8806,7 +11262,7 @@
     (let
       [scratch : i64 (arena-make)]
       (begin
-        (arena-set! scratch)
+        (unsafe (arena-set! scratch))
         (match (lower-function
           ctx
           top-env
@@ -8821,23 +11277,23 @@
             (let
               [scratch-head : i64 (arena-current)]
               (begin
-                (arena-set! enclosing)
+                (unsafe (arena-set! enclosing))
                 (let
                   [escaped-fns : CompilerIrFunctionList (clone fns)]
                   [escaped-spans : CompilerSourceSpans
                     (lower-record-function-span spans logical-name body)]
                   (begin
-                    (arena-destroy scratch-head)
+                    (unsafe (arena-destroy scratch-head))
                     (OkLowerFunction escaped-fns escaped-spans)))))]
           [(ErrLowerFunction message)
             (let
               [scratch-head : i64 (arena-current)]
               (begin
-                (arena-set! enclosing)
+                (unsafe (arena-set! enclosing))
                 (let
                   [escaped-message : CompilerDiagnostic (clone message)]
                   (begin
-                    (arena-destroy scratch-head)
+                    (unsafe (arena-destroy scratch-head))
                     (ErrLowerFunction escaped-message)))))])))))
 
 (define (lower-decls
@@ -8968,7 +11424,8 @@
                     name
                     (tc-type-without-regions (tc-resolve-type decl-ctx ty))
                     (ast-extern-metadata-abi metadata)
-                    (ast-extern-metadata-symbol metadata))
+                    (ast-extern-metadata-symbol metadata)
+                    (ast-extern-metadata-link-inputs metadata))
                   externs)
                 spans
                 names
@@ -9408,6 +11865,66 @@
 (define (main) : unit
   ((lambda () : unit (print-i64 1))))")
 
+(define (compiler-lower-capturing-lambda-scalar-source) : String
+  "(define (main) : i64
+  (let
+    [n : i64 10]
+    ((lambda ([x : i64]) : i64 (+ x n)) 32)))")
+
+(define (compiler-lower-capturing-lambda-function-value-source) : String
+  "(define (main) : i64
+  (let
+    [inc : (-> i64 i64) (lambda ([x : i64]) : i64 (+ x 1))]
+    [n : i64 9]
+    ((lambda ([x : i64]) : i64 (inc (+ x n))) 32)))")
+
+(define (compiler-lower-capturing-lambda-fat-handle-source) : String
+  "(define (main [n : i64]) : i64
+  (let
+    [s : String \"hello\"]
+    [a : (Array i64) (make-array i64 2)]
+    (begin
+      (array-set! a 0 n)
+      ((lambda () : i64 (+ (string-length s) (array-ref a 0)))))))")
+
+(define (compiler-lower-capturing-lambda-aggregate-source) : String
+  "(defstruct Point (x i64) (y i64))
+(defenum Shape (Rect i64 i64) (None))
+(define (main) : i64
+  (let
+    [t : (Tuple i64 i64) (tuple 5 99)]
+    [p : Point (Point 7 1)]
+    [a : (Array i64 2) (array 3 10)]
+    [s : Shape (Rect 4 5)]
+    ((lambda
+       ()
+       :
+       i64
+       (+
+         (tuple-ref t 0)
+         (+
+           (struct-get p x)
+           (+
+             (array-ref a 1)
+             (match s
+               [(Rect w h) (* w h)]
+               [(None) 0]))))))))")
+
+(define (compiler-lower-capturing-lambda-shadow-source) : String
+  "(define (main) : i64
+  (let
+    [n : i64 10]
+    ((lambda
+       ([x : i64])
+       :
+       i64
+       (+
+         n
+         (let
+           [n : i64 100]
+           (+ x n))))
+     32)))")
+
 ;; `(comptime expr)` folds to a literal via the scalar CTFE evaluator (#719).
 ;; These fixtures exercise arithmetic, `if`, and `let` folds, plus the
 ;; runtime-variable and deferred-f64 (#735) rejection paths.
@@ -9579,7 +12096,10 @@
   (+ (fs-process-id)
     (+ (fs-mkdir-status \"target/typelisp-fs\")
       (+ (fs-remove-file-status \"target/typelisp-fs/artifact.o\")
-        (fs-remove-dir-status \"target/typelisp-fs\")))))")
+        (+ (fs-remove-dir-status \"target/typelisp-fs\")
+          (fs-rename-status
+            \"target/typelisp-fs/from name\"
+            \"target/typelisp-fs/to name\"))))))")
 
 (define (compiler-lower-raw-pointer-ops-source) : String
   "(extern raw-make : (-> (MutPtr i64)))
@@ -9632,6 +12152,43 @@
     [t : (Tuple bool i64) (tuple true 42)]
     (tuple-ref t 1)))")
 
+(define (compiler-lower-clone-source) : String
+  "(defstruct Holder
+  (name String)
+  (fixed (Array String 2))
+  (items (Array String))
+  (pair (Tuple String String)))
+(defenum StringList
+  (SNil)
+  (SCons String StringList))
+(define (clone-tuple [items : (Array String)]) : (Tuple String (Array String))
+  (clone (tuple \"tuple\" items)))
+(define (clone-fixed) : (Array String 2)
+  (clone (array \"left\" \"right\")))
+(define (clone-dyn [items : (Array String)]) : (Array String)
+  (clone items))
+(define (clone-holder [items : (Array String)]) : Holder
+  (clone (Holder \"holder\" (array \"x\" \"y\") items (tuple \"p\" \"q\"))))
+(define (clone-list [list : StringList]) : StringList
+  (clone list))
+(define (main [n : i64] [list : StringList]) : i64
+  (let
+    [items1 : (Array String) (make-array String n)]
+    [items2 : (Array String) (make-array String n)]
+    [items3 : (Array String) (make-array String n)]
+    (begin
+      (clone-tuple items1)
+      (clone-dyn items2)
+      (clone-holder items3)
+      (clone-fixed)
+      (clone-list list)
+      0)))")
+
+(define (compiler-lower-clone-unsupported-source) : String
+  "(define (inc [x : i64]) : i64 (+ x 1))
+(define (main) : (-> i64 i64)
+  (clone inc))")
+
 ;; `main` must lower with both element stores (bool + i64 each written into the
 ;; aggregate) and a load for the `tuple-ref`.
 (define (compiler-lower-tuple-shape-ok?) : bool
@@ -9643,6 +12200,102 @@
             (>= (lower-test-function-store-ptr-count functions "main") 2)
             (>= (lower-test-function-load-count functions "main") 1))])]
     [(ErrCompilerLower _) false]))
+
+(define (compiler-lower-clone-shape-ok?) : bool
+  (match (parse-ast-source (compiler-lower-clone-source))
+    [(OkAstProgram ast)
+      (match (lower-compiler-program-with-decl-paths
+        "<source>"
+        ast
+        AstDeclPathNil)
+        [(OkCompilerLower program _)
+          (match program
+            [(IrProgram _ functions _)
+              (let
+                [ok : bool true]
+                (begin
+                  (if (>
+                    (lower-test-function-call-count
+                      functions
+                      "<source>::clone-tuple"
+                      "tl_substring")
+                    0)
+                    unit
+                    (set! ok false))
+                  (if (>
+                    (lower-test-function-call-count
+                      functions
+                      "<source>::clone-tuple"
+                      "tl_alloc")
+                    0)
+                    unit
+                    (set! ok false))
+                  (if (>
+                    (lower-test-function-call-count
+                      functions
+                      "<source>::clone-fixed"
+                      "tl_substring")
+                    1)
+                    unit
+                    (set! ok false))
+                  (if (>
+                    (lower-test-function-call-count
+                      functions
+                      "<source>::clone-dyn"
+                      "tl_alloc")
+                    1)
+                    unit
+                    (set! ok false))
+                  (if (>
+                    (lower-test-function-branch-count
+                      functions
+                      "<source>::clone-dyn")
+                    0)
+                    unit
+                    (set! ok false))
+                  (if (=
+                    (lower-test-function-call-count
+                      functions
+                      "<source>::clone-holder"
+                      "<source>::clone$Holder")
+                    1)
+                    unit
+                    (set! ok false))
+                  (if (=
+                    (lower-test-function-call-count
+                      functions
+                      "<source>::clone-list"
+                      "<source>::clone$StringList")
+                    1)
+                    unit
+                    (set! ok false))
+                  (if (>
+                    (lower-test-function-call-count
+                      functions
+                      "<source>::clone$Holder"
+                      "tl_substring")
+                    0)
+                    unit
+                    (set! ok false))
+                  (if (>
+                    (lower-test-function-call-count
+                      functions
+                      "<source>::clone$Holder"
+                      "tl_alloc")
+                    0)
+                    unit
+                    (set! ok false))
+                  (if (>
+                    (lower-test-function-call-count
+                      functions
+                      "<source>::clone$StringList$acc"
+                      "tl_substring")
+                    0)
+                    unit
+                    (set! ok false))
+                  ok))])]
+        [(ErrCompilerLower _) false])]
+    [(ErrAstProgram _) false]))
 
 (define (compiler-lower-comptime-decl-source) : String
   "(comptime-decl (defstruct Point (x i64) (y i64)))
@@ -9807,17 +12460,42 @@
     [(OkCompilerLower program _)
       (let
         [summary : CompilerIrSummary (compiler-ir-program-summary program)]
-        (and
-          (= (compiler-ir-summary-globals summary) 1)
-          (and
-            (= (compiler-ir-summary-functions summary) 2)
-            (and
-              (= (compiler-ir-summary-externs summary) 1)
-              (and
-                (= (compiler-ir-summary-blocks summary) 8)
-                (and
-                  (= (compiler-ir-summary-instructions summary) 29)
-                  (= (compiler-ir-summary-vars summary) 21)))))))]
+        [ok : bool true]
+        (begin
+          (if (= (compiler-ir-summary-globals summary) 1)
+            unit
+            (set! ok false))
+          (if (= (compiler-ir-summary-functions summary) 2)
+            unit
+            (set! ok false))
+          (if (= (compiler-ir-summary-externs summary) 1)
+            unit
+            (set! ok false))
+          (if (= (compiler-ir-summary-blocks summary) 8)
+            unit
+            (set! ok false))
+          (if (= (compiler-ir-summary-instructions summary) 29)
+            unit
+            (set! ok false))
+          (if (= (compiler-ir-summary-vars summary) 21)
+            unit
+            (set! ok false))
+          (if (= (compiler-ir-summary-empty-blocks summary) 0)
+            unit
+            (set! ok false))
+          (if (= (compiler-ir-summary-max-instructions-function summary) 25)
+            unit
+            (set! ok false))
+          (if (= (compiler-ir-summary-max-instructions-block summary) 8)
+            unit
+            (set! ok false))
+          (if (= (compiler-ir-summary-call-arg-entries summary) 1)
+            unit
+            (set! ok false))
+          (if (= (compiler-ir-summary-phi-input-entries summary) 2)
+            unit
+            (set! ok false))
+          ok))]
     [(ErrCompilerLower _) false]))
 
 ;; Count `IrInstrPhi` nodes, to assert the merge-phi shape of lowered scalar
@@ -9943,9 +12621,29 @@
     [(IrInstrVectorBinOp _ _ _ _ _ _) 1]
     [_ 0]))
 
+(define (lower-test-instr-vector-reduce-count [instr : CompilerIrInstr]) : i64
+  (match instr
+    [(IrInstrVectorReduce _ _ _ _ _) 1]
+    [_ 0]))
+
 (define (lower-test-instr-vector-store-count [instr : CompilerIrInstr]) : i64
   (match instr
     [(IrInstrVectorStore _ _ _ _ _) 1]
+    [_ 0]))
+
+(define (lower-test-instr-predicated-load-count [instr : CompilerIrInstr]) : i64
+  (match instr
+    [(IrInstrPredicatedLoad _ _ _ _ _ _) 1]
+    [_ 0]))
+
+(define (lower-test-instr-predicated-store-count [instr : CompilerIrInstr]) : i64
+  (match instr
+    [(IrInstrPredicatedStore _ _ _ _ _ _) 1]
+    [_ 0]))
+
+(define (lower-test-instr-tail-mask-count [instr : CompilerIrInstr]) : i64
+  (match instr
+    [(IrInstrTailMask _ _ _ _) 1]
     [_ 0]))
 
 (define (lower-test-vector-shape?
@@ -9968,7 +12666,19 @@
       (if (lower-test-vector-shape? actual-lanes actual-ty lanes elem-ty)
         1
         0)]
+    [(IrInstrVectorReduce _ _ _ actual-lanes actual-ty)
+      (if (lower-test-vector-shape? actual-lanes actual-ty lanes elem-ty)
+        1
+        0)]
     [(IrInstrVectorStore _ _ _ actual-lanes actual-ty)
+      (if (lower-test-vector-shape? actual-lanes actual-ty lanes elem-ty)
+        1
+        0)]
+    [(IrInstrPredicatedLoad _ _ _ _ actual-lanes actual-ty)
+      (if (lower-test-vector-shape? actual-lanes actual-ty lanes elem-ty)
+        1
+        0)]
+    [(IrInstrPredicatedStore _ _ _ _ actual-lanes actual-ty)
       (if (lower-test-vector-shape? actual-lanes actual-ty lanes elem-ty)
         1
         0)]
@@ -10213,6 +12923,14 @@
         (lower-test-instr-vector-binop-count instr)
         (lower-test-instrs-vector-binop-count rest))]))
 
+(define (lower-test-instrs-vector-reduce-count [instrs : CompilerIrInstrList]) : i64
+  (match instrs
+    [(IrInstrNil) 0]
+    [(IrInstrCons instr rest)
+      (+
+        (lower-test-instr-vector-reduce-count instr)
+        (lower-test-instrs-vector-reduce-count rest))]))
+
 (define (lower-test-instrs-vector-store-count [instrs : CompilerIrInstrList]) : i64
   (match instrs
     [(IrInstrNil) 0]
@@ -10220,6 +12938,31 @@
       (+
         (lower-test-instr-vector-store-count instr)
         (lower-test-instrs-vector-store-count rest))]))
+
+(define (lower-test-instrs-predicated-load-count [instrs : CompilerIrInstrList]) : i64
+  (match instrs
+    [(IrInstrNil) 0]
+    [(IrInstrCons instr rest)
+      (+
+        (lower-test-instr-predicated-load-count instr)
+        (lower-test-instrs-predicated-load-count rest))]))
+
+(define (lower-test-instrs-predicated-store-count
+  [instrs : CompilerIrInstrList]) : i64
+  (match instrs
+    [(IrInstrNil) 0]
+    [(IrInstrCons instr rest)
+      (+
+        (lower-test-instr-predicated-store-count instr)
+        (lower-test-instrs-predicated-store-count rest))]))
+
+(define (lower-test-instrs-tail-mask-count [instrs : CompilerIrInstrList]) : i64
+  (match instrs
+    [(IrInstrNil) 0]
+    [(IrInstrCons instr rest)
+      (+
+        (lower-test-instr-tail-mask-count instr)
+        (lower-test-instrs-tail-mask-count rest))]))
 
 (define (lower-test-instrs-vector-shape-count
   [instrs : CompilerIrInstrList]
@@ -10439,6 +13182,16 @@
             (lower-test-instrs-vector-binop-count instrs)
             (lower-test-blocks-vector-binop-count rest))])]))
 
+(define (lower-test-blocks-vector-reduce-count [blocks : CompilerIrBlockList]) : i64
+  (match blocks
+    [(IrBlockNil) 0]
+    [(IrBlockCons block rest)
+      (match block
+        [(IrBlock _ instrs)
+          (+
+            (lower-test-instrs-vector-reduce-count instrs)
+            (lower-test-blocks-vector-reduce-count rest))])]))
+
 (define (lower-test-blocks-vector-store-count [blocks : CompilerIrBlockList]) : i64
   (match blocks
     [(IrBlockNil) 0]
@@ -10448,6 +13201,37 @@
           (+
             (lower-test-instrs-vector-store-count instrs)
             (lower-test-blocks-vector-store-count rest))])]))
+
+(define (lower-test-blocks-predicated-load-count [blocks : CompilerIrBlockList]) : i64
+  (match blocks
+    [(IrBlockNil) 0]
+    [(IrBlockCons block rest)
+      (match block
+        [(IrBlock _ instrs)
+          (+
+            (lower-test-instrs-predicated-load-count instrs)
+            (lower-test-blocks-predicated-load-count rest))])]))
+
+(define (lower-test-blocks-predicated-store-count
+  [blocks : CompilerIrBlockList]) : i64
+  (match blocks
+    [(IrBlockNil) 0]
+    [(IrBlockCons block rest)
+      (match block
+        [(IrBlock _ instrs)
+          (+
+            (lower-test-instrs-predicated-store-count instrs)
+            (lower-test-blocks-predicated-store-count rest))])]))
+
+(define (lower-test-blocks-tail-mask-count [blocks : CompilerIrBlockList]) : i64
+  (match blocks
+    [(IrBlockNil) 0]
+    [(IrBlockCons block rest)
+      (match block
+        [(IrBlock _ instrs)
+          (+
+            (lower-test-instrs-tail-mask-count instrs)
+            (lower-test-blocks-tail-mask-count rest))])]))
 
 (define (lower-test-blocks-vector-shape-count
   [blocks : CompilerIrBlockList]
@@ -10718,6 +13502,18 @@
             (lower-test-blocks-vector-binop-count blocks)
             (lower-test-function-vector-binop-count rest name))])]))
 
+(define (lower-test-function-vector-reduce-count
+  [funcs : CompilerIrFunctionList]
+  [name : String]) : i64
+  (match funcs
+    [(IrFunctionNil) (- 0 1)]
+    [(IrFunctionCons func rest)
+      (match func
+        [(IrFunction fname _ _ _ blocks)
+          (if (string-eq fname name)
+            (lower-test-blocks-vector-reduce-count blocks)
+            (lower-test-function-vector-reduce-count rest name))])]))
+
 (define (lower-test-function-vector-store-count
   [funcs : CompilerIrFunctionList]
   [name : String]) : i64
@@ -10729,6 +13525,42 @@
           (if (string-eq fname name)
             (lower-test-blocks-vector-store-count blocks)
             (lower-test-function-vector-store-count rest name))])]))
+
+(define (lower-test-function-predicated-load-count
+  [funcs : CompilerIrFunctionList]
+  [name : String]) : i64
+  (match funcs
+    [(IrFunctionNil) (- 0 1)]
+    [(IrFunctionCons func rest)
+      (match func
+        [(IrFunction fname _ _ _ blocks)
+          (if (string-eq fname name)
+            (lower-test-blocks-predicated-load-count blocks)
+            (lower-test-function-predicated-load-count rest name))])]))
+
+(define (lower-test-function-predicated-store-count
+  [funcs : CompilerIrFunctionList]
+  [name : String]) : i64
+  (match funcs
+    [(IrFunctionNil) (- 0 1)]
+    [(IrFunctionCons func rest)
+      (match func
+        [(IrFunction fname _ _ _ blocks)
+          (if (string-eq fname name)
+            (lower-test-blocks-predicated-store-count blocks)
+            (lower-test-function-predicated-store-count rest name))])]))
+
+(define (lower-test-function-tail-mask-count
+  [funcs : CompilerIrFunctionList]
+  [name : String]) : i64
+  (match funcs
+    [(IrFunctionNil) (- 0 1)]
+    [(IrFunctionCons func rest)
+      (match func
+        [(IrFunction fname _ _ _ blocks)
+          (if (string-eq fname name)
+            (lower-test-blocks-tail-mask-count blocks)
+            (lower-test-function-tail-mask-count rest name))])]))
 
 (define (lower-test-function-vector-shape-count
   [funcs : CompilerIrFunctionList]
@@ -10961,6 +13793,42 @@
                 0)])]
         [(ErrCompilerLower _) false])]
     [(ErrAstProgram _) false]))
+
+(define (compiler-lower-extern-link-metadata-source) : String
+  "(extern ffi-add (:abi c) (:symbol \"ffi_add\") (:link-lib \"ffi\") (:link-search \"native\") (:link-arg \"-Wl,--as-needed\") : (-> i64 i64))
+(define (main) : i64 (ffi-add 35))")
+
+(define (compiler-lower-extern-link-inputs-ok?
+  [inputs : AstExternLinkInputList]) : bool
+  (match inputs
+    [(AstExternLinkInputCons
+        (AstExternLinkLib lib)
+        (AstExternLinkInputCons
+          (AstExternLinkSearch dir)
+          (AstExternLinkInputCons
+            (AstExternLinkArg arg-value)
+            AstExternLinkInputNil)))
+      (and
+        (string-eq lib "ffi")
+        (and (string-eq dir "native") (string-eq arg-value "-Wl,--as-needed")))]
+    [_ false]))
+
+(define (compiler-lower-extern-link-metadata-ok?) : bool
+  (match (lower-compiler-source (compiler-lower-extern-link-metadata-source))
+    [(OkCompilerLower program _)
+      (match program
+        [(IrProgram _ _ externs)
+          (match externs
+            [(IrExternCons (IrExtern name _ abi symbol link-inputs) IrExternNil)
+              (and
+                (string-eq name "ffi-add")
+                (and
+                  (string-eq symbol "ffi_add")
+                  (and
+                    (ast-extern-abi-c? abi)
+                    (compiler-lower-extern-link-inputs-ok? link-inputs))))]
+            [_ false])])]
+    [(ErrCompilerLower _) false]))
 
 (define (compiler-lower-global-source) : String
   "(extern print-i64 : (-> i64 unit))
@@ -11646,6 +14514,146 @@
       (compiler-lower-immediate-lambda-call-ok?)
       (compiler-lower-unit-lambda-call-ok?))))
 
+(define (compiler-lower-capturing-lambda-scalar-shape-ok?) : bool
+  (match (lower-compiler-source (compiler-lower-capturing-lambda-scalar-source))
+    [(OkCompilerLower program _)
+      (match program
+        [(IrProgram _ functions _)
+          (let
+            [lambda-name : String "__tl_lambda_main_0"]
+            [ok : bool true]
+            (begin
+              (if (= (compiler-ir-function-list-count functions) 2)
+                unit
+                (set! ok false))
+              (if (=
+                (lower-test-function-indirect-call-count functions "main")
+                1)
+                unit
+                (set! ok false))
+              (if (>= (lower-test-function-store-ptr-count functions "main") 3)
+                unit
+                (set! ok false))
+              (if (>= (lower-test-functions-call-count functions "tl_alloc") 2)
+                unit
+                (set! ok false))
+              (if (>= (lower-test-function-load-count functions lambda-name) 1)
+                unit
+                (set! ok false))
+              ok))])]
+    [(ErrCompilerLower _) false]))
+
+(define (compiler-lower-capturing-lambda-function-value-shape-ok?) : bool
+  (match (lower-compiler-source
+    (compiler-lower-capturing-lambda-function-value-source))
+    [(OkCompilerLower program _)
+      (match program
+        [(IrProgram _ functions _)
+          (let
+            [capturing-name : String "__tl_lambda_main_1"]
+            [ok : bool true]
+            (begin
+              (if (= (compiler-ir-function-list-count functions) 3)
+                unit
+                (set! ok false))
+              (if (=
+                (lower-test-function-indirect-call-count functions "main")
+                1)
+                unit
+                (set! ok false))
+              (if (>=
+                (lower-test-function-indirect-call-count
+                  functions
+                  capturing-name)
+                1)
+                unit
+                (set! ok false))
+              (if (>=
+                (lower-test-function-load-count functions capturing-name)
+                2)
+                unit
+                (set! ok false))
+              ok))])]
+    [(ErrCompilerLower _) false]))
+
+(define (compiler-lower-capturing-lambda-fat-handle-shape-ok?) : bool
+  (match (lower-compiler-source
+    (compiler-lower-capturing-lambda-fat-handle-source))
+    [(OkCompilerLower program _)
+      (match program
+        [(IrProgram _ functions _)
+          (let
+            [lambda-name : String "__tl_lambda_main_0"]
+            [ok : bool true]
+            (begin
+              (if (= (compiler-ir-function-list-count functions) 2)
+                unit
+                (set! ok false))
+              (if (=
+                (lower-test-function-indirect-call-count functions "main")
+                1)
+                unit
+                (set! ok false))
+              (if (>= (lower-test-functions-call-count functions "tl_alloc") 3)
+                unit
+                (set! ok false))
+              (if (>= (lower-test-function-load-count functions lambda-name) 2)
+                unit
+                (set! ok false))
+              ok))])]
+    [(ErrCompilerLower _) false]))
+
+(define (compiler-lower-capturing-lambda-aggregate-shape-ok?) : bool
+  (match (lower-compiler-source
+    (compiler-lower-capturing-lambda-aggregate-source))
+    [(OkCompilerLower program _)
+      (match program
+        [(IrProgram _ functions _)
+          (let
+            [lambda-name : String "__tl_lambda_main_0"]
+            [ok : bool true]
+            (begin
+              (if (= (compiler-ir-function-list-count functions) 2)
+                unit
+                (set! ok false))
+              (if (=
+                (lower-test-function-indirect-call-count functions "main")
+                1)
+                unit
+                (set! ok false))
+              (if (>= (lower-test-functions-call-count functions "tl_alloc") 5)
+                unit
+                (set! ok false))
+              (if (>= (lower-test-function-store-ptr-count functions "main") 8)
+                unit
+                (set! ok false))
+              (if (>= (lower-test-function-load-count functions lambda-name) 4)
+                unit
+                (set! ok false))
+              ok))])]
+    [(ErrCompilerLower _) false]))
+
+(define (compiler-lower-capturing-lambda-shadow-shape-ok?) : bool
+  (match (lower-compiler-source (compiler-lower-capturing-lambda-shadow-source))
+    [(OkCompilerLower program _)
+      (match program
+        [(IrProgram _ functions _)
+          (and
+            (= (compiler-ir-function-list-count functions) 2)
+            (= (lower-test-function-indirect-call-count functions "main") 1))])]
+    [(ErrCompilerLower _) false]))
+
+(define (compiler-lower-capturing-lambda-tests-ok?) : bool
+  (and
+    (compiler-lower-capturing-lambda-scalar-shape-ok?)
+    (and
+      (compiler-lower-capturing-lambda-function-value-shape-ok?)
+      (and
+        (compiler-lower-capturing-lambda-fat-handle-shape-ok?)
+        (and
+          (compiler-lower-capturing-lambda-aggregate-shape-ok?)
+          (compiler-lower-capturing-lambda-shadow-shape-ok?))))))
+
 (define (compiler-lower-file-handle-status-shape-ok? [src : String]) : bool
   (match (lower-compiler-source src)
     [(OkCompilerLower program _)
@@ -11786,19 +14794,31 @@
                   (=
                     (lower-test-functions-call-count
                       functions
-                      ".L_tl_fs_process_id")
+                      ".L_tl_fs_rename_status")
                     1)
                   (and
                     (=
                       (lower-test-functions-call-count
                         functions
-                        "fs-mkdir-status")
-                      0)
-                    (=
-                      (lower-test-functions-call-count
-                        functions
-                        "fs-process-id")
-                      0))))))])]
+                        ".L_tl_fs_process_id")
+                      1)
+                    (and
+                      (=
+                        (lower-test-functions-call-count
+                          functions
+                          "fs-mkdir-status")
+                        0)
+                      (and
+                        (=
+                          (lower-test-functions-call-count
+                            functions
+                            "fs-rename-status")
+                          0)
+                        (=
+                          (lower-test-functions-call-count
+                            functions
+                            "fs-process-id")
+                          0))))))))])]
     [(ErrCompilerLower _) false]))
 
 (define (compiler-lower-region-source) : String
@@ -11817,6 +14837,52 @@
             (> (lower-test-functions-call-count functions "tl_region_mark") 0)
             (> (lower-test-functions-call-count functions "tl_region_reset") 0))])]
     [(ErrCompilerLower _) false]))
+
+(define (compiler-lower-with-escape-scalar-source) : String
+  "(define (main) : i64
+  (let
+    [scratch : i64 (arena-make)]
+    (with-escape scratch 40 42)))")
+
+(define (compiler-lower-with-escape-string-source) : String
+  "(define (main) : String
+  (let
+    [scratch : i64 (arena-make)]
+    (with-escape scratch (int->string 42))))")
+
+(define (compiler-lower-with-escape-arena-shape-ok? [src : String]) : bool
+  (match (lower-compiler-source src)
+    [(OkCompilerLower program _)
+      (match program
+        [(IrProgram _ functions _)
+          (and
+            (>=
+              (lower-test-functions-call-count functions "tl_arena_current")
+              3)
+            (and
+              (>= (lower-test-functions-call-count functions "tl_arena_set") 4)
+              (and
+                (>
+                  (lower-test-functions-call-count functions "tl_region_mark")
+                  0)
+                (>
+                  (lower-test-functions-call-count functions "tl_region_reset")
+                  0))))])]
+    [(ErrCompilerLower _) false]))
+
+(define (compiler-lower-with-escape-shape-ok?) : bool
+  (and
+    (compiler-lower-with-escape-arena-shape-ok?
+      (compiler-lower-with-escape-scalar-source))
+    (match (lower-compiler-source (compiler-lower-with-escape-string-source))
+      [(OkCompilerLower program _)
+        (match program
+          [(IrProgram _ functions _)
+            (and
+              (compiler-lower-with-escape-arena-shape-ok?
+                (compiler-lower-with-escape-string-source))
+              (> (lower-test-functions-call-count functions "tl_substring") 0))])]
+      [(ErrCompilerLower _) false])))
 
 (define (compiler-lower-repr-c-shape-ok?) : bool
   (match (lower-compiler-source (compiler-lower-repr-c-source))
@@ -11915,6 +14981,73 @@
         (AstTyF64)
         4))))
 
+(define (compiler-lower-and8
+  [a : bool]
+  [b : bool]
+  [c : bool]
+  [d : bool]
+  [e : bool]
+  [f : bool]
+  [g : bool]
+  [h : bool]) : bool
+  (and (and (and a b) (and c d)) (and (and e f) (and g h))))
+
+(define (compiler-lower-avx512-foreach-map-source-shape-ok?
+  [src : String]
+  [elem-ty : AstType]
+  [lanes : i64]) : bool
+  (match (lower-compiler-source-with-mode src (CompilerLowerAvx512))
+    [(OkCompilerLower program _)
+      (match program
+        [(IrProgram _ functions _)
+          (let
+            [load-count : i64
+              (lower-test-function-vector-load-count functions "fill")]
+            [binop-count : i64
+              (lower-test-function-vector-binop-count functions "fill")]
+            [store-count : i64
+              (lower-test-function-vector-store-count functions "fill")]
+            [pred-load-count : i64
+              (lower-test-function-predicated-load-count functions "fill")]
+            [pred-store-count : i64
+              (lower-test-function-predicated-store-count functions "fill")]
+            [tail-mask-count : i64
+              (lower-test-function-tail-mask-count functions "fill")]
+            [shape-count : i64
+              (lower-test-function-vector-shape-count
+                functions
+                "fill"
+                lanes
+                elem-ty)]
+            [tail-store-count : i64
+              (lower-test-function-store-ptr-count functions "fill")]
+            (compiler-lower-and8
+              (= load-count 2)
+              (= binop-count 2)
+              (= store-count 1)
+              (= pred-load-count 2)
+              (= pred-store-count 1)
+              (= tail-mask-count 1)
+              (= shape-count 8)
+              (> tail-store-count 0)))])]
+    [(ErrCompilerLower _) false]))
+
+(define (compiler-lower-avx512-foreach-map-shape-ok?) : bool
+  (and
+    (compiler-lower-avx512-foreach-map-source-shape-ok?
+      (compiler-lower-avx2-foreach-map-source)
+      (AstTyI64)
+      8)
+    (and
+      (compiler-lower-avx512-foreach-map-source-shape-ok?
+        (compiler-lower-avx2-foreach-map-i32-source)
+        (AstTyI32)
+        16)
+      (compiler-lower-avx512-foreach-map-source-shape-ok?
+        (compiler-lower-avx2-foreach-map-f64-source)
+        (AstTyF64)
+        8))))
+
 (define (compiler-lower-scalar-foreach-stays-scalar-ok?) : bool
   (match (lower-compiler-source (compiler-lower-avx2-foreach-map-source))
     [(OkCompilerLower program _)
@@ -11939,25 +15072,79 @@
 
 (define (compiler-lower-foreach-tests-ok?) : bool
   (and
-    (compiler-lower-ok?
-      "(define (main) : i64 (begin (foreach ([i : i64 0 3]) unit) 0))")
-    (and
+    (compiler-lower-and8
+      (compiler-lower-ok?
+        "(define (main) : i64 (begin (foreach ([i : i64 0 3]) unit) 0))")
       (compiler-lower-ok?
         "(define (f [a : (Array i64)] [n : i64]) : unit (foreach ([i : i64 0 n]) (array-set! a i i)))")
-      (and
-        (compiler-lower-ok?
-          "(define (main) : i64 (begin (foreach ([i : i64 0 0]) unit) 0))")
-        (and
-          (compiler-lower-ok?
-            "(define (main) : i64 (begin (foreach ([i : i64 0 3]) (foreach ([j : i64 0 2]) unit)) 0))")
+      (compiler-lower-ok?
+        "(define (main) : i64 (begin (foreach ([i : i64 0 0]) unit) 0))")
+      (compiler-lower-ok?
+        "(define (main) : i64 (begin (foreach ([i : i64 0 3]) (foreach ([j : i64 0 2]) unit)) 0))")
+      (compiler-lower-foreach-shape-ok?
+        "(define (main) : i64 (begin (foreach ([i : i64 0 3]) unit) 0))")
+      (compiler-lower-avx2-foreach-map-shape-ok?)
+      (compiler-lower-avx512-foreach-map-shape-ok?)
+      (compiler-lower-scalar-foreach-stays-scalar-ok?))
+    (compiler-lower-avx2-foreach-fallback-stays-scalar-ok?)))
+
+(define (compiler-lower-avx2-spmd-reduce-shape-ok?
+  [src : String]
+  [elem-ty : AstType]
+  [lanes : i64]) : bool
+  (match (lower-compiler-source-with-mode src (CompilerLowerAvx2))
+    [(OkCompilerLower program _)
+      (match program
+        [(IrProgram _ functions _)
           (and
-            (compiler-lower-foreach-shape-ok?
-              "(define (main) : i64 (begin (foreach ([i : i64 0 3]) unit) 0))")
+            (= (lower-test-function-vector-load-count functions "f") 1)
             (and
-              (compiler-lower-avx2-foreach-map-shape-ok?)
+              (= (lower-test-function-vector-reduce-count functions "f") 1)
               (and
-                (compiler-lower-scalar-foreach-stays-scalar-ok?)
-                (compiler-lower-avx2-foreach-fallback-stays-scalar-ok?)))))))))
+                (=
+                  (lower-test-function-vector-shape-count
+                    functions
+                    "f"
+                    lanes
+                    elem-ty)
+                  2)
+                (> (lower-test-function-bounds-count functions "f") 0))))])]
+    [(ErrCompilerLower _) false]))
+
+(define (compiler-lower-avx2-spmd-reduce-stays-scalar-ok? [src : String]) : bool
+  (match (lower-compiler-source-with-mode src (CompilerLowerAvx2))
+    [(OkCompilerLower program _)
+      (match program
+        [(IrProgram _ functions _)
+          (= (lower-test-function-vector-reduce-count functions "f") 0)])]
+    [(ErrCompilerLower _) false]))
+
+(define (compiler-lower-avx2-spmd-reduce-tests-ok?) : bool
+  (and
+    (compiler-lower-and8
+      (compiler-lower-avx2-spmd-reduce-shape-ok?
+        "(define (f [xs : (Array i64)] [n : i64]) : i64 (spmd-reduce sum ([i : i64 0 n]) 0 (array-ref xs i)))"
+        (AstTyI64)
+        4)
+      (compiler-lower-avx2-spmd-reduce-shape-ok?
+        "(define (f [xs : (Array i32)] [n : i64]) : i32 (spmd-reduce sum ([i : i64 0 n]) (cast 0 : i32) (array-ref xs i)))"
+        (AstTyI32)
+        8)
+      (compiler-lower-avx2-spmd-reduce-shape-ok?
+        "(define (f [xs : (Array i32)] [n : i64] [seed : i32]) : i32 (spmd-reduce min ([i : i64 0 n]) seed (array-ref xs i)))"
+        (AstTyI32)
+        8)
+      (compiler-lower-avx2-spmd-reduce-shape-ok?
+        "(define (f [xs : (Array i32)] [n : i64] [seed : i32]) : i32 (spmd-reduce max ([i : i64 0 n]) seed (array-ref xs i)))"
+        (AstTyI32)
+        8)
+      (compiler-lower-avx2-spmd-reduce-stays-scalar-ok?
+        "(define (f [xs : (Array f64)] [n : i64]) : f64 (spmd-reduce sum ([i : i64 0 n]) 0.0 (array-ref xs i)))")
+      (compiler-lower-avx2-spmd-reduce-stays-scalar-ok?
+        "(define (f [xs : (Array i64)] [n : i64] [seed : i64]) : i64 (spmd-reduce max ([i : i64 0 n]) seed (array-ref xs i)))")
+      true
+      true)
+    true))
 
 ;; `spmd-reduce` sum lowering (#1013): integer and f64 sum reductions lower (to
 ;; an accumulator loop, so `main` holds the guard branch + fold/increment
@@ -11981,8 +15168,10 @@
             (and
               (compiler-lower-ok?
                 "(define (f [xs : (Array bool)] [n : i64]) : bool (spmd-reduce all ([i : i64 0 n]) true (array-ref xs i)))")
-              (compiler-lower-ok?
-                "(define (f [xs : (Array bool)] [n : i64]) : bool (spmd-reduce any ([i : i64 0 n]) false (array-ref xs i)))"))))))))
+              (and
+                (compiler-lower-ok?
+                  "(define (f [xs : (Array bool)] [n : i64]) : bool (spmd-reduce any ([i : i64 0 n]) false (array-ref xs i)))")
+                (compiler-lower-avx2-spmd-reduce-tests-ok?)))))))))
 
 ;; Comptime folding of the remaining scalar operators: each `(comptime ...)`
 ;; must collapse to a single constant `mov` with no residual runtime binop,
@@ -12268,10 +15457,21 @@
       (if (compiler-lower-noncapturing-lambda-tests-ok?)
         unit
         (set! ok false))
+      (if (compiler-lower-capturing-lambda-tests-ok?)
+        unit
+        (set! ok false))
       (if (compiler-lower-ok? (compiler-lower-aggregate-source))
         unit
         (set! ok false))
       (if (compiler-lower-tuple-shape-ok?)
+        unit
+        (set! ok false))
+      (if (compiler-lower-clone-shape-ok?)
+        unit
+        (set! ok false))
+      (if (compiler-lower-error-ok?
+        (compiler-lower-clone-unsupported-source)
+        "typecheck: clone unsupported type (-> i64 i64)")
         unit
         (set! ok false))
       (if (compiler-lower-ok? (compiler-lower-comptime-decl-source))
@@ -12290,6 +15490,9 @@
         unit
         (set! ok false))
       (if (compiler-lower-module-function-returning-enum-ok?)
+        unit
+        (set! ok false))
+      (if (compiler-lower-extern-link-metadata-ok?)
         unit
         (set! ok false))
       (if (compiler-lower-global-shape-ok?)
@@ -12427,6 +15630,9 @@
         unit
         (set! ok false))
       (if (compiler-lower-region-shape-ok?)
+        unit
+        (set! ok false))
+      (if (compiler-lower-with-escape-shape-ok?)
         unit
         (set! ok false))
       (if (compiler-lower-repr-c-shape-ok?)

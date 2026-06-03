@@ -260,9 +260,8 @@ and may include `;; doctest-stdout: -` / `;; doctest-stderr: -` or
 compile and run through the self-hosted no-Rust build/run path and compare exact
 exit status, stdout, and stderr. Unsupported hosts report an unsupported
 runnable doctest diagnostic. Ordinary `;` and `;;` comments are not
-documentation and are ignored by the doctest scanner. Legacy `;;;;` and `;;;`
-doc comments remain accepted while the repository migrates, but `;#` and `;:`
-are the canonical spellings.
+documentation and are ignored by the doctest scanner. `;#` and `;:` are the
+only public documentation comment syntaxes.
 
 Inline tests can live next to source declarations as `(test name body...)`
 items. Normal `check`, `compile`, `build`, and `run` ignore them. `typelisp
@@ -307,20 +306,19 @@ struct field.
 Named top-level functions and `lambda` literals can be passed as pointer-sized
 closure descriptor values. Non-capturing lambdas use static descriptors.
 Capturing lambdas snapshot supported captures into heap environments: scalars,
-function values, `String`, dynamic arrays, tuples/structs/enums (including ones
-with nested aggregate fields, which are recursively deep-copied), and a
-directly-captured scalar fixed array. The aggregate captures snapshot their
-storage onto the heap so the environment can outlive the creating frame.
-Aggregate-element / nested fixed-array captures and mutation of captured names
-are still rejected.
+function values, `String`, dynamic arrays, tuples/structs/enums, and fixed
+arrays, including nested aggregate and fixed-array contents that are recursively
+deep-copied. The aggregate captures snapshot their storage onto the heap so the
+environment can outlive the creating frame. Capturing aggregate-element
+references and mutation of captured names are still rejected.
 SPMD/SIMD `foreach` is documented in [SPEC.md section 5.15](SPEC.md). The
 compiler parses and type-checks the first source form and lowers it to scalar
 reference loops; `--backend-mode avx2` supports a first contiguous map/zip
 subset. Runtime-dispatched SIMD variants are specified with `defdispatch`:
 ordinary calls resolve once per process to AVX-512, AVX2, or scalar fallback
 using the `stdlib/cpu.tl` capability checks. Parser/compiler support for
-`defdispatch` is pending. `spmd-reduce` reduction semantics are specified but
-not implemented yet.
+`defdispatch` is pending. `spmd-reduce` scalar lowering is implemented, and
+`--backend-mode avx2` vectorizes scalar-equivalent integer array reductions.
 
 ### Builtins
 
@@ -401,11 +399,12 @@ Scoped cleanup of non-memory resources is separate. The SPEC reserves
 handles, locks, mapped files, and similar resources; it is not implemented yet
 and does not imply destructors, `free`, or arena reset semantics.
 
-Programs that need manual control may still declare low-level extern helpers:
-`tl_region_mark` and `tl_region_reset` snapshot and restore the bump allocator.
-These are unsafe-by-convention — the caller must prove no live handle escapes
-the reset — and are currently emitted only for the Linux x86_64 System V
-target. See [SPEC.md §7.3](SPEC.md) for details.
+Programs that need manual control use the first-class arena helpers. `arena-make`,
+`arena-current`, and `arena-mark` are safe because they only create/read handles
+or record a reset mark. `arena-set!`, `arena-destroy`, and `arena-rewind` require
+`(unsafe ...)`, because switching, freeing, or rewinding arenas can invalidate
+live heap handles. The safe `with-arena` surface remains preferred for scoped
+cleanup. See [SPEC.md §7.3](SPEC.md) for details.
 
 See [SPEC.md](SPEC.md) for the full language reference.
 
@@ -539,8 +538,9 @@ through the TypeLisp-owned build/run path.
 
 `compile`, `run`, and `build` accept `--backend-mode scalar|avx2|avx512`.
 `scalar` is the default. `avx2` supports a first contiguous SPMD `foreach`
-map/zip subset and otherwise falls back or rejects unsupported vector IR;
-`avx512` parses but is rejected until that backend lands.
+map/zip subset plus scalar-equivalent integer `spmd-reduce` array folds;
+`avx512` supports the same `foreach` map/zip subset with ZMM vectors and opmask
+predicated tails. Unsupported vector IR falls back or rejects explicitly.
 
 The language-level runtime dispatch design is specified as `defdispatch` in
 `SPEC.md`: one logical function can list scalar, AVX2, and AVX-512 variant
@@ -573,8 +573,8 @@ x86_64 Linux/Windows backend targets. Integers, floats (`f64`), bool/char/unit,
 `extern`, multi-file modules, scalar `foreach`, and an initial AVX2 `foreach`
 map/zip path all compile to native code. See the
 [project roadmap](https://github.com/JoNil-Botta/typelisp/issues/8) and
-[SPEC.md §8](SPEC.md) for what is not yet supported (aggregate-element /
-nested fixed-array captures, tail calls, tuple/fixed-array by-value returns,
+[SPEC.md §8](SPEC.md) for what is not yet supported (aggregate-element
+reference captures, tail calls, tuple/fixed-array by-value returns,
 `f32` codegen, general GC/free, ownership/borrowing, and later SPMD/SIMD
 reductions/cross-lane work). Raw pointer types and unsafe pointer operations are
 implemented, while C-string/address-of ergonomics remain follow-up FFI work.

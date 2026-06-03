@@ -17,9 +17,21 @@
     [f : (-> i64) (lambda () : i64 (array-ref a 3))]
     (= (f) 42)))
 
+; Captures snapshot fixed-array storage at lambda creation time, so later
+; mutation of the original array does not affect the closure.
+(define (case-mutated-after-capture) : bool
+  (let
+    [a : (Array i64 2) (array 42 7)]
+    [f : (-> i64) (lambda () : i64 (array-ref a 0))]
+    (begin
+      (array-set! a 0 5)
+      (= (f) 42))))
+
 (define (main) : i64
   (if (case-immediate)
     (if (case-returned)
-      42
+      (if (case-mutated-after-capture)
+        42
+        3)
       2)
     1))

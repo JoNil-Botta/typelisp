@@ -809,7 +809,8 @@
       name
       (AstExternMetadata
         (AstExternAbiC)
-        (compiler-load-package-user-symbol logical))
+        (compiler-load-package-user-symbol logical)
+        AstExternLinkInputNil)
       (AstTyFunc (compiler-load-param-type-list params) ret))))
 
 (define (compiler-load-package-transform-decl
@@ -1513,29 +1514,29 @@
           "compiler-load: cannot read import target/stdlib/cl_sur_missing.tl")]
       [(OkCompilerLoadWithPaths _ _ _ _) false])))
 
-;;; --- typelisp.pkg manifest parser (#834, slice 1) ---------------------------
-;;; Parse a `typelisp.pkg` manifest, an S-expression of the form
-;;;   (package (name "...") (version "...") (kind "bin") (entry "...")
-;;;            (dependencies (alias "path") ...))
-;;; into a structured value. Reuses the selfhost reader (`lex` + `read-result`,
-;;; both already reachable here via compiler_parse_core -> read.tl) instead of a
-;;; bespoke manifest tokenizer.
-;;; A parsed dependency: an import alias and its package-root path.
+;: --- typelisp.pkg manifest parser (#834, slice 1) ---------------------------
+;: Parse a `typelisp.pkg` manifest, an S-expression of the form
+;:   (package (name "...") (version "...") (kind "bin") (entry "...")
+;:            (dependencies (alias "path") ...))
+;: into a structured value. Reuses the selfhost reader (`lex` + `read-result`,
+;: both already reachable here via compiler_parse_core -> read.tl) instead of a
+;: bespoke manifest tokenizer.
+;: A parsed dependency: an import alias and its package-root path.
 (defstruct CompilerPkgDep
   (alias String)
   (path String))
 
-;;; Alias->path dependency list from a parsed manifest.
+;: Alias->path dependency list from a parsed manifest.
 (defenum CompilerPkgDepList
   (CompilerPkgDepNil)
   (CompilerPkgDepCons CompilerPkgDep CompilerPkgDepList))
 
-;;; Package artifact kind: binary executable or static library.
+;: Package artifact kind: binary executable or static library.
 (defenum CompilerPkgKind
   (CompilerPkgKindBin)
   (CompilerPkgKindLib))
 
-;;; A parsed `typelisp.pkg` manifest.
+;: A parsed `typelisp.pkg` manifest.
 (defstruct CompilerPkgManifest
   (name String)
   (version String)
@@ -1543,27 +1544,27 @@
   (entry String)
   (deps CompilerPkgDepList))
 
-;;; Parse result: the manifest or a diagnostic.
+;: Parse result: the manifest or a diagnostic.
 (defenum ResultCompilerPkgManifest
   (OkCompilerPkgManifest CompilerPkgManifest)
   (ErrCompilerPkgManifest String))
 
-;;; Internal: a single extracted string field value, or a diagnostic.
+;: Internal: a single extracted string field value, or a diagnostic.
 (defenum ResultPkgString
   (OkPkgString String)
   (ErrPkgString String))
 
-;;; Internal: a parsed package kind, or a diagnostic.
+;: Internal: a parsed package kind, or a diagnostic.
 (defenum ResultCompilerPkgKind
   (OkCompilerPkgKind CompilerPkgKind)
   (ErrCompilerPkgKind String))
 
-;;; Internal: a parsed dependency list, or a diagnostic.
+;: Internal: a parsed dependency list, or a diagnostic.
 (defenum ResultCompilerPkgDepList
   (OkCompilerPkgDepList CompilerPkgDepList)
   (ErrCompilerPkgDepList String))
 
-;;; Count the dependencies in a parsed list.
+;: Count the dependencies in a parsed list.
 (define (compiler-pkg-dep-list-count [deps : CompilerPkgDepList]) : i64
   (match deps
     [(CompilerPkgDepNil) 0]
@@ -1628,7 +1629,7 @@
         true
         (compiler-load-pkg-dep-alias-seen? rest target-alias))]))
 
-;;; Extract a single `"value"` from a field tail `("value")`.
+;: Extract a single `"value"` from a field tail `("value")`.
 (define (compiler-load-manifest-string-value [ftail : Sexpr] [fname : String]) : ResultPkgString
   (match ftail
     [(SCons vhead vrest)
@@ -1703,7 +1704,7 @@
             (OkCompilerPkgDepList
               (CompilerPkgDepCons (CompilerPkgDep alias path) tail-deps)))])]))
 
-;;; Parse the `(alias "path") ...` entries of a `(dependencies ...)` field.
+;: Parse the `(alias "path") ...` entries of a `(dependencies ...)` field.
 (define (compiler-load-manifest-parse-deps [entries : Sexpr]) : ResultCompilerPkgDepList
   (match entries
     [(SNil) (OkCompilerPkgDepList (CompilerPkgDepNil))]
@@ -1731,9 +1732,9 @@
     [(CompilerPkgKindBin) "src/main.tl"]
     [(CompilerPkgKindLib) "src/lib.tl"]))
 
-;;; Walk the package fields, accumulating name/version/kind/entry/deps, then
-;;; check required fields and synthesize convention defaults for omitted kind
-;;; and entry.
+;: Walk the package fields, accumulating name/version/kind/entry/deps, then
+;: check required fields and synthesize convention defaults for omitted kind
+;: and entry.
 (define (compiler-load-manifest-fields
   [fields : Sexpr]
   [name : String]
@@ -1887,7 +1888,7 @@
       (ErrCompilerPkgManifest
         "package fields must be lists like `(name \"...\")`")]))
 
-;;; Parse the top-level `(package ...)` form.
+;: Parse the top-level `(package ...)` form.
 (define (compiler-load-manifest-from-form [form : Sexpr]) : ResultCompilerPkgManifest
   (match form
     [(SCons head rest)
@@ -1913,14 +1914,14 @@
         [_ (ErrCompilerPkgManifest "manifest must start with `package`")])]
     [_ (ErrCompilerPkgManifest "manifest must be a `(package ...)` form")]))
 
-;;; Parse a `typelisp.pkg` manifest source string into a structured manifest.
+;: Parse a `typelisp.pkg` manifest source string into a structured manifest.
 (define (compiler-load-parse-manifest [source : String]) : ResultCompilerPkgManifest
   (match (read-result (lex source))
     [(ErrSexpr msg) (ErrCompilerPkgManifest (string-append "manifest: " msg))]
     [(OkSexpr form) (compiler-load-manifest-from-form form)]))
 
-;;; Self-test: a full manifest parses with the expected fields + dependency
-;;; count.
+;: Self-test: a full manifest parses with the expected fields + dependency
+;: count.
 (define (compiler-load-manifest-valid-full-ok?) : bool
   (match (compiler-load-parse-manifest
     "(package (name \"demo\") (version \"0.1.0\") (kind \"bin\") (entry \"src/main.tl\") (dependencies (math \"../math\") (util \"../util\")))")
@@ -1937,7 +1938,7 @@
             [(CompilerPkgKindLib) false])))]
     [(ErrCompilerPkgManifest _) false]))
 
-;;; Self-test: a manifest without a `dependencies` field parses with no deps.
+;: Self-test: a manifest without a `dependencies` field parses with no deps.
 (define (compiler-load-manifest-valid-nodeps-ok?) : bool
   (match (compiler-load-parse-manifest
     "(package (name \"x\") (version \"1\") (kind staticlib))")
@@ -1968,7 +1969,7 @@
         [(CompilerPkgKindBin) false])]
     [(ErrCompilerPkgManifest _) false]))
 
-;;; True when parsing `source` fails with exactly the `expected` diagnostic.
+;: True when parsing `source` fails with exactly the `expected` diagnostic.
 (define (compiler-load-manifest-rejects? [source : String] [expected : String]) : bool
   (match (compiler-load-parse-manifest source)
     [(ErrCompilerPkgManifest m) (string-eq m expected)]
@@ -2023,7 +2024,7 @@
                           "(package (name \"x\") (version \"1\") (kind \"bin\") (entry \"e.tl\") (dependencies (math \"\")))"
                           "manifest dependency `math` path must not be empty")))))))))))))
 
-;;; Aggregate manifest-parser self-test (#834).
+;: Aggregate manifest-parser self-test (#834).
 (define (compiler-load-pkg-manifest-ok?) : bool
   (and
     (compiler-load-manifest-valid-full-ok?)
@@ -2047,17 +2048,17 @@
                   "expected `package` form, got `module`")
                 (compiler-load-pkg-manifest-validation-ok?)))))))))
 
-;;; --- pkg:<alias>/... import resolution (#834, slice 2) ----------------------
-;;; Resolve a `pkg:<alias>/<rest>` import against a parsed manifest's dependency
-;;; list, relative to the manifest directory: `<manifest-dir>/<dep-path>/<rest>`,
-;;; normalized. Rejects a missing alias, an empty/`/`-less spec, and a `rest`
-;;; that escapes the dependency root via `..`, preserving those diagnostics when
-;;; the import resolver runs inside the selfhost driver.
-;;; True when an import path is a package import (`pkg:<alias>/...`).
+;: --- pkg:<alias>/... import resolution (#834, slice 2) ----------------------
+;: Resolve a `pkg:<alias>/<rest>` import against a parsed manifest's dependency
+;: list, relative to the manifest directory: `<manifest-dir>/<dep-path>/<rest>`,
+;: normalized. Rejects a missing alias, an empty/`/`-less spec, and a `rest`
+;: that escapes the dependency root via `..`, preserving those diagnostics when
+;: the import resolver runs inside the selfhost driver.
+;: True when an import path is a package import (`pkg:<alias>/...`).
 (define (compiler-load-pkg-import? [path : String]) : bool
   (compiler-load-string-prefix-at? path "pkg:" 0))
 
-;;; Index of the first '/' in `s` at or after `i`, or -1 if none.
+;: Index of the first '/' in `s` at or after `i`, or -1 if none.
 (define (compiler-load-slash-index-from [s : String] [i : i64] [n : i64]) : i64
   (if (>= i n)
     -1
@@ -2065,7 +2066,7 @@
       i
       (compiler-load-slash-index-from s (+ i 1) n))))
 
-;;; True when a (normalized) relative path escapes its base via a leading `..`.
+;: True when a (normalized) relative path escapes its base via a leading `..`.
 (define (compiler-load-path-escapes? [path : String]) : bool
   (if (compiler-load-string-prefix-at? path ".." 0)
     (if (= (string-length path) 2)
@@ -2073,7 +2074,7 @@
       (= (string-ref path 2) #/'))
     false))
 
-;;; Look up a dependency's root path by import alias.
+;: Look up a dependency's root path by import alias.
 (define (compiler-load-pkg-dep-lookup
   [deps : CompilerPkgDepList]
   [target-alias : String]) : CompilerLoadMaybePath
@@ -2084,7 +2085,7 @@
         (CompilerLoadSomePath (struct-get dep path))
         (compiler-load-pkg-dep-lookup rest target-alias))]))
 
-;;; Resolve `pkg:<alias>/<rest>` against `deps`, relative to `manifest-dir`.
+;: Resolve `pkg:<alias>/<rest>` against `deps`, relative to `manifest-dir`.
 (define (compiler-load-resolve-pkg-import
   [import-path : String]
   [manifest-dir : String]
@@ -2126,9 +2127,9 @@
                         (compiler-load-join-root-path manifest-dir dep-path)
                         norm-rest)))))]))))))
 
-;;; Parent directory of a directory path, or no-path at the top. `dirname`
-;;; returns a path *including* its trailing separator, so a trailing separator
-;;; is stripped first to make the walk-up progress (e.g. `src/` -> ``, the cwd).
+;: Parent directory of a directory path, or no-path at the top. `dirname`
+;: returns a path *including* its trailing separator, so a trailing separator
+;: is stripped first to make the walk-up progress (e.g. `src/` -> ``, the cwd).
 (define (compiler-load-parent-dir [dir : String]) : CompilerLoadMaybePath
   (let
     [n : i64 (string-length dir)]
@@ -2145,8 +2146,8 @@
             (CompilerLoadNoPath)
             (CompilerLoadSomePath parent)))))))
 
-;;; Walk up from `dir` looking for a `typelisp.pkg` manifest, mirroring the Rust
-;;; `discover_manifest` (src/package.rs). `fuel` bounds the climb.
+;: Walk up from `dir` looking for a `typelisp.pkg` manifest, mirroring the Rust
+;: `discover_manifest` (src/package.rs). `fuel` bounds the climb.
 (define (compiler-load-discover-manifest-up [dir : String] [fuel : i64]) : CompilerLoadMaybePath
   (if (<= fuel 0)
     (CompilerLoadNoPath)
@@ -2159,15 +2160,15 @@
           [(CompilerLoadSomePath parent)
             (compiler-load-discover-manifest-up parent (- fuel 1))])))))
 
-;;; Discover the nearest `typelisp.pkg` at or above the importer's directory.
+;: Discover the nearest `typelisp.pkg` at or above the importer's directory.
 (define (compiler-load-discover-manifest [start-path : String]) : CompilerLoadMaybePath
   (compiler-load-discover-manifest-up (compiler-load-dirname start-path) 256))
 
-;;; Resolve a `pkg:<alias>/...` import by discovering and parsing the nearest
-;;; `typelisp.pkg` relative to the importer, then resolving against its deps.
-;;; Missing manifests and parse errors fall back to the raw import path so the
-;;; loader reports a normal "cannot read import" error. Syntactically valid
-;;; manifests preserve pkg-resolution diagnostics into the caller.
+;: Resolve a `pkg:<alias>/...` import by discovering and parsing the nearest
+;: `typelisp.pkg` relative to the importer, then resolving against its deps.
+;: Missing manifests and parse errors fall back to the raw import path so the
+;: loader reports a normal "cannot read import" error. Syntactically valid
+;: manifests preserve pkg-resolution diagnostics into the caller.
 (define (compiler-load-resolve-pkg-import-from-disk
   [importer-path : String]
   [import-path : String]) : ResultPkgResolve
@@ -2182,7 +2183,7 @@
             (compiler-load-dirname manifest-path)
             (struct-get manifest deps))])]))
 
-;;; Self-test fixture: `math` -> sibling dir, `util` -> vendored subdir.
+;: Self-test fixture: `math` -> sibling dir, `util` -> vendored subdir.
 (define (compiler-load-pkg-resolve-deps) : CompilerPkgDepList
   (CompilerPkgDepCons
     (CompilerPkgDep "math" "../math")
@@ -2190,7 +2191,7 @@
       (CompilerPkgDep "util" "vendor/util")
       (CompilerPkgDepNil))))
 
-;;; True when resolving `import-path` yields exactly `expected`.
+;: True when resolving `import-path` yields exactly `expected`.
 (define (compiler-load-pkg-resolves? [import-path : String] [expected : String]) : bool
   (match (compiler-load-resolve-pkg-import
     import-path
@@ -2199,7 +2200,7 @@
     [(OkPkgResolve p) (string-eq p expected)]
     [(ErrPkgResolve _) false]))
 
-;;; True when resolving `import-path` fails with exactly `expected`.
+;: True when resolving `import-path` fails with exactly `expected`.
 (define (compiler-load-pkg-resolve-rejects?
   [import-path : String]
   [expected : String]) : bool
@@ -2210,7 +2211,7 @@
     [(ErrPkgResolve m) (string-eq m expected)]
     [(OkPkgResolve _) false]))
 
-;;; Aggregate pkg-import resolution self-test (#834).
+;: Aggregate pkg-import resolution self-test (#834).
 (define (compiler-load-pkg-resolve-ok?) : bool
   (and
     (compiler-load-pkg-resolves? "pkg:math/src/add.tl" "math/src/add.tl")
@@ -2228,20 +2229,20 @@
             "pkg:math/../../etc.tl"
             "compiler-load: pkg import escapes package root: pkg:math/../../etc.tl"))))))
 
-;;; True when `parent-dir dir` yields exactly `expected`.
+;: True when `parent-dir dir` yields exactly `expected`.
 (define (compiler-load-pkg-parent-dir-is? [dir : String] [expected : String]) : bool
   (match (compiler-load-parent-dir dir)
     [(CompilerLoadSomePath p) (string-eq p expected)]
     [(CompilerLoadNoPath) false]))
 
-;;; True when `parent-dir dir` reports no parent (top of the climb).
+;: True when `parent-dir dir` reports no parent (top of the climb).
 (define (compiler-load-pkg-parent-dir-none? [dir : String]) : bool
   (match (compiler-load-parent-dir dir)
     [(CompilerLoadNoPath) true]
     [(CompilerLoadSomePath _) false]))
 
-;;; The manifest-discovery walk-up steps one directory at a time, descending to
-;;; the cwd (``) before stopping (#834).
+;: The manifest-discovery walk-up steps one directory at a time, descending to
+;: the cwd (``) before stopping (#834).
 (define (compiler-load-pkg-parent-dir-ok?) : bool
   (and
     (compiler-load-pkg-parent-dir-is? "a/b/" "a/")

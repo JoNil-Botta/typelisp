@@ -826,6 +826,8 @@
                 [(OkCompilerBackend asm) (string-eq asm "")]
                 [(ErrCompilerBackend _) false])
               (match (compiler-backend-emit-cast
+                "_tl_test"
+                "entry"
                 coalesced
                 2
                 (IrValueVar 0)
@@ -1502,6 +1504,160 @@
           44
           13)))))
 
+(define (compiler-backend-avx2-map-source [elem : String]) : String
+  (backend-cat5
+    "(define (fill [a : (Array "
+    elem
+    ")] [b : (Array "
+    elem
+    (backend-cat3
+      ")] [out : (Array "
+      elem
+      ")] [n : i64]) : unit
+  (foreach
+    ([i : i64 0 n])
+    (array-set! out i (+ (array-ref a i) (array-ref b i)))))")))
+
+(define (compiler-backend-avx2-map-asm-contains?
+  [elem : String]
+  [move : String]
+  [op : String]) : bool
+  (match (lower-compiler-source-with-mode
+    (compiler-backend-avx2-map-source elem)
+    (CompilerLowerAvx2))
+    [(OkCompilerLower program spans)
+      (match (compiler-backend-emit-program-target-with-mode
+        program
+        (BackendTargetLinux)
+        (BackendModeAvx2)
+        spans
+        true)
+        [(OkCompilerBackend asm)
+          (and
+            (backend-and4
+              (compiler-backend-string-contains? asm "    vzeroupper\n")
+              (compiler-backend-string-contains? asm move)
+              (compiler-backend-string-contains? asm op)
+              (compiler-backend-string-contains? asm "%ymm"))
+            (not
+              (compiler-backend-string-contains?
+                asm
+                "vector/mask IR emission is not implemented")))]
+        [(ErrCompilerBackend _) false])]
+    [(ErrCompilerLower _) false]))
+
+(define (compiler-backend-avx2-vector-map-ok?) : bool
+  (and
+    (compiler-backend-avx2-map-asm-contains? "i64" "    vmovdqu " "    vpaddq ")
+    (and
+      (compiler-backend-avx2-map-asm-contains?
+        "i32"
+        "    vmovdqu "
+        "    vpaddd ")
+      (compiler-backend-avx2-map-asm-contains?
+        "f64"
+        "    vmovupd "
+        "    vaddpd "))))
+
+(define (compiler-backend-avx512-map-asm-contains?
+  [elem : String]
+  [move : String]
+  [op : String]) : bool
+  (match (lower-compiler-source-with-mode
+    (compiler-backend-avx2-map-source elem)
+    (CompilerLowerAvx512))
+    [(OkCompilerLower program spans)
+      (match (compiler-backend-emit-program-target-with-mode
+        program
+        (BackendTargetLinux)
+        (BackendModeAvx512)
+        spans
+        true)
+        [(OkCompilerBackend asm)
+          (and
+            (backend-and8
+              (compiler-backend-string-contains? asm move)
+              (compiler-backend-string-contains? asm op)
+              (compiler-backend-string-contains? asm "%zmm")
+              (compiler-backend-string-contains? asm "%k")
+              (compiler-backend-string-contains? asm "tail_mask_")
+              (compiler-backend-string-contains? asm "}{z}")
+              (compiler-backend-string-contains? asm "kmovw")
+              (compiler-backend-string-contains? asm "shll %cl, %eax"))
+            (not
+              (compiler-backend-string-contains?
+                asm
+                "vector/mask IR emission is not implemented")))]
+        [(ErrCompilerBackend _) false])]
+    [(ErrCompilerLower _) false]))
+
+(define (compiler-backend-avx512-vector-map-ok?) : bool
+  (and
+    (compiler-backend-avx512-map-asm-contains?
+      "i64"
+      "    vmovdqu64 "
+      "    vpaddq ")
+    (and
+      (compiler-backend-avx512-map-asm-contains?
+        "i32"
+        "    vmovdqu32 "
+        "    vpaddd ")
+      (compiler-backend-avx512-map-asm-contains?
+        "f64"
+        "    vmovupd "
+        "    vaddpd "))))
+
+(define (compiler-backend-avx2-reduce-asm-contains?
+  [src : String]
+  [op : String]
+  [move : String]) : bool
+  (match (lower-compiler-source-with-mode src (CompilerLowerAvx2))
+    [(OkCompilerLower program spans)
+      (match (compiler-backend-emit-program-target-with-mode
+        program
+        (BackendTargetLinux)
+        (BackendModeAvx2)
+        spans
+        true)
+        [(OkCompilerBackend asm)
+          (and
+            (backend-and8
+              (compiler-backend-string-contains? asm "    vzeroupper\n")
+              (compiler-backend-string-contains? asm "    vextracti128 $1, ")
+              (compiler-backend-string-contains? asm "    vpsrldq $8, ")
+              (compiler-backend-string-contains? asm op)
+              (compiler-backend-string-contains? asm move)
+              (compiler-backend-string-contains? asm "%ymm")
+              (compiler-backend-string-contains? asm "spmd_reduce_avx2")
+              (compiler-backend-string-contains? asm "spmd_reduce_tail"))
+            (not
+              (compiler-backend-string-contains?
+                asm
+                "vector/mask IR emission is not implemented")))]
+        [(ErrCompilerBackend _) false])]
+    [(ErrCompilerLower _) false]))
+
+(define (compiler-backend-avx2-vector-reduce-ok?) : bool
+  (and
+    (compiler-backend-avx2-reduce-asm-contains?
+      "(define (f [xs : (Array i64)] [n : i64]) : i64 (spmd-reduce sum ([i : i64 0 n]) 0 (array-ref xs i)))"
+      "    vpaddq "
+      "    vmovq %xmm0, %rax\n")
+    (and
+      (compiler-backend-avx2-reduce-asm-contains?
+        "(define (f [xs : (Array i32)] [n : i64]) : i32 (spmd-reduce sum ([i : i64 0 n]) (cast 0 : i32) (array-ref xs i)))"
+        "    vpaddd "
+        "    vmovd %xmm0, %eax\n")
+      (and
+        (compiler-backend-avx2-reduce-asm-contains?
+          "(define (f [xs : (Array i32)] [n : i64] [seed : i32]) : i32 (spmd-reduce min ([i : i64 0 n]) seed (array-ref xs i)))"
+          "    vpminsd "
+          "    vmovd %xmm0, %eax\n")
+        (compiler-backend-avx2-reduce-asm-contains?
+          "(define (f [xs : (Array i32)] [n : i64] [seed : i32]) : i32 (spmd-reduce max ([i : i64 0 n]) seed (array-ref xs i)))"
+          "    vpmaxsd "
+          "    vmovd %xmm0, %eax\n")))))
+
 (define (compiler-backend-optimizer-rewrite-diagnostic-ok?) : bool
   (let
     [phi : CompilerIrInstr
@@ -1641,29 +1797,31 @@
                 "    jb .L_tl_test_bounds_ok\n"))))))))
 
 (define (compiler-backend-numeric-cast-shape-ok?) : bool
-  (and
+  (backend-and8
     (compiler-backend-instr-contains?
       (IrInstrCast 6 (IrValueVar 5) (AstTyI64) (AstTyF64))
       "    cvtsi2sdq %rax, %xmm0\n")
-    (and
-      (compiler-backend-instr-contains?
-        (IrInstrCast 6 (IrValueVar 5) (AstTyI64) (AstTyF32))
-        "    cvtsi2ssq %rax, %xmm0\n")
-      (and
-        (compiler-backend-instr-contains?
-          (IrInstrCast 6 (IrValueVar 5) (AstTyF64) (AstTyI64))
-          "    cvttsd2siq %xmm0, %rax\n")
-        (and
-          (compiler-backend-instr-contains?
-            (IrInstrCast 6 (IrValueVar 5) (AstTyF32) (AstTyI32))
-            "    cvttss2siq %xmm0, %rax\n")
-          (and
-            (compiler-backend-instr-contains?
-              (IrInstrCast 6 (IrValueVar 5) (AstTyF64) (AstTyF32))
-              "    cvtsd2ss %xmm0, %xmm0\n")
-            (compiler-backend-instr-contains?
-              (IrInstrCast 6 (IrValueVar 5) (AstTyF32) (AstTyF64))
-              "    cvtss2sd %xmm0, %xmm0\n")))))))
+    (compiler-backend-instr-contains?
+      (IrInstrCast 6 (IrValueVar 5) (AstTyI64) (AstTyF32))
+      "    cvtsi2ssq %rax, %xmm0\n")
+    (compiler-backend-instr-contains?
+      (IrInstrCast 6 (IrValueVar 5) (AstTyU8) (AstTyF64))
+      "    cvtsi2sdq %rax, %xmm0\n")
+    (compiler-backend-instr-contains?
+      (IrInstrCast 6 (IrValueVar 5) (AstTyU64) (AstTyF64))
+      "    js .L_tl_test_cast_u64_float_entry_v6_high\n")
+    (compiler-backend-instr-contains?
+      (IrInstrCast 6 (IrValueVar 5) (AstTyU64) (AstTyF32))
+      "    addss %xmm0, %xmm0\n")
+    (compiler-backend-instr-contains?
+      (IrInstrCast 6 (IrValueVar 5) (AstTyF64) (AstTyI64))
+      "    cvttsd2siq %xmm0, %rax\n")
+    (compiler-backend-instr-contains?
+      (IrInstrCast 6 (IrValueVar 5) (AstTyF64) (AstTyF32))
+      "    cvtsd2ss %xmm0, %xmm0\n")
+    (compiler-backend-instr-contains?
+      (IrInstrCast 6 (IrValueVar 5) (AstTyF32) (AstTyF64))
+      "    cvtss2sd %xmm0, %xmm0\n")))
 
 ;; A source exercising `array-ref`, used to confirm the lowerer's bounds-check
 ;; trap (#528) reaches the backend as a `call tl_oob_abort`.
@@ -1953,7 +2111,10 @@
   (+ (fs-process-id)
     (+ (fs-mkdir-status \"target/typelisp-fs\")
       (+ (fs-remove-file-status \"target/typelisp-fs/artifact.o\")
-        (fs-remove-dir-status \"target/typelisp-fs\")))))")
+        (+ (fs-remove-dir-status \"target/typelisp-fs\")
+          (fs-rename-status
+            \"target/typelisp-fs/from name\"
+            \"target/typelisp-fs/to name\"))))))")
 
 (define (compiler-backend-fs-runtime-ok?) : bool
   (match (compiler-backend-emit-source (compiler-backend-fs-runtime-source))
@@ -1967,17 +2128,22 @@
           (compiler-backend-string-contains?
             asm
             ".L_tl_fs_remove_dir_status:\n")
+          (compiler-backend-string-contains? asm ".L_tl_fs_rename_status:\n")
           (compiler-backend-string-contains? asm ".L_tl_fs_process_id:\n")
           (compiler-backend-string-contains? asm "    movq $83, %rax\n")
           (compiler-backend-string-contains? asm "    movq $87, %rax\n")
-          (compiler-backend-string-contains? asm "    movq $84, %rax\n")
-          (compiler-backend-string-contains? asm "    movq $39, %rax\n"))
+          (compiler-backend-string-contains? asm "    movq $84, %rax\n"))
         (and
-          (not (compiler-backend-string-contains? asm "    .extern _mkdir\n"))
-          (not
-            (compiler-backend-string-contains?
-              asm
-              ".extern .L_tl_fs_mkdir_status\n"))))]
+          (compiler-backend-string-contains? asm "    movq $82, %rax\n")
+          (and
+            (compiler-backend-string-contains? asm "    movq $39, %rax\n")
+            (and
+              (not
+                (compiler-backend-string-contains? asm "    .extern _mkdir\n"))
+              (not
+                (compiler-backend-string-contains?
+                  asm
+                  ".extern .L_tl_fs_rename_status\n"))))))]
     [(ErrCompilerBackend _) false]))
 
 (define (compiler-backend-windows-fs-runtime-ok?) : bool
@@ -1994,31 +2160,28 @@
           (compiler-backend-string-contains?
             asm
             ".L_tl_fs_remove_dir_status:\n")
+          (compiler-backend-string-contains? asm ".L_tl_fs_rename_status:\n")
           (compiler-backend-string-contains? asm ".L_tl_fs_process_id:\n")
           (compiler-backend-string-contains? asm "    call _mkdir\n")
           (compiler-backend-string-contains? asm "    call _unlink\n")
-          (compiler-backend-string-contains? asm "    call _rmdir\n")
-          (compiler-backend-string-contains? asm "    call _errno\n"))
+          (compiler-backend-string-contains? asm "    call _rmdir\n"))
         (and
-          (compiler-backend-string-contains?
-            asm
-            "    call GetCurrentProcessId\n")
+          (compiler-backend-string-contains? asm "    call _errno\n")
           (and
-            (compiler-backend-string-contains? asm "    .extern _mkdir\n")
+            (compiler-backend-string-contains?
+              asm
+              "    call GetCurrentProcessId\n")
             (and
-              (compiler-backend-string-contains? asm "    .extern _unlink\n")
-              (and
+              (backend-and4
+                (compiler-backend-string-contains? asm "    .extern _mkdir\n")
+                (compiler-backend-string-contains? asm "    .extern _unlink\n")
                 (compiler-backend-string-contains? asm "    .extern _rmdir\n")
-                (and
-                  (compiler-backend-string-contains?
-                    asm
-                    "    .extern GetCurrentProcessId\n")
-                  (and
-                    (not
-                      (compiler-backend-string-contains?
-                        asm
-                        "    movq $38, %rax\n"))
-                    (not (compiler-backend-string-contains? asm "    syscall")))))))))]
+                (compiler-backend-string-contains?
+                  asm
+                  "    .extern GetCurrentProcessId\n"))
+              (and
+                (compiler-backend-string-contains? asm "    movq $38, %rax\n")
+                (not (compiler-backend-string-contains? asm "    syscall")))))))]
     [(ErrCompilerBackend _) false]))
 
 ;; A refutable literal payload match (#651) lowers to a payload comparison that
@@ -2692,15 +2855,21 @@
                     (compiler-backend-checked-trap-emit-shape-ok?)
                     (and
                       (compiler-backend-closure-emit-shape-ok?)
-                      (backend-and8
-                        (compiler-backend-scalar-wide-ops-ok?)
-                        (compiler-backend-scalar-div-mod-ok?)
-                        (compiler-backend-narrow-scalar-instr-ok?)
-                        (compiler-backend-f64-abi-ok?)
-                        (compiler-backend-win64-f64-abi-ok?)
-                        (compiler-backend-aggregate-storage-shape-ok?)
-                        (compiler-backend-alloc-runtime-shape-ok?)
-                        (compiler-backend-windows-sdk-registry-runtime-ok?))))))))))))
+                      (and
+                        (compiler-backend-avx2-vector-map-ok?)
+                        (and
+                          (compiler-backend-avx2-vector-reduce-ok?)
+                          (and
+                            (compiler-backend-avx512-vector-map-ok?)
+                            (backend-and8
+                              (compiler-backend-scalar-wide-ops-ok?)
+                              (compiler-backend-scalar-div-mod-ok?)
+                              (compiler-backend-narrow-scalar-instr-ok?)
+                              (compiler-backend-f64-abi-ok?)
+                              (compiler-backend-win64-f64-abi-ok?)
+                              (compiler-backend-aggregate-storage-shape-ok?)
+                              (compiler-backend-alloc-runtime-shape-ok?)
+                              (compiler-backend-windows-sdk-registry-runtime-ok?)))))))))))))))
     42
     (begin
       (panic "backend: smoke output mismatch")

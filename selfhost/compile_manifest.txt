@@ -123,7 +123,7 @@ end
 decision|selfhost/ast_types.tl|legacy AST type declarations only; imported by selfhost/ast.tl and has no functions to compile directly
 
 case|selfhost_build|selfhost/build.tl|assembly|skip|direct
-requires-stage0-symbol|file-read-chunk-status,file-write-status,file-flush-status,append-file-status
+requires-stage0-symbol|file-read-chunk-status,file-write-status,file-flush-status,append-file-status,fs-rename-status
 contains|_tl_build_cli_config_from:
 contains|_tl_source_tool_build_source:
 contains|_tl_build_config_from:
@@ -136,11 +136,11 @@ contains|Generated:
 end
 
 # Unified pure-TypeLisp toolchain dispatcher (single self-hosted entry point for
-# build/run/check/fmt/lint/test/doc). Each subcommand routes through its
+# build/run/check/fmt/lint/test/doc/repl/lsp). Each subcommand routes through its
 # `*-run-from` entry in a shared main-free `*_cli_core.tl` module, so the
 # dispatcher's assembly must reference every command's runner.
 case|selfhost_cli|selfhost/cli.tl|assembly|exactly-one|direct
-requires-stage0-symbol|file-read-chunk-status,file-write-status,file-flush-status,append-file-status
+requires-stage0-symbol|file-read-chunk-status,file-write-status,file-flush-status,append-file-status,fs-mkdir-status,write-file-status,file-exists-status,fs-rename-status
 contains|_tl_cli_dispatch:
 contains|_tl_build_run_from:
 contains|_tl_run_run_from:
@@ -149,6 +149,10 @@ contains|_tl_fmt_run_from:
 contains|_tl_selfhost_lint_run_from:
 contains|_tl_tltest_run_from:
 contains|_tl_doc_run_from:
+contains|_tl_repl_run_from:
+contains|_tl_scaffold_new_run_from:
+contains|_tl_scaffold_init_run_from:
+contains|_tl_lsp_frame_run_from:
 contains|typelisp: unknown subcommand
 end
 
@@ -163,10 +167,13 @@ decision|selfhost/format_cli_core.tl|fmt command logic (#522): --check vs rewrit
 decision|selfhost/test_cli_core.tl|test command logic: config parsing and test run dispatch; main-less, imported by selfhost/test.tl and selfhost/cli.tl and exercised through the selfhost_test and selfhost_cli cases
 decision|selfhost/doc_cli_core.tl|doc command logic: kind dispatch (test/html/load/default) with a base-offset arg model; main-less, imported by selfhost/doc.tl and selfhost/cli.tl and exercised through the selfhost_doc and selfhost_cli cases
 decision|selfhost/compile_cli_core.tl|compile/tokenize/parse/debug command logic (#565/#1639): arg parsing and compile/tokenize/parse/check/debug dispatch + execution (compile-cli-run); main-less, imported by selfhost/compile.tl and selfhost/cli.tl and exercised through the selfhost_compile and selfhost_cli cases
+decision|selfhost/repl_cli_core.tl|REPL command logic (#1641): line loop, dot commands, type queries, and scratch expression execution; main-less, imported by selfhost/repl.tl and selfhost/cli.tl and exercised through the selfhost_repl and selfhost_cli cases
+decision|selfhost/scaffold_cli_core.tl|new/init scaffold command logic (#1642): package skeleton creation shared by selfhost/scaffold.tl and selfhost/cli.tl; main-less and exercised through the selfhost_scaffold and selfhost_cli cases
+decision|selfhost/lsp_frame_core.tl|lsp command logic (#1640): stdio JSON-RPC framing and diagnostics server; main-less, imported by selfhost/lsp_frame.tl and selfhost/cli.tl and exercised through selfhost_lsp_frame and selfhost_cli cases
 decision|selfhost/compiler_clone.tl|type-directed clone$<Type> helper synthesis (#1633): least-fixpoint clone-ability over the type graph plus match-reconstruct/tail-recursive AST generation for (clone x); main-less, imported by selfhost/compiler_lower.tl and exercised through the selfhost_compiler_lower case
 
 case|selfhost_build_run_core|selfhost/build_run_core.tl|assembly|skip|direct
-requires-stage0-symbol|file-read-chunk-status,file-write-status,file-flush-status,append-file-status
+requires-stage0-symbol|file-read-chunk-status,file-write-status,file-flush-status,append-file-status,fs-rename-status
 contains|_tl_source_tool_build_source:
 contains|_tl_source_tool_run_source:
 contains|_tl_source_tool_run_command:
@@ -191,21 +198,25 @@ contains|_tl_compile_cli_target:
 contains|_tl_compile_cli_invalid_opt_level:
 contains|_tl_compile_cli_backend_mode:
 contains|_tl_compile_cli_root_list_append:
-contains|_tl_compiler_driver_compile_file_with_roots_and_level:
-contains|_tl_compiler_driver_compile_file_for_target_with_roots_and_level:
+contains|_tl_compiler_driver_compile_file_with_roots_level_and_mode:
+contains|_tl_compiler_driver_compile_file_for_target_with_roots_level_and_mode:
 contains|_tl_compiler_driver_emit_ir_summary_file_with_roots_and_level:
-contains|_tl_compiler_backend_emit_program_with_spans_for_target_and_entry:
+contains|_tl_compiler_backend_emit_program_target_with_mode:
 contains|compile: expected source path
 contains|compile: --target requires a value
 contains|compile: --stdlib-root requires a value
 contains|compile: --opt-level requires a value
 contains|compile: invalid --opt-level
 contains|compile: --backend-mode requires a value
-contains|requires the Rust compile driver until selfhost SIMD support
 contains|Expected scalar, avx2, or avx512
 contains|Error: unknown target '
 contains|--emit-ir
 contains|typelisp-ir-summary v1
+contains|empty-blocks
+contains|max-instructions-function
+contains|max-instructions-block
+contains|call-arg-entries
+contains|phi-input-entries
 end
 
 case|selfhost_compile_smoke|selfhost/compile_smoke.tl|assembly|exactly-one|direct
@@ -317,14 +328,14 @@ end
 
 case|selfhost_compiler_driver_core|selfhost/compiler_driver_core.tl|assembly|skip|direct
 contains|_tl_compiler_driver_compile_file:
-contains|_tl_compiler_driver_compile_file_with_roots_and_level:
+contains|_tl_compiler_driver_compile_file_with_roots_level_and_mode:
 contains|_tl_compiler_driver_compile_file_for_target:
 contains|_tl_compiler_driver_emit_file:
-contains|_tl_compiler_driver_emit_file_with_target_roots_and_level:
+contains|_tl_compiler_driver_emit_file_with_target_roots_level_and_mode:
 contains|_tl_compiler_driver_emit_file_for_target:
 contains|_tl_compiler_driver_emit_ir_summary_file_with_roots_and_level:
 contains|_tl_compiler_driver_ir_summary_render:
-contains|_tl_compiler_backend_emit_program_with_spans_for_target:
+contains|_tl_compiler_backend_emit_program_target_with_mode:
 contains|_tl_compiler_backend_emit_source:
 end
 
@@ -332,6 +343,11 @@ case|selfhost_compiler_ir_types|selfhost/compiler_ir_types.tl|assembly|skip|dire
 contains|_tl_compiler_ir_program_summary:
 contains|_tl_compiler_ir_summary_globals:
 contains|_tl_compiler_ir_summary_functions:
+contains|_tl_compiler_ir_summary_empty_blocks:
+contains|_tl_compiler_ir_summary_max_instructions_function:
+contains|_tl_compiler_ir_summary_max_instructions_block:
+contains|_tl_compiler_ir_summary_call_arg_entries:
+contains|_tl_compiler_ir_summary_phi_input_entries:
 contains|_tl_compiler_ir_instr_render:
 contains|_tl_compiler_ir_tail_call_render_ok_question:
 contains|_tl_compiler_ir_instr_effect:
@@ -467,6 +483,8 @@ end
 
 case|selfhost_compiler_typecheck_core|selfhost/compiler_typecheck_core.tl|assembly|skip|direct
 contains|_tl_typecheck_compiler_specialized_program_with_paths:
+contains|tc_inline_aggregate_layout_for:
+contains|tc_inline_aggregate_type_layout:
 contains|_tl_tc_source_type_policy_message:
 contains|extern ABI c does not support
 contains|typecheck: return type mismatch
@@ -479,7 +497,7 @@ contains|_tl_typecheck_compiler_program:
 end
 
 case|selfhost_doc|selfhost/doc.tl|assembly|exactly-one|direct
-requires-stage0-symbol|file-read-chunk-status,file-write-status,file-flush-status,append-file-status
+requires-stage0-symbol|file-read-chunk-status,file-write-status,file-flush-status,append-file-status,fs-rename-status
 contains|_tl_doc_generate_file:
 contains|_tl_doc_generate_html_file:
 contains|_tl_doc_generate_html_module_graph:
@@ -523,8 +541,6 @@ contains|(define answer : i64 42)
 contains|(define (main [argc : i64])
 contains|;: EOF unattached
 contains|Module title\nsecond module line\nlater module
-contains|;;;; Legacy module
-contains|;;; legacy item
 end
 
 case|selfhost_doc_extract_smoke|selfhost/doc_extract_smoke.tl|assembly|exactly-one|direct
@@ -575,6 +591,7 @@ contains|_tl_format_lex:
 end
 
 case|selfhost_doc_site_core|selfhost/doc_site_core.tl|assembly|skip|direct
+requires-stage0-symbol|fs-rename-status
 contains|_tl_doc_site_build:
 contains|_tl_doc_site_render_index:
 contains|_tl_doc_site_css:
@@ -590,6 +607,7 @@ contains|doc-site: duplicate output path in stdlib manifest
 end
 
 case|selfhost_doc_site|selfhost/doc_site.tl|assembly|exactly-one|direct
+requires-stage0-symbol|fs-rename-status
 contains|_tl_doc_site_build:
 contains|_tl_doc_site_usage:
 contains|_tl_doc_site_render_index:
@@ -600,6 +618,7 @@ contains|doc-site: expected zero args or output directory
 end
 
 case|selfhost_doc_site_smoke|selfhost/doc_site_smoke.tl|assembly|exactly-one|direct
+requires-stage0-symbol|fs-rename-status
 contains|_tl_doc_site_smoke:
 contains|_tl_doc_site_render_index:
 contains|_tl_doc_extract_source:
@@ -618,7 +637,7 @@ contains|_tl_doc_render_markdown:
 end
 
 case|selfhost_doc_test|selfhost/doc_test.tl|assembly|skip|direct
-requires-stage0-symbol|file-read-chunk-status,file-write-status,file-flush-status,append-file-status
+requires-stage0-symbol|file-read-chunk-status,file-write-status,file-flush-status,append-file-status,fs-rename-status
 contains|_tl_doc_test_extract_source:
 contains|_tl_doc_test_extract_file:
 contains|_tl_doc_test_parse_run_metadata:
@@ -647,7 +666,7 @@ contains|was expected to fail
 end
 
 case|selfhost_doc_test_smoke|selfhost/doc_test_smoke.tl|assembly|exactly-one|direct
-requires-stage0-symbol|file-read-chunk-status,file-write-status,file-flush-status,append-file-status
+requires-stage0-symbol|file-read-chunk-status,file-write-status,file-flush-status,append-file-status,fs-rename-status
 contains|_tl_doc_test_smoke_all:
 contains|_tl_doc_test_run_smoke:
 contains|_tl_doc_test_smoke:
@@ -856,7 +875,7 @@ contains|reader: unterminated list (missing ')')
 end
 
 case|selfhost_repl|selfhost/repl.tl|assembly|exactly-one|direct
-requires-stage0-symbol|file-read-chunk-status,file-write-status,file-flush-status,append-file-status
+requires-stage0-symbol|file-read-chunk-status,file-write-status,file-flush-status,append-file-status,fs-rename-status
 contains|_tl_repl_loop:
 contains|_tl_repl_handle_input:
 contains|_tl_repl_banner:
@@ -874,7 +893,7 @@ contains|tl>
 end
 
 case|selfhost_run|selfhost/run.tl|assembly|skip|direct
-requires-stage0-symbol|file-read-chunk-status,file-write-status,file-flush-status,append-file-status
+requires-stage0-symbol|file-read-chunk-status,file-write-status,file-flush-status,append-file-status,fs-rename-status
 contains|_tl_run_direct_from:
 contains|_tl_run_run_from:
 contains|_tl_run_cli_config_from:
@@ -883,7 +902,7 @@ contains|run: expected source path
 end
 
 case|selfhost_test|selfhost/test.tl|assembly|skip|direct
-requires-stage0-symbol|file-read-chunk-status,file-write-status,file-flush-status,append-file-status
+requires-stage0-symbol|file-read-chunk-status,file-write-status,file-flush-status,append-file-status,fs-rename-status
 contains|_tl_tltest_run_config:
 contains|_tl_tltest_build_harness:
 contains|_tl_tltest_run_direct:
@@ -892,7 +911,7 @@ contains|_tl_tltest_invalid_opt_level:
 contains|_tl_source_tool_assemble_and_link:
 contains|_tl_source_tool_run_executable:
 contains|_tl_optimize_program_with_level:
-contains|_tl_compiler_backend_emit_program_with_spans_for_target:
+contains|_tl_compiler_backend_emit_program_target_with_mode:
 contains|test: expected source path
 contains|test: --opt-level requires a value
 contains|test: invalid --opt-level
@@ -943,10 +962,11 @@ contains|_tl_selfhost_lint_source_with_roots:
 end
 
 case|selfhost_scaffold|selfhost/scaffold.tl|assembly|skip|direct
-requires-stage0-symbol|fs-mkdir-status,write-file-status,file-exists-status
+requires-stage0-symbol|fs-mkdir-status,write-file-status,file-exists-status,fs-rename-status
 contains|_tl_scaffold_new:
 contains|_tl_scaffold_init:
 contains|_tl_scaffold_emit:
+contains|_tl_scaffold_run_from:
 contains|scaffold: usage
 end
 

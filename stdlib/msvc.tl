@@ -1,19 +1,19 @@
-;;;; MSVC tool discovery (#855): find link.exe and its command environment.
-;;;;
-;;;; Detect an already-configured MSVC command environment (a Developer Command
-;;;; Prompt or equivalent) first. If that is absent, enumerate Visual Studio /
-;;;; Build Tools instances through SetupConfiguration, combine the selected VC
-;;;; toolset with Windows SDK discovery, and return the `PATH`, `LIB`, and
-;;;; `INCLUDE` overrides needed to invoke the requested MSVC tool from a normal
-;;;; shell.
-;;;;
-;;;; Usage: `(import "stdlib/msvc.tl")`
-;;;;
-;;;; ```typelisp
-;;;; (import "stdlib/msvc.tl")
-;;;; (define tool : ResultMsvcTool
-;;;;   (msvc-find-tool "x86_64-pc-windows-msvc" "link.exe"))
-;;;; ```
+;# MSVC tool discovery (#855): find link.exe and its command environment.
+;#
+;# Detect an already-configured MSVC command environment (a Developer Command
+;# Prompt or equivalent) first. If that is absent, enumerate Visual Studio /
+;# Build Tools instances through SetupConfiguration, combine the selected VC
+;# toolset with Windows SDK discovery, and return the `PATH`, `LIB`, and
+;# `INCLUDE` overrides needed to invoke the requested MSVC tool from a normal
+;# shell.
+;#
+;# Usage: `(import "stdlib/msvc.tl")`
+;#
+;# ```typelisp
+;# (import "stdlib/msvc.tl")
+;# (define tool : ResultMsvcTool
+;#   (msvc-find-tool "x86_64-pc-windows-msvc" "link.exe"))
+;# ```
 (import "env.tl")
 
 (import "io.tl")
@@ -28,57 +28,57 @@
 
 (import "windows_setup.tl")
 
-;;; Resolved MSVC tool: executable path plus the command-environment overrides.
+;: Resolved MSVC tool: executable path plus the command-environment overrides.
 (defstruct MsvcTool
   (executable String)
   (path String)
   (lib String)
   (include String))
 
-;;; Structured MSVC discovery failures.
+;: Structured MSVC discovery failures.
 (defenum MsvcError
   (MsvcUnsupported String)
   (MsvcMissingEnvironment String)
   (MsvcToolNotFound String)
   (MsvcSetupUnavailable String))
 
-;;; Result type for MSVC tool discovery.
+;: Result type for MSVC tool discovery.
 (defenum ResultMsvcTool
   (OkMsvcTool MsvcTool)
   (ErrMsvcTool MsvcError))
 
-;;; Optional resolved-path result for the PATH search.
+;: Optional resolved-path result for the PATH search.
 (defenum MsvcMaybeString
   (MsvcNoString)
   (MsvcSomeString String))
 
-;;; Parsed version segment plus the index where parsing stopped.
+;: Parsed version segment plus the index where parsing stopped.
 (defstruct MsvcVersionCursor
   (value i64)
   (next i64))
 
-;;; Optional usable tool candidate while scanning setup instances.
+;: Optional usable tool candidate while scanning setup instances.
 (defenum MsvcMaybeToolCandidate
   (MsvcNoToolCandidate)
   (MsvcSomeToolCandidate MsvcTool String))
 
-;;; Return the resolved tool executable path.
+;: Return the resolved tool executable path.
 (define (msvc-tool-executable [tool : MsvcTool]) : String
   (struct-get tool executable))
 
-;;; Return the PATH override for invoking the tool.
+;: Return the PATH override for invoking the tool.
 (define (msvc-tool-path [tool : MsvcTool]) : String
   (struct-get tool path))
 
-;;; Return the LIB override for invoking the tool.
+;: Return the LIB override for invoking the tool.
 (define (msvc-tool-lib [tool : MsvcTool]) : String
   (struct-get tool lib))
 
-;;; Return the INCLUDE override for invoking the tool.
+;: Return the INCLUDE override for invoking the tool.
 (define (msvc-tool-include [tool : MsvcTool]) : String
   (struct-get tool include))
 
-;;; Return process environment overrides for invoking the tool.
+;: Return process environment overrides for invoking the tool.
 (define (msvc-tool-process-env [tool : MsvcTool]) : ProcessEnvList
   (process-env-cons
     "PATH"
@@ -88,7 +88,7 @@
       (msvc-tool-lib tool)
       (process-env-cons "INCLUDE" (msvc-tool-include tool) (process-env-empty)))))
 
-;;; Render a discovery error as a diagnostic message.
+;: Render a discovery error as a diagnostic message.
 (define (msvc-error-message [error : MsvcError]) : String
   (match error
     [(MsvcUnsupported message) message]
@@ -96,27 +96,27 @@
     [(MsvcToolNotFound message) message]
     [(MsvcSetupUnavailable message) message]))
 
-;;; Return true when the host path-list separator identifies Windows.
+;: Return true when the host path-list separator identifies Windows.
 (define (msvc-host-windows?) : bool
   (string-eq (env-path-list-separator) ";"))
 
-;;; Return true when `target` is a v1-supported MSVC target triple.
+;: Return true when `target` is a v1-supported MSVC target triple.
 (define (msvc-supported-target? [target : String]) : bool
   (string-eq target "x86_64-pc-windows-msvc"))
 
-;;; Return true when `c` is an ASCII decimal digit.
+;: Return true when `c` is an ASCII decimal digit.
 (define (msvc-digit? [c : char]) : bool
   (let
     [code : i64 (cast c : i64)]
     (and (>= code (cast #0' : i64)) (<= code (cast #9' : i64)))))
 
-;;; Return the numeric value of an ASCII decimal digit, or zero otherwise.
+;: Return the numeric value of an ASCII decimal digit, or zero otherwise.
 (define (msvc-digit-value [c : char]) : i64
   (if (msvc-digit? c)
     (- (cast c : i64) (cast #0' : i64))
     0))
 
-;;; Read one dotted numeric version segment starting at `index`.
+;: Read one dotted numeric version segment starting at `index`.
 (define (msvc-version-read-segment [version : String] [index : i64]) : MsvcVersionCursor
   (let
     [n : i64 (string-length version)]
@@ -136,7 +136,7 @@
               (set! i (+ i 1))))))
       (MsvcVersionCursor value i))))
 
-;;; Advance past a dotted version separator if one is present.
+;: Advance past a dotted version separator if one is present.
 (define (msvc-version-next-index [version : String] [index : i64]) : i64
   (let
     [n : i64 (string-length version)]
@@ -144,7 +144,7 @@
       (+ index 1)
       index)))
 
-;;; Return true when `left` is a newer dotted numeric version than `right`.
+;: Return true when `left` is a newer dotted numeric version than `right`.
 (define (msvc-version-greater? [left : String] [right : String]) : bool
   (let
     [left-len : i64 (string-length left)]
@@ -181,13 +181,13 @@
                     (struct-get right-segment next))))))))
       greater)))
 
-;;; Return true when `path` exists, mapping probe errors to false.
+;: Return true when `path` exists, mapping probe errors to false.
 (define (msvc-path-exists? [path : String]) : bool
   (match (try-file-exists? path)
     [(OkIoBool exists) exists]
     [(ErrIoBool _) false]))
 
-;;; Search PATH directories for `tool`, returning the first existing candidate.
+;: Search PATH directories for `tool`, returning the first existing candidate.
 (define (msvc-search-dirs [dirs : EnvStringList] [tool : String]) : MsvcMaybeString
   (match dirs
     [(EnvStringNil) (MsvcNoString)]
@@ -198,33 +198,33 @@
           (MsvcSomeString candidate)
           (msvc-search-dirs rest tool)))]))
 
-;;; Locate `tool` on the PATH environment variable.
+;: Locate `tool` on the PATH environment variable.
 (define (msvc-find-on-path [tool : String]) : MsvcMaybeString
   (match (env-path-list "PATH")
     [(EnvNoStringList) (MsvcNoString)]
     [(EnvSomeStringList dirs) (msvc-search-dirs dirs tool)]))
 
-;;; Read an environment variable or the empty string when it is unset.
+;: Read an environment variable or the empty string when it is unset.
 (define (msvc-env-or-empty [name : String]) : String
   (match (env-get name)
     [(EnvSomeString value) value]
     [(EnvNoString) ""]))
 
-;;; Join `head` before an optional PATH-style suffix.
+;: Join `head` before an optional PATH-style suffix.
 (define (msvc-path-list-prepend [head : String] [tail : String]) : String
   (if (string-eq tail "")
     head
     (string-append (string-append head (env-path-list-separator)) tail)))
 
-;;; Join two required PATH-style entries.
+;: Join two required PATH-style entries.
 (define (msvc-path-list-join2 [a : String] [b : String]) : String
   (string-append (string-append a (env-path-list-separator)) b))
 
-;;; Join three required PATH-style entries.
+;: Join three required PATH-style entries.
 (define (msvc-path-list-join3 [a : String] [b : String] [c : String]) : String
   (msvc-path-list-join2 (msvc-path-list-join2 a b) c))
 
-;;; Join four required PATH-style entries.
+;: Join four required PATH-style entries.
 (define (msvc-path-list-join4
   [a : String]
   [b : String]
@@ -232,7 +232,7 @@
   [d : String]) : String
   (msvc-path-list-join2 (msvc-path-list-join3 a b c) d))
 
-;;; Join an optional inherited path list after required entries.
+;: Join an optional inherited path list after required entries.
 (define (msvc-path-list-join3-with-tail
   [a : String]
   [b : String]
@@ -240,14 +240,14 @@
   [tail : String]) : String
   (msvc-path-list-prepend (msvc-path-list-join3 a b c) tail))
 
-;;; Join an optional inherited path list after two required entries.
+;: Join an optional inherited path list after two required entries.
 (define (msvc-path-list-join2-with-tail
   [a : String]
   [b : String]
   [tail : String]) : String
   (msvc-path-list-prepend (msvc-path-list-join2 a b) tail))
 
-;;; Join an optional inherited path list after four required entries.
+;: Join an optional inherited path list after four required entries.
 (define (msvc-path-list-join4-with-tail
   [a : String]
   [b : String]
@@ -256,7 +256,7 @@
   [tail : String]) : String
   (msvc-path-list-prepend (msvc-path-list-join4 a b c d) tail))
 
-;;; Build a configured tool result once the executable path is known.
+;: Build a configured tool result once the executable path is known.
 (define (msvc-configured-result [executable : String]) : ResultMsvcTool
   (match (env-get "LIB")
     [(EnvNoString)
@@ -273,7 +273,7 @@
           (OkMsvcTool
             (MsvcTool executable (msvc-env-or-empty "PATH") lib include))])]))
 
-;;; Detect a configured MSVC command environment and resolve `tool`.
+;: Detect a configured MSVC command environment and resolve `tool`.
 (define (msvc-find-tool-configured [tool : String]) : ResultMsvcTool
   (match (msvc-find-on-path tool)
     [(MsvcSomeString executable) (msvc-configured-result executable)]
@@ -284,7 +284,7 @@
             (string-append "msvc: could not find " tool)
             " on PATH; run from a Developer Command Prompt or install Visual Studio Build Tools (newest-toolset selection is tracked by #855)")))]))
 
-;;; Return a user-provided `VCToolsVersion` if one is set.
+;: Return a user-provided `VCToolsVersion` if one is set.
 (define (msvc-vc-tools-version-from-env) : MsvcMaybeString
   (match (env-get "VCToolsVersion")
     [(EnvSomeString value)
@@ -295,7 +295,7 @@
           (MsvcSomeString trimmed)))]
     [(EnvNoString) (MsvcNoString)]))
 
-;;; Path to an instance's default VC toolset version marker file.
+;: Path to an instance's default VC toolset version marker file.
 (define (msvc-default-vc-tools-version-path [instance : WindowsSetupInstance]) : String
   (windows-sdk-path-join5
     (windows-setup-instance-installation-path instance)
@@ -304,7 +304,7 @@
     "Build"
     "Microsoft.VCToolsVersion.default.txt"))
 
-;;; Read the default VC toolset version advertised by a Visual Studio instance.
+;: Read the default VC toolset version advertised by a Visual Studio instance.
 (define (msvc-default-vc-tools-version [instance : WindowsSetupInstance]) : MsvcMaybeString
   (match (try-read-file (msvc-default-vc-tools-version-path instance))
     [(OkIoString contents)
@@ -315,13 +315,13 @@
           (MsvcSomeString trimmed)))]
     [(ErrIoString _) (MsvcNoString)]))
 
-;;; Pick the VC toolset version, honoring `VCToolsVersion` when present.
+;: Pick the VC toolset version, honoring `VCToolsVersion` when present.
 (define (msvc-vc-tools-version [instance : WindowsSetupInstance]) : MsvcMaybeString
   (match (msvc-vc-tools-version-from-env)
     [(MsvcSomeString version) (MsvcSomeString version)]
     [(MsvcNoString) (msvc-default-vc-tools-version instance)]))
 
-;;; Path to the selected VC toolset root.
+;: Path to the selected VC toolset root.
 (define (msvc-toolset-root [instance : WindowsSetupInstance] [version : String]) : String
   (windows-sdk-path-join5
     (windows-setup-instance-installation-path instance)
@@ -330,30 +330,30 @@
     "MSVC"
     version))
 
-;;; Path to the selected host-x64/target-x64 MSVC binary directory.
+;: Path to the selected host-x64/target-x64 MSVC binary directory.
 (define (msvc-toolset-bin-x64 [toolset-root : String]) : String
   (windows-sdk-path-join4 toolset-root "bin" "Hostx64" "x64"))
 
-;;; Path to the selected x64 MSVC library directory.
+;: Path to the selected x64 MSVC library directory.
 (define (msvc-toolset-lib-x64 [toolset-root : String]) : String
   (windows-sdk-path-join3 toolset-root "lib" "x64"))
 
-;;; Path to the selected MSVC include directory.
+;: Path to the selected MSVC include directory.
 (define (msvc-toolset-include [toolset-root : String]) : String
   (windows-sdk-path-join2 toolset-root "include"))
 
-;;; Path to `tool` inside a selected MSVC toolset.
+;: Path to `tool` inside a selected MSVC toolset.
 (define (msvc-toolset-executable [toolset-root : String] [tool : String]) : String
   (windows-sdk-path-join2 (msvc-toolset-bin-x64 toolset-root) tool))
 
-;;; Build the PATH override for a discovered tool.
+;: Build the PATH override for a discovered tool.
 (define (msvc-setup-path [toolset-root : String] [sdk : WindowsSdkLayout]) : String
   (msvc-path-list-join2-with-tail
     (msvc-toolset-bin-x64 toolset-root)
     (windows-sdk-bin-x64 sdk)
     (msvc-env-or-empty "PATH")))
 
-;;; Build the LIB override for a discovered tool.
+;: Build the LIB override for a discovered tool.
 (define (msvc-setup-lib [toolset-root : String] [sdk : WindowsSdkLayout]) : String
   (msvc-path-list-join3-with-tail
     (msvc-toolset-lib-x64 toolset-root)
@@ -361,7 +361,7 @@
     (windows-sdk-lib-um-x64 sdk)
     (msvc-env-or-empty "LIB")))
 
-;;; Build the INCLUDE override for a discovered tool.
+;: Build the INCLUDE override for a discovered tool.
 (define (msvc-setup-include [toolset-root : String] [sdk : WindowsSdkLayout]) : String
   (msvc-path-list-join4-with-tail
     (msvc-toolset-include toolset-root)
@@ -370,7 +370,7 @@
     (windows-sdk-include-shared sdk)
     (msvc-env-or-empty "INCLUDE")))
 
-;;; Return the first missing VC toolset path, or `MsvcNoString`.
+;: Return the first missing VC toolset path, or `MsvcNoString`.
 (define (msvc-first-missing-toolset-path
   [toolset-root : String]
   [tool : String]) : MsvcMaybeString
@@ -386,7 +386,7 @@
       (MsvcSomeString (msvc-toolset-executable toolset-root tool))]
     [else (MsvcNoString)]))
 
-;;; Try to construct a tool result from one Visual Studio instance.
+;: Try to construct a tool result from one Visual Studio instance.
 (define (msvc-tool-from-instance
   [instance : WindowsSetupInstance]
   [sdk : WindowsSdkLayout]
@@ -414,7 +414,7 @@
                 (msvc-setup-lib toolset-root sdk)
                 (msvc-setup-include toolset-root sdk)))]))]))
 
-;;; Keep the newest usable setup candidate seen so far.
+;: Keep the newest usable setup candidate seen so far.
 (define (msvc-select-newest-candidate
   [best : MsvcMaybeToolCandidate]
   [tool : MsvcTool]
@@ -426,7 +426,7 @@
         (MsvcSomeToolCandidate tool installation-version)
         (MsvcSomeToolCandidate best-tool best-version))]))
 
-;;; Search all Visual Studio instances for the newest usable requested tool.
+;: Search all Visual Studio instances for the newest usable requested tool.
 (define (msvc-find-tool-in-instances
   [instances : WindowsSetupInstanceList]
   [sdk : WindowsSdkLayout]
@@ -463,7 +463,7 @@
             best
             (msvc-error-message error))])]))
 
-;;; Locate a tool through SetupConfiguration and Windows SDK discovery.
+;: Locate a tool through SetupConfiguration and Windows SDK discovery.
 (define (msvc-find-tool-from-setup [target : String] [tool : String]) : ResultMsvcTool
   (if (not (msvc-host-windows?))
     (ErrMsvcTool
@@ -495,10 +495,10 @@
                 (MsvcNoToolCandidate)
                 "")])]))))
 
-;;; Find an MSVC tool such as `link.exe` and its command environment.
-;;;
-;;; The configured Developer Command Prompt path is preferred. Otherwise this
-;;; falls back to SetupConfiguration + Windows SDK discovery.
+;: Find an MSVC tool such as `link.exe` and its command environment.
+;:
+;: The configured Developer Command Prompt path is preferred. Otherwise this
+;: falls back to SetupConfiguration + Windows SDK discovery.
 (define (msvc-find-tool [target : String] [tool : String]) : ResultMsvcTool
   (if (not (msvc-host-windows?))
     (ErrMsvcTool

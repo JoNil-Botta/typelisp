@@ -511,6 +511,8 @@
           (tltest-reach-mark-expr end (tltest-reach-mark-expr start names))))]
     [(AstExprStructGet receiver _) (tltest-reach-mark-expr receiver names)]
     [(AstExprWithRegion _ body) (tltest-reach-mark-expr-list body names)]
+    [(AstExprWithEscape scratch body)
+      (tltest-reach-mark-expr-list body (tltest-reach-mark-expr scratch names))]
     [(AstExprWithResource bindings body)
       (tltest-reach-mark-expr-list
         body

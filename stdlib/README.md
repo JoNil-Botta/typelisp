@@ -116,7 +116,7 @@ should take borrowed text and which should return owned active-arena strings.
 | `stdin-at-eof?`, `stdin-read-text`, `stdin-read-eof?`, `stdout-write`, `stderr-write`, `stdout-flush` | Non-allocating wrappers/accessors around runtime stdio primitives and `StdinRead` values. |
 | `stdout-write-line`, `stderr-write-line` | Allocate a newline-appended active-arena `String` via `string-append`, then write it to the target stream. |
 | `env-get`, `env-path-list`, `env-path-split`, `env-path-join` | Environment values and split/join results allocate fresh active-arena Strings/lists when runtime values are read or string pieces are created; missing variables return explicit `EnvNo*` options. |
-| `fs-path-join`, `fs-dirname`, `fs-basename`, `fs-extension`, `try-mkdir`, `try-remove-file`, `try-remove-dir`, `try-create-temp-dir` | Path joins allocate active-arena Strings when a separator is inserted or duplicate separator is removed. `fs-dirname`/`fs-basename`/`fs-extension` are pure separator-agnostic string helpers (no allocation beyond the returned substring; `fs-extension` operates on the basename and treats a leading-dot name as extensionless). Recoverable filesystem helpers map runtime status codes into `IoError`; `try-mkdir` works on Linux and Windows. Linux temp directories are created under `$TMPDIR` or `/tmp` with process-id and retry suffixes. Windows temp directories are created under `%TEMP%`, `%TMP%`, or `.` with process-id and retry suffixes; cleanup helpers still return `IoUnsupported` on Windows. |
+| `fs-path-join`, `fs-dirname`, `fs-basename`, `fs-extension`, `try-mkdir`, `try-mkdir-if-missing`, `try-remove-file`, `try-remove-dir`, `try-rename`, `try-create-temp-dir` | Path joins allocate active-arena Strings when a separator is inserted or duplicate separator is removed. `fs-dirname`/`fs-basename`/`fs-extension` are pure separator-agnostic string helpers (no allocation beyond the returned substring; `fs-extension` operates on the basename and treats a leading-dot name as extensionless). Recoverable filesystem helpers map runtime status codes into `IoError`; `try-mkdir` works on Linux and Windows, `try-mkdir-if-missing` treats an already-existing path as success, and `try-rename` follows host rename/replacement behavior on Linux while returning `IoUnsupported` on Windows. Linux temp directories are created under `$TMPDIR` or `/tmp` with process-id and retry suffixes. Windows temp directories are created under `%TEMP%`, `%TMP%`, or `.` with process-id and retry suffixes; cleanup helpers still return `IoUnsupported` on Windows. |
 | `hash-*` helpers | Deterministic, non-cryptographic hash and key equality helpers are non-allocating. Hashes are stable bucket hints only; collection users must still compare colliding candidate keys with the matching equality predicate. |
 | `string-list-*` helpers | Construct immutable `StringList` cons nodes and `StringListBuilder` values in the active arena. `string-list-reverse`, `-reverse-onto`, `-append`, `-from-array`, and builder build helpers allocate fresh list spines; `string-list-to-array` allocates a fresh active-arena `(Array String)` and copies the string handles into it. |
 | `process-*` helpers | Construct process command/output/error aggregates in the active arena. Ordered argv append helpers allocate list nodes; validators inspect executable/env/cwd metadata and reject invalid env names. On Linux, `process-run` and `process-output` execute directly through the backend runtime, preserving inherited environment entries, replacing entries named by env overrides, honoring cwd, and feeding string stdin. Unsupported targets return structured errors. |
@@ -133,10 +133,11 @@ directory-read statuses get semantic variants; target-specific or unstable
 codes remain available as `IoSystemCode`.
 
 No current stdlib function returns a borrow-typed `str`, mutates a
-caller-provided buffer in place, or manually calls `tl_region_mark` /
-`tl_region_reset`. `str` is specified as an immutable borrowed text referent,
-not a mutable buffer type; those policies should remain explicit when borrowed
-strings, mutable buffers, and unsafe reset APIs are added.
+caller-provided buffer in place, or manually resets arenas. Source-level
+`arena-set!`, `arena-destroy`, and `arena-rewind` require `(unsafe ...)`; safe
+stdlib APIs should prefer `with-arena` for scoped reclamation. `str` is specified
+as an immutable borrowed text referent, not a mutable buffer type; those policies
+should remain explicit when borrowed strings and mutable buffers are added.
 
 ### File-handle API (v1, #1036)
 
@@ -241,7 +242,7 @@ fixtures are discovered without a manifest edit.
    a specific stdlib API; `scripts/verify-inline-tests.sh` discovers them
    automatically.
 8. Document the intended public API coverage in `stdlib/tests/README.md`.
-9. Add `;;;;` module docs, attached `;;;` item docs for every public top-level
+9. Add `;#` module docs, attached `;:` item docs for every public top-level
    declaration, allocation-behavior notes for allocating APIs, an update to the
    arena allocation classification table above, and at least one checked doctest
    example that runs with `--stdlib-root`.

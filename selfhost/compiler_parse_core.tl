@@ -475,6 +475,9 @@
 (define (compiler-parse-tag-expr-unquote-splicing) : i64
   268)
 
+(define (compiler-parse-tag-expr-with-escape) : i64
+  269)
+
 (define (compiler-parse-tag-lit-true) : i64
   300)
 
@@ -667,6 +670,9 @@
       (set!
         out
         (sym-i64-bind out "with-arena" (compiler-parse-tag-expr-with-region)))
+      (set!
+        out
+        (sym-i64-bind out "with-escape" (compiler-parse-tag-expr-with-escape)))
       (set!
         out
         (sym-i64-bind out "type" (compiler-parse-tag-expr-type-literal)))
@@ -1927,6 +1933,23 @@
       (ErrAstExpr "parse: with-arena region name must be an identifier")]
     [_ (ErrAstExpr "parse: malformed with-arena")]))
 
+(define (parse-ast-with-escape [dispatch : SymI64Env] [rest : SpannedSexpr]) : ResultAstExpr
+  (match rest
+    [(SpSNil _)
+      (ErrAstExpr "parse: with-escape requires a scratch arena before its body")]
+    [(SpSCons scratch body _)
+      (match body
+        [(SpSNil _) (ErrAstExpr "parse: with-escape requires a non-empty body")]
+        [_
+          (match (parse-ast-expr dispatch scratch)
+            [(OkAstExpr parsed-scratch)
+              (match (parse-ast-expr-list dispatch body)
+                [(OkAstExprList exprs)
+                  (OkAstExpr (AstExprWithEscape parsed-scratch exprs))]
+                [(ErrAstExprList message) (ErrAstExpr message)])]
+            [(ErrAstExpr message) (ErrAstExpr message)])])]
+    [_ (ErrAstExpr "parse: malformed with-escape")]))
+
 (define (parse-ast-resource-binding-items
   [dispatch : SymI64Env]
   [items : SpannedSexpr]) : ResultAstResourceBinding
@@ -2186,6 +2209,8 @@
       (parse-ast-type-literal dispatch rest)]
     [(= tag (compiler-parse-tag-expr-with-region))
       (parse-ast-with-region dispatch rest)]
+    [(= tag (compiler-parse-tag-expr-with-escape))
+      (parse-ast-with-escape dispatch rest)]
     [(= tag (compiler-parse-tag-expr-with-resource))
       (parse-ast-with-resource dispatch rest)]
     [(= tag (compiler-parse-tag-expr-quote))
@@ -2370,19 +2395,30 @@
         (ErrAstExternAbi (string-append "parse: unknown extern ABI " name)))]
     [_ (ErrAstExternAbi "parse: malformed extern :abi metadata")]))
 
-(define (parse-ast-extern-symbol-tail [tail : Sexpr]) : ResultAstExternSymbol
+(define (parse-ast-extern-string-tail [key : String] [tail : Sexpr]) : ResultAstExternSymbol
   (match tail
-    [(SCons (SStr symbol) (SNil))
-      (if (> (string-length symbol) 0)
-        (OkAstExternSymbol symbol)
-        (ErrAstExternSymbol "parse: extern :symbol must not be empty"))]
-    [_ (ErrAstExternSymbol "parse: malformed extern :symbol metadata")]))
+    [(SCons (SStr value) (SNil))
+      (if (> (string-length value) 0)
+        (OkAstExternSymbol value)
+        (ErrAstExternSymbol
+          (string-append
+            "parse: extern "
+            (string-append key " must not be empty"))))]
+    [_
+      (ErrAstExternSymbol
+        (string-append
+          "parse: malformed extern "
+          (string-append key " metadata")))]))
+
+(define (parse-ast-extern-symbol-tail [tail : Sexpr]) : ResultAstExternSymbol
+  (parse-ast-extern-string-tail ":symbol" tail))
 
 (define (parse-ast-extern-items
   [dispatch : SymI64Env]
   [items : SpannedSexpr]
   [abi : AstExternAbi]
   [symbol : String]
+  [link-inputs : AstExternLinkInputList]
   [seen-abi : bool]
   [seen-symbol : bool]) : ResultAstExternParts
   (match items
@@ -2392,7 +2428,9 @@
           [(SpSCons ty (SpSNil _) _)
             (match (parse-ast-type dispatch (spanned-sexpr-form ty))
               [(OkAstType parsed-ty)
-                (OkAstExternParts (AstExternMetadata abi symbol) parsed-ty)]
+                (OkAstExternParts
+                  (AstExternMetadata abi symbol link-inputs)
+                  parsed-ty)]
               [(ErrAstType message) (ErrAstExternParts message)])]
           [_ (ErrAstExternParts "parse: malformed extern")])
         (match (spanned-sexpr-form head)
@@ -2408,6 +2446,7 @@
                         tail
                         parsed-abi
                         symbol
+                        link-inputs
                         true
                         seen-symbol)]
                     [(ErrAstExternAbi message) (ErrAstExternParts message)]))]
@@ -2421,9 +2460,52 @@
                         tail
                         abi
                         parsed-symbol
+                        link-inputs
                         seen-abi
                         true)]
                     [(ErrAstExternSymbol message) (ErrAstExternParts message)]))]
+              [(string-eq key ":link-lib")
+                (match (parse-ast-extern-string-tail ":link-lib" after-key)
+                  [(OkAstExternSymbol value)
+                    (parse-ast-extern-items
+                      dispatch
+                      tail
+                      abi
+                      symbol
+                      (ast-extern-link-input-list-append
+                        link-inputs
+                        (AstExternLinkLib value))
+                      seen-abi
+                      seen-symbol)]
+                  [(ErrAstExternSymbol message) (ErrAstExternParts message)])]
+              [(string-eq key ":link-search")
+                (match (parse-ast-extern-string-tail ":link-search" after-key)
+                  [(OkAstExternSymbol value)
+                    (parse-ast-extern-items
+                      dispatch
+                      tail
+                      abi
+                      symbol
+                      (ast-extern-link-input-list-append
+                        link-inputs
+                        (AstExternLinkSearch value))
+                      seen-abi
+                      seen-symbol)]
+                  [(ErrAstExternSymbol message) (ErrAstExternParts message)])]
+              [(string-eq key ":link-arg")
+                (match (parse-ast-extern-string-tail ":link-arg" after-key)
+                  [(OkAstExternSymbol value)
+                    (parse-ast-extern-items
+                      dispatch
+                      tail
+                      abi
+                      symbol
+                      (ast-extern-link-input-list-append
+                        link-inputs
+                        (AstExternLinkArg value))
+                      seen-abi
+                      seen-symbol)]
+                  [(ErrAstExternSymbol message) (ErrAstExternParts message)])]
               [(compiler-parse-metadata-key? key)
                 (ErrAstExternParts
                   (string-append "parse: unknown extern metadata " key))]
@@ -2439,6 +2521,7 @@
         after-name
         (AstExternAbiC)
         name
+        AstExternLinkInputNil
         false
         false)
         [(OkAstExternParts metadata parsed-ty)
@@ -3039,7 +3122,7 @@
   "(extern raw-map : (-> (Ptr i64) (MutPtr (Ptr u8))))")
 
 (define (compiler-parse-extern-metadata-source) : String
-  "(extern local-call (:abi c) (:symbol \"foreign_exact\") : (-> i64 i64))")
+  "(extern local-call (:abi c) (:symbol \"foreign_exact\") (:link-lib \"m\") (:link-search \"native/lib\") (:link-arg \"-Wl,--as-needed\") : (-> i64 i64))")
 
 (define (compiler-parse-raw-pointer-ops-source) : String
   "(define (main [p : (MutPtr i64)] [n : u64]) : u64
@@ -3066,6 +3149,23 @@
         [_ false])]
     [(ErrAstProgram _) false]))
 
+(define (compiler-parse-extern-link-inputs-ok?
+  [inputs : AstExternLinkInputList]) : bool
+  (match inputs
+    [(AstExternLinkInputCons
+        (AstExternLinkLib lib)
+        (AstExternLinkInputCons
+          (AstExternLinkSearch dir)
+          (AstExternLinkInputCons
+            (AstExternLinkArg arg-value)
+            AstExternLinkInputNil)))
+      (and
+        (string-eq lib "m")
+        (and
+          (string-eq dir "native/lib")
+          (string-eq arg-value "-Wl,--as-needed")))]
+    [_ false]))
+
 (define (compiler-parse-extern-metadata-ok?) : bool
   (match (parse-ast-source (compiler-parse-extern-metadata-source))
     [(OkAstProgram (AstProgram decls))
@@ -3077,15 +3177,18 @@
               (string-eq (ast-extern-metadata-symbol metadata) "foreign_exact")
               (and
                 (ast-extern-abi-c? (ast-extern-metadata-abi metadata))
-                (match ty
-                  [(AstTyFunc args ret)
-                    (match args
-                      [(AstTypeCons (AstTyI64) AstTypeNil)
-                        (match ret
-                          [(AstTyI64) true]
-                          [_ false])]
-                      [_ false])]
-                  [_ false]))))]
+                (and
+                  (compiler-parse-extern-link-inputs-ok?
+                    (ast-extern-metadata-link-inputs metadata))
+                  (match ty
+                    [(AstTyFunc args ret)
+                      (match args
+                        [(AstTypeCons (AstTyI64) AstTypeNil)
+                          (match ret
+                            [(AstTyI64) true]
+                            [_ false])]
+                        [_ false])]
+                    [_ false])))))]
         [_ false])]
     [(ErrAstProgram _) false]))
 
@@ -3551,21 +3654,40 @@
       ok)))
 
 (define (compiler-parse-extern-metadata-error-tests-ok?) : bool
-  (and
-    (compiler-parse-error-ok?
-      "(extern f (:abi stdcall) : (-> i64))"
-      "parse: unknown extern ABI stdcall")
-    (and
-      (compiler-parse-error-ok?
+  (let
+    [ok : bool true]
+    (begin
+      (if (compiler-parse-error-ok?
+        "(extern f (:abi stdcall) : (-> i64))"
+        "parse: unknown extern ABI stdcall")
+        unit
+        (set! ok false))
+      (if (compiler-parse-error-ok?
         "(extern f (:symbol bad) : (-> i64))"
         "parse: malformed extern :symbol metadata")
-      (and
-        (compiler-parse-error-ok?
-          "(extern f (:abi c) (:abi c) : (-> i64))"
-          "parse: duplicate extern :abi metadata")
-        (compiler-parse-error-ok?
-          "(extern f (:link \"x\") : (-> i64))"
-          "parse: unknown extern metadata :link")))))
+        unit
+        (set! ok false))
+      (if (compiler-parse-error-ok?
+        "(extern f (:link-lib bad) : (-> i64))"
+        "parse: malformed extern :link-lib metadata")
+        unit
+        (set! ok false))
+      (if (compiler-parse-error-ok?
+        "(extern f (:link-arg \"\") : (-> i64))"
+        "parse: extern :link-arg must not be empty")
+        unit
+        (set! ok false))
+      (if (compiler-parse-error-ok?
+        "(extern f (:abi c) (:abi c) : (-> i64))"
+        "parse: duplicate extern :abi metadata")
+        unit
+        (set! ok false))
+      (if (compiler-parse-error-ok?
+        "(extern f (:link \"x\") : (-> i64))"
+        "parse: unknown extern metadata :link")
+        unit
+        (set! ok false))
+      ok)))
 
 (define (compiler-parse-reference-error-tests-ok?) : bool
   (let
@@ -3910,6 +4032,43 @@
               "(define (main) : i64 (with-arena r))"
               "parse: with-arena 'r' requires a non-empty body")))))))
 
+(define (compiler-parse-with-escape-shape-ok?) : bool
+  (match (parse-ast-source
+    "(define (main) : String (with-escape (arena-make) (int->string 42)))")
+    [(OkAstProgram (AstProgram decls))
+      (match decls
+        [(AstDeclCons (AstDeclDefFn _ _ _ body) AstDeclNil)
+          (match (ast-expr-unspan body)
+            [(AstExprWithEscape scratch body-exprs)
+              (match (ast-expr-unspan scratch)
+                [(AstExprCall callee AstExprNil)
+                  (match (ast-expr-unspan callee)
+                    [(AstExprVar name)
+                      (and
+                        (string-eq name "arena-make")
+                        (match body-exprs
+                          [(AstExprCons _ AstExprNil) true]
+                          [_ false]))]
+                    [_ false])]
+                [_ false])]
+            [_ false])]
+        [_ false])]
+    [(ErrAstProgram _) false]))
+
+(define (compiler-parse-with-escape-tests-ok?) : bool
+  (and
+    (compiler-parse-with-escape-shape-ok?)
+    (and
+      (compiler-parse-ok?
+        "(define (main) : i64 (let ([scratch : i64 (arena-make)]) (with-escape scratch 1 2 3)))")
+      (and
+        (compiler-parse-error-ok?
+          "(define (main) : i64 (with-escape))"
+          "parse: with-escape requires a scratch arena before its body")
+        (compiler-parse-error-ok?
+          "(define (main) : i64 (with-escape (arena-make)))"
+          "parse: with-escape requires a non-empty body")))))
+
 (define (compiler-parse-resource-with-source) : String
   "(define (main) : i64
   (with ([h (open-handle) close-handle]
@@ -4123,92 +4282,130 @@
         "(defmacro (bad [rest : bool ...] [x : bool]) : bool rest)"
         "parse: variadic macro operand must be final"))))
 
+(define (compiler-parse-shape-tests-front-ok? [program : AstProgram]) : bool
+  (and
+    (= (compiler-parse-smoke-score program) 36)
+    (and
+      (compiler-parse-nested-expr-span-ok?)
+      (and
+        (compiler-parse-error-span-ok?)
+        (and
+          (compiler-parse-float-literal-ok?)
+          (and (compiler-parse-region-ok?) (compiler-parse-arena-ok?)))))))
+
+(define (compiler-parse-shape-tests-middle-ok?) : bool
+  (and
+    (compiler-parse-comptime-decl-ok?)
+    (and
+      (compiler-parse-module-decl-ok?)
+      (and
+        (compiler-parse-import-metadata-ok?)
+        (and
+          (compiler-parse-export-decl-ok?)
+          (and
+            (compiler-parse-flat-let-call-body-ok?)
+            (and (compiler-parse-inline-test-ok?) (compiler-parse-try-ok?))))))))
+
+(define (compiler-parse-error-suite-front-ok?) : bool
+  (and
+    (compiler-parse-error-tests-ok?)
+    (and
+      (compiler-parse-declaration-tests-ok?)
+      (and
+        (compiler-parse-let-tests-ok?)
+        (and
+          (compiler-parse-spmd-tests-ok?)
+          (and
+            (compiler-parse-pattern-tests-ok?)
+            (compiler-parse-pattern-string-char-tests-ok?)))))))
+
+(define (compiler-parse-error-suite-middle-ok?) : bool
+  (and
+    (compiler-parse-enum-struct-tests-ok?)
+    (and
+      (compiler-parse-operator-tests-ok?)
+      (and
+        (compiler-parse-type-literal-tests-ok?)
+        (and
+          (compiler-parse-region-tests-ok?)
+          (and
+            (compiler-parse-repl-tests-ok?)
+            (compiler-parse-comptime-param-tests-ok?)))))))
+
+(define (compiler-parse-error-suite-back-ok?) : bool
+  (and
+    (compiler-parse-defmacro-tests-ok?)
+    (and
+      (compiler-parse-resource-with-tests-ok?)
+      (and
+        (compiler-parse-with-escape-tests-ok?)
+        (and
+          (compiler-parse-quote-syntax-tests-ok?)
+          (compiler-parse-export-error-tests-ok?))))))
+
+(define (compiler-parse-smoke-shapes [program : AstProgram]) : unit
+  (begin
+    (if (compiler-parse-shape-tests-front-ok? program)
+      unit
+      (panic "parse: compiler AST front shape tests failed"))
+    (if (compiler-parse-shape-tests-middle-ok?)
+      unit
+      (panic "parse: compiler AST middle shape tests failed"))
+    (if (compiler-parse-repr-c-ok?)
+      unit
+      (panic "parse: repr c shape test failed"))
+    (if (compiler-parse-cleanup-metadata-ok?)
+      unit
+      (panic "parse: cleanup metadata shape test failed"))
+    (if (compiler-parse-raw-pointer-ok?)
+      unit
+      (panic "parse: raw pointer shape test failed"))
+    (if (compiler-parse-extern-metadata-ok?)
+      unit
+      (panic "parse: extern metadata shape test failed"))
+    (if (compiler-parse-raw-pointer-ops-ok?)
+      unit
+      (panic "parse: raw pointer ops shape test failed"))
+    (if (compiler-parse-box-ok?)
+      unit
+      (panic "parse: box shape test failed"))
+    (if (compiler-parse-reference-ok?)
+      unit
+      (panic "parse: reference shape test failed"))
+    (if (compiler-parse-borrow-ok?)
+      unit
+      (panic "parse: borrow shape test failed"))
+    (if (compiler-parse-resource-with-shape-ok?)
+      unit
+      (panic "parse: resource with shape test failed"))
+    (if (compiler-parse-with-escape-shape-ok?)
+      unit
+      (panic "parse: with-escape shape test failed"))
+    (if (compiler-parse-quote-syntax-shape-ok?)
+      unit
+      (panic "parse: quote syntax shape test failed"))
+    unit))
+
+(define (compiler-parse-smoke-errors) : unit
+  (begin
+    (if (compiler-parse-error-suite-front-ok?)
+      unit
+      (panic "parse: front error-path self-tests failed"))
+    (if (compiler-parse-error-suite-middle-ok?)
+      unit
+      (panic "parse: middle error-path self-tests failed"))
+    (if (compiler-parse-error-suite-back-ok?)
+      unit
+      (panic "parse: back error-path self-tests failed"))
+    unit))
+
 (define (compiler-parse-smoke) : i64
   (match (parse-ast-source (compiler-parse-smoke-source))
     [(OkAstProgram program)
-      (if (and
-        (= (compiler-parse-smoke-score program) 36)
-        (and
-          (compiler-parse-nested-expr-span-ok?)
-          (and
-            (compiler-parse-error-span-ok?)
-            (and
-              (compiler-parse-float-literal-ok?)
-              (and
-                (compiler-parse-region-ok?)
-                (and
-                  (compiler-parse-arena-ok?)
-                  (and
-                    (compiler-parse-comptime-decl-ok?)
-                    (and
-                      (compiler-parse-module-decl-ok?)
-                      (and
-                        (compiler-parse-import-metadata-ok?)
-                        (and
-                          (compiler-parse-export-decl-ok?)
-                          (and
-                            (compiler-parse-flat-let-call-body-ok?)
-                            (and
-                              (compiler-parse-inline-test-ok?)
-                              (and
-                                (compiler-parse-try-ok?)
-                                (and
-                                  (compiler-parse-repr-c-ok?)
-                                  (and
-                                    (compiler-parse-cleanup-metadata-ok?)
-                                    (and
-                                      (compiler-parse-raw-pointer-ok?)
-                                      (and
-                                        (compiler-parse-extern-metadata-ok?)
-                                        (and
-                                          (compiler-parse-raw-pointer-ops-ok?)
-                                          (and
-                                            (compiler-parse-box-ok?)
-                                            (and
-                                              (compiler-parse-reference-ok?)
-                                              (and
-                                                (compiler-parse-borrow-ok?)
-                                                (and
-                                                  (compiler-parse-resource-with-shape-ok?)
-                                                  (compiler-parse-quote-syntax-shape-ok?)))))))))))))))))))))))
-        (if (and
-          (compiler-parse-error-tests-ok?)
-          (and
-            (compiler-parse-declaration-tests-ok?)
-            (and
-              (compiler-parse-let-tests-ok?)
-              (and
-                (compiler-parse-spmd-tests-ok?)
-                (and
-                  (compiler-parse-pattern-tests-ok?)
-                  (and
-                    (compiler-parse-pattern-string-char-tests-ok?)
-                    (and
-                      (compiler-parse-enum-struct-tests-ok?)
-                      (and
-                        (compiler-parse-operator-tests-ok?)
-                        (and
-                          (compiler-parse-type-literal-tests-ok?)
-                          (and
-                            (compiler-parse-region-tests-ok?)
-                            (and
-                              (compiler-parse-repl-tests-ok?)
-                              (and
-                                (compiler-parse-comptime-param-tests-ok?)
-                                (and
-                                  (compiler-parse-defmacro-tests-ok?)
-                                  (and
-                                    (compiler-parse-resource-with-tests-ok?)
-                                    (and
-                                      (compiler-parse-quote-syntax-tests-ok?)
-                                      (compiler-parse-export-error-tests-ok?))))))))))))))))
-          42
-          (begin
-            (panic "parse: error-path self-tests failed")
-            0))
-        (begin
-          (panic "parse: compiler AST smoke score mismatch")
-          0))]
+      (begin
+        (compiler-parse-smoke-shapes program)
+        (compiler-parse-smoke-errors)
+        42)]
     [(ErrAstProgram message)
       (begin
         (panic message)

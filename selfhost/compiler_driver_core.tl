@@ -11,6 +11,12 @@
   (OkCompilerDriver String)
   (ErrCompilerDriver CompilerDiagnostic))
 
+(define (compiler-driver-lower-mode-for-backend [mode : CompilerBackendMode]) : CompilerLowerMode
+  (match mode
+    [(BackendModeAvx2) (CompilerLowerAvx2)]
+    [(BackendModeAvx512) (CompilerLowerAvx512)]
+    [_ (CompilerLowerScalar)]))
+
 (define (compiler-driver-emit-lowered
   [input-path : String]
   [program : CompilerIrProgram]
@@ -49,16 +55,38 @@
   [has-target : bool]
   [opt-level : i64]
   [emit-entry : bool]) : ResultCompilerDriver
+  (compiler-driver-emit-lowered-with-level-mode-and-entry
+    input-path
+    program
+    spans
+    target
+    has-target
+    (BackendModeScalar)
+    opt-level
+    emit-entry))
+
+(define (compiler-driver-emit-lowered-with-level-mode-and-entry
+  [input-path : String]
+  [program : CompilerIrProgram]
+  [spans : CompilerSourceSpans]
+  [target : CompilerBackendTarget]
+  [has-target : bool]
+  [mode : CompilerBackendMode]
+  [opt-level : i64]
+  [emit-entry : bool]) : ResultCompilerDriver
   (match (optimize-program-with-spans-and-level program spans opt-level)
     [(CompilerOptimizedProgram optimized optimized-spans)
       (match (if has-target
-        (compiler-backend-emit-program-with-spans-for-target-and-entry
+        (compiler-backend-emit-program-target-with-mode
           optimized
-          optimized-spans
           target
+          mode
+          optimized-spans
           emit-entry)
-        (compiler-backend-emit-program-with-spans-and-entry
+        (compiler-backend-emit-program-target-with-mode
           optimized
+          (BackendTargetLinux)
+          mode
           optimized-spans
           emit-entry))
         [(OkCompilerBackend asm) (OkCompilerDriver asm)]
@@ -93,26 +121,44 @@
   [has-target : bool]
   [stdlib-roots : CompilerLoadRootList]
   [opt-level : i64]) : ResultCompilerDriver
+  (compiler-driver-emit-file-with-target-roots-level-and-mode
+    input-path
+    target
+    has-target
+    stdlib-roots
+    opt-level
+    (BackendModeScalar)))
+
+(define (compiler-driver-emit-file-with-target-roots-level-and-mode
+  [input-path : String]
+  [target : CompilerBackendTarget]
+  [has-target : bool]
+  [stdlib-roots : CompilerLoadRootList]
+  [opt-level : i64]
+  [mode : CompilerBackendMode]) : ResultCompilerDriver
   (match (compiler-load-file-with-paths-and-roots
     input-path
     (sym-i64-empty)
     stdlib-roots)
     [(OkCompilerLoadWithPaths decls paths _ _)
-      (match (lower-compiler-program-with-decl-paths
+      (match (lower-compiler-program-with-decl-paths-mode
         input-path
         (AstProgram decls)
-        paths)
+        paths
+        (compiler-driver-lower-mode-for-backend mode))
         ;; The lowering provenance side table (#605/#761) is remapped after
         ;; optimization so backend diagnostics report surviving instruction
         ;; locations when a rewrite can preserve them.
         [(OkCompilerLower program spans)
-          (compiler-driver-emit-lowered-with-level
+          (compiler-driver-emit-lowered-with-level-mode-and-entry
             input-path
             program
             spans
             target
             has-target
-            opt-level)]
+            mode
+            opt-level
+            true)]
         [(ErrCompilerLower diag) (ErrCompilerDriver diag)])]
     [(ErrCompilerLoadWithPaths diag) (ErrCompilerDriver diag)]))
 
@@ -154,35 +200,91 @@
     (string-append " " (string-append (int->string value) "\n"))))
 
 (define (compiler-driver-ir-summary-render [summary : CompilerIrSummary]) : String
-  (string-append
-    "typelisp-ir-summary v1\n"
-    (string-append
-      (compiler-driver-ir-summary-line
-        "globals"
-        (compiler-ir-summary-globals summary))
-      (string-append
-        (compiler-driver-ir-summary-line
-          "functions"
-          (compiler-ir-summary-functions summary))
+  (let
+    [out : String "typelisp-ir-summary v1\n"]
+    (begin
+      (set!
+        out
         (string-append
+          out
+          (compiler-driver-ir-summary-line
+            "globals"
+            (compiler-ir-summary-globals summary))))
+      (set!
+        out
+        (string-append
+          out
+          (compiler-driver-ir-summary-line
+            "functions"
+            (compiler-ir-summary-functions summary))))
+      (set!
+        out
+        (string-append
+          out
           (compiler-driver-ir-summary-line
             "externs"
-            (compiler-ir-summary-externs summary))
-          (string-append
-            (compiler-driver-ir-summary-line
-              "blocks"
-              (compiler-ir-summary-blocks summary))
-            (string-append
-              (compiler-driver-ir-summary-line
-                "instructions"
-                (compiler-ir-summary-instructions summary))
-              (string-append
-                (compiler-driver-ir-summary-line
-                  "vars"
-                  (compiler-ir-summary-vars summary))
-                (compiler-driver-ir-summary-line
-                  "score"
-                  (compiler-ir-summary-score summary))))))))))
+            (compiler-ir-summary-externs summary))))
+      (set!
+        out
+        (string-append
+          out
+          (compiler-driver-ir-summary-line
+            "blocks"
+            (compiler-ir-summary-blocks summary))))
+      (set!
+        out
+        (string-append
+          out
+          (compiler-driver-ir-summary-line
+            "instructions"
+            (compiler-ir-summary-instructions summary))))
+      (set!
+        out
+        (string-append
+          out
+          (compiler-driver-ir-summary-line
+            "vars"
+            (compiler-ir-summary-vars summary))))
+      (set!
+        out
+        (string-append
+          out
+          (compiler-driver-ir-summary-line
+            "empty-blocks"
+            (compiler-ir-summary-empty-blocks summary))))
+      (set!
+        out
+        (string-append
+          out
+          (compiler-driver-ir-summary-line
+            "max-instructions-function"
+            (compiler-ir-summary-max-instructions-function summary))))
+      (set!
+        out
+        (string-append
+          out
+          (compiler-driver-ir-summary-line
+            "max-instructions-block"
+            (compiler-ir-summary-max-instructions-block summary))))
+      (set!
+        out
+        (string-append
+          out
+          (compiler-driver-ir-summary-line
+            "call-arg-entries"
+            (compiler-ir-summary-call-arg-entries summary))))
+      (set!
+        out
+        (string-append
+          out
+          (compiler-driver-ir-summary-line
+            "phi-input-entries"
+            (compiler-ir-summary-phi-input-entries summary))))
+      (string-append
+        out
+        (compiler-driver-ir-summary-line
+          "score"
+          (compiler-ir-summary-score summary))))))
 
 (define (compiler-driver-emit-ir-summary-lowered-with-level
   [program : CompilerIrProgram]
@@ -307,6 +409,22 @@
       opt-level)
     output-path))
 
+(define (compiler-driver-compile-file-with-roots-level-and-mode
+  [input-path : String]
+  [output-path : String]
+  [stdlib-roots : CompilerLoadRootList]
+  [opt-level : i64]
+  [mode : CompilerBackendMode]) : i64
+  (compiler-driver-write-result
+    (compiler-driver-emit-file-with-target-roots-level-and-mode
+      input-path
+      (BackendTargetLinux)
+      false
+      stdlib-roots
+      opt-level
+      mode)
+    output-path))
+
 (define (compiler-driver-compile-file-for-target
   [input-path : String]
   [output-path : String]
@@ -339,4 +457,21 @@
       target
       stdlib-roots
       opt-level)
+    output-path))
+
+(define (compiler-driver-compile-file-for-target-with-roots-level-and-mode
+  [input-path : String]
+  [output-path : String]
+  [target : CompilerBackendTarget]
+  [stdlib-roots : CompilerLoadRootList]
+  [opt-level : i64]
+  [mode : CompilerBackendMode]) : i64
+  (compiler-driver-write-result
+    (compiler-driver-emit-file-with-target-roots-level-and-mode
+      input-path
+      target
+      true
+      stdlib-roots
+      opt-level
+      mode)
     output-path))

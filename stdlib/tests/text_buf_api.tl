@@ -26,6 +26,18 @@
             (set! buf (text-buf-append buf "ha"))
             (set! i (+ i 1))))
         (assert-text-buf buf "hahahahahaha" "repeated append")))
+    (let
+      [buf : TextBuf (text-buf-empty)]
+      [i : i64 0]
+      (begin
+        (while (< i 40)
+          (begin
+            (set! buf (text-buf-append buf "x"))
+            (set! i (+ i 1))))
+        (assert-text-buf
+          buf
+          "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+          "balanced repeated append")))
     (assert-text-buf
       (text-buf-append-int
         (text-buf-append-char

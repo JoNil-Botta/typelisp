@@ -1,64 +1,64 @@
-;;;; stdlib/fs.tl - Minimal filesystem helpers for TypeLisp tools (#850).
-;;;;
-;;;; Provides recoverable temporary-directory, path-join, and cleanup helpers on
-;;;; top of compiler/runtime primitives:
-;;;;
-;;;; `fs-mkdir-status`, `fs-remove-file-status`, `fs-remove-dir-status`, and
-;;;; `fs-process-id`.
-;;;;
-;;;; Usage: `(import "stdlib/fs.tl")`
-;;;;
-;;;; ```typelisp
-;;;; (import "stdlib/fs.tl")
-;;;; (define joined : String (fs-path-join "target" "tool-output.s"))
-;;;; ```
+;# stdlib/fs.tl - Minimal filesystem helpers for TypeLisp tools (#850).
+;#
+;# Provides recoverable temporary-directory, path-join, and cleanup helpers on
+;# top of compiler/runtime primitives:
+;#
+;# `fs-mkdir-status`, `fs-remove-file-status`, `fs-remove-dir-status`,
+;# `fs-rename-status`, and `fs-process-id`.
+;#
+;# Usage: `(import "stdlib/fs.tl")`
+;#
+;# ```typelisp
+;# (import "stdlib/fs.tl")
+;# (define joined : String (fs-path-join "target" "tool-output.s"))
+;# ```
 (import "env.tl")
 
 (import "io.tl")
 
 (import "string.tl")
 
-;;; Common host status code for attempting to create an already-existing path.
+;: Common host status code for attempting to create an already-existing path.
 (define fs-status-already-exists : i64
   17)
 
-;;; Maximum collision retries for `try-create-temp-dir`.
+;: Maximum collision retries for `try-create-temp-dir`.
 (define fs-temp-attempt-limit : i64
   100)
 
-;;; Return true on Windows-style hosts.
+;: Return true on Windows-style hosts.
 (define (fs-windows?) : bool
   (string-eq (env-path-list-separator) ";"))
 
-;;; Return the preferred path separator for the current host.
+;: Return the preferred path separator for the current host.
 (define (fs-path-separator) : String
   (if (fs-windows?)
     "\\"
     "/"))
 
-;;; Return the preferred path separator as a character.
+;: Return the preferred path separator as a character.
 (define (fs-path-separator-char) : char
   (if (fs-windows?)
     #\\'
     #/'))
 
-;;; Return true when `c` is either Unix or Windows path separator syntax.
+;: Return true when `c` is either Unix or Windows path separator syntax.
 (define (fs-path-separator? [c : char]) : bool
   (or (char-eq c #/') (char-eq c #\\')))
 
-;;; Return true when `path` starts with either supported separator character.
+;: Return true when `path` starts with either supported separator character.
 (define (fs-path-starts-separator? [path : String]) : bool
   (and (> (string-length path) 0) (fs-path-separator? (string-ref path 0))))
 
-;;; Return true when `path` ends with either supported separator character.
+;: Return true when `path` ends with either supported separator character.
 (define (fs-path-ends-separator? [path : String]) : bool
   (let
     [n : i64 (string-length path)]
     (and (> n 0) (fs-path-separator? (string-ref path (- n 1))))))
 
-;;; Join `left` and `right` with exactly one host path separator when needed.
-;;;
-;;; Empty sides are returned without allocating an extra separator.
+;: Join `left` and `right` with exactly one host path separator when needed.
+;:
+;: Empty sides are returned without allocating an extra separator.
 (define (fs-path-join [left : String] [right : String]) : String
   (cond
     [(= (string-length left) 0) right]
@@ -70,7 +70,7 @@
     [(fs-path-starts-separator? right) (string-append left right)]
     [else (string-append (string-append left (fs-path-separator)) right)]))
 
-;;; Index of the last path separator in `path`, or `-1` when there is none.
+;: Index of the last path separator in `path`, or `-1` when there is none.
 (define (fs-last-separator-index [path : String]) : i64
   (let
     [n : i64 (string-length path)]
@@ -85,10 +85,10 @@
           (set! i (+ i 1))))
       last)))
 
-;;; Directory portion of `path`, without a trailing separator.
-;;;
-;;; Returns `"."` when `path` has no separator, and the host separator when the
-;;; only separator is the leading one (a root child such as `/main.tl`).
+;: Directory portion of `path`, without a trailing separator.
+;:
+;: Returns `"."` when `path` has no separator, and the host separator when the
+;: only separator is the leading one (a root child such as `/main.tl`).
 (define (fs-dirname [path : String]) : String
   (let
     [last : i64 (fs-last-separator-index path)]
@@ -98,10 +98,10 @@
         (fs-path-separator)
         (substring path 0 last)))))
 
-;;; Final component of `path` (the part after the last separator).
-;;;
-;;; Returns `path` unchanged when there is no separator, and `""` when `path`
-;;; ends with a separator.
+;: Final component of `path` (the part after the last separator).
+;:
+;: Returns `path` unchanged when there is no separator, and `""` when `path`
+;: ends with a separator.
 (define (fs-basename [path : String]) : String
   (let
     [n : i64 (string-length path)]
@@ -110,11 +110,11 @@
       path
       (substring path (+ last 1) (- n (+ last 1))))))
 
-;;; Extension of `path` without the leading dot (e.g. `"tl"` for `main.tl`).
-;;;
-;;; Operates on the basename, so directory dots do not count. Returns `""` when
-;;; the basename has no dot or is a dotfile (a leading-dot name like
-;;; `.gitignore`, which has no extension).
+;: Extension of `path` without the leading dot (e.g. `"tl"` for `main.tl`).
+;:
+;: Operates on the basename, so directory dots do not count. Returns `""` when
+;: the basename has no dot or is a dotfile (a leading-dot name like
+;: `.gitignore`, which has no extension).
 (define (fs-extension [path : String]) : String
   (let
     [base : String (fs-basename path)]
@@ -132,33 +132,60 @@
         ""
         (substring base (+ dot 1) (- bn (+ dot 1)))))))
 
-;;; Convert a runtime filesystem status into a structured `ResultIoUnit`.
+;: Convert a runtime filesystem status into a structured `ResultIoUnit`.
 (define (fs-status-result [path : String] [status : i64]) : ResultIoUnit
   (if (= status io-status-ok)
     OkIoUnit
     (ErrIoUnit (io-error-from-status path status))))
 
-;;; Create `path` as a directory, returning a structured status.
-;;;
-;;; Linux uses mode `0700`; Windows uses the backend `_mkdir` helper.
+;: Create `path` as a directory, returning a structured status.
+;:
+;: Linux uses mode `0700`; Windows uses the backend `_mkdir` helper.
 (define (try-mkdir [path : String]) : ResultIoUnit
   (if (io-empty-path? path)
     (ErrIoUnit (IoInvalidPath path))
     (fs-status-result path (fs-mkdir-status path))))
 
-;;; Remove a file path, returning a structured status.
+;: Create `path` as a directory when it is missing.
+;:
+;: A pre-existing path reported by the host as already-created is accepted.
+(define (try-mkdir-if-missing [path : String]) : ResultIoUnit
+  (match (try-mkdir path)
+    [(OkIoUnit) OkIoUnit]
+    [(ErrIoUnit error)
+      (match error
+        [(IoSystemCode code _)
+          (if (= code fs-status-already-exists)
+            OkIoUnit
+            (ErrIoUnit error))]
+        [_ (ErrIoUnit error)])]))
+
+;: Remove a file path, returning a structured status.
 (define (try-remove-file [path : String]) : ResultIoUnit
   (if (io-empty-path? path)
     (ErrIoUnit (IoInvalidPath path))
     (fs-status-result path (fs-remove-file-status path))))
 
-;;; Remove an empty directory path, returning a structured status.
+;: Remove an empty directory path, returning a structured status.
 (define (try-remove-dir [path : String]) : ResultIoUnit
   (if (io-empty-path? path)
     (ErrIoUnit (IoInvalidPath path))
     (fs-status-result path (fs-remove-dir-status path))))
 
-;;; Remove a file if present. Missing paths are considered already cleaned.
+;: Rename `source` to `destination`, returning a structured status.
+;:
+;: Host replacement behavior is target-defined: Linux follows `rename(2)`,
+;: while Windows currently reports `IoUnsupported`.
+(define (try-rename [source : String] [destination : String]) : ResultIoUnit
+  (if (io-empty-path? source)
+    (ErrIoUnit (IoInvalidPath source))
+    (if (io-empty-path? destination)
+      (ErrIoUnit (IoInvalidPath destination))
+      (fs-status-result
+        (string-append (string-append source " -> ") destination)
+        (fs-rename-status source destination)))))
+
+;: Remove a file if present. Missing paths are considered already cleaned.
 (define (try-remove-file-if-exists [path : String]) : ResultIoUnit
   (match (try-remove-file path)
     [(OkIoUnit) OkIoUnit]
@@ -167,7 +194,7 @@
         OkIoUnit
         (ErrIoUnit error))]))
 
-;;; Remove an empty directory if present. Missing paths are considered cleaned.
+;: Remove an empty directory if present. Missing paths are considered cleaned.
 (define (try-remove-dir-if-exists [path : String]) : ResultIoUnit
   (match (try-remove-dir path)
     [(OkIoUnit) OkIoUnit]
@@ -176,7 +203,7 @@
         OkIoUnit
         (ErrIoUnit error))]))
 
-;;; Return the host temporary root used by `try-create-temp-dir`.
+;: Return the host temporary root used by `try-create-temp-dir`.
 (define (fs-temp-root) : String
   (if (fs-windows?)
     (match (env-get "TEMP")
@@ -189,13 +216,13 @@
       [(EnvSomeString value) value]
       [(EnvNoString) "/tmp"])))
 
-;;; Compose one candidate temporary directory basename from prefix, pid, and attempt.
+;: Compose one candidate temporary directory basename from prefix, pid, and attempt.
 (define (fs-temp-name [prefix : String] [pid : i64] [attempt : i64]) : String
   (string-append
     (string-append prefix "-")
     (string-append (int->string pid) (string-append "-" (int->string attempt)))))
 
-;;; Retry temporary directory creation until an unused candidate is found.
+;: Retry temporary directory creation until an unused candidate is found.
 (define (fs-create-temp-dir-loop
   [root : String]
   [prefix : String]
@@ -213,12 +240,12 @@
             (fs-create-temp-dir-loop root prefix pid (+ attempt 1))
             (ErrIoString (io-error-from-status candidate status))))))))
 
-;;; Create a unique temporary directory for tool artifacts.
-;;;
-;;; The directory is created below `$TMPDIR` on Linux (or `/tmp` when `TMPDIR` is
-;;; missing), and below `%TEMP%`/`%TMP%` (or `.`) on Windows. The unique name is
-;;; seeded by the process id (`GetCurrentProcessId` on Windows, `getpid` on
-;;; Linux) and an attempt counter, retrying on collision.
+;: Create a unique temporary directory for tool artifacts.
+;:
+;: The directory is created below `$TMPDIR` on Linux (or `/tmp` when `TMPDIR` is
+;: missing), and below `%TEMP%`/`%TMP%` (or `.`) on Windows. The unique name is
+;: seeded by the process id (`GetCurrentProcessId` on Windows, `getpid` on
+;: Linux) and an attempt counter, retrying on collision.
 (define (try-create-temp-dir [prefix : String]) : ResultIoString
   (if (io-empty-path? prefix)
     (ErrIoString (IoInvalidPath prefix))

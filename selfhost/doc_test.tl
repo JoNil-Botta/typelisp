@@ -1,11 +1,10 @@
 ;; doc_test.tl - Self-hosted TypeLisp doctest extraction (#722) + runner (#724).
 ;;
 ;; Extraction pulls TypeLisp fenced examples from public doc comments, mirroring
-;; the public doc scanning policy: module docs (`;#`, legacy `;;;;`) are
-;; scanned as standalone doc blocks, item docs (`;:`, legacy `;;;`) attach only to the next
-;; supported top-level declaration, blank physical lines are tolerated between
-;; doc comment lines, ordinary comments are ignored, and unattached item docs are
-;; dropped.
+;; the public doc scanning policy: module docs (`;#`) are scanned as standalone
+;; doc blocks, item docs (`;:`) attach only to the next supported top-level
+;; declaration, blank physical lines are tolerated between doc comment lines,
+;; ordinary comments are ignored, and unattached item docs are dropped.
 ;;
 ;; The runner (#724/#1322) checks extracted examples through the in-memory
 ;; virtual-source loader/typechecker (`compiler-check-source`, #723), and runs
@@ -447,32 +446,25 @@
   [prefix : String]) : DocTestMaybeString
   (let
     [trimmed : String (doc-test-trim-left line)]
-    (if (and (string-eq prefix ";;;") (doc-test-string-prefix? trimmed ";;;;"))
-      (DocTestNoString)
-      (if (doc-test-string-prefix? trimmed prefix)
+    (if (doc-test-string-prefix? trimmed prefix)
+      (let
+        [prefix-len : i64 (string-length prefix)]
+        [trimmed-len : i64 (string-length trimmed)]
         (let
-          [prefix-len : i64 (string-length prefix)]
-          [trimmed-len : i64 (string-length trimmed)]
-          (let
-            [body : String
-              (substring trimmed prefix-len (- trimmed-len prefix-len))]
-            (if (> (string-length body) 0)
-              (if (= (string-ref body 0) #\space')
-                (DocTestSomeString
-                  (substring body 1 (- (string-length body) 1)))
-                (DocTestSomeString body))
-              (DocTestSomeString body))))
-        (DocTestNoString)))))
+          [body : String
+            (substring trimmed prefix-len (- trimmed-len prefix-len))]
+          (if (> (string-length body) 0)
+            (if (= (string-ref body 0) #\space')
+              (DocTestSomeString (substring body 1 (- (string-length body) 1)))
+              (DocTestSomeString body))
+            (DocTestSomeString body))))
+      (DocTestNoString))))
 
 (define (doc-test-module-doc-comment-body [line : String]) : DocTestMaybeString
-  (match (doc-test-doc-comment-body-with-prefix line ";#")
-    [(DocTestSomeString body) (DocTestSomeString body)]
-    [(DocTestNoString) (doc-test-doc-comment-body-with-prefix line ";;;;")]))
+  (doc-test-doc-comment-body-with-prefix line ";#"))
 
 (define (doc-test-item-doc-comment-body [line : String]) : DocTestMaybeString
-  (match (doc-test-doc-comment-body-with-prefix line ";:")
-    [(DocTestSomeString body) (DocTestSomeString body)]
-    [(DocTestNoString) (doc-test-doc-comment-body-with-prefix line ";;;")]))
+  (doc-test-doc-comment-body-with-prefix line ";:"))
 
 (define (doc-test-starts-with-form-head? [text : String] [head : String]) : bool
   (if (doc-test-string-prefix? text head)
@@ -1662,24 +1654,16 @@
 ;; ```
 ")
 
-(define (doc-test-legacy-item-source) : String
-  ";;; Legacy item docs
-;;; ```tl
-;;; (define legacy : i64 1)
-;;; ```
-(define legacy : i64 1)
-")
-
 (define (doc-test-malformed-source) : String
-  ";;;; ```typelisp maybe
-;;;; (define (main) : i64 0)
-;;;; ```
+  ";# ```typelisp maybe
+;# (define (main) : i64 0)
+;# ```
 
-;;;; ```tl
-;;;; ```
+;# ```tl
+;# ```
 
-;;;; ```typelisp
-;;;; (define (open) : i64 0)
+;# ```typelisp
+;# (define (open) : i64 0)
 ")
 
 (define (doc-test-runnable-source) : String
@@ -1800,12 +1784,6 @@
         false)]
     [_ false]))
 
-(define (doc-test-legacy-item-ok? [examples : DocTestExampleList]) : bool
-  (match examples
-    [(DocTestExampleCons example DocTestExampleNil)
-      (doc-test-example-ok? example 1 2 false "(define legacy")]
-    [_ false]))
-
 (define (doc-test-malformed-errors-ok? [errors : DocTestErrorList]) : bool
   (match errors
     [(DocTestErrorCons
@@ -1835,13 +1813,6 @@
     [(DocTestExtraction ordinary-examples ordinary-errors)
       (if (= (doc-test-example-list-count ordinary-examples) 0)
         (= (doc-test-error-list-count ordinary-errors) 0)
-        false)]))
-
-(define (doc-test-legacy-item-smoke-ok?) : bool
-  (match (doc-test-extract-source (doc-test-legacy-item-source))
-    [(DocTestExtraction legacy-examples legacy-errors)
-      (if (= (doc-test-error-list-count legacy-errors) 0)
-        (doc-test-legacy-item-ok? legacy-examples)
         false)]))
 
 (define (doc-test-malformed-smoke-ok?) : bool
@@ -1907,22 +1878,18 @@
         (if (= (doc-test-example-list-count examples) 2)
           (if (doc-test-smoke-examples-ok? examples)
             (if (doc-test-ordinary-comments-ok?)
-              (if (doc-test-legacy-item-smoke-ok?)
-                (if (doc-test-malformed-smoke-ok?)
-                  (if (doc-test-runnable-smoke-ok?)
-                    (if (doc-test-runnable-malformed-smoke-ok?)
-                      42
-                      (begin
-                        (panic "doc-test: runnable malformed smoke mismatch")
-                        0))
+              (if (doc-test-malformed-smoke-ok?)
+                (if (doc-test-runnable-smoke-ok?)
+                  (if (doc-test-runnable-malformed-smoke-ok?)
+                    42
                     (begin
-                      (panic "doc-test: runnable smoke mismatch")
+                      (panic "doc-test: runnable malformed smoke mismatch")
                       0))
                   (begin
-                    (panic "doc-test: malformed smoke mismatch")
+                    (panic "doc-test: runnable smoke mismatch")
                     0))
                 (begin
-                  (panic "doc-test: legacy item smoke mismatch")
+                  (panic "doc-test: malformed smoke mismatch")
                   0))
               (begin
                 (panic "doc-test: ordinary comment smoke mismatch")
@@ -1940,16 +1907,16 @@
 ;; --- runner self-test (#724) ------------------------------------------------
 ;; A normal example whose body fails to typecheck (i64 return, bool body).
 (define (doc-test-run-unexpected-error-source) : String
-  ";;;; ```typelisp
-;;;; (define (main) : i64 true)
-;;;; ```
+  ";# ```typelisp
+;# (define (main) : i64 true)
+;# ```
 ")
 
 ;; An `expect-error` example that actually checks successfully.
 (define (doc-test-run-unexpected-pass-source) : String
-  ";;;; ```typelisp expect-error
-;;;; (define (main) : i64 0)
-;;;; ```
+  ";# ```typelisp expect-error
+;# (define (main) : i64 0)
+;# ```
 ")
 
 ;; A file with no doctest fences at all.
@@ -2244,7 +2211,11 @@ typecheck: return type mismatch"))]
 ;; self-test batteries pass.
 (define (doc-test-smoke-all) : i64
   (if (= (doc-test-smoke) 42)
-    (doc-test-run-smoke)
+    (if (source-tool-link-inputs-dedupe-smoke-ok?)
+      (doc-test-run-smoke)
+      (begin
+        (panic "source-tool: link input dedupe smoke regressed")
+        0))
     (begin
       (panic "doc-test: extraction smoke regressed")
       0)))

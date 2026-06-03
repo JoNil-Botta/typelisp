@@ -301,15 +301,24 @@ else
     assert_contains "$err" "typelisp fmt"
     assert_contains "$err" "typelisp doc"
 fi
-if grep -q "typelisp lsp" "$err"; then
+USAGE_ERR=$err
+if grep -q "typelisp lsp" "$USAGE_ERR"; then
     HAS_LSP_COMMAND=1
 else
     HAS_LSP_COMMAND=0
 fi
-if grep -q "typelisp lint" "$err"; then
+if grep -q "typelisp lint" "$USAGE_ERR"; then
     HAS_LINT_COMMAND=1
 else
     HAS_LINT_COMMAND=0
+fi
+if [ "$HAS_LSP_COMMAND" -eq 1 ]; then
+    LSP_COMMAND_PROBE="$WORKDIR/lsp-command-probe.in"
+    printf 'X-Test: 1\r\n\r\n' > "$LSP_COMMAND_PROBE"
+    run_stdin lsp-command-probe "$LSP_COMMAND_PROBE" "$COMPILER" lsp
+    if grep -F "not yet available" "$err" >/dev/null; then
+        HAS_LSP_COMMAND=0
+    fi
 fi
 
 run_cmd missing-command "$COMPILER"
@@ -469,14 +478,12 @@ EOF
         assert_contains "$err" "compile: --backend-mode $mode requires the Rust compile driver until selfhost SIMD support (#1014)"
         continue
     fi
-    # The single-binary cli.tl seed has no SIMD compile driver, so non-scalar
-    # `compile --backend-mode` is rejected with the #1014 message just like the
-    # stage1 wrapper. Keep full SIMD-asm coverage on the Rust/wrapper lanes.
     if [ "$HOST_ACTION_ENABLED" -eq 0 ] && [ "$mode" != scalar ]; then
-        assert_failure
-        assert_stdout_empty
-        assert_contains "$err" "compile: --backend-mode $mode requires the Rust compile driver until selfhost SIMD support (#1014)"
-        continue
+        if grep -F -- "compile: --backend-mode $mode requires the Rust compile driver until selfhost SIMD support (#1014)" "$err" > /dev/null; then
+            assert_failure
+            assert_stdout_empty
+            continue
+        fi
     fi
     assert_success
     assert_stderr_empty
@@ -490,6 +497,40 @@ EOF
 done <<EOF
 $(compile_backend_modes)
 EOF
+
+simd_shape_dir="$CLI_MATRIX/backend-avx512-shape"
+mkdir -p "$simd_shape_dir"
+cat > "$simd_shape_dir/main.tl" <<'EOF'
+(define (fill [a : (Array i64)] [b : (Array i64)] [out : (Array i64)] [n : i64]) : unit
+  (foreach
+    ([i : i64 0 n])
+    (array-set! out i (+ (array-ref a i) (array-ref b i)))))
+(define (main) : i64
+  (let
+    [a : (Array i64) (make-array i64 17)]
+    [b : (Array i64) (make-array i64 17)]
+    [out : (Array i64) (make-array i64 17)]
+    (begin
+      (fill a b out 17)
+      42)))
+EOF
+run_cmd compile-backend-avx512-shape "$COMPILER" compile "$simd_shape_dir/main.tl" --backend-mode avx512 -o "$simd_shape_dir/main.s"
+if [ "$IS_STAGE1_WRAPPER" -eq 1 ]; then
+    assert_failure
+    assert_stdout_empty
+    assert_contains "$err" "compile: --backend-mode avx512 requires the Rust compile driver until selfhost SIMD support (#1014)"
+elif [ "$HOST_ACTION_ENABLED" -eq 0 ] &&
+    grep -F -- "compile: --backend-mode avx512 requires the Rust compile driver until selfhost SIMD support (#1014)" "$err" > /dev/null; then
+    assert_failure
+    assert_stdout_empty
+else
+    assert_success
+    assert_stderr_empty
+    assert_contains "$simd_shape_dir/main.s" "%zmm"
+    assert_contains "$simd_shape_dir/main.s" "%k"
+    assert_contains "$simd_shape_dir/main.s" "vmovdqu64"
+    assert_not_contains "$simd_shape_dir/main.s" "vector/mask IR emission is not implemented"
+fi
 
 for target_alias in windows-x86_64 windows_x86_64; do
     target_dir="$CLI_MATRIX/target-$target_alias"
@@ -932,6 +973,41 @@ EOF
     assert_stdout_empty
     assert_stderr_empty
 
+    LINK_METADATA_SOURCE="$SELFHOST_PLANNER_DIR/with space/link metadata file.tl"
+    LINK_METADATA_MODULE="$SELFHOST_PLANNER_DIR/with space/link metadata module.tl"
+    LINK_METADATA_OUTPUT="$SELFHOST_PLANNER_DIR/with space/link metadata program"
+    cat > "$LINK_METADATA_MODULE" <<EOF
+(extern ffi_add7 (:link-search "$LINK_LIB_DIR") (:link-lib "ffi_add7") : (-> i64 i64))
+EOF
+    cat > "$LINK_METADATA_SOURCE" <<'EOF'
+(import "link metadata module.tl")
+(define (main) : i64 (ffi_add7 35))
+EOF
+    run_cmd selfhost-build-tool-link-metadata "$SELFHOST_PLANNER_DIR/build-tool" --direct "$LINK_METADATA_SOURCE" -o "$LINK_METADATA_OUTPUT" --target linux-x86_64 --backend-mode scalar
+    assert_success
+    assert_stderr_empty
+    assert_contains "$out" "Generated: $LINK_METADATA_OUTPUT"
+    run_cmd selfhost-build-tool-link-metadata-output "$LINK_METADATA_OUTPUT"
+    assert_code 42
+    assert_stderr_empty
+    run_cmd selfhost-run-tool-link-metadata "$SELFHOST_PLANNER_DIR/run-tool" --direct "$LINK_METADATA_SOURCE" --target linux-x86_64 --backend-mode scalar
+    assert_code 42
+    assert_stdout_empty
+    assert_stderr_empty
+
+    PUBLIC_LINK_METADATA_OUTPUT="$SELFHOST_PLANNER_DIR/with space/public link metadata program"
+    run_cmd public-build-link-metadata "$COMPILER" build "$LINK_METADATA_SOURCE" -o "$PUBLIC_LINK_METADATA_OUTPUT" --target linux-x86_64
+    assert_success
+    assert_stderr_empty
+    assert_contains "$out" "Generated: $PUBLIC_LINK_METADATA_OUTPUT"
+    run_cmd public-build-link-metadata-output "$PUBLIC_LINK_METADATA_OUTPUT"
+    assert_code 42
+    assert_stderr_empty
+    run_cmd public-run-link-metadata "$COMPILER" run "$LINK_METADATA_SOURCE" --target linux-x86_64
+    assert_code 42
+    assert_stdout_empty
+    assert_stderr_empty
+
     run_cmd selfhost-build-tool-avx2-rejected "$SELFHOST_PLANNER_DIR/build-tool" --direct "$PLANNER_SOURCE" -o "$SELFHOST_PLANNER_DIR/with space/avx2 program" --target linux-x86_64 --backend-mode avx2
     assert_failure
     assert_stdout_empty
@@ -1199,11 +1275,11 @@ while IFS='|' read -r diag_name diag_command diag_expect || [ -n "$diag_name" ];
     # such as `tuple_return` / `array_return` successfully, so the expected-failure
     # backend diagnostic does not hold for the selfhost frontend. Skip those
     # known-divergent cases until the selfhost lowerer grows the matching
-    # rejection (#1327); other cases still run.
+    # rejection (#1699); other cases still run.
     if [ "$SELFHOST_FRONTEND_DIAGNOSTICS" -eq 1 ]; then
         case "$diag_name" in
             tuple_return | array_return)
-                echo "[public-tools] skipping backend diagnostic $diag_name (selfhost lowerer accepts it; #1327)"
+                echo "[public-tools] skipping backend diagnostic $diag_name (selfhost lowerer accepts it; #1699)"
                 continue
                 ;;
         esac
@@ -1349,15 +1425,15 @@ if [ "$HOST_OS" = windows ]; then
 else
 echo "[public-tools] doc and doctest commands"
 cat > "$WORKDIR/docs.tl" <<'EOF'
-;;;; Module docs.
-;;;; ```typelisp
-;;;; (define (main) : i64 42)
-;;;; ```
+;# Module docs.
+;# ```typelisp
+;# (define (main) : i64 42)
+;# ```
 
-;;; Item docs.
-;;; ```tl
-;;; (define answer : i64 42)
-;;; ```
+;: Item docs.
+;: ```tl
+;: (define answer : i64 42)
+;: ```
 (define documented : i64 1)
 EOF
 run_cmd doc-test-pass "$COMPILER" doc --test "$WORKDIR/docs.tl"
@@ -1367,10 +1443,10 @@ assert_contains "$out" "Doc tests passed: 2 example(s)"
 assert_doctest_temp_cleaned "$WORKDIR/docs.tl"
 
 cat > "$WORKDIR/docs_expected_error.tl" <<'EOF'
-;;;; Expected error.
-;;;; ```typelisp expect-error
-;;;; (define (bad) : i64 true)
-;;;; ```
+;# Expected error.
+;# ```typelisp expect-error
+;# (define (bad) : i64 true)
+;# ```
 EOF
 run_cmd doc-test-expected-error "$COMPILER" doc --test "$WORKDIR/docs_expected_error.tl"
 assert_success
@@ -1379,10 +1455,10 @@ assert_contains "$out" "Doc tests passed: 1 example(s)"
 assert_doctest_temp_cleaned "$WORKDIR/docs_expected_error.tl"
 
 cat > "$WORKDIR/docs_malformed.tl" <<'EOF'
-;;;; Bad fence.
-;;;; ```typelisp maybe
-;;;; (define (main) : i64 0)
-;;;; ```
+;# Bad fence.
+;# ```typelisp maybe
+;# (define (main) : i64 0)
+;# ```
 EOF
 run_cmd doc-test-malformed "$COMPILER" doc --test "$WORKDIR/docs_malformed.tl"
 assert_failure
@@ -1391,8 +1467,8 @@ assert_contains "$err" 'unsupported TypeLisp doctest option `maybe`'
 assert_doctest_temp_cleaned "$WORKDIR/docs_malformed.tl"
 
 cat > "$WORKDIR/docs_empty.tl" <<'EOF'
-;;;; Docs without fenced examples.
-;;; Item docs without fenced examples.
+;# Docs without fenced examples.
+;: Item docs without fenced examples.
 (define documented : i64 1)
 EOF
 run_cmd doc-test-empty "$COMPILER" doc --test "$WORKDIR/docs_empty.tl"
@@ -1407,11 +1483,11 @@ cat > "$DOC_STDLIB_ROOT/docfixture.tl" <<'EOF'
 (define stdlib-answer : i64 42)
 EOF
 cat > "$WORKDIR/docs_stdlib_root.tl" <<'EOF'
-;;;; Stdlib import example.
-;;;; ```typelisp
-;;;; (import "stdlib/docfixture.tl")
-;;;; (define (main) : i64 stdlib-answer)
-;;;; ```
+;# Stdlib import example.
+;# ```typelisp
+;# (import "stdlib/docfixture.tl")
+;# (define (main) : i64 stdlib-answer)
+;# ```
 EOF
 run_cmd doc-test-stdlib-root "$COMPILER" doc --test "$WORKDIR/docs_stdlib_root.tl" --stdlib-root "$DOC_STDLIB_ROOT"
 assert_success
@@ -1420,10 +1496,10 @@ assert_contains "$out" "Doc tests passed: 1 example(s)"
 assert_doctest_temp_cleaned "$WORKDIR/docs_stdlib_root.tl"
 
 cat > "$WORKDIR/docs_bad.tl" <<'EOF'
-;;;; Unexpected error.
-;;;; ```typelisp
-;;;; (define (bad) : i64 true)
-;;;; ```
+;# Unexpected error.
+;# ```typelisp
+;# (define (bad) : i64 true)
+;# ```
 EOF
 run_cmd doc-test-unexpected-error "$COMPILER" doc --test "$WORKDIR/docs_bad.tl"
 assert_failure
@@ -1464,12 +1540,12 @@ fi
 # single-binary cli.tl stage0 (it aborts with `tl: read-file failed`), and the
 # selfhost-doc-tool build path needs the `Generated:` host-action output, so the
 # no-Rust gate disables this block via TYPELISP_PUBLIC_TOOLS_HOST_ACTION_ENABLED=0
-# until that lands (#1327). `doc --test` coverage above still runs on cli.tl.
+# until that lands (#1662). `doc --test` coverage above still runs on cli.tl.
 if [ "$HOST_OS" = linux ] && [ "$HOST_ACTION_ENABLED" -eq 1 ]; then
     cat > "$WORKDIR/doc_source.tl" <<'EOF'
-;;;; Module docs.
+;# Module docs.
 
-;;; Item docs.
+;: Item docs.
 (define answer : i64 42)
 EOF
     run_cmd doc-generate "$COMPILER" doc "$WORKDIR/doc_source.tl" -o "$WORKDIR/doc_source.md"
@@ -1482,7 +1558,7 @@ EOF
     DOC_CUSTOM_DIR="$WORKDIR/custom-doc-output"
     mkdir -p "$DOC_CUSTOM_DIR"
     cat > "$WORKDIR/doc_custom_input.tl" <<'EOF'
-;;; Single item.
+;: Single item.
 (define x : i64 1)
 EOF
     run_cmd doc-generate-custom "$COMPILER" doc "$WORKDIR/doc_custom_input.tl" -o "$DOC_CUSTOM_DIR/custom.md"
@@ -1499,25 +1575,25 @@ EOF
     DOC_GRAPH_OUT="$DOC_GRAPH_DIR/graph.md"
     mkdir -p "$DOC_GRAPH_STDLIB"
     cat > "$DOC_GRAPH_LOCAL" <<'EOF'
-;;;; Local module docs.
+;# Local module docs.
 
-;;; Local answer docs.
+;: Local answer docs.
 (define local-answer : i64 7)
 EOF
     cat > "$DOC_GRAPH_STDLIB_SOURCE" <<'EOF'
-;;;; Stdlib module docs.
+;# Stdlib module docs.
 
-;;; Stdlib answer docs.
+;: Stdlib answer docs.
 (define stdlib-answer : i64 35)
 EOF
     cat > "$DOC_GRAPH_ENTRY" <<'EOF'
-;;;; Entry module docs.
+;# Entry module docs.
 
 (import "local.tl")
 (import "local.tl")
 (import "stdlib/docfixture.tl")
 
-;;; Entry docs.
+;: Entry docs.
 (define (main) : i64 (+ local-answer stdlib-answer))
 EOF
     run_cmd doc-generate-module-graph "$COMPILER" doc "$DOC_GRAPH_ENTRY" -o "$DOC_GRAPH_OUT" --stdlib-root "$DOC_GRAPH_STDLIB"
@@ -1785,42 +1861,35 @@ ERR_NORMALIZED="$WORKDIR/missing_dep_err_normalized.tmp"
 tr '\\' '/' < "$err" > "$ERR_NORMALIZED"
 assert_contains "$ERR_NORMALIZED" "vendor/math/src/missing.tl"
 else
-    echo "[public-tools] skipping package build coverage (host-action drivers disabled; #1327)"
+    echo "[public-tools] skipping package build coverage (host-action drivers disabled; #1662)"
 fi
 
-# REPL/LSP gates temporarily disabled: the unified cli.tl stage0 lists lsp and
-# repl in its help for stage0 parity, but they are still pending stubs (#1640
-# lsp, #1641 repl), so neither the REPL/LSP corpus nor the inline LSP
-# init/shutdown checks can pass yet. Re-enable (flip to 1) once lsp/repl are
-# wired into cli.tl — tracked in #1640.
-TYPELISP_PUBLIC_TOOLS_REPL_LSP_ENABLED=0
-echo "[public-tools] REPL/LSP corpus via run-corpus.sh"
-if [ "$TYPELISP_PUBLIC_TOOLS_REPL_LSP_ENABLED" -eq 1 ]; then
-    if [ "$HAS_LSP_COMMAND" -eq 1 ]; then
-        TYPELISP_PUBLIC_TOOLS_STAGE1_WRAPPER=$IS_STAGE1_WRAPPER TYPELISP_BIN="$COMPILER" sh "$ROOT/tests/public-tools/run-corpus.sh"
-    else
-        TYPELISP_PUBLIC_TOOLS_STAGE1_WRAPPER=$IS_STAGE1_WRAPPER TYPELISP_BIN="$COMPILER" sh "$ROOT/tests/public-tools/run-corpus.sh" repl
-    fi
+echo "[public-tools] LSP corpus via run-corpus.sh"
+if [ "$HAS_LSP_COMMAND" -eq 1 ]; then
+    TYPELISP_PUBLIC_TOOLS_STAGE1_WRAPPER=$IS_STAGE1_WRAPPER TYPELISP_BIN="$COMPILER" sh "$ROOT/tests/public-tools/run-corpus.sh" lsp
 else
-    echo "[public-tools] skipping REPL/LSP corpus (lsp/repl pending in cli.tl; #1640/#1641)"
-    if [ "$HOST_OS" = linux ]; then
-        echo "[public-tools] selfhost REPL corpus via run-corpus.sh"
-        TYPELISP_PUBLIC_TOOLS_STAGE1_WRAPPER=1 TYPELISP_BIN="$COMPILER" sh "$ROOT/tests/public-tools/run-corpus.sh" repl
-    else
-        echo "[public-tools] selfhost REPL scratch smoke on $HOST_OS"
-        SELFHOST_REPL_SMOKE="$WORKDIR/selfhost-repl-smoke.in"
-        cat > "$SELFHOST_REPL_SMOKE" <<'EOF'
+    echo "[public-tools] skipping LSP corpus (lsp command unavailable or pending)"
+fi
+
+echo "[public-tools] REPL corpus via run-corpus.sh"
+echo "[public-tools] skipping public REPL corpus (repl pending in cli.tl; #1641)"
+if [ "$HOST_OS" = linux ]; then
+    echo "[public-tools] selfhost REPL corpus via run-corpus.sh"
+    TYPELISP_PUBLIC_TOOLS_STAGE1_WRAPPER=1 TYPELISP_BIN="$COMPILER" sh "$ROOT/tests/public-tools/run-corpus.sh" repl
+else
+    echo "[public-tools] selfhost REPL scratch smoke on $HOST_OS"
+    SELFHOST_REPL_SMOKE="$WORKDIR/selfhost-repl-smoke.in"
+    cat > "$SELFHOST_REPL_SMOKE" <<'EOF'
 (+ 1 2) ; trailing comment must not swallow generated wrapper delimiters
 .exit
 EOF
-        run_stdin selfhost-repl-scratch-smoke "$SELFHOST_REPL_SMOKE" "$COMPILER" run "$ROOT/selfhost/repl.tl" --stdlib-root "$ROOT/stdlib"
-        assert_success
-        assert_contains "$out" "3"
-        assert_stderr_empty
-    fi
+    run_stdin selfhost-repl-scratch-smoke "$SELFHOST_REPL_SMOKE" "$COMPILER" run "$ROOT/selfhost/repl.tl" --stdlib-root "$ROOT/stdlib"
+    assert_success
+    assert_contains "$out" "3"
+    assert_stderr_empty
 fi
 
-if [ "$TYPELISP_PUBLIC_TOOLS_REPL_LSP_ENABLED" -eq 1 ] && [ "$HAS_LSP_COMMAND" -eq 1 ]; then
+if [ "$HAS_LSP_COMMAND" -eq 1 ]; then
     echo "[public-tools] LSP (legacy inline checks)"
     frame_append() {
         frame_file=$1
@@ -1843,7 +1912,7 @@ if [ "$TYPELISP_PUBLIC_TOOLS_REPL_LSP_ENABLED" -eq 1 ] && [ "$HAS_LSP_COMMAND" -
     assert_contains "$out" '"capabilities"'
     assert_contains "$out" '"id":2'
 else
-    echo "[public-tools] skipping LSP checks (lsp pending in cli.tl; #1640)"
+    echo "[public-tools] skipping LSP checks (lsp command unavailable or pending)"
 fi
 
 echo "[public-tools] SPEC metadata examples"
@@ -2090,7 +2159,7 @@ while IFS='|' read -r spec_name spec_mode spec_value; do
                 # coverage for the current selfhost cli lives in
                 # scripts/verify-selfhost-cli-build-run.sh. SPEC check/compile
                 # examples still run on cli.tl above.
-                echo "[public-tools] skipping SPEC run example $spec_name (host-action drivers disabled; #1327)"
+                echo "[public-tools] skipping SPEC run example $spec_name (host-action drivers disabled; #1662)"
                 continue
             fi
             run_cmd "spec-$spec_name" "$COMPILER" run "$SPEC_WORK/$spec_name.tl"

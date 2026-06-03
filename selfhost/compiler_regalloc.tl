@@ -167,7 +167,7 @@
               "%r14"
               (CompilerRegStringCons "%r15" CompilerRegStringNil))))))))
 
-;; Persistent f64 homes use XMM registers that are caller-saved on both SysV
+;; Persistent float homes use XMM registers that are caller-saved on both SysV
 ;; and Windows x64, avoid %xmm0/%xmm1 arithmetic scratch, avoid %xmm15 outgoing
 ;; stack-argument scratch, and avoid Windows callee-saved XMM6-XMM15 until the
 ;; backend has save/restore support for those registers.
@@ -267,9 +267,10 @@
         true
         (compiler-reg-string-list-contains? rest want))]))
 
-(define (compiler-reg-f64-type? [ty : AstType]) : bool
+(define (compiler-reg-float-type? [ty : AstType]) : bool
   (match ty
     [(AstTyF64) true]
+    [(AstTyF32) true]
     [_ false]))
 
 (define (compiler-reg-scalar-type? [ty : AstType]) : bool
@@ -283,6 +284,7 @@
     [(AstTyU16) true]
     [(AstTyU8) true]
     [(AstTyF64) true]
+    [(AstTyF32) true]
     [(AstTyBool) true]
     [(AstTyChar) true]
     [(AstTyFunc _ _) true]
@@ -503,10 +505,33 @@
   [point : i64]) : unit
   (match set
     [(CompilerLiveI64Nil) unit]
-    [(CompilerLiveI64Cons var rest)
+    [(CompilerLiveI64Cons chunk rest)
       (begin
-        (compiler-reg-extend-interval starts ends var point)
+        (compiler-reg-extend-set-word-bits
+          starts
+          ends
+          (compiler-live-set-chunk-bits chunk)
+          (*
+            (compiler-live-set-chunk-word-index chunk)
+            (compiler-live-set-word-bits))
+          0
+          point)
         (compiler-reg-extend-set starts ends rest point))]))
+
+(define (compiler-reg-extend-set-word-bits
+  [starts : (Array i64)]
+  [ends : (Array i64)]
+  [bits : i64]
+  [base : i64]
+  [bit : i64]
+  [point : i64]) : unit
+  (if (>= bit (compiler-live-set-word-bits))
+    unit
+    (begin
+      (if (= (bit-and bits (shl 1 bit)) 0)
+        unit
+        (compiler-reg-extend-interval starts ends (+ base bit) point))
+      (compiler-reg-extend-set-word-bits starts ends bits base (+ bit 1) point))))
 
 (define (compiler-reg-extend-instr
   [starts : (Array i64)]
@@ -543,7 +568,7 @@
             (compiler-reg-extend-instr
               starts
               ends
-              CompilerLiveI64Nil
+              (compiler-live-set-empty)
               point
               instr)
             (compiler-reg-live-intervals-instrs
@@ -767,7 +792,9 @@
             params
             (compiler-reg-call-arg-vars-blocks
               blocks
-              (compiler-reg-ineligible-non-scalars types CompilerLiveI64Nil)))))]))
+              (compiler-reg-ineligible-non-scalars
+                types
+                (compiler-live-set-empty))))))]))
 
 (define (compiler-reg-interval-before?
   [left : CompilerRegInterval]
@@ -800,7 +827,7 @@
   [intervals : CompilerRegIntervalList]
   [types : CompilerRegVarTypeList]
   [ineligible : CompilerLiveI64Set]
-  [want-f64 : bool]) : CompilerRegIntervalList
+  [want-float : bool]) : CompilerRegIntervalList
   (match intervals
     [(CompilerRegIntervalNil) CompilerRegIntervalNil]
     [(CompilerRegIntervalCons interval rest)
@@ -808,14 +835,14 @@
         [(CompilerRegInterval var _ _)
           (let
             [tail : CompilerRegIntervalList
-              (compiler-reg-candidates rest types ineligible want-f64)]
+              (compiler-reg-candidates rest types ineligible want-float)]
             (if (compiler-live-set-contains? ineligible var)
               tail
               (match (compiler-reg-var-type-lookup types var)
                 [(CompilerRegSomeType ty)
-                  (if (if want-f64
-                    (compiler-reg-f64-type? ty)
-                    (not (compiler-reg-f64-type? ty)))
+                  (if (if want-float
+                    (compiler-reg-float-type? ty)
+                    (not (compiler-reg-float-type? ty)))
                     (compiler-reg-candidate-insert tail interval)
                     tail)]
                 [(CompilerRegNoType) tail])))])]))

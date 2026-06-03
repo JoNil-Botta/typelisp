@@ -8,9 +8,9 @@
 ;;
 ;;   typelisp run selfhost/cli.tl -- <command> <args...>
 ;;
-;; Recognized commands: build, run, check, fmt, lint, test, doc. The command
-;; name is `(arg 1)`; each `*-run-from` entry parses its own arguments starting
-;; at index 2.
+;; Recognized commands: build, run, check, fmt, lint, test, doc, compile, debug,
+;; new, and init. The command name is `(arg 1)`; each `*-run-from` entry parses
+;; its own arguments starting at index 2.
 ;;
 ;; This is the single-binary step toward a Rust-free stage0 (#666/#795): once
 ;; this dispatcher is the shipped `typelisp`, the toolchain needs neither the
@@ -34,11 +34,14 @@
 
 (import "compile_cli_core.tl")
 
+(import "repl_cli_core.tl")
+
+(import "scaffold_cli_core.tl")
+
+(import "lsp_frame_core.tl")
+
 ;; Mirrors the Rust stage0 `print_usage` (src/main.rs) so the unified selfhost
-;; CLI presents the same help surface. Commands not yet routed here (lsp, repl,
-;; new, init) are still listed for parity but report their tracking issue when
-;; invoked (see cli-pending), so the help matches stage0 without pretending the
-;; command works yet.
+;; CLI presents the same help surface as the published stage0 driver.
 (define (cli-help-text) : String
   "typelisp — A typed Lisp/Scheme dialect with x86_64 backend
 
@@ -122,11 +125,10 @@ Options for doc:
     ;; parse are reached via their canonical `debug` forms (no top-level aliases).
     [(string-eq command "compile") (compile-cli-run count)]
     [(string-eq command "debug") (compile-cli-run count)]
-    ;; Listed in the help for stage0 parity; wiring tracked under #1638.
-    [(string-eq command "lsp") (cli-pending "lsp" "#1640")]
-    [(string-eq command "repl") (cli-pending "repl" "#1641")]
-    [(string-eq command "new") (cli-pending "new" "#1642")]
-    [(string-eq command "init") (cli-pending "init" "#1642")]
+    [(string-eq command "lsp") (lsp-frame-run-from 2 count)]
+    [(string-eq command "repl") (repl-run-from 2 count)]
+    [(string-eq command "new") (scaffold-new-run-from 2 count)]
+    [(string-eq command "init") (scaffold-init-run-from 2 count)]
     [else
       (begin
         (print-error (string-append "typelisp: unknown subcommand " command))

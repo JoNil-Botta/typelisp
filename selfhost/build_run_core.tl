@@ -34,6 +34,10 @@
   (search-dirs ProcessStringList)
   (raw-args ProcessStringList))
 
+(defenum ResultSourceToolLinkInputs
+  (OkSourceToolLinkInputs SourceToolLinkInputs)
+  (ErrSourceToolLinkInputs String))
+
 (define (source-tool-cat3 [a : String] [b : String] [c : String]) : String
   (string-append a (string-append b c)))
 
@@ -158,6 +162,188 @@
     (source-tool-args-append
       (source-tool-link-inputs-raw-args inputs)
       arg-value)))
+
+(define (source-tool-string-list-contains?
+  [items : ProcessStringList]
+  [value : String]) : bool
+  (match items
+    [(ProcessStringNil) false]
+    [(ProcessStringCons head rest)
+      (or (string-eq head value) (source-tool-string-list-contains? rest value))]))
+
+(define (source-tool-args-append-unique
+  [items : ProcessStringList]
+  [value : String]) : ProcessStringList
+  (if (source-tool-string-list-contains? items value)
+    items
+    (source-tool-args-append items value)))
+
+(define (source-tool-string-list-merge-unique
+  [left : ProcessStringList]
+  [right : ProcessStringList]) : ProcessStringList
+  (match right
+    [(ProcessStringNil) left]
+    [(ProcessStringCons head rest)
+      (source-tool-string-list-merge-unique
+        (source-tool-args-append-unique left head)
+        rest)]))
+
+(define (source-tool-string-list-eq?
+  [left : ProcessStringList]
+  [right : ProcessStringList]) : bool
+  (match left
+    [(ProcessStringNil)
+      (match right
+        [(ProcessStringNil) true]
+        [_ false])]
+    [(ProcessStringCons left-head left-rest)
+      (match right
+        [(ProcessStringCons right-head right-rest)
+          (and
+            (string-eq left-head right-head)
+            (source-tool-string-list-eq? left-rest right-rest))]
+        [_ false])]))
+
+(define (source-tool-link-inputs-merge
+  [left : SourceToolLinkInputs]
+  [right : SourceToolLinkInputs]) : SourceToolLinkInputs
+  (SourceToolLinkInputs
+    (source-tool-string-list-merge-unique
+      (source-tool-link-inputs-libs left)
+      (source-tool-link-inputs-libs right))
+    (source-tool-string-list-merge-unique
+      (source-tool-link-inputs-search-dirs left)
+      (source-tool-link-inputs-search-dirs right))
+    (source-tool-string-list-merge-unique
+      (source-tool-link-inputs-raw-args left)
+      (source-tool-link-inputs-raw-args right))))
+
+(define (source-tool-link-inputs-add-ast
+  [inputs : SourceToolLinkInputs]
+  [item : AstExternLinkInput]) : SourceToolLinkInputs
+  (match item
+    [(AstExternLinkLib name)
+      (SourceToolLinkInputs
+        (source-tool-args-append-unique
+          (source-tool-link-inputs-libs inputs)
+          name)
+        (source-tool-link-inputs-search-dirs inputs)
+        (source-tool-link-inputs-raw-args inputs))]
+    [(AstExternLinkSearch dir)
+      (SourceToolLinkInputs
+        (source-tool-link-inputs-libs inputs)
+        (source-tool-args-append-unique
+          (source-tool-link-inputs-search-dirs inputs)
+          dir)
+        (source-tool-link-inputs-raw-args inputs))]
+    [(AstExternLinkArg arg-value)
+      (SourceToolLinkInputs
+        (source-tool-link-inputs-libs inputs)
+        (source-tool-link-inputs-search-dirs inputs)
+        (source-tool-args-append-unique
+          (source-tool-link-inputs-raw-args inputs)
+          arg-value))]))
+
+(define (source-tool-link-inputs-add-ast-list
+  [inputs : SourceToolLinkInputs]
+  [items : AstExternLinkInputList]) : SourceToolLinkInputs
+  (match items
+    [(AstExternLinkInputNil) inputs]
+    [(AstExternLinkInputCons head rest)
+      (source-tool-link-inputs-add-ast-list
+        (source-tool-link-inputs-add-ast inputs head)
+        rest)]))
+
+(define (source-tool-link-inputs-eq?
+  [left : SourceToolLinkInputs]
+  [right : SourceToolLinkInputs]) : bool
+  (and
+    (source-tool-string-list-eq?
+      (source-tool-link-inputs-libs left)
+      (source-tool-link-inputs-libs right))
+    (and
+      (source-tool-string-list-eq?
+        (source-tool-link-inputs-search-dirs left)
+        (source-tool-link-inputs-search-dirs right))
+      (source-tool-string-list-eq?
+        (source-tool-link-inputs-raw-args left)
+        (source-tool-link-inputs-raw-args right)))))
+
+(define (source-tool-link-inputs-dedupe-smoke-ok?) : bool
+  (let
+    [metadata-items : AstExternLinkInputList
+      (AstExternLinkInputCons
+        (AstExternLinkLib "m")
+        (AstExternLinkInputCons
+          (AstExternLinkLib "m")
+          (AstExternLinkInputCons
+            (AstExternLinkSearch "native")
+            (AstExternLinkInputCons
+              (AstExternLinkArg "-Wl,a")
+              AstExternLinkInputNil))))]
+    [metadata-inputs : SourceToolLinkInputs
+      (source-tool-link-inputs-add-ast-list
+        (source-tool-link-inputs-empty)
+        metadata-items)]
+    [explicit-inputs : SourceToolLinkInputs
+      (source-tool-link-inputs-add-raw-arg
+        (source-tool-link-inputs-add-raw-arg
+          (source-tool-link-inputs-add-search-dir
+            (source-tool-link-inputs-add-search-dir
+              (source-tool-link-inputs-add-lib
+                (source-tool-link-inputs-add-lib
+                  (source-tool-link-inputs-empty)
+                  "m")
+                "z")
+              "native")
+            "cli")
+          "-Wl,a")
+        "-Wl,b")]
+    [expected : SourceToolLinkInputs
+      (SourceToolLinkInputs
+        (process-args-cons "m" (process-args-cons "z" (process-args-empty)))
+        (process-args-cons
+          "native"
+          (process-args-cons "cli" (process-args-empty)))
+        (process-args-cons
+          "-Wl,a"
+          (process-args-cons "-Wl,b" (process-args-empty))))]
+    (source-tool-link-inputs-eq?
+      (source-tool-link-inputs-merge metadata-inputs explicit-inputs)
+      expected)))
+
+(define (source-tool-link-inputs-from-decls
+  [decls : AstDeclList]
+  [inputs : SourceToolLinkInputs]) : SourceToolLinkInputs
+  (match decls
+    [(AstDeclNil) inputs]
+    [(AstDeclCons decl rest)
+      (match decl
+        [(AstDeclExtern _ metadata _)
+          (source-tool-link-inputs-from-decls
+            rest
+            (source-tool-link-inputs-add-ast-list
+              inputs
+              (ast-extern-metadata-link-inputs metadata)))]
+        [_ (source-tool-link-inputs-from-decls rest inputs)])]))
+
+(define (source-tool-link-inputs-for-source
+  [source : String]
+  [stdlib-roots : CompilerLoadRootList]
+  [explicit-inputs : SourceToolLinkInputs]) : ResultSourceToolLinkInputs
+  (match (compiler-load-file-with-paths-and-roots
+    source
+    (sym-i64-empty)
+    stdlib-roots)
+    [(OkCompilerLoadWithPaths decls _ _ _)
+      (OkSourceToolLinkInputs
+        (source-tool-link-inputs-merge
+          (source-tool-link-inputs-from-decls
+            decls
+            (source-tool-link-inputs-empty))
+          explicit-inputs))]
+    [(ErrCompilerLoadWithPaths diag)
+      (ErrSourceToolLinkInputs (compiler-diagnostic-render diag))]))
 
 (define (source-tool-path-separator? [c : char]) : bool
   (or (= c #/') (= c #\\')))
@@ -803,29 +989,24 @@ _tl_print_string:
       (if has-output
         output
         (source-tool-default-output source target))]
-    (match (source-tool-emit-assembly source target stdlib-roots opt-level)
-      [(ErrSourceToolString message)
+    (match (source-tool-link-inputs-for-source source stdlib-roots link-inputs)
+      [(ErrSourceToolLinkInputs message)
         (begin
           (print-error message)
           (source-tool-clean-temp temp-dir asm-path obj-path bin-path false)
           1)]
-      [(OkSourceToolString asm)
-        (match (source-tool-write-file
-          asm-path
-          asm
-          "build: failed to write assembly artifact")
-          [(SourceToolCommandErr message)
+      [(OkSourceToolLinkInputs effective-link-inputs)
+        (match (source-tool-emit-assembly source target stdlib-roots opt-level)
+          [(ErrSourceToolString message)
             (begin
               (print-error message)
               (source-tool-clean-temp temp-dir asm-path obj-path bin-path false)
               1)]
-          [(SourceToolCommandOk)
-            (match (source-tool-assemble-and-link
-              target
+          [(OkSourceToolString asm)
+            (match (source-tool-write-file
               asm-path
-              obj-path
-              bin-path
-              link-inputs)
+              asm
+              "build: failed to write assembly artifact")
               [(SourceToolCommandErr message)
                 (begin
                   (print-error message)
@@ -837,16 +1018,35 @@ _tl_print_string:
                     false)
                   1)]
               [(SourceToolCommandOk)
-                (begin
-                  (print-string
-                    (string-append "Generated: " (string-append bin-path "\n")))
-                  (source-tool-clean-temp
-                    temp-dir
-                    asm-path
-                    obj-path
-                    bin-path
-                    false)
-                  0)])])])))
+                (match (source-tool-assemble-and-link
+                  target
+                  asm-path
+                  obj-path
+                  bin-path
+                  effective-link-inputs)
+                  [(SourceToolCommandErr message)
+                    (begin
+                      (print-error message)
+                      (source-tool-clean-temp
+                        temp-dir
+                        asm-path
+                        obj-path
+                        bin-path
+                        false)
+                      1)]
+                  [(SourceToolCommandOk)
+                    (begin
+                      (print-string
+                        (string-append
+                          "Generated: "
+                          (string-append bin-path "\n")))
+                      (source-tool-clean-temp
+                        temp-dir
+                        asm-path
+                        obj-path
+                        bin-path
+                        false)
+                      0)])])])])))
 
 (define (source-tool-build-source
   [source : String]
@@ -894,29 +1094,24 @@ _tl_print_string:
     [asm-path : String (source-tool-asm-path temp-dir source)]
     [obj-path : String (source-tool-obj-path temp-dir source target)]
     [bin-path : String (source-tool-temp-bin-path temp-dir source target)]
-    (match (source-tool-emit-assembly source target stdlib-roots opt-level)
-      [(ErrSourceToolString message)
+    (match (source-tool-link-inputs-for-source source stdlib-roots link-inputs)
+      [(ErrSourceToolLinkInputs message)
         (begin
           (print-error message)
           (source-tool-clean-temp temp-dir asm-path obj-path bin-path true)
           1)]
-      [(OkSourceToolString asm)
-        (match (source-tool-write-file
-          asm-path
-          asm
-          "run: failed to write assembly artifact")
-          [(SourceToolCommandErr message)
+      [(OkSourceToolLinkInputs effective-link-inputs)
+        (match (source-tool-emit-assembly source target stdlib-roots opt-level)
+          [(ErrSourceToolString message)
             (begin
               (print-error message)
               (source-tool-clean-temp temp-dir asm-path obj-path bin-path true)
               1)]
-          [(SourceToolCommandOk)
-            (match (source-tool-assemble-and-link
-              target
+          [(OkSourceToolString asm)
+            (match (source-tool-write-file
               asm-path
-              obj-path
-              bin-path
-              link-inputs)
+              asm
+              "run: failed to write assembly artifact")
               [(SourceToolCommandErr message)
                 (begin
                   (print-error message)
@@ -928,38 +1123,60 @@ _tl_print_string:
                     true)
                   1)]
               [(SourceToolCommandOk)
-                (match (source-tool-run-executable bin-path target runtime-args)
-                  [(OkProcessOutput output)
-                    (let
-                      [status : i64 (process-output-status output)]
-                      (begin
-                        (source-tool-forward-output output)
-                        (source-tool-clean-temp
-                          temp-dir
-                          asm-path
-                          obj-path
-                          bin-path
-                          true)
-                        status))]
-                  [(ErrProcessOutput error)
+                (match (source-tool-assemble-and-link
+                  target
+                  asm-path
+                  obj-path
+                  bin-path
+                  effective-link-inputs)
+                  [(SourceToolCommandErr message)
                     (begin
-                      (print-error
-                        (string-append
-                          (string-append
-                            "Error: failed to run executable '"
-                            bin-path)
-                          (string-append
-                            (string-append
-                              "' for target "
-                              (source-tool-target-name target))
-                            (string-append ": " (process-error-message error)))))
+                      (print-error message)
                       (source-tool-clean-temp
                         temp-dir
                         asm-path
                         obj-path
                         bin-path
                         true)
-                      1)])])])])))
+                      1)]
+                  [(SourceToolCommandOk)
+                    (match (source-tool-run-executable
+                      bin-path
+                      target
+                      runtime-args)
+                      [(OkProcessOutput output)
+                        (let
+                          [status : i64 (process-output-status output)]
+                          (begin
+                            (source-tool-forward-output output)
+                            (source-tool-clean-temp
+                              temp-dir
+                              asm-path
+                              obj-path
+                              bin-path
+                              true)
+                            status))]
+                      [(ErrProcessOutput error)
+                        (begin
+                          (print-error
+                            (string-append
+                              (string-append
+                                "Error: failed to run executable '"
+                                bin-path)
+                              (string-append
+                                (string-append
+                                  "' for target "
+                                  (source-tool-target-name target))
+                                (string-append
+                                  ": "
+                                  (process-error-message error)))))
+                          (source-tool-clean-temp
+                            temp-dir
+                            asm-path
+                            obj-path
+                            bin-path
+                            true)
+                          1)])])])])])))
 
 (define (source-tool-run-source
   [source : String]

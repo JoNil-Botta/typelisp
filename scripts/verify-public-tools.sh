@@ -997,7 +997,10 @@ EOF
     CTOR_SOURCE="$SELFHOST_PLANNER_DIR/with space/ctor file.tl"
     cat > "$CTOR_SOURCE" <<'EOF'
 (extern ffi_ctor_value : (-> i64))
-(define (main) : i64 (ffi_ctor_value))
+(define (main) : i64
+  (if (string-eq (int->string (ffi_ctor_value)) "42")
+    (ffi_ctor_value)
+    1))
 EOF
     run_cmd selfhost-run-tool-link-ctor "$SELFHOST_PLANNER_DIR/run-tool" --direct "$CTOR_SOURCE" --target linux-x86_64 --backend-mode scalar --link-search "$LINK_LIB_DIR" --link-lib ffi_ctor
     assert_code 42

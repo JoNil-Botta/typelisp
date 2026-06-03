@@ -798,12 +798,14 @@ _tl_print_string:
           "CC"
           (source-tool-resolve-command "cc")))
       (process-args-cons
-        obj-path
+        "-no-pie"
         (process-args-cons
-          "-o"
+          obj-path
           (process-args-cons
-            bin-path
-            (source-tool-link-inputs-linux-args link-inputs)))))))
+            "-o"
+            (process-args-cons
+              bin-path
+              (source-tool-link-inputs-linux-args link-inputs))))))))
 
 (define (source-tool-windows-link-libs) : ProcessStringList
   (process-args-cons

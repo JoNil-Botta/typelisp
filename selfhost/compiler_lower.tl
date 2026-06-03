@@ -20,6 +20,10 @@
   (LowerNameNil)
   (LowerNameBind String String LowerNameEnv))
 
+(defstruct LowerNameCache
+  (ids StringI64Map)
+  (values (Array String)))
+
 (defenum LowerStringSet
   (LowerStringNil)
   (LowerStringCons String LowerStringSet))
@@ -56,7 +60,7 @@
     CompilerIrFunctionList
     String
     CompilerSourceSpans
-    LowerNameEnv
+    LowerNameCache
     CompilerLowerMode))
 
 (defenum LowerMaybeArrayVar
@@ -275,6 +279,58 @@
     [(TcSomeString logical) logical]
     [(TcNoString) source-name]))
 
+(define (lower-name-env-count [names : LowerNameEnv]) : i64
+  (match names
+    [(LowerNameNil) 0]
+    [(LowerNameBind _ _ rest) (+ 1 (lower-name-env-count rest))]))
+
+(define (lower-name-cache-capacity [count : i64]) : i64
+  (if (< count 4) 8 (* count 2)))
+
+(define (lower-name-cache-add
+  [cache : LowerNameCache]
+  [source-name : String]
+  [logical-name : String]) : LowerNameCache
+  (let
+    [ids : StringI64Map (struct-get cache ids)]
+    [values : (Array String) (struct-get cache values)]
+    (match (string-i64-map-get ids source-name)
+      [(StringI64MapFound _) cache]
+      [(StringI64MapMissing)
+        (let
+          [next : i64 (string-i64-map-len ids)]
+          (begin
+            (array-set! values next logical-name)
+            (LowerNameCache
+              (string-i64-map-put ids source-name next)
+              values)))])))
+
+(define (lower-name-cache-from-env-into
+  [names : LowerNameEnv]
+  [cache : LowerNameCache]) : LowerNameCache
+  (match names
+    [(LowerNameNil) cache]
+    [(LowerNameBind source logical rest)
+      (lower-name-cache-from-env-into
+        rest
+        (lower-name-cache-add cache source logical))]))
+
+(define (lower-name-cache-from-env [names : LowerNameEnv]) : LowerNameCache
+  (let
+    [count : i64 (lower-name-env-count names)]
+    (lower-name-cache-from-env-into
+      names
+      (LowerNameCache
+        (string-i64-map-with-capacity (lower-name-cache-capacity count))
+        (make-array String count)))))
+
+(define (lower-name-cache-resolve
+  [cache : LowerNameCache]
+  [source-name : String]) : String
+  (match (string-i64-map-get (struct-get cache ids) source-name)
+    [(StringI64MapFound index) (array-ref (struct-get cache values) index)]
+    [(StringI64MapMissing) source-name]))
+
 (define (lower-name-env-add-alias-if-free
   [names : LowerNameEnv]
   [source-name : String]
@@ -296,7 +352,7 @@
       names)))
 
 (define (lower-resolve-name [state : LowerState] [source-name : String]) : String
-  (lower-name-env-resolve (lower-state-names state) source-name))
+  (lower-name-cache-resolve (lower-state-names state) source-name))
 
 (define (lower-resolve-call-name
   [state : LowerState]
@@ -1403,7 +1459,7 @@
   (match state
     [(LowerState _ _ _ _ _ _ _ _ spans _ _) spans]))
 
-(define (lower-state-names [state : LowerState]) : LowerNameEnv
+(define (lower-state-names [state : LowerState]) : LowerNameCache
   (match state
     [(LowerState _ _ _ _ _ _ _ _ _ names _) names]))
 
@@ -3746,7 +3802,7 @@
   [body : AstExpr]
   [captures : LowerCaptureList]
   [spans : CompilerSourceSpans]
-  [names : LowerNameEnv]
+  [names : LowerNameCache]
   [mode : CompilerLowerMode]) : ResultLowerFunction
   (if (or
     (lower-param-list-contains-unsupported-reference? ctx params)
@@ -12726,7 +12782,7 @@
   [ret : AstType]
   [body : AstExpr]
   [spans : CompilerSourceSpans]
-  [names : LowerNameEnv]
+  [names : LowerNameCache]
   [mode : CompilerLowerMode]) : ResultLowerFunction
   (if (or
     (lower-param-list-contains-unsupported-reference? ctx params)
@@ -12775,14 +12831,14 @@
               (lower-state-spans final-state))]
           [(ErrLowerState message) (ErrLowerFunction message)])))))
 
-(define (lower-global-value [names : LowerNameEnv] [expr : AstExpr]) : ResultLowerValue
+(define (lower-global-value [names : LowerNameCache] [expr : AstExpr]) : ResultLowerValue
   (match expr
     [(AstExprSpanned inner _) (lower-global-value names inner)]
     [(AstExprAnn inner _) (lower-global-value names inner)]
     [(AstExprCast inner _) (lower-global-value names inner)]
     [(AstExprLiteral lit) (OkLowerValue (lower-literal-value lit))]
     [(AstExprVar name)
-      (OkLowerValue (IrValueGlobal (lower-name-env-resolve names name)))]
+      (OkLowerValue (IrValueGlobal (lower-name-cache-resolve names name)))]
     [_
       (ErrLowerValue (lower-diagnostic "lower: unsupported global initializer"))]))
 
@@ -12824,7 +12880,7 @@
   [ret : AstType]
   [body : AstExpr]
   [spans : CompilerSourceSpans]
-  [names : LowerNameEnv]
+  [names : LowerNameCache]
   [mode : CompilerLowerMode]) : ResultLowerFunction
   (let
     [enclosing : i64 (arena-current)]
@@ -12883,6 +12939,7 @@
     externs
     spans
     names
+    (lower-name-cache-from-env names)
     mode
     ""))
 
@@ -12895,6 +12952,7 @@
   [externs : CompilerIrExternList]
   [spans : CompilerSourceSpans]
   [names : LowerNameEnv]
+  [name-cache : LowerNameCache]
   [mode : CompilerLowerMode]
   [module : String]) : ResultLowerDecls
   (match decls
@@ -12909,8 +12967,6 @@
         [(AstDeclDef name _ expr)
           (let
             [decl-ctx : TcContext (tc-context-with-module ctx module)]
-            [local-names : LowerNameEnv
-              (lower-module-local-names ctx names module)]
             (match (tc-module-local-env ctx top-env module)
               [(OkTcEnv local-top-env)
                 (match (tc-top-decl-type-with-env decl-ctx local-top-env decl)
@@ -12919,7 +12975,7 @@
                       [global-ty : AstType (tc-type-without-regions ty)]
                       [global-name : String
                         (lower-current-decl-logical-name names module name)]
-                      (match (lower-global-value local-names expr)
+                      (match (lower-global-value name-cache expr)
                         [(OkLowerValue value)
                           (lower-decls-in-module
                             ctx
@@ -12932,6 +12988,7 @@
                             externs
                             spans
                             names
+                            name-cache
                             mode
                             module)]
                         ;; A global whose initializer is not a compile-time
@@ -12951,7 +13008,7 @@
                             global-ty
                             expr
                             spans
-                            local-names
+                            name-cache
                             mode)
                             [(OkLowerFunction init-funcs init-spans)
                               (lower-decls-in-module
@@ -12967,6 +13024,7 @@
                                 externs
                                 init-spans
                                 names
+                                name-cache
                                 mode
                                 module)]
                             [(ErrLowerFunction init-message)
@@ -12997,13 +13055,12 @@
                   externs)
                 spans
                 names
+                name-cache
                 mode
                 module)))]
         [(AstDeclDefFn name params ret body)
           (let
             [decl-ctx : TcContext (tc-context-with-module ctx module)]
-            [local-names : LowerNameEnv
-              (lower-module-local-names ctx names module)]
             (match (tc-module-local-env ctx top-env module)
               [(OkTcEnv local-top-env)
                 (match (lower-function-escaping
@@ -13014,7 +13071,7 @@
                   ret
                   body
                   spans
-                  local-names
+                  name-cache
                   mode)
                   [(OkLowerFunction lowered-functions function-spans)
                     (lower-decls-in-module
@@ -13026,6 +13083,7 @@
                       externs
                       function-spans
                       names
+                      name-cache
                       mode
                       module)]
                   [(ErrLowerFunction message) (ErrLowerDecls message)])]
@@ -13040,6 +13098,7 @@
             externs
             spans
             names
+            name-cache
             mode
             module)]
         [(AstDeclImport _)
@@ -13052,6 +13111,7 @@
             externs
             spans
             names
+            name-cache
             mode
             module)]
         [(AstDeclExport _)
@@ -13064,20 +13124,25 @@
             externs
             spans
             names
+            name-cache
             mode
             module)]
         [(AstDeclModule next-module)
-          (lower-decls-in-module
-            ctx
-            top-env
-            rest
-            globals
-            functions
-            externs
-            spans
-            names
-            mode
-            next-module)]
+          (let
+            [local-names : LowerNameEnv
+              (lower-module-local-names ctx names next-module)]
+            (lower-decls-in-module
+              ctx
+              top-env
+              rest
+              globals
+              functions
+              externs
+              spans
+              names
+              (lower-name-cache-from-env local-names)
+              mode
+              next-module))]
         [(AstDeclTest _ _ _)
           (lower-decls-in-module
             ctx
@@ -13088,6 +13153,7 @@
             externs
             spans
             names
+            name-cache
             mode
             module)]
         [(AstDeclDefEnum name variants)
@@ -13104,6 +13170,7 @@
             externs
             spans
             names
+            name-cache
             mode
             module)]
         [(AstDeclDefStruct _ _ _ _)
@@ -13116,6 +13183,7 @@
             externs
             spans
             names
+            name-cache
             mode
             module)]
         [(AstDeclComptimeDecl _)
@@ -13128,6 +13196,7 @@
             externs
             spans
             names
+            name-cache
             mode
             module)])]))
 

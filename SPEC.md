@@ -2268,6 +2268,20 @@ not perform a reset; the semantics match minus reclamation. The form still
 prevents escapes, so programs compile and run identically, but allocations
 accumulate in the process-lifetime arena instead of being reclaimed.
 
+**First-class arena escape:** `(with-escape arena-expr body ...)` is a
+separate scoped form for first-class scratch arenas. `arena-expr` must
+typecheck as `i64` and evaluates to an arena handle such as one created by
+`arena-make`; it is not a lexical region binder and does not conflict with
+`with-arena`.
+
+The body is a non-empty expression sequence evaluated with that arena as the
+active allocation target. On exit, the result is deep-cloned into the enclosing
+active arena, the scratch arena is rewound to its entry mark, and the active
+arena is restored. This cleanup/restore sequence is emitted for both scalar and
+heap results. Typechecking returns the body result type with source-region tags
+stripped, matching the clone semantics of moving the result back to the
+enclosing arena.
+
 ### 5.17 Comptime type reflection (specified, selfhost v1 implemented)
 
 Type reflection is the compile-time-only surface that lets generators inspect
@@ -2982,6 +2996,29 @@ tag, not the inner one).
 On non-Linux targets `with-arena` still type-checks and scopes but does not
 reclaim, matching the semantic contract minus the reset.
 
+#### First-class scratch arena escape - `with-escape`
+
+Compiler internals and long-running tools may allocate a first-class scratch
+arena with `arena-make`, switch to it for transient work, and then keep only a
+deep-cloned result. The safe source form for this pattern is:
+
+```lisp test=ignore name=with-escape-example reason="depends on first-class arena runtime support"
+(define (build-message) : String
+  (let
+    [scratch : i64 (arena-make)]
+    (with-escape scratch
+      (string-append "answer " (int->string 42)))))
+```
+
+`with-escape` evaluates the arena expression in the current arena, records the
+enclosing active arena, switches to the scratch arena, marks it, evaluates the
+body, switches back to the enclosing arena, deep-clones the body result, rewinds
+the scratch arena to the entry mark, and restores the enclosing active arena.
+This lowers to the same `arena-current` / `arena-set!` / `arena-mark` /
+`clone` / `arena-rewind` sequence that hand-written escape sites used before.
+The form is intended for first-class scratch arenas; lexical region cleanup
+remains the job of `with-arena`.
+
 #### Scoped non-memory resources (reserved) - `with`
 
 The reserved `(with ([name init cleanup] ...) body ...)` form (§5.19) is the
@@ -3635,6 +3672,7 @@ expr          ::= literal
                 | "(" "spmd-reduce" reduce-op foreach-clause expr expr ")"
                 | "(" "lambda" "(" param* ")" [":" type] expr ")"
                 | "(" "with-arena" ident expr+ ")"
+                | "(" "with-escape" expr expr+ ")"
                 | "(" "with" "(" resource-binding* ")" expr+ ")"
                 | borrow-expr                 ; specified, not implemented
                 | "(" "unsafe" expr+ ")"

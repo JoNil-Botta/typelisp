@@ -1685,6 +1685,10 @@
         [(ErrTcUnit message) (ErrTcUnit message)])]
     [(AstExprStructGet receiver _) (tc-source-expr-policy-ok ctx receiver)]
     [(AstExprWithRegion _ body) (tc-source-expr-list-policy-ok ctx body)]
+    [(AstExprWithEscape scratch body)
+      (match (tc-source-expr-policy-ok ctx scratch)
+        [(OkTcUnit) (tc-source-expr-list-policy-ok ctx body)]
+        [(ErrTcUnit message) (ErrTcUnit message)])]
     [(AstExprWithResource bindings body)
       (match (tc-source-resource-binding-list-policy-ok ctx bindings)
         [(OkTcUnit) (tc-source-expr-list-policy-ok ctx body)]
@@ -4489,6 +4493,8 @@
         [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)])]
     [(AstExprWithRegion region body)
       (tc-spmd-begin-list ctx (tc-push-region env region) spmd-env body)]
+    [(AstExprWithEscape _ _)
+      (ErrTcSpmdExprInfo "typecheck: with-escape inside spmd is not supported")]
     [(AstExprWithResource _ _)
       (ErrTcSpmdExprInfo
         "typecheck: resource with is not implemented yet (#907)")]
@@ -4800,6 +4806,10 @@
     [(AstExprStructGet receiver _)
       (tc-expr-uses-free-name? receiver name bound)]
     [(AstExprWithRegion _ body) (tc-expr-list-uses-free-name? body name bound)]
+    [(AstExprWithEscape scratch body)
+      (or
+        (tc-expr-uses-free-name? scratch name bound)
+        (tc-expr-list-uses-free-name? body name bound))]
     [(AstExprWithResource bindings body)
       (or
         (tc-resource-binding-list-uses-free-name? bindings name bound)
@@ -4918,6 +4928,8 @@
     [(AstExprBoxGet inner)
       (tc-expr-result-uses-cleanup-owner? inner owners bound)]
     [(AstExprWithRegion _ body)
+      (tc-expr-list-result-uses-cleanup-owner? body owners bound)]
+    [(AstExprWithEscape _ body)
       (tc-expr-list-result-uses-cleanup-owner? body owners bound)]
     [(AstExprWithResource bindings body)
       (tc-expr-list-result-uses-cleanup-owner?
@@ -6652,6 +6664,20 @@
     [(AstExprQuasiquote inner) (tc-quasiquote-template-ok ctx env inner)]
     [_ OkTcUnit]))
 
+(define (tc-with-escape-expr
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [scratch : AstExpr]
+  [body : AstExprList]) : ResultTcType
+  (match (tc-expr ctx env scratch)
+    [(OkTcType scratch-ty)
+      (if (tc-type-eq scratch-ty (AstTyI64))
+        (match (tc-begin-list ctx env body)
+          [(OkTcType body-ty) (OkTcType (tc-type-without-regions body-ty))]
+          [(ErrTcType message) (ErrTcType message)])
+        (ErrTcType "typecheck: with-escape arena must be i64"))]
+    [(ErrTcType message) (ErrTcType message)]))
+
 (define (tc-expr [ctx : TcContext] [env : TcTypeEnv] [expr : AstExpr]) : ResultTcType
   (match expr
     [(AstExprSpanned inner _) (tc-expr ctx env inner)]
@@ -7131,6 +7157,8 @@
                   (string-append region "'")))
               (OkTcType body-ty))]
           [(ErrTcType message) (ErrTcType message)]))]
+    [(AstExprWithEscape scratch body)
+      (tc-with-escape-expr ctx env scratch body)]
     [(AstExprWithResource bindings body)
       (match (tc-resource-bindings ctx env bindings)
         [(OkTcEnv body-env)
@@ -7590,6 +7618,10 @@
     [(AstExprStructGet inner _) (tc-move-check-expr ctx env locals moved inner)]
     [(AstExprWithRegion _ exprs)
       (tc-move-check-exprs ctx env locals moved exprs)]
+    [(AstExprWithEscape scratch exprs)
+      (match (tc-move-check-expr ctx env locals moved scratch)
+        [(OkTcMove moved1) (tc-move-check-exprs ctx env locals moved1 exprs)]
+        [(ErrTcMove message) (ErrTcMove message)])]
     [(AstExprWithResource _ exprs)
       (tc-move-check-exprs ctx env locals moved exprs)]
     [(AstExprBox inner) (tc-move-check-expr ctx env locals moved inner)]
@@ -8264,6 +8296,8 @@
 ;; into the enclosing arena before the scratch is freed). The kept top-level type
 ;; environment and the AST both live in the enclosing arena and are only read, so
 ;; nothing dangles. Typecheck verdicts are unchanged (same diagnostics/summary).
+;; TODO(#1688): migrate this hand-rolled arena escape to `with-escape` after the
+;; bootstrapping stage0 parser supports the new form.
 (define (tc-check-decl-escaping
   [ctx : TcContext]
   [top-env : TcTypeEnv]

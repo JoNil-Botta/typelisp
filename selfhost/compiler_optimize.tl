@@ -5553,6 +5553,8 @@
 ;; it into the enclosing arena and rewinding `scratch` for reuse. The enclosing
 ;; arena is captured fresh on entry, so the grown head is never stale across the
 ;; recursion and no overflow arenas leak.
+;; TODO(#1688): once the published stage0 parser carries `with-escape`, rewrite
+;; this hand-rolled switch/clone/rewind sequence as `(with-escape scratch ...)`.
 (define (optimize-function-escaping
   [func : CompilerIrFunction]
   [level : i64]

@@ -998,6 +998,12 @@
       (lower-reach-expr all-functions names state value)]
     [(AstExprWithRegion _ exprs)
       (lower-reach-expr-list all-functions names state exprs)]
+    [(AstExprWithEscape scratch exprs)
+      (lower-reach-expr-list
+        all-functions
+        names
+        (lower-reach-expr all-functions names state scratch)
+        exprs)]
     [(AstExprWithResource bindings body)
       (lower-reach-expr-list
         all-functions
@@ -3763,6 +3769,27 @@
     [(AstTyVar name) (lower-clone-named state env name value ty)]
     [_ (OkLowerExpr (LowerExpr state value ty))]))
 
+(define (lower-clone-value-dispatch
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [value : CompilerIrValue]
+  [ty : AstType]) : ResultLowerExpr
+  (match (tc-resolve-type ctx ty)
+    [(AstTyString)
+      (match (lower-string-fields state value)
+        [(LowerStringFields fields-state ptr len)
+          (lower-substring-bounds-checked
+            fields-state
+            ptr
+            len
+            (IrValueI64 0)
+            len)])]
+    [(AstTyEnum name) (lower-clone-named state env name value ty)]
+    [(AstTyStruct name) (lower-clone-named state env name value ty)]
+    [(AstTyVar name) (lower-clone-named state env name value ty)]
+    [_ (OkLowerExpr (LowerExpr state value ty))]))
+
 (define (lower-clone-call
   [ctx : TcContext]
   [state : LowerState]
@@ -4231,6 +4258,8 @@
     [(AstExprTupleRef tuple-expr index)
       (lower-tuple-ref ctx state env type-env tuple-expr index expr-ty)]
     [(AstExprWithRegion _ body) (lower-with-arena ctx state env type-env body)]
+    [(AstExprWithEscape scratch body)
+      (lower-with-escape ctx state env type-env scratch body)]
     [(AstExprWithResource bindings body)
       (lower-with-resource ctx state env type-env bindings body)]
     [(AstExprBox inner) (lower-box ctx state env type-env inner expr-ty)]
@@ -7779,6 +7808,184 @@
                         body-ty))])])]
           [(ErrLowerExpr message) (ErrLowerExpr message)]))]))
 
+(define (lower-with-escape-final
+  [final-lowered : LowerExpr]
+  [escaped-value : CompilerIrValue]
+  [escaped-ty : AstType]) : ResultLowerExpr
+  (match final-lowered
+    [(LowerExpr final-state _ _)
+      (OkLowerExpr (LowerExpr final-state escaped-value escaped-ty))]))
+
+(define (lower-with-escape-rewind
+  [state : LowerState]
+  [mark-value : CompilerIrValue]
+  [new-enclosing-value : CompilerIrValue]
+  [escaped-value : CompilerIrValue]
+  [escaped-ty : AstType]) : ResultLowerExpr
+  (match (lower-runtime-call-values
+    state
+    "tl_region_reset"
+    (IrValueCons mark-value IrValueNil)
+    (AstTyUnit))
+    [(OkLowerExpr rewind-lowered)
+      (match rewind-lowered
+        [(LowerExpr rewind-state _ _)
+          (match (lower-runtime-call-values
+            rewind-state
+            "tl_arena_set"
+            (IrValueCons new-enclosing-value IrValueNil)
+            (AstTyUnit))
+            [(OkLowerExpr final-lowered)
+              (lower-with-escape-final final-lowered escaped-value escaped-ty)]
+            [(ErrLowerExpr message) (ErrLowerExpr message)])])]
+    [(ErrLowerExpr message) (ErrLowerExpr message)]))
+
+(define (lower-with-escape-cleanup
+  [state : LowerState]
+  [scratch-head-value : CompilerIrValue]
+  [mark-value : CompilerIrValue]
+  [escaped-value : CompilerIrValue]
+  [escaped-ty : AstType]) : ResultLowerExpr
+  (match (lower-runtime-call-values
+    state
+    "tl_arena_current"
+    IrValueNil
+    (AstTyI64))
+    [(OkLowerExpr new-enclosing-lowered)
+      (match new-enclosing-lowered
+        [(LowerExpr new-enclosing-state new-enclosing-value _)
+          (match (lower-runtime-call-values
+            new-enclosing-state
+            "tl_arena_set"
+            (IrValueCons scratch-head-value IrValueNil)
+            (AstTyUnit))
+            [(OkLowerExpr restore-scratch-lowered)
+              (match restore-scratch-lowered
+                [(LowerExpr restore-scratch-state _ _)
+                  (lower-with-escape-rewind
+                    restore-scratch-state
+                    mark-value
+                    new-enclosing-value
+                    escaped-value
+                    escaped-ty)])]
+            [(ErrLowerExpr message) (ErrLowerExpr message)])])]
+    [(ErrLowerExpr message) (ErrLowerExpr message)]))
+
+(define (lower-with-escape-clone
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [scratch-head-value : CompilerIrValue]
+  [mark-value : CompilerIrValue]
+  [body-value : CompilerIrValue]
+  [body-ty : AstType]) : ResultLowerExpr
+  (match (lower-clone-value-dispatch ctx state env body-value body-ty)
+    [(OkLowerExpr escaped-lowered)
+      (match escaped-lowered
+        [(LowerExpr escaped-state escaped-value escaped-ty)
+          (lower-with-escape-cleanup
+            escaped-state
+            scratch-head-value
+            mark-value
+            escaped-value
+            escaped-ty)])]
+    [(ErrLowerExpr message) (ErrLowerExpr message)]))
+
+(define (lower-with-escape-body
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [enclosing-value : CompilerIrValue]
+  [mark-value : CompilerIrValue]
+  [body : AstExprList]) : ResultLowerExpr
+  (match (lower-begin ctx state env type-env body)
+    [(OkLowerExpr body-lowered)
+      (match body-lowered
+        [(LowerExpr body-state body-value body-ty)
+          (match (lower-runtime-call-values
+            body-state
+            "tl_arena_current"
+            IrValueNil
+            (AstTyI64))
+            [(OkLowerExpr scratch-head-lowered)
+              (match scratch-head-lowered
+                [(LowerExpr scratch-head-state scratch-head-value _)
+                  (match (lower-runtime-call-values
+                    scratch-head-state
+                    "tl_arena_set"
+                    (IrValueCons enclosing-value IrValueNil)
+                    (AstTyUnit))
+                    [(OkLowerExpr restore-enclosing-lowered)
+                      (match restore-enclosing-lowered
+                        [(LowerExpr restore-state _ _)
+                          (lower-with-escape-clone
+                            ctx
+                            restore-state
+                            env
+                            scratch-head-value
+                            mark-value
+                            body-value
+                            body-ty)])]
+                    [(ErrLowerExpr message) (ErrLowerExpr message)])])]
+            [(ErrLowerExpr message) (ErrLowerExpr message)])])]
+    [(ErrLowerExpr message) (ErrLowerExpr message)]))
+
+(define (lower-with-escape
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [scratch : AstExpr]
+  [body : AstExprList]) : ResultLowerExpr
+  (match (lower-runtime-call-values
+    state
+    "tl_arena_current"
+    IrValueNil
+    (AstTyI64))
+    [(OkLowerExpr enclosing-lowered)
+      (match enclosing-lowered
+        [(LowerExpr enclosing-state enclosing-value _)
+          (match (lower-expr-expected
+            ctx
+            enclosing-state
+            env
+            type-env
+            scratch
+            (AstTyI64)
+            scratch)
+            [(OkLowerExpr scratch-lowered)
+              (match scratch-lowered
+                [(LowerExpr scratch-state scratch-value _)
+                  (match (lower-runtime-call-values
+                    scratch-state
+                    "tl_arena_set"
+                    (IrValueCons scratch-value IrValueNil)
+                    (AstTyUnit))
+                    [(OkLowerExpr set-scratch-lowered)
+                      (match set-scratch-lowered
+                        [(LowerExpr set-scratch-state _ _)
+                          (match (lower-runtime-call-values
+                            set-scratch-state
+                            "tl_region_mark"
+                            IrValueNil
+                            (AstTyU64))
+                            [(OkLowerExpr mark-lowered)
+                              (match mark-lowered
+                                [(LowerExpr mark-state mark-value _)
+                                  (lower-with-escape-body
+                                    ctx
+                                    mark-state
+                                    env
+                                    type-env
+                                    enclosing-value
+                                    mark-value
+                                    body)])]
+                            [(ErrLowerExpr message) (ErrLowerExpr message)])])]
+                    [(ErrLowerExpr message) (ErrLowerExpr message)])])]
+            [(ErrLowerExpr message) (ErrLowerExpr message)])])]
+    [(ErrLowerExpr message) (ErrLowerExpr message)]))
+
 (define (lower-if-merge
   [else-state : LowerState]
   [then-value : CompilerIrValue]
@@ -9820,6 +10027,8 @@
 ;; monotonically-growing accumulator per function would be O(n^2). `enclosing` is
 ;; captured fresh and `scratch`'s grown head re-read before destroy so nothing
 ;; leaks. Output stays byte-identical (same proof as the optimizer escape).
+;; TODO(#1688): migrate this hand-rolled arena escape to `with-escape` after the
+;; bootstrapping stage0 parser supports the new form.
 (define (lower-function-escaping
   [ctx : TcContext]
   [top-env : TcTypeEnv]
@@ -13062,6 +13271,52 @@
             (> (lower-test-functions-call-count functions "tl_region_reset") 0))])]
     [(ErrCompilerLower _) false]))
 
+(define (compiler-lower-with-escape-scalar-source) : String
+  "(define (main) : i64
+  (let
+    [scratch : i64 (arena-make)]
+    (with-escape scratch 40 42)))")
+
+(define (compiler-lower-with-escape-string-source) : String
+  "(define (main) : String
+  (let
+    [scratch : i64 (arena-make)]
+    (with-escape scratch (int->string 42))))")
+
+(define (compiler-lower-with-escape-arena-shape-ok? [src : String]) : bool
+  (match (lower-compiler-source src)
+    [(OkCompilerLower program _)
+      (match program
+        [(IrProgram _ functions _)
+          (and
+            (>=
+              (lower-test-functions-call-count functions "tl_arena_current")
+              3)
+            (and
+              (>= (lower-test-functions-call-count functions "tl_arena_set") 4)
+              (and
+                (>
+                  (lower-test-functions-call-count functions "tl_region_mark")
+                  0)
+                (>
+                  (lower-test-functions-call-count functions "tl_region_reset")
+                  0))))])]
+    [(ErrCompilerLower _) false]))
+
+(define (compiler-lower-with-escape-shape-ok?) : bool
+  (and
+    (compiler-lower-with-escape-arena-shape-ok?
+      (compiler-lower-with-escape-scalar-source))
+    (match (lower-compiler-source (compiler-lower-with-escape-string-source))
+      [(OkCompilerLower program _)
+        (match program
+          [(IrProgram _ functions _)
+            (and
+              (compiler-lower-with-escape-arena-shape-ok?
+                (compiler-lower-with-escape-string-source))
+              (> (lower-test-functions-call-count functions "tl_substring") 0))])]
+      [(ErrCompilerLower _) false])))
+
 (define (compiler-lower-repr-c-shape-ok?) : bool
   (match (lower-compiler-source (compiler-lower-repr-c-source))
     [(OkCompilerLower program _)
@@ -13674,6 +13929,9 @@
         unit
         (set! ok false))
       (if (compiler-lower-region-shape-ok?)
+        unit
+        (set! ok false))
+      (if (compiler-lower-with-escape-shape-ok?)
         unit
         (set! ok false))
       (if (compiler-lower-repr-c-shape-ok?)

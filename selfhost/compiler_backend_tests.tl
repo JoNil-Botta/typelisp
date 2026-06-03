@@ -1806,6 +1806,8 @@
       false
       false
       false
+      false
+      false
       false)
     IrFunctionNil
     IrExternNil
@@ -2222,15 +2224,15 @@
           (and
             (compiler-backend-string-contains?
               asm
-              "    .extern GetCurrentProcessId\n"))
-          (and
-            (compiler-backend-string-contains? asm "    movq $38, %rax\n")
+              "    .extern GetCurrentProcessId\n")
             (and
-              (not (compiler-backend-string-contains? asm "    syscall"))
-              (not
-                (compiler-backend-string-contains?
-                  asm
-                  "tl_fs_current_dir_status:\n"))))))]
+              (compiler-backend-string-contains? asm "    movq $38, %rax\n")
+              (and
+                (not (compiler-backend-string-contains? asm "    syscall"))
+                (not
+                  (compiler-backend-string-contains?
+                    asm
+                    "tl_fs_current_dir_status:\n")))))))]
     [(ErrCompilerBackend _) false]))
 
 (define (compiler-backend-fs-current-dir-source) : String

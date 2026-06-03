@@ -95,6 +95,8 @@
     bool
     bool
     bool
+    bool
+    bool
     bool))
 
 ;; Backend code-generation target (#646). Linux/System V and Windows x64 are
@@ -8406,7 +8408,7 @@
     [(IrExternNil) false]
     [(IrExternCons item rest)
       (match item
-        [(IrExtern extern-name _ _ link-symbol)
+        [(IrExtern extern-name _ _ link-symbol _)
           (if (string-eq extern-name name)
             true
             (if (string-eq link-symbol name)
@@ -9183,6 +9185,10 @@
           false
           false
           false))]
+    [needs-fs-current-dir : bool
+      (or
+        (or extern-fs-current-dir-status extern-fs-current-dir)
+        (or calls-fs-current-dir-status calls-fs-current-dir))]
     [needs-read-line : bool (or extern-read-line calls-read-line)]
     [needs-read-bytes : bool (or extern-read-bytes calls-read-bytes)]
     [needs-stdin-eof : bool (or extern-stdin-eof calls-stdin-eof)]
@@ -9244,138 +9250,59 @@
           needs-file-exists)
         (or
           (backend-or8
-            extern-fs-mkdir-status
-            extern-fs-remove-file-status
-            extern-fs-remove-dir-status
-            extern-fs-rename-status
-            extern-fs-process-id
-            false
-            false
-            false)
-          (backend-or8
-            calls-fs-mkdir-status
-            calls-fs-remove-file-status
-            calls-fs-remove-dir-status
-            calls-fs-rename-status
-            calls-fs-process-id
-            false
-            false
-            false))]
-      [needs-fs-current-dir : bool
-        (or
-          (or extern-fs-current-dir-status extern-fs-current-dir)
-          (or calls-fs-current-dir-status calls-fs-current-dir))]
-      [needs-read-line : bool (or extern-read-line calls-read-line)]
-      [needs-read-bytes : bool (or extern-read-bytes calls-read-bytes)]
-      [needs-stdin-eof : bool (or extern-stdin-eof calls-stdin-eof)]
-      [needs-flush-stdout : bool (or extern-flush-stdout calls-flush-stdout)]
-      [needs-process-output : bool
-        (and
-          (not defines-process-output)
-          (or extern-process-output calls-process-output))]
-      [needs-region-mark : bool
-        (and
-          (not defines-region-mark)
-          (or extern-region-mark calls-region-mark))]
-      [needs-region-reset : bool
-        (and
-          (not defines-region-reset)
-          (or extern-region-reset calls-region-reset))]
-      [needs-random-system-seed : bool
-        (and
-          (not defines-random-system-seed)
-          (or extern-random-system-seed calls-random-system-seed))]
-      [needs-windows-setup-instances : bool
-        (and
-          (not defines-windows-setup-instances)
-          (or extern-windows-setup-instances calls-windows-setup-instances))]
-      [needs-windows-sdk-registry-install : bool
-        (and
-          (not defines-windows-sdk-registry-install)
-          (or
-            extern-windows-sdk-registry-install
-            calls-windows-sdk-registry-install))]
-      [needs-env-var-exists : bool
-        (and
-          (not defines-env-var-exists)
-          (or extern-env-var-exists calls-env-var-exists))]
-      [needs-env-var-value : bool
-        (and
-          (not defines-env-var-value)
-          (or extern-env-var-value calls-env-var-value))]
-      [needs-env-path-separator : bool
-        (and
-          (not defines-env-path-separator)
-          (or extern-env-path-separator calls-env-path-separator))]
-      [direct-alloc : bool
-        (and (not defines-alloc) (or extern-alloc calls-alloc))]
-      (let
-        [needs-abort : bool
-          (or
-            direct-abort
-            (or
-              needs-arg
-              (or needs-read-file (or needs-write-file needs-file-exists))))]
-        [needs-alloc : bool
-          (or
-            (backend-or8
-              direct-alloc
-              needs-int-to-string
-              needs-substring
-              needs-concat
-              needs-arg
-              needs-read-file
-              needs-write-file
-              needs-file-exists)
-            (or
-              (backend-or8
-                needs-file-handle
-                needs-file-read-chunk
-                needs-fs-runtime
-                needs-fs-current-dir
-                needs-process-output
-                needs-read-line
-                needs-read-bytes
-                needs-random-system-seed)
-              (or
-                needs-windows-setup-instances
-                (backend-or4
-                  needs-windows-sdk-registry-install
-                  needs-env-var-value
-                  needs-env-path-separator
-                  false))))]
-        (OkBackendRuntimePlan
-          (BackendRuntimePlan
-            needs-alloc
-            needs-oob
-            needs-substring
-            needs-concat
-            needs-string-eq
-            needs-string-to-int
-            needs-int-to-string
-            needs-abort
-            needs-print-err
-            needs-print-str
-            needs-arg-count
-            needs-arg
-            needs-read-file
-            needs-write-file
-            needs-file-exists
             needs-file-handle
             needs-file-read-chunk
             needs-fs-runtime
+            needs-fs-current-dir
             needs-process-output
             needs-read-line
             needs-read-bytes
-            needs-random-system-seed
-            needs-windows-setup-instances)
-          (backend-or4
-            needs-windows-sdk-registry-install
-            needs-env-var-value
-            needs-env-path-separator
-            needs-div-abort
-            needs-shift-abort
-            needs-fs-current-dir))))))
+            needs-random-system-seed)
+          (or
+            needs-windows-setup-instances
+            (backend-or4
+              needs-windows-sdk-registry-install
+              needs-env-var-value
+              needs-env-path-separator
+              false))))]
+    (OkBackendRuntimePlan
+      (BackendRuntimePlan
+        needs-alloc
+        needs-oob
+        needs-substring
+        needs-concat
+        needs-string-eq
+        needs-string-to-int
+        needs-int-to-string
+        needs-abort
+        needs-print-err
+        needs-print-str
+        needs-print-char
+        needs-print-f64
+        needs-arg-count
+        needs-arg
+        needs-read-file
+        needs-write-file
+        needs-file-exists
+        needs-file-handle
+        needs-file-read-chunk
+        needs-fs-runtime
+        needs-process-output
+        needs-read-line
+        needs-read-bytes
+        needs-stdin-eof
+        needs-flush-stdout
+        needs-region-mark
+        needs-region-reset
+        needs-random-system-seed
+        needs-windows-setup-instances
+        needs-windows-sdk-registry-install
+        needs-env-var-exists
+        needs-env-var-value
+        needs-env-path-separator
+        needs-div-abort
+        needs-shift-abort
+        needs-fs-current-dir))))
 
 (define (compiler-backend-runtime-plan [program : CompilerIrProgram]) : ResultBackendRuntimePlan
   (match program
@@ -9389,7 +9316,7 @@
     [(IrExternNil) ""]
     [(IrExternCons item rest)
       (match item
-        [(IrExtern name _ _ link-symbol)
+        [(IrExtern name _ _ link-symbol _)
           (if (compiler-backend-plan-provides? plan link-symbol)
             (compiler-backend-emit-externs rest plan)
             (backend-cat4

@@ -3630,7 +3630,7 @@
     [(IrExternNil) AstTypeNil]
     [(IrExternCons item rest)
       (match item
-        [(IrExtern extern-name ty _ _)
+        [(IrExtern extern-name ty _ _ _)
           (if (string-eq extern-name name)
             (match ty
               [(AstTyFunc args _) args]
@@ -3658,7 +3658,7 @@
     [(IrExternNil) (CompilerBackendNoSignature)]
     [(IrExternCons item rest)
       (match item
-        [(IrExtern extern-name ty _ _)
+        [(IrExtern extern-name ty _ _ _)
           (if (string-eq extern-name name)
             (match ty
               [(AstTyFunc args ret-ty)
@@ -8304,7 +8304,7 @@
     [(IrExternNil) false]
     [(IrExternCons item rest)
       (match item
-        [(IrExtern extern-name _ _ _)
+        [(IrExtern extern-name _ _ _ _)
           (if (string-eq extern-name name)
             true
             (compiler-backend-extern-list-references? rest name))])]))
@@ -8316,7 +8316,7 @@
     [(IrExternNil) name]
     [(IrExternCons item rest)
       (match item
-        [(IrExtern extern-name _ _ link-symbol)
+        [(IrExtern extern-name _ _ link-symbol _)
           (if (string-eq extern-name name)
             link-symbol
             (compiler-backend-extern-list-link-symbol rest name))])]))
@@ -9160,7 +9160,7 @@
     [(IrExternNil) ""]
     [(IrExternCons item rest)
       (match item
-        [(IrExtern name _ _ link-symbol)
+        [(IrExtern name _ _ link-symbol _)
           (if (and
             (string-eq name link-symbol)
             (compiler-backend-plan-provides? plan name))

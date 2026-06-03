@@ -1281,7 +1281,7 @@
 (define (compiler-typecheck-extern-abi-source) : String
   "(defenum ResultI64 (OkI64 i64))
 (defstruct Box (value i64))
-(extern foreign-callback (:abi c) (:symbol \"foreign_callback\") : (-> (Ptr i64) (-> i64 i64) ResultI64))
+(extern foreign-callback (:abi c) (:symbol \"foreign_callback\") (:link-lib \"ffi_callback\") (:link-search \"native\") (:link-arg \"-Wl,--whole-archive\") : (-> (Ptr i64) (-> i64 i64) ResultI64))
 (extern foreign-box (:abi c) (:symbol \"foreign_box\") : (-> Box unit))")
 
 (define (compiler-typecheck-extern-abi-tuple-source) : String

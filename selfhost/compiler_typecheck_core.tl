@@ -7254,7 +7254,7 @@
   [metadata : AstExternMetadata]
   [ty : AstType]) : ResultTcUnit
   (match metadata
-    [(AstExternMetadata abi _)
+    [(AstExternMetadata abi _ _)
       (if (ast-extern-abi-c? abi)
         (tc-check-extern-c-abi (tc-resolve-type ctx ty))
         (ErrTcUnit "typecheck: unsupported extern ABI"))]))

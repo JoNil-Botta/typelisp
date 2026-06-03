@@ -135,8 +135,17 @@
 (defenum AstExternAbi
   (AstExternAbiC))
 
+(defenum AstExternLinkInput
+  (AstExternLinkLib String)
+  (AstExternLinkSearch String)
+  (AstExternLinkArg String))
+
+(defenum AstExternLinkInputList
+  (AstExternLinkInputNil)
+  (AstExternLinkInputCons AstExternLinkInput AstExternLinkInputList))
+
 (defenum AstExternMetadata
-  (AstExternMetadata AstExternAbi String))
+  (AstExternMetadata AstExternAbi String AstExternLinkInputList))
 
 (defenum AstStructCleanup
   (AstStructNoCleanup)
@@ -422,16 +431,64 @@
   (match a
     [(AstExternAbiC) (ast-extern-abi-c? b)]))
 
+(define (ast-extern-link-input-eq?
+  [a : AstExternLinkInput]
+  [b : AstExternLinkInput]) : bool
+  (match a
+    [(AstExternLinkLib aname)
+      (match b
+        [(AstExternLinkLib bname) (string-eq aname bname)]
+        [_ false])]
+    [(AstExternLinkSearch adir)
+      (match b
+        [(AstExternLinkSearch bdir) (string-eq adir bdir)]
+        [_ false])]
+    [(AstExternLinkArg aarg)
+      (match b
+        [(AstExternLinkArg barg) (string-eq aarg barg)]
+        [_ false])]))
+
+(define (ast-extern-link-input-list-eq?
+  [a : AstExternLinkInputList]
+  [b : AstExternLinkInputList]) : bool
+  (match a
+    [(AstExternLinkInputNil)
+      (match b
+        [(AstExternLinkInputNil) true]
+        [_ false])]
+    [(AstExternLinkInputCons ahead arest)
+      (match b
+        [(AstExternLinkInputCons bhead brest)
+          (and
+            (ast-extern-link-input-eq? ahead bhead)
+            (ast-extern-link-input-list-eq? arest brest))]
+        [_ false])]))
+
+(define (ast-extern-link-input-list-append
+  [items : AstExternLinkInputList]
+  [item : AstExternLinkInput]) : AstExternLinkInputList
+  (match items
+    [(AstExternLinkInputNil)
+      (AstExternLinkInputCons item AstExternLinkInputNil)]
+    [(AstExternLinkInputCons head rest)
+      (AstExternLinkInputCons
+        head
+        (ast-extern-link-input-list-append rest item))]))
+
 (define (ast-extern-default-metadata [name : String]) : AstExternMetadata
-  (AstExternMetadata (AstExternAbiC) name))
+  (AstExternMetadata (AstExternAbiC) name AstExternLinkInputNil))
 
 (define (ast-extern-metadata-symbol [metadata : AstExternMetadata]) : String
   (match metadata
-    [(AstExternMetadata _ symbol) symbol]))
+    [(AstExternMetadata _ symbol _) symbol]))
 
 (define (ast-extern-metadata-abi [metadata : AstExternMetadata]) : AstExternAbi
   (match metadata
-    [(AstExternMetadata abi _) abi]))
+    [(AstExternMetadata abi _ _) abi]))
+
+(define (ast-extern-metadata-link-inputs [metadata : AstExternMetadata]) : AstExternLinkInputList
+  (match metadata
+    [(AstExternMetadata _ _ link-inputs) link-inputs]))
 
 (define (ast-struct-cleanup? [cleanup : AstStructCleanup]) : bool
   (match cleanup

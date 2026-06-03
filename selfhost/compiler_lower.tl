@@ -5271,8 +5271,10 @@
 
 (define (lower-call-result-type-fast
   [ctx : TcContext]
+  [env : SymI64Env]
   [type-env : TcTypeEnv]
-  [func : AstExpr]) : ResultTcType
+  [func : AstExpr]
+  [args : AstExprList]) : ResultTcType
   (match (ast-expr-unspan func)
     [(AstExprVar name)
       (match (tc-lookup type-env name)
@@ -5284,8 +5286,63 @@
             [(AstTyEnum _)
               (OkTcType (tc-type-without-regions fn-ty))]
             [_ (ErrTcType "lower: call result type is not fast-pathable")])]
-        [(ErrTcType message) (ErrTcType message)])]
+        [(ErrTcType message)
+          (if (lower-builtin-call-available? ctx env name)
+            (cond
+              [(string-eq name "array-length") (OkTcType (AstTyI64))]
+              [(or (string-eq name "string-ref") (string-eq name "char-at"))
+                (OkTcType (AstTyChar))]
+              [(string-eq name "clone")
+                (match args
+                  [(AstExprCons arg (AstExprNil))
+                    (lower-expr-result-type-fast ctx env type-env arg)]
+                  [_ (ErrTcType "lower: call result type is not fast-pathable")])]
+              [else (ErrTcType message)])
+            (ErrTcType message))])]
     [_ (ErrTcType "lower: call result type is not fast-pathable")]))
+
+(define (lower-binary-result-type-fast
+  [ctx : TcContext]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [op : AstBinOp]
+  [left : AstExpr]) : ResultTcType
+  (match op
+    [(AstBinAnd) (OkTcType (AstTyBool))]
+    [(AstBinOr) (OkTcType (AstTyBool))]
+    [(AstBinEq) (OkTcType (AstTyBool))]
+    [(AstBinNe) (OkTcType (AstTyBool))]
+    [(AstBinLt) (OkTcType (AstTyBool))]
+    [(AstBinLe) (OkTcType (AstTyBool))]
+    [(AstBinGt) (OkTcType (AstTyBool))]
+    [(AstBinGe) (OkTcType (AstTyBool))]
+    [_
+      (match (lower-expr-result-type-fast ctx env type-env left)
+        [(OkTcType left-ty) (OkTcType left-ty)]
+        [(ErrTcType message) (ErrTcType message)])]))
+
+(define (lower-expr-result-type-fast
+  [ctx : TcContext]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [expr : AstExpr]) : ResultTcType
+  (match expr
+    [(AstExprSpanned inner _) (lower-expr-result-type-fast ctx env type-env inner)]
+    [(AstExprLiteral lit) (OkTcType (tc-literal-type lit))]
+    [(AstExprVar name)
+      (match (tc-lookup type-env name)
+        [(OkTcType expr-ty)
+          (OkTcType (tc-type-without-regions expr-ty))]
+        [(ErrTcType message) (ErrTcType message)])]
+    [(AstExprAnn _ ty)
+      (OkTcType (tc-type-without-regions (tc-resolve-type ctx ty)))]
+    [(AstExprCast _ ty)
+      (OkTcType (tc-type-without-regions (tc-resolve-type ctx ty)))]
+    [(AstExprCall func args)
+      (lower-call-result-type-fast ctx env type-env func args)]
+    [(AstExprBinary op left _)
+      (lower-binary-result-type-fast ctx env type-env op left)]
+    [_ (ErrTcType "lower: expression result type is not fast-pathable")]))
 
 (define (lower-expr-typechecked
   [ctx : TcContext]
@@ -5359,8 +5416,21 @@
         expr
         origin
         (tc-type-without-regions (tc-resolve-type ctx ty)))]
-    [(AstExprCall func _)
-      (match (lower-call-result-type-fast ctx type-env func)
+    [(AstExprBinary op left _)
+      (match (lower-binary-result-type-fast ctx env type-env op left)
+        [(OkTcType expr-ty)
+          (lower-expr-with-type
+            ctx
+            state
+            env
+            type-env
+            expr
+            origin
+            expr-ty)]
+        [(ErrTcType _)
+          (lower-expr-typechecked ctx state env type-env expr origin)])]
+    [(AstExprCall func args)
+      (match (lower-call-result-type-fast ctx env type-env func args)
         [(OkTcType expr-ty)
           (lower-expr-with-type
             ctx

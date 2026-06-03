@@ -152,10 +152,8 @@
     [string-score : i64 (string-cycles 12 0)]
     [list-score : i64 (list-cycles 8 0)]
     [rewind-score : i64 (rewind-list-cycles 8)]
-    (if (> string-score 0)
-      (if (= list-score 8)
-        (if (= rewind-score 8)
-          42
-          3)
-        2)
-      1)))
+    (begin
+      (unless (> string-score 0) (return 1))
+      (unless (= list-score 8) (return 2))
+      (unless (= rewind-score 8) (return 3))
+      42)))

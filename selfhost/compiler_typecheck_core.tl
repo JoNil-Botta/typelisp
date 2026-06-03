@@ -368,7 +368,10 @@
       out)))
 
 (define (tc-default-env) : TcTypeEnv
-  (tc-arena-builtins-env (tc-default-env-base)))
+  (tc-bind
+    (tc-arena-builtins-env (tc-default-env-base))
+    (tc-default-boundary-name)
+    (AstTyUnit)))
 
 (define (tc-default-env-base) : TcTypeEnv
   (let
@@ -2132,6 +2135,21 @@
         "typecheck: "
         (string-append name " requires unsafe context")))))
 
+(define (tc-arena-unsafe-primitive? [name : String]) : bool
+  (or
+    (string-eq name "arena-set!")
+    (or (string-eq name "arena-destroy") (string-eq name "arena-rewind"))))
+
+(define (tc-require-arena-call-safe [env : TcTypeEnv] [func : AstExpr]) : ResultTcUnit
+  (match (tc-expr-var-name func)
+    [(TcSomeString name)
+      (if (and
+        (tc-arena-unsafe-primitive? name)
+        (tc-default-builtin-unshadowed? env name))
+        (tc-require-unsafe env name)
+        OkTcUnit)]
+    [(TcNoString) OkTcUnit]))
+
 (define (tc-dyn-array-elem-supported? [ty : AstType]) : bool
   (if (tc-integer-type? ty)
     true
@@ -3199,7 +3217,7 @@
           (tc-default-builtin-unshadowed-scan? rest name)))]))
 
 (define (tc-default-builtin-unshadowed? [env : TcTypeEnv] [name : String]) : bool
-  (if (tc-region-arg-builtin-name? name)
+  (if (or (tc-region-arg-builtin-name? name) (tc-arena-unsafe-primitive? name))
     (tc-default-builtin-unshadowed-scan? env name)
     false))
 
@@ -3402,30 +3420,44 @@
   [env : TcTypeEnv]
   [func : AstExpr]
   [args : AstExprList]) : ResultTcType
-  (match (tc-expr ctx env func)
-    [(OkTcType fn-ty)
-      (match fn-ty
-        [(AstTyFunc params ret)
-          (tc-call-function-type ctx env func args params ret)]
-        [(AstTyRegion _ inner)
-          (match inner
+  (match (tc-require-arena-call-safe env func)
+    [(OkTcUnit)
+      (match (tc-expr ctx env func)
+        [(OkTcType fn-ty)
+          (match fn-ty
             [(AstTyFunc params ret)
-              (match (tc-check-call-args ctx env args params false (AstNoType))
-                [(OkTcUnit) (OkTcType (tc-tag-active-region env ret))]
-                [(ErrTcUnit message) (ErrTcType message)])]
+              (tc-call-function-type ctx env func args params ret)]
+            [(AstTyRegion _ inner)
+              (match inner
+                [(AstTyFunc params ret)
+                  (match (tc-check-call-args
+                    ctx
+                    env
+                    args
+                    params
+                    false
+                    (AstNoType))
+                    [(OkTcUnit) (OkTcType (tc-tag-active-region env ret))]
+                    [(ErrTcUnit message) (ErrTcType message)])]
+                [(AstTyEnum enum-name)
+                  (match args
+                    [(AstExprNil)
+                      (tc-nullary-variant-call-expr
+                        ctx
+                        env
+                        func
+                        enum-name
+                        inner)]
+                    [_ (ErrTcType "typecheck: arity mismatch")])]
+                [_ (ErrTcType "typecheck: call target is not a function")])]
             [(AstTyEnum enum-name)
               (match args
                 [(AstExprNil)
-                  (tc-nullary-variant-call-expr ctx env func enum-name inner)]
+                  (tc-nullary-variant-call-expr ctx env func enum-name fn-ty)]
                 [_ (ErrTcType "typecheck: arity mismatch")])]
             [_ (ErrTcType "typecheck: call target is not a function")])]
-        [(AstTyEnum enum-name)
-          (match args
-            [(AstExprNil)
-              (tc-nullary-variant-call-expr ctx env func enum-name fn-ty)]
-            [_ (ErrTcType "typecheck: arity mismatch")])]
-        [_ (ErrTcType "typecheck: call target is not a function")])]
-    [(ErrTcType message) (ErrTcType message)]))
+        [(ErrTcType message) (ErrTcType message)])]
+    [(ErrTcUnit message) (ErrTcType message)]))
 
 ;; Whether `name` resolves to any binding in `env` (a builtin, a top-level
 ;; user definition, or a local). Used to decide whether an unbound builtin
@@ -7195,7 +7227,14 @@
   (match expr
     [(AstExprSpanned inner _) (tc-expr ctx env inner)]
     [(AstExprLiteral lit) (OkTcType (tc-literal-type lit))]
-    [(AstExprVar name) (tc-lookup env name)]
+    [(AstExprVar name)
+      (if (and
+        (tc-arena-unsafe-primitive? name)
+        (tc-default-builtin-unshadowed? env name))
+        (match (tc-require-unsafe env name)
+          [(OkTcUnit) (tc-lookup env name)]
+          [(ErrTcUnit message) (ErrTcType message)])
+        (tc-lookup env name))]
     [(AstExprTypeLiteral ty)
       (ErrTcType
         (string-append
@@ -8820,24 +8859,23 @@
     (let
       [scratch : i64 (arena-make)]
       (begin
-        (arena-set! scratch)
+        (unsafe (arena-set! scratch))
         (match (tc-check-decl ctx top-env decl)
           [(OkTcUnit)
             (let
               [scratch-head : i64 (arena-current)]
               (begin
-                (arena-set! enclosing)
-                (arena-destroy scratch-head)
+                (unsafe (arena-set! enclosing) (arena-destroy scratch-head))
                 (OkTcUnit)))]
           [(ErrTcUnit message)
             (let
               [scratch-head : i64 (arena-current)]
               (begin
-                (arena-set! enclosing)
+                (unsafe (arena-set! enclosing))
                 (let
                   [escaped : String (clone message)]
                   (begin
-                    (arena-destroy scratch-head)
+                    (unsafe (arena-destroy scratch-head))
                     (ErrTcUnit escaped)))))])))))
 
 (define (tc-check-decls-with-paths-in-module

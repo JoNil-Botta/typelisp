@@ -133,10 +133,11 @@ directory-read statuses get semantic variants; target-specific or unstable
 codes remain available as `IoSystemCode`.
 
 No current stdlib function returns a borrow-typed `str`, mutates a
-caller-provided buffer in place, or manually calls `tl_region_mark` /
-`tl_region_reset`. `str` is specified as an immutable borrowed text referent,
-not a mutable buffer type; those policies should remain explicit when borrowed
-strings, mutable buffers, and unsafe reset APIs are added.
+caller-provided buffer in place, or manually resets arenas. Source-level
+`arena-set!`, `arena-destroy`, and `arena-rewind` require `(unsafe ...)`; safe
+stdlib APIs should prefer `with-arena` for scoped reclamation. `str` is specified
+as an immutable borrowed text referent, not a mutable buffer type; those policies
+should remain explicit when borrowed strings and mutable buffers are added.
 
 ### File-handle API (v1, #1036)
 

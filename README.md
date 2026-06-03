@@ -399,11 +399,12 @@ Scoped cleanup of non-memory resources is separate. The SPEC reserves
 handles, locks, mapped files, and similar resources; it is not implemented yet
 and does not imply destructors, `free`, or arena reset semantics.
 
-Programs that need manual control may still declare low-level extern helpers:
-`tl_region_mark` and `tl_region_reset` snapshot and restore the bump allocator.
-These are unsafe-by-convention — the caller must prove no live handle escapes
-the reset — and are currently emitted only for the Linux x86_64 System V
-target. See [SPEC.md §7.3](SPEC.md) for details.
+Programs that need manual control use the first-class arena helpers. `arena-make`,
+`arena-current`, and `arena-mark` are safe because they only create/read handles
+or record a reset mark. `arena-set!`, `arena-destroy`, and `arena-rewind` require
+`(unsafe ...)`, because switching, freeing, or rewinding arenas can invalidate
+live heap handles. The safe `with-arena` surface remains preferred for scoped
+cleanup. See [SPEC.md §7.3](SPEC.md) for details.
 
 See [SPEC.md](SPEC.md) for the full language reference.
 

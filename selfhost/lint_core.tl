@@ -1,15 +1,11 @@
-;# TypeLisp lint engine + nested-if-ladder rule (#1163).
+;# TypeLisp lint engine + source cleanup rules (#1163, #1177).
 ;#
 ;# A selfhost lint pass: walk the parsed AST, run rules, and collect findings.
-;# This first slice ships the rule engine plus one rule — **deeply-nested `if`
-;# ladders**. An `if` whose else-branch chains into further `if`s beyond a
-;# configurable depth threshold is flagged with a suggestion to use `cond`
-;# (value/guard ladders) or `match` (variant dispatch).
+;# The initial rules flag deeply-nested `if` ladders and body-only nested `let`
+;# forms that can be flattened into one sequential `let`.
 ;#
-;# The `typelisp lint` CLI driver, the multi-rule registry, suppression, and
-;# corpus fixtures are tracked as follow-ups on #1163; this module is the
-;# rule core that those build on. It is verified by `compiler-lint-self-test`
-;# (driver: `selfhost/lint_smoke.tl`).
+;# It is verified by `compiler-lint-self-test` (driver:
+;# `selfhost/lint_smoke.tl`).
 (import "compiler_ast_types.tl")
 
 ;: A single lint finding: a human-readable message, the ladder depth that
@@ -27,13 +23,18 @@
 (define (lint-rule-nested-if-ladder-id) : String
   "nested-if-ladder")
 
+(define (lint-rule-nested-let-id) : String
+  "nested-let")
+
 ;: Rule registry suggestion layer: the structured suggestion text for a rule
 ;: id, independent of the rendered message. A second rule plugs in here without
 ;: touching the public driver. Unknown ids return the empty string.
 (define (lint-rule-suggestion [rule-id : String]) : String
   (if (string-eq rule-id (lint-rule-nested-if-ladder-id))
     "prefer cond (value/guard ladders) or match (variant dispatch)"
-    ""))
+    (if (string-eq rule-id (lint-rule-nested-let-id))
+      "merge the nested let bindings into one sequential let"
+      "")))
 
 ;: Immutable list of findings.
 (defenum LintFindingList
@@ -75,6 +76,13 @@
     depth
     span))
 
+(define (lint-nested-let-finding [span : AstSourceSpan]) : LintFinding
+  (LintFinding
+    "nested let: body is a single let; merge bindings into one sequential let"
+    (lint-rule-nested-let-id)
+    0
+    span))
+
 ;: Walk every expression in `exprs`, accumulating findings.
 (define (lint-walk-expr-list
   [exprs : AstExprList]
@@ -99,6 +107,61 @@
             rest
             threshold
             (lint-walk-expr init threshold acc))])]))
+
+(define (lint-let-bindings-contain-name?
+  [bindings : AstLetBindingList]
+  [name : String]) : bool
+  (match bindings
+    [(AstLetBindingNil) false]
+    [(AstLetBindingCons binding rest)
+      (match binding
+        [(AstLetBinding binding-name _ _)
+          (if (string-eq binding-name name)
+            true
+            (lint-let-bindings-contain-name? rest name))])]))
+
+(define (lint-let-bindings-shadow-outer?
+  [outer : AstLetBindingList]
+  [inner : AstLetBindingList]) : bool
+  (match inner
+    [(AstLetBindingNil) false]
+    [(AstLetBindingCons binding rest)
+      (match binding
+        [(AstLetBinding name _ _)
+          (if (lint-let-bindings-contain-name? outer name)
+            true
+            (lint-let-bindings-shadow-outer? outer rest))])]))
+
+(define (lint-nested-let-body? [body : AstExpr]) : bool
+  (match body
+    [(AstExprSpanned inner _) (lint-nested-let-body? inner)]
+    [(AstExprLet _ _) true]
+    [_ false]))
+
+(define (lint-nested-let-shadows? [outer : AstLetBindingList] [body : AstExpr]) : bool
+  (match body
+    [(AstExprSpanned inner _) (lint-nested-let-shadows? outer inner)]
+    [(AstExprLet inner-bindings _)
+      (lint-let-bindings-shadow-outer? outer inner-bindings)]
+    [_ false]))
+
+(define (lint-walk-let
+  [bindings : AstLetBindingList]
+  [body : AstExpr]
+  [span : AstSourceSpan]
+  [threshold : i64]
+  [acc : LintFindingList]) : LintFindingList
+  (let
+    [next : LintFindingList
+      (if (and
+        (lint-nested-let-body? body)
+        (not (lint-nested-let-shadows? bindings body)))
+        (LintFindingCons (lint-nested-let-finding span) acc)
+        acc)]
+    (lint-walk-expr
+      body
+      threshold
+      (lint-walk-let-bindings bindings threshold next))))
 
 ;: Walk each resource initializer and cleanup expression in `bindings`.
 (define (lint-walk-resource-bindings
@@ -191,6 +254,8 @@
       (match inner
         [(AstExprIf cond then-branch else-branch)
           (lint-walk-if cond then-branch else-branch span threshold acc)]
+        [(AstExprLet bindings body)
+          (lint-walk-let bindings body span threshold acc)]
         [_ (lint-walk-expr inner threshold acc)])]
     [(AstExprLiteral _) acc]
     [(AstExprVar _) acc]
@@ -205,10 +270,7 @@
       ;; gets the sentinel. Maximal-ladder dedup lives in lint-walk-if.
       (lint-walk-if cond then-branch else-branch (lint-no-span) threshold acc)]
     [(AstExprLet bindings body)
-      (lint-walk-expr
-        body
-        threshold
-        (lint-walk-let-bindings bindings threshold acc))]
+      (lint-walk-let bindings body (lint-no-span) threshold acc)]
     [(AstExprLambda _ _ body) (lint-walk-expr body threshold acc)]
     [(AstExprTuple exprs) (lint-walk-expr-list exprs threshold acc)]
     [(AstExprTupleRef tuple _) (lint-walk-expr tuple threshold acc)]
@@ -330,7 +392,26 @@
           (AstLetBinding "y" (AstNoType) ladder3)
           (AstLetBindingNil))
         vx)]
+    [outer-let-bindings : AstLetBindingList
+      (AstLetBindingCons (AstLetBinding "a" (AstNoType) one) (AstLetBindingNil))]
+    [inner-let-bindings : AstLetBindingList
+      (AstLetBindingCons (AstLetBinding "b" (AstNoType) vx) (AstLetBindingNil))]
+    [shadowing-let-bindings : AstLetBindingList
+      (AstLetBindingCons (AstLetBinding "a" (AstNoType) one) (AstLetBindingNil))]
+    [nested-let : AstExpr
+      (AstExprLet outer-let-bindings (AstExprLet inner-let-bindings vx))]
+    [shadowing-nested-let : AstExpr
+      (AstExprLet outer-let-bindings (AstExprLet shadowing-let-bindings vx))]
+    [begin-inner-let : AstExpr
+      (AstExprLet
+        outer-let-bindings
+        (AstExprBegin
+          (AstExprCons
+            (AstExprLet inner-let-bindings vx)
+            (AstExprCons vx (AstExprNil)))))]
     [spanned : AstExpr (AstExprSpanned ladder3 (AstSourceSpan 7 3 9 4))]
+    [spanned-nested-let : AstExpr
+      (AstExprSpanned nested-let (AstSourceSpan 11 5 15 6))]
     (begin
       ;; ladder length math
       (if (= (lint-ladder-length ladder3) 3)
@@ -414,11 +495,57 @@
                 "lint: spanned ladder finding should carry its head start-line")))]
         [(LintFindingNil)
           (panic "lint: spanned ladder should produce a finding")])
+      (if (=
+        (lint-finding-list-count
+          (lint-walk-expr
+            nested-let
+            (lint-default-ladder-threshold)
+            (LintFindingNil)))
+        1)
+        unit
+        (panic "lint: body-only nested let should be flagged once"))
+      (if (=
+        (lint-finding-list-count
+          (lint-walk-expr
+            shadowing-nested-let
+            (lint-default-ladder-threshold)
+            (LintFindingNil)))
+        0)
+        unit
+        (panic "lint: shadowing nested let should not be flagged"))
+      (if (=
+        (lint-finding-list-count
+          (lint-walk-expr
+            begin-inner-let
+            (lint-default-ladder-threshold)
+            (LintFindingNil)))
+        0)
+        unit
+        (panic "lint: let with nontrivial begin body should not be flagged"))
+      (match (lint-walk-expr
+        spanned-nested-let
+        (lint-default-ladder-threshold)
+        (LintFindingNil))
+        [(LintFindingCons finding _)
+          (let
+            [fspan : AstSourceSpan (struct-get finding span)]
+            (if (and
+              (= (struct-get fspan start-line) 11)
+              (string-eq (struct-get finding rule-id) (lint-rule-nested-let-id)))
+              unit
+              (panic "lint: nested-let finding should carry rule id and span")))]
+        [(LintFindingNil)
+          (panic "lint: spanned nested let should produce a finding")])
       (if (string-eq
         (lint-rule-suggestion (lint-rule-nested-if-ladder-id))
         "prefer cond (value/guard ladders) or match (variant dispatch)")
         unit
         (panic "lint: nested-if-ladder suggestion should be registered"))
+      (if (string-eq
+        (lint-rule-suggestion (lint-rule-nested-let-id))
+        "merge the nested let bindings into one sequential let")
+        unit
+        (panic "lint: nested-let suggestion should be registered"))
       (if (string-eq (lint-rule-suggestion "unknown-rule") "")
         unit
         (panic "lint: unknown rule should have no suggestion"))

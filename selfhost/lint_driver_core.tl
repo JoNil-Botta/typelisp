@@ -341,6 +341,39 @@
 (define (selfhost-lint-clean-source) : String
   "(define (inc [x : i64]) : i64 (+ x 1))")
 
+(define (selfhost-lint-nested-let-source) : String
+  "(define (main) : i64
+  (let
+    [a : i64 1]
+    (let
+      [b : i64 (+ a 1)]
+      (+ a b))))")
+
+(define (selfhost-lint-shadowing-nested-let-source) : String
+  "(define (main) : i64
+  (let
+    [a : i64 1]
+    (let
+      [a : i64 2]
+      a)))")
+
+(define (selfhost-lint-begin-inner-let-source) : String
+  "(define (main) : i64
+  (let
+    [a : i64 1]
+    (begin
+      (let [b : i64 (+ a 1)] b)
+      a)))")
+
+(define (selfhost-lint-suppressed-nested-let-source) : String
+  "(define (main) : i64
+  ;; lint-allow: nested-let
+  (let
+    [a : i64 1]
+    (let
+      [b : i64 (+ a 1)]
+      (+ a b))))")
+
 ;; Number of findings reported for `source` (after cond-origin + suppression
 ;; filtering), via the public source-lint path.
 (define (selfhost-lint-source-finding-count [source : String]) : i64
@@ -364,6 +397,16 @@
             (string-eq
               (struct-get finding rule-id)
               (lint-rule-nested-if-ladder-id)))))]
+    [(LintFindingNil) false]))
+
+(define (selfhost-lint-nested-let-finding-ok? [findings : LintFindingList]) : bool
+  (match findings
+    [(LintFindingCons finding _)
+      (let
+        [fspan : AstSourceSpan (struct-get finding span)]
+        (and
+          (> (struct-get fspan start-line) 0)
+          (string-eq (struct-get finding rule-id) (lint-rule-nested-let-id))))]
     [(LintFindingNil) false]))
 
 (define (compiler-lint-driver-self-test) : i64
@@ -397,6 +440,36 @@
             (selfhost-lint-source-finding-count (selfhost-lint-clean-source))
             0))
         5]
+      ;; body-only nested let reports one nested-let finding
+      [(not
+          (selfhost-lint-nested-let-finding-ok?
+            (selfhost-lint-source-with-roots
+              "lint_driver_self_test.tl"
+              (selfhost-lint-nested-let-source)
+              CompilerLoadRootNil)))
+        9]
+      ;; inner let shadowing an outer binding is not semantics-preserving to
+      ;; suggest, so it remains clean.
+      [(not
+          (=
+            (selfhost-lint-source-finding-count
+              (selfhost-lint-shadowing-nested-let-source))
+            0))
+        10]
+      ;; an inner let inside a real begin body is not the body-only pattern.
+      [(not
+          (=
+            (selfhost-lint-source-finding-count
+              (selfhost-lint-begin-inner-let-source))
+            0))
+        11]
+      ;; nested-let findings use the same inline suppression path.
+      [(not
+          (=
+            (selfhost-lint-source-finding-count
+              (selfhost-lint-suppressed-nested-let-source))
+            0))
+        12]
       ;; enforcing (`--check`) mode exits 1 when findings remain, 0 when clean
       [(not (= (selfhost-lint-enforce-exit true 1) 1)) 6]
       [(not (= (selfhost-lint-enforce-exit true 0) 0)) 7]

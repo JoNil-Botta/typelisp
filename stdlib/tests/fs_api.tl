@@ -188,17 +188,108 @@
         (fs-extension ".gitignore")
         ""
         "leading-dot name has no extension")
-      (let
-        [dir-a : String
-          (expect-ok-string
-            (try-create-temp-dir "typelisp fs test")
-            "create temp dir a: ")]
-        [dir-b : String
-          (expect-ok-string
-            (try-create-temp-dir "typelisp fs test")
-            "create temp dir b: ")]
-        [file-a : String (fs-path-join dir-a "artifact with space.s")]
-        [file-b : String (fs-path-join dir-b "cleanup.obj")]
+      (assert-string-eq
+        (fs-path-normalize "")
+        "."
+        "normalize empty path to dot")
+      (assert-string-eq (fs-path-normalize ".") "." "normalize dot path")
+      (assert-string-eq
+        (fs-path-normalize "selfhost/./x/../compiler_load.tl")
+        "selfhost/compiler_load.tl"
+        "normalize dot and parent segments")
+      (assert-string-eq
+        (fs-path-normalize "target\\loader\\..\\dep.tl")
+        "target/dep.tl"
+        "normalize windows separators to slash")
+      (assert-string-eq
+        (fs-path-normalize "src//./app\\../main.tl")
+        "src/main.tl"
+        "normalize repeated and mixed separators")
+      (assert-string-eq
+        (fs-path-normalize "../pkg/lib.tl")
+        "../pkg/lib.tl"
+        "normalize preserves leading relative parent")
+      (assert-string-eq
+        (fs-path-normalize "a/../../b")
+        "../b"
+        "normalize preserves escaping relative parent")
+      (assert-string-eq
+        (fs-path-normalize "/a/..")
+        "/"
+        "normalize preserves root")
+      (assert-string-eq
+        (fs-path-normalize "\\a\\..\\b")
+        "/b"
+        "normalize rooted windows separators")
+      (assert-string-eq
+        (fs-path-normalize "C:\\tmp\\..\\file.tl")
+        "C:/file.tl"
+        "normalize drive absolute path")
+      (assert-bool-eq
+        (fs-path-absolute? "/root")
+        true
+        "slash-rooted path is absolute")
+      (assert-bool-eq
+        (fs-path-absolute? "\\root")
+        true
+        "backslash-rooted path is absolute")
+      (assert-bool-eq
+        (fs-path-absolute? "C:/root")
+        true
+        "drive slash path is absolute")
+      (assert-bool-eq
+        (fs-path-absolute? "C:\\root")
+        true
+        "drive backslash path is absolute")
+      (assert-bool-eq
+        (fs-path-absolute? "C:root")
+        false
+        "drive-relative path is not absolute")
+      (assert-bool-eq
+        (fs-path-absolute? "src/main.tl")
+        false
+        "relative path is not absolute")
+      (assert-bool-eq
+        (fs-path-safe-relative? "src/main.tl")
+        true
+        "normal relative path is safe")
+      (assert-bool-eq
+        (fs-path-safe-relative? "src//./lib/../main.tl")
+        true
+        "normalizing relative path below root is safe")
+      (assert-bool-eq
+        (fs-path-safe-relative? "")
+        false
+        "empty path is not a safe suffix")
+      (assert-bool-eq
+        (fs-path-safe-relative? ".")
+        false
+        "dot path is not a safe suffix")
+      (assert-bool-eq
+        (fs-path-safe-relative? "..")
+        false
+        "parent path is not a safe suffix")
+      (assert-bool-eq
+        (fs-path-safe-relative? "../escape.tl")
+        false
+        "leading parent traversal is not safe")
+      (assert-bool-eq
+        (fs-path-safe-relative? "a/../../escape.tl")
+        false
+        "normalized parent traversal is not safe")
+      (assert-bool-eq
+        (fs-path-safe-relative? "/abs.tl")
+        false
+        "rooted path is not a safe suffix")
+      (assert-bool-eq
+        (fs-path-safe-relative? "C:/abs.tl")
+        false
+        "drive absolute path is not a safe suffix")
+      (assert-bool-eq
+        (fs-path-safe-relative? "C:relative.tl")
+        false
+        "drive-relative path is not a safe suffix")
+      (if (fs-windows?)
         (begin
           (assert-true
             (not (string-eq dir-a dir-b))

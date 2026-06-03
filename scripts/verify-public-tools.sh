@@ -906,6 +906,7 @@ if [ "$HOST_OS" = linux ]; then
     mkdir -p "$SELFHOST_PLANNER_DIR/with space" "$SELFHOST_PLANNER_DIR/stdlib one"
     command -v as >/dev/null 2>&1 || fail "missing assembler: as"
     command -v ld >/dev/null 2>&1 || fail "missing linker: ld"
+    command -v cc >/dev/null 2>&1 || fail "missing C compiler: cc"
     command -v ar >/dev/null 2>&1 || fail "missing archiver: ar"
     build_linux_cli_tool selfhost-build-tool selfhost/build.tl "$SELFHOST_PLANNER_DIR/build-tool"
     build_linux_cli_tool selfhost-run-tool selfhost/run.tl "$SELFHOST_PLANNER_DIR/run-tool"
@@ -973,37 +974,36 @@ EOF
     assert_stdout_empty
     assert_stderr_empty
 
-    LINK_METADATA_SOURCE="$SELFHOST_PLANNER_DIR/with space/link metadata file.tl"
-    LINK_METADATA_MODULE="$SELFHOST_PLANNER_DIR/with space/link metadata module.tl"
-    LINK_METADATA_OUTPUT="$SELFHOST_PLANNER_DIR/with space/link metadata program"
-    cat > "$LINK_METADATA_MODULE" <<EOF
-(extern ffi_add7 (:link-search "$LINK_LIB_DIR") (:link-lib "ffi_add7") : (-> i64 i64))
+    cat > "$LINK_LIB_DIR/ffi_ctor.c" <<'EOF'
+static long ffi_ctor_value_state = 0;
+
+__attribute__((constructor)) static void ffi_ctor_init(void) {
+    ffi_ctor_value_state = 42;
+}
+
+long ffi_ctor_value(void) {
+    return ffi_ctor_value_state;
+}
 EOF
-    cat > "$LINK_METADATA_SOURCE" <<'EOF'
-(import "link metadata module.tl")
-(define (main) : i64 (ffi_add7 35))
-EOF
-    run_cmd selfhost-build-tool-link-metadata "$SELFHOST_PLANNER_DIR/build-tool" --direct "$LINK_METADATA_SOURCE" -o "$LINK_METADATA_OUTPUT" --target linux-x86_64 --backend-mode scalar
+    run_cmd link-lib-ctor-compile cc -c "$LINK_LIB_DIR/ffi_ctor.c" -o "$LINK_LIB_DIR/ffi_ctor.o"
     assert_success
+    assert_stdout_empty
     assert_stderr_empty
-    assert_contains "$out" "Generated: $LINK_METADATA_OUTPUT"
-    run_cmd selfhost-build-tool-link-metadata-output "$LINK_METADATA_OUTPUT"
-    assert_code 42
-    assert_stderr_empty
-    run_cmd selfhost-run-tool-link-metadata "$SELFHOST_PLANNER_DIR/run-tool" --direct "$LINK_METADATA_SOURCE" --target linux-x86_64 --backend-mode scalar
-    assert_code 42
+    run_cmd link-lib-ctor-archive ar rcs "$LINK_LIB_DIR/libffi_ctor.a" "$LINK_LIB_DIR/ffi_ctor.o"
+    assert_success
     assert_stdout_empty
     assert_stderr_empty
 
-    PUBLIC_LINK_METADATA_OUTPUT="$SELFHOST_PLANNER_DIR/with space/public link metadata program"
-    run_cmd public-build-link-metadata "$COMPILER" build "$LINK_METADATA_SOURCE" -o "$PUBLIC_LINK_METADATA_OUTPUT" --target linux-x86_64
-    assert_success
-    assert_stderr_empty
-    assert_contains "$out" "Generated: $PUBLIC_LINK_METADATA_OUTPUT"
-    run_cmd public-build-link-metadata-output "$PUBLIC_LINK_METADATA_OUTPUT"
+    CTOR_SOURCE="$SELFHOST_PLANNER_DIR/with space/ctor file.tl"
+    cat > "$CTOR_SOURCE" <<'EOF'
+(extern ffi_ctor_value : (-> i64))
+(define (main) : i64 (ffi_ctor_value))
+EOF
+    run_cmd selfhost-run-tool-link-ctor "$SELFHOST_PLANNER_DIR/run-tool" --direct "$CTOR_SOURCE" --target linux-x86_64 --backend-mode scalar --link-search "$LINK_LIB_DIR" --link-lib ffi_ctor
     assert_code 42
+    assert_stdout_empty
     assert_stderr_empty
-    run_cmd public-run-link-metadata "$COMPILER" run "$LINK_METADATA_SOURCE" --target linux-x86_64
+    run_cmd public-run-link-ctor "$COMPILER" run "$CTOR_SOURCE" --target linux-x86_64 --link-search "$LINK_LIB_DIR" --link-lib ffi_ctor
     assert_code 42
     assert_stdout_empty
     assert_stderr_empty

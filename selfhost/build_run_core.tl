@@ -137,6 +137,20 @@
 (define (source-tool-link-inputs-raw-args [inputs : SourceToolLinkInputs]) : ProcessStringList
   (struct-get inputs raw-args))
 
+(define (source-tool-link-inputs-empty? [inputs : SourceToolLinkInputs]) : bool
+  (and
+    (= (process-args-count (source-tool-link-inputs-libs inputs)) 0)
+    (and
+      (= (process-args-count (source-tool-link-inputs-search-dirs inputs)) 0)
+      (= (process-args-count (source-tool-link-inputs-raw-args inputs)) 0))))
+
+(define (source-tool-linux-crt-entry?
+  [target : CompilerBackendTarget]
+  [link-inputs : SourceToolLinkInputs]) : bool
+  (match target
+    [(BackendTargetLinux) (not (source-tool-link-inputs-empty? link-inputs))]
+    [(BackendTargetWindows) false]))
+
 (define (source-tool-link-inputs-add-lib
   [inputs : SourceToolLinkInputs]
   [name : String]) : SourceToolLinkInputs
@@ -517,19 +531,24 @@
   [source : String]
   [target : CompilerBackendTarget]
   [stdlib-roots : CompilerLoadRootList]
-  [opt-level : i64]) : ResultSourceToolString
+  [opt-level : i64]
+  [link-inputs : SourceToolLinkInputs]) : ResultSourceToolString
   (match (try-read-file source)
     [(ErrIoString error)
       (ErrSourceToolString
         (source-tool-cannot-read-module-message source error))]
     [(OkIoString _)
-      (match (compiler-driver-emit-file-for-target-with-roots-and-level
+      (match (compiler-driver-emit-file-with-target-roots-level-mode-and-crt
         source
         target
+        true
         stdlib-roots
-        opt-level)
+        opt-level
+        (BackendModeScalar)
+        (source-tool-linux-crt-entry? target link-inputs))
         [(OkCompilerDriver asm)
-          (OkSourceToolString (source-tool-augment-assembly asm))]
+          (OkSourceToolString
+            (source-tool-augment-assembly-for-target asm target))]
         [(ErrCompilerDriver diag)
           (ErrSourceToolString (compiler-diagnostic-render diag))])]))
 
@@ -540,13 +559,14 @@
   [opt-level : i64]
   [manifest-dir : String]
   [deps : CompilerPkgDepList]
-  [emit-entry : bool]) : ResultSourceToolString
+  [emit-entry : bool]
+  [crt-entry : bool]) : ResultSourceToolString
   (match (try-read-file source)
     [(ErrIoString error)
       (ErrSourceToolString
         (source-tool-cannot-read-module-message source error))]
     [(OkIoString _)
-      (match (compiler-driver-emit-package-file-with-target-roots-and-level
+      (match (compiler-driver-emit-package-file-with-target-roots-level-and-crt
         source
         target
         true
@@ -554,9 +574,11 @@
         opt-level
         manifest-dir
         deps
-        emit-entry)
+        emit-entry
+        crt-entry)
         [(OkCompilerDriver asm)
-          (OkSourceToolString (source-tool-augment-assembly asm))]
+          (OkSourceToolString
+            (source-tool-augment-assembly-for-target asm target))]
         [(ErrCompilerDriver diag)
           (ErrSourceToolString (compiler-diagnostic-render diag))])]))
 
@@ -582,6 +604,22 @@ _tl_print_string:
   (if (source-tool-needs-print-string-runtime? asm)
     (string-append asm (source-tool-print-string-runtime))
     asm))
+
+(define (source-tool-noexecstack-note) : String
+  "
+    .section .note.GNU-stack,\"\",@progbits
+")
+
+(define (source-tool-augment-assembly-for-target
+  [asm : String]
+  [target : CompilerBackendTarget]) : String
+  (let
+    [base : String (source-tool-augment-assembly asm)]
+    (if (compiler-backend-target-linux? target)
+      (if (string-contains base ".note.GNU-stack")
+        base
+        (string-append base (source-tool-noexecstack-note)))
+      base)))
 
 (define (source-tool-write-file
   [path : String]
@@ -739,21 +777,33 @@ _tl_print_string:
   [obj-path : String]
   [bin-path : String]
   [link-inputs : SourceToolLinkInputs]) : ProcessCommand
-  (process-command
-    (source-tool-resolve-command "ld")
-    (process-args-cons
-      obj-path
+  (if (source-tool-link-inputs-empty? link-inputs)
+    (process-command
+      (source-tool-resolve-command "ld")
       (process-args-cons
-        "-o"
+        obj-path
         (process-args-cons
-          bin-path
+          "-o"
           (process-args-cons
-            "-dynamic-linker"
+            bin-path
             (process-args-cons
-              "/lib64/ld-linux-x86-64.so.2"
-              (process-args-append
-                (source-tool-link-inputs-linux-args link-inputs)
-                (process-args-cons "-lc" (process-args-empty))))))))))
+              "-dynamic-linker"
+              (process-args-cons
+                "/lib64/ld-linux-x86-64.so.2"
+                (process-args-cons "-lc" (process-args-empty))))))))
+    (process-command
+      (source-tool-env-command-or-default
+        "TYPELISP_LINUX_CC"
+        (source-tool-env-command-or-default
+          "CC"
+          (source-tool-resolve-command "cc")))
+      (process-args-cons
+        obj-path
+        (process-args-cons
+          "-o"
+          (process-args-cons
+            bin-path
+            (source-tool-link-inputs-linux-args link-inputs)))))))
 
 (define (source-tool-windows-link-libs) : ProcessStringList
   (process-args-cons
@@ -989,8 +1039,13 @@ _tl_print_string:
       (if has-output
         output
         (source-tool-default-output source target))]
-    (match (source-tool-link-inputs-for-source source stdlib-roots link-inputs)
-      [(ErrSourceToolLinkInputs message)
+    (match (source-tool-emit-assembly
+      source
+      target
+      stdlib-roots
+      opt-level
+      link-inputs)
+      [(ErrSourceToolString message)
         (begin
           (print-error message)
           (source-tool-clean-temp temp-dir asm-path obj-path bin-path false)
@@ -1094,8 +1149,13 @@ _tl_print_string:
     [asm-path : String (source-tool-asm-path temp-dir source)]
     [obj-path : String (source-tool-obj-path temp-dir source target)]
     [bin-path : String (source-tool-temp-bin-path temp-dir source target)]
-    (match (source-tool-link-inputs-for-source source stdlib-roots link-inputs)
-      [(ErrSourceToolLinkInputs message)
+    (match (source-tool-emit-assembly
+      source
+      target
+      stdlib-roots
+      opt-level
+      link-inputs)
+      [(ErrSourceToolString message)
         (begin
           (print-error message)
           (source-tool-clean-temp temp-dir asm-path obj-path bin-path true)

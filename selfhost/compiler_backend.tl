@@ -7261,6 +7261,63 @@
           "")])
     ""))
 
+(define (compiler-backend-emit-linux-crt-main-argv-capture
+  [target : CompilerBackendTarget]
+  [name : String]
+  [crt-entry : bool]
+  [plan : CompilerBackendRuntimePlan]) : String
+  (if (and
+    (and crt-entry (compiler-backend-target-linux? target))
+    (string-eq name "main"))
+    (match plan
+      [(BackendRuntimePlan
+          _
+          _
+          _
+          _
+          _
+          _
+          _
+          _
+          _
+          _
+          _
+          _
+          arg-count
+          arg
+          _
+          _
+          _
+          _
+          _
+          _
+          process-output
+          _
+          _
+          _
+          _
+          _
+          _
+          _
+          _
+          _
+          env-var-exists
+          env-var-value
+          _
+          _
+          _)
+        (string-append
+          (if (or arg-count arg)
+            "    movq %rdi, .L_tl_argc(%rip)
+    movq %rsi, .L_tl_argv(%rip)
+"
+            "")
+          (if (or process-output (or env-var-exists env-var-value))
+            "    movq %rdx, .L_tl_envp(%rip)
+"
+            ""))])
+    ""))
+
 (define (compiler-backend-emit-function
   [target : CompilerBackendTarget]
   [mode : CompilerBackendMode]
@@ -7269,7 +7326,8 @@
   [globals : CompilerIrGlobalList]
   [externs : CompilerIrExternList]
   [plan : CompilerBackendRuntimePlan]
-  [spans : CompilerSourceSpans]) : ResultCompilerBackend
+  [spans : CompilerSourceSpans]
+  [crt-entry : bool]) : ResultCompilerBackend
   (match func
     [(IrFunction name params ret-ty vars blocks)
       ;; The provenance fallback diagnostic for this function (#605): backend
@@ -7340,21 +7398,33 @@
                                   name
                                   plan)
                                 (string-append
-                                  (if (and
-                                    (compiler-backend-target-windows? target)
-                                    (string-eq name "main"))
-                                    (compiler-backend-global-initializers
-                                      globals)
-                                    "")
+                                  (compiler-backend-emit-linux-crt-main-argv-capture
+                                    target
+                                    name
+                                    crt-entry
+                                    plan)
                                   (string-append
-                                    spills
+                                    (if (and
+                                      (string-eq name "main")
+                                      (or
+                                        (compiler-backend-target-windows?
+                                          target)
+                                        (and
+                                          crt-entry
+                                          (compiler-backend-target-linux?
+                                            target))))
+                                      (compiler-backend-global-initializers
+                                        globals)
+                                      "")
                                     (string-append
-                                      body
-                                      (compiler-backend-return-epilogue
-                                        name
-                                        assignments
-                                        vars
-                                        blocks)))))))
+                                      spills
+                                      (string-append
+                                        body
+                                        (compiler-backend-return-epilogue
+                                          name
+                                          assignments
+                                          vars
+                                          blocks))))))))
                           "\n")
                         "")))]
                 [(ErrCompilerBackend message) (ErrCompilerBackend message)]))]
@@ -7375,7 +7445,8 @@
   [globals : CompilerIrGlobalList]
   [externs : CompilerIrExternList]
   [plan : CompilerBackendRuntimePlan]
-  [spans : CompilerSourceSpans]) : ResultCompilerBackend
+  [spans : CompilerSourceSpans]
+  [crt-entry : bool]) : ResultCompilerBackend
   (let
     [enclosing : i64 (arena-current)]
     [scratch : i64 (arena-make)]
@@ -7389,7 +7460,8 @@
         globals
         externs
         plan
-        spans)
+        spans
+        crt-entry)
         [(OkCompilerBackend asm)
           (let
             [scratch-head : i64 (arena-current)]
@@ -7420,6 +7492,7 @@
   [externs : CompilerIrExternList]
   [plan : CompilerBackendRuntimePlan]
   [spans : CompilerSourceSpans]
+  [crt-entry : bool]
   [buf : TextBuf]) : ResultCompilerBackend
   (match functions
     [(IrFunctionNil) (OkCompilerBackend (text-buf-render buf))]
@@ -7432,7 +7505,8 @@
         globals
         externs
         plan
-        spans)
+        spans
+        crt-entry)
         [(OkCompilerBackend head)
           (compiler-backend-emit-functions-into
             target
@@ -7443,6 +7517,7 @@
             externs
             plan
             spans
+            crt-entry
             (text-buf-append buf head))]
         [(ErrCompilerBackend message) (ErrCompilerBackend message)])]))
 
@@ -7454,7 +7529,8 @@
   [all-functions : CompilerIrFunctionList]
   [externs : CompilerIrExternList]
   [plan : CompilerBackendRuntimePlan]
-  [spans : CompilerSourceSpans]) : ResultCompilerBackend
+  [spans : CompilerSourceSpans]
+  [crt-entry : bool]) : ResultCompilerBackend
   (compiler-backend-emit-functions-into
     target
     mode
@@ -7464,6 +7540,7 @@
     externs
     plan
     spans
+    crt-entry
     (text-buf-empty)))
 
 (define (compiler-backend-emit-closure-descriptor-entry [name : String]) : String
@@ -15707,16 +15784,31 @@ tl_windows_sdk_registry_install:
     [(BackendTargetLinux) 0]
     [(BackendTargetWindows) 32]))
 
-;; Program entry section and global symbol. Linux links the bare `_start`;
-;; Windows links `main` through the CRT. (The Windows entry body is #647.)
+;; Program entry section and global symbol. Linux normally links the bare
+;; `_start`; CRT entry mode links `main` through the C runtime. Windows links
+;; `main` through the CRT. (The Windows entry body is #647.)
+(define (compiler-backend-target-linux? [target : CompilerBackendTarget]) : bool
+  (match target
+    [(BackendTargetLinux) true]
+    [(BackendTargetWindows) false]))
+
+(define (compiler-backend-target-entry-text-with-crt
+  [target : CompilerBackendTarget]
+  [emit-entry : bool]
+  [crt-entry : bool]) : String
+  (if emit-entry
+    (match target
+      [(BackendTargetLinux)
+        (if crt-entry
+          ".text\n.globl main\n"
+          ".text\n.globl _start\n")]
+      [(BackendTargetWindows) ".text\n.globl main\n"])
+    ".text\n"))
+
 (define (compiler-backend-target-entry-text
   [target : CompilerBackendTarget]
   [emit-entry : bool]) : String
-  (if emit-entry
-    (match target
-      [(BackendTargetLinux) ".text\n.globl _start\n"]
-      [(BackendTargetWindows) ".text\n.globl main\n"])
-    ".text\n"))
+  (compiler-backend-target-entry-text-with-crt target emit-entry false))
 
 ;; Run main on a fresh 1 GiB mmap'd stack, then exit(main()). The compiler
 ;; recurses far deeper than the default 8 MiB stack rlimit allows — type-directed
@@ -15778,54 +15870,63 @@ tl_windows_sdk_registry_install:
       "_start:\n"
       (string-append global-inits (compiler-backend-entry-call-main)))))
 
+(define (compiler-backend-entry-for-target-with-crt
+  [target : CompilerBackendTarget]
+  [plan : CompilerBackendRuntimePlan]
+  [globals : CompilerIrGlobalList]
+  [crt-entry : bool]) : String
+  (match target
+    [(BackendTargetLinux)
+      (if crt-entry
+        ""
+        (match plan
+          [(BackendRuntimePlan
+              _
+              _
+              _
+              _
+              _
+              _
+              _
+              _
+              _
+              _
+              _
+              _
+              arg-count
+              arg
+              _
+              _
+              _
+              _
+              _
+              _
+              process-output
+              _
+              _
+              _
+              _
+              _
+              _
+              _
+              _
+              _
+              env-var-exists
+              env-var-value
+              _
+              _
+              _)
+            (compiler-backend-entry
+              (or arg-count arg)
+              (or process-output (or env-var-exists env-var-value))
+              (compiler-backend-global-initializers globals))]))]
+    [(BackendTargetWindows) ""]))
+
 (define (compiler-backend-entry-for-target
   [target : CompilerBackendTarget]
   [plan : CompilerBackendRuntimePlan]
   [globals : CompilerIrGlobalList]) : String
-  (match target
-    [(BackendTargetLinux)
-      (match plan
-        [(BackendRuntimePlan
-            _
-            _
-            _
-            _
-            _
-            _
-            _
-            _
-            _
-            _
-            _
-            _
-            arg-count
-            arg
-            _
-            _
-            _
-            _
-            _
-            _
-            process-output
-            _
-            _
-            _
-            _
-            _
-            _
-            _
-            _
-            _
-            env-var-exists
-            env-var-value
-            _
-            _
-            _)
-          (compiler-backend-entry
-            (or arg-count arg)
-            (or process-output (or env-var-exists env-var-value))
-            (compiler-backend-global-initializers globals))])]
-    [(BackendTargetWindows) ""]))
+  (compiler-backend-entry-for-target-with-crt target plan globals false))
 
 (define (compiler-backend-target-windows? [target : CompilerBackendTarget]) : bool
   (match target
@@ -16078,6 +16179,21 @@ tl_windows_sdk_registry_install:
   [mode : CompilerBackendMode]
   [spans : CompilerSourceSpans]
   [emit-entry : bool]) : ResultCompilerBackend
+  (compiler-backend-emit-program-target-with-mode-and-crt
+    program
+    target
+    mode
+    spans
+    emit-entry
+    false))
+
+(define (compiler-backend-emit-program-target-with-mode-and-crt
+  [program : CompilerIrProgram]
+  [target : CompilerBackendTarget]
+  [mode : CompilerBackendMode]
+  [spans : CompilerSourceSpans]
+  [emit-entry : bool]
+  [crt-entry : bool]) : ResultCompilerBackend
   (match (compiler-backend-runtime-plan program)
     [(OkBackendRuntimePlan plan)
       (if (compiler-backend-target-runtime-ok? target plan)
@@ -16093,7 +16209,8 @@ tl_windows_sdk_registry_install:
                   functions
                   externs
                   plan
-                  spans)
+                  spans
+                  crt-entry)
                   [(OkCompilerBackend functions-asm)
                     (let
                       [closure-names : BackendStringList
@@ -16145,9 +16262,10 @@ tl_windows_sdk_registry_install:
                                         (compiler-backend-runtime-externs-for-target
                                           target
                                           plan))
-                                      (compiler-backend-target-entry-text
+                                      (compiler-backend-target-entry-text-with-crt
                                         target
-                                        emit-entry))
+                                        emit-entry
+                                        crt-entry))
                                     functions-asm)
                                   closure-adapters-asm)
                                 (string-append
@@ -16157,10 +16275,11 @@ tl_windows_sdk_registry_install:
                                       plan)
                                     "")
                                   (if emit-entry
-                                    (compiler-backend-entry-for-target
+                                    (compiler-backend-entry-for-target-with-crt
                                       target
                                       plan
-                                      globals)
+                                      globals
+                                      crt-entry)
                                     "")))]
                             (OkCompilerBackend (text-buf-render buf)))]
                         [(ErrCompilerBackend message)

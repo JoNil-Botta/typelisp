@@ -1256,14 +1256,16 @@
                   (and
                     (compiler-backend-target-linux-no-entry-ok? src)
                     (and
-                      (compiler-backend-target-linux-matches-default? src)
+                      (compiler-backend-target-linux-crt-entry-ok?)
                       (and
-                        (compiler-backend-target-windows-abi-ok?)
+                        (compiler-backend-target-linux-matches-default? src)
                         (and
-                          (compiler-backend-target-windows-callee-save-ok?)
+                          (compiler-backend-target-windows-abi-ok?)
                           (and
-                            (compiler-backend-target-windows-stack-probe-ok?)
-                            (compiler-backend-target-windows-runtime-ok?)))))))))))))))
+                            (compiler-backend-target-windows-callee-save-ok?)
+                            (and
+                              (compiler-backend-target-windows-stack-probe-ok?)
+                              (compiler-backend-target-windows-runtime-ok?))))))))))))))))
 
 (define (compiler-backend-target-linux-matches-default? [src : String]) : bool
   (match (compiler-backend-emit-source-for-target src (BackendTargetLinux))
@@ -1289,6 +1291,49 @@
               (and
                 (not (compiler-backend-string-contains? asm ".globl _start\n"))
                 (not (compiler-backend-string-contains? asm "_start:\n")))))]
+        [(ErrCompilerBackend _) false])]
+    [(ErrCompilerLower _) false]))
+
+(define (compiler-backend-target-linux-crt-entry-source) : String
+  "(define (seed) : i64 41)
+(define value
+  (seed))
+(define (main) : i64
+  (+ value (arg-count)))")
+
+(define (compiler-backend-target-linux-crt-entry-ok?) : bool
+  (match (lower-compiler-source
+    (compiler-backend-target-linux-crt-entry-source))
+    [(OkCompilerLower program spans)
+      (match (compiler-backend-emit-program-target-with-mode-and-crt
+        program
+        (BackendTargetLinux)
+        (BackendModeScalar)
+        spans
+        true
+        true)
+        [(OkCompilerBackend asm)
+          (and
+            (compiler-backend-string-contains?
+              (compiler-backend-target-entry-text-with-crt
+                (BackendTargetLinux)
+                true
+                true)
+              ".globl main")
+            (and
+              (compiler-backend-string-contains? asm "main:\n")
+              (and
+                (compiler-backend-string-contains?
+                  asm
+                  "    movq %rdi, .L_tl_argc(%rip)\n")
+                (and
+                  (compiler-backend-string-contains?
+                    asm
+                    "    call _tl___global_init_")
+                  (and
+                    (not
+                      (compiler-backend-string-contains? asm ".globl _start\n"))
+                    (not (compiler-backend-string-contains? asm "_start:\n")))))))]
         [(ErrCompilerBackend _) false])]
     [(ErrCompilerLower _) false]))
 

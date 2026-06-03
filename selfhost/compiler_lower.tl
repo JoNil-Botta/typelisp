@@ -8702,24 +8702,23 @@
         [(LowerExpr then-state then-value then-ty)
           (let
             [then-end-label : String (lower-state-current-label then-state)]
-            (let
-              [else-start : LowerState
-                (if (tc-never-type? then-ty)
-                  (lower-state-finish-block then-state else-label)
-                  (lower-state-finish-block
-                    (lower-state-emit then-state (IrInstrJump merge-label))
-                    else-label))]
-              (lower-if-else
-                ctx
-                else-start
-                env
-                type-env
-                else-branch
-                then-value
-                then-ty
-                then-end-label
-                merge-label
-                expr-ty)))])]
+            [else-start : LowerState
+              (if (tc-never-type? then-ty)
+                (lower-state-finish-block then-state else-label)
+                (lower-state-finish-block
+                  (lower-state-emit then-state (IrInstrJump merge-label))
+                  else-label))]
+            (lower-if-else
+              ctx
+              else-start
+              env
+              type-env
+              else-branch
+              then-value
+              then-ty
+              then-end-label
+              merge-label
+              expr-ty))])]
     [(ErrLowerExpr message) (ErrLowerExpr message)]))
 
 (define (lower-if

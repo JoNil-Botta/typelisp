@@ -69,24 +69,24 @@
     [(BackendTargetWindows) true]))
 
 (define (source-tool-backend-mode [command : String] [value : String]) : ResultSourceToolBackendMode
-  (if (string-eq value "scalar")
-    (OkSourceToolBackendMode (BackendModeScalar))
-    (if (string-eq value "avx2")
-      (OkSourceToolBackendMode (BackendModeAvx2))
-      (if (string-eq value "avx512")
-        (ErrSourceToolBackendMode
-          (source-tool-cat3
-            command
-            ": --backend-mode "
+  (cond
+    [(string-eq value "scalar") (OkSourceToolBackendMode (BackendModeScalar))]
+    [(string-eq value "avx2") (OkSourceToolBackendMode (BackendModeAvx2))]
+    [(string-eq value "avx512")
+      (ErrSourceToolBackendMode
+        (source-tool-cat3
+          command
+          ": --backend-mode "
+          (string-append
+            value
             (string-append
-              value
+              " requires the Rust "
               (string-append
-                " requires the Rust "
-                (string-append
-                  command
-                  " driver until selfhost SIMD support (#1014)")))))
-        (ErrSourceToolBackendMode
-          (source-tool-cat3 command ": unknown backend mode " value))))))
+                command
+                " driver until selfhost SIMD support (#1014)")))))]
+    [else
+      (ErrSourceToolBackendMode
+        (source-tool-cat3 command ": unknown backend mode " value))]))
 
 (define (source-tool-opt-level-valid? [value : String]) : bool
   (or

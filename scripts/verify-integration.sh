@@ -244,15 +244,6 @@ EOF
 # verify-selfhost-native.sh until the published stage0 includes #1720.
 selfhost_deferred_integration_skips() {
     cat <<'EOF'
-f32_scalar
-lambda_capture_aggregate
-lambda_capture_fixed_array
-lambda_capture_fixed_array_aggregate
-lambda_capture_nested_aggregate
-lambda_capture_scalar
-lambda_capture_struct_enum
-lambda_capture_tuple
-print_char
 ref_fixed_array_return
 ref_param_identity
 ref_return

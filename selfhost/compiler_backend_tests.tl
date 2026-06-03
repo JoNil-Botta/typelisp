@@ -1533,7 +1533,7 @@
           (IrValueF64 "1.0")
           (IrValueF64 "2.0")
           (AstTyF64))
-        "backend: unsupported float binary op"
+        "backend: unsupported f64 binary op"
         34
         9)
       ;; #1044: an f64 unary op other than negation is rejected (mirrors the

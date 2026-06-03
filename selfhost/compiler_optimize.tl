@@ -3139,7 +3139,9 @@
     [(IrBlockNil) true]
     [(IrBlockCons block rest)
       (and
-        (opt-label-subset? (opt-cfg-block-successors block) labels)
+        (opt-label-subset?
+          (opt-cfg-block-successors-with-next block (opt-cfg-entry-label rest))
+          labels)
         (opt-cfg-successor-targets-known-in-blocks? rest labels))]))
 
 (define (opt-cfg-predecessors [blocks : CompilerIrBlockList] [label : String]) : OptLabelSet
@@ -3150,7 +3152,11 @@
         [(IrBlock block-label _)
           (let
             [tail : OptLabelSet (opt-cfg-predecessors rest label)]
-            (if (opt-label-contains (opt-cfg-block-successors block) label)
+            (if (opt-label-contains
+              (opt-cfg-block-successors-with-next
+                block
+                (opt-cfg-entry-label rest))
+              label)
               (opt-label-add tail block-label)
               tail))])]))
 
@@ -4413,6 +4419,36 @@
   (match block
     [(IrBlock _ instrs) (opt-cfg-instrs-successors (OptLabelNil) instrs)]))
 
+(define (opt-cfg-terminator-instr? [instr : CompilerIrInstr]) : bool
+  (match instr
+    [(IrInstrJump _) true]
+    [(IrInstrBranch _ _ _) true]
+    [(IrInstrReturn _) true]
+    [(IrInstrTailCall _ _ _) true]
+    [_ false]))
+
+(define (opt-cfg-instrs-can-fallthrough? [instrs : CompilerIrInstrList]) : bool
+  (match instrs
+    [(IrInstrNil) true]
+    [(IrInstrCons instr rest)
+      (match rest
+        [(IrInstrNil) (not (opt-cfg-terminator-instr? instr))]
+        [_ (opt-cfg-instrs-can-fallthrough? rest)])]))
+
+(define (opt-cfg-block-successors-with-next
+  [block : CompilerIrBlock]
+  [next-label : String]) : OptLabelSet
+  (match block
+    [(IrBlock _ instrs)
+      (let
+        [explicit : OptLabelSet
+          (opt-cfg-instrs-successors (OptLabelNil) instrs)]
+        (if (and
+          (> (string-length next-label) 0)
+          (opt-cfg-instrs-can-fallthrough? instrs))
+          (opt-label-add explicit next-label)
+          explicit))]))
+
 (define (opt-cfg-blocks-successors
   [blocks : CompilerIrBlockList]
   [label : String]) : OptLabelSet
@@ -4422,7 +4458,9 @@
       (match block
         [(IrBlock block-label _)
           (if (string-eq block-label label)
-            (opt-cfg-block-successors block)
+            (opt-cfg-block-successors-with-next
+              block
+              (opt-cfg-entry-label rest))
             (opt-cfg-blocks-successors rest label))])]))
 
 (define (opt-cfg-reachable-label
@@ -8828,6 +8866,45 @@
               (IrInstrNil))))
         (IrBlockNil)))))
 
+(define (opt-cfg-fallthrough-prune-blocks) : CompilerIrBlockList
+  (IrBlockCons
+    (IrBlock "entry" (IrInstrNil))
+    (IrBlockCons
+      (IrBlock "reachable-empty" (IrInstrNil))
+      (IrBlockCons
+        (IrBlock
+          "exit"
+          (IrInstrCons
+            (IrInstrReturn (IrSomeValue (IrValueI64 1)))
+            (IrInstrNil)))
+        (IrBlockCons
+          (IrBlock "dead-empty" (IrInstrNil))
+          (IrBlockCons
+            (IrBlock
+              "dead-exit"
+              (IrInstrCons
+                (IrInstrReturn (IrSomeValue (IrValueI64 2)))
+                (IrInstrNil)))
+            (IrBlockNil)))))))
+
+(define (opt-cfg-fallthrough-prune-ok? [blocks : CompilerIrBlockList]) : bool
+  (and
+    (= (compiler-ir-block-list-count blocks) 3)
+    (and
+      (opt-block-list-has-label? blocks "entry")
+      (and
+        (opt-block-list-has-label? blocks "reachable-empty")
+        (and
+          (opt-block-list-has-label? blocks "exit")
+          (and
+            (not (opt-block-list-has-label? blocks "dead-empty"))
+            (and
+              (not (opt-block-list-has-label? blocks "dead-exit"))
+              (and
+                (opt-cfg-successor-targets-known? blocks)
+                (opt-verify-ok?
+                  (opt-verify-function (opt-cfg-test-function blocks)))))))))))
+
 (define (opt-ssa-cond-params) : CompilerIrParamList
   (IrParamCons (IrParam "cond" (AstTyBool) 0) (IrParamNil)))
 
@@ -9143,42 +9220,49 @@
               (opt-function-blocks
                 (optimize-function
                   (opt-cfg-test-function (opt-cfg-trap-path-blocks))))]
-            (if (= (compiler-ir-block-list-count constant-if) 2)
-              (if (not (opt-block-list-has-label? constant-if "else"))
-                (if (= (opt-count-jump-to-blocks constant-if "then") 1)
-                  (if (= (opt-count-branches-blocks constant-if) 0)
-                    (if (= (compiler-ir-block-list-count loop-guard) 3)
-                      (if (not (opt-block-list-has-label? loop-guard "body"))
-                        (if (= (opt-count-jump-to-blocks loop-guard "exit") 1)
-                          (if (= (compiler-ir-block-list-count phi-blocks) 3)
-                            (if (not
-                              (opt-block-list-has-label? phi-blocks "else"))
-                              (if (= (opt-count-phi-blocks phi-blocks) 0)
-                                (if (= (opt-count-mov-dst-blocks phi-cfg 3) 1)
-                                  (if (=
-                                    (compiler-ir-block-list-count trap-blocks)
-                                    3)
-                                    (if (opt-block-list-has-label?
-                                      trap-blocks
-                                      "trap")
-                                      (if (=
-                                        (opt-count-branches-blocks trap-blocks)
-                                        1)
-                                        42
-                                        14)
-                                      13)
-                                    12)
-                                  11)
-                                10)
-                              9)
-                            8)
-                          7)
-                        6)
-                      5)
-                    4)
-                  3)
-                2)
-              1)))))))
+            (let
+              [fallthrough-blocks : CompilerIrBlockList
+                (opt-cfg-simplify-blocks (opt-cfg-fallthrough-prune-blocks))]
+              (if (= (compiler-ir-block-list-count constant-if) 2)
+                (if (not (opt-block-list-has-label? constant-if "else"))
+                  (if (= (opt-count-jump-to-blocks constant-if "then") 1)
+                    (if (= (opt-count-branches-blocks constant-if) 0)
+                      (if (= (compiler-ir-block-list-count loop-guard) 3)
+                        (if (not (opt-block-list-has-label? loop-guard "body"))
+                          (if (= (opt-count-jump-to-blocks loop-guard "exit") 1)
+                            (if (= (compiler-ir-block-list-count phi-blocks) 3)
+                              (if (not
+                                (opt-block-list-has-label? phi-blocks "else"))
+                                (if (= (opt-count-phi-blocks phi-blocks) 0)
+                                  (if (= (opt-count-mov-dst-blocks phi-cfg 3) 1)
+                                    (if (=
+                                      (compiler-ir-block-list-count trap-blocks)
+                                      3)
+                                      (if (opt-block-list-has-label?
+                                        trap-blocks
+                                        "trap")
+                                        (if (=
+                                          (opt-count-branches-blocks
+                                            trap-blocks)
+                                          1)
+                                          (if (opt-cfg-fallthrough-prune-ok?
+                                            fallthrough-blocks)
+                                            42
+                                            15)
+                                          14)
+                                        13)
+                                      12)
+                                    11)
+                                  10)
+                                9)
+                              8)
+                            7)
+                          6)
+                        5)
+                      4)
+                    3)
+                  2)
+                1))))))))
 
 (define (compiler-optimize-fixed-point-self-test) : i64
   (let

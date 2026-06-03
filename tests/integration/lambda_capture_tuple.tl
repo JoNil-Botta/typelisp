@@ -28,10 +28,8 @@
     (= ((lambda () : i64 (+ n (+ (tuple-ref t 0) (tuple-ref t 1))))) 42)))
 
 (define (main) : i64
-  (if (case-tuple-immediate)
-    (if (case-tuple-returned)
-      (if (case-tuple-mixed)
-        42
-        3)
-      2)
-    1))
+  (begin
+    (unless (case-tuple-immediate) (return 1))
+    (unless (case-tuple-returned) (return 2))
+    (unless (case-tuple-mixed) (return 3))
+    42))

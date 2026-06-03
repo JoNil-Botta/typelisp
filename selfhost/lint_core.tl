@@ -1,8 +1,8 @@
 ;# TypeLisp lint engine + source cleanup rules (#1163, #1177).
 ;#
 ;# A selfhost lint pass: walk the parsed AST, run rules, and collect findings.
-;# The initial rules flag deeply-nested `if` ladders and body-only nested `let`
-;# forms that can be flattened into one sequential `let`.
+;# The rules flag deeply-nested `if` ladders, body-only nested `let` forms,
+;# nested success-path `if` return chains, and unit-branch return guards.
 ;#
 ;# It is verified by `compiler-lint-self-test` (driver:
 ;# `selfhost/lint_smoke.tl`).
@@ -26,15 +26,26 @@
 (define (lint-rule-nested-let-id) : String
   "nested-let")
 
+(define (lint-rule-return-path-chain-id) : String
+  "return-path-chain")
+
+(define (lint-rule-unit-if-guard-id) : String
+  "unit-if-guard")
+
 ;: Rule registry suggestion layer: the structured suggestion text for a rule
 ;: id, independent of the rendered message. A second rule plugs in here without
 ;: touching the public driver. Unknown ids return the empty string.
 (define (lint-rule-suggestion [rule-id : String]) : String
-  (if (string-eq rule-id (lint-rule-nested-if-ladder-id))
-    "prefer cond (value/guard ladders) or match (variant dispatch)"
-    (if (string-eq rule-id (lint-rule-nested-let-id))
-      "merge the nested let bindings into one sequential let"
-      "")))
+  (cond
+    [(string-eq rule-id (lint-rule-nested-if-ladder-id))
+      "prefer cond (value/guard ladders) or match (variant dispatch)"]
+    [(string-eq rule-id (lint-rule-nested-let-id))
+      "merge the nested let bindings into one sequential let"]
+    [(string-eq rule-id (lint-rule-return-path-chain-id))
+      "prefer early return guards with (return ...)"]
+    [(string-eq rule-id (lint-rule-unit-if-guard-id))
+      "prefer when/unless for unit guard branches"]
+    [else ""]))
 
 ;: Immutable list of findings.
 (defenum LintFindingList
@@ -61,6 +72,40 @@
     [(AstExprIf _ _ else-branch) (+ 1 (lint-ladder-length else-branch))]
     [_ 0]))
 
+(define (lint-return-path-chain-length [expr : AstExpr]) : i64
+  (match expr
+    [(AstExprSpanned inner _) (lint-return-path-chain-length inner)]
+    [(AstExprIf _ then-branch _)
+      (+ 1 (lint-return-path-chain-length then-branch))]
+    [_ 0]))
+
+(define (lint-unit-expr? [expr : AstExpr]) : bool
+  (match expr
+    [(AstExprSpanned inner _) (lint-unit-expr? inner)]
+    [(AstExprLiteral AstLitUnit) true]
+    [_ false]))
+
+(define (lint-return-expr? [expr : AstExpr]) : bool
+  (match expr
+    [(AstExprSpanned inner _) (lint-return-expr? inner)]
+    [(AstExprReturn _) true]
+    [_ false]))
+
+(define (lint-expr-list-has-return? [exprs : AstExprList]) : bool
+  (match exprs
+    [(AstExprNil) false]
+    [(AstExprCons head rest)
+      (if (lint-return-expr? head)
+        true
+        (lint-expr-list-has-return? rest))]))
+
+(define (lint-return-branch? [expr : AstExpr]) : bool
+  (match expr
+    [(AstExprSpanned inner _) (lint-return-branch? inner)]
+    [(AstExprReturn _) true]
+    [(AstExprBegin exprs) (lint-expr-list-has-return? exprs)]
+    [_ false]))
+
 ;: Sentinel span for a finding whose AST node carried no source location (a
 ;: synthesized or in-memory expression). Parsed ladders carry the span from
 ;: their `AstExprSpanned` wrapper instead.
@@ -81,6 +126,22 @@
     "nested let: body is a single let; merge bindings into one sequential let"
     (lint-rule-nested-let-id)
     0
+    span))
+
+(define (lint-return-path-chain-finding [depth : i64] [span : AstSourceSpan]) : LintFinding
+  (LintFinding
+    "return-path chain: nested success-path ifs; prefer guard clauses with (return ...)"
+    (lint-rule-return-path-chain-id)
+    depth
+    span))
+
+(define (lint-unit-if-guard-finding [then-unit : bool] [span : AstSourceSpan]) : LintFinding
+  (LintFinding
+    (if then-unit
+      "unit return guard if: unit then-branch; prefer unless"
+      "unit return guard if: unit else-branch; prefer when")
+    (lint-rule-unit-if-guard-id)
+    1
     span))
 
 ;: Walk every expression in `exprs`, accumulating findings.
@@ -163,6 +224,24 @@
       threshold
       (lint-walk-let-bindings bindings threshold next))))
 
+(define (lint-walk-tail-let
+  [bindings : AstLetBindingList]
+  [body : AstExpr]
+  [span : AstSourceSpan]
+  [threshold : i64]
+  [acc : LintFindingList]) : LintFindingList
+  (let
+    [next : LintFindingList
+      (if (and
+        (lint-nested-let-body? body)
+        (not (lint-nested-let-shadows? bindings body)))
+        (LintFindingCons (lint-nested-let-finding span) acc)
+        acc)]
+    (lint-walk-tail-expr
+      body
+      threshold
+      (lint-walk-let-bindings bindings threshold next))))
+
 ;: Walk each resource initializer and cleanup expression in `bindings`.
 (define (lint-walk-resource-bindings
   [bindings : AstResourceBindingList]
@@ -203,18 +282,54 @@
 (define (lint-walk-ladder
   [expr : AstExpr]
   [threshold : i64]
+  [tail-return-path : bool]
   [acc : LintFindingList]) : LintFindingList
   (match expr
-    [(AstExprSpanned inner _) (lint-walk-ladder inner threshold acc)]
+    [(AstExprSpanned inner _)
+      (lint-walk-ladder inner threshold tail-return-path acc)]
     [(AstExprIf cond then-branch else-branch)
       (lint-walk-ladder
         else-branch
         threshold
+        tail-return-path
+        (if tail-return-path
+          (lint-walk-tail-expr
+            then-branch
+            threshold
+            (lint-walk-expr cond threshold acc))
+          (lint-walk-expr
+            then-branch
+            threshold
+            (lint-walk-expr cond threshold acc))))]
+    [_
+      (if tail-return-path
+        (lint-walk-tail-expr expr threshold acc)
+        (lint-walk-expr expr threshold acc))]))
+
+(define (lint-walk-return-path-chain
+  [expr : AstExpr]
+  [threshold : i64]
+  [acc : LintFindingList]) : LintFindingList
+  (match expr
+    [(AstExprSpanned inner _) (lint-walk-return-path-chain inner threshold acc)]
+    [(AstExprIf cond then-branch else-branch)
+      (lint-walk-return-path-chain
+        then-branch
+        threshold
         (lint-walk-expr
-          then-branch
+          else-branch
           threshold
           (lint-walk-expr cond threshold acc)))]
-    [_ (lint-walk-expr expr threshold acc)]))
+    [_ (lint-walk-tail-expr expr threshold acc)]))
+
+(define (lint-walk-unit-if-guard-branch
+  [branch : AstExpr]
+  [tail-return-path : bool]
+  [threshold : i64]
+  [acc : LintFindingList]) : LintFindingList
+  (if tail-return-path
+    (lint-walk-tail-expr branch threshold acc)
+    (lint-walk-expr branch threshold acc)))
 
 ;: Walk an `if`-headed expression whose source span is `span` (`lint-no-span`
 ;: when unspanned): a maximal ladder of length >= `threshold` flags ONCE at
@@ -225,22 +340,139 @@
   [then-branch : AstExpr]
   [else-branch : AstExpr]
   [span : AstSourceSpan]
+  [tail-return-path : bool]
   [threshold : i64]
   [acc : LintFindingList]) : LintFindingList
   (let
     [ladder : i64 (+ 1 (lint-ladder-length else-branch))]
-    (if (>= ladder threshold)
-      (lint-walk-ladder
-        (AstExprIf cond then-branch else-branch)
-        threshold
-        (LintFindingCons (lint-ladder-finding ladder span) acc))
-      (lint-walk-expr
-        else-branch
-        threshold
-        (lint-walk-expr
-          then-branch
+    [return-chain : i64 (+ 1 (lint-return-path-chain-length then-branch))]
+    [then-unit : bool (lint-unit-expr? then-branch)]
+    [else-unit : bool (lint-unit-expr? else-branch)]
+    [then-return : bool (lint-return-branch? then-branch)]
+    [else-return : bool (lint-return-branch? else-branch)]
+    (cond
+      [(and then-unit (and (not else-unit) else-return))
+        (lint-walk-unit-if-guard-branch
+          else-branch
+          tail-return-path
           threshold
-          (lint-walk-expr cond threshold acc))))))
+          (LintFindingCons
+            (lint-unit-if-guard-finding true span)
+            (lint-walk-expr cond threshold acc)))]
+      [(and else-unit (and (not then-unit) then-return))
+        (lint-walk-unit-if-guard-branch
+          then-branch
+          tail-return-path
+          threshold
+          (LintFindingCons
+            (lint-unit-if-guard-finding false span)
+            (lint-walk-expr cond threshold acc)))]
+      [(and tail-return-path (>= return-chain threshold))
+        (lint-walk-return-path-chain
+          (AstExprIf cond then-branch else-branch)
+          threshold
+          (LintFindingCons
+            (lint-return-path-chain-finding return-chain span)
+            acc))]
+      [(>= ladder threshold)
+        (lint-walk-ladder
+          (AstExprIf cond then-branch else-branch)
+          threshold
+          tail-return-path
+          (LintFindingCons (lint-ladder-finding ladder span) acc))]
+      [tail-return-path
+        (lint-walk-tail-expr
+          else-branch
+          threshold
+          (lint-walk-tail-expr
+            then-branch
+            threshold
+            (lint-walk-expr cond threshold acc)))]
+      [else
+        (lint-walk-expr
+          else-branch
+          threshold
+          (lint-walk-expr
+            then-branch
+            threshold
+            (lint-walk-expr cond threshold acc)))])))
+
+;;; Walk a list of expressions where only the final expression is in tail
+;;; position.
+(define (lint-walk-tail-expr-list
+  [exprs : AstExprList]
+  [threshold : i64]
+  [acc : LintFindingList]) : LintFindingList
+  (match exprs
+    [(AstExprNil) acc]
+    [(AstExprCons head rest)
+      (match rest
+        [(AstExprNil) (lint-walk-tail-expr head threshold acc)]
+        [_
+          (lint-walk-tail-expr-list
+            rest
+            threshold
+            (lint-walk-expr head threshold acc))])]))
+
+;;; Walk match arms whose bodies are in tail position.
+(define (lint-walk-tail-match-arms
+  [arms : AstMatchArmList]
+  [threshold : i64]
+  [acc : LintFindingList]) : LintFindingList
+  (match arms
+    [(AstMatchArmNil) acc]
+    [(AstMatchArmCons arm rest)
+      (match arm
+        [(AstMatchArm _ body)
+          (lint-walk-tail-match-arms
+            rest
+            threshold
+            (lint-walk-tail-expr body threshold acc))])]))
+
+;;; Walk `expr` in a function/lambda/test tail context. The return-path-chain
+;;; rule is only valid here: in non-tail value contexts, introducing
+;;; `(return ...)` would change the surrounding expression's behavior.
+(define (lint-walk-tail-expr
+  [expr : AstExpr]
+  [threshold : i64]
+  [acc : LintFindingList]) : LintFindingList
+  (match expr
+    [(AstExprSpanned inner span)
+      (match inner
+        [(AstExprIf cond then-branch else-branch)
+          (lint-walk-if cond then-branch else-branch span true threshold acc)]
+        [(AstExprLet bindings body)
+          (lint-walk-tail-let bindings body span threshold acc)]
+        [_ (lint-walk-tail-expr inner threshold acc)])]
+    [(AstExprIf cond then-branch else-branch)
+      (lint-walk-if
+        cond
+        then-branch
+        else-branch
+        (lint-no-span)
+        true
+        threshold
+        acc)]
+    [(AstExprLet bindings body)
+      (lint-walk-tail-let bindings body (lint-no-span) threshold acc)]
+    [(AstExprLambda _ _ body) (lint-walk-tail-expr body threshold acc)]
+    [(AstExprBegin exprs) (lint-walk-tail-expr-list exprs threshold acc)]
+    [(AstExprUnsafe exprs) (lint-walk-tail-expr-list exprs threshold acc)]
+    [(AstExprAnn inner _) (lint-walk-tail-expr inner threshold acc)]
+    [(AstExprCast inner _) (lint-walk-tail-expr inner threshold acc)]
+    [(AstExprMatch scrutinee arms)
+      (lint-walk-tail-match-arms
+        arms
+        threshold
+        (lint-walk-expr scrutinee threshold acc))]
+    [(AstExprWithRegion _ body) (lint-walk-tail-expr-list body threshold acc)]
+    [(AstExprWithResource bindings body)
+      (lint-walk-tail-expr-list
+        body
+        threshold
+        (lint-walk-resource-bindings bindings threshold acc))]
+    [(AstExprTry inner) (lint-walk-tail-expr inner threshold acc)]
+    [_ (lint-walk-expr expr threshold acc)]))
 
 ;: Walk `expr`, flagging each maximal nested-`if` ladder of length >=
 ;: `threshold` exactly once and recursing into all sub-expressions. A ladder
@@ -253,7 +485,7 @@
     [(AstExprSpanned inner span)
       (match inner
         [(AstExprIf cond then-branch else-branch)
-          (lint-walk-if cond then-branch else-branch span threshold acc)]
+          (lint-walk-if cond then-branch else-branch span false threshold acc)]
         [(AstExprLet bindings body)
           (lint-walk-let bindings body span threshold acc)]
         [_ (lint-walk-expr inner threshold acc)])]
@@ -268,7 +500,14 @@
     [(AstExprIf cond then-branch else-branch)
       ;; A directly-reached (unspanned) `if`: no wrapper span, so the finding
       ;; gets the sentinel. Maximal-ladder dedup lives in lint-walk-if.
-      (lint-walk-if cond then-branch else-branch (lint-no-span) threshold acc)]
+      (lint-walk-if
+        cond
+        then-branch
+        else-branch
+        (lint-no-span)
+        false
+        threshold
+        acc)]
     [(AstExprLet bindings body)
       (lint-walk-let bindings body (lint-no-span) threshold acc)]
     [(AstExprLambda _ _ body) (lint-walk-expr body threshold acc)]
@@ -352,9 +591,9 @@
   [acc : LintFindingList]) : LintFindingList
   (match decl
     [(AstDeclDef _ _ body) (lint-walk-expr body threshold acc)]
-    [(AstDeclDefFn _ _ _ body) (lint-walk-expr body threshold acc)]
-    [(AstDeclDefMacro _ _ _ body) (lint-walk-expr body threshold acc)]
-    [(AstDeclTest _ body _) (lint-walk-expr body threshold acc)]
+    [(AstDeclDefFn _ _ _ body) (lint-walk-tail-expr body threshold acc)]
+    [(AstDeclDefMacro _ _ _ body) (lint-walk-tail-expr body threshold acc)]
+    [(AstDeclTest _ body _) (lint-walk-tail-expr body threshold acc)]
     [(AstDeclComptimeDecl inner) (lint-walk-decl inner threshold acc)]
     [(AstDeclModule _) acc]
     [(AstDeclExtern _ _ _) acc]
@@ -383,6 +622,7 @@
   (let
     [vx : AstExpr (AstExprVar "x")]
     [one : AstExpr (AstExprLiteral (AstLitInt 1))]
+    [unit-expr : AstExpr (AstExprLiteral AstLitUnit)]
     [ladder3 : AstExpr
       (AstExprIf vx one (AstExprIf vx one (AstExprIf vx one one)))]
     [ladder2 : AstExpr (AstExprIf vx one (AstExprIf vx one one))]
@@ -391,6 +631,12 @@
         vx
         one
         (AstExprIf vx one (AstExprIf vx one (AstExprIf vx one one))))]
+    [return-chain3 : AstExpr
+      (AstExprIf vx (AstExprIf vx (AstExprIf vx one one) one) one)]
+    [return-one : AstExpr (AstExprReturn one)]
+    [unit-then-guard : AstExpr (AstExprIf vx unit-expr return-one)]
+    [unit-else-guard : AstExpr (AstExprIf vx return-one unit-expr)]
+    [unit-value-guard : AstExpr (AstExprIf vx one unit-expr)]
     [nested : AstExpr (AstExprBegin (AstExprCons ladder3 (AstExprNil)))]
     [in-let : AstExpr
       (AstExprLet
@@ -455,7 +701,68 @@
         1)
         unit
         (panic "lint: 2-deep ladder should be flagged at threshold 2"))
-      ;; the walk recurses into begin bodies
+      ;; return-path chains are only reported in tail contexts, where replacing
+      ;; nested failure values with `(return ...)` preserves semantics.
+      (if (=
+        (lint-finding-list-count
+          (lint-walk-expr
+            return-chain3
+            (lint-default-ladder-threshold)
+            (LintFindingNil)))
+        0)
+        unit
+        (panic "lint: return-path chain should not flag in a value context"))
+      (if (=
+        (lint-finding-list-count
+          (lint-walk-tail-expr
+            return-chain3
+            (lint-default-ladder-threshold)
+            (LintFindingNil)))
+        1)
+        unit
+        (panic "lint: return-path chain should be flagged once"))
+      (match (lint-walk-tail-expr
+        return-chain3
+        (lint-default-ladder-threshold)
+        (LintFindingNil))
+        [(LintFindingCons finding _)
+          (if (string-eq
+            (struct-get finding rule-id)
+            (lint-rule-return-path-chain-id))
+            unit
+            (panic "lint: return-path chain should report its rule id"))]
+        [(LintFindingNil)
+          (panic "lint: return-path chain should produce a finding")])
+      (if (=
+        (lint-finding-list-count
+          (lint-walk-expr
+            unit-then-guard
+            (lint-default-ladder-threshold)
+            (LintFindingNil)))
+        1)
+        unit
+        (panic "lint: unit then-branch should be flagged once"))
+      (match (lint-walk-expr
+        unit-else-guard
+        (lint-default-ladder-threshold)
+        (LintFindingNil))
+        [(LintFindingCons finding _)
+          (if (string-eq
+            (struct-get finding rule-id)
+            (lint-rule-unit-if-guard-id))
+            unit
+            (panic "lint: unit-if guard should report its rule id"))]
+        [(LintFindingNil)
+          (panic "lint: unit-if guard should produce a finding")])
+      (if (=
+        (lint-finding-list-count
+          (lint-walk-expr
+            unit-value-guard
+            (lint-default-ladder-threshold)
+            (LintFindingNil)))
+        0)
+        unit
+        (panic "lint: unit-if guard should only flag return guards"))
       (if (=
         (lint-finding-list-count
           (lint-walk-expr
@@ -552,6 +859,16 @@
         "merge the nested let bindings into one sequential let")
         unit
         (panic "lint: nested-let suggestion should be registered"))
+      (if (string-eq
+        (lint-rule-suggestion (lint-rule-return-path-chain-id))
+        "prefer early return guards with (return ...)")
+        unit
+        (panic "lint: return-path-chain suggestion should be registered"))
+      (if (string-eq
+        (lint-rule-suggestion (lint-rule-unit-if-guard-id))
+        "prefer when/unless for unit guard branches")
+        unit
+        (panic "lint: unit-if-guard suggestion should be registered"))
       (if (string-eq (lint-rule-suggestion "unknown-rule") "")
         unit
         (panic "lint: unknown rule should have no suggestion"))

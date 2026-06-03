@@ -2414,100 +2414,131 @@
           "C:/dep.tl")))))
 
 (define (compiler-load-self-test) : i64
-  (if (compiler-load-normalize-ok?)
-    (if (compiler-load-relative-resolution-ok?)
-      (if (compiler-load-source-provenance-ok?)
-        (if (compiler-load-expected-module-conflict-ok?)
-          (if (compiler-load-duplicate-module-ok?)
-            (if (compiler-load-seen-module-ok?)
-              (if (compiler-load-cfg-import-ok?)
-                (if (compiler-load-file-import-dedup-cycle-ok?)
-                  (if (compiler-load-file-fallback-path-dedup-ok?)
-                    (if (compiler-load-import-alias-preserved-ok?)
-                      (if (compiler-load-diamond-import-ok?)
-                        (if (compiler-load-transitive-import-ok?)
-                          (if (compiler-load-missing-import-ok?)
-                            (if (compiler-load-imported-parse-error-path-ok?)
-                              (if (compiler-load-imported-duplicate-module-path-ok?)
-                                (if (compiler-load-stdlib-root-fallback-ok?)
-                                  (if (compiler-load-stdlib-searched-root-ok?)
-                                    (if (compiler-load-stdlib-unresolved-ok?)
-                                      (if (compiler-load-pkg-manifest-ok?)
-                                        (if (compiler-load-pkg-resolve-ok?)
-                                          (if (compiler-load-pkg-parent-dir-ok?)
-                                            42
-                                            (begin
-                                              (panic
-                                                "compiler-load: pkg parent-dir smoke mismatch")
-                                              0))
-                                          (begin
-                                            (panic
-                                              "compiler-load: pkg resolve smoke mismatch")
-                                            0))
-                                        (begin
-                                          (panic
-                                            "compiler-load: pkg manifest smoke mismatch")
-                                          0))
-                                      (begin
-                                        (panic
-                                          "compiler-load: stdlib unresolved smoke mismatch")
-                                        0))
-                                    (begin
-                                      (panic
-                                        "compiler-load: stdlib searched root smoke mismatch")
-                                      0))
-                                  (begin
-                                    (panic
-                                      "compiler-load: stdlib root fallback smoke mismatch")
-                                    0))
-                                (begin
-                                  (panic
-                                    "compiler-load: imported duplicate module path smoke mismatch")
-                                  0))
-                              (begin
-                                (panic
-                                  "compiler-load: imported parse error path smoke mismatch")
-                                0))
-                            (begin
-                              (panic
-                                "compiler-load: missing import smoke mismatch")
-                              0))
-                          (begin
-                            (panic
-                              "compiler-load: transitive import smoke mismatch")
-                            0))
-                        (begin
-                          (panic "compiler-load: diamond import smoke mismatch")
-                          0))
-                      (begin
-                        (panic
-                          "compiler-load: import alias preservation smoke mismatch")
-                        0))
-                    (begin
-                      (panic
-                        "compiler-load: fallback path dedup smoke mismatch")
-                      0))
-                  (begin
-                    (panic "compiler-load: import dedup/cycle smoke mismatch")
-                    0))
-                (begin
-                  (panic "compiler-load: cfg import smoke mismatch")
-                  0))
-              (begin
-                (panic "compiler-load: seen module smoke mismatch")
-                0))
-            (begin
-              (panic "compiler-load: duplicate module smoke mismatch")
-              0))
-          (begin
-            (panic "compiler-load: expected module smoke mismatch")
-            0))
+  (begin
+    (unless
+      (compiler-load-normalize-ok?)
+      (return
+        (begin
+          (panic "compiler-load: normalize smoke mismatch")
+          0)))
+    (unless
+      (compiler-load-relative-resolution-ok?)
+      (return
+        (begin
+          (panic "compiler-load: relative resolution smoke mismatch")
+          0)))
+    (unless
+      (compiler-load-source-provenance-ok?)
+      (return
         (begin
           (panic "compiler-load: source provenance smoke mismatch")
-          0))
-      (begin
-        (panic "compiler-load: relative resolution smoke mismatch")
-        0))
-    (begin
-      (panic "compiler-load: normalize smoke mismatch")
-      0)))
+          0)))
+    (unless
+      (compiler-load-expected-module-conflict-ok?)
+      (return
+        (begin
+          (panic "compiler-load: expected module smoke mismatch")
+          0)))
+    (unless
+      (compiler-load-duplicate-module-ok?)
+      (return
+        (begin
+          (panic "compiler-load: duplicate module smoke mismatch")
+          0)))
+    (unless
+      (compiler-load-seen-module-ok?)
+      (return
+        (begin
+          (panic "compiler-load: seen module smoke mismatch")
+          0)))
+    (unless
+      (compiler-load-cfg-import-ok?)
+      (return
+        (begin
+          (panic "compiler-load: cfg import smoke mismatch")
+          0)))
+    (unless
+      (compiler-load-file-import-dedup-cycle-ok?)
+      (return
+        (begin
+          (panic "compiler-load: import dedup/cycle smoke mismatch")
+          0)))
+    (unless
+      (compiler-load-file-fallback-path-dedup-ok?)
+      (return
+        (begin
+          (panic "compiler-load: fallback path dedup smoke mismatch")
+          0)))
+    (unless
+      (compiler-load-import-alias-preserved-ok?)
+      (return
+        (begin
+          (panic "compiler-load: import alias preservation smoke mismatch")
+          0)))
+    (unless
+      (compiler-load-diamond-import-ok?)
+      (return
+        (begin
+          (panic "compiler-load: diamond import smoke mismatch")
+          0)))
+    (unless
+      (compiler-load-transitive-import-ok?)
+      (return
+        (begin
+          (panic "compiler-load: transitive import smoke mismatch")
+          0)))
+    (unless
+      (compiler-load-missing-import-ok?)
+      (return
+        (begin
+          (panic "compiler-load: missing import smoke mismatch")
+          0)))
+    (unless
+      (compiler-load-imported-parse-error-path-ok?)
+      (return
+        (begin
+          (panic "compiler-load: imported parse error path smoke mismatch")
+          0)))
+    (unless
+      (compiler-load-imported-duplicate-module-path-ok?)
+      (return
+        (begin
+          (panic "compiler-load: imported duplicate module path smoke mismatch")
+          0)))
+    (unless
+      (compiler-load-stdlib-root-fallback-ok?)
+      (return
+        (begin
+          (panic "compiler-load: stdlib root fallback smoke mismatch")
+          0)))
+    (unless
+      (compiler-load-stdlib-searched-root-ok?)
+      (return
+        (begin
+          (panic "compiler-load: stdlib searched root smoke mismatch")
+          0)))
+    (unless
+      (compiler-load-stdlib-unresolved-ok?)
+      (return
+        (begin
+          (panic "compiler-load: stdlib unresolved smoke mismatch")
+          0)))
+    (unless
+      (compiler-load-pkg-manifest-ok?)
+      (return
+        (begin
+          (panic "compiler-load: pkg manifest smoke mismatch")
+          0)))
+    (unless
+      (compiler-load-pkg-resolve-ok?)
+      (return
+        (begin
+          (panic "compiler-load: pkg resolve smoke mismatch")
+          0)))
+    (unless
+      (compiler-load-pkg-parent-dir-ok?)
+      (return
+        (begin
+          (panic "compiler-load: pkg parent-dir smoke mismatch")
+          0)))
+    42))

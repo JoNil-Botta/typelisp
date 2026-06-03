@@ -45,7 +45,7 @@ accepted safe code as having behavior outside this table.
 | Mutation through shared references | Static reject | Safe code cannot write through an immutable/shared reference. Mutable-reference writes require exclusive access; that checker work is owned by #806. Current aggregate-handle mutation is governed by the move-only and aliasing rules in sections 4.6.2 and 7.6. |
 | SPMD safe-code data-race freedom | Static reject | Safe `foreach`/SPMD code rejects varying calls, unsupported varying control flow, unsafe shared mutation, and reduction shapes that cannot be proven race-free by the SPMD rules. See section 5.15 and #937/#1012. |
 | Invalid enum/struct states | Static reject | Safe code constructs enums and structs only through their checked constructors and pattern forms. Arbitrary bit construction, invalid variants, invalid field layouts, packed-field access, and recursive-by-value `repr c` states are rejected. See sections 3.5, 4.6, and 5.13. |
-| Raw pointer dereference/write/arithmetic/casts, foreign ABI assumptions, and manual arena reset | Static reject | Safe code may pass, return, compare, and null-test raw pointer values as specified, but dereference, write, offset, pointer/integer cast, foreign ABI invariants beyond the declared signature, and low-level manual region reset require `(unsafe ...)` or an unsafe-by-convention helper. See sections 3.4, 5.19, 7.3, and 7.4; design/implementation owners are #954, #809, #812, #1052, #1054, and #1055. |
+| Raw pointer dereference/write/arithmetic/casts, foreign ABI assumptions, and manual arena reset | Static reject | Safe code may pass, return, compare, and null-test raw pointer values as specified, but dereference, write, offset, pointer/integer cast, foreign ABI invariants beyond the declared signature, and invalidating manual arena operations require `(unsafe ...)`. See sections 3.4, 5.19, 7.3, and 7.4; design/implementation owners are #954, #809, #812, #1052, #1054, and #1055. |
 | Invalid comptime-to-runtime values | Static reject | Comptime generation and reflection cannot smuggle invalid runtime values, invalid types, or unstable compiler-internal identities into safe runtime code. Runtime observation of comptime-only metadata is rejected. See sections 3.7 and 5.17; reflection surface owner is #970. |
 | Valid comptime-generated runtime values | Defined result | Accepted generated declarations and values have ordinary valid runtime representations and follow the same safe-code contract as hand-written declarations. See sections 3.7 and 5.17; reflection surface owner is #970. |
 
@@ -2970,9 +2970,9 @@ stdlib surface.
 The owned `String` / borrowed `str` source contract is specified in section
 3.11, but no current stdlib function has migrated to a borrow-typed `str`
 signature. No current stdlib function manually resets arenas; safe scoped
-cleanup is owned by `with-arena`, while raw
-`tl_region_mark` and `tl_region_reset` remain low-level unsafe-by-convention
-helpers.
+cleanup is owned by `with-arena`. Source code that needs manual arena control
+uses the first-class arena helpers, with `arena-set!`, `arena-destroy`, and
+`arena-rewind` gated by `(unsafe ...)`.
 
 Nested `with-arena` forms create independent subregions whose values do not
 mix. Inner-region values cannot escape to the outer region; outer-region values
@@ -2992,37 +2992,42 @@ destructors or automatic `drop`.
 
 This keeps resource lifetime policy independent from arena lifetime policy:
 files, process handles, locks, mapped files, and temporary paths use `with`;
-heap allocation reclamation uses `with-arena` or the low-level unsafe region
-helpers below. Cleanup-owning aggregates (section 4.6.1) use the same `with`
+heap allocation reclamation uses `with-arena` or explicit unsafe arena
+operations below. Cleanup-owning aggregates (section 4.6.1) use the same `with`
 owner scope plus a declared aggregate cleanup function for the field cleanup
 plan. Compiler support is tracked by #907, with move-only enforcement tracked
 separately.
 
-#### Low-level extern helpers (unsafe by convention)
+#### Manual arena helpers
 
-Programs that need manual control may still declare the raw backend externs:
+Programs that need manual control can use the first-class arena helpers:
 
-```lisp test=check name=region-extern-helpers
-(extern tl_region_mark : (-> u64))
-(extern tl_region_reset : (-> u64 unit))
+```lisp test=check name=arena-manual-helpers
+(define (main) : unit
+  (let
+    [arena : i64 (arena-current)]
+    [mark : i64 (arena-mark)]
+    (unsafe
+      (arena-rewind mark)
+      (arena-set! arena)
+      (arena-destroy arena))))
 ```
 
-`tl_region_mark` returns the current arena bump pointer, or `0` if no arena has
-been allocated. `tl_region_reset` restores a nonzero mark by discarding newer
-arenas and moving the marked arena's bump pointer back to the mark. Passing mark
-`0` discards all current arenas and returns allocation to lazy initialization.
-An invalid nonzero mark traps with exit status 134.
-The region helpers are currently emitted only for the Linux x86_64 System V
-target; unsupported targets reject programs that reference them.
+`arena-make`, `arena-current`, and `arena-mark` are safe: they create an arena
+handle, read the active arena handle, or record the active arena bump pointer.
+By themselves they do not switch the active arena, free arena chains, rewind
+allocation, or invalidate live safe handles.
 
-A region reset mark invalidates every heap handle allocated after that mark, so
-it is only valid when the caller can prove those values are dead, such as after a
-compiler, formatter, package-tooling, or REPL iteration has discarded all
-phase-local results. It is not a safe arbitrary source-level `free`
-replacement.
-
-Once `(unsafe ...)` lands, direct calls to these raw reset helpers should be
-wrapped in an unsafe context. The safe `with-arena` surface remains preferred.
+`arena-set!`, `arena-destroy`, and `arena-rewind` require `(unsafe ...)`.
+`arena-set!` switches the active arena, `arena-destroy` frees an arena chain, and
+`arena-rewind` restores a mark by discarding newer arenas and moving the marked
+arena's bump pointer back to the mark. A rewind invalidates every heap handle
+allocated after that mark, so it is only valid when the caller can prove those
+values are dead, such as after a compiler, formatter, package-tooling, or REPL
+iteration has discarded all phase-local results. These helpers are not a safe
+arbitrary source-level `free` replacement. Taking one of these invalidating
+helpers as a first-class function value also requires an unsafe context. The safe
+`with-arena` surface remains preferred.
 
 ### 7.4 Raw pointers and unsafe memory access (v1 design)
 
@@ -3122,8 +3127,9 @@ not the future safe reference/borrow model (#182), not a replacement for
 - Bootstrap I/O helpers: `arg-count`, `arg`, `read-file`, `write-file`,
   `file-exists?`, `file-open`, `file-close`, `file-read-chunk`,
   `read-stdin-line`, `read-stdin-bytes`, `stdin-eof?`, `flush-stdout`.
-- Low-level extern-only allocator region helpers: `tl_region_mark`,
-  `tl_region_reset`.
+- First-class arena helpers: `arena-make`, `arena-current`, `arena-mark`,
+  `arena-set!`, `arena-destroy`, and `arena-rewind`; invalidating helpers
+  require `(unsafe ...)`.
 - `extern` declarations.
 - Multi-file modules via `import`.
 - Native x86_64 executable targets: `linux-x86_64` by default, and

@@ -5535,7 +5535,7 @@
         [result : CompilerIrFunctionList
           (optimize-function-list-escaping funcs level scratch)]
         (begin
-          (arena-destroy scratch)
+          (unsafe (arena-destroy scratch))
           result)))))
 
 (define (optimize-function-list-escaping
@@ -5560,7 +5560,7 @@
   (let
     [enclosing : i64 (arena-current)]
     (begin
-      (arena-set! scratch)
+      (unsafe (arena-set! scratch))
       (let
         [mark : i64 (arena-mark)]
         (let
@@ -5568,15 +5568,16 @@
           (let
             [scratch-head : i64 (arena-current)]
             (begin
-              (arena-set! enclosing)
+              (unsafe (arena-set! enclosing))
               (let
                 [escaped : CompilerIrFunction (clone raw)]
                 (let
                   [new-enclosing : i64 (arena-current)]
                   (begin
-                    (arena-set! scratch-head)
-                    (arena-rewind mark)
-                    (arena-set! new-enclosing)
+                    (unsafe
+                      (arena-set! scratch-head)
+                      (arena-rewind mark)
+                      (arena-set! new-enclosing))
                     escaped))))))))))
 
 (defenum OptStringSet

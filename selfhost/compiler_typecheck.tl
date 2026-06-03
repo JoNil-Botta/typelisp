@@ -2982,6 +2982,84 @@
       (compiler-typecheck-unsafe-empty-source)
       "parse: unsafe requires a non-empty body")))
 
+(define (compiler-typecheck-arena-safe-observe-source) : String
+  "(define (main) : i64
+  (let
+    [arena : i64 (arena-make)]
+    [current : i64 (arena-current)]
+    [mark : i64 (arena-mark)]
+    (+ arena (+ current mark))))")
+
+(define (compiler-typecheck-arena-with-arena-safe-source) : String
+  "(define (main) : i64
+  (with-arena r
+    (let [s : String (int->string 41)]
+      (string-length s))))")
+
+(define (compiler-typecheck-arena-safe-set-source) : String
+  "(define (main) : unit
+  (arena-set! (arena-current)))")
+
+(define (compiler-typecheck-arena-safe-destroy-source) : String
+  "(define (main) : unit
+  (arena-destroy (arena-current)))")
+
+(define (compiler-typecheck-arena-safe-rewind-source) : String
+  "(define (main) : unit
+  (arena-rewind (arena-mark)))")
+
+(define (compiler-typecheck-arena-safe-alias-source) : String
+  "(define (main) : unit
+  (let
+    [rewind : (-> i64 unit) arena-rewind]
+    (rewind (arena-mark))))")
+
+(define (compiler-typecheck-arena-unsafe-mutate-source) : String
+  "(define (main) : unit
+  (let
+    [arena : i64 (arena-current)]
+    [mark : i64 (arena-mark)]
+    (unsafe
+      (arena-rewind mark)
+      (arena-set! arena)
+      (arena-destroy arena))))")
+
+(define (compiler-typecheck-arena-unsafe-alias-source) : String
+  "(define (main) : unit
+  (let
+    [mark : i64 (arena-mark)]
+    (unsafe
+      (let
+        [rewind : (-> i64 unit) arena-rewind]
+        (rewind mark)))))")
+
+(define (compiler-typecheck-arena-unsafe-tests-ok?) : bool
+  (and
+    (compiler-typecheck-ok? (compiler-typecheck-arena-safe-observe-source))
+    (and
+      (compiler-typecheck-ok? (compiler-typecheck-arena-with-arena-safe-source))
+      (and
+        (compiler-typecheck-error-ok?
+          (compiler-typecheck-arena-safe-set-source)
+          "typecheck: arena-set! requires unsafe context")
+        (and
+          (compiler-typecheck-error-ok?
+            (compiler-typecheck-arena-safe-destroy-source)
+            "typecheck: arena-destroy requires unsafe context")
+          (and
+            (compiler-typecheck-error-ok?
+              (compiler-typecheck-arena-safe-rewind-source)
+              "typecheck: arena-rewind requires unsafe context")
+            (and
+              (compiler-typecheck-error-ok?
+                (compiler-typecheck-arena-safe-alias-source)
+                "typecheck: arena-rewind requires unsafe context")
+              (and
+                (compiler-typecheck-ok?
+                  (compiler-typecheck-arena-unsafe-mutate-source))
+                (compiler-typecheck-ok?
+                  (compiler-typecheck-arena-unsafe-alias-source))))))))))
+
 ;; CTFE layout queries (#989): folded calls produce `i64`, runtime calls are
 ;; rejected, and `offset-of` is restricted to repr-c structs and known fields.
 (define (compiler-typecheck-layout-query-tests-ok?) : bool
@@ -3173,6 +3251,9 @@
     (if (compiler-typecheck-unsafe-tests-ok?)
       unit
       (panic "typecheck: unsafe block tests failed"))
+    (if (compiler-typecheck-arena-unsafe-tests-ok?)
+      unit
+      (panic "typecheck: arena unsafe primitive tests failed"))
     (if (compiler-typecheck-raw-pointer-op-tests-ok?)
       unit
       (panic "typecheck: raw pointer unsafe operation tests failed"))

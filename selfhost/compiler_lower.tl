@@ -2014,7 +2014,7 @@
   [value : CompilerIrValue]
   [from-ty : AstType]
   [to-ty : AstType]) : LowerExpr
-  (if (tc-type-eq from-ty to-ty)
+  (if (or (tc-type-eq from-ty to-ty) (tc-never-type? from-ty))
     (LowerExpr state value to-ty)
     (if (tc-type-compatible? to-ty from-ty)
       (lower-cast-value state value from-ty to-ty)
@@ -5777,6 +5777,8 @@
         origin
         expected-ty
         expected-ty)]
+    [(AstExprIf cond then-branch else-branch)
+      (lower-if ctx state env type-env cond then-branch else-branch expected-ty)]
     [(AstExprCall func _)
       (match (ast-expr-unspan func)
         [(AstExprVar name)
@@ -9534,7 +9536,14 @@
   [then-end-label : String]
   [merge-label : String]
   [expr-ty : AstType]) : ResultLowerExpr
-  (match (lower-expr ctx else-start env type-env else-branch)
+  (match (lower-expr-expected
+    ctx
+    else-start
+    env
+    type-env
+    else-branch
+    expr-ty
+    else-branch)
     [(OkLowerExpr else-lowered)
       (match else-lowered
         [(LowerExpr else-state else-value else-ty)
@@ -9559,7 +9568,14 @@
   [else-label : String]
   [merge-label : String]
   [expr-ty : AstType]) : ResultLowerExpr
-  (match (lower-expr ctx then-start env type-env then-branch)
+  (match (lower-expr-expected
+    ctx
+    then-start
+    env
+    type-env
+    then-branch
+    expr-ty
+    then-branch)
     [(OkLowerExpr then-lowered)
       (match then-lowered
         [(LowerExpr then-state then-value then-ty)
@@ -9596,28 +9612,33 @@
   (match (lower-expr ctx state env type-env cond)
     [(OkLowerExpr cond-lowered)
       (match cond-lowered
-        [(LowerExpr cond-state cond-value _)
-          (match (lower-state-fresh-label cond-state "if_then")
-            [(LowerLabel then-label-state then-label)
-              (match (lower-state-fresh-label then-label-state "if_else")
-                [(LowerLabel else-label-state else-label)
-                  (match (lower-state-fresh-label else-label-state "if_merge")
-                    [(LowerLabel merge-label-state merge-label)
-                      (let
-                        [branch-state : LowerState
-                          (lower-state-emit
-                            merge-label-state
-                            (IrInstrBranch cond-value then-label else-label))]
-                        (lower-if-then
-                          ctx
-                          (lower-state-finish-block branch-state then-label)
-                          env
-                          type-env
-                          then-branch
-                          else-branch
-                          else-label
-                          merge-label
-                          expr-ty))])])])])]
+        [(LowerExpr cond-state cond-value cond-ty)
+          (if (tc-type-compatible? (AstTyBool) cond-ty)
+            (match (lower-state-fresh-label cond-state "if_then")
+              [(LowerLabel then-label-state then-label)
+                (match (lower-state-fresh-label then-label-state "if_else")
+                  [(LowerLabel else-label-state else-label)
+                    (match (lower-state-fresh-label else-label-state "if_merge")
+                      [(LowerLabel merge-label-state merge-label)
+                        (let
+                          [branch-state : LowerState
+                            (lower-state-emit
+                              merge-label-state
+                              (IrInstrBranch cond-value then-label else-label))]
+                          (lower-if-then
+                            ctx
+                            (lower-state-finish-block branch-state then-label)
+                            env
+                            type-env
+                            then-branch
+                            else-branch
+                            else-label
+                            merge-label
+                            expr-ty))])])])
+            (ErrLowerExpr
+              (lower-diagnostic-at-expr
+                cond
+                "typecheck: if condition must be bool")))])]
     [(ErrLowerExpr message) (ErrLowerExpr message)]))
 
 (define (lower-while

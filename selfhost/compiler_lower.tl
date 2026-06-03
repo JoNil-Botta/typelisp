@@ -11688,6 +11688,13 @@
             (not (lower-supported-function-param-type? ctx ty))
             (lower-param-list-contains-unsupported-reference? ctx rest))])]))
 
+(define (lower-supported-function-return-type? [ctx : TcContext] [ty : AstType]) : bool
+  (match (tc-resolve-type ctx ty)
+    [(AstTyTuple _) false]
+    [(AstTyArray _ _) false]
+    [(AstTyRegion _ inner) (lower-supported-function-return-type? ctx inner)]
+    [_ true]))
+
 (define (lower-function
   [ctx : TcContext]
   [top-env : TcTypeEnv]
@@ -11725,19 +11732,22 @@
           names
           mode)]
       [ret-ty : AstType (tc-type-without-regions (tc-resolve-type ctx ret))]
-      (match (lower-tail-expr ctx state env type-env body ret-ty)
-        [(OkLowerState final-state)
-          (OkLowerFunction
-            (IrFunctionCons
-              (IrFunction
-                logical-name
-                (lower-param-list ctx params 0)
-                ret-ty
-                (lower-state-next-var final-state)
-                (lower-state-build-blocks final-state))
-              (lower-state-functions final-state))
-            (lower-state-spans final-state))]
-        [(ErrLowerState message) (ErrLowerFunction message)]))))
+      (if (lower-supported-function-return-type? ctx ret-ty)
+        (match (lower-tail-expr ctx state env type-env body ret-ty)
+          [(OkLowerState final-state)
+            (OkLowerFunction
+              (IrFunctionCons
+                (IrFunction
+                  logical-name
+                  (lower-param-list ctx params 0)
+                  ret-ty
+                  (lower-state-next-var final-state)
+                  (lower-state-build-blocks final-state))
+                (lower-state-functions final-state))
+              (lower-state-spans final-state))]
+          [(ErrLowerState message) (ErrLowerFunction message)])
+        (ErrLowerFunction
+          (lower-diagnostic-at-expr body "lower: unsupported expression"))))))
 
 (define (lower-global-value [names : LowerNameEnv] [expr : AstExpr]) : ResultLowerValue
   (match expr
@@ -12356,6 +12366,11 @@
 ;; lowers to inline storage with each element stored at its offset, returning the
 ;; storage pointer (the same representation `array-ref`/`array-set!` index off).
 (define (compiler-lower-array-literal-source) : String
+  "(define (main) : i64
+  (let [a : (Array i64 3) (array 1 2 3)]
+    (array-ref a 2)))")
+
+(define (compiler-lower-fixed-array-return-source) : String
   "(define (main) : (Array i64 3)
   (array 1 2 3))")
 
@@ -12714,6 +12729,10 @@
     [t : (Tuple bool i64) (tuple true 42)]
     (tuple-ref t 1)))")
 
+(define (compiler-lower-tuple-return-source) : String
+  "(define (make-pair [a : i64] [b : bool]) : (Tuple i64 bool)
+  (tuple a b))")
+
 (define (compiler-lower-clone-source) : String
   "(defstruct Holder
   (name String)
@@ -12723,12 +12742,15 @@
 (defenum StringList
   (SNil)
   (SCons String StringList))
-(define (clone-tuple [items : (Array String)]) : (Tuple String (Array String))
-  (clone (tuple \"tuple\" items)))
-(define (clone-fixed) : (Array String 2)
-  (clone (array \"left\" \"right\")))
-(define (clone-dyn [items : (Array String)]) : (Array String)
-  (clone items))
+(define (clone-tuple [items : (Array String)]) : i64
+  (let [pair : (Tuple String (Array String)) (clone (tuple \"tuple\" items))]
+    (string-length (tuple-ref pair 0))))
+(define (clone-fixed) : i64
+  (let [fixed : (Array String 2) (clone (array \"left\" \"right\"))]
+    (string-length (array-ref fixed 0))))
+(define (clone-dyn [items : (Array String)]) : i64
+  (let [copied : (Array String) (clone items)]
+    (array-length copied)))
 (define (clone-holder [items : (Array String)]) : Holder
   (clone (Holder \"holder\" (array \"x\" \"y\") items (tuple \"p\" \"q\"))))
 (define (clone-list [list : StringList]) : StringList
@@ -16157,6 +16179,11 @@
       (if (compiler-lower-tuple-shape-ok?)
         unit
         (set! ok false))
+      (if (compiler-lower-error-ok?
+        (compiler-lower-tuple-return-source)
+        "lower: unsupported expression")
+        unit
+        (set! ok false))
       (if (compiler-lower-clone-shape-ok?)
         unit
         (set! ok false))
@@ -16335,6 +16362,11 @@
         unit
         (set! ok false))
       (if (compiler-lower-ok? (compiler-lower-array-literal-source))
+        unit
+        (set! ok false))
+      (if (compiler-lower-error-ok?
+        (compiler-lower-fixed-array-return-source)
+        "lower: unsupported expression")
         unit
         (set! ok false))
       (if (compiler-lower-ok? (compiler-lower-box-source))

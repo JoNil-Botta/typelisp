@@ -9256,40 +9256,49 @@
       (compiler-backend-function-list-calls? functions "env-var-value")]
     [calls-env-path-separator : bool
       (compiler-backend-function-list-calls? functions "env-path-separator")]
-    (let
-      [needs-oob : bool (and (not defines-oob) (or extern-oob calls-oob))]
-      [needs-div-abort : bool
-        (or
-          (compiler-backend-function-list-needs-div-abort? functions)
-          (and (not defines-div-abort) (or extern-div-abort calls-div-abort)))]
-      [needs-shift-abort : bool
-        (or
-          (compiler-backend-function-list-needs-shift-abort? functions)
-          (and
-            (not defines-shift-abort)
-            (or extern-shift-abort calls-shift-abort)))]
-      [needs-substring : bool
-        (and (not defines-substring) (or extern-substring calls-substring))]
-      [needs-concat : bool
-        (and (not defines-concat) (or extern-concat calls-concat))]
-      [needs-string-eq : bool
-        (and (not defines-string-eq) (or extern-string-eq calls-string-eq))]
-      [needs-string-to-int : bool
+    [needs-oob : bool (and (not defines-oob) (or extern-oob calls-oob))]
+    [needs-div-abort : bool
+      (or
+        (compiler-backend-function-list-needs-div-abort? functions)
+        (and (not defines-div-abort) (or extern-div-abort calls-div-abort)))]
+    [needs-shift-abort : bool
+      (or
+        (compiler-backend-function-list-needs-shift-abort? functions)
         (and
-          (not defines-string-to-int)
-          (or extern-string-to-int calls-string-to-int))]
-      [needs-int-to-string : bool
-        (and
-          (not defines-int-to-string)
-          (or extern-int-to-string calls-int-to-string))]
-      [direct-abort : bool (or extern-abort calls-abort)]
-      [needs-print-err : bool
-        (and (not defines-print-err) (or extern-print-err calls-print-err))]
-      [needs-print-str : bool
-        (and (not defines-print-str) (or extern-print-str calls-print-str))]
-      [needs-arg-count : bool (or extern-arg-count calls-arg-count)]
-      [needs-arg : bool (or extern-arg calls-arg)]
-      [needs-read-file : bool
+          (not defines-shift-abort)
+          (or extern-shift-abort calls-shift-abort)))]
+    [needs-substring : bool
+      (and (not defines-substring) (or extern-substring calls-substring))]
+    [needs-concat : bool
+      (and (not defines-concat) (or extern-concat calls-concat))]
+    [needs-string-eq : bool
+      (and (not defines-string-eq) (or extern-string-eq calls-string-eq))]
+    [needs-string-to-int : bool
+      (and
+        (not defines-string-to-int)
+        (or extern-string-to-int calls-string-to-int))]
+    [needs-int-to-string : bool
+      (and
+        (not defines-int-to-string)
+        (or extern-int-to-string calls-int-to-string))]
+    [direct-abort : bool (or extern-abort calls-abort)]
+    [needs-print-err : bool
+      (and (not defines-print-err) (or extern-print-err calls-print-err))]
+    [needs-print-str : bool
+      (and (not defines-print-str) (or extern-print-str calls-print-str))]
+    [needs-print-char : bool
+      (and (not defines-print-char) (or extern-print-char calls-print-char))]
+    [needs-print-f64 : bool
+      (and (not defines-print-f64) (or extern-print-f64 calls-print-f64))]
+    [needs-arg-count : bool (or extern-arg-count calls-arg-count)]
+    [needs-arg : bool (or extern-arg calls-arg)]
+    [needs-read-file : bool
+      (or
+        (or extern-read-file calls-read-file)
+        (or extern-read-file-status calls-read-file-status))]
+    [needs-write-file : bool
+      (or
+        (or extern-write-file calls-write-file)
         (or
           (or extern-write-file-status calls-write-file-status)
           (or extern-append-file-status calls-append-file-status)))]
@@ -12020,130 +12029,18 @@ tl_region_reset:
 
 ")
 
-(define (compiler-backend-runtime-windows-fs-remove-file-status-functions) : String
-  ".L_tl_fs_remove_file_status:
-    push %rbp
-    mov %rsp, %rbp
-    push %rbx
-    push %r12
-    push %r13
-    sub $8, %rsp
-    movq %rcx, %rbx
-    movq %rdx, %r12
-    cmpq $0, %r12
-    jl .L_tl_fs_remove_file_status_win_invalid
-    movq %r12, %rcx
-    addq $1, %rcx
-    js .L_tl_fs_remove_file_status_win_invalid
-    sub $32, %rsp
-    call tl_alloc
-    add $32, %rsp
-    movq %rax, %r13
-    xorq %r10, %r10
-.L_tl_fs_remove_file_status_win_path_copy_loop:
-    cmpq %r12, %r10
-    jge .L_tl_fs_remove_file_status_win_path_copy_done
-    movzbl (%rbx,%r10), %edx
-    movb %dl, (%r13,%r10)
-    incq %r10
-    jmp .L_tl_fs_remove_file_status_win_path_copy_loop
-.L_tl_fs_remove_file_status_win_path_copy_done:
-    movb $0, (%r13,%r12)
-    movq %r13, %rcx
-    sub $32, %rsp
-    call _unlink
-    add $32, %rsp
-    testl %eax, %eax
-    js .L_tl_fs_remove_file_status_win_errno
-    xorq %rax, %rax
-    jmp .L_tl_fs_remove_file_status_win_return
-.L_tl_fs_remove_file_status_win_errno:
-    sub $32, %rsp
-    call _errno
-    add $32, %rsp
-    movslq (%rax), %rax
-    testq %rax, %rax
-    jne .L_tl_fs_remove_file_status_win_return
-    movq $1, %rax
-    jmp .L_tl_fs_remove_file_status_win_return
-.L_tl_fs_remove_file_status_win_invalid:
-    movq $22, %rax
-.L_tl_fs_remove_file_status_win_return:
-    add $8, %rsp
-    pop %r13
-    pop %r12
-    pop %rbx
-    pop %rbp
-    ret
-
-")
-
-(define (compiler-backend-runtime-windows-fs-remove-dir-status-functions) : String
-  ".L_tl_fs_remove_dir_status:
-    push %rbp
-    mov %rsp, %rbp
-    push %rbx
-    push %r12
-    push %r13
-    sub $8, %rsp
-    movq %rcx, %rbx
-    movq %rdx, %r12
-    cmpq $0, %r12
-    jl .L_tl_fs_remove_dir_status_win_invalid
-    movq %r12, %rcx
-    addq $1, %rcx
-    js .L_tl_fs_remove_dir_status_win_invalid
-    sub $32, %rsp
-    call tl_alloc
-    add $32, %rsp
-    movq %rax, %r13
-    xorq %r10, %r10
-.L_tl_fs_remove_dir_status_win_path_copy_loop:
-    cmpq %r12, %r10
-    jge .L_tl_fs_remove_dir_status_win_path_copy_done
-    movzbl (%rbx,%r10), %edx
-    movb %dl, (%r13,%r10)
-    incq %r10
-    jmp .L_tl_fs_remove_dir_status_win_path_copy_loop
-.L_tl_fs_remove_dir_status_win_path_copy_done:
-    movb $0, (%r13,%r12)
-    movq %r13, %rcx
-    sub $32, %rsp
-    call _rmdir
-    add $32, %rsp
-    testl %eax, %eax
-    js .L_tl_fs_remove_dir_status_win_errno
-    xorq %rax, %rax
-    jmp .L_tl_fs_remove_dir_status_win_return
-.L_tl_fs_remove_dir_status_win_errno:
-    sub $32, %rsp
-    call _errno
-    add $32, %rsp
-    movslq (%rax), %rax
-    testq %rax, %rax
-    jne .L_tl_fs_remove_dir_status_win_return
-    movq $1, %rax
-    jmp .L_tl_fs_remove_dir_status_win_return
-.L_tl_fs_remove_dir_status_win_invalid:
-    movq $22, %rax
-.L_tl_fs_remove_dir_status_win_return:
-    add $8, %rsp
-    pop %r13
-    pop %r12
-    pop %rbx
-    pop %rbp
-    ret
-
-")
-
 (define (compiler-backend-runtime-windows-fs-functions) : String
   (string-append
-    (string-append
-      (compiler-backend-runtime-windows-fs-mkdir-status-functions)
-      (string-append
-        (compiler-backend-runtime-windows-fs-remove-file-status-functions)
-        (compiler-backend-runtime-windows-fs-remove-dir-status-functions)))
-    ".L_tl_fs_rename_status:
+    (compiler-backend-runtime-windows-fs-mkdir-status-functions)
+    ".L_tl_fs_remove_file_status:
+    movq $38, %rax
+    ret
+
+.L_tl_fs_remove_dir_status:
+    movq $38, %rax
+    ret
+
+.L_tl_fs_rename_status:
     movq $38, %rax
     ret
 
@@ -16123,8 +16020,6 @@ tl_windows_sdk_registry_install:
 "
         (if (compiler-backend-plan-provides? plan ".L_tl_fs_mkdir_status")
           "    .extern _mkdir
-    .extern _unlink
-    .extern _rmdir
     .extern GetCurrentProcessId
 "
           ""))

@@ -5580,6 +5580,127 @@
         [(AstLetBinding name _ _)
           (lower-let-bindings-local-env (sym-i64-bind env name 0) rest)])]))
 
+(define (lower-projected-result-type-fast
+  [ctx : TcContext]
+  [container-ty : AstType]
+  [projected-ty : AstType]) : AstType
+  (tc-type-without-regions
+    (tc-resolve-type
+      ctx
+      (tc-project-from-region-container container-ty projected-ty))))
+
+(define (lower-index-result-type-fast
+  [ctx : TcContext]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [index : AstExpr]) : ResultTcType
+  (match (lower-expr-result-type-fast ctx env type-env index)
+    [(OkTcType index-ty)
+      (if (tc-integer-type? index-ty)
+        (OkTcType index-ty)
+        (ErrTcType "lower: index result type is not fast-pathable"))]
+    [(ErrTcType message) (ErrTcType message)]))
+
+(define (lower-unary-result-type-fast
+  [ctx : TcContext]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [op : AstUnOp]
+  [inner : AstExpr]) : ResultTcType
+  (match (lower-expr-result-type-fast ctx env type-env inner)
+    [(OkTcType inner-ty)
+      (match (tc-unop-type op inner-ty)
+        [(OkTcType result-ty)
+          (OkTcType (tc-type-without-regions (tc-resolve-type ctx result-ty)))]
+        [(ErrTcType message) (ErrTcType message)])]
+    [(ErrTcType message) (ErrTcType message)]))
+
+(define (lower-tuple-ref-result-type-fast
+  [ctx : TcContext]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [tuple-expr : AstExpr]
+  [index : i64]) : ResultTcType
+  (match (lower-expr-result-type-fast ctx env type-env tuple-expr)
+    [(OkTcType tuple-ty)
+      (match (tc-type-strip-region (tc-resolve-type ctx tuple-ty))
+        [(AstTyTuple elem-tys)
+          (match (tc-type-list-ref elem-tys index)
+            [(OkTcType elem-ty)
+              (OkTcType (lower-projected-result-type-fast ctx tuple-ty elem-ty))]
+            [(ErrTcType message) (ErrTcType message)])]
+        [_ (ErrTcType "lower: tuple-ref result type is not fast-pathable")])]
+    [(ErrTcType message) (ErrTcType message)]))
+
+(define (lower-array-ref-result-type-fast
+  [ctx : TcContext]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [array-expr : AstExpr]
+  [index : AstExpr]) : ResultTcType
+  (match (lower-index-result-type-fast ctx env type-env index)
+    [(OkTcType _)
+      (match (lower-expr-result-type-fast ctx env type-env array-expr)
+        [(OkTcType array-ty)
+          (match (tc-type-strip-region (tc-resolve-type ctx array-ty))
+            [(AstTyArray elem-ty _)
+              (OkTcType
+                (lower-projected-result-type-fast ctx array-ty elem-ty))]
+            [(AstTyDynArray elem-ty)
+              (OkTcType
+                (lower-projected-result-type-fast ctx array-ty elem-ty))]
+            [_ (ErrTcType "lower: array-ref result type is not fast-pathable")])]
+        [(ErrTcType message) (ErrTcType message)])]
+    [(ErrTcType message) (ErrTcType message)]))
+
+(define (lower-string-ref-result-type-fast
+  [ctx : TcContext]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [str : AstExpr]
+  [index : AstExpr]) : ResultTcType
+  (match (lower-index-result-type-fast ctx env type-env index)
+    [(OkTcType _)
+      (match (lower-expr-result-type-fast ctx env type-env str)
+        [(OkTcType str-ty)
+          (if (lower-string-handle-type? ctx str-ty)
+            (OkTcType (AstTyChar))
+            (ErrTcType "lower: string-ref result type is not fast-pathable"))]
+        [(ErrTcType message) (ErrTcType message)])]
+    [(ErrTcType message) (ErrTcType message)]))
+
+(define (lower-struct-get-result-type-fast
+  [ctx : TcContext]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [receiver : AstExpr]
+  [field : String]) : ResultTcType
+  (match (lower-expr-result-type-fast ctx env type-env receiver)
+    [(OkTcType receiver-ty)
+      (match (tc-type-strip-region (tc-resolve-type ctx receiver-ty))
+        [(AstTyStruct struct-name)
+          (match (tc-struct-field-type ctx struct-name field)
+            [(OkTcType field-ty)
+              (OkTcType
+                (lower-projected-result-type-fast ctx receiver-ty field-ty))]
+            [(ErrTcType message) (ErrTcType message)])]
+        [_ (ErrTcType "lower: struct-get result type is not fast-pathable")])]
+    [(ErrTcType message) (ErrTcType message)]))
+
+(define (lower-box-get-result-type-fast
+  [ctx : TcContext]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [box-expr : AstExpr]) : ResultTcType
+  (match (lower-expr-result-type-fast ctx env type-env box-expr)
+    [(OkTcType box-ty)
+      (match (tc-type-strip-region (tc-resolve-type ctx box-ty))
+        [(AstTyBox inner-ty)
+          (OkTcType
+            (lower-projected-result-type-fast ctx box-ty inner-ty))]
+        [_ (ErrTcType "lower: box-get result type is not fast-pathable")])]
+    [(ErrTcType message) (ErrTcType message)]))
+
 (define (lower-expr-result-type-fast
   [ctx : TcContext]
   [env : SymI64Env]
@@ -5597,6 +5718,8 @@
       (OkTcType (tc-type-without-regions (tc-resolve-type ctx ty)))]
     [(AstExprCast _ ty)
       (OkTcType (tc-type-without-regions (tc-resolve-type ctx ty)))]
+    [(AstExprUnary op inner)
+      (lower-unary-result-type-fast ctx env type-env op inner)]
     [(AstExprCall func args)
       (lower-call-result-type-fast ctx env type-env func args)]
     [(AstExprBinary op left _)
@@ -5618,6 +5741,16 @@
             body-type-env
             body)]
         [(ErrTcEnv message) (ErrTcType message)])]
+    [(AstExprTupleRef tuple-expr index)
+      (lower-tuple-ref-result-type-fast ctx env type-env tuple-expr index)]
+    [(AstExprArrayRef array-expr index)
+      (lower-array-ref-result-type-fast ctx env type-env array-expr index)]
+    [(AstExprStringRef str index)
+      (lower-string-ref-result-type-fast ctx env type-env str index)]
+    [(AstExprStructGet receiver field)
+      (lower-struct-get-result-type-fast ctx env type-env receiver field)]
+    [(AstExprBoxGet box-expr)
+      (lower-box-get-result-type-fast ctx env type-env box-expr)]
     [_ (ErrTcType "lower: expression result type is not fast-pathable")]))
 
 (define (lower-expr-typechecked
@@ -5738,7 +5871,19 @@
           (lower-match ctx state env type-env scrutinee arms expr-ty)]
         [(ErrTcType _)
           (lower-expr-typechecked ctx state env type-env expr origin)])]
-    [_ (lower-expr-typechecked ctx state env type-env expr origin)]))
+    [_
+      (match (lower-expr-result-type-fast ctx env type-env expr)
+        [(OkTcType expr-ty)
+          (lower-expr-with-type
+            ctx
+            state
+            env
+            type-env
+            expr
+            origin
+            expr-ty)]
+        [(ErrTcType _)
+          (lower-expr-typechecked ctx state env type-env expr origin)])]))
 
 (define (lower-expr
   [ctx : TcContext]

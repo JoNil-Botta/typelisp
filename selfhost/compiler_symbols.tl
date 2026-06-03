@@ -1,23 +1,23 @@
 ;; compiler_symbols.tl - Top-level compiler symbol table over AstProgram (#405).
 ;;
-;; This is intentionally an assoc-list slice over SymI64Env, not the future
-;; hash-table work from #42. Handles are packed as kind * stride + declaration
-;; index, where index is the source-order position among supported declarations.
-;; Import declarations have no top-level symbol name here and do not consume an
-;; index.
+;; Handles are packed as kind * stride + declaration index, where index is the
+;; source-order position among supported declarations. Import declarations have
+;; no top-level symbol name here and do not consume an index.
 (import "compiler_parse_core.tl")
 
 (import "sym_i64_env.tl")
 
+(import "stdlib/hashmap.tl")
+
 (defenum CompilerSymbols
-  (CompilerSymbols SymI64Env SymI64Env SymI64Env))
+  (CompilerSymbols StringI64Map StringI64Map StringI64Map))
 
 (defenum ResultCompilerSymbols
   (OkCompilerSymbols CompilerSymbols)
   (ErrCompilerSymbols String))
 
 (defenum CompilerRegistries
-  (CompilerRegistries SymI64Env SymI64Env))
+  (CompilerRegistries StringI64Map StringI64Map))
 
 (defenum ResultCompilerRegistries
   (OkCompilerRegistries CompilerRegistries)
@@ -89,29 +89,51 @@
     (compiler-symbol-kind-defstruct)
     (compiler-registry-handle-owner-index handle)))
 
+(define (compiler-symbol-map-empty) : StringI64Map
+  (string-i64-map-with-capacity 256))
+
+(define (compiler-symbol-map-lookup [map : StringI64Map] [name : String]) : MaybeI64
+  (match (string-i64-map-get map name)
+    [(StringI64MapFound value) (SomeI64 value)]
+    [(StringI64MapMissing) NoneI64]))
+
+(define (compiler-symbol-map-contains? [map : StringI64Map] [name : String]) : bool
+  (match (compiler-symbol-map-lookup map name)
+    [(SomeI64 _) true]
+    [(NoneI64) false]))
+
+(define (compiler-symbol-map-bind
+  [map : StringI64Map]
+  [name : String]
+  [handle : i64]) : StringI64Map
+  (string-i64-map-put map name handle))
+
 (define (compiler-symbols-empty) : CompilerSymbols
-  (CompilerSymbols (sym-i64-empty) (sym-i64-empty) (sym-i64-empty)))
+  (CompilerSymbols
+    (compiler-symbol-map-empty)
+    (compiler-symbol-map-empty)
+    (compiler-symbol-map-empty)))
 
 (define (compiler-registries-empty) : CompilerRegistries
-  (CompilerRegistries (sym-i64-empty) (sym-i64-empty)))
+  (CompilerRegistries (compiler-symbol-map-empty) (compiler-symbol-map-empty)))
 
 (define (compiler-symbols-lookup-value
   [symbols : CompilerSymbols]
   [name : String]) : MaybeI64
   (match symbols
-    [(CompilerSymbols values _ _) (sym-i64-lookup values name)]))
+    [(CompilerSymbols values _ _) (compiler-symbol-map-lookup values name)]))
 
 (define (compiler-symbols-lookup-type
   [symbols : CompilerSymbols]
   [name : String]) : MaybeI64
   (match symbols
-    [(CompilerSymbols _ types _) (sym-i64-lookup types name)]))
+    [(CompilerSymbols _ types _) (compiler-symbol-map-lookup types name)]))
 
 (define (compiler-symbols-lookup-macro
   [symbols : CompilerSymbols]
   [name : String]) : MaybeI64
   (match symbols
-    [(CompilerSymbols _ _ macros) (sym-i64-lookup macros name)]))
+    [(CompilerSymbols _ _ macros) (compiler-symbol-map-lookup macros name)]))
 
 (define (compiler-symbols-duplicate-value-message [name : String]) : String
   (string-append "symbols: duplicate value declaration " name))
@@ -153,9 +175,12 @@
   [handle : i64]) : CompilerSymbols
   (match symbols
     [(CompilerSymbols values types macros)
-      (if (sym-i64-contains values name)
+      (if (compiler-symbol-map-contains? values name)
         symbols
-        (CompilerSymbols (sym-i64-bind values name handle) types macros))]))
+        (CompilerSymbols
+          (compiler-symbol-map-bind values name handle)
+          types
+          macros))]))
 
 (define (compiler-symbols-add-type-alias
   [symbols : CompilerSymbols]
@@ -163,9 +188,12 @@
   [handle : i64]) : CompilerSymbols
   (match symbols
     [(CompilerSymbols values types macros)
-      (if (sym-i64-contains types name)
+      (if (compiler-symbol-map-contains? types name)
         symbols
-        (CompilerSymbols values (sym-i64-bind types name handle) macros))]))
+        (CompilerSymbols
+          values
+          (compiler-symbol-map-bind types name handle)
+          macros))]))
 
 (define (compiler-symbols-add-macro-alias
   [symbols : CompilerSymbols]
@@ -173,9 +201,12 @@
   [handle : i64]) : CompilerSymbols
   (match symbols
     [(CompilerSymbols values types macros)
-      (if (sym-i64-contains macros name)
+      (if (compiler-symbol-map-contains? macros name)
         symbols
-        (CompilerSymbols values types (sym-i64-bind macros name handle)))]))
+        (CompilerSymbols
+          values
+          types
+          (compiler-symbol-map-bind macros name handle)))]))
 
 (define (compiler-registries-add-variant-alias
   [registries : CompilerRegistries]
@@ -183,9 +214,11 @@
   [handle : i64]) : CompilerRegistries
   (match registries
     [(CompilerRegistries variants fields)
-      (if (sym-i64-contains variants name)
+      (if (compiler-symbol-map-contains? variants name)
         registries
-        (CompilerRegistries (sym-i64-bind variants name handle) fields))]))
+        (CompilerRegistries
+          (compiler-symbol-map-bind variants name handle)
+          fields))]))
 
 (define (compiler-symbols-add-value
   [symbols : CompilerSymbols]
@@ -193,13 +226,16 @@
   [handle : i64]) : ResultCompilerSymbols
   (match symbols
     [(CompilerSymbols values types macros)
-      (if (sym-i64-contains values name)
+      (if (compiler-symbol-map-contains? values name)
         (ErrCompilerSymbols (compiler-symbols-duplicate-value-message name))
-        (if (sym-i64-contains macros name)
+        (if (compiler-symbol-map-contains? macros name)
           (ErrCompilerSymbols
             (compiler-symbols-duplicate-macro-value-message name))
           (OkCompilerSymbols
-            (CompilerSymbols (sym-i64-bind values name handle) types macros))))]))
+            (CompilerSymbols
+              (compiler-symbol-map-bind values name handle)
+              types
+              macros))))]))
 
 (define (compiler-symbols-add-variant-value
   [symbols : CompilerSymbols]
@@ -207,7 +243,7 @@
   [handle : i64]) : ResultCompilerSymbols
   (match symbols
     [(CompilerSymbols values types macros)
-      (match (sym-i64-lookup values name)
+      (match (compiler-symbol-map-lookup values name)
         [(SomeI64 existing)
           (if (=
             (compiler-symbol-handle-kind existing)
@@ -216,11 +252,14 @@
               (compiler-registries-duplicate-variant-message name))
             (ErrCompilerSymbols (compiler-symbols-duplicate-value-message name)))]
         [(NoneI64)
-          (if (sym-i64-contains macros name)
+          (if (compiler-symbol-map-contains? macros name)
             (ErrCompilerSymbols
               (compiler-symbols-duplicate-macro-value-message name))
             (OkCompilerSymbols
-              (CompilerSymbols (sym-i64-bind values name handle) types macros)))])]))
+              (CompilerSymbols
+                (compiler-symbol-map-bind values name handle)
+                types
+                macros)))])]))
 
 (define (compiler-symbols-add-type
   [symbols : CompilerSymbols]
@@ -228,10 +267,13 @@
   [handle : i64]) : ResultCompilerSymbols
   (match symbols
     [(CompilerSymbols values types macros)
-      (if (sym-i64-contains types name)
+      (if (compiler-symbol-map-contains? types name)
         (ErrCompilerSymbols (compiler-symbols-duplicate-type-message name))
         (OkCompilerSymbols
-          (CompilerSymbols values (sym-i64-bind types name handle) macros)))]))
+          (CompilerSymbols
+            values
+            (compiler-symbol-map-bind types name handle)
+            macros)))]))
 
 (define (compiler-symbols-add-macro
   [symbols : CompilerSymbols]
@@ -239,13 +281,16 @@
   [handle : i64]) : ResultCompilerSymbols
   (match symbols
     [(CompilerSymbols values types macros)
-      (if (sym-i64-contains macros name)
+      (if (compiler-symbol-map-contains? macros name)
         (ErrCompilerSymbols (compiler-symbols-duplicate-macro-message name))
-        (if (sym-i64-contains values name)
+        (if (compiler-symbol-map-contains? values name)
           (ErrCompilerSymbols
             (compiler-symbols-duplicate-macro-value-message name))
           (OkCompilerSymbols
-            (CompilerSymbols values types (sym-i64-bind macros name handle)))))]))
+            (CompilerSymbols
+              values
+              types
+              (compiler-symbol-map-bind macros name handle)))))]))
 
 (define (compiler-symbols-add-value-in-module
   [symbols : CompilerSymbols]
@@ -620,7 +665,7 @@
   [registries : CompilerRegistries]
   [name : String]) : MaybeI64
   (match registries
-    [(CompilerRegistries variants _) (sym-i64-lookup variants name)]))
+    [(CompilerRegistries variants _) (compiler-symbol-map-lookup variants name)]))
 
 (define (compiler-registries-lookup-struct-field
   [registries : CompilerRegistries]
@@ -628,7 +673,9 @@
   [field-name : String]) : MaybeI64
   (match registries
     [(CompilerRegistries _ fields)
-      (sym-i64-lookup fields (compiler-struct-field-key struct-name field-name))]))
+      (compiler-symbol-map-lookup
+        fields
+        (compiler-struct-field-key struct-name field-name))]))
 
 (define (compiler-registries-add-variant
   [registries : CompilerRegistries]
@@ -637,12 +684,12 @@
   [variant-index : i64]) : ResultCompilerRegistries
   (match registries
     [(CompilerRegistries variants fields)
-      (if (sym-i64-contains variants name)
+      (if (compiler-symbol-map-contains? variants name)
         (ErrCompilerRegistries
           (compiler-registries-duplicate-variant-message name))
         (OkCompilerRegistries
           (CompilerRegistries
-            (sym-i64-bind
+            (compiler-symbol-map-bind
               variants
               name
               (compiler-registry-make-handle
@@ -666,12 +713,14 @@
         variant-index)]
     (match registries
       [(CompilerRegistries variants fields)
-        (if (sym-i64-contains variants key)
+        (if (compiler-symbol-map-contains? variants key)
           (ErrCompilerRegistries
             (compiler-registries-duplicate-variant-message key))
           (OkCompilerRegistries
             (compiler-registries-add-variant-alias
-              (CompilerRegistries (sym-i64-bind variants key handle) fields)
+              (CompilerRegistries
+                (compiler-symbol-map-bind variants key handle)
+                fields)
               name
               handle)))])))
 
@@ -685,13 +734,13 @@
     [(CompilerRegistries variants fields)
       (let
         [key : String (compiler-struct-field-key struct-name field-name)]
-        (if (sym-i64-contains fields key)
+        (if (compiler-symbol-map-contains? fields key)
           (ErrCompilerRegistries
             (compiler-registries-duplicate-field-message struct-name field-name))
           (OkCompilerRegistries
             (CompilerRegistries
               variants
-              (sym-i64-bind
+              (compiler-symbol-map-bind
                 fields
                 key
                 (compiler-registry-make-handle
@@ -708,9 +757,11 @@
     [(CompilerRegistries variants fields)
       (let
         [key : String (compiler-struct-field-key struct-name field-name)]
-        (if (sym-i64-contains fields key)
+        (if (compiler-symbol-map-contains? fields key)
           registries
-          (CompilerRegistries variants (sym-i64-bind fields key handle))))]))
+          (CompilerRegistries
+            variants
+            (compiler-symbol-map-bind fields key handle))))]))
 
 (define (compiler-registries-add-variant-aliases-list
   [registries : CompilerRegistries]

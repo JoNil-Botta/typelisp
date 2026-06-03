@@ -239,12 +239,10 @@ EOF
 # former Rust backend handled these, but it has been removed, so these cases are
 # commented out in the manifest and listed here as documented skips until the
 # selfhost compiler closes the gap:
-#   print-char /
 #   enum-payload pattern / spmd ....... #1657
 #   bare idiv traps need guarded abort  #1654
 selfhost_deferred_integration_skips() {
     cat <<'EOF'
-print_char
 shl_count_width_trap
 shl_neg_count_trap
 string_match

@@ -365,6 +365,52 @@
                 (compiler-backend-todo-marker))))))]
     [(ErrCompilerBackend _) false]))
 
+(define (compiler-backend-print-runtime-source) : String
+  "(define (main) : i64
+  (begin
+    (print-char #A')
+    (print-float 1.5)
+    0))")
+
+(define (compiler-backend-print-runtime-target-extra-ok?
+  [target : CompilerBackendTarget]
+  [asm : String]) : bool
+  (match target
+    [(BackendTargetLinux)
+      (compiler-backend-string-contains? asm "    call snprintf\n")]
+    [(BackendTargetWindows)
+      (and
+        (compiler-backend-string-contains? asm ".extern _snprintf\n")
+        (compiler-backend-string-contains? asm "    call _snprintf\n"))]))
+
+(define (compiler-backend-print-runtime-target-ok?
+  [target : CompilerBackendTarget]) : bool
+  (match (compiler-backend-emit-source-for-target
+    (compiler-backend-print-runtime-source)
+    target)
+    [(OkCompilerBackend asm)
+      (and
+        (backend-and8
+          (compiler-backend-string-contains? asm ".globl tl_print_char\n")
+          (compiler-backend-string-contains? asm "tl_print_char:\n")
+          (compiler-backend-string-contains? asm "    call tl_print_char\n")
+          (compiler-backend-string-contains? asm ".globl tl_print_f64\n")
+          (compiler-backend-string-contains? asm "tl_print_f64:\n")
+          (compiler-backend-string-contains? asm "    call tl_print_f64\n")
+          (compiler-backend-string-contains? asm ".L_tl_print_f64_fmt:\n")
+          (compiler-backend-print-runtime-target-extra-ok? target asm))
+        (and
+          (not (compiler-backend-string-contains? asm "call _tl_print_char"))
+          (and
+            (not (compiler-backend-string-contains? asm "_tl_print_float"))
+            (not (compiler-backend-string-contains? asm "call _tl_print_f64")))))]
+    [(ErrCompilerBackend _) false]))
+
+(define (compiler-backend-print-runtime-ok?) : bool
+  (and
+    (compiler-backend-print-runtime-target-ok? (BackendTargetLinux))
+    (compiler-backend-print-runtime-target-ok? (BackendTargetWindows))))
+
 ;; Backend-owned replacement for the Rust `string-ref` emit-shape checks
 ;; (#1417): source-level string indexing should keep literal string data, use an
 ;; unsigned bounds check, call the out-of-bounds helper, and zero-extend the
@@ -1660,6 +1706,8 @@
       false
       false
       false
+      false
+      false
       false)
     IrFunctionNil
     IrExternNil
@@ -2730,7 +2778,9 @@
               (backend-and8
                 (compiler-backend-user-helper-name-ok?)
                 (compiler-backend-file-handle-open-close-runtime-ok?)
-                (compiler-backend-string-runtime-ok?)
+                (and
+                  (compiler-backend-string-runtime-ok?)
+                  (compiler-backend-print-runtime-ok?))
                 (compiler-backend-env-runtime-ok?)
                 (compiler-backend-expanded-scalar-regs-ok?)
                 (compiler-backend-regalloc-f64-ok?)

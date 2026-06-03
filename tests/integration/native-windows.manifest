@@ -66,7 +66,8 @@ region_reset_discard|tests/integration/region_reset_discard.tl|3|-|-|-
 region_reset_preserve|tests/integration/region_reset_preserve.tl|62|-|-|-
 # run-assert deferred on windows (region-reset guard faults instead of aborting, #1660): region_reset_invalid_trap|tests/integration/region_reset_invalid_trap.tl|134|-|-|-|expected-stderr:tl: invalid region mark\n
 print|tests/integration/print.tl|0|42\nfalse\n|-|-
-# run-assert deferred (selfhost parity follow-up #1654/#1655/#1656/#1657): print_char|tests/integration/print_char.tl|0|A\n|-|-
+print_char|tests/integration/print_char.tl|0|A\n|-|-
+print_float|tests/integration/print_float.tl|0|1.5\n|-|-
 print_string|tests/integration/print_string.tl|0|hello\nworld\n|-|-
 register_scalar_homes|tests/integration/register_scalar_homes.tl|42|-|-|-
 # run-assert deferred (bare idiv trap needs guarded abort, #1654): rem_zero_trap|tests/integration/rem_zero_trap.tl|135|-|-|-|expected-stderr:tl: integer division or remainder error\n

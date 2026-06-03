@@ -5556,13 +5556,11 @@
   (optimize-function-fixed func (optimize-function-max-iterations)))
 
 (define (optimize-function-with-level [func : CompilerIrFunction] [level : i64]) : CompilerIrFunction
-  (if (= level 0)
-    func
-    (if (= level 1)
-      (optimize-function-once-fast func)
-      (if (= level 2)
-        (optimize-function-once-level2 func)
-        (optimize-function func)))))
+  (cond
+    [(= level 0) func]
+    [(= level 1) (optimize-function-once-fast func)]
+    [(= level 2) (optimize-function-once-level2 func)]
+    [else (optimize-function func)]))
 
 (define (optimize-function-list [funcs : CompilerIrFunctionList]) : CompilerIrFunctionList
   (optimize-function-list-with-level funcs (compiler-optimize-default-level)))

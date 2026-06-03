@@ -5503,6 +5503,33 @@
                     promoted-frame
                     (opt-dce-block-list used global-blocks)))])]))]))
 
+;; Level 2 keeps the self-build path lightweight while preserving the explicit
+;; optimized-level checks for local scalar cleanup, bounds checks, stack
+;; promotion, CFG cleanup, DCE, and program-level reachability pruning.
+(define (optimize-function-once-level2 [func : CompilerIrFunction]) : CompilerIrFunction
+  (match func
+    [(IrFunction name params ret-ty frame blocks)
+      (let
+        [folded : CompilerIrBlockList (optimize-block-list blocks)]
+        (let
+          [promoted : CompilerIrFunction
+            (opt-aggregate-stack-promote-function
+              (IrFunction name params ret-ty frame folded))]
+          (match promoted
+            [(IrFunction _ _ _ promoted-frame promoted-blocks)
+              (let
+                [cfg : CompilerIrBlockList
+                  (opt-cfg-simplify-blocks promoted-blocks)]
+                (let
+                  [used : OptUsedSet
+                    (opt-collect-blocks-uses (OptUsedNil) cfg)]
+                  (IrFunction
+                    name
+                    params
+                    ret-ty
+                    promoted-frame
+                    (opt-dce-block-list used cfg))))])))]))
+
 (define (optimize-function-once-fast [func : CompilerIrFunction]) : CompilerIrFunction
   (match func
     [(IrFunction name params ret-ty frame blocks)
@@ -5535,7 +5562,7 @@
     (if (= level 1)
       (optimize-function-once-fast func)
       (if (= level 2)
-        (optimize-function-once func)
+        (optimize-function-once-level2 func)
         (optimize-function func)))))
 
 (define (optimize-function-list [funcs : CompilerIrFunctionList]) : CompilerIrFunctionList
@@ -8036,7 +8063,7 @@
       [(not (= (compiler-ir-instr-list-count level2-instrs) 0)) false]
       [(not (= (compiler-ir-instr-list-count level3-instrs) 0)) false]
       [(not (opt-program-eq level1 defaulted)) false]
-      ;; Level 2 runs one full pipeline pass; level 3 keeps fixed-point cleanup.
+      ;; Level 2 keeps a cheaper optimized pass; level 3 keeps fixed-point cleanup.
       [(not (= (compiler-ir-instr-list-count level2-fixed-instrs) 4)) false]
       [(not (= (opt-count-arith-instrs level2-fixed-instrs) 3)) false]
       [(not (= (compiler-ir-instr-list-count level3-fixed-instrs) 3)) false]

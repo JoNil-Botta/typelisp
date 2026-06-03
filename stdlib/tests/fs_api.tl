@@ -82,6 +82,25 @@
     [(ErrIoString error)
       (panic (string-append message (io-error-message error)))]))
 
+;; Windows supports temp-dir creation (mkdir + GetCurrentProcessId, #850) but
+;; not yet removal/cleanup (remove-file/remove-dir are unsupported stubs), so the
+;; Windows arm asserts a successful, unique, existing create rather than the full
+;; Linux create/write/remove lifecycle.
+(define (assert-created-temp-dir) : unit
+  (let
+    [dir-a : String
+      (expect-ok-string
+        (try-create-temp-dir "typelisp fs test")
+        "create temp dir a: ")]
+    [dir-b : String
+      (expect-ok-string
+        (try-create-temp-dir "typelisp fs test")
+        "create temp dir b: ")]
+    (begin
+      (assert-true (not (string-eq dir-a dir-b)) "temp directories are unique")
+      (assert-exists dir-a true "temp dir a exists")
+      (assert-exists dir-b true "temp dir b exists"))))
+
 (define (assert-invalid-temp-dir) : unit
   (match (try-create-temp-dir "")
     [(ErrIoString error)
@@ -268,17 +287,7 @@
         (fs-extension ".gitignore")
         ""
         "leading-dot name has no extension")
-      (let
-        [dir-a : String
-          (expect-ok-string
-            (try-create-temp-dir "typelisp fs test")
-            "create temp dir a: ")]
-        [dir-b : String
-          (expect-ok-string
-            (try-create-temp-dir "typelisp fs test")
-            "create temp dir b: ")]
-        [file-a : String (fs-path-join dir-a "artifact with space.s")]
-        [file-b : String (fs-path-join dir-b "cleanup.obj")]
+      (if (fs-windows?)
         (begin
           (assert-created-temp-dir)
           (let

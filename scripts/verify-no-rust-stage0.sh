@@ -409,7 +409,7 @@ fi
 SEED_STAGE1_WRAPPER=0
 if compiler_is_stage1_wrapper "$SEED_TYPELISP_BIN"; then
     SEED_STAGE1_WRAPPER=1
-    echo "[no-rust-stage0] seed is a stage1 wrapper; full Rust CLI parity gates remain in the Rust lane"
+    echo "[no-rust-stage0] seed is a stage1 wrapper; extended CLI parity gates remain in compatibility tiers"
 fi
 
 FRONT_GATE_TYPELISP_BIN=$SEED_TYPELISP_BIN
@@ -558,9 +558,9 @@ if [ "$HOST_OS" = linux ]; then
 else
     # The single-binary cli.tl seed emits module-qualified symbols (the stage1
     # mangling, `_tl_<mod>_u2etl_colon_colon<fn>`), which only the manifest's
-    # stage1 expectation mode accepts; stage0 mode expects the bare Rust-backend
-    # labels. STAGE1_HOST_ACTION_DRIVERS_AVAILABLE is always 0 on Windows, so the
-    # seed is always cli.tl here (#1662).
+    # stage1 expectation mode accepts; stage0 mode expects legacy unqualified
+    # labels. STAGE1_HOST_ACTION_DRIVERS_AVAILABLE is always 0 on Windows, so
+    # the seed is always cli.tl here (#1662).
     run_gate "selfhost compile manifest" env TYPELISP_COMPILE_MANIFEST_EXPECTATION_MODE=stage1 scripts/verify-selfhost-compile-manifest.sh
     run_gate "deterministic assembly" scripts/check-deterministic-asm.sh
     if [ "$WINDOWS_SEED_STAGED_RUNTIME_GAP" -eq 1 ]; then

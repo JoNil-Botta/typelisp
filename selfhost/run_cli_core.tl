@@ -20,6 +20,7 @@
     CompilerLoadRootList
     ProcessStringList
     i64
+    CompilerBackendMode
     SourceToolLinkInputs))
 
 (defenum ResultRunCliConfig
@@ -212,6 +213,7 @@
   [stdlib-roots : CompilerLoadRootList]
   [runtime-args : ProcessStringList]
   [opt-level : i64]
+  [backend-mode : CompilerBackendMode]
   [link-inputs : SourceToolLinkInputs]) : ResultRunCliConfig
   (if (>= idx count)
     (OkRunCliConfig
@@ -221,6 +223,7 @@
         stdlib-roots
         runtime-args
         opt-level
+        backend-mode
         link-inputs))
     (let
       [current : String (arg idx)]
@@ -233,6 +236,7 @@
               stdlib-roots
               (source-tool-args-from-argv (+ idx 1) count runtime-args)
               opt-level
+              backend-mode
               link-inputs))]
         [(string-eq current "--target")
           (if (>= (+ idx 1) count)
@@ -249,6 +253,7 @@
                     stdlib-roots
                     runtime-args
                     opt-level
+                    backend-mode
                     link-inputs)]
                 [(ErrSourceToolTarget _)
                   (ErrRunCliConfig (run-cli-unknown-target value))])))]
@@ -258,7 +263,7 @@
             (let
               [value : String (arg (+ idx 1))]
               (match (source-tool-backend-mode "run" value)
-                [(OkSourceToolBackendMode)
+                [(OkSourceToolBackendMode parsed-mode)
                   (run-cli-parse-options
                     (+ idx 2)
                     count
@@ -267,6 +272,7 @@
                     stdlib-roots
                     runtime-args
                     opt-level
+                    parsed-mode
                     link-inputs)]
                 [(ErrSourceToolBackendMode message) (ErrRunCliConfig message)])))]
         [(string-eq current "--opt-level")
@@ -283,6 +289,7 @@
                   stdlib-roots
                   runtime-args
                   (string->int value)
+                  backend-mode
                   link-inputs)
                 (ErrRunCliConfig (run-cli-unknown-opt-level value)))))]
         [(string-eq current "--stdlib-root")
@@ -296,6 +303,7 @@
               (source-tool-root-list-append stdlib-roots (arg (+ idx 1)))
               runtime-args
               opt-level
+              backend-mode
               link-inputs))]
         [(string-eq current "--link-lib")
           (if (>= (+ idx 1) count)
@@ -308,6 +316,7 @@
               stdlib-roots
               runtime-args
               opt-level
+              backend-mode
               (source-tool-link-inputs-add-lib link-inputs (arg (+ idx 1)))))]
         [(string-eq current "--link-search")
           (if (>= (+ idx 1) count)
@@ -320,6 +329,7 @@
               stdlib-roots
               runtime-args
               opt-level
+              backend-mode
               (source-tool-link-inputs-add-search-dir
                 link-inputs
                 (arg (+ idx 1)))))]
@@ -334,6 +344,7 @@
               stdlib-roots
               runtime-args
               opt-level
+              backend-mode
               (source-tool-link-inputs-add-raw-arg link-inputs (arg (+ idx 1)))))]
         [else
           (OkRunCliConfig
@@ -343,6 +354,7 @@
               stdlib-roots
               (source-tool-args-from-argv idx count runtime-args)
               opt-level
+              backend-mode
               link-inputs))]))))
 
 (define (run-cli-config [count : i64]) : ResultRunCliConfig
@@ -363,6 +375,7 @@
           CompilerLoadRootNil
           (process-args-empty)
           (compiler-optimize-default-level)
+          (BackendModeScalar)
           (source-tool-link-inputs-empty))))))
 
 (define (run-cli-main) : i64
@@ -375,6 +388,7 @@
             stdlib-roots
             runtime-args
             opt-level
+            backend-mode
             link-inputs)
           (source-tool-run-source
             source
@@ -382,6 +396,7 @@
             stdlib-roots
             runtime-args
             opt-level
+            backend-mode
             link-inputs)])]
     [(ErrRunCliConfig message)
       (begin
@@ -398,6 +413,7 @@
             stdlib-roots
             runtime-args
             opt-level
+            backend-mode
             link-inputs)
           (source-tool-run-source
             source
@@ -405,6 +421,7 @@
             stdlib-roots
             runtime-args
             opt-level
+            backend-mode
             link-inputs)])]
     [(ErrRunCliConfig message)
       (begin

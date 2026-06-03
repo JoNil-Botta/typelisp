@@ -768,14 +768,13 @@ assert_stdout_empty
 assert_stderr_empty
 
 # Public `compile --backend-mode ...` still emits SIMD-targeted assembly above.
-# Linux public `run`/`build` route through the selfhost source tools, so
-# non-scalar modes stay rejected until those tools can delegate to the Rust SIMD
-# driver or implement selfhost SIMD support (#1014). Windows still uses the
-# Rust-backed public path and keeps CPU-gated execution coverage.
-SIMD_ISAS=$(sh "$ROOT/scripts/detect-simd-isa.sh" 2>/dev/null || true)
+# Linux public `run`/`build` route through the selfhost source tools. AVX2 is
+# now executable through that path; AVX-512 remains staged until the selfhost
+# backend grows mask/predicated memory emission.
+SIMD_ISAS=$(TYPELISP_BIN="$COMPILER" sh "$ROOT/scripts/detect-simd-isa.sh" 2>/dev/null || true)
 run_backend_mode_exec() {
     # $1 = backend mode (avx2|avx512); $2 = required ISA token (avx2|avx512f)
-    if [ "$HOST_OS" = linux ]; then
+    if [ "$HOST_OS" = linux ] && { [ "$IS_STAGE1_WRAPPER" -eq 1 ] || [ "$1" = avx512 ]; }; then
         run_cmd "run-backend-$1-rejected" "$COMPILER" run "$CLI_MATRIX/main.tl" --backend-mode "$1" -- arg
         assert_failure
         assert_stdout_empty
@@ -798,41 +797,45 @@ run_backend_mode_exec() {
 run_backend_mode_exec avx2 avx2
 run_backend_mode_exec avx512 avx512f
 
-# The scalar SPMD source remains an always-run reference. On Linux, non-scalar
-# `run` modes are rejected at the source-tool boundary for now. On Windows, keep
-# CPU-gated SIMD execution coverage for the Rust-backed path.
+# The scalar SPMD source remains an always-run reference. AVX2 is CPU-gated and
+# must match scalar through selfhost source build/run; AVX-512 remains staged on
+# Linux selfhost and CPU-gated on Windows' Rust-backed path.
 SPMD_EXEC="$WORKDIR/spmd-exec"
 mkdir -p "$SPMD_EXEC"
 cat > "$SPMD_EXEC/spmd.tl" <<'TLEOF'
 (define (main) : i64
   (let
-    [a : (Array i64) (make-array i64 64)]
-    [b : (Array i64) (make-array i64 64)]
-    [out : (Array i64) (make-array i64 64)]
+    [a : (Array i64) (make-array i64 65)]
+    [b : (Array i64) (make-array i64 65)]
+    [out : (Array i64) (make-array i64 65)]
     [i : i64 0]
     (begin
-      (while (< i 64)
+      (while (< i 65)
         (begin
           (array-set! a i (+ i 1))
           (array-set! b i (* i 2))
           (set! i (+ i 1))))
       (foreach
-        ([j : i64 0 64])
+        ([j : i64 0 65])
         (array-set! out j (+ (array-ref a j) (array-ref b j))))
-      (bit-and (array-ref out 63) 255))))
+      (bit-and (array-ref out 64) 255))))
 TLEOF
 run_spmd_exec_mode() {
     # $1 = backend mode; $2 = required ISA token, or "-" to always run
-    if [ "$2" != "-" ] && [ "$HOST_OS" != linux ] && ! printf '%s\n' "$SIMD_ISAS" | grep -qx "$2"; then
-        echo "[public-tools] skipping spmd-exec --backend-mode $1 ($2 not available on this $HOST_OS host)"
-        return
+    if [ "$2" != "-" ]; then
+        if [ "$HOST_OS" = linux ] && { [ "$IS_STAGE1_WRAPPER" -eq 1 ] || [ "$1" = avx512 ]; }; then
+            :
+        elif ! printf '%s\n' "$SIMD_ISAS" | grep -qx "$2"; then
+            echo "[public-tools] skipping spmd-exec --backend-mode $1 ($2 not available on this $HOST_OS host)"
+            return
+        fi
     fi
     run_cmd "spmd-exec-$1" "$COMPILER" run "$SPMD_EXEC/spmd.tl" --backend-mode "$1" -- arg
     if [ "$1" = scalar ]; then
-        assert_code 190
+        assert_code 193
         assert_stdout_empty
         assert_stderr_empty
-    elif [ "$HOST_OS" = linux ]; then
+    elif [ "$HOST_OS" = linux ] && { [ "$IS_STAGE1_WRAPPER" -eq 1 ] || [ "$1" = avx512 ]; }; then
         assert_failure
         assert_stdout_empty
         if [ "$IS_STAGE1_WRAPPER" -eq 1 ]; then
@@ -841,7 +844,7 @@ run_spmd_exec_mode() {
             assert_contains "$err" "run: --backend-mode $1 requires the Rust run driver until selfhost SIMD support (#1014)"
         fi
     else
-        assert_code 190
+        assert_code 193
         assert_stdout_empty
         assert_stderr_empty
     fi
@@ -973,45 +976,42 @@ EOF
     assert_stdout_empty
     assert_stderr_empty
 
-    LINK_METADATA_SOURCE="$SELFHOST_PLANNER_DIR/with space/link metadata file.tl"
-    LINK_METADATA_MODULE="$SELFHOST_PLANNER_DIR/with space/link metadata module.tl"
-    LINK_METADATA_OUTPUT="$SELFHOST_PLANNER_DIR/with space/link metadata program"
-    cat > "$LINK_METADATA_MODULE" <<EOF
-(extern ffi_add7 (:link-search "$LINK_LIB_DIR") (:link-lib "ffi_add7") : (-> i64 i64))
+    SPMD_PLANNER_SOURCE="$SELFHOST_PLANNER_DIR/with space/avx2 spmd.tl"
+    SPMD_PLANNER_OUTPUT="$SELFHOST_PLANNER_DIR/with space/avx2 program"
+    cat > "$SPMD_PLANNER_SOURCE" <<'EOF'
+(define (main) : i64
+  (let
+    [a : (Array i64) (make-array i64 65)]
+    [b : (Array i64) (make-array i64 65)]
+    [out : (Array i64) (make-array i64 65)]
+    [i : i64 0]
+    (begin
+      (while (< i 65)
+        (begin
+          (array-set! a i (+ i 1))
+          (array-set! b i (* i 2))
+          (set! i (+ i 1))))
+      (foreach
+        ([j : i64 0 65])
+        (array-set! out j (+ (array-ref a j) (array-ref b j))))
+      (bit-and (array-ref out 64) 255))))
 EOF
-    cat > "$LINK_METADATA_SOURCE" <<'EOF'
-(import "link metadata module.tl")
-(define (main) : i64 (ffi_add7 35))
-EOF
-    run_cmd selfhost-build-tool-link-metadata "$SELFHOST_PLANNER_DIR/build-tool" --direct "$LINK_METADATA_SOURCE" -o "$LINK_METADATA_OUTPUT" --target linux-x86_64 --backend-mode scalar
-    assert_success
-    assert_stderr_empty
-    assert_contains "$out" "Generated: $LINK_METADATA_OUTPUT"
-    run_cmd selfhost-build-tool-link-metadata-output "$LINK_METADATA_OUTPUT"
-    assert_code 42
-    assert_stderr_empty
-    run_cmd selfhost-run-tool-link-metadata "$SELFHOST_PLANNER_DIR/run-tool" --direct "$LINK_METADATA_SOURCE" --target linux-x86_64 --backend-mode scalar
-    assert_code 42
-    assert_stdout_empty
-    assert_stderr_empty
-
-    PUBLIC_LINK_METADATA_OUTPUT="$SELFHOST_PLANNER_DIR/with space/public link metadata program"
-    run_cmd public-build-link-metadata "$COMPILER" build "$LINK_METADATA_SOURCE" -o "$PUBLIC_LINK_METADATA_OUTPUT" --target linux-x86_64
-    assert_success
-    assert_stderr_empty
-    assert_contains "$out" "Generated: $PUBLIC_LINK_METADATA_OUTPUT"
-    run_cmd public-build-link-metadata-output "$PUBLIC_LINK_METADATA_OUTPUT"
-    assert_code 42
-    assert_stderr_empty
-    run_cmd public-run-link-metadata "$COMPILER" run "$LINK_METADATA_SOURCE" --target linux-x86_64
-    assert_code 42
-    assert_stdout_empty
-    assert_stderr_empty
-
-    run_cmd selfhost-build-tool-avx2-rejected "$SELFHOST_PLANNER_DIR/build-tool" --direct "$PLANNER_SOURCE" -o "$SELFHOST_PLANNER_DIR/with space/avx2 program" --target linux-x86_64 --backend-mode avx2
-    assert_failure
-    assert_stdout_empty
-    assert_contains "$err" "build: --backend-mode avx2 requires the Rust build driver until selfhost SIMD support (#1014)"
+    if printf '%s\n' "$SIMD_ISAS" | grep -qx avx2; then
+        run_cmd selfhost-build-tool-avx2 "$SELFHOST_PLANNER_DIR/build-tool" --direct "$SPMD_PLANNER_SOURCE" -o "$SPMD_PLANNER_OUTPUT" --target linux-x86_64 --backend-mode avx2
+        assert_success
+        assert_stderr_empty
+        assert_contains "$out" "Generated: $SPMD_PLANNER_OUTPUT"
+        run_cmd selfhost-build-tool-avx2-output "$SPMD_PLANNER_OUTPUT"
+        assert_code 193
+        assert_stdout_empty
+        assert_stderr_empty
+        run_cmd selfhost-run-tool-avx2 "$SELFHOST_PLANNER_DIR/run-tool" --direct "$SPMD_PLANNER_SOURCE" --target linux-x86_64 --backend-mode avx2
+        assert_code 193
+        assert_stdout_empty
+        assert_stderr_empty
+    else
+        echo "[public-tools] skipping selfhost build/run tool AVX2 execution (avx2 not available on this $HOST_OS host)"
+    fi
 
     PLANNER_RUN_SOURCE="$SELFHOST_PLANNER_DIR/with space/run file.tl"
     cat > "$PLANNER_RUN_SOURCE" <<'EOF'

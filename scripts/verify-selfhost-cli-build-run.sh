@@ -40,6 +40,8 @@ WORKDIR="$ROOT/target/selfhost-cli-build-run"
 rm -rf "$WORKDIR"
 mkdir -p "$WORKDIR"
 
+SIMD_ISAS=$(TYPELISP_BIN="$COMPILER" sh "$ROOT/scripts/detect-simd-isa.sh" 2>/dev/null || true)
+
 CLI_SURFACE_MANIFEST="$ROOT/tests/public-tools/cli-command-surface.txt"
 CLI_SURFACE_DIR="$WORKDIR/cli-surface"
 CLI_SURFACE_SRC="$CLI_SURFACE_DIR/main.tl"
@@ -413,6 +415,76 @@ set -e
 assert_status built-program "$status" 19
 assert_empty built-program "$WORKDIR/built-program.out"
 assert_empty built-program "$WORKDIR/built-program.err"
+
+SIMD_SRC="$WORKDIR/spmd-avx2-main.tl"
+SIMD_EXE="$WORKDIR/spmd-avx2-program"
+SIMD_AVX512_EXE="$WORKDIR/spmd-avx512-program"
+if [ "$HOST_OS" = windows ]; then
+    SIMD_EXE="$SIMD_EXE.exe"
+    SIMD_AVX512_EXE="$SIMD_AVX512_EXE.exe"
+fi
+cat > "$SIMD_SRC" <<'EOF'
+(define (main) : i64
+  (let
+    [a : (Array i64) (make-array i64 65)]
+    [b : (Array i64) (make-array i64 65)]
+    [out : (Array i64) (make-array i64 65)]
+    [i : i64 0]
+    (begin
+      (while (< i 65)
+        (begin
+          (array-set! a i (+ i 1))
+          (array-set! b i (* i 2))
+          (set! i (+ i 1))))
+      (foreach
+        ([j : i64 0 65])
+        (array-set! out j (+ (array-ref a j) (array-ref b j))))
+      (bit-and (array-ref out 64) 255))))
+EOF
+if printf '%s\n' "$SIMD_ISAS" | grep -qx avx2; then
+    set +e
+    "$COMPILER" build "$SIMD_SRC" --target "$BUILD_TARGET" --backend-mode avx2 -o "$SIMD_EXE" > "$WORKDIR/spmd-avx2-build.out" 2> "$WORKDIR/spmd-avx2-build.err"
+    status=$?
+    set -e
+    assert_status spmd-avx2-build "$status" 0
+    assert_empty spmd-avx2-build "$WORKDIR/spmd-avx2-build.err"
+    assert_contains spmd-avx2-build "$WORKDIR/spmd-avx2-build.out" "Generated:"
+    assert_file_exists spmd-avx2-build "$SIMD_EXE"
+
+    set +e
+    "$SIMD_EXE" > "$WORKDIR/spmd-avx2-program.out" 2> "$WORKDIR/spmd-avx2-program.err"
+    status=$?
+    set -e
+    assert_status spmd-avx2-program "$status" 193
+    assert_empty spmd-avx2-program "$WORKDIR/spmd-avx2-program.out"
+    assert_empty spmd-avx2-program "$WORKDIR/spmd-avx2-program.err"
+
+    set +e
+    "$COMPILER" run "$SIMD_SRC" --target "$BUILD_TARGET" --backend-mode avx2 > "$WORKDIR/spmd-avx2-run.out" 2> "$WORKDIR/spmd-avx2-run.err"
+    status=$?
+    set -e
+    assert_status spmd-avx2-run "$status" 193
+    assert_empty spmd-avx2-run "$WORKDIR/spmd-avx2-run.out"
+    assert_empty spmd-avx2-run "$WORKDIR/spmd-avx2-run.err"
+else
+    echo "[selfhost-cli-build-run] skipping AVX2 source build/run smoke (avx2 not available on this $HOST_OS host)"
+fi
+
+set +e
+"$COMPILER" build "$SIMD_SRC" --target "$BUILD_TARGET" --backend-mode avx512 -o "$SIMD_AVX512_EXE" > "$WORKDIR/spmd-avx512-build.out" 2> "$WORKDIR/spmd-avx512-build.err"
+status=$?
+set -e
+assert_status spmd-avx512-build "$status" 1
+assert_empty spmd-avx512-build "$WORKDIR/spmd-avx512-build.out"
+assert_contains spmd-avx512-build "$WORKDIR/spmd-avx512-build.err" "build: --backend-mode avx512 requires the Rust build driver until selfhost SIMD support (#1014)"
+
+set +e
+"$COMPILER" run "$SIMD_SRC" --target "$BUILD_TARGET" --backend-mode avx512 > "$WORKDIR/spmd-avx512-run.out" 2> "$WORKDIR/spmd-avx512-run.err"
+status=$?
+set -e
+assert_status spmd-avx512-run "$status" 1
+assert_empty spmd-avx512-run "$WORKDIR/spmd-avx512-run.out"
+assert_contains spmd-avx512-run "$WORKDIR/spmd-avx512-run.err" "run: --backend-mode avx512 requires the Rust run driver until selfhost SIMD support (#1014)"
 
 PKG_DIR="$WORKDIR/package-build"
 mkdir -p "$PKG_DIR/src"

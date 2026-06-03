@@ -35,6 +35,7 @@
     CompilerBackendTarget
     CompilerLoadRootList
     i64
+    CompilerBackendMode
     SourceToolLinkInputs))
 
 (defenum ResultBuildCliConfig
@@ -840,6 +841,7 @@
   [target : CompilerBackendTarget]
   [stdlib-roots : CompilerLoadRootList]
   [opt-level : i64]
+  [backend-mode : CompilerBackendMode]
   [link-inputs : SourceToolLinkInputs]) : ResultBuildCliConfig
   (if (>= idx count)
     (if has-source
@@ -852,6 +854,7 @@
           target
           stdlib-roots
           opt-level
+          backend-mode
           link-inputs))
       (if has-output
         (ErrBuildCliConfig "build: -o requires a source file argument")
@@ -874,6 +877,7 @@
                 target
                 stdlib-roots
                 opt-level
+                backend-mode
                 link-inputs)))]
         [(BuildCliOptionStdlibRoot)
           (if (>= (+ idx 1) count)
@@ -888,6 +892,7 @@
               target
               (source-tool-root-list-append stdlib-roots (arg (+ idx 1)))
               opt-level
+              backend-mode
               link-inputs))]
         [(BuildCliOptionTarget)
           (if (>= (+ idx 1) count)
@@ -906,6 +911,7 @@
                     parsed-target
                     stdlib-roots
                     opt-level
+                    backend-mode
                     link-inputs)]
                 [(ErrSourceToolTarget _)
                   (ErrBuildCliConfig (build-cli-unknown-target value))])))]
@@ -915,7 +921,7 @@
             (let
               [value : String (arg (+ idx 1))]
               (match (source-tool-backend-mode "build" value)
-                [(OkSourceToolBackendMode)
+                [(OkSourceToolBackendMode parsed-mode)
                   (build-cli-parse-options
                     (+ idx 2)
                     count
@@ -926,6 +932,7 @@
                     target
                     stdlib-roots
                     opt-level
+                    parsed-mode
                     link-inputs)]
                 [(ErrSourceToolBackendMode message) (ErrBuildCliConfig message)])))]
         [(BuildCliOptionOptLevel)
@@ -944,6 +951,7 @@
                   target
                   stdlib-roots
                   (string->int value)
+                  backend-mode
                   link-inputs)
                 (ErrBuildCliConfig (build-cli-unknown-opt-level value)))))]
         [(BuildCliOptionLinkLib)
@@ -959,6 +967,7 @@
               target
               stdlib-roots
               opt-level
+              backend-mode
               (source-tool-link-inputs-add-lib link-inputs (arg (+ idx 1)))))]
         [(BuildCliOptionLinkSearch)
           (if (>= (+ idx 1) count)
@@ -973,6 +982,7 @@
               target
               stdlib-roots
               opt-level
+              backend-mode
               (source-tool-link-inputs-add-search-dir
                 link-inputs
                 (arg (+ idx 1)))))]
@@ -989,6 +999,7 @@
               target
               stdlib-roots
               opt-level
+              backend-mode
               (source-tool-link-inputs-add-raw-arg link-inputs (arg (+ idx 1)))))]
         [(BuildCliOptionManifestPath)
           (if (>= (+ idx 1) count)
@@ -1010,6 +1021,7 @@
                 target
                 stdlib-roots
                 opt-level
+                backend-mode
                 link-inputs)))]))))
 
 (define (build-cli-config [count : i64]) : ResultBuildCliConfig
@@ -1026,6 +1038,7 @@
     (source-tool-default-target)
     CompilerLoadRootNil
     (compiler-optimize-default-level)
+    (BackendModeScalar)
     (source-tool-link-inputs-empty)))
 
 (define (build-cli-main) : i64
@@ -1040,6 +1053,7 @@
             target
             stdlib-roots
             opt-level
+            backend-mode
             link-inputs)
           (source-tool-build-source
             source
@@ -1048,6 +1062,7 @@
             target
             stdlib-roots
             opt-level
+            backend-mode
             link-inputs)])]
     [(ErrBuildCliConfig message)
       (begin
@@ -1068,6 +1083,7 @@
             target
             stdlib-roots
             opt-level
+            backend-mode
             link-inputs)
           (source-tool-build-source
             source
@@ -1076,6 +1092,7 @@
             target
             stdlib-roots
             opt-level
+            backend-mode
             link-inputs)])]
     [(ErrBuildCliConfig message)
       (begin

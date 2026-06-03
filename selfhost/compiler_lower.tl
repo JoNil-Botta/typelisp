@@ -5346,6 +5346,102 @@
         [(AstExprNil) (lower-expr-result-type-fast ctx env type-env expr)]
         [_ (lower-expr-list-result-type-fast ctx env type-env rest)])]))
 
+(define (lower-pattern-list-bind-local-names
+  [env : SymI64Env]
+  [patterns : AstPatternList]) : SymI64Env
+  (match patterns
+    [(AstPatternNil) env]
+    [(AstPatternCons pattern rest)
+      (lower-pattern-list-bind-local-names
+        (lower-pattern-bind-local-names env pattern)
+        rest)]))
+
+(define (lower-pattern-bind-local-names
+  [env : SymI64Env]
+  [pattern : AstPattern]) : SymI64Env
+  (match pattern
+    [(AstPatVar name _) (sym-i64-bind env name 0)]
+    [(AstPatTuple patterns) (lower-pattern-list-bind-local-names env patterns)]
+    [(AstPatBinding name) (sym-i64-bind env name 0)]
+    [(AstPatVariant _ args) (lower-pattern-list-bind-local-names env args)]
+    [_ env]))
+
+(define (lower-match-pattern-bind-local-names
+  [ctx : TcContext]
+  [env : SymI64Env]
+  [scrut-ty : AstType]
+  [pattern : AstPattern]) : SymI64Env
+  (match (tc-type-strip-region (tc-resolve-type ctx scrut-ty))
+    [(AstTyEnum _)
+      (match pattern
+        [(AstPatVariant _ args) (lower-pattern-list-bind-local-names env args)]
+        [_ env])]
+    [_ (lower-pattern-bind-local-names env pattern)]))
+
+(define (lower-match-arm-result-type-fast
+  [ctx : TcContext]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [scrut-ty : AstType]
+  [arm : AstMatchArm]) : ResultTcType
+  (match arm
+    [(AstMatchArm pattern body)
+      (match (tc-bind-match-pattern ctx type-env scrut-ty pattern)
+        [(OkTcEnv arm-type-env)
+          (lower-expr-result-type-fast
+            ctx
+            (lower-match-pattern-bind-local-names ctx env scrut-ty pattern)
+            arm-type-env
+            body)]
+        [(ErrTcEnv message) (ErrTcType message)])]))
+
+(define (lower-match-rest-result-types-fast
+  [ctx : TcContext]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [scrut-ty : AstType]
+  [arms : AstMatchArmList]
+  [want : AstType]) : ResultTcType
+  (match arms
+    [(AstMatchArmNil) (OkTcType want)]
+    [(AstMatchArmCons arm rest)
+      (match (lower-match-arm-result-type-fast ctx env type-env scrut-ty arm)
+        [(OkTcType got)
+          (match (tc-merge-branch-type want got)
+            [(OkTcType merged)
+              (lower-match-rest-result-types-fast
+                ctx
+                env
+                type-env
+                scrut-ty
+                rest
+                merged)]
+            [(ErrTcType message) (ErrTcType message)])]
+        [(ErrTcType message) (ErrTcType message)])]))
+
+(define (lower-match-result-type-fast
+  [ctx : TcContext]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [scrutinee : AstExpr]
+  [arms : AstMatchArmList]) : ResultTcType
+  (match (lower-expr-result-type-fast ctx env type-env scrutinee)
+    [(OkTcType scrut-ty)
+      (match arms
+        [(AstMatchArmNil) (ErrTcType "lower: match result type is not fast-pathable")]
+        [(AstMatchArmCons arm rest)
+          (match (lower-match-arm-result-type-fast ctx env type-env scrut-ty arm)
+            [(OkTcType first-ty)
+              (lower-match-rest-result-types-fast
+                ctx
+                env
+                type-env
+                scrut-ty
+                rest
+                first-ty)]
+            [(ErrTcType message) (ErrTcType message)])])]
+    [(ErrTcType message) (ErrTcType message)]))
+
 (define (lower-expr-result-type-fast
   [ctx : TcContext]
   [env : SymI64Env]
@@ -5373,6 +5469,8 @@
       (lower-expr-list-result-type-fast ctx env type-env exprs)]
     [(AstExprUnsafe exprs)
       (lower-expr-list-result-type-fast ctx env (tc-enter-unsafe type-env) exprs)]
+    [(AstExprMatch scrutinee arms)
+      (lower-match-result-type-fast ctx env type-env scrutinee arms)]
     [_ (ErrTcType "lower: expression result type is not fast-pathable")]))
 
 (define (lower-expr-typechecked
@@ -5485,6 +5583,12 @@
       (match (lower-if-result-type-fast ctx env type-env then-branch else-branch)
         [(OkTcType expr-ty)
           (lower-if ctx state env type-env cond then-branch else-branch expr-ty)]
+        [(ErrTcType _)
+          (lower-expr-typechecked ctx state env type-env expr origin)])]
+    [(AstExprMatch scrutinee arms)
+      (match (lower-match-result-type-fast ctx env type-env scrutinee arms)
+        [(OkTcType expr-ty)
+          (lower-match ctx state env type-env scrutinee arms expr-ty)]
         [(ErrTcType _)
           (lower-expr-typechecked ctx state env type-env expr origin)])]
     [_ (lower-expr-typechecked ctx state env type-env expr origin)]))

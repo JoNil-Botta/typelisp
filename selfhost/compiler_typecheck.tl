@@ -193,6 +193,56 @@
   "(define (main) : (-> i64 i64)
   (lambda ([x : i64]) : i64 true))")
 
+(define (compiler-typecheck-clone-aggregate-source) : String
+  "(defstruct Holder
+  (name String)
+  (fixed (Array String 2))
+  (items (Array String))
+  (pair (Tuple String String)))
+(defenum StringList
+  (SNil)
+  (SCons String StringList))
+(define (clone-tuple [items : (Array String)]) : (Tuple String (Array String))
+  (clone (tuple \"tuple\" items)))
+(define (clone-fixed) : (Array String 2)
+  (clone (array \"left\" \"right\")))
+(define (clone-dyn [items : (Array String)]) : (Array String)
+  (clone items))
+(define (clone-holder [items : (Array String)]) : Holder
+  (clone (Holder \"holder\" (array \"x\" \"y\") items (tuple \"p\" \"q\"))))
+(define (clone-list [list : StringList]) : StringList
+  (clone list))
+(define (main [items : (Array String)] [list : StringList]) : i64 0)")
+
+(define (compiler-typecheck-clone-function-source) : String
+  "(define (inc [x : i64]) : i64 (+ x 1))
+(define (main) : (-> i64 i64)
+  (clone inc))")
+
+(define (compiler-typecheck-clone-pointer-source) : String
+  "(extern raw-make : (-> (MutPtr i64)))
+(define (main) : (MutPtr i64)
+  (unsafe (clone (raw-make))))")
+
+(define (compiler-typecheck-clone-ref-source) : String
+  "(define (main [n : i64]) : (& n i64)
+  (clone (& n)))")
+
+(define (compiler-typecheck-clone-tests-ok?) : bool
+  (and
+    (compiler-typecheck-ok? (compiler-typecheck-clone-aggregate-source))
+    (and
+      (compiler-typecheck-error-ok?
+        (compiler-typecheck-clone-function-source)
+        "typecheck: clone unsupported type (-> i64 i64)")
+      (and
+        (compiler-typecheck-error-ok?
+          (compiler-typecheck-clone-pointer-source)
+          "typecheck: clone unsupported type (MutPtr i64)")
+        (compiler-typecheck-error-ok?
+          (compiler-typecheck-clone-ref-source)
+          "typecheck: clone unsupported type (& n i64)")))))
+
 (define (compiler-typecheck-foreach-return-source) : String
   "(define (main [n : i64]) : i64
   (begin

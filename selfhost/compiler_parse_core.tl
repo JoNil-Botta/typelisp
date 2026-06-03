@@ -431,13 +431,13 @@
   251)
 
 (define (compiler-parse-tag-expr-return) : i64
-  269)
-
-(define (compiler-parse-tag-expr-when) : i64
   270)
 
-(define (compiler-parse-tag-expr-unless) : i64
+(define (compiler-parse-tag-expr-when) : i64
   271)
+
+(define (compiler-parse-tag-expr-unless) : i64
+  272)
 
 (define (compiler-parse-tag-expr-ptr-null) : i64
   252)

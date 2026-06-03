@@ -235,14 +235,20 @@ region_reset_invalid_trap
 EOF
 }
 
-# Run-assert parity gaps the self-hosted compiler does not yet implement. The
-# former Rust backend handled these, but it has been removed, so these cases are
+# Cases the seed-backed integration manifests cannot yet run. The former Rust
+# backend handled the parity-gap cases, but it has been removed, so these are
 # commented out in the manifest and listed here as documented skips until the
-# selfhost compiler closes the gap:
+# selfhost compiler closes the gap or the published stage0 carries the support:
 #   enum-payload pattern / spmd ....... #1657
 #   bare idiv traps need guarded abort  #1654
+# Immutable-reference native smoke fixtures are covered by
+# verify-selfhost-native.sh until the published stage0 includes #1720.
 selfhost_deferred_integration_skips() {
     cat <<'EOF'
+ref_fixed_array_return
+ref_param_identity
+ref_return
+ref_tuple_return
 shl_count_width_trap
 shl_neg_count_trap
 string_match

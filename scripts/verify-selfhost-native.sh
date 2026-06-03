@@ -508,6 +508,27 @@ EOF
     assemble_link_run_asm compiler-driver-string-oob "$_oob_asm" 134 - "printf:tl: array index out of bounds\n" 1
 }
 
+verify_compiler_driver_immutable_refs() {
+    _driver=$1
+    _dir="$WORKDIR/compiler-driver/immutable-refs"
+    mkdir -p "$_dir"
+
+    for _case in \
+        ref_return \
+        ref_param_identity \
+        ref_tuple_return \
+        ref_fixed_array_return
+    do
+        _src="$ROOT/tests/integration/$_case.tl"
+        _asm="$_dir/$_case.s"
+        _label="compiler-driver-$_case"
+
+        echo "[selfhost-native] compiler_driver immutable ref $_case"
+        run_compiler_driver "$_driver" "$_label" "$_src" "$_asm"
+        assemble_link_run_asm "$_label" "$_asm" 42 - - 1
+    done
+}
+
 verify_emit_printed_program() {
     _dir="$WORKDIR/generated-emit"
     mkdir -p "$_dir"
@@ -611,6 +632,7 @@ verify_compiler_driver_pkg_import "$DRIVER"
 verify_compiler_driver_string_runtime "$DRIVER"
 verify_compiler_driver_stdlib_json "$DRIVER"
 verify_compiler_driver_arrays_and_traps "$DRIVER"
+verify_compiler_driver_immutable_refs "$DRIVER"
 verify_emit_printed_program
 verify_parse_printed_program
 verify_eval_driver_errors

@@ -49,6 +49,9 @@
 (extern io-windows-access (:symbol "_access") : (-> (Ptr u8) i32 i32))
 (extern io-windows-errno-location (:symbol "_errno") : (-> (MutPtr i32)))
 
+(extern io-linux-snprintf (:abi c-varargs 3) (:symbol "snprintf") : (-> (MutPtr u8) i64 (Ptr u8) f64 i32))
+(extern io-windows-snprintf (:abi c-varargs 3) (:symbol "_snprintf") : (-> (MutPtr u8) i64 (Ptr u8) f64 i32))
+
 (extern io-ffi-fflush (:symbol "fflush") : (-> (Ptr u8) i32))
 (extern io-ffi-exit (:symbol "exit") : (-> i32 never))
 
@@ -219,6 +222,37 @@
 ;: Compatibility alias for `print-string`.
 (define (print-str [text : String]) : unit
   (print-string text))
+
+;: Write one character byte to stdout without adding a newline.
+(define (print-char [ch : char]) : unit
+  (let
+    [buf : (Array u8) (make-array u8 1)]
+    (begin
+      (array-set! buf 0 (cast ch : u8))
+      (if (= (io-write-all-fd-status 1 (io-array-const-ptr buf) 1) 0)
+        unit
+        (io-ffi-exit 134)))))
+
+(define (io-format-float [value : f64]) : String
+  (let
+    [buf : (Array u8) (make-array u8 64)]
+    [fmt-bytes : (Array u8) (io-c-string "%.17g\n")]
+    [fmt : (Ptr u8) (io-array-const-ptr fmt-bytes)]
+    [n32 : i32
+      (cfg windows
+        (io-windows-snprintf (io-array-ptr buf) 64 fmt value)
+        (io-linux-snprintf (io-array-ptr buf) 64 fmt value))]
+    [n : i64 (cast n32 : i64)]
+    (if (< n 0)
+      ""
+      (unsafe
+        (string-from-bytes
+          (io-array-const-ptr buf)
+          (if (> n 63) 63 n))))))
+
+;: Write a floating-point value to stdout using `%.17g` plus a newline.
+(define (print-float [value : f64]) : unit
+  (print-string (io-format-float value)))
 
 ;: Write a string to stderr without adding a newline.
 (define (print-error [text : String]) : unit

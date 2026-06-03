@@ -333,6 +333,31 @@ run_with_heartbeat() {
     return "$heartbeat_status"
 }
 
+run_with_heartbeat_capture() {
+    heartbeat_label=$1
+    heartbeat_stdout=$2
+    heartbeat_stderr=$3
+    shift 3
+
+    "$@" > "$heartbeat_stdout" 2> "$heartbeat_stderr" &
+    heartbeat_cmd_pid=$!
+    (
+        while kill -0 "$heartbeat_cmd_pid" 2>/dev/null; do
+            sleep "$HEARTBEAT_SECONDS"
+            if kill -0 "$heartbeat_cmd_pid" 2>/dev/null; then
+                echo "[native-link] ${heartbeat_label} still running"
+            fi
+        done
+    ) &
+    heartbeat_pid=$!
+
+    heartbeat_status=0
+    wait "$heartbeat_cmd_pid" || heartbeat_status=$?
+    kill "$heartbeat_pid" 2>/dev/null || true
+    wait "$heartbeat_pid" 2>/dev/null || true
+    return "$heartbeat_status"
+}
+
 assemble_and_link_windows() {
     label=$1
     asm=$2

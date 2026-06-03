@@ -1943,27 +1943,46 @@
 (define (compiler-backend-region-ok?) : bool
   (match (compiler-backend-emit-source (compiler-backend-region-source))
     [(OkCompilerBackend asm)
-      (and
-        (compiler-backend-string-contains? asm "    call tl_region_mark\n")
-        (and
-          (compiler-backend-string-contains? asm "    call tl_region_reset\n")
+      (let
+        [calls : bool
           (and
+            (compiler-backend-string-contains? asm "    call tl_region_mark\n")
+            (compiler-backend-string-contains? asm "    call tl_region_reset\n"))]
+        [runtime : bool
+          (backend-and4
             (compiler-backend-string-contains? asm "tl_region_mark:\n")
-            (and
-              (compiler-backend-string-contains? asm "tl_region_reset:\n")
-              (and
-                (compiler-backend-string-contains?
-                  asm
-                  ".L_tl_region_reset_msg:")
-                (and
-                  (not
-                    (compiler-backend-string-contains?
-                      asm
-                      ".extern tl_region_mark\n"))
-                  (not
-                    (compiler-backend-string-contains?
-                      asm
-                      ".extern tl_region_reset\n"))))))))]
+            (compiler-backend-string-contains? asm "tl_region_reset:\n")
+            (compiler-backend-string-contains? asm ".L_tl_region_reset_msg:")
+            (compiler-backend-string-contains? asm "tl_current_arena:\n"))]
+        [poison : bool
+          (backend-and8
+            (compiler-backend-string-contains?
+              asm
+              ".L_tl_arena_poison_enabled:\n")
+            (compiler-backend-string-contains? asm "tl_arena_poison_enable:\n")
+            (compiler-backend-string-contains?
+              asm
+              "    movq $1, .L_tl_arena_poison_enabled(%rip)\n")
+            (compiler-backend-string-contains?
+              asm
+              ".L_tl_region_reset_drop_newer_unmap:\n")
+            (compiler-backend-string-contains?
+              asm
+              ".L_tl_region_reset_restore_set:\n")
+            (compiler-backend-string-contains?
+              asm
+              ".L_tl_region_reset_all_unmap:\n")
+            (compiler-backend-string-contains? asm "    movb $0xA5, %al\n")
+            (>= (compiler-backend-string-count asm "    rep stosb\n") 4))]
+        [no-externs : bool
+          (and
+            (not
+              (compiler-backend-string-contains? asm ".extern tl_region_mark\n"))
+            (not
+              (compiler-backend-string-contains?
+                asm
+                ".extern tl_region_reset\n")))]
+        (backend-and4 calls runtime poison no-externs))]
     [(ErrCompilerBackend _) false]))
 
 (define (compiler-backend-process-output-source) : String

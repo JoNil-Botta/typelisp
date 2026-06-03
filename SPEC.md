@@ -3120,16 +3120,27 @@ handle, read the active arena handle, or record the active arena bump pointer.
 By themselves they do not switch the active arena, free arena chains, rewind
 allocation, or invalidate live safe handles.
 
-`arena-set!`, `arena-destroy`, and `arena-rewind` require `(unsafe ...)`.
-`arena-set!` switches the active arena, `arena-destroy` frees an arena chain, and
-`arena-rewind` restores a mark by discarding newer arenas and moving the marked
-arena's bump pointer back to the mark. A rewind invalidates every heap handle
-allocated after that mark, so it is only valid when the caller can prove those
-values are dead, such as after a compiler, formatter, package-tooling, or REPL
-iteration has discarded all phase-local results. These helpers are not a safe
-arbitrary source-level `free` replacement. Taking one of these invalidating
-helpers as a first-class function value also requires an unsafe context. The safe
-`with-arena` surface remains preferred.
+Linux runtime tests may opt into poison-on-reclaim mode with:
+
+```lisp
+(extern tl_arena_poison_enable : (-> unit))
+```
+
+After `tl_arena_poison_enable` is called, Linux `tl_region_reset` and
+`tl_arena_destroy` fill reclaimed arena bytes with `0xA5` immediately before a
+rewind or unmap. This mode is off for normal compiler output unless explicitly
+enabled by the program, and it is a debugging aid rather than a safety boundary.
+Windows poison-on-reclaim behavior is currently unsupported; the poison fixtures
+are covered on Linux and skipped on Windows.
+
+A region reset mark invalidates every heap handle allocated after that mark, so
+it is only valid when the caller can prove those values are dead, such as after a
+compiler, formatter, package-tooling, or REPL iteration has discarded all
+phase-local results. It is not a safe arbitrary source-level `free`
+replacement.
+
+Once `(unsafe ...)` lands, direct calls to these raw reset helpers should be
+wrapped in an unsafe context. The safe `with-arena` surface remains preferred.
 
 ### 7.4 Raw pointers and unsafe memory access (v1 design)
 

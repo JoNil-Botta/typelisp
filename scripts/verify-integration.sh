@@ -239,7 +239,7 @@ EOF
 # backend handled the parity-gap cases, but it has been removed, so these are
 # commented out in the manifest and listed here as documented skips until the
 # selfhost compiler closes the gap or the published stage0 carries the support:
-#   enum-payload pattern / spmd ....... #1657
+#   enum-payload pattern .............. #1657
 #   bare idiv traps need guarded abort  #1654
 # Immutable-reference native smoke fixtures are covered by
 # verify-selfhost-native.sh until the published stage0 includes #1720.
@@ -252,7 +252,6 @@ ref_tuple_return
 shl_count_width_trap
 shl_neg_count_trap
 string_match
-spmd_reduce_scalar
 div_zero_trap
 rem_zero_trap
 min_div_neg1_trap

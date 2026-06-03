@@ -3012,10 +3012,8 @@
   (match (sym-i64-lookup env name)
     [(SomeI64 id) (OkLowerExpr (LowerExpr state (IrValueVar id) ty))]
     [(NoneI64)
-      (lower-materialize
-        state
-        (IrValueGlobal (lower-resolve-name state name))
-        ty)]))
+      (OkLowerExpr
+        (LowerExpr state (IrValueGlobal (lower-resolve-name state name)) ty))]))
 
 (define (lower-function-type? [ty : AstType]) : bool
   (match (tc-type-strip-region ty)

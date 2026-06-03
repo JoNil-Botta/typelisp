@@ -199,6 +199,13 @@ Prefer `--stdlib-root` for CI, bootstrap, and reproducible scripts. See
 [stdlib/README.md](stdlib/README.md) for the current stdlib layout and
 verification conventions.
 
+`typelisp compile` accepts `--cfg <name>` to enable source-level conditional
+compilation flags. Source may wrap a top-level declaration as
+`(cfg predicate declaration)`, where `predicate` is a flag name, `(all ...)`,
+`(any ...)`, or `(not predicate)`. Inactive `cfg` branches are lexed/read but are
+not parsed as TypeLisp declarations, so they can hide stage- or platform-specific
+declarations from compilers that should not see them.
+
 Local packages can be described with a std-only S-expression manifest named
 `typelisp.pkg`:
 
@@ -523,7 +530,7 @@ typelisp debug parse    file.tl    # Print AST
 typelisp debug check    file.tl    # Type check
 typelisp lsp                      # Start stdio LSP diagnostics server
 typelisp repl                     # Start minimal stdio REPL (.help, .type, .exit)
-typelisp compile        file.tl    # Generate assembly (.s); -o <path>, --target <target>, --emit-ir, --backend-mode <mode>
+typelisp compile        file.tl    # Generate assembly (.s); -o <path>, --target <target>, --emit-ir, --backend-mode <mode>, --cfg <name>
 typelisp build          file.tl    # Build native executable; -o <path>, --target <target>, --backend-mode <mode>
 typelisp run            file.tl    # Compile, assemble, link, and run; --target <target>, --backend-mode <mode>
 typelisp build                    # Build nearest typelisp.pkg artifact; --target <target>, --backend-mode <mode>
@@ -544,6 +551,12 @@ through the TypeLisp-owned build/run path.
 map/zip subset plus scalar-equivalent integer `spmd-reduce` array folds;
 `avx512` supports the same `foreach` map/zip subset with ZMM vectors and opmask
 predicated tails. Unsupported vector IR falls back or rejects explicitly.
+
+`compile` accepts repeated `--cfg <name>` flags. Enabled names control `(cfg
+predicate declaration)` and expression-level `(cfg predicate expr [else-expr])`
+forms. Without `--cfg`, named predicates are false, `(all ...)` is true only when
+all operands are true, `(any ...)` is true when any operand is true, and
+`(not ...)` negates one predicate.
 
 The language-level runtime dispatch design is specified as `defdispatch` in
 `SPEC.md`: one logical function can list scalar, AVX2, and AVX-512 variant

@@ -1255,6 +1255,32 @@ stages only ever see a normal global.
   deduplication.
 - An include failure reports both the including file and the requested path.
 
+#### 4.4.7 `(cfg predicate declaration)` - conditional compilation
+
+`cfg` conditionally includes source forms before normal declaration parsing and
+import resolution. The selfhost compiler supports top-level declarations of the
+shape `(cfg predicate declaration)`. If `predicate` is true, `declaration` is
+parsed in place; if it is false, the declaration is skipped.
+
+Predicates are inspired by Rust `cfg`:
+
+- `name` is true when the compiler command enabled `--cfg name`.
+- `(all predicate...)` is true when every operand is true; with no operands it
+  is true.
+- `(any predicate...)` is true when any operand is true; with no operands it is
+  false.
+- `(not predicate)` negates exactly one predicate.
+
+Inactive branches must still be lexically valid S-expressions, but they are not
+parsed as TypeLisp declarations or expressions. This is intended for stage and
+platform conditionals where a newer compiler can see instrumentation or helper
+calls that an older stage0 must skip.
+
+Expression lists may also contain `(cfg predicate expr)` forms. A false
+expression-list cfg is omitted. In required expression position, `(cfg predicate
+then-expr)` evaluates to `unit` when the predicate is false; `(cfg predicate
+then-expr else-expr)` parses only the selected expression.
+
 ### 4.5 `(test name body...)` - inline test item
 
 Declares a source-owned inline test. The name is an identifier. The body must
@@ -3484,8 +3510,11 @@ Options:
   run --backend-mode <mode>
   build --backend-mode <mode>
                           Select scalar, avx2, or avx512 backend mode;
-                          scalar is the default, while avx2 and avx512
-                          support the first contiguous foreach map/zip subset
+                          scalar is the default, avx2 supports the first
+                          contiguous foreach map/zip subset, and avx512 is
+                          reserved until that backend lands
+  compile --cfg <name>
+                          Enable a conditional-compilation flag for `(cfg ...)`
   test --check <file.tl>
                           Type-check the generated inline test harness without
                           assembling or running it
@@ -3686,6 +3715,7 @@ fields are rejected before lowering.
 program       ::= top-level*
 
 top-level     ::= define-var
+                | cfg-decl
                 | define-func
                 | dispatch-decl
                 | defmacro
@@ -3697,6 +3727,11 @@ top-level     ::= define-var
                 | defstruct
                 | test-decl
 
+cfg-decl      ::= "(" "cfg" cfg-predicate top-level ")"
+cfg-predicate ::= ident
+                | "(" "all" cfg-predicate* ")"
+                | "(" "any" cfg-predicate* ")"
+                | "(" "not" cfg-predicate ")"
 define-var    ::= "(" "define" ident [":" type] expr ")"
 define-func   ::= "(" "define" "(" ident param* ")" [":" type] expr ")"
 dispatch-decl ::= "(" "defdispatch" ident dispatch-variant+ ")"
@@ -3749,6 +3784,7 @@ expr          ::= literal
                 | "(" "cast" expr ":" type ")"
                 | "(" "match" expr match-arm+ ")"
                 | "(" "foreach" foreach-clause expr ")"
+                | "(" "cfg" cfg-predicate expr [expr] ")"
                 | "(" "spmd-reduce" reduce-op foreach-clause expr expr ")"
                 | "(" "lambda" "(" param* ")" [":" type] expr ")"
                 | "(" "return" expr ")"

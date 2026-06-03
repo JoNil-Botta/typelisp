@@ -136,10 +136,28 @@
   [stdlib-roots : CompilerLoadRootList]
   [opt-level : i64]
   [mode : CompilerBackendMode]) : ResultCompilerDriver
-  (match (compiler-load-file-with-paths-and-roots
+  (compiler-driver-emit-file-with-target-roots-level-mode-and-cfg
+    input-path
+    target
+    has-target
+    stdlib-roots
+    opt-level
+    mode
+    (compiler-cfg-empty)))
+
+(define (compiler-driver-emit-file-with-target-roots-level-mode-and-cfg
+  [input-path : String]
+  [target : CompilerBackendTarget]
+  [has-target : bool]
+  [stdlib-roots : CompilerLoadRootList]
+  [opt-level : i64]
+  [mode : CompilerBackendMode]
+  [cfgs : SymI64Env]) : ResultCompilerDriver
+  (match (compiler-load-file-with-paths-and-roots-cfg
     input-path
     (sym-i64-empty)
-    stdlib-roots)
+    stdlib-roots
+    cfgs)
     [(OkCompilerLoadWithPaths decls paths _ _)
       (match (lower-compiler-program-with-decl-paths-mode
         input-path
@@ -300,10 +318,22 @@
   [input-path : String]
   [stdlib-roots : CompilerLoadRootList]
   [opt-level : i64]) : ResultCompilerDriver
-  (match (compiler-load-file-with-paths-and-roots
+  (compiler-driver-emit-ir-summary-file-with-roots-level-and-cfg
+    input-path
+    stdlib-roots
+    opt-level
+    (compiler-cfg-empty)))
+
+(define (compiler-driver-emit-ir-summary-file-with-roots-level-and-cfg
+  [input-path : String]
+  [stdlib-roots : CompilerLoadRootList]
+  [opt-level : i64]
+  [cfgs : SymI64Env]) : ResultCompilerDriver
+  (match (compiler-load-file-with-paths-and-roots-cfg
     input-path
     (sym-i64-empty)
-    stdlib-roots)
+    stdlib-roots
+    cfgs)
     [(OkCompilerLoadWithPaths decls paths _ _)
       (match (lower-compiler-program-with-decl-paths
         input-path
@@ -425,6 +455,24 @@
       mode)
     output-path))
 
+(define (compiler-driver-compile-file-with-roots-level-mode-and-cfg
+  [input-path : String]
+  [output-path : String]
+  [stdlib-roots : CompilerLoadRootList]
+  [opt-level : i64]
+  [mode : CompilerBackendMode]
+  [cfgs : SymI64Env]) : i64
+  (compiler-driver-write-result
+    (compiler-driver-emit-file-with-target-roots-level-mode-and-cfg
+      input-path
+      (BackendTargetLinux)
+      false
+      stdlib-roots
+      opt-level
+      mode
+      cfgs)
+    output-path))
+
 (define (compiler-driver-compile-file-for-target
   [input-path : String]
   [output-path : String]
@@ -474,4 +522,23 @@
       stdlib-roots
       opt-level
       mode)
+    output-path))
+
+(define (compiler-driver-compile-file-for-target-with-roots-level-mode-and-cfg
+  [input-path : String]
+  [output-path : String]
+  [target : CompilerBackendTarget]
+  [stdlib-roots : CompilerLoadRootList]
+  [opt-level : i64]
+  [mode : CompilerBackendMode]
+  [cfgs : SymI64Env]) : i64
+  (compiler-driver-write-result
+    (compiler-driver-emit-file-with-target-roots-level-mode-and-cfg
+      input-path
+      target
+      true
+      stdlib-roots
+      opt-level
+      mode
+      cfgs)
     output-path))

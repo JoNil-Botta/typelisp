@@ -2,7 +2,8 @@
 ;;
 ;; Wraps compiler_driver.tl's input/output API with the selfhost compile CLI:
 ;; `compile <file.tl> [-o <file>] [--emit-ir] [--target <target>]
-;; [--opt-level <0|1|2|3>] [--backend-mode scalar] [--stdlib-root <dir>...]`,
+;; [--opt-level <0|1|2|3>] [--backend-mode scalar] [--stdlib-root <dir>...]
+;; [--cfg <name>...]`,
 ;; plus `tokenize`/`parse`/`check`/`debug …`.
 ;; The private bootstrap form `<file.tl> [compile options]` remains accepted so
 ;; existing stage1->stage2 scripts can call the raw compiler directly.
@@ -29,6 +30,7 @@
     bool
     CompilerBackendTarget
     CompilerLoadRootList
+    SymI64Env
     CompilerBackendMode
     i64))
 
@@ -62,7 +64,7 @@
   (and (> (string-length value) 0) (= (string-ref value 0) #-')))
 
 (define (compile-cli-usage) : String
-  "Usage:\n  typelisp debug tokenize <file.tl>    Show tokens\n  typelisp debug parse <file.tl>       Show AST\n  typelisp debug check <file.tl> [--stdlib-root <dir>...]\n  typelisp tokenize <file.tl>\n  typelisp parse <file.tl>\n  typelisp check <file.tl> [--stdlib-root <dir>...]\n  typelisp compile <file.tl> [-o <file>] [--emit-ir] [--target <target>] [--backend-mode <mode>] [--opt-level <0|1|2|3>] [--stdlib-root <dir>...]")
+  "Usage:\n  typelisp debug tokenize <file.tl>    Show tokens\n  typelisp debug parse <file.tl>       Show AST\n  typelisp debug check <file.tl> [--stdlib-root <dir>...]\n  typelisp tokenize <file.tl>\n  typelisp parse <file.tl>\n  typelisp check <file.tl> [--stdlib-root <dir>...]\n  typelisp compile <file.tl> [-o <file>] [--emit-ir] [--target <target>] [--backend-mode <mode>] [--opt-level <0|1|2|3>] [--stdlib-root <dir>...] [--cfg <name>...]")
 
 (define (compile-cli-message-with-usage [message : String]) : String
   (string-append message (string-append "\n\n" (compile-cli-usage))))
@@ -158,6 +160,7 @@
   [has-target : bool]
   [target : CompilerBackendTarget]
   [stdlib-roots : CompilerLoadRootList]
+  [cfgs : SymI64Env]
   [emit-ir : bool]
   [has-opt-level : bool]
   [opt-level : i64]
@@ -173,6 +176,7 @@
         has-target
         target
         stdlib-roots
+        cfgs
         backend-mode
         opt-level))
     (let
@@ -192,6 +196,7 @@
                 has-target
                 target
                 stdlib-roots
+                cfgs
                 emit-ir
                 has-opt-level
                 opt-level
@@ -208,6 +213,24 @@
               has-target
               target
               (compile-cli-root-list-append stdlib-roots (arg (+ idx 1)))
+              cfgs
+              emit-ir
+              has-opt-level
+              opt-level
+              backend-mode))]
+        [(string-eq current "--cfg")
+          (if (>= (+ idx 1) count)
+            (ErrCompileCliConfig "compile: --cfg requires a value")
+            (compile-cli-parse-options
+              (+ idx 2)
+              count
+              input-path
+              output-path
+              has-output
+              has-target
+              target
+              stdlib-roots
+              (compiler-cfg-enable cfgs (arg (+ idx 1)))
               emit-ir
               has-opt-level
               opt-level
@@ -229,6 +252,7 @@
                     true
                     parsed-target
                     stdlib-roots
+                    cfgs
                     emit-ir
                     has-opt-level
                     opt-level
@@ -253,6 +277,7 @@
                       has-target
                       target
                       stdlib-roots
+                      cfgs
                       emit-ir
                       true
                       parsed-level
@@ -273,6 +298,7 @@
                   has-target
                   target
                   stdlib-roots
+                  cfgs
                   emit-ir
                   has-opt-level
                   opt-level
@@ -288,6 +314,7 @@
             has-target
             target
             stdlib-roots
+            cfgs
             true
             has-opt-level
             opt-level
@@ -314,6 +341,7 @@
           false
           (BackendTargetLinux)
           CompilerLoadRootNil
+          (compiler-cfg-empty)
           false
           false
           (compiler-optimize-default-level)
@@ -451,29 +479,33 @@
             has-target
             target
             stdlib-roots
+            cfgs
             backend-mode
             opt-level)
           (if emit-ir
             (compiler-driver-write-result
-              (compiler-driver-emit-ir-summary-file-with-roots-and-level
+              (compiler-driver-emit-ir-summary-file-with-roots-level-and-cfg
                 input-path
                 stdlib-roots
-                opt-level)
+                opt-level
+                cfgs)
               output-path)
             (if has-target
-              (compiler-driver-compile-file-for-target-with-roots-level-and-mode
+              (compiler-driver-compile-file-for-target-with-roots-level-mode-and-cfg
                 input-path
                 output-path
                 target
                 stdlib-roots
                 opt-level
-                backend-mode)
-              (compiler-driver-compile-file-with-roots-level-and-mode
+                backend-mode
+                cfgs)
+              (compiler-driver-compile-file-with-roots-level-mode-and-cfg
                 input-path
                 output-path
                 stdlib-roots
                 opt-level
-                backend-mode)))])]
+                backend-mode
+                cfgs)))])]
     [(CompileCliCheck input-path stdlib-roots)
       (match (compiler-check-file-with-roots input-path stdlib-roots)
         [(OkCompilerCheck _)

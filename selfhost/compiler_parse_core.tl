@@ -144,9 +144,23 @@
   (OkAstDecl AstDecl)
   (ErrAstDecl String))
 
+(defenum ResultAstMaybeDecl
+  (OkAstNoDecl)
+  (OkAstSomeDecl AstDecl)
+  (ErrAstMaybeDecl String))
+
 (defenum ResultAstDeclList
   (OkAstDeclList AstDeclList)
   (ErrAstDeclList String))
+
+(defenum ResultAstMaybeExpr
+  (OkAstNoExpr)
+  (OkAstSomeExpr AstExpr)
+  (ErrAstMaybeExpr String))
+
+(defenum ResultCompilerCfg
+  (OkCompilerCfg bool)
+  (ErrCompilerCfg String))
 
 (defenum ResultAstProgram
   (OkAstProgram AstProgram)
@@ -172,6 +186,75 @@
   (match s
     [(SSym text) (string-eq text ":")]
     [_ false]))
+
+(define (compiler-cfg-key [name : String]) : String
+  (string-append "cfg:" name))
+
+(define (compiler-cfg-empty) : SymI64Env
+  (sym-i64-empty))
+
+(define (compiler-cfg-enable [cfgs : SymI64Env] [name : String]) : SymI64Env
+  (sym-i64-bind cfgs (compiler-cfg-key name) 1))
+
+(define (compiler-cfg-merge [base : SymI64Env] [cfgs : SymI64Env]) : SymI64Env
+  (match cfgs
+    [(SymI64Nil) base]
+    [(SymI64Bind name value rest)
+      (sym-i64-bind (compiler-cfg-merge base rest) name value)]))
+
+(define (compiler-cfg-enabled? [dispatch : SymI64Env] [name : String]) : bool
+  (sym-i64-contains dispatch (compiler-cfg-key name)))
+
+(define (compiler-cfg-eval-list-all
+  [dispatch : SymI64Env]
+  [predicates : SpannedSexpr]) : ResultCompilerCfg
+  (match predicates
+    [(SpSNil _) (OkCompilerCfg true)]
+    [(SpSCons head tail _)
+      (match (compiler-cfg-eval dispatch head)
+        [(OkCompilerCfg enabled)
+          (if enabled
+            (compiler-cfg-eval-list-all dispatch tail)
+            (OkCompilerCfg false))]
+        [(ErrCompilerCfg message) (ErrCompilerCfg message)])]
+    [_ (ErrCompilerCfg "parse: cfg all expects predicates")]))
+
+(define (compiler-cfg-eval-list-any
+  [dispatch : SymI64Env]
+  [predicates : SpannedSexpr]) : ResultCompilerCfg
+  (match predicates
+    [(SpSNil _) (OkCompilerCfg false)]
+    [(SpSCons head tail _)
+      (match (compiler-cfg-eval dispatch head)
+        [(OkCompilerCfg enabled)
+          (if enabled
+            (OkCompilerCfg true)
+            (compiler-cfg-eval-list-any dispatch tail))]
+        [(ErrCompilerCfg message) (ErrCompilerCfg message)])]
+    [_ (ErrCompilerCfg "parse: cfg any expects predicates")]))
+
+(define (compiler-cfg-eval-not
+  [dispatch : SymI64Env]
+  [predicates : SpannedSexpr]) : ResultCompilerCfg
+  (match predicates
+    [(SpSCons pred (SpSNil _) _)
+      (match (compiler-cfg-eval dispatch pred)
+        [(OkCompilerCfg enabled) (OkCompilerCfg (not enabled))]
+        [(ErrCompilerCfg message) (ErrCompilerCfg message)])]
+    [_ (ErrCompilerCfg "parse: cfg not expects exactly one predicate")]))
+
+(define (compiler-cfg-eval [dispatch : SymI64Env] [predicate : SpannedSexpr]) : ResultCompilerCfg
+  (match predicate
+    [(SpSSym name _) (OkCompilerCfg (compiler-cfg-enabled? dispatch name))]
+    [(SpSCons (SpSSym op _) predicates _)
+      (cond
+        [(string-eq op "all") (compiler-cfg-eval-list-all dispatch predicates)]
+        [(string-eq op "any") (compiler-cfg-eval-list-any dispatch predicates)]
+        [(string-eq op "not") (compiler-cfg-eval-not dispatch predicates)]
+        [else
+          (ErrCompilerCfg
+            "parse: cfg predicate expects a name, all, any, or not")])]
+    [_ (ErrCompilerCfg "parse: malformed cfg predicate")]))
 
 (define (compiler-parse-abstraction-policy-message) : String
   "parse: TypeLisp does not support source-level generics or traits; use comptime-decl and comptime-generated concrete declarations instead (#893/#913/#970/#902)")
@@ -1288,17 +1371,67 @@
         [(ErrAstPatternList message) (ErrAstPattern message)])]
     [_ (ErrAstPattern "parse: expected pattern")]))
 
+(define (parse-ast-cfg-expr-maybe [dispatch : SymI64Env] [rest : SpannedSexpr]) : ResultAstMaybeExpr
+  (match rest
+    [(SpSCons pred (SpSCons then-expr (SpSNil _) _) _)
+      (match (compiler-cfg-eval dispatch pred)
+        [(OkCompilerCfg enabled)
+          (if enabled
+            (match (parse-ast-expr dispatch then-expr)
+              [(OkAstExpr parsed) (OkAstSomeExpr parsed)]
+              [(ErrAstExpr message) (ErrAstMaybeExpr message)])
+            (OkAstNoExpr))]
+        [(ErrCompilerCfg message) (ErrAstMaybeExpr message)])]
+    [(SpSCons pred (SpSCons then-expr (SpSCons else-expr (SpSNil _) _) _) _)
+      (match (compiler-cfg-eval dispatch pred)
+        [(OkCompilerCfg enabled)
+          (match (parse-ast-expr
+            dispatch
+            (if enabled
+              then-expr
+              else-expr))
+            [(OkAstExpr parsed) (OkAstSomeExpr parsed)]
+            [(ErrAstExpr message) (ErrAstMaybeExpr message)])]
+        [(ErrCompilerCfg message) (ErrAstMaybeExpr message)])]
+    [_
+      (ErrAstMaybeExpr "parse: cfg expression expects predicate and expression")]))
+
+(define (parse-ast-cfg-expr [dispatch : SymI64Env] [rest : SpannedSexpr]) : ResultAstExpr
+  (match (parse-ast-cfg-expr-maybe dispatch rest)
+    [(OkAstSomeExpr expr) (OkAstExpr expr)]
+    [(OkAstNoExpr) (OkAstExpr (AstExprLiteral AstLitUnit))]
+    [(ErrAstMaybeExpr message) (ErrAstExpr message)]))
+
 (define (parse-ast-expr-list [dispatch : SymI64Env] [s : SpannedSexpr]) : ResultAstExprList
   (match s
     [(SpSNil _) (OkAstExprList AstExprNil)]
     [(SpSCons head tail _)
-      (match (parse-ast-expr dispatch head)
-        [(OkAstExpr parsed-head)
-          (match (parse-ast-expr-list dispatch tail)
-            [(OkAstExprList parsed-tail)
-              (OkAstExprList (AstExprCons parsed-head parsed-tail))]
-            [(ErrAstExprList message) (ErrAstExprList message)])]
-        [(ErrAstExpr message) (ErrAstExprList message)])]
+      (match head
+        [(SpSCons (SpSSym op _) cfg-rest _)
+          (if (string-eq op "cfg")
+            (match (parse-ast-cfg-expr-maybe dispatch cfg-rest)
+              [(OkAstSomeExpr parsed-head)
+                (match (parse-ast-expr-list dispatch tail)
+                  [(OkAstExprList parsed-tail)
+                    (OkAstExprList (AstExprCons parsed-head parsed-tail))]
+                  [(ErrAstExprList message) (ErrAstExprList message)])]
+              [(OkAstNoExpr) (parse-ast-expr-list dispatch tail)]
+              [(ErrAstMaybeExpr message) (ErrAstExprList message)])
+            (match (parse-ast-expr dispatch head)
+              [(OkAstExpr parsed-head)
+                (match (parse-ast-expr-list dispatch tail)
+                  [(OkAstExprList parsed-tail)
+                    (OkAstExprList (AstExprCons parsed-head parsed-tail))]
+                  [(ErrAstExprList message) (ErrAstExprList message)])]
+              [(ErrAstExpr message) (ErrAstExprList message)]))]
+        [_
+          (match (parse-ast-expr dispatch head)
+            [(OkAstExpr parsed-head)
+              (match (parse-ast-expr-list dispatch tail)
+                [(OkAstExprList parsed-tail)
+                  (OkAstExprList (AstExprCons parsed-head parsed-tail))]
+                [(ErrAstExprList message) (ErrAstExprList message)])]
+            [(ErrAstExpr message) (ErrAstExprList message)])])]
     [_ (ErrAstExprList "parse: malformed expression list")]))
 
 (define (parse-ast-binary
@@ -2296,9 +2429,19 @@
             (OkAstExpr (ast-expr-wrap-span (AstExprLiteral AstLitUnit) s))]
           [else (OkAstExpr (ast-expr-wrap-span (AstExprVar name) s))]))]
     [(SpSCons head rest _)
-      (match (parse-ast-list-expr dispatch head rest)
-        [(OkAstExpr parsed) (OkAstExpr (ast-expr-wrap-span parsed s))]
-        [(ErrAstExpr message) (ErrAstExpr message)])]
+      (match head
+        [(SpSSym op _)
+          (if (string-eq op "cfg")
+            (match (parse-ast-cfg-expr dispatch rest)
+              [(OkAstExpr parsed) (OkAstExpr (ast-expr-wrap-span parsed s))]
+              [(ErrAstExpr message) (ErrAstExpr message)])
+            (match (parse-ast-list-expr dispatch head rest)
+              [(OkAstExpr parsed) (OkAstExpr (ast-expr-wrap-span parsed s))]
+              [(ErrAstExpr message) (ErrAstExpr message)]))]
+        [_
+          (match (parse-ast-list-expr dispatch head rest)
+            [(OkAstExpr parsed) (OkAstExpr (ast-expr-wrap-span parsed s))]
+            [(ErrAstExpr message) (ErrAstExpr message)])])]
     [_ (ErrAstExpr "parse: malformed expression")]))
 
 (define (parse-ast-define-value
@@ -2753,6 +2896,26 @@
           [else (ErrAstDecl "parse: expected declaration")]))]
     [_ (ErrAstDecl "parse: malformed declaration")]))
 
+(define (parse-ast-decl-maybe [dispatch : SymI64Env] [s : SpannedSexpr]) : ResultAstMaybeDecl
+  (match s
+    [(SpSCons (SpSSym head _) rest _)
+      (if (string-eq head "cfg")
+        (match rest
+          [(SpSCons pred (SpSCons decl-form (SpSNil _) _) _)
+            (match (compiler-cfg-eval dispatch pred)
+              [(OkCompilerCfg enabled)
+                (if enabled
+                  (parse-ast-decl-maybe dispatch decl-form)
+                  (OkAstNoDecl))]
+              [(ErrCompilerCfg message) (ErrAstMaybeDecl message)])]
+          [_
+            (ErrAstMaybeDecl
+              "parse: cfg declaration expects predicate and declaration")])
+        (match (parse-ast-decl dispatch s)
+          [(OkAstDecl decl) (OkAstSomeDecl decl)]
+          [(ErrAstDecl message) (ErrAstMaybeDecl message)]))]
+    [_ (ErrAstMaybeDecl "parse: malformed declaration")]))
+
 (define (parse-ast-program-forms
   [dispatch : SymI64Env]
   [toks : (Array SpannedToken)]
@@ -2761,30 +2924,42 @@
     (OkAstDeclList AstDeclNil)
     (match (read-form-spanned-result toks cur)
       [(OkSpannedSexpr form)
-        (match (parse-ast-decl dispatch form)
-          [(OkAstDecl decl)
+        (match (parse-ast-decl-maybe dispatch form)
+          [(OkAstSomeDecl decl)
             (match (parse-ast-program-forms dispatch toks cur)
               [(OkAstDeclList rest) (OkAstDeclList (AstDeclCons decl rest))]
               [(ErrAstDeclList message) (ErrAstDeclList message)])]
-          [(ErrAstDecl message) (ErrAstDeclList message)])]
+          [(OkAstNoDecl) (parse-ast-program-forms dispatch toks cur)]
+          [(ErrAstMaybeDecl message) (ErrAstDeclList message)])]
       [(ErrSpannedSexpr err) (ErrAstDeclList (source-error-message err))])))
 
 (define (parse-ast-program-dispatch) : SymI64Env
   (compiler-parse-dispatch-env))
 
-(define (parse-ast-program [toks : (Array SpannedToken)]) : ResultAstProgram
+(define (parse-ast-program-dispatch-with-cfg [cfgs : SymI64Env]) : SymI64Env
+  (compiler-cfg-merge (compiler-parse-dispatch-env) cfgs))
+
+(define (parse-ast-program-with-cfg
+  [toks : (Array SpannedToken)]
+  [cfgs : SymI64Env]) : ResultAstProgram
   (let
     [cur : (Array i64) (make-array i64 1)]
-    [dispatch : SymI64Env (parse-ast-program-dispatch)]
+    [dispatch : SymI64Env (parse-ast-program-dispatch-with-cfg cfgs)]
     (begin
       (array-set! cur 0 0)
       (match (parse-ast-program-forms dispatch toks cur)
         [(OkAstDeclList decls) (OkAstProgram (AstProgram decls))]
         [(ErrAstDeclList message) (ErrAstProgram message)]))))
 
+(define (parse-ast-program [toks : (Array SpannedToken)]) : ResultAstProgram
+  (parse-ast-program-with-cfg toks (compiler-cfg-empty)))
+
 (define (parse-ast-source [src : String]) : ResultAstProgram
+  (parse-ast-source-with-cfg src (compiler-cfg-empty)))
+
+(define (parse-ast-source-with-cfg [src : String] [cfgs : SymI64Env]) : ResultAstProgram
   (match (lex-spanned-result src)
-    [(OkSpannedTokens toks) (parse-ast-program toks)]
+    [(OkSpannedTokens toks) (parse-ast-program-with-cfg toks cfgs)]
     [(ErrSpannedTokens err) (ErrAstProgram (source-error-message err))]))
 
 (define (parse-ast-repl-source [src : String]) : ResultAstReplItem
@@ -2820,13 +2995,15 @@
     (OkAstDeclListDiagnostic AstDeclNil)
     (match (read-form-spanned-result toks cur)
       [(OkSpannedSexpr spanned-form)
-        (match (parse-ast-decl dispatch spanned-form)
-          [(OkAstDecl decl)
+        (match (parse-ast-decl-maybe dispatch spanned-form)
+          [(OkAstSomeDecl decl)
             (match (parse-ast-program-forms-diagnostic path dispatch toks cur)
               [(OkAstDeclListDiagnostic rest)
                 (OkAstDeclListDiagnostic (AstDeclCons decl rest))]
               [(ErrAstDeclListDiagnostic diag) (ErrAstDeclListDiagnostic diag)])]
-          [(ErrAstDecl message)
+          [(OkAstNoDecl)
+            (parse-ast-program-forms-diagnostic path dispatch toks cur)]
+          [(ErrAstMaybeDecl message)
             (ErrAstDeclListDiagnostic
               (compiler-diagnostic-from-span
                 path
@@ -2839,9 +3016,15 @@
 (define (parse-ast-program-diagnostic
   [path : String]
   [toks : (Array SpannedToken)]) : ResultAstProgramDiagnostic
+  (parse-ast-program-diagnostic-with-cfg path toks (compiler-cfg-empty)))
+
+(define (parse-ast-program-diagnostic-with-cfg
+  [path : String]
+  [toks : (Array SpannedToken)]
+  [cfgs : SymI64Env]) : ResultAstProgramDiagnostic
   (let
     [cur : (Array i64) (make-array i64 1)]
-    [dispatch : SymI64Env (parse-ast-program-dispatch)]
+    [dispatch : SymI64Env (parse-ast-program-dispatch-with-cfg cfgs)]
     (begin
       (array-set! cur 0 0)
       (match (parse-ast-program-forms-diagnostic path dispatch toks cur)
@@ -2850,8 +3033,15 @@
         [(ErrAstDeclListDiagnostic diag) (ErrAstProgramDiagnostic diag)]))))
 
 (define (parse-ast-source-diagnostic [path : String] [src : String]) : ResultAstProgramDiagnostic
+  (parse-ast-source-diagnostic-with-cfg path src (compiler-cfg-empty)))
+
+(define (parse-ast-source-diagnostic-with-cfg
+  [path : String]
+  [src : String]
+  [cfgs : SymI64Env]) : ResultAstProgramDiagnostic
   (match (lex-spanned-result src)
-    [(OkSpannedTokens toks) (parse-ast-program-diagnostic path toks)]
+    [(OkSpannedTokens toks)
+      (parse-ast-program-diagnostic-with-cfg path toks cfgs)]
     [(ErrSpannedTokens err)
       (ErrAstProgramDiagnostic (compiler-diagnostic-from-source-error path err))]))
 
@@ -3885,6 +4075,69 @@
     [(OkAstProgram _) true]
     [(ErrAstProgram _) false]))
 
+(define (compiler-parse-cfg-decl-count-ok?
+  [src : String]
+  [cfgs : SymI64Env]
+  [want : i64]) : bool
+  (match (parse-ast-source-with-cfg src cfgs)
+    [(OkAstProgram (AstProgram decls)) (= (ast-decl-list-count decls) want)]
+    [(ErrAstProgram _) false]))
+
+(define (compiler-parse-cfg-error? [src : String] [cfgs : SymI64Env]) : bool
+  (match (parse-ast-source-with-cfg src cfgs)
+    [(OkAstProgram _) false]
+    [(ErrAstProgram _) true]))
+
+(define (compiler-parse-cfg-tests-ok?) : bool
+  (let
+    [feature-cfg : SymI64Env
+      (compiler-cfg-enable (compiler-cfg-empty) "feature")]
+    [windows-feature-cfg : SymI64Env
+      (compiler-cfg-enable feature-cfg "windows")]
+    (and
+      (compiler-parse-cfg-decl-count-ok?
+        "(cfg feature (define answer : i64 42))"
+        (compiler-cfg-empty)
+        0)
+      (and
+        (compiler-parse-cfg-decl-count-ok?
+          "(cfg feature (define answer : i64 42))"
+          feature-cfg
+          1)
+        (and
+          (compiler-parse-cfg-decl-count-ok?
+            "(cfg feature (define))"
+            (compiler-cfg-empty)
+            0)
+          (and
+            (compiler-parse-cfg-decl-count-ok?
+              "(cfg (all feature windows) (define answer : i64 42))"
+              windows-feature-cfg
+              1)
+            (and
+              (compiler-parse-cfg-decl-count-ok?
+                "(cfg (any missing feature) (define answer : i64 42))"
+                feature-cfg
+                1)
+              (and
+                (compiler-parse-cfg-decl-count-ok?
+                  "(cfg (not missing) (define answer : i64 42))"
+                  feature-cfg
+                  1)
+                (and
+                  (compiler-parse-cfg-decl-count-ok?
+                    "(define (main) : i64 (begin (cfg feature (if)) 42))"
+                    (compiler-cfg-empty)
+                    1)
+                  (and
+                    (compiler-parse-cfg-decl-count-ok?
+                      "(define (main) : i64 (cfg feature (if) 42))"
+                      (compiler-cfg-empty)
+                      1)
+                    (compiler-parse-cfg-error?
+                      "(define (main) : i64 (cfg feature (if) 42))"
+                      feature-cfg)))))))))))
+
 (define (compiler-parse-declaration-tests-ok?) : bool
   (and
     (compiler-parse-ok? "(define answer : i64 42)")
@@ -4552,7 +4805,9 @@
                                     (compiler-parse-resource-with-tests-ok?)
                                     (and
                                       (compiler-parse-quote-syntax-tests-ok?)
-                                      (compiler-parse-export-error-tests-ok?))))))))))))))))
+                                      (and
+                                        (compiler-parse-export-error-tests-ok?)
+                                        (compiler-parse-cfg-tests-ok?)))))))))))))))))
           42
           (begin
             (panic "parse: error-path self-tests failed")

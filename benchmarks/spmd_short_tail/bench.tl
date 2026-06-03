@@ -15,6 +15,8 @@
 ;# preventing whole-loop constant folding. The folded index `r % array-len`
 ;# (modulo, since the length is not a power of two) reads a different element
 ;# each pass so the stored array cannot be eliminated.
+(import "stdlib/io.tl")
+
 (define array-len : i64
   1000)
 

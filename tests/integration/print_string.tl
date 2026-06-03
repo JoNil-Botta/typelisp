@@ -2,6 +2,8 @@
 ;; `(print-string s)` / `(print-str s)` : (-> String unit) issues a single
 ;; write(1) syscall. The "\n" escape lexes to a real newline byte, so this
 ;; emits exactly "hello\nworld\n" to stdout and exits 0.
+(import "stdlib/io.tl")
+
 (define (main) : i64
   (begin
     (print-string "hello\n")

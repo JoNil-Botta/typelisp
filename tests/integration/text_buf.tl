@@ -1,4 +1,6 @@
 ;; text_buf.tl - Integration driver for the selfhost text buffer module.
+(import "stdlib/io.tl")
+
 (import "text_buf_core.tl")
 
 (define (check-string [got : String] [want : String] [message : String]) : unit

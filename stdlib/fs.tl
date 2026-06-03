@@ -2,7 +2,7 @@
 ;#
 ;# Provides recoverable current-directory and temporary-directory APIs, path-join,
 ;# lexical path normalization, safe relative suffix checks, and cleanup helpers on
-;# top of compiler/runtime primitives:
+;# top of direct platform FFI bindings and compiler/runtime primitives:
 ;#
 ;# `fs-mkdir-status`, `fs-remove-file-status`, `fs-remove-dir-status`,
 ;# `fs-rename-status`, `fs-read-dir-status`, `fs-read-dir`,
@@ -38,6 +38,78 @@
 
 ;: Runtime string probe for retrieving the current working directory.
 (extern tl_fs_current_dir : (-> String))
+
+(extern fs-linux-mkdir (:symbol "mkdir") : (-> (Ptr u8) i32 i32))
+(extern fs-linux-unlink (:symbol "unlink") : (-> (Ptr u8) i32))
+(extern fs-linux-rmdir (:symbol "rmdir") : (-> (Ptr u8) i32))
+(extern fs-linux-getpid (:symbol "getpid") : (-> i32))
+
+(extern fs-windows-mkdir (:symbol "_mkdir") : (-> (Ptr u8) i32))
+(extern fs-windows-unlink (:symbol "_unlink") : (-> (Ptr u8) i32))
+(extern fs-windows-rmdir (:symbol "_rmdir") : (-> (Ptr u8) i32))
+(extern fs-windows-get-current-process-id (:symbol "GetCurrentProcessId") : (-> u32))
+
+(extern fs-ffi-rename (:symbol "rename") : (-> (Ptr u8) (Ptr u8) i32))
+
+(define (fs-status-from-result [result : i64]) : i64
+  (if (= result 0)
+    0
+    (io-last-error-code)))
+
+;: Return the host status code for creating a directory.
+(define (fs-mkdir-status [path : (& path str)]) : i64
+  (let
+    [path-text : String (io-copy-path path)]
+    [path-bytes : (Array u8) (io-c-string path-text)]
+    [path-ptr : (Ptr u8) (io-array-const-ptr path-bytes)]
+    (fs-status-from-result
+      (cfg windows
+        (cast (fs-windows-mkdir path-ptr) : i64)
+        (cast (fs-linux-mkdir path-ptr (cast 448 : i32)) : i64)))))
+
+;: Return the host status code for removing a file.
+(define (fs-remove-file-status [path : (& path str)]) : i64
+  (let
+    [path-text : String (io-copy-path path)]
+    [path-bytes : (Array u8) (io-c-string path-text)]
+    [path-ptr : (Ptr u8) (io-array-const-ptr path-bytes)]
+    (fs-status-from-result
+      (cfg windows
+        (cast (fs-windows-unlink path-ptr) : i64)
+        (cast (fs-linux-unlink path-ptr) : i64)))))
+
+;: Return the host status code for removing an empty directory.
+(define (fs-remove-dir-status [path : (& path str)]) : i64
+  (let
+    [path-text : String (io-copy-path path)]
+    [path-bytes : (Array u8) (io-c-string path-text)]
+    [path-ptr : (Ptr u8) (io-array-const-ptr path-bytes)]
+    (fs-status-from-result
+      (cfg windows
+        (cast (fs-windows-rmdir path-ptr) : i64)
+        (cast (fs-linux-rmdir path-ptr) : i64)))))
+
+;: Return the host status code for renaming a path.
+(define (fs-rename-status
+  [source : (& source str)]
+  [destination : (& destination str)]) : i64
+  (let
+    [source-text : String (io-copy-path source)]
+    [destination-text : String (io-copy-path destination)]
+    [source-bytes : (Array u8) (io-c-string source-text)]
+    [destination-bytes : (Array u8) (io-c-string destination-text)]
+    (fs-status-from-result
+      (cast
+        (fs-ffi-rename
+          (io-array-const-ptr source-bytes)
+          (io-array-const-ptr destination-bytes))
+        : i64))))
+
+;: Return the host process id.
+(define (fs-process-id) : i64
+  (cfg windows
+    (cast (fs-windows-get-current-process-id) : i64)
+    (cast (fs-linux-getpid) : i64)))
 
 ;: Common host status code for attempting to create an already-existing path.
 (define fs-status-already-exists : i64
@@ -347,7 +419,7 @@
 
 ;: Create `path` as a directory, returning a structured status.
 ;:
-;: Linux uses mode `0700`; Windows uses the backend `_mkdir` helper.
+;: Linux uses mode `0700`; Windows uses the CRT `_mkdir` function.
 (define (try-mkdir [path : (& path str)]) : ResultIoUnit
   (if (io-empty-path? path)
     (ErrIoUnit (io-invalid-path-error path))

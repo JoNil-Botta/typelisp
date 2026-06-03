@@ -1,7 +1,7 @@
 ;# stdlib/cpu.tl - host CPU SIMD ISA detection via the cpuid/xgetbv primitives.
 ;#
 ;# Mirrors the retired scripts/simd_cpuid_probe.c (refs #1168, built on the
-;# #1167 cpuid/xgetbv runtime primitives). A SIMD ISA is reported "runnable"
+;# #1167 cpuid/xgetbv instructions). A SIMD ISA is reported "runnable"
 ;# only when BOTH the CPUID feature bit AND the OS XSAVE state enablement (XCR0
 ;# via XGETBV) are present -- i.e. the running host can actually execute it, not
 ;# merely that the CPU advertises the feature.
@@ -12,6 +12,27 @@
 ;# sign of the widening cast is irrelevant.
 ;#
 ;# Usage: `(import "stdlib/cpu.tl")`
+
+(define (cpu-cpuid-eax [leaf : i64] [subleaf : i64]) : i32
+  (cast (cpuid-eax leaf subleaf) : i32))
+
+(define (cpu-cpuid-ebx [leaf : i64] [subleaf : i64]) : i32
+  (cast (cpuid-ebx leaf subleaf) : i32))
+
+(define (cpu-cpuid-ecx [leaf : i64] [subleaf : i64]) : i32
+  (cast (cpuid-ecx leaf subleaf) : i32))
+
+(define (cpu-cpuid-edx [leaf : i64] [subleaf : i64]) : i32
+  (cast (cpuid-edx leaf subleaf) : i32))
+
+;: Return CPUID registers for `leaf` and `subleaf` as (eax ebx ecx edx).
+(define (cpuid [leaf : i64] [subleaf : i64]) : (Tuple i32 i32 i32 i32)
+  (tuple
+    (cpu-cpuid-eax leaf subleaf)
+    (cpu-cpuid-ebx leaf subleaf)
+    (cpu-cpuid-ecx leaf subleaf)
+    (cpu-cpuid-edx leaf subleaf)))
+
 ;: CPUID.1:ECX bit 27 = OSXSAVE: the OS enabled XSAVE and the XGETBV instruction.
 (define (cpu-osxsave?) : bool
   (let

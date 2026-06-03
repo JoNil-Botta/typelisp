@@ -12,6 +12,8 @@
 ;# extra arguments, matching C `argc`), so the trip count is not a compile-time
 ;# constant. The hash accumulator is carried across rounds, so the per-round
 ;# scan is not loop-invariant and cannot be folded into a closed form.
+(import "stdlib/io.tl")
+
 (define scan-text : String
   "the quick brown fox jumps over the lazy dog 0123456789")
 

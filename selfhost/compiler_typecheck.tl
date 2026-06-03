@@ -3072,6 +3072,16 @@
       [g : (-> unit) (lambda () : unit (set! n 1))]
       (begin (g) n))))")
 
+(define (compiler-typecheck-lambda-captured-set-with-escape-source) : String
+  "(define (main) : i64
+  (let
+    [scratch : i64 (arena-make)]
+    (let
+      [n : i64 0]
+      (let
+        [g : (-> unit) (lambda () : unit (with-escape scratch (set! n 1)))]
+        (begin (g) n)))))")
+
 (define (compiler-typecheck-lambda-param-set-source) : String
   "(define (main) : i64
   (let
@@ -3125,10 +3135,14 @@
                               (compiler-typecheck-lambda-captured-set-source)
                               "typecheck: lambda cannot assign captured binding")
                             (and
-                              (compiler-typecheck-ok?
-                                (compiler-typecheck-lambda-param-set-source))
-                              (compiler-typecheck-ok?
-                                (compiler-typecheck-lambda-aggregate-return-source)))))))))))))))))
+                              (compiler-typecheck-error-ok?
+                                (compiler-typecheck-lambda-captured-set-with-escape-source)
+                                "typecheck: lambda cannot assign captured binding")
+                              (and
+                                (compiler-typecheck-ok?
+                                  (compiler-typecheck-lambda-param-set-source))
+                                (compiler-typecheck-ok?
+                                  (compiler-typecheck-lambda-aggregate-return-source))))))))))))))))))
 
 (define (compiler-typecheck-cast-tests-ok?) : bool
   (and

@@ -4945,6 +4945,10 @@
     [(AstExprStructGet receiver _)
       (tc-expr-sets-free-name? receiver name bound)]
     [(AstExprWithRegion _ body) (tc-expr-list-sets-free-name? body name bound)]
+    [(AstExprWithEscape scratch body)
+      (or
+        (tc-expr-sets-free-name? scratch name bound)
+        (tc-expr-list-sets-free-name? body name bound))]
     [(AstExprWithResource bindings body)
       (or
         (tc-resource-binding-list-sets-free-name? bindings name bound)

@@ -3499,11 +3499,80 @@
                           (compiler-typecheck-runtime-builtin-char-at-bad-index-source)
                           "typecheck: string index must be integer")))))))))))))
 
+(define (compiler-typecheck-panic-error-never-tests-ok?) : bool
+  (let
+    [ok : bool true]
+    (begin
+      (if (compiler-typecheck-ok? "(define (f [s : String]) : i64 (panic s))")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-ok?
+        "(define (f [s : String]) : i64 (panic (& s)))")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-ok? "(define (f [s : String]) : i64 (error s))")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-ok?
+        "(define (f [s : String]) : i64 (error (& s)))")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-ok?
+        "(define (f [flag : bool]) : i64 (if flag 42 (panic \"stop\")))")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-ok?
+        "(define (f [flag : bool]) : String (if flag \"ok\" (error \"stop\")))")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-ok?
+        "(defenum Choice (Left) (Right))
+(define (f [c : Choice]) : i64 (match c [(Left) (panic \"left\")] [(Right) 7]))")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-ok?
+        "(defenum Choice (Left) (Right))
+(define (f [c : Choice]) : String (match c [(Left) \"ok\"] [(Right) (error \"right\")]))")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-ok?
+        "(define (f) : unit (begin (panic \"stop\") unit))")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-ok?
+        "(define (f) : unit (begin (error \"stop\")))")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        "(define (f) : i64 (panic))"
+        "typecheck: arity mismatch")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        "(define (f) : i64 (error \"a\" \"b\"))"
+        "typecheck: arity mismatch")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        "(define (f) : i64 (panic 5))"
+        "typecheck: argument type mismatch")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        "(define (f) : i64 (error true))"
+        "typecheck: argument type mismatch")
+        unit
+        (set! ok false))
+      ok)))
+
 (define (compiler-typecheck-self-test-builtins) : unit
   (begin
     (if (compiler-typecheck-runtime-builtin-tests-ok?)
       unit
       (panic "typecheck: runtime builtin tests failed"))
+    (if (compiler-typecheck-panic-error-never-tests-ok?)
+      unit
+      (panic "typecheck: panic/error never-context tests failed"))
     (if (compiler-typecheck-string-builtin-tests-ok?)
       unit
       (panic "typecheck: string builtin tests failed"))

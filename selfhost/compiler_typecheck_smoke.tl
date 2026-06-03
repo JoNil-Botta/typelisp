@@ -43,6 +43,92 @@
     [r : (& x i64) (& x)]
     (lambda () : unit (let [copy : (& x i64) r] unit))))")
 
+(define (compiler-typecheck-reference-tuple-return-ok-source) : String
+  "(define (main [n : i64]) : (Tuple (& n i64) i64)
+  (tuple (& n) 1))")
+
+(define (compiler-typecheck-reference-fixed-return-ok-source) : String
+  "(define (main [n : i64]) : (Array (& n i64) 1)
+  (array (& n)))")
+
+(define (compiler-typecheck-reference-tuple-local-escape-source) : String
+  "(define (main [n : i64]) : (Tuple (& n i64) i64)
+  (let [n : i64 1] (tuple (& n) 1)))")
+
+(define (compiler-typecheck-reference-fixed-local-escape-source) : String
+  "(define (main [n : i64]) : (Array (& n i64) 1)
+  (let [n : i64 1] (array (& n))))")
+
+(define (compiler-typecheck-reference-tuple-arena-escape-source) : String
+  "(define (main [seed : (& phase str)]) : (Tuple (& phase str) i64)
+  (with-arena phase
+    (let [s : String (int->string 1)] (tuple (& phase s) 1))))")
+
+(define (compiler-typecheck-reference-fixed-arena-escape-source) : String
+  "(define (main [seed : (& phase str)]) : (Array (& phase str) 1)
+  (with-arena phase
+    (let [s : String (int->string 1)] (array (& phase s)))))")
+
+(define (compiler-typecheck-reference-dyn-array-make-ok-source) : String
+  "(define (main [n : i64]) : unit
+  (let [items : (Array (& n i64)) (make-array (& n i64) 0)] unit))")
+
+(define (compiler-typecheck-reference-dyn-array-push-read-ok-source) : String
+  "(define (main [n : i64]) : unit
+  (let
+    [items : (Array (& n i64)) (make-array (& n i64) 0)]
+    (begin
+      (array-push! items (& n))
+      (let [r : (& n i64) (array-ref items 0)] unit))))")
+
+(define (compiler-typecheck-reference-dyn-array-push-escape-source) : String
+  "(define (main [n : i64]) : unit
+  (let
+    [items : (Array (& n i64)) (make-array (& n i64) 0)]
+    (let [n : i64 1] (array-push! items (& n)))))")
+
+(define (compiler-typecheck-reference-dyn-array-hidden-source) : String
+  "(define (main) : unit
+  (let [items : (Array (& n i64)) (make-array (& n i64) 0)] unit))")
+
+(define (compiler-typecheck-reference-return-container-tests-ok?) : bool
+  (and
+    (compiler-typecheck-ok?
+      (compiler-typecheck-reference-tuple-return-ok-source))
+    (and
+      (compiler-typecheck-ok?
+        (compiler-typecheck-reference-fixed-return-ok-source))
+      (and
+        (compiler-typecheck-error-ok?
+          (compiler-typecheck-reference-tuple-local-escape-source)
+          "typecheck: reference value would escape lexical scope")
+        (and
+          (compiler-typecheck-error-ok?
+            (compiler-typecheck-reference-fixed-local-escape-source)
+            "typecheck: reference value would escape lexical scope")
+          (and
+            (compiler-typecheck-error-ok?
+              (compiler-typecheck-reference-tuple-arena-escape-source)
+              "typecheck: region-tagged value cannot escape with-arena 'phase'")
+            (compiler-typecheck-error-ok?
+              (compiler-typecheck-reference-fixed-arena-escape-source)
+              "typecheck: region-tagged value cannot escape with-arena 'phase'")))))))
+
+(define (compiler-typecheck-reference-dyn-array-tests-ok?) : bool
+  (and
+    (compiler-typecheck-ok?
+      (compiler-typecheck-reference-dyn-array-make-ok-source))
+    (and
+      (compiler-typecheck-ok?
+        (compiler-typecheck-reference-dyn-array-push-read-ok-source))
+      (and
+        (compiler-typecheck-error-ok?
+          (compiler-typecheck-reference-dyn-array-push-escape-source)
+          "typecheck: cannot store reference into longer-lived array; reference value would escape lexical scope")
+        (compiler-typecheck-error-ok?
+          (compiler-typecheck-reference-dyn-array-hidden-source)
+          "typecheck: make-array element type is not supported")))))
+
 (define (compiler-typecheck-reference-escape-tests-ok?) : bool
   (and
     (compiler-typecheck-ok? (compiler-typecheck-reference-nested-local-source))
@@ -69,9 +155,13 @@
                 (compiler-typecheck-error-ok?
                   (compiler-typecheck-reference-arena-store-escape-source)
                   "typecheck: cannot store reference into longer-lived array; reference value would escape lexical scope")
-                (compiler-typecheck-error-ok?
-                  (compiler-typecheck-reference-lambda-capture-source)
-                  "typecheck: lambda cannot capture immutable reference; reference value would escape lexical scope")))))))))
+                (and
+                  (compiler-typecheck-error-ok?
+                    (compiler-typecheck-reference-lambda-capture-source)
+                    "typecheck: lambda cannot capture immutable reference; reference value would escape lexical scope")
+                  (and
+                    (compiler-typecheck-reference-return-container-tests-ok?)
+                    (compiler-typecheck-reference-dyn-array-tests-ok?)))))))))))
 
 (define (main) : i64
   (begin

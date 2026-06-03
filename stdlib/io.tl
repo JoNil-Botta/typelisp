@@ -3,7 +3,7 @@
 ;# Provides file, argv, panic, and stdio helpers through direct extern bindings
 ;# to platform FFI symbols plus low-level language forms for argv and raw bytes.
 ;#
-;# Public runtime-facing functions such as `print-string`, `panic`, `arg`,
+;# Public platform-facing functions such as `print-string`, `panic`, `arg`,
 ;# `read-file`, `write-file`, file-handle status helpers, and stdin/stdout
 ;# helpers are stdlib definitions in this module. Programs must import this module
 ;# to use them.
@@ -551,7 +551,7 @@
   (OkIoBool bool)
   (ErrIoBool IoError))
 
-;: Opaque runtime-managed file handle id.
+;: Opaque stdlib-managed file handle id.
 ;:
 ;: v1 handles must be closed explicitly with `file-close`; there is no implicit
 ;: drop until move-only/drop semantics land.
@@ -591,7 +591,7 @@
   (text String)
   (eof bool))
 
-;: Portable errno-style status code used by runtime helpers for success.
+;: Portable errno-style status code used by stdlib host helpers for success.
 (define io-status-ok : i64
   0)
 
@@ -707,7 +707,7 @@
     [path : String label]
     (io-error-from-status (& path) code)))
 
-;: Convert an open mode into the runtime helper's compact mode code.
+;: Convert an open mode into the stdlib helper's compact mode code.
 (define (open-mode-code [mode : OpenMode]) : i64
   (match mode
     [(OpenRead) 0]
@@ -734,7 +734,7 @@
 (define (file-read-invalid-count-message) : String
   "file-read-chunk count must be non-negative")
 
-;: Open `path` in `mode`, returning a runtime-managed file handle.
+;: Open `path` in `mode`, returning a stdlib-managed file handle.
 ;:
 ;: The returned handle must be passed to `file-close`. Empty paths return
 ;: `IoInvalidPath`; unsupported targets and mode/host failures are reported as
@@ -748,7 +748,7 @@
         (ErrIoFile (io-error-from-status path (- 0 raw)))
         (OkIoFile (FileHandle raw))))))
 
-;: Close a runtime-managed file handle.
+;: Close a stdlib-managed file handle.
 ;:
 ;: Closing a valid handle returns `OkIoUnit`. Closing an invalid or already
 ;: closed handle returns `ErrIoUnit (IoUnsupported ...)` and never panics.
@@ -769,11 +769,11 @@
 (define (file-read-eof? [read : FileRead]) : bool
   (struct-get read eof))
 
-;: Read up to `count` bytes from a runtime-managed read-mode file handle.
+;: Read up to `count` bytes from a stdlib-managed read-mode file handle.
 ;:
 ;: The returned bytes are represented as `String` until #807 adds a distinct
 ;: byte-string/slice type. A short read does not imply EOF; EOF becomes true
-;: only after the runtime receives a zero-byte host read.
+;: only after the stdlib receives a zero-byte host read.
 (define (file-read-chunk [handle : FileHandle] [count : i64]) : ResultIoRead
   (if (< count 0)
     (ErrIoRead (IoInvalidPath (file-read-invalid-count-message)))
@@ -787,9 +787,9 @@
           (ErrIoRead (IoUnsupported (file-read-unsupported-message)))
           (ErrIoRead (io-error-from-label "file-read-chunk" status)))))))
 
-;: Write `contents` to a runtime-managed write-mode file handle.
+;: Write `contents` to a stdlib-managed write-mode file handle.
 ;:
-;: The runtime retries short host writes until all bytes are accepted or a
+;: The stdlib retries short host writes until all bytes are accepted or a
 ;: host error is returned. Closed, invalid, read-only, and unsupported handles
 ;: return `IoUnsupported`.
 (define (file-write [handle : FileHandle] [contents : (& contents str)]) : ResultIoUnit
@@ -801,7 +801,7 @@
         (ErrIoUnit (IoUnsupported (file-write-unsupported-message)))
         (ErrIoUnit (io-error-from-label "file-write" status))))))
 
-;: Flush a runtime-managed write-mode file handle.
+;: Flush a stdlib-managed write-mode file handle.
 ;:
 ;: Closed, invalid, read-only, and unsupported handles return
 ;: `IoUnsupported`; host flush failures are mapped through `io-error-from-status`.

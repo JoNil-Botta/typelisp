@@ -5534,7 +5534,9 @@
     func
     (if (= level 1)
       (optimize-function-once-fast func)
-      (optimize-function func))))
+      (if (= level 2)
+        (optimize-function-once func)
+        (optimize-function func)))))
 
 (define (optimize-function-list [funcs : CompilerIrFunctionList]) : CompilerIrFunctionList
   (optimize-function-list-with-level funcs (compiler-optimize-default-level)))
@@ -8014,20 +8016,32 @@
     [level2 : CompilerIrProgram (optimize-program-with-level program 2)]
     [level3 : CompilerIrProgram (optimize-program-with-level program 3)]
     [defaulted : CompilerIrProgram (optimize-program program)]
+    [fixed-program : CompilerIrProgram (opt-test-program (opt-fixed-point-instrs))]
+    [level2-fixed : CompilerIrProgram
+      (optimize-program-with-level fixed-program 2)]
+    [level3-fixed : CompilerIrProgram
+      (optimize-program-with-level fixed-program 3)]
     [level0-instrs : CompilerIrInstrList (opt-program-first-instrs level0)]
     [level1-instrs : CompilerIrInstrList (opt-program-first-instrs level1)]
     [level2-instrs : CompilerIrInstrList (opt-program-first-instrs level2)]
-    (and
-      (opt-program-eq program level0)
-      (and
-        (= (opt-count-arith-instrs level0-instrs) 1)
-        (and
-          (= (opt-count-arith-instrs level1-instrs) 0)
-          (and
-            (= (compiler-ir-instr-list-count level2-instrs) 0)
-            (and
-              (opt-program-eq level2 level3)
-              (opt-program-eq level1 defaulted))))))))
+    [level3-instrs : CompilerIrInstrList (opt-program-first-instrs level3)]
+    [level2-fixed-instrs : CompilerIrInstrList
+      (opt-program-first-instrs level2-fixed)]
+    [level3-fixed-instrs : CompilerIrInstrList
+      (opt-program-first-instrs level3-fixed)]
+    (cond
+      [(not (opt-program-eq program level0)) false]
+      [(not (= (opt-count-arith-instrs level0-instrs) 1)) false]
+      [(not (= (opt-count-arith-instrs level1-instrs) 0)) false]
+      [(not (= (compiler-ir-instr-list-count level2-instrs) 0)) false]
+      [(not (= (compiler-ir-instr-list-count level3-instrs) 0)) false]
+      [(not (opt-program-eq level1 defaulted)) false]
+      ;; Level 2 runs one full pipeline pass; level 3 keeps fixed-point cleanup.
+      [(not (= (compiler-ir-instr-list-count level2-fixed-instrs) 4)) false]
+      [(not (= (opt-count-arith-instrs level2-fixed-instrs) 3)) false]
+      [(not (= (compiler-ir-instr-list-count level3-fixed-instrs) 3)) false]
+      [(not (= (opt-count-arith-instrs level3-fixed-instrs) 2)) false]
+      [else true])))
 
 (define (compiler-optimize-level-self-test) : i64
   (if (compiler-optimize-level-policy-ok?)
@@ -9193,9 +9207,9 @@
     [optimized-program : CompilerIrProgram
       (optimize-program-with-level
         (opt-test-program (opt-fixed-point-instrs))
-        2)]
+        3)]
     [again-program : CompilerIrProgram
-      (optimize-program-with-level optimized-program 2)]
+      (optimize-program-with-level optimized-program 3)]
     (cond
       [(not (= (compiler-ir-instr-list-count once-instrs) 4)) 1]
       [(not (= (opt-count-arith-instrs once-instrs) 3)) 2]

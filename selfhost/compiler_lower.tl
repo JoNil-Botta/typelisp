@@ -13124,6 +13124,7 @@
   (lower-decls-in-module
     ctx
     top-env
+    top-env
     decls
     globals
     functions
@@ -13137,6 +13138,7 @@
 (define (lower-decls-in-module
   [ctx : TcContext]
   [top-env : TcTypeEnv]
+  [local-top-env : TcTypeEnv]
   [decls : AstDeclList]
   [globals : CompilerIrGlobalList]
   [functions : CompilerIrFunctionList]
@@ -13158,72 +13160,70 @@
         [(AstDeclDef name _ expr)
           (let
             [decl-ctx : TcContext (tc-context-with-module ctx module)]
-            (match (tc-module-local-env ctx top-env module)
-              [(OkTcEnv local-top-env)
-                (match (tc-top-decl-type-with-env decl-ctx local-top-env decl)
-                  [(OkTcType ty)
-                    (let
-                      [global-ty : AstType (tc-type-without-regions ty)]
-                      [global-name : String
-                        (lower-current-decl-logical-name names module name)]
-                      (match (lower-global-value name-cache expr)
-                        [(OkLowerValue value)
+            (match (tc-top-decl-type-with-env decl-ctx local-top-env decl)
+              [(OkTcType ty)
+                (let
+                  [global-ty : AstType (tc-type-without-regions ty)]
+                  [global-name : String
+                    (lower-current-decl-logical-name names module name)]
+                  (match (lower-global-value name-cache expr)
+                    [(OkLowerValue value)
+                      (lower-decls-in-module
+                        ctx
+                        top-env
+                        local-top-env
+                        rest
+                        (IrGlobalCons
+                          (IrGlobal global-name global-ty value)
+                          globals)
+                        functions
+                        externs
+                        spans
+                        names
+                        name-cache
+                        mode
+                        module)]
+                    ;; A global whose initializer is not a compile-time
+                    ;; constant is evaluated at startup by a hidden
+                    ;; `__global_init_<name>` function whose return value the
+                    ;; backend stores into the global before `main`. This
+                    ;; applies to any non-unit type (scalars as well as
+                    ;; aggregates), mirroring the former Rust lowerer, which
+                    ;; emits an init function whenever `extract_const` yields
+                    ;; no constant.
+                    [(ErrLowerValue _)
+                      (match (lower-function-escaping
+                        decl-ctx
+                        local-top-env
+                        (lower-global-init-function-name global-name)
+                        AstParamNil
+                        global-ty
+                        expr
+                        spans
+                        name-cache
+                        mode)
+                        [(OkLowerFunction init-funcs init-spans)
                           (lower-decls-in-module
                             ctx
                             top-env
+                            local-top-env
                             rest
                             (IrGlobalCons
-                              (IrGlobal global-name global-ty value)
+                              (IrGlobal global-name global-ty IrValueUnit)
                               globals)
-                            functions
+                            (lower-function-list-append
+                              init-funcs
+                              functions)
                             externs
-                            spans
+                            init-spans
                             names
                             name-cache
                             mode
                             module)]
-                        ;; A global whose initializer is not a compile-time
-                        ;; constant is evaluated at startup by a hidden
-                        ;; `__global_init_<name>` function whose return value the
-                        ;; backend stores into the global before `main`. This
-                        ;; applies to any non-unit type (scalars as well as
-                        ;; aggregates), mirroring the former Rust lowerer, which
-                        ;; emits an init function whenever `extract_const` yields
-                        ;; no constant.
-                        [(ErrLowerValue _)
-                          (match (lower-function-escaping
-                            decl-ctx
-                            local-top-env
-                            (lower-global-init-function-name global-name)
-                            AstParamNil
-                            global-ty
-                            expr
-                            spans
-                            name-cache
-                            mode)
-                            [(OkLowerFunction init-funcs init-spans)
-                              (lower-decls-in-module
-                                ctx
-                                top-env
-                                rest
-                                (IrGlobalCons
-                                  (IrGlobal global-name global-ty IrValueUnit)
-                                  globals)
-                                (lower-function-list-append
-                                  init-funcs
-                                  functions)
-                                externs
-                                init-spans
-                                names
-                                name-cache
-                                mode
-                                module)]
-                            [(ErrLowerFunction init-message)
-                              (ErrLowerDecls init-message)])]))]
-                  [(ErrTcType message)
-                    (ErrLowerDecls (lower-diagnostic message))])]
-              [(ErrTcEnv env-message)
-                (ErrLowerDecls (lower-diagnostic env-message))]))]
+                        [(ErrLowerFunction init-message)
+                          (ErrLowerDecls init-message)])]))]
+              [(ErrTcType message)
+                (ErrLowerDecls (lower-diagnostic message))]))]
         [(AstDeclExtern name metadata ty)
           (let
             [decl-ctx : TcContext (tc-context-with-module ctx module)]
@@ -13233,6 +13233,7 @@
               (lower-decls-in-module
                 ctx
                 top-env
+                local-top-env
                 rest
                 globals
                 functions
@@ -13252,37 +13253,36 @@
         [(AstDeclDefFn name params ret body)
           (let
             [decl-ctx : TcContext (tc-context-with-module ctx module)]
-            (match (tc-module-local-env ctx top-env module)
-              [(OkTcEnv local-top-env)
-                (match (lower-function-escaping
-                  decl-ctx
+            (match (lower-function-escaping
+              decl-ctx
+              local-top-env
+              (lower-current-decl-logical-name names module name)
+              params
+              ret
+              body
+              spans
+              name-cache
+              mode)
+              [(OkLowerFunction lowered-functions function-spans)
+                (lower-decls-in-module
+                  ctx
+                  top-env
                   local-top-env
-                  (lower-current-decl-logical-name names module name)
-                  params
-                  ret
-                  body
-                  spans
+                  rest
+                  globals
+                  (lower-function-list-append lowered-functions functions)
+                  externs
+                  function-spans
+                  names
                   name-cache
-                  mode)
-                  [(OkLowerFunction lowered-functions function-spans)
-                    (lower-decls-in-module
-                      ctx
-                      top-env
-                      rest
-                      globals
-                      (lower-function-list-append lowered-functions functions)
-                      externs
-                      function-spans
-                      names
-                      name-cache
-                      mode
-                      module)]
-                  [(ErrLowerFunction message) (ErrLowerDecls message)])]
-              [(ErrTcEnv message) (ErrLowerDecls (lower-diagnostic message))]))]
+                  mode
+                  module)]
+              [(ErrLowerFunction message) (ErrLowerDecls message)]))]
         [(AstDeclDefMacro _ _ _ _)
           (lower-decls-in-module
             ctx
             top-env
+            local-top-env
             rest
             globals
             functions
@@ -13296,6 +13296,7 @@
           (lower-decls-in-module
             ctx
             top-env
+            local-top-env
             rest
             globals
             functions
@@ -13309,6 +13310,7 @@
           (lower-decls-in-module
             ctx
             top-env
+            local-top-env
             rest
             globals
             functions
@@ -13319,25 +13321,30 @@
             mode
             module)]
         [(AstDeclModule next-module)
-          (let
-            [local-names : LowerNameEnv
-              (lower-module-local-names ctx names next-module)]
-            (lower-decls-in-module
-              ctx
-              top-env
-              rest
-              globals
-              functions
-              externs
-              spans
-              names
-              (lower-name-cache-from-env local-names)
-              mode
-              next-module))]
+          (match (tc-module-local-env ctx top-env next-module)
+            [(OkTcEnv next-local-top-env)
+              (let
+                [local-names : LowerNameEnv
+                  (lower-module-local-names ctx names next-module)]
+                (lower-decls-in-module
+                  ctx
+                  top-env
+                  next-local-top-env
+                  rest
+                  globals
+                  functions
+                  externs
+                  spans
+                  names
+                  (lower-name-cache-from-env local-names)
+                  mode
+                  next-module))]
+            [(ErrTcEnv message) (ErrLowerDecls (lower-diagnostic message))])]
         [(AstDeclTest _ _ _)
           (lower-decls-in-module
             ctx
             top-env
+            local-top-env
             rest
             globals
             functions
@@ -13351,6 +13358,7 @@
           (lower-decls-in-module
             ctx
             top-env
+            local-top-env
             rest
             (lower-nullary-variant-globals
               (lower-current-decl-logical-name names module name)
@@ -13368,6 +13376,7 @@
           (lower-decls-in-module
             ctx
             top-env
+            local-top-env
             rest
             globals
             functions
@@ -13381,6 +13390,7 @@
           (lower-decls-in-module
             ctx
             top-env
+            local-top-env
             rest
             globals
             functions

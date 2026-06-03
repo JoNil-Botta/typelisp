@@ -1992,7 +1992,7 @@
         OkTcUnit)]
     [(TcNoString) OkTcUnit]))
 
-(define (tc-dyn-array-elem-supported? [ty : AstType]) : bool
+(define (tc-dyn-array-elem-supported? [env : TcTypeEnv] [ty : AstType]) : bool
   (if (tc-integer-type? ty)
     true
     (match (tc-type-strip-region ty)
@@ -2003,6 +2003,10 @@
       [(AstTyEnum _) true]
       [(AstTyStruct _) true]
       [(AstTyDynArray _) true]
+      [(AstTyRef _ _)
+        (tc-reference-lifetimes-visible?
+          env
+          (tc-type-collect-reference-lifetimes ty))]
       [_ false])))
 
 (define (tc-spmd-varying? [class : TcSpmdClass]) : bool
@@ -7214,7 +7218,7 @@
         (match (tc-expr ctx env len)
           [(OkTcType len-ty)
             (if (tc-integer-type? len-ty)
-              (if (tc-dyn-array-elem-supported? elem)
+              (if (tc-dyn-array-elem-supported? env elem)
                 (OkTcType (tc-tag-active-region env (AstTyDynArray elem)))
                 (ErrTcType
                   "typecheck: make-array element type is not supported"))

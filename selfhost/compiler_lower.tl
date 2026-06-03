@@ -864,17 +864,17 @@
 
 (define (lower-reach-add-source
   [all-functions : StringI64Map]
-  [names : LowerNameEnv]
+  [names : LowerNameCache]
   [state : LowerReachState]
   [source-name : String]) : LowerReachState
   (lower-reach-add-logical
     all-functions
     state
-    (lower-name-env-resolve names source-name)))
+    (lower-name-cache-resolve names source-name)))
 
 (define (lower-reach-expr-list
   [all-functions : StringI64Map]
-  [names : LowerNameEnv]
+  [names : LowerNameCache]
   [state : LowerReachState]
   [exprs : AstExprList]) : LowerReachState
   (match exprs
@@ -888,7 +888,7 @@
 
 (define (lower-reach-let-bindings
   [all-functions : StringI64Map]
-  [names : LowerNameEnv]
+  [names : LowerNameCache]
   [state : LowerReachState]
   [bindings : AstLetBindingList]) : LowerReachState
   (match bindings
@@ -904,7 +904,7 @@
 
 (define (lower-reach-match-arms
   [all-functions : StringI64Map]
-  [names : LowerNameEnv]
+  [names : LowerNameCache]
   [state : LowerReachState]
   [arms : AstMatchArmList]) : LowerReachState
   (match arms
@@ -920,7 +920,7 @@
 
 (define (lower-reach-resource-bindings
   [all-functions : StringI64Map]
-  [names : LowerNameEnv]
+  [names : LowerNameCache]
   [state : LowerReachState]
   [bindings : AstResourceBindingList]) : LowerReachState
   (match bindings
@@ -940,7 +940,7 @@
 
 (define (lower-reach-call-callee
   [all-functions : StringI64Map]
-  [names : LowerNameEnv]
+  [names : LowerNameCache]
   [state : LowerReachState]
   [callee : AstExpr]) : LowerReachState
   (match (ast-expr-unspan callee)
@@ -949,7 +949,7 @@
 
 (define (lower-reach-expr
   [all-functions : StringI64Map]
-  [names : LowerNameEnv]
+  [names : LowerNameCache]
   [state : LowerReachState]
   [expr : AstExpr]) : LowerReachState
   (match expr
@@ -1116,7 +1116,7 @@
 
 (define (lower-reach-global-decls
   [all-functions : StringI64Map]
-  [names : LowerNameEnv]
+  [names : LowerNameCache]
   [state : LowerReachState]
   [decls : AstDeclList]) : LowerReachState
   (match decls
@@ -1227,7 +1227,7 @@
 
 (define (lower-reach-process
   [all-functions : StringI64Map]
-  [names : LowerNameEnv]
+  [names : LowerNameCache]
   [body-index : LowerFunctionBodyIndex]
   [state : LowerReachState]) : LowerReachState
   (match state
@@ -1408,14 +1408,15 @@
             paths
             entry-path
             (string-i64-map-len all-functions))]
+        [name-cache : LowerNameCache (lower-name-cache-from-env names)]
         (if (string-i64-map-contains? all-functions "main")
           (match (lower-reach-process
             all-functions
-            names
+            name-cache
             body-index
             (lower-reach-global-decls
               all-functions
-              names
+              name-cache
               (lower-reach-add-clone-helpers
                 all-functions
                 decls

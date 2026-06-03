@@ -536,9 +536,10 @@ commands and bare expressions are evaluated by compiling a scratch program
 through the TypeLisp-owned build/run path.
 
 `compile`, `run`, and `build` accept `--backend-mode scalar|avx2|avx512`.
-`scalar` is the default. `avx2` supports a first contiguous SPMD `foreach`
-map/zip subset and otherwise falls back or rejects unsupported vector IR;
-`avx512` parses but is rejected until that backend lands.
+`scalar` is the default. `avx2` and `avx512` support a first contiguous SPMD
+`foreach` map/zip subset and otherwise fall back or reject unsupported vector
+IR. The AVX-512 backend emits ZMM vectors with opmask predicated tails for
+supported shapes.
 
 The language-level runtime dispatch design is specified as `defdispatch` in
 `SPEC.md`: one logical function can list scalar, AVX2, and AVX-512 variant

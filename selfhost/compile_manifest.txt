@@ -208,7 +208,6 @@ contains|compile: --stdlib-root requires a value
 contains|compile: --opt-level requires a value
 contains|compile: invalid --opt-level
 contains|compile: --backend-mode requires a value
-contains|requires the Rust compile driver until selfhost SIMD support
 contains|Expected scalar, avx2, or avx512
 contains|Error: unknown target '
 contains|--emit-ir

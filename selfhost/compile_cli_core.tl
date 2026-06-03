@@ -6,8 +6,8 @@
 ;; plus `tokenize`/`parse`/`check`/`debug …`.
 ;; The private bootstrap form `<file.tl> [compile options]` remains accepted so
 ;; existing stage1->stage2 scripts can call the raw compiler directly.
-;; `--backend-mode scalar` and `avx2` are accepted by the selfhost compiler.
-;; `avx512` remains staged behind follow-up selfhost SIMD backend work.
+;; `--backend-mode scalar`, `avx2`, and `avx512` are accepted by the selfhost
+;; compiler.
 ;; `--emit-ir` writes a deterministic TypeLisp-owned IR summary.
 ;;
 ;; This is a main-free core (like the other `*_cli_core.tl` modules): the entry
@@ -124,9 +124,7 @@
     value
     "; expected 0, 1, 2, or 3"))
 
-;; `--backend-mode` parity with Rust (which accepts scalar/avx2/avx512). The
-;; selfhost compiler now owns the first AVX2 slice; `avx512` is still an
-;; unsupported valid mode while the tail-mask/predicated backend work lands.
+;; `--backend-mode` parity with Rust (which accepts scalar/avx2/avx512).
 (defenum ResultCompileCliBackendMode
   (OkCompileCliBackendMode CompilerBackendMode)
   (ErrCompileCliBackendMode String))
@@ -135,12 +133,7 @@
   (cond
     [(string-eq value "scalar") (OkCompileCliBackendMode (BackendModeScalar))]
     [(string-eq value "avx2") (OkCompileCliBackendMode (BackendModeAvx2))]
-    [(string-eq value "avx512")
-      (ErrCompileCliBackendMode
-        (compile-cli-cat3
-          "compile: --backend-mode "
-          value
-          " requires the Rust compile driver until selfhost SIMD support (#1014)"))]
+    [(string-eq value "avx512") (OkCompileCliBackendMode (BackendModeAvx512))]
     [else
       (ErrCompileCliBackendMode
         (compile-cli-cat3

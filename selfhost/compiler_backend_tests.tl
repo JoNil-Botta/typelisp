@@ -1559,6 +1559,54 @@
         "    vmovupd "
         "    vaddpd "))))
 
+(define (compiler-backend-avx512-map-asm-contains?
+  [elem : String]
+  [move : String]
+  [op : String]) : bool
+  (match (lower-compiler-source-with-mode
+    (compiler-backend-avx2-map-source elem)
+    (CompilerLowerAvx512))
+    [(OkCompilerLower program spans)
+      (match (compiler-backend-emit-program-target-with-mode
+        program
+        (BackendTargetLinux)
+        (BackendModeAvx512)
+        spans
+        true)
+        [(OkCompilerBackend asm)
+          (and
+            (backend-and8
+              (compiler-backend-string-contains? asm move)
+              (compiler-backend-string-contains? asm op)
+              (compiler-backend-string-contains? asm "%zmm")
+              (compiler-backend-string-contains? asm "%k")
+              (compiler-backend-string-contains? asm "tail_mask_")
+              (compiler-backend-string-contains? asm "}{z}")
+              (compiler-backend-string-contains? asm "kmovw")
+              (compiler-backend-string-contains? asm "shll %cl, %eax"))
+            (not
+              (compiler-backend-string-contains?
+                asm
+                "vector/mask IR emission is not implemented")))]
+        [(ErrCompilerBackend _) false])]
+    [(ErrCompilerLower _) false]))
+
+(define (compiler-backend-avx512-vector-map-ok?) : bool
+  (and
+    (compiler-backend-avx512-map-asm-contains?
+      "i64"
+      "    vmovdqu64 "
+      "    vpaddq ")
+    (and
+      (compiler-backend-avx512-map-asm-contains?
+        "i32"
+        "    vmovdqu32 "
+        "    vpaddd ")
+      (compiler-backend-avx512-map-asm-contains?
+        "f64"
+        "    vmovupd "
+        "    vaddpd "))))
+
 (define (compiler-backend-optimizer-rewrite-diagnostic-ok?) : bool
   (let
     [phi : CompilerIrInstr
@@ -2752,15 +2800,17 @@
                       (compiler-backend-closure-emit-shape-ok?)
                       (and
                         (compiler-backend-avx2-vector-map-ok?)
-                        (backend-and8
-                          (compiler-backend-scalar-wide-ops-ok?)
-                          (compiler-backend-scalar-div-mod-ok?)
-                          (compiler-backend-narrow-scalar-instr-ok?)
-                          (compiler-backend-f64-abi-ok?)
-                          (compiler-backend-win64-f64-abi-ok?)
-                          (compiler-backend-aggregate-storage-shape-ok?)
-                          (compiler-backend-alloc-runtime-shape-ok?)
-                          (compiler-backend-windows-sdk-registry-runtime-ok?)))))))))))))
+                        (and
+                          (compiler-backend-avx512-vector-map-ok?)
+                          (backend-and8
+                            (compiler-backend-scalar-wide-ops-ok?)
+                            (compiler-backend-scalar-div-mod-ok?)
+                            (compiler-backend-narrow-scalar-instr-ok?)
+                            (compiler-backend-f64-abi-ok?)
+                            (compiler-backend-win64-f64-abi-ok?)
+                            (compiler-backend-aggregate-storage-shape-ok?)
+                            (compiler-backend-alloc-runtime-shape-ok?)
+                            (compiler-backend-windows-sdk-registry-runtime-ok?))))))))))))))
     42
     (begin
       (panic "backend: smoke output mismatch")

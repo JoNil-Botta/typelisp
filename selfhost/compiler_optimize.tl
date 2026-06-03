@@ -5521,8 +5521,7 @@
                 [cfg : CompilerIrBlockList
                   (opt-cfg-simplify-blocks promoted-blocks)]
                 (let
-                  [used : OptUsedSet
-                    (opt-collect-blocks-uses (OptUsedNil) cfg)]
+                  [used : OptUsedSet (opt-collect-blocks-uses (OptUsedNil) cfg)]
                   (IrFunction
                     name
                     params
@@ -8043,7 +8042,8 @@
     [level2 : CompilerIrProgram (optimize-program-with-level program 2)]
     [level3 : CompilerIrProgram (optimize-program-with-level program 3)]
     [defaulted : CompilerIrProgram (optimize-program program)]
-    [fixed-program : CompilerIrProgram (opt-test-program (opt-fixed-point-instrs))]
+    [fixed-program : CompilerIrProgram
+      (opt-test-program (opt-fixed-point-instrs))]
     [level2-fixed : CompilerIrProgram
       (optimize-program-with-level fixed-program 2)]
     [level3-fixed : CompilerIrProgram

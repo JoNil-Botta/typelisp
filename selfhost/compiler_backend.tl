@@ -7924,8 +7924,7 @@
         rest
         (BackendStringCons head out))]))
 
-(define (compiler-backend-string-list-reverse
-  [strings : BackendStringList]) : BackendStringList
+(define (compiler-backend-string-list-reverse [strings : BackendStringList]) : BackendStringList
   (compiler-backend-string-list-reverse-into strings BackendStringNil))
 
 (define (compiler-backend-string-list-add

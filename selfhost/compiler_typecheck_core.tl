@@ -9067,6 +9067,28 @@
   [summary : CompilerTypecheckSummary]) : ResultCompilerTypecheck
   (tc-check-decls-with-paths-in-module ctx top-env decls paths summary ""))
 
+(define (tc-generated-clone-name? [name : String]) : bool
+  (if (>= (string-length name) 6)
+    (string-eq (substring name 0 6) "clone$")
+    false))
+
+(define (tc-generated-clone-decl-with-path? [decl : AstDecl] [path : String]) : bool
+  (if (string-eq path "")
+    (match decl
+      [(AstDeclDefFn name _ _ _) (tc-generated-clone-name? name)]
+      [_ false])
+    false))
+
+(define (tc-typecheck-diag-with-path
+  [decl : AstDecl]
+  [path : String]
+  [message : String]) : CompilerDiagnostic
+  (let
+    [diag : CompilerDiagnostic (tc-decl-diag decl message)]
+    (if (string-eq path "")
+      diag
+      (compiler-diagnostic-with-path diag path))))
+
 ;; Per-declaration arena escape for typechecking (#1633). Checking one decl
 ;; allocates type-inference scratch (unification temporaries, per-expression
 ;; environment extensions) that the bump allocator never frees. We check each
@@ -9104,6 +9126,18 @@
                   (unsafe (arena-destroy scratch-head))
                   (ErrTcUnit escaped)))))]))))
 
+(define (tc-check-one-decl-with-module
+  [ctx : TcContext]
+  [top-env : TcTypeEnv]
+  [decl : AstDecl]
+  [module : String]) : ResultTcUnit
+  (match (tc-module-local-env ctx top-env module)
+    [(OkTcEnv local-env)
+      (let
+        [decl-ctx : TcContext (tc-context-with-module ctx module)]
+        (tc-check-decl-escaping decl-ctx local-env decl))]
+    [(ErrTcEnv message) (ErrTcUnit message)]))
+
 (define (tc-check-decls-with-paths-in-module
   [ctx : TcContext]
   [top-env : TcTypeEnv]
@@ -9133,33 +9167,26 @@
               summary
               next-module)]
           [_
-            (match (tc-module-local-env ctx top-env module)
-              [(OkTcEnv local-env)
-                (let
-                  [decl-ctx : TcContext (tc-context-with-module ctx module)]
-                  (match (tc-check-decl-escaping decl-ctx local-env decl)
-                    [(OkTcUnit)
-                      (tc-check-decls-with-paths-in-module
-                        ctx
-                        top-env
-                        rest
-                        rest-paths
-                        (tc-summary-add-decl summary decl)
-                        module)]
-                    [(ErrTcUnit message)
-                      (let
-                        [diag : CompilerDiagnostic (tc-decl-diag decl message)]
-                        (if (string-eq decl-path "")
-                          (ErrCompilerTypecheck diag)
-                          (ErrCompilerTypecheck
-                            (compiler-diagnostic-with-path diag decl-path))))]))]
-              [(ErrTcEnv message)
-                (let
-                  [diag : CompilerDiagnostic (tc-decl-diag decl message)]
-                  (if (string-eq decl-path "")
-                    (ErrCompilerTypecheck diag)
-                    (ErrCompilerTypecheck
-                      (compiler-diagnostic-with-path diag decl-path))))])]))]))
+            (if (tc-generated-clone-decl-with-path? decl decl-path)
+              (tc-check-decls-with-paths-in-module
+                ctx
+                top-env
+                rest
+                rest-paths
+                (tc-summary-add-decl summary decl)
+                module)
+              (match (tc-check-one-decl-with-module ctx top-env decl module)
+                [(OkTcUnit)
+                  (tc-check-decls-with-paths-in-module
+                    ctx
+                    top-env
+                    rest
+                    rest-paths
+                    (tc-summary-add-decl summary decl)
+                    module)]
+                [(ErrTcUnit message)
+                  (ErrCompilerTypecheck
+                    (tc-typecheck-diag-with-path decl decl-path message))]))]))]))
 
 (define (typecheck-compiler-specialized-program-with-paths
   [program : AstProgram]

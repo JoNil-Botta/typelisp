@@ -846,6 +846,18 @@
   "(define (main) : i64
   (with-escape true 1))")
 
+(define (compiler-typecheck-with-escape-array-result-source) : String
+  "(define (main) : (Array i64)
+  (let
+    [scratch : i64 (arena-make)]
+    (with-escape scratch (make-array i64 4))))")
+
+(define (compiler-typecheck-with-escape-box-result-source) : String
+  "(define (main) : (Box i64)
+  (let
+    [scratch : i64 (arena-make)]
+    (with-escape scratch (box 4))))")
+
 (define (compiler-typecheck-with-escape-tests-ok?) : bool
   (and
     (compiler-typecheck-ok? (compiler-typecheck-with-escape-scalar-source))
@@ -854,9 +866,17 @@
       (and
         (compiler-typecheck-ok?
           (compiler-typecheck-with-escape-region-strip-source))
-        (compiler-typecheck-error-ok?
-          (compiler-typecheck-with-escape-bad-arena-source)
-          "typecheck: with-escape arena must be i64")))))
+        (and
+          (compiler-typecheck-error-ok?
+            (compiler-typecheck-with-escape-bad-arena-source)
+            "typecheck: with-escape arena must be i64")
+          (and
+            (compiler-typecheck-error-ok?
+              (compiler-typecheck-with-escape-array-result-source)
+              "typecheck: with-escape result type is not clone-supported")
+            (compiler-typecheck-error-ok?
+              (compiler-typecheck-with-escape-box-result-source)
+              "typecheck: with-escape result type is not clone-supported")))))))
 
 (define (compiler-typecheck-box-source) : String
   "(define (main) : i64

@@ -6664,6 +6664,14 @@
     [(AstExprQuasiquote inner) (tc-quasiquote-template-ok ctx env inner)]
     [_ OkTcUnit]))
 
+(define (tc-with-escape-result-supported? [ctx : TcContext] [ty : AstType]) : bool
+  (match (tc-type-strip-region (tc-resolve-type ctx ty))
+    [(AstTyString) true]
+    [(AstTyEnum _) true]
+    [(AstTyStruct _) true]
+    [(AstTyVar _) true]
+    [_ (tc-type-copyable? ty)]))
+
 (define (tc-with-escape-expr
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -6673,7 +6681,11 @@
     [(OkTcType scratch-ty)
       (if (tc-type-eq scratch-ty (AstTyI64))
         (match (tc-begin-list ctx env body)
-          [(OkTcType body-ty) (OkTcType (tc-type-without-regions body-ty))]
+          [(OkTcType body-ty)
+            (if (tc-with-escape-result-supported? ctx body-ty)
+              (OkTcType (tc-type-without-regions body-ty))
+              (ErrTcType
+                "typecheck: with-escape result type is not clone-supported"))]
           [(ErrTcType message) (ErrTcType message)])
         (ErrTcType "typecheck: with-escape arena must be i64"))]
     [(ErrTcType message) (ErrTcType message)]))

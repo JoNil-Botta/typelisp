@@ -35,6 +35,8 @@
 ;; module, then the reader.
 (import "token.tl")
 
+(import "stdlib/text_buf.tl")
+
 (defenum ResultTokens
   (OkTokens (Array Token))
   (ErrTokens String))
@@ -226,7 +228,7 @@
 (define (unescape-string-literal [src : String] [start : i64] [end : i64]) : String
   (let
     [i : i64 start]
-    [out : String ""]
+    [buf : TextBuf (text-buf-empty)]
     (begin
       (while (< i end)
         (let
@@ -234,15 +236,17 @@
           (if (= c #\\')
             (if (< (+ i 1) end)
               (begin
-                (set! out (string-append out (string-escape-piece src (+ i 1))))
+                (set!
+                  buf
+                  (text-buf-append buf (string-escape-piece src (+ i 1))))
                 (set! i (+ i 2)))
               (begin
-                (set! out (string-append out "\\"))
+                (set! buf (text-buf-append buf "\\"))
                 (set! i (+ i 1))))
             (begin
-              (set! out (string-append out (substring src i 1)))
+              (set! buf (text-buf-append buf (substring src i 1)))
               (set! i (+ i 1))))))
-      out)))
+      (text-buf-render buf))))
 
 ;; Return the index of the end-of-line that ends a `;` line comment whose body
 ;; starts at `start`. `n` is the source length. Scans forward until a newline

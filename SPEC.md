@@ -3139,8 +3139,8 @@ compiler, formatter, package-tooling, or REPL iteration has discarded all
 phase-local results. It is not a safe arbitrary source-level `free`
 replacement.
 
-Once `(unsafe ...)` lands, direct calls to these raw reset helpers should be
-wrapped in an unsafe context. The safe `with-arena` surface remains preferred.
+Direct calls to these raw reset helpers require an unsafe context. The safe
+`with-arena` surface remains preferred.
 
 ### 7.4 Raw pointers and unsafe memory access (v1 design)
 

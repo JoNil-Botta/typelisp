@@ -2606,11 +2606,21 @@ Initial raw pointer operation set:
 | `(ptr->int p)` | Unsafe | raw pointer -> `u64` | Exposes the target address representation. |
 | `(int->ptr n : (Ptr T))` / `(int->ptr n : (MutPtr T))` | Unsafe | integer -> requested raw pointer type | Address validity is entirely outside the typechecker. |
 
+`stdlib/ffi.tl` provides caller-owned C string marshalling helpers on top of
+this raw-pointer surface. `ffi-c-string-required-bytes` computes
+`string-length + 1`, `ffi-c-string-interior-nul?` rejects strings that cannot be
+passed to ordinary NUL-terminated C APIs, and `ffi-c-string-copy!` copies into a
+caller-provided `(MutPtr u8)` with an explicit capacity before writing the
+trailing NUL byte. The helper returns a structured result for success,
+interior-NUL input, or too-small buffers; it does not allocate, does not create
+implicit `String -> Ptr` coercions, and does not extend the input String's
+lifetime.
+
 Deferred raw pointer operations: address-of local/global/field expressions,
-slice views, C string helpers, volatile/atomic access, provenance tracking,
-pointer comparisons beyond `ptr-null?`, pointer-to-function casts, and any
-borrow-checked reference surface. Those are follow-ups to the raw pointer/FFI
-track (#809/#897/#911/#912) and the safe reference/ownership track (#182).
+slice views, volatile/atomic access, provenance tracking, pointer comparisons
+beyond `ptr-null?`, pointer-to-function casts, and any borrow-checked reference
+surface. Those are follow-ups to the raw pointer/FFI track
+(#809/#897/#911/#912) and the safe reference/ownership track (#182).
 
 ---
 

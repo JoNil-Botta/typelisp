@@ -1,0 +1,62 @@
+;# FFI boundary helpers.
+;#
+;# Provides caller-owned C string marshalling helpers for raw-pointer FFI
+;# boundaries. These helpers do not allocate and do not extend the lifetime of
+;# the input `String`; callers own the destination `(MutPtr u8)` storage and its
+;# capacity.
+;#
+;# Usage: `(import "stdlib/ffi.tl")`
+(defenum FfiCStringCopyResult
+  (FfiCStringCopyOk i64)
+  (FfiCStringInteriorNul)
+  (FfiCStringBufferTooSmall i64))
+
+;: Return the byte count needed for a NUL-terminated copy of `text`.
+(define (ffi-c-string-required-bytes [text : String]) : i64
+  (+ (string-length text) 1))
+
+;: Return true when `text` contains an interior NUL byte.
+(define (ffi-c-string-interior-nul? [text : String]) : bool
+  (let
+    [n : i64 (string-length text)]
+    [i : i64 0]
+    [found : bool false]
+    (begin
+      (while (and (not found) (< i n))
+        (if (= (string-ref text i) #\nul')
+          (set! found true)
+          (set! i (+ i 1))))
+      found)))
+
+(define (ffi-c-string-copy-bytes! [text : String] [dst : (MutPtr u8)] [n : i64]) : unit
+  (let
+    [i : i64 0]
+    (while (< i n)
+      (begin
+        (unsafe (ptr-write! (ptr-offset dst i) (cast (string-ref text i) : u8)))
+        (set! i (+ i 1))))))
+
+;: Copy `text` to caller-owned mutable storage and append the trailing NUL byte.
+;:
+;: Returns `FfiCStringInteriorNul` without writing when `text` contains a NUL
+;: byte. Returns `FfiCStringBufferTooSmall required` without writing when
+;: `capacity` is smaller than `(ffi-c-string-required-bytes text)`. On success,
+;: returns `FfiCStringCopyOk bytes-written`, where `bytes-written` includes the
+;: trailing NUL. Raw-pointer validity, alignment, and lifetime remain the
+;: caller's responsibility.
+(define (ffi-c-string-copy!
+  [text : String]
+  [dst : (MutPtr u8)]
+  [capacity : i64]) : FfiCStringCopyResult
+  (let
+    [needed : i64 (ffi-c-string-required-bytes text)]
+    (if (ffi-c-string-interior-nul? text)
+      (FfiCStringInteriorNul)
+      (if (< capacity needed)
+        (FfiCStringBufferTooSmall needed)
+        (let
+          [n : i64 (string-length text)]
+          (begin
+            (ffi-c-string-copy-bytes! text dst n)
+            (unsafe (ptr-write! (ptr-offset dst n) (cast #\nul' : u8)))
+            (FfiCStringCopyOk needed)))))))

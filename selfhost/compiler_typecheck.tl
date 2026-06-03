@@ -2748,25 +2748,55 @@
             "indirect array indexing is not allowed inside a spmd-reduce value expression; gather/scatter is deferred in the first slice (SPEC.md §5.16)"))))))
 
 ;; array-builtin signature rules (#1042): make-array length, array-ref array/index
-;; types, and array-set! value-type agreement, with valid accepts.
+;; types, array-set! value-type agreement, and array-push! dynamic-array
+;; restrictions, with valid accepts.
 (define (compiler-typecheck-array-builtin-tests-ok?) : bool
-  (and
-    (compiler-typecheck-ok?
-      "(define (f [a : (Array i64)]) : i64 (begin (array-set! a 0 5) (array-ref a 0)))")
-    (and
-      (compiler-typecheck-ok?
+  (let
+    [ok : bool true]
+    (begin
+      (if (compiler-typecheck-ok?
+        "(define (f [a : (Array i64)]) : i64 (begin (array-set! a 0 5) (array-ref a 0)))")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-ok?
         "(define (f) : i64 (let [a : (Array i64) (make-array i64 4)] (array-length a)))")
-      (and
-        (compiler-typecheck-error-ok?
-          "(define (f [a : (Array i64)]) : i64 (array-ref a true))"
-          "typecheck: array index must be integer")
-        (and
-          (compiler-typecheck-error-ok?
-            "(define (f) : i64 (make-array i64 true))"
-            "typecheck: make-array length must be integer")
-          (compiler-typecheck-error-ok?
-            "(define (f [a : (Array i64)]) : unit (array-set! a 0 true))"
-            "typecheck: array-set! value type mismatch"))))))
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-ok?
+        "(define (f) : i64
+  (let
+    [a : (Array i64) (make-array i64 0)]
+    (begin
+      (array-push! a 5)
+      (array-length a))))")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        "(define (f [a : (Array i64)]) : i64 (array-ref a true))"
+        "typecheck: array index must be integer")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        "(define (f) : i64 (make-array i64 true))"
+        "typecheck: make-array length must be integer")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        "(define (f [a : (Array i64)]) : unit (array-set! a 0 true))"
+        "typecheck: array-set! value type mismatch")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        "(define (f [a : (Array i64)]) : unit (array-push! a true))"
+        "typecheck: array-push! value type mismatch")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        "(define (f [a : (Array i64 2)]) : unit (array-push! a 5))"
+        "typecheck: array-push! requires dynamic array type")
+        unit
+        (set! ok false))
+      ok)))
 
 ;; comptime typecheck rules (#1042): a `(comptime ...)` form is typed by its
 ;; inner expression and flows that type to the use site (so an `i64` body is an
@@ -2889,6 +2919,30 @@
         "(define (f [h : i64]) : bool (file-read-chunk-eof? h))")
         unit
         (set! ok false))
+      (if (compiler-typecheck-ok? "(define (f) : String (read-stdin-line))")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-ok? "(define (f) : String (read-stdin-bytes 3))")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-ok? "(define (f) : bool (stdin-eof?))")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-ok?
+        "(define (read-file [n : i64]) : i64 (+ n 1))
+(define (f) : i64 (read-file 41))")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-ok?
+        "(define (file-open-status [path : i64] [mode : i64]) : bool true)
+(define (f) : bool (file-open-status 1 2))")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-ok?
+        "(define (read-stdin-line [limit : i64]) : i64 limit)
+(define (f) : i64 (read-stdin-line 7))")
+        unit
+        (set! ok false))
       (if (compiler-typecheck-error-ok?
         "(define (f [c : String]) : unit (write-file 5 c))"
         "typecheck: argument type mismatch")
@@ -2927,6 +2981,36 @@
       (if (compiler-typecheck-error-ok?
         "(define (f [h : i64]) : i64 (file-write-status h 5))"
         "typecheck: argument type mismatch")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        "(define (f) : String (read-stdin-line 1))"
+        "typecheck: arity mismatch")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        "(define (f) : String (read-stdin-bytes \"3\"))"
+        "typecheck: argument type mismatch")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        "(define (f) : String (read-stdin-bytes))"
+        "typecheck: arity mismatch")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        "(define (f) : bool (stdin-eof? 0))"
+        "typecheck: arity mismatch")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        "(define (f) : i64 (read-stdin-line))"
+        "typecheck: return type mismatch")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        "(define (f) : String (stdin-eof?))"
+        "typecheck: return type mismatch")
         unit
         (set! ok false))
       (if (compiler-typecheck-error-ok?
@@ -3414,10 +3498,8 @@
 ;; src/typechecker.rs). `print-string`/`print-str`/`print-error` take a `String`;
 ;; `xgetbv` takes an integer; `cpuid` takes integers; `string-ref`/`char-at`
 ;; require an integer index. A user declaration may shadow a builtin and its own
-;; signature then wins. (`array-push` and the stdin `read-byte`/`read-line`
-;; helpers have no selfhost typechecker builtin yet — selfhost reports
-;; `unbound name ...` for them — so those Rust cases are left to a follow-up
-;; blocker rather than asserted here.)
+;; signature then wins. Current `array-push!` and stdin helper parity cases live
+;; in the array and IO builtin suites above.
 (define (compiler-typecheck-runtime-builtin-print-string-ok-source) : String
   "(define (main) : i64 (begin (print-string \"hi\") 0))")
 

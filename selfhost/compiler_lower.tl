@@ -10767,7 +10767,8 @@
                     name
                     (tc-type-without-regions (tc-resolve-type decl-ctx ty))
                     (ast-extern-metadata-abi metadata)
-                    (ast-extern-metadata-symbol metadata))
+                    (ast-extern-metadata-symbol metadata)
+                    (ast-extern-metadata-link-inputs metadata))
                   externs)
                 spans
                 names
@@ -12978,6 +12979,42 @@
         [(ErrCompilerLower _) false])]
     [(ErrAstProgram _) false]))
 
+(define (compiler-lower-extern-link-metadata-source) : String
+  "(extern ffi-add (:abi c) (:symbol \"ffi_add\") (:link-lib \"ffi\") (:link-search \"native\") (:link-arg \"-Wl,--as-needed\") : (-> i64 i64))
+(define (main) : i64 (ffi-add 35))")
+
+(define (compiler-lower-extern-link-inputs-ok?
+  [inputs : AstExternLinkInputList]) : bool
+  (match inputs
+    [(AstExternLinkInputCons
+        (AstExternLinkLib lib)
+        (AstExternLinkInputCons
+          (AstExternLinkSearch dir)
+          (AstExternLinkInputCons
+            (AstExternLinkArg arg-value)
+            AstExternLinkInputNil)))
+      (and
+        (string-eq lib "ffi")
+        (and (string-eq dir "native") (string-eq arg-value "-Wl,--as-needed")))]
+    [_ false]))
+
+(define (compiler-lower-extern-link-metadata-ok?) : bool
+  (match (lower-compiler-source (compiler-lower-extern-link-metadata-source))
+    [(OkCompilerLower program _)
+      (match program
+        [(IrProgram _ _ externs)
+          (match externs
+            [(IrExternCons (IrExtern name _ abi symbol link-inputs) IrExternNil)
+              (and
+                (string-eq name "ffi-add")
+                (and
+                  (string-eq symbol "ffi_add")
+                  (and
+                    (ast-extern-abi-c? abi)
+                    (compiler-lower-extern-link-inputs-ok? link-inputs))))]
+            [_ false])])]
+    [(ErrCompilerLower _) false]))
+
 (define (compiler-lower-global-source) : String
   "(extern print-i64 : (-> i64 unit))
 (define answer : i64 40)
@@ -14584,6 +14621,9 @@
         unit
         (set! ok false))
       (if (compiler-lower-module-function-returning-enum-ok?)
+        unit
+        (set! ok false))
+      (if (compiler-lower-extern-link-metadata-ok?)
         unit
         (set! ok false))
       (if (compiler-lower-global-shape-ok?)

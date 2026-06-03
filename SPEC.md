@@ -929,6 +929,17 @@ Metadata may appear before `:`:
 - `(:abi c)` selects the C ABI. Unknown ABI names are rejected.
 - `(:symbol "exact_name")` supplies the external linker symbol independently of
   the local TypeLisp name.
+- `(:link-lib "name")` adds a native library input for source `build`/`run`.
+- `(:link-search "dir")` adds a native library search directory for source
+  `build`/`run`.
+- `(:link-arg "arg")` adds a raw linker argument for source `build`/`run`.
+
+Extern link metadata strings must be non-empty. Link metadata may be repeated.
+Source `build`/`run` collects extern-owned link inputs from the source and its
+imports, then merges explicit CLI `--link-lib`, `--link-search`, and
+`--link-arg` inputs after metadata inputs. Exact duplicate values within each
+input class are removed while preserving stable first-seen order. CLI link flags
+remain supported.
 
 External calls and `.extern` declarations use the metadata symbol without the
 `_tl_` TypeLisp function prefix. Symbol text is passed through the deterministic
@@ -954,6 +965,10 @@ Example:
 
 ```lisp test=ignore name=extern-metadata-declaration reason="requires the selfhost parser metadata form"
 (extern local-add (:abi c) (:symbol "foreign_add_exact") : (-> i64 i64 i64))
+```
+
+```lisp test=ignore name=extern-link-metadata-declaration reason="requires native library fixture"
+(extern native-add (:link-search "native/lib") (:link-lib "native_math") : (-> i64 i64 i64))
 ```
 
 ```lisp test=ignore name=extern-raw-pointer-signature reason="requires the selfhost raw-pointer checker path"
@@ -3595,6 +3610,9 @@ macro-operand ::= "[" ident ":" type "]"
 extern-decl   ::= "(" "extern" ident extern-meta* ":" type ")"
 extern-meta   ::= "(" ":abi" "c" ")"
                 | "(" ":symbol" string ")"
+                | "(" ":link-lib" string ")"
+                | "(" ":link-search" string ")"
+                | "(" ":link-arg" string ")"
 module-decl   ::= "(" "module" module-ident ")"
 import-decl   ::= "(" "import" string [":as" ident] ")"
 export-decl   ::= "(" "export" export-item+ ")"

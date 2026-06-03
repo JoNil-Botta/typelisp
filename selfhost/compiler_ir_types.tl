@@ -172,7 +172,7 @@
   (IrGlobalCons CompilerIrGlobal CompilerIrGlobalList))
 
 (defenum CompilerIrExtern
-  (IrExtern String AstType AstExternAbi String))
+  (IrExtern String AstType AstExternAbi String AstExternLinkInputList))
 
 (defenum CompilerIrExternList
   (IrExternNil)
@@ -182,7 +182,7 @@
   (IrProgram CompilerIrGlobalList CompilerIrFunctionList CompilerIrExternList))
 
 (define (compiler-ir-extern-default [name : String] [ty : AstType]) : CompilerIrExtern
-  (IrExtern name ty (AstExternAbiC) name))
+  (IrExtern name ty (AstExternAbiC) name AstExternLinkInputNil))
 
 (define (compiler-ir-cat3 [a : String] [b : String] [c : String]) : String
   (string-append a (string-append b c)))

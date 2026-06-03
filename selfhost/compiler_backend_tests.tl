@@ -610,9 +610,13 @@
         (compiler-backend-string-contains?
           asm
           (backend-cat3 init-symbol ":\n" "")))
-      (compiler-backend-string-contains?
-        asm
-        (backend-cat3 "    movq " symbol "(%rip), %rax\n")))))
+      (or
+        (compiler-backend-string-contains?
+          asm
+          (backend-cat3 "    movq " symbol "(%rip), %rax\n"))
+        (compiler-backend-string-contains?
+          asm
+          (backend-cat3 "    movq " symbol "(%rip), %r10\n"))))))
 
 (define (compiler-backend-aggregate-global-init-shape-ok?) : bool
   (match (compiler-backend-emit-source
@@ -2902,10 +2906,10 @@
           (compiler-backend-string-contains? asm "    movsd %xmm1, -16(%rbp)\n")
           (compiler-backend-string-contains? asm "    movsd %xmm2, -24(%rbp)\n")
           (compiler-backend-string-contains? asm "    movsd %xmm3, -32(%rbp)\n")
-          (compiler-backend-string-contains? asm "    subq $112, %rsp\n")
+          (compiler-backend-string-contains? asm "    subq $96, %rsp\n")
           (compiler-backend-string-contains?
             asm
-            "    movsd -48(%rbp), %xmm15\n")
+            "    movsd -40(%rbp), %xmm15\n")
           (compiler-backend-string-contains? asm "    movsd %xmm15, 32(%rsp)\n")
           (compiler-backend-string-contains? asm "    movsd 48(%rbp), %xmm0\n"))
         (and

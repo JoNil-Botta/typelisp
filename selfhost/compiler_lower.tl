@@ -14614,19 +14614,19 @@
           (if (= (compiler-ir-summary-blocks summary) 8)
             unit
             (set! ok false))
-          (if (= (compiler-ir-summary-instructions summary) 29)
+          (if (= (compiler-ir-summary-instructions summary) 22)
             unit
             (set! ok false))
-          (if (= (compiler-ir-summary-vars summary) 21)
+          (if (= (compiler-ir-summary-vars summary) 14)
             unit
             (set! ok false))
           (if (= (compiler-ir-summary-empty-blocks summary) 0)
             unit
             (set! ok false))
-          (if (= (compiler-ir-summary-max-instructions-function summary) 25)
+          (if (= (compiler-ir-summary-max-instructions-function summary) 19)
             unit
             (set! ok false))
-          (if (= (compiler-ir-summary-max-instructions-block summary) 8)
+          (if (= (compiler-ir-summary-max-instructions-block summary) 6)
             unit
             (set! ok false))
           (if (= (compiler-ir-summary-call-arg-entries summary) 1)

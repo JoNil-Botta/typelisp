@@ -12,8 +12,8 @@ expression subset `compile_smoke.tl` can lower **today** — integer arithmetic,
 as the backend gaps tracked in #520 close.
 
 For the broader selfhost compiler testing convention, including module-local
-self-tests, smoke drivers, Rust compile tests, Linux integration checks, and CI
-expectations, see [`selfhost/TESTING.md`](../TESTING.md).
+self-tests, smoke drivers, compile-manifest checks, Linux integration checks,
+and CI expectations, see [`selfhost/TESTING.md`](../TESTING.md).
 
 ## Layout
 
@@ -39,13 +39,13 @@ only; it no-ops cleanly on other platforms.
 scripts/fetch-stage0.sh
 TYPELISP_BIN=./target/stage0/typelisp ./scripts/verify-selfhost.sh
 
-# Or build the Rust stage0 fallback locally and drive the whole corpus:
+# Or let the script fetch the published self-hosted stage0 fallback:
 ./scripts/verify-selfhost.sh
 
 # Or reuse an already-built compiler:
 TYPELISP_BIN=./target/stage0/typelisp ./scripts/verify-selfhost.sh
 ```
 
-The same step runs in the `integration` CI job. These cases are also exercised
-inline by the Rust harness in `tests/integration.rs`; the corpus makes them
-reviewable as standalone programs and extendable without touching Rust.
+The same step runs in the `integration` CI job. The corpus keeps these cases
+reviewable as standalone programs and extendable without changing compiler
+source.

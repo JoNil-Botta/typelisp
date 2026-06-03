@@ -40,8 +40,8 @@
 
 (import "lsp_frame_core.tl")
 
-;; Mirrors the Rust stage0 `print_usage` (src/main.rs) so the unified selfhost
-;; CLI presents the same help surface as the published stage0 driver.
+;; Mirrors the former Rust stage0 `print_usage` provenance so the unified
+;; selfhost CLI presents the same help surface as the published stage0 driver.
 (define (cli-help-text) : String
   "typelisp — A typed Lisp/Scheme dialect with x86_64 backend
 

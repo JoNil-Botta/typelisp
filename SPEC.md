@@ -963,11 +963,11 @@ Example:
 
 ### 4.4 `(import "path.tl")` — module import
 
-Imports another TypeLisp file. The current Rust stage0 loader still behaves as
-a legacy whole-program concatenation model: all top-level definitions from the
-imported file become available in one flat namespace. The selfhost module model
-specified below replaces that with canonical module identities, explicit
-exports, and qualified lookup.
+Imports another TypeLisp file. The legacy stage0 loader behaved as a
+whole-program concatenation model: all top-level definitions from the imported
+file became available in one flat namespace. The selfhost module model specified
+below replaces that with canonical module identities, explicit exports, and
+qualified lookup.
 
 - Relative paths are resolved from the importing file's directory.
 - Absolute filesystem paths are accepted by the underlying path resolver.
@@ -1487,9 +1487,9 @@ order, using field-style `(:cleanup ...)` and `(:owned)` payload metadata.
 
 #### 4.6.2 Move-only aggregate handle semantics (specified, pending implementation)
 
-The v1 source semantics make aggregate handles move-only. The current Rust
-compiler may still accept copies until the selfhost move checker lands, but
-new source and selfhost implementation work must follow this contract.
+The v1 source semantics make aggregate handles move-only. The current compiler
+may still accept copies until the selfhost move checker lands, but new source
+and selfhost implementation work must follow this contract.
 
 **Copyable v1 types.** A use of a copyable value duplicates the value and leaves
 the source initialized. Copyable types are:
@@ -2847,9 +2847,9 @@ pattern as the Windows `try-create-temp-dir` behavior. No operation panics for a
 unsupported platform; callers always receive an `IoError`.
 
 **Scope.** The #1056 open/close subset, #1057 streaming reads, and #1058
-streaming writes/flush are implemented for the stdlib API and Rust stage0
-backend, with Windows returning structured `IoUnsupported` results until native
-handle support lands.
+streaming writes/flush are implemented for the stdlib API and selfhost backend,
+with Windows returning structured `IoUnsupported` results until native handle
+support lands.
 
 ---
 
@@ -2861,8 +2861,8 @@ rules (`(& place)` / `(& arena place)`), including the borrowed `str` source
 contract in section 3.11, but the source-level borrow checker is not
 implemented yet. There is no implicit destructor, `drop`, `free`, or
 garbage-collector model. Section 4.6.2 specifies move-only aggregate handle
-ownership for v1 source semantics, but the current Rust compiler may still
-accept aggregate copies until the selfhost move checker lands. The
+ownership for v1 source semantics, but the current compiler may still accept
+aggregate copies until the selfhost move checker lands. The
 implementation uses pointer-sized handles for several aggregate values, but
 those handles are not checked references in the source language. Full
 ownership/borrowing work is a separate design track. The reserved
@@ -3085,7 +3085,7 @@ not the future safe reference/borrow model (#182), not a replacement for
   frame-local. This is storage placement for safety; ownership transfer is still
   governed by the source-level move rules.
 
-```lisp test=ignore name=dynamic-array-aliasing reason="current Rust-stage aliasing behavior; future move checker rejects copied array handles"
+```lisp test=ignore name=dynamic-array-aliasing reason="current compiler aliasing behavior; future move checker rejects copied array handles"
 (define (main) : i64
   (let
     [a : (Array i64) (make-array i64 1)]
@@ -3285,7 +3285,7 @@ generic traits or implicit conversions.
   family is incompatible, or when manual matches over these enums are
   non-exhaustive.
 
-```lisp test=ignore name=result-try-success reason="selfhost-only try propagation; Rust stage0 does not parse try"
+```lisp test=ignore name=result-try-success reason="selfhost-only try propagation; spec harness does not yet run this case"
 (defenum ResultI64
   (OkI64 i64)
   (ErrI64 String))
@@ -3300,7 +3300,7 @@ generic traits or implicit conversions.
     (OkI64 (+ value 1))))
 ```
 
-```lisp test=ignore name=result-try-incompatible-error reason="selfhost-only negative propagation example; should be an expect-error once Rust stage0 supports try"
+```lisp test=ignore name=result-try-incompatible-error reason="selfhost-only negative propagation example; should be an expect-error once the spec harness supports try diagnostics"
 (defenum ResultI64
   (OkI64 i64)
   (ErrI64 String))

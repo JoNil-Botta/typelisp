@@ -27,5 +27,5 @@ TypeLisp-owned fix or regression fixture live? Prefer `selfhost/...` or
 
 **Environment**
 - OS:
-- Rust version (`rustc --version`):
+- TypeLisp version (`typelisp --version`, if available):
 - TypeLisp commit/branch:

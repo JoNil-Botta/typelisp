@@ -5269,12 +5269,31 @@
                 (lower-function-value-or-var ctx state env name expr-ty)])]
           [(NoneI64) (lower-function-value-or-var ctx state env name expr-ty)]))]))
 
-(define (lower-expr
+(define (lower-call-result-type-fast
+  [ctx : TcContext]
+  [type-env : TcTypeEnv]
+  [func : AstExpr]) : ResultTcType
+  (match (ast-expr-unspan func)
+    [(AstExprVar name)
+      (match (tc-lookup type-env name)
+        [(OkTcType fn-ty)
+          (match (tc-type-strip-region (tc-resolve-type ctx fn-ty))
+            [(AstTyFunc _ ret)
+              (OkTcType
+                (tc-type-without-regions (tc-resolve-type ctx ret)))]
+            [(AstTyEnum _)
+              (OkTcType (tc-type-without-regions fn-ty))]
+            [_ (ErrTcType "lower: call result type is not fast-pathable")])]
+        [(ErrTcType message) (ErrTcType message)])]
+    [_ (ErrTcType "lower: call result type is not fast-pathable")]))
+
+(define (lower-expr-typechecked
   [ctx : TcContext]
   [state : LowerState]
   [env : SymI64Env]
   [type-env : TcTypeEnv]
-  [expr : AstExpr]) : ResultLowerExpr
+  [expr : AstExpr]
+  [origin : AstExpr]) : ResultLowerExpr
   (match (tc-expr ctx type-env expr)
     [(OkTcType expr-ty)
       (lower-expr-with-type
@@ -5283,9 +5302,85 @@
         env
         type-env
         expr
-        expr
+        origin
         (tc-type-without-regions expr-ty))]
     [(ErrTcType message) (ErrLowerExpr (lower-diagnostic-at-expr expr message))]))
+
+;; Lowering runs after full-program typecheck. For result types that are
+;; syntactically available, avoid re-running recursive expression typecheck;
+;; the fallback below preserves the old path for anything ambiguous.
+(define (lower-expr-origin
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [expr : AstExpr]
+  [origin : AstExpr]) : ResultLowerExpr
+  (match expr
+    [(AstExprSpanned inner _)
+      (lower-expr-origin ctx state env type-env inner origin)]
+    [(AstExprLiteral lit)
+      (lower-expr-with-type
+        ctx
+        state
+        env
+        type-env
+        expr
+        origin
+        (tc-literal-type lit))]
+    [(AstExprVar name)
+      (match (tc-lookup type-env name)
+        [(OkTcType expr-ty)
+          (lower-expr-with-type
+            ctx
+            state
+            env
+            type-env
+            expr
+            origin
+            (tc-type-without-regions expr-ty))]
+        [(ErrTcType message)
+          (ErrLowerExpr (lower-diagnostic-at-expr origin message))])]
+    [(AstExprAnn _ ty)
+      (lower-expr-with-type
+        ctx
+        state
+        env
+        type-env
+        expr
+        origin
+        (tc-type-without-regions (tc-resolve-type ctx ty)))]
+    [(AstExprCast _ ty)
+      (lower-expr-with-type
+        ctx
+        state
+        env
+        type-env
+        expr
+        origin
+        (tc-type-without-regions (tc-resolve-type ctx ty)))]
+    [(AstExprCall func _)
+      (match (lower-call-result-type-fast ctx type-env func)
+        [(OkTcType expr-ty)
+          (lower-expr-with-type
+            ctx
+            state
+            env
+            type-env
+            expr
+            origin
+            expr-ty)]
+        [(ErrTcType _)
+          (lower-expr-typechecked ctx state env type-env expr origin)])]
+    [_ (lower-expr-typechecked ctx state env type-env expr origin)]))
+
+(define (lower-expr
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [expr : AstExpr]) : ResultLowerExpr
+  (lower-expr-origin ctx state env type-env expr expr))
 
 (define (lower-expr-with-type
   [ctx : TcContext]

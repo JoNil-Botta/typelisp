@@ -1565,10 +1565,10 @@
   [state : LowerState]
   [instr : CompilerIrInstr]
   [expr : AstExpr]) : LowerState
-  (match (lower-ast-expr-span expr)
-    [(CompilerSomeSourceSpan span)
-      (lower-state-emit (lower-state-record-instr-span state instr span) instr)]
-    [(CompilerNoSourceSpan) (lower-state-emit state instr)]))
+  ;; Per-instruction spans are allocated inside per-function scratch arenas and
+  ;; are not escaped by `lower-function-escaping`; function-level spans are
+  ;; recorded separately after escape.
+  (lower-state-emit state instr))
 
 (define (lower-state-finish-block [state : LowerState] [next-label : String]) : LowerState
   (match state

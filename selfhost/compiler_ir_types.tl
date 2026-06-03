@@ -469,9 +469,8 @@
         head
         (compiler-source-spans-entry-list-append rest entry))]))
 
-;; Record `name -> span`. Lowering appends in order; the first binding for a
-;;
-;; name wins on lookup, so re-recording a name is a no-op for diagnostics.
+;; Record `name -> span`. Function names are unique in lowered programs, so a
+;; prepend keeps diagnostics equivalent while avoiding O(n^2) provenance builds.
 (define (compiler-source-spans-insert
   [spans : CompilerSourceSpans]
   [name : String]
@@ -479,9 +478,9 @@
   (match spans
     [(CompilerSourceSpans entries instr-entries instr-count)
       (CompilerSourceSpans
-        (compiler-source-spans-entry-list-append
-          entries
-          (CompilerSourceSpansEntry name span))
+        (CompilerSourceSpansEntryCons
+          (CompilerSourceSpansEntry name span)
+          entries)
         instr-entries
         instr-count)]))
 
@@ -1823,11 +1822,16 @@
     "  tailcall fact_loop(%3, 1) : i64"))
 
 (define (compiler-ir-effect-self-test) : i64
-  (begin
-    (unless (compiler-ir-instruction-effects-ok?) (return 1))
-    (unless (compiler-ir-vector-mask-effects-ok?) (return 1))
-    (unless (compiler-ir-runtime-effects-ok?) (return 1))
-    (unless (compiler-ir-effect-predicates-ok?) (return 1))
-    (unless (compiler-ir-display-self-test-ok?) (return 1))
-    (unless (compiler-ir-tail-call-render-ok?) (return 1))
-    42))
+  (if (compiler-ir-instruction-effects-ok?)
+    (if (compiler-ir-vector-mask-effects-ok?)
+      (if (compiler-ir-runtime-effects-ok?)
+        (if (compiler-ir-effect-predicates-ok?)
+          (if (compiler-ir-display-self-test-ok?)
+            (if (compiler-ir-tail-call-render-ok?)
+              42
+              1)
+            1)
+          1)
+        1)
+      1)
+    1))

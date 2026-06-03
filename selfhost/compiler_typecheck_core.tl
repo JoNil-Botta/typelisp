@@ -325,7 +325,10 @@
       out)))
 
 (define (tc-default-env) : TcTypeEnv
-  (tc-arena-builtins-env (tc-default-env-base)))
+  (tc-bind
+    (tc-arena-builtins-env (tc-default-env-base))
+    (tc-default-boundary-name)
+    (AstTyUnit)))
 
 (define (tc-default-env-base) : TcTypeEnv
   (let
@@ -2093,7 +2096,9 @@
 (define (tc-require-arena-call-safe [env : TcTypeEnv] [func : AstExpr]) : ResultTcUnit
   (match (tc-expr-var-name func)
     [(TcSomeString name)
-      (if (tc-arena-unsafe-primitive? name)
+      (if (and
+        (tc-arena-unsafe-primitive? name)
+        (tc-default-builtin-unshadowed? env name))
         (tc-require-unsafe env name)
         OkTcUnit)]
     [(TcNoString) OkTcUnit]))
@@ -3165,7 +3170,7 @@
           (tc-default-builtin-unshadowed-scan? rest name)))]))
 
 (define (tc-default-builtin-unshadowed? [env : TcTypeEnv] [name : String]) : bool
-  (if (tc-region-arg-builtin-name? name)
+  (if (or (tc-region-arg-builtin-name? name) (tc-arena-unsafe-primitive? name))
     (tc-default-builtin-unshadowed-scan? env name)
     false))
 
@@ -6684,7 +6689,9 @@
     [(AstExprSpanned inner _) (tc-expr ctx env inner)]
     [(AstExprLiteral lit) (OkTcType (tc-literal-type lit))]
     [(AstExprVar name)
-      (if (tc-arena-unsafe-primitive? name)
+      (if (and
+        (tc-arena-unsafe-primitive? name)
+        (tc-default-builtin-unshadowed? env name))
         (match (tc-require-unsafe env name)
           [(OkTcUnit) (tc-lookup env name)]
           [(ErrTcUnit message) (ErrTcType message)])

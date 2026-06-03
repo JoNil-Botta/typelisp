@@ -3014,6 +3014,22 @@
     [rewind : (-> i64 unit) arena-rewind]
     (rewind (arena-mark))))")
 
+(define (compiler-typecheck-arena-top-level-shadow-source) : String
+  "(define (arena-rewind [mark : i64]) : unit unit)
+(define (arena-set! [arena : i64]) : unit unit)
+(define (arena-destroy [arena : i64]) : unit unit)
+(define (main) : unit
+  (begin
+    (arena-rewind 1)
+    (arena-set! 2)
+    (arena-destroy 3)))")
+
+(define (compiler-typecheck-arena-local-shadow-source) : String
+  "(define (main) : unit
+  (let
+    [arena-rewind : (-> i64 unit) (lambda ([mark : i64]) : unit unit)]
+    (arena-rewind 1)))")
+
 (define (compiler-typecheck-arena-unsafe-mutate-source) : String
   "(define (main) : unit
   (let
@@ -3034,31 +3050,54 @@
         (rewind mark)))))")
 
 (define (compiler-typecheck-arena-unsafe-tests-ok?) : bool
-  (and
-    (compiler-typecheck-ok? (compiler-typecheck-arena-safe-observe-source))
-    (and
-      (compiler-typecheck-ok? (compiler-typecheck-arena-with-arena-safe-source))
-      (and
-        (compiler-typecheck-error-ok?
-          (compiler-typecheck-arena-safe-set-source)
-          "typecheck: arena-set! requires unsafe context")
-        (and
-          (compiler-typecheck-error-ok?
-            (compiler-typecheck-arena-safe-destroy-source)
-            "typecheck: arena-destroy requires unsafe context")
-          (and
-            (compiler-typecheck-error-ok?
-              (compiler-typecheck-arena-safe-rewind-source)
-              "typecheck: arena-rewind requires unsafe context")
-            (and
-              (compiler-typecheck-error-ok?
-                (compiler-typecheck-arena-safe-alias-source)
-                "typecheck: arena-rewind requires unsafe context")
-              (and
-                (compiler-typecheck-ok?
-                  (compiler-typecheck-arena-unsafe-mutate-source))
-                (compiler-typecheck-ok?
-                  (compiler-typecheck-arena-unsafe-alias-source))))))))))
+  (let
+    [ok : bool true]
+    (begin
+      (if (compiler-typecheck-ok?
+        (compiler-typecheck-arena-safe-observe-source))
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-ok?
+        (compiler-typecheck-arena-with-arena-safe-source))
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        (compiler-typecheck-arena-safe-set-source)
+        "typecheck: arena-set! requires unsafe context")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        (compiler-typecheck-arena-safe-destroy-source)
+        "typecheck: arena-destroy requires unsafe context")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        (compiler-typecheck-arena-safe-rewind-source)
+        "typecheck: arena-rewind requires unsafe context")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        (compiler-typecheck-arena-safe-alias-source)
+        "typecheck: arena-rewind requires unsafe context")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-ok?
+        (compiler-typecheck-arena-top-level-shadow-source))
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-ok?
+        (compiler-typecheck-arena-local-shadow-source))
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-ok?
+        (compiler-typecheck-arena-unsafe-mutate-source))
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-ok?
+        (compiler-typecheck-arena-unsafe-alias-source))
+        unit
+        (set! ok false))
+      ok)))
 
 ;; CTFE layout queries (#989): folded calls produce `i64`, runtime calls are
 ;; rejected, and `offset-of` is restricted to repr-c structs and known fields.

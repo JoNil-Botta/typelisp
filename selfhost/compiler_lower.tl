@@ -5442,6 +5442,51 @@
             [(ErrTcType message) (ErrTcType message)])])]
     [(ErrTcType message) (ErrTcType message)]))
 
+(define (lower-let-binding-result-type-fast
+  [ctx : TcContext]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [maybe-ty : AstMaybeType]
+  [init : AstExpr]) : ResultTcType
+  (match maybe-ty
+    [(AstSomeType ty)
+      (OkTcType (tc-type-without-regions (tc-resolve-type ctx ty)))]
+    [(AstNoType) (lower-expr-result-type-fast ctx env type-env init)]))
+
+(define (lower-let-bindings-type-env-fast
+  [ctx : TcContext]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [bindings : AstLetBindingList]) : ResultTcEnv
+  (match bindings
+    [(AstLetBindingNil) (OkTcEnv type-env)]
+    [(AstLetBindingCons binding rest)
+      (match binding
+        [(AstLetBinding name maybe-ty init)
+          (match (lower-let-binding-result-type-fast
+            ctx
+            env
+            type-env
+            maybe-ty
+            init)
+            [(OkTcType binding-ty)
+              (lower-let-bindings-type-env-fast
+                ctx
+                (sym-i64-bind env name 0)
+                (tc-bind type-env name binding-ty)
+                rest)]
+            [(ErrTcType message) (ErrTcEnv message)])])]))
+
+(define (lower-let-bindings-local-env
+  [env : SymI64Env]
+  [bindings : AstLetBindingList]) : SymI64Env
+  (match bindings
+    [(AstLetBindingNil) env]
+    [(AstLetBindingCons binding rest)
+      (match binding
+        [(AstLetBinding name _ _)
+          (lower-let-bindings-local-env (sym-i64-bind env name 0) rest)])]))
+
 (define (lower-expr-result-type-fast
   [ctx : TcContext]
   [env : SymI64Env]
@@ -5471,6 +5516,15 @@
       (lower-expr-list-result-type-fast ctx env (tc-enter-unsafe type-env) exprs)]
     [(AstExprMatch scrutinee arms)
       (lower-match-result-type-fast ctx env type-env scrutinee arms)]
+    [(AstExprLet bindings body)
+      (match (lower-let-bindings-type-env-fast ctx env type-env bindings)
+        [(OkTcEnv body-type-env)
+          (lower-expr-result-type-fast
+            ctx
+            (lower-let-bindings-local-env env bindings)
+            body-type-env
+            body)]
+        [(ErrTcEnv message) (ErrTcType message)])]
     [_ (ErrTcType "lower: expression result type is not fast-pathable")]))
 
 (define (lower-expr-typechecked

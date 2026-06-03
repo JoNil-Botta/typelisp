@@ -7,9 +7,15 @@
 
 (import "compiler_optimize.tl")
 
+(import "stdlib/text_buf.tl")
+
 (defenum ResultCompilerDriver
   (OkCompilerDriver String)
   (ErrCompilerDriver CompilerDiagnostic))
+
+(defenum ResultCompilerDriverBuffer
+  (OkCompilerDriverBuffer TextBuf)
+  (ErrCompilerDriverBuffer CompilerDiagnostic))
 
 (cfg
   compile-profile
@@ -263,6 +269,51 @@
                 (ErrCompilerDriver
                   (compiler-diagnostic-with-path diag input-path)))]))])))
 
+(define (compiler-driver-emit-lowered-buffer-with-level-mode-and-entry
+  [input-path : String]
+  [program : CompilerIrProgram]
+  [spans : CompilerSourceSpans]
+  [target : CompilerBackendTarget]
+  [has-target : bool]
+  [mode : CompilerBackendMode]
+  [opt-level : i64]
+  [emit-entry : bool]) : ResultCompilerDriverBuffer
+  (begin
+    (cfg compile-profile (compiler-driver-profile-start-phase))
+    (match (optimize-program-with-spans-and-level program spans opt-level)
+      [(CompilerOptimizedProgram optimized optimized-spans)
+        (begin
+          (cfg
+            compile-profile
+            (compiler-driver-profile-finish-phase "optimize"))
+          (cfg compile-profile (compiler-driver-profile-start-phase))
+          (match (if has-target
+            (compiler-backend-emit-program-target-with-mode-buffer
+              optimized
+              target
+              mode
+              optimized-spans
+              emit-entry)
+            (compiler-backend-emit-program-target-with-mode-buffer
+              optimized
+              (BackendTargetLinux)
+              mode
+              optimized-spans
+              emit-entry))
+            [(OkCompilerBackendBuffer buf)
+              (begin
+                (cfg
+                  compile-profile
+                  (compiler-driver-profile-finish-phase "backend"))
+                (OkCompilerDriverBuffer buf))]
+            [(ErrCompilerBackendBuffer diag)
+              (begin
+                (cfg
+                  compile-profile
+                  (compiler-driver-profile-finish-phase "backend"))
+                (ErrCompilerDriverBuffer
+                  (compiler-diagnostic-with-path diag input-path)))]))])))
+
 (define (compiler-driver-emit-file-with-target
   [input-path : String]
   [target : CompilerBackendTarget]
@@ -405,6 +456,55 @@
         (begin
           (cfg compile-profile (compiler-driver-profile-finish-phase "load"))
           (ErrCompilerDriver diag))])))
+
+(define (compiler-driver-emit-file-buffer-with-target-roots-level-mode-and-cfg
+  [input-path : String]
+  [target : CompilerBackendTarget]
+  [has-target : bool]
+  [stdlib-roots : CompilerLoadRootList]
+  [opt-level : i64]
+  [mode : CompilerBackendMode]
+  [cfgs : SymI64Env]) : ResultCompilerDriverBuffer
+  (begin
+    (cfg compile-profile (compiler-driver-profile-start-total))
+    (match (compiler-load-file-with-paths-and-roots-cfg
+      input-path
+      (sym-i64-empty)
+      stdlib-roots
+      cfgs)
+      [(OkCompilerLoadWithPaths decls paths _ _)
+        (begin
+          (cfg compile-profile (compiler-driver-profile-finish-phase "load"))
+          (cfg compile-profile (compiler-driver-profile-start-phase))
+          (match (lower-compiler-program-with-decl-paths-mode
+            input-path
+            (AstProgram decls)
+            paths
+            (compiler-driver-lower-mode-for-backend mode))
+            [(OkCompilerLower program spans)
+              (begin
+                (cfg
+                  compile-profile
+                  (compiler-driver-profile-finish-phase "lower"))
+                (compiler-driver-emit-lowered-buffer-with-level-mode-and-entry
+                  input-path
+                  program
+                  spans
+                  target
+                  has-target
+                  mode
+                  opt-level
+                  true))]
+            [(ErrCompilerLower diag)
+              (begin
+                (cfg
+                  compile-profile
+                  (compiler-driver-profile-finish-phase "lower"))
+                (ErrCompilerDriverBuffer diag))]))]
+      [(ErrCompilerLoadWithPaths diag)
+        (begin
+          (cfg compile-profile (compiler-driver-profile-finish-phase "load"))
+          (ErrCompilerDriverBuffer diag))])))
 
 (define (compiler-driver-emit-package-file-with-target-roots-and-level
   [input-path : String]
@@ -670,6 +770,40 @@
     stdlib-roots
     opt-level))
 
+(define (compiler-driver-append-output-chunk
+  [output-path : String]
+  [chunk : String]) : i64
+  (let
+    [status : i64 (append-file-status output-path chunk)]
+    (if (= status 0)
+      0
+      (begin
+        (print-error
+          (string-append
+            "compiler: append output failed with status "
+            (string-append (int->string status) "\n")))
+        1))))
+
+(define (compiler-driver-write-text-buf-chunks
+  [output-path : String]
+  [chunks : TextBufChunkList]) : i64
+  (match chunks
+    [(TextBufChunkNil) 0]
+    [(TextBufChunkCons chunk rest)
+      (let
+        [tail-status : i64
+          (compiler-driver-write-text-buf-chunks output-path rest)]
+        (if (= tail-status 0)
+          (compiler-driver-append-output-chunk output-path chunk)
+          tail-status))]))
+
+(define (compiler-driver-write-text-buf [output-path : String] [buf : TextBuf]) : i64
+  (match buf
+    [(TextBuf chunks _)
+      (begin
+        (write-file output-path "")
+        (compiler-driver-write-text-buf-chunks output-path chunks))]))
+
 (define (compiler-driver-write-result
   [result : ResultCompilerDriver]
   [output-path : String]) : i64
@@ -689,32 +823,92 @@
         (print-error (compiler-diagnostic-render diag))
         1)]))
 
+(define (compiler-driver-write-buffer-result
+  [result : ResultCompilerDriverBuffer]
+  [output-path : String]) : i64
+  (match result
+    [(OkCompilerDriverBuffer buf)
+      (let
+        [status : i64
+          (begin
+            (cfg compile-profile (compiler-driver-profile-start-phase))
+            (compiler-driver-write-text-buf output-path buf))]
+        (begin
+          (cfg compile-profile (compiler-driver-profile-finish-phase "write"))
+          (cfg compile-profile (compiler-driver-profile-finish-total))
+          (if (= status 0)
+            (begin
+              (print-string
+                (string-append "Generated: " (string-append output-path "\n")))
+              0)
+            status)))]
+    [(ErrCompilerDriverBuffer diag)
+      (begin
+        (cfg compile-profile (compiler-driver-profile-finish-total))
+        (print-error (compiler-diagnostic-render diag))
+        1)]))
+
+(define (compiler-driver-compile-file-with-target-roots-level-mode-cfg
+  [input-path : String]
+  [output-path : String]
+  [target : CompilerBackendTarget]
+  [has-target : bool]
+  [stdlib-roots : CompilerLoadRootList]
+  [opt-level : i64]
+  [mode : CompilerBackendMode]
+  [cfgs : SymI64Env]) : i64
+  (compiler-driver-write-buffer-result
+    (compiler-driver-emit-file-buffer-with-target-roots-level-mode-and-cfg
+      input-path
+      target
+      has-target
+      stdlib-roots
+      opt-level
+      mode
+      cfgs)
+    output-path))
+
 (define (compiler-driver-compile-file
   [input-path : String]
   [output-path : String]) : i64
-  (compiler-driver-write-result
-    (compiler-driver-emit-file input-path)
-    output-path))
+  (compiler-driver-compile-file-with-target-roots-level-mode-cfg
+    input-path
+    output-path
+    (BackendTargetLinux)
+    false
+    CompilerLoadRootNil
+    (compiler-optimize-default-level)
+    (BackendModeScalar)
+    (compiler-cfg-empty)))
 
 (define (compiler-driver-compile-file-with-roots
   [input-path : String]
   [output-path : String]
   [stdlib-roots : CompilerLoadRootList]) : i64
-  (compiler-driver-write-result
-    (compiler-driver-emit-file-with-roots input-path stdlib-roots)
-    output-path))
+  (compiler-driver-compile-file-with-target-roots-level-mode-cfg
+    input-path
+    output-path
+    (BackendTargetLinux)
+    false
+    stdlib-roots
+    (compiler-optimize-default-level)
+    (BackendModeScalar)
+    (compiler-cfg-empty)))
 
 (define (compiler-driver-compile-file-with-roots-and-level
   [input-path : String]
   [output-path : String]
   [stdlib-roots : CompilerLoadRootList]
   [opt-level : i64]) : i64
-  (compiler-driver-write-result
-    (compiler-driver-emit-file-with-roots-and-level
-      input-path
-      stdlib-roots
-      opt-level)
-    output-path))
+  (compiler-driver-compile-file-with-target-roots-level-mode-cfg
+    input-path
+    output-path
+    (BackendTargetLinux)
+    false
+    stdlib-roots
+    opt-level
+    (BackendModeScalar)
+    (compiler-cfg-empty)))
 
 (define (compiler-driver-compile-file-with-roots-level-and-mode
   [input-path : String]
@@ -722,15 +916,15 @@
   [stdlib-roots : CompilerLoadRootList]
   [opt-level : i64]
   [mode : CompilerBackendMode]) : i64
-  (compiler-driver-write-result
-    (compiler-driver-emit-file-with-target-roots-level-and-mode
-      input-path
-      (BackendTargetLinux)
-      false
-      stdlib-roots
-      opt-level
-      mode)
-    output-path))
+  (compiler-driver-compile-file-with-target-roots-level-mode-cfg
+    input-path
+    output-path
+    (BackendTargetLinux)
+    false
+    stdlib-roots
+    opt-level
+    mode
+    (compiler-cfg-empty)))
 
 (define (compiler-driver-compile-file-with-roots-level-mode-and-cfg
   [input-path : String]
@@ -739,36 +933,44 @@
   [opt-level : i64]
   [mode : CompilerBackendMode]
   [cfgs : SymI64Env]) : i64
-  (compiler-driver-write-result
-    (compiler-driver-emit-file-with-target-roots-level-mode-and-cfg
-      input-path
-      (BackendTargetLinux)
-      false
-      stdlib-roots
-      opt-level
-      mode
-      cfgs)
-    output-path))
+  (compiler-driver-compile-file-with-target-roots-level-mode-cfg
+    input-path
+    output-path
+    (BackendTargetLinux)
+    false
+    stdlib-roots
+    opt-level
+    mode
+    cfgs))
 
 (define (compiler-driver-compile-file-for-target
   [input-path : String]
   [output-path : String]
   [target : CompilerBackendTarget]) : i64
-  (compiler-driver-write-result
-    (compiler-driver-emit-file-for-target input-path target)
-    output-path))
+  (compiler-driver-compile-file-with-target-roots-level-mode-cfg
+    input-path
+    output-path
+    target
+    true
+    CompilerLoadRootNil
+    (compiler-optimize-default-level)
+    (BackendModeScalar)
+    (compiler-cfg-empty)))
 
 (define (compiler-driver-compile-file-for-target-with-roots
   [input-path : String]
   [output-path : String]
   [target : CompilerBackendTarget]
   [stdlib-roots : CompilerLoadRootList]) : i64
-  (compiler-driver-write-result
-    (compiler-driver-emit-file-for-target-with-roots
-      input-path
-      target
-      stdlib-roots)
-    output-path))
+  (compiler-driver-compile-file-with-target-roots-level-mode-cfg
+    input-path
+    output-path
+    target
+    true
+    stdlib-roots
+    (compiler-optimize-default-level)
+    (BackendModeScalar)
+    (compiler-cfg-empty)))
 
 (define (compiler-driver-compile-file-for-target-with-roots-and-level
   [input-path : String]
@@ -776,13 +978,15 @@
   [target : CompilerBackendTarget]
   [stdlib-roots : CompilerLoadRootList]
   [opt-level : i64]) : i64
-  (compiler-driver-write-result
-    (compiler-driver-emit-file-for-target-with-roots-and-level
-      input-path
-      target
-      stdlib-roots
-      opt-level)
-    output-path))
+  (compiler-driver-compile-file-with-target-roots-level-mode-cfg
+    input-path
+    output-path
+    target
+    true
+    stdlib-roots
+    opt-level
+    (BackendModeScalar)
+    (compiler-cfg-empty)))
 
 (define (compiler-driver-compile-file-for-target-with-roots-level-and-mode
   [input-path : String]
@@ -791,15 +995,15 @@
   [stdlib-roots : CompilerLoadRootList]
   [opt-level : i64]
   [mode : CompilerBackendMode]) : i64
-  (compiler-driver-write-result
-    (compiler-driver-emit-file-with-target-roots-level-and-mode
-      input-path
-      target
-      true
-      stdlib-roots
-      opt-level
-      mode)
-    output-path))
+  (compiler-driver-compile-file-with-target-roots-level-mode-cfg
+    input-path
+    output-path
+    target
+    true
+    stdlib-roots
+    opt-level
+    mode
+    (compiler-cfg-empty)))
 
 (define (compiler-driver-compile-file-for-target-with-roots-level-mode-and-cfg
   [input-path : String]
@@ -809,13 +1013,12 @@
   [opt-level : i64]
   [mode : CompilerBackendMode]
   [cfgs : SymI64Env]) : i64
-  (compiler-driver-write-result
-    (compiler-driver-emit-file-with-target-roots-level-mode-and-cfg
-      input-path
-      target
-      true
-      stdlib-roots
-      opt-level
-      mode
-      cfgs)
-    output-path))
+  (compiler-driver-compile-file-with-target-roots-level-mode-cfg
+    input-path
+    output-path
+    target
+    true
+    stdlib-roots
+    opt-level
+    mode
+    cfgs))

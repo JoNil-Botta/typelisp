@@ -63,6 +63,10 @@
 (defenum CompilerBackendRuntimeTailPlan
   (BackendRuntimeTailPlan bool bool))
 
+(defenum ResultCompilerBackendBuffer
+  (OkCompilerBackendBuffer TextBuf)
+  (ErrCompilerBackendBuffer CompilerDiagnostic))
+
 (defenum CompilerBackendRuntimePlan
   (BackendRuntimePlan
     bool
@@ -7650,6 +7654,66 @@
     (not (compiler-backend-function-list-defines? functions "main")))
     (IrFunctionCons (compiler-backend-implicit-main-function) functions)
     functions))
+
+(define (compiler-backend-emit-functions-buffer-into
+  [target : CompilerBackendTarget]
+  [mode : CompilerBackendMode]
+  [functions : CompilerIrFunctionList]
+  [all-functions : CompilerIrFunctionList]
+  [globals : CompilerIrGlobalList]
+  [externs : CompilerIrExternList]
+  [plan : CompilerBackendRuntimePlan]
+  [spans : CompilerSourceSpans]
+  [crt-entry : bool]
+  [buf : TextBuf]) : ResultCompilerBackendBuffer
+  (match functions
+    [(IrFunctionNil) (OkCompilerBackendBuffer buf)]
+    [(IrFunctionCons func rest)
+      (match (compiler-backend-emit-function-escaping
+        target
+        mode
+        func
+        all-functions
+        globals
+        externs
+        plan
+        spans
+        crt-entry)
+        [(OkCompilerBackend head)
+          (compiler-backend-emit-functions-buffer-into
+            target
+            mode
+            rest
+            all-functions
+            globals
+            externs
+            plan
+            spans
+            crt-entry
+            (text-buf-append buf head))]
+        [(ErrCompilerBackend message) (ErrCompilerBackendBuffer message)])]))
+
+(define (compiler-backend-emit-functions-buffer
+  [target : CompilerBackendTarget]
+  [mode : CompilerBackendMode]
+  [functions : CompilerIrFunctionList]
+  [globals : CompilerIrGlobalList]
+  [all-functions : CompilerIrFunctionList]
+  [externs : CompilerIrExternList]
+  [plan : CompilerBackendRuntimePlan]
+  [spans : CompilerSourceSpans]
+  [crt-entry : bool]) : ResultCompilerBackendBuffer
+  (compiler-backend-emit-functions-buffer-into
+    target
+    mode
+    functions
+    all-functions
+    globals
+    externs
+    plan
+    spans
+    crt-entry
+    (text-buf-empty)))
 
 (define (compiler-backend-emit-closure-descriptor-entry [name : String]) : String
   (backend-cat5
@@ -16900,13 +16964,13 @@ tl_windows_sdk_registry_install:
     spans
     emit-entry))
 
-(define (compiler-backend-emit-program-target-with-mode
+(define (compiler-backend-emit-program-target-with-mode-buffer
   [program : CompilerIrProgram]
   [target : CompilerBackendTarget]
   [mode : CompilerBackendMode]
   [spans : CompilerSourceSpans]
-  [emit-entry : bool]) : ResultCompilerBackend
-  (compiler-backend-emit-program-target-with-mode-and-crt
+  [emit-entry : bool]) : ResultCompilerBackendBuffer
+  (compiler-backend-emit-program-target-with-mode-buffer-and-crt
     program
     target
     mode
@@ -16914,13 +16978,13 @@ tl_windows_sdk_registry_install:
     emit-entry
     false))
 
-(define (compiler-backend-emit-program-target-with-mode-and-crt
+(define (compiler-backend-emit-program-target-with-mode-buffer-and-crt
   [program : CompilerIrProgram]
   [target : CompilerBackendTarget]
   [mode : CompilerBackendMode]
   [spans : CompilerSourceSpans]
   [emit-entry : bool]
-  [crt-entry : bool]) : ResultCompilerBackend
+  [crt-entry : bool]) : ResultCompilerBackendBuffer
   (match (compiler-backend-runtime-plan program)
     [(OkBackendRuntimePlan plan)
       (if (compiler-backend-target-runtime-ok? target plan)
@@ -16933,7 +16997,7 @@ tl_windows_sdk_registry_install:
                     (compiler-backend-functions-with-implicit-main
                       functions
                       emit-entry)]
-                  (match (compiler-backend-emit-functions
+                  (match (compiler-backend-emit-functions-buffer
                     target
                     mode
                     entry-functions
@@ -16943,7 +17007,7 @@ tl_windows_sdk_registry_install:
                     plan
                     spans
                     crt-entry)
-                    [(OkCompilerBackend functions-asm)
+                    [(OkCompilerBackendBuffer functions-buf)
                       (let
                         [closure-names : BackendStringList
                           (compiler-backend-collect-program-functions program)]
@@ -16960,7 +17024,7 @@ tl_windows_sdk_registry_install:
                                   program)]
                               [floats : BackendStringList
                                 (compiler-backend-collect-program-f64s program)]
-                              [buf : TextBuf
+                              [prefix-buf : TextBuf
                                 (text-buf-append
                                   (text-buf-append
                                     (text-buf-append
@@ -16970,61 +17034,98 @@ tl_windows_sdk_registry_install:
                                             (text-buf-append
                                               (text-buf-append
                                                 (text-buf-append
-                                                  (text-buf-append
-                                                    (text-buf-append
-                                                      (text-buf-append
-                                                        (text-buf-empty)
-                                                        ".data\n")
-                                                      globals-asm)
-                                                    (compiler-backend-emit-string-rodata
-                                                      strings))
-                                                  (compiler-backend-emit-f64-rodata
-                                                    floats))
-                                                (compiler-backend-emit-closure-descriptors
-                                                  closure-names
-                                                  entry-functions
-                                                  externs))
-                                              (if emit-entry
-                                                (compiler-backend-runtime-data-for-target
-                                                  target
-                                                  plan)
-                                                ""))
-                                            (compiler-backend-emit-externs
-                                              externs
-                                              plan))
-                                          (compiler-backend-runtime-externs-for-target
+                                                  (text-buf-empty)
+                                                  ".data\n")
+                                                globals-asm)
+                                              (compiler-backend-emit-string-rodata
+                                                strings))
+                                            (compiler-backend-emit-f64-rodata
+                                              floats))
+                                          (compiler-backend-emit-closure-descriptors
+                                            closure-names
+                                            entry-functions
+                                            externs))
+                                        (if emit-entry
+                                          (compiler-backend-runtime-data-for-target
                                             target
-                                            plan))
-                                        (compiler-backend-target-entry-text-with-crt
-                                          target
-                                          emit-entry
-                                          crt-entry))
-                                      functions-asm)
-                                    closure-adapters-asm)
-                                  (string-append
+                                            plan)
+                                          ""))
+                                      (compiler-backend-emit-externs
+                                        externs
+                                        plan))
+                                    (compiler-backend-runtime-externs-for-target
+                                      target
+                                      plan))
+                                  (compiler-backend-target-entry-text-with-crt
+                                    target
+                                    emit-entry
+                                    crt-entry))]
+                              [with-functions : TextBuf
+                                (text-buf-append-buffer
+                                  prefix-buf
+                                  functions-buf)]
+                              [buf : TextBuf
+                                (text-buf-append
+                                  (text-buf-append
+                                    (text-buf-append
+                                      with-functions
+                                      closure-adapters-asm)
                                     (if emit-entry
                                       (compiler-backend-runtime-functions-for-target
                                         target
                                         plan)
-                                      "")
-                                    (if emit-entry
-                                      (compiler-backend-entry-for-target-with-crt
-                                        target
-                                        plan
-                                        globals
-                                        crt-entry)
-                                      "")))]
-                              (OkCompilerBackend (text-buf-render buf)))]
+                                      ""))
+                                  (if emit-entry
+                                    (compiler-backend-entry-for-target-with-crt
+                                      target
+                                      plan
+                                      globals
+                                      crt-entry)
+                                    ""))]
+                              (OkCompilerBackendBuffer buf))]
                           [(ErrCompilerBackend message)
-                            (ErrCompilerBackend message)]))]
-                    [(ErrCompilerBackend message) (ErrCompilerBackend message)]))]
-              [(ErrCompilerBackend message) (ErrCompilerBackend message)])])
-        (ErrCompilerBackend
+                            (ErrCompilerBackendBuffer message)]))]
+                    [(ErrCompilerBackendBuffer message)
+                      (ErrCompilerBackendBuffer message)]))]
+              [(ErrCompilerBackend message) (ErrCompilerBackendBuffer message)])])
+        (ErrCompilerBackendBuffer
           (compiler-diagnostic-at-start
             ""
             "backend: internal target runtime rejection")))]
     [(ErrBackendRuntimePlan message)
-      (ErrCompilerBackend (compiler-diagnostic-at-start "" message))]))
+      (ErrCompilerBackendBuffer (compiler-diagnostic-at-start "" message))]))
+
+(define (compiler-backend-emit-program-target-with-mode-and-crt
+  [program : CompilerIrProgram]
+  [target : CompilerBackendTarget]
+  [mode : CompilerBackendMode]
+  [spans : CompilerSourceSpans]
+  [emit-entry : bool]
+  [crt-entry : bool]) : ResultCompilerBackend
+  (match (compiler-backend-emit-program-target-with-mode-buffer-and-crt
+    program
+    target
+    mode
+    spans
+    emit-entry
+    crt-entry)
+    [(OkCompilerBackendBuffer buf) (OkCompilerBackend (text-buf-render buf))]
+    [(ErrCompilerBackendBuffer message) (ErrCompilerBackend message)]))
+
+(define (compiler-backend-emit-program-target-with-mode
+  [program : CompilerIrProgram]
+  [target : CompilerBackendTarget]
+  [mode : CompilerBackendMode]
+  [spans : CompilerSourceSpans]
+  [emit-entry : bool]) : ResultCompilerBackend
+  (match (compiler-backend-emit-program-target-with-mode-buffer
+    program
+    target
+    mode
+    spans
+    emit-entry)
+    [(OkCompilerBackendBuffer buf) (OkCompilerBackend (text-buf-render buf))]
+    [(ErrCompilerBackendBuffer message) (ErrCompilerBackend message)]))
 
 (define (compiler-backend-emit-source [src : String]) : ResultCompilerBackend
   (match (lower-compiler-source src)

@@ -782,35 +782,71 @@
     [(CompilerSourceSpans _ _ instr-count) (>= instr-count minimum)]))
 
 (defenum CompilerIrSummary
-  (CompilerIrSummary i64 i64 i64 i64 i64 i64))
+  (CompilerIrSummary i64 i64 i64 i64 i64 i64 i64 i64 i64 i64 i64))
 
 (define (compiler-ir-summary-globals [summary : CompilerIrSummary]) : i64
   (match summary
-    [(CompilerIrSummary globals _ _ _ _ _) globals]))
+    [(CompilerIrSummary globals _ _ _ _ _ _ _ _ _ _) globals]))
 
 (define (compiler-ir-summary-functions [summary : CompilerIrSummary]) : i64
   (match summary
-    [(CompilerIrSummary _ functions _ _ _ _) functions]))
+    [(CompilerIrSummary _ functions _ _ _ _ _ _ _ _ _) functions]))
 
 (define (compiler-ir-summary-externs [summary : CompilerIrSummary]) : i64
   (match summary
-    [(CompilerIrSummary _ _ externs _ _ _) externs]))
+    [(CompilerIrSummary _ _ externs _ _ _ _ _ _ _ _) externs]))
 
 (define (compiler-ir-summary-blocks [summary : CompilerIrSummary]) : i64
   (match summary
-    [(CompilerIrSummary _ _ _ blocks _ _) blocks]))
+    [(CompilerIrSummary _ _ _ blocks _ _ _ _ _ _ _) blocks]))
 
 (define (compiler-ir-summary-instructions [summary : CompilerIrSummary]) : i64
   (match summary
-    [(CompilerIrSummary _ _ _ _ instructions _) instructions]))
+    [(CompilerIrSummary _ _ _ _ instructions _ _ _ _ _ _) instructions]))
 
 (define (compiler-ir-summary-vars [summary : CompilerIrSummary]) : i64
   (match summary
-    [(CompilerIrSummary _ _ _ _ _ vars) vars]))
+    [(CompilerIrSummary _ _ _ _ _ vars _ _ _ _ _) vars]))
+
+(define (compiler-ir-summary-empty-blocks [summary : CompilerIrSummary]) : i64
+  (match summary
+    [(CompilerIrSummary _ _ _ _ _ _ empty-blocks _ _ _ _) empty-blocks]))
+
+(define (compiler-ir-summary-max-instructions-function
+  [summary : CompilerIrSummary]) : i64
+  (match summary
+    [(CompilerIrSummary _ _ _ _ _ _ _ max-instructions-function _ _ _)
+      max-instructions-function]))
+
+(define (compiler-ir-summary-max-instructions-block
+  [summary : CompilerIrSummary]) : i64
+  (match summary
+    [(CompilerIrSummary _ _ _ _ _ _ _ _ max-instructions-block _ _)
+      max-instructions-block]))
+
+(define (compiler-ir-summary-call-arg-entries [summary : CompilerIrSummary]) : i64
+  (match summary
+    [(CompilerIrSummary _ _ _ _ _ _ _ _ _ call-arg-entries _) call-arg-entries]))
+
+(define (compiler-ir-summary-phi-input-entries [summary : CompilerIrSummary]) : i64
+  (match summary
+    [(CompilerIrSummary _ _ _ _ _ _ _ _ _ _ phi-input-entries)
+      phi-input-entries]))
 
 (define (compiler-ir-summary-score [summary : CompilerIrSummary]) : i64
   (match summary
-    [(CompilerIrSummary globals functions externs blocks instructions vars)
+    [(CompilerIrSummary
+        globals
+        functions
+        externs
+        blocks
+        instructions
+        vars
+        _
+        _
+        _
+        _
+        _)
       (+
         globals
         (+
@@ -829,15 +865,101 @@
     [(IrExternNil) 0]
     [(IrExternCons _ rest) (+ 1 (compiler-ir-extern-list-count rest))]))
 
+(define (compiler-ir-max-i64 [a : i64] [b : i64]) : i64
+  (if (> a b)
+    a
+    b))
+
+(define (compiler-ir-value-list-count [values : CompilerIrValueList]) : i64
+  (match values
+    [(IrValueNil) 0]
+    [(IrValueCons _ rest) (+ 1 (compiler-ir-value-list-count rest))]))
+
+(define (compiler-ir-phi-input-list-count [inputs : CompilerIrPhiInputList]) : i64
+  (match inputs
+    [(IrPhiInputNil) 0]
+    [(IrPhiInputCons _ rest) (+ 1 (compiler-ir-phi-input-list-count rest))]))
+
+(define (compiler-ir-instr-call-arg-count [instr : CompilerIrInstr]) : i64
+  (match instr
+    [(IrInstrCall _ _ args _) (compiler-ir-value-list-count args)]
+    [(IrInstrCallIndirect _ _ args _) (compiler-ir-value-list-count args)]
+    [(IrInstrTailCall _ args _) (compiler-ir-value-list-count args)]
+    [_ 0]))
+
+(define (compiler-ir-instr-phi-input-count [instr : CompilerIrInstr]) : i64
+  (match instr
+    [(IrInstrPhi _ inputs _) (compiler-ir-phi-input-list-count inputs)]
+    [_ 0]))
+
 (define (compiler-ir-instr-list-count [instrs : CompilerIrInstrList]) : i64
   (match instrs
     [(IrInstrNil) 0]
     [(IrInstrCons _ rest) (+ 1 (compiler-ir-instr-list-count rest))]))
 
+(define (compiler-ir-instr-list-call-arg-count [instrs : CompilerIrInstrList]) : i64
+  (match instrs
+    [(IrInstrNil) 0]
+    [(IrInstrCons instr rest)
+      (+
+        (compiler-ir-instr-call-arg-count instr)
+        (compiler-ir-instr-list-call-arg-count rest))]))
+
+(define (compiler-ir-instr-list-phi-input-count [instrs : CompilerIrInstrList]) : i64
+  (match instrs
+    [(IrInstrNil) 0]
+    [(IrInstrCons instr rest)
+      (+
+        (compiler-ir-instr-phi-input-count instr)
+        (compiler-ir-instr-list-phi-input-count rest))]))
+
 (define (compiler-ir-block-list-count [blocks : CompilerIrBlockList]) : i64
   (match blocks
     [(IrBlockNil) 0]
     [(IrBlockCons _ rest) (+ 1 (compiler-ir-block-list-count rest))]))
+
+(define (compiler-ir-block-list-empty-count [blocks : CompilerIrBlockList]) : i64
+  (match blocks
+    [(IrBlockNil) 0]
+    [(IrBlockCons block rest)
+      (match block
+        [(IrBlock _ instrs)
+          (+
+            (if (= (compiler-ir-instr-list-count instrs) 0)
+              1
+              0)
+            (compiler-ir-block-list-empty-count rest))])]))
+
+(define (compiler-ir-block-list-max-instruction-count
+  [blocks : CompilerIrBlockList]) : i64
+  (match blocks
+    [(IrBlockNil) 0]
+    [(IrBlockCons block rest)
+      (match block
+        [(IrBlock _ instrs)
+          (compiler-ir-max-i64
+            (compiler-ir-instr-list-count instrs)
+            (compiler-ir-block-list-max-instruction-count rest))])]))
+
+(define (compiler-ir-block-list-call-arg-count [blocks : CompilerIrBlockList]) : i64
+  (match blocks
+    [(IrBlockNil) 0]
+    [(IrBlockCons block rest)
+      (match block
+        [(IrBlock _ instrs)
+          (+
+            (compiler-ir-instr-list-call-arg-count instrs)
+            (compiler-ir-block-list-call-arg-count rest))])]))
+
+(define (compiler-ir-block-list-phi-input-count [blocks : CompilerIrBlockList]) : i64
+  (match blocks
+    [(IrBlockNil) 0]
+    [(IrBlockCons block rest)
+      (match block
+        [(IrBlock _ instrs)
+          (+
+            (compiler-ir-instr-list-phi-input-count instrs)
+            (compiler-ir-block-list-phi-input-count rest))])]))
 
 (define (compiler-ir-block-list-instruction-count
   [blocks : CompilerIrBlockList]) : i64
@@ -877,6 +999,61 @@
             (compiler-ir-block-list-instruction-count blocks)
             (compiler-ir-function-list-instruction-count rest))])]))
 
+(define (compiler-ir-function-list-empty-block-count
+  [functions : CompilerIrFunctionList]) : i64
+  (match functions
+    [(IrFunctionNil) 0]
+    [(IrFunctionCons func rest)
+      (match func
+        [(IrFunction _ _ _ _ blocks)
+          (+
+            (compiler-ir-block-list-empty-count blocks)
+            (compiler-ir-function-list-empty-block-count rest))])]))
+
+(define (compiler-ir-function-list-max-instruction-count
+  [functions : CompilerIrFunctionList]) : i64
+  (match functions
+    [(IrFunctionNil) 0]
+    [(IrFunctionCons func rest)
+      (match func
+        [(IrFunction _ _ _ _ blocks)
+          (compiler-ir-max-i64
+            (compiler-ir-block-list-instruction-count blocks)
+            (compiler-ir-function-list-max-instruction-count rest))])]))
+
+(define (compiler-ir-function-list-max-block-instruction-count
+  [functions : CompilerIrFunctionList]) : i64
+  (match functions
+    [(IrFunctionNil) 0]
+    [(IrFunctionCons func rest)
+      (match func
+        [(IrFunction _ _ _ _ blocks)
+          (compiler-ir-max-i64
+            (compiler-ir-block-list-max-instruction-count blocks)
+            (compiler-ir-function-list-max-block-instruction-count rest))])]))
+
+(define (compiler-ir-function-list-call-arg-count
+  [functions : CompilerIrFunctionList]) : i64
+  (match functions
+    [(IrFunctionNil) 0]
+    [(IrFunctionCons func rest)
+      (match func
+        [(IrFunction _ _ _ _ blocks)
+          (+
+            (compiler-ir-block-list-call-arg-count blocks)
+            (compiler-ir-function-list-call-arg-count rest))])]))
+
+(define (compiler-ir-function-list-phi-input-count
+  [functions : CompilerIrFunctionList]) : i64
+  (match functions
+    [(IrFunctionNil) 0]
+    [(IrFunctionCons func rest)
+      (match func
+        [(IrFunction _ _ _ _ blocks)
+          (+
+            (compiler-ir-block-list-phi-input-count blocks)
+            (compiler-ir-function-list-phi-input-count rest))])]))
+
 (define (compiler-ir-function-list-var-count
   [functions : CompilerIrFunctionList]) : i64
   (match functions
@@ -895,7 +1072,12 @@
         (compiler-ir-extern-list-count externs)
         (compiler-ir-function-list-block-count functions)
         (compiler-ir-function-list-instruction-count functions)
-        (compiler-ir-function-list-var-count functions))]))
+        (compiler-ir-function-list-var-count functions)
+        (compiler-ir-function-list-empty-block-count functions)
+        (compiler-ir-function-list-max-instruction-count functions)
+        (compiler-ir-function-list-max-block-instruction-count functions)
+        (compiler-ir-function-list-call-arg-count functions)
+        (compiler-ir-function-list-phi-input-count functions))]))
 
 (define (compiler-ir-cat4 [a : String] [b : String] [c : String] [d : String]) : String
   (string-append a (string-append b (string-append c d))))

@@ -24,6 +24,10 @@
   (ids StringI64Map)
   (values (Array String)))
 
+(defenum LowerTypeCache
+  (LowerNoTypeCache)
+  (LowerSomeTypeCache StringI64Map (Array AstType) i64))
+
 (defenum LowerStringSet
   (LowerStringNil)
   (LowerStringCons String LowerStringSet))
@@ -61,6 +65,7 @@
     String
     CompilerSourceSpans
     LowerNameCache
+    LowerTypeCache
     CompilerLowerMode))
 
 (defenum LowerMaybeArrayVar
@@ -285,7 +290,9 @@
     [(LowerNameBind _ _ rest) (+ 1 (lower-name-env-count rest))]))
 
 (define (lower-name-cache-capacity [count : i64]) : i64
-  (if (< count 4) 8 (* count 2)))
+  (if (< count 4)
+    8
+    (* count 2)))
 
 (define (lower-name-cache-add
   [cache : LowerNameCache]
@@ -301,9 +308,7 @@
           [next : i64 (string-i64-map-len ids)]
           (begin
             (array-set! values next logical-name)
-            (LowerNameCache
-              (string-i64-map-put ids source-name next)
-              values)))])))
+            (LowerNameCache (string-i64-map-put ids source-name next) values)))])))
 
 (define (lower-name-cache-from-env-into
   [names : LowerNameEnv]
@@ -330,6 +335,70 @@
   (match (string-i64-map-get (struct-get cache ids) source-name)
     [(StringI64MapFound index) (array-ref (struct-get cache values) index)]
     [(StringI64MapMissing) source-name]))
+
+(define (lower-type-env-count [env : TcTypeEnv]) : i64
+  (match env
+    [(TcTypeNil) 0]
+    [(TcTypeBind _ _ rest) (+ 1 (lower-type-env-count rest))]))
+
+(define (lower-type-cache-capacity [count : i64]) : i64
+  (if (< count 4)
+    8
+    (* count 2)))
+
+(define (lower-type-cache-add
+  [cache : LowerTypeCache]
+  [name : String]
+  [ty : AstType]) : LowerTypeCache
+  (match cache
+    [(LowerNoTypeCache) cache]
+    [(LowerSomeTypeCache ids values next)
+      (match (string-i64-map-get ids name)
+        [(StringI64MapFound _) cache]
+        [(StringI64MapMissing)
+          (begin
+            (array-set! values next ty)
+            (LowerSomeTypeCache
+              (string-i64-map-put ids name next)
+              values
+              (+ next 1)))])]))
+
+(define (lower-type-cache-from-env-into
+  [env : TcTypeEnv]
+  [cache : LowerTypeCache]) : LowerTypeCache
+  (match env
+    [(TcTypeNil) cache]
+    [(TcTypeBind name ty rest)
+      (lower-type-cache-from-env-into rest (lower-type-cache-add cache name ty))]))
+
+(define (lower-type-cache-from-env [env : TcTypeEnv]) : LowerTypeCache
+  (let
+    [count : i64 (lower-type-env-count env)]
+    (lower-type-cache-from-env-into
+      env
+      (LowerSomeTypeCache
+        (string-i64-map-with-capacity (lower-type-cache-capacity count))
+        (make-array AstType count)
+        0))))
+
+(define (lower-type-cache-lookup [cache : LowerTypeCache] [name : String]) : ResultTcType
+  (match cache
+    [(LowerNoTypeCache)
+      (ErrTcType (string-append "typecheck: unbound name " name))]
+    [(LowerSomeTypeCache ids values _)
+      (match (string-i64-map-get ids name)
+        [(StringI64MapFound index) (OkTcType (array-ref values index))]
+        [(StringI64MapMissing)
+          (ErrTcType (string-append "typecheck: unbound name " name))])]))
+
+(define (lower-lookup-type
+  [type-cache : LowerTypeCache]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [name : String]) : ResultTcType
+  (match (sym-i64-lookup env name)
+    [(SomeI64 _) (tc-lookup type-env name)]
+    [(NoneI64) (lower-type-cache-lookup type-cache name)]))
 
 (define (lower-name-env-add-alias-if-free
   [names : LowerNameEnv]
@@ -1245,11 +1314,7 @@
                   body-index
                   (lower-reach-expr all-functions names popped body))]
               [(LowerNoFunctionBody)
-                (lower-reach-process
-                  all-functions
-                  names
-                  body-index
-                  popped)]))])]))
+                (lower-reach-process all-functions names body-index popped)]))])]))
 
 (define (lower-filter-reachable-decls-in-module
   [decls : AstDeclList]
@@ -1446,31 +1511,35 @@
 
 (define (lower-state-next-var [state : LowerState]) : i64
   (match state
-    [(LowerState next-var _ _ _ _ _ _ _ _ _ _) next-var]))
+    [(LowerState next-var _ _ _ _ _ _ _ _ _ _ _) next-var]))
 
 (define (lower-state-current-label [state : LowerState]) : String
   (match state
-    [(LowerState _ _ _ label _ _ _ _ _ _ _) label]))
+    [(LowerState _ _ _ label _ _ _ _ _ _ _ _) label]))
 
 (define (lower-state-current-function [state : LowerState]) : String
   (match state
-    [(LowerState _ _ _ _ _ _ _ function _ _ _) function]))
+    [(LowerState _ _ _ _ _ _ _ function _ _ _ _) function]))
 
 (define (lower-state-spans [state : LowerState]) : CompilerSourceSpans
   (match state
-    [(LowerState _ _ _ _ _ _ _ _ spans _ _) spans]))
+    [(LowerState _ _ _ _ _ _ _ _ spans _ _ _) spans]))
 
 (define (lower-state-names [state : LowerState]) : LowerNameCache
   (match state
-    [(LowerState _ _ _ _ _ _ _ _ _ names _) names]))
+    [(LowerState _ _ _ _ _ _ _ _ _ names _ _) names]))
+
+(define (lower-state-type-cache [state : LowerState]) : LowerTypeCache
+  (match state
+    [(LowerState _ _ _ _ _ _ _ _ _ _ type-cache _) type-cache]))
 
 (define (lower-state-functions [state : LowerState]) : CompilerIrFunctionList
   (match state
-    [(LowerState _ _ _ _ _ _ functions _ _ _ _) functions]))
+    [(LowerState _ _ _ _ _ _ functions _ _ _ _ _) functions]))
 
 (define (lower-state-mode [state : LowerState]) : CompilerLowerMode
   (match state
-    [(LowerState _ _ _ _ _ _ _ _ _ _ mode) mode]))
+    [(LowerState _ _ _ _ _ _ _ _ _ _ _ mode) mode]))
 
 (define (lower-state-alloc-var [state : LowerState]) : LowerAlloc
   (match state
@@ -1485,6 +1554,7 @@
         function
         spans
         names
+        type-cache
         mode)
       (LowerAlloc
         (LowerState
@@ -1498,6 +1568,7 @@
           function
           spans
           names
+          type-cache
           mode)
         next-var)]))
 
@@ -1514,6 +1585,7 @@
         function
         spans
         names
+        type-cache
         mode)
       (LowerLabel
         (LowerState
@@ -1527,6 +1599,7 @@
           function
           spans
           names
+          type-cache
           mode)
         (string-append (string-append prefix ".") (int->string next-label)))]))
 
@@ -1543,6 +1616,7 @@
         function
         spans
         names
+        type-cache
         mode)
       (LowerLambdaName
         (LowerState
@@ -1556,6 +1630,7 @@
           function
           spans
           names
+          type-cache
           mode)
         (string-append
           (string-append (string-append "__tl_lambda_" function) "_")
@@ -1574,6 +1649,7 @@
         function
         spans
         names
+        type-cache
         mode)
       (LowerState
         next-var
@@ -1586,6 +1662,7 @@
         function
         spans
         names
+        type-cache
         mode)]))
 
 (define (lower-state-record-instr-span
@@ -1604,6 +1681,7 @@
         function
         spans
         names
+        type-cache
         mode)
       (LowerState
         next-var
@@ -1616,12 +1694,15 @@
         function
         (compiler-source-spans-insert-instr spans function instr span)
         names
+        type-cache
         mode)]))
 
 (define (lower-state-emit-at-expr
   [state : LowerState]
   [instr : CompilerIrInstr]
-  [expr : AstExpr]) : LowerState
+  [expr : AstExpr])
+  :
+  LowerState
   ;; Per-instruction spans are allocated inside per-function scratch arenas and
   ;; are not escaped by `lower-function-escaping`; function-level spans are
   ;; recorded separately after escape.
@@ -1640,6 +1721,7 @@
         function
         spans
         names
+        type-cache
         mode)
       (let
         [block-instrs : CompilerIrInstrList
@@ -1655,11 +1737,12 @@
           function
           spans
           names
+          type-cache
           mode))]))
 
 (define (lower-state-build-blocks [state : LowerState]) : CompilerIrBlockList
   (match state
-    [(LowerState _ _ _ current-label current-instrs blocks _ _ _ _ _)
+    [(LowerState _ _ _ current-label current-instrs blocks _ _ _ _ _ _)
       (lower-block-list-reverse
         (IrBlockCons
           (IrBlock current-label (lower-instr-list-reverse current-instrs))
@@ -1681,6 +1764,7 @@
         function
         _
         names
+        type-cache
         mode)
       (LowerState
         next-var
@@ -1693,6 +1777,7 @@
         function
         new-spans
         names
+        type-cache
         mode)]))
 
 (define (lower-materialize
@@ -3795,6 +3880,7 @@
 (define (lower-function-with-captures
   [ctx : TcContext]
   [top-env : TcTypeEnv]
+  [type-cache : LowerTypeCache]
   [logical-name : String]
   [params : AstParamList]
   [ret : AstType]
@@ -3829,6 +3915,7 @@
             logical-name
             function-spans
             names
+            type-cache
             mode)]
         [ret-ty : AstType (tc-type-without-regions (tc-resolve-type ctx ret))]
         (match (lower-load-captures
@@ -3881,6 +3968,7 @@
           (match (lower-function
             ctx
             type-env
+            (lower-state-type-cache state)
             lambda-name
             params
             ret-ty
@@ -3923,6 +4011,7 @@
                   (match (lower-function-with-captures
                     ctx
                     type-env
+                    (lower-state-type-cache named-state)
                     lambda-name
                     params
                     ret-ty
@@ -5358,12 +5447,7 @@
                           AstExprNil
                           expr-ty)]
                       [_
-                        (lower-function-value-or-var
-                          ctx
-                          state
-                          env
-                          name
-                          expr-ty)])]
+                        (lower-function-value-or-var ctx state env name expr-ty)])]
                   [(ErrAstTypeList _)
                     (lower-function-value-or-var ctx state env name expr-ty)])]
               [(NoneI64)
@@ -5374,18 +5458,17 @@
   [ctx : TcContext]
   [env : SymI64Env]
   [type-env : TcTypeEnv]
+  [type-cache : LowerTypeCache]
   [func : AstExpr]
   [args : AstExprList]) : ResultTcType
   (match (ast-expr-unspan func)
     [(AstExprVar name)
-      (match (tc-lookup type-env name)
+      (match (lower-lookup-type type-cache env type-env name)
         [(OkTcType fn-ty)
           (match (tc-type-strip-region (tc-resolve-type ctx fn-ty))
             [(AstTyFunc _ ret)
-              (OkTcType
-                (tc-type-without-regions (tc-resolve-type ctx ret)))]
-            [(AstTyEnum _)
-              (OkTcType (tc-type-without-regions fn-ty))]
+              (OkTcType (tc-type-without-regions (tc-resolve-type ctx ret)))]
+            [(AstTyEnum _) (OkTcType (tc-type-without-regions fn-ty))]
             [_ (ErrTcType "lower: call result type is not fast-pathable")])]
         [(ErrTcType message)
           (if (lower-builtin-call-available? ctx env name)
@@ -5396,7 +5479,12 @@
               [(string-eq name "clone")
                 (match args
                   [(AstExprCons arg (AstExprNil))
-                    (lower-expr-result-type-fast ctx env type-env arg)]
+                    (lower-expr-result-type-fast
+                      ctx
+                      env
+                      type-env
+                      type-cache
+                      arg)]
                   [_ (ErrTcType "lower: call result type is not fast-pathable")])]
               [else (ErrTcType message)])
             (ErrTcType message))])]
@@ -5406,6 +5494,7 @@
   [ctx : TcContext]
   [env : SymI64Env]
   [type-env : TcTypeEnv]
+  [type-cache : LowerTypeCache]
   [op : AstBinOp]
   [left : AstExpr]) : ResultTcType
   (match op
@@ -5418,7 +5507,7 @@
     [(AstBinGt) (OkTcType (AstTyBool))]
     [(AstBinGe) (OkTcType (AstTyBool))]
     [_
-      (match (lower-expr-result-type-fast ctx env type-env left)
+      (match (lower-expr-result-type-fast ctx env type-env type-cache left)
         [(OkTcType left-ty) (OkTcType left-ty)]
         [(ErrTcType message) (ErrTcType message)])]))
 
@@ -5426,11 +5515,17 @@
   [ctx : TcContext]
   [env : SymI64Env]
   [type-env : TcTypeEnv]
+  [type-cache : LowerTypeCache]
   [then-branch : AstExpr]
   [else-branch : AstExpr]) : ResultTcType
-  (match (lower-expr-result-type-fast ctx env type-env then-branch)
+  (match (lower-expr-result-type-fast ctx env type-env type-cache then-branch)
     [(OkTcType then-ty)
-      (match (lower-expr-result-type-fast ctx env type-env else-branch)
+      (match (lower-expr-result-type-fast
+        ctx
+        env
+        type-env
+        type-cache
+        else-branch)
         [(OkTcType else-ty) (tc-merge-branch-type then-ty else-ty)]
         [(ErrTcType message) (ErrTcType message)])]
     [(ErrTcType message) (ErrTcType message)]))
@@ -5439,13 +5534,15 @@
   [ctx : TcContext]
   [env : SymI64Env]
   [type-env : TcTypeEnv]
+  [type-cache : LowerTypeCache]
   [exprs : AstExprList]) : ResultTcType
   (match exprs
     [(AstExprNil) (OkTcType (AstTyUnit))]
     [(AstExprCons expr rest)
       (match rest
-        [(AstExprNil) (lower-expr-result-type-fast ctx env type-env expr)]
-        [_ (lower-expr-list-result-type-fast ctx env type-env rest)])]))
+        [(AstExprNil)
+          (lower-expr-result-type-fast ctx env type-env type-cache expr)]
+        [_ (lower-expr-list-result-type-fast ctx env type-env type-cache rest)])]))
 
 (define (lower-pattern-list-bind-local-names
   [env : SymI64Env]
@@ -5483,6 +5580,7 @@
   [ctx : TcContext]
   [env : SymI64Env]
   [type-env : TcTypeEnv]
+  [type-cache : LowerTypeCache]
   [scrut-ty : AstType]
   [arm : AstMatchArm]) : ResultTcType
   (match arm
@@ -5493,6 +5591,7 @@
             ctx
             (lower-match-pattern-bind-local-names ctx env scrut-ty pattern)
             arm-type-env
+            type-cache
             body)]
         [(ErrTcEnv message) (ErrTcType message)])]))
 
@@ -5500,13 +5599,20 @@
   [ctx : TcContext]
   [env : SymI64Env]
   [type-env : TcTypeEnv]
+  [type-cache : LowerTypeCache]
   [scrut-ty : AstType]
   [arms : AstMatchArmList]
   [want : AstType]) : ResultTcType
   (match arms
     [(AstMatchArmNil) (OkTcType want)]
     [(AstMatchArmCons arm rest)
-      (match (lower-match-arm-result-type-fast ctx env type-env scrut-ty arm)
+      (match (lower-match-arm-result-type-fast
+        ctx
+        env
+        type-env
+        type-cache
+        scrut-ty
+        arm)
         [(OkTcType got)
           (match (tc-merge-branch-type want got)
             [(OkTcType merged)
@@ -5514,6 +5620,7 @@
                 ctx
                 env
                 type-env
+                type-cache
                 scrut-ty
                 rest
                 merged)]
@@ -5524,19 +5631,28 @@
   [ctx : TcContext]
   [env : SymI64Env]
   [type-env : TcTypeEnv]
+  [type-cache : LowerTypeCache]
   [scrutinee : AstExpr]
   [arms : AstMatchArmList]) : ResultTcType
-  (match (lower-expr-result-type-fast ctx env type-env scrutinee)
+  (match (lower-expr-result-type-fast ctx env type-env type-cache scrutinee)
     [(OkTcType scrut-ty)
       (match arms
-        [(AstMatchArmNil) (ErrTcType "lower: match result type is not fast-pathable")]
+        [(AstMatchArmNil)
+          (ErrTcType "lower: match result type is not fast-pathable")]
         [(AstMatchArmCons arm rest)
-          (match (lower-match-arm-result-type-fast ctx env type-env scrut-ty arm)
+          (match (lower-match-arm-result-type-fast
+            ctx
+            env
+            type-env
+            type-cache
+            scrut-ty
+            arm)
             [(OkTcType first-ty)
               (lower-match-rest-result-types-fast
                 ctx
                 env
                 type-env
+                type-cache
                 scrut-ty
                 rest
                 first-ty)]
@@ -5547,17 +5663,19 @@
   [ctx : TcContext]
   [env : SymI64Env]
   [type-env : TcTypeEnv]
+  [type-cache : LowerTypeCache]
   [maybe-ty : AstMaybeType]
   [init : AstExpr]) : ResultTcType
   (match maybe-ty
     [(AstSomeType ty)
       (OkTcType (tc-type-without-regions (tc-resolve-type ctx ty)))]
-    [(AstNoType) (lower-expr-result-type-fast ctx env type-env init)]))
+    [(AstNoType) (lower-expr-result-type-fast ctx env type-env type-cache init)]))
 
 (define (lower-let-bindings-type-env-fast
   [ctx : TcContext]
   [env : SymI64Env]
   [type-env : TcTypeEnv]
+  [type-cache : LowerTypeCache]
   [bindings : AstLetBindingList]) : ResultTcEnv
   (match bindings
     [(AstLetBindingNil) (OkTcEnv type-env)]
@@ -5568,6 +5686,7 @@
             ctx
             env
             type-env
+            type-cache
             maybe-ty
             init)
             [(OkTcType binding-ty)
@@ -5575,6 +5694,7 @@
                 ctx
                 (sym-i64-bind env name 0)
                 (tc-bind type-env name binding-ty)
+                type-cache
                 rest)]
             [(ErrTcType message) (ErrTcEnv message)])])]))
 
@@ -5601,8 +5721,9 @@
   [ctx : TcContext]
   [env : SymI64Env]
   [type-env : TcTypeEnv]
+  [type-cache : LowerTypeCache]
   [index : AstExpr]) : ResultTcType
-  (match (lower-expr-result-type-fast ctx env type-env index)
+  (match (lower-expr-result-type-fast ctx env type-env type-cache index)
     [(OkTcType index-ty)
       (if (tc-integer-type? index-ty)
         (OkTcType index-ty)
@@ -5613,9 +5734,10 @@
   [ctx : TcContext]
   [env : SymI64Env]
   [type-env : TcTypeEnv]
+  [type-cache : LowerTypeCache]
   [op : AstUnOp]
   [inner : AstExpr]) : ResultTcType
-  (match (lower-expr-result-type-fast ctx env type-env inner)
+  (match (lower-expr-result-type-fast ctx env type-env type-cache inner)
     [(OkTcType inner-ty)
       (match (tc-unop-type op inner-ty)
         [(OkTcType result-ty)
@@ -5627,9 +5749,10 @@
   [ctx : TcContext]
   [env : SymI64Env]
   [type-env : TcTypeEnv]
+  [type-cache : LowerTypeCache]
   [tuple-expr : AstExpr]
   [index : i64]) : ResultTcType
-  (match (lower-expr-result-type-fast ctx env type-env tuple-expr)
+  (match (lower-expr-result-type-fast ctx env type-env type-cache tuple-expr)
     [(OkTcType tuple-ty)
       (match (tc-type-strip-region (tc-resolve-type ctx tuple-ty))
         [(AstTyTuple elem-tys)
@@ -5644,19 +5767,23 @@
   [ctx : TcContext]
   [env : SymI64Env]
   [type-env : TcTypeEnv]
+  [type-cache : LowerTypeCache]
   [array-expr : AstExpr]
   [index : AstExpr]) : ResultTcType
-  (match (lower-index-result-type-fast ctx env type-env index)
+  (match (lower-index-result-type-fast ctx env type-env type-cache index)
     [(OkTcType _)
-      (match (lower-expr-result-type-fast ctx env type-env array-expr)
+      (match (lower-expr-result-type-fast
+        ctx
+        env
+        type-env
+        type-cache
+        array-expr)
         [(OkTcType array-ty)
           (match (tc-type-strip-region (tc-resolve-type ctx array-ty))
             [(AstTyArray elem-ty _)
-              (OkTcType
-                (lower-projected-result-type-fast ctx array-ty elem-ty))]
+              (OkTcType (lower-projected-result-type-fast ctx array-ty elem-ty))]
             [(AstTyDynArray elem-ty)
-              (OkTcType
-                (lower-projected-result-type-fast ctx array-ty elem-ty))]
+              (OkTcType (lower-projected-result-type-fast ctx array-ty elem-ty))]
             [_ (ErrTcType "lower: array-ref result type is not fast-pathable")])]
         [(ErrTcType message) (ErrTcType message)])]
     [(ErrTcType message) (ErrTcType message)]))
@@ -5665,11 +5792,12 @@
   [ctx : TcContext]
   [env : SymI64Env]
   [type-env : TcTypeEnv]
+  [type-cache : LowerTypeCache]
   [str : AstExpr]
   [index : AstExpr]) : ResultTcType
-  (match (lower-index-result-type-fast ctx env type-env index)
+  (match (lower-index-result-type-fast ctx env type-env type-cache index)
     [(OkTcType _)
-      (match (lower-expr-result-type-fast ctx env type-env str)
+      (match (lower-expr-result-type-fast ctx env type-env type-cache str)
         [(OkTcType str-ty)
           (if (lower-string-handle-type? ctx str-ty)
             (OkTcType (AstTyChar))
@@ -5681,9 +5809,10 @@
   [ctx : TcContext]
   [env : SymI64Env]
   [type-env : TcTypeEnv]
+  [type-cache : LowerTypeCache]
   [receiver : AstExpr]
   [field : String]) : ResultTcType
-  (match (lower-expr-result-type-fast ctx env type-env receiver)
+  (match (lower-expr-result-type-fast ctx env type-env type-cache receiver)
     [(OkTcType receiver-ty)
       (match (tc-type-strip-region (tc-resolve-type ctx receiver-ty))
         [(AstTyStruct struct-name)
@@ -5699,13 +5828,13 @@
   [ctx : TcContext]
   [env : SymI64Env]
   [type-env : TcTypeEnv]
+  [type-cache : LowerTypeCache]
   [box-expr : AstExpr]) : ResultTcType
-  (match (lower-expr-result-type-fast ctx env type-env box-expr)
+  (match (lower-expr-result-type-fast ctx env type-env type-cache box-expr)
     [(OkTcType box-ty)
       (match (tc-type-strip-region (tc-resolve-type ctx box-ty))
         [(AstTyBox inner-ty)
-          (OkTcType
-            (lower-projected-result-type-fast ctx box-ty inner-ty))]
+          (OkTcType (lower-projected-result-type-fast ctx box-ty inner-ty))]
         [_ (ErrTcType "lower: box-get result type is not fast-pathable")])]
     [(ErrTcType message) (ErrTcType message)]))
 
@@ -5713,52 +5842,88 @@
   [ctx : TcContext]
   [env : SymI64Env]
   [type-env : TcTypeEnv]
+  [type-cache : LowerTypeCache]
   [expr : AstExpr]) : ResultTcType
   (match expr
-    [(AstExprSpanned inner _) (lower-expr-result-type-fast ctx env type-env inner)]
+    [(AstExprSpanned inner _)
+      (lower-expr-result-type-fast ctx env type-env type-cache inner)]
     [(AstExprLiteral lit) (OkTcType (tc-literal-type lit))]
     [(AstExprVar name)
-      (match (tc-lookup type-env name)
-        [(OkTcType expr-ty)
-          (OkTcType (tc-type-without-regions expr-ty))]
+      (match (lower-lookup-type type-cache env type-env name)
+        [(OkTcType expr-ty) (OkTcType (tc-type-without-regions expr-ty))]
         [(ErrTcType message) (ErrTcType message)])]
     [(AstExprAnn _ ty)
       (OkTcType (tc-type-without-regions (tc-resolve-type ctx ty)))]
     [(AstExprCast _ ty)
       (OkTcType (tc-type-without-regions (tc-resolve-type ctx ty)))]
     [(AstExprUnary op inner)
-      (lower-unary-result-type-fast ctx env type-env op inner)]
+      (lower-unary-result-type-fast ctx env type-env type-cache op inner)]
     [(AstExprCall func args)
-      (lower-call-result-type-fast ctx env type-env func args)]
+      (lower-call-result-type-fast ctx env type-env type-cache func args)]
     [(AstExprBinary op left _)
-      (lower-binary-result-type-fast ctx env type-env op left)]
+      (lower-binary-result-type-fast ctx env type-env type-cache op left)]
     [(AstExprIf _ then-branch else-branch)
-      (lower-if-result-type-fast ctx env type-env then-branch else-branch)]
+      (lower-if-result-type-fast
+        ctx
+        env
+        type-env
+        type-cache
+        then-branch
+        else-branch)]
     [(AstExprBegin exprs)
-      (lower-expr-list-result-type-fast ctx env type-env exprs)]
+      (lower-expr-list-result-type-fast ctx env type-env type-cache exprs)]
     [(AstExprUnsafe exprs)
-      (lower-expr-list-result-type-fast ctx env (tc-enter-unsafe type-env) exprs)]
+      (lower-expr-list-result-type-fast
+        ctx
+        env
+        (tc-enter-unsafe type-env)
+        type-cache
+        exprs)]
     [(AstExprMatch scrutinee arms)
-      (lower-match-result-type-fast ctx env type-env scrutinee arms)]
+      (lower-match-result-type-fast ctx env type-env type-cache scrutinee arms)]
     [(AstExprLet bindings body)
-      (match (lower-let-bindings-type-env-fast ctx env type-env bindings)
+      (match (lower-let-bindings-type-env-fast
+        ctx
+        env
+        type-env
+        type-cache
+        bindings)
         [(OkTcEnv body-type-env)
           (lower-expr-result-type-fast
             ctx
             (lower-let-bindings-local-env env bindings)
             body-type-env
+            type-cache
             body)]
         [(ErrTcEnv message) (ErrTcType message)])]
     [(AstExprTupleRef tuple-expr index)
-      (lower-tuple-ref-result-type-fast ctx env type-env tuple-expr index)]
+      (lower-tuple-ref-result-type-fast
+        ctx
+        env
+        type-env
+        type-cache
+        tuple-expr
+        index)]
     [(AstExprArrayRef array-expr index)
-      (lower-array-ref-result-type-fast ctx env type-env array-expr index)]
+      (lower-array-ref-result-type-fast
+        ctx
+        env
+        type-env
+        type-cache
+        array-expr
+        index)]
     [(AstExprStringRef str index)
-      (lower-string-ref-result-type-fast ctx env type-env str index)]
+      (lower-string-ref-result-type-fast ctx env type-env type-cache str index)]
     [(AstExprStructGet receiver field)
-      (lower-struct-get-result-type-fast ctx env type-env receiver field)]
+      (lower-struct-get-result-type-fast
+        ctx
+        env
+        type-env
+        type-cache
+        receiver
+        field)]
     [(AstExprBoxGet box-expr)
-      (lower-box-get-result-type-fast ctx env type-env box-expr)]
+      (lower-box-get-result-type-fast ctx env type-env type-cache box-expr)]
     [(AstExprSet _ _) (OkTcType (AstTyUnit))]
     [_ (ErrTcType "lower: expression result type is not fast-pathable")]))
 
@@ -5804,7 +5969,11 @@
         origin
         (tc-literal-type lit))]
     [(AstExprVar name)
-      (match (tc-lookup type-env name)
+      (match (lower-lookup-type
+        (lower-state-type-cache state)
+        env
+        type-env
+        name)
         [(OkTcType expr-ty)
           (lower-expr-with-type
             ctx
@@ -5835,29 +6004,27 @@
         origin
         (tc-type-without-regions (tc-resolve-type ctx ty)))]
     [(AstExprBinary op left _)
-      (match (lower-binary-result-type-fast ctx env type-env op left)
+      (match (lower-binary-result-type-fast
+        ctx
+        env
+        type-env
+        (lower-state-type-cache state)
+        op
+        left)
         [(OkTcType expr-ty)
-          (lower-expr-with-type
-            ctx
-            state
-            env
-            type-env
-            expr
-            origin
-            expr-ty)]
+          (lower-expr-with-type ctx state env type-env expr origin expr-ty)]
         [(ErrTcType _)
           (lower-expr-typechecked ctx state env type-env expr origin)])]
     [(AstExprCall func args)
-      (match (lower-call-result-type-fast ctx env type-env func args)
+      (match (lower-call-result-type-fast
+        ctx
+        env
+        type-env
+        (lower-state-type-cache state)
+        func
+        args)
         [(OkTcType expr-ty)
-          (lower-expr-with-type
-            ctx
-            state
-            env
-            type-env
-            expr
-            origin
-            expr-ty)]
+          (lower-expr-with-type ctx state env type-env expr origin expr-ty)]
         [(ErrTcType _)
           (lower-expr-typechecked ctx state env type-env expr origin)])]
     [(AstExprLet bindings body)
@@ -5869,28 +6036,38 @@
     [(AstExprUnsafe exprs)
       (lower-begin ctx state env (tc-enter-unsafe type-env) exprs)]
     [(AstExprIf cond then-branch else-branch)
-      (match (lower-if-result-type-fast ctx env type-env then-branch else-branch)
+      (match (lower-if-result-type-fast
+        ctx
+        env
+        type-env
+        (lower-state-type-cache state)
+        then-branch
+        else-branch)
         [(OkTcType expr-ty)
           (lower-if ctx state env type-env cond then-branch else-branch expr-ty)]
         [(ErrTcType _)
           (lower-expr-typechecked ctx state env type-env expr origin)])]
     [(AstExprMatch scrutinee arms)
-      (match (lower-match-result-type-fast ctx env type-env scrutinee arms)
+      (match (lower-match-result-type-fast
+        ctx
+        env
+        type-env
+        (lower-state-type-cache state)
+        scrutinee
+        arms)
         [(OkTcType expr-ty)
           (lower-match ctx state env type-env scrutinee arms expr-ty)]
         [(ErrTcType _)
           (lower-expr-typechecked ctx state env type-env expr origin)])]
     [_
-      (match (lower-expr-result-type-fast ctx env type-env expr)
+      (match (lower-expr-result-type-fast
+        ctx
+        env
+        type-env
+        (lower-state-type-cache state)
+        expr)
         [(OkTcType expr-ty)
-          (lower-expr-with-type
-            ctx
-            state
-            env
-            type-env
-            expr
-            origin
-            expr-ty)]
+          (lower-expr-with-type ctx state env type-env expr origin expr-ty)]
         [(ErrTcType _)
           (lower-expr-typechecked ctx state env type-env expr origin)])]))
 
@@ -6016,7 +6193,11 @@
     [(AstExprUnsafe exprs)
       (lower-begin ctx state env (tc-enter-unsafe type-env) exprs)]
     [(AstExprSet name value)
-      (match (tc-lookup type-env name)
+      (match (lower-lookup-type
+        (lower-state-type-cache state)
+        env
+        type-env
+        name)
         [(OkTcType store-ty)
           (let
             [target-ty : AstType
@@ -6402,7 +6583,11 @@
     [(AstExprCall func _)
       (match (ast-expr-unspan func)
         [(AstExprVar name)
-          (match (tc-lookup type-env name)
+          (match (lower-lookup-type
+            (lower-state-type-cache state)
+            env
+            type-env
+            name)
             [(OkTcType fn-ty)
               (match (tc-type-strip-region (tc-resolve-type ctx fn-ty))
                 [(AstTyFunc _ ret-ty)
@@ -6438,16 +6623,9 @@
                     expr
                     expected-ty)])]
             [(ErrTcType _)
-              (lower-expr-and-coerce
-                ctx
-                state
-                env
-                type-env
-                expr
-                expected-ty)])]
+              (lower-expr-and-coerce ctx state env type-env expr expected-ty)])]
         [_ (lower-expr-and-coerce ctx state env type-env expr expected-ty)])]
-    [_
-      (lower-expr-and-coerce ctx state env type-env expr expected-ty)]))
+    [_ (lower-expr-and-coerce ctx state env type-env expr expected-ty)]))
 
 (define (lower-struct-get
   [ctx : TcContext]
@@ -7106,7 +7284,11 @@
   [args : AstExprList]
   [result-ty : AstType]
   [origin : AstExpr]) : ResultLowerExpr
-  (match (match (tc-lookup type-env name)
+  (match (match (lower-lookup-type
+    (lower-state-type-cache state)
+    env
+    type-env
+    name)
     [(OkTcType fn-ty)
       (match (tc-type-strip-region (tc-resolve-type ctx fn-ty))
         [(AstTyFunc param-types _)
@@ -8882,7 +9064,12 @@
   [origin : AstExpr]) : ResultLowerExpr
   (match args
     [(AstExprCons arr (AstExprNil))
-      (match (lower-expr-result-type-fast ctx env type-env arr)
+      (match (lower-expr-result-type-fast
+        ctx
+        env
+        type-env
+        (lower-state-type-cache state)
+        arr)
         [(OkTcType arr-ty)
           (lower-array-length-with-type
             ctx
@@ -8937,15 +9124,7 @@
     [_
       (if (lower-string-handle-type? ctx arr-ty)
         (lower-array-length-load ctx state env type-env arr)
-        (lower-direct-call
-          ctx
-          state
-          env
-          type-env
-          name
-          args
-          result-ty
-          origin))]))
+        (lower-direct-call ctx state env type-env name args result-ty origin))]))
 
 (define (lower-array-length-load
   [ctx : TcContext]
@@ -12976,6 +13155,7 @@
 (define (lower-function
   [ctx : TcContext]
   [top-env : TcTypeEnv]
+  [type-cache : LowerTypeCache]
   [logical-name : String]
   [params : AstParamList]
   [ret : AstType]
@@ -13014,6 +13194,7 @@
             logical-name
             function-spans
             names
+            type-cache
             mode)]
         [ret-ty : AstType (tc-type-without-regions (tc-resolve-type ctx ret))]
         (match (lower-tail-expr ctx state env type-env body ret-ty)
@@ -13074,6 +13255,7 @@
 (define (lower-function-escaping
   [ctx : TcContext]
   [top-env : TcTypeEnv]
+  [type-cache : LowerTypeCache]
   [logical-name : String]
   [params : AstParamList]
   [ret : AstType]
@@ -13089,6 +13271,7 @@
       (match (lower-function
         ctx
         top-env
+        type-cache
         logical-name
         params
         ret
@@ -13140,6 +13323,7 @@
     spans
     names
     (lower-name-cache-from-env names)
+    (lower-type-cache-from-env top-env)
     mode
     ""))
 
@@ -13154,6 +13338,7 @@
   [spans : CompilerSourceSpans]
   [names : LowerNameEnv]
   [name-cache : LowerNameCache]
+  [type-cache : LowerTypeCache]
   [mode : CompilerLowerMode]
   [module : String]) : ResultLowerDecls
   (match decls
@@ -13189,6 +13374,7 @@
                         spans
                         names
                         name-cache
+                        type-cache
                         mode
                         module)]
                     ;; A global whose initializer is not a compile-time
@@ -13203,6 +13389,7 @@
                       (match (lower-function-escaping
                         decl-ctx
                         local-top-env
+                        type-cache
                         (lower-global-init-function-name global-name)
                         AstParamNil
                         global-ty
@@ -13219,19 +13406,17 @@
                             (IrGlobalCons
                               (IrGlobal global-name global-ty IrValueUnit)
                               globals)
-                            (lower-function-list-append
-                              init-funcs
-                              functions)
+                            (lower-function-list-append init-funcs functions)
                             externs
                             init-spans
                             names
                             name-cache
+                            type-cache
                             mode
                             module)]
                         [(ErrLowerFunction init-message)
                           (ErrLowerDecls init-message)])]))]
-              [(ErrTcType message)
-                (ErrLowerDecls (lower-diagnostic message))]))]
+              [(ErrTcType message) (ErrLowerDecls (lower-diagnostic message))]))]
         [(AstDeclExtern name metadata ty)
           (let
             [decl-ctx : TcContext (tc-context-with-module ctx module)]
@@ -13256,6 +13441,7 @@
                 spans
                 names
                 name-cache
+                type-cache
                 mode
                 module)))]
         [(AstDeclDefFn name params ret body)
@@ -13264,6 +13450,7 @@
             (match (lower-function-escaping
               decl-ctx
               local-top-env
+              type-cache
               (lower-current-decl-logical-name names module name)
               params
               ret
@@ -13283,6 +13470,7 @@
                   function-spans
                   names
                   name-cache
+                  type-cache
                   mode
                   module)]
               [(ErrLowerFunction message) (ErrLowerDecls message)]))]
@@ -13298,6 +13486,7 @@
             spans
             names
             name-cache
+            type-cache
             mode
             module)]
         [(AstDeclImport _)
@@ -13312,6 +13501,7 @@
             spans
             names
             name-cache
+            type-cache
             mode
             module)]
         [(AstDeclExport _)
@@ -13326,6 +13516,7 @@
             spans
             names
             name-cache
+            type-cache
             mode
             module)]
         [(AstDeclModule next-module)
@@ -13345,6 +13536,7 @@
                   spans
                   names
                   (lower-name-cache-from-env local-names)
+                  (lower-type-cache-from-env next-local-top-env)
                   mode
                   next-module))]
             [(ErrTcEnv message) (ErrLowerDecls (lower-diagnostic message))])]
@@ -13360,6 +13552,7 @@
             spans
             names
             name-cache
+            type-cache
             mode
             module)]
         [(AstDeclDefEnum name variants)
@@ -13378,6 +13571,7 @@
             spans
             names
             name-cache
+            type-cache
             mode
             module)]
         [(AstDeclDefStruct _ _ _ _)
@@ -13392,6 +13586,7 @@
             spans
             names
             name-cache
+            type-cache
             mode
             module)]
         [(AstDeclComptimeDecl _)
@@ -13406,6 +13601,7 @@
             spans
             names
             name-cache
+            type-cache
             mode
             module)])]))
 

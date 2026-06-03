@@ -1236,9 +1236,16 @@
 (define (tc-nominal-owner-cache-reset!) : unit
   (set! tc-nominal-owner-cache-handle 0))
 
-(define (tc-nominal-owner-cache-lookup [handle : i64]) : ResultTcString
+(define (tc-nominal-owner-cache-lookup [ctx : TcContext] [handle : i64]) : ResultTcString
   (if (= tc-nominal-owner-cache-handle handle)
-    (OkTcString tc-nominal-owner-cache-name)
+    (match (compiler-symbols-lookup-type
+      (tc-context-symbols ctx)
+      tc-nominal-owner-cache-name)
+      [(SomeI64 cached-handle)
+        (if (= cached-handle handle)
+          (OkTcString tc-nominal-owner-cache-name)
+          (ErrTcString ""))]
+      [(NoneI64) (ErrTcString "")])
     (ErrTcString "")))
 
 (define (tc-nominal-owner-cache-store-if-safe! [handle : i64] [name : String]) : unit
@@ -1300,7 +1307,7 @@
         [(ErrTcString message) (ErrTcString message)])]))
 
 (define (tc-nominal-owner-name [ctx : TcContext] [handle : i64]) : ResultTcString
-  (match (tc-nominal-owner-cache-lookup handle)
+  (match (tc-nominal-owner-cache-lookup ctx handle)
     [(OkTcString cached) (OkTcString cached)]
     [(ErrTcString _)
       (match ctx

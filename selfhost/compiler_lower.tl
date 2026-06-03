@@ -3010,7 +3010,7 @@
   [name : String]
   [ty : AstType]) : ResultLowerExpr
   (match (sym-i64-lookup env name)
-    [(SomeI64 id) (lower-materialize state (IrValueVar id) ty)]
+    [(SomeI64 id) (OkLowerExpr (LowerExpr state (IrValueVar id) ty))]
     [(NoneI64)
       (lower-materialize
         state

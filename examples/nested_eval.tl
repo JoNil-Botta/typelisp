@@ -55,18 +55,17 @@
       (let
         [arg1 : Sexpr (sexpr-head rest)]
         [arg2 : Sexpr (sexpr-head (sexpr-tail rest))]
-        (let
-          [a : i64 (eval-sexpr arg1)]
-          [b : i64 (eval-sexpr arg2)]
-          (cond
-            [(string-eq name "+") (+ a b)]
-            [(string-eq name "-") (- a b)]
-            [(string-eq name "*") (* a b)]
-            [(string-eq name "/") (/ a b)]
-            [else
-              (begin
-                (panic "eval: unknown operator")
-                0)])))]
+        [a : i64 (eval-sexpr arg1)]
+        [b : i64 (eval-sexpr arg2)]
+        (cond
+          [(string-eq name "+") (+ a b)]
+          [(string-eq name "-") (- a b)]
+          [(string-eq name "*") (* a b)]
+          [(string-eq name "/") (/ a b)]
+          [else
+            (begin
+              (panic "eval: unknown operator")
+              0)]))]
     ;; Any other shape (bare symbol, empty list, non-symbol operator head) is
     ;; not an evaluable call: the nested SSym above did not match, so we land
     ;; here.
@@ -83,6 +82,5 @@
 (define (main) : i64
   (let
     [inner : Sexpr (SCons (SSym "*") (SCons (SInt 2) (SCons (SInt 3) SNil)))]
-    (let
-      [prog : Sexpr (SCons (SSym "+") (SCons (SInt 1) (SCons inner SNil)))]
-      (eval-sexpr prog))))
+    [prog : Sexpr (SCons (SSym "+") (SCons (SInt 1) (SCons inner SNil)))]
+    (eval-sexpr prog)))

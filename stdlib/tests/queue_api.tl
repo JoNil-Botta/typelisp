@@ -74,22 +74,19 @@
             (i64-deque-push-back (i64-deque-with-capacity 3) 1)
             2)
           3)]
-      (let
-        [drop1 : I64DequePop (i64-deque-pop-front base)]
-        (let
-          [wrapped : I64Deque
-            (i64-deque-push-back (deque-pop-rest-or drop1 base) 4)]
-          (let
-            [grown : I64Deque (i64-deque-push-back wrapped 5)]
-            (begin
-              (assert-i64-eq (i64-deque-capacity grown) 6 "growth doubles to 6")
-              (assert-i64-eq (i64-deque-len grown) 4 "grown len 4")
-              (assert-i64-eq (i64-deque-get grown 0 -1) 2 "grown[0] = 2")
-              (assert-i64-eq (i64-deque-get grown 1 -1) 3 "grown[1] = 3")
-              (assert-i64-eq (i64-deque-get grown 2 -1) 4 "grown[2] = 4")
-              (assert-i64-eq (i64-deque-get grown 3 -1) 5 "grown[3] = 5")
-              (assert-i64-eq (i64-deque-peek-front grown -1) 2 "grown front")
-              (assert-i64-eq (i64-deque-peek-back grown -1) 5 "grown back"))))))
+      [drop1 : I64DequePop (i64-deque-pop-front base)]
+      [wrapped : I64Deque
+        (i64-deque-push-back (deque-pop-rest-or drop1 base) 4)]
+      [grown : I64Deque (i64-deque-push-back wrapped 5)]
+      (begin
+        (assert-i64-eq (i64-deque-capacity grown) 6 "growth doubles to 6")
+        (assert-i64-eq (i64-deque-len grown) 4 "grown len 4")
+        (assert-i64-eq (i64-deque-get grown 0 -1) 2 "grown[0] = 2")
+        (assert-i64-eq (i64-deque-get grown 1 -1) 3 "grown[1] = 3")
+        (assert-i64-eq (i64-deque-get grown 2 -1) 4 "grown[2] = 4")
+        (assert-i64-eq (i64-deque-get grown 3 -1) 5 "grown[3] = 5")
+        (assert-i64-eq (i64-deque-peek-front grown -1) 2 "grown front")
+        (assert-i64-eq (i64-deque-peek-back grown -1) 5 "grown back")))
     ;; --- double-ended push/pop and reuse after draining ---
     (let
       [dq : I64Deque

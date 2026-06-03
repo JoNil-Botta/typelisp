@@ -30,6 +30,9 @@ installed-root discovery, namespace isolation, or an implicit prelude.
   checks.
 - `fs.tl`: minimal recoverable filesystem helpers for tool artifact paths,
   temporary directories, and cleanup. Import it with `(import "stdlib/fs.tl")`.
+- `ffi.tl`: caller-owned FFI buffer helpers, including explicit
+  NUL-terminated `String` copies into `(MutPtr u8)` storage. Import it with
+  `(import "stdlib/ffi.tl")`.
 - `hash.tl`: deterministic, non-cryptographic hash and key equality helpers for
   future collections. Import it with `(import "stdlib/hash.tl")`.
 - `hashmap.tl`: fixed-capacity, open-addressed `String -> i64` map — the
@@ -117,6 +120,7 @@ should take borrowed text and which should return owned active-arena strings.
 | `stdout-write-line`, `stderr-write-line` | Allocate a newline-appended active-arena `String` via `string-append`, then write it to the target stream. |
 | `env-get`, `env-path-list`, `env-path-split`, `env-path-join` | Environment values and split/join results allocate fresh active-arena Strings/lists when runtime values are read or string pieces are created; missing variables return explicit `EnvNo*` options. |
 | `fs-path-join`, `fs-dirname`, `fs-basename`, `fs-extension`, `try-mkdir`, `try-mkdir-if-missing`, `try-remove-file`, `try-remove-dir`, `try-rename`, `try-create-temp-dir` | Path joins allocate active-arena Strings when a separator is inserted or duplicate separator is removed. `fs-dirname`/`fs-basename`/`fs-extension` are pure separator-agnostic string helpers (no allocation beyond the returned substring; `fs-extension` operates on the basename and treats a leading-dot name as extensionless). Recoverable filesystem helpers map runtime status codes into `IoError`; `try-mkdir` works on Linux and Windows, `try-mkdir-if-missing` treats an already-existing path as success, and `try-rename` follows host rename/replacement behavior on Linux while returning `IoUnsupported` on Windows. Linux temp directories are created under `$TMPDIR` or `/tmp` with process-id and retry suffixes. Windows temp directories are created under `%TEMP%`, `%TMP%`, or `.` with process-id and retry suffixes; cleanup helpers still return `IoUnsupported` on Windows. |
+| `ffi-c-string-*` helpers | Non-allocating inspection and copying into caller-owned `(MutPtr u8)` storage. `ffi-c-string-copy!` validates interior NUL bytes and capacity before writing, appends the trailing NUL on success, and leaves raw-pointer validity/lifetime with the caller. |
 | `hash-*` helpers | Deterministic, non-cryptographic hash and key equality helpers are non-allocating. Hashes are stable bucket hints only; collection users must still compare colliding candidate keys with the matching equality predicate. |
 | `string-list-*` helpers | Construct immutable `StringList` cons nodes and `StringListBuilder` values in the active arena. `string-list-reverse`, `-reverse-onto`, `-append`, `-from-array`, and builder build helpers allocate fresh list spines; `string-list-to-array` allocates a fresh active-arena `(Array String)` and copies the string handles into it. |
 | `process-*` helpers | Construct process command/output/error aggregates in the active arena. Ordered argv append helpers allocate list nodes; validators inspect executable/env/cwd metadata and reject invalid env names. On Linux, `process-run` and `process-output` execute directly through the backend runtime, preserving inherited environment entries, replacing entries named by env overrides, honoring cwd, and feeding string stdin. Unsupported targets return structured errors. |
@@ -169,6 +173,7 @@ Stdlib modules are imported explicitly:
 
 ```lisp
 (import "stdlib/env.tl")
+(import "stdlib/ffi.tl")
 (import "stdlib/fs.tl")
 (import "stdlib/hash.tl")
 (import "stdlib/hashmap.tl")

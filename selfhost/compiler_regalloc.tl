@@ -1278,33 +1278,30 @@
 (define (compiler-reg-plan-function [func : CompilerIrFunction]) : CompilerRegPlan
   (let
     [liveness : CompilerFunctionLiveness (compiler-live-analyze-function func)]
-    (let
-      [types : CompilerRegVarTypeList (compiler-reg-function-var-types func)]
-      (let
-        [intervals : CompilerRegIntervalList
-          (compiler-reg-live-intervals func liveness)]
-        (let
-          [ineligible : CompilerLiveI64Set
-            (compiler-reg-ineligible-vars func liveness types)]
-          (match (compiler-reg-assign-candidates
-            (compiler-reg-candidates intervals types ineligible false)
-            (compiler-reg-sysv-integer-registers)
-            CompilerRegActiveNil
-            CompilerRegAssignmentNil
-            (compiler-reg-function-moves func)
-            intervals
-            types)
-            [(CompilerRegAssignState _ integer-assignments)
-              (match (compiler-reg-assign-candidates
-                (compiler-reg-candidates intervals types ineligible true)
-                (compiler-reg-xmm-registers)
-                CompilerRegActiveNil
-                integer-assignments
-                (compiler-reg-function-moves func)
-                intervals
-                types)
-                [(CompilerRegAssignState _ assignments)
-                  (CompilerRegPlan assignments ineligible intervals)])]))))))
+    [types : CompilerRegVarTypeList (compiler-reg-function-var-types func)]
+    [intervals : CompilerRegIntervalList
+      (compiler-reg-live-intervals func liveness)]
+    [ineligible : CompilerLiveI64Set
+      (compiler-reg-ineligible-vars func liveness types)]
+    (match (compiler-reg-assign-candidates
+      (compiler-reg-candidates intervals types ineligible false)
+      (compiler-reg-sysv-integer-registers)
+      CompilerRegActiveNil
+      CompilerRegAssignmentNil
+      (compiler-reg-function-moves func)
+      intervals
+      types)
+      [(CompilerRegAssignState _ integer-assignments)
+        (match (compiler-reg-assign-candidates
+          (compiler-reg-candidates intervals types ineligible true)
+          (compiler-reg-xmm-registers)
+          CompilerRegActiveNil
+          integer-assignments
+          (compiler-reg-function-moves func)
+          intervals
+          types)
+          [(CompilerRegAssignState _ assignments)
+            (CompilerRegPlan assignments ineligible intervals)])])))
 
 (define (compiler-reg-plan-assignments [plan : CompilerRegPlan]) : CompilerRegAssignmentList
   (match plan

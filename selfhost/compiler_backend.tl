@@ -94,6 +94,8 @@
     bool
     bool
     bool
+    bool
+    bool
     bool))
 
 ;; Backend code-generation target (#646). Linux/System V and Windows x64 are
@@ -3793,16 +3795,19 @@
     [(CompilerBackendNoSignature)
       (compiler-backend-extern-signature externs name)]))
 
+(define (compiler-backend-runtime-param-types [name : String]) : AstTypeList
+  (cond
+    [(string-eq name "tl_print_char") (AstTypeCons (AstTyChar) AstTypeNil)]
+    [(string-eq name "tl_print_f64") (AstTypeCons (AstTyF64) AstTypeNil)]
+    [else AstTypeNil]))
+
 (define (compiler-backend-call-param-types
   [name : String]
   [functions : CompilerIrFunctionList]
   [externs : CompilerIrExternList]) : AstTypeList
-  (let
-    [local-types : AstTypeList
-      (compiler-backend-function-param-types functions name)]
-    (match local-types
-      [(AstTypeNil) (compiler-backend-extern-param-types externs name)]
-      [_ local-types])))
+  (match (compiler-backend-signature functions externs name)
+    [(CompilerBackendSomeSignature param-types _) param-types]
+    [(CompilerBackendNoSignature) (compiler-backend-runtime-param-types name)]))
 
 ;; Byte offset from %rsp where the `stack-idx`-th stack-passed OUTGOING argument
 ;; is stored (#750). Stack args are numbered sequentially in argument order (0,
@@ -3845,27 +3850,26 @@
           (match types
             [(AstTypeCons _ tail) tail]
             [(AstTypeNil) AstTypeNil])]
-        (let
-          [is-float : bool (compiler-backend-float-type? arg-ty)]
-          (compiler-backend-call-stack-arg-count
+        [is-float : bool (compiler-backend-float-type? arg-ty)]
+        (compiler-backend-call-stack-arg-count
+          target
+          rest
+          rest-types
+          (if is-float
+            int-idx
+            (+ int-idx 1))
+          (if is-float
+            (+ float-idx 1)
+            float-idx)
+          (+ position 1)
+          (if (compiler-backend-stack-call-arg-for-banks?
             target
-            rest
-            rest-types
-            (if is-float
-              int-idx
-              (+ int-idx 1))
-            (if is-float
-              (+ float-idx 1)
-              float-idx)
-            (+ position 1)
-            (if (compiler-backend-stack-call-arg-for-banks?
-              target
-              is-float
-              int-idx
-              float-idx
-              position)
-              (+ stack-count 1)
-              stack-count))))]))
+            is-float
+            int-idx
+            float-idx
+            position)
+            (+ stack-count 1)
+            stack-count)))]))
 
 ;; Total %rsp adjustment reserved for a call's stack-passed args (#750):
 ;; `roundup16(shadow + stack-arg-count * 8)`. System V has no shadow space, so
@@ -4014,37 +4018,87 @@
           (match types
             [(AstTypeCons _ tail) tail]
             [(AstTypeNil) AstTypeNil])]
-        (let
-          [is-float : bool (compiler-backend-float-type? arg-ty)]
-          (let
-            [next-int : i64
-              (if is-float
-                int-idx
-                (+ int-idx 1))]
-            [next-float : i64
-              (if is-float
-                (+ float-idx 1)
-                float-idx)]
-            (if (compiler-backend-stack-call-arg-for-banks?
+        [is-float : bool (compiler-backend-float-type? arg-ty)]
+        [next-int : i64
+          (if is-float
+            int-idx
+            (+ int-idx 1))]
+        [next-float : i64
+          (if is-float
+            (+ float-idx 1)
+            float-idx)]
+        (if (compiler-backend-stack-call-arg-for-banks?
+          target
+          is-float
+          int-idx
+          float-idx
+          position)
+          ;; Stack-passed arg: load into a scratch register that no other
+          ;; call arg uses (%xmm15 / %r11, matching the Rust backend) so an
+          ;; earlier register arg in xmm0/%rax is never clobbered, then
+          ;; store it at its %rsp offset.
+          (match (if is-float
+            (compiler-backend-emit-load-float-value-with-plan
+              assignments
+              value
+              arg-ty
+              "%xmm15")
+            (compiler-backend-emit-load-value-with-plan
+              assignments
+              value
+              "%r11"))
+            [(OkCompilerBackend head)
+              (match (compiler-backend-emit-call-args
+                target
+                assignments
+                rest
+                rest-types
+                next-int
+                next-float
+                (+ position 1)
+                (+ stack-idx 1)
+                func-diag)
+                [(OkCompilerBackend tail)
+                  (OkCompilerBackend
+                    (backend-cat5
+                      head
+                      (if is-float
+                        (backend-cat4
+                          "    "
+                          (compiler-backend-float-move arg-ty)
+                          " %xmm15, "
+                          "")
+                        "    movq %r11, ")
+                      (int->string
+                        (compiler-backend-outgoing-stack-arg-offset
+                          target
+                          stack-idx))
+                      "(%rsp)\n"
+                      tail))]
+                [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
+            [(ErrCompilerBackend message) (ErrCompilerBackend message)])
+          (match (if is-float
+            (compiler-backend-target-float-arg-reg
               target
-              is-float
-              int-idx
-              float-idx
-              position)
-              ;; Stack-passed arg: load into a scratch register that no other
-              ;; call arg uses (%xmm15 / %r11, matching the Rust backend) so an
-              ;; earlier register arg in xmm0/%rax is never clobbered, then
-              ;; store it at its %rsp offset.
+              (if (compiler-backend-target-windows? target)
+                position
+                float-idx))
+            (compiler-backend-target-arg-reg
+              target
+              (if (compiler-backend-target-windows? target)
+                position
+                int-idx)))
+            [(OkBackendReg reg)
               (match (if is-float
                 (compiler-backend-emit-load-float-value-with-plan
                   assignments
                   value
                   arg-ty
-                  "%xmm15")
+                  reg)
                 (compiler-backend-emit-load-value-with-plan
                   assignments
                   value
-                  "%r11"))
+                  reg))
                 [(OkCompilerBackend head)
                   (match (compiler-backend-emit-call-args
                     target
@@ -4054,68 +4108,15 @@
                     next-int
                     next-float
                     (+ position 1)
-                    (+ stack-idx 1)
+                    stack-idx
                     func-diag)
                     [(OkCompilerBackend tail)
-                      (OkCompilerBackend
-                        (backend-cat5
-                          head
-                          (if is-float
-                            (backend-cat4
-                              "    "
-                              (compiler-backend-float-move arg-ty)
-                              " %xmm15, "
-                              "")
-                            "    movq %r11, ")
-                          (int->string
-                            (compiler-backend-outgoing-stack-arg-offset
-                              target
-                              stack-idx))
-                          "(%rsp)\n"
-                          tail))]
+                      (OkCompilerBackend (string-append head tail))]
                     [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
-                [(ErrCompilerBackend message) (ErrCompilerBackend message)])
-              (match (if is-float
-                (compiler-backend-target-float-arg-reg
-                  target
-                  (if (compiler-backend-target-windows? target)
-                    position
-                    float-idx))
-                (compiler-backend-target-arg-reg
-                  target
-                  (if (compiler-backend-target-windows? target)
-                    position
-                    int-idx)))
-                [(OkBackendReg reg)
-                  (match (if is-float
-                    (compiler-backend-emit-load-float-value-with-plan
-                      assignments
-                      value
-                      arg-ty
-                      reg)
-                    (compiler-backend-emit-load-value-with-plan
-                      assignments
-                      value
-                      reg))
-                    [(OkCompilerBackend head)
-                      (match (compiler-backend-emit-call-args
-                        target
-                        assignments
-                        rest
-                        rest-types
-                        next-int
-                        next-float
-                        (+ position 1)
-                        stack-idx
-                        func-diag)
-                        [(OkCompilerBackend tail)
-                          (OkCompilerBackend (string-append head tail))]
-                        [(ErrCompilerBackend message)
-                          (ErrCompilerBackend message)])]
-                    [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
-                [(ErrBackendReg message)
-                  (ErrCompilerBackend
-                    (compiler-diagnostic-with-message func-diag message))])))))]))
+                [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
+            [(ErrBackendReg message)
+              (ErrCompilerBackend
+                (compiler-diagnostic-with-message func-diag message))])))]))
 
 (define (compiler-backend-phi-input-value
   [inputs : CompilerIrPhiInputList]
@@ -4514,40 +4515,38 @@
   (let
     [param-types : AstTypeList
       (compiler-backend-call-param-types name functions externs)]
-    (let
-      [call-space : i64
-        (compiler-backend-call-arg-space target args param-types)]
-      (match (compiler-backend-emit-call-args
-        target
-        assignments
-        args
-        param-types
-        0
-        0
-        0
-        0
-        instr-diag)
-        [(OkCompilerBackend args-asm)
-          (OkCompilerBackend
+    [call-space : i64 (compiler-backend-call-arg-space target args param-types)]
+    (match (compiler-backend-emit-call-args
+      target
+      assignments
+      args
+      param-types
+      0
+      0
+      0
+      0
+      instr-diag)
+      [(OkCompilerBackend args-asm)
+        (OkCompilerBackend
+          (string-append
+            (compiler-backend-emit-call-space-sub call-space)
             (string-append
-              (compiler-backend-emit-call-space-sub call-space)
-              (string-append
-                args-asm
-                (backend-cat5
-                  "    call "
-                  (compiler-backend-call-symbol name plan functions externs)
-                  "\n"
+              args-asm
+              (backend-cat5
+                "    call "
+                (compiler-backend-call-symbol name plan functions externs)
+                "\n"
+                (string-append
+                  (compiler-backend-emit-call-space-add call-space)
                   (string-append
-                    (compiler-backend-emit-call-space-add call-space)
-                    (string-append
-                      (compiler-backend-tail-call-return-normalize ty)
-                      (compiler-backend-return-tail
-                        source-function
-                        assignments
-                        vars
-                        blocks)))
-                  ""))))]
-        [(ErrCompilerBackend message) (ErrCompilerBackend message)]))))
+                    (compiler-backend-tail-call-return-normalize ty)
+                    (compiler-backend-return-tail
+                      source-function
+                      assignments
+                      vars
+                      blocks)))
+                ""))))]
+      [(ErrCompilerBackend message) (ErrCompilerBackend message)])))
 
 (define (compiler-backend-emit-trivial-phi-return-edge-instrs
   [source-function : String]
@@ -4923,46 +4922,41 @@
         (let
           [param-types : AstTypeList
             (compiler-backend-call-param-types name functions externs)]
-          (let
-            [call-space : i64
-              (compiler-backend-call-arg-space target args param-types)]
-            (match (compiler-backend-emit-call-args
-              target
-              assignments
-              args
-              param-types
-              0
-              0
-              0
-              0
-              instr-diag)
-              [(OkCompilerBackend args-asm)
-                (OkCompilerBackend
+          [call-space : i64
+            (compiler-backend-call-arg-space target args param-types)]
+          (match (compiler-backend-emit-call-args
+            target
+            assignments
+            args
+            param-types
+            0
+            0
+            0
+            0
+            instr-diag)
+            [(OkCompilerBackend args-asm)
+              (OkCompilerBackend
+                (string-append
+                  (compiler-backend-emit-call-space-sub call-space)
                   (string-append
-                    (compiler-backend-emit-call-space-sub call-space)
-                    (string-append
-                      args-asm
-                      (backend-cat5
-                        "    call "
-                        (compiler-backend-call-symbol
-                          name
-                          plan
-                          functions
-                          externs)
-                        "\n"
-                        (string-append
-                          (compiler-backend-emit-call-space-add call-space)
-                          (compiler-backend-emit-store-typed-var-with-plan
-                            assignments
-                            dst
-                            (if (compiler-backend-float-type? ty)
-                              "%xmm0"
-                              "%rax")
-                            ty))
-                        ""))))]
-              [(ErrCompilerBackend message)
-                (ErrCompilerBackend
-                  (compiler-backend-apply-instr-diagnostic message instr-diag))])))]
+                    args-asm
+                    (backend-cat5
+                      "    call "
+                      (compiler-backend-call-symbol name plan functions externs)
+                      "\n"
+                      (string-append
+                        (compiler-backend-emit-call-space-add call-space)
+                        (compiler-backend-emit-store-typed-var-with-plan
+                          assignments
+                          dst
+                          (if (compiler-backend-float-type? ty)
+                            "%xmm0"
+                            "%rax")
+                          ty))
+                      ""))))]
+            [(ErrCompilerBackend message)
+              (ErrCompilerBackend
+                (compiler-backend-apply-instr-diagnostic message instr-diag))]))]
       [(IrInstrCallIndirect dst func args ty)
         (compiler-backend-emit-indirect-call
           target
@@ -5765,40 +5759,38 @@
   (let
     [param-types : AstTypeList
       (compiler-backend-call-param-types name functions externs)]
-    (let
-      [call-space : i64
-        (compiler-backend-call-arg-space target args param-types)]
-      (match (compiler-backend-emit-call-args
-        target
-        assignments
-        args
-        param-types
-        0
-        0
-        0
-        0
-        instr-diag)
-        [(OkCompilerBackend args-asm)
-          (OkCompilerBackend
+    [call-space : i64 (compiler-backend-call-arg-space target args param-types)]
+    (match (compiler-backend-emit-call-args
+      target
+      assignments
+      args
+      param-types
+      0
+      0
+      0
+      0
+      instr-diag)
+      [(OkCompilerBackend args-asm)
+        (OkCompilerBackend
+          (string-append
+            (compiler-backend-emit-call-space-sub call-space)
             (string-append
-              (compiler-backend-emit-call-space-sub call-space)
-              (string-append
-                args-asm
-                (backend-cat5
-                  "    call "
-                  (compiler-backend-call-symbol name plan functions externs)
-                  "\n"
-                  (string-append
-                    (compiler-backend-emit-call-space-add call-space)
-                    (compiler-backend-return-tail
-                      source-function
-                      assignments
-                      vars
-                      blocks))
-                  ""))))]
-        [(ErrCompilerBackend message)
-          (ErrCompilerBackend
-            (compiler-backend-apply-instr-diagnostic message instr-diag))]))))
+              args-asm
+              (backend-cat5
+                "    call "
+                (compiler-backend-call-symbol name plan functions externs)
+                "\n"
+                (string-append
+                  (compiler-backend-emit-call-space-add call-space)
+                  (compiler-backend-return-tail
+                    source-function
+                    assignments
+                    vars
+                    blocks))
+                ""))))]
+      [(ErrCompilerBackend message)
+        (ErrCompilerBackend
+          (compiler-backend-apply-instr-diagnostic message instr-diag))])))
 
 (define (compiler-backend-indirect-call-param-types
   [types : CompilerRegVarTypeList]
@@ -5832,57 +5824,56 @@
   (let
     [param-types : AstTypeList
       (compiler-backend-indirect-call-param-types types func functions externs)]
-    (let
-      [call-space : i64
-        (compiler-backend-closure-call-arg-space target args param-types)]
-      (match (compiler-backend-emit-call-args
-        target
-        assignments
-        args
-        param-types
-        1
-        0
-        1
-        0
-        instr-diag)
-        [(OkCompilerBackend args-asm)
-          (match (compiler-backend-emit-load-value-with-plan
-            assignments
-            func
-            "%r11")
-            [(OkCompilerBackend func-asm)
-              (match (compiler-backend-target-arg-reg target 0)
-                [(OkBackendReg env-reg)
-                  (OkCompilerBackend
+    [call-space : i64
+      (compiler-backend-closure-call-arg-space target args param-types)]
+    (match (compiler-backend-emit-call-args
+      target
+      assignments
+      args
+      param-types
+      1
+      0
+      1
+      0
+      instr-diag)
+      [(OkCompilerBackend args-asm)
+        (match (compiler-backend-emit-load-value-with-plan
+          assignments
+          func
+          "%r11")
+          [(OkCompilerBackend func-asm)
+            (match (compiler-backend-target-arg-reg target 0)
+              [(OkBackendReg env-reg)
+                (OkCompilerBackend
+                  (string-append
+                    (compiler-backend-emit-call-space-sub call-space)
                     (string-append
-                      (compiler-backend-emit-call-space-sub call-space)
+                      args-asm
                       (string-append
-                        args-asm
-                        (string-append
-                          func-asm
-                          (backend-cat5
-                            "    movq 8(%r11), "
-                            env-reg
-                            "\n    movq (%r11), %rax\n    call *%rax\n"
-                            (string-append
-                              (compiler-backend-emit-call-space-add call-space)
-                              (compiler-backend-emit-store-typed-var-with-plan
-                                assignments
-                                dst
-                                (if (compiler-backend-float-type? ty)
-                                  "%xmm0"
-                                  "%rax")
-                                ty))
-                            "")))))]
-                [(ErrBackendReg message)
-                  (ErrCompilerBackend
-                    (compiler-diagnostic-with-message instr-diag message))])]
-            [(ErrCompilerBackend message)
-              (ErrCompilerBackend
-                (compiler-backend-apply-instr-diagnostic message instr-diag))])]
-        [(ErrCompilerBackend message)
-          (ErrCompilerBackend
-            (compiler-backend-apply-instr-diagnostic message instr-diag))]))))
+                        func-asm
+                        (backend-cat5
+                          "    movq 8(%r11), "
+                          env-reg
+                          "\n    movq (%r11), %rax\n    call *%rax\n"
+                          (string-append
+                            (compiler-backend-emit-call-space-add call-space)
+                            (compiler-backend-emit-store-typed-var-with-plan
+                              assignments
+                              dst
+                              (if (compiler-backend-float-type? ty)
+                                "%xmm0"
+                                "%rax")
+                              ty))
+                          "")))))]
+              [(ErrBackendReg message)
+                (ErrCompilerBackend
+                  (compiler-diagnostic-with-message instr-diag message))])]
+          [(ErrCompilerBackend message)
+            (ErrCompilerBackend
+              (compiler-backend-apply-instr-diagnostic message instr-diag))])]
+      [(ErrCompilerBackend message)
+        (ErrCompilerBackend
+          (compiler-backend-apply-instr-diagnostic message instr-diag))])))
 
 (define (compiler-backend-emit-instrs
   [target : CompilerBackendTarget]
@@ -7134,96 +7125,92 @@
         [(IrParam _ ty var-id)
           (let
             [is-float : bool (compiler-backend-float-type? ty)]
-            (let
-              [next-int : i64
-                (if is-float
-                  int-idx
-                  (+ int-idx 1))]
-              [next-float : i64
-                (if is-float
-                  (+ float-idx 1)
-                  float-idx)]
-              (if (compiler-backend-stack-call-arg-for-banks?
-                target
-                is-float
+            [next-int : i64
+              (if is-float
                 int-idx
-                float-idx
-                position)
-                (match (compiler-backend-emit-param-spills
-                  target
-                  assignments
-                  rest
-                  next-int
-                  next-float
-                  (+ position 1)
-                  (+ stack-idx 1))
-                  [(OkCompilerBackend tail)
-                    (OkCompilerBackend
+                (+ int-idx 1))]
+            [next-float : i64
+              (if is-float
+                (+ float-idx 1)
+                float-idx)]
+            (if (compiler-backend-stack-call-arg-for-banks?
+              target
+              is-float
+              int-idx
+              float-idx
+              position)
+              (match (compiler-backend-emit-param-spills
+                target
+                assignments
+                rest
+                next-int
+                next-float
+                (+ position 1)
+                (+ stack-idx 1))
+                [(OkCompilerBackend tail)
+                  (OkCompilerBackend
+                    (string-append
+                      (if is-float
+                        (backend-cat5
+                          "    "
+                          (compiler-backend-float-move ty)
+                          " "
+                          (int->string
+                            (compiler-backend-incoming-stack-arg-offset
+                              target
+                              stack-idx))
+                          "(%rbp), %xmm0\n")
+                        (backend-cat4
+                          "    movq "
+                          (int->string
+                            (compiler-backend-incoming-stack-arg-offset
+                              target
+                              stack-idx))
+                          "(%rbp), %rax\n"
+                          ""))
                       (string-append
-                        (if is-float
-                          (backend-cat5
-                            "    "
-                            (compiler-backend-float-move ty)
-                            " "
-                            (int->string
-                              (compiler-backend-incoming-stack-arg-offset
-                                target
-                                stack-idx))
-                            "(%rbp), %xmm0\n")
-                          (backend-cat4
-                            "    movq "
-                            (int->string
-                              (compiler-backend-incoming-stack-arg-offset
-                                target
-                                stack-idx))
-                            "(%rbp), %rax\n"
-                            ""))
+                        (compiler-backend-emit-store-typed-var-with-plan
+                          assignments
+                          var-id
+                          (if is-float
+                            "%xmm0"
+                            "%rax")
+                          ty)
+                        tail)))]
+                [(ErrCompilerBackend message) (ErrCompilerBackend message)])
+              (match (if is-float
+                (compiler-backend-target-float-arg-reg
+                  target
+                  (if (compiler-backend-target-windows? target)
+                    position
+                    float-idx))
+                (compiler-backend-target-arg-reg
+                  target
+                  (if (compiler-backend-target-windows? target)
+                    position
+                    int-idx)))
+                [(OkBackendReg reg)
+                  (match (compiler-backend-emit-param-spills
+                    target
+                    assignments
+                    rest
+                    next-int
+                    next-float
+                    (+ position 1)
+                    stack-idx)
+                    [(OkCompilerBackend tail)
+                      (OkCompilerBackend
                         (string-append
                           (compiler-backend-emit-store-typed-var-with-plan
                             assignments
                             var-id
-                            (if is-float
-                              "%xmm0"
-                              "%rax")
+                            reg
                             ty)
-                          tail)))]
-                  [(ErrCompilerBackend message) (ErrCompilerBackend message)])
-                (match (if is-float
-                  (compiler-backend-target-float-arg-reg
-                    target
-                    (if (compiler-backend-target-windows? target)
-                      position
-                      float-idx))
-                  (compiler-backend-target-arg-reg
-                    target
-                    (if (compiler-backend-target-windows? target)
-                      position
-                      int-idx)))
-                  [(OkBackendReg reg)
-                    (match (compiler-backend-emit-param-spills
-                      target
-                      assignments
-                      rest
-                      next-int
-                      next-float
-                      (+ position 1)
-                      stack-idx)
-                      [(OkCompilerBackend tail)
-                        (OkCompilerBackend
-                          (string-append
-                            (compiler-backend-emit-store-typed-var-with-plan
-                              assignments
-                              var-id
-                              reg
-                              ty)
-                            tail))]
-                      [(ErrCompilerBackend message)
-                        (ErrCompilerBackend message)])]
-                  [(ErrBackendReg _)
-                    (ErrCompilerBackend
-                      (compiler-diagnostic-at-start
-                        ""
-                        "backend: too many params"))]))))])]))
+                          tail))]
+                    [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
+                [(ErrBackendReg _)
+                  (ErrCompilerBackend
+                    (compiler-diagnostic-at-start "" "backend: too many params"))])))])]))
 
 (define (compiler-backend-emit-windows-main-argv-capture
   [target : CompilerBackendTarget]
@@ -7232,6 +7219,8 @@
   (if (and (compiler-backend-target-windows? target) (string-eq name "main"))
     (match plan
       [(BackendRuntimePlan
+          _
+          _
           _
           _
           _
@@ -7289,95 +7278,87 @@
       (let
         [func-diag : CompilerDiagnostic
           (compiler-backend-function-diagnostic spans name "")]
-        (let
-          [reg-plan : CompilerRegPlan (compiler-reg-plan-function func)]
-          (let
-            [raw-assignments : CompilerRegAssignmentList
-              (compiler-reg-plan-assignments reg-plan)]
+        [reg-plan : CompilerRegPlan (compiler-reg-plan-function func)]
+        [raw-assignments : CompilerRegAssignmentList
+          (compiler-reg-plan-assignments reg-plan)]
+        [assignments : CompilerRegAssignmentList raw-assignments]
+        [types : CompilerRegVarTypeList (compiler-reg-function-var-types func)]
+        [use-counts : (Array i64)
+          (compiler-backend-function-use-counts vars blocks)]
+        (match (compiler-backend-emit-param-spills
+          target
+          assignments
+          params
+          0
+          0
+          0
+          0)
+          [(OkCompilerBackend spills)
             (let
-              [assignments : CompilerRegAssignmentList raw-assignments]
-              [types : CompilerRegVarTypeList
-                (compiler-reg-function-var-types func)]
-              [use-counts : (Array i64)
-                (compiler-backend-function-use-counts vars blocks)]
-              (match (compiler-backend-emit-param-spills
+              [symbol : String (compiler-backend-user-symbol name)]
+              (match (compiler-backend-emit-blocks
                 target
+                symbol
+                name
+                blocks
+                blocks
                 assignments
-                params
-                0
-                0
-                0
-                0)
-                [(OkCompilerBackend spills)
+                vars
+                types
+                ret-ty
+                plan
+                functions
+                externs
+                spans
+                func-diag
+                use-counts)
+                [(OkCompilerBackend body)
                   (let
-                    [symbol : String (compiler-backend-user-symbol name)]
-                    (match (compiler-backend-emit-blocks
-                      target
-                      symbol
-                      name
-                      blocks
-                      blocks
-                      assignments
-                      vars
-                      types
-                      ret-ty
-                      plan
-                      functions
-                      externs
-                      spans
-                      func-diag
-                      use-counts)
-                      [(OkCompilerBackend body)
-                        (let
-                          [frame : i64
-                            (+
-                              (compiler-backend-frame-size
-                                (compiler-backend-frame-slots vars assignments))
-                              (compiler-backend-outgoing-frame-space
-                                target
-                                blocks))]
-                          (OkCompilerBackend
-                            (backend-cat5
-                              ".globl "
-                              symbol
-                              "\n"
-                              (backend-cat5
-                                symbol
-                                ":\n    pushq %rbp\n    movq %rsp, %rbp\n"
-                                (compiler-backend-emit-stack-sub target frame)
+                    [frame : i64
+                      (+
+                        (compiler-backend-frame-size
+                          (compiler-backend-frame-slots vars assignments))
+                        (compiler-backend-outgoing-frame-space target blocks))]
+                    (OkCompilerBackend
+                      (backend-cat5
+                        ".globl "
+                        symbol
+                        "\n"
+                        (backend-cat5
+                          symbol
+                          ":\n    pushq %rbp\n    movq %rsp, %rbp\n"
+                          (compiler-backend-emit-stack-sub target frame)
+                          (string-append
+                            (compiler-backend-mode-prologue mode)
+                            (string-append
+                              (compiler-backend-emit-save-callee-regs
+                                assignments
+                                vars)
+                              (string-append
+                                (compiler-backend-emit-windows-main-argv-capture
+                                  target
+                                  name
+                                  plan)
                                 (string-append
-                                  (compiler-backend-mode-prologue mode)
+                                  (if (and
+                                    (compiler-backend-target-windows? target)
+                                    (string-eq name "main"))
+                                    (compiler-backend-global-initializers
+                                      globals)
+                                    "")
                                   (string-append
-                                    (compiler-backend-emit-save-callee-regs
-                                      assignments
-                                      vars)
+                                    spills
                                     (string-append
-                                      (compiler-backend-emit-windows-main-argv-capture
-                                        target
+                                      body
+                                      (compiler-backend-return-epilogue
                                         name
-                                        plan)
-                                      (string-append
-                                        (if (and
-                                          (compiler-backend-target-windows?
-                                            target)
-                                          (string-eq name "main"))
-                                          (compiler-backend-global-initializers
-                                            globals)
-                                          "")
-                                        (string-append
-                                          spills
-                                          (string-append
-                                            body
-                                            (compiler-backend-return-epilogue
-                                              name
-                                              assignments
-                                              vars
-                                              blocks)))))))
-                                "\n")
-                              "")))]
-                      [(ErrCompilerBackend message)
-                        (ErrCompilerBackend message)]))]
-                [(ErrCompilerBackend message) (ErrCompilerBackend message)])))))]))
+                                        assignments
+                                        vars
+                                        blocks)))))))
+                          "\n")
+                        "")))]
+                [(ErrCompilerBackend message) (ErrCompilerBackend message)]))]
+          [(ErrCompilerBackend message) (ErrCompilerBackend message)]))]))
 
 ;; Per-function arena escape for the backend (#1633). Emitting one function's
 ;; assembly allocates per-instruction transient strings (right-associative
@@ -7397,39 +7378,38 @@
   [spans : CompilerSourceSpans]) : ResultCompilerBackend
   (let
     [enclosing : i64 (arena-current)]
-    (let
-      [scratch : i64 (arena-make)]
-      (begin
-        (unsafe (arena-set! scratch))
-        (match (compiler-backend-emit-function
-          target
-          mode
-          func
-          all-functions
-          globals
-          externs
-          plan
-          spans)
-          [(OkCompilerBackend asm)
-            (let
-              [scratch-head : i64 (arena-current)]
-              (begin
-                (unsafe (arena-set! enclosing))
-                (let
-                  [escaped : String (clone asm)]
-                  (begin
-                    (unsafe (arena-destroy scratch-head))
-                    (OkCompilerBackend escaped)))))]
-          [(ErrCompilerBackend message)
-            (let
-              [scratch-head : i64 (arena-current)]
-              (begin
-                (unsafe (arena-set! enclosing))
-                (let
-                  [escaped : CompilerDiagnostic (clone message)]
-                  (begin
-                    (unsafe (arena-destroy scratch-head))
-                    (ErrCompilerBackend escaped)))))])))))
+    [scratch : i64 (arena-make)]
+    (begin
+      (unsafe (arena-set! scratch))
+      (match (compiler-backend-emit-function
+        target
+        mode
+        func
+        all-functions
+        globals
+        externs
+        plan
+        spans)
+        [(OkCompilerBackend asm)
+          (let
+            [scratch-head : i64 (arena-current)]
+            (begin
+              (unsafe (arena-set! enclosing))
+              (let
+                [escaped : String (clone asm)]
+                (begin
+                  (unsafe (arena-destroy scratch-head))
+                  (OkCompilerBackend escaped)))))]
+        [(ErrCompilerBackend message)
+          (let
+            [scratch-head : i64 (arena-current)]
+            (begin
+              (unsafe (arena-set! enclosing))
+              (let
+                [escaped : CompilerDiagnostic (clone message)]
+                (begin
+                  (unsafe (arena-destroy scratch-head))
+                  (ErrCompilerBackend escaped)))))]))))
 
 (define (compiler-backend-emit-functions-into
   [target : CompilerBackendTarget]
@@ -7552,61 +7532,59 @@
       (compiler-backend-var-value-list
         (compiler-backend-type-list-count param-types)
         0)]
-    (let
-      [frame : i64
-        (+
-          (compiler-backend-frame-size
-            (compiler-backend-frame-slots vars CompilerRegAssignmentNil))
-          (compiler-backend-closure-adapter-outgoing-frame-space target args))]
-      [call-space : i64
-        (compiler-backend-call-arg-space target args param-types)]
-      [diag : CompilerDiagnostic (compiler-diagnostic-at-start "" "")]
-      (match (compiler-backend-emit-param-spills
-        target
-        CompilerRegAssignmentNil
-        params
-        1
-        0
-        1
-        0)
-        [(OkCompilerBackend spills)
-          (match (compiler-backend-emit-call-args
-            target
-            CompilerRegAssignmentNil
-            args
-            param-types
-            0
-            0
-            0
-            0
-            diag)
-            [(OkCompilerBackend args-asm)
-              (OkCompilerBackend
-                (backend-cat5
-                  (compiler-backend-closure-entry-label name)
-                  ":\n    pushq %rbp\n    movq %rsp, %rbp\n"
-                  (compiler-backend-emit-stack-sub target frame)
+    [frame : i64
+      (+
+        (compiler-backend-frame-size
+          (compiler-backend-frame-slots vars CompilerRegAssignmentNil))
+        (compiler-backend-closure-adapter-outgoing-frame-space target args))]
+    [call-space : i64 (compiler-backend-call-arg-space target args param-types)]
+    [diag : CompilerDiagnostic (compiler-diagnostic-at-start "" "")]
+    (match (compiler-backend-emit-param-spills
+      target
+      CompilerRegAssignmentNil
+      params
+      1
+      0
+      1
+      0)
+      [(OkCompilerBackend spills)
+        (match (compiler-backend-emit-call-args
+          target
+          CompilerRegAssignmentNil
+          args
+          param-types
+          0
+          0
+          0
+          0
+          diag)
+          [(OkCompilerBackend args-asm)
+            (OkCompilerBackend
+              (backend-cat5
+                (compiler-backend-closure-entry-label name)
+                ":\n    pushq %rbp\n    movq %rsp, %rbp\n"
+                (compiler-backend-emit-stack-sub target frame)
+                (string-append
+                  spills
                   (string-append
-                    spills
+                    (compiler-backend-emit-call-space-sub call-space)
                     (string-append
-                      (compiler-backend-emit-call-space-sub call-space)
-                      (string-append
-                        args-asm
-                        (backend-cat5
-                          "    call "
-                          (compiler-backend-call-symbol
-                            name
-                            plan
-                            functions
-                            externs)
-                          "\n"
-                          (string-append
-                            (compiler-backend-emit-call-space-add call-space)
-                            "    movq %rbp, %rsp\n    popq %rbp\n    ret\n\n")
-                          ""))))
-                  ""))]
-            [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
-        [(ErrCompilerBackend message) (ErrCompilerBackend message)]))))
+                      args-asm
+                      (backend-cat5
+                        "    call "
+                        (compiler-backend-call-symbol
+                          name
+                          plan
+                          functions
+                          externs)
+                        "\n"
+                        (string-append
+                          (compiler-backend-emit-call-space-add call-space)
+                          "    movq %rbp, %rsp\n    popq %rbp\n    ret\n\n")
+                        ""))))
+                ""))]
+          [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
+      [(ErrCompilerBackend message) (ErrCompilerBackend message)])))
 
 (define (compiler-backend-emit-closure-entry-adapters-into
   [target : CompilerBackendTarget]
@@ -8572,6 +8550,8 @@
         provides-abort
         provides-print-err
         provides-print-str
+        provides-print-char
+        provides-print-f64
         provides-arg-count
         provides-arg
         provides-read-file
@@ -8658,10 +8638,20 @@
               ".L_tl_file_exists"
               provides-file-exists))
           (or
-            (compiler-backend-provides-runtime-name?
-              name
-              "tl_print_str"
-              provides-print-str)
+            (backend-or4
+              (compiler-backend-provides-runtime-name?
+                name
+                "tl_print_str"
+                provides-print-str)
+              (compiler-backend-provides-runtime-name?
+                name
+                "tl_print_char"
+                provides-print-char)
+              (compiler-backend-provides-runtime-name?
+                name
+                "tl_print_f64"
+                provides-print-f64)
+              false)
             (or
               (backend-or8
                 (compiler-backend-provides-runtime-name?
@@ -8812,6 +8802,10 @@
       (compiler-backend-function-list-defines? functions "tl_print_err")]
     [defines-print-str : bool
       (compiler-backend-function-list-defines? functions "tl_print_str")]
+    [defines-print-char : bool
+      (compiler-backend-function-list-defines? functions "tl_print_char")]
+    [defines-print-f64 : bool
+      (compiler-backend-function-list-defines? functions "tl_print_f64")]
     [defines-region-mark : bool
       (compiler-backend-function-list-defines? functions "tl_region_mark")]
     [defines-region-reset : bool
@@ -8860,6 +8854,10 @@
       (compiler-backend-extern-list-references? externs "tl_print_err")]
     [extern-print-str : bool
       (compiler-backend-extern-list-references? externs "tl_print_str")]
+    [extern-print-char : bool
+      (compiler-backend-extern-list-references? externs "tl_print_char")]
+    [extern-print-f64 : bool
+      (compiler-backend-extern-list-references? externs "tl_print_f64")]
     [extern-arg-count : bool
       (compiler-backend-extern-list-references? externs ".L_tl_arg_count")]
     [extern-arg : bool
@@ -8986,6 +8984,10 @@
       (compiler-backend-function-list-calls? functions "tl_print_err")]
     [calls-print-str : bool
       (compiler-backend-function-list-calls? functions "tl_print_str")]
+    [calls-print-char : bool
+      (compiler-backend-function-list-calls? functions "tl_print_char")]
+    [calls-print-f64 : bool
+      (compiler-backend-function-list-calls? functions "tl_print_f64")]
     [calls-arg-count : bool
       (compiler-backend-function-list-calls? functions ".L_tl_arg_count")]
     [calls-arg : bool
@@ -9080,197 +9082,197 @@
       (compiler-backend-function-list-calls? functions "env-var-value")]
     [calls-env-path-separator : bool
       (compiler-backend-function-list-calls? functions "env-path-separator")]
-    (let
-      [needs-oob : bool (and (not defines-oob) (or extern-oob calls-oob))]
-      [needs-div-abort : bool
-        (and (not defines-div-abort) (or extern-div-abort calls-div-abort))]
-      [needs-shift-abort : bool
-        (and
-          (not defines-shift-abort)
-          (or extern-shift-abort calls-shift-abort))]
-      [needs-substring : bool
-        (and (not defines-substring) (or extern-substring calls-substring))]
-      [needs-concat : bool
-        (and (not defines-concat) (or extern-concat calls-concat))]
-      [needs-string-eq : bool
-        (and (not defines-string-eq) (or extern-string-eq calls-string-eq))]
-      [needs-string-to-int : bool
-        (and
-          (not defines-string-to-int)
-          (or extern-string-to-int calls-string-to-int))]
-      [needs-int-to-string : bool
-        (and
-          (not defines-int-to-string)
-          (or extern-int-to-string calls-int-to-string))]
-      [direct-abort : bool (or extern-abort calls-abort)]
-      [needs-print-err : bool
-        (and (not defines-print-err) (or extern-print-err calls-print-err))]
-      [needs-print-str : bool
-        (and (not defines-print-str) (or extern-print-str calls-print-str))]
-      [needs-arg-count : bool (or extern-arg-count calls-arg-count)]
-      [needs-arg : bool (or extern-arg calls-arg)]
-      [needs-read-file : bool
+    [needs-oob : bool (and (not defines-oob) (or extern-oob calls-oob))]
+    [needs-div-abort : bool
+      (and (not defines-div-abort) (or extern-div-abort calls-div-abort))]
+    [needs-shift-abort : bool
+      (and (not defines-shift-abort) (or extern-shift-abort calls-shift-abort))]
+    [needs-substring : bool
+      (and (not defines-substring) (or extern-substring calls-substring))]
+    [needs-concat : bool
+      (and (not defines-concat) (or extern-concat calls-concat))]
+    [needs-string-eq : bool
+      (and (not defines-string-eq) (or extern-string-eq calls-string-eq))]
+    [needs-string-to-int : bool
+      (and
+        (not defines-string-to-int)
+        (or extern-string-to-int calls-string-to-int))]
+    [needs-int-to-string : bool
+      (and
+        (not defines-int-to-string)
+        (or extern-int-to-string calls-int-to-string))]
+    [direct-abort : bool (or extern-abort calls-abort)]
+    [needs-print-err : bool
+      (and (not defines-print-err) (or extern-print-err calls-print-err))]
+    [needs-print-str : bool
+      (and (not defines-print-str) (or extern-print-str calls-print-str))]
+    [needs-print-char : bool
+      (and (not defines-print-char) (or extern-print-char calls-print-char))]
+    [needs-print-f64 : bool
+      (and (not defines-print-f64) (or extern-print-f64 calls-print-f64))]
+    [needs-arg-count : bool (or extern-arg-count calls-arg-count)]
+    [needs-arg : bool (or extern-arg calls-arg)]
+    [needs-read-file : bool
+      (or
+        (or extern-read-file calls-read-file)
+        (or extern-read-file-status calls-read-file-status))]
+    [needs-write-file : bool
+      (or
+        (or extern-write-file calls-write-file)
         (or
-          (or extern-read-file calls-read-file)
-          (or extern-read-file-status calls-read-file-status))]
-      [needs-write-file : bool
+          (or extern-write-file-status calls-write-file-status)
+          (or extern-append-file-status calls-append-file-status)))]
+    [needs-file-exists : bool
+      (or
+        (or extern-file-exists calls-file-exists)
+        (or extern-file-exists-status calls-file-exists-status))]
+    [needs-file-handle : bool
+      (or
         (or
-          (or extern-write-file calls-write-file)
+          (or extern-file-open-status calls-file-open-status)
+          (or extern-file-close-status calls-file-close-status))
+        (or
+          (or extern-file-write-status calls-file-write-status)
+          (or extern-file-flush-status calls-file-flush-status)))]
+    [needs-file-read-chunk : bool
+      (or
+        (or extern-file-read-chunk-status calls-file-read-chunk-status)
+        (or
+          extern-file-read-chunk-bytes
           (or
-            (or extern-write-file-status calls-write-file-status)
-            (or extern-append-file-status calls-append-file-status)))]
-      [needs-file-exists : bool
+            calls-file-read-chunk-bytes
+            (or extern-file-read-chunk-eof calls-file-read-chunk-eof))))]
+    [needs-fs-runtime : bool
+      (or
+        (backend-or8
+          extern-fs-mkdir-status
+          extern-fs-remove-file-status
+          extern-fs-remove-dir-status
+          extern-fs-rename-status
+          extern-fs-process-id
+          false
+          false
+          false)
+        (backend-or8
+          calls-fs-mkdir-status
+          calls-fs-remove-file-status
+          calls-fs-remove-dir-status
+          calls-fs-rename-status
+          calls-fs-process-id
+          false
+          false
+          false))]
+    [needs-read-line : bool (or extern-read-line calls-read-line)]
+    [needs-read-bytes : bool (or extern-read-bytes calls-read-bytes)]
+    [needs-stdin-eof : bool (or extern-stdin-eof calls-stdin-eof)]
+    [needs-flush-stdout : bool (or extern-flush-stdout calls-flush-stdout)]
+    [needs-process-output : bool
+      (and
+        (not defines-process-output)
+        (or extern-process-output calls-process-output))]
+    [needs-region-mark : bool
+      (and (not defines-region-mark) (or extern-region-mark calls-region-mark))]
+    [needs-region-reset : bool
+      (and
+        (not defines-region-reset)
+        (or extern-region-reset calls-region-reset))]
+    [needs-random-system-seed : bool
+      (and
+        (not defines-random-system-seed)
+        (or extern-random-system-seed calls-random-system-seed))]
+    [needs-windows-setup-instances : bool
+      (and
+        (not defines-windows-setup-instances)
+        (or extern-windows-setup-instances calls-windows-setup-instances))]
+    [needs-windows-sdk-registry-install : bool
+      (and
+        (not defines-windows-sdk-registry-install)
         (or
-          (or extern-file-exists calls-file-exists)
-          (or extern-file-exists-status calls-file-exists-status))]
-      [needs-file-handle : bool
+          extern-windows-sdk-registry-install
+          calls-windows-sdk-registry-install))]
+    [needs-env-var-exists : bool
+      (and
+        (not defines-env-var-exists)
+        (or extern-env-var-exists calls-env-var-exists))]
+    [needs-env-var-value : bool
+      (and
+        (not defines-env-var-value)
+        (or extern-env-var-value calls-env-var-value))]
+    [needs-env-path-separator : bool
+      (and
+        (not defines-env-path-separator)
+        (or extern-env-path-separator calls-env-path-separator))]
+    [direct-alloc : bool
+      (and (not defines-alloc) (or extern-alloc calls-alloc))]
+    [needs-abort : bool
+      (or
+        direct-abort
         (or
-          (or
-            (or extern-file-open-status calls-file-open-status)
-            (or extern-file-close-status calls-file-close-status))
-          (or
-            (or extern-file-write-status calls-file-write-status)
-            (or extern-file-flush-status calls-file-flush-status)))]
-      [needs-file-read-chunk : bool
-        (or
-          (or extern-file-read-chunk-status calls-file-read-chunk-status)
-          (or
-            extern-file-read-chunk-bytes
-            (or
-              calls-file-read-chunk-bytes
-              (or extern-file-read-chunk-eof calls-file-read-chunk-eof))))]
-      [needs-fs-runtime : bool
+          needs-arg
+          (or needs-read-file (or needs-write-file needs-file-exists))))]
+    [needs-alloc : bool
+      (or
+        (backend-or8
+          direct-alloc
+          needs-int-to-string
+          needs-substring
+          needs-concat
+          needs-arg
+          needs-read-file
+          needs-write-file
+          needs-file-exists)
         (or
           (backend-or8
-            extern-fs-mkdir-status
-            extern-fs-remove-file-status
-            extern-fs-remove-dir-status
-            extern-fs-rename-status
-            extern-fs-process-id
-            false
-            false
-            false)
-          (backend-or8
-            calls-fs-mkdir-status
-            calls-fs-remove-file-status
-            calls-fs-remove-dir-status
-            calls-fs-rename-status
-            calls-fs-process-id
-            false
-            false
-            false))]
-      [needs-read-line : bool (or extern-read-line calls-read-line)]
-      [needs-read-bytes : bool (or extern-read-bytes calls-read-bytes)]
-      [needs-stdin-eof : bool (or extern-stdin-eof calls-stdin-eof)]
-      [needs-flush-stdout : bool (or extern-flush-stdout calls-flush-stdout)]
-      [needs-process-output : bool
-        (and
-          (not defines-process-output)
-          (or extern-process-output calls-process-output))]
-      [needs-region-mark : bool
-        (and
-          (not defines-region-mark)
-          (or extern-region-mark calls-region-mark))]
-      [needs-region-reset : bool
-        (and
-          (not defines-region-reset)
-          (or extern-region-reset calls-region-reset))]
-      [needs-random-system-seed : bool
-        (and
-          (not defines-random-system-seed)
-          (or extern-random-system-seed calls-random-system-seed))]
-      [needs-windows-setup-instances : bool
-        (and
-          (not defines-windows-setup-instances)
-          (or extern-windows-setup-instances calls-windows-setup-instances))]
-      [needs-windows-sdk-registry-install : bool
-        (and
-          (not defines-windows-sdk-registry-install)
-          (or
-            extern-windows-sdk-registry-install
-            calls-windows-sdk-registry-install))]
-      [needs-env-var-exists : bool
-        (and
-          (not defines-env-var-exists)
-          (or extern-env-var-exists calls-env-var-exists))]
-      [needs-env-var-value : bool
-        (and
-          (not defines-env-var-value)
-          (or extern-env-var-value calls-env-var-value))]
-      [needs-env-path-separator : bool
-        (and
-          (not defines-env-path-separator)
-          (or extern-env-path-separator calls-env-path-separator))]
-      [direct-alloc : bool
-        (and (not defines-alloc) (or extern-alloc calls-alloc))]
-      (let
-        [needs-abort : bool
-          (or
-            direct-abort
-            (or
-              needs-arg
-              (or needs-read-file (or needs-write-file needs-file-exists))))]
-        [needs-alloc : bool
-          (or
-            (backend-or8
-              direct-alloc
-              needs-int-to-string
-              needs-substring
-              needs-concat
-              needs-arg
-              needs-read-file
-              needs-write-file
-              needs-file-exists)
-            (or
-              (backend-or8
-                needs-file-handle
-                needs-file-read-chunk
-                needs-fs-runtime
-                needs-process-output
-                needs-read-line
-                needs-read-bytes
-                needs-random-system-seed
-                needs-windows-setup-instances)
-              (backend-or4
-                needs-windows-sdk-registry-install
-                needs-env-var-value
-                needs-env-path-separator
-                false)))]
-        (OkBackendRuntimePlan
-          (BackendRuntimePlan
-            needs-alloc
-            needs-oob
-            needs-substring
-            needs-concat
-            needs-string-eq
-            needs-string-to-int
-            needs-int-to-string
-            needs-abort
-            needs-print-err
-            needs-print-str
-            needs-arg-count
-            needs-arg
-            needs-read-file
-            needs-write-file
-            needs-file-exists
             needs-file-handle
             needs-file-read-chunk
             needs-fs-runtime
             needs-process-output
             needs-read-line
             needs-read-bytes
-            needs-stdin-eof
-            needs-flush-stdout
-            needs-region-mark
-            needs-region-reset
             needs-random-system-seed
-            needs-windows-setup-instances
+            needs-windows-setup-instances)
+          (backend-or4
             needs-windows-sdk-registry-install
-            needs-env-var-exists
             needs-env-var-value
             needs-env-path-separator
-            needs-div-abort
-            needs-shift-abort))))))
+            false)))]
+    (OkBackendRuntimePlan
+      (BackendRuntimePlan
+        needs-alloc
+        needs-oob
+        needs-substring
+        needs-concat
+        needs-string-eq
+        needs-string-to-int
+        needs-int-to-string
+        needs-abort
+        needs-print-err
+        needs-print-str
+        needs-print-char
+        needs-print-f64
+        needs-arg-count
+        needs-arg
+        needs-read-file
+        needs-write-file
+        needs-file-exists
+        needs-file-handle
+        needs-file-read-chunk
+        needs-fs-runtime
+        needs-process-output
+        needs-read-line
+        needs-read-bytes
+        needs-stdin-eof
+        needs-flush-stdout
+        needs-region-mark
+        needs-region-reset
+        needs-random-system-seed
+        needs-windows-setup-instances
+        needs-windows-sdk-registry-install
+        needs-env-var-exists
+        needs-env-var-value
+        needs-env-path-separator
+        needs-div-abort
+        needs-shift-abort))))
 
 (define (compiler-backend-runtime-plan [program : CompilerIrProgram]) : ResultBackendRuntimePlan
   (match program
@@ -9555,6 +9557,15 @@ tl_current_arena:
 "
     ""))
 
+(define (compiler-backend-runtime-print-f64-data [print-f64 : bool]) : String
+  (if print-f64
+    "    .section .rodata
+.L_tl_print_f64_fmt:
+    .asciz \"%.17g\\n\"
+
+"
+    ""))
+
 (define (compiler-backend-runtime-data-for-target
   [target : CompilerBackendTarget]
   [plan : CompilerBackendRuntimePlan]) : String
@@ -9570,6 +9581,8 @@ tl_current_arena:
         _
         _
         _
+        _
+        print-f64
         arg-count
         arg
         read-file
@@ -9612,7 +9625,9 @@ tl_current_arena:
                 (compiler-backend-runtime-region-reset-data)
                 "")
               (string-append
-                (compiler-backend-runtime-argv-data arg-count arg)
+                (string-append
+                  (compiler-backend-runtime-print-f64-data print-f64)
+                  (compiler-backend-runtime-argv-data arg-count arg))
                 (string-append
                   (compiler-backend-runtime-read-file-data read-file)
                   (string-append
@@ -10103,6 +10118,50 @@ tl_print_str:
     movq $1, %rdi
     movq $1, %rax
     syscall
+    ret
+
+")
+
+(define (compiler-backend-runtime-print-char-functions) : String
+  "    .globl tl_print_char
+tl_print_char:
+    subq $8, %rsp
+    movb %dil, (%rsp)
+    movq %rsp, %rsi
+    movq $1, %rdx
+    movq $1, %rdi
+    movq $1, %rax
+    syscall
+    addq $8, %rsp
+    ret
+
+")
+
+(define (compiler-backend-runtime-print-f64-functions) : String
+  "    .globl tl_print_f64
+tl_print_f64:
+    push %rbp
+    mov %rsp, %rbp
+    subq $128, %rsp
+    leaq -128(%rbp), %rdi
+    movq $128, %rsi
+    leaq .L_tl_print_f64_fmt(%rip), %rdx
+    movb $1, %al
+    call snprintf
+    movq %rax, %rdx
+    cmpq $0, %rdx
+    jl .L_tl_print_f64_done
+    cmpq $128, %rdx
+    jl .L_tl_print_f64_len_ready
+    movq $127, %rdx
+.L_tl_print_f64_len_ready:
+    leaq -128(%rbp), %rsi
+    movq $1, %rdi
+    movq $1, %rax
+    syscall
+.L_tl_print_f64_done:
+    mov %rbp, %rsp
+    pop %rbp
     ret
 
 ")
@@ -12617,6 +12676,55 @@ tl_print_str:
     sub $32, %rsp
     call _write
     add $32, %rsp
+    mov %rbp, %rsp
+    pop %rbp
+    ret
+
+")
+
+(define (compiler-backend-runtime-windows-print-char-functions) : String
+  "    .globl tl_print_char
+tl_print_char:
+    push %rbp
+    mov %rsp, %rbp
+    sub $40, %rsp
+    movb %cl, 32(%rsp)
+    movq $1, %rcx
+    leaq 32(%rsp), %rdx
+    movq $1, %r8
+    call _write
+    add $40, %rsp
+    mov %rbp, %rsp
+    pop %rbp
+    ret
+
+")
+
+(define (compiler-backend-runtime-windows-print-f64-functions) : String
+  "    .globl tl_print_f64
+tl_print_f64:
+    push %rbp
+    mov %rsp, %rbp
+    sub $160, %rsp
+    leaq -128(%rbp), %rcx
+    movq $128, %rdx
+    leaq .L_tl_print_f64_fmt(%rip), %r8
+    movapd %xmm0, %xmm3
+    movq %xmm0, %r9
+    call _snprintf
+    movslq %eax, %rax
+    cmpq $0, %rax
+    jl .L_tl_print_f64_done
+    cmpq $128, %rax
+    jl .L_tl_print_f64_len_ready
+    movq $127, %rax
+.L_tl_print_f64_len_ready:
+    movq %rax, %r8
+    movq $1, %rcx
+    leaq -128(%rbp), %rdx
+    call _write
+.L_tl_print_f64_done:
+    add $160, %rsp
     mov %rbp, %rsp
     pop %rbp
     ret
@@ -15245,6 +15353,8 @@ tl_windows_sdk_registry_install:
         abort
         print-err
         print-str
+        print-char
+        print-f64
         arg-count
         arg
         read-file
@@ -15340,6 +15450,18 @@ tl_windows_sdk_registry_install:
             (if (compiler-backend-target-windows? target)
               (compiler-backend-runtime-windows-print-str-functions)
               (compiler-backend-runtime-print-str-functions))
+            "")]
+        [print-char-asm : String
+          (if print-char
+            (if (compiler-backend-target-windows? target)
+              (compiler-backend-runtime-windows-print-char-functions)
+              (compiler-backend-runtime-print-char-functions))
+            "")]
+        [print-f64-asm : String
+          (if print-f64
+            (if (compiler-backend-target-windows? target)
+              (compiler-backend-runtime-windows-print-f64-functions)
+              (compiler-backend-runtime-print-f64-functions))
             "")]
         [arg-count-asm : String
           (if arg-count
@@ -15487,10 +15609,12 @@ tl_windows_sdk_registry_install:
             (backend-cat5
               print-err-asm
               print-str-asm
-              arg-count-asm
+              print-char-asm
+              print-f64-asm
+              arg-count-asm)
+            (string-append
               arg-asm
-              read-file-asm)
-            read-file-status-asm)]
+              (string-append read-file-asm read-file-status-asm)))]
         [runtime-file-asm : String
           (backend-cat5
             write-file-asm
@@ -15672,6 +15796,8 @@ tl_windows_sdk_registry_install:
             _
             _
             _
+            _
+            _
             arg-count
             arg
             _
@@ -15720,6 +15846,8 @@ tl_windows_sdk_registry_install:
         abort
         print-err
         print-str
+        print-char
+        print-f64
         arg-count
         arg
         read-file
@@ -15757,17 +15885,17 @@ tl_windows_sdk_registry_install:
           (or
             (backend-or8
               print-err
+              print-char
+              print-f64
               arg-count
               arg
               read-file
               write-file
-              file-exists
-              file-handle
-              file-read-chunk)
+              file-exists)
             (or
-              print-str
+              (or print-str file-handle)
               (or
-                fs-runtime
+                (or fs-runtime file-read-chunk)
                 (or
                   process-output
                   (or
@@ -15851,14 +15979,19 @@ tl_windows_sdk_registry_install:
               "    .extern VirtualFree
 "
               ""))
-          ;; The Windows tl_process_output spawns the child via CreateProcessA
-          ;; with a constructed contiguous env block (__p__environ above) and
-          ;; captures stdout/stderr through CRT temp files made inheritable
-          ;; (tmpfile/_fileno/_get_osfhandle/SetHandleInformation), waiting via
-          ;; WaitForSingleObject/GetExitCodeProcess/CloseHandle. The Linux
-          ;; variant uses raw syscalls instead.
-          (if (compiler-backend-plan-provides? plan "tl_process_output")
-            "    .extern __p__environ
+          (string-append
+            (if (compiler-backend-plan-provides? plan "tl_print_f64")
+              "    .extern _snprintf
+"
+              "")
+            ;; The Windows tl_process_output spawns the child via CreateProcessA
+            ;; with a constructed contiguous env block (__p__environ above) and
+            ;; captures stdout/stderr through CRT temp files made inheritable
+            ;; (tmpfile/_fileno/_get_osfhandle/SetHandleInformation), waiting via
+            ;; WaitForSingleObject/GetExitCodeProcess/CloseHandle. The Linux
+            ;; variant uses raw syscalls instead.
+            (if (compiler-backend-plan-provides? plan "tl_process_output")
+              "    .extern __p__environ
     .extern tmpfile
     .extern fclose
     .extern _fileno
@@ -15870,7 +16003,7 @@ tl_windows_sdk_registry_install:
     .extern CloseHandle
     .extern GetStdHandle
 "
-            ""))))
+              "")))))
     ""))
 
 ;; Emit a full program for `target`. Windows x64 has ABI-correct user function

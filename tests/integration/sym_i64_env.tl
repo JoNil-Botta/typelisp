@@ -85,15 +85,13 @@
     ; Substring-built key lookup
     (let
       [e : SymI64Env (sym-i64-bind (sym-i64-empty) "hello" 99)]
-      (let
-        [key : String (substring "hello world" 0 5)]
-        (check-true (sym-i64-contains e key) "substring-key-hit")))
+      [key : String (substring "hello world" 0 5)]
+      (check-true (sym-i64-contains e key) "substring-key-hit"))
     ; String-append-built key lookup
     (let
       [e : SymI64Env (sym-i64-bind (sym-i64-empty) "foobar" 77)]
-      (let
-        [key : String (string-append "foo" "bar")]
-        (check-true (sym-i64-contains e key) "append-key-hit")))
+      [key : String (string-append "foo" "bar")]
+      (check-true (sym-i64-contains e key) "append-key-hit"))
     ; Multi-bind chain
     (let
       [e : SymI64Env

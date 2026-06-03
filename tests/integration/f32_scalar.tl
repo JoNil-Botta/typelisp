@@ -48,43 +48,41 @@
     [half : f32 0.5]
     ;; f32 locals and arithmetic: (2 + 3) = 5, (3 - 2) = 1, (2 * 3) = 6,
     ;; (3 / 2) = 1.5.
-    (let
-      [sum : f32 (addf two three)]
-      [diff : f32 (subf three two)]
-      [prod : f32 (mulf two three)]
-      [quot : f32 (divf three two)]
-      ;; Build the answer from comparisons over the f32 results so the exit
-      ;; code only reaches 42 if single-precision codegen is correct.
-      (let
-        [a : i64
-          (if (ltf diff sum)
-            20
-            0)]
-        ;; 1 < 5  -> 20
-        [b : i64
-          (if (< prod sum)
-            0
-            13)]
-        ;; 6 < 5 is false -> 13
-        [c : i64
-          (if (< quot two)
-            9
-            0)]
-        ;; 1.5 < 2 -> 9
-        ;; Round-trip an exactly-representable f64 (2.5) through f32 and
-        ;; require exact equality on return. A correct round-trip is neither
-        ;; less than nor greater than 2.5, so `rt` stays 0; any drift breaks
-        ;; the exit code.
-        [rt : i64
-          (if (< (roundtrip 2.5) 2.5)
-            100
-            (if (< 2.5 (roundtrip 2.5))
-              100
-              0))]
-        ;; Contextual f32 literals through a call boundary, with the ninth
-        ;; argument stack-passed on System V.
-        [stack : i64
-          (if (ltf half (ninthf 1.0 1.0 1.0 1.0 1.0 1.0 1.0 1.0 3.0))
-            0
-            100)]
-        (+ stack (+ rt (+ a (+ b c))))))))
+    [sum : f32 (addf two three)]
+    [diff : f32 (subf three two)]
+    [prod : f32 (mulf two three)]
+    [quot : f32 (divf three two)]
+    ;; Build the answer from comparisons over the f32 results so the exit
+    ;; code only reaches 42 if single-precision codegen is correct.
+    [a : i64
+      (if (ltf diff sum)
+        20
+        0)]
+    ;; 1 < 5  -> 20
+    [b : i64
+      (if (< prod sum)
+        0
+        13)]
+    ;; 6 < 5 is false -> 13
+    [c : i64
+      (if (< quot two)
+        9
+        0)]
+    ;; 1.5 < 2 -> 9
+    ;; Round-trip an exactly-representable f64 (2.5) through f32 and
+    ;; require exact equality on return. A correct round-trip is neither
+    ;; less than nor greater than 2.5, so `rt` stays 0; any drift breaks
+    ;; the exit code.
+    [rt : i64
+      (if (< (roundtrip 2.5) 2.5)
+        100
+        (if (< 2.5 (roundtrip 2.5))
+          100
+          0))]
+    ;; Contextual f32 literals through a call boundary, with the ninth
+    ;; argument stack-passed on System V.
+    [stack : i64
+      (if (ltf half (ninthf 1.0 1.0 1.0 1.0 1.0 1.0 1.0 1.0 3.0))
+        0
+        100)]
+    (+ stack (+ rt (+ a (+ b c))))))

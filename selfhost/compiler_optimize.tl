@@ -2650,21 +2650,17 @@
     [(IrInstrBinOp dst op l r ty)
       (let
         [t1 : OptExprTable (opt-expr-invalidate-var table dst)]
-        (let
-          [key : OptExprKey (OptBinKey op l r)]
-          (match (opt-expr-lookup t1 key)
-            [(IrSomeValue earlier)
-              (OptCseResult t1 (IrInstrMov dst earlier ty))]
-            [(IrNoValue) (OptCseResult (OptExprCons key dst t1) instr)])))]
+        [key : OptExprKey (OptBinKey op l r)]
+        (match (opt-expr-lookup t1 key)
+          [(IrSomeValue earlier) (OptCseResult t1 (IrInstrMov dst earlier ty))]
+          [(IrNoValue) (OptCseResult (OptExprCons key dst t1) instr)]))]
     [(IrInstrUnOp dst op v ty)
       (let
         [t1 : OptExprTable (opt-expr-invalidate-var table dst)]
-        (let
-          [key : OptExprKey (OptUnKey op v)]
-          (match (opt-expr-lookup t1 key)
-            [(IrSomeValue earlier)
-              (OptCseResult t1 (IrInstrMov dst earlier ty))]
-            [(IrNoValue) (OptCseResult (OptExprCons key dst t1) instr)])))]
+        [key : OptExprKey (OptUnKey op v)]
+        (match (opt-expr-lookup t1 key)
+          [(IrSomeValue earlier) (OptCseResult t1 (IrInstrMov dst earlier ty))]
+          [(IrNoValue) (OptCseResult (OptExprCons key dst t1) instr)]))]
     ;; Other defining instructions: invalidate their dst, keep the instruction.
     [(IrInstrMov dst _ _)
       (OptCseResult (opt-expr-invalidate-var table dst) instr)]
@@ -4345,19 +4341,14 @@
     [doms : OptDomTable (opt-cfg-dominators blocks)]
     [copy-facts : OptGlobalCopyFacts
       (opt-global-copy-facts-from-blocks blocks (OptGlobalCopyNil))]
-    (let
-      [copied : CompilerIrBlockList
-        (opt-global-copy-blocks copy-facts doms blocks)]
-      (let
-        [expr-facts : OptGlobalExprFacts
-          (opt-global-expr-facts-from-blocks copied (OptGlobalExprNil))]
-        (let
-          [cse : CompilerIrBlockList
-            (opt-global-cse-blocks expr-facts doms copied)]
-          (let
-            [cse-copy-facts : OptGlobalCopyFacts
-              (opt-global-copy-facts-from-blocks cse (OptGlobalCopyNil))]
-            (opt-global-copy-blocks cse-copy-facts doms cse)))))))
+    [copied : CompilerIrBlockList
+      (opt-global-copy-blocks copy-facts doms blocks)]
+    [expr-facts : OptGlobalExprFacts
+      (opt-global-expr-facts-from-blocks copied (OptGlobalExprNil))]
+    [cse : CompilerIrBlockList (opt-global-cse-blocks expr-facts doms copied)]
+    [cse-copy-facts : OptGlobalCopyFacts
+      (opt-global-copy-facts-from-blocks cse (OptGlobalCopyNil))]
+    (opt-global-copy-blocks cse-copy-facts doms cse)))
 
 (define (opt-global-value-number-function [func : CompilerIrFunction]) : CompilerIrFunction
   (match (opt-verify-function func)
@@ -4576,9 +4567,8 @@
 (define (opt-cfg-simplify-blocks [blocks : CompilerIrBlockList]) : CompilerIrBlockList
   (let
     [folded : CompilerIrBlockList (opt-cfg-fold-branches-blocks blocks)]
-    (let
-      [reachable : OptLabelSet (opt-cfg-reachable-blocks folded)]
-      (opt-cfg-filter-clean-blocks reachable folded))))
+    [reachable : OptLabelSet (opt-cfg-reachable-blocks folded)]
+    (opt-cfg-filter-clean-blocks reachable folded)))
 
 ;; --- sparse conditional constant propagation (#1348) -----------------------
 ;;
@@ -5479,59 +5469,48 @@
       ;; CFG and eliminate dead pure assignments.
       (let
         [folded : CompilerIrBlockList (optimize-block-list blocks)]
-        (let
-          [promoted : CompilerIrFunction
-            (opt-aggregate-stack-promote-function
-              (IrFunction name params ret-ty frame folded))]
-          (match promoted
-            [(IrFunction _ _ _ promoted-frame promoted-blocks)
-              ;; Aggregate field-load SROA (#1562) runs on the post-promotion
-              ;; blocks/frame (it leaves the frame unchanged), so the slots stay
-              ;; consistent with the later #1530 global-GVN pass below.
-              (match (opt-aggregate-sroa-function
-                (IrFunction name params ret-ty promoted-frame promoted-blocks))
-                [(IrFunction _ _ _ _ sroa-blocks)
-                  (let
-                    [gvn : CompilerIrBlockList
-                      (opt-gvn-blocks params sroa-blocks)]
-                    (let
-                      [sccp : CompilerIrBlockList (opt-sccp-blocks params gvn)]
-                      (let
-                        [cfg : CompilerIrBlockList
-                          (opt-cfg-simplify-blocks sccp)]
-                        ;; Cross-block global value numbering + copy propagation
-                        ;; (#1530) runs after local GVN/SCCP/CFG cleanup, on the
-                        ;; post-stack-promotion frame so its slots stay consistent
-                        ;; with the promoted blocks.
-                        (let
-                          [global : CompilerIrFunction
-                            (opt-global-value-number-function
-                              (IrFunction name params ret-ty promoted-frame cfg))]
-                          (let
-                            [global-blocks : CompilerIrBlockList
-                              (opt-function-blocks global)]
-                            (let
-                              [used : OptUsedSet
-                                (opt-collect-blocks-uses
-                                  (OptUsedNil)
-                                  global-blocks)]
-                              (IrFunction
-                                name
-                                params
-                                ret-ty
-                                promoted-frame
-                                (opt-dce-block-list used global-blocks))))))))])])))]))
+        [promoted : CompilerIrFunction
+          (opt-aggregate-stack-promote-function
+            (IrFunction name params ret-ty frame folded))]
+        (match promoted
+          [(IrFunction _ _ _ promoted-frame promoted-blocks)
+            ;; Aggregate field-load SROA (#1562) runs on the post-promotion
+            ;; blocks/frame (it leaves the frame unchanged), so the slots stay
+            ;; consistent with the later #1530 global-GVN pass below.
+            (match (opt-aggregate-sroa-function
+              (IrFunction name params ret-ty promoted-frame promoted-blocks))
+              [(IrFunction _ _ _ _ sroa-blocks)
+                (let
+                  [gvn : CompilerIrBlockList
+                    (opt-gvn-blocks params sroa-blocks)]
+                  [sccp : CompilerIrBlockList (opt-sccp-blocks params gvn)]
+                  [cfg : CompilerIrBlockList (opt-cfg-simplify-blocks sccp)]
+                  ;; Cross-block global value numbering + copy propagation
+                  ;; (#1530) runs after local GVN/SCCP/CFG cleanup, on the
+                  ;; post-stack-promotion frame so its slots stay consistent
+                  ;; with the promoted blocks.
+                  [global : CompilerIrFunction
+                    (opt-global-value-number-function
+                      (IrFunction name params ret-ty promoted-frame cfg))]
+                  [global-blocks : CompilerIrBlockList
+                    (opt-function-blocks global)]
+                  [used : OptUsedSet
+                    (opt-collect-blocks-uses (OptUsedNil) global-blocks)]
+                  (IrFunction
+                    name
+                    params
+                    ret-ty
+                    promoted-frame
+                    (opt-dce-block-list used global-blocks)))])]))]))
 
 (define (optimize-function-once-fast [func : CompilerIrFunction]) : CompilerIrFunction
   (match func
     [(IrFunction name params ret-ty frame blocks)
       (let
         [folded : CompilerIrBlockList (optimize-block-list-fast blocks)]
-        (let
-          [cfg : CompilerIrBlockList (opt-cfg-simplify-blocks folded)]
-          (let
-            [used : OptUsedSet (opt-collect-blocks-uses (OptUsedNil) cfg)]
-            (IrFunction name params ret-ty frame (opt-dce-block-list used cfg)))))]))
+        [cfg : CompilerIrBlockList (opt-cfg-simplify-blocks folded)]
+        [used : OptUsedSet (opt-collect-blocks-uses (OptUsedNil) cfg)]
+        (IrFunction name params ret-ty frame (opt-dce-block-list used cfg)))]))
 
 (define (optimize-function-pass [func : CompilerIrFunction]) : OptFunctionPassResult
   (let
@@ -5573,12 +5552,11 @@
     funcs
     (let
       [scratch : i64 (arena-make)]
-      (let
-        [result : CompilerIrFunctionList
-          (optimize-function-list-escaping funcs level scratch)]
-        (begin
-          (unsafe (arena-destroy scratch))
-          result)))))
+      [result : CompilerIrFunctionList
+        (optimize-function-list-escaping funcs level scratch)]
+      (begin
+        (unsafe (arena-destroy scratch))
+        result))))
 
 (define (optimize-function-list-escaping
   [funcs : CompilerIrFunctionList]
@@ -5607,22 +5585,19 @@
       (unsafe (arena-set! scratch))
       (let
         [mark : i64 (arena-mark)]
-        (let
-          [raw : CompilerIrFunction (optimize-function-with-level func level)]
+        [raw : CompilerIrFunction (optimize-function-with-level func level)]
+        [scratch-head : i64 (arena-current)]
+        (begin
+          (unsafe (arena-set! enclosing))
           (let
-            [scratch-head : i64 (arena-current)]
+            [escaped : CompilerIrFunction (clone raw)]
+            [new-enclosing : i64 (arena-current)]
             (begin
-              (unsafe (arena-set! enclosing))
-              (let
-                [escaped : CompilerIrFunction (clone raw)]
-                (let
-                  [new-enclosing : i64 (arena-current)]
-                  (begin
-                    (unsafe
-                      (arena-set! scratch-head)
-                      (arena-rewind mark)
-                      (arena-set! new-enclosing))
-                    escaped))))))))))
+              (unsafe
+                (arena-set! scratch-head)
+                (arena-rewind mark)
+                (arena-set! new-enclosing))
+              escaped)))))))
 
 (defenum OptStringSet
   (OptStringNil)
@@ -5924,13 +5899,12 @@
           (let
             [reachable-functions : CompilerIrFunctionList
               (opt-prune-unreachable-functions globals functions)]
-            (let
-              [optimized-functions : CompilerIrFunctionList
-                (optimize-function-list-with-level reachable-functions level)]
-              (IrProgram
-                globals
-                (opt-prune-unreachable-functions globals optimized-functions)
-                externs)))))]))
+            [optimized-functions : CompilerIrFunctionList
+              (optimize-function-list-with-level reachable-functions level)]
+            (IrProgram
+              globals
+              (opt-prune-unreachable-functions globals optimized-functions)
+              externs))))]))
 
 (define (opt-remap-spans-prepend-entry
   [spans : CompilerSourceSpans]
@@ -7138,24 +7112,22 @@
 (define (compiler-optimize-self-test) : i64
   (let
     [instrs : CompilerIrInstrList (opt-self-test-instrs)]
-    (let
-      [optimized : CompilerIrInstrList (opt-fold-instrs (OptConstNil) instrs)]
-      (if (= (opt-count-arith-instrs instrs) 1)
-        (if (= (opt-count-arith-instrs optimized) 0)
-          (if (= (opt-sum-mov-i64 optimized) 84)
-            (let
-              [stale-instrs : CompilerIrInstrList (opt-stale-load-test-instrs)]
-              (let
-                [stale-optimized : CompilerIrInstrList
-                  (opt-fold-instrs (OptConstNil) stale-instrs)]
-                (if (= (opt-count-arith-instrs stale-optimized) 1)
-                  (if (= (compiler-optimize-vector-mask-self-test) 42)
-                    42
-                    5)
-                  4)))
-            3)
-          2)
-        1))))
+    [optimized : CompilerIrInstrList (opt-fold-instrs (OptConstNil) instrs)]
+    (if (= (opt-count-arith-instrs instrs) 1)
+      (if (= (opt-count-arith-instrs optimized) 0)
+        (if (= (opt-sum-mov-i64 optimized) 84)
+          (let
+            [stale-instrs : CompilerIrInstrList (opt-stale-load-test-instrs)]
+            [stale-optimized : CompilerIrInstrList
+              (opt-fold-instrs (OptConstNil) stale-instrs)]
+            (if (= (opt-count-arith-instrs stale-optimized) 1)
+              (if (= (compiler-optimize-vector-mask-self-test) 42)
+                42
+                5)
+              4))
+          3)
+        2)
+      1)))
 
 (define (opt-typed-fold-u64-shr-instrs) : CompilerIrInstrList
   (IrInstrCons
@@ -7259,40 +7231,39 @@
   (let
     [pos : CompilerIrInstrList
       (opt-fold-instrs (OptConstNil) (opt-typed-fold-instrs))]
-    (let
-      [neg : CompilerIrInstrList
-        (opt-fold-instrs (OptConstNil) (opt-typed-fold-invalid-instrs))]
-      (if (= (opt-count-arith-instrs pos) 0)
-        (if (= (opt-count-cast-instrs pos) 0)
-          (if (= (opt-mov-dst-i64-value pos 2 (- 0 999)) 0)
-            (if (opt-mov-dst-bool-value? pos 5 true)
-              (if (opt-mov-dst-bool-value? pos 6 false)
-                (if (= (opt-mov-dst-i64-value pos 7 0) 255)
-                  (if (= (opt-mov-dst-char-code pos 8 0) 44)
-                    (if (= (opt-mov-dst-i64-value pos 10 0) 65)
-                      (if (opt-mov-dst-bool-value? pos 12 false)
-                        (if (= (opt-mov-dst-i64-value pos 13 0) 7)
-                          (if (= (opt-mov-dst-i64-value pos 14 0) 1)
-                            (if (= (opt-mov-dst-i64-value pos 17 0) 8)
-                              (if (= (opt-mov-dst-i64-value pos 19 0) (- 0 4))
-                                (if (= (opt-mov-dst-i64-value pos 22 0) 1)
-                                  (if (= (opt-count-arith-instrs neg) 4)
-                                    42
-                                    16)
-                                  15)
-                                14)
-                              13)
-                            12)
-                          11)
-                        10)
-                      9)
-                    8)
-                  7)
-                6)
-              5)
-            4)
-          3)
-        1))))
+    [neg : CompilerIrInstrList
+      (opt-fold-instrs (OptConstNil) (opt-typed-fold-invalid-instrs))]
+    (if (= (opt-count-arith-instrs pos) 0)
+      (if (= (opt-count-cast-instrs pos) 0)
+        (if (= (opt-mov-dst-i64-value pos 2 (- 0 999)) 0)
+          (if (opt-mov-dst-bool-value? pos 5 true)
+            (if (opt-mov-dst-bool-value? pos 6 false)
+              (if (= (opt-mov-dst-i64-value pos 7 0) 255)
+                (if (= (opt-mov-dst-char-code pos 8 0) 44)
+                  (if (= (opt-mov-dst-i64-value pos 10 0) 65)
+                    (if (opt-mov-dst-bool-value? pos 12 false)
+                      (if (= (opt-mov-dst-i64-value pos 13 0) 7)
+                        (if (= (opt-mov-dst-i64-value pos 14 0) 1)
+                          (if (= (opt-mov-dst-i64-value pos 17 0) 8)
+                            (if (= (opt-mov-dst-i64-value pos 19 0) (- 0 4))
+                              (if (= (opt-mov-dst-i64-value pos 22 0) 1)
+                                (if (= (opt-count-arith-instrs neg) 4)
+                                  42
+                                  16)
+                                15)
+                              14)
+                            13)
+                          12)
+                        11)
+                      10)
+                    9)
+                  8)
+                7)
+              6)
+            5)
+          4)
+        3)
+      1)))
 
 ;; Positive strength-reduction cases: integer neutral/absorbing identities and
 ;; boolean `and`/`or` identities. The first instruction uses `AstTyU8` to prove
@@ -7411,18 +7382,17 @@
   (let
     [pos : CompilerIrInstrList
       (opt-strength-instrs (OptConstNil) (opt-strength-self-test-instrs))]
-    (let
-      [neg : CompilerIrInstrList
-        (opt-strength-instrs (OptConstNil) (opt-strength-negative-instrs))]
-      (cond
-        [(not (= (opt-count-arith-instrs pos) 0)) 1]
-        [(not (= (opt-sum-mov-var-src pos) 49)) 2]
-        [(not (= (opt-count-mov-i64-value pos 0) 2)) 3]
-        [(not (= (opt-count-mov-bool-value pos false) 2)) 4]
-        [(not (= (opt-count-mov-bool-value pos true) 2)) 5]
-        [(not (= (opt-mov-dst-type-tag pos 10) (ast-type-tag (AstTyU8)))) 6]
-        [(not (= (opt-count-arith-instrs neg) 5)) 7]
-        [else 42]))))
+    [neg : CompilerIrInstrList
+      (opt-strength-instrs (OptConstNil) (opt-strength-negative-instrs))]
+    (cond
+      [(not (= (opt-count-arith-instrs pos) 0)) 1]
+      [(not (= (opt-sum-mov-var-src pos) 49)) 2]
+      [(not (= (opt-count-mov-i64-value pos 0) 2)) 3]
+      [(not (= (opt-count-mov-bool-value pos false) 2)) 4]
+      [(not (= (opt-count-mov-bool-value pos true) 2)) 5]
+      [(not (= (opt-mov-dst-type-tag pos 10) (ast-type-tag (AstTyU8)))) 6]
+      [(not (= (opt-count-arith-instrs neg) 5)) 7]
+      [else 42])))
 
 ;; Builds `[Mov v0=99 (unused), Call v1 = noop(), Return v1]`. `v0` is a dead
 ;; pure temporary; `v1` is produced by a side-effecting call and used by the
@@ -7439,22 +7409,17 @@
 (define (compiler-optimize-dce-self-test) : i64
   (let
     [instrs : CompilerIrInstrList (opt-dce-self-test-instrs)]
-    (let
-      [used : OptUsedSet (opt-collect-instrs-uses (OptUsedNil) instrs)]
-      (let
-        [cleaned : CompilerIrInstrList (opt-dce-instrs used instrs)]
-        (let
-          [again : CompilerIrInstrList
-            (opt-dce-instrs
-              (opt-collect-instrs-uses (OptUsedNil) cleaned)
-              cleaned)]
-          (cond
-            [(not (opt-used-contains used 1)) 0]
-            [(opt-used-contains used 0) 1]
-            [(not (= (compiler-ir-instr-list-count instrs) 3)) 2]
-            [(not (= (compiler-ir-instr-list-count cleaned) 2)) 3]
-            [(not (= (compiler-ir-instr-list-count again) 2)) 4]
-            [else 42]))))))
+    [used : OptUsedSet (opt-collect-instrs-uses (OptUsedNil) instrs)]
+    [cleaned : CompilerIrInstrList (opt-dce-instrs used instrs)]
+    [again : CompilerIrInstrList
+      (opt-dce-instrs (opt-collect-instrs-uses (OptUsedNil) cleaned) cleaned)]
+    (cond
+      [(not (opt-used-contains used 1)) 0]
+      [(opt-used-contains used 0) 1]
+      [(not (= (compiler-ir-instr-list-count instrs) 3)) 2]
+      [(not (= (compiler-ir-instr-list-count cleaned) 2)) 3]
+      [(not (= (compiler-ir-instr-list-count again) 2)) 4]
+      [else 42])))
 
 ;; Builds `[Mov v0=4096 (an address), Load v1 = *v0, Return v1]`. `v0` feeds a
 ;; `Load`, so DCE must treat it as used and keep it; without collecting the
@@ -7471,15 +7436,13 @@
 (define (compiler-optimize-dce-mem-self-test) : i64
   (let
     [instrs : CompilerIrInstrList (opt-dce-mem-self-test-instrs)]
-    (let
-      [used : OptUsedSet (opt-collect-instrs-uses (OptUsedNil) instrs)]
-      (let
-        [cleaned : CompilerIrInstrList (opt-dce-instrs used instrs)]
-        (if (opt-used-contains used 0)
-          (if (= (compiler-ir-instr-list-count cleaned) 3)
-            42
-            2)
-          1)))))
+    [used : OptUsedSet (opt-collect-instrs-uses (OptUsedNil) instrs)]
+    [cleaned : CompilerIrInstrList (opt-dce-instrs used instrs)]
+    (if (opt-used-contains used 0)
+      (if (= (compiler-ir-instr-list-count cleaned) 3)
+        42
+        2)
+      1)))
 
 ;; `[BinOp v2 = v0 + v1, BinOp v3 = v0 + v1]` with non-constant operands: CSE
 ;; rewrites the second into `Mov v3 = v2` (two arithmetic instrs -> one).
@@ -7520,19 +7483,17 @@
   (let
     [cse : CompilerIrInstrList
       (opt-cse-instrs (OptExprNil) (opt-cse-self-test-instrs))]
-    (let
-      [store : CompilerIrInstrList
-        (opt-cse-instrs (OptExprNil) (opt-cse-store-clears-instrs))]
-      (let
-        [redef : CompilerIrInstrList
-          (opt-cse-instrs (OptExprNil) (opt-cse-operand-redef-instrs))]
-        (if (= (opt-count-arith-instrs cse) 1)
-          (if (= (opt-count-arith-instrs store) 2)
-            (if (= (opt-count-arith-instrs redef) 2)
-              42
-              3)
-            2)
-          1)))))
+    [store : CompilerIrInstrList
+      (opt-cse-instrs (OptExprNil) (opt-cse-store-clears-instrs))]
+    [redef : CompilerIrInstrList
+      (opt-cse-instrs (OptExprNil) (opt-cse-operand-redef-instrs))]
+    (if (= (opt-count-arith-instrs cse) 1)
+      (if (= (opt-count-arith-instrs store) 2)
+        (if (= (opt-count-arith-instrs redef) 2)
+          42
+          3)
+        2)
+      1)))
 
 ;; --- cross-block GVN self-tests (#1349) -------------------------------------
 (define (opt-gvn-test-params) : CompilerIrParamList
@@ -7817,35 +7778,29 @@
   (let
     [pos : CompilerIrInstrList
       (opt-copy-instrs (OptCopyNil) (opt-copy-pos-instrs))]
-    (let
-      [src-redef : CompilerIrInstrList
-        (opt-copy-instrs (OptCopyNil) (opt-copy-src-redef-instrs))]
-      (let
-        [dst-redef : CompilerIrInstrList
-          (opt-copy-instrs (OptCopyNil) (opt-copy-dst-redef-instrs))]
-        (let
-          [cse : CompilerIrInstrList
-            (opt-copy-instrs
-              (OptCopyNil)
-              (opt-cse-instrs (OptExprNil) (opt-copy-cse-instrs)))]
-          (let
-            [cse-dce : CompilerIrInstrList
-              (opt-dce-instrs (opt-collect-instrs-uses (OptUsedNil) cse) cse)]
-            (let
-              [f64 : CompilerIrInstrList
-                (opt-copy-instrs (OptCopyNil) (opt-copy-f64-instrs))]
-              (let
-                [phi : CompilerIrInstrList
-                  (opt-copy-instrs (OptCopyNil) (opt-copy-phi-instrs))]
-                (cond
-                  [(not (= (opt-copy-binop-lhs-var pos 2) 0)) 1]
-                  [(not (= (opt-copy-binop-lhs-var src-redef 2) 1)) 2]
-                  [(not (= (opt-copy-binop-lhs-var dst-redef 2) 1)) 3]
-                  [(not (= (opt-copy-binop-lhs-var cse 4) 2)) 4]
-                  [(not (= (compiler-ir-instr-list-count cse-dce) 3)) 5]
-                  [(not (= (opt-copy-binop-lhs-var f64 2) 1)) 6]
-                  [(not (= (opt-phi-dst-first-input-var phi 2 (- 0 1)) 1)) 7]
-                  [else 42])))))))))
+    [src-redef : CompilerIrInstrList
+      (opt-copy-instrs (OptCopyNil) (opt-copy-src-redef-instrs))]
+    [dst-redef : CompilerIrInstrList
+      (opt-copy-instrs (OptCopyNil) (opt-copy-dst-redef-instrs))]
+    [cse : CompilerIrInstrList
+      (opt-copy-instrs
+        (OptCopyNil)
+        (opt-cse-instrs (OptExprNil) (opt-copy-cse-instrs)))]
+    [cse-dce : CompilerIrInstrList
+      (opt-dce-instrs (opt-collect-instrs-uses (OptUsedNil) cse) cse)]
+    [f64 : CompilerIrInstrList
+      (opt-copy-instrs (OptCopyNil) (opt-copy-f64-instrs))]
+    [phi : CompilerIrInstrList
+      (opt-copy-instrs (OptCopyNil) (opt-copy-phi-instrs))]
+    (cond
+      [(not (= (opt-copy-binop-lhs-var pos 2) 0)) 1]
+      [(not (= (opt-copy-binop-lhs-var src-redef 2) 1)) 2]
+      [(not (= (opt-copy-binop-lhs-var dst-redef 2) 1)) 3]
+      [(not (= (opt-copy-binop-lhs-var cse 4) 2)) 4]
+      [(not (= (compiler-ir-instr-list-count cse-dce) 3)) 5]
+      [(not (= (opt-copy-binop-lhs-var f64 2) 1)) 6]
+      [(not (= (opt-phi-dst-first-input-var phi 2 (- 0 1)) 1)) 7]
+      [else 42])))
 
 ;; Count explicit trapping bounds checks after the dedicated bounds pass.
 (define (opt-count-bounds-instrs [instrs : CompilerIrInstrList]) : i64
@@ -9212,92 +9167,71 @@
   (let
     [constant-if : CompilerIrBlockList
       (opt-cfg-simplify-blocks (opt-cfg-constant-if-blocks))]
-    (let
-      [loop-guard : CompilerIrBlockList
-        (opt-cfg-simplify-blocks (opt-cfg-loop-guard-blocks))]
-      (let
-        [phi-cfg : CompilerIrBlockList
-          (opt-cfg-simplify-blocks (opt-cfg-phi-blocks))]
-        (let
-          [phi-blocks : CompilerIrBlockList
-            (opt-function-blocks
-              (optimize-function (opt-cfg-test-function (opt-cfg-phi-blocks))))]
-          (let
-            [trap-blocks : CompilerIrBlockList
-              (opt-function-blocks
-                (optimize-function
-                  (opt-cfg-test-function (opt-cfg-trap-path-blocks))))]
-            (let
-              [fallthrough-blocks : CompilerIrBlockList
-                (opt-cfg-simplify-blocks (opt-cfg-fallthrough-prune-blocks))]
-              (if (= (compiler-ir-block-list-count constant-if) 2)
-                (if (not (opt-block-list-has-label? constant-if "else"))
-                  (if (= (opt-count-jump-to-blocks constant-if "then") 1)
-                    (if (= (opt-count-branches-blocks constant-if) 0)
-                      (if (= (compiler-ir-block-list-count loop-guard) 3)
-                        (if (not (opt-block-list-has-label? loop-guard "body"))
-                          (if (= (opt-count-jump-to-blocks loop-guard "exit") 1)
-                            (if (= (compiler-ir-block-list-count phi-blocks) 3)
-                              (if (not
-                                (opt-block-list-has-label? phi-blocks "else"))
-                                (if (= (opt-count-phi-blocks phi-blocks) 0)
-                                  (if (= (opt-count-mov-dst-blocks phi-cfg 3) 1)
-                                    (if (=
-                                      (compiler-ir-block-list-count trap-blocks)
-                                      3)
-                                      (if (opt-block-list-has-label?
-                                        trap-blocks
-                                        "trap")
-                                        (if (=
-                                          (opt-count-branches-blocks
-                                            trap-blocks)
-                                          1)
-                                          (if (opt-cfg-fallthrough-prune-ok?
-                                            fallthrough-blocks)
-                                            42
-                                            15)
-                                          14)
-                                        13)
-                                      12)
-                                    11)
-                                  10)
-                                9)
-                              8)
-                            7)
-                          6)
-                        5)
-                      4)
-                    3)
-                  2)
-                1))))))))
+    [loop-guard : CompilerIrBlockList
+      (opt-cfg-simplify-blocks (opt-cfg-loop-guard-blocks))]
+    [phi-cfg : CompilerIrBlockList
+      (opt-cfg-simplify-blocks (opt-cfg-phi-blocks))]
+    [phi-blocks : CompilerIrBlockList
+      (opt-function-blocks
+        (optimize-function (opt-cfg-test-function (opt-cfg-phi-blocks))))]
+    [trap-blocks : CompilerIrBlockList
+      (opt-function-blocks
+        (optimize-function (opt-cfg-test-function (opt-cfg-trap-path-blocks))))]
+    [fallthrough-blocks : CompilerIrBlockList
+      (opt-cfg-simplify-blocks (opt-cfg-fallthrough-prune-blocks))]
+    (if (= (compiler-ir-block-list-count constant-if) 2)
+      (if (not (opt-block-list-has-label? constant-if "else"))
+        (if (= (opt-count-jump-to-blocks constant-if "then") 1)
+          (if (= (opt-count-branches-blocks constant-if) 0)
+            (if (= (compiler-ir-block-list-count loop-guard) 3)
+              (if (not (opt-block-list-has-label? loop-guard "body"))
+                (if (= (opt-count-jump-to-blocks loop-guard "exit") 1)
+                  (if (= (compiler-ir-block-list-count phi-blocks) 3)
+                    (if (not (opt-block-list-has-label? phi-blocks "else"))
+                      (if (= (opt-count-phi-blocks phi-blocks) 0)
+                        (if (= (opt-count-mov-dst-blocks phi-cfg 3) 1)
+                          (if (= (compiler-ir-block-list-count trap-blocks) 3)
+                            (if (opt-block-list-has-label? trap-blocks "trap")
+                              (if (= (opt-count-branches-blocks trap-blocks) 1)
+                                (if (opt-cfg-fallthrough-prune-ok?
+                                  fallthrough-blocks)
+                                  42
+                                  15)
+                                14)
+                              13)
+                            12)
+                          11)
+                        10)
+                      9)
+                    8)
+                  7)
+                6)
+              5)
+            4)
+          3)
+        2)
+      1)))
 
 (define (compiler-optimize-fixed-point-self-test) : i64
   (let
     [func : CompilerIrFunction (opt-test-function (opt-fixed-point-instrs))]
-    (let
-      [once : CompilerIrFunction (optimize-function-once func)]
-      (let
-        [fixed : CompilerIrFunction (optimize-function func)]
-        (let
-          [once-instrs : CompilerIrInstrList (opt-function-first-instrs once)]
-          (let
-            [fixed-instrs : CompilerIrInstrList
-              (opt-function-first-instrs fixed)]
-            (let
-              [optimized-program : CompilerIrProgram
-                (optimize-program-with-level
-                  (opt-test-program (opt-fixed-point-instrs))
-                  2)]
-              (let
-                [again-program : CompilerIrProgram
-                  (optimize-program-with-level optimized-program 2)]
-                (cond
-                  [(not (= (compiler-ir-instr-list-count once-instrs) 4)) 1]
-                  [(not (= (opt-count-arith-instrs once-instrs) 3)) 2]
-                  [(not (= (compiler-ir-instr-list-count fixed-instrs) 3)) 3]
-                  [(not (= (opt-count-arith-instrs fixed-instrs) 2)) 4]
-                  [(not (opt-program-eq optimized-program again-program)) 5]
-                  [else 42])))))))))
+    [once : CompilerIrFunction (optimize-function-once func)]
+    [fixed : CompilerIrFunction (optimize-function func)]
+    [once-instrs : CompilerIrInstrList (opt-function-first-instrs once)]
+    [fixed-instrs : CompilerIrInstrList (opt-function-first-instrs fixed)]
+    [optimized-program : CompilerIrProgram
+      (optimize-program-with-level
+        (opt-test-program (opt-fixed-point-instrs))
+        2)]
+    [again-program : CompilerIrProgram
+      (optimize-program-with-level optimized-program 2)]
+    (cond
+      [(not (= (compiler-ir-instr-list-count once-instrs) 4)) 1]
+      [(not (= (opt-count-arith-instrs once-instrs) 3)) 2]
+      [(not (= (compiler-ir-instr-list-count fixed-instrs) 3)) 3]
+      [(not (= (opt-count-arith-instrs fixed-instrs) 2)) 4]
+      [(not (opt-program-eq optimized-program again-program)) 5]
+      [else 42])))
 
 ;; --- noalias / alias fact model (#1510) -------------------------------------
 ;;

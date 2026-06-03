@@ -42,6 +42,9 @@ Coverage notes:
 - `env_api.tl` covers missing, empty, and present environment variables,
   host-separator PATH splitting/joining, and explicit Windows `;` path-list
   behavior.
+- `ffi_api.tl` covers caller-owned C string buffers: required byte counts,
+  exact-capacity copies, trailing NUL writes, too-small buffers, and interior
+  NUL rejection using an explicitly unsafe test-only string fixture.
 - `fs_api.tl` covers path joins, dirname/basename/extension helpers, temp-dir
   creation, recoverable cleanup helpers, Linux file/directory rename behavior,
   missing and empty rename paths, and the Windows unsupported rename result.

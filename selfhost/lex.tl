@@ -136,11 +136,10 @@
 (define (scan-number-end [src : String] [start : i64] [n : i64]) : i64
   (let
     [digits-start : i64 (number-digits-start src start)]
-    (let
-      [int-end : i64 (scan-int-end src digits-start n)]
-      (if (float-tail? src int-end n)
-        (scan-int-end src (+ int-end 1) n)
-        int-end))))
+    [int-end : i64 (scan-int-end src digits-start n)]
+    (if (float-tail? src int-end n)
+      (scan-int-end src (+ int-end 1) n)
+      int-end)))
 
 (define (number-digits-start [src : String] [start : i64]) : i64
   (if (= (string-ref src start) #-')
@@ -341,11 +340,10 @@
           (if (starts-named-char src start n)
             (let
               [end : i64 (scan-char-name-end src start n)]
-              (let
-                [message : String (char-close-error src end n)]
-                (if (lex-ok? message)
-                  (named-char-result (substring src start (- end start)))
-                  (ErrLexChar message))))
+              [message : String (char-close-error src end n)]
+              (if (lex-ok? message)
+                (named-char-result (substring src start (- end start)))
+                (ErrLexChar message)))
             (let
               [message : String (char-close-error src (+ start 1) n)]
               (if (lex-ok? message)
@@ -377,11 +375,10 @@
           (if (starts-named-char src start n)
             (let
               [end : i64 (scan-char-name-end src start n)]
-              (let
-                [message : String (char-close-error src end n)]
-                (if (lex-ok? message)
-                  (OkLexI64 (+ end 1))
-                  (ErrLexI64 message))))
+              [message : String (char-close-error src end n)]
+              (if (lex-ok? message)
+                (OkLexI64 (+ end 1))
+                (ErrLexI64 message)))
             (let
               [message : String (char-close-error src (+ start 1) n)]
               (if (lex-ok? message)
@@ -540,16 +537,15 @@
               ; '"' - a string literal
               (let
                 [start : i64 (+ i 1)]
-                (let
-                  [end : i64 (scan-str-end src start n)]
-                  (begin
-                    (array-set! starts count i)
-                    (array-set!
-                      toks
-                      count
-                      (TStr (unescape-string-literal src start end)))
-                    (set! count (+ count 1))
-                    (set! i (+ end 1)))))]
+                [end : i64 (scan-str-end src start n)]
+                (begin
+                  (array-set! starts count i)
+                  (array-set!
+                    toks
+                    count
+                    (TStr (unescape-string-literal src start end)))
+                  (set! count (+ count 1))
+                  (set! i (+ end 1))))]
             [(= c #;')
               ; ';' - a line comment
               (set! i (scan-comment-end src (+ i 1) n))]
@@ -557,13 +553,12 @@
               ; '#' - a char literal
               (let
                 [value : char (char-literal-value src i n)]
-                (let
-                  [end : i64 (char-literal-end src i n)]
-                  (begin
-                    (array-set! starts count i)
-                    (array-set! toks count (TChar value))
-                    (set! count (+ count 1))
-                    (set! i end))))]
+                [end : i64 (char-literal-end src i n)]
+                (begin
+                  (array-set! starts count i)
+                  (array-set! toks count (TChar value))
+                  (set! count (+ count 1))
+                  (set! i end)))]
             [(or (is-digit c) (negative-number-start? src i n))
               (let
                 [end : i64 (scan-number-end src i n)]
@@ -691,17 +686,13 @@
     [(OkLexCheck _)
       (let
         [cap : i64 (+ (string-length src) 1)]
-        (let
-          [toks : (Array Token) (make-array Token cap)]
-          [starts : (Array i64) (make-array i64 cap)]
-          (let
-            [count : i64 (lex-into-spanned src toks starts)]
-            (let
-              [stoks : (Array SpannedToken)
-                (make-array SpannedToken (+ count 1))]
-              (begin
-                (fill-spanned src toks starts stoks (+ count 1))
-                (OkSpannedTokens stoks))))))]
+        [toks : (Array Token) (make-array Token cap)]
+        [starts : (Array i64) (make-array i64 cap)]
+        [count : i64 (lex-into-spanned src toks starts)]
+        [stoks : (Array SpannedToken) (make-array SpannedToken (+ count 1))]
+        (begin
+          (fill-spanned src toks starts stoks (+ count 1))
+          (OkSpannedTokens stoks)))]
     [(ErrLexCheck err) (ErrSpannedTokens err)]))
 
 (define (lex-spanned [src : String]) : (Array SpannedToken)

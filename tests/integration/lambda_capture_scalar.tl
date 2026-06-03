@@ -49,14 +49,13 @@
 (define (case-nested) : bool
   (let
     [outer : i64 7]
-    (let
-      [make : (-> i64 (-> i64 i64))
-        (lambda
-          ([add : i64])
-          :
-          (-> i64 i64)
-          (lambda ([x : i64]) : i64 (+ x (+ outer add))))]
-      (= ((make 3) 32) 42))))
+    [make : (-> i64 (-> i64 i64))
+      (lambda
+        ([add : i64])
+        :
+        (-> i64 i64)
+        (lambda ([x : i64]) : i64 (+ x (+ outer add))))]
+    (= ((make 3) 32) 42)))
 
 (define (case-shadowed-capture) : bool
   (let

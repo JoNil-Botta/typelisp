@@ -365,6 +365,52 @@
                 (compiler-backend-todo-marker))))))]
     [(ErrCompilerBackend _) false]))
 
+(define (compiler-backend-print-runtime-source) : String
+  "(define (main) : i64
+  (begin
+    (print-char #A')
+    (print-float 1.5)
+    0))")
+
+(define (compiler-backend-print-runtime-target-extra-ok?
+  [target : CompilerBackendTarget]
+  [asm : String]) : bool
+  (match target
+    [(BackendTargetLinux)
+      (compiler-backend-string-contains? asm "    call snprintf\n")]
+    [(BackendTargetWindows)
+      (and
+        (compiler-backend-string-contains? asm ".extern _snprintf\n")
+        (compiler-backend-string-contains? asm "    call _snprintf\n"))]))
+
+(define (compiler-backend-print-runtime-target-ok?
+  [target : CompilerBackendTarget]) : bool
+  (match (compiler-backend-emit-source-for-target
+    (compiler-backend-print-runtime-source)
+    target)
+    [(OkCompilerBackend asm)
+      (and
+        (backend-and8
+          (compiler-backend-string-contains? asm ".globl tl_print_char\n")
+          (compiler-backend-string-contains? asm "tl_print_char:\n")
+          (compiler-backend-string-contains? asm "    call tl_print_char\n")
+          (compiler-backend-string-contains? asm ".globl tl_print_f64\n")
+          (compiler-backend-string-contains? asm "tl_print_f64:\n")
+          (compiler-backend-string-contains? asm "    call tl_print_f64\n")
+          (compiler-backend-string-contains? asm ".L_tl_print_f64_fmt:\n")
+          (compiler-backend-print-runtime-target-extra-ok? target asm))
+        (and
+          (not (compiler-backend-string-contains? asm "call _tl_print_char"))
+          (and
+            (not (compiler-backend-string-contains? asm "_tl_print_float"))
+            (not (compiler-backend-string-contains? asm "call _tl_print_f64")))))]
+    [(ErrCompilerBackend _) false]))
+
+(define (compiler-backend-print-runtime-ok?) : bool
+  (and
+    (compiler-backend-print-runtime-target-ok? (BackendTargetLinux))
+    (compiler-backend-print-runtime-target-ok? (BackendTargetWindows))))
+
 ;; Backend-owned replacement for the Rust `string-ref` emit-shape checks
 ;; (#1417): source-level string indexing should keep literal string data, use an
 ;; unsigned bounds check, call the out-of-bounds helper, and zero-extend the
@@ -1487,7 +1533,7 @@
           (IrValueF64 "1.0")
           (IrValueF64 "2.0")
           (AstTyF64))
-        "backend: unsupported float binary op"
+        "backend: unsupported f64 binary op"
         34
         9)
       ;; #1044: an f64 unary op other than negation is rejected (mirrors the
@@ -1727,6 +1773,8 @@
     CompilerRegVarTypeNil
     (AstTyI64)
     (BackendRuntimePlan
+      false
+      false
       false
       false
       false
@@ -2794,6 +2842,34 @@
           (compiler-backend-string-contains? asm (compiler-backend-todo-marker))))]
     [(ErrCompilerBackend _) false]))
 
+;; Backend emit-shape coverage for local tuple construction/ref (#1414).
+;; `(tuple true 42)` allocates the tuple payload, materializes/stores the bool
+;; byte and i64 at their offsets, and `(tuple-ref t 1)` loads the i64 slot back.
+(define (compiler-backend-tuple-source) : String
+  "(define (main) : i64
+  (let
+    [t : (Tuple bool i64) (tuple true 42)]
+    (tuple-ref t 1)))")
+
+(define (compiler-backend-tuple-ok?) : bool
+  (match (compiler-backend-emit-source (compiler-backend-tuple-source))
+    [(OkCompilerBackend asm)
+      (and
+        (backend-and8
+          (compiler-backend-string-contains?
+            asm
+            "    movq $16, %rdi\n    call tl_alloc\n")
+          (compiler-backend-string-contains? asm "    movq $1, %rax\n")
+          (compiler-backend-string-contains? asm "    movb %al, (%r10)\n")
+          (compiler-backend-string-contains? asm "    movq $42, %rax\n")
+          (compiler-backend-string-contains? asm "    movq %rax, 8(%r10)\n")
+          (compiler-backend-string-contains? asm "    movq 8(%r10), %rax\n")
+          true
+          true)
+        (not
+          (compiler-backend-string-contains? asm (compiler-backend-todo-marker))))]
+    [(ErrCompilerBackend _) false]))
+
 (define (compiler-backend-self-test) : i64
   (if (and
     (backend-and8
@@ -2835,7 +2911,9 @@
               (backend-and8
                 (compiler-backend-user-helper-name-ok?)
                 (compiler-backend-file-handle-open-close-runtime-ok?)
-                (compiler-backend-string-runtime-ok?)
+                (and
+                  (compiler-backend-string-runtime-ok?)
+                  (compiler-backend-print-runtime-ok?))
                 (compiler-backend-env-runtime-ok?)
                 (compiler-backend-expanded-scalar-regs-ok?)
                 (compiler-backend-regalloc-f64-ok?)
@@ -2852,24 +2930,26 @@
                     (compiler-backend-raw-pointer-fixture-shape-ok?)
                     (compiler-backend-box-ok?))
                   (and
-                    (compiler-backend-checked-trap-emit-shape-ok?)
+                    (compiler-backend-tuple-ok?)
                     (and
-                      (compiler-backend-closure-emit-shape-ok?)
+                      (compiler-backend-checked-trap-emit-shape-ok?)
                       (and
-                        (compiler-backend-avx2-vector-map-ok?)
+                        (compiler-backend-closure-emit-shape-ok?)
                         (and
-                          (compiler-backend-avx2-vector-reduce-ok?)
+                          (compiler-backend-avx2-vector-map-ok?)
                           (and
-                            (compiler-backend-avx512-vector-map-ok?)
-                            (backend-and8
-                              (compiler-backend-scalar-wide-ops-ok?)
-                              (compiler-backend-scalar-div-mod-ok?)
-                              (compiler-backend-narrow-scalar-instr-ok?)
-                              (compiler-backend-f64-abi-ok?)
-                              (compiler-backend-win64-f64-abi-ok?)
-                              (compiler-backend-aggregate-storage-shape-ok?)
-                              (compiler-backend-alloc-runtime-shape-ok?)
-                              (compiler-backend-windows-sdk-registry-runtime-ok?)))))))))))))))
+                            (compiler-backend-avx2-vector-reduce-ok?)
+                            (and
+                              (compiler-backend-avx512-vector-map-ok?)
+                              (backend-and8
+                                (compiler-backend-scalar-wide-ops-ok?)
+                                (compiler-backend-scalar-div-mod-ok?)
+                                (compiler-backend-narrow-scalar-instr-ok?)
+                                (compiler-backend-f64-abi-ok?)
+                                (compiler-backend-win64-f64-abi-ok?)
+                                (compiler-backend-aggregate-storage-shape-ok?)
+                                (compiler-backend-alloc-runtime-shape-ok?)
+                                (compiler-backend-windows-sdk-registry-runtime-ok?))))))))))))))))
     42
     (begin
       (panic "backend: smoke output mismatch")

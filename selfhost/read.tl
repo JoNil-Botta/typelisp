@@ -184,66 +184,63 @@
   [cur : (Array i64)]) : ResultSpannedSexpr
   (let
     [st : SpannedToken (peek-spanned-token toks cur)]
-    (let
-      [tok : Token (spanned-token-token st)]
-      [span : SourceSpan (spanned-token-span st)]
-      (let
-        [t : i64 (token-tag tok)]
-        (cond
-          [(= t (tag-int))
-            (let
-              [v : i64 (token-int tok)]
-              (begin
-                (advance cur)
-                (OkSpannedSexpr (SpSInt v span))))]
-          [(= t (tag-float))
-            (let
-              [s : String (token-float tok)]
-              (begin
-                (advance cur)
-                (OkSpannedSexpr (SpSFloat s span))))]
-          [(= t (tag-sym))
-            (let
-              [s : String (token-sym tok)]
-              (begin
-                (advance cur)
-                (OkSpannedSexpr (SpSSym s span))))]
-          [(= t (tag-str))
-            (let
-              [s : String (token-str tok)]
-              (begin
-                (advance cur)
-                (OkSpannedSexpr (SpSStr s span))))]
-          [(= t (tag-char))
-            (let
-              [c : char (token-char tok)]
-              (begin
-                (advance cur)
-                (OkSpannedSexpr (SpSChar c span))))]
-          [(= t (tag-lparen))
-            (begin
-              (advance cur)
-              (read-list-spanned-result toks cur span))]
-          [(= t (tag-lbracket))
-            (begin
-              (advance cur)
-              (read-bracket-list-spanned-result toks cur span))]
-          [(read-prefix-tag? t)
-            (let
-              [name : String (read-prefix-symbol t)]
-              (begin
-                (advance cur)
-                (match (read-form-spanned-result toks cur)
-                  [(OkSpannedSexpr form)
-                    (OkSpannedSexpr (read-prefix-spanned-form name span form))]
-                  [(ErrSpannedSexpr err) (ErrSpannedSexpr err)])))]
-          [(= t (tag-rparen))
-            (ErrSpannedSexpr (SourceError "reader: unexpected ')'" span))]
-          [(= t (tag-rbracket))
-            (ErrSpannedSexpr (SourceError "reader: unexpected ']'" span))]
-          [else
-            (ErrSpannedSexpr
-              (SourceError "reader: unexpected end of input" span))])))))
+    [tok : Token (spanned-token-token st)]
+    [span : SourceSpan (spanned-token-span st)]
+    [t : i64 (token-tag tok)]
+    (cond
+      [(= t (tag-int))
+        (let
+          [v : i64 (token-int tok)]
+          (begin
+            (advance cur)
+            (OkSpannedSexpr (SpSInt v span))))]
+      [(= t (tag-float))
+        (let
+          [s : String (token-float tok)]
+          (begin
+            (advance cur)
+            (OkSpannedSexpr (SpSFloat s span))))]
+      [(= t (tag-sym))
+        (let
+          [s : String (token-sym tok)]
+          (begin
+            (advance cur)
+            (OkSpannedSexpr (SpSSym s span))))]
+      [(= t (tag-str))
+        (let
+          [s : String (token-str tok)]
+          (begin
+            (advance cur)
+            (OkSpannedSexpr (SpSStr s span))))]
+      [(= t (tag-char))
+        (let
+          [c : char (token-char tok)]
+          (begin
+            (advance cur)
+            (OkSpannedSexpr (SpSChar c span))))]
+      [(= t (tag-lparen))
+        (begin
+          (advance cur)
+          (read-list-spanned-result toks cur span))]
+      [(= t (tag-lbracket))
+        (begin
+          (advance cur)
+          (read-bracket-list-spanned-result toks cur span))]
+      [(read-prefix-tag? t)
+        (let
+          [name : String (read-prefix-symbol t)]
+          (begin
+            (advance cur)
+            (match (read-form-spanned-result toks cur)
+              [(OkSpannedSexpr form)
+                (OkSpannedSexpr (read-prefix-spanned-form name span form))]
+              [(ErrSpannedSexpr err) (ErrSpannedSexpr err)])))]
+      [(= t (tag-rparen))
+        (ErrSpannedSexpr (SourceError "reader: unexpected ')'" span))]
+      [(= t (tag-rbracket))
+        (ErrSpannedSexpr (SourceError "reader: unexpected ']'" span))]
+      [else
+        (ErrSpannedSexpr (SourceError "reader: unexpected end of input" span))])))
 
 (define (read-list-spanned-items-result
   [toks : (Array SpannedToken)]
@@ -253,31 +250,30 @@
   [unterminated-message : String]) : ResultSpannedSexpr
   (let
     [st : SpannedToken (peek-spanned-token toks cur)]
-    (let
-      [span : SourceSpan (spanned-token-span st)]
-      [t : i64 (token-tag (spanned-token-token st))]
-      (if (= t close-tag)
-        (begin
-          (advance cur)
-          (OkSpannedSexpr (SpSNil (merge-spans open-span span))))
-        (if (= t (tag-end))
-          (ErrSpannedSexpr (SourceError unterminated-message span))
-          (match (read-form-spanned-result toks cur)
-            [(OkSpannedSexpr head)
-              (match (read-list-spanned-items-result
-                toks
-                cur
-                open-span
-                close-tag
-                unterminated-message)
-                [(OkSpannedSexpr tail)
-                  (OkSpannedSexpr
-                    (SpSCons
-                      head
-                      tail
-                      (merge-spans open-span (spanned-sexpr-span tail))))]
-                [(ErrSpannedSexpr err) (ErrSpannedSexpr err)])]
-            [(ErrSpannedSexpr err) (ErrSpannedSexpr err)]))))))
+    [span : SourceSpan (spanned-token-span st)]
+    [t : i64 (token-tag (spanned-token-token st))]
+    (if (= t close-tag)
+      (begin
+        (advance cur)
+        (OkSpannedSexpr (SpSNil (merge-spans open-span span))))
+      (if (= t (tag-end))
+        (ErrSpannedSexpr (SourceError unterminated-message span))
+        (match (read-form-spanned-result toks cur)
+          [(OkSpannedSexpr head)
+            (match (read-list-spanned-items-result
+              toks
+              cur
+              open-span
+              close-tag
+              unterminated-message)
+              [(OkSpannedSexpr tail)
+                (OkSpannedSexpr
+                  (SpSCons
+                    head
+                    tail
+                    (merge-spans open-span (spanned-sexpr-span tail))))]
+              [(ErrSpannedSexpr err) (ErrSpannedSexpr err)])]
+          [(ErrSpannedSexpr err) (ErrSpannedSexpr err)])))))
 
 (define (read-list-spanned-result
   [toks : (Array SpannedToken)]

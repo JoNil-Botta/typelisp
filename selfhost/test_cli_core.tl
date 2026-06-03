@@ -287,51 +287,50 @@
           (match paths
             [(AstDeclPathCons path _) path]
             [(AstDeclPathNil) ""])]
-        (let
-          [rest-paths : AstDeclPathList
-            (match paths
-              [(AstDeclPathCons _ path-rest) path-rest]
-              [(AstDeclPathNil) AstDeclPathNil])]
-          (match decl
-            [(AstDeclTest name body span)
-              (tltest-collect
-                rest
-                rest-paths
-                runtime-rev
-                path-rev
-                (InlineTestCons
-                  (InlineTest
-                    name
-                    decl-path
-                    (tltest-source-line span)
-                    body
-                    (tltest-private-name test-count))
-                  tests-rev)
-                (+ test-count 1))]
-            [(AstDeclImport _)
+        [rest-paths : AstDeclPathList
+          (match paths
+            [(AstDeclPathCons _ path-rest) path-rest]
+            [(AstDeclPathNil) AstDeclPathNil])]
+        (match decl
+          [(AstDeclTest name body span)
+            (tltest-collect
+              rest
+              rest-paths
+              runtime-rev
+              path-rev
+              (InlineTestCons
+                (InlineTest
+                  name
+                  decl-path
+                  (tltest-source-line span)
+                  body
+                  (tltest-private-name test-count))
+                tests-rev)
+              (+ test-count 1))]
+          [(AstDeclImport _)
+            (tltest-collect
+              rest
+              rest-paths
+              runtime-rev
+              path-rev
+              tests-rev
+              test-count)]
+          [_
+            (if (tltest-main-decl? decl)
               (tltest-collect
                 rest
                 rest-paths
                 runtime-rev
                 path-rev
                 tests-rev
-                test-count)]
-            [_
-              (if (tltest-main-decl? decl)
-                (tltest-collect
-                  rest
-                  rest-paths
-                  runtime-rev
-                  path-rev
-                  tests-rev
-                  test-count)
-                (tltest-collect
-                  rest
-                  rest-paths
-                  (AstDeclCons decl runtime-rev)
-                  (AstDeclPathCons decl-path path-rev)
-                  tests-rev
-                  test-count))])))]))
+                test-count)
+              (tltest-collect
+                rest
+                rest-paths
+                (AstDeclCons decl runtime-rev)
+                (AstDeclPathCons decl-path path-rev)
+                tests-rev
+                test-count))]))]))
 
 (define (tltest-print-expr [text : String]) : AstExpr
   (AstExprCall

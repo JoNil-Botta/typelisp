@@ -1041,19 +1041,19 @@ _tl_print_string:
       (if has-output
         output
         (source-tool-default-output source target))]
-    (match (source-tool-emit-assembly
-      source
-      target
-      stdlib-roots
-      opt-level
-      link-inputs)
-      [(ErrSourceToolString message)
+    (match (source-tool-link-inputs-for-source source stdlib-roots link-inputs)
+      [(ErrSourceToolLinkInputs message)
         (begin
           (print-error message)
           (source-tool-clean-temp temp-dir asm-path obj-path bin-path false)
           1)]
       [(OkSourceToolLinkInputs effective-link-inputs)
-        (match (source-tool-emit-assembly source target stdlib-roots opt-level)
+        (match (source-tool-emit-assembly
+          source
+          target
+          stdlib-roots
+          opt-level
+          effective-link-inputs)
           [(ErrSourceToolString message)
             (begin
               (print-error message)
@@ -1151,19 +1151,19 @@ _tl_print_string:
     [asm-path : String (source-tool-asm-path temp-dir source)]
     [obj-path : String (source-tool-obj-path temp-dir source target)]
     [bin-path : String (source-tool-temp-bin-path temp-dir source target)]
-    (match (source-tool-emit-assembly
-      source
-      target
-      stdlib-roots
-      opt-level
-      link-inputs)
-      [(ErrSourceToolString message)
+    (match (source-tool-link-inputs-for-source source stdlib-roots link-inputs)
+      [(ErrSourceToolLinkInputs message)
         (begin
           (print-error message)
           (source-tool-clean-temp temp-dir asm-path obj-path bin-path true)
           1)]
       [(OkSourceToolLinkInputs effective-link-inputs)
-        (match (source-tool-emit-assembly source target stdlib-roots opt-level)
+        (match (source-tool-emit-assembly
+          source
+          target
+          stdlib-roots
+          opt-level
+          effective-link-inputs)
           [(ErrSourceToolString message)
             (begin
               (print-error message)

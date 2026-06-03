@@ -335,7 +335,7 @@ using the `stdlib/cpu.tl` capability checks. Parser/compiler support for
 
 ### Builtins
 
-`print`, `print-bool`, `print-float`, `print-char`, `print-newline`,
+`print`, `print-bool`, `print-newline`; stdlib `print-float`, `print-char`,
 `print-string`/`print-str`; `arg-count`, `arg`, `read-file`, `write-file`,
 `file-exists?`, `read-file-status`, `write-file-status`,
 `append-file-status`, `file-exists-status`, `file-open-status`,

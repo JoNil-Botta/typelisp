@@ -1,15 +1,19 @@
 ;# TypeLisp lint engine + source cleanup rules (#1163, #1177).
 ;#
-;# A selfhost lint pass: walk the parsed AST, run rules, and collect findings.
-;# The initial rules flag deeply-nested `if` ladders and body-only nested `let`
-;# forms that can be flattened into one sequential `let`.
+;# A selfhost lint pass: walk the parsed AST, run registered rules, and collect
+;# findings. This slice ships one rule: deeply-nested `if` ladders. An `if`
+;# whose else-branch chains into further `if`s beyond a configurable depth
+;# threshold is flagged with a suggestion to use `cond` (value/guard ladders) or
+;# `match` (variant dispatch).
 ;#
-;# It is verified by `compiler-lint-self-test` (driver:
+;# The `typelisp lint` CLI driver consumes the rule id attached to each finding
+;# for suppression (`;; lint-allow: <rule-id>`). This module owns stable rule
+;# metadata and the lint core verified by `compiler-lint-self-test` (driver:
 ;# `selfhost/lint_smoke.tl`).
 (import "compiler_ast_types.tl")
 
-;: A single lint finding: a human-readable message, the ladder depth that
-;: triggered it, and the source span of the flagged node (the `lint-no-span`
+;: A single lint finding: stable rule id, human-readable message, rule-specific
+;: depth metadata, and the source span of the flagged node (the `lint-no-span`
 ;: sentinel when the node carried no location, e.g. a synthesized expression).
 (defstruct LintFinding
   (message String)
@@ -23,18 +27,64 @@
 (define (lint-rule-nested-if-ladder-id) : String
   "nested-if-ladder")
 
-(define (lint-rule-nested-let-id) : String
-  "nested-let")
+;: Public message text for the nested-`if`-ladder rule. Kept separate from the
+;: registry constructor so rule walkers and self-tests use the same metadata.
+(define (lint-rule-nested-if-ladder-message) : String
+  "nested if-ladder: chain of if/else-if; prefer cond (value/guard ladders) or match (variant dispatch)")
 
-;: Rule registry suggestion layer: the structured suggestion text for a rule
-;: id, independent of the rendered message. A second rule plugs in here without
-;: touching the public driver. Unknown ids return the empty string.
+(define (lint-rule-nested-if-ladder-suggestion) : String
+  "prefer cond (value/guard ladders) or match (variant dispatch)")
+
+;: Metadata for one lint rule. Rule id is stable public API for suppressions;
+;: message is the rendered finding text; suggestion is structured helper text
+;: that drivers or tooling can render separately from the message.
+(defstruct LintRule
+  (rule-id String)
+  (message String)
+  (suggestion String))
+
+;: Immutable list of registered rules.
+(defenum LintRuleList
+  (LintRuleNil)
+  (LintRuleCons LintRule LintRuleList))
+
+(defenum LintMaybeRule
+  (LintRuleNotFound)
+  (LintRuleFound LintRule))
+
+(define (lint-rule-nested-if-ladder) : LintRule
+  (LintRule
+    (lint-rule-nested-if-ladder-id)
+    (lint-rule-nested-if-ladder-message)
+    (lint-rule-nested-if-ladder-suggestion)))
+
+;: Small registry for lint metadata. New rules plug into this list and the
+;: shared lookup helpers without requiring public driver edits.
+(define (lint-rule-registry) : LintRuleList
+  (LintRuleCons (lint-rule-nested-if-ladder) LintRuleNil))
+
+(define (lint-rule-find-in [rules : LintRuleList] [rule-id : String]) : LintMaybeRule
+  (match rules
+    [(LintRuleNil) LintRuleNotFound]
+    [(LintRuleCons rule rest)
+      (if (string-eq (struct-get rule rule-id) rule-id)
+        (LintRuleFound rule)
+        (lint-rule-find-in rest rule-id))]))
+
+(define (lint-rule-find [rule-id : String]) : LintMaybeRule
+  (lint-rule-find-in (lint-rule-registry) rule-id))
+
+;: Rule registry message lookup. Unknown ids return the empty string.
+(define (lint-rule-message [rule-id : String]) : String
+  (match (lint-rule-find rule-id)
+    [(LintRuleFound rule) (struct-get rule message)]
+    [(LintRuleNotFound) ""]))
+
+;: Rule registry suggestion lookup. Unknown ids return the empty string.
 (define (lint-rule-suggestion [rule-id : String]) : String
-  (if (string-eq rule-id (lint-rule-nested-if-ladder-id))
-    "prefer cond (value/guard ladders) or match (variant dispatch)"
-    (if (string-eq rule-id (lint-rule-nested-let-id))
-      "merge the nested let bindings into one sequential let"
-      "")))
+  (match (lint-rule-find rule-id)
+    [(LintRuleFound rule) (struct-get rule suggestion)]
+    [(LintRuleNotFound) ""]))
 
 ;: Immutable list of findings.
 (defenum LintFindingList
@@ -71,7 +121,7 @@
 ;: is at `span`.
 (define (lint-ladder-finding [depth : i64] [span : AstSourceSpan]) : LintFinding
   (LintFinding
-    "nested if-ladder: chain of if/else-if; prefer cond (value/guard ladders) or match (variant dispatch)"
+    (lint-rule-message (lint-rule-nested-if-ladder-id))
     (lint-rule-nested-if-ladder-id)
     depth
     span))
@@ -548,11 +598,35 @@
         unit
         (panic "lint: nested-if-ladder suggestion should be registered"))
       (if (string-eq
-        (lint-rule-suggestion (lint-rule-nested-let-id))
-        "merge the nested let bindings into one sequential let")
+        (lint-rule-message (lint-rule-nested-if-ladder-id))
+        "nested if-ladder: chain of if/else-if; prefer cond (value/guard ladders) or match (variant dispatch)")
         unit
-        (panic "lint: nested-let suggestion should be registered"))
+        (panic "lint: nested-if-ladder message should be registered"))
+      (match (lint-rule-find (lint-rule-nested-if-ladder-id))
+        [(LintRuleFound rule)
+          (if (and
+            (string-eq
+              (struct-get rule rule-id)
+              (lint-rule-nested-if-ladder-id))
+            (and
+              (string-eq
+                (struct-get rule message)
+                (lint-rule-nested-if-ladder-message))
+              (string-eq
+                (struct-get rule suggestion)
+                (lint-rule-nested-if-ladder-suggestion))))
+            unit
+            (panic
+              "lint: nested-if-ladder registry entry should match metadata"))]
+        [(LintRuleNotFound)
+          (panic "lint: nested-if-ladder should be registered")])
       (if (string-eq (lint-rule-suggestion "unknown-rule") "")
         unit
         (panic "lint: unknown rule should have no suggestion"))
+      (if (string-eq (lint-rule-message "unknown-rule") "")
+        unit
+        (panic "lint: unknown rule should have no message"))
+      (match (lint-rule-find "unknown-rule")
+        [(LintRuleNotFound) unit]
+        [(LintRuleFound _) (panic "lint: unknown rule should not be found")])
       42)))

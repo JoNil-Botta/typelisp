@@ -339,6 +339,7 @@
 (define (lower-type-env-count [env : TcTypeEnv]) : i64
   (match env
     [(TcTypeNil) 0]
+    [(TcTypeCache _ _ rest) (lower-type-env-count rest)]
     [(TcTypeBind _ _ rest) (+ 1 (lower-type-env-count rest))]))
 
 (define (lower-type-cache-capacity [count : i64]) : i64
@@ -368,6 +369,7 @@
   [cache : LowerTypeCache]) : LowerTypeCache
   (match env
     [(TcTypeNil) cache]
+    [(TcTypeCache _ _ rest) (lower-type-cache-from-env-into rest cache)]
     [(TcTypeBind name ty rest)
       (lower-type-cache-from-env-into rest (lower-type-cache-add cache name ty))]))
 
@@ -4182,6 +4184,7 @@
   [type-env : TcTypeEnv]) : ResultLowerState
   (match type-env
     [(TcTypeNil) (OkLowerState state)]
+    [(TcTypeCache _ _ rest) (lower-emit-active-exits state env rest)]
     [(TcTypeBind key ty rest)
       (if (string-eq key (lower-cleanup-marker-name))
         (match ty
@@ -4210,6 +4213,7 @@
   [type-env : TcTypeEnv]) : ResultLowerState
   (match type-env
     [(TcTypeNil) (OkLowerState state)]
+    [(TcTypeCache _ _ rest) (lower-emit-active-cleanups state env rest)]
     [(TcTypeBind key ty rest)
       (if (string-eq key (lower-cleanup-marker-name))
         (match ty

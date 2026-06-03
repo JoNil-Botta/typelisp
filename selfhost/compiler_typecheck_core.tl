@@ -9,7 +9,8 @@
 
 (defenum TcTypeEnv
   (TcTypeNil)
-  (TcTypeBind String AstType TcTypeEnv))
+  (TcTypeBind String AstType TcTypeEnv)
+  (TcTypeCache StringI64Map (Array AstType) TcTypeEnv))
 
 (defenum TcContext
   (TcContext AstProgram CompilerSymbols CompilerRegistries String))
@@ -214,6 +215,52 @@
 (define (tc-bind [env : TcTypeEnv] [name : String] [ty : AstType]) : TcTypeEnv
   (TcTypeBind name ty env))
 
+(define (tc-env-cache-count [env : TcTypeEnv]) : i64
+  (match env
+    [(TcTypeNil) 0]
+    [(TcTypeBind _ _ rest) (+ 1 (tc-env-cache-count rest))]
+    [(TcTypeCache _ _ rest) (tc-env-cache-count rest)]))
+
+(define (tc-env-cache-capacity [count : i64]) : i64
+  (if (< count 4)
+    8
+    (* count 2)))
+
+(define (tc-env-cache-add
+  [ids : StringI64Map]
+  [values : (Array AstType)]
+  [name : String]
+  [ty : AstType]) : StringI64Map
+  (match (string-i64-map-get ids name)
+    [(StringI64MapFound _) ids]
+    [(StringI64MapMissing)
+      (let
+        [next : i64 (string-i64-map-len ids)]
+        (begin
+          (array-set! values next ty)
+          (string-i64-map-put ids name next)))]))
+
+(define (tc-env-cache-fill
+  [env : TcTypeEnv]
+  [ids : StringI64Map]
+  [values : (Array AstType)]) : StringI64Map
+  (match env
+    [(TcTypeNil) ids]
+    [(TcTypeBind name ty rest)
+      (tc-env-cache-fill rest (tc-env-cache-add ids values name ty) values)]
+    [(TcTypeCache _ _ rest) (tc-env-cache-fill rest ids values)]))
+
+(define (tc-env-with-cache [env : TcTypeEnv]) : TcTypeEnv
+  (let
+    [count : i64 (tc-env-cache-count env)]
+    [values : (Array AstType) (make-array AstType count)]
+    [ids : StringI64Map
+      (tc-env-cache-fill
+        env
+        (string-i64-map-with-capacity (tc-env-cache-capacity count))
+        values)]
+    (TcTypeCache ids values env)))
+
 (define (tc-bind-alias-if-free [env : TcTypeEnv] [name : String] [ty : AstType]) : TcTypeEnv
   (if (tc-name-bound? env name)
     env
@@ -249,6 +296,7 @@
 (define (tc-in-unsafe? [env : TcTypeEnv]) : bool
   (match env
     [(TcTypeNil) false]
+    [(TcTypeCache _ _ rest) (tc-in-unsafe? rest)]
     [(TcTypeBind key _ rest)
       (if (string-eq key (tc-unsafe-marker-name))
         true
@@ -261,6 +309,7 @@
   (match env
     [(TcTypeNil)
       (ErrTcType "typecheck: try requires enclosing Result-like function")]
+    [(TcTypeCache _ _ rest) (tc-current-return-type rest)]
     [(TcTypeBind key ty rest)
       (if (string-eq key (tc-return-type-name))
         (OkTcType ty)
@@ -551,6 +600,10 @@
 (define (tc-lookup [env : TcTypeEnv] [name : String]) : ResultTcType
   (match env
     [(TcTypeNil) (ErrTcType (string-append "typecheck: unbound name " name))]
+    [(TcTypeCache ids values rest)
+      (match (string-i64-map-get ids name)
+        [(StringI64MapFound index) (OkTcType (array-ref values index))]
+        [(StringI64MapMissing) (tc-lookup rest name)])]
     [(TcTypeBind key ty rest)
       (if (string-eq key name)
         (OkTcType ty)
@@ -559,6 +612,7 @@
 (define (tc-active-region [env : TcTypeEnv]) : TcMaybeString
   (match env
     [(TcTypeNil) (TcNoString)]
+    [(TcTypeCache _ _ rest) (tc-active-region rest)]
     [(TcTypeBind key ty rest)
       (if (string-eq key (tc-region-marker-name))
         (match ty
@@ -605,11 +659,13 @@
 (define (tc-cleanup-owner-marker-head? [env : TcTypeEnv] [name : String]) : bool
   (match env
     [(TcTypeNil) false]
+    [(TcTypeCache _ _ rest) (tc-cleanup-owner-marker-head? rest name)]
     [(TcTypeBind key ty _) (tc-cleanup-owner-marker-for? key ty name)]))
 
 (define (tc-cleanup-owner-active? [env : TcTypeEnv] [name : String]) : bool
   (match env
     [(TcTypeNil) false]
+    [(TcTypeCache _ _ rest) (tc-cleanup-owner-active? rest name)]
     [(TcTypeBind key ty rest)
       (if (string-eq key name)
         (tc-cleanup-owner-marker-head? rest name)
@@ -618,6 +674,7 @@
 (define (tc-active-cleanup-owners-scan [root : TcTypeEnv] [env : TcTypeEnv]) : TcStringList
   (match env
     [(TcTypeNil) TcStringNil]
+    [(TcTypeCache _ _ rest) (tc-active-cleanup-owners-scan root rest)]
     [(TcTypeBind key ty rest)
       (let
         [owners : TcStringList (tc-active-cleanup-owners-scan root rest)]
@@ -673,6 +730,7 @@
 (define (tc-lifetime-visible? [env : TcTypeEnv] [lifetime : String]) : bool
   (match env
     [(TcTypeNil) false]
+    [(TcTypeCache _ _ rest) (tc-lifetime-visible? rest lifetime)]
     [(TcTypeBind key ty rest)
       (if (tc-env-binding-matches-lifetime? key ty lifetime)
         true
@@ -695,6 +753,8 @@
   [seen-target : bool]) : bool
   (match env
     [(TcTypeNil) false]
+    [(TcTypeCache _ _ rest)
+      (tc-lifetime-outlives-binding-scan rest lifetime target seen-target)]
     [(TcTypeBind key ty rest)
       (if (tc-env-binding-matches-lifetime? key ty lifetime)
         seen-target
@@ -730,6 +790,12 @@
     true
     (match env
       [(TcTypeNil) false]
+      [(TcTypeCache _ _ rest)
+        (tc-lifetime-outlives-lifetime-scan
+          rest
+          value-lifetime
+          target-lifetime
+          seen-target)]
       [(TcTypeBind key ty rest)
         (if (tc-env-binding-matches-lifetime? key ty value-lifetime)
           seen-target
@@ -1072,6 +1138,8 @@
     true
     (match env
       [(TcTypeNil) false]
+      [(TcTypeCache _ _ rest)
+        (tc-region-outlives-or-matches rest value-region target-region)]
       [(TcTypeBind key ty rest)
         (if (string-eq key (tc-region-marker-name))
           (match ty
@@ -1159,6 +1227,27 @@
       (AstTyStruct name)
       (AstTyVar name))))
 
+(define tc-nominal-owner-cache-handle : i64
+  0)
+
+(define tc-nominal-owner-cache-name : String
+  "")
+
+(define (tc-nominal-owner-cache-reset!) : unit
+  (set! tc-nominal-owner-cache-handle 0))
+
+(define (tc-nominal-owner-cache-lookup [handle : i64]) : ResultTcString
+  (if (= tc-nominal-owner-cache-handle handle)
+    (OkTcString tc-nominal-owner-cache-name)
+    (ErrTcString "")))
+
+(define (tc-nominal-owner-cache-store-if-safe! [handle : i64] [name : String]) : unit
+  (if (tc-name-qualified? name)
+    unit
+    (begin
+      (set! tc-nominal-owner-cache-handle handle)
+      (set! tc-nominal-owner-cache-name name))))
+
 (define (tc-nominal-owner-name-list
   [decls : AstDeclList]
   [target : i64]
@@ -1197,16 +1286,29 @@
             [_ (tc-nominal-owner-name-list rest target (+ index 1) module)])]
         [_ (tc-nominal-owner-name-list rest target (+ index 1) module)])]))
 
+(define (tc-nominal-owner-name-scan
+  [program : AstProgram]
+  [handle : i64]
+  [index : i64]) : ResultTcString
+  (match program
+    [(AstProgram decls)
+      (match (tc-nominal-owner-name-list decls index 0 "")
+        [(OkTcString name)
+          (begin
+            (tc-nominal-owner-cache-store-if-safe! handle name)
+            (OkTcString name))]
+        [(ErrTcString message) (ErrTcString message)])]))
+
 (define (tc-nominal-owner-name [ctx : TcContext] [handle : i64]) : ResultTcString
-  (match ctx
-    [(TcContext program _ _ _)
-      (match program
-        [(AstProgram decls)
-          (tc-nominal-owner-name-list
-            decls
-            (compiler-symbol-handle-index handle)
-            0
-            "")])]))
+  (match (tc-nominal-owner-cache-lookup handle)
+    [(OkTcString cached) (OkTcString cached)]
+    [(ErrTcString _)
+      (match ctx
+        [(TcContext program _ _ _)
+          (tc-nominal-owner-name-scan
+            program
+            handle
+            (compiler-symbol-handle-index handle))])]))
 
 (define (tc-resolve-type-name [ctx : TcContext] [name : String]) : AstType
   (match ctx
@@ -1699,8 +1801,10 @@
 (define (tc-program-source-types-policy-ok
   [ctx : TcContext]
   [program : AstProgram]) : ResultTcUnit
-  (match program
-    [(AstProgram decls) (tc-source-decl-list-policy-ok ctx decls)]))
+  (begin
+    (tc-nominal-owner-cache-reset!)
+    (match program
+      [(AstProgram decls) (tc-source-decl-list-policy-ok ctx decls)])))
 
 (define (tc-type-list-eq [a : AstTypeList] [b : AstTypeList]) : bool
   (match a
@@ -2079,6 +2183,7 @@
 (define (tc-spmd-env-from-type-env [env : TcTypeEnv]) : TcSpmdEnv
   (match env
     [(TcTypeNil) TcSpmdEnvNil]
+    [(TcTypeCache _ _ rest) (tc-spmd-env-from-type-env rest)]
     [(TcTypeBind name ty rest)
       (TcSpmdEnvBind
         name
@@ -2658,11 +2763,16 @@
         [_ (tc-build-top-env-aliases-list ctx all-decls rest env)])]))
 
 (define (tc-build-top-env [ctx : TcContext] [program : AstProgram]) : ResultTcEnv
-  (match program
-    [(AstProgram decls)
-      (match (tc-build-top-env-list ctx decls (tc-default-env))
-        [(OkTcEnv env) (tc-build-top-env-aliases-list ctx decls decls env)]
-        [(ErrTcEnv message) (ErrTcEnv message)])]))
+  (begin
+    (tc-nominal-owner-cache-reset!)
+    (match program
+      [(AstProgram decls)
+        (match (tc-build-top-env-list ctx decls (tc-default-env))
+          [(OkTcEnv env)
+            (match (tc-build-top-env-aliases-list ctx decls decls env)
+              [(OkTcEnv aliases) (OkTcEnv (tc-env-with-cache aliases))]
+              [(ErrTcEnv message) (ErrTcEnv message)])]
+          [(ErrTcEnv message) (ErrTcEnv message)])])))
 
 (define (tc-bind-enum-variants-local
   [ctx : TcContext]
@@ -3076,6 +3186,7 @@
 (define (tc-default-builtin-unshadowed-scan? [env : TcTypeEnv] [name : String]) : bool
   (match env
     [(TcTypeNil) false]
+    [(TcTypeCache _ _ rest) (tc-default-builtin-unshadowed-scan? rest name)]
     [(TcTypeBind key _ rest)
       (if (string-eq key name)
         false
@@ -5163,6 +5274,8 @@
   [body : AstExpr]) : ResultTcUnit
   (match env
     [(TcTypeNil) OkTcUnit]
+    [(TcTypeCache _ _ rest)
+      (tc-check-lambda-region-captures-scan-root root rest bound body)]
     [(TcTypeBind key ty rest)
       (cond
         [(or

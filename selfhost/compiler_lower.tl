@@ -11879,17 +11879,42 @@
     [(OkCompilerLower program _)
       (let
         [summary : CompilerIrSummary (compiler-ir-program-summary program)]
-        (and
-          (= (compiler-ir-summary-globals summary) 1)
-          (and
-            (= (compiler-ir-summary-functions summary) 2)
-            (and
-              (= (compiler-ir-summary-externs summary) 1)
-              (and
-                (= (compiler-ir-summary-blocks summary) 8)
-                (and
-                  (= (compiler-ir-summary-instructions summary) 29)
-                  (= (compiler-ir-summary-vars summary) 21)))))))]
+        [ok : bool true]
+        (begin
+          (if (= (compiler-ir-summary-globals summary) 1)
+            unit
+            (set! ok false))
+          (if (= (compiler-ir-summary-functions summary) 2)
+            unit
+            (set! ok false))
+          (if (= (compiler-ir-summary-externs summary) 1)
+            unit
+            (set! ok false))
+          (if (= (compiler-ir-summary-blocks summary) 8)
+            unit
+            (set! ok false))
+          (if (= (compiler-ir-summary-instructions summary) 29)
+            unit
+            (set! ok false))
+          (if (= (compiler-ir-summary-vars summary) 21)
+            unit
+            (set! ok false))
+          (if (= (compiler-ir-summary-empty-blocks summary) 0)
+            unit
+            (set! ok false))
+          (if (= (compiler-ir-summary-max-instructions-function summary) 25)
+            unit
+            (set! ok false))
+          (if (= (compiler-ir-summary-max-instructions-block summary) 8)
+            unit
+            (set! ok false))
+          (if (= (compiler-ir-summary-call-arg-entries summary) 1)
+            unit
+            (set! ok false))
+          (if (= (compiler-ir-summary-phi-input-entries summary) 2)
+            unit
+            (set! ok false))
+          ok))]
     [(ErrCompilerLower _) false]))
 
 ;; Count `IrInstrPhi` nodes, to assert the merge-phi shape of lowered scalar

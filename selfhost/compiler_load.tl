@@ -2484,7 +2484,8 @@
                           "compiler-load: import alias preservation smoke mismatch")
                         0))
                     (begin
-                      (panic "compiler-load: fallback path dedup smoke mismatch")
+                      (panic
+                        "compiler-load: fallback path dedup smoke mismatch")
                       0))
                   (begin
                     (panic "compiler-load: import dedup/cycle smoke mismatch")

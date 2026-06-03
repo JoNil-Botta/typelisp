@@ -5698,6 +5698,38 @@
       (ErrLowerExpr
         (lower-diagnostic-at-expr origin "lower: unsupported expression"))]))
 
+(define (lower-expr-with-type-and-coerce
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [expr : AstExpr]
+  [origin : AstExpr]
+  [expr-ty : AstType]
+  [expected-ty : AstType]) : ResultLowerExpr
+  (match (lower-expr-with-type ctx state env type-env expr origin expr-ty)
+    [(OkLowerExpr lowered)
+      (match lowered
+        [(LowerExpr next-state value actual-ty)
+          (OkLowerExpr
+            (lower-coerce-value next-state value actual-ty expected-ty))])]
+    [(ErrLowerExpr message) (ErrLowerExpr message)]))
+
+(define (lower-expr-and-coerce
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [expr : AstExpr]
+  [expected-ty : AstType]) : ResultLowerExpr
+  (match (lower-expr ctx state env type-env expr)
+    [(OkLowerExpr lowered)
+      (match lowered
+        [(LowerExpr next-state value actual-ty)
+          (OkLowerExpr
+            (lower-coerce-value next-state value actual-ty expected-ty))])]
+    [(ErrLowerExpr message) (ErrLowerExpr message)]))
+
 (define (lower-expr-expected
   [ctx : TcContext]
   [state : LowerState]
@@ -5715,14 +5747,85 @@
         (lower-literal-value lit)
         expected-ty
         origin)]
+    [(AstExprLet _ _)
+      (lower-expr-with-type-and-coerce
+        ctx
+        state
+        env
+        type-env
+        expr
+        origin
+        expected-ty
+        expected-ty)]
+    [(AstExprBegin _)
+      (lower-expr-with-type-and-coerce
+        ctx
+        state
+        env
+        type-env
+        expr
+        origin
+        expected-ty
+        expected-ty)]
+    [(AstExprUnsafe _)
+      (lower-expr-with-type-and-coerce
+        ctx
+        state
+        env
+        type-env
+        expr
+        origin
+        expected-ty
+        expected-ty)]
+    [(AstExprCall func _)
+      (match (ast-expr-unspan func)
+        [(AstExprVar name)
+          (match (tc-lookup type-env name)
+            [(OkTcType fn-ty)
+              (match (tc-type-strip-region (tc-resolve-type ctx fn-ty))
+                [(AstTyFunc _ ret-ty)
+                  (let
+                    [actual-ty : AstType
+                      (tc-type-without-regions (tc-resolve-type ctx ret-ty))]
+                    [expected-resolved : AstType
+                      (tc-type-without-regions
+                        (tc-resolve-type ctx expected-ty))]
+                    (if (tc-type-eq actual-ty expected-resolved)
+                      (lower-expr-with-type-and-coerce
+                        ctx
+                        state
+                        env
+                        type-env
+                        expr
+                        origin
+                        actual-ty
+                        expected-ty)
+                      (lower-expr-and-coerce
+                        ctx
+                        state
+                        env
+                        type-env
+                        expr
+                        expected-ty)))]
+                [_
+                  (lower-expr-and-coerce
+                    ctx
+                    state
+                    env
+                    type-env
+                    expr
+                    expected-ty)])]
+            [(ErrTcType _)
+              (lower-expr-and-coerce
+                ctx
+                state
+                env
+                type-env
+                expr
+                expected-ty)])]
+        [_ (lower-expr-and-coerce ctx state env type-env expr expected-ty)])]
     [_
-      (match (lower-expr ctx state env type-env expr)
-        [(OkLowerExpr lowered)
-          (match lowered
-            [(LowerExpr next-state value actual-ty)
-              (OkLowerExpr
-                (lower-coerce-value next-state value actual-ty expected-ty))])]
-        [(ErrLowerExpr message) (ErrLowerExpr message)])]))
+      (lower-expr-and-coerce ctx state env type-env expr expected-ty)]))
 
 (define (lower-struct-get
   [ctx : TcContext]

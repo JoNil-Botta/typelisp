@@ -17,6 +17,10 @@
   (OkCompilerDriverBuffer TextBuf)
   (ErrCompilerDriverBuffer CompilerDiagnostic))
 
+(defenum ResultCompilerDriverLowered
+  (OkCompilerDriverLowered CompilerIrProgram CompilerSourceSpans)
+  (ErrCompilerDriverLowered CompilerDiagnostic))
+
 (cfg
   compile-profile
   (define compiler-driver-profile-total-start-ms : i64
@@ -314,6 +318,76 @@
                 (ErrCompilerDriverBuffer
                   (compiler-diagnostic-with-path diag input-path)))]))])))
 
+(define (compiler-driver-load-and-lower-escaping
+  [input-path : String]
+  [stdlib-roots : CompilerLoadRootList]
+  [mode : CompilerBackendMode]
+  [cfgs : SymI64Env]) : ResultCompilerDriverLowered
+  (let
+    [enclosing : i64 (arena-current)]
+    (let
+      [scratch : i64 (arena-make)]
+      (begin
+        (unsafe (arena-set! scratch))
+        (match (compiler-load-file-with-paths-and-roots-cfg
+          input-path
+          (sym-i64-empty)
+          stdlib-roots
+          cfgs)
+          [(OkCompilerLoadWithPaths decls paths _ _)
+            (begin
+              (cfg
+                compile-profile
+                (compiler-driver-profile-finish-phase "load"))
+              (cfg compile-profile (compiler-driver-profile-start-phase))
+              (match (lower-compiler-program-with-decl-paths-mode
+                input-path
+                (AstProgram decls)
+                paths
+                (compiler-driver-lower-mode-for-backend mode))
+                [(OkCompilerLower program spans)
+                  (let
+                    [scratch-head : i64 (arena-current)]
+                    (begin
+                      (unsafe (arena-set! enclosing))
+                      (let
+                        [escaped-program : CompilerIrProgram (clone program)]
+                        [escaped-spans : CompilerSourceSpans (clone spans)]
+                        (begin
+                          (unsafe (arena-destroy scratch-head))
+                          (cfg
+                            compile-profile
+                            (compiler-driver-profile-finish-phase "lower"))
+                          (OkCompilerDriverLowered
+                            escaped-program
+                            escaped-spans)))))]
+                [(ErrCompilerLower diag)
+                  (let
+                    [scratch-head : i64 (arena-current)]
+                    (begin
+                      (unsafe (arena-set! enclosing))
+                      (let
+                        [escaped-diag : CompilerDiagnostic (clone diag)]
+                        (begin
+                          (unsafe (arena-destroy scratch-head))
+                          (cfg
+                            compile-profile
+                            (compiler-driver-profile-finish-phase "lower"))
+                          (ErrCompilerDriverLowered escaped-diag)))))]))]
+          [(ErrCompilerLoadWithPaths diag)
+            (let
+              [scratch-head : i64 (arena-current)]
+              (begin
+                (unsafe (arena-set! enclosing))
+                (let
+                  [escaped-diag : CompilerDiagnostic (clone diag)]
+                  (begin
+                    (unsafe (arena-destroy scratch-head))
+                    (cfg
+                      compile-profile
+                      (compiler-driver-profile-finish-phase "load"))
+                    (ErrCompilerDriverLowered escaped-diag)))))])))))
+
 (define (compiler-driver-emit-file-with-target
   [input-path : String]
   [target : CompilerBackendTarget]
@@ -414,48 +488,26 @@
   [crt-entry : bool]) : ResultCompilerDriver
   (begin
     (cfg compile-profile (compiler-driver-profile-start-total))
-    (match (compiler-load-file-with-paths-and-roots-cfg
+    (match (compiler-driver-load-and-lower-escaping
       input-path
-      (sym-i64-empty)
       stdlib-roots
+      mode
       cfgs)
-      [(OkCompilerLoadWithPaths decls paths _ _)
-        (begin
-          (cfg compile-profile (compiler-driver-profile-finish-phase "load"))
-          (cfg compile-profile (compiler-driver-profile-start-phase))
-          (match (lower-compiler-program-with-decl-paths-mode
-            input-path
-            (AstProgram decls)
-            paths
-            (compiler-driver-lower-mode-for-backend mode))
-            ;; The lowering provenance side table (#605/#761) is remapped after
-            ;; optimization so backend diagnostics report surviving instruction
-            ;; locations when a rewrite can preserve them.
-            [(OkCompilerLower program spans)
-              (begin
-                (cfg
-                  compile-profile
-                  (compiler-driver-profile-finish-phase "lower"))
-                (compiler-driver-emit-lowered-with-level-mode-entry-and-crt
-                  input-path
-                  program
-                  spans
-                  target
-                  has-target
-                  mode
-                  opt-level
-                  true
-                  crt-entry))]
-            [(ErrCompilerLower diag)
-              (begin
-                (cfg
-                  compile-profile
-                  (compiler-driver-profile-finish-phase "lower"))
-                (ErrCompilerDriver diag))]))]
-      [(ErrCompilerLoadWithPaths diag)
-        (begin
-          (cfg compile-profile (compiler-driver-profile-finish-phase "load"))
-          (ErrCompilerDriver diag))])))
+      [(OkCompilerDriverLowered program spans)
+        ;; The lowering provenance side table (#605/#761) is remapped after
+        ;; optimization so backend diagnostics report surviving instruction
+        ;; locations when a rewrite can preserve them.
+        (compiler-driver-emit-lowered-with-level-mode-entry-and-crt
+          input-path
+          program
+          spans
+          target
+          has-target
+          mode
+          opt-level
+          true
+          crt-entry)]
+      [(ErrCompilerDriverLowered diag) (ErrCompilerDriver diag)])))
 
 (define (compiler-driver-emit-file-buffer-with-target-roots-level-mode-and-cfg
   [input-path : String]
@@ -467,44 +519,22 @@
   [cfgs : SymI64Env]) : ResultCompilerDriverBuffer
   (begin
     (cfg compile-profile (compiler-driver-profile-start-total))
-    (match (compiler-load-file-with-paths-and-roots-cfg
+    (match (compiler-driver-load-and-lower-escaping
       input-path
-      (sym-i64-empty)
       stdlib-roots
+      mode
       cfgs)
-      [(OkCompilerLoadWithPaths decls paths _ _)
-        (begin
-          (cfg compile-profile (compiler-driver-profile-finish-phase "load"))
-          (cfg compile-profile (compiler-driver-profile-start-phase))
-          (match (lower-compiler-program-with-decl-paths-mode
-            input-path
-            (AstProgram decls)
-            paths
-            (compiler-driver-lower-mode-for-backend mode))
-            [(OkCompilerLower program spans)
-              (begin
-                (cfg
-                  compile-profile
-                  (compiler-driver-profile-finish-phase "lower"))
-                (compiler-driver-emit-lowered-buffer-with-level-mode-and-entry
-                  input-path
-                  program
-                  spans
-                  target
-                  has-target
-                  mode
-                  opt-level
-                  true))]
-            [(ErrCompilerLower diag)
-              (begin
-                (cfg
-                  compile-profile
-                  (compiler-driver-profile-finish-phase "lower"))
-                (ErrCompilerDriverBuffer diag))]))]
-      [(ErrCompilerLoadWithPaths diag)
-        (begin
-          (cfg compile-profile (compiler-driver-profile-finish-phase "load"))
-          (ErrCompilerDriverBuffer diag))])))
+      [(OkCompilerDriverLowered program spans)
+        (compiler-driver-emit-lowered-buffer-with-level-mode-and-entry
+          input-path
+          program
+          spans
+          target
+          has-target
+          mode
+          opt-level
+          true)]
+      [(ErrCompilerDriverLowered diag) (ErrCompilerDriverBuffer diag)])))
 
 (define (compiler-driver-emit-package-file-with-target-roots-and-level
   [input-path : String]

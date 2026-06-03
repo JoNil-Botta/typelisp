@@ -3371,9 +3371,8 @@ Options:
   run --backend-mode <mode>
   build --backend-mode <mode>
                           Select scalar, avx2, or avx512 backend mode;
-                          scalar is the default, avx2 supports the first
-                          contiguous foreach map/zip subset, and avx512 is
-                          reserved until that backend lands
+                          scalar is the default, while avx2 and avx512
+                          support the first contiguous foreach map/zip subset
   test --check <file.tl>
                           Type-check the generated inline test harness without
                           assembling or running it

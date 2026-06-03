@@ -484,14 +484,6 @@ EOF
             assert_stdout_empty
             continue
         fi
-        # The selfhost direct compile path owns the AVX2 backend slice; AVX-512
-        # remains staged until mask/predicated memory emission lands.
-        if [ "$mode" = avx512 ]; then
-            assert_failure
-            assert_stdout_empty
-            assert_contains "$err" "compile: --backend-mode $mode requires the Rust compile driver until selfhost SIMD support (#1014)"
-            continue
-        fi
     fi
     assert_success
     assert_stderr_empty
@@ -505,6 +497,40 @@ EOF
 done <<EOF
 $(compile_backend_modes)
 EOF
+
+simd_shape_dir="$CLI_MATRIX/backend-avx512-shape"
+mkdir -p "$simd_shape_dir"
+cat > "$simd_shape_dir/main.tl" <<'EOF'
+(define (fill [a : (Array i64)] [b : (Array i64)] [out : (Array i64)] [n : i64]) : unit
+  (foreach
+    ([i : i64 0 n])
+    (array-set! out i (+ (array-ref a i) (array-ref b i)))))
+(define (main) : i64
+  (let
+    [a : (Array i64) (make-array i64 17)]
+    [b : (Array i64) (make-array i64 17)]
+    [out : (Array i64) (make-array i64 17)]
+    (begin
+      (fill a b out 17)
+      42)))
+EOF
+run_cmd compile-backend-avx512-shape "$COMPILER" compile "$simd_shape_dir/main.tl" --backend-mode avx512 -o "$simd_shape_dir/main.s"
+if [ "$IS_STAGE1_WRAPPER" -eq 1 ]; then
+    assert_failure
+    assert_stdout_empty
+    assert_contains "$err" "compile: --backend-mode avx512 requires the Rust compile driver until selfhost SIMD support (#1014)"
+elif [ "$HOST_ACTION_ENABLED" -eq 0 ] &&
+    grep -F -- "compile: --backend-mode avx512 requires the Rust compile driver until selfhost SIMD support (#1014)" "$err" > /dev/null; then
+    assert_failure
+    assert_stdout_empty
+else
+    assert_success
+    assert_stderr_empty
+    assert_contains "$simd_shape_dir/main.s" "%zmm"
+    assert_contains "$simd_shape_dir/main.s" "%k"
+    assert_contains "$simd_shape_dir/main.s" "vmovdqu64"
+    assert_not_contains "$simd_shape_dir/main.s" "vector/mask IR emission is not implemented"
+fi
 
 for target_alias in windows-x86_64 windows_x86_64; do
     target_dir="$CLI_MATRIX/target-$target_alias"

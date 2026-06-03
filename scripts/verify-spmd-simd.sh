@@ -160,11 +160,6 @@ while IFS= read -r prog; do
             continue
         fi
         run_spmd_mode "$prog" "$mode"
-        if [ "$mode" = avx512 ] &&
-            grep -qF "requires the Rust compile driver until selfhost SIMD support (#1014)" "$mode_err"; then
-            echo "[spmd-simd]   skip $mode (selfhost AVX-512 backend is still staged)"
-            continue
-        fi
         if [ -s "$mode_err" ]; then
             echo "[spmd-simd]   $mode build/run error:" >&2
             sed 's/^/    /' "$mode_err" >&2

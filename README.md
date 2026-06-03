@@ -106,6 +106,7 @@ struct/enum fields, and (optionally) `let` bindings.
 (if (< answer 100) "small" "large")
 (while (> answer 0) (set! answer (- answer 1)))
 (begin (print 1) (print 2) 0)
+(begin (when (< answer 0) (return 0)) answer)
 
 ;; Casts
 (cast 300 : u8)
@@ -139,9 +140,10 @@ blocks, generic `Option<T>`/`Result<T,E>` syntax, or trait-based error
 conversion. Library abstraction should come from Zig-style comptime generation:
 compile-time code inspects type values and emits concrete structs, enums,
 functions, and implementation bundles. Until that path lands, write explicit
-monomorphic declarations such as `MaybeI64` or domain-specific `Result*` enums;
-the selfhost compiler already uses `(try expr)` as the Lisp-shaped propagation
-form for compatible concrete Result-like enums.
+monomorphic declarations such as `MaybeI64` or domain-specific `Result*` enums.
+Use `(return expr)` for function-local early exits, `(when cond body...)` /
+`(unless cond body...)` for unit-valued guards, and `(try expr)` for the
+Lisp-shaped propagation form over compatible concrete Result-like enums.
 
 The comptime implementation path is tracked by #893 and #902; v1 type
 reflection from #913 is implemented in the selfhost CTFE path. Historical
@@ -304,8 +306,9 @@ same local value or type name without colliding.
 
 ### Expression forms
 
-`if`, `let`, `while`, `begin`, `set!`, `match` (incl. nested/recursive enum
-patterns and `_`), `ann`, `cast`, `foreach`, plus arithmetic (`+ - * / %`),
+`if`, `when`, `unless`, `let`, `while`, `begin`, `set!`, `match` (incl.
+nested/recursive enum patterns and `_`), `ann`, `cast`, `foreach`, plus
+arithmetic (`+ - * / %`),
 comparison (`= != < <= > >=`), boolean (`and` `or`), and bitwise/shift
 (`bit-and` `bit-or` `bit-xor` `shl` `shr`) operators. `struct-get` reads a
 struct field.

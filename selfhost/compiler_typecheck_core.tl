@@ -1587,6 +1587,7 @@
     [(AstExprUnquote inner) (tc-source-expr-policy-ok ctx inner)]
     [(AstExprUnquoteSplicing inner) (tc-source-expr-policy-ok ctx inner)]
     [(AstExprTry inner) (tc-source-expr-policy-ok ctx inner)]
+    [(AstExprReturn inner) (tc-source-expr-policy-ok ctx inner)]
     [(AstExprPtrNullCheck inner) (tc-source-expr-policy-ok ctx inner)]
     [(AstExprPtrRead ptr) (tc-source-expr-policy-ok ctx ptr)]
     [(AstExprPtrWrite ptr value) (tc-source-expr-pair-policy-ok ctx ptr value)]
@@ -4457,6 +4458,8 @@
             [(TcSpmdExprInfo _ class next-spmd-env)
               (tc-spmd-finish expr-ty class next-spmd-env)])]
         [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)])]
+    [(AstExprReturn _)
+      (ErrTcSpmdExprInfo "typecheck: return inside foreach is not supported")]
     [(AstExprPtrNull _) (tc-spmd-finish expr-ty TcSpmdUniform spmd-env)]
     [(AstExprPtrNullCheck inner)
       (match (tc-spmd-expr ctx env spmd-env inner)
@@ -4762,6 +4765,7 @@
     [(AstExprUnquote inner) (tc-expr-uses-free-name? inner name bound)]
     [(AstExprUnquoteSplicing inner) (tc-expr-uses-free-name? inner name bound)]
     [(AstExprTry inner) (tc-expr-uses-free-name? inner name bound)]
+    [(AstExprReturn inner) (tc-expr-uses-free-name? inner name bound)]
     [(AstExprPtrNull _) false]
     [(AstExprPtrNullCheck inner) (tc-expr-uses-free-name? inner name bound)]
     [(AstExprPtrRead ptr) (tc-expr-uses-free-name? ptr name bound)]
@@ -4863,6 +4867,8 @@
     [(AstExprComptime inner)
       (tc-expr-result-uses-cleanup-owner? inner owners bound)]
     [(AstExprTry inner) (tc-expr-result-uses-cleanup-owner? inner owners bound)]
+    [(AstExprReturn inner)
+      (tc-expr-result-uses-cleanup-owner? inner owners bound)]
     [(AstExprBoxGet inner)
       (tc-expr-result-uses-cleanup-owner? inner owners bound)]
     [(AstExprWithRegion _ body)
@@ -6064,6 +6070,24 @@
           (ErrTcType "typecheck: try operand must be Result-like enum")])]
     [(ErrTcType message) (ErrTcType message)]))
 
+(define (tc-return-expr [ctx : TcContext] [env : TcTypeEnv] [value : AstExpr]) : ResultTcType
+  (match (tc-current-return-type env)
+    [(OkTcType return-ty)
+      (match (tc-expr-with-expected-or-actual ctx env value return-ty)
+        [(OkTcType value-ty)
+          (match (tc-expect
+            value-ty
+            return-ty
+            "typecheck: return type mismatch")
+            [(OkTcUnit)
+              (if (tc-expr-result-uses-active-cleanup-owner? env value)
+                (ErrTcType
+                  "typecheck: cleanup-required resource would escape with scope")
+                (OkTcType (AstTyNever)))]
+            [(ErrTcUnit message) (ErrTcType message)])]
+        [(ErrTcType message) (ErrTcType message)])]
+    [(ErrTcType _) (ErrTcType "typecheck: return requires enclosing function")]))
+
 (define (tc-variant-owner-name [ctx : TcContext] [handle : i64]) : ResultTcString
   (match (tc-context-program ctx)
     [(AstProgram decls)
@@ -7056,6 +7080,7 @@
     [(AstExprBox inner) (tc-quasiquote-template-ok ctx env inner)]
     [(AstExprBoxGet inner) (tc-quasiquote-template-ok ctx env inner)]
     [(AstExprComptime inner) (tc-quasiquote-template-ok ctx env inner)]
+    [(AstExprReturn inner) (tc-quasiquote-template-ok ctx env inner)]
     [(AstExprQuote _) OkTcUnit]
     [(AstExprQuasiquote inner) (tc-quasiquote-template-ok ctx env inner)]
     [_ OkTcUnit]))
@@ -7619,6 +7644,7 @@
     [(AstExprUnquoteSplicing _)
       (ErrTcType "typecheck: unquote-splicing is only valid inside quasiquote")]
     [(AstExprTry inner) (tc-try-expr ctx env inner)]
+    [(AstExprReturn value) (tc-return-expr ctx env value)]
     [(AstExprPtrNull ty)
       (let
         [resolved : AstType (tc-resolve-type ctx ty)]
@@ -8048,6 +8074,7 @@
     [(AstExprUnquote _) (OkTcMove moved)]
     [(AstExprUnquoteSplicing _) (OkTcMove moved)]
     [(AstExprTry inner) (tc-move-check-expr ctx env locals moved inner)]
+    [(AstExprReturn inner) (tc-move-check-expr ctx env locals moved inner)]
     [(AstExprPtrNull _) (OkTcMove moved)]
     [(AstExprPtrNullCheck inner)
       (tc-move-check-expr ctx env locals moved inner)]
@@ -8515,6 +8542,10 @@
       [(AstExprComptime inner)
         (match (macro-expand-expr ctx env decls depth inner)
           [(OkMacroExpr ninner) (OkMacroExpr (AstExprComptime ninner))]
+          [(ErrMacroExpr diag) (ErrMacroExpr diag)])]
+      [(AstExprReturn inner)
+        (match (macro-expand-expr ctx env decls depth inner)
+          [(OkMacroExpr ninner) (OkMacroExpr (AstExprReturn ninner))]
           [(ErrMacroExpr diag) (ErrMacroExpr diag)])]
       [(AstExprSet name rhs)
         (match (macro-expand-expr ctx env decls depth rhs)

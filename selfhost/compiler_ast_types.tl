@@ -247,6 +247,9 @@
   ;; convention recognizes concrete enums with one `Ok*` and one `Err*`
   ;; variant, each carrying exactly one payload.
   (AstExprTry AstExpr)
+  ;; General function-local early exit: `(return expr)` checks `expr` against
+  ;; the enclosing function's return type and has the internal `never` type.
+  (AstExprReturn AstExpr)
   ;; Null raw-pointer construction `(ptr-null : T)` where `T` is `(Ptr U)` or
   ;; `(MutPtr U)` (#1054). Lowers to a pointer-sized zero; type is `T`.
   (AstExprPtrNull AstType)
@@ -385,6 +388,7 @@
     [(AstExprComptime _) 27]
     [(AstExprSpmdReduce _ _ _ _ _ _ _) 28]
     [(AstExprTry _) 29]
+    [(AstExprReturn _) 48]
     [(AstExprPtrNull _) 30]
     [(AstExprPtrNullCheck _) 31]
     [(AstExprWithResource _ _) 33]

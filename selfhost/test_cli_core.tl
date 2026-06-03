@@ -526,6 +526,7 @@
     [(AstExprUnquote inner) (tltest-reach-mark-expr inner names)]
     [(AstExprUnquoteSplicing inner) (tltest-reach-mark-expr inner names)]
     [(AstExprTry inner) (tltest-reach-mark-expr inner names)]
+    [(AstExprReturn inner) (tltest-reach-mark-expr inner names)]
     [(AstExprPtrNull _) names]
     [(AstExprPtrNullCheck inner) (tltest-reach-mark-expr inner names)]
     [(AstExprPtrRead ptr) (tltest-reach-mark-expr ptr names)]

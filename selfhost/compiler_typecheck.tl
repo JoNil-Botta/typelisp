@@ -170,6 +170,18 @@
   "(define (main [flag : bool]) : i64
   (if flag 42 (panic \"stop\")))")
 
+(define (compiler-typecheck-return-source) : String
+  "(define (main [flag : bool]) : i64
+  (begin
+    (if flag (return 7) unit)
+    42))")
+
+(define (compiler-typecheck-return-mismatch-source) : String
+  "(define (main) : i64 (return true))")
+
+(define (compiler-typecheck-return-outside-source) : String
+  "(define answer : i64 (return 1))")
+
 (define (compiler-typecheck-cast-bad-source) : String
   "(define (main) : i64 (cast true : i64))")
 
@@ -230,6 +242,12 @@
         (compiler-typecheck-error-ok?
           (compiler-typecheck-clone-ref-source)
           "typecheck: clone unsupported type (& n i64)")))))
+
+(define (compiler-typecheck-foreach-return-source) : String
+  "(define (main [n : i64]) : i64
+  (begin
+    (foreach ([i : i64 0 n]) (return i))
+    0))")
 
 (define (compiler-typecheck-foreach-spmd-ok-source) : String
   "(define (main [n : i64]) : unit
@@ -355,6 +373,21 @@
                 "typecheck: foreach varying array lane type is not supported: String")
               (compiler-typecheck-foreach-control-flow-tests-ok?))))))))
 
+(define (compiler-typecheck-return-tests-ok?) : bool
+  (and
+    (compiler-typecheck-ok-score? (compiler-typecheck-return-source) 10)
+    (and
+      (compiler-typecheck-error-ok?
+        (compiler-typecheck-return-mismatch-source)
+        "typecheck: return type mismatch")
+      (and
+        (compiler-typecheck-error-ok?
+          (compiler-typecheck-return-outside-source)
+          "typecheck: return requires enclosing function")
+        (compiler-typecheck-error-ok?
+          (compiler-typecheck-foreach-return-source)
+          "typecheck: return inside foreach is not supported")))))
+
 (define (compiler-typecheck-abstraction-policy-tests-ok?) : bool
   (compiler-typecheck-error-ok?
     (compiler-typecheck-type-parameter-source)
@@ -401,9 +434,11 @@
                           (compiler-typecheck-error-ok?
                             (compiler-typecheck-foreach-body-source)
                             "typecheck: foreach body must be unit")
-                          (compiler-typecheck-error-ok?
-                            (compiler-typecheck-lambda-ret-source)
-                            "typecheck: lambda return type mismatch"))))))))))))))
+                          (and
+                            (compiler-typecheck-error-ok?
+                              (compiler-typecheck-lambda-ret-source)
+                              "typecheck: lambda return type mismatch")
+                            (compiler-typecheck-return-tests-ok?)))))))))))))))
 
 (define (compiler-typecheck-nominal-source) : String
   "(defenum Maybe (None) (Some i64))

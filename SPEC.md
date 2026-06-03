@@ -528,9 +528,9 @@ Expansion runs after parsing/import loading and before runtime typechecking.
 The expander resolves a list head in the macro namespace first; if no macro is
 found, the form is left for ordinary value-call checking. A module may not
 declare a local value/function and a local macro with the same unqualified name
-in v1. Hygiene and binding-introducing macros are not part of v1; the initial
-stdlib macros (`and`, `or`, `when`, `unless`, and `cond`) must expand without
-introducing new user-visible bindings.
+in v1. Hygiene and binding-introducing macros are not part of v1; parser-owned
+guard/conditional forms such as `when`, `unless`, and `cond` introduce no
+user-visible bindings.
 
 ### 3.8 Type conversions (casts)
 
@@ -1888,6 +1888,17 @@ as the head of the final `cond` arm.
   [(= x 0) 10]
   [(= x 1) 20]
   [else 30])
+```
+
+`(when cond body...)` and `(unless cond body...)` are unit-valued guard forms.
+`when` evaluates its body only when `cond` is true; `unless` evaluates its body
+only when `cond` is false. The body must contain at least one expression. Body
+results are discarded, and the whole form has type `unit`, which makes these
+forms suitable for side effects and early-return guards.
+
+```lisp test=ignore name=when-unless-guards reason=fragment
+(when (< x 0) (return 0))
+(unless (< x 100) (print-string "large\n"))
 ```
 
 ### 5.7 `(let [name [: type] init] ... body)` — local bindings
@@ -3312,6 +3323,25 @@ for builtin `panic`/`error`:
       0)))
 ```
 
+Function-local early exit uses the Lisp-shaped `(return expr)` form:
+
+```lisp test=ignore name=early-return-guard reason="selfhost-only return; published stage0 may not support it yet"
+(define (clamp-positive [x : i64]) : i64
+  (begin
+    (when (< x 0) (return 0))
+    x))
+```
+
+- `(return expr)` is valid inside an enclosing function or lambda.
+- `expr` is checked against the enclosing function's declared return type.
+- The form has the compiler-internal bottom type, so it can appear in one
+  branch of an `if` or `match` whose other branch produces the surrounding
+  value.
+- Active resource `with` cleanup functions and scoped `with-arena` resets run
+  before the early exit leaves their scope.
+- `(return expr)` is rejected outside a function and inside `foreach`/SPMD
+  bodies.
+
 Recoverable failures are represented with ordinary concrete enums. TypeLisp
 does not expose generic `Option<T>` / `Result<T,E>` type syntax, generic
 functions, traits, trait objects, vtables, or runtime type-erased dispatch for
@@ -3744,6 +3774,8 @@ expr          ::= literal
                 | ident
                 | "(" "if" expr expr expr ")"
                 | "(" "cond" cond-arm+ ")"
+                | "(" "when" expr expr+ ")"
+                | "(" "unless" expr expr+ ")"
                 | "(" "let" binding+ expr ")"
                 | "(" "while" expr expr ")"
                 | "(" "begin" expr+ ")"
@@ -3755,6 +3787,7 @@ expr          ::= literal
                 | "(" "cfg" cfg-predicate expr [expr] ")"
                 | "(" "spmd-reduce" reduce-op foreach-clause expr expr ")"
                 | "(" "lambda" "(" param* ")" [":" type] expr ")"
+                | "(" "return" expr ")"
                 | "(" "with-arena" ident expr+ ")"
                 | "(" "with-escape" expr expr+ ")"
                 | "(" "with" "(" resource-binding* ")" expr+ ")"

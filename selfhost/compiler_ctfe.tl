@@ -400,6 +400,7 @@
     [(AstExprUnquote _) "unquote"]
     [(AstExprUnquoteSplicing _) "unquote-splicing"]
     [(AstExprTry _) "try"]
+    [(AstExprReturn _) "return"]
     [(AstExprPtrNull _) "ptr-null"]
     [(AstExprPtrNullCheck _) "ptr-null?"]
     [(AstExprPtrRead _) "ptr-read"]
@@ -2482,6 +2483,11 @@
         [(OkCtfeQuoteExpr quoted ty next-fuel)
           (OkCtfeQuoteExpr (AstExprComptime quoted) ty next-fuel)]
         [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExpr diag)])]
+    [(AstExprReturn inner)
+      (match (ctfe-quote-expr inner env fuel quasiquote)
+        [(OkCtfeQuoteExpr quoted _ next-fuel)
+          (OkCtfeQuoteExpr (AstExprReturn quoted) (AstTyExpr) next-fuel)]
+        [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExpr diag)])]
     [(AstExprUnquote inner)
       (if quasiquote
         (ctfe-eval-unquote-expr inner expr env fuel)
@@ -2656,6 +2662,10 @@
     [(AstExprUnquoteSplicing a-inner)
       (match b
         [(AstExprUnquoteSplicing b-inner) (ctfe-expr-eq a-inner b-inner)]
+        [_ false])]
+    [(AstExprReturn a-inner)
+      (match b
+        [(AstExprReturn b-inner) (ctfe-expr-eq a-inner b-inner)]
         [_ false])]
     [(AstExprSpanned a-inner _) (ctfe-expr-eq a-inner b)]
     [_ false]))

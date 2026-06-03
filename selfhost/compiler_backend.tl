@@ -1563,17 +1563,19 @@
   (let
     [i : i64 0]
     [n : i64 (string-length text)]
-    [out : String ""]
+    [buf : TextBuf (text-buf-empty)]
     (begin
       (while (< i n)
         (let
           [c : char (string-ref text i)]
           (begin
             (set!
-              out
-              (string-append out (compiler-backend-escape-string-byte text i c)))
+              buf
+              (text-buf-append
+                buf
+                (compiler-backend-escape-string-byte text i c)))
             (set! i (+ i 1)))))
-      out)))
+      (text-buf-render buf))))
 
 (define (compiler-backend-quoted-gas-string [text : String]) : String
   (string-append
@@ -1584,20 +1586,20 @@
   (let
     [i : i64 0]
     [n : i64 (string-length text)]
-    [out : String ""]
+    [buf : TextBuf (text-buf-empty)]
     (begin
       (while (< i n)
         (begin
           (set!
-            out
-            (string-append
-              out
+            buf
+            (text-buf-append
+              buf
               (compiler-backend-hex-byte
                 (compiler-backend-char-code (string-ref text i)))))
           (set! i (+ i 1))))
       (if (= n 0)
         "empty"
-        out))))
+        (text-buf-render buf)))))
 
 (define (compiler-backend-string-data-label [text : String]) : String
   (string-append ".L_tl_str_data_" (compiler-backend-string-label-suffix text)))
@@ -7723,22 +7725,35 @@
     "\n    .quad 0\n"
     ""))
 
-(define (compiler-backend-emit-closure-descriptor-entries
+(define (compiler-backend-emit-closure-descriptor-entry-into
+  [name : String]
+  [functions : CompilerIrFunctionList]
+  [externs : CompilerIrExternList]
+  [buf : TextBuf]) : TextBuf
+  (match (compiler-backend-signature functions externs name)
+    [(CompilerBackendSomeSignature _ _)
+      (text-buf-append
+        buf
+        (compiler-backend-emit-closure-descriptor-entry name))]
+    [(CompilerBackendNoSignature) buf]))
+
+(define (compiler-backend-emit-closure-descriptor-entries-into
   [names : BackendStringList]
   [functions : CompilerIrFunctionList]
-  [externs : CompilerIrExternList]) : String
+  [externs : CompilerIrExternList]
+  [buf : TextBuf]) : TextBuf
   (match names
-    [(BackendStringNil) ""]
+    [(BackendStringNil) buf]
     [(BackendStringCons name rest)
-      (string-append
-        (match (compiler-backend-signature functions externs name)
-          [(CompilerBackendSomeSignature _ _)
-            (compiler-backend-emit-closure-descriptor-entry name)]
-          [(CompilerBackendNoSignature) ""])
-        (compiler-backend-emit-closure-descriptor-entries
-          rest
+      (compiler-backend-emit-closure-descriptor-entries-into
+        rest
+        functions
+        externs
+        (compiler-backend-emit-closure-descriptor-entry-into
+          name
           functions
-          externs))]))
+          externs
+          buf))]))
 
 (define (compiler-backend-emit-closure-descriptors
   [names : BackendStringList]
@@ -7747,12 +7762,14 @@
   (match names
     [(BackendStringNil) ""]
     [_
-      (string-append
-        "    .section .rodata\n    .balign 8\n"
-        (compiler-backend-emit-closure-descriptor-entries
+      (text-buf-render
+        (compiler-backend-emit-closure-descriptor-entries-into
           names
           functions
-          externs))]))
+          externs
+          (text-buf-append
+            (text-buf-empty)
+            "    .section .rodata\n    .balign 8\n")))]))
 
 (define (compiler-backend-closure-adapter-outgoing-frame-space
   [target : CompilerBackendTarget]
@@ -7897,20 +7914,26 @@
         true
         (compiler-backend-string-list-contains? rest text))]))
 
-(define (compiler-backend-string-list-append
+(define (compiler-backend-string-list-reverse-into
   [strings : BackendStringList]
-  [text : String]) : BackendStringList
+  [out : BackendStringList]) : BackendStringList
   (match strings
-    [(BackendStringNil) (BackendStringCons text BackendStringNil)]
+    [(BackendStringNil) out]
     [(BackendStringCons head rest)
-      (BackendStringCons head (compiler-backend-string-list-append rest text))]))
+      (compiler-backend-string-list-reverse-into
+        rest
+        (BackendStringCons head out))]))
+
+(define (compiler-backend-string-list-reverse
+  [strings : BackendStringList]) : BackendStringList
+  (compiler-backend-string-list-reverse-into strings BackendStringNil))
 
 (define (compiler-backend-string-list-add
   [strings : BackendStringList]
   [text : String]) : BackendStringList
   (if (compiler-backend-string-list-contains? strings text)
     strings
-    (compiler-backend-string-list-append strings text)))
+    (BackendStringCons text strings)))
 
 (define (compiler-backend-collect-value-function
   [functions : BackendStringList]
@@ -8092,9 +8115,10 @@
   [program : CompilerIrProgram]) : BackendStringList
   (match program
     [(IrProgram globals functions _)
-      (compiler-backend-collect-function-functions
-        (compiler-backend-collect-global-functions BackendStringNil globals)
-        functions)]))
+      (compiler-backend-string-list-reverse
+        (compiler-backend-collect-function-functions
+          (compiler-backend-collect-global-functions BackendStringNil globals)
+          functions))]))
 
 (define (compiler-backend-collect-value-string
   [strings : BackendStringList]
@@ -8271,9 +8295,10 @@
 (define (compiler-backend-collect-program-strings [program : CompilerIrProgram]) : BackendStringList
   (match program
     [(IrProgram globals functions _)
-      (compiler-backend-collect-function-strings
-        (compiler-backend-collect-global-strings BackendStringNil globals)
-        functions)]))
+      (compiler-backend-string-list-reverse
+        (compiler-backend-collect-function-strings
+          (compiler-backend-collect-global-strings BackendStringNil globals)
+          functions))]))
 
 (define (compiler-backend-collect-value-f64
   [floats : BackendStringList]
@@ -8443,9 +8468,10 @@
 (define (compiler-backend-collect-program-f64s [program : CompilerIrProgram]) : BackendStringList
   (match program
     [(IrProgram globals functions _)
-      (compiler-backend-collect-function-f64s
-        (compiler-backend-collect-global-f64s BackendStringNil globals)
-        functions)]))
+      (compiler-backend-string-list-reverse
+        (compiler-backend-collect-function-f64s
+          (compiler-backend-collect-global-f64s BackendStringNil globals)
+          functions))]))
 
 (define (compiler-backend-emit-string-entry [text : String]) : String
   (backend-cat5

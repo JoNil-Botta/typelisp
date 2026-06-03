@@ -250,36 +250,35 @@
 (define (doc-test-parse-i64 [text : String]) : DocTestMaybeI64
   (let
     [trimmed : String (doc-test-trim text)]
-    (let
-      [n : i64 (string-length trimmed)]
-      (if (= n 0)
-        (DocTestNoI64 "expected integer")
-        (let
-          [i : i64 0]
-          [sign : i64 1]
-          [value : i64 0]
-          [ok : bool true]
-          (begin
-            (if (= (string-ref trimmed 0) #-')
-              (begin
-                (set! sign -1)
-                (set! i 1))
-              unit)
-            (if (= i n)
-              (set! ok false)
-              unit)
-            (while (and ok (< i n))
-              (let
-                [digit : i64
-                  (doc-test-decimal-digit-value (string-ref trimmed i))]
-                (if (< digit 0)
-                  (set! ok false)
-                  (begin
-                    (set! value (+ (* value 10) digit))
-                    (set! i (+ i 1))))))
-            (if ok
-              (DocTestSomeI64 (* sign value))
-              (DocTestNoI64 "expected integer"))))))))
+    [n : i64 (string-length trimmed)]
+    (if (= n 0)
+      (DocTestNoI64 "expected integer")
+      (let
+        [i : i64 0]
+        [sign : i64 1]
+        [value : i64 0]
+        [ok : bool true]
+        (begin
+          (if (= (string-ref trimmed 0) #-')
+            (begin
+              (set! sign -1)
+              (set! i 1))
+            unit)
+          (if (= i n)
+            (set! ok false)
+            unit)
+          (while (and ok (< i n))
+            (let
+              [digit : i64
+                (doc-test-decimal-digit-value (string-ref trimmed i))]
+              (if (< digit 0)
+                (set! ok false)
+                (begin
+                  (set! value (+ (* value 10) digit))
+                  (set! i (+ i 1))))))
+          (if ok
+            (DocTestSomeI64 (* sign value))
+            (DocTestNoI64 "expected integer")))))))
 
 (define (doc-test-decode-output-literal [text : String]) : DocTestMaybeOutput
   (let
@@ -450,14 +449,13 @@
       (let
         [prefix-len : i64 (string-length prefix)]
         [trimmed-len : i64 (string-length trimmed)]
-        (let
-          [body : String
-            (substring trimmed prefix-len (- trimmed-len prefix-len))]
-          (if (> (string-length body) 0)
-            (if (= (string-ref body 0) #\space')
-              (DocTestSomeString (substring body 1 (- (string-length body) 1)))
-              (DocTestSomeString body))
-            (DocTestSomeString body))))
+        [body : String
+          (substring trimmed prefix-len (- trimmed-len prefix-len))]
+        (if (> (string-length body) 0)
+          (if (= (string-ref body 0) #\space')
+            (DocTestSomeString (substring body 1 (- (string-length body) 1)))
+            (DocTestSomeString body))
+          (DocTestSomeString body)))
       (DocTestNoString))))
 
 (define (doc-test-module-doc-comment-body [line : String]) : DocTestMaybeString
@@ -507,43 +505,41 @@
       (DocTestFenceTypeLisp mode)
       (let
         [end : i64 (doc-test-word-end trimmed 0)]
-        (let
-          [option : String (substring trimmed 0 end)]
-          [rest : String
-            (substring trimmed end (- (string-length trimmed) end))]
-          (if (string-eq option "expect-error")
-            (match mode
-              [(DocTestFenceRun)
-                (DocTestFenceMalformed
-                  (DocTestError
-                    line-number
-                    "TypeLisp doctest options `run` and `expect-error` cannot be combined"))]
-              [(DocTestFenceCheck _)
-                (doc-test-parse-fence-options
-                  rest
-                  line-number
-                  (DocTestFenceCheck (DocTestExpectError)))])
-            (if (string-eq option "run")
-              (match mode
-                [(DocTestFenceRun)
-                  (doc-test-parse-fence-options rest line-number mode)]
-                [(DocTestFenceCheck expectation)
-                  (if (doc-test-expectation-error? expectation)
-                    (DocTestFenceMalformed
-                      (DocTestError
-                        line-number
-                        "TypeLisp doctest options `run` and `expect-error` cannot be combined"))
-                    (doc-test-parse-fence-options
-                      rest
-                      line-number
-                      (DocTestFenceRun)))])
+        [option : String (substring trimmed 0 end)]
+        [rest : String (substring trimmed end (- (string-length trimmed) end))]
+        (if (string-eq option "expect-error")
+          (match mode
+            [(DocTestFenceRun)
               (DocTestFenceMalformed
                 (DocTestError
                   line-number
-                  (doc-test-cat3
-                    "unsupported TypeLisp doctest option `"
-                    option
-                    "`"))))))))))
+                  "TypeLisp doctest options `run` and `expect-error` cannot be combined"))]
+            [(DocTestFenceCheck _)
+              (doc-test-parse-fence-options
+                rest
+                line-number
+                (DocTestFenceCheck (DocTestExpectError)))])
+          (if (string-eq option "run")
+            (match mode
+              [(DocTestFenceRun)
+                (doc-test-parse-fence-options rest line-number mode)]
+              [(DocTestFenceCheck expectation)
+                (if (doc-test-expectation-error? expectation)
+                  (DocTestFenceMalformed
+                    (DocTestError
+                      line-number
+                      "TypeLisp doctest options `run` and `expect-error` cannot be combined"))
+                  (doc-test-parse-fence-options
+                    rest
+                    line-number
+                    (DocTestFenceRun)))])
+            (DocTestFenceMalformed
+              (DocTestError
+                line-number
+                (doc-test-cat3
+                  "unsupported TypeLisp doctest option `"
+                  option
+                  "`")))))))))
 
 (define (doc-test-parse-fence-info [info : String] [line-number : i64]) : DocTestFenceInfo
   (let
@@ -552,16 +548,14 @@
       (DocTestFenceIgnore)
       (let
         [end : i64 (doc-test-word-end trimmed 0)]
-        (let
-          [language : String (substring trimmed 0 end)]
-          [rest : String
-            (substring trimmed end (- (string-length trimmed) end))]
-          (if (or (string-eq language "typelisp") (string-eq language "tl"))
-            (doc-test-parse-fence-options
-              rest
-              line-number
-              (DocTestFenceCheck (DocTestExpectPass)))
-            (DocTestFenceIgnore)))))))
+        [language : String (substring trimmed 0 end)]
+        [rest : String (substring trimmed end (- (string-length trimmed) end))]
+        (if (or (string-eq language "typelisp") (string-eq language "tl"))
+          (doc-test-parse-fence-options
+            rest
+            line-number
+            (DocTestFenceCheck (DocTestExpectPass)))
+          (DocTestFenceIgnore))))))
 
 (define (doc-test-skip-ignored-fence [lines : DocTestLineList]) : DocTestLineList
   (match lines
@@ -919,45 +913,42 @@
       (while (< pos n)
         (let
           [line-end : i64 (doc-test-line-end src pos n)]
-          (let
-            [line : String (substring src pos (- line-end pos))]
-            (begin
-              (match (doc-test-module-doc-comment-body line)
-                [(DocTestSomeString body)
+          [line : String (substring src pos (- line-end pos))]
+          (begin
+            (match (doc-test-module-doc-comment-body line)
+              [(DocTestSomeString body)
+                (begin
+                  (set! pending-lines DocTestLineNil)
+                  (set!
+                    module-lines
+                    (DocTestLineCons
+                      (DocTestLine line-number body)
+                      module-lines)))]
+              [(DocTestNoString)
+                (if (doc-test-string-blank? line)
+                  (set! pending-lines pending-lines)
                   (begin
-                    (set! pending-lines DocTestLineNil)
                     (set!
-                      module-lines
-                      (DocTestLineCons
-                        (DocTestLine line-number body)
-                        module-lines)))]
-                [(DocTestNoString)
-                  (if (doc-test-string-blank? line)
-                    (set! pending-lines pending-lines)
-                    (begin
-                      (set!
-                        state
-                        (doc-test-scan-reversed-block module-lines state))
-                      (set! module-lines DocTestLineNil)
-                      (match (doc-test-item-doc-comment-body line)
-                        [(DocTestSomeString body)
-                          (set!
-                            pending-lines
-                            (DocTestLineCons
-                              (DocTestLine line-number body)
-                              pending-lines))]
-                        [(DocTestNoString)
-                          (if (doc-test-supported-item-declaration? line)
-                            (begin
-                              (set!
-                                state
-                                (doc-test-scan-reversed-block
-                                  pending-lines
-                                  state))
-                              (set! pending-lines DocTestLineNil))
-                            (set! pending-lines DocTestLineNil))])))])
-              (set! pos (doc-test-next-line-start src line-end n))
-              (set! line-number (+ line-number 1))))))
+                      state
+                      (doc-test-scan-reversed-block module-lines state))
+                    (set! module-lines DocTestLineNil)
+                    (match (doc-test-item-doc-comment-body line)
+                      [(DocTestSomeString body)
+                        (set!
+                          pending-lines
+                          (DocTestLineCons
+                            (DocTestLine line-number body)
+                            pending-lines))]
+                      [(DocTestNoString)
+                        (if (doc-test-supported-item-declaration? line)
+                          (begin
+                            (set!
+                              state
+                              (doc-test-scan-reversed-block pending-lines state))
+                            (set! pending-lines DocTestLineNil))
+                          (set! pending-lines DocTestLineNil))])))])
+            (set! pos (doc-test-next-line-start src line-end n))
+            (set! line-number (+ line-number 1)))))
       (set! state (doc-test-scan-reversed-block module-lines state))
       (match state
         [(DocTestScanState examples errors _)

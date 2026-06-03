@@ -8,18 +8,17 @@
 (define (fmt-format-file [check : bool] [path : String]) : i64
   (let
     [source : String (read-file path)]
-    (let
-      [formatted : String (format-rules-render-source-width source 80)]
-      (if check
-        (if (string-eq source formatted)
-          0
-          (begin
-            (print-error
-              (string-append "fmt: would reformat " (string-append path "\n")))
-            1))
+    [formatted : String (format-rules-render-source-width source 80)]
+    (if check
+      (if (string-eq source formatted)
+        0
         (begin
-          (write-file path formatted)
-          0)))))
+          (print-error
+            (string-append "fmt: would reformat " (string-append path "\n")))
+          1))
+      (begin
+        (write-file path formatted)
+        0))))
 
 (define (fmt-files [check : bool] [index : i64] [count : i64] [status : i64]) : i64
   (if (< index count)

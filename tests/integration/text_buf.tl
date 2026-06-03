@@ -35,12 +35,11 @@
         (text-buf-append (text-buf-append (text-buf-empty) "left") "-")]
       [right : TextBuf
         (text-buf-append (text-buf-append (text-buf-empty) "right") "\n")]
-      (let
-        [joined : TextBuf (text-buf-append-buffer left right)]
-        (begin
-          (check-string
-            (text-buf-render joined)
-            "left-right\n"
-            "text-buf buffer append failed")
-          (print-string (text-buf-render joined)))))
+      [joined : TextBuf (text-buf-append-buffer left right)]
+      (begin
+        (check-string
+          (text-buf-render joined)
+          "left-right\n"
+          "text-buf buffer append failed")
+        (print-string (text-buf-render joined))))
     0))

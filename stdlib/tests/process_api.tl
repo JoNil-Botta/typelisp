@@ -86,96 +86,95 @@
       (process-args-cons
         "hello"
         (process-args-cons "world" (process-args-empty)))]
-    (let
-      [command : ProcessCommand
-        (process-command-with-arg
-          (process-command-with-env
-            (process-command-with-stdin
-              (process-command-with-cwd (process-command "echo" args) "target")
-              "stdin")
-            "TL_TEST"
-            "1")
-          "!")]
-      (begin
-        (assert-string-eq
-          (process-command-executable command)
-          "echo"
-          "process executable")
-        (assert-process-string-list args "hello" "world" "process argv")
-        (assert-process-string-list3
-          (process-command-argv command)
-          "hello"
-          "world"
-          "!"
-          "process argv append")
-        (assert-i64-eq
-          (process-args-count (process-command-argv command))
-          3
-          "process argv count")
-        (assert-process-string-list3
-          (process-args-append args (process-args-single "again"))
-          "hello"
-          "world"
-          "again"
-          "process args append")
-        (assert-process-some-string
-          (process-command-cwd command)
-          "target"
-          "process cwd")
-        (assert-process-some-string
-          (process-command-stdin command)
-          "stdin"
-          "process stdin")
-        (assert-process-env-head
-          (process-command-env command)
+    [command : ProcessCommand
+      (process-command-with-arg
+        (process-command-with-env
+          (process-command-with-stdin
+            (process-command-with-cwd (process-command "echo" args) "target")
+            "stdin")
           "TL_TEST"
-          "1"
-          "process env")
-        (assert-i64-eq
-          (process-env-count (process-command-env command))
-          1
-          "process env count")
-        (assert-process-env-head
-          (process-command-env
-            (process-command-with-env-list
-              command
-              (process-env-cons "TL_REPLACED" "yes" (process-env-empty))))
-          "TL_REPLACED"
-          "yes"
-          "process env list")
-        (assert-process-no-string
-          (process-command-cwd (process-command "echo" (process-args-empty)))
-          "process default cwd")
-        (assert-process-invalid-command
-          (process-output (process-command "" (process-args-empty)))
-          "process: executable path is empty")
-        (assert-process-invalid-command
-          (process-output (process-command-with-cwd command ""))
-          "process: cwd path is empty")
-        (assert-process-invalid-command
-          (process-output (process-command-with-env command "" "1"))
-          "process: environment variable name is empty")
-        (assert-process-invalid-command
-          (process-output (process-command-with-env command "BAD=NAME" "1"))
-          "process: environment variable name contains '='")
-        (assert-true (process-command-valid? command) "process valid command")
-        (assert-false
-          (process-command-valid? (process-command "" (process-args-empty)))
-          "process invalid empty executable")
-        (assert-true
-          (process-result-success? (OkProcessOutput (ProcessOutput 0 "" "")))
-          "process result success")
-        (assert-false
-          (process-result-success? (OkProcessOutput (ProcessOutput 7 "" "")))
-          "process result nonzero")
-        (assert-false
-          (process-result-success?
-            (ErrProcessOutput (ProcessSpawnFailed "spawn failed")))
-          "process result error")
-        (assert-true
-          (process-error-spawn-failed? (ProcessSpawnFailed "spawn failed"))
-          "process spawn predicate")
-        (assert-true
-          (process-error-wait-failed? (ProcessWaitFailed "wait failed"))
-          "process wait predicate")
-        42))))
+          "1")
+        "!")]
+    (begin
+      (assert-string-eq
+        (process-command-executable command)
+        "echo"
+        "process executable")
+      (assert-process-string-list args "hello" "world" "process argv")
+      (assert-process-string-list3
+        (process-command-argv command)
+        "hello"
+        "world"
+        "!"
+        "process argv append")
+      (assert-i64-eq
+        (process-args-count (process-command-argv command))
+        3
+        "process argv count")
+      (assert-process-string-list3
+        (process-args-append args (process-args-single "again"))
+        "hello"
+        "world"
+        "again"
+        "process args append")
+      (assert-process-some-string
+        (process-command-cwd command)
+        "target"
+        "process cwd")
+      (assert-process-some-string
+        (process-command-stdin command)
+        "stdin"
+        "process stdin")
+      (assert-process-env-head
+        (process-command-env command)
+        "TL_TEST"
+        "1"
+        "process env")
+      (assert-i64-eq
+        (process-env-count (process-command-env command))
+        1
+        "process env count")
+      (assert-process-env-head
+        (process-command-env
+          (process-command-with-env-list
+            command
+            (process-env-cons "TL_REPLACED" "yes" (process-env-empty))))
+        "TL_REPLACED"
+        "yes"
+        "process env list")
+      (assert-process-no-string
+        (process-command-cwd (process-command "echo" (process-args-empty)))
+        "process default cwd")
+      (assert-process-invalid-command
+        (process-output (process-command "" (process-args-empty)))
+        "process: executable path is empty")
+      (assert-process-invalid-command
+        (process-output (process-command-with-cwd command ""))
+        "process: cwd path is empty")
+      (assert-process-invalid-command
+        (process-output (process-command-with-env command "" "1"))
+        "process: environment variable name is empty")
+      (assert-process-invalid-command
+        (process-output (process-command-with-env command "BAD=NAME" "1"))
+        "process: environment variable name contains '='")
+      (assert-true (process-command-valid? command) "process valid command")
+      (assert-false
+        (process-command-valid? (process-command "" (process-args-empty)))
+        "process invalid empty executable")
+      (assert-true
+        (process-result-success? (OkProcessOutput (ProcessOutput 0 "" "")))
+        "process result success")
+      (assert-false
+        (process-result-success? (OkProcessOutput (ProcessOutput 7 "" "")))
+        "process result nonzero")
+      (assert-false
+        (process-result-success?
+          (ErrProcessOutput (ProcessSpawnFailed "spawn failed")))
+        "process result error")
+      (assert-true
+        (process-error-spawn-failed? (ProcessSpawnFailed "spawn failed"))
+        "process spawn predicate")
+      (assert-true
+        (process-error-wait-failed? (ProcessWaitFailed "wait failed"))
+        "process wait predicate")
+      42)))

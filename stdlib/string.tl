@@ -24,29 +24,27 @@
 (define (string-trim-left [s : String]) : String
   (let
     [n : i64 (string-length s)]
-    (let
-      [i : i64 0]
-      [done : bool false]
-      (begin
-        (while (and (not done) (< i n))
-          (if (is-char-whitespace (string-ref s i))
-            (set! i (+ i 1))
-            (set! done true)))
-        (substring s i (- n i))))))
+    [i : i64 0]
+    [done : bool false]
+    (begin
+      (while (and (not done) (< i n))
+        (if (is-char-whitespace (string-ref s i))
+          (set! i (+ i 1))
+          (set! done true)))
+      (substring s i (- n i)))))
 
 ;: Trim trailing whitespace from a string.
 (define (string-trim-right [s : String]) : String
   (let
     [n : i64 (string-length s)]
-    (let
-      [i : i64 (- n 1)]
-      [done : bool false]
-      (begin
-        (while (and (not done) (>= i 0))
-          (if (is-char-whitespace (string-ref s i))
-            (set! i (- i 1))
-            (set! done true)))
-        (substring s 0 (+ i 1))))))
+    [i : i64 (- n 1)]
+    [done : bool false]
+    (begin
+      (while (and (not done) (>= i 0))
+        (if (is-char-whitespace (string-ref s i))
+          (set! i (- i 1))
+          (set! done true)))
+      (substring s 0 (+ i 1)))))
 
 ;: Trim whitespace from both ends.
 (define (string-trim [s : String]) : String

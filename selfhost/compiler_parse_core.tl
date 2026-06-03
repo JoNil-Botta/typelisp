@@ -520,78 +520,32 @@
 (define (compiler-parse-dispatch-binops [e : SymI64Env]) : SymI64Env
   (let
     [e1 : SymI64Env (sym-i64-bind e "+" (compiler-parse-tag-bin-add))]
-    (let
-      [e2 : SymI64Env (sym-i64-bind e1 "-" (compiler-parse-tag-bin-sub))]
-      (let
-        [e3 : SymI64Env (sym-i64-bind e2 "*" (compiler-parse-tag-bin-mul))]
-        (let
-          [e4 : SymI64Env (sym-i64-bind e3 "/" (compiler-parse-tag-bin-div))]
-          (let
-            [e5 : SymI64Env (sym-i64-bind e4 "%" (compiler-parse-tag-bin-mod))]
-            (let
-              [e6 : SymI64Env (sym-i64-bind e5 "=" (compiler-parse-tag-bin-eq))]
-              (let
-                [e7 : SymI64Env
-                  (sym-i64-bind e6 "!=" (compiler-parse-tag-bin-ne))]
-                (let
-                  [e8 : SymI64Env
-                    (sym-i64-bind e7 "<" (compiler-parse-tag-bin-lt))]
-                  (let
-                    [e9 : SymI64Env
-                      (sym-i64-bind e8 "<=" (compiler-parse-tag-bin-le))]
-                    (let
-                      [e10 : SymI64Env
-                        (sym-i64-bind e9 ">" (compiler-parse-tag-bin-gt))]
-                      (let
-                        [e11 : SymI64Env
-                          (sym-i64-bind e10 ">=" (compiler-parse-tag-bin-ge))]
-                        (let
-                          [e12 : SymI64Env
-                            (sym-i64-bind
-                              e11
-                              "and"
-                              (compiler-parse-tag-bin-and))]
-                          (let
-                            [e13 : SymI64Env
-                              (sym-i64-bind
-                                e12
-                                "or"
-                                (compiler-parse-tag-bin-or))]
-                            (let
-                              [e14 : SymI64Env
-                                (sym-i64-bind
-                                  e13
-                                  "bit-and"
-                                  (compiler-parse-tag-bin-bit-and))]
-                              (let
-                                [e15 : SymI64Env
-                                  (sym-i64-bind
-                                    e14
-                                    "bit-or"
-                                    (compiler-parse-tag-bin-bit-or))]
-                                (let
-                                  [e16 : SymI64Env
-                                    (sym-i64-bind
-                                      e15
-                                      "bit-xor"
-                                      (compiler-parse-tag-bin-bit-xor))]
-                                  (let
-                                    [e17 : SymI64Env
-                                      (sym-i64-bind
-                                        e16
-                                        "shl"
-                                        (compiler-parse-tag-bin-shl))]
-                                    (sym-i64-bind
-                                      e17
-                                      "shr"
-                                      (compiler-parse-tag-bin-shr))))))))))))))))))))
+    [e2 : SymI64Env (sym-i64-bind e1 "-" (compiler-parse-tag-bin-sub))]
+    [e3 : SymI64Env (sym-i64-bind e2 "*" (compiler-parse-tag-bin-mul))]
+    [e4 : SymI64Env (sym-i64-bind e3 "/" (compiler-parse-tag-bin-div))]
+    [e5 : SymI64Env (sym-i64-bind e4 "%" (compiler-parse-tag-bin-mod))]
+    [e6 : SymI64Env (sym-i64-bind e5 "=" (compiler-parse-tag-bin-eq))]
+    [e7 : SymI64Env (sym-i64-bind e6 "!=" (compiler-parse-tag-bin-ne))]
+    [e8 : SymI64Env (sym-i64-bind e7 "<" (compiler-parse-tag-bin-lt))]
+    [e9 : SymI64Env (sym-i64-bind e8 "<=" (compiler-parse-tag-bin-le))]
+    [e10 : SymI64Env (sym-i64-bind e9 ">" (compiler-parse-tag-bin-gt))]
+    [e11 : SymI64Env (sym-i64-bind e10 ">=" (compiler-parse-tag-bin-ge))]
+    [e12 : SymI64Env (sym-i64-bind e11 "and" (compiler-parse-tag-bin-and))]
+    [e13 : SymI64Env (sym-i64-bind e12 "or" (compiler-parse-tag-bin-or))]
+    [e14 : SymI64Env
+      (sym-i64-bind e13 "bit-and" (compiler-parse-tag-bin-bit-and))]
+    [e15 : SymI64Env
+      (sym-i64-bind e14 "bit-or" (compiler-parse-tag-bin-bit-or))]
+    [e16 : SymI64Env
+      (sym-i64-bind e15 "bit-xor" (compiler-parse-tag-bin-bit-xor))]
+    [e17 : SymI64Env (sym-i64-bind e16 "shl" (compiler-parse-tag-bin-shl))]
+    (sym-i64-bind e17 "shr" (compiler-parse-tag-bin-shr))))
 
 (define (compiler-parse-dispatch-unops [e : SymI64Env]) : SymI64Env
   (let
     [e1 : SymI64Env (sym-i64-bind e "not" (compiler-parse-tag-un-not))]
-    (let
-      [e2 : SymI64Env (sym-i64-bind e1 "neg" (compiler-parse-tag-un-neg))]
-      (sym-i64-bind e2 "bit-not" (compiler-parse-tag-un-bit-not)))))
+    [e2 : SymI64Env (sym-i64-bind e1 "neg" (compiler-parse-tag-un-neg))]
+    (sym-i64-bind e2 "bit-not" (compiler-parse-tag-un-bit-not))))
 
 (define (compiler-parse-dispatch-types [e : SymI64Env]) : SymI64Env
   (let
@@ -722,44 +676,25 @@
 (define (compiler-parse-dispatch-patterns [e : SymI64Env]) : SymI64Env
   (let
     [e1 : SymI64Env (sym-i64-bind e "true" (compiler-parse-tag-lit-true))]
-    (let
-      [e2 : SymI64Env (sym-i64-bind e1 "false" (compiler-parse-tag-lit-false))]
-      (sym-i64-bind e2 "_" (compiler-parse-tag-pattern-wildcard)))))
+    [e2 : SymI64Env (sym-i64-bind e1 "false" (compiler-parse-tag-lit-false))]
+    (sym-i64-bind e2 "_" (compiler-parse-tag-pattern-wildcard))))
 
 (define (compiler-parse-dispatch-decls [e : SymI64Env]) : SymI64Env
   (let
     [e1 : SymI64Env (sym-i64-bind e "define" (compiler-parse-tag-decl-define))]
-    (let
-      [e2 : SymI64Env
-        (sym-i64-bind e1 "extern" (compiler-parse-tag-decl-extern))]
-      (let
-        [e3 : SymI64Env
-          (sym-i64-bind e2 "defenum" (compiler-parse-tag-decl-defenum))]
-        (let
-          [e4 : SymI64Env
-            (sym-i64-bind e3 "defstruct" (compiler-parse-tag-decl-defstruct))]
-          (let
-            [e5 : SymI64Env
-              (sym-i64-bind e4 "import" (compiler-parse-tag-decl-import))]
-            (let
-              [e6 : SymI64Env
-                (sym-i64-bind
-                  e5
-                  "comptime-decl"
-                  (compiler-parse-tag-decl-comptime-decl))]
-              (let
-                [e7 : SymI64Env
-                  (sym-i64-bind e6 "module" (compiler-parse-tag-decl-module))]
-                (let
-                  [e8 : SymI64Env
-                    (sym-i64-bind e7 "test" (compiler-parse-tag-decl-test))]
-                  (let
-                    [e9 : SymI64Env
-                      (sym-i64-bind
-                        e8
-                        "defmacro"
-                        (compiler-parse-tag-decl-defmacro))]
-                    (sym-i64-bind e9 "export" (compiler-parse-tag-decl-export))))))))))))
+    [e2 : SymI64Env (sym-i64-bind e1 "extern" (compiler-parse-tag-decl-extern))]
+    [e3 : SymI64Env
+      (sym-i64-bind e2 "defenum" (compiler-parse-tag-decl-defenum))]
+    [e4 : SymI64Env
+      (sym-i64-bind e3 "defstruct" (compiler-parse-tag-decl-defstruct))]
+    [e5 : SymI64Env (sym-i64-bind e4 "import" (compiler-parse-tag-decl-import))]
+    [e6 : SymI64Env
+      (sym-i64-bind e5 "comptime-decl" (compiler-parse-tag-decl-comptime-decl))]
+    [e7 : SymI64Env (sym-i64-bind e6 "module" (compiler-parse-tag-decl-module))]
+    [e8 : SymI64Env (sym-i64-bind e7 "test" (compiler-parse-tag-decl-test))]
+    [e9 : SymI64Env
+      (sym-i64-bind e8 "defmacro" (compiler-parse-tag-decl-defmacro))]
+    (sym-i64-bind e9 "export" (compiler-parse-tag-decl-export))))
 
 (define (compiler-parse-dispatch-env) : SymI64Env
   (compiler-parse-dispatch-decls
@@ -2772,13 +2707,12 @@
 (define (parse-ast-program [toks : (Array SpannedToken)]) : ResultAstProgram
   (let
     [cur : (Array i64) (make-array i64 1)]
-    (let
-      [dispatch : SymI64Env (parse-ast-program-dispatch)]
-      (begin
-        (array-set! cur 0 0)
-        (match (parse-ast-program-forms dispatch toks cur)
-          [(OkAstDeclList decls) (OkAstProgram (AstProgram decls))]
-          [(ErrAstDeclList message) (ErrAstProgram message)])))))
+    [dispatch : SymI64Env (parse-ast-program-dispatch)]
+    (begin
+      (array-set! cur 0 0)
+      (match (parse-ast-program-forms dispatch toks cur)
+        [(OkAstDeclList decls) (OkAstProgram (AstProgram decls))]
+        [(ErrAstDeclList message) (ErrAstProgram message)]))))
 
 (define (parse-ast-source [src : String]) : ResultAstProgram
   (match (lex-spanned-result src)
@@ -2839,14 +2773,13 @@
   [toks : (Array SpannedToken)]) : ResultAstProgramDiagnostic
   (let
     [cur : (Array i64) (make-array i64 1)]
-    (let
-      [dispatch : SymI64Env (parse-ast-program-dispatch)]
-      (begin
-        (array-set! cur 0 0)
-        (match (parse-ast-program-forms-diagnostic path dispatch toks cur)
-          [(OkAstDeclListDiagnostic decls)
-            (OkAstProgramDiagnostic (AstProgram decls))]
-          [(ErrAstDeclListDiagnostic diag) (ErrAstProgramDiagnostic diag)])))))
+    [dispatch : SymI64Env (parse-ast-program-dispatch)]
+    (begin
+      (array-set! cur 0 0)
+      (match (parse-ast-program-forms-diagnostic path dispatch toks cur)
+        [(OkAstDeclListDiagnostic decls)
+          (OkAstProgramDiagnostic (AstProgram decls))]
+        [(ErrAstDeclListDiagnostic diag) (ErrAstProgramDiagnostic diag)]))))
 
 (define (parse-ast-source-diagnostic [path : String] [src : String]) : ResultAstProgramDiagnostic
   (match (lex-spanned-result src)

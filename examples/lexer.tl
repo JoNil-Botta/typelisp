@@ -182,6 +182,5 @@
 (define (main) : i64
   (let
     [toks : (Array Token) (make-array Token 16)]
-    (let
-      [count : i64 (lex "foo - 3 * (12 / 4)" toks)]
-      (+ count (ident-text-length (array-ref toks 0))))))
+    [count : i64 (lex "foo - 3 * (12 / 4)" toks)]
+    (+ count (ident-text-length (array-ref toks 0)))))

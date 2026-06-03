@@ -302,22 +302,21 @@
   [body : Expr]) : String
   (let
     [next-depth : i64 (+ depth 1)]
-    (let
-      [off : i64 (slot-offset next-depth)]
+    [off : i64 (slot-offset next-depth)]
+    (string-append
+      (emit-expr-in strings env depth lc value)
       (string-append
-        (emit-expr-in strings env depth lc value)
+        "    movq %rax, "
         (string-append
-          "    movq %rax, "
+          (emit-slot off)
           (string-append
-            (emit-slot off)
-            (string-append
-              "\n"
-              (emit-expr-in
-                strings
-                (sym-i64-bind env name off)
-                next-depth
-                lc
-                body))))))))
+            "\n"
+            (emit-expr-in
+              strings
+              (sym-i64-bind env name off)
+              next-depth
+              lc
+              body)))))))
 
 (define (emit-if
   [strings : StrList]
@@ -525,30 +524,29 @@
       (let
         [nparams : i64
           (checked-max-six (str-list-count params) "emit: too many params")]
-        (let
-          [frame : i64 (function-frame-size params body)]
+        [frame : i64 (function-frame-size params body)]
+        (string-append
+          name
           (string-append
-            name
+            ":\n"
             (string-append
-              ":\n"
+              "    push %rbp\n"
               (string-append
-                "    push %rbp\n"
+                "    mov %rsp, %rbp\n"
                 (string-append
-                  "    mov %rsp, %rbp\n"
+                  (emit-stack-sub frame)
                   (string-append
-                    (emit-stack-sub frame)
+                    (emit-param-spills params 0)
                     (string-append
-                      (emit-param-spills params 0)
+                      (emit-expr-in
+                        strings
+                        (bind-params params 1 (sym-i64-empty))
+                        nparams
+                        lc
+                        body)
                       (string-append
-                        (emit-expr-in
-                          strings
-                          (bind-params params 1 (sym-i64-empty))
-                          nparams
-                          lc
-                          body)
-                        (string-append
-                          "    mov %rbp, %rsp\n"
-                          (string-append "    pop %rbp\n" "    ret\n\n")))))))))))]))
+                        "    mov %rbp, %rsp\n"
+                        (string-append "    pop %rbp\n" "    ret\n\n"))))))))))]))
 
 (define (emit-defs [strings : StrList] [lc : (Array i64)] [items : ItemList]) : String
   (match items

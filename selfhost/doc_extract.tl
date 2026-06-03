@@ -318,29 +318,28 @@
 (define (doc-decl-info [signature : String]) : DocMaybeDeclInfo
   (let
     [stream : FormatTokenStream (format-lex signature)]
-    (let
-      [open-idx : i64 (doc-next-code-token-index stream 0)]
-      (if (=
-        (format-token-tag (format-token-at stream open-idx))
-        (fmt-tag-lparen))
-        (let
-          [head-idx : i64 (doc-next-code-token-index stream (+ open-idx 1))]
-          (if (doc-token-symbol? stream head-idx)
-            (let
-              [head : String (doc-symbol-text stream head-idx)]
-              [after-head : i64 (+ head-idx 1)]
-              (cond
-                [(string-eq head "define")
-                  (doc-info-after-define stream after-head)]
-                [(string-eq head "extern")
-                  (doc-info-after-name (DocKindExtern) stream after-head)]
-                [(string-eq head "defenum")
-                  (doc-info-after-name (DocKindDefEnum) stream after-head)]
-                [(string-eq head "defstruct")
-                  (doc-info-after-name (DocKindDefStruct) stream after-head)]
-                [else (DocNoDeclInfo)]))
-            (DocNoDeclInfo)))
-        (DocNoDeclInfo)))))
+    [open-idx : i64 (doc-next-code-token-index stream 0)]
+    (if (=
+      (format-token-tag (format-token-at stream open-idx))
+      (fmt-tag-lparen))
+      (let
+        [head-idx : i64 (doc-next-code-token-index stream (+ open-idx 1))]
+        (if (doc-token-symbol? stream head-idx)
+          (let
+            [head : String (doc-symbol-text stream head-idx)]
+            [after-head : i64 (+ head-idx 1)]
+            (cond
+              [(string-eq head "define")
+                (doc-info-after-define stream after-head)]
+              [(string-eq head "extern")
+                (doc-info-after-name (DocKindExtern) stream after-head)]
+              [(string-eq head "defenum")
+                (doc-info-after-name (DocKindDefEnum) stream after-head)]
+              [(string-eq head "defstruct")
+                (doc-info-after-name (DocKindDefStruct) stream after-head)]
+              [else (DocNoDeclInfo)]))
+          (DocNoDeclInfo)))
+      (DocNoDeclInfo))))
 
 (define (doc-extract-source [src : String]) : DocExtraction
   (let
@@ -355,77 +354,75 @@
       (while (< i n)
         (let
           [line-end : i64 (doc-line-end src i n)]
-          (let
-            [line-start : i64 (doc-first-nonspace src i line-end)]
-            (if (= line-start line-end)
-              (set! i (doc-next-line-start src line-end n))
-              (let
-                [c : char (string-ref src line-start)]
-                (if (= c #;')
-                  (let
-                    [module-prefix-len : i64
-                      (doc-module-doc-prefix-len src line-start)]
-                    (if (> module-prefix-len 0)
-                      (begin
-                        (set!
-                          module-doc
-                          (doc-append-line
-                            module-doc
-                            module-has
-                            (doc-comment-body
-                              src
-                              line-start
-                              line-end
-                              module-prefix-len)))
-                        (set! module-has true)
-                        (set! pending-doc "")
-                        (set! pending-has false)
-                        (set! i (doc-next-line-start src line-end n)))
-                      (let
-                        [item-prefix-len : i64
-                          (doc-item-doc-prefix-len src line-start)]
-                        (if (> item-prefix-len 0)
-                          (begin
-                            (set!
-                              pending-doc
-                              (doc-append-line
-                                pending-doc
-                                pending-has
-                                (doc-comment-body
-                                  src
-                                  line-start
-                                  line-end
-                                  item-prefix-len)))
-                            (set! pending-has true)
-                            (set! i (doc-next-line-start src line-end n)))
-                          (begin
-                            (set! pending-doc "")
-                            (set! pending-has false)
-                            (set! i (doc-next-line-start src line-end n)))))))
-                  (if (= c #(')
-                    (let
-                      [form-end : i64 (doc-scan-form-end src line-start n)]
-                      (let
-                        [signature : String
-                          (substring src line-start (- form-end line-start))]
-                        (begin
-                          (if pending-has
-                            (match (doc-decl-info signature)
-                              [(DocDeclInfo kind name)
-                                (set!
-                                  items
-                                  (DocItemCons
-                                    (DocItem kind name pending-doc signature)
-                                    items))]
-                              [(DocNoDeclInfo) (set! items items)])
-                            (set! items items))
-                          (set! pending-doc "")
-                          (set! pending-has false)
-                          (set! i form-end))))
+          [line-start : i64 (doc-first-nonspace src i line-end)]
+          (if (= line-start line-end)
+            (set! i (doc-next-line-start src line-end n))
+            (let
+              [c : char (string-ref src line-start)]
+              (if (= c #;')
+                (let
+                  [module-prefix-len : i64
+                    (doc-module-doc-prefix-len src line-start)]
+                  (if (> module-prefix-len 0)
                     (begin
+                      (set!
+                        module-doc
+                        (doc-append-line
+                          module-doc
+                          module-has
+                          (doc-comment-body
+                            src
+                            line-start
+                            line-end
+                            module-prefix-len)))
+                      (set! module-has true)
                       (set! pending-doc "")
                       (set! pending-has false)
-                      (set! i (doc-next-line-start src line-end n))))))))))
+                      (set! i (doc-next-line-start src line-end n)))
+                    (let
+                      [item-prefix-len : i64
+                        (doc-item-doc-prefix-len src line-start)]
+                      (if (> item-prefix-len 0)
+                        (begin
+                          (set!
+                            pending-doc
+                            (doc-append-line
+                              pending-doc
+                              pending-has
+                              (doc-comment-body
+                                src
+                                line-start
+                                line-end
+                                item-prefix-len)))
+                          (set! pending-has true)
+                          (set! i (doc-next-line-start src line-end n)))
+                        (begin
+                          (set! pending-doc "")
+                          (set! pending-has false)
+                          (set! i (doc-next-line-start src line-end n)))))))
+                (if (= c #(')
+                  (let
+                    [form-end : i64 (doc-scan-form-end src line-start n)]
+                    [signature : String
+                      (substring src line-start (- form-end line-start))]
+                    (begin
+                      (if pending-has
+                        (match (doc-decl-info signature)
+                          [(DocDeclInfo kind name)
+                            (set!
+                              items
+                              (DocItemCons
+                                (DocItem kind name pending-doc signature)
+                                items))]
+                          [(DocNoDeclInfo) (set! items items)])
+                        (set! items items))
+                      (set! pending-doc "")
+                      (set! pending-has false)
+                      (set! i form-end)))
+                  (begin
+                    (set! pending-doc "")
+                    (set! pending-has false)
+                    (set! i (doc-next-line-start src line-end n)))))))))
       (DocExtraction module-doc (doc-item-list-reverse items)))))
 
 (define (doc-extract-file [path : String]) : DocExtraction

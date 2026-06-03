@@ -2211,7 +2211,11 @@ typecheck: return type mismatch"))]
 ;; self-test batteries pass.
 (define (doc-test-smoke-all) : i64
   (if (= (doc-test-smoke) 42)
-    (doc-test-run-smoke)
+    (if (source-tool-link-inputs-dedupe-smoke-ok?)
+      (doc-test-run-smoke)
+      (begin
+        (panic "source-tool: link input dedupe smoke regressed")
+        0))
     (begin
       (panic "doc-test: extraction smoke regressed")
       0)))

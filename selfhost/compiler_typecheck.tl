@@ -620,6 +620,185 @@
     [(ErrTcUnit message) (string-eq message want)]
     [(OkTcUnit) false]))
 
+(define (compiler-typecheck-inline-layout-query-source) : String
+  "(defstruct InlinePacket
+  (tag u8)
+  (count i64)
+  (flag bool)
+  (small u16))
+(defenum InlineChoice
+  (Empty)
+  (Byte u8)
+  (Wide u8 i64)
+  (Pair (Tuple u8 i32)))
+(defenum ListI64
+  (ListNil)
+  (ListCons i64 (Box ListI64)))
+(defenum Tree
+  (Leaf i64)
+  (Node (Box Tree) (Box Tree)))")
+
+(define (compiler-typecheck-inline-layout-query-ok?) : bool
+  (match (parse-ast-source (compiler-typecheck-inline-layout-query-source))
+    [(OkAstProgram program)
+      (match (build-compiler-symbols program)
+        [(OkCompilerSymbols symbols)
+          (match (build-compiler-registries program)
+            [(OkCompilerRegistries registries)
+              (let
+                [ctx : TcContext (TcContext program symbols registries "")]
+                [ok : bool true]
+                (begin
+                  (match (tc-inline-aggregate-layout-for ctx "InlinePacket")
+                    [(OkTcInlineAggregateLayout layout)
+                      (begin
+                        (if (= (tc-inline-aggregate-layout-size layout) 24)
+                          unit
+                          (set! ok false))
+                        (if (= (tc-inline-aggregate-layout-align layout) 8)
+                          unit
+                          (set! ok false))
+                        (if (=
+                          (tc-inline-aggregate-layout-field-offset layout "tag")
+                          0)
+                          unit
+                          (set! ok false))
+                        (if (=
+                          (tc-inline-aggregate-layout-field-offset
+                            layout
+                            "count")
+                          8)
+                          unit
+                          (set! ok false))
+                        (if (=
+                          (tc-inline-aggregate-layout-field-offset
+                            layout
+                            "flag")
+                          16)
+                          unit
+                          (set! ok false))
+                        (if (=
+                          (tc-inline-aggregate-layout-field-offset
+                            layout
+                            "small")
+                          18)
+                          unit
+                          (set! ok false)))]
+                    [(ErrTcInlineAggregateLayout _) (set! ok false)])
+                  (match (tc-inline-aggregate-layout-for ctx "InlineChoice")
+                    [(OkTcInlineAggregateLayout layout)
+                      (begin
+                        (if (= (tc-inline-aggregate-layout-size layout) 24)
+                          unit
+                          (set! ok false))
+                        (if (= (tc-inline-aggregate-layout-align layout) 8)
+                          unit
+                          (set! ok false))
+                        (if (=
+                          (tc-inline-aggregate-layout-variant-size
+                            layout
+                            "Empty")
+                          8)
+                          unit
+                          (set! ok false))
+                        (if (=
+                          (tc-inline-aggregate-layout-variant-size
+                            layout
+                            "Byte")
+                          16)
+                          unit
+                          (set! ok false))
+                        (if (=
+                          (tc-inline-aggregate-layout-variant-size
+                            layout
+                            "Wide")
+                          24)
+                          unit
+                          (set! ok false))
+                        (if (=
+                          (tc-inline-aggregate-layout-variant-payload-offset
+                            layout
+                            "Wide"
+                            0)
+                          8)
+                          unit
+                          (set! ok false))
+                        (if (=
+                          (tc-inline-aggregate-layout-variant-payload-offset
+                            layout
+                            "Wide"
+                            1)
+                          16)
+                          unit
+                          (set! ok false))
+                        (if (=
+                          (tc-inline-aggregate-layout-variant-payload-offset
+                            layout
+                            "Pair"
+                            0)
+                          8)
+                          unit
+                          (set! ok false)))]
+                    [(ErrTcInlineAggregateLayout _) (set! ok false)])
+                  (match (tc-inline-aggregate-layout-for ctx "ListI64")
+                    [(OkTcInlineAggregateLayout layout)
+                      (if (= (tc-inline-aggregate-layout-size layout) 24)
+                        unit
+                        (set! ok false))]
+                    [(ErrTcInlineAggregateLayout _) (set! ok false)])
+                  (match (tc-inline-aggregate-layout-for ctx "Tree")
+                    [(OkTcInlineAggregateLayout layout)
+                      (if (= (tc-inline-aggregate-layout-size layout) 24)
+                        unit
+                        (set! ok false))]
+                    [(ErrTcInlineAggregateLayout _) (set! ok false)])
+                  (match (tc-inline-aggregate-type-layout
+                    ctx
+                    (AstTyTuple (tc-type-list2 (AstTyU8) (AstTyI32))))
+                    [(OkTcLayoutInfo info)
+                      (if (and
+                        (= (tc-layout-info-size info) 8)
+                        (= (tc-layout-info-align info) 4))
+                        unit
+                        (set! ok false))]
+                    [(ErrTcLayoutInfo _) (set! ok false)])
+                  (match (tc-inline-aggregate-type-layout
+                    ctx
+                    (AstTyArray
+                      (AstTyTuple (tc-type-list2 (AstTyU8) (AstTyI32)))
+                      2))
+                    [(OkTcLayoutInfo info)
+                      (if (and
+                        (= (tc-layout-info-size info) 16)
+                        (= (tc-layout-info-align info) 4))
+                        unit
+                        (set! ok false))]
+                    [(ErrTcLayoutInfo _) (set! ok false)])
+                  (match (tc-inline-aggregate-type-layout
+                    ctx
+                    (AstTyBox (AstTyStruct "InlinePacket")))
+                    [(OkTcLayoutInfo info)
+                      (if (and
+                        (= (tc-layout-info-size info) 8)
+                        (= (tc-layout-info-align info) 8))
+                        unit
+                        (set! ok false))]
+                    [(ErrTcLayoutInfo _) (set! ok false)])
+                  (match (tc-inline-aggregate-type-layout
+                    ctx
+                    (AstTyDynArray (AstTyStruct "InlinePacket")))
+                    [(OkTcLayoutInfo info)
+                      (if (and
+                        (= (tc-layout-info-size info) 8)
+                        (= (tc-layout-info-align info) 8))
+                        unit
+                        (set! ok false))]
+                    [(ErrTcLayoutInfo _) (set! ok false)])
+                  ok))]
+            [(ErrCompilerRegistries _) false])]
+        [(ErrCompilerSymbols _) false])]
+    [(ErrAstProgram _) false]))
+
 (define (compiler-typecheck-inline-boxed-list-source) : String
   "(defenum ListI64
   (ListNil)
@@ -678,9 +857,11 @@
           (compiler-typecheck-inline-boxed-tree-source)
           "Tree")
         (and
-          (compiler-typecheck-inline-layout-ok?
-            (compiler-typecheck-inline-pointer-boundaries-source)
-            "Node")
+          (and
+            (compiler-typecheck-inline-layout-ok?
+              (compiler-typecheck-inline-pointer-boundaries-source)
+              "Node")
+            (compiler-typecheck-inline-layout-query-ok?))
           (and
             (compiler-typecheck-inline-layout-error-ok?
               (compiler-typecheck-inline-unboxed-list-source)
@@ -1281,7 +1462,7 @@
 (define (compiler-typecheck-extern-abi-source) : String
   "(defenum ResultI64 (OkI64 i64))
 (defstruct Box (value i64))
-(extern foreign-callback (:abi c) (:symbol \"foreign_callback\") : (-> (Ptr i64) (-> i64 i64) ResultI64))
+(extern foreign-callback (:abi c) (:symbol \"foreign_callback\") (:link-lib \"ffi_callback\") (:link-search \"native\") (:link-arg \"-Wl,--whole-archive\") : (-> (Ptr i64) (-> i64 i64) ResultI64))
 (extern foreign-box (:abi c) (:symbol \"foreign_box\") : (-> Box unit))")
 
 (define (compiler-typecheck-extern-abi-tuple-source) : String
@@ -3499,11 +3680,80 @@
                           (compiler-typecheck-runtime-builtin-char-at-bad-index-source)
                           "typecheck: string index must be integer")))))))))))))
 
+(define (compiler-typecheck-panic-error-never-tests-ok?) : bool
+  (let
+    [ok : bool true]
+    (begin
+      (if (compiler-typecheck-ok? "(define (f [s : String]) : i64 (panic s))")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-ok?
+        "(define (f [s : String]) : i64 (panic (& s)))")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-ok? "(define (f [s : String]) : i64 (error s))")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-ok?
+        "(define (f [s : String]) : i64 (error (& s)))")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-ok?
+        "(define (f [flag : bool]) : i64 (if flag 42 (panic \"stop\")))")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-ok?
+        "(define (f [flag : bool]) : String (if flag \"ok\" (error \"stop\")))")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-ok?
+        "(defenum Choice (Left) (Right))
+(define (f [c : Choice]) : i64 (match c [(Left) (panic \"left\")] [(Right) 7]))")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-ok?
+        "(defenum Choice (Left) (Right))
+(define (f [c : Choice]) : String (match c [(Left) \"ok\"] [(Right) (error \"right\")]))")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-ok?
+        "(define (f) : unit (begin (panic \"stop\") unit))")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-ok?
+        "(define (f) : unit (begin (error \"stop\")))")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        "(define (f) : i64 (panic))"
+        "typecheck: arity mismatch")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        "(define (f) : i64 (error \"a\" \"b\"))"
+        "typecheck: arity mismatch")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        "(define (f) : i64 (panic 5))"
+        "typecheck: argument type mismatch")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        "(define (f) : i64 (error true))"
+        "typecheck: argument type mismatch")
+        unit
+        (set! ok false))
+      ok)))
+
 (define (compiler-typecheck-self-test-builtins) : unit
   (begin
     (if (compiler-typecheck-runtime-builtin-tests-ok?)
       unit
       (panic "typecheck: runtime builtin tests failed"))
+    (if (compiler-typecheck-panic-error-never-tests-ok?)
+      unit
+      (panic "typecheck: panic/error never-context tests failed"))
     (if (compiler-typecheck-string-builtin-tests-ok?)
       unit
       (panic "typecheck: string builtin tests failed"))

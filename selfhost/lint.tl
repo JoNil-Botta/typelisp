@@ -1,5 +1,5 @@
 ;; lint.tl - selfhost `typelisp lint` driver (#1163). Reads a TypeLisp file,
-;; runs the lint_core nested-if-ladder rule over its program, and prints each
+;; runs the lint_core rules over its program, and prints each
 ;; finding as `path:line:col: message` followed by a count summary. Warn-only:
 ;; exits 0 even with findings (CI enforcement is layered on per #1164); a load
 ;; failure exits 1, and bad arguments exit 2.

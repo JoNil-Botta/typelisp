@@ -21,7 +21,7 @@ The corpus emphasizes the cases where SIMD bugs hide:
 - `../integration/spmd_foreach.tl` — `foreach` add over a full 64-element
   array for i64 and i32, self-checked against a scalar loop. Exit 42.
 - `../integration/spmd_reduce_scalar.tl` — `spmd-reduce` `sum`/`max`/`min` over
-  i64/i32/f64 across lengths including a non-divisible tail. Exit 42.
+  i64/i32/f64 across empty, sub-lane, exact-lane, and tail lengths. Exit 42.
 
 ## Running
 

@@ -243,6 +243,19 @@
       [(= slot 6) "%ymm12"]
       [else "%ymm13"])))
 
+(define (compiler-backend-avx2-xmm-reg [var : i64]) : String
+  (let
+    [slot : i64 (% var 8)]
+    (cond
+      [(= slot 0) "%xmm6"]
+      [(= slot 1) "%xmm7"]
+      [(= slot 2) "%xmm8"]
+      [(= slot 3) "%xmm9"]
+      [(= slot 4) "%xmm10"]
+      [(= slot 5) "%xmm11"]
+      [(= slot 6) "%xmm12"]
+      [else "%xmm13"])))
+
 (define (compiler-backend-vector-value-reg
   [value : CompilerIrValue]
   [role : String]
@@ -269,6 +282,24 @@
         [(AstTyF64) "vaddpd"]
         [_ ""])]
     [_ ""]))
+
+(define (compiler-backend-avx2-vector-reduce-op-mnemonic
+  [op : CompilerIrVectorReduceOp]
+  [elem-ty : AstType]) : String
+  (match op
+    [(IrVectorReduceSum)
+      (match elem-ty
+        [(AstTyI64) "vpaddq"]
+        [(AstTyI32) "vpaddd"]
+        [_ ""])]
+    [(IrVectorReduceMin)
+      (match elem-ty
+        [(AstTyI32) "vpminsd"]
+        [_ ""])]
+    [(IrVectorReduceMax)
+      (match elem-ty
+        [(AstTyI32) "vpmaxsd"]
+        [_ ""])]))
 
 (define (compiler-backend-avx2-indexed-addr [elem-ty : AstType]) : String
   (backend-cat5
@@ -401,6 +432,579 @@
         (ErrCompilerBackend
           (compiler-diagnostic-with-message instr-diag message))])
     (compiler-backend-avx2-shape-diagnostic instr-diag elem-ty lanes)))
+
+(define (compiler-backend-avx512-shape-ok? [elem-ty : AstType] [lanes : i64]) : bool
+  (match elem-ty
+    [(AstTyI64) (= lanes 8)]
+    [(AstTyU64) (= lanes 8)]
+    [(AstTyF64) (= lanes 8)]
+    [(AstTyI32) (= lanes 16)]
+    [(AstTyU32) (= lanes 16)]
+    [_ false]))
+
+(define (compiler-backend-avx512-shape-diagnostic
+  [instr-diag : CompilerDiagnostic]
+  [elem-ty : AstType]
+  [lanes : i64]) : ResultCompilerBackend
+  (ErrCompilerBackend
+    (compiler-diagnostic-with-message
+      instr-diag
+      (backend-cat5
+        "backend: unsupported AVX-512 vector shape "
+        (int->string lanes)
+        " x "
+        (compiler-ir-type-name elem-ty)
+        ""))))
+
+(define (compiler-backend-avx512-vector-reg [var : i64]) : String
+  (let
+    [slot : i64 (% var 8)]
+    (cond
+      [(= slot 0) "%zmm6"]
+      [(= slot 1) "%zmm7"]
+      [(= slot 2) "%zmm8"]
+      [(= slot 3) "%zmm9"]
+      [(= slot 4) "%zmm10"]
+      [(= slot 5) "%zmm11"]
+      [(= slot 6) "%zmm12"]
+      [else "%zmm13"])))
+
+(define (compiler-backend-avx512-mask-reg [var : i64]) : String
+  (let
+    [slot : i64 (% var 6)]
+    (cond
+      [(= slot 0) "%k1"]
+      [(= slot 1) "%k2"]
+      [(= slot 2) "%k3"]
+      [(= slot 3) "%k4"]
+      [(= slot 4) "%k5"]
+      [else "%k6"])))
+
+(define (compiler-backend-avx512-vector-value-reg
+  [value : CompilerIrValue]
+  [role : String]
+  [instr-diag : CompilerDiagnostic]) : ResultBackendReg
+  (match value
+    [(IrValueVar var) (OkBackendReg (compiler-backend-avx512-vector-reg var))]
+    [_
+      (ErrBackendReg
+        (string-append "backend: unsupported AVX-512 vector " role))]))
+
+(define (compiler-backend-avx512-mask-value-reg
+  [value : CompilerIrValue]
+  [role : String]
+  [instr-diag : CompilerDiagnostic]) : ResultBackendReg
+  (match value
+    [(IrValueVar var) (OkBackendReg (compiler-backend-avx512-mask-reg var))]
+    [_
+      (ErrBackendReg (string-append "backend: unsupported AVX-512 mask " role))]))
+
+(define (compiler-backend-avx512-vector-move [elem-ty : AstType]) : String
+  (match elem-ty
+    [(AstTyF64) "vmovupd"]
+    [(AstTyI64) "vmovdqu64"]
+    [(AstTyU64) "vmovdqu64"]
+    [(AstTyI32) "vmovdqu32"]
+    [(AstTyU32) "vmovdqu32"]
+    [_ ""]))
+
+(define (compiler-backend-avx512-vector-binop-mnemonic
+  [op : CompilerIrBinOp]
+  [elem-ty : AstType]) : String
+  (match op
+    [(IrBinAdd)
+      (match elem-ty
+        [(AstTyI64) "vpaddq"]
+        [(AstTyU64) "vpaddq"]
+        [(AstTyI32) "vpaddd"]
+        [(AstTyU32) "vpaddd"]
+        [(AstTyF64) "vaddpd"]
+        [_ ""])]
+    [_ ""]))
+
+(define (compiler-backend-avx512-lane-mask [lanes : i64]) : i64
+  (cond [(= lanes 8) 255] [(= lanes 16) 65535] [else 0]))
+
+(define (compiler-backend-avx512-mask-label
+  [function : String]
+  [current-label : String]
+  [dst : i64]
+  [suffix : String]) : String
+  (compiler-backend-asm-label
+    function
+    (backend-cat5 "tail_mask_" current-label "_v" (int->string dst) suffix)))
+
+(define (compiler-backend-emit-avx512-vector-load
+  [assignments : CompilerRegAssignmentList]
+  [dst : i64]
+  [base : CompilerIrValue]
+  [index : CompilerIrValue]
+  [lanes : i64]
+  [elem-ty : AstType]
+  [instr-diag : CompilerDiagnostic]) : ResultCompilerBackend
+  (if (compiler-backend-avx512-shape-ok? elem-ty lanes)
+    (match (compiler-backend-emit-avx2-base-index assignments base index)
+      [(OkCompilerBackend addr-asm)
+        (OkCompilerBackend
+          (string-append
+            addr-asm
+            (backend-cat5
+              "    "
+              (compiler-backend-avx512-vector-move elem-ty)
+              " "
+              (compiler-backend-avx2-indexed-addr elem-ty)
+              (backend-cat5
+                ", "
+                (compiler-backend-avx512-vector-reg dst)
+                "\n"
+                ""
+                ""))))]
+      [(ErrCompilerBackend message)
+        (ErrCompilerBackend
+          (compiler-backend-apply-instr-diagnostic message instr-diag))])
+    (compiler-backend-avx512-shape-diagnostic instr-diag elem-ty lanes)))
+
+(define (compiler-backend-emit-avx512-vector-binop
+  [dst : i64]
+  [op : CompilerIrBinOp]
+  [lhs : CompilerIrValue]
+  [rhs : CompilerIrValue]
+  [lanes : i64]
+  [elem-ty : AstType]
+  [instr-diag : CompilerDiagnostic]) : ResultCompilerBackend
+  (if (compiler-backend-avx512-shape-ok? elem-ty lanes)
+    (let
+      [mnemonic : String
+        (compiler-backend-avx512-vector-binop-mnemonic op elem-ty)]
+      (if (= (string-length mnemonic) 0)
+        (ErrCompilerBackend
+          (compiler-diagnostic-with-message
+            instr-diag
+            "backend: unsupported AVX-512 vector binary op"))
+        (match (compiler-backend-avx512-vector-value-reg lhs "lhs" instr-diag)
+          [(OkBackendReg lhs-reg)
+            (match (compiler-backend-avx512-vector-value-reg
+              rhs
+              "rhs"
+              instr-diag)
+              [(OkBackendReg rhs-reg)
+                (OkCompilerBackend
+                  (backend-cat5
+                    "    "
+                    mnemonic
+                    " "
+                    rhs-reg
+                    (backend-cat5
+                      ", "
+                      lhs-reg
+                      ", "
+                      (compiler-backend-avx512-vector-reg dst)
+                      "\n")))]
+              [(ErrBackendReg message)
+                (ErrCompilerBackend
+                  (compiler-diagnostic-with-message instr-diag message))])]
+          [(ErrBackendReg message)
+            (ErrCompilerBackend
+              (compiler-diagnostic-with-message instr-diag message))])))
+    (compiler-backend-avx512-shape-diagnostic instr-diag elem-ty lanes)))
+
+(define (compiler-backend-emit-avx512-vector-store
+  [assignments : CompilerRegAssignmentList]
+  [base : CompilerIrValue]
+  [index : CompilerIrValue]
+  [value : CompilerIrValue]
+  [lanes : i64]
+  [elem-ty : AstType]
+  [instr-diag : CompilerDiagnostic]) : ResultCompilerBackend
+  (if (compiler-backend-avx512-shape-ok? elem-ty lanes)
+    (match (compiler-backend-avx512-vector-value-reg
+      value
+      "store value"
+      instr-diag)
+      [(OkBackendReg value-reg)
+        (match (compiler-backend-emit-avx2-base-index assignments base index)
+          [(OkCompilerBackend addr-asm)
+            (OkCompilerBackend
+              (string-append
+                addr-asm
+                (backend-cat5
+                  "    "
+                  (compiler-backend-avx512-vector-move elem-ty)
+                  " "
+                  value-reg
+                  (backend-cat5
+                    ", "
+                    (compiler-backend-avx2-indexed-addr elem-ty)
+                    "\n"
+                    ""
+                    ""))))]
+          [(ErrCompilerBackend message)
+            (ErrCompilerBackend
+              (compiler-backend-apply-instr-diagnostic message instr-diag))])]
+      [(ErrBackendReg message)
+        (ErrCompilerBackend
+          (compiler-diagnostic-with-message instr-diag message))])
+    (compiler-backend-avx512-shape-diagnostic instr-diag elem-ty lanes)))
+
+(define (compiler-backend-emit-vector-load
+  [assignments : CompilerRegAssignmentList]
+  [dst : i64]
+  [base : CompilerIrValue]
+  [index : CompilerIrValue]
+  [lanes : i64]
+  [elem-ty : AstType]
+  [instr-diag : CompilerDiagnostic]) : ResultCompilerBackend
+  (if (compiler-backend-avx512-shape-ok? elem-ty lanes)
+    (compiler-backend-emit-avx512-vector-load
+      assignments
+      dst
+      base
+      index
+      lanes
+      elem-ty
+      instr-diag)
+    (compiler-backend-emit-avx2-vector-load
+      assignments
+      dst
+      base
+      index
+      lanes
+      elem-ty
+      instr-diag)))
+
+(define (compiler-backend-emit-vector-binop
+  [dst : i64]
+  [op : CompilerIrBinOp]
+  [lhs : CompilerIrValue]
+  [rhs : CompilerIrValue]
+  [lanes : i64]
+  [elem-ty : AstType]
+  [instr-diag : CompilerDiagnostic]) : ResultCompilerBackend
+  (if (compiler-backend-avx512-shape-ok? elem-ty lanes)
+    (compiler-backend-emit-avx512-vector-binop
+      dst
+      op
+      lhs
+      rhs
+      lanes
+      elem-ty
+      instr-diag)
+    (compiler-backend-emit-avx2-vector-binop
+      dst
+      op
+      lhs
+      rhs
+      lanes
+      elem-ty
+      instr-diag)))
+
+(define (compiler-backend-emit-vector-store
+  [assignments : CompilerRegAssignmentList]
+  [base : CompilerIrValue]
+  [index : CompilerIrValue]
+  [value : CompilerIrValue]
+  [lanes : i64]
+  [elem-ty : AstType]
+  [instr-diag : CompilerDiagnostic]) : ResultCompilerBackend
+  (if (compiler-backend-avx512-shape-ok? elem-ty lanes)
+    (compiler-backend-emit-avx512-vector-store
+      assignments
+      base
+      index
+      value
+      lanes
+      elem-ty
+      instr-diag)
+    (compiler-backend-emit-avx2-vector-store
+      assignments
+      base
+      index
+      value
+      lanes
+      elem-ty
+      instr-diag)))
+
+(define (compiler-backend-emit-avx512-tail-mask
+  [function : String]
+  [current-label : String]
+  [assignments : CompilerRegAssignmentList]
+  [dst : i64]
+  [index : CompilerIrValue]
+  [end-value : CompilerIrValue]
+  [lanes : i64]
+  [instr-diag : CompilerDiagnostic]) : ResultCompilerBackend
+  (if (= (compiler-backend-avx512-lane-mask lanes) 0)
+    (compiler-backend-avx512-shape-diagnostic instr-diag (AstTyI64) lanes)
+    (let
+      [full-mask : i64 (compiler-backend-avx512-lane-mask lanes)]
+      (match (compiler-backend-emit-load-value-with-plan
+        assignments
+        index
+        "%rax")
+        [(OkCompilerBackend index-asm)
+          (match (compiler-backend-emit-load-value-with-plan
+            assignments
+            end-value
+            "%rcx")
+            [(OkCompilerBackend end-asm)
+              (let
+                [dst-reg : String (compiler-backend-avx512-mask-reg dst)]
+                [full-label : String
+                  (compiler-backend-avx512-mask-label
+                    function
+                    current-label
+                    dst
+                    "_full")]
+                [zero-label : String
+                  (compiler-backend-avx512-mask-label
+                    function
+                    current-label
+                    dst
+                    "_zero")]
+                [done-label : String
+                  (compiler-backend-avx512-mask-label
+                    function
+                    current-label
+                    dst
+                    "_done")]
+                [body-asm : String
+                  (string-append
+                    (backend-cat5
+                      "    subq %rax, %rcx\n    cmpq $"
+                      (int->string lanes)
+                      ", %rcx\n    jge "
+                      full-label
+                      "\n")
+                    (string-append
+                      (backend-cat4
+                        "    testq %rcx, %rcx\n    jle "
+                        zero-label
+                        "\n    movl $1, %eax\n    shll %cl, %eax\n"
+                        "")
+                      (string-append
+                        (backend-cat5
+                          "    subl $1, %eax\n    kmovw %eax, "
+                          dst-reg
+                          "\n    jmp "
+                          done-label
+                          "\n")
+                        (string-append
+                          (backend-cat5
+                            full-label
+                            ":\n    movl $"
+                            (int->string full-mask)
+                            ", %eax\n    kmovw %eax, "
+                            dst-reg)
+                          (string-append
+                            (backend-cat5
+                              "\n    jmp "
+                              done-label
+                              "\n"
+                              zero-label
+                              ":\n")
+                            (backend-cat5
+                              "    xorl %eax, %eax\n    kmovw %eax, "
+                              dst-reg
+                              "\n"
+                              done-label
+                              ":\n"))))))]
+                (OkCompilerBackend
+                  (string-append index-asm (string-append end-asm body-asm))))]
+            [(ErrCompilerBackend message)
+              (ErrCompilerBackend
+                (compiler-backend-apply-instr-diagnostic message instr-diag))])]
+        [(ErrCompilerBackend message)
+          (ErrCompilerBackend
+            (compiler-backend-apply-instr-diagnostic message instr-diag))]))))
+
+(define (compiler-backend-emit-avx512-predicated-load
+  [assignments : CompilerRegAssignmentList]
+  [dst : i64]
+  [base : CompilerIrValue]
+  [index : CompilerIrValue]
+  [mask : CompilerIrValue]
+  [lanes : i64]
+  [elem-ty : AstType]
+  [instr-diag : CompilerDiagnostic]) : ResultCompilerBackend
+  (if (compiler-backend-avx512-shape-ok? elem-ty lanes)
+    (match (compiler-backend-avx512-mask-value-reg mask "load mask" instr-diag)
+      [(OkBackendReg mask-reg)
+        (match (compiler-backend-emit-avx2-base-index assignments base index)
+          [(OkCompilerBackend addr-asm)
+            (OkCompilerBackend
+              (string-append
+                addr-asm
+                (backend-cat5
+                  "    "
+                  (compiler-backend-avx512-vector-move elem-ty)
+                  " "
+                  (compiler-backend-avx2-indexed-addr elem-ty)
+                  (backend-cat5
+                    ", "
+                    (compiler-backend-avx512-vector-reg dst)
+                    (backend-cat3 "{" mask-reg "}{z}\n")
+                    ""
+                    ""))))]
+          [(ErrCompilerBackend message)
+            (ErrCompilerBackend
+              (compiler-backend-apply-instr-diagnostic message instr-diag))])]
+      [(ErrBackendReg message)
+        (ErrCompilerBackend
+          (compiler-diagnostic-with-message instr-diag message))])
+    (compiler-backend-avx512-shape-diagnostic instr-diag elem-ty lanes)))
+
+(define (compiler-backend-emit-avx512-predicated-store
+  [assignments : CompilerRegAssignmentList]
+  [base : CompilerIrValue]
+  [index : CompilerIrValue]
+  [value : CompilerIrValue]
+  [mask : CompilerIrValue]
+  [lanes : i64]
+  [elem-ty : AstType]
+  [instr-diag : CompilerDiagnostic]) : ResultCompilerBackend
+  (if (compiler-backend-avx512-shape-ok? elem-ty lanes)
+    (match (compiler-backend-avx512-vector-value-reg
+      value
+      "store value"
+      instr-diag)
+      [(OkBackendReg value-reg)
+        (match (compiler-backend-avx512-mask-value-reg
+          mask
+          "store mask"
+          instr-diag)
+          [(OkBackendReg mask-reg)
+            (match (compiler-backend-emit-avx2-base-index
+              assignments
+              base
+              index)
+              [(OkCompilerBackend addr-asm)
+                (OkCompilerBackend
+                  (string-append
+                    addr-asm
+                    (backend-cat5
+                      "    "
+                      (compiler-backend-avx512-vector-move elem-ty)
+                      " "
+                      value-reg
+                      (backend-cat5
+                        ", "
+                        (compiler-backend-avx2-indexed-addr elem-ty)
+                        (backend-cat3 "{" mask-reg "}\n")
+                        ""
+                        ""))))]
+              [(ErrCompilerBackend message)
+                (ErrCompilerBackend
+                  (compiler-backend-apply-instr-diagnostic message instr-diag))])]
+          [(ErrBackendReg message)
+            (ErrCompilerBackend
+              (compiler-diagnostic-with-message instr-diag message))])]
+      [(ErrBackendReg message)
+        (ErrCompilerBackend
+          (compiler-diagnostic-with-message instr-diag message))])
+    (compiler-backend-avx512-shape-diagnostic instr-diag elem-ty lanes)))
+
+(define (compiler-backend-mask-binop-mnemonic [op : CompilerIrMaskBinOp]) : String
+  (match op
+    [(IrMaskAnd) "kandw"]
+    [(IrMaskOr) "korw"]))
+
+(define (compiler-backend-emit-avx512-mask-binop
+  [dst : i64]
+  [op : CompilerIrMaskBinOp]
+  [lhs : CompilerIrValue]
+  [rhs : CompilerIrValue]
+  [lanes : i64]
+  [instr-diag : CompilerDiagnostic]) : ResultCompilerBackend
+  (if (= (compiler-backend-avx512-lane-mask lanes) 0)
+    (compiler-backend-avx512-shape-diagnostic instr-diag (AstTyI64) lanes)
+    (match (compiler-backend-avx512-mask-value-reg lhs "lhs" instr-diag)
+      [(OkBackendReg lhs-reg)
+        (match (compiler-backend-avx512-mask-value-reg rhs "rhs" instr-diag)
+          [(OkBackendReg rhs-reg)
+            (OkCompilerBackend
+              (backend-cat5
+                "    "
+                (compiler-backend-mask-binop-mnemonic op)
+                " "
+                rhs-reg
+                (backend-cat5
+                  ", "
+                  lhs-reg
+                  ", "
+                  (compiler-backend-avx512-mask-reg dst)
+                  "\n")))]
+          [(ErrBackendReg message)
+            (ErrCompilerBackend
+              (compiler-diagnostic-with-message instr-diag message))])]
+      [(ErrBackendReg message)
+        (ErrCompilerBackend
+          (compiler-diagnostic-with-message instr-diag message))])))
+
+(define (compiler-backend-emit-avx512-mask-not
+  [dst : i64]
+  [src : CompilerIrValue]
+  [lanes : i64]
+  [instr-diag : CompilerDiagnostic]) : ResultCompilerBackend
+  (let
+    [full-mask : i64 (compiler-backend-avx512-lane-mask lanes)]
+    (if (= full-mask 0)
+      (compiler-backend-avx512-shape-diagnostic instr-diag (AstTyI64) lanes)
+      (match (compiler-backend-avx512-mask-value-reg
+        src
+        "not source"
+        instr-diag)
+        [(OkBackendReg src-reg)
+          (let
+            [dst-reg : String (compiler-backend-avx512-mask-reg dst)]
+            (OkCompilerBackend
+              (string-append
+                (backend-cat5 "    knotw " src-reg ", " dst-reg "\n")
+                (backend-cat5
+                  "    movl $"
+                  (int->string full-mask)
+                  ", %eax\n    kmovw %eax, %k7\n    kandw %k7, "
+                  dst-reg
+                  (backend-cat3 ", " dst-reg "\n")))))]
+        [(ErrBackendReg message)
+          (ErrCompilerBackend
+            (compiler-diagnostic-with-message instr-diag message))]))))
+
+(define (compiler-backend-emit-avx512-mask-reduce
+  [assignments : CompilerRegAssignmentList]
+  [dst : i64]
+  [op : CompilerIrMaskReduceOp]
+  [src : CompilerIrValue]
+  [lanes : i64]
+  [instr-diag : CompilerDiagnostic]) : ResultCompilerBackend
+  (let
+    [full-mask : i64 (compiler-backend-avx512-lane-mask lanes)]
+    (if (= full-mask 0)
+      (compiler-backend-avx512-shape-diagnostic instr-diag (AstTyI64) lanes)
+      (match (compiler-backend-avx512-mask-value-reg
+        src
+        "reduce source"
+        instr-diag)
+        [(OkBackendReg src-reg)
+          (OkCompilerBackend
+            (string-append
+              (backend-cat5
+                "    kmovw "
+                src-reg
+                ", %eax\n"
+                (match op
+                  [(IrMaskReduceAny) "    testl %eax, %eax\n    setne %al\n"]
+                  [(IrMaskReduceAll)
+                    (backend-cat5
+                      "    andl $"
+                      (int->string full-mask)
+                      ", %eax\n    cmpl $"
+                      (int->string full-mask)
+                      ", %eax\n    sete %al\n")])
+                "    movzbq %al, %rax\n")
+              (compiler-backend-emit-store-var-with-plan assignments dst "%rax")))]
+        [(ErrBackendReg message)
+          (ErrCompilerBackend
+            (compiler-diagnostic-with-message instr-diag message))]))))
 
 (define (compiler-backend-round-up-16 [n : i64]) : i64
   (if (= n 0)
@@ -1335,6 +1939,92 @@
                 imm
                 (backend-cat3 ", " addr "\n")))))]
       [(CompilerBackendNoImmediate) (CompilerBackendNoAsm)])))
+
+(define (compiler-backend-avx2-vector-reduce-move-scalar [elem-ty : AstType]) : String
+  (match elem-ty
+    [(AstTyI32) "    vmovd %xmm0, %eax\n"]
+    [_ "    vmovq %xmm0, %rax\n"]))
+
+(define (compiler-backend-avx2-vector-reduce-horizontal-asm
+  [mnemonic : String]
+  [src-var : i64]
+  [elem-ty : AstType]) : String
+  (let
+    [ymm : String (compiler-backend-avx2-vector-reg src-var)]
+    [xmm : String (compiler-backend-avx2-xmm-reg src-var)]
+    (match elem-ty
+      [(AstTyI64)
+        (string-append
+          (backend-cat5
+            "    vextracti128 $1, "
+            ymm
+            ", %xmm0\n    "
+            mnemonic
+            (backend-cat3 " %xmm0, " xmm ", %xmm0\n"))
+          (backend-cat4
+            "    vpsrldq $8, %xmm0, %xmm1\n    "
+            mnemonic
+            " %xmm1, %xmm0, %xmm0\n"
+            ""))]
+      [(AstTyI32)
+        (string-append
+          (backend-cat5
+            "    vextracti128 $1, "
+            ymm
+            ", %xmm0\n    "
+            mnemonic
+            (backend-cat3 " %xmm0, " xmm ", %xmm0\n"))
+          (string-append
+            (backend-cat4
+              "    vpsrldq $8, %xmm0, %xmm1\n    "
+              mnemonic
+              " %xmm1, %xmm0, %xmm0\n"
+              "")
+            (backend-cat4
+              "    vpsrldq $4, %xmm0, %xmm1\n    "
+              mnemonic
+              " %xmm1, %xmm0, %xmm0\n"
+              "")))]
+      [_ ""])))
+
+(define (compiler-backend-emit-avx2-vector-reduce
+  [assignments : CompilerRegAssignmentList]
+  [dst : i64]
+  [op : CompilerIrVectorReduceOp]
+  [src : CompilerIrValue]
+  [lanes : i64]
+  [elem-ty : AstType]
+  [instr-diag : CompilerDiagnostic]) : ResultCompilerBackend
+  (if (compiler-backend-avx2-shape-ok? elem-ty lanes)
+    (let
+      [mnemonic : String
+        (compiler-backend-avx2-vector-reduce-op-mnemonic op elem-ty)]
+      (if (= (string-length mnemonic) 0)
+        (ErrCompilerBackend
+          (compiler-diagnostic-with-message
+            instr-diag
+            "backend: unsupported AVX2 vector reduction"))
+        (match src
+          [(IrValueVar src-var)
+            (OkCompilerBackend
+              (string-append
+                (compiler-backend-avx2-vector-reduce-horizontal-asm
+                  mnemonic
+                  src-var
+                  elem-ty)
+                (string-append
+                  (compiler-backend-avx2-vector-reduce-move-scalar elem-ty)
+                  (compiler-backend-emit-store-typed-var-with-plan
+                    assignments
+                    dst
+                    "%rax"
+                    elem-ty))))]
+          [_
+            (ErrCompilerBackend
+              (compiler-diagnostic-with-message
+                instr-diag
+                "backend: unsupported AVX2 vector reduce source"))])))
+    (compiler-backend-avx2-shape-diagnostic instr-diag elem-ty lanes)))
 
 (define (compiler-backend-emit-store-typed-var-with-plan
   [assignments : CompilerRegAssignmentList]
@@ -3057,7 +3747,7 @@
     [(IrExternNil) AstTypeNil]
     [(IrExternCons item rest)
       (match item
-        [(IrExtern extern-name ty _ _)
+        [(IrExtern extern-name ty _ _ _)
           (if (string-eq extern-name name)
             (match ty
               [(AstTyFunc args _) args]
@@ -3085,7 +3775,7 @@
     [(IrExternNil) (CompilerBackendNoSignature)]
     [(IrExternCons item rest)
       (match item
-        [(IrExtern extern-name ty _ _)
+        [(IrExtern extern-name ty _ _ _)
           (if (string-eq extern-name name)
             (match ty
               [(AstTyFunc args ret-ty)
@@ -4142,7 +4832,7 @@
       [(IrInstrSplat _ _ _ _)
         (compiler-backend-vector-mask-unimplemented instr-diag)]
       [(IrInstrVectorBinOp dst op lhs rhs lanes elem-ty)
-        (compiler-backend-emit-avx2-vector-binop
+        (compiler-backend-emit-vector-binop
           dst
           op
           lhs
@@ -4150,20 +4840,39 @@
           lanes
           elem-ty
           instr-diag)]
-      [(IrInstrVectorReduce _ _ _ _ _)
-        (compiler-backend-vector-mask-unimplemented instr-diag)]
+      [(IrInstrVectorReduce dst op src lanes elem-ty)
+        (compiler-backend-emit-avx2-vector-reduce
+          assignments
+          dst
+          op
+          src
+          lanes
+          elem-ty
+          instr-diag)]
       [(IrInstrVectorCompare _ _ _ _ _ _)
         (compiler-backend-vector-mask-unimplemented instr-diag)]
-      [(IrInstrMaskBinOp _ _ _ _ _)
-        (compiler-backend-vector-mask-unimplemented instr-diag)]
-      [(IrInstrMaskNot _ _ _)
-        (compiler-backend-vector-mask-unimplemented instr-diag)]
-      [(IrInstrMaskReduce _ _ _ _)
-        (compiler-backend-vector-mask-unimplemented instr-diag)]
+      [(IrInstrMaskBinOp dst op lhs rhs lanes)
+        (compiler-backend-emit-avx512-mask-binop
+          dst
+          op
+          lhs
+          rhs
+          lanes
+          instr-diag)]
+      [(IrInstrMaskNot dst src lanes)
+        (compiler-backend-emit-avx512-mask-not dst src lanes instr-diag)]
+      [(IrInstrMaskReduce dst op src lanes)
+        (compiler-backend-emit-avx512-mask-reduce
+          assignments
+          dst
+          op
+          src
+          lanes
+          instr-diag)]
       [(IrInstrSelect _ _ _ _ _ _)
         (compiler-backend-vector-mask-unimplemented instr-diag)]
       [(IrInstrVectorLoad dst base index lanes elem-ty)
-        (compiler-backend-emit-avx2-vector-load
+        (compiler-backend-emit-vector-load
           assignments
           dst
           base
@@ -4172,7 +4881,7 @@
           elem-ty
           instr-diag)]
       [(IrInstrVectorStore base index value lanes elem-ty)
-        (compiler-backend-emit-avx2-vector-store
+        (compiler-backend-emit-vector-store
           assignments
           base
           index
@@ -4180,12 +4889,36 @@
           lanes
           elem-ty
           instr-diag)]
-      [(IrInstrPredicatedStore _ _ _ _ _ _)
-        (compiler-backend-vector-mask-unimplemented instr-diag)]
-      [(IrInstrPredicatedLoad _ _ _ _ _ _)
-        (compiler-backend-vector-mask-unimplemented instr-diag)]
-      [(IrInstrTailMask _ _ _ _)
-        (compiler-backend-vector-mask-unimplemented instr-diag)]
+      [(IrInstrPredicatedStore base index value mask lanes elem-ty)
+        (compiler-backend-emit-avx512-predicated-store
+          assignments
+          base
+          index
+          value
+          mask
+          lanes
+          elem-ty
+          instr-diag)]
+      [(IrInstrPredicatedLoad dst base index mask lanes elem-ty)
+        (compiler-backend-emit-avx512-predicated-load
+          assignments
+          dst
+          base
+          index
+          mask
+          lanes
+          elem-ty
+          instr-diag)]
+      [(IrInstrTailMask dst index len lanes)
+        (compiler-backend-emit-avx512-tail-mask
+          function
+          current-label
+          assignments
+          dst
+          index
+          len
+          lanes
+          instr-diag)]
       [(IrInstrCall dst name args ty)
         (let
           [param-types : AstTypeList
@@ -7695,7 +8428,7 @@
     [(IrExternNil) false]
     [(IrExternCons item rest)
       (match item
-        [(IrExtern extern-name _ _ _)
+        [(IrExtern extern-name _ _ _ _)
           (if (string-eq extern-name name)
             true
             (compiler-backend-extern-list-references? rest name))])]))
@@ -7707,7 +8440,7 @@
     [(IrExternNil) name]
     [(IrExternCons item rest)
       (match item
-        [(IrExtern extern-name _ _ link-symbol)
+        [(IrExtern extern-name _ _ link-symbol _)
           (if (string-eq extern-name name)
             link-symbol
             (compiler-backend-extern-list-link-symbol rest name))])]))
@@ -8551,7 +9284,7 @@
     [(IrExternNil) ""]
     [(IrExternCons item rest)
       (match item
-        [(IrExtern name _ _ link-symbol)
+        [(IrExtern name _ _ link-symbol _)
           (if (and
             (string-eq name link-symbol)
             (compiler-backend-plan-provides? plan name))

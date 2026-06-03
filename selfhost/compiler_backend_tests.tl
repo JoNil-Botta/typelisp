@@ -272,6 +272,70 @@
     [(OkCompilerBackend asm) (compiler-backend-asm-ok? asm)]
     [(ErrCompilerBackend _) false]))
 
+(define (compiler-backend-implicit-main-source) : String
+  "(define token-value : i64 7)")
+
+(define (compiler-backend-implicit-main-linux-entry-ok? [asm : String]) : bool
+  (backend-and8
+    (compiler-backend-string-contains? asm ".globl _start\n")
+    (compiler-backend-string-contains? asm "_start:\n")
+    (compiler-backend-string-contains? asm ".globl main\n")
+    (compiler-backend-string-contains? asm "main:\n")
+    (compiler-backend-string-contains? asm "    call main\n")
+    (compiler-backend-string-contains? asm "    xorq %rax, %rax\n")
+    (compiler-backend-string-contains? asm ".text\n")
+    true))
+
+(define (compiler-backend-implicit-main-linux-no-entry-ok? [asm : String]) : bool
+  (and
+    (compiler-backend-string-contains? asm ".text\n")
+    (and
+      (not (compiler-backend-string-contains? asm ".globl _start\n"))
+      (and
+        (not (compiler-backend-string-contains? asm "_start:\n"))
+        (not (compiler-backend-string-contains? asm "main:\n"))))))
+
+(define (compiler-backend-implicit-main-windows-entry-ok? [asm : String]) : bool
+  (backend-and4
+    (compiler-backend-string-contains? asm ".globl main\n")
+    (compiler-backend-string-contains? asm "main:\n")
+    (compiler-backend-string-contains? asm "    xorq %rax, %rax\n")
+    (not (compiler-backend-string-contains? asm "_start:\n"))))
+
+(define (compiler-backend-implicit-main-ok?) : bool
+  (match (lower-compiler-source (compiler-backend-implicit-main-source))
+    [(OkCompilerLower program spans)
+      (match (compiler-backend-emit-program-with-spans-for-target-and-entry
+        program
+        spans
+        (BackendTargetLinux)
+        true)
+        [(OkCompilerBackend linux-entry-asm)
+          (match (compiler-backend-emit-program-with-spans-for-target-and-entry
+            program
+            spans
+            (BackendTargetLinux)
+            false)
+            [(OkCompilerBackend linux-no-entry-asm)
+              (match (compiler-backend-emit-program-with-spans-for-target-and-entry
+                program
+                spans
+                (BackendTargetWindows)
+                true)
+                [(OkCompilerBackend windows-entry-asm)
+                  (and
+                    (compiler-backend-implicit-main-linux-entry-ok?
+                      linux-entry-asm)
+                    (and
+                      (compiler-backend-implicit-main-linux-no-entry-ok?
+                        linux-no-entry-asm)
+                      (compiler-backend-implicit-main-windows-entry-ok?
+                        windows-entry-asm)))]
+                [(ErrCompilerBackend _) false])]
+            [(ErrCompilerBackend _) false])]
+        [(ErrCompilerBackend _) false])]
+    [(ErrCompilerLower _) false]))
+
 (define (compiler-backend-string-ok?) : bool
   (match (compiler-backend-emit-source (compiler-backend-string-source))
     [(OkCompilerBackend asm)
@@ -2881,7 +2945,9 @@
       (compiler-backend-string-ok?)
       (and
         (compiler-backend-memory-op-ok?)
-        (compiler-backend-numeric-cast-shape-ok?))
+        (and
+          (compiler-backend-numeric-cast-shape-ok?)
+          (compiler-backend-implicit-main-ok?)))
       (compiler-backend-aggregate-ok?))
     (and
       (backend-and8

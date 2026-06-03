@@ -1024,6 +1024,7 @@
     [(AstExprUnquoteSplicing inner)
       (lower-reach-expr all-functions names state inner)]
     [(AstExprTry inner) (lower-reach-expr all-functions names state inner)]
+    [(AstExprReturn inner) (lower-reach-expr all-functions names state inner)]
     [(AstExprPtrNull _) state]
     [(AstExprPtrNullCheck value)
       (lower-reach-expr all-functions names state value)]
@@ -3341,8 +3342,14 @@
 (define (lower-cleanup-marker-name) : String
   " __tl_active_cleanup")
 
+(define (lower-region-reset-marker-name) : String
+  " __tl_active_region_reset")
+
 (define (lower-cleanup-hidden-name [var-id : i64]) : String
   (string-append "__tl_cleanup_resource." (int->string var-id)))
+
+(define (lower-region-hidden-name [var-id : i64]) : String
+  (string-append "__tl_region_mark." (int->string var-id)))
 
 (define (lower-cleanup-metadata-type
   [hidden-name : String]
@@ -3352,6 +3359,9 @@
       (AstTyVar hidden-name)
       (AstTypeCons (AstTyVar cleanup-name) AstTypeNil))))
 
+(define (lower-region-reset-metadata-type [hidden-name : String]) : AstType
+  (AstTyVar hidden-name))
+
 (define (lower-type-env-push-cleanup
   [type-env : TcTypeEnv]
   [hidden-name : String]
@@ -3360,6 +3370,14 @@
     type-env
     (lower-cleanup-marker-name)
     (lower-cleanup-metadata-type hidden-name cleanup-name)))
+
+(define (lower-type-env-push-region-reset
+  [type-env : TcTypeEnv]
+  [hidden-name : String]) : TcTypeEnv
+  (tc-bind
+    type-env
+    (lower-region-reset-marker-name)
+    (lower-region-reset-metadata-type hidden-name)))
 
 (define (lower-cleanup-name-from-expr [cleanup : AstExpr]) : ResultTcString
   (match (ast-expr-unspan cleanup)
@@ -3387,6 +3405,25 @@
       (ErrLowerState
         (lower-diagnostic "lower: missing resource cleanup binding"))]))
 
+(define (lower-emit-region-reset
+  [state : LowerState]
+  [env : SymI64Env]
+  [hidden-name : String]) : ResultLowerState
+  (match (sym-i64-lookup env hidden-name)
+    [(SomeI64 mark-var)
+      (match (lower-state-alloc-var state)
+        [(LowerAlloc allocated reset-var)
+          (OkLowerState
+            (lower-state-emit
+              allocated
+              (IrInstrCall
+                reset-var
+                "tl_region_reset"
+                (IrValueCons (IrValueVar mark-var) IrValueNil)
+                (AstTyUnit))))])]
+    [(NoneI64)
+      (ErrLowerState (lower-diagnostic "lower: missing region reset binding"))]))
+
 (define (lower-emit-cleanup-list
   [state : LowerState]
   [env : SymI64Env]
@@ -3400,6 +3437,34 @@
             [(OkLowerState next-state)
               (lower-emit-cleanup-list next-state env rest)]
             [(ErrLowerState message) (ErrLowerState message)])])]))
+
+(define (lower-emit-active-exits
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]) : ResultLowerState
+  (match type-env
+    [(TcTypeNil) (OkLowerState state)]
+    [(TcTypeBind key ty rest)
+      (if (string-eq key (lower-cleanup-marker-name))
+        (match ty
+          [(AstTyTuple
+              (AstTypeCons
+                (AstTyVar hidden-name)
+                (AstTypeCons (AstTyVar cleanup-name) AstTypeNil)))
+            (match (lower-emit-cleanup-call state env hidden-name cleanup-name)
+              [(OkLowerState next-state)
+                (lower-emit-active-exits next-state env rest)]
+              [(ErrLowerState message) (ErrLowerState message)])]
+          [_ (lower-emit-active-exits state env rest)])
+        (if (string-eq key (lower-region-reset-marker-name))
+          (match ty
+            [(AstTyVar hidden-name)
+              (match (lower-emit-region-reset state env hidden-name)
+                [(OkLowerState next-state)
+                  (lower-emit-active-exits next-state env rest)]
+                [(ErrLowerState message) (ErrLowerState message)])]
+            [_ (lower-emit-active-exits state env rest)])
+          (lower-emit-active-exits state env rest)))]))
 
 (define (lower-emit-active-cleanups
   [state : LowerState]
@@ -3420,6 +3485,37 @@
               [(ErrLowerState message) (ErrLowerState message)])]
           [_ (lower-emit-active-cleanups state env rest)])
         (lower-emit-active-cleanups state env rest))]))
+
+(define (lower-return-form
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [value : AstExpr]
+  [origin : AstExpr]) : ResultLowerExpr
+  (match (tc-current-return-type type-env)
+    [(OkTcType return-ty)
+      (match (lower-expr ctx state env type-env value)
+        [(OkLowerExpr lowered)
+          (match lowered
+            [(LowerExpr value-state value-ir _)
+              (match (lower-emit-active-exits value-state env type-env)
+                [(OkLowerState cleanup-state)
+                  (OkLowerExpr
+                    (LowerExpr
+                      (lower-state-emit-at-expr
+                        cleanup-state
+                        (IrInstrReturn (lower-return-maybe value-ir return-ty))
+                        origin)
+                      IrValueUnit
+                      (AstTyNever)))]
+                [(ErrLowerState message) (ErrLowerExpr message)])])]
+        [(ErrLowerExpr message) (ErrLowerExpr message)])]
+    [(ErrTcType _)
+      (ErrLowerExpr
+        (lower-diagnostic-at-expr
+          origin
+          "typecheck: return requires enclosing function"))]))
 
 (define (lower-load-single-payload
   [ctx : TcContext]
@@ -3492,7 +3588,7 @@
       result-value
       (tc-result-info-err-type operand-info))
       [(LowerExpr err-payload-state err-payload _)
-        (match (lower-emit-active-cleanups err-payload-state env type-env)
+        (match (lower-emit-active-exits err-payload-state env type-env)
           [(OkLowerState cleanup-state)
             (match (lower-return-result-err
               ctx
@@ -4697,6 +4793,8 @@
     [(AstExprBox inner) (lower-box ctx state env type-env inner expr-ty)]
     [(AstExprBoxGet inner) (lower-box-get ctx state env type-env inner expr-ty)]
     [(AstExprTry inner) (lower-try ctx state env type-env inner origin)]
+    [(AstExprReturn value)
+      (lower-return-form ctx state env type-env value origin)]
     ;; `(comptime expr)` folds to a literal via the scalar CTFE evaluator (#719).
     ;; Successful folds reuse the ordinary literal path; CTFE rejections (free
     ;; runtime vars, unsupported forms, f64 -> #735) surface as lower errors.
@@ -8239,10 +8337,15 @@
             [(OkLowerExpr lowered-body)
               (match lowered-body
                 [(LowerExpr body-state value body-ty)
-                  (match (lower-emit-cleanup-list body-state body-env cleanups)
-                    [(OkLowerState cleanup-state)
-                      (OkLowerExpr (LowerExpr cleanup-state value body-ty))]
-                    [(ErrLowerState message) (ErrLowerExpr message)])])]
+                  (if (tc-never-type? body-ty)
+                    (OkLowerExpr (LowerExpr body-state value body-ty))
+                    (match (lower-emit-cleanup-list
+                      body-state
+                      body-env
+                      cleanups)
+                      [(OkLowerState cleanup-state)
+                        (OkLowerExpr (LowerExpr cleanup-state value body-ty))]
+                      [(ErrLowerState message) (ErrLowerExpr message)]))])]
             [(ErrLowerExpr message) (ErrLowerExpr message)])])]
     [(ErrLowerResourceBindings message) (ErrLowerExpr message)]))
 
@@ -8261,8 +8364,11 @@
           (match (lower-expr ctx state env type-env expr)
             [(OkLowerExpr lowered)
               (match lowered
-                [(LowerExpr next-state _ _)
-                  (lower-begin ctx next-state env type-env rest)])]
+                [(LowerExpr next-state _ expr-ty)
+                  (if (tc-never-type? expr-ty)
+                    (OkLowerExpr
+                      (LowerExpr next-state IrValueUnit (AstTyNever)))
+                    (lower-begin ctx next-state env type-env rest))])]
             [(ErrLowerExpr message) (ErrLowerExpr message)])])]))
 
 (define (lower-with-arena
@@ -8274,27 +8380,33 @@
   (match (lower-state-alloc-var state)
     [(LowerAlloc mark-allocated mark-var)
       (let
+        [hidden-name : String (lower-region-hidden-name mark-var)]
         [marked-state : LowerState
           (lower-state-emit
             mark-allocated
             (IrInstrCall mark-var "tl_region_mark" IrValueNil (AstTyU64)))]
-        (match (lower-begin ctx marked-state env type-env body)
+        [region-env : SymI64Env (sym-i64-bind env hidden-name mark-var)]
+        [region-type-env : TcTypeEnv
+          (lower-type-env-push-region-reset type-env hidden-name)]
+        (match (lower-begin ctx marked-state region-env region-type-env body)
           [(OkLowerExpr lowered)
             (match lowered
               [(LowerExpr body-state value body-ty)
-                (match (lower-state-alloc-var body-state)
-                  [(LowerAlloc reset-allocated reset-var)
-                    (OkLowerExpr
-                      (LowerExpr
-                        (lower-state-emit
-                          reset-allocated
-                          (IrInstrCall
-                            reset-var
-                            "tl_region_reset"
-                            (IrValueCons (IrValueVar mark-var) IrValueNil)
-                            (AstTyUnit)))
-                        value
-                        body-ty))])])]
+                (if (tc-never-type? body-ty)
+                  (OkLowerExpr (LowerExpr body-state value body-ty))
+                  (match (lower-state-alloc-var body-state)
+                    [(LowerAlloc reset-allocated reset-var)
+                      (OkLowerExpr
+                        (LowerExpr
+                          (lower-state-emit
+                            reset-allocated
+                            (IrInstrCall
+                              reset-var
+                              "tl_region_reset"
+                              (IrValueCons (IrValueVar mark-var) IrValueNil)
+                              (AstTyUnit)))
+                          value
+                          body-ty))]))])]
           [(ErrLowerExpr message) (ErrLowerExpr message)]))]))
 
 (define (lower-with-escape-final
@@ -8505,6 +8617,49 @@
             (IrValueVar var-id)
             expr-ty))])))
 
+(define (lower-if-single-merge
+  [state : LowerState]
+  [value : CompilerIrValue]
+  [merge-label : String]
+  [expr-ty : AstType]) : ResultLowerExpr
+  (let
+    [merge-start : LowerState
+      (lower-state-finish-block
+        (lower-state-emit state (IrInstrJump merge-label))
+        merge-label)]
+    (OkLowerExpr (LowerExpr merge-start value expr-ty))))
+
+(define (lower-if-finish
+  [then-value : CompilerIrValue]
+  [then-ty : AstType]
+  [then-end-label : String]
+  [else-state : LowerState]
+  [else-value : CompilerIrValue]
+  [else-ty : AstType]
+  [merge-label : String]
+  [expr-ty : AstType]) : ResultLowerExpr
+  (if (tc-never-type? then-ty)
+    (if (tc-never-type? else-ty)
+      (OkLowerExpr
+        (LowerExpr
+          (lower-state-finish-block else-state merge-label)
+          IrValueUnit
+          (AstTyNever)))
+      (lower-if-single-merge else-state else-value merge-label expr-ty))
+    (if (tc-never-type? else-ty)
+      (OkLowerExpr
+        (LowerExpr
+          (lower-state-finish-block else-state merge-label)
+          then-value
+          expr-ty))
+      (lower-if-merge
+        else-state
+        then-value
+        then-end-label
+        else-value
+        merge-label
+        expr-ty))))
+
 (define (lower-if-else
   [ctx : TcContext]
   [else-start : LowerState]
@@ -8512,18 +8667,21 @@
   [type-env : TcTypeEnv]
   [else-branch : AstExpr]
   [then-value : CompilerIrValue]
+  [then-ty : AstType]
   [then-end-label : String]
   [merge-label : String]
   [expr-ty : AstType]) : ResultLowerExpr
   (match (lower-expr ctx else-start env type-env else-branch)
     [(OkLowerExpr else-lowered)
       (match else-lowered
-        [(LowerExpr else-state else-value _)
-          (lower-if-merge
-            else-state
+        [(LowerExpr else-state else-value else-ty)
+          (lower-if-finish
             then-value
+            then-ty
             then-end-label
+            else-state
             else-value
+            else-ty
             merge-label
             expr-ty)])]
     [(ErrLowerExpr message) (ErrLowerExpr message)]))
@@ -8541,23 +8699,27 @@
   (match (lower-expr ctx then-start env type-env then-branch)
     [(OkLowerExpr then-lowered)
       (match then-lowered
-        [(LowerExpr then-state then-value _)
+        [(LowerExpr then-state then-value then-ty)
           (let
             [then-end-label : String (lower-state-current-label then-state)]
-            [else-start : LowerState
-              (lower-state-finish-block
-                (lower-state-emit then-state (IrInstrJump merge-label))
-                else-label)]
-            (lower-if-else
-              ctx
-              else-start
-              env
-              type-env
-              else-branch
-              then-value
-              then-end-label
-              merge-label
-              expr-ty))])]
+            (let
+              [else-start : LowerState
+                (if (tc-never-type? then-ty)
+                  (lower-state-finish-block then-state else-label)
+                  (lower-state-finish-block
+                    (lower-state-emit then-state (IrInstrJump merge-label))
+                    else-label))]
+              (lower-if-else
+                ctx
+                else-start
+                env
+                type-env
+                else-branch
+                then-value
+                then-ty
+                then-end-label
+                merge-label
+                expr-ty)))])]
     [(ErrLowerExpr message) (ErrLowerExpr message)]))
 
 (define (lower-if
@@ -8630,14 +8792,18 @@
                           (match (lower-expr ctx body-start env type-env body)
                             [(OkLowerExpr body-lowered)
                               (match body-lowered
-                                [(LowerExpr body-state _ _)
+                                [(LowerExpr body-state _ body-ty)
                                   (OkLowerExpr
                                     (LowerExpr
-                                      (lower-state-finish-block
-                                        (lower-state-emit
+                                      (if (tc-never-type? body-ty)
+                                        (lower-state-finish-block
                                           body-state
-                                          (IrInstrJump header-label))
-                                        exit-label)
+                                          exit-label)
+                                        (lower-state-finish-block
+                                          (lower-state-emit
+                                            body-state
+                                            (IrInstrJump header-label))
+                                          exit-label))
                                       IrValueUnit
                                       (AstTyUnit)))])]
                             [(ErrLowerExpr message) (ErrLowerExpr message)]))])]
@@ -10458,19 +10624,25 @@
                         body)
                         [(OkLowerExpr body-lowered)
                           (match body-lowered
-                            [(LowerExpr body-state body-value _)
+                            [(LowerExpr body-state body-value body-ty)
                               (let
                                 [body-end-label : String
                                   (lower-state-current-label body-state)]
-                                (lower-match-finish
-                                  (lower-state-emit
+                                (if (tc-never-type? body-ty)
+                                  (lower-match-finish
                                     body-state
-                                    (IrInstrJump merge-label))
-                                  merge-label
-                                  expr-ty
-                                  (IrPhiInputCons
-                                    (IrPhiInput body-value body-end-label)
-                                    phi-inputs)))])]
+                                    merge-label
+                                    expr-ty
+                                    phi-inputs)
+                                  (lower-match-finish
+                                    (lower-state-emit
+                                      body-state
+                                      (IrInstrJump merge-label))
+                                    merge-label
+                                    expr-ty
+                                    (IrPhiInputCons
+                                      (IrPhiInput body-value body-end-label)
+                                      phi-inputs))))])]
                         [(ErrLowerExpr message) (ErrLowerExpr message)])]
                     [(ErrLowerEnv message) (ErrLowerExpr message)]))]
               [(ErrAstTypeList message)
@@ -10510,14 +10682,16 @@
       (match (lower-expr ctx bound-state body-env body-type-env body)
         [(OkLowerExpr body-lowered)
           (match body-lowered
-            [(LowerExpr body-state body-value _)
+            [(LowerExpr body-state body-value body-ty)
               (let
                 [body-end-label : String (lower-state-current-label body-state)]
                 (lower-match-enum-arms
                   ctx
-                  (lower-state-finish-block
-                    (lower-state-emit body-state (IrInstrJump merge-label))
-                    next-label)
+                  (if (tc-never-type? body-ty)
+                    (lower-state-finish-block body-state next-label)
+                    (lower-state-finish-block
+                      (lower-state-emit body-state (IrInstrJump merge-label))
+                      next-label))
                   env
                   type-env
                   scrut-var
@@ -10526,9 +10700,11 @@
                   rest
                   merge-label
                   expr-ty
-                  (IrPhiInputCons
-                    (IrPhiInput body-value body-end-label)
-                    phi-inputs)))])]
+                  (if (tc-never-type? body-ty)
+                    phi-inputs
+                    (IrPhiInputCons
+                      (IrPhiInput body-value body-end-label)
+                      phi-inputs))))])]
         [(ErrLowerExpr message) (ErrLowerExpr message)])]
     [(ErrLowerEnv message) (ErrLowerExpr message)]))
 
@@ -10653,17 +10829,19 @@
                   (match (lower-expr ctx body-start env type-env body)
                     [(OkLowerExpr body-lowered)
                       (match body-lowered
-                        [(LowerExpr body-state body-value _)
+                        [(LowerExpr body-state body-value body-ty)
                           (let
                             [body-end-label : String
                               (lower-state-current-label body-state)]
                             (lower-match-arms
                               ctx
-                              (lower-state-finish-block
-                                (lower-state-emit
-                                  body-state
-                                  (IrInstrJump merge-label))
-                                next-label)
+                              (if (tc-never-type? body-ty)
+                                (lower-state-finish-block body-state next-label)
+                                (lower-state-finish-block
+                                  (lower-state-emit
+                                    body-state
+                                    (IrInstrJump merge-label))
+                                  next-label))
                               env
                               type-env
                               scrut-var
@@ -10671,9 +10849,11 @@
                               rest
                               merge-label
                               expr-ty
-                              (IrPhiInputCons
-                                (IrPhiInput body-value body-end-label)
-                                phi-inputs)))])]
+                              (if (tc-never-type? body-ty)
+                                phi-inputs
+                                (IrPhiInputCons
+                                  (IrPhiInput body-value body-end-label)
+                                  phi-inputs))))])]
                     [(ErrLowerExpr message) (ErrLowerExpr message)]))])]))]))
 
 (define (lower-match-catch-all
@@ -10701,18 +10881,29 @@
         (match (lower-expr ctx state body-env body-type-env body)
           [(OkLowerExpr body-lowered)
             (match body-lowered
-              [(LowerExpr body-state body-value _)
+              [(LowerExpr body-state body-value body-ty)
                 (let
                   [body-end-label : String
                     (lower-state-current-label body-state)]
-                  (lower-match-finish
-                    (lower-state-emit body-state (IrInstrJump merge-label))
-                    merge-label
-                    expr-ty
-                    (IrPhiInputCons
-                      (IrPhiInput body-value body-end-label)
-                      phi-inputs)))])]
+                  (if (tc-never-type? body-ty)
+                    (lower-match-finish
+                      body-state
+                      merge-label
+                      expr-ty
+                      phi-inputs)
+                    (lower-match-finish
+                      (lower-state-emit body-state (IrInstrJump merge-label))
+                      merge-label
+                      expr-ty
+                      (IrPhiInputCons
+                        (IrPhiInput body-value body-end-label)
+                        phi-inputs))))])]
           [(ErrLowerExpr message) (ErrLowerExpr message)]))]))
+
+(define (lower-phi-input-list-empty? [phi-inputs : CompilerIrPhiInputList]) : bool
+  (match phi-inputs
+    [(IrPhiInputNil) true]
+    [_ false]))
 
 (define (lower-match-finish
   [state : LowerState]
@@ -10721,18 +10912,20 @@
   [phi-inputs : CompilerIrPhiInputList]) : ResultLowerExpr
   (let
     [merge-start : LowerState (lower-state-finish-block state merge-label)]
-    (match expr-ty
-      [(AstTyUnit) (OkLowerExpr (LowerExpr merge-start IrValueUnit expr-ty))]
-      [_
-        (match (lower-state-alloc-var merge-start)
-          [(LowerAlloc allocated var-id)
-            (OkLowerExpr
-              (LowerExpr
-                (lower-state-emit
-                  allocated
-                  (IrInstrPhi var-id phi-inputs expr-ty))
-                (IrValueVar var-id)
-                expr-ty))])])))
+    (if (lower-phi-input-list-empty? phi-inputs)
+      (OkLowerExpr (LowerExpr merge-start IrValueUnit (AstTyNever)))
+      (match expr-ty
+        [(AstTyUnit) (OkLowerExpr (LowerExpr merge-start IrValueUnit expr-ty))]
+        [_
+          (match (lower-state-alloc-var merge-start)
+            [(LowerAlloc allocated var-id)
+              (OkLowerExpr
+                (LowerExpr
+                  (lower-state-emit
+                    allocated
+                    (IrInstrPhi var-id phi-inputs expr-ty))
+                  (IrValueVar var-id)
+                  expr-ty))])]))))
 
 (define (lower-tail-call-target?
   [state : LowerState]
@@ -10820,11 +11013,13 @@
   (match (lower-expr-expected ctx state env type-env expr ret-ty expr)
     [(OkLowerExpr lowered)
       (match lowered
-        [(LowerExpr body-state value _)
-          (OkLowerState
-            (lower-state-emit
-              body-state
-              (IrInstrReturn (lower-return-maybe value ret-ty))))])]
+        [(LowerExpr body-state value expr-ty)
+          (if (tc-never-type? expr-ty)
+            (OkLowerState body-state)
+            (OkLowerState
+              (lower-state-emit
+                body-state
+                (IrInstrReturn (lower-return-maybe value ret-ty)))))])]
     [(ErrLowerExpr message) (ErrLowerState message)]))
 
 (define (lower-tail-call
@@ -10870,8 +11065,10 @@
           (match (lower-expr ctx state env type-env expr)
             [(OkLowerExpr lowered)
               (match lowered
-                [(LowerExpr next-state _ _)
-                  (lower-tail-begin ctx next-state env type-env rest ret-ty)])]
+                [(LowerExpr next-state _ expr-ty)
+                  (if (tc-never-type? expr-ty)
+                    (OkLowerState next-state)
+                    (lower-tail-begin ctx next-state env type-env rest ret-ty))])]
             [(ErrLowerExpr message) (ErrLowerState message)])])]))
 
 (define (lower-tail-if
@@ -12433,6 +12630,19 @@
   (OkI64 (try (sum flag true))))
 (define (main [flag : bool]) : ResultI64
   (chain flag))")
+
+(define (compiler-lower-return-source) : String
+  "(define (main [flag : bool]) : i64
+  (begin
+    (if flag (return 7) unit)
+    42))")
+
+(define (compiler-lower-return-with-arena-source) : String
+  "(define (main [flag : bool]) : i64
+  (with-arena r
+    (begin
+      (if flag (return 7) unit)
+      42)))")
 
 (define (compiler-lower-resource-with-source) : String
   "(defenum ResultI64 (OkI64 i64) (ErrI64 String))
@@ -14228,6 +14438,24 @@
                 (> (lower-test-function-load-count functions "sum") 3))))])]
     [(ErrCompilerLower _) false]))
 
+(define (compiler-lower-return-shape-ok?) : bool
+  (match (lower-compiler-source (compiler-lower-return-source))
+    [(OkCompilerLower program _)
+      (match program
+        [(IrProgram _ functions _)
+          (> (lower-test-function-return-count functions "main") 1)])]
+    [(ErrCompilerLower _) false]))
+
+(define (compiler-lower-return-with-arena-shape-ok?) : bool
+  (match (lower-compiler-source (compiler-lower-return-with-arena-source))
+    [(OkCompilerLower program _)
+      (match program
+        [(IrProgram _ functions _)
+          (and
+            (> (lower-test-function-return-count functions "main") 1)
+            (> (lower-test-functions-call-count functions "tl_region_reset") 1))])]
+    [(ErrCompilerLower _) false]))
+
 (define (compiler-lower-resource-with-shape-ok?) : bool
   (match (lower-compiler-source (compiler-lower-resource-with-source))
     [(OkCompilerLower program _)
@@ -15469,6 +15697,12 @@
         (set! ok false))
       (if (compiler-lower-result-try-shape-ok?
         (compiler-lower-result-try-source))
+        unit
+        (set! ok false))
+      (if (compiler-lower-return-shape-ok?)
+        unit
+        (set! ok false))
+      (if (compiler-lower-return-with-arena-shape-ok?)
         unit
         (set! ok false))
       (if (compiler-lower-resource-with-shape-ok?)

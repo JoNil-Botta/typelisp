@@ -430,6 +430,15 @@
 (define (compiler-parse-tag-expr-try) : i64
   251)
 
+(define (compiler-parse-tag-expr-return) : i64
+  269)
+
+(define (compiler-parse-tag-expr-when) : i64
+  270)
+
+(define (compiler-parse-tag-expr-unless) : i64
+  271)
+
 (define (compiler-parse-tag-expr-ptr-null) : i64
   252)
 
@@ -631,6 +640,9 @@
         out
         (sym-i64-bind out "type" (compiler-parse-tag-expr-type-literal)))
       (set! out (sym-i64-bind out "try" (compiler-parse-tag-expr-try)))
+      (set! out (sym-i64-bind out "return" (compiler-parse-tag-expr-return)))
+      (set! out (sym-i64-bind out "when" (compiler-parse-tag-expr-when)))
+      (set! out (sym-i64-bind out "unless" (compiler-parse-tag-expr-unless)))
       (set!
         out
         (sym-i64-bind out "ptr-null" (compiler-parse-tag-expr-ptr-null)))
@@ -1330,6 +1342,51 @@
         [(ErrAstExpr message) (ErrAstExpr message)])]
     [_ (ErrAstExpr "parse: malformed if")]))
 
+(define (parse-ast-unit-expr) : AstExpr
+  (AstExprLiteral AstLitUnit))
+
+(define (parse-ast-expr-list-append-unit [exprs : AstExprList]) : AstExprList
+  (match exprs
+    [(AstExprNil) (AstExprCons (parse-ast-unit-expr) AstExprNil)]
+    [(AstExprCons head rest)
+      (AstExprCons head (parse-ast-expr-list-append-unit rest))]))
+
+(define (parse-ast-when-like-error [is-unless : bool]) : String
+  (if is-unless
+    "parse: unless expects a condition and at least one body expression"
+    "parse: when expects a condition and at least one body expression"))
+
+(define (parse-ast-when-like
+  [dispatch : SymI64Env]
+  [rest : SpannedSexpr]
+  [is-unless : bool]) : ResultAstExpr
+  (match rest
+    [(SpSCons cond body _)
+      (match body
+        [(SpSNil _) (ErrAstExpr (parse-ast-when-like-error is-unless))]
+        [_
+          (match (parse-ast-expr dispatch cond)
+            [(OkAstExpr parsed-cond)
+              (match (parse-ast-expr-list dispatch body)
+                [(OkAstExprList parsed-body)
+                  (let
+                    [unit-expr : AstExpr (parse-ast-unit-expr)]
+                    [body-expr : AstExpr
+                      (AstExprBegin
+                        (parse-ast-expr-list-append-unit parsed-body))]
+                    (if is-unless
+                      (OkAstExpr (AstExprIf parsed-cond unit-expr body-expr))
+                      (OkAstExpr (AstExprIf parsed-cond body-expr unit-expr))))]
+                [(ErrAstExprList message) (ErrAstExpr message)])]
+            [(ErrAstExpr message) (ErrAstExpr message)])])]
+    [_ (ErrAstExpr (parse-ast-when-like-error is-unless))]))
+
+(define (parse-ast-when [dispatch : SymI64Env] [rest : SpannedSexpr]) : ResultAstExpr
+  (parse-ast-when-like dispatch rest false))
+
+(define (parse-ast-unless [dispatch : SymI64Env] [rest : SpannedSexpr]) : ResultAstExpr
+  (parse-ast-when-like dispatch rest true))
+
 (define (parse-ast-cond-test-arm
   [dispatch : SymI64Env]
   [cond : SpannedSexpr]
@@ -1749,6 +1806,14 @@
         [(ErrAstExpr message) (ErrAstExpr message)])]
     [_ (ErrAstExpr "parse: try expects exactly one expression")]))
 
+(define (parse-ast-return [dispatch : SymI64Env] [rest : SpannedSexpr]) : ResultAstExpr
+  (match rest
+    [(SpSCons expr (SpSNil _) _)
+      (match (parse-ast-expr dispatch expr)
+        [(OkAstExpr parsed-expr) (OkAstExpr (AstExprReturn parsed-expr))]
+        [(ErrAstExpr message) (ErrAstExpr message)])]
+    [_ (ErrAstExpr "parse: return expects exactly one expression")]))
+
 (define (parse-ast-box-like
   [dispatch : SymI64Env]
   [rest : SpannedSexpr]
@@ -2109,6 +2174,8 @@
   [rest : SpannedSexpr]) : ResultAstExpr
   (cond
     [(= tag (compiler-parse-tag-expr-if)) (parse-ast-if dispatch rest)]
+    [(= tag (compiler-parse-tag-expr-when)) (parse-ast-when dispatch rest)]
+    [(= tag (compiler-parse-tag-expr-unless)) (parse-ast-unless dispatch rest)]
     [(= tag (compiler-parse-tag-expr-let)) (parse-ast-let dispatch rest)]
     [(= tag (compiler-parse-tag-expr-lambda)) (parse-ast-lambda dispatch rest)]
     [(= tag (compiler-parse-tag-expr-while)) (parse-ast-while dispatch rest)]
@@ -2157,6 +2224,7 @@
     [(= tag (compiler-parse-tag-expr-unquote-splicing))
       (parse-ast-quote-like dispatch tag rest)]
     [(= tag (compiler-parse-tag-expr-try)) (parse-ast-try dispatch rest)]
+    [(= tag (compiler-parse-tag-expr-return)) (parse-ast-return dispatch rest)]
     [(= tag (compiler-parse-tag-expr-box))
       (parse-ast-box-like dispatch rest false)]
     [(= tag (compiler-parse-tag-expr-box-get))
@@ -3223,6 +3291,69 @@
         [_ false])]
     [(ErrAstProgram _) false]))
 
+(define (compiler-parse-return-source) : String
+  "(define (main) : i64 (return 42))")
+
+(define (compiler-parse-return-ok?) : bool
+  (match (parse-ast-source (compiler-parse-return-source))
+    [(OkAstProgram (AstProgram decls))
+      (match decls
+        [(AstDeclCons (AstDeclDefFn _ _ _ body) AstDeclNil)
+          (match (ast-expr-unspan body)
+            [(AstExprReturn inner)
+              (match (ast-expr-unspan inner)
+                [(AstExprLiteral (AstLitInt 42)) true]
+                [_ false])]
+            [_ false])]
+        [_ false])]
+    [(ErrAstProgram _) false]))
+
+(define (compiler-parse-unit-expr? [expr : AstExpr]) : bool
+  (match (ast-expr-unspan expr)
+    [(AstExprLiteral AstLitUnit) true]
+    [_ false]))
+
+(define (compiler-parse-return-then-unit-begin? [expr : AstExpr]) : bool
+  (match (ast-expr-unspan expr)
+    [(AstExprBegin (AstExprCons first (AstExprCons last AstExprNil)))
+      (and
+        (match (ast-expr-unspan first)
+          [(AstExprReturn _) true]
+          [_ false])
+        (compiler-parse-unit-expr? last))]
+    [_ false]))
+
+(define (compiler-parse-guard-form-ok? [source : String] [is-unless : bool]) : bool
+  (match (parse-ast-source source)
+    [(OkAstProgram (AstProgram decls))
+      (match decls
+        [(AstDeclCons (AstDeclDefFn _ _ _ body) AstDeclNil)
+          (match (ast-expr-unspan body)
+            [(AstExprIf cond then-branch else-branch)
+              (and
+                (match (ast-expr-unspan cond)
+                  [(AstExprVar name) (string-eq name "ok")]
+                  [_ false])
+                (if is-unless
+                  (and
+                    (compiler-parse-unit-expr? then-branch)
+                    (compiler-parse-return-then-unit-begin? else-branch))
+                  (and
+                    (compiler-parse-return-then-unit-begin? then-branch)
+                    (compiler-parse-unit-expr? else-branch))))]
+            [_ false])]
+        [_ false])]
+    [(ErrAstProgram _) false]))
+
+(define (compiler-parse-guard-forms-ok?) : bool
+  (and
+    (compiler-parse-guard-form-ok?
+      "(define (main [ok : bool]) : unit (when ok (return unit)))"
+      false)
+    (compiler-parse-guard-form-ok?
+      "(define (main [ok : bool]) : unit (unless ok (return unit)))"
+      true)))
+
 (define (compiler-parse-comptime-decl-source) : String
   "(comptime-decl (defstruct Point (x i64) (y i64)))
 (comptime-decl (defenum Maybe (None) (Some i64)))")
@@ -3409,6 +3540,9 @@
 
 (define (compiler-parse-malformed-try-source) : String
   "(define (main) : i64 (try))")
+
+(define (compiler-parse-malformed-return-source) : String
+  "(define (main) : i64 (return 1 2))")
 
 (define (compiler-parse-repr-c-error-tests-ok?) : bool
   (and
@@ -3702,9 +3836,13 @@
                 (compiler-parse-error-ok?
                   (compiler-parse-region-type-bad-source)
                   "parse: region name must be an identifier")
-                (compiler-parse-error-ok?
-                  (compiler-parse-malformed-try-source)
-                  "parse: try expects exactly one expression")))))))))
+                (and
+                  (compiler-parse-error-ok?
+                    (compiler-parse-malformed-try-source)
+                    "parse: try expects exactly one expression")
+                  (compiler-parse-error-ok?
+                    (compiler-parse-malformed-return-source)
+                    "parse: return expects exactly one expression"))))))))))
 
 (define (compiler-parse-error-tests-ok?) : bool
   (and
@@ -4335,10 +4473,93 @@
 (define (compiler-parse-smoke) : i64
   (match (parse-ast-source (compiler-parse-smoke-source))
     [(OkAstProgram program)
-      (begin
-        (compiler-parse-smoke-shapes program)
-        (compiler-parse-smoke-errors)
-        42)]
+      (if (and
+        (= (compiler-parse-smoke-score program) 36)
+        (and
+          (compiler-parse-nested-expr-span-ok?)
+          (and
+            (compiler-parse-error-span-ok?)
+            (and
+              (compiler-parse-float-literal-ok?)
+              (and
+                (compiler-parse-region-ok?)
+                (and
+                  (compiler-parse-arena-ok?)
+                  (and
+                    (compiler-parse-comptime-decl-ok?)
+                    (and
+                      (compiler-parse-module-decl-ok?)
+                      (and
+                        (compiler-parse-import-metadata-ok?)
+                        (and
+                          (compiler-parse-export-decl-ok?)
+                          (and
+                            (compiler-parse-flat-let-call-body-ok?)
+                            (and
+                              (compiler-parse-inline-test-ok?)
+                              (and
+                                (compiler-parse-try-ok?)
+                                (and
+                                  (and
+                                    (compiler-parse-return-ok?)
+                                    (compiler-parse-guard-forms-ok?))
+                                  (and
+                                    (compiler-parse-repr-c-ok?)
+                                    (and
+                                      (compiler-parse-cleanup-metadata-ok?)
+                                      (and
+                                        (compiler-parse-raw-pointer-ok?)
+                                        (and
+                                          (compiler-parse-extern-metadata-ok?)
+                                          (and
+                                            (compiler-parse-raw-pointer-ops-ok?)
+                                            (and
+                                              (compiler-parse-box-ok?)
+                                              (and
+                                                (compiler-parse-reference-ok?)
+                                                (and
+                                                  (compiler-parse-borrow-ok?)
+                                                  (and
+                                                    (compiler-parse-resource-with-shape-ok?)
+                                                    (compiler-parse-quote-syntax-shape-ok?))))))))))))))))))))))))
+        (if (and
+          (compiler-parse-error-tests-ok?)
+          (and
+            (compiler-parse-declaration-tests-ok?)
+            (and
+              (compiler-parse-let-tests-ok?)
+              (and
+                (compiler-parse-spmd-tests-ok?)
+                (and
+                  (compiler-parse-pattern-tests-ok?)
+                  (and
+                    (compiler-parse-pattern-string-char-tests-ok?)
+                    (and
+                      (compiler-parse-enum-struct-tests-ok?)
+                      (and
+                        (compiler-parse-operator-tests-ok?)
+                        (and
+                          (compiler-parse-type-literal-tests-ok?)
+                          (and
+                            (compiler-parse-region-tests-ok?)
+                            (and
+                              (compiler-parse-repl-tests-ok?)
+                              (and
+                                (compiler-parse-comptime-param-tests-ok?)
+                                (and
+                                  (compiler-parse-defmacro-tests-ok?)
+                                  (and
+                                    (compiler-parse-resource-with-tests-ok?)
+                                    (and
+                                      (compiler-parse-quote-syntax-tests-ok?)
+                                      (compiler-parse-export-error-tests-ok?))))))))))))))))
+          42
+          (begin
+            (panic "parse: error-path self-tests failed")
+            0))
+        (begin
+          (panic "parse: compiler AST smoke score mismatch")
+          0))]
     [(ErrAstProgram message)
       (begin
         (panic message)

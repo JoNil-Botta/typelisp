@@ -672,6 +672,8 @@
       (front-cat3 "UnquoteSplicing { expr: " (front-expr-render inner) " }")]
     [(AstExprTry inner)
       (front-cat3 "Try { expr: " (front-expr-render inner) " }")]
+    [(AstExprReturn inner)
+      (front-cat3 "Return { expr: " (front-expr-render inner) " }")]
     [(AstExprPtrNull ty)
       (front-cat3 "PtrNull { ty: " (front-type-render ty) " }")]
     [(AstExprPtrNullCheck inner)

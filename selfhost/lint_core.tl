@@ -333,6 +333,7 @@
     [(AstExprUnquote inner) (lint-walk-expr inner threshold acc)]
     [(AstExprUnquoteSplicing inner) (lint-walk-expr inner threshold acc)]
     [(AstExprTry inner) (lint-walk-expr inner threshold acc)]
+    [(AstExprReturn inner) (lint-walk-expr inner threshold acc)]
     [(AstExprPtrNull _) acc]
     [(AstExprPtrNullCheck inner) (lint-walk-expr inner threshold acc)]
     [(AstExprPtrRead ptr) (lint-walk-expr ptr threshold acc)]

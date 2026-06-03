@@ -212,6 +212,11 @@ contains|Expected scalar, avx2, or avx512
 contains|Error: unknown target '
 contains|--emit-ir
 contains|typelisp-ir-summary v1
+contains|empty-blocks
+contains|max-instructions-function
+contains|max-instructions-block
+contains|call-arg-entries
+contains|phi-input-entries
 end
 
 case|selfhost_compile_smoke|selfhost/compile_smoke.tl|assembly|exactly-one|direct
@@ -338,6 +343,11 @@ case|selfhost_compiler_ir_types|selfhost/compiler_ir_types.tl|assembly|skip|dire
 contains|_tl_compiler_ir_program_summary:
 contains|_tl_compiler_ir_summary_globals:
 contains|_tl_compiler_ir_summary_functions:
+contains|_tl_compiler_ir_summary_empty_blocks:
+contains|_tl_compiler_ir_summary_max_instructions_function:
+contains|_tl_compiler_ir_summary_max_instructions_block:
+contains|_tl_compiler_ir_summary_call_arg_entries:
+contains|_tl_compiler_ir_summary_phi_input_entries:
 contains|_tl_compiler_ir_instr_render:
 contains|_tl_compiler_ir_tail_call_render_ok_question:
 contains|_tl_compiler_ir_instr_effect:
@@ -473,6 +483,8 @@ end
 
 case|selfhost_compiler_typecheck_core|selfhost/compiler_typecheck_core.tl|assembly|skip|direct
 contains|_tl_typecheck_compiler_specialized_program_with_paths:
+contains|tc_inline_aggregate_layout_for:
+contains|tc_inline_aggregate_type_layout:
 contains|_tl_tc_source_type_policy_message:
 contains|extern ABI c does not support
 contains|typecheck: return type mismatch

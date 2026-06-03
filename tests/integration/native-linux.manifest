@@ -7,8 +7,9 @@ aggregate_globals|tests/integration/aggregate_globals.tl|42|-|-|-
 argv|tests/integration/argv.tl|7|alpha\n|alpha beta|-
 arithmetic|tests/integration/arithmetic.tl|47|-|-|-
 calc|tests/integration/calc.tl|14|-|-|token.tl
+clone_deep_copy|tests/integration/clone_deep_copy.tl|42|-|-|-|requires-stage0-symbol:_tl_clone_u24Bundle
 tl_emit|selfhost/emit.tl|0|@tests/golden/tl_emit_program.s|-|emit_core.tl ast_types.tl sym_i64_env.tl
-# run-assert deferred (selfhost parity follow-up #1654/#1655/#1656/#1657): tl_ast|selfhost/ast.tl|173|-|-|ast_types.tl read.tl lex.tl token.tl
+tl_ast|selfhost/ast.tl|173|-|-|ast_types.tl read.tl lex.tl token.tl
 tl_lexer|selfhost/lexer.tl|19|-|-|lex.tl token.tl
 tl_reader|selfhost/reader.tl|62|-|-|lex.tl token.tl
 tl_eval|selfhost/eval.tl|30|hello world3233\n25\n15\n2\n10\n1\n0\n1\n3\n(1 2 3)(1 (2 3) 4)(10 . 20)(1 2 . 3)(1 4 9 16)(1 2)|-|read.tl lex.tl token.tl
@@ -66,7 +67,8 @@ region_reset_discard|tests/integration/region_reset_discard.tl|3|-|-|-
 region_reset_preserve|tests/integration/region_reset_preserve.tl|62|-|-|-
 region_reset_invalid_trap|tests/integration/region_reset_invalid_trap.tl|134|-|-|-|expected-stderr:tl: invalid region mark\n
 print|tests/integration/print.tl|0|42\nfalse\n|-|-
-# run-assert deferred (selfhost parity follow-up #1654/#1655/#1656/#1657): print_char|tests/integration/print_char.tl|0|A\n|-|-
+print_char|tests/integration/print_char.tl|0|A\n|-|-
+print_float|tests/integration/print_float.tl|0|1.5\n|-|-
 print_string|tests/integration/print_string.tl|0|hello\nworld\n|-|-
 register_scalar_homes|tests/integration/register_scalar_homes.tl|42|-|-|-
 # run-assert deferred (bare idiv trap needs guarded abort, #1654): rem_zero_trap|tests/integration/rem_zero_trap.tl|136|-|-|-
@@ -100,17 +102,17 @@ with_arena_builtin_alloc|tests/integration/with_arena_builtin_alloc.tl|2|-|-|-
 with_arena_loop|tests/integration/with_arena_loop.tl|42|-|-|-
 compiler_parse_smoke|selfhost/compiler_parse_smoke.tl|42|-|-|compiler_parse_core.tl compiler_diagnostic.tl compiler_ast_types.tl sym_i64_env.tl read.tl lex.tl token.tl
 compiler_symbols_smoke|selfhost/compiler_symbols_smoke.tl|42|-|-|compiler_symbols.tl compiler_parse_core.tl compiler_diagnostic.tl compiler_ast_types.tl sym_i64_env.tl read.tl lex.tl token.tl
-compiler_typecheck_smoke|selfhost/compiler_typecheck_smoke.tl|42|-|-|compiler_typecheck.tl compiler_typecheck_core.tl compiler_ctfe.tl compiler_specialize.tl compiler_symbols.tl compiler_parse_core.tl compiler_diagnostic.tl compiler_ast_types.tl sym_i64_env.tl read.tl lex.tl token.tl
-compiler_check_smoke|selfhost/compiler_check_smoke.tl|42|-|-|compiler_check_core.tl compiler_load.tl compiler_typecheck.tl compiler_typecheck_core.tl compiler_ctfe.tl compiler_specialize.tl compiler_symbols.tl compiler_parse_core.tl compiler_diagnostic.tl compiler_ast_types.tl sym_i64_env.tl read.tl lex.tl token.tl
+compiler_typecheck_smoke|selfhost/compiler_typecheck_smoke.tl|42|-|-|compiler_typecheck.tl compiler_typecheck_core.tl compiler_ctfe.tl compiler_specialize.tl compiler_symbols.tl compiler_parse_core.tl compiler_diagnostic.tl compiler_ast_types.tl sym_i64_env.tl read.tl lex.tl token.tl compiler_clone.tl
+compiler_check_smoke|selfhost/compiler_check_smoke.tl|42|-|-|compiler_check_core.tl compiler_load.tl compiler_typecheck.tl compiler_typecheck_core.tl compiler_ctfe.tl compiler_specialize.tl compiler_symbols.tl compiler_parse_core.tl compiler_diagnostic.tl compiler_ast_types.tl sym_i64_env.tl read.tl lex.tl token.tl compiler_clone.tl
 compiler_ctfe_smoke|selfhost/compiler_ctfe_smoke.tl|42|-|-|compiler_ctfe.tl compiler_diagnostic.tl compiler_ast_types.tl token.tl
-compiler_typecheck_reflection_smoke|selfhost/compiler_typecheck_reflection_smoke.tl|42|-|-|compiler_typecheck.tl compiler_typecheck_core.tl compiler_ctfe.tl compiler_specialize.tl compiler_symbols.tl compiler_parse_core.tl compiler_diagnostic.tl compiler_ast_types.tl sym_i64_env.tl read.tl lex.tl token.tl
+compiler_typecheck_reflection_smoke|selfhost/compiler_typecheck_reflection_smoke.tl|42|-|-|compiler_typecheck.tl compiler_typecheck_core.tl compiler_ctfe.tl compiler_specialize.tl compiler_symbols.tl compiler_parse_core.tl compiler_diagnostic.tl compiler_ast_types.tl sym_i64_env.tl read.tl lex.tl token.tl compiler_clone.tl
 compiler_lower_smoke|selfhost/compiler_lower_smoke.tl|42|-|-|compiler_lower.tl compiler_ctfe.tl compiler_specialize.tl compiler_ir_types.tl compiler_typecheck.tl compiler_typecheck_core.tl compiler_symbols.tl compiler_parse_core.tl compiler_diagnostic.tl compiler_ast_types.tl sym_i64_env.tl read.tl lex.tl token.tl compiler_clone.tl
 compiler_ir_types_smoke|selfhost/compiler_ir_types_smoke.tl|42|-|-|compiler_ir_types.tl compiler_ast_types.tl
 compiler_liveness_smoke|selfhost/compiler_liveness_smoke.tl|42|-|-|compiler_liveness.tl compiler_ir_types.tl compiler_ast_types.tl
 compiler_regalloc_smoke|selfhost/compiler_regalloc_smoke.tl|42|-|-|compiler_regalloc.tl compiler_liveness.tl compiler_ir_types.tl compiler_ast_types.tl
 compiler_optimize_smoke|selfhost/compiler_optimize_smoke.tl|42|-|-|compiler_optimize.tl compiler_ir_types.tl compiler_ast_types.tl
 lex_span_smoke|selfhost/lex_span_smoke.tl|42|-|-|lex.tl token.tl
-# run-assert deferred (pre-existing backend self-test golden mismatch, #1657): compiler_backend_smoke|selfhost/compiler_backend_smoke.tl|42|-|-|compiler_backend_tests.tl compiler_backend.tl compiler_optimize.tl compiler_regalloc.tl compiler_liveness.tl compiler_lower.tl compiler_ctfe.tl compiler_specialize.tl compiler_ir_types.tl compiler_typecheck.tl compiler_typecheck_core.tl compiler_symbols.tl compiler_parse_core.tl compiler_diagnostic.tl compiler_ast_types.tl sym_i64_env.tl stdlib/text_buf.tl read.tl lex.tl token.tl compiler_clone.tl
+compiler_backend_smoke|selfhost/compiler_backend_smoke.tl|42|-|-|compiler_backend_tests.tl compiler_backend.tl compiler_optimize.tl compiler_regalloc.tl compiler_liveness.tl compiler_lower.tl compiler_ctfe.tl compiler_specialize.tl compiler_ir_types.tl compiler_typecheck.tl compiler_typecheck_core.tl compiler_symbols.tl compiler_parse_core.tl compiler_diagnostic.tl compiler_ast_types.tl sym_i64_env.tl stdlib/text_buf.tl read.tl lex.tl token.tl compiler_clone.tl
 doc_extract_smoke|selfhost/doc_extract_smoke.tl|42|-|-|doc_extract.tl format_tokens.tl
 doc_test_smoke|selfhost/doc_test_smoke.tl|42|-|-|doc_test.tl build_run_core.tl compiler_driver_core.tl compiler_backend.tl compiler_optimize.tl compiler_regalloc.tl compiler_liveness.tl compiler_lower.tl compiler_check_core.tl compiler_load.tl compiler_typecheck.tl compiler_typecheck_core.tl compiler_ctfe.tl compiler_specialize.tl compiler_ir_types.tl compiler_symbols.tl compiler_parse_core.tl compiler_ast_types.tl compiler_diagnostic.tl sym_i64_env.tl stdlib/text_buf.tl read.tl lex.tl token.tl stdlib/fs.tl stdlib/env.tl stdlib/io.tl stdlib/string.tl stdlib/process.tl stdlib/msvc.tl stdlib/windows_sdk.tl stdlib/windows_registry.tl stdlib/windows_setup.tl compiler_clone.tl
 doc_render_smoke|selfhost/doc_render_smoke.tl|42|-|-|doc_render.tl doc_extract.tl format_tokens.tl

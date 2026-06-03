@@ -5,6 +5,8 @@
 
 (import "compiler_ctfe.tl")
 
+(import "compiler_clone.tl")
+
 (defenum TcTypeEnv
   (TcTypeNil)
   (TcTypeBind String AstType TcTypeEnv))
@@ -122,6 +124,49 @@
 (defenum ResultTcReprCLayout
   (OkTcReprCLayout TcReprCLayout)
   (ErrTcReprCLayout String))
+
+(defenum TcInlineFieldLayout
+  (TcInlineFieldLayout String AstType i64))
+
+(defenum TcInlineFieldLayoutList
+  (TcInlineFieldLayoutNil)
+  (TcInlineFieldLayoutCons TcInlineFieldLayout TcInlineFieldLayoutList))
+
+(defenum TcInlinePayloadLayout
+  (TcInlinePayloadLayout i64 AstType i64))
+
+(defenum TcInlinePayloadLayoutList
+  (TcInlinePayloadLayoutNil)
+  (TcInlinePayloadLayoutCons TcInlinePayloadLayout TcInlinePayloadLayoutList))
+
+(defenum TcInlineVariantLayout
+  (TcInlineVariantLayout String i64 i64 TcInlinePayloadLayoutList))
+
+(defenum TcInlineVariantLayoutList
+  (TcInlineVariantLayoutNil)
+  (TcInlineVariantLayoutCons TcInlineVariantLayout TcInlineVariantLayoutList))
+
+(defenum TcInlineFieldsLayout
+  (TcInlineFieldsLayout i64 i64 TcInlineFieldLayoutList))
+
+(defenum ResultTcInlineFieldsLayout
+  (OkTcInlineFieldsLayout TcInlineFieldsLayout)
+  (ErrTcInlineFieldsLayout String))
+
+(defenum TcInlinePayloadFieldsLayout
+  (TcInlinePayloadFieldsLayout i64 i64 TcInlinePayloadLayoutList))
+
+(defenum ResultTcInlinePayloadFieldsLayout
+  (OkTcInlinePayloadFieldsLayout TcInlinePayloadFieldsLayout)
+  (ErrTcInlinePayloadFieldsLayout String))
+
+(defenum TcInlineAggregateLayout
+  (TcInlineStructLayout i64 i64 TcInlineFieldLayoutList)
+  (TcInlineEnumLayout i64 i64 TcInlineVariantLayoutList))
+
+(defenum ResultTcInlineAggregateLayout
+  (OkTcInlineAggregateLayout TcInlineAggregateLayout)
+  (ErrTcInlineAggregateLayout String))
 
 (defenum CompilerTypecheckSummary
   (CompilerTypecheckSummary i64 i64 i64))
@@ -325,7 +370,10 @@
       out)))
 
 (define (tc-default-env) : TcTypeEnv
-  (tc-arena-builtins-env (tc-default-env-base)))
+  (tc-bind
+    (tc-arena-builtins-env (tc-default-env-base))
+    (tc-default-boundary-name)
+    (AstTyUnit)))
 
 (define (tc-default-env-base) : TcTypeEnv
   (let
@@ -1685,6 +1733,10 @@
         [(ErrTcUnit message) (ErrTcUnit message)])]
     [(AstExprStructGet receiver _) (tc-source-expr-policy-ok ctx receiver)]
     [(AstExprWithRegion _ body) (tc-source-expr-list-policy-ok ctx body)]
+    [(AstExprWithEscape scratch body)
+      (match (tc-source-expr-policy-ok ctx scratch)
+        [(OkTcUnit) (tc-source-expr-list-policy-ok ctx body)]
+        [(ErrTcUnit message) (ErrTcUnit message)])]
     [(AstExprWithResource bindings body)
       (match (tc-source-resource-binding-list-policy-ok ctx bindings)
         [(OkTcUnit) (tc-source-expr-list-policy-ok ctx body)]
@@ -2084,6 +2136,21 @@
       (string-append
         "typecheck: "
         (string-append name " requires unsafe context")))))
+
+(define (tc-arena-unsafe-primitive? [name : String]) : bool
+  (or
+    (string-eq name "arena-set!")
+    (or (string-eq name "arena-destroy") (string-eq name "arena-rewind"))))
+
+(define (tc-require-arena-call-safe [env : TcTypeEnv] [func : AstExpr]) : ResultTcUnit
+  (match (tc-expr-var-name func)
+    [(TcSomeString name)
+      (if (and
+        (tc-arena-unsafe-primitive? name)
+        (tc-default-builtin-unshadowed? env name))
+        (tc-require-unsafe env name)
+        OkTcUnit)]
+    [(TcNoString) OkTcUnit]))
 
 (define (tc-dyn-array-elem-supported? [ty : AstType]) : bool
   (if (tc-integer-type? ty)
@@ -3152,7 +3219,7 @@
           (tc-default-builtin-unshadowed-scan? rest name)))]))
 
 (define (tc-default-builtin-unshadowed? [env : TcTypeEnv] [name : String]) : bool
-  (if (tc-region-arg-builtin-name? name)
+  (if (or (tc-region-arg-builtin-name? name) (tc-arena-unsafe-primitive? name))
     (tc-default-builtin-unshadowed-scan? env name)
     false))
 
@@ -3355,30 +3422,44 @@
   [env : TcTypeEnv]
   [func : AstExpr]
   [args : AstExprList]) : ResultTcType
-  (match (tc-expr ctx env func)
-    [(OkTcType fn-ty)
-      (match fn-ty
-        [(AstTyFunc params ret)
-          (tc-call-function-type ctx env func args params ret)]
-        [(AstTyRegion _ inner)
-          (match inner
+  (match (tc-require-arena-call-safe env func)
+    [(OkTcUnit)
+      (match (tc-expr ctx env func)
+        [(OkTcType fn-ty)
+          (match fn-ty
             [(AstTyFunc params ret)
-              (match (tc-check-call-args ctx env args params false (AstNoType))
-                [(OkTcUnit) (OkTcType (tc-tag-active-region env ret))]
-                [(ErrTcUnit message) (ErrTcType message)])]
+              (tc-call-function-type ctx env func args params ret)]
+            [(AstTyRegion _ inner)
+              (match inner
+                [(AstTyFunc params ret)
+                  (match (tc-check-call-args
+                    ctx
+                    env
+                    args
+                    params
+                    false
+                    (AstNoType))
+                    [(OkTcUnit) (OkTcType (tc-tag-active-region env ret))]
+                    [(ErrTcUnit message) (ErrTcType message)])]
+                [(AstTyEnum enum-name)
+                  (match args
+                    [(AstExprNil)
+                      (tc-nullary-variant-call-expr
+                        ctx
+                        env
+                        func
+                        enum-name
+                        inner)]
+                    [_ (ErrTcType "typecheck: arity mismatch")])]
+                [_ (ErrTcType "typecheck: call target is not a function")])]
             [(AstTyEnum enum-name)
               (match args
                 [(AstExprNil)
-                  (tc-nullary-variant-call-expr ctx env func enum-name inner)]
+                  (tc-nullary-variant-call-expr ctx env func enum-name fn-ty)]
                 [_ (ErrTcType "typecheck: arity mismatch")])]
             [_ (ErrTcType "typecheck: call target is not a function")])]
-        [(AstTyEnum enum-name)
-          (match args
-            [(AstExprNil)
-              (tc-nullary-variant-call-expr ctx env func enum-name fn-ty)]
-            [_ (ErrTcType "typecheck: arity mismatch")])]
-        [_ (ErrTcType "typecheck: call target is not a function")])]
-    [(ErrTcType message) (ErrTcType message)]))
+        [(ErrTcType message) (ErrTcType message)])]
+    [(ErrTcUnit message) (ErrTcType message)]))
 
 ;; Whether `name` resolves to any binding in `env` (a builtin, a top-level
 ;; user definition, or a local). Used to decide whether an unbound builtin
@@ -3782,14 +3863,31 @@
       "typecheck: "
       (string-append name " is compile-time only; wrap it in (comptime ...)"))))
 
+(define (tc-clone-able-type? [ctx : TcContext] [ty : AstType]) : bool
+  (match (tc-context-program ctx)
+    [(AstProgram decls)
+      (clone-field-type-able?
+        (tc-type-without-regions (tc-resolve-type ctx ty))
+        (clone-fixpoint decls (clone-all-type-names decls (CloneNameNil))))]))
+
 ;; `(clone x)` deep-copies x into the current arena (#1633). Type-directed: the
 ;; result is the argument's type, stripped of any inner-region tag (the copy
-;; lands in the enclosing arena, not the source's region).
+;; lands in the enclosing arena, not the source's region). Unsupported types are
+;; rejected here so no heap-backed value silently lowers as a shallow handle copy.
 (define (tc-clone-call [ctx : TcContext] [env : TcTypeEnv] [args : AstExprList]) : ResultTcType
   (match args
     [(AstExprCons arg (AstExprNil))
       (match (tc-expr ctx env arg)
-        [(OkTcType arg-ty) (OkTcType (tc-type-without-regions arg-ty))]
+        [(OkTcType arg-ty)
+          (let
+            [clone-ty : AstType (tc-type-without-regions arg-ty)]
+            (if (tc-clone-able-type? ctx clone-ty)
+              (OkTcType clone-ty)
+              (ErrTcType
+                (string-append
+                  "typecheck: clone unsupported type "
+                  (tc-type-render
+                    (tc-type-without-regions (tc-resolve-type ctx arg-ty)))))))]
         [(ErrTcType message) (ErrTcType message)])]
     [_ (ErrTcType "typecheck: clone expects exactly one argument")]))
 
@@ -4489,6 +4587,8 @@
         [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)])]
     [(AstExprWithRegion region body)
       (tc-spmd-begin-list ctx (tc-push-region env region) spmd-env body)]
+    [(AstExprWithEscape _ _)
+      (ErrTcSpmdExprInfo "typecheck: with-escape inside spmd is not supported")]
     [(AstExprWithResource _ _)
       (ErrTcSpmdExprInfo
         "typecheck: resource with is not implemented yet (#907)")]
@@ -4800,6 +4900,10 @@
     [(AstExprStructGet receiver _)
       (tc-expr-uses-free-name? receiver name bound)]
     [(AstExprWithRegion _ body) (tc-expr-list-uses-free-name? body name bound)]
+    [(AstExprWithEscape scratch body)
+      (or
+        (tc-expr-uses-free-name? scratch name bound)
+        (tc-expr-list-uses-free-name? body name bound))]
     [(AstExprWithResource bindings body)
       (or
         (tc-resource-binding-list-uses-free-name? bindings name bound)
@@ -4918,6 +5022,8 @@
     [(AstExprBoxGet inner)
       (tc-expr-result-uses-cleanup-owner? inner owners bound)]
     [(AstExprWithRegion _ body)
+      (tc-expr-list-result-uses-cleanup-owner? body owners bound)]
+    [(AstExprWithEscape _ body)
       (tc-expr-list-result-uses-cleanup-owner? body owners bound)]
     [(AstExprWithResource bindings body)
       (tc-expr-list-result-uses-cleanup-owner?
@@ -5114,6 +5220,124 @@
         (tc-repr-c-field-layout-offset field)
         (tc-repr-c-layout-field-offset rest name))]))
 
+(define (tc-inline-field-layout-name [field : TcInlineFieldLayout]) : String
+  (match field
+    [(TcInlineFieldLayout name _ _) name]))
+
+(define (tc-inline-field-layout-type [field : TcInlineFieldLayout]) : AstType
+  (match field
+    [(TcInlineFieldLayout _ ty _) ty]))
+
+(define (tc-inline-field-layout-offset [field : TcInlineFieldLayout]) : i64
+  (match field
+    [(TcInlineFieldLayout _ _ offset) offset]))
+
+(define (tc-inline-field-layout-list-offset
+  [fields : TcInlineFieldLayoutList]
+  [name : String]) : i64
+  (match fields
+    [(TcInlineFieldLayoutNil) -1]
+    [(TcInlineFieldLayoutCons field rest)
+      (if (string-eq (tc-inline-field-layout-name field) name)
+        (tc-inline-field-layout-offset field)
+        (tc-inline-field-layout-list-offset rest name))]))
+
+(define (tc-inline-payload-layout-index [payload : TcInlinePayloadLayout]) : i64
+  (match payload
+    [(TcInlinePayloadLayout index _ _) index]))
+
+(define (tc-inline-payload-layout-type [payload : TcInlinePayloadLayout]) : AstType
+  (match payload
+    [(TcInlinePayloadLayout _ ty _) ty]))
+
+(define (tc-inline-payload-layout-offset [payload : TcInlinePayloadLayout]) : i64
+  (match payload
+    [(TcInlinePayloadLayout _ _ offset) offset]))
+
+(define (tc-inline-payload-layout-list-offset
+  [payloads : TcInlinePayloadLayoutList]
+  [index : i64]) : i64
+  (match payloads
+    [(TcInlinePayloadLayoutNil) -1]
+    [(TcInlinePayloadLayoutCons payload rest)
+      (if (= (tc-inline-payload-layout-index payload) index)
+        (tc-inline-payload-layout-offset payload)
+        (tc-inline-payload-layout-list-offset rest index))]))
+
+(define (tc-inline-variant-layout-name [variant : TcInlineVariantLayout]) : String
+  (match variant
+    [(TcInlineVariantLayout name _ _ _) name]))
+
+(define (tc-inline-variant-layout-size [variant : TcInlineVariantLayout]) : i64
+  (match variant
+    [(TcInlineVariantLayout _ size _ _) size]))
+
+(define (tc-inline-variant-layout-align [variant : TcInlineVariantLayout]) : i64
+  (match variant
+    [(TcInlineVariantLayout _ _ align _) align]))
+
+(define (tc-inline-variant-layout-payloads [variant : TcInlineVariantLayout]) : TcInlinePayloadLayoutList
+  (match variant
+    [(TcInlineVariantLayout _ _ _ payloads) payloads]))
+
+(define (tc-inline-variant-layout-list-size
+  [variants : TcInlineVariantLayoutList]
+  [name : String]) : i64
+  (match variants
+    [(TcInlineVariantLayoutNil) -1]
+    [(TcInlineVariantLayoutCons variant rest)
+      (if (string-eq (tc-inline-variant-layout-name variant) name)
+        (tc-inline-variant-layout-size variant)
+        (tc-inline-variant-layout-list-size rest name))]))
+
+(define (tc-inline-variant-layout-list-payload-offset
+  [variants : TcInlineVariantLayoutList]
+  [name : String]
+  [index : i64]) : i64
+  (match variants
+    [(TcInlineVariantLayoutNil) -1]
+    [(TcInlineVariantLayoutCons variant rest)
+      (if (string-eq (tc-inline-variant-layout-name variant) name)
+        (tc-inline-payload-layout-list-offset
+          (tc-inline-variant-layout-payloads variant)
+          index)
+        (tc-inline-variant-layout-list-payload-offset rest name index))]))
+
+(define (tc-inline-aggregate-layout-size [layout : TcInlineAggregateLayout]) : i64
+  (match layout
+    [(TcInlineStructLayout size _ _) size]
+    [(TcInlineEnumLayout size _ _) size]))
+
+(define (tc-inline-aggregate-layout-align [layout : TcInlineAggregateLayout]) : i64
+  (match layout
+    [(TcInlineStructLayout _ align _) align]
+    [(TcInlineEnumLayout _ align _) align]))
+
+(define (tc-inline-aggregate-layout-field-offset
+  [layout : TcInlineAggregateLayout]
+  [name : String]) : i64
+  (match layout
+    [(TcInlineStructLayout _ _ fields)
+      (tc-inline-field-layout-list-offset fields name)]
+    [(TcInlineEnumLayout _ _ _) -1]))
+
+(define (tc-inline-aggregate-layout-variant-size
+  [layout : TcInlineAggregateLayout]
+  [name : String]) : i64
+  (match layout
+    [(TcInlineStructLayout _ _ _) -1]
+    [(TcInlineEnumLayout _ _ variants)
+      (tc-inline-variant-layout-list-size variants name)]))
+
+(define (tc-inline-aggregate-layout-variant-payload-offset
+  [layout : TcInlineAggregateLayout]
+  [name : String]
+  [index : i64]) : i64
+  (match layout
+    [(TcInlineStructLayout _ _ _) -1]
+    [(TcInlineEnumLayout _ _ variants)
+      (tc-inline-variant-layout-list-payload-offset variants name index)]))
+
 (define (tc-align-up [n : i64] [align : i64]) : i64
   (if (<= align 1)
     n
@@ -5259,6 +5483,346 @@
 
 (define (tc-inline-aggregate-layout-finite-ok [ctx : TcContext] [name : String]) : ResultTcUnit
   (tc-inline-aggregate-nominal-finite-ok ctx name TcStringNil))
+
+(define (tc-inline-aggregate-layout-info [size : i64] [align : i64]) : TcLayoutInfo
+  (TcLayoutInfo size align))
+
+(define (tc-inline-aggregate-pointer-layout-info) : TcLayoutInfo
+  (tc-inline-aggregate-layout-info 8 8))
+
+(define (tc-inline-aggregate-zero-layout-info) : TcLayoutInfo
+  (tc-inline-aggregate-layout-info 0 1))
+
+(define (tc-inline-aggregate-finish-layout [cursor : i64] [max-align : i64]) : TcLayoutInfo
+  (let
+    [align : i64
+      (if (= max-align 0)
+        1
+        max-align)]
+    (tc-inline-aggregate-layout-info (tc-align-up cursor align) align)))
+
+(define (tc-inline-aggregate-array-size
+  [elem-size : i64]
+  [elem-align : i64]
+  [count : i64]) : i64
+  (if (<= count 0)
+    0
+    (* (tc-align-up elem-size elem-align) count)))
+
+(define (tc-inline-aggregate-type-list-layout-info
+  [ctx : TcContext]
+  [types : AstTypeList]
+  [cursor : i64]
+  [max-align : i64]
+  [stack : TcStringList]) : ResultTcLayoutInfo
+  (match types
+    [(AstTypeNil)
+      (OkTcLayoutInfo (tc-inline-aggregate-finish-layout cursor max-align))]
+    [(AstTypeCons ty rest)
+      (match (tc-inline-aggregate-type-layout-with-stack ctx ty stack)
+        [(OkTcLayoutInfo info)
+          (let
+            [field-align : i64 (tc-layout-info-align info)]
+            [field-size : i64 (tc-layout-info-size info)]
+            [offset : i64 (tc-align-up cursor field-align)]
+            [next-cursor : i64 (+ offset field-size)]
+            [next-align : i64 (tc-max-i64 max-align field-align)]
+            (tc-inline-aggregate-type-list-layout-info
+              ctx
+              rest
+              next-cursor
+              next-align
+              stack))]
+        [(ErrTcLayoutInfo message) (ErrTcLayoutInfo message)])]))
+
+(define (tc-inline-aggregate-field-defs-layout
+  [ctx : TcContext]
+  [fields : AstFieldDefList]
+  [cursor : i64]
+  [max-align : i64]
+  [stack : TcStringList]) : ResultTcInlineFieldsLayout
+  (match fields
+    [(AstFieldDefNil)
+      (match (tc-inline-aggregate-finish-layout cursor max-align)
+        [(TcLayoutInfo size align)
+          (OkTcInlineFieldsLayout
+            (TcInlineFieldsLayout size align TcInlineFieldLayoutNil))])]
+    [(AstFieldDefCons field rest)
+      (match field
+        [(AstFieldDef name ty _)
+          (let
+            [resolved : AstType (tc-resolve-type ctx ty)]
+            (match (tc-inline-aggregate-type-layout-with-stack
+              ctx
+              resolved
+              stack)
+              [(OkTcLayoutInfo info)
+                (let
+                  [field-align : i64 (tc-layout-info-align info)]
+                  [field-size : i64 (tc-layout-info-size info)]
+                  [offset : i64 (tc-align-up cursor field-align)]
+                  [next-cursor : i64 (+ offset field-size)]
+                  [next-align : i64 (tc-max-i64 max-align field-align)]
+                  (match (tc-inline-aggregate-field-defs-layout
+                    ctx
+                    rest
+                    next-cursor
+                    next-align
+                    stack)
+                    [(OkTcInlineFieldsLayout rest-layout)
+                      (match rest-layout
+                        [(TcInlineFieldsLayout size align rest-fields)
+                          (OkTcInlineFieldsLayout
+                            (TcInlineFieldsLayout
+                              size
+                              align
+                              (TcInlineFieldLayoutCons
+                                (TcInlineFieldLayout name resolved offset)
+                                rest-fields)))])]
+                    [(ErrTcInlineFieldsLayout message)
+                      (ErrTcInlineFieldsLayout message)]))]
+              [(ErrTcLayoutInfo message) (ErrTcInlineFieldsLayout message)]))])]))
+
+(define (tc-inline-aggregate-payloads-layout
+  [ctx : TcContext]
+  [types : AstTypeList]
+  [index : i64]
+  [cursor : i64]
+  [max-align : i64]
+  [stack : TcStringList]) : ResultTcInlinePayloadFieldsLayout
+  (match types
+    [(AstTypeNil)
+      (match (tc-inline-aggregate-finish-layout cursor max-align)
+        [(TcLayoutInfo size align)
+          (OkTcInlinePayloadFieldsLayout
+            (TcInlinePayloadFieldsLayout size align TcInlinePayloadLayoutNil))])]
+    [(AstTypeCons ty rest)
+      (let
+        [resolved : AstType (tc-resolve-type ctx ty)]
+        (match (tc-inline-aggregate-type-layout-with-stack ctx resolved stack)
+          [(OkTcLayoutInfo info)
+            (let
+              [field-align : i64 (tc-layout-info-align info)]
+              [field-size : i64 (tc-layout-info-size info)]
+              [offset : i64 (tc-align-up cursor field-align)]
+              [next-cursor : i64 (+ offset field-size)]
+              [next-align : i64 (tc-max-i64 max-align field-align)]
+              (match (tc-inline-aggregate-payloads-layout
+                ctx
+                rest
+                (+ index 1)
+                next-cursor
+                next-align
+                stack)
+                [(OkTcInlinePayloadFieldsLayout rest-layout)
+                  (match rest-layout
+                    [(TcInlinePayloadFieldsLayout size align rest-payloads)
+                      (OkTcInlinePayloadFieldsLayout
+                        (TcInlinePayloadFieldsLayout
+                          size
+                          align
+                          (TcInlinePayloadLayoutCons
+                            (TcInlinePayloadLayout index resolved offset)
+                            rest-payloads)))])]
+                [(ErrTcInlinePayloadFieldsLayout message)
+                  (ErrTcInlinePayloadFieldsLayout message)]))]
+          [(ErrTcLayoutInfo message) (ErrTcInlinePayloadFieldsLayout message)]))]))
+
+(define (tc-inline-aggregate-struct-layout-with-stack
+  [ctx : TcContext]
+  [struct-name : String]
+  [stack : TcStringList]) : ResultTcInlineAggregateLayout
+  (if (tc-string-list-contains stack struct-name)
+    (ErrTcInlineAggregateLayout
+      (tc-inline-aggregate-cycle-message struct-name stack))
+    (match (tc-struct-decl ctx struct-name)
+      [(OkTcStructDecl decl)
+        (match decl
+          [(TcStructDecl _ fields)
+            (match (tc-inline-aggregate-field-defs-layout
+              ctx
+              fields
+              0
+              0
+              (TcStringCons struct-name stack))
+              [(OkTcInlineFieldsLayout layout)
+                (match layout
+                  [(TcInlineFieldsLayout size align fields-layout)
+                    (OkTcInlineAggregateLayout
+                      (TcInlineStructLayout size align fields-layout))])]
+              [(ErrTcInlineFieldsLayout message)
+                (ErrTcInlineAggregateLayout message)])])]
+      [(ErrTcStructDecl message) (ErrTcInlineAggregateLayout message)])))
+
+(define (tc-inline-aggregate-variants-layout
+  [ctx : TcContext]
+  [variants : AstVariantDefList]
+  [max-size : i64]
+  [max-align : i64]
+  [stack : TcStringList]) : ResultTcInlineAggregateLayout
+  (match variants
+    [(AstVariantDefNil)
+      (OkTcInlineAggregateLayout
+        (TcInlineEnumLayout
+          (tc-align-up max-size max-align)
+          max-align
+          TcInlineVariantLayoutNil))]
+    [(AstVariantDefCons variant rest)
+      (match variant
+        [(AstVariantDef variant-name fields)
+          (match (tc-inline-aggregate-payloads-layout ctx fields 0 8 8 stack)
+            [(OkTcInlinePayloadFieldsLayout payload-layout)
+              (match payload-layout
+                [(TcInlinePayloadFieldsLayout
+                    variant-size
+                    variant-align
+                    payloads)
+                  (let
+                    [next-size : i64 (tc-max-i64 max-size variant-size)]
+                    [next-align : i64 (tc-max-i64 max-align variant-align)]
+                    (match (tc-inline-aggregate-variants-layout
+                      ctx
+                      rest
+                      next-size
+                      next-align
+                      stack)
+                      [(OkTcInlineAggregateLayout rest-layout)
+                        (match rest-layout
+                          [(TcInlineEnumLayout
+                              enum-size
+                              enum-align
+                              rest-variants)
+                            (OkTcInlineAggregateLayout
+                              (TcInlineEnumLayout
+                                enum-size
+                                enum-align
+                                (TcInlineVariantLayoutCons
+                                  (TcInlineVariantLayout
+                                    variant-name
+                                    variant-size
+                                    variant-align
+                                    payloads)
+                                  rest-variants)))]
+                          [(TcInlineStructLayout _ _ _)
+                            (ErrTcInlineAggregateLayout
+                              "typecheck: internal inline enum layout mismatch")])]
+                      [(ErrTcInlineAggregateLayout message)
+                        (ErrTcInlineAggregateLayout message)]))])]
+            [(ErrTcInlinePayloadFieldsLayout message)
+              (ErrTcInlineAggregateLayout message)])])]))
+
+(define (tc-inline-aggregate-enum-layout-with-stack
+  [ctx : TcContext]
+  [enum-name : String]
+  [stack : TcStringList]) : ResultTcInlineAggregateLayout
+  (if (tc-string-list-contains stack enum-name)
+    (ErrTcInlineAggregateLayout
+      (tc-inline-aggregate-cycle-message enum-name stack))
+    (match (tc-program-enum-variants (tc-context-program ctx) enum-name)
+      [(OkAstVariantDefList variants)
+        (tc-inline-aggregate-variants-layout
+          ctx
+          variants
+          8
+          8
+          (TcStringCons enum-name stack))]
+      [(ErrAstVariantDefList message) (ErrTcInlineAggregateLayout message)])))
+
+(define (tc-inline-aggregate-layout-for-with-stack
+  [ctx : TcContext]
+  [name : String]
+  [stack : TcStringList]) : ResultTcInlineAggregateLayout
+  (match (compiler-symbols-lookup-type (tc-context-symbols ctx) name)
+    [(SomeI64 handle)
+      (if (=
+        (compiler-symbol-handle-kind handle)
+        (compiler-symbol-kind-defenum))
+        (tc-inline-aggregate-enum-layout-with-stack ctx name stack)
+        (if (=
+          (compiler-symbol-handle-kind handle)
+          (compiler-symbol-kind-defstruct))
+          (tc-inline-aggregate-struct-layout-with-stack ctx name stack)
+          (ErrTcInlineAggregateLayout
+            (string-append "typecheck: unknown aggregate " name))))]
+    [(NoneI64)
+      (ErrTcInlineAggregateLayout
+        (string-append "typecheck: unknown aggregate " name))]))
+
+(define (tc-inline-aggregate-type-layout-with-stack
+  [ctx : TcContext]
+  [ty : AstType]
+  [stack : TcStringList]) : ResultTcLayoutInfo
+  (match (tc-type-strip-region (tc-resolve-type ctx ty))
+    [(AstTyI64) (OkTcLayoutInfo (tc-inline-aggregate-layout-info 8 8))]
+    [(AstTyU64) (OkTcLayoutInfo (tc-inline-aggregate-layout-info 8 8))]
+    [(AstTyF64) (OkTcLayoutInfo (tc-inline-aggregate-layout-info 8 8))]
+    [(AstTyI32) (OkTcLayoutInfo (tc-inline-aggregate-layout-info 4 4))]
+    [(AstTyU32) (OkTcLayoutInfo (tc-inline-aggregate-layout-info 4 4))]
+    [(AstTyF32) (OkTcLayoutInfo (tc-inline-aggregate-layout-info 4 4))]
+    [(AstTyI16) (OkTcLayoutInfo (tc-inline-aggregate-layout-info 2 2))]
+    [(AstTyU16) (OkTcLayoutInfo (tc-inline-aggregate-layout-info 2 2))]
+    [(AstTyI8) (OkTcLayoutInfo (tc-inline-aggregate-layout-info 1 1))]
+    [(AstTyU8) (OkTcLayoutInfo (tc-inline-aggregate-layout-info 1 1))]
+    [(AstTyBool) (OkTcLayoutInfo (tc-inline-aggregate-layout-info 1 1))]
+    [(AstTyChar) (OkTcLayoutInfo (tc-inline-aggregate-layout-info 1 1))]
+    [(AstTyUnit) (OkTcLayoutInfo (tc-inline-aggregate-zero-layout-info))]
+    [(AstTyNever) (OkTcLayoutInfo (tc-inline-aggregate-zero-layout-info))]
+    [(AstTyExpr) (OkTcLayoutInfo (tc-inline-aggregate-zero-layout-info))]
+    [(AstTyExprList) (OkTcLayoutInfo (tc-inline-aggregate-zero-layout-info))]
+    [(AstTyFunc _ _) (OkTcLayoutInfo (tc-inline-aggregate-pointer-layout-info))]
+    [(AstTyDynArray _)
+      (OkTcLayoutInfo (tc-inline-aggregate-pointer-layout-info))]
+    [(AstTyBox _) (OkTcLayoutInfo (tc-inline-aggregate-pointer-layout-info))]
+    [(AstTyPtr _) (OkTcLayoutInfo (tc-inline-aggregate-pointer-layout-info))]
+    [(AstTyMutPtr _) (OkTcLayoutInfo (tc-inline-aggregate-pointer-layout-info))]
+    [(AstTyRef _ _) (OkTcLayoutInfo (tc-inline-aggregate-pointer-layout-info))]
+    [(AstTyMutRef _ _)
+      (OkTcLayoutInfo (tc-inline-aggregate-pointer-layout-info))]
+    [(AstTyRegion _ inner)
+      (tc-inline-aggregate-type-layout-with-stack ctx inner stack)]
+    [(AstTyString) (OkTcLayoutInfo (tc-inline-aggregate-pointer-layout-info))]
+    [(AstTyStr) (OkTcLayoutInfo (tc-inline-aggregate-pointer-layout-info))]
+    [(AstTyVar _) (OkTcLayoutInfo (tc-inline-aggregate-pointer-layout-info))]
+    [(AstTyTuple elems)
+      (tc-inline-aggregate-type-list-layout-info ctx elems 0 0 stack)]
+    [(AstTyArray elem count)
+      (match (tc-inline-aggregate-type-layout-with-stack ctx elem stack)
+        [(OkTcLayoutInfo elem-info)
+          (OkTcLayoutInfo
+            (TcLayoutInfo
+              (tc-inline-aggregate-array-size
+                (tc-layout-info-size elem-info)
+                (tc-layout-info-align elem-info)
+                count)
+              (tc-layout-info-align elem-info)))]
+        [(ErrTcLayoutInfo message) (ErrTcLayoutInfo message)])]
+    [(AstTyStruct name)
+      (match (tc-inline-aggregate-layout-for-with-stack ctx name stack)
+        [(OkTcInlineAggregateLayout layout)
+          (OkTcLayoutInfo
+            (TcLayoutInfo
+              (tc-inline-aggregate-layout-size layout)
+              (tc-inline-aggregate-layout-align layout)))]
+        [(ErrTcInlineAggregateLayout message) (ErrTcLayoutInfo message)])]
+    [(AstTyEnum name)
+      (match (tc-inline-aggregate-layout-for-with-stack ctx name stack)
+        [(OkTcInlineAggregateLayout layout)
+          (OkTcLayoutInfo
+            (TcLayoutInfo
+              (tc-inline-aggregate-layout-size layout)
+              (tc-inline-aggregate-layout-align layout)))]
+        [(ErrTcInlineAggregateLayout message) (ErrTcLayoutInfo message)])]))
+
+(define (tc-inline-aggregate-type-layout [ctx : TcContext] [ty : AstType]) : ResultTcLayoutInfo
+  (match (tc-inline-aggregate-type-finite-ok ctx ty TcStringNil)
+    [(OkTcUnit) (tc-inline-aggregate-type-layout-with-stack ctx ty TcStringNil)]
+    [(ErrTcUnit message) (ErrTcLayoutInfo message)]))
+
+(define (tc-inline-aggregate-layout-for [ctx : TcContext] [name : String]) : ResultTcInlineAggregateLayout
+  (match (tc-inline-aggregate-layout-finite-ok ctx name)
+    [(OkTcUnit)
+      (tc-inline-aggregate-layout-for-with-stack ctx name TcStringNil)]
+    [(ErrTcUnit message) (ErrTcInlineAggregateLayout message)]))
 
 (define (tc-repr-c-unsupported-field-message
   [owner : String]
@@ -6652,11 +7216,44 @@
     [(AstExprQuasiquote inner) (tc-quasiquote-template-ok ctx env inner)]
     [_ OkTcUnit]))
 
+(define (tc-with-escape-result-supported? [ctx : TcContext] [ty : AstType]) : bool
+  (match (tc-type-strip-region (tc-resolve-type ctx ty))
+    [(AstTyString) true]
+    [(AstTyEnum _) true]
+    [(AstTyStruct _) true]
+    [(AstTyVar _) true]
+    [_ (tc-type-copyable? ty)]))
+
+(define (tc-with-escape-expr
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [scratch : AstExpr]
+  [body : AstExprList]) : ResultTcType
+  (match (tc-expr ctx env scratch)
+    [(OkTcType scratch-ty)
+      (if (tc-type-eq scratch-ty (AstTyI64))
+        (match (tc-begin-list ctx env body)
+          [(OkTcType body-ty)
+            (if (tc-with-escape-result-supported? ctx body-ty)
+              (OkTcType (tc-type-without-regions body-ty))
+              (ErrTcType
+                "typecheck: with-escape result type is not clone-supported"))]
+          [(ErrTcType message) (ErrTcType message)])
+        (ErrTcType "typecheck: with-escape arena must be i64"))]
+    [(ErrTcType message) (ErrTcType message)]))
+
 (define (tc-expr [ctx : TcContext] [env : TcTypeEnv] [expr : AstExpr]) : ResultTcType
   (match expr
     [(AstExprSpanned inner _) (tc-expr ctx env inner)]
     [(AstExprLiteral lit) (OkTcType (tc-literal-type lit))]
-    [(AstExprVar name) (tc-lookup env name)]
+    [(AstExprVar name)
+      (if (and
+        (tc-arena-unsafe-primitive? name)
+        (tc-default-builtin-unshadowed? env name))
+        (match (tc-require-unsafe env name)
+          [(OkTcUnit) (tc-lookup env name)]
+          [(ErrTcUnit message) (ErrTcType message)])
+        (tc-lookup env name))]
     [(AstExprTypeLiteral ty)
       (ErrTcType
         (string-append
@@ -7131,6 +7728,8 @@
                   (string-append region "'")))
               (OkTcType body-ty))]
           [(ErrTcType message) (ErrTcType message)]))]
+    [(AstExprWithEscape scratch body)
+      (tc-with-escape-expr ctx env scratch body)]
     [(AstExprWithResource bindings body)
       (match (tc-resource-bindings ctx env bindings)
         [(OkTcEnv body-env)
@@ -7254,7 +7853,7 @@
   [metadata : AstExternMetadata]
   [ty : AstType]) : ResultTcUnit
   (match metadata
-    [(AstExternMetadata abi _)
+    [(AstExternMetadata abi _ _)
       (if (ast-extern-abi-c? abi)
         (tc-check-extern-c-abi (tc-resolve-type ctx ty))
         (ErrTcUnit "typecheck: unsupported extern ABI"))]))
@@ -7590,6 +8189,10 @@
     [(AstExprStructGet inner _) (tc-move-check-expr ctx env locals moved inner)]
     [(AstExprWithRegion _ exprs)
       (tc-move-check-exprs ctx env locals moved exprs)]
+    [(AstExprWithEscape scratch exprs)
+      (match (tc-move-check-expr ctx env locals moved scratch)
+        [(OkTcMove moved1) (tc-move-check-exprs ctx env locals moved1 exprs)]
+        [(ErrTcMove message) (ErrTcMove message)])]
     [(AstExprWithResource _ exprs)
       (tc-move-check-exprs ctx env locals moved exprs)]
     [(AstExprBox inner) (tc-move-check-expr ctx env locals moved inner)]
@@ -8264,6 +8867,8 @@
 ;; into the enclosing arena before the scratch is freed). The kept top-level type
 ;; environment and the AST both live in the enclosing arena and are only read, so
 ;; nothing dangles. Typecheck verdicts are unchanged (same diagnostics/summary).
+;; TODO(#1688): migrate this hand-rolled arena escape to `with-escape` after the
+;; bootstrapping stage0 parser supports the new form.
 (define (tc-check-decl-escaping
   [ctx : TcContext]
   [top-env : TcTypeEnv]
@@ -8273,24 +8878,23 @@
     (let
       [scratch : i64 (arena-make)]
       (begin
-        (arena-set! scratch)
+        (unsafe (arena-set! scratch))
         (match (tc-check-decl ctx top-env decl)
           [(OkTcUnit)
             (let
               [scratch-head : i64 (arena-current)]
               (begin
-                (arena-set! enclosing)
-                (arena-destroy scratch-head)
+                (unsafe (arena-set! enclosing) (arena-destroy scratch-head))
                 (OkTcUnit)))]
           [(ErrTcUnit message)
             (let
               [scratch-head : i64 (arena-current)]
               (begin
-                (arena-set! enclosing)
+                (unsafe (arena-set! enclosing))
                 (let
                   [escaped : String (clone message)]
                   (begin
-                    (arena-destroy scratch-head)
+                    (unsafe (arena-destroy scratch-head))
                     (ErrTcUnit escaped)))))])))))
 
 (define (tc-check-decls-with-paths-in-module

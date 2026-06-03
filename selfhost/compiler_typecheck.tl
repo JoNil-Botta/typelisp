@@ -181,6 +181,56 @@
   "(define (main) : (-> i64 i64)
   (lambda ([x : i64]) : i64 true))")
 
+(define (compiler-typecheck-clone-aggregate-source) : String
+  "(defstruct Holder
+  (name String)
+  (fixed (Array String 2))
+  (items (Array String))
+  (pair (Tuple String String)))
+(defenum StringList
+  (SNil)
+  (SCons String StringList))
+(define (clone-tuple [items : (Array String)]) : (Tuple String (Array String))
+  (clone (tuple \"tuple\" items)))
+(define (clone-fixed) : (Array String 2)
+  (clone (array \"left\" \"right\")))
+(define (clone-dyn [items : (Array String)]) : (Array String)
+  (clone items))
+(define (clone-holder [items : (Array String)]) : Holder
+  (clone (Holder \"holder\" (array \"x\" \"y\") items (tuple \"p\" \"q\"))))
+(define (clone-list [list : StringList]) : StringList
+  (clone list))
+(define (main [items : (Array String)] [list : StringList]) : i64 0)")
+
+(define (compiler-typecheck-clone-function-source) : String
+  "(define (inc [x : i64]) : i64 (+ x 1))
+(define (main) : (-> i64 i64)
+  (clone inc))")
+
+(define (compiler-typecheck-clone-pointer-source) : String
+  "(extern raw-make : (-> (MutPtr i64)))
+(define (main) : (MutPtr i64)
+  (unsafe (clone (raw-make))))")
+
+(define (compiler-typecheck-clone-ref-source) : String
+  "(define (main [n : i64]) : (& n i64)
+  (clone (& n)))")
+
+(define (compiler-typecheck-clone-tests-ok?) : bool
+  (and
+    (compiler-typecheck-ok? (compiler-typecheck-clone-aggregate-source))
+    (and
+      (compiler-typecheck-error-ok?
+        (compiler-typecheck-clone-function-source)
+        "typecheck: clone unsupported type (-> i64 i64)")
+      (and
+        (compiler-typecheck-error-ok?
+          (compiler-typecheck-clone-pointer-source)
+          "typecheck: clone unsupported type (MutPtr i64)")
+        (compiler-typecheck-error-ok?
+          (compiler-typecheck-clone-ref-source)
+          "typecheck: clone unsupported type (& n i64)")))))
+
 (define (compiler-typecheck-foreach-spmd-ok-source) : String
   "(define (main [n : i64]) : unit
   (let
@@ -620,6 +670,185 @@
     [(ErrTcUnit message) (string-eq message want)]
     [(OkTcUnit) false]))
 
+(define (compiler-typecheck-inline-layout-query-source) : String
+  "(defstruct InlinePacket
+  (tag u8)
+  (count i64)
+  (flag bool)
+  (small u16))
+(defenum InlineChoice
+  (Empty)
+  (Byte u8)
+  (Wide u8 i64)
+  (Pair (Tuple u8 i32)))
+(defenum ListI64
+  (ListNil)
+  (ListCons i64 (Box ListI64)))
+(defenum Tree
+  (Leaf i64)
+  (Node (Box Tree) (Box Tree)))")
+
+(define (compiler-typecheck-inline-layout-query-ok?) : bool
+  (match (parse-ast-source (compiler-typecheck-inline-layout-query-source))
+    [(OkAstProgram program)
+      (match (build-compiler-symbols program)
+        [(OkCompilerSymbols symbols)
+          (match (build-compiler-registries program)
+            [(OkCompilerRegistries registries)
+              (let
+                [ctx : TcContext (TcContext program symbols registries "")]
+                [ok : bool true]
+                (begin
+                  (match (tc-inline-aggregate-layout-for ctx "InlinePacket")
+                    [(OkTcInlineAggregateLayout layout)
+                      (begin
+                        (if (= (tc-inline-aggregate-layout-size layout) 24)
+                          unit
+                          (set! ok false))
+                        (if (= (tc-inline-aggregate-layout-align layout) 8)
+                          unit
+                          (set! ok false))
+                        (if (=
+                          (tc-inline-aggregate-layout-field-offset layout "tag")
+                          0)
+                          unit
+                          (set! ok false))
+                        (if (=
+                          (tc-inline-aggregate-layout-field-offset
+                            layout
+                            "count")
+                          8)
+                          unit
+                          (set! ok false))
+                        (if (=
+                          (tc-inline-aggregate-layout-field-offset
+                            layout
+                            "flag")
+                          16)
+                          unit
+                          (set! ok false))
+                        (if (=
+                          (tc-inline-aggregate-layout-field-offset
+                            layout
+                            "small")
+                          18)
+                          unit
+                          (set! ok false)))]
+                    [(ErrTcInlineAggregateLayout _) (set! ok false)])
+                  (match (tc-inline-aggregate-layout-for ctx "InlineChoice")
+                    [(OkTcInlineAggregateLayout layout)
+                      (begin
+                        (if (= (tc-inline-aggregate-layout-size layout) 24)
+                          unit
+                          (set! ok false))
+                        (if (= (tc-inline-aggregate-layout-align layout) 8)
+                          unit
+                          (set! ok false))
+                        (if (=
+                          (tc-inline-aggregate-layout-variant-size
+                            layout
+                            "Empty")
+                          8)
+                          unit
+                          (set! ok false))
+                        (if (=
+                          (tc-inline-aggregate-layout-variant-size
+                            layout
+                            "Byte")
+                          16)
+                          unit
+                          (set! ok false))
+                        (if (=
+                          (tc-inline-aggregate-layout-variant-size
+                            layout
+                            "Wide")
+                          24)
+                          unit
+                          (set! ok false))
+                        (if (=
+                          (tc-inline-aggregate-layout-variant-payload-offset
+                            layout
+                            "Wide"
+                            0)
+                          8)
+                          unit
+                          (set! ok false))
+                        (if (=
+                          (tc-inline-aggregate-layout-variant-payload-offset
+                            layout
+                            "Wide"
+                            1)
+                          16)
+                          unit
+                          (set! ok false))
+                        (if (=
+                          (tc-inline-aggregate-layout-variant-payload-offset
+                            layout
+                            "Pair"
+                            0)
+                          8)
+                          unit
+                          (set! ok false)))]
+                    [(ErrTcInlineAggregateLayout _) (set! ok false)])
+                  (match (tc-inline-aggregate-layout-for ctx "ListI64")
+                    [(OkTcInlineAggregateLayout layout)
+                      (if (= (tc-inline-aggregate-layout-size layout) 24)
+                        unit
+                        (set! ok false))]
+                    [(ErrTcInlineAggregateLayout _) (set! ok false)])
+                  (match (tc-inline-aggregate-layout-for ctx "Tree")
+                    [(OkTcInlineAggregateLayout layout)
+                      (if (= (tc-inline-aggregate-layout-size layout) 24)
+                        unit
+                        (set! ok false))]
+                    [(ErrTcInlineAggregateLayout _) (set! ok false)])
+                  (match (tc-inline-aggregate-type-layout
+                    ctx
+                    (AstTyTuple (tc-type-list2 (AstTyU8) (AstTyI32))))
+                    [(OkTcLayoutInfo info)
+                      (if (and
+                        (= (tc-layout-info-size info) 8)
+                        (= (tc-layout-info-align info) 4))
+                        unit
+                        (set! ok false))]
+                    [(ErrTcLayoutInfo _) (set! ok false)])
+                  (match (tc-inline-aggregate-type-layout
+                    ctx
+                    (AstTyArray
+                      (AstTyTuple (tc-type-list2 (AstTyU8) (AstTyI32)))
+                      2))
+                    [(OkTcLayoutInfo info)
+                      (if (and
+                        (= (tc-layout-info-size info) 16)
+                        (= (tc-layout-info-align info) 4))
+                        unit
+                        (set! ok false))]
+                    [(ErrTcLayoutInfo _) (set! ok false)])
+                  (match (tc-inline-aggregate-type-layout
+                    ctx
+                    (AstTyBox (AstTyStruct "InlinePacket")))
+                    [(OkTcLayoutInfo info)
+                      (if (and
+                        (= (tc-layout-info-size info) 8)
+                        (= (tc-layout-info-align info) 8))
+                        unit
+                        (set! ok false))]
+                    [(ErrTcLayoutInfo _) (set! ok false)])
+                  (match (tc-inline-aggregate-type-layout
+                    ctx
+                    (AstTyDynArray (AstTyStruct "InlinePacket")))
+                    [(OkTcLayoutInfo info)
+                      (if (and
+                        (= (tc-layout-info-size info) 8)
+                        (= (tc-layout-info-align info) 8))
+                        unit
+                        (set! ok false))]
+                    [(ErrTcLayoutInfo _) (set! ok false)])
+                  ok))]
+            [(ErrCompilerRegistries _) false])]
+        [(ErrCompilerSymbols _) false])]
+    [(ErrAstProgram _) false]))
+
 (define (compiler-typecheck-inline-boxed-list-source) : String
   "(defenum ListI64
   (ListNil)
@@ -678,9 +907,11 @@
           (compiler-typecheck-inline-boxed-tree-source)
           "Tree")
         (and
-          (compiler-typecheck-inline-layout-ok?
-            (compiler-typecheck-inline-pointer-boundaries-source)
-            "Node")
+          (and
+            (compiler-typecheck-inline-layout-ok?
+              (compiler-typecheck-inline-pointer-boundaries-source)
+              "Node")
+            (compiler-typecheck-inline-layout-query-ok?))
           (and
             (compiler-typecheck-inline-layout-error-ok?
               (compiler-typecheck-inline-unboxed-list-source)
@@ -822,6 +1053,61 @@
     (match (Text (int->string 1))
       [(Text s) (string-length s)]
       [End 0])))")
+
+(define (compiler-typecheck-with-escape-scalar-source) : String
+  "(define (main) : i64
+  (let
+    [scratch : i64 (arena-make)]
+    (with-escape scratch 40 42)))")
+
+(define (compiler-typecheck-with-escape-string-source) : String
+  "(define (main) : String
+  (let
+    [scratch : i64 (arena-make)]
+    (with-escape scratch (int->string 42))))")
+
+(define (compiler-typecheck-with-escape-region-strip-source) : String
+  "(define (main) : String
+  (let
+    [scratch : i64 (arena-make)]
+    (with-arena r
+      (with-escape scratch (int->string 42)))))")
+
+(define (compiler-typecheck-with-escape-bad-arena-source) : String
+  "(define (main) : i64
+  (with-escape true 1))")
+
+(define (compiler-typecheck-with-escape-array-result-source) : String
+  "(define (main) : (Array i64)
+  (let
+    [scratch : i64 (arena-make)]
+    (with-escape scratch (make-array i64 4))))")
+
+(define (compiler-typecheck-with-escape-box-result-source) : String
+  "(define (main) : (Box i64)
+  (let
+    [scratch : i64 (arena-make)]
+    (with-escape scratch (box 4))))")
+
+(define (compiler-typecheck-with-escape-tests-ok?) : bool
+  (and
+    (compiler-typecheck-ok? (compiler-typecheck-with-escape-scalar-source))
+    (and
+      (compiler-typecheck-ok? (compiler-typecheck-with-escape-string-source))
+      (and
+        (compiler-typecheck-ok?
+          (compiler-typecheck-with-escape-region-strip-source))
+        (and
+          (compiler-typecheck-error-ok?
+            (compiler-typecheck-with-escape-bad-arena-source)
+            "typecheck: with-escape arena must be i64")
+          (and
+            (compiler-typecheck-error-ok?
+              (compiler-typecheck-with-escape-array-result-source)
+              "typecheck: with-escape result type is not clone-supported")
+            (compiler-typecheck-error-ok?
+              (compiler-typecheck-with-escape-box-result-source)
+              "typecheck: with-escape result type is not clone-supported")))))))
 
 (define (compiler-typecheck-box-source) : String
   "(define (main) : i64
@@ -1281,7 +1567,7 @@
 (define (compiler-typecheck-extern-abi-source) : String
   "(defenum ResultI64 (OkI64 i64))
 (defstruct Box (value i64))
-(extern foreign-callback (:abi c) (:symbol \"foreign_callback\") : (-> (Ptr i64) (-> i64 i64) ResultI64))
+(extern foreign-callback (:abi c) (:symbol \"foreign_callback\") (:link-lib \"ffi_callback\") (:link-search \"native\") (:link-arg \"-Wl,--whole-archive\") : (-> (Ptr i64) (-> i64 i64) ResultI64))
 (extern foreign-box (:abi c) (:symbol \"foreign_box\") : (-> Box unit))")
 
 (define (compiler-typecheck-extern-abi-tuple-source) : String
@@ -2748,25 +3034,55 @@
             "indirect array indexing is not allowed inside a spmd-reduce value expression; gather/scatter is deferred in the first slice (SPEC.md §5.16)"))))))
 
 ;; array-builtin signature rules (#1042): make-array length, array-ref array/index
-;; types, and array-set! value-type agreement, with valid accepts.
+;; types, array-set! value-type agreement, and array-push! dynamic-array
+;; restrictions, with valid accepts.
 (define (compiler-typecheck-array-builtin-tests-ok?) : bool
-  (and
-    (compiler-typecheck-ok?
-      "(define (f [a : (Array i64)]) : i64 (begin (array-set! a 0 5) (array-ref a 0)))")
-    (and
-      (compiler-typecheck-ok?
+  (let
+    [ok : bool true]
+    (begin
+      (if (compiler-typecheck-ok?
+        "(define (f [a : (Array i64)]) : i64 (begin (array-set! a 0 5) (array-ref a 0)))")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-ok?
         "(define (f) : i64 (let [a : (Array i64) (make-array i64 4)] (array-length a)))")
-      (and
-        (compiler-typecheck-error-ok?
-          "(define (f [a : (Array i64)]) : i64 (array-ref a true))"
-          "typecheck: array index must be integer")
-        (and
-          (compiler-typecheck-error-ok?
-            "(define (f) : i64 (make-array i64 true))"
-            "typecheck: make-array length must be integer")
-          (compiler-typecheck-error-ok?
-            "(define (f [a : (Array i64)]) : unit (array-set! a 0 true))"
-            "typecheck: array-set! value type mismatch"))))))
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-ok?
+        "(define (f) : i64
+  (let
+    [a : (Array i64) (make-array i64 0)]
+    (begin
+      (array-push! a 5)
+      (array-length a))))")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        "(define (f [a : (Array i64)]) : i64 (array-ref a true))"
+        "typecheck: array index must be integer")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        "(define (f) : i64 (make-array i64 true))"
+        "typecheck: make-array length must be integer")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        "(define (f [a : (Array i64)]) : unit (array-set! a 0 true))"
+        "typecheck: array-set! value type mismatch")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        "(define (f [a : (Array i64)]) : unit (array-push! a true))"
+        "typecheck: array-push! value type mismatch")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        "(define (f [a : (Array i64 2)]) : unit (array-push! a 5))"
+        "typecheck: array-push! requires dynamic array type")
+        unit
+        (set! ok false))
+      ok)))
 
 ;; comptime typecheck rules (#1042): a `(comptime ...)` form is typed by its
 ;; inner expression and flows that type to the use site (so an `i64` body is an
@@ -2889,6 +3205,30 @@
         "(define (f [h : i64]) : bool (file-read-chunk-eof? h))")
         unit
         (set! ok false))
+      (if (compiler-typecheck-ok? "(define (f) : String (read-stdin-line))")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-ok? "(define (f) : String (read-stdin-bytes 3))")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-ok? "(define (f) : bool (stdin-eof?))")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-ok?
+        "(define (read-file [n : i64]) : i64 (+ n 1))
+(define (f) : i64 (read-file 41))")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-ok?
+        "(define (file-open-status [path : i64] [mode : i64]) : bool true)
+(define (f) : bool (file-open-status 1 2))")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-ok?
+        "(define (read-stdin-line [limit : i64]) : i64 limit)
+(define (f) : i64 (read-stdin-line 7))")
+        unit
+        (set! ok false))
       (if (compiler-typecheck-error-ok?
         "(define (f [c : String]) : unit (write-file 5 c))"
         "typecheck: argument type mismatch")
@@ -2927,6 +3267,36 @@
       (if (compiler-typecheck-error-ok?
         "(define (f [h : i64]) : i64 (file-write-status h 5))"
         "typecheck: argument type mismatch")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        "(define (f) : String (read-stdin-line 1))"
+        "typecheck: arity mismatch")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        "(define (f) : String (read-stdin-bytes \"3\"))"
+        "typecheck: argument type mismatch")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        "(define (f) : String (read-stdin-bytes))"
+        "typecheck: arity mismatch")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        "(define (f) : bool (stdin-eof? 0))"
+        "typecheck: arity mismatch")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        "(define (f) : i64 (read-stdin-line))"
+        "typecheck: return type mismatch")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        "(define (f) : String (stdin-eof?))"
+        "typecheck: return type mismatch")
         unit
         (set! ok false))
       (if (compiler-typecheck-error-ok?
@@ -2981,6 +3351,123 @@
     (compiler-typecheck-error-ok?
       (compiler-typecheck-unsafe-empty-source)
       "parse: unsafe requires a non-empty body")))
+
+(define (compiler-typecheck-arena-safe-observe-source) : String
+  "(define (main) : i64
+  (let
+    [arena : i64 (arena-make)]
+    [current : i64 (arena-current)]
+    [mark : i64 (arena-mark)]
+    (+ arena (+ current mark))))")
+
+(define (compiler-typecheck-arena-with-arena-safe-source) : String
+  "(define (main) : i64
+  (with-arena r
+    (let [s : String (int->string 41)]
+      (string-length s))))")
+
+(define (compiler-typecheck-arena-safe-set-source) : String
+  "(define (main) : unit
+  (arena-set! (arena-current)))")
+
+(define (compiler-typecheck-arena-safe-destroy-source) : String
+  "(define (main) : unit
+  (arena-destroy (arena-current)))")
+
+(define (compiler-typecheck-arena-safe-rewind-source) : String
+  "(define (main) : unit
+  (arena-rewind (arena-mark)))")
+
+(define (compiler-typecheck-arena-safe-alias-source) : String
+  "(define (main) : unit
+  (let
+    [rewind : (-> i64 unit) arena-rewind]
+    (rewind (arena-mark))))")
+
+(define (compiler-typecheck-arena-top-level-shadow-source) : String
+  "(define (arena-rewind [mark : i64]) : unit unit)
+(define (arena-set! [arena : i64]) : unit unit)
+(define (arena-destroy [arena : i64]) : unit unit)
+(define (main) : unit
+  (begin
+    (arena-rewind 1)
+    (arena-set! 2)
+    (arena-destroy 3)))")
+
+(define (compiler-typecheck-arena-local-shadow-source) : String
+  "(define (main) : unit
+  (let
+    [arena-rewind : (-> i64 unit) (lambda ([mark : i64]) : unit unit)]
+    (arena-rewind 1)))")
+
+(define (compiler-typecheck-arena-unsafe-mutate-source) : String
+  "(define (main) : unit
+  (let
+    [arena : i64 (arena-current)]
+    [mark : i64 (arena-mark)]
+    (unsafe
+      (arena-rewind mark)
+      (arena-set! arena)
+      (arena-destroy arena))))")
+
+(define (compiler-typecheck-arena-unsafe-alias-source) : String
+  "(define (main) : unit
+  (let
+    [mark : i64 (arena-mark)]
+    (unsafe
+      (let
+        [rewind : (-> i64 unit) arena-rewind]
+        (rewind mark)))))")
+
+(define (compiler-typecheck-arena-unsafe-tests-ok?) : bool
+  (let
+    [ok : bool true]
+    (begin
+      (if (compiler-typecheck-ok?
+        (compiler-typecheck-arena-safe-observe-source))
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-ok?
+        (compiler-typecheck-arena-with-arena-safe-source))
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        (compiler-typecheck-arena-safe-set-source)
+        "typecheck: arena-set! requires unsafe context")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        (compiler-typecheck-arena-safe-destroy-source)
+        "typecheck: arena-destroy requires unsafe context")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        (compiler-typecheck-arena-safe-rewind-source)
+        "typecheck: arena-rewind requires unsafe context")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        (compiler-typecheck-arena-safe-alias-source)
+        "typecheck: arena-rewind requires unsafe context")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-ok?
+        (compiler-typecheck-arena-top-level-shadow-source))
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-ok?
+        (compiler-typecheck-arena-local-shadow-source))
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-ok?
+        (compiler-typecheck-arena-unsafe-mutate-source))
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-ok?
+        (compiler-typecheck-arena-unsafe-alias-source))
+        unit
+        (set! ok false))
+      ok)))
 
 ;; CTFE layout queries (#989): folded calls produce `i64`, runtime calls are
 ;; rejected, and `offset-of` is restricted to repr-c structs and known fields.
@@ -3173,6 +3660,9 @@
     (if (compiler-typecheck-unsafe-tests-ok?)
       unit
       (panic "typecheck: unsafe block tests failed"))
+    (if (compiler-typecheck-arena-unsafe-tests-ok?)
+      unit
+      (panic "typecheck: arena unsafe primitive tests failed"))
     (if (compiler-typecheck-raw-pointer-op-tests-ok?)
       unit
       (panic "typecheck: raw pointer unsafe operation tests failed"))
@@ -3369,6 +3859,9 @@
     (if (compiler-typecheck-aggregate-tests-ok?)
       unit
       (panic "typecheck: aggregate tests failed"))
+    (if (compiler-typecheck-clone-tests-ok?)
+      unit
+      (panic "typecheck: clone tests failed"))
     (if (compiler-typecheck-foreach-spmd-tests-ok?)
       unit
       (panic "typecheck: foreach/spmd tests failed"))
@@ -3381,6 +3874,9 @@
     (if (compiler-typecheck-region-tests-ok?)
       unit
       (panic "typecheck: region tests failed"))
+    (if (compiler-typecheck-with-escape-tests-ok?)
+      unit
+      (panic "typecheck: with-escape tests failed"))
     (if (compiler-typecheck-box-tests-ok?)
       unit
       (panic "typecheck: box tests failed"))
@@ -3414,10 +3910,8 @@
 ;; src/typechecker.rs). `print-string`/`print-str`/`print-error` take a `String`;
 ;; `xgetbv` takes an integer; `cpuid` takes integers; `string-ref`/`char-at`
 ;; require an integer index. A user declaration may shadow a builtin and its own
-;; signature then wins. (`array-push` and the stdin `read-byte`/`read-line`
-;; helpers have no selfhost typechecker builtin yet — selfhost reports
-;; `unbound name ...` for them — so those Rust cases are left to a follow-up
-;; blocker rather than asserted here.)
+;; signature then wins. Current `array-push!` and stdin helper parity cases live
+;; in the array and IO builtin suites above.
 (define (compiler-typecheck-runtime-builtin-print-string-ok-source) : String
   "(define (main) : i64 (begin (print-string \"hi\") 0))")
 

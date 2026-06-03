@@ -8873,26 +8873,70 @@
   [origin : AstExpr]) : ResultLowerExpr
   (match args
     [(AstExprCons arr (AstExprNil))
-      (match (tc-expr ctx type-env arr)
+      (match (lower-expr-result-type-fast ctx env type-env arr)
         [(OkTcType arr-ty)
-          (match (tc-type-strip-region arr-ty)
-            [(AstTyDynArray _)
-              (lower-array-length-load ctx state env type-env arr)]
-            [_
-              (if (lower-string-handle-type? ctx arr-ty)
-                (lower-array-length-load ctx state env type-env arr)
-                (lower-direct-call
-                  ctx
-                  state
-                  env
-                  type-env
-                  name
-                  args
-                  result-ty
-                  origin))])]
+          (lower-array-length-with-type
+            ctx
+            state
+            env
+            type-env
+            name
+            args
+            result-ty
+            origin
+            arr
+            arr-ty)]
         [(ErrTcType _)
-          (lower-direct-call ctx state env type-env name args result-ty origin)])]
+          (match (tc-expr ctx type-env arr)
+            [(OkTcType arr-ty)
+              (lower-array-length-with-type
+                ctx
+                state
+                env
+                type-env
+                name
+                args
+                result-ty
+                origin
+                arr
+                arr-ty)]
+            [(ErrTcType _)
+              (lower-direct-call
+                ctx
+                state
+                env
+                type-env
+                name
+                args
+                result-ty
+                origin)])])]
     [_ (lower-direct-call ctx state env type-env name args result-ty origin)]))
+
+(define (lower-array-length-with-type
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [name : String]
+  [args : AstExprList]
+  [result-ty : AstType]
+  [origin : AstExpr]
+  [arr : AstExpr]
+  [arr-ty : AstType]) : ResultLowerExpr
+  (match (tc-type-strip-region (tc-resolve-type ctx arr-ty))
+    [(AstTyDynArray _) (lower-array-length-load ctx state env type-env arr)]
+    [_
+      (if (lower-string-handle-type? ctx arr-ty)
+        (lower-array-length-load ctx state env type-env arr)
+        (lower-direct-call
+          ctx
+          state
+          env
+          type-env
+          name
+          args
+          result-ty
+          origin))]))
 
 (define (lower-array-length-load
   [ctx : TcContext]

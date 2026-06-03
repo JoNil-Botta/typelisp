@@ -8396,13 +8396,19 @@
       "\n    .quad "
       (backend-cat3 (int->string (string-length text)) "\n" ""))))
 
-(define (compiler-backend-emit-string-entries [strings : BackendStringList]) : String
+(define (compiler-backend-emit-string-entries-into
+  [strings : BackendStringList]
+  [buf : TextBuf]) : TextBuf
   (match strings
-    [(BackendStringNil) ""]
+    [(BackendStringNil) buf]
     [(BackendStringCons text rest)
-      (string-append
-        (compiler-backend-emit-string-entry text)
-        (compiler-backend-emit-string-entries rest))]))
+      (compiler-backend-emit-string-entries-into
+        rest
+        (text-buf-append buf (compiler-backend-emit-string-entry text)))]))
+
+(define (compiler-backend-emit-string-entries [strings : BackendStringList]) : String
+  (text-buf-render
+    (compiler-backend-emit-string-entries-into strings (text-buf-empty))))
 
 (define (compiler-backend-emit-string-rodata [strings : BackendStringList]) : String
   (match strings
@@ -8420,13 +8426,19 @@
     "\n"
     ""))
 
-(define (compiler-backend-emit-f64-entries [floats : BackendStringList]) : String
+(define (compiler-backend-emit-f64-entries-into
+  [floats : BackendStringList]
+  [buf : TextBuf]) : TextBuf
   (match floats
-    [(BackendStringNil) ""]
+    [(BackendStringNil) buf]
     [(BackendStringCons text rest)
-      (string-append
-        (compiler-backend-emit-f64-entry text)
-        (compiler-backend-emit-f64-entries rest))]))
+      (compiler-backend-emit-f64-entries-into
+        rest
+        (text-buf-append buf (compiler-backend-emit-f64-entry text)))]))
+
+(define (compiler-backend-emit-f64-entries [floats : BackendStringList]) : String
+  (text-buf-render
+    (compiler-backend-emit-f64-entries-into floats (text-buf-empty))))
 
 (define (compiler-backend-emit-f64-rodata [floats : BackendStringList]) : String
   (match floats
@@ -8524,19 +8536,25 @@
                   ""))]
             [(ErrCompilerBackend message) (ErrCompilerBackend message)])))]))
 
-(define (compiler-backend-emit-globals
+(define (compiler-backend-emit-globals-into
   [target : CompilerBackendTarget]
-  [globals : CompilerIrGlobalList]) : ResultCompilerBackend
+  [globals : CompilerIrGlobalList]
+  [buf : TextBuf]) : ResultCompilerBackend
   (match globals
-    [(IrGlobalNil) (OkCompilerBackend "")]
+    [(IrGlobalNil) (OkCompilerBackend (text-buf-render buf))]
     [(IrGlobalCons global rest)
       (match (compiler-backend-emit-global target global)
         [(OkCompilerBackend head)
-          (match (compiler-backend-emit-globals target rest)
-            [(OkCompilerBackend tail)
-              (OkCompilerBackend (string-append head tail))]
-            [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
+          (compiler-backend-emit-globals-into
+            target
+            rest
+            (text-buf-append buf head))]
         [(ErrCompilerBackend message) (ErrCompilerBackend message)])]))
+
+(define (compiler-backend-emit-globals
+  [target : CompilerBackendTarget]
+  [globals : CompilerIrGlobalList]) : ResultCompilerBackend
+  (compiler-backend-emit-globals-into target globals (text-buf-empty)))
 
 (define (compiler-backend-global-init-name [global-name : String]) : String
   (string-append "__global_init_" global-name))

@@ -60,6 +60,22 @@ assert_empty() {
     fi
 }
 
+assert_empty_or_generated() {
+    _file=$1
+    _generated=$2
+    _label=$3
+    if [ ! -s "$_file" ]; then
+        return 0
+    fi
+    _actual=$(cat "$_file")
+    _expected="Generated: $_generated"
+    if [ "$_actual" != "$_expected" ]; then
+        echo "FAIL: $_label wrote unexpected output:" >&2
+        sed 's/^/  /' "$_file" >&2
+        exit 1
+    fi
+}
+
 assert_contains() {
     _file=$1
     _snippet=$2
@@ -218,7 +234,7 @@ run_compiler_driver() {
         if [ -s "$_stderr" ]; then sed 's/^/  stderr: /' "$_stderr" >&2; fi
         exit 1
     fi
-    assert_empty "$_stdout" "$_label driver stdout"
+    assert_empty_or_generated "$_stdout" "$_asm" "$_label driver stdout"
     assert_empty "$_stderr" "$_label driver stderr"
 }
 

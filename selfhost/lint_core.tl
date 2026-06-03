@@ -315,6 +315,11 @@
           (lint-walk-expr end threshold (lint-walk-expr start threshold acc))))]
     [(AstExprStructGet receiver _) (lint-walk-expr receiver threshold acc)]
     [(AstExprWithRegion _ body) (lint-walk-expr-list body threshold acc)]
+    [(AstExprWithEscape scratch body)
+      (lint-walk-expr-list
+        body
+        threshold
+        (lint-walk-expr scratch threshold acc))]
     [(AstExprWithResource bindings body)
       (lint-walk-expr-list
         body

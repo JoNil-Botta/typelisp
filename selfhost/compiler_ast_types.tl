@@ -224,6 +224,7 @@
   (AstExprSpmdReduce AstReduceOp String AstType AstExpr AstExpr AstExpr AstExpr)
   (AstExprStructGet AstExpr String)
   (AstExprWithRegion String AstExprList)
+  (AstExprWithEscape AstExpr AstExprList)
   (AstExprWithResource AstResourceBindingList AstExprList)
   (AstExprBox AstExpr)
   (AstExprBoxGet AstExpr)
@@ -379,6 +380,7 @@
     [(AstExprForeach _ _ _ _ _) 23]
     [(AstExprStructGet _ _) 24]
     [(AstExprWithRegion _ _) 25]
+    [(AstExprWithEscape _ _) 48]
     [(AstExprTypeLiteral _) 26]
     [(AstExprComptime _) 27]
     [(AstExprSpmdReduce _ _ _ _ _ _ _) 28]

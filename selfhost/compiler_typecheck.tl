@@ -1004,6 +1004,61 @@
       [(Text s) (string-length s)]
       [End 0])))")
 
+(define (compiler-typecheck-with-escape-scalar-source) : String
+  "(define (main) : i64
+  (let
+    [scratch : i64 (arena-make)]
+    (with-escape scratch 40 42)))")
+
+(define (compiler-typecheck-with-escape-string-source) : String
+  "(define (main) : String
+  (let
+    [scratch : i64 (arena-make)]
+    (with-escape scratch (int->string 42))))")
+
+(define (compiler-typecheck-with-escape-region-strip-source) : String
+  "(define (main) : String
+  (let
+    [scratch : i64 (arena-make)]
+    (with-arena r
+      (with-escape scratch (int->string 42)))))")
+
+(define (compiler-typecheck-with-escape-bad-arena-source) : String
+  "(define (main) : i64
+  (with-escape true 1))")
+
+(define (compiler-typecheck-with-escape-array-result-source) : String
+  "(define (main) : (Array i64)
+  (let
+    [scratch : i64 (arena-make)]
+    (with-escape scratch (make-array i64 4))))")
+
+(define (compiler-typecheck-with-escape-box-result-source) : String
+  "(define (main) : (Box i64)
+  (let
+    [scratch : i64 (arena-make)]
+    (with-escape scratch (box 4))))")
+
+(define (compiler-typecheck-with-escape-tests-ok?) : bool
+  (and
+    (compiler-typecheck-ok? (compiler-typecheck-with-escape-scalar-source))
+    (and
+      (compiler-typecheck-ok? (compiler-typecheck-with-escape-string-source))
+      (and
+        (compiler-typecheck-ok?
+          (compiler-typecheck-with-escape-region-strip-source))
+        (and
+          (compiler-typecheck-error-ok?
+            (compiler-typecheck-with-escape-bad-arena-source)
+            "typecheck: with-escape arena must be i64")
+          (and
+            (compiler-typecheck-error-ok?
+              (compiler-typecheck-with-escape-array-result-source)
+              "typecheck: with-escape result type is not clone-supported")
+            (compiler-typecheck-error-ok?
+              (compiler-typecheck-with-escape-box-result-source)
+              "typecheck: with-escape result type is not clone-supported")))))))
+
 (define (compiler-typecheck-box-source) : String
   "(define (main) : i64
   (let
@@ -3562,6 +3617,9 @@
     (if (compiler-typecheck-region-tests-ok?)
       unit
       (panic "typecheck: region tests failed"))
+    (if (compiler-typecheck-with-escape-tests-ok?)
+      unit
+      (panic "typecheck: with-escape tests failed"))
     (if (compiler-typecheck-box-tests-ok?)
       unit
       (panic "typecheck: box tests failed"))

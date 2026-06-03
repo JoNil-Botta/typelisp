@@ -5,6 +5,8 @@
 
 (import "compiler_ctfe.tl")
 
+(import "compiler_clone.tl")
+
 (defenum TcTypeEnv
   (TcTypeNil)
   (TcTypeBind String AstType TcTypeEnv))
@@ -3861,14 +3863,31 @@
       "typecheck: "
       (string-append name " is compile-time only; wrap it in (comptime ...)"))))
 
+(define (tc-clone-able-type? [ctx : TcContext] [ty : AstType]) : bool
+  (match (tc-context-program ctx)
+    [(AstProgram decls)
+      (clone-field-type-able?
+        (tc-type-without-regions (tc-resolve-type ctx ty))
+        (clone-fixpoint decls (clone-all-type-names decls (CloneNameNil))))]))
+
 ;; `(clone x)` deep-copies x into the current arena (#1633). Type-directed: the
 ;; result is the argument's type, stripped of any inner-region tag (the copy
-;; lands in the enclosing arena, not the source's region).
+;; lands in the enclosing arena, not the source's region). Unsupported types are
+;; rejected here so no heap-backed value silently lowers as a shallow handle copy.
 (define (tc-clone-call [ctx : TcContext] [env : TcTypeEnv] [args : AstExprList]) : ResultTcType
   (match args
     [(AstExprCons arg (AstExprNil))
       (match (tc-expr ctx env arg)
-        [(OkTcType arg-ty) (OkTcType (tc-type-without-regions arg-ty))]
+        [(OkTcType arg-ty)
+          (let
+            [clone-ty : AstType (tc-type-without-regions arg-ty)]
+            (if (tc-clone-able-type? ctx clone-ty)
+              (OkTcType clone-ty)
+              (ErrTcType
+                (string-append
+                  "typecheck: clone unsupported type "
+                  (tc-type-render
+                    (tc-type-without-regions (tc-resolve-type ctx arg-ty)))))))]
         [(ErrTcType message) (ErrTcType message)])]
     [_ (ErrTcType "typecheck: clone expects exactly one argument")]))
 

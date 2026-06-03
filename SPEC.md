@@ -3144,6 +3144,18 @@ not the future safe reference/borrow model (#182), not a replacement for
 - Returning an aggregate may heap-promote storage that would otherwise be
   frame-local. This is storage placement for safety; ownership transfer is still
   governed by the source-level move rules.
+- `(clone value)` is the explicit deep-copy operation for values that must not
+  share aggregate backing storage with the source. Cloneable types are scalars,
+  `unit`, `never`, `String`, tuples whose elements are cloneable, fixed arrays
+  whose elements are cloneable, dynamic arrays whose elements are cloneable, and
+  named structs/enums whose fields or payloads are cloneable. Scalars return the
+  same value; aggregate clones allocate fresh storage in the current active
+  arena and recursively clone nested cloneable elements. Named structs/enums use
+  compiler-generated `clone$Type` helpers.
+- `clone` rejects unsupported ownership/lifetime forms rather than silently
+  bit-copying them. Unsupported clone operands include function values,
+  references including borrowed `str`, raw pointers, boxes, compile-time-only
+  values, and named aggregate shapes containing non-cloneable fields.
 
 ```lisp test=ignore name=dynamic-array-aliasing reason="current Rust-stage aliasing behavior; future move checker rejects copied array handles"
 (define (main) : i64

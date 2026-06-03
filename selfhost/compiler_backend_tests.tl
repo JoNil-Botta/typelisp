@@ -2297,13 +2297,14 @@
   "(define (main) : i64
   (+ (fs-process-id)
     (+ (fs-mkdir-status \"target/typelisp-fs\")
-      (+ (fs-remove-file-status \"target/typelisp-fs/artifact.o\")
-        (+ (fs-remove-dir-status \"target/typelisp-fs\")
-          (+ (fs-rename-status
-              \"target/typelisp-fs/from name\"
-              \"target/typelisp-fs/to name\")
-            (+ (fs-read-dir-status \"target/typelisp-fs\")
-              (string-length (fs-read-dir \"target/typelisp-fs\")))))))))")
+        (+ (fs-remove-file-status \"target/typelisp-fs/artifact.o\")
+          (+ (fs-remove-dir-status \"target/typelisp-fs\")
+            (+ (fs-rename-status
+                \"target/typelisp-fs/from name\"
+                \"target/typelisp-fs/to name\")
+              (+ (fs-read-dir-status \"target/typelisp-fs\")
+                (+ (string-length (fs-read-dir \"target/typelisp-fs\"))
+                  (fs-file-kind-status \"target/typelisp-fs\")))))))))")
 
 (define (compiler-backend-fs-runtime-ok?) : bool
   (match (compiler-backend-emit-source (compiler-backend-fs-runtime-source))
@@ -2341,7 +2342,17 @@
                   (compiler-backend-string-contains?
                     asm
                     "    movq $217, %rax\n")
-                  (compiler-backend-string-contains? asm "    movq $39, %rax\n"))))
+                  (and
+                    (compiler-backend-string-contains?
+                      asm
+                      ".L_tl_fs_file_kind_status:\n")
+                    (and
+                      (compiler-backend-string-contains?
+                        asm
+                        "    movq $262, %rax\n")
+                      (compiler-backend-string-contains?
+                        asm
+                        "    movq $39, %rax\n"))))))
             (and
               (not
                 (compiler-backend-string-contains? asm "    .extern _mkdir\n"))
@@ -2350,10 +2361,15 @@
                   (compiler-backend-string-contains?
                     asm
                     ".extern .L_tl_fs_rename_status\n"))
-                (not
-                  (compiler-backend-string-contains?
-                    asm
-                    "tl_fs_current_dir_status:\n")))))))]
+                (and
+                  (not
+                    (compiler-backend-string-contains?
+                      asm
+                      ".extern .L_tl_fs_file_kind_status\n"))
+                  (not
+                    (compiler-backend-string-contains?
+                      asm
+                      "tl_fs_current_dir_status:\n"))))))))]
     [(ErrCompilerBackend _) false]))
 
 (define (compiler-backend-windows-fs-runtime-ok?) : bool
@@ -2386,15 +2402,23 @@
           (and
             (compiler-backend-string-contains?
               asm
-              "    .extern GetCurrentProcessId\n")
+              ".L_tl_fs_file_kind_status:\n")
             (and
-              (compiler-backend-string-contains? asm "    movq $38, %rax\n")
+              (compiler-backend-string-contains?
+                asm
+                "    call GetCurrentProcessId\n")
               (and
-                (not (compiler-backend-string-contains? asm "    syscall"))
-                (not
-                  (compiler-backend-string-contains?
-                    asm
-                    "tl_fs_current_dir_status:\n")))))))]
+                (compiler-backend-string-contains?
+                  asm
+                  "    .extern GetCurrentProcessId\n")
+                (and
+                  (compiler-backend-string-contains? asm "    movq $38, %rax\n")
+                  (and
+                    (not (compiler-backend-string-contains? asm "    syscall"))
+                    (not
+                      (compiler-backend-string-contains?
+                        asm
+                        "tl_fs_current_dir_status:\n")))))))))]
     [(ErrCompilerBackend _) false]))
 
 (define (compiler-backend-fs-current-dir-source) : String

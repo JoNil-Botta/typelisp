@@ -130,6 +130,7 @@
     (fs-remove-dir-status s)
     (fs-rename-status s s)
     (fs-read-dir-status s)
+    (fs-file-kind-status s)
     (fs-process-id)
     (fs-current-dir-status)
     (string-length (fs-current-dir))

@@ -2987,15 +2987,20 @@ stdlib extern wrappers.
 The compiler emits helper routines into the generated assembly when needed.
 They are not implemented by a separate C runtime.
 
+Stdlib APIs that are thin wrappers over platform facilities are not backend
+runtime helpers. `stdlib/io.tl`, `stdlib/env.tl`, `stdlib/fs.tl`, and
+`stdlib/cpu.tl` bind platform symbols directly with `extern` and choose
+target-specific implementations with `cfg`. Low-level language forms expose
+entry `argc`/`argv`/`envp`, raw string/array storage, and CPU instructions when
+stdlib code needs capabilities that are not expressible as ordinary FFI calls.
+
 | Symbol | Purpose |
 |--------|---------|
-| `tl_print_i64` | Print integer |
-| `tl_print_bool` | Print boolean |
-| `tl_print_f64` | Print floating-point value |
-| `tl_print_char` | Print character |
-| `tl_print_newline` | Print newline |
-| `tl_print_str` | Print string bytes |
 | `tl_alloc` | Allocate bump-allocator memory |
+| `tl_arena_current` | Return the current arena header |
+| `tl_arena_set` | Install a current arena header |
+| `tl_arena_make` | Allocate an independent arena chain |
+| `tl_arena_destroy` | Release an independent arena chain |
 | `tl_region_mark` | Return the current allocator region mark, or `0` before allocation |
 | `tl_region_reset` | Restore a region mark; mark `0` clears all current arenas |
 | `tl_string_eq` | String comparison |
@@ -3003,16 +3008,13 @@ They are not implemented by a separate C runtime.
 | `tl_substring` | String slicing |
 | `tl_string_to_int` | Parse integer |
 | `tl_int_to_string` | Format integer |
-| `.L_tl_arg_count` | Return captured process argc |
-| `.L_tl_arg` | Return copied argv entry |
-| `.L_tl_read_file` | Read whole file |
-| `.L_tl_write_file` | Write whole file |
-| `.L_tl_file_open_status` | Open a runtime-managed file-handle slot |
-| `.L_tl_file_close_status` | Close a runtime-managed file-handle slot |
-| `.L_tl_file_write_status` | Write all bytes from a string to a runtime-managed write handle |
-| `.L_tl_file_flush_status` | Flush a runtime-managed write handle |
-| `.L_tl_abort` | Print and abort (used by `panic`/`error`) |
 | `tl_oob_abort` | Bounds-check trap |
+| `tl_div_abort` | Integer division/remainder trap |
+| `tl_shift_abort` | Shift-count trap |
+| `tl_process_output` | Spawn a process and capture output |
+| `tl_random_system_seed` | Fetch system entropy for random seeding |
+| `tl_windows_setup_instances` | Windows SetupConfiguration enumeration |
+| `tl_windows_sdk_registry_install` | Windows SDK registry lookup |
 
 ### 6.3 Builtin operator aliases
 
@@ -3035,7 +3037,7 @@ it does not introduce a new error vocabulary.
 **Handle type.** A file handle is an opaque value `FileHandle`. Source-level
 TypeLisp v1 treats it as opaque: programs obtain it from `file-open`, pass it to
 read/write/close helpers, and never inspect its representation. Internally the
-handle carries an id into a runtime-managed table that stores the host
+handle carries an id into a stdlib-managed table that stores the host
 descriptor, open mode, and open/closed state; these fields are not part of the
 public contract and may change. A handle is an aggregate value and follows the
 move-only source contract in section 4.6.2 once that checker lands. Until then,
@@ -3069,7 +3071,7 @@ no destructor, drop glue, or implicit close — a handle that is never closed
 leaks its host descriptor for the life of the process, matching TypeLisp's
 current no-reclamation memory direction (§7.3). Use-after-close (any read or
 write on a closed handle) and double-close return a structured `IoUnsupported`
-error for stale handles that reach the runtime; they never panic and never touch
+error for stale handles that reach the stdlib implementation; they never panic and never touch
 a host descriptor. Once move checking is enforced, ordinary source-level double
 close through the same variable is rejected earlier as use-after-move. Automatic
 close on scope exit is still deferred to scoped cleanup work.
@@ -3484,7 +3486,7 @@ not the future safe reference/borrow model (#182), not a replacement for
   `windows-x86_64` for Windows x64 ABI output with CRT-linked runtime helpers.
 - Builtin `print`, `print-bool`, `print-newline`, and string/array primitives such as
   `string-append`/`string-concat`.
-- Stdlib-owned runtime wrappers in `stdlib/io.tl`, `stdlib/env.tl`,
+- Stdlib-owned FFI wrappers in `stdlib/io.tl`, `stdlib/env.tl`,
   `stdlib/fs.tl`, and `stdlib/cpu.tl` for argv, file I/O, stdio, panic/error,
   environment variables, filesystem status helpers, and CPUID/XGETBV.
 
@@ -3511,7 +3513,7 @@ not the future safe reference/borrow model (#182), not a replacement for
 | SPMD / SIMD `foreach` | Scalar reference lowering implemented; AVX2 supports a first contiguous map/zip subset |
 | SPMD reductions and public cross-lane ops | Source semantics specified; parser/typechecker/lowering/backend support pending |
 | Runtime SIMD dispatch (`defdispatch`) | Source semantics specified; parser/typechecker/lowering/backend support pending |
-| Windows region helpers | `tl_region_mark`/`tl_region_reset` are Linux-only |
+| Windows region helpers | Implemented for `tl_region_mark`/`tl_region_reset` |
 | Complete source locations for all semantic errors | Partial |
 | REPL evaluation | Selfhost REPL bare expressions run through scratch build/run execution; public selfhost CLI routing is implemented |
 | Package manager | Not implemented |
@@ -3521,22 +3523,20 @@ not the future safe reference/borrow model (#182), not a replacement for
 
 ## 9. Error handling
 
-TypeLisp has one built-in error-handling mechanism today: **panic**.
+TypeLisp has one standard error-handling mechanism today: **panic**.
 
 ```lisp test=ignore name=panic-expression reason=not-standalone
 (panic "message")
 ```
 
-- Prints the message to stderr.
-- Calls the private runtime helper `.L_tl_abort` (which prints and exits).
+- Prints the message to stderr through the stdlib platform FFI binding.
+- Calls the platform `exit` binding with status `134`.
 - Panic is a terminal operation; it never returns normally.
 - `error` is an alias for `panic`.
 
-The type checker gives builtin `panic` and `error` a compiler-internal bottom
-type. It is not user-denotable syntax, but it can satisfy any expected type and
-can merge with concrete `if` branch or `match` arm result types. The lowerer
-still emits a destination-less `.L_tl_abort` call; the internal type is never a
-runtime value.
+The stdlib declarations give `panic` and `error` the `never` return type. It can
+satisfy any expected type and can merge with concrete `if` branch or `match` arm
+result types.
 
 ```lisp test=compile name=panic-never-branch
 (define (parse-or-zero [ok : bool]) : i64

@@ -31,6 +31,11 @@
   (LowerNoFunctionBody)
   (LowerSomeFunctionBody AstExpr))
 
+(defstruct LowerFunctionBodyIndex
+  (ids StringI64Map)
+  (bodies (Array LowerMaybeFunctionBody))
+  (next i64))
+
 (defenum LowerPrunedProgram
   (LowerPrunedProgram AstProgram AstDeclPathList))
 
@@ -1079,14 +1084,43 @@
             rest)]
         [_ (lower-reach-global-decls all-functions names state rest)])]))
 
-(define (lower-find-function-body-in-module
+(define (lower-function-body-index-empty [count : i64]) : LowerFunctionBodyIndex
+  (LowerFunctionBodyIndex
+    (string-i64-map-with-capacity 8192)
+    (make-array LowerMaybeFunctionBody count)
+    0))
+
+(define (lower-function-body-index-add
+  [index : LowerFunctionBodyIndex]
+  [logical-name : String]
+  [body : AstExpr]) : LowerFunctionBodyIndex
+  (let
+    [ids : StringI64Map (struct-get index ids)]
+    [bodies : (Array LowerMaybeFunctionBody) (struct-get index bodies)]
+    [next : i64 (struct-get index next)]
+    (begin
+      (array-set! bodies next (LowerSomeFunctionBody body))
+      (LowerFunctionBodyIndex
+        (string-i64-map-put ids logical-name next)
+        bodies
+        (+ next 1)))))
+
+(define (lower-function-body-index-find
+  [index : LowerFunctionBodyIndex]
+  [target : String]) : LowerMaybeFunctionBody
+  (match (string-i64-map-get (struct-get index ids) target)
+    [(StringI64MapFound body-index)
+      (array-ref (struct-get index bodies) body-index)]
+    [(StringI64MapMissing) (LowerNoFunctionBody)]))
+
+(define (lower-function-body-index-from-decls-in-module
   [decls : AstDeclList]
   [paths : AstDeclPathList]
   [entry-path : String]
   [module : String]
-  [target : String]) : LowerMaybeFunctionBody
+  [index : LowerFunctionBodyIndex]) : LowerFunctionBodyIndex
   (match decls
-    [(AstDeclNil) (LowerNoFunctionBody)]
+    [(AstDeclNil) index]
     [(AstDeclCons decl rest)
       (let
         [decl-path : String
@@ -1099,44 +1133,46 @@
             [(AstDeclPathNil) AstDeclPathNil])]
         (match decl
           [(AstDeclModule next-module)
-            (lower-find-function-body-in-module
+            (lower-function-body-index-from-decls-in-module
               rest
               rest-paths
               entry-path
               next-module
-              target)]
+              index)]
           [(AstDeclDefFn name _ _ body)
-            (if (string-eq
-              (lower-decl-logical-name entry-path decl-path module name)
-              target)
-              (LowerSomeFunctionBody body)
-              (lower-find-function-body-in-module
-                rest
-                rest-paths
-                entry-path
-                module
-                target))]
-          [_
-            (lower-find-function-body-in-module
+            (lower-function-body-index-from-decls-in-module
               rest
               rest-paths
               entry-path
               module
-              target)]))]))
+              (lower-function-body-index-add
+                index
+                (lower-decl-logical-name entry-path decl-path module name)
+                body))]
+          [_
+            (lower-function-body-index-from-decls-in-module
+              rest
+              rest-paths
+              entry-path
+              module
+              index)]))]))
 
-(define (lower-find-function-body
+(define (lower-function-body-index-from-decls
   [decls : AstDeclList]
   [paths : AstDeclPathList]
   [entry-path : String]
-  [target : String]) : LowerMaybeFunctionBody
-  (lower-find-function-body-in-module decls paths entry-path "" target))
+  [count : i64]) : LowerFunctionBodyIndex
+  (lower-function-body-index-from-decls-in-module
+    decls
+    paths
+    entry-path
+    ""
+    (lower-function-body-index-empty count)))
 
 (define (lower-reach-process
   [all-functions : StringI64Map]
   [names : LowerNameEnv]
-  [decls : AstDeclList]
-  [paths : AstDeclPathList]
-  [entry-path : String]
+  [body-index : LowerFunctionBodyIndex]
   [state : LowerReachState]) : LowerReachState
   (match state
     [(LowerReachState reachable worklist)
@@ -1145,22 +1181,18 @@
         [(LowerStringCons name rest)
           (let
             [popped : LowerReachState (LowerReachState reachable rest)]
-            (match (lower-find-function-body decls paths entry-path name)
+            (match (lower-function-body-index-find body-index name)
               [(LowerSomeFunctionBody body)
                 (lower-reach-process
                   all-functions
                   names
-                  decls
-                  paths
-                  entry-path
+                  body-index
                   (lower-reach-expr all-functions names popped body))]
               [(LowerNoFunctionBody)
                 (lower-reach-process
                   all-functions
                   names
-                  decls
-                  paths
-                  entry-path
+                  body-index
                   popped)]))])]))
 
 (define (lower-filter-reachable-decls-in-module
@@ -1314,13 +1346,17 @@
       (let
         [all-functions : StringI64Map
           (lower-function-set-from-decls decls paths entry-path)]
+        [body-index : LowerFunctionBodyIndex
+          (lower-function-body-index-from-decls
+            decls
+            paths
+            entry-path
+            (string-i64-map-len all-functions))]
         (if (string-i64-map-contains? all-functions "main")
           (match (lower-reach-process
             all-functions
             names
-            decls
-            paths
-            entry-path
+            body-index
             (lower-reach-global-decls
               all-functions
               names

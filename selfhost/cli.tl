@@ -52,7 +52,7 @@ Usage:
     typelisp lsp                            Start stdio LSP diagnostics server
     typelisp repl                           Start minimal stdio REPL
     typelisp check <file.tl> [--stdlib-root <dir>...]
-    typelisp compile <file.tl> [-o <file>] [--emit-ir] [--target <target>] [--backend-mode <mode>] [--stdlib-root <dir>...]
+    typelisp compile <file.tl> [-o <file>] [--emit-ir] [--target <target>] [--backend-mode <mode>] [--stdlib-root <dir>...] [--cfg <name>...]
     typelisp run <file.tl> [--target <target>] [--backend-mode <mode>] [--stdlib-root <dir>...] [-- args...]
     typelisp build <file.tl> [-o <exe>] [--target <target>] [--backend-mode <mode>] [--stdlib-root <dir>...]
     typelisp build [--manifest-path <typelisp.pkg>] [--target <target>] [--backend-mode <mode>] [--opt-level <0|1|2|3>] [--stdlib-root <dir>...]
@@ -72,6 +72,7 @@ Usage:
     --target <target>              linux-x86_64 or windows-x86_64
     --manifest-path <file>         Package manifest for build
     --stdlib-root <dir>            Search root for stdlib/... imports before env/embedded fallback
+    --cfg <name>                   Enable a compile-time cfg predicate name
     TYPELISP_STDLIB_ROOT           Optional fallback root before embedded stdlib
 
 Options for compile:

@@ -2601,205 +2601,203 @@
         [(AstTypeCons ty rest-types)
           (let
             [resolved : AstType (tc-resolve-type ctx ty)]
-            (let
-              [default-offset : i64
-                (lower-align-up cursor (lower-type-align ctx resolved))]
-              [offset : i64
-                (lower-variant-payload-offset
-                  ctx
-                  mode
-                  enum-name
-                  variant-name
-                  index
-                  cursor
-                  resolved)]
-              [next-cursor : i64
-                (+ default-offset (lower-type-size ctx resolved))]
-              [next-index : i64 (+ index 1)]
-              (if (< offset 0)
-                (ErrLowerEnv
-                  (lower-diagnostic
-                    (string-append
-                      "lower: inline enum layout missing payload for "
-                      variant-name)))
-                (match pattern
-                  [(AstPatWildcard)
-                    (lower-bind-variant-payloads
-                      ctx
-                      state
-                      env
-                      type-env
-                      base
-                      rest-patterns
-                      rest-types
-                      mode
-                      enum-name
-                      variant-name
-                      next-index
-                      next-cursor
-                      fail-label)]
-                  [(AstPatBinding name)
+            [default-offset : i64
+              (lower-align-up cursor (lower-type-align ctx resolved))]
+            [offset : i64
+              (lower-variant-payload-offset
+                ctx
+                mode
+                enum-name
+                variant-name
+                index
+                cursor
+                resolved)]
+            [next-cursor : i64
+              (+ default-offset (lower-type-size ctx resolved))]
+            [next-index : i64 (+ index 1)]
+            (if (< offset 0)
+              (ErrLowerEnv
+                (lower-diagnostic
+                  (string-append
+                    "lower: inline enum layout missing payload for "
+                    variant-name)))
+              (match pattern
+                [(AstPatWildcard)
+                  (lower-bind-variant-payloads
+                    ctx
+                    state
+                    env
+                    type-env
+                    base
+                    rest-patterns
+                    rest-types
+                    mode
+                    enum-name
+                    variant-name
+                    next-index
+                    next-cursor
+                    fail-label)]
+                [(AstPatBinding name)
+                  (match (lower-load-at-offset state base offset resolved)
+                    [(LowerExpr load-state value _)
+                      (match value
+                        [(IrValueVar field-var)
+                          (lower-bind-variant-payloads
+                            ctx
+                            load-state
+                            (sym-i64-bind env name field-var)
+                            (tc-bind type-env name resolved)
+                            base
+                            rest-patterns
+                            rest-types
+                            mode
+                            enum-name
+                            variant-name
+                            next-index
+                            next-cursor
+                            fail-label)]
+                        [_
+                          (ErrLowerEnv
+                            (lower-diagnostic
+                              "lower: internal enum payload load failed"))])])]
+                [(AstPatLiteral lit)
+                  (if (lower-literal-payload-supported? lit)
                     (match (lower-load-at-offset state base offset resolved)
-                      [(LowerExpr load-state value _)
-                        (match value
-                          [(IrValueVar field-var)
-                            (lower-bind-variant-payloads
-                              ctx
-                              load-state
-                              (sym-i64-bind env name field-var)
-                              (tc-bind type-env name resolved)
-                              base
-                              rest-patterns
-                              rest-types
-                              mode
-                              enum-name
-                              variant-name
-                              next-index
-                              next-cursor
-                              fail-label)]
-                          [_
-                            (ErrLowerEnv
-                              (lower-diagnostic
-                                "lower: internal enum payload load failed"))])])]
-                  [(AstPatLiteral lit)
-                    (if (lower-literal-payload-supported? lit)
-                      (match (lower-load-at-offset state base offset resolved)
-                        [(LowerExpr load-state field-value _)
-                          (match (lower-state-alloc-var load-state)
-                            [(LowerAlloc eq-alloc eq-var)
-                              (match (lower-state-fresh-label
-                                (lower-state-emit
-                                  eq-alloc
-                                  (IrInstrBinOp
-                                    eq-var
-                                    IrBinEq
-                                    field-value
-                                    (lower-literal-value lit)
-                                    resolved))
-                                "payload_ok")
-                                [(LowerLabel ok-state ok-label)
-                                  (lower-bind-variant-payloads
-                                    ctx
-                                    (lower-state-finish-block
-                                      (lower-state-emit
-                                        ok-state
-                                        (IrInstrBranch
-                                          (IrValueVar eq-var)
-                                          ok-label
-                                          fail-label))
-                                      ok-label)
-                                    env
-                                    type-env
-                                    base
-                                    rest-patterns
-                                    rest-types
-                                    mode
-                                    enum-name
-                                    variant-name
-                                    next-index
-                                    next-cursor
-                                    fail-label)])])])
-                      (ErrLowerEnv
-                        (lower-diagnostic
-                          "lower: unsupported enum payload literal pattern type")))]
-                  [(AstPatVariant nested-name nested-args)
-                    ;; Refutable nested variant payload (#651): load the payload
-                    ;; field (an enum pointer), test its tag against the nested
-                    ;; variant, and on mismatch branch to the enclosing arm's
-                    ;; next-arm test (`fail-label`); on match recurse into the
-                    ;; nested variant's own payload fields (tag at offset 0,
-                    ;; payloads from offset 8), then continue the outer payloads.
-                    (match ctx
-                      [(TcContext program _ registries _)
-                        (match (compiler-registries-lookup-variant
-                          registries
-                          nested-name)
-                          [(NoneI64)
-                            (ErrLowerEnv
-                              (lower-diagnostic
-                                (string-append
-                                  "lower: unknown nested variant "
-                                  nested-name)))]
-                          [(SomeI64 handle)
-                            (match (compiler-registries-variant-fields
-                              program
-                              handle)
-                              [(ErrAstTypeList message)
-                                (ErrLowerEnv (lower-diagnostic message))]
-                              [(OkAstTypeList nested-fields)
-                                (match (lower-load-at-offset
-                                  state
+                      [(LowerExpr load-state field-value _)
+                        (match (lower-state-alloc-var load-state)
+                          [(LowerAlloc eq-alloc eq-var)
+                            (match (lower-state-fresh-label
+                              (lower-state-emit
+                                eq-alloc
+                                (IrInstrBinOp
+                                  eq-var
+                                  IrBinEq
+                                  field-value
+                                  (lower-literal-value lit)
+                                  resolved))
+                              "payload_ok")
+                              [(LowerLabel ok-state ok-label)
+                                (lower-bind-variant-payloads
+                                  ctx
+                                  (lower-state-finish-block
+                                    (lower-state-emit
+                                      ok-state
+                                      (IrInstrBranch
+                                        (IrValueVar eq-var)
+                                        ok-label
+                                        fail-label))
+                                    ok-label)
+                                  env
+                                  type-env
                                   base
-                                  offset
-                                  resolved)
-                                  [(LowerExpr field-state field-value _)
-                                    (match (lower-load-at-offset
-                                      field-state
-                                      field-value
-                                      0
-                                      (AstTyI64))
-                                      [(LowerExpr tag-state tag-value _)
-                                        (match (lower-state-alloc-var tag-state)
-                                          [(LowerAlloc eq-alloc eq-var)
-                                            (match (lower-state-fresh-label
-                                              (lower-state-emit
-                                                eq-alloc
-                                                (IrInstrBinOp
-                                                  eq-var
-                                                  IrBinEq
-                                                  tag-value
-                                                  (IrValueI64
-                                                    (compiler-registry-handle-child-index
-                                                      handle))
-                                                  (AstTyI64)))
-                                              "payload_ok")
-                                              [(LowerLabel ok-state ok-label)
-                                                (match (lower-bind-variant-payloads
-                                                  ctx
-                                                  (lower-state-finish-block
-                                                    (lower-state-emit
-                                                      ok-state
-                                                      (IrInstrBranch
-                                                        (IrValueVar eq-var)
-                                                        ok-label
-                                                        fail-label))
-                                                    ok-label)
-                                                  env
-                                                  type-env
-                                                  field-value
-                                                  nested-args
-                                                  nested-fields
-                                                  mode
-                                                  (lower-enum-type-name-or-empty
-                                                    resolved)
-                                                  nested-name
-                                                  0
-                                                  8
-                                                  fail-label)
-                                                  [(OkLowerEnv
-                                                      nested-state
-                                                      nested-env
-                                                      nested-type-env)
-                                                    (lower-bind-variant-payloads
-                                                      ctx
-                                                      nested-state
-                                                      nested-env
-                                                      nested-type-env
-                                                      base
-                                                      rest-patterns
-                                                      rest-types
-                                                      mode
-                                                      enum-name
-                                                      variant-name
-                                                      next-index
-                                                      next-cursor
-                                                      fail-label)]
-                                                  [(ErrLowerEnv message)
-                                                    (ErrLowerEnv message)])])])])])])])])]
-                  [_
+                                  rest-patterns
+                                  rest-types
+                                  mode
+                                  enum-name
+                                  variant-name
+                                  next-index
+                                  next-cursor
+                                  fail-label)])])])
                     (ErrLowerEnv
                       (lower-diagnostic
-                        "lower: unsupported enum payload pattern"))]))))]
+                        "lower: unsupported enum payload literal pattern type")))]
+                [(AstPatVariant nested-name nested-args)
+                  ;; Refutable nested variant payload (#651): load the payload
+                  ;; field (an enum pointer), test its tag against the nested
+                  ;; variant, and on mismatch branch to the enclosing arm's
+                  ;; next-arm test (`fail-label`); on match recurse into the
+                  ;; nested variant's own payload fields (tag at offset 0,
+                  ;; payloads from offset 8), then continue the outer payloads.
+                  (match ctx
+                    [(TcContext program _ registries _)
+                      (match (compiler-registries-lookup-variant
+                        registries
+                        nested-name)
+                        [(NoneI64)
+                          (ErrLowerEnv
+                            (lower-diagnostic
+                              (string-append
+                                "lower: unknown nested variant "
+                                nested-name)))]
+                        [(SomeI64 handle)
+                          (match (compiler-registries-variant-fields
+                            program
+                            handle)
+                            [(ErrAstTypeList message)
+                              (ErrLowerEnv (lower-diagnostic message))]
+                            [(OkAstTypeList nested-fields)
+                              (match (lower-load-at-offset
+                                state
+                                base
+                                offset
+                                resolved)
+                                [(LowerExpr field-state field-value _)
+                                  (match (lower-load-at-offset
+                                    field-state
+                                    field-value
+                                    0
+                                    (AstTyI64))
+                                    [(LowerExpr tag-state tag-value _)
+                                      (match (lower-state-alloc-var tag-state)
+                                        [(LowerAlloc eq-alloc eq-var)
+                                          (match (lower-state-fresh-label
+                                            (lower-state-emit
+                                              eq-alloc
+                                              (IrInstrBinOp
+                                                eq-var
+                                                IrBinEq
+                                                tag-value
+                                                (IrValueI64
+                                                  (compiler-registry-handle-child-index
+                                                    handle))
+                                                (AstTyI64)))
+                                            "payload_ok")
+                                            [(LowerLabel ok-state ok-label)
+                                              (match (lower-bind-variant-payloads
+                                                ctx
+                                                (lower-state-finish-block
+                                                  (lower-state-emit
+                                                    ok-state
+                                                    (IrInstrBranch
+                                                      (IrValueVar eq-var)
+                                                      ok-label
+                                                      fail-label))
+                                                  ok-label)
+                                                env
+                                                type-env
+                                                field-value
+                                                nested-args
+                                                nested-fields
+                                                mode
+                                                (lower-enum-type-name-or-empty
+                                                  resolved)
+                                                nested-name
+                                                0
+                                                8
+                                                fail-label)
+                                                [(OkLowerEnv
+                                                    nested-state
+                                                    nested-env
+                                                    nested-type-env)
+                                                  (lower-bind-variant-payloads
+                                                    ctx
+                                                    nested-state
+                                                    nested-env
+                                                    nested-type-env
+                                                    base
+                                                    rest-patterns
+                                                    rest-types
+                                                    mode
+                                                    enum-name
+                                                    variant-name
+                                                    next-index
+                                                    next-cursor
+                                                    fail-label)]
+                                                [(ErrLowerEnv message)
+                                                  (ErrLowerEnv message)])])])])])])])])]
+                [_
+                  (ErrLowerEnv
+                    (lower-diagnostic "lower: unsupported enum payload pattern"))])))]
         [(AstTypeNil)
           (ErrLowerEnv
             (lower-diagnostic "lower: enum payload pattern arity mismatch"))])]))
@@ -3721,54 +3719,53 @@
       (ErrLowerFunction (lower-diagnostic (lower-inline-aggregate-abi-message)))
       (let
         [param-count : i64 (+ 1 (lower-param-count params))]
-        (let
-          [function-spans : CompilerSourceSpans
-            (lower-record-function-span spans logical-name body)]
-          [state : LowerState
-            (LowerState
-              param-count
-              0
-              0
-              "entry"
-              IrInstrNil
-              IrBlockNil
-              IrFunctionNil
-              logical-name
-              function-spans
-              names
-              mode)]
-          [ret-ty : AstType (tc-type-without-regions (tc-resolve-type ctx ret))]
-          (match (lower-load-captures
-            state
-            (IrValueVar 0)
-            captures
-            (sym-i64-empty)
-            (tc-bind-return-type top-env ret-ty))
-            [(OkLowerEnv captured-state captured-env captured-type-env)
-              (let
-                [env : SymI64Env (lower-bind-params params 1 captured-env)]
-                [type-env : TcTypeEnv
-                  (tc-bind-params ctx captured-type-env params)]
-                (match (lower-tail-expr
-                  ctx
-                  captured-state
-                  env
-                  type-env
-                  body
-                  ret-ty)
-                  [(OkLowerState final-state)
-                    (OkLowerFunction
-                      (IrFunctionCons
-                        (IrFunction
-                          logical-name
-                          (lower-captured-param-list ctx params)
-                          ret-ty
-                          (lower-state-next-var final-state)
-                          (lower-state-build-blocks final-state))
-                        (lower-state-functions final-state))
-                      (lower-state-spans final-state))]
-                  [(ErrLowerState message) (ErrLowerFunction message)]))]
-            [(ErrLowerEnv message) (ErrLowerFunction message)]))))))
+        [function-spans : CompilerSourceSpans
+          (lower-record-function-span spans logical-name body)]
+        [state : LowerState
+          (LowerState
+            param-count
+            0
+            0
+            "entry"
+            IrInstrNil
+            IrBlockNil
+            IrFunctionNil
+            logical-name
+            function-spans
+            names
+            mode)]
+        [ret-ty : AstType (tc-type-without-regions (tc-resolve-type ctx ret))]
+        (match (lower-load-captures
+          state
+          (IrValueVar 0)
+          captures
+          (sym-i64-empty)
+          (tc-bind-return-type top-env ret-ty))
+          [(OkLowerEnv captured-state captured-env captured-type-env)
+            (let
+              [env : SymI64Env (lower-bind-params params 1 captured-env)]
+              [type-env : TcTypeEnv
+                (tc-bind-params ctx captured-type-env params)]
+              (match (lower-tail-expr
+                ctx
+                captured-state
+                env
+                type-env
+                body
+                ret-ty)
+                [(OkLowerState final-state)
+                  (OkLowerFunction
+                    (IrFunctionCons
+                      (IrFunction
+                        logical-name
+                        (lower-captured-param-list ctx params)
+                        ret-ty
+                        (lower-state-next-var final-state)
+                        (lower-state-build-blocks final-state))
+                      (lower-state-functions final-state))
+                    (lower-state-spans final-state))]
+                [(ErrLowerState message) (ErrLowerFunction message)]))]
+          [(ErrLowerEnv message) (ErrLowerFunction message)])))))
 
 (define (lower-lambda-noncapturing
   [ctx : TcContext]
@@ -12113,41 +12110,40 @@
       (ErrLowerFunction (lower-diagnostic (lower-inline-aggregate-abi-message)))
       (let
         [param-count : i64 (lower-param-count params)]
-        (let
-          [env : SymI64Env (lower-bind-params params 0 (sym-i64-empty))]
-          [type-env : TcTypeEnv
-            (tc-bind-return-type
-              (tc-bind-params ctx top-env params)
-              (tc-type-without-regions (tc-resolve-type ctx ret)))]
-          [function-spans : CompilerSourceSpans
-            (lower-record-function-span spans logical-name body)]
-          [state : LowerState
-            (LowerState
-              param-count
-              0
-              0
-              "entry"
-              IrInstrNil
-              IrBlockNil
-              IrFunctionNil
-              logical-name
-              function-spans
-              names
-              mode)]
-          [ret-ty : AstType (tc-type-without-regions (tc-resolve-type ctx ret))]
-          (match (lower-tail-expr ctx state env type-env body ret-ty)
-            [(OkLowerState final-state)
-              (OkLowerFunction
-                (IrFunctionCons
-                  (IrFunction
-                    logical-name
-                    (lower-param-list ctx params 0)
-                    ret-ty
-                    (lower-state-next-var final-state)
-                    (lower-state-build-blocks final-state))
-                  (lower-state-functions final-state))
-                (lower-state-spans final-state))]
-            [(ErrLowerState message) (ErrLowerFunction message)]))))))
+        [env : SymI64Env (lower-bind-params params 0 (sym-i64-empty))]
+        [type-env : TcTypeEnv
+          (tc-bind-return-type
+            (tc-bind-params ctx top-env params)
+            (tc-type-without-regions (tc-resolve-type ctx ret)))]
+        [function-spans : CompilerSourceSpans
+          (lower-record-function-span spans logical-name body)]
+        [state : LowerState
+          (LowerState
+            param-count
+            0
+            0
+            "entry"
+            IrInstrNil
+            IrBlockNil
+            IrFunctionNil
+            logical-name
+            function-spans
+            names
+            mode)]
+        [ret-ty : AstType (tc-type-without-regions (tc-resolve-type ctx ret))]
+        (match (lower-tail-expr ctx state env type-env body ret-ty)
+          [(OkLowerState final-state)
+            (OkLowerFunction
+              (IrFunctionCons
+                (IrFunction
+                  logical-name
+                  (lower-param-list ctx params 0)
+                  ret-ty
+                  (lower-state-next-var final-state)
+                  (lower-state-build-blocks final-state))
+                (lower-state-functions final-state))
+              (lower-state-spans final-state))]
+          [(ErrLowerState message) (ErrLowerFunction message)])))))
 
 (define (lower-global-value [names : LowerNameEnv] [expr : AstExpr]) : ResultLowerValue
   (match expr

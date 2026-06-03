@@ -10,16 +10,16 @@
     [scratch : i64 (arena-make)]
     (begin
       (tl_arena_poison_enable)
-      (arena-set! scratch)
+      (unsafe (arena-set! scratch))
       (let
         [source : PoisonPayload
           (PoisonPayload (string-append "poison" "ok") 34)]
         (begin
-          (arena-set! outer)
+          (unsafe (arena-set! outer))
           (let
             [copy : PoisonPayload (clone source)]
             (begin
-              (arena-destroy scratch)
+              (unsafe (arena-destroy scratch))
               (+
                 (string-length (struct-get copy label))
                 (struct-get copy value)))))))))

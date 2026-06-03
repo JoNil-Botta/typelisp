@@ -3122,7 +3122,7 @@ allocation, or invalidate live safe handles.
 
 Linux runtime tests may opt into poison-on-reclaim mode with:
 
-```lisp
+```lisp test=check name=arena-poison-enable-extern
 (extern tl_arena_poison_enable : (-> unit))
 ```
 

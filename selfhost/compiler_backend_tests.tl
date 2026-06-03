@@ -2211,19 +2211,25 @@
           (compiler-backend-string-contains? asm ".L_tl_fs_rename_status:\n")
           (compiler-backend-string-contains? asm ".L_tl_fs_process_id:\n")
           (compiler-backend-string-contains? asm "    call _mkdir\n")
-          (compiler-backend-string-contains? asm "    call _errno\n")
-          (compiler-backend-string-contains?
-            asm
-            "    call GetCurrentProcessId\n"))
+          (compiler-backend-string-contains? asm "    call _unlink\n")
+          (compiler-backend-string-contains? asm "    call _rmdir\n"))
         (and
+          (compiler-backend-string-contains? asm "    call _errno\n")
           (and
-            (compiler-backend-string-contains? asm "    .extern _mkdir\n")
             (compiler-backend-string-contains?
               asm
-              "    .extern GetCurrentProcessId\n"))
-          (and
-            (compiler-backend-string-contains? asm "    movq $38, %rax\n")
-            (not (compiler-backend-string-contains? asm "    syscall")))))]
+              "    call GetCurrentProcessId\n")
+            (and
+              (backend-and4
+                (compiler-backend-string-contains? asm "    .extern _mkdir\n")
+                (compiler-backend-string-contains? asm "    .extern _unlink\n")
+                (compiler-backend-string-contains? asm "    .extern _rmdir\n")
+                (compiler-backend-string-contains?
+                  asm
+                  "    .extern GetCurrentProcessId\n"))
+              (and
+                (compiler-backend-string-contains? asm "    movq $38, %rax\n")
+                (not (compiler-backend-string-contains? asm "    syscall")))))))]
     [(ErrCompilerBackend _) false]))
 
 ;; A refutable literal payload match (#651) lowers to a payload comparison that

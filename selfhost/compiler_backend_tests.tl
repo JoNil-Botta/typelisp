@@ -1466,6 +1466,12 @@
       (string-eq (compiler-diagnostic-message message) want)]
     [(OkCompilerBackend _) false]))
 
+(define (compiler-backend-emit-source-inline-aggregates [src : String]) : ResultCompilerBackend
+  (match (lower-compiler-source-with-mode src (CompilerLowerInlineAggregates))
+    [(OkCompilerLower program spans)
+      (compiler-backend-emit-program-with-spans program spans)]
+    [(ErrCompilerLower message) (ErrCompilerBackend message)]))
+
 (define (compiler-backend-source-contains? [src : String] [needle : String]) : bool
   (match (compiler-backend-emit-source src)
     [(OkCompilerBackend asm) (compiler-backend-string-contains? asm needle)]
@@ -2842,33 +2848,50 @@
           (compiler-backend-string-contains? asm (compiler-backend-todo-marker))))]
     [(ErrCompilerBackend _) false]))
 
-;; Backend emit-shape coverage for local tuple construction/ref (#1414).
-;; `(tuple true 42)` allocates the tuple payload, materializes/stores the bool
-;; byte and i64 at their offsets, and `(tuple-ref t 1)` loads the i64 slot back.
-(define (compiler-backend-tuple-source) : String
-  "(define (main) : i64
-  (let
-    [t : (Tuple bool i64) (tuple true 42)]
-    (tuple-ref t 1)))")
-
-(define (compiler-backend-tuple-ok?) : bool
-  (match (compiler-backend-emit-source (compiler-backend-tuple-source))
+(define (compiler-backend-inline-struct-ok?) : bool
+  (match (compiler-backend-emit-source-inline-aggregates
+    (compiler-lower-inline-struct-source))
     [(OkCompilerBackend asm)
-      (and
-        (backend-and8
-          (compiler-backend-string-contains?
-            asm
-            "    movq $16, %rdi\n    call tl_alloc\n")
-          (compiler-backend-string-contains? asm "    movq $1, %rax\n")
-          (compiler-backend-string-contains? asm "    movb %al, (%r10)\n")
-          (compiler-backend-string-contains? asm "    movq $42, %rax\n")
-          (compiler-backend-string-contains? asm "    movq %rax, 8(%r10)\n")
-          (compiler-backend-string-contains? asm "    movq 8(%r10), %rax\n")
-          true
-          true)
+      (backend-and4
+        (= (compiler-backend-string-count asm "    call tl_alloc\n") 0)
+        (compiler-backend-string-contains? asm "    leaq -")
+        (compiler-backend-string-contains? asm "main:\n")
         (not
           (compiler-backend-string-contains? asm (compiler-backend-todo-marker))))]
     [(ErrCompilerBackend _) false]))
+
+(define (compiler-backend-inline-enum-ok?) : bool
+  (match (compiler-backend-emit-source-inline-aggregates
+    (compiler-lower-inline-enum-source))
+    [(OkCompilerBackend asm)
+      (backend-and4
+        (= (compiler-backend-string-count asm "    call tl_alloc\n") 0)
+        (compiler-backend-string-contains? asm "    leaq -")
+        (compiler-backend-string-contains? asm ".Lmain_match_arm.")
+        (not
+          (compiler-backend-string-contains? asm (compiler-backend-todo-marker))))]
+    [(ErrCompilerBackend _) false]))
+
+(define (compiler-backend-inline-boxed-recursive-ok?) : bool
+  (match (compiler-backend-emit-source-inline-aggregates
+    (compiler-lower-inline-boxed-recursive-source))
+    [(OkCompilerBackend asm)
+      (backend-and4
+        (= (compiler-backend-string-count asm "    call tl_alloc\n") 1)
+        (compiler-backend-string-contains?
+          asm
+          "    movq $8, %rdi\n    call tl_alloc\n")
+        (compiler-backend-string-contains? asm "    leaq -")
+        (not
+          (compiler-backend-string-contains? asm (compiler-backend-todo-marker))))]
+    [(ErrCompilerBackend _) false]))
+
+(define (compiler-backend-inline-aggregate-storage-ok?) : bool
+  (and
+    (compiler-backend-inline-struct-ok?)
+    (and
+      (compiler-backend-inline-enum-ok?)
+      (compiler-backend-inline-boxed-recursive-ok?))))
 
 (define (compiler-backend-self-test) : i64
   (if (and
@@ -2928,7 +2951,9 @@
                     (compiler-backend-string-ref-shape-ok?)
                     (compiler-backend-fixed-array-shape-ok?)
                     (compiler-backend-raw-pointer-fixture-shape-ok?)
-                    (compiler-backend-box-ok?))
+                    (and
+                      (compiler-backend-box-ok?)
+                      (compiler-backend-inline-aggregate-storage-ok?)))
                   (and
                     (compiler-backend-tuple-ok?)
                     (and

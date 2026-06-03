@@ -473,6 +473,8 @@ end
 
 case|selfhost_compiler_typecheck_core|selfhost/compiler_typecheck_core.tl|assembly|skip|direct
 contains|_tl_typecheck_compiler_specialized_program_with_paths:
+contains|tc_inline_aggregate_layout_for:
+contains|tc_inline_aggregate_type_layout:
 contains|_tl_tc_source_type_policy_message:
 contains|extern ABI c does not support
 contains|typecheck: return type mismatch

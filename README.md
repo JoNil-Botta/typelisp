@@ -205,7 +205,10 @@ compilation flags. Source may wrap a top-level declaration as
 `(cfg predicate declaration)`, where `predicate` is a flag name, `(all ...)`,
 `(any ...)`, or `(not predicate)`. Inactive `cfg` branches are lexed/read but are
 not parsed as TypeLisp declarations, so they can hide stage- or platform-specific
-declarations from compilers that should not see them.
+declarations from compilers that should not see them. The compiler also enables
+target OS predicates automatically: `linux`, `unix`, `target-linux`, and
+`os-linux` for `linux-x86_64`; `windows`, `target-windows`, and `os-windows` for
+`windows-x86_64`.
 
 Local packages can be described with a std-only S-expression manifest named
 `typelisp.pkg`:
@@ -557,7 +560,10 @@ predicated tails. Unsupported vector IR falls back or rejects explicitly.
 predicate declaration)` and expression-level `(cfg predicate expr [else-expr])`
 forms. Without `--cfg`, named predicates are false, `(all ...)` is true only when
 all operands are true, `(any ...)` is true when any operand is true, and
-`(not ...)` negates one predicate.
+`(not ...)` negates one predicate. Target OS predicates are enabled implicitly
+from `--target`: `linux`, `unix`, `target-linux`, and `os-linux` for
+`linux-x86_64`; `windows`, `target-windows`, and `os-windows` for
+`windows-x86_64`.
 
 The language-level runtime dispatch design is specified as `defdispatch` in
 `SPEC.md`: one logical function can list scalar, AVX2, and AVX-512 variant

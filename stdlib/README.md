@@ -13,13 +13,16 @@ installed-root discovery, namespace isolation, or an implicit prelude.
 ## Current Modules
 
 - `io.tl`: file I/O helpers, explicit file-handle open/close wrappers, stdio
-  wrappers, and monomorphic Result-style I/O error APIs built on
-  compiler/runtime primitives. Import it with
+  wrappers, argv access, panic/error, and monomorphic Result-style I/O error
+  APIs built as stdlib extern wrappers over backend runtime symbols. Import it with
   `(import "stdlib/io.tl")`.
 - `env.tl`: recoverable environment variable lookup and PATH-style list
-  helpers. Import it with `(import "stdlib/env.tl")`.
-- `cpu.tl`: host CPU SIMD ISA detection via the `cpuid`/`xgetbv` primitives
-  (#1167). `cpu-runs-avx2?` / `cpu-runs-avx512f?` report an ISA as runnable only
+  helpers, including the stdlib-owned `env-var-exists?`, `env-var-value`, and
+  target-cfg-derived `env-path-separator` wrappers. Import it with
+  `(import "stdlib/env.tl")`.
+- `cpu.tl`: host CPU SIMD ISA detection via stdlib-owned `cpuid`/`xgetbv`
+  wrappers over backend runtime symbols (#1167). `cpu-runs-avx2?` /
+  `cpu-runs-avx512f?` report an ISA as runnable only
   when both the CPUID feature bit and OS XSAVE state (XCR0) are present, plus the
   underlying `cpu-osxsave?` / `cpu-xcr0` / `cpu-max-leaf` / `cpu-has-avx2?` /
   `cpu-has-avx512f?` accessors. Backs `scripts/detect_simd_isa.tl`, which
@@ -30,8 +33,9 @@ installed-root discovery, namespace isolation, or an implicit prelude.
   checks.
 - `fs.tl`: minimal recoverable filesystem helpers for tool artifact paths,
   current-directory lookup, lexical path normalization, safe relative suffix
-  checks, temporary directories, cleanup, and coarse file-kind probes. Import it with
-  `(import "stdlib/fs.tl")`.
+  checks, temporary directories, cleanup, process ids, and coarse file-kind
+  probes, with public status helpers bound directly to platform externs where
+  available. Import it with `(import "stdlib/fs.tl")`.
 - `ffi.tl`: caller-owned FFI buffer helpers, including explicit
   NUL-terminated `String` copies into `(MutPtr u8)` storage. Import it with
   `(import "stdlib/ffi.tl")`.

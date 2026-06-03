@@ -19,6 +19,8 @@
 ;; self-contained. `main` evaluates `(+ 1 (* 2 3))` and returns 7: the inner
 ;; `(* 2 3)` is the nested argument, so it is evaluated first (to 6), then the
 ;; outer `(+ 1 6)` to 7 - the result depends on the whole nested shape.
+(import "stdlib/io.tl")
+
 (defenum Sexpr
   (SInt i64)
   (SSym String)

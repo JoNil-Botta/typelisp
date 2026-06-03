@@ -1,3 +1,5 @@
+(import "stdlib/io.tl")
+
 (define (borrowed-str-len [text : (& input str)]) : i64
   (string-length text))
 

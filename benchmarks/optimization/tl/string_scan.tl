@@ -1,3 +1,5 @@
+(import "stdlib/io.tl")
+
 (define (scan-once [text : String]) : i64
   (let
     [i : i64 0]

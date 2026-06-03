@@ -1,7 +1,7 @@
 ;# stdlib/env.tl - Environment variable helpers for TypeLisp (#854).
 ;#
 ;# Provides recoverable environment lookup and PATH-style list helpers on top of
-;# compiler/runtime primitives:
+;# direct platform C library bindings:
 ;#
 ;# `env-var-exists?`, `env-var-value`, and `env-path-separator`.
 ;#
@@ -13,6 +13,57 @@
 ;#   (let [name : String "TYPELISP_DOC_TEST_MISSING_ENV"] (env-get (& name))))
 ;# ```
 (import "string.tl")
+
+(extern env-ffi-getenv (:symbol "getenv") : (-> (Ptr u8) (Ptr u8)))
+
+(extern env-ffi-strlen (:symbol "strlen") : (-> (Ptr u8) i64))
+
+(define (env-c-string [text : String]) : (Array u8)
+  (let
+    [n : i64 (string-length text)]
+    [buf : (Array u8) (make-array u8 (+ n 1))]
+    [i : i64 0]
+    (begin
+      (while (< i n)
+        (begin
+          (array-set! buf i (cast (string-ref text i) : u8))
+          (set! i (+ i 1))))
+      (array-set! buf n (cast #\nul' : u8))
+      buf)))
+
+(define (env-copy-c-string [ptr : (Ptr u8)]) : String
+  (let
+    [n : i64 (env-ffi-strlen ptr)]
+    [buf : (Array u8) (make-array u8 n)]
+    [i : i64 0]
+    (begin
+      (while (< i n)
+        (begin
+          (array-set! buf i (unsafe (ptr-read (ptr-offset ptr i))))
+          (set! i (+ i 1))))
+      (unsafe (string-from-bytes (ptr-cast (array-data buf) : (Ptr u8)) n)))))
+
+(define (env-getenv-ptr [name : String]) : (Ptr u8)
+  (let
+    [name-bytes : (Array u8) (env-c-string name)]
+    (env-ffi-getenv
+      (unsafe (ptr-cast (array-data name-bytes) : (Ptr u8))))))
+
+;: Return true when `name` is present in the process environment.
+(define (env-var-exists? [name : String]) : bool
+  (not (ptr-null? (env-getenv-ptr name))))
+
+;: Return the value of `name`, or an empty string when the variable is missing.
+(define (env-var-value [name : String]) : String
+  (let
+    [value : (Ptr u8) (env-getenv-ptr name)]
+    (if (ptr-null? value)
+      ""
+      (env-copy-c-string value))))
+
+;: Return the target platform PATH-list separator as a one-byte String.
+(define (env-path-separator) : String
+  (cfg windows ";" ":"))
 
 ;: Optional String result for environment lookups.
 (defenum EnvMaybeString

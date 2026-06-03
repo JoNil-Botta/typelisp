@@ -12,6 +12,8 @@
 ;# #937 roadmap and #1014 vector-mask IR target — complementing spmd_map's and
 ;# spmd_zip's uniform lane bodies. Runtime-opaque trip count and per-pass `r`
 ;# keep the result deterministic while defeating constant folding and hoisting.
+(import "stdlib/io.tl")
+
 (define array-len : i64
   4096)
 

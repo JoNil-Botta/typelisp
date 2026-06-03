@@ -1,17 +1,12 @@
 ;# File I/O utility library for TypeLisp (#702).
 ;#
-;# Provides higher-level file and stdio helpers built on the compiler/runtime
-;# I/O primitives, mirroring how `stdlib/string.tl` wraps string primitives.
+;# Provides file, argv, panic, and stdio helpers through direct extern bindings
+;# to platform FFI symbols plus low-level language forms for argv and raw bytes.
 ;#
-;# Primitives required from the compiler/runtime: `read-file`, `write-file`,
-;# `file-exists?`, `read-file-status`, `write-file-status`,
-;# `append-file-status`, `file-exists-status`, `file-open-status`,
-;# `file-close-status`, `file-read-chunk-status`,
-;# `file-write-status`, `file-flush-status`,
-;# `file-read-chunk-bytes`, `file-read-chunk-eof?`,
-;# `read-stdin-line`, `read-stdin-bytes`,
-;# `stdin-eof?`, `print-string`, `print-error`, `flush-stdout`,
-;# `int->string`, `string-append`, and `string-length`.
+;# Public runtime-facing functions such as `print-string`, `panic`, `arg`,
+;# `read-file`, `write-file`, file-handle status helpers, and stdin/stdout
+;# helpers are stdlib definitions in this module. Programs must import this module
+;# to use them.
 ;#
 ;# The `try-*` helpers return explicit monomorphic result enums. Host errors
 ;# are reported through status-code primitives and mapped into `IoError`.
@@ -38,6 +33,497 @@
 ;#     (let [text : String "hello from io\n"] (stdout-write (& text)))
 ;#     0))
 ;# ```
+(extern io-linux-open (:symbol "open") : (-> (Ptr u8) i32 i32 i32))
+(extern io-linux-read (:symbol "read") : (-> i32 (MutPtr u8) i64 i64))
+(extern io-linux-write (:symbol "write") : (-> i32 (Ptr u8) i64 i64))
+(extern io-linux-close (:symbol "close") : (-> i32 i32))
+(extern io-linux-lseek (:symbol "lseek") : (-> i32 i64 i32 i64))
+(extern io-linux-access (:symbol "access") : (-> (Ptr u8) i32 i32))
+(extern io-linux-errno-location (:symbol "__errno_location") : (-> (MutPtr i32)))
+
+(extern io-windows-open (:symbol "_open") : (-> (Ptr u8) i32 i32 i32))
+(extern io-windows-read (:symbol "_read") : (-> i32 (MutPtr u8) i32 i32))
+(extern io-windows-write (:symbol "_write") : (-> i32 (Ptr u8) i32 i32))
+(extern io-windows-close (:symbol "_close") : (-> i32 i32))
+(extern io-windows-lseek (:symbol "_lseeki64") : (-> i32 i64 i32 i64))
+(extern io-windows-access (:symbol "_access") : (-> (Ptr u8) i32 i32))
+(extern io-windows-errno-location (:symbol "_errno") : (-> (MutPtr i32)))
+
+(extern io-ffi-fflush (:symbol "fflush") : (-> (Ptr u8) i32))
+(extern io-ffi-exit (:symbol "exit") : (-> i32 never))
+
+(define io-file-handle-cap : i64
+  1024)
+
+(define io-file-handle-next : i64
+  1)
+
+(define io-file-fds : (Array i64)
+  (make-array i64 1024))
+
+(define io-file-modes : (Array i64)
+  (make-array i64 1024))
+
+(define io-file-states : (Array i64)
+  (make-array i64 1024))
+
+(define io-file-eofs : (Array bool)
+  (make-array bool 1024))
+
+(define io-file-last-ready : (Array bool)
+  (make-array bool 1024))
+
+(define io-file-last-bytes : (Array String)
+  (make-array String 1024))
+
+(define io-stdin-eof-state : bool
+  false)
+
+(define (io-c-string [text : String]) : (Array u8)
+  (let
+    [n : i64 (string-length text)]
+    [buf : (Array u8) (make-array u8 (+ n 1))]
+    [i : i64 0]
+    (begin
+      (while (< i n)
+        (begin
+          (array-set! buf i (cast (string-ref text i) : u8))
+          (set! i (+ i 1))))
+      (array-set! buf n (cast #\nul' : u8))
+      buf)))
+
+(define (io-array-ptr [buf : (Array u8)]) : (MutPtr u8)
+  (unsafe (array-data buf)))
+
+(define (io-array-const-ptr [buf : (Array u8)]) : (Ptr u8)
+  (unsafe (ptr-cast (array-data buf) : (Ptr u8))))
+
+(define (io-string-data [text : String]) : (Ptr u8)
+  (unsafe (string-data text)))
+
+(define (io-copy-c-string [ptr : (Ptr u8)]) : String
+  (let
+    [n : i64 (io-c-string-length ptr)]
+    [buf : (Array u8) (make-array u8 n)]
+    [i : i64 0]
+    (begin
+      (while (< i n)
+        (begin
+          (array-set! buf i (unsafe (ptr-read (ptr-offset ptr i))))
+          (set! i (+ i 1))))
+      (unsafe (string-from-bytes (io-array-const-ptr buf) n)))))
+
+(define (io-c-string-length [ptr : (Ptr u8)]) : i64
+  (let
+    [n : i64 0]
+    [done : bool false]
+    (begin
+      (while (not done)
+        (if (= (cast (unsafe (ptr-read (ptr-offset ptr n))) : i64) 0)
+          (set! done true)
+          (set! n (+ n 1))))
+      n)))
+
+(define (io-last-error-code) : i64
+  (cast
+    (unsafe
+      (ptr-read
+        (cfg windows (io-windows-errno-location) (io-linux-errno-location))))
+    : i64))
+
+(define (io-platform-open [path : (Ptr u8)] [flags : i64] [mode : i64]) : i64
+  (cfg windows
+    (cast
+      (io-windows-open path (cast flags : i32) (cast mode : i32))
+      : i64)
+    (cast
+      (io-linux-open path (cast flags : i32) (cast mode : i32))
+      : i64)))
+
+(define (io-platform-read [fd : i64] [buf : (MutPtr u8)] [count : i64]) : i64
+  (cfg windows
+    (cast (io-windows-read (cast fd : i32) buf (cast count : i32)) : i64)
+    (io-linux-read (cast fd : i32) buf count)))
+
+(define (io-platform-write [fd : i64] [buf : (Ptr u8)] [count : i64]) : i64
+  (cfg windows
+    (cast (io-windows-write (cast fd : i32) buf (cast count : i32)) : i64)
+    (io-linux-write (cast fd : i32) buf count)))
+
+(define (io-platform-close [fd : i64]) : i64
+  (cfg windows
+    (cast (io-windows-close (cast fd : i32)) : i64)
+    (cast (io-linux-close (cast fd : i32)) : i64)))
+
+(define (io-platform-lseek [fd : i64] [offset : i64] [whence : i64]) : i64
+  (cfg windows
+    (io-windows-lseek (cast fd : i32) offset (cast whence : i32))
+    (io-linux-lseek (cast fd : i32) offset (cast whence : i32))))
+
+(define (io-platform-access [path : (Ptr u8)] [mode : i64]) : i64
+  (cfg windows
+    (cast (io-windows-access path (cast mode : i32)) : i64)
+    (cast (io-linux-access path (cast mode : i32)) : i64)))
+
+(define (io-open-read-flags) : i64
+  (cfg windows 32768 0))
+
+(define (io-open-write-truncate-flags) : i64
+  (cfg windows 33537 577))
+
+(define (io-open-write-append-flags) : i64
+  (cfg windows 33033 1089))
+
+(define (io-open-mode) : i64
+  384)
+
+(define (io-open-flags-for-mode [mode : i64]) : i64
+  (cond
+    [(= mode 0) (io-open-read-flags)]
+    [(= mode 1) (io-open-write-truncate-flags)]
+    [else (io-open-write-append-flags)]))
+
+(define (io-neg-status [code : i64]) : i64
+  (- 0 code))
+
+(define (io-write-all-fd-status [fd : i64] [data : (Ptr u8)] [len : i64]) : i64
+  (let
+    [offset : i64 0]
+    [status : i64 0]
+    (begin
+      (while (and (= status 0) (< offset len))
+        (let
+          [written : i64
+            (io-platform-write
+              fd
+              (unsafe (ptr-offset data offset))
+              (- len offset))]
+          (if (< written 0)
+            (set! status (io-last-error-code))
+            (if (= written 0)
+              (set! status 5)
+              (set! offset (+ offset written))))))
+      status)))
+
+(define (io-write-string-fd-status [fd : i64] [text : String]) : i64
+  (io-write-all-fd-status fd (io-string-data text) (string-length text)))
+
+;: Write a string to stdout without adding a newline.
+(define (print-string [text : String]) : unit
+  (let
+    [status : i64 (io-write-string-fd-status 1 text)]
+    (if (= status 0)
+      unit
+      (io-ffi-exit 134))))
+
+;: Compatibility alias for `print-string`.
+(define (print-str [text : String]) : unit
+  (print-string text))
+
+;: Write a string to stderr without adding a newline.
+(define (print-error [text : String]) : unit
+  (let
+    [status : i64 (io-write-string-fd-status 2 text)]
+    (if (= status 0)
+      unit
+      (io-ffi-exit 134))))
+
+;: Abort the process after writing `message` to stderr.
+(define (panic [message : String]) : never
+  (begin
+    (print-error message)
+    (io-ffi-exit 134)))
+
+;: Alias for `panic`.
+(define (error [message : String]) : never
+  (panic message))
+
+;: Return the number of process argv entries.
+(define (arg-count) : i64
+  (program-argc))
+
+;: Return argv entry `index`, aborting on out-of-range indices.
+(define (arg [index : i64]) : String
+  (if (< index 0)
+    (panic "tl: argv index out of bounds\n")
+    (if (>= index (arg-count))
+      (panic "tl: argv index out of bounds\n")
+      (let
+        [argv : (Ptr (Ptr u8)) (unsafe (program-argv))]
+        [raw : (Ptr u8) (unsafe (ptr-read (ptr-offset argv index)))]
+        (io-copy-c-string raw)))))
+
+(define (io-read-fd-to-string [fd : i64]) : String
+  (let
+    [end : i64 (io-platform-lseek fd 0 2)]
+    (if (< end 0)
+      (panic "tl: read-file failed\n")
+      (begin
+        (if (< (io-platform-lseek fd 0 0) 0)
+          (panic "tl: read-file failed\n")
+          unit)
+        (let
+          [buf : (Array u8) (make-array u8 end)]
+          [offset : i64 0]
+          [done : bool false]
+          (begin
+            (while (and (not done) (< offset end))
+              (let
+                [read-count : i64
+                  (io-platform-read
+                    fd
+                    (unsafe (ptr-offset (io-array-ptr buf) offset))
+                    (- end offset))]
+                (if (< read-count 0)
+                  (panic "tl: read-file failed\n")
+                  (if (= read-count 0)
+                    (set! done true)
+                    (set! offset (+ offset read-count))))))
+            (unsafe (string-from-bytes (io-array-const-ptr buf) offset)))))))
+
+;: Return the host status code for reading `path`.
+(define (read-file-status [path : String]) : i64
+  (let
+    [path-bytes : (Array u8) (io-c-string path)]
+    [fd : i64 (io-platform-open (io-array-const-ptr path-bytes) (io-open-read-flags) 0)]
+    (if (< fd 0)
+      (io-last-error-code)
+      (let
+        [probe : (Array u8) (make-array u8 1)]
+        [read-count : i64 (io-platform-read fd (io-array-ptr probe) 1)]
+        [status : i64
+          (if (< read-count 0)
+            (io-last-error-code)
+            0)]
+        (begin
+          (io-platform-close fd)
+          status)))))
+
+;: Read a whole file, aborting on host read failure.
+(define (read-file [path : String]) : String
+  (let
+    [path-bytes : (Array u8) (io-c-string path)]
+    [fd : i64 (io-platform-open (io-array-const-ptr path-bytes) (io-open-read-flags) 0)]
+    (if (< fd 0)
+      (panic "tl: read-file failed\n")
+      (let
+        [contents : String (io-read-fd-to-string fd)]
+        (begin
+          (io-platform-close fd)
+          contents)))))
+
+(define (io-write-path-status [path : String] [contents : String] [flags : i64]) : i64
+  (let
+    [path-bytes : (Array u8) (io-c-string path)]
+    [fd : i64 (io-platform-open (io-array-const-ptr path-bytes) flags (io-open-mode))]
+    (if (< fd 0)
+      (io-last-error-code)
+      (let
+        [status : i64
+          (io-write-string-fd-status fd contents)]
+        [close-status : i64 (io-platform-close fd)]
+        (if (= status 0)
+          (if (< close-status 0)
+            (io-last-error-code)
+            0)
+          status)))))
+
+;: Return the host status code for writing `contents` to `path`.
+(define (write-file-status [path : String] [contents : String]) : i64
+  (io-write-path-status path contents (io-open-write-truncate-flags)))
+
+;: Write a whole file, aborting on host write failure.
+(define (write-file [path : String] [contents : String]) : unit
+  (let
+    [status : i64 (write-file-status path contents)]
+    (if (= status 0)
+      unit
+      (panic "tl: write-file failed\n"))))
+
+;: Return the host status code for appending `contents` to `path`.
+(define (append-file-status [path : String] [contents : String]) : i64
+  (io-write-path-status path contents (io-open-write-append-flags)))
+
+;: Return the host status code for probing `path`.
+(define (file-exists-status [path : String]) : i64
+  (let
+    [path-bytes : (Array u8) (io-c-string path)]
+    [status : i64 (io-platform-access (io-array-const-ptr path-bytes) 0)]
+    (if (= status 0)
+      0
+      (io-last-error-code))))
+
+;: Return true when `path` exists, aborting on hard host probe failure.
+(define (file-exists? [path : String]) : bool
+  (let
+    [status : i64 (file-exists-status path)]
+    (if (= status 0)
+      true
+      (if (or (= status 2) (= status 20))
+        false
+        (begin
+          (panic "tl: file-exists? failed\n")
+          false)))))
+
+(define (io-valid-handle? [raw : i64]) : bool
+  (and
+    (> raw 0)
+    (and (< raw io-file-handle-cap) (= (array-ref io-file-states raw) 1))))
+
+;: Return a stdlib file handle id or negative status for opening `path`.
+(define (file-open-status [path : String] [mode : i64]) : i64
+  (let
+    [path-bytes : (Array u8) (io-c-string path)]
+    [fd : i64
+      (io-platform-open
+        (io-array-const-ptr path-bytes)
+        (io-open-flags-for-mode mode)
+        (io-open-mode))]
+    (if (< fd 0)
+      (io-neg-status (io-last-error-code))
+      (if (>= io-file-handle-next io-file-handle-cap)
+        (begin
+          (io-platform-close fd)
+          (io-neg-status 38))
+        (let
+          [handle : i64 io-file-handle-next]
+          (begin
+            (set! io-file-handle-next (+ io-file-handle-next 1))
+            (array-set! io-file-fds handle fd)
+            (array-set! io-file-modes handle mode)
+            (array-set! io-file-states handle 1)
+            (array-set! io-file-eofs handle false)
+            (array-set! io-file-last-ready handle false)
+            handle))))))
+
+;: Return the host status code for closing a stdlib file handle id.
+(define (file-close-status [raw : i64]) : i64
+  (if (io-valid-handle? raw)
+    (let
+      [fd : i64 (array-ref io-file-fds raw)]
+      [status : i64 (io-platform-close fd)]
+      (begin
+        (array-set! io-file-states raw 0)
+        (if (< status 0)
+          (io-last-error-code)
+          0)))
+    38))
+
+;: Return the host status code for reading a chunk into the stdlib handle cache.
+(define (file-read-chunk-status [raw : i64] [count : i64]) : i64
+  (if (not (io-valid-handle? raw))
+    38
+    (if (not (= (array-ref io-file-modes raw) 0))
+      38
+      (if (< count 0)
+        22
+        (if (= count 0)
+          (begin
+            (array-set! io-file-last-bytes raw "")
+            (array-set! io-file-last-ready raw true)
+            0)
+          (let
+            [buf : (Array u8) (make-array u8 count)]
+            [fd : i64 (array-ref io-file-fds raw)]
+            [read-count : i64 (io-platform-read fd (io-array-ptr buf) count)]
+            (if (< read-count 0)
+              (io-last-error-code)
+              (begin
+                (if (= read-count 0)
+                  (array-set! io-file-eofs raw true)
+                  (array-set! io-file-eofs raw false))
+                (array-set!
+                  io-file-last-bytes
+                  raw
+                  (unsafe (string-from-bytes (io-array-const-ptr buf) read-count)))
+                (array-set! io-file-last-ready raw true)
+                0))))))))
+
+;: Return the host status code for writing `contents` through a stdlib handle.
+(define (file-write-status [raw : i64] [contents : String]) : i64
+  (if (not (io-valid-handle? raw))
+    38
+    (if (= (array-ref io-file-modes raw) 0)
+      38
+      (io-write-string-fd-status (array-ref io-file-fds raw) contents))))
+
+;: Return the host status code for flushing a stdlib handle.
+(define (file-flush-status [raw : i64]) : i64
+  (if (not (io-valid-handle? raw))
+    38
+    (if (= (array-ref io-file-modes raw) 0)
+      38
+      0)))
+
+;: Return bytes from the last successful stdlib file chunk read.
+(define (file-read-chunk-bytes [raw : i64]) : String
+  (if (and (io-valid-handle? raw) (array-ref io-file-last-ready raw))
+    (array-ref io-file-last-bytes raw)
+    ""))
+
+;: Return the sticky EOF bit from the last successful stdlib file chunk read.
+(define (file-read-chunk-eof? [raw : i64]) : bool
+  (if (io-valid-handle? raw)
+    (array-ref io-file-eofs raw)
+    true))
+
+;: Read up to `count` bytes from stdin.
+(define (read-stdin-bytes [count : i64]) : String
+  (if (< count 0)
+    (panic "tl: stdin failed\n")
+    (if (= count 0)
+      ""
+      (let
+        [buf : (Array u8) (make-array u8 count)]
+        [read-count : i64 (io-platform-read 0 (io-array-ptr buf) count)]
+        (if (< read-count 0)
+          (panic "tl: stdin failed\n")
+          (begin
+            (if (< read-count count)
+              (set! io-stdin-eof-state true)
+              (set! io-stdin-eof-state false))
+            (unsafe (string-from-bytes (io-array-const-ptr buf) read-count))))))))
+
+;: Read one stdin line without the trailing newline.
+(define (read-stdin-line) : String
+  (let
+    [bytes : (Array u8) (make-array u8 0)]
+    [one : (Array u8) (make-array u8 1)]
+    [done : bool false]
+    (begin
+      (while (not done)
+        (let
+          [read-count : i64 (io-platform-read 0 (io-array-ptr one) 1)]
+          (if (< read-count 0)
+            (panic "tl: stdin failed\n")
+            (if (= read-count 0)
+              (begin
+                (set! io-stdin-eof-state true)
+                (set! done true))
+              (let
+                [byte : u8 (array-ref one 0)]
+                (if (= (cast byte : i64) 10)
+                  (set! done true)
+                  (begin
+                    (array-push! bytes byte)
+                    (set! done false))))))))
+      (unsafe
+        (string-from-bytes
+          (io-array-const-ptr bytes)
+          (array-length bytes))))))
+
+;: Return the sticky stdin EOF state.
+(define (stdin-eof?) : bool
+  io-stdin-eof-state)
+
+;: Flush stdout.
+(define (flush-stdout) : unit
+  (let
+    [status : i32 (io-ffi-fflush (ptr-null : (Ptr u8)))]
+    (if (= status (cast 0 : i32))
+      unit
+      (panic "tl: flush-stdout failed\n"))))
+
 ;: Structured file I/O failures.
 ;:
 ;: `IoSystemCode` stores a target-specific positive error code and path.
@@ -392,7 +878,7 @@
 
 ;: Append `contents` to the file at `path`, creating it when absent.
 ;:
-;: Uses the runtime append-status primitive: non-truncating, create-if-missing,
+;: Uses the platform append status path: non-truncating, create-if-missing,
 ;: and best-effort host append semantics.
 (define (append-file [path : (& path str)] [contents : (& contents str)]) : unit
   (match (try-append-file path contents)
@@ -435,8 +921,7 @@
 ;: Read up to `count` bytes from stdin and report post-read EOF.
 ;:
 ;: The returned bytes are represented as `String` until #807 adds a distinct
-;: byte-string/slice type. The runtime handles invalid counts consistently with
-;: the raw primitive.
+;: byte-string/slice type.
 (define (stdin-read-bytes [count : i64]) : StdinRead
   (let
     [text : String (read-stdin-bytes count)]

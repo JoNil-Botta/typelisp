@@ -19,6 +19,8 @@
 ;# aggregates allocated in the active arena when constructed. The generator is
 ;# MINSTD/Park-Miller with Schrage constants, so it avoids signed `i64`
 ;# overflow and remains portable across current TypeLisp targets.
+(import "io.tl")
+
 ;: Pseudo-random generator state. Valid normalized seeds are in `1..2147483647`.
 (defstruct RandomState
   (seed i64))

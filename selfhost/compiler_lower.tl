@@ -8631,7 +8631,7 @@
     [(AstExprVar name)
       (match (sym-i64-lookup env name)
         [(SomeI64 local-id)
-          (match (tc-expr ctx type-env func)
+          (match (tc-lookup type-env name)
             [(OkTcType fn-ty)
               (if (lower-function-type? fn-ty)
                 (lower-indirect-call

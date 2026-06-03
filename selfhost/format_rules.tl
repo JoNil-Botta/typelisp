@@ -424,12 +424,9 @@
       (format-rules-render-source-width (format-rules-comments-source) 80)]
     [quote : String
       (format-rules-render-source-width (format-rules-quote-source) 80)]
-    (if (string-eq decls (format-rules-decls-expected))
-      (if (string-eq flow (format-rules-flow-expected))
-        (if (string-eq comments (format-rules-comments-expected))
-          (if (string-eq quote (format-rules-quote-expected))
-            42
-            4)
-          3)
-        2)
-      1)))
+    (begin
+      (unless (string-eq decls (format-rules-decls-expected)) (return 1))
+      (unless (string-eq flow (format-rules-flow-expected)) (return 2))
+      (unless (string-eq comments (format-rules-comments-expected)) (return 3))
+      (unless (string-eq quote (format-rules-quote-expected)) (return 4))
+      42)))

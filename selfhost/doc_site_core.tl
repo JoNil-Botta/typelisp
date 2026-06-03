@@ -557,24 +557,23 @@ pre {
 (define (doc-site-module-label [module : DocSiteModule]) : String
   (let
     [source : String (doc-site-module-source module)]
-    (let
-      [i : i64 0]
-      [n : i64 (string-length source)]
-      [start : i64 0]
-      [end : i64 (string-length source)]
-      (begin
-        (while (< i n)
-          (begin
-            (if (fs-path-separator? (string-ref source i))
-              (begin
-                (set! start (+ i 1))
-                (set! end n))
-              unit)
-            (if (= (string-ref source i) #.')
-              (set! end i)
-              unit)
-            (set! i (+ i 1))))
-        (substring source start (- end start))))))
+    [i : i64 0]
+    [n : i64 (string-length source)]
+    [start : i64 0]
+    [end : i64 (string-length source)]
+    (begin
+      (while (< i n)
+        (begin
+          (if (fs-path-separator? (string-ref source i))
+            (begin
+              (set! start (+ i 1))
+              (set! end n))
+            unit)
+          (if (= (string-ref source i) #.')
+            (set! end i)
+            unit)
+          (set! i (+ i 1))))
+      (substring source start (- end start)))))
 
 (define (doc-site-sidebar-link-open [href : String] [current : String]) : String
   (if (string-eq href current)

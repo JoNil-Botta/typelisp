@@ -28,12 +28,11 @@
   (let
     [a : Sexpr (sexpr-head rest)]
     [after-a : Sexpr (sexpr-tail rest)]
-    (let
-      [b : Sexpr (sexpr-head after-a)]
-      [after-b : Sexpr (sexpr-tail after-a)]
-      (begin
-        (sexpr-expect-nil after-b)
-        (EBin op (parse-expr a) (parse-expr b))))))
+    [b : Sexpr (sexpr-head after-a)]
+    [after-b : Sexpr (sexpr-tail after-a)]
+    (begin
+      (sexpr-expect-nil after-b)
+      (EBin op (parse-expr a) (parse-expr b)))))
 
 (define (parse-not [rest : Sexpr]) : Expr
   (match rest
@@ -174,18 +173,17 @@
         (let
           [header : Sexpr (sexpr-head rest)]
           [after-header : Sexpr (sexpr-tail rest)]
-          (let
-            [body : Sexpr (sexpr-head after-header)]
-            [after-body : Sexpr (sexpr-tail after-header)]
-            (begin
-              (sexpr-expect-nil after-body)
-              (match header
-                [(SCons (SSym name) params)
-                  (IDefFn name (parse-params params) (parse-expr body))]
-                [_
-                  (begin
-                    (panic "ast: malformed define header")
-                    (IDefFn "" SLNil (EInt 0)))]))))
+          [body : Sexpr (sexpr-head after-header)]
+          [after-body : Sexpr (sexpr-tail after-header)]
+          (begin
+            (sexpr-expect-nil after-body)
+            (match header
+              [(SCons (SSym name) params)
+                (IDefFn name (parse-params params) (parse-expr body))]
+              [_
+                (begin
+                  (panic "ast: malformed define header")
+                  (IDefFn "" SLNil (EInt 0)))])))
         (begin
           (panic "ast: expected define")
           (IDefFn "" SLNil (EInt 0))))]

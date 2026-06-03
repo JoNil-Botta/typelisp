@@ -831,19 +831,17 @@
           (let
             [cond-e : Sexpr (sexpr-head rest)]
             [restc : Sexpr (sexpr-tail rest)]
-            (let
-              [then-e : Sexpr (sexpr-head restc)]
-              [restt : Sexpr (sexpr-tail restc)]
+            [then-e : Sexpr (sexpr-head restc)]
+            [restt : Sexpr (sexpr-tail restc)]
+            [else-e : Sexpr (sexpr-head restt)]
+            [reste : Sexpr (sexpr-tail restt)]
+            (begin
+              (sexpr-expect-nil reste)
               (let
-                [else-e : Sexpr (sexpr-head restt)]
-                [reste : Sexpr (sexpr-tail restt)]
-                (begin
-                  (sexpr-expect-nil reste)
-                  (let
-                    [c : i64 (as-int (eval-sexpr cond-e env fenv))]
-                    (if (= c 0)
-                      (eval-sexpr else-e env fenv)
-                      (eval-sexpr then-e env fenv)))))))]
+                [c : i64 (as-int (eval-sexpr cond-e env fenv))]
+                (if (= c 0)
+                  (eval-sexpr else-e env fenv)
+                  (eval-sexpr then-e env fenv)))))]
         [(string-eq name "print")
           ;; The `print` special form `(print e)`: rest is
           ;; `(SCons e SNil)`. Evaluate the single argument, emit it via the
@@ -912,19 +910,17 @@
           (let
             [se : Sexpr (sexpr-head rest)]
             [rests : Sexpr (sexpr-tail rest)]
-            (let
-              [ie : Sexpr (sexpr-head rests)]
-              [rests2 : Sexpr (sexpr-tail rests)]
-              (let
-                [ne : Sexpr (sexpr-head rests2)]
-                [rests3 : Sexpr (sexpr-tail rests2)]
-                (begin
-                  (sexpr-expect-nil rests3)
-                  (VStr
-                    (substring
-                      (as-str (eval-sexpr se env fenv))
-                      (as-int (eval-sexpr ie env fenv))
-                      (as-int (eval-sexpr ne env fenv))))))))]
+            [ie : Sexpr (sexpr-head rests)]
+            [rests2 : Sexpr (sexpr-tail rests)]
+            [ne : Sexpr (sexpr-head rests2)]
+            [rests3 : Sexpr (sexpr-tail rests2)]
+            (begin
+              (sexpr-expect-nil rests3)
+              (VStr
+                (substring
+                  (as-str (eval-sexpr se env fenv))
+                  (as-int (eval-sexpr ie env fenv))
+                  (as-int (eval-sexpr ne env fenv))))))]
         [(string-eq name "string-eq")
           ;; STRING OP `(string-eq a b)`: rest is
           ;; `(SCons a (SCons b SNil))`. Evaluate both operands,
@@ -936,17 +932,16 @@
           (let
             [ae : Sexpr (sexpr-head rest)]
             [reste : Sexpr (sexpr-tail rest)]
-            (let
-              [be : Sexpr (sexpr-head reste)]
-              [reste2 : Sexpr (sexpr-tail reste)]
-              (begin
-                (sexpr-expect-nil reste2)
-                (VInt
-                  (if (string-eq
-                    (as-str (eval-sexpr ae env fenv))
-                    (as-str (eval-sexpr be env fenv)))
-                    1
-                    0)))))]
+            [be : Sexpr (sexpr-head reste)]
+            [reste2 : Sexpr (sexpr-tail reste)]
+            (begin
+              (sexpr-expect-nil reste2)
+              (VInt
+                (if (string-eq
+                  (as-str (eval-sexpr ae env fenv))
+                  (as-str (eval-sexpr be env fenv)))
+                  1
+                  0))))]
         [(string-eq name "int->string")
           ;; STRING OP `(int->string n)`: rest is
           ;; `(SCons n SNil)`. Evaluate the single argument,
@@ -992,15 +987,14 @@
           (let
             [ae : Sexpr (sexpr-head rest)]
             [restA : Sexpr (sexpr-tail rest)]
-            (let
-              [be : Sexpr (sexpr-head restA)]
-              [restA2 : Sexpr (sexpr-tail restA)]
-              (begin
-                (sexpr-expect-nil restA2)
-                (VStr
-                  (string-append
-                    (as-str (eval-sexpr ae env fenv))
-                    (as-str (eval-sexpr be env fenv)))))))]
+            [be : Sexpr (sexpr-head restA)]
+            [restA2 : Sexpr (sexpr-tail restA)]
+            (begin
+              (sexpr-expect-nil restA2)
+              (VStr
+                (string-append
+                  (as-str (eval-sexpr ae env fenv))
+                  (as-str (eval-sexpr be env fenv))))))]
         [(string-eq name "cons")
           ;; CONS PAIR `(cons a b)`: rest is
           ;; `(SCons a (SCons b SNil))`. Evaluate BOTH
@@ -1016,12 +1010,11 @@
           (let
             [ae : Sexpr (sexpr-head rest)]
             [restC : Sexpr (sexpr-tail rest)]
-            (let
-              [be : Sexpr (sexpr-head restC)]
-              [restC2 : Sexpr (sexpr-tail restC)]
-              (begin
-                (sexpr-expect-nil restC2)
-                (VPair (eval-sexpr ae env fenv) (eval-sexpr be env fenv)))))]
+            [be : Sexpr (sexpr-head restC)]
+            [restC2 : Sexpr (sexpr-tail restC)]
+            (begin
+              (sexpr-expect-nil restC2)
+              (VPair (eval-sexpr ae env fenv) (eval-sexpr be env fenv))))]
         [(string-eq name "car")
           ;; CAR `(car p)`: rest is `(SCons p SNil)`.
           ;; Evaluate the single argument and project the
@@ -1130,15 +1123,14 @@
           (let
             [arg1 : Sexpr (sexpr-head rest)]
             [rest2 : Sexpr (sexpr-tail rest)]
-            (let
-              [arg2 : Sexpr (sexpr-head rest2)]
-              [rest3 : Sexpr (sexpr-tail rest2)]
-              (begin
-                (sexpr-expect-nil rest3)
-                (let
-                  [a : i64 (as-int (eval-sexpr arg1 env fenv))]
-                  [b : i64 (as-int (eval-sexpr arg2 env fenv))]
-                  (VInt (eval-builtin name a b))))))]
+            [arg2 : Sexpr (sexpr-head rest2)]
+            [rest3 : Sexpr (sexpr-tail rest2)]
+            (begin
+              (sexpr-expect-nil rest3)
+              (let
+                [a : i64 (as-int (eval-sexpr arg1 env fenv))]
+                [b : i64 (as-int (eval-sexpr arg2 env fenv))]
+                (VInt (eval-builtin name a b)))))]
         ;; OTHERWISE: a USER-FUNCTION CALL `(f a b c)`. `rest` is the
         ;; ARGUMENT-EXPRESSION list `(SCons a (SCons b (SCons c SNil)))`.
         ;; Look up `f`'s PARAMETER LIST and body in the shared `fenv`,

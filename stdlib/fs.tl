@@ -232,13 +232,12 @@
     (ErrIoString (IoSystemCode fs-status-already-exists prefix))
     (let
       [candidate : String (fs-path-join root (fs-temp-name prefix pid attempt))]
-      (let
-        [status : i64 (fs-mkdir-status candidate)]
-        (if (= status io-status-ok)
-          (OkIoString candidate)
-          (if (= status fs-status-already-exists)
-            (fs-create-temp-dir-loop root prefix pid (+ attempt 1))
-            (ErrIoString (io-error-from-status candidate status))))))))
+      [status : i64 (fs-mkdir-status candidate)]
+      (if (= status io-status-ok)
+        (OkIoString candidate)
+        (if (= status fs-status-already-exists)
+          (fs-create-temp-dir-loop root prefix pid (+ attempt 1))
+          (ErrIoString (io-error-from-status candidate status)))))))
 
 ;: Create a unique temporary directory for tool artifacts.
 ;:

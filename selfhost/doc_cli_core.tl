@@ -18,11 +18,10 @@
 (define (doc-generate-file [input-path : String] [output-path : String]) : i64
   (let
     [source : String (read-file input-path)]
-    (let
-      [markdown : String (doc-render-markdown (doc-extract-source source))]
-      (begin
-        (write-file output-path markdown)
-        0))))
+    [markdown : String (doc-render-markdown (doc-extract-source source))]
+    (begin
+      (write-file output-path markdown)
+      0)))
 
 (define (doc-read-modules [idx : i64] [end : i64]) : DocModuleList
   (if (>= idx end)
@@ -85,11 +84,10 @@
 (define (doc-generate-html-file [input-path : String] [output-path : String]) : i64
   (let
     [source : String (read-file input-path)]
-    (let
-      [html : String (doc-html-render-source input-path source)]
-      (begin
-        (write-file output-path html)
-        0))))
+    [html : String (doc-html-render-source input-path source)]
+    (begin
+      (write-file output-path html)
+      0)))
 
 (define (doc-generate-html-module-graph [output-path : String]) : i64
   (let

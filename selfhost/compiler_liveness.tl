@@ -639,19 +639,16 @@
       (let
         [live-out : CompilerLiveI64Set
           (compiler-live-successor-live-out successors blocks)]
-        (let
-          [live-in : CompilerLiveI64Set
-            (compiler-live-set-union
-              uses
-              (compiler-live-set-minus live-out defs))]
-          (CompilerLiveBlock
-            label
-            uses
-            defs
-            live-in
-            live-out
-            successors
-            instr-after)))]))
+        [live-in : CompilerLiveI64Set
+          (compiler-live-set-union uses (compiler-live-set-minus live-out defs))]
+        (CompilerLiveBlock
+          label
+          uses
+          defs
+          live-in
+          live-out
+          successors
+          instr-after))]))
 
 (define (compiler-live-block-liveness-eq?
   [left : CompilerLiveBlock]

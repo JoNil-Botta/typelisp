@@ -69,11 +69,10 @@
 (define (read-all-stdin-acc [acc : String]) : String
   (let
     [chunk : String (read-stdin-bytes stdin-read-size)]
-    (let
-      [text : String (string-append acc chunk)]
-      (if (stdin-eof?)
-        text
-        (read-all-stdin-acc text)))))
+    [text : String (string-append acc chunk)]
+    (if (stdin-eof?)
+      text
+      (read-all-stdin-acc text))))
 
 (define (read-all-stdin) : String
   (read-all-stdin-acc ""))

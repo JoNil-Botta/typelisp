@@ -2140,11 +2140,10 @@
           (if (compiler-load-path-separator? (string-ref dir (- n 1)))
             (substring dir 0 (- n 1))
             dir)]
-        (let
-          [parent : String (compiler-load-dirname trimmed)]
-          (if (string-eq parent dir)
-            (CompilerLoadNoPath)
-            (CompilerLoadSomePath parent)))))))
+        [parent : String (compiler-load-dirname trimmed)]
+        (if (string-eq parent dir)
+          (CompilerLoadNoPath)
+          (CompilerLoadSomePath parent))))))
 
 ;: Walk up from `dir` looking for a `typelisp.pkg` manifest, mirroring the Rust
 ;: `discover_manifest` (src/package.rs). `fuel` bounds the climb.

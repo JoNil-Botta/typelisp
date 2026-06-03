@@ -69,48 +69,24 @@
 (define (parse-dispatch-env) : SymI64Env
   (let
     [e0 : SymI64Env (sym-i64-empty)]
-    (let
-      [e1 : SymI64Env (sym-i64-bind e0 "let" (parse-tag-let))]
-      (let
-        [e2 : SymI64Env (sym-i64-bind e1 "if" (parse-tag-if))]
-        (let
-          [e3 : SymI64Env (sym-i64-bind e2 "while" (parse-tag-while))]
-          (let
-            [e4 : SymI64Env (sym-i64-bind e3 "print" (parse-tag-print))]
-            (let
-              [e5 : SymI64Env (sym-i64-bind e4 "set!" (parse-tag-set))]
-              (let
-                [e6 : SymI64Env (sym-i64-bind e5 "begin" (parse-tag-begin))]
-                (let
-                  [e7 : SymI64Env (sym-i64-bind e6 "+" (parse-tag-add))]
-                  (let
-                    [e8 : SymI64Env (sym-i64-bind e7 "-" (parse-tag-sub))]
-                    (let
-                      [e9 : SymI64Env (sym-i64-bind e8 "*" (parse-tag-mul))]
-                      (let
-                        [e10 : SymI64Env (sym-i64-bind e9 "<" (parse-tag-lt))]
-                        (let
-                          [e11 : SymI64Env
-                            (sym-i64-bind e10 "=" (parse-tag-eq))]
-                          (let
-                            [e12 : SymI64Env
-                              (sym-i64-bind e11 "<=" (parse-tag-le))]
-                            (let
-                              [e13 : SymI64Env
-                                (sym-i64-bind e12 ">" (parse-tag-gt))]
-                              (let
-                                [e14 : SymI64Env
-                                  (sym-i64-bind e13 ">=" (parse-tag-ge))]
-                                (let
-                                  [e15 : SymI64Env
-                                    (sym-i64-bind e14 "!=" (parse-tag-ne))]
-                                  (let
-                                    [e16 : SymI64Env
-                                      (sym-i64-bind e15 "and" (parse-tag-and))]
-                                    (let
-                                      [e17 : SymI64Env
-                                        (sym-i64-bind e16 "or" (parse-tag-or))]
-                                      (sym-i64-bind e17 "not" (parse-tag-not)))))))))))))))))))))
+    [e1 : SymI64Env (sym-i64-bind e0 "let" (parse-tag-let))]
+    [e2 : SymI64Env (sym-i64-bind e1 "if" (parse-tag-if))]
+    [e3 : SymI64Env (sym-i64-bind e2 "while" (parse-tag-while))]
+    [e4 : SymI64Env (sym-i64-bind e3 "print" (parse-tag-print))]
+    [e5 : SymI64Env (sym-i64-bind e4 "set!" (parse-tag-set))]
+    [e6 : SymI64Env (sym-i64-bind e5 "begin" (parse-tag-begin))]
+    [e7 : SymI64Env (sym-i64-bind e6 "+" (parse-tag-add))]
+    [e8 : SymI64Env (sym-i64-bind e7 "-" (parse-tag-sub))]
+    [e9 : SymI64Env (sym-i64-bind e8 "*" (parse-tag-mul))]
+    [e10 : SymI64Env (sym-i64-bind e9 "<" (parse-tag-lt))]
+    [e11 : SymI64Env (sym-i64-bind e10 "=" (parse-tag-eq))]
+    [e12 : SymI64Env (sym-i64-bind e11 "<=" (parse-tag-le))]
+    [e13 : SymI64Env (sym-i64-bind e12 ">" (parse-tag-gt))]
+    [e14 : SymI64Env (sym-i64-bind e13 ">=" (parse-tag-ge))]
+    [e15 : SymI64Env (sym-i64-bind e14 "!=" (parse-tag-ne))]
+    [e16 : SymI64Env (sym-i64-bind e15 "and" (parse-tag-and))]
+    [e17 : SymI64Env (sym-i64-bind e16 "or" (parse-tag-or))]
+    (sym-i64-bind e17 "not" (parse-tag-not))))
 
 (define (parse-dispatch-tag [dispatch : SymI64Env] [op : String]) : i64
   (match (sym-i64-lookup dispatch op)
@@ -387,8 +363,7 @@
 (define (parse-program [toks : (Array Token)]) : ResultParsedProgram
   (let
     [cur : (Array i64) (make-array i64 1)]
-    (let
-      [dispatch : SymI64Env (parse-dispatch-env)]
-      (begin
-        (array-set! cur 0 0)
-        (parse-program-forms dispatch toks cur ILNil)))))
+    [dispatch : SymI64Env (parse-dispatch-env)]
+    (begin
+      (array-set! cur 0 0)
+      (parse-program-forms dispatch toks cur ILNil))))

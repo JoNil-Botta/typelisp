@@ -317,8 +317,8 @@ reference loops; `--backend-mode avx2` supports a first contiguous map/zip
 subset. Runtime-dispatched SIMD variants are specified with `defdispatch`:
 ordinary calls resolve once per process to AVX-512, AVX2, or scalar fallback
 using the `stdlib/cpu.tl` capability checks. Parser/compiler support for
-`defdispatch` is pending. `spmd-reduce` reduction semantics are specified but
-not implemented yet.
+`defdispatch` is pending. `spmd-reduce` scalar lowering is implemented, and
+`--backend-mode avx2` vectorizes scalar-equivalent integer array reductions.
 
 ### Builtins
 
@@ -536,10 +536,10 @@ commands and bare expressions are evaluated by compiling a scratch program
 through the TypeLisp-owned build/run path.
 
 `compile`, `run`, and `build` accept `--backend-mode scalar|avx2|avx512`.
-`scalar` is the default. `avx2` and `avx512` support a first contiguous SPMD
-`foreach` map/zip subset and otherwise fall back or reject unsupported vector
-IR. The AVX-512 backend emits ZMM vectors with opmask predicated tails for
-supported shapes.
+`scalar` is the default. `avx2` supports a first contiguous SPMD `foreach`
+map/zip subset plus scalar-equivalent integer `spmd-reduce` array folds;
+`avx512` supports the same `foreach` map/zip subset with ZMM vectors and opmask
+predicated tails. Unsupported vector IR falls back or rejects explicitly.
 
 The language-level runtime dispatch design is specified as `defdispatch` in
 `SPEC.md`: one logical function can list scalar, AVX2, and AVX-512 variant

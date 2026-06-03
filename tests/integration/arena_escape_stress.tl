@@ -46,69 +46,66 @@
 (define (escape-string [seed : i64]) : String
   (let
     [enclosing : i64 (arena-current)]
-    (let
-      [scratch : i64 (arena-make)]
-      (begin
-        (arena-set! scratch)
-        (let
-          [raw : String (payload seed 999)]
-          (begin
-            (force-overflow)
-            (let
-              [scratch-head : i64 (arena-current)]
-              (begin
-                (arena-set! enclosing)
-                (let
-                  [escaped : String (clone raw)]
-                  (begin
-                    (arena-destroy scratch-head)
-                    escaped))))))))))
+    [scratch : i64 (arena-make)]
+    (begin
+      (unsafe (arena-set! scratch))
+      (let
+        [raw : String (payload seed 999)]
+        (begin
+          (force-overflow)
+          (let
+            [scratch-head : i64 (arena-current)]
+            (begin
+              (unsafe (arena-set! enclosing))
+              (let
+                [escaped : String (clone raw)]
+                (begin
+                  (unsafe (arena-destroy scratch-head))
+                  escaped)))))))))
 
 (define (escape-list [count : i64] [seed : i64]) : StressList
   (let
     [enclosing : i64 (arena-current)]
-    (let
-      [scratch : i64 (arena-make)]
-      (begin
-        (arena-set! scratch)
-        (let
-          [raw : StressList (make-list count seed)]
-          (begin
-            (force-overflow)
-            (let
-              [scratch-head : i64 (arena-current)]
-              (begin
-                (arena-set! enclosing)
-                (let
-                  [escaped : StressList (clone raw)]
-                  (begin
-                    (arena-destroy scratch-head)
-                    escaped))))))))))
+    [scratch : i64 (arena-make)]
+    (begin
+      (unsafe (arena-set! scratch))
+      (let
+        [raw : StressList (make-list count seed)]
+        (begin
+          (force-overflow)
+          (let
+            [scratch-head : i64 (arena-current)]
+            (begin
+              (unsafe (arena-set! enclosing))
+              (let
+                [escaped : StressList (clone raw)]
+                (begin
+                  (unsafe (arena-destroy scratch-head))
+                  escaped)))))))))
 
 (define (escape-list-rewind [scratch : i64] [count : i64] [seed : i64]) : StressList
   (let
     [enclosing : i64 (arena-current)]
     (begin
-      (arena-set! scratch)
+      (unsafe (arena-set! scratch))
       (let
         [mark : i64 (arena-mark)]
-        (let
-          [raw : StressList (make-list count seed)]
-          (begin
-            (force-overflow)
-            (let
-              [scratch-head : i64 (arena-current)]
-              (begin
-                (arena-set! enclosing)
-                (let
-                  [escaped : StressList (clone raw)]
-                  (let
-                    [new-enclosing : i64 (arena-current)]
-                    (begin
-                      (arena-set! scratch-head)
-                      (arena-rewind mark)
-                      (arena-set! new-enclosing)
-                      escaped)))))))))))
+        [raw : StressList (make-list count seed)]
+        (begin
+          (force-overflow)
+          (let
+            [scratch-head : i64 (arena-current)]
+            (begin
+              (unsafe (arena-set! enclosing))
+              (let
+                [escaped : StressList (clone raw)]
+                [new-enclosing : i64 (arena-current)]
+                (begin
+                  (unsafe
+                    (arena-set! scratch-head)
+                    (arena-rewind mark)
+                    (arena-set! new-enclosing))
+                  escaped)))))))))
 
 (define (string-cycles [n : i64] [acc : i64]) : i64
   (if (= n 0)
@@ -145,11 +142,10 @@
 (define (rewind-list-cycles [n : i64]) : i64
   (let
     [scratch : i64 (arena-make)]
-    (let
-      [score : i64 (rewind-list-cycles-inner scratch n 0)]
-      (begin
-        (arena-destroy scratch)
-        score))))
+    [score : i64 (rewind-list-cycles-inner scratch n 0)]
+    (begin
+      (unsafe (arena-destroy scratch))
+      score)))
 
 (define (main) : i64
   (let

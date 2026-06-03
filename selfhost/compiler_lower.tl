@@ -5335,30 +5335,40 @@
   (match (sym-i64-lookup env name)
     [(SomeI64 _) (lower-var state env name expr-ty)]
     [(NoneI64)
-      (let
-        [lookup-name : String
-          (lower-variant-constructor-lookup-name ctx name expr-ty)]
-        [program : AstProgram (tc-context-program ctx)]
-        [registries : CompilerRegistries (tc-context-registries ctx)]
-        (match (compiler-registries-lookup-variant registries lookup-name)
-          [(SomeI64 handle)
-            (match (compiler-registries-variant-fields program handle)
-              [(OkAstTypeList fields)
-                (match fields
-                  [(AstTypeNil)
-                    (lower-construct-enum-with-handle
-                      ctx
-                      state
-                      env
-                      type-env
-                      lookup-name
-                      handle
-                      AstExprNil
-                      expr-ty)]
-                  [_ (lower-function-value-or-var ctx state env name expr-ty)])]
-              [(ErrAstTypeList _)
-                (lower-function-value-or-var ctx state env name expr-ty)])]
-          [(NoneI64) (lower-function-value-or-var ctx state env name expr-ty)]))]))
+      (match (tc-type-strip-region expr-ty)
+        [(AstTyEnum _)
+          (let
+            [lookup-name : String
+              (lower-variant-constructor-lookup-name ctx name expr-ty)]
+            [program : AstProgram (tc-context-program ctx)]
+            [registries : CompilerRegistries (tc-context-registries ctx)]
+            (match (compiler-registries-lookup-variant registries lookup-name)
+              [(SomeI64 handle)
+                (match (compiler-registries-variant-fields program handle)
+                  [(OkAstTypeList fields)
+                    (match fields
+                      [(AstTypeNil)
+                        (lower-construct-enum-with-handle
+                          ctx
+                          state
+                          env
+                          type-env
+                          lookup-name
+                          handle
+                          AstExprNil
+                          expr-ty)]
+                      [_
+                        (lower-function-value-or-var
+                          ctx
+                          state
+                          env
+                          name
+                          expr-ty)])]
+                  [(ErrAstTypeList _)
+                    (lower-function-value-or-var ctx state env name expr-ty)])]
+              [(NoneI64)
+                (lower-function-value-or-var ctx state env name expr-ty)]))]
+        [_ (lower-function-value-or-var ctx state env name expr-ty)])]))
 
 (define (lower-call-result-type-fast
   [ctx : TcContext]

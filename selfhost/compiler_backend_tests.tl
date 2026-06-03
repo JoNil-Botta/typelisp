@@ -1607,6 +1607,57 @@
         "    vmovupd "
         "    vaddpd "))))
 
+(define (compiler-backend-avx2-reduce-asm-contains?
+  [src : String]
+  [op : String]
+  [move : String]) : bool
+  (match (lower-compiler-source-with-mode src (CompilerLowerAvx2))
+    [(OkCompilerLower program spans)
+      (match (compiler-backend-emit-program-target-with-mode
+        program
+        (BackendTargetLinux)
+        (BackendModeAvx2)
+        spans
+        true)
+        [(OkCompilerBackend asm)
+          (and
+            (backend-and8
+              (compiler-backend-string-contains? asm "    vzeroupper\n")
+              (compiler-backend-string-contains? asm "    vextracti128 $1, ")
+              (compiler-backend-string-contains? asm "    vpsrldq $8, ")
+              (compiler-backend-string-contains? asm op)
+              (compiler-backend-string-contains? asm move)
+              (compiler-backend-string-contains? asm "%ymm")
+              (compiler-backend-string-contains? asm "spmd_reduce_avx2")
+              (compiler-backend-string-contains? asm "spmd_reduce_tail"))
+            (not
+              (compiler-backend-string-contains?
+                asm
+                "vector/mask IR emission is not implemented")))]
+        [(ErrCompilerBackend _) false])]
+    [(ErrCompilerLower _) false]))
+
+(define (compiler-backend-avx2-vector-reduce-ok?) : bool
+  (and
+    (compiler-backend-avx2-reduce-asm-contains?
+      "(define (f [xs : (Array i64)] [n : i64]) : i64 (spmd-reduce sum ([i : i64 0 n]) 0 (array-ref xs i)))"
+      "    vpaddq "
+      "    vmovq %xmm0, %rax\n")
+    (and
+      (compiler-backend-avx2-reduce-asm-contains?
+        "(define (f [xs : (Array i32)] [n : i64]) : i32 (spmd-reduce sum ([i : i64 0 n]) (cast 0 : i32) (array-ref xs i)))"
+        "    vpaddd "
+        "    vmovd %xmm0, %eax\n")
+      (and
+        (compiler-backend-avx2-reduce-asm-contains?
+          "(define (f [xs : (Array i32)] [n : i64] [seed : i32]) : i32 (spmd-reduce min ([i : i64 0 n]) seed (array-ref xs i)))"
+          "    vpminsd "
+          "    vmovd %xmm0, %eax\n")
+        (compiler-backend-avx2-reduce-asm-contains?
+          "(define (f [xs : (Array i32)] [n : i64] [seed : i32]) : i32 (spmd-reduce max ([i : i64 0 n]) seed (array-ref xs i)))"
+          "    vpmaxsd "
+          "    vmovd %xmm0, %eax\n")))))
+
 (define (compiler-backend-optimizer-rewrite-diagnostic-ok?) : bool
   (let
     [phi : CompilerIrInstr
@@ -2801,16 +2852,18 @@
                       (and
                         (compiler-backend-avx2-vector-map-ok?)
                         (and
-                          (compiler-backend-avx512-vector-map-ok?)
-                          (backend-and8
-                            (compiler-backend-scalar-wide-ops-ok?)
-                            (compiler-backend-scalar-div-mod-ok?)
-                            (compiler-backend-narrow-scalar-instr-ok?)
-                            (compiler-backend-f64-abi-ok?)
-                            (compiler-backend-win64-f64-abi-ok?)
-                            (compiler-backend-aggregate-storage-shape-ok?)
-                            (compiler-backend-alloc-runtime-shape-ok?)
-                            (compiler-backend-windows-sdk-registry-runtime-ok?))))))))))))))
+                          (compiler-backend-avx2-vector-reduce-ok?)
+                          (and
+                            (compiler-backend-avx512-vector-map-ok?)
+                            (backend-and8
+                              (compiler-backend-scalar-wide-ops-ok?)
+                              (compiler-backend-scalar-div-mod-ok?)
+                              (compiler-backend-narrow-scalar-instr-ok?)
+                              (compiler-backend-f64-abi-ok?)
+                              (compiler-backend-win64-f64-abi-ok?)
+                              (compiler-backend-aggregate-storage-shape-ok?)
+                              (compiler-backend-alloc-runtime-shape-ok?)
+                              (compiler-backend-windows-sdk-registry-runtime-ok?)))))))))))))))
     42
     (begin
       (panic "backend: smoke output mismatch")

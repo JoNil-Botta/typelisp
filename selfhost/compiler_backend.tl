@@ -243,6 +243,19 @@
       [(= slot 6) "%ymm12"]
       [else "%ymm13"])))
 
+(define (compiler-backend-avx2-xmm-reg [var : i64]) : String
+  (let
+    [slot : i64 (% var 8)]
+    (cond
+      [(= slot 0) "%xmm6"]
+      [(= slot 1) "%xmm7"]
+      [(= slot 2) "%xmm8"]
+      [(= slot 3) "%xmm9"]
+      [(= slot 4) "%xmm10"]
+      [(= slot 5) "%xmm11"]
+      [(= slot 6) "%xmm12"]
+      [else "%xmm13"])))
+
 (define (compiler-backend-vector-value-reg
   [value : CompilerIrValue]
   [role : String]
@@ -269,6 +282,24 @@
         [(AstTyF64) "vaddpd"]
         [_ ""])]
     [_ ""]))
+
+(define (compiler-backend-avx2-vector-reduce-op-mnemonic
+  [op : CompilerIrVectorReduceOp]
+  [elem-ty : AstType]) : String
+  (match op
+    [(IrVectorReduceSum)
+      (match elem-ty
+        [(AstTyI64) "vpaddq"]
+        [(AstTyI32) "vpaddd"]
+        [_ ""])]
+    [(IrVectorReduceMin)
+      (match elem-ty
+        [(AstTyI32) "vpminsd"]
+        [_ ""])]
+    [(IrVectorReduceMax)
+      (match elem-ty
+        [(AstTyI32) "vpmaxsd"]
+        [_ ""])]))
 
 (define (compiler-backend-avx2-indexed-addr [elem-ty : AstType]) : String
   (backend-cat5
@@ -1908,6 +1939,92 @@
                 imm
                 (backend-cat3 ", " addr "\n")))))]
       [(CompilerBackendNoImmediate) (CompilerBackendNoAsm)])))
+
+(define (compiler-backend-avx2-vector-reduce-move-scalar [elem-ty : AstType]) : String
+  (match elem-ty
+    [(AstTyI32) "    vmovd %xmm0, %eax\n"]
+    [_ "    vmovq %xmm0, %rax\n"]))
+
+(define (compiler-backend-avx2-vector-reduce-horizontal-asm
+  [mnemonic : String]
+  [src-var : i64]
+  [elem-ty : AstType]) : String
+  (let
+    [ymm : String (compiler-backend-avx2-vector-reg src-var)]
+    [xmm : String (compiler-backend-avx2-xmm-reg src-var)]
+    (match elem-ty
+      [(AstTyI64)
+        (string-append
+          (backend-cat5
+            "    vextracti128 $1, "
+            ymm
+            ", %xmm0\n    "
+            mnemonic
+            (backend-cat3 " %xmm0, " xmm ", %xmm0\n"))
+          (backend-cat4
+            "    vpsrldq $8, %xmm0, %xmm1\n    "
+            mnemonic
+            " %xmm1, %xmm0, %xmm0\n"
+            ""))]
+      [(AstTyI32)
+        (string-append
+          (backend-cat5
+            "    vextracti128 $1, "
+            ymm
+            ", %xmm0\n    "
+            mnemonic
+            (backend-cat3 " %xmm0, " xmm ", %xmm0\n"))
+          (string-append
+            (backend-cat4
+              "    vpsrldq $8, %xmm0, %xmm1\n    "
+              mnemonic
+              " %xmm1, %xmm0, %xmm0\n"
+              "")
+            (backend-cat4
+              "    vpsrldq $4, %xmm0, %xmm1\n    "
+              mnemonic
+              " %xmm1, %xmm0, %xmm0\n"
+              "")))]
+      [_ ""])))
+
+(define (compiler-backend-emit-avx2-vector-reduce
+  [assignments : CompilerRegAssignmentList]
+  [dst : i64]
+  [op : CompilerIrVectorReduceOp]
+  [src : CompilerIrValue]
+  [lanes : i64]
+  [elem-ty : AstType]
+  [instr-diag : CompilerDiagnostic]) : ResultCompilerBackend
+  (if (compiler-backend-avx2-shape-ok? elem-ty lanes)
+    (let
+      [mnemonic : String
+        (compiler-backend-avx2-vector-reduce-op-mnemonic op elem-ty)]
+      (if (= (string-length mnemonic) 0)
+        (ErrCompilerBackend
+          (compiler-diagnostic-with-message
+            instr-diag
+            "backend: unsupported AVX2 vector reduction"))
+        (match src
+          [(IrValueVar src-var)
+            (OkCompilerBackend
+              (string-append
+                (compiler-backend-avx2-vector-reduce-horizontal-asm
+                  mnemonic
+                  src-var
+                  elem-ty)
+                (string-append
+                  (compiler-backend-avx2-vector-reduce-move-scalar elem-ty)
+                  (compiler-backend-emit-store-typed-var-with-plan
+                    assignments
+                    dst
+                    "%rax"
+                    elem-ty))))]
+          [_
+            (ErrCompilerBackend
+              (compiler-diagnostic-with-message
+                instr-diag
+                "backend: unsupported AVX2 vector reduce source"))])))
+    (compiler-backend-avx2-shape-diagnostic instr-diag elem-ty lanes)))
 
 (define (compiler-backend-emit-store-typed-var-with-plan
   [assignments : CompilerRegAssignmentList]
@@ -4723,8 +4840,15 @@
           lanes
           elem-ty
           instr-diag)]
-      [(IrInstrVectorReduce _ _ _ _ _)
-        (compiler-backend-vector-mask-unimplemented instr-diag)]
+      [(IrInstrVectorReduce dst op src lanes elem-ty)
+        (compiler-backend-emit-avx2-vector-reduce
+          assignments
+          dst
+          op
+          src
+          lanes
+          elem-ty
+          instr-diag)]
       [(IrInstrVectorCompare _ _ _ _ _ _)
         (compiler-backend-vector-mask-unimplemented instr-diag)]
       [(IrInstrMaskBinOp dst op lhs rhs lanes)

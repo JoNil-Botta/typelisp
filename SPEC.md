@@ -2654,7 +2654,7 @@ track (#809/#897/#911/#912) and the safe reference/ownership track (#182).
 |---------|-----------|-------------|
 | `print` | `i64 → unit` | Print integer to stdout + newline |
 | `print-bool` | `bool → unit` | Print `true`/`false` to stdout + newline |
-| `print-float` | `f64 → unit` | Print floating-point value to stdout + newline |
+| `print-float` | `f64 → unit` | Print floating-point value to stdout using `%.17g` + newline |
 | `print-char` | `char → unit` | Print ASCII character to stdout |
 | `print-newline` | `→ unit` | Print newline to stdout |
 | `print-string` | `String → unit` | Print string bytes to stdout |

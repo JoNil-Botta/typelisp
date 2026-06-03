@@ -94,6 +94,8 @@
     bool
     bool
     bool
+    bool
+    bool
     bool))
 
 ;; Backend code-generation target (#646). Linux/System V and Windows x64 are
@@ -3793,16 +3795,19 @@
     [(CompilerBackendNoSignature)
       (compiler-backend-extern-signature externs name)]))
 
+(define (compiler-backend-runtime-param-types [name : String]) : AstTypeList
+  (cond
+    [(string-eq name "tl_print_char") (AstTypeCons (AstTyChar) AstTypeNil)]
+    [(string-eq name "tl_print_f64") (AstTypeCons (AstTyF64) AstTypeNil)]
+    [else AstTypeNil]))
+
 (define (compiler-backend-call-param-types
   [name : String]
   [functions : CompilerIrFunctionList]
   [externs : CompilerIrExternList]) : AstTypeList
-  (let
-    [local-types : AstTypeList
-      (compiler-backend-function-param-types functions name)]
-    (match local-types
-      [(AstTypeNil) (compiler-backend-extern-param-types externs name)]
-      [_ local-types])))
+  (match (compiler-backend-signature functions externs name)
+    [(CompilerBackendSomeSignature param-types _) param-types]
+    [(CompilerBackendNoSignature) (compiler-backend-runtime-param-types name)]))
 
 ;; Byte offset from %rsp where the `stack-idx`-th stack-passed OUTGOING argument
 ;; is stored (#750). Stack args are numbered sequentially in argument order (0,
@@ -7242,6 +7247,8 @@
           _
           _
           _
+          _
+          _
           arg-count
           arg
           _
@@ -8572,6 +8579,8 @@
         provides-abort
         provides-print-err
         provides-print-str
+        provides-print-char
+        provides-print-f64
         provides-arg-count
         provides-arg
         provides-read-file
@@ -8658,10 +8667,20 @@
               ".L_tl_file_exists"
               provides-file-exists))
           (or
-            (compiler-backend-provides-runtime-name?
-              name
-              "tl_print_str"
-              provides-print-str)
+            (backend-or4
+              (compiler-backend-provides-runtime-name?
+                name
+                "tl_print_str"
+                provides-print-str)
+              (compiler-backend-provides-runtime-name?
+                name
+                "tl_print_char"
+                provides-print-char)
+              (compiler-backend-provides-runtime-name?
+                name
+                "tl_print_f64"
+                provides-print-f64)
+              false)
             (or
               (backend-or8
                 (compiler-backend-provides-runtime-name?
@@ -8812,6 +8831,10 @@
       (compiler-backend-function-list-defines? functions "tl_print_err")]
     [defines-print-str : bool
       (compiler-backend-function-list-defines? functions "tl_print_str")]
+    [defines-print-char : bool
+      (compiler-backend-function-list-defines? functions "tl_print_char")]
+    [defines-print-f64 : bool
+      (compiler-backend-function-list-defines? functions "tl_print_f64")]
     [defines-region-mark : bool
       (compiler-backend-function-list-defines? functions "tl_region_mark")]
     [defines-region-reset : bool
@@ -8860,6 +8883,10 @@
       (compiler-backend-extern-list-references? externs "tl_print_err")]
     [extern-print-str : bool
       (compiler-backend-extern-list-references? externs "tl_print_str")]
+    [extern-print-char : bool
+      (compiler-backend-extern-list-references? externs "tl_print_char")]
+    [extern-print-f64 : bool
+      (compiler-backend-extern-list-references? externs "tl_print_f64")]
     [extern-arg-count : bool
       (compiler-backend-extern-list-references? externs ".L_tl_arg_count")]
     [extern-arg : bool
@@ -8986,6 +9013,10 @@
       (compiler-backend-function-list-calls? functions "tl_print_err")]
     [calls-print-str : bool
       (compiler-backend-function-list-calls? functions "tl_print_str")]
+    [calls-print-char : bool
+      (compiler-backend-function-list-calls? functions "tl_print_char")]
+    [calls-print-f64 : bool
+      (compiler-backend-function-list-calls? functions "tl_print_f64")]
     [calls-arg-count : bool
       (compiler-backend-function-list-calls? functions ".L_tl_arg_count")]
     [calls-arg : bool
@@ -9107,6 +9138,10 @@
         (and (not defines-print-err) (or extern-print-err calls-print-err))]
       [needs-print-str : bool
         (and (not defines-print-str) (or extern-print-str calls-print-str))]
+      [needs-print-char : bool
+        (and (not defines-print-char) (or extern-print-char calls-print-char))]
+      [needs-print-f64 : bool
+        (and (not defines-print-f64) (or extern-print-f64 calls-print-f64))]
       [needs-arg-count : bool (or extern-arg-count calls-arg-count)]
       [needs-arg : bool (or extern-arg calls-arg)]
       [needs-read-file : bool
@@ -9248,6 +9283,8 @@
             needs-abort
             needs-print-err
             needs-print-str
+            needs-print-char
+            needs-print-f64
             needs-arg-count
             needs-arg
             needs-read-file
@@ -9555,6 +9592,15 @@ tl_current_arena:
 "
     ""))
 
+(define (compiler-backend-runtime-print-f64-data [print-f64 : bool]) : String
+  (if print-f64
+    "    .section .rodata
+.L_tl_print_f64_fmt:
+    .asciz \"%.17g\\n\"
+
+"
+    ""))
+
 (define (compiler-backend-runtime-data-for-target
   [target : CompilerBackendTarget]
   [plan : CompilerBackendRuntimePlan]) : String
@@ -9570,6 +9616,8 @@ tl_current_arena:
         _
         _
         _
+        _
+        print-f64
         arg-count
         arg
         read-file
@@ -9612,7 +9660,9 @@ tl_current_arena:
                 (compiler-backend-runtime-region-reset-data)
                 "")
               (string-append
-                (compiler-backend-runtime-argv-data arg-count arg)
+                (string-append
+                  (compiler-backend-runtime-print-f64-data print-f64)
+                  (compiler-backend-runtime-argv-data arg-count arg))
                 (string-append
                   (compiler-backend-runtime-read-file-data read-file)
                   (string-append
@@ -10103,6 +10153,50 @@ tl_print_str:
     movq $1, %rdi
     movq $1, %rax
     syscall
+    ret
+
+")
+
+(define (compiler-backend-runtime-print-char-functions) : String
+  "    .globl tl_print_char
+tl_print_char:
+    subq $8, %rsp
+    movb %dil, (%rsp)
+    movq %rsp, %rsi
+    movq $1, %rdx
+    movq $1, %rdi
+    movq $1, %rax
+    syscall
+    addq $8, %rsp
+    ret
+
+")
+
+(define (compiler-backend-runtime-print-f64-functions) : String
+  "    .globl tl_print_f64
+tl_print_f64:
+    push %rbp
+    mov %rsp, %rbp
+    subq $128, %rsp
+    leaq -128(%rbp), %rdi
+    movq $128, %rsi
+    leaq .L_tl_print_f64_fmt(%rip), %rdx
+    movb $1, %al
+    call snprintf
+    movq %rax, %rdx
+    cmpq $0, %rdx
+    jl .L_tl_print_f64_done
+    cmpq $128, %rdx
+    jl .L_tl_print_f64_len_ready
+    movq $127, %rdx
+.L_tl_print_f64_len_ready:
+    leaq -128(%rbp), %rsi
+    movq $1, %rdi
+    movq $1, %rax
+    syscall
+.L_tl_print_f64_done:
+    mov %rbp, %rsp
+    pop %rbp
     ret
 
 ")
@@ -12505,6 +12599,55 @@ tl_print_str:
     sub $32, %rsp
     call _write
     add $32, %rsp
+    mov %rbp, %rsp
+    pop %rbp
+    ret
+
+")
+
+(define (compiler-backend-runtime-windows-print-char-functions) : String
+  "    .globl tl_print_char
+tl_print_char:
+    push %rbp
+    mov %rsp, %rbp
+    sub $40, %rsp
+    movb %cl, 32(%rsp)
+    movq $1, %rcx
+    leaq 32(%rsp), %rdx
+    movq $1, %r8
+    call _write
+    add $40, %rsp
+    mov %rbp, %rsp
+    pop %rbp
+    ret
+
+")
+
+(define (compiler-backend-runtime-windows-print-f64-functions) : String
+  "    .globl tl_print_f64
+tl_print_f64:
+    push %rbp
+    mov %rsp, %rbp
+    sub $160, %rsp
+    leaq -128(%rbp), %rcx
+    movq $128, %rdx
+    leaq .L_tl_print_f64_fmt(%rip), %r8
+    movapd %xmm0, %xmm3
+    movq %xmm0, %r9
+    call _snprintf
+    movslq %eax, %rax
+    cmpq $0, %rax
+    jl .L_tl_print_f64_done
+    cmpq $128, %rax
+    jl .L_tl_print_f64_len_ready
+    movq $127, %rax
+.L_tl_print_f64_len_ready:
+    movq %rax, %r8
+    movq $1, %rcx
+    leaq -128(%rbp), %rdx
+    call _write
+.L_tl_print_f64_done:
+    add $160, %rsp
     mov %rbp, %rsp
     pop %rbp
     ret
@@ -15133,6 +15276,8 @@ tl_windows_sdk_registry_install:
         abort
         print-err
         print-str
+        print-char
+        print-f64
         arg-count
         arg
         read-file
@@ -15228,6 +15373,18 @@ tl_windows_sdk_registry_install:
             (if (compiler-backend-target-windows? target)
               (compiler-backend-runtime-windows-print-str-functions)
               (compiler-backend-runtime-print-str-functions))
+            "")]
+        [print-char-asm : String
+          (if print-char
+            (if (compiler-backend-target-windows? target)
+              (compiler-backend-runtime-windows-print-char-functions)
+              (compiler-backend-runtime-print-char-functions))
+            "")]
+        [print-f64-asm : String
+          (if print-f64
+            (if (compiler-backend-target-windows? target)
+              (compiler-backend-runtime-windows-print-f64-functions)
+              (compiler-backend-runtime-print-f64-functions))
             "")]
         [arg-count-asm : String
           (if arg-count
@@ -15375,10 +15532,12 @@ tl_windows_sdk_registry_install:
             (backend-cat5
               print-err-asm
               print-str-asm
-              arg-count-asm
+              print-char-asm
+              print-f64-asm
+              arg-count-asm)
+            (string-append
               arg-asm
-              read-file-asm)
-            read-file-status-asm)]
+              (string-append read-file-asm read-file-status-asm)))]
         [runtime-file-asm : String
           (backend-cat5
             write-file-asm
@@ -15560,6 +15719,8 @@ tl_windows_sdk_registry_install:
             _
             _
             _
+            _
+            _
             arg-count
             arg
             _
@@ -15608,6 +15769,8 @@ tl_windows_sdk_registry_install:
         abort
         print-err
         print-str
+        print-char
+        print-f64
         arg-count
         arg
         read-file
@@ -15645,17 +15808,17 @@ tl_windows_sdk_registry_install:
           (or
             (backend-or8
               print-err
+              print-char
+              print-f64
               arg-count
               arg
               read-file
               write-file
-              file-exists
-              file-handle
-              file-read-chunk)
+              file-exists)
             (or
-              print-str
+              (or print-str file-handle)
               (or
-                fs-runtime
+                (or fs-runtime file-read-chunk)
                 (or
                   process-output
                   (or
@@ -15737,14 +15900,19 @@ tl_windows_sdk_registry_install:
               "    .extern VirtualFree
 "
               ""))
-          ;; The Windows tl_process_output spawns the child via CreateProcessA
-          ;; with a constructed contiguous env block (__p__environ above) and
-          ;; captures stdout/stderr through CRT temp files made inheritable
-          ;; (tmpfile/_fileno/_get_osfhandle/SetHandleInformation), waiting via
-          ;; WaitForSingleObject/GetExitCodeProcess/CloseHandle. The Linux
-          ;; variant uses raw syscalls instead.
-          (if (compiler-backend-plan-provides? plan "tl_process_output")
-            "    .extern __p__environ
+          (string-append
+            (if (compiler-backend-plan-provides? plan "tl_print_f64")
+              "    .extern _snprintf
+"
+              "")
+            ;; The Windows tl_process_output spawns the child via CreateProcessA
+            ;; with a constructed contiguous env block (__p__environ above) and
+            ;; captures stdout/stderr through CRT temp files made inheritable
+            ;; (tmpfile/_fileno/_get_osfhandle/SetHandleInformation), waiting via
+            ;; WaitForSingleObject/GetExitCodeProcess/CloseHandle. The Linux
+            ;; variant uses raw syscalls instead.
+            (if (compiler-backend-plan-provides? plan "tl_process_output")
+              "    .extern __p__environ
     .extern tmpfile
     .extern fclose
     .extern _fileno
@@ -15756,7 +15924,7 @@ tl_windows_sdk_registry_install:
     .extern CloseHandle
     .extern GetStdHandle
 "
-            ""))))
+              "")))))
     ""))
 
 ;; Emit a full program for `target`. Windows x64 has ABI-correct user function

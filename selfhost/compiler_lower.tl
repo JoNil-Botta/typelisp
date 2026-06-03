@@ -5727,6 +5727,42 @@
           (IrValueVar var-id)
           result-ty))]))
 
+(define (lower-one-arg-runtime-call
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [args : AstExprList]
+  [fallback-name : String]
+  [runtime-name : String]
+  [expected-ty : AstType]
+  [result-ty : AstType]
+  [origin : AstExpr]) : ResultLowerExpr
+  (match args
+    [(AstExprCons arg (AstExprNil))
+      (match (lower-expr ctx state env type-env arg)
+        [(OkLowerExpr lowered)
+          (match lowered
+            [(LowerExpr arg-state arg-value arg-ty)
+              (match (lower-cast-value arg-state arg-value arg-ty expected-ty)
+                [(LowerExpr cast-state cast-value _)
+                  (lower-runtime-call-values
+                    cast-state
+                    runtime-name
+                    (IrValueCons cast-value IrValueNil)
+                    result-ty)])])]
+        [(ErrLowerExpr message) (ErrLowerExpr message)])]
+    [_
+      (lower-direct-call
+        ctx
+        state
+        env
+        type-env
+        fallback-name
+        args
+        result-ty
+        origin)]))
+
 (define (lower-one-string-runtime-call
   [ctx : TcContext]
   [state : LowerState]
@@ -7152,6 +7188,34 @@
                 "tl_print_str"
                 result-ty
                 "lower: print-string requires String"
+                origin)]
+            [(and
+                (lower-builtin-call-available? ctx env name)
+                (string-eq name "print-char"))
+              (lower-one-arg-runtime-call
+                ctx
+                state
+                env
+                type-env
+                args
+                "print-char"
+                "tl_print_char"
+                (AstTyChar)
+                result-ty
+                origin)]
+            [(and
+                (lower-builtin-call-available? ctx env name)
+                (string-eq name "print-float"))
+              (lower-one-arg-runtime-call
+                ctx
+                state
+                env
+                type-env
+                args
+                "print-float"
+                "tl_print_f64"
+                (AstTyF64)
+                result-ty
                 origin)]
             [(and
                 (lower-builtin-call-available? ctx env name)
@@ -12043,6 +12107,8 @@
     (begin
       (print-string (& joined))
       (print-str (& extended))
+      (print-char #A')
+      (print-float 1.5)
       (+ (string-length (& joined))
         (+ (string-length (& extended))
           (+ (string->int (& digits))
@@ -14327,6 +14393,24 @@
                 unit
                 (set! ok false))
               (if (= (lower-test-functions-call-count functions "print-str") 0)
+                unit
+                (set! ok false))
+              (if (=
+                (lower-test-functions-call-count functions "tl_print_char")
+                1)
+                unit
+                (set! ok false))
+              (if (=
+                (lower-test-functions-call-count functions "tl_print_f64")
+                1)
+                unit
+                (set! ok false))
+              (if (= (lower-test-functions-call-count functions "print-char") 0)
+                unit
+                (set! ok false))
+              (if (=
+                (lower-test-functions-call-count functions "print-float")
+                0)
                 unit
                 (set! ok false))
               ok))])]

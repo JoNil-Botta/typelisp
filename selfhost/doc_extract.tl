@@ -108,17 +108,16 @@
       i)))
 
 (define (doc-next-line-start [src : String] [line-end : i64] [n : i64]) : i64
-  (if (< line-end n)
+  (begin
+    (unless (< line-end n) (return line-end))
     (let
       [k : char (string-ref src line-end)]
-      (if (= k #\return')
-        (if (< (+ line-end 1) n)
-          (if (= (string-ref src (+ line-end 1)) #\newline')
-            (+ line-end 2)
-            (+ line-end 1))
-          (+ line-end 1))
-        (+ line-end 1)))
-    line-end))
+      (begin
+        (unless (= k #\return') (return (+ line-end 1)))
+        (unless (< (+ line-end 1) n) (return (+ line-end 1)))
+        (if (= (string-ref src (+ line-end 1)) #\newline')
+          (+ line-end 2)
+          (+ line-end 1))))))
 
 (define (doc-first-nonspace [src : String] [start : i64] [end : i64]) : i64
   (let
@@ -454,6 +453,11 @@
 (defstruct Point (x i64) (y i64))
 ;: EOF unattached")
 
+(define (doc-extract-legacy-smoke-source) : String
+  ";# Legacy module
+;: legacy item
+(define legacy : i64 1)")
+
 (define (doc-item-ok?
   [item : DocItem]
   [kind-tag : i64]
@@ -462,13 +466,11 @@
   [signature-fragment : String]) : bool
   (match item
     [(DocItem kind item-name item-doc signature)
-      (if (= (doc-kind-tag kind) kind-tag)
-        (if (string-eq item-name name)
-          (if (string-eq item-doc doc-text)
-            (doc-string-contains? signature signature-fragment)
-            false)
-          false)
-        false)]))
+      (begin
+        (unless (= (doc-kind-tag kind) kind-tag) (return false))
+        (unless (string-eq item-name name) (return false))
+        (unless (string-eq item-doc doc-text) (return false))
+        (doc-string-contains? signature signature-fragment))]))
 
 (define (doc-extract-smoke-items-ok? [items : DocItemList]) : bool
   (match items
@@ -477,42 +479,84 @@
         (DocItemCons
           main-fn
           (DocItemCons maybe (DocItemCons print (DocItemCons point DocItemNil)))))
-      (if (doc-item-ok?
-        answer
-        1
-        "answer"
-        "answer doc\nstill answer"
-        "(define answer : i64 42)")
-        (if (doc-item-ok?
-          main-fn
-          2
-          "main"
-          "function doc"
-          "(define (main [argc : i64])")
-          (if (doc-item-ok? maybe 4 "Maybe" "enum doc" "(defenum Maybe")
-            (if (doc-item-ok? print 3 "print" "external doc" "(extern print")
-              (doc-item-ok? point 5 "Point" "struct doc" "(defstruct Point")
-              false)
-            false)
-          false)
-        false)]
+      (begin
+        (unless
+          (doc-item-ok?
+            answer
+            1
+            "answer"
+            "answer doc\nstill answer"
+            "(define answer : i64 42)")
+          (return false))
+        (unless
+          (doc-item-ok?
+            main-fn
+            2
+            "main"
+            "function doc"
+            "(define (main [argc : i64])")
+          (return false))
+        (unless
+          (doc-item-ok? maybe 4 "Maybe" "enum doc" "(defenum Maybe")
+          (return false))
+        (unless
+          (doc-item-ok? print 3 "print" "external doc" "(extern print")
+          (return false))
+        (doc-item-ok? point 5 "Point" "struct doc" "(defstruct Point"))]
     [_ false]))
 
 (define (doc-extract-smoke) : i64
   (match (doc-extract-source (doc-extract-smoke-source))
     [(DocExtraction module-doc items)
-      (if (string-eq
-        module-doc
-        "Module title\nsecond module line\nlater module")
-        (if (= (doc-item-list-count items) 5)
-          (if (doc-extract-smoke-items-ok? items)
-            42
+      (begin
+        (unless
+          (string-eq
+            module-doc
+            "Module title\nsecond module line\nlater module")
+          (return
+            (begin
+              (panic "doc-extract: module doc smoke mismatch")
+              0)))
+        (unless
+          (= (doc-item-list-count items) 5)
+          (return
+            (begin
+              (panic "doc-extract: item count smoke mismatch")
+              0)))
+        (unless
+          (doc-extract-smoke-items-ok? items)
+          (return
             (begin
               (panic "doc-extract: item doc smoke mismatch")
-              0))
-          (begin
-            (panic "doc-extract: item count smoke mismatch")
-            0))
-        (begin
-          (panic "doc-extract: module doc smoke mismatch")
-          0))]))
+              0)))
+        (match (doc-extract-source (doc-extract-legacy-smoke-source))
+          [(DocExtraction legacy-module legacy-items)
+            (begin
+              (unless
+                (string-eq legacy-module "Legacy module")
+                (return
+                  (begin
+                    (panic "doc-extract: legacy module doc mismatch")
+                    0)))
+              (unless
+                (= (doc-item-list-count legacy-items) 1)
+                (return
+                  (begin
+                    (panic "doc-extract: legacy item count mismatch")
+                    0)))
+              (match legacy-items
+                [(DocItemCons legacy DocItemNil)
+                  (begin
+                    (unless
+                      (doc-item-ok?
+                        legacy
+                        1
+                        "legacy"
+                        "legacy item"
+                        "(define legacy : i64 1)")
+                      (return
+                        (begin
+                          (panic "doc-extract: legacy item mismatch")
+                          0)))
+                    42)]
+                [_ 0]))]))]))

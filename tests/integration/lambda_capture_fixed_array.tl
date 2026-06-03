@@ -28,10 +28,8 @@
       (= (f) 42))))
 
 (define (main) : i64
-  (if (case-immediate)
-    (if (case-returned)
-      (if (case-mutated-after-capture)
-        42
-        3)
-      2)
-    1))
+  (begin
+    (unless (case-immediate) (return 1))
+    (unless (case-returned) (return 2))
+    (unless (case-mutated-after-capture) (return 3))
+    42))

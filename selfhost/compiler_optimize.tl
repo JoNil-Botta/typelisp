@@ -7113,21 +7113,18 @@
   (let
     [instrs : CompilerIrInstrList (opt-self-test-instrs)]
     [optimized : CompilerIrInstrList (opt-fold-instrs (OptConstNil) instrs)]
-    (if (= (opt-count-arith-instrs instrs) 1)
-      (if (= (opt-count-arith-instrs optimized) 0)
-        (if (= (opt-sum-mov-i64 optimized) 84)
-          (let
-            [stale-instrs : CompilerIrInstrList (opt-stale-load-test-instrs)]
-            [stale-optimized : CompilerIrInstrList
-              (opt-fold-instrs (OptConstNil) stale-instrs)]
-            (if (= (opt-count-arith-instrs stale-optimized) 1)
-              (if (= (compiler-optimize-vector-mask-self-test) 42)
-                42
-                5)
-              4))
-          3)
-        2)
-      1)))
+    (begin
+      (unless (= (opt-count-arith-instrs instrs) 1) (return 1))
+      (unless (= (opt-count-arith-instrs optimized) 0) (return 2))
+      (unless (= (opt-sum-mov-i64 optimized) 84) (return 3))
+      (let
+        [stale-instrs : CompilerIrInstrList (opt-stale-load-test-instrs)]
+        [stale-optimized : CompilerIrInstrList
+          (opt-fold-instrs (OptConstNil) stale-instrs)]
+        (begin
+          (unless (= (opt-count-arith-instrs stale-optimized) 1) (return 4))
+          (unless (= (compiler-optimize-vector-mask-self-test) 42) (return 5))
+          42)))))
 
 (define (opt-typed-fold-u64-shr-instrs) : CompilerIrInstrList
   (IrInstrCons
@@ -7233,37 +7230,23 @@
       (opt-fold-instrs (OptConstNil) (opt-typed-fold-instrs))]
     [neg : CompilerIrInstrList
       (opt-fold-instrs (OptConstNil) (opt-typed-fold-invalid-instrs))]
-    (if (= (opt-count-arith-instrs pos) 0)
-      (if (= (opt-count-cast-instrs pos) 0)
-        (if (= (opt-mov-dst-i64-value pos 2 (- 0 999)) 0)
-          (if (opt-mov-dst-bool-value? pos 5 true)
-            (if (opt-mov-dst-bool-value? pos 6 false)
-              (if (= (opt-mov-dst-i64-value pos 7 0) 255)
-                (if (= (opt-mov-dst-char-code pos 8 0) 44)
-                  (if (= (opt-mov-dst-i64-value pos 10 0) 65)
-                    (if (opt-mov-dst-bool-value? pos 12 false)
-                      (if (= (opt-mov-dst-i64-value pos 13 0) 7)
-                        (if (= (opt-mov-dst-i64-value pos 14 0) 1)
-                          (if (= (opt-mov-dst-i64-value pos 17 0) 8)
-                            (if (= (opt-mov-dst-i64-value pos 19 0) (- 0 4))
-                              (if (= (opt-mov-dst-i64-value pos 22 0) 1)
-                                (if (= (opt-count-arith-instrs neg) 4)
-                                  42
-                                  16)
-                                15)
-                              14)
-                            13)
-                          12)
-                        11)
-                      10)
-                    9)
-                  8)
-                7)
-              6)
-            5)
-          4)
-        3)
-      1)))
+    (begin
+      (unless (= (opt-count-arith-instrs pos) 0) (return 1))
+      (unless (= (opt-count-cast-instrs pos) 0) (return 3))
+      (unless (= (opt-mov-dst-i64-value pos 2 (- 0 999)) 0) (return 4))
+      (unless (opt-mov-dst-bool-value? pos 5 true) (return 5))
+      (unless (opt-mov-dst-bool-value? pos 6 false) (return 6))
+      (unless (= (opt-mov-dst-i64-value pos 7 0) 255) (return 7))
+      (unless (= (opt-mov-dst-char-code pos 8 0) 44) (return 8))
+      (unless (= (opt-mov-dst-i64-value pos 10 0) 65) (return 9))
+      (unless (opt-mov-dst-bool-value? pos 12 false) (return 10))
+      (unless (= (opt-mov-dst-i64-value pos 13 0) 7) (return 11))
+      (unless (= (opt-mov-dst-i64-value pos 14 0) 1) (return 12))
+      (unless (= (opt-mov-dst-i64-value pos 17 0) 8) (return 13))
+      (unless (= (opt-mov-dst-i64-value pos 19 0) (- 0 4)) (return 14))
+      (unless (= (opt-mov-dst-i64-value pos 22 0) 1) (return 15))
+      (unless (= (opt-count-arith-instrs neg) 4) (return 16))
+      42)))
 
 ;; Positive strength-reduction cases: integer neutral/absorbing identities and
 ;; boolean `and`/`or` identities. The first instruction uses `AstTyU8` to prove
@@ -7487,13 +7470,11 @@
       (opt-cse-instrs (OptExprNil) (opt-cse-store-clears-instrs))]
     [redef : CompilerIrInstrList
       (opt-cse-instrs (OptExprNil) (opt-cse-operand-redef-instrs))]
-    (if (= (opt-count-arith-instrs cse) 1)
-      (if (= (opt-count-arith-instrs store) 2)
-        (if (= (opt-count-arith-instrs redef) 2)
-          42
-          3)
-        2)
-      1)))
+    (begin
+      (unless (= (opt-count-arith-instrs cse) 1) (return 1))
+      (unless (= (opt-count-arith-instrs store) 2) (return 2))
+      (unless (= (opt-count-arith-instrs redef) 2) (return 3))
+      42)))
 
 ;; --- cross-block GVN self-tests (#1349) -------------------------------------
 (define (opt-gvn-test-params) : CompilerIrParamList
@@ -7642,27 +7623,32 @@
 ;; loop drop to 1 binop), leaves non-dominating siblings alone (3 binops), and
 ;; refuses to CSE across a reassigned operand (2 binops).
 (define (compiler-optimize-gvn-self-test) : i64
-  (if (=
-    (opt-gvn-count-binops-blocks
-      (opt-gvn-blocks (opt-gvn-test-params) (opt-gvn-diamond-blocks)))
-    1)
-    (if (=
-      (opt-gvn-count-binops-blocks
-        (opt-gvn-blocks (opt-gvn-test-params) (opt-gvn-siblings-blocks)))
-      3)
-      (if (=
+  (begin
+    (unless
+      (=
+        (opt-gvn-count-binops-blocks
+          (opt-gvn-blocks (opt-gvn-test-params) (opt-gvn-diamond-blocks)))
+        1)
+      (return 1))
+    (unless
+      (=
+        (opt-gvn-count-binops-blocks
+          (opt-gvn-blocks (opt-gvn-test-params) (opt-gvn-siblings-blocks)))
+        3)
+      (return 2))
+    (unless
+      (=
         (opt-gvn-count-binops-blocks
           (opt-gvn-blocks (opt-gvn-test-params) (opt-gvn-redef-blocks)))
         2)
-        (if (=
-          (opt-gvn-count-binops-blocks
-            (opt-gvn-blocks (opt-gvn-test-params) (opt-gvn-loop-blocks)))
-          1)
-          42
-          4)
-        3)
-      2)
-    1))
+      (return 3))
+    (unless
+      (=
+        (opt-gvn-count-binops-blocks
+          (opt-gvn-blocks (opt-gvn-test-params) (opt-gvn-loop-blocks)))
+        1)
+      (return 4))
+    42))
 
 ;; Returns the lhs var id of the `BinOp` whose destination is `dst`, or -1 if it
 ;; is absent or its lhs is not a var. Used to inspect copy-propagation rewrites.
@@ -9179,38 +9165,23 @@
         (optimize-function (opt-cfg-test-function (opt-cfg-trap-path-blocks))))]
     [fallthrough-blocks : CompilerIrBlockList
       (opt-cfg-simplify-blocks (opt-cfg-fallthrough-prune-blocks))]
-    (if (= (compiler-ir-block-list-count constant-if) 2)
-      (if (not (opt-block-list-has-label? constant-if "else"))
-        (if (= (opt-count-jump-to-blocks constant-if "then") 1)
-          (if (= (opt-count-branches-blocks constant-if) 0)
-            (if (= (compiler-ir-block-list-count loop-guard) 3)
-              (if (not (opt-block-list-has-label? loop-guard "body"))
-                (if (= (opt-count-jump-to-blocks loop-guard "exit") 1)
-                  (if (= (compiler-ir-block-list-count phi-blocks) 3)
-                    (if (not (opt-block-list-has-label? phi-blocks "else"))
-                      (if (= (opt-count-phi-blocks phi-blocks) 0)
-                        (if (= (opt-count-mov-dst-blocks phi-cfg 3) 1)
-                          (if (= (compiler-ir-block-list-count trap-blocks) 3)
-                            (if (opt-block-list-has-label? trap-blocks "trap")
-                              (if (= (opt-count-branches-blocks trap-blocks) 1)
-                                (if (opt-cfg-fallthrough-prune-ok?
-                                  fallthrough-blocks)
-                                  42
-                                  15)
-                                14)
-                              13)
-                            12)
-                          11)
-                        10)
-                      9)
-                    8)
-                  7)
-                6)
-              5)
-            4)
-          3)
-        2)
-      1)))
+    (begin
+      (unless (= (compiler-ir-block-list-count constant-if) 2) (return 1))
+      (unless (not (opt-block-list-has-label? constant-if "else")) (return 2))
+      (unless (= (opt-count-jump-to-blocks constant-if "then") 1) (return 3))
+      (unless (= (opt-count-branches-blocks constant-if) 0) (return 4))
+      (unless (= (compiler-ir-block-list-count loop-guard) 3) (return 5))
+      (unless (not (opt-block-list-has-label? loop-guard "body")) (return 6))
+      (unless (= (opt-count-jump-to-blocks loop-guard "exit") 1) (return 7))
+      (unless (= (compiler-ir-block-list-count phi-blocks) 3) (return 8))
+      (unless (not (opt-block-list-has-label? phi-blocks "else")) (return 9))
+      (unless (= (opt-count-phi-blocks phi-blocks) 0) (return 10))
+      (unless (= (opt-count-mov-dst-blocks phi-cfg 3) 1) (return 11))
+      (unless (= (compiler-ir-block-list-count trap-blocks) 3) (return 12))
+      (unless (opt-block-list-has-label? trap-blocks "trap") (return 13))
+      (unless (= (opt-count-branches-blocks trap-blocks) 1) (return 14))
+      (unless (opt-cfg-fallthrough-prune-ok? fallthrough-blocks) (return 15))
+      42)))
 
 (define (compiler-optimize-fixed-point-self-test) : i64
   (let

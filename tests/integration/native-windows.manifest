@@ -18,7 +18,7 @@ comptime_scalar|tests/integration/comptime_scalar.tl|3|-|-|-
 cond|tests/integration/cond.tl|42|-|-|-
 control_flow|tests/integration/control_flow.tl|15|-|-|-
 early_return|tests/integration/early_return.tl|42|-|-|-
-# run-assert deferred (bare idiv trap needs guarded abort, #1654): div_zero_trap|tests/integration/div_zero_trap.tl|135|-|-|-|expected-stderr:tl: integer division or remainder error\n
+div_zero_trap|tests/integration/div_zero_trap.tl|135|-|-|-|expected-stderr:tl: integer division or remainder error\n
 enum_match|tests/integration/enum_match.tl|42|-|-|-
 make_array_negative_trap|tests/integration/make_array_negative_trap.tl|134|-|-|-|expected-stderr:tl: array index out of bounds\n
 make_array_overflow_trap|tests/integration/make_array_overflow_trap.tl|134|-|-|-|expected-stderr:tl: array index out of bounds\n
@@ -36,8 +36,8 @@ function_pointer_values|tests/integration/function_pointer_values.tl|42|-|-|-
 functions|tests/integration/functions.tl|32|-|-|-
 global_initializer|tests/integration/global_initializer.tl|120|-|-|-
 hello|tests/integration/hello.tl|42|-|-|-
-# run-assert deferred (bare idiv trap needs guarded abort, #1654): i16_min_div_neg1_trap|tests/integration/i16_min_div_neg1_trap.tl|135|-|-|-|expected-stderr:tl: integer division or remainder error\n
-# run-assert deferred (bare idiv trap needs guarded abort, #1654): i16_min_rem_neg1_trap|tests/integration/i16_min_rem_neg1_trap.tl|135|-|-|-|expected-stderr:tl: integer division or remainder error\n
+i16_min_div_neg1_trap|tests/integration/i16_min_div_neg1_trap.tl|135|-|-|-|expected-stderr:tl: integer division or remainder error\n
+i16_min_rem_neg1_trap|tests/integration/i16_min_rem_neg1_trap.tl|135|-|-|-|expected-stderr:tl: integer division or remainder error\n
 lambda_aggregate_returns|tests/integration/lambda_aggregate_returns.tl|42|-|-|-
 lambda_capture_aggregate|tests/integration/lambda_capture_aggregate.tl|42|-|-|-
 lambda_capture_fixed_array|tests/integration/lambda_capture_fixed_array.tl|42|-|-|-
@@ -50,7 +50,7 @@ lambda_lift|tests/integration/lambda_lift.tl|42|-|-|-
 lexer|tests/integration/lexer.tl|12|-|-|-
 many_args|tests/integration/many_args.tl|36|-|-|-
 maybe_result|tests/integration/maybe_result.tl|65|-|-|-
-# run-assert deferred (bare idiv trap needs guarded abort, #1654): min_div_neg1_trap|tests/integration/min_div_neg1_trap.tl|135|-|-|-|expected-stderr:tl: integer division or remainder error\n
+min_div_neg1_trap|tests/integration/min_div_neg1_trap.tl|135|-|-|-|expected-stderr:tl: integer division or remainder error\n
 modules_main|tests/integration/modules_main.tl|30|-|-|modules_helper.tl
 narrow_div_mod|tests/integration/narrow_div_mod.tl|30|-|-|-
 nested_eval|tests/integration/nested_eval.tl|7|-|-|-
@@ -73,12 +73,12 @@ print_char|tests/integration/print_char.tl|0|A\n|-|-
 print_float|tests/integration/print_float.tl|0|1.5\n|-|-
 print_string|tests/integration/print_string.tl|0|hello\nworld\n|-|-
 register_scalar_homes|tests/integration/register_scalar_homes.tl|42|-|-|-
-# run-assert deferred (bare idiv trap needs guarded abort, #1654): rem_zero_trap|tests/integration/rem_zero_trap.tl|135|-|-|-|expected-stderr:tl: integer division or remainder error\n
+rem_zero_trap|tests/integration/rem_zero_trap.tl|135|-|-|-|expected-stderr:tl: integer division or remainder error\n
 short_circuit|tests/integration/short_circuit.tl|42|-|-|-
-# run-assert deferred (selfhost parity follow-up #1654/#1655/#1656/#1657): shl_count_width_trap|tests/integration/shl_count_width_trap.tl|129|-|-|-|expected-stderr:tl: shift count out of range\n
-# run-assert deferred (selfhost parity follow-up #1654/#1655/#1656/#1657): shl_neg_count_trap|tests/integration/shl_neg_count_trap.tl|129|-|-|-|expected-stderr:tl: shift count out of range\n
+shl_count_width_trap|tests/integration/shl_count_width_trap.tl|129|-|-|-|expected-stderr:tl: shift count out of range\n
+shl_neg_count_trap|tests/integration/shl_neg_count_trap.tl|129|-|-|-|expected-stderr:tl: shift count out of range\n
 spmd_foreach|tests/integration/spmd_foreach.tl|42|-|-|-
-# run-assert deferred (selfhost parity follow-up #1654/#1655/#1656/#1657): spmd_reduce_scalar|tests/integration/spmd_reduce_scalar.tl|42|-|-|-
+# run-assert deferred (selfhost parity follow-up #1655/#1656/#1657): spmd_reduce_scalar|tests/integration/spmd_reduce_scalar.tl|42|-|-|-
 stdlib_io|tests/integration/stdlib_io.tl|42|-|-|stdlib/io.tl|requires-stage0-symbol:file-read-chunk-status,file-write-status,file-flush-status,append-file-status
 stdlib_json|tests/integration/stdlib_json.tl|42|-|-|stdlib/json.tl stdlib/text_buf.tl
 stdlib_text_buf|tests/integration/stdlib_text_buf.tl|42|-|-|stdlib/text_buf.tl
@@ -87,7 +87,7 @@ stdlib_test|tests/integration/stdlib_test.tl|42|-|-|stdlib/test.tl
 string_append|tests/integration/string_append.tl|0|[]\nright\nleft\nfoobar\nabcdefghijklmnopqrstuvwxyz0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ\n|-|-
 string_eq|tests/integration/string_eq.tl|0|true\ntrue\ntrue\nfalse\nfalse\ntrue\nfalse\n|-|-
 string_length|tests/integration/string_length.tl|5|-|-|-
-# run-assert deferred (selfhost parity follow-up #1654/#1655/#1656/#1657): string_match|tests/integration/string_match.tl|42|-|-|-
+# run-assert deferred (selfhost parity follow-up #1655/#1656/#1657): string_match|tests/integration/string_match.tl|42|-|-|-
 substring|tests/integration/substring.tl|55|-|-|-
 sym_i64_env|tests/integration/sym_i64_env.tl|0|PASS: empty-miss\nPASS: single-hit-contains\nPASS: single-hit-value\nPASS: single-miss\nPASS: shadow-newest\nPASS: outer-preserved-a\nPASS: outer-no-b\nPASS: inner-sees-a\nPASS: inner-sees-b\nPASS: substring-key-hit\nPASS: append-key-hit\nPASS: chain-x\nPASS: chain-y\nPASS: chain-z\nAll sym-i64-env tests passed.\n|-|sym_i64_env_core.tl
 tail_self_loop|tests/integration/tail_self_loop.tl|42|-|-|-
@@ -95,7 +95,7 @@ text_buf|tests/integration/text_buf.tl|0|left-right\n|-|text_buf_core.tl
 tl_alloc|tests/integration/tl_alloc.tl|0|-|-|-
 tree|tests/integration/tree.tl|3|-|-|-
 tuple_values|tests/integration/tuple_values.tl|42|-|-|-
-# run-assert deferred (bare idiv trap needs guarded abort, #1654): u16_div_zero_trap|tests/integration/u16_div_zero_trap.tl|135|-|-|-|expected-stderr:tl: integer division or remainder error\n
+u16_div_zero_trap|tests/integration/u16_div_zero_trap.tl|135|-|-|-|expected-stderr:tl: integer division or remainder error\n
 u64_float_casts|tests/integration/u64_float_casts.tl|0|-|-|-
 unit_functions|tests/integration/unit_functions.tl|7|-|-|-
 unit_main|tests/integration/unit_main.tl|0|-|-|-

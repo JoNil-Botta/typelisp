@@ -9,9 +9,9 @@
 ;; `(clone x)` for any user type (mirroring the Rust generic clone codegen).
 ;;
 ;; A type is clone-able iff every (transitive) field type is a scalar, a String,
-;; or another clone-able named type. Types with array/tuple/dynarray/function/
-;; reference fields are not yet clone-able and are skipped (cloning one is a
-;; lowering error). Clone-ability is a least-fixed-point over the type graph.
+;; tuple, fixed array, dynamic array, or another clone-able named type. Function,
+;; reference, raw-pointer, Box, str, and compile-time-only values are not
+;; clone-able. Clone-ability is a least-fixed-point over the type graph.
 (import "compiler_ast_types.tl")
 
 (defenum CloneNameList
@@ -29,10 +29,10 @@
         true
         (clone-name-list-contains? rest name))]))
 
-;; A field type is clone-able given the current clone-able-name set: scalars and
-;; String are always clone-able; a named type (parsed as AstTyVar, or resolved
-;; to AstTyEnum/AstTyStruct) is clone-able iff it is in `names`; everything else
-;; (arrays, tuples, dynarrays, functions, references, regions, str, Expr) is not.
+;; A field type is clone-able given the current clone-able-name set: scalars,
+;; String, tuples, fixed arrays, and dynamic arrays are clone-able recursively; a
+;; named type (parsed as AstTyVar, or resolved to AstTyEnum/AstTyStruct) is
+;; clone-able iff it is in `names`; everything else is not.
 (define (clone-field-type-able? [ty : AstType] [names : CloneNameList]) : bool
   (match ty
     [(AstTyI64) true]
@@ -47,7 +47,13 @@
     [(AstTyF32) true]
     [(AstTyBool) true]
     [(AstTyChar) true]
+    [(AstTyUnit) true]
+    [(AstTyNever) true]
     [(AstTyString) true]
+    [(AstTyTuple elems) (clone-field-type-list-able? elems names)]
+    [(AstTyArray elem _) (clone-field-type-able? elem names)]
+    [(AstTyDynArray elem) (clone-field-type-able? elem names)]
+    [(AstTyRegion _ inner) (clone-field-type-able? inner names)]
     [(AstTyVar name) (clone-name-list-contains? names name)]
     [(AstTyEnum name) (clone-name-list-contains? names name)]
     [(AstTyStruct name) (clone-name-list-contains? names name)]

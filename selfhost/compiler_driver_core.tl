@@ -200,35 +200,91 @@
     (string-append " " (string-append (int->string value) "\n"))))
 
 (define (compiler-driver-ir-summary-render [summary : CompilerIrSummary]) : String
-  (string-append
-    "typelisp-ir-summary v1\n"
-    (string-append
-      (compiler-driver-ir-summary-line
-        "globals"
-        (compiler-ir-summary-globals summary))
-      (string-append
-        (compiler-driver-ir-summary-line
-          "functions"
-          (compiler-ir-summary-functions summary))
+  (let
+    [out : String "typelisp-ir-summary v1\n"]
+    (begin
+      (set!
+        out
         (string-append
+          out
+          (compiler-driver-ir-summary-line
+            "globals"
+            (compiler-ir-summary-globals summary))))
+      (set!
+        out
+        (string-append
+          out
+          (compiler-driver-ir-summary-line
+            "functions"
+            (compiler-ir-summary-functions summary))))
+      (set!
+        out
+        (string-append
+          out
           (compiler-driver-ir-summary-line
             "externs"
-            (compiler-ir-summary-externs summary))
-          (string-append
-            (compiler-driver-ir-summary-line
-              "blocks"
-              (compiler-ir-summary-blocks summary))
-            (string-append
-              (compiler-driver-ir-summary-line
-                "instructions"
-                (compiler-ir-summary-instructions summary))
-              (string-append
-                (compiler-driver-ir-summary-line
-                  "vars"
-                  (compiler-ir-summary-vars summary))
-                (compiler-driver-ir-summary-line
-                  "score"
-                  (compiler-ir-summary-score summary))))))))))
+            (compiler-ir-summary-externs summary))))
+      (set!
+        out
+        (string-append
+          out
+          (compiler-driver-ir-summary-line
+            "blocks"
+            (compiler-ir-summary-blocks summary))))
+      (set!
+        out
+        (string-append
+          out
+          (compiler-driver-ir-summary-line
+            "instructions"
+            (compiler-ir-summary-instructions summary))))
+      (set!
+        out
+        (string-append
+          out
+          (compiler-driver-ir-summary-line
+            "vars"
+            (compiler-ir-summary-vars summary))))
+      (set!
+        out
+        (string-append
+          out
+          (compiler-driver-ir-summary-line
+            "empty-blocks"
+            (compiler-ir-summary-empty-blocks summary))))
+      (set!
+        out
+        (string-append
+          out
+          (compiler-driver-ir-summary-line
+            "max-instructions-function"
+            (compiler-ir-summary-max-instructions-function summary))))
+      (set!
+        out
+        (string-append
+          out
+          (compiler-driver-ir-summary-line
+            "max-instructions-block"
+            (compiler-ir-summary-max-instructions-block summary))))
+      (set!
+        out
+        (string-append
+          out
+          (compiler-driver-ir-summary-line
+            "call-arg-entries"
+            (compiler-ir-summary-call-arg-entries summary))))
+      (set!
+        out
+        (string-append
+          out
+          (compiler-driver-ir-summary-line
+            "phi-input-entries"
+            (compiler-ir-summary-phi-input-entries summary))))
+      (string-append
+        out
+        (compiler-driver-ir-summary-line
+          "score"
+          (compiler-ir-summary-score summary))))))
 
 (define (compiler-driver-emit-ir-summary-lowered-with-level
   [program : CompilerIrProgram]

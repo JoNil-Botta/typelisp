@@ -644,6 +644,11 @@
         "WithRegion { region: \""
         region
         (front-cat3 "\", body: [" (front-expr-list-render body) "] }"))]
+    [(AstExprWithEscape scratch body)
+      (front-cat3
+        "WithEscape { arena: "
+        (front-expr-render scratch)
+        (front-cat3 ", body: [" (front-expr-list-render body) "] }"))]
     [(AstExprWithResource bindings body)
       (front-cat3
         "WithResource { bindings: ["

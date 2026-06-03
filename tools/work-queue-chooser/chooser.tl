@@ -2,7 +2,7 @@
 ;#
 ;# Reads the combined `{"prs":[...],"issues":[...]}` JSON from stdin, classifies
 ;# each entry, skips PRs whose checks are still pending/running, weights the
-;# rest (PR review = 30, ready-for-implementation = 10, research/triage = 1,
+;# rest (PR review = 45, ready-for-implementation = 10, research/triage = 1,
 ;# +50 for a p0 label, +3 for a p1 label), uses system entropy to make a
 ;# weighted pick, and prints one action line:
 ;#
@@ -30,7 +30,7 @@
   2)
 
 (define review-weight : i64
-  30)
+  45)
 
 (define implement-weight : i64
   10)
@@ -349,6 +349,22 @@
             (+ implement-weight p1-priority-bonus))
             unit
             (panic "issue with only p1 should use p1 priority"))))]
+    [(ErrJson _) (panic "test JSON should parse")]))
+
+(test
+  chooser-pr-review-weight-is-raised
+  (match (json-parse
+    "{\"prs\":[{\"number\":20,\"title\":\"Review me\",\"statusCheckRollup\":[]}],\"issues\":[]}")
+    [(OkJson root)
+      (let
+        [cands : CandList (build-candidates root)]
+        (begin
+          (if (= (cand-count cands) 1)
+            unit
+            (panic "expected one PR candidate"))
+          (if (= (struct-get (cand-nth cands 0) weight) 45)
+            unit
+            (panic "PR review weight should be 45"))))]
     [(ErrJson _) (panic "test JSON should parse")]))
 
 ;: The action verb for a candidate kind.

@@ -973,6 +973,41 @@ EOF
     assert_stdout_empty
     assert_stderr_empty
 
+    LINK_METADATA_SOURCE="$SELFHOST_PLANNER_DIR/with space/link metadata file.tl"
+    LINK_METADATA_MODULE="$SELFHOST_PLANNER_DIR/with space/link metadata module.tl"
+    LINK_METADATA_OUTPUT="$SELFHOST_PLANNER_DIR/with space/link metadata program"
+    cat > "$LINK_METADATA_MODULE" <<EOF
+(extern ffi_add7 (:link-search "$LINK_LIB_DIR") (:link-lib "ffi_add7") : (-> i64 i64))
+EOF
+    cat > "$LINK_METADATA_SOURCE" <<'EOF'
+(import "link metadata module.tl")
+(define (main) : i64 (ffi_add7 35))
+EOF
+    run_cmd selfhost-build-tool-link-metadata "$SELFHOST_PLANNER_DIR/build-tool" --direct "$LINK_METADATA_SOURCE" -o "$LINK_METADATA_OUTPUT" --target linux-x86_64 --backend-mode scalar
+    assert_success
+    assert_stderr_empty
+    assert_contains "$out" "Generated: $LINK_METADATA_OUTPUT"
+    run_cmd selfhost-build-tool-link-metadata-output "$LINK_METADATA_OUTPUT"
+    assert_code 42
+    assert_stderr_empty
+    run_cmd selfhost-run-tool-link-metadata "$SELFHOST_PLANNER_DIR/run-tool" --direct "$LINK_METADATA_SOURCE" --target linux-x86_64 --backend-mode scalar
+    assert_code 42
+    assert_stdout_empty
+    assert_stderr_empty
+
+    PUBLIC_LINK_METADATA_OUTPUT="$SELFHOST_PLANNER_DIR/with space/public link metadata program"
+    run_cmd public-build-link-metadata "$COMPILER" build "$LINK_METADATA_SOURCE" -o "$PUBLIC_LINK_METADATA_OUTPUT" --target linux-x86_64
+    assert_success
+    assert_stderr_empty
+    assert_contains "$out" "Generated: $PUBLIC_LINK_METADATA_OUTPUT"
+    run_cmd public-build-link-metadata-output "$PUBLIC_LINK_METADATA_OUTPUT"
+    assert_code 42
+    assert_stderr_empty
+    run_cmd public-run-link-metadata "$COMPILER" run "$LINK_METADATA_SOURCE" --target linux-x86_64
+    assert_code 42
+    assert_stdout_empty
+    assert_stderr_empty
+
     run_cmd selfhost-build-tool-avx2-rejected "$SELFHOST_PLANNER_DIR/build-tool" --direct "$PLANNER_SOURCE" -o "$SELFHOST_PLANNER_DIR/with space/avx2 program" --target linux-x86_64 --backend-mode avx2
     assert_failure
     assert_stdout_empty

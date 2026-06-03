@@ -1151,6 +1151,16 @@
         [(OkSpecExprList rewritten state2)
           (OkSpecExpr (AstExprWithRegion region rewritten) state2)]
         [(ErrSpecExprList diag) (ErrSpecExpr diag)])]
+    [(AstExprWithEscape scratch body)
+      (match (spec-rewrite-expr scratch templates state)
+        [(OkSpecExpr rewritten-scratch scratch-state)
+          (match (spec-rewrite-expr-list body templates scratch-state)
+            [(OkSpecExprList rewritten-body body-state)
+              (OkSpecExpr
+                (AstExprWithEscape rewritten-scratch rewritten-body)
+                body-state)]
+            [(ErrSpecExprList diag) (ErrSpecExpr diag)])]
+        [(ErrSpecExpr diag) (ErrSpecExpr diag)])]
     [(AstExprWithResource bindings body)
       (OkSpecExpr (AstExprWithResource bindings body) state)]
     [(AstExprBox inner)
@@ -1461,6 +1471,15 @@
         [(OkSpecSubExprList rewritten)
           (OkSpecSubExpr (AstExprWithRegion region rewritten))]
         [(ErrSpecSubExprList diag) (ErrSpecSubExpr diag)])]
+    [(AstExprWithEscape scratch body)
+      (match (spec-substitute-values-expr scratch subs)
+        [(OkSpecSubExpr rewritten-scratch)
+          (match (spec-substitute-values-expr-list body subs)
+            [(OkSpecSubExprList rewritten-body)
+              (OkSpecSubExpr
+                (AstExprWithEscape rewritten-scratch rewritten-body))]
+            [(ErrSpecSubExprList diag) (ErrSpecSubExpr diag)])]
+        [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
     [(AstExprWithResource bindings body)
       (OkSpecSubExpr (AstExprWithResource bindings body))]
     [(AstExprBox inner)
@@ -1829,6 +1848,15 @@
         [(OkSpecSubExprList rewritten)
           (OkSpecSubExpr (AstExprWithRegion region rewritten))]
         [(ErrSpecSubExprList diag) (ErrSpecSubExpr diag)])]
+    [(AstExprWithEscape scratch body)
+      (match (spec-substitute-types-expr scratch subs)
+        [(OkSpecSubExpr rewritten-scratch)
+          (match (spec-substitute-types-expr-list body subs)
+            [(OkSpecSubExprList rewritten-body)
+              (OkSpecSubExpr
+                (AstExprWithEscape rewritten-scratch rewritten-body))]
+            [(ErrSpecSubExprList diag) (ErrSpecSubExpr diag)])]
+        [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
     [(AstExprWithResource bindings body)
       (OkSpecSubExpr (AstExprWithResource bindings body))]
     [(AstExprBox inner)

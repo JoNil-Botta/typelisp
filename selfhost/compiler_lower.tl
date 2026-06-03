@@ -5321,6 +5321,31 @@
         [(OkTcType left-ty) (OkTcType left-ty)]
         [(ErrTcType message) (ErrTcType message)])]))
 
+(define (lower-if-result-type-fast
+  [ctx : TcContext]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [then-branch : AstExpr]
+  [else-branch : AstExpr]) : ResultTcType
+  (match (lower-expr-result-type-fast ctx env type-env then-branch)
+    [(OkTcType then-ty)
+      (match (lower-expr-result-type-fast ctx env type-env else-branch)
+        [(OkTcType else-ty) (tc-merge-branch-type then-ty else-ty)]
+        [(ErrTcType message) (ErrTcType message)])]
+    [(ErrTcType message) (ErrTcType message)]))
+
+(define (lower-expr-list-result-type-fast
+  [ctx : TcContext]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [exprs : AstExprList]) : ResultTcType
+  (match exprs
+    [(AstExprNil) (OkTcType (AstTyUnit))]
+    [(AstExprCons expr rest)
+      (match rest
+        [(AstExprNil) (lower-expr-result-type-fast ctx env type-env expr)]
+        [_ (lower-expr-list-result-type-fast ctx env type-env rest)])]))
+
 (define (lower-expr-result-type-fast
   [ctx : TcContext]
   [env : SymI64Env]
@@ -5342,6 +5367,12 @@
       (lower-call-result-type-fast ctx env type-env func args)]
     [(AstExprBinary op left _)
       (lower-binary-result-type-fast ctx env type-env op left)]
+    [(AstExprIf _ then-branch else-branch)
+      (lower-if-result-type-fast ctx env type-env then-branch else-branch)]
+    [(AstExprBegin exprs)
+      (lower-expr-list-result-type-fast ctx env type-env exprs)]
+    [(AstExprUnsafe exprs)
+      (lower-expr-list-result-type-fast ctx env (tc-enter-unsafe type-env) exprs)]
     [_ (ErrTcType "lower: expression result type is not fast-pathable")]))
 
 (define (lower-expr-typechecked
@@ -5440,6 +5471,20 @@
             expr
             origin
             expr-ty)]
+        [(ErrTcType _)
+          (lower-expr-typechecked ctx state env type-env expr origin)])]
+    [(AstExprLet bindings body)
+      (match (lower-let-bindings ctx state env type-env bindings)
+        [(OkLowerEnv binding-state body-env body-type-env)
+          (lower-expr ctx binding-state body-env body-type-env body)]
+        [(ErrLowerEnv message) (ErrLowerExpr message)])]
+    [(AstExprBegin exprs) (lower-begin ctx state env type-env exprs)]
+    [(AstExprUnsafe exprs)
+      (lower-begin ctx state env (tc-enter-unsafe type-env) exprs)]
+    [(AstExprIf cond then-branch else-branch)
+      (match (lower-if-result-type-fast ctx env type-env then-branch else-branch)
+        [(OkTcType expr-ty)
+          (lower-if ctx state env type-env cond then-branch else-branch expr-ty)]
         [(ErrTcType _)
           (lower-expr-typechecked ctx state env type-env expr origin)])]
     [_ (lower-expr-typechecked ctx state env type-env expr origin)]))

@@ -5751,6 +5751,7 @@
       (lower-struct-get-result-type-fast ctx env type-env receiver field)]
     [(AstExprBoxGet box-expr)
       (lower-box-get-result-type-fast ctx env type-env box-expr)]
+    [(AstExprSet _ _) (OkTcType (AstTyUnit))]
     [_ (ErrTcType "lower: expression result type is not fast-pathable")]))
 
 (define (lower-expr-typechecked

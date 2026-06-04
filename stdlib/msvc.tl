@@ -9,7 +9,7 @@
 ;#
 ;# Usage: `(import "stdlib/msvc.tl")`
 ;#
-;; requires-stage0-symbol: fs-file-kind-status
+;; requires-stage0-symbol: fs-mkdir-status,fs-remove-file-status,fs-remove-dir-status,fs-rename-status,fs-read-dir-status,fs-read-dir,fs-file-kind-status,fs-file-size-status,fs-file-size
 ;# ```typelisp
 ;# (import "stdlib/msvc.tl")
 ;# (define tool : ResultMsvcTool

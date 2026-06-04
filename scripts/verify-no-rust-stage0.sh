@@ -110,7 +110,9 @@ stage1_driver_staged_symbols() {
         fs-remove-dir-status \
         fs-rename-status \
         fs-read-dir-status \
-        fs-read-dir
+        fs-read-dir \
+        fs-file-size-status \
+        fs-file-size
 }
 
 stage1_driver_prebuild_failed_for_staged_symbol() {

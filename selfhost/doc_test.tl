@@ -381,17 +381,16 @@
       i)))
 
 (define (doc-test-next-line-start [src : String] [line-end : i64] [n : i64]) : i64
-  (if (< line-end n)
+  (begin
+    (unless (< line-end n) (return line-end))
     (let
       [c : char (string-ref src line-end)]
-      (if (= c #\return')
-        (if (< (+ line-end 1) n)
-          (if (= (string-ref src (+ line-end 1)) #\newline')
-            (+ line-end 2)
-            (+ line-end 1))
-          (+ line-end 1))
-        (+ line-end 1)))
-    line-end))
+      (begin
+        (unless (= c #\return') (return (+ line-end 1)))
+        (unless (< (+ line-end 1) n) (return (+ line-end 1)))
+        (if (= (string-ref src (+ line-end 1)) #\newline')
+          (+ line-end 2)
+          (+ line-end 1))))))
 
 (define (doc-test-line-list-reverse-into
   [lines : DocTestLineList]
@@ -1715,17 +1714,17 @@
   [source-line : i64]
   [expect-error : bool]
   [code-fragment : String]) : bool
-  (if (= (doc-test-example-index example) index)
-    (if (= (doc-test-example-source-line example) source-line)
-      (if (=
+  (begin
+    (unless (= (doc-test-example-index example) index) (return false))
+    (unless
+      (= (doc-test-example-source-line example) source-line)
+      (return false))
+    (unless
+      (=
         (doc-test-expectation-error? (doc-test-example-expectation example))
         expect-error)
-        (doc-test-string-contains?
-          (doc-test-example-code example)
-          code-fragment)
-        false)
-      false)
-    false))
+      (return false))
+    (doc-test-string-contains? (doc-test-example-code example) code-fragment)))
 
 (define (doc-test-runnable-example-ok?
   [example : DocTestExample]
@@ -1735,22 +1734,21 @@
   [expected-stdout : String]
   [expected-stderr : String]
   [code-fragment : String]) : bool
-  (if (= (doc-test-example-index example) index)
-    (if (= (doc-test-example-source-line example) source-line)
-      (match (doc-test-example-expectation example)
-        [(DocTestExpectRun actual-exit actual-stdout actual-stderr)
-          (if (= actual-exit expected-exit)
-            (if (string-eq actual-stdout expected-stdout)
-              (if (string-eq actual-stderr expected-stderr)
-                (doc-test-string-contains?
-                  (doc-test-example-code example)
-                  code-fragment)
-                false)
-              false)
-            false)]
-        [_ false])
-      false)
-    false))
+  (begin
+    (unless (= (doc-test-example-index example) index) (return false))
+    (unless
+      (= (doc-test-example-source-line example) source-line)
+      (return false))
+    (match (doc-test-example-expectation example)
+      [(DocTestExpectRun actual-exit actual-stdout actual-stderr)
+        (begin
+          (unless (= actual-exit expected-exit) (return false))
+          (unless (string-eq actual-stdout expected-stdout) (return false))
+          (unless (string-eq actual-stderr expected-stderr) (return false))
+          (doc-test-string-contains?
+            (doc-test-example-code example)
+            code-fragment))]
+      [_ false])))
 
 (define (doc-test-error-list-has?
   [errors : DocTestErrorList]
@@ -1780,23 +1778,23 @@
     [(DocTestErrorCons
         first
         (DocTestErrorCons second (DocTestErrorCons third DocTestErrorNil)))
-      (if (= (doc-test-error-line first) 1)
-        (if (doc-test-string-contains?
-          (doc-test-error-message first)
-          "unsupported TypeLisp doctest option")
-          (if (= (doc-test-error-line second) 5)
-            (if (doc-test-string-contains?
-              (doc-test-error-message second)
-              "empty TypeLisp doctest fence")
-              (if (= (doc-test-error-line third) 8)
-                (doc-test-string-contains?
-                  (doc-test-error-message third)
-                  "unterminated TypeLisp doctest fence")
-                false)
-              false)
-            false)
-          false)
-        false)]
+      (begin
+        (unless (= (doc-test-error-line first) 1) (return false))
+        (unless
+          (doc-test-string-contains?
+            (doc-test-error-message first)
+            "unsupported TypeLisp doctest option")
+          (return false))
+        (unless (= (doc-test-error-line second) 5) (return false))
+        (unless
+          (doc-test-string-contains?
+            (doc-test-error-message second)
+            "empty TypeLisp doctest fence")
+          (return false))
+        (unless (= (doc-test-error-line third) 8) (return false))
+        (doc-test-string-contains?
+          (doc-test-error-message third)
+          "unterminated TypeLisp doctest fence"))]
     [_ false]))
 
 (define (doc-test-ordinary-comments-ok?) : bool
@@ -1805,6 +1803,26 @@
       (if (= (doc-test-example-list-count ordinary-examples) 0)
         (= (doc-test-error-list-count ordinary-errors) 0)
         false)]))
+
+(define (doc-test-legacy-item-source) : String
+  ";: Legacy item docs
+;: ```typelisp
+;: (define legacy : i64 1)
+;: ```
+(define legacy : i64 1)")
+
+(define (doc-test-legacy-item-smoke-ok?) : bool
+  (match (doc-test-extract-source (doc-test-legacy-item-source))
+    [(DocTestExtraction examples errors)
+      (begin
+        (unless (= (doc-test-error-list-count errors) 0) (return false))
+        (unless (= (doc-test-example-list-count examples) 1) (return false))
+        (match examples
+          [(DocTestExampleCons example DocTestExampleNil)
+            (doc-test-string-contains?
+              (doc-test-example-code example)
+              "(define legacy")]
+          [_ false]))]))
 
 (define (doc-test-malformed-smoke-ok?) : bool
   (match (doc-test-extract-source (doc-test-malformed-source))
@@ -1818,82 +1836,107 @@
 (define (doc-test-runnable-smoke-ok?) : bool
   (match (doc-test-extract-source (doc-test-runnable-source))
     [(DocTestExtraction examples errors)
-      (if (= (doc-test-error-list-count errors) 0)
-        (if (= (doc-test-example-list-count examples) 2)
-          (match examples
-            [(DocTestExampleCons
-                first
-                (DocTestExampleCons second DocTestExampleNil))
-              (if (doc-test-runnable-example-ok?
-                first
-                1
-                2
-                0
-                "hello\n"
-                "error\tline\r"
-                "(define (main)")
+      (begin
+        (unless (= (doc-test-error-list-count errors) 0) (return false))
+        (unless (= (doc-test-example-list-count examples) 2) (return false))
+        (match examples
+          [(DocTestExampleCons
+              first
+              (DocTestExampleCons second DocTestExampleNil))
+            (begin
+              (unless
                 (doc-test-runnable-example-ok?
-                  second
+                  first
+                  1
                   2
-                  13
-                  42
-                  ""
-                  ""
+                  0
+                  "hello\n"
+                  "error\tline\r"
                   "(define (main)")
-                false)]
-            [_ false])
-          false)
-        false)]))
+                (return false))
+              (doc-test-runnable-example-ok?
+                second
+                2
+                13
+                42
+                ""
+                ""
+                "(define (main)"))]
+          [_ false]))]))
 
 (define (doc-test-runnable-malformed-smoke-ok?) : bool
   (match (doc-test-extract-source (doc-test-runnable-malformed-source))
     [(DocTestExtraction examples errors)
-      (if (= (doc-test-example-list-count examples) 0)
-        (if (= (doc-test-error-list-count errors) 5)
-          (if (doc-test-error-list-has? errors 1 "cannot be combined")
-            (if (doc-test-error-list-has? errors 4 "cannot be combined")
-              (if (doc-test-error-list-has? errors 8 "must be an integer")
-                (if (doc-test-error-list-has? errors 12 "output metadata")
-                  (doc-test-error-list-has? errors 14 "requires doctest-exit")
-                  false)
-                false)
-              false)
-            false)
-          false)
-        false)]))
+      (begin
+        (unless (= (doc-test-example-list-count examples) 0) (return false))
+        (unless (= (doc-test-error-list-count errors) 5) (return false))
+        (unless
+          (doc-test-error-list-has? errors 1 "cannot be combined")
+          (return false))
+        (unless
+          (doc-test-error-list-has? errors 4 "cannot be combined")
+          (return false))
+        (unless
+          (doc-test-error-list-has? errors 8 "must be an integer")
+          (return false))
+        (unless
+          (doc-test-error-list-has? errors 12 "output metadata")
+          (return false))
+        (doc-test-error-list-has? errors 14 "requires doctest-exit"))]))
 
 (define (doc-test-smoke) : i64
   (match (doc-test-extract-source (doc-test-smoke-source))
     [(DocTestExtraction examples errors)
-      (if (= (doc-test-error-list-count errors) 0)
-        (if (= (doc-test-example-list-count examples) 2)
-          (if (doc-test-smoke-examples-ok? examples)
-            (if (doc-test-ordinary-comments-ok?)
-              (if (doc-test-malformed-smoke-ok?)
-                (if (doc-test-runnable-smoke-ok?)
-                  (if (doc-test-runnable-malformed-smoke-ok?)
-                    42
-                    (begin
-                      (panic "doc-test: runnable malformed smoke mismatch")
-                      0))
-                  (begin
-                    (panic "doc-test: runnable smoke mismatch")
-                    0))
-                (begin
-                  (panic "doc-test: malformed smoke mismatch")
-                  0))
-              (begin
-                (panic "doc-test: ordinary comment smoke mismatch")
-                0))
+      (begin
+        (unless
+          (= (doc-test-error-list-count errors) 0)
+          (return
+            (begin
+              (panic "doc-test: unexpected extraction error")
+              0)))
+        (unless
+          (= (doc-test-example-list-count examples) 2)
+          (return
+            (begin
+              (panic "doc-test: example count mismatch")
+              0)))
+        (unless
+          (doc-test-smoke-examples-ok? examples)
+          (return
             (begin
               (panic "doc-test: example metadata mismatch")
-              0))
-          (begin
-            (panic "doc-test: example count mismatch")
-            0))
-        (begin
-          (panic "doc-test: unexpected extraction error")
-          0))]))
+              0)))
+        (unless
+          (doc-test-ordinary-comments-ok?)
+          (return
+            (begin
+              (panic "doc-test: ordinary comment smoke mismatch")
+              0)))
+        (unless
+          (doc-test-legacy-item-smoke-ok?)
+          (return
+            (begin
+              (panic "doc-test: legacy item smoke mismatch")
+              0)))
+        (unless
+          (doc-test-malformed-smoke-ok?)
+          (return
+            (begin
+              (panic "doc-test: malformed smoke mismatch")
+              0)))
+        (unless
+          (doc-test-runnable-smoke-ok?)
+          (return
+            (begin
+              (panic "doc-test: runnable smoke mismatch")
+              0)))
+        (unless
+          (doc-test-runnable-malformed-smoke-ok?)
+          (return
+            (begin
+              (panic "doc-test: runnable malformed smoke mismatch")
+              0)))
+        42)]))
 
 ;; --- runner self-test (#724) ------------------------------------------------
 ;; A normal example whose body fails to typecheck (i64 return, bool body).
@@ -1957,7 +2000,7 @@
 ;# ```
 ")
 
-(define (doc-test-run-runnable-missing-main-source) : String
+(define (doc-test-run-runnable-implicit-main-source) : String
   ";# ```typelisp run
 ;# ;; doctest-exit: 0
 ;# (define answer : i64 1)
@@ -1982,15 +2025,15 @@
       (doc-test-run-source "docs/bad.tl" (doc-test-run-unexpected-error-source))]
     (match (doc-test-run-report-failures report)
       [(DocTestRunFailureCons failure (DocTestRunFailureNil))
-        (if (= (doc-test-run-failure-index failure) 1)
-          (if (= (doc-test-run-failure-line failure) 1)
-            (if (string-eq (doc-test-run-failure-path failure) "docs/bad.tl")
-              (doc-test-string-contains?
-                (doc-test-run-failure-message failure)
-                "return type mismatch")
-              false)
-            false)
-          false)]
+        (begin
+          (unless (= (doc-test-run-failure-index failure) 1) (return false))
+          (unless (= (doc-test-run-failure-line failure) 1) (return false))
+          (unless
+            (string-eq (doc-test-run-failure-path failure) "docs/bad.tl")
+            (return false))
+          (doc-test-string-contains?
+            (doc-test-run-failure-message failure)
+            "return type mismatch"))]
       [_ false])))
 
 ;; An `expect-error` example that checks successfully is a failure.
@@ -2059,6 +2102,17 @@
       (doc-test-run-report-ok? report)
       false)))
 
+(define (doc-test-run-smoke-runnable-implicit-main-ok?) : bool
+  (let
+    [report : DocTestRunReport
+      (doc-test-run-source-with-roots
+        "docs/run.tl"
+        (doc-test-run-runnable-implicit-main-source)
+        (doc-test-run-smoke-stdlib-roots))]
+    (if (= (doc-test-run-report-count report) 1)
+      (doc-test-run-report-ok? report)
+      false)))
+
 (define (doc-test-run-single-failure-message-contains?
   [source : String]
   [fragment : String]) : bool
@@ -2078,47 +2132,50 @@
       false)))
 
 (define (doc-test-run-smoke-runnable-failures-ok?) : bool
-  (if (doc-test-run-single-failure-message-contains?
-    (doc-test-run-runnable-wrong-exit-source)
-    "expected exit: 0")
-    (if (doc-test-run-single-failure-message-contains?
-      (doc-test-run-runnable-wrong-exit-source)
-      "actual exit: 7")
-      (if (doc-test-run-single-failure-message-contains?
+  (begin
+    (unless
+      (doc-test-run-single-failure-message-contains?
+        (doc-test-run-runnable-wrong-exit-source)
+        "expected exit: 0")
+      (return false))
+    (unless
+      (doc-test-run-single-failure-message-contains?
+        (doc-test-run-runnable-wrong-exit-source)
+        "actual exit: 7")
+      (return false))
+    (unless
+      (doc-test-run-single-failure-message-contains?
         (doc-test-run-runnable-stdout-mismatch-source)
         "expected stdout:")
-        (if (doc-test-run-single-failure-message-contains?
-          (doc-test-run-runnable-stdout-mismatch-source)
-          "actual\n")
-          (if (doc-test-run-single-failure-message-contains?
-            (doc-test-run-runnable-stderr-mismatch-source)
-            "expected stderr:")
-            (if (doc-test-run-single-failure-message-contains?
-              (doc-test-run-runnable-stderr-mismatch-source)
-              "actual-error\n")
-              (if (doc-test-run-single-failure-message-contains?
-                (doc-test-run-runnable-compile-failure-source)
-                "runnable compile failed")
-                (if (doc-test-run-single-failure-message-contains?
-                  (doc-test-run-runnable-missing-main-source)
-                  "runnable compile failed")
-                  true
-                  (doc-test-run-single-failure-message-contains?
-                    (doc-test-run-runnable-missing-main-source)
-                    "runnable build failed"))
-                false)
-              false)
-            false)
-          false)
-        false)
-      false)
-    false))
+      (return false))
+    (unless
+      (doc-test-run-single-failure-message-contains?
+        (doc-test-run-runnable-stdout-mismatch-source)
+        "actual\n")
+      (return false))
+    (unless
+      (doc-test-run-single-failure-message-contains?
+        (doc-test-run-runnable-stderr-mismatch-source)
+        "expected stderr:")
+      (return false))
+    (unless
+      (doc-test-run-single-failure-message-contains?
+        (doc-test-run-runnable-stderr-mismatch-source)
+        "actual-error\n")
+      (return false))
+    (unless
+      (doc-test-run-single-failure-message-contains?
+        (doc-test-run-runnable-compile-failure-source)
+        "runnable compile failed")
+      (return false))
+    true))
 
 (define (doc-test-run-smoke-runnable-ok?) : bool
   (if (doc-test-runnable-supported?)
-    (if (doc-test-run-smoke-runnable-exec-pass-ok?)
-      (doc-test-run-smoke-runnable-failures-ok?)
-      false)
+    (begin
+      (unless (doc-test-run-smoke-runnable-exec-pass-ok?) (return false))
+      (unless (doc-test-run-smoke-runnable-implicit-main-ok?) (return false))
+      (doc-test-run-smoke-runnable-failures-ok?))
     (doc-test-run-smoke-runnable-unsupported-ok?)))
 
 ;; The rendered failure carries the path, line, and message.
@@ -2147,56 +2204,74 @@ typecheck: return type mismatch"))]
       (doc-test-run-source "docs/ok.tl" (doc-test-smoke-source))]
     [fail-report : DocTestRunReport
       (doc-test-run-source "docs/bad.tl" (doc-test-run-unexpected-error-source))]
-    (if (= (doc-test-run-report-status pass-report) 0)
-      (if (string-eq
-        (doc-test-run-report-render pass-report)
-        "Doc tests passed: 2 example(s)")
-        (if (= (doc-test-run-report-status fail-report) 1)
-          (if (doc-test-string-contains?
-            (doc-test-run-report-render fail-report)
-            "doc tests failed: 1 failure(s) across 1 example(s)")
-            (doc-test-string-contains?
-              (doc-test-run-report-render fail-report)
-              "return type mismatch")
-            false)
-          false)
-        false)
-      false)))
+    (begin
+      (unless (= (doc-test-run-report-status pass-report) 0) (return false))
+      (unless
+        (string-eq
+          (doc-test-run-report-render pass-report)
+          "Doc tests passed: 2 example(s)")
+        (return false))
+      (unless (= (doc-test-run-report-status fail-report) 1) (return false))
+      (unless
+        (doc-test-string-contains?
+          (doc-test-run-report-render fail-report)
+          "doc tests failed: 1 failure(s) across 1 example(s)")
+        (return false))
+      (doc-test-string-contains?
+        (doc-test-run-report-render fail-report)
+        "return type mismatch"))))
 
 (define (doc-test-run-smoke) : i64
-  (if (doc-test-run-smoke-pass-ok?)
-    (if (doc-test-run-smoke-unexpected-error-ok?)
-      (if (doc-test-run-smoke-unexpected-pass-ok?)
-        (if (doc-test-run-smoke-malformed-ok?)
-          (if (doc-test-run-smoke-empty-ok?)
-            (if (doc-test-run-smoke-runnable-ok?)
-              (if (doc-test-run-smoke-render-ok?)
-                (if (doc-test-run-smoke-report-render-ok?)
-                  42
-                  (begin
-                    (panic "doc-test-run: report render mismatch")
-                    0))
-                (begin
-                  (panic "doc-test-run: render mismatch")
-                  0))
-              (begin
-                (panic "doc-test-run: runnable execution mismatch")
-                0))
-            (begin
-              (panic "doc-test-run: empty-source mismatch")
-              0))
-          (begin
-            (panic "doc-test-run: malformed mismatch")
-            0))
+  (begin
+    (unless
+      (doc-test-run-smoke-pass-ok?)
+      (return
+        (begin
+          (panic "doc-test-run: pass-case mismatch")
+          0)))
+    (unless
+      (doc-test-run-smoke-unexpected-error-ok?)
+      (return
+        (begin
+          (panic "doc-test-run: unexpected-error mismatch")
+          0)))
+    (unless
+      (doc-test-run-smoke-unexpected-pass-ok?)
+      (return
         (begin
           (panic "doc-test-run: unexpected-pass mismatch")
-          0))
-      (begin
-        (panic "doc-test-run: unexpected-error mismatch")
-        0))
-    (begin
-      (panic "doc-test-run: pass-case mismatch")
-      0)))
+          0)))
+    (unless
+      (doc-test-run-smoke-malformed-ok?)
+      (return
+        (begin
+          (panic "doc-test-run: malformed mismatch")
+          0)))
+    (unless
+      (doc-test-run-smoke-empty-ok?)
+      (return
+        (begin
+          (panic "doc-test-run: empty-source mismatch")
+          0)))
+    (unless
+      (doc-test-run-smoke-runnable-ok?)
+      (return
+        (begin
+          (panic "doc-test-run: runnable execution mismatch")
+          0)))
+    (unless
+      (doc-test-run-smoke-render-ok?)
+      (return
+        (begin
+          (panic "doc-test-run: render mismatch")
+          0)))
+    (unless
+      (doc-test-run-smoke-report-render-ok?)
+      (return
+        (begin
+          (panic "doc-test-run: report render mismatch")
+          0)))
+    42))
 
 ;; Combined smoke: extraction (#722) then runner (#724). Returns 42 iff both
 ;; self-test batteries pass.

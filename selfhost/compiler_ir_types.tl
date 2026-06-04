@@ -1823,16 +1823,11 @@
     "  tailcall fact_loop(%3, 1) : i64"))
 
 (define (compiler-ir-effect-self-test) : i64
-  (if (compiler-ir-instruction-effects-ok?)
-    (if (compiler-ir-vector-mask-effects-ok?)
-      (if (compiler-ir-runtime-effects-ok?)
-        (if (compiler-ir-effect-predicates-ok?)
-          (if (compiler-ir-display-self-test-ok?)
-            (if (compiler-ir-tail-call-render-ok?)
-              42
-              1)
-            1)
-          1)
-        1)
-      1)
-    1))
+  (begin
+    (unless (compiler-ir-instruction-effects-ok?) (return 1))
+    (unless (compiler-ir-vector-mask-effects-ok?) (return 1))
+    (unless (compiler-ir-runtime-effects-ok?) (return 1))
+    (unless (compiler-ir-effect-predicates-ok?) (return 1))
+    (unless (compiler-ir-display-self-test-ok?) (return 1))
+    (unless (compiler-ir-tail-call-render-ok?) (return 1))
+    42))

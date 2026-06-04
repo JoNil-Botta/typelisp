@@ -35,9 +35,6 @@ if [ ! -x "$COMPILER" ]; then
 fi
 
 # Expected exit codes for each example program.
-# NB: the self-hosted backend does NOT yet synthesize an implicit main for a
-# main-less program (Rust parity gap #1659), so the one main-less example
-# (token.tl) is skipped in the loop below rather than run standalone.
 expected_exit() {
     case "$1" in
         calc) echo 14 ;;
@@ -67,14 +64,6 @@ failed=0
 
 for source in "$ROOT/examples/"*.tl; do
     name=$(basename "$source" .tl)
-    if [ "$name" = token ]; then
-        # token.tl is a deliberately main-less importable module; running it
-        # standalone needs implicit-main synthesis (Rust parity gap #1659). Its
-        # token-model logic stays covered via calc.tl's import. Re-enable the
-        # standalone run when #1659 lands.
-        echo "[token] skipped: main-less module pending implicit-main (#1659)"
-        continue
-    fi
     want=$(expected_exit "$name")
     asm="$WORKDIR/$name.s"
     obj="$WORKDIR/$name.o"

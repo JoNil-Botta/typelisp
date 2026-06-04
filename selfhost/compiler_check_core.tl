@@ -124,24 +124,35 @@
     [(ErrCompilerLoad _) false]))
 
 (define (compiler-check-self-test) : i64
-  (if (= (compiler-load-self-test) 42)
-    (if (compiler-check-virtual-import-ok?)
-      (if (compiler-check-export-ok?)
-        (if (compiler-check-virtual-error-ok?)
-          (if (compiler-check-seen-root-ok?)
-            42
-            (begin
-              (panic "compiler-check: seen root smoke mismatch")
-              0))
-          (begin
-            (panic "compiler-check: virtual diagnostic smoke mismatch")
-            0))
+  (begin
+    (unless
+      (= (compiler-load-self-test) 42)
+      (return
+        (begin
+          (panic "compiler-check: loader smoke mismatch")
+          0)))
+    (unless
+      (compiler-check-virtual-import-ok?)
+      (return
+        (begin
+          (panic "compiler-check: virtual import smoke mismatch")
+          0)))
+    (unless
+      (compiler-check-export-ok?)
+      (return
         (begin
           (panic "compiler-check: export smoke mismatch")
-          0))
-      (begin
-        (panic "compiler-check: virtual import smoke mismatch")
-        0))
-    (begin
-      (panic "compiler-check: loader smoke mismatch")
-      0)))
+          0)))
+    (unless
+      (compiler-check-virtual-error-ok?)
+      (return
+        (begin
+          (panic "compiler-check: virtual diagnostic smoke mismatch")
+          0)))
+    (unless
+      (compiler-check-seen-root-ok?)
+      (return
+        (begin
+          (panic "compiler-check: seen root smoke mismatch")
+          0)))
+    42))

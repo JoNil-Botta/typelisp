@@ -285,7 +285,7 @@ fi
 # wrapper, so its typecheck diagnostics use the selfhost wording (no Rust
 # `error[E0200]`/`got <a> -> <b>` annotations). Treat cli.tl (host-action
 # disabled) like the wrapper for those diagnostic-text branches, while keeping
-# the full Rust-diagnostic coverage on the Rust lane (#1327).
+# legacy diagnostic expectations isolated to compatibility branches (#1327).
 if [ "$IS_STAGE1_WRAPPER" -eq 1 ] || [ "$HOST_ACTION_ENABLED" -eq 0 ]; then
     SELFHOST_FRONTEND_DIAGNOSTICS=1
 else
@@ -721,9 +721,9 @@ if [ "$IS_STAGE1_WRAPPER" -eq 1 ]; then
     assert_contains "$err" "return type mismatch"
 elif [ "$HOST_ACTION_ENABLED" -eq 0 ]; then
     # The single-binary cli.tl stage0 accepts the inexact f32 literal silently
-    # (it does not yet emit the Rust lane's W0200 "not exactly representable"
-    # warning). Assert only the typecheck success until that warning is ported
-    # to the selfhost frontend (#1327).
+    # (it does not yet emit the legacy W0200 "not exactly representable"
+    # warning). Assert only the typecheck success until that warning is
+    # implemented in the selfhost frontend (#1327).
     assert_success
     assert_contains "$out" "Type checking passed!"
 else
@@ -734,7 +734,7 @@ else
 fi
 
 # Extended `run` execution coverage retained for lanes that support the legacy
-# Rust/SIMD expectations. Current selfhost direct build/run coverage lives in
+# SIMD expectations. Current selfhost direct build/run coverage lives in
 # scripts/verify-selfhost-cli-build-run.sh, which runs against a fresh cli.tl.
 if [ "$HOST_ACTION_ENABLED" -eq 1 ]; then
 RUN_MATRIX="$WORKDIR/run-matrix"
@@ -906,6 +906,7 @@ if [ "$HOST_OS" = linux ]; then
     mkdir -p "$SELFHOST_PLANNER_DIR/with space" "$SELFHOST_PLANNER_DIR/stdlib one"
     command -v as >/dev/null 2>&1 || fail "missing assembler: as"
     command -v ld >/dev/null 2>&1 || fail "missing linker: ld"
+    command -v cc >/dev/null 2>&1 || fail "missing C compiler: cc"
     command -v ar >/dev/null 2>&1 || fail "missing archiver: ar"
     build_linux_cli_tool selfhost-build-tool selfhost/build.tl "$SELFHOST_PLANNER_DIR/build-tool"
     build_linux_cli_tool selfhost-run-tool selfhost/run.tl "$SELFHOST_PLANNER_DIR/run-tool"
@@ -973,37 +974,39 @@ EOF
     assert_stdout_empty
     assert_stderr_empty
 
-    LINK_METADATA_SOURCE="$SELFHOST_PLANNER_DIR/with space/link metadata file.tl"
-    LINK_METADATA_MODULE="$SELFHOST_PLANNER_DIR/with space/link metadata module.tl"
-    LINK_METADATA_OUTPUT="$SELFHOST_PLANNER_DIR/with space/link metadata program"
-    cat > "$LINK_METADATA_MODULE" <<EOF
-(extern ffi_add7 (:link-search "$LINK_LIB_DIR") (:link-lib "ffi_add7") : (-> i64 i64))
+    cat > "$LINK_LIB_DIR/ffi_ctor.c" <<'EOF'
+static long ffi_ctor_value_state = 0;
+
+__attribute__((constructor)) static void ffi_ctor_init(void) {
+    ffi_ctor_value_state = 42;
+}
+
+long ffi_ctor_value(void) {
+    return ffi_ctor_value_state;
+}
 EOF
-    cat > "$LINK_METADATA_SOURCE" <<'EOF'
-(import "link metadata module.tl")
-(define (main) : i64 (ffi_add7 35))
-EOF
-    run_cmd selfhost-build-tool-link-metadata "$SELFHOST_PLANNER_DIR/build-tool" --direct "$LINK_METADATA_SOURCE" -o "$LINK_METADATA_OUTPUT" --target linux-x86_64 --backend-mode scalar
+    run_cmd link-lib-ctor-compile cc -c "$LINK_LIB_DIR/ffi_ctor.c" -o "$LINK_LIB_DIR/ffi_ctor.o"
     assert_success
+    assert_stdout_empty
     assert_stderr_empty
-    assert_contains "$out" "Generated: $LINK_METADATA_OUTPUT"
-    run_cmd selfhost-build-tool-link-metadata-output "$LINK_METADATA_OUTPUT"
-    assert_code 42
-    assert_stderr_empty
-    run_cmd selfhost-run-tool-link-metadata "$SELFHOST_PLANNER_DIR/run-tool" --direct "$LINK_METADATA_SOURCE" --target linux-x86_64 --backend-mode scalar
-    assert_code 42
+    run_cmd link-lib-ctor-archive ar rcs "$LINK_LIB_DIR/libffi_ctor.a" "$LINK_LIB_DIR/ffi_ctor.o"
+    assert_success
     assert_stdout_empty
     assert_stderr_empty
 
-    PUBLIC_LINK_METADATA_OUTPUT="$SELFHOST_PLANNER_DIR/with space/public link metadata program"
-    run_cmd public-build-link-metadata "$COMPILER" build "$LINK_METADATA_SOURCE" -o "$PUBLIC_LINK_METADATA_OUTPUT" --target linux-x86_64
-    assert_success
-    assert_stderr_empty
-    assert_contains "$out" "Generated: $PUBLIC_LINK_METADATA_OUTPUT"
-    run_cmd public-build-link-metadata-output "$PUBLIC_LINK_METADATA_OUTPUT"
+    CTOR_SOURCE="$SELFHOST_PLANNER_DIR/with space/ctor file.tl"
+    cat > "$CTOR_SOURCE" <<'EOF'
+(extern ffi_ctor_value : (-> i64))
+(define (main) : i64
+  (if (string-eq (int->string (ffi_ctor_value)) "42")
+    (ffi_ctor_value)
+    1))
+EOF
+    run_cmd selfhost-run-tool-link-ctor "$SELFHOST_PLANNER_DIR/run-tool" --direct "$CTOR_SOURCE" --target linux-x86_64 --backend-mode scalar --link-search "$LINK_LIB_DIR" --link-lib ffi_ctor
     assert_code 42
+    assert_stdout_empty
     assert_stderr_empty
-    run_cmd public-run-link-metadata "$COMPILER" run "$LINK_METADATA_SOURCE" --target linux-x86_64
+    run_cmd public-run-link-ctor "$COMPILER" run "$CTOR_SOURCE" --target linux-x86_64 --link-search "$LINK_LIB_DIR" --link-lib ffi_ctor
     assert_code 42
     assert_stdout_empty
     assert_stderr_empty
@@ -1271,11 +1274,11 @@ while IFS='|' read -r diag_name diag_command diag_expect || [ -n "$diag_name" ];
     cp "$source" "$work_source"
 
     # The selfhost lowerer (cli.tl / stage1 wrapper) does not yet reject every
-    # construct the Rust backend rejects: it currently lowers aggregate returns
-    # such as `tuple_return` / `array_return` successfully, so the expected-failure
-    # backend diagnostic does not hold for the selfhost frontend. Skip those
-    # known-divergent cases until the selfhost lowerer grows the matching
-    # rejection (#1699); other cases still run.
+    # construct the former Rust backend rejected: it currently lowers aggregate
+    # returns such as `tuple_return` / `array_return` successfully, so the
+    # expected-failure backend diagnostic does not hold for the selfhost
+    # frontend. Skip those known-divergent cases until the selfhost lowerer
+    # grows the matching rejection (#1699); other cases still run.
     if [ "$SELFHOST_FRONTEND_DIAGNOSTICS" -eq 1 ]; then
         case "$diag_name" in
             tuple_return | array_return)
@@ -1304,7 +1307,7 @@ while IFS='|' read -r diag_name diag_command diag_expect || [ -n "$diag_name" ];
 
     if [ "$SELFHOST_FRONTEND_DIAGNOSTICS" -eq 1 ]; then
         # cli.tl and the stage1 wrapper share the selfhost lowerer, which reports
-        # a generic "lower: unsupported expression" rather than the Rust backend's
+        # a generic "lower: unsupported expression" rather than the legacy
         # per-case diagnostics; assert the generic message here (#1327).
         assert_contains "$err" "lower: unsupported expression"
     else

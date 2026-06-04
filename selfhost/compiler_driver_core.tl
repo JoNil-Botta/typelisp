@@ -74,21 +74,44 @@
   [mode : CompilerBackendMode]
   [opt-level : i64]
   [emit-entry : bool]) : ResultCompilerDriver
+  (compiler-driver-emit-lowered-with-level-mode-entry-and-crt
+    input-path
+    program
+    spans
+    target
+    has-target
+    mode
+    opt-level
+    emit-entry
+    false))
+
+(define (compiler-driver-emit-lowered-with-level-mode-entry-and-crt
+  [input-path : String]
+  [program : CompilerIrProgram]
+  [spans : CompilerSourceSpans]
+  [target : CompilerBackendTarget]
+  [has-target : bool]
+  [mode : CompilerBackendMode]
+  [opt-level : i64]
+  [emit-entry : bool]
+  [crt-entry : bool]) : ResultCompilerDriver
   (match (optimize-program-with-spans-and-level program spans opt-level)
     [(CompilerOptimizedProgram optimized optimized-spans)
       (match (if has-target
-        (compiler-backend-emit-program-target-with-mode
+        (compiler-backend-emit-program-target-with-mode-and-crt
           optimized
           target
           mode
           optimized-spans
-          emit-entry)
-        (compiler-backend-emit-program-target-with-mode
+          emit-entry
+          crt-entry)
+        (compiler-backend-emit-program-target-with-mode-and-crt
           optimized
           (BackendTargetLinux)
           mode
           optimized-spans
-          emit-entry))
+          emit-entry
+          crt-entry))
         [(OkCompilerBackend asm) (OkCompilerDriver asm)]
         [(ErrCompilerBackend diag)
           (ErrCompilerDriver (compiler-diagnostic-with-path diag input-path))])]))
@@ -136,14 +159,15 @@
   [stdlib-roots : CompilerLoadRootList]
   [opt-level : i64]
   [mode : CompilerBackendMode]) : ResultCompilerDriver
-  (compiler-driver-emit-file-with-target-roots-level-mode-and-cfg
+  (compiler-driver-emit-file-with-target-roots-level-mode-cfg-and-crt
     input-path
     target
     has-target
     stdlib-roots
     opt-level
     mode
-    (compiler-cfg-empty)))
+    (compiler-cfg-empty)
+    false))
 
 (define (compiler-driver-emit-file-with-target-roots-level-mode-and-cfg
   [input-path : String]
@@ -153,6 +177,43 @@
   [opt-level : i64]
   [mode : CompilerBackendMode]
   [cfgs : SymI64Env]) : ResultCompilerDriver
+  (compiler-driver-emit-file-with-target-roots-level-mode-cfg-and-crt
+    input-path
+    target
+    has-target
+    stdlib-roots
+    opt-level
+    mode
+    cfgs
+    false))
+
+(define (compiler-driver-emit-file-with-target-roots-level-mode-and-crt
+  [input-path : String]
+  [target : CompilerBackendTarget]
+  [has-target : bool]
+  [stdlib-roots : CompilerLoadRootList]
+  [opt-level : i64]
+  [mode : CompilerBackendMode]
+  [crt-entry : bool]) : ResultCompilerDriver
+  (compiler-driver-emit-file-with-target-roots-level-mode-cfg-and-crt
+    input-path
+    target
+    has-target
+    stdlib-roots
+    opt-level
+    mode
+    (compiler-cfg-empty)
+    crt-entry))
+
+(define (compiler-driver-emit-file-with-target-roots-level-mode-cfg-and-crt
+  [input-path : String]
+  [target : CompilerBackendTarget]
+  [has-target : bool]
+  [stdlib-roots : CompilerLoadRootList]
+  [opt-level : i64]
+  [mode : CompilerBackendMode]
+  [cfgs : SymI64Env]
+  [crt-entry : bool]) : ResultCompilerDriver
   (match (compiler-load-file-with-paths-and-roots-cfg
     input-path
     (sym-i64-empty)
@@ -168,7 +229,7 @@
         ;; optimization so backend diagnostics report surviving instruction
         ;; locations when a rewrite can preserve them.
         [(OkCompilerLower program spans)
-          (compiler-driver-emit-lowered-with-level-mode-and-entry
+          (compiler-driver-emit-lowered-with-level-mode-entry-and-crt
             input-path
             program
             spans
@@ -176,7 +237,8 @@
             has-target
             mode
             opt-level
-            true)]
+            true
+            crt-entry)]
         [(ErrCompilerLower diag) (ErrCompilerDriver diag)])]
     [(ErrCompilerLoadWithPaths diag) (ErrCompilerDriver diag)]))
 
@@ -189,6 +251,50 @@
   [manifest-dir : String]
   [deps : CompilerPkgDepList]
   [emit-entry : bool]) : ResultCompilerDriver
+  (compiler-driver-emit-package-file-with-target-roots-level-and-crt
+    input-path
+    target
+    has-target
+    stdlib-roots
+    opt-level
+    manifest-dir
+    deps
+    emit-entry
+    false))
+
+(define (compiler-driver-emit-package-file-with-target-roots-level-and-crt
+  [input-path : String]
+  [target : CompilerBackendTarget]
+  [has-target : bool]
+  [stdlib-roots : CompilerLoadRootList]
+  [opt-level : i64]
+  [manifest-dir : String]
+  [deps : CompilerPkgDepList]
+  [emit-entry : bool]
+  [crt-entry : bool]) : ResultCompilerDriver
+  (compiler-driver-emit-package-file-with-target-roots-level-mode-and-crt
+    input-path
+    target
+    has-target
+    stdlib-roots
+    opt-level
+    (BackendModeScalar)
+    manifest-dir
+    deps
+    emit-entry
+    crt-entry))
+
+(define (compiler-driver-emit-package-file-with-target-roots-level-mode-and-crt
+  [input-path : String]
+  [target : CompilerBackendTarget]
+  [has-target : bool]
+  [stdlib-roots : CompilerLoadRootList]
+  [opt-level : i64]
+  [mode : CompilerBackendMode]
+  [manifest-dir : String]
+  [deps : CompilerPkgDepList]
+  [emit-entry : bool]
+  [crt-entry : bool]) : ResultCompilerDriver
   (match (compiler-load-package-file-with-paths-and-roots
     input-path
     (sym-i64-empty)
@@ -196,19 +302,22 @@
     manifest-dir
     deps)
     [(OkCompilerLoadWithPaths decls paths _ _)
-      (match (lower-compiler-program-with-decl-paths
+      (match (lower-compiler-program-with-decl-paths-mode
         input-path
         (AstProgram decls)
-        paths)
+        paths
+        (compiler-driver-lower-mode-for-backend mode))
         [(OkCompilerLower program spans)
-          (compiler-driver-emit-lowered-with-level-and-entry
+          (compiler-driver-emit-lowered-with-level-mode-entry-and-crt
             input-path
             program
             spans
             target
             has-target
+            mode
             opt-level
-            emit-entry)]
+            emit-entry
+            crt-entry)]
         [(ErrCompilerLower diag) (ErrCompilerDriver diag)])]
     [(ErrCompilerLoadWithPaths diag) (ErrCompilerDriver diag)]))
 

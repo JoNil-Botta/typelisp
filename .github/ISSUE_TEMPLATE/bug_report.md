@@ -23,9 +23,11 @@ What actually happens. Include full compiler output.
 **Selfhost implementation target**
 If this affects compiler, tooling, runtime, or stdlib behavior, where should the
 TypeLisp-owned fix or regression fixture live? Prefer `selfhost/...` or
-`stdlib/...`. If Rust must change temporarily, link the no-Rust migration issue.
+`stdlib/...`. If a non-TypeLisp implementation-language exception seems
+necessary, link the tracking issue and explain why it cannot stay in the
+selfhost or stdlib code.
 
 **Environment**
 - OS:
-- Rust version (`rustc --version`):
+- TypeLisp binary/stage0 tag:
 - TypeLisp commit/branch:

@@ -369,6 +369,7 @@
                   CompilerLoadRootNil
                   (process-args-empty)
                   (compiler-optimize-default-level)
+                  (BackendModeScalar)
                   (source-tool-link-inputs-empty)
                   temp-dir)]
               (begin

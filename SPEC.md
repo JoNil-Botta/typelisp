@@ -2,7 +2,7 @@
 
 > **Version:** 0.1.0-dev  
 > **Target:** x86_64 Linux (System V AMD64 ABI)  
-> **Constraint:** Rust `std` only — zero third-party dependencies.
+> **Constraint:** self-hosted TypeLisp implementation; zero third-party dependencies.
 
 This document specifies the TypeLisp language as implemented today. It is the ground truth for what compiles, what types mean, and what the backend promises.
 
@@ -114,7 +114,7 @@ the next newline. Double semicolons are just two semicolon characters; the first
 one starts the comment.
 
 The self-hosted documentation extractor recognizes public documentation
-comments before the main Rust lexer discards comments:
+comments before the main lexer discards comments:
 
 - `;#` starts a module/file documentation line.
 - `;:` starts an outer item documentation line attached to the next supported
@@ -978,9 +978,9 @@ Example:
 
 ### 4.4 `(import "path.tl")` — module import
 
-Imports another TypeLisp file. The current Rust stage0 loader still behaves as
-a legacy whole-program concatenation model: all top-level definitions from the
-imported file become available in one flat namespace. The selfhost module model
+Imports another TypeLisp file. The current loader still preserves the legacy
+whole-program concatenation model: all top-level definitions from the imported
+file become available in one flat namespace. The selfhost module model
 specified below replaces that with canonical module identities, explicit
 exports, and qualified lookup.
 
@@ -1528,9 +1528,9 @@ order, using field-style `(:cleanup ...)` and `(:owned)` payload metadata.
 
 #### 4.6.2 Move-only aggregate handle semantics (specified, pending implementation)
 
-The v1 source semantics make aggregate handles move-only. The current Rust
-compiler may still accept copies until the selfhost move checker lands, but
-new source and selfhost implementation work must follow this contract.
+The v1 source semantics make aggregate handles move-only. Some compatibility
+paths may still accept copies until the selfhost move checker lands, but new
+source and selfhost implementation work must follow this contract.
 
 **Copyable v1 types.** A use of a copyable value duplicates the value and leaves
 the source initialized. Copyable types are:
@@ -2926,9 +2926,9 @@ pattern as the Windows `try-create-temp-dir` behavior. No operation panics for a
 unsupported platform; callers always receive an `IoError`.
 
 **Scope.** The #1056 open/close subset, #1057 streaming reads, and #1058
-streaming writes/flush are implemented for the stdlib API and Rust stage0
-backend, with Windows returning structured `IoUnsupported` results until native
-handle support lands.
+streaming writes/flush are implemented for the stdlib API and selfhost backend,
+with Windows returning structured `IoUnsupported` results until native handle
+support lands.
 
 ---
 
@@ -2940,7 +2940,7 @@ rules (`(& place)` / `(& arena place)`), including the borrowed `str` source
 contract in section 3.11, but the source-level borrow checker is not
 implemented yet. There is no implicit destructor, `drop`, `free`, or
 garbage-collector model. Section 4.6.2 specifies move-only aggregate handle
-ownership for v1 source semantics, but the current Rust compiler may still
+ownership for v1 source semantics, but some compatibility paths may still
 accept aggregate copies until the selfhost move checker lands. The
 implementation uses pointer-sized handles for several aggregate values, but
 those handles are not checked references in the source language. Full
@@ -3120,15 +3120,26 @@ handle, read the active arena handle, or record the active arena bump pointer.
 By themselves they do not switch the active arena, free arena chains, rewind
 allocation, or invalidate live safe handles.
 
-`arena-set!`, `arena-destroy`, and `arena-rewind` require `(unsafe ...)`.
-`arena-set!` switches the active arena, `arena-destroy` frees an arena chain, and
-`arena-rewind` restores a mark by discarding newer arenas and moving the marked
-arena's bump pointer back to the mark. A rewind invalidates every heap handle
-allocated after that mark, so it is only valid when the caller can prove those
-values are dead, such as after a compiler, formatter, package-tooling, or REPL
-iteration has discarded all phase-local results. These helpers are not a safe
-arbitrary source-level `free` replacement. Taking one of these invalidating
-helpers as a first-class function value also requires an unsafe context. The safe
+Linux runtime tests may opt into poison-on-reclaim mode with:
+
+```lisp test=check name=arena-poison-enable-extern
+(extern tl_arena_poison_enable : (-> unit))
+```
+
+After `tl_arena_poison_enable` is called, Linux `tl_region_reset` and
+`tl_arena_destroy` fill reclaimed arena bytes with `0xA5` immediately before a
+rewind or unmap. This mode is off for normal compiler output unless explicitly
+enabled by the program, and it is a debugging aid rather than a safety boundary.
+Windows poison-on-reclaim behavior is currently unsupported; the poison fixtures
+are covered on Linux and skipped on Windows.
+
+A region reset mark invalidates every heap handle allocated after that mark, so
+it is only valid when the caller can prove those values are dead, such as after a
+compiler, formatter, package-tooling, or REPL iteration has discarded all
+phase-local results. It is not a safe arbitrary source-level `free`
+replacement.
+
+Direct calls to these raw reset helpers require an unsafe context. The safe
 `with-arena` surface remains preferred.
 
 ### 7.4 Raw pointers and unsafe memory access (v1 design)
@@ -3204,7 +3215,7 @@ not the future safe reference/borrow model (#182), not a replacement for
   references including borrowed `str`, raw pointers, boxes, compile-time-only
   values, and named aggregate shapes containing non-cloneable fields.
 
-```lisp test=ignore name=dynamic-array-aliasing reason="current Rust-stage aliasing behavior; future move checker rejects copied array handles"
+```lisp test=ignore name=dynamic-array-aliasing reason="current compatibility aliasing behavior; future move checker rejects copied array handles"
 (define (main) : i64
   (let
     [a : (Array i64) (make-array i64 1)]
@@ -3424,7 +3435,7 @@ generic traits or implicit conversions.
   family is incompatible, or when manual matches over these enums are
   non-exhaustive.
 
-```lisp test=ignore name=result-try-success reason="selfhost-only try propagation; Rust stage0 does not parse try"
+```lisp test=ignore name=result-try-success reason="try propagation awaits public test-mode coverage"
 (defenum ResultI64
   (OkI64 i64)
   (ErrI64 String))
@@ -3439,7 +3450,7 @@ generic traits or implicit conversions.
     (OkI64 (+ value 1))))
 ```
 
-```lisp test=ignore name=result-try-incompatible-error reason="selfhost-only negative propagation example; should be an expect-error once Rust stage0 supports try"
+```lisp test=ignore name=result-try-incompatible-error reason="negative propagation example; should be an expect-error once SPEC examples support this form"
 (defenum ResultI64
   (OkI64 i64)
   (ErrI64 String))

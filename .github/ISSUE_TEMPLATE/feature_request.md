@@ -12,8 +12,9 @@ What you'd like to see.
 
 **Selfhost implementation target**
 For compiler, tooling, runtime, or stdlib work, where should the TypeLisp-owned
-implementation live? Prefer `selfhost/...` or `stdlib/...`. If Rust must change
-temporarily, link the no-Rust migration issue.
+implementation live? Prefer `selfhost/...` or `stdlib/...`. If a non-TypeLisp
+implementation-language exception seems necessary, link the tracking issue and
+explain why it cannot stay in the selfhost or stdlib code.
 
 **Describe alternatives**
 Other approaches considered.

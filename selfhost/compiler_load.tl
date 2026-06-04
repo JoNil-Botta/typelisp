@@ -682,22 +682,26 @@
     [(OkAstProgramDiagnostic program)
       (begin
         (unsafe
-          (arena-set! enclosing))
+          (begin
+            (arena-set! enclosing)))
         (let
           [escaped-program : AstProgram (clone program)]
           (begin
             (unsafe
-              (arena-destroy parse-head))
+              (begin
+                (arena-destroy parse-head)))
             (OkAstProgramDiagnostic escaped-program))))]
     [(ErrAstProgramDiagnostic diag)
       (begin
         (unsafe
-          (arena-set! enclosing))
+          (begin
+            (arena-set! enclosing)))
         (let
           [escaped-diag : CompilerDiagnostic (clone diag)]
           (begin
             (unsafe
-              (arena-destroy parse-head))
+              (begin
+                (arena-destroy parse-head)))
             (ErrAstProgramDiagnostic escaped-diag))))]))
 
 (define (compiler-load-parse-source-diagnostic-escaping
@@ -709,7 +713,8 @@
     [parse-arena : i64 (arena-make)]
     (begin
       (unsafe
-        (arena-set! parse-arena))
+        (begin
+          (arena-set! parse-arena)))
       (compiler-load-parse-result-escape
         enclosing
         (arena-current)
@@ -723,7 +728,8 @@
     [parse-arena : i64 (arena-make)]
     (begin
       (unsafe
-        (arena-set! parse-arena))
+        (begin
+          (arena-set! parse-arena)))
       (compiler-load-parse-result-escape
         enclosing
         (arena-current)

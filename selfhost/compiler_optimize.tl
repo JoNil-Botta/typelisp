@@ -6326,7 +6326,8 @@
         (optimize-function-list-escaping funcs level scratch)]
       (begin
         (unsafe
-          (arena-destroy scratch))
+          (begin
+            (arena-destroy scratch)))
         result))))
 
 (define (optimize-function-list-escaping
@@ -6354,14 +6355,16 @@
     [enclosing : i64 (arena-current)]
     (begin
       (unsafe
-        (arena-set! scratch))
+        (begin
+          (arena-set! scratch)))
       (let
         [mark : i64 (arena-mark)]
         [raw : CompilerIrFunction (optimize-function-with-level func level)]
         [scratch-head : i64 (arena-current)]
         (begin
           (unsafe
-            (arena-set! enclosing))
+            (begin
+              (arena-set! enclosing)))
           (let
             [escaped : CompilerIrFunction (compiler-ir-clone-function raw)]
             [new-enclosing : i64 (arena-current)]

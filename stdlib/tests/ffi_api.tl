@@ -6,11 +6,13 @@
 
 (define (ffi-test-read-u8 [ptr : (MutPtr u8)] [index : i64]) : u8
   (unsafe
-    (ptr-read (ptr-offset ptr index))))
+    (begin
+      (ptr-read (ptr-offset ptr index)))))
 
 (define (ffi-test-write-u8! [ptr : (MutPtr u8)] [index : i64] [value : i64]) : unit
   (unsafe
-    (ptr-write! (ptr-offset ptr index) (cast value : u8))))
+    (begin
+      (ptr-write! (ptr-offset ptr index) (cast value : u8)))))
 
 (define (ffi-test-assert-u8-eq
   [actual : u8]

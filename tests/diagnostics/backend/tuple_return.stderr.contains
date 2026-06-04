@@ -1,4 +1,0 @@
-return type (Tuple i64 bool)
-tuple_return.tl:2:
- 2 |   (tuple a b)
-^

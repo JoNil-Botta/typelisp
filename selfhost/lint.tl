@@ -9,6 +9,8 @@
 ;;
 ;; Run directly (until the public `typelisp lint` subcommand lands):
 ;;   typelisp run selfhost/lint.tl -- <file.tl> [--stdlib-root <dir>]...
+(import "../stdlib/io.tl")
+
 (import "lint_driver_core.tl")
 
 (define (main) : i64

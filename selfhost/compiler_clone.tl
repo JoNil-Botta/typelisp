@@ -8,10 +8,11 @@
 ;; `clone$<Name>` define and prepends it, so a self-hosted compiler supports
 ;; `(clone x)` for any user type (mirroring the Rust generic clone codegen).
 ;;
-;; A type is clone-able iff every (transitive) field type is a scalar, a String,
 ;; tuple, fixed array, dynamic array, or another clone-able named type. Function,
 ;; reference, raw-pointer, Box, str, and compile-time-only values are not
 ;; clone-able. Clone-ability is a least-fixed-point over the type graph.
+(import "../stdlib/io.tl")
+
 (import "compiler_ast_types.tl")
 
 (defenum CloneNameList

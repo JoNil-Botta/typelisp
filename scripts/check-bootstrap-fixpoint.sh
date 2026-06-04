@@ -9,9 +9,8 @@ set -eu
 # byte-identical.
 #
 # Set TYPELISP_BOOTSTRAP_STAGE1_PATH_FILE to persist the stage1 compiler path for
-# callers that want to reuse the freshly bootstrapped compiler. Set
-# TYPELISP_BOOTSTRAP_STAGE1_ONLY=1 to stop after linking stage1; normal runs
-# continue through the stage2/stage3 fixpoint.
+# callers that want to reuse the freshly bootstrapped compiler. Normal CI runs
+# must continue through the stage2/stage3 fixpoint.
 #
 # refs #47.
 
@@ -55,6 +54,24 @@ assert_contains() {
         sed 's/^/  /' "$file" >&2 || true
         exit 1
     fi
+}
+
+assemble_and_link_stage2() {
+    stdout="$WORKDIR/stage2-link.stdout"
+    stderr="$WORKDIR/stage2-link.stderr"
+    set +e
+    assemble_and_link "stage2" "$STAGE2_ASM" "$STAGE2_OBJ" "$STAGE2_BIN" \
+        > "$stdout" 2> "$stderr"
+    status=$?
+    set -e
+    sed 's/^/  /' "$stdout" || true
+    if [ "$status" -eq 0 ]; then
+        [ ! -s "$stderr" ] || sed 's/^/  /' "$stderr" >&2 || true
+        return 0
+    fi
+
+    sed 's/^/  /' "$stderr" >&2 || true
+    exit "$status"
 }
 
 run_stage1_cli_expect_failure() {
@@ -205,16 +222,10 @@ assemble_and_link "stage1" "$STAGE1_ASM" "$STAGE1_OBJ" "$STAGE1_BIN"
 
 check_stage1_compile_cli
 
-if [ "${TYPELISP_BOOTSTRAP_STAGE1_ONLY:-}" = 1 ]; then
-    write_stage1_path
-    echo "bootstrap stage1 build passed"
-    exit 0
-fi
-
 echo "[bootstrap] stage1 -> stage2.s"
 run_with_heartbeat "stage1 -> stage2.s" "$STAGE1_BIN" compile selfhost/compile.tl -o "$STAGE2_ASM" --target "$BOOTSTRAP_TARGET"
 
-assemble_and_link "stage2" "$STAGE2_ASM" "$STAGE2_OBJ" "$STAGE2_BIN"
+assemble_and_link_stage2
 
 echo "[bootstrap] stage2 -> stage3.s"
 run_with_heartbeat "stage2 -> stage3.s" "$STAGE2_BIN" compile selfhost/compile.tl -o "$STAGE3_ASM" --target "$BOOTSTRAP_TARGET"

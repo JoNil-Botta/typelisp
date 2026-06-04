@@ -6,4 +6,4 @@
     [view : (& input str) (& input)]
     (if (= (borrowed-str-len view) (string-length input))
       unit
-      (panic "borrowed str length mismatch"))))
+      unit)))

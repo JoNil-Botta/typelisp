@@ -1,4 +1,6 @@
 ;; frontend_tools_core.tl - Reusable selfhost tokenize/parse helpers (#796).
+(import "../stdlib/io.tl")
+
 (import "lex.tl")
 
 (import "compiler_parse_core.tl")
@@ -701,7 +703,41 @@
       (front-cat3
         "IntToPtr { value: "
         (front-expr-render value)
-        (front-cat3 ", ty: " (front-type-render ty) " }"))]))
+        (front-cat3 ", ty: " (front-type-render ty) " }"))]
+    [(AstExprStringData inner)
+      (front-cat3 "StringData { expr: " (front-expr-render inner) " }")]
+    [(AstExprStringFromBytes ptr len)
+      (front-cat3
+        "StringFromBytes { ptr: "
+        (front-expr-render ptr)
+        (front-cat3 ", len: " (front-expr-render len) " }"))]
+    [(AstExprArrayData inner)
+      (front-cat3 "ArrayData { expr: " (front-expr-render inner) " }")]
+    [(AstExprProgramArgc) "ProgramArgc"]
+    [(AstExprProgramArgv) "ProgramArgv"]
+    [(AstExprProgramEnvp) "ProgramEnvp"]
+    [(AstExprCpuIdEax leaf subleaf)
+      (front-cat3
+        "CpuIdEax { leaf: "
+        (front-expr-render leaf)
+        (front-cat3 ", subleaf: " (front-expr-render subleaf) " }"))]
+    [(AstExprCpuIdEbx leaf subleaf)
+      (front-cat3
+        "CpuIdEbx { leaf: "
+        (front-expr-render leaf)
+        (front-cat3 ", subleaf: " (front-expr-render subleaf) " }"))]
+    [(AstExprCpuIdEcx leaf subleaf)
+      (front-cat3
+        "CpuIdEcx { leaf: "
+        (front-expr-render leaf)
+        (front-cat3 ", subleaf: " (front-expr-render subleaf) " }"))]
+    [(AstExprCpuIdEdx leaf subleaf)
+      (front-cat3
+        "CpuIdEdx { leaf: "
+        (front-expr-render leaf)
+        (front-cat3 ", subleaf: " (front-expr-render subleaf) " }"))]
+    [(AstExprXgetbv index)
+      (front-cat3 "Xgetbv { index: " (front-expr-render index) " }")]))
 
 (define (front-maybe-module-render [name : AstMaybeModuleName]) : String
   (match name

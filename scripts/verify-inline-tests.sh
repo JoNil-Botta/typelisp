@@ -11,9 +11,16 @@ cd "$ROOT"
 . "$ROOT/scripts/lib-retry.sh"
 
 HOST_OS=linux
+HOST_TARGET=linux-x86_64
 case "$(uname -s)" in
-    Linux*) HOST_OS=linux ;;
-    MINGW* | MSYS* | CYGWIN*) HOST_OS=windows ;;
+    Linux*)
+        HOST_OS=linux
+        HOST_TARGET=linux-x86_64
+        ;;
+    MINGW* | MSYS* | CYGWIN*)
+        HOST_OS=windows
+        HOST_TARGET=windows-x86_64
+        ;;
     *)
         echo "inline test verification is unsupported on this host" >&2
         exit 1
@@ -73,15 +80,6 @@ show_streams() {
     fi
 }
 
-# Extract a staged-primitive directive `;; requires-stage0-symbol: <name>` from a
-# source file (first match), else empty. Such a file is skipped on the no-Rust
-# gate only when build/check output mentions the symbol. The marker name is
-# historical; use it for primitives the current no-Rust compiler path cannot yet
-# emit.
-staged_symbol_for() {
-    sed -n 's/^;;[[:space:]]*requires-stage0-symbol:[[:space:]]*\([^[:space:]][^[:space:]]*\).*/\1/p' "$1" | head -n 1
-}
-
 while IFS= read -r source; do
     [ -n "$source" ] || continue
     if has_inline_test_item "$source"; then
@@ -96,8 +94,6 @@ fi
 
 file_count=0
 test_count=0
-skipped=0
-run_skipped=0
 while IFS= read -r source; do
     [ -n "$source" ] || continue
     file_count=$((file_count + 1))
@@ -106,22 +102,16 @@ while IFS= read -r source; do
     check_stderr="$WORKDIR/$case_name.check.stderr"
     run_stdout="$WORKDIR/$case_name.run.stdout"
     run_stderr="$WORKDIR/$case_name.run.stderr"
-    requires_symbol=$(staged_symbol_for "$source")
 
     echo "[inline-tests] check $source"
     if run_with_retry "$check_stdout" "$check_stderr" \
         "${VERIFY_INLINE_TESTS_ATTEMPTS:-6}" \
-        "$COMPILER" test --check "$source" --stdlib-root "$ROOT/stdlib"; then
+        "$COMPILER" test --check "$source" --target "$HOST_TARGET" --stdlib-root "$ROOT/stdlib"; then
         check_status=0
     else
         check_status=$?
     fi
     if [ "$check_status" -ne 0 ]; then
-        if [ -n "$requires_symbol" ] && grep -qF "$requires_symbol" "$check_stderr"; then
-            echo "[inline-tests] SKIP $source (awaiting no-Rust compiler support for '$requires_symbol')"
-            skipped=$((skipped + 1))
-            continue
-        fi
         echo "inline test typecheck failed for $source" >&2
         show_streams "$check_stdout" "$check_stderr"
         exit 1
@@ -139,27 +129,15 @@ while IFS= read -r source; do
         exit 1
     fi
 
-    if [ "$HOST_OS" = windows ]; then
-        echo "[inline-tests] SKIP run $source ($case_tests test(s); direct inline harness execution unsupported on Windows)"
-        run_skipped=$((run_skipped + 1))
-        test_count=$((test_count + case_tests))
-        continue
-    fi
-
     echo "[inline-tests] run $source ($case_tests test(s))"
     if run_with_retry "$run_stdout" "$run_stderr" \
         "${VERIFY_INLINE_TESTS_ATTEMPTS:-6}" \
-        "$COMPILER" test "$source" --stdlib-root "$ROOT/stdlib"; then
+        "$COMPILER" test "$source" --target "$HOST_TARGET" --stdlib-root "$ROOT/stdlib"; then
         run_status=0
     else
         run_status=$?
     fi
     if [ "$run_status" -ne 0 ]; then
-        if [ -n "$requires_symbol" ] && grep -qF "$requires_symbol" "$run_stderr"; then
-            echo "[inline-tests] SKIP $source (awaiting no-Rust compiler support for '$requires_symbol')"
-            skipped=$((skipped + 1))
-            continue
-        fi
         echo "inline test execution failed for $source" >&2
         show_streams "$run_stdout" "$run_stderr"
         exit 1
@@ -174,15 +152,4 @@ while IFS= read -r source; do
     test_count=$((test_count + case_tests))
 done < "$DISCOVERED"
 
-if [ "$skipped" -gt 0 ]; then
-    echo "inline test verification: $skipped file(s) skipped (staged primitive awaiting no-Rust compiler support)"
-fi
-if [ "$run_skipped" -gt 0 ]; then
-    echo "inline test verification: run phase skipped for $run_skipped file(s) on Windows"
-fi
-
-if [ "$HOST_OS" = windows ]; then
-    echo "inline test verification passed check-only for $test_count test(s) in $file_count file(s)"
-else
-    echo "inline test verification passed for $test_count test(s) in $file_count file(s)"
-fi
+echo "inline test verification passed for $test_count test(s) in $file_count file(s)"

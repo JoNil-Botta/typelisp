@@ -2,6 +2,8 @@
 ;;
 ;; This module keeps the selfhost liveness pass deterministic while storing
 ;; integer live sets as compact bitsets keyed by dense IR variable ids.
+(import "../stdlib/io.tl")
+
 (import "compiler_ir_types.tl")
 
 (defenum CompilerLiveI64Set
@@ -496,6 +498,14 @@
       (compiler-live-set-union
         (compiler-live-value-vars index)
         (compiler-live-value-vars len))]
+    [(IrInstrEntryArgc _) (compiler-live-set-empty)]
+    [(IrInstrEntryArgv _) (compiler-live-set-empty)]
+    [(IrInstrEntryEnvp _) (compiler-live-set-empty)]
+    [(IrInstrCpuId _ leaf subleaf _)
+      (compiler-live-set-union
+        (compiler-live-value-vars leaf)
+        (compiler-live-value-vars subleaf))]
+    [(IrInstrXgetbv _ index) (compiler-live-value-vars index)]
     [(IrInstrCall _ _ args _) (compiler-live-value-list-vars args)]
     [(IrInstrCallIndirect _ func args _)
       (compiler-live-set-union
@@ -530,6 +540,11 @@
     [(IrInstrVectorLoad dst _ _ _ _) (compiler-live-set1 dst)]
     [(IrInstrPredicatedLoad dst _ _ _ _ _) (compiler-live-set1 dst)]
     [(IrInstrTailMask dst _ _ _) (compiler-live-set1 dst)]
+    [(IrInstrEntryArgc dst) (compiler-live-set1 dst)]
+    [(IrInstrEntryArgv dst) (compiler-live-set1 dst)]
+    [(IrInstrEntryEnvp dst) (compiler-live-set1 dst)]
+    [(IrInstrCpuId dst _ _ _) (compiler-live-set1 dst)]
+    [(IrInstrXgetbv dst _) (compiler-live-set1 dst)]
     [(IrInstrCall dst _ _ _) (compiler-live-set1 dst)]
     [(IrInstrCallIndirect dst _ _ _) (compiler-live-set1 dst)]
     [(IrInstrPhi dst _ _) (compiler-live-set1 dst)]

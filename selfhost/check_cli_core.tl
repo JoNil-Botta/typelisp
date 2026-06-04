@@ -2,6 +2,8 @@
 ;;
 ;; Factored out of `check.tl` so the unified `cli.tl` dispatcher and the
 ;; standalone `check.tl` driver share the command without a duplicate `main`.
+(import "../stdlib/io.tl")
+
 (import "compiler_check_core.tl")
 
 (defenum SelfhostCheckConfig

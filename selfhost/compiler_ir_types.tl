@@ -130,6 +130,11 @@
     i64
     AstType)
   (IrInstrTailMask i64 CompilerIrValue CompilerIrValue i64)
+  (IrInstrEntryArgc i64)
+  (IrInstrEntryArgv i64)
+  (IrInstrEntryEnvp i64)
+  (IrInstrCpuId i64 CompilerIrValue CompilerIrValue i64)
+  (IrInstrXgetbv i64 CompilerIrValue)
   (IrInstrCall i64 String CompilerIrValueList AstType)
   (IrInstrCallIndirect i64 CompilerIrValue CompilerIrValueList AstType)
   (IrInstrTailCall String CompilerIrValueList AstType)
@@ -398,6 +403,11 @@
     [(IrInstrLoad _ _ _) IrEffectMemoryRead]
     [(IrInstrVectorLoad _ _ _ _ _) IrEffectMemoryRead]
     [(IrInstrPredicatedLoad _ _ _ _ _ _) IrEffectMemoryRead]
+    [(IrInstrEntryArgc _) IrEffectMemoryRead]
+    [(IrInstrEntryArgv _) IrEffectMemoryRead]
+    [(IrInstrEntryEnvp _) IrEffectMemoryRead]
+    [(IrInstrCpuId _ _ _ _) IrEffectUnknown]
+    [(IrInstrXgetbv _ _) IrEffectUnknown]
     [(IrInstrAlloc _ _) IrEffectMemoryWrite]
     [(IrInstrStorePtr _ _ _) IrEffectMemoryWrite]
     [(IrInstrStore _ _ _) IrEffectMemoryWrite]
@@ -630,6 +640,31 @@
         spans
         (compiler-source-spans-value-key function dst)
         span)]
+    [(IrInstrEntryArgc dst)
+      (compiler-source-spans-insert-instr-entry
+        spans
+        (compiler-source-spans-value-key function dst)
+        span)]
+    [(IrInstrEntryArgv dst)
+      (compiler-source-spans-insert-instr-entry
+        spans
+        (compiler-source-spans-value-key function dst)
+        span)]
+    [(IrInstrEntryEnvp dst)
+      (compiler-source-spans-insert-instr-entry
+        spans
+        (compiler-source-spans-value-key function dst)
+        span)]
+    [(IrInstrCpuId dst _ _ _)
+      (compiler-source-spans-insert-instr-entry
+        spans
+        (compiler-source-spans-value-key function dst)
+        span)]
+    [(IrInstrXgetbv dst _)
+      (compiler-source-spans-insert-instr-entry
+        spans
+        (compiler-source-spans-value-key function dst)
+        span)]
     [(IrInstrCall dst _ _ _)
       (compiler-source-spans-insert-instr-entry
         spans
@@ -736,6 +771,26 @@
             instr-entries
             (compiler-source-spans-value-key function dst))]
         [(IrInstrTailMask dst _ _ _)
+          (compiler-source-spans-entry-list-lookup
+            instr-entries
+            (compiler-source-spans-value-key function dst))]
+        [(IrInstrEntryArgc dst)
+          (compiler-source-spans-entry-list-lookup
+            instr-entries
+            (compiler-source-spans-value-key function dst))]
+        [(IrInstrEntryArgv dst)
+          (compiler-source-spans-entry-list-lookup
+            instr-entries
+            (compiler-source-spans-value-key function dst))]
+        [(IrInstrEntryEnvp dst)
+          (compiler-source-spans-entry-list-lookup
+            instr-entries
+            (compiler-source-spans-value-key function dst))]
+        [(IrInstrCpuId dst _ _ _)
+          (compiler-source-spans-entry-list-lookup
+            instr-entries
+            (compiler-source-spans-value-key function dst))]
+        [(IrInstrXgetbv dst _)
           (compiler-source-spans-entry-list-lookup
             instr-entries
             (compiler-source-spans-value-key function dst))]

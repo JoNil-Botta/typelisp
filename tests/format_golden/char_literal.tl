@@ -1,1 +1,2 @@
-(define (is-quote [c : char]) : bool (= c #''))
+(define (is-quote [c : char]) : bool
+  (= c #''))

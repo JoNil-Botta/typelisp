@@ -85,20 +85,14 @@ if [ ! -s "$DISCOVERED" ]; then
     echo "doc test verification found no documented TypeLisp files" >&2
     exit 1
 fi
-if [ "$HOST_OS" = linux ] && [ "$runnable_count" -eq 0 ]; then
+if [ "$runnable_count" -eq 0 ]; then
     echo "doc test verification found no runnable doctest files" >&2
     exit 1
 fi
 
 count=0
-runnable_skipped=0
 while IFS= read -r source; do
     [ -n "$source" ] || continue
-    if [ "$HOST_OS" = windows ] && has_runnable_doctest "$source"; then
-        echo "[doc-tests] skipping runnable doctests on windows: $source"
-        runnable_skipped=$((runnable_skipped + 1))
-        continue
-    fi
     count=$((count + 1))
     case_name=$(safe_name "$source")
     stdout="$WORKDIR/$case_name.stdout"
@@ -128,11 +122,4 @@ while IFS= read -r source; do
     fi
 done < "$DISCOVERED"
 
-if [ "$HOST_OS" = windows ]; then
-    echo "doc test verification passed for $count non-runnable file(s) on windows"
-else
-    echo "doc test verification passed for $count file(s), including $runnable_count runnable doctest file(s)"
-fi
-if [ "$runnable_skipped" -gt 0 ]; then
-    echo "doc test verification skipped $runnable_skipped runnable doctest file(s) on windows"
-fi
+echo "doc test verification passed for $count file(s), including $runnable_count runnable doctest file(s)"

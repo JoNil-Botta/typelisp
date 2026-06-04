@@ -9,11 +9,11 @@ argv|tests/integration/argv.tl|7|alpha\n|alpha beta|-
 arithmetic|tests/integration/arithmetic.tl|47|-|-|-
 calc|tests/integration/calc.tl|14|-|-|token.tl
 clone_deep_copy|tests/integration/clone_deep_copy.tl|42|-|-|-|requires-stage0-symbol:_tl_clone_u24Bundle
-tl_emit|selfhost/emit.tl|0|@tests/golden/tl_emit_program.s|-|emit_core.tl ast_types.tl sym_i64_env.tl
-tl_ast|selfhost/ast.tl|685|-|-|ast_types.tl read.tl lex.tl token.tl
-tl_lexer|selfhost/lexer.tl|19|-|-|lex.tl token.tl
-tl_reader|selfhost/reader.tl|62|-|-|lex.tl token.tl
-tl_eval|selfhost/eval.tl|30|hello world3233\n25\n15\n2\n10\n1\n0\n1\n3\n(1 2 3)(1 (2 3) 4)(10 . 20)(1 2 . 3)(1 4 9 16)(1 2)|-|read.tl lex.tl token.tl
+tl_emit|selfhost/emit.tl|0|@tests/golden/tl_emit_program.s|-|emit_core.tl ast_types.tl sym_i64_env.tl stdlib/io.tl
+tl_ast|selfhost/ast.tl|685|-|-|ast_types.tl read.tl lex.tl token.tl stdlib/io.tl
+tl_lexer|selfhost/lexer.tl|19|-|-|lex.tl token.tl stdlib/io.tl
+tl_reader|selfhost/reader.tl|62|-|-|lex.tl token.tl stdlib/io.tl
+tl_eval|selfhost/eval.tl|30|hello world3233\n25\n15\n2\n10\n1\n0\n1\n3\n(1 2 3)(1 (2 3) 4)(10 . 20)(1 2 . 3)(1 4 9 16)(1 2)|-|read.tl lex.tl token.tl stdlib/io.tl
 comptime_scalar|tests/integration/comptime_scalar.tl|3|-|-|-
 cond|tests/integration/cond.tl|42|-|-|-
 control_flow|tests/integration/control_flow.tl|15|-|-|-
@@ -28,10 +28,10 @@ f32_scalar|tests/integration/f32_scalar.tl|42|-|-|-
 factorial|tests/integration/factorial.tl|120|-|-|-
 fibonacci|tests/integration/fibonacci.tl|13|-|-|-
 fixed_array|tests/integration/fixed_array.tl|42|-|-|-
-format_core_integration|tests/integration/format_core_integration.tl|42|-|-|format_core.tl format_cst.tl format_tokens.tl format_doc.tl
-format_cst_integration|tests/integration/format_cst_integration.tl|42|-|-|format_cst.tl format_tokens.tl
+format_core_integration|tests/integration/format_core_integration.tl|42|-|-|format_core.tl format_cst.tl format_tokens.tl format_doc.tl stdlib/io.tl
+format_cst_integration|tests/integration/format_cst_integration.tl|42|-|-|format_cst.tl format_tokens.tl stdlib/io.tl
 format_doc_integration|tests/integration/format_doc_integration.tl|42|-|-|format_doc.tl
-format_rules_integration|tests/integration/format_rules_integration.tl|42|-|-|format_rules.tl format_cst.tl format_tokens.tl format_doc.tl
+format_rules_integration|tests/integration/format_rules_integration.tl|42|-|-|format_rules.tl format_cst.tl format_tokens.tl format_doc.tl stdlib/io.tl
 function_pointer_values|tests/integration/function_pointer_values.tl|42|-|-|-
 functions|tests/integration/functions.tl|32|-|-|-
 global_initializer|tests/integration/global_initializer.tl|120|-|-|-

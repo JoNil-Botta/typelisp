@@ -16,6 +16,8 @@
 ;; as the command name. The standalone `compile.tl` driver and the unified
 ;; `cli.tl` dispatcher both call it; `cli.tl` routes compile/tokenize/parse/debug
 ;; here so the single binary drives the compiler (#1638).
+(import "../stdlib/io.tl")
+
 (import "compiler_check_core.tl")
 
 (import "compiler_driver_core.tl")

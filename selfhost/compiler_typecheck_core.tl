@@ -1,4 +1,6 @@
 ;; compiler_typecheck_core.tl - Specialization-free scalar typechecker core (#1436).
+(import "../stdlib/io.tl")
+
 (import "compiler_symbols.tl")
 
 (import "compiler_diagnostic.tl")
@@ -1735,6 +1737,22 @@
       (match (tc-source-expr-policy-ok ctx value)
         [(OkTcUnit) (tc-source-type-policy-ok ctx ty)]
         [(ErrTcUnit message) (ErrTcUnit message)])]
+    [(AstExprStringData str) (tc-source-expr-policy-ok ctx str)]
+    [(AstExprStringFromBytes ptr len)
+      (tc-source-expr-pair-policy-ok ctx ptr len)]
+    [(AstExprArrayData array) (tc-source-expr-policy-ok ctx array)]
+    [(AstExprProgramArgc) OkTcUnit]
+    [(AstExprProgramArgv) OkTcUnit]
+    [(AstExprProgramEnvp) OkTcUnit]
+    [(AstExprCpuIdEax leaf subleaf)
+      (tc-source-expr-pair-policy-ok ctx leaf subleaf)]
+    [(AstExprCpuIdEbx leaf subleaf)
+      (tc-source-expr-pair-policy-ok ctx leaf subleaf)]
+    [(AstExprCpuIdEcx leaf subleaf)
+      (tc-source-expr-pair-policy-ok ctx leaf subleaf)]
+    [(AstExprCpuIdEdx leaf subleaf)
+      (tc-source-expr-pair-policy-ok ctx leaf subleaf)]
+    [(AstExprXgetbv index) (tc-source-expr-policy-ok ctx index)]
     [_ OkTcUnit]))
 
 (define (tc-source-decl-policy-ok [ctx : TcContext] [decl : AstDecl]) : ResultTcUnit
@@ -2192,6 +2210,28 @@
         "typecheck: foreach varying array lane type is not supported: "
         (tc-type-render (tc-type-strip-region ty))))
     (tc-spmd-finish ty class env)))
+
+(define (tc-spmd-cpuid-like
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [spmd-env : TcSpmdEnv]
+  [expr-ty : AstType]
+  [leaf : AstExpr]
+  [subleaf : AstExpr]) : ResultTcSpmdExprInfo
+  (match (tc-spmd-expr ctx env spmd-env leaf)
+    [(OkTcSpmdExprInfo leaf-info)
+      (match leaf-info
+        [(TcSpmdExprInfo _ leaf-class leaf-env)
+          (match (tc-spmd-expr ctx env leaf-env subleaf)
+            [(OkTcSpmdExprInfo subleaf-info)
+              (match subleaf-info
+                [(TcSpmdExprInfo _ subleaf-class subleaf-env)
+                  (tc-spmd-finish
+                    expr-ty
+                    (tc-spmd-merge-class leaf-class subleaf-class)
+                    subleaf-env)])]
+            [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)])])]
+    [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)]))
 
 (define (tc-spmd-env-from-type-env [env : TcTypeEnv]) : TcSpmdEnv
   (match env
@@ -3158,9 +3198,6 @@
 
 (define (tc-region-arg-builtin-name? [name : String]) : bool
   (cond
-    [(string-eq name "print-string") true]
-    [(string-eq name "print-str") true]
-    [(string-eq name "print-error") true]
     [(string-eq name "string-length") true]
     [(string-eq name "length") true]
     [(string-eq name "string-eq") true]
@@ -3193,6 +3230,9 @@
     [(string-eq name "fs-process-id") true]
     [(string-eq name "fs-current-dir-status") true]
     [(string-eq name "fs-current-dir") true]
+    [(string-eq name "print-string") true]
+    [(string-eq name "print-str") true]
+    [(string-eq name "print-error") true]
     [(string-eq name "panic") true]
     [(string-eq name "error") true]
     [(string-eq name "env-var-exists?") true]
@@ -3618,9 +3658,6 @@
 
 (define (tc-borrowed-string-builtin-name? [name : String]) : bool
   (cond
-    [(string-eq name "print-string") true]
-    [(string-eq name "print-str") true]
-    [(string-eq name "print-error") true]
     [(string-eq name "string-eq") true]
     [(string-eq name "string=?") true]
     [(string-eq name "string->int") true]
@@ -3643,6 +3680,9 @@
     [(string-eq name "fs-rename-status") true]
     [(string-eq name "fs-read-dir-status") true]
     [(string-eq name "fs-read-dir") true]
+    [(string-eq name "print-string") true]
+    [(string-eq name "print-str") true]
+    [(string-eq name "print-error") true]
     [(string-eq name "panic") true]
     [(string-eq name "error") true]
     [(string-eq name "env-var-exists?") true]
@@ -3654,10 +3694,6 @@
   [name : String]
   [args : AstExprList]) : ResultTcType
   (cond
-    [(or
-        (string-eq name "print-string")
-        (or (string-eq name "print-str") (string-eq name "print-error")))
-      (tc-one-string-handle-builtin-call ctx env args (AstTyUnit))]
     [(or (string-eq name "string-eq") (string-eq name "string=?"))
       (tc-two-string-handle-builtin-call ctx env args (AstTyBool))]
     [(string-eq name "string->int")
@@ -3696,6 +3732,10 @@
           (string-eq name "fs-remove-file-status")
           (string-eq name "fs-remove-dir-status")))
       (tc-one-string-handle-builtin-call ctx env args (AstTyI64))]
+    [(or
+        (string-eq name "print-string")
+        (or (string-eq name "print-str") (string-eq name "print-error")))
+      (tc-one-string-handle-builtin-call ctx env args (AstTyUnit))]
     [(or (string-eq name "panic") (string-eq name "error"))
       (tc-one-string-handle-builtin-call ctx env args (AstTyNever))]
     [(string-eq name "env-var-exists?")
@@ -4677,6 +4717,53 @@
           (match info
             [(TcSpmdExprInfo _ class next-spmd-env)
               (tc-spmd-finish expr-ty class next-spmd-env)])]
+        [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)])]
+    [(AstExprStringData str)
+      (match (tc-spmd-expr ctx env spmd-env str)
+        [(OkTcSpmdExprInfo info)
+          (match info
+            [(TcSpmdExprInfo _ class next-spmd-env)
+              (tc-spmd-finish expr-ty class next-spmd-env)])]
+        [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)])]
+    [(AstExprStringFromBytes ptr len)
+      (match (tc-spmd-expr ctx env spmd-env ptr)
+        [(OkTcSpmdExprInfo ptr-info)
+          (match ptr-info
+            [(TcSpmdExprInfo _ ptr-class ptr-env)
+              (match (tc-spmd-expr ctx env ptr-env len)
+                [(OkTcSpmdExprInfo len-info)
+                  (match len-info
+                    [(TcSpmdExprInfo _ len-class len-env)
+                      (tc-spmd-finish
+                        expr-ty
+                        (tc-spmd-merge-class ptr-class len-class)
+                        len-env)])]
+                [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)])])]
+        [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)])]
+    [(AstExprArrayData array)
+      (match (tc-spmd-expr ctx env spmd-env array)
+        [(OkTcSpmdExprInfo info)
+          (match info
+            [(TcSpmdExprInfo _ class next-spmd-env)
+              (tc-spmd-finish expr-ty class next-spmd-env)])]
+        [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)])]
+    [(AstExprProgramArgc) (tc-spmd-finish expr-ty TcSpmdUniform spmd-env)]
+    [(AstExprProgramArgv) (tc-spmd-finish expr-ty TcSpmdUniform spmd-env)]
+    [(AstExprProgramEnvp) (tc-spmd-finish expr-ty TcSpmdUniform spmd-env)]
+    [(AstExprCpuIdEax leaf subleaf)
+      (tc-spmd-cpuid-like ctx env spmd-env expr-ty leaf subleaf)]
+    [(AstExprCpuIdEbx leaf subleaf)
+      (tc-spmd-cpuid-like ctx env spmd-env expr-ty leaf subleaf)]
+    [(AstExprCpuIdEcx leaf subleaf)
+      (tc-spmd-cpuid-like ctx env spmd-env expr-ty leaf subleaf)]
+    [(AstExprCpuIdEdx leaf subleaf)
+      (tc-spmd-cpuid-like ctx env spmd-env expr-ty leaf subleaf)]
+    [(AstExprXgetbv index)
+      (match (tc-spmd-expr ctx env spmd-env index)
+        [(OkTcSpmdExprInfo info)
+          (match info
+            [(TcSpmdExprInfo _ class next-spmd-env)
+              (tc-spmd-finish expr-ty class next-spmd-env)])]
         [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)])]))
 
 (define (tc-param-list-add-bound-names
@@ -4931,7 +5018,33 @@
         (tc-expr-uses-free-name? offset name bound))]
     [(AstExprPtrCast ptr _) (tc-expr-uses-free-name? ptr name bound)]
     [(AstExprPtrToInt ptr) (tc-expr-uses-free-name? ptr name bound)]
-    [(AstExprIntToPtr value _) (tc-expr-uses-free-name? value name bound)]))
+    [(AstExprIntToPtr value _) (tc-expr-uses-free-name? value name bound)]
+    [(AstExprStringData str) (tc-expr-uses-free-name? str name bound)]
+    [(AstExprStringFromBytes ptr len)
+      (or
+        (tc-expr-uses-free-name? ptr name bound)
+        (tc-expr-uses-free-name? len name bound))]
+    [(AstExprArrayData array) (tc-expr-uses-free-name? array name bound)]
+    [(AstExprProgramArgc) false]
+    [(AstExprProgramArgv) false]
+    [(AstExprProgramEnvp) false]
+    [(AstExprCpuIdEax leaf subleaf)
+      (or
+        (tc-expr-uses-free-name? leaf name bound)
+        (tc-expr-uses-free-name? subleaf name bound))]
+    [(AstExprCpuIdEbx leaf subleaf)
+      (or
+        (tc-expr-uses-free-name? leaf name bound)
+        (tc-expr-uses-free-name? subleaf name bound))]
+    [(AstExprCpuIdEcx leaf subleaf)
+      (or
+        (tc-expr-uses-free-name? leaf name bound)
+        (tc-expr-uses-free-name? subleaf name bound))]
+    [(AstExprCpuIdEdx leaf subleaf)
+      (or
+        (tc-expr-uses-free-name? leaf name bound)
+        (tc-expr-uses-free-name? subleaf name bound))]
+    [(AstExprXgetbv index) (tc-expr-uses-free-name? index name bound)]))
 
 ;; Same shadowing rules as `tc-expr-uses-free-name?`, but it only returns true
 ;; when the expression assigns to the free name. Lambda capture checks use this
@@ -5015,7 +5128,6 @@
       (or
         (tc-expr-sets-free-name? func name bound)
         (tc-expr-list-sets-free-name? args name bound))]
-    [(AstExprTypeLiteral _) false]
     [(AstExprIf cond then-branch else-branch)
       (or
         (tc-expr-sets-free-name? cond name bound)
@@ -5129,7 +5241,33 @@
         (tc-expr-sets-free-name? offset name bound))]
     [(AstExprPtrCast ptr _) (tc-expr-sets-free-name? ptr name bound)]
     [(AstExprPtrToInt ptr) (tc-expr-sets-free-name? ptr name bound)]
-    [(AstExprIntToPtr value _) (tc-expr-sets-free-name? value name bound)]))
+    [(AstExprIntToPtr value _) (tc-expr-sets-free-name? value name bound)]
+    [(AstExprStringData str) (tc-expr-sets-free-name? str name bound)]
+    [(AstExprStringFromBytes ptr len)
+      (or
+        (tc-expr-sets-free-name? ptr name bound)
+        (tc-expr-sets-free-name? len name bound))]
+    [(AstExprArrayData array) (tc-expr-sets-free-name? array name bound)]
+    [(AstExprProgramArgc) false]
+    [(AstExprProgramArgv) false]
+    [(AstExprProgramEnvp) false]
+    [(AstExprCpuIdEax leaf subleaf)
+      (or
+        (tc-expr-sets-free-name? leaf name bound)
+        (tc-expr-sets-free-name? subleaf name bound))]
+    [(AstExprCpuIdEbx leaf subleaf)
+      (or
+        (tc-expr-sets-free-name? leaf name bound)
+        (tc-expr-sets-free-name? subleaf name bound))]
+    [(AstExprCpuIdEcx leaf subleaf)
+      (or
+        (tc-expr-sets-free-name? leaf name bound)
+        (tc-expr-sets-free-name? subleaf name bound))]
+    [(AstExprCpuIdEdx leaf subleaf)
+      (or
+        (tc-expr-sets-free-name? leaf name bound)
+        (tc-expr-sets-free-name? subleaf name bound))]
+    [(AstExprXgetbv index) (tc-expr-sets-free-name? index name bound)]))
 
 (define (tc-name-is-free-cleanup-owner?
   [owners : TcStringList]
@@ -7358,6 +7496,103 @@
           (ErrTcType "typecheck: int->ptr target must be a raw pointer type")))]
     [(ErrTcUnit message) (ErrTcType message)]))
 
+(define (tc-string-data-expr
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [str : AstExpr]) : ResultTcType
+  (match (tc-require-unsafe env "string-data")
+    [(OkTcUnit)
+      (match (tc-expr ctx env str)
+        [(OkTcType str-ty)
+          (if (tc-string-handle-type? str-ty)
+            (OkTcType (AstTyPtr (AstTyU8)))
+            (ErrTcType "typecheck: string-data requires String"))]
+        [(ErrTcType message) (ErrTcType message)])]
+    [(ErrTcUnit message) (ErrTcType message)]))
+
+(define (tc-string-from-bytes-expr
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [ptr : AstExpr]
+  [len : AstExpr]) : ResultTcType
+  (match (tc-require-unsafe env "string-from-bytes")
+    [(OkTcUnit)
+      (match (tc-expr ctx env ptr)
+        [(OkTcType ptr-ty)
+          (match (tc-type-strip-region (tc-resolve-type ctx ptr-ty))
+            [(AstTyPtr elem)
+              (if (tc-type-compatible? elem (AstTyU8))
+                (match (tc-expr ctx env len)
+                  [(OkTcType len-ty)
+                    (if (tc-integer-type? len-ty)
+                      (OkTcType (AstTyString))
+                      (ErrTcType
+                        "typecheck: string-from-bytes length must be integer"))]
+                  [(ErrTcType message) (ErrTcType message)])
+                (ErrTcType
+                  "typecheck: string-from-bytes pointer must point at u8"))]
+            [(AstTyMutPtr elem)
+              (if (tc-type-compatible? elem (AstTyU8))
+                (match (tc-expr ctx env len)
+                  [(OkTcType len-ty)
+                    (if (tc-integer-type? len-ty)
+                      (OkTcType (AstTyString))
+                      (ErrTcType
+                        "typecheck: string-from-bytes length must be integer"))]
+                  [(ErrTcType message) (ErrTcType message)])
+                (ErrTcType
+                  "typecheck: string-from-bytes pointer must point at u8"))]
+            [_
+              (ErrTcType
+                "typecheck: string-from-bytes requires a raw u8 pointer")])]
+        [(ErrTcType message) (ErrTcType message)])]
+    [(ErrTcUnit message) (ErrTcType message)]))
+
+(define (tc-array-data-expr
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [array : AstExpr]) : ResultTcType
+  (match (tc-require-unsafe env "array-data")
+    [(OkTcUnit)
+      (match (tc-expr ctx env array)
+        [(OkTcType array-ty)
+          (match (tc-type-strip-region (tc-resolve-type ctx array-ty))
+            [(AstTyArray elem-ty _) (OkTcType (AstTyMutPtr elem-ty))]
+            [(AstTyDynArray elem-ty) (OkTcType (AstTyMutPtr elem-ty))]
+            [_ (ErrTcType "typecheck: array-data requires an array")])]
+        [(ErrTcType message) (ErrTcType message)])]
+    [(ErrTcUnit message) (ErrTcType message)]))
+
+(define (tc-program-entry-ptr-expr [env : TcTypeEnv] [name : String]) : ResultTcType
+  (match (tc-require-unsafe env name)
+    [(OkTcUnit) (OkTcType (AstTyPtr (AstTyPtr (AstTyU8))))]
+    [(ErrTcUnit message) (ErrTcType message)]))
+
+(define (tc-cpuid-expr
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [leaf : AstExpr]
+  [subleaf : AstExpr]) : ResultTcType
+  (match (tc-expr ctx env leaf)
+    [(OkTcType leaf-ty)
+      (if (tc-integer-type? leaf-ty)
+        (match (tc-expr ctx env subleaf)
+          [(OkTcType subleaf-ty)
+            (if (tc-integer-type? subleaf-ty)
+              (OkTcType (AstTyI64))
+              (ErrTcType "typecheck: cpuid subleaf must be integer"))]
+          [(ErrTcType message) (ErrTcType message)])
+        (ErrTcType "typecheck: cpuid leaf must be integer"))]
+    [(ErrTcType message) (ErrTcType message)]))
+
+(define (tc-xgetbv-expr [ctx : TcContext] [env : TcTypeEnv] [index : AstExpr]) : ResultTcType
+  (match (tc-expr ctx env index)
+    [(OkTcType index-ty)
+      (if (tc-integer-type? index-ty)
+        (OkTcType (AstTyI64))
+        (ErrTcType "typecheck: xgetbv index must be integer"))]
+    [(ErrTcType message) (ErrTcType message)]))
+
 (define (tc-box-expr [ctx : TcContext] [env : TcTypeEnv] [inner : AstExpr]) : ResultTcType
   (match (tc-ensure-cleanup-resource-not-stored-expr env inner)
     [(OkTcUnit)
@@ -8023,6 +8258,18 @@
     [(AstExprPtrCast ptr target) (tc-ptr-cast-expr ctx env ptr target)]
     [(AstExprPtrToInt ptr) (tc-ptr-to-int-expr ctx env ptr)]
     [(AstExprIntToPtr value target) (tc-int-to-ptr-expr ctx env value target)]
+    [(AstExprStringData str) (tc-string-data-expr ctx env str)]
+    [(AstExprStringFromBytes ptr len)
+      (tc-string-from-bytes-expr ctx env ptr len)]
+    [(AstExprArrayData array) (tc-array-data-expr ctx env array)]
+    [(AstExprProgramArgc) (OkTcType (AstTyI64))]
+    [(AstExprProgramArgv) (tc-program-entry-ptr-expr env "program-argv")]
+    [(AstExprProgramEnvp) (tc-program-entry-ptr-expr env "program-envp")]
+    [(AstExprCpuIdEax leaf subleaf) (tc-cpuid-expr ctx env leaf subleaf)]
+    [(AstExprCpuIdEbx leaf subleaf) (tc-cpuid-expr ctx env leaf subleaf)]
+    [(AstExprCpuIdEcx leaf subleaf) (tc-cpuid-expr ctx env leaf subleaf)]
+    [(AstExprCpuIdEdx leaf subleaf) (tc-cpuid-expr ctx env leaf subleaf)]
+    [(AstExprXgetbv index) (tc-xgetbv-expr ctx env index)]
     [_ (ErrTcType "typecheck: unsupported expression")]))
 
 (define (tc-extern-abi-value-type-ok? [ty : AstType]) : bool
@@ -8039,6 +8286,7 @@
     [(AstTyBool) true]
     [(AstTyChar) true]
     [(AstTyUnit) true]
+    [(AstTyNever) true]
     [(AstTyFunc _ _) true]
     [(AstTyPtr _) true]
     [(AstTyMutPtr _) true]
@@ -8072,6 +8320,15 @@
         [(ErrTcUnit message) (ErrTcUnit message)])]
     [_ (ErrTcUnit "typecheck: extern must have function type")]))
 
+(define (tc-check-extern-varargs-fixed-count [fixed-count : i64] [ty : AstType]) : ResultTcUnit
+  (match ty
+    [(AstTyFunc args _)
+      (if (<= fixed-count (tc-type-list-len args))
+        OkTcUnit
+        (ErrTcUnit
+          "typecheck: extern c-varargs fixed argument count exceeds parameter count"))]
+    [_ (ErrTcUnit "typecheck: extern must have function type")]))
+
 (define (tc-check-extern-decl
   [ctx : TcContext]
   [metadata : AstExternMetadata]
@@ -8079,7 +8336,16 @@
   (match metadata
     [(AstExternMetadata abi _ _)
       (if (ast-extern-abi-c? abi)
-        (tc-check-extern-c-abi (tc-resolve-type ctx ty))
+        (let
+          [resolved : AstType (tc-resolve-type ctx ty)]
+          (match (tc-check-extern-c-abi resolved)
+            [(OkTcUnit)
+              (if (ast-extern-abi-c-varargs? abi)
+                (tc-check-extern-varargs-fixed-count
+                  (ast-extern-abi-varargs-fixed-count abi)
+                  resolved)
+                OkTcUnit)]
+            [(ErrTcUnit message) (ErrTcUnit message)]))
         (ErrTcUnit "typecheck: unsupported extern ABI"))]))
 
 (define (tc-summary-add-decl
@@ -8443,7 +8709,33 @@
         [(ErrTcMove message) (ErrTcMove message)])]
     [(AstExprPtrCast inner _) (tc-move-check-expr ctx env locals moved inner)]
     [(AstExprPtrToInt inner) (tc-move-check-expr ctx env locals moved inner)]
-    [(AstExprIntToPtr inner _) (tc-move-check-expr ctx env locals moved inner)]))
+    [(AstExprIntToPtr inner _) (tc-move-check-expr ctx env locals moved inner)]
+    [(AstExprStringData inner) (tc-move-check-expr ctx env locals moved inner)]
+    [(AstExprStringFromBytes ptr len)
+      (match (tc-move-check-expr ctx env locals moved ptr)
+        [(OkTcMove moved1) (tc-move-check-expr ctx env locals moved1 len)]
+        [(ErrTcMove message) (ErrTcMove message)])]
+    [(AstExprArrayData inner) (tc-move-check-expr ctx env locals moved inner)]
+    [(AstExprProgramArgc) (OkTcMove moved)]
+    [(AstExprProgramArgv) (OkTcMove moved)]
+    [(AstExprProgramEnvp) (OkTcMove moved)]
+    [(AstExprCpuIdEax leaf subleaf)
+      (match (tc-move-check-expr ctx env locals moved leaf)
+        [(OkTcMove moved1) (tc-move-check-expr ctx env locals moved1 subleaf)]
+        [(ErrTcMove message) (ErrTcMove message)])]
+    [(AstExprCpuIdEbx leaf subleaf)
+      (match (tc-move-check-expr ctx env locals moved leaf)
+        [(OkTcMove moved1) (tc-move-check-expr ctx env locals moved1 subleaf)]
+        [(ErrTcMove message) (ErrTcMove message)])]
+    [(AstExprCpuIdEcx leaf subleaf)
+      (match (tc-move-check-expr ctx env locals moved leaf)
+        [(OkTcMove moved1) (tc-move-check-expr ctx env locals moved1 subleaf)]
+        [(ErrTcMove message) (ErrTcMove message)])]
+    [(AstExprCpuIdEdx leaf subleaf)
+      (match (tc-move-check-expr ctx env locals moved leaf)
+        [(OkTcMove moved1) (tc-move-check-expr ctx env locals moved1 subleaf)]
+        [(ErrTcMove message) (ErrTcMove message)])]
+    [(AstExprXgetbv index) (tc-move-check-expr ctx env locals moved index)]))
 
 (define (tc-move-check-body
   [ctx : TcContext]
@@ -8904,6 +9196,58 @@
       [(AstExprSet name rhs)
         (match (macro-expand-expr ctx env decls depth rhs)
           [(OkMacroExpr nrhs) (OkMacroExpr (AstExprSet name nrhs))]
+          [(ErrMacroExpr diag) (ErrMacroExpr diag)])]
+      [(AstExprStringData inner)
+        (match (macro-expand-expr ctx env decls depth inner)
+          [(OkMacroExpr ninner) (OkMacroExpr (AstExprStringData ninner))]
+          [(ErrMacroExpr diag) (ErrMacroExpr diag)])]
+      [(AstExprStringFromBytes ptr len)
+        (match (macro-expand-expr ctx env decls depth ptr)
+          [(OkMacroExpr nptr)
+            (match (macro-expand-expr ctx env decls depth len)
+              [(OkMacroExpr nlen)
+                (OkMacroExpr (AstExprStringFromBytes nptr nlen))]
+              [(ErrMacroExpr diag) (ErrMacroExpr diag)])]
+          [(ErrMacroExpr diag) (ErrMacroExpr diag)])]
+      [(AstExprArrayData inner)
+        (match (macro-expand-expr ctx env decls depth inner)
+          [(OkMacroExpr ninner) (OkMacroExpr (AstExprArrayData ninner))]
+          [(ErrMacroExpr diag) (ErrMacroExpr diag)])]
+      [(AstExprCpuIdEax leaf subleaf)
+        (match (macro-expand-expr ctx env decls depth leaf)
+          [(OkMacroExpr nleaf)
+            (match (macro-expand-expr ctx env decls depth subleaf)
+              [(OkMacroExpr nsubleaf)
+                (OkMacroExpr (AstExprCpuIdEax nleaf nsubleaf))]
+              [(ErrMacroExpr diag) (ErrMacroExpr diag)])]
+          [(ErrMacroExpr diag) (ErrMacroExpr diag)])]
+      [(AstExprCpuIdEbx leaf subleaf)
+        (match (macro-expand-expr ctx env decls depth leaf)
+          [(OkMacroExpr nleaf)
+            (match (macro-expand-expr ctx env decls depth subleaf)
+              [(OkMacroExpr nsubleaf)
+                (OkMacroExpr (AstExprCpuIdEbx nleaf nsubleaf))]
+              [(ErrMacroExpr diag) (ErrMacroExpr diag)])]
+          [(ErrMacroExpr diag) (ErrMacroExpr diag)])]
+      [(AstExprCpuIdEcx leaf subleaf)
+        (match (macro-expand-expr ctx env decls depth leaf)
+          [(OkMacroExpr nleaf)
+            (match (macro-expand-expr ctx env decls depth subleaf)
+              [(OkMacroExpr nsubleaf)
+                (OkMacroExpr (AstExprCpuIdEcx nleaf nsubleaf))]
+              [(ErrMacroExpr diag) (ErrMacroExpr diag)])]
+          [(ErrMacroExpr diag) (ErrMacroExpr diag)])]
+      [(AstExprCpuIdEdx leaf subleaf)
+        (match (macro-expand-expr ctx env decls depth leaf)
+          [(OkMacroExpr nleaf)
+            (match (macro-expand-expr ctx env decls depth subleaf)
+              [(OkMacroExpr nsubleaf)
+                (OkMacroExpr (AstExprCpuIdEdx nleaf nsubleaf))]
+              [(ErrMacroExpr diag) (ErrMacroExpr diag)])]
+          [(ErrMacroExpr diag) (ErrMacroExpr diag)])]
+      [(AstExprXgetbv index)
+        (match (macro-expand-expr ctx env decls depth index)
+          [(OkMacroExpr nindex) (OkMacroExpr (AstExprXgetbv nindex))]
           [(ErrMacroExpr diag) (ErrMacroExpr diag)])]
       [_ (OkMacroExpr expr)])))
 

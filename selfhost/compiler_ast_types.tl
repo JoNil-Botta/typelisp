@@ -133,7 +133,8 @@
   (AstStructReprC))
 
 (defenum AstExternAbi
-  (AstExternAbiC))
+  (AstExternAbiC)
+  (AstExternAbiCVarargs i64))
 
 (defenum AstExternLinkInput
   (AstExternLinkLib String)
@@ -262,7 +263,22 @@
   (AstExprPtrOffset AstExpr AstExpr)
   (AstExprPtrCast AstExpr AstType)
   (AstExprPtrToInt AstExpr)
-  (AstExprIntToPtr AstExpr AstType))
+  (AstExprIntToPtr AstExpr AstType)
+  ;; Low-level FFI bridge operations used by stdlib. These expose raw backing
+  ;; storage and process entry state without synthesizing runtime wrapper calls.
+  (AstExprStringData AstExpr)
+  (AstExprStringFromBytes AstExpr AstExpr)
+  (AstExprArrayData AstExpr)
+  (AstExprProgramArgc)
+  (AstExprProgramArgv)
+  (AstExprProgramEnvp)
+  ;; Inline CPU feature instructions. These lower directly to x86_64 `cpuid`
+  ;; and `xgetbv` instructions, avoiding emitted forwarding helpers.
+  (AstExprCpuIdEax AstExpr AstExpr)
+  (AstExprCpuIdEbx AstExpr AstExpr)
+  (AstExprCpuIdEcx AstExpr AstExpr)
+  (AstExprCpuIdEdx AstExpr AstExpr)
+  (AstExprXgetbv AstExpr))
 
 (defenum AstExprList
   (AstExprNil)
@@ -403,7 +419,18 @@
     [(AstExprQuote _) 44]
     [(AstExprQuasiquote _) 45]
     [(AstExprUnquote _) 46]
-    [(AstExprUnquoteSplicing _) 47]))
+    [(AstExprUnquoteSplicing _) 47]
+    [(AstExprStringData _) 49]
+    [(AstExprStringFromBytes _ _) 50]
+    [(AstExprArrayData _) 51]
+    [(AstExprProgramArgc) 52]
+    [(AstExprProgramArgv) 53]
+    [(AstExprProgramEnvp) 54]
+    [(AstExprCpuIdEax _ _) 55]
+    [(AstExprCpuIdEbx _ _) 56]
+    [(AstExprCpuIdEcx _ _) 57]
+    [(AstExprCpuIdEdx _ _) 58]
+    [(AstExprXgetbv _) 59]))
 
 (define (ast-expr-unspan [expr : AstExpr]) : AstExpr
   (match expr
@@ -431,11 +458,29 @@
 
 (define (ast-extern-abi-c? [abi : AstExternAbi]) : bool
   (match abi
-    [(AstExternAbiC) true]))
+    [(AstExternAbiC) true]
+    [(AstExternAbiCVarargs _) true]))
+
+(define (ast-extern-abi-c-varargs? [abi : AstExternAbi]) : bool
+  (match abi
+    [(AstExternAbiC) false]
+    [(AstExternAbiCVarargs _) true]))
+
+(define (ast-extern-abi-varargs-fixed-count [abi : AstExternAbi]) : i64
+  (match abi
+    [(AstExternAbiC) 0]
+    [(AstExternAbiCVarargs fixed-count) fixed-count]))
 
 (define (ast-extern-abi-eq? [a : AstExternAbi] [b : AstExternAbi]) : bool
   (match a
-    [(AstExternAbiC) (ast-extern-abi-c? b)]))
+    [(AstExternAbiC)
+      (match b
+        [(AstExternAbiC) true]
+        [_ false])]
+    [(AstExternAbiCVarargs afixed)
+      (match b
+        [(AstExternAbiCVarargs bfixed) (= afixed bfixed)]
+        [_ false])]))
 
 (define (ast-extern-link-input-eq?
   [a : AstExternLinkInput]

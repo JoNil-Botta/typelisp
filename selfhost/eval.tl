@@ -45,6 +45,8 @@
 ;; is ONE nominal type, so the tree this evaluator walks is the very tree the
 ;; imported `read-form` constructed - the enum, its constructors, and the
 ;; projections' `match` arms all carry across the boundary.
+(import "../stdlib/io.tl")
+
 (import "read.tl")
 
 ;; --------------------------------------------------------------------------

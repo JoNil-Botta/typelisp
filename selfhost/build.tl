@@ -4,6 +4,8 @@
 ;; dispatcher can share it without a duplicate `main`. The driver builds
 ;; in-process via stdlib fs/process helpers; `--direct` remains accepted for
 ;; compatibility with older scripts.
+(import "../stdlib/io.tl")
+
 (import "build_cli_core.tl")
 
 (define (main) : i64

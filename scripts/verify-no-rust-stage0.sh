@@ -97,10 +97,17 @@ run_gate() {
 
 stage1_driver_staged_symbols() {
     printf '%s\n' \
+        file-open-status \
+        file-close-status \
         file-read-chunk-status \
+        file-read-chunk-bytes \
+        file-read-chunk-eof? \
         file-write-status \
         file-flush-status \
         append-file-status \
+        fs-mkdir-status \
+        fs-remove-file-status \
+        fs-remove-dir-status \
         fs-rename-status \
         fs-read-dir-status \
         fs-read-dir
@@ -165,6 +172,23 @@ run_with_compiler() {
     export TYPELISP_BIN
     run_gate "$@"
 }
+
+required_gate_unavailable() {
+    gate=$1
+    shift
+    echo >&2
+    echo "[no-rust-stage0] ERROR: CI must run every required gate; skipped gates hide compiler regressions." >&2
+    echo "[no-rust-stage0] ERROR: unable to run required gate: $gate" >&2
+    for detail in "$@"; do
+        echo "[no-rust-stage0]   $detail" >&2
+    done
+    exit 1
+}
+
+# Agent/contributor note: do not make CI pass by skipping gates when a PR needs
+# a new compiler/runtime capability. Split that work instead: first land the
+# compiler/runtime support, then land a follow-up PR that uses the new feature.
+# A short green run caused by skipped gates is a CI bug, not a successful check.
 
 compiler_rejects_package_kind_manifest() {
     compiler=$1
@@ -312,6 +336,13 @@ if [ "$HOST_OS" = linux ]; then
     rm -f "$STAGE1_PATH_FILE"
     TYPELISP_BOOTSTRAP_STAGE1_PATH_FILE=$STAGE1_PATH_FILE
     export TYPELISP_BOOTSTRAP_STAGE1_PATH_FILE
+
+    LINUX_SEED_STAGED_RUNTIME_GAP=0
+    if seed_has_staged_runtime_gap "$SEED_TYPELISP_BIN"; then
+        LINUX_SEED_STAGED_RUNTIME_GAP=1
+        echo "[no-rust-stage0] Linux seed lacks staged runtime symbols used by stdlib modules; Linux gates still run through branch-built compilers"
+    fi
+
     run_gate "bootstrap stage1->stage2->stage3 fixpoint" scripts/check-bootstrap-fixpoint.sh "$SEED_TYPELISP_BIN"
     unset TYPELISP_BOOTSTRAP_STAGE1_PATH_FILE
     if [ -s "$STAGE1_PATH_FILE" ]; then
@@ -328,24 +359,16 @@ if [ "$HOST_OS" = linux ]; then
 
     # Distinct from the full cli.tl build/run smoke above: can the freshly
     # bootstrapped compile-only stage1 compile -> assemble -> link -> RUN a native
-    # program? This is the compile-path run-assert capability. When it holds, the
-    # Linux safety/integration/examples tiers execute on the artifact we just built
-    # (compile + as + ld + run), proving it actually runs programs, instead of being
-    # skipped or falling back to the fetched seed. The probe is the safety div-zero
-    # fixture (compile->as->ld->run->trap 136); reuse its result for all three tiers
-    # so the corpora are only gated on a capability we have positively demonstrated.
+    # program? This is the compile-path run-assert capability. Linux is the
+    # coverage-bearing lane, so a failed probe is a CI failure rather than a
+    # reason to omit the safety/integration/examples tiers.
     STAGE1_CAN_COMPILE_NATIVE=0
     if stage1_safety_corpus_supported "$BOOTSTRAPPED_STAGE1"; then
         STAGE1_CAN_COMPILE_NATIVE=1
         echo "[no-rust-stage0] stage1 compile->as->ld->run capability confirmed; Linux run-assert tiers execute on the bootstrapped stage1"
     else
-        echo "[no-rust-stage0] stage1 compile->as->ld->run probe failed; Linux run-assert tiers stay on the seed/skip path"
-    fi
-
-    LINUX_SEED_STAGED_RUNTIME_GAP=0
-    if seed_has_staged_runtime_gap "$SEED_TYPELISP_BIN"; then
-        LINUX_SEED_STAGED_RUNTIME_GAP=1
-        echo "[no-rust-stage0] Linux seed lacks staged runtime symbols used by stdlib modules; limiting stage1 to compile-only gates"
+        required_gate_unavailable "Linux stage1 compile->as->ld->run probe" \
+            "safety, integration, examples, SPMD, and stdlib run-assert tiers depend on this probe"
     fi
 
     STAGE1_DOC_BIN=
@@ -356,10 +379,9 @@ if [ "$HOST_OS" = linux ]; then
     STAGE1_TEST_BIN=
     STAGE1_LSP_BIN=
     STAGE1_HOST_ACTION_DRIVERS_AVAILABLE=0
-    # cli.tl is the single stage0 binary with every toolchain command in-process,
-    # so the gates run it directly instead of building per-command driver
-    # binaries and a dispatch wrapper. STAGE1_TEST_BIN stays empty (as it always
-    # was for a non-bundle seed), so the separate test-driver gates stay skipped.
+    # cli.tl is the single stage0 binary with every toolchain command in-process.
+    # When the compile-only stage1 lacks a host-action surface, those gates run
+    # on the fresh branch-built cli.tl instead of being removed from coverage.
     SEED_IS_STAGE1_BUNDLE=0
     STAGE1_DOC_BIN=$SEED_TYPELISP_BIN
     STAGE1_BUILD_BIN=$SEED_TYPELISP_BIN
@@ -367,22 +389,17 @@ if [ "$HOST_OS" = linux ]; then
     STAGE1_LSP_BIN=$SEED_TYPELISP_BIN
     STAGE1_LINT_BIN=$SEED_TYPELISP_BIN
     STAGE1_FORMAT_BIN=$SEED_TYPELISP_BIN
-    # This branch still treats the fetched seed as a compatibility compiler for
-    # broad gates. Current cli.tl build/run execution is covered by the fresh
-    # selfhost cli smoke above; the older seed path keeps build/run-heavy gates
-    # disabled because it may not include this branch's direct executor and the
-    # package/generated-program tiers still need their own parity work. Force
-    # STAGE1_HOST_ACTION_DRIVERS_AVAILABLE=0 so those downstream gates stay on
-    # the documented skip path while compile/check/fmt/lint/test/doc gates run.
+    # Linux CI is intentionally fail-closed: do not add branch-local bypass flags
+    # or compatibility bypasses here. Important gates must either run on the
+    # bootstrapped stage1 compiler or on the fresh branch-built cli.tl above.
     STAGE1_HOST_ACTION_DRIVERS_AVAILABLE=0
     if [ "$LINUX_SEED_STAGED_RUNTIME_GAP" -ne 0 ]; then
-        echo "[no-rust-stage0] seed lacks staged runtime symbols; toolchain gates limited to compile-only"
+        echo "[no-rust-stage0] seed lacks staged runtime symbols; Linux host-action gates use the fresh selfhost CLI"
     fi
-    # Route the compile-path 'stage1' gates (deterministic asm, compile manifest,
-    # borrowed-str check) at the freshly bootstrapped stage1, not the fetched
-    # seed, so the artifact we built is what gets exercised. The build/run/doc
-    # command gates still need a runner with the build/run/doc commands (built in
-    # the BUILD-RUNNERS phase below); until those exist the flag stays 0.
+    # Route the narrow compile-path stage1 gates at the freshly bootstrapped
+    # stage1, not the fetched seed, so the artifact we built is what gets
+    # exercised. Host-action gates use the fresh selfhost CLI when the
+    # compile-only stage1 lacks that surface.
     STAGE1_TYPELISP_BIN=$BOOTSTRAPPED_STAGE1
     echo "[no-rust-stage0] stage1 compile-path gates run the freshly bootstrapped stage1; full cli.tl build/run coverage is in the fresh cli smoke"
 else
@@ -424,10 +441,8 @@ fi
 # Repository doctests run `typelisp doc --test`, which the stage1 wrapper serves
 # through the freshly bootstrapped selfhost doc driver (the same path the stdlib
 # documentation gate already uses). On Linux, route them through the wrapper
-# whenever the host-action drivers are available so this capability tier no
-# longer depends on the seed/published compiler (#1544). When the drivers are
-# unavailable the doctest gate is skipped below, so this binary is only used on
-# the wrapper-capable path.
+# whenever the host-action drivers are available; otherwise the gate runs on the
+# fresh branch-built cli.tl.
 DOCTEST_TYPELISP_BIN=$FRONT_GATE_TYPELISP_BIN
 if [ "$HOST_OS" = linux ] && [ "$STAGE1_HOST_ACTION_DRIVERS_AVAILABLE" -eq 1 ]; then
     DOCTEST_TYPELISP_BIN=$STAGE1_TYPELISP_BIN
@@ -435,8 +450,7 @@ fi
 
 # Repository inline tests run `typelisp test`, which the stage1 wrapper can
 # serve through the prebuilt selfhost test driver when a fresh bundle carries
-# one (#1609). Older seed bundles do not have that driver, so keep their
-# explicit skip below instead of compiling selfhost/test.tl in the hosted lane.
+# one (#1609). Otherwise the gate runs on the fresh branch-built cli.tl.
 INLINE_TEST_TYPELISP_BIN=$FRONT_GATE_TYPELISP_BIN
 if [ "$HOST_OS" = linux ] && [ -n "$STAGE1_TEST_BIN" ]; then
     INLINE_TEST_TYPELISP_BIN=$STAGE1_TYPELISP_BIN
@@ -448,10 +462,9 @@ if [ "$HOST_OS" = linux ]; then
     run_with_compiler "$STAGE1_TYPELISP_BIN" "stage1 stdlib borrowed-str source gate" scripts/verify-stdlib.sh --borrowed-str-only
 fi
 
-# The public-tool corpus is the broadest CLI behavior witness. On Linux, run it
-# against the freshly bootstrapped stage1 wrapper whenever the wrapper's
-# host-action drivers are available. The seed path below is only a compatibility
-# fallback for old artifacts or missing drivers (#1662).
+# The public-tool corpus is the broadest CLI behavior witness. On Linux it must
+# run on a branch-built compiler; use the fresh cli.tl artifact when the
+# compile-only stage1 does not expose host-action commands.
 PUBLIC_TOOLS_TYPELISP_BIN=$FRONT_GATE_TYPELISP_BIN
 PUBLIC_TOOLS_LABEL="public tool surface"
 if [ "$HOST_OS" = linux ] && [ "$STAGE1_HOST_ACTION_DRIVERS_AVAILABLE" -eq 1 ]; then
@@ -459,100 +472,33 @@ if [ "$HOST_OS" = linux ] && [ "$STAGE1_HOST_ACTION_DRIVERS_AVAILABLE" -eq 1 ]; 
     PUBLIC_TOOLS_LABEL="stage1 public tool surface"
 fi
 
-if [ "$WINDOWS_SEED_STAGED_RUNTIME_GAP" -eq 1 ]; then
-    echo
-    echo "[no-rust-stage0] skipping Windows seed gates that compile selfhost doc/build/run drivers:"
-    echo "[no-rust-stage0]   public tool surface, repository doctests"
-else
-    if [ "$HOST_OS" = linux ] &&
-        [ "$STAGE1_HOST_ACTION_DRIVERS_AVAILABLE" -eq 1 ]; then
-        run_with_compiler "$PUBLIC_TOOLS_TYPELISP_BIN" "$PUBLIC_TOOLS_LABEL" scripts/verify-public-tools.sh
-    elif [ "$HOST_OS" = linux ] &&
-        [ "$LINUX_SEED_STAGED_RUNTIME_GAP" -eq 1 ] &&
-        [ "$STAGE1_HOST_ACTION_DRIVERS_AVAILABLE" -eq 0 ]; then
-        echo
-        echo "[no-rust-stage0] skipping seed public tool surface until stage1 host-action drivers are available (#1662)"
-    elif [ "$HOST_OS" = windows ]; then
-        echo
-        echo "[no-rust-stage0] running Windows seed public tool surface with selfhost compatibility gates"
-        if compiler_rejects_package_kind_manifest "$FRONT_GATE_TYPELISP_BIN"; then
-            echo "[no-rust-stage0] Windows seed rejects package kind; using legacy package manifests for public tool surface"
-            run_with_compiler "$FRONT_GATE_TYPELISP_BIN" "public tool surface" env TYPELISP_LEGACY_PACKAGE_MANIFEST=1 TYPELISP_PUBLIC_TOOLS_HOST_ACTION_ENABLED=0 TYPELISP_PUBLIC_TOOLS_SKIP_CURRENT_LSP_IMPORT_CLEAR=1 scripts/verify-public-tools.sh
-        else
-            run_with_compiler "$FRONT_GATE_TYPELISP_BIN" "public tool surface" env TYPELISP_PUBLIC_TOOLS_HOST_ACTION_ENABLED=0 TYPELISP_PUBLIC_TOOLS_SKIP_CURRENT_LSP_IMPORT_CLEAR=1 scripts/verify-public-tools.sh
-        fi
-    elif [ "$SEED_IS_STAGE1_BUNDLE" -eq 1 ]; then
-        echo
-        echo "[no-rust-stage0] skipping public tool surface until bundled stage1 host-action drivers are available (#1662)"
-    elif [ "$SEED_STAGE1_WRAPPER" -eq 1 ]; then
-        echo
-        echo "[no-rust-stage0] skipping seed public tool surface until stage1 wrapper host-action drivers are available (#1662)"
-    else
-        echo
-        echo "[no-rust-stage0] running seed public tool surface with selfhost compatibility gates"
-        if compiler_rejects_package_kind_manifest "$PUBLIC_TOOLS_TYPELISP_BIN"; then
-            echo "[no-rust-stage0] seed rejects package kind; using legacy package manifests for public tool surface"
-            run_with_compiler "$PUBLIC_TOOLS_TYPELISP_BIN" "$PUBLIC_TOOLS_LABEL" env TYPELISP_LEGACY_PACKAGE_MANIFEST=1 TYPELISP_PUBLIC_TOOLS_HOST_ACTION_ENABLED=0 TYPELISP_PUBLIC_TOOLS_SKIP_CURRENT_LSP_IMPORT_CLEAR=1 scripts/verify-public-tools.sh
-        else
-            run_with_compiler "$PUBLIC_TOOLS_TYPELISP_BIN" "$PUBLIC_TOOLS_LABEL" env TYPELISP_PUBLIC_TOOLS_HOST_ACTION_ENABLED=0 TYPELISP_PUBLIC_TOOLS_SKIP_CURRENT_LSP_IMPORT_CLEAR=1 scripts/verify-public-tools.sh
-        fi
-    fi
-    if [ "$HOST_OS" = linux ] &&
-        [ "$LINUX_SEED_STAGED_RUNTIME_GAP" -eq 1 ] &&
-        [ "$STAGE1_HOST_ACTION_DRIVERS_AVAILABLE" -eq 0 ]; then
-        echo
-        echo "[no-rust-stage0] skipping repository doctests until staged runtime symbols land in stage0"
-    else
-        # The single-binary cli.tl seed runs `doc --test` (including runnable
-        # ` ```typelisp run ` doctests) in-process, so this gate stays on the seed.
-        run_with_compiler "$DOCTEST_TYPELISP_BIN" "repository doctests" scripts/verify-doc-tests.sh
-    fi
+if [ "$HOST_OS" = linux ]; then
+    run_with_compiler "$SELFHOST_CLI_BIN" "fresh selfhost CLI public tool surface" scripts/verify-public-tools.sh
+    run_with_compiler "$SELFHOST_CLI_BIN" "fresh selfhost CLI repository doctests" scripts/verify-doc-tests.sh
+elif [ "$HOST_OS" = windows ]; then
+    run_with_compiler "$SELFHOST_CLI_BIN" "fresh selfhost CLI public tool surface" scripts/verify-public-tools.sh
+    run_with_compiler "$SELFHOST_CLI_BIN" "fresh selfhost CLI repository doctests" scripts/verify-doc-tests.sh
 fi
-if [ "$HOST_OS" = linux ] &&
-    [ "$SEED_IS_STAGE1_BUNDLE" -eq 1 ] &&
-    [ -z "$STAGE1_TEST_BIN" ]; then
-    echo
-    echo "[no-rust-stage0] skipping inline TypeLisp tests until the stage1 bundle carries a selfhost test driver (#1609)"
+if [ "$HOST_OS" = linux ] || [ "$HOST_OS" = windows ]; then
+    run_with_compiler "$SELFHOST_CLI_BIN" "fresh selfhost CLI inline TypeLisp tests" scripts/verify-inline-tests.sh
 else
     # The single-binary cli.tl seed runs `typelisp test` (both --check and the
     # in-process test-executable run) directly, so this gate stays on the seed.
     run_with_compiler "$INLINE_TEST_TYPELISP_BIN" "inline TypeLisp tests" scripts/verify-inline-tests.sh
 fi
 if [ "$HOST_OS" = linux ]; then
-    # Building the full selfhost test driver in this hosted no-Rust lane is
-    # currently too heavy for the runner. When the stage1 bundle carries the
-    # driver, run the wrapper's direct test-command smoke instead of the old
-    # host-action plan path.
-    if [ -z "$STAGE1_TEST_BIN" ]; then
-        TYPELISP_STAGE1_SKIP_TEST_SMOKE=1
-        export TYPELISP_STAGE1_SKIP_TEST_SMOKE
-    fi
-    # Building the full selfhost doc driver through stage1 is also too heavy
-    # for this hosted lane; #1437 tracks restoring direct stage1 coverage for
-    # compiler-sized selfhost drivers.
-    TYPELISP_STAGE1_SKIP_DOC_SMOKE=1
-    export TYPELISP_STAGE1_SKIP_DOC_SMOKE
-    if [ "$SEED_IS_STAGE1_BUNDLE" -eq 1 ]; then
-        TYPELISP_STAGE1_SKIP_PACKAGE_SMOKE=1
-        export TYPELISP_STAGE1_SKIP_PACKAGE_SMOKE
-    fi
     if [ "$STAGE1_HOST_ACTION_DRIVERS_AVAILABLE" -eq 0 ]; then
-        echo
-        echo "[no-rust-stage0] skipping stage1 CLI host-action wrapper smoke until staged runtime symbols land in stage0"
+        run_with_compiler "$SELFHOST_CLI_BIN" "fresh selfhost CLI host-action wrapper smoke" scripts/check-stage1-wrapper.sh
     else
         run_with_compiler "$STAGE1_TYPELISP_BIN" "stage1 CLI host-action wrapper smoke" scripts/check-stage1-wrapper.sh
     fi
-    unset TYPELISP_STAGE1_SKIP_TEST_SMOKE
-    unset TYPELISP_STAGE1_SKIP_DOC_SMOKE
-    unset TYPELISP_STAGE1_SKIP_PACKAGE_SMOKE
     run_with_compiler "$STAGE1_TYPELISP_BIN" "stage1 deterministic assembly" scripts/check-deterministic-asm.sh
     run_with_compiler "$SEED_TYPELISP_BIN" "comptime-type specialization smoke" \
         env TYPELISP_BOOTSTRAP_SMOKE_STAGE1_BIN="$BOOTSTRAPPED_STAGE1" scripts/check-bootstrap-smoke.sh
     run_with_compiler "$STAGE1_TYPELISP_BIN" "stage1 selfhost compile manifest" env TYPELISP_COMPILE_MANIFEST_EXPECTATION_MODE=stage1 scripts/verify-selfhost-compile-manifest.sh
     if [ "$STAGE1_HOST_ACTION_DRIVERS_AVAILABLE" -eq 0 ]; then
-        echo
-        echo "[no-rust-stage0] skipping stage1 doc/build-driver gates until staged runtime symbols land in stage0:"
-        echo "[no-rust-stage0]   stdlib documentation, stdlib selfhost verifier"
+        run_with_compiler "$SELFHOST_CLI_BIN" "fresh selfhost CLI stdlib documentation" scripts/verify-stdlib-docs.sh
+        run_with_compiler "$SELFHOST_CLI_BIN" "fresh selfhost CLI stdlib selfhost verifier" scripts/verify-stdlib-selfhost.sh
     else
         run_with_compiler "$STAGE1_TYPELISP_BIN" "stage1 stdlib documentation" scripts/verify-stdlib-docs.sh
         run_with_compiler "$STAGE1_TYPELISP_BIN" "stage1 stdlib selfhost verifier" scripts/verify-stdlib-selfhost.sh
@@ -565,41 +511,36 @@ else
     # symbols, so the manifest still uses stage1 expectation mode.
     run_with_compiler "$SELFHOST_CLI_BIN" "selfhost compile manifest" env TYPELISP_COMPILE_MANIFEST_EXPECTATION_MODE=stage1 scripts/verify-selfhost-compile-manifest.sh
     run_with_compiler "$SELFHOST_CLI_BIN" "deterministic assembly" scripts/check-deterministic-asm.sh
+    run_with_compiler "$SELFHOST_CLI_BIN" "windows selfhost MSVC link.exe build/run" scripts/verify-windows-selfhost-msvc-link.sh
+
+    # The Windows stage2 self-compile allocation ceiling (#1601) is fixed on
+    # this branch (it is based on the 1601 branch), and lib-native-link.sh
+    # links each bootstrap stage at a 256 MB stack reserve (not the old 16 MB
+    # /STACK). Capture the bootstrapped Windows stage1 and reuse it for the
+    # run-assert tiers below so the gate executes real Windows binaries built by
+    # the artifact we just produced.
     if [ "$WINDOWS_SEED_STAGED_RUNTIME_GAP" -eq 1 ]; then
-        echo
-        echo "[no-rust-stage0] skipping Windows selfhost MSVC link.exe build/run and bootstrap fixpoint until the seed provides staged runtime symbols"
-    else
-        # The Windows stage2 self-compile allocation ceiling (#1601) is fixed on
-        # this branch (it is based on the 1601 branch), and lib-native-link.sh
-        # links each bootstrap stage at a 256 MB stack reserve (not the old 16 MB
-        # /STACK), so the Windows self-reproduction fixpoint converges. Run it,
-        # capture the bootstrapped Windows stage1, and reuse it for the run-assert
-        # tiers below so the gate executes real Windows binaries built by the
-        # artifact we just produced. (verify-windows-selfhost-msvc-link.sh stays
-        # deferred in this compatibility lane. The fixpoint already exercises the
-        # MSVC link.exe path through lib-native-link.sh, so MSVC linking is covered.
-        # Fresh cli.tl direct build/run coverage is checked earlier by
-        # verify-selfhost-cli-build-run.sh.)
-        echo
-        echo "[no-rust-stage0] skipping windows selfhost MSVC link.exe build/run compatibility gate (MSVC link covered by the fixpoint; direct cli.tl build/run covered by the fresh cli smoke)"
-        WINDOWS_STAGE1_PATH_FILE="$ROOT/target/no-rust-stage0-win-stage1.path"
-        rm -f "$WINDOWS_STAGE1_PATH_FILE"
-        TYPELISP_BOOTSTRAP_STAGE1_PATH_FILE=$WINDOWS_STAGE1_PATH_FILE
-        export TYPELISP_BOOTSTRAP_STAGE1_PATH_FILE
-        run_gate "windows bootstrap fixpoint" scripts/check-bootstrap-fixpoint.sh "$SEED_TYPELISP_BIN"
-        unset TYPELISP_BOOTSTRAP_STAGE1_PATH_FILE
-        if [ -s "$WINDOWS_STAGE1_PATH_FILE" ]; then
-            BOOTSTRAPPED_STAGE1=$(sed -n '1p' "$WINDOWS_STAGE1_PATH_FILE")
-            ensure_executable "windows stage1" "$BOOTSTRAPPED_STAGE1"
-            if stage1_can_compile_native_windows "$BOOTSTRAPPED_STAGE1"; then
-                STAGE1_CAN_COMPILE_NATIVE=1
-                echo "[no-rust-stage0] windows stage1 compile->clang->lld-link->run capability confirmed; run-assert tiers execute on the bootstrapped stage1"
-            else
-                echo "[no-rust-stage0] windows stage1 compile-native probe failed; run-assert tiers stay skipped"
-            fi
+        echo "[no-rust-stage0] Windows seed lacks staged runtime symbols; bootstrap fixpoint still runs with the seed and must pass"
+    fi
+    WINDOWS_STAGE1_PATH_FILE="$ROOT/target/no-rust-stage0-win-stage1.path"
+    rm -f "$WINDOWS_STAGE1_PATH_FILE"
+    TYPELISP_BOOTSTRAP_STAGE1_PATH_FILE=$WINDOWS_STAGE1_PATH_FILE
+    export TYPELISP_BOOTSTRAP_STAGE1_PATH_FILE
+    run_gate "windows bootstrap fixpoint" scripts/check-bootstrap-fixpoint.sh "$SEED_TYPELISP_BIN"
+    unset TYPELISP_BOOTSTRAP_STAGE1_PATH_FILE
+    if [ -s "$WINDOWS_STAGE1_PATH_FILE" ]; then
+        BOOTSTRAPPED_STAGE1=$(sed -n '1p' "$WINDOWS_STAGE1_PATH_FILE")
+        ensure_executable "windows stage1" "$BOOTSTRAPPED_STAGE1"
+        if stage1_can_compile_native_windows "$BOOTSTRAPPED_STAGE1"; then
+            STAGE1_CAN_COMPILE_NATIVE=1
+            echo "[no-rust-stage0] windows stage1 compile->clang->lld-link->run capability confirmed; run-assert tiers execute on the bootstrapped stage1"
         else
-            echo "[no-rust-stage0] windows fixpoint did not persist a stage1 path; run-assert tiers stay skipped"
+            required_gate_unavailable "Windows stage1 compile->clang->lld-link->run probe" \
+                "safety, integration, and examples run-assert tiers depend on this probe"
         fi
+    else
+        required_gate_unavailable "Windows bootstrap fixpoint" \
+            "bootstrap did not persist a stage1 path for downstream run-assert tiers"
     fi
 fi
 TYPELISP_BIN=$SEED_TYPELISP_BIN
@@ -620,15 +561,15 @@ if [ "$STAGE1_CAN_COMPILE_NATIVE" -eq 1 ]; then
     SAFETY_GATE_LABEL="stage1 safety corpus"
     run_with_compiler "$SAFETY_GATE_TYPELISP_BIN" "$SAFETY_GATE_LABEL" scripts/verify-safety-corpus.sh
 elif [ "$WINDOWS_SEED_STAGED_RUNTIME_GAP" -eq 1 ]; then
-    echo
-    echo "[no-rust-stage0] skipping Windows safety corpus until the seed provides staged runtime symbols"
+    required_gate_unavailable "Windows safety corpus" \
+        "the seed has staged runtime gaps and no bootstrapped stage1 run capability was established"
 elif [ "$STAGE1_HOST_ACTION_DRIVERS_AVAILABLE" -eq 0 ]; then
     # The safety corpus assembles, links, and runs native trap fixtures. On hosts
     # where the bootstrapped stage1 cannot drive compile->as->ld->run (Windows, or
-    # a Linux stage1 that failed the compile-native probe), skip this seed
+    # a Linux stage1 that failed the compile-native probe), fail the seed
     # compatibility path; fresh cli.tl build/run is covered above.
-    echo
-    echo "[no-rust-stage0] skipping safety corpus; needs stage1 compile->as->ld->run in this compatibility path"
+    required_gate_unavailable "safety corpus" \
+        "stage1 compile/link/run capability was not established"
 else
     run_with_compiler "$SAFETY_GATE_TYPELISP_BIN" "$SAFETY_GATE_LABEL" scripts/verify-safety-corpus.sh
 fi
@@ -639,10 +580,10 @@ if [ "$STAGE1_CAN_COMPILE_NATIVE" -eq 1 ]; then
     # The bootstrapped stage1 compiles + assembles + links + runs native programs
     # (compile-native probe confirmed), so run the integration corpus and examples
     # on the artifact we built via compile -> assemble -> link -> run (as/ld on
-    # Linux, clang/lld-link on Windows), instead of skipping. On Linux, stdlib
-    # fixtures use the same compile -> as -> ld path, so they can also execute on
-    # the compile-only stage1. Windows stdlib fixtures still need the public
-    # `build` host action and remain in the explicit fallback/skip lane.
+    # Linux, clang/lld-link on Windows). On Linux, stdlib fixtures use the same
+    # compile -> as -> ld path, so they can also execute on the compile-only
+    # stage1. Windows stdlib fixtures run through the fresh branch-built cli.tl
+    # because they require the public `build` host action.
     run_with_compiler "$BOOTSTRAPPED_STAGE1" "stage1 native integration corpus" scripts/verify-integration.sh
     run_with_compiler "$BOOTSTRAPPED_STAGE1" "stage1 examples" scripts/verify-examples.sh
     if [ "$HOST_OS" = linux ]; then
@@ -650,37 +591,34 @@ if [ "$STAGE1_CAN_COMPILE_NATIVE" -eq 1 ]; then
         run_with_compiler "$BOOTSTRAPPED_STAGE1" "stage1 stdlib modules and fixtures" \
             env TYPELISP_STDLIB_BORROWED_STR_BIN="$BOOTSTRAPPED_STAGE1" scripts/verify-stdlib.sh
     else
-        echo
-        echo "[no-rust-stage0] stdlib modules/fixtures stay deferred on Windows until this lane has a full stage1 build command"
+        run_with_compiler "$SELFHOST_CLI_BIN" "fresh selfhost CLI stdlib modules and fixtures" \
+            env TYPELISP_STDLIB_BORROWED_STR_BIN="$BOOTSTRAPPED_STAGE1" scripts/verify-stdlib.sh
     fi
 elif [ "$WINDOWS_SEED_STAGED_RUNTIME_GAP" -eq 1 ] ||
     [ "$LINUX_SEED_STAGED_RUNTIME_GAP" -eq 1 ] ||
     [ "$SEED_STAGE1_WRAPPER" -eq 1 ]; then
-    echo
-    echo "[no-rust-stage0] skipping seed build/run artifact gates until staged runtime symbols and full seed CLI parity land in stage0:"
-    echo "[no-rust-stage0]   native integration corpus, examples, stdlib modules and fixtures"
+    required_gate_unavailable "native integration corpus, examples, stdlib modules and fixtures" \
+        "staged runtime symbols or seed CLI parity are unavailable and no stage1 run capability was established"
 elif [ "$HOST_OS" = linux ] && [ "$SEED_IS_STAGE1_BUNDLE" -eq 1 ]; then
-    echo
-    echo "[no-rust-stage0] skipping seed build/run artifact gates until the stage1 bundle reaches compiler/runtime parity:"
-    echo "[no-rust-stage0]   native integration corpus, examples, stdlib modules and fixtures"
+    required_gate_unavailable "native integration corpus, examples, stdlib modules and fixtures" \
+        "stage1 bundle compiler/runtime parity is unavailable"
 elif [ "$STAGE1_HOST_ACTION_DRIVERS_AVAILABLE" -eq 0 ]; then
     # These gates build and run native programs (integration corpus, examples,
-    # stdlib fixtures via `typelisp build`/`run`). Keep them disabled in this
-    # compatibility seed path; fresh cli.tl direct build/run is covered earlier,
+    # stdlib fixtures via `typelisp build`/`run`). This compatibility seed path
+    # fails closed; fresh cli.tl direct build/run is covered earlier,
     # while this broad path still has package/generated-program parity gaps.
     # cli.tl's compile/check coverage for these sources stays exercised by the
     # deterministic assembly + selfhost compile manifest gates and the
     # borrowed-str check gate.
-    echo
-    echo "[no-rust-stage0] skipping seed build/run artifact gates in the compatibility path:"
-    echo "[no-rust-stage0]   native integration corpus, examples, stdlib modules and fixtures"
+    required_gate_unavailable "native integration corpus, examples, stdlib modules and fixtures" \
+        "stage1 host-action drivers are unavailable"
 else
     run_gate "native integration corpus" scripts/verify-integration.sh
     run_gate "examples" scripts/verify-examples.sh
     if [ "$HOST_OS" = linux ]; then
         run_gate "stdlib modules and fixtures" env TYPELISP_STDLIB_BORROWED_STR_BIN="$STAGE1_TYPELISP_BIN" scripts/verify-stdlib.sh
     else
-        run_gate "stdlib modules and fixtures" env TYPELISP_STDLIB_SKIP_BORROWED_STR=1 scripts/verify-stdlib.sh
+        run_gate "stdlib modules and fixtures" scripts/verify-stdlib.sh
     fi
 fi
 
@@ -692,29 +630,17 @@ if [ "$HOST_OS" = linux ]; then
         unset DOC_SITE_OUT
         run_with_compiler "$STAGE1_TYPELISP_BIN" "stage1 selfhost native generated programs" scripts/verify-selfhost-native.sh
         run_with_compiler "$STAGE1_TYPELISP_BIN" "stage1 selfhost external compiler corpus" scripts/verify-selfhost.sh
-    elif [ "$LINUX_SEED_STAGED_RUNTIME_GAP" -eq 1 ] || [ "$SEED_STAGE1_WRAPPER" -eq 1 ]; then
-        echo
-        echo "[no-rust-stage0] skipping Linux stage1 generated gates until wrapper host-action drivers are available (#1662):"
-        echo "[no-rust-stage0]   docs Pages build path, selfhost native generated programs,"
-        echo "[no-rust-stage0]   selfhost external compiler corpus"
-    elif [ "$SEED_IS_STAGE1_BUNDLE" -eq 1 ]; then
-        echo
-        echo "[no-rust-stage0] skipping Linux stage1 generated gates until bundled host-action drivers are available (#1662):"
-        echo "[no-rust-stage0]   docs Pages build path, selfhost native generated programs,"
-        echo "[no-rust-stage0]   selfhost external compiler corpus"
     else
-        # These gates build/run generated programs (docs Pages site, selfhost
-        # native programs, the external selfhost compiler corpus). Keep them on
-        # the compatibility skip path until this lane runs a full current cli.tl
-        # artifact and the generated-program parity gaps are closed.
-        echo
-        echo "[no-rust-stage0] skipping Linux generated gates in the compatibility path:"
-        echo "[no-rust-stage0]   docs Pages build path, selfhost native generated programs,"
-        echo "[no-rust-stage0]   selfhost external compiler corpus"
+        DOC_SITE_OUT="$ROOT/target/no-rust-docs-pages-site"
+        export DOC_SITE_OUT
+        run_with_compiler "$SELFHOST_CLI_BIN" "fresh selfhost CLI docs Pages build path" scripts/verify-doc-site.sh
+        unset DOC_SITE_OUT
+        run_with_compiler "$SELFHOST_CLI_BIN" "fresh selfhost CLI selfhost native generated programs" scripts/verify-selfhost-native.sh
+        run_with_compiler "$SELFHOST_CLI_BIN" "fresh selfhost CLI selfhost external compiler corpus" scripts/verify-selfhost.sh
     fi
 else
     echo
-    echo "[no-rust-stage0] skipping Linux-only gates on Windows:"
+    echo "[no-rust-stage0] Linux-only GNU as/ld gates are not Windows-applicable:"
     echo "[no-rust-stage0]   stdlib documentation, selfhost native generated programs,"
     echo "[no-rust-stage0]   selfhost external compiler corpus"
 fi

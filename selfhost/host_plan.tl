@@ -3,6 +3,8 @@
 ;; This mirrors `src/host_action.rs`'s private `typelisp-host-plan v1` grammar.
 ;; The boundary is deliberately not shell-tokenized: paths and runtime args are
 ;; emitted as netstrings so spaces, colons, and newlines round-trip exactly.
+(import "../stdlib/env.tl")
+
 (define (host-plan-cat3 [a : String] [b : String] [c : String]) : String
   (string-append a (string-append b c)))
 

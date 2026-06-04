@@ -4,6 +4,8 @@
 ;; compile_smoke AST. It stays parser-only: later #27 work can reuse the
 ;; parsed `AstProgram` for typechecking/lowering once those selfhost passes
 ;; exist.
+(import "../stdlib/io.tl")
+
 (import "compiler_ast_types.tl")
 
 (import "compiler_diagnostic.tl")
@@ -127,6 +129,14 @@
 (defenum ResultAstExpr
   (OkAstExpr AstExpr)
   (ErrAstExpr String))
+
+(defstruct AstExprPair
+  (first AstExpr)
+  (second AstExpr))
+
+(defenum ResultAstExprPair
+  (OkAstExprPair AstExprPair)
+  (ErrAstExprPair String))
 
 (defenum ResultAstExprList
   (OkAstExprList AstExprList)
@@ -555,6 +565,39 @@
 (define (compiler-parse-tag-expr-box-get) : i64
   264)
 
+(define (compiler-parse-tag-expr-string-data) : i64
+  276)
+
+(define (compiler-parse-tag-expr-string-from-bytes) : i64
+  277)
+
+(define (compiler-parse-tag-expr-array-data) : i64
+  278)
+
+(define (compiler-parse-tag-expr-program-argc) : i64
+  279)
+
+(define (compiler-parse-tag-expr-program-argv) : i64
+  280)
+
+(define (compiler-parse-tag-expr-program-envp) : i64
+  281)
+
+(define (compiler-parse-tag-expr-cpuid-eax) : i64
+  282)
+
+(define (compiler-parse-tag-expr-cpuid-ebx) : i64
+  283)
+
+(define (compiler-parse-tag-expr-cpuid-ecx) : i64
+  284)
+
+(define (compiler-parse-tag-expr-cpuid-edx) : i64
+  285)
+
+(define (compiler-parse-tag-expr-xgetbv) : i64
+  286)
+
 (define (compiler-parse-tag-expr-quote) : i64
   265)
 
@@ -752,6 +795,40 @@
         (sym-i64-bind out "int->ptr" (compiler-parse-tag-expr-int-to-ptr)))
       (set! out (sym-i64-bind out "box" (compiler-parse-tag-expr-box)))
       (set! out (sym-i64-bind out "box-get" (compiler-parse-tag-expr-box-get)))
+      (set!
+        out
+        (sym-i64-bind out "string-data" (compiler-parse-tag-expr-string-data)))
+      (set!
+        out
+        (sym-i64-bind
+          out
+          "string-from-bytes"
+          (compiler-parse-tag-expr-string-from-bytes)))
+      (set!
+        out
+        (sym-i64-bind out "array-data" (compiler-parse-tag-expr-array-data)))
+      (set!
+        out
+        (sym-i64-bind out "program-argc" (compiler-parse-tag-expr-program-argc)))
+      (set!
+        out
+        (sym-i64-bind out "program-argv" (compiler-parse-tag-expr-program-argv)))
+      (set!
+        out
+        (sym-i64-bind out "program-envp" (compiler-parse-tag-expr-program-envp)))
+      (set!
+        out
+        (sym-i64-bind out "cpuid-eax" (compiler-parse-tag-expr-cpuid-eax)))
+      (set!
+        out
+        (sym-i64-bind out "cpuid-ebx" (compiler-parse-tag-expr-cpuid-ebx)))
+      (set!
+        out
+        (sym-i64-bind out "cpuid-ecx" (compiler-parse-tag-expr-cpuid-ecx)))
+      (set!
+        out
+        (sym-i64-bind out "cpuid-edx" (compiler-parse-tag-expr-cpuid-edx)))
+      (set! out (sym-i64-bind out "xgetbv" (compiler-parse-tag-expr-xgetbv)))
       (set!
         out
         (sym-i64-bind out "with" (compiler-parse-tag-expr-with-resource)))
@@ -2047,6 +2124,92 @@
         [(ErrAstExpr message) (ErrAstExpr message)])]
     [_ (ErrAstExpr "parse: ptr->int expects exactly one expression")]))
 
+(define (parse-ast-one-expr
+  [dispatch : SymI64Env]
+  [rest : SpannedSexpr]
+  [name : String]) : ResultAstExpr
+  (match rest
+    [(SpSCons expr (SpSNil _) _) (parse-ast-expr dispatch expr)]
+    [_
+      (ErrAstExpr
+        (string-append
+          "parse: "
+          (string-append name " expects exactly one expression")))]))
+
+(define (parse-ast-two-exprs
+  [dispatch : SymI64Env]
+  [rest : SpannedSexpr]
+  [name : String]) : ResultAstExprPair
+  (match rest
+    [(SpSCons first (SpSCons second (SpSNil _) _) _)
+      (match (parse-ast-expr dispatch first)
+        [(OkAstExpr parsed-first)
+          (match (parse-ast-expr dispatch second)
+            [(OkAstExpr parsed-second)
+              (OkAstExprPair (AstExprPair parsed-first parsed-second))]
+            [(ErrAstExpr message) (ErrAstExprPair message)])]
+        [(ErrAstExpr message) (ErrAstExprPair message)])]
+    [_
+      (ErrAstExprPair
+        (string-append
+          "parse: "
+          (string-append name " expects exactly two expressions")))]))
+
+(define (parse-ast-string-data [dispatch : SymI64Env] [rest : SpannedSexpr]) : ResultAstExpr
+  (match (parse-ast-one-expr dispatch rest "string-data")
+    [(OkAstExpr expr) (OkAstExpr (AstExprStringData expr))]
+    [(ErrAstExpr message) (ErrAstExpr message)]))
+
+(define (parse-ast-string-from-bytes
+  [dispatch : SymI64Env]
+  [rest : SpannedSexpr]) : ResultAstExpr
+  (match (parse-ast-two-exprs dispatch rest "string-from-bytes")
+    [(OkAstExprPair pair)
+      (OkAstExpr
+        (AstExprStringFromBytes
+          (struct-get pair first)
+          (struct-get pair second)))]
+    [(ErrAstExprPair message) (ErrAstExpr message)]))
+
+(define (parse-ast-array-data [dispatch : SymI64Env] [rest : SpannedSexpr]) : ResultAstExpr
+  (match (parse-ast-one-expr dispatch rest "array-data")
+    [(OkAstExpr expr) (OkAstExpr (AstExprArrayData expr))]
+    [(ErrAstExpr message) (ErrAstExpr message)]))
+
+(define (parse-ast-no-arg-low-level
+  [rest : SpannedSexpr]
+  [name : String]
+  [expr : AstExpr]) : ResultAstExpr
+  (match rest
+    [(SpSNil _) (OkAstExpr expr)]
+    [_
+      (ErrAstExpr
+        (string-append "parse: " (string-append name " expects no arguments")))]))
+
+(define (parse-ast-cpuid-like
+  [dispatch : SymI64Env]
+  [tag : i64]
+  [rest : SpannedSexpr]) : ResultAstExpr
+  (match (parse-ast-two-exprs dispatch rest "cpuid")
+    [(OkAstExprPair pair)
+      (let
+        [leaf : AstExpr (struct-get pair first)]
+        [subleaf : AstExpr (struct-get pair second)]
+        (cond
+          [(= tag (compiler-parse-tag-expr-cpuid-eax))
+            (OkAstExpr (AstExprCpuIdEax leaf subleaf))]
+          [(= tag (compiler-parse-tag-expr-cpuid-ebx))
+            (OkAstExpr (AstExprCpuIdEbx leaf subleaf))]
+          [(= tag (compiler-parse-tag-expr-cpuid-ecx))
+            (OkAstExpr (AstExprCpuIdEcx leaf subleaf))]
+          [else (OkAstExpr (AstExprCpuIdEdx leaf subleaf))]))]
+    [(ErrAstExprPair message) (ErrAstExpr message)]))
+
+(define (parse-ast-xgetbv [dispatch : SymI64Env] [rest : SpannedSexpr]) : ResultAstExpr
+  (match (parse-ast-one-expr dispatch rest "xgetbv")
+    [(OkAstExpr expr) (OkAstExpr (AstExprXgetbv expr))]
+    [(ErrAstExpr message) (ErrAstExpr message)]))
+
 (define (parse-ast-with-region [dispatch : SymI64Env] [rest : SpannedSexpr]) : ResultAstExpr
   (match rest
     [(SpSNil _)
@@ -2362,6 +2525,27 @@
       (parse-ast-box-like dispatch rest false)]
     [(= tag (compiler-parse-tag-expr-box-get))
       (parse-ast-box-like dispatch rest true)]
+    [(= tag (compiler-parse-tag-expr-string-data))
+      (parse-ast-string-data dispatch rest)]
+    [(= tag (compiler-parse-tag-expr-string-from-bytes))
+      (parse-ast-string-from-bytes dispatch rest)]
+    [(= tag (compiler-parse-tag-expr-array-data))
+      (parse-ast-array-data dispatch rest)]
+    [(= tag (compiler-parse-tag-expr-program-argc))
+      (parse-ast-no-arg-low-level rest "program-argc" (AstExprProgramArgc))]
+    [(= tag (compiler-parse-tag-expr-program-argv))
+      (parse-ast-no-arg-low-level rest "program-argv" (AstExprProgramArgv))]
+    [(= tag (compiler-parse-tag-expr-program-envp))
+      (parse-ast-no-arg-low-level rest "program-envp" (AstExprProgramEnvp))]
+    [(= tag (compiler-parse-tag-expr-cpuid-eax))
+      (parse-ast-cpuid-like dispatch tag rest)]
+    [(= tag (compiler-parse-tag-expr-cpuid-ebx))
+      (parse-ast-cpuid-like dispatch tag rest)]
+    [(= tag (compiler-parse-tag-expr-cpuid-ecx))
+      (parse-ast-cpuid-like dispatch tag rest)]
+    [(= tag (compiler-parse-tag-expr-cpuid-edx))
+      (parse-ast-cpuid-like dispatch tag rest)]
+    [(= tag (compiler-parse-tag-expr-xgetbv)) (parse-ast-xgetbv dispatch rest)]
     [(= tag (compiler-parse-tag-expr-ptr-null))
       (parse-ast-ptr-null dispatch rest)]
     [(= tag (compiler-parse-tag-expr-ptr-null-check))
@@ -2538,6 +2722,13 @@
     [(SCons (SSym name) (SNil))
       (if (string-eq name "c")
         (OkAstExternAbi (AstExternAbiC))
+        (ErrAstExternAbi (string-append "parse: unknown extern ABI " name)))]
+    [(SCons (SSym name) (SCons (SInt fixed-count) (SNil)))
+      (if (string-eq name "c-varargs")
+        (if (>= fixed-count 0)
+          (OkAstExternAbi (AstExternAbiCVarargs fixed-count))
+          (ErrAstExternAbi
+            "parse: extern c-varargs fixed argument count must be nonnegative"))
         (ErrAstExternAbi (string-append "parse: unknown extern ABI " name)))]
     [_ (ErrAstExternAbi "parse: malformed extern :abi metadata")]))
 
@@ -3315,6 +3506,9 @@
 (define (compiler-parse-extern-metadata-source) : String
   "(extern local-call (:abi c) (:symbol \"foreign_exact\") (:link-lib \"m\") (:link-search \"native/lib\") (:link-arg \"-Wl,--as-needed\") : (-> i64 i64))")
 
+(define (compiler-parse-extern-varargs-metadata-source) : String
+  "(extern snprintf (:abi c-varargs 3) (:symbol \"snprintf\") : (-> (MutPtr u8) i64 (Ptr u8) f64 i32))")
+
 (define (compiler-parse-raw-pointer-ops-source) : String
   "(define (main [p : (MutPtr i64)] [n : u64]) : u64
   (unsafe
@@ -3380,6 +3574,37 @@
                             [_ false])]
                         [_ false])]
                     [_ false])))))]
+        [_ false])]
+    [(ErrAstProgram _) false]))
+
+(define (compiler-parse-extern-varargs-metadata-ok?) : bool
+  (match (parse-ast-source (compiler-parse-extern-varargs-metadata-source))
+    [(OkAstProgram (AstProgram decls))
+      (match decls
+        [(AstDeclCons (AstDeclExtern name metadata ty) AstDeclNil)
+          (and
+            (string-eq name "snprintf")
+            (and
+              (string-eq (ast-extern-metadata-symbol metadata) "snprintf")
+              (and
+                (match (ast-extern-metadata-abi metadata)
+                  [(AstExternAbiCVarargs fixed-count) (= fixed-count 3)]
+                  [_ false])
+                (match ty
+                  [(AstTyFunc args ret)
+                    (match args
+                      [(AstTypeCons
+                          (AstTyMutPtr (AstTyU8))
+                          (AstTypeCons
+                            (AstTyI64)
+                            (AstTypeCons
+                              (AstTyPtr (AstTyU8))
+                              (AstTypeCons (AstTyF64) AstTypeNil))))
+                        (match ret
+                          [(AstTyI32) true]
+                          [_ false])]
+                      [_ false])]
+                  [_ false]))))]
         [_ false])]
     [(ErrAstProgram _) false]))
 
@@ -3937,6 +4162,16 @@
       (if (compiler-parse-error-ok?
         "(extern f (:abi c) (:abi c) : (-> i64))"
         "parse: duplicate extern :abi metadata")
+        unit
+        (set! ok false))
+      (if (compiler-parse-error-ok?
+        "(extern f (:abi c-varargs) : (-> i64))"
+        "parse: unknown extern ABI c-varargs")
+        unit
+        (set! ok false))
+      (if (compiler-parse-error-ok?
+        "(extern f (:abi c-varargs -1) : (-> i64))"
+        "parse: extern c-varargs fixed argument count must be nonnegative")
         unit
         (set! ok false))
       (if (compiler-parse-error-ok?
@@ -4687,6 +4922,9 @@
     (if (compiler-parse-extern-metadata-ok?)
       unit
       (panic "parse: extern metadata shape test failed"))
+    (if (compiler-parse-extern-varargs-metadata-ok?)
+      unit
+      (panic "parse: extern c-varargs metadata shape test failed"))
     (if (compiler-parse-raw-pointer-ops-ok?)
       unit
       (panic "parse: raw pointer ops shape test failed"))

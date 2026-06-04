@@ -261,6 +261,7 @@
     [(AstDeclDef name _ _) (string-eq name "main")]
     [(AstDeclDefFn name _ _ _) (string-eq name "main")]
     [(AstDeclDefMacro _ _ _ _) false]
+    [(AstDeclUnsafe inner) (tltest-main-decl? inner)]
     [_ false]))
 
 (define (tltest-source-line [span : AstSourceSpan]) : i64
@@ -644,6 +645,7 @@
         (tltest-reach-mark-expr body names)
         names)]
     [(AstDeclDefMacro _ _ _ _) names]
+    [(AstDeclUnsafe inner) (tltest-reach-mark-decl inner names)]
     [_ names]))
 
 (define (tltest-reach-mark-decls [decls : AstDeclList] [names : SymI64Env]) : SymI64Env
@@ -672,6 +674,7 @@
     [(AstDeclDefFn name _ _ _) (sym-i64-contains names name)]
     [(AstDeclExtern name _ _) (sym-i64-contains names name)]
     [(AstDeclDefMacro _ _ _ _) true]
+    [(AstDeclUnsafe inner) (tltest-reachable-runtime-decl? inner names)]
     [_ true]))
 
 (define (tltest-prune-runtime-decls-in

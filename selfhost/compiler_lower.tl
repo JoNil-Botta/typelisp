@@ -564,6 +564,13 @@
       ;; Calls resolve through the local declaration name; backend metadata owns
       ;; the exact external linker symbol.
       (lower-name-env-add-module-binding names module name name)]
+    [(AstDeclUnsafe inner)
+      (lower-name-env-add-decl-in-module
+        names
+        entry-path
+        decl-path
+        module
+        inner)]
     [_ names]))
 
 (define (lower-name-env-add-decl
@@ -661,6 +668,15 @@
         alias
         module
         template
+        path-aware)]
+    [(AstDeclUnsafe inner)
+      (lower-name-env-add-decl-alias-in-module
+        names
+        entry-path
+        decl-path
+        alias
+        module
+        inner
         path-aware)]
     [_ names]))
 
@@ -826,6 +842,7 @@
         name
         (lower-current-decl-logical-name names module name)
         names)]
+    [(AstDeclUnsafe inner) (lower-name-env-add-local-decl names module inner)]
     [_ names]))
 
 (define (lower-module-local-type-env-bind-qualified
@@ -878,6 +895,8 @@
       (lower-module-local-type-env-bind-qualified top-env env module name)]
     [(AstDeclComptimeDecl template)
       (lower-module-local-type-env-add-decl top-env env module template)]
+    [(AstDeclUnsafe inner)
+      (lower-module-local-type-env-add-decl top-env env module inner)]
     [_ (OkTcEnv env)]))
 
 (define (lower-module-local-envs-list
@@ -1344,6 +1363,8 @@
     [(AstDeclCons decl rest)
       (match decl
         [(AstDeclDefFn _ _ _ _) (+ 1 (lower-function-decl-count rest))]
+        [(AstDeclUnsafe (AstDeclDefFn _ _ _ _))
+          (+ 1 (lower-function-decl-count rest))]
         [_ (lower-function-decl-count rest)])]))
 
 (define (lower-function-body-index-add
@@ -1396,6 +1417,16 @@
               next-module
               index)]
           [(AstDeclDefFn name _ _ body)
+            (lower-function-body-index-from-decls-in-module
+              rest
+              rest-paths
+              entry-path
+              module
+              (lower-function-body-index-add
+                index
+                (lower-decl-logical-name entry-path decl-path module name)
+                body))]
+          [(AstDeclUnsafe (AstDeclDefFn name _ _ body))
             (lower-function-body-index-from-decls-in-module
               rest
               rest-paths
@@ -14130,6 +14161,21 @@
         spans)]
     [(AstDeclCons decl rest)
       (match decl
+        [(AstDeclUnsafe inner)
+          (lower-decls-in-module
+            ctx
+            top-env
+            local-top-env
+            (AstDeclCons inner rest)
+            globals
+            functions
+            externs
+            spans
+            names
+            name-cache
+            type-cache
+            mode
+            module)]
         [(AstDeclDef name _ expr)
           (let
             [decl-ctx : TcContext (tc-context-with-module ctx module)]

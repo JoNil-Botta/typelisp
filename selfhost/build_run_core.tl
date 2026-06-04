@@ -332,6 +332,8 @@
             (source-tool-link-inputs-add-ast-list
               inputs
               (ast-extern-metadata-link-inputs metadata)))]
+        [(AstDeclUnsafe inner)
+          (source-tool-link-inputs-from-decls (AstDeclCons inner rest) inputs)]
         [_ (source-tool-link-inputs-from-decls rest inputs)])]))
 
 (define (source-tool-link-inputs-for-source

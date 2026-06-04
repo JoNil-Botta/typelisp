@@ -130,8 +130,9 @@ Name              ; a defenum / defstruct nominal type
 
 Both `f64` and `f32` support scalar parameters, returns, locals, arithmetic,
 comparisons, and casts.
-Raw pointer types `(Ptr T)` and `(MutPtr T)` plus `(unsafe ...)` are implemented
-for the v1 FFI surface described in [SPEC.md](SPEC.md) sections 3.4 and 5.20.
+Raw pointer types `(Ptr T)` and `(MutPtr T)`, `(unsafe ...)`, and unsafe
+function/extern declaration wrappers are implemented for the v1 FFI surface
+described in [SPEC.md](SPEC.md) sections 3.4, 4.3.1, and 5.20.
 
 ### Abstraction policy
 

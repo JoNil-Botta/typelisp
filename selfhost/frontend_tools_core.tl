@@ -878,6 +878,8 @@
         "Test { name: \""
         name
         (front-cat3 "\", body: " (front-expr-render body) " }"))]
+    [(AstDeclUnsafe inner)
+      (front-cat3 "UnsafeDecl { inner: " (front-decl-render inner) " }")]
     [(AstDeclComptimeDecl template)
       (front-cat3 "ComptimeDecl { template: " (front-decl-render template) " }")]))
 

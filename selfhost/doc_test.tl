@@ -2000,7 +2000,7 @@
 ;# ```
 ")
 
-(define (doc-test-run-runnable-missing-main-source) : String
+(define (doc-test-run-runnable-implicit-main-source) : String
   ";# ```typelisp run
 ;# ;; doctest-exit: 0
 ;# (define answer : i64 1)
@@ -2102,6 +2102,17 @@
       (doc-test-run-report-ok? report)
       false)))
 
+(define (doc-test-run-smoke-runnable-implicit-main-ok?) : bool
+  (let
+    [report : DocTestRunReport
+      (doc-test-run-source-with-roots
+        "docs/run.tl"
+        (doc-test-run-runnable-implicit-main-source)
+        (doc-test-run-smoke-stdlib-roots))]
+    (if (= (doc-test-run-report-count report) 1)
+      (doc-test-run-report-ok? report)
+      false)))
+
 (define (doc-test-run-single-failure-message-contains?
   [source : String]
   [fragment : String]) : bool
@@ -2157,19 +2168,14 @@
         (doc-test-run-runnable-compile-failure-source)
         "runnable compile failed")
       (return false))
-    (if (doc-test-run-single-failure-message-contains?
-      (doc-test-run-runnable-missing-main-source)
-      "runnable compile failed")
-      true
-      (doc-test-run-single-failure-message-contains?
-        (doc-test-run-runnable-missing-main-source)
-        "runnable build failed"))))
+    true))
 
 (define (doc-test-run-smoke-runnable-ok?) : bool
   (if (doc-test-runnable-supported?)
-    (if (doc-test-run-smoke-runnable-exec-pass-ok?)
-      (doc-test-run-smoke-runnable-failures-ok?)
-      false)
+    (begin
+      (unless (doc-test-run-smoke-runnable-exec-pass-ok?) (return false))
+      (unless (doc-test-run-smoke-runnable-implicit-main-ok?) (return false))
+      (doc-test-run-smoke-runnable-failures-ok?))
     (doc-test-run-smoke-runnable-unsupported-ok?)))
 
 ;; The rendered failure carries the path, line, and message.

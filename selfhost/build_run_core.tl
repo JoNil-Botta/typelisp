@@ -905,22 +905,25 @@ _tl_print_string:
   [obj-path : String]
   [bin-path : String]
   [link-inputs : SourceToolLinkInputs]) : ResultSourceToolCommand
-  (match (msvc-find-tool "x86_64-pc-windows-msvc" "link.exe")
-    [(OkMsvcTool tool)
-      (OkSourceToolCommand
-        (process-command-with-env-list
-          (process-command
-            (source-tool-env-command-or-default
-              "TYPELISP_WINDOWS_LINK"
-              (msvc-tool-executable tool))
-            (source-tool-windows-linker-args obj-path bin-path link-inputs))
-          (msvc-tool-process-env tool)))]
-    [(ErrMsvcTool _)
-      (OkSourceToolCommand
-        (source-tool-windows-linker-fallback-command
-          obj-path
-          bin-path
-          link-inputs))]))
+  (let
+    [target : String "x86_64-pc-windows-msvc"]
+    [tool : String "link.exe"]
+    (match (msvc-find-tool (& target) (& tool))
+      [(OkMsvcTool resolved-tool)
+        (OkSourceToolCommand
+          (process-command-with-env-list
+            (process-command
+              (source-tool-env-command-or-default
+                "TYPELISP_WINDOWS_LINK"
+                (msvc-tool-executable resolved-tool))
+              (source-tool-windows-linker-args obj-path bin-path link-inputs))
+            (msvc-tool-process-env resolved-tool)))]
+      [(ErrMsvcTool _)
+        (OkSourceToolCommand
+          (source-tool-windows-linker-fallback-command
+            obj-path
+            bin-path
+            link-inputs))])))
 
 (define (source-tool-archiver-command
   [obj-path : String]
@@ -954,19 +957,22 @@ _tl_print_string:
 (define (source-tool-windows-archiver-command
   [obj-path : String]
   [archive-path : String]) : ResultSourceToolCommand
-  (match (msvc-find-tool "x86_64-pc-windows-msvc" "lib.exe")
-    [(OkMsvcTool tool)
-      (OkSourceToolCommand
-        (process-command-with-env-list
-          (process-command
-            (source-tool-env-command-or-default
-              "TYPELISP_WINDOWS_LIB"
-              (msvc-tool-executable tool))
-            (source-tool-windows-archiver-args obj-path archive-path))
-          (msvc-tool-process-env tool)))]
-    [(ErrMsvcTool _)
-      (OkSourceToolCommand
-        (source-tool-windows-archiver-fallback-command obj-path archive-path))]))
+  (let
+    [target : String "x86_64-pc-windows-msvc"]
+    [tool : String "lib.exe"]
+    (match (msvc-find-tool (& target) (& tool))
+      [(OkMsvcTool resolved-tool)
+        (OkSourceToolCommand
+          (process-command-with-env-list
+            (process-command
+              (source-tool-env-command-or-default
+                "TYPELISP_WINDOWS_LIB"
+                (msvc-tool-executable resolved-tool))
+              (source-tool-windows-archiver-args obj-path archive-path))
+            (msvc-tool-process-env resolved-tool)))]
+      [(ErrMsvcTool _)
+        (OkSourceToolCommand
+          (source-tool-windows-archiver-fallback-command obj-path archive-path))])))
 
 (define (source-tool-clean-temp
   [temp-dir : String]

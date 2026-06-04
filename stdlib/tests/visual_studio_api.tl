@@ -37,12 +37,27 @@
   [message : String]) : unit
   (assert-string-eq (windows-setup-error-message error) expected message))
 
+(define (test-windows-setup-string-list-cons
+  [value : String]
+  [rest : WindowsSetupStringList]) : WindowsSetupStringList
+  (windows-setup-string-list-cons (& value) rest))
+
+(define (test-windows-setup-string-list-contains?
+  [items : WindowsSetupStringList]
+  [package-id : String]) : bool
+  (windows-setup-string-list-contains? items (& package-id)))
+
+(define (test-windows-setup-instance-has-package?
+  [instance : WindowsSetupInstance]
+  [package-id : String]) : bool
+  (windows-setup-instance-has-package? instance (& package-id)))
+
 (define (main) : i64
   (let
     [packages : WindowsSetupStringList
-      (windows-setup-string-list-cons
+      (test-windows-setup-string-list-cons
         "Microsoft.VisualStudio.Component.VC.Tools.x86.x64"
-        (windows-setup-string-list-cons
+        (test-windows-setup-string-list-cons
           "Microsoft.VisualStudio.Workload.VCTools"
           (windows-setup-string-list-empty)))]
     [instance : WindowsSetupInstance
@@ -62,12 +77,12 @@
         2
         "windows setup package count")
       (assert-true
-        (windows-setup-string-list-contains?
+        (test-windows-setup-string-list-contains?
           packages
           "Microsoft.VisualStudio.Workload.VCTools")
         "windows setup package contains")
       (assert-false
-        (windows-setup-string-list-contains? packages "missing")
+        (test-windows-setup-string-list-contains? packages "missing")
         "windows setup package missing")
       (assert-i64-eq
         (windows-setup-instance-list-count instances)
@@ -90,7 +105,7 @@
         "Microsoft.VisualStudio.Product.BuildTools"
         "windows setup product id")
       (assert-true
-        (windows-setup-instance-has-package?
+        (test-windows-setup-instance-has-package?
           instance
           "Microsoft.VisualStudio.Component.VC.Tools.x86.x64")
         "windows setup instance package")

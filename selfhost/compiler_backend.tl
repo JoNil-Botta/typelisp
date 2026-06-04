@@ -4446,12 +4446,10 @@
     [(IrPhiInputNil)
       (ErrBackendValue
         (string-append "backend: missing phi input from " from-label))]
-    [(IrPhiInputCons input rest)
-      (match input
-        [(IrPhiInput value label)
-          (if (string-eq label from-label)
-            (OkBackendValue value)
-            (compiler-backend-phi-input-value rest from-label))])]))
+    [(IrPhiInputCons value label rest)
+      (if (string-eq label from-label)
+        (OkBackendValue value)
+        (compiler-backend-phi-input-value rest from-label))]))
 
 (define (compiler-backend-vars-same-home?
   [assignments : CompilerRegAssignmentList]
@@ -5551,12 +5549,10 @@
   [inputs : CompilerIrPhiInputList]) : unit
   (match inputs
     [(IrPhiInputNil) unit]
-    [(IrPhiInputCons input rest)
-      (match input
-        [(IrPhiInput value _)
-          (begin
-            (compiler-backend-count-value-use counts value)
-            (compiler-backend-count-phi-input-uses counts rest))])]))
+    [(IrPhiInputCons value _ rest)
+      (begin
+        (compiler-backend-count-value-use counts value)
+        (compiler-backend-count-phi-input-uses counts rest))]))
 
 (define (compiler-backend-count-instr-uses
   [counts : (Array i64)]
@@ -8236,12 +8232,10 @@
   [inputs : CompilerIrPhiInputList]) : BackendStringList
   (match inputs
     [(IrPhiInputNil) functions]
-    [(IrPhiInputCons input rest)
-      (match input
-        [(IrPhiInput value _)
-          (compiler-backend-collect-phi-functions
-            (compiler-backend-collect-value-function functions value)
-            rest)])]))
+    [(IrPhiInputCons value _ rest)
+      (compiler-backend-collect-phi-functions
+        (compiler-backend-collect-value-function functions value)
+        rest)]))
 
 (define (compiler-backend-collect-instr-functions
   [functions : BackendStringList]
@@ -8430,12 +8424,10 @@
   [inputs : CompilerIrPhiInputList]) : BackendStringList
   (match inputs
     [(IrPhiInputNil) strings]
-    [(IrPhiInputCons input rest)
-      (match input
-        [(IrPhiInput value _)
-          (compiler-backend-collect-phi-strings
-            (compiler-backend-collect-value-string strings value)
-            rest)])]))
+    [(IrPhiInputCons value _ rest)
+      (compiler-backend-collect-phi-strings
+        (compiler-backend-collect-value-string strings value)
+        rest)]))
 
 (define (compiler-backend-collect-instr-strings
   [strings : BackendStringList]
@@ -8619,12 +8611,10 @@
   [inputs : CompilerIrPhiInputList]) : BackendStringList
   (match inputs
     [(IrPhiInputNil) floats]
-    [(IrPhiInputCons input rest)
-      (match input
-        [(IrPhiInput value _)
-          (compiler-backend-collect-phi-f64s
-            (compiler-backend-collect-value-f64 floats value)
-            rest)])]))
+    [(IrPhiInputCons value _ rest)
+      (compiler-backend-collect-phi-f64s
+        (compiler-backend-collect-value-f64 floats value)
+        rest)]))
 
 (define (compiler-backend-collect-instr-f64s
   [floats : BackendStringList]

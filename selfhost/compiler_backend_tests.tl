@@ -1361,7 +1361,7 @@
       (IrInstrCons
         (IrInstrPhi
           1
-          (IrPhiInputCons (IrPhiInput (IrValueVar 0) "entry") IrPhiInputNil)
+          (IrPhiInputCons (IrValueVar 0) "entry" IrPhiInputNil)
           (AstTyI64))
         IrInstrNil))
     IrBlockNil))
@@ -1373,12 +1373,12 @@
       (IrInstrCons
         (IrInstrPhi
           0
-          (IrPhiInputCons (IrPhiInput (IrValueVar 1) "back") IrPhiInputNil)
+          (IrPhiInputCons (IrValueVar 1) "back" IrPhiInputNil)
           (AstTyI64))
         (IrInstrCons
           (IrInstrPhi
             1
-            (IrPhiInputCons (IrPhiInput (IrValueVar 0) "back") IrPhiInputNil)
+            (IrPhiInputCons (IrValueVar 0) "back" IrPhiInputNil)
             (AstTyI64))
           IrInstrNil)))
     IrBlockNil))
@@ -1984,7 +1984,7 @@
     [phi : CompilerIrInstr
       (IrInstrPhi
         0
-        (IrPhiInputCons (IrPhiInput (IrValueF64 "1.0") "entry") IrPhiInputNil)
+        (IrPhiInputCons (IrValueF64 "1.0") "entry" IrPhiInputNil)
         (AstTyI64))]
     [program : CompilerIrProgram
       (IrProgram

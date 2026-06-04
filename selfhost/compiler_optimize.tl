@@ -897,10 +897,8 @@
   [inputs : CompilerIrPhiInputList]) : OptUsedSet
   (match inputs
     [(IrPhiInputNil) set]
-    [(IrPhiInputCons input rest)
-      (match input
-        [(IrPhiInput value _)
-          (opt-collect-phi-uses (opt-collect-value-uses set value) rest)])]))
+    [(IrPhiInputCons value _ rest)
+      (opt-collect-phi-uses (opt-collect-value-uses set value) rest)]))
 
 (define (opt-collect-instr-uses [set : OptUsedSet] [instr : CompilerIrInstr]) : OptUsedSet
   (match instr
@@ -1133,12 +1131,10 @@
   [inputs : CompilerIrPhiInputList]) : bool
   (match inputs
     [(IrPhiInputNil) false]
-    [(IrPhiInputCons input rest)
-      (match input
-        [(IrPhiInput value _)
-          (or
-            (opt-aggregate-value-has-pointer? base ptrs value)
-            (opt-aggregate-phi-inputs-have-pointer? base ptrs rest))])]))
+    [(IrPhiInputCons value _ rest)
+      (or
+        (opt-aggregate-value-has-pointer? base ptrs value)
+        (opt-aggregate-phi-inputs-have-pointer? base ptrs rest))]))
 
 (define (opt-aggregate-raw-var-is-pointer?
   [base : i64]
@@ -2199,12 +2195,12 @@
           (and (opt-value-eq ah bh) (opt-value-list-eq at bt))]
         [_ false])]))
 
-(define (opt-phi-input-eq [a : CompilerIrPhiInput] [b : CompilerIrPhiInput]) : bool
-  (match a
-    [(IrPhiInput av alabel)
-      (match b
-        [(IrPhiInput bv blabel)
-          (and (string-eq alabel blabel) (opt-value-eq av bv))])]))
+(define (opt-phi-input-eq
+  [av : CompilerIrValue]
+  [alabel : String]
+  [bv : CompilerIrValue]
+  [blabel : String]) : bool
+  (and (string-eq alabel blabel) (opt-value-eq av bv)))
 
 (define (opt-phi-input-list-eq
   [a : CompilerIrPhiInputList]
@@ -2214,10 +2210,12 @@
       (match b
         [(IrPhiInputNil) true]
         [_ false])]
-    [(IrPhiInputCons ah at)
+    [(IrPhiInputCons av alabel at)
       (match b
-        [(IrPhiInputCons bh bt)
-          (and (opt-phi-input-eq ah bh) (opt-phi-input-list-eq at bt))]
+        [(IrPhiInputCons bv blabel bt)
+          (and
+            (opt-phi-input-eq av alabel bv blabel)
+            (opt-phi-input-list-eq at bt))]
         [_ false])]))
 
 (define (opt-instr-eq [a : CompilerIrInstr] [b : CompilerIrInstr]) : bool
@@ -3746,17 +3744,15 @@
   [inputs : CompilerIrPhiInputList]) : ResultCompilerOptimizeVerify
   (match inputs
     [(IrPhiInputNil) (OkCompilerOptimizeVerify)]
-    [(IrPhiInputCons input rest)
-      (match input
-        [(IrPhiInput value pred-label)
-          (match value
-            [(IrValueVar var)
-              (match (opt-verify-var-use-on-edge defs doms var pred-label)
-                [(OkCompilerOptimizeVerify)
-                  (opt-verify-phi-input-uses defs doms rest)]
-                [(ErrCompilerOptimizeVerify message)
-                  (ErrCompilerOptimizeVerify message)])]
-            [_ (opt-verify-phi-input-uses defs doms rest)])])]))
+    [(IrPhiInputCons value pred-label rest)
+      (match value
+        [(IrValueVar var)
+          (match (opt-verify-var-use-on-edge defs doms var pred-label)
+            [(OkCompilerOptimizeVerify)
+              (opt-verify-phi-input-uses defs doms rest)]
+            [(ErrCompilerOptimizeVerify message)
+              (ErrCompilerOptimizeVerify message)])]
+        [_ (opt-verify-phi-input-uses defs doms rest)])]))
 
 (define (opt-verify-two
   [a : ResultCompilerOptimizeVerify]
@@ -3895,21 +3891,18 @@
 (define (opt-phi-input-labels [inputs : CompilerIrPhiInputList]) : OptLabelSet
   (match inputs
     [(IrPhiInputNil) (OptLabelNil)]
-    [(IrPhiInputCons input rest)
-      (match input
-        [(IrPhiInput _ label) (opt-label-add (opt-phi-input-labels rest) label)])]))
+    [(IrPhiInputCons _ label rest)
+      (opt-label-add (opt-phi-input-labels rest) label)]))
 
 (define (opt-phi-input-labels-unique-from?
   [inputs : CompilerIrPhiInputList]
   [seen : OptLabelSet]) : bool
   (match inputs
     [(IrPhiInputNil) true]
-    [(IrPhiInputCons input rest)
-      (match input
-        [(IrPhiInput _ label)
-          (if (opt-label-contains seen label)
-            false
-            (opt-phi-input-labels-unique-from? rest (opt-label-add seen label)))])]))
+    [(IrPhiInputCons _ label rest)
+      (if (opt-label-contains seen label)
+        false
+        (opt-phi-input-labels-unique-from? rest (opt-label-add seen label)))]))
 
 (define (opt-phi-input-labels-match?
   [inputs : CompilerIrPhiInputList]
@@ -4610,25 +4603,21 @@
   [inputs : CompilerIrPhiInputList]) : CompilerIrPhiInputList
   (match inputs
     [(IrPhiInputNil) (IrPhiInputNil)]
-    [(IrPhiInputCons input rest)
-      (match input
-        [(IrPhiInput _ label)
-          (if (opt-label-contains reachable label)
-            (IrPhiInputCons input (opt-cfg-filter-phi-inputs reachable rest))
-            (opt-cfg-filter-phi-inputs reachable rest))])]))
+    [(IrPhiInputCons value label rest)
+      (if (opt-label-contains reachable label)
+        (IrPhiInputCons value label (opt-cfg-filter-phi-inputs reachable rest))
+        (opt-cfg-filter-phi-inputs reachable rest))]))
 
 (define (opt-phi-input-count [inputs : CompilerIrPhiInputList]) : i64
   (match inputs
     [(IrPhiInputNil) 0]
-    [(IrPhiInputCons _ rest) (+ 1 (opt-phi-input-count rest))]))
+    [(IrPhiInputCons _ _ rest) (+ 1 (opt-phi-input-count rest))]))
 
 (define (opt-phi-single-value [inputs : CompilerIrPhiInputList]) : CompilerIrMaybeValue
   (match inputs
-    [(IrPhiInputCons input rest)
+    [(IrPhiInputCons value _ rest)
       (match rest
-        [(IrPhiInputNil)
-          (match input
-            [(IrPhiInput value _) (IrSomeValue value)])]
+        [(IrPhiInputNil) (IrSomeValue value)]
         [_ (IrNoValue)])]
     [_ (IrNoValue)]))
 
@@ -4842,15 +4831,14 @@
 
 (define (opt-sccp-phi-input-value
   [state : OptSccpState]
-  [input : CompilerIrPhiInput]
+  [value : CompilerIrValue]
+  [pred : String]
   [ty : AstType]) : OptSccpValue
   (match state
     [(OptSccpState executable _ _)
-      (match input
-        [(IrPhiInput value pred)
-          (if (opt-label-contains executable pred)
-            (opt-sccp-value state value ty)
-            (OptSccpUnknown))])]))
+      (if (opt-label-contains executable pred)
+        (opt-sccp-value state value ty)
+        (OptSccpUnknown))]))
 
 (define (opt-sccp-phi-value
   [state : OptSccpState]
@@ -4858,9 +4846,9 @@
   [ty : AstType]) : OptSccpValue
   (match inputs
     [(IrPhiInputNil) (OptSccpUnknown)]
-    [(IrPhiInputCons input rest)
+    [(IrPhiInputCons value pred rest)
       (opt-sccp-join
-        (opt-sccp-phi-input-value state input ty)
+        (opt-sccp-phi-input-value state value pred ty)
         (opt-sccp-phi-value state rest ty))]))
 
 (define (opt-sccp-mark-branch-targets
@@ -5064,12 +5052,11 @@
   [inputs : CompilerIrPhiInputList]) : CompilerIrPhiInputList
   (match inputs
     [(IrPhiInputNil) (IrPhiInputNil)]
-    [(IrPhiInputCons input rest)
-      (match input
-        [(IrPhiInput value label)
-          (IrPhiInputCons
-            (IrPhiInput (opt-sccp-rewrite-value env value) label)
-            (opt-sccp-rewrite-phi-inputs env rest))])]))
+    [(IrPhiInputCons value label rest)
+      (IrPhiInputCons
+        (opt-sccp-rewrite-value env value)
+        label
+        (opt-sccp-rewrite-phi-inputs env rest))]))
 
 (define (opt-sccp-rewrite-scalar-def
   [env : OptSccpEnv]
@@ -5858,13 +5845,11 @@
   [inputs : CompilerIrPhiInputList]) : OptReachState
   (match inputs
     [(IrPhiInputNil) state]
-    [(IrPhiInputCons input rest)
-      (match input
-        [(IrPhiInput value _)
-          (opt-reach-phi-inputs
-            functions
-            (opt-reach-value functions state value)
-            rest)])]))
+    [(IrPhiInputCons value _ rest)
+      (opt-reach-phi-inputs
+        functions
+        (opt-reach-value functions state value)
+        rest)]))
 
 (define (opt-reach-instr
   [functions : CompilerIrFunctionList]
@@ -6716,7 +6701,7 @@
         (IrInstrCons
           (IrInstrPhi
             2
-            (IrPhiInputCons (IrPhiInput (IrValueVar 1) "entry") (IrPhiInputNil))
+            (IrPhiInputCons (IrValueVar 1) "entry" (IrPhiInputNil))
             (AstTyU64))
           (IrInstrCons (IrInstrReturn (IrSomeValue (IrValueI64 0))) IrInstrNil)))
       IrBlockNil)))
@@ -7921,7 +7906,7 @@
     (IrInstrCons
       (IrInstrPhi
         2
-        (IrPhiInputCons (IrPhiInput (IrValueVar 1) "left") IrPhiInputNil)
+        (IrPhiInputCons (IrValueVar 1) "left" IrPhiInputNil)
         (AstTyI64))
       (IrInstrNil))))
 
@@ -7930,12 +7915,10 @@
   [fallback : i64]) : i64
   (match inputs
     [(IrPhiInputNil) fallback]
-    [(IrPhiInputCons input _)
-      (match input
-        [(IrPhiInput value _)
-          (match value
-            [(IrValueVar id) id]
-            [_ fallback])])]))
+    [(IrPhiInputCons value _ _)
+      (match value
+        [(IrValueVar id) id]
+        [_ fallback])]))
 
 (define (opt-phi-dst-first-input-var
   [instrs : CompilerIrInstrList]
@@ -8578,10 +8561,9 @@
               (IrInstrPhi
                 6
                 (IrPhiInputCons
-                  (IrPhiInput (IrValueVar 4) "then")
-                  (IrPhiInputCons
-                    (IrPhiInput (IrValueVar 5) "else")
-                    (IrPhiInputNil)))
+                  (IrValueVar 4)
+                  "then"
+                  (IrPhiInputCons (IrValueVar 5) "else" (IrPhiInputNil)))
                 (AstTyI64))
               (IrInstrCons
                 (IrInstrReturn (IrSomeValue (IrValueVar 6)))
@@ -8621,10 +8603,9 @@
           (IrInstrPhi
             5
             (IrPhiInputCons
-              (IrPhiInput (IrValueVar 1) "entry")
-              (IrPhiInputCons
-                (IrPhiInput (IrValueVar 4) "body")
-                (IrPhiInputNil)))
+              (IrValueVar 1)
+              "entry"
+              (IrPhiInputCons (IrValueVar 4) "body" (IrPhiInputNil)))
             (AstTyI64))
           (IrInstrCons
             (IrInstrBinOp 3 (IrBinAdd) (IrValueVar 5) (IrValueVar 2) (AstTyI64))
@@ -8828,10 +8809,9 @@
               (IrInstrPhi
                 3
                 (IrPhiInputCons
-                  (IrPhiInput (IrValueVar 1) "then")
-                  (IrPhiInputCons
-                    (IrPhiInput (IrValueVar 2) "else")
-                    (IrPhiInputNil)))
+                  (IrValueVar 1)
+                  "then"
+                  (IrPhiInputCons (IrValueVar 2) "else" (IrPhiInputNil)))
                 (AstTyI64))
               (IrInstrCons
                 (IrInstrReturn (IrSomeValue (IrValueVar 3)))
@@ -8871,10 +8851,9 @@
           (IrInstrPhi
             1
             (IrPhiInputCons
-              (IrPhiInput (IrValueVar 0) "entry")
-              (IrPhiInputCons
-                (IrPhiInput (IrValueVar 2) "body")
-                (IrPhiInputNil)))
+              (IrValueVar 0)
+              "entry"
+              (IrPhiInputCons (IrValueVar 2) "body" (IrPhiInputNil)))
             (AstTyI64))
           (IrInstrCons
             (IrInstrBranch (IrValueVar 4) "body" "exit")
@@ -8995,10 +8974,9 @@
               (IrInstrPhi
                 3
                 (IrPhiInputCons
-                  (IrPhiInput (IrValueVar 1) "then")
-                  (IrPhiInputCons
-                    (IrPhiInput (IrValueVar 2) "else")
-                    (IrPhiInputNil)))
+                  (IrValueVar 1)
+                  "then"
+                  (IrPhiInputCons (IrValueVar 2) "else" (IrPhiInputNil)))
                 (AstTyI64))
               (IrInstrCons
                 (IrInstrReturn (IrSomeValue (IrValueVar 3)))
@@ -9095,10 +9073,9 @@
               (IrInstrPhi
                 3
                 (IrPhiInputCons
-                  (IrPhiInput (IrValueVar 1) "then")
-                  (IrPhiInputCons
-                    (IrPhiInput (IrValueVar 2) "else")
-                    (IrPhiInputNil)))
+                  (IrValueVar 1)
+                  "then"
+                  (IrPhiInputCons (IrValueVar 2) "else" (IrPhiInputNil)))
                 (AstTyI64))
               (IrInstrCons
                 (IrInstrReturn (IrSomeValue (IrValueVar 3)))
@@ -9123,10 +9100,9 @@
           (IrInstrPhi
             1
             (IrPhiInputCons
-              (IrPhiInput (IrValueVar 0) "entry")
-              (IrPhiInputCons
-                (IrPhiInput (IrValueVar 2) "body")
-                (IrPhiInputNil)))
+              (IrValueVar 0)
+              "entry"
+              (IrPhiInputCons (IrValueVar 2) "body" (IrPhiInputNil)))
             (AstTyI64))
           (IrInstrCons
             (IrInstrBranch (IrValueVar 4) "body" "exit")
@@ -9201,10 +9177,9 @@
                 (IrInstrPhi
                   3
                   (IrPhiInputCons
-                    (IrPhiInput (IrValueVar 1) "then")
-                    (IrPhiInputCons
-                      (IrPhiInput (IrValueVar 2) "ghost")
-                      (IrPhiInputNil)))
+                    (IrValueVar 1)
+                    "then"
+                    (IrPhiInputCons (IrValueVar 2) "ghost" (IrPhiInputNil)))
                   (AstTyI64))
                 (IrInstrCons
                   (IrInstrReturn (IrSomeValue (IrValueVar 3)))

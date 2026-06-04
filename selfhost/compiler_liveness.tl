@@ -416,12 +416,10 @@
 (define (compiler-live-phi-input-vars [inputs : CompilerIrPhiInputList]) : CompilerLiveI64Set
   (match inputs
     [(IrPhiInputNil) (compiler-live-set-empty)]
-    [(IrPhiInputCons input rest)
-      (match input
-        [(IrPhiInput value _)
-          (compiler-live-set-union
-            (compiler-live-value-vars value)
-            (compiler-live-phi-input-vars rest))])]))
+    [(IrPhiInputCons value _ rest)
+      (compiler-live-set-union
+        (compiler-live-value-vars value)
+        (compiler-live-phi-input-vars rest))]))
 
 (define (compiler-live-instr-uses [instr : CompilerIrInstr]) : CompilerLiveI64Set
   (match instr
@@ -918,10 +916,9 @@
                 (IrInstrPhi
                   3
                   (IrPhiInputCons
-                    (IrPhiInput (IrValueVar 1) "left")
-                    (IrPhiInputCons
-                      (IrPhiInput (IrValueVar 2) "right")
-                      IrPhiInputNil))
+                    (IrValueVar 1)
+                    "left"
+                    (IrPhiInputCons (IrValueVar 2) "right" IrPhiInputNil))
                   (compiler-live-i64-ty))
                 (IrInstrCons
                   (IrInstrReturn (IrSomeValue (IrValueVar 3)))
@@ -956,9 +953,7 @@
                 (IrInstrCons
                   (IrInstrPhi
                     4
-                    (IrPhiInputCons
-                      (IrPhiInput (IrValueVar 16) "a")
-                      IrPhiInputNil)
+                    (IrPhiInputCons (IrValueVar 16) "a" IrPhiInputNil)
                     (compiler-live-i64-ty))
                   (IrInstrCons
                     (IrInstrReturn (IrSomeValue (IrValueVar 4)))

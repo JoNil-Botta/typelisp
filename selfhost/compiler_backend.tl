@@ -7624,6 +7624,27 @@
     crt-entry
     (text-buf-empty)))
 
+(define (compiler-backend-implicit-main-function) : CompilerIrFunction
+  (IrFunction
+    "main"
+    IrParamNil
+    (AstTyI64)
+    1
+    (IrBlockCons
+      (IrBlock
+        "entry"
+        (IrInstrCons (IrInstrReturn (IrSomeValue (IrValueI64 0))) IrInstrNil))
+      IrBlockNil)))
+
+(define (compiler-backend-functions-with-implicit-main
+  [functions : CompilerIrFunctionList]
+  [emit-entry : bool]) : CompilerIrFunctionList
+  (if (and
+    emit-entry
+    (not (compiler-backend-function-list-defines? functions "main")))
+    (IrFunctionCons (compiler-backend-implicit-main-function) functions)
+    functions))
+
 (define (compiler-backend-emit-closure-descriptor-entry [name : String]) : String
   (backend-cat5
     (compiler-backend-closure-descriptor-label name)
@@ -16431,34 +16452,39 @@ tl_windows_sdk_registry_install:
           [(IrProgram globals functions externs)
             (match (compiler-backend-emit-globals target globals)
               [(OkCompilerBackend globals-asm)
-                (match (compiler-backend-emit-functions
-                  target
-                  mode
-                  functions
-                  globals
-                  functions
-                  externs
-                  plan
-                  spans
-                  crt-entry)
-                  [(OkCompilerBackend functions-asm)
-                    (let
-                      [closure-names : BackendStringList
-                        (compiler-backend-collect-program-functions program)]
-                      (match (compiler-backend-emit-closure-entry-adapters
-                        target
-                        closure-names
-                        functions
-                        externs
-                        plan)
-                        [(OkCompilerBackend closure-adapters-asm)
-                          (let
-                            [strings : BackendStringList
-                              (compiler-backend-collect-program-strings program)]
-                            [floats : BackendStringList
-                              (compiler-backend-collect-program-f64s program)]
-                            [buf : TextBuf
-                              (text-buf-append
+                (let
+                  [entry-functions : CompilerIrFunctionList
+                    (compiler-backend-functions-with-implicit-main
+                      functions
+                      emit-entry)]
+                  (match (compiler-backend-emit-functions
+                    target
+                    mode
+                    entry-functions
+                    globals
+                    entry-functions
+                    externs
+                    plan
+                    spans
+                    crt-entry)
+                    [(OkCompilerBackend functions-asm)
+                      (let
+                        [closure-names : BackendStringList
+                          (compiler-backend-collect-program-functions program)]
+                        (match (compiler-backend-emit-closure-entry-adapters
+                          target
+                          closure-names
+                          entry-functions
+                          externs
+                          plan)
+                          [(OkCompilerBackend closure-adapters-asm)
+                            (let
+                              [strings : BackendStringList
+                                (compiler-backend-collect-program-strings
+                                  program)]
+                              [floats : BackendStringList
+                                (compiler-backend-collect-program-f64s program)]
+                              [buf : TextBuf
                                 (text-buf-append
                                   (text-buf-append
                                     (text-buf-append
@@ -16470,51 +16496,52 @@ tl_windows_sdk_registry_install:
                                                 (text-buf-append
                                                   (text-buf-append
                                                     (text-buf-append
-                                                      (text-buf-empty)
-                                                      ".data\n")
-                                                    globals-asm)
-                                                  (compiler-backend-emit-string-rodata
-                                                    strings))
-                                                (compiler-backend-emit-f64-rodata
-                                                  floats))
-                                              (compiler-backend-emit-closure-descriptors
-                                                closure-names
-                                                functions
-                                                externs))
-                                            (if emit-entry
-                                              (compiler-backend-runtime-data-for-target
-                                                target
-                                                plan)
-                                              ""))
-                                          (compiler-backend-emit-externs
-                                            externs
+                                                      (text-buf-append
+                                                        (text-buf-empty)
+                                                        ".data\n")
+                                                      globals-asm)
+                                                    (compiler-backend-emit-string-rodata
+                                                      strings))
+                                                  (compiler-backend-emit-f64-rodata
+                                                    floats))
+                                                (compiler-backend-emit-closure-descriptors
+                                                  closure-names
+                                                  entry-functions
+                                                  externs))
+                                              (if emit-entry
+                                                (compiler-backend-runtime-data-for-target
+                                                  target
+                                                  plan)
+                                                ""))
+                                            (compiler-backend-emit-externs
+                                              externs
+                                              plan))
+                                          (compiler-backend-runtime-externs-for-target
+                                            target
                                             plan))
-                                        (compiler-backend-runtime-externs-for-target
+                                        (compiler-backend-target-entry-text-with-crt
                                           target
-                                          plan))
-                                      (compiler-backend-target-entry-text-with-crt
+                                          emit-entry
+                                          crt-entry))
+                                      functions-asm)
+                                    closure-adapters-asm)
+                                  (string-append
+                                    (if emit-entry
+                                      (compiler-backend-runtime-functions-for-target
                                         target
-                                        emit-entry
-                                        crt-entry))
-                                    functions-asm)
-                                  closure-adapters-asm)
-                                (string-append
-                                  (if emit-entry
-                                    (compiler-backend-runtime-functions-for-target
-                                      target
-                                      plan)
-                                    "")
-                                  (if emit-entry
-                                    (compiler-backend-entry-for-target-with-crt
-                                      target
-                                      plan
-                                      globals
-                                      crt-entry)
-                                    "")))]
-                            (OkCompilerBackend (text-buf-render buf)))]
-                        [(ErrCompilerBackend message)
-                          (ErrCompilerBackend message)]))]
-                  [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
+                                        plan)
+                                      "")
+                                    (if emit-entry
+                                      (compiler-backend-entry-for-target-with-crt
+                                        target
+                                        plan
+                                        globals
+                                        crt-entry)
+                                      "")))]
+                              (OkCompilerBackend (text-buf-render buf)))]
+                          [(ErrCompilerBackend message)
+                            (ErrCompilerBackend message)]))]
+                    [(ErrCompilerBackend message) (ErrCompilerBackend message)]))]
               [(ErrCompilerBackend message) (ErrCompilerBackend message)])])
         (ErrCompilerBackend
           (compiler-diagnostic-at-start

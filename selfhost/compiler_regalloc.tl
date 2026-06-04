@@ -687,10 +687,7 @@
           starts
           ends
           (compiler-live-set-chunk-bits chunk)
-          (*
-            (compiler-live-set-chunk-word-index chunk)
-            (compiler-live-set-word-bits))
-          0
+          (* (compiler-live-set-chunk-word-index chunk) (compiler-live-set-word-bits))
           point)
         (compiler-reg-extend-set starts ends rest point))]))
 
@@ -698,16 +695,20 @@
   [starts : (Array i64)]
   [ends : (Array i64)]
   [bits : i64]
-  [base : i64]
-  [bit : i64]
+  [var : i64]
   [point : i64]) : unit
-  (if (>= bit (compiler-live-set-word-bits))
+  (if (= bits 0)
     unit
     (begin
-      (if (= (bit-and bits (shl 1 bit)) 0)
+      (if (= (bit-and bits 1) 0)
         unit
-        (compiler-reg-extend-interval starts ends (+ base bit) point))
-      (compiler-reg-extend-set-word-bits starts ends bits base (+ bit 1) point))))
+        (compiler-reg-extend-interval starts ends var point))
+      (compiler-reg-extend-set-word-bits
+        starts
+        ends
+        (shr bits 1)
+        (+ var 1)
+        point))))
 
 (define (compiler-reg-extend-instr
   [starts : (Array i64)]

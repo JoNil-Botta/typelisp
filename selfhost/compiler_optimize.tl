@@ -1130,6 +1130,237 @@
         (opt-dce-block set block)
         (opt-dce-block-list set (box-get rest)))]))
 
+(define (opt-used-array-fill
+  [items : (Array bool)]
+  [index : i64]
+  [value : bool]) : unit
+  (if (>= index (array-length items))
+    unit
+    (begin
+      (array-set! items index value)
+      (opt-used-array-fill items (+ index 1) value))))
+
+(define (opt-used-array-new [count : i64]) : (Array bool)
+  (let
+    [items : (Array bool) (make-array bool count)]
+    (begin
+      (opt-used-array-fill items 0 false)
+      items)))
+
+(define (opt-used-array-add [items : (Array bool)] [var : i64]) : unit
+  (if (< var 0)
+    unit
+    (if (>= var (array-length items))
+      unit
+      (begin
+        (array-set! items var true)
+        unit))))
+
+(define (opt-used-array-contains [items : (Array bool)] [var : i64]) : bool
+  (if (< var 0)
+    false
+    (if (>= var (array-length items))
+      false
+      (array-ref items var))))
+
+(define (opt-collect-value-uses-array
+  [items : (Array bool)]
+  [value : CompilerIrValue]) : unit
+  (match value
+    [(IrValueVar id) (opt-used-array-add items id)]
+    [_ unit]))
+
+(define (opt-collect-value-list-uses-array
+  [items : (Array bool)]
+  [values : CompilerIrValueList]) : unit
+  (match values
+    [(IrValueNil) unit]
+    [(IrValueCons value rest)
+      (begin
+        (opt-collect-value-uses-array items value)
+        (opt-collect-value-list-uses-array items rest))]))
+
+(define (opt-collect-phi-uses-array
+  [items : (Array bool)]
+  [inputs : CompilerIrPhiInputList]) : unit
+  (match inputs
+    [(IrPhiInputNil) unit]
+    [(IrPhiInputCons input rest)
+      (match input
+        [(IrPhiInput value _)
+          (begin
+            (opt-collect-value-uses-array items value)
+            (opt-collect-phi-uses-array items rest))])]))
+
+(define (opt-collect-instr-uses-array
+  [items : (Array bool)]
+  [instr : CompilerIrInstr]) : unit
+  (match instr
+    [(IrInstrMov _ src _) (opt-collect-value-uses-array items src)]
+    [(IrInstrBinOp _ _ l r _)
+      (begin
+        (opt-collect-value-uses-array items l)
+        (opt-collect-value-uses-array items r))]
+    [(IrInstrUnOp _ _ src _) (opt-collect-value-uses-array items src)]
+    [(IrInstrCall _ _ args _) (opt-collect-value-list-uses-array items args)]
+    [(IrInstrCallIndirect _ func args _)
+      (begin
+        (opt-collect-value-uses-array items func)
+        (opt-collect-value-list-uses-array items args))]
+    [(IrInstrTailCall _ args _) (opt-collect-value-list-uses-array items args)]
+    [(IrInstrStore _ value _) (opt-collect-value-uses-array items value)]
+    [(IrInstrAddrOf _ src) (opt-used-array-add items src)]
+    [(IrInstrGep _ base offset _)
+      (begin
+        (opt-collect-value-uses-array items base)
+        (opt-collect-value-uses-array items offset))]
+    [(IrInstrLoad _ src _) (opt-collect-value-uses-array items src)]
+    [(IrInstrStorePtr ptr value _)
+      (begin
+        (opt-collect-value-uses-array items ptr)
+        (opt-collect-value-uses-array items value))]
+    [(IrInstrBoundsCheck index length _)
+      (begin
+        (opt-collect-value-uses-array items index)
+        (opt-collect-value-uses-array items length))]
+    [(IrInstrCast _ src _ _) (opt-collect-value-uses-array items src)]
+    [(IrInstrSplat _ value _ _) (opt-collect-value-uses-array items value)]
+    [(IrInstrVectorBinOp _ _ lhs rhs _ _)
+      (begin
+        (opt-collect-value-uses-array items lhs)
+        (opt-collect-value-uses-array items rhs))]
+    [(IrInstrVectorReduce _ _ src _ _) (opt-collect-value-uses-array items src)]
+    [(IrInstrVectorCompare _ _ lhs rhs _ _)
+      (begin
+        (opt-collect-value-uses-array items lhs)
+        (opt-collect-value-uses-array items rhs))]
+    [(IrInstrMaskBinOp _ _ lhs rhs _)
+      (begin
+        (opt-collect-value-uses-array items lhs)
+        (opt-collect-value-uses-array items rhs))]
+    [(IrInstrMaskNot _ src _) (opt-collect-value-uses-array items src)]
+    [(IrInstrMaskReduce _ _ src _) (opt-collect-value-uses-array items src)]
+    [(IrInstrSelect _ mask on-true on-false _ _)
+      (begin
+        (opt-collect-value-uses-array items mask)
+        (opt-collect-value-uses-array items on-true)
+        (opt-collect-value-uses-array items on-false))]
+    [(IrInstrVectorLoad _ base index _ _)
+      (begin
+        (opt-collect-value-uses-array items base)
+        (opt-collect-value-uses-array items index))]
+    [(IrInstrVectorStore base index value _ _)
+      (begin
+        (opt-collect-value-uses-array items base)
+        (opt-collect-value-uses-array items index)
+        (opt-collect-value-uses-array items value))]
+    [(IrInstrPredicatedStore base index value mask _ _)
+      (begin
+        (opt-collect-value-uses-array items base)
+        (opt-collect-value-uses-array items index)
+        (opt-collect-value-uses-array items value)
+        (opt-collect-value-uses-array items mask))]
+    [(IrInstrPredicatedLoad _ base index mask _ _)
+      (begin
+        (opt-collect-value-uses-array items base)
+        (opt-collect-value-uses-array items index)
+        (opt-collect-value-uses-array items mask))]
+    [(IrInstrTailMask _ index length _)
+      (begin
+        (opt-collect-value-uses-array items index)
+        (opt-collect-value-uses-array items length))]
+    [(IrInstrEntryArgc _) unit]
+    [(IrInstrEntryArgv _) unit]
+    [(IrInstrEntryEnvp _) unit]
+    [(IrInstrCpuId _ leaf subleaf _)
+      (begin
+        (opt-collect-value-uses-array items leaf)
+        (opt-collect-value-uses-array items subleaf))]
+    [(IrInstrXgetbv _ index) (opt-collect-value-uses-array items index)]
+    [(IrInstrBranch cond _ _) (opt-collect-value-uses-array items cond)]
+    [(IrInstrReturn maybe)
+      (match maybe
+        [(IrSomeValue value) (opt-collect-value-uses-array items value)]
+        [(IrNoValue) unit])]
+    [(IrInstrPhi _ inputs _) (opt-collect-phi-uses-array items inputs)]
+    [_ unit]))
+
+(define (opt-collect-instrs-uses-array
+  [items : (Array bool)]
+  [instrs : CompilerIrInstrList]) : unit
+  (match instrs
+    [(IrInstrNil) unit]
+    [(IrInstrCons instr rest)
+      (begin
+        (opt-collect-instr-uses-array items instr)
+        (opt-collect-instrs-uses-array items rest))]))
+
+(define (opt-collect-blocks-uses-array-into
+  [items : (Array bool)]
+  [blocks : CompilerIrBlockList]) : unit
+  (match blocks
+    [(IrBlockNil) unit]
+    [(IrBlockCons block rest)
+      (match block
+        [(IrBlock _ instrs)
+          (begin
+            (opt-collect-instrs-uses-array items instrs)
+            (opt-collect-blocks-uses-array-into items rest))])]))
+
+(define (opt-collect-blocks-uses-array
+  [vars : i64]
+  [blocks : CompilerIrBlockList]) : (Array bool)
+  (let
+    [items : (Array bool) (opt-used-array-new vars)]
+    (begin
+      (opt-collect-blocks-uses-array-into items blocks)
+      items)))
+
+(define (opt-instr-dead-array? [items : (Array bool)] [instr : CompilerIrInstr]) : bool
+  (match instr
+    [(IrInstrMov dst _ _) (not (opt-used-array-contains items dst))]
+    [(IrInstrBinOp dst op _ _ _)
+      (and (not (opt-binop-traps? op)) (not (opt-used-array-contains items dst)))]
+    [(IrInstrUnOp dst _ _ _) (not (opt-used-array-contains items dst))]
+    [(IrInstrPhi dst _ _) (not (opt-used-array-contains items dst))]
+    [(IrInstrLaneId dst _ _) (not (opt-used-array-contains items dst))]
+    [(IrInstrSplat dst _ _ _) (not (opt-used-array-contains items dst))]
+    [(IrInstrVectorBinOp dst _ _ _ _ _) (not (opt-used-array-contains items dst))]
+    [(IrInstrVectorReduce dst _ _ _ _) (not (opt-used-array-contains items dst))]
+    [(IrInstrVectorCompare dst _ _ _ _ _) (not (opt-used-array-contains items dst))]
+    [(IrInstrMaskBinOp dst _ _ _ _) (not (opt-used-array-contains items dst))]
+    [(IrInstrMaskNot dst _ _) (not (opt-used-array-contains items dst))]
+    [(IrInstrMaskReduce dst _ _ _) (not (opt-used-array-contains items dst))]
+    [(IrInstrSelect dst _ _ _ _ _) (not (opt-used-array-contains items dst))]
+    [(IrInstrTailMask dst _ _ _) (not (opt-used-array-contains items dst))]
+    [_ false]))
+
+(define (opt-dce-instrs-array
+  [items : (Array bool)]
+  [instrs : CompilerIrInstrList]) : CompilerIrInstrList
+  (match instrs
+    [(IrInstrNil) (IrInstrNil)]
+    [(IrInstrCons instr rest)
+      (if (opt-instr-dead-array? items instr)
+        (opt-dce-instrs-array items rest)
+        (IrInstrCons instr (opt-dce-instrs-array items rest)))]))
+
+(define (opt-dce-block-array
+  [items : (Array bool)]
+  [block : CompilerIrBlock]) : CompilerIrBlock
+  (match block
+    [(IrBlock label instrs) (IrBlock label (opt-dce-instrs-array items instrs))]))
+
+(define (opt-dce-block-list-array
+  [items : (Array bool)]
+  [blocks : CompilerIrBlockList]) : CompilerIrBlockList
+  (match blocks
+    [(IrBlockNil) (IrBlockNil)]
+    [(IrBlockCons block rest)
+      (IrBlockCons
+        (opt-dce-block-array items block)
+        (opt-dce-block-list-array items rest))]))
+
 ;; --- aggregate allocation candidate analysis (#1487) ------------------------
 ;;
 ;; This is intentionally analysis-only. It recognizes heap aggregate allocations
@@ -6569,14 +6800,16 @@
                       (IrFunction name params ret-ty promoted-frame licm-blocks))]
                   [global-blocks : CompilerIrBlockList
                     (opt-function-blocks global)]
-                  [used : OptUsedSet
-                    (opt-collect-blocks-uses (OptUsedNil) global-blocks)]
+                  [used : (Array bool)
+                    (opt-collect-blocks-uses-array
+                      promoted-frame
+                      global-blocks)]
                   (IrFunction
                     name
                     params
                     ret-ty
                     promoted-frame
-                    (opt-dce-block-list used global-blocks)))])]))]))
+                    (opt-dce-block-list-array used global-blocks)))])]))]))
 
 ;; Level 2 keeps the self-build path lightweight while preserving the explicit
 ;; optimized-level checks for local scalar cleanup, bounds checks, stack
@@ -6594,13 +6827,14 @@
             (let
               [cfg : CompilerIrBlockList
                 (opt-cfg-simplify-blocks promoted-blocks)]
-              [used : OptUsedSet (opt-collect-blocks-uses (OptUsedNil) cfg)]
+              [used : (Array bool)
+                (opt-collect-blocks-uses-array promoted-frame cfg)]
               (IrFunction
                 name
                 params
                 ret-ty
                 promoted-frame
-                (opt-dce-block-list used cfg)))]))]))
+                (opt-dce-block-list-array used cfg)))]))]))
 
 (define (optimize-function-once-fast [func : CompilerIrFunction]) : CompilerIrFunction
   (match func
@@ -6608,8 +6842,8 @@
       (let
         [folded : CompilerIrBlockList (optimize-block-list-fast blocks)]
         [cfg : CompilerIrBlockList (opt-cfg-simplify-blocks folded)]
-        [used : OptUsedSet (opt-collect-blocks-uses (OptUsedNil) cfg)]
-        (IrFunction name params ret-ty frame (opt-dce-block-list used cfg)))]))
+        [used : (Array bool) (opt-collect-blocks-uses-array frame cfg)]
+        (IrFunction name params ret-ty frame (opt-dce-block-list-array used cfg)))]))
 
 (define (optimize-function-pass [func : CompilerIrFunction]) : OptFunctionPassResult
   (let

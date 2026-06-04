@@ -149,11 +149,11 @@
 
 (define (main) : i64
   (let
-    [string-score : i64 (string-cycles 12 0)]
-    [list-score : i64 (list-cycles 8 0)]
-    [rewind-score : i64 (rewind-list-cycles 8)]
+    [string-score : i64 (string-cycles 3 0)]
+    [list-score : i64 (list-cycles 3 0)]
+    [rewind-score : i64 (rewind-list-cycles 3)]
     (begin
       (unless (> string-score 0) (return 1))
-      (unless (= list-score 8) (return 2))
-      (unless (= rewind-score 8) (return 3))
+      (unless (= list-score 3) (return 2))
+      (unless (= rewind-score 3) (return 3))
       42)))

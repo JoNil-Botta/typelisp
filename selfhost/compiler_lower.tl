@@ -9578,7 +9578,7 @@
   (let
     [acc-update : AstExpr (spmd-reduce-acc-update-expr op value)]
     (if (and
-      (lower-mode-avx2? (lower-state-mode state))
+      (lower-mode-simd? (lower-state-mode state))
       (lower-type-i64? index-ty))
       (match (lower-simple-vector-reduce
         (lower-state-mode state)
@@ -9787,7 +9787,7 @@
   [op : AstReduceOp]
   [index : String]
   [value : AstExpr]) : LowerMaybeVectorReduce
-  (if (lower-mode-avx2? mode)
+  (if (lower-mode-simd? mode)
     (match value
       [(AstExprSpanned inner _)
         (lower-simple-vector-reduce mode env type-env op index inner)]

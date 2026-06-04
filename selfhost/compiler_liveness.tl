@@ -439,31 +439,60 @@
     [(IrValueVar id) (compiler-live-set1 id)]
     [_ (compiler-live-set-empty)]))
 
+(define (compiler-live-value-vars-into
+  [set : CompilerLiveI64Set]
+  [value : CompilerIrValue]) : CompilerLiveI64Set
+  (match value
+    [(IrValueVar id) (compiler-live-set-insert set id)]
+    [_ set]))
+
+(define (compiler-live-values2-vars
+  [a : CompilerIrValue]
+  [b : CompilerIrValue]) : CompilerLiveI64Set
+  (compiler-live-value-vars-into
+    (compiler-live-value-vars b)
+    a))
+
+(define (compiler-live-values3-vars
+  [a : CompilerIrValue]
+  [b : CompilerIrValue]
+  [c : CompilerIrValue]) : CompilerLiveI64Set
+  (compiler-live-value-vars-into
+    (compiler-live-values2-vars b c)
+    a))
+
+(define (compiler-live-values4-vars
+  [a : CompilerIrValue]
+  [b : CompilerIrValue]
+  [c : CompilerIrValue]
+  [d : CompilerIrValue]) : CompilerLiveI64Set
+  (compiler-live-value-vars-into
+    (compiler-live-values3-vars b c d)
+    a))
+
 (define (compiler-live-value-list-vars [values : CompilerIrValueList]) : CompilerLiveI64Set
   (match values
     [(IrValueNil) (compiler-live-set-empty)]
     [(IrValueCons value rest)
-      (compiler-live-set-union
-        (compiler-live-value-vars value)
-        (compiler-live-value-list-vars (box-get rest)))]))
+      (compiler-live-value-vars-into
+        (compiler-live-value-list-vars (box-get rest))
+        value)]))
 
 (define (compiler-live-call-args-array-vars
   [values : (Array CompilerIrValue)]
   [index : i64]) : CompilerLiveI64Set
   (if (>= index (array-length values))
     (compiler-live-set-empty)
-    (compiler-live-set-union
-      (compiler-live-value-vars (array-ref values index))
-      (compiler-live-call-args-array-vars values (+ index 1)))))
+    (compiler-live-value-vars-into
+      (compiler-live-call-args-array-vars values (+ index 1))
+      (array-ref values index))))
 
 (define (compiler-live-call-args-vars [args : CompilerIrCallArgs]) : CompilerLiveI64Set
   (match args
     [(IrCallArgsNil) (compiler-live-set-empty)]
     [(IrCallArgsOne value) (compiler-live-value-vars value)]
     [(IrCallArgsTwo a b)
-      (compiler-live-set-union
-        (compiler-live-value-vars a)
-        (compiler-live-value-vars b))]
+      (compiler-live-values2-vars a b)]
     [(IrCallArgsArray values) (compiler-live-call-args-array-vars values 0)]))
 
 (define (compiler-live-maybe-value-vars [value : CompilerIrMaybeValue]) : CompilerLiveI64Set
@@ -475,9 +504,9 @@
   (match inputs
     [(IrPhiInputNil) (compiler-live-set-empty)]
     [(IrPhiInputCons value _ rest)
-      (compiler-live-set-union
-        (compiler-live-value-vars value)
-        (compiler-live-phi-input-vars (box-get rest)))]))
+      (compiler-live-value-vars-into
+        (compiler-live-phi-input-vars (box-get rest))
+        value)]))
 
 (define (compiler-live-instr-uses [instr : CompilerIrInstr]) : CompilerLiveI64Set
   (match instr
@@ -485,88 +514,48 @@
     [(IrInstrAlloc _ _) (compiler-live-set-empty)]
     [(IrInstrAddrOf _ src) (compiler-live-set1 src)]
     [(IrInstrGep _ base offset _)
-      (compiler-live-set-union
-        (compiler-live-value-vars base)
-        (compiler-live-value-vars offset))]
+      (compiler-live-values2-vars base offset)]
     [(IrInstrLoad _ src _) (compiler-live-value-vars src)]
     [(IrInstrStorePtr dst src _)
-      (compiler-live-set-union
-        (compiler-live-value-vars dst)
-        (compiler-live-value-vars src))]
+      (compiler-live-values2-vars dst src)]
     [(IrInstrBoundsCheck index length _)
-      (compiler-live-set-union
-        (compiler-live-value-vars index)
-        (compiler-live-value-vars length))]
+      (compiler-live-values2-vars index length)]
     [(IrInstrCast _ src _ _) (compiler-live-value-vars src)]
     [(IrInstrBinOp _ _ lhs rhs _)
-      (compiler-live-set-union
-        (compiler-live-value-vars lhs)
-        (compiler-live-value-vars rhs))]
+      (compiler-live-values2-vars lhs rhs)]
     [(IrInstrUnOp _ _ src _) (compiler-live-value-vars src)]
     [(IrInstrLaneId _ _ _) (compiler-live-set-empty)]
     [(IrInstrSplat _ value _ _) (compiler-live-value-vars value)]
     [(IrInstrVectorBinOp _ _ lhs rhs _ _)
-      (compiler-live-set-union
-        (compiler-live-value-vars lhs)
-        (compiler-live-value-vars rhs))]
+      (compiler-live-values2-vars lhs rhs)]
     [(IrInstrVectorReduce _ _ src _ _) (compiler-live-value-vars src)]
     [(IrInstrVectorCompare _ _ lhs rhs _ _)
-      (compiler-live-set-union
-        (compiler-live-value-vars lhs)
-        (compiler-live-value-vars rhs))]
+      (compiler-live-values2-vars lhs rhs)]
     [(IrInstrMaskBinOp _ _ lhs rhs _)
-      (compiler-live-set-union
-        (compiler-live-value-vars lhs)
-        (compiler-live-value-vars rhs))]
+      (compiler-live-values2-vars lhs rhs)]
     [(IrInstrMaskNot _ src _) (compiler-live-value-vars src)]
     [(IrInstrMaskReduce _ _ src _) (compiler-live-value-vars src)]
     [(IrInstrSelect _ mask on-true on-false _ _)
-      (compiler-live-set-union
-        (compiler-live-value-vars mask)
-        (compiler-live-set-union
-          (compiler-live-value-vars on-true)
-          (compiler-live-value-vars on-false)))]
+      (compiler-live-values3-vars mask on-true on-false)]
     [(IrInstrVectorLoad _ base index _ _)
-      (compiler-live-set-union
-        (compiler-live-value-vars base)
-        (compiler-live-value-vars index))]
+      (compiler-live-values2-vars base index)]
     [(IrInstrVectorStore base index value _ _)
-      (compiler-live-set-union
-        (compiler-live-value-vars base)
-        (compiler-live-set-union
-          (compiler-live-value-vars index)
-          (compiler-live-value-vars value)))]
+      (compiler-live-values3-vars base index value)]
     [(IrInstrPredicatedStore base index value mask _ _)
-      (compiler-live-set-union
-        (compiler-live-value-vars base)
-        (compiler-live-set-union
-          (compiler-live-value-vars index)
-          (compiler-live-set-union
-            (compiler-live-value-vars value)
-            (compiler-live-value-vars mask))))]
+      (compiler-live-values4-vars base index value mask)]
     [(IrInstrPredicatedLoad _ base index mask _ _)
-      (compiler-live-set-union
-        (compiler-live-value-vars base)
-        (compiler-live-set-union
-          (compiler-live-value-vars index)
-          (compiler-live-value-vars mask)))]
+      (compiler-live-values3-vars base index mask)]
     [(IrInstrTailMask _ index len _)
-      (compiler-live-set-union
-        (compiler-live-value-vars index)
-        (compiler-live-value-vars len))]
+      (compiler-live-values2-vars index len)]
     [(IrInstrEntryArgc _) (compiler-live-set-empty)]
     [(IrInstrEntryArgv _) (compiler-live-set-empty)]
     [(IrInstrEntryEnvp _) (compiler-live-set-empty)]
     [(IrInstrCpuId _ leaf subleaf _)
-      (compiler-live-set-union
-        (compiler-live-value-vars leaf)
-        (compiler-live-value-vars subleaf))]
+      (compiler-live-values2-vars leaf subleaf)]
     [(IrInstrXgetbv _ index) (compiler-live-value-vars index)]
     [(IrInstrCall _ _ args _) (compiler-live-call-args-vars args)]
     [(IrInstrCallIndirect _ func args _)
-      (compiler-live-set-union
-        (compiler-live-value-vars func)
-        (compiler-live-call-args-vars args))]
+      (compiler-live-value-vars-into (compiler-live-call-args-vars args) func)]
     [(IrInstrTailCall _ args _) (compiler-live-call-args-vars args)]
     [(IrInstrStore _ value _) (compiler-live-value-vars value)]
     [(IrInstrBranch cond _ _) (compiler-live-value-vars cond)]

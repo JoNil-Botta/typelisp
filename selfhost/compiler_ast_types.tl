@@ -316,8 +316,10 @@
   (AstDeclDefEnum String AstVariantDefList)
   (AstDeclDefStruct String AstStructRepr AstStructCleanup AstFieldDefList)
   (AstDeclImport AstImportSpec)
+  (AstDeclIncludeStr String String)
   (AstDeclExport AstExportItemList)
   (AstDeclTest String AstExpr AstSourceSpan)
+  (AstDeclUnsafe AstDecl)
   (AstDeclComptimeDecl AstDecl))
 
 (defenum AstDeclList
@@ -449,7 +451,9 @@
     [(AstDeclTest _ _ _) 7]
     [(AstDeclComptimeDecl _) 8]
     [(AstDeclModule _) 9]
-    [(AstDeclExport _) 11]))
+    [(AstDeclExport _) 11]
+    [(AstDeclIncludeStr _ _) 12]
+    [(AstDeclUnsafe _) 13]))
 
 (define (ast-struct-repr-c? [repr : AstStructRepr]) : bool
   (match repr

@@ -253,12 +253,9 @@
 
 ;: Return true when a path exists, mapping probe errors to false.
 (define (windows-sdk-path-exists? [path : (& path str)]) : bool
-  (let
-    [empty : String ""]
-    [owned-path : String (string-append path (& empty))]
-    (match (try-file-exists? owned-path)
-      [(OkIoBool exists) exists]
-      [(ErrIoBool _) false])))
+  (match (try-file-exists? path)
+    [(OkIoBool exists) exists]
+    [(ErrIoBool _) false]))
 
 ;: Return true when an owned path exists through the borrowed public helper.
 (define (windows-sdk-path-exists-owned? [path : String]) : bool

@@ -303,9 +303,9 @@ fallback/skip path is tied to #1662 and #1437.
 canonical `;#`/`;:` doc comments or TypeLisp fenced examples, then runs
 `typelisp doc --test` for each file with `--stdlib-root`. This gate does not
 use a hand-maintained file manifest, so adding documented TypeLisp source with fenced examples
-automatically adds doctest coverage. In the Linux no-Rust lane it runs through
-the bootstrapped stage1 doc command driver whenever that command tier is
-available, and falls back to the seed compiler otherwise (#1662).
+automatically adds doctest coverage. In no-Rust command-tier lanes it runs
+through the compiler selected by `scripts/verify-no-rust-stage0.sh`; runnable
+doctest files are required and executed on both Linux and Windows.
 
 ### Repository inline-test gate
 

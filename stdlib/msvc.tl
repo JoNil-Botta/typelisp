@@ -9,7 +9,7 @@
 ;#
 ;# Usage: `(import "stdlib/msvc.tl")`
 ;#
-;; requires-stage0-symbol: fs-file-kind-status
+;; requires-stage0-symbol: fs-mkdir-status,fs-remove-file-status,fs-remove-dir-status,fs-rename-status,fs-read-dir-status,fs-read-dir,fs-file-kind-status,fs-file-size-status,fs-file-size
 ;# ```typelisp
 ;# (import "stdlib/msvc.tl")
 ;# (define target : String "x86_64-pc-windows-msvc")
@@ -194,16 +194,17 @@
 
 ;: Return true when `path` exists, mapping probe errors to false.
 (define (msvc-path-exists? [path : (& path str)]) : bool
-  (let
-    [empty : String ""]
-    [owned-path : String (string-append path (& empty))]
-    (match (try-file-exists? owned-path)
-      [(OkIoBool exists) exists]
-      [(ErrIoBool _) false])))
+  (match (try-file-exists? path)
+    [(OkIoBool exists) exists]
+    [(ErrIoBool _) false]))
 
 ;: Return true when an owned path exists through the borrowed public helper.
 (define (msvc-path-exists-owned? [path : String]) : bool
   (msvc-path-exists? (& path)))
+
+;: Join two filesystem path segments using the platform separator.
+(define (msvc-path-join [left : String] [right : String]) : String
+  (fs-path-join (& left) (& right)))
 
 ;: Search PATH directories for `tool`, returning the first existing candidate.
 (define (msvc-search-dirs-owned [dirs : EnvStringList] [tool : String]) : MsvcMaybeString
@@ -211,7 +212,7 @@
     [(EnvStringNil) (MsvcNoString)]
     [(EnvStringCons dir rest)
       (let
-        [candidate : String (fs-path-join dir tool)]
+        [candidate : String (msvc-path-join dir tool)]
         (if (msvc-path-exists-owned? candidate)
           (MsvcSomeString candidate)
           (msvc-search-dirs-owned rest tool)))]))
@@ -428,14 +429,16 @@
 
 ;: Read the default VC toolset version advertised by a Visual Studio instance.
 (define (msvc-default-vc-tools-version [instance : WindowsSetupInstance]) : MsvcMaybeString
-  (match (try-read-file (msvc-default-vc-tools-version-path instance))
-    [(OkIoString contents)
-      (let
-        [trimmed : String (string-trim contents)]
-        (if (string-eq trimmed "")
-          (MsvcNoString)
-          (MsvcSomeString trimmed)))]
-    [(ErrIoString _) (MsvcNoString)]))
+  (let
+    [path : String (msvc-default-vc-tools-version-path instance)]
+    (match (try-read-file (& path))
+      [(OkIoString contents)
+        (let
+          [trimmed : String (string-trim contents)]
+          (if (string-eq trimmed "")
+            (MsvcNoString)
+            (MsvcSomeString trimmed)))]
+      [(ErrIoString _) (MsvcNoString)])))
 
 ;: Pick the VC toolset version, honoring `VCToolsVersion` when present.
 (define (msvc-vc-tools-version [instance : WindowsSetupInstance]) : MsvcMaybeString

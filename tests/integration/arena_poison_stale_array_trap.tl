@@ -10,5 +10,7 @@
       [items : (Array i64) (make-array i64 1)]
       (begin
         (array-set! items 0 (+ base 33))
-        (unsafe (arena-rewind mark))
+        (unsafe
+          (begin
+            (arena-rewind mark)))
         (array-ref items 0)))))

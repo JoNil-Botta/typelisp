@@ -8,9 +8,10 @@
 ;; `clone$<Name>` define and prepends it, so a self-hosted compiler supports
 ;; `(clone x)` for any user type (mirroring the Rust generic clone codegen).
 ;;
-;; tuple, fixed array, dynamic array, or another clone-able named type. Function,
-;; reference, raw-pointer, Box, str, and compile-time-only values are not
-;; clone-able. Clone-ability is a least-fixed-point over the type graph.
+;; tuple, fixed array, dynamic array, Box of a clone-able type, or another
+;; clone-able named type. Function, reference, raw-pointer, str, and
+;; compile-time-only values are not clone-able. Clone-ability is a
+;; least-fixed-point over the type graph.
 (import "../stdlib/io.tl")
 
 (import "compiler_ast_types.tl")
@@ -54,6 +55,7 @@
     [(AstTyTuple elems) (clone-field-type-list-able? elems names)]
     [(AstTyArray elem _) (clone-field-type-able? elem names)]
     [(AstTyDynArray elem) (clone-field-type-able? elem names)]
+    [(AstTyBox elem) (clone-field-type-able? elem names)]
     [(AstTyRegion _ inner) (clone-field-type-able? inner names)]
     [(AstTyVar name) (clone-name-list-contains? names name)]
     [(AstTyEnum name) (clone-name-list-contains? names name)]
@@ -222,7 +224,7 @@
 ;; back into order. Element clones stay bounded-depth via `(clone h)`.
 (defenum CloneListShape
   (CloneNotList)
-  (CloneIsList String String))
+  (CloneIsList String String bool))
 
 ; nil-ctor name, cons-ctor name
 (define (clone-variant-field-count [v : AstVariantDef]) : i64
@@ -239,14 +241,35 @@
     [(AstTyEnum n) (string-eq n name)]
     [_ false]))
 
+;; True iff `tail` is the enum itself, either directly or through a Box tail.
+(define (clone-tail-is-self? [tail : AstType] [self-name : String]) : bool
+  (match tail
+    [(AstTyBox inner) (clone-type-is-name? inner self-name)]
+    [_ (clone-type-is-name? tail self-name)]))
+
+(define (clone-tail-is-boxed-self? [tail : AstType] [self-name : String]) : bool
+  (match tail
+    [(AstTyBox inner) (clone-type-is-name? inner self-name)]
+    [_ false]))
+
 ;; True iff `v` is a two-field variant whose SECOND field is the enum itself
-;; (the `(Cons element Self)` shape).
+;; (the `(Cons element Self)` or `(Cons element (Box Self))` shape).
 (define (clone-variant-cons-tail-self? [v : AstVariantDef] [self-name : String]) : bool
   (match v
     [(AstVariantDef _ field-types)
       (match field-types
         [(AstTypeCons _ (AstTypeCons tail (AstTypeNil)))
-          (clone-type-is-name? tail self-name)]
+          (clone-tail-is-self? tail self-name)]
+        [_ false])]))
+
+(define (clone-variant-cons-tail-boxed?
+  [v : AstVariantDef]
+  [self-name : String]) : bool
+  (match v
+    [(AstVariantDef _ field-types)
+      (match field-types
+        [(AstTypeCons _ (AstTypeCons tail (AstTypeNil)))
+          (clone-tail-is-boxed-self? tail self-name)]
         [_ false])]))
 
 ;; If (nil-v, cons-v) form a Nil/Cons pair, return the list shape; else NotList.
@@ -256,17 +279,20 @@
   [self-name : String]) : CloneListShape
   (if (= (clone-variant-field-count nil-v) 0)
     (if (clone-variant-cons-tail-self? cons-v self-name)
-      (CloneIsList (clone-variant-name nil-v) (clone-variant-name cons-v))
+      (CloneIsList
+        (clone-variant-name nil-v)
+        (clone-variant-name cons-v)
+        (clone-variant-cons-tail-boxed? cons-v self-name))
       (CloneNotList))
     (CloneNotList)))
 
 ;; A list-shaped enum is exactly two variants: one nullary (Nil) and one
-;; `(Cons element Self)`, in either source order.
+;; `(Cons element Self)` or `(Cons element (Box Self))`, in either source order.
 (define (clone-list-shape [variants : AstVariantDefList] [self-name : String]) : CloneListShape
   (match variants
     [(AstVariantDefCons v1 (AstVariantDefCons v2 (AstVariantDefNil)))
       (match (clone-list-shape-try v1 v2 self-name)
-        [(CloneIsList n c) (CloneIsList n c)]
+        [(CloneIsList n c boxed) (CloneIsList n c boxed)]
         [(CloneNotList) (clone-list-shape-try v2 v1 self-name)])]
     [_ (CloneNotList)]))
 
@@ -279,6 +305,16 @@
 ;; `(Nil)` — a nullary constructor is a zero-arg call, as in clone-variant-arm.
 (define (clone-nil-expr [nil-ctor : String]) : AstExpr
   (AstExprCall (AstExprVar nil-ctor) AstExprNil))
+
+(define (clone-list-tail-next-expr [boxed-tail : bool]) : AstExpr
+  (if boxed-tail
+    (AstExprBoxGet (AstExprVar "t"))
+    (AstExprVar "t")))
+
+(define (clone-list-tail-acc-expr [boxed-tail : bool]) : AstExpr
+  (if boxed-tail
+    (AstExprBox (AstExprVar "acc"))
+    (AstExprVar "acc")))
 
 ;; A two-parameter `(define (fn [x : T] [acc : T]) : T body)`.
 (define (clone-make-list-fn
@@ -299,6 +335,7 @@
 (define (clone-list-step-arm
   [fn-name : String]
   [cons-ctor : String]
+  [boxed-tail : bool]
   [head-expr : AstExpr]) : AstMatchArm
   (AstMatchArm
     (AstPatVariant
@@ -309,11 +346,13 @@
     (AstExprCall
       (AstExprVar fn-name)
       (AstExprCons
-        (AstExprVar "t")
+        (clone-list-tail-next-expr boxed-tail)
         (AstExprCons
           (AstExprCall
             (AstExprVar cons-ctor)
-            (AstExprCons head-expr (AstExprCons (AstExprVar "acc") AstExprNil)))
+            (AstExprCons
+              head-expr
+              (AstExprCons (clone-list-tail-acc-expr boxed-tail) AstExprNil)))
           AstExprNil)))))
 
 ;; (match x [(Nil) acc] [(Cons h t) (fn t (Cons head-expr acc))])
@@ -321,20 +360,22 @@
   [fn-name : String]
   [nil-ctor : String]
   [cons-ctor : String]
+  [boxed-tail : bool]
   [head-expr : AstExpr]) : AstExpr
   (AstExprMatch
     (AstExprVar "x")
     (AstMatchArmCons
       (AstMatchArm (AstPatVariant nil-ctor AstPatternNil) (AstExprVar "acc"))
       (AstMatchArmCons
-        (clone-list-step-arm fn-name cons-ctor head-expr)
+        (clone-list-step-arm fn-name cons-ctor boxed-tail head-expr)
         AstMatchArmNil))))
 
 ;; clone$L$acc: tail-recursively clone each element into a reversed accumulator.
 (define (clone-list-acc-decl
   [type-name : String]
   [nil-ctor : String]
-  [cons-ctor : String]) : AstDecl
+  [cons-ctor : String]
+  [boxed-tail : bool]) : AstDecl
   (let
     [fn-name : String (clone-list-acc-name type-name)]
     (clone-make-list-fn
@@ -344,19 +385,26 @@
         fn-name
         nil-ctor
         cons-ctor
+        boxed-tail
         (clone-call-expr (AstExprVar "h"))))))
 
 ;; clone$L$rev: tail-recursively reverse (no cloning) to restore source order.
 (define (clone-list-rev-decl
   [type-name : String]
   [nil-ctor : String]
-  [cons-ctor : String]) : AstDecl
+  [cons-ctor : String]
+  [boxed-tail : bool]) : AstDecl
   (let
     [fn-name : String (clone-list-rev-name type-name)]
     (clone-make-list-fn
       fn-name
       type-name
-      (clone-list-fold-body fn-name nil-ctor cons-ctor (AstExprVar "h")))))
+      (clone-list-fold-body
+        fn-name
+        nil-ctor
+        cons-ctor
+        boxed-tail
+        (AstExprVar "h")))))
 
 ;; clone$L: reverse(acc(x, Nil), Nil) — both folds run in O(1) stack frames.
 (define (clone-list-entry-decl [type-name : String] [nil-ctor : String]) : AstDecl
@@ -379,12 +427,14 @@
   [variants : AstVariantDefList]
   [acc : AstDeclList]) : AstDeclList
   (match (clone-list-shape variants name)
-    [(CloneIsList nil-ctor cons-ctor)
+    [(CloneIsList nil-ctor cons-ctor boxed-tail)
       (AstDeclCons
         (clone-list-entry-decl name nil-ctor)
         (AstDeclCons
-          (clone-list-acc-decl name nil-ctor cons-ctor)
-          (AstDeclCons (clone-list-rev-decl name nil-ctor cons-ctor) acc)))]
+          (clone-list-acc-decl name nil-ctor cons-ctor boxed-tail)
+          (AstDeclCons
+            (clone-list-rev-decl name nil-ctor cons-ctor boxed-tail)
+            acc)))]
     [(CloneNotList)
       (AstDeclCons
         (clone-make-helper-decl

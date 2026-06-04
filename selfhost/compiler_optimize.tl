@@ -787,7 +787,9 @@
     [(IrInstrCons instr rest)
       (match (opt-fold-instr env instr)
         [(OptInstrResult new-env new-instr)
-          (IrInstrCons new-instr (opt-fold-instrs new-env rest))])]))
+          (compiler-ir-instr-cons
+            new-instr
+            (opt-fold-instrs new-env (box-get rest)))])]))
 
 (define (opt-strength-instr [env : OptConstEnv] [instr : CompilerIrInstr]) : OptInstrResult
   (match instr
@@ -850,7 +852,9 @@
     [(IrInstrCons instr rest)
       (match (opt-strength-instr env instr)
         [(OptInstrResult new-env new-instr)
-          (IrInstrCons new-instr (opt-strength-instrs new-env rest))])]))
+          (compiler-ir-instr-cons
+            new-instr
+            (opt-strength-instrs new-env (box-get rest)))])]))
 
 ;; --- dead-code elimination (#544) --------------------------------------------
 ;;
@@ -890,7 +894,30 @@
   (match values
     [(IrValueNil) set]
     [(IrValueCons value rest)
-      (opt-collect-value-list-uses (opt-collect-value-uses set value) rest)]))
+      (opt-collect-value-list-uses
+        (opt-collect-value-uses set value)
+        (box-get rest))]))
+
+(define (opt-collect-call-args-array-uses
+  [set : OptUsedSet]
+  [values : (Array CompilerIrValue)]
+  [index : i64]) : OptUsedSet
+  (if (>= index (array-length values))
+    set
+    (opt-collect-call-args-array-uses
+      (opt-collect-value-uses set (array-ref values index))
+      values
+      (+ index 1))))
+
+(define (opt-collect-call-args-uses
+  [set : OptUsedSet]
+  [args : CompilerIrCallArgs]) : OptUsedSet
+  (match args
+    [(IrCallArgsNil) set]
+    [(IrCallArgsOne value) (opt-collect-value-uses set value)]
+    [(IrCallArgsTwo a b)
+      (opt-collect-value-uses (opt-collect-value-uses set a) b)]
+    [(IrCallArgsArray values) (opt-collect-call-args-array-uses set values 0)]))
 
 (define (opt-collect-phi-uses
   [set : OptUsedSet]
@@ -898,7 +925,7 @@
   (match inputs
     [(IrPhiInputNil) set]
     [(IrPhiInputCons value _ rest)
-      (opt-collect-phi-uses (opt-collect-value-uses set value) rest)]))
+      (opt-collect-phi-uses (opt-collect-value-uses set value) (box-get rest))]))
 
 (define (opt-collect-instr-uses [set : OptUsedSet] [instr : CompilerIrInstr]) : OptUsedSet
   (match instr
@@ -906,10 +933,10 @@
     [(IrInstrBinOp _ _ l r _)
       (opt-collect-value-uses (opt-collect-value-uses set l) r)]
     [(IrInstrUnOp _ _ src _) (opt-collect-value-uses set src)]
-    [(IrInstrCall _ _ args _) (opt-collect-value-list-uses set args)]
+    [(IrInstrCall _ _ args _) (opt-collect-call-args-uses set args)]
     [(IrInstrCallIndirect _ func args _)
-      (opt-collect-value-list-uses (opt-collect-value-uses set func) args)]
-    [(IrInstrTailCall _ args _) (opt-collect-value-list-uses set args)]
+      (opt-collect-call-args-uses (opt-collect-value-uses set func) args)]
+    [(IrInstrTailCall _ args _) (opt-collect-call-args-uses set args)]
     [(IrInstrStore _ value _) (opt-collect-value-uses set value)]
     ;; Pointer/memory ops carry operand uses too; missing any of these would let
     ;; DCE wrongly drop a definition that feeds an address/load/store/cast.
@@ -975,7 +1002,9 @@
   (match instrs
     [(IrInstrNil) set]
     [(IrInstrCons instr rest)
-      (opt-collect-instrs-uses (opt-collect-instr-uses set instr) rest)]))
+      (opt-collect-instrs-uses
+        (opt-collect-instr-uses set instr)
+        (box-get rest))]))
 
 (define (opt-collect-blocks-uses
   [set : OptUsedSet]
@@ -985,7 +1014,9 @@
     [(IrBlockCons block rest)
       (match block
         [(IrBlock _ instrs)
-          (opt-collect-blocks-uses (opt-collect-instrs-uses set instrs) rest)])]))
+          (opt-collect-blocks-uses
+            (opt-collect-instrs-uses set instrs)
+            (box-get rest))])]))
 
 ;; Division, modulo, and shift can trap at runtime (zero divisor, signed
 ;; MIN / -1, shift count out of range), so a BinOp using one of those operators
@@ -1025,8 +1056,8 @@
     [(IrInstrNil) (IrInstrNil)]
     [(IrInstrCons instr rest)
       (if (opt-instr-dead? set instr)
-        (opt-dce-instrs set rest)
-        (IrInstrCons instr (opt-dce-instrs set rest)))]))
+        (opt-dce-instrs set (box-get rest))
+        (compiler-ir-instr-cons instr (opt-dce-instrs set (box-get rest))))]))
 
 (define (opt-dce-block [set : OptUsedSet] [block : CompilerIrBlock]) : CompilerIrBlock
   (match block
@@ -1036,7 +1067,9 @@
   (match blocks
     [(IrBlockNil) (IrBlockNil)]
     [(IrBlockCons block rest)
-      (IrBlockCons (opt-dce-block set block) (opt-dce-block-list set rest))]))
+      (compiler-ir-block-cons
+        (opt-dce-block set block)
+        (opt-dce-block-list set (box-get rest)))]))
 
 ;; --- aggregate allocation candidate analysis (#1487) ------------------------
 ;;
@@ -1051,14 +1084,11 @@
     [(AstTyArray _ _) true]
     [_ false]))
 
-(define (opt-aggregate-tl-alloc-size [args : CompilerIrValueList]) : OptMaybeI64
+(define (opt-aggregate-tl-alloc-size [args : CompilerIrCallArgs]) : OptMaybeI64
   (match args
-    [(IrValueCons value rest)
-      (match rest
-        [(IrValueNil)
-          (match value
-            [(IrValueI64 size) (OptSomeI64 size)]
-            [_ (OptNoI64)])]
+    [(IrCallArgsOne value)
+      (match value
+        [(IrValueI64 size) (OptSomeI64 size)]
         [_ (OptNoI64)])]
     [_ (OptNoI64)]))
 
@@ -1115,7 +1145,32 @@
     [(IrValueCons value rest)
       (or
         (opt-aggregate-value-has-pointer? base ptrs value)
-        (opt-aggregate-value-list-has-pointer? base ptrs rest))]))
+        (opt-aggregate-value-list-has-pointer? base ptrs (box-get rest)))]))
+
+(define (opt-aggregate-call-args-array-has-pointer?
+  [base : i64]
+  [ptrs : OptAggregatePointerList]
+  [values : (Array CompilerIrValue)]
+  [index : i64]) : bool
+  (if (>= index (array-length values))
+    false
+    (or
+      (opt-aggregate-value-has-pointer? base ptrs (array-ref values index))
+      (opt-aggregate-call-args-array-has-pointer? base ptrs values (+ index 1)))))
+
+(define (opt-aggregate-call-args-has-pointer?
+  [base : i64]
+  [ptrs : OptAggregatePointerList]
+  [args : CompilerIrCallArgs]) : bool
+  (match args
+    [(IrCallArgsNil) false]
+    [(IrCallArgsOne value) (opt-aggregate-value-has-pointer? base ptrs value)]
+    [(IrCallArgsTwo a b)
+      (or
+        (opt-aggregate-value-has-pointer? base ptrs a)
+        (opt-aggregate-value-has-pointer? base ptrs b))]
+    [(IrCallArgsArray values)
+      (opt-aggregate-call-args-array-has-pointer? base ptrs values 0)]))
 
 (define (opt-aggregate-maybe-value-has-pointer?
   [base : i64]
@@ -1134,7 +1189,7 @@
     [(IrPhiInputCons value _ rest)
       (or
         (opt-aggregate-value-has-pointer? base ptrs value)
-        (opt-aggregate-phi-inputs-have-pointer? base ptrs rest))]))
+        (opt-aggregate-phi-inputs-have-pointer? base ptrs (box-get rest)))]))
 
 (define (opt-aggregate-raw-var-is-pointer?
   [base : i64]
@@ -1233,9 +1288,9 @@
         (opt-aggregate-value-has-pointer? base ptrs subleaf))]
     [(IrInstrXgetbv _ index) (opt-aggregate-value-has-pointer? base ptrs index)]
     [(IrInstrCall _ _ args _)
-      (opt-aggregate-value-list-has-pointer? base ptrs args)]
+      (opt-aggregate-call-args-has-pointer? base ptrs args)]
     [(IrInstrTailCall _ args _)
-      (opt-aggregate-value-list-has-pointer? base ptrs args)]
+      (opt-aggregate-call-args-has-pointer? base ptrs args)]
     [(IrInstrStore _ value _)
       (opt-aggregate-value-has-pointer? base ptrs value)]
     [(IrInstrBranch cond _ _) (opt-aggregate-value-has-pointer? base ptrs cond)]
@@ -1254,7 +1309,7 @@
     [(IrInstrCons instr rest)
       (or
         (opt-aggregate-instr-has-pointer? instr base ptrs)
-        (opt-aggregate-instrs-touch-candidate? rest base ptrs))]))
+        (opt-aggregate-instrs-touch-candidate? (box-get rest) base ptrs))]))
 
 (define (opt-aggregate-instr-known-safe?
   [instr : CompilerIrInstr]
@@ -1304,10 +1359,31 @@
             (if (and
               (= dst base)
               (and (= alloc-size size) (opt-type-eq alloc-ty ty)))
-              (opt-aggregate-scan-instrs base ty size rest ptrs accesses true)
-              (opt-aggregate-scan-instrs base ty size rest ptrs accesses false))]
+              (opt-aggregate-scan-instrs
+                base
+                ty
+                size
+                (box-get rest)
+                ptrs
+                accesses
+                true)
+              (opt-aggregate-scan-instrs
+                base
+                ty
+                size
+                (box-get rest)
+                ptrs
+                accesses
+                false))]
           [(OptNoAggregateAlloc)
-            (opt-aggregate-scan-instrs base ty size rest ptrs accesses false)])
+            (opt-aggregate-scan-instrs
+              base
+              ty
+              size
+              (box-get rest)
+              ptrs
+              accesses
+              false)])
         (match instr
           [(IrInstrGep dst src offset _)
             (match (opt-aggregate-value-offset base ptrs src)
@@ -1318,7 +1394,7 @@
                       base
                       ty
                       size
-                      rest
+                      (box-get rest)
                       (OptAggregatePointerCons
                         (OptAggregatePointer dst (+ base-offset field-offset))
                         ptrs)
@@ -1332,7 +1408,7 @@
                     base
                     ty
                     size
-                    rest
+                    (box-get rest)
                     ptrs
                     accesses
                     true))])]
@@ -1343,20 +1419,23 @@
                   base
                   ty
                   size
-                  rest
+                  (box-get rest)
                   ptrs
                   (OptAggregateAccessCons
                     (OptAggregateLoad dst offset load-ty)
                     accesses)
                   true)]
               [(OptNoI64)
-                (if (opt-aggregate-instrs-touch-candidate? rest base ptrs)
+                (if (opt-aggregate-instrs-touch-candidate?
+                  (box-get rest)
+                  base
+                  ptrs)
                   (OptAggregateScanReject)
                   (opt-aggregate-scan-instrs
                     base
                     ty
                     size
-                    rest
+                    (box-get rest)
                     ptrs
                     accesses
                     true))])]
@@ -1369,7 +1448,7 @@
                     base
                     ty
                     size
-                    rest
+                    (box-get rest)
                     ptrs
                     (OptAggregateAccessCons
                       (OptAggregateStore offset store-ty)
@@ -1381,13 +1460,16 @@
                   (and
                     (compiler-ir-effect-invalidates-cse?
                       (compiler-ir-instr-effect instr))
-                    (opt-aggregate-instrs-touch-candidate? rest base ptrs)))
+                    (opt-aggregate-instrs-touch-candidate?
+                      (box-get rest)
+                      base
+                      ptrs)))
                   (OptAggregateScanReject)
                   (opt-aggregate-scan-instrs
                     base
                     ty
                     size
-                    rest
+                    (box-get rest)
                     ptrs
                     accesses
                     true))])]
@@ -1396,9 +1478,16 @@
               (OptAggregateScanReject)
               (if (and
                 (opt-aggregate-instr-crosses-unknown-effect? instr base ptrs)
-                (opt-aggregate-instrs-touch-candidate? rest base ptrs))
+                (opt-aggregate-instrs-touch-candidate? (box-get rest) base ptrs))
                 (OptAggregateScanReject)
-                (opt-aggregate-scan-instrs base ty size rest ptrs accesses true)))]))]))
+                (opt-aggregate-scan-instrs
+                  base
+                  ty
+                  size
+                  (box-get rest)
+                  ptrs
+                  accesses
+                  true)))]))]))
 
 (define (opt-aggregate-classify-one
   [base : i64]
@@ -1426,10 +1515,11 @@
             [(OptAggregateScanOk ptrs accesses)
               (OptAggregateAllocCandidateCons
                 (OptAggregateAllocCandidate base ty size ptrs accesses)
-                (opt-aggregate-candidates-from-instrs rest all))]
+                (opt-aggregate-candidates-from-instrs (box-get rest) all))]
             [(OptAggregateScanReject)
-              (opt-aggregate-candidates-from-instrs rest all)])]
-        [(OptNoAggregateAlloc) (opt-aggregate-candidates-from-instrs rest all)])]))
+              (opt-aggregate-candidates-from-instrs (box-get rest) all)])]
+        [(OptNoAggregateAlloc)
+          (opt-aggregate-candidates-from-instrs (box-get rest) all)])]))
 
 (define (opt-aggregate-instr-list-append
   [left : CompilerIrInstrList]
@@ -1437,7 +1527,9 @@
   (match left
     [(IrInstrNil) right]
     [(IrInstrCons head rest)
-      (IrInstrCons head (opt-aggregate-instr-list-append rest right))]))
+      (compiler-ir-instr-cons
+        head
+        (opt-aggregate-instr-list-append (box-get rest) right))]))
 
 (define (opt-aggregate-flatten-blocks [blocks : CompilerIrBlockList]) : CompilerIrInstrList
   (match blocks
@@ -1447,7 +1539,7 @@
         [(IrBlock _ instrs)
           (opt-aggregate-instr-list-append
             instrs
-            (opt-aggregate-flatten-blocks rest))])]))
+            (opt-aggregate-flatten-blocks (box-get rest)))])]))
 
 (define (opt-aggregate-allocation-candidates-function
   [func : CompilerIrFunction]) : OptAggregateAllocCandidateList
@@ -1474,7 +1566,7 @@
     [(IrFunctionCons func rest)
       (opt-aggregate-candidate-list-append
         (opt-aggregate-allocation-candidates-function func)
-        (opt-aggregate-allocation-candidates-functions rest))]))
+        (opt-aggregate-allocation-candidates-functions (box-get rest)))]))
 
 (define (opt-aggregate-allocation-candidates [program : CompilerIrProgram]) : OptAggregateAllocCandidateList
   (match program
@@ -1583,11 +1675,11 @@
     [(OptSomeAggregateAlloc base ty _)
       (match (opt-aggregate-promote-lookup slots base)
         [(OptSomeI64 storage)
-          (IrInstrCons
+          (compiler-ir-instr-cons
             (IrInstrAlloc storage ty)
-            (IrInstrCons (IrInstrAddrOf base storage) IrInstrNil))]
-        [(OptNoI64) (IrInstrCons instr IrInstrNil)])]
-    [(OptNoAggregateAlloc) (IrInstrCons instr IrInstrNil)]))
+            (compiler-ir-instr-cons (IrInstrAddrOf base storage) IrInstrNil))]
+        [(OptNoI64) (compiler-ir-instr-cons instr IrInstrNil)])]
+    [(OptNoAggregateAlloc) (compiler-ir-instr-cons instr IrInstrNil)]))
 
 (define (opt-aggregate-promote-instrs
   [slots : OptAggregatePromoteSlotList]
@@ -1597,7 +1689,7 @@
     [(IrInstrCons instr rest)
       (opt-aggregate-instr-list-append
         (opt-aggregate-promote-rewrite-instr slots instr)
-        (opt-aggregate-promote-instrs slots rest))]))
+        (opt-aggregate-promote-instrs slots (box-get rest)))]))
 
 (define (opt-aggregate-promote-block
   [slots : OptAggregatePromoteSlotList]
@@ -1612,9 +1704,9 @@
   (match blocks
     [(IrBlockNil) (IrBlockNil)]
     [(IrBlockCons block rest)
-      (IrBlockCons
+      (compiler-ir-block-cons
         (opt-aggregate-promote-block slots block)
-        (opt-aggregate-promote-blocks slots rest))]))
+        (opt-aggregate-promote-blocks slots (box-get rest)))]))
 
 (define (opt-aggregate-stack-promote-function [func : CompilerIrFunction]) : CompilerIrFunction
   (match func
@@ -1861,9 +1953,9 @@
     [(IrInstrCons instr rest)
       (match (opt-aggregate-sroa-instr candidates facts instr)
         [(OptAggregateSroaResult next-facts next-instr)
-          (IrInstrCons
+          (compiler-ir-instr-cons
             next-instr
-            (opt-aggregate-sroa-instrs candidates next-facts rest))])]))
+            (opt-aggregate-sroa-instrs candidates next-facts (box-get rest)))])]))
 
 (define (opt-aggregate-sroa-block
   [candidates : OptAggregateAllocCandidateList]
@@ -1880,9 +1972,9 @@
   (match blocks
     [(IrBlockNil) (IrBlockNil)]
     [(IrBlockCons block rest)
-      (IrBlockCons
+      (compiler-ir-block-cons
         (opt-aggregate-sroa-block candidates block)
-        (opt-aggregate-sroa-blocks candidates rest))]))
+        (opt-aggregate-sroa-blocks candidates (box-get rest)))]))
 
 (define (opt-aggregate-sroa-function [func : CompilerIrFunction]) : CompilerIrFunction
   (match func
@@ -2192,7 +2284,41 @@
     [(IrValueCons ah at)
       (match b
         [(IrValueCons bh bt)
-          (and (opt-value-eq ah bh) (opt-value-list-eq at bt))]
+          (and
+            (opt-value-eq ah bh)
+            (opt-value-list-eq (box-get at) (box-get bt)))]
+        [_ false])]))
+
+(define (opt-call-args-array-eq
+  [a : (Array CompilerIrValue)]
+  [b : (Array CompilerIrValue)]
+  [index : i64]) : bool
+  (if (>= index (array-length a))
+    true
+    (and
+      (opt-value-eq (array-ref a index) (array-ref b index))
+      (opt-call-args-array-eq a b (+ index 1)))))
+
+(define (opt-call-args-eq [a : CompilerIrCallArgs] [b : CompilerIrCallArgs]) : bool
+  (match a
+    [(IrCallArgsNil)
+      (match b
+        [(IrCallArgsNil) true]
+        [_ false])]
+    [(IrCallArgsOne av)
+      (match b
+        [(IrCallArgsOne bv) (opt-value-eq av bv)]
+        [_ false])]
+    [(IrCallArgsTwo aa ab)
+      (match b
+        [(IrCallArgsTwo ba bb) (and (opt-value-eq aa ba) (opt-value-eq ab bb))]
+        [_ false])]
+    [(IrCallArgsArray av)
+      (match b
+        [(IrCallArgsArray bv)
+          (and
+            (= (array-length av) (array-length bv))
+            (opt-call-args-array-eq av bv 0))]
         [_ false])]))
 
 (define (opt-phi-input-eq
@@ -2215,7 +2341,7 @@
         [(IrPhiInputCons bv blabel bt)
           (and
             (opt-phi-input-eq av alabel bv blabel)
-            (opt-phi-input-list-eq at bt))]
+            (opt-phi-input-list-eq (box-get at) (box-get bt)))]
         [_ false])]))
 
 (define (opt-instr-eq [a : CompilerIrInstr] [b : CompilerIrInstr]) : bool
@@ -2461,7 +2587,7 @@
             (= ad bd)
             (and
               (string-eq aname bname)
-              (and (opt-value-list-eq aargs bargs) (opt-type-eq aty bty))))]
+              (and (opt-call-args-eq aargs bargs) (opt-type-eq aty bty))))]
         [_ false])]
     [(IrInstrCallIndirect ad afunc aargs aty)
       (match b
@@ -2470,14 +2596,14 @@
             (= ad bd)
             (and
               (opt-value-eq afunc bfunc)
-              (and (opt-value-list-eq aargs bargs) (opt-type-eq aty bty))))]
+              (and (opt-call-args-eq aargs bargs) (opt-type-eq aty bty))))]
         [_ false])]
     [(IrInstrTailCall aname aargs aty)
       (match b
         [(IrInstrTailCall bname bargs bty)
           (and
             (string-eq aname bname)
-            (and (opt-value-list-eq aargs bargs) (opt-type-eq aty bty)))]
+            (and (opt-call-args-eq aargs bargs) (opt-type-eq aty bty)))]
         [_ false])]
     [(IrInstrStore aname av aty)
       (match b
@@ -2523,7 +2649,9 @@
     [(IrInstrCons ah at)
       (match b
         [(IrInstrCons bh bt)
-          (and (opt-instr-eq ah bh) (opt-instr-list-eq at bt))]
+          (and
+            (opt-instr-eq ah bh)
+            (opt-instr-list-eq (box-get at) (box-get bt)))]
         [_ false])]))
 
 (define (opt-block-eq [a : CompilerIrBlock] [b : CompilerIrBlock]) : bool
@@ -2542,7 +2670,9 @@
     [(IrBlockCons ah at)
       (match b
         [(IrBlockCons bh bt)
-          (and (opt-block-eq ah bh) (opt-block-list-eq at bt))]
+          (and
+            (opt-block-eq ah bh)
+            (opt-block-list-eq (box-get at) (box-get bt)))]
         [_ false])]))
 
 (define (opt-param-eq [a : CompilerIrParam] [b : CompilerIrParam]) : bool
@@ -2561,7 +2691,9 @@
     [(IrParamCons ah at)
       (match b
         [(IrParamCons bh bt)
-          (and (opt-param-eq ah bh) (opt-param-list-eq at bt))]
+          (and
+            (opt-param-eq ah bh)
+            (opt-param-list-eq (box-get at) (box-get bt)))]
         [_ false])]))
 
 (define (opt-function-eq [a : CompilerIrFunction] [b : CompilerIrFunction]) : bool
@@ -2590,7 +2722,9 @@
     [(IrFunctionCons ah at)
       (match b
         [(IrFunctionCons bh bt)
-          (and (opt-function-eq ah bh) (opt-function-list-eq at bt))]
+          (and
+            (opt-function-eq ah bh)
+            (opt-function-list-eq (box-get at) (box-get bt)))]
         [_ false])]))
 
 (define (opt-global-eq [a : CompilerIrGlobal] [b : CompilerIrGlobal]) : bool
@@ -2613,7 +2747,9 @@
     [(IrGlobalCons ah at)
       (match b
         [(IrGlobalCons bh bt)
-          (and (opt-global-eq ah bh) (opt-global-list-eq at bt))]
+          (and
+            (opt-global-eq ah bh)
+            (opt-global-list-eq (box-get at) (box-get bt)))]
         [_ false])]))
 
 (define (opt-extern-eq [a : CompilerIrExtern] [b : CompilerIrExtern]) : bool
@@ -2642,7 +2778,9 @@
     [(IrExternCons ah at)
       (match b
         [(IrExternCons bh bt)
-          (and (opt-extern-eq ah bh) (opt-extern-list-eq at bt))]
+          (and
+            (opt-extern-eq ah bh)
+            (opt-extern-list-eq (box-get at) (box-get bt)))]
         [_ false])]))
 
 (define (opt-program-eq [a : CompilerIrProgram] [b : CompilerIrProgram]) : bool
@@ -2787,7 +2925,9 @@
     [(IrInstrCons instr rest)
       (match (opt-cse-instr table instr)
         [(OptCseResult new-table new-instr)
-          (IrInstrCons new-instr (opt-cse-instrs new-table rest))])]))
+          (compiler-ir-instr-cons
+            new-instr
+            (opt-cse-instrs new-table (box-get rest)))])]))
 
 ;; --- block-local copy propagation (#545) ------------------------------------
 ;;
@@ -2859,9 +2999,36 @@
   (match values
     [(IrValueNil) (IrValueNil)]
     [(IrValueCons value rest)
-      (IrValueCons
+      (compiler-ir-value-cons
         (opt-copy-resolve env value)
-        (opt-copy-subst-value-list env rest))]))
+        (opt-copy-subst-value-list env (box-get rest)))]))
+
+(define (opt-copy-subst-call-args-array
+  [env : OptCopyEnv]
+  [src : (Array CompilerIrValue)]
+  [dst : (Array CompilerIrValue)]
+  [index : i64]) : unit
+  (if (>= index (array-length src))
+    unit
+    (begin
+      (array-set! dst index (opt-copy-resolve env (array-ref src index)))
+      (opt-copy-subst-call-args-array env src dst (+ index 1)))))
+
+(define (opt-copy-subst-call-args
+  [env : OptCopyEnv]
+  [args : CompilerIrCallArgs]) : CompilerIrCallArgs
+  (match args
+    [(IrCallArgsNil) (IrCallArgsNil)]
+    [(IrCallArgsOne value) (IrCallArgsOne (opt-copy-resolve env value))]
+    [(IrCallArgsTwo a b)
+      (IrCallArgsTwo (opt-copy-resolve env a) (opt-copy-resolve env b))]
+    [(IrCallArgsArray values)
+      (let
+        [out : (Array CompilerIrValue)
+          (make-array CompilerIrValue (array-length values))]
+        (begin
+          (opt-copy-subst-call-args-array env values out 0)
+          (IrCallArgsArray out)))]))
 
 ;; Rewrite the value-use operands of an instruction through the copy env. Phi
 ;; inputs and the raw var id of `IrInstrAddrOf` are intentionally not rewritten.
@@ -2913,15 +3080,15 @@
         reg-index)]
     [(IrInstrXgetbv dst index) (IrInstrXgetbv dst (opt-copy-resolve env index))]
     [(IrInstrCall dst name args ty)
-      (IrInstrCall dst name (opt-copy-subst-value-list env args) ty)]
+      (IrInstrCall dst name (opt-copy-subst-call-args env args) ty)]
     [(IrInstrCallIndirect dst func args ty)
       (IrInstrCallIndirect
         dst
         (opt-copy-resolve env func)
-        (opt-copy-subst-value-list env args)
+        (opt-copy-subst-call-args env args)
         ty)]
     [(IrInstrTailCall name args ty)
-      (IrInstrTailCall name (opt-copy-subst-value-list env args) ty)]
+      (IrInstrTailCall name (opt-copy-subst-call-args env args) ty)]
     [(IrInstrStore name value ty)
       (IrInstrStore name (opt-copy-resolve env value) ty)]
     [(IrInstrBoundsCheck index length ok-label)
@@ -3000,7 +3167,9 @@
     [(IrInstrCons instr rest)
       (match (opt-copy-instr env instr)
         [(OptCopyResult new-env new-instr)
-          (IrInstrCons new-instr (opt-copy-instrs new-env rest))])]))
+          (compiler-ir-instr-cons
+            new-instr
+            (opt-copy-instrs new-env (box-get rest)))])]))
 
 ;; --- block-local redundant bounds-check elimination (#930) ------------------
 ;;
@@ -3111,14 +3280,18 @@
       (match instr
         [(IrInstrBoundsCheck index length _)
           (if (opt-bounds-contains facts index length)
-            (opt-bounds-instrs facts rest)
-            (IrInstrCons
+            (opt-bounds-instrs facts (box-get rest))
+            (compiler-ir-instr-cons
               instr
-              (opt-bounds-instrs (opt-bounds-add facts index length) rest)))]
+              (opt-bounds-instrs
+                (opt-bounds-add facts index length)
+                (box-get rest))))]
         [_
-          (IrInstrCons
+          (compiler-ir-instr-cons
             instr
-            (opt-bounds-instrs (opt-bounds-update-facts facts instr) rest))])]))
+            (opt-bounds-instrs
+              (opt-bounds-update-facts facts instr)
+              (box-get rest)))])]))
 
 ;; --- conservative CFG simplification (#926) ---------------------------------
 ;;
@@ -3179,7 +3352,7 @@
         [(IrBlock block-label _)
           (if (string-eq block-label label)
             (OptSomeBlock block)
-            (opt-cfg-find-block rest label))])]))
+            (opt-cfg-find-block (box-get rest) label))])]))
 
 (define (opt-cfg-block-exists? [blocks : CompilerIrBlockList] [label : String]) : bool
   (match (opt-cfg-find-block blocks label)
@@ -3198,7 +3371,8 @@
     [(IrBlockNil) (OptLabelNil)]
     [(IrBlockCons block rest)
       (match block
-        [(IrBlock label _) (opt-label-add (opt-cfg-block-labels rest) label)])]))
+        [(IrBlock label _)
+          (opt-label-add (opt-cfg-block-labels (box-get rest)) label)])]))
 
 (define (opt-cfg-block-labels-unique-from?
   [blocks : CompilerIrBlockList]
@@ -3210,7 +3384,9 @@
         [(IrBlock label _)
           (if (opt-label-contains seen label)
             false
-            (opt-cfg-block-labels-unique-from? rest (opt-label-add seen label)))])]))
+            (opt-cfg-block-labels-unique-from?
+              (box-get rest)
+              (opt-label-add seen label)))])]))
 
 (define (opt-cfg-block-labels-unique? [blocks : CompilerIrBlockList]) : bool
   (opt-cfg-block-labels-unique-from? blocks (OptLabelNil)))
@@ -3228,9 +3404,11 @@
     [(IrBlockCons block rest)
       (and
         (opt-label-subset?
-          (opt-cfg-block-successors-with-next block (opt-cfg-entry-label rest))
+          (opt-cfg-block-successors-with-next
+            block
+            (opt-cfg-entry-label (box-get rest)))
           labels)
-        (opt-cfg-successor-targets-known-in-blocks? rest labels))]))
+        (opt-cfg-successor-targets-known-in-blocks? (box-get rest) labels))]))
 
 (define (opt-cfg-predecessors [blocks : CompilerIrBlockList] [label : String]) : OptLabelSet
   (match blocks
@@ -3239,11 +3417,11 @@
       (match block
         [(IrBlock block-label _)
           (let
-            [tail : OptLabelSet (opt-cfg-predecessors rest label)]
+            [tail : OptLabelSet (opt-cfg-predecessors (box-get rest) label)]
             (if (opt-label-contains
               (opt-cfg-block-successors-with-next
                 block
-                (opt-cfg-entry-label rest))
+                (opt-cfg-entry-label (box-get rest)))
               label)
               (opt-label-add tail block-label)
               tail))])]))
@@ -3257,8 +3435,10 @@
       (match block
         [(IrBlock label _)
           (if (opt-label-contains labels label)
-            (IrBlockCons block (opt-cfg-filter-blocks-by-labels labels rest))
-            (opt-cfg-filter-blocks-by-labels labels rest))])]))
+            (compiler-ir-block-cons
+              block
+              (opt-cfg-filter-blocks-by-labels labels (box-get rest)))
+            (opt-cfg-filter-blocks-by-labels labels (box-get rest)))])]))
 
 (define (opt-cfg-reachable-block-order [blocks : CompilerIrBlockList]) : CompilerIrBlockList
   (opt-cfg-filter-blocks-by-labels (opt-cfg-reachable-blocks blocks) blocks))
@@ -3342,12 +3522,12 @@
                   (opt-label-add (OptLabelNil) label)
                   all-reachable))
               (opt-cfg-dominators-initial
-                rest
+                (box-get rest)
                 reachable
                 entry-label
                 all-reachable))
             (opt-cfg-dominators-initial
-              rest
+              (box-get rest)
               reachable
               entry-label
               all-reachable))])]))
@@ -3457,7 +3637,7 @@
             [tail : OptLabelSet
               (opt-cfg-dominance-frontier-blocks
                 all-blocks
-                rest
+                (box-get rest)
                 reachable
                 doms
                 label)]
@@ -3563,7 +3743,7 @@
       (match param
         [(IrParam _ _ var)
           (match (opt-var-set-add-unique set var)
-            [(OptVarSetOk next) (opt-verify-param-def-set rest next)]
+            [(OptVarSetOk next) (opt-verify-param-def-set (box-get rest) next)]
             [(OptVarSetErr) (OptVarSetErr)])])]))
 
 (define (opt-verify-instr-def-set
@@ -3575,9 +3755,9 @@
       (match (opt-instr-def-var instr)
         [(OptSomeI64 var)
           (match (opt-var-set-add-unique set var)
-            [(OptVarSetOk next) (opt-verify-instr-def-set rest next)]
+            [(OptVarSetOk next) (opt-verify-instr-def-set (box-get rest) next)]
             [(OptVarSetErr) (OptVarSetErr)])]
-        [(OptNoI64) (opt-verify-instr-def-set rest set)])]))
+        [(OptNoI64) (opt-verify-instr-def-set (box-get rest) set)])]))
 
 (define (opt-verify-block-def-set
   [blocks : CompilerIrBlockList]
@@ -3588,7 +3768,7 @@
       (match block
         [(IrBlock _ instrs)
           (match (opt-verify-instr-def-set instrs set)
-            [(OptVarSetOk next) (opt-verify-block-def-set rest next)]
+            [(OptVarSetOk next) (opt-verify-block-def-set (box-get rest) next)]
             [(OptVarSetErr) (OptVarSetErr)])])]))
 
 (define (opt-verify-single-defs?
@@ -3611,7 +3791,7 @@
       (match param
         [(IrParam _ _ var)
           (opt-var-defs-from-params
-            rest
+            (box-get rest)
             entry-label
             (OptVarDefCons (OptVarDef var entry-label 0) defs))])]))
 
@@ -3626,13 +3806,14 @@
       (match (opt-instr-def-var instr)
         [(OptSomeI64 var)
           (opt-var-defs-from-instrs
-            rest
+            (box-get rest)
             block-label
             (+ pos 1)
             (OptVarDefCons
               (OptVarDef var block-label (opt-instr-def-position instr pos))
               defs))]
-        [(OptNoI64) (opt-var-defs-from-instrs rest block-label (+ pos 1) defs)])]))
+        [(OptNoI64)
+          (opt-var-defs-from-instrs (box-get rest) block-label (+ pos 1) defs)])]))
 
 (define (opt-var-defs-from-blocks
   [blocks : CompilerIrBlockList]
@@ -3643,7 +3824,7 @@
       (match block
         [(IrBlock label instrs)
           (opt-var-defs-from-blocks
-            rest
+            (box-get rest)
             (opt-var-defs-from-instrs instrs label 1 defs))])]))
 
 (define (opt-var-defs-from-function
@@ -3723,9 +3904,56 @@
     [(IrValueCons value rest)
       (match (opt-verify-value-use defs doms value use-block use-pos)
         [(OkCompilerOptimizeVerify)
-          (opt-verify-value-list-uses defs doms rest use-block use-pos)]
+          (opt-verify-value-list-uses
+            defs
+            doms
+            (box-get rest)
+            use-block
+            use-pos)]
         [(ErrCompilerOptimizeVerify message)
           (ErrCompilerOptimizeVerify message)])]))
+
+(define (opt-verify-call-args-array-uses
+  [defs : OptVarDefList]
+  [doms : OptDomTable]
+  [values : (Array CompilerIrValue)]
+  [use-block : String]
+  [use-pos : i64]
+  [index : i64]) : ResultCompilerOptimizeVerify
+  (if (>= index (array-length values))
+    (OkCompilerOptimizeVerify)
+    (match (opt-verify-value-use
+      defs
+      doms
+      (array-ref values index)
+      use-block
+      use-pos)
+      [(OkCompilerOptimizeVerify)
+        (opt-verify-call-args-array-uses
+          defs
+          doms
+          values
+          use-block
+          use-pos
+          (+ index 1))]
+      [(ErrCompilerOptimizeVerify message) (ErrCompilerOptimizeVerify message)])))
+
+(define (opt-verify-call-args-uses
+  [defs : OptVarDefList]
+  [doms : OptDomTable]
+  [args : CompilerIrCallArgs]
+  [use-block : String]
+  [use-pos : i64]) : ResultCompilerOptimizeVerify
+  (match args
+    [(IrCallArgsNil) (OkCompilerOptimizeVerify)]
+    [(IrCallArgsOne value)
+      (opt-verify-value-use defs doms value use-block use-pos)]
+    [(IrCallArgsTwo a b)
+      (opt-verify-two
+        (opt-verify-value-use defs doms a use-block use-pos)
+        (opt-verify-value-use defs doms b use-block use-pos))]
+    [(IrCallArgsArray values)
+      (opt-verify-call-args-array-uses defs doms values use-block use-pos 0)]))
 
 (define (opt-verify-maybe-value-use
   [defs : OptVarDefList]
@@ -3749,10 +3977,10 @@
         [(IrValueVar var)
           (match (opt-verify-var-use-on-edge defs doms var pred-label)
             [(OkCompilerOptimizeVerify)
-              (opt-verify-phi-input-uses defs doms rest)]
+              (opt-verify-phi-input-uses defs doms (box-get rest))]
             [(ErrCompilerOptimizeVerify message)
               (ErrCompilerOptimizeVerify message)])]
-        [_ (opt-verify-phi-input-uses defs doms rest)])]))
+        [_ (opt-verify-phi-input-uses defs doms (box-get rest))])]))
 
 (define (opt-verify-two
   [a : ResultCompilerOptimizeVerify]
@@ -3855,13 +4083,13 @@
     [(IrInstrXgetbv _ index)
       (opt-verify-value-use defs doms index block-label pos)]
     [(IrInstrCall _ _ args _)
-      (opt-verify-value-list-uses defs doms args block-label pos)]
+      (opt-verify-call-args-uses defs doms args block-label pos)]
     [(IrInstrCallIndirect _ func args _)
       (opt-verify-two
         (opt-verify-value-use defs doms func block-label pos)
-        (opt-verify-value-list-uses defs doms args block-label pos))]
+        (opt-verify-call-args-uses defs doms args block-label pos))]
     [(IrInstrTailCall _ args _)
-      (opt-verify-value-list-uses defs doms args block-label pos)]
+      (opt-verify-call-args-uses defs doms args block-label pos)]
     [(IrInstrStore _ value _)
       (opt-verify-value-use defs doms value block-label pos)]
     [(IrInstrBranch cond _ _)
@@ -3884,7 +4112,12 @@
     [(IrInstrCons instr rest)
       (match (opt-verify-instr-uses defs doms block-label pos instr)
         [(OkCompilerOptimizeVerify)
-          (opt-verify-instr-list-uses defs doms block-label rest (+ pos 1))]
+          (opt-verify-instr-list-uses
+            defs
+            doms
+            block-label
+            (box-get rest)
+            (+ pos 1))]
         [(ErrCompilerOptimizeVerify message)
           (ErrCompilerOptimizeVerify message)])]))
 
@@ -3892,7 +4125,7 @@
   (match inputs
     [(IrPhiInputNil) (OptLabelNil)]
     [(IrPhiInputCons _ label rest)
-      (opt-label-add (opt-phi-input-labels rest) label)]))
+      (opt-label-add (opt-phi-input-labels (box-get rest)) label)]))
 
 (define (opt-phi-input-labels-unique-from?
   [inputs : CompilerIrPhiInputList]
@@ -3902,7 +4135,9 @@
     [(IrPhiInputCons _ label rest)
       (if (opt-label-contains seen label)
         false
-        (opt-phi-input-labels-unique-from? rest (opt-label-add seen label)))]))
+        (opt-phi-input-labels-unique-from?
+          (box-get rest)
+          (opt-label-add seen label)))]))
 
 (define (opt-phi-input-labels-match?
   [inputs : CompilerIrPhiInputList]
@@ -3923,10 +4158,14 @@
           (if (opt-phi-input-labels-match?
             inputs
             (opt-cfg-predecessors blocks block-label))
-            (opt-verify-phi-predecessors-instrs blocks block-label rest)
+            (opt-verify-phi-predecessors-instrs
+              blocks
+              block-label
+              (box-get rest))
             (ErrCompilerOptimizeVerify
               "optimizer verify: phi predecessor mismatch"))]
-        [_ (opt-verify-phi-predecessors-instrs blocks block-label rest)])]))
+        [_
+          (opt-verify-phi-predecessors-instrs blocks block-label (box-get rest))])]))
 
 (define (opt-verify-phi-predecessors-blocks
   [blocks : CompilerIrBlockList]
@@ -3938,7 +4177,7 @@
         [(IrBlock label instrs)
           (match (opt-verify-phi-predecessors-instrs blocks label instrs)
             [(OkCompilerOptimizeVerify)
-              (opt-verify-phi-predecessors-blocks blocks rest)]
+              (opt-verify-phi-predecessors-blocks blocks (box-get rest))]
             [(ErrCompilerOptimizeVerify message)
               (ErrCompilerOptimizeVerify message)])])]))
 
@@ -3952,7 +4191,8 @@
       (match block
         [(IrBlock label instrs)
           (match (opt-verify-instr-list-uses defs doms label instrs 1)
-            [(OkCompilerOptimizeVerify) (opt-verify-block-uses defs doms rest)]
+            [(OkCompilerOptimizeVerify)
+              (opt-verify-block-uses defs doms (box-get rest))]
             [(ErrCompilerOptimizeVerify message)
               (ErrCompilerOptimizeVerify message)])])]))
 
@@ -3983,7 +4223,7 @@
     [(IrFunctionNil) (OkCompilerOptimizeVerify)]
     [(IrFunctionCons func rest)
       (match (opt-verify-function func)
-        [(OkCompilerOptimizeVerify) (opt-verify-function-list rest)]
+        [(OkCompilerOptimizeVerify) (opt-verify-function-list (box-get rest))]
         [(ErrCompilerOptimizeVerify message)
           (ErrCompilerOptimizeVerify message)])]))
 
@@ -4098,7 +4338,11 @@
     [(IrInstrCons instr rest)
       (let
         [rest-facts : OptGlobalCopyFacts
-          (opt-global-copy-facts-from-instrs block-label (+ pos 1) rest tail)]
+          (opt-global-copy-facts-from-instrs
+            block-label
+            (+ pos 1)
+            (box-get rest)
+            tail)]
         (match instr
           [(IrInstrMov dst src _)
             (if (and
@@ -4118,7 +4362,7 @@
     [(IrBlockCons block rest)
       (let
         [rest-facts : OptGlobalCopyFacts
-          (opt-global-copy-facts-from-blocks rest tail)]
+          (opt-global-copy-facts-from-blocks (box-get rest) tail)]
         (match block
           [(IrBlock label instrs)
             (opt-global-copy-facts-from-instrs label 1 instrs rest-facts)]))]))
@@ -4185,9 +4429,73 @@
   (match values
     [(IrValueNil) (IrValueNil)]
     [(IrValueCons value rest)
-      (IrValueCons
+      (compiler-ir-value-cons
         (opt-global-copy-resolve facts doms use-block use-pos value)
-        (opt-global-copy-subst-value-list facts doms use-block use-pos rest))]))
+        (opt-global-copy-subst-value-list
+          facts
+          doms
+          use-block
+          use-pos
+          (box-get rest)))]))
+
+(define (opt-global-copy-subst-call-args-array
+  [facts : OptGlobalCopyFacts]
+  [doms : OptDomTable]
+  [use-block : String]
+  [use-pos : i64]
+  [src : (Array CompilerIrValue)]
+  [dst : (Array CompilerIrValue)]
+  [index : i64]) : unit
+  (if (>= index (array-length src))
+    unit
+    (begin
+      (array-set!
+        dst
+        index
+        (opt-global-copy-resolve
+          facts
+          doms
+          use-block
+          use-pos
+          (array-ref src index)))
+      (opt-global-copy-subst-call-args-array
+        facts
+        doms
+        use-block
+        use-pos
+        src
+        dst
+        (+ index 1)))))
+
+(define (opt-global-copy-subst-call-args
+  [facts : OptGlobalCopyFacts]
+  [doms : OptDomTable]
+  [use-block : String]
+  [use-pos : i64]
+  [args : CompilerIrCallArgs]) : CompilerIrCallArgs
+  (match args
+    [(IrCallArgsNil) (IrCallArgsNil)]
+    [(IrCallArgsOne value)
+      (IrCallArgsOne
+        (opt-global-copy-resolve facts doms use-block use-pos value))]
+    [(IrCallArgsTwo a b)
+      (IrCallArgsTwo
+        (opt-global-copy-resolve facts doms use-block use-pos a)
+        (opt-global-copy-resolve facts doms use-block use-pos b))]
+    [(IrCallArgsArray values)
+      (let
+        [out : (Array CompilerIrValue)
+          (make-array CompilerIrValue (array-length values))]
+        (begin
+          (opt-global-copy-subst-call-args-array
+            facts
+            doms
+            use-block
+            use-pos
+            values
+            out
+            0)
+          (IrCallArgsArray out)))]))
 
 (define (opt-global-copy-subst-instr
   [facts : OptGlobalCopyFacts]
@@ -4251,18 +4559,18 @@
       (IrInstrCall
         dst
         name
-        (opt-global-copy-subst-value-list facts doms block-label pos args)
+        (opt-global-copy-subst-call-args facts doms block-label pos args)
         ty)]
     [(IrInstrCallIndirect dst func args ty)
       (IrInstrCallIndirect
         dst
         (opt-global-copy-resolve facts doms block-label pos func)
-        (opt-global-copy-subst-value-list facts doms block-label pos args)
+        (opt-global-copy-subst-call-args facts doms block-label pos args)
         ty)]
     [(IrInstrTailCall name args ty)
       (IrInstrTailCall
         name
-        (opt-global-copy-subst-value-list facts doms block-label pos args)
+        (opt-global-copy-subst-call-args facts doms block-label pos args)
         ty)]
     [(IrInstrStore name value ty)
       (IrInstrStore
@@ -4321,9 +4629,9 @@
   (match instrs
     [(IrInstrNil) (IrInstrNil)]
     [(IrInstrCons instr rest)
-      (IrInstrCons
+      (compiler-ir-instr-cons
         (opt-global-copy-subst-instr facts doms block-label pos instr)
-        (opt-global-copy-instrs facts doms block-label (+ pos 1) rest))]))
+        (opt-global-copy-instrs facts doms block-label (+ pos 1) (box-get rest)))]))
 
 (define (opt-global-copy-blocks
   [facts : OptGlobalCopyFacts]
@@ -4334,9 +4642,9 @@
     [(IrBlockCons block rest)
       (match block
         [(IrBlock label instrs)
-          (IrBlockCons
+          (compiler-ir-block-cons
             (IrBlock label (opt-global-copy-instrs facts doms label 1 instrs))
-            (opt-global-copy-blocks facts doms rest))])]))
+            (opt-global-copy-blocks facts doms (box-get rest)))])]))
 
 (define (opt-global-expr-facts-from-instrs
   [block-label : String]
@@ -4348,7 +4656,11 @@
     [(IrInstrCons instr rest)
       (let
         [rest-facts : OptGlobalExprFacts
-          (opt-global-expr-facts-from-instrs block-label (+ pos 1) rest tail)]
+          (opt-global-expr-facts-from-instrs
+            block-label
+            (+ pos 1)
+            (box-get rest)
+            tail)]
         (match (opt-global-key-for-instr instr)
           [(OptSomeGlobalExprKey key)
             (match (opt-instr-def-var instr)
@@ -4367,7 +4679,7 @@
     [(IrBlockCons block rest)
       (let
         [rest-facts : OptGlobalExprFacts
-          (opt-global-expr-facts-from-blocks rest tail)]
+          (opt-global-expr-facts-from-blocks (box-get rest) tail)]
         (match block
           [(IrBlock label instrs)
             (opt-global-expr-facts-from-instrs label 1 instrs rest-facts)]))]))
@@ -4429,9 +4741,9 @@
   (match instrs
     [(IrInstrNil) (IrInstrNil)]
     [(IrInstrCons instr rest)
-      (IrInstrCons
+      (compiler-ir-instr-cons
         (opt-global-cse-instr facts doms block-label pos instr)
-        (opt-global-cse-instrs facts doms block-label (+ pos 1) rest))]))
+        (opt-global-cse-instrs facts doms block-label (+ pos 1) (box-get rest)))]))
 
 (define (opt-global-cse-blocks
   [facts : OptGlobalExprFacts]
@@ -4442,9 +4754,9 @@
     [(IrBlockCons block rest)
       (match block
         [(IrBlock label instrs)
-          (IrBlockCons
+          (compiler-ir-block-cons
             (IrBlock label (opt-global-cse-instrs facts doms label 1 instrs))
-            (opt-global-cse-blocks facts doms rest))])]))
+            (opt-global-cse-blocks facts doms (box-get rest)))])]))
 
 (define (opt-global-value-number-blocks [blocks : CompilerIrBlockList]) : CompilerIrBlockList
   (let
@@ -4488,9 +4800,9 @@
   (match instrs
     [(IrInstrNil) (IrInstrNil)]
     [(IrInstrCons instr rest)
-      (IrInstrCons
+      (compiler-ir-instr-cons
         (opt-cfg-fold-branch instr)
-        (opt-cfg-fold-branches-instrs rest))]))
+        (opt-cfg-fold-branches-instrs (box-get rest)))]))
 
 (define (opt-cfg-fold-branches-block [block : CompilerIrBlock]) : CompilerIrBlock
   (match block
@@ -4501,9 +4813,9 @@
   (match blocks
     [(IrBlockNil) (IrBlockNil)]
     [(IrBlockCons block rest)
-      (IrBlockCons
+      (compiler-ir-block-cons
         (opt-cfg-fold-branches-block block)
-        (opt-cfg-fold-branches-blocks rest))]))
+        (opt-cfg-fold-branches-blocks (box-get rest)))]))
 
 (define (opt-cfg-instr-successors [set : OptLabelSet] [instr : CompilerIrInstr]) : OptLabelSet
   (match instr
@@ -4518,7 +4830,9 @@
   (match instrs
     [(IrInstrNil) set]
     [(IrInstrCons instr rest)
-      (opt-cfg-instrs-successors (opt-cfg-instr-successors set instr) rest)]))
+      (opt-cfg-instrs-successors
+        (opt-cfg-instr-successors set instr)
+        (box-get rest))]))
 
 (define (opt-cfg-block-successors [block : CompilerIrBlock]) : OptLabelSet
   (match block
@@ -4536,9 +4850,9 @@
   (match instrs
     [(IrInstrNil) true]
     [(IrInstrCons instr rest)
-      (match rest
+      (match (box-get rest)
         [(IrInstrNil) (not (opt-cfg-terminator-instr? instr))]
-        [_ (opt-cfg-instrs-can-fallthrough? rest)])]))
+        [_ (opt-cfg-instrs-can-fallthrough? (box-get rest))])]))
 
 (define (opt-cfg-block-successors-with-next
   [block : CompilerIrBlock]
@@ -4565,8 +4879,8 @@
           (if (string-eq block-label label)
             (opt-cfg-block-successors-with-next
               block
-              (opt-cfg-entry-label rest))
-            (opt-cfg-blocks-successors rest label))])]))
+              (opt-cfg-entry-label (box-get rest)))
+            (opt-cfg-blocks-successors (box-get rest) label))])]))
 
 (define (opt-cfg-reachable-label
   [blocks : CompilerIrBlockList]
@@ -4598,6 +4912,266 @@
       (match block
         [(IrBlock label _) (opt-cfg-reachable-label blocks label (OptLabelNil))])]))
 
+(defenum OptLoopPreheader
+  (OptNoLoopPreheader)
+  (OptSomeLoopPreheader String))
+
+(defenum OptLoopPreheaderCandidate
+  (OptLoopPreheaderNone)
+  (OptLoopPreheaderOne String)
+  (OptLoopPreheaderMany))
+
+(defenum OptNaturalLoop
+  (OptNaturalLoop String String OptLabelSet OptLoopPreheader))
+
+(defenum OptMaybeNaturalLoop
+  (OptNoNaturalLoop)
+  (OptSomeNaturalLoop OptNaturalLoop))
+
+(defenum OptNaturalLoopList
+  (OptNaturalLoopNil)
+  (OptNaturalLoopCons OptNaturalLoop OptNaturalLoopList))
+
+(defenum OptNaturalLoopCollectState
+  (OptNaturalLoopCollectState OptLabelSet OptLabelSet))
+
+(define (opt-natural-loop-header [loop : OptNaturalLoop]) : String
+  (match loop
+    [(OptNaturalLoop header _ _ _) header]))
+
+(define (opt-natural-loop-latch [loop : OptNaturalLoop]) : String
+  (match loop
+    [(OptNaturalLoop _ latch _ _) latch]))
+
+(define (opt-natural-loop-body [loop : OptNaturalLoop]) : OptLabelSet
+  (match loop
+    [(OptNaturalLoop _ _ body _) body]))
+
+(define (opt-natural-loop-preheader [loop : OptNaturalLoop]) : OptLoopPreheader
+  (match loop
+    [(OptNaturalLoop _ _ _ preheader) preheader]))
+
+(define (opt-natural-loop-list-count [loops : OptNaturalLoopList]) : i64
+  (match loops
+    [(OptNaturalLoopNil) 0]
+    [(OptNaturalLoopCons _ rest) (+ 1 (opt-natural-loop-list-count rest))]))
+
+(define (opt-natural-loop-find
+  [loops : OptNaturalLoopList]
+  [header : String]
+  [latch : String]) : OptMaybeNaturalLoop
+  (match loops
+    [(OptNaturalLoopNil) (OptNoNaturalLoop)]
+    [(OptNaturalLoopCons loop rest)
+      (if (and
+        (string-eq (opt-natural-loop-header loop) header)
+        (string-eq (opt-natural-loop-latch loop) latch))
+        (OptSomeNaturalLoop loop)
+        (opt-natural-loop-find rest header latch))]))
+
+(define (opt-natural-loop-collect-add-pred
+  [reachable : OptLabelSet]
+  [state : OptNaturalLoopCollectState]
+  [pred : String]) : OptNaturalLoopCollectState
+  (match state
+    [(OptNaturalLoopCollectState body worklist)
+      (if (and
+        (opt-label-contains reachable pred)
+        (not (opt-label-contains body pred)))
+        (OptNaturalLoopCollectState
+          (opt-label-add body pred)
+          (opt-label-add worklist pred))
+        state)]))
+
+(define (opt-natural-loop-collect-add-preds
+  [reachable : OptLabelSet]
+  [preds : OptLabelSet]
+  [state : OptNaturalLoopCollectState]) : OptNaturalLoopCollectState
+  (match preds
+    [(OptLabelNil) state]
+    [(OptLabelCons pred rest)
+      (opt-natural-loop-collect-add-preds
+        reachable
+        rest
+        (opt-natural-loop-collect-add-pred reachable state pred))]))
+
+(define (opt-natural-loop-collect-body
+  [blocks : CompilerIrBlockList]
+  [reachable : OptLabelSet]
+  [body : OptLabelSet]
+  [worklist : OptLabelSet]) : OptLabelSet
+  (match worklist
+    [(OptLabelNil) body]
+    [(OptLabelCons label rest)
+      (let
+        [state : OptNaturalLoopCollectState
+          (opt-natural-loop-collect-add-preds
+            reachable
+            (opt-cfg-predecessors blocks label)
+            (OptNaturalLoopCollectState body rest))]
+        (match state
+          [(OptNaturalLoopCollectState next-body next-worklist)
+            (opt-natural-loop-collect-body
+              blocks
+              reachable
+              next-body
+              next-worklist)]))]))
+
+(define (opt-natural-loop-safe-preheader-block?
+  [blocks : CompilerIrBlockList]
+  [label : String]
+  [header : String]) : bool
+  (let
+    [successors : OptLabelSet (opt-cfg-blocks-successors blocks label)]
+    (and
+      (= (opt-label-count successors) 1)
+      (opt-label-contains successors header))))
+
+(define (opt-natural-loop-preheader-candidate-add
+  [blocks : CompilerIrBlockList]
+  [header : String]
+  [candidate : OptLoopPreheaderCandidate]
+  [pred : String]) : OptLoopPreheaderCandidate
+  (match candidate
+    [(OptLoopPreheaderMany) (OptLoopPreheaderMany)]
+    [(OptLoopPreheaderNone)
+      (if (opt-natural-loop-safe-preheader-block? blocks pred header)
+        (OptLoopPreheaderOne pred)
+        (OptLoopPreheaderMany))]
+    [(OptLoopPreheaderOne _) (OptLoopPreheaderMany)]))
+
+(define (opt-natural-loop-preheader-candidate-scan
+  [blocks : CompilerIrBlockList]
+  [reachable : OptLabelSet]
+  [header : String]
+  [body : OptLabelSet]
+  [preds : OptLabelSet]
+  [candidate : OptLoopPreheaderCandidate]) : OptLoopPreheaderCandidate
+  (match preds
+    [(OptLabelNil) candidate]
+    [(OptLabelCons pred rest)
+      (if (and
+        (opt-label-contains reachable pred)
+        (not (opt-label-contains body pred)))
+        (opt-natural-loop-preheader-candidate-scan
+          blocks
+          reachable
+          header
+          body
+          rest
+          (opt-natural-loop-preheader-candidate-add
+            blocks
+            header
+            candidate
+            pred))
+        (opt-natural-loop-preheader-candidate-scan
+          blocks
+          reachable
+          header
+          body
+          rest
+          candidate))]))
+
+(define (opt-natural-loop-preheader-from-candidate
+  [candidate : OptLoopPreheaderCandidate]) : OptLoopPreheader
+  (match candidate
+    [(OptLoopPreheaderOne label) (OptSomeLoopPreheader label)]
+    [_ (OptNoLoopPreheader)]))
+
+(define (opt-natural-loop-find-preheader
+  [blocks : CompilerIrBlockList]
+  [reachable : OptLabelSet]
+  [header : String]
+  [body : OptLabelSet]) : OptLoopPreheader
+  (opt-natural-loop-preheader-from-candidate
+    (opt-natural-loop-preheader-candidate-scan
+      blocks
+      reachable
+      header
+      body
+      (opt-cfg-predecessors blocks header)
+      (OptLoopPreheaderNone))))
+
+(define (opt-natural-loop-build
+  [blocks : CompilerIrBlockList]
+  [reachable : OptLabelSet]
+  [header : String]
+  [latch : String]) : OptNaturalLoop
+  (let
+    [body : OptLabelSet
+      (opt-natural-loop-collect-body
+        blocks
+        reachable
+        (opt-label-add (opt-label-add (OptLabelNil) header) latch)
+        (opt-label-add (OptLabelNil) latch))]
+    (OptNaturalLoop
+      header
+      latch
+      body
+      (opt-natural-loop-find-preheader blocks reachable header body))))
+
+(define (opt-cfg-natural-loop-successors
+  [blocks : CompilerIrBlockList]
+  [reachable : OptLabelSet]
+  [doms : OptDomTable]
+  [source : String]
+  [successors : OptLabelSet]
+  [tail : OptNaturalLoopList]) : OptNaturalLoopList
+  (match successors
+    [(OptLabelNil) tail]
+    [(OptLabelCons header rest)
+      (let
+        [next : OptNaturalLoopList
+          (opt-cfg-natural-loop-successors
+            blocks
+            reachable
+            doms
+            source
+            rest
+            tail)]
+        (if (and
+          (opt-label-contains reachable header)
+          (opt-dom-dominates? doms header source))
+          (OptNaturalLoopCons
+            (opt-natural-loop-build blocks reachable header source)
+            next)
+          next))]))
+
+(define (opt-cfg-natural-loop-blocks
+  [all-blocks : CompilerIrBlockList]
+  [remaining : CompilerIrBlockList]
+  [reachable : OptLabelSet]
+  [doms : OptDomTable]) : OptNaturalLoopList
+  (match remaining
+    [(IrBlockNil) (OptNaturalLoopNil)]
+    [(IrBlockCons block rest)
+      (match block
+        [(IrBlock label _)
+          (let
+            [tail : OptNaturalLoopList
+              (opt-cfg-natural-loop-blocks
+                all-blocks
+                (box-get rest)
+                reachable
+                doms)]
+            (if (opt-label-contains reachable label)
+              (opt-cfg-natural-loop-successors
+                all-blocks
+                reachable
+                doms
+                label
+                (opt-cfg-block-successors-with-next
+                  block
+                  (opt-cfg-entry-label (box-get rest)))
+                tail)
+              tail))])]))
+
+(define (opt-cfg-natural-loops [blocks : CompilerIrBlockList]) : OptNaturalLoopList
+  (let
+    [reachable : OptLabelSet (opt-cfg-reachable-blocks blocks)]
+    [doms : OptDomTable (opt-cfg-dominators blocks)]
+    (opt-cfg-natural-loop-blocks blocks blocks reachable doms)))
+
 (define (opt-cfg-filter-phi-inputs
   [reachable : OptLabelSet]
   [inputs : CompilerIrPhiInputList]) : CompilerIrPhiInputList
@@ -4605,18 +5179,21 @@
     [(IrPhiInputNil) (IrPhiInputNil)]
     [(IrPhiInputCons value label rest)
       (if (opt-label-contains reachable label)
-        (IrPhiInputCons value label (opt-cfg-filter-phi-inputs reachable rest))
-        (opt-cfg-filter-phi-inputs reachable rest))]))
+        (compiler-ir-phi-input-cons
+          value
+          label
+          (opt-cfg-filter-phi-inputs reachable (box-get rest)))
+        (opt-cfg-filter-phi-inputs reachable (box-get rest)))]))
 
 (define (opt-phi-input-count [inputs : CompilerIrPhiInputList]) : i64
   (match inputs
     [(IrPhiInputNil) 0]
-    [(IrPhiInputCons _ _ rest) (+ 1 (opt-phi-input-count rest))]))
+    [(IrPhiInputCons _ _ rest) (+ 1 (opt-phi-input-count (box-get rest)))]))
 
 (define (opt-phi-single-value [inputs : CompilerIrPhiInputList]) : CompilerIrMaybeValue
   (match inputs
     [(IrPhiInputCons value _ rest)
-      (match rest
+      (match (box-get rest)
         [(IrPhiInputNil) (IrSomeValue value)]
         [_ (IrNoValue)])]
     [_ (IrNoValue)]))
@@ -4645,9 +5222,9 @@
   (match instrs
     [(IrInstrNil) (IrInstrNil)]
     [(IrInstrCons instr rest)
-      (IrInstrCons
+      (compiler-ir-instr-cons
         (opt-cfg-clean-instr reachable instr)
-        (opt-cfg-clean-instrs reachable rest))]))
+        (opt-cfg-clean-instrs reachable (box-get rest)))]))
 
 (define (opt-cfg-clean-block
   [reachable : OptLabelSet]
@@ -4665,10 +5242,10 @@
       (match block
         [(IrBlock label _)
           (if (opt-label-contains reachable label)
-            (IrBlockCons
+            (compiler-ir-block-cons
               (opt-cfg-clean-block reachable block)
-              (opt-cfg-filter-clean-blocks reachable rest))
-            (opt-cfg-filter-clean-blocks reachable rest))])]))
+              (opt-cfg-filter-clean-blocks reachable (box-get rest)))
+            (opt-cfg-filter-clean-blocks reachable (box-get rest)))])]))
 
 (define (opt-cfg-simplify-blocks [blocks : CompilerIrBlockList]) : CompilerIrBlockList
   (let
@@ -4849,7 +5426,7 @@
     [(IrPhiInputCons value pred rest)
       (opt-sccp-join
         (opt-sccp-phi-input-value state value pred ty)
-        (opt-sccp-phi-value state rest ty))]))
+        (opt-sccp-phi-value state (box-get rest) ty))]))
 
 (define (opt-sccp-mark-branch-targets
   [state : OptSccpState]
@@ -4956,7 +5533,9 @@
   (match instrs
     [(IrInstrNil) state]
     [(IrInstrCons instr rest)
-      (opt-sccp-process-instrs (opt-sccp-process-instr state instr) rest)]))
+      (opt-sccp-process-instrs
+        (opt-sccp-process-instr state instr)
+        (box-get rest))]))
 
 (define (opt-sccp-process-block
   [state : OptSccpState]
@@ -4975,7 +5554,9 @@
   (match blocks
     [(IrBlockNil) state]
     [(IrBlockCons block rest)
-      (opt-sccp-process-blocks (opt-sccp-process-block state block) rest)]))
+      (opt-sccp-process-blocks
+        (opt-sccp-process-block state block)
+        (box-get rest))]))
 
 (define (opt-sccp-env-from-params
   [params : CompilerIrParamList]
@@ -4986,7 +5567,7 @@
       (match param
         [(IrParam _ _ id)
           (opt-sccp-env-from-params
-            rest
+            (box-get rest)
             (opt-sccp-env-set env id (OptSccpOverdefined)))])]))
 
 (define (opt-sccp-initial-state
@@ -5043,9 +5624,38 @@
   (match values
     [(IrValueNil) (IrValueNil)]
     [(IrValueCons value rest)
-      (IrValueCons
+      (compiler-ir-value-cons
         (opt-sccp-rewrite-value env value)
-        (opt-sccp-rewrite-value-list env rest))]))
+        (opt-sccp-rewrite-value-list env (box-get rest)))]))
+
+(define (opt-sccp-rewrite-call-args-array
+  [env : OptSccpEnv]
+  [src : (Array CompilerIrValue)]
+  [dst : (Array CompilerIrValue)]
+  [index : i64]) : unit
+  (if (>= index (array-length src))
+    unit
+    (begin
+      (array-set! dst index (opt-sccp-rewrite-value env (array-ref src index)))
+      (opt-sccp-rewrite-call-args-array env src dst (+ index 1)))))
+
+(define (opt-sccp-rewrite-call-args
+  [env : OptSccpEnv]
+  [args : CompilerIrCallArgs]) : CompilerIrCallArgs
+  (match args
+    [(IrCallArgsNil) (IrCallArgsNil)]
+    [(IrCallArgsOne value) (IrCallArgsOne (opt-sccp-rewrite-value env value))]
+    [(IrCallArgsTwo a b)
+      (IrCallArgsTwo
+        (opt-sccp-rewrite-value env a)
+        (opt-sccp-rewrite-value env b))]
+    [(IrCallArgsArray values)
+      (let
+        [out : (Array CompilerIrValue)
+          (make-array CompilerIrValue (array-length values))]
+        (begin
+          (opt-sccp-rewrite-call-args-array env values out 0)
+          (IrCallArgsArray out)))]))
 
 (define (opt-sccp-rewrite-phi-inputs
   [env : OptSccpEnv]
@@ -5053,10 +5663,10 @@
   (match inputs
     [(IrPhiInputNil) (IrPhiInputNil)]
     [(IrPhiInputCons value label rest)
-      (IrPhiInputCons
+      (compiler-ir-phi-input-cons
         (opt-sccp-rewrite-value env value)
         label
-        (opt-sccp-rewrite-phi-inputs env rest))]))
+        (opt-sccp-rewrite-phi-inputs env (box-get rest)))]))
 
 (define (opt-sccp-rewrite-scalar-def
   [env : OptSccpEnv]
@@ -5114,15 +5724,15 @@
     [(IrInstrSplat dst value lanes ty)
       (IrInstrSplat dst (opt-sccp-rewrite-value env value) lanes ty)]
     [(IrInstrCall dst name args ty)
-      (IrInstrCall dst name (opt-sccp-rewrite-value-list env args) ty)]
+      (IrInstrCall dst name (opt-sccp-rewrite-call-args env args) ty)]
     [(IrInstrCallIndirect dst callee args ty)
       (IrInstrCallIndirect
         dst
         (opt-sccp-rewrite-value env callee)
-        (opt-sccp-rewrite-value-list env args)
+        (opt-sccp-rewrite-call-args env args)
         ty)]
     [(IrInstrTailCall name args ty)
-      (IrInstrTailCall name (opt-sccp-rewrite-value-list env args) ty)]
+      (IrInstrTailCall name (opt-sccp-rewrite-call-args env args) ty)]
     [(IrInstrStore name value ty)
       (IrInstrStore name (opt-sccp-rewrite-value env value) ty)]
     [(IrInstrBoundsCheck index length ok-label)
@@ -5242,9 +5852,9 @@
   (match instrs
     [(IrInstrNil) (IrInstrNil)]
     [(IrInstrCons instr rest)
-      (IrInstrCons
+      (compiler-ir-instr-cons
         (opt-sccp-rewrite-instr env instr)
-        (opt-sccp-rewrite-instrs env rest))]))
+        (opt-sccp-rewrite-instrs env (box-get rest)))]))
 
 (define (opt-sccp-rewrite-block [env : OptSccpEnv] [block : CompilerIrBlock]) : CompilerIrBlock
   (match block
@@ -5257,9 +5867,9 @@
   (match blocks
     [(IrBlockNil) (IrBlockNil)]
     [(IrBlockCons block rest)
-      (IrBlockCons
+      (compiler-ir-block-cons
         (opt-sccp-rewrite-block env block)
-        (opt-sccp-rewrite-blocks env rest))]))
+        (opt-sccp-rewrite-blocks env (box-get rest)))]))
 
 (define (opt-sccp-blocks
   [params : CompilerIrParamList]
@@ -5384,7 +5994,8 @@
     [(IrParamNil) acc]
     [(IrParamCons param rest)
       (match param
-        [(IrParam _ _ id) (opt-gvn-sources-params rest (OptGvnDefsCons id acc))])]))
+        [(IrParam _ _ id)
+          (opt-gvn-sources-params (box-get rest) (OptGvnDefsCons id acc))])]))
 
 (define (opt-gvn-sources-instrs
   [instrs : CompilerIrInstrList]
@@ -5395,7 +6006,7 @@
       (let
         [dst : i64 (opt-gvn-instr-dst instr)]
         (opt-gvn-sources-instrs
-          rest
+          (box-get rest)
           (if (= dst (- 0 1))
             acc
             (OptGvnDefsCons dst acc))))]))
@@ -5408,7 +6019,9 @@
     [(IrBlockCons block rest)
       (match block
         [(IrBlock _ instrs)
-          (opt-gvn-sources-blocks rest (opt-gvn-sources-instrs instrs acc))])]))
+          (opt-gvn-sources-blocks
+            (box-get rest)
+            (opt-gvn-sources-instrs instrs acc))])]))
 
 ;; Record a `BinOp`/`UnOp` whose result and operands are all single-source as an
 ;; available value keyed by its expression and tagged with its defining block.
@@ -5445,7 +6058,7 @@
       (opt-gvn-build-map-instrs
         sources
         label
-        rest
+        (box-get rest)
         (opt-gvn-record instr label sources acc))]))
 
 (define (opt-gvn-build-map-blocks
@@ -5459,7 +6072,7 @@
         [(IrBlock label instrs)
           (opt-gvn-build-map-blocks
             sources
-            rest
+            (box-get rest)
             (opt-gvn-build-map-instrs sources label instrs acc))])]))
 
 ;; Find the result var of an available expression matching `key` whose defining
@@ -5517,9 +6130,9 @@
   (match instrs
     [(IrInstrNil) (IrInstrNil)]
     [(IrInstrCons instr rest)
-      (IrInstrCons
+      (compiler-ir-instr-cons
         (opt-gvn-rewrite-instr table doms sources use-label instr)
-        (opt-gvn-rewrite-instrs table doms sources use-label rest))]))
+        (opt-gvn-rewrite-instrs table doms sources use-label (box-get rest)))]))
 
 (define (opt-gvn-rewrite-block
   [table : OptGvnMap]
@@ -5538,9 +6151,9 @@
   (match blocks
     [(IrBlockNil) (IrBlockNil)]
     [(IrBlockCons block rest)
-      (IrBlockCons
+      (compiler-ir-block-cons
         (opt-gvn-rewrite-block table doms sources block)
-        (opt-gvn-rewrite-blocks table doms sources rest))]))
+        (opt-gvn-rewrite-blocks table doms sources (box-get rest)))]))
 
 ;; Replace dominated repeated pure scalar expressions with a copy from the first
 ;; dominating value; existing copy propagation and DCE remove the dead copies.
@@ -5583,13 +6196,17 @@
   (match blocks
     [(IrBlockNil) (IrBlockNil)]
     [(IrBlockCons block rest)
-      (IrBlockCons (optimize-block block) (optimize-block-list rest))]))
+      (compiler-ir-block-cons
+        (optimize-block block)
+        (optimize-block-list (box-get rest)))]))
 
 (define (optimize-block-list-fast [blocks : CompilerIrBlockList]) : CompilerIrBlockList
   (match blocks
     [(IrBlockNil) (IrBlockNil)]
     [(IrBlockCons block rest)
-      (IrBlockCons (optimize-block-fast block) (optimize-block-list-fast rest))]))
+      (compiler-ir-block-cons
+        (optimize-block-fast block)
+        (optimize-block-list-fast (box-get rest)))]))
 
 (define (optimize-function-once [func : CompilerIrFunction]) : CompilerIrFunction
   (match func
@@ -5708,7 +6325,9 @@
       [result : CompilerIrFunctionList
         (optimize-function-list-escaping funcs level scratch)]
       (begin
-        (unsafe (arena-destroy scratch))
+        (unsafe
+          (begin
+            (arena-destroy scratch)))
         result))))
 
 (define (optimize-function-list-escaping
@@ -5718,9 +6337,9 @@
   (match funcs
     [(IrFunctionNil) (IrFunctionNil)]
     [(IrFunctionCons func rest)
-      (IrFunctionCons
+      (compiler-ir-function-cons
         (optimize-function-escaping func level scratch)
-        (optimize-function-list-escaping rest level scratch))]))
+        (optimize-function-list-escaping (box-get rest) level scratch))]))
 
 ;; Optimize one function inside `scratch`, then escape the result by deep-cloning
 ;; it into the enclosing arena and rewinding `scratch` for reuse. The enclosing
@@ -5735,15 +6354,19 @@
   (let
     [enclosing : i64 (arena-current)]
     (begin
-      (unsafe (arena-set! scratch))
+      (unsafe
+        (begin
+          (arena-set! scratch)))
       (let
         [mark : i64 (arena-mark)]
         [raw : CompilerIrFunction (optimize-function-with-level func level)]
         [scratch-head : i64 (arena-current)]
         (begin
-          (unsafe (arena-set! enclosing))
+          (unsafe
+            (begin
+              (arena-set! enclosing)))
           (let
-            [escaped : CompilerIrFunction (clone raw)]
+            [escaped : CompilerIrFunction (compiler-ir-clone-function raw)]
             [new-enclosing : i64 (arena-current)]
             (begin
               (unsafe
@@ -5781,7 +6404,7 @@
         [(IrFunction func-name _ _ _ _)
           (if (string-eq func-name name)
             true
-            (opt-function-list-defines? rest name))])]))
+            (opt-function-list-defines? (box-get rest) name))])]))
 
 (define (opt-function-list-find
   [functions : CompilerIrFunctionList]
@@ -5793,7 +6416,7 @@
         [(IrFunction func-name _ _ _ _)
           (if (string-eq func-name name)
             (OptSomeFunction func)
-            (opt-function-list-find rest name))])]))
+            (opt-function-list-find (box-get rest) name))])]))
 
 (define (opt-reach-add-function
   [functions : CompilerIrFunctionList]
@@ -5829,7 +6452,32 @@
       (opt-reach-value-list
         functions
         (opt-reach-value functions state value)
-        rest)]))
+        (box-get rest))]))
+
+(define (opt-reach-call-args-array
+  [functions : CompilerIrFunctionList]
+  [state : OptReachState]
+  [values : (Array CompilerIrValue)]
+  [index : i64]) : OptReachState
+  (if (>= index (array-length values))
+    state
+    (opt-reach-call-args-array
+      functions
+      (opt-reach-value functions state (array-ref values index))
+      values
+      (+ index 1))))
+
+(define (opt-reach-call-args
+  [functions : CompilerIrFunctionList]
+  [state : OptReachState]
+  [args : CompilerIrCallArgs]) : OptReachState
+  (match args
+    [(IrCallArgsNil) state]
+    [(IrCallArgsOne value) (opt-reach-value functions state value)]
+    [(IrCallArgsTwo a b)
+      (opt-reach-value functions (opt-reach-value functions state a) b)]
+    [(IrCallArgsArray values)
+      (opt-reach-call-args-array functions state values 0)]))
 
 (define (opt-reach-maybe-value
   [functions : CompilerIrFunctionList]
@@ -5849,7 +6497,7 @@
       (opt-reach-phi-inputs
         functions
         (opt-reach-value functions state value)
-        rest)]))
+        (box-get rest))]))
 
 (define (opt-reach-instr
   [functions : CompilerIrFunctionList]
@@ -5923,17 +6571,17 @@
     [(IrInstrCall _ name args _)
       (opt-reach-add-function
         functions
-        (opt-reach-value-list functions state args)
+        (opt-reach-call-args functions state args)
         name)]
     [(IrInstrCallIndirect _ func args _)
-      (opt-reach-value-list
+      (opt-reach-call-args
         functions
         (opt-reach-value functions state func)
         args)]
     [(IrInstrTailCall name args _)
       (opt-reach-add-function
         functions
-        (opt-reach-value-list functions state args)
+        (opt-reach-call-args functions state args)
         name)]
     [(IrInstrStore _ value _) (opt-reach-value functions state value)]
     [(IrInstrJump _) state]
@@ -5948,7 +6596,10 @@
   (match instrs
     [(IrInstrNil) state]
     [(IrInstrCons instr rest)
-      (opt-reach-instrs functions (opt-reach-instr functions state instr) rest)]))
+      (opt-reach-instrs
+        functions
+        (opt-reach-instr functions state instr)
+        (box-get rest))]))
 
 (define (opt-reach-blocks
   [functions : CompilerIrFunctionList]
@@ -5962,7 +6613,7 @@
           (opt-reach-blocks
             functions
             (opt-reach-instrs functions state instrs)
-            rest)])]))
+            (box-get rest))])]))
 
 (define (opt-reach-function
   [functions : CompilerIrFunctionList]
@@ -6005,7 +6656,7 @@
       (opt-reach-globals
         functions
         (opt-reach-global functions state global)
-        rest)]))
+        (box-get rest))]))
 
 (define (opt-filter-reachable-functions
   [functions : CompilerIrFunctionList]
@@ -6016,10 +6667,10 @@
       (match func
         [(IrFunction name _ _ _ _)
           (if (opt-string-set-contains? reachable name)
-            (IrFunctionCons
+            (compiler-ir-function-cons
               func
-              (opt-filter-reachable-functions rest reachable))
-            (opt-filter-reachable-functions rest reachable))])]))
+              (opt-filter-reachable-functions (box-get rest) reachable))
+            (opt-filter-reachable-functions (box-get rest) reachable))])]))
 
 (define (opt-prune-unreachable-functions
   [globals : CompilerIrGlobalList]
@@ -6246,7 +6897,7 @@
         source-spans
         (opt-remap-spans-instr source-spans out function instr)
         function
-        rest)]))
+        (box-get rest))]))
 
 (define (opt-remap-spans-blocks
   [source-spans : CompilerSourceSpans]
@@ -6262,7 +6913,7 @@
             source-spans
             (opt-remap-spans-instrs source-spans out function instrs)
             function
-            rest)])]))
+            (box-get rest))])]))
 
 (define (opt-remap-spans-function
   [source-spans : CompilerSourceSpans]
@@ -6282,7 +6933,7 @@
       (opt-remap-spans-functions
         source-spans
         (opt-remap-spans-function source-spans out func)
-        rest)]))
+        (box-get rest))]))
 
 (define (opt-remap-spans-fast-path? [source-spans : CompilerSourceSpans]) : bool
   (compiler-source-spans-instr-count-at-least? source-spans 2049))
@@ -6322,7 +6973,7 @@
   (match instrs
     [(IrInstrNil) 0]
     [(IrInstrCons instr rest)
-      (+ (opt-arith-instr-count instr) (opt-count-arith-instrs rest))]))
+      (+ (opt-arith-instr-count instr) (opt-count-arith-instrs (box-get rest)))]))
 
 (define (opt-arith-instr-count [instr : CompilerIrInstr]) : i64
   (match instr
@@ -6334,7 +6985,7 @@
   (match instrs
     [(IrInstrNil) 0]
     [(IrInstrCons instr rest)
-      (+ (opt-mov-i64-value instr) (opt-sum-mov-i64 rest))]))
+      (+ (opt-mov-i64-value instr) (opt-sum-mov-i64 (box-get rest)))]))
 
 (define (opt-mov-i64-value [instr : CompilerIrInstr]) : i64
   (match instr
@@ -6352,7 +7003,7 @@
               1
               0)]
           [_ 0])
-        (opt-count-mov-i64-value rest needle))]))
+        (opt-count-mov-i64-value (box-get rest) needle))]))
 
 (define (opt-count-mov-bool-value
   [instrs : CompilerIrInstrList]
@@ -6371,7 +7022,7 @@
                 0
                 1))]
           [_ 0])
-        (opt-count-mov-bool-value rest needle))]))
+        (opt-count-mov-bool-value (box-get rest) needle))]))
 
 (define (opt-sum-mov-var-src [instrs : CompilerIrInstrList]) : i64
   (match instrs
@@ -6381,7 +7032,7 @@
         (match instr
           [(IrInstrMov _ (IrValueVar id) _) id]
           [_ 0])
-        (opt-sum-mov-var-src rest))]))
+        (opt-sum-mov-var-src (box-get rest)))]))
 
 (define (opt-mov-dst-type-tag [instrs : CompilerIrInstrList] [dst : i64]) : i64
   (match instrs
@@ -6391,8 +7042,8 @@
         [(IrInstrMov d _ ty)
           (if (= d dst)
             (ast-type-tag ty)
-            (opt-mov-dst-type-tag rest dst))]
-        [_ (opt-mov-dst-type-tag rest dst)])]))
+            (opt-mov-dst-type-tag (box-get rest) dst))]
+        [_ (opt-mov-dst-type-tag (box-get rest) dst)])]))
 
 (define (opt-mov-dst-i64-value
   [instrs : CompilerIrInstrList]
@@ -6405,8 +7056,8 @@
         [(IrInstrMov d (IrValueI64 n) _)
           (if (= d dst)
             n
-            (opt-mov-dst-i64-value rest dst fallback))]
-        [_ (opt-mov-dst-i64-value rest dst fallback)])]))
+            (opt-mov-dst-i64-value (box-get rest) dst fallback))]
+        [_ (opt-mov-dst-i64-value (box-get rest) dst fallback)])]))
 
 (define (opt-mov-dst-bool-value?
   [instrs : CompilerIrInstrList]
@@ -6421,8 +7072,8 @@
             (if needle
               b
               (not b))
-            (opt-mov-dst-bool-value? rest dst needle))]
-        [_ (opt-mov-dst-bool-value? rest dst needle)])]))
+            (opt-mov-dst-bool-value? (box-get rest) dst needle))]
+        [_ (opt-mov-dst-bool-value? (box-get rest) dst needle)])]))
 
 (define (opt-mov-dst-char-code
   [instrs : CompilerIrInstrList]
@@ -6435,8 +7086,8 @@
         [(IrInstrMov d (IrValueChar c) _)
           (if (= d dst)
             (cast c : i64)
-            (opt-mov-dst-char-code rest dst fallback))]
-        [_ (opt-mov-dst-char-code rest dst fallback)])]))
+            (opt-mov-dst-char-code (box-get rest) dst fallback))]
+        [_ (opt-mov-dst-char-code (box-get rest) dst fallback)])]))
 
 (define (opt-test-span [line : i64] [col : i64]) : AstSourceSpan
   (AstSourceSpan line col line col))
@@ -6473,12 +7124,12 @@
     IrParamNil
     (AstTyI64)
     4
-    (IrBlockCons (IrBlock "entry" instrs) IrBlockNil)))
+    (compiler-ir-block-cons (IrBlock "entry" instrs) IrBlockNil)))
 
 (define (opt-spans-program [instrs : CompilerIrInstrList]) : CompilerIrProgram
   (IrProgram
     IrGlobalNil
-    (IrFunctionCons (opt-spans-function instrs) IrFunctionNil)
+    (compiler-ir-function-cons (opt-spans-function instrs) IrFunctionNil)
     IrExternNil))
 
 (define (opt-spans-base) : CompilerSourceSpans
@@ -6490,13 +7141,15 @@
 (define (compiler-optimize-spans-dce-ok?) : bool
   (let
     [dead : CompilerIrInstr (IrInstrMov 0 (IrValueI64 1) (AstTyI64))]
-    [live : CompilerIrInstr (IrInstrCall 1 "opaque" IrValueNil (AstTyI64))]
+    [live : CompilerIrInstr (IrInstrCall 1 "opaque" (IrCallArgsNil) (AstTyI64))]
     [instrs : CompilerIrInstrList
-      (IrInstrCons
+      (compiler-ir-instr-cons
         dead
-        (IrInstrCons
+        (compiler-ir-instr-cons
           live
-          (IrInstrCons (IrInstrReturn (IrSomeValue (IrValueVar 1))) IrInstrNil)))]
+          (compiler-ir-instr-cons
+            (IrInstrReturn (IrSomeValue (IrValueVar 1)))
+            IrInstrNil)))]
     [spans : CompilerSourceSpans
       (compiler-source-spans-insert-instr
         (compiler-source-spans-insert-instr
@@ -6524,11 +7177,13 @@
       (IrInstrBinOp 2 (IrBinAdd) (IrValueI64 20) (IrValueI64 22) (AstTyI64))]
     [rewritten : CompilerIrInstr (IrInstrMov 2 (IrValueI64 42) (AstTyI64))]
     [instrs : CompilerIrInstrList
-      (IrInstrCons
+      (compiler-ir-instr-cons
         folded
-        (IrInstrCons
+        (compiler-ir-instr-cons
           (IrInstrAddrOf 3 2)
-          (IrInstrCons (IrInstrReturn (IrSomeValue (IrValueVar 3))) IrInstrNil)))]
+          (compiler-ir-instr-cons
+            (IrInstrReturn (IrSomeValue (IrValueVar 3)))
+            IrInstrNil)))]
     [spans : CompilerSourceSpans
       (compiler-source-spans-insert-instr
         (opt-spans-base)
@@ -6550,13 +7205,13 @@
       (IrInstrBinOp 3 (IrBinAdd) (IrValueVar 0) (IrValueVar 1) (AstTyI64))]
     [rewritten : CompilerIrInstr (IrInstrMov 3 (IrValueVar 2) (AstTyI64))]
     [instrs : CompilerIrInstrList
-      (IrInstrCons
+      (compiler-ir-instr-cons
         first
-        (IrInstrCons
+        (compiler-ir-instr-cons
           second
-          (IrInstrCons
+          (compiler-ir-instr-cons
             (IrInstrAddrOf 4 3)
-            (IrInstrCons
+            (compiler-ir-instr-cons
               (IrInstrReturn (IrSomeValue (IrValueVar 4)))
               IrInstrNil))))]
     [spans : CompilerSourceSpans
@@ -6589,90 +7244,96 @@
   (IrInstrCall
     1
     "tl_alloc"
-    (IrValueCons (IrValueI64 16) IrValueNil)
+    (IrCallArgsOne (IrValueI64 16))
     (AstTyStruct "Pair")))
 
 (define (opt-aggregate-positive-instrs) : CompilerIrInstrList
-  (IrInstrCons
+  (compiler-ir-instr-cons
     (opt-aggregate-test-alloc)
-    (IrInstrCons
+    (compiler-ir-instr-cons
       (IrInstrGep 2 (IrValueVar 1) (IrValueI64 0) (AstTyU8))
-      (IrInstrCons
+      (compiler-ir-instr-cons
         (IrInstrStorePtr (IrValueVar 2) (IrValueI64 10) (AstTyI64))
-        (IrInstrCons
+        (compiler-ir-instr-cons
           (IrInstrGep 3 (IrValueVar 1) (IrValueI64 8) (AstTyU8))
-          (IrInstrCons
+          (compiler-ir-instr-cons
             (IrInstrStorePtr (IrValueVar 3) (IrValueBool true) (AstTyBool))
-            (IrInstrCons
+            (compiler-ir-instr-cons
               (IrInstrGep 4 (IrValueVar 1) (IrValueI64 0) (AstTyU8))
-              (IrInstrCons
+              (compiler-ir-instr-cons
                 (IrInstrLoad 5 (IrValueVar 4) (AstTyI64))
-                (IrInstrCons
+                (compiler-ir-instr-cons
                   (IrInstrReturn (IrSomeValue (IrValueVar 5)))
                   IrInstrNil)))))))))
 
 (define (opt-aggregate-returned-instrs) : CompilerIrInstrList
-  (IrInstrCons
+  (compiler-ir-instr-cons
     (opt-aggregate-test-alloc)
-    (IrInstrCons (IrInstrReturn (IrSomeValue (IrValueVar 1))) IrInstrNil)))
+    (compiler-ir-instr-cons
+      (IrInstrReturn (IrSomeValue (IrValueVar 1)))
+      IrInstrNil)))
 
 (define (opt-aggregate-passed-instrs) : CompilerIrInstrList
-  (IrInstrCons
+  (compiler-ir-instr-cons
     (opt-aggregate-test-alloc)
-    (IrInstrCons
-      (IrInstrCall
-        2
-        "touch"
-        (IrValueCons (IrValueVar 1) IrValueNil)
-        (AstTyUnit))
-      (IrInstrCons (IrInstrReturn (IrSomeValue (IrValueI64 0))) IrInstrNil))))
+    (compiler-ir-instr-cons
+      (IrInstrCall 2 "touch" (IrCallArgsOne (IrValueVar 1)) (AstTyUnit))
+      (compiler-ir-instr-cons
+        (IrInstrReturn (IrSomeValue (IrValueI64 0)))
+        IrInstrNil))))
 
 (define (opt-aggregate-global-store-instrs) : CompilerIrInstrList
-  (IrInstrCons
+  (compiler-ir-instr-cons
     (opt-aggregate-test-alloc)
-    (IrInstrCons
+    (compiler-ir-instr-cons
       (IrInstrStore "escaped" (IrValueVar 1) (AstTyU64))
-      (IrInstrCons (IrInstrReturn (IrSomeValue (IrValueI64 0))) IrInstrNil))))
+      (compiler-ir-instr-cons
+        (IrInstrReturn (IrSomeValue (IrValueI64 0)))
+        IrInstrNil))))
 
 (define (opt-aggregate-store-through-other-instrs) : CompilerIrInstrList
-  (IrInstrCons
+  (compiler-ir-instr-cons
     (opt-aggregate-test-alloc)
-    (IrInstrCons
+    (compiler-ir-instr-cons
       (IrInstrStorePtr (IrValueVar 99) (IrValueVar 1) (AstTyU64))
-      (IrInstrCons (IrInstrReturn (IrSomeValue (IrValueI64 0))) IrInstrNil))))
+      (compiler-ir-instr-cons
+        (IrInstrReturn (IrSomeValue (IrValueI64 0)))
+        IrInstrNil))))
 
 (define (opt-aggregate-unknown-offset-instrs) : CompilerIrInstrList
-  (IrInstrCons
+  (compiler-ir-instr-cons
     (opt-aggregate-test-alloc)
-    (IrInstrCons
+    (compiler-ir-instr-cons
       (IrInstrGep 2 (IrValueVar 1) (IrValueVar 9) (AstTyU8))
-      (IrInstrCons (IrInstrReturn (IrSomeValue (IrValueI64 0))) IrInstrNil))))
+      (compiler-ir-instr-cons
+        (IrInstrReturn (IrSomeValue (IrValueI64 0)))
+        IrInstrNil))))
 
 (define (opt-aggregate-call-separated-instrs) : CompilerIrInstrList
-  (IrInstrCons
+  (compiler-ir-instr-cons
     (opt-aggregate-test-alloc)
-    (IrInstrCons
+    (compiler-ir-instr-cons
       (IrInstrGep 2 (IrValueVar 1) (IrValueI64 0) (AstTyU8))
-      (IrInstrCons
+      (compiler-ir-instr-cons
         (IrInstrStorePtr (IrValueVar 2) (IrValueI64 10) (AstTyI64))
-        (IrInstrCons
-          (IrInstrCall 9 "touch" IrValueNil (AstTyUnit))
-          (IrInstrCons
+        (compiler-ir-instr-cons
+          (IrInstrCall 9 "touch" (IrCallArgsNil) (AstTyUnit))
+          (compiler-ir-instr-cons
             (IrInstrGep 3 (IrValueVar 1) (IrValueI64 0) (AstTyU8))
-            (IrInstrCons
+            (compiler-ir-instr-cons
               (IrInstrLoad 4 (IrValueVar 3) (AstTyI64))
-              (IrInstrCons
+              (compiler-ir-instr-cons
                 (IrInstrReturn (IrSomeValue (IrValueVar 4)))
                 IrInstrNil))))))))
 
 (define (opt-aggregate-predicated-memory-instrs) : CompilerIrInstrList
-  (IrInstrCons
+  (compiler-ir-instr-cons
     (opt-aggregate-test-alloc)
-    (IrInstrCons
+    (compiler-ir-instr-cons
       (IrInstrGep 2 (IrValueVar 1) (IrValueI64 0) (AstTyU8))
-      (IrInstrCons
+      (compiler-ir-instr-cons
         (IrInstrStorePtr (IrValueVar 2) (IrValueI64 10) (AstTyI64))
-        (IrInstrCons
+        (compiler-ir-instr-cons
           (IrInstrPredicatedLoad
             8
             (IrValueVar 99)
@@ -6680,30 +7341,32 @@
             (IrValueBool true)
             4
             (AstTyI64))
-          (IrInstrCons
+          (compiler-ir-instr-cons
             (IrInstrGep 3 (IrValueVar 1) (IrValueI64 0) (AstTyU8))
-            (IrInstrCons
+            (compiler-ir-instr-cons
               (IrInstrLoad 4 (IrValueVar 3) (AstTyI64))
-              (IrInstrCons
+              (compiler-ir-instr-cons
                 (IrInstrReturn (IrSomeValue (IrValueVar 4)))
                 IrInstrNil))))))))
 
 (define (opt-aggregate-phi-flowed-blocks) : CompilerIrBlockList
-  (IrBlockCons
+  (compiler-ir-block-cons
     (IrBlock
       "entry"
-      (IrInstrCons
+      (compiler-ir-instr-cons
         (opt-aggregate-test-alloc)
-        (IrInstrCons (IrInstrJump "join") IrInstrNil)))
-    (IrBlockCons
+        (compiler-ir-instr-cons (IrInstrJump "join") IrInstrNil)))
+    (compiler-ir-block-cons
       (IrBlock
         "join"
-        (IrInstrCons
+        (compiler-ir-instr-cons
           (IrInstrPhi
             2
-            (IrPhiInputCons (IrValueVar 1) "entry" (IrPhiInputNil))
+            (compiler-ir-phi-input-cons (IrValueVar 1) "entry" (IrPhiInputNil))
             (AstTyU64))
-          (IrInstrCons (IrInstrReturn (IrSomeValue (IrValueI64 0))) IrInstrNil)))
+          (compiler-ir-instr-cons
+            (IrInstrReturn (IrSomeValue (IrValueI64 0)))
+            IrInstrNil)))
       IrBlockNil)))
 
 (define (opt-aggregate-no-candidates? [instrs : CompilerIrInstrList]) : bool
@@ -6718,7 +7381,7 @@
       (opt-aggregate-allocation-candidates
         (IrProgram
           IrGlobalNil
-          (IrFunctionCons
+          (compiler-ir-function-cons
             (IrFunction
               "main"
               IrParamNil
@@ -6774,24 +7437,24 @@
     [else 42]))
 
 (define (opt-aggregate-array-local-instrs) : CompilerIrInstrList
-  (IrInstrCons
+  (compiler-ir-instr-cons
     (IrInstrCall
       1
       "tl_alloc"
-      (IrValueCons (IrValueI64 16) IrValueNil)
+      (IrCallArgsOne (IrValueI64 16))
       (AstTyArray (AstTyI64) 2))
-    (IrInstrCons
+    (compiler-ir-instr-cons
       (IrInstrGep 2 (IrValueVar 1) (IrValueI64 0) (AstTyU8))
-      (IrInstrCons
+      (compiler-ir-instr-cons
         (IrInstrStorePtr
           (IrValueVar 2)
           (IrValueVar 9)
           (AstTyArray (AstTyI64) 2))
-        (IrInstrCons
+        (compiler-ir-instr-cons
           (IrInstrGep 3 (IrValueVar 1) (IrValueI64 0) (AstTyU8))
-          (IrInstrCons
+          (compiler-ir-instr-cons
             (IrInstrLoad 4 (IrValueVar 3) (AstTyArray (AstTyI64) 2))
-            (IrInstrCons
+            (compiler-ir-instr-cons
               (IrInstrReturn (IrSomeValue (IrValueI64 0)))
               IrInstrNil)))))))
 
@@ -6806,7 +7469,7 @@
               1
               0)]
           [_ 0])
-        (opt-count-tl-alloc-calls rest))]))
+        (opt-count-tl-alloc-calls (box-get rest)))]))
 
 (define (opt-count-ir-alloc-instrs [instrs : CompilerIrInstrList]) : i64
   (match instrs
@@ -6816,7 +7479,7 @@
         (match instr
           [(IrInstrAlloc _ _) 1]
           [_ 0])
-        (opt-count-ir-alloc-instrs rest))]))
+        (opt-count-ir-alloc-instrs (box-get rest)))]))
 
 (define (opt-count-addr-of-instrs [instrs : CompilerIrInstrList]) : i64
   (match instrs
@@ -6826,7 +7489,7 @@
         (match instr
           [(IrInstrAddrOf _ _) 1]
           [_ 0])
-        (opt-count-addr-of-instrs rest))]))
+        (opt-count-addr-of-instrs (box-get rest)))]))
 
 (define (opt-aggregate-promote-test-function [instrs : CompilerIrInstrList]) : CompilerIrFunction
   (opt-aggregate-stack-promote-function (opt-spans-function instrs)))
@@ -6890,103 +7553,105 @@
       [else 42])))
 
 (define (opt-aggregate-repeated-load-instrs) : CompilerIrInstrList
-  (IrInstrCons
+  (compiler-ir-instr-cons
     (opt-aggregate-test-alloc)
-    (IrInstrCons
+    (compiler-ir-instr-cons
       (IrInstrGep 2 (IrValueVar 1) (IrValueI64 0) (AstTyU8))
-      (IrInstrCons
+      (compiler-ir-instr-cons
         (IrInstrStorePtr (IrValueVar 2) (IrValueI64 10) (AstTyI64))
-        (IrInstrCons
+        (compiler-ir-instr-cons
           (IrInstrGep 3 (IrValueVar 1) (IrValueI64 0) (AstTyU8))
-          (IrInstrCons
+          (compiler-ir-instr-cons
             (IrInstrLoad 4 (IrValueVar 3) (AstTyI64))
-            (IrInstrCons
+            (compiler-ir-instr-cons
               (IrInstrGep 5 (IrValueVar 1) (IrValueI64 0) (AstTyU8))
-              (IrInstrCons
+              (compiler-ir-instr-cons
                 (IrInstrLoad 6 (IrValueVar 5) (AstTyI64))
-                (IrInstrCons
+                (compiler-ir-instr-cons
                   (IrInstrReturn (IrSomeValue (IrValueVar 6)))
                   IrInstrNil)))))))))
 
 (define (opt-aggregate-overwritten-load-instrs) : CompilerIrInstrList
-  (IrInstrCons
+  (compiler-ir-instr-cons
     (opt-aggregate-test-alloc)
-    (IrInstrCons
+    (compiler-ir-instr-cons
       (IrInstrGep 2 (IrValueVar 1) (IrValueI64 0) (AstTyU8))
-      (IrInstrCons
+      (compiler-ir-instr-cons
         (IrInstrStorePtr (IrValueVar 2) (IrValueI64 10) (AstTyI64))
-        (IrInstrCons
+        (compiler-ir-instr-cons
           (IrInstrStorePtr (IrValueVar 2) (IrValueI64 20) (AstTyI64))
-          (IrInstrCons
+          (compiler-ir-instr-cons
             (IrInstrGep 3 (IrValueVar 1) (IrValueI64 0) (AstTyU8))
-            (IrInstrCons
+            (compiler-ir-instr-cons
               (IrInstrLoad 4 (IrValueVar 3) (AstTyI64))
-              (IrInstrCons
+              (compiler-ir-instr-cons
                 (IrInstrReturn (IrSomeValue (IrValueVar 4)))
                 IrInstrNil))))))))
 
 (define (opt-aggregate-escaped-then-load-instrs) : CompilerIrInstrList
-  (IrInstrCons
+  (compiler-ir-instr-cons
     (opt-aggregate-test-alloc)
-    (IrInstrCons
+    (compiler-ir-instr-cons
       (IrInstrStore "escaped" (IrValueVar 1) (AstTyU64))
-      (IrInstrCons
+      (compiler-ir-instr-cons
         (IrInstrGep 2 (IrValueVar 1) (IrValueI64 0) (AstTyU8))
-        (IrInstrCons
+        (compiler-ir-instr-cons
           (IrInstrStorePtr (IrValueVar 2) (IrValueI64 10) (AstTyI64))
-          (IrInstrCons
+          (compiler-ir-instr-cons
             (IrInstrGep 3 (IrValueVar 1) (IrValueI64 0) (AstTyU8))
-            (IrInstrCons
+            (compiler-ir-instr-cons
               (IrInstrLoad 4 (IrValueVar 3) (AstTyI64))
-              (IrInstrCons
+              (compiler-ir-instr-cons
                 (IrInstrReturn (IrSomeValue (IrValueVar 4)))
                 IrInstrNil))))))))
 
 (define (opt-aggregate-array-typed-load-instrs) : CompilerIrInstrList
-  (IrInstrCons
+  (compiler-ir-instr-cons
     (opt-aggregate-test-alloc)
-    (IrInstrCons
+    (compiler-ir-instr-cons
       (IrInstrGep 2 (IrValueVar 1) (IrValueI64 0) (AstTyU8))
-      (IrInstrCons
+      (compiler-ir-instr-cons
         (IrInstrStorePtr
           (IrValueVar 2)
           (IrValueVar 9)
           (AstTyArray (AstTyI64) 2))
-        (IrInstrCons
+        (compiler-ir-instr-cons
           (IrInstrGep 3 (IrValueVar 1) (IrValueI64 0) (AstTyU8))
-          (IrInstrCons
+          (compiler-ir-instr-cons
             (IrInstrLoad 4 (IrValueVar 3) (AstTyArray (AstTyI64) 2))
-            (IrInstrCons
+            (compiler-ir-instr-cons
               (IrInstrReturn (IrSomeValue (IrValueI64 0)))
               IrInstrNil)))))))
 
 (define (opt-aggregate-branch-load-blocks) : CompilerIrBlockList
-  (IrBlockCons
+  (compiler-ir-block-cons
     (IrBlock
       "entry"
-      (IrInstrCons
+      (compiler-ir-instr-cons
         (opt-aggregate-test-alloc)
-        (IrInstrCons
+        (compiler-ir-instr-cons
           (IrInstrGep 2 (IrValueVar 1) (IrValueI64 0) (AstTyU8))
-          (IrInstrCons
+          (compiler-ir-instr-cons
             (IrInstrStorePtr (IrValueVar 2) (IrValueI64 10) (AstTyI64))
-            (IrInstrCons
+            (compiler-ir-instr-cons
               (IrInstrBranch (IrValueBool true) "then" "else")
               IrInstrNil)))))
-    (IrBlockCons
+    (compiler-ir-block-cons
       (IrBlock
         "then"
-        (IrInstrCons
+        (compiler-ir-instr-cons
           (IrInstrGep 3 (IrValueVar 1) (IrValueI64 0) (AstTyU8))
-          (IrInstrCons
+          (compiler-ir-instr-cons
             (IrInstrLoad 4 (IrValueVar 3) (AstTyI64))
-            (IrInstrCons
+            (compiler-ir-instr-cons
               (IrInstrReturn (IrSomeValue (IrValueVar 4)))
               IrInstrNil))))
-      (IrBlockCons
+      (compiler-ir-block-cons
         (IrBlock
           "else"
-          (IrInstrCons (IrInstrReturn (IrSomeValue (IrValueI64 0))) IrInstrNil))
+          (compiler-ir-instr-cons
+            (IrInstrReturn (IrSomeValue (IrValueI64 0)))
+            IrInstrNil))
         IrBlockNil))))
 
 (define (opt-count-load-dst-instrs [instrs : CompilerIrInstrList] [dst : i64]) : i64
@@ -7000,7 +7665,7 @@
               1
               0)]
           [_ 0])
-        (opt-count-load-dst-instrs rest dst))]))
+        (opt-count-load-dst-instrs (box-get rest) dst))]))
 
 (define (opt-count-load-dst-blocks [blocks : CompilerIrBlockList] [dst : i64]) : i64
   (match blocks
@@ -7010,7 +7675,7 @@
         [(IrBlock _ instrs)
           (+
             (opt-count-load-dst-instrs instrs dst)
-            (opt-count-load-dst-blocks rest dst))])]))
+            (opt-count-load-dst-blocks (box-get rest) dst))])]))
 
 (define (opt-count-mov-i64-value-blocks
   [blocks : CompilerIrBlockList]
@@ -7022,7 +7687,7 @@
         [(IrBlock _ instrs)
           (+
             (opt-count-mov-i64-value instrs needle)
-            (opt-count-mov-i64-value-blocks rest needle))])]))
+            (opt-count-mov-i64-value-blocks (box-get rest) needle))])]))
 
 (define (opt-aggregate-sroa-test-instrs [instrs : CompilerIrInstrList]) : CompilerIrInstrList
   (match (opt-aggregate-sroa-function (opt-spans-function instrs))
@@ -7080,39 +7745,39 @@
         (match instr
           [(IrInstrCast _ _ _ _) 1]
           [_ 0])
-        (opt-count-cast-instrs rest))]))
+        (opt-count-cast-instrs (box-get rest)))]))
 
 ;; Builds `[Mov v0=20, Mov v1=22, BinOp v2 = v0 + v1]` (one arithmetic instr).
 (define (opt-self-test-instrs) : CompilerIrInstrList
-  (IrInstrCons
+  (compiler-ir-instr-cons
     (IrInstrMov 0 (IrValueI64 20) (AstTyI64))
-    (IrInstrCons
+    (compiler-ir-instr-cons
       (IrInstrMov 1 (IrValueI64 22) (AstTyI64))
-      (IrInstrCons
+      (compiler-ir-instr-cons
         (IrInstrBinOp 2 (IrBinAdd) (IrValueVar 0) (IrValueVar 1) (AstTyI64))
         (IrInstrNil)))))
 
 (define (opt-stale-load-test-instrs) : CompilerIrInstrList
-  (IrInstrCons
+  (compiler-ir-instr-cons
     (IrInstrMov 0 (IrValueI64 41) (AstTyI64))
-    (IrInstrCons
+    (compiler-ir-instr-cons
       (IrInstrLoad 0 (IrValueVar 9) (AstTyI64))
-      (IrInstrCons
+      (compiler-ir-instr-cons
         (IrInstrBinOp 1 (IrBinAdd) (IrValueVar 0) (IrValueI64 1) (AstTyI64))
         (IrInstrNil)))))
 
 (define (opt-vector-mask-test-instrs) : CompilerIrInstrList
-  (IrInstrCons
+  (compiler-ir-instr-cons
     (IrInstrMov 0 (IrValueI64 3) (AstTyI64))
-    (IrInstrCons
+    (compiler-ir-instr-cons
       (IrInstrMov 1 (IrValueI64 4) (AstTyI64))
-      (IrInstrCons
+      (compiler-ir-instr-cons
         (IrInstrSplat 2 (IrValueVar 0) 4 (AstTyI64))
-        (IrInstrCons
+        (compiler-ir-instr-cons
           (IrInstrLaneId 3 4 (AstTyI64))
-          (IrInstrCons
+          (compiler-ir-instr-cons
             (IrInstrTailMask 4 (IrValueVar 0) (IrValueVar 1) 4)
-            (IrInstrCons
+            (compiler-ir-instr-cons
               (IrInstrVectorBinOp
                 5
                 (IrBinAdd)
@@ -7120,7 +7785,7 @@
                 (IrValueVar 3)
                 4
                 (AstTyI64))
-              (IrInstrCons
+              (compiler-ir-instr-cons
                 (IrInstrSelect
                   6
                   (IrValueVar 4)
@@ -7128,7 +7793,7 @@
                   (IrValueVar 2)
                   4
                   (AstTyI64))
-                (IrInstrCons
+                (compiler-ir-instr-cons
                   (IrInstrPredicatedStore
                     (IrValueVar 8)
                     (IrValueVar 0)
@@ -7139,9 +7804,9 @@
                   IrInstrNil)))))))))
 
 (define (opt-vector-cse-instrs) : CompilerIrInstrList
-  (IrInstrCons
+  (compiler-ir-instr-cons
     (IrInstrVectorBinOp 2 (IrBinAdd) (IrValueVar 0) (IrValueVar 1) 4 (AstTyI64))
-    (IrInstrCons
+    (compiler-ir-instr-cons
       (IrInstrVectorBinOp
         3
         (IrBinAdd)
@@ -7152,25 +7817,25 @@
       IrInstrNil)))
 
 (define (opt-vector-reduce-cse-instrs) : CompilerIrInstrList
-  (IrInstrCons
+  (compiler-ir-instr-cons
     (IrInstrVectorReduce 1 (IrVectorReduceSum) (IrValueVar 0) 4 (AstTyI64))
-    (IrInstrCons
+    (compiler-ir-instr-cons
       (IrInstrVectorReduce 2 (IrVectorReduceSum) (IrValueVar 0) 4 (AstTyI64))
       IrInstrNil)))
 
 (define (opt-vector-reduce-stale-instrs) : CompilerIrInstrList
-  (IrInstrCons
+  (compiler-ir-instr-cons
     (IrInstrMov 1 (IrValueI64 10) (AstTyI64))
-    (IrInstrCons
+    (compiler-ir-instr-cons
       (IrInstrVectorReduce 1 (IrVectorReduceSum) (IrValueVar 0) 4 (AstTyI64))
-      (IrInstrCons
+      (compiler-ir-instr-cons
         (IrInstrBinOp 2 (IrBinAdd) (IrValueVar 1) (IrValueI64 1) (AstTyI64))
         IrInstrNil))))
 
 (define (opt-vector-copy-instrs) : CompilerIrInstrList
-  (IrInstrCons
+  (compiler-ir-instr-cons
     (IrInstrMov 2 (IrValueVar 0) (AstTyI64))
-    (IrInstrCons
+    (compiler-ir-instr-cons
       (IrInstrVectorBinOp
         3
         (IrBinAdd)
@@ -7181,16 +7846,16 @@
       IrInstrNil)))
 
 (define (opt-mask-copy-instrs) : CompilerIrInstrList
-  (IrInstrCons
+  (compiler-ir-instr-cons
     (IrInstrMov 2 (IrValueVar 0) (AstTyBool))
-    (IrInstrCons
+    (compiler-ir-instr-cons
       (IrInstrMaskBinOp 3 (IrMaskAnd) (IrValueVar 2) (IrValueVar 1) 4)
       IrInstrNil)))
 
 (define (opt-mask-reduce-copy-instrs) : CompilerIrInstrList
-  (IrInstrCons
+  (compiler-ir-instr-cons
     (IrInstrMov 1 (IrValueVar 0) (AstTyBool))
-    (IrInstrCons
+    (compiler-ir-instr-cons
       (IrInstrMaskReduce 2 (IrMaskReduceAny) (IrValueVar 1) 4)
       IrInstrNil)))
 
@@ -7202,7 +7867,7 @@
         (match instr
           [(IrInstrVectorBinOp _ _ _ _ _ _) 1]
           [_ 0])
-        (opt-count-vector-binop-instrs rest))]))
+        (opt-count-vector-binop-instrs (box-get rest)))]))
 
 (define (opt-count-vector-reduce-instrs [instrs : CompilerIrInstrList]) : i64
   (match instrs
@@ -7212,7 +7877,7 @@
         (match instr
           [(IrInstrVectorReduce _ _ _ _ _) 1]
           [_ 0])
-        (opt-count-vector-reduce-instrs rest))]))
+        (opt-count-vector-reduce-instrs (box-get rest)))]))
 
 (define (opt-vector-binop-lhs-var [instrs : CompilerIrInstrList] [dst : i64]) : i64
   (match instrs
@@ -7224,8 +7889,8 @@
             (match lhs
               [(IrValueVar id) id]
               [_ (- 0 1)])
-            (opt-vector-binop-lhs-var rest dst))]
-        [_ (opt-vector-binop-lhs-var rest dst)])]))
+            (opt-vector-binop-lhs-var (box-get rest) dst))]
+        [_ (opt-vector-binop-lhs-var (box-get rest) dst)])]))
 
 (define (opt-mask-binop-lhs-var [instrs : CompilerIrInstrList] [dst : i64]) : i64
   (match instrs
@@ -7237,8 +7902,8 @@
             (match lhs
               [(IrValueVar id) id]
               [_ (- 0 1)])
-            (opt-mask-binop-lhs-var rest dst))]
-        [_ (opt-mask-binop-lhs-var rest dst)])]))
+            (opt-mask-binop-lhs-var (box-get rest) dst))]
+        [_ (opt-mask-binop-lhs-var (box-get rest) dst)])]))
 
 (define (opt-mask-reduce-src-var [instrs : CompilerIrInstrList] [dst : i64]) : i64
   (match instrs
@@ -7250,8 +7915,8 @@
             (match src
               [(IrValueVar id) id]
               [_ (- 0 1)])
-            (opt-mask-reduce-src-var rest dst))]
-        [_ (opt-mask-reduce-src-var rest dst)])]))
+            (opt-mask-reduce-src-var (box-get rest) dst))]
+        [_ (opt-mask-reduce-src-var (box-get rest) dst)])]))
 
 (define (compiler-optimize-vector-mask-self-test) : i64
   (let
@@ -7309,24 +7974,24 @@
           42)))))
 
 (define (opt-typed-fold-u64-shr-instrs) : CompilerIrInstrList
-  (IrInstrCons
+  (compiler-ir-instr-cons
     (IrInstrMov 20 (IrValueI64 (- 0 1)) (AstTyU64))
-    (IrInstrCons
+    (compiler-ir-instr-cons
       (IrInstrMov 21 (IrValueI64 63) (AstTyU8))
-      (IrInstrCons
+      (compiler-ir-instr-cons
         (IrInstrBinOp 22 (IrBinShr) (IrValueVar 20) (IrValueVar 21) (AstTyU64))
         (IrInstrNil)))))
 
 (define (opt-typed-fold-shift-instrs) : CompilerIrInstrList
-  (IrInstrCons
+  (compiler-ir-instr-cons
     (IrInstrMov 15 (IrValueI64 1) (AstTyI64))
-    (IrInstrCons
+    (compiler-ir-instr-cons
       (IrInstrMov 16 (IrValueI64 3) (AstTyU8))
-      (IrInstrCons
+      (compiler-ir-instr-cons
         (IrInstrBinOp 17 (IrBinShl) (IrValueVar 15) (IrValueVar 16) (AstTyI64))
-        (IrInstrCons
+        (compiler-ir-instr-cons
           (IrInstrMov 18 (IrValueI64 (- 0 8)) (AstTyI64))
-          (IrInstrCons
+          (compiler-ir-instr-cons
             (IrInstrBinOp
               19
               (IrBinShr)
@@ -7336,16 +8001,16 @@
             (opt-typed-fold-u64-shr-instrs)))))))
 
 (define (opt-typed-fold-div-instrs) : CompilerIrInstrList
-  (IrInstrCons
+  (compiler-ir-instr-cons
     (IrInstrBinOp 13 (IrBinDiv) (IrValueI64 42) (IrValueI64 6) (AstTyI64))
-    (IrInstrCons
+    (compiler-ir-instr-cons
       (IrInstrBinOp 14 (IrBinMod) (IrValueI64 22) (IrValueI64 7) (AstTyU8))
       (opt-typed-fold-shift-instrs))))
 
 (define (opt-typed-fold-bool-instrs) : CompilerIrInstrList
-  (IrInstrCons
+  (compiler-ir-instr-cons
     (IrInstrMov 11 (IrValueBool true) (AstTyBool))
-    (IrInstrCons
+    (compiler-ir-instr-cons
       (IrInstrBinOp
         12
         (IrBinAnd)
@@ -7355,54 +8020,54 @@
       (opt-typed-fold-div-instrs))))
 
 (define (opt-typed-fold-cast-instrs) : CompilerIrInstrList
-  (IrInstrCons
+  (compiler-ir-instr-cons
     (IrInstrCast 7 (IrValueVar 0) (AstTyU8) (AstTyI64))
-    (IrInstrCons
+    (compiler-ir-instr-cons
       (IrInstrCast 8 (IrValueI64 300) (AstTyU16) (AstTyChar))
-      (IrInstrCons
+      (compiler-ir-instr-cons
         (IrInstrMov 9 (IrValueChar #A') (AstTyChar))
-        (IrInstrCons
+        (compiler-ir-instr-cons
           (IrInstrCast 10 (IrValueVar 9) (AstTyChar) (AstTyI64))
           (opt-typed-fold-bool-instrs))))))
 
 (define (opt-typed-fold-compare-instrs) : CompilerIrInstrList
-  (IrInstrCons
+  (compiler-ir-instr-cons
     (IrInstrMov 3 (IrValueI64 (- 0 1)) (AstTyI8))
-    (IrInstrCons
+    (compiler-ir-instr-cons
       (IrInstrMov 4 (IrValueI64 1) (AstTyI8))
-      (IrInstrCons
+      (compiler-ir-instr-cons
         (IrInstrBinOp 5 (IrBinLt) (IrValueVar 3) (IrValueVar 4) (AstTyBool))
-        (IrInstrCons
+        (compiler-ir-instr-cons
           (IrInstrBinOp 6 (IrBinLt) (IrValueVar 0) (IrValueVar 1) (AstTyBool))
           (opt-typed-fold-cast-instrs))))))
 
 (define (opt-typed-fold-instrs) : CompilerIrInstrList
-  (IrInstrCons
+  (compiler-ir-instr-cons
     (IrInstrMov 0 (IrValueI64 255) (AstTyU8))
-    (IrInstrCons
+    (compiler-ir-instr-cons
       (IrInstrMov 1 (IrValueI64 1) (AstTyU8))
-      (IrInstrCons
+      (compiler-ir-instr-cons
         (IrInstrBinOp 2 (IrBinAdd) (IrValueVar 0) (IrValueVar 1) (AstTyU8))
         (opt-typed-fold-compare-instrs)))))
 
 (define (opt-typed-fold-invalid-instrs) : CompilerIrInstrList
-  (IrInstrCons
+  (compiler-ir-instr-cons
     (IrInstrBinOp 30 (IrBinDiv) (IrValueI64 1) (IrValueI64 0) (AstTyI64))
-    (IrInstrCons
+    (compiler-ir-instr-cons
       (IrInstrBinOp
         31
         (IrBinDiv)
         (IrValueI64 (- 0 128))
         (IrValueI64 (- 0 1))
         (AstTyI8))
-      (IrInstrCons
+      (compiler-ir-instr-cons
         (IrInstrBinOp
           32
           (IrBinShl)
           (IrValueI64 1)
           (IrValueI64 (- 0 1))
           (AstTyI64))
-        (IrInstrCons
+        (compiler-ir-instr-cons
           (IrInstrBinOp 33 (IrBinShl) (IrValueI64 1) (IrValueI64 8) (AstTyU8))
           (IrInstrNil))))))
 
@@ -7434,85 +8099,85 @@
 ;; boolean `and`/`or` identities. The first instruction uses `AstTyU8` to prove
 ;; non-i64 integer result types keep their original type.
 (define (opt-strength-self-test-instrs) : CompilerIrInstrList
-  (IrInstrCons
+  (compiler-ir-instr-cons
     (IrInstrBinOp 10 (IrBinAdd) (IrValueVar 1) (IrValueI64 0) (AstTyU8))
-    (IrInstrCons
+    (compiler-ir-instr-cons
       (IrInstrBinOp 11 (IrBinAdd) (IrValueI64 0) (IrValueVar 2) (AstTyI64))
-      (IrInstrCons
+      (compiler-ir-instr-cons
         (IrInstrBinOp 12 (IrBinSub) (IrValueVar 3) (IrValueI64 0) (AstTyI64))
-        (IrInstrCons
+        (compiler-ir-instr-cons
           (IrInstrBinOp 13 (IrBinMul) (IrValueVar 4) (IrValueI64 1) (AstTyI64))
-          (IrInstrCons
+          (compiler-ir-instr-cons
             (IrInstrBinOp
               14
               (IrBinMul)
               (IrValueI64 1)
               (IrValueVar 5)
               (AstTyI64))
-            (IrInstrCons
+            (compiler-ir-instr-cons
               (IrInstrBinOp
                 15
                 (IrBinMul)
                 (IrValueVar 6)
                 (IrValueI64 0)
                 (AstTyI64))
-              (IrInstrCons
+              (compiler-ir-instr-cons
                 (IrInstrBinOp
                   16
                   (IrBinMul)
                   (IrValueI64 0)
                   (IrValueVar 7)
                   (AstTyI64))
-                (IrInstrCons
+                (compiler-ir-instr-cons
                   (IrInstrBinOp
                     17
                     (IrBinAnd)
                     (IrValueVar 8)
                     (IrValueBool true)
                     (AstTyBool))
-                  (IrInstrCons
+                  (compiler-ir-instr-cons
                     (IrInstrBinOp
                       18
                       (IrBinAnd)
                       (IrValueBool true)
                       (IrValueVar 9)
                       (AstTyBool))
-                    (IrInstrCons
+                    (compiler-ir-instr-cons
                       (IrInstrBinOp
                         19
                         (IrBinAnd)
                         (IrValueVar 8)
                         (IrValueBool false)
                         (AstTyBool))
-                      (IrInstrCons
+                      (compiler-ir-instr-cons
                         (IrInstrBinOp
                           20
                           (IrBinAnd)
                           (IrValueBool false)
                           (IrValueVar 9)
                           (AstTyBool))
-                        (IrInstrCons
+                        (compiler-ir-instr-cons
                           (IrInstrBinOp
                             21
                             (IrBinOr)
                             (IrValueVar 8)
                             (IrValueBool false)
                             (AstTyBool))
-                          (IrInstrCons
+                          (compiler-ir-instr-cons
                             (IrInstrBinOp
                               22
                               (IrBinOr)
                               (IrValueBool false)
                               (IrValueVar 9)
                               (AstTyBool))
-                            (IrInstrCons
+                            (compiler-ir-instr-cons
                               (IrInstrBinOp
                                 23
                                 (IrBinOr)
                                 (IrValueVar 8)
                                 (IrValueBool true)
                                 (AstTyBool))
-                              (IrInstrCons
+                              (compiler-ir-instr-cons
                                 (IrInstrBinOp
                                   24
                                   (IrBinOr)
@@ -7524,15 +8189,15 @@
 ;; Negative cases for edge-sensitive operations and non-identities: division,
 ;; modulo, shifts, and `0 - x` must stay as `BinOp`s.
 (define (opt-strength-negative-instrs) : CompilerIrInstrList
-  (IrInstrCons
+  (compiler-ir-instr-cons
     (IrInstrBinOp 30 (IrBinDiv) (IrValueVar 1) (IrValueI64 0) (AstTyI64))
-    (IrInstrCons
+    (compiler-ir-instr-cons
       (IrInstrBinOp 31 (IrBinMod) (IrValueVar 1) (IrValueI64 0) (AstTyI64))
-      (IrInstrCons
+      (compiler-ir-instr-cons
         (IrInstrBinOp 32 (IrBinShl) (IrValueVar 1) (IrValueI64 0) (AstTyI64))
-        (IrInstrCons
+        (compiler-ir-instr-cons
           (IrInstrBinOp 33 (IrBinShr) (IrValueVar 1) (IrValueI64 0) (AstTyI64))
-          (IrInstrCons
+          (compiler-ir-instr-cons
             (IrInstrBinOp
               34
               (IrBinSub)
@@ -7563,11 +8228,13 @@
 ;; pure temporary; `v1` is produced by a side-effecting call and used by the
 ;; return, so DCE must drop only `v0`'s Mov (3 instrs -> 2).
 (define (opt-dce-self-test-instrs) : CompilerIrInstrList
-  (IrInstrCons
+  (compiler-ir-instr-cons
     (IrInstrMov 0 (IrValueI64 99) (AstTyI64))
-    (IrInstrCons
-      (IrInstrCall 1 "noop" (IrValueNil) (AstTyI64))
-      (IrInstrCons (IrInstrReturn (IrSomeValue (IrValueVar 1))) (IrInstrNil)))))
+    (compiler-ir-instr-cons
+      (IrInstrCall 1 "noop" (IrCallArgsNil) (AstTyI64))
+      (compiler-ir-instr-cons
+        (IrInstrReturn (IrSomeValue (IrValueVar 1)))
+        (IrInstrNil)))))
 
 ;; Returns 42 when DCE keeps the used call result `v1` and the side-effecting
 ;; instructions, drops the unused `v0`, and is idempotent on a second pass.
@@ -7590,11 +8257,13 @@
 ;; `Load`, so DCE must treat it as used and keep it; without collecting the
 ;; Load's operand uses, DCE would wrongly drop `v0`'s Mov and break the load.
 (define (opt-dce-mem-self-test-instrs) : CompilerIrInstrList
-  (IrInstrCons
+  (compiler-ir-instr-cons
     (IrInstrMov 0 (IrValueI64 4096) (AstTyI64))
-    (IrInstrCons
+    (compiler-ir-instr-cons
       (IrInstrLoad 1 (IrValueVar 0) (AstTyI64))
-      (IrInstrCons (IrInstrReturn (IrSomeValue (IrValueVar 1))) (IrInstrNil)))))
+      (compiler-ir-instr-cons
+        (IrInstrReturn (IrSomeValue (IrValueVar 1)))
+        (IrInstrNil)))))
 
 ;; Returns 42 when DCE keeps the `Mov` that feeds the `Load` (operand uses of
 ;; pointer/memory ops are collected), leaving all three instructions intact.
@@ -7612,20 +8281,20 @@
 ;; `[BinOp v2 = v0 + v1, BinOp v3 = v0 + v1]` with non-constant operands: CSE
 ;; rewrites the second into `Mov v3 = v2` (two arithmetic instrs -> one).
 (define (opt-cse-self-test-instrs) : CompilerIrInstrList
-  (IrInstrCons
+  (compiler-ir-instr-cons
     (IrInstrBinOp 2 (IrBinAdd) (IrValueVar 0) (IrValueVar 1) (AstTyI64))
-    (IrInstrCons
+    (compiler-ir-instr-cons
       (IrInstrBinOp 3 (IrBinAdd) (IrValueVar 0) (IrValueVar 1) (AstTyI64))
       (IrInstrNil))))
 
 ;; A store between the two identical expressions clears the table, so the second
 ;; expression is preserved (no cross-store CSE).
 (define (opt-cse-store-clears-instrs) : CompilerIrInstrList
-  (IrInstrCons
+  (compiler-ir-instr-cons
     (IrInstrBinOp 2 (IrBinAdd) (IrValueVar 0) (IrValueVar 1) (AstTyI64))
-    (IrInstrCons
+    (compiler-ir-instr-cons
       (IrInstrStore "g" (IrValueI64 0) (AstTyI64))
-      (IrInstrCons
+      (compiler-ir-instr-cons
         (IrInstrBinOp 3 (IrBinAdd) (IrValueVar 0) (IrValueVar 1) (AstTyI64))
         (IrInstrNil)))))
 
@@ -7633,11 +8302,11 @@
 ;; available entry, so the second expression is preserved (correctness on
 ;; non-SSA IR).
 (define (opt-cse-operand-redef-instrs) : CompilerIrInstrList
-  (IrInstrCons
+  (compiler-ir-instr-cons
     (IrInstrBinOp 2 (IrBinAdd) (IrValueVar 0) (IrValueVar 1) (AstTyI64))
-    (IrInstrCons
+    (compiler-ir-instr-cons
       (IrInstrMov 0 (IrValueI64 5) (AstTyI64))
-      (IrInstrCons
+      (compiler-ir-instr-cons
         (IrInstrBinOp 3 (IrBinAdd) (IrValueVar 0) (IrValueVar 1) (AstTyI64))
         (IrInstrNil)))))
 
@@ -7660,9 +8329,9 @@
 
 ;; --- cross-block GVN self-tests (#1349) -------------------------------------
 (define (opt-gvn-test-params) : CompilerIrParamList
-  (IrParamCons
+  (compiler-ir-param-cons
     (IrParam "a" (AstTyI64) 0)
-    (IrParamCons (IrParam "b" (AstTyI64) 1) (IrParamNil))))
+    (compiler-ir-param-cons (IrParam "b" (AstTyI64) 1) (IrParamNil))))
 
 (define (opt-gvn-count-binops-blocks [blocks : CompilerIrBlockList]) : i64
   (match blocks
@@ -7670,33 +8339,37 @@
     [(IrBlockCons block rest)
       (match block
         [(IrBlock _ instrs)
-          (+ (opt-count-arith-instrs instrs) (opt-gvn-count-binops-blocks rest))])]))
+          (+
+            (opt-count-arith-instrs instrs)
+            (opt-gvn-count-binops-blocks (box-get rest)))])]))
 
 ;; Diamond: `a + b` computed in the entry block and recomputed in the
 ;; post-dominating join. The entry strictly dominates the join, so the join's
 ;; expression is rewritten to a copy and the binop count drops from 2 to 1.
 (define (opt-gvn-diamond-blocks) : CompilerIrBlockList
-  (IrBlockCons
+  (compiler-ir-block-cons
     (IrBlock
       "entry"
-      (IrInstrCons
+      (compiler-ir-instr-cons
         (IrInstrBinOp 10 (IrBinAdd) (IrValueVar 0) (IrValueVar 1) (AstTyI64))
-        (IrInstrCons (IrInstrBranch (IrValueVar 0) "l" "r") (IrInstrNil))))
-    (IrBlockCons
-      (IrBlock "l" (IrInstrCons (IrInstrJump "j") (IrInstrNil)))
-      (IrBlockCons
-        (IrBlock "r" (IrInstrCons (IrInstrJump "j") (IrInstrNil)))
-        (IrBlockCons
+        (compiler-ir-instr-cons
+          (IrInstrBranch (IrValueVar 0) "l" "r")
+          (IrInstrNil))))
+    (compiler-ir-block-cons
+      (IrBlock "l" (compiler-ir-instr-cons (IrInstrJump "j") (IrInstrNil)))
+      (compiler-ir-block-cons
+        (IrBlock "r" (compiler-ir-instr-cons (IrInstrJump "j") (IrInstrNil)))
+        (compiler-ir-block-cons
           (IrBlock
             "j"
-            (IrInstrCons
+            (compiler-ir-instr-cons
               (IrInstrBinOp
                 11
                 (IrBinAdd)
                 (IrValueVar 0)
                 (IrValueVar 1)
                 (AstTyI64))
-              (IrInstrCons
+              (compiler-ir-instr-cons
                 (IrInstrReturn (IrSomeValue (IrValueVar 11)))
                 (IrInstrNil))))
           (IrBlockNil))))))
@@ -7704,38 +8377,40 @@
 ;; Two sibling arms each compute `a + b`, and the join recomputes it. Neither arm
 ;; strictly dominates the join, so no cross-block CSE fires and all 3 binops stay.
 (define (opt-gvn-siblings-blocks) : CompilerIrBlockList
-  (IrBlockCons
+  (compiler-ir-block-cons
     (IrBlock
       "entry"
-      (IrInstrCons (IrInstrBranch (IrValueVar 0) "l" "r") (IrInstrNil)))
-    (IrBlockCons
+      (compiler-ir-instr-cons
+        (IrInstrBranch (IrValueVar 0) "l" "r")
+        (IrInstrNil)))
+    (compiler-ir-block-cons
       (IrBlock
         "l"
-        (IrInstrCons
+        (compiler-ir-instr-cons
           (IrInstrBinOp 10 (IrBinAdd) (IrValueVar 0) (IrValueVar 1) (AstTyI64))
-          (IrInstrCons (IrInstrJump "j") (IrInstrNil))))
-      (IrBlockCons
+          (compiler-ir-instr-cons (IrInstrJump "j") (IrInstrNil))))
+      (compiler-ir-block-cons
         (IrBlock
           "r"
-          (IrInstrCons
+          (compiler-ir-instr-cons
             (IrInstrBinOp
               11
               (IrBinAdd)
               (IrValueVar 0)
               (IrValueVar 1)
               (AstTyI64))
-            (IrInstrCons (IrInstrJump "j") (IrInstrNil))))
-        (IrBlockCons
+            (compiler-ir-instr-cons (IrInstrJump "j") (IrInstrNil))))
+        (compiler-ir-block-cons
           (IrBlock
             "j"
-            (IrInstrCons
+            (compiler-ir-instr-cons
               (IrInstrBinOp
                 12
                 (IrBinAdd)
                 (IrValueVar 0)
                 (IrValueVar 1)
                 (AstTyI64))
-              (IrInstrCons
+              (compiler-ir-instr-cons
                 (IrInstrReturn (IrSomeValue (IrValueVar 12)))
                 (IrInstrNil))))
           (IrBlockNil))))))
@@ -7744,27 +8419,27 @@
 ;; sources and is not stable. Even though the entry dominates the join, the two
 ;; `v0 + v2` expressions compute different values and must not be CSE'd: 2 binops.
 (define (opt-gvn-redef-blocks) : CompilerIrBlockList
-  (IrBlockCons
+  (compiler-ir-block-cons
     (IrBlock
       "entry"
-      (IrInstrCons
+      (compiler-ir-instr-cons
         (IrInstrMov 2 (IrValueI64 5) (AstTyI64))
-        (IrInstrCons
+        (compiler-ir-instr-cons
           (IrInstrBinOp 10 (IrBinAdd) (IrValueVar 0) (IrValueVar 2) (AstTyI64))
-          (IrInstrCons (IrInstrJump "j") (IrInstrNil)))))
-    (IrBlockCons
+          (compiler-ir-instr-cons (IrInstrJump "j") (IrInstrNil)))))
+    (compiler-ir-block-cons
       (IrBlock
         "j"
-        (IrInstrCons
+        (compiler-ir-instr-cons
           (IrInstrMov 2 (IrValueI64 7) (AstTyI64))
-          (IrInstrCons
+          (compiler-ir-instr-cons
             (IrInstrBinOp
               11
               (IrBinAdd)
               (IrValueVar 0)
               (IrValueVar 2)
               (AstTyI64))
-            (IrInstrCons
+            (compiler-ir-instr-cons
               (IrInstrReturn (IrSomeValue (IrValueVar 11)))
               (IrInstrNil)))))
       (IrBlockNil))))
@@ -7772,31 +8447,31 @@
 ;; Loop: the header computes `a + b` and the body recomputes it. The header
 ;; strictly dominates the body, so the body's expression is rewritten: 2 -> 1.
 (define (opt-gvn-loop-blocks) : CompilerIrBlockList
-  (IrBlockCons
-    (IrBlock "entry" (IrInstrCons (IrInstrJump "h") (IrInstrNil)))
-    (IrBlockCons
+  (compiler-ir-block-cons
+    (IrBlock "entry" (compiler-ir-instr-cons (IrInstrJump "h") (IrInstrNil)))
+    (compiler-ir-block-cons
       (IrBlock
         "h"
-        (IrInstrCons
+        (compiler-ir-instr-cons
           (IrInstrBinOp 10 (IrBinAdd) (IrValueVar 0) (IrValueVar 1) (AstTyI64))
-          (IrInstrCons
+          (compiler-ir-instr-cons
             (IrInstrBranch (IrValueVar 0) "body" "exit")
             (IrInstrNil))))
-      (IrBlockCons
+      (compiler-ir-block-cons
         (IrBlock
           "body"
-          (IrInstrCons
+          (compiler-ir-instr-cons
             (IrInstrBinOp
               11
               (IrBinAdd)
               (IrValueVar 0)
               (IrValueVar 1)
               (AstTyI64))
-            (IrInstrCons (IrInstrJump "h") (IrInstrNil))))
-        (IrBlockCons
+            (compiler-ir-instr-cons (IrInstrJump "h") (IrInstrNil))))
+        (compiler-ir-block-cons
           (IrBlock
             "exit"
-            (IrInstrCons
+            (compiler-ir-instr-cons
               (IrInstrReturn (IrSomeValue (IrValueVar 10)))
               (IrInstrNil)))
           (IrBlockNil))))))
@@ -7844,37 +8519,37 @@
             (match l
               [(IrValueVar id) id]
               [_ (- 0 1)])
-            (opt-copy-binop-lhs-var rest dst))]
-        [_ (opt-copy-binop-lhs-var rest dst)])]))
+            (opt-copy-binop-lhs-var (box-get rest) dst))]
+        [_ (opt-copy-binop-lhs-var (box-get rest) dst)])]))
 
 ;; `[Mov v1 = v0, BinOp v2 = v1 + 1]`: copy propagation rewrites the binop lhs
 ;; from v1 to v0.
 (define (opt-copy-pos-instrs) : CompilerIrInstrList
-  (IrInstrCons
+  (compiler-ir-instr-cons
     (IrInstrMov 1 (IrValueVar 0) (AstTyI64))
-    (IrInstrCons
+    (compiler-ir-instr-cons
       (IrInstrBinOp 2 (IrBinAdd) (IrValueVar 1) (IrValueI64 1) (AstTyI64))
       (IrInstrNil))))
 
 ;; `[Mov v1 = v0, Load v0 = *v9, BinOp v2 = v1 + 1]`: redefining the copy source
 ;; v0 invalidates the v1 -> v0 fact, so the binop lhs stays v1.
 (define (opt-copy-src-redef-instrs) : CompilerIrInstrList
-  (IrInstrCons
+  (compiler-ir-instr-cons
     (IrInstrMov 1 (IrValueVar 0) (AstTyI64))
-    (IrInstrCons
+    (compiler-ir-instr-cons
       (IrInstrLoad 0 (IrValueVar 9) (AstTyI64))
-      (IrInstrCons
+      (compiler-ir-instr-cons
         (IrInstrBinOp 2 (IrBinAdd) (IrValueVar 1) (IrValueI64 1) (AstTyI64))
         (IrInstrNil)))))
 
 ;; `[Mov v1 = v0, Load v1 = *v9, BinOp v2 = v1 + 1]`: redefining the copy
 ;; destination v1 invalidates the fact, so the binop lhs stays v1.
 (define (opt-copy-dst-redef-instrs) : CompilerIrInstrList
-  (IrInstrCons
+  (compiler-ir-instr-cons
     (IrInstrMov 1 (IrValueVar 0) (AstTyI64))
-    (IrInstrCons
+    (compiler-ir-instr-cons
       (IrInstrLoad 1 (IrValueVar 9) (AstTyI64))
-      (IrInstrCons
+      (compiler-ir-instr-cons
         (IrInstrBinOp 2 (IrBinAdd) (IrValueVar 1) (IrValueI64 1) (AstTyI64))
         (IrInstrNil)))))
 
@@ -7883,30 +8558,32 @@
 ;; the v4 lhs from v3 to v2, leaving the `Mov v3` copy dead for DCE to drop (the
 ;; `Return v4` keeps v4 live so only the copy is removed: 4 instrs -> 3).
 (define (opt-copy-cse-instrs) : CompilerIrInstrList
-  (IrInstrCons
+  (compiler-ir-instr-cons
     (IrInstrBinOp 2 (IrBinAdd) (IrValueVar 0) (IrValueVar 1) (AstTyI64))
-    (IrInstrCons
+    (compiler-ir-instr-cons
       (IrInstrBinOp 3 (IrBinAdd) (IrValueVar 0) (IrValueVar 1) (AstTyI64))
-      (IrInstrCons
+      (compiler-ir-instr-cons
         (IrInstrBinOp 4 (IrBinAdd) (IrValueVar 3) (IrValueI64 1) (AstTyI64))
-        (IrInstrCons (IrInstrReturn (IrSomeValue (IrValueVar 4))) (IrInstrNil))))))
+        (compiler-ir-instr-cons
+          (IrInstrReturn (IrSomeValue (IrValueVar 4)))
+          (IrInstrNil))))))
 
 ;; `[Mov v1 = 1.5f64, BinOp v2 = v1 + v1]`: an F64 source is not recorded as a
 ;; copy in this slice, so the binop lhs stays v1 (no unsafe literal propagation).
 (define (opt-copy-f64-instrs) : CompilerIrInstrList
-  (IrInstrCons
+  (compiler-ir-instr-cons
     (IrInstrMov 1 (IrValueF64 "1.5") (AstTyF64))
-    (IrInstrCons
+    (compiler-ir-instr-cons
       (IrInstrBinOp 2 (IrBinAdd) (IrValueVar 1) (IrValueVar 1) (AstTyF64))
       (IrInstrNil))))
 
 (define (opt-copy-phi-instrs) : CompilerIrInstrList
-  (IrInstrCons
+  (compiler-ir-instr-cons
     (IrInstrMov 1 (IrValueVar 0) (AstTyI64))
-    (IrInstrCons
+    (compiler-ir-instr-cons
       (IrInstrPhi
         2
-        (IrPhiInputCons (IrValueVar 1) "left" IrPhiInputNil)
+        (compiler-ir-phi-input-cons (IrValueVar 1) "left" IrPhiInputNil)
         (AstTyI64))
       (IrInstrNil))))
 
@@ -7931,8 +8608,8 @@
         [(IrInstrPhi found inputs _)
           (if (= found dst)
             (opt-phi-first-input-var inputs fallback)
-            (opt-phi-dst-first-input-var rest dst fallback))]
-        [_ (opt-phi-dst-first-input-var rest dst fallback)])]))
+            (opt-phi-dst-first-input-var (box-get rest) dst fallback))]
+        [_ (opt-phi-dst-first-input-var (box-get rest) dst fallback)])]))
 
 ;; Returns 42 when block-local copy propagation: rewrites a var copy into a later
 ;; use (pos: lhs v1 -> v0); does not propagate after the source (src-redef) or
@@ -7977,7 +8654,7 @@
         (match instr
           [(IrInstrBoundsCheck _ _ _) 1]
           [_ 0])
-        (opt-count-bounds-instrs rest))]))
+        (opt-count-bounds-instrs (box-get rest)))]))
 
 (define (opt-count-bounds-blocks [blocks : CompilerIrBlockList]) : i64
   (match blocks
@@ -7985,78 +8662,80 @@
     [(IrBlockCons block rest)
       (match block
         [(IrBlock _ instrs)
-          (+ (opt-count-bounds-instrs instrs) (opt-count-bounds-blocks rest))])]))
+          (+
+            (opt-count-bounds-instrs instrs)
+            (opt-count-bounds-blocks (box-get rest)))])]))
 
 (define (opt-bounds-duplicate-instrs) : CompilerIrInstrList
-  (IrInstrCons
+  (compiler-ir-instr-cons
     (IrInstrBoundsCheck (IrValueVar 0) (IrValueVar 1) "bounds_ok.0")
-    (IrInstrCons
+    (compiler-ir-instr-cons
       (IrInstrBoundsCheck (IrValueVar 0) (IrValueVar 1) "bounds_ok.1")
       (IrInstrNil))))
 
 (define (opt-bounds-different-instrs) : CompilerIrInstrList
-  (IrInstrCons
+  (compiler-ir-instr-cons
     (IrInstrBoundsCheck (IrValueVar 0) (IrValueVar 1) "bounds_ok.0")
-    (IrInstrCons
+    (compiler-ir-instr-cons
       (IrInstrBoundsCheck (IrValueVar 1) (IrValueVar 0) "bounds_ok.1")
       (IrInstrNil))))
 
 (define (opt-bounds-redef-instrs) : CompilerIrInstrList
-  (IrInstrCons
+  (compiler-ir-instr-cons
     (IrInstrBoundsCheck (IrValueVar 0) (IrValueVar 1) "bounds_ok.0")
-    (IrInstrCons
+    (compiler-ir-instr-cons
       (IrInstrMov 0 (IrValueI64 7) (AstTyI64))
-      (IrInstrCons
+      (compiler-ir-instr-cons
         (IrInstrBoundsCheck (IrValueVar 0) (IrValueVar 1) "bounds_ok.1")
         (IrInstrNil)))))
 
 (define (opt-bounds-call-instrs) : CompilerIrInstrList
-  (IrInstrCons
+  (compiler-ir-instr-cons
     (IrInstrBoundsCheck (IrValueVar 0) (IrValueVar 1) "bounds_ok.0")
-    (IrInstrCons
-      (IrInstrCall 9 "touch" (IrValueNil) (AstTyUnit))
-      (IrInstrCons
+    (compiler-ir-instr-cons
+      (IrInstrCall 9 "touch" (IrCallArgsNil) (AstTyUnit))
+      (compiler-ir-instr-cons
         (IrInstrBoundsCheck (IrValueVar 0) (IrValueVar 1) "bounds_ok.1")
         (IrInstrNil)))))
 
 (define (opt-bounds-branch-instrs) : CompilerIrInstrList
-  (IrInstrCons
+  (compiler-ir-instr-cons
     (IrInstrBoundsCheck (IrValueVar 0) (IrValueVar 1) "bounds_ok.0")
-    (IrInstrCons
+    (compiler-ir-instr-cons
       (IrInstrBranch (IrValueBool true) "ok" "fail")
-      (IrInstrCons
+      (compiler-ir-instr-cons
         (IrInstrBoundsCheck (IrValueVar 0) (IrValueVar 1) "bounds_ok.1")
         (IrInstrNil)))))
 
 (define (opt-bounds-copy-instrs) : CompilerIrInstrList
-  (IrInstrCons
+  (compiler-ir-instr-cons
     (IrInstrMov 2 (IrValueVar 0) (AstTyI64))
-    (IrInstrCons
+    (compiler-ir-instr-cons
       (IrInstrBoundsCheck (IrValueVar 2) (IrValueVar 1) "bounds_ok.0")
-      (IrInstrCons
+      (compiler-ir-instr-cons
         (IrInstrBoundsCheck (IrValueVar 0) (IrValueVar 1) "bounds_ok.1")
         (IrInstrNil)))))
 
 (define (opt-bounds-dce-instrs) : CompilerIrInstrList
-  (IrInstrCons
+  (compiler-ir-instr-cons
     (IrInstrMov 0 (IrValueI64 1) (AstTyU64))
-    (IrInstrCons
+    (compiler-ir-instr-cons
       (IrInstrMov 1 (IrValueI64 2) (AstTyU64))
-      (IrInstrCons
+      (compiler-ir-instr-cons
         (IrInstrBoundsCheck (IrValueVar 0) (IrValueVar 1) "bounds_ok.0")
         (IrInstrNil)))))
 
 (define (opt-bounds-cross-blocks) : CompilerIrBlockList
-  (IrBlockCons
+  (compiler-ir-block-cons
     (IrBlock
       "entry"
-      (IrInstrCons
+      (compiler-ir-instr-cons
         (IrInstrBoundsCheck (IrValueVar 0) (IrValueVar 1) "bounds_ok.0")
         (IrInstrNil)))
-    (IrBlockCons
+    (compiler-ir-block-cons
       (IrBlock
         "next"
-        (IrInstrCons
+        (compiler-ir-instr-cons
           (IrInstrBoundsCheck (IrValueVar 0) (IrValueVar 1) "bounds_ok.1")
           (IrInstrNil)))
       (IrBlockNil))))
@@ -8098,15 +8777,15 @@
 ;; run for that iteration. A second pass then CSEs `v3` to `v2`; copy propagation
 ;; rewrites `v4`, and DCE drops the now-unused copy.
 (define (opt-fixed-point-instrs) : CompilerIrInstrList
-  (IrInstrCons
+  (compiler-ir-instr-cons
     (IrInstrMov 1 (IrValueVar 0) (AstTyI64))
-    (IrInstrCons
+    (compiler-ir-instr-cons
       (IrInstrBinOp 2 (IrBinAdd) (IrValueVar 0) (IrValueI64 1) (AstTyI64))
-      (IrInstrCons
+      (compiler-ir-instr-cons
         (IrInstrBinOp 3 (IrBinAdd) (IrValueVar 1) (IrValueI64 1) (AstTyI64))
-        (IrInstrCons
+        (compiler-ir-instr-cons
           (IrInstrBinOp 4 (IrBinAdd) (IrValueVar 2) (IrValueVar 3) (AstTyI64))
-          (IrInstrCons
+          (compiler-ir-instr-cons
             (IrInstrReturn (IrSomeValue (IrValueVar 4)))
             (IrInstrNil)))))))
 
@@ -8116,7 +8795,7 @@
     (IrParamNil)
     (AstTyI64)
     5
-    (IrBlockCons (IrBlock "entry" instrs) (IrBlockNil))))
+    (compiler-ir-block-cons (IrBlock "entry" instrs) (IrBlockNil))))
 
 (define (opt-test-function [instrs : CompilerIrInstrList]) : CompilerIrFunction
   (opt-test-function-named "fixed" instrs))
@@ -8124,7 +8803,7 @@
 (define (opt-test-program [instrs : CompilerIrInstrList]) : CompilerIrProgram
   (IrProgram
     (IrGlobalNil)
-    (IrFunctionCons (opt-test-function instrs) (IrFunctionNil))
+    (compiler-ir-function-cons (opt-test-function instrs) (IrFunctionNil))
     (IrExternNil)))
 
 (define (opt-function-first-instrs [func : CompilerIrFunction]) : CompilerIrInstrList
@@ -8230,25 +8909,29 @@
     1))
 
 (define (opt-global-dce-main-instrs) : CompilerIrInstrList
-  (IrInstrCons
-    (IrInstrCall 1 "helper" (IrValueNil) (AstTyI64))
-    (IrInstrCons (IrInstrReturn (IrSomeValue (IrValueVar 1))) (IrInstrNil))))
+  (compiler-ir-instr-cons
+    (IrInstrCall 1 "helper" (IrCallArgsNil) (AstTyI64))
+    (compiler-ir-instr-cons
+      (IrInstrReturn (IrSomeValue (IrValueVar 1)))
+      (IrInstrNil))))
 
 (define (opt-global-dce-return-instrs [value : i64]) : CompilerIrInstrList
-  (IrInstrCons (IrInstrReturn (IrSomeValue (IrValueI64 value))) (IrInstrNil)))
+  (compiler-ir-instr-cons
+    (IrInstrReturn (IrSomeValue (IrValueI64 value)))
+    (IrInstrNil)))
 
 (define (opt-global-dce-program) : CompilerIrProgram
   (IrProgram
-    (IrGlobalCons
+    (compiler-ir-global-cons
       (IrGlobal "callback" (AstTyI64) (IrValueGlobal "callback-target"))
       (IrGlobalNil))
-    (IrFunctionCons
+    (compiler-ir-function-cons
       (opt-test-function-named "main" (opt-global-dce-main-instrs))
-      (IrFunctionCons
+      (compiler-ir-function-cons
         (opt-test-function-named "helper" (opt-global-dce-return-instrs 7))
-        (IrFunctionCons
+        (compiler-ir-function-cons
           (opt-test-function-named "dead" (opt-global-dce-return-instrs 9))
-          (IrFunctionCons
+          (compiler-ir-function-cons
             (opt-test-function-named
               "callback-target"
               (opt-global-dce-return-instrs 11))
@@ -8258,9 +8941,9 @@
 (define (opt-global-dce-no-main-program) : CompilerIrProgram
   (IrProgram
     (IrGlobalNil)
-    (IrFunctionCons
+    (compiler-ir-function-cons
       (opt-test-function-named "helper" (opt-global-dce-return-instrs 7))
-      (IrFunctionCons
+      (compiler-ir-function-cons
         (opt-test-function-named "dead" (opt-global-dce-return-instrs 9))
         (IrFunctionNil)))
     (IrExternNil)))
@@ -8308,7 +8991,7 @@
         [(IrBlock block-label _)
           (if (string-eq block-label label)
             true
-            (opt-block-list-has-label? rest label))])]))
+            (opt-block-list-has-label? (box-get rest) label))])]))
 
 (define (opt-count-branches-instrs [instrs : CompilerIrInstrList]) : i64
   (match instrs
@@ -8318,7 +9001,7 @@
         (match instr
           [(IrInstrBranch _ _ _) 1]
           [_ 0])
-        (opt-count-branches-instrs rest))]))
+        (opt-count-branches-instrs (box-get rest)))]))
 
 (define (opt-count-branches-blocks [blocks : CompilerIrBlockList]) : i64
   (match blocks
@@ -8328,7 +9011,7 @@
         [(IrBlock _ instrs)
           (+
             (opt-count-branches-instrs instrs)
-            (opt-count-branches-blocks rest))])]))
+            (opt-count-branches-blocks (box-get rest)))])]))
 
 (define (opt-count-jump-to-instrs
   [instrs : CompilerIrInstrList]
@@ -8343,7 +9026,7 @@
               1
               0)]
           [_ 0])
-        (opt-count-jump-to-instrs rest target))]))
+        (opt-count-jump-to-instrs (box-get rest) target))]))
 
 (define (opt-count-jump-to-blocks
   [blocks : CompilerIrBlockList]
@@ -8355,7 +9038,7 @@
         [(IrBlock _ instrs)
           (+
             (opt-count-jump-to-instrs instrs target)
-            (opt-count-jump-to-blocks rest target))])]))
+            (opt-count-jump-to-blocks (box-get rest) target))])]))
 
 (define (opt-count-phi-instrs [instrs : CompilerIrInstrList]) : i64
   (match instrs
@@ -8365,7 +9048,7 @@
         (match instr
           [(IrInstrPhi _ _ _) 1]
           [_ 0])
-        (opt-count-phi-instrs rest))]))
+        (opt-count-phi-instrs (box-get rest)))]))
 
 (define (opt-count-phi-blocks [blocks : CompilerIrBlockList]) : i64
   (match blocks
@@ -8373,7 +9056,9 @@
     [(IrBlockCons block rest)
       (match block
         [(IrBlock _ instrs)
-          (+ (opt-count-phi-instrs instrs) (opt-count-phi-blocks rest))])]))
+          (+
+            (opt-count-phi-instrs instrs)
+            (opt-count-phi-blocks (box-get rest)))])]))
 
 (define (opt-count-mov-dst-instrs [instrs : CompilerIrInstrList] [dst : i64]) : i64
   (match instrs
@@ -8386,7 +9071,7 @@
               1
               0)]
           [_ 0])
-        (opt-count-mov-dst-instrs rest dst))]))
+        (opt-count-mov-dst-instrs (box-get rest) dst))]))
 
 (define (opt-count-mov-dst-blocks [blocks : CompilerIrBlockList] [dst : i64]) : i64
   (match blocks
@@ -8396,7 +9081,7 @@
         [(IrBlock _ instrs)
           (+
             (opt-count-mov-dst-instrs instrs dst)
-            (opt-count-mov-dst-blocks rest dst))])]))
+            (opt-count-mov-dst-blocks (box-get rest) dst))])]))
 
 (define (opt-count-arith-blocks [blocks : CompilerIrBlockList]) : i64
   (match blocks
@@ -8404,7 +9089,9 @@
     [(IrBlockCons block rest)
       (match block
         [(IrBlock _ instrs)
-          (+ (opt-count-arith-instrs instrs) (opt-count-arith-blocks rest))])]))
+          (+
+            (opt-count-arith-instrs instrs)
+            (opt-count-arith-blocks (box-get rest)))])]))
 
 (define (opt-blocks-mov-dst-i64-value
   [blocks : CompilerIrBlockList]
@@ -8418,7 +9105,7 @@
           (let
             [value : i64 (opt-mov-dst-i64-value instrs dst fallback)]
             (if (= value fallback)
-              (opt-blocks-mov-dst-i64-value rest dst fallback)
+              (opt-blocks-mov-dst-i64-value (box-get rest) dst fallback)
               value))])]))
 
 (define (opt-count-cast-blocks [blocks : CompilerIrBlockList]) : i64
@@ -8427,7 +9114,9 @@
     [(IrBlockCons block rest)
       (match block
         [(IrBlock _ instrs)
-          (+ (opt-count-cast-instrs instrs) (opt-count-cast-blocks rest))])]))
+          (+
+            (opt-count-cast-instrs instrs)
+            (opt-count-cast-blocks (box-get rest)))])]))
 
 (define (opt-count-gep-instrs [instrs : CompilerIrInstrList]) : i64
   (match instrs
@@ -8437,7 +9126,7 @@
         (match instr
           [(IrInstrGep _ _ _ _) 1]
           [_ 0])
-        (opt-count-gep-instrs rest))]))
+        (opt-count-gep-instrs (box-get rest)))]))
 
 (define (opt-count-gep-blocks [blocks : CompilerIrBlockList]) : i64
   (match blocks
@@ -8445,7 +9134,9 @@
     [(IrBlockCons block rest)
       (match block
         [(IrBlock _ instrs)
-          (+ (opt-count-gep-instrs instrs) (opt-count-gep-blocks rest))])]))
+          (+
+            (opt-count-gep-instrs instrs)
+            (opt-count-gep-blocks (box-get rest)))])]))
 
 (define (opt-count-load-instrs [instrs : CompilerIrInstrList]) : i64
   (match instrs
@@ -8455,7 +9146,7 @@
         (match instr
           [(IrInstrLoad _ _ _) 1]
           [_ 0])
-        (opt-count-load-instrs rest))]))
+        (opt-count-load-instrs (box-get rest)))]))
 
 (define (opt-count-load-blocks [blocks : CompilerIrBlockList]) : i64
   (match blocks
@@ -8463,7 +9154,9 @@
     [(IrBlockCons block rest)
       (match block
         [(IrBlock _ instrs)
-          (+ (opt-count-load-instrs instrs) (opt-count-load-blocks rest))])]))
+          (+
+            (opt-count-load-instrs instrs)
+            (opt-count-load-blocks (box-get rest)))])]))
 
 (define (opt-blocks-binop-lhs-var
   [blocks : CompilerIrBlockList]
@@ -8477,7 +9170,7 @@
           (let
             [value : i64 (opt-copy-binop-lhs-var instrs dst)]
             (if (= value (- 0 1))
-              (opt-blocks-binop-lhs-var rest dst fallback)
+              (opt-blocks-binop-lhs-var (box-get rest) dst fallback)
               value))])]))
 
 (define (opt-blocks-mov-src-var
@@ -8492,7 +9185,7 @@
           (let
             [value : i64 (opt-mov-src-var instrs dst fallback)]
             (if (= value fallback)
-              (opt-blocks-mov-src-var rest dst fallback)
+              (opt-blocks-mov-src-var (box-get rest) dst fallback)
               value))])]))
 
 (define (opt-mov-src-var
@@ -8506,27 +9199,27 @@
         [(IrInstrMov mov-dst (IrValueVar src) _)
           (if (= mov-dst dst)
             src
-            (opt-mov-src-var rest dst fallback))]
-        [_ (opt-mov-src-var rest dst fallback)])]))
+            (opt-mov-src-var (box-get rest) dst fallback))]
+        [_ (opt-mov-src-var (box-get rest) dst fallback)])]))
 
 (define (opt-cfg-test-function [blocks : CompilerIrBlockList]) : CompilerIrFunction
   (IrFunction "cfg" (IrParamNil) (AstTyI64) 16 blocks))
 
 (define (opt-sccp-cond-params) : CompilerIrParamList
-  (IrParamCons (IrParam "cond" (AstTyBool) 0) (IrParamNil)))
+  (compiler-ir-param-cons (IrParam "cond" (AstTyBool) 0) (IrParamNil)))
 
 (define (opt-sccp-loop-params) : CompilerIrParamList
-  (IrParamCons (IrParam "cond" (AstTyBool) 4) (IrParamNil)))
+  (compiler-ir-param-cons (IrParam "cond" (AstTyBool) 4) (IrParamNil)))
 
 (define (opt-gvn-scalar-params) : CompilerIrParamList
-  (IrParamCons
+  (compiler-ir-param-cons
     (IrParam "cond" (AstTyBool) 0)
-    (IrParamCons
+    (compiler-ir-param-cons
       (IrParam "lhs" (AstTyI64) 1)
-      (IrParamCons (IrParam "rhs" (AstTyI64) 2) (IrParamNil)))))
+      (compiler-ir-param-cons (IrParam "rhs" (AstTyI64) 2) (IrParamNil)))))
 
 (define (opt-gvn-pointer-params) : CompilerIrParamList
-  (IrParamCons (IrParam "ptr" (AstTyI64) 1) (IrParamNil)))
+  (compiler-ir-param-cons (IrParam "ptr" (AstTyI64) 1) (IrParamNil)))
 
 (define (opt-gvn-function
   [name : String]
@@ -8536,160 +9229,167 @@
   (IrFunction name params ret-ty 16 blocks))
 
 (define (opt-gvn-dominated-diamond-blocks) : CompilerIrBlockList
-  (IrBlockCons
+  (compiler-ir-block-cons
     (IrBlock
       "entry"
-      (IrInstrCons
+      (compiler-ir-instr-cons
         (IrInstrBinOp 3 (IrBinAdd) (IrValueVar 1) (IrValueVar 2) (AstTyI64))
-        (IrInstrCons (IrInstrBranch (IrValueVar 0) "then" "else") (IrInstrNil))))
-    (IrBlockCons
+        (compiler-ir-instr-cons
+          (IrInstrBranch (IrValueVar 0) "then" "else")
+          (IrInstrNil))))
+    (compiler-ir-block-cons
       (IrBlock
         "then"
-        (IrInstrCons
+        (compiler-ir-instr-cons
           (IrInstrBinOp 4 (IrBinAdd) (IrValueVar 1) (IrValueVar 2) (AstTyI64))
-          (IrInstrCons (IrInstrJump "join") (IrInstrNil))))
-      (IrBlockCons
+          (compiler-ir-instr-cons (IrInstrJump "join") (IrInstrNil))))
+      (compiler-ir-block-cons
         (IrBlock
           "else"
-          (IrInstrCons
+          (compiler-ir-instr-cons
             (IrInstrBinOp 5 (IrBinAdd) (IrValueVar 1) (IrValueVar 2) (AstTyI64))
-            (IrInstrCons (IrInstrJump "join") (IrInstrNil))))
-        (IrBlockCons
+            (compiler-ir-instr-cons (IrInstrJump "join") (IrInstrNil))))
+        (compiler-ir-block-cons
           (IrBlock
             "join"
-            (IrInstrCons
+            (compiler-ir-instr-cons
               (IrInstrPhi
                 6
-                (IrPhiInputCons
+                (compiler-ir-phi-input-cons
                   (IrValueVar 4)
                   "then"
-                  (IrPhiInputCons (IrValueVar 5) "else" (IrPhiInputNil)))
+                  (compiler-ir-phi-input-cons
+                    (IrValueVar 5)
+                    "else"
+                    (IrPhiInputNil)))
                 (AstTyI64))
-              (IrInstrCons
+              (compiler-ir-instr-cons
                 (IrInstrReturn (IrSomeValue (IrValueVar 6)))
                 (IrInstrNil))))
           (IrBlockNil))))))
 
 (define (opt-gvn-sibling-blocks) : CompilerIrBlockList
-  (IrBlockCons
+  (compiler-ir-block-cons
     (IrBlock
       "entry"
-      (IrInstrCons (IrInstrBranch (IrValueVar 0) "then" "else") (IrInstrNil)))
-    (IrBlockCons
+      (compiler-ir-instr-cons
+        (IrInstrBranch (IrValueVar 0) "then" "else")
+        (IrInstrNil)))
+    (compiler-ir-block-cons
       (IrBlock
         "then"
-        (IrInstrCons
+        (compiler-ir-instr-cons
           (IrInstrBinOp 3 (IrBinAdd) (IrValueVar 1) (IrValueVar 2) (AstTyI64))
-          (IrInstrCons
+          (compiler-ir-instr-cons
             (IrInstrReturn (IrSomeValue (IrValueVar 3)))
             (IrInstrNil))))
-      (IrBlockCons
+      (compiler-ir-block-cons
         (IrBlock
           "else"
-          (IrInstrCons
+          (compiler-ir-instr-cons
             (IrInstrBinOp 4 (IrBinAdd) (IrValueVar 1) (IrValueVar 2) (AstTyI64))
-            (IrInstrCons
+            (compiler-ir-instr-cons
               (IrInstrReturn (IrSomeValue (IrValueVar 4)))
               (IrInstrNil))))
         (IrBlockNil)))))
 
 (define (opt-gvn-phi-loop-blocks) : CompilerIrBlockList
-  (IrBlockCons
-    (IrBlock "entry" (IrInstrCons (IrInstrJump "loop") (IrInstrNil)))
-    (IrBlockCons
+  (compiler-ir-block-cons
+    (IrBlock "entry" (compiler-ir-instr-cons (IrInstrJump "loop") (IrInstrNil)))
+    (compiler-ir-block-cons
       (IrBlock
         "loop"
-        (IrInstrCons
+        (compiler-ir-instr-cons
           (IrInstrPhi
             5
-            (IrPhiInputCons
+            (compiler-ir-phi-input-cons
               (IrValueVar 1)
               "entry"
-              (IrPhiInputCons (IrValueVar 4) "body" (IrPhiInputNil)))
+              (compiler-ir-phi-input-cons (IrValueVar 4) "body" (IrPhiInputNil)))
             (AstTyI64))
-          (IrInstrCons
+          (compiler-ir-instr-cons
             (IrInstrBinOp 3 (IrBinAdd) (IrValueVar 5) (IrValueVar 2) (AstTyI64))
-            (IrInstrCons
+            (compiler-ir-instr-cons
               (IrInstrBranch (IrValueVar 0) "body" "exit")
               (IrInstrNil)))))
-      (IrBlockCons
+      (compiler-ir-block-cons
         (IrBlock
           "body"
-          (IrInstrCons
+          (compiler-ir-instr-cons
             (IrInstrBinOp 4 (IrBinAdd) (IrValueVar 5) (IrValueVar 2) (AstTyI64))
-            (IrInstrCons (IrInstrJump "loop") (IrInstrNil))))
-        (IrBlockCons
+            (compiler-ir-instr-cons (IrInstrJump "loop") (IrInstrNil))))
+        (compiler-ir-block-cons
           (IrBlock
             "exit"
-            (IrInstrCons
+            (compiler-ir-instr-cons
               (IrInstrReturn (IrSomeValue (IrValueVar 3)))
               (IrInstrNil)))
           (IrBlockNil))))))
 
 (define (opt-gvn-load-barrier-blocks) : CompilerIrBlockList
-  (IrBlockCons
+  (compiler-ir-block-cons
     (IrBlock
       "entry"
-      (IrInstrCons
+      (compiler-ir-instr-cons
         (IrInstrLoad 3 (IrValueVar 1) (AstTyI64))
-        (IrInstrCons (IrInstrJump "use") (IrInstrNil))))
-    (IrBlockCons
+        (compiler-ir-instr-cons (IrInstrJump "use") (IrInstrNil))))
+    (compiler-ir-block-cons
       (IrBlock
         "use"
-        (IrInstrCons
+        (compiler-ir-instr-cons
           (IrInstrLoad 4 (IrValueVar 1) (AstTyI64))
-          (IrInstrCons
+          (compiler-ir-instr-cons
             (IrInstrReturn (IrSomeValue (IrValueVar 4)))
             (IrInstrNil))))
       (IrBlockNil))))
 
 (define (opt-gvn-copy-blocks) : CompilerIrBlockList
-  (IrBlockCons
+  (compiler-ir-block-cons
     (IrBlock
       "entry"
-      (IrInstrCons
+      (compiler-ir-instr-cons
         (IrInstrMov 3 (IrValueVar 1) (AstTyI64))
-        (IrInstrCons (IrInstrJump "use") (IrInstrNil))))
-    (IrBlockCons
+        (compiler-ir-instr-cons (IrInstrJump "use") (IrInstrNil))))
+    (compiler-ir-block-cons
       (IrBlock
         "use"
-        (IrInstrCons
+        (compiler-ir-instr-cons
           (IrInstrBinOp 4 (IrBinAdd) (IrValueVar 3) (IrValueI64 1) (AstTyI64))
-          (IrInstrCons
+          (compiler-ir-instr-cons
             (IrInstrReturn (IrSomeValue (IrValueVar 4)))
             (IrInstrNil))))
       (IrBlockNil))))
 
 (define (opt-gvn-cast-blocks) : CompilerIrBlockList
-  (IrBlockCons
+  (compiler-ir-block-cons
     (IrBlock
       "entry"
-      (IrInstrCons
+      (compiler-ir-instr-cons
         (IrInstrCast 3 (IrValueVar 1) (AstTyI64) (AstTyI32))
-        (IrInstrCons (IrInstrJump "use") (IrInstrNil))))
-    (IrBlockCons
+        (compiler-ir-instr-cons (IrInstrJump "use") (IrInstrNil))))
+    (compiler-ir-block-cons
       (IrBlock
         "use"
-        (IrInstrCons
+        (compiler-ir-instr-cons
           (IrInstrCast 4 (IrValueVar 1) (AstTyI64) (AstTyI32))
-          (IrInstrCons
+          (compiler-ir-instr-cons
             (IrInstrReturn (IrSomeValue (IrValueVar 4)))
             (IrInstrNil))))
       (IrBlockNil))))
 
 (define (opt-gvn-gep-blocks) : CompilerIrBlockList
-  (IrBlockCons
+  (compiler-ir-block-cons
     (IrBlock
       "entry"
-      (IrInstrCons
+      (compiler-ir-instr-cons
         (IrInstrGep 3 (IrValueVar 1) (IrValueI64 8) (AstTyU8))
-        (IrInstrCons (IrInstrJump "use") (IrInstrNil))))
-    (IrBlockCons
+        (compiler-ir-instr-cons (IrInstrJump "use") (IrInstrNil))))
+    (compiler-ir-block-cons
       (IrBlock
         "use"
-        (IrInstrCons
+        (compiler-ir-instr-cons
           (IrInstrGep 4 (IrValueVar 1) (IrValueI64 8) (AstTyU8))
-          (IrInstrCons
+          (compiler-ir-instr-cons
             (IrInstrReturn (IrSomeValue (IrValueVar 4)))
             (IrInstrNil))))
       (IrBlockNil))))
@@ -8769,116 +9469,127 @@
       [else 42])))
 
 (define (opt-sccp-cross-block-blocks) : CompilerIrBlockList
-  (IrBlockCons
+  (compiler-ir-block-cons
     (IrBlock
       "entry"
-      (IrInstrCons
+      (compiler-ir-instr-cons
         (IrInstrMov 0 (IrValueI64 20) (AstTyI64))
-        (IrInstrCons (IrInstrJump "rhs") (IrInstrNil))))
-    (IrBlockCons
+        (compiler-ir-instr-cons (IrInstrJump "rhs") (IrInstrNil))))
+    (compiler-ir-block-cons
       (IrBlock
         "rhs"
-        (IrInstrCons
+        (compiler-ir-instr-cons
           (IrInstrBinOp 1 (IrBinAdd) (IrValueVar 0) (IrValueI64 22) (AstTyI64))
-          (IrInstrCons
+          (compiler-ir-instr-cons
             (IrInstrReturn (IrSomeValue (IrValueVar 1)))
             (IrInstrNil))))
       (IrBlockNil))))
 
 (define (opt-sccp-diamond-blocks) : CompilerIrBlockList
-  (IrBlockCons
+  (compiler-ir-block-cons
     (IrBlock
       "entry"
-      (IrInstrCons (IrInstrBranch (IrValueVar 0) "then" "else") (IrInstrNil)))
-    (IrBlockCons
+      (compiler-ir-instr-cons
+        (IrInstrBranch (IrValueVar 0) "then" "else")
+        (IrInstrNil)))
+    (compiler-ir-block-cons
       (IrBlock
         "then"
-        (IrInstrCons
+        (compiler-ir-instr-cons
           (IrInstrMov 1 (IrValueI64 7) (AstTyI64))
-          (IrInstrCons (IrInstrJump "join") (IrInstrNil))))
-      (IrBlockCons
+          (compiler-ir-instr-cons (IrInstrJump "join") (IrInstrNil))))
+      (compiler-ir-block-cons
         (IrBlock
           "else"
-          (IrInstrCons
+          (compiler-ir-instr-cons
             (IrInstrMov 2 (IrValueI64 7) (AstTyI64))
-            (IrInstrCons (IrInstrJump "join") (IrInstrNil))))
-        (IrBlockCons
+            (compiler-ir-instr-cons (IrInstrJump "join") (IrInstrNil))))
+        (compiler-ir-block-cons
           (IrBlock
             "join"
-            (IrInstrCons
+            (compiler-ir-instr-cons
               (IrInstrPhi
                 3
-                (IrPhiInputCons
+                (compiler-ir-phi-input-cons
                   (IrValueVar 1)
                   "then"
-                  (IrPhiInputCons (IrValueVar 2) "else" (IrPhiInputNil)))
+                  (compiler-ir-phi-input-cons
+                    (IrValueVar 2)
+                    "else"
+                    (IrPhiInputNil)))
                 (AstTyI64))
-              (IrInstrCons
+              (compiler-ir-instr-cons
                 (IrInstrReturn (IrSomeValue (IrValueVar 3)))
                 (IrInstrNil))))
           (IrBlockNil))))))
 
 (define (opt-sccp-constant-branch-blocks) : CompilerIrBlockList
-  (IrBlockCons
+  (compiler-ir-block-cons
     (IrBlock
       "entry"
-      (IrInstrCons
+      (compiler-ir-instr-cons
         (IrInstrMov 0 (IrValueBool true) (AstTyBool))
-        (IrInstrCons (IrInstrBranch (IrValueVar 0) "then" "else") (IrInstrNil))))
-    (IrBlockCons
+        (compiler-ir-instr-cons
+          (IrInstrBranch (IrValueVar 0) "then" "else")
+          (IrInstrNil))))
+    (compiler-ir-block-cons
       (IrBlock
         "then"
-        (IrInstrCons (IrInstrReturn (IrSomeValue (IrValueI64 1))) (IrInstrNil)))
-      (IrBlockCons
+        (compiler-ir-instr-cons
+          (IrInstrReturn (IrSomeValue (IrValueI64 1)))
+          (IrInstrNil)))
+      (compiler-ir-block-cons
         (IrBlock
           "else"
-          (IrInstrCons
+          (compiler-ir-instr-cons
             (IrInstrReturn (IrSomeValue (IrValueI64 2)))
             (IrInstrNil)))
         (IrBlockNil)))))
 
 (define (opt-sccp-loop-blocks) : CompilerIrBlockList
-  (IrBlockCons
+  (compiler-ir-block-cons
     (IrBlock
       "entry"
-      (IrInstrCons
+      (compiler-ir-instr-cons
         (IrInstrMov 0 (IrValueI64 0) (AstTyI64))
-        (IrInstrCons (IrInstrJump "loop") (IrInstrNil))))
-    (IrBlockCons
+        (compiler-ir-instr-cons (IrInstrJump "loop") (IrInstrNil))))
+    (compiler-ir-block-cons
       (IrBlock
         "loop"
-        (IrInstrCons
+        (compiler-ir-instr-cons
           (IrInstrPhi
             1
-            (IrPhiInputCons
+            (compiler-ir-phi-input-cons
               (IrValueVar 0)
               "entry"
-              (IrPhiInputCons (IrValueVar 2) "body" (IrPhiInputNil)))
+              (compiler-ir-phi-input-cons (IrValueVar 2) "body" (IrPhiInputNil)))
             (AstTyI64))
-          (IrInstrCons
+          (compiler-ir-instr-cons
             (IrInstrBranch (IrValueVar 4) "body" "exit")
             (IrInstrNil))))
-      (IrBlockCons
+      (compiler-ir-block-cons
         (IrBlock
           "body"
-          (IrInstrCons
+          (compiler-ir-instr-cons
             (IrInstrBinOp 2 (IrBinAdd) (IrValueVar 1) (IrValueI64 1) (AstTyI64))
-            (IrInstrCons (IrInstrJump "loop") (IrInstrNil))))
-        (IrBlockCons
+            (compiler-ir-instr-cons (IrInstrJump "loop") (IrInstrNil))))
+        (compiler-ir-block-cons
           (IrBlock
             "exit"
-            (IrInstrCons
+            (compiler-ir-instr-cons
               (IrInstrReturn (IrSomeValue (IrValueVar 1)))
               (IrInstrNil)))
           (IrBlockNil))))))
 
 (define (opt-sccp-trap-blocks) : CompilerIrBlockList
-  (IrBlockCons
+  (compiler-ir-block-cons
     (IrBlock
       "entry"
-      (IrInstrCons
+      (compiler-ir-instr-cons
         (IrInstrBinOp 1 (IrBinDiv) (IrValueI64 1) (IrValueI64 0) (AstTyI64))
-        (IrInstrCons (IrInstrReturn (IrSomeValue (IrValueVar 1))) (IrInstrNil))))
+        (compiler-ir-instr-cons
+          (IrInstrReturn (IrSomeValue (IrValueVar 1)))
+          (IrInstrNil))))
     (IrBlockNil)))
 
 (define (compiler-optimize-sccp-self-test) : i64
@@ -8911,114 +9622,125 @@
       [else 42])))
 
 (define (opt-cfg-constant-if-blocks) : CompilerIrBlockList
-  (IrBlockCons
+  (compiler-ir-block-cons
     (IrBlock
       "entry"
-      (IrInstrCons
+      (compiler-ir-instr-cons
         (IrInstrBranch (IrValueBool true) "then" "else")
         (IrInstrNil)))
-    (IrBlockCons
+    (compiler-ir-block-cons
       (IrBlock
         "then"
-        (IrInstrCons (IrInstrReturn (IrSomeValue (IrValueI64 1))) (IrInstrNil)))
-      (IrBlockCons
+        (compiler-ir-instr-cons
+          (IrInstrReturn (IrSomeValue (IrValueI64 1)))
+          (IrInstrNil)))
+      (compiler-ir-block-cons
         (IrBlock
           "else"
-          (IrInstrCons
+          (compiler-ir-instr-cons
             (IrInstrReturn (IrSomeValue (IrValueI64 2)))
             (IrInstrNil)))
         (IrBlockNil)))))
 
 (define (opt-cfg-loop-guard-blocks) : CompilerIrBlockList
-  (IrBlockCons
-    (IrBlock "entry" (IrInstrCons (IrInstrJump "loop") (IrInstrNil)))
-    (IrBlockCons
+  (compiler-ir-block-cons
+    (IrBlock "entry" (compiler-ir-instr-cons (IrInstrJump "loop") (IrInstrNil)))
+    (compiler-ir-block-cons
       (IrBlock
         "loop"
-        (IrInstrCons
+        (compiler-ir-instr-cons
           (IrInstrBranch (IrValueBool false) "body" "exit")
           (IrInstrNil)))
-      (IrBlockCons
-        (IrBlock "body" (IrInstrCons (IrInstrJump "loop") (IrInstrNil)))
-        (IrBlockCons
+      (compiler-ir-block-cons
+        (IrBlock
+          "body"
+          (compiler-ir-instr-cons (IrInstrJump "loop") (IrInstrNil)))
+        (compiler-ir-block-cons
           (IrBlock
             "exit"
-            (IrInstrCons
+            (compiler-ir-instr-cons
               (IrInstrReturn (IrSomeValue (IrValueI64 0)))
               (IrInstrNil)))
           (IrBlockNil))))))
 
 (define (opt-cfg-phi-blocks) : CompilerIrBlockList
-  (IrBlockCons
+  (compiler-ir-block-cons
     (IrBlock
       "entry"
-      (IrInstrCons
+      (compiler-ir-instr-cons
         (IrInstrBranch (IrValueBool true) "then" "else")
         (IrInstrNil)))
-    (IrBlockCons
+    (compiler-ir-block-cons
       (IrBlock
         "then"
-        (IrInstrCons
+        (compiler-ir-instr-cons
           (IrInstrMov 1 (IrValueI64 10) (AstTyI64))
-          (IrInstrCons (IrInstrJump "join") (IrInstrNil))))
-      (IrBlockCons
+          (compiler-ir-instr-cons (IrInstrJump "join") (IrInstrNil))))
+      (compiler-ir-block-cons
         (IrBlock
           "else"
-          (IrInstrCons
+          (compiler-ir-instr-cons
             (IrInstrMov 2 (IrValueI64 20) (AstTyI64))
-            (IrInstrCons (IrInstrJump "join") (IrInstrNil))))
-        (IrBlockCons
+            (compiler-ir-instr-cons (IrInstrJump "join") (IrInstrNil))))
+        (compiler-ir-block-cons
           (IrBlock
             "join"
-            (IrInstrCons
+            (compiler-ir-instr-cons
               (IrInstrPhi
                 3
-                (IrPhiInputCons
+                (compiler-ir-phi-input-cons
                   (IrValueVar 1)
                   "then"
-                  (IrPhiInputCons (IrValueVar 2) "else" (IrPhiInputNil)))
+                  (compiler-ir-phi-input-cons
+                    (IrValueVar 2)
+                    "else"
+                    (IrPhiInputNil)))
                 (AstTyI64))
-              (IrInstrCons
+              (compiler-ir-instr-cons
                 (IrInstrReturn (IrSomeValue (IrValueVar 3)))
                 (IrInstrNil))))
           (IrBlockNil))))))
 
 (define (opt-cfg-trap-path-blocks) : CompilerIrBlockList
-  (IrBlockCons
+  (compiler-ir-block-cons
     (IrBlock
       "entry"
-      (IrInstrCons (IrInstrBranch (IrValueVar 0) "ok" "trap") (IrInstrNil)))
-    (IrBlockCons
+      (compiler-ir-instr-cons
+        (IrInstrBranch (IrValueVar 0) "ok" "trap")
+        (IrInstrNil)))
+    (compiler-ir-block-cons
       (IrBlock
         "ok"
-        (IrInstrCons (IrInstrReturn (IrSomeValue (IrValueI64 0))) (IrInstrNil)))
-      (IrBlockCons
+        (compiler-ir-instr-cons
+          (IrInstrReturn (IrSomeValue (IrValueI64 0)))
+          (IrInstrNil)))
+      (compiler-ir-block-cons
         (IrBlock
           "trap"
-          (IrInstrCons
-            (IrInstrCall 9 "panic" (IrValueNil) (AstTyUnit))
-            (IrInstrCons
+          (compiler-ir-instr-cons
+            (IrInstrCall 9 "panic" (IrCallArgsNil) (AstTyUnit))
+            (compiler-ir-instr-cons
               (IrInstrReturn (IrSomeValue (IrValueI64 1)))
               (IrInstrNil))))
         (IrBlockNil)))))
 
 (define (opt-cfg-fallthrough-prune-blocks) : CompilerIrBlockList
-  (IrBlockCons
+  (compiler-ir-block-cons
     (IrBlock "entry" (IrInstrNil))
-    (IrBlockCons
+    (compiler-ir-block-cons
       (IrBlock "reachable-empty" (IrInstrNil))
-      (IrBlockCons
+      (compiler-ir-block-cons
         (IrBlock
           "exit"
-          (IrInstrCons
+          (compiler-ir-instr-cons
             (IrInstrReturn (IrSomeValue (IrValueI64 1)))
             (IrInstrNil)))
-        (IrBlockCons
+        (compiler-ir-block-cons
           (IrBlock "dead-empty" (IrInstrNil))
-          (IrBlockCons
+          (compiler-ir-block-cons
             (IrBlock
               "dead-exit"
-              (IrInstrCons
+              (compiler-ir-instr-cons
                 (IrInstrReturn (IrSomeValue (IrValueI64 2)))
                 (IrInstrNil)))
             (IrBlockNil)))))))
@@ -9042,42 +9764,47 @@
                   (opt-verify-function (opt-cfg-test-function blocks)))))))))))
 
 (define (opt-ssa-cond-params) : CompilerIrParamList
-  (IrParamCons (IrParam "cond" (AstTyBool) 0) (IrParamNil)))
+  (compiler-ir-param-cons (IrParam "cond" (AstTyBool) 0) (IrParamNil)))
 
 (define (opt-ssa-loop-params) : CompilerIrParamList
-  (IrParamCons
+  (compiler-ir-param-cons
     (IrParam "seed" (AstTyI64) 0)
-    (IrParamCons (IrParam "cond" (AstTyBool) 4) (IrParamNil))))
+    (compiler-ir-param-cons (IrParam "cond" (AstTyBool) 4) (IrParamNil))))
 
 (define (opt-ssa-diamond-blocks) : CompilerIrBlockList
-  (IrBlockCons
+  (compiler-ir-block-cons
     (IrBlock
       "entry"
-      (IrInstrCons (IrInstrBranch (IrValueVar 0) "then" "else") (IrInstrNil)))
-    (IrBlockCons
+      (compiler-ir-instr-cons
+        (IrInstrBranch (IrValueVar 0) "then" "else")
+        (IrInstrNil)))
+    (compiler-ir-block-cons
       (IrBlock
         "then"
-        (IrInstrCons
+        (compiler-ir-instr-cons
           (IrInstrMov 1 (IrValueI64 10) (AstTyI64))
-          (IrInstrCons (IrInstrJump "join") (IrInstrNil))))
-      (IrBlockCons
+          (compiler-ir-instr-cons (IrInstrJump "join") (IrInstrNil))))
+      (compiler-ir-block-cons
         (IrBlock
           "else"
-          (IrInstrCons
+          (compiler-ir-instr-cons
             (IrInstrMov 2 (IrValueI64 20) (AstTyI64))
-            (IrInstrCons (IrInstrJump "join") (IrInstrNil))))
-        (IrBlockCons
+            (compiler-ir-instr-cons (IrInstrJump "join") (IrInstrNil))))
+        (compiler-ir-block-cons
           (IrBlock
             "join"
-            (IrInstrCons
+            (compiler-ir-instr-cons
               (IrInstrPhi
                 3
-                (IrPhiInputCons
+                (compiler-ir-phi-input-cons
                   (IrValueVar 1)
                   "then"
-                  (IrPhiInputCons (IrValueVar 2) "else" (IrPhiInputNil)))
+                  (compiler-ir-phi-input-cons
+                    (IrValueVar 2)
+                    "else"
+                    (IrPhiInputNil)))
                 (AstTyI64))
-              (IrInstrCons
+              (compiler-ir-instr-cons
                 (IrInstrReturn (IrSomeValue (IrValueVar 3)))
                 (IrInstrNil))))
           (IrBlockNil))))))
@@ -9091,32 +9818,32 @@
     (opt-ssa-diamond-blocks)))
 
 (define (opt-ssa-loop-blocks) : CompilerIrBlockList
-  (IrBlockCons
-    (IrBlock "entry" (IrInstrCons (IrInstrJump "loop") (IrInstrNil)))
-    (IrBlockCons
+  (compiler-ir-block-cons
+    (IrBlock "entry" (compiler-ir-instr-cons (IrInstrJump "loop") (IrInstrNil)))
+    (compiler-ir-block-cons
       (IrBlock
         "loop"
-        (IrInstrCons
+        (compiler-ir-instr-cons
           (IrInstrPhi
             1
-            (IrPhiInputCons
+            (compiler-ir-phi-input-cons
               (IrValueVar 0)
               "entry"
-              (IrPhiInputCons (IrValueVar 2) "body" (IrPhiInputNil)))
+              (compiler-ir-phi-input-cons (IrValueVar 2) "body" (IrPhiInputNil)))
             (AstTyI64))
-          (IrInstrCons
+          (compiler-ir-instr-cons
             (IrInstrBranch (IrValueVar 4) "body" "exit")
             (IrInstrNil))))
-      (IrBlockCons
+      (compiler-ir-block-cons
         (IrBlock
           "body"
-          (IrInstrCons
+          (compiler-ir-instr-cons
             (IrInstrBinOp 2 (IrBinAdd) (IrValueVar 1) (IrValueI64 1) (AstTyI64))
-            (IrInstrCons (IrInstrJump "loop") (IrInstrNil))))
-        (IrBlockCons
+            (compiler-ir-instr-cons (IrInstrJump "loop") (IrInstrNil))))
+        (compiler-ir-block-cons
           (IrBlock
             "exit"
-            (IrInstrCons
+            (compiler-ir-instr-cons
               (IrInstrReturn (IrSomeValue (IrValueVar 1)))
               (IrInstrNil)))
           (IrBlockNil))))))
@@ -9129,15 +9856,160 @@
     16
     (opt-ssa-loop-blocks)))
 
-(define (opt-ssa-unreachable-blocks) : CompilerIrBlockList
-  (IrBlockCons
+(define (opt-natural-loop-nested-blocks) : CompilerIrBlockList
+  (compiler-ir-block-cons
     (IrBlock
       "entry"
-      (IrInstrCons (IrInstrReturn (IrSomeValue (IrValueI64 1))) (IrInstrNil)))
-    (IrBlockCons
+      (compiler-ir-instr-cons (IrInstrJump "outer") (IrInstrNil)))
+    (compiler-ir-block-cons
+      (IrBlock
+        "outer"
+        (compiler-ir-instr-cons (IrInstrJump "inner") (IrInstrNil)))
+      (compiler-ir-block-cons
+        (IrBlock
+          "inner"
+          (compiler-ir-instr-cons
+            (IrInstrBranch (IrValueVar 4) "inner-body" "outer-latch")
+            (IrInstrNil)))
+        (compiler-ir-block-cons
+          (IrBlock
+            "inner-body"
+            (compiler-ir-instr-cons (IrInstrJump "inner") (IrInstrNil)))
+          (compiler-ir-block-cons
+            (IrBlock
+              "outer-latch"
+              (compiler-ir-instr-cons
+                (IrInstrBranch (IrValueVar 8) "outer" "exit")
+                (IrInstrNil)))
+            (compiler-ir-block-cons
+              (IrBlock
+                "exit"
+                (compiler-ir-instr-cons
+                  (IrInstrReturn (IrSomeValue (IrValueI64 0)))
+                  (IrInstrNil)))
+              (IrBlockNil))))))))
+
+(define (opt-natural-loop-irreducible-blocks) : CompilerIrBlockList
+  (compiler-ir-block-cons
+    (IrBlock
+      "entry"
+      (compiler-ir-instr-cons
+        (IrInstrBranch (IrValueBool true) "left" "right")
+        (IrInstrNil)))
+    (compiler-ir-block-cons
+      (IrBlock
+        "left"
+        (compiler-ir-instr-cons (IrInstrJump "right") (IrInstrNil)))
+      (compiler-ir-block-cons
+        (IrBlock
+          "right"
+          (compiler-ir-instr-cons
+            (IrInstrBranch (IrValueBool true) "left" "exit")
+            (IrInstrNil)))
+        (compiler-ir-block-cons
+          (IrBlock
+            "exit"
+            (compiler-ir-instr-cons
+              (IrInstrReturn (IrSomeValue (IrValueI64 0)))
+              (IrInstrNil)))
+          (IrBlockNil))))))
+
+(define (opt-natural-loop-no-preheader-blocks) : CompilerIrBlockList
+  (compiler-ir-block-cons
+    (IrBlock
+      "entry"
+      (compiler-ir-instr-cons
+        (IrInstrBranch (IrValueBool true) "pre-one" "pre-two")
+        (IrInstrNil)))
+    (compiler-ir-block-cons
+      (IrBlock
+        "pre-one"
+        (compiler-ir-instr-cons (IrInstrJump "loop") (IrInstrNil)))
+      (compiler-ir-block-cons
+        (IrBlock
+          "pre-two"
+          (compiler-ir-instr-cons (IrInstrJump "loop") (IrInstrNil)))
+        (compiler-ir-block-cons
+          (IrBlock
+            "loop"
+            (compiler-ir-instr-cons
+              (IrInstrBranch (IrValueBool true) "body" "exit")
+              (IrInstrNil)))
+          (compiler-ir-block-cons
+            (IrBlock
+              "body"
+              (compiler-ir-instr-cons (IrInstrJump "loop") (IrInstrNil)))
+            (compiler-ir-block-cons
+              (IrBlock
+                "exit"
+                (compiler-ir-instr-cons
+                  (IrInstrReturn (IrSomeValue (IrValueI64 0)))
+                  (IrInstrNil)))
+              (IrBlockNil))))))))
+
+(define (opt-natural-loop-multi-backedge-blocks) : CompilerIrBlockList
+  (compiler-ir-block-cons
+    (IrBlock "entry" (compiler-ir-instr-cons (IrInstrJump "loop") (IrInstrNil)))
+    (compiler-ir-block-cons
+      (IrBlock
+        "loop"
+        (compiler-ir-instr-cons
+          (IrInstrBranch (IrValueBool true) "left" "right")
+          (IrInstrNil)))
+      (compiler-ir-block-cons
+        (IrBlock
+          "left"
+          (compiler-ir-instr-cons (IrInstrJump "loop") (IrInstrNil)))
+        (compiler-ir-block-cons
+          (IrBlock
+            "right"
+            (compiler-ir-instr-cons (IrInstrJump "loop") (IrInstrNil)))
+          (IrBlockNil))))))
+
+(define (opt-natural-loop-maybe-body-count [maybe : OptMaybeNaturalLoop]) : i64
+  (match maybe
+    [(OptNoNaturalLoop) 0]
+    [(OptSomeNaturalLoop loop) (opt-label-count (opt-natural-loop-body loop))]))
+
+(define (opt-natural-loop-maybe-body-contains?
+  [maybe : OptMaybeNaturalLoop]
+  [label : String]) : bool
+  (match maybe
+    [(OptNoNaturalLoop) false]
+    [(OptSomeNaturalLoop loop)
+      (opt-label-contains (opt-natural-loop-body loop) label)]))
+
+(define (opt-natural-loop-maybe-preheader-label?
+  [maybe : OptMaybeNaturalLoop]
+  [label : String]) : bool
+  (match maybe
+    [(OptNoNaturalLoop) false]
+    [(OptSomeNaturalLoop loop)
+      (match (opt-natural-loop-preheader loop)
+        [(OptSomeLoopPreheader actual) (string-eq actual label)]
+        [(OptNoLoopPreheader) false])]))
+
+(define (opt-natural-loop-maybe-no-preheader? [maybe : OptMaybeNaturalLoop]) : bool
+  (match maybe
+    [(OptNoNaturalLoop) false]
+    [(OptSomeNaturalLoop loop)
+      (match (opt-natural-loop-preheader loop)
+        [(OptNoLoopPreheader) true]
+        [(OptSomeLoopPreheader _) false])]))
+
+(define (opt-ssa-unreachable-blocks) : CompilerIrBlockList
+  (compiler-ir-block-cons
+    (IrBlock
+      "entry"
+      (compiler-ir-instr-cons
+        (IrInstrReturn (IrSomeValue (IrValueI64 1)))
+        (IrInstrNil)))
+    (compiler-ir-block-cons
       (IrBlock
         "dead"
-        (IrInstrCons (IrInstrReturn (IrSomeValue (IrValueI64 2))) (IrInstrNil)))
+        (compiler-ir-instr-cons
+          (IrInstrReturn (IrSomeValue (IrValueI64 2)))
+          (IrInstrNil)))
       (IrBlockNil))))
 
 (define (opt-ssa-unreachable-function) : CompilerIrFunction
@@ -9154,34 +10026,39 @@
     (opt-ssa-cond-params)
     (AstTyI64)
     16
-    (IrBlockCons
+    (compiler-ir-block-cons
       (IrBlock
         "entry"
-        (IrInstrCons (IrInstrBranch (IrValueVar 0) "then" "else") (IrInstrNil)))
-      (IrBlockCons
+        (compiler-ir-instr-cons
+          (IrInstrBranch (IrValueVar 0) "then" "else")
+          (IrInstrNil)))
+      (compiler-ir-block-cons
         (IrBlock
           "then"
-          (IrInstrCons
+          (compiler-ir-instr-cons
             (IrInstrMov 1 (IrValueI64 10) (AstTyI64))
-            (IrInstrCons (IrInstrJump "join") (IrInstrNil))))
-        (IrBlockCons
+            (compiler-ir-instr-cons (IrInstrJump "join") (IrInstrNil))))
+        (compiler-ir-block-cons
           (IrBlock
             "else"
-            (IrInstrCons
+            (compiler-ir-instr-cons
               (IrInstrMov 2 (IrValueI64 20) (AstTyI64))
-              (IrInstrCons (IrInstrJump "join") (IrInstrNil))))
-          (IrBlockCons
+              (compiler-ir-instr-cons (IrInstrJump "join") (IrInstrNil))))
+          (compiler-ir-block-cons
             (IrBlock
               "join"
-              (IrInstrCons
+              (compiler-ir-instr-cons
                 (IrInstrPhi
                   3
-                  (IrPhiInputCons
+                  (compiler-ir-phi-input-cons
                     (IrValueVar 1)
                     "then"
-                    (IrPhiInputCons (IrValueVar 2) "ghost" (IrPhiInputNil)))
+                    (compiler-ir-phi-input-cons
+                      (IrValueVar 2)
+                      "ghost"
+                      (IrPhiInputNil)))
                   (AstTyI64))
-                (IrInstrCons
+                (compiler-ir-instr-cons
                   (IrInstrReturn (IrSomeValue (IrValueVar 3)))
                   (IrInstrNil))))
             (IrBlockNil)))))))
@@ -9192,14 +10069,16 @@
     (IrParamNil)
     (AstTyI64)
     0
-    (IrBlockCons
+    (compiler-ir-block-cons
       (IrBlock
         "entry"
-        (IrInstrCons (IrInstrReturn (IrSomeValue (IrValueI64 1))) (IrInstrNil)))
-      (IrBlockCons
+        (compiler-ir-instr-cons
+          (IrInstrReturn (IrSomeValue (IrValueI64 1)))
+          (IrInstrNil)))
+      (compiler-ir-block-cons
         (IrBlock
           "entry"
-          (IrInstrCons
+          (compiler-ir-instr-cons
             (IrInstrReturn (IrSomeValue (IrValueI64 2)))
             (IrInstrNil)))
         (IrBlockNil)))))
@@ -9210,8 +10089,10 @@
     (IrParamNil)
     (AstTyI64)
     0
-    (IrBlockCons
-      (IrBlock "entry" (IrInstrCons (IrInstrJump "missing") (IrInstrNil)))
+    (compiler-ir-block-cons
+      (IrBlock
+        "entry"
+        (compiler-ir-instr-cons (IrInstrJump "missing") (IrInstrNil)))
       (IrBlockNil))))
 
 (define (opt-ssa-duplicate-def-function) : CompilerIrFunction
@@ -9220,14 +10101,14 @@
     (IrParamNil)
     (AstTyI64)
     0
-    (IrBlockCons
+    (compiler-ir-block-cons
       (IrBlock
         "entry"
-        (IrInstrCons
+        (compiler-ir-instr-cons
           (IrInstrMov 1 (IrValueI64 1) (AstTyI64))
-          (IrInstrCons
+          (compiler-ir-instr-cons
             (IrInstrMov 1 (IrValueI64 2) (AstTyI64))
-            (IrInstrCons
+            (compiler-ir-instr-cons
               (IrInstrReturn (IrSomeValue (IrValueVar 1)))
               (IrInstrNil)))))
       (IrBlockNil))))
@@ -9238,10 +10119,12 @@
     (IrParamNil)
     (AstTyI64)
     0
-    (IrBlockCons
+    (compiler-ir-block-cons
       (IrBlock
         "entry"
-        (IrInstrCons (IrInstrReturn (IrSomeValue (IrValueVar 9))) (IrInstrNil)))
+        (compiler-ir-instr-cons
+          (IrInstrReturn (IrSomeValue (IrValueVar 9)))
+          (IrInstrNil)))
       (IrBlockNil))))
 
 (define (opt-ssa-dominance-fail-function) : CompilerIrFunction
@@ -9250,25 +10133,86 @@
     (opt-ssa-cond-params)
     (AstTyI64)
     16
-    (IrBlockCons
+    (compiler-ir-block-cons
       (IrBlock
         "entry"
-        (IrInstrCons (IrInstrBranch (IrValueVar 0) "then" "else") (IrInstrNil)))
-      (IrBlockCons
+        (compiler-ir-instr-cons
+          (IrInstrBranch (IrValueVar 0) "then" "else")
+          (IrInstrNil)))
+      (compiler-ir-block-cons
         (IrBlock
           "then"
-          (IrInstrCons
+          (compiler-ir-instr-cons
             (IrInstrMov 1 (IrValueI64 10) (AstTyI64))
-            (IrInstrCons (IrInstrJump "join") (IrInstrNil))))
-        (IrBlockCons
-          (IrBlock "else" (IrInstrCons (IrInstrJump "join") (IrInstrNil)))
-          (IrBlockCons
+            (compiler-ir-instr-cons (IrInstrJump "join") (IrInstrNil))))
+        (compiler-ir-block-cons
+          (IrBlock
+            "else"
+            (compiler-ir-instr-cons (IrInstrJump "join") (IrInstrNil)))
+          (compiler-ir-block-cons
             (IrBlock
               "join"
-              (IrInstrCons
+              (compiler-ir-instr-cons
                 (IrInstrReturn (IrSomeValue (IrValueVar 1)))
                 (IrInstrNil)))
             (IrBlockNil)))))))
+
+(define (compiler-optimize-natural-loop-self-test) : i64
+  (let
+    [single-loops : OptNaturalLoopList
+      (opt-cfg-natural-loops (opt-ssa-loop-blocks))]
+    [single : OptMaybeNaturalLoop
+      (opt-natural-loop-find single-loops "loop" "body")]
+    [nested-loops : OptNaturalLoopList
+      (opt-cfg-natural-loops (opt-natural-loop-nested-blocks))]
+    [inner : OptMaybeNaturalLoop
+      (opt-natural-loop-find nested-loops "inner" "inner-body")]
+    [outer : OptMaybeNaturalLoop
+      (opt-natural-loop-find nested-loops "outer" "outer-latch")]
+    [diamond-loops : OptNaturalLoopList
+      (opt-cfg-natural-loops (opt-ssa-diamond-blocks))]
+    [irreducible-loops : OptNaturalLoopList
+      (opt-cfg-natural-loops (opt-natural-loop-irreducible-blocks))]
+    [no-preheader-loops : OptNaturalLoopList
+      (opt-cfg-natural-loops (opt-natural-loop-no-preheader-blocks))]
+    [no-preheader : OptMaybeNaturalLoop
+      (opt-natural-loop-find no-preheader-loops "loop" "body")]
+    [multi-loops : OptNaturalLoopList
+      (opt-cfg-natural-loops (opt-natural-loop-multi-backedge-blocks))]
+    [multi-left : OptMaybeNaturalLoop
+      (opt-natural-loop-find multi-loops "loop" "left")]
+    [multi-right : OptMaybeNaturalLoop
+      (opt-natural-loop-find multi-loops "loop" "right")]
+    (cond
+      [(not (= (opt-natural-loop-list-count single-loops) 1)) 1]
+      [(not (= (opt-natural-loop-maybe-body-count single) 2)) 2]
+      [(not (opt-natural-loop-maybe-body-contains? single "loop")) 3]
+      [(not (opt-natural-loop-maybe-body-contains? single "body")) 4]
+      [(not (opt-natural-loop-maybe-preheader-label? single "entry")) 5]
+      [(not (= (opt-natural-loop-list-count nested-loops) 2)) 6]
+      [(not (= (opt-natural-loop-maybe-body-count inner) 2)) 7]
+      [(not (opt-natural-loop-maybe-body-contains? inner "inner")) 8]
+      [(not (opt-natural-loop-maybe-body-contains? inner "inner-body")) 9]
+      [(not (opt-natural-loop-maybe-preheader-label? inner "outer")) 10]
+      [(not (= (opt-natural-loop-maybe-body-count outer) 4)) 11]
+      [(not (opt-natural-loop-maybe-body-contains? outer "outer")) 12]
+      [(not (opt-natural-loop-maybe-body-contains? outer "inner")) 13]
+      [(not (opt-natural-loop-maybe-body-contains? outer "inner-body")) 14]
+      [(not (opt-natural-loop-maybe-body-contains? outer "outer-latch")) 15]
+      [(not (opt-natural-loop-maybe-preheader-label? outer "entry")) 16]
+      [(not (= (opt-natural-loop-list-count diamond-loops) 0)) 17]
+      [(not (= (opt-natural-loop-list-count irreducible-loops) 0)) 18]
+      [(not (= (opt-natural-loop-list-count no-preheader-loops) 1)) 19]
+      [(not (= (opt-natural-loop-maybe-body-count no-preheader) 2)) 20]
+      [(not (opt-natural-loop-maybe-no-preheader? no-preheader)) 21]
+      [(not (= (opt-natural-loop-list-count multi-loops) 2)) 22]
+      [(not (= (opt-natural-loop-maybe-body-count multi-left) 2)) 23]
+      [(not (opt-natural-loop-maybe-body-contains? multi-left "left")) 24]
+      [(not (opt-natural-loop-maybe-body-contains? multi-left "loop")) 25]
+      [(not (= (opt-natural-loop-maybe-body-count multi-right) 2)) 26]
+      [(not (opt-natural-loop-maybe-body-contains? multi-right "right")) 27]
+      [(not (opt-natural-loop-maybe-body-contains? multi-right "loop")) 28]
+      [else 42])))
 
 (define (compiler-optimize-ssa-self-test) : i64
   (let
@@ -9610,50 +10554,56 @@
   (match instrs
     [(IrInstrNil) facts]
     [(IrInstrCons instr rest)
-      (opt-alias-run (opt-alias-update-facts facts instr) rest)]))
+      (opt-alias-run (opt-alias-update-facts facts instr) (box-get rest))]))
 
 ;; --- noalias fact model self-test (#1510) -----------------------------------
 (define (opt-alias-test-unique-instrs) : CompilerIrInstrList
-  (IrInstrCons
+  (compiler-ir-instr-cons
     (IrInstrAlloc 0 (AstTyI64))
-    (IrInstrCons
+    (compiler-ir-instr-cons
       (IrInstrGep 1 (IrValueVar 0) (IrValueI64 8) (AstTyI64))
-      (IrInstrCons
+      (compiler-ir-instr-cons
         (IrInstrBinOp 2 (IrBinAdd) (IrValueI64 1) (IrValueI64 2) (AstTyI64))
         (IrInstrNil)))))
 
 (define (opt-alias-test-transitive-instrs) : CompilerIrInstrList
-  (IrInstrCons
+  (compiler-ir-instr-cons
     (IrInstrAlloc 0 (AstTyI64))
-    (IrInstrCons
+    (compiler-ir-instr-cons
       (IrInstrGep 1 (IrValueVar 0) (IrValueI64 8) (AstTyI64))
-      (IrInstrCons
+      (compiler-ir-instr-cons
         (IrInstrGep 2 (IrValueVar 1) (IrValueI64 8) (AstTyI64))
         (IrInstrNil)))))
 
 (define (opt-alias-test-load-instrs) : CompilerIrInstrList
-  (IrInstrCons
+  (compiler-ir-instr-cons
     (IrInstrAlloc 0 (AstTyI64))
-    (IrInstrCons (IrInstrLoad 1 (IrValueVar 0) (AstTyI64)) (IrInstrNil))))
+    (compiler-ir-instr-cons
+      (IrInstrLoad 1 (IrValueVar 0) (AstTyI64))
+      (IrInstrNil))))
 
 (define (opt-alias-test-store-instrs) : CompilerIrInstrList
-  (IrInstrCons
+  (compiler-ir-instr-cons
     (IrInstrAlloc 0 (AstTyI64))
-    (IrInstrCons
+    (compiler-ir-instr-cons
       (IrInstrStorePtr (IrValueVar 0) (IrValueI64 5) (AstTyI64))
       (IrInstrNil))))
 
 (define (opt-alias-test-call-instrs) : CompilerIrInstrList
-  (IrInstrCons
+  (compiler-ir-instr-cons
     (IrInstrAlloc 0 (AstTyI64))
-    (IrInstrCons (IrInstrCall 9 "tl_noop" (IrValueNil) (AstTyI64)) (IrInstrNil))))
+    (compiler-ir-instr-cons
+      (IrInstrCall 9 "tl_noop" (IrCallArgsNil) (AstTyI64))
+      (IrInstrNil))))
 
 (define (opt-alias-test-copy-instrs) : CompilerIrInstrList
-  (IrInstrCons
+  (compiler-ir-instr-cons
     (IrInstrAlloc 0 (AstTyI64))
-    (IrInstrCons
+    (compiler-ir-instr-cons
       (IrInstrMov 1 (IrValueVar 0) (AstTyI64))
-      (IrInstrCons (IrInstrMov 2 (IrValueI64 7) (AstTyI64)) (IrInstrNil)))))
+      (compiler-ir-instr-cons
+        (IrInstrMov 2 (IrValueI64 7) (AstTyI64))
+        (IrInstrNil)))))
 
 (define (opt-alias-join-facts-a) : OptAliasFacts
   (opt-alias-bind
@@ -9677,7 +10627,7 @@
   (IrInstrStorePtr (IrValueVar 0) (IrValueI64 5) (AstTyI64)))
 
 (define (opt-alias-sample-tail-call) : CompilerIrInstr
-  (IrInstrTailCall "tl_noop" (IrValueNil) (AstTyI64)))
+  (IrInstrTailCall "tl_noop" (IrCallArgsNil) (AstTyI64)))
 
 (define (opt-alias-sample-binop) : CompilerIrInstr
   (IrInstrBinOp 9 (IrBinAdd) (IrValueI64 1) (IrValueI64 2) (AstTyI64)))

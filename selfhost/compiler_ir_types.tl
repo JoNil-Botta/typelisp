@@ -61,11 +61,17 @@
 
 (defenum CompilerIrValueList
   (IrValueNil)
-  (IrValueCons CompilerIrValue CompilerIrValueList))
+  (IrValueCons CompilerIrValue (Box CompilerIrValueList)))
+
+(defenum CompilerIrCallArgs
+  (IrCallArgsNil)
+  (IrCallArgsOne CompilerIrValue)
+  (IrCallArgsTwo CompilerIrValue CompilerIrValue)
+  (IrCallArgsArray (Array CompilerIrValue)))
 
 (defenum CompilerIrPhiInputList
   (IrPhiInputNil)
-  (IrPhiInputCons CompilerIrValue String CompilerIrPhiInputList))
+  (IrPhiInputCons CompilerIrValue String (Box CompilerIrPhiInputList)))
 
 (defenum CompilerIrInstr
   (IrInstrMov i64 CompilerIrValue AstType)
@@ -132,9 +138,9 @@
   (IrInstrEntryEnvp i64)
   (IrInstrCpuId i64 CompilerIrValue CompilerIrValue i64)
   (IrInstrXgetbv i64 CompilerIrValue)
-  (IrInstrCall i64 String CompilerIrValueList AstType)
-  (IrInstrCallIndirect i64 CompilerIrValue CompilerIrValueList AstType)
-  (IrInstrTailCall String CompilerIrValueList AstType)
+  (IrInstrCall i64 String CompilerIrCallArgs AstType)
+  (IrInstrCallIndirect i64 CompilerIrValue CompilerIrCallArgs AstType)
+  (IrInstrTailCall String CompilerIrCallArgs AstType)
   (IrInstrStore String CompilerIrValue AstType)
   (IrInstrJump String)
   (IrInstrBranch CompilerIrValue String String)
@@ -143,48 +149,521 @@
 
 (defenum CompilerIrInstrList
   (IrInstrNil)
-  (IrInstrCons CompilerIrInstr CompilerIrInstrList))
+  (IrInstrCons CompilerIrInstr (Box CompilerIrInstrList)))
 
 (defenum CompilerIrBlock
   (IrBlock String CompilerIrInstrList))
 
 (defenum CompilerIrBlockList
   (IrBlockNil)
-  (IrBlockCons CompilerIrBlock CompilerIrBlockList))
+  (IrBlockCons CompilerIrBlock (Box CompilerIrBlockList)))
 
 (defenum CompilerIrParam
   (IrParam String AstType i64))
 
 (defenum CompilerIrParamList
   (IrParamNil)
-  (IrParamCons CompilerIrParam CompilerIrParamList))
+  (IrParamCons CompilerIrParam (Box CompilerIrParamList)))
 
 (defenum CompilerIrFunction
   (IrFunction String CompilerIrParamList AstType i64 CompilerIrBlockList))
 
 (defenum CompilerIrFunctionList
   (IrFunctionNil)
-  (IrFunctionCons CompilerIrFunction CompilerIrFunctionList))
+  (IrFunctionCons CompilerIrFunction (Box CompilerIrFunctionList)))
 
 (defenum CompilerIrGlobal
   (IrGlobal String AstType CompilerIrValue))
 
 (defenum CompilerIrGlobalList
   (IrGlobalNil)
-  (IrGlobalCons CompilerIrGlobal CompilerIrGlobalList))
+  (IrGlobalCons CompilerIrGlobal (Box CompilerIrGlobalList)))
 
 (defenum CompilerIrExtern
   (IrExtern String AstType AstExternAbi String AstExternLinkInputList))
 
 (defenum CompilerIrExternList
   (IrExternNil)
-  (IrExternCons CompilerIrExtern CompilerIrExternList))
+  (IrExternCons CompilerIrExtern (Box CompilerIrExternList)))
 
 (defenum CompilerIrProgram
   (IrProgram CompilerIrGlobalList CompilerIrFunctionList CompilerIrExternList))
 
+(define (compiler-ir-value-cons
+  [value : CompilerIrValue]
+  [rest : CompilerIrValueList]) : CompilerIrValueList
+  (IrValueCons value (box rest)))
+
+(define (compiler-ir-phi-input-cons
+  [value : CompilerIrValue]
+  [label : String]
+  [rest : CompilerIrPhiInputList]) : CompilerIrPhiInputList
+  (IrPhiInputCons value label (box rest)))
+
+(define (compiler-ir-instr-cons
+  [instr : CompilerIrInstr]
+  [rest : CompilerIrInstrList]) : CompilerIrInstrList
+  (IrInstrCons instr (box rest)))
+
+(define (compiler-ir-block-cons
+  [block : CompilerIrBlock]
+  [rest : CompilerIrBlockList]) : CompilerIrBlockList
+  (IrBlockCons block (box rest)))
+
+(define (compiler-ir-param-cons
+  [param : CompilerIrParam]
+  [rest : CompilerIrParamList]) : CompilerIrParamList
+  (IrParamCons param (box rest)))
+
+(define (compiler-ir-function-cons
+  [func : CompilerIrFunction]
+  [rest : CompilerIrFunctionList]) : CompilerIrFunctionList
+  (IrFunctionCons func (box rest)))
+
+(define (compiler-ir-global-cons
+  [global : CompilerIrGlobal]
+  [rest : CompilerIrGlobalList]) : CompilerIrGlobalList
+  (IrGlobalCons global (box rest)))
+
+(define (compiler-ir-extern-cons
+  [extern : CompilerIrExtern]
+  [rest : CompilerIrExternList]) : CompilerIrExternList
+  (IrExternCons extern (box rest)))
+
 (define (compiler-ir-extern-default [name : String] [ty : AstType]) : CompilerIrExtern
   (IrExtern name ty (AstExternAbiC) name AstExternLinkInputNil))
+
+(define (compiler-ir-clone-value [value : CompilerIrValue]) : CompilerIrValue
+  (match value
+    [(IrValueVar id) (IrValueVar id)]
+    [(IrValueGlobal name) (IrValueGlobal (clone name))]
+    [(IrValueGlobalAddr name) (IrValueGlobalAddr (clone name))]
+    [(IrValueFunction name) (IrValueFunction (clone name))]
+    [(IrValueI64 n) (IrValueI64 n)]
+    [(IrValueF64 n) (IrValueF64 (clone n))]
+    [(IrValueBool b) (IrValueBool b)]
+    [(IrValueChar c) (IrValueChar c)]
+    [(IrValueString s) (IrValueString (clone s))]
+    [(IrValueUnit) (IrValueUnit)]))
+
+(define (compiler-ir-clone-maybe-value [value : CompilerIrMaybeValue]) : CompilerIrMaybeValue
+  (match value
+    [(IrNoValue) (IrNoValue)]
+    [(IrSomeValue inner) (IrSomeValue (compiler-ir-clone-value inner))]))
+
+(define (compiler-ir-clone-value-list-acc
+  [values : CompilerIrValueList]
+  [acc : CompilerIrValueList]) : CompilerIrValueList
+  (match values
+    [(IrValueNil) acc]
+    [(IrValueCons value rest)
+      (compiler-ir-clone-value-list-acc
+        (box-get rest)
+        (compiler-ir-value-cons (compiler-ir-clone-value value) acc))]))
+
+(define (compiler-ir-value-list-reverse-onto
+  [values : CompilerIrValueList]
+  [acc : CompilerIrValueList]) : CompilerIrValueList
+  (match values
+    [(IrValueNil) acc]
+    [(IrValueCons value rest)
+      (compiler-ir-value-list-reverse-onto
+        (box-get rest)
+        (compiler-ir-value-cons value acc))]))
+
+(define (compiler-ir-clone-value-list [values : CompilerIrValueList]) : CompilerIrValueList
+  (compiler-ir-value-list-reverse-onto
+    (compiler-ir-clone-value-list-acc values IrValueNil)
+    IrValueNil))
+
+(define (compiler-ir-clone-call-args [args : CompilerIrCallArgs]) : CompilerIrCallArgs
+  (match args
+    [(IrCallArgsNil) (IrCallArgsNil)]
+    [(IrCallArgsOne a) (IrCallArgsOne (compiler-ir-clone-value a))]
+    [(IrCallArgsTwo a b)
+      (IrCallArgsTwo (compiler-ir-clone-value a) (compiler-ir-clone-value b))]
+    [(IrCallArgsArray values) (IrCallArgsArray (clone values))]))
+
+(define (compiler-ir-clone-phi-input-list-acc
+  [inputs : CompilerIrPhiInputList]
+  [acc : CompilerIrPhiInputList]) : CompilerIrPhiInputList
+  (match inputs
+    [(IrPhiInputNil) acc]
+    [(IrPhiInputCons value label rest)
+      (compiler-ir-clone-phi-input-list-acc
+        (box-get rest)
+        (compiler-ir-phi-input-cons
+          (compiler-ir-clone-value value)
+          (clone label)
+          acc))]))
+
+(define (compiler-ir-phi-input-list-reverse-onto
+  [inputs : CompilerIrPhiInputList]
+  [acc : CompilerIrPhiInputList]) : CompilerIrPhiInputList
+  (match inputs
+    [(IrPhiInputNil) acc]
+    [(IrPhiInputCons value label rest)
+      (compiler-ir-phi-input-list-reverse-onto
+        (box-get rest)
+        (compiler-ir-phi-input-cons value label acc))]))
+
+(define (compiler-ir-clone-phi-input-list [inputs : CompilerIrPhiInputList]) : CompilerIrPhiInputList
+  (compiler-ir-phi-input-list-reverse-onto
+    (compiler-ir-clone-phi-input-list-acc inputs IrPhiInputNil)
+    IrPhiInputNil))
+
+(define (compiler-ir-clone-instr [instr : CompilerIrInstr]) : CompilerIrInstr
+  (match instr
+    [(IrInstrMov dst src ty)
+      (IrInstrMov dst (compiler-ir-clone-value src) (clone ty))]
+    [(IrInstrAlloc dst ty) (IrInstrAlloc dst (clone ty))]
+    [(IrInstrAddrOf dst src) (IrInstrAddrOf dst src)]
+    [(IrInstrGep dst base offset ty)
+      (IrInstrGep
+        dst
+        (compiler-ir-clone-value base)
+        (compiler-ir-clone-value offset)
+        (clone ty))]
+    [(IrInstrLoad dst src ty)
+      (IrInstrLoad dst (compiler-ir-clone-value src) (clone ty))]
+    [(IrInstrStorePtr dst src ty)
+      (IrInstrStorePtr
+        (compiler-ir-clone-value dst)
+        (compiler-ir-clone-value src)
+        (clone ty))]
+    [(IrInstrBoundsCheck index length label)
+      (IrInstrBoundsCheck
+        (compiler-ir-clone-value index)
+        (compiler-ir-clone-value length)
+        (clone label))]
+    [(IrInstrCast dst src from-ty to-ty)
+      (IrInstrCast
+        dst
+        (compiler-ir-clone-value src)
+        (clone from-ty)
+        (clone to-ty))]
+    [(IrInstrBinOp dst op lhs rhs ty)
+      (IrInstrBinOp
+        dst
+        op
+        (compiler-ir-clone-value lhs)
+        (compiler-ir-clone-value rhs)
+        (clone ty))]
+    [(IrInstrUnOp dst op src ty)
+      (IrInstrUnOp dst op (compiler-ir-clone-value src) (clone ty))]
+    [(IrInstrLaneId dst lane ty) (IrInstrLaneId dst lane (clone ty))]
+    [(IrInstrSplat dst value lanes ty)
+      (IrInstrSplat dst (compiler-ir-clone-value value) lanes (clone ty))]
+    [(IrInstrVectorBinOp dst op lhs rhs lanes ty)
+      (IrInstrVectorBinOp
+        dst
+        op
+        (compiler-ir-clone-value lhs)
+        (compiler-ir-clone-value rhs)
+        lanes
+        (clone ty))]
+    [(IrInstrVectorReduce dst op src lanes ty)
+      (IrInstrVectorReduce
+        dst
+        op
+        (compiler-ir-clone-value src)
+        lanes
+        (clone ty))]
+    [(IrInstrVectorCompare dst op lhs rhs lanes ty)
+      (IrInstrVectorCompare
+        dst
+        op
+        (compiler-ir-clone-value lhs)
+        (compiler-ir-clone-value rhs)
+        lanes
+        (clone ty))]
+    [(IrInstrMaskBinOp dst op lhs rhs lanes)
+      (IrInstrMaskBinOp
+        dst
+        op
+        (compiler-ir-clone-value lhs)
+        (compiler-ir-clone-value rhs)
+        lanes)]
+    [(IrInstrMaskNot dst src lanes)
+      (IrInstrMaskNot dst (compiler-ir-clone-value src) lanes)]
+    [(IrInstrMaskReduce dst op src lanes)
+      (IrInstrMaskReduce dst op (compiler-ir-clone-value src) lanes)]
+    [(IrInstrSelect dst cond then-value else-value lanes ty)
+      (IrInstrSelect
+        dst
+        (compiler-ir-clone-value cond)
+        (compiler-ir-clone-value then-value)
+        (compiler-ir-clone-value else-value)
+        lanes
+        (clone ty))]
+    [(IrInstrVectorLoad dst base index lanes ty)
+      (IrInstrVectorLoad
+        dst
+        (compiler-ir-clone-value base)
+        (compiler-ir-clone-value index)
+        lanes
+        (clone ty))]
+    [(IrInstrVectorStore base index value lanes ty)
+      (IrInstrVectorStore
+        (compiler-ir-clone-value base)
+        (compiler-ir-clone-value index)
+        (compiler-ir-clone-value value)
+        lanes
+        (clone ty))]
+    [(IrInstrPredicatedStore base index value mask lanes ty)
+      (IrInstrPredicatedStore
+        (compiler-ir-clone-value base)
+        (compiler-ir-clone-value index)
+        (compiler-ir-clone-value value)
+        (compiler-ir-clone-value mask)
+        lanes
+        (clone ty))]
+    [(IrInstrPredicatedLoad dst base index mask lanes ty)
+      (IrInstrPredicatedLoad
+        dst
+        (compiler-ir-clone-value base)
+        (compiler-ir-clone-value index)
+        (compiler-ir-clone-value mask)
+        lanes
+        (clone ty))]
+    [(IrInstrTailMask dst index len lanes)
+      (IrInstrTailMask
+        dst
+        (compiler-ir-clone-value index)
+        (compiler-ir-clone-value len)
+        lanes)]
+    [(IrInstrEntryArgc dst) (IrInstrEntryArgc dst)]
+    [(IrInstrEntryArgv dst) (IrInstrEntryArgv dst)]
+    [(IrInstrEntryEnvp dst) (IrInstrEntryEnvp dst)]
+    [(IrInstrCpuId dst leaf subleaf lanes)
+      (IrInstrCpuId
+        dst
+        (compiler-ir-clone-value leaf)
+        (compiler-ir-clone-value subleaf)
+        lanes)]
+    [(IrInstrXgetbv dst index)
+      (IrInstrXgetbv dst (compiler-ir-clone-value index))]
+    [(IrInstrCall dst name args ty)
+      (IrInstrCall
+        dst
+        (clone name)
+        (compiler-ir-clone-call-args args)
+        (clone ty))]
+    [(IrInstrCallIndirect dst callee args ty)
+      (IrInstrCallIndirect
+        dst
+        (compiler-ir-clone-value callee)
+        (compiler-ir-clone-call-args args)
+        (clone ty))]
+    [(IrInstrTailCall name args ty)
+      (IrInstrTailCall
+        (clone name)
+        (compiler-ir-clone-call-args args)
+        (clone ty))]
+    [(IrInstrStore name value ty)
+      (IrInstrStore (clone name) (compiler-ir-clone-value value) (clone ty))]
+    [(IrInstrJump label) (IrInstrJump (clone label))]
+    [(IrInstrBranch cond true-label false-label)
+      (IrInstrBranch
+        (compiler-ir-clone-value cond)
+        (clone true-label)
+        (clone false-label))]
+    [(IrInstrReturn value)
+      (IrInstrReturn (compiler-ir-clone-maybe-value value))]
+    [(IrInstrPhi dst inputs ty)
+      (IrInstrPhi dst (compiler-ir-clone-phi-input-list inputs) (clone ty))]))
+
+(define (compiler-ir-clone-instr-list-acc
+  [instrs : CompilerIrInstrList]
+  [acc : CompilerIrInstrList]) : CompilerIrInstrList
+  (match instrs
+    [(IrInstrNil) acc]
+    [(IrInstrCons instr rest)
+      (compiler-ir-clone-instr-list-acc
+        (box-get rest)
+        (compiler-ir-instr-cons (compiler-ir-clone-instr instr) acc))]))
+
+(define (compiler-ir-instr-list-reverse-onto
+  [instrs : CompilerIrInstrList]
+  [acc : CompilerIrInstrList]) : CompilerIrInstrList
+  (match instrs
+    [(IrInstrNil) acc]
+    [(IrInstrCons instr rest)
+      (compiler-ir-instr-list-reverse-onto
+        (box-get rest)
+        (compiler-ir-instr-cons instr acc))]))
+
+(define (compiler-ir-clone-instr-list [instrs : CompilerIrInstrList]) : CompilerIrInstrList
+  (compiler-ir-instr-list-reverse-onto
+    (compiler-ir-clone-instr-list-acc instrs IrInstrNil)
+    IrInstrNil))
+
+(define (compiler-ir-clone-block [block : CompilerIrBlock]) : CompilerIrBlock
+  (match block
+    [(IrBlock label instrs)
+      (IrBlock (clone label) (compiler-ir-clone-instr-list instrs))]))
+
+(define (compiler-ir-clone-block-list-acc
+  [blocks : CompilerIrBlockList]
+  [acc : CompilerIrBlockList]) : CompilerIrBlockList
+  (match blocks
+    [(IrBlockNil) acc]
+    [(IrBlockCons block rest)
+      (compiler-ir-clone-block-list-acc
+        (box-get rest)
+        (compiler-ir-block-cons (compiler-ir-clone-block block) acc))]))
+
+(define (compiler-ir-block-list-reverse-onto
+  [blocks : CompilerIrBlockList]
+  [acc : CompilerIrBlockList]) : CompilerIrBlockList
+  (match blocks
+    [(IrBlockNil) acc]
+    [(IrBlockCons block rest)
+      (compiler-ir-block-list-reverse-onto
+        (box-get rest)
+        (compiler-ir-block-cons block acc))]))
+
+(define (compiler-ir-clone-block-list [blocks : CompilerIrBlockList]) : CompilerIrBlockList
+  (compiler-ir-block-list-reverse-onto
+    (compiler-ir-clone-block-list-acc blocks IrBlockNil)
+    IrBlockNil))
+
+(define (compiler-ir-clone-param [param : CompilerIrParam]) : CompilerIrParam
+  (match param
+    [(IrParam name ty id) (IrParam (clone name) (clone ty) id)]))
+
+(define (compiler-ir-clone-param-list-acc
+  [params : CompilerIrParamList]
+  [acc : CompilerIrParamList]) : CompilerIrParamList
+  (match params
+    [(IrParamNil) acc]
+    [(IrParamCons param rest)
+      (compiler-ir-clone-param-list-acc
+        (box-get rest)
+        (compiler-ir-param-cons (compiler-ir-clone-param param) acc))]))
+
+(define (compiler-ir-param-list-reverse-onto
+  [params : CompilerIrParamList]
+  [acc : CompilerIrParamList]) : CompilerIrParamList
+  (match params
+    [(IrParamNil) acc]
+    [(IrParamCons param rest)
+      (compiler-ir-param-list-reverse-onto
+        (box-get rest)
+        (compiler-ir-param-cons param acc))]))
+
+(define (compiler-ir-clone-param-list [params : CompilerIrParamList]) : CompilerIrParamList
+  (compiler-ir-param-list-reverse-onto
+    (compiler-ir-clone-param-list-acc params IrParamNil)
+    IrParamNil))
+
+(define (compiler-ir-clone-function [func : CompilerIrFunction]) : CompilerIrFunction
+  (match func
+    [(IrFunction name params ret vars blocks)
+      (IrFunction
+        (clone name)
+        (compiler-ir-clone-param-list params)
+        (clone ret)
+        vars
+        (compiler-ir-clone-block-list blocks))]))
+
+(define (compiler-ir-clone-function-list-acc
+  [functions : CompilerIrFunctionList]
+  [acc : CompilerIrFunctionList]) : CompilerIrFunctionList
+  (match functions
+    [(IrFunctionNil) acc]
+    [(IrFunctionCons func rest)
+      (compiler-ir-clone-function-list-acc
+        (box-get rest)
+        (compiler-ir-function-cons (compiler-ir-clone-function func) acc))]))
+
+(define (compiler-ir-function-list-reverse-onto
+  [functions : CompilerIrFunctionList]
+  [acc : CompilerIrFunctionList]) : CompilerIrFunctionList
+  (match functions
+    [(IrFunctionNil) acc]
+    [(IrFunctionCons func rest)
+      (compiler-ir-function-list-reverse-onto
+        (box-get rest)
+        (compiler-ir-function-cons func acc))]))
+
+(define (compiler-ir-clone-function-list [functions : CompilerIrFunctionList]) : CompilerIrFunctionList
+  (compiler-ir-function-list-reverse-onto
+    (compiler-ir-clone-function-list-acc functions IrFunctionNil)
+    IrFunctionNil))
+
+(define (compiler-ir-clone-global [global : CompilerIrGlobal]) : CompilerIrGlobal
+  (match global
+    [(IrGlobal name ty value)
+      (IrGlobal (clone name) (clone ty) (compiler-ir-clone-value value))]))
+
+(define (compiler-ir-clone-global-list-acc
+  [globals : CompilerIrGlobalList]
+  [acc : CompilerIrGlobalList]) : CompilerIrGlobalList
+  (match globals
+    [(IrGlobalNil) acc]
+    [(IrGlobalCons global rest)
+      (compiler-ir-clone-global-list-acc
+        (box-get rest)
+        (compiler-ir-global-cons (compiler-ir-clone-global global) acc))]))
+
+(define (compiler-ir-global-list-reverse-onto
+  [globals : CompilerIrGlobalList]
+  [acc : CompilerIrGlobalList]) : CompilerIrGlobalList
+  (match globals
+    [(IrGlobalNil) acc]
+    [(IrGlobalCons global rest)
+      (compiler-ir-global-list-reverse-onto
+        (box-get rest)
+        (compiler-ir-global-cons global acc))]))
+
+(define (compiler-ir-clone-global-list [globals : CompilerIrGlobalList]) : CompilerIrGlobalList
+  (compiler-ir-global-list-reverse-onto
+    (compiler-ir-clone-global-list-acc globals IrGlobalNil)
+    IrGlobalNil))
+
+(define (compiler-ir-clone-extern [extern : CompilerIrExtern]) : CompilerIrExtern
+  (match extern
+    [(IrExtern name ty abi symbol links)
+      (IrExtern
+        (clone name)
+        (clone ty)
+        (clone abi)
+        (clone symbol)
+        (clone links))]))
+
+(define (compiler-ir-clone-extern-list-acc
+  [externs : CompilerIrExternList]
+  [acc : CompilerIrExternList]) : CompilerIrExternList
+  (match externs
+    [(IrExternNil) acc]
+    [(IrExternCons extern rest)
+      (compiler-ir-clone-extern-list-acc
+        (box-get rest)
+        (compiler-ir-extern-cons (compiler-ir-clone-extern extern) acc))]))
+
+(define (compiler-ir-extern-list-reverse-onto
+  [externs : CompilerIrExternList]
+  [acc : CompilerIrExternList]) : CompilerIrExternList
+  (match externs
+    [(IrExternNil) acc]
+    [(IrExternCons extern rest)
+      (compiler-ir-extern-list-reverse-onto
+        (box-get rest)
+        (compiler-ir-extern-cons extern acc))]))
+
+(define (compiler-ir-clone-extern-list [externs : CompilerIrExternList]) : CompilerIrExternList
+  (compiler-ir-extern-list-reverse-onto
+    (compiler-ir-clone-extern-list-acc externs IrExternNil)
+    IrExternNil))
+
+(define (compiler-ir-clone-program [program : CompilerIrProgram]) : CompilerIrProgram
+  (match program
+    [(IrProgram globals functions externs)
+      (IrProgram
+        (compiler-ir-clone-global-list globals)
+        (compiler-ir-clone-function-list functions)
+        (compiler-ir-clone-extern-list externs))]))
 
 (define (compiler-ir-cat3 [a : String] [b : String] [c : String]) : String
   (string-append a (string-append b c)))
@@ -280,20 +759,87 @@
     [(IrValueCons value rest)
       (string-append
         (compiler-ir-value-render value)
-        (match rest
+        (match (box-get rest)
           [(IrValueNil) ""]
-          [_ (string-append ", " (compiler-ir-value-list-render rest))]))]))
+          [_
+            (string-append ", " (compiler-ir-value-list-render (box-get rest)))]))]))
+
+(define (compiler-ir-value-list-count [values : CompilerIrValueList]) : i64
+  (match values
+    [(IrValueNil) 0]
+    [(IrValueCons _ rest) (+ 1 (compiler-ir-value-list-count (box-get rest)))]))
+
+(define (compiler-ir-value-list-fill-array
+  [values : CompilerIrValueList]
+  [out : (Array CompilerIrValue)]
+  [index : i64]) : unit
+  (match values
+    [(IrValueNil) unit]
+    [(IrValueCons value rest)
+      (begin
+        (array-set! out index value)
+        (compiler-ir-value-list-fill-array (box-get rest) out (+ index 1)))]))
+
+(define (compiler-ir-call-args-array [values : CompilerIrValueList]) : CompilerIrCallArgs
+  (let
+    [count : i64 (compiler-ir-value-list-count values)]
+    [out : (Array CompilerIrValue) (make-array CompilerIrValue count)]
+    (begin
+      (compiler-ir-value-list-fill-array values out 0)
+      (IrCallArgsArray out))))
+
+(define (compiler-ir-call-args-from-list [values : CompilerIrValueList]) : CompilerIrCallArgs
+  (match values
+    [(IrValueNil) (IrCallArgsNil)]
+    [(IrValueCons a rest)
+      (match (box-get rest)
+        [(IrValueNil) (IrCallArgsOne a)]
+        [(IrValueCons b tail)
+          (match (box-get tail)
+            [(IrValueNil) (IrCallArgsTwo a b)]
+            [_ (compiler-ir-call-args-array values)])])]))
+
+(define (compiler-ir-call-args-array-render
+  [values : (Array CompilerIrValue)]
+  [index : i64]) : String
+  (if (>= index (array-length values))
+    ""
+    (string-append
+      (compiler-ir-value-render (array-ref values index))
+      (if (= (+ index 1) (array-length values))
+        ""
+        (string-append
+          ", "
+          (compiler-ir-call-args-array-render values (+ index 1)))))))
+
+(define (compiler-ir-call-args-render [args : CompilerIrCallArgs]) : String
+  (match args
+    [(IrCallArgsNil) ""]
+    [(IrCallArgsOne a) (compiler-ir-value-render a)]
+    [(IrCallArgsTwo a b)
+      (compiler-ir-cat3
+        (compiler-ir-value-render a)
+        ", "
+        (compiler-ir-value-render b))]
+    [(IrCallArgsArray values) (compiler-ir-call-args-array-render values 0)]))
+
+(define (compiler-ir-call-args-count [args : CompilerIrCallArgs]) : i64
+  (match args
+    [(IrCallArgsNil) 0]
+    [(IrCallArgsOne _) 1]
+    [(IrCallArgsTwo _ _) 2]
+    [(IrCallArgsArray values) (array-length values)]))
 
 (define (compiler-ir-tail-call-render
   [name : String]
-  [args : CompilerIrValueList]
+  [args : CompilerIrCallArgs]
   [ty : AstType]) : String
   (compiler-ir-cat3
     "  tailcall "
     name
     (compiler-ir-cat3
       "("
-      (compiler-ir-value-list-render args)
+      (compiler-ir-call-args-render args)
       (compiler-ir-cat3 ") : " (compiler-ir-type-render ty) ""))))
 
 (define (compiler-ir-instr-render [instr : CompilerIrInstr]) : String
@@ -909,33 +1455,29 @@
 (define (compiler-ir-global-list-count [globals : CompilerIrGlobalList]) : i64
   (match globals
     [(IrGlobalNil) 0]
-    [(IrGlobalCons _ rest) (+ 1 (compiler-ir-global-list-count rest))]))
+    [(IrGlobalCons _ rest) (+ 1 (compiler-ir-global-list-count (box-get rest)))]))
 
 (define (compiler-ir-extern-list-count [externs : CompilerIrExternList]) : i64
   (match externs
     [(IrExternNil) 0]
-    [(IrExternCons _ rest) (+ 1 (compiler-ir-extern-list-count rest))]))
+    [(IrExternCons _ rest) (+ 1 (compiler-ir-extern-list-count (box-get rest)))]))
 
 (define (compiler-ir-max-i64 [a : i64] [b : i64]) : i64
   (if (> a b)
     a
     b))
 
-(define (compiler-ir-value-list-count [values : CompilerIrValueList]) : i64
-  (match values
-    [(IrValueNil) 0]
-    [(IrValueCons _ rest) (+ 1 (compiler-ir-value-list-count rest))]))
-
 (define (compiler-ir-phi-input-list-count [inputs : CompilerIrPhiInputList]) : i64
   (match inputs
     [(IrPhiInputNil) 0]
-    [(IrPhiInputCons _ _ rest) (+ 1 (compiler-ir-phi-input-list-count rest))]))
+    [(IrPhiInputCons _ _ rest)
+      (+ 1 (compiler-ir-phi-input-list-count (box-get rest)))]))
 
 (define (compiler-ir-instr-call-arg-count [instr : CompilerIrInstr]) : i64
   (match instr
-    [(IrInstrCall _ _ args _) (compiler-ir-value-list-count args)]
-    [(IrInstrCallIndirect _ _ args _) (compiler-ir-value-list-count args)]
-    [(IrInstrTailCall _ args _) (compiler-ir-value-list-count args)]
+    [(IrInstrCall _ _ args _) (compiler-ir-call-args-count args)]
+    [(IrInstrCallIndirect _ _ args _) (compiler-ir-call-args-count args)]
+    [(IrInstrTailCall _ args _) (compiler-ir-call-args-count args)]
     [_ 0]))
 
 (define (compiler-ir-instr-phi-input-count [instr : CompilerIrInstr]) : i64
@@ -946,7 +1488,7 @@
 (define (compiler-ir-instr-list-count [instrs : CompilerIrInstrList]) : i64
   (match instrs
     [(IrInstrNil) 0]
-    [(IrInstrCons _ rest) (+ 1 (compiler-ir-instr-list-count rest))]))
+    [(IrInstrCons _ rest) (+ 1 (compiler-ir-instr-list-count (box-get rest)))]))
 
 (define (compiler-ir-instr-list-call-arg-count [instrs : CompilerIrInstrList]) : i64
   (match instrs
@@ -954,7 +1496,7 @@
     [(IrInstrCons instr rest)
       (+
         (compiler-ir-instr-call-arg-count instr)
-        (compiler-ir-instr-list-call-arg-count rest))]))
+        (compiler-ir-instr-list-call-arg-count (box-get rest)))]))
 
 (define (compiler-ir-instr-list-phi-input-count [instrs : CompilerIrInstrList]) : i64
   (match instrs
@@ -962,12 +1504,12 @@
     [(IrInstrCons instr rest)
       (+
         (compiler-ir-instr-phi-input-count instr)
-        (compiler-ir-instr-list-phi-input-count rest))]))
+        (compiler-ir-instr-list-phi-input-count (box-get rest)))]))
 
 (define (compiler-ir-block-list-count [blocks : CompilerIrBlockList]) : i64
   (match blocks
     [(IrBlockNil) 0]
-    [(IrBlockCons _ rest) (+ 1 (compiler-ir-block-list-count rest))]))
+    [(IrBlockCons _ rest) (+ 1 (compiler-ir-block-list-count (box-get rest)))]))
 
 (define (compiler-ir-block-list-empty-count [blocks : CompilerIrBlockList]) : i64
   (match blocks
@@ -979,7 +1521,7 @@
             (if (= (compiler-ir-instr-list-count instrs) 0)
               1
               0)
-            (compiler-ir-block-list-empty-count rest))])]))
+            (compiler-ir-block-list-empty-count (box-get rest)))])]))
 
 (define (compiler-ir-block-list-max-instruction-count
   [blocks : CompilerIrBlockList]) : i64
@@ -990,7 +1532,7 @@
         [(IrBlock _ instrs)
           (compiler-ir-max-i64
             (compiler-ir-instr-list-count instrs)
-            (compiler-ir-block-list-max-instruction-count rest))])]))
+            (compiler-ir-block-list-max-instruction-count (box-get rest)))])]))
 
 (define (compiler-ir-block-list-call-arg-count [blocks : CompilerIrBlockList]) : i64
   (match blocks
@@ -1000,7 +1542,7 @@
         [(IrBlock _ instrs)
           (+
             (compiler-ir-instr-list-call-arg-count instrs)
-            (compiler-ir-block-list-call-arg-count rest))])]))
+            (compiler-ir-block-list-call-arg-count (box-get rest)))])]))
 
 (define (compiler-ir-block-list-phi-input-count [blocks : CompilerIrBlockList]) : i64
   (match blocks
@@ -1010,7 +1552,7 @@
         [(IrBlock _ instrs)
           (+
             (compiler-ir-instr-list-phi-input-count instrs)
-            (compiler-ir-block-list-phi-input-count rest))])]))
+            (compiler-ir-block-list-phi-input-count (box-get rest)))])]))
 
 (define (compiler-ir-block-list-instruction-count
   [blocks : CompilerIrBlockList]) : i64
@@ -1021,12 +1563,13 @@
         [(IrBlock _ instrs)
           (+
             (compiler-ir-instr-list-count instrs)
-            (compiler-ir-block-list-instruction-count rest))])]))
+            (compiler-ir-block-list-instruction-count (box-get rest)))])]))
 
 (define (compiler-ir-function-list-count [functions : CompilerIrFunctionList]) : i64
   (match functions
     [(IrFunctionNil) 0]
-    [(IrFunctionCons _ rest) (+ 1 (compiler-ir-function-list-count rest))]))
+    [(IrFunctionCons _ rest)
+      (+ 1 (compiler-ir-function-list-count (box-get rest)))]))
 
 (define (compiler-ir-function-list-block-count
   [functions : CompilerIrFunctionList]) : i64
@@ -1037,7 +1580,7 @@
         [(IrFunction _ _ _ _ blocks)
           (+
             (compiler-ir-block-list-count blocks)
-            (compiler-ir-function-list-block-count rest))])]))
+            (compiler-ir-function-list-block-count (box-get rest)))])]))
 
 (define (compiler-ir-function-list-instruction-count
   [functions : CompilerIrFunctionList]) : i64
@@ -1048,7 +1591,7 @@
         [(IrFunction _ _ _ _ blocks)
           (+
             (compiler-ir-block-list-instruction-count blocks)
-            (compiler-ir-function-list-instruction-count rest))])]))
+            (compiler-ir-function-list-instruction-count (box-get rest)))])]))
 
 (define (compiler-ir-function-list-empty-block-count
   [functions : CompilerIrFunctionList]) : i64
@@ -1059,7 +1602,7 @@
         [(IrFunction _ _ _ _ blocks)
           (+
             (compiler-ir-block-list-empty-count blocks)
-            (compiler-ir-function-list-empty-block-count rest))])]))
+            (compiler-ir-function-list-empty-block-count (box-get rest)))])]))
 
 (define (compiler-ir-function-list-max-instruction-count
   [functions : CompilerIrFunctionList]) : i64
@@ -1070,7 +1613,7 @@
         [(IrFunction _ _ _ _ blocks)
           (compiler-ir-max-i64
             (compiler-ir-block-list-instruction-count blocks)
-            (compiler-ir-function-list-max-instruction-count rest))])]))
+            (compiler-ir-function-list-max-instruction-count (box-get rest)))])]))
 
 (define (compiler-ir-function-list-max-block-instruction-count
   [functions : CompilerIrFunctionList]) : i64
@@ -1081,7 +1624,8 @@
         [(IrFunction _ _ _ _ blocks)
           (compiler-ir-max-i64
             (compiler-ir-block-list-max-instruction-count blocks)
-            (compiler-ir-function-list-max-block-instruction-count rest))])]))
+            (compiler-ir-function-list-max-block-instruction-count
+              (box-get rest)))])]))
 
 (define (compiler-ir-function-list-call-arg-count
   [functions : CompilerIrFunctionList]) : i64
@@ -1092,7 +1636,7 @@
         [(IrFunction _ _ _ _ blocks)
           (+
             (compiler-ir-block-list-call-arg-count blocks)
-            (compiler-ir-function-list-call-arg-count rest))])]))
+            (compiler-ir-function-list-call-arg-count (box-get rest)))])]))
 
 (define (compiler-ir-function-list-phi-input-count
   [functions : CompilerIrFunctionList]) : i64
@@ -1103,7 +1647,7 @@
         [(IrFunction _ _ _ _ blocks)
           (+
             (compiler-ir-block-list-phi-input-count blocks)
-            (compiler-ir-function-list-phi-input-count rest))])]))
+            (compiler-ir-function-list-phi-input-count (box-get rest)))])]))
 
 (define (compiler-ir-function-list-var-count
   [functions : CompilerIrFunctionList]) : i64
@@ -1112,7 +1656,7 @@
     [(IrFunctionCons func rest)
       (match func
         [(IrFunction _ _ _ vars _)
-          (+ vars (compiler-ir-function-list-var-count rest))])]))
+          (+ vars (compiler-ir-function-list-var-count (box-get rest)))])]))
 
 (define (compiler-ir-program-summary [program : CompilerIrProgram]) : CompilerIrSummary
   (match program
@@ -1245,13 +1789,37 @@
   (match values
     [(IrValueNil) ""]
     [(IrValueCons head tail)
-      (match tail
+      (match (box-get tail)
         [(IrValueNil) (compiler-ir-value-describe head)]
         [_
           (compiler-ir-cat3
             (compiler-ir-value-describe head)
             ", "
-            (compiler-ir-value-list-describe tail))])]))
+            (compiler-ir-value-list-describe (box-get tail)))])]))
+
+(define (compiler-ir-call-args-array-describe
+  [values : (Array CompilerIrValue)]
+  [index : i64]) : String
+  (if (>= index (array-length values))
+    ""
+    (string-append
+      (compiler-ir-value-describe (array-ref values index))
+      (if (= (+ index 1) (array-length values))
+        ""
+        (string-append
+          ", "
+          (compiler-ir-call-args-array-describe values (+ index 1)))))))
+
+(define (compiler-ir-call-args-describe [args : CompilerIrCallArgs]) : String
+  (match args
+    [(IrCallArgsNil) ""]
+    [(IrCallArgsOne a) (compiler-ir-value-describe a)]
+    [(IrCallArgsTwo a b)
+      (compiler-ir-cat3
+        (compiler-ir-value-describe a)
+        ", "
+        (compiler-ir-value-describe b))]
+    [(IrCallArgsArray values) (compiler-ir-call-args-array-describe values 0)]))
 
 (define (compiler-ir-binop-name [op : CompilerIrBinOp]) : String
   (match op
@@ -1474,7 +2042,10 @@
                 (compiler-ir-effect-is?
                   (IrInstrPhi
                     6
-                    (IrPhiInputCons (IrValueI64 1) "entry" (IrPhiInputNil))
+                    (compiler-ir-phi-input-cons
+                      (IrValueI64 1)
+                      "entry"
+                      (IrPhiInputNil))
                     (AstTyI64))
                   IrEffectPure)
                 (and
@@ -1501,7 +2072,7 @@
                             (IrInstrCall
                               9
                               "tl_string_eq"
-                              IrValueNil
+                              (IrCallArgsNil)
                               (AstTyBool))
                             IrEffectMemoryRead)
                           (and
@@ -1515,9 +2086,7 @@
                               (compiler-ir-effect-is?
                                 (IrInstrTailCall
                                   "fact_loop"
-                                  (IrValueCons
-                                    (IrValueVar 3)
-                                    (IrValueCons (IrValueI64 1) IrValueNil))
+                                  (IrCallArgsTwo (IrValueVar 3) (IrValueI64 1))
                                   (AstTyI64))
                                 IrEffectControlFlow)
                               (and
@@ -1867,7 +2436,7 @@
     (compiler-ir-instr-render
       (IrInstrTailCall
         "fact_loop"
-        (IrValueCons (IrValueVar 3) (IrValueCons (IrValueI64 1) IrValueNil))
+        (IrCallArgsTwo (IrValueVar 3) (IrValueI64 1))
         (AstTyI64)))
     "  tailcall fact_loop(%3, 1) : i64"))
 

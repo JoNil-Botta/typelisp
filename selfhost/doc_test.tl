@@ -1706,9 +1706,9 @@
                 (string-append
                   ";#   (begin\n"
                   (string-append
-                    ";#     (stdout-write \"hello\\n\")\n"
+                    ";#     (let [text : String \"hello\\n\"] (stdout-write (& text)))\n"
                     (string-append
-                      ";#     (stderr-write \"error\\tline\\r\")\n"
+                      ";#     (let [text : String \"error\\tline\\r\"] (stderr-write (& text)))\n"
                       (string-append
                         ";#     0))\n"
                         (string-append
@@ -2008,7 +2008,7 @@
 ;# (import \"stdlib/io.tl\")
 ;# (define (main) : i64
 ;#   (begin
-;#     (stdout-write \"actual\\n\")
+;#     (let [text : String \"actual\\n\"] (stdout-write (& text)))
 ;#     0))
 ;# ```
 ")
@@ -2020,7 +2020,7 @@
 ;# (import \"stdlib/io.tl\")
 ;# (define (main) : i64
 ;#   (begin
-;#     (stderr-write \"actual-error\\n\")
+;#     (let [text : String \"actual-error\\n\"] (stderr-write (& text)))
 ;#     0))
 ;# ```
 ")

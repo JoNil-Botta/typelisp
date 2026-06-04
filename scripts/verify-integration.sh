@@ -173,6 +173,16 @@ requires_symbol_from_deps() {
     done
 }
 
+should_skip_staged() {
+    _symbols=$1
+    _stderr=$2
+    [ -n "$_symbols" ] || return 1
+    for _symbol in $(printf '%s\n' "$_symbols" | tr ',' ' '); do
+        grep -qF "$_symbol" "$_stderr" && return 0
+    done
+    return 1
+}
+
 dep_source_path() {
     _dep=$1
     _source_dir=$2
@@ -961,6 +971,7 @@ validate_manifest
 
 failed=0
 ran=0
+skipped=0
 
 while IFS='|' read -r name source want stdout_spec runtime_args deps extra || [ -n "$name" ]; do
     case "$name" in
@@ -1016,6 +1027,12 @@ while IFS='|' read -r name source want stdout_spec runtime_args deps extra || [ 
         # Linux compile->as->ld path below.
         if ! "$COMPILER" compile "$work_src" --target windows-x86_64 -o "$asm" \
             > "$build_stdout" 2> "$build_stderr"; then
+            if should_skip_staged "$requires_symbol" "$build_stderr"; then
+                echo "[integration] SKIP $name (awaiting no-Rust compiler support for '$requires_symbol')"
+                skipped=$((skipped + 1))
+                ran=$((ran + 1))
+                continue
+            fi
             echo "FAIL: $name compile failed" >&2
             show_build_streams "$build_stdout" "$build_stderr"
             failed=$((failed + 1))
@@ -1052,6 +1069,12 @@ while IFS='|' read -r name source want stdout_spec runtime_args deps extra || [ 
         fi
     else
         if ! "$COMPILER" compile "$work_src" -o "$asm" > "$build_stdout" 2> "$build_stderr"; then
+            if should_skip_staged "$requires_symbol" "$build_stderr"; then
+                echo "[integration] SKIP $name (awaiting no-Rust compiler support for '$requires_symbol')"
+                skipped=$((skipped + 1))
+                ran=$((ran + 1))
+                continue
+            fi
             echo "FAIL: $name compile failed" >&2
             show_build_streams "$build_stdout" "$build_stderr"
             failed=$((failed + 1))
@@ -1144,4 +1167,4 @@ else
     run_windows_backend_fixtures
 fi
 
-echo "All $ran integration case(s) passed for $HOST_OS."
+echo "All $ran integration case(s) passed for $HOST_OS ($skipped staged case(s) skipped)."

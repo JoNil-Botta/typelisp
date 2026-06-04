@@ -41,6 +41,10 @@
   (CompilerLoadNoDecl)
   (CompilerLoadSomeDecl AstDecl))
 
+(defenum ResultCompilerLoadInclude
+  (OkCompilerLoadInclude AstDecl)
+  (ErrCompilerLoadInclude CompilerDiagnostic))
+
 (defenum ResultCompilerLoadModuleId
   (OkCompilerLoadModuleId String)
   (ErrCompilerLoadModuleId CompilerDiagnostic))
@@ -52,7 +56,7 @@
   (fs-path-separator? c))
 
 (define (compiler-load-absolute-path? [path : String]) : bool
-  (fs-path-absolute? path))
+  (fs-path-absolute? (& path)))
 
 (define (compiler-load-dirname [path : String]) : String
   (let
@@ -78,7 +82,10 @@
     (string-append (compiler-load-dirname importer-path) import-path)))
 
 (define (compiler-load-normalize-path [path : String]) : String
-  (fs-path-normalize path))
+  (fs-path-normalize (& path)))
+
+(define (compiler-load-safe-relative? [path : String]) : bool
+  (fs-path-safe-relative? (& path)))
 
 (define (compiler-load-string-prefix-at?
   [text : String]
@@ -125,7 +132,7 @@
 (define (compiler-load-resolve-stdlib-root
   [suffix : String]
   [roots : CompilerLoadRootList]) : CompilerLoadMaybePath
-  (if (fs-path-safe-relative? suffix)
+  (if (compiler-load-safe-relative? suffix)
     (match roots
       [(CompilerLoadRootNil) (CompilerLoadNoPath)]
       [(CompilerLoadRootCons root rest)
@@ -178,6 +185,58 @@
                   primary)])
             primary))]
       (OkPkgResolve resolved))))
+
+(define (compiler-load-include-str-def [name : String] [contents : String]) : AstDecl
+  (AstDeclDef
+    name
+    (AstSomeType (AstTyString))
+    (AstExprLiteral (AstLitString contents))))
+
+(define (compiler-load-include-str-read-error
+  [importer-path : String]
+  [include-path : String]
+  [resolved : String]) : CompilerDiagnostic
+  (compiler-diagnostic-at-start
+    importer-path
+    (string-append
+      "compiler-load: cannot read include-str "
+      (string-append
+        include-path
+        (string-append
+          " from "
+          (string-append
+            importer-path
+            (string-append " (resolved " (string-append resolved ")"))))))))
+
+(define (compiler-load-include-str-from-resolved
+  [importer-path : String]
+  [include-path : String]
+  [resolved : String]
+  [name : String]) : ResultCompilerLoadInclude
+  (if (file-exists? resolved)
+    (OkCompilerLoadInclude
+      (compiler-load-include-str-def name (read-file resolved)))
+    (ErrCompilerLoadInclude
+      (compiler-load-include-str-read-error importer-path include-path resolved))))
+
+(define (compiler-load-expand-include-str
+  [importer-path : String]
+  [include-path : String]
+  [name : String]
+  [stdlib-roots : CompilerLoadRootList]) : ResultCompilerLoadInclude
+  (match (compiler-load-resolve-import-result-with-roots
+    importer-path
+    include-path
+    stdlib-roots)
+    [(OkPkgResolve resolved)
+      (compiler-load-include-str-from-resolved
+        importer-path
+        include-path
+        resolved
+        name)]
+    [(ErrPkgResolve message)
+      (ErrCompilerLoadInclude
+        (compiler-diagnostic-at-start importer-path message))]))
 
 (define (compiler-load-decl-list-append
   [left : AstDeclList]
@@ -381,6 +440,33 @@
             [(ErrPkgResolve message)
               (ErrCompilerLoadWithPaths
                 (compiler-diagnostic-at-start importer-path message))])]
+        [(AstDeclIncludeStr name include-path)
+          (match (compiler-load-expand-include-str
+            importer-path
+            include-path
+            name
+            stdlib-roots)
+            [(OkCompilerLoadInclude expanded)
+              (match (compiler-load-decls-with-module-and-roots-cfg
+                rest
+                importer-path
+                importer-module
+                seen
+                stdlib-roots
+                cfgs)
+                [(OkCompilerLoadWithPaths
+                    rest-decls
+                    rest-paths
+                    rest-modules
+                    rest-seen)
+                  (OkCompilerLoadWithPaths
+                    (AstDeclCons expanded rest-decls)
+                    (AstDeclPathCons importer-path rest-paths)
+                    (AstDeclModuleCons importer-module rest-modules)
+                    rest-seen)]
+                [(ErrCompilerLoadWithPaths diag)
+                  (ErrCompilerLoadWithPaths diag)])]
+            [(ErrCompilerLoadInclude diag) (ErrCompilerLoadWithPaths diag)])]
         [_
           (match (compiler-load-decls-with-module-and-roots-cfg
             rest
@@ -595,19 +681,27 @@
   (match result
     [(OkAstProgramDiagnostic program)
       (begin
-        (unsafe (arena-set! enclosing))
+        (unsafe
+          (begin
+            (arena-set! enclosing)))
         (let
           [escaped-program : AstProgram (clone program)]
           (begin
-            (unsafe (arena-destroy parse-head))
+            (unsafe
+              (begin
+                (arena-destroy parse-head)))
             (OkAstProgramDiagnostic escaped-program))))]
     [(ErrAstProgramDiagnostic diag)
       (begin
-        (unsafe (arena-set! enclosing))
+        (unsafe
+          (begin
+            (arena-set! enclosing)))
         (let
           [escaped-diag : CompilerDiagnostic (clone diag)]
           (begin
-            (unsafe (arena-destroy parse-head))
+            (unsafe
+              (begin
+                (arena-destroy parse-head)))
             (ErrAstProgramDiagnostic escaped-diag))))]))
 
 (define (compiler-load-parse-source-diagnostic-escaping
@@ -618,7 +712,9 @@
     [enclosing : i64 (arena-current)]
     [parse-arena : i64 (arena-make)]
     (begin
-      (unsafe (arena-set! parse-arena))
+      (unsafe
+        (begin
+          (arena-set! parse-arena)))
       (compiler-load-parse-result-escape
         enclosing
         (arena-current)
@@ -631,7 +727,9 @@
     [enclosing : i64 (arena-current)]
     [parse-arena : i64 (arena-make)]
     (begin
-      (unsafe (arena-set! parse-arena))
+      (unsafe
+        (begin
+          (arena-set! parse-arena)))
       (compiler-load-parse-result-escape
         enclosing
         (arena-current)
@@ -910,6 +1008,15 @@
           ret))]
     [(AstDeclDefStruct _ _ _ _) (CompilerLoadSomeDecl decl)]
     [(AstDeclModule _) (CompilerLoadSomeDecl decl)]
+    [(AstDeclUnsafe inner)
+      (match (compiler-load-package-transform-decl
+        entry-path
+        decl-path
+        module
+        inner)
+        [(CompilerLoadSomeDecl transformed)
+          (CompilerLoadSomeDecl (AstDeclUnsafe transformed))]
+        [(CompilerLoadNoDecl) (CompilerLoadNoDecl)])]
     [(AstDeclComptimeDecl template)
       (match (compiler-load-package-transform-decl
         entry-path
@@ -1026,6 +1133,29 @@
             "")]
         [(ErrCompilerLoadWithPaths diag) (ErrCompilerLoadWithPaths diag)])]))
 
+(define (compiler-load-package-expand-include-str
+  [importer-path : String]
+  [include-path : String]
+  [name : String]
+  [stdlib-roots : CompilerLoadRootList]
+  [manifest-dir : String]
+  [deps : CompilerPkgDepList]) : ResultCompilerLoadInclude
+  (match (if (compiler-load-pkg-import? include-path)
+    (compiler-load-resolve-pkg-import include-path manifest-dir deps)
+    (compiler-load-resolve-import-result-with-roots
+      importer-path
+      include-path
+      stdlib-roots))
+    [(OkPkgResolve resolved)
+      (compiler-load-include-str-from-resolved
+        importer-path
+        include-path
+        resolved
+        name)]
+    [(ErrPkgResolve message)
+      (ErrCompilerLoadInclude
+        (compiler-diagnostic-at-start importer-path message))]))
+
 (define (compiler-load-package-decls-with-module-and-roots
   [decls : AstDeclList]
   [importer-path : String]
@@ -1110,6 +1240,37 @@
             [(ErrPkgResolve message)
               (ErrCompilerLoadWithPaths
                 (compiler-diagnostic-at-start importer-path message))])]
+        [(AstDeclIncludeStr name include-path)
+          (match (compiler-load-package-expand-include-str
+            importer-path
+            include-path
+            name
+            stdlib-roots
+            manifest-dir
+            deps)
+            [(OkCompilerLoadInclude expanded)
+              (match (compiler-load-package-decls-with-module-and-roots
+                rest
+                importer-path
+                importer-module
+                seen
+                stdlib-roots
+                manifest-dir
+                deps
+                cfgs)
+                [(OkCompilerLoadWithPaths
+                    rest-decls
+                    rest-paths
+                    rest-modules
+                    rest-seen)
+                  (OkCompilerLoadWithPaths
+                    (AstDeclCons expanded rest-decls)
+                    (AstDeclPathCons importer-path rest-paths)
+                    (AstDeclModuleCons importer-module rest-modules)
+                    rest-seen)]
+                [(ErrCompilerLoadWithPaths diag)
+                  (ErrCompilerLoadWithPaths diag)])]
+            [(ErrCompilerLoadInclude diag) (ErrCompilerLoadWithPaths diag)])]
         [_
           (match (compiler-load-package-decls-with-module-and-roots
             rest
@@ -1229,6 +1390,20 @@
   (match decls
     [(AstDeclNil) 0]
     [(AstDeclCons _ rest) (+ 1 (compiler-load-decl-list-count rest))]))
+
+(define (compiler-load-first-string-def?
+  [decls : AstDeclList]
+  [name : String]
+  [want : String]) : bool
+  (match decls
+    [(AstDeclCons
+        (AstDeclDef
+          got
+          (AstSomeType (AstTyString))
+          (AstExprLiteral (AstLitString text)))
+        _)
+      (and (string-eq got name) (string-eq text want))]
+    [_ false]))
 
 (define (compiler-load-decl-list-has-import-alias?
   [decls : AstDeclList]
@@ -1547,6 +1722,69 @@
         "compiler-load: cannot read import src/no_such_module_xyz.tl")]
     [(OkCompilerLoad _ _) false]))
 
+(define (compiler-load-include-str-relative-ok?) : bool
+  (begin
+    (write-file "target/cl_include_payload.txt" "hello from include")
+    (write-file
+      "target/cl_include_entry.tl"
+      "(include-str payload \"cl_include_payload.txt\")
+(define (main) : i64 0)")
+    (match (compiler-load-file-with-paths
+      "target/cl_include_entry.tl"
+      (sym-i64-empty))
+      [(OkCompilerLoadWithPaths decls _ _ _)
+        (and
+          (= (compiler-load-decl-list-count decls) 2)
+          (compiler-load-first-string-def? decls "payload" "hello from include"))]
+      [(ErrCompilerLoadWithPaths _) false])))
+
+(define (compiler-load-include-str-stdlib-root-ok?) : bool
+  (begin
+    (write-file "target/cl_include_root_payload.txt" "hello from root")
+    (match (compiler-load-source-with-paths-and-roots
+      "src/include_entry.tl"
+      "(include-str embedded \"stdlib/cl_include_root_payload.txt\")
+(define (main) : i64 0)"
+      (sym-i64-empty)
+      (CompilerLoadRootCons "target" CompilerLoadRootNil))
+      [(OkCompilerLoadWithPaths decls _ _ _)
+        (and
+          (= (compiler-load-decl-list-count decls) 2)
+          (compiler-load-first-string-def? decls "embedded" "hello from root"))]
+      [(ErrCompilerLoadWithPaths _) false])))
+
+(define (compiler-load-missing-include-str-ok?) : bool
+  (match (compiler-load-source
+    "src/app.tl"
+    "(include-str missing \"no_such_resource_xyz.txt\")
+(define value : i64 1)"
+    (sym-i64-empty))
+    [(ErrCompilerLoad diag)
+      (string-eq
+        (compiler-diagnostic-message diag)
+        "compiler-load: cannot read include-str no_such_resource_xyz.txt from src/app.tl (resolved src/no_such_resource_xyz.txt)")]
+    [(OkCompilerLoad _ _) false]))
+
+(define (compiler-load-include-str-raw-text-ok?) : bool
+  (let
+    [payload : String
+      "(import \"definitely_missing.tl\")
+(define injected : i64 7)"]
+    (begin
+      (write-file "target/cl_include_raw_payload.txt" payload)
+      (write-file
+        "target/cl_include_raw_entry.tl"
+        "(include-str payload \"cl_include_raw_payload.txt\")
+(define (main) : i64 0)")
+      (match (compiler-load-file-with-paths
+        "target/cl_include_raw_entry.tl"
+        (sym-i64-empty))
+        [(OkCompilerLoadWithPaths decls _ _ _)
+          (and
+            (= (compiler-load-decl-list-count decls) 2)
+            (compiler-load-first-string-def? decls "payload" payload))]
+        [(ErrCompilerLoadWithPaths _) false]))))
+
 ;; A parse error inside an imported file surfaces a diagnostic whose path is the
 ;; imported file (not the importer), preserving imported-file provenance (#1074).
 (define (compiler-load-imported-parse-error-path-ok?) : bool
@@ -1753,7 +1991,7 @@
       (= i n))))
 
 (define (compiler-load-normal-relative-entry? [path : String]) : bool
-  (fs-path-safe-relative? path))
+  (compiler-load-safe-relative? path))
 
 (define (compiler-load-pkg-dep-alias-seen?
   [deps : CompilerPkgDepList]
@@ -2204,7 +2442,7 @@
 
 ;: True when a path is not a safe relative suffix below its package root.
 (define (compiler-load-path-escapes? [path : String]) : bool
-  (not (fs-path-safe-relative? path)))
+  (not (compiler-load-safe-relative? path)))
 
 ;: Look up a dependency's root path by import alias.
 (define (compiler-load-pkg-dep-lookup
@@ -2489,6 +2727,30 @@
       (return
         (begin
           (panic "compiler-load: missing import smoke mismatch")
+          0)))
+    (unless
+      (compiler-load-include-str-relative-ok?)
+      (return
+        (begin
+          (panic "compiler-load: include-str relative smoke mismatch")
+          0)))
+    (unless
+      (compiler-load-include-str-stdlib-root-ok?)
+      (return
+        (begin
+          (panic "compiler-load: include-str stdlib root smoke mismatch")
+          0)))
+    (unless
+      (compiler-load-missing-include-str-ok?)
+      (return
+        (begin
+          (panic "compiler-load: missing include-str smoke mismatch")
+          0)))
+    (unless
+      (compiler-load-include-str-raw-text-ok?)
+      (return
+        (begin
+          (panic "compiler-load: include-str raw text smoke mismatch")
           0)))
     (unless
       (compiler-load-imported-parse-error-path-ok?)

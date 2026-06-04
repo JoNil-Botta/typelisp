@@ -6,6 +6,7 @@
 ;# capacity.
 ;#
 ;# Usage: `(import "stdlib/ffi.tl")`
+;: Result type for copying a TypeLisp string into caller-owned C string storage.
 (defenum FfiCStringCopyResult
   (FfiCStringCopyOk i64)
   (FfiCStringInteriorNul)
@@ -28,6 +29,10 @@
           (set! i (+ i 1))))
       found)))
 
+;: Copy exactly `n` bytes from `text` into `dst`.
+;:
+;: The caller must ensure `n` is at most `(string-length text)` and that `dst`
+;: points to writable storage for at least `n` bytes.
 (define (ffi-c-string-copy-bytes! [text : String] [dst : (MutPtr u8)] [n : i64]) : unit
   (let
     [i : i64 0]

@@ -4,6 +4,8 @@
 ;; CLI driver (`lint.tl`) and the runnable smoke (`lint_driver_smoke.tl`) can
 ;; import it. Warn-only by design (the file driver returns 0 even with findings);
 ;; CI enforcement is layered on top per #1164.
+(import "../stdlib/io.tl")
+
 (import "compiler_load.tl")
 
 (import "lint_core.tl")

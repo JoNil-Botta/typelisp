@@ -29,6 +29,8 @@
 ;; `main` and there is no duplicate-symbol clash. The selfhost namespace model
 ;; specified in SPEC.md replaces this flat import behavior with qualified module
 ;; identities.
+(import "../stdlib/io.tl")
+
 (import "lex.tl")
 
 ;; --------------------------------------------------------------------------

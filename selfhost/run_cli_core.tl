@@ -2,6 +2,8 @@
 ;;
 ;; Source-file runs build and execute in-process through stdlib fs/process
 ;; helpers. `--direct` remains accepted as a compatibility no-op.
+(import "../stdlib/io.tl")
+
 (import "host_plan.tl")
 
 (import "build_run_core.tl")

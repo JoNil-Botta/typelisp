@@ -4,6 +4,8 @@
 ;; CompilerIrProgram. It also covers scalar match and heap-backed struct/enum
 ;; construction/projection; closure, array, and enum-match lowering remain
 ;; explicit future work.
+(import "../stdlib/io.tl")
+
 (import "compiler_typecheck.tl")
 
 (import "compiler_diagnostic.tl")
@@ -1264,7 +1266,45 @@
     [(AstExprPtrCast ptr _) (lower-reach-expr all-functions names state ptr)]
     [(AstExprPtrToInt ptr) (lower-reach-expr all-functions names state ptr)]
     [(AstExprIntToPtr value _)
-      (lower-reach-expr all-functions names state value)]))
+      (lower-reach-expr all-functions names state value)]
+    [(AstExprStringData inner)
+      (lower-reach-expr all-functions names state inner)]
+    [(AstExprStringFromBytes ptr len)
+      (lower-reach-expr
+        all-functions
+        names
+        (lower-reach-expr all-functions names state ptr)
+        len)]
+    [(AstExprArrayData inner)
+      (lower-reach-expr all-functions names state inner)]
+    [(AstExprProgramArgc) state]
+    [(AstExprProgramArgv) state]
+    [(AstExprProgramEnvp) state]
+    [(AstExprCpuIdEax leaf subleaf)
+      (lower-reach-expr
+        all-functions
+        names
+        (lower-reach-expr all-functions names state leaf)
+        subleaf)]
+    [(AstExprCpuIdEbx leaf subleaf)
+      (lower-reach-expr
+        all-functions
+        names
+        (lower-reach-expr all-functions names state leaf)
+        subleaf)]
+    [(AstExprCpuIdEcx leaf subleaf)
+      (lower-reach-expr
+        all-functions
+        names
+        (lower-reach-expr all-functions names state leaf)
+        subleaf)]
+    [(AstExprCpuIdEdx leaf subleaf)
+      (lower-reach-expr
+        all-functions
+        names
+        (lower-reach-expr all-functions names state leaf)
+        subleaf)]
+    [(AstExprXgetbv index) (lower-reach-expr all-functions names state index)]))
 
 (define (lower-reach-global-decls
   [all-functions : StringI64Map]
@@ -1297,6 +1337,14 @@
     (string-i64-map-with-capacity 8192)
     (make-array LowerMaybeFunctionBody count)
     0))
+
+(define (lower-function-decl-count [decls : AstDeclList]) : i64
+  (match decls
+    [(AstDeclNil) 0]
+    [(AstDeclCons decl rest)
+      (match decl
+        [(AstDeclDefFn _ _ _ _) (+ 1 (lower-function-decl-count rest))]
+        [_ (lower-function-decl-count rest)])]))
 
 (define (lower-function-body-index-add
   [index : LowerFunctionBodyIndex]
@@ -1555,7 +1603,7 @@
             decls
             paths
             entry-path
-            (string-i64-map-len all-functions))]
+            (lower-function-decl-count decls))]
         [name-cache : LowerNameCache (lower-name-cache-from-env names)]
         (if (string-i64-map-contains? all-functions "main")
           (match (lower-reach-process
@@ -4629,13 +4677,6 @@
     (not (sym-i64-contains env name))
     (not (lower-top-level-value-defined? ctx name))))
 
-(define (lower-stdio-builtin? [name : String]) : bool
-  (cond
-    [(string-eq name "read-stdin-line") true]
-    [(string-eq name "read-stdin-bytes") true]
-    [(string-eq name "stdin-eof?") true]
-    [else (string-eq name "flush-stdout")]))
-
 (define (lower-string-runtime-builtin? [name : String]) : bool
   (cond
     [(string-eq name "substring") true]
@@ -5293,6 +5334,13 @@
     [(string-eq name "fs-process-id") true]
     [(string-eq name "fs-current-dir-status") true]
     [(string-eq name "fs-current-dir") true]
+    [(string-eq name "env-var-exists?") true]
+    [(string-eq name "env-var-value") true]
+    [(string-eq name "env-path-separator") true]
+    [(string-eq name "read-stdin-line") true]
+    [(string-eq name "read-stdin-bytes") true]
+    [(string-eq name "stdin-eof?") true]
+    [(string-eq name "flush-stdout") true]
     [(string-eq name "panic") true]
     [(string-eq name "error") true]
     [else (string-eq name "print-error")]))
@@ -5306,6 +5354,73 @@
     [(string-eq name "read-stdin-bytes") ".L_tl_read_stdin_bytes"]
     [(string-eq name "stdin-eof?") ".L_tl_stdin_eof"]
     [else ".L_tl_flush_stdout"]))
+
+(define (lower-env-runtime-name [name : String]) : String
+  (cond
+    [(string-eq name "env-var-exists?") "tl_env_var_exists"]
+    [(string-eq name "env-var-value") "tl_env_var_value"]
+    [else "env-path-separator"]))
+
+(define (lower-env-runtime-call
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [name : String]
+  [args : AstExprList]
+  [result-ty : AstType]
+  [origin : AstExpr]) : ResultLowerExpr
+  (if (string-eq name "env-path-separator")
+    (match args
+      [(AstExprNil)
+        (lower-runtime-call-values
+          state
+          (lower-env-runtime-name name)
+          IrValueNil
+          result-ty)]
+      [_ (lower-direct-call ctx state env type-env name args result-ty origin)])
+    (match args
+      [(AstExprCons arg (AstExprNil))
+        (lower-one-string-object-runtime-call
+          ctx
+          state
+          env
+          type-env
+          arg
+          (lower-env-runtime-name name)
+          result-ty
+          (string-append (string-append "lower: " name) " requires String"))]
+      [_ (lower-direct-call ctx state env type-env name args result-ty origin)])))
+
+(define (lower-stdio-runtime-call
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [name : String]
+  [args : AstExprList]
+  [result-ty : AstType]
+  [origin : AstExpr]) : ResultLowerExpr
+  (if (string-eq name "read-stdin-bytes")
+    (lower-one-arg-runtime-call
+      ctx
+      state
+      env
+      type-env
+      args
+      name
+      (lower-stdio-runtime-name name)
+      (AstTyI64)
+      result-ty
+      origin)
+    (match args
+      [(AstExprNil)
+        (lower-runtime-call-values
+          state
+          (lower-stdio-runtime-name name)
+          IrValueNil
+          result-ty)]
+      [_ (lower-direct-call ctx state env type-env name args result-ty origin)])))
 
 (define (lower-args-as
   [ctx : TcContext]
@@ -6678,6 +6793,24 @@
               (OkLowerExpr
                 (lower-cast-value value-state value-ir value-ty expr-ty))])]
         [(ErrLowerExpr diag) (ErrLowerExpr diag)])]
+    [(AstExprStringData str)
+      (lower-string-data ctx state env type-env str expr-ty)]
+    [(AstExprStringFromBytes ptr len)
+      (lower-string-from-bytes ctx state env type-env ptr len)]
+    [(AstExprArrayData array)
+      (lower-array-data ctx state env type-env array expr-ty)]
+    [(AstExprProgramArgc) (lower-entry-load state 0 expr-ty)]
+    [(AstExprProgramArgv) (lower-entry-load state 1 expr-ty)]
+    [(AstExprProgramEnvp) (lower-entry-load state 2 expr-ty)]
+    [(AstExprCpuIdEax leaf subleaf)
+      (lower-cpuid-like ctx state env type-env leaf subleaf 0)]
+    [(AstExprCpuIdEbx leaf subleaf)
+      (lower-cpuid-like ctx state env type-env leaf subleaf 1)]
+    [(AstExprCpuIdEcx leaf subleaf)
+      (lower-cpuid-like ctx state env type-env leaf subleaf 2)]
+    [(AstExprCpuIdEdx leaf subleaf)
+      (lower-cpuid-like ctx state env type-env leaf subleaf 3)]
+    [(AstExprXgetbv index) (lower-xgetbv ctx state env type-env index)]
     [_
       (ErrLowerExpr
         (lower-diagnostic-at-expr origin "lower: unsupported expression"))]))
@@ -7648,6 +7781,28 @@
             (ErrLowerExpr (lower-diagnostic-at-expr arg message)))])]
     [(ErrLowerExpr message) (ErrLowerExpr message)]))
 
+(define (lower-one-string-object-runtime-call
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [arg : AstExpr]
+  [runtime-name : String]
+  [result-ty : AstType]
+  [message : String]) : ResultLowerExpr
+  (match (lower-expr ctx state env type-env arg)
+    [(OkLowerExpr lowered)
+      (match lowered
+        [(LowerExpr arg-state arg-value arg-ty)
+          (if (lower-string-handle-type? ctx arg-ty)
+            (lower-runtime-call-values
+              arg-state
+              runtime-name
+              (IrValueCons arg-value IrValueNil)
+              result-ty)
+            (ErrLowerExpr (lower-diagnostic-at-expr arg message)))])]
+    [(ErrLowerExpr message) (ErrLowerExpr message)]))
+
 (define (lower-two-string-runtime-call
   [ctx : TcContext]
   [state : LowerState]
@@ -7763,11 +7918,100 @@
   "
 ")
 
-;; The bare `print` builtin (i64 -> unit) has no dedicated runtime symbol of its
-;; own; lower it to the already-supported `(print-string (int->string n))`
-;; followed by a trailing newline (`print` always ends the line). Both halves
-;; reuse the proven int->string / print-string runtime paths via `lower-expr`,
-;; which re-typechecks the synthesized calls, so no new codegen is introduced.
+(define (lower-print-string-value-call
+  [state : LowerState]
+  [value : CompilerIrValue]
+  [result-ty : AstType]) : ResultLowerExpr
+  (match (lower-string-fields state value)
+    [(LowerStringFields fields-state ptr len)
+      (lower-runtime-call-values
+        fields-state
+        "tl_print_str"
+        (IrValueCons ptr (IrValueCons len IrValueNil))
+        result-ty)]))
+
+(define (lower-print-string-call
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [name : String]
+  [args : AstExprList]
+  [result-ty : AstType]
+  [origin : AstExpr]) : ResultLowerExpr
+  (match args
+    [(AstExprCons arg (AstExprNil))
+      (lower-one-string-runtime-call
+        ctx
+        state
+        env
+        type-env
+        arg
+        "tl_print_str"
+        result-ty
+        (string-append (string-append "lower: " name) " requires String"))]
+    [_ (lower-direct-call ctx state env type-env name args result-ty origin)]))
+
+(define (lower-print-char-call
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [args : AstExprList]
+  [result-ty : AstType]
+  [origin : AstExpr]) : ResultLowerExpr
+  (lower-one-arg-runtime-call
+    ctx
+    state
+    env
+    type-env
+    args
+    "print-char"
+    "tl_print_char"
+    (AstTyChar)
+    result-ty
+    origin))
+
+(define (lower-print-float-call
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [args : AstExprList]
+  [result-ty : AstType]
+  [origin : AstExpr]) : ResultLowerExpr
+  (lower-one-arg-runtime-call
+    ctx
+    state
+    env
+    type-env
+    args
+    "print-float"
+    "tl_print_f64"
+    (AstTyF64)
+    result-ty
+    origin))
+
+(define (lower-print-literal-call
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [text : String]
+  [result-ty : AstType]) : ResultLowerExpr
+  (lower-one-string-runtime-call
+    ctx
+    state
+    env
+    type-env
+    (AstExprLiteral (AstLitString text))
+    "tl_print_str"
+    result-ty
+    "lower: print literal requires String"))
+
+;; The bare `print` builtin (i64 -> unit) remains compiler-owned. It lowers to
+;; int->string plus the backend runtime print ABI directly, so the public
+;; stdlib `print-string` wrapper is not an implicit fallback.
 (define (lower-print-call
   [ctx : TcContext]
   [state : LowerState]
@@ -7778,36 +8022,36 @@
   [origin : AstExpr]) : ResultLowerExpr
   (match args
     [(AstExprCons number-arg (AstExprNil))
-      (match (lower-expr
+      (match (lower-int-to-string-call
         ctx
         state
         env
         type-env
-        (AstExprCall
-          (AstExprVar "print-string")
-          (AstExprCons
-            (AstExprCall
-              (AstExprVar "int->string")
-              (AstExprCons number-arg AstExprNil))
-            AstExprNil)))
+        (AstExprCons number-arg AstExprNil)
+        (AstTyString)
+        origin)
         [(OkLowerExpr decimal-printed)
           (match decimal-printed
-            [(LowerExpr decimal-state _ _)
-              (lower-expr
-                ctx
+            [(LowerExpr decimal-state decimal-value _)
+              (match (lower-print-string-value-call
                 decimal-state
-                env
-                type-env
-                (AstExprCall
-                  (AstExprVar "print-string")
-                  (AstExprCons
-                    (AstExprLiteral (AstLitString (lower-print-newline-text)))
-                    AstExprNil)))])]
+                decimal-value
+                (AstTyUnit))
+                [(OkLowerExpr decimal-output)
+                  (match decimal-output
+                    [(LowerExpr newline-state _ _)
+                      (lower-print-literal-call
+                        ctx
+                        newline-state
+                        env
+                        type-env
+                        (lower-print-newline-text)
+                        result-ty)])]
+                [(ErrLowerExpr message) (ErrLowerExpr message)])])]
         [(ErrLowerExpr message) (ErrLowerExpr message)])]
     [_ (lower-direct-call ctx state env type-env "print" args result-ty origin)]))
 
-;; `(print-newline)` writes a single newline; lower it to `(print-string
-;; <newline>)`, reusing the existing string runtime path (no dedicated runtime).
+;; `(print-newline)` writes a single newline through the runtime print ABI.
 (define (lower-print-newline-call
   [ctx : TcContext]
   [state : LowerState]
@@ -7818,16 +8062,13 @@
   [origin : AstExpr]) : ResultLowerExpr
   (match args
     [(AstExprNil)
-      (lower-expr
+      (lower-print-literal-call
         ctx
         state
         env
         type-env
-        (AstExprCall
-          (AstExprVar "print-string")
-          (AstExprCons
-            (AstExprLiteral (AstLitString (lower-print-newline-text)))
-            AstExprNil)))]
+        (lower-print-newline-text)
+        result-ty)]
     [_
       (lower-direct-call
         ctx
@@ -7840,8 +8081,7 @@
         origin)]))
 
 ;; `(print-bool b)` writes `true`/`false` followed by a newline (matching the
-;; print family's line-terminating behavior). Lower it to a conditional pair of
-;; `print-string` calls plus the shared newline, all proven runtime paths.
+;; print family's line-terminating behavior).
 (define (lower-print-bool-call
   [ctx : TcContext]
   [state : LowerState]
@@ -7858,26 +8098,27 @@
         env
         type-env
         flag
-        (AstExprCall
-          (AstExprVar "print-string")
-          (AstExprCons (AstExprLiteral (AstLitString "true")) AstExprNil))
-        (AstExprCall
-          (AstExprVar "print-string")
-          (AstExprCons (AstExprLiteral (AstLitString "false")) AstExprNil))
-        (AstTyUnit))
-        [(OkLowerExpr word-printed)
-          (match word-printed
-            [(LowerExpr word-state _ _)
-              (lower-expr
-                ctx
+        (AstExprLiteral (AstLitString "true"))
+        (AstExprLiteral (AstLitString "false"))
+        (AstTyString))
+        [(OkLowerExpr word-lowered)
+          (match word-lowered
+            [(LowerExpr word-state word-value _)
+              (match (lower-print-string-value-call
                 word-state
-                env
-                type-env
-                (AstExprCall
-                  (AstExprVar "print-string")
-                  (AstExprCons
-                    (AstExprLiteral (AstLitString (lower-print-newline-text)))
-                    AstExprNil)))])]
+                word-value
+                (AstTyUnit))
+                [(OkLowerExpr word-printed)
+                  (match word-printed
+                    [(LowerExpr newline-state _ _)
+                      (lower-print-literal-call
+                        ctx
+                        newline-state
+                        env
+                        type-env
+                        (lower-print-newline-text)
+                        result-ty)])]
+                [(ErrLowerExpr message) (ErrLowerExpr message)])])]
         [(ErrLowerExpr message) (ErrLowerExpr message)])]
     [_
       (lower-direct-call
@@ -8481,57 +8722,6 @@
         result-ty
         origin)]))
 
-(define (lower-string-eq-call
-  [ctx : TcContext]
-  [state : LowerState]
-  [env : SymI64Env]
-  [type-env : TcTypeEnv]
-  [args : AstExprList]
-  [result-ty : AstType]
-  [origin : AstExpr]) : ResultLowerExpr
-  (match args
-    [(AstExprCons left (AstExprCons right (AstExprNil)))
-      (match (lower-expr ctx state env type-env left)
-        [(OkLowerExpr lowered-left)
-          (match lowered-left
-            [(LowerExpr left-state left-value _)
-              (match (lower-expr ctx left-state env type-env right)
-                [(OkLowerExpr lowered-right)
-                  (match lowered-right
-                    [(LowerExpr right-state right-value _)
-                      (match (lower-string-fields right-state left-value)
-                        [(LowerStringFields left-fields-state left-ptr left-len)
-                          (match (lower-string-fields
-                            left-fields-state
-                            right-value)
-                            [(LowerStringFields
-                                done-fields-state
-                                right-ptr
-                                right-len)
-                              (lower-runtime-call-values
-                                done-fields-state
-                                "tl_string_eq"
-                                (IrValueCons
-                                  left-ptr
-                                  (IrValueCons
-                                    left-len
-                                    (IrValueCons
-                                      right-ptr
-                                      (IrValueCons right-len IrValueNil))))
-                                result-ty)])])])]
-                [(ErrLowerExpr message) (ErrLowerExpr message)])])]
-        [(ErrLowerExpr message) (ErrLowerExpr message)])]
-    [_
-      (lower-direct-call
-        ctx
-        state
-        env
-        type-env
-        "string-eq"
-        args
-        result-ty
-        origin)]))
-
 (define (lower-write-file-call
   [ctx : TcContext]
   [state : LowerState]
@@ -8681,6 +8871,57 @@
         env
         type-env
         "append-file-status"
+        args
+        result-ty
+        origin)]))
+
+(define (lower-string-eq-call
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [args : AstExprList]
+  [result-ty : AstType]
+  [origin : AstExpr]) : ResultLowerExpr
+  (match args
+    [(AstExprCons left (AstExprCons right (AstExprNil)))
+      (match (lower-expr ctx state env type-env left)
+        [(OkLowerExpr lowered-left)
+          (match lowered-left
+            [(LowerExpr left-state left-value _)
+              (match (lower-expr ctx left-state env type-env right)
+                [(OkLowerExpr lowered-right)
+                  (match lowered-right
+                    [(LowerExpr right-state right-value _)
+                      (match (lower-string-fields right-state left-value)
+                        [(LowerStringFields left-fields-state left-ptr left-len)
+                          (match (lower-string-fields
+                            left-fields-state
+                            right-value)
+                            [(LowerStringFields
+                                done-fields-state
+                                right-ptr
+                                right-len)
+                              (lower-runtime-call-values
+                                done-fields-state
+                                "tl_string_eq"
+                                (IrValueCons
+                                  left-ptr
+                                  (IrValueCons
+                                    left-len
+                                    (IrValueCons
+                                      right-ptr
+                                      (IrValueCons right-len IrValueNil))))
+                                result-ty)])])])]
+                [(ErrLowerExpr message) (ErrLowerExpr message)])])]
+        [(ErrLowerExpr message) (ErrLowerExpr message)])]
+    [_
+      (lower-direct-call
+        ctx
+        state
+        env
+        type-env
+        "string-eq"
         args
         result-ty
         origin)]))
@@ -8881,6 +9122,26 @@
         origin)]
     [(string-eq name "fs-current-dir")
       (lower-fs-current-dir-call ctx state env type-env args result-ty origin)]
+    [(or
+        (string-eq name "env-var-exists?")
+        (or
+          (string-eq name "env-var-value")
+          (string-eq name "env-path-separator")))
+      (lower-env-runtime-call ctx state env type-env name args result-ty origin)]
+    [(or
+        (string-eq name "read-stdin-line")
+        (or
+          (string-eq name "read-stdin-bytes")
+          (or (string-eq name "stdin-eof?") (string-eq name "flush-stdout"))))
+      (lower-stdio-runtime-call
+        ctx
+        state
+        env
+        type-env
+        name
+        args
+        result-ty
+        origin)]
     [(or (string-eq name "panic") (string-eq name "error"))
       (lower-message-runtime-call
         ctx
@@ -9118,62 +9379,42 @@
                 origin)]
             [(and
                 (lower-builtin-call-available? ctx env name)
-                (lower-stdio-builtin? name))
-              (lower-direct-call
-                ctx
-                state
-                env
-                type-env
-                (lower-stdio-runtime-name name)
-                args
-                result-ty
-                origin)]
+                (string-eq name "print"))
+              (lower-print-call ctx state env type-env args result-ty origin)]
             [(and
                 (lower-builtin-call-available? ctx env name)
                 (lower-print-string-builtin? name))
-              (lower-message-runtime-call
+              (lower-print-string-call
                 ctx
                 state
                 env
                 type-env
-                args
                 name
-                "tl_print_str"
+                args
                 result-ty
-                "lower: print-string requires String"
                 origin)]
             [(and
                 (lower-builtin-call-available? ctx env name)
                 (string-eq name "print-char"))
-              (lower-one-arg-runtime-call
+              (lower-print-char-call
                 ctx
                 state
                 env
                 type-env
                 args
-                "print-char"
-                "tl_print_char"
-                (AstTyChar)
                 result-ty
                 origin)]
             [(and
                 (lower-builtin-call-available? ctx env name)
                 (string-eq name "print-float"))
-              (lower-one-arg-runtime-call
+              (lower-print-float-call
                 ctx
                 state
                 env
                 type-env
                 args
-                "print-float"
-                "tl_print_f64"
-                (AstTyF64)
                 result-ty
                 origin)]
-            [(and
-                (lower-builtin-call-available? ctx env name)
-                (string-eq name "print"))
-              (lower-print-call ctx state env type-env args result-ty origin)]
             [(and
                 (lower-builtin-call-available? ctx env name)
                 (string-eq name "print-newline"))
@@ -9196,6 +9437,14 @@
                 args
                 result-ty
                 origin)]
+            [(and
+                (lower-builtin-call-available? ctx env name)
+                (string-eq name "cpuid"))
+              (lower-cpuid-call ctx state env type-env args result-ty origin)]
+            [(and
+                (lower-builtin-call-available? ctx env name)
+                (string-eq name "xgetbv"))
+              (lower-xgetbv-call ctx state env type-env args origin)]
             [(and
                 (lower-builtin-call-available? ctx env name)
                 (string-eq name "clone"))
@@ -9369,6 +9618,270 @@
                         (IrValueVar load-var)
                         (AstTyI64)))]))])])]
     [(ErrLowerExpr message) (ErrLowerExpr message)]))
+
+(define (lower-string-data
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [str : AstExpr]
+  [result-ty : AstType]) : ResultLowerExpr
+  (match (lower-expr ctx state env type-env str)
+    [(OkLowerExpr lowered)
+      (match lowered
+        [(LowerExpr str-state str-value _)
+          (match (lower-load-at-offset str-state str-value 0 result-ty)
+            [(LowerExpr data-state data-value _)
+              (OkLowerExpr (LowerExpr data-state data-value result-ty))])])]
+    [(ErrLowerExpr message) (ErrLowerExpr message)]))
+
+(define (lower-array-data
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [array : AstExpr]
+  [result-ty : AstType]) : ResultLowerExpr
+  (match (lower-expr ctx state env type-env array)
+    [(OkLowerExpr lowered)
+      (match lowered
+        [(LowerExpr array-state array-value array-ty)
+          (match (tc-type-strip-region (tc-resolve-type ctx array-ty))
+            [(AstTyDynArray _)
+              (match (lower-load-at-offset array-state array-value 0 result-ty)
+                [(LowerExpr data-state data-value _)
+                  (OkLowerExpr (LowerExpr data-state data-value result-ty))])]
+            [(AstTyArray _ _)
+              (OkLowerExpr
+                (lower-cast-value array-state array-value array-ty result-ty))]
+            [_
+              (ErrLowerExpr
+                (lower-diagnostic "lower: array-data requires array"))])])]
+    [(ErrLowerExpr message) (ErrLowerExpr message)]))
+
+(define (lower-string-from-bytes
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [ptr : AstExpr]
+  [len : AstExpr]) : ResultLowerExpr
+  (match (lower-expr ctx state env type-env ptr)
+    [(OkLowerExpr ptr-lowered)
+      (match ptr-lowered
+        [(LowerExpr ptr-state ptr-value ptr-ty)
+          (match (lower-expr ctx ptr-state env type-env len)
+            [(OkLowerExpr len-lowered)
+              (match len-lowered
+                [(LowerExpr len-state len-value len-ty)
+                  (match (lower-cast-value
+                    len-state
+                    len-value
+                    len-ty
+                    (AstTyI64))
+                    [(LowerExpr len-i-state len-i-value _)
+                      (match (lower-reserve-heap-storage
+                        len-i-state
+                        16
+                        (AstTyString))
+                        [(LowerExpr base-state base-value _)
+                          (let
+                            [with-ptr : LowerState
+                              (lower-store-at-offset
+                                base-state
+                                base-value
+                                0
+                                ptr-value
+                                (lower-raw-pointer-ir-type ptr-ty))]
+                            [with-len : LowerState
+                              (lower-store-at-offset
+                                with-ptr
+                                base-value
+                                8
+                                len-i-value
+                                (AstTyI64))]
+                            (OkLowerExpr
+                              (LowerExpr with-len base-value (AstTyString))))])])])]
+            [(ErrLowerExpr message) (ErrLowerExpr message)])])]
+    [(ErrLowerExpr message) (ErrLowerExpr message)]))
+
+(define (lower-entry-load
+  [state : LowerState]
+  [kind : i64]
+  [result-ty : AstType]) : ResultLowerExpr
+  (match (lower-state-alloc-var state)
+    [(LowerAlloc allocated var-id)
+      (let
+        [instr : CompilerIrInstr
+          (cond
+            [(= kind 0) (IrInstrEntryArgc var-id)]
+            [(= kind 1) (IrInstrEntryArgv var-id)]
+            [else (IrInstrEntryEnvp var-id)])]
+        (OkLowerExpr
+          (LowerExpr
+            (lower-state-emit allocated instr)
+            (IrValueVar var-id)
+            result-ty)))]))
+
+(define (lower-cpuid-like
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [leaf : AstExpr]
+  [subleaf : AstExpr]
+  [reg-index : i64]) : ResultLowerExpr
+  (match (lower-expr ctx state env type-env leaf)
+    [(OkLowerExpr leaf-lowered)
+      (match leaf-lowered
+        [(LowerExpr leaf-state leaf-value leaf-ty)
+          (match (lower-cast-value leaf-state leaf-value leaf-ty (AstTyI64))
+            [(LowerExpr leaf-i-state leaf-i-value _)
+              (match (lower-expr ctx leaf-i-state env type-env subleaf)
+                [(OkLowerExpr subleaf-lowered)
+                  (match subleaf-lowered
+                    [(LowerExpr subleaf-state subleaf-value subleaf-ty)
+                      (match (lower-cast-value
+                        subleaf-state
+                        subleaf-value
+                        subleaf-ty
+                        (AstTyI64))
+                        [(LowerExpr subleaf-i-state subleaf-i-value _)
+                          (match (lower-state-alloc-var subleaf-i-state)
+                            [(LowerAlloc allocated var-id)
+                              (OkLowerExpr
+                                (LowerExpr
+                                  (lower-state-emit
+                                    allocated
+                                    (IrInstrCpuId
+                                      var-id
+                                      leaf-i-value
+                                      subleaf-i-value
+                                      reg-index))
+                                  (IrValueVar var-id)
+                                  (AstTyI64)))])])])]
+                [(ErrLowerExpr message) (ErrLowerExpr message)])])])]
+    [(ErrLowerExpr message) (ErrLowerExpr message)]))
+
+(define (lower-xgetbv
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [index : AstExpr]) : ResultLowerExpr
+  (match (lower-expr ctx state env type-env index)
+    [(OkLowerExpr lowered)
+      (match lowered
+        [(LowerExpr index-state index-value index-ty)
+          (match (lower-cast-value index-state index-value index-ty (AstTyI64))
+            [(LowerExpr index-i-state index-i-value _)
+              (match (lower-state-alloc-var index-i-state)
+                [(LowerAlloc allocated var-id)
+                  (OkLowerExpr
+                    (LowerExpr
+                      (lower-state-emit
+                        allocated
+                        (IrInstrXgetbv var-id index-i-value))
+                      (IrValueVar var-id)
+                      (AstTyI64)))])])])]
+    [(ErrLowerExpr message) (ErrLowerExpr message)]))
+
+(define (lower-cpuid-store-field
+  [state : LowerState]
+  [base : CompilerIrValue]
+  [leaf : CompilerIrValue]
+  [subleaf : CompilerIrValue]
+  [reg-index : i64]
+  [offset : i64]) : LowerState
+  (match (lower-state-alloc-var state)
+    [(LowerAlloc allocated var-id)
+      (lower-store-at-offset
+        (lower-state-emit
+          allocated
+          (IrInstrCpuId var-id leaf subleaf reg-index))
+        base
+        offset
+        (IrValueVar var-id)
+        (AstTyI32))]))
+
+(define (lower-cpuid-tuple-values
+  [ctx : TcContext]
+  [state : LowerState]
+  [leaf : CompilerIrValue]
+  [subleaf : CompilerIrValue]
+  [result-ty : AstType]
+  [origin : AstExpr]) : ResultLowerExpr
+  (match (tc-resolve-type ctx result-ty)
+    [(AstTyTuple elem-tys)
+      (match (lower-reserve-heap-storage
+        state
+        (lower-type-list-storage-size ctx elem-tys)
+        result-ty)
+        [(LowerExpr base-state base _)
+          (let
+            [eax-state : LowerState
+              (lower-cpuid-store-field base-state base leaf subleaf 0 0)]
+            [ebx-state : LowerState
+              (lower-cpuid-store-field eax-state base leaf subleaf 1 4)]
+            [ecx-state : LowerState
+              (lower-cpuid-store-field ebx-state base leaf subleaf 2 8)]
+            [edx-state : LowerState
+              (lower-cpuid-store-field ecx-state base leaf subleaf 3 12)]
+            (OkLowerExpr (LowerExpr edx-state base result-ty)))])]
+    [_
+      (ErrLowerExpr
+        (lower-diagnostic-at-expr origin "lower: cpuid requires tuple result"))]))
+
+(define (lower-cpuid-call
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [args : AstExprList]
+  [result-ty : AstType]
+  [origin : AstExpr]) : ResultLowerExpr
+  (match args
+    [(AstExprCons leaf (AstExprCons subleaf (AstExprNil)))
+      (match (lower-expr ctx state env type-env leaf)
+        [(OkLowerExpr leaf-lowered)
+          (match leaf-lowered
+            [(LowerExpr leaf-state leaf-value leaf-ty)
+              (match (lower-cast-value leaf-state leaf-value leaf-ty (AstTyI64))
+                [(LowerExpr leaf-i-state leaf-i-value _)
+                  (match (lower-expr ctx leaf-i-state env type-env subleaf)
+                    [(OkLowerExpr subleaf-lowered)
+                      (match subleaf-lowered
+                        [(LowerExpr subleaf-state subleaf-value subleaf-ty)
+                          (match (lower-cast-value
+                            subleaf-state
+                            subleaf-value
+                            subleaf-ty
+                            (AstTyI64))
+                            [(LowerExpr subleaf-i-state subleaf-i-value _)
+                              (lower-cpuid-tuple-values
+                                ctx
+                                subleaf-i-state
+                                leaf-i-value
+                                subleaf-i-value
+                                result-ty
+                                origin)])])]
+                    [(ErrLowerExpr message) (ErrLowerExpr message)])])])]
+        [(ErrLowerExpr message) (ErrLowerExpr message)])]
+    [_ (ErrLowerExpr (lower-diagnostic "lower: cpuid expects two arguments"))]))
+
+(define (lower-xgetbv-call
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [args : AstExprList]
+  [origin : AstExpr]) : ResultLowerExpr
+  (match args
+    [(AstExprCons index (AstExprNil))
+      (lower-xgetbv ctx state env type-env index)]
+    [_
+      (ErrLowerExpr
+        (lower-diagnostic-at-expr origin "lower: xgetbv expects one argument"))]))
 
 ;; Small emit helpers: allocate a fresh var, emit one instruction, and return a
 ;; `LowerExpr` carrying the updated state plus the result value. These flatten
@@ -13405,8 +13918,6 @@
 
 (define (lower-supported-function-return-type? [ctx : TcContext] [ty : AstType]) : bool
   (match (tc-resolve-type ctx ty)
-    [(AstTyTuple _) false]
-    [(AstTyArray _ _) false]
     [(AstTyRegion _ inner) (lower-supported-function-return-type? ctx inner)]
     [_ true]))
 
@@ -14158,12 +14669,18 @@
 (define (compiler-lower-reference-return-source) : String
   "(define (ref-return [n : i64]) : (& n i64) (& n))
 (define (ref-id [r : (& n i64)]) : (& n i64) r)
+(define (make-ref-tuple [n : i64]) : (Tuple (& n i64) i64)
+  (tuple (& n) 7))
+(define (make-ref-array [n : i64]) : (Array (& n i64) 1)
+  (array (& n)))
 (define (main [n : i64]) : i64
   (let
     [pair : (Tuple (& n i64) i64) (tuple (& n) 7)]
     [items : (Array (& n i64) 1) (array (& n))]
     (begin
       (ref-id (ref-return n))
+      (make-ref-tuple n)
+      (make-ref-array n)
       (tuple-ref pair 1)
       (array-ref items 0)
       42)))")
@@ -14287,6 +14804,11 @@
 (define (compiler-lower-comptime-f64-source) : String
   "(define (main) : f64 (comptime 1.5))")
 
+(define (compiler-lower-duplicate-function-source) : String
+  "(define (dup) : i64 1)
+(define (dup) : i64 2)
+(define (main) : i64 (dup))")
+
 (define (compiler-lower-error-ok? [src : String] [want : String]) : bool
   (match (lower-compiler-source src)
     [(ErrCompilerLower diag)
@@ -14380,7 +14902,11 @@
 (define (main) : i64 0)")
 
 (define (compiler-lower-string-runtime-source) : String
-  "(define (main) : i64
+  "(define (print-string [text : String]) : unit
+  unit)
+(define (print-str [text : String]) : unit
+  (print-string text))
+(define (main) : i64
   (let
     [left : String \"foo\"]
     [right : String \"bar\"]
@@ -14391,21 +14917,24 @@
     [spaced : String \" x\"]
     [digits : String \"7\"]
     (begin
-      (print-string (& joined))
-      (print-str (& extended))
-      (print-char #A')
-      (print-float 1.5)
+      (print-string joined)
+      (print-str extended)
       (+ (string-length (& joined))
         (+ (string-length (& extended))
           (+ (string->int (& digits))
             (+ (if (string-eq (& joined) (& extended)) 1 0)
               (cast (char-at (& spaced) 0) : i64))))))))")
 
+(define (compiler-lower-print-string-builtin-source) : String
+  "(define (main [text : String]) : i64
+  (begin
+    (print-string text)
+    (print-str (& text))
+    0))")
+
 (define (compiler-lower-borrowed-str-param-source) : String
   "(define (borrowed-score [path : (& path str)]) : i64
-  (begin
-    (print-string path)
-    (+ (string-length path) (file-exists-status path))))
+  (string-length path))
 (define (main [path : String]) : i64
   (borrowed-score (& path)))")
 
@@ -14420,24 +14949,89 @@
       (+ (string-ref 10 7) (char-at 3 4)))))")
 
 (define (compiler-lower-stdio-source) : String
-  "(define (main) : i64
+  "(define stdin-eof-state : bool false)
+(define (read-stdin-bytes [count : i64]) : String
+  (let
+    [buf : (Array u8) (make-array u8 count)]
+    (unsafe (string-from-bytes (ptr-cast (array-data buf) : (Ptr u8)) count))))
+(define (read-stdin-line) : String
+  (let
+    [buf : (Array u8) (make-array u8 0)]
+    (unsafe (string-from-bytes (ptr-cast (array-data buf) : (Ptr u8)) 0))))
+(define (stdin-eof?) : bool stdin-eof-state)
+(define (flush-stdout) : unit unit)
+(define (main) : i64
   (begin
     (flush-stdout)
     (if (stdin-eof?)
         (string-length (read-stdin-line))
         (string-length (read-stdin-bytes 3)))))")
 
-(define (compiler-lower-file-handle-status-source) : String
+(define (compiler-lower-stdio-builtin-source) : String
+  "(define (main [count : i64]) : i64
+  (begin
+    (flush-stdout)
+    (if (stdin-eof?)
+        (string-length (read-stdin-line))
+        (string-length (read-stdin-bytes count)))))")
+
+(define (compiler-lower-env-builtin-source) : String
+  "(define (main [name : String]) : i64
+  (let
+    [separator : String (env-path-separator)]
+    [value : String (env-var-value (& name))]
+    (if (env-var-exists? (& name))
+      (+ (string-length (& value)) (string-length (& separator)))
+      (string-length (& separator)))))")
+
+(define (compiler-lower-cpu-builtin-source) : String
   "(define (main) : i64
+  (let
+    [r : (Tuple i32 i32 i32 i32) (cpuid 0 0)]
+    (+ (cast (tuple-ref r 0) : i64) (xgetbv 0))))")
+
+(define (compiler-lower-file-handle-status-source) : String
+  "(extern os-open (:symbol \"open\") : (-> (Ptr u8) i32 i32 i32))
+(extern os-close (:symbol \"close\") : (-> i32 i32))
+(extern os-read (:symbol \"read\") : (-> i32 (MutPtr u8) i64 i64))
+(extern os-write (:symbol \"write\") : (-> i32 (Ptr u8) i64 i64))
+(extern os-fflush (:symbol \"fflush\") : (-> (Ptr u8) i32))
+(define (file-open-status [path : String] [mode : i64]) : i64
+  (cast
+    (os-open (unsafe (string-data path)) (cast mode : i32) (cast 384 : i32))
+    : i64))
+(define (file-close-status [handle : i64]) : i64
+  (cast (os-close (cast handle : i32)) : i64))
+(define (file-read-chunk-status [handle : i64] [count : i64]) : i64
+  (let
+    [buf : (Array u8) (make-array u8 count)]
+    (os-read (cast handle : i32) (unsafe (array-data buf)) count)))
+(define (file-write-status [handle : i64] [text : String]) : i64
+  (os-write
+    (cast handle : i32)
+    (unsafe (string-data text))
+    (string-length text)))
+(define (file-flush-status [handle : i64]) : i64
+  (cast (os-fflush (ptr-null : (Ptr u8))) : i64))
+(define (file-read-chunk-bytes [handle : i64]) : String
+  (let
+    [buf : (Array u8) (make-array u8 0)]
+    (unsafe (string-from-bytes (ptr-cast (array-data buf) : (Ptr u8)) 0))))
+(define (file-read-chunk-eof? [handle : i64]) : bool false)
+(define (append-file-status [path : String] [text : String]) : i64
+  (let
+    [handle : i64 (file-open-status path 2)]
+    (+ (file-write-status handle text) (file-close-status handle))))
+(define (main) : i64
   (let
     [path : String \"input.txt\"]
     [suffix : String \"x\"]
     [chunk : String \"chunk\"]
-    [handle : i64 (file-open-status (& path) 0)]
+    [handle : i64 (file-open-status path 0)]
     (+ handle
-      (+ (append-file-status (& path) (& suffix))
+      (+ (append-file-status path suffix)
         (+ (file-read-chunk-status handle 4)
-          (+ (file-write-status handle (& chunk))
+          (+ (file-write-status handle chunk)
             (+ (file-flush-status handle)
               (+ (string-length (file-read-chunk-bytes handle))
                 (+ (if (file-read-chunk-eof? handle) 1 0)
@@ -15053,6 +15647,16 @@
         0)]
     [_ 0]))
 
+(define (lower-test-instr-cpuid-count [instr : CompilerIrInstr]) : i64
+  (match instr
+    [(IrInstrCpuId _ _ _ _) 1]
+    [_ 0]))
+
+(define (lower-test-instr-xgetbv-count [instr : CompilerIrInstr]) : i64
+  (match instr
+    [(IrInstrXgetbv _ _) 1]
+    [_ 0]))
+
 (define (lower-test-instr-indirect-call-count [instr : CompilerIrInstr]) : i64
   (match instr
     [(IrInstrCallIndirect _ _ _ _) 1]
@@ -15372,6 +15976,22 @@
         (lower-test-instr-call-count instr name)
         (lower-test-instrs-call-count rest name))]))
 
+(define (lower-test-instrs-cpuid-count [instrs : CompilerIrInstrList]) : i64
+  (match instrs
+    [(IrInstrNil) 0]
+    [(IrInstrCons instr rest)
+      (+
+        (lower-test-instr-cpuid-count instr)
+        (lower-test-instrs-cpuid-count rest))]))
+
+(define (lower-test-instrs-xgetbv-count [instrs : CompilerIrInstrList]) : i64
+  (match instrs
+    [(IrInstrNil) 0]
+    [(IrInstrCons instr rest)
+      (+
+        (lower-test-instr-xgetbv-count instr)
+        (lower-test-instrs-xgetbv-count rest))]))
+
 (define (lower-test-instrs-indirect-call-count [instrs : CompilerIrInstrList]) : i64
   (match instrs
     [(IrInstrNil) 0]
@@ -15618,6 +16238,26 @@
           (+
             (lower-test-instrs-call-count instrs name)
             (lower-test-blocks-call-count rest name))])]))
+
+(define (lower-test-blocks-cpuid-count [blocks : CompilerIrBlockList]) : i64
+  (match blocks
+    [(IrBlockNil) 0]
+    [(IrBlockCons block rest)
+      (match block
+        [(IrBlock _ instrs)
+          (+
+            (lower-test-instrs-cpuid-count instrs)
+            (lower-test-blocks-cpuid-count rest))])]))
+
+(define (lower-test-blocks-xgetbv-count [blocks : CompilerIrBlockList]) : i64
+  (match blocks
+    [(IrBlockNil) 0]
+    [(IrBlockCons block rest)
+      (match block
+        [(IrBlock _ instrs)
+          (+
+            (lower-test-instrs-xgetbv-count instrs)
+            (lower-test-blocks-xgetbv-count rest))])]))
 
 (define (lower-test-blocks-indirect-call-count [blocks : CompilerIrBlockList]) : i64
   (match blocks
@@ -15929,6 +16569,26 @@
           (+
             (lower-test-blocks-call-count blocks name)
             (lower-test-functions-call-count rest name))])]))
+
+(define (lower-test-functions-cpuid-count [funcs : CompilerIrFunctionList]) : i64
+  (match funcs
+    [(IrFunctionNil) 0]
+    [(IrFunctionCons func rest)
+      (match func
+        [(IrFunction _ _ _ _ blocks)
+          (+
+            (lower-test-blocks-cpuid-count blocks)
+            (lower-test-functions-cpuid-count rest))])]))
+
+(define (lower-test-functions-xgetbv-count [funcs : CompilerIrFunctionList]) : i64
+  (match funcs
+    [(IrFunctionNil) 0]
+    [(IrFunctionCons func rest)
+      (match func
+        [(IrFunction _ _ _ _ blocks)
+          (+
+            (lower-test-blocks-xgetbv-count blocks)
+            (lower-test-functions-xgetbv-count rest))])]))
 
 (define (lower-test-function-call-count
   [funcs : CompilerIrFunctionList]
@@ -16935,38 +17595,39 @@
                 0)
                 unit
                 (set! ok false))
-              (if (>
+              (if (=
                 (lower-test-functions-call-count functions "tl_print_str")
-                1)
+                0)
+                unit
+                (set! ok false))
+              (if (=
+                (lower-test-functions-call-count
+                  functions
+                  "__tl_rt_print_string")
+                0)
                 unit
                 (set! ok false))
               (if (=
                 (lower-test-functions-call-count functions "print-string")
-                0)
+                2)
                 unit
                 (set! ok false))
-              (if (= (lower-test-functions-call-count functions "print-str") 0)
-                unit
-                (set! ok false))
-              (if (=
-                (lower-test-functions-call-count functions "tl_print_char")
-                1)
-                unit
-                (set! ok false))
-              (if (=
-                (lower-test-functions-call-count functions "tl_print_f64")
-                1)
-                unit
-                (set! ok false))
-              (if (= (lower-test-functions-call-count functions "print-char") 0)
-                unit
-                (set! ok false))
-              (if (=
-                (lower-test-functions-call-count functions "print-float")
-                0)
+              (if (= (lower-test-functions-call-count functions "print-str") 1)
                 unit
                 (set! ok false))
               ok))])]
+    [(ErrCompilerLower _) false]))
+
+(define (compiler-lower-print-string-builtin-shape-ok?) : bool
+  (match (lower-compiler-source (compiler-lower-print-string-builtin-source))
+    [(OkCompilerLower program _)
+      (match program
+        [(IrProgram _ functions _)
+          (and
+            (= (lower-test-functions-call-count functions "tl_print_str") 2)
+            (and
+              (= (lower-test-functions-call-count functions "print-string") 0)
+              (= (lower-test-functions-call-count functions "print-str") 0)))])]
     [(ErrCompilerLower _) false]))
 
 (define (compiler-lower-borrowed-str-param-shape-ok?) : bool
@@ -16983,22 +17644,6 @@
                   "main"
                   "borrowed-score")
                 0)
-                unit
-                (set! ok false))
-              (if (=
-                (lower-test-function-call-count
-                  functions
-                  "borrowed-score"
-                  "tl_print_str")
-                1)
-                unit
-                (set! ok false))
-              (if (=
-                (lower-test-function-call-count
-                  functions
-                  "borrowed-score"
-                  ".L_tl_file_exists_status")
-                1)
                 unit
                 (set! ok false))
               (if (>
@@ -17370,98 +18015,113 @@
                 (lower-test-functions-call-count
                   functions
                   ".L_tl_file_open_status")
-                1)
+                0)
                 unit
                 (set! ok false))
               (if (=
                 (lower-test-functions-call-count
                   functions
                   ".L_tl_file_close_status")
-                1)
+                0)
                 unit
                 (set! ok false))
               (if (=
                 (lower-test-functions-call-count
                   functions
                   ".L_tl_append_file_status")
-                1)
+                0)
                 unit
                 (set! ok false))
               (if (=
                 (lower-test-functions-call-count
                   functions
                   ".L_tl_file_read_chunk_status")
-                1)
+                0)
                 unit
                 (set! ok false))
               (if (=
                 (lower-test-functions-call-count
                   functions
                   ".L_tl_file_write_status")
-                1)
+                0)
                 unit
                 (set! ok false))
               (if (=
                 (lower-test-functions-call-count
                   functions
                   ".L_tl_file_flush_status")
-                1)
+                0)
                 unit
                 (set! ok false))
               (if (=
                 (lower-test-functions-call-count
                   functions
                   ".L_tl_file_read_chunk_bytes")
-                1)
+                0)
                 unit
                 (set! ok false))
               (if (=
                 (lower-test-functions-call-count
                   functions
                   ".L_tl_file_read_chunk_eof")
-                1)
+                0)
                 unit
                 (set! ok false))
-              (if (=
+              (if (> (lower-test-functions-call-count functions "os-open") 0)
+                unit
+                (set! ok false))
+              (if (> (lower-test-functions-call-count functions "os-close") 0)
+                unit
+                (set! ok false))
+              (if (> (lower-test-functions-call-count functions "os-read") 0)
+                unit
+                (set! ok false))
+              (if (> (lower-test-functions-call-count functions "os-write") 0)
+                unit
+                (set! ok false))
+              (if (> (lower-test-functions-call-count functions "os-fflush") 0)
+                unit
+                (set! ok false))
+              (if (>
                 (lower-test-functions-call-count functions "file-open-status")
                 0)
                 unit
                 (set! ok false))
-              (if (=
+              (if (>
                 (lower-test-functions-call-count functions "file-close-status")
                 0)
                 unit
                 (set! ok false))
-              (if (=
+              (if (>
                 (lower-test-functions-call-count functions "append-file-status")
                 0)
                 unit
                 (set! ok false))
-              (if (=
+              (if (>
                 (lower-test-functions-call-count
                   functions
                   "file-read-chunk-status")
                 0)
                 unit
                 (set! ok false))
-              (if (=
+              (if (>
                 (lower-test-functions-call-count functions "file-write-status")
                 0)
                 unit
                 (set! ok false))
-              (if (=
+              (if (>
                 (lower-test-functions-call-count functions "file-flush-status")
                 0)
                 unit
                 (set! ok false))
-              (if (=
+              (if (>
                 (lower-test-functions-call-count
                   functions
                   "file-read-chunk-bytes")
                 0)
                 unit
                 (set! ok false))
-              (if (=
+              (if (>
                 (lower-test-functions-call-count
                   functions
                   "file-read-chunk-eof?")
@@ -18099,6 +18759,97 @@
         [(ErrCompilerLower _) false])]
     [(ErrAstProgram _) false]))
 
+(define (compiler-lower-stdio-builtin-shape-ok?) : bool
+  (match (lower-compiler-source (compiler-lower-stdio-builtin-source))
+    [(OkCompilerLower program _)
+      (match program
+        [(IrProgram _ functions _)
+          (and
+            (=
+              (lower-test-functions-call-count functions ".L_tl_flush_stdout")
+              1)
+            (and
+              (=
+                (lower-test-functions-call-count functions ".L_tl_stdin_eof")
+                1)
+              (and
+                (=
+                  (lower-test-functions-call-count
+                    functions
+                    ".L_tl_read_stdin_line")
+                  1)
+                (=
+                  (lower-test-functions-call-count
+                    functions
+                    ".L_tl_read_stdin_bytes")
+                  1))))])]
+    [(ErrCompilerLower _) false]))
+
+(define (compiler-lower-env-builtin-shape-ok?) : bool
+  (match (lower-compiler-source (compiler-lower-env-builtin-source))
+    [(OkCompilerLower program _)
+      (match program
+        [(IrProgram _ functions _)
+          (let
+            [ok : bool true]
+            (begin
+              (if (=
+                (lower-test-functions-call-count functions "tl_env_var_exists")
+                1)
+                unit
+                (set! ok false))
+              (if (=
+                (lower-test-functions-call-count functions "tl_env_var_value")
+                1)
+                unit
+                (set! ok false))
+              (if (=
+                (lower-test-functions-call-count functions "env-path-separator")
+                1)
+                unit
+                (set! ok false))
+              (if (=
+                (lower-test-functions-call-count functions "env-var-exists?")
+                0)
+                unit
+                (set! ok false))
+              (if (=
+                (lower-test-functions-call-count functions "env-var-value")
+                0)
+                unit
+                (set! ok false))
+              ok))])]
+    [(ErrCompilerLower _) false]))
+
+(define (compiler-lower-cpu-builtin-shape-ok?) : bool
+  (match (lower-compiler-source (compiler-lower-cpu-builtin-source))
+    [(OkCompilerLower program _)
+      (match program
+        [(IrProgram _ functions _)
+          (let
+            [ok : bool true]
+            (begin
+              (if (>= (lower-test-functions-cpuid-count functions) 4)
+                unit
+                (set! ok false))
+              (if (= (lower-test-functions-xgetbv-count functions) 1)
+                unit
+                (set! ok false))
+              (if (= (lower-test-functions-call-count functions "cpuid") 0)
+                unit
+                (set! ok false))
+              (if (= (lower-test-functions-call-count functions "xgetbv") 0)
+                unit
+                (set! ok false))
+              (if (= (lower-test-functions-call-count functions "tl_cpuid") 0)
+                unit
+                (set! ok false))
+              (if (= (lower-test-functions-call-count functions "tl_xgetbv") 0)
+                unit
+                (set! ok false))
+              ok))])]
+    [(ErrCompilerLower _) false]))
+
 (define (compiler-lower-runtime-helper-tests-ok?) : bool
   (let
     [ok : bool true]
@@ -18113,6 +18864,9 @@
         (compiler-lower-string-runtime-source))
         unit
         (set! ok false))
+      (if (compiler-lower-print-string-builtin-shape-ok?)
+        unit
+        (set! ok false))
       (if (compiler-lower-borrowed-str-param-shape-ok?)
         unit
         (set! ok false))
@@ -18121,6 +18875,15 @@
         unit
         (set! ok false))
       (if (compiler-lower-stdio-ok?)
+        unit
+        (set! ok false))
+      (if (compiler-lower-stdio-builtin-shape-ok?)
+        unit
+        (set! ok false))
+      (if (compiler-lower-env-builtin-shape-ok?)
+        unit
+        (set! ok false))
+      (if (compiler-lower-cpu-builtin-shape-ok?)
         unit
         (set! ok false))
       (if (compiler-lower-fs-status-shape-ok?)
@@ -18245,9 +19008,7 @@
       (if (compiler-lower-tuple-shape-ok?)
         unit
         (set! ok false))
-      (if (compiler-lower-error-ok?
-        (compiler-lower-tuple-return-source)
-        "lower: unsupported expression")
+      (if (compiler-lower-ok? (compiler-lower-tuple-return-source))
         unit
         (set! ok false))
       (if (compiler-lower-clone-shape-ok?)
@@ -18433,9 +19194,7 @@
       (if (compiler-lower-ok? (compiler-lower-array-literal-source))
         unit
         (set! ok false))
-      (if (compiler-lower-error-ok?
-        (compiler-lower-fixed-array-return-source)
-        "lower: unsupported expression")
+      (if (compiler-lower-ok? (compiler-lower-fixed-array-return-source))
         unit
         (set! ok false))
       (if (compiler-lower-ok? (compiler-lower-box-source))
@@ -18482,6 +19241,11 @@
         unit
         (set! ok false))
       (if (compiler-lower-layout-query-fold-tests-ok?)
+        unit
+        (set! ok false))
+      (if (compiler-lower-error-ok?
+        (compiler-lower-duplicate-function-source)
+        "symbols: duplicate value declaration dup")
         unit
         (set! ok false))
       (if (compiler-lower-numeric-shape-ok?)

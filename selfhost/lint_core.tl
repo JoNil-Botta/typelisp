@@ -8,6 +8,8 @@
 ;# for suppression (`;; lint-allow: <rule-id>`). This module owns stable rule
 ;# metadata and the lint core verified by `compiler-lint-self-test` (driver:
 ;# `selfhost/lint_smoke.tl`).
+(import "../stdlib/io.tl")
+
 (import "compiler_ast_types.tl")
 
 ;: A single lint finding: stable rule id, human-readable message, rule-specific
@@ -670,7 +672,23 @@
       (lint-walk-expr offset threshold (lint-walk-expr ptr threshold acc))]
     [(AstExprPtrCast ptr _) (lint-walk-expr ptr threshold acc)]
     [(AstExprPtrToInt ptr) (lint-walk-expr ptr threshold acc)]
-    [(AstExprIntToPtr value _) (lint-walk-expr value threshold acc)]))
+    [(AstExprIntToPtr value _) (lint-walk-expr value threshold acc)]
+    [(AstExprStringData inner) (lint-walk-expr inner threshold acc)]
+    [(AstExprStringFromBytes ptr len)
+      (lint-walk-expr len threshold (lint-walk-expr ptr threshold acc))]
+    [(AstExprArrayData inner) (lint-walk-expr inner threshold acc)]
+    [(AstExprProgramArgc) acc]
+    [(AstExprProgramArgv) acc]
+    [(AstExprProgramEnvp) acc]
+    [(AstExprCpuIdEax leaf subleaf)
+      (lint-walk-expr subleaf threshold (lint-walk-expr leaf threshold acc))]
+    [(AstExprCpuIdEbx leaf subleaf)
+      (lint-walk-expr subleaf threshold (lint-walk-expr leaf threshold acc))]
+    [(AstExprCpuIdEcx leaf subleaf)
+      (lint-walk-expr subleaf threshold (lint-walk-expr leaf threshold acc))]
+    [(AstExprCpuIdEdx leaf subleaf)
+      (lint-walk-expr subleaf threshold (lint-walk-expr leaf threshold acc))]
+    [(AstExprXgetbv index) (lint-walk-expr index threshold acc)]))
 
 ;: Walk the body expression(s) carried by a declaration, if any.
 (define (lint-walk-decl

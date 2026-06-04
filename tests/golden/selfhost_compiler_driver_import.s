@@ -11,23 +11,33 @@ tl_current_arena:
 .L_tl_arena_poison_enabled:
     .zero 8
 
+    .data
+    .balign 8
+.L_tl_argc:
+    .quad 0
+.L_tl_argv:
+    .quad 0
+
+    .data
+    .balign 8
+.L_tl_envp:
+    .quad 0
+
 .text
 .globl _start
 .globl _tl_helper_u2etl_colon_colonhelper
 _tl_helper_u2etl_colon_colonhelper:
     pushq %rbp
     movq %rsp, %rbp
-    subq $64, %rsp
-    movq %r12, -32(%rbp)
+    subq $48, %rsp
+    movq %r12, -24(%rbp)
 .L_tl_helper_u2etl_colon_colonhelper_entry:
-    movq _tl_shared_u2etl_colon_colonshared(%rip), %rax
-    movq %rax, %r12
     movq $38, %rax
-    movq %r12, %rbx
+    movq _tl_shared_u2etl_colon_colonshared(%rip), %rbx
     addq %rbx, %rax
     movq %rax, %r12
     movq %r12, %rax
-    movq -32(%rbp), %r12
+    movq -24(%rbp), %r12
     leave
     ret
 
@@ -35,19 +45,17 @@ _tl_helper_u2etl_colon_colonhelper:
 main:
     pushq %rbp
     movq %rsp, %rbp
-    subq $64, %rsp
-    movq %r12, -32(%rbp)
+    subq $48, %rsp
+    movq %r12, -24(%rbp)
 .Lmain_entry:
     call _tl_helper_u2etl_colon_colonhelper
     movq %rax, -8(%rbp)
-    movq _tl_shared_u2etl_colon_colonshared(%rip), %rax
-    movq %rax, %r12
     movq -8(%rbp), %rax
-    movq %r12, %rbx
+    movq _tl_shared_u2etl_colon_colonshared(%rip), %rbx
     addq %rbx, %rax
     movq %rax, %r12
     movq %r12, %rax
-    movq -32(%rbp), %r12
+    movq -24(%rbp), %r12
     leave
     ret
 
@@ -122,6 +130,13 @@ tl_arena_destroy:
     ret
 
 _start:
+    movq (%rsp), %rax
+    movq %rax, .L_tl_argc(%rip)
+    leaq 8(%rsp), %rax
+    movq %rax, .L_tl_argv(%rip)
+    movq (%rsp), %rax
+    leaq 16(%rsp,%rax,8), %rax
+    movq %rax, .L_tl_envp(%rip)
     movq $0x40000000, %rsi
     xorq %rdi, %rdi
     movq $3, %rdx

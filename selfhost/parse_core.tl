@@ -3,6 +3,8 @@
 ;; The runnable `parse.tl` demo used to contain these definitions directly.
 ;; Keeping them here lets other drivers reuse the parser without importing a
 ;; second `main`.
+(import "../stdlib/io.tl")
+
 (import "sym_i64_env.tl")
 
 (import "emit_core.tl")

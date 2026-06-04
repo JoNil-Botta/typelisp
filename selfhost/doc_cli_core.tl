@@ -7,6 +7,8 @@
 ;;   typelisp run selfhost/doc.tl -- --html entry.tl imported.tl output.html
 ;;   typelisp run selfhost/doc.tl -- --test input.tl
 ;;   typelisp run selfhost/doc.tl -- --load input.tl output.md [--stdlib-root <dir>...]
+(import "../stdlib/io.tl")
+
 (import "doc_render.tl")
 
 (import "doc_html.tl")
@@ -15,12 +17,20 @@
 
 (import "compiler_load.tl")
 
+(defenum DocMaybeString
+  (DocNoString)
+  (DocSomeString String))
+
+(define (doc-print-generated [output-path : String]) : unit
+  (print-string (string-append "Generated: " (string-append output-path "\n"))))
+
 (define (doc-generate-file [input-path : String] [output-path : String]) : i64
   (let
     [source : String (read-file input-path)]
     [markdown : String (doc-render-markdown (doc-extract-source source))]
     (begin
       (write-file output-path markdown)
+      (doc-print-generated output-path)
       0)))
 
 (define (doc-read-modules [idx : i64] [end : i64]) : DocModuleList
@@ -62,6 +72,7 @@
     [modules : DocModuleList (doc-read-modules 1 (- (arg-count) 1))]
     (begin
       (write-file output-path (doc-render-module-graph-markdown modules))
+      (doc-print-generated output-path)
       0)))
 
 (define (doc-generate-loaded-file
@@ -75,6 +86,7 @@
     [(OkCompilerLoadWithPaths _ paths _ _)
       (begin
         (write-file output-path (doc-render-loaded-markdown input-path paths))
+        (doc-print-generated output-path)
         0)]
     [(ErrCompilerLoadWithPaths diag)
       (begin
@@ -87,6 +99,7 @@
     [html : String (doc-html-render-source input-path source)]
     (begin
       (write-file output-path html)
+      (doc-print-generated output-path)
       0)))
 
 (define (doc-generate-html-module-graph [output-path : String]) : i64
@@ -94,6 +107,7 @@
     [modules : DocModuleList (doc-read-modules 2 (- (arg-count) 1))]
     (begin
       (write-file output-path (doc-html-render-module-graph modules))
+      (doc-print-generated output-path)
       0)))
 
 (define (doc-test-file
@@ -116,6 +130,22 @@
         (CompilerLoadRootCons (arg (+ idx 1)) (doc-stdlib-roots (+ idx 2)))
         CompilerLoadRootNil)
       (doc-stdlib-roots (+ idx 1)))))
+
+(define (doc-has-output-option [idx : i64]) : bool
+  (if (>= idx (arg-count))
+    false
+    (if (string-eq (arg idx) "-o")
+      true
+      (doc-has-output-option (+ idx 1)))))
+
+(define (doc-output-option [idx : i64]) : DocMaybeString
+  (if (>= idx (arg-count))
+    (DocNoString)
+    (if (string-eq (arg idx) "-o")
+      (if (< (+ idx 1) (arg-count))
+        (DocSomeString (arg (+ idx 1)))
+        (DocNoString))
+      (doc-output-option (+ idx 1)))))
 
 (define (doc-invalid-args) : i64
   (begin
@@ -176,11 +206,19 @@
     (doc-invalid-load-args)))
 
 (define (doc-main-default [base : i64]) : i64
-  (if (= (arg-count) (+ base 2))
-    (doc-generate-file (arg base) (arg (+ base 1)))
-    (if (> (arg-count) (+ base 2))
-      (doc-generate-module-graph (arg (- (arg-count) 1)))
-      (doc-invalid-args))))
+  (cond
+    [(doc-has-output-option (+ base 1))
+      (match (doc-output-option (+ base 1))
+        [(DocSomeString output-path)
+          (doc-generate-loaded-file
+            (arg base)
+            output-path
+            (doc-stdlib-roots (+ base 1)))]
+        [(DocNoString) (doc-invalid-args)])]
+    [(= (arg-count) (+ base 2)) (doc-generate-file (arg base) (arg (+ base 1)))]
+    [(> (arg-count) (+ base 2))
+      (doc-generate-module-graph (arg (- (arg-count) 1)))]
+    [else (doc-invalid-args)]))
 
 (define (doc-main-dispatch [kind : i64] [base : i64]) : i64
   (match kind

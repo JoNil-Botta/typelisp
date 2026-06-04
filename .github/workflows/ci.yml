@@ -15,8 +15,9 @@ jobs:
   # TypeLisp is self-hosted: there is no Rust compiler to build. The single
   # verification flow fetches the published self-hosted stage0 (cli.tl) and runs
   # every gate through it (and, on Linux, through a freshly bootstrapped stage1).
-  # The gate stays cross-platform; individual scripts may skip explicitly
-  # documented Linux-only or Windows-blocked coverage.
+  # The gate is fail-closed: Linux and Windows must run every applicable gate.
+  # Do not add skip flags; compiler/runtime capability changes should land first,
+  # then a follow-up PR can use the new capability.
   ci:
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.os }}
@@ -39,10 +40,22 @@ jobs:
         run: scripts/check-implementation-languages.sh
 
       - name: Check native toolchain
-        if: ${{ matrix.os == 'ubuntu-latest' }}
+        shell: bash
         run: |
-          command -v as
-          command -v ld
+          case "$RUNNER_OS" in
+            Linux)
+              command -v as
+              command -v ld
+              ;;
+            Windows)
+              command -v clang
+              command -v lld-link || command -v lld-link.exe
+              ;;
+            *)
+              echo "unsupported runner OS: $RUNNER_OS" >&2
+              exit 1
+              ;;
+          esac
 
       - name: Stage0 verification
         shell: bash

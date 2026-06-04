@@ -121,23 +121,33 @@ stage1_symbol_regex() {
         .L_tl_*:)
             symbol=${needle#.L_tl_}
             symbol=${symbol%:}
-            printf '(_tl|\\.L_tl)_%s\n' "$symbol"
+            printf '(_tl__u2eL_tl_%s|_tl_%s|\\.L_tl_%s)\n' "$symbol" "$symbol" "$symbol"
+            return 0
+            ;;
+        .L_tl_*)
+            symbol=${needle#.L_tl_}
+            printf '(_tl__u2eL_tl_%s|_tl_%s|\\.L_tl_%s)\n' "$symbol" "$symbol" "$symbol"
             return 0
             ;;
         _tl_*:)
             symbol=${needle#_tl_}
             symbol=${symbol%:}
-            printf '^_tl_[[:alnum:]_]+_u2etl_colon_colon%s:$\n' "$symbol"
+            printf '^(_tl_([[:alnum:]_]+_u2etl_colon_colon|[[:alnum:]_]+_)?|tl_)%s:$\n' "$symbol"
             return 0
             ;;
         _tl_*)
             symbol=${needle#_tl_}
-            printf '_tl_[[:alnum:]_]+_u2etl_colon_colon%s\n' "$symbol"
+            printf '(_tl_([[:alnum:]_]+_u2etl_colon_colon|[[:alnum:]_]+_)?|tl_)%s([^[:alnum:]_]|$)\n' "$symbol"
             return 0
             ;;
         call\ _tl_*)
             symbol=${needle#call _tl_}
-            printf 'call[[:space:]]+_tl_[[:alnum:]_]+_u2etl_colon_colon%s\n' "$symbol"
+            printf 'call[[:space:]]+(_tl_([[:alnum:]_]+_u2etl_colon_colon|[[:alnum:]_]+_)?|tl_)%s([^[:alnum:]_]|$)\n' "$symbol"
+            return 0
+            ;;
+        call\ .L_tl_*)
+            symbol=${needle#call .L_tl_}
+            printf 'call[[:space:]]+(_tl__u2eL_tl_%s|_tl_%s|\\.L_tl_%s)\n' "$symbol" "$symbol" "$symbol"
             return 0
             ;;
     esac
@@ -157,16 +167,6 @@ stage1_count_text() {
         return
     }
     grep -E -- "$regex" "$asm_path" | wc -l | tr -d ' '
-}
-
-staged_symbol_matches() {
-    symbols=$1
-    err_path=$2
-    [ -n "$symbols" ] || return 1
-    for symbol in $(printf '%s\n' "$symbols" | tr ',' ' '); do
-        grep -qF "$symbol" "$err_path" && return 0
-    done
-    return 1
 }
 
 main_label_count() {
@@ -193,10 +193,7 @@ ensure_compiled() {
     fi
 
     if [ "$EXPECTATION_MODE" = stage1 ] && [ -n "$case_requires_stage0_mode" ]; then
-        echo "[selfhost-compile] SKIP $case_id (stage1 blocker: $case_requires_stage0_mode)"
-        skipped=$((skipped + 1))
-        compiled=2
-        return
+        fail "$case_id declares a stage1 blocker in fail-closed CI: $case_requires_stage0_mode"
     fi
 
     echo "[selfhost-compile] $case_id ($case_source)"
@@ -205,12 +202,6 @@ ensure_compiled() {
     code=$?
     set -e
     if [ "$code" -ne 0 ]; then
-        if staged_symbol_matches "$case_requires_symbol" "$err_path"; then
-            echo "[selfhost-compile] SKIP $case_id (awaiting no-Rust compiler support for '$case_requires_symbol')"
-            skipped=$((skipped + 1))
-            compiled=2
-            return
-        fi
         echo "stdout:" >&2
         sed 's/^/  /' "$out_path" >&2
         echo "stderr:" >&2
@@ -269,7 +260,6 @@ main_policy=
 case_dir=
 compiled=1
 case_count=0
-skipped=0
 case_requires_stage0_mode=
 
 while IFS='|' read -r kind a b c d e; do
@@ -340,6 +330,3 @@ if [ -n "$case_id" ]; then
 fi
 
 echo "selfhost compile manifest passed: $case_count case(s) ($EXPECTATION_MODE mode)"
-if [ "$skipped" -ne 0 ]; then
-    echo "selfhost compile manifest: $skipped case(s) skipped in $EXPECTATION_MODE mode (blockers documented in manifest)"
-fi

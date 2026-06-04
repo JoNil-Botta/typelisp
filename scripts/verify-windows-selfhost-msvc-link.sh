@@ -305,10 +305,6 @@ assert_contains() {
     fi
 }
 
-compiler_advertises_link_inputs() {
-    "$COMPILER" --help 2>&1 | grep -q -- "--link-lib"
-}
-
 if [ -z "${TYPELISP_WINDOWS_CLANG:-}" ]; then
     CLANG_PATH=$(find_clang || true)
     if [ -z "$CLANG_PATH" ]; then
@@ -506,89 +502,85 @@ if command -v cygpath >/dev/null 2>&1; then
     PUBLIC_LINK_BIN_DISPLAY=$(cygpath -m "$PUBLIC_LINK_BIN")
 fi
 
-if compiler_advertises_link_inputs; then
-    echo "[windows-selfhost-msvc] public build --link-lib"
-    if ! "$COMPILER" build "$LINK_SRC" --target windows-x86_64 -o "$PUBLIC_LINK_BIN" \
-        --stdlib-root "$ROOT/stdlib" --link-search "$LINK_SEARCH" --link-lib ffi_add7 \
-        > "$WORKDIR/public-build-link.stdout" 2> "$WORKDIR/public-build-link.stderr"; then
-        sed 's/^/  /' "$WORKDIR/public-build-link.stdout" >&2 || true
-        sed 's/^/  /' "$WORKDIR/public-build-link.stderr" >&2 || true
-        fail "public build --link-lib failed"
-    fi
-    assert_contains "$WORKDIR/public-build-link.stdout" "Generated: $PUBLIC_LINK_BIN_DISPLAY"
-    assert_empty "$WORKDIR/public-build-link.stderr"
-
-    set +e
-    "$PUBLIC_LINK_BIN" > "$WORKDIR/public-built-link.stdout" 2> "$WORKDIR/public-built-link.stderr"
-    public_built_link_status=$?
-    set -e
-    if [ "$public_built_link_status" -ne 42 ]; then
-        sed 's/^/  /' "$WORKDIR/public-built-link.stdout" >&2 || true
-        sed 's/^/  /' "$WORKDIR/public-built-link.stderr" >&2 || true
-        fail "public linked executable expected exit 42, got $public_built_link_status"
-    fi
-    assert_empty "$WORKDIR/public-built-link.stdout"
-    assert_empty "$WORKDIR/public-built-link.stderr"
-
-    echo "[windows-selfhost-msvc] public run --link-lib"
-    set +e
-    "$COMPILER" run "$LINK_SRC" --target windows-x86_64 --stdlib-root "$ROOT/stdlib" \
-        --link-search "$LINK_SEARCH" --link-lib ffi_add7 \
-        > "$WORKDIR/public-run-link.stdout" 2> "$WORKDIR/public-run-link.stderr"
-    public_run_link_status=$?
-    set -e
-    if [ "$public_run_link_status" -ne 42 ]; then
-        sed 's/^/  /' "$WORKDIR/public-run-link.stdout" >&2 || true
-        sed 's/^/  /' "$WORKDIR/public-run-link.stderr" >&2 || true
-        fail "public run --link-lib expected exit 42, got $public_run_link_status"
-    fi
-    assert_empty "$WORKDIR/public-run-link.stdout"
-    assert_empty "$WORKDIR/public-run-link.stderr"
-
-    PUBLIC_LINK_METADATA_BIN="$WORKDIR/public-link-metadata-main.exe"
-    PUBLIC_LINK_METADATA_BIN_DISPLAY=$PUBLIC_LINK_METADATA_BIN
-    if command -v cygpath >/dev/null 2>&1; then
-        PUBLIC_LINK_METADATA_BIN_DISPLAY=$(cygpath -m "$PUBLIC_LINK_METADATA_BIN")
-    fi
-
-    echo "[windows-selfhost-msvc] public build extern link metadata"
-    if ! "$COMPILER" build "$LINK_METADATA_SRC" --target windows-x86_64 \
-        -o "$PUBLIC_LINK_METADATA_BIN" --stdlib-root "$ROOT/stdlib" \
-        > "$WORKDIR/public-build-link-metadata.stdout" 2> "$WORKDIR/public-build-link-metadata.stderr"; then
-        sed 's/^/  /' "$WORKDIR/public-build-link-metadata.stdout" >&2 || true
-        sed 's/^/  /' "$WORKDIR/public-build-link-metadata.stderr" >&2 || true
-        fail "public build extern link metadata failed"
-    fi
-    assert_contains "$WORKDIR/public-build-link-metadata.stdout" "Generated: $PUBLIC_LINK_METADATA_BIN_DISPLAY"
-    assert_empty "$WORKDIR/public-build-link-metadata.stderr"
-
-    set +e
-    "$PUBLIC_LINK_METADATA_BIN" > "$WORKDIR/public-built-link-metadata.stdout" 2> "$WORKDIR/public-built-link-metadata.stderr"
-    public_built_link_metadata_status=$?
-    set -e
-    if [ "$public_built_link_metadata_status" -ne 42 ]; then
-        sed 's/^/  /' "$WORKDIR/public-built-link-metadata.stdout" >&2 || true
-        sed 's/^/  /' "$WORKDIR/public-built-link-metadata.stderr" >&2 || true
-        fail "public metadata linked executable expected exit 42, got $public_built_link_metadata_status"
-    fi
-    assert_empty "$WORKDIR/public-built-link-metadata.stdout"
-    assert_empty "$WORKDIR/public-built-link-metadata.stderr"
-
-    echo "[windows-selfhost-msvc] public run extern link metadata"
-    set +e
-    "$COMPILER" run "$LINK_METADATA_SRC" --target windows-x86_64 --stdlib-root "$ROOT/stdlib" \
-        > "$WORKDIR/public-run-link-metadata.stdout" 2> "$WORKDIR/public-run-link-metadata.stderr"
-    public_run_link_metadata_status=$?
-    set -e
-    if [ "$public_run_link_metadata_status" -ne 42 ]; then
-        sed 's/^/  /' "$WORKDIR/public-run-link-metadata.stdout" >&2 || true
-        sed 's/^/  /' "$WORKDIR/public-run-link-metadata.stderr" >&2 || true
-        fail "public run extern link metadata expected exit 42, got $public_run_link_metadata_status"
-    fi
-    assert_empty "$WORKDIR/public-run-link-metadata.stdout"
-    assert_empty "$WORKDIR/public-run-link-metadata.stderr"
-else
-    echo "[windows-selfhost-msvc] skipping public build/run --link-lib until the compiler advertises --link-lib"
+echo "[windows-selfhost-msvc] public build --link-lib"
+if ! "$COMPILER" build "$LINK_SRC" --target windows-x86_64 -o "$PUBLIC_LINK_BIN" \
+    --stdlib-root "$ROOT/stdlib" --link-search "$LINK_SEARCH" --link-lib ffi_add7 \
+    > "$WORKDIR/public-build-link.stdout" 2> "$WORKDIR/public-build-link.stderr"; then
+    sed 's/^/  /' "$WORKDIR/public-build-link.stdout" >&2 || true
+    sed 's/^/  /' "$WORKDIR/public-build-link.stderr" >&2 || true
+    fail "public build --link-lib failed"
 fi
+assert_contains "$WORKDIR/public-build-link.stdout" "Generated: $PUBLIC_LINK_BIN_DISPLAY"
+assert_empty "$WORKDIR/public-build-link.stderr"
+
+set +e
+"$PUBLIC_LINK_BIN" > "$WORKDIR/public-built-link.stdout" 2> "$WORKDIR/public-built-link.stderr"
+public_built_link_status=$?
+set -e
+if [ "$public_built_link_status" -ne 42 ]; then
+    sed 's/^/  /' "$WORKDIR/public-built-link.stdout" >&2 || true
+    sed 's/^/  /' "$WORKDIR/public-built-link.stderr" >&2 || true
+    fail "public linked executable expected exit 42, got $public_built_link_status"
+fi
+assert_empty "$WORKDIR/public-built-link.stdout"
+assert_empty "$WORKDIR/public-built-link.stderr"
+
+echo "[windows-selfhost-msvc] public run --link-lib"
+set +e
+"$COMPILER" run "$LINK_SRC" --target windows-x86_64 --stdlib-root "$ROOT/stdlib" \
+    --link-search "$LINK_SEARCH" --link-lib ffi_add7 \
+    > "$WORKDIR/public-run-link.stdout" 2> "$WORKDIR/public-run-link.stderr"
+public_run_link_status=$?
+set -e
+if [ "$public_run_link_status" -ne 42 ]; then
+    sed 's/^/  /' "$WORKDIR/public-run-link.stdout" >&2 || true
+    sed 's/^/  /' "$WORKDIR/public-run-link.stderr" >&2 || true
+    fail "public run --link-lib expected exit 42, got $public_run_link_status"
+fi
+assert_empty "$WORKDIR/public-run-link.stdout"
+assert_empty "$WORKDIR/public-run-link.stderr"
+
+PUBLIC_LINK_METADATA_BIN="$WORKDIR/public-link-metadata-main.exe"
+PUBLIC_LINK_METADATA_BIN_DISPLAY=$PUBLIC_LINK_METADATA_BIN
+if command -v cygpath >/dev/null 2>&1; then
+    PUBLIC_LINK_METADATA_BIN_DISPLAY=$(cygpath -m "$PUBLIC_LINK_METADATA_BIN")
+fi
+
+echo "[windows-selfhost-msvc] public build extern link metadata"
+if ! "$COMPILER" build "$LINK_METADATA_SRC" --target windows-x86_64 \
+    -o "$PUBLIC_LINK_METADATA_BIN" --stdlib-root "$ROOT/stdlib" \
+    > "$WORKDIR/public-build-link-metadata.stdout" 2> "$WORKDIR/public-build-link-metadata.stderr"; then
+    sed 's/^/  /' "$WORKDIR/public-build-link-metadata.stdout" >&2 || true
+    sed 's/^/  /' "$WORKDIR/public-build-link-metadata.stderr" >&2 || true
+    fail "public build extern link metadata failed"
+fi
+assert_contains "$WORKDIR/public-build-link-metadata.stdout" "Generated: $PUBLIC_LINK_METADATA_BIN_DISPLAY"
+assert_empty "$WORKDIR/public-build-link-metadata.stderr"
+
+set +e
+"$PUBLIC_LINK_METADATA_BIN" > "$WORKDIR/public-built-link-metadata.stdout" 2> "$WORKDIR/public-built-link-metadata.stderr"
+public_built_link_metadata_status=$?
+set -e
+if [ "$public_built_link_metadata_status" -ne 42 ]; then
+    sed 's/^/  /' "$WORKDIR/public-built-link-metadata.stdout" >&2 || true
+    sed 's/^/  /' "$WORKDIR/public-built-link-metadata.stderr" >&2 || true
+    fail "public metadata linked executable expected exit 42, got $public_built_link_metadata_status"
+fi
+assert_empty "$WORKDIR/public-built-link-metadata.stdout"
+assert_empty "$WORKDIR/public-built-link-metadata.stderr"
+
+echo "[windows-selfhost-msvc] public run extern link metadata"
+set +e
+"$COMPILER" run "$LINK_METADATA_SRC" --target windows-x86_64 --stdlib-root "$ROOT/stdlib" \
+    > "$WORKDIR/public-run-link-metadata.stdout" 2> "$WORKDIR/public-run-link-metadata.stderr"
+public_run_link_metadata_status=$?
+set -e
+if [ "$public_run_link_metadata_status" -ne 42 ]; then
+    sed 's/^/  /' "$WORKDIR/public-run-link-metadata.stdout" >&2 || true
+    sed 's/^/  /' "$WORKDIR/public-run-link-metadata.stderr" >&2 || true
+    fail "public run extern link metadata expected exit 42, got $public_run_link_metadata_status"
+fi
+assert_empty "$WORKDIR/public-run-link-metadata.stdout"
+assert_empty "$WORKDIR/public-run-link-metadata.stderr"
 
 echo "windows selfhost MSVC link smoke passed"

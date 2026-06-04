@@ -1,4 +1,6 @@
 ;; compiler_specialize.tl - Selfhost comptime function specialization (#832).
+(import "../stdlib/io.tl")
+
 (import "compiler_ctfe.tl")
 
 (import "compiler_diagnostic.tl")
@@ -1234,6 +1236,74 @@
         [(OkSpecExpr rewritten state2)
           (OkSpecExpr (AstExprIntToPtr rewritten ty) state2)]
         [(ErrSpecExpr diag) (ErrSpecExpr diag)])]
+    [(AstExprStringData inner)
+      (match (spec-rewrite-expr inner templates state)
+        [(OkSpecExpr rewritten state2)
+          (OkSpecExpr (AstExprStringData rewritten) state2)]
+        [(ErrSpecExpr diag) (ErrSpecExpr diag)])]
+    [(AstExprStringFromBytes ptr len)
+      (match (spec-rewrite-expr ptr templates state)
+        [(OkSpecExpr rewritten-ptr ptr-state)
+          (match (spec-rewrite-expr len templates ptr-state)
+            [(OkSpecExpr rewritten-len len-state)
+              (OkSpecExpr
+                (AstExprStringFromBytes rewritten-ptr rewritten-len)
+                len-state)]
+            [(ErrSpecExpr diag) (ErrSpecExpr diag)])]
+        [(ErrSpecExpr diag) (ErrSpecExpr diag)])]
+    [(AstExprArrayData inner)
+      (match (spec-rewrite-expr inner templates state)
+        [(OkSpecExpr rewritten state2)
+          (OkSpecExpr (AstExprArrayData rewritten) state2)]
+        [(ErrSpecExpr diag) (ErrSpecExpr diag)])]
+    [(AstExprProgramArgc) (OkSpecExpr (AstExprProgramArgc) state)]
+    [(AstExprProgramArgv) (OkSpecExpr (AstExprProgramArgv) state)]
+    [(AstExprProgramEnvp) (OkSpecExpr (AstExprProgramEnvp) state)]
+    [(AstExprCpuIdEax leaf subleaf)
+      (match (spec-rewrite-expr leaf templates state)
+        [(OkSpecExpr rewritten-leaf leaf-state)
+          (match (spec-rewrite-expr subleaf templates leaf-state)
+            [(OkSpecExpr rewritten-subleaf subleaf-state)
+              (OkSpecExpr
+                (AstExprCpuIdEax rewritten-leaf rewritten-subleaf)
+                subleaf-state)]
+            [(ErrSpecExpr diag) (ErrSpecExpr diag)])]
+        [(ErrSpecExpr diag) (ErrSpecExpr diag)])]
+    [(AstExprCpuIdEbx leaf subleaf)
+      (match (spec-rewrite-expr leaf templates state)
+        [(OkSpecExpr rewritten-leaf leaf-state)
+          (match (spec-rewrite-expr subleaf templates leaf-state)
+            [(OkSpecExpr rewritten-subleaf subleaf-state)
+              (OkSpecExpr
+                (AstExprCpuIdEbx rewritten-leaf rewritten-subleaf)
+                subleaf-state)]
+            [(ErrSpecExpr diag) (ErrSpecExpr diag)])]
+        [(ErrSpecExpr diag) (ErrSpecExpr diag)])]
+    [(AstExprCpuIdEcx leaf subleaf)
+      (match (spec-rewrite-expr leaf templates state)
+        [(OkSpecExpr rewritten-leaf leaf-state)
+          (match (spec-rewrite-expr subleaf templates leaf-state)
+            [(OkSpecExpr rewritten-subleaf subleaf-state)
+              (OkSpecExpr
+                (AstExprCpuIdEcx rewritten-leaf rewritten-subleaf)
+                subleaf-state)]
+            [(ErrSpecExpr diag) (ErrSpecExpr diag)])]
+        [(ErrSpecExpr diag) (ErrSpecExpr diag)])]
+    [(AstExprCpuIdEdx leaf subleaf)
+      (match (spec-rewrite-expr leaf templates state)
+        [(OkSpecExpr rewritten-leaf leaf-state)
+          (match (spec-rewrite-expr subleaf templates leaf-state)
+            [(OkSpecExpr rewritten-subleaf subleaf-state)
+              (OkSpecExpr
+                (AstExprCpuIdEdx rewritten-leaf rewritten-subleaf)
+                subleaf-state)]
+            [(ErrSpecExpr diag) (ErrSpecExpr diag)])]
+        [(ErrSpecExpr diag) (ErrSpecExpr diag)])]
+    [(AstExprXgetbv index)
+      (match (spec-rewrite-expr index templates state)
+        [(OkSpecExpr rewritten state2)
+          (OkSpecExpr (AstExprXgetbv rewritten) state2)]
+        [(ErrSpecExpr diag) (ErrSpecExpr diag)])]
     [(AstExprQuote inner)
       (match (spec-rewrite-expr inner templates state)
         [(OkSpecExpr rewritten state2)
@@ -1546,6 +1616,63 @@
       (match (spec-substitute-values-expr value subs)
         [(OkSpecSubExpr rewritten)
           (OkSpecSubExpr (AstExprIntToPtr rewritten ty))]
+        [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
+    [(AstExprStringData inner)
+      (match (spec-substitute-values-expr inner subs)
+        [(OkSpecSubExpr rewritten)
+          (OkSpecSubExpr (AstExprStringData rewritten))]
+        [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
+    [(AstExprStringFromBytes ptr len)
+      (match (spec-substitute-values-expr ptr subs)
+        [(OkSpecSubExpr rewritten-ptr)
+          (match (spec-substitute-values-expr len subs)
+            [(OkSpecSubExpr rewritten-len)
+              (OkSpecSubExpr
+                (AstExprStringFromBytes rewritten-ptr rewritten-len))]
+            [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
+        [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
+    [(AstExprArrayData inner)
+      (match (spec-substitute-values-expr inner subs)
+        [(OkSpecSubExpr rewritten) (OkSpecSubExpr (AstExprArrayData rewritten))]
+        [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
+    [(AstExprProgramArgc) (OkSpecSubExpr (AstExprProgramArgc))]
+    [(AstExprProgramArgv) (OkSpecSubExpr (AstExprProgramArgv))]
+    [(AstExprProgramEnvp) (OkSpecSubExpr (AstExprProgramEnvp))]
+    [(AstExprCpuIdEax leaf subleaf)
+      (match (spec-substitute-values-expr leaf subs)
+        [(OkSpecSubExpr rewritten-leaf)
+          (match (spec-substitute-values-expr subleaf subs)
+            [(OkSpecSubExpr rewritten-subleaf)
+              (OkSpecSubExpr (AstExprCpuIdEax rewritten-leaf rewritten-subleaf))]
+            [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
+        [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
+    [(AstExprCpuIdEbx leaf subleaf)
+      (match (spec-substitute-values-expr leaf subs)
+        [(OkSpecSubExpr rewritten-leaf)
+          (match (spec-substitute-values-expr subleaf subs)
+            [(OkSpecSubExpr rewritten-subleaf)
+              (OkSpecSubExpr (AstExprCpuIdEbx rewritten-leaf rewritten-subleaf))]
+            [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
+        [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
+    [(AstExprCpuIdEcx leaf subleaf)
+      (match (spec-substitute-values-expr leaf subs)
+        [(OkSpecSubExpr rewritten-leaf)
+          (match (spec-substitute-values-expr subleaf subs)
+            [(OkSpecSubExpr rewritten-subleaf)
+              (OkSpecSubExpr (AstExprCpuIdEcx rewritten-leaf rewritten-subleaf))]
+            [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
+        [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
+    [(AstExprCpuIdEdx leaf subleaf)
+      (match (spec-substitute-values-expr leaf subs)
+        [(OkSpecSubExpr rewritten-leaf)
+          (match (spec-substitute-values-expr subleaf subs)
+            [(OkSpecSubExpr rewritten-subleaf)
+              (OkSpecSubExpr (AstExprCpuIdEdx rewritten-leaf rewritten-subleaf))]
+            [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
+        [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
+    [(AstExprXgetbv index)
+      (match (spec-substitute-values-expr index subs)
+        [(OkSpecSubExpr rewritten) (OkSpecSubExpr (AstExprXgetbv rewritten))]
         [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
     [(AstExprQuote inner)
       (match (spec-substitute-values-expr inner subs)
@@ -1930,6 +2057,63 @@
         [(OkSpecSubExpr rewritten)
           (OkSpecSubExpr
             (AstExprIntToPtr rewritten (spec-substitute-type ty subs)))]
+        [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
+    [(AstExprStringData inner)
+      (match (spec-substitute-types-expr inner subs)
+        [(OkSpecSubExpr rewritten)
+          (OkSpecSubExpr (AstExprStringData rewritten))]
+        [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
+    [(AstExprStringFromBytes ptr len)
+      (match (spec-substitute-types-expr ptr subs)
+        [(OkSpecSubExpr rewritten-ptr)
+          (match (spec-substitute-types-expr len subs)
+            [(OkSpecSubExpr rewritten-len)
+              (OkSpecSubExpr
+                (AstExprStringFromBytes rewritten-ptr rewritten-len))]
+            [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
+        [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
+    [(AstExprArrayData inner)
+      (match (spec-substitute-types-expr inner subs)
+        [(OkSpecSubExpr rewritten) (OkSpecSubExpr (AstExprArrayData rewritten))]
+        [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
+    [(AstExprProgramArgc) (OkSpecSubExpr (AstExprProgramArgc))]
+    [(AstExprProgramArgv) (OkSpecSubExpr (AstExprProgramArgv))]
+    [(AstExprProgramEnvp) (OkSpecSubExpr (AstExprProgramEnvp))]
+    [(AstExprCpuIdEax leaf subleaf)
+      (match (spec-substitute-types-expr leaf subs)
+        [(OkSpecSubExpr rewritten-leaf)
+          (match (spec-substitute-types-expr subleaf subs)
+            [(OkSpecSubExpr rewritten-subleaf)
+              (OkSpecSubExpr (AstExprCpuIdEax rewritten-leaf rewritten-subleaf))]
+            [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
+        [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
+    [(AstExprCpuIdEbx leaf subleaf)
+      (match (spec-substitute-types-expr leaf subs)
+        [(OkSpecSubExpr rewritten-leaf)
+          (match (spec-substitute-types-expr subleaf subs)
+            [(OkSpecSubExpr rewritten-subleaf)
+              (OkSpecSubExpr (AstExprCpuIdEbx rewritten-leaf rewritten-subleaf))]
+            [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
+        [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
+    [(AstExprCpuIdEcx leaf subleaf)
+      (match (spec-substitute-types-expr leaf subs)
+        [(OkSpecSubExpr rewritten-leaf)
+          (match (spec-substitute-types-expr subleaf subs)
+            [(OkSpecSubExpr rewritten-subleaf)
+              (OkSpecSubExpr (AstExprCpuIdEcx rewritten-leaf rewritten-subleaf))]
+            [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
+        [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
+    [(AstExprCpuIdEdx leaf subleaf)
+      (match (spec-substitute-types-expr leaf subs)
+        [(OkSpecSubExpr rewritten-leaf)
+          (match (spec-substitute-types-expr subleaf subs)
+            [(OkSpecSubExpr rewritten-subleaf)
+              (OkSpecSubExpr (AstExprCpuIdEdx rewritten-leaf rewritten-subleaf))]
+            [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
+        [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
+    [(AstExprXgetbv index)
+      (match (spec-substitute-types-expr index subs)
+        [(OkSpecSubExpr rewritten) (OkSpecSubExpr (AstExprXgetbv rewritten))]
         [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
     [(AstExprQuote inner)
       (match (spec-substitute-types-expr inner subs)

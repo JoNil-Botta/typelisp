@@ -4,6 +4,10 @@
 ;; helpers. Package builds are handled in-process by the selfhost compiler:
 ;; parse/discover `typelisp.pkg`, emit assembly for the manifest entry, and
 ;; produce the package artifact selected by manifest kind.
+(import "../stdlib/fs.tl")
+
+(import "../stdlib/io.tl")
+
 (import "host_plan.tl")
 
 (import "build_run_core.tl")

@@ -14,8 +14,8 @@ usage: scripts/verify-stdlib.sh [--borrowed-str-only]
 Verifies canonical stdlib modules and fixtures through --stdlib-root.
 Set TYPELISP_STDLIB_BORROWED_STR_BIN to route fixtures marked
 requires-borrowed-str-capable through a compiler path that can parse/check
-`(& lifetime str)` signatures, such as the Linux no-Rust bootstrapped stage1. In
-full mode, marked rows are skipped unless that variable is set.
+`(& lifetime str)` signatures, such as the Linux no-Rust bootstrapped stage1.
+In full mode, marked rows run through TYPELISP_BIN unless this override is set.
 EOF
 }
 
@@ -86,9 +86,8 @@ fi
 # pass the same <stem> they use for their .stdout/.stderr assertion paths.
 # Sets `build_status` (0 = built ok) and, on success, runs the binary setting
 # `got`. Build/link output is captured to <stem>.build.err. A build failure does
-# NOT abort the script (callers classify it) so staged-primitive rows can be
-# skipped on the no-Rust gate when the published stage0 lacks a new runtime
-# symbol (#1114).
+# NOT abort this helper; the caller reports the fixture failure with captured
+# output so CI cannot silently lose coverage.
 stdlib_build_run() {
     _src=$1
     _stem=$2
@@ -122,39 +121,6 @@ stdlib_build_run() {
         fi
     fi
     set -e
-}
-
-# A staged-primitive row may be skipped ONLY on the no-Rust gate, ONLY when the
-# build failed because the current no-Rust compiler path does not yet provide the
-# named runtime symbol/name (it appears as undefined/unbound in the build output).
-# Any other build failure still fails the gate. Returns 0 = skip.
-stdlib_should_skip_staged() {
-    _symbols=$1
-    _build_err=$2
-    [ -n "$_symbols" ] || return 1
-    [ "$build_status" -ne 0 ] || return 1
-    for _symbol in $(printf '%s\n' "$_symbols" | tr ',' ' '); do
-        grep -qF "$_symbol" "$_build_err" && return 0
-    done
-    return 1
-}
-
-# A runtime-gap row may be skipped ONLY when the built program fails in the
-# currently tracked way. If the row starts passing, the marker is reported below
-# so the follow-up can remove it instead of silently preserving stale debt.
-stdlib_should_skip_runtime_gap() {
-    _issue=$1
-    _snippet=$2
-    _stderr=$3
-    _got=$4
-    _want=$5
-    _gap_host=$6
-    _host=$7
-    [ -n "$_issue" ] || return 1
-    { [ "$_gap_host" = all ] || [ "$_gap_host" = "$_host" ]; } || return 1
-    [ -n "$_snippet" ] || return 1
-    [ "$_got" -ne "$_want" ] || return 1
-    grep -qF "$_snippet" "$_stderr" >/dev/null 2>&1
 }
 
 stdlib_runtime_gap_applies() {
@@ -200,10 +166,10 @@ EOF
 # for one line using the host executable's newline convention, or a
 # repository-relative path for exact stream bytes. The stdin and capability
 # columns are optional; stdin defaults to "-". A runnable row may use
-# `requires-stage0-symbol:<name>[,<name>...]` for build-time staged primitive
-# gaps, or `requires-runtime-gap:<host>:#NNNN:<stderr-substring>` for a narrowed
-# runtime-only blocker that should be skipped only on the named host when the
-# expected diagnostic appears. `<host>` is `linux`, `windows`, or `all`.
+# `requires-stage0-symbol:<name>[,<name>...]` or
+# `requires-runtime-gap:<host>:#NNNN:<stderr-substring>` only as metadata. These
+# markers do not make failures pass; CI must run the row and fail on regression.
+# `<host>` is `linux`, `windows`, or `all`.
 stdlib_test_manifest() {
     cat <<'EOF'
 stdlib/tests/string_edges.tl|42|-|-
@@ -453,7 +419,6 @@ fi
 export WindowsSDKVersion="$SDK_VERSION"
 
 passed=0
-skipped=0
 if [ "$BORROWED_STR_ONLY" -eq 0 ]; then
 while IFS='|' read -r fixture want stdout_spec stderr_spec stdin_spec extra; do
     case "$fixture" in
@@ -528,11 +493,6 @@ while IFS='|' read -r fixture want stdout_spec stderr_spec stdin_spec extra; do
     stdlib_build_run "$copied" "$stem" "$stdin"
 
     if [ "$build_status" -ne 0 ]; then
-        if stdlib_should_skip_staged "$requires_symbol" "$stem.build.err"; then
-            echo "[stdlib] SKIP $fixture (awaiting no-Rust compiler support for '$requires_symbol')"
-            skipped=$((skipped + 1))
-            continue
-        fi
         echo "FAIL: $fixture failed to build" >&2
         sed 's/^/  /' "$stem.build.err" >&2 || true
         exit 1
@@ -543,11 +503,6 @@ while IFS='|' read -r fixture want stdout_spec stderr_spec stdin_spec extra; do
     fi
 
     if [ "$got" -ne "$want" ]; then
-        if stdlib_should_skip_runtime_gap "$runtime_gap_issue" "$runtime_gap_stderr" "$stderr" "$got" "$want" "$runtime_gap_host" "$HOST_OS"; then
-            echo "[stdlib] SKIP $fixture (known runtime gap $runtime_gap_issue: $runtime_gap_stderr)"
-            skipped=$((skipped + 1))
-            continue
-        fi
         echo "FAIL: $fixture expected exit $want, got $got" >&2
         show_streams "$stdout" "$stderr"
         exit 1
@@ -608,17 +563,6 @@ while IFS='|' read -r fixture want stderr_snippet extra; do
     if [ "$BORROWED_STR_ONLY" -eq 1 ] && [ "$borrowed_str_row" -eq 0 ]; then
         continue
     fi
-    if [ "${TYPELISP_STDLIB_SKIP_BORROWED_STR:-0}" = 1 ] && [ "$borrowed_str_row" -eq 1 ]; then
-        echo "[stdlib] SKIP $fixture (no borrowed-str capable compiler on this host)"
-        continue
-    fi
-    if [ "$borrowed_str_row" -eq 1 ] &&
-        [ "$BORROWED_STR_ONLY" -eq 0 ] &&
-        [ "$BORROWED_STR_COMPILER_EXPLICIT" -eq 0 ]; then
-        echo "[stdlib] SKIP $fixture (set TYPELISP_STDLIB_BORROWED_STR_BIN to verify borrowed-str syntax)"
-        continue
-    fi
-
     case "$fixture" in
         stdlib/tests/*.tl) ;;
         *)
@@ -681,9 +625,5 @@ if [ "$BORROWED_STR_ONLY" -eq 1 ]; then
 fi
 
 module_count=$(wc -l < "$EXPECTED" | tr -d ' ')
-
-if [ "$skipped" -gt 0 ]; then
-    echo "stdlib verification: $skipped runnable fixture(s) skipped (staged primitive or known runtime gap)"
-fi
 
 echo "stdlib verification passed for $module_count module(s), $passed runnable fixture(s), $checked check fixture(s)"

@@ -221,13 +221,13 @@ copy_dep() {
     esac
 }
 
-# Integration cases the self-hosted Windows backend cannot yet run as expected
+# Integration cases that are not Windows-applicable in this manifest
 # (kept covered on Linux via native-linux.manifest):
 #   arena_poison_*            Linux-only poison-on-reclaim debug mode
 #   with_arena_*               existing host gaps
 #   tl_alloc_huge_trap /       Windows huge-alloc + region-reset guards do not
 #   region_reset_invalid_trap  abort cleanly with 134 (#1660)
-windows_integration_skips() {
+windows_integration_non_applicable_cases() {
     cat <<'EOF'
 arena_poison_clone_survives
 arena_poison_stale_array_trap
@@ -238,10 +238,11 @@ region_reset_invalid_trap
 EOF
 }
 
-# Cases the seed-backed integration manifests cannot yet run.
+# Cases covered by the selfhost-native generated-program gate rather than the
+# seed-backed integration manifests.
 # Immutable-reference native smoke fixtures are covered by
 # verify-selfhost-native.sh until the published stage0 includes #1720.
-selfhost_deferred_integration_skips() {
+selfhost_native_manifest_cases() {
     cat <<'EOF'
 ref_fixed_array_return
 ref_param_identity
@@ -362,16 +363,16 @@ EOF
     fi
 
     if [ "$HOST_OS" = windows ]; then
-        windows_integration_skips >> "$_known"
+        windows_integration_non_applicable_cases >> "$_known"
     fi
-    selfhost_deferred_integration_skips >> "$_known"
+    selfhost_native_manifest_cases >> "$_known"
 
     find tests/integration -maxdepth 1 -type f -name '*.tl' |
         sed 's#^tests/integration/##; s#\.tl$##' | sort > "$_actual"
     sort -u "$_known" > "$_known_sorted"
     if ! cmp -s "$_actual" "$_known_sorted"; then
         echo "integration manifest is out of date for $HOST_OS" >&2
-        echo "every tests/integration/*.tl file must be a manifest case, dependency, or documented host skip" >&2
+        echo "every tests/integration/*.tl file must be a manifest case, dependency, or documented host exception" >&2
         if command -v diff >/dev/null 2>&1; then
             diff -u "$_known_sorted" "$_actual" >&2 || true
         fi
@@ -542,24 +543,6 @@ build_linux_fixture_driver() {
         show_build_streams "$_build_stdout" "$_build_stderr"
         exit 1
     fi
-}
-
-# A staged-primitive integration case may be skipped only when a build/link
-# failure mentions the staged runtime symbol. Once the no-Rust compiler path
-# provides the symbol, the case builds and runs normally with a drop-marker
-# notice.
-integration_should_skip_staged() {
-    _symbols=$1
-    shift
-    [ -n "$_symbols" ] || return 1
-    for _symbol in $(printf '%s\n' "$_symbols" | tr ',' ' '); do
-        [ -n "$_symbol" ] || continue
-        for _file in "$@"; do
-            [ -f "$_file" ] || continue
-            grep -qF "$_symbol" "$_file" && return 0
-        done
-    done
-    return 1
 }
 
 run_linux_backend_fixtures() {
@@ -795,11 +778,8 @@ run_windows_backend_fixtures() {
         ".extern _write" \
         ".extern exit" \
         ".extern _read" \
-        ".extern fflush" \
-        ".extern _open" \
         ".extern _lseeki64" \
         ".extern _close" \
-        ".extern _access" \
         ".extern SystemFunction036" \
         "call VirtualAlloc" \
         "call _write" \
@@ -981,7 +961,6 @@ validate_manifest
 
 failed=0
 ran=0
-skipped=0
 
 while IFS='|' read -r name source want stdout_spec runtime_args deps extra || [ -n "$name" ]; do
     case "$name" in
@@ -1028,6 +1007,7 @@ while IFS='|' read -r name source want stdout_spec runtime_args deps extra || [ 
     code_file="$case_dir/$name.exit"
     build_stdout="$case_dir/$name.build.stdout"
     build_stderr="$case_dir/$name.build.stderr"
+    run_shell_stderr="$case_dir/$name.run-shell.stderr"
 
     echo "[$name] build -> run ($HOST_OS)"
     if [ "$HOST_OS" = windows ]; then
@@ -1036,11 +1016,6 @@ while IFS='|' read -r name source want stdout_spec runtime_args deps extra || [ 
         # Linux compile->as->ld path below.
         if ! "$COMPILER" compile "$work_src" --target windows-x86_64 -o "$asm" \
             > "$build_stdout" 2> "$build_stderr"; then
-            if integration_should_skip_staged "$requires_symbol" "$build_stdout" "$build_stderr"; then
-                echo "[integration] SKIP $name (awaiting no-Rust compiler support for '$requires_symbol')"
-                skipped=$((skipped + 1))
-                continue
-            fi
             echo "FAIL: $name compile failed" >&2
             show_build_streams "$build_stdout" "$build_stderr"
             failed=$((failed + 1))
@@ -1058,11 +1033,6 @@ while IFS='|' read -r name source want stdout_spec runtime_args deps extra || [ 
         if ! lld-link -NOLOGO "$(cygpath -aw "$obj")" "-OUT:$(cygpath -aw "$bin.exe")" \
             -SUBSYSTEM:CONSOLE -STACK:268435456 msvcrt.lib legacy_stdio_definitions.lib advapi32.lib \
             >> "$build_stdout" 2>> "$build_stderr"; then
-            if integration_should_skip_staged "$requires_symbol" "$build_stdout" "$build_stderr"; then
-                echo "[integration] SKIP $name (awaiting no-Rust compiler support for '$requires_symbol')"
-                skipped=$((skipped + 1))
-                continue
-            fi
             echo "FAIL: $name link failed" >&2
             show_build_streams "$build_stdout" "$build_stderr"
             failed=$((failed + 1))
@@ -1082,11 +1052,6 @@ while IFS='|' read -r name source want stdout_spec runtime_args deps extra || [ 
         fi
     else
         if ! "$COMPILER" compile "$work_src" -o "$asm" > "$build_stdout" 2> "$build_stderr"; then
-            if integration_should_skip_staged "$requires_symbol" "$build_stdout" "$build_stderr"; then
-                echo "[integration] SKIP $name (awaiting no-Rust compiler support for '$requires_symbol')"
-                skipped=$((skipped + 1))
-                continue
-            fi
             echo "FAIL: $name compile failed" >&2
             show_build_streams "$build_stdout" "$build_stderr"
             failed=$((failed + 1))
@@ -1094,11 +1059,6 @@ while IFS='|' read -r name source want stdout_spec runtime_args deps extra || [ 
             continue
         fi
         if ! as "$asm" -o "$obj" >> "$build_stdout" 2>> "$build_stderr"; then
-            if integration_should_skip_staged "$requires_symbol" "$build_stdout" "$build_stderr"; then
-                echo "[integration] SKIP $name (awaiting no-Rust compiler support for '$requires_symbol')"
-                skipped=$((skipped + 1))
-                continue
-            fi
             echo "FAIL: $name assemble failed" >&2
             show_build_streams "$build_stdout" "$build_stderr"
             failed=$((failed + 1))
@@ -1107,11 +1067,6 @@ while IFS='|' read -r name source want stdout_spec runtime_args deps extra || [ 
         fi
         if ! ld "$obj" -o "$bin" -dynamic-linker /lib64/ld-linux-x86-64.so.2 -lc \
             >> "$build_stdout" 2>> "$build_stderr"; then
-            if integration_should_skip_staged "$requires_symbol" "$build_stdout" "$build_stderr"; then
-                echo "[integration] SKIP $name (awaiting no-Rust compiler support for '$requires_symbol')"
-                skipped=$((skipped + 1))
-                continue
-            fi
             echo "FAIL: $name link failed" >&2
             show_build_streams "$build_stdout" "$build_stderr"
             failed=$((failed + 1))
@@ -1120,8 +1075,13 @@ while IFS='|' read -r name source want stdout_spec runtime_args deps extra || [ 
         fi
 
         set +e
-        # shellcheck disable=SC2086
-        "$bin" $(deps_or_empty "$runtime_args") > "$stdout" 2> "$stderr"
+        (
+            # Keep parent-shell crash notices (for example dash's
+            # "Segmentation fault (core dumped)") out of the program stderr
+            # comparison; the manifest still checks the actual signal exit code.
+            # shellcheck disable=SC2086
+            "$bin" $(deps_or_empty "$runtime_args") > "$stdout" 2> "$stderr"
+        ) 2> "$run_shell_stderr"
         got=$?
         set -e
     fi
@@ -1160,6 +1120,10 @@ while IFS='|' read -r name source want stdout_spec runtime_args deps extra || [ 
         fi
         case_failed=1
     fi
+    if [ "$case_failed" -ne 0 ] && [ -s "$run_shell_stderr" ]; then
+        echo "NOTE: $name shell run diagnostics:" >&2
+        sed 's/^/  /' "$run_shell_stderr" >&2
+    fi
 
     if [ "$case_failed" -eq 0 ]; then
         echo "PASS: $name"
@@ -1174,10 +1138,6 @@ if [ "$failed" -gt 0 ]; then
     exit 1
 fi
 
-if [ "$skipped" -gt 0 ]; then
-    echo "integration verification: $skipped case(s) skipped (staged primitive awaiting no-Rust compiler support)"
-fi
-
 if [ "$HOST_OS" = linux ]; then
     run_linux_backend_fixtures
 else
@@ -1185,6 +1145,3 @@ else
 fi
 
 echo "All $ran integration case(s) passed for $HOST_OS."
-if [ "$skipped" -ne 0 ]; then
-    echo "$skipped integration case(s) skipped (staged primitive awaiting no-Rust compiler support)."
-fi

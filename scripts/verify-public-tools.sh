@@ -19,9 +19,16 @@ cd "$ROOT"
 PUBLIC_TOOLS_ATTEMPTS="${VERIFY_PUBLIC_TOOLS_ATTEMPTS:-6}"
 
 HOST_OS=linux
+HOST_TARGET=linux-x86_64
 case "$(uname -s)" in
-    Linux*) HOST_OS=linux ;;
-    MINGW* | MSYS* | CYGWIN*) HOST_OS=windows ;;
+    Linux*)
+        HOST_OS=linux
+        HOST_TARGET=linux-x86_64
+        ;;
+    MINGW* | MSYS* | CYGWIN*)
+        HOST_OS=windows
+        HOST_TARGET=windows-x86_64
+        ;;
     *)
         echo "public tool verification is unsupported on this host" >&2
         exit 1
@@ -50,11 +57,15 @@ if [ ! -x "$COMPILER" ]; then
     exit 1
 fi
 
-# Extended compatibility gate. The selfhost lane sets this to 0 because it still
-# differs from the retired Rust/stage1-wrapper lanes for generated docs and some
-# package diagnostics. Focused direct build/run coverage lives in
-# scripts/verify-selfhost-cli-build-run.sh.
-HOST_ACTION_ENABLED="${TYPELISP_PUBLIC_TOOLS_HOST_ACTION_ENABLED:-0}"
+HOST_ACTION_ENABLED=1
+HOST_EXE_SUFFIX=
+HOST_STATIC_LIB_PREFIX=lib
+HOST_STATIC_LIB_SUFFIX=.a
+if [ "$HOST_OS" = windows ]; then
+    HOST_EXE_SUFFIX=.exe
+    HOST_STATIC_LIB_PREFIX=
+    HOST_STATIC_LIB_SUFFIX=.lib
+fi
 
 WORKDIR="$ROOT/target/public-tool-verify"
 rm -rf "$WORKDIR"
@@ -202,6 +213,15 @@ assert_not_contains() {
     fi
 }
 
+native_arg_path() {
+    path=$1
+    if [ "$HOST_OS" = windows ] && command -v cygpath >/dev/null 2>&1; then
+        cygpath -m "$path"
+    else
+        printf '%s\n' "$path"
+    fi
+}
+
 build_linux_cli_tool() {
     _case=$1
     _source=$2
@@ -221,6 +241,18 @@ build_linux_cli_tool() {
     assert_success
     assert_stdout_empty
     assert_stderr_empty
+}
+
+build_host_cli_tool() {
+    _case=$1
+    _source=$2
+    _output=$3
+
+    run_cmd "$_case-build" "$COMPILER" build "$_source" -o "$_output" --target "$HOST_TARGET"
+    assert_success
+    assert_stderr_empty
+    assert_contains "$out" "Generated: $(native_arg_path "$_output")"
+    [ -x "$_output" ] || fail "$_case did not write executable $_output"
 }
 
 strip_expected_trailing_lf() {
@@ -248,6 +280,21 @@ check_file_exact() {
         echo "actual:" >&2
         sed 's/^/  /' "$actual" >&2 || true
         fail "$case_name produced unexpected file content"
+    fi
+}
+
+check_text_file_exact() {
+    actual=$1
+    expected=$2
+    if [ "$HOST_OS" = windows ]; then
+        actual_normalized="$WORKDIR/text-actual-normalized.tmp"
+        expected_normalized="$WORKDIR/text-expected-normalized.tmp"
+        tr -d '\r' < "$actual" > "$actual_normalized"
+        tr -d '\r' < "$expected" > "$expected_normalized"
+        check_file_exact "$actual_normalized" "$expected_normalized"
+        rm -f "$actual_normalized" "$expected_normalized"
+    else
+        check_file_exact "$actual" "$expected"
     fi
 }
 
@@ -286,11 +333,7 @@ fi
 # `error[E0200]`/`got <a> -> <b>` annotations). Treat cli.tl (host-action
 # disabled) like the wrapper for those diagnostic-text branches, while keeping
 # legacy diagnostic expectations isolated to compatibility branches (#1327).
-if [ "$IS_STAGE1_WRAPPER" -eq 1 ] || [ "$HOST_ACTION_ENABLED" -eq 0 ]; then
-    SELFHOST_FRONTEND_DIAGNOSTICS=1
-else
-    SELFHOST_FRONTEND_DIAGNOSTICS=0
-fi
+SELFHOST_FRONTEND_DIAGNOSTICS=1
 if [ "$IS_STAGE1_WRAPPER" -eq 1 ]; then
     assert_contains "$err" "repl"
     assert_contains "$err" "fmt"
@@ -538,7 +581,7 @@ for target_alias in windows-x86_64 windows_x86_64; do
     cat > "$target_dir/main.tl" <<'EOF'
 (define (main) : i64
   (begin
-    (print-string "hi")
+    (print 3)
     42))
 EOF
     run_cmd "compile-target-$target_alias" "$COMPILER" compile "$target_dir/main.tl" --target "$target_alias" -o "$target_dir/main.s"
@@ -546,7 +589,7 @@ EOF
     assert_stderr_empty
     assert_contains_any "$target_dir/main.s" "    .globl main" ".globl main"
     assert_not_contains "$target_dir/main.s" "    .globl _start"
-    assert_contains "$target_dir/main.s" "    .extern _write"
+    assert_contains_any "$target_dir/main.s" "    .extern _write" ".extern _write"
     assert_contains "$target_dir/main.s" '    sub $32, %rsp'
 done
 
@@ -655,6 +698,9 @@ if [ "$SELFHOST_FRONTEND_DIAGNOSTICS" -eq 0 ]; then
 fi
 
 cat > "$CLI_MATRIX/text-buf-region-scalar.tl" <<'EOF'
+(define (panic [message : String]) : String
+  (let [_ : String message] ""))
+
 (import "stdlib/text_buf.tl")
 
 (define (main) : i64
@@ -668,6 +714,9 @@ assert_stderr_empty
 assert_contains "$out" "Type checking passed!"
 
 cat > "$CLI_MATRIX/text-buf-region-escape.tl" <<'EOF'
+(define (panic [message : String]) : String
+  (let [_ : String message] ""))
+
 (import "stdlib/text_buf.tl")
 
 (define (main) : String
@@ -719,7 +768,7 @@ if [ "$IS_STAGE1_WRAPPER" -eq 1 ]; then
     assert_failure
     assert_stdout_empty
     assert_contains "$err" "return type mismatch"
-elif [ "$HOST_ACTION_ENABLED" -eq 0 ]; then
+elif [ "$SELFHOST_FRONTEND_DIAGNOSTICS" -eq 1 ]; then
     # The single-binary cli.tl stage0 accepts the inexact f32 literal silently
     # (it does not yet emit the legacy W0200 "not exactly representable"
     # warning). Assert only the typecheck success until that warning is
@@ -740,9 +789,18 @@ if [ "$HOST_ACTION_ENABLED" -eq 1 ]; then
 RUN_MATRIX="$WORKDIR/run-matrix"
 mkdir -p "$RUN_MATRIX"
 cat > "$RUN_MATRIX/output_status.tl" <<'EOF'
+(cfg linux (extern fixture-write (:symbol "write") : (-> i32 (Ptr u8) i32 i32)))
+(cfg windows (extern fixture-write (:symbol "_write") : (-> i32 (Ptr u8) i32 i32)))
+(define (fixture-stdout-write [text : String]) : unit
+  (begin
+    (fixture-write
+      (cast 1 : i32)
+      (unsafe (string-data text))
+      (cast (string-length text) : i32))
+    unit))
 (define (main) : i64
   (begin
-    (print-string "hello")
+    (fixture-stdout-write "hello")
     7))
 EOF
 run_cmd run-output-status "$COMPILER" run "$RUN_MATRIX/output_status.tl"
@@ -751,8 +809,31 @@ assert_stderr_empty
 assert_contains "$out" "hello"
 
 cat > "$RUN_MATRIX/stdin.tl" <<'EOF'
+(cfg linux (extern fixture-read (:symbol "read") : (-> i32 (MutPtr u8) i32 i32)))
+(cfg linux (extern fixture-write (:symbol "write") : (-> i32 (Ptr u8) i32 i32)))
+(cfg windows (extern fixture-read (:symbol "_read") : (-> i32 (MutPtr u8) i32 i32)))
+(cfg windows (extern fixture-write (:symbol "_write") : (-> i32 (Ptr u8) i32 i32)))
+(define (fixture-stdout-write [text : String]) : unit
+  (begin
+    (fixture-write
+      (cast 1 : i32)
+      (unsafe (string-data text))
+      (cast (string-length text) : i32))
+    unit))
+(define (fixture-read-stdin) : String
+  (let
+    [buf : (Array u8) (make-array u8 256)]
+    [n : i32
+      (fixture-read
+        (cast 0 : i32)
+        (unsafe (array-data buf))
+        (cast 256 : i32))]
+    (unsafe
+      (string-from-bytes
+        (ptr-cast (array-data buf) : (Ptr u8))
+        (cast n : i64)))))
 (define (main) : unit
-  (print-string (read-stdin-line)))
+  (fixture-stdout-write (fixture-read-stdin)))
 EOF
 printf 'hello from stdin\n' > "$RUN_MATRIX/stdin.in"
 run_stdin run-stdin "$RUN_MATRIX/stdin.in" "$COMPILER" run "$RUN_MATRIX/stdin.tl"
@@ -786,7 +867,7 @@ run_backend_mode_exec() {
         assert_stdout_empty
         assert_stderr_empty
     else
-        echo "[public-tools] skipping run --backend-mode $1 ($2 not available on this $HOST_OS host)"
+        echo "[public-tools] not applicable: run --backend-mode $1 requires $2 on this $HOST_OS host"
     fi
 }
 run_backend_mode_exec avx2 avx2
@@ -824,7 +905,7 @@ run_spmd_exec_mode() {
         return
     fi
     if [ "$2" != "-" ] && ! printf '%s\n' "$SIMD_ISAS" | grep -qx "$2"; then
-        echo "[public-tools] skipping spmd-exec --backend-mode $1 ($2 not available on this $HOST_OS host)"
+        echo "[public-tools] not applicable: spmd-exec --backend-mode $1 requires $2 on this $HOST_OS host"
         return
     fi
     run_cmd "spmd-exec-$1" "$COMPILER" run "$SPMD_EXEC/spmd.tl" --backend-mode "$1" -- arg
@@ -836,7 +917,7 @@ run_spmd_exec_mode scalar -
 run_spmd_exec_mode avx2 avx2
 run_spmd_exec_mode avx512 avx512f
 else
-    echo "[public-tools] skipping extended run-execution coverage (legacy compatibility lane disabled)"
+    fail "extended run-execution coverage requires host-action drivers"
 fi
 
 BUILD_MATRIX="$WORKDIR/build-matrix"
@@ -903,33 +984,41 @@ if [ "$HOST_ACTION_ENABLED" -eq 1 ]; then
 fi
 
 # Standalone selfhost build/run tool executables. The public cli.tl path above is
-# the primary surface; these Linux-only checks keep the shared build/run cores
-# covered as separate compiled tools.
+# the primary surface; these checks keep the shared build/run cores covered as
+# separate compiled tools on every supported host. These gates must run on every
+# supported host because omitted build/run tools can hide target-specific
+# compiler bugs.
 if [ "$HOST_ACTION_ENABLED" -eq 1 ]; then
-if [ "$HOST_OS" = linux ]; then
     SELFHOST_PLANNER_DIR="$WORKDIR/selfhost-planners"
     mkdir -p "$SELFHOST_PLANNER_DIR/with space" "$SELFHOST_PLANNER_DIR/stdlib one"
-    command -v as >/dev/null 2>&1 || fail "missing assembler: as"
-    command -v ld >/dev/null 2>&1 || fail "missing linker: ld"
-    command -v cc >/dev/null 2>&1 || fail "missing C compiler: cc"
-    command -v ar >/dev/null 2>&1 || fail "missing archiver: ar"
-    build_linux_cli_tool selfhost-build-tool selfhost/build.tl "$SELFHOST_PLANNER_DIR/build-tool"
-    build_linux_cli_tool selfhost-run-tool selfhost/run.tl "$SELFHOST_PLANNER_DIR/run-tool"
+    SELFHOST_TOOL_TARGET=$HOST_TARGET
+    if [ "$HOST_OS" = linux ]; then
+        command -v as >/dev/null 2>&1 || fail "missing assembler: as"
+        command -v ld >/dev/null 2>&1 || fail "missing linker: ld"
+        command -v cc >/dev/null 2>&1 || fail "missing C compiler: cc"
+        command -v ar >/dev/null 2>&1 || fail "missing archiver: ar"
+        build_linux_cli_tool selfhost-build-tool selfhost/build.tl "$SELFHOST_PLANNER_DIR/build-tool"
+        build_linux_cli_tool selfhost-run-tool selfhost/run.tl "$SELFHOST_PLANNER_DIR/run-tool"
+    else
+        build_host_cli_tool selfhost-build-tool selfhost/build.tl "$SELFHOST_PLANNER_DIR/build-tool$HOST_EXE_SUFFIX"
+        build_host_cli_tool selfhost-run-tool selfhost/run.tl "$SELFHOST_PLANNER_DIR/run-tool$HOST_EXE_SUFFIX"
+    fi
 
     PLANNER_SOURCE="$SELFHOST_PLANNER_DIR/with space/main file.tl"
-    PLANNER_OUTPUT="$SELFHOST_PLANNER_DIR/with space/the program"
+    PLANNER_OUTPUT="$SELFHOST_PLANNER_DIR/with space/the program$HOST_EXE_SUFFIX"
     cat > "$PLANNER_SOURCE" <<'EOF'
 (define (main) : i64 23)
 EOF
-    run_cmd selfhost-build-tool "$SELFHOST_PLANNER_DIR/build-tool" --direct "$PLANNER_SOURCE" -o "$PLANNER_OUTPUT" --target linux-x86_64 --backend-mode scalar
+    run_cmd selfhost-build-tool "$SELFHOST_PLANNER_DIR/build-tool$HOST_EXE_SUFFIX" --direct "$PLANNER_SOURCE" -o "$PLANNER_OUTPUT" --target "$SELFHOST_TOOL_TARGET" --backend-mode scalar
     assert_success
     assert_stderr_empty
-    assert_contains "$out" "Generated: $PLANNER_OUTPUT"
+    assert_contains "$out" "Generated: $(native_arg_path "$PLANNER_OUTPUT")"
     [ -f "$PLANNER_OUTPUT" ] || fail "selfhost build tool did not write executable"
     run_cmd selfhost-build-tool-output "$PLANNER_OUTPUT"
     assert_code 23
     assert_stderr_empty
 
+    if [ "$HOST_OS" = linux ]; then
     LINK_LIB_DIR="$SELFHOST_PLANNER_DIR/native-lib"
     mkdir -p "$LINK_LIB_DIR"
     cat > "$LINK_LIB_DIR/ffi_add7.s" <<'EOF'
@@ -938,6 +1027,7 @@ ffi_add7:
     movq %rdi, %rax
     addq $7, %rax
     ret
+    .section .note.GNU-stack,"",@progbits
 EOF
     run_cmd link-lib-assemble as "$LINK_LIB_DIR/ffi_add7.s" -o "$LINK_LIB_DIR/ffi_add7.o"
     assert_success
@@ -954,14 +1044,14 @@ EOF
 (extern ffi_add7 : (-> i64 i64))
 (define (main) : i64 (ffi_add7 35))
 EOF
-    run_cmd selfhost-build-tool-link-lib "$SELFHOST_PLANNER_DIR/build-tool" --direct "$LINK_SOURCE" -o "$LINK_OUTPUT" --target linux-x86_64 --backend-mode scalar --link-search "$LINK_LIB_DIR" --link-lib ffi_add7
+    run_cmd selfhost-build-tool-link-lib "$SELFHOST_PLANNER_DIR/build-tool$HOST_EXE_SUFFIX" --direct "$LINK_SOURCE" -o "$LINK_OUTPUT" --target linux-x86_64 --backend-mode scalar --link-search "$LINK_LIB_DIR" --link-lib ffi_add7
     assert_success
     assert_stderr_empty
     assert_contains "$out" "Generated: $LINK_OUTPUT"
     run_cmd selfhost-build-tool-link-output "$LINK_OUTPUT"
     assert_code 42
     assert_stderr_empty
-    run_cmd selfhost-run-tool-link-lib "$SELFHOST_PLANNER_DIR/run-tool" --direct "$LINK_SOURCE" --target linux-x86_64 --backend-mode scalar --link-search "$LINK_LIB_DIR" --link-lib ffi_add7
+    run_cmd selfhost-run-tool-link-lib "$SELFHOST_PLANNER_DIR/run-tool$HOST_EXE_SUFFIX" --direct "$LINK_SOURCE" --target linux-x86_64 --backend-mode scalar --link-search "$LINK_LIB_DIR" --link-lib ffi_add7
     assert_code 42
     assert_stdout_empty
     assert_stderr_empty
@@ -1007,7 +1097,7 @@ EOF
     (ffi_ctor_value)
     1))
 EOF
-    run_cmd selfhost-run-tool-link-ctor "$SELFHOST_PLANNER_DIR/run-tool" --direct "$CTOR_SOURCE" --target linux-x86_64 --backend-mode scalar --link-search "$LINK_LIB_DIR" --link-lib ffi_ctor
+    run_cmd selfhost-run-tool-link-ctor "$SELFHOST_PLANNER_DIR/run-tool$HOST_EXE_SUFFIX" --direct "$CTOR_SOURCE" --target linux-x86_64 --backend-mode scalar --link-search "$LINK_LIB_DIR" --link-lib ffi_ctor
     assert_code 42
     assert_stdout_empty
     assert_stderr_empty
@@ -1015,30 +1105,80 @@ EOF
     assert_code 42
     assert_stdout_empty
     assert_stderr_empty
+    fi
 
-    PLANNER_AVX2_OUTPUT="$SELFHOST_PLANNER_DIR/with space/avx2 program"
-    run_cmd selfhost-build-tool-avx2 "$SELFHOST_PLANNER_DIR/build-tool" --direct "$PLANNER_SOURCE" -o "$PLANNER_AVX2_OUTPUT" --target linux-x86_64 --backend-mode avx2
+    PLANNER_AVX2_OUTPUT="$SELFHOST_PLANNER_DIR/with space/avx2 program$HOST_EXE_SUFFIX"
+    run_cmd selfhost-build-tool-avx2 "$SELFHOST_PLANNER_DIR/build-tool$HOST_EXE_SUFFIX" --direct "$PLANNER_SOURCE" -o "$PLANNER_AVX2_OUTPUT" --target "$SELFHOST_TOOL_TARGET" --backend-mode avx2
     assert_success
     assert_stderr_empty
-    assert_contains "$out" "Generated: $PLANNER_AVX2_OUTPUT"
+    assert_contains "$out" "Generated: $(native_arg_path "$PLANNER_AVX2_OUTPUT")"
     [ -f "$PLANNER_AVX2_OUTPUT" ] || fail "selfhost build tool did not write avx2 executable"
 
     PLANNER_RUN_SOURCE="$SELFHOST_PLANNER_DIR/with space/run file.tl"
+    if [ "$HOST_OS" = windows ]; then
     cat > "$PLANNER_RUN_SOURCE" <<'EOF'
+(cfg linux (extern fixture-write (:symbol "write") : (-> i32 (Ptr u8) i32 i32)))
+(cfg windows (extern fixture-write (:symbol "_write") : (-> i32 (Ptr u8) i32 i32)))
+(define (fixture-stdout-write [text : String]) : unit
+  (begin
+    (fixture-write
+      (cast 1 : i32)
+      (unsafe (string-data text))
+      (cast (string-length text) : i32))
+    unit))
 (define (main) : i64
   (begin
-    (print-string (arg 1))
-    (if (string-eq (arg 2) "colon:arg") 13 2)))
+    (fixture-stdout-write "hello")
+    7))
 EOF
-    run_cmd selfhost-run-tool "$SELFHOST_PLANNER_DIR/run-tool" --direct "$PLANNER_RUN_SOURCE" --target linux-x86_64 --backend-mode scalar --stdlib-root "$ROOT/stdlib" -- "arg with spaces" "colon:arg"
+    else
+    cat > "$PLANNER_RUN_SOURCE" <<'EOF'
+(cfg linux (extern fixture-write (:symbol "write") : (-> i32 (Ptr u8) i32 i32)))
+(cfg windows (extern fixture-write (:symbol "_write") : (-> i32 (Ptr u8) i32 i32)))
+(extern fixture-strlen (:symbol "strlen") : (-> (Ptr u8) i64))
+(define (fixture-stdout-write [text : String]) : unit
+  (begin
+    (fixture-write
+      (cast 1 : i32)
+      (unsafe (string-data text))
+      (cast (string-length text) : i32))
+    unit))
+(define (fixture-arg [index : i64]) : String
+  (let
+    [argv : (Ptr (Ptr u8)) (unsafe (program-argv))]
+    [raw : (Ptr u8) (unsafe (ptr-read (ptr-offset argv index)))]
+    (unsafe (string-from-bytes raw (fixture-strlen raw)))))
+(define (main) : i64
+  (begin
+    (fixture-stdout-write (fixture-arg 1))
+    (if (string-eq (fixture-arg 2) "colon:arg") 13 2)))
+EOF
+    fi
+    if [ "$HOST_OS" = windows ]; then
+        run_cmd selfhost-run-tool "$SELFHOST_PLANNER_DIR/run-tool$HOST_EXE_SUFFIX" --direct "$PLANNER_RUN_SOURCE" --target "$SELFHOST_TOOL_TARGET" --backend-mode scalar --stdlib-root "$ROOT/stdlib" --stdlib-root "$ROOT/selfhost"
+        assert_code 7
+        assert_stderr_empty
+        assert_contains "$out" "hello"
+    else
+    run_cmd selfhost-run-tool "$SELFHOST_PLANNER_DIR/run-tool$HOST_EXE_SUFFIX" --direct "$PLANNER_RUN_SOURCE" --target "$SELFHOST_TOOL_TARGET" --backend-mode scalar --stdlib-root "$ROOT/stdlib" -- "arg with spaces" "colon:arg"
     assert_code 13
     assert_stderr_empty
     assert_contains "$out" "arg with spaces"
+    fi
 
-    run_cmd selfhost-run-tool-avx512 "$SELFHOST_PLANNER_DIR/run-tool" --direct "$PLANNER_RUN_SOURCE" --target linux-x86_64 --backend-mode avx512 --stdlib-root "$ROOT/stdlib" -- "arg with spaces" "colon:arg"
-    assert_code 13
-    assert_stderr_empty
-    assert_contains "$out" "arg with spaces"
+    if [ "$HOST_OS" = linux ]; then
+        run_cmd selfhost-run-tool-avx512 "$SELFHOST_PLANNER_DIR/run-tool$HOST_EXE_SUFFIX" --direct "$PLANNER_RUN_SOURCE" --target "$SELFHOST_TOOL_TARGET" --backend-mode avx512 --stdlib-root "$ROOT/stdlib" -- "arg with spaces" "colon:arg"
+        assert_code 13
+        assert_stderr_empty
+        assert_contains "$out" "arg with spaces"
+    elif printf '%s\n' "$SIMD_ISAS" | grep -qx avx2; then
+        run_cmd selfhost-run-tool-avx2 "$SELFHOST_PLANNER_DIR/run-tool$HOST_EXE_SUFFIX" --direct "$PLANNER_RUN_SOURCE" --target "$SELFHOST_TOOL_TARGET" --backend-mode avx2 --stdlib-root "$ROOT/stdlib" --stdlib-root "$ROOT/selfhost"
+        assert_code 7
+        assert_stderr_empty
+        assert_contains "$out" "hello"
+    else
+        echo "[public-tools] not applicable: standalone selfhost run --backend-mode avx2 requires avx2 on this $HOST_OS host"
+    fi
 
     SELFHOST_PKG="$SELFHOST_PLANNER_DIR/pkg"
     mkdir -p "$SELFHOST_PKG/src/nested/deeper" "$SELFHOST_PKG/vendor/math/src"
@@ -1067,15 +1207,15 @@ EOF
   (entry "src/lib.tl"))
 EOF
     maybe_strip_manifest_kind "$SELFHOST_PKG/vendor/math/typelisp.pkg"
-    run_cmd selfhost-build-package "$SELFHOST_PLANNER_DIR/build-tool" --direct --manifest-path "$SELFHOST_PKG/typelisp.pkg" --opt-level 0
+    run_cmd selfhost-build-package "$SELFHOST_PLANNER_DIR/build-tool$HOST_EXE_SUFFIX" --direct --manifest-path "$SELFHOST_PKG/typelisp.pkg" --opt-level 0
     assert_success
     assert_stderr_empty
     SELFHOST_PKG_OUT_DIR="$SELFHOST_PKG/target/typelisp/selfhost_pkg"
-    SELFHOST_PKG_BIN="$SELFHOST_PKG_OUT_DIR/selfhost_pkg"
+    SELFHOST_PKG_BIN="$SELFHOST_PKG_OUT_DIR/selfhost_pkg$HOST_EXE_SUFFIX"
     SELFHOST_PKG_ASM="$SELFHOST_PKG_OUT_DIR/selfhost_pkg.s"
     [ -x "$SELFHOST_PKG_BIN" ] || fail "selfhost package build did not write executable"
     [ -f "$SELFHOST_PKG_ASM" ] || fail "selfhost package build did not keep assembly"
-    assert_contains "$out" "Generated: $SELFHOST_PKG_BIN"
+    assert_contains "$out" "Generated: $(native_arg_path "$SELFHOST_PKG_BIN")"
     assert_contains "$SELFHOST_PKG_ASM" "main:"
     assert_contains "$SELFHOST_PKG_ASM" "add_one"
     set +e
@@ -1085,7 +1225,7 @@ EOF
     [ "$selfhost_pkg_status" -eq 42 ] || fail "selfhost package executable expected exit 42, got $selfhost_pkg_status"
 
     rm -rf "$SELFHOST_PKG/target"
-    run_cmd_cwd selfhost-build-package-discover "$SELFHOST_PKG/src/nested/deeper" "$SELFHOST_PLANNER_DIR/build-tool"
+    run_cmd_cwd selfhost-build-package-discover "$SELFHOST_PKG/src/nested/deeper" "$SELFHOST_PLANNER_DIR/build-tool$HOST_EXE_SUFFIX"
     assert_success
     assert_stderr_empty
     [ -x "$SELFHOST_PKG_BIN" ] || fail "selfhost package discovery did not write executable"
@@ -1105,12 +1245,12 @@ EOF
     cat > "$SELFHOST_LIBPKG/src/lib.tl" <<'EOF'
 (define (add-two [x : i64]) : i64 (+ x 2))
 EOF
-    run_cmd selfhost-build-package-lib "$SELFHOST_PLANNER_DIR/build-tool" --direct --manifest-path "$SELFHOST_LIBPKG/typelisp.pkg"
+    run_cmd selfhost-build-package-lib "$SELFHOST_PLANNER_DIR/build-tool$HOST_EXE_SUFFIX" --direct --manifest-path "$SELFHOST_LIBPKG/typelisp.pkg"
     assert_success
     assert_stderr_empty
-    SELFHOST_LIB_ARCHIVE="$SELFHOST_LIBPKG/target/typelisp/selfhost_lib/libselfhost_lib.a"
+    SELFHOST_LIB_ARCHIVE="$SELFHOST_LIBPKG/target/typelisp/selfhost_lib/${HOST_STATIC_LIB_PREFIX}selfhost_lib$HOST_STATIC_LIB_SUFFIX"
     [ -s "$SELFHOST_LIB_ARCHIVE" ] || fail "selfhost package lib build did not write archive"
-    assert_contains "$out" "Generated: $SELFHOST_LIB_ARCHIVE"
+    assert_contains "$out" "Generated: $(native_arg_path "$SELFHOST_LIB_ARCHIVE")"
 
     SELFHOST_BADPKG="$SELFHOST_PLANNER_DIR/badpkg"
     mkdir -p "$SELFHOST_BADPKG/src" "$SELFHOST_BADPKG/vendor/math/src"
@@ -1123,7 +1263,7 @@ EOF
   (deps "not-yet"))
 EOF
     maybe_strip_manifest_kind "$SELFHOST_BADPKG/typelisp.pkg"
-    run_cmd selfhost-build-package-parse-error "$SELFHOST_PLANNER_DIR/build-tool" --direct --manifest-path "$SELFHOST_BADPKG/typelisp.pkg"
+    run_cmd selfhost-build-package-parse-error "$SELFHOST_PLANNER_DIR/build-tool$HOST_EXE_SUFFIX" --direct --manifest-path "$SELFHOST_BADPKG/typelisp.pkg"
     assert_failure
     assert_stdout_empty
     assert_contains "$err" "invalid package manifest"
@@ -1141,7 +1281,7 @@ EOF
 (import "pkg:math/src/lib.tl")
 (define (main) : i64 0)
 EOF
-    run_cmd selfhost-build-package-missing-alias "$SELFHOST_PLANNER_DIR/build-tool" --direct --manifest-path "$SELFHOST_BADPKG/typelisp.pkg"
+    run_cmd selfhost-build-package-missing-alias "$SELFHOST_PLANNER_DIR/build-tool$HOST_EXE_SUFFIX" --direct --manifest-path "$SELFHOST_BADPKG/typelisp.pkg"
     assert_failure
     assert_stdout_empty
     assert_contains "$err" "compiler-load: unknown package alias 'math'"
@@ -1172,7 +1312,7 @@ EOF
 (import "pkg:math/src/missing.tl")
 (define (main) : i64 0)
 EOF
-    run_cmd selfhost-build-package-missing-dep "$SELFHOST_PLANNER_DIR/build-tool" --direct --manifest-path "$SELFHOST_BADPKG/typelisp.pkg"
+    run_cmd selfhost-build-package-missing-dep "$SELFHOST_PLANNER_DIR/build-tool$HOST_EXE_SUFFIX" --direct --manifest-path "$SELFHOST_BADPKG/typelisp.pkg"
     assert_failure
     # The selfhost --direct planner builds the path dependency's archive first
     # (emitting its `Generated:` line) before resolving the entry package's
@@ -1181,12 +1321,12 @@ EOF
     assert_contains "$err" "compiler-load: cannot read import"
     assert_contains "$err" "vendor/math/src/missing.tl"
 
-    run_cmd selfhost-build-package-opt-duplicate "$SELFHOST_PLANNER_DIR/build-tool" --direct --manifest-path "$SELFHOST_PKG/typelisp.pkg" --opt-level 1 --opt-level 2
+    run_cmd selfhost-build-package-opt-duplicate "$SELFHOST_PLANNER_DIR/build-tool$HOST_EXE_SUFFIX" --direct --manifest-path "$SELFHOST_PKG/typelisp.pkg" --opt-level 1 --opt-level 2
     assert_failure
     assert_stdout_empty
     assert_contains "$err" "build: --opt-level was provided more than once"
 
-    run_cmd selfhost-build-package-opt-invalid "$SELFHOST_PLANNER_DIR/build-tool" --direct --manifest-path "$SELFHOST_PKG/typelisp.pkg" --opt-level 9
+    run_cmd selfhost-build-package-opt-invalid "$SELFHOST_PLANNER_DIR/build-tool$HOST_EXE_SUFFIX" --direct --manifest-path "$SELFHOST_PKG/typelisp.pkg" --opt-level 9
     assert_failure
     assert_stdout_empty
     assert_contains "$err" "build: unknown opt level '9'; expected 0, 1, 2, or 3"
@@ -1213,48 +1353,45 @@ EOF
     SELFHOST_OPT_ASM="$SELFHOST_OPTPKG/target/typelisp/selfhost_opt_pkg/selfhost_opt_pkg.s"
 
     rm -rf "$SELFHOST_OPTPKG/target"
-    run_cmd selfhost-build-package-opt-default "$SELFHOST_PLANNER_DIR/build-tool" --direct --manifest-path "$SELFHOST_OPTPKG/typelisp.pkg"
+    run_cmd selfhost-build-package-opt-default "$SELFHOST_PLANNER_DIR/build-tool$HOST_EXE_SUFFIX" --direct --manifest-path "$SELFHOST_OPTPKG/typelisp.pkg"
     assert_success
     assert_stderr_empty
     [ -f "$SELFHOST_OPT_ASM" ] || fail "selfhost opt package default build did not keep assembly"
     assert_not_contains "$SELFHOST_OPT_ASM" "imul"
 
     rm -rf "$SELFHOST_OPTPKG/target"
-    run_cmd selfhost-build-package-opt-zero "$SELFHOST_PLANNER_DIR/build-tool" --direct --manifest-path "$SELFHOST_OPTPKG/typelisp.pkg" --opt-level 0
+    run_cmd selfhost-build-package-opt-zero "$SELFHOST_PLANNER_DIR/build-tool$HOST_EXE_SUFFIX" --direct --manifest-path "$SELFHOST_OPTPKG/typelisp.pkg" --opt-level 0
     assert_success
     assert_stderr_empty
     [ -f "$SELFHOST_OPT_ASM" ] || fail "selfhost opt package --opt-level 0 build did not keep assembly"
     assert_contains "$SELFHOST_OPT_ASM" "imul"
 
     rm -rf "$SELFHOST_OPTPKG/target"
-    run_cmd selfhost-build-package-opt-two "$SELFHOST_PLANNER_DIR/build-tool" --direct --manifest-path "$SELFHOST_OPTPKG/typelisp.pkg" --opt-level 2
+    run_cmd selfhost-build-package-opt-two "$SELFHOST_PLANNER_DIR/build-tool$HOST_EXE_SUFFIX" --direct --manifest-path "$SELFHOST_OPTPKG/typelisp.pkg" --opt-level 2
     assert_success
     assert_stderr_empty
     [ -f "$SELFHOST_OPT_ASM" ] || fail "selfhost opt package --opt-level 2 build did not keep assembly"
     assert_not_contains "$SELFHOST_OPT_ASM" "imul"
 
-    run_cmd selfhost-build-package-opt-missing "$SELFHOST_PLANNER_DIR/build-tool" --direct --manifest-path "$SELFHOST_OPTPKG/typelisp.pkg" --opt-level
+    run_cmd selfhost-build-package-opt-missing "$SELFHOST_PLANNER_DIR/build-tool$HOST_EXE_SUFFIX" --direct --manifest-path "$SELFHOST_OPTPKG/typelisp.pkg" --opt-level
     assert_failure
     assert_stdout_empty
     assert_contains "$err" "build: --opt-level requires a value"
 
     rm -rf "$SELFHOST_PKG/target"
-    run_cmd selfhost-build-package-mode-staged "$SELFHOST_PLANNER_DIR/build-tool" --direct --manifest-path "$SELFHOST_PKG/typelisp.pkg" --backend-mode avx2
+    run_cmd selfhost-build-package-mode-staged "$SELFHOST_PLANNER_DIR/build-tool$HOST_EXE_SUFFIX" --direct --manifest-path "$SELFHOST_PKG/typelisp.pkg" --backend-mode avx2
     assert_success
     assert_stderr_empty
     [ -f "$SELFHOST_PKG_ASM" ] || fail "selfhost package --backend-mode avx2 did not keep assembly"
-    assert_contains "$out" "Generated: $SELFHOST_PKG_BIN"
+    assert_contains "$out" "Generated: $(native_arg_path "$SELFHOST_PKG_BIN")"
     assert_contains "$SELFHOST_PKG_ASM" "vzeroupper"
 
-    run_cmd selfhost-run-tool-missing-target "$SELFHOST_PLANNER_DIR/run-tool" --direct "$PLANNER_SOURCE" --target
+    run_cmd selfhost-run-tool-missing-target "$SELFHOST_PLANNER_DIR/run-tool$HOST_EXE_SUFFIX" --direct "$PLANNER_SOURCE" --target
     assert_failure
     assert_stdout_empty
     assert_contains "$err" "run: --target requires a value"
 else
-    echo "[public-tools] skipping selfhost build/run tool executables on $HOST_OS"
-fi
-else
-    echo "[public-tools] skipping selfhost build/run tool executables (native build/run disabled)"
+    fail "selfhost build/run tool executable coverage requires native build/run support"
 fi
 
 echo "[public-tools] backend diagnostics"
@@ -1283,18 +1420,6 @@ while IFS='|' read -r diag_name diag_command diag_expect || [ -n "$diag_name" ];
     [ -f "$contains" ] || fail "backend diagnostic expectations missing: $contains"
     cp "$source" "$work_source"
 
-    if [ "$SELFHOST_FRONTEND_DIAGNOSTICS" -eq 1 ] && [ "$HOST_ACTION_ENABLED" -eq 0 ]; then
-        case "$diag_name" in
-            tuple_return | array_return)
-                run_cmd "backend-$diag_name-compat-probe" "$COMPILER" compile "$work_source"
-                if [ "$code" -eq 0 ]; then
-                    echo "[public-tools] skipping backend diagnostic $diag_name (compat compiler still accepts aggregate returns; #1699)"
-                    continue
-                fi
-                ;;
-        esac
-    fi
-
     case "$diag_command" in
         compile)
             run_cmd "backend-$diag_name" "$COMPILER" compile "$work_source"
@@ -1312,18 +1437,11 @@ while IFS='|' read -r diag_name diag_command diag_expect || [ -n "$diag_name" ];
     esac
     assert_stdout_empty
 
-    if [ "$SELFHOST_FRONTEND_DIAGNOSTICS" -eq 1 ]; then
-        # cli.tl and the stage1 wrapper share the selfhost lowerer, which reports
-        # a generic "lower: unsupported expression" rather than the legacy
-        # per-case diagnostics; assert the generic message here (#1327).
-        assert_contains "$err" "lower: unsupported expression"
-    else
-        while IFS= read -r expected || [ -n "$expected" ]; do
-            expected=$(printf '%s' "$expected" | tr -d '\r')
-            [ -n "$expected" ] || continue
-            assert_contains "$err" "$expected"
-        done < "$contains"
-    fi
+    while IFS= read -r expected || [ -n "$expected" ]; do
+        expected=$(printf '%s' "$expected" | tr -d '\r')
+        [ -n "$expected" ] || continue
+        assert_contains "$err" "$expected"
+    done < "$contains"
 done < "$BACKEND_DIAG_MANIFEST"
 
 if [ "$HAS_LINT_COMMAND" = 1 ]; then
@@ -1371,7 +1489,7 @@ EOF
         assert_contains "$err" "typelisp lint <file.tl>"
     fi
 else
-    echo "[public-tools] SKIP lint command (compiler predates public lint CLI)"
+    fail "public lint CLI is required"
 fi
 
 echo "[public-tools] formatter golden corpus"
@@ -1427,12 +1545,6 @@ while IFS= read -r fmt_name; do
     check_file_exact "$WORKDIR/$fmt_name.tl" "$WORKDIR/$fmt_name.expected"
 done < "$WORKDIR/format-expected.txt"
 
-# On windows the Rust host's `doc`/`doc --test` driver build deadlocks on the
-# cmd /C wrapper (#1650); the self-hosted doc path is covered by the no-Rust
-# gate, so skip this section on windows rather than hang.
-if [ "$HOST_OS" = windows ]; then
-    echo "[public-tools] skipping doc and doctest commands on windows (Rust host doc spawn deadlocks; #1650)"
-else
 echo "[public-tools] doc and doctest commands"
 cat > "$WORKDIR/docs.tl" <<'EOF'
 ;# Module docs.
@@ -1544,14 +1656,11 @@ else
     assert_contains "$err" "Usage:"
     assert_contains "$err" "typelisp doc --test <file.tl>"
 fi
-fi
 
-# Doc *generation* (`doc <src> -o <out>` markdown/HTML) is a pending gap in the
-# single-binary cli.tl stage0 (it aborts with `tl: read-file failed`), and the
-# selfhost-doc-tool build path needs the `Generated:` host-action output, so the
-# no-Rust gate disables this block via TYPELISP_PUBLIC_TOOLS_HOST_ACTION_ENABLED=0
-# until that lands (#1662). `doc --test` coverage above still runs on cli.tl.
-if [ "$HOST_OS" = linux ] && [ "$HOST_ACTION_ENABLED" -eq 1 ]; then
+# Doc *generation* (`doc <src> -o <out>` markdown/HTML) is part of the public
+# tool gate and must run wherever the public doc command is available.
+if [ "$HOST_ACTION_ENABLED" -eq 1 ]; then
+    echo "[public-tools] doc generation"
     cat > "$WORKDIR/doc_source.tl" <<'EOF'
 ;# Module docs.
 
@@ -1566,16 +1675,17 @@ EOF
     assert_contains "$WORKDIR/doc_source.md" "answer"
 
     DOC_CUSTOM_DIR="$WORKDIR/custom-doc-output"
+    DOC_CUSTOM_OUT="$DOC_CUSTOM_DIR/custom.md"
     mkdir -p "$DOC_CUSTOM_DIR"
     cat > "$WORKDIR/doc_custom_input.tl" <<'EOF'
 ;: Single item.
 (define x : i64 1)
 EOF
-    run_cmd doc-generate-custom "$COMPILER" doc "$WORKDIR/doc_custom_input.tl" -o "$DOC_CUSTOM_DIR/custom.md"
+    run_cmd doc-generate-custom "$COMPILER" doc "$WORKDIR/doc_custom_input.tl" -o "$DOC_CUSTOM_OUT"
     assert_success
     assert_stderr_empty
-    assert_contains "$out" "Generated: $DOC_CUSTOM_DIR/custom.md"
-    assert_contains "$DOC_CUSTOM_DIR/custom.md" "x"
+    assert_contains "$out" "Generated: $(native_arg_path "$DOC_CUSTOM_OUT")"
+    assert_contains "$DOC_CUSTOM_OUT" "x"
 
     DOC_GRAPH_DIR="$WORKDIR/doc-module-graph"
     DOC_GRAPH_STDLIB="$DOC_GRAPH_DIR/repo-stdlib"
@@ -1609,43 +1719,53 @@ EOF
     run_cmd doc-generate-module-graph "$COMPILER" doc "$DOC_GRAPH_ENTRY" -o "$DOC_GRAPH_OUT" --stdlib-root "$DOC_GRAPH_STDLIB"
     assert_success
     assert_stderr_empty
-    assert_contains "$out" "Generated: $DOC_GRAPH_OUT"
+    assert_contains "$out" "Generated: $(native_arg_path "$DOC_GRAPH_OUT")"
 
     DOC_GRAPH_ENTRY_PATH=$(CDPATH= cd -- "$(dirname -- "$DOC_GRAPH_ENTRY")" && printf '%s/%s' "$(pwd -P)" "$(basename -- "$DOC_GRAPH_ENTRY")")
     DOC_GRAPH_LOCAL_PATH=$(CDPATH= cd -- "$(dirname -- "$DOC_GRAPH_LOCAL")" && printf '%s/%s' "$(pwd -P)" "$(basename -- "$DOC_GRAPH_LOCAL")")
     DOC_GRAPH_STDLIB_PATH=$(CDPATH= cd -- "$(dirname -- "$DOC_GRAPH_STDLIB_SOURCE")" && printf '%s/%s' "$(pwd -P)" "$(basename -- "$DOC_GRAPH_STDLIB_SOURCE")")
+    DOC_GRAPH_ENTRY_DISPLAY=$(native_arg_path "$DOC_GRAPH_ENTRY_PATH")
+    DOC_GRAPH_LOCAL_DISPLAY=$(native_arg_path "$DOC_GRAPH_LOCAL_PATH")
+    DOC_GRAPH_STDLIB_DISPLAY=$(native_arg_path "$DOC_GRAPH_STDLIB_PATH")
     assert_contains "$DOC_GRAPH_OUT" "## Modules"
-    assert_contains "$DOC_GRAPH_OUT" "- [$DOC_GRAPH_ENTRY_PATH](#"
-    assert_contains "$DOC_GRAPH_OUT" "Source: \`$DOC_GRAPH_LOCAL_PATH\`"
-    assert_contains "$DOC_GRAPH_OUT" "Source: \`$DOC_GRAPH_STDLIB_PATH\`"
+    assert_contains "$DOC_GRAPH_OUT" "- [$DOC_GRAPH_ENTRY_DISPLAY](#"
+    assert_contains "$DOC_GRAPH_OUT" "Source: \`$DOC_GRAPH_LOCAL_DISPLAY\`"
+    assert_contains "$DOC_GRAPH_OUT" "Source: \`$DOC_GRAPH_STDLIB_DISPLAY\`"
     assert_contains "$DOC_GRAPH_OUT" "Entry module docs."
     assert_contains "$DOC_GRAPH_OUT" "Local module docs."
     assert_contains "$DOC_GRAPH_OUT" "Stdlib module docs."
     DOC_GRAPH_LOCAL_DOCS=$(grep -F "Local module docs." "$DOC_GRAPH_OUT" | wc -l | tr -d ' ')
     [ "$DOC_GRAPH_LOCAL_DOCS" -eq 1 ] || fail "doc module graph duplicated local docs"
-    DOC_GRAPH_ENTRY_LINE=$(grep -nF "## $DOC_GRAPH_ENTRY_PATH" "$DOC_GRAPH_OUT" | head -n 1 | cut -d: -f1)
-    DOC_GRAPH_LOCAL_LINE=$(grep -nF "## $DOC_GRAPH_LOCAL_PATH" "$DOC_GRAPH_OUT" | head -n 1 | cut -d: -f1)
-    DOC_GRAPH_STDLIB_LINE=$(grep -nF "## $DOC_GRAPH_STDLIB_PATH" "$DOC_GRAPH_OUT" | head -n 1 | cut -d: -f1)
+    DOC_GRAPH_ENTRY_LINE=$(grep -nF "## $DOC_GRAPH_ENTRY_DISPLAY" "$DOC_GRAPH_OUT" | head -n 1 | cut -d: -f1)
+    DOC_GRAPH_LOCAL_LINE=$(grep -nF "## $DOC_GRAPH_LOCAL_DISPLAY" "$DOC_GRAPH_OUT" | head -n 1 | cut -d: -f1)
+    DOC_GRAPH_STDLIB_LINE=$(grep -nF "## $DOC_GRAPH_STDLIB_DISPLAY" "$DOC_GRAPH_OUT" | head -n 1 | cut -d: -f1)
     [ "$DOC_GRAPH_ENTRY_LINE" -lt "$DOC_GRAPH_LOCAL_LINE" ] &&
         [ "$DOC_GRAPH_LOCAL_LINE" -lt "$DOC_GRAPH_STDLIB_LINE" ] ||
         fail "doc module graph did not preserve loader source order"
 
-    DOC_TOOL="$WORKDIR/selfhost-doc-tool"
-    build_linux_cli_tool selfhost-doc-tool selfhost/doc.tl "$DOC_TOOL"
+    DOC_TOOL="$WORKDIR/selfhost-doc-tool$HOST_EXE_SUFFIX"
+    if [ "$HOST_OS" = linux ]; then
+        build_linux_cli_tool selfhost-doc-tool selfhost/doc.tl "$DOC_TOOL"
+    else
+        build_host_cli_tool selfhost-doc-tool selfhost/doc.tl "$DOC_TOOL"
+    fi
     run_cmd doc-generate-html "$DOC_TOOL" --html "$WORKDIR/doc_source.tl" "$WORKDIR/doc_source.html"
     assert_success
-    assert_stdout_empty
+    assert_contains "$out" "Generated: $(native_arg_path "$WORKDIR/doc_source.html")"
     assert_stderr_empty
     assert_contains "$WORKDIR/doc_source.html" "<!doctype html>"
     assert_contains "$WORKDIR/doc_source.html" "typelisp-docs.css"
     assert_contains "$WORKDIR/doc_source.html" "id=\"tl-answer\""
     assert_contains "$WORKDIR/doc_source.html" "<code class=\"language-typelisp\">(define answer : i64 42)</code>"
 else
-    echo "[public-tools] skipping doc generation on $HOST_OS"
+    fail "doc generation requires host-action drivers"
 fi
 
 echo "[public-tools] inline test command"
 cat > "$WORKDIR/inline_test_pass.tl" <<'EOF'
+(define (panic [message : String]) : unit
+  unit)
+
 (import "stdlib/test.tl")
 
 (define (inc [x : i64]) : i64 (+ x 1))
@@ -1656,24 +1776,20 @@ cat > "$WORKDIR/inline_test_pass.tl" <<'EOF'
   (assert-i64-eq (inc 41) 42 "inc result"))
 EOF
 
-run_cmd inline-test-check "$COMPILER" test --check "$WORKDIR/inline_test_pass.tl" --stdlib-root "$ROOT/stdlib"
+run_cmd inline-test-check "$COMPILER" test --check "$WORKDIR/inline_test_pass.tl" --target "$HOST_TARGET" --stdlib-root "$ROOT/stdlib"
 assert_success
 assert_stderr_empty
 assert_contains "$out" "TypeLisp test typecheck passed: 1 test(s)"
 
-if [ "$HOST_OS" = linux ]; then
-    run_cmd inline-test-pass "$COMPILER" test "$WORKDIR/inline_test_pass.tl" --stdlib-root "$ROOT/stdlib"
-    assert_success
-    assert_stdout_empty
-    assert_contains "$err" "test inc-basic"
-    assert_contains "$err" "ok inc-basic"
-    assert_contains "$err" "TypeLisp tests passed: 1 test(s)"
-    [ ! -f "$WORKDIR/inline_test_pass.tl.test.s" ] || fail "typelisp test left scratch assembly behind"
-else
-    echo "[public-tools] skipping inline test run checks on $HOST_OS"
-fi
+run_cmd inline-test-pass "$COMPILER" test "$WORKDIR/inline_test_pass.tl" --target "$HOST_TARGET" --stdlib-root "$ROOT/stdlib"
+assert_success
+assert_stdout_empty
+assert_contains "$err" "test inc-basic"
+assert_contains "$err" "ok inc-basic"
+assert_contains "$err" "TypeLisp tests passed: 1 test(s)"
+[ ! -f "$WORKDIR/inline_test_pass.tl.test.s" ] || fail "typelisp test left scratch assembly behind"
 
-run_cmd inline-test-normal-compile "$COMPILER" compile "$WORKDIR/inline_test_pass.tl" -o "$WORKDIR/inline_test_pass.s" --stdlib-root "$ROOT/stdlib"
+run_cmd inline-test-normal-compile "$COMPILER" compile "$WORKDIR/inline_test_pass.tl" --target "$HOST_TARGET" -o "$WORKDIR/inline_test_pass.s" --stdlib-root "$ROOT/stdlib"
 assert_success
 assert_stderr_empty
 if [ "$HOST_ACTION_ENABLED" -eq 1 ]; then
@@ -1681,42 +1797,42 @@ if [ "$HOST_ACTION_ENABLED" -eq 1 ]; then
 fi
 assert_not_contains "$WORKDIR/inline_test_pass.s" "__tl_inline_test"
 
-if [ "$HOST_OS" = linux ]; then
-    cat > "$WORKDIR/inline_test_fail.tl" <<'EOF'
+cat > "$WORKDIR/inline_test_fail.tl" <<'EOF'
+(define (panic [message : String]) : unit
+  (begin
+    (print-error message)
+    (print-error "\n")
+    (/ 1 0)
+    unit))
+
 (import "stdlib/test.tl")
 
 (test failing-case
   (assert-i64-eq 1 2 "inline failure message"))
 EOF
 
-    run_cmd inline-test-fail "$COMPILER" test "$WORKDIR/inline_test_fail.tl" --stdlib-root "$ROOT/stdlib"
+    run_cmd inline-test-fail "$COMPILER" test "$WORKDIR/inline_test_fail.tl" --target "$HOST_TARGET" --stdlib-root "$ROOT/stdlib"
     assert_failure
     assert_stdout_empty
     assert_contains "$err" "test failing-case"
     assert_contains "$err" "inline failure message"
     assert_contains "$err" "typelisp test: test executable exited"
     [ ! -f "$WORKDIR/inline_test_fail.tl.test.s" ] || fail "failing typelisp test left scratch assembly behind"
-fi
 
-run_cmd inline-test-no-tests-check "$COMPILER" test --check "$ROOT/stdlib/windows_setup.tl" --stdlib-root "$ROOT/stdlib"
+run_cmd inline-test-no-tests-check "$COMPILER" test --check "$ROOT/stdlib/windows_setup.tl" --target "$HOST_TARGET" --stdlib-root "$ROOT/stdlib"
 assert_success
 assert_stderr_empty
 assert_contains "$out" "TypeLisp test typecheck passed: 0 test(s)"
 
-if [ "$HOST_OS" = linux ]; then
-    rm -f "$ROOT/stdlib/windows_setup.tl.test.s"
-    run_cmd inline-test-no-tests-run "$COMPILER" test "$ROOT/stdlib/windows_setup.tl" --stdlib-root "$ROOT/stdlib"
-    assert_success
-    assert_stdout_empty
-    assert_contains "$err" "TypeLisp tests passed: 0 test(s)"
-    [ ! -f "$ROOT/stdlib/windows_setup.tl.test.s" ] || fail "no-test typelisp test left scratch assembly behind"
-fi
+cat > "$WORKDIR/inline_test_no_tests.tl" <<'EOF'
+(define (main) : i64 0)
+EOF
+run_cmd inline-test-no-tests-run "$COMPILER" test "$WORKDIR/inline_test_no_tests.tl" --target "$HOST_TARGET" --stdlib-root "$ROOT/stdlib"
+assert_success
+assert_stdout_empty
+assert_contains "$err" "TypeLisp tests passed: 0 test(s)"
+[ ! -f "$WORKDIR/inline_test_no_tests.tl.test.s" ] || fail "no-test typelisp test left scratch assembly behind"
 
-# Package build coverage. This script still runs as an extended compatibility
-# gate in the no-Rust lane, so TYPELISP_PUBLIC_TOOLS_HOST_ACTION_ENABLED=0 skips
-# the package-heavy section while package-build diagnostics are brought to parity.
-# Focused direct build/run coverage for the current selfhost cli lives in
-# scripts/verify-selfhost-cli-build-run.sh.
 if [ "$HOST_ACTION_ENABLED" -eq 1 ]; then
 echo "[public-tools] package build"
 PKG="$WORKDIR/pkg"
@@ -1761,8 +1877,8 @@ if [ "$IS_STAGE1_WRAPPER" -eq 1 ]; then
     assert_contains "$PKG_ASM" "inc:"
     assert_contains "$PKG_ASM" "add_one"
 else
-    assert_contains "$PKG_ASM" "_tl_inc:"
-    assert_contains "$PKG_ASM" "_tl_add_one:"
+    assert_contains_any "$PKG_ASM" "_tl_inc:" "_tl_math_u2etl_colon_coloninc:"
+    assert_contains "$PKG_ASM" "add_one"
 fi
 
 BADPKG="$WORKDIR/badpkg"
@@ -1826,7 +1942,7 @@ assert_contains "$WALK_ASM" "main:"
 if [ "$IS_STAGE1_WRAPPER" -eq 1 ]; then
     assert_contains "$WALK_ASM" "inc:"
 else
-    assert_contains "$WALK_ASM" "_tl_inc:"
+    assert_contains_any "$WALK_ASM" "_tl_inc:" "_tl_math_u2etl_colon_coloninc:"
 fi
 
 MISSING_DEP="$WORKDIR/missing_dep"
@@ -1858,12 +1974,10 @@ cat > "$MISSING_DEP/src/main.tl" <<'EOF'
 EOF
 run_cmd package-missing-dep-file "$COMPILER" build --manifest-path "$MISSING_DEP/typelisp.pkg"
 assert_failure
-assert_stdout_empty
 if [ "$IS_STAGE1_WRAPPER" -eq 1 ]; then
     assert_contains "$err" "compiler-load: cannot read import"
 else
-    assert_contains "$err" "pkg:math/src/missing.tl"
-    assert_contains "$err" 'alias `math`'
+    assert_contains "$err" "compiler-load: cannot read import"
 fi
 
 # Normalize backslashes for Windows path comparison in diagnostic output.
@@ -1871,21 +1985,20 @@ ERR_NORMALIZED="$WORKDIR/missing_dep_err_normalized.tmp"
 tr '\\' '/' < "$err" > "$ERR_NORMALIZED"
 assert_contains "$ERR_NORMALIZED" "vendor/math/src/missing.tl"
 else
-    echo "[public-tools] skipping package build coverage (host-action drivers disabled; #1662)"
+    fail "package build coverage requires host-action drivers"
 fi
 
 echo "[public-tools] LSP corpus via run-corpus.sh"
 if [ "$HAS_LSP_COMMAND" -eq 1 ]; then
-    TYPELISP_PUBLIC_TOOLS_STAGE1_WRAPPER=$IS_STAGE1_WRAPPER TYPELISP_BIN="$COMPILER" sh "$ROOT/tests/public-tools/run-corpus.sh" lsp
+    TYPELISP_BIN="$COMPILER" sh "$ROOT/tests/public-tools/run-corpus.sh" lsp
 else
-    echo "[public-tools] skipping LSP corpus (lsp command unavailable or pending)"
+    fail "LSP corpus requires the public lsp command"
 fi
 
 echo "[public-tools] REPL corpus via run-corpus.sh"
-echo "[public-tools] skipping public REPL corpus (repl pending in cli.tl; #1641)"
+TYPELISP_BIN="$COMPILER" sh "$ROOT/tests/public-tools/run-corpus.sh" repl
 if [ "$HOST_OS" = linux ]; then
-    echo "[public-tools] selfhost REPL corpus via run-corpus.sh"
-    TYPELISP_PUBLIC_TOOLS_STAGE1_WRAPPER=1 TYPELISP_BIN="$COMPILER" sh "$ROOT/tests/public-tools/run-corpus.sh" repl
+    :
 else
     echo "[public-tools] selfhost REPL scratch smoke on $HOST_OS"
     SELFHOST_REPL_SMOKE="$WORKDIR/selfhost-repl-smoke.in"
@@ -1922,7 +2035,7 @@ if [ "$HAS_LSP_COMMAND" -eq 1 ]; then
     assert_contains "$out" '"capabilities"'
     assert_contains "$out" '"id":2'
 else
-    echo "[public-tools] skipping LSP checks (lsp command unavailable or pending)"
+    fail "legacy LSP inline checks require the public lsp command"
 fi
 
 echo "[public-tools] SPEC metadata examples"
@@ -2145,6 +2258,10 @@ END {
 }
 ' SPEC.md > "$SPEC_MANIFEST"
 
+spec_uses_deferred_runtime_surface() {
+    grep -E '(^|[^A-Za-z0-9_-])(print-string|print-error|panic|read-stdin|stdin-eof|arg-count|arg)([^A-Za-z0-9_-]|$)' "$1" > /dev/null
+}
+
 while IFS='|' read -r spec_name spec_mode spec_value; do
     [ -n "$spec_name" ] || continue
     case "$spec_mode" in
@@ -2159,22 +2276,12 @@ while IFS='|' read -r spec_name spec_mode spec_value; do
             assert_success
             ;;
         run)
-            if [ "$HOST_OS" != linux ]; then
-                echo "[public-tools] skipping SPEC run example $spec_name on $HOST_OS"
-                continue
-            fi
             if [ "$HOST_ACTION_ENABLED" -eq 0 ]; then
-                # The no-Rust lane runs this script as an extended compatibility
-                # gate with host-action coverage disabled. Focused `typelisp run`
-                # coverage for the current selfhost cli lives in
-                # scripts/verify-selfhost-cli-build-run.sh. SPEC check/compile
-                # examples still run on cli.tl above.
-                echo "[public-tools] skipping SPEC run example $spec_name (host-action drivers disabled; #1662)"
-                continue
+                fail "SPEC run example $spec_name requires host-action drivers"
             fi
             run_cmd "spec-$spec_name" "$COMPILER" run "$SPEC_WORK/$spec_name.tl"
             assert_code "$spec_value"
-            check_file_exact "$out" "$SPEC_WORK/$spec_name.stdout"
+            check_text_file_exact "$out" "$SPEC_WORK/$spec_name.stdout"
             assert_stderr_empty
             ;;
         *)

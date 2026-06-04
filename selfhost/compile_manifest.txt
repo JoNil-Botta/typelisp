@@ -180,7 +180,7 @@ contains|_tl_source_tool_run_source:
 contains|_tl_source_tool_run_command:
 contains|_tl_source_tool_augment_assembly:
 contains|tl_process_output:
-contains|.L_tl_fs_mkdir_status:
+contains|_tl_fs_mkdir_status:
 end
 
 case|selfhost_check|selfhost/check.tl|assembly|exactly-one|direct
@@ -189,7 +189,7 @@ contains|_tl_selfhost_check_config_from:
 contains|_tl_selfhost_check_run_from:
 contains|_tl_selfhost_check_file:
 contains|_tl_compiler_check_file_with_roots:
-contains|_tl_compiler_load_file_with_path
+contains|_tl_compiler_load_file_with_paths_and_roots
 contains|selfhost-check: expected input path
 contains|selfhost-check: --stdlib-root requires a value
 end
@@ -229,7 +229,7 @@ end
 case|selfhost_compile_smoke|selfhost/compile_smoke.tl|assembly|exactly-one|direct
 contains|call _tl_parse_program
 contains|call _tl_emit_program_with_defs
-contains|.L_tl_arg_count:
+contains|_tl_arg_count:
 contains|compile-smoke: expected input and output paths
 end
 
@@ -534,10 +534,10 @@ contains|_tl_doc_html_render_module_graph:
 contains|_tl_doc_extract_source:
 contains|_tl_format_lex:
 contains|_tl_doc_stdlib_roots:
-contains|.L_tl_arg_count:
-contains|.L_tl_arg:
-contains|.L_tl_read_file:
-contains|.L_tl_write_file:
+contains|_tl_arg_count:
+contains|_tl_arg:
+contains|_tl_read_file:
+contains|_tl_write_file:
 contains|Doc tests passed:
 contains|doc tests failed:
 contains|doc: expected --test input path
@@ -621,9 +621,9 @@ contains|_tl_doc_site_render_index:
 contains|_tl_doc_site_css:
 contains|_tl_doc_html_render_module_page:
 contains|_tl_doc_extract_source:
-contains|.L_tl_read_file_status:
-contains|.L_tl_write_file_status:
-contains|.L_tl_fs_mkdir_status:
+contains|_tl_read_file_status:
+contains|_tl_write_file_status:
+contains|_tl_fs_mkdir_status:
 contains|stdlib-io.html
 contains|typelisp-docs.css
 contains|doc-site: missing input module:
@@ -635,8 +635,8 @@ requires-stage0-symbol|fs-rename-status,fs-read-dir-status,fs-read-dir,fs-file-k
 contains|_tl_doc_site_build:
 contains|_tl_doc_site_usage:
 contains|_tl_doc_site_render_index:
-contains|.L_tl_arg_count:
-contains|.L_tl_arg:
+contains|_tl_arg_count:
+contains|_tl_arg:
 contains|typelisp-docs.css
 contains|doc-site: expected zero args or output directory
 end
@@ -757,7 +757,7 @@ not-contains|_tl_sexpr_sym:
 not-contains|_tl_seq:
 not-contains|_tl_sum_list:
 not-contains|eval: strings not supported
-count-at-least|call _tl_eval_sexpr|2
+count-at-least|call _tl_eval_sexpr_result|2
 count-at-least|call _tl_print_value|2
 end
 
@@ -807,8 +807,8 @@ contains|_tl_front_program_render:
 contains|_tl_parse_ast_source_diagnostic:
 contains|_tl_lex_spanned_result:
 contains|frontend-tools: expected mode tokenize
-not-contains|_tl_print_char
-not-contains|tl_print_char
+not-contains|_tl_print_char:
+not-contains|tl_print_char:
 end
 
 case|selfhost_frontend_tools_core|selfhost/frontend_tools_core.tl|assembly|skip|direct
@@ -910,9 +910,9 @@ contains|_tl_repl_type_command:
 contains|_tl_repl_type_render:
 contains|_tl_repl_handle_type_command:
 contains|_tl_repl_handle_line:
-contains|.L_tl_read_stdin_line
-contains|.L_tl_stdin_eof
-contains|.L_tl_flush_stdout
+contains|_tl_stdin_read_line:
+contains|_tl_stdin_at_eof_question:
+contains|_tl_stdout_flush:
 contains|tl>
 end
 
@@ -939,7 +939,6 @@ contains|_tl_compiler_backend_emit_program_target_with_mode_buffer_and_crt:
 contains|test: expected source path
 contains|test: --opt-level requires a value
 contains|test: invalid --opt-level
-contains|test: direct inline harness execution is unsupported on windows-x86_64
 contains|typelisp test: test executable exited with exit status:
 contains|test: failed to write assembly artifact
 end

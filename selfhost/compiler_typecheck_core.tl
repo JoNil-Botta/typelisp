@@ -1277,6 +1277,8 @@
       (match decl
         [(AstDeclImport _)
           (tc-nominal-owner-name-list rest target index module)]
+        [(AstDeclIncludeStr _ _)
+          (tc-nominal-owner-name-list rest target index module)]
         [(AstDeclExport _)
           (tc-nominal-owner-name-list rest target index module)]
         [(AstDeclModule next-module)
@@ -1805,6 +1807,8 @@
               [(ErrTcReprCLayout message) (ErrTcUnit message)])
             OkTcUnit)]
         [(ErrTcUnit message) (ErrTcUnit message)])]
+    [(AstDeclIncludeStr _ _)
+      (ErrTcUnit "typecheck: include-str must be expanded by compiler loader")]
     [(AstDeclImport _) OkTcUnit]
     [(AstDeclExport _) OkTcUnit]
     [(AstDeclModule _) OkTcUnit]
@@ -2649,6 +2653,8 @@
             [_ (tc-build-top-env-list-in-module ctx rest env module)])]
         [(AstDeclImport _)
           (tc-build-top-env-list-in-module ctx rest env module)]
+        [(AstDeclIncludeStr _ _)
+          (tc-build-top-env-list-in-module ctx rest env module)]
         [(AstDeclExport _)
           (tc-build-top-env-list-in-module ctx rest env module)]
         [(AstDeclTest _ _ _)
@@ -2737,6 +2743,14 @@
             alias
             next-module)]
         [(AstDeclImport _)
+          (tc-bind-import-alias-module-list
+            ctx
+            rest
+            env
+            target-module
+            alias
+            module)]
+        [(AstDeclIncludeStr _ _)
           (tc-bind-import-alias-module-list
             ctx
             rest
@@ -6606,6 +6620,8 @@
     [(AstDeclCons decl rest)
       (match decl
         [(AstDeclImport _)
+          (tc-variant-owner-name-list rest target index module)]
+        [(AstDeclIncludeStr _ _)
           (tc-variant-owner-name-list rest target index module)]
         [(AstDeclExport _)
           (tc-variant-owner-name-list rest target index module)]

@@ -706,6 +706,16 @@
               alias
               module
               path-aware)]
+          [(AstDeclIncludeStr _ _)
+            (lower-name-env-add-module-aliases
+              rest
+              rest-paths
+              entry-path
+              names
+              target-module
+              alias
+              module
+              path-aware)]
           [(AstDeclExport _)
             (lower-name-env-add-module-aliases
               rest
@@ -14279,6 +14289,21 @@
             mode
             module)]
         [(AstDeclImport _)
+          (lower-decls-in-module
+            ctx
+            top-env
+            local-top-env
+            rest
+            globals
+            functions
+            externs
+            spans
+            names
+            name-cache
+            type-cache
+            mode
+            module)]
+        [(AstDeclIncludeStr _ _)
           (lower-decls-in-module
             ctx
             top-env

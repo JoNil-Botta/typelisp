@@ -44,6 +44,9 @@
       (+ (* (hash-normalize seed) (hash-multiplier)) (hash-normalize component))
       1)))
 
+(define (hash-combine-normalized [seed : i64] [component : i64]) : i64
+  (hash-normalize (+ (+ (* seed (hash-multiplier)) component) 1)))
+
 ;: Hash an `i64` key value.
 (define (hash-i64 [value : i64]) : i64
   (hash-normalize value))
@@ -82,7 +85,9 @@
     (begin
       (while (< i n)
         (begin
-          (set! hash (hash-combine hash (hash-char (string-ref key i))))
+          (set!
+            hash
+            (hash-combine-normalized hash (cast (string-ref key i) : i64)))
           (set! i (+ i 1))))
       hash)))
 

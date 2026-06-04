@@ -1326,7 +1326,7 @@
             (IrBlock
               "entry"
               (IrInstrCons
-                (IrInstrCall 0 "callee" IrValueNil (AstTyI64))
+                (IrInstrCall 0 "callee" (IrCallArgsNil) (AstTyI64))
                 (IrInstrCons
                   (IrInstrReturn (IrSomeValue (IrValueVar 0)))
                   IrInstrNil)))
@@ -2920,7 +2920,7 @@
   (IrBlock
     "div_trap"
     (IrInstrCons
-      (IrInstrCall 1 "tl_div_abort" IrValueNil (AstTyUnit))
+      (IrInstrCall 1 "tl_div_abort" (IrCallArgsNil) (AstTyUnit))
       (IrInstrCons (IrInstrJump "div_ok") IrInstrNil))))
 
 (define (compiler-backend-checked-trap-div-ok-block) : CompilerIrBlock
@@ -2940,7 +2940,7 @@
   (IrBlock
     "shift_trap"
     (IrInstrCons
-      (IrInstrCall 5 "tl_shift_abort" IrValueNil (AstTyUnit))
+      (IrInstrCall 5 "tl_shift_abort" (IrCallArgsNil) (AstTyUnit))
       (IrInstrCons (IrInstrJump "shift_ok") IrInstrNil))))
 
 (define (compiler-backend-checked-trap-shift-ok-block) : CompilerIrBlock

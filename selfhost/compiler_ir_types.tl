@@ -63,6 +63,12 @@
   (IrValueNil)
   (IrValueCons CompilerIrValue CompilerIrValueList))
 
+(defenum CompilerIrCallArgs
+  (IrCallArgsNil)
+  (IrCallArgsOne CompilerIrValue)
+  (IrCallArgsTwo CompilerIrValue CompilerIrValue)
+  (IrCallArgsArray (Array CompilerIrValue)))
+
 (defenum CompilerIrPhiInputList
   (IrPhiInputNil)
   (IrPhiInputCons CompilerIrValue String CompilerIrPhiInputList))
@@ -132,9 +138,9 @@
   (IrInstrEntryEnvp i64)
   (IrInstrCpuId i64 CompilerIrValue CompilerIrValue i64)
   (IrInstrXgetbv i64 CompilerIrValue)
-  (IrInstrCall i64 String CompilerIrValueList AstType)
-  (IrInstrCallIndirect i64 CompilerIrValue CompilerIrValueList AstType)
-  (IrInstrTailCall String CompilerIrValueList AstType)
+  (IrInstrCall i64 String CompilerIrCallArgs AstType)
+  (IrInstrCallIndirect i64 CompilerIrValue CompilerIrCallArgs AstType)
+  (IrInstrTailCall String CompilerIrCallArgs AstType)
   (IrInstrStore String CompilerIrValue AstType)
   (IrInstrJump String)
   (IrInstrBranch CompilerIrValue String String)
@@ -284,16 +290,82 @@
           [(IrValueNil) ""]
           [_ (string-append ", " (compiler-ir-value-list-render rest))]))]))
 
+(define (compiler-ir-value-list-count [values : CompilerIrValueList]) : i64
+  (match values
+    [(IrValueNil) 0]
+    [(IrValueCons _ rest) (+ 1 (compiler-ir-value-list-count rest))]))
+
+(define (compiler-ir-value-list-fill-array
+  [values : CompilerIrValueList]
+  [out : (Array CompilerIrValue)]
+  [index : i64]) : unit
+  (match values
+    [(IrValueNil) unit]
+    [(IrValueCons value rest)
+      (begin
+        (array-set! out index value)
+        (compiler-ir-value-list-fill-array rest out (+ index 1)))]))
+
+(define (compiler-ir-call-args-array [values : CompilerIrValueList]) : CompilerIrCallArgs
+  (let
+    [count : i64 (compiler-ir-value-list-count values)]
+    [out : (Array CompilerIrValue) (make-array CompilerIrValue count)]
+    (begin
+      (compiler-ir-value-list-fill-array values out 0)
+      (IrCallArgsArray out))))
+
+(define (compiler-ir-call-args-from-list [values : CompilerIrValueList]) : CompilerIrCallArgs
+  (match values
+    [(IrValueNil) (IrCallArgsNil)]
+    [(IrValueCons a rest)
+      (match rest
+        [(IrValueNil) (IrCallArgsOne a)]
+        [(IrValueCons b tail)
+          (match tail
+            [(IrValueNil) (IrCallArgsTwo a b)]
+            [_ (compiler-ir-call-args-array values)])])]))
+
+(define (compiler-ir-call-args-array-render
+  [values : (Array CompilerIrValue)]
+  [index : i64]) : String
+  (if (>= index (array-length values))
+    ""
+    (string-append
+      (compiler-ir-value-render (array-ref values index))
+      (if (= (+ index 1) (array-length values))
+        ""
+        (string-append
+          ", "
+          (compiler-ir-call-args-array-render values (+ index 1)))))))
+
+(define (compiler-ir-call-args-render [args : CompilerIrCallArgs]) : String
+  (match args
+    [(IrCallArgsNil) ""]
+    [(IrCallArgsOne a) (compiler-ir-value-render a)]
+    [(IrCallArgsTwo a b)
+      (compiler-ir-cat3
+        (compiler-ir-value-render a)
+        ", "
+        (compiler-ir-value-render b))]
+    [(IrCallArgsArray values) (compiler-ir-call-args-array-render values 0)]))
+
+(define (compiler-ir-call-args-count [args : CompilerIrCallArgs]) : i64
+  (match args
+    [(IrCallArgsNil) 0]
+    [(IrCallArgsOne _) 1]
+    [(IrCallArgsTwo _ _) 2]
+    [(IrCallArgsArray values) (array-length values)]))
+
 (define (compiler-ir-tail-call-render
   [name : String]
-  [args : CompilerIrValueList]
+  [args : CompilerIrCallArgs]
   [ty : AstType]) : String
   (compiler-ir-cat3
     "  tailcall "
     name
     (compiler-ir-cat3
       "("
-      (compiler-ir-value-list-render args)
+      (compiler-ir-call-args-render args)
       (compiler-ir-cat3 ") : " (compiler-ir-type-render ty) ""))))
 
 (define (compiler-ir-instr-render [instr : CompilerIrInstr]) : String
@@ -921,11 +993,6 @@
     a
     b))
 
-(define (compiler-ir-value-list-count [values : CompilerIrValueList]) : i64
-  (match values
-    [(IrValueNil) 0]
-    [(IrValueCons _ rest) (+ 1 (compiler-ir-value-list-count rest))]))
-
 (define (compiler-ir-phi-input-list-count [inputs : CompilerIrPhiInputList]) : i64
   (match inputs
     [(IrPhiInputNil) 0]
@@ -933,9 +1000,9 @@
 
 (define (compiler-ir-instr-call-arg-count [instr : CompilerIrInstr]) : i64
   (match instr
-    [(IrInstrCall _ _ args _) (compiler-ir-value-list-count args)]
-    [(IrInstrCallIndirect _ _ args _) (compiler-ir-value-list-count args)]
-    [(IrInstrTailCall _ args _) (compiler-ir-value-list-count args)]
+    [(IrInstrCall _ _ args _) (compiler-ir-call-args-count args)]
+    [(IrInstrCallIndirect _ _ args _) (compiler-ir-call-args-count args)]
+    [(IrInstrTailCall _ args _) (compiler-ir-call-args-count args)]
     [_ 0]))
 
 (define (compiler-ir-instr-phi-input-count [instr : CompilerIrInstr]) : i64
@@ -1253,6 +1320,30 @@
             ", "
             (compiler-ir-value-list-describe tail))])]))
 
+(define (compiler-ir-call-args-array-describe
+  [values : (Array CompilerIrValue)]
+  [index : i64]) : String
+  (if (>= index (array-length values))
+    ""
+    (string-append
+      (compiler-ir-value-describe (array-ref values index))
+      (if (= (+ index 1) (array-length values))
+        ""
+        (string-append
+          ", "
+          (compiler-ir-call-args-array-describe values (+ index 1)))))))
+
+(define (compiler-ir-call-args-describe [args : CompilerIrCallArgs]) : String
+  (match args
+    [(IrCallArgsNil) ""]
+    [(IrCallArgsOne a) (compiler-ir-value-describe a)]
+    [(IrCallArgsTwo a b)
+      (compiler-ir-cat3
+        (compiler-ir-value-describe a)
+        ", "
+        (compiler-ir-value-describe b))]
+    [(IrCallArgsArray values) (compiler-ir-call-args-array-describe values 0)]))
+
 (define (compiler-ir-binop-name [op : CompilerIrBinOp]) : String
   (match op
     [(IrBinAdd) "add"]
@@ -1501,7 +1592,7 @@
                             (IrInstrCall
                               9
                               "tl_string_eq"
-                              IrValueNil
+                              (IrCallArgsNil)
                               (AstTyBool))
                             IrEffectMemoryRead)
                           (and
@@ -1515,9 +1606,7 @@
                               (compiler-ir-effect-is?
                                 (IrInstrTailCall
                                   "fact_loop"
-                                  (IrValueCons
-                                    (IrValueVar 3)
-                                    (IrValueCons (IrValueI64 1) IrValueNil))
+                                  (IrCallArgsTwo (IrValueVar 3) (IrValueI64 1))
                                   (AstTyI64))
                                 IrEffectControlFlow)
                               (and
@@ -1867,7 +1956,7 @@
     (compiler-ir-instr-render
       (IrInstrTailCall
         "fact_loop"
-        (IrValueCons (IrValueVar 3) (IrValueCons (IrValueI64 1) IrValueNil))
+        (IrCallArgsTwo (IrValueVar 3) (IrValueI64 1))
         (AstTyI64)))
     "  tailcall fact_loop(%3, 1) : i64"))
 

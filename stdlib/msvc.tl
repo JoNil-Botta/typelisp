@@ -183,9 +183,12 @@
 
 ;: Return true when `path` exists, mapping probe errors to false.
 (define (msvc-path-exists? [path : String]) : bool
-  (match (try-file-exists? path)
+  (match (try-file-exists? (& path))
     [(OkIoBool exists) exists]
     [(ErrIoBool _) false]))
+
+(define (msvc-path-join [left : String] [right : String]) : String
+  (fs-path-join (& left) (& right)))
 
 ;: Search PATH directories for `tool`, returning the first existing candidate.
 (define (msvc-search-dirs [dirs : EnvStringList] [tool : String]) : MsvcMaybeString
@@ -193,7 +196,7 @@
     [(EnvStringNil) (MsvcNoString)]
     [(EnvStringCons dir rest)
       (let
-        [candidate : String (fs-path-join dir tool)]
+        [candidate : String (msvc-path-join dir tool)]
         (if (msvc-path-exists? candidate)
           (MsvcSomeString candidate)
           (msvc-search-dirs rest tool)))]))
@@ -314,14 +317,16 @@
 
 ;: Read the default VC toolset version advertised by a Visual Studio instance.
 (define (msvc-default-vc-tools-version [instance : WindowsSetupInstance]) : MsvcMaybeString
-  (match (try-read-file (msvc-default-vc-tools-version-path instance))
-    [(OkIoString contents)
-      (let
-        [trimmed : String (string-trim contents)]
-        (if (string-eq trimmed "")
-          (MsvcNoString)
-          (MsvcSomeString trimmed)))]
-    [(ErrIoString _) (MsvcNoString)]))
+  (let
+    [path : String (msvc-default-vc-tools-version-path instance)]
+    (match (try-read-file (& path))
+      [(OkIoString contents)
+        (let
+          [trimmed : String (string-trim contents)]
+          (if (string-eq trimmed "")
+            (MsvcNoString)
+            (MsvcSomeString trimmed)))]
+      [(ErrIoString _) (MsvcNoString)])))
 
 ;: Pick the VC toolset version, honoring `VCToolsVersion` when present.
 (define (msvc-vc-tools-version [instance : WindowsSetupInstance]) : MsvcMaybeString

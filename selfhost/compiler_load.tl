@@ -52,7 +52,7 @@
   (fs-path-separator? c))
 
 (define (compiler-load-absolute-path? [path : String]) : bool
-  (fs-path-absolute? path))
+  (fs-path-absolute? (& path)))
 
 (define (compiler-load-dirname [path : String]) : String
   (let
@@ -78,7 +78,10 @@
     (string-append (compiler-load-dirname importer-path) import-path)))
 
 (define (compiler-load-normalize-path [path : String]) : String
-  (fs-path-normalize path))
+  (fs-path-normalize (& path)))
+
+(define (compiler-load-safe-relative? [path : String]) : bool
+  (fs-path-safe-relative? (& path)))
 
 (define (compiler-load-string-prefix-at?
   [text : String]
@@ -125,7 +128,7 @@
 (define (compiler-load-resolve-stdlib-root
   [suffix : String]
   [roots : CompilerLoadRootList]) : CompilerLoadMaybePath
-  (if (fs-path-safe-relative? suffix)
+  (if (compiler-load-safe-relative? suffix)
     (match roots
       [(CompilerLoadRootNil) (CompilerLoadNoPath)]
       [(CompilerLoadRootCons root rest)
@@ -1753,7 +1756,7 @@
       (= i n))))
 
 (define (compiler-load-normal-relative-entry? [path : String]) : bool
-  (fs-path-safe-relative? path))
+  (compiler-load-safe-relative? path))
 
 (define (compiler-load-pkg-dep-alias-seen?
   [deps : CompilerPkgDepList]
@@ -2204,7 +2207,7 @@
 
 ;: True when a path is not a safe relative suffix below its package root.
 (define (compiler-load-path-escapes? [path : String]) : bool
-  (not (fs-path-safe-relative? path)))
+  (not (compiler-load-safe-relative? path)))
 
 ;: Look up a dependency's root path by import alias.
 (define (compiler-load-pkg-dep-lookup

@@ -43,15 +43,21 @@
 (define (scaffold-lib-source) : String
   "(define (answer) : i64\n  42)\n")
 
+(define (scaffold-try-mkdir [path : String]) : ResultIoUnit
+  (try-mkdir (& path)))
+
+(define (scaffold-try-write-file [path : String] [contents : String]) : ResultIoUnit
+  (try-write-file (& path) (& contents)))
+
 ;; Create a directory, treating an already-existing one as success. A genuine
 ;; create failure is an error.
 (define (scaffold-ensure-dir [path : String]) : ResultIoUnit
-  (match (try-mkdir path)
+  (match (scaffold-try-mkdir path)
     [(OkIoUnit) OkIoUnit]
     [(ErrIoUnit _)
       (if (file-exists? path)
         OkIoUnit
-        (try-mkdir path))]))
+        (scaffold-try-mkdir path))]))
 
 ;; Write `contents` to `path`, refusing to overwrite an existing file.
 (define (scaffold-write-new [path : String] [contents : String]) : i64
@@ -62,7 +68,7 @@
           "scaffold: refusing to overwrite existing file: "
           (string-append path "\n")))
       1)
-    (match (try-write-file path contents)
+    (match (scaffold-try-write-file path contents)
       [(OkIoUnit) 0]
       [(ErrIoUnit _)
         (begin

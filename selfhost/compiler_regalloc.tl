@@ -785,9 +785,40 @@
               starts
               ends))])]))
 
-(define (compiler-reg-live-intervals-blocks
+(define (compiler-reg-live-intervals-find-afters
+  [live-blocks : CompilerLiveBlockList]
+  [label : String]) : CompilerLiveInstrSetList
+  (match (compiler-live-find-block live-blocks label)
+    [(CompilerLiveSomeBlock live-block)
+      (compiler-live-block-instr-after live-block)]
+    [(CompilerLiveNoBlock) CompilerLiveInstrSetNil]))
+
+(define (compiler-reg-live-intervals-head-afters
+  [live-blocks : CompilerLiveBlockList]
+  [all-live-blocks : CompilerLiveBlockList]
+  [label : String]) : CompilerLiveInstrSetList
+  (match live-blocks
+    [(CompilerLiveBlockNil)
+      (compiler-reg-live-intervals-find-afters all-live-blocks label)]
+    [(CompilerLiveBlockCons live-block _)
+      (if (string-eq (compiler-live-block-label live-block) label)
+        (compiler-live-block-instr-after live-block)
+        (compiler-reg-live-intervals-find-afters all-live-blocks label))]))
+
+(define (compiler-reg-live-intervals-next-live-blocks
+  [live-blocks : CompilerLiveBlockList]
+  [label : String]) : CompilerLiveBlockList
+  (match live-blocks
+    [(CompilerLiveBlockNil) CompilerLiveBlockNil]
+    [(CompilerLiveBlockCons live-block rest)
+      (if (string-eq (compiler-live-block-label live-block) label)
+        rest
+        live-blocks)]))
+
+(define (compiler-reg-live-intervals-blocks-with-live
   [blocks : CompilerIrBlockList]
-  [liveness : CompilerFunctionLiveness]
+  [live-blocks : CompilerLiveBlockList]
+  [all-live-blocks : CompilerLiveBlockList]
   [point : i64]
   [starts : (Array i64)]
   [ends : (Array i64)]) : i64
@@ -798,15 +829,14 @@
         [(IrBlock label instrs)
           (let
             [live-afters : CompilerLiveInstrSetList
-              (match (compiler-live-find-block
-                (compiler-live-function-blocks liveness)
-                label)
-                [(CompilerLiveSomeBlock live-block)
-                  (compiler-live-block-instr-after live-block)]
-                [(CompilerLiveNoBlock) CompilerLiveInstrSetNil])]
-            (compiler-reg-live-intervals-blocks
+              (compiler-reg-live-intervals-head-afters
+                live-blocks
+                all-live-blocks
+                label)]
+            (compiler-reg-live-intervals-blocks-with-live
               (box-get rest)
-              liveness
+              (compiler-reg-live-intervals-next-live-blocks live-blocks label)
+              all-live-blocks
               (compiler-reg-live-intervals-instrs
                 instrs
                 live-afters
@@ -815,6 +845,23 @@
                 ends)
               starts
               ends))])]))
+
+(define (compiler-reg-live-intervals-blocks
+  [blocks : CompilerIrBlockList]
+  [liveness : CompilerFunctionLiveness]
+  [point : i64]
+  [starts : (Array i64)]
+  [ends : (Array i64)]) : i64
+  (let
+    [live-blocks : CompilerLiveBlockList
+      (compiler-live-function-blocks liveness)]
+    (compiler-reg-live-intervals-blocks-with-live
+      blocks
+      live-blocks
+      live-blocks
+      point
+      starts
+      ends)))
 
 (define (compiler-reg-interval-arrays-to-list
   [starts : (Array i64)]

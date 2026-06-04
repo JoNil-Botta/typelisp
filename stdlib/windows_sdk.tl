@@ -177,7 +177,7 @@
 
 ;: Return true when a path exists, mapping probe errors to false.
 (define (windows-sdk-path-exists? [path : String]) : bool
-  (match (try-file-exists? path)
+  (match (try-file-exists? (& path))
     [(OkIoBool exists) exists]
     [(ErrIoBool _) false]))
 

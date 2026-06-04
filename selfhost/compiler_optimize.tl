@@ -892,6 +892,27 @@
     [(IrValueCons value rest)
       (opt-collect-value-list-uses (opt-collect-value-uses set value) rest)]))
 
+(define (opt-collect-call-args-array-uses
+  [set : OptUsedSet]
+  [values : (Array CompilerIrValue)]
+  [index : i64]) : OptUsedSet
+  (if (>= index (array-length values))
+    set
+    (opt-collect-call-args-array-uses
+      (opt-collect-value-uses set (array-ref values index))
+      values
+      (+ index 1))))
+
+(define (opt-collect-call-args-uses
+  [set : OptUsedSet]
+  [args : CompilerIrCallArgs]) : OptUsedSet
+  (match args
+    [(IrCallArgsNil) set]
+    [(IrCallArgsOne value) (opt-collect-value-uses set value)]
+    [(IrCallArgsTwo a b)
+      (opt-collect-value-uses (opt-collect-value-uses set a) b)]
+    [(IrCallArgsArray values) (opt-collect-call-args-array-uses set values 0)]))
+
 (define (opt-collect-phi-uses
   [set : OptUsedSet]
   [inputs : CompilerIrPhiInputList]) : OptUsedSet
@@ -906,10 +927,10 @@
     [(IrInstrBinOp _ _ l r _)
       (opt-collect-value-uses (opt-collect-value-uses set l) r)]
     [(IrInstrUnOp _ _ src _) (opt-collect-value-uses set src)]
-    [(IrInstrCall _ _ args _) (opt-collect-value-list-uses set args)]
+    [(IrInstrCall _ _ args _) (opt-collect-call-args-uses set args)]
     [(IrInstrCallIndirect _ func args _)
-      (opt-collect-value-list-uses (opt-collect-value-uses set func) args)]
-    [(IrInstrTailCall _ args _) (opt-collect-value-list-uses set args)]
+      (opt-collect-call-args-uses (opt-collect-value-uses set func) args)]
+    [(IrInstrTailCall _ args _) (opt-collect-call-args-uses set args)]
     [(IrInstrStore _ value _) (opt-collect-value-uses set value)]
     ;; Pointer/memory ops carry operand uses too; missing any of these would let
     ;; DCE wrongly drop a definition that feeds an address/load/store/cast.
@@ -1051,14 +1072,11 @@
     [(AstTyArray _ _) true]
     [_ false]))
 
-(define (opt-aggregate-tl-alloc-size [args : CompilerIrValueList]) : OptMaybeI64
+(define (opt-aggregate-tl-alloc-size [args : CompilerIrCallArgs]) : OptMaybeI64
   (match args
-    [(IrValueCons value rest)
-      (match rest
-        [(IrValueNil)
-          (match value
-            [(IrValueI64 size) (OptSomeI64 size)]
-            [_ (OptNoI64)])]
+    [(IrCallArgsOne value)
+      (match value
+        [(IrValueI64 size) (OptSomeI64 size)]
         [_ (OptNoI64)])]
     [_ (OptNoI64)]))
 
@@ -1116,6 +1134,31 @@
       (or
         (opt-aggregate-value-has-pointer? base ptrs value)
         (opt-aggregate-value-list-has-pointer? base ptrs rest))]))
+
+(define (opt-aggregate-call-args-array-has-pointer?
+  [base : i64]
+  [ptrs : OptAggregatePointerList]
+  [values : (Array CompilerIrValue)]
+  [index : i64]) : bool
+  (if (>= index (array-length values))
+    false
+    (or
+      (opt-aggregate-value-has-pointer? base ptrs (array-ref values index))
+      (opt-aggregate-call-args-array-has-pointer? base ptrs values (+ index 1)))))
+
+(define (opt-aggregate-call-args-has-pointer?
+  [base : i64]
+  [ptrs : OptAggregatePointerList]
+  [args : CompilerIrCallArgs]) : bool
+  (match args
+    [(IrCallArgsNil) false]
+    [(IrCallArgsOne value) (opt-aggregate-value-has-pointer? base ptrs value)]
+    [(IrCallArgsTwo a b)
+      (or
+        (opt-aggregate-value-has-pointer? base ptrs a)
+        (opt-aggregate-value-has-pointer? base ptrs b))]
+    [(IrCallArgsArray values)
+      (opt-aggregate-call-args-array-has-pointer? base ptrs values 0)]))
 
 (define (opt-aggregate-maybe-value-has-pointer?
   [base : i64]
@@ -1233,9 +1276,9 @@
         (opt-aggregate-value-has-pointer? base ptrs subleaf))]
     [(IrInstrXgetbv _ index) (opt-aggregate-value-has-pointer? base ptrs index)]
     [(IrInstrCall _ _ args _)
-      (opt-aggregate-value-list-has-pointer? base ptrs args)]
+      (opt-aggregate-call-args-has-pointer? base ptrs args)]
     [(IrInstrTailCall _ args _)
-      (opt-aggregate-value-list-has-pointer? base ptrs args)]
+      (opt-aggregate-call-args-has-pointer? base ptrs args)]
     [(IrInstrStore _ value _)
       (opt-aggregate-value-has-pointer? base ptrs value)]
     [(IrInstrBranch cond _ _) (opt-aggregate-value-has-pointer? base ptrs cond)]
@@ -2195,6 +2238,38 @@
           (and (opt-value-eq ah bh) (opt-value-list-eq at bt))]
         [_ false])]))
 
+(define (opt-call-args-array-eq
+  [a : (Array CompilerIrValue)]
+  [b : (Array CompilerIrValue)]
+  [index : i64]) : bool
+  (if (>= index (array-length a))
+    true
+    (and
+      (opt-value-eq (array-ref a index) (array-ref b index))
+      (opt-call-args-array-eq a b (+ index 1)))))
+
+(define (opt-call-args-eq [a : CompilerIrCallArgs] [b : CompilerIrCallArgs]) : bool
+  (match a
+    [(IrCallArgsNil)
+      (match b
+        [(IrCallArgsNil) true]
+        [_ false])]
+    [(IrCallArgsOne av)
+      (match b
+        [(IrCallArgsOne bv) (opt-value-eq av bv)]
+        [_ false])]
+    [(IrCallArgsTwo aa ab)
+      (match b
+        [(IrCallArgsTwo ba bb) (and (opt-value-eq aa ba) (opt-value-eq ab bb))]
+        [_ false])]
+    [(IrCallArgsArray av)
+      (match b
+        [(IrCallArgsArray bv)
+          (and
+            (= (array-length av) (array-length bv))
+            (opt-call-args-array-eq av bv 0))]
+        [_ false])]))
+
 (define (opt-phi-input-eq
   [av : CompilerIrValue]
   [alabel : String]
@@ -2461,7 +2536,7 @@
             (= ad bd)
             (and
               (string-eq aname bname)
-              (and (opt-value-list-eq aargs bargs) (opt-type-eq aty bty))))]
+              (and (opt-call-args-eq aargs bargs) (opt-type-eq aty bty))))]
         [_ false])]
     [(IrInstrCallIndirect ad afunc aargs aty)
       (match b
@@ -2470,14 +2545,14 @@
             (= ad bd)
             (and
               (opt-value-eq afunc bfunc)
-              (and (opt-value-list-eq aargs bargs) (opt-type-eq aty bty))))]
+              (and (opt-call-args-eq aargs bargs) (opt-type-eq aty bty))))]
         [_ false])]
     [(IrInstrTailCall aname aargs aty)
       (match b
         [(IrInstrTailCall bname bargs bty)
           (and
             (string-eq aname bname)
-            (and (opt-value-list-eq aargs bargs) (opt-type-eq aty bty)))]
+            (and (opt-call-args-eq aargs bargs) (opt-type-eq aty bty)))]
         [_ false])]
     [(IrInstrStore aname av aty)
       (match b
@@ -2863,6 +2938,33 @@
         (opt-copy-resolve env value)
         (opt-copy-subst-value-list env rest))]))
 
+(define (opt-copy-subst-call-args-array
+  [env : OptCopyEnv]
+  [src : (Array CompilerIrValue)]
+  [dst : (Array CompilerIrValue)]
+  [index : i64]) : unit
+  (if (>= index (array-length src))
+    unit
+    (begin
+      (array-set! dst index (opt-copy-resolve env (array-ref src index)))
+      (opt-copy-subst-call-args-array env src dst (+ index 1)))))
+
+(define (opt-copy-subst-call-args
+  [env : OptCopyEnv]
+  [args : CompilerIrCallArgs]) : CompilerIrCallArgs
+  (match args
+    [(IrCallArgsNil) (IrCallArgsNil)]
+    [(IrCallArgsOne value) (IrCallArgsOne (opt-copy-resolve env value))]
+    [(IrCallArgsTwo a b)
+      (IrCallArgsTwo (opt-copy-resolve env a) (opt-copy-resolve env b))]
+    [(IrCallArgsArray values)
+      (let
+        [out : (Array CompilerIrValue)
+          (make-array CompilerIrValue (array-length values))]
+        (begin
+          (opt-copy-subst-call-args-array env values out 0)
+          (IrCallArgsArray out)))]))
+
 ;; Rewrite the value-use operands of an instruction through the copy env. Phi
 ;; inputs and the raw var id of `IrInstrAddrOf` are intentionally not rewritten.
 (define (opt-copy-subst-instr [env : OptCopyEnv] [instr : CompilerIrInstr]) : CompilerIrInstr
@@ -2913,15 +3015,15 @@
         reg-index)]
     [(IrInstrXgetbv dst index) (IrInstrXgetbv dst (opt-copy-resolve env index))]
     [(IrInstrCall dst name args ty)
-      (IrInstrCall dst name (opt-copy-subst-value-list env args) ty)]
+      (IrInstrCall dst name (opt-copy-subst-call-args env args) ty)]
     [(IrInstrCallIndirect dst func args ty)
       (IrInstrCallIndirect
         dst
         (opt-copy-resolve env func)
-        (opt-copy-subst-value-list env args)
+        (opt-copy-subst-call-args env args)
         ty)]
     [(IrInstrTailCall name args ty)
-      (IrInstrTailCall name (opt-copy-subst-value-list env args) ty)]
+      (IrInstrTailCall name (opt-copy-subst-call-args env args) ty)]
     [(IrInstrStore name value ty)
       (IrInstrStore name (opt-copy-resolve env value) ty)]
     [(IrInstrBoundsCheck index length ok-label)
@@ -3727,6 +3829,48 @@
         [(ErrCompilerOptimizeVerify message)
           (ErrCompilerOptimizeVerify message)])]))
 
+(define (opt-verify-call-args-array-uses
+  [defs : OptVarDefList]
+  [doms : OptDomTable]
+  [values : (Array CompilerIrValue)]
+  [use-block : String]
+  [use-pos : i64]
+  [index : i64]) : ResultCompilerOptimizeVerify
+  (if (>= index (array-length values))
+    (OkCompilerOptimizeVerify)
+    (match (opt-verify-value-use
+      defs
+      doms
+      (array-ref values index)
+      use-block
+      use-pos)
+      [(OkCompilerOptimizeVerify)
+        (opt-verify-call-args-array-uses
+          defs
+          doms
+          values
+          use-block
+          use-pos
+          (+ index 1))]
+      [(ErrCompilerOptimizeVerify message) (ErrCompilerOptimizeVerify message)])))
+
+(define (opt-verify-call-args-uses
+  [defs : OptVarDefList]
+  [doms : OptDomTable]
+  [args : CompilerIrCallArgs]
+  [use-block : String]
+  [use-pos : i64]) : ResultCompilerOptimizeVerify
+  (match args
+    [(IrCallArgsNil) (OkCompilerOptimizeVerify)]
+    [(IrCallArgsOne value)
+      (opt-verify-value-use defs doms value use-block use-pos)]
+    [(IrCallArgsTwo a b)
+      (opt-verify-two
+        (opt-verify-value-use defs doms a use-block use-pos)
+        (opt-verify-value-use defs doms b use-block use-pos))]
+    [(IrCallArgsArray values)
+      (opt-verify-call-args-array-uses defs doms values use-block use-pos 0)]))
+
 (define (opt-verify-maybe-value-use
   [defs : OptVarDefList]
   [doms : OptDomTable]
@@ -3855,13 +3999,13 @@
     [(IrInstrXgetbv _ index)
       (opt-verify-value-use defs doms index block-label pos)]
     [(IrInstrCall _ _ args _)
-      (opt-verify-value-list-uses defs doms args block-label pos)]
+      (opt-verify-call-args-uses defs doms args block-label pos)]
     [(IrInstrCallIndirect _ func args _)
       (opt-verify-two
         (opt-verify-value-use defs doms func block-label pos)
-        (opt-verify-value-list-uses defs doms args block-label pos))]
+        (opt-verify-call-args-uses defs doms args block-label pos))]
     [(IrInstrTailCall _ args _)
-      (opt-verify-value-list-uses defs doms args block-label pos)]
+      (opt-verify-call-args-uses defs doms args block-label pos)]
     [(IrInstrStore _ value _)
       (opt-verify-value-use defs doms value block-label pos)]
     [(IrInstrBranch cond _ _)
@@ -4189,6 +4333,65 @@
         (opt-global-copy-resolve facts doms use-block use-pos value)
         (opt-global-copy-subst-value-list facts doms use-block use-pos rest))]))
 
+(define (opt-global-copy-subst-call-args-array
+  [facts : OptGlobalCopyFacts]
+  [doms : OptDomTable]
+  [use-block : String]
+  [use-pos : i64]
+  [src : (Array CompilerIrValue)]
+  [dst : (Array CompilerIrValue)]
+  [index : i64]) : unit
+  (if (>= index (array-length src))
+    unit
+    (begin
+      (array-set!
+        dst
+        index
+        (opt-global-copy-resolve
+          facts
+          doms
+          use-block
+          use-pos
+          (array-ref src index)))
+      (opt-global-copy-subst-call-args-array
+        facts
+        doms
+        use-block
+        use-pos
+        src
+        dst
+        (+ index 1)))))
+
+(define (opt-global-copy-subst-call-args
+  [facts : OptGlobalCopyFacts]
+  [doms : OptDomTable]
+  [use-block : String]
+  [use-pos : i64]
+  [args : CompilerIrCallArgs]) : CompilerIrCallArgs
+  (match args
+    [(IrCallArgsNil) (IrCallArgsNil)]
+    [(IrCallArgsOne value)
+      (IrCallArgsOne
+        (opt-global-copy-resolve facts doms use-block use-pos value))]
+    [(IrCallArgsTwo a b)
+      (IrCallArgsTwo
+        (opt-global-copy-resolve facts doms use-block use-pos a)
+        (opt-global-copy-resolve facts doms use-block use-pos b))]
+    [(IrCallArgsArray values)
+      (let
+        [out : (Array CompilerIrValue)
+          (make-array CompilerIrValue (array-length values))]
+        (begin
+          (opt-global-copy-subst-call-args-array
+            facts
+            doms
+            use-block
+            use-pos
+            values
+            out
+            0)
+          (IrCallArgsArray out)))]))
+
 (define (opt-global-copy-subst-instr
   [facts : OptGlobalCopyFacts]
   [doms : OptDomTable]
@@ -4251,18 +4454,18 @@
       (IrInstrCall
         dst
         name
-        (opt-global-copy-subst-value-list facts doms block-label pos args)
+        (opt-global-copy-subst-call-args facts doms block-label pos args)
         ty)]
     [(IrInstrCallIndirect dst func args ty)
       (IrInstrCallIndirect
         dst
         (opt-global-copy-resolve facts doms block-label pos func)
-        (opt-global-copy-subst-value-list facts doms block-label pos args)
+        (opt-global-copy-subst-call-args facts doms block-label pos args)
         ty)]
     [(IrInstrTailCall name args ty)
       (IrInstrTailCall
         name
-        (opt-global-copy-subst-value-list facts doms block-label pos args)
+        (opt-global-copy-subst-call-args facts doms block-label pos args)
         ty)]
     [(IrInstrStore name value ty)
       (IrInstrStore
@@ -5047,6 +5250,35 @@
         (opt-sccp-rewrite-value env value)
         (opt-sccp-rewrite-value-list env rest))]))
 
+(define (opt-sccp-rewrite-call-args-array
+  [env : OptSccpEnv]
+  [src : (Array CompilerIrValue)]
+  [dst : (Array CompilerIrValue)]
+  [index : i64]) : unit
+  (if (>= index (array-length src))
+    unit
+    (begin
+      (array-set! dst index (opt-sccp-rewrite-value env (array-ref src index)))
+      (opt-sccp-rewrite-call-args-array env src dst (+ index 1)))))
+
+(define (opt-sccp-rewrite-call-args
+  [env : OptSccpEnv]
+  [args : CompilerIrCallArgs]) : CompilerIrCallArgs
+  (match args
+    [(IrCallArgsNil) (IrCallArgsNil)]
+    [(IrCallArgsOne value) (IrCallArgsOne (opt-sccp-rewrite-value env value))]
+    [(IrCallArgsTwo a b)
+      (IrCallArgsTwo
+        (opt-sccp-rewrite-value env a)
+        (opt-sccp-rewrite-value env b))]
+    [(IrCallArgsArray values)
+      (let
+        [out : (Array CompilerIrValue)
+          (make-array CompilerIrValue (array-length values))]
+        (begin
+          (opt-sccp-rewrite-call-args-array env values out 0)
+          (IrCallArgsArray out)))]))
+
 (define (opt-sccp-rewrite-phi-inputs
   [env : OptSccpEnv]
   [inputs : CompilerIrPhiInputList]) : CompilerIrPhiInputList
@@ -5114,15 +5346,15 @@
     [(IrInstrSplat dst value lanes ty)
       (IrInstrSplat dst (opt-sccp-rewrite-value env value) lanes ty)]
     [(IrInstrCall dst name args ty)
-      (IrInstrCall dst name (opt-sccp-rewrite-value-list env args) ty)]
+      (IrInstrCall dst name (opt-sccp-rewrite-call-args env args) ty)]
     [(IrInstrCallIndirect dst callee args ty)
       (IrInstrCallIndirect
         dst
         (opt-sccp-rewrite-value env callee)
-        (opt-sccp-rewrite-value-list env args)
+        (opt-sccp-rewrite-call-args env args)
         ty)]
     [(IrInstrTailCall name args ty)
-      (IrInstrTailCall name (opt-sccp-rewrite-value-list env args) ty)]
+      (IrInstrTailCall name (opt-sccp-rewrite-call-args env args) ty)]
     [(IrInstrStore name value ty)
       (IrInstrStore name (opt-sccp-rewrite-value env value) ty)]
     [(IrInstrBoundsCheck index length ok-label)
@@ -5831,6 +6063,31 @@
         (opt-reach-value functions state value)
         rest)]))
 
+(define (opt-reach-call-args-array
+  [functions : CompilerIrFunctionList]
+  [state : OptReachState]
+  [values : (Array CompilerIrValue)]
+  [index : i64]) : OptReachState
+  (if (>= index (array-length values))
+    state
+    (opt-reach-call-args-array
+      functions
+      (opt-reach-value functions state (array-ref values index))
+      values
+      (+ index 1))))
+
+(define (opt-reach-call-args
+  [functions : CompilerIrFunctionList]
+  [state : OptReachState]
+  [args : CompilerIrCallArgs]) : OptReachState
+  (match args
+    [(IrCallArgsNil) state]
+    [(IrCallArgsOne value) (opt-reach-value functions state value)]
+    [(IrCallArgsTwo a b)
+      (opt-reach-value functions (opt-reach-value functions state a) b)]
+    [(IrCallArgsArray values)
+      (opt-reach-call-args-array functions state values 0)]))
+
 (define (opt-reach-maybe-value
   [functions : CompilerIrFunctionList]
   [state : OptReachState]
@@ -5923,17 +6180,17 @@
     [(IrInstrCall _ name args _)
       (opt-reach-add-function
         functions
-        (opt-reach-value-list functions state args)
+        (opt-reach-call-args functions state args)
         name)]
     [(IrInstrCallIndirect _ func args _)
-      (opt-reach-value-list
+      (opt-reach-call-args
         functions
         (opt-reach-value functions state func)
         args)]
     [(IrInstrTailCall name args _)
       (opt-reach-add-function
         functions
-        (opt-reach-value-list functions state args)
+        (opt-reach-call-args functions state args)
         name)]
     [(IrInstrStore _ value _) (opt-reach-value functions state value)]
     [(IrInstrJump _) state]
@@ -6490,7 +6747,7 @@
 (define (compiler-optimize-spans-dce-ok?) : bool
   (let
     [dead : CompilerIrInstr (IrInstrMov 0 (IrValueI64 1) (AstTyI64))]
-    [live : CompilerIrInstr (IrInstrCall 1 "opaque" IrValueNil (AstTyI64))]
+    [live : CompilerIrInstr (IrInstrCall 1 "opaque" (IrCallArgsNil) (AstTyI64))]
     [instrs : CompilerIrInstrList
       (IrInstrCons
         dead
@@ -6589,7 +6846,7 @@
   (IrInstrCall
     1
     "tl_alloc"
-    (IrValueCons (IrValueI64 16) IrValueNil)
+    (IrCallArgsOne (IrValueI64 16))
     (AstTyStruct "Pair")))
 
 (define (opt-aggregate-positive-instrs) : CompilerIrInstrList
@@ -6620,11 +6877,7 @@
   (IrInstrCons
     (opt-aggregate-test-alloc)
     (IrInstrCons
-      (IrInstrCall
-        2
-        "touch"
-        (IrValueCons (IrValueVar 1) IrValueNil)
-        (AstTyUnit))
+      (IrInstrCall 2 "touch" (IrCallArgsOne (IrValueVar 1)) (AstTyUnit))
       (IrInstrCons (IrInstrReturn (IrSomeValue (IrValueI64 0))) IrInstrNil))))
 
 (define (opt-aggregate-global-store-instrs) : CompilerIrInstrList
@@ -6656,7 +6909,7 @@
       (IrInstrCons
         (IrInstrStorePtr (IrValueVar 2) (IrValueI64 10) (AstTyI64))
         (IrInstrCons
-          (IrInstrCall 9 "touch" IrValueNil (AstTyUnit))
+          (IrInstrCall 9 "touch" (IrCallArgsNil) (AstTyUnit))
           (IrInstrCons
             (IrInstrGep 3 (IrValueVar 1) (IrValueI64 0) (AstTyU8))
             (IrInstrCons
@@ -6778,7 +7031,7 @@
     (IrInstrCall
       1
       "tl_alloc"
-      (IrValueCons (IrValueI64 16) IrValueNil)
+      (IrCallArgsOne (IrValueI64 16))
       (AstTyArray (AstTyI64) 2))
     (IrInstrCons
       (IrInstrGep 2 (IrValueVar 1) (IrValueI64 0) (AstTyU8))
@@ -7566,7 +7819,7 @@
   (IrInstrCons
     (IrInstrMov 0 (IrValueI64 99) (AstTyI64))
     (IrInstrCons
-      (IrInstrCall 1 "noop" (IrValueNil) (AstTyI64))
+      (IrInstrCall 1 "noop" (IrCallArgsNil) (AstTyI64))
       (IrInstrCons (IrInstrReturn (IrSomeValue (IrValueVar 1))) (IrInstrNil)))))
 
 ;; Returns 42 when DCE keeps the used call result `v1` and the side-effecting
@@ -8014,7 +8267,7 @@
   (IrInstrCons
     (IrInstrBoundsCheck (IrValueVar 0) (IrValueVar 1) "bounds_ok.0")
     (IrInstrCons
-      (IrInstrCall 9 "touch" (IrValueNil) (AstTyUnit))
+      (IrInstrCall 9 "touch" (IrCallArgsNil) (AstTyUnit))
       (IrInstrCons
         (IrInstrBoundsCheck (IrValueVar 0) (IrValueVar 1) "bounds_ok.1")
         (IrInstrNil)))))
@@ -8231,7 +8484,7 @@
 
 (define (opt-global-dce-main-instrs) : CompilerIrInstrList
   (IrInstrCons
-    (IrInstrCall 1 "helper" (IrValueNil) (AstTyI64))
+    (IrInstrCall 1 "helper" (IrCallArgsNil) (AstTyI64))
     (IrInstrCons (IrInstrReturn (IrSomeValue (IrValueVar 1))) (IrInstrNil))))
 
 (define (opt-global-dce-return-instrs [value : i64]) : CompilerIrInstrList
@@ -8996,7 +9249,7 @@
         (IrBlock
           "trap"
           (IrInstrCons
-            (IrInstrCall 9 "panic" (IrValueNil) (AstTyUnit))
+            (IrInstrCall 9 "panic" (IrCallArgsNil) (AstTyUnit))
             (IrInstrCons
               (IrInstrReturn (IrSomeValue (IrValueI64 1)))
               (IrInstrNil))))
@@ -9646,7 +9899,9 @@
 (define (opt-alias-test-call-instrs) : CompilerIrInstrList
   (IrInstrCons
     (IrInstrAlloc 0 (AstTyI64))
-    (IrInstrCons (IrInstrCall 9 "tl_noop" (IrValueNil) (AstTyI64)) (IrInstrNil))))
+    (IrInstrCons
+      (IrInstrCall 9 "tl_noop" (IrCallArgsNil) (AstTyI64))
+      (IrInstrNil))))
 
 (define (opt-alias-test-copy-instrs) : CompilerIrInstrList
   (IrInstrCons
@@ -9677,7 +9932,7 @@
   (IrInstrStorePtr (IrValueVar 0) (IrValueI64 5) (AstTyI64)))
 
 (define (opt-alias-sample-tail-call) : CompilerIrInstr
-  (IrInstrTailCall "tl_noop" (IrValueNil) (AstTyI64)))
+  (IrInstrTailCall "tl_noop" (IrCallArgsNil) (AstTyI64)))
 
 (define (opt-alias-sample-binop) : CompilerIrInstr
   (IrInstrBinOp 9 (IrBinAdd) (IrValueI64 1) (IrValueI64 2) (AstTyI64)))

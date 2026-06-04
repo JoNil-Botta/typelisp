@@ -89,11 +89,29 @@
     [(OkIoRead _) (panic (string-append message "read unexpectedly succeeded"))]
     [(ErrIoRead error) (assert-true (io-error-invalid-path? error) message)]))
 
+(define (test-try-read-file [path : String]) : ResultIoString
+  (try-read-file (& path)))
+
+(define (test-try-file-exists? [path : String]) : ResultIoBool
+  (try-file-exists? (& path)))
+
+(define (test-try-write-file [path : String] [contents : String]) : ResultIoUnit
+  (try-write-file (& path) (& contents)))
+
+(define (test-try-remove-file-if-exists [path : String]) : ResultIoUnit
+  (try-remove-file-if-exists (& path)))
+
+(define (test-file-open [path : String] [mode : OpenMode]) : ResultIoFile
+  (file-open (& path) mode))
+
+(define (test-file-write [handle : FileHandle] [contents : String]) : ResultIoUnit
+  (file-write handle (& contents)))
+
 (define (assert-file-contents
   [path : String]
   [expected : String]
   [message : String]) : unit
-  (match (try-read-file path)
+  (match (test-try-read-file path)
     [(OkIoString contents) (assert-string-eq contents expected message)]
     [(ErrIoString error)
       (panic (string-append message (io-error-message error)))]))
@@ -102,7 +120,7 @@
   [path : String]
   [expected : bool]
   [message : String]) : unit
-  (match (try-file-exists? path)
+  (match (test-try-file-exists? path)
     [(OkIoBool exists) (assert-bool-eq exists expected message)]
     [(ErrIoBool error) (panic (string-append message (io-error-message error)))]))
 
@@ -111,9 +129,11 @@
     [read-handle : FileHandle
       (begin
         (assert-ok-unit
-          (try-write-file handle-read-file "abcdef")
+          (test-try-write-file handle-read-file "abcdef")
           "seed read handle file: ")
-        (expect-open-ok (file-open handle-read-file OpenRead) "open read: "))]
+        (expect-open-ok
+          (test-file-open handle-read-file OpenRead)
+          "open read: "))]
     (begin
       (assert-read-invalid
         (file-read-chunk read-handle -1)
@@ -162,7 +182,7 @@
         (file-close (FileHandle 999))
         "invalid handle returns unsupported")
       (assert-unit-unsupported
-        (file-write (FileHandle 999) "x")
+        (test-file-write (FileHandle 999) "x")
         "write"
         "invalid write handle returns unsupported")
       (assert-unit-unsupported
@@ -170,29 +190,29 @@
         "flush"
         "invalid flush handle returns unsupported")
       (assert-open-not-found
-        (file-open handle-missing-file OpenRead)
+        (test-file-open handle-missing-file OpenRead)
         "missing read open")
-      (assert-open-invalid (file-open "" OpenRead) "empty path open")
+      (assert-open-invalid (test-file-open "" OpenRead) "empty path open")
       (assert-ok-unit
-        (try-write-file handle-truncate-file "payload")
+        (test-try-write-file handle-truncate-file "payload")
         "seed truncate file: ")
       (let
         [truncate-handle : FileHandle
           (expect-open-ok
-            (file-open handle-truncate-file OpenWriteTruncate)
+            (test-file-open handle-truncate-file OpenWriteTruncate)
             "open truncate: ")]
         (begin
           (assert-read-unsupported
             (file-read-chunk truncate-handle 1)
             "write-only handle read returns unsupported")
           (assert-ok-unit
-            (file-write truncate-handle "alpha")
+            (test-file-write truncate-handle "alpha")
             "write truncate alpha: ")
           (assert-ok-unit
-            (file-write truncate-handle "")
+            (test-file-write truncate-handle "")
             "write truncate empty chunk: ")
           (assert-ok-unit
-            (file-write truncate-handle "-beta")
+            (test-file-write truncate-handle "-beta")
             "write truncate beta: ")
           (assert-ok-unit
             (file-flush truncate-handle)
@@ -205,7 +225,7 @@
             "alpha-beta"
             "truncate writes replace existing file")
           (assert-unit-unsupported
-            (file-write truncate-handle "after-close")
+            (test-file-write truncate-handle "after-close")
             "write"
             "write after close returns unsupported")
           (assert-unit-unsupported
@@ -213,16 +233,16 @@
             "flush"
             "flush after close returns unsupported")))
       (assert-ok-unit
-        (try-write-file handle-truncate-file "readonly")
+        (test-try-write-file handle-truncate-file "readonly")
         "seed read-only write test file: ")
       (let
         [read-only-handle : FileHandle
           (expect-open-ok
-            (file-open handle-truncate-file OpenRead)
+            (test-file-open handle-truncate-file OpenRead)
             "open read-only for write test: ")]
         (begin
           (assert-unit-unsupported
-            (file-write read-only-handle "x")
+            (test-file-write read-only-handle "x")
             "write"
             "read-only handle write returns unsupported")
           (assert-unit-unsupported
@@ -233,16 +253,16 @@
             (file-close read-only-handle)
             "close read-only handle: ")))
       (assert-ok-unit
-        (try-write-file handle-append-file "seed")
+        (test-try-write-file handle-append-file "seed")
         "seed append file: ")
       (let
         [append-handle : FileHandle
           (expect-open-ok
-            (file-open handle-append-file OpenWriteAppend)
+            (test-file-open handle-append-file OpenWriteAppend)
             "open append existing: ")]
         (begin
           (assert-ok-unit
-            (file-write append-handle "-tail")
+            (test-file-write append-handle "-tail")
             "write append tail: ")
           (assert-ok-unit (file-flush append-handle) "flush append handle: ")
           (assert-ok-unit (file-close append-handle) "close append handle: ")
@@ -251,16 +271,16 @@
             "seed-tail"
             "append mode writes at end of file")))
       (assert-ok-unit
-        (try-remove-file-if-exists handle-created-file)
+        (test-try-remove-file-if-exists handle-created-file)
         "clean append-created file: ")
       (let
         [created-handle : FileHandle
           (expect-open-ok
-            (file-open handle-created-file OpenWriteAppend)
+            (test-file-open handle-created-file OpenWriteAppend)
             "open append create: ")]
         (begin
           (assert-ok-unit
-            (file-write created-handle "created")
+            (test-file-write created-handle "created")
             "write append-created file: ")
           (assert-ok-unit (file-flush created-handle) "flush created handle: ")
           (assert-ok-unit (file-close created-handle) "close created handle: ")
@@ -278,13 +298,13 @@
     (if (fs-windows?)
       (begin
         (assert-open-unsupported
-          (file-open handle-read-file OpenRead)
+          (test-file-open handle-read-file OpenRead)
           "windows file handles are unsupported")
         (assert-read-unsupported
           (file-read-chunk (FileHandle 1) 1)
           "windows file reads are unsupported")
         (assert-unit-unsupported
-          (file-write (FileHandle 1) "x")
+          (test-file-write (FileHandle 1) "x")
           "write"
           "windows file writes are unsupported")
         (assert-unit-unsupported

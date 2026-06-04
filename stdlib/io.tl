@@ -20,7 +20,8 @@
 ;#
 ;# ```typelisp
 ;# (import "stdlib/io.tl")
-;# (define fallback : ResultIoString (try-read-file "missing-file-for-docs.txt"))
+;# (define fallback : ResultIoString
+;#   (let [path : String "missing-file-for-docs.txt"] (try-read-file (& path))))
 ;# ```
 ;#
 ;# ```typelisp
@@ -34,7 +35,7 @@
 ;# (import "stdlib/io.tl")
 ;# (define (main) : i64
 ;#   (begin
-;#     (stdout-write "hello from io\n")
+;#     (let [text : String "hello from io\n"] (stdout-write (& text)))
 ;#     0))
 ;# ```
 ;: Structured file I/O failures.
@@ -144,8 +145,17 @@
 (define io-status-name-too-long : i64
   36)
 
+;: Copy a borrowed string slice into an owned active-arena `String`.
+;:
+;: Result payloads store owned strings, so helpers that receive borrowed paths
+;: copy before constructing public diagnostics.
+(define (io-copy-path [path : (& path str)]) : String
+  (let
+    [empty : String ""]
+    (string-append path (& empty))))
+
 ;: Return true when `path` is syntactically empty.
-(define (io-empty-path? [path : String]) : bool
+(define (io-empty-path? [path : (& path str)]) : bool
   (= (string-length path) 0))
 
 ;: Render an I/O error into a human-readable diagnostic string.
@@ -186,18 +196,30 @@
     true
     (= code io-status-not-directory)))
 
+;: Construct an invalid-path diagnostic from a borrowed path.
+(define (io-invalid-path-error [path : (& path str)]) : IoError
+  (IoInvalidPath (io-copy-path path)))
+
 ;: Convert a runtime status code into the public structured error model.
-(define (io-error-from-status [path : String] [code : i64]) : IoError
-  (cond
-    [(io-status-expected-absence? code) (IoNotFound path)]
-    [(= code io-status-permission-denied) (IoPermissionDenied path)]
-    [(= code io-status-invalid) (IoInvalidPath path)]
-    [(= code io-status-name-too-long) (IoInvalidPath path)]
-    [(= code io-status-interrupted) (IoInterrupted path)]
-    [(= code io-status-is-directory) (IoUnsupported path)]
-    [(= code io-status-unsupported) (IoUnsupported path)]
-    [(= code io-status-ok) (IoUnknown path)]
-    [else (IoSystemCode code path)]))
+(define (io-error-from-status [path : (& path str)] [code : i64]) : IoError
+  (let
+    [owned-path : String (io-copy-path path)]
+    (cond
+      [(io-status-expected-absence? code) (IoNotFound owned-path)]
+      [(= code io-status-permission-denied) (IoPermissionDenied owned-path)]
+      [(= code io-status-invalid) (IoInvalidPath owned-path)]
+      [(= code io-status-name-too-long) (IoInvalidPath owned-path)]
+      [(= code io-status-interrupted) (IoInterrupted owned-path)]
+      [(= code io-status-is-directory) (IoUnsupported owned-path)]
+      [(= code io-status-unsupported) (IoUnsupported owned-path)]
+      [(= code io-status-ok) (IoUnknown owned-path)]
+      [else (IoSystemCode code owned-path)])))
+
+;: Convert a status code for a fixed diagnostic label.
+(define (io-error-from-label [label : String] [code : i64]) : IoError
+  (let
+    [path : String label]
+    (io-error-from-status (& path) code)))
 
 ;: Convert an open mode into the runtime helper's compact mode code.
 (define (open-mode-code [mode : OpenMode]) : i64
@@ -231,9 +253,9 @@
 ;: The returned handle must be passed to `file-close`. Empty paths return
 ;: `IoInvalidPath`; unsupported targets and mode/host failures are reported as
 ;: structured `IoError` values.
-(define (file-open [path : String] [mode : OpenMode]) : ResultIoFile
+(define (file-open [path : (& path str)] [mode : OpenMode]) : ResultIoFile
   (if (io-empty-path? path)
-    (ErrIoFile (IoInvalidPath path))
+    (ErrIoFile (io-invalid-path-error path))
     (let
       [raw : i64 (file-open-status path (open-mode-code mode))]
       (if (< raw 0)
@@ -251,7 +273,7 @@
       OkIoUnit
       (if (= status io-status-unsupported)
         (ErrIoUnit (IoUnsupported (file-handle-invalid-message)))
-        (ErrIoUnit (io-error-from-status "file-close" status))))))
+        (ErrIoUnit (io-error-from-label "file-close" status))))))
 
 ;: Return the bytes captured by a streaming file read.
 (define (file-read-bytes [read : FileRead]) : String
@@ -277,21 +299,21 @@
           (FileRead (file-read-chunk-bytes raw) (file-read-chunk-eof? raw)))
         (if (= status io-status-unsupported)
           (ErrIoRead (IoUnsupported (file-read-unsupported-message)))
-          (ErrIoRead (io-error-from-status "file-read-chunk" status)))))))
+          (ErrIoRead (io-error-from-label "file-read-chunk" status)))))))
 
 ;: Write `contents` to a runtime-managed write-mode file handle.
 ;:
 ;: The runtime retries short host writes until all bytes are accepted or a
 ;: host error is returned. Closed, invalid, read-only, and unsupported handles
 ;: return `IoUnsupported`.
-(define (file-write [handle : FileHandle] [contents : String]) : ResultIoUnit
+(define (file-write [handle : FileHandle] [contents : (& contents str)]) : ResultIoUnit
   (let
     [status : i64 (file-write-status (struct-get handle id) contents)]
     (if (= status io-status-ok)
       OkIoUnit
       (if (= status io-status-unsupported)
         (ErrIoUnit (IoUnsupported (file-write-unsupported-message)))
-        (ErrIoUnit (io-error-from-status "file-write" status))))))
+        (ErrIoUnit (io-error-from-label "file-write" status))))))
 
 ;: Flush a runtime-managed write-mode file handle.
 ;:
@@ -304,14 +326,14 @@
       OkIoUnit
       (if (= status io-status-unsupported)
         (ErrIoUnit (IoUnsupported (file-flush-unsupported-message)))
-        (ErrIoUnit (io-error-from-status "file-flush" status))))))
+        (ErrIoUnit (io-error-from-label "file-flush" status))))))
 
 ;: Read `path` and return either its contents or a structured I/O error.
 ;:
 ;: Missing paths return `IoNotFound`. Empty paths return `IoInvalidPath`.
-(define (try-read-file [path : String]) : ResultIoString
+(define (try-read-file [path : (& path str)]) : ResultIoString
   (if (io-empty-path? path)
-    (ErrIoString (IoInvalidPath path))
+    (ErrIoString (io-invalid-path-error path))
     (let
       [status : i64 (read-file-status path)]
       (if (= status io-status-ok)
@@ -321,9 +343,9 @@
 ;: Write `contents` to `path`, returning a structured result.
 ;:
 ;: Empty paths return `IoInvalidPath`.
-(define (try-write-file [path : String] [contents : String]) : ResultIoUnit
+(define (try-write-file [path : (& path str)] [contents : (& contents str)]) : ResultIoUnit
   (if (io-empty-path? path)
-    (ErrIoUnit (IoInvalidPath path))
+    (ErrIoUnit (io-invalid-path-error path))
     (let
       [status : i64 (write-file-status path contents)]
       (if (= status io-status-ok)
@@ -334,9 +356,9 @@
 ;:
 ;: Missing paths are represented as `OkIoBool false`, because absence is an
 ;: expected result of an existence probe. Empty paths return `IoInvalidPath`.
-(define (try-file-exists? [path : String]) : ResultIoBool
+(define (try-file-exists? [path : (& path str)]) : ResultIoBool
   (if (io-empty-path? path)
-    (ErrIoBool (IoInvalidPath path))
+    (ErrIoBool (io-invalid-path-error path))
     (let
       [status : i64 (file-exists-status path)]
       (if (= status io-status-ok)
@@ -350,9 +372,9 @@
 ;: The runtime opens the path in host append mode where available, preserving
 ;: existing contents and creating the file when missing. Empty paths return
 ;: `IoInvalidPath`.
-(define (try-append-file [path : String] [contents : String]) : ResultIoUnit
+(define (try-append-file [path : (& path str)] [contents : (& contents str)]) : ResultIoUnit
   (if (io-empty-path? path)
-    (ErrIoUnit (IoInvalidPath path))
+    (ErrIoUnit (io-invalid-path-error path))
     (let
       [status : i64 (append-file-status path contents)]
       (if (= status io-status-ok)
@@ -363,7 +385,7 @@
 ;:
 ;: This is a convenience wrapper over `try-read-file`. It returns `fallback`
 ;: for every structured error, preserving the historical optional-file API.
-(define (read-file-or [path : String] [fallback : String]) : String
+(define (read-file-or [path : (& path str)] [fallback : String]) : String
   (match (try-read-file path)
     [(OkIoString contents) contents]
     [(ErrIoString _) fallback]))
@@ -372,7 +394,7 @@
 ;:
 ;: Uses the runtime append-status primitive: non-truncating, create-if-missing,
 ;: and best-effort host append semantics.
-(define (append-file [path : String] [contents : String]) : unit
+(define (append-file [path : (& path str)] [contents : (& contents str)]) : unit
   (match (try-append-file path contents)
     [(OkIoUnit) unit]
     [(ErrIoUnit error)
@@ -383,7 +405,7 @@
 ;: Return true when `path` exists and its contents are non-empty.
 ;:
 ;: Structured errors return false.
-(define (file-nonempty? [path : String]) : bool
+(define (file-nonempty? [path : (& path str)]) : bool
   (match (try-read-file path)
     [(OkIoString contents) (> (string-length contents) 0)]
     [(ErrIoString _) false]))
@@ -421,25 +443,29 @@
     (StdinRead text (stdin-eof?))))
 
 ;: Write `text` to stdout without adding a newline.
-(define (stdout-write [text : String]) : unit
+(define (stdout-write [text : (& text str)]) : unit
   (print-string text))
 
 ;: Write `text` and a trailing newline to stdout.
 ;:
 ;: This convenience helper allocates the newline-appended string.
-(define (stdout-write-line [text : String]) : unit
-  (print-string (string-append text "\n")))
+(define (stdout-write-line [text : (& text str)]) : unit
+  (let
+    [newline : String "\n"]
+    (print-string (string-append text (& newline)))))
 
 ;: Flush stdout.
 (define (stdout-flush) : unit
   (flush-stdout))
 
 ;: Write `text` to stderr without adding a newline.
-(define (stderr-write [text : String]) : unit
+(define (stderr-write [text : (& text str)]) : unit
   (print-error text))
 
 ;: Write `text` and a trailing newline to stderr.
 ;:
 ;: This convenience helper allocates the newline-appended string.
-(define (stderr-write-line [text : String]) : unit
-  (print-error (string-append text "\n")))
+(define (stderr-write-line [text : (& text str)]) : unit
+  (let
+    [newline : String "\n"]
+    (print-error (string-append text (& newline)))))

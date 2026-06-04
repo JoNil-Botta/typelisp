@@ -3498,7 +3498,10 @@
         [(OkCompilerBackend length-asm)
           (let
             [call-space : i64
-              (compiler-backend-call-arg-space target IrValueNil AstTypeNil)]
+              (compiler-backend-call-arg-space
+                target
+                (IrCallArgsNil)
+                AstTypeNil)]
             [ok-symbol : String (compiler-backend-asm-label function ok-label)]
             (OkCompilerBackend
               (string-append
@@ -4018,6 +4021,28 @@
     [(IrValueNil) 0]
     [(IrValueCons _ rest) (+ 1 (compiler-backend-ir-value-list-count rest))]))
 
+(define (compiler-backend-call-args-count [args : CompilerIrCallArgs]) : i64
+  (match args
+    [(IrCallArgsNil) 0]
+    [(IrCallArgsOne _) 1]
+    [(IrCallArgsTwo _ _) 2]
+    [(IrCallArgsArray values) (array-length values)]))
+
+(define (compiler-backend-call-arg-at [args : CompilerIrCallArgs] [index : i64]) : CompilerIrValue
+  (match args
+    [(IrCallArgsNil) (IrValueUnit)]
+    [(IrCallArgsOne value)
+      (if (= index 0)
+        value
+        (IrValueUnit))]
+    [(IrCallArgsTwo a b)
+      (if (= index 0)
+        a
+        (if (= index 1)
+          b
+          (IrValueUnit)))]
+    [(IrCallArgsArray values) (array-ref values index)]))
+
 (define (compiler-backend-call-register-count [target : CompilerBackendTarget]) : i64
   (match target
     [(BackendTargetLinux) 6]
@@ -4279,58 +4304,60 @@
 ;; already full.
 (define (compiler-backend-call-stack-arg-count
   [target : CompilerBackendTarget]
-  [args : CompilerIrValueList]
+  [args : CompilerIrCallArgs]
   [types : AstTypeList]
+  [arg-index : i64]
   [int-idx : i64]
   [float-idx : i64]
   [position : i64]
   [stack-count : i64]) : i64
-  (match args
-    [(IrValueNil) stack-count]
-    [(IrValueCons value rest)
-      (let
-        [arg-ty : AstType
-          (match types
-            [(AstTypeCons ty _) ty]
-            [(AstTypeNil) (AstTyI64)])]
-        [rest-types : AstTypeList
-          (match types
-            [(AstTypeCons _ tail) tail]
-            [(AstTypeNil) AstTypeNil])]
-        [is-float : bool (compiler-backend-float-type? arg-ty)]
-        (compiler-backend-call-stack-arg-count
+  (if (>= arg-index (compiler-backend-call-args-count args))
+    stack-count
+    (let
+      [arg-ty : AstType
+        (match types
+          [(AstTypeCons ty _) ty]
+          [(AstTypeNil) (AstTyI64)])]
+      [rest-types : AstTypeList
+        (match types
+          [(AstTypeCons _ tail) tail]
+          [(AstTypeNil) AstTypeNil])]
+      [is-float : bool (compiler-backend-float-type? arg-ty)]
+      (compiler-backend-call-stack-arg-count
+        target
+        args
+        rest-types
+        (+ arg-index 1)
+        (if is-float
+          int-idx
+          (+ int-idx 1))
+        (if is-float
+          (+ float-idx 1)
+          float-idx)
+        (+ position 1)
+        (if (compiler-backend-stack-call-arg-for-banks?
           target
-          rest
-          rest-types
-          (if is-float
-            int-idx
-            (+ int-idx 1))
-          (if is-float
-            (+ float-idx 1)
-            float-idx)
-          (+ position 1)
-          (if (compiler-backend-stack-call-arg-for-banks?
-            target
-            is-float
-            int-idx
-            float-idx
-            position)
-            (+ stack-count 1)
-            stack-count)))]))
+          is-float
+          int-idx
+          float-idx
+          position)
+          (+ stack-count 1)
+          stack-count)))))
 
 ;; Total %rsp adjustment reserved for a call's stack-passed args (#750):
 ;; `roundup16(shadow + stack-arg-count * 8)`. System V has no shadow space, so
 ;; this is 0 whenever every arg fits in registers.
 (define (compiler-backend-call-arg-space
   [target : CompilerBackendTarget]
-  [args : CompilerIrValueList]
+  [args : CompilerIrCallArgs]
   [types : AstTypeList]) : i64
-  (compiler-backend-call-arg-space-from target args types 0 0 0))
+  (compiler-backend-call-arg-space-from target args types 0 0 0 0))
 
 (define (compiler-backend-call-arg-space-from
   [target : CompilerBackendTarget]
-  [args : CompilerIrValueList]
+  [args : CompilerIrCallArgs]
   [types : AstTypeList]
+  [arg-index : i64]
   [int-idx : i64]
   [float-idx : i64]
   [position : i64]) : i64
@@ -4340,6 +4367,7 @@
         target
         args
         types
+        arg-index
         int-idx
         float-idx
         position
@@ -4353,21 +4381,21 @@
 
 (define (compiler-backend-closure-call-arg-space
   [target : CompilerBackendTarget]
-  [args : CompilerIrValueList]
+  [args : CompilerIrCallArgs]
   [types : AstTypeList]) : i64
-  (compiler-backend-call-arg-space-from target args types 1 0 1))
+  (compiler-backend-call-arg-space-from target args types 0 1 0 1))
 
-(define (compiler-backend-windows-stack-arg-space [args : CompilerIrValueList]) : i64
+(define (compiler-backend-windows-stack-arg-space [args : CompilerIrCallArgs]) : i64
   (let
-    [arg-count : i64 (compiler-backend-ir-value-list-count args)]
+    [arg-count : i64 (compiler-backend-call-args-count args)]
     (if (> arg-count 4)
       (compiler-backend-round-up-16 (* (- arg-count 4) 8))
       0)))
 
 (define (compiler-backend-windows-closure-stack-arg-space
-  [args : CompilerIrValueList]) : i64
+  [args : CompilerIrCallArgs]) : i64
   (let
-    [arg-count : i64 (+ 1 (compiler-backend-ir-value-list-count args))]
+    [arg-count : i64 (+ 1 (compiler-backend-call-args-count args))]
     (if (> arg-count 4)
       (compiler-backend-round-up-16 (* (- arg-count 4) 8))
       0)))
@@ -4446,124 +4474,121 @@
 (define (compiler-backend-emit-call-args
   [target : CompilerBackendTarget]
   [assignments : CompilerRegAssignmentList]
-  [args : CompilerIrValueList]
+  [args : CompilerIrCallArgs]
   [types : AstTypeList]
+  [arg-index : i64]
   [int-idx : i64]
   [float-idx : i64]
   [position : i64]
   [stack-idx : i64]
   [func-diag : CompilerDiagnostic]) : ResultCompilerBackend
-  (match args
-    [(IrValueNil) (OkCompilerBackend "")]
-    [(IrValueCons value rest)
-      (let
-        [arg-ty : AstType
-          (match types
-            [(AstTypeCons ty _) ty]
-            [(AstTypeNil) (AstTyI64)])]
-        [rest-types : AstTypeList
-          (match types
-            [(AstTypeCons _ tail) tail]
-            [(AstTypeNil) AstTypeNil])]
-        [is-float : bool (compiler-backend-float-type? arg-ty)]
-        [next-int : i64
-          (if is-float
-            int-idx
-            (+ int-idx 1))]
-        [next-float : i64
-          (if is-float
-            (+ float-idx 1)
-            float-idx)]
-        (if (compiler-backend-stack-call-arg-for-banks?
-          target
-          is-float
+  (if (>= arg-index (compiler-backend-call-args-count args))
+    (OkCompilerBackend "")
+    (let
+      [value : CompilerIrValue (compiler-backend-call-arg-at args arg-index)]
+      [arg-ty : AstType
+        (match types
+          [(AstTypeCons ty _) ty]
+          [(AstTypeNil) (AstTyI64)])]
+      [rest-types : AstTypeList
+        (match types
+          [(AstTypeCons _ tail) tail]
+          [(AstTypeNil) AstTypeNil])]
+      [is-float : bool (compiler-backend-float-type? arg-ty)]
+      [next-int : i64
+        (if is-float
           int-idx
-          float-idx
-          position)
-          ;; Stack-passed arg: load into a scratch register that no other
-          ;; call arg uses (%xmm15 / %r11, matching the legacy backend) so an
-          ;; earlier register arg in xmm0/%rax is never clobbered, then
-          ;; store it at its %rsp offset.
-          (match (if is-float
-            (compiler-backend-emit-load-float-value-with-plan
+          (+ int-idx 1))]
+      [next-float : i64
+        (if is-float
+          (+ float-idx 1)
+          float-idx)]
+      (if (compiler-backend-stack-call-arg-for-banks?
+        target
+        is-float
+        int-idx
+        float-idx
+        position)
+        ;; Stack-passed arg: load into a scratch register that no other
+        ;; call arg uses (%xmm15 / %r11, matching the legacy backend) so an
+        ;; earlier register arg in xmm0/%rax is never clobbered, then
+        ;; store it at its %rsp offset.
+        (match (if is-float
+          (compiler-backend-emit-load-float-value-with-plan
+            assignments
+            value
+            arg-ty
+            "%xmm15")
+          (compiler-backend-emit-load-value-with-plan assignments value "%r11"))
+          [(OkCompilerBackend head)
+            (match (compiler-backend-emit-call-args
+              target
               assignments
-              value
-              arg-ty
-              "%xmm15")
-            (compiler-backend-emit-load-value-with-plan
-              assignments
-              value
-              "%r11"))
-            [(OkCompilerBackend head)
-              (match (compiler-backend-emit-call-args
-                target
+              args
+              rest-types
+              (+ arg-index 1)
+              next-int
+              next-float
+              (+ position 1)
+              (+ stack-idx 1)
+              func-diag)
+              [(OkCompilerBackend tail)
+                (OkCompilerBackend
+                  (backend-cat5
+                    head
+                    (if is-float
+                      (backend-cat4
+                        "    "
+                        (compiler-backend-float-move arg-ty)
+                        " %xmm15, "
+                        "")
+                      "    movq %r11, ")
+                    (int->string
+                      (compiler-backend-outgoing-stack-arg-offset
+                        target
+                        stack-idx))
+                    "(%rsp)\n"
+                    tail))]
+              [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
+          [(ErrCompilerBackend message) (ErrCompilerBackend message)])
+        (match (if is-float
+          (compiler-backend-target-float-arg-reg
+            target
+            (if (compiler-backend-target-windows? target)
+              position
+              float-idx))
+          (compiler-backend-target-arg-reg
+            target
+            (if (compiler-backend-target-windows? target)
+              position
+              int-idx)))
+          [(OkBackendReg reg)
+            (match (if is-float
+              (compiler-backend-emit-load-float-value-with-plan
                 assignments
-                rest
-                rest-types
-                next-int
-                next-float
-                (+ position 1)
-                (+ stack-idx 1)
-                func-diag)
-                [(OkCompilerBackend tail)
-                  (OkCompilerBackend
-                    (backend-cat5
-                      head
-                      (if is-float
-                        (backend-cat4
-                          "    "
-                          (compiler-backend-float-move arg-ty)
-                          " %xmm15, "
-                          "")
-                        "    movq %r11, ")
-                      (int->string
-                        (compiler-backend-outgoing-stack-arg-offset
-                          target
-                          stack-idx))
-                      "(%rsp)\n"
-                      tail))]
-                [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
-            [(ErrCompilerBackend message) (ErrCompilerBackend message)])
-          (match (if is-float
-            (compiler-backend-target-float-arg-reg
-              target
-              (if (compiler-backend-target-windows? target)
-                position
-                float-idx))
-            (compiler-backend-target-arg-reg
-              target
-              (if (compiler-backend-target-windows? target)
-                position
-                int-idx)))
-            [(OkBackendReg reg)
-              (match (if is-float
-                (compiler-backend-emit-load-float-value-with-plan
+                value
+                arg-ty
+                reg)
+              (compiler-backend-emit-load-value-with-plan assignments value reg))
+              [(OkCompilerBackend head)
+                (match (compiler-backend-emit-call-args
+                  target
                   assignments
-                  value
-                  arg-ty
-                  reg)
-                (compiler-backend-emit-load-value-with-plan
-                  assignments
-                  value
-                  reg))
-                [(OkCompilerBackend head)
-                  (match (compiler-backend-emit-call-args
-                    target
-                    assignments
-                    rest
-                    rest-types
-                    next-int
-                    next-float
-                    (+ position 1)
-                    stack-idx
-                    func-diag)
-                    [(OkCompilerBackend tail)
-                      (OkCompilerBackend (string-append head tail))]
-                    [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
-                [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
-            [(ErrBackendReg message)
-              (ErrCompilerBackend
-                (compiler-diagnostic-with-message func-diag message))])))]))
+                  args
+                  rest-types
+                  (+ arg-index 1)
+                  next-int
+                  next-float
+                  (+ position 1)
+                  stack-idx
+                  func-diag)
+                  [(OkCompilerBackend tail)
+                    (OkCompilerBackend (string-append head tail))]
+                  [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
+              [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
+          [(ErrBackendReg message)
+            (ErrCompilerBackend
+              (compiler-diagnostic-with-message func-diag message))])))))
 
 (define (compiler-backend-phi-input-value
   [inputs : CompilerIrPhiInputList]
@@ -4949,7 +4974,7 @@
   [source-function : String]
   [blocks : CompilerIrBlockList]
   [name : String]
-  [args : CompilerIrValueList]
+  [args : CompilerIrCallArgs]
   [ty : AstType]
   [assignments : CompilerRegAssignmentList]
   [vars : i64]
@@ -4966,6 +4991,7 @@
       assignments
       args
       param-types
+      0
       0
       0
       0
@@ -5485,6 +5511,7 @@
             0
             0
             0
+            0
             instr-diag)
             [(OkCompilerBackend args-asm)
               (OkCompilerBackend
@@ -5677,6 +5704,29 @@
         (compiler-backend-count-value-use counts value)
         (compiler-backend-count-value-list-uses counts rest))]))
 
+(define (compiler-backend-count-call-args-array-uses
+  [counts : (Array i64)]
+  [values : (Array CompilerIrValue)]
+  [index : i64]) : unit
+  (if (>= index (array-length values))
+    unit
+    (begin
+      (compiler-backend-count-value-use counts (array-ref values index))
+      (compiler-backend-count-call-args-array-uses counts values (+ index 1)))))
+
+(define (compiler-backend-count-call-args-uses
+  [counts : (Array i64)]
+  [args : CompilerIrCallArgs]) : unit
+  (match args
+    [(IrCallArgsNil) unit]
+    [(IrCallArgsOne value) (compiler-backend-count-value-use counts value)]
+    [(IrCallArgsTwo a b)
+      (begin
+        (compiler-backend-count-value-use counts a)
+        (compiler-backend-count-value-use counts b))]
+    [(IrCallArgsArray values)
+      (compiler-backend-count-call-args-array-uses counts values 0)]))
+
 (define (compiler-backend-count-phi-input-uses
   [counts : (Array i64)]
   [inputs : CompilerIrPhiInputList]) : unit
@@ -5768,7 +5818,7 @@
         (compiler-backend-count-value-use counts subleaf))]
     [(IrInstrXgetbv _ index) (compiler-backend-count-value-use counts index)]
     [(IrInstrCall _ _ args _)
-      (compiler-backend-count-value-list-uses counts args)]
+      (compiler-backend-count-call-args-uses counts args)]
     [(IrInstrStore _ value _) (compiler-backend-count-value-use counts value)]
     [(IrInstrBranch cond _ _) (compiler-backend-count-value-use counts cond)]
     [(IrInstrReturn maybe)
@@ -6317,7 +6367,7 @@
   [source-function : String]
   [blocks : CompilerIrBlockList]
   [name : String]
-  [args : CompilerIrValueList]
+  [args : CompilerIrCallArgs]
   [assignments : CompilerRegAssignmentList]
   [vars : i64]
   [plan : CompilerBackendRuntimePlan]
@@ -6333,6 +6383,7 @@
       assignments
       args
       param-types
+      0
       0
       0
       0
@@ -6388,7 +6439,7 @@
   [target : CompilerBackendTarget]
   [dst : i64]
   [func : CompilerIrValue]
-  [args : CompilerIrValueList]
+  [args : CompilerIrCallArgs]
   [ty : AstType]
   [assignments : CompilerRegAssignmentList]
   [types : CompilerRegVarTypeList]
@@ -6405,6 +6456,7 @@
       assignments
       args
       param-types
+      0
       1
       0
       1
@@ -8176,7 +8228,7 @@
 
 (define (compiler-backend-closure-adapter-outgoing-frame-space
   [target : CompilerBackendTarget]
-  [args : CompilerIrValueList]) : i64
+  [args : CompilerIrCallArgs]) : i64
   (match target
     [(BackendTargetLinux) 0]
     [(BackendTargetWindows)
@@ -8197,10 +8249,11 @@
     [params : CompilerIrParamList
       (compiler-backend-param-list-from-types param-types 0)]
     [vars : i64 (compiler-backend-type-list-count param-types)]
-    [args : CompilerIrValueList
-      (compiler-backend-var-value-list
-        (compiler-backend-type-list-count param-types)
-        0)]
+    [args : CompilerIrCallArgs
+      (compiler-ir-call-args-from-list
+        (compiler-backend-var-value-list
+          (compiler-backend-type-list-count param-types)
+          0))]
     [frame : i64
       (+
         (compiler-backend-frame-size
@@ -8222,6 +8275,7 @@
           CompilerRegAssignmentNil
           args
           param-types
+          0
           0
           0
           0
@@ -8360,6 +8414,33 @@
         (compiler-backend-collect-value-function functions value)
         rest)]))
 
+(define (compiler-backend-collect-call-args-array-functions
+  [functions : BackendStringList]
+  [values : (Array CompilerIrValue)]
+  [index : i64]) : BackendStringList
+  (if (>= index (array-length values))
+    functions
+    (compiler-backend-collect-call-args-array-functions
+      (compiler-backend-collect-value-function
+        functions
+        (array-ref values index))
+      values
+      (+ index 1))))
+
+(define (compiler-backend-collect-call-args-functions
+  [functions : BackendStringList]
+  [args : CompilerIrCallArgs]) : BackendStringList
+  (match args
+    [(IrCallArgsNil) functions]
+    [(IrCallArgsOne value)
+      (compiler-backend-collect-value-function functions value)]
+    [(IrCallArgsTwo a b)
+      (compiler-backend-collect-value-function
+        (compiler-backend-collect-value-function functions a)
+        b)]
+    [(IrCallArgsArray values)
+      (compiler-backend-collect-call-args-array-functions functions values 0)]))
+
 (define (compiler-backend-collect-phi-functions
   [functions : BackendStringList]
   [inputs : CompilerIrPhiInputList]) : BackendStringList
@@ -8383,13 +8464,13 @@
     [(IrInstrUnOp _ _ src _)
       (compiler-backend-collect-value-function functions src)]
     [(IrInstrCall _ _ args _)
-      (compiler-backend-collect-value-list-functions functions args)]
+      (compiler-backend-collect-call-args-functions functions args)]
     [(IrInstrCallIndirect _ func args _)
-      (compiler-backend-collect-value-list-functions
+      (compiler-backend-collect-call-args-functions
         (compiler-backend-collect-value-function functions func)
         args)]
     [(IrInstrTailCall _ args _)
-      (compiler-backend-collect-value-list-functions functions args)]
+      (compiler-backend-collect-call-args-functions functions args)]
     [(IrInstrBranch cond _ _)
       (compiler-backend-collect-value-function functions cond)]
     [(IrInstrReturn maybe)
@@ -8552,6 +8633,31 @@
         (compiler-backend-collect-value-string strings value)
         rest)]))
 
+(define (compiler-backend-collect-call-args-array-strings
+  [strings : BackendStringList]
+  [values : (Array CompilerIrValue)]
+  [index : i64]) : BackendStringList
+  (if (>= index (array-length values))
+    strings
+    (compiler-backend-collect-call-args-array-strings
+      (compiler-backend-collect-value-string strings (array-ref values index))
+      values
+      (+ index 1))))
+
+(define (compiler-backend-collect-call-args-strings
+  [strings : BackendStringList]
+  [args : CompilerIrCallArgs]) : BackendStringList
+  (match args
+    [(IrCallArgsNil) strings]
+    [(IrCallArgsOne value)
+      (compiler-backend-collect-value-string strings value)]
+    [(IrCallArgsTwo a b)
+      (compiler-backend-collect-value-string
+        (compiler-backend-collect-value-string strings a)
+        b)]
+    [(IrCallArgsArray values)
+      (compiler-backend-collect-call-args-array-strings strings values 0)]))
+
 (define (compiler-backend-collect-phi-strings
   [strings : BackendStringList]
   [inputs : CompilerIrPhiInputList]) : BackendStringList
@@ -8574,9 +8680,9 @@
     [(IrInstrUnOp _ _ src _)
       (compiler-backend-collect-value-string strings src)]
     [(IrInstrCall _ _ args _)
-      (compiler-backend-collect-value-list-strings strings args)]
+      (compiler-backend-collect-call-args-strings strings args)]
     [(IrInstrTailCall _ args _)
-      (compiler-backend-collect-value-list-strings strings args)]
+      (compiler-backend-collect-call-args-strings strings args)]
     [(IrInstrStore _ value _)
       (compiler-backend-collect-value-string strings value)]
     [(IrInstrBranch cond _ _)
@@ -8739,6 +8845,30 @@
         (compiler-backend-collect-value-f64 floats value)
         rest)]))
 
+(define (compiler-backend-collect-call-args-array-f64s
+  [floats : BackendStringList]
+  [values : (Array CompilerIrValue)]
+  [index : i64]) : BackendStringList
+  (if (>= index (array-length values))
+    floats
+    (compiler-backend-collect-call-args-array-f64s
+      (compiler-backend-collect-value-f64 floats (array-ref values index))
+      values
+      (+ index 1))))
+
+(define (compiler-backend-collect-call-args-f64s
+  [floats : BackendStringList]
+  [args : CompilerIrCallArgs]) : BackendStringList
+  (match args
+    [(IrCallArgsNil) floats]
+    [(IrCallArgsOne value) (compiler-backend-collect-value-f64 floats value)]
+    [(IrCallArgsTwo a b)
+      (compiler-backend-collect-value-f64
+        (compiler-backend-collect-value-f64 floats a)
+        b)]
+    [(IrCallArgsArray values)
+      (compiler-backend-collect-call-args-array-f64s floats values 0)]))
+
 (define (compiler-backend-collect-phi-f64s
   [floats : BackendStringList]
   [inputs : CompilerIrPhiInputList]) : BackendStringList
@@ -8760,9 +8890,9 @@
         rhs)]
     [(IrInstrUnOp _ _ src _) (compiler-backend-collect-value-f64 floats src)]
     [(IrInstrCall _ _ args _)
-      (compiler-backend-collect-value-list-f64s floats args)]
+      (compiler-backend-collect-call-args-f64s floats args)]
     [(IrInstrTailCall _ args _)
-      (compiler-backend-collect-value-list-f64s floats args)]
+      (compiler-backend-collect-call-args-f64s floats args)]
     [(IrInstrStore _ value _) (compiler-backend-collect-value-f64 floats value)]
     [(IrInstrBranch cond _ _) (compiler-backend-collect-value-f64 floats cond)]
     [(IrInstrReturn maybe)
@@ -18465,91 +18595,98 @@ tl_windows_sdk_registry_install:
               (IrInstrCall
                 0
                 "tl_alloc"
-                (IrValueCons (IrValueI64 8) IrValueNil)
+                (IrCallArgsOne (IrValueI64 8))
                 (AstTyI64))
               (IrInstrCons
                 (IrInstrCall
                   1
                   "tl_substring"
-                  (IrValueCons
-                    (IrValueI64 0)
+                  (compiler-ir-call-args-from-list
                     (IrValueCons
                       (IrValueI64 0)
-                      (IrValueCons (IrValueI64 0) IrValueNil)))
+                      (IrValueCons
+                        (IrValueI64 0)
+                        (IrValueCons (IrValueI64 0) IrValueNil))))
                   (AstTyI64))
                 (IrInstrCons
                   (IrInstrCall
                     2
                     "tl_string_concat"
-                    (IrValueCons
-                      (IrValueI64 0)
+                    (compiler-ir-call-args-from-list
                       (IrValueCons
                         (IrValueI64 0)
                         (IrValueCons
                           (IrValueI64 0)
-                          (IrValueCons (IrValueI64 0) IrValueNil))))
+                          (IrValueCons
+                            (IrValueI64 0)
+                            (IrValueCons (IrValueI64 0) IrValueNil)))))
                     (AstTyI64))
                   (IrInstrCons
                     (IrInstrCall
                       3
                       ".L_tl_read_stdin_line"
-                      IrValueNil
+                      (IrCallArgsNil)
                       (AstTyString))
                     (IrInstrCons
                       (IrInstrCall
                         4
                         ".L_tl_read_stdin_bytes"
-                        (IrValueCons (IrValueI64 0) IrValueNil)
+                        (IrCallArgsOne (IrValueI64 0))
                         (AstTyString))
                       (IrInstrCons
-                        (IrInstrCall 5 ".L_tl_stdin_eof" IrValueNil (AstTyBool))
+                        (IrInstrCall
+                          5
+                          ".L_tl_stdin_eof"
+                          (IrCallArgsNil)
+                          (AstTyBool))
                         (IrInstrCons
                           (IrInstrCall
                             6
                             ".L_tl_flush_stdout"
-                            IrValueNil
+                            (IrCallArgsNil)
                             (AstTyUnit))
                           (IrInstrCons
                             (IrInstrCall
                               7
                               "tl_random_system_seed"
-                              IrValueNil
+                              (IrCallArgsNil)
                               (AstTyI64))
                             (IrInstrCons
                               (IrInstrCall
                                 8
                                 ".L_tl_file_open_status"
-                                (IrValueCons
-                                  (IrValueI64 0)
+                                (compiler-ir-call-args-from-list
                                   (IrValueCons
                                     (IrValueI64 0)
-                                    (IrValueCons (IrValueI64 0) IrValueNil)))
+                                    (IrValueCons
+                                      (IrValueI64 0)
+                                      (IrValueCons (IrValueI64 0) IrValueNil))))
                                 (AstTyI64))
                               (IrInstrCons
                                 (IrInstrCall
                                   9
                                   ".L_tl_file_close_status"
-                                  (IrValueCons (IrValueI64 1) IrValueNil)
+                                  (IrCallArgsOne (IrValueI64 1))
                                   (AstTyI64))
                                 (IrInstrCons
                                   (IrInstrCall
                                     10
                                     ".L_tl_file_read_chunk_status"
-                                    (IrValueCons
+                                    (IrCallArgsTwo
                                       (IrValueI64 1)
-                                      (IrValueCons (IrValueI64 4) IrValueNil))
+                                      (IrValueI64 4))
                                     (AstTyI64))
                                   (IrInstrCons
                                     (IrInstrCall
                                       11
                                       ".L_tl_file_read_chunk_bytes"
-                                      (IrValueCons (IrValueI64 1) IrValueNil)
+                                      (IrCallArgsOne (IrValueI64 1))
                                       (AstTyString))
                                     (IrInstrCons
                                       (IrInstrCall
                                         12
                                         ".L_tl_file_read_chunk_eof"
-                                        (IrValueCons (IrValueI64 1) IrValueNil)
+                                        (IrCallArgsOne (IrValueI64 1))
                                         (AstTyBool))
                                       (IrInstrCons
                                         (IrInstrReturn
@@ -18863,7 +19000,7 @@ tl_windows_sdk_registry_install:
             (IrBlock
               "entry"
               (IrInstrCons
-                (IrInstrCall 0 "tl_alloc" IrValueNil (AstTyI64))
+                (IrInstrCall 0 "tl_alloc" (IrCallArgsNil) (AstTyI64))
                 (IrInstrCons
                   (IrInstrReturn (IrSomeValue (IrValueVar 0)))
                   IrInstrNil)))
@@ -18908,16 +19045,17 @@ tl_windows_sdk_registry_install:
             (IrBlock
               "entry"
               (IrInstrCons
-                (IrInstrCall 0 "tl_alloc" IrValueNil (AstTyI64))
+                (IrInstrCall 0 "tl_alloc" (IrCallArgsNil) (AstTyI64))
                 (IrInstrCons
                   (IrInstrCall
                     1
                     "tl_substring"
-                    (IrValueCons
-                      (IrValueI64 0)
+                    (compiler-ir-call-args-from-list
                       (IrValueCons
                         (IrValueI64 0)
-                        (IrValueCons (IrValueI64 0) IrValueNil)))
+                        (IrValueCons
+                          (IrValueI64 0)
+                          (IrValueCons (IrValueI64 0) IrValueNil))))
                     (AstTyI64))
                   (IrInstrCons
                     (IrInstrReturn (IrSomeValue (IrValueVar 0)))
@@ -18976,7 +19114,7 @@ tl_windows_sdk_registry_install:
             (IrBlock
               "entry"
               (IrInstrCons
-                (IrInstrCall 0 "lib.tl::helper" IrValueNil (AstTyI64))
+                (IrInstrCall 0 "lib.tl::helper" (IrCallArgsNil) (AstTyI64))
                 (IrInstrCons
                   (IrInstrReturn (IrSomeValue (IrValueVar 0)))
                   IrInstrNil)))

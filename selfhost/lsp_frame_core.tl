@@ -208,9 +208,15 @@
               (LspFrameErr "lsp: truncated payload")
               (LspFrameOk payload)))]))))
 
+(define (lsp-frame-stdout-write [text : String]) : unit
+  (stdout-write (& text)))
+
+(define (lsp-frame-stderr-write [text : String]) : unit
+  (stderr-write (& text)))
+
 (define (lsp-frame-write-body [body : String]) : unit
   (begin
-    (stdout-write
+    (lsp-frame-stdout-write
       (lsp-frame-cat5
         "Content-Length: "
         (int->string (string-length body))
@@ -772,7 +778,7 @@
           [(LspFrameErr message)
             (begin
               (lsp-write-parse-error message)
-              (stderr-write message)
+              (lsp-frame-stderr-write message)
               (set! status 1)
               (set! done true))]))
       status)))

@@ -2162,7 +2162,7 @@
   (match (tc-struct-decl ctx struct-name)
     [(OkTcStructDecl decl)
       (match decl
-        [(TcStructDecl repr _) (ast-struct-repr-c? repr)])]
+        [(TcStructDecl repr _ _) (ast-struct-repr-c? repr)])]
     [(ErrTcStructDecl _) false]))
 
 (define (lower-repr-c-inline-field? [ctx : TcContext] [field-ty : AstType]) : bool
@@ -2187,11 +2187,7 @@
       (LowerExpr
         (lower-state-emit
           allocated
-          (IrInstrCall
-            var-id
-            "tl_alloc"
-            (IrValueCons (IrValueI64 size) IrValueNil)
-            ty))
+          (IrInstrCall var-id "tl_alloc" (IrCallArgsOne (IrValueI64 size)) ty))
         (IrValueVar var-id)
         ty)]))
 
@@ -2339,7 +2335,7 @@
     [(LowerAlloc allocated var-id)
       (lower-state-emit
         allocated
-        (IrInstrCall var-id "tl_oob_abort" IrValueNil (AstTyUnit)))]))
+        (IrInstrCall var-id "tl_oob_abort" (IrCallArgsNil) (AstTyUnit)))]))
 
 (define (lower-string-fields [state : LowerState] [value : CompilerIrValue]) : LowerStringFields
   (match (lower-load-at-offset state value 0 (AstTyU64))
@@ -2916,11 +2912,14 @@
                     (IrInstrCall
                       eq-var
                       "tl_string_eq"
-                      (IrValueCons
-                        field-ptr
+                      (compiler-ir-call-args-from-list
                         (IrValueCons
-                          field-len
-                          (IrValueCons lit-ptr (IrValueCons lit-len IrValueNil))))
+                          field-ptr
+                          (IrValueCons
+                            field-len
+                            (IrValueCons
+                              lit-ptr
+                              (IrValueCons lit-len IrValueNil)))))
                       (AstTyBool)))
                   (IrValueVar eq-var)
                   (AstTyBool)))])])]))
@@ -3569,7 +3568,7 @@
                         (IrInstrCall
                           buf-var
                           "tl_alloc"
-                          (IrValueCons byte-count IrValueNil)
+                          (IrCallArgsOne byte-count)
                           (AstTyU64)))
                       old-buf
                       len
@@ -4343,7 +4342,7 @@
               (IrInstrCall
                 var-id
                 (lower-resolve-call-name allocated env cleanup-name)
-                (IrValueCons (IrValueVar resource-id) IrValueNil)
+                (IrCallArgsOne (IrValueVar resource-id))
                 (AstTyUnit))))])]
     [(NoneI64)
       (ErrLowerState
@@ -4363,7 +4362,7 @@
               (IrInstrCall
                 reset-var
                 "tl_region_reset"
-                (IrValueCons (IrValueVar mark-var) IrValueNil)
+                (IrCallArgsOne (IrValueVar mark-var))
                 (AstTyUnit))))])]
     [(NoneI64)
       (ErrLowerState (lower-diagnostic "lower: missing region reset binding"))]))
@@ -4794,7 +4793,7 @@
             (IrInstrCall
               var-id
               (lower-resolve-call-name allocated env (clone-helper-name name))
-              (IrValueCons value IrValueNil)
+              (IrCallArgsOne value)
               ty))
           (IrValueVar var-id)
           ty))]))
@@ -5213,7 +5212,7 @@
                         (IrInstrCall
                           buf-var
                           "tl_alloc"
-                          (IrValueCons byte-count IrValueNil)
+                          (IrCallArgsOne byte-count)
                           (AstTyU64)))
                       env
                       type-env
@@ -7352,9 +7351,10 @@
             (IrInstrCall
               var-id
               "tl_substring"
-              (IrValueCons
-                src-ptr
-                (IrValueCons start-value (IrValueCons len-value IrValueNil)))
+              (compiler-ir-call-args-from-list
+                (IrValueCons
+                  src-ptr
+                  (IrValueCons start-value (IrValueCons len-value IrValueNil))))
               (AstTyString)))
           (IrValueVar var-id)
           (AstTyString)))]))
@@ -7568,15 +7568,16 @@
                                         (IrInstrCall
                                           var-id
                                           "tl_string_concat"
-                                          (IrValueCons
-                                            left-ptr
+                                          (compiler-ir-call-args-from-list
                                             (IrValueCons
-                                              left-len
+                                              left-ptr
                                               (IrValueCons
-                                                right-ptr
+                                                left-len
                                                 (IrValueCons
-                                                  right-len
-                                                  IrValueNil))))
+                                                  right-ptr
+                                                  (IrValueCons
+                                                    right-len
+                                                    IrValueNil)))))
                                           (AstTyString)))
                                       (IrValueVar var-id)
                                       (AstTyString)))])])])
@@ -7625,7 +7626,7 @@
               (IrInstrCall
                 var-id
                 (lower-resolve-call-name allocated env name)
-                values
+                (compiler-ir-call-args-from-list values)
                 result-ty)]
             (OkLowerExpr
               (LowerExpr
@@ -7644,7 +7645,11 @@
     [(LowerAlloc allocated var-id)
       (let
         [instr : CompilerIrInstr
-          (IrInstrCallIndirect var-id func-value values result-ty)]
+          (IrInstrCallIndirect
+            var-id
+            func-value
+            (compiler-ir-call-args-from-list values)
+            result-ty)]
         (OkLowerExpr
           (LowerExpr
             (lower-state-emit-at-expr allocated instr origin)
@@ -7717,7 +7722,11 @@
         (LowerExpr
           (lower-state-emit
             allocated
-            (IrInstrCall var-id name values result-ty))
+            (IrInstrCall
+              var-id
+              name
+              (compiler-ir-call-args-from-list values)
+              result-ty))
           (IrValueVar var-id)
           result-ty))]))
 
@@ -10045,7 +10054,7 @@
               (IrInstrCall
                 buf-var
                 "tl_alloc"
-                (IrValueCons byte-count IrValueNil)
+                (IrCallArgsOne byte-count)
                 (AstTyU64)))
             arr-ty
             buf-var
@@ -10529,7 +10538,7 @@
                   (IrInstrCall
                     buf-var
                     "tl_alloc"
-                    (IrValueCons byte-count IrValueNil)
+                    (IrCallArgsOne byte-count)
                     (AstTyU64)))
                 arr-value
                 old-buf
@@ -10856,7 +10865,7 @@
         [marked-state : LowerState
           (lower-state-emit
             mark-allocated
-            (IrInstrCall mark-var "tl_region_mark" IrValueNil (AstTyU64)))]
+            (IrInstrCall mark-var "tl_region_mark" (IrCallArgsNil) (AstTyU64)))]
         [region-env : SymI64Env (sym-i64-bind env hidden-name mark-var)]
         [region-type-env : TcTypeEnv
           (lower-type-env-push-region-reset type-env hidden-name)]
@@ -10875,7 +10884,7 @@
                             (IrInstrCall
                               reset-var
                               "tl_region_reset"
-                              (IrValueCons (IrValueVar mark-var) IrValueNil)
+                              (IrCallArgsOne (IrValueVar mark-var))
                               (AstTyUnit)))
                           value
                           body-ty))]))])]
@@ -13536,7 +13545,7 @@
             args-state
             (IrInstrTailCall
               (lower-state-current-function args-state)
-              values
+              (compiler-ir-call-args-from-list values)
               ret-ty)
             origin))]
       [(ErrLowerArgs message) (ErrLowerState message)])
@@ -15687,6 +15696,29 @@
         (lower-test-value-function-count value name)
         (lower-test-value-list-function-count rest name))]))
 
+(define (lower-test-call-args-function-count
+  [args : CompilerIrCallArgs]
+  [name : String]) : i64
+  (match args
+    [(IrCallArgsNil) 0]
+    [(IrCallArgsOne value) (lower-test-value-function-count value name)]
+    [(IrCallArgsTwo a b)
+      (+
+        (lower-test-value-function-count a name)
+        (lower-test-value-function-count b name))]
+    [(IrCallArgsArray values)
+      (lower-test-call-args-array-function-count values name 0)]))
+
+(define (lower-test-call-args-array-function-count
+  [values : (Array CompilerIrValue)]
+  [name : String]
+  [index : i64]) : i64
+  (if (>= index (array-length values))
+    0
+    (+
+      (lower-test-value-function-count (array-ref values index) name)
+      (lower-test-call-args-array-function-count values name (+ index 1)))))
+
 (define (lower-test-instr-return-function-count
   [instr : CompilerIrInstr]
   [function-name : String]) : i64
@@ -15713,7 +15745,7 @@
   (match instr
     [(IrInstrCall _ found args _)
       (if (string-eq found call-name)
-        (lower-test-value-list-function-count args function-name)
+        (lower-test-call-args-function-count args function-name)
         0)]
     [_ 0]))
 

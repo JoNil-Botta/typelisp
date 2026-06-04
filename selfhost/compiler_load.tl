@@ -385,6 +385,14 @@
               "compiler-load: import expected module "
               (string-append want (string-append " but loaded " actual))))))]))
 
+(define (compiler-load-no-expected-module? [expected : AstMaybeModuleName]) : bool
+  (match expected
+    [(AstNoModuleName) true]
+    [(AstSomeModuleName _) false]))
+
+(define (compiler-load-seen-path-key [path : String]) : String
+  (string-append "path:" (compiler-load-normalize-path path)))
+
 (define (compiler-load-decls-with-paths
   [decls : AstDeclList]
   [importer-path : String]
@@ -874,40 +882,66 @@
     expected-module
     (compiler-cfg-empty)))
 
+(define (compiler-load-bind-path-dedup
+  [loaded : ResultCompilerLoadWithPaths]
+  [path-dedup : bool]
+  [path-key : String]) : ResultCompilerLoadWithPaths
+  (match loaded
+    [(OkCompilerLoadWithPaths decls paths modules loaded-seen)
+      (OkCompilerLoadWithPaths
+        decls
+        paths
+        modules
+        (if path-dedup
+          (sym-i64-bind loaded-seen path-key 1)
+          loaded-seen))]
+    [(ErrCompilerLoadWithPaths diag) (ErrCompilerLoadWithPaths diag)]))
+
 (define (compiler-load-file-with-paths-and-roots-expect-cfg
   [path : String]
   [seen : SymI64Env]
   [stdlib-roots : CompilerLoadRootList]
   [expected-module : AstMaybeModuleName]
   [cfgs : SymI64Env]) : ResultCompilerLoadWithPaths
-  (if (file-exists? path)
-    (match (compiler-load-parse-file-diagnostic-escaping path cfgs)
-      [(OkAstProgramDiagnostic program)
-        (compiler-load-program-with-paths-and-roots-expect-cfg
-          path
-          program
-          seen
-          stdlib-roots
-          expected-module
-          cfgs)]
-      [(ErrAstProgramDiagnostic diag) (ErrCompilerLoadWithPaths diag)])
-    (match (compiler-load-embedded-stdlib-source-for-path path)
-      [(CompilerEmbeddedStdlibSomeSource source)
-        (match (compiler-load-parse-source-diagnostic-escaping path source cfgs)
+  (let
+    [path-key : String (compiler-load-seen-path-key path)]
+    [path-dedup : bool (compiler-load-no-expected-module? expected-module)]
+    (if (and path-dedup (sym-i64-contains seen path-key))
+      (OkCompilerLoadWithPaths AstDeclNil AstDeclPathNil AstDeclModuleNil seen)
+      (if (file-exists? path)
+        (match (compiler-load-parse-file-diagnostic-escaping path cfgs)
           [(OkAstProgramDiagnostic program)
-            (compiler-load-program-with-paths-and-roots-expect-cfg
-              path
-              program
-              seen
-              stdlib-roots
-              expected-module
-              cfgs)]
-          [(ErrAstProgramDiagnostic diag) (ErrCompilerLoadWithPaths diag)])]
-      [(CompilerEmbeddedStdlibNoSource)
-        (ErrCompilerLoadWithPaths
-          (compiler-diagnostic-at-start
-            path
-            (string-append "compiler-load: cannot read import " path)))])))
+            (compiler-load-bind-path-dedup
+              (compiler-load-program-with-paths-and-roots-expect-cfg
+                path
+                program
+                seen
+                stdlib-roots
+                expected-module
+                cfgs)
+              path-dedup
+              path-key)]
+          [(ErrAstProgramDiagnostic diag) (ErrCompilerLoadWithPaths diag)])
+        (match (compiler-load-embedded-stdlib-source-for-path path)
+          [(CompilerEmbeddedStdlibSomeSource source)
+            (match (compiler-load-parse-source-diagnostic-escaping path source cfgs)
+              [(OkAstProgramDiagnostic program)
+                (compiler-load-bind-path-dedup
+                  (compiler-load-program-with-paths-and-roots-expect-cfg
+                    path
+                    program
+                    seen
+                    stdlib-roots
+                    expected-module
+                    cfgs)
+                  path-dedup
+                  path-key)]
+              [(ErrAstProgramDiagnostic diag) (ErrCompilerLoadWithPaths diag)])]
+          [(CompilerEmbeddedStdlibNoSource)
+            (ErrCompilerLoadWithPaths
+              (compiler-diagnostic-at-start
+                path
+                (string-append "compiler-load: cannot read import " path)))])))))
 
 (define (compiler-load-file [path : String] [seen : SymI64Env]) : ResultCompilerLoad
   (compiler-load-drop-paths (compiler-load-file-with-paths path seen)))

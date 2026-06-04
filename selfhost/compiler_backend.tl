@@ -60,8 +60,9 @@
   (OkCompilerBackend String)
   (ErrCompilerBackend CompilerDiagnostic))
 
-(defenum CompilerBackendRuntimeTailPlan
-  (BackendRuntimeTailPlan bool bool))
+(defstruct CompilerBackendRuntimeTailPlan
+  (fs-current-dir bool)
+  (profile bool))
 
 (defenum ResultCompilerBackendBuffer
   (OkCompilerBackendBuffer TextBuf)
@@ -105,6 +106,14 @@
     bool
     bool
     CompilerBackendRuntimeTailPlan))
+
+(define (compiler-backend-runtime-tail-fs-current-dir?
+  [tail : CompilerBackendRuntimeTailPlan]) : bool
+  (struct-get tail fs-current-dir))
+
+(define (compiler-backend-runtime-tail-profile?
+  [tail : CompilerBackendRuntimeTailPlan]) : bool
+  (struct-get tail profile))
 
 ;; Backend code-generation target (#646). Linux/System V and Windows x64 are
 ;; both modeled here; target-specific runtime helpers are emitted below.
@@ -7345,7 +7354,7 @@
           _
           _
           _
-          (BackendRuntimeTailPlan _ _))
+          _)
         (if (or arg-count arg)
           "    movq %rcx, .L_tl_argc(%rip)
     movq %rdx, .L_tl_argv(%rip)
@@ -7398,7 +7407,7 @@
           _
           _
           _
-          (BackendRuntimeTailPlan _ _))
+          _)
         (string-append
           (if (or arg-count arg)
             "    movq %rdi, .L_tl_argc(%rip)
@@ -8977,7 +8986,7 @@
         provides-env-path-separator
         provides-div-abort
         provides-shift-abort
-        (BackendRuntimeTailPlan provides-fs-current-dir provides-profile))
+        provides-tail)
       (or
         (backend-or8
           (compiler-backend-provides-runtime-name? name "tl_alloc" alloc)
@@ -9132,11 +9141,13 @@
                     (compiler-backend-provides-runtime-name?
                       name
                       "tl_fs_current_dir_status"
-                      provides-fs-current-dir)
+                      (compiler-backend-runtime-tail-fs-current-dir?
+                        provides-tail))
                     (compiler-backend-provides-runtime-name?
                       name
                       "tl_fs_current_dir"
-                      provides-fs-current-dir)
+                      (compiler-backend-runtime-tail-fs-current-dir?
+                        provides-tail))
                     false)
                   (or
                     (compiler-backend-provides-runtime-name?
@@ -9184,7 +9195,8 @@
                             provides-shift-abort)
                           (compiler-backend-provides-profile-runtime-name?
                             name
-                            provides-profile)
+                            (compiler-backend-runtime-tail-profile?
+                              provides-tail))
                           false))))))))))]))
 
 (define (compiler-backend-runtime-plan-for
@@ -9770,7 +9782,7 @@
         needs-env-path-separator
         needs-div-abort
         needs-shift-abort
-        (BackendRuntimeTailPlan needs-fs-current-dir needs-profile)))))
+        (CompilerBackendRuntimeTailPlan needs-fs-current-dir needs-profile)))))
 
 (define (compiler-backend-runtime-plan [program : CompilerIrProgram]) : ResultBackendRuntimePlan
   (match program
@@ -10119,12 +10131,13 @@ tl_profile_alloc_peak_bytes:
         _
         div-abort
         shift-abort
-        (BackendRuntimeTailPlan _ profile))
+        tail-plan)
       (string-append
         (string-append
           (compiler-backend-runtime-arena-data-for-target target)
           (string-append
-            (compiler-backend-runtime-profile-data profile)
+            (compiler-backend-runtime-profile-data
+              (compiler-backend-runtime-tail-profile? tail-plan))
             (if alloc
               (compiler-backend-runtime-alloc-data-for-target target)
               "")))
@@ -16254,8 +16267,11 @@ tl_windows_sdk_registry_install:
         env-path-separator
         div-abort
         shift-abort
-        (BackendRuntimeTailPlan fs-current-dir profile))
+        tail-plan)
       (let
+        [fs-current-dir : bool
+          (compiler-backend-runtime-tail-fs-current-dir? tail-plan)]
+        [profile : bool (compiler-backend-runtime-tail-profile? tail-plan)]
         [alloc-asm : String
           (if alloc
             (if (compiler-backend-target-windows? target)
@@ -16725,7 +16741,7 @@ tl_windows_sdk_registry_install:
               _
               _
               _
-              (BackendRuntimeTailPlan _ _))
+              _)
             (compiler-backend-entry
               (or arg-count arg)
               (or process-output (or env-var-exists env-var-value))
@@ -16782,9 +16798,9 @@ tl_windows_sdk_registry_install:
         env-path-separator
         div-abort
         shift-abort
-        (BackendRuntimeTailPlan fs-current-dir profile))
-      (not
-        (or
+        tail-plan)
+      (let
+        [front-runtime : bool
           (backend-or8
             alloc
             oob
@@ -16793,42 +16809,49 @@ tl_windows_sdk_registry_install:
             string-eq
             string-to-int
             int-to-string
-            abort)
-          (or
-            (backend-or8
-              print-err
-              print-str
-              print-char
-              print-f64
-              arg-count
-              arg
-              read-file
-              write-file)
+            abort)]
+        [io-runtime : bool
+          (backend-or8
+            print-err
+            print-str
+            print-char
+            print-f64
+            arg-count
+            arg
+            read-file
+            write-file)]
+        [file-runtime : bool
+          (backend-or8
+            file-exists
+            file-handle
+            file-read-chunk
+            fs-runtime
+            process-output
+            read-line
+            read-bytes
+            stdin-eof)]
+        [tail-runtime : bool
+          (backend-or8
+            flush-stdout
+            region-mark
+            region-reset
+            random-system-seed
+            windows-setup-instances
+            windows-sdk-registry-install
+            env-var-exists
+            env-var-value)]
+        [extra-runtime : bool
+          (backend-or4
+            env-path-separator
+            div-abort
+            shift-abort
             (or
-              (backend-or8
-                file-exists
-                file-handle
-                file-read-chunk
-                fs-runtime
-                process-output
-                read-line
-                read-bytes
-                stdin-eof)
-              (or
-                (backend-or8
-                  flush-stdout
-                  region-mark
-                  region-reset
-                  random-system-seed
-                  windows-setup-instances
-                  windows-sdk-registry-install
-                  env-var-exists
-                  env-var-value)
-                (backend-or4
-                  env-path-separator
-                  div-abort
-                  shift-abort
-                  (or fs-current-dir profile)))))))]))
+              (compiler-backend-runtime-tail-fs-current-dir? tail-plan)
+              (compiler-backend-runtime-tail-profile? tail-plan)))]
+        (not
+          (or
+            front-runtime
+            (or io-runtime (or file-runtime (or tail-runtime extra-runtime))))))]))
 
 ;; All runtime helpers the backend can be asked to emit now have a Windows
 ;; variant (region mark/reset and the env-var/env-path helpers were the last

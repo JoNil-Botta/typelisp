@@ -9,6 +9,7 @@
 ;#
 ;# Usage: `(import "stdlib/msvc.tl")`
 ;#
+;; requires-stage0-symbol: fs-file-kind-status
 ;# ```typelisp
 ;# (import "stdlib/msvc.tl")
 ;# (define tool : ResultMsvcTool

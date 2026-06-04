@@ -5,11 +5,13 @@
 ;# top of compiler/runtime primitives:
 ;#
 ;# `fs-mkdir-status`, `fs-remove-file-status`, `fs-remove-dir-status`,
-;# `fs-rename-status`, `fs-read-dir-status`, `fs-read-dir`, `fs-process-id`,
-;# `tl_fs_current_dir_status`, and `tl_fs_current_dir`.
+;# `fs-rename-status`, `fs-read-dir-status`, `fs-read-dir`,
+;# `fs-file-kind-status`, `fs-process-id`, `tl_fs_current_dir_status`, and
+;# `tl_fs_current_dir`.
 ;#
 ;# Usage: `(import "stdlib/fs.tl")`
 ;#
+;; requires-stage0-symbol: fs-file-kind-status
 ;# ```typelisp
 ;# (import "stdlib/fs.tl")
 ;# (define joined : String
@@ -49,6 +51,29 @@
 (defenum FsPathSegmentList
   (FsPathSegmentNil)
   (FsPathSegmentCons String FsPathSegmentList))
+
+;: Runtime status sentinel for regular files returned by `fs-file-kind-status`.
+(define fs-file-kind-regular-code : i64
+  -1)
+
+;: Runtime status sentinel for directories returned by `fs-file-kind-status`.
+(define fs-file-kind-directory-code : i64
+  -2)
+
+;: Runtime status sentinel for filesystem nodes that are neither files nor directories.
+(define fs-file-kind-other-code : i64
+  -3)
+
+;: Portable coarse filesystem node kind.
+(defenum FsFileKind
+  (FsFileRegular)
+  (FsFileDirectory)
+  (FsFileOther))
+
+;: Result type for file-kind probes.
+(defenum ResultFsFileKind
+  (OkFsFileKind FsFileKind)
+  (ErrFsFileKind IoError))
 
 ;: Return true on Windows-style hosts.
 (define (fs-windows?) : bool
@@ -312,6 +337,14 @@
     OkIoUnit
     (ErrIoUnit (io-error-from-status path status))))
 
+;: Convert a runtime file-kind status into a structured result.
+(define (fs-file-kind-status-result [path : (& path str)] [status : i64]) : ResultFsFileKind
+  (cond
+    [(= status fs-file-kind-regular-code) (OkFsFileKind (FsFileRegular))]
+    [(= status fs-file-kind-directory-code) (OkFsFileKind (FsFileDirectory))]
+    [(= status fs-file-kind-other-code) (OkFsFileKind (FsFileOther))]
+    [else (ErrFsFileKind (io-error-from-status path status))]))
+
 ;: Create `path` as a directory, returning a structured status.
 ;:
 ;: Linux uses mode `0700`; Windows uses the backend `_mkdir` helper.
@@ -366,6 +399,33 @@
         [path : String
           (string-append (string-append source (& arrow)) destination)]
         (fs-status-result (& path) (fs-rename-status source destination))))))
+
+;: Probe the coarse filesystem kind of `path`.
+;:
+;: Linux reports regular files, directories, and other node kinds. Windows
+;: currently returns `IoUnsupported` through the runtime status helper.
+(define (try-file-kind [path : (& path str)]) : ResultFsFileKind
+  (if (io-empty-path? path)
+    (ErrFsFileKind (io-invalid-path-error path))
+    (fs-file-kind-status-result path (fs-file-kind-status path))))
+
+;: Return true when `kind` is `FsFileRegular`.
+(define (fs-file-kind-regular? [kind : FsFileKind]) : bool
+  (match kind
+    [(FsFileRegular) true]
+    [_ false]))
+
+;: Return true when `kind` is `FsFileDirectory`.
+(define (fs-file-kind-directory? [kind : FsFileKind]) : bool
+  (match kind
+    [(FsFileDirectory) true]
+    [_ false]))
+
+;: Return true when `kind` is `FsFileOther`.
+(define (fs-file-kind-other? [kind : FsFileKind]) : bool
+  (match kind
+    [(FsFileOther) true]
+    [_ false]))
 
 ;: Split the runtime's newline-delimited directory payload into entry names.
 (define (fs-read-dir-split [entries : String]) : StringList

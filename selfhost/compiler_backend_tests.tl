@@ -2630,6 +2630,50 @@
           (compiler-backend-string-contains? asm "\ntl_fs_read_dir_status:\n")))]
     [(ErrCompilerBackend _) false]))
 
+(define (compiler-backend-fs-file-kind-runtime-source) : String
+  "(define (main [path : String]) : i64 (fs-file-kind-status path))")
+
+(define (compiler-backend-fs-file-kind-runtime-ok?) : bool
+  (match (compiler-backend-emit-source
+    (compiler-backend-fs-file-kind-runtime-source))
+    [(OkCompilerBackend asm)
+      (and
+        (compiler-backend-string-contains? asm ".L_tl_fs_file_kind_status:\n")
+        (and
+          (compiler-backend-string-contains? asm "    movq $262, %rax\n")
+          (and
+            (not
+              (compiler-backend-string-contains?
+                asm
+                ".globl tl_fs_file_kind_status\n"))
+            (not
+              (compiler-backend-string-contains?
+                asm
+                "\ntl_fs_file_kind_status:\n")))))]
+    [(ErrCompilerBackend _) false]))
+
+(define (compiler-backend-windows-fs-file-kind-runtime-ok?) : bool
+  (match (compiler-backend-emit-source-for-target
+    (compiler-backend-fs-file-kind-runtime-source)
+    (BackendTargetWindows))
+    [(OkCompilerBackend asm)
+      (and
+        (compiler-backend-string-contains? asm ".L_tl_fs_file_kind_status:\n")
+        (and
+          (compiler-backend-string-contains? asm "    movq $38, %rax\n")
+          (and
+            (not (compiler-backend-string-contains? asm "    syscall"))
+            (and
+              (not
+                (compiler-backend-string-contains?
+                  asm
+                  ".globl tl_fs_file_kind_status\n"))
+              (not
+                (compiler-backend-string-contains?
+                  asm
+                  "\ntl_fs_file_kind_status:\n"))))))]
+    [(ErrCompilerBackend _) false]))
+
 (define (compiler-backend-fs-current-dir-source) : String
   "(define (main) : i64
   (+ (fs-current-dir-status) (string-length (fs-current-dir))))")
@@ -3445,9 +3489,13 @@
           (and
             (compiler-backend-windows-fs-runtime-ok?)
             (and
-              (compiler-backend-fs-read-dir-runtime-ok?)
               (and
-                (compiler-backend-windows-fs-read-dir-runtime-ok?)
+                (compiler-backend-fs-read-dir-runtime-ok?)
+                (compiler-backend-fs-file-kind-runtime-ok?))
+              (and
+                (and
+                  (compiler-backend-windows-fs-read-dir-runtime-ok?)
+                  (compiler-backend-windows-fs-file-kind-runtime-ok?))
                 (and
                   (compiler-backend-fs-current-dir-runtime-ok?)
                   (and

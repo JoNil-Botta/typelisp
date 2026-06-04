@@ -5330,6 +5330,7 @@
     [(string-eq name "fs-rename-status") true]
     [(string-eq name "fs-read-dir-status") true]
     [(string-eq name "fs-read-dir") true]
+    [(string-eq name "fs-file-kind-status") true]
     [(string-eq name "fs-process-id") true]
     [(string-eq name "fs-current-dir-status") true]
     [(string-eq name "fs-current-dir") true]
@@ -9094,6 +9095,17 @@
         type-env
         name
         ".L_tl_fs_read_dir"
+        args
+        result-ty
+        origin)]
+    [(string-eq name "fs-file-kind-status")
+      (lower-fs-path-status-call
+        ctx
+        state
+        env
+        type-env
+        name
+        ".L_tl_fs_file_kind_status"
         args
         result-ty
         origin)]
@@ -15037,7 +15049,8 @@
                   \"target/typelisp-fs/from name\"
                   \"target/typelisp-fs/to name\")
                 (+ (fs-read-dir-status \"target/typelisp-fs\")
-                  (string-length (fs-read-dir \"target/typelisp-fs\")))))))))))")
+                  (+ (string-length (fs-read-dir \"target/typelisp-fs\"))
+                    (fs-file-kind-status \"target/typelisp-fs\")))))))))))")
 
 (define (compiler-lower-raw-pointer-ops-source) : String
   "(extern raw-make : (-> (MutPtr i64)))
@@ -18169,6 +18182,13 @@
               (if (=
                 (lower-test-functions-call-count
                   functions
+                  ".L_tl_fs_file_kind_status")
+                1)
+                unit
+                (set! ok false))
+              (if (=
+                (lower-test-functions-call-count
+                  functions
                   ".L_tl_fs_process_id")
                 1)
                 unit
@@ -18202,6 +18222,13 @@
                 (set! ok false))
               (if (=
                 (lower-test-functions-call-count functions "fs-read-dir")
+                0)
+                unit
+                (set! ok false))
+              (if (=
+                (lower-test-functions-call-count
+                  functions
+                  "fs-file-kind-status")
                 0)
                 unit
                 (set! ok false))

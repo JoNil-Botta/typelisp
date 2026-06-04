@@ -98,7 +98,8 @@ jobs:
         shell: bash
         run: |
           ./typelisp-stage0-windows.exe compile selfhost/compile.tl -o /tmp/stage0-smoke.s \
-            --target windows-x86_64 --stdlib-root stdlib --stdlib-root selfhost
+            --target windows-x86_64 --cfg windows --cfg target-windows --cfg os-windows \
+            --stdlib-root stdlib --stdlib-root selfhost
           test -s /tmp/stage0-smoke.s
 
       - name: Corpus-check the new stage0 (frontend only)

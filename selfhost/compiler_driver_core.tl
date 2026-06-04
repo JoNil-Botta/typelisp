@@ -9,7 +9,7 @@
 
 (import "compiler_optimize.tl")
 
-(import "stdlib/text_buf.tl")
+(import "../stdlib/text_buf.tl")
 
 (defenum ResultCompilerDriver
   (OkCompilerDriver String)

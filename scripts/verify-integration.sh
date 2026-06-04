@@ -209,16 +209,20 @@ copy_dep() {
     _source_dir=$2
     _case_dir=$3
     _src=$(dep_source_path "$_dep" "$_source_dir")
-    _dst="$_case_dir/$_dep"
-    mkdir -p "$(dirname -- "$_dst")"
-    cp "$_src" "$_dst"
     case "$_dep" in
         stdlib/*)
-            _sibling_dst="$(dirname -- "$_case_dir")/$_dep"
-            mkdir -p "$(dirname -- "$_sibling_dst")"
-            cp "$_src" "$_sibling_dst"
+            if [ "$_source_dir" = "$ROOT/selfhost" ]; then
+                _dst="$(dirname -- "$_case_dir")/$_dep"
+            else
+                _dst="$_case_dir/$_dep"
+            fi
+            ;;
+        *)
+            _dst="$_case_dir/$_dep"
             ;;
     esac
+    mkdir -p "$(dirname -- "$_dst")"
+    cp "$_src" "$_dst"
 }
 
 # Integration cases that are not Windows-applicable in this manifest
@@ -738,7 +742,7 @@ run_windows_backend_fixtures() {
     _driver_obj="$_runtime_dir/fixture_driver.obj"
     _driver_bin="$_runtime_dir/fixture_driver.exe"
     "$COMPILER" compile selfhost/compiler_backend_runtime_fixture.tl \
-        --target windows-x86_64 -o "$_driver_asm" || {
+        --target windows-x86_64 --cfg windows -o "$_driver_asm" || {
         echo "FAIL: windows-backend-runtime driver compile failed" >&2
         exit 1
     }
@@ -858,7 +862,7 @@ run_windows_backend_fixtures() {
     # driver via compile + clang + lld-link (mirrors the runtime fixture above).
     _driver_self_asm="$_driver_dir/selfhost-compile.s"
     _driver_self_obj="$_driver_dir/selfhost-compile.obj"
-    "$COMPILER" compile selfhost/compile.tl --target windows-x86_64 -o "$_driver_self_asm" || {
+    "$COMPILER" compile selfhost/compile.tl --target windows-x86_64 --cfg windows -o "$_driver_self_asm" || {
         echo "FAIL: windows-selfhost-compile-driver compile failed" >&2
         exit 1
     }
@@ -890,7 +894,7 @@ run_windows_backend_fixtures() {
     fi
 
     run_windows_program "$_driver_bin" "$_driver_stdout" "$_driver_stderr" "$_driver_code" 0 compile \
-        "$(cygpath -aw "$_driver_source")" --target windows-x86_64 -o "$(cygpath -aw "$_driver_windows_asm")"
+        "$(cygpath -aw "$_driver_source")" --target windows-x86_64 --cfg windows -o "$(cygpath -aw "$_driver_windows_asm")"
     if [ "$got" -ne 0 ]; then
         echo "FAIL: windows-selfhost-compile-driver Windows target got exit $got" >&2
         exit 1
@@ -1011,7 +1015,7 @@ while IFS='|' read -r name source want stdout_spec runtime_args deps extra || [ 
         # The compile-only bootstrapped stage1 has `compile` but not `build`, so
         # emit Windows asm then assemble (clang) + link (lld-link), mirroring the
         # Linux compile->as->ld path below.
-        if ! "$COMPILER" compile "$work_src" --target windows-x86_64 -o "$asm" \
+        if ! "$COMPILER" compile "$work_src" --target windows-x86_64 --cfg windows -o "$asm" \
             > "$build_stdout" 2> "$build_stderr"; then
             echo "FAIL: $name compile failed" >&2
             show_build_streams "$build_stdout" "$build_stderr"

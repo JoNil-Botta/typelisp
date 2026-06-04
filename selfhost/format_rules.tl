@@ -24,6 +24,14 @@
     [(FmtCstAtom tok) (= (format-token-tag tok) (fmt-tag-colon))]
     [_ false]))
 
+(define (format-rules-node-symbol-name [node : FormatCst]) : String
+  (match node
+    [(FmtCstAtom tok)
+      (match tok
+        [(FmtSymbol name) name]
+        [_ ""])]
+    [_ ""]))
+
 (define (format-rules-node-comment? [node : FormatCst]) : bool
   (match node
     [(FmtCstComment _) true]
@@ -317,10 +325,30 @@
       (format-rules-first-or-line-form-doc "match" rest)]
     [else (format-rules-delimited-doc "(" (FmtCstCons head rest) ")")]))
 
+(define (format-rules-colon-list-doc [rest : FormatCstList]) : Doc
+  (match rest
+    [(FmtCstCons key tail)
+      (let
+        [name : String (format-rules-node-symbol-name key)]
+        (if (> (string-length name) 0)
+          (format-rules-inline-form-doc (string-append ":" name) tail)
+          (format-rules-delimited-doc
+            "("
+            (FmtCstCons (FmtCstAtom (FmtColon)) rest)
+            ")")))]
+    [_
+      (format-rules-delimited-doc
+        "("
+        (FmtCstCons (FmtCstAtom (FmtColon)) rest)
+        ")")]))
+
 (define (format-rules-list-doc [items : FormatCstList]) : Doc
   (match items
     [(FmtCstNil) (format-rules-delimited-doc "(" FmtCstNil ")")]
-    [(FmtCstCons head rest) (format-rules-special-list-doc head rest)]))
+    [(FmtCstCons head rest)
+      (if (format-rules-node-colon? head)
+        (format-rules-colon-list-doc rest)
+        (format-rules-special-list-doc head rest))]))
 
 (define (format-rules-forms-tail-doc
   [previous-comment : bool]
@@ -370,10 +398,10 @@
   (render-doc-width (format-rules-source-doc src) width))
 
 (define (format-rules-decls-source) : String
-  "(import \"std.tl\") (extern print-string : (-> String unit)) (defenum Maybe (Some i64) (None)) (defstruct Point (x i64) (y i64))")
+  "(import \"std.tl\") (extern print-string (:abi c) (:symbol \"tl_print_string\") : (-> String unit)) (defenum Maybe (Some i64) (None)) (defstruct Point (x i64) (y i64))")
 
 (define (format-rules-decls-expected) : String
-  "(import \"std.tl\")\n\n(extern print-string : (-> String unit))\n\n(defenum Maybe\n  (Some i64)\n  (None))\n\n(defstruct Point\n  (x i64)\n  (y i64))")
+  "(import \"std.tl\")\n\n(extern print-string (:abi c) (:symbol \"tl_print_string\") : (-> String unit))\n\n(defenum Maybe\n  (Some i64)\n  (None))\n\n(defstruct Point\n  (x i64)\n  (y i64))")
 
 (define (format-rules-flow-source) : String
   "(define (main [x : i64]) : i64 (begin (let ([y : i64 1]) (if (< x y) (while (< x 10) (set! x (+ x 1))) x)) (match (Some x) [(Some v) v] [None 0])))")

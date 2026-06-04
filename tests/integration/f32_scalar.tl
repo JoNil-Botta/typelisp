@@ -79,8 +79,8 @@
       (if (< (roundtrip 2.5) 2.5)
         100
         (if (< 2.5 (roundtrip 2.5))
-            100
-            0))]
+          100
+          0))]
     ;; Contextual f32 literals through a call boundary, with the ninth
     ;; argument stack-passed on System V.
     [stack : i64

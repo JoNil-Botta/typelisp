@@ -46,8 +46,7 @@
 (define (env-getenv-ptr [name : String]) : (Ptr u8)
   (let
     [name-bytes : (Array u8) (env-c-string name)]
-    (env-ffi-getenv
-      (unsafe (ptr-cast (array-data name-bytes) : (Ptr u8))))))
+    (env-ffi-getenv (unsafe (ptr-cast (array-data name-bytes) : (Ptr u8))))))
 
 ;: Return true when `name` is present in the process environment.
 (define (env-var-exists? [name : String]) : bool
@@ -108,9 +107,12 @@
 
 ;: Return the value of `name`, or `EnvNoString` when the variable is missing.
 (define (env-get [name : (& name str)]) : EnvMaybeString
-  (if (env-var-exists? name)
-    (EnvSomeString (env-var-value name))
-    (EnvNoString)))
+  (let
+    [empty : String ""]
+    [owned-name : String (string-append name (& empty))]
+    (if (env-var-exists? owned-name)
+      (EnvSomeString (env-var-value owned-name))
+      (EnvNoString))))
 
 ;: Split a PATH-style string using the supplied one-byte separator string.
 (define (env-path-split-with-separator

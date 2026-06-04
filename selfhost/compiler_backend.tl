@@ -9,7 +9,7 @@
 
 (import "compiler_regalloc.tl")
 
-(import "stdlib/text_buf.tl")
+(import "../stdlib/text_buf.tl")
 
 (defenum ResultBackendReg
   (OkBackendReg String)
@@ -18520,64 +18520,14 @@ tl_windows_sdk_registry_install:
               (IrExternCons
                 (compiler-ir-extern-default "tl_int_to_string" (AstTyString))
                 (IrExternCons
-                  (compiler-ir-extern-default "tl_print_err" (AstTyUnit))
+                  (compiler-ir-extern-default
+                    "tl_process_output"
+                    (AstTyFunc (AstTypeCons (AstTyI64) AstTypeNil) (AstTyI64)))
                   (IrExternCons
-                    (compiler-ir-extern-default ".L_tl_arg_count" (AstTyI64))
-                    (IrExternCons
-                      (compiler-ir-extern-default ".L_tl_arg" (AstTyString))
-                      (IrExternCons
-                        (compiler-ir-extern-default
-                          ".L_tl_read_file"
-                          (AstTyString))
-                        (IrExternCons
-                          (compiler-ir-extern-default
-                            ".L_tl_write_file"
-                            (AstTyUnit))
-                          (IrExternCons
-                            (compiler-ir-extern-default
-                              ".L_tl_file_exists"
-                              (AstTyBool))
-                            (IrExternCons
-                              (compiler-ir-extern-default
-                                ".L_tl_file_open_status"
-                                (AstTyI64))
-                              (IrExternCons
-                                (compiler-ir-extern-default
-                                  ".L_tl_file_close_status"
-                                  (AstTyI64))
-                                (IrExternCons
-                                  (compiler-ir-extern-default
-                                    ".L_tl_file_read_chunk_status"
-                                    (AstTyI64))
-                                  (IrExternCons
-                                    (compiler-ir-extern-default
-                                      ".L_tl_file_write_status"
-                                      (AstTyI64))
-                                    (IrExternCons
-                                      (compiler-ir-extern-default
-                                        ".L_tl_file_flush_status"
-                                        (AstTyI64))
-                                      (IrExternCons
-                                        (compiler-ir-extern-default
-                                          ".L_tl_file_read_chunk_bytes"
-                                          (AstTyString))
-                                        (IrExternCons
-                                          (compiler-ir-extern-default
-                                            ".L_tl_file_read_chunk_eof"
-                                            (AstTyBool))
-                                          (IrExternCons
-                                            (compiler-ir-extern-default
-                                              "tl_process_output"
-                                              (AstTyFunc
-                                                (AstTypeCons
-                                                  (AstTyI64)
-                                                  AstTypeNil)
-                                                (AstTyI64)))
-                                            (IrExternCons
-                                              (compiler-ir-extern-default
-                                                "tl_random_system_seed"
-                                                (AstTyI64))
-                                              IrExternNil)))))))))))))))))))))))
+                    (compiler-ir-extern-default
+                      "tl_random_system_seed"
+                      (AstTyI64))
+                    IrExternNil))))))))))
 
 (define (compiler-backend-runtime-helper-program) : CompilerIrProgram
   (IrProgram
@@ -18587,7 +18537,7 @@ tl_windows_sdk_registry_install:
         "main"
         IrParamNil
         (AstTyI64)
-        13
+        4
         (IrBlockCons
           (IrBlock
             "entry"
@@ -18624,74 +18574,12 @@ tl_windows_sdk_registry_install:
                   (IrInstrCons
                     (IrInstrCall
                       3
-                      ".L_tl_read_stdin_line"
+                      "tl_random_system_seed"
                       (IrCallArgsNil)
-                      (AstTyString))
+                      (AstTyI64))
                     (IrInstrCons
-                      (IrInstrCall
-                        4
-                        ".L_tl_read_stdin_bytes"
-                        (IrCallArgsOne (IrValueI64 0))
-                        (AstTyString))
-                      (IrInstrCons
-                        (IrInstrCall
-                          5
-                          ".L_tl_stdin_eof"
-                          (IrCallArgsNil)
-                          (AstTyBool))
-                        (IrInstrCons
-                          (IrInstrCall
-                            6
-                            ".L_tl_flush_stdout"
-                            (IrCallArgsNil)
-                            (AstTyUnit))
-                          (IrInstrCons
-                            (IrInstrCall
-                              7
-                              "tl_random_system_seed"
-                              (IrCallArgsNil)
-                              (AstTyI64))
-                            (IrInstrCons
-                              (IrInstrCall
-                                8
-                                ".L_tl_file_open_status"
-                                (compiler-ir-call-args-from-list
-                                  (IrValueCons
-                                    (IrValueI64 0)
-                                    (IrValueCons
-                                      (IrValueI64 0)
-                                      (IrValueCons (IrValueI64 0) IrValueNil))))
-                                (AstTyI64))
-                              (IrInstrCons
-                                (IrInstrCall
-                                  9
-                                  ".L_tl_file_close_status"
-                                  (IrCallArgsOne (IrValueI64 1))
-                                  (AstTyI64))
-                                (IrInstrCons
-                                  (IrInstrCall
-                                    10
-                                    ".L_tl_file_read_chunk_status"
-                                    (IrCallArgsTwo
-                                      (IrValueI64 1)
-                                      (IrValueI64 4))
-                                    (AstTyI64))
-                                  (IrInstrCons
-                                    (IrInstrCall
-                                      11
-                                      ".L_tl_file_read_chunk_bytes"
-                                      (IrCallArgsOne (IrValueI64 1))
-                                      (AstTyString))
-                                    (IrInstrCons
-                                      (IrInstrCall
-                                        12
-                                        ".L_tl_file_read_chunk_eof"
-                                        (IrCallArgsOne (IrValueI64 1))
-                                        (AstTyBool))
-                                      (IrInstrCons
-                                        (IrInstrReturn
-                                          (IrSomeValue (IrValueI64 42)))
-                                        IrInstrNil)))))))))))))))
+                      (IrInstrReturn (IrSomeValue (IrValueI64 42)))
+                      IrInstrNil))))))
           IrBlockNil))
       IrFunctionNil)
     (compiler-backend-runtime-helper-externs)))

@@ -290,9 +290,9 @@
 
 (define (assert-windows-rename-api) : unit
   (begin
-    (assert-unsupported-unit
+    (assert-not-found-unit
       (test-try-rename "windows source" "windows destination")
-      "windows rename reports unsupported")
+      "windows missing rename source reports not found")
     (assert-invalid-unit
       (test-try-rename "" "windows destination")
       "windows empty rename source is invalid")

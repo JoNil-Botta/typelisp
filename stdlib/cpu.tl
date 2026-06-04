@@ -12,7 +12,6 @@
 ;# sign of the widening cast is irrelevant.
 ;#
 ;# Usage: `(import "stdlib/cpu.tl")`
-
 (define (cpu-cpuid-eax [leaf : i64] [subleaf : i64]) : i32
   (cast (cpuid-eax leaf subleaf) : i32))
 

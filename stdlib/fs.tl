@@ -40,14 +40,21 @@
 (extern tl_fs_current_dir : (-> String))
 
 (extern fs-linux-mkdir (:symbol "mkdir") : (-> (Ptr u8) i32 i32))
+
 (extern fs-linux-unlink (:symbol "unlink") : (-> (Ptr u8) i32))
+
 (extern fs-linux-rmdir (:symbol "rmdir") : (-> (Ptr u8) i32))
+
 (extern fs-linux-getpid (:symbol "getpid") : (-> i32))
 
 (extern fs-windows-mkdir (:symbol "_mkdir") : (-> (Ptr u8) i32))
+
 (extern fs-windows-unlink (:symbol "_unlink") : (-> (Ptr u8) i32))
+
 (extern fs-windows-rmdir (:symbol "_rmdir") : (-> (Ptr u8) i32))
-(extern fs-windows-get-current-process-id (:symbol "GetCurrentProcessId") : (-> u32))
+
+(extern fs-windows-get-current-process-id (:symbol "GetCurrentProcessId") : (->
+  u32))
 
 (extern fs-ffi-rename (:symbol "rename") : (-> (Ptr u8) (Ptr u8) i32))
 
@@ -56,58 +63,83 @@
     0
     (io-last-error-code)))
 
+(define (fs-mkdir-status-owned [path : String]) : i64
+  (let
+    [path-bytes : (Array u8) (io-c-string path)]
+    [path-ptr : (Ptr u8) (io-array-const-ptr path-bytes)]
+    (fs-status-from-result
+      (cfg
+        windows
+        (cast (fs-windows-mkdir path-ptr) : i64)
+        (cast (fs-linux-mkdir path-ptr (cast 448 : i32)) : i64)))))
+
 ;: Return the host status code for creating a directory.
 (define (fs-mkdir-status [path : (& path str)]) : i64
   (let
-    [path-text : String (io-copy-path path)]
-    [path-bytes : (Array u8) (io-c-string path-text)]
+    [empty : String ""]
+    [path-text : String (string-append path (& empty))]
+    (fs-mkdir-status-owned path-text)))
+
+(define (fs-remove-file-status-owned [path : String]) : i64
+  (let
+    [path-bytes : (Array u8) (io-c-string path)]
     [path-ptr : (Ptr u8) (io-array-const-ptr path-bytes)]
     (fs-status-from-result
-      (cfg windows
-        (cast (fs-windows-mkdir path-ptr) : i64)
-        (cast (fs-linux-mkdir path-ptr (cast 448 : i32)) : i64)))))
+      (cfg
+        windows
+        (cast (fs-windows-unlink path-ptr) : i64)
+        (cast (fs-linux-unlink path-ptr) : i64)))))
 
 ;: Return the host status code for removing a file.
 (define (fs-remove-file-status [path : (& path str)]) : i64
   (let
-    [path-text : String (io-copy-path path)]
-    [path-bytes : (Array u8) (io-c-string path-text)]
+    [empty : String ""]
+    [path-text : String (string-append path (& empty))]
+    (fs-remove-file-status-owned path-text)))
+
+(define (fs-remove-dir-status-owned [path : String]) : i64
+  (let
+    [path-bytes : (Array u8) (io-c-string path)]
     [path-ptr : (Ptr u8) (io-array-const-ptr path-bytes)]
     (fs-status-from-result
-      (cfg windows
-        (cast (fs-windows-unlink path-ptr) : i64)
-        (cast (fs-linux-unlink path-ptr) : i64)))))
+      (cfg
+        windows
+        (cast (fs-windows-rmdir path-ptr) : i64)
+        (cast (fs-linux-rmdir path-ptr) : i64)))))
 
 ;: Return the host status code for removing an empty directory.
 (define (fs-remove-dir-status [path : (& path str)]) : i64
   (let
-    [path-text : String (io-copy-path path)]
-    [path-bytes : (Array u8) (io-c-string path-text)]
-    [path-ptr : (Ptr u8) (io-array-const-ptr path-bytes)]
+    [empty : String ""]
+    [path-text : String (string-append path (& empty))]
+    (fs-remove-dir-status-owned path-text)))
+
+(define (fs-rename-status-owned [source : String] [destination : String]) : i64
+  (let
+    [source-bytes : (Array u8) (io-c-string source)]
+    [destination-bytes : (Array u8) (io-c-string destination)]
     (fs-status-from-result
-      (cfg windows
-        (cast (fs-windows-rmdir path-ptr) : i64)
-        (cast (fs-linux-rmdir path-ptr) : i64)))))
+      (cast
+        (fs-ffi-rename
+          (io-array-const-ptr source-bytes)
+          (io-array-const-ptr destination-bytes))
+        :
+        i64))))
 
 ;: Return the host status code for renaming a path.
 (define (fs-rename-status
   [source : (& source str)]
   [destination : (& destination str)]) : i64
   (let
-    [source-text : String (io-copy-path source)]
-    [destination-text : String (io-copy-path destination)]
-    [source-bytes : (Array u8) (io-c-string source-text)]
-    [destination-bytes : (Array u8) (io-c-string destination-text)]
-    (fs-status-from-result
-      (cast
-        (fs-ffi-rename
-          (io-array-const-ptr source-bytes)
-          (io-array-const-ptr destination-bytes))
-        : i64))))
+    [empty : String ""]
+    [source-text : String (string-append source (& empty))]
+    [destination-text : String (string-append destination (& empty))]
+    (fs-rename-status-owned source-text destination-text)))
 
 ;: Return the host process id.
 (define (fs-process-id) : i64
-  (cfg windows
+  (cfg
+    windows
     (cast (fs-windows-get-current-process-id) : i64)
     (cast (fs-linux-getpid) : i64)))
 
@@ -378,7 +410,9 @@
     [n : i64 (string-length path)]
     [last : i64 (fs-last-separator-index path)]
     (if (< last 0)
-      (io-copy-path path)
+      (let
+        [empty : String ""]
+        (string-append path (& empty)))
       (substring path (+ last 1) (- n (+ last 1))))))
 
 ;: Extension of `path` without the leading dot (e.g. `"tl"` for `main.tl`).
@@ -404,13 +438,13 @@
         (substring base (+ dot 1) (- bn (+ dot 1)))))))
 
 ;: Convert a runtime filesystem status into a structured `ResultIoUnit`.
-(define (fs-status-result [path : (& path str)] [status : i64]) : ResultIoUnit
+(define (fs-status-result [path : String] [status : i64]) : ResultIoUnit
   (if (= status io-status-ok)
     OkIoUnit
     (ErrIoUnit (io-error-from-status path status))))
 
 ;: Convert a runtime file-kind status into a structured result.
-(define (fs-file-kind-status-result [path : (& path str)] [status : i64]) : ResultFsFileKind
+(define (fs-file-kind-status-result [path : String] [status : i64]) : ResultFsFileKind
   (cond
     [(= status fs-file-kind-regular-code) (OkFsFileKind (FsFileRegular))]
     [(= status fs-file-kind-directory-code) (OkFsFileKind (FsFileDirectory))]
@@ -421,9 +455,12 @@
 ;:
 ;: Linux uses mode `0700`; Windows uses the CRT `_mkdir` function.
 (define (try-mkdir [path : (& path str)]) : ResultIoUnit
-  (if (io-empty-path? path)
-    (ErrIoUnit (io-invalid-path-error path))
-    (fs-status-result path (fs-mkdir-status path))))
+  (let
+    [empty : String ""]
+    [path-text : String (string-append path (& empty))]
+    (if (io-empty-path? path-text)
+      (ErrIoUnit (io-invalid-path-error path-text))
+      (fs-status-result path-text (fs-mkdir-status-owned path-text)))))
 
 ;: Create `path` as a directory when it is missing.
 ;:
@@ -441,15 +478,21 @@
 
 ;: Remove a file path, returning a structured status.
 (define (try-remove-file [path : (& path str)]) : ResultIoUnit
-  (if (io-empty-path? path)
-    (ErrIoUnit (io-invalid-path-error path))
-    (fs-status-result path (fs-remove-file-status path))))
+  (let
+    [empty : String ""]
+    [path-text : String (string-append path (& empty))]
+    (if (io-empty-path? path-text)
+      (ErrIoUnit (io-invalid-path-error path-text))
+      (fs-status-result path-text (fs-remove-file-status-owned path-text)))))
 
 ;: Remove an empty directory path, returning a structured status.
 (define (try-remove-dir [path : (& path str)]) : ResultIoUnit
-  (if (io-empty-path? path)
-    (ErrIoUnit (io-invalid-path-error path))
-    (fs-status-result path (fs-remove-dir-status path))))
+  (let
+    [empty : String ""]
+    [path-text : String (string-append path (& empty))]
+    (if (io-empty-path? path-text)
+      (ErrIoUnit (io-invalid-path-error path-text))
+      (fs-status-result path-text (fs-remove-dir-status-owned path-text)))))
 
 ;: Rename `source` to `destination`, returning a structured status.
 ;:
@@ -467,19 +510,27 @@
         [empty : String ""]
         (ErrIoUnit (IoInvalidPath (string-append destination (& empty)))))
       (let
+        [empty : String ""]
+        [source-text : String (string-append source (& empty))]
+        [destination-text : String (string-append destination (& empty))]
         [arrow : String " -> "]
         [path : String
           (string-append (string-append source (& arrow)) destination)]
-        (fs-status-result (& path) (fs-rename-status source destination))))))
+        (fs-status-result
+          path
+          (fs-rename-status-owned source-text destination-text))))))
 
 ;: Probe the coarse filesystem kind of `path`.
 ;:
 ;: Linux reports regular files, directories, and other node kinds. Windows
 ;: currently returns `IoUnsupported` through the runtime status helper.
 (define (try-file-kind [path : (& path str)]) : ResultFsFileKind
-  (if (io-empty-path? path)
-    (ErrFsFileKind (io-invalid-path-error path))
-    (fs-file-kind-status-result path (fs-file-kind-status path))))
+  (let
+    [empty : String ""]
+    [path-text : String (string-append path (& empty))]
+    (if (io-empty-path? path-text)
+      (ErrFsFileKind (io-invalid-path-error path-text))
+      (fs-file-kind-status-result path-text (fs-file-kind-status (& path-text))))))
 
 ;: Return true when `kind` is `FsFileRegular`.
 (define (fs-file-kind-regular? [kind : FsFileKind]) : bool
@@ -530,13 +581,16 @@
 ;: that need stable ordering should sort the returned list. The returned list
 ;: spine and entry strings allocate in the active arena.
 (define (try-read-dir [path : (& path str)]) : ResultIoStringList
-  (if (io-empty-path? path)
-    (ErrIoStringList (io-invalid-path-error path))
-    (let
-      [status : i64 (fs-read-dir-status path)]
-      (if (= status io-status-ok)
-        (OkIoStringList (fs-read-dir-split (fs-read-dir path)))
-        (ErrIoStringList (io-error-from-status path status))))))
+  (let
+    [empty : String ""]
+    [path-text : String (string-append path (& empty))]
+    (if (io-empty-path? path-text)
+      (ErrIoStringList (io-invalid-path-error path-text))
+      (let
+        [status : i64 (fs-read-dir-status (& path-text))]
+        (if (= status io-status-ok)
+          (OkIoStringList (fs-read-dir-split (fs-read-dir (& path-text))))
+          (ErrIoStringList (io-error-from-status path-text status)))))))
 
 ;: Remove a file if present. Missing paths are considered already cleaned.
 (define (try-remove-file-if-exists [path : (& path str)]) : ResultIoUnit
@@ -622,12 +676,12 @@
             (string-append root (& name))]
           [else
             (string-append (string-append root (fs-path-separator)) (& name))])]
-      [status : i64 (fs-mkdir-status path)]
+      [status : i64 (fs-mkdir-status-owned path)]
       (if (= status io-status-ok)
         (OkIoString path)
         (if (= status fs-status-already-exists)
           (fs-create-temp-dir-loop root prefix pid (+ attempt 1))
-          (ErrIoString (io-error-from-status (& path) status)))))))
+          (ErrIoString (io-error-from-status path status)))))))
 
 ;: Create a unique temporary directory for tool artifacts.
 ;:

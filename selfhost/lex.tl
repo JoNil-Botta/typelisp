@@ -37,7 +37,7 @@
 
 (import "token.tl")
 
-(import "stdlib/text_buf.tl")
+(import "../stdlib/text_buf.tl")
 
 (defenum ResultTokens
   (OkTokens (Array Token))

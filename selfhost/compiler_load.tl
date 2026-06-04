@@ -1873,22 +1873,25 @@
 ;; A configured stdlib root must not serve a suffix that lexically escapes the
 ;; root with `..` (#1681).
 (define (compiler-load-stdlib-root-escape-rejected-ok?) : bool
-  (begin
-    (fs-mkdir-status "target/cl_sre_root")
-    (fs-mkdir-status "target/cl_sre_entry_dir")
-    (write-file "target/cl_sre_out.tl" "(module sre.out)
+  (let
+    [root-dir : String "target/cl_sre_root"]
+    [entry-dir : String "target/cl_sre_entry_dir"]
+    (begin
+      (fs-mkdir-status-owned root-dir)
+      (fs-mkdir-status-owned entry-dir)
+      (write-file "target/cl_sre_out.tl" "(module sre.out)
 (define v : i64 1)")
-    (write-file
-      "target/cl_sre_entry_dir/entry.tl"
-      "(module sre.entry)
+      (write-file
+        "target/cl_sre_entry_dir/entry.tl"
+        "(module sre.entry)
 (import \"stdlib/../cl_sre_out.tl\" module sre.out as out)
 (define (main) : i64 0)")
-    (match (compiler-load-file-with-paths-and-roots
-      "target/cl_sre_entry_dir/entry.tl"
-      (sym-i64-empty)
-      (CompilerLoadRootCons "target/cl_sre_root" CompilerLoadRootNil))
-      [(ErrCompilerLoadWithPaths _) true]
-      [(OkCompilerLoadWithPaths _ _ _ _) false])))
+      (match (compiler-load-file-with-paths-and-roots
+        "target/cl_sre_entry_dir/entry.tl"
+        (sym-i64-empty)
+        (CompilerLoadRootCons "target/cl_sre_root" CompilerLoadRootNil))
+        [(ErrCompilerLoadWithPaths _) true]
+        [(OkCompilerLoadWithPaths _ _ _ _) false]))))
 
 ;: --- typelisp.pkg manifest parser (#834, slice 1) ---------------------------
 ;: Parse a `typelisp.pkg` manifest, an S-expression of the form

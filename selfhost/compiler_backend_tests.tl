@@ -1611,10 +1611,12 @@
           (compiler-backend-string-contains? asm "    call VirtualAlloc\n")
           (compiler-backend-string-contains? asm "    call _write\n")
           (compiler-backend-string-contains? asm "    call _read\n")
-          (compiler-backend-string-contains? asm "    call fflush\n")
-          (compiler-backend-string-contains? asm "    call _open\n")
+          (compiler-backend-string-contains?
+            asm
+            "    .extern SystemFunction036\n")
+          (compiler-backend-string-contains? asm "    call SystemFunction036\n")
           (compiler-backend-string-contains? asm "    call _lseeki64\n")
-          (compiler-backend-string-contains? asm "    call _access\n"))
+          (compiler-backend-string-contains? asm "tl_process_output:\n"))
         (and
           (backend-and8
             (compiler-backend-string-contains? asm "tl_substring:\n")
@@ -1622,43 +1624,28 @@
             (compiler-backend-string-contains? asm "tl_string_eq:\n")
             (compiler-backend-string-contains? asm "tl_string_to_int:\n")
             (compiler-backend-string-contains? asm "tl_int_to_string:\n")
-            (compiler-backend-string-contains? asm ".L_tl_arg:\n")
-            (compiler-backend-string-contains? asm ".L_tl_read_file:\n")
-            (compiler-backend-string-contains? asm ".L_tl_write_file:\n"))
+            (compiler-backend-string-contains? asm "tl_random_system_seed:\n")
+            (not
+              (compiler-backend-string-contains?
+                asm
+                ".extern tl_random_system_seed\n"))
+            (compiler-backend-no-stdlib-forwarding-labels? asm))
           (and
-            (backend-and8
-              (compiler-backend-string-contains? asm ".L_tl_file_exists:\n")
+            (backend-and4
               (compiler-backend-string-contains?
                 asm
-                ".L_tl_file_open_status:\n")
-              (compiler-backend-string-contains?
-                asm
-                ".L_tl_file_close_status:\n")
-              (compiler-backend-string-contains? asm "    movq $-38, %rax\n")
-              (compiler-backend-string-contains?
-                asm
-                ".L_tl_file_read_chunk_status:\n")
-              (compiler-backend-string-contains?
-                asm
-                ".L_tl_file_read_chunk_bytes:\n")
-              (compiler-backend-string-contains?
-                asm
-                ".L_tl_file_read_chunk_eof:\n")
-              (compiler-backend-string-contains?
-                asm
-                "    movq %rcx, .L_tl_argc(%rip)\n"))
-            (and
+                "    movq %rcx, .L_tl_argc(%rip)\n")
               (compiler-backend-string-contains?
                 asm
                 "    .extern VirtualAlloc\n")
-              (and
-                (not (compiler-backend-string-contains? asm "syscall\n"))
-                (and
-                  (not
-                    (compiler-backend-string-contains?
-                      asm
-                      ".L_tl_file_handle_next:\n"))
-                  (compiler-backend-windows-driver-runtime-ok?)))))))]
+              (not (compiler-backend-string-contains? asm "syscall\n"))
+              (not (compiler-backend-string-contains? asm ".globl _start\n")))
+            (and
+              (not
+                (compiler-backend-string-contains?
+                  asm
+                  ".L_tl_file_handle_next:\n"))
+              (compiler-backend-windows-driver-runtime-ok?)))))]
     [(ErrCompilerBackend message) false]))
 
 (define (compiler-backend-deterministic-ok? [src : String]) : bool

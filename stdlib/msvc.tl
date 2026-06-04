@@ -188,6 +188,7 @@
     [(OkIoBool exists) exists]
     [(ErrIoBool _) false]))
 
+;: Join two filesystem path segments using the platform separator.
 (define (msvc-path-join [left : String] [right : String]) : String
   (fs-path-join (& left) (& right)))
 

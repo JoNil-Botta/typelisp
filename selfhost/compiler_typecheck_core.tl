@@ -14,7 +14,7 @@
 (defenum TcTypeEnv
   (TcTypeNil)
   (TcTypeBind String AstType TcTypeEnv)
-  (TcTypeCache StringI64Map (Array AstType) TcTypeEnv))
+  (TcTypeCache StringI64Map (Array AstType) StringI64Map TcTypeEnv))
 
 (defenum TcContext
   (TcContext AstProgram CompilerSymbols CompilerRegistries String))
@@ -64,6 +64,18 @@
 (defenum ResultTcLifetimeSubst
   (OkTcLifetimeSubst TcLifetimeSubst)
   (ErrTcLifetimeSubst String))
+
+(defenum TcMaybeTypeEnv
+  (TcNoTypeEnv)
+  (TcSomeTypeEnv TcTypeEnv))
+
+(defenum TcModuleLocalEnvCache
+  (TcModuleLocalEnvNil)
+  (TcModuleLocalEnvCons String TcTypeEnv TcModuleLocalEnvCache))
+
+(defenum ResultTcModuleLocalEnv
+  (OkTcModuleLocalEnv TcTypeEnv TcModuleLocalEnvCache)
+  (ErrTcModuleLocalEnv String))
 
 (defenum ResultTcEnv
   (OkTcEnv TcTypeEnv)
@@ -207,6 +219,337 @@
 (define (tc-diag-at-start [message : String]) : CompilerDiagnostic
   (compiler-diagnostic-at-start "" message))
 
+(cfg
+  compile-profile
+  (define compiler-tc-profile-start-ms : i64
+    0))
+
+(cfg
+  compile-profile
+  (define compiler-tc-profile-start-total : i64
+    0))
+
+(cfg
+  compile-profile
+  (define compiler-tc-profile-start-live : i64
+    0))
+
+(cfg
+  compile-profile
+  (define (compiler-tc-profile-field [value : i64]) : String
+    (string-append "|" (int->string value))))
+
+(cfg
+  compile-profile
+  (define (compiler-tc-profile-start) : unit
+    (begin
+      (set! compiler-tc-profile-start-ms (profile-now-ms))
+      (set! compiler-tc-profile-start-total (profile-alloc-total))
+      (set! compiler-tc-profile-start-live (profile-alloc-live))
+      (profile-alloc-reset-peak))))
+
+(cfg
+  compile-profile
+  (define (compiler-tc-profile-finish [phase : String]) : unit
+    (let
+      [end-ms : i64 (profile-now-ms)]
+      [end-total : i64 (profile-alloc-total)]
+      [end-live : i64 (profile-alloc-live)]
+      [peak-delta : i64 (- (profile-alloc-peak) compiler-tc-profile-start-live)]
+      (print-error
+        (string-append
+          "compile-profile|typecheck."
+          (string-append
+            phase
+            (string-append
+              (compiler-tc-profile-field
+                (- end-ms compiler-tc-profile-start-ms))
+              (string-append
+                (compiler-tc-profile-field
+                  (- end-total compiler-tc-profile-start-total))
+                (string-append
+                  (compiler-tc-profile-field
+                    (- end-live compiler-tc-profile-start-live))
+                  (string-append
+                    (compiler-tc-profile-field peak-delta)
+                    "\n"))))))))))
+
+(cfg
+  compile-profile
+  (define compiler-tc-decl-profile-start-ms : i64
+    0))
+
+(cfg
+  compile-profile
+  (define compiler-tc-decl-profile-local-env-ms : i64
+    0))
+
+(cfg
+  compile-profile
+  (define compiler-tc-decl-profile-arena-ms : i64
+    0))
+
+(cfg
+  compile-profile
+  (define compiler-tc-decl-profile-def-expr-ms : i64
+    0))
+
+(cfg
+  compile-profile
+  (define compiler-tc-decl-profile-fn-expr-ms : i64
+    0))
+
+(cfg
+  compile-profile
+  (define compiler-tc-decl-profile-fn-move-ms : i64
+    0))
+
+(cfg
+  compile-profile
+  (define compiler-tc-decl-profile-macro-ms : i64
+    0))
+
+(cfg
+  compile-profile
+  (define compiler-tc-decl-profile-extern-ms : i64
+    0))
+
+(cfg
+  compile-profile
+  (define compiler-tc-decl-profile-decl-count : i64
+    0))
+
+(cfg
+  compile-profile
+  (define compiler-tc-decl-profile-def-count : i64
+    0))
+
+(cfg
+  compile-profile
+  (define compiler-tc-decl-profile-fn-count : i64
+    0))
+
+(cfg
+  compile-profile
+  (define compiler-tc-decl-profile-macro-count : i64
+    0))
+
+(cfg
+  compile-profile
+  (define compiler-tc-decl-profile-extern-count : i64
+    0))
+
+(cfg
+  compile-profile
+  (define compiler-tc-decl-profile-other-count : i64
+    0))
+
+(cfg
+  compile-profile
+  (define (compiler-tc-decl-profile-reset) : unit
+    (begin
+      (set! compiler-tc-decl-profile-start-ms 0)
+      (set! compiler-tc-decl-profile-local-env-ms 0)
+      (set! compiler-tc-decl-profile-arena-ms 0)
+      (set! compiler-tc-decl-profile-def-expr-ms 0)
+      (set! compiler-tc-decl-profile-fn-expr-ms 0)
+      (set! compiler-tc-decl-profile-fn-move-ms 0)
+      (set! compiler-tc-decl-profile-macro-ms 0)
+      (set! compiler-tc-decl-profile-extern-ms 0)
+      (set! compiler-tc-decl-profile-decl-count 0)
+      (set! compiler-tc-decl-profile-def-count 0)
+      (set! compiler-tc-decl-profile-fn-count 0)
+      (set! compiler-tc-decl-profile-macro-count 0)
+      (set! compiler-tc-decl-profile-extern-count 0)
+      (set! compiler-tc-decl-profile-other-count 0))))
+
+(cfg
+  compile-profile
+  (define (compiler-tc-decl-profile-start-section) : unit
+    (set! compiler-tc-decl-profile-start-ms (profile-now-ms))))
+
+(cfg
+  compile-profile
+  (define (compiler-tc-decl-profile-add-local-env) : unit
+    (set!
+      compiler-tc-decl-profile-local-env-ms
+      (+
+        compiler-tc-decl-profile-local-env-ms
+        (- (profile-now-ms) compiler-tc-decl-profile-start-ms)))))
+
+(cfg
+  compile-profile
+  (define (compiler-tc-decl-profile-add-arena) : unit
+    (set!
+      compiler-tc-decl-profile-arena-ms
+      (+
+        compiler-tc-decl-profile-arena-ms
+        (- (profile-now-ms) compiler-tc-decl-profile-start-ms)))))
+
+(cfg
+  compile-profile
+  (define (compiler-tc-decl-profile-add-def-expr) : unit
+    (set!
+      compiler-tc-decl-profile-def-expr-ms
+      (+
+        compiler-tc-decl-profile-def-expr-ms
+        (- (profile-now-ms) compiler-tc-decl-profile-start-ms)))))
+
+(cfg
+  compile-profile
+  (define (compiler-tc-decl-profile-add-fn-expr) : unit
+    (set!
+      compiler-tc-decl-profile-fn-expr-ms
+      (+
+        compiler-tc-decl-profile-fn-expr-ms
+        (- (profile-now-ms) compiler-tc-decl-profile-start-ms)))))
+
+(cfg
+  compile-profile
+  (define (compiler-tc-decl-profile-add-fn-expr-named [name : String]) : unit
+    (let
+      [elapsed : i64 (- (profile-now-ms) compiler-tc-decl-profile-start-ms)]
+      (begin
+        (set!
+          compiler-tc-decl-profile-fn-expr-ms
+          (+ compiler-tc-decl-profile-fn-expr-ms elapsed))
+        (if (>= elapsed 1)
+          (print-error
+            (string-append
+              "compile-profile-detail|typecheck.fn_expr|"
+              (string-append
+                (int->string elapsed)
+                (string-append "|" (string-append name "\n")))))
+          unit)))))
+
+(cfg
+  compile-profile
+  (define (compiler-tc-decl-profile-add-fn-move) : unit
+    (set!
+      compiler-tc-decl-profile-fn-move-ms
+      (+
+        compiler-tc-decl-profile-fn-move-ms
+        (- (profile-now-ms) compiler-tc-decl-profile-start-ms)))))
+
+(cfg
+  compile-profile
+  (define (compiler-tc-decl-profile-add-macro) : unit
+    (set!
+      compiler-tc-decl-profile-macro-ms
+      (+
+        compiler-tc-decl-profile-macro-ms
+        (- (profile-now-ms) compiler-tc-decl-profile-start-ms)))))
+
+(cfg
+  compile-profile
+  (define (compiler-tc-decl-profile-add-extern) : unit
+    (set!
+      compiler-tc-decl-profile-extern-ms
+      (+
+        compiler-tc-decl-profile-extern-ms
+        (- (profile-now-ms) compiler-tc-decl-profile-start-ms)))))
+
+(cfg
+  compile-profile
+  (define (compiler-tc-decl-profile-count-def) : unit
+    (begin
+      (set! compiler-tc-decl-profile-decl-count
+        (+ compiler-tc-decl-profile-decl-count 1))
+      (set! compiler-tc-decl-profile-def-count
+        (+ compiler-tc-decl-profile-def-count 1)))))
+
+(cfg
+  compile-profile
+  (define (compiler-tc-decl-profile-count-fn) : unit
+    (begin
+      (set! compiler-tc-decl-profile-decl-count
+        (+ compiler-tc-decl-profile-decl-count 1))
+      (set! compiler-tc-decl-profile-fn-count
+        (+ compiler-tc-decl-profile-fn-count 1)))))
+
+(cfg
+  compile-profile
+  (define (compiler-tc-decl-profile-count-macro) : unit
+    (begin
+      (set! compiler-tc-decl-profile-decl-count
+        (+ compiler-tc-decl-profile-decl-count 1))
+      (set! compiler-tc-decl-profile-macro-count
+        (+ compiler-tc-decl-profile-macro-count 1)))))
+
+(cfg
+  compile-profile
+  (define (compiler-tc-decl-profile-count-extern) : unit
+    (begin
+      (set! compiler-tc-decl-profile-decl-count
+        (+ compiler-tc-decl-profile-decl-count 1))
+      (set! compiler-tc-decl-profile-extern-count
+        (+ compiler-tc-decl-profile-extern-count 1)))))
+
+(cfg
+  compile-profile
+  (define (compiler-tc-decl-profile-count-other) : unit
+    (begin
+      (set! compiler-tc-decl-profile-decl-count
+        (+ compiler-tc-decl-profile-decl-count 1))
+      (set! compiler-tc-decl-profile-other-count
+        (+ compiler-tc-decl-profile-other-count 1)))))
+
+(cfg
+  compile-profile
+  (define (compiler-tc-decl-profile-line [phase : String] [value : i64]) : unit
+    (print-error
+      (string-append
+        "compile-profile|typecheck.decl."
+        (string-append
+          phase
+          (string-append
+            (compiler-tc-profile-field value)
+            "|0|0|0\n"))))))
+
+(cfg
+  compile-profile
+  (define (compiler-tc-decl-profile-finish) : unit
+    (begin
+      (compiler-tc-decl-profile-line
+        "local_env"
+        compiler-tc-decl-profile-local-env-ms)
+      (compiler-tc-decl-profile-line
+        "arena"
+        compiler-tc-decl-profile-arena-ms)
+      (compiler-tc-decl-profile-line
+        "def_expr"
+        compiler-tc-decl-profile-def-expr-ms)
+      (compiler-tc-decl-profile-line
+        "fn_expr"
+        compiler-tc-decl-profile-fn-expr-ms)
+      (compiler-tc-decl-profile-line
+        "fn_move"
+        compiler-tc-decl-profile-fn-move-ms)
+      (compiler-tc-decl-profile-line
+        "macro"
+        compiler-tc-decl-profile-macro-ms)
+      (compiler-tc-decl-profile-line
+        "extern"
+        compiler-tc-decl-profile-extern-ms)
+      (compiler-tc-decl-profile-line
+        "decl_count"
+        compiler-tc-decl-profile-decl-count)
+      (compiler-tc-decl-profile-line
+        "def_count"
+        compiler-tc-decl-profile-def-count)
+      (compiler-tc-decl-profile-line
+        "fn_count"
+        compiler-tc-decl-profile-fn-count)
+      (compiler-tc-decl-profile-line
+        "macro_count"
+        compiler-tc-decl-profile-macro-count)
+      (compiler-tc-decl-profile-line
+        "extern_count"
+        compiler-tc-decl-profile-extern-count)
+      (compiler-tc-decl-profile-line
+        "other_count"
+        compiler-tc-decl-profile-other-count))))
+
 (define (tc-expr-diag [expr : AstExpr] [message : String]) : CompilerDiagnostic
   (match expr
     [(AstExprSpanned _ span)
@@ -261,7 +604,7 @@
 (define (tc-binding-unsafe? [env : TcTypeEnv] [name : String]) : bool
   (match env
     [(TcTypeNil) false]
-    [(TcTypeCache _ _ rest) (tc-binding-unsafe? rest name)]
+    [(TcTypeCache _ _ _ rest) (tc-binding-unsafe? rest name)]
     [(TcTypeBind key _ rest)
       (if (string-eq key name)
         (tc-binding-unsafe-marker-head? rest name)
@@ -271,7 +614,7 @@
   (match env
     [(TcTypeNil) 0]
     [(TcTypeBind _ _ rest) (+ 1 (tc-env-cache-count rest))]
-    [(TcTypeCache _ _ rest) (tc-env-cache-count rest)]))
+    [(TcTypeCache _ _ _ rest) (tc-env-cache-count rest)]))
 
 (define (tc-env-cache-capacity [count : i64]) : i64
   (if (< count 4)
@@ -300,18 +643,45 @@
     [(TcTypeNil) ids]
     [(TcTypeBind name ty rest)
       (tc-env-cache-fill rest (tc-env-cache-add ids values name ty) values)]
-    [(TcTypeCache _ _ rest) (tc-env-cache-fill rest ids values)]))
+    [(TcTypeCache _ _ _ rest) (tc-env-cache-fill rest ids values)]))
+
+(define (tc-env-default-shadow-count [env : TcTypeEnv]) : i64
+  (match env
+    [(TcTypeNil) 0]
+    [(TcTypeBind name _ rest)
+      (if (string-eq name (tc-default-boundary-name))
+        0
+        (+ 1 (tc-env-default-shadow-count rest)))]
+    [(TcTypeCache _ _ _ rest) (tc-env-default-shadow-count rest)]))
+
+(define (tc-env-default-shadow-fill
+  [env : TcTypeEnv]
+  [shadows : StringI64Map]) : StringI64Map
+  (match env
+    [(TcTypeNil) shadows]
+    [(TcTypeBind name _ rest)
+      (if (string-eq name (tc-default-boundary-name))
+        shadows
+        (tc-env-default-shadow-fill
+          rest
+          (string-i64-map-put shadows name 1)))]
+    [(TcTypeCache _ _ _ rest) (tc-env-default-shadow-fill rest shadows)]))
 
 (define (tc-env-with-cache [env : TcTypeEnv]) : TcTypeEnv
   (let
     [count : i64 (tc-env-cache-count env)]
+    [shadow-count : i64 (tc-env-default-shadow-count env)]
     [values : (Array AstType) (make-array AstType count)]
     [ids : StringI64Map
       (tc-env-cache-fill
         env
         (string-i64-map-with-capacity (tc-env-cache-capacity count))
         values)]
-    (TcTypeCache ids values env)))
+    [shadows : StringI64Map
+      (tc-env-default-shadow-fill
+        env
+        (string-i64-map-with-capacity (tc-env-cache-capacity shadow-count)))]
+    (TcTypeCache ids values shadows env)))
 
 (define (tc-bind-alias-if-free [env : TcTypeEnv] [name : String] [ty : AstType]) : TcTypeEnv
   (if (tc-name-bound? env name)
@@ -401,7 +771,7 @@
 (define (tc-in-unsafe? [env : TcTypeEnv]) : bool
   (match env
     [(TcTypeNil) false]
-    [(TcTypeCache _ _ rest) (tc-in-unsafe? rest)]
+    [(TcTypeCache _ _ _ rest) (tc-in-unsafe? rest)]
     [(TcTypeBind key _ rest)
       (if (string-eq key (tc-unsafe-marker-name))
         true
@@ -414,7 +784,7 @@
   (match env
     [(TcTypeNil)
       (ErrTcType "typecheck: try requires enclosing Result-like function")]
-    [(TcTypeCache _ _ rest) (tc-current-return-type rest)]
+    [(TcTypeCache _ _ _ rest) (tc-current-return-type rest)]
     [(TcTypeBind key ty rest)
       (if (string-eq key (tc-return-type-name))
         (OkTcType ty)
@@ -614,7 +984,7 @@
 (define (tc-lookup [env : TcTypeEnv] [name : String]) : ResultTcType
   (match env
     [(TcTypeNil) (ErrTcType (string-append "typecheck: unbound name " name))]
-    [(TcTypeCache ids values rest)
+    [(TcTypeCache ids values _ rest)
       (match (string-i64-map-get ids name)
         [(StringI64MapFound index) (OkTcType (array-ref values index))]
         [(StringI64MapMissing) (tc-lookup rest name)])]
@@ -629,7 +999,7 @@
   [name : String]) : ResultTcType
   (match env
     [(TcTypeNil) (tc-lookup root name)]
-    [(TcTypeCache _ _ rest) (tc-lookup-hygiene-global-scan root rest name)]
+    [(TcTypeCache _ _ _ rest) (tc-lookup-hygiene-global-scan root rest name)]
     [(TcTypeBind key _ rest)
       (if (string-eq key (tc-hygiene-global-boundary-name))
         (tc-lookup rest name)
@@ -644,7 +1014,7 @@
   [name : String]) : bool
   (match env
     [(TcTypeNil) (tc-binding-unsafe? root name)]
-    [(TcTypeCache _ _ rest)
+    [(TcTypeCache _ _ _ rest)
       (tc-hygiene-global-binding-unsafe-scan root rest name)]
     [(TcTypeBind key _ rest)
       (if (string-eq key (tc-hygiene-global-boundary-name))
@@ -657,7 +1027,7 @@
 (define (tc-active-region [env : TcTypeEnv]) : TcMaybeString
   (match env
     [(TcTypeNil) (TcNoString)]
-    [(TcTypeCache _ _ rest) (tc-active-region rest)]
+    [(TcTypeCache _ _ _ rest) (tc-active-region rest)]
     [(TcTypeBind key ty rest)
       (if (string-eq key (tc-region-marker-name))
         (match ty
@@ -704,13 +1074,13 @@
 (define (tc-cleanup-owner-marker-head? [env : TcTypeEnv] [name : String]) : bool
   (match env
     [(TcTypeNil) false]
-    [(TcTypeCache _ _ rest) (tc-cleanup-owner-marker-head? rest name)]
+    [(TcTypeCache _ _ _ rest) (tc-cleanup-owner-marker-head? rest name)]
     [(TcTypeBind key ty _) (tc-cleanup-owner-marker-for? key ty name)]))
 
 (define (tc-cleanup-owner-active? [env : TcTypeEnv] [name : String]) : bool
   (match env
     [(TcTypeNil) false]
-    [(TcTypeCache _ _ rest) (tc-cleanup-owner-active? rest name)]
+    [(TcTypeCache _ _ _ rest) (tc-cleanup-owner-active? rest name)]
     [(TcTypeBind key ty rest)
       (if (string-eq key name)
         (tc-cleanup-owner-marker-head? rest name)
@@ -719,7 +1089,7 @@
 (define (tc-active-cleanup-owners-scan [root : TcTypeEnv] [env : TcTypeEnv]) : TcStringList
   (match env
     [(TcTypeNil) TcStringNil]
-    [(TcTypeCache _ _ rest) (tc-active-cleanup-owners-scan root rest)]
+    [(TcTypeCache _ _ _ rest) (tc-active-cleanup-owners-scan root rest)]
     [(TcTypeBind key ty rest)
       (let
         [owners : TcStringList (tc-active-cleanup-owners-scan root rest)]
@@ -889,7 +1259,7 @@
 (define (tc-lifetime-visible? [env : TcTypeEnv] [lifetime : String]) : bool
   (match env
     [(TcTypeNil) false]
-    [(TcTypeCache _ _ rest) (tc-lifetime-visible? rest lifetime)]
+    [(TcTypeCache _ _ _ rest) (tc-lifetime-visible? rest lifetime)]
     [(TcTypeBind key ty rest)
       (if (tc-env-binding-matches-lifetime? key ty lifetime)
         true
@@ -912,7 +1282,7 @@
   [seen-target : bool]) : bool
   (match env
     [(TcTypeNil) false]
-    [(TcTypeCache _ _ rest)
+    [(TcTypeCache _ _ _ rest)
       (tc-lifetime-outlives-binding-scan rest lifetime target seen-target)]
     [(TcTypeBind key ty rest)
       (if (tc-env-binding-matches-lifetime? key ty lifetime)
@@ -949,7 +1319,7 @@
     true
     (match env
       [(TcTypeNil) false]
-      [(TcTypeCache _ _ rest)
+      [(TcTypeCache _ _ _ rest)
         (tc-lifetime-outlives-lifetime-scan
           rest
           value-lifetime
@@ -1366,7 +1736,7 @@
     true
     (match env
       [(TcTypeNil) false]
-      [(TcTypeCache _ _ rest)
+      [(TcTypeCache _ _ _ rest)
         (tc-region-outlives-or-matches rest value-region target-region)]
       [(TcTypeBind key ty rest)
         (if (string-eq key (tc-region-marker-name))
@@ -2705,7 +3075,12 @@
         [_ false])]))
 
 (define (tc-type-eq [a : AstType] [b : AstType]) : bool
-  (tc-type-eq-core (tc-type-without-regions a) (tc-type-without-regions b)))
+  (match a
+    [(AstTyRegion _ inner) (tc-type-eq (box-get inner) b)]
+    [_
+      (match b
+        [(AstTyRegion _ inner) (tc-type-eq a (box-get inner))]
+        [_ (tc-type-eq-core a b)])]))
 
 (define (tc-never-type? [ty : AstType]) : bool
   (match ty
@@ -2951,7 +3326,7 @@
 (define (tc-spmd-env-from-type-env [env : TcTypeEnv]) : TcSpmdEnv
   (match env
     [(TcTypeNil) TcSpmdEnvNil]
-    [(TcTypeCache _ _ rest) (tc-spmd-env-from-type-env rest)]
+    [(TcTypeCache _ _ _ rest) (tc-spmd-env-from-type-env rest)]
     [(TcTypeBind name ty rest)
       (TcSpmdEnvBind
         name
@@ -3893,6 +4268,33 @@
             module
             ""))])))
 
+(define (tc-module-local-env-cache-lookup
+  [cache : TcModuleLocalEnvCache]
+  [module : String]) : TcMaybeTypeEnv
+  (match cache
+    [(TcModuleLocalEnvNil) (TcNoTypeEnv)]
+    [(TcModuleLocalEnvCons cached-module env rest)
+      (if (string-eq cached-module module)
+        (TcSomeTypeEnv env)
+        (tc-module-local-env-cache-lookup rest module))]))
+
+(define (tc-module-local-env-cached
+  [ctx : TcContext]
+  [top-env : TcTypeEnv]
+  [module : String]
+  [cache : TcModuleLocalEnvCache]) : ResultTcModuleLocalEnv
+  (if (string-eq module "")
+    (OkTcModuleLocalEnv top-env cache)
+    (match (tc-module-local-env-cache-lookup cache module)
+      [(TcSomeTypeEnv env) (OkTcModuleLocalEnv env cache)]
+      [(TcNoTypeEnv)
+        (match (tc-module-local-env ctx top-env module)
+          [(OkTcEnv env)
+            (OkTcModuleLocalEnv
+              env
+              (TcModuleLocalEnvCons module env cache))]
+          [(ErrTcEnv message) (ErrTcModuleLocalEnv message)])])))
+
 (define (tc-expect [actual : AstType] [expected : AstType] [message : String]) : ResultTcUnit
   (if (tc-type-compatible? expected actual)
     OkTcUnit
@@ -4205,7 +4607,7 @@
 (define (tc-default-builtin-unshadowed-scan? [env : TcTypeEnv] [name : String]) : bool
   (match env
     [(TcTypeNil) false]
-    [(TcTypeCache _ _ rest) (tc-default-builtin-unshadowed-scan? rest name)]
+    [(TcTypeCache _ _ shadows _) (not (string-i64-map-contains? shadows name))]
     [(TcTypeBind key _ rest)
       (if (string-eq key name)
         false
@@ -7272,7 +7674,7 @@
   [body : AstExpr]) : ResultTcUnit
   (match env
     [(TcTypeNil) OkTcUnit]
-    [(TcTypeCache _ _ rest)
+    [(TcTypeCache _ _ _ rest)
       (tc-check-lambda-region-captures-scan-root root rest bound body)]
     [(TcTypeBind key ty rest)
       (cond
@@ -10006,21 +10408,22 @@
     [(AstExprAnn inner-box ty)
       (let
         [inner : AstExpr (box-get inner-box)]
+        [want-ty : AstType (tc-resolve-type ctx ty)]
         (match (tc-expr-with-expected-or-actual
           ctx
           env
           inner
-          (tc-resolve-type ctx ty))
+          want-ty)
           [(OkTcType got)
             (match (tc-expect
               got
-              (tc-resolve-type ctx ty)
+              want-ty
               "typecheck: annotation type mismatch")
               [(OkTcUnit)
                 (OkTcType
                   (if (tc-type-contains-any-region got)
                     got
-                    (tc-resolve-type ctx ty)))]
+                    want-ty))]
               [(ErrTcUnit message) (ErrTcType message)])]
           [(ErrTcType message) (ErrTcType message)]))]
     [(AstExprLet bindings body-box)
@@ -13141,7 +13544,16 @@
   [decls : AstDeclList]
   [paths : AstDeclPathList]
   [summary : CompilerTypecheckSummary]) : ResultCompilerTypecheck
-  (tc-check-decls-with-paths-in-module ctx top-env decls paths summary ""))
+  (begin
+    (cfg compile-profile (compiler-tc-decl-profile-reset))
+    (tc-check-decls-with-paths-in-module
+      ctx
+      top-env
+      decls
+      paths
+      summary
+      ""
+      (TcModuleLocalEnvNil))))
 
 (define (tc-generated-clone-name? [name : String]) : bool
   (if (>= (string-length name) 6)
@@ -13179,33 +13591,40 @@
   [ctx : TcContext]
   [top-env : TcTypeEnv]
   [decl : AstDecl]) : ResultTcUnit
-  (let
-    [enclosing : i64 (arena-current)]
-    [scratch : i64 (arena-make)]
-    (begin
-      (unsafe
-        (arena-set! scratch))
-      (match (tc-check-decl ctx top-env decl)
-        [(OkTcUnit)
-          (let
-            [scratch-head : i64 (arena-current)]
+  (begin
+    (cfg compile-profile (compiler-tc-decl-profile-start-section))
+    (let
+      [enclosing : i64 (arena-current)]
+      [scratch : i64 (arena-make)]
+      (begin
+        (cfg compile-profile (compiler-tc-decl-profile-add-arena))
+        (unsafe (arena-set! scratch))
+        (match (tc-check-decl ctx top-env decl)
+          [(OkTcUnit)
             (begin
-              (unsafe
-                (arena-set! enclosing)
-                (arena-destroy scratch-head))
-              (OkTcUnit)))]
-        [(ErrTcUnit message)
-          (let
-            [scratch-head : i64 (arena-current)]
-            (begin
-              (unsafe
-                (arena-set! enclosing))
+              (cfg compile-profile (compiler-tc-decl-profile-start-section))
               (let
-                [escaped : String (clone message)]
+                [scratch-head : i64 (arena-current)]
                 (begin
                   (unsafe
-                    (arena-destroy scratch-head))
-                  (ErrTcUnit escaped)))))]))))
+                    (begin
+                      (arena-set! enclosing)
+                      (arena-destroy scratch-head)))
+                  (cfg compile-profile (compiler-tc-decl-profile-add-arena))
+                  (OkTcUnit))))]
+          [(ErrTcUnit message)
+            (begin
+              (cfg compile-profile (compiler-tc-decl-profile-start-section))
+              (let
+                [scratch-head : i64 (arena-current)]
+                (begin
+                  (unsafe (arena-set! enclosing))
+                  (let
+                    [escaped : String (clone message)]
+                    (begin
+                      (unsafe (arena-destroy scratch-head))
+                      (cfg compile-profile (compiler-tc-decl-profile-add-arena))
+                      (ErrTcUnit escaped))))))])))))
 
 (define (tc-check-one-decl-with-module
   [ctx : TcContext]
@@ -13225,7 +13644,8 @@
   [decls : AstDeclList]
   [paths : AstDeclPathList]
   [summary : CompilerTypecheckSummary]
-  [module : String]) : ResultCompilerTypecheck
+  [module : String]
+  [cache : TcModuleLocalEnvCache]) : ResultCompilerTypecheck
   (match decls
     [(AstDeclNil) (OkCompilerTypecheck summary)]
     [(AstDeclCons decl rest)
@@ -13250,7 +13670,8 @@
               rest
               rest-paths
               summary
-              next-module)]
+              next-module
+              cache)]
           [_
             (if (tc-generated-clone-decl-with-path? decl decl-path)
               (tc-check-decls-with-paths-in-module
@@ -13259,19 +13680,37 @@
                 rest
                 rest-paths
                 (tc-summary-add-decl summary decl)
-                module)
-              (match (tc-check-one-decl-with-module ctx top-env decl module)
-                [(OkTcUnit)
-                  (tc-check-decls-with-paths-in-module
-                    ctx
-                    top-env
-                    rest
-                    rest-paths
-                    (tc-summary-add-decl summary decl)
-                    module)]
-                [(ErrTcUnit message)
-                  (ErrCompilerTypecheck
-                    (tc-typecheck-diag-with-path decl decl-path message))]))]))]))
+                module
+                cache)
+              (begin
+                (cfg compile-profile (compiler-tc-decl-profile-start-section))
+                (match (tc-module-local-env-cached ctx top-env module cache)
+                  [(OkTcModuleLocalEnv local-env next-cache)
+                    (begin
+                      (cfg compile-profile (compiler-tc-decl-profile-add-local-env))
+                      (let
+                        [decl-ctx : TcContext (tc-context-with-module ctx module)]
+                        (match (tc-check-decl-escaping decl-ctx local-env decl)
+                          [(OkTcUnit)
+                            (tc-check-decls-with-paths-in-module
+                              ctx
+                              top-env
+                              rest
+                              rest-paths
+                              (tc-summary-add-decl summary decl)
+                              module
+                              next-cache)]
+                          [(ErrTcUnit message)
+                            (ErrCompilerTypecheck
+                              (tc-typecheck-diag-with-path
+                                decl
+                                decl-path
+                                message))])))]
+                  [(ErrTcModuleLocalEnv message)
+                    (begin
+                      (cfg compile-profile (compiler-tc-decl-profile-add-local-env))
+                      (ErrCompilerTypecheck
+                        (tc-typecheck-diag-with-path decl decl-path message)))])))]))]))
 
 (define (typecheck-compiler-specialized-program-with-paths
   [program : AstProgram]

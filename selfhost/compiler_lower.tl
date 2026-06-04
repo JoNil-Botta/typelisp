@@ -207,6 +207,60 @@
 (define (lower-diagnostic [message : String]) : CompilerDiagnostic
   (compiler-diagnostic-at-start "" message))
 
+(cfg
+  compile-profile
+  (define compiler-lower-profile-start-ms : i64
+    0))
+
+(cfg
+  compile-profile
+  (define compiler-lower-profile-start-total : i64
+    0))
+
+(cfg
+  compile-profile
+  (define compiler-lower-profile-start-live : i64
+    0))
+
+(cfg
+  compile-profile
+  (define (compiler-lower-profile-field [value : i64]) : String
+    (string-append "|" (int->string value))))
+
+(cfg
+  compile-profile
+  (define (compiler-lower-profile-start) : unit
+    (begin
+      (set! compiler-lower-profile-start-ms (profile-now-ms))
+      (set! compiler-lower-profile-start-total (profile-alloc-total))
+      (set! compiler-lower-profile-start-live (profile-alloc-live))
+      (profile-alloc-reset-peak))))
+
+(cfg
+  compile-profile
+  (define (compiler-lower-profile-finish [phase : String]) : unit
+    (let
+      [end-ms : i64 (profile-now-ms)]
+      [end-total : i64 (profile-alloc-total)]
+      [end-live : i64 (profile-alloc-live)]
+      [peak-delta : i64
+        (- (profile-alloc-peak) compiler-lower-profile-start-live)]
+      (print-error
+        (string-append
+          "compile-profile|lower."
+          (string-append
+            phase
+            (string-append
+              (compiler-lower-profile-field
+                (- end-ms compiler-lower-profile-start-ms))
+              (string-append
+                (compiler-lower-profile-field
+                  (- end-total compiler-lower-profile-start-total))
+                (string-append
+                  (compiler-lower-profile-field
+                    (- end-live compiler-lower-profile-start-live))
+                  (string-append (compiler-lower-profile-field peak-delta) "\n"))))))))))
+
 (define (lower-diagnostic-at-expr [expr : AstExpr] [message : String]) : CompilerDiagnostic
   (match expr
     [(AstExprSpanned _ span)
@@ -374,7 +428,7 @@
 (define (lower-type-env-count [env : TcTypeEnv]) : i64
   (match env
     [(TcTypeNil) 0]
-    [(TcTypeCache _ _ rest) (lower-type-env-count rest)]
+    [(TcTypeCache _ _ _ rest) (lower-type-env-count rest)]
     [(TcTypeBind _ _ rest) (+ 1 (lower-type-env-count rest))]))
 
 (define (lower-type-cache-capacity [count : i64]) : i64
@@ -404,7 +458,7 @@
   [cache : LowerTypeCache]) : LowerTypeCache
   (match env
     [(TcTypeNil) cache]
-    [(TcTypeCache _ _ rest) (lower-type-cache-from-env-into rest cache)]
+    [(TcTypeCache _ _ _ rest) (lower-type-cache-from-env-into rest cache)]
     [(TcTypeBind name ty rest)
       (lower-type-cache-from-env-into rest (lower-type-cache-add cache name ty))]))
 
@@ -5666,7 +5720,7 @@
   [type-env : TcTypeEnv]) : ResultLowerState
   (match type-env
     [(TcTypeNil) (OkLowerState state)]
-    [(TcTypeCache _ _ rest) (lower-emit-active-exits state env rest)]
+    [(TcTypeCache _ _ _ rest) (lower-emit-active-exits state env rest)]
     [(TcTypeBind key ty rest)
       (if (string-eq key (lower-cleanup-marker-name))
         (match ty
@@ -5709,7 +5763,7 @@
   [type-env : TcTypeEnv]) : ResultLowerState
   (match type-env
     [(TcTypeNil) (OkLowerState state)]
-    [(TcTypeCache _ _ rest) (lower-emit-active-cleanups state env rest)]
+    [(TcTypeCache _ _ _ rest) (lower-emit-active-cleanups state env rest)]
     [(TcTypeBind key ty rest)
       (if (string-eq key (lower-cleanup-marker-name))
         (match ty
@@ -17481,15 +17535,21 @@
   [program : AstProgram]
   [paths : AstDeclPathList]
   [mode : CompilerLowerMode]) : ResultCompilerLower
-  (match (macro-expand-program program)
-    [(OkMacroExpand expanded)
-      (lower-compiler-expanded-program-with-decl-paths-mode
-        entry-path
-        expanded
-        paths
-        mode)]
-    [(ErrMacroExpand diag)
-      (ErrCompilerLower (lower-diagnostic-with-path diag entry-path))]))
+  (begin
+    (cfg compile-profile (compiler-lower-profile-start))
+    (match (macro-expand-program program)
+      [(OkMacroExpand expanded)
+        (begin
+          (cfg compile-profile (compiler-lower-profile-finish "macro_expand"))
+          (lower-compiler-expanded-program-with-decl-paths-mode
+            entry-path
+            expanded
+            paths
+            mode))]
+      [(ErrMacroExpand diag)
+        (begin
+          (cfg compile-profile (compiler-lower-profile-finish "macro_expand"))
+          (ErrCompilerLower (lower-diagnostic-with-path diag entry-path)))])))
 
 (define (lower-compiler-program-with-decl-paths
   [entry-path : String]

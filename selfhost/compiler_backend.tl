@@ -193,6 +193,10 @@
   (extern-references StringI64Map)
   (extern-link-symbols (Array String)))
 
+(defstruct CompilerBackendSourceSpanIndex
+  (entries StringI64Map)
+  (values (Array CompilerMaybeSourceSpan)))
+
 (define (compiler-backend-runtime-tail-fs-current-dir?
   [tail : CompilerBackendRuntimeTailPlan]) : bool
   (struct-get tail fs-current-dir))
@@ -278,6 +282,75 @@
 ;; `path:1:1` location. `function` is the raw IR function name (the key used by
 ;;
 ;; the spans table), not the mangled assembly symbol.
+(define (compiler-backend-source-span-index-fill
+  [values : (Array CompilerMaybeSourceSpan)]
+  [index : i64]) : unit
+  (if (>= index (array-length values))
+    unit
+    (begin
+      (array-set! values index (CompilerNoSourceSpan))
+      (compiler-backend-source-span-index-fill values (+ index 1)))))
+
+(define (compiler-backend-source-span-index-add
+  [entries : CompilerSourceSpansEntryList]
+  [map : StringI64Map]
+  [values : (Array CompilerMaybeSourceSpan)]
+  [index : i64]) : StringI64Map
+  (match entries
+    [(CompilerSourceSpansEntryNil) map]
+    [(CompilerSourceSpansEntryCons entry rest)
+      (match entry
+        [(CompilerSourceSpansEntry name span)
+          (if (string-i64-map-contains? map name)
+            (compiler-backend-source-span-index-add rest map values index)
+            (match (string-i64-map-insert map name index)
+              [(StringI64MapInsertOk next-map)
+                (begin
+                  (array-set! values index (CompilerSomeSourceSpan span))
+                  (compiler-backend-source-span-index-add
+                    rest
+                    next-map
+                    values
+                    (+ index 1)))]
+              [(StringI64MapInsertFull next-map) next-map]))])]))
+
+(define (compiler-backend-source-span-index-build
+  [spans : CompilerSourceSpans]) : CompilerBackendSourceSpanIndex
+  (match spans
+    [(CompilerSourceSpans entries _ _)
+      (let
+        [count : i64 (compiler-source-spans-count spans)]
+        [values : (Array CompilerMaybeSourceSpan)
+          (make-array CompilerMaybeSourceSpan count)]
+        (begin
+          (compiler-backend-source-span-index-fill values 0)
+          (CompilerBackendSourceSpanIndex
+            (compiler-backend-source-span-index-add
+              entries
+              (string-i64-map-with-capacity (+ (* count 2) 16))
+              values
+              0)
+            values)))]))
+
+(define (compiler-backend-source-span-index-lookup
+  [index : CompilerBackendSourceSpanIndex]
+  [name : String]) : CompilerMaybeSourceSpan
+  (match (string-i64-map-get (struct-get index entries) name)
+    [(StringI64MapFound slot)
+      (if (and (>= slot 0) (< slot (array-length (struct-get index values))))
+        (array-ref (struct-get index values) slot)
+        (CompilerNoSourceSpan))]
+    [(StringI64MapMissing) (CompilerNoSourceSpan)]))
+
+(define (compiler-backend-function-diagnostic-index
+  [index : CompilerBackendSourceSpanIndex]
+  [function : String]
+  [message : String]) : CompilerDiagnostic
+  (match (compiler-backend-source-span-index-lookup index function)
+    [(CompilerSomeSourceSpan span)
+      (compiler-diagnostic-from-ast-span "" span message)]
+    [(CompilerNoSourceSpan) (compiler-diagnostic-at-start "" message)]))
+
 (define (compiler-backend-function-diagnostic
   [spans : CompilerSourceSpans]
   [function : String]
@@ -8394,6 +8467,7 @@
   [plan : CompilerBackendRuntimePlan]
   [program-index : CompilerBackendProgramIndex]
   [spans : CompilerSourceSpans]
+  [span-index : CompilerBackendSourceSpanIndex]
   [crt-entry : bool]) : ResultCompilerBackend
   (match func
     [(IrFunction name params ret-ty vars blocks)
@@ -8402,7 +8476,7 @@
       ;; (or `1:1` when none was recorded) rather than always `1:1`.
       (let
         [func-diag : CompilerDiagnostic
-          (compiler-backend-function-diagnostic spans name "")]
+          (compiler-backend-function-diagnostic-index span-index name "")]
         [reg-plan : CompilerRegPlan (compiler-reg-plan-function func)]
         [raw-assignments : CompilerRegAssignmentList
           (compiler-reg-plan-assignments reg-plan)]
@@ -8520,6 +8594,7 @@
   [plan : CompilerBackendRuntimePlan]
   [program-index : CompilerBackendProgramIndex]
   [spans : CompilerSourceSpans]
+  [span-index : CompilerBackendSourceSpanIndex]
   [crt-entry : bool]) : ResultCompilerBackend
   (let
     [enclosing : i64 (arena-current)]
@@ -8537,6 +8612,7 @@
         plan
         program-index
         spans
+        span-index
         crt-entry)
         [(OkCompilerBackend asm)
           (let
@@ -8573,6 +8649,7 @@
   [plan : CompilerBackendRuntimePlan]
   [program-index : CompilerBackendProgramIndex]
   [spans : CompilerSourceSpans]
+  [span-index : CompilerBackendSourceSpanIndex]
   [crt-entry : bool]
   [buf : TextBuf]) : ResultCompilerBackend
   (match functions
@@ -8588,6 +8665,7 @@
         plan
         program-index
         spans
+        span-index
         crt-entry)
         [(OkCompilerBackend head)
           (compiler-backend-emit-functions-into
@@ -8600,6 +8678,7 @@
             plan
             program-index
             spans
+            span-index
             crt-entry
             (text-buf-append buf head))]
         [(ErrCompilerBackend message) (ErrCompilerBackend message)])]))
@@ -8615,18 +8694,22 @@
   [program-index : CompilerBackendProgramIndex]
   [spans : CompilerSourceSpans]
   [crt-entry : bool]) : ResultCompilerBackend
-  (compiler-backend-emit-functions-into
-    target
-    mode
-    functions
-    all-functions
-    globals
-    externs
-    plan
-    program-index
-    spans
-    crt-entry
-    (text-buf-empty)))
+  (let
+    [span-index : CompilerBackendSourceSpanIndex
+      (compiler-backend-source-span-index-build spans)]
+    (compiler-backend-emit-functions-into
+      target
+      mode
+      functions
+      all-functions
+      globals
+      externs
+      plan
+      program-index
+      spans
+      span-index
+      crt-entry
+      (text-buf-empty))))
 
 (define (compiler-backend-implicit-main-function) : CompilerIrFunction
   (IrFunction
@@ -8663,6 +8746,7 @@
   [plan : CompilerBackendRuntimePlan]
   [program-index : CompilerBackendProgramIndex]
   [spans : CompilerSourceSpans]
+  [span-index : CompilerBackendSourceSpanIndex]
   [crt-entry : bool]
   [buf : TextBuf]) : ResultCompilerBackendBuffer
   (match functions
@@ -8678,6 +8762,7 @@
         plan
         program-index
         spans
+        span-index
         crt-entry)
         [(OkCompilerBackend head)
           (compiler-backend-emit-functions-buffer-into
@@ -8690,6 +8775,7 @@
             plan
             program-index
             spans
+            span-index
             crt-entry
             (text-buf-append buf head))]
         [(ErrCompilerBackend message) (ErrCompilerBackendBuffer message)])]))
@@ -8705,18 +8791,22 @@
   [program-index : CompilerBackendProgramIndex]
   [spans : CompilerSourceSpans]
   [crt-entry : bool]) : ResultCompilerBackendBuffer
-  (compiler-backend-emit-functions-buffer-into
-    target
-    mode
-    functions
-    all-functions
-    globals
-    externs
-    plan
-    program-index
-    spans
-    crt-entry
-    (text-buf-empty)))
+  (let
+    [span-index : CompilerBackendSourceSpanIndex
+      (compiler-backend-source-span-index-build spans)]
+    (compiler-backend-emit-functions-buffer-into
+      target
+      mode
+      functions
+      all-functions
+      globals
+      externs
+      plan
+      program-index
+      spans
+      span-index
+      crt-entry
+      (text-buf-empty))))
 
 (define (compiler-backend-emit-closure-descriptor-entry [name : String]) : String
   (backend-cat5

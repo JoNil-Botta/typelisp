@@ -8000,7 +8000,8 @@
     [enclosing : i64 (arena-current)]
     [scratch : i64 (arena-make)]
     (begin
-      (unsafe (arena-set! scratch))
+      (unsafe
+        (arena-set! scratch))
       (match (compiler-backend-emit-function
         target
         mode
@@ -8015,21 +8016,25 @@
           (let
             [scratch-head : i64 (arena-current)]
             (begin
-              (unsafe (arena-set! enclosing))
+              (unsafe
+                (arena-set! enclosing))
               (let
                 [escaped : String (clone asm)]
                 (begin
-                  (unsafe (arena-destroy scratch-head))
+                  (unsafe
+                    (arena-destroy scratch-head))
                   (OkCompilerBackend escaped)))))]
         [(ErrCompilerBackend message)
           (let
             [scratch-head : i64 (arena-current)]
             (begin
-              (unsafe (arena-set! enclosing))
+              (unsafe
+                (arena-set! enclosing))
               (let
                 [escaped : CompilerDiagnostic (clone message)]
                 (begin
-                  (unsafe (arena-destroy scratch-head))
+                  (unsafe
+                    (arena-destroy scratch-head))
                   (ErrCompilerBackend escaped)))))]))))
 
 (define (compiler-backend-emit-functions-into

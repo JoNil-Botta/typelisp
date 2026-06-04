@@ -38,7 +38,8 @@
     [i : i64 0]
     (while (< i n)
       (begin
-        (unsafe (ptr-write! (ptr-offset dst i) (cast (string-ref text i) : u8)))
+        (unsafe
+          (ptr-write! (ptr-offset dst i) (cast (string-ref text i) : u8)))
         (set! i (+ i 1))))))
 
 ;: Copy `text` to caller-owned mutable storage and append the trailing NUL byte.
@@ -63,5 +64,6 @@
           [n : i64 (string-length text)]
           (begin
             (ffi-c-string-copy-bytes! text dst n)
-            (unsafe (ptr-write! (ptr-offset dst n) (cast #\nul' : u8)))
+            (unsafe
+              (ptr-write! (ptr-offset dst n) (cast #\nul' : u8)))
             (FfiCStringCopyOk needed)))))))

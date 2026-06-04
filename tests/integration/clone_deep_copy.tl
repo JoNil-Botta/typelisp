@@ -48,7 +48,8 @@
 
 (define (copy-from-scratch [home : i64] [scratch : i64]) : i64
   (begin
-    (unsafe (arena-set! scratch))
+    (unsafe
+      (arena-set! scratch))
     (let
       [items : (Array String) (make-array String 2)]
       (begin
@@ -58,12 +59,14 @@
           [bundle : Bundle (make-bundle items)]
           [list : StringList (make-list)]
           (begin
-            (unsafe (arena-set! home))
+            (unsafe
+              (arena-set! home))
             (let
               [bundle-copy : Bundle (clone bundle)]
               [list-copy : StringList (clone list)]
               (begin
-                (unsafe (arena-destroy scratch))
+                (unsafe
+                  (arena-destroy scratch))
                 (+ (bundle-score bundle-copy) (list-score list-copy))))))))))
 
 (define (main) : i64

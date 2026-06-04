@@ -9747,23 +9747,28 @@
     [enclosing : i64 (arena-current)]
     [scratch : i64 (arena-make)]
     (begin
-      (unsafe (arena-set! scratch))
+      (unsafe
+        (arena-set! scratch))
       (match (tc-check-decl ctx top-env decl)
         [(OkTcUnit)
           (let
             [scratch-head : i64 (arena-current)]
             (begin
-              (unsafe (arena-set! enclosing) (arena-destroy scratch-head))
+              (unsafe
+                (arena-set! enclosing)
+                (arena-destroy scratch-head))
               (OkTcUnit)))]
         [(ErrTcUnit message)
           (let
             [scratch-head : i64 (arena-current)]
             (begin
-              (unsafe (arena-set! enclosing))
+              (unsafe
+                (arena-set! enclosing))
               (let
                 [escaped : String (clone message)]
                 (begin
-                  (unsafe (arena-destroy scratch-head))
+                  (unsafe
+                    (arena-destroy scratch-head))
                   (ErrTcUnit escaped)))))]))))
 
 (define (tc-check-one-decl-with-module

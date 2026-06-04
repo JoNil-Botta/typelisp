@@ -44,10 +44,8 @@
     false))
 
 (define (main) : i64
-  (if (case-struct-immediate)
-    (if (case-struct-returned)
-      (if (case-enum-returned)
-        42
-        3)
-      2)
-    1))
+  (begin
+    (unless (case-struct-immediate) (return 1))
+    (unless (case-struct-returned) (return 2))
+    (unless (case-enum-returned) (return 3))
+    42))

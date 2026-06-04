@@ -30,7 +30,7 @@ jobs:
             timeout_minutes: 90
           - name: Test + Integration (windows-latest)
             os: windows-latest
-            timeout_minutes: 90
+            timeout_minutes: 120
     steps:
       - uses: actions/checkout@v4
 

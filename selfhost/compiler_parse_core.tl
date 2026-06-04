@@ -898,9 +898,154 @@
             (compiler-parse-dispatch-binops (sym-i64-empty))))))))
 
 (define (compiler-parse-dispatch-tag [dispatch : SymI64Env] [name : String]) : i64
-  (match (sym-i64-lookup dispatch name)
-    [(SomeI64 tag) tag]
-    [(NoneI64) (compiler-parse-tag-unknown)]))
+  (let
+    [n : i64 (string-length name)]
+    (cond
+      [(= n 1)
+        (cond
+          [(string-eq name "+") (compiler-parse-tag-bin-add)]
+          [(string-eq name "-") (compiler-parse-tag-bin-sub)]
+          [(string-eq name "*") (compiler-parse-tag-bin-mul)]
+          [(string-eq name "/") (compiler-parse-tag-bin-div)]
+          [(string-eq name "%") (compiler-parse-tag-bin-mod)]
+          [(string-eq name "=") (compiler-parse-tag-bin-eq)]
+          [(string-eq name "<") (compiler-parse-tag-bin-lt)]
+          [(string-eq name ">") (compiler-parse-tag-bin-gt)]
+          [(string-eq name "&") (compiler-parse-tag-ty-ref)]
+          [(string-eq name "_") (compiler-parse-tag-pattern-wildcard)]
+          [else (compiler-parse-tag-unknown)])]
+      [(= n 2)
+        (cond
+          [(string-eq name "!=") (compiler-parse-tag-bin-ne)]
+          [(string-eq name "<=") (compiler-parse-tag-bin-le)]
+          [(string-eq name ">=") (compiler-parse-tag-bin-ge)]
+          [(string-eq name "or") (compiler-parse-tag-bin-or)]
+          [(string-eq name "i8") (compiler-parse-tag-ty-i8)]
+          [(string-eq name "u8") (compiler-parse-tag-ty-u8)]
+          [(string-eq name "->") (compiler-parse-tag-ty-func)]
+          [(string-eq name "in") (compiler-parse-tag-ty-region)]
+          [(string-eq name "if") (compiler-parse-tag-expr-if)]
+          [else (compiler-parse-tag-unknown)])]
+      [(= n 3)
+        (cond
+          [(string-eq name "and") (compiler-parse-tag-bin-and)]
+          [(string-eq name "shl") (compiler-parse-tag-bin-shl)]
+          [(string-eq name "shr") (compiler-parse-tag-bin-shr)]
+          [(string-eq name "not") (compiler-parse-tag-un-not)]
+          [(string-eq name "neg") (compiler-parse-tag-un-neg)]
+          [(string-eq name "i64") (compiler-parse-tag-ty-i64)]
+          [(string-eq name "i32") (compiler-parse-tag-ty-i32)]
+          [(string-eq name "i16") (compiler-parse-tag-ty-i16)]
+          [(string-eq name "u64") (compiler-parse-tag-ty-u64)]
+          [(string-eq name "u32") (compiler-parse-tag-ty-u32)]
+          [(string-eq name "u16") (compiler-parse-tag-ty-u16)]
+          [(string-eq name "f64") (compiler-parse-tag-ty-f64)]
+          [(string-eq name "f32") (compiler-parse-tag-ty-f32)]
+          [(string-eq name "str") (compiler-parse-tag-ty-str)]
+          [(string-eq name "Ptr") (compiler-parse-tag-ty-ptr)]
+          [(string-eq name "Box") (compiler-parse-tag-ty-box)]
+          [(string-eq name "let") (compiler-parse-tag-expr-let)]
+          [(string-eq name "ann") (compiler-parse-tag-expr-ann)]
+          [(string-eq name "try") (compiler-parse-tag-expr-try)]
+          [(string-eq name "box") (compiler-parse-tag-expr-box)]
+          [else (compiler-parse-tag-unknown)])]
+      [(= n 4)
+        (cond
+          [(string-eq name "bool") (compiler-parse-tag-ty-bool)]
+          [(string-eq name "char") (compiler-parse-tag-ty-char)]
+          [(string-eq name "unit") (compiler-parse-tag-unit)]
+          [(string-eq name "&mut") (compiler-parse-tag-ty-mut-ref)]
+          [(string-eq name "set!") (compiler-parse-tag-expr-set)]
+          [(string-eq name "cast") (compiler-parse-tag-expr-cast)]
+          [(string-eq name "cond") (compiler-parse-tag-expr-cond)]
+          [(string-eq name "type") (compiler-parse-tag-expr-type-literal)]
+          [(string-eq name "when") (compiler-parse-tag-expr-when)]
+          [(string-eq name "with") (compiler-parse-tag-expr-with-resource)]
+          [(string-eq name "true") (compiler-parse-tag-lit-true)]
+          [(string-eq name "test") (compiler-parse-tag-decl-test)]
+          [else (compiler-parse-tag-unknown)])]
+      [(= n 5)
+        (cond
+          [(string-eq name "never") (compiler-parse-tag-ty-never)]
+          [(string-eq name "Tuple") (compiler-parse-tag-ty-tuple)]
+          [(string-eq name "Array") (compiler-parse-tag-ty-array)]
+          [(string-eq name "while") (compiler-parse-tag-expr-while)]
+          [(string-eq name "begin") (compiler-parse-tag-expr-begin)]
+          [(string-eq name "tuple") (compiler-parse-tag-expr-tuple)]
+          [(string-eq name "array") (compiler-parse-tag-expr-array)]
+          [(string-eq name "match") (compiler-parse-tag-expr-match)]
+          [(string-eq name "quote") (compiler-parse-tag-expr-quote)]
+          [(string-eq name "false") (compiler-parse-tag-lit-false)]
+          [else (compiler-parse-tag-unknown)])]
+      [(= n 6)
+        (cond
+          [(string-eq name "bit-or") (compiler-parse-tag-bin-bit-or)]
+          [(string-eq name "String") (compiler-parse-tag-ty-string)]
+          [(string-eq name "MutPtr") (compiler-parse-tag-ty-mut-ptr)]
+          [(string-eq name "lambda") (compiler-parse-tag-expr-lambda)]
+          [(string-eq name "unsafe") (compiler-parse-tag-expr-unsafe)]
+          [(string-eq name "return") (compiler-parse-tag-expr-return)]
+          [(string-eq name "unless") (compiler-parse-tag-expr-unless)]
+          [(string-eq name "define") (compiler-parse-tag-decl-define)]
+          [(string-eq name "extern") (compiler-parse-tag-decl-extern)]
+          [(string-eq name "import") (compiler-parse-tag-decl-import)]
+          [(string-eq name "module") (compiler-parse-tag-decl-module)]
+          [(string-eq name "export") (compiler-parse-tag-decl-export)]
+          [else (compiler-parse-tag-unknown)])]
+      [(= n 7)
+        (cond
+          [(string-eq name "bit-and") (compiler-parse-tag-bin-bit-and)]
+          [(string-eq name "bit-xor") (compiler-parse-tag-bin-bit-xor)]
+          [(string-eq name "bit-not") (compiler-parse-tag-un-bit-not)]
+          [(string-eq name "foreach") (compiler-parse-tag-expr-foreach)]
+          [(string-eq name "box-get") (compiler-parse-tag-expr-box-get)]
+          [(string-eq name "unquote") (compiler-parse-tag-expr-unquote)]
+          [(string-eq name "defenum") (compiler-parse-tag-decl-defenum)]
+          [else (compiler-parse-tag-unknown)])]
+      [(= n 8)
+        (cond
+          [(string-eq name "comptime") (compiler-parse-tag-expr-comptime)]
+          [(string-eq name "ptr-null") (compiler-parse-tag-expr-ptr-null)]
+          [(string-eq name "ptr-read") (compiler-parse-tag-expr-ptr-read)]
+          [(string-eq name "ptr-cast") (compiler-parse-tag-expr-ptr-cast)]
+          [(string-eq name "ptr->int") (compiler-parse-tag-expr-ptr-to-int)]
+          [(string-eq name "int->ptr") (compiler-parse-tag-expr-int-to-ptr)]
+          [(string-eq name "defmacro") (compiler-parse-tag-decl-defmacro)]
+          [else (compiler-parse-tag-unknown)])]
+      [(= n 9)
+        (cond
+          [(string-eq name "tuple-ref") (compiler-parse-tag-expr-tuple-ref)]
+          [(string-eq name "array-ref") (compiler-parse-tag-expr-array-ref)]
+          [(string-eq name "ptr-null?") (compiler-parse-tag-expr-ptr-null-check)]
+          [(string-eq name "defstruct") (compiler-parse-tag-decl-defstruct)]
+          [else (compiler-parse-tag-unknown)])]
+      [(= n 10)
+        (cond
+          [(string-eq name "make-array") (compiler-parse-tag-expr-make-array)]
+          [(string-eq name "array-set!") (compiler-parse-tag-expr-array-set)]
+          [(string-eq name "struct-get") (compiler-parse-tag-expr-struct-get)]
+          [(string-eq name "with-arena") (compiler-parse-tag-expr-with-region)]
+          [(string-eq name "ptr-write!") (compiler-parse-tag-expr-ptr-write)]
+          [(string-eq name "ptr-offset") (compiler-parse-tag-expr-ptr-offset)]
+          [(string-eq name "quasiquote") (compiler-parse-tag-expr-quasiquote)]
+          [else (compiler-parse-tag-unknown)])]
+      [(= n 11)
+        (cond
+          [(string-eq name "array-push!") (compiler-parse-tag-expr-array-push)]
+          [(string-eq name "spmd-reduce") (compiler-parse-tag-expr-spmd-reduce)]
+          [(string-eq name "with-escape") (compiler-parse-tag-expr-with-escape)]
+          [else (compiler-parse-tag-unknown)])]
+      [(= n 13)
+        (cond
+          [(string-eq name "comptime-decl")
+            (compiler-parse-tag-decl-comptime-decl)]
+          [else (compiler-parse-tag-unknown)])]
+      [(= n 16)
+        (cond
+          [(string-eq name "unquote-splicing")
+            (compiler-parse-tag-expr-unquote-splicing)]
+          [else (compiler-parse-tag-unknown)])]
+      [else (compiler-parse-tag-unknown)])))
 
 (define (ast-binop-tag? [tag : i64]) : bool
   (cond

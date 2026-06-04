@@ -7608,7 +7608,7 @@
   [source-spans : CompilerSourceSpans]
   [program : CompilerIrProgram]) : CompilerSourceSpans
   (if (opt-remap-spans-fast-path? source-spans)
-    source-spans
+    (compiler-source-spans-clear-instrs source-spans)
     (match program
       [(IrProgram _ functions _)
         (opt-remap-spans-functions

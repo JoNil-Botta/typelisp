@@ -332,6 +332,8 @@
             (source-tool-link-inputs-add-ast-list
               inputs
               (ast-extern-metadata-link-inputs metadata)))]
+        [(AstDeclUnsafe inner)
+          (source-tool-link-inputs-from-decls (AstDeclCons inner rest) inputs)]
         [_ (source-tool-link-inputs-from-decls rest inputs)])]))
 
 (define (source-tool-link-inputs-for-source
@@ -372,10 +374,34 @@
 (define (source-tool-path-entry-command [dir : String] [tool : String]) : String
   (if (= (string-length dir) 0)
     tool
-    (fs-path-join dir tool)))
+    (source-tool-fs-path-join dir tool)))
+
+(define (source-tool-fs-path-join [left : String] [right : String]) : String
+  (fs-path-join (& left) (& right)))
+
+(define (source-tool-fs-basename [path : String]) : String
+  (fs-basename (& path)))
+
+(define (source-tool-try-file-exists? [path : String]) : ResultIoBool
+  (try-file-exists? (& path)))
+
+(define (source-tool-try-read-file [path : String]) : ResultIoString
+  (try-read-file (& path)))
+
+(define (source-tool-try-remove-file-if-exists [path : String]) : ResultIoUnit
+  (try-remove-file-if-exists (& path)))
+
+(define (source-tool-try-remove-dir-if-exists [path : String]) : ResultIoUnit
+  (try-remove-dir-if-exists (& path)))
+
+(define (source-tool-stdout-write [text : String]) : unit
+  (stdout-write (& text)))
+
+(define (source-tool-stderr-write [text : String]) : unit
+  (stderr-write (& text)))
 
 (define (source-tool-path-command-exists? [candidate : String]) : bool
-  (match (try-file-exists? candidate)
+  (match (source-tool-try-file-exists? candidate)
     [(OkIoBool exists) exists]
     [(ErrIoBool _) false]))
 
@@ -484,10 +510,10 @@
       (string-append name (source-tool-static-library-extension target))]))
 
 (define (source-tool-artifact-stem [source : String]) : String
-  (source-tool-replace-extension (fs-basename source) ""))
+  (source-tool-replace-extension (source-tool-fs-basename source) ""))
 
 (define (source-tool-asm-path [temp-dir : String] [source : String]) : String
-  (fs-path-join
+  (source-tool-fs-path-join
     temp-dir
     (string-append (source-tool-artifact-stem source) ".s")))
 
@@ -495,7 +521,7 @@
   [temp-dir : String]
   [source : String]
   [target : CompilerBackendTarget]) : String
-  (fs-path-join
+  (source-tool-fs-path-join
     temp-dir
     (string-append
       (source-tool-artifact-stem source)
@@ -505,14 +531,14 @@
   [temp-dir : String]
   [source : String]
   [target : CompilerBackendTarget]) : String
-  (fs-path-join
+  (source-tool-fs-path-join
     temp-dir
     (string-append
       (source-tool-artifact-stem source)
       (source-tool-executable-extension target))))
 
 (define (source-tool-create-temp-dir [prefix : String]) : ResultSourceToolString
-  (match (try-create-temp-dir prefix)
+  (match (try-create-temp-dir (& prefix))
     [(OkIoString path) (OkSourceToolString path)]
     [(ErrIoString error) (ErrSourceToolString (io-error-message error))]))
 
@@ -530,7 +556,7 @@
   [opt-level : i64]
   [mode : CompilerBackendMode]
   [link-inputs : SourceToolLinkInputs]) : ResultSourceToolString
-  (match (try-read-file source)
+  (match (source-tool-try-read-file source)
     [(ErrIoString error)
       (ErrSourceToolString
         (source-tool-cannot-read-module-message source error))]
@@ -559,7 +585,7 @@
   [deps : CompilerPkgDepList]
   [emit-entry : bool]
   [crt-entry : bool]) : ResultSourceToolString
-  (match (try-read-file source)
+  (match (source-tool-try-read-file source)
     [(ErrIoString error)
       (ErrSourceToolString
         (source-tool-cannot-read-module-message source error))]
@@ -624,7 +650,7 @@ _tl_print_string:
   [path : String]
   [contents : String]
   [context : String]) : SourceToolCommandStatus
-  (match (try-write-file path contents)
+  (match (try-write-file (& path) (& contents))
     [(OkIoUnit) SourceToolCommandOk]
     [(ErrIoUnit error)
       (SourceToolCommandErr
@@ -632,8 +658,8 @@ _tl_print_string:
 
 (define (source-tool-forward-output [output : ProcessOutput]) : unit
   (begin
-    (stdout-write (process-output-stdout output))
-    (stderr-write (process-output-stderr output))))
+    (source-tool-stdout-write (process-output-stdout output))
+    (source-tool-stderr-write (process-output-stderr output))))
 
 (define (source-tool-run-command
   [role : String]
@@ -949,12 +975,12 @@ _tl_print_string:
   [bin-path : String]
   [remove-bin : bool]) : unit
   (begin
-    (try-remove-file-if-exists asm-path)
-    (try-remove-file-if-exists obj-path)
+    (source-tool-try-remove-file-if-exists asm-path)
+    (source-tool-try-remove-file-if-exists obj-path)
     (if remove-bin
-      (try-remove-file-if-exists bin-path)
+      (source-tool-try-remove-file-if-exists bin-path)
       OkIoUnit)
-    (try-remove-dir-if-exists temp-dir)
+    (source-tool-try-remove-dir-if-exists temp-dir)
     unit))
 
 (define (source-tool-assemble

@@ -787,11 +787,14 @@ pre {
 (define (doc-site-ensure-dir [path : String]) : unit
   (if (= (string-length path) 0)
     (doc-site-panic-unit "doc-site: empty output directory")
-    (match (try-mkdir-if-missing path)
+    (match (try-mkdir-if-missing (& path))
       [(OkIoUnit) unit]
       [(ErrIoUnit _)
         (doc-site-panic-unit
           (string-append "doc-site: could not create output directory: " path))])))
+
+(define (doc-site-path-join [left : String] [right : String]) : String
+  (fs-path-join (& left) (& right)))
 
 (define (doc-site-write-module-page
   [output-dir : String]
@@ -799,7 +802,8 @@ pre {
   [module : DocSiteModule]) : unit
   (let
     [source : String (doc-site-module-source module)]
-    [output : String (fs-path-join output-dir (doc-site-module-output module))]
+    [output : String
+      (doc-site-path-join output-dir (doc-site-module-output module))]
     [docs : DocExtraction (doc-site-read-module-docs source)]
     (doc-site-write-file
       output
@@ -821,7 +825,7 @@ pre {
   [sections : DocSiteSectionList]
   [guide : DocSiteGuidePage]) : unit
   (doc-site-write-file
-    (fs-path-join output-dir (doc-site-guide-output guide))
+    (doc-site-path-join output-dir (doc-site-guide-output guide))
     (doc-site-render-guide-page
       sections
       guide
@@ -844,7 +848,7 @@ pre {
   [tree : DocSiteApiTree]) : unit
   (begin
     (doc-site-write-file
-      (fs-path-join output-dir (doc-site-api-tree-output tree))
+      (doc-site-path-join output-dir (doc-site-api-tree-output tree))
       (doc-site-render-api-tree-index sections tree))
     (doc-site-write-module-pages
       output-dir
@@ -880,10 +884,10 @@ pre {
       (doc-site-validate-stdlib-manifest (doc-site-api-tree-modules stdlib))
       (doc-site-ensure-dir output-dir)
       (doc-site-write-file
-        (fs-path-join output-dir "typelisp-docs.css")
+        (doc-site-path-join output-dir "typelisp-docs.css")
         (doc-site-css))
       (doc-site-write-file
-        (fs-path-join output-dir "index.html")
+        (doc-site-path-join output-dir "index.html")
         (doc-site-render-index sections "index.html"))
       (doc-site-write-sections output-dir sections sections)
       0)))

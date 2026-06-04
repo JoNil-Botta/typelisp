@@ -297,6 +297,8 @@
   (cond
     [(format-rules-node-symbol? head "import")
       (format-rules-inline-form-doc "import" rest)]
+    [(format-rules-node-symbol? head "include-str")
+      (format-rules-inline-form-doc "include-str" rest)]
     [(format-rules-node-symbol? head "extern")
       (format-rules-inline-form-doc "extern" rest)]
     [(format-rules-node-symbol? head "define") (format-rules-define-doc rest)]
@@ -311,6 +313,8 @@
       (format-rules-first-or-line-form-doc "while" rest)]
     [(format-rules-node-symbol? head "begin")
       (format-rules-line-form-doc "begin" rest)]
+    [(format-rules-node-symbol? head "unsafe")
+      (format-rules-line-form-doc "unsafe" rest)]
     [(format-rules-node-symbol? head "match")
       (format-rules-first-or-line-form-doc "match" rest)]
     [else (format-rules-delimited-doc "(" (FmtCstCons head rest) ")")]))
@@ -416,6 +420,18 @@
   `(begin
     ,@xs))")
 
+(define (format-rules-unsafe-source) : String
+  "(define (main [p : (Ptr i64)]) : i64 (unsafe (ptr-read p))) (unsafe (define (danger [x : i64]) : i64 x))")
+
+(define (format-rules-unsafe-expected) : String
+  "(define (main [p : (Ptr i64)]) : i64
+  (unsafe
+    (ptr-read p)))
+
+(unsafe
+  (define (danger [x : i64]) : i64
+    x))")
+
 (define (format-rules-self-test) : i64
   (let
     [decls : String
@@ -426,9 +442,12 @@
       (format-rules-render-source-width (format-rules-comments-source) 80)]
     [quote : String
       (format-rules-render-source-width (format-rules-quote-source) 80)]
+    [unsafe : String
+      (format-rules-render-source-width (format-rules-unsafe-source) 80)]
     (begin
       (unless (string-eq decls (format-rules-decls-expected)) (return 1))
       (unless (string-eq flow (format-rules-flow-expected)) (return 2))
       (unless (string-eq comments (format-rules-comments-expected)) (return 3))
       (unless (string-eq quote (format-rules-quote-expected)) (return 4))
+      (unless (string-eq unsafe (format-rules-unsafe-expected)) (return 5))
       42)))

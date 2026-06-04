@@ -406,7 +406,26 @@
     [(IrValueCons value rest)
       (compiler-live-set-union
         (compiler-live-value-vars value)
-        (compiler-live-value-list-vars rest))]))
+        (compiler-live-value-list-vars (box-get rest)))]))
+
+(define (compiler-live-call-args-array-vars
+  [values : (Array CompilerIrValue)]
+  [index : i64]) : CompilerLiveI64Set
+  (if (>= index (array-length values))
+    (compiler-live-set-empty)
+    (compiler-live-set-union
+      (compiler-live-value-vars (array-ref values index))
+      (compiler-live-call-args-array-vars values (+ index 1)))))
+
+(define (compiler-live-call-args-vars [args : CompilerIrCallArgs]) : CompilerLiveI64Set
+  (match args
+    [(IrCallArgsNil) (compiler-live-set-empty)]
+    [(IrCallArgsOne value) (compiler-live-value-vars value)]
+    [(IrCallArgsTwo a b)
+      (compiler-live-set-union
+        (compiler-live-value-vars a)
+        (compiler-live-value-vars b))]
+    [(IrCallArgsArray values) (compiler-live-call-args-array-vars values 0)]))
 
 (define (compiler-live-maybe-value-vars [value : CompilerIrMaybeValue]) : CompilerLiveI64Set
   (match value
@@ -419,7 +438,7 @@
     [(IrPhiInputCons value _ rest)
       (compiler-live-set-union
         (compiler-live-value-vars value)
-        (compiler-live-phi-input-vars rest))]))
+        (compiler-live-phi-input-vars (box-get rest)))]))
 
 (define (compiler-live-instr-uses [instr : CompilerIrInstr]) : CompilerLiveI64Set
   (match instr
@@ -504,12 +523,12 @@
         (compiler-live-value-vars leaf)
         (compiler-live-value-vars subleaf))]
     [(IrInstrXgetbv _ index) (compiler-live-value-vars index)]
-    [(IrInstrCall _ _ args _) (compiler-live-value-list-vars args)]
+    [(IrInstrCall _ _ args _) (compiler-live-call-args-vars args)]
     [(IrInstrCallIndirect _ func args _)
       (compiler-live-set-union
         (compiler-live-value-vars func)
-        (compiler-live-value-list-vars args))]
-    [(IrInstrTailCall _ args _) (compiler-live-value-list-vars args)]
+        (compiler-live-call-args-vars args))]
+    [(IrInstrTailCall _ args _) (compiler-live-call-args-vars args)]
     [(IrInstrStore _ value _) (compiler-live-value-vars value)]
     [(IrInstrBranch cond _ _) (compiler-live-value-vars cond)]
     [(IrInstrReturn value) (compiler-live-maybe-value-vars value)]
@@ -559,7 +578,7 @@
         [instr-uses : CompilerLiveI64Set (compiler-live-instr-uses instr)]
         [instr-defs : CompilerLiveI64Set (compiler-live-instr-defs instr)]
         (compiler-live-block-use-def-instrs
-          rest
+          (box-get rest)
           (compiler-live-set-union
             uses
             (compiler-live-set-minus instr-uses defs))
@@ -575,9 +594,9 @@
   (match instrs
     [(IrInstrNil) CompilerLiveNoInstr]
     [(IrInstrCons instr rest)
-      (match rest
+      (match (box-get rest)
         [(IrInstrNil) (CompilerLiveSomeInstr instr)]
-        [_ (compiler-live-instr-list-last rest)])]))
+        [_ (compiler-live-instr-list-last (box-get rest))])]))
 
 (define (compiler-live-block-successors [block : CompilerIrBlock]) : CompilerLiveLabelSet
   (match block
@@ -614,7 +633,7 @@
     [(IrBlockCons block rest)
       (CompilerLiveBlockCons
         (compiler-live-build-block block)
-        (compiler-live-build-blocks rest))]))
+        (compiler-live-build-blocks (box-get rest)))]))
 
 (define (compiler-live-find-block
   [blocks : CompilerLiveBlockList]
@@ -718,7 +737,7 @@
   (match instrs
     [(IrInstrNil) (CompilerLiveInstrScan CompilerLiveInstrSetNil live-out)]
     [(IrInstrCons instr rest)
-      (match (compiler-live-instr-scan rest live-out)
+      (match (compiler-live-instr-scan (box-get rest) live-out)
         [(CompilerLiveInstrScan rest-after live-after)
           (CompilerLiveInstrScan
             (CompilerLiveInstrSetCons live-after rest-after)
@@ -763,7 +782,7 @@
         [(IrBlock block-label _)
           (if (string-eq block-label label)
             (CompilerLiveSomeIrBlock block)
-            (compiler-live-find-ir-block rest label))])]))
+            (compiler-live-find-ir-block (box-get rest) label))])]))
 
 (define (compiler-live-fill-instr-after-blocks
   [ir-blocks : CompilerIrBlockList]
@@ -848,19 +867,19 @@
     IrParamNil
     (compiler-live-i64-ty)
     3
-    (IrBlockCons
+    (compiler-ir-block-cons
       (IrBlock
         "entry"
-        (IrInstrCons
+        (compiler-ir-instr-cons
           (IrInstrMov 0 (IrValueI64 1) (compiler-live-i64-ty))
-          (IrInstrCons
+          (compiler-ir-instr-cons
             (IrInstrBinOp
               1
               IrBinAdd
               (IrValueVar 0)
               (IrValueVar 2)
               (compiler-live-i64-ty))
-            (IrInstrCons
+            (compiler-ir-instr-cons
               (IrInstrReturn (IrSomeValue (IrValueVar 1)))
               IrInstrNil))))
       IrBlockNil)))
@@ -871,18 +890,22 @@
     IrParamNil
     (compiler-live-i64-ty)
     3
-    (IrBlockCons
+    (compiler-ir-block-cons
       (IrBlock
         "entry"
-        (IrInstrCons (IrInstrBranch (IrValueVar 0) "then" "else") IrInstrNil))
-      (IrBlockCons
+        (compiler-ir-instr-cons
+          (IrInstrBranch (IrValueVar 0) "then" "else")
+          IrInstrNil))
+      (compiler-ir-block-cons
         (IrBlock
           "then"
-          (IrInstrCons (IrInstrReturn (IrSomeValue (IrValueVar 1))) IrInstrNil))
-        (IrBlockCons
+          (compiler-ir-instr-cons
+            (IrInstrReturn (IrSomeValue (IrValueVar 1)))
+            IrInstrNil))
+        (compiler-ir-block-cons
           (IrBlock
             "else"
-            (IrInstrCons
+            (compiler-ir-instr-cons
               (IrInstrReturn (IrSomeValue (IrValueVar 2)))
               IrInstrNil))
           IrBlockNil)))))
@@ -893,69 +916,75 @@
     IrParamNil
     (compiler-live-i64-ty)
     4
-    (IrBlockCons
+    (compiler-ir-block-cons
       (IrBlock
         "entry"
-        (IrInstrCons (IrInstrBranch (IrValueVar 0) "left" "right") IrInstrNil))
-      (IrBlockCons
+        (compiler-ir-instr-cons
+          (IrInstrBranch (IrValueVar 0) "left" "right")
+          IrInstrNil))
+      (compiler-ir-block-cons
         (IrBlock
           "left"
-          (IrInstrCons
+          (compiler-ir-instr-cons
             (IrInstrMov 1 (IrValueI64 10) (compiler-live-i64-ty))
-            (IrInstrCons (IrInstrJump "join") IrInstrNil)))
-        (IrBlockCons
+            (compiler-ir-instr-cons (IrInstrJump "join") IrInstrNil)))
+        (compiler-ir-block-cons
           (IrBlock
             "right"
-            (IrInstrCons
+            (compiler-ir-instr-cons
               (IrInstrMov 2 (IrValueI64 20) (compiler-live-i64-ty))
-              (IrInstrCons (IrInstrJump "join") IrInstrNil)))
-          (IrBlockCons
+              (compiler-ir-instr-cons (IrInstrJump "join") IrInstrNil)))
+          (compiler-ir-block-cons
             (IrBlock
               "join"
-              (IrInstrCons
+              (compiler-ir-instr-cons
                 (IrInstrPhi
                   3
-                  (IrPhiInputCons
+                  (compiler-ir-phi-input-cons
                     (IrValueVar 1)
                     "left"
-                    (IrPhiInputCons (IrValueVar 2) "right" IrPhiInputNil))
+                    (compiler-ir-phi-input-cons
+                      (IrValueVar 2)
+                      "right"
+                      IrPhiInputNil))
                   (compiler-live-i64-ty))
-                (IrInstrCons
+                (compiler-ir-instr-cons
                   (IrInstrReturn (IrSomeValue (IrValueVar 3)))
                   IrInstrNil)))
             IrBlockNil))))))
 
 (define (compiler-live-use-def-ok?) : bool
   (match (compiler-live-block-use-def
-    (IrInstrCons
+    (compiler-ir-instr-cons
       (IrInstrMov 0 (IrValueVar 10) (compiler-live-i64-ty))
-      (IrInstrCons
+      (compiler-ir-instr-cons
         (IrInstrBinOp
           1
           IrBinAdd
           (IrValueVar 0)
           (IrValueVar 11)
           (compiler-live-i64-ty))
-        (IrInstrCons
+        (compiler-ir-instr-cons
           (IrInstrUnOp 2 IrUnNeg (IrValueVar 12) (compiler-live-i64-ty))
-          (IrInstrCons
+          (compiler-ir-instr-cons
             (IrInstrCall
               3
               "f"
-              (IrValueCons
-                (IrValueVar 1)
-                (IrValueCons (IrValueVar 13) IrValueNil))
+              (IrCallArgsTwo (IrValueVar 1) (IrValueVar 13))
               (compiler-live-i64-ty))
-            (IrInstrCons
+            (compiler-ir-instr-cons
               (IrInstrStore "g" (IrValueVar 14) (compiler-live-i64-ty))
-              (IrInstrCons
+              (compiler-ir-instr-cons
                 (IrInstrBranch (IrValueVar 15) "a" "b")
-                (IrInstrCons
+                (compiler-ir-instr-cons
                   (IrInstrPhi
                     4
-                    (IrPhiInputCons (IrValueVar 16) "a" IrPhiInputNil)
+                    (compiler-ir-phi-input-cons
+                      (IrValueVar 16)
+                      "a"
+                      IrPhiInputNil)
                     (compiler-live-i64-ty))
-                  (IrInstrCons
+                  (compiler-ir-instr-cons
                     (IrInstrReturn (IrSomeValue (IrValueVar 4)))
                     IrInstrNil)))))))))
     [(CompilerLiveUseDef uses defs)
@@ -965,20 +994,20 @@
 
 (define (compiler-live-memory-use-def-ok?) : bool
   (match (compiler-live-block-use-def
-    (IrInstrCons
+    (compiler-ir-instr-cons
       (IrInstrAlloc 0 (compiler-live-i64-ty))
-      (IrInstrCons
+      (compiler-ir-instr-cons
         (IrInstrAddrOf 1 0)
-        (IrInstrCons
+        (compiler-ir-instr-cons
           (IrInstrGep 2 (IrValueVar 1) (IrValueVar 10) (compiler-live-i64-ty))
-          (IrInstrCons
+          (compiler-ir-instr-cons
             (IrInstrLoad 3 (IrValueVar 2) (compiler-live-i64-ty))
-            (IrInstrCons
+            (compiler-ir-instr-cons
               (IrInstrStorePtr
                 (IrValueVar 2)
                 (IrValueVar 11)
                 (compiler-live-i64-ty))
-              (IrInstrCons
+              (compiler-ir-instr-cons
                 (IrInstrCast 4 (IrValueVar 3) (compiler-live-i64-ty) (AstTyI32))
                 IrInstrNil)))))))
     [(CompilerLiveUseDef uses defs)
@@ -988,11 +1017,11 @@
 
 (define (compiler-live-vector-mask-use-def-ok?) : bool
   (match (compiler-live-block-use-def
-    (IrInstrCons
+    (compiler-ir-instr-cons
       (IrInstrLaneId 0 4 (compiler-live-i64-ty))
-      (IrInstrCons
+      (compiler-ir-instr-cons
         (IrInstrSplat 1 (IrValueVar 10) 4 (compiler-live-i64-ty))
-        (IrInstrCons
+        (compiler-ir-instr-cons
           (IrInstrVectorBinOp
             2
             (IrBinAdd)
@@ -1000,9 +1029,9 @@
             (IrValueVar 1)
             4
             (compiler-live-i64-ty))
-          (IrInstrCons
+          (compiler-ir-instr-cons
             (IrInstrTailMask 3 (IrValueVar 11) (IrValueVar 12) 4)
-            (IrInstrCons
+            (compiler-ir-instr-cons
               (IrInstrPredicatedLoad
                 4
                 (IrValueVar 13)
@@ -1010,7 +1039,7 @@
                 (IrValueVar 3)
                 4
                 (compiler-live-i64-ty))
-              (IrInstrCons
+              (compiler-ir-instr-cons
                 (IrInstrPredicatedStore
                   (IrValueVar 14)
                   (IrValueVar 11)
@@ -1018,7 +1047,7 @@
                   (IrValueVar 3)
                   4
                   (compiler-live-i64-ty))
-                (IrInstrCons
+                (compiler-ir-instr-cons
                   (IrInstrMaskReduce 5 (IrMaskReduceAny) (IrValueVar 3) 4)
                   IrInstrNil))))))))
     [(CompilerLiveUseDef uses defs)

@@ -700,12 +700,14 @@
     [(AstDeclDefFn _ _ _ body) (lint-walk-tail-expr body threshold acc)]
     [(AstDeclDefMacro _ _ _ body) (lint-walk-tail-expr body threshold acc)]
     [(AstDeclTest _ body _) (lint-walk-tail-expr body threshold acc)]
+    [(AstDeclUnsafe inner) (lint-walk-decl inner threshold acc)]
     [(AstDeclComptimeDecl inner) (lint-walk-decl inner threshold acc)]
     [(AstDeclModule _) acc]
     [(AstDeclExtern _ _ _) acc]
     [(AstDeclDefEnum _ _) acc]
     [(AstDeclDefStruct _ _ _ _) acc]
     [(AstDeclExport _) acc]
+    [(AstDeclIncludeStr _ _) acc]
     [(AstDeclImport _) acc]))
 
 ;: Walk every declaration body in `decls`.

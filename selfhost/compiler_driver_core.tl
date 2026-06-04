@@ -369,7 +369,8 @@
                   (begin
                     (unsafe (arena-set! enclosing))
                     (let
-                      [escaped-program : CompilerIrProgram (clone program)]
+                      [escaped-program : CompilerIrProgram
+                        (compiler-ir-clone-program program)]
                       [escaped-spans : CompilerSourceSpans (clone spans)]
                       (begin
                         (unsafe (arena-destroy scratch-head))

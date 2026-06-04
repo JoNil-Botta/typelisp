@@ -25,12 +25,13 @@ these outcomes:
 - **Defined result:** the operation produces the specified value, including
   specified wrapping behavior where the language says arithmetic wraps.
 
-Safe code is source outside an `(unsafe ...)` context and outside helpers
-documented as unsafe by convention. An unsafe context does not disable ordinary
-type checking; it only moves responsibility for raw-pointer, foreign-ABI, and
-manual resource-reset invariants to the programmer. Optimizations may rely on
-the static type, move, borrow, and region facts below, but must not reinterpret
-accepted safe code as having behavior outside this table.
+Safe code is source outside an `(unsafe ...)` context and outside calls or
+references to declarations marked unsafe. An unsafe context does not disable
+ordinary type checking; it only moves responsibility for raw-pointer,
+foreign-ABI, and manual resource-reset invariants to the programmer.
+Optimizations may rely on the static type, move, borrow, and region facts below,
+but must not reinterpret accepted safe code as having behavior outside this
+table.
 
 | Safety area | Safe-code outcome | Binding rule and owner |
 |-------------|-------------------|------------------------|
@@ -459,7 +460,124 @@ chain.
 Until that path is complete, write explicit monomorphic declarations such as
 `MaybeI64`, `ResultStringI64`, or domain-specific structs/enums.
 
-#### 3.7.1 Typed expression macros (v1 design)
+#### 3.7.1 Comptime-generated declarations (v1 design)
+
+V1 generated declarations are concrete top-level declarations produced during
+compile time. They are TypeLisp's replacement for source-level generics and
+traits: a generator inspects compile-time metadata such as `(type T)` and
+`(type-key (type T))`, then requests or emits ordinary monomorphic
+`defstruct`, `defenum`, and `define` declarations.
+
+The source surface is the top-level `comptime-decl` declaration:
+
+```lisp test=ignore name=comptime-generated-decl-surface reason="generated declarations are specified before #893 implementation"
+(comptime-decl
+  (:generated stdlib/option-family Option_String (type-key (type String)))
+  (defenum Option_String
+    (None_String)
+    (Some_String String)))
+
+(comptime-decl
+  (:generated stdlib/option-family option-string-some? (type-key (type String)))
+  (define (option-string-some? [value : Option_String]) : bool
+    (match value
+      [(Some_String _) true]
+      [(None_String) false])))
+```
+
+`comptime-decl` is valid only at top level, after `module`/`import`
+resolution and before ordinary typechecking/lowering. Its payload is a single
+generated declaration template. V1 accepts only `defstruct`, `defenum`, and
+`define` payloads. `define` covers both value and function declarations.
+Generated `extern`, `defmacro`, `module`, `import`, `export`, `cfg`, `test`,
+and nested `comptime-decl` payloads are rejected in v1.
+
+The `(:generated generator-name generated-item-name arg-key-expr*)` metadata is
+required for reusable generated declarations. The parser may continue accepting
+legacy literal `(comptime-decl (defstruct ...))` / `(comptime-decl (defenum
+...))` templates during migration, but reusable #893 generation must use the
+metadata form.
+
+Conceptually, the source form creates one generated-declaration request. The
+compiler API for comptime generator code uses the same request record: generator
+origin span, generated identity metadata, and the `AstDecl` payload to insert.
+Generator code must not bypass that record or mutate ordinary declaration lists
+directly.
+
+Generated declaration identity is the tuple:
+
+- Generator module identity: the canonical module identity that owns
+  `generator-name`.
+- Generator identity: the resolved generator declaration name inside that
+  module.
+- Generated item name: the declared item identity for this payload. For a
+  `defstruct` or `defenum`, this is the nominal type name; for a `define`, it is
+  the value/function name.
+- Argument keys: the ordered compile-time `String` results of
+  `arg-key-expr*`. Type arguments should use `type-key`; non-type comptime
+  arguments must use stable compiler-owned keys or explicit generator-defined
+  string keys.
+
+The payload declaration name must match `generated-item-name`. The compiler may
+derive display names from keys, but the generated identity, not the display
+spelling alone, is the stable reuse key. Generated identities use canonical
+module identities, never import aliases or source-relative paths.
+
+Each `arg-key-expr` is evaluated in generated-declaration evaluation. It must
+produce a compile-time `String`; direct runtime observation of that metadata is
+rejected. `type-key` strings are opaque inputs to the identity tuple and must not
+be parsed by user programs.
+
+Repeated generation with the same identity is idempotent only when the new
+payload is structurally the same declaration after normalizing spans,
+doc-comments, and non-semantic formatting. The compiler reuses the existing
+declaration and does not create a second namespace item. Repeating the same key
+with a different declaration kind, signature, field/variant shape, body, export
+visibility, or namespace effects is an incompatible duplicate diagnostic.
+Different generated identities that bind the same visible value/type/
+constructor/variant name are ordinary duplicate namespace errors, with the
+generated keys included in the diagnostic.
+
+Generated declarations enter the same namespaces as hand-written declarations:
+
+- `defstruct` binds the nominal type, struct constructor, and exported fields
+  according to the ordinary struct/export rules.
+- `defenum` binds the nominal type plus variant constructors and patterns
+  according to the ordinary enum/export rules.
+- `define` binds the ordinary value/function namespace item.
+
+After registry insertion, generated declarations participate in symbol
+collection, typechecking, lowering, documentation extraction, tests, and
+diagnostics like source declarations. Generated functions and constructors lower
+to stable symbols derived from the canonical module identity plus declaration
+identity. Documentation tools should show generated declarations when they are
+part of the public API and include generated-origin metadata rather than
+treating them as compiler internals.
+
+Diagnostics for generated declarations report the most useful source locations:
+the generator request/call site, the generated declaration template span when
+available, and the generated identity key. Type errors inside generated
+declarations should point at the generated declaration and include an expansion
+or generation stack back to the request. Duplicate diagnostics should show both
+the existing generated identity and the conflicting request.
+
+V1 exclusions:
+
+- No source-level generic type constructors, generic functions, traits,
+  `impl` blocks, trait objects, vtables, or runtime type-erased dispatch.
+- No runtime representation for `type`, `Expr`, `ExprList`, declaration
+  metadata, generated keys, or other comptime-only values.
+- No generated public Rust compiler product surface; this is a selfhost
+  compiler feature.
+- No generated declaration kinds beyond `defstruct`, `defenum`, and `define`.
+- No cross-run ABI promise for display-name mangling beyond deterministic,
+  collision-free names within the TypeLisp module/declaration identity model.
+
+Implementation of this generated-declaration mechanism is tracked by #893.
+Downstream Option/Result and collection families must reuse this identity and
+duplicate policy rather than inventing family-specific generation paths.
+
+#### 3.7.2 Typed expression macros (v1 design)
 
 V1 macros are compile-time expression transformers. They are declared with
 `defmacro`, checked through a function-type-like `macro` type, and expanded
@@ -531,6 +649,93 @@ declare a local value/function and a local macro with the same unqualified name
 in v1. Hygiene and binding-introducing macros are not part of v1; parser-owned
 guard/conditional forms such as `when`, `unless`, and `cond` introduce no
 user-visible bindings.
+
+#### 3.7.3 Hygienic expression macros (v2 design)
+
+V2 macros use full hygienic expansion, not gensym-only renaming. Gensym is
+enough to keep a macro's temporary binder from capturing a caller identifier,
+but it does not make free identifiers in a macro template resolve in the macro's
+definition environment. TypeLisp needs both properties before macros may safely
+introduce bindings.
+
+The compiler represents macro-time syntax internally as scoped syntax objects:
+an AST node plus source span and lexical context. The source-level type remains
+the single `Expr` / `ExprList` surface from v1; scope sets, definition contexts,
+and expansion marks are compiler metadata, not source-level type parameters.
+
+Rules:
+
+- Each identifier has a printed name and a scope set. Name resolution uses the
+  scoped identifier, not only the printed name.
+- A macro declaration stores the lexical definition context in its macro
+  metadata. For exported macros, the serialized/imported macro metadata must
+  carry enough definition-context information for template free identifiers to
+  keep resolving as they did at the macro definition site.
+- Identifiers that come from a quoted or quasiquoted macro template carry the
+  macro definition context.
+- Each macro expansion adds a fresh expansion scope to identifiers introduced by
+  the template. Binding forms introduced by the template apply that fresh scope
+  to their own introduced references, so generated locals can refer to each
+  other without colliding with same-name caller locals.
+- Syntax supplied by the caller through `unquote` or `unquote-splicing`
+  preserves its use-site context. A caller expression inserted under a
+  macro-introduced binder therefore still resolves to the caller binding it
+  originally named, unless the caller explicitly supplied syntax that refers to
+  the macro-introduced identifier through a future intentional escape API.
+- Nested and recursive macro expansion compose by retaining all existing scopes
+  and adding a new expansion scope for each expansion step.
+
+`quote` and `quasiquote` both produce scoped template syntax. `unquote`
+evaluates to an `Expr` and inserts that expression with its existing scope set.
+`unquote-splicing` evaluates to an `ExprList` and inserts every element with its
+existing scope set. `unquote` and `unquote-splicing` outside quasiquote remain
+syntax errors. Converting an `Expr` to printable/debug text may drop scope
+details, but any operation that feeds syntax back into the expander must keep or
+explicitly reconstruct lexical context.
+
+Worked example: a macro-introduced temporary binding must not capture a
+same-name user variable inside an unquoted body.
+
+```lisp test=ignore name=macro-hygiene-temp-binder reason="hygienic macro expansion is tracked by #1144"
+(defmacro (with-temp-plus [value : i64] [body : i64]) : i64
+  `(let ([tmp : i64 ,value])
+     (+ tmp ,body)))
+
+(define (main) : i64
+  (let ([tmp : i64 40])
+    (with-temp-plus 1 (+ tmp 1))))
+```
+
+The result is `42`: the `tmp` in the macro template's `(+ tmp ...)` resolves to
+the macro-introduced binder, while the `tmp` inside the unquoted caller body
+keeps the caller scope and resolves to the outer `let`.
+
+Worked example: a free identifier in a macro template resolves in the macro
+definition environment even when the use site shadows the same printed name.
+
+```lisp test=ignore name=macro-hygiene-definition-context reason="hygienic macro expansion is tracked by #1144"
+(define (macro-helper [x : bool]) : bool
+  (not x))
+
+(defmacro (unless2 [condition : bool] [body : unit]) : unit
+  `(if (macro-helper ,condition)
+     ,body
+     unit))
+
+(define (main) : unit
+  (let ([macro-helper : bool true])
+    (unless2 false (print-string "ok"))))
+```
+
+The `macro-helper` referenced by the template is the top-level function visible
+where `unless2` was defined. The caller's local boolean named `macro-helper`
+does not capture that reference.
+
+Diagnostics should report source spans from the most useful user-facing syntax:
+call-site spans for invalid operands and unquoted caller syntax, template spans
+for invalid macro-produced forms, and an expansion stack when an error crosses a
+macro boundary. Diagnostics should not expose generated internal names except in
+deliberate debug output. Hygiene implementation work is tracked by #1144.
 
 ### 3.8 Type conversions (casts)
 
@@ -978,6 +1183,27 @@ Example:
 ```lisp test=ignore name=extern-link-metadata-declaration reason="requires native library fixture"
 (extern native-add (:link-search "native/lib") (:link-lib "native_math") : (-> i64 i64 i64))
 ```
+
+### 4.3.1 `(unsafe declaration)` - unsafe functions and externs
+
+An unsafe declaration is written by wrapping exactly one function `define` or
+`extern` declaration:
+
+```lisp test=ignore name=unsafe-declaration-surface reason="demonstrates call-site gating"
+(unsafe (define (raw-read [p : (Ptr i64)]) : i64
+  (unsafe (ptr-read p))))
+
+(unsafe (extern foreign-write : (-> (MutPtr i64) i64 unit)))
+```
+
+The wrapper is declaration metadata, not a runtime expression. It is preserved
+through module loading, package transformation, imports, aliases, macro
+expansion, and lowering. Safe code may mention the declared type only by entering
+an explicit `(unsafe ...)` expression; a safe direct call or safe function-value
+reference is rejected and the diagnostic names the callee. An unsafe function
+body is still checked as ordinary safe code unless the body itself uses
+`(unsafe ...)`. A local or later declaration that shadows the same name does not
+inherit the unsafe marker.
 
 ```lisp test=ignore name=extern-raw-pointer-signature reason="requires the selfhost raw-pointer checker path"
 (extern strlen : (-> (Ptr u8) u64))
@@ -2672,9 +2898,10 @@ evaluates one or more body expressions in order and returns the last value.
 
 An unsafe context does not disable normal type checking. It only permits forms
 that are rejected in safe code because they can violate memory safety, ABI
-contracts, aliasing assumptions, or region lifetime rules. Unsafe functions,
-unsafe declarations, and "unsafe by default" modules are deferred; v1 has only
-the expression/block form.
+contracts, aliasing assumptions, or region lifetime rules. Top-level unsafe
+function and extern declarations are supported through the `(unsafe
+declaration)` wrapper described in section 4.3.1. "Unsafe by default" modules
+are deferred.
 
 Initial raw pointer operation set:
 
@@ -3250,7 +3477,8 @@ not the future safe reference/borrow model (#182), not a replacement for
 - First-class arena helpers: `arena-make`, `arena-current`, `arena-mark`,
   `arena-set!`, `arena-destroy`, and `arena-rewind`; invalidating helpers
   require `(unsafe ...)`.
-- `extern` declarations.
+- `extern` declarations, including unsafe declaration metadata for externs and
+  top-level functions.
 - Multi-file modules via `import`.
 - Native x86_64 executable targets: `linux-x86_64` by default, and
   `windows-x86_64` for Windows x64 ABI output with CRT-linked runtime helpers.
@@ -3274,7 +3502,7 @@ not the future safe reference/borrow model (#182), not a replacement for
 | Mutable captures (`set!` to captured names) in lambdas | Not implemented |
 | Tail call optimization | Not implemented |
 | `struct-set!` | Not implemented |
-| Raw pointer types and `(unsafe ...)` | Implemented v1 parser/typechecker/lowering/backend surface |
+| Raw pointer types, `(unsafe ...)`, and unsafe function/extern declarations | Implemented v1 parser/typechecker/lowering/backend surface |
 | Raw pointer dereference/write/offset/cast | Implemented unsafe v1 operations; address-of, C-string helpers, volatile/atomic access, and borrow-checked references remain follow-ups |
 | Garbage collection / general `free` | Not implemented; allocation is process-lifetime by default with unsafe explicit region reset for tool-owned phase boundaries |
 | Move-only aggregate handle checking | Specified for v1 source semantics; selfhost checker implementation pending (#1048/#1049) |
@@ -3722,7 +3950,9 @@ program       ::= top-level*
 
 top-level     ::= define-var
                 | cfg-decl
+                | comptime-decl
                 | define-func
+                | unsafe-decl
                 | dispatch-decl
                 | defmacro
                 | extern-decl
@@ -3738,8 +3968,13 @@ cfg-predicate ::= ident
                 | "(" "all" cfg-predicate* ")"
                 | "(" "any" cfg-predicate* ")"
                 | "(" "not" cfg-predicate ")"
+comptime-decl ::= "(" "comptime-decl" generated-meta? generated-payload ")"
+generated-meta ::= "(" ":generated" qualified-name ident expr* ")"
+generated-payload ::= defstruct | defenum | define-var | define-func
 define-var    ::= "(" "define" ident [":" type] expr ")"
 define-func   ::= "(" "define" "(" ident param* ")" [":" type] expr ")"
+unsafe-decl   ::= "(" "unsafe" unsafe-decl-payload ")"
+unsafe-decl-payload ::= define-func | extern-decl
 dispatch-decl ::= "(" "defdispatch" ident dispatch-variant+ ")"
 dispatch-variant ::= "(" dispatch-isa ident ")"
 dispatch-isa  ::= "scalar" | "avx2" | "avx512"
@@ -3862,6 +4097,7 @@ macro-type-slot ::= type
                   | type "..."                         ; variadic final slot only
 
 module-ident  ::= ident ("/" ident)*
+qualified-name ::= ident | module-ident "/" ident
 ident         ::= [a-zA-Z_][a-zA-Z0-9_!?+-=*/<>:]*
 integer       ::= [-]?[0-9]+
 float         ::= [-]?[0-9]+\.[0-9]+

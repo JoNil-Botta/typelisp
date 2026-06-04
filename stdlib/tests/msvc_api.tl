@@ -10,6 +10,48 @@
 
 (import "stdlib/windows_setup.tl")
 
+(define (test-windows-setup-string-list-cons
+  [value : String]
+  [rest : WindowsSetupStringList]) : WindowsSetupStringList
+  (windows-setup-string-list-cons (& value) rest))
+
+(define (test-msvc-find-tool [target : String] [tool : String]) : ResultMsvcTool
+  (msvc-find-tool (& target) (& tool)))
+
+(define (test-msvc-find-tool-from-setup [target : String] [tool : String]) : ResultMsvcTool
+  (msvc-find-tool-from-setup (& target) (& tool)))
+
+(define (test-msvc-supported-target? [target : String]) : bool
+  (msvc-supported-target? (& target)))
+
+(define (test-msvc-version-greater? [left : String] [right : String]) : bool
+  (msvc-version-greater? (& left) (& right)))
+
+(define (test-msvc-toolset-root
+  [instance : WindowsSetupInstance]
+  [version : String]) : String
+  (msvc-toolset-root instance (& version)))
+
+(define (test-msvc-toolset-executable [toolset-root : String] [tool : String]) : String
+  (msvc-toolset-executable (& toolset-root) (& tool)))
+
+(define (test-msvc-toolset-lib-x64 [toolset-root : String]) : String
+  (msvc-toolset-lib-x64 (& toolset-root)))
+
+(define (test-msvc-toolset-include [toolset-root : String]) : String
+  (msvc-toolset-include (& toolset-root)))
+
+(define (test-msvc-setup-path [toolset-root : String] [sdk : WindowsSdkLayout]) : String
+  (msvc-setup-path (& toolset-root) sdk))
+
+(define (test-msvc-setup-lib [toolset-root : String] [sdk : WindowsSdkLayout]) : String
+  (msvc-setup-lib (& toolset-root) sdk))
+
+(define (test-msvc-setup-include
+  [toolset-root : String]
+  [sdk : WindowsSdkLayout]) : String
+  (msvc-setup-include (& toolset-root) sdk))
+
 ;; Assert that a discovery result is the `MsvcUnsupported` error variant.
 (define (assert-unsupported [result : ResultMsvcTool] [message : String]) : unit
   (match result
@@ -24,7 +66,7 @@
 ;; Assert that the current Windows host can discover and run MSVC `link.exe /?`.
 (define (assert-link-help-if-windows) : unit
   (if (msvc-host-windows?)
-    (match (msvc-find-tool "x86_64-pc-windows-msvc" "link.exe")
+    (match (test-msvc-find-tool "x86_64-pc-windows-msvc" "link.exe")
       [(OkMsvcTool found)
         (match (process-output
           (process-command-full
@@ -57,7 +99,7 @@
 (define (assert-msvc-setup-paths) : unit
   (let
     [packages : WindowsSetupStringList
-      (windows-setup-string-list-cons
+      (test-windows-setup-string-list-cons
         "Microsoft.VisualStudio.Component.VC.Tools.x86.x64"
         (windows-setup-string-list-empty))]
     [instance : WindowsSetupInstance
@@ -77,37 +119,37 @@
         "C:\\SDK\\Lib\\10.0.99999.0\\ucrt\\x64"
         "C:\\SDK\\Lib\\10.0.99999.0\\um\\x64"
         "C:\\SDK\\bin\\10.0.99999.0\\x64")]
-    [root : String (msvc-toolset-root instance "14.44.35207")]
+    [root : String (test-msvc-toolset-root instance "14.44.35207")]
     (begin
       (assert-string-eq
         root
         "C:\\VS\\BuildTools\\VC\\Tools\\MSVC\\14.44.35207"
         "msvc toolset root")
       (assert-string-eq
-        (msvc-toolset-executable root "link.exe")
+        (test-msvc-toolset-executable root "link.exe")
         "C:\\VS\\BuildTools\\VC\\Tools\\MSVC\\14.44.35207\\bin\\Hostx64\\x64\\link.exe"
         "msvc toolset executable")
       (assert-string-eq
-        (msvc-toolset-lib-x64 root)
+        (test-msvc-toolset-lib-x64 root)
         "C:\\VS\\BuildTools\\VC\\Tools\\MSVC\\14.44.35207\\lib\\x64"
         "msvc toolset lib")
       (assert-string-eq
-        (msvc-toolset-include root)
+        (test-msvc-toolset-include root)
         "C:\\VS\\BuildTools\\VC\\Tools\\MSVC\\14.44.35207\\include"
         "msvc toolset include")
       (assert-true
         (string-contains
-          (msvc-setup-path root sdk)
+          (test-msvc-setup-path root sdk)
           "C:\\VS\\BuildTools\\VC\\Tools\\MSVC\\14.44.35207\\bin\\Hostx64\\x64")
         "msvc setup PATH")
       (assert-true
         (string-contains
-          (msvc-setup-lib root sdk)
+          (test-msvc-setup-lib root sdk)
           "C:\\SDK\\Lib\\10.0.99999.0\\ucrt\\x64")
         "msvc setup LIB")
       (assert-true
         (string-contains
-          (msvc-setup-include root sdk)
+          (test-msvc-setup-include root sdk)
           "C:\\SDK\\Include\\10.0.99999.0\\shared")
         "msvc setup INCLUDE"))))
 
@@ -124,10 +166,10 @@
       (assert-string-eq (msvc-tool-lib tool) "C:\\lib" "msvc tool lib")
       (assert-string-eq (msvc-tool-include tool) "C:\\inc" "msvc tool include")
       (assert-true
-        (msvc-supported-target? "x86_64-pc-windows-msvc")
+        (test-msvc-supported-target? "x86_64-pc-windows-msvc")
         "msvc supported target")
       (assert-false
-        (msvc-supported-target? "x86_64-unknown-linux-gnu")
+        (test-msvc-supported-target? "x86_64-unknown-linux-gnu")
         "msvc unsupported target")
       (assert-string-eq
         (msvc-error-message (MsvcUnsupported "u"))
@@ -150,24 +192,24 @@
         3
         "msvc process env count")
       (assert-true
-        (msvc-version-greater? "17.10.0" "17.9.9")
+        (test-msvc-version-greater? "17.10.0" "17.9.9")
         "msvc version numeric compare")
       (assert-false
-        (msvc-version-greater? "17.9.9" "17.10.0")
+        (test-msvc-version-greater? "17.9.9" "17.10.0")
         "msvc version numeric compare inverse")
       (assert-false
-        (msvc-version-greater? "17.10.0" "17.10.0")
+        (test-msvc-version-greater? "17.10.0" "17.10.0")
         "msvc version equal compare")
       (assert-msvc-setup-paths)
       (if (msvc-host-windows?)
         unit
         (assert-unsupported
-          (msvc-find-tool-from-setup "x86_64-pc-windows-msvc" "link.exe")
+          (test-msvc-find-tool-from-setup "x86_64-pc-windows-msvc" "link.exe")
           "msvc setup unsupported host"))
       ;; An unsupported target yields `MsvcUnsupported` on every host: a
       ;; non-Windows host rejects first, a Windows host rejects the target.
       (assert-unsupported
-        (msvc-find-tool "x86_64-unknown-linux-gnu" "link.exe")
+        (test-msvc-find-tool "x86_64-unknown-linux-gnu" "link.exe")
         "msvc unsupported target or non-Windows host")
       (assert-link-help-if-windows)
       42)))

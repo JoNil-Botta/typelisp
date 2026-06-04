@@ -44,6 +44,25 @@
     [(ErrIoString error)
       (panic (string-append message (io-error-message error)))]))
 
+;; Windows supports temp-dir creation (mkdir + GetCurrentProcessId, #850) but
+;; not yet removal/cleanup (remove-file/remove-dir are unsupported stubs), so the
+;; Windows arm asserts a successful, unique, existing create rather than the full
+;; Linux create/write/remove lifecycle.
+(define (assert-created-temp-dir) : unit
+  (let
+    [dir-a : String
+      (expect-ok-string
+        (try-create-temp-dir "typelisp fs test")
+        "create temp dir a: ")]
+    [dir-b : String
+      (expect-ok-string
+        (try-create-temp-dir "typelisp fs test")
+        "create temp dir b: ")]
+    (begin
+      (assert-true (not (string-eq dir-a dir-b)) "temp directories are unique")
+      (assert-exists dir-a true "temp dir a exists")
+      (assert-exists dir-b true "temp dir b exists"))))
+
 (define (assert-invalid-temp-dir) : unit
   (match (try-create-temp-dir "")
     [(ErrIoString error)
@@ -141,6 +160,31 @@
       (try-rename "windows source" "")
       "windows empty rename destination is invalid")))
 
+(define (fs-test-drive-absolute? [path : String]) : bool
+  (and
+    (> (string-length path) 2)
+    (and (= (string-ref path 1) #:') (fs-path-separator? (string-ref path 2)))))
+
+(define (assert-current-dir-api) : unit
+  (match (try-current-dir)
+    [(OkIoString cwd)
+      (begin
+        (assert-true (> (string-length cwd) 0) "current dir is non-empty")
+        (assert-true
+          (if (fs-windows?)
+            (or (fs-path-starts-separator? cwd) (fs-test-drive-absolute? cwd))
+            (fs-path-starts-separator? cwd))
+          "current dir has rooted shape"))]
+    [(ErrIoString error)
+      (if (fs-windows?)
+        (assert-true
+          (io-error-unsupported? error)
+          "windows current dir may be unsupported")
+        (panic
+          (string-append
+            "linux current dir unexpectedly failed: "
+            (io-error-message error))))]))
+
 (define (main) : i64
   (let
     [joined : String (fs-path-join "left path" "right file")]
@@ -188,58 +232,165 @@
         (fs-extension ".gitignore")
         ""
         "leading-dot name has no extension")
-      (let
-        [dir-a : String
-          (expect-ok-string
-            (try-create-temp-dir "typelisp fs test")
-            "create temp dir a: ")]
-        [dir-b : String
-          (expect-ok-string
-            (try-create-temp-dir "typelisp fs test")
-            "create temp dir b: ")]
-        [file-a : String (fs-path-join dir-a "artifact with space.s")]
-        [file-b : String (fs-path-join dir-b "cleanup.obj")]
+      (assert-string-eq
+        (fs-path-normalize "")
+        "."
+        "normalize empty path to dot")
+      (assert-string-eq (fs-path-normalize ".") "." "normalize dot path")
+      (assert-string-eq
+        (fs-path-normalize "selfhost/./x/../compiler_load.tl")
+        "selfhost/compiler_load.tl"
+        "normalize dot and parent segments")
+      (assert-string-eq
+        (fs-path-normalize "target\\loader\\..\\dep.tl")
+        "target/dep.tl"
+        "normalize windows separators to slash")
+      (assert-string-eq
+        (fs-path-normalize "src//./app\\../main.tl")
+        "src/main.tl"
+        "normalize repeated and mixed separators")
+      (assert-string-eq
+        (fs-path-normalize "../pkg/lib.tl")
+        "../pkg/lib.tl"
+        "normalize preserves leading relative parent")
+      (assert-string-eq
+        (fs-path-normalize "a/../../b")
+        "../b"
+        "normalize preserves escaping relative parent")
+      (assert-string-eq
+        (fs-path-normalize "/a/..")
+        "/"
+        "normalize preserves root")
+      (assert-string-eq
+        (fs-path-normalize "\\a\\..\\b")
+        "/b"
+        "normalize rooted windows separators")
+      (assert-string-eq
+        (fs-path-normalize "C:\\tmp\\..\\file.tl")
+        "C:/file.tl"
+        "normalize drive absolute path")
+      (assert-bool-eq
+        (fs-path-absolute? "/root")
+        true
+        "slash-rooted path is absolute")
+      (assert-bool-eq
+        (fs-path-absolute? "\\root")
+        true
+        "backslash-rooted path is absolute")
+      (assert-bool-eq
+        (fs-path-absolute? "C:/root")
+        true
+        "drive slash path is absolute")
+      (assert-bool-eq
+        (fs-path-absolute? "C:\\root")
+        true
+        "drive backslash path is absolute")
+      (assert-bool-eq
+        (fs-path-absolute? "C:root")
+        false
+        "drive-relative path is not absolute")
+      (assert-bool-eq
+        (fs-path-absolute? "src/main.tl")
+        false
+        "relative path is not absolute")
+      (assert-bool-eq
+        (fs-path-safe-relative? "src/main.tl")
+        true
+        "normal relative path is safe")
+      (assert-bool-eq
+        (fs-path-safe-relative? "src//./lib/../main.tl")
+        true
+        "normalizing relative path below root is safe")
+      (assert-bool-eq
+        (fs-path-safe-relative? "")
+        false
+        "empty path is not a safe suffix")
+      (assert-bool-eq
+        (fs-path-safe-relative? ".")
+        false
+        "dot path is not a safe suffix")
+      (assert-bool-eq
+        (fs-path-safe-relative? "..")
+        false
+        "parent path is not a safe suffix")
+      (assert-bool-eq
+        (fs-path-safe-relative? "../escape.tl")
+        false
+        "leading parent traversal is not safe")
+      (assert-bool-eq
+        (fs-path-safe-relative? "a/../../escape.tl")
+        false
+        "normalized parent traversal is not safe")
+      (assert-bool-eq
+        (fs-path-safe-relative? "/abs.tl")
+        false
+        "rooted path is not a safe suffix")
+      (assert-bool-eq
+        (fs-path-safe-relative? "C:/abs.tl")
+        false
+        "drive absolute path is not a safe suffix")
+      (assert-bool-eq
+        (fs-path-safe-relative? "C:relative.tl")
+        false
+        "drive-relative path is not a safe suffix")
+      (assert-current-dir-api)
+      (if (fs-windows?)
         (begin
-          (assert-true
-            (not (string-eq dir-a dir-b))
-            "temp directories are unique")
-          (assert-exists dir-a true "temp dir a exists")
-          (assert-exists dir-b true "temp dir b exists")
-          (assert-ok-unit
-            (try-write-file file-a "assembly")
-            "write temp artifact a: ")
-          (assert-ok-unit
-            (try-write-file file-b "object")
-            "write temp artifact b: ")
-          (assert-mkdir-if-missing dir-a true)
-          (assert-exists file-a true "temp artifact a exists")
-          (assert-ok-unit (try-remove-file file-a) "remove temp artifact a: ")
-          (assert-exists file-a false "temp artifact a removed")
-          (assert-ok-unit (try-remove-dir dir-a) "remove temp dir a: ")
-          (assert-exists dir-a false "temp dir a removed")
-          (assert-ok-unit
-            (try-remove-file-if-exists file-b)
-            "cleanup temp artifact b: ")
-          (assert-ok-unit
-            (try-remove-file-if-exists file-b)
-            "cleanup missing temp artifact b: ")
-          (assert-ok-unit
-            (try-remove-dir-if-exists dir-b)
-            "cleanup temp dir b: ")
-          (assert-ok-unit
-            (try-remove-dir-if-exists dir-b)
-            "cleanup missing temp dir b: ")
-          (assert-invalid-temp-dir)
-          (if (fs-windows?)
-            (assert-windows-rename-api)
-            (let
-              [dir-c : String
-                (expect-ok-string
-                  (try-create-temp-dir "typelisp fs rename test")
-                  "create temp dir c: ")]
-              (begin
-                (assert-linux-rename-api dir-c)
-                (assert-ok-unit
-                  (try-remove-dir dir-c)
-                  "cleanup rename temp dir: "))))
-          42)))))
+          (assert-created-temp-dir)
+          (let
+            [dir : String
+              (expect-ok-string
+                (try-create-temp-dir "typelisp fs mkdir test")
+                "create temp dir mkdir: ")]
+            (assert-mkdir-if-missing dir false))
+          (assert-windows-rename-api)
+          42)
+        (let
+          [dir-a : String
+            (expect-ok-string
+              (try-create-temp-dir "typelisp fs test")
+              "create temp dir a: ")]
+          [dir-b : String
+            (expect-ok-string
+              (try-create-temp-dir "typelisp fs test")
+              "create temp dir b: ")]
+          [dir-c : String
+            (expect-ok-string
+              (try-create-temp-dir "typelisp fs rename test")
+              "create temp dir c: ")]
+          [file-a : String (fs-path-join dir-a "artifact with space.s")]
+          [file-b : String (fs-path-join dir-b "cleanup.obj")]
+          (begin
+            (assert-true
+              (not (string-eq dir-a dir-b))
+              "temp directories are unique")
+            (assert-exists dir-a true "temp dir a exists")
+            (assert-exists dir-b true "temp dir b exists")
+            (assert-ok-unit
+              (try-write-file file-a "assembly")
+              "write temp artifact a: ")
+            (assert-ok-unit
+              (try-write-file file-b "object")
+              "write temp artifact b: ")
+            (assert-mkdir-if-missing dir-a true)
+            (assert-exists file-a true "temp artifact a exists")
+            (assert-ok-unit (try-remove-file file-a) "remove temp artifact a: ")
+            (assert-exists file-a false "temp artifact a removed")
+            (assert-ok-unit (try-remove-dir dir-a) "remove temp dir a: ")
+            (assert-exists dir-a false "temp dir a removed")
+            (assert-ok-unit
+              (try-remove-file-if-exists file-b)
+              "cleanup temp artifact b: ")
+            (assert-ok-unit
+              (try-remove-file-if-exists file-b)
+              "cleanup missing temp artifact b: ")
+            (assert-ok-unit
+              (try-remove-dir-if-exists dir-b)
+              "cleanup temp dir b: ")
+            (assert-ok-unit
+              (try-remove-dir-if-exists dir-b)
+              "cleanup missing temp dir b: ")
+            (assert-invalid-temp-dir)
+            (assert-linux-rename-api dir-c)
+            (assert-ok-unit (try-remove-dir dir-c) "cleanup rename temp dir: ")
+            42))))))

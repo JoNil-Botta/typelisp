@@ -5,6 +5,8 @@
 
 (import "sym_i64_env.tl")
 
+(import "../stdlib/fs.tl")
+
 (defenum ResultCompilerLoad
   (OkCompilerLoad AstDeclList SymI64Env)
   (ErrCompilerLoad CompilerDiagnostic))
@@ -29,10 +31,6 @@
   (OkPkgResolve String)
   (ErrPkgResolve String))
 
-(defenum CompilerLoadSegmentList
-  (CompilerLoadSegmentNil)
-  (CompilerLoadSegmentCons String CompilerLoadSegmentList))
-
 (defenum CompilerLoadMaybeModuleId
   (CompilerLoadNoModuleId)
   (CompilerLoadSomeModuleId String))
@@ -49,20 +47,10 @@
   (cast (string-ref text idx) : i64))
 
 (define (compiler-load-path-separator? [c : char]) : bool
-  (or (= c #/') (= c #\\')))
+  (fs-path-separator? c))
 
 (define (compiler-load-absolute-path? [path : String]) : bool
-  (let
-    [n : i64 (string-length path)]
-    (if (= n 0)
-      false
-      (let
-        [first : char (string-ref path 0)]
-        (if (compiler-load-path-separator? first)
-          true
-          (if (> n 1)
-            (= (string-ref path 1) #:')
-            false))))))
+  (fs-path-absolute? path))
 
 (define (compiler-load-dirname [path : String]) : String
   (let
@@ -87,73 +75,8 @@
     import-path
     (string-append (compiler-load-dirname importer-path) import-path)))
 
-(define (compiler-load-rooted-path? [path : String]) : bool
-  (if (= (string-length path) 0)
-    false
-    (compiler-load-path-separator? (string-ref path 0))))
-
-(define (compiler-load-segment-list-render [segments : CompilerLoadSegmentList]) : String
-  (match segments
-    [(CompilerLoadSegmentNil) ""]
-    [(CompilerLoadSegmentCons head rest)
-      (let
-        [prefix : String (compiler-load-segment-list-render rest)]
-        (if (= (string-length prefix) 0)
-          head
-          (string-append prefix (string-append "/" head))))]))
-
-(define (compiler-load-normalize-segment
-  [segment : String]
-  [segments : CompilerLoadSegmentList]
-  [rooted : bool]) : CompilerLoadSegmentList
-  (if (or (string-eq segment "") (string-eq segment "."))
-    segments
-    (if (string-eq segment "..")
-      (match segments
-        [(CompilerLoadSegmentNil)
-          (if rooted
-            CompilerLoadSegmentNil
-            (CompilerLoadSegmentCons segment segments))]
-        [(CompilerLoadSegmentCons top rest)
-          (if (string-eq top "..")
-            (CompilerLoadSegmentCons segment segments)
-            rest)])
-      (CompilerLoadSegmentCons segment segments))))
-
 (define (compiler-load-normalize-path [path : String]) : String
-  (let
-    [n : i64 (string-length path)]
-    [i : i64 0]
-    [segment-start : i64 0]
-    [rooted : bool (compiler-load-rooted-path? path)]
-    [segments : CompilerLoadSegmentList CompilerLoadSegmentNil]
-    (begin
-      (while (< i n)
-        (begin
-          (if (compiler-load-path-separator? (string-ref path i))
-            (begin
-              (set!
-                segments
-                (compiler-load-normalize-segment
-                  (substring path segment-start (- i segment-start))
-                  segments
-                  rooted))
-              (set! segment-start (+ i 1)))
-            (set! segment-start segment-start))
-          (set! i (+ i 1))))
-      (set!
-        segments
-        (compiler-load-normalize-segment
-          (substring path segment-start (- n segment-start))
-          segments
-          rooted))
-      (let
-        [body : String (compiler-load-segment-list-render segments)]
-        (if rooted
-          (if (= (string-length body) 0)
-            "/"
-            (string-append "/" body))
-          body)))))
+  (fs-path-normalize path))
 
 (define (compiler-load-string-prefix-at?
   [text : String]
@@ -200,14 +123,16 @@
 (define (compiler-load-resolve-stdlib-root
   [suffix : String]
   [roots : CompilerLoadRootList]) : CompilerLoadMaybePath
-  (match roots
-    [(CompilerLoadRootNil) (CompilerLoadNoPath)]
-    [(CompilerLoadRootCons root rest)
-      (let
-        [candidate : String (compiler-load-join-root-path root suffix)]
-        (if (file-exists? candidate)
-          (CompilerLoadSomePath candidate)
-          (compiler-load-resolve-stdlib-root suffix rest)))]))
+  (if (fs-path-safe-relative? suffix)
+    (match roots
+      [(CompilerLoadRootNil) (CompilerLoadNoPath)]
+      [(CompilerLoadRootCons root rest)
+        (let
+          [candidate : String (compiler-load-join-root-path root suffix)]
+          (if (file-exists? candidate)
+            (CompilerLoadSomePath candidate)
+            (compiler-load-resolve-stdlib-root suffix rest)))])
+    (CompilerLoadNoPath)))
 
 (define (compiler-load-resolve-import
   [importer-path : String]
@@ -1649,6 +1574,26 @@
           "compiler-load: cannot read import target/stdlib/cl_sur_missing.tl")]
       [(OkCompilerLoadWithPaths _ _ _ _) false])))
 
+;; A configured stdlib root must not serve a suffix that lexically escapes the
+;; root with `..` (#1681).
+(define (compiler-load-stdlib-root-escape-rejected-ok?) : bool
+  (begin
+    (fs-mkdir-status "target/cl_sre_root")
+    (fs-mkdir-status "target/cl_sre_entry_dir")
+    (write-file "target/cl_sre_out.tl" "(module sre.out)
+(define v : i64 1)")
+    (write-file
+      "target/cl_sre_entry_dir/entry.tl"
+      "(module sre.entry)
+(import \"stdlib/../cl_sre_out.tl\" module sre.out as out)
+(define (main) : i64 0)")
+    (match (compiler-load-file-with-paths-and-roots
+      "target/cl_sre_entry_dir/entry.tl"
+      (sym-i64-empty)
+      (CompilerLoadRootCons "target/cl_sre_root" CompilerLoadRootNil))
+      [(ErrCompilerLoadWithPaths _) true]
+      [(OkCompilerLoadWithPaths _ _ _ _) false])))
+
 ;: --- typelisp.pkg manifest parser (#834, slice 1) ---------------------------
 ;: Parse a `typelisp.pkg` manifest, an S-expression of the form
 ;:   (package (name "...") (version "...") (kind "bin") (entry "...")
@@ -1729,30 +1674,7 @@
       (= i n))))
 
 (define (compiler-load-normal-relative-entry? [path : String]) : bool
-  (let
-    [n : i64 (string-length path)]
-    [i : i64 0]
-    [segment-start : i64 0]
-    [ok : bool (and (> n 0) (not (compiler-load-rooted-path? path)))]
-    (begin
-      (while ok
-        (if (< i n)
-          (if (compiler-load-path-separator? (string-ref path i))
-            (let
-              [segment : String
-                (substring path segment-start (- i segment-start))]
-              (if (or (string-eq segment ".") (string-eq segment ".."))
-                (set! ok false)
-                (begin
-                  (set! segment-start (+ i 1))
-                  (set! i (+ i 1)))))
-            (set! i (+ i 1)))
-          (set! ok false)))
-      (if (= i n)
-        (let
-          [segment : String (substring path segment-start (- n segment-start))]
-          (and (not (string-eq segment ".")) (not (string-eq segment ".."))))
-        false))))
+  (fs-path-safe-relative? path))
 
 (define (compiler-load-pkg-dep-alias-seen?
   [deps : CompilerPkgDepList]
@@ -2201,13 +2123,9 @@
       i
       (compiler-load-slash-index-from s (+ i 1) n))))
 
-;: True when a (normalized) relative path escapes its base via a leading `..`.
+;: True when a path is not a safe relative suffix below its package root.
 (define (compiler-load-path-escapes? [path : String]) : bool
-  (if (compiler-load-string-prefix-at? path ".." 0)
-    (if (= (string-length path) 2)
-      true
-      (= (string-ref path 2) #/'))
-    false))
+  (not (fs-path-safe-relative? path)))
 
 ;: Look up a dependency's root path by import alias.
 (define (compiler-load-pkg-dep-lookup
@@ -2414,100 +2332,137 @@
           "C:/dep.tl")))))
 
 (define (compiler-load-self-test) : i64
-  (if (compiler-load-normalize-ok?)
-    (if (compiler-load-relative-resolution-ok?)
-      (if (compiler-load-source-provenance-ok?)
-        (if (compiler-load-expected-module-conflict-ok?)
-          (if (compiler-load-duplicate-module-ok?)
-            (if (compiler-load-seen-module-ok?)
-              (if (compiler-load-cfg-import-ok?)
-                (if (compiler-load-file-import-dedup-cycle-ok?)
-                  (if (compiler-load-file-fallback-path-dedup-ok?)
-                    (if (compiler-load-import-alias-preserved-ok?)
-                      (if (compiler-load-diamond-import-ok?)
-                        (if (compiler-load-transitive-import-ok?)
-                          (if (compiler-load-missing-import-ok?)
-                            (if (compiler-load-imported-parse-error-path-ok?)
-                              (if (compiler-load-imported-duplicate-module-path-ok?)
-                                (if (compiler-load-stdlib-root-fallback-ok?)
-                                  (if (compiler-load-stdlib-searched-root-ok?)
-                                    (if (compiler-load-stdlib-unresolved-ok?)
-                                      (if (compiler-load-pkg-manifest-ok?)
-                                        (if (compiler-load-pkg-resolve-ok?)
-                                          (if (compiler-load-pkg-parent-dir-ok?)
-                                            42
-                                            (begin
-                                              (panic
-                                                "compiler-load: pkg parent-dir smoke mismatch")
-                                              0))
-                                          (begin
-                                            (panic
-                                              "compiler-load: pkg resolve smoke mismatch")
-                                            0))
-                                        (begin
-                                          (panic
-                                            "compiler-load: pkg manifest smoke mismatch")
-                                          0))
-                                      (begin
-                                        (panic
-                                          "compiler-load: stdlib unresolved smoke mismatch")
-                                        0))
-                                    (begin
-                                      (panic
-                                        "compiler-load: stdlib searched root smoke mismatch")
-                                      0))
-                                  (begin
-                                    (panic
-                                      "compiler-load: stdlib root fallback smoke mismatch")
-                                    0))
-                                (begin
-                                  (panic
-                                    "compiler-load: imported duplicate module path smoke mismatch")
-                                  0))
-                              (begin
-                                (panic
-                                  "compiler-load: imported parse error path smoke mismatch")
-                                0))
-                            (begin
-                              (panic
-                                "compiler-load: missing import smoke mismatch")
-                              0))
-                          (begin
-                            (panic
-                              "compiler-load: transitive import smoke mismatch")
-                            0))
-                        (begin
-                          (panic "compiler-load: diamond import smoke mismatch")
-                          0))
-                      (begin
-                        (panic
-                          "compiler-load: import alias preservation smoke mismatch")
-                        0))
-                    (begin
-                      (panic
-                        "compiler-load: fallback path dedup smoke mismatch")
-                      0))
-                  (begin
-                    (panic "compiler-load: import dedup/cycle smoke mismatch")
-                    0))
-                (begin
-                  (panic "compiler-load: cfg import smoke mismatch")
-                  0))
-              (begin
-                (panic "compiler-load: seen module smoke mismatch")
-                0))
-            (begin
-              (panic "compiler-load: duplicate module smoke mismatch")
-              0))
-          (begin
-            (panic "compiler-load: expected module smoke mismatch")
-            0))
+  (begin
+    (unless
+      (compiler-load-normalize-ok?)
+      (return
+        (begin
+          (panic "compiler-load: normalize smoke mismatch")
+          0)))
+    (unless
+      (compiler-load-relative-resolution-ok?)
+      (return
+        (begin
+          (panic "compiler-load: relative resolution smoke mismatch")
+          0)))
+    (unless
+      (compiler-load-source-provenance-ok?)
+      (return
         (begin
           (panic "compiler-load: source provenance smoke mismatch")
-          0))
-      (begin
-        (panic "compiler-load: relative resolution smoke mismatch")
-        0))
-    (begin
-      (panic "compiler-load: normalize smoke mismatch")
-      0)))
+          0)))
+    (unless
+      (compiler-load-expected-module-conflict-ok?)
+      (return
+        (begin
+          (panic "compiler-load: expected module smoke mismatch")
+          0)))
+    (unless
+      (compiler-load-duplicate-module-ok?)
+      (return
+        (begin
+          (panic "compiler-load: duplicate module smoke mismatch")
+          0)))
+    (unless
+      (compiler-load-seen-module-ok?)
+      (return
+        (begin
+          (panic "compiler-load: seen module smoke mismatch")
+          0)))
+    (unless
+      (compiler-load-cfg-import-ok?)
+      (return
+        (begin
+          (panic "compiler-load: cfg import smoke mismatch")
+          0)))
+    (unless
+      (compiler-load-file-import-dedup-cycle-ok?)
+      (return
+        (begin
+          (panic "compiler-load: import dedup/cycle smoke mismatch")
+          0)))
+    (unless
+      (compiler-load-file-fallback-path-dedup-ok?)
+      (return
+        (begin
+          (panic "compiler-load: fallback path dedup smoke mismatch")
+          0)))
+    (unless
+      (compiler-load-import-alias-preserved-ok?)
+      (return
+        (begin
+          (panic "compiler-load: import alias preservation smoke mismatch")
+          0)))
+    (unless
+      (compiler-load-diamond-import-ok?)
+      (return
+        (begin
+          (panic "compiler-load: diamond import smoke mismatch")
+          0)))
+    (unless
+      (compiler-load-transitive-import-ok?)
+      (return
+        (begin
+          (panic "compiler-load: transitive import smoke mismatch")
+          0)))
+    (unless
+      (compiler-load-missing-import-ok?)
+      (return
+        (begin
+          (panic "compiler-load: missing import smoke mismatch")
+          0)))
+    (unless
+      (compiler-load-imported-parse-error-path-ok?)
+      (return
+        (begin
+          (panic "compiler-load: imported parse error path smoke mismatch")
+          0)))
+    (unless
+      (compiler-load-imported-duplicate-module-path-ok?)
+      (return
+        (begin
+          (panic "compiler-load: imported duplicate module path smoke mismatch")
+          0)))
+    (unless
+      (compiler-load-stdlib-root-fallback-ok?)
+      (return
+        (begin
+          (panic "compiler-load: stdlib root fallback smoke mismatch")
+          0)))
+    (unless
+      (compiler-load-stdlib-searched-root-ok?)
+      (return
+        (begin
+          (panic "compiler-load: stdlib searched root smoke mismatch")
+          0)))
+    (unless
+      (compiler-load-stdlib-unresolved-ok?)
+      (return
+        (begin
+          (panic "compiler-load: stdlib unresolved smoke mismatch")
+          0)))
+    (unless
+      (compiler-load-stdlib-root-escape-rejected-ok?)
+      (return
+        (begin
+          (panic "compiler-load: stdlib root escape smoke mismatch")
+          0)))
+    (unless
+      (compiler-load-pkg-manifest-ok?)
+      (return
+        (begin
+          (panic "compiler-load: pkg manifest smoke mismatch")
+          0)))
+    (unless
+      (compiler-load-pkg-resolve-ok?)
+      (return
+        (begin
+          (panic "compiler-load: pkg resolve smoke mismatch")
+          0)))
+    (unless
+      (compiler-load-pkg-parent-dir-ok?)
+      (return
+        (begin
+          (panic "compiler-load: pkg parent-dir smoke mismatch")
+          0)))
+    42))

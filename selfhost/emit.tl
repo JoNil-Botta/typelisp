@@ -8,7 +8,7 @@
 ;;
 ;; #156 productizes that instruction sequence into a COMPLETE runnable `.s`:
 ;; `emit-program` wraps `emit-expr`'s body in the same `main` + `_start` skeleton
-;; the Rust backend emits. The body leaves the computed value in %rax, `main`
+;; the legacy backend emitted. The body leaves the computed value in %rax, `main`
 ;; returns it, and `_start` exits with that value - so the printed `.s`, when
 ;; assembled (`as`) + linked (`ld`) + run, EXITS 7 for `(+ 1 (* 2 3))`.
 (import "emit_core.tl")

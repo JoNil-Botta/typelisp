@@ -102,16 +102,11 @@
   (= ((make-names-reader)) 11))
 
 (define (main) : i64
-  (if (case-string-array)
-    (if (case-point-array)
-      (if (case-nested-array)
-        (if (case-fixed-array-field)
-          (if (case-fixed-array-field-mutated-after-capture)
-            (if (case-aggregate-array-field)
-              42
-              6)
-            5)
-          4)
-        3)
-      2)
-    1))
+  (begin
+    (unless (case-string-array) (return 1))
+    (unless (case-point-array) (return 2))
+    (unless (case-nested-array) (return 3))
+    (unless (case-fixed-array-field) (return 4))
+    (unless (case-fixed-array-field-mutated-after-capture) (return 5))
+    (unless (case-aggregate-array-field) (return 6))
+    42))

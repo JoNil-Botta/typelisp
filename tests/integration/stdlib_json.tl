@@ -42,24 +42,19 @@
   (match (json-parse
     " { \"name\" : \"tl\", \"items\" : [1, -2.5e3, true, false, null], \"escaped\" : \"a\\nb\" } ")
     [(OkJson doc)
-      (if (json-test-name doc)
-        (if (json-test-items doc)
-          (if (json-test-escaped doc)
-            (if (json-test-stringify doc)
-              42
-              4)
-            3)
-          2)
-        1)]
+      (begin
+        (unless (json-test-name doc) (return 1))
+        (unless (json-test-items doc) (return 2))
+        (unless (json-test-escaped doc) (return 3))
+        (unless (json-test-stringify doc) (return 4))
+        42)]
     [(ErrJson _) 7]))
 
 (define (main) : i64
   (let
     [document-code : i64 (json-test-document-code)]
-    (if (= document-code 42)
-      (if (json-test-string-escapes)
-        (if (json-test-invalid)
-          42
-          13)
-        12)
-      document-code)))
+    (begin
+      (unless (= document-code 42) (return document-code))
+      (unless (json-test-string-escapes) (return 12))
+      (unless (json-test-invalid) (return 13))
+      42)))

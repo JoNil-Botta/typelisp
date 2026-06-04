@@ -320,24 +320,6 @@ while IFS='|' read -r case_id mode source expected_code stderr_contains; do
             [ "$stderr_contains" != "-" ] || fail "$case_id run-trap missing stderr expectation"
             assert_contains "$err" "$stderr_contains" || fail "$case_id trap stderr did not match expectation"
             ;;
-        run-trap-signal)
-            # A bare hardware trap (e.g. SIGFPE from `idiv` by zero): assert the
-            # deterministic exit code only — the kernel signal produces no
-            # `tl:`-prefixed stderr message (unlike the guarded runtime aborts).
-            if [ "$HOST_OS" = windows ]; then
-                # On Windows the bare trap surfaces as a structured exception
-                # (0xC0000094 for integer divide-by-zero), which MSYS/Git Bash
-                # reports as an unstable shell code (127) — the exact-code
-                # assertion is not meaningful. The guarded abort that exits
-                # cleanly (#1654) will run as a normal run-trap here once it
-                # lands; until then the Linux corpus covers this bare-signal exit.
-                echo "[safety-corpus] skip run-trap-signal $case_id on windows (bare trap code unstable; #1654)"
-                continue
-            fi
-            echo "[safety-corpus] run-trap-signal $case_id"
-            run_program_case "$case_id" "$case_name" "$source" "$out" "$err" "$expected_code"
-            [ "$code" -eq "$expected_code" ] || fail "$case_id expected trap exit $expected_code, got $code"
-            ;;
         *)
             fail "$case_id has unknown safety corpus mode: $mode"
             ;;

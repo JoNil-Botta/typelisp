@@ -1,6 +1,6 @@
 ;; compiler_regalloc.tl - Planning-only scalar register allocation (#554).
 ;;
-;; This pass mirrors the Rust backend's planning shape without changing
+;; This pass mirrors the legacy backend's planning shape without changing
 ;; assembly emission. It computes inspectable live intervals, ineligible vars,
 ;; and register/spill homes for scalar IR values. The selfhost pools keep
 ;; %rsp/%rbp and the emitter's hard scratch registers reserved, and only admit

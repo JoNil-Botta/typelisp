@@ -532,6 +532,93 @@ in v1. Hygiene and binding-introducing macros are not part of v1; parser-owned
 guard/conditional forms such as `when`, `unless`, and `cond` introduce no
 user-visible bindings.
 
+#### 3.7.2 Hygienic expression macros (v2 design)
+
+V2 macros use full hygienic expansion, not gensym-only renaming. Gensym is
+enough to keep a macro's temporary binder from capturing a caller identifier,
+but it does not make free identifiers in a macro template resolve in the macro's
+definition environment. TypeLisp needs both properties before macros may safely
+introduce bindings.
+
+The compiler represents macro-time syntax internally as scoped syntax objects:
+an AST node plus source span and lexical context. The source-level type remains
+the single `Expr` / `ExprList` surface from v1; scope sets, definition contexts,
+and expansion marks are compiler metadata, not source-level type parameters.
+
+Rules:
+
+- Each identifier has a printed name and a scope set. Name resolution uses the
+  scoped identifier, not only the printed name.
+- A macro declaration stores the lexical definition context in its macro
+  metadata. For exported macros, the serialized/imported macro metadata must
+  carry enough definition-context information for template free identifiers to
+  keep resolving as they did at the macro definition site.
+- Identifiers that come from a quoted or quasiquoted macro template carry the
+  macro definition context.
+- Each macro expansion adds a fresh expansion scope to identifiers introduced by
+  the template. Binding forms introduced by the template apply that fresh scope
+  to their own introduced references, so generated locals can refer to each
+  other without colliding with same-name caller locals.
+- Syntax supplied by the caller through `unquote` or `unquote-splicing`
+  preserves its use-site context. A caller expression inserted under a
+  macro-introduced binder therefore still resolves to the caller binding it
+  originally named, unless the caller explicitly supplied syntax that refers to
+  the macro-introduced identifier through a future intentional escape API.
+- Nested and recursive macro expansion compose by retaining all existing scopes
+  and adding a new expansion scope for each expansion step.
+
+`quote` and `quasiquote` both produce scoped template syntax. `unquote`
+evaluates to an `Expr` and inserts that expression with its existing scope set.
+`unquote-splicing` evaluates to an `ExprList` and inserts every element with its
+existing scope set. `unquote` and `unquote-splicing` outside quasiquote remain
+syntax errors. Converting an `Expr` to printable/debug text may drop scope
+details, but any operation that feeds syntax back into the expander must keep or
+explicitly reconstruct lexical context.
+
+Worked example: a macro-introduced temporary binding must not capture a
+same-name user variable inside an unquoted body.
+
+```lisp test=ignore name=macro-hygiene-temp-binder reason="hygienic macro expansion is tracked by #1144"
+(defmacro (with-temp-plus [value : i64] [body : i64]) : i64
+  `(let ([tmp : i64 ,value])
+     (+ tmp ,body)))
+
+(define (main) : i64
+  (let ([tmp : i64 40])
+    (with-temp-plus 1 (+ tmp 1))))
+```
+
+The result is `42`: the `tmp` in the macro template's `(+ tmp ...)` resolves to
+the macro-introduced binder, while the `tmp` inside the unquoted caller body
+keeps the caller scope and resolves to the outer `let`.
+
+Worked example: a free identifier in a macro template resolves in the macro
+definition environment even when the use site shadows the same printed name.
+
+```lisp test=ignore name=macro-hygiene-definition-context reason="hygienic macro expansion is tracked by #1144"
+(define (macro-helper [x : bool]) : bool
+  (not x))
+
+(defmacro (unless2 [condition : bool] [body : unit]) : unit
+  `(if (macro-helper ,condition)
+     ,body
+     unit))
+
+(define (main) : unit
+  (let ([macro-helper : bool true])
+    (unless2 false (print-string "ok"))))
+```
+
+The `macro-helper` referenced by the template is the top-level function visible
+where `unless2` was defined. The caller's local boolean named `macro-helper`
+does not capture that reference.
+
+Diagnostics should report source spans from the most useful user-facing syntax:
+call-site spans for invalid operands and unquoted caller syntax, template spans
+for invalid macro-produced forms, and an expansion stack when an error crosses a
+macro boundary. Diagnostics should not expose generated internal names except in
+deliberate debug output. Hygiene implementation work is tracked by #1144.
+
 ### 3.8 Type conversions (casts)
 
 ```lisp test=ignore name=cast-placeholder reason=placeholder

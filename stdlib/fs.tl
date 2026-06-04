@@ -1,11 +1,12 @@
 ;# stdlib/fs.tl - Minimal filesystem helpers for TypeLisp tools (#850).
 ;#
-;# Provides recoverable temporary-directory, path-join, and cleanup helpers on
+;# Provides recoverable current-directory and temporary-directory APIs, path-join,
+;# lexical path normalization, safe relative suffix checks, and cleanup helpers on
 ;# top of compiler/runtime primitives:
 ;#
 ;# `fs-mkdir-status`, `fs-remove-file-status`, `fs-remove-dir-status`,
-;# `fs-rename-status`, `fs-read-dir-status`, `fs-read-dir`, and
-;# `fs-process-id`.
+;# `fs-rename-status`, `fs-read-dir-status`, `fs-read-dir`, `fs-process-id`,
+;# `tl_fs_current_dir_status`, and `tl_fs_current_dir`.
 ;#
 ;# Usage: `(import "stdlib/fs.tl")`
 ;#
@@ -26,6 +27,10 @@
   (OkIoStringList StringList)
   (ErrIoStringList IoError))
 
+(extern tl_fs_current_dir_status : (-> i64))
+
+(extern tl_fs_current_dir : (-> String))
+
 ;: Common host status code for attempting to create an already-existing path.
 (define fs-status-already-exists : i64
   17)
@@ -33,6 +38,10 @@
 ;: Maximum collision retries for `try-create-temp-dir`.
 (define fs-temp-attempt-limit : i64
   100)
+
+(defenum FsPathSegmentList
+  (FsPathSegmentNil)
+  (FsPathSegmentCons String FsPathSegmentList))
 
 ;: Return true on Windows-style hosts.
 (define (fs-windows?) : bool
@@ -63,6 +72,147 @@
   (let
     [n : i64 (string-length path)]
     (and (> n 0) (fs-path-separator? (string-ref path (- n 1))))))
+
+;: Return true when `path` starts with a Windows drive designator like `C:`.
+;:
+;: `C:relative` is drive-qualified but not absolute. `fs-path-safe-relative?`
+;: rejects drive-qualified strings because they are not portable root suffixes.
+(define (fs-path-drive-qualified? [path : String]) : bool
+  (and (> (string-length path) 1) (char-eq (string-ref path 1) #:')))
+
+;: Return true when `path` is rooted or drive-absolute.
+;:
+;: Both `/` and `\` count as rooted separators. Windows drive-style absolute
+;: paths require a separator after the drive designator, such as `C:/tmp` or
+;: `C:\tmp`; drive-relative strings like `C:tmp` return false.
+(define (fs-path-absolute? [path : String]) : bool
+  (let
+    [n : i64 (string-length path)]
+    (if (= n 0)
+      false
+      (if (fs-path-separator? (string-ref path 0))
+        true
+        (and
+          (> n 2)
+          (and
+            (fs-path-drive-qualified? path)
+            (fs-path-separator? (string-ref path 2))))))))
+
+(define (fs-path-segment-list-render [segments : FsPathSegmentList]) : String
+  (match segments
+    [(FsPathSegmentNil) ""]
+    [(FsPathSegmentCons head rest)
+      (let
+        [prefix : String (fs-path-segment-list-render rest)]
+        (if (= (string-length prefix) 0)
+          head
+          (string-append prefix (string-append "/" head))))]))
+
+(define (fs-path-normalize-segment
+  [segment : String]
+  [segments : FsPathSegmentList]
+  [rooted : bool]) : FsPathSegmentList
+  (if (or (string-eq segment "") (string-eq segment "."))
+    segments
+    (if (string-eq segment "..")
+      (match segments
+        [(FsPathSegmentNil)
+          (if rooted
+            FsPathSegmentNil
+            (FsPathSegmentCons segment segments))]
+        [(FsPathSegmentCons top rest)
+          (if (string-eq top "..")
+            (FsPathSegmentCons segment segments)
+            rest)])
+      (FsPathSegmentCons segment segments))))
+
+;: Lexically normalize `path` without resolving symlinks or touching the host FS.
+;:
+;: Both `/` and `\` are accepted as separators. Repeated separators and `.`
+;: segments are removed, `..` pops a normal segment, rooted paths stay rooted,
+;: and leading `..` segments are preserved for relative paths. Normalized output
+;: uses `/` as its stable separator on every host; empty relative paths normalize
+;: to `"."`.
+(define (fs-path-normalize [path : String]) : String
+  (let
+    [n : i64 (string-length path)]
+    [drive-root : bool
+      (and
+        (> n 2)
+        (and
+          (fs-path-drive-qualified? path)
+          (fs-path-separator? (string-ref path 2))))]
+    [rooted : bool
+      (if drive-root
+        true
+        (and (> n 0) (fs-path-separator? (string-ref path 0))))]
+    [i : i64
+      (if drive-root
+        3
+        (if rooted
+          1
+          0))]
+    [segment-start : i64 i]
+    [segments : FsPathSegmentList FsPathSegmentNil]
+    (begin
+      (while (< i n)
+        (begin
+          (if (fs-path-separator? (string-ref path i))
+            (begin
+              (set!
+                segments
+                (fs-path-normalize-segment
+                  (substring path segment-start (- i segment-start))
+                  segments
+                  rooted))
+              (set! segment-start (+ i 1)))
+            (set! segment-start segment-start))
+          (set! i (+ i 1))))
+      (set!
+        segments
+        (fs-path-normalize-segment
+          (substring path segment-start (- n segment-start))
+          segments
+          rooted))
+      (let
+        [body : String (fs-path-segment-list-render segments)]
+        (cond
+          [(and drive-root (= (string-length body) 0))
+            (string-append (substring path 0 2) "/")]
+          [drive-root
+            (string-append (substring path 0 2) (string-append "/" body))]
+          [(and rooted (= (string-length body) 0)) "/"]
+          [rooted (string-append "/" body)]
+          [(= (string-length body) 0) "."]
+          [else body])))))
+
+(define (fs-path-normalized-escapes? [path : String]) : bool
+  (let
+    [n : i64 (string-length path)]
+    (if (string-eq path "..")
+      true
+      (and
+        (> n 2)
+        (and
+          (char-eq (string-ref path 0) #.')
+          (and
+            (char-eq (string-ref path 1) #.')
+            (fs-path-separator? (string-ref path 2))))))))
+
+;: Return true when `path` is a non-empty relative suffix that stays below root.
+;:
+;: This is a lexical guard to use before joining user-controlled suffixes under
+;: a trusted root. It rejects empty/`.` paths, absolute or drive-qualified paths,
+;: and normalized paths whose first segment is `..`. It does not canonicalize
+;: symlinks or query the filesystem.
+(define (fs-path-safe-relative? [path : String]) : bool
+  (if (or (fs-path-absolute? path) (fs-path-drive-qualified? path))
+    false
+    (let
+      [normalized : String (fs-path-normalize path)]
+      (and
+        (not (string-eq normalized "."))
+        (not (fs-path-normalized-escapes? normalized))))))
 
 ;: Join `left` and `right` with exactly one host path separator when needed.
 ;:
@@ -262,6 +412,17 @@
     (match (env-get "TMPDIR")
       [(EnvSomeString value) value]
       [(EnvNoString) "/tmp"])))
+
+;: Return the process current directory as an owned active-arena String.
+;:
+;: The returned path is the host-reported cwd; it is not symlink-canonicalized.
+;: Unsupported targets return `ErrIoString` with `IoUnsupported`.
+(define (try-current-dir) : ResultIoString
+  (let
+    [status : i64 (tl_fs_current_dir_status)]
+    (if (= status io-status-ok)
+      (OkIoString (tl_fs_current_dir))
+      (ErrIoString (io-error-from-status "current directory" status)))))
 
 ;: Compose one candidate temporary directory basename from prefix, pid, and attempt.
 (define (fs-temp-name [prefix : String] [pid : i64] [attempt : i64]) : String

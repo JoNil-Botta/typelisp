@@ -124,12 +124,9 @@
     [broken : String (render-doc-width (sample-group-doc) 6)]
     [hard : String (render-doc-width (sample-hard-line-doc) 80)]
     [empty : String (render-doc (doc-append (doc-empty) (DText "x")))]
-    (if (string-eq flat "alpha beta")
-      (if (string-eq broken "alpha\n  beta")
-        (if (string-eq hard "a\nb")
-          (if (string-eq empty "x")
-            42
-            4)
-          3)
-        2)
-      1)))
+    (begin
+      (unless (string-eq flat "alpha beta") (return 1))
+      (unless (string-eq broken "alpha\n  beta") (return 2))
+      (unless (string-eq hard "a\nb") (return 3))
+      (unless (string-eq empty "x") (return 4))
+      42)))

@@ -123,7 +123,7 @@ end
 decision|selfhost/ast_types.tl|legacy AST type declarations only; imported by selfhost/ast.tl and has no functions to compile directly
 
 case|selfhost_build|selfhost/build.tl|assembly|skip|direct
-requires-stage0-symbol|file-read-chunk-status,file-write-status,file-flush-status,append-file-status,fs-rename-status
+requires-stage0-symbol|file-read-chunk-status,file-write-status,file-flush-status,append-file-status,fs-rename-status,fs-read-dir-status,fs-read-dir
 contains|_tl_build_cli_config_from:
 contains|_tl_source_tool_build_source:
 contains|_tl_build_config_from:
@@ -140,7 +140,7 @@ end
 # `*-run-from` entry in a shared main-free `*_cli_core.tl` module, so the
 # dispatcher's assembly must reference every command's runner.
 case|selfhost_cli|selfhost/cli.tl|assembly|exactly-one|direct
-requires-stage0-symbol|file-read-chunk-status,file-write-status,file-flush-status,append-file-status,fs-mkdir-status,write-file-status,file-exists-status,fs-rename-status
+requires-stage0-symbol|file-read-chunk-status,file-write-status,file-flush-status,append-file-status,fs-mkdir-status,write-file-status,file-exists-status,fs-rename-status,fs-read-dir-status,fs-read-dir
 contains|_tl_cli_dispatch:
 contains|_tl_build_run_from:
 contains|_tl_run_run_from:
@@ -174,7 +174,7 @@ decision|selfhost/lsp_frame_core.tl|lsp command logic (#1640): stdio JSON-RPC fr
 decision|selfhost/compiler_clone.tl|type-directed clone$<Type> helper synthesis (#1633): least-fixpoint clone-ability over the type graph plus match-reconstruct/tail-recursive AST generation for (clone x); main-less, imported by selfhost/compiler_lower.tl and exercised through the selfhost_compiler_lower case
 
 case|selfhost_build_run_core|selfhost/build_run_core.tl|assembly|skip|direct
-requires-stage0-symbol|file-read-chunk-status,file-write-status,file-flush-status,append-file-status,fs-rename-status
+requires-stage0-symbol|file-read-chunk-status,file-write-status,file-flush-status,append-file-status,fs-rename-status,fs-read-dir-status,fs-read-dir
 contains|_tl_source_tool_build_source:
 contains|_tl_source_tool_run_source:
 contains|_tl_source_tool_run_command:
@@ -184,6 +184,7 @@ contains|.L_tl_fs_mkdir_status:
 end
 
 case|selfhost_check|selfhost/check.tl|assembly|exactly-one|direct
+requires-stage0-symbol|fs-read-dir-status,fs-read-dir
 contains|_tl_selfhost_check_config_from:
 contains|_tl_selfhost_check_run_from:
 contains|_tl_selfhost_check_file:
@@ -194,6 +195,7 @@ contains|selfhost-check: --stdlib-root requires a value
 end
 
 case|selfhost_compile|selfhost/compile.tl|assembly|exactly-one|direct
+requires-stage0-symbol|fs-read-dir-status,fs-read-dir
 contains|_tl_compile_cli_config_from:
 contains|_tl_compile_cli_target:
 contains|_tl_compile_cli_invalid_opt_level:
@@ -203,7 +205,7 @@ contains|_tl_compiler_cfg_enable:
 contains|_tl_compiler_driver_compile_file_with_roots_level_mode_and_cfg:
 contains|_tl_compiler_driver_compile_file_for_target_with_roots_level_mode_and_cfg:
 contains|_tl_compiler_driver_emit_ir_summary_file_with_roots_level_and_cfg:
-contains|_tl_compiler_backend_emit_program_target_with_mode:
+contains|_tl_compiler_backend_emit_program_target_with_mode_and_crt:
 contains|compile: expected source path
 contains|compile: --target requires a value
 contains|compile: --stdlib-root requires a value
@@ -294,12 +296,14 @@ contains|linux-x86_64
 end
 
 case|selfhost_compiler_check_core|selfhost/compiler_check_core.tl|assembly|skip|direct
+requires-stage0-symbol|fs-read-dir-status,fs-read-dir
 contains|_tl_compiler_check_file:
 contains|_tl_compiler_check_file_with_roots:
 contains|_tl_compiler_check_source_with_roots:
 end
 
 case|selfhost_compiler_check_smoke|selfhost/compiler_check_smoke.tl|assembly|exactly-one|direct
+requires-stage0-symbol|fs-read-dir-status,fs-read-dir
 contains|_tl_compiler_check_self_test:
 contains|_tl_compiler_load_self_test:
 contains|_tl_compiler_check_source:
@@ -324,6 +328,7 @@ contains|_tl_compiler_diagnostic_self_test:
 end
 
 case|selfhost_compiler_driver|selfhost/compiler_driver.tl|assembly|exactly-one|direct
+requires-stage0-symbol|fs-read-dir-status,fs-read-dir
 contains|_tl_compiler_driver_compile_file:
 contains|_tl_compiler_driver_emit_file:
 contains|_tl_compiler_load_file_with_paths_and_roots_cfg:
@@ -331,6 +336,7 @@ contains|compiler-driver: expected input and output paths
 end
 
 case|selfhost_compiler_driver_core|selfhost/compiler_driver_core.tl|assembly|skip|direct
+requires-stage0-symbol|fs-read-dir-status,fs-read-dir
 contains|_tl_compiler_driver_compile_file:
 contains|_tl_compiler_driver_compile_file_with_roots_level_and_mode:
 contains|_tl_compiler_driver_compile_file_for_target:
@@ -343,7 +349,7 @@ contains|_tl_compiler_driver_emit_ir_summary_file_with_roots_level_and_cfg:
 contains|_tl_compiler_driver_compile_file_with_roots_level_mode_and_cfg:
 contains|_tl_compiler_driver_compile_file_for_target_with_roots_level_mode_and_cfg:
 contains|_tl_compiler_driver_ir_summary_render:
-contains|_tl_compiler_backend_emit_program_target_with_mode:
+contains|_tl_compiler_backend_emit_program_target_with_mode_and_crt:
 contains|_tl_compiler_backend_emit_source:
 end
 
@@ -383,6 +389,7 @@ contains|_tl_compiler_live_analyze_function:
 end
 
 case|selfhost_compiler_load|selfhost/compiler_load.tl|assembly|skip|direct
+requires-stage0-symbol|fs-read-dir-status,fs-read-dir
 contains|_tl_compiler_load_file:
 contains|_tl_compiler_load_file_with_roots:
 contains|_tl_compiler_load_file_with_paths_and_roots_cfg:
@@ -513,7 +520,7 @@ contains|_tl_typecheck_compiler_program:
 end
 
 case|selfhost_doc|selfhost/doc.tl|assembly|exactly-one|direct
-requires-stage0-symbol|file-read-chunk-status,file-write-status,file-flush-status,append-file-status,fs-rename-status
+requires-stage0-symbol|file-read-chunk-status,file-write-status,file-flush-status,append-file-status,fs-rename-status,fs-read-dir-status,fs-read-dir
 contains|_tl_doc_generate_file:
 contains|_tl_doc_generate_html_file:
 contains|_tl_doc_generate_html_module_graph:
@@ -607,7 +614,7 @@ contains|_tl_format_lex:
 end
 
 case|selfhost_doc_site_core|selfhost/doc_site_core.tl|assembly|skip|direct
-requires-stage0-symbol|fs-rename-status
+requires-stage0-symbol|fs-rename-status,fs-read-dir-status,fs-read-dir
 contains|_tl_doc_site_build:
 contains|_tl_doc_site_render_index:
 contains|_tl_doc_site_css:
@@ -623,7 +630,7 @@ contains|doc-site: duplicate output path in stdlib manifest
 end
 
 case|selfhost_doc_site|selfhost/doc_site.tl|assembly|exactly-one|direct
-requires-stage0-symbol|fs-rename-status
+requires-stage0-symbol|fs-rename-status,fs-read-dir-status,fs-read-dir
 contains|_tl_doc_site_build:
 contains|_tl_doc_site_usage:
 contains|_tl_doc_site_render_index:
@@ -634,7 +641,7 @@ contains|doc-site: expected zero args or output directory
 end
 
 case|selfhost_doc_site_smoke|selfhost/doc_site_smoke.tl|assembly|exactly-one|direct
-requires-stage0-symbol|fs-rename-status
+requires-stage0-symbol|fs-rename-status,fs-read-dir-status,fs-read-dir
 contains|_tl_doc_site_smoke:
 contains|_tl_doc_site_render_index:
 contains|_tl_doc_extract_source:
@@ -653,7 +660,7 @@ contains|_tl_doc_render_markdown:
 end
 
 case|selfhost_doc_test|selfhost/doc_test.tl|assembly|skip|direct
-requires-stage0-symbol|file-read-chunk-status,file-write-status,file-flush-status,append-file-status,fs-rename-status
+requires-stage0-symbol|file-read-chunk-status,file-write-status,file-flush-status,append-file-status,fs-rename-status,fs-read-dir-status,fs-read-dir
 contains|_tl_doc_test_extract_source:
 contains|_tl_doc_test_extract_file:
 contains|_tl_doc_test_parse_run_metadata:
@@ -682,7 +689,7 @@ contains|was expected to fail
 end
 
 case|selfhost_doc_test_smoke|selfhost/doc_test_smoke.tl|assembly|exactly-one|direct
-requires-stage0-symbol|file-read-chunk-status,file-write-status,file-flush-status,append-file-status,fs-rename-status
+requires-stage0-symbol|file-read-chunk-status,file-write-status,file-flush-status,append-file-status,fs-rename-status,fs-read-dir-status,fs-read-dir
 contains|_tl_doc_test_smoke_all:
 contains|_tl_doc_test_run_smoke:
 contains|_tl_doc_test_smoke:
@@ -891,7 +898,7 @@ contains|reader: unterminated list (missing ')')
 end
 
 case|selfhost_repl|selfhost/repl.tl|assembly|exactly-one|direct
-requires-stage0-symbol|file-read-chunk-status,file-write-status,file-flush-status,append-file-status,fs-rename-status
+requires-stage0-symbol|file-read-chunk-status,file-write-status,file-flush-status,append-file-status,fs-rename-status,fs-read-dir-status,fs-read-dir
 contains|_tl_repl_loop:
 contains|_tl_repl_handle_input:
 contains|_tl_repl_banner:
@@ -909,7 +916,7 @@ contains|tl>
 end
 
 case|selfhost_run|selfhost/run.tl|assembly|skip|direct
-requires-stage0-symbol|file-read-chunk-status,file-write-status,file-flush-status,append-file-status,fs-rename-status
+requires-stage0-symbol|file-read-chunk-status,file-write-status,file-flush-status,append-file-status,fs-rename-status,fs-read-dir-status,fs-read-dir
 contains|_tl_run_direct_from:
 contains|_tl_run_run_from:
 contains|_tl_run_cli_config_from:
@@ -918,7 +925,7 @@ contains|run: expected source path
 end
 
 case|selfhost_test|selfhost/test.tl|assembly|skip|direct
-requires-stage0-symbol|file-read-chunk-status,file-write-status,file-flush-status,append-file-status,fs-rename-status
+requires-stage0-symbol|file-read-chunk-status,file-write-status,file-flush-status,append-file-status,fs-rename-status,fs-read-dir-status,fs-read-dir
 contains|_tl_tltest_run_config:
 contains|_tl_tltest_build_harness:
 contains|_tl_tltest_run_direct:
@@ -927,7 +934,7 @@ contains|_tl_tltest_invalid_opt_level:
 contains|_tl_source_tool_assemble_and_link:
 contains|_tl_source_tool_run_executable:
 contains|_tl_optimize_program_with_level:
-contains|_tl_compiler_backend_emit_program_target_with_mode:
+contains|_tl_compiler_backend_emit_program_target_with_mode_and_crt:
 contains|test: expected source path
 contains|test: --opt-level requires a value
 contains|test: invalid --opt-level
@@ -978,7 +985,7 @@ contains|_tl_selfhost_lint_source_with_roots:
 end
 
 case|selfhost_scaffold|selfhost/scaffold.tl|assembly|skip|direct
-requires-stage0-symbol|fs-mkdir-status,write-file-status,file-exists-status,fs-rename-status
+requires-stage0-symbol|fs-mkdir-status,write-file-status,file-exists-status,fs-rename-status,fs-read-dir-status,fs-read-dir
 contains|_tl_scaffold_new:
 contains|_tl_scaffold_init:
 contains|_tl_scaffold_emit:

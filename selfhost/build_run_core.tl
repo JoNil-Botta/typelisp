@@ -26,7 +26,7 @@
   (ErrSourceToolTarget String))
 
 (defenum ResultSourceToolBackendMode
-  (OkSourceToolBackendMode)
+  (OkSourceToolBackendMode CompilerBackendMode)
   (ErrSourceToolBackendMode String))
 
 (defstruct SourceToolLinkInputs
@@ -69,22 +69,13 @@
     [(BackendTargetWindows) true]))
 
 (define (source-tool-backend-mode [command : String] [value : String]) : ResultSourceToolBackendMode
-  (if (string-eq value "scalar")
-    (OkSourceToolBackendMode)
-    (if (or (string-eq value "avx2") (string-eq value "avx512"))
+  (cond
+    [(string-eq value "scalar") (OkSourceToolBackendMode (BackendModeScalar))]
+    [(string-eq value "avx2") (OkSourceToolBackendMode (BackendModeAvx2))]
+    [(string-eq value "avx512") (OkSourceToolBackendMode (BackendModeAvx512))]
+    [else
       (ErrSourceToolBackendMode
-        (source-tool-cat3
-          command
-          ": --backend-mode "
-          (string-append
-            value
-            (string-append
-              " requires the Rust "
-              (string-append
-                command
-                " driver until selfhost SIMD support (#1014)")))))
-      (ErrSourceToolBackendMode
-        (source-tool-cat3 command ": unknown backend mode " value)))))
+        (source-tool-cat3 command ": unknown backend mode " value))]))
 
 (define (source-tool-opt-level-valid? [value : String]) : bool
   (or
@@ -136,6 +127,20 @@
 
 (define (source-tool-link-inputs-raw-args [inputs : SourceToolLinkInputs]) : ProcessStringList
   (struct-get inputs raw-args))
+
+(define (source-tool-link-inputs-empty? [inputs : SourceToolLinkInputs]) : bool
+  (and
+    (= (process-args-count (source-tool-link-inputs-libs inputs)) 0)
+    (and
+      (= (process-args-count (source-tool-link-inputs-search-dirs inputs)) 0)
+      (= (process-args-count (source-tool-link-inputs-raw-args inputs)) 0))))
+
+(define (source-tool-linux-crt-entry?
+  [target : CompilerBackendTarget]
+  [link-inputs : SourceToolLinkInputs]) : bool
+  (match target
+    [(BackendTargetLinux) (not (source-tool-link-inputs-empty? link-inputs))]
+    [(BackendTargetWindows) false]))
 
 (define (source-tool-link-inputs-add-lib
   [inputs : SourceToolLinkInputs]
@@ -517,19 +522,25 @@
   [source : String]
   [target : CompilerBackendTarget]
   [stdlib-roots : CompilerLoadRootList]
-  [opt-level : i64]) : ResultSourceToolString
+  [opt-level : i64]
+  [mode : CompilerBackendMode]
+  [link-inputs : SourceToolLinkInputs]) : ResultSourceToolString
   (match (try-read-file source)
     [(ErrIoString error)
       (ErrSourceToolString
         (source-tool-cannot-read-module-message source error))]
     [(OkIoString _)
-      (match (compiler-driver-emit-file-for-target-with-roots-and-level
+      (match (compiler-driver-emit-file-with-target-roots-level-mode-and-crt
         source
         target
+        true
         stdlib-roots
-        opt-level)
+        opt-level
+        mode
+        (source-tool-linux-crt-entry? target link-inputs))
         [(OkCompilerDriver asm)
-          (OkSourceToolString (source-tool-augment-assembly asm))]
+          (OkSourceToolString
+            (source-tool-augment-assembly-for-target asm target))]
         [(ErrCompilerDriver diag)
           (ErrSourceToolString (compiler-diagnostic-render diag))])]))
 
@@ -538,25 +549,30 @@
   [target : CompilerBackendTarget]
   [stdlib-roots : CompilerLoadRootList]
   [opt-level : i64]
+  [mode : CompilerBackendMode]
   [manifest-dir : String]
   [deps : CompilerPkgDepList]
-  [emit-entry : bool]) : ResultSourceToolString
+  [emit-entry : bool]
+  [crt-entry : bool]) : ResultSourceToolString
   (match (try-read-file source)
     [(ErrIoString error)
       (ErrSourceToolString
         (source-tool-cannot-read-module-message source error))]
     [(OkIoString _)
-      (match (compiler-driver-emit-package-file-with-target-roots-and-level
+      (match (compiler-driver-emit-package-file-with-target-roots-level-mode-and-crt
         source
         target
         true
         stdlib-roots
         opt-level
+        mode
         manifest-dir
         deps
-        emit-entry)
+        emit-entry
+        crt-entry)
         [(OkCompilerDriver asm)
-          (OkSourceToolString (source-tool-augment-assembly asm))]
+          (OkSourceToolString
+            (source-tool-augment-assembly-for-target asm target))]
         [(ErrCompilerDriver diag)
           (ErrSourceToolString (compiler-diagnostic-render diag))])]))
 
@@ -582,6 +598,22 @@ _tl_print_string:
   (if (source-tool-needs-print-string-runtime? asm)
     (string-append asm (source-tool-print-string-runtime))
     asm))
+
+(define (source-tool-noexecstack-note) : String
+  "
+    .section .note.GNU-stack,\"\",@progbits
+")
+
+(define (source-tool-augment-assembly-for-target
+  [asm : String]
+  [target : CompilerBackendTarget]) : String
+  (let
+    [base : String (source-tool-augment-assembly asm)]
+    (if (compiler-backend-target-linux? target)
+      (if (string-contains base ".note.GNU-stack")
+        base
+        (string-append base (source-tool-noexecstack-note)))
+      base)))
 
 (define (source-tool-write-file
   [path : String]
@@ -739,21 +771,35 @@ _tl_print_string:
   [obj-path : String]
   [bin-path : String]
   [link-inputs : SourceToolLinkInputs]) : ProcessCommand
-  (process-command
-    (source-tool-resolve-command "ld")
-    (process-args-cons
-      obj-path
+  (if (source-tool-link-inputs-empty? link-inputs)
+    (process-command
+      (source-tool-resolve-command "ld")
       (process-args-cons
-        "-o"
+        obj-path
         (process-args-cons
-          bin-path
+          "-o"
           (process-args-cons
-            "-dynamic-linker"
+            bin-path
             (process-args-cons
-              "/lib64/ld-linux-x86-64.so.2"
-              (process-args-append
-                (source-tool-link-inputs-linux-args link-inputs)
-                (process-args-cons "-lc" (process-args-empty))))))))))
+              "-dynamic-linker"
+              (process-args-cons
+                "/lib64/ld-linux-x86-64.so.2"
+                (process-args-cons "-lc" (process-args-empty))))))))
+    (process-command
+      (source-tool-env-command-or-default
+        "TYPELISP_LINUX_CC"
+        (source-tool-env-command-or-default
+          "CC"
+          (source-tool-resolve-command "cc")))
+      (process-args-cons
+        "-no-pie"
+        (process-args-cons
+          obj-path
+          (process-args-cons
+            "-o"
+            (process-args-cons
+              bin-path
+              (source-tool-link-inputs-linux-args link-inputs))))))))
 
 (define (source-tool-windows-link-libs) : ProcessStringList
   (process-args-cons
@@ -980,6 +1026,7 @@ _tl_print_string:
   [target : CompilerBackendTarget]
   [stdlib-roots : CompilerLoadRootList]
   [opt-level : i64]
+  [mode : CompilerBackendMode]
   [link-inputs : SourceToolLinkInputs]
   [temp-dir : String]) : i64
   (let
@@ -996,7 +1043,13 @@ _tl_print_string:
           (source-tool-clean-temp temp-dir asm-path obj-path bin-path false)
           1)]
       [(OkSourceToolLinkInputs effective-link-inputs)
-        (match (source-tool-emit-assembly source target stdlib-roots opt-level)
+        (match (source-tool-emit-assembly
+          source
+          target
+          stdlib-roots
+          opt-level
+          mode
+          effective-link-inputs)
           [(ErrSourceToolString message)
             (begin
               (print-error message)
@@ -1055,6 +1108,7 @@ _tl_print_string:
   [target : CompilerBackendTarget]
   [stdlib-roots : CompilerLoadRootList]
   [opt-level : i64]
+  [mode : CompilerBackendMode]
   [link-inputs : SourceToolLinkInputs]) : i64
   (match (source-tool-create-temp-dir "typelisp-build")
     [(OkSourceToolString temp-dir)
@@ -1065,6 +1119,7 @@ _tl_print_string:
         target
         stdlib-roots
         opt-level
+        mode
         link-inputs
         temp-dir)]
     [(ErrSourceToolString message)
@@ -1088,6 +1143,7 @@ _tl_print_string:
   [stdlib-roots : CompilerLoadRootList]
   [runtime-args : ProcessStringList]
   [opt-level : i64]
+  [mode : CompilerBackendMode]
   [link-inputs : SourceToolLinkInputs]
   [temp-dir : String]) : i64
   (let
@@ -1101,7 +1157,13 @@ _tl_print_string:
           (source-tool-clean-temp temp-dir asm-path obj-path bin-path true)
           1)]
       [(OkSourceToolLinkInputs effective-link-inputs)
-        (match (source-tool-emit-assembly source target stdlib-roots opt-level)
+        (match (source-tool-emit-assembly
+          source
+          target
+          stdlib-roots
+          opt-level
+          mode
+          effective-link-inputs)
           [(ErrSourceToolString message)
             (begin
               (print-error message)
@@ -1184,6 +1246,7 @@ _tl_print_string:
   [stdlib-roots : CompilerLoadRootList]
   [runtime-args : ProcessStringList]
   [opt-level : i64]
+  [mode : CompilerBackendMode]
   [link-inputs : SourceToolLinkInputs]) : i64
   (match (source-tool-create-temp-dir "typelisp-run")
     [(OkSourceToolString temp-dir)
@@ -1193,6 +1256,7 @@ _tl_print_string:
         stdlib-roots
         runtime-args
         opt-level
+        mode
         link-inputs
         temp-dir)]
     [(ErrSourceToolString message)

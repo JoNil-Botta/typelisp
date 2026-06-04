@@ -17,6 +17,7 @@
   (RunCliConfig
     String
     CompilerBackendTarget
+    CompilerBackendMode
     CompilerLoadRootList
     ProcessStringList
     i64
@@ -209,6 +210,7 @@
   [count : i64]
   [source : String]
   [target : CompilerBackendTarget]
+  [mode : CompilerBackendMode]
   [stdlib-roots : CompilerLoadRootList]
   [runtime-args : ProcessStringList]
   [opt-level : i64]
@@ -218,6 +220,7 @@
       (RunCliConfig
         source
         target
+        mode
         stdlib-roots
         runtime-args
         opt-level
@@ -230,6 +233,7 @@
             (RunCliConfig
               source
               target
+              mode
               stdlib-roots
               (source-tool-args-from-argv (+ idx 1) count runtime-args)
               opt-level
@@ -246,6 +250,7 @@
                     count
                     source
                     parsed-target
+                    mode
                     stdlib-roots
                     runtime-args
                     opt-level
@@ -258,12 +263,13 @@
             (let
               [value : String (arg (+ idx 1))]
               (match (source-tool-backend-mode "run" value)
-                [(OkSourceToolBackendMode)
+                [(OkSourceToolBackendMode parsed-mode)
                   (run-cli-parse-options
                     (+ idx 2)
                     count
                     source
                     target
+                    parsed-mode
                     stdlib-roots
                     runtime-args
                     opt-level
@@ -280,6 +286,7 @@
                   count
                   source
                   target
+                  mode
                   stdlib-roots
                   runtime-args
                   (string->int value)
@@ -293,6 +300,7 @@
               count
               source
               target
+              mode
               (source-tool-root-list-append stdlib-roots (arg (+ idx 1)))
               runtime-args
               opt-level
@@ -305,6 +313,7 @@
               count
               source
               target
+              mode
               stdlib-roots
               runtime-args
               opt-level
@@ -317,6 +326,7 @@
               count
               source
               target
+              mode
               stdlib-roots
               runtime-args
               opt-level
@@ -331,6 +341,7 @@
               count
               source
               target
+              mode
               stdlib-roots
               runtime-args
               opt-level
@@ -340,6 +351,7 @@
             (RunCliConfig
               source
               target
+              mode
               stdlib-roots
               (source-tool-args-from-argv idx count runtime-args)
               opt-level
@@ -360,6 +372,7 @@
           count
           source
           (source-tool-default-target)
+          (BackendModeScalar)
           CompilerLoadRootNil
           (process-args-empty)
           (compiler-optimize-default-level)
@@ -372,6 +385,7 @@
         [(RunCliConfig
             source
             target
+            mode
             stdlib-roots
             runtime-args
             opt-level
@@ -382,6 +396,7 @@
             stdlib-roots
             runtime-args
             opt-level
+            mode
             link-inputs)])]
     [(ErrRunCliConfig message)
       (begin
@@ -395,6 +410,7 @@
         [(RunCliConfig
             source
             target
+            mode
             stdlib-roots
             runtime-args
             opt-level
@@ -405,6 +421,7 @@
             stdlib-roots
             runtime-args
             opt-level
+            mode
             link-inputs)])]
     [(ErrRunCliConfig message)
       (begin

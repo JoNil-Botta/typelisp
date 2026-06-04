@@ -1,5 +1,5 @@
 {
   "exit": 0,
-  "stdout_exact": "",
-  "stderr_contains": ["Error: .type expects an expression, got a declaration", "unbound variable: answer"]
+  "stdout_exact": "TypeLisp REPL. Type .help for commands.\ntl> tl> tl> ",
+  "stderr_contains": ["Error: .type expects an expression, got a declaration", "unbound name answer"]
 }

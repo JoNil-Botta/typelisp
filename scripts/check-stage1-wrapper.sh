@@ -2,8 +2,8 @@
 set -eu
 
 # Smoke-test a TYPELISP_BIN-compatible stage1 wrapper on the Linux host-action
-# surface: compile, tokenize, parse, check, source/package build, run, repl,
-# lsp, doc, test, fmt, lint, and debug host-action.
+# surface: compile, debug tokenize/parse, check, source/package build, run,
+# repl, lsp, doc, test, fmt, lint, and debug host-action when advertised.
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
@@ -239,26 +239,44 @@ run_expect_failure compile-missing-source "$COMPILER" compile
 assert_empty "$WORKDIR/compile-missing-source.stdout"
 assert_contains "$WORKDIR/compile-missing-source.stderr" "compile: expected source path"
 
-echo "[stage1-wrapper] frontend aliases"
-run_capture tokenize "$COMPILER" tokenize "$SRC"
-assert_empty "$WORKDIR/tokenize.stderr"
-assert_contains "$WORKDIR/tokenize.stdout" "define"
-assert_contains "$WORKDIR/tokenize.stdout" "main"
-cp "$WORKDIR/tokenize.stdout" "$WORKDIR/tokenize.expected"
+run_capture help "$COMPILER" help
+assert_empty "$WORKDIR/help.stdout"
+if grep -qF "typelisp tokenize <file.tl>" "$WORKDIR/help.stderr"; then
+    HAS_TOP_LEVEL_FRONTEND_ALIASES=1
+else
+    HAS_TOP_LEVEL_FRONTEND_ALIASES=0
+fi
 
+echo "[stage1-wrapper] frontend debug commands"
 run_capture debug-tokenize "$COMPILER" debug tokenize "$SRC"
 assert_empty "$WORKDIR/debug-tokenize.stderr"
-cmp -s "$WORKDIR/debug-tokenize.stdout" "$WORKDIR/tokenize.expected" || fail "debug tokenize differs from tokenize"
-
-run_capture parse "$COMPILER" parse "$SRC"
-assert_empty "$WORKDIR/parse.stderr"
-assert_contains "$WORKDIR/parse.stdout" "Program"
-assert_contains "$WORKDIR/parse.stdout" "DefFn"
-cp "$WORKDIR/parse.stdout" "$WORKDIR/parse.expected"
+assert_contains "$WORKDIR/debug-tokenize.stdout" "define"
+assert_contains "$WORKDIR/debug-tokenize.stdout" "main"
 
 run_capture debug-parse "$COMPILER" debug parse "$SRC"
 assert_empty "$WORKDIR/debug-parse.stderr"
-cmp -s "$WORKDIR/debug-parse.stdout" "$WORKDIR/parse.expected" || fail "debug parse differs from parse"
+assert_contains "$WORKDIR/debug-parse.stdout" "Program"
+assert_contains "$WORKDIR/debug-parse.stdout" "DefFn"
+
+if [ "$HAS_TOP_LEVEL_FRONTEND_ALIASES" -eq 1 ]; then
+    run_capture tokenize "$COMPILER" tokenize "$SRC"
+    assert_empty "$WORKDIR/tokenize.stderr"
+    cmp -s "$WORKDIR/tokenize.stdout" "$WORKDIR/debug-tokenize.stdout" ||
+        fail "top-level tokenize differs from debug tokenize"
+
+    run_capture parse "$COMPILER" parse "$SRC"
+    assert_empty "$WORKDIR/parse.stderr"
+    cmp -s "$WORKDIR/parse.stdout" "$WORKDIR/debug-parse.stdout" ||
+        fail "top-level parse differs from debug parse"
+else
+    run_expect_failure tokenize-removed "$COMPILER" tokenize "$SRC"
+    assert_empty "$WORKDIR/tokenize-removed.stdout"
+    assert_contains "$WORKDIR/tokenize-removed.stderr" "unknown subcommand tokenize"
+
+    run_expect_failure parse-removed "$COMPILER" parse "$SRC"
+    assert_empty "$WORKDIR/parse-removed.stdout"
+    assert_contains "$WORKDIR/parse-removed.stderr" "unknown subcommand parse"
+fi
 
 run_capture check "$COMPILER" check "$SRC"
 assert_empty "$WORKDIR/check.stderr"
@@ -292,9 +310,15 @@ assert_empty "$WORKDIR/debug-unknown.stdout"
 assert_contains "$WORKDIR/debug-unknown.stderr" "Unknown debug command: wat"
 assert_contains "$WORKDIR/debug-unknown.stderr" "typelisp debug check <file.tl>"
 
-run_expect_failure tokenize-missing "$COMPILER" tokenize
-assert_empty "$WORKDIR/tokenize-missing.stdout"
-assert_contains "$WORKDIR/tokenize-missing.stderr" "Error: missing file argument"
+if [ "$HAS_TOP_LEVEL_FRONTEND_ALIASES" -eq 1 ]; then
+    run_expect_failure tokenize-missing "$COMPILER" tokenize
+    assert_empty "$WORKDIR/tokenize-missing.stdout"
+    assert_contains "$WORKDIR/tokenize-missing.stderr" "Error: missing file argument"
+else
+    run_expect_failure debug-tokenize-missing "$COMPILER" debug tokenize
+    assert_empty "$WORKDIR/debug-tokenize-missing.stdout"
+    assert_contains "$WORKDIR/debug-tokenize-missing.stderr" "Error: missing file argument"
+fi
 
 echo "[stage1-wrapper] build"
 run_capture build "$COMPILER" build "$SRC" -o "$BIN"
@@ -304,10 +328,7 @@ run_capture build "$COMPILER" build "$SRC" -o "$BIN"
 }
 assert_contains "$WORKDIR/build.stdout" "Generated: $BIN"
 
-if [ "${TYPELISP_STAGE1_SKIP_PACKAGE_SMOKE:-}" = "1" ]; then
-    echo "[stage1-wrapper] skipping package build smoke until the bundled stage1 build driver carries package kind artifacts"
-else
-    echo "[stage1-wrapper] package build"
+echo "[stage1-wrapper] package build"
     PKG="$WORKDIR/pkg"
     mkdir -p "$PKG/src/nested/deeper" "$PKG/vendor/math/src"
     cat > "$PKG/typelisp.pkg" <<'EOF'
@@ -396,10 +417,9 @@ EOF
     }
     assert_contains "$WORKDIR/build-package-lib.stdout" "Generated: $LIB_ARCHIVE"
 
-    run_expect_failure build-package-missing "$COMPILER" build --manifest-path "$WORKDIR/missing.pkg"
-    assert_empty "$WORKDIR/build-package-missing.stdout"
-    assert_contains "$WORKDIR/build-package-missing.stderr" "cannot read package manifest"
-fi
+run_expect_failure build-package-missing "$COMPILER" build --manifest-path "$WORKDIR/missing.pkg"
+assert_empty "$WORKDIR/build-package-missing.stdout"
+assert_contains "$WORKDIR/build-package-missing.stderr" "cannot read package manifest"
 
 echo "[stage1-wrapper] run"
 set +e
@@ -442,7 +462,8 @@ run_stdin_capture repl-session "$WORKDIR/repl-session.in" "$COMPILER" repl
 assert_contains "$WORKDIR/repl-session.stdout" "TypeLisp REPL commands:"
 assert_contains "$WORKDIR/repl-session.stdout" ".type <expr>"
 assert_contains "$WORKDIR/repl-session.stdout" "bool"
-assert_contains "$WORKDIR/repl-session.stderr" "REPL evaluation is not implemented yet"
+assert_contains "$WORKDIR/repl-session.stdout" "tl> 3"
+assert_empty "$WORKDIR/repl-session.stderr"
 
 run_expect_failure repl-args "$COMPILER" repl unexpected
 assert_empty "$WORKDIR/repl-args.stdout"
@@ -480,13 +501,7 @@ assert_contains "$WORKDIR/lsp-diagnostics.stdout" "typecheck: return type mismat
 assert_contains "$WORKDIR/lsp-diagnostics.stdout" '"diagnostics":[]'
 
 echo "[stage1-wrapper] doc"
-if [ "${TYPELISP_STAGE1_SKIP_DOC_SMOKE:-}" = "1" ]; then
-    echo "[stage1-wrapper] doc generation skipped"
-    run_capture doc-help "$COMPILER" doc help
-    assert_empty "$WORKDIR/doc-help.stdout"
-    assert_contains "$WORKDIR/doc-help.stderr" "typelisp doc <file.tl>"
-else
-    DOC_DIR="$WORKDIR/doc"
+DOC_DIR="$WORKDIR/doc"
     DOC_STDLIB="$DOC_DIR/stdlib"
     DOC_ENTRY="$DOC_DIR/entry.tl"
     DOC_LOCAL="$DOC_DIR/local.tl"
@@ -528,13 +543,9 @@ EOF
     echo "[stage1-wrapper] doc --test"
     run_capture doc-test "$COMPILER" doc --test "$DOC_ENTRY" --stdlib-root "$DOC_STDLIB"
     assert_empty "$WORKDIR/doc-test.stderr"
-    assert_contains "$WORKDIR/doc-test.stdout" "Doc tests passed: 1 example(s)"
-fi
+assert_contains "$WORKDIR/doc-test.stdout" "Doc tests passed: 1 example(s)"
 
-if [ "${TYPELISP_STAGE1_SKIP_TEST_SMOKE:-}" = "1" ]; then
-    echo "[stage1-wrapper] test commands skipped"
-else
-    echo "[stage1-wrapper] test --check"
+echo "[stage1-wrapper] test --check"
     TEST_SRC="$WORKDIR/inline-test.tl"
     cat > "$TEST_SRC" <<'EOF'
 (import "stdlib/test.tl")
@@ -635,9 +646,8 @@ EOF
         echo "stage1 wrapper test bad-target case unexpectedly succeeded" >&2
         exit 1
     fi
-    assert_empty "$WORKDIR/test-bad-target.stdout"
-    assert_contains "$WORKDIR/test-bad-target.stderr" "test: unknown target nope"
-fi
+assert_empty "$WORKDIR/test-bad-target.stdout"
+assert_contains "$WORKDIR/test-bad-target.stderr" "test: unknown target nope"
 
 echo "[stage1-wrapper] fmt"
 format_manifest | sort > "$WORKDIR/format-expected.txt"
@@ -678,11 +688,15 @@ run_capture fmt-golden-check "$@"
 assert_empty "$WORKDIR/fmt-golden-check.stdout"
 assert_empty "$WORKDIR/fmt-golden-check.stderr"
 
-cp "tests/format_golden/decls.tl" "$WORKDIR/fmt-changed.tl"
+cat > "$WORKDIR/fmt-changed.tl" <<'EOF'
+(define (main) : i64
+(+ 1 2))
+EOF
+cp "$WORKDIR/fmt-changed.tl" "$WORKDIR/fmt-changed.expected"
 run_expect_failure fmt-check-changed "$COMPILER" fmt --check "$WORKDIR/fmt-changed.tl"
 assert_empty "$WORKDIR/fmt-check-changed.stdout"
 assert_contains "$WORKDIR/fmt-check-changed.stderr" "fmt: would reformat"
-check_file_exact "$WORKDIR/fmt-changed.tl" "tests/format_golden/decls.tl"
+check_file_exact "$WORKDIR/fmt-changed.tl" "$WORKDIR/fmt-changed.expected"
 
 run_expect_failure fmt-missing "$COMPILER" fmt "$WORKDIR/missing.tl"
 assert_empty "$WORKDIR/fmt-missing.stdout"
@@ -694,14 +708,11 @@ assert_empty "$WORKDIR/fmt-parse-error.stdout"
 assert_nonempty "$WORKDIR/fmt-parse-error.stderr"
 
 echo "[stage1-wrapper] lint"
-run_capture lint-help "$COMPILER" lint help
-assert_empty "$WORKDIR/lint-help.stdout"
-assert_contains "$WORKDIR/lint-help.stderr" "typelisp lint <file.tl>"
+assert_contains "$WORKDIR/help.stderr" "typelisp lint <file.tl>"
 
 run_expect_failure lint-missing "$COMPILER" lint
 assert_empty "$WORKDIR/lint-missing.stdout"
-assert_contains "$WORKDIR/lint-missing.stderr" "Error: missing file argument"
-assert_contains "$WORKDIR/lint-missing.stderr" "typelisp lint <file.tl>"
+assert_contains "$WORKDIR/lint-missing.stderr" "expected input path"
 
 run_capture lint-clean "$COMPILER" lint "$SRC"
 assert_empty "$WORKDIR/lint-clean.stderr"
@@ -736,55 +747,61 @@ assert_empty "$WORKDIR/lint-parse-error.stdout"
 assert_nonempty "$WORKDIR/lint-parse-error.stderr"
 
 echo "[stage1-wrapper] debug host-action"
-mkdir -p "$(dirname -- "$HOST_ACTION_BIN")"
-{
-    printf 'typelisp-host-plan v1\n'
-    printf 'action build-source\n'
-    printf 'source %s:%s\n' "${#SRC}" "$SRC"
-    printf 'output %s:%s\n' "${#HOST_ACTION_BIN}" "$HOST_ACTION_BIN"
-    printf 'target linux-x86_64\n'
-    printf 'backend-mode scalar\n'
-    printf 'end\n'
-} > "$WORKDIR/host-action.in"
-run_capture host-action "$COMPILER" debug host-action < "$WORKDIR/host-action.in"
-[ -x "$HOST_ACTION_BIN" ] || {
-    echo "debug host-action did not write executable $HOST_ACTION_BIN" >&2
-    exit 1
-}
-assert_contains "$WORKDIR/host-action.stdout" "Generated: $HOST_ACTION_BIN"
+if grep -qF "stage1 wrapper commands" "$WORKDIR/help.stderr"; then
+    mkdir -p "$(dirname -- "$HOST_ACTION_BIN")"
+    {
+        printf 'typelisp-host-plan v1\n'
+        printf 'action build-source\n'
+        printf 'source %s:%s\n' "${#SRC}" "$SRC"
+        printf 'output %s:%s\n' "${#HOST_ACTION_BIN}" "$HOST_ACTION_BIN"
+        printf 'target linux-x86_64\n'
+        printf 'backend-mode scalar\n'
+        printf 'end\n'
+    } > "$WORKDIR/host-action.in"
+    run_capture host-action "$COMPILER" debug host-action < "$WORKDIR/host-action.in"
+    [ -x "$HOST_ACTION_BIN" ] || {
+        echo "debug host-action did not write executable $HOST_ACTION_BIN" >&2
+        exit 1
+    }
+    assert_contains "$WORKDIR/host-action.stdout" "Generated: $HOST_ACTION_BIN"
 
-cat > "$SCRATCH_ASM" <<'EOF'
+    cat > "$SCRATCH_ASM" <<'EOF'
 .globl _start
 _start:
     mov $5, %rdi
     mov $60, %rax
     syscall
 EOF
-{
-    printf 'typelisp-host-plan v1\n'
-    printf 'action run-scratch-assembly\n'
-    printf 'scratch-assembly-path %s:%s\n' "${#SCRATCH_ASM}" "$SCRATCH_ASM"
-    printf 'target linux-x86_64\n'
-    printf 'backend-mode scalar\n'
-    printf 'end\n'
-} > "$WORKDIR/host-action-scratch.in"
-set +e
-"$COMPILER" debug host-action < "$WORKDIR/host-action-scratch.in" \
-    > "$WORKDIR/host-action-scratch.stdout" \
-    2> "$WORKDIR/host-action-scratch.stderr"
-scratch_status=$?
-set -e
-if [ "$scratch_status" -ne 5 ]; then
-    echo "debug host-action scratch expected exit 5, got $scratch_status" >&2
-    echo "stdout:" >&2
-    sed 's/^/  /' "$WORKDIR/host-action-scratch.stdout" >&2 || true
-    echo "stderr:" >&2
-    sed 's/^/  /' "$WORKDIR/host-action-scratch.stderr" >&2 || true
-    exit 1
+    {
+        printf 'typelisp-host-plan v1\n'
+        printf 'action run-scratch-assembly\n'
+        printf 'scratch-assembly-path %s:%s\n' "${#SCRATCH_ASM}" "$SCRATCH_ASM"
+        printf 'target linux-x86_64\n'
+        printf 'backend-mode scalar\n'
+        printf 'end\n'
+    } > "$WORKDIR/host-action-scratch.in"
+    set +e
+    "$COMPILER" debug host-action < "$WORKDIR/host-action-scratch.in" \
+        > "$WORKDIR/host-action-scratch.stdout" \
+        2> "$WORKDIR/host-action-scratch.stderr"
+    scratch_status=$?
+    set -e
+    if [ "$scratch_status" -ne 5 ]; then
+        echo "debug host-action scratch expected exit 5, got $scratch_status" >&2
+        echo "stdout:" >&2
+        sed 's/^/  /' "$WORKDIR/host-action-scratch.stdout" >&2 || true
+        echo "stderr:" >&2
+        sed 's/^/  /' "$WORKDIR/host-action-scratch.stderr" >&2 || true
+        exit 1
+    fi
+    [ ! -f "$SCRATCH_ASM" ] || {
+        echo "debug host-action scratch did not remove $SCRATCH_ASM" >&2
+        exit 1
+    }
+else
+    run_expect_failure host-action-unsupported "$COMPILER" debug host-action
+    assert_empty "$WORKDIR/host-action-unsupported.stdout"
+    assert_contains "$WORKDIR/host-action-unsupported.stderr" "Unknown debug command: host-action"
 fi
-[ ! -f "$SCRATCH_ASM" ] || {
-    echo "debug host-action scratch did not remove $SCRATCH_ASM" >&2
-    exit 1
-}
 
 echo "stage1 wrapper smoke passed"

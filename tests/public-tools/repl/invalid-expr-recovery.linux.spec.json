@@ -1,5 +1,5 @@
 {
   "exit": 0,
-  "stdout_exact": "8\n",
-  "stderr_contains": ["numeric types"]
+  "stdout_exact": "TypeLisp REPL. Type .help for commands.\ntl> tl> tl> 8\ntl> ",
+  "stderr_contains": ["integer operator expects matching integer operands"]
 }

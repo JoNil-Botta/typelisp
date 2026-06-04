@@ -1,5 +1,5 @@
 {
   "exit": 0,
   "stdout_contains": ["TypeLisp REPL commands:"],
-  "stderr_contains": ["lexer error", "unknown named character literal", "parse error"]
+  "stderr_contains": ["lexer:", "unknown named character literal", "parse error"]
 }

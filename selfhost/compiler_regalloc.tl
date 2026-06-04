@@ -6,6 +6,8 @@
 ;; %rsp/%rbp and the emitter's hard scratch registers reserved, and only admit
 ;; caller-saved integer/XMM registers for values that cannot be clobbered by
 ;; call emission.
+(import "../stdlib/io.tl")
+
 (import "compiler_liveness.tl")
 
 (defenum CompilerRegStringList
@@ -351,6 +353,14 @@
       (compiler-reg-var-type-insert types dst elem-ty)]
     [(IrInstrMaskReduce dst _ _ _)
       (compiler-reg-var-type-insert types dst (AstTyBool))]
+    [(IrInstrEntryArgc dst) (compiler-reg-var-type-insert types dst (AstTyI64))]
+    [(IrInstrEntryArgv dst)
+      (compiler-reg-var-type-insert types dst (AstTyPtr (AstTyPtr (AstTyU8))))]
+    [(IrInstrEntryEnvp dst)
+      (compiler-reg-var-type-insert types dst (AstTyPtr (AstTyPtr (AstTyU8))))]
+    [(IrInstrCpuId dst _ _ _)
+      (compiler-reg-var-type-insert types dst (AstTyI64))]
+    [(IrInstrXgetbv dst _) (compiler-reg-var-type-insert types dst (AstTyI64))]
     [(IrInstrCall dst _ _ ty) (compiler-reg-var-type-insert types dst ty)]
     [(IrInstrPhi dst _ ty) (compiler-reg-var-type-insert types dst ty)]
     [_ types]))

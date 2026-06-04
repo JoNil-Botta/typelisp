@@ -27,8 +27,10 @@
   (OkIoStringList StringList)
   (ErrIoStringList IoError))
 
+;: Runtime status probe for retrieving the current working directory.
 (extern tl_fs_current_dir_status : (-> i64))
 
+;: Runtime string probe for retrieving the current working directory.
 (extern tl_fs_current_dir : (-> String))
 
 ;: Common host status code for attempting to create an already-existing path.
@@ -39,6 +41,7 @@
 (define fs-temp-attempt-limit : i64
   100)
 
+;: Reversed path segment stack used by lexical path normalization.
 (defenum FsPathSegmentList
   (FsPathSegmentNil)
   (FsPathSegmentCons String FsPathSegmentList))
@@ -98,6 +101,7 @@
             (fs-path-drive-qualified? path)
             (fs-path-separator? (string-ref path 2))))))))
 
+;: Render a reversed normalized path segment stack using `/` separators.
 (define (fs-path-segment-list-render [segments : FsPathSegmentList]) : String
   (match segments
     [(FsPathSegmentNil) ""]
@@ -108,6 +112,7 @@
           head
           (string-append prefix (string-append "/" head))))]))
 
+;: Fold one lexical path segment into the normalized segment stack.
 (define (fs-path-normalize-segment
   [segment : String]
   [segments : FsPathSegmentList]
@@ -186,6 +191,7 @@
           [(= (string-length body) 0) "."]
           [else body])))))
 
+;: Return true when a normalized relative path still escapes via leading `..`.
 (define (fs-path-normalized-escapes? [path : String]) : bool
   (let
     [n : i64 (string-length path)]

@@ -44,7 +44,13 @@
                   "Incremental Linker")
                 "link.exe /? output"))]
           [(ErrProcessOutput error) (panic (process-error-message error))])]
-      [(ErrMsvcTool error) (panic (msvc-error-message error))])
+      [(ErrMsvcTool error)
+        (match error
+          [(MsvcSetupUnavailable message)
+            (assert-true
+              (> (string-length message) 0)
+              "msvc setup unavailable has message")]
+          [_ (panic (msvc-error-message error))])])
     unit))
 
 ;; Assert that the pure path assembly helpers build the expected MSVC layout.

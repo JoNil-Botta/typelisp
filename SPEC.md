@@ -927,6 +927,9 @@ defaults to target C ABI and uses `name` as the external linker symbol.
 Metadata may appear before `:`:
 
 - `(:abi c)` selects the C ABI. Unknown ABI names are rejected.
+- `(:abi c-varargs fixed-count)` selects the target C varargs ABI. The
+  `fixed-count` value is the number of non-variadic leading parameters in the
+  declared extern signature.
 - `(:symbol "exact_name")` supplies the external linker symbol independently of
   the local TypeLisp name.
 - `(:link-lib "name")` adds a native library input for source `build`/`run`.
@@ -957,6 +960,11 @@ aggregate storage.
 Raw pointer signatures do not make the pointer safe: nullability, validity,
 aliasing, lifetime, mutability, and target ABI correctness remain the caller and
 callee's contract.
+
+For `c-varargs` externs, the backend emits the extra platform call setup needed
+by the C ABI: SysV x86_64 sets `%al` to the vector-register argument count, and
+Windows x64 duplicates variadic floating-point register arguments into the
+corresponding integer argument registers.
 
 Example:
 ```lisp test=check name=extern-declaration
@@ -1270,6 +1278,12 @@ Predicates are inspired by Rust `cfg`:
 - `(any predicate...)` is true when any operand is true; with no operands it is
   false.
 - `(not predicate)` negates exactly one predicate.
+
+In addition to explicit `--cfg` names, the compiler enables target OS predicates
+from the selected backend target. `linux-x86_64` enables `linux`, `unix`,
+`target-linux`, and `os-linux`. `windows-x86_64` enables `windows`,
+`target-windows`, and `os-windows`. These names are available to both top-level
+and expression-level `cfg` forms, including imports.
 
 Inactive branches must still be lexically valid S-expressions, but they are not
 parsed as TypeLisp declarations or expressions. This is intended for stage and
@@ -1601,7 +1615,7 @@ without moving it. In v1 these are limited to:
 - Immutable borrow expressions `(& place)` / `(& lifetime place)` and reference
   parameters once the selfhost syntax/provenance/escape slices land
   (#1033-#1035).
-- Compatibility inspection builtins whose current signatures are not yet
+- Compatibility inspection calls whose current signatures are not yet
   reference-typed: `length`/`string-length`, `string-ref`/`char-at`,
   `string-eq`/`string=?`, `string->int`, `print-string`/`print-str`,
   `print-error`, dynamic-array `length`/`array-length`, `array-ref` when the
@@ -2697,36 +2711,17 @@ surface. Those are follow-ups to the raw pointer/FFI track
 
 ### 6.1 Builtin functions (lowered to IR calls)
 
+Public I/O, argv, environment, filesystem, panic/error, and CPU capability
+helpers are standard-library definitions, not implicit compiler builtins. Import
+`stdlib/io.tl`, `stdlib/env.tl`, `stdlib/fs.tl`, or `stdlib/cpu.tl` to use those
+surfaces. The backend may still emit private runtime symbols used by those
+stdlib extern wrappers.
+
 | Builtin | Signature | Description |
 |---------|-----------|-------------|
 | `print` | `i64 → unit` | Print integer to stdout + newline |
 | `print-bool` | `bool → unit` | Print `true`/`false` to stdout + newline |
-| `print-float` | `f64 → unit` | Print floating-point value to stdout using `%.17g` + newline |
-| `print-char` | `char → unit` | Print ASCII character to stdout |
 | `print-newline` | `→ unit` | Print newline to stdout |
-| `print-string` | `String → unit` | Print string bytes to stdout |
-| `print-str` | `String → unit` | Alias for `print-string` |
-| `print-error` | `String → unit` | Print string bytes to stderr |
-| `arg-count` | `→ i64` | Get Linux process `argc` |
-| `arg` | `i64 → String` | Get argv entry as an owned String |
-| `read-file` | `String → String` | Read whole file contents; panics on error |
-| `write-file` | `String String → unit` | Write whole file contents; panics on error |
-| `file-exists?` | `String → bool` | Return true when a filesystem path exists; panics on unexpected syscall/path errors |
-| `read-file-status` | `String → i64` | Return 0 when `read-file` should succeed, otherwise a positive host status code |
-| `write-file-status` | `String String → i64` | Write whole file contents and return 0 on success or a positive host status code |
-| `append-file-status` | `String String → i64` | Append contents without truncating, create the file when missing, and return 0 on success or a positive host status code |
-| `file-exists-status` | `String → i64` | Return 0 when a path exists, otherwise a positive host status code such as not-found |
-| `file-open-status` | `String i64 → i64` | Open a runtime-managed file-handle slot; return a positive handle id on success or a negative host status code |
-| `file-close-status` | `i64 → i64` | Close a runtime-managed file-handle slot; return 0 on success or a positive host status code |
-| `file-read-chunk-status` | `i64 i64 → i64` | Read once from a runtime-managed handle into the per-handle last-read slot; return 0 on success or a positive host status code |
-| `file-write-status` | `i64 String → i64` | Write all bytes from a `String` to a runtime-managed write handle; return 0 on success or a positive host status code |
-| `file-flush-status` | `i64 → i64` | Flush a runtime-managed write handle; return 0 on success or a positive host status code |
-| `file-read-chunk-bytes` | `i64 → String` | Return the bytes stored by the last successful `file-read-chunk-status` call for a handle |
-| `file-read-chunk-eof?` | `i64 → bool` | Return the sticky EOF state stored by the last successful `file-read-chunk-status` call for a handle |
-| `read-stdin-line` | `→ String` | Read one stdin line without trailing newline; blank line returns `""` and does not set EOF |
-| `read-stdin-bytes` | `i64 → String` | Read up to `n` stdin bytes; negative counts panic, short reads occur only at EOF |
-| `stdin-eof?` | `→ bool` | Report whether the most recent stdin read hit EOF before a full line/requested byte count |
-| `flush-stdout` | `→ unit` | Flush stdout where the target has buffered stdout; panics on flush error |
 | `length` | `(Array t) → i64` | Get dynamic array length |
 | `length` | `String → i64` | Get string byte length |
 | `array-length` | `(Array t) → i64` | Get dynamic array length |
@@ -3248,7 +3243,7 @@ not the future safe reference/borrow model (#182), not a replacement for
 - Strings: literals, `string-ref`/`char-at`, `string-length`/`length`,
   `string-eq`/`string=?`, `string-append`/`string-concat`,
   `substring`/`string-slice`, `string->int`, `int->string`,
-  `print-string`/`print-str`, `print-error`.
+  `print-string`/`print-str`, `print-char`, `print-float`, `print-error`.
 - Bootstrap I/O helpers: `arg-count`, `arg`, `read-file`, `write-file`,
   `file-exists?`, `file-open`, `file-close`, `file-read-chunk`,
   `read-stdin-line`, `read-stdin-bytes`, `stdin-eof?`, `flush-stdout`.
@@ -3259,11 +3254,11 @@ not the future safe reference/borrow model (#182), not a replacement for
 - Multi-file modules via `import`.
 - Native x86_64 executable targets: `linux-x86_64` by default, and
   `windows-x86_64` for Windows x64 ABI output with CRT-linked runtime helpers.
-- Builtin `print`, `print-bool`, `print-float`, `print-char`,
-  `print-newline`, `print-string`/`print-str`, `print-error`,
-  `string-append`/`string-concat`, `read-file`, `write-file`, `file-exists?`,
-  `read-stdin-line`, `read-stdin-bytes`, `stdin-eof?`, `flush-stdout`,
-  `panic`/`error`.
+- Builtin `print`, `print-bool`, `print-newline`, and string/array primitives such as
+  `string-append`/`string-concat`.
+- Stdlib-owned runtime wrappers in `stdlib/io.tl`, `stdlib/env.tl`,
+  `stdlib/fs.tl`, and `stdlib/cpu.tl` for argv, file I/O, stdio, panic/error,
+  environment variables, filesystem status helpers, and CPUID/XGETBV.
 
 ### 8.2 What does NOT work (yet)
 
@@ -3753,6 +3748,7 @@ macro-operand ::= "[" ident ":" type "]"
                 | "[" ident ":" type "..." "]"      ; variadic final operand only
 extern-decl   ::= "(" "extern" ident extern-meta* ":" type ")"
 extern-meta   ::= "(" ":abi" "c" ")"
+                | "(" ":abi" "c-varargs" integer ")"
                 | "(" ":symbol" string ")"
                 | "(" ":link-lib" string ")"
                 | "(" ":link-search" string ")"

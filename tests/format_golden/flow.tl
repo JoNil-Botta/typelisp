@@ -1,1 +1,11 @@
-(define (main [x : i64]) : i64 (begin (let ([y : i64 1]) (if (< x y) (while (< x 10) (set! x (+ x 1))) x)) (match (Some x) [(Some v) v] [None 0])))
+(define (main [x : i64]) : i64
+  (begin
+    (let
+      [y : i64 1]
+      (if (< x y)
+        (while (< x 10)
+          (set! x (+ x 1)))
+        x))
+    (match (Some x)
+      [(Some v) v]
+      [None 0])))

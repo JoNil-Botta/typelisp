@@ -10,6 +10,8 @@
 ;; Evaluation is purely functional: the environment is an immutable cons list
 ;; threaded through recursion, and the step budget ("fuel") is threaded through
 ;; results so the evaluator stays deterministic without a mutable counter.
+(import "../stdlib/io.tl")
+
 (import "compiler_ast_types.tl")
 
 (import "compiler_diagnostic.tl")
@@ -410,7 +412,18 @@
     [(AstExprPtrToInt _) "ptr->int"]
     [(AstExprIntToPtr _ _) "int->ptr"]
     [(AstExprBox _) "box"]
-    [(AstExprBoxGet _) "box-get"]))
+    [(AstExprBoxGet _) "box-get"]
+    [(AstExprStringData _) "string-data"]
+    [(AstExprStringFromBytes _ _) "string-from-bytes"]
+    [(AstExprArrayData _) "array-data"]
+    [(AstExprProgramArgc) "program-argc"]
+    [(AstExprProgramArgv) "program-argv"]
+    [(AstExprProgramEnvp) "program-envp"]
+    [(AstExprCpuIdEax _ _) "cpuid-eax"]
+    [(AstExprCpuIdEbx _ _) "cpuid-ebx"]
+    [(AstExprCpuIdEcx _ _) "cpuid-ecx"]
+    [(AstExprCpuIdEdx _ _) "cpuid-edx"]
+    [(AstExprXgetbv _) "xgetbv"]))
 
 (define (ctfe-value-type-name [value : CompilerCtfeValue]) : String
   (match value
@@ -2666,6 +2679,55 @@
     [(AstExprReturn a-inner)
       (match b
         [(AstExprReturn b-inner) (ctfe-expr-eq a-inner b-inner)]
+        [_ false])]
+    [(AstExprStringData a-inner)
+      (match b
+        [(AstExprStringData b-inner) (ctfe-expr-eq a-inner b-inner)]
+        [_ false])]
+    [(AstExprStringFromBytes a-ptr a-len)
+      (match b
+        [(AstExprStringFromBytes b-ptr b-len)
+          (and (ctfe-expr-eq a-ptr b-ptr) (ctfe-expr-eq a-len b-len))]
+        [_ false])]
+    [(AstExprArrayData a-inner)
+      (match b
+        [(AstExprArrayData b-inner) (ctfe-expr-eq a-inner b-inner)]
+        [_ false])]
+    [(AstExprProgramArgc)
+      (match b
+        [(AstExprProgramArgc) true]
+        [_ false])]
+    [(AstExprProgramArgv)
+      (match b
+        [(AstExprProgramArgv) true]
+        [_ false])]
+    [(AstExprProgramEnvp)
+      (match b
+        [(AstExprProgramEnvp) true]
+        [_ false])]
+    [(AstExprCpuIdEax a-leaf a-subleaf)
+      (match b
+        [(AstExprCpuIdEax b-leaf b-subleaf)
+          (and (ctfe-expr-eq a-leaf b-leaf) (ctfe-expr-eq a-subleaf b-subleaf))]
+        [_ false])]
+    [(AstExprCpuIdEbx a-leaf a-subleaf)
+      (match b
+        [(AstExprCpuIdEbx b-leaf b-subleaf)
+          (and (ctfe-expr-eq a-leaf b-leaf) (ctfe-expr-eq a-subleaf b-subleaf))]
+        [_ false])]
+    [(AstExprCpuIdEcx a-leaf a-subleaf)
+      (match b
+        [(AstExprCpuIdEcx b-leaf b-subleaf)
+          (and (ctfe-expr-eq a-leaf b-leaf) (ctfe-expr-eq a-subleaf b-subleaf))]
+        [_ false])]
+    [(AstExprCpuIdEdx a-leaf a-subleaf)
+      (match b
+        [(AstExprCpuIdEdx b-leaf b-subleaf)
+          (and (ctfe-expr-eq a-leaf b-leaf) (ctfe-expr-eq a-subleaf b-subleaf))]
+        [_ false])]
+    [(AstExprXgetbv a-index)
+      (match b
+        [(AstExprXgetbv b-index) (ctfe-expr-eq a-index b-index)]
         [_ false])]
     [(AstExprSpanned a-inner _) (ctfe-expr-eq a-inner b)]
     [_ false]))

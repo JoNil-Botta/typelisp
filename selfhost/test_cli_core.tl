@@ -4,6 +4,8 @@
 ;; lowers them into private unit-returning functions plus a generated `main`,
 ;; then assembles, links, and runs that generated harness directly. Normal
 ;; compile paths ignore `AstDeclTest`.
+(import "../stdlib/io.tl")
+
 (import "build_run_core.tl")
 
 (import "compiler_backend.tl")
@@ -334,7 +336,7 @@
 
 (define (tltest-print-expr [text : String]) : AstExpr
   (AstExprCall
-    (AstExprVar "print-error")
+    (AstExprVar "__tl_test_print_error")
     (AstExprCons (AstExprLiteral (AstLitString text)) AstExprNil)))
 
 (define (tltest-call-expr [name : String]) : AstExpr
@@ -362,6 +364,75 @@
   (string-append
     "TypeLisp tests passed: "
     (string-append (int->string count) " test(s)\n")))
+
+(define (tltest-print-runtime-write-symbol [target : CompilerBackendTarget]) : String
+  (match target
+    [(BackendTargetLinux) "write"]
+    [(BackendTargetWindows) "_write"]))
+
+(define (tltest-print-runtime-write-type) : AstType
+  (AstTyFunc
+    (AstTypeCons
+      (AstTyI32)
+      (AstTypeCons (AstTyPtr (AstTyU8)) (AstTypeCons (AstTyI32) AstTypeNil)))
+    (AstTyI32)))
+
+(define (tltest-print-runtime-write-decl [target : CompilerBackendTarget]) : AstDecl
+  (AstDeclExtern
+    "__tl_test_write"
+    (AstExternMetadata
+      (AstExternAbiC)
+      (tltest-print-runtime-write-symbol target)
+      AstExternLinkInputNil)
+    (tltest-print-runtime-write-type)))
+
+(define (tltest-text-param-list) : AstParamList
+  (AstParamCons (AstParam "text" (AstTyString) false) AstParamNil))
+
+(define (tltest-text-length-expr) : AstExpr
+  (AstExprCall
+    (AstExprVar "string-length")
+    (AstExprCons (AstExprVar "text") AstExprNil)))
+
+(define (tltest-print-runtime-write-call) : AstExpr
+  (AstExprCall
+    (AstExprVar "__tl_test_write")
+    (AstExprCons
+      (AstExprCast (AstExprLiteral (AstLitInt 2)) (AstTyI32))
+      (AstExprCons
+        (AstExprUnsafe
+          (AstExprCons (AstExprStringData (AstExprVar "text")) AstExprNil))
+        (AstExprCons
+          (AstExprCast (tltest-text-length-expr) (AstTyI32))
+          AstExprNil)))))
+
+(define (tltest-print-runtime-print-decl) : AstDecl
+  (AstDeclDefFn
+    "__tl_test_print_error"
+    (tltest-text-param-list)
+    (AstTyUnit)
+    (AstExprBegin
+      (AstExprCons
+        (tltest-print-runtime-write-call)
+        (AstExprCons (AstExprLiteral (AstLitUnit)) AstExprNil)))))
+
+(define (tltest-print-runtime-decls [target : CompilerBackendTarget]) : AstDeclList
+  (AstDeclCons
+    (tltest-print-runtime-write-decl target)
+    (AstDeclCons (tltest-print-runtime-print-decl) AstDeclNil)))
+
+(define (tltest-program-with-print-runtime
+  [program : AstProgram]
+  [target : CompilerBackendTarget]) : AstProgram
+  (match program
+    [(AstProgram decls)
+      (AstProgram
+        (tltest-decl-list-append (tltest-print-runtime-decls target) decls))]))
+
+(define (tltest-paths-with-print-runtime [paths : AstDeclPathList]) : AstDeclPathList
+  (AstDeclPathCons
+    "<generated test runtime>"
+    (AstDeclPathCons "<generated test runtime>" paths)))
 
 (define (tltest-main-exprs [tests : InlineTestList] [count : i64]) : AstExprList
   (match tests
@@ -536,7 +607,23 @@
       (tltest-reach-mark-expr offset (tltest-reach-mark-expr ptr names))]
     [(AstExprPtrCast ptr _) (tltest-reach-mark-expr ptr names)]
     [(AstExprPtrToInt ptr) (tltest-reach-mark-expr ptr names)]
-    [(AstExprIntToPtr value _) (tltest-reach-mark-expr value names)]))
+    [(AstExprIntToPtr value _) (tltest-reach-mark-expr value names)]
+    [(AstExprStringData inner) (tltest-reach-mark-expr inner names)]
+    [(AstExprStringFromBytes ptr len)
+      (tltest-reach-mark-expr len (tltest-reach-mark-expr ptr names))]
+    [(AstExprArrayData inner) (tltest-reach-mark-expr inner names)]
+    [(AstExprProgramArgc) names]
+    [(AstExprProgramArgv) names]
+    [(AstExprProgramEnvp) names]
+    [(AstExprCpuIdEax leaf subleaf)
+      (tltest-reach-mark-expr subleaf (tltest-reach-mark-expr leaf names))]
+    [(AstExprCpuIdEbx leaf subleaf)
+      (tltest-reach-mark-expr subleaf (tltest-reach-mark-expr leaf names))]
+    [(AstExprCpuIdEcx leaf subleaf)
+      (tltest-reach-mark-expr subleaf (tltest-reach-mark-expr leaf names))]
+    [(AstExprCpuIdEdx leaf subleaf)
+      (tltest-reach-mark-expr subleaf (tltest-reach-mark-expr leaf names))]
+    [(AstExprXgetbv index) (tltest-reach-mark-expr index names)]))
 
 (define (tltest-reach-mark-tests [tests : InlineTestList] [names : SymI64Env]) : SymI64Env
   (match tests
@@ -661,8 +748,11 @@
 (define (tltest-check-only
   [program : AstProgram]
   [paths : AstDeclPathList]
-  [count : i64]) : i64
-  (match (typecheck-compiler-program-with-paths program paths)
+  [count : i64]
+  [target : CompilerBackendTarget]) : i64
+  (match (typecheck-compiler-program-with-paths
+    (tltest-program-with-print-runtime program target)
+    (tltest-paths-with-print-runtime paths))
     [(OkCompilerTypecheck _)
       (begin
         (print-string
@@ -817,27 +907,20 @@
         (print-error (tltest-unknown-target target))
         1)]
     [(OkSourceToolTarget backend-target)
-      (match backend-target
-        [(BackendTargetWindows)
+      (match (source-tool-create-temp-dir "typelisp-test")
+        [(OkSourceToolString temp-dir)
+          (tltest-run-harness-in-temp
+            source
+            (tltest-program-with-print-runtime program backend-target)
+            (tltest-paths-with-print-runtime paths)
+            backend-target
+            opt-level
+            temp-dir)]
+        [(ErrSourceToolString message)
           (begin
             (print-error
-              "test: direct inline harness execution is unsupported on windows-x86_64")
-            1)]
-        [(BackendTargetLinux)
-          (match (source-tool-create-temp-dir "typelisp-test")
-            [(OkSourceToolString temp-dir)
-              (tltest-run-harness-in-temp
-                source
-                program
-                paths
-                backend-target
-                opt-level
-                temp-dir)]
-            [(ErrSourceToolString message)
-              (begin
-                (print-error
-                  (string-append "test: failed to create temp dir: " message))
-                1)])])]))
+              (string-append "test: failed to create temp dir: " message))
+            1)])]))
 
 (define (tltest-no-tests-check [decls : AstDeclList] [paths : AstDeclPathList]) : i64
   (match (typecheck-compiler-program-with-paths (AstProgram decls) paths)
@@ -869,32 +952,43 @@
 (define (tltest-run-config [config : TestConfig]) : i64
   (match config
     [(TestConfig source target mode roots opt-level test-mode)
-      (match (compiler-load-file-with-paths-and-roots
-        source
-        (sym-i64-empty)
-        roots)
-        [(OkCompilerLoadWithPaths decls paths _ _)
-          (match (tltest-build-harness source decls paths)
-            [(InlineHarness program harness-paths count)
-              (if (= count 0)
-                (match test-mode
-                  [(TestModeCheck) (tltest-no-tests-check decls paths)]
-                  [(TestModeRun)
-                    (tltest-no-tests-run source target mode opt-level)])
-                (match test-mode
-                  [(TestModeCheck)
-                    (tltest-check-only program harness-paths count)]
-                  [(TestModeRun)
-                    (tltest-run-direct
-                      source
-                      program
-                      harness-paths
-                      target
-                      opt-level)]))])]
-        [(ErrCompilerLoadWithPaths diag)
+      (match (source-tool-target target)
+        [(ErrSourceToolTarget _)
           (begin
-            (print-error (compiler-diagnostic-render diag))
-            1)])]))
+            (print-error (tltest-unknown-target target))
+            1)]
+        [(OkSourceToolTarget backend-target)
+          (match (compiler-load-file-with-paths-and-roots-cfg
+            source
+            (sym-i64-empty)
+            roots
+            (compiler-driver-target-cfgs backend-target (compiler-cfg-empty)))
+            [(OkCompilerLoadWithPaths decls paths _ _)
+              (match (tltest-build-harness source decls paths)
+                [(InlineHarness program harness-paths count)
+                  (if (= count 0)
+                    (match test-mode
+                      [(TestModeCheck) (tltest-no-tests-check decls paths)]
+                      [(TestModeRun)
+                        (tltest-no-tests-run source target mode opt-level)])
+                    (match test-mode
+                      [(TestModeCheck)
+                        (tltest-check-only
+                          program
+                          harness-paths
+                          count
+                          backend-target)]
+                      [(TestModeRun)
+                        (tltest-run-direct
+                          source
+                          program
+                          harness-paths
+                          target
+                          opt-level)]))])]
+            [(ErrCompilerLoadWithPaths diag)
+              (begin
+                (print-error (compiler-diagnostic-render diag))
+                1)])])]))
 
 ;; Run the `test` command over arguments starting at `start`.
 (define (tltest-run-from [start : i64] [count : i64]) : i64

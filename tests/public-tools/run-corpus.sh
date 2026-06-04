@@ -42,9 +42,6 @@ case "$MODE" in
         exit 1
         ;;
 esac
-STAGE1_WRAPPER=${TYPELISP_PUBLIC_TOOLS_STAGE1_WRAPPER:-0}
-SKIP_CURRENT_LSP_IMPORT_CLEAR=${TYPELISP_PUBLIC_TOOLS_SKIP_CURRENT_LSP_IMPORT_CLEAR:-0}
-
 rm -rf "$WORKDIR"
 mkdir -p "$WORKDIR"
 
@@ -263,7 +260,19 @@ check_exact_if_present() {
     if json_has_key "$spec" "$key"; then
         expected="$WORKDIR/expected.$$.$key"
         write_json_string_value "$spec" "$key" "$expected"
-        if ! cmp -s "$actual" "$expected"; then
+        actual_cmp=$actual
+        expected_cmp=$expected
+        actual_normalized=
+        expected_normalized=
+        if [ "$HOST_OS" = windows ]; then
+            actual_normalized="$WORKDIR/actual.$$.$key.normalized"
+            expected_normalized="$WORKDIR/expected.$$.$key.normalized"
+            tr -d '\r' < "$actual" > "$actual_normalized"
+            tr -d '\r' < "$expected" > "$expected_normalized"
+            actual_cmp=$actual_normalized
+            expected_cmp=$expected_normalized
+        fi
+        if ! cmp -s "$actual_cmp" "$expected_cmp"; then
             {
                 printf '%s mismatch\n' "$label"
                 printf 'expected:\n'
@@ -272,7 +281,7 @@ check_exact_if_present() {
                 sed 's/^/  /' "$actual" || true
             } >> "$errors"
         fi
-        rm -f "$expected"
+        rm -f "$expected" "$actual_normalized" "$expected_normalized"
     fi
 }
 
@@ -603,11 +612,11 @@ build_selfhost_binary() {
 
     if [ "$HOST_OS" = linux ]; then
         command -v as >/dev/null 2>&1 || {
-            printf '  SKIP selfhost %s: missing assembler\n' "$name" >&2
+            printf '  FAIL selfhost %s: missing assembler\n' "$name" >&2
             return 1
         }
         command -v ld >/dev/null 2>&1 || {
-            printf '  SKIP selfhost %s: missing linker\n' "$name" >&2
+            printf '  FAIL selfhost %s: missing linker\n' "$name" >&2
             return 1
         }
         asm="$bin_path.s"
@@ -617,16 +626,22 @@ build_selfhost_binary() {
         code=$?
         set -e
         if [ "$code" -ne 0 ]; then
-            printf '  SKIP selfhost %s: compile failed\n' "$name" >&2
+            printf '  FAIL selfhost %s: compile failed\n' "$name" >&2
+            sed 's/^/    /' "$WORKDIR/build-$name.out" >&2 || true
+            sed 's/^/    /' "$WORKDIR/build-$name.err" >&2 || true
             return 1
         fi
         if ! as "$asm" -o "$obj" >> "$WORKDIR/build-$name.out" 2>> "$WORKDIR/build-$name.err"; then
-            printf '  SKIP selfhost %s: assemble failed\n' "$name" >&2
+            printf '  FAIL selfhost %s: assemble failed\n' "$name" >&2
+            sed 's/^/    /' "$WORKDIR/build-$name.out" >&2 || true
+            sed 's/^/    /' "$WORKDIR/build-$name.err" >&2 || true
             return 1
         fi
         if ! ld "$obj" -o "$bin_path" -dynamic-linker /lib64/ld-linux-x86-64.so.2 -lc \
             >> "$WORKDIR/build-$name.out" 2>> "$WORKDIR/build-$name.err"; then
-            printf '  SKIP selfhost %s: link failed\n' "$name" >&2
+            printf '  FAIL selfhost %s: link failed\n' "$name" >&2
+            sed 's/^/    /' "$WORKDIR/build-$name.out" >&2 || true
+            sed 's/^/    /' "$WORKDIR/build-$name.err" >&2 || true
             return 1
         fi
     else
@@ -635,7 +650,9 @@ build_selfhost_binary() {
         code=$?
         set -e
         if [ "$code" -ne 0 ]; then
-            printf '  SKIP selfhost %s: build failed\n' "$name" >&2
+            printf '  FAIL selfhost %s: build failed\n' "$name" >&2
+            sed 's/^/    /' "$WORKDIR/build-$name.out" >&2 || true
+            sed 's/^/    /' "$WORKDIR/build-$name.err" >&2 || true
             return 1
         fi
     fi
@@ -687,9 +704,7 @@ run_selfhost_lsp_fixture() {
 
 run_repl_corpus() {
     repl_dir="$FIXTURE_ROOT/repl"
-    if [ "$STAGE1_WRAPPER" = "1" ]; then
-        echo "  SKIP repl/* (stage1 wrapper REPL has bounded selfhost corpus coverage)"
-    elif [ -d "$repl_dir" ]; then
+    if [ -d "$repl_dir" ]; then
         for path in "$repl_dir"/*.in; do
             [ -f "$path" ] || continue
             case "$path" in
@@ -709,7 +724,7 @@ run_repl_corpus() {
 
     selfhost_repl_dir="$FIXTURE_ROOT/selfhost-repl"
     if [ "$HOST_OS" = linux ] && [ -d "$selfhost_repl_dir" ]; then
-        selfhost_repl_bin=$(build_selfhost_binary repl || true)
+        selfhost_repl_bin=$(build_selfhost_binary repl)
         if [ -n "$selfhost_repl_bin" ]; then
             for path in "$selfhost_repl_dir"/*.linux.in; do
                 [ -f "$path" ] || continue
@@ -722,27 +737,17 @@ run_repl_corpus() {
 
 run_lsp_corpus() {
     lsp_dir="$FIXTURE_ROOT/lsp"
-    if [ "$STAGE1_WRAPPER" = "1" ]; then
-        echo "  SKIP lsp/* (stage1 wrapper LSP has bounded selfhost corpus coverage)"
-    elif [ -d "$lsp_dir" ]; then
+    if [ -d "$lsp_dir" ]; then
         for path in "$lsp_dir"/*.in.json; do
             [ -f "$path" ] || continue
             fixture_name=$(basename "$path")
-            case "$fixture_name" in
-                clear-imports-change.in.json | clear-imports-close.in.json)
-                    if [ "$SKIP_CURRENT_LSP_IMPORT_CLEAR" = "1" ]; then
-                        printf '  SKIP lsp/%s (seed LSP lacks current import diagnostic clearing; #1733)\n' "$fixture_name"
-                        continue
-                    fi
-                    ;;
-            esac
             run_lsp_fixture "$path" "lsp/$fixture_name" "$COMPILER"
         done
     fi
 
     selfhost_lsp_dir="$FIXTURE_ROOT/selfhost-lsp"
     if [ "$HOST_OS" = linux ] && [ -d "$selfhost_lsp_dir" ]; then
-        selfhost_lsp_bin=$(build_selfhost_binary lsp_frame || true)
+        selfhost_lsp_bin=$(build_selfhost_binary lsp_frame)
         if [ -n "$selfhost_lsp_bin" ]; then
             for path in "$selfhost_lsp_dir"/*.linux.in "$selfhost_lsp_dir"/*.linux.in.json; do
                 [ -f "$path" ] || continue

@@ -5,6 +5,8 @@
 ;; this file to produce each stage. The unified `cli.tl` dispatcher shares the
 ;; same core (it routes compile/tokenize/parse/debug into `compile-cli-run`), so
 ;; the compiler logic lives in one place (#1639).
+(import "../stdlib/io.tl")
+
 (import "compile_cli_core.tl")
 
 (define (main) : i64

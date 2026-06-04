@@ -106,11 +106,13 @@
     [(TextBufChunkCons chunk rest)
       (text-buf-chunks-render-rev rest (string-append chunk out))]))
 
+;: Return the number of chunk nodes in `chunks`, accumulating into `count`.
 (define (text-buf-chunk-count [chunks : TextBufChunkList] [count : i64]) : i64
   (match chunks
     [(TextBufChunkNil) count]
     [(TextBufChunkCons _ rest) (text-buf-chunk-count rest (+ count 1))]))
 
+;: Fill `items` from a reversed chunk list so array order matches render order.
 (define (text-buf-chunks-fill-array-rev
   [chunks : TextBufChunkList]
   [items : (Array String)]
@@ -122,6 +124,7 @@
         (array-set! items index chunk)
         (text-buf-chunks-fill-array-rev rest items (- index 1)))]))
 
+;: Render the half-open chunk array range `[lo, hi)` with balanced concatenation.
 (define (text-buf-chunks-render-array-range
   [items : (Array String)]
   [lo : i64]
@@ -136,6 +139,7 @@
           (text-buf-chunks-render-array-range items lo mid)
           (text-buf-chunks-render-array-range items mid hi))))))
 
+;: Render many chunks through an array to avoid a deep left-leaning concat chain.
 (define (text-buf-chunks-render-balanced
   [chunks : TextBufChunkList]
   [count : i64]) : String

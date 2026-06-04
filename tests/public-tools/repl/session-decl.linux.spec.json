@@ -1,5 +1,5 @@
 {
   "exit": 0,
-  "stdout_exact": "42\n",
+  "stdout_exact": "TypeLisp REPL. Type .help for commands.\ntl> tl> 42\ntl> ",
   "stderr_exact": ""
 }

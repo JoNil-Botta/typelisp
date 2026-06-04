@@ -11,6 +11,8 @@
 ;; the legacy backend emitted. The body leaves the computed value in %rax, `main`
 ;; returns it, and `_start` exits with that value - so the printed `.s`, when
 ;; assembled (`as`) + linked (`ld`) + run, EXITS 7 for `(+ 1 (* 2 3))`.
+(import "../stdlib/io.tl")
+
 (import "emit_core.tl")
 
 (define (sample) : Expr

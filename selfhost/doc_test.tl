@@ -12,6 +12,8 @@
 ;; path where the target supports process execution. Each failure records the
 ;; source path, the fence's source line, the example index, and the rendered
 ;; diagnostic when one is available.
+(import "../stdlib/io.tl")
+
 (import "compiler_check_core.tl")
 
 (import "build_run_core.tl")
@@ -1068,12 +1070,12 @@
         (doc-test-public-diagnostic-render diag)))))
 
 ;; Runnable doctests spawn nested build/run commands from a generated test
-;; binary. Keep that path Linux-only until the Windows selfhost executable
-;; instability tracked by #1270 is resolved.
+;; binary. This is a required gate on both Linux and Windows because skipped
+;; runnable doctests can hide target-specific compiler/runtime bugs.
 (define (doc-test-runnable-target-supported? [target : CompilerBackendTarget]) : bool
   (match target
     [(BackendTargetLinux) true]
-    [(BackendTargetWindows) false]))
+    [(BackendTargetWindows) true]))
 
 (define (doc-test-runnable-supported?) : bool
   (doc-test-runnable-target-supported? (source-tool-default-target)))
@@ -1126,17 +1128,49 @@
             "\nactual "
             (string-append name (string-append ":\n" actual))))))))
 
+(define (doc-test-normalize-windows-crlf [text : String]) : String
+  (let
+    [n : i64 (string-length text)]
+    [i : i64 0]
+    [out : String ""]
+    (begin
+      (while (< i n)
+        (if (and
+          (= (string-ref text i) #\return')
+          (and (< (+ i 1) n) (= (string-ref text (+ i 1)) #\newline')))
+          (begin
+            (set! out (string-append out "\n"))
+            (set! i (+ i 2)))
+          (begin
+            (set! out (string-append out (substring text i 1)))
+            (set! i (+ i 1)))))
+      out)))
+
+(define (doc-test-normalize-output-for-target
+  [target : CompilerBackendTarget]
+  [text : String]) : String
+  (match target
+    [(BackendTargetLinux) text]
+    [(BackendTargetWindows) (doc-test-normalize-windows-crlf text)]))
+
 (define (doc-test-runnable-mismatch-message
   [index : i64]
   [expectation : DocTestExpectation]
+  [target : CompilerBackendTarget]
   [output : ProcessOutput]) : String
   (let
     [expected-exit : i64 (doc-test-expectation-run-exit expectation)]
     [expected-stdout : String (doc-test-expectation-run-stdout expectation)]
     [expected-stderr : String (doc-test-expectation-run-stderr expectation)]
     [actual-exit : i64 (process-output-status output)]
-    [actual-stdout : String (process-output-stdout output)]
-    [actual-stderr : String (process-output-stderr output)]
+    [actual-stdout : String
+      (doc-test-normalize-output-for-target
+        target
+        (process-output-stdout output))]
+    [actual-stderr : String
+      (doc-test-normalize-output-for-target
+        target
+        (process-output-stderr output))]
     (string-append
       "doctest example "
       (string-append
@@ -1165,16 +1199,21 @@
 
 (define (doc-test-runnable-output-matches?
   [expectation : DocTestExpectation]
+  [target : CompilerBackendTarget]
   [output : ProcessOutput]) : bool
   (if (=
     (doc-test-expectation-run-exit expectation)
     (process-output-status output))
     (if (string-eq
       (doc-test-expectation-run-stdout expectation)
-      (process-output-stdout output))
+      (doc-test-normalize-output-for-target
+        target
+        (process-output-stdout output)))
       (string-eq
         (doc-test-expectation-run-stderr expectation)
-        (process-output-stderr output))
+        (doc-test-normalize-output-for-target
+          target
+          (process-output-stderr output)))
       false)
     false))
 
@@ -1238,19 +1277,12 @@
   [asm-path : String]
   [obj-path : String]
   [bin-path : String]) : SourceToolCommandStatus
-  (match (doc-test-run-command-captured
-    "assembler"
+  (source-tool-assemble-and-link
     target
-    (source-tool-assembler-command asm-path obj-path))
-    [(SourceToolCommandOk)
-      (doc-test-run-command-captured
-        "linker"
-        target
-        (source-tool-linker-command
-          obj-path
-          bin-path
-          (source-tool-link-inputs-empty)))]
-    [(SourceToolCommandErr message) (SourceToolCommandErr message)]))
+    asm-path
+    obj-path
+    bin-path
+    (source-tool-link-inputs-empty)))
 
 (define (doc-test-emit-runnable-assembly
   [path : String]
@@ -1309,13 +1341,13 @@
     [(OkProcessOutput output)
       (begin
         (source-tool-clean-temp temp-dir asm-path obj-path bin-path true)
-        (if (doc-test-runnable-output-matches? expectation output)
+        (if (doc-test-runnable-output-matches? expectation target output)
           (DocTestNoFailure)
           (doc-test-runnable-failure
             path
             source-line
             index
-            (doc-test-runnable-mismatch-message index expectation output))))]
+            (doc-test-runnable-mismatch-message index expectation target output))))]
     [(ErrProcessOutput error)
       (begin
         (source-tool-clean-temp temp-dir asm-path obj-path bin-path true)

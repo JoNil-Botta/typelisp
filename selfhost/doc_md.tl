@@ -322,17 +322,16 @@
       i)))
 
 (define (md-next-line-start [src : String] [line-end : i64] [n : i64]) : i64
-  (if (< line-end n)
+  (begin
+    (unless (< line-end n) (return line-end))
     (let
       [c : char (string-ref src line-end)]
-      (if (= c #\return')
-        (if (< (+ line-end 1) n)
-          (if (= (string-ref src (+ line-end 1)) #\newline')
-            (+ line-end 2)
-            (+ line-end 1))
-          (+ line-end 1))
-        (+ line-end 1)))
-    line-end))
+      (begin
+        (unless (= c #\return') (return (+ line-end 1)))
+        (unless (< (+ line-end 1) n) (return (+ line-end 1)))
+        (if (= (string-ref src (+ line-end 1)) #\newline')
+          (+ line-end 2)
+          (+ line-end 1))))))
 
 (define (md-line-at [src : String] [pos : i64] [n : i64]) : String
   (let
@@ -350,12 +349,10 @@
     (begin
       (while (and (< i n) (= (string-ref trimmed i) ##'))
         (set! i (+ i 1)))
-      (if (and (>= i 1) (<= i 6))
-        (if (< i n)
-          (if (md-inline-space? (string-ref trimmed i))
-            i
-            0)
-          0)
+      (unless (and (>= i 1) (<= i 6)) (return 0))
+      (unless (< i n) (return 0))
+      (if (md-inline-space? (string-ref trimmed i))
+        i
         0))))
 
 (define (md-heading-text [line : String] [level : i64]) : String
@@ -407,15 +404,13 @@
     (begin
       (while (and (< i n) (md-decimal-digit? (string-ref trimmed i)))
         (set! i (+ i 1)))
-      (if (> i 0)
-        (if (< (+ i 1) n)
-          (if (and
-            (= (string-ref trimmed i) #.')
-            (md-inline-space? (string-ref trimmed (+ i 1))))
-            (+ i 2)
-            -1)
-          -1)
-        -1))))
+      (unless (> i 0) (return (- 0 1)))
+      (unless (< (+ i 1) n) (return (- 0 1)))
+      (if (and
+        (= (string-ref trimmed i) #.')
+        (md-inline-space? (string-ref trimmed (+ i 1))))
+        (+ i 2)
+        (- 0 1)))))
 
 (define (md-numbered-start? [line : String]) : bool
   (>= (md-numbered-marker-end line) 0))
@@ -993,44 +988,50 @@
 (define (md-render-block-smoke-result [fixture : String] [blocks : MdBlockList]) : i64
   (let
     [html : String (md-render-blocks blocks)]
-    (if (md-string-contains?
-      html
-      (doc-html-cat5
-        "<h1 id=\""
-        (doc-render-anchor "Title `x`")
-        "\">Title <code>x</code></h1>\n"
-        ""
-        ""))
-      (if (md-string-contains?
-        (md-render-block (MdHeading 6 "Deep Heading"))
-        "<h6 id=\"tl-Deep-32Heading\">Deep Heading</h6>\n")
-        (if (md-string-contains? html "<p>Paragraph with <em>em</em></p>\n")
-          (if (md-string-contains?
-            html
-            "<blockquote>\n<p>quote <a href=\"b\">a</a><br>\nsecond</p>\n</blockquote>\n")
-            (if (md-string-contains?
-              html
-              "<ul>\n<li>one</li>\n<li>two</li>\n</ul>\n")
-              (if (md-string-contains?
-                html
-                "<ol>\n<li>first</li>\n<li>second</li>\n</ol>\n")
-                (if (md-string-contains?
-                  html
-                  "<pre><code class=\"language-typelisp\" data-meta=\"run expect=42\">(define x : i64 1)\n; &lt;tag&gt; &amp; value\n</code></pre>\n")
-                  (if (md-string-contains?
-                    html
-                    "<table>\n<thead>\n<tr><th>Name</th><th>Type</th></tr>\n</thead>\n<tbody>\n<tr><td>x</td><td>i64</td></tr>\n</tbody>\n</table>\n")
-                    (if (string-eq (md-render-html fixture) html)
-                      42
-                      117)
-                    116)
-                  115)
-                114)
-              113)
-            112)
-          111)
-        110)
-      109)))
+    (begin
+      (unless
+        (md-string-contains?
+          html
+          (doc-html-cat5
+            "<h1 id=\""
+            (doc-render-anchor "Title `x`")
+            "\">Title <code>x</code></h1>\n"
+            ""
+            ""))
+        (return 109))
+      (unless
+        (md-string-contains?
+          (md-render-block (MdHeading 6 "Deep Heading"))
+          "<h6 id=\"tl-Deep-32Heading\">Deep Heading</h6>\n")
+        (return 110))
+      (unless
+        (md-string-contains? html "<p>Paragraph with <em>em</em></p>\n")
+        (return 111))
+      (unless
+        (md-string-contains?
+          html
+          "<blockquote>\n<p>quote <a href=\"b\">a</a><br>\nsecond</p>\n</blockquote>\n")
+        (return 112))
+      (unless
+        (md-string-contains? html "<ul>\n<li>one</li>\n<li>two</li>\n</ul>\n")
+        (return 113))
+      (unless
+        (md-string-contains?
+          html
+          "<ol>\n<li>first</li>\n<li>second</li>\n</ol>\n")
+        (return 114))
+      (unless
+        (md-string-contains?
+          html
+          "<pre><code class=\"language-typelisp\" data-meta=\"run expect=42\">(define x : i64 1)\n; &lt;tag&gt; &amp; value\n</code></pre>\n")
+        (return 115))
+      (unless
+        (md-string-contains?
+          html
+          "<table>\n<thead>\n<tr><th>Name</th><th>Type</th></tr>\n</thead>\n<tbody>\n<tr><td>x</td><td>i64</td></tr>\n</tbody>\n</table>\n")
+        (return 116))
+      (unless (string-eq (md-render-html fixture) html) (return 117))
+      42)))
 
 ;; ---- self-test (driven by doc_md_smoke.tl) ----
 (define (compiler-doc-md-block-self-test) : i64
@@ -1050,52 +1051,49 @@
                   "```typelisp run expect=42\n(define x : i64 1)\n; <tag> & value\n```\n"
                   "| Name | Type |\n| --- | --- |\n| x | i64 |\n"))))))]
     [blocks : MdBlockList (md-scan-blocks fixture)]
-    (if (= (md-block-list-count blocks) 8)
-      (if (md-check-heading? blocks 0 1 "Title `x`")
-        (if (md-check-blank? blocks 1)
-          (if (md-check-paragraph? blocks 2 "Paragraph with *em*")
-            (if (md-check-blockquote2? blocks 3 "quote [a](b)" "second")
-              (if (md-check-bullet-list2? blocks 4 "one" "two")
-                (if (md-check-numbered-list2? blocks 5 "first" "second")
-                  (if (md-check-code-fence?
-                    blocks
-                    6
-                    "typelisp"
-                    "run expect=42"
-                    "(define x : i64 1)\n; <tag> & value\n")
-                    (if (md-check-table1? blocks 7 "Name" "Type" "x" "i64")
-                      (md-render-block-smoke-result fixture blocks)
-                      108)
-                    107)
-                  106)
-                105)
-              104)
-            103)
-          102)
-        101)
-      100)))
+    (begin
+      (unless (= (md-block-list-count blocks) 8) (return 100))
+      (unless (md-check-heading? blocks 0 1 "Title `x`") (return 101))
+      (unless (md-check-blank? blocks 1) (return 102))
+      (unless (md-check-paragraph? blocks 2 "Paragraph with *em*") (return 103))
+      (unless
+        (md-check-blockquote2? blocks 3 "quote [a](b)" "second")
+        (return 104))
+      (unless (md-check-bullet-list2? blocks 4 "one" "two") (return 105))
+      (unless (md-check-numbered-list2? blocks 5 "first" "second") (return 106))
+      (unless
+        (md-check-code-fence?
+          blocks
+          6
+          "typelisp"
+          "run expect=42"
+          "(define x : i64 1)\n; <tag> & value\n")
+        (return 107))
+      (unless (md-check-table1? blocks 7 "Name" "Type" "x" "i64") (return 108))
+      (md-render-block-smoke-result fixture blocks))))
 
 (define (compiler-doc-md-self-test) : i64
-  (if (string-eq (md-render-inline "plain text") "plain text")
-    (if (string-eq (md-render-inline "a `b` c") "a <code>b</code> c")
-      (if (string-eq (md-render-inline "x *y* z") "x <em>y</em> z")
-        (if (string-eq (md-render-inline "u _v_ w") "u <em>v</em> w")
-          (if (string-eq
-            (md-render-inline "see [docs](https://x/y)")
-            "see <a href=\"https://x/y\">docs</a>")
-            (if (string-eq
-              (md-render-inline "1 < 2 & 3 > 0")
-              "1 &lt; 2 &amp; 3 &gt; 0")
-              (if (string-eq
-                (md-render-inline "code `a<b`")
-                "code <code>a&lt;b</code>")
-                (if (string-eq (md-render-inline "bare [link") "bare [link")
-                  (compiler-doc-md-block-self-test)
-                  7)
-                6)
-              5)
-            4)
-          3)
-        2)
-      1)
-    0))
+  (begin
+    (unless (string-eq (md-render-inline "plain text") "plain text") (return 0))
+    (unless
+      (string-eq (md-render-inline "a `b` c") "a <code>b</code> c")
+      (return 1))
+    (unless
+      (string-eq (md-render-inline "x *y* z") "x <em>y</em> z")
+      (return 2))
+    (unless
+      (string-eq (md-render-inline "u _v_ w") "u <em>v</em> w")
+      (return 3))
+    (unless
+      (string-eq
+        (md-render-inline "see [docs](https://x/y)")
+        "see <a href=\"https://x/y\">docs</a>")
+      (return 4))
+    (unless
+      (string-eq (md-render-inline "1 < 2 & 3 > 0") "1 &lt; 2 &amp; 3 &gt; 0")
+      (return 5))
+    (unless
+      (string-eq (md-render-inline "code `a<b`") "code <code>a&lt;b</code>")
+      (return 6))
+    (unless (string-eq (md-render-inline "bare [link") "bare [link") (return 7))
+    (compiler-doc-md-block-self-test)))

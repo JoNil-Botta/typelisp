@@ -592,18 +592,12 @@
       [CompilerDiagnosticLabelNil false])))
 
 (define (compiler-diagnostic-self-test) : i64
-  (if (compiler-diagnostic-render-ok?)
-    (if (compiler-diagnostic-source-error-ok?)
-      (if (compiler-diagnostic-rewrite-ok?)
-        (if (and
-          (compiler-diagnostic-source-render-ok?)
-          (and
-            (compiler-diagnostic-source-render-minimal-ok?)
-            (and
-              (compiler-diagnostic-end-span-ok?)
-              (compiler-diagnostic-metadata-ok?))))
-          42
-          4)
-        3)
-      2)
-    1))
+  (begin
+    (unless (compiler-diagnostic-render-ok?) (return 1))
+    (unless (compiler-diagnostic-source-error-ok?) (return 2))
+    (unless (compiler-diagnostic-rewrite-ok?) (return 3))
+    (unless (compiler-diagnostic-source-render-ok?) (return 4))
+    (unless (compiler-diagnostic-source-render-minimal-ok?) (return 4))
+    (unless (compiler-diagnostic-end-span-ok?) (return 4))
+    (unless (compiler-diagnostic-metadata-ok?) (return 4))
+    42))

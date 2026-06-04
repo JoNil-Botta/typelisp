@@ -3,9 +3,9 @@ set -eu
 
 # check-bootstrap-fixpoint.sh - selfhost compiler stage2/stage3 fixpoint gate.
 #
-# The Rust stage0 compiler builds the TypeLisp selfhost compiler to stage1.
-# stage1 then compiles the same selfhost source to stage2.s, stage2 repeats that
-# compile to stage3.s, and the selfhost-emitted stage2/stage3 assembly must be
+# A seed TypeLisp compiler builds the selfhost compiler to stage1. stage1 then
+# compiles the same selfhost source to stage2.s, stage2 repeats that compile to
+# stage3.s, and the selfhost-emitted stage2/stage3 assembly must be
 # byte-identical.
 #
 # Set TYPELISP_BOOTSTRAP_STAGE1_PATH_FILE to persist the stage1 compiler path for

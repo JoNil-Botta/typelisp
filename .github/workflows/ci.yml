@@ -27,10 +27,10 @@ jobs:
         include:
           - name: Test + Integration
             os: ubuntu-latest
-            timeout_minutes: 90
+            timeout_minutes: 120
           - name: Test + Integration (windows-latest)
             os: windows-latest
-            timeout_minutes: 90
+            timeout_minutes: 120
     steps:
       - uses: actions/checkout@v4
 

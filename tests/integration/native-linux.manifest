@@ -7,6 +7,8 @@ aggregate_globals|tests/integration/aggregate_globals.tl|42|-|-|-
 arena_escape_stress|tests/integration/arena_escape_stress.tl|42|-|-|-
 argv|tests/integration/argv.tl|7|alpha\n|alpha beta|-
 arithmetic|tests/integration/arithmetic.tl|47|-|-|-
+arena_poison_clone_survives|tests/integration/arena_poison_clone_survives.tl|42|-|-|requires-stage0-symbol:tl_arena_poison_enable
+arena_poison_stale_array_trap|tests/integration/arena_poison_stale_array_trap.tl|139|-|-|requires-stage0-symbol:tl_arena_poison_enable|expected-stderr:Segmentation fault (core dumped)\n
 calc|tests/integration/calc.tl|14|-|-|token.tl
 clone_deep_copy|tests/integration/clone_deep_copy.tl|42|-|-|-|requires-stage0-symbol:_tl_clone_u24Bundle
 tl_emit|selfhost/emit.tl|0|@tests/golden/tl_emit_program.s|-|emit_core.tl ast_types.tl sym_i64_env.tl

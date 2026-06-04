@@ -8772,18 +8772,20 @@
           "env-path-separator"
           env-path-separator)))))
 
-;; The first-class arena runtime helpers are always emitted (#1633), so they are
-;; provided runtime symbols (resolve to their raw names, not the mangled
-;; `_tl_tl_arena_*`).
+;; The first-class arena runtime helpers (#1633) and arena poison debug toggle
+;; (#1690) are always emitted, so they are provided runtime symbols (resolve to
+;; their raw names, not the mangled `_tl_tl_arena_*`).
 (define (compiler-backend-plan-provides?
   [plan : CompilerBackendRuntimePlan]
   [name : String]) : bool
   (or
-    (backend-or4
-      (string-eq name "tl_arena_make")
-      (string-eq name "tl_arena_current")
-      (string-eq name "tl_arena_set")
-      (string-eq name "tl_arena_destroy"))
+    (or
+      (string-eq name "tl_arena_poison_enable")
+      (backend-or4
+        (string-eq name "tl_arena_make")
+        (string-eq name "tl_arena_current")
+        (string-eq name "tl_arena_set")
+        (string-eq name "tl_arena_destroy")))
     (compiler-backend-plan-provides-rest? plan name)))
 
 (define (compiler-backend-plan-provides-rest?
@@ -9579,6 +9581,9 @@
     .balign 8
 tl_current_arena:
     .zero 8
+    .balign 8
+.L_tl_arena_poison_enabled:
+    .zero 8
 
 ")
 
@@ -10030,6 +10035,11 @@ tl_arena_set:
     movq %rdi, tl_current_arena(%rip)
     ret
 
+    .globl tl_arena_poison_enable
+tl_arena_poison_enable:
+    movq $1, .L_tl_arena_poison_enabled(%rip)
+    ret
+
     .globl tl_arena_make
 tl_arena_make:
     movq $0x4000000, %rsi
@@ -10064,6 +10074,15 @@ tl_arena_destroy:
     jz .L_tl_arena_destroy_done
     movq 0(%rbx), %r8
     push %r8
+    cmpq $0, .L_tl_arena_poison_enabled(%rip)
+    je .L_tl_arena_destroy_unmap
+    movq 8(%rbx), %rdi
+    movq 24(%rbx), %rcx
+    subq %rdi, %rcx
+    jbe .L_tl_arena_destroy_unmap
+    movb $0xA5, %al
+    rep stosb
+.L_tl_arena_destroy_unmap:
     movq 24(%rbx), %rsi
     subq %rbx, %rsi
     movq %rbx, %rdi
@@ -10090,6 +10109,10 @@ tl_arena_current:
     .globl tl_arena_set
 tl_arena_set:
     movq %rcx, tl_current_arena(%rip)
+    ret
+
+    .globl tl_arena_poison_enable
+tl_arena_poison_enable:
     ret
 
     .globl tl_arena_make
@@ -10176,6 +10199,15 @@ tl_region_reset:
     cmpq %r8, %r9
     je .L_tl_region_reset_restore
     movq 0(%r9), %r10
+    cmpq $0, .L_tl_arena_poison_enabled(%rip)
+    je .L_tl_region_reset_drop_newer_unmap
+    movq 8(%r9), %rdi
+    movq 24(%r9), %rcx
+    subq %rdi, %rcx
+    jbe .L_tl_region_reset_drop_newer_unmap
+    movb $0xA5, %al
+    rep stosb
+.L_tl_region_reset_drop_newer_unmap:
     movq 24(%r9), %rsi
     subq %r9, %rsi
     movq %r9, %rdi
@@ -10188,6 +10220,15 @@ tl_region_reset:
     movq %r10, %r9
     jmp .L_tl_region_reset_drop_newer
 .L_tl_region_reset_restore:
+    cmpq $0, .L_tl_arena_poison_enabled(%rip)
+    je .L_tl_region_reset_restore_set
+    movq 16(%r8), %rcx
+    subq %rbx, %rcx
+    jbe .L_tl_region_reset_restore_set
+    movq %rbx, %rdi
+    movb $0xA5, %al
+    rep stosb
+.L_tl_region_reset_restore_set:
     movq %rbx, 16(%r8)
     movq %r8, tl_current_arena(%rip)
     pop %rbx
@@ -10199,6 +10240,15 @@ tl_region_reset:
     testq %r8, %r8
     jz .L_tl_region_reset_done
     movq 0(%r8), %r9
+    cmpq $0, .L_tl_arena_poison_enabled(%rip)
+    je .L_tl_region_reset_all_unmap
+    movq 8(%r8), %rdi
+    movq 24(%r8), %rcx
+    subq %rdi, %rcx
+    jbe .L_tl_region_reset_all_unmap
+    movb $0xA5, %al
+    rep stosb
+.L_tl_region_reset_all_unmap:
     movq 24(%r8), %rsi
     subq %r8, %rsi
     movq %r8, %rdi

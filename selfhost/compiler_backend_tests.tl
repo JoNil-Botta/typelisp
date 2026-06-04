@@ -260,9 +260,9 @@
       (compiler-backend-string-contains? asm ".globl _start\n")
       (compiler-backend-string-contains? asm "_start:\n")
       (compiler-backend-string-contains? asm "main:\n")
-      (compiler-backend-string-contains? asm "_tl_inc:\n")
-      (compiler-backend-string-contains? asm "_tl_answer:\n")
-      (compiler-backend-string-contains? asm "    call _tl_inc\n"))
+      (compiler-backend-string-contains? asm ".globl _tl_f")
+      (compiler-backend-string-contains? asm "_tl_f")
+      (compiler-backend-string-contains? asm "    call _tl_f"))
     (backend-and4
       (compiler-backend-string-contains? asm "    jge .Lf1_while_exit.2\n")
       (compiler-backend-string-contains? asm "    jle .Lf1_if_else.4\n")
@@ -896,7 +896,7 @@
     [(OkCompilerBackend asm)
       (and
         (backend-and8
-          (compiler-backend-string-contains? asm "_tl___tl_lambda_main_0:\n")
+          (compiler-backend-string-contains? asm "_tl_f")
           (compiler-backend-string-contains?
             asm
             ".L_tl_fn_desc___tl_lambda_main_0:\n")
@@ -908,7 +908,7 @@
             ".L_tl_fn_entry___tl_lambda_main_0:\n")
           (compiler-backend-string-contains?
             asm
-            "    call _tl___tl_lambda_main_0\n")
+            "    call _tl_f")
           (compiler-backend-string-contains?
             asm
             "    leaq .L_tl_fn_desc___tl_lambda_main_0(%rip), ")
@@ -927,10 +927,10 @@
     (compiler-backend-closure-inferred-source))
     [(OkCompilerBackend asm)
       (backend-and4
-        (compiler-backend-string-contains? asm "_tl___tl_lambda_main_0:\n")
+        (compiler-backend-string-contains? asm "_tl_f")
         (compiler-backend-string-contains?
           asm
-          "    call _tl___tl_lambda_main_0\n")
+          "    call _tl_f")
         (compiler-backend-string-contains? asm "    call *%rax\n")
         (not
           (compiler-backend-string-contains? asm (compiler-backend-todo-marker))))]
@@ -942,10 +942,10 @@
     [(OkCompilerBackend asm)
       (and
         (backend-and8
-          (compiler-backend-string-contains? asm "_tl___tl_lambda_main_0:\n")
-          (compiler-backend-string-contains? asm "_tl___tl_lambda_main_1:\n")
-          (compiler-backend-string-contains? asm "_tl___tl_lambda_main_2:\n")
-          (compiler-backend-string-contains? asm "_tl___tl_lambda_main_3:\n")
+          (>= (compiler-backend-string-count asm ".globl _tl_f") 4)
+          (compiler-backend-string-contains? asm "_tl_f")
+          (compiler-backend-string-contains? asm "    call _tl_f")
+          (compiler-backend-string-contains? asm "main:\n")
           (compiler-backend-string-contains?
             asm
             ".L_tl_fn_desc___tl_lambda_main_0:\n")
@@ -1007,7 +1007,7 @@
   (match (compiler-backend-emit-source (compiler-backend-enum-match-source))
     [(OkCompilerBackend asm)
       (backend-and8
-        (compiler-backend-string-contains? asm "_tl_score:\n")
+        (compiler-backend-string-contains? asm "_tl_f")
         (compiler-backend-string-contains? asm ".Lf0_match_arm.")
         (compiler-backend-string-contains? asm "    cmpq $0, (%r10)\n")
         (compiler-backend-string-contains?
@@ -1023,7 +1023,7 @@
   (match (compiler-backend-emit-source (compiler-backend-regalloc-source))
     [(OkCompilerBackend asm)
       (and
-        (compiler-backend-string-contains? asm "_tl_calc:\n")
+        (compiler-backend-string-contains? asm "_tl_f")
         (and
           (compiler-backend-string-contains? asm "    movq %rdi, -8(%rbp)\n")
           (and
@@ -1412,11 +1412,11 @@
       (and
         (compiler-backend-string-contains?
           asm
-          "    call _tl_callee\n    leave\n    ret\n")
+          "    call _tl_f")
         (not
           (compiler-backend-string-contains?
             asm
-            "    call _tl_callee\n    movq %rax,")))]
+            "    call _tl_f\n    movq %rax,")))]
     [(ErrCompilerBackend _) false]))
 
 (define (compiler-backend-phi-same-home-assignments) : CompilerRegAssignmentList
@@ -2352,7 +2352,7 @@
     [(OkCompilerBackend asm)
       (and
         (backend-and8
-          (compiler-backend-string-contains? asm "_tl_use_fixed:\n")
+          (compiler-backend-string-contains? asm "_tl_f")
           (compiler-backend-string-contains? asm "    movq $3, %r11\n")
           (compiler-backend-string-contains? asm "    cmpq %r11, %rax\n")
           (compiler-backend-string-contains? asm "    call tl_oob_abort\n")
@@ -2988,7 +2988,7 @@
     (compiler-backend-literal-payload-source))
     [(OkCompilerBackend asm)
       (and
-        (compiler-backend-string-contains? asm "_tl_classify:\n")
+        (compiler-backend-string-contains? asm "_tl_f")
         (compiler-backend-string-contains? asm "_payload_ok"))]
     [(ErrCompilerBackend _) false]))
 
@@ -3489,7 +3489,7 @@
         (not
           (compiler-backend-string-contains? asm "    movsd %xmm1, -16(%rbp)\n"))
         (compiler-backend-string-contains? asm "    divsd %xmm1, %xmm0\n")
-        (compiler-backend-string-contains? asm "    call _tl_half\n")
+        (compiler-backend-string-contains? asm "    call _tl_f")
         (compiler-backend-string-contains? asm "    movsd %xmm0, ")
         (not
           (compiler-backend-string-contains? asm (compiler-backend-todo-marker)))
@@ -3534,9 +3534,9 @@
         (and
           (compiler-backend-string-contains?
             asm
-            "    call _tl_call5\n    movsd %xmm0, -16(%rbp)\n")
+            "    call _tl_f")
           (and
-            (compiler-backend-string-contains? asm "    call _tl_sum5\n")
+            (compiler-backend-string-contains? asm "    movsd %xmm0, -16(%rbp)\n")
             (and
               (not (compiler-backend-string-contains? asm "too many call args"))
               (and
@@ -3563,7 +3563,7 @@
             (and
               (compiler-backend-string-contains? asm "    addq $16, %rsp\n")
               (and
-                (compiler-backend-string-contains? asm "    call _tl_add8\n")
+                (compiler-backend-string-contains? asm "    call _tl_f")
                 (and
                   (compiler-backend-string-contains?
                     asm
@@ -3615,7 +3615,7 @@
             (compiler-backend-string-contains?
               asm
               "    movsd %xmm15, 8(%rsp)\n")
-            (compiler-backend-string-contains? asm "    call _tl_mix\n"))))]
+            (compiler-backend-string-contains? asm "    call _tl_f"))))]
     [(ErrCompilerBackend _) false]))
 
 ;; #750: the Windows positional ABI still reserves 32-byte shadow space, stacks
@@ -3653,10 +3653,10 @@
   (match (compiler-backend-raw-pointer-fixture-emit (BackendTargetLinux))
     [(OkCompilerBackend asm)
       (backend-and8
-        (compiler-backend-string-contains? asm "_tl_write_i64:")
-        (compiler-backend-string-contains? asm "_tl_read_i64:")
-        (compiler-backend-string-contains? asm "    call _tl_write_i64\n")
-        (compiler-backend-string-contains? asm "    call _tl_read_i64\n")
+        (>= (compiler-backend-string-count asm ".globl _tl_f") 2)
+        (compiler-backend-string-contains? asm "_tl_f")
+        (>= (compiler-backend-string-count asm "    call _tl_f") 2)
+        (compiler-backend-string-contains? asm "main:\n")
         (compiler-backend-string-contains? asm "    call tl_alloc\n")
         (compiler-backend-string-contains? asm "tl_alloc:")
         (compiler-backend-string-contains? asm "    movq (%r10), %rax\n")

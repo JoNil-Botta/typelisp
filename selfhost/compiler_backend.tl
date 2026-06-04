@@ -1715,10 +1715,8 @@
 (define (compiler-backend-compact-function-symbol?
   [name : String]) : bool
   (and
-    (> (string-length name) 32)
-    (and
-      (not (string-eq name "main"))
-      (not (compiler-backend-string-prefix-at? name "__global_init_" 0)))))
+    (not (string-eq name "main"))
+    (not (compiler-backend-string-prefix-at? name "__global_init_" 0))))
 
 (define (compiler-backend-function-symbol-index
   [index : CompilerBackendProgramIndex]
@@ -19871,9 +19869,9 @@ tl_windows_sdk_registry_install:
     (compiler-backend-user-helper-name-program))
     [(OkCompilerBackend asm)
       (and
-        (compiler-backend-string-contains? asm ".globl _tl_tl_alloc\n")
+        (compiler-backend-string-contains? asm ".globl _tl_f")
         (and
-          (compiler-backend-string-contains? asm "    call _tl_tl_alloc\n")
+          (compiler-backend-string-contains? asm "    call _tl_f")
           (not (compiler-backend-string-contains? asm ".L_tl_alloc_msg"))))]
     [(ErrCompilerBackend _) false]))
 
@@ -19929,13 +19927,13 @@ tl_windows_sdk_registry_install:
     (compiler-backend-runtime-coexist-program))
     [(OkCompilerBackend asm)
       (and
-        (compiler-backend-string-contains? asm ".globl _tl_tl_alloc\n")
+        (compiler-backend-string-contains? asm ".globl _tl_f")
         (and
           (compiler-backend-string-contains? asm ".globl tl_alloc\n")
           (and
             (compiler-backend-string-contains? asm ".globl tl_substring\n")
             (and
-              (compiler-backend-string-contains? asm "    call _tl_tl_alloc\n")
+              (compiler-backend-string-contains? asm "    call _tl_f")
               (and
                 (compiler-backend-string-contains?
                   asm
@@ -19987,14 +19985,14 @@ tl_windows_sdk_registry_install:
       (and
         (compiler-backend-string-contains?
           asm
-          ".globl _tl_lib_u2etl_colon_colonhelper\n")
+          ".globl _tl_f")
         (and
           (compiler-backend-string-contains?
             asm
-            "_tl_lib_u2etl_colon_colonhelper:\n")
+            "_tl_f")
           (compiler-backend-string-contains?
             asm
-            "    call _tl_lib_u2etl_colon_colonhelper\n")))]
+            "    call _tl_f")))]
     [(ErrCompilerBackend _) false]))
 
 (define (compiler-backend-extern-metadata-source) : String
@@ -20013,7 +20011,7 @@ tl_windows_sdk_registry_install:
         (and
           (compiler-backend-string-contains? asm "    call foreign_exact\n")
           (and
-            (compiler-backend-string-contains? asm "    call _tl_normal\n")
+            (compiler-backend-string-contains? asm "    call _tl_f")
             (and
               (not
                 (compiler-backend-string-contains? asm ".extern local-call\n"))

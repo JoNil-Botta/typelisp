@@ -182,6 +182,36 @@
         "%xmm4"
         (CompilerRegStringCons "%xmm5" CompilerRegStringNil)))))
 
+(define (compiler-reg-vector-registers) : CompilerRegStringList
+  (CompilerRegStringCons
+    "%vec6"
+    (CompilerRegStringCons
+      "%vec7"
+      (CompilerRegStringCons
+        "%vec8"
+        (CompilerRegStringCons
+          "%vec9"
+          (CompilerRegStringCons
+            "%vec10"
+            (CompilerRegStringCons
+              "%vec11"
+              (CompilerRegStringCons
+                "%vec12"
+                (CompilerRegStringCons "%vec13" CompilerRegStringNil)))))))))
+
+(define (compiler-reg-mask-registers) : CompilerRegStringList
+  (CompilerRegStringCons
+    "%k1"
+    (CompilerRegStringCons
+      "%k2"
+      (CompilerRegStringCons
+        "%k3"
+        (CompilerRegStringCons
+          "%k4"
+          (CompilerRegStringCons
+            "%k5"
+            (CompilerRegStringCons "%k6" CompilerRegStringNil)))))))
+
 (define (compiler-reg-sysv-caller-saved-xmm-registers) : CompilerRegStringList
   (CompilerRegStringCons
     "%xmm0"
@@ -689,14 +719,7 @@
     [(IrInstrGep dst _ _ _) (compiler-live-set-insert set dst)]
     [(IrInstrLaneId dst _ _) (compiler-live-set-insert set dst)]
     [(IrInstrSplat dst _ _ _) (compiler-live-set-insert set dst)]
-    [(IrInstrVectorBinOp dst _ _ _ _ _) (compiler-live-set-insert set dst)]
-    [(IrInstrVectorCompare dst _ _ _ _ _) (compiler-live-set-insert set dst)]
-    [(IrInstrMaskBinOp dst _ _ _ _) (compiler-live-set-insert set dst)]
-    [(IrInstrMaskNot dst _ _) (compiler-live-set-insert set dst)]
     [(IrInstrSelect dst _ _ _ _ _) (compiler-live-set-insert set dst)]
-    [(IrInstrVectorLoad dst _ _ _ _) (compiler-live-set-insert set dst)]
-    [(IrInstrPredicatedLoad dst _ _ _ _ _) (compiler-live-set-insert set dst)]
-    [(IrInstrTailMask dst _ _ _) (compiler-live-set-insert set dst)]
     [_ set]))
 
 (define (compiler-reg-ineligible-instrs
@@ -854,6 +877,79 @@
                     (compiler-reg-candidate-insert tail interval)
                     tail)]
                 [(CompilerRegNoType) tail])))])]))
+
+(define (compiler-reg-vector-defs-instr
+  [instr : CompilerIrInstr]
+  [set : CompilerLiveI64Set]) : CompilerLiveI64Set
+  (match instr
+    [(IrInstrVectorBinOp dst _ _ _ _ _) (compiler-live-set-insert set dst)]
+    [(IrInstrVectorLoad dst _ _ _ _) (compiler-live-set-insert set dst)]
+    [(IrInstrPredicatedLoad dst _ _ _ _ _) (compiler-live-set-insert set dst)]
+    [_ set]))
+
+(define (compiler-reg-mask-defs-instr
+  [instr : CompilerIrInstr]
+  [set : CompilerLiveI64Set]) : CompilerLiveI64Set
+  (match instr
+    [(IrInstrVectorCompare dst _ _ _ _ _) (compiler-live-set-insert set dst)]
+    [(IrInstrMaskBinOp dst _ _ _ _) (compiler-live-set-insert set dst)]
+    [(IrInstrMaskNot dst _ _) (compiler-live-set-insert set dst)]
+    [(IrInstrTailMask dst _ _ _) (compiler-live-set-insert set dst)]
+    [_ set]))
+
+(define (compiler-reg-vector-mask-defs-instrs
+  [instrs : CompilerIrInstrList]
+  [vector-set : CompilerLiveI64Set]
+  [mask-set : CompilerLiveI64Set]) : CompilerLiveUseDef
+  (match instrs
+    [(IrInstrNil) (CompilerLiveUseDef vector-set mask-set)]
+    [(IrInstrCons instr rest)
+      (compiler-reg-vector-mask-defs-instrs
+        rest
+        (compiler-reg-vector-defs-instr instr vector-set)
+        (compiler-reg-mask-defs-instr instr mask-set))]))
+
+(define (compiler-reg-vector-mask-defs-blocks
+  [blocks : CompilerIrBlockList]
+  [vector-set : CompilerLiveI64Set]
+  [mask-set : CompilerLiveI64Set]) : CompilerLiveUseDef
+  (match blocks
+    [(IrBlockNil) (CompilerLiveUseDef vector-set mask-set)]
+    [(IrBlockCons block rest)
+      (match block
+        [(IrBlock _ instrs)
+          (match (compiler-reg-vector-mask-defs-instrs
+            instrs
+            vector-set
+            mask-set)
+            [(CompilerLiveUseDef next-vector next-mask)
+              (compiler-reg-vector-mask-defs-blocks rest next-vector next-mask)])])]))
+
+(define (compiler-reg-function-vector-mask-defs [func : CompilerIrFunction]) : CompilerLiveUseDef
+  (match func
+    [(IrFunction _ _ _ _ blocks)
+      (compiler-reg-vector-mask-defs-blocks
+        blocks
+        (compiler-live-set-empty)
+        (compiler-live-set-empty))]))
+
+(define (compiler-reg-special-candidates
+  [intervals : CompilerRegIntervalList]
+  [vars : CompilerLiveI64Set]
+  [blocked : CompilerLiveI64Set]) : CompilerRegIntervalList
+  (match intervals
+    [(CompilerRegIntervalNil) CompilerRegIntervalNil]
+    [(CompilerRegIntervalCons interval rest)
+      (match interval
+        [(CompilerRegInterval var _ _)
+          (let
+            [tail : CompilerRegIntervalList
+              (compiler-reg-special-candidates rest vars blocked)]
+            (if (and
+              (compiler-live-set-contains? vars var)
+              (not (compiler-live-set-contains? blocked var)))
+              (compiler-reg-candidate-insert tail interval)
+              tail))])]))
 
 (define (compiler-reg-active-count [active : CompilerRegActiveList]) : i64
   (match active
@@ -1283,6 +1379,40 @@
                       intervals
                       types)))]))])]))
 
+(define (compiler-reg-assign-fixed-candidates
+  [candidates : CompilerRegIntervalList]
+  [regs : CompilerRegStringList]
+  [active : CompilerRegActiveList]
+  [assignments : CompilerRegAssignmentList]) : CompilerRegAssignState
+  (match candidates
+    [(CompilerRegIntervalNil) (CompilerRegAssignState active assignments)]
+    [(CompilerRegIntervalCons interval rest)
+      (match interval
+        [(CompilerRegInterval var start end)
+          (let
+            [expired : CompilerRegActiveList
+              (compiler-reg-expire-active active start)]
+            (if (=
+              (compiler-reg-active-count expired)
+              (compiler-reg-string-list-count regs))
+              (compiler-reg-assign-fixed-candidates
+                rest
+                regs
+                expired
+                assignments)
+              (let
+                [reg : String (compiler-reg-first-free-register regs expired)]
+                (compiler-reg-assign-fixed-candidates
+                  rest
+                  regs
+                  (compiler-reg-active-insert
+                    expired
+                    (CompilerRegActive var end reg))
+                  (compiler-reg-assignment-insert
+                    assignments
+                    var
+                    (CompilerRegRegister reg))))))])]))
+
 (define (compiler-reg-plan-function [func : CompilerIrFunction]) : CompilerRegPlan
   (let
     [liveness : CompilerFunctionLiveness (compiler-live-analyze-function func)]
@@ -1291,6 +1421,8 @@
       (compiler-reg-live-intervals func liveness)]
     [ineligible : CompilerLiveI64Set
       (compiler-reg-ineligible-vars func liveness types)]
+    [vector-mask-defs : CompilerLiveUseDef
+      (compiler-reg-function-vector-mask-defs func)]
     (match (compiler-reg-assign-candidates
       (compiler-reg-candidates intervals types ineligible false)
       (compiler-reg-sysv-integer-registers)
@@ -1308,8 +1440,28 @@
           (compiler-reg-function-moves func)
           intervals
           types)
-          [(CompilerRegAssignState _ assignments)
-            (CompilerRegPlan assignments ineligible intervals)])])))
+          [(CompilerRegAssignState _ scalar-assignments)
+            (match vector-mask-defs
+              [(CompilerLiveUseDef vector-vars mask-vars)
+                (match (compiler-reg-assign-fixed-candidates
+                  (compiler-reg-special-candidates
+                    intervals
+                    vector-vars
+                    ineligible)
+                  (compiler-reg-vector-registers)
+                  CompilerRegActiveNil
+                  scalar-assignments)
+                  [(CompilerRegAssignState _ vector-assignments)
+                    (match (compiler-reg-assign-fixed-candidates
+                      (compiler-reg-special-candidates
+                        intervals
+                        mask-vars
+                        ineligible)
+                      (compiler-reg-mask-registers)
+                      CompilerRegActiveNil
+                      vector-assignments)
+                      [(CompilerRegAssignState _ assignments)
+                        (CompilerRegPlan assignments ineligible intervals)])])])])])))
 
 (define (compiler-reg-plan-assignments [plan : CompilerRegPlan]) : CompilerRegAssignmentList
   (match plan
@@ -1763,6 +1915,69 @@
                               IrInstrNil))))))))))))
       IrBlockNil)))
 
+(define (compiler-reg-vector-home-function) : CompilerIrFunction
+  (IrFunction
+    "vector_home"
+    IrParamNil
+    (AstTyUnit)
+    4
+    (IrBlockCons
+      (IrBlock
+        "entry"
+        (IrInstrCons
+          (IrInstrVectorLoad 0 (IrValueI64 0) (IrValueI64 0) 4 (AstTyI64))
+          (IrInstrCons
+            (IrInstrVectorLoad 1 (IrValueI64 0) (IrValueI64 4) 4 (AstTyI64))
+            (IrInstrCons
+              (IrInstrVectorBinOp
+                2
+                (IrBinAdd)
+                (IrValueVar 0)
+                (IrValueVar 1)
+                4
+                (AstTyI64))
+              (IrInstrCons
+                (IrInstrVectorBinOp
+                  3
+                  (IrBinAdd)
+                  (IrValueVar 0)
+                  (IrValueVar 2)
+                  4
+                  (AstTyI64))
+                (IrInstrCons
+                  (IrInstrVectorStore
+                    (IrValueI64 0)
+                    (IrValueI64 8)
+                    (IrValueVar 3)
+                    4
+                    (AstTyI64))
+                  (IrInstrCons (IrInstrReturn IrNoValue) IrInstrNil)))))))
+      IrBlockNil)))
+
+(define (compiler-reg-mask-home-function) : CompilerIrFunction
+  (IrFunction
+    "mask_home"
+    IrParamNil
+    (AstTyUnit)
+    5
+    (IrBlockCons
+      (IrBlock
+        "entry"
+        (IrInstrCons
+          (IrInstrTailMask 0 (IrValueI64 0) (IrValueI64 8) 8)
+          (IrInstrCons
+            (IrInstrTailMask 1 (IrValueI64 4) (IrValueI64 8) 8)
+            (IrInstrCons
+              (IrInstrMaskBinOp 2 (IrMaskAnd) (IrValueVar 0) (IrValueVar 1) 8)
+              (IrInstrCons
+                (IrInstrMaskNot 3 (IrValueVar 2) 8)
+                (IrInstrCons
+                  (IrInstrMaskReduce 4 (IrMaskReduceAny) (IrValueVar 3) 8)
+                  (IrInstrCons
+                    (IrInstrReturn (IrSomeValue (IrValueVar 4)))
+                    IrInstrNil)))))))
+      IrBlockNil)))
+
 (define (compiler-reg-reuse-ok?) : bool
   (match (compiler-reg-plan-function (compiler-reg-reuse-function))
     [(CompilerRegPlan assignments _ _)
@@ -1904,9 +2119,7 @@
                 (compiler-live-set-contains? ineligible 3)
                 (and
                   (compiler-live-set-contains? ineligible 4)
-                  (and
-                    (compiler-live-set-contains? ineligible 6)
-                    (compiler-live-set-contains? ineligible 7))))))]
+                  (compiler-live-set-contains? ineligible 6)))))]
         [unassigned : bool
           (and
             (compiler-reg-unassigned? assignments 0)
@@ -1916,9 +2129,7 @@
                 (compiler-reg-unassigned? assignments 3)
                 (and
                   (compiler-reg-unassigned? assignments 4)
-                  (and
-                    (compiler-reg-unassigned? assignments 6)
-                    (compiler-reg-unassigned? assignments 7))))))]
+                  (compiler-reg-unassigned? assignments 6)))))]
         [homes : bool
           (and
             (compiler-reg-location-register?
@@ -1987,6 +2198,42 @@
                                   spill-assignments
                                   4
                                   5))))))])])])])]))
+
+(define (compiler-reg-vector-mask-homes-ok?) : bool
+  (match (compiler-reg-plan-function (compiler-reg-vector-home-function))
+    [(CompilerRegPlan vector-assignments _ _)
+      (match (compiler-reg-plan-function (compiler-reg-mask-home-function))
+        [(CompilerRegPlan mask-assignments _ _)
+          (let
+            [vector-ok : bool
+              (and
+                (compiler-reg-location-register?
+                  (compiler-reg-assignment-lookup vector-assignments 0)
+                  "%vec6")
+                (and
+                  (compiler-reg-location-register?
+                    (compiler-reg-assignment-lookup vector-assignments 1)
+                    "%vec7")
+                  (and
+                    (compiler-reg-location-register?
+                      (compiler-reg-assignment-lookup vector-assignments 2)
+                      "%vec7")
+                    (compiler-reg-location-register?
+                      (compiler-reg-assignment-lookup vector-assignments 3)
+                      "%vec6"))))]
+            [mask-ok : bool
+              (and
+                (compiler-reg-location-register?
+                  (compiler-reg-assignment-lookup mask-assignments 0)
+                  "%k1")
+                (and
+                  (compiler-reg-location-register?
+                    (compiler-reg-assignment-lookup mask-assignments 1)
+                    "%k2")
+                  (compiler-reg-location-register?
+                    (compiler-reg-assignment-lookup mask-assignments 3)
+                    "%k1")))]
+            (and vector-ok mask-ok))])]))
 
 (define (compiler-reg-target-clobbers-ok?) : bool
   (let
@@ -2095,7 +2342,9 @@
                       (compiler-reg-target-clobbers-ok?)
                       (and
                         (compiler-reg-xmm-clobbers-ok?)
-                        (compiler-reg-coalesce-ok?))))))))))))
+                        (and
+                          (compiler-reg-coalesce-ok?)
+                          (compiler-reg-vector-mask-homes-ok?)))))))))))))
     42
     (begin
       (panic "regalloc: smoke mismatch")

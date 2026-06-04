@@ -988,7 +988,8 @@
     [(TcTypeCache ids values _ rest)
       (match (string-i64-map-get ids name)
         [(StringI64MapFound index) (OkTcType (array-ref values index))]
-        [(StringI64MapMissing) (tc-lookup rest name)])]
+        [(StringI64MapMissing)
+          (ErrTcType (string-append "typecheck: unbound name " name))])]
     [(TcTypeBind key ty rest)
       (if (string-eq key name)
         (OkTcType ty)

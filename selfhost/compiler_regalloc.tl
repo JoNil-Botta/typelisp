@@ -674,6 +674,35 @@
                 unit)))
           unit)))))
 
+(define (compiler-reg-low-bit-index [bits : i64]) : i64
+  (let
+    [value : i64 bits]
+    [offset : i64 0]
+    (begin
+      (if (= (bit-and value 65535) 0)
+        (begin
+          (set! value (shr value 16))
+          (set! offset (+ offset 16)))
+        unit)
+      (if (= (bit-and value 255) 0)
+        (begin
+          (set! value (shr value 8))
+          (set! offset (+ offset 8)))
+        unit)
+      (if (= (bit-and value 15) 0)
+        (begin
+          (set! value (shr value 4))
+          (set! offset (+ offset 4)))
+        unit)
+      (if (= (bit-and value 3) 0)
+        (begin
+          (set! value (shr value 2))
+          (set! offset (+ offset 2)))
+        unit)
+      (if (= (bit-and value 1) 0)
+        (+ offset 1)
+        offset))))
+
 (define (compiler-reg-extend-set
   [starts : (Array i64)]
   [ends : (Array i64)]
@@ -699,16 +728,16 @@
   [point : i64]) : unit
   (if (= bits 0)
     unit
-    (begin
-      (if (= (bit-and bits 1) 0)
-        unit
-        (compiler-reg-extend-interval starts ends var point))
+    (let
+      [index : i64 (compiler-reg-low-bit-index bits)]
+      (begin
+        (compiler-reg-extend-interval starts ends (+ var index) point)
       (compiler-reg-extend-set-word-bits
         starts
         ends
-        (shr bits 1)
-        (+ var 1)
-        point))))
+          (bit-and bits (- bits 1))
+          var
+          point)))))
 
 (define (compiler-reg-extend-instr
   [starts : (Array i64)]

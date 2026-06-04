@@ -15,6 +15,62 @@
 
 (import "stdlib/hashmap.tl")
 
+(cfg
+  compile-profile
+  (define compiler-backend-profile-start-ms : i64
+    0))
+
+(cfg
+  compile-profile
+  (define compiler-backend-profile-start-total : i64
+    0))
+
+(cfg
+  compile-profile
+  (define compiler-backend-profile-start-live : i64
+    0))
+
+(cfg
+  compile-profile
+  (define (compiler-backend-profile-field [value : i64]) : String
+    (string-append "|" (int->string value))))
+
+(cfg
+  compile-profile
+  (define (compiler-backend-profile-start) : unit
+    (begin
+      (set! compiler-backend-profile-start-ms (profile-now-ms))
+      (set! compiler-backend-profile-start-total (profile-alloc-total))
+      (set! compiler-backend-profile-start-live (profile-alloc-live))
+      (profile-alloc-reset-peak))))
+
+(cfg
+  compile-profile
+  (define (compiler-backend-profile-finish [phase : String]) : unit
+    (let
+      [end-ms : i64 (profile-now-ms)]
+      [end-total : i64 (profile-alloc-total)]
+      [end-live : i64 (profile-alloc-live)]
+      [peak-delta : i64
+        (- (profile-alloc-peak) compiler-backend-profile-start-live)]
+      (print-error
+        (string-append
+          "compile-profile|backend."
+          (string-append
+            phase
+            (string-append
+              (compiler-backend-profile-field
+                (- end-ms compiler-backend-profile-start-ms))
+              (string-append
+                (compiler-backend-profile-field
+                  (- end-total compiler-backend-profile-start-total))
+                (string-append
+                  (compiler-backend-profile-field
+                    (- end-live compiler-backend-profile-start-live))
+                  (string-append
+                    (compiler-backend-profile-field peak-delta)
+                    "\n"))))))))))
+
 (defenum ResultBackendReg
   (OkBackendReg String)
   (ErrBackendReg String))
@@ -128,6 +184,14 @@
   (calls StringI64Map)
   (needs-div-abort bool)
   (needs-shift-abort bool))
+
+(defstruct CompilerBackendProgramIndex
+  (functions StringI64Map)
+  (function-signatures (Array CompilerBackendMaybeSignature))
+  (extern-signatures StringI64Map)
+  (extern-signature-values (Array CompilerBackendMaybeSignature))
+  (extern-references StringI64Map)
+  (extern-link-symbols (Array String)))
 
 (define (compiler-backend-runtime-tail-fs-current-dir?
   [tail : CompilerBackendRuntimeTailPlan]) : bool
@@ -1614,6 +1678,30 @@
     (if (and
       (compiler-backend-plan-provides? plan name)
       (not (compiler-backend-function-list-defines? functions name)))
+      (if (compiler-backend-runtime-user-symbol? name)
+        (compiler-backend-user-symbol name)
+        name)
+      (compiler-backend-user-symbol name))))
+
+(define (compiler-backend-call-symbol-index
+  [name : String]
+  [plan : CompilerBackendRuntimePlan]
+  [index : CompilerBackendProgramIndex]) : String
+  (if (compiler-backend-index-extern-references? index name)
+    (let
+      [link-symbol : String (compiler-backend-index-extern-link-symbol index name)]
+      (if (and
+        (and
+          (string-eq link-symbol name)
+          (compiler-backend-plan-provides? plan name))
+        (not (compiler-backend-index-function-defines? index name)))
+        (if (compiler-backend-runtime-user-symbol? name)
+          (compiler-backend-user-symbol name)
+          name)
+        (compiler-backend-asm-safe-symbol link-symbol)))
+    (if (and
+      (compiler-backend-plan-provides? plan name)
+      (not (compiler-backend-index-function-defines? index name)))
       (if (compiler-backend-runtime-user-symbol? name)
         (compiler-backend-user-symbol name)
         name)
@@ -3557,7 +3645,8 @@
   [ok-label : String]
   [plan : CompilerBackendRuntimePlan]
   [functions : CompilerIrFunctionList]
-  [externs : CompilerIrExternList]) : ResultCompilerBackend
+  [externs : CompilerIrExternList]
+  [program-index : CompilerBackendProgramIndex]) : ResultCompilerBackend
   (match (compiler-backend-emit-load-value-with-plan assignments index "%rax")
     [(OkCompilerBackend index-asm)
       (match (compiler-backend-emit-load-value-with-plan
@@ -3587,11 +3676,10 @@
                       (compiler-backend-emit-call-space-sub call-space)
                       (backend-cat5
                         "    call "
-                        (compiler-backend-call-symbol
+                        (compiler-backend-call-symbol-index
                           "tl_oob_abort"
                           plan
-                          functions
-                          externs)
+                          program-index)
                         "\n"
                         (string-append
                           (compiler-backend-emit-call-space-add call-space)
@@ -4244,6 +4332,167 @@
               [_ (CompilerBackendNoSignature)])
             (compiler-backend-extern-signature (box-get rest) name))])]))
 
+(define (compiler-backend-function-list-count
+  [functions : CompilerIrFunctionList]) : i64
+  (match functions
+    [(IrFunctionNil) 0]
+    [(IrFunctionCons _ rest) (+ 1 (compiler-backend-function-list-count rest))]))
+
+(define (compiler-backend-extern-list-count [externs : CompilerIrExternList]) : i64
+  (match externs
+    [(IrExternNil) 0]
+    [(IrExternCons _ rest) (+ 1 (compiler-backend-extern-list-count rest))]))
+
+(define (compiler-backend-program-index-functions-into
+  [functions : CompilerIrFunctionList]
+  [ids : StringI64Map]
+  [signatures : (Array CompilerBackendMaybeSignature)]
+  [index : i64]) : StringI64Map
+  (match functions
+    [(IrFunctionNil) ids]
+    [(IrFunctionCons func rest)
+      (match func
+        [(IrFunction name params ret-ty _ _)
+          (begin
+            (array-set!
+              signatures
+              index
+              (CompilerBackendSomeSignature
+                (compiler-backend-param-type-list params)
+                ret-ty))
+            (compiler-backend-program-index-functions-into
+              rest
+              (string-i64-map-put ids name index)
+              signatures
+              (+ index 1)))])]))
+
+(define (compiler-backend-program-index-extern-signature [ty : AstType]) : CompilerBackendMaybeSignature
+  (match ty
+    [(AstTyFunc args ret-ty) (CompilerBackendSomeSignature args ret-ty)]
+    [_ (CompilerBackendNoSignature)]))
+
+(define (compiler-backend-program-index-extern-signatures-into
+  [externs : CompilerIrExternList]
+  [signature-ids : StringI64Map]
+  [signatures : (Array CompilerBackendMaybeSignature)]
+  [index : i64]) : StringI64Map
+  (match externs
+    [(IrExternNil) signature-ids]
+    [(IrExternCons item rest)
+      (match item
+        [(IrExtern extern-name ty _ _ _)
+          (begin
+            (array-set!
+              signatures
+              index
+              (compiler-backend-program-index-extern-signature ty))
+            (compiler-backend-program-index-extern-signatures-into
+              rest
+              (string-i64-map-put signature-ids extern-name index)
+              signatures
+              (+ index 1)))])]))
+
+(define (compiler-backend-program-index-extern-references-into
+  [externs : CompilerIrExternList]
+  [reference-ids : StringI64Map]
+  [link-symbols : (Array String)]
+  [index : i64]) : StringI64Map
+  (match externs
+    [(IrExternNil) reference-ids]
+    [(IrExternCons item rest)
+      (match item
+        [(IrExtern extern-name _ _ link-symbol _)
+          (begin
+            (array-set! link-symbols index link-symbol)
+            (compiler-backend-program-index-extern-references-into
+              rest
+              (string-i64-map-put
+                (string-i64-map-put reference-ids extern-name index)
+                link-symbol
+                index)
+              link-symbols
+              (+ index 1)))])]))
+
+(define (compiler-backend-program-index-build
+  [functions : CompilerIrFunctionList]
+  [externs : CompilerIrExternList]) : CompilerBackendProgramIndex
+  (let
+    [function-count : i64 (compiler-backend-function-list-count functions)]
+    [extern-count : i64 (compiler-backend-extern-list-count externs)]
+    [function-signatures : (Array CompilerBackendMaybeSignature)
+      (make-array CompilerBackendMaybeSignature function-count)]
+    [extern-signatures : (Array CompilerBackendMaybeSignature)
+      (make-array CompilerBackendMaybeSignature extern-count)]
+    [extern-link-symbols : (Array String) (make-array String extern-count)]
+    [function-ids : StringI64Map
+      (compiler-backend-program-index-functions-into
+        functions
+        (string-i64-map-with-capacity (+ (* function-count 2) 1))
+        function-signatures
+        0)]
+    [extern-signature-ids : StringI64Map
+      (compiler-backend-program-index-extern-signatures-into
+        externs
+        (string-i64-map-with-capacity (+ (* extern-count 2) 1))
+        extern-signatures
+        0)]
+    [extern-reference-ids : StringI64Map
+      (compiler-backend-program-index-extern-references-into
+        externs
+        (string-i64-map-with-capacity (+ (* extern-count 4) 1))
+        extern-link-symbols
+        0)]
+    (CompilerBackendProgramIndex
+      function-ids
+      function-signatures
+      extern-signature-ids
+      extern-signatures
+      extern-reference-ids
+      extern-link-symbols)))
+
+(define (compiler-backend-index-function-signature
+  [index : CompilerBackendProgramIndex]
+  [name : String]) : CompilerBackendMaybeSignature
+  (match (string-i64-map-get (struct-get index functions) name)
+    [(StringI64MapFound slot)
+      (array-ref (struct-get index function-signatures) slot)]
+    [(StringI64MapMissing) (CompilerBackendNoSignature)]))
+
+(define (compiler-backend-index-extern-signature
+  [index : CompilerBackendProgramIndex]
+  [name : String]) : CompilerBackendMaybeSignature
+  (match (string-i64-map-get (struct-get index extern-signatures) name)
+    [(StringI64MapFound slot)
+      (array-ref (struct-get index extern-signature-values) slot)]
+    [(StringI64MapMissing) (CompilerBackendNoSignature)]))
+
+(define (compiler-backend-index-signature
+  [index : CompilerBackendProgramIndex]
+  [name : String]) : CompilerBackendMaybeSignature
+  (match (compiler-backend-index-function-signature index name)
+    [(CompilerBackendSomeSignature args ret-ty)
+      (CompilerBackendSomeSignature args ret-ty)]
+    [(CompilerBackendNoSignature)
+      (compiler-backend-index-extern-signature index name)]))
+
+(define (compiler-backend-index-function-defines?
+  [index : CompilerBackendProgramIndex]
+  [name : String]) : bool
+  (string-i64-map-contains? (struct-get index functions) name))
+
+(define (compiler-backend-index-extern-references?
+  [index : CompilerBackendProgramIndex]
+  [name : String]) : bool
+  (string-i64-map-contains? (struct-get index extern-references) name))
+
+(define (compiler-backend-index-extern-link-symbol
+  [index : CompilerBackendProgramIndex]
+  [name : String]) : String
+  (match (string-i64-map-get (struct-get index extern-references) name)
+    [(StringI64MapFound slot)
+      (array-ref (struct-get index extern-link-symbols) slot)]
+    [(StringI64MapMissing) name]))
+
 (define (compiler-backend-signature
   [functions : CompilerIrFunctionList]
   [externs : CompilerIrExternList]
@@ -4357,6 +4606,13 @@
             "")]
         [(BackendTargetWindows)
           (compiler-backend-windows-vararg-dup-asm param-types fixed-count 0)]))))
+
+(define (compiler-backend-call-param-types-index
+  [name : String]
+  [index : CompilerBackendProgramIndex]) : AstTypeList
+  (match (compiler-backend-index-signature index name)
+    [(CompilerBackendSomeSignature param-types _) param-types]
+    [(CompilerBackendNoSignature) (compiler-backend-runtime-param-types name)]))
 
 ;; Byte offset from %rsp where the `stack-idx`-th stack-passed OUTGOING argument
 ;; is stored (#750). Stack args are numbered sequentially in argument order (0,
@@ -5070,10 +5326,11 @@
   [plan : CompilerBackendRuntimePlan]
   [functions : CompilerIrFunctionList]
   [externs : CompilerIrExternList]
+  [program-index : CompilerBackendProgramIndex]
   [instr-diag : CompilerDiagnostic]) : ResultCompilerBackend
   (let
     [param-types : AstTypeList
-      (compiler-backend-call-param-types name functions externs)]
+      (compiler-backend-call-param-types-index name program-index)]
     [call-space : i64 (compiler-backend-call-arg-space target args param-types)]
     (match (compiler-backend-emit-call-args
       target
@@ -5100,7 +5357,7 @@
                   param-types)
                 (backend-cat5
                   "    call "
-                  (compiler-backend-call-symbol name plan functions externs)
+                  (compiler-backend-call-symbol-index name plan program-index)
                   "\n"
                   (string-append
                     (compiler-backend-emit-call-space-add call-space)
@@ -5383,6 +5640,7 @@
   [plan : CompilerBackendRuntimePlan]
   [functions : CompilerIrFunctionList]
   [externs : CompilerIrExternList]
+  [program-index : CompilerBackendProgramIndex]
   [spans : CompilerSourceSpans]
   [func-diag : CompilerDiagnostic]) : ResultCompilerBackend
   (let
@@ -5435,7 +5693,8 @@
           ok-label
           plan
           functions
-          externs)
+          externs
+          program-index)
           [(OkCompilerBackend asm) (OkCompilerBackend asm)]
           [(ErrCompilerBackend message)
             (ErrCompilerBackend
@@ -5597,7 +5856,7 @@
       [(IrInstrCall dst name args ty)
         (let
           [param-types : AstTypeList
-            (compiler-backend-call-param-types name functions externs)]
+            (compiler-backend-call-param-types-index name program-index)]
           [call-space : i64
             (compiler-backend-call-arg-space target args param-types)]
           (match (compiler-backend-emit-call-args
@@ -5625,11 +5884,10 @@
                         param-types)
                       (backend-cat5
                         "    call "
-                        (compiler-backend-call-symbol
+                        (compiler-backend-call-symbol-index
                           name
                           plan
-                          functions
-                          externs)
+                          program-index)
                         "\n"
                         (string-append
                           (compiler-backend-emit-call-space-add call-space)
@@ -5655,6 +5913,7 @@
           types
           functions
           externs
+          program-index
           instr-diag)]
       [(IrInstrTailCall name args ty)
         (match (compiler-backend-emit-tail-call
@@ -5669,6 +5928,7 @@
           plan
           functions
           externs
+          program-index
           instr-diag)
           [(OkCompilerBackend asm) (OkCompilerBackend asm)]
           [(ErrCompilerBackend message)
@@ -5995,6 +6255,7 @@
   [plan : CompilerBackendRuntimePlan]
   [functions : CompilerIrFunctionList]
   [externs : CompilerIrExternList]
+  [program-index : CompilerBackendProgramIndex]
   [spans : CompilerSourceSpans]
   [func-diag : CompilerDiagnostic]
   [use-counts : (Array i64)]) : ResultCompilerBackend
@@ -6016,6 +6277,7 @@
     plan
     functions
     externs
+    program-index
     spans
     func-diag)
     [(OkCompilerBackend head)
@@ -6035,6 +6297,7 @@
         plan
         functions
         externs
+        program-index
         spans
         func-diag
         use-counts)
@@ -6065,6 +6328,7 @@
   [plan : CompilerBackendRuntimePlan]
   [functions : CompilerIrFunctionList]
   [externs : CompilerIrExternList]
+  [program-index : CompilerBackendProgramIndex]
   [spans : CompilerSourceSpans]
   [func-diag : CompilerDiagnostic]
   [use-counts : (Array i64)]) : ResultCompilerBackend
@@ -6095,6 +6359,7 @@
         plan
         functions
         externs
+        program-index
         spans
         func-diag
         use-counts)
@@ -6136,6 +6401,7 @@
   [plan : CompilerBackendRuntimePlan]
   [functions : CompilerIrFunctionList]
   [externs : CompilerIrExternList]
+  [program-index : CompilerBackendProgramIndex]
   [spans : CompilerSourceSpans]
   [func-diag : CompilerDiagnostic]
   [use-counts : (Array i64)]) : ResultCompilerBackend
@@ -6166,6 +6432,7 @@
         plan
         functions
         externs
+        program-index
         spans
         func-diag
         use-counts)
@@ -6210,6 +6477,7 @@
   [plan : CompilerBackendRuntimePlan]
   [functions : CompilerIrFunctionList]
   [externs : CompilerIrExternList]
+  [program-index : CompilerBackendProgramIndex]
   [spans : CompilerSourceSpans]
   [func-diag : CompilerDiagnostic]
   [use-counts : (Array i64)]) : ResultCompilerBackend
@@ -6242,6 +6510,7 @@
         plan
         functions
         externs
+        program-index
         spans
         func-diag
         use-counts)
@@ -6280,6 +6549,7 @@
   [plan : CompilerBackendRuntimePlan]
   [functions : CompilerIrFunctionList]
   [externs : CompilerIrExternList]
+  [program-index : CompilerBackendProgramIndex]
   [spans : CompilerSourceSpans]
   [func-diag : CompilerDiagnostic]
   [use-counts : (Array i64)]) : ResultCompilerBackend
@@ -6307,6 +6577,7 @@
         plan
         functions
         externs
+        program-index
         spans
         func-diag
         use-counts)
@@ -6345,6 +6616,7 @@
   [plan : CompilerBackendRuntimePlan]
   [functions : CompilerIrFunctionList]
   [externs : CompilerIrExternList]
+  [program-index : CompilerBackendProgramIndex]
   [spans : CompilerSourceSpans]
   [func-diag : CompilerDiagnostic]
   [use-counts : (Array i64)]) : ResultCompilerBackend
@@ -6372,6 +6644,7 @@
         plan
         functions
         externs
+        program-index
         spans
         func-diag
         use-counts)
@@ -6408,6 +6681,7 @@
   [plan : CompilerBackendRuntimePlan]
   [functions : CompilerIrFunctionList]
   [externs : CompilerIrExternList]
+  [program-index : CompilerBackendProgramIndex]
   [spans : CompilerSourceSpans]
   [func-diag : CompilerDiagnostic]
   [use-counts : (Array i64)]) : ResultCompilerBackend
@@ -6440,6 +6714,7 @@
           plan
           functions
           externs
+          program-index
           spans
           func-diag
           use-counts)
@@ -6459,6 +6734,7 @@
           plan
           functions
           externs
+          program-index
           spans
           func-diag
           use-counts)
@@ -6487,10 +6763,11 @@
   [plan : CompilerBackendRuntimePlan]
   [functions : CompilerIrFunctionList]
   [externs : CompilerIrExternList]
+  [program-index : CompilerBackendProgramIndex]
   [instr-diag : CompilerDiagnostic]) : ResultCompilerBackend
   (let
     [param-types : AstTypeList
-      (compiler-backend-call-param-types name functions externs)]
+      (compiler-backend-call-param-types-index name program-index)]
     [call-space : i64 (compiler-backend-call-arg-space target args param-types)]
     (match (compiler-backend-emit-call-args
       target
@@ -6517,7 +6794,7 @@
                   param-types)
                 (backend-cat5
                   "    call "
-                  (compiler-backend-call-symbol name plan functions externs)
+                  (compiler-backend-call-symbol-index name plan program-index)
                   "\n"
                   (string-append
                     (compiler-backend-emit-call-space-add call-space)
@@ -6535,10 +6812,11 @@
   [types : CompilerRegVarTypeList]
   [func : CompilerIrValue]
   [functions : CompilerIrFunctionList]
-  [externs : CompilerIrExternList]) : AstTypeList
+  [externs : CompilerIrExternList]
+  [program-index : CompilerBackendProgramIndex]) : AstTypeList
   (match func
     [(IrValueFunction name)
-      (match (compiler-backend-signature functions externs name)
+      (match (compiler-backend-index-signature program-index name)
         [(CompilerBackendSomeSignature param-types _) param-types]
         [(CompilerBackendNoSignature) AstTypeNil])]
     [_
@@ -6562,10 +6840,16 @@
   [types : CompilerRegVarTypeList]
   [functions : CompilerIrFunctionList]
   [externs : CompilerIrExternList]
+  [program-index : CompilerBackendProgramIndex]
   [instr-diag : CompilerDiagnostic]) : ResultCompilerBackend
   (let
     [param-types : AstTypeList
-      (compiler-backend-indirect-call-param-types types func functions externs)]
+      (compiler-backend-indirect-call-param-types
+        types
+        func
+        functions
+        externs
+        program-index)]
     [call-space : i64
       (compiler-backend-closure-call-arg-space target args param-types)]
     (match (compiler-backend-emit-call-args
@@ -6634,6 +6918,7 @@
   [plan : CompilerBackendRuntimePlan]
   [functions : CompilerIrFunctionList]
   [externs : CompilerIrExternList]
+  [program-index : CompilerBackendProgramIndex]
   [spans : CompilerSourceSpans]
   [func-diag : CompilerDiagnostic]
   [use-counts : (Array i64)]) : ResultCompilerBackend
@@ -6666,6 +6951,7 @@
                     plan
                     functions
                     externs
+                    program-index
                     spans
                     func-diag
                     use-counts)]
@@ -6710,6 +6996,7 @@
                               plan
                               functions
                               externs
+                              program-index
                               spans
                               func-diag
                               use-counts))]
@@ -6731,6 +7018,7 @@
                             plan
                             functions
                             externs
+                            program-index
                             spans
                             func-diag
                             use-counts)])]
@@ -6752,6 +7040,7 @@
                         plan
                         functions
                         externs
+                        program-index
                         spans
                         func-diag
                         use-counts)])]
@@ -6773,6 +7062,7 @@
                     plan
                     functions
                     externs
+                    program-index
                     spans
                     func-diag
                     use-counts)])]
@@ -6794,6 +7084,7 @@
                 plan
                 functions
                 externs
+                program-index
                 spans
                 func-diag
                 use-counts)])]
@@ -6820,6 +7111,7 @@
                               plan
                               functions
                               externs
+                              program-index
                               (compiler-backend-instr-diagnostic
                                 spans
                                 source-function
@@ -6843,6 +7135,7 @@
                               plan
                               functions
                               externs
+                              program-index
                               spans
                               func-diag
                               use-counts))]
@@ -6864,6 +7157,7 @@
                             plan
                             functions
                             externs
+                            program-index
                             spans
                             func-diag
                             use-counts)])]
@@ -6885,6 +7179,7 @@
                         plan
                         functions
                         externs
+                        program-index
                         spans
                         func-diag
                         use-counts)])]
@@ -6906,6 +7201,7 @@
                     plan
                     functions
                     externs
+                    program-index
                     spans
                     func-diag
                     use-counts)])]
@@ -6927,6 +7223,7 @@
                 plan
                 functions
                 externs
+                program-index
                 spans
                 func-diag
                 use-counts)])]
@@ -7003,6 +7300,7 @@
                                                   plan
                                                   functions
                                                   externs
+                                                  program-index
                                                   spans
                                                   func-diag
                                                   use-counts)
@@ -7028,6 +7326,7 @@
                                                   plan
                                                   functions
                                                   externs
+                                                  program-index
                                                   spans
                                                   func-diag
                                                   use-counts))]
@@ -7054,6 +7353,7 @@
                                                 plan
                                                 functions
                                                 externs
+                                                program-index
                                                 spans
                                                 func-diag
                                                 use-counts)])]
@@ -7080,6 +7380,7 @@
                                             plan
                                             functions
                                             externs
+                                            program-index
                                             spans
                                             func-diag
                                             use-counts)])
@@ -7105,6 +7406,7 @@
                                         plan
                                         functions
                                         externs
+                                        program-index
                                         spans
                                         func-diag
                                         use-counts))]
@@ -7131,6 +7433,7 @@
                                       plan
                                       functions
                                       externs
+                                      program-index
                                       spans
                                       func-diag
                                       use-counts)])]
@@ -7157,6 +7460,7 @@
                                   plan
                                   functions
                                   externs
+                                  program-index
                                   spans
                                   func-diag
                                   use-counts)])
@@ -7182,6 +7486,7 @@
                               plan
                               functions
                               externs
+                              program-index
                               spans
                               func-diag
                               use-counts))
@@ -7202,6 +7507,7 @@
                             plan
                             functions
                             externs
+                            program-index
                             spans
                             func-diag
                             use-counts))]
@@ -7229,6 +7535,7 @@
                             plan
                             functions
                             externs
+                            program-index
                             spans
                             func-diag
                             use-counts)
@@ -7249,6 +7556,7 @@
                             plan
                             functions
                             externs
+                            program-index
                             spans
                             func-diag
                             use-counts))]
@@ -7270,6 +7578,7 @@
                           plan
                           functions
                           externs
+                          program-index
                           spans
                           func-diag
                           use-counts)])]
@@ -7291,6 +7600,7 @@
                       plan
                       functions
                       externs
+                      program-index
                       spans
                       func-diag
                       use-counts)])]
@@ -7312,6 +7622,7 @@
                   plan
                   functions
                   externs
+                  program-index
                   spans
                   func-diag
                   use-counts)])
@@ -7332,6 +7643,7 @@
               plan
               functions
               externs
+              program-index
               spans
               func-diag
               use-counts))]
@@ -7388,6 +7700,7 @@
                                   plan
                                   functions
                                   externs
+                                  program-index
                                   spans
                                   func-diag
                                   use-counts)
@@ -7408,6 +7721,7 @@
                                   plan
                                   functions
                                   externs
+                                  program-index
                                   spans
                                   func-diag
                                   use-counts))]
@@ -7429,6 +7743,7 @@
                                 plan
                                 functions
                                 externs
+                                program-index
                                 spans
                                 func-diag
                                 use-counts)])]
@@ -7450,6 +7765,7 @@
                             plan
                             functions
                             externs
+                            program-index
                             spans
                             func-diag
                             use-counts)])
@@ -7470,6 +7786,7 @@
                         plan
                         functions
                         externs
+                        program-index
                         spans
                         func-diag
                         use-counts))]
@@ -7491,6 +7808,7 @@
                       plan
                       functions
                       externs
+                      program-index
                       spans
                       func-diag
                       use-counts)])]
@@ -7512,6 +7830,7 @@
                   plan
                   functions
                   externs
+                  program-index
                   spans
                   func-diag
                   use-counts)])
@@ -7532,6 +7851,7 @@
               plan
               functions
               externs
+              program-index
               spans
               func-diag
               use-counts))]
@@ -7578,6 +7898,7 @@
                                 plan
                                 functions
                                 externs
+                                program-index
                                 spans
                                 func-diag
                                 use-counts))]
@@ -7599,6 +7920,7 @@
                               plan
                               functions
                               externs
+                              program-index
                               spans
                               func-diag
                               use-counts)])]
@@ -7620,6 +7942,7 @@
                           plan
                           functions
                           externs
+                          program-index
                           spans
                           func-diag
                           use-counts)])]
@@ -7648,6 +7971,7 @@
                         plan
                         functions
                         externs
+                        program-index
                         spans
                         func-diag
                         use-counts)
@@ -7668,6 +7992,7 @@
                         plan
                         functions
                         externs
+                        program-index
                         spans
                         func-diag
                         use-counts))]
@@ -7689,6 +8014,7 @@
                       plan
                       functions
                       externs
+                      program-index
                       spans
                       func-diag
                       use-counts)])]
@@ -7710,6 +8036,7 @@
                   plan
                   functions
                   externs
+                  program-index
                   spans
                   func-diag
                   use-counts)])
@@ -7730,6 +8057,7 @@
               plan
               functions
               externs
+              program-index
               spans
               func-diag
               use-counts))]
@@ -7751,6 +8079,7 @@
             plan
             functions
             externs
+            program-index
             spans
             func-diag
             use-counts)])]))
@@ -7770,6 +8099,7 @@
   [plan : CompilerBackendRuntimePlan]
   [functions : CompilerIrFunctionList]
   [externs : CompilerIrExternList]
+  [program-index : CompilerBackendProgramIndex]
   [spans : CompilerSourceSpans]
   [func-diag : CompilerDiagnostic]
   [use-counts : (Array i64)]) : ResultCompilerBackend
@@ -7791,6 +8121,7 @@
         plan
         functions
         externs
+        program-index
         spans
         func-diag
         use-counts)
@@ -7824,6 +8155,7 @@
   [plan : CompilerBackendRuntimePlan]
   [functions : CompilerIrFunctionList]
   [externs : CompilerIrExternList]
+  [program-index : CompilerBackendProgramIndex]
   [spans : CompilerSourceSpans]
   [func-diag : CompilerDiagnostic]
   [use-counts : (Array i64)]
@@ -7846,6 +8178,7 @@
         plan
         functions
         externs
+        program-index
         spans
         func-diag
         use-counts)
@@ -7864,6 +8197,7 @@
             plan
             functions
             externs
+            program-index
             spans
             func-diag
             use-counts
@@ -7884,6 +8218,7 @@
   [plan : CompilerBackendRuntimePlan]
   [functions : CompilerIrFunctionList]
   [externs : CompilerIrExternList]
+  [program-index : CompilerBackendProgramIndex]
   [spans : CompilerSourceSpans]
   [func-diag : CompilerDiagnostic]
   [use-counts : (Array i64)]) : ResultCompilerBackend
@@ -7901,6 +8236,7 @@
     plan
     functions
     externs
+    program-index
     spans
     func-diag
     use-counts
@@ -8049,6 +8385,7 @@
   [globals : CompilerIrGlobalList]
   [externs : CompilerIrExternList]
   [plan : CompilerBackendRuntimePlan]
+  [program-index : CompilerBackendProgramIndex]
   [spans : CompilerSourceSpans]
   [crt-entry : bool]) : ResultCompilerBackend
   (match func
@@ -8093,6 +8430,7 @@
                 plan
                 functions
                 externs
+                program-index
                 spans
                 func-diag
                 use-counts)
@@ -8171,6 +8509,7 @@
   [globals : CompilerIrGlobalList]
   [externs : CompilerIrExternList]
   [plan : CompilerBackendRuntimePlan]
+  [program-index : CompilerBackendProgramIndex]
   [spans : CompilerSourceSpans]
   [crt-entry : bool]) : ResultCompilerBackend
   (let
@@ -8187,6 +8526,7 @@
         globals
         externs
         plan
+        program-index
         spans
         crt-entry)
         [(OkCompilerBackend asm)
@@ -8222,6 +8562,7 @@
   [globals : CompilerIrGlobalList]
   [externs : CompilerIrExternList]
   [plan : CompilerBackendRuntimePlan]
+  [program-index : CompilerBackendProgramIndex]
   [spans : CompilerSourceSpans]
   [crt-entry : bool]
   [buf : TextBuf]) : ResultCompilerBackend
@@ -8236,6 +8577,7 @@
         globals
         externs
         plan
+        program-index
         spans
         crt-entry)
         [(OkCompilerBackend head)
@@ -8247,6 +8589,7 @@
             globals
             externs
             plan
+            program-index
             spans
             crt-entry
             (text-buf-append buf head))]
@@ -8260,6 +8603,7 @@
   [all-functions : CompilerIrFunctionList]
   [externs : CompilerIrExternList]
   [plan : CompilerBackendRuntimePlan]
+  [program-index : CompilerBackendProgramIndex]
   [spans : CompilerSourceSpans]
   [crt-entry : bool]) : ResultCompilerBackend
   (compiler-backend-emit-functions-into
@@ -8270,6 +8614,7 @@
     globals
     externs
     plan
+    program-index
     spans
     crt-entry
     (text-buf-empty)))
@@ -8307,6 +8652,7 @@
   [globals : CompilerIrGlobalList]
   [externs : CompilerIrExternList]
   [plan : CompilerBackendRuntimePlan]
+  [program-index : CompilerBackendProgramIndex]
   [spans : CompilerSourceSpans]
   [crt-entry : bool]
   [buf : TextBuf]) : ResultCompilerBackendBuffer
@@ -8321,6 +8667,7 @@
         globals
         externs
         plan
+        program-index
         spans
         crt-entry)
         [(OkCompilerBackend head)
@@ -8332,6 +8679,7 @@
             globals
             externs
             plan
+            program-index
             spans
             crt-entry
             (text-buf-append buf head))]
@@ -8345,6 +8693,7 @@
   [all-functions : CompilerIrFunctionList]
   [externs : CompilerIrExternList]
   [plan : CompilerBackendRuntimePlan]
+  [program-index : CompilerBackendProgramIndex]
   [spans : CompilerSourceSpans]
   [crt-entry : bool]) : ResultCompilerBackendBuffer
   (compiler-backend-emit-functions-buffer-into
@@ -8355,6 +8704,7 @@
     globals
     externs
     plan
+    program-index
     spans
     crt-entry
     (text-buf-empty)))
@@ -8371,8 +8721,9 @@
   [name : String]
   [functions : CompilerIrFunctionList]
   [externs : CompilerIrExternList]
+  [program-index : CompilerBackendProgramIndex]
   [buf : TextBuf]) : TextBuf
-  (match (compiler-backend-signature functions externs name)
+  (match (compiler-backend-index-signature program-index name)
     [(CompilerBackendSomeSignature _ _)
       (text-buf-append
         buf
@@ -8383,6 +8734,7 @@
   [names : BackendStringList]
   [functions : CompilerIrFunctionList]
   [externs : CompilerIrExternList]
+  [program-index : CompilerBackendProgramIndex]
   [buf : TextBuf]) : TextBuf
   (match names
     [(BackendStringNil) buf]
@@ -8391,16 +8743,19 @@
         (box-get rest)
         functions
         externs
+        program-index
         (compiler-backend-emit-closure-descriptor-entry-into
           name
           functions
           externs
+          program-index
           buf))]))
 
 (define (compiler-backend-emit-closure-descriptors
   [names : BackendStringList]
   [functions : CompilerIrFunctionList]
-  [externs : CompilerIrExternList]) : String
+  [externs : CompilerIrExternList]
+  [program-index : CompilerBackendProgramIndex]) : String
   (match names
     [(BackendStringNil) ""]
     [_
@@ -8409,6 +8764,7 @@
           names
           functions
           externs
+          program-index
           (text-buf-append
             (text-buf-empty)
             "    .section .rodata\n    .balign 8\n")))]))
@@ -8431,7 +8787,8 @@
   [ret-ty : AstType]
   [plan : CompilerBackendRuntimePlan]
   [functions : CompilerIrFunctionList]
-  [externs : CompilerIrExternList]) : ResultCompilerBackend
+  [externs : CompilerIrExternList]
+  [program-index : CompilerBackendProgramIndex]) : ResultCompilerBackend
   (let
     [params : CompilerIrParamList
       (compiler-backend-param-list-from-types param-types 0)]
@@ -8488,11 +8845,10 @@
                           param-types)
                         (backend-cat5
                           "    call "
-                          (compiler-backend-call-symbol
+                          (compiler-backend-call-symbol-index
                             name
                             plan
-                            functions
-                            externs)
+                            program-index)
                           "\n"
                           (string-append
                             (compiler-backend-emit-call-space-add call-space)
@@ -8508,11 +8864,12 @@
   [functions : CompilerIrFunctionList]
   [externs : CompilerIrExternList]
   [plan : CompilerBackendRuntimePlan]
+  [program-index : CompilerBackendProgramIndex]
   [buf : TextBuf]) : ResultCompilerBackend
   (match names
     [(BackendStringNil) (OkCompilerBackend (text-buf-render buf))]
     [(BackendStringCons name rest)
-      (match (compiler-backend-signature functions externs name)
+      (match (compiler-backend-index-signature program-index name)
         [(CompilerBackendSomeSignature param-types ret-ty)
           (match (compiler-backend-emit-closure-entry-adapter
             target
@@ -8521,7 +8878,8 @@
             ret-ty
             plan
             functions
-            externs)
+            externs
+            program-index)
             [(OkCompilerBackend head)
               (compiler-backend-emit-closure-entry-adapters-into
                 target
@@ -8529,6 +8887,7 @@
                 functions
                 externs
                 plan
+                program-index
                 (text-buf-append buf head))]
             [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
         [(CompilerBackendNoSignature)
@@ -8538,6 +8897,7 @@
             functions
             externs
             plan
+            program-index
             buf)])]))
 
 (define (compiler-backend-emit-closure-entry-adapters
@@ -8545,13 +8905,15 @@
   [names : BackendStringList]
   [functions : CompilerIrFunctionList]
   [externs : CompilerIrExternList]
-  [plan : CompilerBackendRuntimePlan]) : ResultCompilerBackend
+  [plan : CompilerBackendRuntimePlan]
+  [program-index : CompilerBackendProgramIndex]) : ResultCompilerBackend
   (compiler-backend-emit-closure-entry-adapters-into
     target
     names
     functions
     externs
     plan
+    program-index
     (text-buf-empty)))
 
 (define (compiler-backend-string-list-contains?
@@ -18767,45 +19129,59 @@ tl_windows_sdk_registry_install:
   [emit-entry : bool]
   [crt-entry : bool]) : ResultCompilerBackendBuffer
   (match (compiler-backend-runtime-plan program)
-    [(OkBackendRuntimePlan plan)
-      (if (compiler-backend-target-runtime-ok? target plan)
-        (match program
-          [(IrProgram globals functions externs)
-            (match (compiler-backend-emit-globals target globals)
-              [(OkCompilerBackend globals-asm)
-                (let
-                  [entry-functions : CompilerIrFunctionList
-                    (compiler-backend-functions-with-implicit-main
-                      functions
-                      emit-entry)]
-                  (match (compiler-backend-emit-functions-buffer
-                    target
-                    mode
-                    entry-functions
-                    globals
-                    entry-functions
-                    externs
-                    plan
-                    spans
-                    crt-entry)
-                    [(OkCompilerBackendBuffer functions-buf)
-                      (let
-                        [closure-names : BackendStringList
-                          (compiler-backend-collect-program-functions program)]
-                        (match (compiler-backend-emit-closure-entry-adapters
-                          target
-                          closure-names
-                          entry-functions
-                          externs
-                          plan)
-                          [(OkCompilerBackend closure-adapters-asm)
-                            (let
-                              [strings : BackendStringList
-                                (compiler-backend-collect-program-strings
-                                  program)]
-                              [floats : BackendStringList
-                                (compiler-backend-collect-program-f64s program)]
-                              [prefix-buf : TextBuf
+      [(OkBackendRuntimePlan plan)
+        (if (compiler-backend-target-runtime-ok? target plan)
+          (match program
+            [(IrProgram globals functions externs)
+              (match (compiler-backend-emit-globals target globals)
+                [(OkCompilerBackend globals-asm)
+                  (let
+                    [entry-functions : CompilerIrFunctionList
+                      (compiler-backend-functions-with-implicit-main
+                        functions
+                        emit-entry)]
+                    [program-index : CompilerBackendProgramIndex
+                      (compiler-backend-program-index-build
+                        entry-functions
+                        externs)]
+                    (begin
+                      (cfg compile-profile (compiler-backend-profile-start))
+                    (match (compiler-backend-emit-functions-buffer
+                      target
+                      mode
+                      entry-functions
+                      globals
+                      entry-functions
+                      externs
+                      plan
+                      program-index
+                      spans
+                      crt-entry)
+                      [(OkCompilerBackendBuffer functions-buf)
+                        (begin
+                          (cfg
+                            compile-profile
+                            (compiler-backend-profile-finish "functions"))
+                          (let
+                            [closure-names : BackendStringList
+                              (compiler-backend-collect-program-functions
+                                program)]
+                            (match (compiler-backend-emit-closure-entry-adapters
+                              target
+                              closure-names
+                              entry-functions
+                              externs
+                              plan
+                              program-index)
+                              [(OkCompilerBackend closure-adapters-asm)
+                                (let
+                                  [strings : BackendStringList
+                                    (compiler-backend-collect-program-strings
+                                      program)]
+                                  [floats : BackendStringList
+                                    (compiler-backend-collect-program-f64s
+                                      program)]
+                                  [prefix-buf : TextBuf
                                 (text-buf-append
                                   (text-buf-append
                                     (text-buf-append
@@ -18825,7 +19201,8 @@ tl_windows_sdk_registry_install:
                                           (compiler-backend-emit-closure-descriptors
                                             closure-names
                                             entry-functions
-                                            externs))
+                                            externs
+                                            program-index))
                                         (if emit-entry
                                           (compiler-backend-runtime-data-for-target
                                             target
@@ -18865,16 +19242,20 @@ tl_windows_sdk_registry_install:
                                     ""))]
                               (OkCompilerBackendBuffer buf))]
                           [(ErrCompilerBackend message)
-                            (ErrCompilerBackendBuffer message)]))]
+                            (ErrCompilerBackendBuffer message)])))]
                     [(ErrCompilerBackendBuffer message)
-                      (ErrCompilerBackendBuffer message)]))]
-              [(ErrCompilerBackend message) (ErrCompilerBackendBuffer message)])])
-        (ErrCompilerBackendBuffer
-          (compiler-diagnostic-at-start
-            ""
-            "backend: internal target runtime rejection")))]
-    [(ErrBackendRuntimePlan message)
-      (ErrCompilerBackendBuffer (compiler-diagnostic-at-start "" message))]))
+                      (begin
+                        (cfg
+                          compile-profile
+                          (compiler-backend-profile-finish "functions"))
+                        (ErrCompilerBackendBuffer message))])))]
+                [(ErrCompilerBackend message) (ErrCompilerBackendBuffer message)])])
+          (ErrCompilerBackendBuffer
+            (compiler-diagnostic-at-start
+              ""
+              "backend: internal target runtime rejection")))]
+      [(ErrBackendRuntimePlan message)
+        (ErrCompilerBackendBuffer (compiler-diagnostic-at-start "" message))]))
 
 (define (compiler-backend-emit-program-target-with-mode-and-crt
   [program : CompilerIrProgram]

@@ -1927,7 +1927,7 @@
       false
       false
       false
-      false)
+      (CompilerBackendRuntimeTailPlan false false))
     IrFunctionNil
     IrExternNil
     (compiler-source-spans-empty)

@@ -1985,7 +1985,7 @@
         (IrInstrCons
           (IrInstrVectorLoad 0 (IrValueI64 0) (IrValueI64 0) 4 (AstTyI64))
           (IrInstrCons
-            (IrInstrCall 1 "side_effect" IrValueNil (AstTyUnit))
+            (IrInstrCall 1 "side_effect" (IrCallArgsNil) (AstTyUnit))
             (IrInstrCons
               (IrInstrVectorBinOp
                 2

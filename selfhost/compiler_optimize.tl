@@ -1180,6 +1180,29 @@
         (opt-collect-value-uses-array items value)
         (opt-collect-value-list-uses-array items rest))]))
 
+(define (opt-collect-call-args-array-uses-array
+  [items : (Array bool)]
+  [values : (Array CompilerIrValue)]
+  [index : i64]) : unit
+  (if (>= index (array-length values))
+    unit
+    (begin
+      (opt-collect-value-uses-array items (array-ref values index))
+      (opt-collect-call-args-array-uses-array items values (+ index 1)))))
+
+(define (opt-collect-call-args-uses-array
+  [items : (Array bool)]
+  [args : CompilerIrCallArgs]) : unit
+  (match args
+    [(IrCallArgsNil) unit]
+    [(IrCallArgsOne value) (opt-collect-value-uses-array items value)]
+    [(IrCallArgsTwo a b)
+      (begin
+        (opt-collect-value-uses-array items a)
+        (opt-collect-value-uses-array items b))]
+    [(IrCallArgsArray values)
+      (opt-collect-call-args-array-uses-array items values 0)]))
+
 (define (opt-collect-phi-uses-array
   [items : (Array bool)]
   [inputs : CompilerIrPhiInputList]) : unit
@@ -1200,12 +1223,12 @@
         (opt-collect-value-uses-array items l)
         (opt-collect-value-uses-array items r))]
     [(IrInstrUnOp _ _ src _) (opt-collect-value-uses-array items src)]
-    [(IrInstrCall _ _ args _) (opt-collect-value-list-uses-array items args)]
+    [(IrInstrCall _ _ args _) (opt-collect-call-args-uses-array items args)]
     [(IrInstrCallIndirect _ func args _)
       (begin
         (opt-collect-value-uses-array items func)
-        (opt-collect-value-list-uses-array items args))]
-    [(IrInstrTailCall _ args _) (opt-collect-value-list-uses-array items args)]
+        (opt-collect-call-args-uses-array items args))]
+    [(IrInstrTailCall _ args _) (opt-collect-call-args-uses-array items args)]
     [(IrInstrStore _ value _) (opt-collect-value-uses-array items value)]
     [(IrInstrAddrOf _ src) (opt-used-array-add items src)]
     [(IrInstrGep _ base offset _)

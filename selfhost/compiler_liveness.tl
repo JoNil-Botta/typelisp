@@ -408,6 +408,25 @@
         (compiler-live-value-vars value)
         (compiler-live-value-list-vars rest))]))
 
+(define (compiler-live-call-args-array-vars
+  [values : (Array CompilerIrValue)]
+  [index : i64]) : CompilerLiveI64Set
+  (if (>= index (array-length values))
+    (compiler-live-set-empty)
+    (compiler-live-set-union
+      (compiler-live-value-vars (array-ref values index))
+      (compiler-live-call-args-array-vars values (+ index 1)))))
+
+(define (compiler-live-call-args-vars [args : CompilerIrCallArgs]) : CompilerLiveI64Set
+  (match args
+    [(IrCallArgsNil) (compiler-live-set-empty)]
+    [(IrCallArgsOne value) (compiler-live-value-vars value)]
+    [(IrCallArgsTwo a b)
+      (compiler-live-set-union
+        (compiler-live-value-vars a)
+        (compiler-live-value-vars b))]
+    [(IrCallArgsArray values) (compiler-live-call-args-array-vars values 0)]))
+
 (define (compiler-live-maybe-value-vars [value : CompilerIrMaybeValue]) : CompilerLiveI64Set
   (match value
     [(IrNoValue) (compiler-live-set-empty)]
@@ -504,12 +523,12 @@
         (compiler-live-value-vars leaf)
         (compiler-live-value-vars subleaf))]
     [(IrInstrXgetbv _ index) (compiler-live-value-vars index)]
-    [(IrInstrCall _ _ args _) (compiler-live-value-list-vars args)]
+    [(IrInstrCall _ _ args _) (compiler-live-call-args-vars args)]
     [(IrInstrCallIndirect _ func args _)
       (compiler-live-set-union
         (compiler-live-value-vars func)
-        (compiler-live-value-list-vars args))]
-    [(IrInstrTailCall _ args _) (compiler-live-value-list-vars args)]
+        (compiler-live-call-args-vars args))]
+    [(IrInstrTailCall _ args _) (compiler-live-call-args-vars args)]
     [(IrInstrStore _ value _) (compiler-live-value-vars value)]
     [(IrInstrBranch cond _ _) (compiler-live-value-vars cond)]
     [(IrInstrReturn value) (compiler-live-maybe-value-vars value)]
@@ -942,9 +961,7 @@
             (IrInstrCall
               3
               "f"
-              (IrValueCons
-                (IrValueVar 1)
-                (IrValueCons (IrValueVar 13) IrValueNil))
+              (IrCallArgsTwo (IrValueVar 1) (IrValueVar 13))
               (compiler-live-i64-ty))
             (IrInstrCons
               (IrInstrStore "g" (IrValueVar 14) (compiler-live-i64-ty))

@@ -791,9 +791,9 @@
         rest
         (match instr
           [(IrInstrCall _ _ args _)
-            (compiler-live-set-union set (compiler-live-value-list-vars args))]
+            (compiler-live-set-union set (compiler-live-call-args-vars args))]
           [(IrInstrTailCall _ args _)
-            (compiler-live-set-union set (compiler-live-value-list-vars args))]
+            (compiler-live-set-union set (compiler-live-call-args-vars args))]
           [_ set]))]))
 
 (define (compiler-reg-call-arg-vars-blocks
@@ -1667,7 +1667,7 @@
         (IrInstrCons
           (IrInstrMov 0 (IrValueI64 9) (compiler-reg-i64-ty))
           (IrInstrCons
-            (IrInstrCall 1 "side_effect" IrValueNil (AstTyUnit))
+            (IrInstrCall 1 "side_effect" (IrCallArgsNil) (AstTyUnit))
             (IrInstrCons
               (IrInstrMov 2 (IrValueVar 0) (compiler-reg-i64-ty))
               (IrInstrCons
@@ -1687,7 +1687,7 @@
         (IrInstrCons
           (IrInstrMov 0 (IrValueF64 "9.5") (compiler-reg-f64-ty))
           (IrInstrCons
-            (IrInstrCall 1 "side_effect" IrValueNil (AstTyUnit))
+            (IrInstrCall 1 "side_effect" (IrCallArgsNil) (AstTyUnit))
             (IrInstrCons
               (IrInstrMov 2 (IrValueVar 0) (compiler-reg-f64-ty))
               (IrInstrCons
@@ -1712,9 +1712,7 @@
               (IrInstrCall
                 2
                 "use_args"
-                (IrValueCons
-                  (IrValueVar 0)
-                  (IrValueCons (IrValueVar 1) IrValueNil))
+                (IrCallArgsTwo (IrValueVar 0) (IrValueVar 1))
                 (AstTyUnit))
               (IrInstrCons
                 (IrInstrMov 3 (IrValueI64 3) (compiler-reg-i64-ty))
@@ -1738,7 +1736,7 @@
             (IrInstrCall
               1
               "takes_f64"
-              (IrValueCons (IrValueVar 0) IrValueNil)
+              (IrCallArgsOne (IrValueVar 0))
               (AstTyUnit))
             (IrInstrCons
               (IrInstrMov 2 (IrValueF64 "2.5") (compiler-reg-f64-ty))

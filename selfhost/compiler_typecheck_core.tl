@@ -771,7 +771,7 @@
 (define (tc-in-unsafe? [env : TcTypeEnv]) : bool
   (match env
     [(TcTypeNil) false]
-    [(TcTypeCache _ _ _ rest) (tc-in-unsafe? rest)]
+    [(TcTypeCache _ _ _ _) false]
     [(TcTypeBind key _ rest)
       (if (string-eq key (tc-unsafe-marker-name))
         true
@@ -784,7 +784,8 @@
   (match env
     [(TcTypeNil)
       (ErrTcType "typecheck: try requires enclosing Result-like function")]
-    [(TcTypeCache _ _ _ rest) (tc-current-return-type rest)]
+    [(TcTypeCache _ _ _ _)
+      (ErrTcType "typecheck: try requires enclosing Result-like function")]
     [(TcTypeBind key ty rest)
       (if (string-eq key (tc-return-type-name))
         (OkTcType ty)
@@ -1027,7 +1028,7 @@
 (define (tc-active-region [env : TcTypeEnv]) : TcMaybeString
   (match env
     [(TcTypeNil) (TcNoString)]
-    [(TcTypeCache _ _ _ rest) (tc-active-region rest)]
+    [(TcTypeCache _ _ _ _) (TcNoString)]
     [(TcTypeBind key ty rest)
       (if (string-eq key (tc-region-marker-name))
         (match ty
@@ -1074,13 +1075,13 @@
 (define (tc-cleanup-owner-marker-head? [env : TcTypeEnv] [name : String]) : bool
   (match env
     [(TcTypeNil) false]
-    [(TcTypeCache _ _ _ rest) (tc-cleanup-owner-marker-head? rest name)]
+    [(TcTypeCache _ _ _ _) false]
     [(TcTypeBind key ty _) (tc-cleanup-owner-marker-for? key ty name)]))
 
 (define (tc-cleanup-owner-active? [env : TcTypeEnv] [name : String]) : bool
   (match env
     [(TcTypeNil) false]
-    [(TcTypeCache _ _ _ rest) (tc-cleanup-owner-active? rest name)]
+    [(TcTypeCache _ _ _ _) false]
     [(TcTypeBind key ty rest)
       (if (string-eq key name)
         (tc-cleanup-owner-marker-head? rest name)
@@ -1089,7 +1090,7 @@
 (define (tc-active-cleanup-owners-scan [root : TcTypeEnv] [env : TcTypeEnv]) : TcStringList
   (match env
     [(TcTypeNil) TcStringNil]
-    [(TcTypeCache _ _ _ rest) (tc-active-cleanup-owners-scan root rest)]
+    [(TcTypeCache _ _ _ _) TcStringNil]
     [(TcTypeBind key ty rest)
       (let
         [owners : TcStringList (tc-active-cleanup-owners-scan root rest)]
@@ -1259,7 +1260,7 @@
 (define (tc-lifetime-visible? [env : TcTypeEnv] [lifetime : String]) : bool
   (match env
     [(TcTypeNil) false]
-    [(TcTypeCache _ _ _ rest) (tc-lifetime-visible? rest lifetime)]
+    [(TcTypeCache _ _ _ _) false]
     [(TcTypeBind key ty rest)
       (if (tc-env-binding-matches-lifetime? key ty lifetime)
         true
@@ -1282,8 +1283,7 @@
   [seen-target : bool]) : bool
   (match env
     [(TcTypeNil) false]
-    [(TcTypeCache _ _ _ rest)
-      (tc-lifetime-outlives-binding-scan rest lifetime target seen-target)]
+    [(TcTypeCache _ _ _ _) false]
     [(TcTypeBind key ty rest)
       (if (tc-env-binding-matches-lifetime? key ty lifetime)
         seen-target
@@ -1319,12 +1319,7 @@
     true
     (match env
       [(TcTypeNil) false]
-      [(TcTypeCache _ _ _ rest)
-        (tc-lifetime-outlives-lifetime-scan
-          rest
-          value-lifetime
-          target-lifetime
-          seen-target)]
+      [(TcTypeCache _ _ _ _) false]
       [(TcTypeBind key ty rest)
         (if (tc-env-binding-matches-lifetime? key ty value-lifetime)
           seen-target
@@ -1736,8 +1731,7 @@
     true
     (match env
       [(TcTypeNil) false]
-      [(TcTypeCache _ _ _ rest)
-        (tc-region-outlives-or-matches rest value-region target-region)]
+      [(TcTypeCache _ _ _ _) false]
       [(TcTypeBind key ty rest)
         (if (string-eq key (tc-region-marker-name))
           (match ty
@@ -7674,8 +7668,7 @@
   [body : AstExpr]) : ResultTcUnit
   (match env
     [(TcTypeNil) OkTcUnit]
-    [(TcTypeCache _ _ _ rest)
-      (tc-check-lambda-region-captures-scan-root root rest bound body)]
+    [(TcTypeCache _ _ _ _) OkTcUnit]
     [(TcTypeBind key ty rest)
       (cond
         [(or

@@ -6,6 +6,8 @@
 
 (import "compiler_ir_types.tl")
 
+(import "stdlib/hashmap.tl")
+
 (defenum CompilerLiveI64Set
   (CompilerLiveI64Nil)
   (CompilerLiveI64Cons i64 CompilerLiveI64Set))
@@ -31,6 +33,10 @@
 (defenum CompilerLiveBlockList
   (CompilerLiveBlockNil)
   (CompilerLiveBlockCons CompilerLiveBlock (Box CompilerLiveBlockList)))
+
+(defstruct CompilerLiveBlockGraph
+  (ids StringI64Map)
+  (blocks (Array CompilerLiveBlock)))
 
 (defenum CompilerFunctionLiveness
   (CompilerFunctionLiveness CompilerLiveBlockList))
@@ -657,6 +663,87 @@
             (CompilerLiveSomeBlock block)
             (compiler-live-find-block (box-get rest) label))])]))
 
+(define (compiler-live-block-count [blocks : CompilerLiveBlockList]) : i64
+  (match blocks
+    [(CompilerLiveBlockNil) 0]
+    [(CompilerLiveBlockCons _ rest) (+ 1 (compiler-live-block-count rest))]))
+
+(define (compiler-live-block-graph-fill!
+  [blocks : CompilerLiveBlockList]
+  [ids : StringI64Map]
+  [values : (Array CompilerLiveBlock)]
+  [index : i64]) : StringI64Map
+  (match blocks
+    [(CompilerLiveBlockNil) ids]
+    [(CompilerLiveBlockCons block rest)
+      (match block
+        [(CompilerLiveBlock label _ _ _ _ _ _)
+          (begin
+            (array-set! values index block)
+            (compiler-live-block-graph-fill!
+              rest
+              (if (string-i64-map-contains? ids label)
+                ids
+                (string-i64-map-put ids label index))
+              values
+              (+ index 1)))])]))
+
+(define (compiler-live-block-graph-build
+  [blocks : CompilerLiveBlockList]) : CompilerLiveBlockGraph
+  (let
+    [count : i64 (compiler-live-block-count blocks)]
+    [values : (Array CompilerLiveBlock) (make-array CompilerLiveBlock count)]
+    [ids : StringI64Map
+      (compiler-live-block-graph-fill!
+        blocks
+        (string-i64-map-with-capacity (+ (* count 2) 1))
+        values
+        0)]
+    (CompilerLiveBlockGraph ids values)))
+
+(define (compiler-live-graph-find-block
+  [graph : CompilerLiveBlockGraph]
+  [label : String]) : CompilerLiveMaybeBlock
+  (match (string-i64-map-get (struct-get graph ids) label)
+    [(StringI64MapFound slot)
+      (CompilerLiveSomeBlock (array-ref (struct-get graph blocks) slot))]
+    [(StringI64MapMissing) CompilerLiveNoBlock]))
+
+(define (compiler-live-successor-live-out-graph
+  [successors : CompilerLiveLabelSet]
+  [graph : CompilerLiveBlockGraph]) : CompilerLiveI64Set
+  (match successors
+    [(CompilerLiveLabelNil) (compiler-live-set-empty)]
+    [(CompilerLiveLabelCons label rest)
+      (let
+        [rest-live : CompilerLiveI64Set
+          (compiler-live-successor-live-out-graph rest graph)]
+        (match (compiler-live-graph-find-block graph label)
+          [(CompilerLiveSomeBlock block)
+            (match block
+              [(CompilerLiveBlock _ _ _ live-in _ _ _)
+                (compiler-live-set-union live-in rest-live)])]
+          [(CompilerLiveNoBlock) rest-live]))]))
+
+(define (compiler-live-recompute-block-graph
+  [block : CompilerLiveBlock]
+  [graph : CompilerLiveBlockGraph]) : CompilerLiveBlock
+  (match block
+    [(CompilerLiveBlock label uses defs _ _ successors instr-after)
+      (let
+        [live-out : CompilerLiveI64Set
+          (compiler-live-successor-live-out-graph successors graph)]
+        [live-in : CompilerLiveI64Set
+          (compiler-live-set-union uses (compiler-live-set-minus live-out defs))]
+        (CompilerLiveBlock
+          label
+          uses
+          defs
+          live-in
+          live-out
+          successors
+          instr-after))]))
+
 (define (compiler-live-successor-live-out
   [successors : CompilerLiveLabelSet]
   [blocks : CompilerLiveBlockList]) : CompilerLiveI64Set
@@ -721,18 +808,55 @@
                 rest-changed
                 true))]))]))
 
+(define (compiler-live-graph-update! [graph : CompilerLiveBlockGraph]) : bool
+  (let
+    [blocks : (Array CompilerLiveBlock) (struct-get graph blocks)]
+    [count : i64 (array-length blocks)]
+    [index : i64 0]
+    [changed : bool false]
+    (begin
+      (while (< index count)
+        (let
+          [block : CompilerLiveBlock (array-ref blocks index)]
+          [updated : CompilerLiveBlock
+            (compiler-live-recompute-block-graph block graph)]
+          (begin
+            (if (compiler-live-block-liveness-eq? block updated)
+              unit
+              (begin
+                (array-set! blocks index updated)
+                (set! changed true)))
+            (set! index (+ index 1)))))
+      changed)))
+
+(define (compiler-live-graph-to-list-from
+  [blocks : (Array CompilerLiveBlock)]
+  [index : i64]
+  [acc : CompilerLiveBlockList]) : CompilerLiveBlockList
+  (if (< index 0)
+    acc
+    (compiler-live-graph-to-list-from
+      blocks
+      (- index 1)
+      (CompilerLiveBlockCons (array-ref blocks index) acc))))
+
+(define (compiler-live-graph-to-list
+  [graph : CompilerLiveBlockGraph]) : CompilerLiveBlockList
+  (let
+    [blocks : (Array CompilerLiveBlock) (struct-get graph blocks)]
+    (compiler-live-graph-to-list-from
+      blocks
+      (- (array-length blocks) 1)
+      CompilerLiveBlockNil)))
+
 (define (compiler-live-fixpoint [blocks : CompilerLiveBlockList]) : CompilerLiveBlockList
   (let
-    [current : CompilerLiveBlockList blocks]
+    [graph : CompilerLiveBlockGraph (compiler-live-block-graph-build blocks)]
     [done : bool false]
     (begin
       (while (not done)
-        (match (compiler-live-update-blocks current current)
-          [(CompilerLiveBlockListStep next changed)
-            (begin
-              (set! current next)
-              (set! done (not changed)))]))
-      current)))
+        (set! done (not (compiler-live-graph-update! graph))))
+      (compiler-live-graph-to-list graph))))
 
 (define (compiler-live-before-instr
   [live-after : CompilerLiveI64Set]

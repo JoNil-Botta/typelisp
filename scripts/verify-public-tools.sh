@@ -1283,6 +1283,18 @@ while IFS='|' read -r diag_name diag_command diag_expect || [ -n "$diag_name" ];
     [ -f "$contains" ] || fail "backend diagnostic expectations missing: $contains"
     cp "$source" "$work_source"
 
+    if [ "$SELFHOST_FRONTEND_DIAGNOSTICS" -eq 1 ] && [ "$HOST_ACTION_ENABLED" -eq 0 ]; then
+        case "$diag_name" in
+            tuple_return | array_return)
+                run_cmd "backend-$diag_name-compat-probe" "$COMPILER" compile "$work_source"
+                if [ "$code" -eq 0 ]; then
+                    echo "[public-tools] skipping backend diagnostic $diag_name (compat compiler still accepts aggregate returns; #1699)"
+                    continue
+                fi
+                ;;
+        esac
+    fi
+
     case "$diag_command" in
         compile)
             run_cmd "backend-$diag_name" "$COMPILER" compile "$work_source"

@@ -200,6 +200,8 @@ only when the build failure mentions that symbol:
   `stdlib/tests/foo_api.tl|42|-|-|-|requires-stage0-symbol:tl_foo`.
 - `scripts/verify-inline-tests.sh`: add a directive comment near the top of the
   inline-test file: `;; requires-stage0-symbol: tl_foo`.
+- `scripts/verify-doc-tests.sh`: add the same directive comment near the top of
+  a documented `.tl` file whose doctests import a staged primitive.
 - `scripts/verify-integration.sh`: add an optional seventh manifest field to
   the native integration row, e.g.
   `foo_runtime|tests/integration/foo_runtime.tl|42|-|-|-|requires-stage0-symbol:tl_foo`.

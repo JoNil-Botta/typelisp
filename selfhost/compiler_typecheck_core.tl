@@ -491,27 +491,30 @@
                           (tc-bind
                             (tc-bind
                               (tc-bind
-                                e18
-                                "file-exists?"
-                                (tc-fn1 (AstTyString) (AstTyBool)))
-                              "file-exists-status"
-                              (tc-fn1 (AstTyString) (AstTyI64)))
-                            "file-open-status"
-                            (tc-fn2 (AstTyString) (AstTyI64) (AstTyI64)))
-                          "file-close-status"
-                          (tc-fn1 (AstTyI64) (AstTyI64)))
-                        "fs-mkdir-status"
+                                (tc-bind
+                                  e18
+                                  "file-exists?"
+                                  (tc-fn1 (AstTyString) (AstTyBool)))
+                                "file-exists-status"
+                                (tc-fn1 (AstTyString) (AstTyI64)))
+                              "file-open-status"
+                              (tc-fn2 (AstTyString) (AstTyI64) (AstTyI64)))
+                            "file-close-status"
+                            (tc-fn1 (AstTyI64) (AstTyI64)))
+                          "fs-mkdir-status"
+                          (tc-fn1 (AstTyString) (AstTyI64)))
+                        "fs-remove-file-status"
                         (tc-fn1 (AstTyString) (AstTyI64)))
-                      "fs-remove-file-status"
+                      "fs-remove-dir-status"
                       (tc-fn1 (AstTyString) (AstTyI64)))
-                    "fs-remove-dir-status"
-                    (tc-fn1 (AstTyString) (AstTyI64)))
-                  "fs-rename-status"
-                  (tc-fn2 (AstTyString) (AstTyString) (AstTyI64)))
-                "fs-read-dir-status"
-                (tc-fn1 (AstTyString) (AstTyI64)))
-              "fs-read-dir"
-              (tc-fn1 (AstTyString) (AstTyString)))
+                    "fs-rename-status"
+                    (tc-fn2 (AstTyString) (AstTyString) (AstTyI64)))
+                  "fs-read-dir-status"
+                  (tc-fn1 (AstTyString) (AstTyI64)))
+                "fs-read-dir"
+                (tc-fn1 (AstTyString) (AstTyString)))
+              "fs-file-kind-status"
+              (tc-fn1 (AstTyString) (AstTyI64)))
             "fs-process-id"
             (tc-fn0 (AstTyI64)))
           "fs-current-dir-status"
@@ -3227,6 +3230,7 @@
     [(string-eq name "fs-rename-status") true]
     [(string-eq name "fs-read-dir-status") true]
     [(string-eq name "fs-read-dir") true]
+    [(string-eq name "fs-file-kind-status") true]
     [(string-eq name "fs-process-id") true]
     [(string-eq name "fs-current-dir-status") true]
     [(string-eq name "fs-current-dir") true]
@@ -3680,6 +3684,7 @@
     [(string-eq name "fs-rename-status") true]
     [(string-eq name "fs-read-dir-status") true]
     [(string-eq name "fs-read-dir") true]
+    [(string-eq name "fs-file-kind-status") true]
     [(string-eq name "print-string") true]
     [(string-eq name "print-str") true]
     [(string-eq name "print-error") true]
@@ -3730,7 +3735,9 @@
         (string-eq name "fs-mkdir-status")
         (or
           (string-eq name "fs-remove-file-status")
-          (string-eq name "fs-remove-dir-status")))
+          (or
+            (string-eq name "fs-remove-dir-status")
+            (string-eq name "fs-file-kind-status"))))
       (tc-one-string-handle-builtin-call ctx env args (AstTyI64))]
     [(or
         (string-eq name "print-string")

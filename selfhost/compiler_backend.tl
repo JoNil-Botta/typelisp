@@ -9463,14 +9463,19 @@
                     (or
                       (compiler-backend-provides-runtime-name?
                         name
-                        "tl_fs_current_dir_status"
-                        (compiler-backend-runtime-tail-fs-current-dir?
-                          provides-tail))
-                      (compiler-backend-provides-runtime-name?
-                        name
-                        "tl_fs_current_dir"
-                        (compiler-backend-runtime-tail-fs-current-dir?
-                          provides-tail))))
+                        ".L_tl_fs_file_kind_status"
+                        provides-fs)
+                      (or
+                        (compiler-backend-provides-runtime-name?
+                          name
+                          "tl_fs_current_dir_status"
+                          (compiler-backend-runtime-tail-fs-current-dir?
+                            provides-tail))
+                        (compiler-backend-provides-runtime-name?
+                          name
+                          "tl_fs_current_dir"
+                          (compiler-backend-runtime-tail-fs-current-dir?
+                            provides-tail)))))
                   (or
                     (compiler-backend-provides-runtime-name?
                       name
@@ -9732,6 +9737,10 @@
         externs
         ".L_tl_fs_rename_status"
         "tl_fs_rename_status")]
+    [extern-fs-file-kind-status : bool
+      (compiler-backend-extern-list-references?
+        externs
+        ".L_tl_fs_file_kind_status")]
     [extern-fs-process-id : bool
       (compiler-backend-extern-list-references-alias?
         externs
@@ -9897,6 +9906,10 @@
         ".L_tl_fs_remove_dir_status")]
     [calls-fs-rename-status : bool
       (compiler-backend-function-list-calls? functions ".L_tl_fs_rename_status")]
+    [calls-fs-file-kind-status : bool
+      (compiler-backend-function-list-calls?
+        functions
+        ".L_tl_fs_file_kind_status")]
     [calls-fs-process-id : bool
       (compiler-backend-function-list-calls? functions ".L_tl_fs_process_id")]
     [calls-fs-read-dir-status : bool
@@ -10031,7 +10044,7 @@
           extern-fs-process-id
           extern-fs-read-dir-status
           extern-fs-read-dir
-          false)
+          extern-fs-file-kind-status)
         (backend-or8
           calls-fs-mkdir-status
           calls-fs-remove-file-status
@@ -10040,7 +10053,7 @@
           calls-fs-process-id
           calls-fs-read-dir-status
           calls-fs-read-dir
-          false))]
+          calls-fs-file-kind-status))]
     [needs-fs-current-dir : bool
       (or
         (or extern-fs-current-dir-status extern-fs-current-dir)
@@ -13376,6 +13389,69 @@ tl_fs_rename_status:
     pop %rbp
     ret
 
+.L_tl_fs_file_kind_status:
+    push %rbp
+    mov %rsp, %rbp
+    push %rbx
+    push %r12
+    push %r13
+    push %r14
+    sub $160, %rsp
+    movq %rdi, %rbx
+    movq %rsi, %r12
+    cmpq $0, %r12
+    jl .L_tl_fs_file_kind_status_invalid
+    movq %r12, %rdi
+    addq $1, %rdi
+    js .L_tl_fs_file_kind_status_invalid
+    call tl_alloc
+    movq %rax, %r13
+    xorq %rcx, %rcx
+.L_tl_fs_file_kind_status_path_copy_loop:
+    cmpq %r12, %rcx
+    jge .L_tl_fs_file_kind_status_path_copy_done
+    movzbl (%rbx,%rcx), %edx
+    movb %dl, (%r13,%rcx)
+    incq %rcx
+    jmp .L_tl_fs_file_kind_status_path_copy_loop
+.L_tl_fs_file_kind_status_path_copy_done:
+    movb $0, (%r13,%r12)
+    movq $262, %rax
+    movq $-100, %rdi
+    movq %r13, %rsi
+    movq %rsp, %rdx
+    xorq %r10, %r10
+    syscall
+    testq %rax, %rax
+    js .L_tl_fs_file_kind_status_error_from_rax
+    movl 24(%rsp), %eax
+    andl $61440, %eax
+    cmpl $32768, %eax
+    je .L_tl_fs_file_kind_status_regular
+    cmpl $16384, %eax
+    je .L_tl_fs_file_kind_status_directory
+    movq $-3, %rax
+    jmp .L_tl_fs_file_kind_status_return
+.L_tl_fs_file_kind_status_regular:
+    movq $-1, %rax
+    jmp .L_tl_fs_file_kind_status_return
+.L_tl_fs_file_kind_status_directory:
+    movq $-2, %rax
+    jmp .L_tl_fs_file_kind_status_return
+.L_tl_fs_file_kind_status_error_from_rax:
+    negq %rax
+    jmp .L_tl_fs_file_kind_status_return
+.L_tl_fs_file_kind_status_invalid:
+    movq $22, %rax
+.L_tl_fs_file_kind_status_return:
+    add $160, %rsp
+    pop %r14
+    pop %r13
+    pop %r12
+    pop %rbx
+    pop %rbp
+    ret
+
     .globl tl_fs_process_id
 tl_fs_process_id:
 .L_tl_fs_process_id:
@@ -13665,6 +13741,10 @@ tl_fs_rename_status:
     movq $0, 8(%rax)
     add $48, %rsp
     pop %rbp
+    ret
+
+.L_tl_fs_file_kind_status:
+    movq $38, %rax
     ret
 
     .globl tl_fs_process_id

@@ -65,10 +65,8 @@
     false))
 
 (define (main) : i64
-  (if (case-struct-string)
-    (if (case-struct-dynarray)
-      (if (case-enum-nested)
-        42
-        3)
-      2)
-    1))
+  (begin
+    (unless (case-struct-string) (return 1))
+    (unless (case-struct-dynarray) (return 2))
+    (unless (case-enum-nested) (return 3))
+    42))

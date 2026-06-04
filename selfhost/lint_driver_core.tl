@@ -132,7 +132,7 @@
                 (set! ok false)))
             ok))))))
 
-(define (selfhost-lint-cond-delim? [source : String] [idx : i64]) : bool
+(define (selfhost-lint-form-delim? [source : String] [idx : i64]) : bool
   (let
     [source-len : i64 (string-length source)]
     (if (>= idx source-len)
@@ -197,20 +197,33 @@
       false
       (selfhost-lint-line-allows? source (- line 1) rule-id))))
 
-(define (selfhost-lint-cond-origin? [source : String] [span : AstSourceSpan]) : bool
+(define (selfhost-lint-form-origin?
+  [source : String]
+  [span : AstSourceSpan]
+  [form-name : String]) : bool
   (let
     [line : i64 (struct-get span start-line)]
     [col : i64 (struct-get span start-col)]
     (if (or (<= line 0) (<= col 0))
       false
       (let
+        [needle : String (string-append "(" form-name)]
         [line-start : i64 (selfhost-lint-line-start-index source line)]
         [idx : i64 (+ line-start (- col 1))]
         (and
-          (selfhost-lint-prefix-at? source idx "(cond")
-          (selfhost-lint-cond-delim? source (+ idx 5)))))))
+          (selfhost-lint-prefix-at? source idx needle)
+          (selfhost-lint-form-delim? source (+ idx (string-length needle))))))))
 
-(define (selfhost-lint-filter-cond-origins
+(define (selfhost-lint-derived-form-origin?
+  [source : String]
+  [span : AstSourceSpan]) : bool
+  (or
+    (selfhost-lint-form-origin? source span "cond")
+    (or
+      (selfhost-lint-form-origin? source span "when")
+      (selfhost-lint-form-origin? source span "unless"))))
+
+(define (selfhost-lint-filter-derived-origins
   [source : String]
   [items : LintFindingList]) : LintFindingList
   (match items
@@ -218,9 +231,9 @@
     [(LintFindingCons finding rest)
       (let
         [filtered-rest : LintFindingList
-          (selfhost-lint-filter-cond-origins source rest)]
+          (selfhost-lint-filter-derived-origins source rest)]
         (if (or
-          (selfhost-lint-cond-origin? source (struct-get finding span))
+          (selfhost-lint-derived-form-origin? source (struct-get finding span))
           (selfhost-lint-suppressed? source finding))
           filtered-rest
           (LintFindingCons finding filtered-rest)))]))
@@ -230,7 +243,7 @@
   [program : AstProgram]) : LintFindingList
   (match program
     [(AstProgram decls)
-      (selfhost-lint-filter-cond-origins
+      (selfhost-lint-filter-derived-origins
         source
         (lint-program (AstProgram decls) (lint-default-ladder-threshold)))]))
 
@@ -337,6 +350,51 @@
         30
         0))))")
 
+(define (selfhost-lint-return-path-chain-source) : String
+  "(define (check [a : bool] [b : bool] [c : bool]) : i64
+  (if a
+    (if b
+      (if c
+        42
+        3)
+      2)
+    1))")
+
+(define (selfhost-lint-suppressed-return-path-chain-source) : String
+  "(define (check [a : bool] [b : bool] [c : bool]) : i64
+  ;; lint-allow: return-path-chain
+  (if a
+    (if b
+      (if c
+        42
+        3)
+      2)
+    1))")
+
+(define (selfhost-lint-unit-if-source) : String
+  "(define (check [ok : bool]) : i64
+  (begin
+    (if ok
+      (return 1)
+      unit)
+    42))")
+
+(define (selfhost-lint-suppressed-unit-if-source) : String
+  "(define (check [ok : bool]) : i64
+  (begin
+    ;; lint-allow: unit-if-guard
+    (if ok
+      (return 1)
+      unit)
+    42))")
+
+(define (selfhost-lint-when-unless-source) : String
+  "(define (check [a : bool] [b : bool]) : i64
+  (begin
+    (when a (return 1))
+    (unless b (return 2))
+    42))")
+
 ;; A clean source with no nested-`if` ladder - zero findings.
 (define (selfhost-lint-clean-source) : String
   "(define (inc [x : i64]) : i64 (+ x 1))")
@@ -374,8 +432,8 @@
       [b : i64 (+ a 1)]
       (+ a b))))")
 
-;; Number of findings reported for `source` (after cond-origin + suppression
-;; filtering), via the public source-lint path.
+;; Number of findings reported for `source` (after derived-form-origin +
+;; suppression filtering), via the public source-lint path.
 (define (selfhost-lint-source-finding-count [source : String]) : i64
   (lint-finding-list-count
     (selfhost-lint-source-with-roots
@@ -409,6 +467,34 @@
           (string-eq (struct-get finding rule-id) (lint-rule-nested-let-id))))]
     [(LintFindingNil) false]))
 
+(define (selfhost-lint-return-path-finding-ok? [findings : LintFindingList]) : bool
+  (match findings
+    [(LintFindingCons finding _)
+      (let
+        [fspan : AstSourceSpan (struct-get finding span)]
+        (and
+          (= (struct-get finding depth) 3)
+          (and
+            (> (struct-get fspan start-line) 0)
+            (string-eq
+              (struct-get finding rule-id)
+              (lint-rule-return-path-chain-id)))))]
+    [(LintFindingNil) false]))
+
+(define (selfhost-lint-unit-if-finding-ok? [findings : LintFindingList]) : bool
+  (match findings
+    [(LintFindingCons finding _)
+      (let
+        [fspan : AstSourceSpan (struct-get finding span)]
+        (and
+          (= (struct-get finding depth) 1)
+          (and
+            (> (struct-get fspan start-line) 0)
+            (string-eq
+              (struct-get finding rule-id)
+              (lint-rule-unit-if-guard-id)))))]
+    [(LintFindingNil) false]))
+
 (define (compiler-lint-driver-self-test) : i64
   (let
     [reported : LintFindingList
@@ -416,10 +502,42 @@
         "lint_driver_self_test.tl"
         (selfhost-lint-ladder-source)
         CompilerLoadRootNil)]
+    [return-reported : LintFindingList
+      (selfhost-lint-source-with-roots
+        "lint_driver_self_test.tl"
+        (selfhost-lint-return-path-chain-source)
+        CompilerLoadRootNil)]
+    [unit-reported : LintFindingList
+      (selfhost-lint-source-with-roots
+        "lint_driver_self_test.tl"
+        (selfhost-lint-unit-if-source)
+        CompilerLoadRootNil)]
     (cond
       ;; one reported finding, carrying the rule id / depth / span
       [(not (= (lint-finding-list-count reported) 1)) 1]
       [(not (selfhost-lint-reported-finding-ok? reported)) 2]
+      [(not (= (lint-finding-list-count return-reported) 1)) 9]
+      [(not (selfhost-lint-return-path-finding-ok? return-reported)) 10]
+      [(not (= (lint-finding-list-count unit-reported) 1)) 12]
+      [(not (selfhost-lint-unit-if-finding-ok? unit-reported)) 13]
+      [(not
+          (=
+            (selfhost-lint-source-finding-count
+              (selfhost-lint-suppressed-return-path-chain-source))
+            0))
+        11]
+      [(not
+          (=
+            (selfhost-lint-source-finding-count
+              (selfhost-lint-suppressed-unit-if-source))
+            0))
+        14]
+      [(not
+          (=
+            (selfhost-lint-source-finding-count
+              (selfhost-lint-when-unless-source))
+            0))
+        15]
       ;; one suppressed finding (`;; lint-allow: nested-if-ladder`) -> none reported
       [(not
           (=

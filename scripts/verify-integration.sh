@@ -223,11 +223,14 @@ copy_dep() {
 
 # Integration cases the self-hosted Windows backend cannot yet run as expected
 # (kept covered on Linux via native-linux.manifest):
+#   arena_poison_*            Linux-only poison-on-reclaim debug mode
 #   with_arena_*               existing host gaps
 #   tl_alloc_huge_trap /       Windows huge-alloc + region-reset guards do not
 #   region_reset_invalid_trap  abort cleanly with 134 (#1660)
 windows_integration_skips() {
     cat <<'EOF'
+arena_poison_clone_survives
+arena_poison_stale_array_trap
 with_arena_builtin_alloc
 with_arena_loop
 tl_alloc_huge_trap
@@ -239,8 +242,7 @@ EOF
 # backend handled the parity-gap cases, but it has been removed, so these are
 # commented out in the manifest and listed here as documented skips until the
 # selfhost compiler closes the gap or the published stage0 carries the support:
-#   enum-payload pattern / spmd ....... #1657
-#   bare idiv traps need guarded abort  #1654
+#   enum-payload pattern .............. #1657
 # Immutable-reference native smoke fixtures are covered by
 # verify-selfhost-native.sh until the published stage0 includes #1720.
 selfhost_deferred_integration_skips() {
@@ -249,16 +251,7 @@ ref_fixed_array_return
 ref_param_identity
 ref_return
 ref_tuple_return
-shl_count_width_trap
-shl_neg_count_trap
 string_match
-spmd_reduce_scalar
-div_zero_trap
-rem_zero_trap
-min_div_neg1_trap
-i16_min_div_neg1_trap
-i16_min_rem_neg1_trap
-u16_div_zero_trap
 EOF
 }
 

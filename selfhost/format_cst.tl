@@ -161,14 +161,10 @@
   (let
     [stream : FormatTokenStream (format-lex (format-cst-fixture))]
     [tree : FormatCst (parse-format-source (format-cst-fixture))]
-    (if (> (format-token-count stream) 40)
-      (if (> (fmt-cst-count tree) 40)
-        (if (= (fmt-cst-comment-count tree) 1)
-          (if (> (fmt-cst-bracket-count tree) 4)
-            (if (= (format-token-tag-count stream (fmt-tag-char)) 1)
-              42
-              5)
-            4)
-          3)
-        2)
-      1)))
+    (begin
+      (unless (> (format-token-count stream) 40) (return 1))
+      (unless (> (fmt-cst-count tree) 40) (return 2))
+      (unless (= (fmt-cst-comment-count tree) 1) (return 3))
+      (unless (> (fmt-cst-bracket-count tree) 4) (return 4))
+      (unless (= (format-token-tag-count stream (fmt-tag-char)) 1) (return 5))
+      42)))

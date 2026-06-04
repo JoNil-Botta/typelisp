@@ -272,6 +272,70 @@
     [(OkCompilerBackend asm) (compiler-backend-asm-ok? asm)]
     [(ErrCompilerBackend _) false]))
 
+(define (compiler-backend-implicit-main-source) : String
+  "(define token-value : i64 7)")
+
+(define (compiler-backend-implicit-main-linux-entry-ok? [asm : String]) : bool
+  (backend-and8
+    (compiler-backend-string-contains? asm ".globl _start\n")
+    (compiler-backend-string-contains? asm "_start:\n")
+    (compiler-backend-string-contains? asm ".globl main\n")
+    (compiler-backend-string-contains? asm "main:\n")
+    (compiler-backend-string-contains? asm "    call main\n")
+    (compiler-backend-string-contains? asm "    xorq %rax, %rax\n")
+    (compiler-backend-string-contains? asm ".text\n")
+    true))
+
+(define (compiler-backend-implicit-main-linux-no-entry-ok? [asm : String]) : bool
+  (and
+    (compiler-backend-string-contains? asm ".text\n")
+    (and
+      (not (compiler-backend-string-contains? asm ".globl _start\n"))
+      (and
+        (not (compiler-backend-string-contains? asm "_start:\n"))
+        (not (compiler-backend-string-contains? asm "main:\n"))))))
+
+(define (compiler-backend-implicit-main-windows-entry-ok? [asm : String]) : bool
+  (backend-and4
+    (compiler-backend-string-contains? asm ".globl main\n")
+    (compiler-backend-string-contains? asm "main:\n")
+    (compiler-backend-string-contains? asm "    xorq %rax, %rax\n")
+    (not (compiler-backend-string-contains? asm "_start:\n"))))
+
+(define (compiler-backend-implicit-main-ok?) : bool
+  (match (lower-compiler-source (compiler-backend-implicit-main-source))
+    [(OkCompilerLower program spans)
+      (match (compiler-backend-emit-program-with-spans-for-target-and-entry
+        program
+        spans
+        (BackendTargetLinux)
+        true)
+        [(OkCompilerBackend linux-entry-asm)
+          (match (compiler-backend-emit-program-with-spans-for-target-and-entry
+            program
+            spans
+            (BackendTargetLinux)
+            false)
+            [(OkCompilerBackend linux-no-entry-asm)
+              (match (compiler-backend-emit-program-with-spans-for-target-and-entry
+                program
+                spans
+                (BackendTargetWindows)
+                true)
+                [(OkCompilerBackend windows-entry-asm)
+                  (and
+                    (compiler-backend-implicit-main-linux-entry-ok?
+                      linux-entry-asm)
+                    (and
+                      (compiler-backend-implicit-main-linux-no-entry-ok?
+                        linux-no-entry-asm)
+                      (compiler-backend-implicit-main-windows-entry-ok?
+                        windows-entry-asm)))]
+                [(ErrCompilerBackend _) false])]
+            [(ErrCompilerBackend _) false])]
+        [(ErrCompilerBackend _) false])]
+    [(ErrCompilerLower _) false]))
+
 (define (compiler-backend-string-ok?) : bool
   (match (compiler-backend-emit-source (compiler-backend-string-source))
     [(OkCompilerBackend asm)
@@ -479,7 +543,7 @@
     [(ErrCompilerBackend _) false]))
 
 ;; Backend-owned replacement for representative aggregate storage emit-shape
-;; checks from the Rust backend suite (#1354/#1413).
+;; checks from the legacy backend suite (#1354/#1413).
 (define (compiler-backend-aggregate-return-source) : String
   "(defenum Shape (Circle i64) (Square i64) (Nothing))
 (defstruct Point (x i64) (y i64))
@@ -1256,14 +1320,16 @@
                   (and
                     (compiler-backend-target-linux-no-entry-ok? src)
                     (and
-                      (compiler-backend-target-linux-matches-default? src)
+                      (compiler-backend-target-linux-crt-entry-ok?)
                       (and
-                        (compiler-backend-target-windows-abi-ok?)
+                        (compiler-backend-target-linux-matches-default? src)
                         (and
-                          (compiler-backend-target-windows-callee-save-ok?)
+                          (compiler-backend-target-windows-abi-ok?)
                           (and
-                            (compiler-backend-target-windows-stack-probe-ok?)
-                            (compiler-backend-target-windows-runtime-ok?)))))))))))))))
+                            (compiler-backend-target-windows-callee-save-ok?)
+                            (and
+                              (compiler-backend-target-windows-stack-probe-ok?)
+                              (compiler-backend-target-windows-runtime-ok?))))))))))))))))
 
 (define (compiler-backend-target-linux-matches-default? [src : String]) : bool
   (match (compiler-backend-emit-source-for-target src (BackendTargetLinux))
@@ -1289,6 +1355,49 @@
               (and
                 (not (compiler-backend-string-contains? asm ".globl _start\n"))
                 (not (compiler-backend-string-contains? asm "_start:\n")))))]
+        [(ErrCompilerBackend _) false])]
+    [(ErrCompilerLower _) false]))
+
+(define (compiler-backend-target-linux-crt-entry-source) : String
+  "(define (seed) : i64 41)
+(define value
+  (seed))
+(define (main) : i64
+  (+ value (arg-count)))")
+
+(define (compiler-backend-target-linux-crt-entry-ok?) : bool
+  (match (lower-compiler-source
+    (compiler-backend-target-linux-crt-entry-source))
+    [(OkCompilerLower program spans)
+      (match (compiler-backend-emit-program-target-with-mode-and-crt
+        program
+        (BackendTargetLinux)
+        (BackendModeScalar)
+        spans
+        true
+        true)
+        [(OkCompilerBackend asm)
+          (and
+            (compiler-backend-string-contains?
+              (compiler-backend-target-entry-text-with-crt
+                (BackendTargetLinux)
+                true
+                true)
+              ".globl main")
+            (and
+              (compiler-backend-string-contains? asm "main:\n")
+              (and
+                (compiler-backend-string-contains?
+                  asm
+                  "    movq %rdi, .L_tl_argc(%rip)\n")
+                (and
+                  (compiler-backend-string-contains?
+                    asm
+                    "    call _tl___global_init_")
+                  (and
+                    (not
+                      (compiler-backend-string-contains? asm ".globl _start\n"))
+                    (not (compiler-backend-string-contains? asm "_start:\n")))))))]
         [(ErrCompilerBackend _) false])]
     [(ErrCompilerLower _) false]))
 
@@ -1465,6 +1574,12 @@
     [(ErrCompilerBackend message)
       (string-eq (compiler-diagnostic-message message) want)]
     [(OkCompilerBackend _) false]))
+
+(define (compiler-backend-emit-source-inline-aggregates [src : String]) : ResultCompilerBackend
+  (match (lower-compiler-source-with-mode src (CompilerLowerInlineAggregates))
+    [(OkCompilerLower program spans)
+      (compiler-backend-emit-program-with-spans program spans)]
+    [(ErrCompilerLower message) (ErrCompilerBackend message)]))
 
 (define (compiler-backend-source-contains? [src : String] [needle : String]) : bool
   (match (compiler-backend-emit-source src)
@@ -1944,27 +2059,46 @@
 (define (compiler-backend-region-ok?) : bool
   (match (compiler-backend-emit-source (compiler-backend-region-source))
     [(OkCompilerBackend asm)
-      (and
-        (compiler-backend-string-contains? asm "    call tl_region_mark\n")
-        (and
-          (compiler-backend-string-contains? asm "    call tl_region_reset\n")
+      (let
+        [calls : bool
           (and
+            (compiler-backend-string-contains? asm "    call tl_region_mark\n")
+            (compiler-backend-string-contains? asm "    call tl_region_reset\n"))]
+        [runtime : bool
+          (backend-and4
             (compiler-backend-string-contains? asm "tl_region_mark:\n")
-            (and
-              (compiler-backend-string-contains? asm "tl_region_reset:\n")
-              (and
-                (compiler-backend-string-contains?
-                  asm
-                  ".L_tl_region_reset_msg:")
-                (and
-                  (not
-                    (compiler-backend-string-contains?
-                      asm
-                      ".extern tl_region_mark\n"))
-                  (not
-                    (compiler-backend-string-contains?
-                      asm
-                      ".extern tl_region_reset\n"))))))))]
+            (compiler-backend-string-contains? asm "tl_region_reset:\n")
+            (compiler-backend-string-contains? asm ".L_tl_region_reset_msg:")
+            (compiler-backend-string-contains? asm "tl_current_arena:\n"))]
+        [poison : bool
+          (backend-and8
+            (compiler-backend-string-contains?
+              asm
+              ".L_tl_arena_poison_enabled:\n")
+            (compiler-backend-string-contains? asm "tl_arena_poison_enable:\n")
+            (compiler-backend-string-contains?
+              asm
+              "    movq $1, .L_tl_arena_poison_enabled(%rip)\n")
+            (compiler-backend-string-contains?
+              asm
+              ".L_tl_region_reset_drop_newer_unmap:\n")
+            (compiler-backend-string-contains?
+              asm
+              ".L_tl_region_reset_restore_set:\n")
+            (compiler-backend-string-contains?
+              asm
+              ".L_tl_region_reset_all_unmap:\n")
+            (compiler-backend-string-contains? asm "    movb $0xA5, %al\n")
+            (>= (compiler-backend-string-count asm "    rep stosb\n") 4))]
+        [no-externs : bool
+          (and
+            (not
+              (compiler-backend-string-contains? asm ".extern tl_region_mark\n"))
+            (not
+              (compiler-backend-string-contains?
+                asm
+                ".extern tl_region_reset\n")))]
+        (backend-and4 calls runtime poison no-externs))]
     [(ErrCompilerBackend _) false]))
 
 (define (compiler-backend-process-output-source) : String
@@ -2239,8 +2373,14 @@
   "(define (main) : i64
   (+ (fs-current-dir-status) (string-length (fs-current-dir))))")
 
-(define (compiler-backend-fs-current-dir-runtime-ok?) : bool
-  (match (compiler-backend-emit-source (compiler-backend-fs-current-dir-source))
+(define (compiler-backend-fs-current-dir-extern-source) : String
+  "(extern tl_fs_current_dir_status : (-> i64))
+(extern tl_fs_current_dir : (-> String))
+(define (main) : i64
+  (+ (tl_fs_current_dir_status) (string-length (tl_fs_current_dir))))")
+
+(define (compiler-backend-fs-current-dir-runtime-source-ok? [source : String]) : bool
+  (match (compiler-backend-emit-source source)
     [(OkCompilerBackend asm)
       (and
         (compiler-backend-string-contains? asm "tl_fs_current_dir_status:\n")
@@ -2259,10 +2399,16 @@
                   ".extern tl_fs_current_dir\n"))))))]
     [(ErrCompilerBackend _) false]))
 
-(define (compiler-backend-windows-fs-current-dir-runtime-ok?) : bool
-  (match (compiler-backend-emit-source-for-target
-    (compiler-backend-fs-current-dir-source)
-    (BackendTargetWindows))
+(define (compiler-backend-fs-current-dir-runtime-ok?) : bool
+  (and
+    (compiler-backend-fs-current-dir-runtime-source-ok?
+      (compiler-backend-fs-current-dir-source))
+    (compiler-backend-fs-current-dir-runtime-source-ok?
+      (compiler-backend-fs-current-dir-extern-source))))
+
+(define (compiler-backend-windows-fs-current-dir-runtime-source-ok?
+  [source : String]) : bool
+  (match (compiler-backend-emit-source-for-target source (BackendTargetWindows))
     [(OkCompilerBackend asm)
       (and
         (compiler-backend-string-contains? asm "tl_fs_current_dir_status:\n")
@@ -2277,6 +2423,13 @@
                   asm
                   ".L_tl_fs_mkdir_status:\n"))))))]
     [(ErrCompilerBackend _) false]))
+
+(define (compiler-backend-windows-fs-current-dir-runtime-ok?) : bool
+  (and
+    (compiler-backend-windows-fs-current-dir-runtime-source-ok?
+      (compiler-backend-fs-current-dir-source))
+    (compiler-backend-windows-fs-current-dir-runtime-source-ok?
+      (compiler-backend-fs-current-dir-extern-source))))
 
 ;; A refutable literal payload match (#651) lowers to a payload comparison that
 ;; branches to the next arm; confirm the resulting CFG reaches valid assembly.
@@ -2410,15 +2563,43 @@
   (match (compiler-backend-emit-source (compiler-backend-scalar-div-mod-source))
     [(OkCompilerBackend asm)
       (backend-and8
+        (compiler-backend-string-contains?
+          asm
+          "    testq %rbx, %rbx\n    jne 1f\n    call tl_div_abort\n1:\n")
+        (compiler-backend-string-contains?
+          asm
+          "    cmpq %r10, %rax\n    jne 1f\n")
+        (compiler-backend-string-contains?
+          asm
+          "    cmpq %r11, %rbx\n    jne 1f\n    call tl_div_abort\n1:\n")
         (compiler-backend-string-contains? asm "    cqto\n")
         (compiler-backend-string-contains? asm "    idivq %rbx\n")
         (compiler-backend-string-contains? asm "    movq %rdx, %rax\n")
+        (compiler-backend-string-contains? asm ".globl tl_div_abort\n")
         (not
-          (compiler-backend-string-contains? asm (compiler-backend-todo-marker)))
-        true
-        true
-        true
-        true)]
+          (compiler-backend-string-contains? asm (compiler-backend-todo-marker))))]
+    [(ErrCompilerBackend _) false]))
+
+(define (compiler-backend-shift-guard-source) : String
+  "(define (main) : i64 (shl 1 -1))")
+
+(define (compiler-backend-shift-guard-ok?) : bool
+  (match (compiler-backend-emit-source (compiler-backend-shift-guard-source))
+    [(OkCompilerBackend asm)
+      (backend-and8
+        (compiler-backend-string-contains? asm "    movq $-1, %rax\n")
+        (compiler-backend-string-contains?
+          asm
+          "    testq %rbx, %rbx\n    jge 1f\n    call tl_shift_abort\n1:\n")
+        (compiler-backend-string-contains?
+          asm
+          "    cmpq $64, %rbx\n    jb 1f\n    call tl_shift_abort\n1:\n")
+        (compiler-backend-string-contains? asm "    call tl_shift_abort\n")
+        (compiler-backend-string-contains? asm ".globl tl_shift_abort\n")
+        (compiler-backend-string-contains? asm ".L_tl_shift_msg:")
+        (not (compiler-backend-string-contains? asm "    shlq $-1, %rax\n"))
+        (not
+          (compiler-backend-string-contains? asm (compiler-backend-todo-marker))))]
     [(ErrCompilerBackend _) false]))
 
 (define (compiler-backend-checked-trap-entry-block) : CompilerIrBlock
@@ -2916,6 +3097,51 @@
           (compiler-backend-string-contains? asm (compiler-backend-todo-marker))))]
     [(ErrCompilerBackend _) false]))
 
+(define (compiler-backend-inline-struct-ok?) : bool
+  (match (compiler-backend-emit-source-inline-aggregates
+    (compiler-lower-inline-struct-source))
+    [(OkCompilerBackend asm)
+      (backend-and4
+        (= (compiler-backend-string-count asm "    call tl_alloc\n") 0)
+        (compiler-backend-string-contains? asm "    leaq -")
+        (compiler-backend-string-contains? asm "main:\n")
+        (not
+          (compiler-backend-string-contains? asm (compiler-backend-todo-marker))))]
+    [(ErrCompilerBackend _) false]))
+
+(define (compiler-backend-inline-enum-ok?) : bool
+  (match (compiler-backend-emit-source-inline-aggregates
+    (compiler-lower-inline-enum-source))
+    [(OkCompilerBackend asm)
+      (backend-and4
+        (= (compiler-backend-string-count asm "    call tl_alloc\n") 0)
+        (compiler-backend-string-contains? asm "    leaq -")
+        (compiler-backend-string-contains? asm ".Lmain_match_arm.")
+        (not
+          (compiler-backend-string-contains? asm (compiler-backend-todo-marker))))]
+    [(ErrCompilerBackend _) false]))
+
+(define (compiler-backend-inline-boxed-recursive-ok?) : bool
+  (match (compiler-backend-emit-source-inline-aggregates
+    (compiler-lower-inline-boxed-recursive-source))
+    [(OkCompilerBackend asm)
+      (backend-and4
+        (= (compiler-backend-string-count asm "    call tl_alloc\n") 1)
+        (compiler-backend-string-contains?
+          asm
+          "    movq $8, %rdi\n    call tl_alloc\n")
+        (compiler-backend-string-contains? asm "    leaq -")
+        (not
+          (compiler-backend-string-contains? asm (compiler-backend-todo-marker))))]
+    [(ErrCompilerBackend _) false]))
+
+(define (compiler-backend-inline-aggregate-storage-ok?) : bool
+  (and
+    (compiler-backend-inline-struct-ok?)
+    (and
+      (compiler-backend-inline-enum-ok?)
+      (compiler-backend-inline-boxed-recursive-ok?))))
+
 (define (compiler-backend-self-test) : i64
   (if (and
     (backend-and8
@@ -2927,7 +3153,9 @@
       (compiler-backend-string-ok?)
       (and
         (compiler-backend-memory-op-ok?)
-        (compiler-backend-numeric-cast-shape-ok?))
+        (and
+          (compiler-backend-numeric-cast-shape-ok?)
+          (compiler-backend-implicit-main-ok?)))
       (compiler-backend-aggregate-ok?))
     (and
       (backend-and8
@@ -2961,7 +3189,9 @@
                   (backend-and8
                     (compiler-backend-user-helper-name-ok?)
                     (compiler-backend-file-handle-open-close-runtime-ok?)
-                    (compiler-backend-string-runtime-ok?)
+                    (and
+                      (compiler-backend-string-runtime-ok?)
+                      (compiler-backend-print-runtime-ok?))
                     (compiler-backend-env-runtime-ok?)
                     (compiler-backend-expanded-scalar-regs-ok?)
                     (compiler-backend-regalloc-f64-ok?)
@@ -2976,13 +3206,15 @@
                         (compiler-backend-string-ref-shape-ok?)
                         (compiler-backend-fixed-array-shape-ok?)
                         (compiler-backend-raw-pointer-fixture-shape-ok?)
-                        (compiler-backend-box-ok?))
+                        (and
+                          (compiler-backend-box-ok?)
+                          (compiler-backend-inline-aggregate-storage-ok?)))
                       (and
-                        (compiler-backend-checked-trap-emit-shape-ok?)
+                        (compiler-backend-tuple-ok?)
                         (and
                           (compiler-backend-closure-emit-shape-ok?)
                           (and
-                            (compiler-backend-avx2-vector-map-ok?)
+                            (compiler-backend-alloc-runtime-shape-ok?)
                             (backend-and8
                               (compiler-backend-scalar-wide-ops-ok?)
                               (compiler-backend-scalar-div-mod-ok?)
@@ -2990,7 +3222,7 @@
                               (compiler-backend-f64-abi-ok?)
                               (compiler-backend-win64-f64-abi-ok?)
                               (compiler-backend-aggregate-storage-shape-ok?)
-                              (compiler-backend-alloc-runtime-shape-ok?)
+                              (compiler-backend-shift-guard-ok?)
                               (compiler-backend-windows-sdk-registry-runtime-ok?)))))))))))))))
     42
     (begin

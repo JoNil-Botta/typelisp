@@ -477,6 +477,44 @@
 (define (main [p : Point]) : i64
   (struct-get p z))")
 
+(define (compiler-typecheck-aggregate-global-source) : String
+  "(defstruct Point (x i64) (y i64))
+(defenum Maybe (None) (Some i64))
+(define point : Point (Point 20 2))
+(define pair : (Tuple i64 bool) (tuple 7 true))
+(define fixed : (Array i64 2) (array 5 6))
+(define maybe : Maybe (Some 8))
+(define (main) : i64
+  (+ (struct-get point x)
+     (+ (tuple-ref pair 0)
+        (+ (array-ref fixed 1)
+           (match maybe [(Some n) n] [None 0])))))")
+
+(define (compiler-typecheck-global-region-source) : String
+  "(define bad : String (with-arena r (int->string 1)))")
+
+(define (compiler-typecheck-global-reference-aggregate-source) : String
+  "(define bad : (Tuple (& n i64) i64) (tuple (& n) 1))")
+
+(define (compiler-typecheck-struct-constructor-mismatch-source) : String
+  "(defstruct Point (x i64) (flag bool))
+(define bad : Point (Point true false))")
+
+(define (compiler-typecheck-struct-constructor-arity-source) : String
+  "(defstruct Point (x i64) (flag bool))
+(define bad : Point (Point 1))")
+
+(define (compiler-typecheck-struct-get-nonstruct-source) : String
+  "(define (main) : i64 (struct-get 1 x))")
+
+(define (compiler-typecheck-recursive-enum-boxed-source) : String
+  "(defenum ListI64
+  (ListNil)
+  (ListCons i64 (Box ListI64)))
+(define (head [xs : ListI64]) : i64
+  (match xs [(ListCons v rest) v] [ListNil 0]))
+(define (main) : i64 (head (ListCons 1 (box ListNil))))")
+
 (define (compiler-typecheck-duplicate-variant-source) : String
   "(defenum Left (Same))
 (defenum Right (Same))
@@ -997,6 +1035,38 @@
       (if (compiler-typecheck-error-ok?
         (compiler-typecheck-unknown-field-source)
         "typecheck: unknown struct field Point.z")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-ok? (compiler-typecheck-aggregate-global-source))
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        (compiler-typecheck-global-region-source)
+        "typecheck: region-tagged value cannot escape with-arena 'r'")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        (compiler-typecheck-global-reference-aggregate-source)
+        "typecheck: storing references in top-level values requires lifetime support (#804)")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        (compiler-typecheck-struct-constructor-mismatch-source)
+        "typecheck: argument type mismatch")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        (compiler-typecheck-struct-constructor-arity-source)
+        "typecheck: arity mismatch")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        (compiler-typecheck-struct-get-nonstruct-source)
+        "typecheck: struct-get requires struct")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-ok?
+        (compiler-typecheck-recursive-enum-boxed-source))
         unit
         (set! ok false))
       (if (compiler-typecheck-error-ok?
@@ -2969,6 +3039,58 @@
 (define (main) : i64
   (let [p : P (P 9)] (let [g : (-> P) (lambda () : P p)] (struct-get (g) a))))")
 
+(define (compiler-typecheck-lambda-capture-dyn-array-source) : String
+  "(define (main [n : i64]) : i64
+  (let
+    [items : (Array i64) (make-array i64 n)]
+    (begin
+      (array-push! items 5)
+      (let [g : (-> i64) (lambda () : i64 (array-length items))] (g)))))")
+
+(define (compiler-typecheck-lambda-capture-enum-source) : String
+  "(defenum Maybe (None) (Some i64))
+(define (main [m : Maybe]) : i64
+  (let
+    [g : (-> i64) (lambda () : i64 (match m [(Some v) v] [None 0]))]
+    (g)))")
+
+(define (compiler-typecheck-lambda-capture-tuple-source) : String
+  "(define (main) : i64
+  (let
+    [t : (Tuple i64 bool) (tuple 7 true)]
+    (let [g : (-> i64) (lambda () : i64 (tuple-ref t 0))] (g))))")
+
+(define (compiler-typecheck-lambda-capture-fixed-array-source) : String
+  "(define (main) : i64
+  (let
+    [items : (Array i64 2) (array 4 5)]
+    (let [g : (-> i64) (lambda () : i64 (array-ref items 1))] (g))))")
+
+(define (compiler-typecheck-lambda-captured-set-source) : String
+  "(define (main) : i64
+  (let
+    [n : i64 0]
+    (let
+      [g : (-> unit) (lambda () : unit (set! n 1))]
+      (begin (g) n))))")
+
+(define (compiler-typecheck-lambda-captured-set-with-escape-source) : String
+  "(define (main) : i64
+  (let
+    [scratch : i64 (arena-make)]
+    (let
+      [n : i64 0]
+      (let
+        [g : (-> unit) (lambda () : unit (with-escape scratch (set! n 1)))]
+        (begin (g) n)))))")
+
+(define (compiler-typecheck-lambda-param-set-source) : String
+  "(define (main) : i64
+  (let
+    [g : (-> i64 i64)
+      (lambda ([n : i64]) : i64 (begin (set! n (+ n 1)) n))]
+    (g 1)))")
+
 (define (compiler-typecheck-lambda-aggregate-return-source) : String
   "(defstruct P (a i64))
 (define (main) : i64
@@ -2998,8 +3120,31 @@
                 (and
                   (compiler-typecheck-ok?
                     (compiler-typecheck-lambda-capture-struct-source))
-                  (compiler-typecheck-ok?
-                    (compiler-typecheck-lambda-aggregate-return-source)))))))))))
+                  (and
+                    (compiler-typecheck-ok?
+                      (compiler-typecheck-lambda-capture-dyn-array-source))
+                    (and
+                      (compiler-typecheck-ok?
+                        (compiler-typecheck-lambda-capture-enum-source))
+                      (and
+                        (compiler-typecheck-ok?
+                          (compiler-typecheck-lambda-capture-tuple-source))
+                        (and
+                          (compiler-typecheck-ok?
+                            (compiler-typecheck-lambda-capture-fixed-array-source))
+                          (and
+                            (compiler-typecheck-error-ok?
+                              (compiler-typecheck-lambda-captured-set-source)
+                              "typecheck: lambda cannot assign captured binding")
+                            (and
+                              (compiler-typecheck-error-ok?
+                                (compiler-typecheck-lambda-captured-set-with-escape-source)
+                                "typecheck: lambda cannot assign captured binding")
+                              (and
+                                (compiler-typecheck-ok?
+                                  (compiler-typecheck-lambda-param-set-source))
+                                (compiler-typecheck-ok?
+                                  (compiler-typecheck-lambda-aggregate-return-source))))))))))))))))))
 
 (define (compiler-typecheck-cast-tests-ok?) : bool
   (and

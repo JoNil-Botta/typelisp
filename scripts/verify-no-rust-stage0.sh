@@ -231,14 +231,14 @@ stage1_safety_corpus_supported() {
     "$bin" > "$probe_dir/run.stdout" 2> "$probe_dir/run.stderr"
     probe_status=$?
     set -e
-    # The selfhost backend emits a bare hardware divide (idiv), so divide-by-zero
-    # faults with SIGFPE (exit 136) and produces no `tl:`-prefixed message. This
-    # matches tests/safety/manifest.txt's `run-trap-signal|136` expectation. The
-    # guarded abort that prints "tl: integer division or remainder error" and exits
-    # 135 is a tracked follow-up (#1654); switch this probe back to 135 + the
-    # message grep when that lands.
-    if [ "$probe_status" -ne 136 ]; then
-        echo "[no-rust-stage0] stage1 safety probe expected bare div-zero SIGFPE exit 136, got $probe_status"
+    if [ "$probe_status" -ne 135 ]; then
+        echo "[no-rust-stage0] stage1 safety probe expected guarded div-zero exit 135, got $probe_status"
+        sed 's/^/  /' "$probe_dir/run.stdout" >&2 || true
+        sed 's/^/  /' "$probe_dir/run.stderr" >&2 || true
+        return 1
+    fi
+    if ! grep -F "tl: integer division or remainder error" "$probe_dir/run.stderr" >/dev/null; then
+        echo "[no-rust-stage0] stage1 safety probe missing guarded div-zero stderr" >&2
         sed 's/^/  /' "$probe_dir/run.stdout" >&2 || true
         sed 's/^/  /' "$probe_dir/run.stderr" >&2 || true
         return 1
@@ -409,7 +409,7 @@ fi
 SEED_STAGE1_WRAPPER=0
 if compiler_is_stage1_wrapper "$SEED_TYPELISP_BIN"; then
     SEED_STAGE1_WRAPPER=1
-    echo "[no-rust-stage0] seed is a stage1 wrapper; full Rust CLI parity gates remain in the Rust lane"
+    echo "[no-rust-stage0] seed is a stage1 wrapper; extended CLI parity gates remain in compatibility tiers"
 fi
 
 FRONT_GATE_TYPELISP_BIN=$SEED_TYPELISP_BIN
@@ -558,9 +558,9 @@ if [ "$HOST_OS" = linux ]; then
 else
     # The single-binary cli.tl seed emits module-qualified symbols (the stage1
     # mangling, `_tl_<mod>_u2etl_colon_colon<fn>`), which only the manifest's
-    # stage1 expectation mode accepts; stage0 mode expects the bare Rust-backend
-    # labels. STAGE1_HOST_ACTION_DRIVERS_AVAILABLE is always 0 on Windows, so the
-    # seed is always cli.tl here (#1662).
+    # stage1 expectation mode accepts; stage0 mode expects legacy unqualified
+    # labels. STAGE1_HOST_ACTION_DRIVERS_AVAILABLE is always 0 on Windows, so
+    # the seed is always cli.tl here (#1662).
     run_gate "selfhost compile manifest" env TYPELISP_COMPILE_MANIFEST_EXPECTATION_MODE=stage1 scripts/verify-selfhost-compile-manifest.sh
     run_gate "deterministic assembly" scripts/check-deterministic-asm.sh
     if [ "$WINDOWS_SEED_STAGED_RUNTIME_GAP" -eq 1 ]; then

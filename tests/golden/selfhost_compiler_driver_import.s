@@ -7,6 +7,9 @@ _tl_shared_u2etl_colon_colonshared:
     .balign 8
 tl_current_arena:
     .zero 8
+    .balign 8
+.L_tl_arena_poison_enabled:
+    .zero 8
 
 .text
 .globl _start
@@ -58,6 +61,11 @@ tl_arena_set:
     movq %rdi, tl_current_arena(%rip)
     ret
 
+    .globl tl_arena_poison_enable
+tl_arena_poison_enable:
+    movq $1, .L_tl_arena_poison_enabled(%rip)
+    ret
+
     .globl tl_arena_make
 tl_arena_make:
     movq $0x4000000, %rsi
@@ -92,6 +100,15 @@ tl_arena_destroy:
     jz .L_tl_arena_destroy_done
     movq 0(%rbx), %r8
     push %r8
+    cmpq $0, .L_tl_arena_poison_enabled(%rip)
+    je .L_tl_arena_destroy_unmap
+    movq 8(%rbx), %rdi
+    movq 24(%rbx), %rcx
+    subq %rdi, %rcx
+    jbe .L_tl_arena_destroy_unmap
+    movb $0xA5, %al
+    rep stosb
+.L_tl_arena_destroy_unmap:
     movq 24(%rbx), %rsi
     subq %rbx, %rsi
     movq %rbx, %rdi

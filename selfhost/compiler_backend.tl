@@ -4115,7 +4115,7 @@
           float-idx
           position)
           ;; Stack-passed arg: load into a scratch register that no other
-          ;; call arg uses (%xmm15 / %r11, matching the Rust backend) so an
+          ;; call arg uses (%xmm15 / %r11, matching the legacy backend) so an
           ;; earlier register arg in xmm0/%rax is never clobbered, then
           ;; store it at its %rsp offset.
           (match (if is-float

@@ -285,7 +285,7 @@ fi
 # wrapper, so its typecheck diagnostics use the selfhost wording (no Rust
 # `error[E0200]`/`got <a> -> <b>` annotations). Treat cli.tl (host-action
 # disabled) like the wrapper for those diagnostic-text branches, while keeping
-# the full Rust-diagnostic coverage on the Rust lane (#1327).
+# legacy diagnostic expectations isolated to compatibility branches (#1327).
 if [ "$IS_STAGE1_WRAPPER" -eq 1 ] || [ "$HOST_ACTION_ENABLED" -eq 0 ]; then
     SELFHOST_FRONTEND_DIAGNOSTICS=1
 else
@@ -721,9 +721,9 @@ if [ "$IS_STAGE1_WRAPPER" -eq 1 ]; then
     assert_contains "$err" "return type mismatch"
 elif [ "$HOST_ACTION_ENABLED" -eq 0 ]; then
     # The single-binary cli.tl stage0 accepts the inexact f32 literal silently
-    # (it does not yet emit the Rust lane's W0200 "not exactly representable"
-    # warning). Assert only the typecheck success until that warning is ported
-    # to the selfhost frontend (#1327).
+    # (it does not yet emit the legacy W0200 "not exactly representable"
+    # warning). Assert only the typecheck success until that warning is
+    # implemented in the selfhost frontend (#1327).
     assert_success
     assert_contains "$out" "Type checking passed!"
 else
@@ -734,7 +734,7 @@ else
 fi
 
 # Extended `run` execution coverage retained for lanes that support the legacy
-# Rust/SIMD expectations. Current selfhost direct build/run coverage lives in
+# SIMD expectations. Current selfhost direct build/run coverage lives in
 # scripts/verify-selfhost-cli-build-run.sh, which runs against a fresh cli.tl.
 if [ "$HOST_ACTION_ENABLED" -eq 1 ]; then
 RUN_MATRIX="$WORKDIR/run-matrix"
@@ -1280,11 +1280,11 @@ while IFS='|' read -r diag_name diag_command diag_expect || [ -n "$diag_name" ];
     cp "$source" "$work_source"
 
     # The selfhost lowerer (cli.tl / stage1 wrapper) does not yet reject every
-    # construct the Rust backend rejects: it currently lowers aggregate returns
-    # such as `tuple_return` / `array_return` successfully, so the expected-failure
-    # backend diagnostic does not hold for the selfhost frontend. Skip those
-    # known-divergent cases until the selfhost lowerer grows the matching
-    # rejection (#1699); other cases still run.
+    # construct the former Rust backend rejected: it currently lowers aggregate
+    # returns such as `tuple_return` / `array_return` successfully, so the
+    # expected-failure backend diagnostic does not hold for the selfhost
+    # frontend. Skip those known-divergent cases until the selfhost lowerer
+    # grows the matching rejection (#1699); other cases still run.
     if [ "$SELFHOST_FRONTEND_DIAGNOSTICS" -eq 1 ]; then
         case "$diag_name" in
             tuple_return | array_return)
@@ -1313,7 +1313,7 @@ while IFS='|' read -r diag_name diag_command diag_expect || [ -n "$diag_name" ];
 
     if [ "$SELFHOST_FRONTEND_DIAGNOSTICS" -eq 1 ]; then
         # cli.tl and the stage1 wrapper share the selfhost lowerer, which reports
-        # a generic "lower: unsupported expression" rather than the Rust backend's
+        # a generic "lower: unsupported expression" rather than the legacy
         # per-case diagnostics; assert the generic message here (#1327).
         assert_contains "$err" "lower: unsupported expression"
     else

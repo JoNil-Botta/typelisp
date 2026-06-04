@@ -482,7 +482,7 @@
         [(IrParam _ ty id)
           (begin
             (compiler-reg-var-type-array-set! present types id ty)
-            (compiler-reg-param-types-array! rest present types))])]))
+            (compiler-reg-param-types-array! (box-get rest) present types))])]))
 
 (define (compiler-reg-instr-def-type-array!
   [instr : CompilerIrInstr]
@@ -514,7 +514,7 @@
     [(IrInstrCons instr rest)
       (begin
         (compiler-reg-instr-def-type-array! instr present types)
-        (compiler-reg-instr-list-types-array! rest present types))]))
+        (compiler-reg-instr-list-types-array! (box-get rest) present types))]))
 
 (define (compiler-reg-block-list-types-array!
   [blocks : CompilerIrBlockList]
@@ -527,7 +527,7 @@
         [(IrBlock _ instrs)
           (begin
             (compiler-reg-instr-list-types-array! instrs present types)
-            (compiler-reg-block-list-types-array! rest present types))])]))
+            (compiler-reg-block-list-types-array! (box-get rest) present types))])]))
 
 (define (compiler-reg-var-type-arrays-to-list
   [present : (Array i64)]

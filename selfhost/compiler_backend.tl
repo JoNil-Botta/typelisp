@@ -4416,12 +4416,12 @@
   [functions : CompilerIrFunctionList]) : i64
   (match functions
     [(IrFunctionNil) 0]
-    [(IrFunctionCons _ rest) (+ 1 (compiler-backend-function-list-count rest))]))
+    [(IrFunctionCons _ rest) (+ 1 (compiler-backend-function-list-count (box-get rest)))]))
 
 (define (compiler-backend-extern-list-count [externs : CompilerIrExternList]) : i64
   (match externs
     [(IrExternNil) 0]
-    [(IrExternCons _ rest) (+ 1 (compiler-backend-extern-list-count rest))]))
+    [(IrExternCons _ rest) (+ 1 (compiler-backend-extern-list-count (box-get rest)))]))
 
 (define (compiler-backend-program-index-functions-into
   [functions : CompilerIrFunctionList]
@@ -4441,7 +4441,7 @@
                 (compiler-backend-param-type-list params)
                 ret-ty))
             (compiler-backend-program-index-functions-into
-              rest
+              (box-get rest)
               (string-i64-map-put ids name index)
               signatures
               (+ index 1)))])]))
@@ -4467,7 +4467,7 @@
               index
               (compiler-backend-program-index-extern-signature ty))
             (compiler-backend-program-index-extern-signatures-into
-              rest
+              (box-get rest)
               (string-i64-map-put signature-ids extern-name index)
               signatures
               (+ index 1)))])]))
@@ -4485,7 +4485,7 @@
           (begin
             (array-set! link-symbols index link-symbol)
             (compiler-backend-program-index-extern-references-into
-              rest
+              (box-get rest)
               (string-i64-map-put
                 (string-i64-map-put reference-ids extern-name index)
                 link-symbol
@@ -10184,7 +10184,7 @@
     [(IrInstrCons instr rest)
       (compiler-backend-runtime-index-instrs
         (compiler-backend-runtime-index-instr index instr)
-        rest)]))
+        (box-get rest))]))
 
 (define (compiler-backend-runtime-index-blocks
   [index : CompilerBackendRuntimeIndex]
@@ -10196,7 +10196,7 @@
         [(IrBlock _ instrs)
           (compiler-backend-runtime-index-blocks
             (compiler-backend-runtime-index-instrs index instrs)
-            rest)])]))
+            (box-get rest))])]))
 
 (define (compiler-backend-runtime-index-functions
   [index : CompilerBackendRuntimeIndex]
@@ -10210,7 +10210,7 @@
             (compiler-backend-runtime-index-blocks
               (compiler-backend-runtime-index-add-define index name)
               blocks)
-            rest)])]))
+            (box-get rest))])]))
 
 (define (compiler-backend-runtime-index-externs
   [index : CompilerBackendRuntimeIndex]
@@ -10226,7 +10226,7 @@
                 index
                 extern-name)
               link-symbol)
-            rest)])]))
+            (box-get rest))])]))
 
 (define (compiler-backend-runtime-index
   [functions : CompilerIrFunctionList]

@@ -1178,7 +1178,7 @@
     [(IrValueCons value rest)
       (begin
         (opt-collect-value-uses-array items value)
-        (opt-collect-value-list-uses-array items rest))]))
+        (opt-collect-value-list-uses-array items (box-get rest)))]))
 
 (define (opt-collect-call-args-array-uses-array
   [items : (Array bool)]
@@ -1211,7 +1211,7 @@
     [(IrPhiInputCons value _ rest)
       (begin
         (opt-collect-value-uses-array items value)
-        (opt-collect-phi-uses-array items rest))]))
+        (opt-collect-phi-uses-array items (box-get rest)))]))
 
 (define (opt-collect-instr-uses-array
   [items : (Array bool)]
@@ -1314,7 +1314,7 @@
     [(IrInstrCons instr rest)
       (begin
         (opt-collect-instr-uses-array items instr)
-        (opt-collect-instrs-uses-array items rest))]))
+        (opt-collect-instrs-uses-array items (box-get rest)))]))
 
 (define (opt-collect-blocks-uses-array-into
   [items : (Array bool)]
@@ -1326,7 +1326,7 @@
         [(IrBlock _ instrs)
           (begin
             (opt-collect-instrs-uses-array items instrs)
-            (opt-collect-blocks-uses-array-into items rest))])]))
+            (opt-collect-blocks-uses-array-into items (box-get rest)))])]))
 
 (define (opt-collect-blocks-uses-array
   [vars : i64]
@@ -1363,8 +1363,8 @@
     [(IrInstrNil) (IrInstrNil)]
     [(IrInstrCons instr rest)
       (if (opt-instr-dead-array? items instr)
-        (opt-dce-instrs-array items rest)
-        (IrInstrCons instr (opt-dce-instrs-array items rest)))]))
+        (opt-dce-instrs-array items (box-get rest))
+        (compiler-ir-instr-cons instr (opt-dce-instrs-array items (box-get rest))))]))
 
 (define (opt-dce-block-array
   [items : (Array bool)]
@@ -1378,9 +1378,9 @@
   (match blocks
     [(IrBlockNil) (IrBlockNil)]
     [(IrBlockCons block rest)
-      (IrBlockCons
+      (compiler-ir-block-cons
         (opt-dce-block-array items block)
-        (opt-dce-block-list-array items rest))]))
+        (opt-dce-block-list-array items (box-get rest)))]))
 
 ;; --- aggregate allocation candidate analysis (#1487) ------------------------
 ;;

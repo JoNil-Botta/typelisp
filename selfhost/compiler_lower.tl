@@ -2172,7 +2172,7 @@
   (match (tc-struct-decl ctx struct-name)
     [(OkTcStructDecl decl)
       (match decl
-        [(TcStructDecl repr _) (ast-struct-repr-c? repr)])]
+        [(TcStructDecl repr _ _) (ast-struct-repr-c? repr)])]
     [(ErrTcStructDecl _) false]))
 
 (define (lower-repr-c-inline-field? [ctx : TcContext] [field-ty : AstType]) : bool

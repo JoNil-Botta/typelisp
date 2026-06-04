@@ -220,7 +220,9 @@
   (match instrs
     [(IrInstrNil) acc]
     [(IrInstrCons head rest)
-      (lower-instr-list-reverse-onto rest (IrInstrCons head acc))]))
+      (lower-instr-list-reverse-onto
+        (box-get rest)
+        (compiler-ir-instr-cons head acc))]))
 
 (define (lower-instr-list-reverse [instrs : CompilerIrInstrList]) : CompilerIrInstrList
   (lower-instr-list-reverse-onto instrs IrInstrNil))
@@ -231,7 +233,9 @@
   (match blocks
     [(IrBlockNil) acc]
     [(IrBlockCons head rest)
-      (lower-block-list-reverse-onto rest (IrBlockCons head acc))]))
+      (lower-block-list-reverse-onto
+        (box-get rest)
+        (compiler-ir-block-cons head acc))]))
 
 (define (lower-block-list-reverse [blocks : CompilerIrBlockList]) : CompilerIrBlockList
   (lower-block-list-reverse-onto blocks IrBlockNil))
@@ -242,7 +246,9 @@
   (match globals
     [(IrGlobalNil) acc]
     [(IrGlobalCons head rest)
-      (lower-global-list-reverse-onto rest (IrGlobalCons head acc))]))
+      (lower-global-list-reverse-onto
+        (box-get rest)
+        (compiler-ir-global-cons head acc))]))
 
 (define (lower-global-list-reverse [globals : CompilerIrGlobalList]) : CompilerIrGlobalList
   (lower-global-list-reverse-onto globals IrGlobalNil))
@@ -253,7 +259,9 @@
   (match functions
     [(IrFunctionNil) acc]
     [(IrFunctionCons head rest)
-      (lower-function-list-reverse-onto rest (IrFunctionCons head acc))]))
+      (lower-function-list-reverse-onto
+        (box-get rest)
+        (compiler-ir-function-cons head acc))]))
 
 (define (lower-function-list-reverse [functions : CompilerIrFunctionList]) : CompilerIrFunctionList
   (lower-function-list-reverse-onto functions IrFunctionNil))
@@ -264,7 +272,9 @@
   (match left
     [(IrFunctionNil) right]
     [(IrFunctionCons head rest)
-      (IrFunctionCons head (lower-function-list-append rest right))]))
+      (compiler-ir-function-cons
+        head
+        (lower-function-list-append (box-get rest) right))]))
 
 (define (lower-extern-list-reverse-onto
   [externs : CompilerIrExternList]
@@ -272,7 +282,9 @@
   (match externs
     [(IrExternNil) acc]
     [(IrExternCons head rest)
-      (lower-extern-list-reverse-onto rest (IrExternCons head acc))]))
+      (lower-extern-list-reverse-onto
+        (box-get rest)
+        (compiler-ir-extern-cons head acc))]))
 
 (define (lower-extern-list-reverse [externs : CompilerIrExternList]) : CompilerIrExternList
   (lower-extern-list-reverse-onto externs IrExternNil))
@@ -1797,7 +1809,7 @@
         next-label
         next-lambda
         current-label
-        (IrInstrCons instr current-instrs)
+        (compiler-ir-instr-cons instr current-instrs)
         blocks
         functions
         function
@@ -1873,7 +1885,7 @@
           next-lambda
           next-label
           IrInstrNil
-          (IrBlockCons (IrBlock current-label block-instrs) blocks)
+          (compiler-ir-block-cons (IrBlock current-label block-instrs) blocks)
           functions
           function
           spans
@@ -1885,7 +1897,7 @@
   (match state
     [(LowerState _ _ _ current-label current-instrs blocks _ _ _ _ _ _)
       (lower-block-list-reverse
-        (IrBlockCons
+        (compiler-ir-block-cons
           (IrBlock current-label (lower-instr-list-reverse current-instrs))
           blocks))]))
 
@@ -2114,7 +2126,7 @@
                   (let
                     [object-name : String
                       (lower-nullary-variant-object-name enum-name variant-name)]
-                    (IrGlobalCons
+                    (compiler-ir-global-cons
                       (IrGlobal object-name (AstTyI64) (IrValueI64 tag))
                       globals))]
                 [_ globals])]
@@ -2730,7 +2742,7 @@
               ctx
               (lower-store-at-offset state base offset value resolved)
               base
-              rest-values
+              (box-get rest-values)
               rest-types
               (+ offset (lower-type-size ctx resolved))))]
         [(AstTypeNil)
@@ -2768,7 +2780,7 @@
                   ctx
                   stored-state
                   base
-                  rest-values
+                  (box-get rest-values)
                   rest-fields))])]
         [(TcReprCFieldLayoutNil)
           (ErrLowerState (lower-diagnostic "lower: constructor arity mismatch"))])]))
@@ -2817,7 +2829,7 @@
                           ctx
                           stored-state
                           base
-                          rest-values
+                          (box-get rest-values)
                           rest-fields
                           layout))]
                     [(ErrTcLayoutInfo message)
@@ -2864,7 +2876,7 @@
                       state
                       (lower-store-at-offset state base offset value resolved))
                     base
-                    rest-values
+                    (box-get rest-values)
                     rest-types
                     layout
                     variant-name
@@ -2923,13 +2935,13 @@
                       eq-var
                       "tl_string_eq"
                       (compiler-ir-call-args-from-list
-                        (IrValueCons
+                        (compiler-ir-value-cons
                           field-ptr
-                          (IrValueCons
+                          (compiler-ir-value-cons
                             field-len
-                            (IrValueCons
+                            (compiler-ir-value-cons
                               lit-ptr
-                              (IrValueCons lit-len IrValueNil)))))
+                              (compiler-ir-value-cons lit-len IrValueNil)))))
                       (AstTyBool)))
                   (IrValueVar eq-var)
                   (AstTyBool)))])])]))
@@ -4088,7 +4100,7 @@
                       "lower: capture load did not materialize a variable"))])])])]))
 
 (define (lower-captured-param-list [ctx : TcContext] [params : AstParamList]) : CompilerIrParamList
-  (IrParamCons
+  (compiler-ir-param-cons
     (IrParam "__tl_env" (AstTyU64) 0)
     (lower-param-list ctx params 1)))
 
@@ -4153,7 +4165,7 @@
                 ret-ty)
                 [(OkLowerState final-state)
                   (OkLowerFunction
-                    (IrFunctionCons
+                    (compiler-ir-function-cons
                       (IrFunction
                         logical-name
                         (lower-captured-param-list ctx params)
@@ -4775,7 +4787,7 @@
                     (lower-runtime-call-values
                       cast-state
                       (lower-arena-builtin-symbol name)
-                      (IrValueCons cast-value IrValueNil)
+                      (compiler-ir-value-cons cast-value IrValueNil)
                       result-ty)])])]
           [(ErrLowerExpr message) (ErrLowerExpr message)])]
       [_
@@ -4784,9 +4796,10 @@
 
 ;; Lower `(clone x)` (#1633): the canonical deep-copy / arena-escape. A String
 ;; copies its buffer through `tl_substring`; tuple, fixed-array, and dynamic-
-;; array values allocate fresh storage and recursively clone each element; named
-;; aggregates dispatch to synthesized `clone$<Name>` helpers (compiler_clone.tl)
-;; so recursive enum/struct values recurse at runtime instead of lower time; and
+;; array values allocate fresh storage and recursively clone each element; Box
+;; values allocate a fresh box for the cloned inner value; named aggregates
+;; dispatch to synthesized `clone$<Name>` helpers (compiler_clone.tl) so
+;; recursive enum/struct values recurse at runtime instead of lower time; and
 ;; scalar values are returned as-is.
 (define (lower-clone-named
   [state : LowerState]
@@ -5233,6 +5246,43 @@
                       buf-var
                       result-ty)])]))])]))
 
+(define (lower-clone-box-value
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [value : CompilerIrValue]
+  [inner-ty : AstType]
+  [result-ty : AstType]) : ResultLowerExpr
+  (match (lower-load-at-offset state value 0 inner-ty)
+    [(LowerExpr load-state inner-value _)
+      (match (lower-clone-dispatch
+        ctx
+        load-state
+        env
+        type-env
+        inner-value
+        inner-ty)
+        [(OkLowerExpr cloned)
+          (match cloned
+            [(LowerExpr clone-state clone-value _)
+              (match (lower-reserve-heap-storage
+                clone-state
+                (lower-type-size ctx inner-ty)
+                result-ty)
+                [(LowerExpr box-state box-value _)
+                  (OkLowerExpr
+                    (LowerExpr
+                      (lower-store-at-offset
+                        box-state
+                        box-value
+                        0
+                        clone-value
+                        inner-ty)
+                      box-value
+                      result-ty))])])]
+        [(ErrLowerExpr message) (ErrLowerExpr message)])]))
+
 (define (lower-clone-dispatch
   [ctx : TcContext]
   [state : LowerState]
@@ -5258,6 +5308,15 @@
           clone-ty)]
       [(AstTyDynArray elem-ty)
         (lower-clone-dynarray-value
+          ctx
+          state
+          env
+          type-env
+          value
+          (tc-type-without-regions elem-ty)
+          clone-ty)]
+      [(AstTyBox elem-ty)
+        (lower-clone-box-value
           ctx
           state
           env
@@ -5462,7 +5521,9 @@
                       rest-args
                       rest-types)
                       [(OkLowerArgs rest-state rest-values)
-                        (OkLowerArgs rest-state (IrValueCons value rest-values))]
+                        (OkLowerArgs
+                          rest-state
+                          (compiler-ir-value-cons value rest-values))]
                       [(ErrLowerArgs message) (ErrLowerArgs message)])])]
               [(ErrLowerExpr message) (ErrLowerArgs message)]))]
         [(AstTypeNil)
@@ -7362,9 +7423,11 @@
               var-id
               "tl_substring"
               (compiler-ir-call-args-from-list
-                (IrValueCons
+                (compiler-ir-value-cons
                   src-ptr
-                  (IrValueCons start-value (IrValueCons len-value IrValueNil))))
+                  (compiler-ir-value-cons
+                    start-value
+                    (compiler-ir-value-cons len-value IrValueNil))))
               (AstTyString)))
           (IrValueVar var-id)
           (AstTyString)))]))
@@ -7579,13 +7642,13 @@
                                           var-id
                                           "tl_string_concat"
                                           (compiler-ir-call-args-from-list
-                                            (IrValueCons
+                                            (compiler-ir-value-cons
                                               left-ptr
-                                              (IrValueCons
+                                              (compiler-ir-value-cons
                                                 left-len
-                                                (IrValueCons
+                                                (compiler-ir-value-cons
                                                   right-ptr
-                                                  (IrValueCons
+                                                  (compiler-ir-value-cons
                                                     right-len
                                                     IrValueNil)))))
                                           (AstTyString)))
@@ -7762,7 +7825,7 @@
                   (lower-runtime-call-values
                     cast-state
                     runtime-name
-                    (IrValueCons cast-value IrValueNil)
+                    (compiler-ir-value-cons cast-value IrValueNil)
                     result-ty)])])]
         [(ErrLowerExpr message) (ErrLowerExpr message)])]
     [_
@@ -7795,7 +7858,9 @@
                 (lower-runtime-call-values
                   fields-state
                   runtime-name
-                  (IrValueCons ptr (IrValueCons len IrValueNil))
+                  (compiler-ir-value-cons
+                    ptr
+                    (compiler-ir-value-cons len IrValueNil))
                   result-ty)])
             (ErrLowerExpr (lower-diagnostic-at-expr arg message)))])]
     [(ErrLowerExpr message) (ErrLowerExpr message)]))
@@ -7817,7 +7882,7 @@
             (lower-runtime-call-values
               arg-state
               runtime-name
-              (IrValueCons arg-value IrValueNil)
+              (compiler-ir-value-cons arg-value IrValueNil)
               result-ty)
             (ErrLowerExpr (lower-diagnostic-at-expr arg message)))])]
     [(ErrLowerExpr message) (ErrLowerExpr message)]))
@@ -7854,13 +7919,15 @@
                               (lower-runtime-call-values
                                 done-fields-state
                                 runtime-name
-                                (IrValueCons
+                                (compiler-ir-value-cons
                                   left-ptr
-                                  (IrValueCons
+                                  (compiler-ir-value-cons
                                     left-len
-                                    (IrValueCons
+                                    (compiler-ir-value-cons
                                       right-ptr
-                                      (IrValueCons right-len IrValueNil))))
+                                      (compiler-ir-value-cons
+                                        right-len
+                                        IrValueNil))))
                                 result-ty)])])
                       (ErrLowerExpr (lower-diagnostic-at-expr right message)))])]
               [(ErrLowerExpr message) (ErrLowerExpr message)])
@@ -7916,7 +7983,7 @@
                   (lower-runtime-call-values
                     cast-state
                     "tl_int_to_string"
-                    (IrValueCons cast-value IrValueNil)
+                    (compiler-ir-value-cons cast-value IrValueNil)
                     result-ty)])])]
         [(ErrLowerExpr message) (ErrLowerExpr message)])]
     [_
@@ -7946,7 +8013,7 @@
       (lower-runtime-call-values
         fields-state
         "tl_print_str"
-        (IrValueCons ptr (IrValueCons len IrValueNil))
+        (compiler-ir-value-cons ptr (compiler-ir-value-cons len IrValueNil))
         result-ty)]))
 
 (define (lower-print-string-call
@@ -8191,7 +8258,7 @@
                   (lower-runtime-call-values
                     cast-state
                     ".L_tl_arg"
-                    (IrValueCons cast-value IrValueNil)
+                    (compiler-ir-value-cons cast-value IrValueNil)
                     result-ty)])])]
         [(ErrLowerExpr message) (ErrLowerExpr message)])]
     [_ (lower-direct-call ctx state env type-env "arg" args result-ty origin)]))
@@ -8473,11 +8540,13 @@
                               (lower-runtime-call-values
                                 fields-state
                                 ".L_tl_file_open_status"
-                                (IrValueCons
+                                (compiler-ir-value-cons
                                   ptr
-                                  (IrValueCons
+                                  (compiler-ir-value-cons
                                     len
-                                    (IrValueCons cast-value IrValueNil)))
+                                    (compiler-ir-value-cons
+                                      cast-value
+                                      IrValueNil)))
                                 result-ty)])])])]
                 [(ErrLowerExpr message) (ErrLowerExpr message)])])]
         [(ErrLowerExpr message) (ErrLowerExpr message)])]
@@ -8515,7 +8584,7 @@
                   (lower-runtime-call-values
                     cast-state
                     ".L_tl_file_close_status"
-                    (IrValueCons cast-value IrValueNil)
+                    (compiler-ir-value-cons cast-value IrValueNil)
                     result-ty)])])]
         [(ErrLowerExpr message) (ErrLowerExpr message)])]
     [_
@@ -8562,9 +8631,11 @@
                               (lower-runtime-call-values
                                 cast-state
                                 ".L_tl_file_read_chunk_status"
-                                (IrValueCons
+                                (compiler-ir-value-cons
                                   handle-cast-value
-                                  (IrValueCons count-cast-value IrValueNil))
+                                  (compiler-ir-value-cons
+                                    count-cast-value
+                                    IrValueNil))
                                 result-ty)])])]
                     [(ErrLowerExpr message) (ErrLowerExpr message)])])])]
         [(ErrLowerExpr message) (ErrLowerExpr message)])]
@@ -8615,9 +8686,11 @@
                               (lower-runtime-call-values
                                 fields-state
                                 ".L_tl_file_write_status"
-                                (IrValueCons
+                                (compiler-ir-value-cons
                                   handle-cast-value
-                                  (IrValueCons ptr (IrValueCons len IrValueNil)))
+                                  (compiler-ir-value-cons
+                                    ptr
+                                    (compiler-ir-value-cons len IrValueNil)))
                                 result-ty)])])]
                     [(ErrLowerExpr message) (ErrLowerExpr message)])])])]
         [(ErrLowerExpr message) (ErrLowerExpr message)])]
@@ -8655,7 +8728,7 @@
                   (lower-runtime-call-values
                     cast-state
                     ".L_tl_file_flush_status"
-                    (IrValueCons cast-value IrValueNil)
+                    (compiler-ir-value-cons cast-value IrValueNil)
                     result-ty)])])]
         [(ErrLowerExpr message) (ErrLowerExpr message)])]
     [_
@@ -8694,7 +8767,7 @@
                   (lower-runtime-call-values
                     cast-state
                     runtime-name
-                    (IrValueCons cast-value IrValueNil)
+                    (compiler-ir-value-cons cast-value IrValueNil)
                     result-ty)])])]
         [(ErrLowerExpr message) (ErrLowerExpr message)])]
     [_
@@ -8771,13 +8844,15 @@
                               (lower-runtime-call-values
                                 done-fields-state
                                 ".L_tl_write_file"
-                                (IrValueCons
+                                (compiler-ir-value-cons
                                   path-ptr
-                                  (IrValueCons
+                                  (compiler-ir-value-cons
                                     path-len
-                                    (IrValueCons
+                                    (compiler-ir-value-cons
                                       contents-ptr
-                                      (IrValueCons contents-len IrValueNil))))
+                                      (compiler-ir-value-cons
+                                        contents-len
+                                        IrValueNil))))
                                 result-ty)])])])]
                 [(ErrLowerExpr message) (ErrLowerExpr message)])])]
         [(ErrLowerExpr message) (ErrLowerExpr message)])]
@@ -8822,13 +8897,15 @@
                               (lower-runtime-call-values
                                 done-fields-state
                                 ".L_tl_write_file_status"
-                                (IrValueCons
+                                (compiler-ir-value-cons
                                   path-ptr
-                                  (IrValueCons
+                                  (compiler-ir-value-cons
                                     path-len
-                                    (IrValueCons
+                                    (compiler-ir-value-cons
                                       contents-ptr
-                                      (IrValueCons contents-len IrValueNil))))
+                                      (compiler-ir-value-cons
+                                        contents-len
+                                        IrValueNil))))
                                 result-ty)])])])]
                 [(ErrLowerExpr message) (ErrLowerExpr message)])])]
         [(ErrLowerExpr message) (ErrLowerExpr message)])]
@@ -8873,13 +8950,15 @@
                               (lower-runtime-call-values
                                 done-fields-state
                                 ".L_tl_append_file_status"
-                                (IrValueCons
+                                (compiler-ir-value-cons
                                   path-ptr
-                                  (IrValueCons
+                                  (compiler-ir-value-cons
                                     path-len
-                                    (IrValueCons
+                                    (compiler-ir-value-cons
                                       contents-ptr
-                                      (IrValueCons contents-len IrValueNil))))
+                                      (compiler-ir-value-cons
+                                        contents-len
+                                        IrValueNil))))
                                 result-ty)])])])]
                 [(ErrLowerExpr message) (ErrLowerExpr message)])])]
         [(ErrLowerExpr message) (ErrLowerExpr message)])]
@@ -8924,13 +9003,15 @@
                               (lower-runtime-call-values
                                 done-fields-state
                                 "tl_string_eq"
-                                (IrValueCons
+                                (compiler-ir-value-cons
                                   left-ptr
-                                  (IrValueCons
+                                  (compiler-ir-value-cons
                                     left-len
-                                    (IrValueCons
+                                    (compiler-ir-value-cons
                                       right-ptr
-                                      (IrValueCons right-len IrValueNil))))
+                                      (compiler-ir-value-cons
+                                        right-len
+                                        IrValueNil))))
                                 result-ty)])])])]
                 [(ErrLowerExpr message) (ErrLowerExpr message)])])]
         [(ErrLowerExpr message) (ErrLowerExpr message)])]
@@ -10691,7 +10772,9 @@
             [(LowerExpr arg-state value _)
               (match (lower-args ctx arg-state env type-env rest)
                 [(OkLowerArgs rest-state rest-values)
-                  (OkLowerArgs rest-state (IrValueCons value rest-values))]
+                  (OkLowerArgs
+                    rest-state
+                    (compiler-ir-value-cons value rest-values))]
                 [(ErrLowerArgs message) (ErrLowerArgs message)])])]
         [(ErrLowerExpr message) (ErrLowerArgs message)])]))
 
@@ -10917,7 +11000,7 @@
   (match (lower-runtime-call-values
     state
     "tl_region_reset"
-    (IrValueCons mark-value IrValueNil)
+    (compiler-ir-value-cons mark-value IrValueNil)
     (AstTyUnit))
     [(OkLowerExpr rewind-lowered)
       (match rewind-lowered
@@ -10925,7 +11008,7 @@
           (match (lower-runtime-call-values
             rewind-state
             "tl_arena_set"
-            (IrValueCons new-enclosing-value IrValueNil)
+            (compiler-ir-value-cons new-enclosing-value IrValueNil)
             (AstTyUnit))
             [(OkLowerExpr final-lowered)
               (lower-with-escape-final final-lowered escaped-value escaped-ty)]
@@ -10949,7 +11032,7 @@
           (match (lower-runtime-call-values
             new-enclosing-state
             "tl_arena_set"
-            (IrValueCons scratch-head-value IrValueNil)
+            (compiler-ir-value-cons scratch-head-value IrValueNil)
             (AstTyUnit))
             [(OkLowerExpr restore-scratch-lowered)
               (match restore-scratch-lowered
@@ -11006,7 +11089,7 @@
                   (match (lower-runtime-call-values
                     scratch-head-state
                     "tl_arena_set"
-                    (IrValueCons enclosing-value IrValueNil)
+                    (compiler-ir-value-cons enclosing-value IrValueNil)
                     (AstTyUnit))
                     [(OkLowerExpr restore-enclosing-lowered)
                       (match restore-enclosing-lowered
@@ -11052,7 +11135,7 @@
                   (match (lower-runtime-call-values
                     scratch-state
                     "tl_arena_set"
-                    (IrValueCons scratch-value IrValueNil)
+                    (compiler-ir-value-cons scratch-value IrValueNil)
                     (AstTyUnit))
                     [(OkLowerExpr set-scratch-lowered)
                       (match set-scratch-lowered
@@ -11099,10 +11182,13 @@
               allocated
               (IrInstrPhi
                 var-id
-                (IrPhiInputCons
+                (compiler-ir-phi-input-cons
                   then-value
                   then-end-label
-                  (IrPhiInputCons else-value else-end-label IrPhiInputNil))
+                  (compiler-ir-phi-input-cons
+                    else-value
+                    else-end-label
+                    IrPhiInputNil))
                 expr-ty))
             (IrValueVar var-id)
             expr-ty))])))
@@ -13152,7 +13238,7 @@
                                       (IrInstrJump merge-label))
                                     merge-label
                                     expr-ty
-                                    (IrPhiInputCons
+                                    (compiler-ir-phi-input-cons
                                       body-value
                                       body-end-label
                                       phi-inputs))))])]
@@ -13220,7 +13306,10 @@
                   expr-ty
                   (if (tc-never-type? body-ty)
                     phi-inputs
-                    (IrPhiInputCons body-value body-end-label phi-inputs))))])]
+                    (compiler-ir-phi-input-cons
+                      body-value
+                      body-end-label
+                      phi-inputs))))])]
         [(ErrLowerExpr message) (ErrLowerExpr message)])]
     [(ErrLowerEnv message) (ErrLowerExpr message)]))
 
@@ -13368,7 +13457,7 @@
                               expr-ty
                               (if (tc-never-type? body-ty)
                                 phi-inputs
-                                (IrPhiInputCons
+                                (compiler-ir-phi-input-cons
                                   body-value
                                   body-end-label
                                   phi-inputs))))])]
@@ -13413,7 +13502,10 @@
                       (lower-state-emit body-state (IrInstrJump merge-label))
                       merge-label
                       expr-ty
-                      (IrPhiInputCons body-value body-end-label phi-inputs))))])]
+                      (compiler-ir-phi-input-cons
+                        body-value
+                        body-end-label
+                        phi-inputs))))])]
           [(ErrLowerExpr message) (ErrLowerExpr message)]))]))
 
 (define (lower-phi-input-list-empty? [phi-inputs : CompilerIrPhiInputList]) : bool
@@ -13876,7 +13968,7 @@
     [(AstParamCons param rest)
       (match param
         [(AstParam name ty _)
-          (IrParamCons
+          (compiler-ir-param-cons
             (IrParam
               name
               (tc-type-without-regions (tc-resolve-type ctx ty))
@@ -13986,7 +14078,7 @@
           (match (lower-tail-expr ctx state env type-env body ret-ty)
             [(OkLowerState final-state)
               (OkLowerFunction
-                (IrFunctionCons
+                (compiler-ir-function-cons
                   (IrFunction
                     logical-name
                     (lower-param-list ctx params 0)
@@ -14084,7 +14176,8 @@
             (begin
               (unsafe (arena-set! enclosing))
               (let
-                [escaped-fns : CompilerIrFunctionList (clone fns)]
+                [escaped-fns : CompilerIrFunctionList
+                  (compiler-ir-clone-function-list fns)]
                 [escaped-spans : CompilerSourceSpans
                   (lower-record-function-span spans logical-name body)]
                 (begin
@@ -14165,7 +14258,7 @@
                         top-env
                         local-top-env
                         rest
-                        (IrGlobalCons
+                        (compiler-ir-global-cons
                           (IrGlobal global-name global-ty value)
                           globals)
                         functions
@@ -14202,7 +14295,7 @@
                             top-env
                             local-top-env
                             rest
-                            (IrGlobalCons
+                            (compiler-ir-global-cons
                               (IrGlobal global-name global-ty IrValueUnit)
                               globals)
                             (lower-function-list-append init-funcs functions)
@@ -14229,7 +14322,7 @@
                 rest
                 globals
                 functions
-                (IrExternCons
+                (compiler-ir-extern-cons
                   (IrExtern
                     name
                     (tc-type-without-regions (tc-resolve-type decl-ctx ty))
@@ -15719,7 +15812,7 @@
     [(IrValueCons value rest)
       (+
         (lower-test-value-function-count value name)
-        (lower-test-value-list-function-count rest name))]))
+        (lower-test-value-list-function-count (box-get rest) name))]))
 
 (define (lower-test-call-args-function-count
   [args : CompilerIrCallArgs]
@@ -15986,7 +16079,9 @@
   (match instrs
     [(IrInstrNil) 0]
     [(IrInstrCons instr rest)
-      (+ (lower-test-instr-phi-count instr) (lower-test-instrs-phi-count rest))]))
+      (+
+        (lower-test-instr-phi-count instr)
+        (lower-test-instrs-phi-count (box-get rest)))]))
 
 (define (lower-test-instrs-load-count [instrs : CompilerIrInstrList]) : i64
   (match instrs
@@ -15994,7 +16089,7 @@
     [(IrInstrCons instr rest)
       (+
         (lower-test-instr-load-count instr)
-        (lower-test-instrs-load-count rest))]))
+        (lower-test-instrs-load-count (box-get rest)))]))
 
 (define (lower-test-instrs-branch-count [instrs : CompilerIrInstrList]) : i64
   (match instrs
@@ -16002,7 +16097,7 @@
     [(IrInstrCons instr rest)
       (+
         (lower-test-instr-branch-count instr)
-        (lower-test-instrs-branch-count rest))]))
+        (lower-test-instrs-branch-count (box-get rest)))]))
 
 (define (lower-test-instrs-bounds-count [instrs : CompilerIrInstrList]) : i64
   (match instrs
@@ -16010,7 +16105,7 @@
     [(IrInstrCons instr rest)
       (+
         (lower-test-instr-bounds-count instr)
-        (lower-test-instrs-bounds-count rest))]))
+        (lower-test-instrs-bounds-count (box-get rest)))]))
 
 (define (lower-test-instrs-return-count [instrs : CompilerIrInstrList]) : i64
   (match instrs
@@ -16018,7 +16113,7 @@
     [(IrInstrCons instr rest)
       (+
         (lower-test-instr-return-count instr)
-        (lower-test-instrs-return-count rest))]))
+        (lower-test-instrs-return-count (box-get rest)))]))
 
 (define (lower-test-instrs-call-count
   [instrs : CompilerIrInstrList]
@@ -16028,7 +16123,7 @@
     [(IrInstrCons instr rest)
       (+
         (lower-test-instr-call-count instr name)
-        (lower-test-instrs-call-count rest name))]))
+        (lower-test-instrs-call-count (box-get rest) name))]))
 
 (define (lower-test-instrs-cpuid-count [instrs : CompilerIrInstrList]) : i64
   (match instrs
@@ -16036,7 +16131,7 @@
     [(IrInstrCons instr rest)
       (+
         (lower-test-instr-cpuid-count instr)
-        (lower-test-instrs-cpuid-count rest))]))
+        (lower-test-instrs-cpuid-count (box-get rest)))]))
 
 (define (lower-test-instrs-xgetbv-count [instrs : CompilerIrInstrList]) : i64
   (match instrs
@@ -16044,7 +16139,7 @@
     [(IrInstrCons instr rest)
       (+
         (lower-test-instr-xgetbv-count instr)
-        (lower-test-instrs-xgetbv-count rest))]))
+        (lower-test-instrs-xgetbv-count (box-get rest)))]))
 
 (define (lower-test-instrs-indirect-call-count [instrs : CompilerIrInstrList]) : i64
   (match instrs
@@ -16052,7 +16147,7 @@
     [(IrInstrCons instr rest)
       (+
         (lower-test-instr-indirect-call-count instr)
-        (lower-test-instrs-indirect-call-count rest))]))
+        (lower-test-instrs-indirect-call-count (box-get rest)))]))
 
 (define (lower-test-instrs-indirect-unit-count [instrs : CompilerIrInstrList]) : i64
   (match instrs
@@ -16060,7 +16155,7 @@
     [(IrInstrCons instr rest)
       (+
         (lower-test-instr-indirect-unit-count instr)
-        (lower-test-instrs-indirect-unit-count rest))]))
+        (lower-test-instrs-indirect-unit-count (box-get rest)))]))
 
 (define (lower-test-instrs-return-function-count
   [instrs : CompilerIrInstrList]
@@ -16070,7 +16165,7 @@
     [(IrInstrCons instr rest)
       (+
         (lower-test-instr-return-function-count instr function-name)
-        (lower-test-instrs-return-function-count rest function-name))]))
+        (lower-test-instrs-return-function-count (box-get rest) function-name))]))
 
 (define (lower-test-instrs-indirect-callee-function-count
   [instrs : CompilerIrInstrList]
@@ -16080,7 +16175,9 @@
     [(IrInstrCons instr rest)
       (+
         (lower-test-instr-indirect-callee-function-count instr function-name)
-        (lower-test-instrs-indirect-callee-function-count rest function-name))]))
+        (lower-test-instrs-indirect-callee-function-count
+          (box-get rest)
+          function-name))]))
 
 (define (lower-test-instrs-call-arg-function-count
   [instrs : CompilerIrInstrList]
@@ -16091,7 +16188,10 @@
     [(IrInstrCons instr rest)
       (+
         (lower-test-instr-call-arg-function-count instr call-name function-name)
-        (lower-test-instrs-call-arg-function-count rest call-name function-name))]))
+        (lower-test-instrs-call-arg-function-count
+          (box-get rest)
+          call-name
+          function-name))]))
 
 (define (lower-test-instrs-tail-call-count
   [instrs : CompilerIrInstrList]
@@ -16101,7 +16201,7 @@
     [(IrInstrCons instr rest)
       (+
         (lower-test-instr-tail-call-count instr name)
-        (lower-test-instrs-tail-call-count rest name))]))
+        (lower-test-instrs-tail-call-count (box-get rest) name))]))
 
 (define (lower-test-instrs-store-ptr-count [instrs : CompilerIrInstrList]) : i64
   (match instrs
@@ -16109,7 +16209,7 @@
     [(IrInstrCons instr rest)
       (+
         (lower-test-instr-store-ptr-count instr)
-        (lower-test-instrs-store-ptr-count rest))]))
+        (lower-test-instrs-store-ptr-count (box-get rest)))]))
 
 (define (lower-test-instrs-alloc-count [instrs : CompilerIrInstrList]) : i64
   (match instrs
@@ -16117,7 +16217,7 @@
     [(IrInstrCons instr rest)
       (+
         (lower-test-instr-alloc-count instr)
-        (lower-test-instrs-alloc-count rest))]))
+        (lower-test-instrs-alloc-count (box-get rest)))]))
 
 (define (lower-test-instrs-addr-of-count [instrs : CompilerIrInstrList]) : i64
   (match instrs
@@ -16125,7 +16225,7 @@
     [(IrInstrCons instr rest)
       (+
         (lower-test-instr-addr-of-count instr)
-        (lower-test-instrs-addr-of-count rest))]))
+        (lower-test-instrs-addr-of-count (box-get rest)))]))
 
 (define (lower-test-instrs-vector-load-count [instrs : CompilerIrInstrList]) : i64
   (match instrs
@@ -16133,7 +16233,7 @@
     [(IrInstrCons instr rest)
       (+
         (lower-test-instr-vector-load-count instr)
-        (lower-test-instrs-vector-load-count rest))]))
+        (lower-test-instrs-vector-load-count (box-get rest)))]))
 
 (define (lower-test-instrs-vector-binop-count [instrs : CompilerIrInstrList]) : i64
   (match instrs
@@ -16141,7 +16241,7 @@
     [(IrInstrCons instr rest)
       (+
         (lower-test-instr-vector-binop-count instr)
-        (lower-test-instrs-vector-binop-count rest))]))
+        (lower-test-instrs-vector-binop-count (box-get rest)))]))
 
 (define (lower-test-instrs-vector-reduce-count [instrs : CompilerIrInstrList]) : i64
   (match instrs
@@ -16149,7 +16249,7 @@
     [(IrInstrCons instr rest)
       (+
         (lower-test-instr-vector-reduce-count instr)
-        (lower-test-instrs-vector-reduce-count rest))]))
+        (lower-test-instrs-vector-reduce-count (box-get rest)))]))
 
 (define (lower-test-instrs-vector-store-count [instrs : CompilerIrInstrList]) : i64
   (match instrs
@@ -16157,7 +16257,7 @@
     [(IrInstrCons instr rest)
       (+
         (lower-test-instr-vector-store-count instr)
-        (lower-test-instrs-vector-store-count rest))]))
+        (lower-test-instrs-vector-store-count (box-get rest)))]))
 
 (define (lower-test-instrs-predicated-load-count [instrs : CompilerIrInstrList]) : i64
   (match instrs
@@ -16165,7 +16265,7 @@
     [(IrInstrCons instr rest)
       (+
         (lower-test-instr-predicated-load-count instr)
-        (lower-test-instrs-predicated-load-count rest))]))
+        (lower-test-instrs-predicated-load-count (box-get rest)))]))
 
 (define (lower-test-instrs-predicated-store-count
   [instrs : CompilerIrInstrList]) : i64
@@ -16174,7 +16274,7 @@
     [(IrInstrCons instr rest)
       (+
         (lower-test-instr-predicated-store-count instr)
-        (lower-test-instrs-predicated-store-count rest))]))
+        (lower-test-instrs-predicated-store-count (box-get rest)))]))
 
 (define (lower-test-instrs-tail-mask-count [instrs : CompilerIrInstrList]) : i64
   (match instrs
@@ -16182,7 +16282,7 @@
     [(IrInstrCons instr rest)
       (+
         (lower-test-instr-tail-mask-count instr)
-        (lower-test-instrs-tail-mask-count rest))]))
+        (lower-test-instrs-tail-mask-count (box-get rest)))]))
 
 (define (lower-test-instrs-vector-shape-count
   [instrs : CompilerIrInstrList]
@@ -16193,7 +16293,7 @@
     [(IrInstrCons instr rest)
       (+
         (lower-test-instr-vector-shape-count instr lanes elem-ty)
-        (lower-test-instrs-vector-shape-count rest lanes elem-ty))]))
+        (lower-test-instrs-vector-shape-count (box-get rest) lanes elem-ty))]))
 
 (define (lower-test-instrs-u64-mov-count [instrs : CompilerIrInstrList]) : i64
   (match instrs
@@ -16201,7 +16301,7 @@
     [(IrInstrCons instr rest)
       (+
         (lower-test-instr-u64-mov-count instr)
-        (lower-test-instrs-u64-mov-count rest))]))
+        (lower-test-instrs-u64-mov-count (box-get rest)))]))
 
 (define (lower-test-instrs-binop-op-count
   [instrs : CompilerIrInstrList]
@@ -16211,7 +16311,7 @@
     [(IrInstrCons instr rest)
       (+
         (lower-test-instr-binop-op-count instr op)
-        (lower-test-instrs-binop-op-count rest op))]))
+        (lower-test-instrs-binop-op-count (box-get rest) op))]))
 
 (define (lower-test-instrs-cast-count [instrs : CompilerIrInstrList]) : i64
   (match instrs
@@ -16219,7 +16319,7 @@
     [(IrInstrCons instr rest)
       (+
         (lower-test-instr-cast-count instr)
-        (lower-test-instrs-cast-count rest))]))
+        (lower-test-instrs-cast-count (box-get rest)))]))
 
 (define (lower-test-instrs-store-global-count
   [instrs : CompilerIrInstrList]
@@ -16229,7 +16329,7 @@
     [(IrInstrCons instr rest)
       (+
         (lower-test-instr-store-global-count instr name)
-        (lower-test-instrs-store-global-count rest name))]))
+        (lower-test-instrs-store-global-count (box-get rest) name))]))
 
 (define (lower-test-blocks-phi-count [blocks : CompilerIrBlockList]) : i64
   (match blocks
@@ -16239,7 +16339,7 @@
         [(IrBlock _ instrs)
           (+
             (lower-test-instrs-phi-count instrs)
-            (lower-test-blocks-phi-count rest))])]))
+            (lower-test-blocks-phi-count (box-get rest)))])]))
 
 (define (lower-test-blocks-load-count [blocks : CompilerIrBlockList]) : i64
   (match blocks
@@ -16249,7 +16349,7 @@
         [(IrBlock _ instrs)
           (+
             (lower-test-instrs-load-count instrs)
-            (lower-test-blocks-load-count rest))])]))
+            (lower-test-blocks-load-count (box-get rest)))])]))
 
 (define (lower-test-blocks-branch-count [blocks : CompilerIrBlockList]) : i64
   (match blocks
@@ -16259,7 +16359,7 @@
         [(IrBlock _ instrs)
           (+
             (lower-test-instrs-branch-count instrs)
-            (lower-test-blocks-branch-count rest))])]))
+            (lower-test-blocks-branch-count (box-get rest)))])]))
 
 (define (lower-test-blocks-bounds-count [blocks : CompilerIrBlockList]) : i64
   (match blocks
@@ -16269,7 +16369,7 @@
         [(IrBlock _ instrs)
           (+
             (lower-test-instrs-bounds-count instrs)
-            (lower-test-blocks-bounds-count rest))])]))
+            (lower-test-blocks-bounds-count (box-get rest)))])]))
 
 (define (lower-test-blocks-return-count [blocks : CompilerIrBlockList]) : i64
   (match blocks
@@ -16279,7 +16379,7 @@
         [(IrBlock _ instrs)
           (+
             (lower-test-instrs-return-count instrs)
-            (lower-test-blocks-return-count rest))])]))
+            (lower-test-blocks-return-count (box-get rest)))])]))
 
 (define (lower-test-blocks-call-count
   [blocks : CompilerIrBlockList]
@@ -16291,7 +16391,7 @@
         [(IrBlock _ instrs)
           (+
             (lower-test-instrs-call-count instrs name)
-            (lower-test-blocks-call-count rest name))])]))
+            (lower-test-blocks-call-count (box-get rest) name))])]))
 
 (define (lower-test-blocks-cpuid-count [blocks : CompilerIrBlockList]) : i64
   (match blocks
@@ -16301,7 +16401,7 @@
         [(IrBlock _ instrs)
           (+
             (lower-test-instrs-cpuid-count instrs)
-            (lower-test-blocks-cpuid-count rest))])]))
+            (lower-test-blocks-cpuid-count (box-get rest)))])]))
 
 (define (lower-test-blocks-xgetbv-count [blocks : CompilerIrBlockList]) : i64
   (match blocks
@@ -16311,7 +16411,7 @@
         [(IrBlock _ instrs)
           (+
             (lower-test-instrs-xgetbv-count instrs)
-            (lower-test-blocks-xgetbv-count rest))])]))
+            (lower-test-blocks-xgetbv-count (box-get rest)))])]))
 
 (define (lower-test-blocks-indirect-call-count [blocks : CompilerIrBlockList]) : i64
   (match blocks
@@ -16321,7 +16421,7 @@
         [(IrBlock _ instrs)
           (+
             (lower-test-instrs-indirect-call-count instrs)
-            (lower-test-blocks-indirect-call-count rest))])]))
+            (lower-test-blocks-indirect-call-count (box-get rest)))])]))
 
 (define (lower-test-blocks-indirect-unit-count [blocks : CompilerIrBlockList]) : i64
   (match blocks
@@ -16331,7 +16431,7 @@
         [(IrBlock _ instrs)
           (+
             (lower-test-instrs-indirect-unit-count instrs)
-            (lower-test-blocks-indirect-unit-count rest))])]))
+            (lower-test-blocks-indirect-unit-count (box-get rest)))])]))
 
 (define (lower-test-blocks-return-function-count
   [blocks : CompilerIrBlockList]
@@ -16343,7 +16443,9 @@
         [(IrBlock _ instrs)
           (+
             (lower-test-instrs-return-function-count instrs function-name)
-            (lower-test-blocks-return-function-count rest function-name))])]))
+            (lower-test-blocks-return-function-count
+              (box-get rest)
+              function-name))])]))
 
 (define (lower-test-blocks-indirect-callee-function-count
   [blocks : CompilerIrBlockList]
@@ -16358,7 +16460,7 @@
               instrs
               function-name)
             (lower-test-blocks-indirect-callee-function-count
-              rest
+              (box-get rest)
               function-name))])]))
 
 (define (lower-test-blocks-call-arg-function-count
@@ -16376,7 +16478,7 @@
               call-name
               function-name)
             (lower-test-blocks-call-arg-function-count
-              rest
+              (box-get rest)
               call-name
               function-name))])]))
 
@@ -16390,7 +16492,7 @@
         [(IrBlock _ instrs)
           (+
             (lower-test-instrs-tail-call-count instrs name)
-            (lower-test-blocks-tail-call-count rest name))])]))
+            (lower-test-blocks-tail-call-count (box-get rest) name))])]))
 
 (define (lower-test-blocks-store-ptr-count [blocks : CompilerIrBlockList]) : i64
   (match blocks
@@ -16400,7 +16502,7 @@
         [(IrBlock _ instrs)
           (+
             (lower-test-instrs-store-ptr-count instrs)
-            (lower-test-blocks-store-ptr-count rest))])]))
+            (lower-test-blocks-store-ptr-count (box-get rest)))])]))
 
 (define (lower-test-blocks-alloc-count [blocks : CompilerIrBlockList]) : i64
   (match blocks
@@ -16410,7 +16512,7 @@
         [(IrBlock _ instrs)
           (+
             (lower-test-instrs-alloc-count instrs)
-            (lower-test-blocks-alloc-count rest))])]))
+            (lower-test-blocks-alloc-count (box-get rest)))])]))
 
 (define (lower-test-blocks-addr-of-count [blocks : CompilerIrBlockList]) : i64
   (match blocks
@@ -16420,7 +16522,7 @@
         [(IrBlock _ instrs)
           (+
             (lower-test-instrs-addr-of-count instrs)
-            (lower-test-blocks-addr-of-count rest))])]))
+            (lower-test-blocks-addr-of-count (box-get rest)))])]))
 
 (define (lower-test-blocks-vector-load-count [blocks : CompilerIrBlockList]) : i64
   (match blocks
@@ -16430,7 +16532,7 @@
         [(IrBlock _ instrs)
           (+
             (lower-test-instrs-vector-load-count instrs)
-            (lower-test-blocks-vector-load-count rest))])]))
+            (lower-test-blocks-vector-load-count (box-get rest)))])]))
 
 (define (lower-test-blocks-vector-binop-count [blocks : CompilerIrBlockList]) : i64
   (match blocks
@@ -16440,7 +16542,7 @@
         [(IrBlock _ instrs)
           (+
             (lower-test-instrs-vector-binop-count instrs)
-            (lower-test-blocks-vector-binop-count rest))])]))
+            (lower-test-blocks-vector-binop-count (box-get rest)))])]))
 
 (define (lower-test-blocks-vector-reduce-count [blocks : CompilerIrBlockList]) : i64
   (match blocks
@@ -16450,7 +16552,7 @@
         [(IrBlock _ instrs)
           (+
             (lower-test-instrs-vector-reduce-count instrs)
-            (lower-test-blocks-vector-reduce-count rest))])]))
+            (lower-test-blocks-vector-reduce-count (box-get rest)))])]))
 
 (define (lower-test-blocks-vector-store-count [blocks : CompilerIrBlockList]) : i64
   (match blocks
@@ -16460,7 +16562,7 @@
         [(IrBlock _ instrs)
           (+
             (lower-test-instrs-vector-store-count instrs)
-            (lower-test-blocks-vector-store-count rest))])]))
+            (lower-test-blocks-vector-store-count (box-get rest)))])]))
 
 (define (lower-test-blocks-predicated-load-count [blocks : CompilerIrBlockList]) : i64
   (match blocks
@@ -16470,7 +16572,7 @@
         [(IrBlock _ instrs)
           (+
             (lower-test-instrs-predicated-load-count instrs)
-            (lower-test-blocks-predicated-load-count rest))])]))
+            (lower-test-blocks-predicated-load-count (box-get rest)))])]))
 
 (define (lower-test-blocks-predicated-store-count
   [blocks : CompilerIrBlockList]) : i64
@@ -16481,7 +16583,7 @@
         [(IrBlock _ instrs)
           (+
             (lower-test-instrs-predicated-store-count instrs)
-            (lower-test-blocks-predicated-store-count rest))])]))
+            (lower-test-blocks-predicated-store-count (box-get rest)))])]))
 
 (define (lower-test-blocks-tail-mask-count [blocks : CompilerIrBlockList]) : i64
   (match blocks
@@ -16491,7 +16593,7 @@
         [(IrBlock _ instrs)
           (+
             (lower-test-instrs-tail-mask-count instrs)
-            (lower-test-blocks-tail-mask-count rest))])]))
+            (lower-test-blocks-tail-mask-count (box-get rest)))])]))
 
 (define (lower-test-blocks-vector-shape-count
   [blocks : CompilerIrBlockList]
@@ -16504,7 +16606,7 @@
         [(IrBlock _ instrs)
           (+
             (lower-test-instrs-vector-shape-count instrs lanes elem-ty)
-            (lower-test-blocks-vector-shape-count rest lanes elem-ty))])]))
+            (lower-test-blocks-vector-shape-count (box-get rest) lanes elem-ty))])]))
 
 (define (lower-test-blocks-u64-mov-count [blocks : CompilerIrBlockList]) : i64
   (match blocks
@@ -16514,7 +16616,7 @@
         [(IrBlock _ instrs)
           (+
             (lower-test-instrs-u64-mov-count instrs)
-            (lower-test-blocks-u64-mov-count rest))])]))
+            (lower-test-blocks-u64-mov-count (box-get rest)))])]))
 
 (define (lower-test-blocks-binop-op-count
   [blocks : CompilerIrBlockList]
@@ -16526,7 +16628,7 @@
         [(IrBlock _ instrs)
           (+
             (lower-test-instrs-binop-op-count instrs op)
-            (lower-test-blocks-binop-op-count rest op))])]))
+            (lower-test-blocks-binop-op-count (box-get rest) op))])]))
 
 (define (lower-test-blocks-cast-count [blocks : CompilerIrBlockList]) : i64
   (match blocks
@@ -16536,7 +16638,7 @@
         [(IrBlock _ instrs)
           (+
             (lower-test-instrs-cast-count instrs)
-            (lower-test-blocks-cast-count rest))])]))
+            (lower-test-blocks-cast-count (box-get rest)))])]))
 
 (define (lower-test-blocks-store-global-count
   [blocks : CompilerIrBlockList]
@@ -16548,7 +16650,7 @@
         [(IrBlock _ instrs)
           (+
             (lower-test-instrs-store-global-count instrs name)
-            (lower-test-blocks-store-global-count rest name))])]))
+            (lower-test-blocks-store-global-count (box-get rest) name))])]))
 
 ;; Phi count of the function named `name`, or -1 when no such function exists
 ;; (so a missing function fails both the `> 0` and `= 0` assertions below).
@@ -16562,7 +16664,7 @@
         [(IrFunction fname _ _ _ blocks)
           (if (string-eq fname name)
             (lower-test-blocks-phi-count blocks)
-            (lower-test-function-phi-count rest name))])]))
+            (lower-test-function-phi-count (box-get rest) name))])]))
 
 (define (lower-test-function-load-count
   [funcs : CompilerIrFunctionList]
@@ -16574,7 +16676,7 @@
         [(IrFunction fname _ _ _ blocks)
           (if (string-eq fname name)
             (lower-test-blocks-load-count blocks)
-            (lower-test-function-load-count rest name))])]))
+            (lower-test-function-load-count (box-get rest) name))])]))
 
 (define (lower-test-function-branch-count
   [funcs : CompilerIrFunctionList]
@@ -16586,7 +16688,7 @@
         [(IrFunction fname _ _ _ blocks)
           (if (string-eq fname name)
             (lower-test-blocks-branch-count blocks)
-            (lower-test-function-branch-count rest name))])]))
+            (lower-test-function-branch-count (box-get rest) name))])]))
 
 (define (lower-test-function-bounds-count
   [funcs : CompilerIrFunctionList]
@@ -16598,7 +16700,7 @@
         [(IrFunction fname _ _ _ blocks)
           (if (string-eq fname name)
             (lower-test-blocks-bounds-count blocks)
-            (lower-test-function-bounds-count rest name))])]))
+            (lower-test-function-bounds-count (box-get rest) name))])]))
 
 (define (lower-test-function-return-count
   [funcs : CompilerIrFunctionList]
@@ -16610,7 +16712,7 @@
         [(IrFunction fname _ _ _ blocks)
           (if (string-eq fname name)
             (lower-test-blocks-return-count blocks)
-            (lower-test-function-return-count rest name))])]))
+            (lower-test-function-return-count (box-get rest) name))])]))
 
 (define (lower-test-functions-call-count
   [funcs : CompilerIrFunctionList]
@@ -16622,7 +16724,7 @@
         [(IrFunction _ _ _ _ blocks)
           (+
             (lower-test-blocks-call-count blocks name)
-            (lower-test-functions-call-count rest name))])]))
+            (lower-test-functions-call-count (box-get rest) name))])]))
 
 (define (lower-test-functions-cpuid-count [funcs : CompilerIrFunctionList]) : i64
   (match funcs
@@ -16632,7 +16734,7 @@
         [(IrFunction _ _ _ _ blocks)
           (+
             (lower-test-blocks-cpuid-count blocks)
-            (lower-test-functions-cpuid-count rest))])]))
+            (lower-test-functions-cpuid-count (box-get rest)))])]))
 
 (define (lower-test-functions-xgetbv-count [funcs : CompilerIrFunctionList]) : i64
   (match funcs
@@ -16642,7 +16744,7 @@
         [(IrFunction _ _ _ _ blocks)
           (+
             (lower-test-blocks-xgetbv-count blocks)
-            (lower-test-functions-xgetbv-count rest))])]))
+            (lower-test-functions-xgetbv-count (box-get rest)))])]))
 
 (define (lower-test-function-call-count
   [funcs : CompilerIrFunctionList]
@@ -16655,7 +16757,7 @@
         [(IrFunction fname _ _ _ blocks)
           (if (string-eq fname name)
             (lower-test-blocks-call-count blocks call-name)
-            (lower-test-function-call-count rest name call-name))])]))
+            (lower-test-function-call-count (box-get rest) name call-name))])]))
 
 (define (lower-test-function-indirect-call-count
   [funcs : CompilerIrFunctionList]
@@ -16667,7 +16769,7 @@
         [(IrFunction fname _ _ _ blocks)
           (if (string-eq fname name)
             (lower-test-blocks-indirect-call-count blocks)
-            (lower-test-function-indirect-call-count rest name))])]))
+            (lower-test-function-indirect-call-count (box-get rest) name))])]))
 
 (define (lower-test-function-indirect-unit-count
   [funcs : CompilerIrFunctionList]
@@ -16679,7 +16781,7 @@
         [(IrFunction fname _ _ _ blocks)
           (if (string-eq fname name)
             (lower-test-blocks-indirect-unit-count blocks)
-            (lower-test-function-indirect-unit-count rest name))])]))
+            (lower-test-function-indirect-unit-count (box-get rest) name))])]))
 
 (define (lower-test-function-return-function-count
   [funcs : CompilerIrFunctionList]
@@ -16692,7 +16794,10 @@
         [(IrFunction fname _ _ _ blocks)
           (if (string-eq fname name)
             (lower-test-blocks-return-function-count blocks function-name)
-            (lower-test-function-return-function-count rest name function-name))])]))
+            (lower-test-function-return-function-count
+              (box-get rest)
+              name
+              function-name))])]))
 
 (define (lower-test-function-indirect-callee-function-count
   [funcs : CompilerIrFunctionList]
@@ -16708,7 +16813,7 @@
               blocks
               function-name)
             (lower-test-function-indirect-callee-function-count
-              rest
+              (box-get rest)
               name
               function-name))])]))
 
@@ -16728,7 +16833,7 @@
               call-name
               function-name)
             (lower-test-function-call-arg-function-count
-              rest
+              (box-get rest)
               name
               call-name
               function-name))])]))
@@ -16744,7 +16849,7 @@
         [(IrFunction fname _ _ _ blocks)
           (if (string-eq fname name)
             (lower-test-blocks-tail-call-count blocks call-name)
-            (lower-test-function-tail-call-count rest name call-name))])]))
+            (lower-test-function-tail-call-count (box-get rest) name call-name))])]))
 
 (define (lower-test-function-store-ptr-count
   [funcs : CompilerIrFunctionList]
@@ -16756,7 +16861,7 @@
         [(IrFunction fname _ _ _ blocks)
           (if (string-eq fname name)
             (lower-test-blocks-store-ptr-count blocks)
-            (lower-test-function-store-ptr-count rest name))])]))
+            (lower-test-function-store-ptr-count (box-get rest) name))])]))
 
 (define (lower-test-function-alloc-count
   [funcs : CompilerIrFunctionList]
@@ -16768,7 +16873,7 @@
         [(IrFunction fname _ _ _ blocks)
           (if (string-eq fname name)
             (lower-test-blocks-alloc-count blocks)
-            (lower-test-function-alloc-count rest name))])]))
+            (lower-test-function-alloc-count (box-get rest) name))])]))
 
 (define (lower-test-function-addr-of-count
   [funcs : CompilerIrFunctionList]
@@ -16780,7 +16885,7 @@
         [(IrFunction fname _ _ _ blocks)
           (if (string-eq fname name)
             (lower-test-blocks-addr-of-count blocks)
-            (lower-test-function-addr-of-count rest name))])]))
+            (lower-test-function-addr-of-count (box-get rest) name))])]))
 
 (define (lower-test-function-vector-load-count
   [funcs : CompilerIrFunctionList]
@@ -16792,7 +16897,7 @@
         [(IrFunction fname _ _ _ blocks)
           (if (string-eq fname name)
             (lower-test-blocks-vector-load-count blocks)
-            (lower-test-function-vector-load-count rest name))])]))
+            (lower-test-function-vector-load-count (box-get rest) name))])]))
 
 (define (lower-test-function-vector-binop-count
   [funcs : CompilerIrFunctionList]
@@ -16804,7 +16909,7 @@
         [(IrFunction fname _ _ _ blocks)
           (if (string-eq fname name)
             (lower-test-blocks-vector-binop-count blocks)
-            (lower-test-function-vector-binop-count rest name))])]))
+            (lower-test-function-vector-binop-count (box-get rest) name))])]))
 
 (define (lower-test-function-vector-reduce-count
   [funcs : CompilerIrFunctionList]
@@ -16816,7 +16921,7 @@
         [(IrFunction fname _ _ _ blocks)
           (if (string-eq fname name)
             (lower-test-blocks-vector-reduce-count blocks)
-            (lower-test-function-vector-reduce-count rest name))])]))
+            (lower-test-function-vector-reduce-count (box-get rest) name))])]))
 
 (define (lower-test-function-vector-store-count
   [funcs : CompilerIrFunctionList]
@@ -16828,7 +16933,7 @@
         [(IrFunction fname _ _ _ blocks)
           (if (string-eq fname name)
             (lower-test-blocks-vector-store-count blocks)
-            (lower-test-function-vector-store-count rest name))])]))
+            (lower-test-function-vector-store-count (box-get rest) name))])]))
 
 (define (lower-test-function-predicated-load-count
   [funcs : CompilerIrFunctionList]
@@ -16840,7 +16945,7 @@
         [(IrFunction fname _ _ _ blocks)
           (if (string-eq fname name)
             (lower-test-blocks-predicated-load-count blocks)
-            (lower-test-function-predicated-load-count rest name))])]))
+            (lower-test-function-predicated-load-count (box-get rest) name))])]))
 
 (define (lower-test-function-predicated-store-count
   [funcs : CompilerIrFunctionList]
@@ -16852,7 +16957,7 @@
         [(IrFunction fname _ _ _ blocks)
           (if (string-eq fname name)
             (lower-test-blocks-predicated-store-count blocks)
-            (lower-test-function-predicated-store-count rest name))])]))
+            (lower-test-function-predicated-store-count (box-get rest) name))])]))
 
 (define (lower-test-function-tail-mask-count
   [funcs : CompilerIrFunctionList]
@@ -16864,7 +16969,7 @@
         [(IrFunction fname _ _ _ blocks)
           (if (string-eq fname name)
             (lower-test-blocks-tail-mask-count blocks)
-            (lower-test-function-tail-mask-count rest name))])]))
+            (lower-test-function-tail-mask-count (box-get rest) name))])]))
 
 (define (lower-test-function-vector-shape-count
   [funcs : CompilerIrFunctionList]
@@ -16878,7 +16983,11 @@
         [(IrFunction fname _ _ _ blocks)
           (if (string-eq fname name)
             (lower-test-blocks-vector-shape-count blocks lanes elem-ty)
-            (lower-test-function-vector-shape-count rest name lanes elem-ty))])]))
+            (lower-test-function-vector-shape-count
+              (box-get rest)
+              name
+              lanes
+              elem-ty))])]))
 
 (define (lower-test-function-u64-mov-count
   [funcs : CompilerIrFunctionList]
@@ -16890,7 +16999,7 @@
         [(IrFunction fname _ _ _ blocks)
           (if (string-eq fname name)
             (lower-test-blocks-u64-mov-count blocks)
-            (lower-test-function-u64-mov-count rest name))])]))
+            (lower-test-function-u64-mov-count (box-get rest) name))])]))
 
 (define (lower-test-function-binop-op-count
   [funcs : CompilerIrFunctionList]
@@ -16903,7 +17012,7 @@
         [(IrFunction fname _ _ _ blocks)
           (if (string-eq fname name)
             (lower-test-blocks-binop-op-count blocks op)
-            (lower-test-function-binop-op-count rest name op))])]))
+            (lower-test-function-binop-op-count (box-get rest) name op))])]))
 
 (define (lower-test-function-cast-count
   [funcs : CompilerIrFunctionList]
@@ -16915,7 +17024,7 @@
         [(IrFunction fname _ _ _ blocks)
           (if (string-eq fname name)
             (lower-test-blocks-cast-count blocks)
-            (lower-test-function-cast-count rest name))])]))
+            (lower-test-function-cast-count (box-get rest) name))])]))
 
 (define (lower-test-function-store-global-count
   [funcs : CompilerIrFunctionList]
@@ -16928,7 +17037,10 @@
         [(IrFunction fname _ _ _ blocks)
           (if (string-eq fname name)
             (lower-test-blocks-store-global-count blocks global-name)
-            (lower-test-function-store-global-count rest name global-name))])]))
+            (lower-test-function-store-global-count
+              (box-get rest)
+              name
+              global-name))])]))
 
 (define (lower-test-global-list-has-name?
   [globals : CompilerIrGlobalList]
@@ -16940,7 +17052,7 @@
         [(IrGlobal global-name _ _)
           (if (string-eq global-name name)
             true
-            (lower-test-global-list-has-name? rest name))])]))
+            (lower-test-global-list-has-name? (box-get rest) name))])]))
 
 (define (compiler-lower-module-symbol-source) : String
   "(define answer : i64 40)
@@ -17347,7 +17459,7 @@
     [(IrInstrCons instr rest)
       (+
         (lower-test-instr-i64-mov-count instr want)
-        (lower-test-instrs-i64-mov-count rest want))]))
+        (lower-test-instrs-i64-mov-count (box-get rest) want))]))
 
 (define (lower-test-instrs-binop-count [instrs : CompilerIrInstrList]) : i64
   (match instrs
@@ -17355,7 +17467,7 @@
     [(IrInstrCons instr rest)
       (+
         (lower-test-instr-binop-count instr)
-        (lower-test-instrs-binop-count rest))]))
+        (lower-test-instrs-binop-count (box-get rest)))]))
 
 (define (lower-test-instrs-gep-offset-count
   [instrs : CompilerIrInstrList]
@@ -17365,7 +17477,7 @@
     [(IrInstrCons instr rest)
       (+
         (lower-test-instr-gep-offset-count instr want)
-        (lower-test-instrs-gep-offset-count rest want))]))
+        (lower-test-instrs-gep-offset-count (box-get rest) want))]))
 
 (define (lower-test-blocks-i64-mov-count
   [blocks : CompilerIrBlockList]
@@ -17377,7 +17489,7 @@
         [(IrBlock _ instrs)
           (+
             (lower-test-instrs-i64-mov-count instrs want)
-            (lower-test-blocks-i64-mov-count rest want))])]))
+            (lower-test-blocks-i64-mov-count (box-get rest) want))])]))
 
 (define (lower-test-blocks-binop-count [blocks : CompilerIrBlockList]) : i64
   (match blocks
@@ -17387,7 +17499,7 @@
         [(IrBlock _ instrs)
           (+
             (lower-test-instrs-binop-count instrs)
-            (lower-test-blocks-binop-count rest))])]))
+            (lower-test-blocks-binop-count (box-get rest)))])]))
 
 (define (lower-test-blocks-gep-offset-count
   [blocks : CompilerIrBlockList]
@@ -17399,7 +17511,7 @@
         [(IrBlock _ instrs)
           (+
             (lower-test-instrs-gep-offset-count instrs want)
-            (lower-test-blocks-gep-offset-count rest want))])]))
+            (lower-test-blocks-gep-offset-count (box-get rest) want))])]))
 
 (define (lower-test-function-i64-mov-count
   [funcs : CompilerIrFunctionList]
@@ -17412,7 +17524,7 @@
         [(IrFunction fname _ _ _ blocks)
           (if (string-eq fname name)
             (lower-test-blocks-i64-mov-count blocks want)
-            (lower-test-function-i64-mov-count rest name want))])]))
+            (lower-test-function-i64-mov-count (box-get rest) name want))])]))
 
 (define (lower-test-function-binop-count
   [funcs : CompilerIrFunctionList]
@@ -17424,7 +17536,7 @@
         [(IrFunction fname _ _ _ blocks)
           (if (string-eq fname name)
             (lower-test-blocks-binop-count blocks)
-            (lower-test-function-binop-count rest name))])]))
+            (lower-test-function-binop-count (box-get rest) name))])]))
 
 (define (lower-test-function-gep-offset-count
   [funcs : CompilerIrFunctionList]
@@ -17437,7 +17549,7 @@
         [(IrFunction fname _ _ _ blocks)
           (if (string-eq fname name)
             (lower-test-blocks-gep-offset-count blocks want)
-            (lower-test-function-gep-offset-count rest name want))])]))
+            (lower-test-function-gep-offset-count (box-get rest) name want))])]))
 
 (define (compiler-lower-comptime-fold-ok? [src : String] [want : i64]) : bool
   (match (lower-compiler-source src)

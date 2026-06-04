@@ -1204,18 +1204,20 @@
 (define (compiler-backend-fallthrough-program) : CompilerIrProgram
   (IrProgram
     IrGlobalNil
-    (IrFunctionCons
+    (compiler-ir-function-cons
       (IrFunction
         "main"
         IrParamNil
         (AstTyI64)
         0
-        (IrBlockCons
-          (IrBlock "entry" (IrInstrCons (IrInstrJump "done") IrInstrNil))
-          (IrBlockCons
+        (compiler-ir-block-cons
+          (IrBlock
+            "entry"
+            (compiler-ir-instr-cons (IrInstrJump "done") IrInstrNil))
+          (compiler-ir-block-cons
             (IrBlock
               "done"
-              (IrInstrCons
+              (compiler-ir-instr-cons
                 (IrInstrReturn (IrSomeValue (IrValueI64 7)))
                 IrInstrNil))
             IrBlockNil)))
@@ -1303,31 +1305,31 @@
 (define (compiler-backend-call-return-program) : CompilerIrProgram
   (IrProgram
     IrGlobalNil
-    (IrFunctionCons
+    (compiler-ir-function-cons
       (IrFunction
         "callee"
         IrParamNil
         (AstTyI64)
         0
-        (IrBlockCons
+        (compiler-ir-block-cons
           (IrBlock
             "entry"
-            (IrInstrCons
+            (compiler-ir-instr-cons
               (IrInstrReturn (IrSomeValue (IrValueI64 7)))
               IrInstrNil))
           IrBlockNil))
-      (IrFunctionCons
+      (compiler-ir-function-cons
         (IrFunction
           "main"
           IrParamNil
           (AstTyI64)
           1
-          (IrBlockCons
+          (compiler-ir-block-cons
             (IrBlock
               "entry"
-              (IrInstrCons
+              (compiler-ir-instr-cons
                 (IrInstrCall 0 "callee" (IrCallArgsNil) (AstTyI64))
-                (IrInstrCons
+                (compiler-ir-instr-cons
                   (IrInstrReturn (IrSomeValue (IrValueVar 0)))
                   IrInstrNil)))
             IrBlockNil))
@@ -1355,30 +1357,30 @@
       CompilerRegAssignmentNil)))
 
 (define (compiler-backend-phi-same-home-blocks) : CompilerIrBlockList
-  (IrBlockCons
+  (compiler-ir-block-cons
     (IrBlock
       "join"
-      (IrInstrCons
+      (compiler-ir-instr-cons
         (IrInstrPhi
           1
-          (IrPhiInputCons (IrValueVar 0) "entry" IrPhiInputNil)
+          (compiler-ir-phi-input-cons (IrValueVar 0) "entry" IrPhiInputNil)
           (AstTyI64))
         IrInstrNil))
     IrBlockNil))
 
 (define (compiler-backend-phi-cycle-blocks) : CompilerIrBlockList
-  (IrBlockCons
+  (compiler-ir-block-cons
     (IrBlock
       "join"
-      (IrInstrCons
+      (compiler-ir-instr-cons
         (IrInstrPhi
           0
-          (IrPhiInputCons (IrValueVar 1) "back" IrPhiInputNil)
+          (compiler-ir-phi-input-cons (IrValueVar 1) "back" IrPhiInputNil)
           (AstTyI64))
-        (IrInstrCons
+        (compiler-ir-instr-cons
           (IrInstrPhi
             1
-            (IrPhiInputCons (IrValueVar 0) "back" IrPhiInputNil)
+            (compiler-ir-phi-input-cons (IrValueVar 0) "back" IrPhiInputNil)
             (AstTyI64))
           IrInstrNil)))
     IrBlockNil))
@@ -1713,14 +1715,14 @@
     [program : CompilerIrProgram
       (IrProgram
         IrGlobalNil
-        (IrFunctionCons
+        (compiler-ir-function-cons
           (IrFunction
             "main"
             IrParamNil
             (AstTyI64)
             4
-            (IrBlockCons
-              (IrBlock "entry" (IrInstrCons instr IrInstrNil))
+            (compiler-ir-block-cons
+              (IrBlock "entry" (compiler-ir-instr-cons instr IrInstrNil))
               IrBlockNil))
           IrFunctionNil)
         IrExternNil)]
@@ -1971,7 +1973,10 @@
           "    vmovd %xmm0, %eax\n")))))
 
 (define (compiler-backend-vector-home-program [func : CompilerIrFunction]) : CompilerIrProgram
-  (IrProgram IrGlobalNil (IrFunctionCons func IrFunctionNil) IrExternNil))
+  (IrProgram
+    IrGlobalNil
+    (compiler-ir-function-cons func IrFunctionNil)
+    IrExternNil))
 
 (define (compiler-backend-vector-call-lifetime-function) : CompilerIrFunction
   (IrFunction
@@ -1979,14 +1984,14 @@
     IrParamNil
     (AstTyUnit)
     3
-    (IrBlockCons
+    (compiler-ir-block-cons
       (IrBlock
         "entry"
-        (IrInstrCons
+        (compiler-ir-instr-cons
           (IrInstrVectorLoad 0 (IrValueI64 0) (IrValueI64 0) 4 (AstTyI64))
-          (IrInstrCons
+          (compiler-ir-instr-cons
             (IrInstrCall 1 "side_effect" (IrCallArgsNil) (AstTyUnit))
-            (IrInstrCons
+            (compiler-ir-instr-cons
               (IrInstrVectorBinOp
                 2
                 (IrBinAdd)
@@ -1994,7 +1999,7 @@
                 (IrValueVar 0)
                 4
                 (AstTyI64))
-              (IrInstrCons (IrInstrReturn IrNoValue) IrInstrNil)))))
+              (compiler-ir-instr-cons (IrInstrReturn IrNoValue) IrInstrNil)))))
       IrBlockNil)))
 
 (define (compiler-backend-avx2-vector-homes-ok?) : bool
@@ -2071,25 +2076,27 @@
     [phi : CompilerIrInstr
       (IrInstrPhi
         0
-        (IrPhiInputCons (IrValueF64 "1.0") "entry" IrPhiInputNil)
+        (compiler-ir-phi-input-cons (IrValueF64 "1.0") "entry" IrPhiInputNil)
         (AstTyI64))]
     [program : CompilerIrProgram
       (IrProgram
         IrGlobalNil
-        (IrFunctionCons
+        (compiler-ir-function-cons
           (IrFunction
             "main"
             IrParamNil
             (AstTyI64)
             4
-            (IrBlockCons
-              (IrBlock "entry" (IrInstrCons (IrInstrJump "join") IrInstrNil))
-              (IrBlockCons
+            (compiler-ir-block-cons
+              (IrBlock
+                "entry"
+                (compiler-ir-instr-cons (IrInstrJump "join") IrInstrNil))
+              (compiler-ir-block-cons
                 (IrBlock
                   "join"
-                  (IrInstrCons
+                  (compiler-ir-instr-cons
                     phi
-                    (IrInstrCons
+                    (compiler-ir-instr-cons
                       (IrInstrReturn (IrSomeValue (IrValueVar 0)))
                       IrInstrNil)))
                 IrBlockNil)))
@@ -2997,63 +3004,65 @@
 (define (compiler-backend-checked-trap-entry-block) : CompilerIrBlock
   (IrBlock
     "entry"
-    (IrInstrCons
+    (compiler-ir-instr-cons
       (IrInstrBinOp 0 (IrBinEq) (IrValueI64 0) (IrValueI64 0) (AstTyI64))
-      (IrInstrCons
+      (compiler-ir-instr-cons
         (IrInstrBranch (IrValueVar 0) "div_trap" "div_ok")
         IrInstrNil))))
 
 (define (compiler-backend-checked-trap-div-block) : CompilerIrBlock
   (IrBlock
     "div_trap"
-    (IrInstrCons
+    (compiler-ir-instr-cons
       (IrInstrCall 1 "tl_div_abort" (IrCallArgsNil) (AstTyUnit))
-      (IrInstrCons (IrInstrJump "div_ok") IrInstrNil))))
+      (compiler-ir-instr-cons (IrInstrJump "div_ok") IrInstrNil))))
 
 (define (compiler-backend-checked-trap-div-ok-block) : CompilerIrBlock
   (IrBlock
     "div_ok"
-    (IrInstrCons
+    (compiler-ir-instr-cons
       (IrInstrBinOp 2 (IrBinDiv) (IrValueI64 42) (IrValueI64 6) (AstTyI64))
-      (IrInstrCons
+      (compiler-ir-instr-cons
         (IrInstrBinOp 3 (IrBinMod) (IrValueI64 22) (IrValueI64 7) (AstTyI64))
-        (IrInstrCons
+        (compiler-ir-instr-cons
           (IrInstrBinOp 4 (IrBinEq) (IrValueI64 64) (IrValueI64 64) (AstTyI64))
-          (IrInstrCons
+          (compiler-ir-instr-cons
             (IrInstrBranch (IrValueVar 4) "shift_trap" "shift_ok")
             IrInstrNil))))))
 
 (define (compiler-backend-checked-trap-shift-block) : CompilerIrBlock
   (IrBlock
     "shift_trap"
-    (IrInstrCons
+    (compiler-ir-instr-cons
       (IrInstrCall 5 "tl_shift_abort" (IrCallArgsNil) (AstTyUnit))
-      (IrInstrCons (IrInstrJump "shift_ok") IrInstrNil))))
+      (compiler-ir-instr-cons (IrInstrJump "shift_ok") IrInstrNil))))
 
 (define (compiler-backend-checked-trap-shift-ok-block) : CompilerIrBlock
   (IrBlock
     "shift_ok"
-    (IrInstrCons
+    (compiler-ir-instr-cons
       (IrInstrBinOp 6 (IrBinShl) (IrValueI64 1) (IrValueI64 2) (AstTyI64))
-      (IrInstrCons (IrInstrReturn (IrSomeValue (IrValueVar 6))) IrInstrNil))))
+      (compiler-ir-instr-cons
+        (IrInstrReturn (IrSomeValue (IrValueVar 6)))
+        IrInstrNil))))
 
 (define (compiler-backend-checked-trap-blocks) : CompilerIrBlockList
-  (IrBlockCons
+  (compiler-ir-block-cons
     (compiler-backend-checked-trap-entry-block)
-    (IrBlockCons
+    (compiler-ir-block-cons
       (compiler-backend-checked-trap-div-block)
-      (IrBlockCons
+      (compiler-ir-block-cons
         (compiler-backend-checked-trap-div-ok-block)
-        (IrBlockCons
+        (compiler-ir-block-cons
           (compiler-backend-checked-trap-shift-block)
-          (IrBlockCons
+          (compiler-ir-block-cons
             (compiler-backend-checked-trap-shift-ok-block)
             IrBlockNil))))))
 
 (define (compiler-backend-checked-trap-program) : CompilerIrProgram
   (IrProgram
     IrGlobalNil
-    (IrFunctionCons
+    (compiler-ir-function-cons
       (IrFunction
         "main"
         IrParamNil

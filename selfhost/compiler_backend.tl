@@ -1202,7 +1202,7 @@
         [(IrParam _ _ param-var)
           (if (= var param-var)
             true
-            (compiler-backend-param-var? rest var))])]))
+            (compiler-backend-param-var? (box-get rest) var))])]))
 
 (define (compiler-backend-drop-param-assignments
   [assignments : CompilerRegAssignmentList]
@@ -4019,7 +4019,8 @@
 (define (compiler-backend-ir-value-list-count [args : CompilerIrValueList]) : i64
   (match args
     [(IrValueNil) 0]
-    [(IrValueCons _ rest) (+ 1 (compiler-backend-ir-value-list-count rest))]))
+    [(IrValueCons _ rest)
+      (+ 1 (compiler-backend-ir-value-list-count (box-get rest)))]))
 
 (define (compiler-backend-call-args-count [args : CompilerIrCallArgs]) : i64
   (match args
@@ -4090,7 +4091,7 @@
     [(IrParamCons param rest)
       (match param
         [(IrParam _ ty _)
-          (AstTypeCons ty (compiler-backend-param-type-list rest))])]))
+          (AstTypeCons ty (compiler-backend-param-type-list (box-get rest)))])]))
 
 (define (compiler-backend-type-list-count [types : AstTypeList]) : i64
   (match types
@@ -4103,14 +4104,14 @@
   (match types
     [(AstTypeNil) IrParamNil]
     [(AstTypeCons ty rest)
-      (IrParamCons
+      (compiler-ir-param-cons
         (IrParam (string-append "arg" (int->string idx)) ty idx)
         (compiler-backend-param-list-from-types rest (+ idx 1)))]))
 
 (define (compiler-backend-var-value-list [count : i64] [idx : i64]) : CompilerIrValueList
   (if (>= idx count)
     IrValueNil
-    (IrValueCons
+    (compiler-ir-value-cons
       (IrValueVar idx)
       (compiler-backend-var-value-list count (+ idx 1)))))
 
@@ -4124,7 +4125,7 @@
         [(IrFunction fname params _ _ _)
           (if (string-eq fname name)
             (compiler-backend-param-type-list params)
-            (compiler-backend-function-param-types rest name))])]))
+            (compiler-backend-function-param-types (box-get rest) name))])]))
 
 (define (compiler-backend-extern-param-types
   [externs : CompilerIrExternList]
@@ -4138,7 +4139,7 @@
             (match ty
               [(AstTyFunc args _) args]
               [_ AstTypeNil])
-            (compiler-backend-extern-param-types rest name))])]))
+            (compiler-backend-extern-param-types (box-get rest) name))])]))
 
 (define (compiler-backend-function-signature
   [functions : CompilerIrFunctionList]
@@ -4152,7 +4153,7 @@
             (CompilerBackendSomeSignature
               (compiler-backend-param-type-list params)
               ret-ty)
-            (compiler-backend-function-signature rest name))])]))
+            (compiler-backend-function-signature (box-get rest) name))])]))
 
 (define (compiler-backend-extern-signature
   [externs : CompilerIrExternList]
@@ -4167,7 +4168,7 @@
               [(AstTyFunc args ret-ty)
                 (CompilerBackendSomeSignature args ret-ty)]
               [_ (CompilerBackendNoSignature)])
-            (compiler-backend-extern-signature rest name))])]))
+            (compiler-backend-extern-signature (box-get rest) name))])]))
 
 (define (compiler-backend-signature
   [functions : CompilerIrFunctionList]
@@ -4205,7 +4206,7 @@
             (match abi
               [(AstExternAbiCVarargs fixed-count) fixed-count]
               [_ -1])
-            (compiler-backend-extern-varargs-fixed-count rest name))])]))
+            (compiler-backend-extern-varargs-fixed-count (box-get rest) name))])]))
 
 (define (compiler-backend-varargs-linux-vector-count
   [types : AstTypeList]
@@ -4414,7 +4415,7 @@
     [(IrInstrCons instr rest)
       (if (compiler-backend-instr-needs-outgoing-space? instr)
         true
-        (compiler-backend-instrs-need-outgoing-space? rest))]))
+        (compiler-backend-instrs-need-outgoing-space? (box-get rest)))]))
 
 (define (compiler-backend-blocks-need-outgoing-space?
   [blocks : CompilerIrBlockList]) : bool
@@ -4425,7 +4426,7 @@
         [(IrBlock _ instrs)
           (if (compiler-backend-instrs-need-outgoing-space? instrs)
             true
-            (compiler-backend-blocks-need-outgoing-space? rest))])]))
+            (compiler-backend-blocks-need-outgoing-space? (box-get rest)))])]))
 
 (define (compiler-backend-instr-outgoing-stack-space [instr : CompilerIrInstr]) : i64
   (match instr
@@ -4441,7 +4442,7 @@
     [(IrInstrNil) max-space]
     [(IrInstrCons instr rest)
       (compiler-backend-instrs-outgoing-stack-space
-        rest
+        (box-get rest)
         (compiler-reg-max
           max-space
           (compiler-backend-instr-outgoing-stack-space instr)))]))
@@ -4455,7 +4456,7 @@
       (match block
         [(IrBlock _ instrs)
           (compiler-backend-blocks-outgoing-stack-space
-            rest
+            (box-get rest)
             (compiler-backend-instrs-outgoing-stack-space instrs max-space))])]))
 
 (define (compiler-backend-outgoing-frame-space
@@ -4600,7 +4601,7 @@
     [(IrPhiInputCons value label rest)
       (if (string-eq label from-label)
         (OkBackendValue value)
-        (compiler-backend-phi-input-value rest from-label))]))
+        (compiler-backend-phi-input-value (box-get rest) from-label))]))
 
 (define (compiler-backend-vars-same-home?
   [assignments : CompilerRegAssignmentList]
@@ -4827,7 +4828,7 @@
             [(OkBackendValue value)
               (match (compiler-backend-leading-phi-copies
                 assignments
-                rest
+                (box-get rest)
                 from-label)
                 [(OkBackendPhiCopies tail)
                   (if (compiler-backend-phi-same-home? assignments dst value)
@@ -4871,7 +4872,7 @@
               from-label)
             (compiler-backend-emit-phi-edge-copies
               assignments
-              rest
+              (box-get rest)
               target-label
               from-label))])]))
 
@@ -4892,7 +4893,7 @@
     [(IrInstrCons instr rest)
       (+
         (compiler-backend-instr-return-count instr)
-        (compiler-backend-instr-list-return-count rest))]))
+        (compiler-backend-instr-list-return-count (box-get rest)))]))
 
 (define (compiler-backend-block-list-return-count
   [blocks : CompilerIrBlockList]) : i64
@@ -4903,7 +4904,7 @@
         [(IrBlock _ instrs)
           (+
             (compiler-backend-instr-list-return-count instrs)
-            (compiler-backend-block-list-return-count rest))])]))
+            (compiler-backend-block-list-return-count (box-get rest)))])]))
 
 (define (compiler-backend-use-shared-return?
   [assignments : CompilerRegAssignmentList]
@@ -5037,11 +5038,11 @@
     [(IrInstrCons instr rest)
       (match instr
         [(IrInstrPhi dst inputs _)
-          (match rest
+          (match (box-get rest)
             [(IrInstrCons next after-return)
               (match next
                 [(IrInstrReturn maybe)
-                  (match after-return
+                  (match (box-get after-return)
                     [(IrInstrNil)
                       (match maybe
                         [(IrSomeValue value)
@@ -5092,7 +5093,7 @@
               ret-ty)
             (compiler-backend-emit-trivial-phi-return-edge
               source-function
-              rest
+              (box-get rest)
               target-label
               from-label
               assignments
@@ -5113,11 +5114,11 @@
     [(IrInstrCons instr rest)
       (match instr
         [(IrInstrPhi dst inputs _)
-          (match rest
+          (match (box-get rest)
             [(IrInstrCons next after-return)
               (match next
                 [(IrInstrReturn maybe)
-                  (match after-return
+                  (match (box-get after-return)
                     [(IrInstrNil)
                       (match maybe
                         [(IrSomeValue value)
@@ -5176,7 +5177,7 @@
               moved-src)
             (compiler-backend-emit-mov-trivial-phi-return-edge
               source-function
-              rest
+              (box-get rest)
               target-label
               from-label
               assignments
@@ -5702,7 +5703,7 @@
     [(IrValueCons value rest)
       (begin
         (compiler-backend-count-value-use counts value)
-        (compiler-backend-count-value-list-uses counts rest))]))
+        (compiler-backend-count-value-list-uses counts (box-get rest)))]))
 
 (define (compiler-backend-count-call-args-array-uses
   [counts : (Array i64)]
@@ -5735,7 +5736,7 @@
     [(IrPhiInputCons value _ rest)
       (begin
         (compiler-backend-count-value-use counts value)
-        (compiler-backend-count-phi-input-uses counts rest))]))
+        (compiler-backend-count-phi-input-uses counts (box-get rest)))]))
 
 (define (compiler-backend-count-instr-uses
   [counts : (Array i64)]
@@ -5837,7 +5838,7 @@
     [(IrInstrCons instr rest)
       (begin
         (compiler-backend-count-instr-uses counts instr)
-        (compiler-backend-count-instr-list-uses counts rest))]))
+        (compiler-backend-count-instr-list-uses counts (box-get rest)))]))
 
 (define (compiler-backend-count-block-uses
   [counts : (Array i64)]
@@ -5849,7 +5850,7 @@
         [(IrBlock _ instrs)
           (begin
             (compiler-backend-count-instr-list-uses counts instrs)
-            (compiler-backend-count-block-uses counts rest))])]))
+            (compiler-backend-count-block-uses counts (box-get rest)))])]))
 
 (define (compiler-backend-function-use-counts
   [vars : i64]
@@ -6319,7 +6320,7 @@
           current-label
           fallthrough
           (IrInstrMov dst src ty)
-          (IrInstrCons (IrInstrJump target-label) after-jump)
+          (compiler-ir-instr-cons (IrInstrJump target-label) after-jump)
           assignments
           vars
           types
@@ -6524,7 +6525,7 @@
     [(IrInstrCons instr rest)
       (match instr
         [(IrInstrMov dst src ty)
-          (match rest
+          (match (box-get rest)
             [(IrInstrCons next after-jump)
               (match next
                 [(IrInstrJump target-label)
@@ -6539,7 +6540,7 @@
                     src
                     ty
                     target-label
-                    after-jump
+                    (box-get after-jump)
                     assignments
                     vars
                     types
@@ -6551,7 +6552,7 @@
                     func-diag
                     use-counts)]
                 [(IrInstrReturn maybe)
-                  (match after-jump
+                  (match (box-get after-jump)
                     [(IrInstrNil)
                       (match maybe
                         [(IrSomeValue value)
@@ -6582,7 +6583,7 @@
                               current-label
                               fallthrough
                               instr
-                              rest
+                              (box-get rest)
                               assignments
                               vars
                               types
@@ -6602,7 +6603,7 @@
                             current-label
                             fallthrough
                             instr
-                            rest
+                            (box-get rest)
                             assignments
                             vars
                             types
@@ -6622,7 +6623,7 @@
                         current-label
                         fallthrough
                         instr
-                        rest
+                        (box-get rest)
                         assignments
                         vars
                         types
@@ -6642,7 +6643,7 @@
                     current-label
                     fallthrough
                     instr
-                    rest
+                    (box-get rest)
                     assignments
                     vars
                     types
@@ -6662,7 +6663,7 @@
                 current-label
                 fallthrough
                 instr
-                rest
+                (box-get rest)
                 assignments
                 vars
                 types
@@ -6674,11 +6675,11 @@
                 func-diag
                 use-counts)])]
         [(IrInstrCall dst name args ty)
-          (match rest
+          (match (box-get rest)
             [(IrInstrCons next after-return)
               (match next
                 [(IrInstrReturn maybe)
-                  (match after-return
+                  (match (box-get after-return)
                     [(IrInstrNil)
                       (match maybe
                         [(IrSomeValue value)
@@ -6710,7 +6711,7 @@
                               current-label
                               fallthrough
                               instr
-                              rest
+                              (box-get rest)
                               assignments
                               vars
                               types
@@ -6730,7 +6731,7 @@
                             current-label
                             fallthrough
                             instr
-                            rest
+                            (box-get rest)
                             assignments
                             vars
                             types
@@ -6750,7 +6751,7 @@
                         current-label
                         fallthrough
                         instr
-                        rest
+                        (box-get rest)
                         assignments
                         vars
                         types
@@ -6770,7 +6771,7 @@
                     current-label
                     fallthrough
                     instr
-                    rest
+                    (box-get rest)
                     assignments
                     vars
                     types
@@ -6790,7 +6791,7 @@
                 current-label
                 fallthrough
                 instr
-                rest
+                (box-get rest)
                 assignments
                 vars
                 types
@@ -6805,7 +6806,7 @@
           (if (compiler-backend-var-single-use? use-counts gep-dst)
             (match (compiler-backend-value-as-i64 offset)
               [(CompilerBackendSomeI64 _)
-                (match rest
+                (match (box-get rest)
                   [(IrInstrCons next after-load)
                     (match next
                       [(IrInstrLoad load-dst src load-ty)
@@ -6815,7 +6816,7 @@
                             (compiler-backend-var-single-use?
                               use-counts
                               load-dst))
-                            (match after-load
+                            (match (box-get after-load)
                               [(IrInstrCons maybe-cmp after-cmp)
                                 (match maybe-cmp
                                   [(IrInstrBinOp cmp-dst op lhs rhs cmp-ty)
@@ -6835,7 +6836,7 @@
                                               lhs
                                               rhs
                                               cmp-ty)))))
-                                      (match after-cmp
+                                      (match (box-get after-cmp)
                                         [(IrInstrCons branch after-branch)
                                           (match branch
                                             [(IrInstrBranch
@@ -6864,7 +6865,7 @@
                                                   cmp-ty
                                                   true-label
                                                   false-label
-                                                  after-branch
+                                                  (box-get after-branch)
                                                   assignments
                                                   vars
                                                   types
@@ -6888,7 +6889,7 @@
                                                   elem-ty
                                                   load-dst
                                                   load-ty
-                                                  after-load
+                                                  (box-get after-load)
                                                   assignments
                                                   vars
                                                   types
@@ -6913,7 +6914,7 @@
                                                 elem-ty
                                                 load-dst
                                                 load-ty
-                                                after-load
+                                                (box-get after-load)
                                                 assignments
                                                 vars
                                                 types
@@ -6938,7 +6939,7 @@
                                             elem-ty
                                             load-dst
                                             load-ty
-                                            after-load
+                                            (box-get after-load)
                                             assignments
                                             vars
                                             types
@@ -6962,7 +6963,7 @@
                                         elem-ty
                                         load-dst
                                         load-ty
-                                        after-load
+                                        (box-get after-load)
                                         assignments
                                         vars
                                         types
@@ -6987,7 +6988,7 @@
                                       elem-ty
                                       load-dst
                                       load-ty
-                                      after-load
+                                      (box-get after-load)
                                       assignments
                                       vars
                                       types
@@ -7012,7 +7013,7 @@
                                   elem-ty
                                   load-dst
                                   load-ty
-                                  after-load
+                                  (box-get after-load)
                                   assignments
                                   vars
                                   types
@@ -7036,7 +7037,7 @@
                               elem-ty
                               load-dst
                               load-ty
-                              after-load
+                              (box-get after-load)
                               assignments
                               vars
                               types
@@ -7055,7 +7056,7 @@
                             current-label
                             fallthrough
                             instr
-                            rest
+                            (box-get rest)
                             assignments
                             vars
                             types
@@ -7081,7 +7082,7 @@
                             elem-ty
                             value
                             store-ty
-                            after-load
+                            (box-get after-load)
                             assignments
                             vars
                             types
@@ -7100,7 +7101,7 @@
                             current-label
                             fallthrough
                             instr
-                            rest
+                            (box-get rest)
                             assignments
                             vars
                             types
@@ -7120,7 +7121,7 @@
                           current-label
                           fallthrough
                           instr
-                          rest
+                          (box-get rest)
                           assignments
                           vars
                           types
@@ -7140,7 +7141,7 @@
                       current-label
                       fallthrough
                       instr
-                      rest
+                      (box-get rest)
                       assignments
                       vars
                       types
@@ -7160,7 +7161,7 @@
                   current-label
                   fallthrough
                   instr
-                  rest
+                  (box-get rest)
                   assignments
                   vars
                   types
@@ -7179,7 +7180,7 @@
               current-label
               fallthrough
               instr
-              rest
+              (box-get rest)
               assignments
               vars
               types
@@ -7194,7 +7195,7 @@
           (if (and
             (compiler-backend-load-compare-type? load-ty)
             (compiler-backend-var-single-use? use-counts load-dst))
-            (match rest
+            (match (box-get rest)
               [(IrInstrCons next after-cmp)
                 (match next
                   [(IrInstrBinOp cmp-dst op lhs rhs cmp-ty)
@@ -7206,7 +7207,7 @@
                           (compiler-backend-var-single-use? use-counts cmp-dst)
                           (not
                             (compiler-backend-binop-f64? types lhs rhs cmp-ty)))))
-                      (match after-cmp
+                      (match (box-get after-cmp)
                         [(IrInstrCons branch after-branch)
                           (match branch
                             [(IrInstrBranch cond true-label false-label)
@@ -7229,7 +7230,7 @@
                                   cmp-ty
                                   true-label
                                   false-label
-                                  after-branch
+                                  (box-get after-branch)
                                   assignments
                                   vars
                                   types
@@ -7248,7 +7249,7 @@
                                   current-label
                                   fallthrough
                                   instr
-                                  rest
+                                  (box-get rest)
                                   assignments
                                   vars
                                   types
@@ -7268,7 +7269,7 @@
                                 current-label
                                 fallthrough
                                 instr
-                                rest
+                                (box-get rest)
                                 assignments
                                 vars
                                 types
@@ -7288,7 +7289,7 @@
                             current-label
                             fallthrough
                             instr
-                            rest
+                            (box-get rest)
                             assignments
                             vars
                             types
@@ -7307,7 +7308,7 @@
                         current-label
                         fallthrough
                         instr
-                        rest
+                        (box-get rest)
                         assignments
                         vars
                         types
@@ -7327,7 +7328,7 @@
                       current-label
                       fallthrough
                       instr
-                      rest
+                      (box-get rest)
                       assignments
                       vars
                       types
@@ -7347,7 +7348,7 @@
                   current-label
                   fallthrough
                   instr
-                  rest
+                  (box-get rest)
                   assignments
                   vars
                   types
@@ -7366,7 +7367,7 @@
               current-label
               fallthrough
               instr
-              rest
+              (box-get rest)
               assignments
               vars
               types
@@ -7383,11 +7384,11 @@
             (and
               (compiler-backend-var-single-use? use-counts dst)
               (not (compiler-backend-binop-f64? types lhs rhs ty))))
-            (match rest
+            (match (box-get rest)
               [(IrInstrCons next after-branch)
                 (match next
                   [(IrInstrReturn maybe)
-                    (match after-branch
+                    (match (box-get after-branch)
                       [(IrInstrNil)
                         (match maybe
                           [(IrSomeValue value)
@@ -7410,7 +7411,7 @@
                                 current-label
                                 fallthrough
                                 instr
-                                rest
+                                (box-get rest)
                                 assignments
                                 vars
                                 types
@@ -7430,7 +7431,7 @@
                               current-label
                               fallthrough
                               instr
-                              rest
+                              (box-get rest)
                               assignments
                               vars
                               types
@@ -7450,7 +7451,7 @@
                           current-label
                           fallthrough
                           instr
-                          rest
+                          (box-get rest)
                           assignments
                           vars
                           types
@@ -7477,7 +7478,7 @@
                         ty
                         true-label
                         false-label
-                        after-branch
+                        (box-get after-branch)
                         assignments
                         vars
                         types
@@ -7496,7 +7497,7 @@
                         current-label
                         fallthrough
                         instr
-                        rest
+                        (box-get rest)
                         assignments
                         vars
                         types
@@ -7516,7 +7517,7 @@
                       current-label
                       fallthrough
                       instr
-                      rest
+                      (box-get rest)
                       assignments
                       vars
                       types
@@ -7536,7 +7537,7 @@
                   current-label
                   fallthrough
                   instr
-                  rest
+                  (box-get rest)
                   assignments
                   vars
                   types
@@ -7555,7 +7556,7 @@
               current-label
               fallthrough
               instr
-              rest
+              (box-get rest)
               assignments
               vars
               types
@@ -7575,7 +7576,7 @@
             current-label
             fallthrough
             instr
-            rest
+            (box-get rest)
             assignments
             vars
             types
@@ -7666,7 +7667,7 @@
         source-function
         all-blocks
         block
-        (compiler-backend-next-block-label rest)
+        (compiler-backend-next-block-label (box-get rest))
         assignments
         vars
         types
@@ -7683,7 +7684,7 @@
             function
             source-function
             all-blocks
-            rest
+            (box-get rest)
             assignments
             vars
             types
@@ -7768,7 +7769,7 @@
               (match (compiler-backend-emit-param-spills
                 target
                 assignments
-                rest
+                (box-get rest)
                 next-int
                 next-float
                 (+ position 1)
@@ -7819,7 +7820,7 @@
                   (match (compiler-backend-emit-param-spills
                     target
                     assignments
-                    rest
+                    (box-get rest)
                     next-int
                     next-float
                     (+ position 1)
@@ -7980,10 +7981,10 @@
 
 ;; Per-function arena escape for the backend (#1633). Emitting one function's
 ;; assembly allocates per-instruction transient strings (right-associative
-;; string-append) that the bump allocator never frees — the ~5 GB the backend
+;; string-append) that the bump allocator never frees â€” the ~5 GB the backend
 ;; phase adds. We emit each function inside its own scratch arena, deep-`clone`
 ;; ONLY the resulting assembly String into the enclosing arena, then destroy the
-;; scratch — reclaiming the per-function transient. `clone` of a String copies
+;; scratch â€” reclaiming the per-function transient. `clone` of a String copies
 ;; the same bytes, so the assembled program text is byte-identical.
 (define (compiler-backend-emit-function-escaping
   [target : CompilerBackendTarget]
@@ -8059,7 +8060,7 @@
           (compiler-backend-emit-functions-into
             target
             mode
-            rest
+            (box-get rest)
             all-functions
             globals
             externs
@@ -8097,10 +8098,12 @@
     IrParamNil
     (AstTyI64)
     1
-    (IrBlockCons
+    (compiler-ir-block-cons
       (IrBlock
         "entry"
-        (IrInstrCons (IrInstrReturn (IrSomeValue (IrValueI64 0))) IrInstrNil))
+        (compiler-ir-instr-cons
+          (IrInstrReturn (IrSomeValue (IrValueI64 0)))
+          IrInstrNil))
       IrBlockNil)))
 
 (define (compiler-backend-functions-with-implicit-main
@@ -8109,7 +8112,9 @@
   (if (and
     emit-entry
     (not (compiler-backend-function-list-defines? functions "main")))
-    (IrFunctionCons (compiler-backend-implicit-main-function) functions)
+    (compiler-ir-function-cons
+      (compiler-backend-implicit-main-function)
+      functions)
     functions))
 
 (define (compiler-backend-emit-functions-buffer-into
@@ -8140,7 +8145,7 @@
           (compiler-backend-emit-functions-buffer-into
             target
             mode
-            rest
+            (box-get rest)
             all-functions
             globals
             externs
@@ -8412,7 +8417,7 @@
     [(IrValueCons value rest)
       (compiler-backend-collect-value-list-functions
         (compiler-backend-collect-value-function functions value)
-        rest)]))
+        (box-get rest))]))
 
 (define (compiler-backend-collect-call-args-array-functions
   [functions : BackendStringList]
@@ -8449,7 +8454,7 @@
     [(IrPhiInputCons value _ rest)
       (compiler-backend-collect-phi-functions
         (compiler-backend-collect-value-function functions value)
-        rest)]))
+        (box-get rest))]))
 
 (define (compiler-backend-collect-instr-functions
   [functions : BackendStringList]
@@ -8569,7 +8574,7 @@
     [(IrInstrCons instr rest)
       (compiler-backend-collect-instr-list-functions
         (compiler-backend-collect-instr-functions functions instr)
-        rest)]))
+        (box-get rest))]))
 
 (define (compiler-backend-collect-block-functions
   [functions : BackendStringList]
@@ -8581,7 +8586,7 @@
         [(IrBlock _ instrs)
           (compiler-backend-collect-block-functions
             (compiler-backend-collect-instr-list-functions functions instrs)
-            rest)])]))
+            (box-get rest))])]))
 
 (define (compiler-backend-collect-function-functions
   [names : BackendStringList]
@@ -8593,7 +8598,7 @@
         [(IrFunction _ _ _ _ blocks)
           (compiler-backend-collect-function-functions
             (compiler-backend-collect-block-functions names blocks)
-            rest)])]))
+            (box-get rest))])]))
 
 (define (compiler-backend-collect-global-functions
   [names : BackendStringList]
@@ -8605,7 +8610,7 @@
         [(IrGlobal _ _ value)
           (compiler-backend-collect-global-functions
             (compiler-backend-collect-value-function names value)
-            rest)])]))
+            (box-get rest))])]))
 
 (define (compiler-backend-collect-program-functions
   [program : CompilerIrProgram]) : BackendStringList
@@ -8631,7 +8636,7 @@
     [(IrValueCons value rest)
       (compiler-backend-collect-value-list-strings
         (compiler-backend-collect-value-string strings value)
-        rest)]))
+        (box-get rest))]))
 
 (define (compiler-backend-collect-call-args-array-strings
   [strings : BackendStringList]
@@ -8666,7 +8671,7 @@
     [(IrPhiInputCons value _ rest)
       (compiler-backend-collect-phi-strings
         (compiler-backend-collect-value-string strings value)
-        rest)]))
+        (box-get rest))]))
 
 (define (compiler-backend-collect-instr-strings
   [strings : BackendStringList]
@@ -8782,7 +8787,7 @@
     [(IrInstrCons instr rest)
       (compiler-backend-collect-instr-list-strings
         (compiler-backend-collect-instr-strings strings instr)
-        rest)]))
+        (box-get rest))]))
 
 (define (compiler-backend-collect-block-strings
   [strings : BackendStringList]
@@ -8794,7 +8799,7 @@
         [(IrBlock _ instrs)
           (compiler-backend-collect-block-strings
             (compiler-backend-collect-instr-list-strings strings instrs)
-            rest)])]))
+            (box-get rest))])]))
 
 (define (compiler-backend-collect-function-strings
   [strings : BackendStringList]
@@ -8806,7 +8811,7 @@
         [(IrFunction _ _ _ _ blocks)
           (compiler-backend-collect-function-strings
             (compiler-backend-collect-block-strings strings blocks)
-            rest)])]))
+            (box-get rest))])]))
 
 (define (compiler-backend-collect-global-strings
   [strings : BackendStringList]
@@ -8818,7 +8823,7 @@
         [(IrGlobal _ _ value)
           (compiler-backend-collect-global-strings
             (compiler-backend-collect-value-string strings value)
-            rest)])]))
+            (box-get rest))])]))
 
 (define (compiler-backend-collect-program-strings [program : CompilerIrProgram]) : BackendStringList
   (match program
@@ -8843,7 +8848,7 @@
     [(IrValueCons value rest)
       (compiler-backend-collect-value-list-f64s
         (compiler-backend-collect-value-f64 floats value)
-        rest)]))
+        (box-get rest))]))
 
 (define (compiler-backend-collect-call-args-array-f64s
   [floats : BackendStringList]
@@ -8877,7 +8882,7 @@
     [(IrPhiInputCons value _ rest)
       (compiler-backend-collect-phi-f64s
         (compiler-backend-collect-value-f64 floats value)
-        rest)]))
+        (box-get rest))]))
 
 (define (compiler-backend-collect-instr-f64s
   [floats : BackendStringList]
@@ -8985,7 +8990,7 @@
     [(IrInstrCons instr rest)
       (compiler-backend-collect-instr-list-f64s
         (compiler-backend-collect-instr-f64s floats instr)
-        rest)]))
+        (box-get rest))]))
 
 (define (compiler-backend-collect-block-f64s
   [floats : BackendStringList]
@@ -8997,7 +9002,7 @@
         [(IrBlock _ instrs)
           (compiler-backend-collect-block-f64s
             (compiler-backend-collect-instr-list-f64s floats instrs)
-            rest)])]))
+            (box-get rest))])]))
 
 (define (compiler-backend-collect-function-f64s
   [floats : BackendStringList]
@@ -9009,7 +9014,7 @@
         [(IrFunction _ _ _ _ blocks)
           (compiler-backend-collect-function-f64s
             (compiler-backend-collect-block-f64s floats blocks)
-            rest)])]))
+            (box-get rest))])]))
 
 (define (compiler-backend-collect-global-f64s
   [floats : BackendStringList]
@@ -9021,7 +9026,7 @@
         [(IrGlobal _ _ value)
           (compiler-backend-collect-global-f64s
             (compiler-backend-collect-value-f64 floats value)
-            rest)])]))
+            (box-get rest))])]))
 
 (define (compiler-backend-collect-program-f64s [program : CompilerIrProgram]) : BackendStringList
   (match program
@@ -9195,7 +9200,7 @@
         [(OkCompilerBackend head)
           (compiler-backend-emit-globals-into
             target
-            rest
+            (box-get rest)
             (text-buf-append buf head))]
         [(ErrCompilerBackend message) (ErrCompilerBackend message)])]))
 
@@ -9236,7 +9241,7 @@
             (if (compiler-backend-runtime-global? ty value)
               (compiler-backend-global-init-call name ty)
               "")
-            (compiler-backend-global-initializers rest))])]))
+            (compiler-backend-global-initializers (box-get rest)))])]))
 
 (define (compiler-backend-function-list-defines?
   [functions : CompilerIrFunctionList]
@@ -9248,7 +9253,7 @@
         [(IrFunction func-name _ _ _ _)
           (if (string-eq func-name name)
             true
-            (compiler-backend-function-list-defines? rest name))])]))
+            (compiler-backend-function-list-defines? (box-get rest) name))])]))
 
 (define (compiler-backend-extern-list-references?
   [externs : CompilerIrExternList]
@@ -9262,7 +9267,7 @@
             true
             (if (string-eq link-symbol name)
               true
-              (compiler-backend-extern-list-references? rest name)))])]))
+              (compiler-backend-extern-list-references? (box-get rest) name)))])]))
 
 (define (compiler-backend-extern-list-references-alias?
   [externs : CompilerIrExternList]
@@ -9282,7 +9287,7 @@
         [(IrExtern extern-name _ _ link-symbol _)
           (if (string-eq extern-name name)
             link-symbol
-            (compiler-backend-extern-list-link-symbol rest name))])]))
+            (compiler-backend-extern-list-link-symbol (box-get rest) name))])]))
 
 (define (compiler-backend-instr-calls?
   [instr : CompilerIrInstr]
@@ -9301,7 +9306,7 @@
     [(IrInstrCons instr rest)
       (if (compiler-backend-instr-calls? instr name)
         true
-        (compiler-backend-instr-list-calls? rest name))]))
+        (compiler-backend-instr-list-calls? (box-get rest) name))]))
 
 (define (compiler-backend-block-list-calls?
   [blocks : CompilerIrBlockList]
@@ -9313,7 +9318,7 @@
         [(IrBlock _ instrs)
           (if (compiler-backend-instr-list-calls? instrs name)
             true
-            (compiler-backend-block-list-calls? rest name))])]))
+            (compiler-backend-block-list-calls? (box-get rest) name))])]))
 
 (define (compiler-backend-function-list-calls?
   [functions : CompilerIrFunctionList]
@@ -9325,7 +9330,7 @@
         [(IrFunction _ _ _ _ blocks)
           (if (compiler-backend-block-list-calls? blocks name)
             true
-            (compiler-backend-function-list-calls? rest name))])]))
+            (compiler-backend-function-list-calls? (box-get rest) name))])]))
 
 (define (compiler-backend-binop-needs-div-abort?
   [op : CompilerIrBinOp]
@@ -9365,7 +9370,7 @@
     [(IrInstrCons instr rest)
       (if (compiler-backend-instr-needs-div-abort? instr)
         true
-        (compiler-backend-instr-list-needs-div-abort? rest))]))
+        (compiler-backend-instr-list-needs-div-abort? (box-get rest)))]))
 
 (define (compiler-backend-instr-list-needs-shift-abort?
   [instrs : CompilerIrInstrList]) : bool
@@ -9374,7 +9379,7 @@
     [(IrInstrCons instr rest)
       (if (compiler-backend-instr-needs-shift-abort? instr)
         true
-        (compiler-backend-instr-list-needs-shift-abort? rest))]))
+        (compiler-backend-instr-list-needs-shift-abort? (box-get rest)))]))
 
 (define (compiler-backend-block-list-needs-div-abort?
   [blocks : CompilerIrBlockList]) : bool
@@ -9385,7 +9390,7 @@
         [(IrBlock _ instrs)
           (if (compiler-backend-instr-list-needs-div-abort? instrs)
             true
-            (compiler-backend-block-list-needs-div-abort? rest))])]))
+            (compiler-backend-block-list-needs-div-abort? (box-get rest)))])]))
 
 (define (compiler-backend-block-list-needs-shift-abort?
   [blocks : CompilerIrBlockList]) : bool
@@ -9396,7 +9401,7 @@
         [(IrBlock _ instrs)
           (if (compiler-backend-instr-list-needs-shift-abort? instrs)
             true
-            (compiler-backend-block-list-needs-shift-abort? rest))])]))
+            (compiler-backend-block-list-needs-shift-abort? (box-get rest)))])]))
 
 (define (compiler-backend-function-list-needs-div-abort?
   [functions : CompilerIrFunctionList]) : bool
@@ -9407,7 +9412,7 @@
         [(IrFunction _ _ _ _ blocks)
           (if (compiler-backend-block-list-needs-div-abort? blocks)
             true
-            (compiler-backend-function-list-needs-div-abort? rest))])]))
+            (compiler-backend-function-list-needs-div-abort? (box-get rest)))])]))
 
 (define (compiler-backend-function-list-needs-shift-abort?
   [functions : CompilerIrFunctionList]) : bool
@@ -9418,7 +9423,7 @@
         [(IrFunction _ _ _ _ blocks)
           (if (compiler-backend-block-list-needs-shift-abort? blocks)
             true
-            (compiler-backend-function-list-needs-shift-abort? rest))])]))
+            (compiler-backend-function-list-needs-shift-abort? (box-get rest)))])]))
 
 (define (compiler-backend-provides-runtime-name?
   [name : String]
@@ -10460,12 +10465,12 @@
               (string-eq name link-symbol)
               (compiler-backend-plan-provides? plan name))
             (compiler-backend-plan-provides? plan link-symbol))
-            (compiler-backend-emit-externs rest plan)
+            (compiler-backend-emit-externs (box-get rest) plan)
             (backend-cat4
               ".extern "
               (compiler-backend-link-symbol link-symbol plan)
               "\n"
-              (compiler-backend-emit-externs rest plan)))])]))
+              (compiler-backend-emit-externs (box-get rest) plan)))])]))
 
 (define (compiler-backend-runtime-alloc-data-for-target
   [target : CompilerBackendTarget]) : String
@@ -10483,7 +10488,7 @@
 ;; exactly ONE object per executable (the entry object, `emit-entry=true`);
 ;; library/dependency objects (`emit-entry=false`) emit none of the runtime and
 ;; reference this slot as an extern, so a multi-object link (a package plus its
-;; dependency .a archive) resolves to the single shared slot — no duplicate
+;; dependency .a archive) resolves to the single shared slot â€” no duplicate
 ;; definition.
 (define (compiler-backend-runtime-arena-data-for-target
   [target : CompilerBackendTarget]) : String
@@ -11026,11 +11031,11 @@ tl_region_mark:
 ;;
 ;; These are `.globl` symbols. The runtime (arena primitives, tl_alloc, the
 ;; region runtime, and the `tl_current_arena` slot) is emitted in exactly ONE
-;; object per executable — the entry/executable object (`emit-entry=true`).
+;; object per executable â€” the entry/executable object (`emit-entry=true`).
 ;; Library/dependency objects (`emit-entry=false`) emit none of the runtime and
 ;; reference these symbols as externs, so a multi-object link (a package plus its
 ;; dependency .a archive) resolves every object's calls to the single definition
-;; in the entry object — no `multiple definition` collision.
+;; in the entry object â€” no `multiple definition` collision.
 (define (compiler-backend-runtime-arena-functions [profile : bool]) : String
   (string-append
     "    .globl tl_arena_current
@@ -11930,7 +11935,7 @@ _tl_env_var_value:
 ;; Linux helper (offsets: 0=prev arena, 8=usable base, 16=bump pointer, 24=end;
 ;; the arena header sits at the VirtualAlloc base). The only difference is how
 ;; newer arenas are released: Linux uses `munmap`, Windows uses
-;; `VirtualFree(lpAddress=arena, dwSize=0, dwFreeType=MEM_RELEASE=0x8000)` — the
+;; `VirtualFree(lpAddress=arena, dwSize=0, dwFreeType=MEM_RELEASE=0x8000)` â€” the
 ;; arena node address is exactly the VirtualAlloc base, so MEM_RELEASE frees the
 ;; whole chunk. Arg (the mark) arrives in %rcx.
 (define (compiler-backend-runtime-windows-region-reset-functions
@@ -17901,8 +17906,8 @@ tl_windows_sdk_registry_install:
   (compiler-backend-target-entry-text-with-crt target emit-entry false))
 
 ;; Run main on a fresh 1 GiB mmap'd stack, then exit(main()). The compiler
-;; recurses far deeper than the default 8 MiB stack rlimit allows — type-directed
-;; `clone` of large IR values during arena escapes (#1633) is the worst case — so
+;; recurses far deeper than the default 8 MiB stack rlimit allows â€” type-directed
+;; `clone` of large IR values during arena escapes (#1633) is the worst case â€” so
 ;; a self-hosted compiler segfaults compiling a large program on the default
 ;; stack. argc/argv/envp are already captured into globals before this runs, so
 ;; switching %rsp is safe (main reads them from globals, not the stack). A failed
@@ -18505,67 +18510,67 @@ tl_windows_sdk_registry_install:
           count)))))
 
 (define (compiler-backend-runtime-helper-externs) : CompilerIrExternList
-  (IrExternCons
+  (compiler-ir-extern-cons
     (compiler-ir-extern-default "tl_alloc" (AstTyI64))
-    (IrExternCons
+    (compiler-ir-extern-cons
       (compiler-ir-extern-default "tl_oob_abort" (AstTyUnit))
-      (IrExternCons
+      (compiler-ir-extern-cons
         (compiler-ir-extern-default "tl_substring" (AstTyI64))
-        (IrExternCons
+        (compiler-ir-extern-cons
           (compiler-ir-extern-default "tl_string_concat" (AstTyI64))
-          (IrExternCons
+          (compiler-ir-extern-cons
             (compiler-ir-extern-default "tl_string_eq" (AstTyBool))
-            (IrExternCons
+            (compiler-ir-extern-cons
               (compiler-ir-extern-default "tl_string_to_int" (AstTyI64))
-              (IrExternCons
+              (compiler-ir-extern-cons
                 (compiler-ir-extern-default "tl_int_to_string" (AstTyString))
-                (IrExternCons
+                (compiler-ir-extern-cons
                   (compiler-ir-extern-default "tl_print_err" (AstTyUnit))
-                  (IrExternCons
+                  (compiler-ir-extern-cons
                     (compiler-ir-extern-default ".L_tl_arg_count" (AstTyI64))
-                    (IrExternCons
+                    (compiler-ir-extern-cons
                       (compiler-ir-extern-default ".L_tl_arg" (AstTyString))
-                      (IrExternCons
+                      (compiler-ir-extern-cons
                         (compiler-ir-extern-default
                           ".L_tl_read_file"
                           (AstTyString))
-                        (IrExternCons
+                        (compiler-ir-extern-cons
                           (compiler-ir-extern-default
                             ".L_tl_write_file"
                             (AstTyUnit))
-                          (IrExternCons
+                          (compiler-ir-extern-cons
                             (compiler-ir-extern-default
                               ".L_tl_file_exists"
                               (AstTyBool))
-                            (IrExternCons
+                            (compiler-ir-extern-cons
                               (compiler-ir-extern-default
                                 ".L_tl_file_open_status"
                                 (AstTyI64))
-                              (IrExternCons
+                              (compiler-ir-extern-cons
                                 (compiler-ir-extern-default
                                   ".L_tl_file_close_status"
                                   (AstTyI64))
-                                (IrExternCons
+                                (compiler-ir-extern-cons
                                   (compiler-ir-extern-default
                                     ".L_tl_file_read_chunk_status"
                                     (AstTyI64))
-                                  (IrExternCons
+                                  (compiler-ir-extern-cons
                                     (compiler-ir-extern-default
                                       ".L_tl_file_write_status"
                                       (AstTyI64))
-                                    (IrExternCons
+                                    (compiler-ir-extern-cons
                                       (compiler-ir-extern-default
                                         ".L_tl_file_flush_status"
                                         (AstTyI64))
-                                      (IrExternCons
+                                      (compiler-ir-extern-cons
                                         (compiler-ir-extern-default
                                           ".L_tl_file_read_chunk_bytes"
                                           (AstTyString))
-                                        (IrExternCons
+                                        (compiler-ir-extern-cons
                                           (compiler-ir-extern-default
                                             ".L_tl_file_read_chunk_eof"
                                             (AstTyBool))
-                                          (IrExternCons
+                                          (compiler-ir-extern-cons
                                             (compiler-ir-extern-default
                                               "tl_process_output"
                                               (AstTyFunc
@@ -18573,7 +18578,7 @@ tl_windows_sdk_registry_install:
                                                   (AstTyI64)
                                                   AstTypeNil)
                                                 (AstTyI64)))
-                                            (IrExternCons
+                                            (compiler-ir-extern-cons
                                               (compiler-ir-extern-default
                                                 "tl_random_system_seed"
                                                 (AstTyI64))
@@ -18582,93 +18587,95 @@ tl_windows_sdk_registry_install:
 (define (compiler-backend-runtime-helper-program) : CompilerIrProgram
   (IrProgram
     IrGlobalNil
-    (IrFunctionCons
+    (compiler-ir-function-cons
       (IrFunction
         "main"
         IrParamNil
         (AstTyI64)
         13
-        (IrBlockCons
+        (compiler-ir-block-cons
           (IrBlock
             "entry"
-            (IrInstrCons
+            (compiler-ir-instr-cons
               (IrInstrCall
                 0
                 "tl_alloc"
                 (IrCallArgsOne (IrValueI64 8))
                 (AstTyI64))
-              (IrInstrCons
+              (compiler-ir-instr-cons
                 (IrInstrCall
                   1
                   "tl_substring"
                   (compiler-ir-call-args-from-list
-                    (IrValueCons
+                    (compiler-ir-value-cons
                       (IrValueI64 0)
-                      (IrValueCons
+                      (compiler-ir-value-cons
                         (IrValueI64 0)
-                        (IrValueCons (IrValueI64 0) IrValueNil))))
+                        (compiler-ir-value-cons (IrValueI64 0) IrValueNil))))
                   (AstTyI64))
-                (IrInstrCons
+                (compiler-ir-instr-cons
                   (IrInstrCall
                     2
                     "tl_string_concat"
                     (compiler-ir-call-args-from-list
-                      (IrValueCons
+                      (compiler-ir-value-cons
                         (IrValueI64 0)
-                        (IrValueCons
+                        (compiler-ir-value-cons
                           (IrValueI64 0)
-                          (IrValueCons
+                          (compiler-ir-value-cons
                             (IrValueI64 0)
-                            (IrValueCons (IrValueI64 0) IrValueNil)))))
+                            (compiler-ir-value-cons (IrValueI64 0) IrValueNil)))))
                     (AstTyI64))
-                  (IrInstrCons
+                  (compiler-ir-instr-cons
                     (IrInstrCall
                       3
                       ".L_tl_read_stdin_line"
                       (IrCallArgsNil)
                       (AstTyString))
-                    (IrInstrCons
+                    (compiler-ir-instr-cons
                       (IrInstrCall
                         4
                         ".L_tl_read_stdin_bytes"
                         (IrCallArgsOne (IrValueI64 0))
                         (AstTyString))
-                      (IrInstrCons
+                      (compiler-ir-instr-cons
                         (IrInstrCall
                           5
                           ".L_tl_stdin_eof"
                           (IrCallArgsNil)
                           (AstTyBool))
-                        (IrInstrCons
+                        (compiler-ir-instr-cons
                           (IrInstrCall
                             6
                             ".L_tl_flush_stdout"
                             (IrCallArgsNil)
                             (AstTyUnit))
-                          (IrInstrCons
+                          (compiler-ir-instr-cons
                             (IrInstrCall
                               7
                               "tl_random_system_seed"
                               (IrCallArgsNil)
                               (AstTyI64))
-                            (IrInstrCons
+                            (compiler-ir-instr-cons
                               (IrInstrCall
                                 8
                                 ".L_tl_file_open_status"
                                 (compiler-ir-call-args-from-list
-                                  (IrValueCons
+                                  (compiler-ir-value-cons
                                     (IrValueI64 0)
-                                    (IrValueCons
+                                    (compiler-ir-value-cons
                                       (IrValueI64 0)
-                                      (IrValueCons (IrValueI64 0) IrValueNil))))
+                                      (compiler-ir-value-cons
+                                        (IrValueI64 0)
+                                        IrValueNil))))
                                 (AstTyI64))
-                              (IrInstrCons
+                              (compiler-ir-instr-cons
                                 (IrInstrCall
                                   9
                                   ".L_tl_file_close_status"
                                   (IrCallArgsOne (IrValueI64 1))
                                   (AstTyI64))
-                                (IrInstrCons
+                                (compiler-ir-instr-cons
                                   (IrInstrCall
                                     10
                                     ".L_tl_file_read_chunk_status"
@@ -18676,19 +18683,19 @@ tl_windows_sdk_registry_install:
                                       (IrValueI64 1)
                                       (IrValueI64 4))
                                     (AstTyI64))
-                                  (IrInstrCons
+                                  (compiler-ir-instr-cons
                                     (IrInstrCall
                                       11
                                       ".L_tl_file_read_chunk_bytes"
                                       (IrCallArgsOne (IrValueI64 1))
                                       (AstTyString))
-                                    (IrInstrCons
+                                    (compiler-ir-instr-cons
                                       (IrInstrCall
                                         12
                                         ".L_tl_file_read_chunk_eof"
                                         (IrCallArgsOne (IrValueI64 1))
                                         (AstTyBool))
-                                      (IrInstrCons
+                                      (compiler-ir-instr-cons
                                         (IrInstrReturn
                                           (IrSomeValue (IrValueI64 42)))
                                         IrInstrNil)))))))))))))))
@@ -18977,31 +18984,31 @@ tl_windows_sdk_registry_install:
 (define (compiler-backend-user-helper-name-program) : CompilerIrProgram
   (IrProgram
     IrGlobalNil
-    (IrFunctionCons
+    (compiler-ir-function-cons
       (IrFunction
         "tl_alloc"
         IrParamNil
         (AstTyI64)
         0
-        (IrBlockCons
+        (compiler-ir-block-cons
           (IrBlock
             "entry"
-            (IrInstrCons
+            (compiler-ir-instr-cons
               (IrInstrReturn (IrSomeValue (IrValueI64 7)))
               IrInstrNil))
           IrBlockNil))
-      (IrFunctionCons
+      (compiler-ir-function-cons
         (IrFunction
           "main"
           IrParamNil
           (AstTyI64)
           1
-          (IrBlockCons
+          (compiler-ir-block-cons
             (IrBlock
               "entry"
-              (IrInstrCons
+              (compiler-ir-instr-cons
                 (IrInstrCall 0 "tl_alloc" (IrCallArgsNil) (AstTyI64))
-                (IrInstrCons
+                (compiler-ir-instr-cons
                   (IrInstrReturn (IrSomeValue (IrValueVar 0)))
                   IrInstrNil)))
             IrBlockNil))
@@ -19022,47 +19029,47 @@ tl_windows_sdk_registry_install:
 (define (compiler-backend-runtime-coexist-program) : CompilerIrProgram
   (IrProgram
     IrGlobalNil
-    (IrFunctionCons
+    (compiler-ir-function-cons
       (IrFunction
         "tl_alloc"
         IrParamNil
         (AstTyI64)
         0
-        (IrBlockCons
+        (compiler-ir-block-cons
           (IrBlock
             "entry"
-            (IrInstrCons
+            (compiler-ir-instr-cons
               (IrInstrReturn (IrSomeValue (IrValueI64 7)))
               IrInstrNil))
           IrBlockNil))
-      (IrFunctionCons
+      (compiler-ir-function-cons
         (IrFunction
           "main"
           IrParamNil
           (AstTyI64)
           2
-          (IrBlockCons
+          (compiler-ir-block-cons
             (IrBlock
               "entry"
-              (IrInstrCons
+              (compiler-ir-instr-cons
                 (IrInstrCall 0 "tl_alloc" (IrCallArgsNil) (AstTyI64))
-                (IrInstrCons
+                (compiler-ir-instr-cons
                   (IrInstrCall
                     1
                     "tl_substring"
                     (compiler-ir-call-args-from-list
-                      (IrValueCons
+                      (compiler-ir-value-cons
                         (IrValueI64 0)
-                        (IrValueCons
+                        (compiler-ir-value-cons
                           (IrValueI64 0)
-                          (IrValueCons (IrValueI64 0) IrValueNil))))
+                          (compiler-ir-value-cons (IrValueI64 0) IrValueNil))))
                     (AstTyI64))
-                  (IrInstrCons
+                  (compiler-ir-instr-cons
                     (IrInstrReturn (IrSomeValue (IrValueVar 0)))
                     IrInstrNil))))
             IrBlockNil))
         IrFunctionNil))
-    (IrExternCons
+    (compiler-ir-extern-cons
       (compiler-ir-extern-default "tl_substring" (AstTyI64))
       IrExternNil)))
 
@@ -19091,31 +19098,31 @@ tl_windows_sdk_registry_install:
 (define (compiler-backend-module-symbol-program) : CompilerIrProgram
   (IrProgram
     IrGlobalNil
-    (IrFunctionCons
+    (compiler-ir-function-cons
       (IrFunction
         "lib.tl::helper"
         IrParamNil
         (AstTyI64)
         0
-        (IrBlockCons
+        (compiler-ir-block-cons
           (IrBlock
             "entry"
-            (IrInstrCons
+            (compiler-ir-instr-cons
               (IrInstrReturn (IrSomeValue (IrValueI64 7)))
               IrInstrNil))
           IrBlockNil))
-      (IrFunctionCons
+      (compiler-ir-function-cons
         (IrFunction
           "main"
           IrParamNil
           (AstTyI64)
           1
-          (IrBlockCons
+          (compiler-ir-block-cons
             (IrBlock
               "entry"
-              (IrInstrCons
+              (compiler-ir-instr-cons
                 (IrInstrCall 0 "lib.tl::helper" (IrCallArgsNil) (AstTyI64))
-                (IrInstrCons
+                (compiler-ir-instr-cons
                   (IrInstrReturn (IrSomeValue (IrValueVar 0)))
                   IrInstrNil)))
             IrBlockNil))

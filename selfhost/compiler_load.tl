@@ -586,6 +586,55 @@
     expected-module
     (compiler-cfg-empty)))
 
+(define (compiler-load-parse-result-escape
+  [enclosing : i64]
+  [parse-head : i64]
+  [result : ResultAstProgramDiagnostic]) : ResultAstProgramDiagnostic
+  (match result
+    [(OkAstProgramDiagnostic program)
+      (begin
+        (unsafe (arena-set! enclosing))
+        (let
+          [escaped-program : AstProgram (clone program)]
+          (begin
+            (unsafe (arena-destroy parse-head))
+            (OkAstProgramDiagnostic escaped-program))))]
+    [(ErrAstProgramDiagnostic diag)
+      (begin
+        (unsafe (arena-set! enclosing))
+        (let
+          [escaped-diag : CompilerDiagnostic (clone diag)]
+          (begin
+            (unsafe (arena-destroy parse-head))
+            (ErrAstProgramDiagnostic escaped-diag))))]))
+
+(define (compiler-load-parse-source-diagnostic-escaping
+  [path : String]
+  [source : String]
+  [cfgs : SymI64Env]) : ResultAstProgramDiagnostic
+  (let
+    [enclosing : i64 (arena-current)]
+    [parse-arena : i64 (arena-make)]
+    (begin
+      (unsafe (arena-set! parse-arena))
+      (compiler-load-parse-result-escape
+        enclosing
+        (arena-current)
+        (parse-ast-source-diagnostic-with-cfg path source cfgs)))))
+
+(define (compiler-load-parse-file-diagnostic-escaping
+  [path : String]
+  [cfgs : SymI64Env]) : ResultAstProgramDiagnostic
+  (let
+    [enclosing : i64 (arena-current)]
+    [parse-arena : i64 (arena-make)]
+    (begin
+      (unsafe (arena-set! parse-arena))
+      (compiler-load-parse-result-escape
+        enclosing
+        (arena-current)
+        (parse-ast-source-diagnostic-with-cfg path (read-file path) cfgs)))))
+
 (define (compiler-load-source-with-paths-and-roots-expect-cfg
   [path : String]
   [source : String]
@@ -593,7 +642,7 @@
   [stdlib-roots : CompilerLoadRootList]
   [expected-module : AstMaybeModuleName]
   [cfgs : SymI64Env]) : ResultCompilerLoadWithPaths
-  (match (parse-ast-source-diagnostic-with-cfg path source cfgs)
+  (match (compiler-load-parse-source-diagnostic-escaping path source cfgs)
     [(OkAstProgramDiagnostic program)
       (compiler-load-program-with-paths-and-roots-expect-cfg
         path
@@ -662,7 +711,7 @@
   [expected-module : AstMaybeModuleName]
   [cfgs : SymI64Env]) : ResultCompilerLoadWithPaths
   (if (file-exists? path)
-    (match (parse-ast-source-diagnostic-with-cfg path (read-file path) cfgs)
+    (match (compiler-load-parse-file-diagnostic-escaping path cfgs)
       [(OkAstProgramDiagnostic program)
         (compiler-load-program-with-paths-and-roots-expect-cfg
           path

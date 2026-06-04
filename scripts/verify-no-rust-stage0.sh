@@ -558,13 +558,13 @@ if [ "$HOST_OS" = linux ]; then
         run_with_compiler "$STAGE1_TYPELISP_BIN" "stage1 stdlib selfhost verifier" scripts/verify-stdlib-selfhost.sh
     fi
 else
-    # The single-binary cli.tl seed emits module-qualified symbols (the stage1
-    # mangling, `_tl_<mod>_u2etl_colon_colon<fn>`), which only the manifest's
-    # stage1 expectation mode accepts; stage0 mode expects legacy unqualified
-    # labels. STAGE1_HOST_ACTION_DRIVERS_AVAILABLE is always 0 on Windows, so
-    # the seed is always cli.tl here (#1662).
-    run_gate "selfhost compile manifest" env TYPELISP_COMPILE_MANIFEST_EXPECTATION_MODE=stage1 scripts/verify-selfhost-compile-manifest.sh
-    run_gate "deterministic assembly" scripts/check-deterministic-asm.sh
+    # Keep the same Windows compile/check corpora, but run the compile-heavy
+    # gates through the fresh selfhost CLI built above. This matches Linux's
+    # branch-built compile-path coverage instead of spending the manifest on the
+    # fetched compatibility seed. The current cli.tl emits stage1-qualified
+    # symbols, so the manifest still uses stage1 expectation mode.
+    run_with_compiler "$SELFHOST_CLI_BIN" "selfhost compile manifest" env TYPELISP_COMPILE_MANIFEST_EXPECTATION_MODE=stage1 scripts/verify-selfhost-compile-manifest.sh
+    run_with_compiler "$SELFHOST_CLI_BIN" "deterministic assembly" scripts/check-deterministic-asm.sh
     if [ "$WINDOWS_SEED_STAGED_RUNTIME_GAP" -eq 1 ]; then
         echo
         echo "[no-rust-stage0] skipping Windows selfhost MSVC link.exe build/run and bootstrap fixpoint until the seed provides staged runtime symbols"

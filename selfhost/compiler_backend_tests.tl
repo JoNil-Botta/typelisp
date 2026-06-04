@@ -1970,6 +1970,87 @@
           "    vpmaxsd "
           "    vmovd %xmm0, %eax\n")))))
 
+(define (compiler-backend-vector-home-program [func : CompilerIrFunction]) : CompilerIrProgram
+  (IrProgram IrGlobalNil (IrFunctionCons func IrFunctionNil) IrExternNil))
+
+(define (compiler-backend-vector-call-lifetime-function) : CompilerIrFunction
+  (IrFunction
+    "vector_call_lifetime"
+    IrParamNil
+    (AstTyUnit)
+    3
+    (IrBlockCons
+      (IrBlock
+        "entry"
+        (IrInstrCons
+          (IrInstrVectorLoad 0 (IrValueI64 0) (IrValueI64 0) 4 (AstTyI64))
+          (IrInstrCons
+            (IrInstrCall 1 "side_effect" IrValueNil (AstTyUnit))
+            (IrInstrCons
+              (IrInstrVectorBinOp
+                2
+                (IrBinAdd)
+                (IrValueVar 0)
+                (IrValueVar 0)
+                4
+                (AstTyI64))
+              (IrInstrCons (IrInstrReturn IrNoValue) IrInstrNil)))))
+      IrBlockNil)))
+
+(define (compiler-backend-avx2-vector-homes-ok?) : bool
+  (match (compiler-backend-emit-program-target-with-mode
+    (compiler-backend-vector-home-program (compiler-reg-vector-home-function))
+    (BackendTargetLinux)
+    (BackendModeAvx2)
+    (compiler-source-spans-empty)
+    true)
+    [(OkCompilerBackend asm)
+      (and
+        (compiler-backend-string-contains? asm "    vmovdqu ")
+        (and
+          (compiler-backend-string-contains?
+            asm
+            "    vpaddq %ymm7, %ymm6, %ymm7\n")
+          (and
+            (compiler-backend-string-contains?
+              asm
+              "    vpaddq %ymm7, %ymm6, %ymm6\n")
+            (not
+              (compiler-backend-string-contains?
+                asm
+                "register home unavailable")))))]
+    [(ErrCompilerBackend _) false]))
+
+(define (compiler-backend-avx512-mask-homes-ok?) : bool
+  (match (compiler-backend-emit-program-target-with-mode
+    (compiler-backend-vector-home-program (compiler-reg-mask-home-function))
+    (BackendTargetLinux)
+    (BackendModeAvx512)
+    (compiler-source-spans-empty)
+    true)
+    [(OkCompilerBackend asm)
+      (and
+        (compiler-backend-string-contains? asm "    kandw %k2, %k1, %k1\n")
+        (and
+          (compiler-backend-string-contains? asm "    knotw %k1, %k1\n")
+          (not
+            (compiler-backend-string-contains? asm "register home unavailable"))))]
+    [(ErrCompilerBackend _) false]))
+
+(define (compiler-backend-vector-call-lifetime-rejects-ok?) : bool
+  (match (compiler-backend-emit-program-target-with-mode
+    (compiler-backend-vector-home-program
+      (compiler-backend-vector-call-lifetime-function))
+    (BackendTargetLinux)
+    (BackendModeAvx2)
+    (compiler-source-spans-empty)
+    true)
+    [(ErrCompilerBackend diag)
+      (string-eq
+        (compiler-diagnostic-message diag)
+        "backend: vector register home unavailable for load dst; unsupported spill, call, or ABI lifetime")]
+    [(OkCompilerBackend _) false]))
+
 (define (compiler-backend-simd-vector-ok?) : bool
   (and
     (compiler-backend-avx2-vector-map-ok?)
@@ -1977,7 +2058,13 @@
       (compiler-backend-avx512-vector-map-ok?)
       (and
         (compiler-backend-avx2-vector-reduce-ok?)
-        (compiler-backend-avx512-vector-reduce-ok?)))))
+        (and
+          (compiler-backend-avx512-vector-reduce-ok?)
+          (and
+            (compiler-backend-avx2-vector-homes-ok?)
+            (and
+              (compiler-backend-avx512-mask-homes-ok?)
+              (compiler-backend-vector-call-lifetime-rejects-ok?))))))))
 
 (define (compiler-backend-optimizer-rewrite-diagnostic-ok?) : bool
   (let

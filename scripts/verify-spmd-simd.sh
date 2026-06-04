@@ -65,7 +65,7 @@ if [ "$HOST_OS" = linux ]; then
 fi
 
 # Runnable SIMD ISAs on THIS host (CPUID feature bit + OS XSAVE), not host OS.
-SIMD_ISAS=$(sh "$ROOT/scripts/detect-simd-isa.sh" 2>/dev/null || true)
+SIMD_ISAS=$(sh "$ROOT/scripts/detect-simd-isa.sh")
 
 WORKDIR="$ROOT/target/spmd-simd-verify"
 rm -rf "$WORKDIR"

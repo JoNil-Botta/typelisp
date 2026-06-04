@@ -843,39 +843,10 @@
     stdlib-roots
     opt-level))
 
-(define (compiler-driver-append-output-chunk
-  [output-path : String]
-  [chunk : String]) : i64
-  (let
-    [status : i64 (append-file-status output-path chunk)]
-    (if (= status 0)
-      0
-      (begin
-        (print-error
-          (string-append
-            "compiler: append output failed with status "
-            (string-append (int->string status) "\n")))
-        1))))
-
-(define (compiler-driver-write-text-buf-chunks
-  [output-path : String]
-  [chunks : TextBufChunkList]) : i64
-  (match chunks
-    [(TextBufChunkNil) 0]
-    [(TextBufChunkCons chunk rest)
-      (let
-        [tail-status : i64
-          (compiler-driver-write-text-buf-chunks output-path rest)]
-        (if (= tail-status 0)
-          (compiler-driver-append-output-chunk output-path chunk)
-          tail-status))]))
-
 (define (compiler-driver-write-text-buf [output-path : String] [buf : TextBuf]) : i64
-  (match buf
-    [(TextBuf chunks _)
-      (begin
-        (write-file output-path "")
-        (compiler-driver-write-text-buf-chunks output-path chunks))]))
+  (begin
+    (write-file output-path (text-buf-render buf))
+    0))
 
 (define (compiler-driver-write-result
   [result : ResultCompilerDriver]

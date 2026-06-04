@@ -868,6 +868,10 @@ if [ "$IS_STAGE1_WRAPPER" -eq 1 ]; then
     assert_failure
     assert_stdout_empty
     assert_contains "$err" "Error: stage1 host-action wrapper supports scalar backend mode only, got avx512"
+elif [ "$HOST_ACTION_ENABLED" -eq 0 ] &&
+    grep -F -- "build: --backend-mode avx512 requires the Rust build driver until selfhost SIMD support (#1014)" "$err" > /dev/null; then
+    assert_failure
+    assert_stdout_empty
 else
     assert_success
     assert_stderr_empty

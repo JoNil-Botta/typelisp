@@ -87,7 +87,7 @@ stdlib_test|tests/integration/stdlib_test.tl|42|-|-|stdlib/test.tl
 string_append|tests/integration/string_append.tl|0|[]\nright\nleft\nfoobar\nabcdefghijklmnopqrstuvwxyz0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ\n|-|-
 string_eq|tests/integration/string_eq.tl|0|true\ntrue\ntrue\nfalse\nfalse\ntrue\nfalse\n|-|-
 string_length|tests/integration/string_length.tl|5|-|-|-
-# run-assert deferred (selfhost parity follow-up #1655/#1656/#1657): string_match|tests/integration/string_match.tl|42|-|-|-
+string_match|tests/integration/string_match.tl|42|-|-|-
 substring|tests/integration/substring.tl|55|-|-|-
 sym_i64_env|tests/integration/sym_i64_env.tl|0|PASS: empty-miss\nPASS: single-hit-contains\nPASS: single-hit-value\nPASS: single-miss\nPASS: shadow-newest\nPASS: outer-preserved-a\nPASS: outer-no-b\nPASS: inner-sees-a\nPASS: inner-sees-b\nPASS: substring-key-hit\nPASS: append-key-hit\nPASS: chain-x\nPASS: chain-y\nPASS: chain-z\nAll sym-i64-env tests passed.\n|-|sym_i64_env_core.tl
 tail_self_loop|tests/integration/tail_self_loop.tl|42|-|-|-

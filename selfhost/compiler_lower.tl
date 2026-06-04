@@ -2544,6 +2544,7 @@
     [(AstLitInt _) true]
     [(AstLitBool _) true]
     [(AstLitChar _) true]
+    [(AstLitString _) true]
     [_ false]))
 
 (define (lower-enum-type-name-or-empty [ty : AstType]) : String
@@ -2568,6 +2569,64 @@
           index)]
       [(ErrTcInlineAggregateLayout _) (- 0 1)])
     (lower-align-up cursor (lower-type-align ctx resolved))))
+
+(define (lower-string-payload-literal-eq
+  [state : LowerState]
+  [field-value : CompilerIrValue]
+  [lit-value : CompilerIrValue]) : ResultLowerExpr
+  (match (lower-string-fields state field-value)
+    [(LowerStringFields field-state field-ptr field-len)
+      (match (lower-string-fields field-state lit-value)
+        [(LowerStringFields done-state lit-ptr lit-len)
+          (match (lower-state-alloc-var done-state)
+            [(LowerAlloc eq-alloc eq-var)
+              (OkLowerExpr
+                (LowerExpr
+                  (lower-state-emit
+                    eq-alloc
+                    (IrInstrCall
+                      eq-var
+                      "tl_string_eq"
+                      (IrValueCons
+                        field-ptr
+                        (IrValueCons
+                          field-len
+                          (IrValueCons lit-ptr (IrValueCons lit-len IrValueNil))))
+                      (AstTyBool)))
+                  (IrValueVar eq-var)
+                  (AstTyBool)))])])]))
+
+(define (lower-literal-payload-eq
+  [ctx : TcContext]
+  [state : LowerState]
+  [field-value : CompilerIrValue]
+  [lit : AstLiteral]
+  [resolved : AstType]) : ResultLowerExpr
+  (match lit
+    [(AstLitString _)
+      (if (lower-string-handle-type? ctx resolved)
+        (lower-string-payload-literal-eq
+          state
+          field-value
+          (lower-literal-value lit))
+        (ErrLowerExpr
+          (lower-diagnostic
+            "lower: unsupported enum payload literal pattern type")))]
+    [_
+      (match (lower-state-alloc-var state)
+        [(LowerAlloc eq-alloc eq-var)
+          (OkLowerExpr
+            (LowerExpr
+              (lower-state-emit
+                eq-alloc
+                (IrInstrBinOp
+                  eq-var
+                  IrBinEq
+                  field-value
+                  (lower-literal-value lit)
+                  resolved))
+              (IrValueVar eq-var)
+              (AstTyBool)))])]))
 
 ;; Bind a matched variant's payload fields. Irrefutable subpatterns (wildcard,
 ;; binding) just load/bind; a refutable literal subpattern (#651) loads the
@@ -2664,40 +2723,41 @@
                   (if (lower-literal-payload-supported? lit)
                     (match (lower-load-at-offset state base offset resolved)
                       [(LowerExpr load-state field-value _)
-                        (match (lower-state-alloc-var load-state)
-                          [(LowerAlloc eq-alloc eq-var)
-                            (match (lower-state-fresh-label
-                              (lower-state-emit
-                                eq-alloc
-                                (IrInstrBinOp
-                                  eq-var
-                                  IrBinEq
-                                  field-value
-                                  (lower-literal-value lit)
-                                  resolved))
-                              "payload_ok")
-                              [(LowerLabel ok-state ok-label)
-                                (lower-bind-variant-payloads
-                                  ctx
-                                  (lower-state-finish-block
-                                    (lower-state-emit
-                                      ok-state
-                                      (IrInstrBranch
-                                        (IrValueVar eq-var)
-                                        ok-label
-                                        fail-label))
-                                    ok-label)
-                                  env
-                                  type-env
-                                  base
-                                  rest-patterns
-                                  rest-types
-                                  mode
-                                  enum-name
-                                  variant-name
-                                  next-index
-                                  next-cursor
-                                  fail-label)])])])
+                        (match (lower-literal-payload-eq
+                          ctx
+                          load-state
+                          field-value
+                          lit
+                          resolved)
+                          [(OkLowerExpr lowered-eq)
+                            (match lowered-eq
+                              [(LowerExpr eq-state eq-value _)
+                                (match (lower-state-fresh-label
+                                  eq-state
+                                  "payload_ok")
+                                  [(LowerLabel ok-state ok-label)
+                                    (lower-bind-variant-payloads
+                                      ctx
+                                      (lower-state-finish-block
+                                        (lower-state-emit
+                                          ok-state
+                                          (IrInstrBranch
+                                            eq-value
+                                            ok-label
+                                            fail-label))
+                                        ok-label)
+                                      env
+                                      type-env
+                                      base
+                                      rest-patterns
+                                      rest-types
+                                      mode
+                                      enum-name
+                                      variant-name
+                                      next-index
+                                      next-cursor
+                                      fail-label)])])]
+                          [(ErrLowerExpr message) (ErrLowerEnv message)])])
                     (ErrLowerEnv
                       (lower-diagnostic
                         "lower: unsupported enum payload literal pattern type")))]
@@ -15346,6 +15406,17 @@
                     (> (lower-test-function-load-count functions "or-zero") 1))))))])]
     [(ErrCompilerLower _) false]))
 
+(define (compiler-lower-enum-string-literal-payload-shape-ok?) : bool
+  (match (lower-compiler-source
+    (compiler-lower-enum-string-literal-payload-source))
+    [(OkCompilerLower program _)
+      (match program
+        [(IrProgram _ functions _)
+          (and
+            (= (lower-test-functions-call-count functions "tl_string_eq") 1)
+            (= (lower-test-functions-call-count functions "string-eq") 0))])]
+    [(ErrCompilerLower _) false]))
+
 (define (compiler-lower-result-try-shape-ok? [src : String]) : bool
   (match (lower-compiler-source src)
     [(OkCompilerLower program _)
@@ -16701,15 +16772,17 @@
       (if (compiler-lower-ok? (compiler-lower-enum-nested-payload-source))
         unit
         (set! ok false))
+      (if (compiler-lower-ok?
+        (compiler-lower-enum-string-literal-payload-source))
+        unit
+        (set! ok false))
+      (if (compiler-lower-enum-string-literal-payload-shape-ok?)
+        unit
+        (set! ok false))
       (if (compiler-lower-ok? (compiler-lower-export-source))
         unit
         (set! ok false))
       (if (compiler-lower-ok? (compiler-lower-result-try-source))
-        unit
-        (set! ok false))
-      (if (compiler-lower-error-ok?
-        (compiler-lower-enum-string-literal-payload-source)
-        "lower: unsupported enum payload literal pattern type")
         unit
         (set! ok false))
       ok)))

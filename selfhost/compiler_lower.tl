@@ -638,6 +638,19 @@
       "main"
       resolved)))
 
+(define (lower-current-decl-logical-name-cache
+  [names : LowerNameCache]
+  [module : String]
+  [source-name : String]) : String
+  (let
+    [key : String (compiler-symbol-module-key module source-name)]
+    [resolved : String (lower-name-cache-resolve names key)]
+    (if (and
+      (and (string-eq module "main") (string-eq source-name "main"))
+      (string-eq resolved key))
+      "main"
+      resolved)))
+
 (define (lower-name-env-add-decl-in-module
   [names : LowerNameEnv]
   [entry-path : String]
@@ -1025,28 +1038,29 @@
 
 (define (lower-name-env-add-local-decl
   [names : LowerNameEnv]
+  [name-cache : LowerNameCache]
   [module : String]
   [decl : AstDecl]) : LowerNameEnv
   (match decl
     [(AstDeclDef name _ _)
       (LowerNameBind
         name
-        (lower-current-decl-logical-name names module name)
+        (lower-current-decl-logical-name-cache name-cache module name)
         names)]
     [(AstDeclDefFn name _ _ _)
       (LowerNameBind
         name
-        (lower-current-decl-logical-name names module name)
+        (lower-current-decl-logical-name-cache name-cache module name)
         names)]
     [(AstDeclExtern name _ _)
       (LowerNameBind
         name
-        (lower-current-decl-logical-name names module name)
+        (lower-current-decl-logical-name-cache name-cache module name)
         names)]
     [(AstDeclUnsafe inner-box)
       (let
         [inner : AstDecl (box-get inner-box)]
-        (lower-name-env-add-local-decl names module inner))]
+        (lower-name-env-add-local-decl names name-cache module inner))]
     [_ names]))
 
 (define (lower-module-local-type-env-bind-qualified
@@ -1114,6 +1128,7 @@
   [decls : AstDeclList]
   [type-env : TcTypeEnv]
   [names : LowerNameEnv]
+  [name-cache : LowerNameCache]
   [target-module : String]
   [module : String]) : ResultLowerModuleLocalEnv
   (match decls
@@ -1128,6 +1143,7 @@
               rest
               type-env
               names
+              name-cache
               target-module
               next-module)]
           [_
@@ -1142,7 +1158,12 @@
                     top-env
                     rest
                     next-type-env
-                    (lower-name-env-add-local-decl names target-module decl)
+                    (lower-name-env-add-local-decl
+                      names
+                      name-cache
+                      target-module
+                      decl)
+                    name-cache
                     target-module
                     module)]
                 [(ErrTcEnv message) (ErrLowerModuleLocalEnv message)])
@@ -1151,6 +1172,7 @@
                 rest
                 type-env
                 names
+                name-cache
                 target-module
                 module))]))]))
 
@@ -1165,7 +1187,14 @@
       [(AstProgram decls-box)
         (let
           [decls : AstDeclList (box-get decls-box)]
-          (lower-module-local-envs-list top-env decls top-env names module ""))])))
+          (lower-module-local-envs-list
+            top-env
+            decls
+            top-env
+            names
+            (lower-name-cache-from-env names)
+            module
+            ""))])))
 
 (define (lower-string-set-contains? [items : LowerStringSet] [name : String]) : bool
   (match items
@@ -16997,7 +17026,10 @@
                   (let
                     [global-ty : AstType (tc-type-without-regions ty)]
                     [global-name : String
-                      (lower-current-decl-logical-name names module name)]
+                      (lower-current-decl-logical-name-cache
+                        name-cache
+                        module
+                        name)]
                     (match (lower-global-value name-cache expr)
                       [(OkLowerValue value)
                         (lower-decls-in-module
@@ -17091,7 +17123,7 @@
                 decl-ctx
                 local-top-env
                 type-cache
-                (lower-current-decl-logical-name names module name)
+                (lower-current-decl-logical-name-cache name-cache module name)
                 params
                 ret
                 body
@@ -17215,7 +17247,7 @@
               local-top-env
               rest
               (lower-nullary-variant-globals
-                (lower-current-decl-logical-name names module name)
+                (lower-current-decl-logical-name-cache name-cache module name)
                 variants
                 0
                 globals)

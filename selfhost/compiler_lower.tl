@@ -3354,7 +3354,7 @@
     [(SymI64Bind name _ rest)
       (if (tc-expr-uses-free-name? body name bound)
         true
-        (lower-lambda-captures-env? rest body bound))]))
+        (lower-lambda-captures-env? (box-get rest) body bound))]))
 
 (define (lower-lambda-ret-type
   [ctx : TcContext]
@@ -3910,7 +3910,7 @@
         (not (tc-expr-uses-free-name? body name bound)))
         (lower-capture-plan-scan
           ctx
-          rest
+          (box-get rest)
           type-env
           body
           bound
@@ -3931,7 +3931,7 @@
                     (lower-align-up cursor (lower-type-align ctx slot-ty))]
                   (lower-capture-plan-scan
                     ctx
-                    rest
+                    (box-get rest)
                     type-env
                     body
                     bound

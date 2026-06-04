@@ -953,6 +953,11 @@
   (Leaf i64)
   (Node (Box Tree) (Box Tree)))")
 
+(define (compiler-typecheck-inline-boxed-sym-i64-env-source) : String
+  "(defenum SymI64Env
+  (SymI64Nil)
+  (SymI64Bind String i64 (Box SymI64Env)))")
+
 (define (compiler-typecheck-inline-pointer-boundaries-source) : String
   "(defstruct Node
   (name String)
@@ -1001,35 +1006,39 @@
           (compiler-typecheck-inline-boxed-tree-source)
           "Tree")
         (and
+          (compiler-typecheck-inline-layout-ok?
+            (compiler-typecheck-inline-boxed-sym-i64-env-source)
+            "SymI64Env")
           (and
-            (compiler-typecheck-inline-layout-ok?
-              (compiler-typecheck-inline-pointer-boundaries-source)
-              "Node")
-            (compiler-typecheck-inline-layout-query-ok?))
-          (and
-            (compiler-typecheck-inline-layout-error-ok?
-              (compiler-typecheck-inline-unboxed-list-source)
-              "BadList"
-              "typecheck: inline aggregate layout cycle BadList -> BadList; insert (Box BadList) at the recursive edge")
+            (and
+              (compiler-typecheck-inline-layout-ok?
+                (compiler-typecheck-inline-pointer-boundaries-source)
+                "Node")
+              (compiler-typecheck-inline-layout-query-ok?))
             (and
               (compiler-typecheck-inline-layout-error-ok?
-                (compiler-typecheck-inline-mutual-struct-source)
-                "A"
-                "typecheck: inline aggregate layout cycle A -> B -> A; insert (Box A) at the recursive edge")
+                (compiler-typecheck-inline-unboxed-list-source)
+                "BadList"
+                "typecheck: inline aggregate layout cycle BadList -> BadList; insert (Box BadList) at the recursive edge")
               (and
                 (compiler-typecheck-inline-layout-error-ok?
-                  (compiler-typecheck-inline-fixed-array-source)
-                  "BadFixed"
-                  "typecheck: inline aggregate layout cycle BadFixed -> BadFixed; insert (Box BadFixed) at the recursive edge")
+                  (compiler-typecheck-inline-mutual-struct-source)
+                  "A"
+                  "typecheck: inline aggregate layout cycle A -> B -> A; insert (Box A) at the recursive edge")
                 (and
                   (compiler-typecheck-inline-layout-error-ok?
-                    (compiler-typecheck-inline-tuple-source)
-                    "BadTuple"
-                    "typecheck: inline aggregate layout cycle BadTuple -> BadTuple; insert (Box BadTuple) at the recursive edge")
-                  (compiler-typecheck-inline-layout-error-ok?
-                    (compiler-typecheck-inline-region-wrapper-source)
-                    "BadRegion"
-                    "typecheck: inline aggregate layout cycle BadRegion -> BadRegion; insert (Box BadRegion) at the recursive edge"))))))))))
+                    (compiler-typecheck-inline-fixed-array-source)
+                    "BadFixed"
+                    "typecheck: inline aggregate layout cycle BadFixed -> BadFixed; insert (Box BadFixed) at the recursive edge")
+                  (and
+                    (compiler-typecheck-inline-layout-error-ok?
+                      (compiler-typecheck-inline-tuple-source)
+                      "BadTuple"
+                      "typecheck: inline aggregate layout cycle BadTuple -> BadTuple; insert (Box BadTuple) at the recursive edge")
+                    (compiler-typecheck-inline-layout-error-ok?
+                      (compiler-typecheck-inline-region-wrapper-source)
+                      "BadRegion"
+                      "typecheck: inline aggregate layout cycle BadRegion -> BadRegion; insert (Box BadRegion) at the recursive edge")))))))))))
 
 (define (compiler-typecheck-nominal-tests-ok?) : bool
   (let

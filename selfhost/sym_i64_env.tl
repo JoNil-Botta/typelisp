@@ -6,13 +6,13 @@
 
 (defenum SymI64Env
   (SymI64Nil)
-  (SymI64Bind String i64 SymI64Env))
+  (SymI64Bind String i64 (Box SymI64Env)))
 
 (define (sym-i64-empty) : SymI64Env
   SymI64Nil)
 
 (define (sym-i64-bind [e : SymI64Env] [k : String] [v : i64]) : SymI64Env
-  (SymI64Bind k v e))
+  (SymI64Bind k v (box e)))
 
 (define (sym-i64-lookup [e : SymI64Env] [k : String]) : MaybeI64
   (match e
@@ -20,7 +20,7 @@
     [(SymI64Bind kk vv rest)
       (if (string-eq kk k)
         (SomeI64 vv)
-        (sym-i64-lookup rest k))]))
+        (sym-i64-lookup (box-get rest) k))]))
 
 (define (sym-i64-contains [e : SymI64Env] [k : String]) : bool
   (match (sym-i64-lookup e k)

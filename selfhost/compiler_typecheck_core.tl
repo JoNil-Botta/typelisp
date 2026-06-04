@@ -424,25 +424,31 @@
                   (tc-bind
                     (tc-bind
                       (tc-bind
-                        e18
-                        "file-exists?"
-                        (tc-fn1 (AstTyString) (AstTyBool)))
-                      "file-exists-status"
-                      (tc-fn1 (AstTyString) (AstTyI64)))
-                    "file-open-status"
-                    (tc-fn2 (AstTyString) (AstTyI64) (AstTyI64)))
-                  "file-close-status"
-                  (tc-fn1 (AstTyI64) (AstTyI64)))
-                "fs-mkdir-status"
+                        (tc-bind
+                          (tc-bind
+                            e18
+                            "file-exists?"
+                            (tc-fn1 (AstTyString) (AstTyBool)))
+                          "file-exists-status"
+                          (tc-fn1 (AstTyString) (AstTyI64)))
+                        "file-open-status"
+                        (tc-fn2 (AstTyString) (AstTyI64) (AstTyI64)))
+                      "file-close-status"
+                      (tc-fn1 (AstTyI64) (AstTyI64)))
+                    "fs-mkdir-status"
+                    (tc-fn1 (AstTyString) (AstTyI64)))
+                  "fs-remove-file-status"
+                  (tc-fn1 (AstTyString) (AstTyI64)))
+                "fs-remove-dir-status"
                 (tc-fn1 (AstTyString) (AstTyI64)))
-              "fs-remove-file-status"
-              (tc-fn1 (AstTyString) (AstTyI64)))
-            "fs-remove-dir-status"
-            (tc-fn1 (AstTyString) (AstTyI64)))
-          "fs-rename-status"
-          (tc-fn2 (AstTyString) (AstTyString) (AstTyI64)))
-        "fs-process-id"
-        (tc-fn0 (AstTyI64)))]
+              "fs-rename-status"
+              (tc-fn2 (AstTyString) (AstTyString) (AstTyI64)))
+            "fs-process-id"
+            (tc-fn0 (AstTyI64)))
+          "fs-current-dir-status"
+          (tc-fn0 (AstTyI64)))
+        "fs-current-dir"
+        (tc-fn0 (AstTyString)))]
     [e20 : TcTypeEnv
       (tc-bind
         (tc-bind
@@ -3048,6 +3054,8 @@
     [(string-eq name "fs-remove-dir-status") true]
     [(string-eq name "fs-rename-status") true]
     [(string-eq name "fs-process-id") true]
+    [(string-eq name "fs-current-dir-status") true]
+    [(string-eq name "fs-current-dir") true]
     [(string-eq name "panic") true]
     [(string-eq name "error") true]
     [(string-eq name "env-var-exists?") true]

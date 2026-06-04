@@ -130,6 +130,8 @@
     (fs-remove-dir-status s)
     (fs-rename-status s s)
     (fs-process-id)
+    (fs-current-dir-status)
+    (string-length (fs-current-dir))
     (string-append (substring s 0 (length s))
                    (int->string (string->int \"7\")))))")
 
@@ -3357,6 +3359,12 @@
   (fs-rename-status (& from) (& to)))")
         unit
         (set! ok false))
+      (if (compiler-typecheck-ok? "(define (f) : i64 (fs-current-dir-status))")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-ok? "(define (f) : String (fs-current-dir))")
+        unit
+        (set! ok false))
       (if (compiler-typecheck-ok?
         "(define (f [p : String]) : i64 (file-open-status p 0))")
         unit
@@ -3436,6 +3444,11 @@
         (set! ok false))
       (if (compiler-typecheck-error-ok?
         "(define (f [from : String]) : i64 (fs-rename-status from))"
+        "typecheck: arity mismatch")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        "(define (f [path : String]) : i64 (fs-current-dir-status path))"
         "typecheck: arity mismatch")
         unit
         (set! ok false))

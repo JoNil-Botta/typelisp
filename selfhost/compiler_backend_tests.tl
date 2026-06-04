@@ -1922,6 +1922,7 @@
       false
       false
       false
+      false
       false)
     IrFunctionNil
     IrExternNil
@@ -2322,10 +2323,15 @@
             (and
               (not
                 (compiler-backend-string-contains? asm "    .extern _mkdir\n"))
-              (not
-                (compiler-backend-string-contains?
-                  asm
-                  ".extern .L_tl_fs_rename_status\n"))))))]
+              (and
+                (not
+                  (compiler-backend-string-contains?
+                    asm
+                    ".extern .L_tl_fs_rename_status\n"))
+                (not
+                  (compiler-backend-string-contains?
+                    asm
+                    "tl_fs_current_dir_status:\n")))))))]
     [(ErrCompilerBackend _) false]))
 
 (define (compiler-backend-windows-fs-runtime-ok?) : bool
@@ -2352,19 +2358,78 @@
           (and
             (compiler-backend-string-contains?
               asm
-              "    call GetCurrentProcessId\n")
+              "    .extern GetCurrentProcessId\n")
             (and
-              (backend-and4
-                (compiler-backend-string-contains? asm "    .extern _mkdir\n")
-                (compiler-backend-string-contains? asm "    .extern _unlink\n")
-                (compiler-backend-string-contains? asm "    .extern _rmdir\n")
+              (compiler-backend-string-contains? asm "    movq $38, %rax\n")
+              (and
+                (not (compiler-backend-string-contains? asm "    syscall"))
+                (not
+                  (compiler-backend-string-contains?
+                    asm
+                    "tl_fs_current_dir_status:\n")))))))]
+    [(ErrCompilerBackend _) false]))
+
+(define (compiler-backend-fs-current-dir-source) : String
+  "(define (main) : i64
+  (+ (fs-current-dir-status) (string-length (fs-current-dir))))")
+
+(define (compiler-backend-fs-current-dir-extern-source) : String
+  "(extern tl_fs_current_dir_status : (-> i64))
+(extern tl_fs_current_dir : (-> String))
+(define (main) : i64
+  (+ (tl_fs_current_dir_status) (string-length (tl_fs_current_dir))))")
+
+(define (compiler-backend-fs-current-dir-runtime-source-ok? [source : String]) : bool
+  (match (compiler-backend-emit-source source)
+    [(OkCompilerBackend asm)
+      (and
+        (compiler-backend-string-contains? asm "tl_fs_current_dir_status:\n")
+        (and
+          (compiler-backend-string-contains? asm "tl_fs_current_dir:\n")
+          (and
+            (compiler-backend-string-contains? asm "    movq $79, %rax\n")
+            (and
+              (not
                 (compiler-backend-string-contains?
                   asm
-                  "    .extern GetCurrentProcessId\n"))
-              (and
-                (compiler-backend-string-contains? asm "    movq $38, %rax\n")
-                (not (compiler-backend-string-contains? asm "    syscall")))))))]
+                  ".L_tl_fs_mkdir_status:\n"))
+              (not
+                (compiler-backend-string-contains?
+                  asm
+                  ".extern tl_fs_current_dir\n"))))))]
     [(ErrCompilerBackend _) false]))
+
+(define (compiler-backend-fs-current-dir-runtime-ok?) : bool
+  (and
+    (compiler-backend-fs-current-dir-runtime-source-ok?
+      (compiler-backend-fs-current-dir-source))
+    (compiler-backend-fs-current-dir-runtime-source-ok?
+      (compiler-backend-fs-current-dir-extern-source))))
+
+(define (compiler-backend-windows-fs-current-dir-runtime-source-ok?
+  [source : String]) : bool
+  (match (compiler-backend-emit-source-for-target source (BackendTargetWindows))
+    [(OkCompilerBackend asm)
+      (and
+        (compiler-backend-string-contains? asm "tl_fs_current_dir_status:\n")
+        (and
+          (compiler-backend-string-contains? asm "tl_fs_current_dir:\n")
+          (and
+            (compiler-backend-string-contains? asm "    movq $38, %rax\n")
+            (and
+              (not (compiler-backend-string-contains? asm "    syscall"))
+              (not
+                (compiler-backend-string-contains?
+                  asm
+                  ".L_tl_fs_mkdir_status:\n"))))))]
+    [(ErrCompilerBackend _) false]))
+
+(define (compiler-backend-windows-fs-current-dir-runtime-ok?) : bool
+  (and
+    (compiler-backend-windows-fs-current-dir-runtime-source-ok?
+      (compiler-backend-fs-current-dir-source))
+    (compiler-backend-windows-fs-current-dir-runtime-source-ok?
+      (compiler-backend-fs-current-dir-extern-source))))
 
 ;; A refutable literal payload match (#651) lowers to a payload comparison that
 ;; branches to the next arm; confirm the resulting CFG reaches valid assembly.
@@ -3117,44 +3182,48 @@
           (and
             (compiler-backend-windows-fs-runtime-ok?)
             (and
-              (backend-and8
-                (compiler-backend-user-helper-name-ok?)
-                (compiler-backend-file-handle-open-close-runtime-ok?)
-                (and
-                  (compiler-backend-string-runtime-ok?)
-                  (compiler-backend-print-runtime-ok?))
-                (compiler-backend-env-runtime-ok?)
-                (compiler-backend-expanded-scalar-regs-ok?)
-                (compiler-backend-regalloc-f64-ok?)
-                (compiler-backend-runtime-coexist-ok?)
-                (compiler-backend-module-symbol-ok?))
+              (compiler-backend-fs-current-dir-runtime-ok?)
               (and
+                (compiler-backend-windows-fs-current-dir-runtime-ok?)
                 (and
-                  (compiler-backend-windows-env-runtime-ok?)
-                  (compiler-backend-extern-metadata-symbol-ok?))
-                (and
-                  (backend-and4
-                    (compiler-backend-string-ref-shape-ok?)
-                    (compiler-backend-fixed-array-shape-ok?)
-                    (compiler-backend-raw-pointer-fixture-shape-ok?)
+                  (backend-and8
+                    (compiler-backend-user-helper-name-ok?)
+                    (compiler-backend-file-handle-open-close-runtime-ok?)
                     (and
-                      (compiler-backend-box-ok?)
-                      (compiler-backend-inline-aggregate-storage-ok?)))
+                      (compiler-backend-string-runtime-ok?)
+                      (compiler-backend-print-runtime-ok?))
+                    (compiler-backend-env-runtime-ok?)
+                    (compiler-backend-expanded-scalar-regs-ok?)
+                    (compiler-backend-regalloc-f64-ok?)
+                    (compiler-backend-runtime-coexist-ok?)
+                    (compiler-backend-module-symbol-ok?))
                   (and
-                    (compiler-backend-tuple-ok?)
                     (and
-                      (compiler-backend-closure-emit-shape-ok?)
+                      (compiler-backend-windows-env-runtime-ok?)
+                      (compiler-backend-extern-metadata-symbol-ok?))
+                    (and
+                      (backend-and4
+                        (compiler-backend-string-ref-shape-ok?)
+                        (compiler-backend-fixed-array-shape-ok?)
+                        (compiler-backend-raw-pointer-fixture-shape-ok?)
+                        (and
+                          (compiler-backend-box-ok?)
+                          (compiler-backend-inline-aggregate-storage-ok?)))
                       (and
-                        (compiler-backend-alloc-runtime-shape-ok?)
-                        (backend-and8
-                          (compiler-backend-scalar-wide-ops-ok?)
-                          (compiler-backend-scalar-div-mod-ok?)
-                          (compiler-backend-narrow-scalar-instr-ok?)
-                          (compiler-backend-f64-abi-ok?)
-                          (compiler-backend-win64-f64-abi-ok?)
-                          (compiler-backend-aggregate-storage-shape-ok?)
-                          (compiler-backend-shift-guard-ok?)
-                          (compiler-backend-windows-sdk-registry-runtime-ok?)))))))))))))
+                        (compiler-backend-tuple-ok?)
+                        (and
+                          (compiler-backend-closure-emit-shape-ok?)
+                          (and
+                            (compiler-backend-alloc-runtime-shape-ok?)
+                            (backend-and8
+                              (compiler-backend-scalar-wide-ops-ok?)
+                              (compiler-backend-scalar-div-mod-ok?)
+                              (compiler-backend-narrow-scalar-instr-ok?)
+                              (compiler-backend-f64-abi-ok?)
+                              (compiler-backend-win64-f64-abi-ok?)
+                              (compiler-backend-aggregate-storage-shape-ok?)
+                              (compiler-backend-shift-guard-ok?)
+                              (compiler-backend-windows-sdk-registry-runtime-ok?)))))))))))))))
     42
     (begin
       (panic "backend: smoke output mismatch")

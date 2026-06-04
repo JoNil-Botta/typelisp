@@ -1,11 +1,12 @@
 ;# stdlib/fs.tl - Minimal filesystem helpers for TypeLisp tools (#850).
 ;#
-;# Provides recoverable temporary-directory, path-join, lexical path
-;# normalization, safe relative suffix checks, and cleanup helpers on top of
-;# compiler/runtime primitives:
+;# Provides recoverable current-directory and temporary-directory APIs, path-join,
+;# lexical path normalization, safe relative suffix checks, and cleanup helpers on
+;# top of compiler/runtime primitives:
 ;#
 ;# `fs-mkdir-status`, `fs-remove-file-status`, `fs-remove-dir-status`,
-;# `fs-rename-status`, and `fs-process-id`.
+;# `fs-rename-status`, `fs-process-id`, `tl_fs_current_dir_status`, and
+;# `tl_fs_current_dir`.
 ;#
 ;# Usage: `(import "stdlib/fs.tl")`
 ;#
@@ -18,6 +19,10 @@
 (import "io.tl")
 
 (import "string.tl")
+
+(extern tl_fs_current_dir_status : (-> i64))
+
+(extern tl_fs_current_dir : (-> String))
 
 ;: Common host status code for attempting to create an already-existing path.
 (define fs-status-already-exists : i64
@@ -361,6 +366,17 @@
     (match (env-get "TMPDIR")
       [(EnvSomeString value) value]
       [(EnvNoString) "/tmp"])))
+
+;: Return the process current directory as an owned active-arena String.
+;:
+;: The returned path is the host-reported cwd; it is not symlink-canonicalized.
+;: Unsupported targets return `ErrIoString` with `IoUnsupported`.
+(define (try-current-dir) : ResultIoString
+  (let
+    [status : i64 (tl_fs_current_dir_status)]
+    (if (= status io-status-ok)
+      (OkIoString (tl_fs_current_dir))
+      (ErrIoString (io-error-from-status "current directory" status)))))
 
 ;: Compose one candidate temporary directory basename from prefix, pid, and attempt.
 (define (fs-temp-name [prefix : String] [pid : i64] [attempt : i64]) : String

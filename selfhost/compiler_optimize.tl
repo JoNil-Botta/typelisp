@@ -5149,7 +5149,11 @@
         [(IrBlock label _)
           (let
             [tail : OptNaturalLoopList
-              (opt-cfg-natural-loop-blocks all-blocks rest reachable doms)]
+              (opt-cfg-natural-loop-blocks
+                all-blocks
+                (box-get rest)
+                reachable
+                doms)]
             (if (opt-label-contains reachable label)
               (opt-cfg-natural-loop-successors
                 all-blocks
@@ -5158,7 +5162,7 @@
                 label
                 (opt-cfg-block-successors-with-next
                   block
-                  (opt-cfg-entry-label rest))
+                  (opt-cfg-entry-label (box-get rest)))
                 tail)
               tail))])]))
 
@@ -9847,97 +9851,113 @@
     (opt-ssa-loop-blocks)))
 
 (define (opt-natural-loop-nested-blocks) : CompilerIrBlockList
-  (IrBlockCons
-    (IrBlock "entry" (IrInstrCons (IrInstrJump "outer") (IrInstrNil)))
-    (IrBlockCons
-      (IrBlock "outer" (IrInstrCons (IrInstrJump "inner") (IrInstrNil)))
-      (IrBlockCons
+  (compiler-ir-block-cons
+    (IrBlock
+      "entry"
+      (compiler-ir-instr-cons (IrInstrJump "outer") (IrInstrNil)))
+    (compiler-ir-block-cons
+      (IrBlock
+        "outer"
+        (compiler-ir-instr-cons (IrInstrJump "inner") (IrInstrNil)))
+      (compiler-ir-block-cons
         (IrBlock
           "inner"
-          (IrInstrCons
+          (compiler-ir-instr-cons
             (IrInstrBranch (IrValueVar 4) "inner-body" "outer-latch")
             (IrInstrNil)))
-        (IrBlockCons
+        (compiler-ir-block-cons
           (IrBlock
             "inner-body"
-            (IrInstrCons (IrInstrJump "inner") (IrInstrNil)))
-          (IrBlockCons
+            (compiler-ir-instr-cons (IrInstrJump "inner") (IrInstrNil)))
+          (compiler-ir-block-cons
             (IrBlock
               "outer-latch"
-              (IrInstrCons
+              (compiler-ir-instr-cons
                 (IrInstrBranch (IrValueVar 8) "outer" "exit")
                 (IrInstrNil)))
-            (IrBlockCons
+            (compiler-ir-block-cons
               (IrBlock
                 "exit"
-                (IrInstrCons
+                (compiler-ir-instr-cons
                   (IrInstrReturn (IrSomeValue (IrValueI64 0)))
                   (IrInstrNil)))
               (IrBlockNil))))))))
 
 (define (opt-natural-loop-irreducible-blocks) : CompilerIrBlockList
-  (IrBlockCons
+  (compiler-ir-block-cons
     (IrBlock
       "entry"
-      (IrInstrCons
+      (compiler-ir-instr-cons
         (IrInstrBranch (IrValueBool true) "left" "right")
         (IrInstrNil)))
-    (IrBlockCons
-      (IrBlock "left" (IrInstrCons (IrInstrJump "right") (IrInstrNil)))
-      (IrBlockCons
+    (compiler-ir-block-cons
+      (IrBlock
+        "left"
+        (compiler-ir-instr-cons (IrInstrJump "right") (IrInstrNil)))
+      (compiler-ir-block-cons
         (IrBlock
           "right"
-          (IrInstrCons
+          (compiler-ir-instr-cons
             (IrInstrBranch (IrValueBool true) "left" "exit")
             (IrInstrNil)))
-        (IrBlockCons
+        (compiler-ir-block-cons
           (IrBlock
             "exit"
-            (IrInstrCons
+            (compiler-ir-instr-cons
               (IrInstrReturn (IrSomeValue (IrValueI64 0)))
               (IrInstrNil)))
           (IrBlockNil))))))
 
 (define (opt-natural-loop-no-preheader-blocks) : CompilerIrBlockList
-  (IrBlockCons
+  (compiler-ir-block-cons
     (IrBlock
       "entry"
-      (IrInstrCons
+      (compiler-ir-instr-cons
         (IrInstrBranch (IrValueBool true) "pre-one" "pre-two")
         (IrInstrNil)))
-    (IrBlockCons
-      (IrBlock "pre-one" (IrInstrCons (IrInstrJump "loop") (IrInstrNil)))
-      (IrBlockCons
-        (IrBlock "pre-two" (IrInstrCons (IrInstrJump "loop") (IrInstrNil)))
-        (IrBlockCons
+    (compiler-ir-block-cons
+      (IrBlock
+        "pre-one"
+        (compiler-ir-instr-cons (IrInstrJump "loop") (IrInstrNil)))
+      (compiler-ir-block-cons
+        (IrBlock
+          "pre-two"
+          (compiler-ir-instr-cons (IrInstrJump "loop") (IrInstrNil)))
+        (compiler-ir-block-cons
           (IrBlock
             "loop"
-            (IrInstrCons
+            (compiler-ir-instr-cons
               (IrInstrBranch (IrValueBool true) "body" "exit")
               (IrInstrNil)))
-          (IrBlockCons
-            (IrBlock "body" (IrInstrCons (IrInstrJump "loop") (IrInstrNil)))
-            (IrBlockCons
+          (compiler-ir-block-cons
+            (IrBlock
+              "body"
+              (compiler-ir-instr-cons (IrInstrJump "loop") (IrInstrNil)))
+            (compiler-ir-block-cons
               (IrBlock
                 "exit"
-                (IrInstrCons
+                (compiler-ir-instr-cons
                   (IrInstrReturn (IrSomeValue (IrValueI64 0)))
                   (IrInstrNil)))
               (IrBlockNil))))))))
 
 (define (opt-natural-loop-multi-backedge-blocks) : CompilerIrBlockList
-  (IrBlockCons
-    (IrBlock "entry" (IrInstrCons (IrInstrJump "loop") (IrInstrNil)))
-    (IrBlockCons
+  (compiler-ir-block-cons
+    (IrBlock "entry" (compiler-ir-instr-cons (IrInstrJump "loop") (IrInstrNil)))
+    (compiler-ir-block-cons
       (IrBlock
         "loop"
-        (IrInstrCons
+        (compiler-ir-instr-cons
           (IrInstrBranch (IrValueBool true) "left" "right")
           (IrInstrNil)))
-      (IrBlockCons
-        (IrBlock "left" (IrInstrCons (IrInstrJump "loop") (IrInstrNil)))
-        (IrBlockCons
-          (IrBlock "right" (IrInstrCons (IrInstrJump "loop") (IrInstrNil)))
+      (compiler-ir-block-cons
+        (IrBlock
+          "left"
+          (compiler-ir-instr-cons (IrInstrJump "loop") (IrInstrNil)))
+        (compiler-ir-block-cons
+          (IrBlock
+            "right"
+            (compiler-ir-instr-cons (IrInstrJump "loop") (IrInstrNil)))
           (IrBlockNil))))))
 
 (define (opt-natural-loop-maybe-body-count [maybe : OptMaybeNaturalLoop]) : i64

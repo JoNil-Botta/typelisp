@@ -1185,12 +1185,10 @@
   [inputs : CompilerIrPhiInputList]) : unit
   (match inputs
     [(IrPhiInputNil) unit]
-    [(IrPhiInputCons input rest)
-      (match input
-        [(IrPhiInput value _)
-          (begin
-            (opt-collect-value-uses-array items value)
-            (opt-collect-phi-uses-array items rest))])]))
+    [(IrPhiInputCons value _ rest)
+      (begin
+        (opt-collect-value-uses-array items value)
+        (opt-collect-phi-uses-array items rest))]))
 
 (define (opt-collect-instr-uses-array
   [items : (Array bool)]

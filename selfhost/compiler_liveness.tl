@@ -81,25 +81,25 @@
   31)
 
 (define (compiler-live-set-bits-mask) : i64
-  (- (shl 1 (compiler-live-set-word-bits)) 1))
+  2147483647)
 
 (define (compiler-live-set-word-index [value : i64]) : i64
-  (/ value (compiler-live-set-word-bits)))
+  (/ value 31))
 
 (define (compiler-live-set-bit-index [value : i64]) : i64
-  (% value (compiler-live-set-word-bits)))
+  (% value 31))
 
 (define (compiler-live-set-bit-mask [value : i64]) : i64
-  (shl 1 (compiler-live-set-bit-index value)))
+  (shl 1 (% value 31)))
 
 (define (compiler-live-set-pack-word [word-index : i64] [bits : i64]) : i64
-  (bit-or (shl word-index (compiler-live-set-word-bits)) bits))
+  (bit-or (shl word-index 31) bits))
 
 (define (compiler-live-set-chunk-word-index [chunk : i64]) : i64
-  (shr chunk (compiler-live-set-word-bits)))
+  (shr chunk 31))
 
 (define (compiler-live-set-chunk-bits [chunk : i64]) : i64
-  (bit-and chunk (compiler-live-set-bits-mask)))
+  (bit-and chunk 2147483647))
 
 (define (compiler-live-set-empty) : CompilerLiveI64Set
   CompilerLiveI64Nil)
@@ -265,18 +265,36 @@
 (define (compiler-live-set-eq?
   [left : CompilerLiveI64Set]
   [right : CompilerLiveI64Set]) : bool
-  (match left
-    [(CompilerLiveI64Nil)
-      (match right
-        [(CompilerLiveI64Nil) true]
-        [(CompilerLiveI64Cons _ _) false])]
-    [(CompilerLiveI64Cons left-chunk left-rest)
-      (match right
-        [(CompilerLiveI64Nil) false]
-        [(CompilerLiveI64Cons right-chunk right-rest)
-          (and
-            (= left-chunk right-chunk)
-            (compiler-live-set-eq? left-rest right-rest))])]))
+  (let
+    [left-cur : CompilerLiveI64Set left]
+    [right-cur : CompilerLiveI64Set right]
+    [same : bool true]
+    [done : bool false]
+    (begin
+      (while (and same (not done))
+        (match left-cur
+          [(CompilerLiveI64Nil)
+            (match right-cur
+              [(CompilerLiveI64Nil) (set! done true)]
+              [(CompilerLiveI64Cons _ _)
+                (begin
+                  (set! same false)
+                  (set! done true))])]
+          [(CompilerLiveI64Cons left-chunk left-rest)
+            (match right-cur
+              [(CompilerLiveI64Nil)
+                (begin
+                  (set! same false)
+                  (set! done true))]
+              [(CompilerLiveI64Cons right-chunk right-rest)
+                (if (= left-chunk right-chunk)
+                  (begin
+                    (set! left-cur left-rest)
+                    (set! right-cur right-rest))
+                  (begin
+                    (set! same false)
+                    (set! done true)))])]))
+      same)))
 
 (define (compiler-live-set-word-count-bits [bits : i64] [bit : i64]) : i64
   (if (>= bit (compiler-live-set-word-bits))

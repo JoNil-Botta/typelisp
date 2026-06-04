@@ -117,34 +117,41 @@
   [stdlib-lines : String]
   [stdlib-roots : CompilerLoadRootList]) : ResultBuildConfig
   (if (>= idx count)
-    (if has-source
-      (if has-manifest
-        (ErrBuildConfig
-          "build: cannot combine a source file with --manifest-path")
-        (OkBuildConfig
-          (BuildSourceConfig
-            source
-            has-source
-            output
-            has-output
-            target
-            mode
-            (if has-opt-level
-              (int->string opt-level)
-              "")
-            stdlib-lines)))
-      (if has-output
-        (ErrBuildConfig "build: -o requires a source file argument")
-        (OkBuildConfig
-          (BuildPackageConfig
-            manifest
+    (begin
+      (if has-source
+        (begin
+          (when
             has-manifest
-            target
-            has-target
-            mode
-            has-opt-level
-            opt-level
-            stdlib-roots))))
+            (return
+              (ErrBuildConfig
+                "build: cannot combine a source file with --manifest-path")))
+          (OkBuildConfig
+            (BuildSourceConfig
+              source
+              has-source
+              output
+              has-output
+              target
+              mode
+              (if has-opt-level
+                (int->string opt-level)
+                "")
+              stdlib-lines)))
+        (begin
+          (when
+            has-output
+            (return
+              (ErrBuildConfig "build: -o requires a source file argument")))
+          (OkBuildConfig
+            (BuildPackageConfig
+              manifest
+              has-manifest
+              target
+              has-target
+              mode
+              has-opt-level
+              opt-level
+              stdlib-roots)))))
     (let
       [current : String (arg idx)]
       (cond
@@ -625,44 +632,53 @@
                 (print-error message)
                 1)]
             [(OkBuildLibs dep-libs)
-              (match (source-tool-emit-package-assembly
-                entry-path
-                target
-                stdlib-roots
-                opt-level
-                manifest-dir
-                (struct-get manifest deps)
-                (build-package-kind-entry? kind))
-                [(ErrSourceToolString message)
-                  (begin
-                    (print-error message)
-                    1)]
-                [(OkSourceToolString asm)
-                  (match (source-tool-write-file
-                    asm-path
-                    asm
-                    "build: failed to write package assembly")
-                    [(SourceToolCommandErr message)
-                      (begin
-                        (print-error message)
-                        1)]
-                    [(SourceToolCommandOk)
-                      (match (build-package-artifact-status
-                        kind
-                        target
-                        asm-path
-                        obj-path
-                        artifact-path
-                        dep-libs)
-                        [(SourceToolCommandErr message)
-                          (begin
-                            (print-error message)
-                            1)]
-                        [(SourceToolCommandOk)
-                          (begin
-                            (print-string
-                              (string-append "Generated: " artifact-path))
-                            0)])])])])))]))
+              (let
+                [dep-link-inputs : SourceToolLinkInputs
+                  (source-tool-link-inputs-from-archives dep-libs)]
+                [emit-entry : bool (build-package-kind-entry? kind)]
+                [crt-entry : bool
+                  (and
+                    emit-entry
+                    (source-tool-linux-crt-entry? target dep-link-inputs))]
+                (match (source-tool-emit-package-assembly
+                  entry-path
+                  target
+                  stdlib-roots
+                  opt-level
+                  manifest-dir
+                  (struct-get manifest deps)
+                  emit-entry
+                  crt-entry)
+                  [(ErrSourceToolString message)
+                    (begin
+                      (print-error message)
+                      1)]
+                  [(OkSourceToolString asm)
+                    (match (source-tool-write-file
+                      asm-path
+                      asm
+                      "build: failed to write package assembly")
+                      [(SourceToolCommandErr message)
+                        (begin
+                          (print-error message)
+                          1)]
+                      [(SourceToolCommandOk)
+                        (match (build-package-artifact-status
+                          kind
+                          target
+                          asm-path
+                          obj-path
+                          artifact-path
+                          dep-libs)
+                          [(SourceToolCommandErr message)
+                            (begin
+                              (print-error message)
+                              1)]
+                          [(SourceToolCommandOk)
+                            (begin
+                              (print-string
+                                (string-append "Generated: " artifact-path))
+                              0)])])]))])))]))
 
 (define (build-package-emit
   [manifest-path : String]

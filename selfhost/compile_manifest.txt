@@ -203,7 +203,7 @@ contains|_tl_compiler_cfg_enable:
 contains|_tl_compiler_driver_compile_file_with_roots_level_mode_and_cfg:
 contains|_tl_compiler_driver_compile_file_for_target_with_roots_level_mode_and_cfg:
 contains|_tl_compiler_driver_emit_ir_summary_file_with_roots_level_and_cfg:
-contains|_tl_compiler_backend_emit_program_target_with_mode:
+contains|_tl_compiler_backend_emit_program_target_with_mode_and_crt:
 contains|compile: expected source path
 contains|compile: --target requires a value
 contains|compile: --stdlib-root requires a value
@@ -343,7 +343,7 @@ contains|_tl_compiler_driver_emit_ir_summary_file_with_roots_level_and_cfg:
 contains|_tl_compiler_driver_compile_file_with_roots_level_mode_and_cfg:
 contains|_tl_compiler_driver_compile_file_for_target_with_roots_level_mode_and_cfg:
 contains|_tl_compiler_driver_ir_summary_render:
-contains|_tl_compiler_backend_emit_program_target_with_mode:
+contains|_tl_compiler_backend_emit_program_target_with_mode_and_crt:
 contains|_tl_compiler_backend_emit_source:
 end
 
@@ -927,7 +927,7 @@ contains|_tl_tltest_invalid_opt_level:
 contains|_tl_source_tool_assemble_and_link:
 contains|_tl_source_tool_run_executable:
 contains|_tl_optimize_program_with_level:
-contains|_tl_compiler_backend_emit_program_target_with_mode:
+contains|_tl_compiler_backend_emit_program_target_with_mode_and_crt:
 contains|test: expected source path
 contains|test: --opt-level requires a value
 contains|test: invalid --opt-level

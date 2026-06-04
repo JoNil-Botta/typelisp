@@ -12,11 +12,20 @@
 (import "stdlib/hashmap.tl")
 
 (defenum CompilerSymbols
-  (CompilerSymbols StringI64Map StringI64Map StringI64Map (Array AstDecl)))
+  (CompilerSymbols
+    StringI64Map
+    StringI64Map
+    StringI64Map
+    (Array AstDecl)
+    (Array String)))
 
 (defenum ResultCompilerSymbols
   (OkCompilerSymbols CompilerSymbols)
   (ErrCompilerSymbols String))
+
+(defenum CompilerMaybeString
+  (CompilerNoString)
+  (CompilerSomeString String))
 
 (defenum CompilerRegistries
   (CompilerRegistries StringI64Map StringI64Map))
@@ -135,7 +144,8 @@
     (compiler-symbol-map-empty)
     (compiler-symbol-map-empty)
     (compiler-symbol-map-empty)
-    (make-array AstDecl decl-count)))
+    (make-array AstDecl decl-count)
+    (make-array String decl-count)))
 
 (define (compiler-symbols-empty) : CompilerSymbols
   (compiler-symbols-empty-with-decls 0))
@@ -185,23 +195,27 @@
   [symbols : CompilerSymbols]
   [name : String]) : MaybeI64
   (match symbols
-    [(CompilerSymbols values _ _ _) (compiler-symbol-map-lookup values name)]))
+    [(CompilerSymbols values _ _ _ _) (compiler-symbol-map-lookup values name)]))
 
 (define (compiler-symbols-lookup-type
   [symbols : CompilerSymbols]
   [name : String]) : MaybeI64
   (match symbols
-    [(CompilerSymbols _ types _ _) (compiler-symbol-map-lookup types name)]))
+    [(CompilerSymbols _ types _ _ _) (compiler-symbol-map-lookup types name)]))
 
 (define (compiler-symbols-lookup-macro
   [symbols : CompilerSymbols]
   [name : String]) : MaybeI64
   (match symbols
-    [(CompilerSymbols _ _ macros _) (compiler-symbol-map-lookup macros name)]))
+    [(CompilerSymbols _ _ macros _ _) (compiler-symbol-map-lookup macros name)]))
 
 (define (compiler-symbols-decls [symbols : CompilerSymbols]) : (Array AstDecl)
   (match symbols
-    [(CompilerSymbols _ _ _ decls) decls]))
+    [(CompilerSymbols _ _ _ decls _) decls]))
+
+(define (compiler-symbols-owner-names [symbols : CompilerSymbols]) : (Array String)
+  (match symbols
+    [(CompilerSymbols _ _ _ _ owner-names) owner-names]))
 
 (define (compiler-symbols-duplicate-value-message [name : String]) : String
   (string-append "symbols: duplicate value declaration " name))
@@ -301,42 +315,45 @@
   [name : String]
   [handle : i64]) : CompilerSymbols
   (match symbols
-    [(CompilerSymbols values types macros decls)
+    [(CompilerSymbols values types macros decls owner-names)
       (if (compiler-symbol-map-contains? values name)
         symbols
         (CompilerSymbols
           (compiler-symbol-map-bind values name handle)
           types
           macros
-          decls))]))
+          decls
+          owner-names))]))
 
 (define (compiler-symbols-add-type-alias
   [symbols : CompilerSymbols]
   [name : String]
   [handle : i64]) : CompilerSymbols
   (match symbols
-    [(CompilerSymbols values types macros decls)
+    [(CompilerSymbols values types macros decls owner-names)
       (if (compiler-symbol-map-contains? types name)
         symbols
         (CompilerSymbols
           values
           (compiler-symbol-map-bind types name handle)
           macros
-          decls))]))
+          decls
+          owner-names))]))
 
 (define (compiler-symbols-add-macro-alias
   [symbols : CompilerSymbols]
   [name : String]
   [handle : i64]) : CompilerSymbols
   (match symbols
-    [(CompilerSymbols values types macros decls)
+    [(CompilerSymbols values types macros decls owner-names)
       (if (compiler-symbol-map-contains? macros name)
         symbols
         (CompilerSymbols
           values
           types
           (compiler-symbol-map-bind macros name handle)
-          decls))]))
+          decls
+          owner-names))]))
 
 (define (compiler-registries-add-variant-alias
   [registries : CompilerRegistries]
@@ -355,7 +372,7 @@
   [name : String]
   [handle : i64]) : ResultCompilerSymbols
   (match symbols
-    [(CompilerSymbols values types macros decls)
+    [(CompilerSymbols values types macros decls owner-names)
       (if (compiler-symbol-map-contains? values name)
         (ErrCompilerSymbols (compiler-symbols-duplicate-value-message name))
         (if (compiler-symbol-map-contains? macros name)
@@ -366,14 +383,15 @@
               (compiler-symbol-map-bind values name handle)
               types
               macros
-              decls))))]))
+              decls
+              owner-names))))]))
 
 (define (compiler-symbols-add-variant-value
   [symbols : CompilerSymbols]
   [name : String]
   [handle : i64]) : ResultCompilerSymbols
   (match symbols
-    [(CompilerSymbols values types macros decls)
+    [(CompilerSymbols values types macros decls owner-names)
       (match (compiler-symbol-map-lookup values name)
         [(SomeI64 existing)
           (if (=
@@ -391,14 +409,15 @@
                 (compiler-symbol-map-bind values name handle)
                 types
                 macros
-                decls)))])]))
+                decls
+                owner-names)))])]))
 
 (define (compiler-symbols-add-type
   [symbols : CompilerSymbols]
   [name : String]
   [handle : i64]) : ResultCompilerSymbols
   (match symbols
-    [(CompilerSymbols values types macros decls)
+    [(CompilerSymbols values types macros decls owner-names)
       (if (compiler-symbol-map-contains? types name)
         (ErrCompilerSymbols (compiler-symbols-duplicate-type-message name))
         (OkCompilerSymbols
@@ -406,14 +425,15 @@
             values
             (compiler-symbol-map-bind types name handle)
             macros
-            decls)))]))
+            decls
+            owner-names)))]))
 
 (define (compiler-symbols-add-macro
   [symbols : CompilerSymbols]
   [name : String]
   [handle : i64]) : ResultCompilerSymbols
   (match symbols
-    [(CompilerSymbols values types macros decls)
+    [(CompilerSymbols values types macros decls owner-names)
       (if (compiler-symbol-map-contains? macros name)
         (ErrCompilerSymbols (compiler-symbols-duplicate-macro-message name))
         (if (compiler-symbol-map-contains? values name)
@@ -424,7 +444,8 @@
               values
               types
               (compiler-symbol-map-bind macros name handle)
-              decls))))]))
+              decls
+              owner-names))))]))
 
 (define (compiler-symbols-add-value-in-module
   [symbols : CompilerSymbols]
@@ -1310,11 +1331,40 @@
         inner)]
     [_ decl]))
 
+(define (compiler-symbol-owner-name-for-decl
+  [decl : AstDecl]
+  [module : String]) : String
+  (match decl
+    [(AstDeclDefEnum name _) (compiler-symbol-module-key module name)]
+    [(AstDeclDefStruct name _ _ _) (compiler-symbol-module-key module name)]
+    [_ ""]))
+
 (define (compiler-symbols-index-decl!
   [symbols : CompilerSymbols]
   [decl : AstDecl]
-  [index : i64]) : unit
-  (array-set! (compiler-symbols-decls symbols) index (compiler-symbol-indexed-decl decl)))
+  [index : i64]
+  [module : String]) : unit
+  (let
+    [indexed : AstDecl (compiler-symbol-indexed-decl decl)]
+    (begin
+      (array-set! (compiler-symbols-decls symbols) index indexed)
+      (array-set!
+        (compiler-symbols-owner-names symbols)
+        index
+        (compiler-symbol-owner-name-for-decl indexed module)))))
+
+(define (compiler-symbols-owner-name-at-index
+  [symbols : CompilerSymbols]
+  [target : i64]) : CompilerMaybeString
+  (let
+    [owner-names : (Array String) (compiler-symbols-owner-names symbols)]
+    (if (or (< target 0) (>= target (array-length owner-names)))
+      (CompilerNoString)
+      (let
+        [owner-name : String (array-ref owner-names target)]
+        (if (> (string-length owner-name) 0)
+          (CompilerSomeString owner-name)
+          (CompilerNoString))))))
 
 (define (build-compiler-symbol-list-in-module
   [decls : AstDeclList]
@@ -1343,7 +1393,7 @@
             (build-compiler-symbol-list-in-module rest symbols index module)]
           [_
             (begin
-              (compiler-symbols-index-decl! symbols decl index)
+              (compiler-symbols-index-decl! symbols decl index module)
               (match (compiler-symbols-add-decl-in-module
                 symbols
                 module

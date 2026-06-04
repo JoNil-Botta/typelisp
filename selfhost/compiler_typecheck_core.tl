@@ -2086,11 +2086,19 @@
     [(OkTcString cached) (OkTcString cached)]
     [(ErrTcString _)
       (match ctx
-        [(TcContext program _ _ _)
-          (tc-nominal-owner-name-scan
-            program
-            handle
-            (compiler-symbol-handle-index handle))])]))
+        [(TcContext program symbols _ _)
+          (match (compiler-symbols-owner-name-at-index
+            symbols
+            (compiler-symbol-handle-index handle))
+            [(CompilerSomeString name)
+              (begin
+                (tc-nominal-owner-cache-store-if-safe! handle name)
+                (OkTcString name))]
+            [(CompilerNoString)
+              (tc-nominal-owner-name-scan
+                program
+                handle
+                (compiler-symbol-handle-index handle))])])]))
 
 (define (tc-resolve-type-name [ctx : TcContext] [name : String]) : AstType
   (match ctx
@@ -9129,15 +9137,20 @@
     [(ErrTcType _) (ErrTcType "typecheck: return requires enclosing function")]))
 
 (define (tc-variant-owner-name [ctx : TcContext] [handle : i64]) : ResultTcString
-  (match (tc-context-program ctx)
-    [(AstProgram decls-box)
-      (let
-        [decls : AstDeclList (box-get decls-box)]
-        (tc-variant-owner-name-list
-          decls
-          (compiler-registry-handle-owner-index handle)
-          0
-          ""))]))
+  (match (compiler-symbols-owner-name-at-index
+    (tc-context-symbols ctx)
+    (compiler-registry-handle-owner-index handle))
+    [(CompilerSomeString name) (OkTcString name)]
+    [(CompilerNoString)
+      (match (tc-context-program ctx)
+        [(AstProgram decls-box)
+          (let
+            [decls : AstDeclList (box-get decls-box)]
+            (tc-variant-owner-name-list
+              decls
+              (compiler-registry-handle-owner-index handle)
+              0
+              ""))])]))
 
 (define (tc-variant-owner-name-list
   [decls : AstDeclList]

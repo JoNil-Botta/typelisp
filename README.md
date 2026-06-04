@@ -145,7 +145,8 @@ Use `(return expr)` for function-local early exits, `(when cond body...)` /
 `(unless cond body...)` for unit-valued guards, and `(try expr)` for the
 Lisp-shaped propagation form over compatible concrete Result-like enums.
 
-The comptime implementation path is tracked by #893 and #902; v1 type
+The generated-declaration surface is specified in `SPEC.md`; implementation is
+tracked by #893 and downstream Option/Result families by #902. V1 type
 reflection from #913 is implemented in the selfhost CTFE path. Historical
 generic/type-constructor work in #483 is superseded by that chain.
 

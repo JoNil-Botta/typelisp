@@ -459,7 +459,108 @@ chain.
 Until that path is complete, write explicit monomorphic declarations such as
 `MaybeI64`, `ResultStringI64`, or domain-specific structs/enums.
 
-#### 3.7.1 Typed expression macros (v1 design)
+#### 3.7.1 Comptime-generated declarations (v1 design)
+
+V1 generated declarations are requested at the top level and evaluated entirely
+by the selfhost compiler. The source surface has two parts:
+
+```lisp test=ignore name=generated-declaration-request-syntax reason="generated declarations are tracked by #893"
+(define (option-decls [comptime T : type]) : DeclBundle
+  (decl-bundle
+    (defenum Option
+      (None)
+      (Some T))
+    (define (option-some [value : T]) : Option
+      (Some value))))
+
+(comptime-decl (option-decls (type String)))
+```
+
+- A generator is an ordinary `define`d function whose parameters are all
+  `comptime` parameters and whose return type is the compiler-owned
+  compile-time-only type `DeclBundle`.
+- `DeclBundle` and `Decl` have no runtime representation. They may be produced
+  only during generated declaration evaluation and may be consumed only by a
+  top-level `comptime-decl` request.
+- `(decl-bundle decl-template ...)` is a compiler form, not a runtime variadic
+  function. Each `decl-template` is a top-level declaration template.
+- V1 declaration templates may be `defstruct`, `defenum`, or `define`.
+  Templates may refer to generator comptime parameters in type positions,
+  constant expression positions, and ordinary function bodies after the same
+  substitution rules used by comptime function specialization.
+- The declaration names written in a bundle are logical item names. The compiler
+  derives actual display identifiers from the generated declaration identity;
+  references among templates in the same bundle are resolved through the
+  logical names before display-name mangling.
+
+`(comptime-decl generator-call)` is a top-level declaration request. The request
+payload must be a direct call to a generator function after ordinary qualified
+lookup; v1 rejects indirect calls, higher-order generator values, local
+bindings, and expression forms that are not direct generator calls. All
+arguments are evaluated by CTFE. Type arguments use `(type T)` values; scalar,
+boolean, character, string, and unit comptime arguments use the same accepted
+value set and runtime-substitution restrictions as comptime function
+specialization.
+
+The older literal spelling:
+
+```lisp test=ignore name=literal-comptime-decl-compat reason="literal compatibility surface exists before #893"
+(comptime-decl (defstruct Point (x i64) (y i64)))
+```
+
+is a bootstrap compatibility form for hand-written top-level templates. It is
+not the reusable generator API: it has no generator parameters, no cross-module
+request identity, and no generated bundle reuse beyond ordinary duplicate
+declaration checks. V1 compiler work should keep or migrate it without treating
+it as a separate abstraction mechanism.
+
+Generated declaration identity is compiler-owned and stable. The key is built
+from tagged, length-prefixed ASCII components:
+
+- The canonical module identity of the resolved generator function.
+- The generator identity: its unqualified value name within that module.
+- The logical item name inside the returned bundle.
+- The generator argument count and argument keys in source order.
+
+Type argument keys are exactly `type-key` results from section 5.17. Other
+comptime argument keys use the specialization key rules for integers, booleans,
+characters, strings, and unit values. Display identifiers are deterministic
+ASCII names derived from the identity key, for example `Option_String`,
+`Some_String`, or a longer escaped form when needed. Display-name mangling is
+compiler-owned, but it must be stable across compiler runs, readable in
+diagnostics/docs, and collision-free within ordinary value/type namespaces.
+
+Repeated requests use the generated declaration key:
+
+- If the same key has already produced an equivalent declaration, the compiler
+  reuses the existing declaration and the request is idempotent.
+- Equivalent means the same declaration kind, logical item name, public
+  namespace effects, field/variant/function signature, and substituted body.
+- If the same key would produce a different declaration, compilation fails with
+  an incompatible generated declaration diagnostic.
+- If two different keys would produce the same display identifier in the same
+  namespace, compilation fails with a generated name collision diagnostic rather
+  than silently choosing one.
+
+Generated declarations participate in the same namespaces and compiler phases
+as ordinary declarations:
+
+- A generated `defstruct` introduces a nominal type, constructor, and fields.
+- A generated `defenum` introduces a nominal type and variant constructors.
+- A generated `define` introduces a value or function.
+- Symbol collection, typechecking, lowering, documentation, and diagnostics
+  treat generated declarations as declarations with a generated origin.
+- Diagnostics should include the request site and the generated declaration
+  template site when both are available; duplicate/reuse diagnostics should also
+  include the generated declaration key or a stable display name derived from it.
+
+Generated declarations are selfhost-only product surface. V1 does not add
+runtime generics, source-level generic type syntax, traits, interfaces, `impl`
+blocks, vtables, trait objects, method tables, type-erased dispatch, generated
+`extern` declarations, generated imports/modules/exports, or Rust compiler
+front-end behavior.
+
+#### 3.7.2 Typed expression macros (v1 design)
 
 V1 macros are compile-time expression transformers. They are declared with
 `defmacro`, checked through a function-type-like `macro` type, and expanded

@@ -543,7 +543,7 @@
     [(ErrCompilerBackend _) false]))
 
 ;; Backend-owned replacement for representative aggregate storage emit-shape
-;; checks from the Rust backend suite (#1354/#1413).
+;; checks from the legacy backend suite (#1354/#1413).
 (define (compiler-backend-aggregate-return-source) : String
   "(defenum Shape (Circle i64) (Square i64) (Nothing))
 (defstruct Point (x i64) (y i64))

@@ -2,7 +2,7 @@
 
 > **Version:** 0.1.0-dev  
 > **Target:** x86_64 Linux (System V AMD64 ABI)  
-> **Constraint:** Rust `std` only — zero third-party dependencies.
+> **Constraint:** self-hosted TypeLisp implementation; zero third-party dependencies.
 
 This document specifies the TypeLisp language as implemented today. It is the ground truth for what compiles, what types mean, and what the backend promises.
 
@@ -114,7 +114,7 @@ the next newline. Double semicolons are just two semicolon characters; the first
 one starts the comment.
 
 The self-hosted documentation extractor recognizes public documentation
-comments before the main Rust lexer discards comments:
+comments before the main lexer discards comments:
 
 - `;#` starts a module/file documentation line.
 - `;:` starts an outer item documentation line attached to the next supported
@@ -978,9 +978,9 @@ Example:
 
 ### 4.4 `(import "path.tl")` — module import
 
-Imports another TypeLisp file. The current Rust stage0 loader still behaves as
-a legacy whole-program concatenation model: all top-level definitions from the
-imported file become available in one flat namespace. The selfhost module model
+Imports another TypeLisp file. The current loader still preserves the legacy
+whole-program concatenation model: all top-level definitions from the imported
+file become available in one flat namespace. The selfhost module model
 specified below replaces that with canonical module identities, explicit
 exports, and qualified lookup.
 
@@ -1528,9 +1528,9 @@ order, using field-style `(:cleanup ...)` and `(:owned)` payload metadata.
 
 #### 4.6.2 Move-only aggregate handle semantics (specified, pending implementation)
 
-The v1 source semantics make aggregate handles move-only. The current Rust
-compiler may still accept copies until the selfhost move checker lands, but
-new source and selfhost implementation work must follow this contract.
+The v1 source semantics make aggregate handles move-only. Some compatibility
+paths may still accept copies until the selfhost move checker lands, but new
+source and selfhost implementation work must follow this contract.
 
 **Copyable v1 types.** A use of a copyable value duplicates the value and leaves
 the source initialized. Copyable types are:
@@ -2926,9 +2926,9 @@ pattern as the Windows `try-create-temp-dir` behavior. No operation panics for a
 unsupported platform; callers always receive an `IoError`.
 
 **Scope.** The #1056 open/close subset, #1057 streaming reads, and #1058
-streaming writes/flush are implemented for the stdlib API and Rust stage0
-backend, with Windows returning structured `IoUnsupported` results until native
-handle support lands.
+streaming writes/flush are implemented for the stdlib API and selfhost backend,
+with Windows returning structured `IoUnsupported` results until native handle
+support lands.
 
 ---
 
@@ -2940,7 +2940,7 @@ rules (`(& place)` / `(& arena place)`), including the borrowed `str` source
 contract in section 3.11, but the source-level borrow checker is not
 implemented yet. There is no implicit destructor, `drop`, `free`, or
 garbage-collector model. Section 4.6.2 specifies move-only aggregate handle
-ownership for v1 source semantics, but the current Rust compiler may still
+ownership for v1 source semantics, but some compatibility paths may still
 accept aggregate copies until the selfhost move checker lands. The
 implementation uses pointer-sized handles for several aggregate values, but
 those handles are not checked references in the source language. Full
@@ -3215,7 +3215,7 @@ not the future safe reference/borrow model (#182), not a replacement for
   references including borrowed `str`, raw pointers, boxes, compile-time-only
   values, and named aggregate shapes containing non-cloneable fields.
 
-```lisp test=ignore name=dynamic-array-aliasing reason="current Rust-stage aliasing behavior; future move checker rejects copied array handles"
+```lisp test=ignore name=dynamic-array-aliasing reason="current compatibility aliasing behavior; future move checker rejects copied array handles"
 (define (main) : i64
   (let
     [a : (Array i64) (make-array i64 1)]
@@ -3435,7 +3435,7 @@ generic traits or implicit conversions.
   family is incompatible, or when manual matches over these enums are
   non-exhaustive.
 
-```lisp test=ignore name=result-try-success reason="selfhost-only try propagation; Rust stage0 does not parse try"
+```lisp test=ignore name=result-try-success reason="try propagation awaits public test-mode coverage"
 (defenum ResultI64
   (OkI64 i64)
   (ErrI64 String))
@@ -3450,7 +3450,7 @@ generic traits or implicit conversions.
     (OkI64 (+ value 1))))
 ```
 
-```lisp test=ignore name=result-try-incompatible-error reason="selfhost-only negative propagation example; should be an expect-error once Rust stage0 supports try"
+```lisp test=ignore name=result-try-incompatible-error reason="negative propagation example; should be an expect-error once SPEC examples support this form"
 (defenum ResultI64
   (OkI64 i64)
   (ErrI64 String))

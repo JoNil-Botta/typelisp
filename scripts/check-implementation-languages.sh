@@ -2,8 +2,9 @@
 set -eu
 
 # Baseline gate for the implementation language policy in CONTRIBUTING.md.
-# Existing Rust stage0 files are listed in implementation-language-baseline.txt
-# until #795 removes them. New non-allowed implementation-language files fail.
+# The Rust stage0 was removed in #795. The baseline should stay empty except
+# for documented temporary implementation-language exceptions; new non-allowed
+# implementation-language files fail.
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"

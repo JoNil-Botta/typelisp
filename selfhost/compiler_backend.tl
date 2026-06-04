@@ -8496,7 +8496,7 @@
         [raw-assignments : CompilerRegAssignmentList
           (compiler-reg-plan-assignments reg-plan)]
         [assignments : CompilerRegAssignmentList raw-assignments]
-        [types : CompilerRegVarTypeList (compiler-reg-function-var-types func)]
+        [types : CompilerRegVarTypeList (compiler-reg-plan-types reg-plan)]
         [global-types : CompilerBackendGlobalTypeList
           (compiler-backend-global-types globals)]
         [use-counts : (Array i64)

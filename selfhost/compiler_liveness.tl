@@ -862,10 +862,10 @@
   (let
     [blocks : (Array CompilerLiveBlock) (struct-get graph blocks)]
     [count : i64 (array-length blocks)]
-    [index : i64 0]
+    [index : i64 (- count 1)]
     [changed : bool false]
     (begin
-      (while (< index count)
+      (while (>= index 0)
         (let
           [block : CompilerLiveBlock (array-ref blocks index)]
           [updated : CompilerLiveBlock
@@ -876,7 +876,7 @@
               (begin
                 (array-set! blocks index updated)
                 (set! changed true)))
-            (set! index (+ index 1)))))
+            (set! index (- index 1)))))
       changed)))
 
 (define (compiler-live-graph-to-list-from

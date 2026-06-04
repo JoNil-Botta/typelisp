@@ -68,7 +68,8 @@
   (CompilerRegPlan
     CompilerRegAssignmentList
     CompilerLiveI64Set
-    CompilerRegIntervalList))
+    CompilerRegIntervalList
+    CompilerRegVarTypeList))
 
 (defenum CompilerRegAssignState
   (CompilerRegAssignState CompilerRegActiveList CompilerRegAssignmentList))
@@ -1606,6 +1607,7 @@
       (compiler-reg-live-intervals func liveness)]
     [ineligible : CompilerLiveI64Set
       (compiler-reg-ineligible-vars func liveness types)]
+    [moves : CompilerRegMoveList (compiler-reg-function-moves func)]
     [vector-mask-defs : CompilerLiveUseDef
       (compiler-reg-function-vector-mask-defs func)]
     (match (compiler-reg-assign-candidates
@@ -1613,7 +1615,7 @@
       (compiler-reg-sysv-integer-registers)
       CompilerRegActiveNil
       CompilerRegAssignmentNil
-      (compiler-reg-function-moves func)
+      moves
       intervals
       types)
       [(CompilerRegAssignState _ integer-assignments)
@@ -1622,7 +1624,7 @@
           (compiler-reg-xmm-registers)
           CompilerRegActiveNil
           integer-assignments
-          (compiler-reg-function-moves func)
+          moves
           intervals
           types)
           [(CompilerRegAssignState _ scalar-assignments)
@@ -1646,19 +1648,27 @@
                       CompilerRegActiveNil
                       vector-assignments)
                       [(CompilerRegAssignState _ assignments)
-                        (CompilerRegPlan assignments ineligible intervals)])])])])])))
+                        (CompilerRegPlan
+                          assignments
+                          ineligible
+                          intervals
+                          types)])])])])])))
 
 (define (compiler-reg-plan-assignments [plan : CompilerRegPlan]) : CompilerRegAssignmentList
   (match plan
-    [(CompilerRegPlan assignments _ _) assignments]))
+    [(CompilerRegPlan assignments _ _ _) assignments]))
 
 (define (compiler-reg-plan-ineligible [plan : CompilerRegPlan]) : CompilerLiveI64Set
   (match plan
-    [(CompilerRegPlan _ ineligible _) ineligible]))
+    [(CompilerRegPlan _ ineligible _ _) ineligible]))
 
 (define (compiler-reg-plan-intervals [plan : CompilerRegPlan]) : CompilerRegIntervalList
   (match plan
-    [(CompilerRegPlan _ _ intervals) intervals]))
+    [(CompilerRegPlan _ _ intervals _) intervals]))
+
+(define (compiler-reg-plan-types [plan : CompilerRegPlan]) : CompilerRegVarTypeList
+  (match plan
+    [(CompilerRegPlan _ _ _ types) types]))
 
 (define (compiler-reg-location-register?
   [maybe-location : CompilerRegMaybeLocation]
@@ -2167,7 +2177,7 @@
 
 (define (compiler-reg-reuse-ok?) : bool
   (match (compiler-reg-plan-function (compiler-reg-reuse-function))
-    [(CompilerRegPlan assignments _ _)
+    [(CompilerRegPlan assignments _ _ _)
       (and
         (= (compiler-reg-assignment-count assignments) 2)
         (and
@@ -2180,7 +2190,7 @@
 
 (define (compiler-reg-f64-reuse-ok?) : bool
   (match (compiler-reg-plan-function (compiler-reg-f64-reuse-function))
-    [(CompilerRegPlan assignments _ _)
+    [(CompilerRegPlan assignments _ _ _)
       (and
         (= (compiler-reg-assignment-count assignments) 2)
         (and
@@ -2193,7 +2203,7 @@
 
 (define (compiler-reg-overlap-spill-ok?) : bool
   (match (compiler-reg-plan-function (compiler-reg-overlap-function))
-    [(CompilerRegPlan assignments _ _)
+    [(CompilerRegPlan assignments _ _ _)
       ;; Seven simultaneously live values against a four-register callee-saved
       ;; pool: the first four take %r12..%r15 and the remaining three spill.
       (and
@@ -2214,7 +2224,7 @@
 
 (define (compiler-reg-f64-overlap-spill-ok?) : bool
   (match (compiler-reg-plan-function (compiler-reg-f64-overlap-function))
-    [(CompilerRegPlan assignments _ _)
+    [(CompilerRegPlan assignments _ _ _)
       (and
         (= (compiler-reg-assignment-count assignments) 5)
         (and
@@ -2241,7 +2251,7 @@
 
 (define (compiler-reg-call-live-ok?) : bool
   (match (compiler-reg-plan-function (compiler-reg-call-live-function))
-    [(CompilerRegPlan assignments ineligible _)
+    [(CompilerRegPlan assignments ineligible _ _)
       (and
         (compiler-live-set-contains? ineligible 0)
         (and
@@ -2254,7 +2264,7 @@
 
 (define (compiler-reg-f64-call-live-ok?) : bool
   (match (compiler-reg-plan-function (compiler-reg-f64-call-live-function))
-    [(CompilerRegPlan assignments ineligible _)
+    [(CompilerRegPlan assignments ineligible _ _)
       (and
         (compiler-live-set-contains? ineligible 0)
         (and
@@ -2269,7 +2279,7 @@
 
 (define (compiler-reg-call-arg-ok?) : bool
   (match (compiler-reg-plan-function (compiler-reg-call-arg-function))
-    [(CompilerRegPlan assignments ineligible _)
+    [(CompilerRegPlan assignments ineligible _ _)
       (and
         (compiler-live-set-contains? ineligible 0)
         (and
@@ -2284,7 +2294,7 @@
 
 (define (compiler-reg-f64-call-arg-ok?) : bool
   (match (compiler-reg-plan-function (compiler-reg-f64-call-arg-function))
-    [(CompilerRegPlan assignments ineligible _)
+    [(CompilerRegPlan assignments ineligible _ _)
       (and
         (compiler-live-set-contains? ineligible 0)
         (and
@@ -2295,7 +2305,7 @@
 
 (define (compiler-reg-ineligible-ok?) : bool
   (match (compiler-reg-plan-function (compiler-reg-ineligible-function))
-    [(CompilerRegPlan assignments ineligible _)
+    [(CompilerRegPlan assignments ineligible _ _)
       (let
         [marked : bool
           (and
@@ -2353,18 +2363,18 @@
 
 (define (compiler-reg-coalesce-ok?) : bool
   (match (compiler-reg-plan-function (compiler-reg-move-chain-function))
-    [(CompilerRegPlan chain-assignments _ _)
+    [(CompilerRegPlan chain-assignments _ _ _)
       (match (compiler-reg-plan-function (compiler-reg-phi-join-function))
-        [(CompilerRegPlan phi-assignments _ _)
+        [(CompilerRegPlan phi-assignments _ _ _)
           (match (compiler-reg-plan-function
             (compiler-reg-loop-backedge-function))
-            [(CompilerRegPlan loop-assignments _ _)
+            [(CompilerRegPlan loop-assignments _ _ _)
               (match (compiler-reg-plan-function
                 (compiler-reg-interference-blocks-coalesce-function))
-                [(CompilerRegPlan blocked-assignments _ _)
+                [(CompilerRegPlan blocked-assignments _ _ _)
                   (match (compiler-reg-plan-function
                     (compiler-reg-spill-coalesce-function))
-                    [(CompilerRegPlan spill-assignments _ _)
+                    [(CompilerRegPlan spill-assignments _ _ _)
                       (and
                         (compiler-reg-same-location? chain-assignments 0 1)
                         (and
@@ -2388,9 +2398,9 @@
 
 (define (compiler-reg-vector-mask-homes-ok?) : bool
   (match (compiler-reg-plan-function (compiler-reg-vector-home-function))
-    [(CompilerRegPlan vector-assignments _ _)
+    [(CompilerRegPlan vector-assignments _ _ _)
       (match (compiler-reg-plan-function (compiler-reg-mask-home-function))
-        [(CompilerRegPlan mask-assignments _ _)
+        [(CompilerRegPlan mask-assignments _ _ _)
           (let
             [vector-ok : bool
               (and

@@ -770,7 +770,12 @@
               (arena-destroy parse-head))
             (ErrAstProgramDiagnostic escaped-diag))))]))
 
-(define (compiler-load-parse-source-diagnostic-escaping
+;; Direct-parse small files to avoid clone cost; large files use a scratch arena
+;; to keep cold self-build peak memory below the 500 MB target.
+(define (compiler-load-direct-parse-source-limit) : i64
+  100000)
+
+(define (compiler-load-parse-source-diagnostic-escaped
   [path : String]
   [source : String]
   [cfgs : SymI64Env]) : ResultAstProgramDiagnostic
@@ -785,19 +790,20 @@
         (arena-current)
         (parse-ast-source-diagnostic-with-cfg path source cfgs)))))
 
+(define (compiler-load-parse-source-diagnostic-escaping
+  [path : String]
+  [source : String]
+  [cfgs : SymI64Env]) : ResultAstProgramDiagnostic
+  (if (<= (string-length source) (compiler-load-direct-parse-source-limit))
+    (parse-ast-source-diagnostic-with-cfg path source cfgs)
+    (compiler-load-parse-source-diagnostic-escaped path source cfgs)))
+
 (define (compiler-load-parse-file-diagnostic-escaping
   [path : String]
   [cfgs : SymI64Env]) : ResultAstProgramDiagnostic
   (let
-    [enclosing : i64 (arena-current)]
-    [parse-arena : i64 (arena-make)]
-    (begin
-      (unsafe
-        (arena-set! parse-arena))
-      (compiler-load-parse-result-escape
-        enclosing
-        (arena-current)
-        (parse-ast-source-diagnostic-with-cfg path (read-file path) cfgs)))))
+    [source : String (read-file path)]
+    (compiler-load-parse-source-diagnostic-escaping path source cfgs)))
 
 (define (compiler-load-source-with-paths-and-roots-expect-cfg
   [path : String]

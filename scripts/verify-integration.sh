@@ -242,7 +242,7 @@ EOF
 # backend handled the parity-gap cases, but it has been removed, so these are
 # commented out in the manifest and listed here as documented skips until the
 # selfhost compiler closes the gap or the published stage0 carries the support:
-#   enum-payload pattern / spmd ....... #1657
+#   enum-payload pattern .............. #1657
 # Immutable-reference native smoke fixtures are covered by
 # verify-selfhost-native.sh until the published stage0 includes #1720.
 selfhost_deferred_integration_skips() {
@@ -252,7 +252,6 @@ ref_param_identity
 ref_return
 ref_tuple_return
 string_match
-spmd_reduce_scalar
 EOF
 }
 

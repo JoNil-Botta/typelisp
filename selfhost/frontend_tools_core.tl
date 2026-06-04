@@ -871,6 +871,11 @@
             (front-struct-cleanup-render cleanup)
             (front-cat3 ", fields: " (front-field-list-render fields) " }"))))]
     [(AstDeclImport spec) (front-import-render spec)]
+    [(AstDeclIncludeStr name path)
+      (front-cat3
+        "IncludeStr { name: \""
+        name
+        (front-cat3 "\", path: \"" path "\" }"))]
     [(AstDeclExport items)
       (front-cat3 "Export { items: " (front-export-item-list-render items) " }")]
     [(AstDeclTest name body _)

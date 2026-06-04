@@ -297,6 +297,8 @@
   (cond
     [(format-rules-node-symbol? head "import")
       (format-rules-inline-form-doc "import" rest)]
+    [(format-rules-node-symbol? head "include-str")
+      (format-rules-inline-form-doc "include-str" rest)]
     [(format-rules-node-symbol? head "extern")
       (format-rules-inline-form-doc "extern" rest)]
     [(format-rules-node-symbol? head "define") (format-rules-define-doc rest)]

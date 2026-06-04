@@ -101,7 +101,7 @@
   (ErrTcSpmdExprListInfo String))
 
 (defenum TcStructDecl
-  (TcStructDecl AstStructRepr AstFieldDefList))
+  (TcStructDecl AstStructRepr AstStructCleanup AstFieldDefList))
 
 (defenum ResultTcStructDecl
   (OkTcStructDecl TcStructDecl)
@@ -1313,6 +1313,8 @@
       (match decl
         [(AstDeclImport _)
           (tc-nominal-owner-name-list rest target index module)]
+        [(AstDeclIncludeStr _ _)
+          (tc-nominal-owner-name-list rest target index module)]
         [(AstDeclExport _)
           (tc-nominal-owner-name-list rest target index module)]
         [(AstDeclModule next-module)
@@ -1496,6 +1498,9 @@
           (match (tc-source-type-policy-ok ctx ty)
             [(OkTcUnit) (tc-source-field-list-policy-ok ctx rest)]
             [(ErrTcUnit message) (ErrTcUnit message)])])]))
+
+(define (tc-struct-cleanup-repr-c-message [struct-name : String]) : String
+  (tc-cat3 "typecheck: cleanup-owning struct " struct-name " cannot use repr c"))
 
 (define (tc-source-variant-list-policy-ok
   [ctx : TcContext]
@@ -1830,17 +1835,23 @@
             (compiler-symbol-module-key (tc-context-module ctx) name)
             variants)]
         [(ErrTcUnit message) (ErrTcUnit message)])]
-    [(AstDeclDefStruct name repr _ fields)
+    [(AstDeclDefStruct name repr cleanup fields)
       (match (tc-source-field-list-policy-ok ctx fields)
         [(OkTcUnit)
-          (if (ast-struct-repr-c? repr)
-            (match (tc-repr-c-struct-layout
-              ctx
-              (compiler-symbol-module-key (tc-context-module ctx) name))
-              [(OkTcReprCLayout _) OkTcUnit]
-              [(ErrTcReprCLayout message) (ErrTcUnit message)])
-            OkTcUnit)]
+          (if (and (ast-struct-repr-c? repr) (ast-struct-cleanup? cleanup))
+            (ErrTcUnit
+              (tc-struct-cleanup-repr-c-message
+                (compiler-symbol-module-key (tc-context-module ctx) name)))
+            (if (ast-struct-repr-c? repr)
+              (match (tc-repr-c-struct-layout
+                ctx
+                (compiler-symbol-module-key (tc-context-module ctx) name))
+                [(OkTcReprCLayout _) OkTcUnit]
+                [(ErrTcReprCLayout message) (ErrTcUnit message)])
+              OkTcUnit))]
         [(ErrTcUnit message) (ErrTcUnit message)])]
+    [(AstDeclIncludeStr _ _)
+      (ErrTcUnit "typecheck: include-str must be expanded by compiler loader")]
     [(AstDeclImport _) OkTcUnit]
     [(AstDeclExport _) OkTcUnit]
     [(AstDeclModule _) OkTcUnit]
@@ -2697,6 +2708,8 @@
             [_ (tc-build-top-env-list-in-module ctx rest env module)])]
         [(AstDeclImport _)
           (tc-build-top-env-list-in-module ctx rest env module)]
+        [(AstDeclIncludeStr _ _)
+          (tc-build-top-env-list-in-module ctx rest env module)]
         [(AstDeclExport _)
           (tc-build-top-env-list-in-module ctx rest env module)]
         [(AstDeclTest _ _ _)
@@ -2800,6 +2813,14 @@
             alias
             next-module)]
         [(AstDeclImport _)
+          (tc-bind-import-alias-module-list
+            ctx
+            rest
+            env
+            target-module
+            alias
+            module)]
+        [(AstDeclIncludeStr _ _)
           (tc-bind-import-alias-module-list
             ctx
             rest
@@ -5770,8 +5791,8 @@
               (compiler-symbol-handle-index handle))
               [(OkAstDecl decl)
                 (match decl
-                  [(AstDeclDefStruct _ repr _ fields)
-                    (OkTcStructDecl (TcStructDecl repr fields))]
+                  [(AstDeclDefStruct _ repr cleanup fields)
+                    (OkTcStructDecl (TcStructDecl repr cleanup fields))]
                   [_
                     (ErrTcStructDecl
                       "typecheck: struct symbol owner is not a struct")])]
@@ -5868,7 +5889,7 @@
             (match (tc-struct-decl ctx name)
               [(OkTcStructDecl decl)
                 (match decl
-                  [(TcStructDecl _ fields)
+                  [(TcStructDecl _ _ fields)
                     (tc-inline-aggregate-fields-finite-ok
                       ctx
                       fields
@@ -6047,7 +6068,7 @@
     (match (tc-struct-decl ctx struct-name)
       [(OkTcStructDecl decl)
         (match decl
-          [(TcStructDecl _ fields)
+          [(TcStructDecl _ _ fields)
             (match (tc-inline-aggregate-field-defs-layout
               ctx
               fields
@@ -6269,7 +6290,7 @@
       (match (tc-struct-decl ctx nested)
         [(OkTcStructDecl decl)
           (match decl
-            [(TcStructDecl repr _)
+            [(TcStructDecl repr _ _)
               (if (ast-struct-repr-c? repr)
                 (match (tc-repr-c-struct-layout-with-seen ctx nested seen)
                   [(OkTcReprCLayout layout)
@@ -6350,7 +6371,7 @@
     (match (tc-struct-decl ctx struct-name)
       [(OkTcStructDecl decl)
         (match decl
-          [(TcStructDecl repr fields)
+          [(TcStructDecl repr _ fields)
             (if (ast-struct-repr-c? repr)
               (tc-repr-c-fields-layout
                 ctx
@@ -6666,6 +6687,8 @@
     [(AstDeclCons decl rest)
       (match decl
         [(AstDeclImport _)
+          (tc-variant-owner-name-list rest target index module)]
+        [(AstDeclIncludeStr _ _)
           (tc-variant-owner-name-list rest target index module)]
         [(AstDeclExport _)
           (tc-variant-owner-name-list rest target index module)]
@@ -9399,6 +9422,170 @@
             (ErrMacroExpand (tc-diag-at-start message))])
         (OkMacroExpand program))]))
 
+(define (tc-cleanup-owning-struct-type? [ctx : TcContext] [ty : AstType]) : bool
+  (match (tc-type-strip-region (tc-resolve-type ctx ty))
+    [(AstTyStruct struct-name)
+      (match (tc-struct-decl ctx struct-name)
+        [(OkTcStructDecl decl)
+          (match decl
+            [(TcStructDecl _ cleanup _) (ast-struct-cleanup? cleanup)])]
+        [(ErrTcStructDecl _) false])]
+    [_ false]))
+
+(define (tc-struct-field-cleanup-outside-message
+  [struct-name : String]
+  [field-name : String]) : String
+  (tc-cat3
+    "typecheck: struct "
+    struct-name
+    (tc-cat3
+      " field "
+      field-name
+      " has cleanup metadata but struct is not cleanup-owning")))
+
+(define (tc-struct-field-cleanup-owning-without-owned-message
+  [struct-name : String]
+  [field-name : String]
+  [ty : AstType]) : String
+  (tc-cat3
+    "typecheck: struct "
+    struct-name
+    (tc-cat3
+      " field "
+      field-name
+      (tc-cat3
+        " stores cleanup-owning type "
+        (tc-type-render ty)
+        " without :owned"))))
+
+(define (tc-struct-field-owned-non-cleanup-message
+  [struct-name : String]
+  [field-name : String]
+  [ty : AstType]) : String
+  (tc-cat3
+    "typecheck: struct "
+    struct-name
+    (tc-cat3
+      " field "
+      field-name
+      (tc-cat3
+        " uses :owned but type "
+        (tc-type-render ty)
+        " is not cleanup-owning"))))
+
+(define (tc-struct-field-cleanup-fn-mismatch-message
+  [struct-name : String]
+  [field-name : String]
+  [cleanup-name : String]) : String
+  (tc-cat3
+    "typecheck: struct "
+    struct-name
+    (tc-cat3
+      " field "
+      field-name
+      (tc-cat3 " cleanup function " cleanup-name " type mismatch"))))
+
+(define (tc-check-struct-field-cleanup-fn
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [struct-name : String]
+  [field-name : String]
+  [cleanup-name : String]
+  [field-ty : AstType]) : ResultTcUnit
+  (match (tc-lookup env cleanup-name)
+    [(OkTcType cleanup-ty)
+      (tc-expect
+        cleanup-ty
+        (tc-fn1 (tc-type-without-regions field-ty) (AstTyUnit))
+        (tc-struct-field-cleanup-fn-mismatch-message
+          struct-name
+          field-name
+          cleanup-name))]
+    [(ErrTcType message) (ErrTcUnit message)]))
+
+(define (tc-check-cleanup-struct-field
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [struct-name : String]
+  [struct-cleanup : AstStructCleanup]
+  [field : AstFieldDef]) : ResultTcUnit
+  (match field
+    [(AstFieldDef field-name ty field-cleanup)
+      (let
+        [resolved-ty : AstType (tc-type-strip-region (tc-resolve-type ctx ty))]
+        [field-cleanup-owning : bool
+          (tc-cleanup-owning-struct-type? ctx resolved-ty)]
+        (if (not (ast-struct-cleanup? struct-cleanup))
+          (if (ast-field-cleanup? field-cleanup)
+            (ErrTcUnit
+              (tc-struct-field-cleanup-outside-message struct-name field-name))
+            (if field-cleanup-owning
+              (ErrTcUnit
+                (tc-struct-field-cleanup-owning-without-owned-message
+                  struct-name
+                  field-name
+                  resolved-ty))
+              OkTcUnit))
+          (match field-cleanup
+            [(AstFieldOwnedCleanup)
+              (if field-cleanup-owning
+                OkTcUnit
+                (ErrTcUnit
+                  (tc-struct-field-owned-non-cleanup-message
+                    struct-name
+                    field-name
+                    resolved-ty)))]
+            [(AstFieldCleanupFn cleanup-name)
+              (if field-cleanup-owning
+                (ErrTcUnit
+                  (tc-struct-field-cleanup-owning-without-owned-message
+                    struct-name
+                    field-name
+                    resolved-ty))
+                (tc-check-struct-field-cleanup-fn
+                  ctx
+                  env
+                  struct-name
+                  field-name
+                  cleanup-name
+                  resolved-ty))]
+            [(AstFieldNoCleanup)
+              (if field-cleanup-owning
+                (ErrTcUnit
+                  (tc-struct-field-cleanup-owning-without-owned-message
+                    struct-name
+                    field-name
+                    resolved-ty))
+                OkTcUnit)])))]))
+
+(define (tc-check-cleanup-struct-fields
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [struct-name : String]
+  [cleanup : AstStructCleanup]
+  [fields : AstFieldDefList]) : ResultTcUnit
+  (match fields
+    [(AstFieldDefNil) OkTcUnit]
+    [(AstFieldDefCons field rest)
+      (match (tc-check-cleanup-struct-field ctx env struct-name cleanup field)
+        [(OkTcUnit)
+          (tc-check-cleanup-struct-fields ctx env struct-name cleanup rest)]
+        [(ErrTcUnit message) (ErrTcUnit message)])]))
+
+(define (tc-check-cleanup-struct-decl
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [name : String]
+  [repr : AstStructRepr]
+  [cleanup : AstStructCleanup]
+  [fields : AstFieldDefList]) : ResultTcUnit
+  (let
+    [struct-name : String
+      (compiler-symbol-module-key (tc-context-module ctx) name)]
+    (if (and (ast-struct-repr-c? repr) (ast-struct-cleanup? cleanup))
+      (ErrTcUnit (tc-struct-cleanup-repr-c-message struct-name))
+      (tc-check-cleanup-struct-fields ctx env struct-name cleanup fields))))
+
 (define (tc-check-decl [ctx : TcContext] [top-env : TcTypeEnv] [decl : AstDecl]) : ResultTcUnit
   (match decl
     [(AstDeclDef _ maybe-ty expr)
@@ -9455,6 +9642,9 @@
     [(AstDeclDefMacro _ params ret body)
       (tc-check-defmacro ctx top-env params ret body)]
     [(AstDeclExtern _ metadata ty) (tc-check-extern-decl ctx metadata ty)]
+    [(AstDeclDefStruct name repr cleanup fields)
+      (tc-check-cleanup-struct-decl ctx top-env name repr cleanup fields)]
+    [(AstDeclComptimeDecl template) (tc-check-decl ctx top-env template)]
     [(AstDeclUnsafe inner) (tc-check-decl ctx top-env inner)]
     [_ OkTcUnit]))
 

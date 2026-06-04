@@ -652,6 +652,9 @@
 (define (compiler-parse-tag-decl-export) : i64
   409)
 
+(define (compiler-parse-tag-decl-include-str) : i64
+  410)
+
 (define (compiler-parse-dispatch-binops [e : SymI64Env]) : SymI64Env
   (let
     [e1 : SymI64Env (sym-i64-bind e "+" (compiler-parse-tag-bin-add))]
@@ -866,7 +869,9 @@
     [e8 : SymI64Env (sym-i64-bind e7 "test" (compiler-parse-tag-decl-test))]
     [e9 : SymI64Env
       (sym-i64-bind e8 "defmacro" (compiler-parse-tag-decl-defmacro))]
-    (sym-i64-bind e9 "export" (compiler-parse-tag-decl-export))))
+    [e10 : SymI64Env
+      (sym-i64-bind e9 "export" (compiler-parse-tag-decl-export))]
+    (sym-i64-bind e10 "include-str" (compiler-parse-tag-decl-include-str))))
 
 (define (compiler-parse-dispatch-env) : SymI64Env
   (compiler-parse-dispatch-decls
@@ -2953,6 +2958,28 @@
     [(SpSCons (SpSStr path _) tail _) (parse-ast-import-tail path tail)]
     [_ (ErrAstDecl "parse: malformed import")]))
 
+(define (parse-ast-include-str [rest : SpannedSexpr]) : ResultAstDecl
+  (match rest
+    [(SpSNil _) (ErrAstDecl "parse: include-str expects name and string path")]
+    [(SpSCons name-node tail _)
+      (match name-node
+        [(SpSSym name _)
+          (match tail
+            [(SpSCons path-node after-path _)
+              (match path-node
+                [(SpSStr path _)
+                  (match after-path
+                    [(SpSNil _) (OkAstDecl (AstDeclIncludeStr name path))]
+                    [_
+                      (ErrAstDecl
+                        "parse: include-str expects exactly two operands")])]
+                [_ (ErrAstDecl "parse: include-str path must be a string")])]
+            [(SpSNil _)
+              (ErrAstDecl "parse: include-str expects name and string path")]
+            [_ (ErrAstDecl "parse: include-str expects exactly two operands")])]
+        [_ (ErrAstDecl "parse: include-str name must be a symbol")])]
+    [_ (ErrAstDecl "parse: malformed include-str")]))
+
 (define (parse-ast-export-item [item : SpannedSexpr]) : ResultAstExportItem
   (match item
     [(SpSCons (SpSSym kind _) rest _)
@@ -3087,6 +3114,8 @@
           [(= tag (compiler-parse-tag-decl-defmacro))
             (parse-ast-defmacro dispatch rest)]
           [(= tag (compiler-parse-tag-decl-import)) (parse-ast-import rest)]
+          [(= tag (compiler-parse-tag-decl-include-str))
+            (parse-ast-include-str rest)]
           [(= tag (compiler-parse-tag-decl-module)) (parse-ast-module rest)]
           [(= tag (compiler-parse-tag-decl-export)) (parse-ast-export rest)]
           [(= tag (compiler-parse-tag-decl-comptime-decl))
@@ -3281,6 +3310,12 @@
       (string-eq path "stdlib/test.tl")]
     [_ false]))
 
+(define (ast-first-include-str-ok? [decls : AstDeclList]) : bool
+  (match decls
+    [(AstDeclCons (AstDeclIncludeStr name path) _)
+      (and (string-eq name "payload") (string-eq path "data.txt"))]
+    [_ false]))
+
 (define (compiler-parse-module-decl-ok?) : bool
   (match (parse-ast-source "(module std.io)")
     [(OkAstProgram (AstProgram decls))
@@ -3306,6 +3341,32 @@
             (and (string-eq module-name "std.io") (string-eq alias "io")))]
         [_ false])]
     [(ErrAstProgram _) false]))
+
+(define (compiler-parse-include-str-ok?) : bool
+  (match (parse-ast-source "(include-str payload \"data.txt\")")
+    [(OkAstProgram (AstProgram decls)) (ast-first-include-str-ok? decls)]
+    [(ErrAstProgram _) false]))
+
+(define (compiler-parse-include-str-errors-ok?) : bool
+  (and
+    (compiler-parse-error-ok?
+      "(include-str)"
+      "parse: include-str expects name and string path")
+    (and
+      (compiler-parse-error-ok?
+        "(include-str \"name\" \"data.txt\")"
+        "parse: include-str name must be a symbol")
+      (and
+        (compiler-parse-error-ok?
+          "(include-str payload data.txt)"
+          "parse: include-str path must be a string")
+        (and
+          (compiler-parse-error-ok?
+            "(include-str payload \"data.txt\" extra)"
+            "parse: include-str expects exactly two operands")
+          (compiler-parse-error-ok?
+            "(include-str payload)"
+            "parse: include-str expects name and string path"))))))
 
 (define (compiler-parse-export-decl-ok?) : bool
   (match (parse-ast-source
@@ -4440,28 +4501,32 @@
             (and
               (compiler-parse-ok? "(import \"stdlib/io.tl\")")
               (and
-                (compiler-parse-error-ok?
-                  "(define answer : i64)"
-                  "parse: malformed value definition")
+                (compiler-parse-include-str-ok?)
                 (and
-                  (compiler-parse-error-ok?
-                    "(define (main) : i64)"
-                    "parse: malformed function definition")
+                  (compiler-parse-include-str-errors-ok?)
                   (and
                     (compiler-parse-error-ok?
-                      "(extern puts)"
-                      "parse: malformed extern")
+                      "(define answer : i64)"
+                      "parse: malformed value definition")
                     (and
                       (compiler-parse-error-ok?
-                        "(defenum)"
-                        "parse: malformed defenum")
+                        "(define (main) : i64)"
+                        "parse: malformed function definition")
                       (and
                         (compiler-parse-error-ok?
-                          "(defstruct)"
-                          "parse: malformed defstruct")
-                        (compiler-parse-error-ok?
-                          "(import)"
-                          "parse: malformed import")))))))))))))
+                          "(extern puts)"
+                          "parse: malformed extern")
+                        (and
+                          (compiler-parse-error-ok?
+                            "(defenum)"
+                            "parse: malformed defenum")
+                          (and
+                            (compiler-parse-error-ok?
+                              "(defstruct)"
+                              "parse: malformed defstruct")
+                            (compiler-parse-error-ok?
+                              "(import)"
+                              "parse: malformed import")))))))))))))))
 
 ;; enum/struct expression coverage (#1073): defenum empty rejection,
 ;; defstruct mixed field types, empty struct rejection, struct-get, and

@@ -318,6 +318,14 @@
               path-rev
               tests-rev
               test-count)]
+          [(AstDeclIncludeStr _ _)
+            (tltest-collect
+              rest
+              rest-paths
+              runtime-rev
+              path-rev
+              tests-rev
+              test-count)]
           [_
             (if (tltest-main-decl? decl)
               (tltest-collect

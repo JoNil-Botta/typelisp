@@ -367,7 +367,7 @@
       (match param
         [(IrParam _ ty id)
           (compiler-reg-param-types
-            rest
+            (box-get rest)
             (compiler-reg-var-type-insert types id ty))])]))
 
 (define (compiler-reg-instr-def-type
@@ -402,7 +402,7 @@
     [(IrInstrNil) types]
     [(IrInstrCons instr rest)
       (compiler-reg-instr-list-types
-        rest
+        (box-get rest)
         (compiler-reg-instr-def-type types instr))]))
 
 (define (compiler-reg-block-list-types
@@ -414,7 +414,7 @@
       (match block
         [(IrBlock _ instrs)
           (compiler-reg-block-list-types
-            rest
+            (box-get rest)
             (compiler-reg-instr-list-types instrs types))])]))
 
 (define (compiler-reg-function-var-types [func : CompilerIrFunction]) : CompilerRegVarTypeList
@@ -456,7 +456,7 @@
     [(IrPhiInputCons value _ rest)
       (let
         [tail : CompilerRegMoveList
-          (compiler-reg-phi-input-moves dst rest moves)]
+          (compiler-reg-phi-input-moves dst (box-get rest) moves)]
         (match value
           [(IrValueVar src) (compiler-reg-move-list-add tail src dst)]
           [_ tail]))]))
@@ -480,7 +480,7 @@
     [(IrInstrCons instr rest)
       (compiler-reg-instr-moves
         instr
-        (compiler-reg-instr-list-moves rest moves))]))
+        (compiler-reg-instr-list-moves (box-get rest) moves))]))
 
 (define (compiler-reg-block-list-moves
   [blocks : CompilerIrBlockList]
@@ -491,7 +491,7 @@
       (match block
         [(IrBlock _ instrs)
           (compiler-reg-block-list-moves
-            rest
+            (box-get rest)
             (compiler-reg-instr-list-moves instrs moves))])]))
 
 (define (compiler-reg-function-moves [func : CompilerIrFunction]) : CompilerRegMoveList
@@ -596,7 +596,7 @@
           (begin
             (compiler-reg-extend-instr starts ends live-after point instr)
             (compiler-reg-live-intervals-instrs
-              rest
+              (box-get rest)
               rest-after
               (+ point 2)
               starts
@@ -610,7 +610,7 @@
               point
               instr)
             (compiler-reg-live-intervals-instrs
-              rest
+              (box-get rest)
               CompilerLiveInstrSetNil
               (+ point 2)
               starts
@@ -636,7 +636,7 @@
                   (compiler-live-block-instr-after live-block)]
                 [(CompilerLiveNoBlock) CompilerLiveInstrSetNil])]
             (compiler-reg-live-intervals-blocks
-              rest
+              (box-get rest)
               liveness
               (compiler-reg-live-intervals-instrs
                 instrs
@@ -706,7 +706,7 @@
       (match param
         [(IrParam _ _ var)
           (compiler-reg-ineligible-params
-            rest
+            (box-get rest)
             (compiler-live-set-insert set var))])]))
 
 (define (compiler-reg-ineligible-instr
@@ -729,7 +729,7 @@
     [(IrInstrNil) set]
     [(IrInstrCons instr rest)
       (compiler-reg-ineligible-instrs
-        rest
+        (box-get rest)
         (compiler-reg-ineligible-instr instr set))]))
 
 (define (compiler-reg-ineligible-memory
@@ -741,7 +741,7 @@
       (match block
         [(IrBlock _ instrs)
           (compiler-reg-ineligible-memory
-            rest
+            (box-get rest)
             (compiler-reg-ineligible-instrs instrs set))])]))
 
 (define (compiler-reg-call-live-instrs
@@ -765,7 +765,12 @@
                 set
                 (compiler-live-after liveness label index))]
             [_ set])]
-        (compiler-reg-call-live-instrs rest liveness label (+ index 1) next-set))]))
+        (compiler-reg-call-live-instrs
+          (box-get rest)
+          liveness
+          label
+          (+ index 1)
+          next-set))]))
 
 (define (compiler-reg-call-live-blocks
   [blocks : CompilerIrBlockList]
@@ -777,7 +782,7 @@
       (match block
         [(IrBlock label instrs)
           (compiler-reg-call-live-blocks
-            rest
+            (box-get rest)
             liveness
             (compiler-reg-call-live-instrs instrs liveness label 0 set))])]))
 
@@ -788,12 +793,12 @@
     [(IrInstrNil) set]
     [(IrInstrCons instr rest)
       (compiler-reg-call-arg-vars-instrs
-        rest
+        (box-get rest)
         (match instr
           [(IrInstrCall _ _ args _)
-            (compiler-live-set-union set (compiler-live-value-list-vars args))]
+            (compiler-live-set-union set (compiler-live-call-args-vars args))]
           [(IrInstrTailCall _ args _)
-            (compiler-live-set-union set (compiler-live-value-list-vars args))]
+            (compiler-live-set-union set (compiler-live-call-args-vars args))]
           [_ set]))]))
 
 (define (compiler-reg-call-arg-vars-blocks
@@ -805,7 +810,7 @@
       (match block
         [(IrBlock _ instrs)
           (compiler-reg-call-arg-vars-blocks
-            rest
+            (box-get rest)
             (compiler-reg-call-arg-vars-instrs instrs set))])]))
 
 (define (compiler-reg-ineligible-vars
@@ -905,7 +910,7 @@
     [(IrInstrNil) (CompilerLiveUseDef vector-set mask-set)]
     [(IrInstrCons instr rest)
       (compiler-reg-vector-mask-defs-instrs
-        rest
+        (box-get rest)
         (compiler-reg-vector-defs-instr instr vector-set)
         (compiler-reg-mask-defs-instr instr mask-set))]))
 
@@ -923,7 +928,10 @@
             vector-set
             mask-set)
             [(CompilerLiveUseDef next-vector next-mask)
-              (compiler-reg-vector-mask-defs-blocks rest next-vector next-mask)])])]))
+              (compiler-reg-vector-mask-defs-blocks
+                (box-get rest)
+                next-vector
+                next-mask)])])]))
 
 (define (compiler-reg-function-vector-mask-defs [func : CompilerIrFunction]) : CompilerLiveUseDef
   (match func
@@ -1523,16 +1531,16 @@
     IrParamNil
     (AstTyUnit)
     2
-    (IrBlockCons
+    (compiler-ir-block-cons
       (IrBlock
         "entry"
-        (IrInstrCons
+        (compiler-ir-instr-cons
           (IrInstrMov 0 (IrValueI64 1) (compiler-reg-i64-ty))
-          (IrInstrCons
+          (compiler-ir-instr-cons
             (IrInstrStore "g0" (IrValueVar 0) (compiler-reg-i64-ty))
-            (IrInstrCons
+            (compiler-ir-instr-cons
               (IrInstrMov 1 (IrValueI64 2) (compiler-reg-i64-ty))
-              (IrInstrCons
+              (compiler-ir-instr-cons
                 (IrInstrReturn (IrSomeValue (IrValueVar 1)))
                 IrInstrNil)))))
       IrBlockNil)))
@@ -1543,16 +1551,16 @@
     IrParamNil
     (compiler-reg-f64-ty)
     2
-    (IrBlockCons
+    (compiler-ir-block-cons
       (IrBlock
         "entry"
-        (IrInstrCons
+        (compiler-ir-instr-cons
           (IrInstrMov 0 (IrValueF64 "1.5") (compiler-reg-f64-ty))
-          (IrInstrCons
+          (compiler-ir-instr-cons
             (IrInstrStore "g0" (IrValueVar 0) (compiler-reg-f64-ty))
-            (IrInstrCons
+            (compiler-ir-instr-cons
               (IrInstrMov 1 (IrValueF64 "2.5") (compiler-reg-f64-ty))
-              (IrInstrCons
+              (compiler-ir-instr-cons
                 (IrInstrReturn (IrSomeValue (IrValueVar 1)))
                 IrInstrNil)))))
       IrBlockNil)))
@@ -1563,56 +1571,56 @@
     IrParamNil
     (AstTyUnit)
     8
-    (IrBlockCons
+    (compiler-ir-block-cons
       (IrBlock
         "entry"
-        (IrInstrCons
+        (compiler-ir-instr-cons
           (IrInstrMov 0 (IrValueI64 0) (compiler-reg-i64-ty))
-          (IrInstrCons
+          (compiler-ir-instr-cons
             (IrInstrMov 1 (IrValueI64 1) (compiler-reg-i64-ty))
-            (IrInstrCons
+            (compiler-ir-instr-cons
               (IrInstrMov 2 (IrValueI64 2) (compiler-reg-i64-ty))
-              (IrInstrCons
+              (compiler-ir-instr-cons
                 (IrInstrMov 3 (IrValueI64 3) (compiler-reg-i64-ty))
-                (IrInstrCons
+                (compiler-ir-instr-cons
                   (IrInstrMov 4 (IrValueI64 4) (compiler-reg-i64-ty))
-                  (IrInstrCons
+                  (compiler-ir-instr-cons
                     (IrInstrMov 5 (IrValueI64 5) (compiler-reg-i64-ty))
-                    (IrInstrCons
+                    (compiler-ir-instr-cons
                       (IrInstrMov 6 (IrValueI64 6) (compiler-reg-i64-ty))
-                      (IrInstrCons
+                      (compiler-ir-instr-cons
                         (IrInstrStore "g0" (IrValueVar 0) (compiler-reg-i64-ty))
-                        (IrInstrCons
+                        (compiler-ir-instr-cons
                           (IrInstrStore
                             "g1"
                             (IrValueVar 1)
                             (compiler-reg-i64-ty))
-                          (IrInstrCons
+                          (compiler-ir-instr-cons
                             (IrInstrStore
                               "g2"
                               (IrValueVar 2)
                               (compiler-reg-i64-ty))
-                            (IrInstrCons
+                            (compiler-ir-instr-cons
                               (IrInstrStore
                                 "g3"
                                 (IrValueVar 3)
                                 (compiler-reg-i64-ty))
-                              (IrInstrCons
+                              (compiler-ir-instr-cons
                                 (IrInstrStore
                                   "g4"
                                   (IrValueVar 4)
                                   (compiler-reg-i64-ty))
-                                (IrInstrCons
+                                (compiler-ir-instr-cons
                                   (IrInstrStore
                                     "g5"
                                     (IrValueVar 5)
                                     (compiler-reg-i64-ty))
-                                  (IrInstrCons
+                                  (compiler-ir-instr-cons
                                     (IrInstrStore
                                       "g6"
                                       (IrValueVar 6)
                                       (compiler-reg-i64-ty))
-                                    (IrInstrCons
+                                    (compiler-ir-instr-cons
                                       (IrInstrReturn IrNoValue)
                                       IrInstrNil))))))))))))))))
       IrBlockNil)))
@@ -1623,36 +1631,38 @@
     IrParamNil
     (AstTyUnit)
     5
-    (IrBlockCons
+    (compiler-ir-block-cons
       (IrBlock
         "entry"
-        (IrInstrCons
+        (compiler-ir-instr-cons
           (IrInstrMov 0 (IrValueF64 "0.5") (compiler-reg-f64-ty))
-          (IrInstrCons
+          (compiler-ir-instr-cons
             (IrInstrMov 1 (IrValueF64 "1.5") (compiler-reg-f64-ty))
-            (IrInstrCons
+            (compiler-ir-instr-cons
               (IrInstrMov 2 (IrValueF64 "2.5") (compiler-reg-f64-ty))
-              (IrInstrCons
+              (compiler-ir-instr-cons
                 (IrInstrMov 3 (IrValueF64 "3.5") (compiler-reg-f64-ty))
-                (IrInstrCons
+                (compiler-ir-instr-cons
                   (IrInstrMov 4 (IrValueF64 "4.5") (compiler-reg-f64-ty))
-                  (IrInstrCons
+                  (compiler-ir-instr-cons
                     (IrInstrStore "g0" (IrValueVar 0) (compiler-reg-f64-ty))
-                    (IrInstrCons
+                    (compiler-ir-instr-cons
                       (IrInstrStore "g1" (IrValueVar 1) (compiler-reg-f64-ty))
-                      (IrInstrCons
+                      (compiler-ir-instr-cons
                         (IrInstrStore "g2" (IrValueVar 2) (compiler-reg-f64-ty))
-                        (IrInstrCons
+                        (compiler-ir-instr-cons
                           (IrInstrStore
                             "g3"
                             (IrValueVar 3)
                             (compiler-reg-f64-ty))
-                          (IrInstrCons
+                          (compiler-ir-instr-cons
                             (IrInstrStore
                               "g4"
                               (IrValueVar 4)
                               (compiler-reg-f64-ty))
-                            (IrInstrCons (IrInstrReturn IrNoValue) IrInstrNil))))))))))))
+                            (compiler-ir-instr-cons
+                              (IrInstrReturn IrNoValue)
+                              IrInstrNil))))))))))))
       IrBlockNil)))
 
 (define (compiler-reg-call-live-function) : CompilerIrFunction
@@ -1661,16 +1671,16 @@
     IrParamNil
     (AstTyUnit)
     3
-    (IrBlockCons
+    (compiler-ir-block-cons
       (IrBlock
         "entry"
-        (IrInstrCons
+        (compiler-ir-instr-cons
           (IrInstrMov 0 (IrValueI64 9) (compiler-reg-i64-ty))
-          (IrInstrCons
-            (IrInstrCall 1 "side_effect" IrValueNil (AstTyUnit))
-            (IrInstrCons
+          (compiler-ir-instr-cons
+            (IrInstrCall 1 "side_effect" (IrCallArgsNil) (AstTyUnit))
+            (compiler-ir-instr-cons
               (IrInstrMov 2 (IrValueVar 0) (compiler-reg-i64-ty))
-              (IrInstrCons
+              (compiler-ir-instr-cons
                 (IrInstrReturn (IrSomeValue (IrValueVar 2)))
                 IrInstrNil)))))
       IrBlockNil)))
@@ -1681,16 +1691,16 @@
     IrParamNil
     (compiler-reg-f64-ty)
     3
-    (IrBlockCons
+    (compiler-ir-block-cons
       (IrBlock
         "entry"
-        (IrInstrCons
+        (compiler-ir-instr-cons
           (IrInstrMov 0 (IrValueF64 "9.5") (compiler-reg-f64-ty))
-          (IrInstrCons
-            (IrInstrCall 1 "side_effect" IrValueNil (AstTyUnit))
-            (IrInstrCons
+          (compiler-ir-instr-cons
+            (IrInstrCall 1 "side_effect" (IrCallArgsNil) (AstTyUnit))
+            (compiler-ir-instr-cons
               (IrInstrMov 2 (IrValueVar 0) (compiler-reg-f64-ty))
-              (IrInstrCons
+              (compiler-ir-instr-cons
                 (IrInstrReturn (IrSomeValue (IrValueVar 2)))
                 IrInstrNil)))))
       IrBlockNil)))
@@ -1701,24 +1711,22 @@
     IrParamNil
     (AstTyUnit)
     4
-    (IrBlockCons
+    (compiler-ir-block-cons
       (IrBlock
         "entry"
-        (IrInstrCons
+        (compiler-ir-instr-cons
           (IrInstrMov 0 (IrValueI64 1) (compiler-reg-i64-ty))
-          (IrInstrCons
+          (compiler-ir-instr-cons
             (IrInstrMov 1 (IrValueI64 2) (compiler-reg-i64-ty))
-            (IrInstrCons
+            (compiler-ir-instr-cons
               (IrInstrCall
                 2
                 "use_args"
-                (IrValueCons
-                  (IrValueVar 0)
-                  (IrValueCons (IrValueVar 1) IrValueNil))
+                (IrCallArgsTwo (IrValueVar 0) (IrValueVar 1))
                 (AstTyUnit))
-              (IrInstrCons
+              (compiler-ir-instr-cons
                 (IrInstrMov 3 (IrValueI64 3) (compiler-reg-i64-ty))
-                (IrInstrCons
+                (compiler-ir-instr-cons
                   (IrInstrReturn (IrSomeValue (IrValueVar 3)))
                   IrInstrNil))))))
       IrBlockNil)))
@@ -1729,20 +1737,20 @@
     IrParamNil
     (compiler-reg-f64-ty)
     3
-    (IrBlockCons
+    (compiler-ir-block-cons
       (IrBlock
         "entry"
-        (IrInstrCons
+        (compiler-ir-instr-cons
           (IrInstrMov 0 (IrValueF64 "1.5") (compiler-reg-f64-ty))
-          (IrInstrCons
+          (compiler-ir-instr-cons
             (IrInstrCall
               1
               "takes_f64"
-              (IrValueCons (IrValueVar 0) IrValueNil)
+              (IrCallArgsOne (IrValueVar 0))
               (AstTyUnit))
-            (IrInstrCons
+            (compiler-ir-instr-cons
               (IrInstrMov 2 (IrValueF64 "2.5") (compiler-reg-f64-ty))
-              (IrInstrCons
+              (compiler-ir-instr-cons
                 (IrInstrReturn (IrSomeValue (IrValueVar 2)))
                 IrInstrNil)))))
       IrBlockNil)))
@@ -1750,27 +1758,27 @@
 (define (compiler-reg-ineligible-function) : CompilerIrFunction
   (IrFunction
     "ineligible"
-    (IrParamCons (IrParam "arg" (compiler-reg-i64-ty) 0) IrParamNil)
+    (compiler-ir-param-cons (IrParam "arg" (compiler-reg-i64-ty) 0) IrParamNil)
     (AstTyUnit)
     7
-    (IrBlockCons
+    (compiler-ir-block-cons
       (IrBlock
         "entry"
-        (IrInstrCons
+        (compiler-ir-instr-cons
           (IrInstrMov 1 (IrValueF64 "1.5") (AstTyF64))
-          (IrInstrCons
+          (compiler-ir-instr-cons
             (IrInstrMov 2 (IrValueString "heap") (AstTyString))
-            (IrInstrCons
+            (compiler-ir-instr-cons
               (IrInstrMov 3 (IrValueVar 0) (compiler-reg-i64-ty))
-              (IrInstrCons
+              (compiler-ir-instr-cons
                 (IrInstrMov 4 (IrValueUnit) (AstTyDynArray (AstTyI64)))
-                (IrInstrCons
+                (compiler-ir-instr-cons
                   (IrInstrMov 5 (IrValueI64 5) (compiler-reg-i64-ty))
-                  (IrInstrCons
+                  (compiler-ir-instr-cons
                     (IrInstrAddrOf 6 3)
-                    (IrInstrCons
+                    (compiler-ir-instr-cons
                       (IrInstrTailMask 7 (IrValueVar 5) (IrValueVar 5) 4)
-                      (IrInstrCons
+                      (compiler-ir-instr-cons
                         (IrInstrReturn (IrSomeValue (IrValueVar 5)))
                         IrInstrNil)))))))))
       IrBlockNil)))
@@ -1781,16 +1789,16 @@
     IrParamNil
     (AstTyI64)
     3
-    (IrBlockCons
+    (compiler-ir-block-cons
       (IrBlock
         "entry"
-        (IrInstrCons
+        (compiler-ir-instr-cons
           (IrInstrMov 0 (IrValueI64 41) (compiler-reg-i64-ty))
-          (IrInstrCons
+          (compiler-ir-instr-cons
             (IrInstrMov 1 (IrValueVar 0) (compiler-reg-i64-ty))
-            (IrInstrCons
+            (compiler-ir-instr-cons
               (IrInstrMov 2 (IrValueVar 1) (compiler-reg-i64-ty))
-              (IrInstrCons
+              (compiler-ir-instr-cons
                 (IrInstrReturn (IrSomeValue (IrValueVar 2)))
                 IrInstrNil)))))
       IrBlockNil)))
@@ -1801,21 +1809,21 @@
     IrParamNil
     (AstTyI64)
     2
-    (IrBlockCons
+    (compiler-ir-block-cons
       (IrBlock
         "entry"
-        (IrInstrCons
+        (compiler-ir-instr-cons
           (IrInstrMov 0 (IrValueI64 7) (compiler-reg-i64-ty))
-          (IrInstrCons (IrInstrJump "join") IrInstrNil)))
-      (IrBlockCons
+          (compiler-ir-instr-cons (IrInstrJump "join") IrInstrNil)))
+      (compiler-ir-block-cons
         (IrBlock
           "join"
-          (IrInstrCons
+          (compiler-ir-instr-cons
             (IrInstrPhi
               1
-              (IrPhiInputCons (IrValueVar 0) "entry" IrPhiInputNil)
+              (compiler-ir-phi-input-cons (IrValueVar 0) "entry" IrPhiInputNil)
               (compiler-reg-i64-ty))
-            (IrInstrCons
+            (compiler-ir-instr-cons
               (IrInstrReturn (IrSomeValue (IrValueVar 1)))
               IrInstrNil)))
         IrBlockNil))))
@@ -1826,34 +1834,36 @@
     IrParamNil
     (AstTyI64)
     3
-    (IrBlockCons
+    (compiler-ir-block-cons
       (IrBlock
         "entry"
-        (IrInstrCons
+        (compiler-ir-instr-cons
           (IrInstrMov 0 (IrValueI64 0) (compiler-reg-i64-ty))
-          (IrInstrCons (IrInstrJump "loop") IrInstrNil)))
-      (IrBlockCons
+          (compiler-ir-instr-cons (IrInstrJump "loop") IrInstrNil)))
+      (compiler-ir-block-cons
         (IrBlock
           "loop"
-          (IrInstrCons
+          (compiler-ir-instr-cons
             (IrInstrPhi
               1
-              (IrPhiInputCons
+              (compiler-ir-phi-input-cons
                 (IrValueVar 0)
                 "entry"
-                (IrPhiInputCons (IrValueVar 2) "body" IrPhiInputNil))
+                (compiler-ir-phi-input-cons (IrValueVar 2) "body" IrPhiInputNil))
               (compiler-reg-i64-ty))
-            (IrInstrCons
+            (compiler-ir-instr-cons
               (IrInstrMov 2 (IrValueVar 1) (compiler-reg-i64-ty))
-              (IrInstrCons
+              (compiler-ir-instr-cons
                 (IrInstrBranch (IrValueBool false) "body" "exit")
                 IrInstrNil))))
-        (IrBlockCons
-          (IrBlock "body" (IrInstrCons (IrInstrJump "loop") IrInstrNil))
-          (IrBlockCons
+        (compiler-ir-block-cons
+          (IrBlock
+            "body"
+            (compiler-ir-instr-cons (IrInstrJump "loop") IrInstrNil))
+          (compiler-ir-block-cons
             (IrBlock
               "exit"
-              (IrInstrCons
+              (compiler-ir-instr-cons
                 (IrInstrReturn (IrSomeValue (IrValueVar 2)))
                 IrInstrNil))
             IrBlockNil))))))
@@ -1864,16 +1874,16 @@
     IrParamNil
     (AstTyI64)
     2
-    (IrBlockCons
+    (compiler-ir-block-cons
       (IrBlock
         "entry"
-        (IrInstrCons
+        (compiler-ir-instr-cons
           (IrInstrMov 0 (IrValueI64 9) (compiler-reg-i64-ty))
-          (IrInstrCons
+          (compiler-ir-instr-cons
             (IrInstrMov 1 (IrValueVar 0) (compiler-reg-i64-ty))
-            (IrInstrCons
+            (compiler-ir-instr-cons
               (IrInstrStore "keep" (IrValueVar 0) (compiler-reg-i64-ty))
-              (IrInstrCons
+              (compiler-ir-instr-cons
                 (IrInstrReturn (IrSomeValue (IrValueVar 1)))
                 IrInstrNil)))))
       IrBlockNil)))
@@ -1884,33 +1894,33 @@
     IrParamNil
     (AstTyI64)
     6
-    (IrBlockCons
+    (compiler-ir-block-cons
       (IrBlock
         "entry"
-        (IrInstrCons
+        (compiler-ir-instr-cons
           (IrInstrMov 0 (IrValueI64 0) (compiler-reg-i64-ty))
-          (IrInstrCons
+          (compiler-ir-instr-cons
             (IrInstrMov 1 (IrValueI64 1) (compiler-reg-i64-ty))
-            (IrInstrCons
+            (compiler-ir-instr-cons
               (IrInstrMov 2 (IrValueI64 2) (compiler-reg-i64-ty))
-              (IrInstrCons
+              (compiler-ir-instr-cons
                 (IrInstrMov 3 (IrValueI64 3) (compiler-reg-i64-ty))
-                (IrInstrCons
+                (compiler-ir-instr-cons
                   (IrInstrMov 4 (IrValueI64 4) (compiler-reg-i64-ty))
-                  (IrInstrCons
+                  (compiler-ir-instr-cons
                     (IrInstrStore "g0" (IrValueVar 0) (compiler-reg-i64-ty))
-                    (IrInstrCons
+                    (compiler-ir-instr-cons
                       (IrInstrStore "g1" (IrValueVar 1) (compiler-reg-i64-ty))
-                      (IrInstrCons
+                      (compiler-ir-instr-cons
                         (IrInstrStore "g2" (IrValueVar 2) (compiler-reg-i64-ty))
-                        (IrInstrCons
+                        (compiler-ir-instr-cons
                           (IrInstrStore
                             "g3"
                             (IrValueVar 3)
                             (compiler-reg-i64-ty))
-                          (IrInstrCons
+                          (compiler-ir-instr-cons
                             (IrInstrMov 5 (IrValueVar 4) (compiler-reg-i64-ty))
-                            (IrInstrCons
+                            (compiler-ir-instr-cons
                               (IrInstrReturn (IrSomeValue (IrValueVar 5)))
                               IrInstrNil))))))))))))
       IrBlockNil)))
@@ -1921,14 +1931,14 @@
     IrParamNil
     (AstTyUnit)
     4
-    (IrBlockCons
+    (compiler-ir-block-cons
       (IrBlock
         "entry"
-        (IrInstrCons
+        (compiler-ir-instr-cons
           (IrInstrVectorLoad 0 (IrValueI64 0) (IrValueI64 0) 4 (AstTyI64))
-          (IrInstrCons
+          (compiler-ir-instr-cons
             (IrInstrVectorLoad 1 (IrValueI64 0) (IrValueI64 4) 4 (AstTyI64))
-            (IrInstrCons
+            (compiler-ir-instr-cons
               (IrInstrVectorBinOp
                 2
                 (IrBinAdd)
@@ -1936,7 +1946,7 @@
                 (IrValueVar 1)
                 4
                 (AstTyI64))
-              (IrInstrCons
+              (compiler-ir-instr-cons
                 (IrInstrVectorBinOp
                   3
                   (IrBinAdd)
@@ -1944,14 +1954,14 @@
                   (IrValueVar 2)
                   4
                   (AstTyI64))
-                (IrInstrCons
+                (compiler-ir-instr-cons
                   (IrInstrVectorStore
                     (IrValueI64 0)
                     (IrValueI64 8)
                     (IrValueVar 3)
                     4
                     (AstTyI64))
-                  (IrInstrCons (IrInstrReturn IrNoValue) IrInstrNil)))))))
+                  (compiler-ir-instr-cons (IrInstrReturn IrNoValue) IrInstrNil)))))))
       IrBlockNil)))
 
 (define (compiler-reg-mask-home-function) : CompilerIrFunction
@@ -1960,20 +1970,20 @@
     IrParamNil
     (AstTyUnit)
     5
-    (IrBlockCons
+    (compiler-ir-block-cons
       (IrBlock
         "entry"
-        (IrInstrCons
+        (compiler-ir-instr-cons
           (IrInstrTailMask 0 (IrValueI64 0) (IrValueI64 8) 8)
-          (IrInstrCons
+          (compiler-ir-instr-cons
             (IrInstrTailMask 1 (IrValueI64 4) (IrValueI64 8) 8)
-            (IrInstrCons
+            (compiler-ir-instr-cons
               (IrInstrMaskBinOp 2 (IrMaskAnd) (IrValueVar 0) (IrValueVar 1) 8)
-              (IrInstrCons
+              (compiler-ir-instr-cons
                 (IrInstrMaskNot 3 (IrValueVar 2) 8)
-                (IrInstrCons
+                (compiler-ir-instr-cons
                   (IrInstrMaskReduce 4 (IrMaskReduceAny) (IrValueVar 3) 8)
-                  (IrInstrCons
+                  (compiler-ir-instr-cons
                     (IrInstrReturn (IrSomeValue (IrValueVar 4)))
                     IrInstrNil)))))))
       IrBlockNil)))

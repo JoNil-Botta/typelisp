@@ -438,6 +438,7 @@
             name
             (compiler-symbol-make-handle (compiler-symbol-kind-defstruct) index))]
         [(ErrCompilerSymbols message) (ErrCompilerSymbols message)])]
+    [(AstDeclIncludeStr _ _) (OkCompilerSymbols symbols)]
     [(AstDeclImport _) (OkCompilerSymbols symbols)]
     [(AstDeclExport _) (OkCompilerSymbols symbols)]
     [(AstDeclModule _) (OkCompilerSymbols symbols)]
@@ -542,6 +543,14 @@
             alias
             index
             module)]
+        [(AstDeclIncludeStr _ _)
+          (compiler-symbols-add-module-aliases-list
+            symbols
+            rest
+            target-module
+            alias
+            index
+            module)]
         [(AstDeclExport _)
           (compiler-symbols-add-module-aliases-list
             symbols
@@ -636,6 +645,8 @@
     [(AstDeclCons decl rest)
       (match decl
         [(AstDeclImport _)
+          (build-compiler-symbol-list-in-module rest symbols index module)]
+        [(AstDeclIncludeStr _ _)
           (build-compiler-symbol-list-in-module rest symbols index module)]
         [(AstDeclExport _)
           (build-compiler-symbol-list-in-module rest symbols index module)]
@@ -865,6 +876,14 @@
             alias
             index
             module)]
+        [(AstDeclIncludeStr _ _)
+          (compiler-registries-add-module-aliases-list
+            registries
+            rest
+            target-module
+            alias
+            index
+            module)]
         [(AstDeclExport _)
           (compiler-registries-add-module-aliases-list
             registries
@@ -1029,6 +1048,8 @@
       (match decl
         [(AstDeclImport _)
           (build-compiler-registry-list-in-module rest registries index module)]
+        [(AstDeclIncludeStr _ _)
+          (build-compiler-registry-list-in-module rest registries index module)]
         [(AstDeclExport _)
           (build-compiler-registry-list-in-module rest registries index module)]
         [(AstDeclModule next-module)
@@ -1143,6 +1164,8 @@
     [(AstDeclCons decl rest)
       (match decl
         [(AstDeclImport _) (compiler-decl-list-at-index rest target index)]
+        [(AstDeclIncludeStr _ _)
+          (compiler-decl-list-at-index rest target index)]
         [(AstDeclExport _) (compiler-decl-list-at-index rest target index)]
         [(AstDeclModule _) (compiler-decl-list-at-index rest target index)]
         [(AstDeclTest _ _ _) (compiler-decl-list-at-index rest target index)]

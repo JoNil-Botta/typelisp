@@ -94,6 +94,14 @@
       (string-eq (compiler-diagnostic-message diag) want)]
     [(OkCompilerTypecheck _) false]))
 
+(define (compiler-typecheck-program-error-ok?
+  [program : AstProgram]
+  [want : String]) : bool
+  (match (typecheck-compiler-program program)
+    [(ErrCompilerTypecheck diag)
+      (string-eq (compiler-diagnostic-message diag) want)]
+    [(OkCompilerTypecheck _) false]))
+
 (define (compiler-typecheck-ok-score? [src : String] [want : i64]) : bool
   (match (typecheck-compiler-source src)
     [(OkCompilerTypecheck summary)
@@ -1518,6 +1526,143 @@
                               (compiler-typecheck-error-ok?
                                 (compiler-typecheck-resource-with-assignment-source)
                                 "typecheck: cannot store cleanup-required resource in longer-lived binding"))))))))))))))))
+
+(define (compiler-typecheck-cleanup-struct-valid-source) : String
+  "(define (close-fd [fd : i64]) : unit unit)
+(defstruct FileHandle
+  (:cleanup cleanup-file-handle)
+  (fd i64 (:cleanup close-fd)))
+(define (main [h : FileHandle]) : i64 (struct-get h fd))")
+
+(define (compiler-typecheck-cleanup-struct-nested-source) : String
+  "(define (close-fd [fd : i64]) : unit unit)
+(defstruct FileHandle
+  (:cleanup cleanup-file-handle)
+  (fd i64 (:cleanup close-fd)))
+(defstruct BufferedFile
+  (:cleanup cleanup-buffered-file)
+  (handle FileHandle (:owned))
+  (size i64))
+(define (main [b : BufferedFile]) : i64 (struct-get b size))")
+
+(define (compiler-typecheck-cleanup-struct-imported-cleanup-source) : String
+  "(module cleanup)
+(define (close-fd [fd : i64]) : unit unit)
+(module main)
+(import \"cleanup.tl\" module cleanup :as c)
+(defstruct FileHandle
+  (:cleanup cleanup-file-handle)
+  (fd i64 (:cleanup c/close-fd)))
+(define (main [h : FileHandle]) : i64 (struct-get h fd))")
+
+(define (compiler-typecheck-cleanup-struct-comptime-source) : String
+  "(define (close-fd [fd : i64]) : unit unit)
+(comptime-decl
+  (defstruct FileHandle
+    (:cleanup cleanup-file-handle)
+    (fd i64 (:cleanup close-fd))))
+(define (main [h : FileHandle]) : i64 (struct-get h fd))")
+
+(define (compiler-typecheck-cleanup-struct-ordinary-store-source) : String
+  "(define (close-fd [fd : i64]) : unit unit)
+(defstruct FileHandle
+  (:cleanup cleanup-file-handle)
+  (fd i64 (:cleanup close-fd)))
+(defstruct Bad
+  (handle FileHandle))")
+
+(define (compiler-typecheck-cleanup-struct-cleanup-mismatch-source) : String
+  "(define (close-bool [fd : bool]) : unit unit)
+(defstruct Bad
+  (:cleanup cleanup-bad)
+  (fd i64 (:cleanup close-bool)))")
+
+(define (compiler-typecheck-cleanup-struct-cleanup-return-source) : String
+  "(define (close-fd [fd : i64]) : i64 fd)
+(defstruct Bad
+  (:cleanup cleanup-bad)
+  (fd i64 (:cleanup close-fd)))")
+
+(define (compiler-typecheck-cleanup-struct-owned-noncleanup-source) : String
+  "(defstruct Bad
+  (:cleanup cleanup-bad)
+  (n i64 (:owned)))")
+
+(define (compiler-typecheck-cleanup-struct-repr-c-ast-program) : AstProgram
+  (AstProgram
+    (AstDeclCons
+      (AstDeclDefStruct
+        "Bad"
+        (AstStructReprC)
+        (AstStructCleanupFn "cleanup-bad")
+        (AstFieldDefCons
+          (AstFieldDef "fd" (AstTyI64) (AstFieldNoCleanup))
+          AstFieldDefNil))
+      AstDeclNil)))
+
+(define (compiler-typecheck-cleanup-struct-field-outside-ast-program) : AstProgram
+  (AstProgram
+    (AstDeclCons
+      (AstDeclDefStruct
+        "Bad"
+        (AstStructReprDefault)
+        (AstStructNoCleanup)
+        (AstFieldDefCons
+          (AstFieldDef "fd" (AstTyI64) (AstFieldCleanupFn "close-fd"))
+          AstFieldDefNil))
+      AstDeclNil)))
+
+(define (compiler-typecheck-cleanup-struct-tests-ok?) : bool
+  (let
+    [ok : bool true]
+    (begin
+      (if (compiler-typecheck-ok?
+        (compiler-typecheck-cleanup-struct-valid-source))
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-ok?
+        (compiler-typecheck-cleanup-struct-nested-source))
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-ok?
+        (compiler-typecheck-cleanup-struct-imported-cleanup-source))
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-ok?
+        (compiler-typecheck-cleanup-struct-comptime-source))
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        (compiler-typecheck-cleanup-struct-ordinary-store-source)
+        "typecheck: struct Bad field handle stores cleanup-owning type FileHandle without :owned")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        (compiler-typecheck-cleanup-struct-cleanup-mismatch-source)
+        "typecheck: struct Bad field fd cleanup function close-bool type mismatch")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        (compiler-typecheck-cleanup-struct-cleanup-return-source)
+        "typecheck: struct Bad field fd cleanup function close-fd type mismatch")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        (compiler-typecheck-cleanup-struct-owned-noncleanup-source)
+        "typecheck: struct Bad field n uses :owned but type i64 is not cleanup-owning")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-program-error-ok?
+        (compiler-typecheck-cleanup-struct-repr-c-ast-program)
+        "typecheck: cleanup-owning struct Bad cannot use repr c")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-program-error-ok?
+        (compiler-typecheck-cleanup-struct-field-outside-ast-program)
+        "typecheck: struct Bad field fd has cleanup metadata but struct is not cleanup-owning")
+        unit
+        (set! ok false))
+      ok)))
 
 (define (compiler-typecheck-result-try-tests-ok?) : bool
   (and
@@ -4202,6 +4347,9 @@
     (if (compiler-typecheck-resource-with-tests-ok?)
       unit
       (panic "typecheck: resource with tests failed"))
+    (if (compiler-typecheck-cleanup-struct-tests-ok?)
+      unit
+      (panic "typecheck: cleanup struct metadata tests failed"))
     (if (compiler-typecheck-raw-pointer-tests-ok?)
       unit
       (panic "typecheck: raw pointer type tests failed"))

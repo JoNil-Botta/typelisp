@@ -1699,13 +1699,20 @@
           (compiler-backend-user-symbol name)
           name)
         (compiler-backend-asm-safe-symbol link-symbol)))
-    (if (and
-      (compiler-backend-plan-provides? plan name)
-      (not (compiler-backend-index-function-defines? index name)))
+      (if (and
+        (compiler-backend-plan-provides? plan name)
+        (not (compiler-backend-index-function-defines? index name)))
       (if (compiler-backend-runtime-user-symbol? name)
         (compiler-backend-user-symbol name)
         name)
       (compiler-backend-user-symbol name))))
+
+(define (compiler-backend-function-label-scope
+  [index : CompilerBackendProgramIndex]
+  [name : String]) : String
+  (match (string-i64-map-get (struct-get index functions) name)
+    [(StringI64MapFound slot) (backend-cat3 "f" (int->string slot) "")]
+    [(StringI64MapMissing) (compiler-backend-user-symbol name)]))
 
 (define (compiler-backend-type-size [ty : AstType]) : i64
   (match ty
@@ -8416,9 +8423,11 @@
           [(OkCompilerBackend spills)
             (let
               [symbol : String (compiler-backend-user-symbol name)]
+              [label-scope : String
+                (compiler-backend-function-label-scope program-index name)]
               (match (compiler-backend-emit-blocks
                 target
-                symbol
+                label-scope
                 name
                 blocks
                 blocks

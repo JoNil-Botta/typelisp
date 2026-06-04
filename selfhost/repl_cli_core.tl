@@ -43,10 +43,31 @@
 (define (repl-help-text) : String
   "TypeLisp REPL commands:\n  .help         Show this help\n  .type <expr>  Print the inferred type without running code\n  .exit         Exit the REPL\n")
 
+(define (repl-stdout-write [text : String]) : unit
+  (stdout-write (& text)))
+
+(define (repl-stdout-write-line [text : String]) : unit
+  (stdout-write-line (& text)))
+
+(define (repl-stderr-write [text : String]) : unit
+  (stderr-write (& text)))
+
+(define (repl-stderr-write-line [text : String]) : unit
+  (stderr-write-line (& text)))
+
+(define (repl-path-join [left : String] [right : String]) : String
+  (fs-path-join (& left) (& right)))
+
+(define (repl-try-remove-file-if-exists [path : String]) : ResultIoUnit
+  (try-remove-file-if-exists (& path)))
+
+(define (repl-try-remove-dir-if-exists [path : String]) : ResultIoUnit
+  (try-remove-dir-if-exists (& path)))
+
 ;; Print the prompt and flush stdout so it is visible before the blocking read.
 (define (repl-prompt) : unit
   (begin
-    (stdout-write "tl> ")
+    (repl-stdout-write "tl> ")
     (stdout-flush)))
 
 ;; `line` begins with `.` (a dot command). Empty lines are handled safely.
@@ -199,10 +220,10 @@
     [(AstTyVar name) (string-append "'" (string-append name "'"))]))
 
 (define (repl-print-error-line [message : String]) : unit
-  (stderr-write-line message))
+  (repl-stderr-write-line message))
 
 (define (repl-report-diagnostic [diag : CompilerDiagnostic]) : unit
-  (stderr-write-line (compiler-diagnostic-render diag)))
+  (repl-stderr-write-line (compiler-diagnostic-render diag)))
 
 (define (repl-char-display-helpers-source) : String
   "(define __tl_repl_ascii_printable_table : String
@@ -333,15 +354,15 @@
 
 (define (repl-clean-scratch-source [temp-dir : String] [source-path : String]) : unit
   (begin
-    (try-remove-file-if-exists source-path)
-    (try-remove-dir-if-exists temp-dir)
+    (repl-try-remove-file-if-exists source-path)
+    (repl-try-remove-dir-if-exists temp-dir)
     unit))
 
 (define (repl-report-run-status [status : i64]) : unit
   (if (= status 0)
     unit
     (begin
-      (stderr-write "\n")
+      (repl-stderr-write "\n")
       (repl-print-error-line
         (string-append
           "REPL evaluation exited with status "
@@ -351,7 +372,7 @@
   (match (source-tool-create-temp-dir "typelisp-repl")
     [(OkSourceToolString temp-dir)
       (let
-        [source-path : String (fs-path-join temp-dir "repl_expr.tl")]
+        [source-path : String (repl-path-join temp-dir "repl_expr.tl")]
         (match (source-tool-write-file
           source-path
           source
@@ -411,7 +432,7 @@
             (match (parse-ast-source session-source)
               [(OkAstProgram (AstProgram decls))
                 (match (typecheck-compiler-repl-expr decls expr)
-                  [(OkTcType ty) (stdout-write-line (repl-type-render ty))]
+                  [(OkTcType ty) (repl-stdout-write-line (repl-type-render ty))]
                   [(ErrTcType message)
                     (repl-print-error-line (string-append "Error: " message))])]
               [(ErrAstProgram message)
@@ -625,12 +646,13 @@
         [(ReplNoTypeCommand)
           (if (string-eq line ".help")
             (begin
-              (stdout-write (repl-help-text))
+              (repl-stdout-write (repl-help-text))
               (ReplLineResult session-source ""))
             (if (repl-dot-command? line)
               (begin
-                (stderr-write (string-append "Unknown REPL command: " line))
-                (stderr-write "\nType .help for commands.\n")
+                (repl-stderr-write
+                  (string-append "Unknown REPL command: " line))
+                (repl-stderr-write "\nType .help for commands.\n")
                 (ReplLineResult session-source ""))
               (repl-handle-source-line session-source pending line)))]))
     (repl-handle-source-line session-source pending line)))
@@ -642,7 +664,7 @@
     (if (stdin-at-eof?)
       (if (string-eq pending "")
         unit
-        (stderr-write "Error: incomplete REPL input at EOF\n"))
+        (repl-stderr-write "Error: incomplete REPL input at EOF\n"))
       (let
         [line-read : StdinRead (stdin-read-line)]
         [line : String (repl-normalize-input-line (stdin-read-text line-read))]
@@ -654,7 +676,7 @@
 
 (define (repl-run) : i64
   (begin
-    (stdout-write (repl-banner))
+    (repl-stdout-write (repl-banner))
     (repl-loop "" "")
     0))
 

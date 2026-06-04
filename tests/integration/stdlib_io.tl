@@ -42,27 +42,55 @@
         7)]
     [(ErrIoBool _) 400]))
 
+(define (test-try-read-file [path : String]) : ResultIoString
+  (try-read-file (& path)))
+
+(define (test-try-write-file [path : String] [contents : String]) : ResultIoUnit
+  (try-write-file (& path) (& contents)))
+
+(define (test-try-file-exists? [path : String]) : ResultIoBool
+  (try-file-exists? (& path)))
+
+(define (test-read-file-or [path : String] [fallback : String]) : String
+  (read-file-or (& path) fallback))
+
+(define (test-append-file [path : String] [contents : String]) : unit
+  (append-file (& path) (& contents)))
+
+(define (test-file-nonempty? [path : String]) : bool
+  (file-nonempty? (& path)))
+
 (define (main) : i64
   (begin
     (write-file io-smoke-path "alpha")
-    (unless (= (read-result-score (try-read-file io-smoke-path)) 1) (return 80))
     (unless
-      (= (read-result-score (try-read-file io-absent-path)) 2)
+      (= (read-result-score (test-try-read-file io-smoke-path)) 1)
+      (return 80))
+    (unless
+      (= (read-result-score (test-try-read-file io-absent-path)) 2)
       (return 70))
-    (unless (= (write-result-score (try-write-file "" "bad")) 4) (return 60))
     (unless
-      (= (write-result-score (try-write-file io-missing-parent-path "bad")) 5)
+      (= (write-result-score (test-try-write-file "" "bad")) 4)
+      (return 60))
+    (unless
+      (=
+        (write-result-score (test-try-write-file io-missing-parent-path "bad"))
+        5)
       (return 57))
     (unless
-      (= (bool-result-score (try-file-exists? io-smoke-path)) 6)
+      (= (bool-result-score (test-try-file-exists? io-smoke-path)) 6)
       (return 56))
     (unless
-      (= (bool-result-score (try-file-exists? io-absent-path)) 7)
+      (= (bool-result-score (test-try-file-exists? io-absent-path)) 7)
       (return 55))
-    (unless (string-eq (read-file-or io-smoke-path "MISS") "alpha") (return 50))
-    (unless (string-eq (read-file-or io-absent-path "MISS") "MISS") (return 40))
-    (append-file io-smoke-path "-beta")
+    (unless
+      (string-eq (test-read-file-or io-smoke-path "MISS") "alpha")
+      (return 50))
+    (unless
+      (string-eq (test-read-file-or io-absent-path "MISS") "MISS")
+      (return 40))
+    (test-append-file io-smoke-path "-beta")
     (unless (string-eq (read-file io-smoke-path) "alpha-beta") (return 30))
-    (unless (file-nonempty? io-smoke-path) (return 20))
-    (when (file-nonempty? io-absent-path) (return 10))
+    (unless (test-file-nonempty? io-smoke-path) (return 20))
+    (when (test-file-nonempty? io-absent-path) (return 10))
     42))

@@ -25,9 +25,17 @@
     (assert-stdin-read (stdin-read-line) "" false "blank line")
     (assert-stdin-read (stdin-read-line) "omega" true "final line")
     (assert-true (stdin-at-eof?) "stdin EOF sticks after final line")
-    (stdout-write "stdout")
-    (stdout-write-line "-line")
-    (stderr-write "stderr")
-    (stderr-write-line "-line")
+    (let
+      [text : String "stdout"]
+      (stdout-write (& text)))
+    (let
+      [text : String "-line"]
+      (stdout-write-line (& text)))
+    (let
+      [text : String "stderr"]
+      (stderr-write (& text)))
+    (let
+      [text : String "-line"]
+      (stderr-write-line (& text)))
     (stdout-flush)
     42))

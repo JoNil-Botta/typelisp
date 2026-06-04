@@ -7938,6 +7938,28 @@
         [decls : AstDeclList (box-get decls-box)]
         (tc-program-enum-variants-list decls enum-name))]))
 
+(define (tc-context-enum-variants
+  [ctx : TcContext]
+  [enum-name : String]) : ResultAstVariantDefList
+  (match (compiler-symbols-lookup-type (tc-context-symbols ctx) enum-name)
+    [(SomeI64 handle)
+      (if (=
+        (compiler-symbol-handle-kind handle)
+        (compiler-symbol-kind-defenum))
+        (match (compiler-symbols-decl-at-index
+          (tc-context-symbols ctx)
+          (compiler-symbol-handle-index handle))
+          [(OkAstDecl decl)
+            (match decl
+              [(AstDeclDefEnum _ variants) (OkAstVariantDefList variants)]
+              [_ (ErrAstVariantDefList
+                (string-append "typecheck: unknown enum " enum-name))])]
+          [(ErrAstDecl message) (ErrAstVariantDefList message)])
+        (ErrAstVariantDefList
+          (string-append "typecheck: unknown enum " enum-name)))]
+    [(NoneI64)
+      (tc-program-enum-variants (tc-context-program ctx) enum-name)]))
+
 (define (tc-layout-info-size [info : TcLayoutInfo]) : i64
   (match info
     [(TcLayoutInfo size _) size]))
@@ -8215,7 +8237,7 @@
         (if (=
           (compiler-symbol-handle-kind handle)
           (compiler-symbol-kind-defenum))
-          (match (tc-program-enum-variants (tc-context-program ctx) name)
+          (match (tc-context-enum-variants ctx name)
             [(OkAstVariantDefList variants)
               (tc-inline-aggregate-variants-finite-ok
                 ctx
@@ -8499,7 +8521,7 @@
   (if (tc-string-list-contains stack enum-name)
     (ErrTcInlineAggregateLayout
       (tc-inline-aggregate-cycle-message enum-name stack))
-    (match (tc-program-enum-variants (tc-context-program ctx) enum-name)
+    (match (tc-context-enum-variants ctx enum-name)
       [(OkAstVariantDefList variants)
         (tc-inline-aggregate-variants-layout
           ctx
@@ -9081,7 +9103,7 @@
 (define (tc-result-info [ctx : TcContext] [ty : AstType]) : ResultTcResultInfo
   (match (tc-type-strip-region ty)
     [(AstTyEnum enum-name)
-      (match (tc-program-enum-variants (tc-context-program ctx) enum-name)
+      (match (tc-context-enum-variants ctx enum-name)
         [(OkAstVariantDefList variants)
           (tc-result-info-from-variants ctx enum-name variants)]
         [(ErrAstVariantDefList message) (ErrTcResultInfo message)])]
@@ -9814,7 +9836,7 @@
         [args : AstPatternList (box-get args-box)]
         (match (tc-type-strip-region (tc-resolve-type ctx field-ty))
           [(AstTyEnum enum-name)
-            (match (tc-program-enum-variants (tc-context-program ctx) enum-name)
+            (match (tc-context-enum-variants ctx enum-name)
               [(OkAstVariantDefList variants)
                 (if (tc-enum-has-single-variant? ctx variants enum-name name)
                   (tc-variant-pattern-irrefutable? ctx enum-name name args)
@@ -9979,7 +10001,7 @@
   [arms : AstMatchArmList]) : bool
   (match (tc-type-strip-region scrut-ty)
     [(AstTyEnum enum-name)
-      (match (tc-program-enum-variants (tc-context-program ctx) enum-name)
+      (match (tc-context-enum-variants ctx enum-name)
         [(OkAstVariantDefList variants)
           (tc-enum-variants-covered? ctx enum-name variants arms)]
         [(ErrAstVariantDefList _) false])]

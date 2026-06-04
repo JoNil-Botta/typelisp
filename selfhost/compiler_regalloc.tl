@@ -423,15 +423,13 @@
   [moves : CompilerRegMoveList]) : CompilerRegMoveList
   (match inputs
     [(IrPhiInputNil) moves]
-    [(IrPhiInputCons input rest)
-      (match input
-        [(IrPhiInput value _)
-          (let
-            [tail : CompilerRegMoveList
-              (compiler-reg-phi-input-moves dst rest moves)]
-            (match value
-              [(IrValueVar src) (compiler-reg-move-list-add tail src dst)]
-              [_ tail]))])]))
+    [(IrPhiInputCons value _ rest)
+      (let
+        [tail : CompilerRegMoveList
+          (compiler-reg-phi-input-moves dst rest moves)]
+        (match value
+          [(IrValueVar src) (compiler-reg-move-list-add tail src dst)]
+          [_ tail]))]))
 
 (define (compiler-reg-instr-moves
   [instr : CompilerIrInstr]
@@ -1663,7 +1661,7 @@
           (IrInstrCons
             (IrInstrPhi
               1
-              (IrPhiInputCons (IrPhiInput (IrValueVar 0) "entry") IrPhiInputNil)
+              (IrPhiInputCons (IrValueVar 0) "entry" IrPhiInputNil)
               (compiler-reg-i64-ty))
             (IrInstrCons
               (IrInstrReturn (IrSomeValue (IrValueVar 1)))
@@ -1689,10 +1687,9 @@
             (IrInstrPhi
               1
               (IrPhiInputCons
-                (IrPhiInput (IrValueVar 0) "entry")
-                (IrPhiInputCons
-                  (IrPhiInput (IrValueVar 2) "body")
-                  IrPhiInputNil))
+                (IrValueVar 0)
+                "entry"
+                (IrPhiInputCons (IrValueVar 2) "body" IrPhiInputNil))
               (compiler-reg-i64-ty))
             (IrInstrCons
               (IrInstrMov 2 (IrValueVar 1) (compiler-reg-i64-ty))

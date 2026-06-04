@@ -63,12 +63,9 @@
   (IrValueNil)
   (IrValueCons CompilerIrValue CompilerIrValueList))
 
-(defenum CompilerIrPhiInput
-  (IrPhiInput CompilerIrValue String))
-
 (defenum CompilerIrPhiInputList
   (IrPhiInputNil)
-  (IrPhiInputCons CompilerIrPhiInput CompilerIrPhiInputList))
+  (IrPhiInputCons CompilerIrValue String CompilerIrPhiInputList))
 
 (defenum CompilerIrInstr
   (IrInstrMov i64 CompilerIrValue AstType)
@@ -932,7 +929,7 @@
 (define (compiler-ir-phi-input-list-count [inputs : CompilerIrPhiInputList]) : i64
   (match inputs
     [(IrPhiInputNil) 0]
-    [(IrPhiInputCons _ rest) (+ 1 (compiler-ir-phi-input-list-count rest))]))
+    [(IrPhiInputCons _ _ rest) (+ 1 (compiler-ir-phi-input-list-count rest))]))
 
 (define (compiler-ir-instr-call-arg-count [instr : CompilerIrInstr]) : i64
   (match instr
@@ -1477,9 +1474,7 @@
                 (compiler-ir-effect-is?
                   (IrInstrPhi
                     6
-                    (IrPhiInputCons
-                      (IrPhiInput (IrValueI64 1) "entry")
-                      (IrPhiInputNil))
+                    (IrPhiInputCons (IrValueI64 1) "entry" (IrPhiInputNil))
                     (AstTyI64))
                   IrEffectPure)
                 (and

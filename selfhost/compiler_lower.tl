@@ -11069,10 +11069,9 @@
               (IrInstrPhi
                 var-id
                 (IrPhiInputCons
-                  (IrPhiInput then-value then-end-label)
-                  (IrPhiInputCons
-                    (IrPhiInput else-value else-end-label)
-                    IrPhiInputNil))
+                  then-value
+                  then-end-label
+                  (IrPhiInputCons else-value else-end-label IrPhiInputNil))
                 expr-ty))
             (IrValueVar var-id)
             expr-ty))])))
@@ -13123,7 +13122,8 @@
                                     merge-label
                                     expr-ty
                                     (IrPhiInputCons
-                                      (IrPhiInput body-value body-end-label)
+                                      body-value
+                                      body-end-label
                                       phi-inputs))))])]
                         [(ErrLowerExpr message) (ErrLowerExpr message)])]
                     [(ErrLowerEnv message) (ErrLowerExpr message)]))]
@@ -13189,9 +13189,7 @@
                   expr-ty
                   (if (tc-never-type? body-ty)
                     phi-inputs
-                    (IrPhiInputCons
-                      (IrPhiInput body-value body-end-label)
-                      phi-inputs))))])]
+                    (IrPhiInputCons body-value body-end-label phi-inputs))))])]
         [(ErrLowerExpr message) (ErrLowerExpr message)])]
     [(ErrLowerEnv message) (ErrLowerExpr message)]))
 
@@ -13340,7 +13338,8 @@
                               (if (tc-never-type? body-ty)
                                 phi-inputs
                                 (IrPhiInputCons
-                                  (IrPhiInput body-value body-end-label)
+                                  body-value
+                                  body-end-label
                                   phi-inputs))))])]
                     [(ErrLowerExpr message) (ErrLowerExpr message)]))])]))]))
 
@@ -13383,9 +13382,7 @@
                       (lower-state-emit body-state (IrInstrJump merge-label))
                       merge-label
                       expr-ty
-                      (IrPhiInputCons
-                        (IrPhiInput body-value body-end-label)
-                        phi-inputs))))])]
+                      (IrPhiInputCons body-value body-end-label phi-inputs))))])]
           [(ErrLowerExpr message) (ErrLowerExpr message)]))]))
 
 (define (lower-phi-input-list-empty? [phi-inputs : CompilerIrPhiInputList]) : bool

@@ -4963,6 +4963,7 @@
     [(AstExprUnquote inner) (tc-expr-sets-free-name? inner name bound)]
     [(AstExprUnquoteSplicing inner) (tc-expr-sets-free-name? inner name bound)]
     [(AstExprTry inner) (tc-expr-sets-free-name? inner name bound)]
+    [(AstExprReturn inner) (tc-expr-sets-free-name? inner name bound)]
     [(AstExprPtrNull _) false]
     [(AstExprPtrNullCheck inner) (tc-expr-sets-free-name? inner name bound)]
     [(AstExprPtrRead ptr) (tc-expr-sets-free-name? ptr name bound)]

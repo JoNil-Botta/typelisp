@@ -69,14 +69,13 @@
     [(BackendTargetWindows) true]))
 
 (define (source-tool-backend-mode [command : String] [value : String]) : ResultSourceToolBackendMode
-  (if (string-eq value "scalar")
-    (OkSourceToolBackendMode (BackendModeScalar))
-    (if (string-eq value "avx2")
-      (OkSourceToolBackendMode (BackendModeAvx2))
-      (if (string-eq value "avx512")
-        (OkSourceToolBackendMode (BackendModeAvx512))
-        (ErrSourceToolBackendMode
-          (source-tool-cat3 command ": unknown backend mode " value))))))
+  (cond
+    [(string-eq value "scalar") (OkSourceToolBackendMode (BackendModeScalar))]
+    [(string-eq value "avx2") (OkSourceToolBackendMode (BackendModeAvx2))]
+    [(string-eq value "avx512") (OkSourceToolBackendMode (BackendModeAvx512))]
+    [else
+      (ErrSourceToolBackendMode
+        (source-tool-cat3 command ": unknown backend mode " value))]))
 
 (define (source-tool-opt-level-valid? [value : String]) : bool
   (or

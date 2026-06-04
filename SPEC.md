@@ -459,7 +459,124 @@ chain.
 Until that path is complete, write explicit monomorphic declarations such as
 `MaybeI64`, `ResultStringI64`, or domain-specific structs/enums.
 
-#### 3.7.1 Typed expression macros (v1 design)
+#### 3.7.1 Comptime-generated declarations (v1 design)
+
+V1 generated declarations are concrete top-level declarations produced during
+compile time. They are TypeLisp's replacement for source-level generics and
+traits: a generator inspects compile-time metadata such as `(type T)` and
+`(type-key (type T))`, then requests or emits ordinary monomorphic
+`defstruct`, `defenum`, and `define` declarations.
+
+The source surface is the top-level `comptime-decl` declaration:
+
+```lisp test=ignore name=comptime-generated-decl-surface reason="generated declarations are specified before #893 implementation"
+(comptime-decl
+  (:generated stdlib/option-family Option_String (type-key (type String)))
+  (defenum Option_String
+    (None_String)
+    (Some_String String)))
+
+(comptime-decl
+  (:generated stdlib/option-family option-string-some? (type-key (type String)))
+  (define (option-string-some? [value : Option_String]) : bool
+    (match value
+      [(Some_String _) true]
+      [(None_String) false])))
+```
+
+`comptime-decl` is valid only at top level, after `module`/`import`
+resolution and before ordinary typechecking/lowering. Its payload is a single
+generated declaration template. V1 accepts only `defstruct`, `defenum`, and
+`define` payloads. `define` covers both value and function declarations.
+Generated `extern`, `defmacro`, `module`, `import`, `export`, `cfg`, `test`,
+and nested `comptime-decl` payloads are rejected in v1.
+
+The `(:generated generator-name generated-item-name arg-key-expr*)` metadata is
+required for reusable generated declarations. The parser may continue accepting
+legacy literal `(comptime-decl (defstruct ...))` / `(comptime-decl (defenum
+...))` templates during migration, but reusable #893 generation must use the
+metadata form.
+
+Conceptually, the source form creates one generated-declaration request. The
+compiler API for comptime generator code uses the same request record: generator
+origin span, generated identity metadata, and the `AstDecl` payload to insert.
+Generator code must not bypass that record or mutate ordinary declaration lists
+directly.
+
+Generated declaration identity is the tuple:
+
+- Generator module identity: the canonical module identity that owns
+  `generator-name`.
+- Generator identity: the resolved generator declaration name inside that
+  module.
+- Generated item name: the declared item identity for this payload. For a
+  `defstruct` or `defenum`, this is the nominal type name; for a `define`, it is
+  the value/function name.
+- Argument keys: the ordered compile-time `String` results of
+  `arg-key-expr*`. Type arguments should use `type-key`; non-type comptime
+  arguments must use stable compiler-owned keys or explicit generator-defined
+  string keys.
+
+The payload declaration name must match `generated-item-name`. The compiler may
+derive display names from keys, but the generated identity, not the display
+spelling alone, is the stable reuse key. Generated identities use canonical
+module identities, never import aliases or source-relative paths.
+
+Each `arg-key-expr` is evaluated in generated-declaration evaluation. It must
+produce a compile-time `String`; direct runtime observation of that metadata is
+rejected. `type-key` strings are opaque inputs to the identity tuple and must not
+be parsed by user programs.
+
+Repeated generation with the same identity is idempotent only when the new
+payload is structurally the same declaration after normalizing spans,
+doc-comments, and non-semantic formatting. The compiler reuses the existing
+declaration and does not create a second namespace item. Repeating the same key
+with a different declaration kind, signature, field/variant shape, body, export
+visibility, or namespace effects is an incompatible duplicate diagnostic.
+Different generated identities that bind the same visible value/type/
+constructor/variant name are ordinary duplicate namespace errors, with the
+generated keys included in the diagnostic.
+
+Generated declarations enter the same namespaces as hand-written declarations:
+
+- `defstruct` binds the nominal type, struct constructor, and exported fields
+  according to the ordinary struct/export rules.
+- `defenum` binds the nominal type plus variant constructors and patterns
+  according to the ordinary enum/export rules.
+- `define` binds the ordinary value/function namespace item.
+
+After registry insertion, generated declarations participate in symbol
+collection, typechecking, lowering, documentation extraction, tests, and
+diagnostics like source declarations. Generated functions and constructors lower
+to stable symbols derived from the canonical module identity plus declaration
+identity. Documentation tools should show generated declarations when they are
+part of the public API and include generated-origin metadata rather than
+treating them as compiler internals.
+
+Diagnostics for generated declarations report the most useful source locations:
+the generator request/call site, the generated declaration template span when
+available, and the generated identity key. Type errors inside generated
+declarations should point at the generated declaration and include an expansion
+or generation stack back to the request. Duplicate diagnostics should show both
+the existing generated identity and the conflicting request.
+
+V1 exclusions:
+
+- No source-level generic type constructors, generic functions, traits,
+  `impl` blocks, trait objects, vtables, or runtime type-erased dispatch.
+- No runtime representation for `type`, `Expr`, `ExprList`, declaration
+  metadata, generated keys, or other comptime-only values.
+- No generated public Rust compiler product surface; this is a selfhost
+  compiler feature.
+- No generated declaration kinds beyond `defstruct`, `defenum`, and `define`.
+- No cross-run ABI promise for display-name mangling beyond deterministic,
+  collision-free names within the TypeLisp module/declaration identity model.
+
+Implementation of this generated-declaration mechanism is tracked by #893.
+Downstream Option/Result and collection families must reuse this identity and
+duplicate policy rather than inventing family-specific generation paths.
+
+#### 3.7.2 Typed expression macros (v1 design)
 
 V1 macros are compile-time expression transformers. They are declared with
 `defmacro`, checked through a function-type-like `macro` type, and expanded
@@ -532,7 +649,7 @@ in v1. Hygiene and binding-introducing macros are not part of v1; parser-owned
 guard/conditional forms such as `when`, `unless`, and `cond` introduce no
 user-visible bindings.
 
-#### 3.7.2 Hygienic expression macros (v2 design)
+#### 3.7.3 Hygienic expression macros (v2 design)
 
 V2 macros use full hygienic expansion, not gensym-only renaming. Gensym is
 enough to keep a macro's temporary binder from capturing a caller identifier,
@@ -3809,6 +3926,7 @@ program       ::= top-level*
 
 top-level     ::= define-var
                 | cfg-decl
+                | comptime-decl
                 | define-func
                 | dispatch-decl
                 | defmacro
@@ -3825,6 +3943,9 @@ cfg-predicate ::= ident
                 | "(" "all" cfg-predicate* ")"
                 | "(" "any" cfg-predicate* ")"
                 | "(" "not" cfg-predicate ")"
+comptime-decl ::= "(" "comptime-decl" generated-meta? generated-payload ")"
+generated-meta ::= "(" ":generated" qualified-name ident expr* ")"
+generated-payload ::= defstruct | defenum | define-var | define-func
 define-var    ::= "(" "define" ident [":" type] expr ")"
 define-func   ::= "(" "define" "(" ident param* ")" [":" type] expr ")"
 dispatch-decl ::= "(" "defdispatch" ident dispatch-variant+ ")"
@@ -3949,6 +4070,7 @@ macro-type-slot ::= type
                   | type "..."                         ; variadic final slot only
 
 module-ident  ::= ident ("/" ident)*
+qualified-name ::= ident | module-ident "/" ident
 ident         ::= [a-zA-Z_][a-zA-Z0-9_!?+-=*/<>:]*
 integer       ::= [-]?[0-9]+
 float         ::= [-]?[0-9]+\.[0-9]+

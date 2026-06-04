@@ -43,12 +43,23 @@ mkdir -p "$(dirname -- "$OUT")"
 
 ASM="$WORKDIR/cli.s"
 OBJ="$WORKDIR/cli.$NL_OBJ_EXT"
+COMPILE_STDOUT="$WORKDIR/compile.stdout"
+COMPILE_STDERR="$WORKDIR/compile.stderr"
 
 echo "[build-stage0] compile selfhost/cli.tl with seed ($NL_BOOTSTRAP_TARGET)"
-run_with_heartbeat "compile cli.tl" \
+if ! run_with_heartbeat_capture "compile cli.tl" "$COMPILE_STDOUT" "$COMPILE_STDERR" \
     "$SEED" compile selfhost/cli.tl -o "$ASM" \
     --target "$NL_BOOTSTRAP_TARGET" \
-    --stdlib-root stdlib --stdlib-root selfhost --opt-level 2
+    --stdlib-root stdlib --stdlib-root selfhost --opt-level 2; then
+    echo "[build-stage0] seed compiler failed while compiling selfhost/cli.tl" >&2
+    echo "[build-stage0] compiler stdout:" >&2
+    sed 's/^/  /' "$COMPILE_STDOUT" >&2 || true
+    echo "[build-stage0] compiler stderr:" >&2
+    sed 's/^/  /' "$COMPILE_STDERR" >&2 || true
+    exit 1
+fi
+cat "$COMPILE_STDOUT"
+cat "$COMPILE_STDERR" >&2
 [ -s "$ASM" ] || {
     echo "[build-stage0] seed did not emit assembly for selfhost/cli.tl" >&2
     exit 1

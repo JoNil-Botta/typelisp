@@ -186,6 +186,8 @@ prepare_cli_surface_files() {
     printf '%s' '(define (main) : i64
   0)' > "$CLI_SURFACE_SRC"
     cat > "$CLI_SURFACE_RUN_SRC" <<'EOF'
+(import "stdlib/io.tl")
+
 (define (main) : i64
   (begin
     (print-string (arg 1))
@@ -627,6 +629,8 @@ assert_contains scaffold-init-lib-manifest "$INIT_LIB_DIR/typelisp.pkg" '(entry 
 
 RUN_SRC="$WORKDIR/run-main.tl"
 cat > "$RUN_SRC" <<'EOF'
+(import "stdlib/io.tl")
+
 (define (main) : i64
   (begin
     (print-string (arg 1))

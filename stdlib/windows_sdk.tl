@@ -222,27 +222,35 @@
 
 ;: Return true when at least one SDK override environment variable is present.
 (define (windows-sdk-env-present?) : bool
-  (match (env-get "WindowsSdkDir")
-    [(EnvSomeString _) true]
-    [(EnvNoString)
-      (match (env-get "WindowsSDKVersion")
-        [(EnvSomeString _) true]
-        [(EnvNoString) false])]))
+  (let
+    [name : String "WindowsSdkDir"]
+    (match (env-get (& name))
+      [(EnvSomeString _) true]
+      [(EnvNoString)
+        (let
+          [name : String "WindowsSDKVersion"]
+          (match (env-get (& name))
+            [(EnvSomeString _) true]
+            [(EnvNoString) false]))])))
 
 ;: Discover and validate an SDK layout from environment overrides.
 (define (windows-sdk-discover-from-env) : ResultWindowsSdkLayout
-  (match (env-get "WindowsSdkDir")
-    [(EnvNoString)
-      (ErrWindowsSdkLayout
-        (WindowsSdkMissingEnvironment "windows-sdk: WindowsSdkDir is not set"))]
-    [(EnvSomeString root)
-      (match (env-get "WindowsSDKVersion")
-        [(EnvNoString)
-          (ErrWindowsSdkLayout
-            (WindowsSdkMissingEnvironment
-              "windows-sdk: WindowsSDKVersion is not set"))]
-        [(EnvSomeString version)
-          (windows-sdk-layout-from-root-version-checked root version)])]))
+  (let
+    [name : String "WindowsSdkDir"]
+    (match (env-get (& name))
+      [(EnvNoString)
+        (ErrWindowsSdkLayout
+          (WindowsSdkMissingEnvironment "windows-sdk: WindowsSdkDir is not set"))]
+      [(EnvSomeString root)
+        (let
+          [name : String "WindowsSDKVersion"]
+          (match (env-get (& name))
+            [(EnvNoString)
+              (ErrWindowsSdkLayout
+                (WindowsSdkMissingEnvironment
+                  "windows-sdk: WindowsSDKVersion is not set"))]
+            [(EnvSomeString version)
+              (windows-sdk-layout-from-root-version-checked root version)]))])))
 
 ;: Validate a root/version pair found in the registry.
 (define (windows-sdk-layout-from-registry-root-version-checked

@@ -9,7 +9,8 @@
 ;#
 ;# ```typelisp
 ;# (import "stdlib/env.tl")
-;# (define fallback : EnvMaybeString (env-get "TYPELISP_DOC_TEST_MISSING_ENV"))
+;# (define fallback : EnvMaybeString
+;#   (let [name : String "TYPELISP_DOC_TEST_MISSING_ENV"] (env-get (& name))))
 ;# ```
 (import "string.tl")
 
@@ -33,7 +34,7 @@
 (define (env-string-list-empty) : EnvStringList
   (EnvStringNil))
 
-;: Prepend a string to an environment string list.
+;: Prepend an owned string to an environment string list.
 (define (env-string-list-cons [value : String] [rest : EnvStringList]) : EnvStringList
   (EnvStringCons value rest))
 
@@ -55,13 +56,15 @@
   (env-path-separator))
 
 ;: Return the value of `name`, or `EnvNoString` when the variable is missing.
-(define (env-get [name : String]) : EnvMaybeString
+(define (env-get [name : (& name str)]) : EnvMaybeString
   (if (env-var-exists? name)
     (EnvSomeString (env-var-value name))
     (EnvNoString)))
 
 ;: Split a PATH-style string using the supplied one-byte separator string.
-(define (env-path-split-with-separator [value : String] [separator : String]) : EnvStringList
+(define (env-path-split-with-separator
+  [value : (& value str)]
+  [separator : (& separator str)]) : EnvStringList
   (let
     [n : i64 (string-length value)]
     (if (= n 0)
@@ -85,20 +88,22 @@
             (EnvStringCons (substring value start (- n start)) items)))))))
 
 ;: Split a PATH-style string using the current platform separator.
-(define (env-path-split [value : String]) : EnvStringList
-  (env-path-split-with-separator value (env-path-list-separator)))
+(define (env-path-split [value : (& value str)]) : EnvStringList
+  (let
+    [separator : String (env-path-list-separator)]
+    (env-path-split-with-separator value (& separator))))
 
 ;: Read `name` and split it as a PATH-style list when present.
-(define (env-path-list [name : String]) : EnvMaybeStringList
+(define (env-path-list [name : (& name str)]) : EnvMaybeStringList
   (match (env-get name)
-    [(EnvSomeString value) (EnvSomeStringList (env-path-split value))]
+    [(EnvSomeString value) (EnvSomeStringList (env-path-split (& value)))]
     [(EnvNoString) (EnvNoStringList)]))
 
 ;: Append PATH-style `items` to `acc`, allocating joined string segments.
 (define (env-path-join-tail
   [acc : String]
   [items : EnvStringList]
-  [separator : String]) : String
+  [separator : (& separator str)]) : String
   (match items
     [(EnvStringNil) acc]
     [(EnvStringCons head rest)
@@ -110,11 +115,13 @@
 ;: Join PATH-style items using the supplied separator.
 (define (env-path-join-with-separator
   [items : EnvStringList]
-  [separator : String]) : String
+  [separator : (& separator str)]) : String
   (match items
     [(EnvStringNil) ""]
     [(EnvStringCons head rest) (env-path-join-tail head rest separator)]))
 
 ;: Join PATH-style items using the current platform separator.
 (define (env-path-join [items : EnvStringList]) : String
-  (env-path-join-with-separator items (env-path-list-separator)))
+  (let
+    [separator : String (env-path-list-separator)]
+    (env-path-join-with-separator items (& separator))))

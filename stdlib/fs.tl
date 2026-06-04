@@ -403,15 +403,21 @@
 ;: Return the host temporary root used by `try-create-temp-dir`.
 (define (fs-temp-root) : String
   (if (fs-windows?)
-    (match (env-get "TEMP")
-      [(EnvSomeString value) value]
-      [(EnvNoString)
-        (match (env-get "TMP")
-          [(EnvSomeString value) value]
-          [(EnvNoString) "."])])
-    (match (env-get "TMPDIR")
-      [(EnvSomeString value) value]
-      [(EnvNoString) "/tmp"])))
+    (let
+      [name : String "TEMP"]
+      (match (env-get (& name))
+        [(EnvSomeString value) value]
+        [(EnvNoString)
+          (let
+            [name : String "TMP"]
+            (match (env-get (& name))
+              [(EnvSomeString value) value]
+              [(EnvNoString) "."]))]))
+    (let
+      [name : String "TMPDIR"]
+      (match (env-get (& name))
+        [(EnvSomeString value) value]
+        [(EnvNoString) "/tmp"]))))
 
 ;: Return the process current directory as an owned active-arena String.
 ;:

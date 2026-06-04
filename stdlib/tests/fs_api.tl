@@ -2,6 +2,8 @@
 
 (import "stdlib/io.tl")
 
+(import "stdlib/list.tl")
+
 (import "stdlib/test.tl")
 
 (define (assert-ok-unit [result : ResultIoUnit] [message : String]) : unit
@@ -29,6 +31,42 @@
     [(OkIoString value) value]
     [(ErrIoString error)
       (panic (string-append message (io-error-message error)))]))
+
+(define (expect-ok-string-list [result : ResultIoStringList] [message : String]) : StringList
+  (match result
+    [(OkIoStringList value) value]
+    [(ErrIoStringList error)
+      (panic (string-append message (io-error-message error)))]))
+
+(define (assert-unsupported-string-list
+  [result : ResultIoStringList]
+  [message : String]) : unit
+  (match result
+    [(OkIoStringList _) (panic (string-append message "unexpected success"))]
+    [(ErrIoStringList error)
+      (assert-true (io-error-unsupported? error) message)]))
+
+(define (assert-not-found-string-list
+  [result : ResultIoStringList]
+  [message : String]) : unit
+  (match result
+    [(OkIoStringList _) (panic (string-append message "unexpected success"))]
+    [(ErrIoStringList error) (assert-true (io-error-not-found? error) message)]))
+
+(define (assert-invalid-string-list
+  [result : ResultIoStringList]
+  [message : String]) : unit
+  (match result
+    [(OkIoStringList _) (panic (string-append message "unexpected success"))]
+    [(ErrIoStringList error)
+      (assert-true (io-error-invalid-path? error) message)]))
+
+(define (assert-error-string-list
+  [result : ResultIoStringList]
+  [message : String]) : unit
+  (match result
+    [(OkIoStringList _) (panic (string-append message "unexpected success"))]
+    [(ErrIoStringList _) unit]))
 
 (define (assert-exists [path : String] [expected : bool] [message : String]) : unit
   (match (try-file-exists? path)
@@ -159,6 +197,48 @@
     (assert-invalid-unit
       (try-rename "windows source" "")
       "windows empty rename destination is invalid")))
+
+(define (assert-linux-read-dir-api [root : String]) : unit
+  (let
+    [file-a : String (fs-path-join root "alpha.txt")]
+    [file-b : String (fs-path-join root "beta data.txt")]
+    [child-dir : String (fs-path-join root "child-dir")]
+    [missing : String (fs-path-join root "missing")]
+    (begin
+      (assert-ok-unit (try-write-file file-a "alpha") "read-dir file a: ")
+      (assert-ok-unit (try-write-file file-b "beta") "read-dir file b: ")
+      (assert-ok-unit (try-mkdir child-dir) "read-dir child dir: ")
+      (let
+        [entries : StringList
+          (expect-ok-string-list (try-read-dir root) "read dir: ")]
+        (begin
+          (assert-true
+            (string-list-contains? entries "alpha.txt")
+            "read-dir includes first file name")
+          (assert-true
+            (string-list-contains? entries "beta data.txt")
+            "read-dir includes second file name")
+          (assert-true
+            (string-list-contains? entries "child-dir")
+            "read-dir includes subdirectory name")
+          (assert-false
+            (string-list-contains? entries ".")
+            "read-dir filters dot")
+          (assert-false
+            (string-list-contains? entries "..")
+            "read-dir filters dotdot")
+          (assert-not-found-string-list
+            (try-read-dir missing)
+            "read-dir missing path reports not found")
+          (assert-error-string-list
+            (try-read-dir file-a)
+            "read-dir file path reports an IoError")
+          (assert-invalid-string-list
+            (try-read-dir "")
+            "read-dir empty path invalid")
+          (assert-ok-unit (try-remove-file file-a) "cleanup read-dir file a: ")
+          (assert-ok-unit (try-remove-file file-b) "cleanup read-dir file b: ")
+          (assert-ok-unit (try-remove-dir child-dir) "cleanup read-dir child: "))))))
 
 (define (fs-test-drive-absolute? [path : String]) : bool
   (and
@@ -344,6 +424,9 @@
                 "create temp dir mkdir: ")]
             (assert-mkdir-if-missing dir false))
           (assert-windows-rename-api)
+          (assert-unsupported-string-list
+            (try-read-dir ".")
+            "windows read-dir reports unsupported")
           42)
         (let
           [dir-a : String
@@ -358,6 +441,10 @@
             (expect-ok-string
               (try-create-temp-dir "typelisp fs rename test")
               "create temp dir c: ")]
+          [dir-d : String
+            (expect-ok-string
+              (try-create-temp-dir "typelisp fs read dir test")
+              "create temp dir d: ")]
           [file-a : String (fs-path-join dir-a "artifact with space.s")]
           [file-b : String (fs-path-join dir-b "cleanup.obj")]
           (begin
@@ -393,4 +480,8 @@
             (assert-invalid-temp-dir)
             (assert-linux-rename-api dir-c)
             (assert-ok-unit (try-remove-dir dir-c) "cleanup rename temp dir: ")
+            (assert-linux-read-dir-api dir-d)
+            (assert-ok-unit
+              (try-remove-dir dir-d)
+              "cleanup read-dir temp dir: ")
             42))))))

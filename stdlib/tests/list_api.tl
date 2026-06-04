@@ -135,6 +135,12 @@
         "middle"
         "right"
         "append order")
+      (assert-true
+        (string-list-contains? built "beta")
+        "contains reports existing item")
+      (assert-false
+        (string-list-contains? built "delta")
+        "contains reports missing item")
       (assert-string-list3
         (string-list-builder-build-onto
           (string-list-builder-push (string-list-builder-empty) "head")

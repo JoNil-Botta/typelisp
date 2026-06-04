@@ -216,7 +216,7 @@ stdlib/tests/io_stdio_bytes.tl|42|-|-|literal:abcdef|requires-stage0-symbol:file
 stdlib/tests/env_api.tl|42|-|-
 stdlib/tests/ffi_api.tl|42|-|-
 stdlib/tests/cpu_api.tl|42|-|-|-|requires-stage0-symbol:cpuid
-stdlib/tests/fs_api.tl|42|-|-|-|requires-runtime-gap:windows:#1683:io: unsupported
+stdlib/tests/fs_api.tl|42|-|-|-|requires-stage0-symbol:file-read-chunk-status,file-write-status,file-flush-status,append-file-status,fs-rename-status,fs-read-dir-status,fs-read-dir
 stdlib/tests/hash_api.tl|42|-|-
 stdlib/tests/hashmap_api.tl|42|-|-
 stdlib/tests/list_api.tl|42|-|-

@@ -2299,9 +2299,11 @@
     (+ (fs-mkdir-status \"target/typelisp-fs\")
       (+ (fs-remove-file-status \"target/typelisp-fs/artifact.o\")
         (+ (fs-remove-dir-status \"target/typelisp-fs\")
-          (fs-rename-status
-            \"target/typelisp-fs/from name\"
-            \"target/typelisp-fs/to name\"))))))")
+          (+ (fs-rename-status
+              \"target/typelisp-fs/from name\"
+              \"target/typelisp-fs/to name\")
+            (+ (fs-read-dir-status \"target/typelisp-fs\")
+              (string-length (fs-read-dir \"target/typelisp-fs\")))))))))")
 
 (define (compiler-backend-fs-runtime-ok?) : bool
   (match (compiler-backend-emit-source (compiler-backend-fs-runtime-source))
@@ -2316,14 +2318,30 @@
             asm
             ".L_tl_fs_remove_dir_status:\n")
           (compiler-backend-string-contains? asm ".L_tl_fs_rename_status:\n")
-          (compiler-backend-string-contains? asm ".L_tl_fs_process_id:\n")
+          (and
+            (compiler-backend-string-contains? asm ".L_tl_fs_process_id:\n")
+            (and
+              (compiler-backend-string-contains?
+                asm
+                ".L_tl_fs_read_dir_status:\n")
+              (compiler-backend-string-contains? asm ".L_tl_fs_read_dir:\n")))
           (compiler-backend-string-contains? asm "    movq $83, %rax\n")
           (compiler-backend-string-contains? asm "    movq $87, %rax\n")
           (compiler-backend-string-contains? asm "    movq $84, %rax\n"))
         (and
           (compiler-backend-string-contains? asm "    movq $82, %rax\n")
           (and
-            (compiler-backend-string-contains? asm "    movq $39, %rax\n")
+            (and
+              (compiler-backend-string-contains?
+                asm
+                ".L_tl_fs_read_dir_status:\n")
+              (and
+                (compiler-backend-string-contains? asm ".L_tl_fs_read_dir:\n")
+                (and
+                  (compiler-backend-string-contains?
+                    asm
+                    "    movq $217, %rax\n")
+                  (compiler-backend-string-contains? asm "    movq $39, %rax\n"))))
             (and
               (not
                 (compiler-backend-string-contains? asm "    .extern _mkdir\n"))
@@ -2353,7 +2371,13 @@
             asm
             ".L_tl_fs_remove_dir_status:\n")
           (compiler-backend-string-contains? asm ".L_tl_fs_rename_status:\n")
-          (compiler-backend-string-contains? asm ".L_tl_fs_process_id:\n")
+          (and
+            (compiler-backend-string-contains? asm ".L_tl_fs_process_id:\n")
+            (and
+              (compiler-backend-string-contains?
+                asm
+                ".L_tl_fs_read_dir_status:\n")
+              (compiler-backend-string-contains? asm ".L_tl_fs_read_dir:\n")))
           (compiler-backend-string-contains? asm "    call _mkdir\n")
           (compiler-backend-string-contains? asm "    call _unlink\n")
           (compiler-backend-string-contains? asm "    call _rmdir\n"))

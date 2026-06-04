@@ -101,7 +101,9 @@ stage1_driver_staged_symbols() {
         file-write-status \
         file-flush-status \
         append-file-status \
-        fs-rename-status
+        fs-rename-status \
+        fs-read-dir-status \
+        fs-read-dir
 }
 
 stage1_driver_prebuild_failed_for_staged_symbol() {

@@ -9140,15 +9140,23 @@
                       provides-fs)
                     (compiler-backend-provides-runtime-name?
                       name
-                      "tl_fs_current_dir_status"
-                      (compiler-backend-runtime-tail-fs-current-dir?
-                        provides-tail))
+                      ".L_tl_fs_read_dir_status"
+                      provides-fs)
                     (compiler-backend-provides-runtime-name?
                       name
-                      "tl_fs_current_dir"
-                      (compiler-backend-runtime-tail-fs-current-dir?
-                        provides-tail))
-                    false)
+                      ".L_tl_fs_read_dir"
+                      provides-fs)
+                    (or
+                      (compiler-backend-provides-runtime-name?
+                        name
+                        "tl_fs_current_dir_status"
+                        (compiler-backend-runtime-tail-fs-current-dir?
+                          provides-tail))
+                      (compiler-backend-provides-runtime-name?
+                        name
+                        "tl_fs_current_dir"
+                        (compiler-backend-runtime-tail-fs-current-dir?
+                          provides-tail))))
                   (or
                     (compiler-backend-provides-runtime-name?
                       name
@@ -9369,6 +9377,12 @@
         ".L_tl_fs_rename_status")]
     [extern-fs-process-id : bool
       (compiler-backend-extern-list-references? externs ".L_tl_fs_process_id")]
+    [extern-fs-read-dir-status : bool
+      (compiler-backend-extern-list-references?
+        externs
+        ".L_tl_fs_read_dir_status")]
+    [extern-fs-read-dir : bool
+      (compiler-backend-extern-list-references? externs ".L_tl_fs_read_dir")]
     [extern-fs-current-dir-status : bool
       (compiler-backend-extern-list-references?
         externs
@@ -9513,6 +9527,12 @@
       (compiler-backend-function-list-calls? functions ".L_tl_fs_rename_status")]
     [calls-fs-process-id : bool
       (compiler-backend-function-list-calls? functions ".L_tl_fs_process_id")]
+    [calls-fs-read-dir-status : bool
+      (compiler-backend-function-list-calls?
+        functions
+        ".L_tl_fs_read_dir_status")]
+    [calls-fs-read-dir : bool
+      (compiler-backend-function-list-calls? functions ".L_tl_fs_read_dir")]
     [calls-fs-current-dir-status : bool
       (compiler-backend-function-list-calls?
         functions
@@ -9635,8 +9655,8 @@
           extern-fs-remove-dir-status
           extern-fs-rename-status
           extern-fs-process-id
-          false
-          false
+          extern-fs-read-dir-status
+          extern-fs-read-dir
           false)
         (backend-or8
           calls-fs-mkdir-status
@@ -9644,8 +9664,8 @@
           calls-fs-remove-dir-status
           calls-fs-rename-status
           calls-fs-process-id
-          false
-          false
+          calls-fs-read-dir-status
+          calls-fs-read-dir
           false))]
     [needs-fs-current-dir : bool
       (or
@@ -12583,6 +12603,254 @@ tl_profile_alloc_reset_peak:
     pop %rbp
     ret
 
+.L_tl_fs_read_dir_status:
+    push %rbp
+    mov %rsp, %rbp
+    push %rbx
+    push %r12
+    push %r13
+    sub $8, %rsp
+    movq %rdi, %rbx
+    movq %rsi, %r12
+    cmpq $0, %r12
+    jl .L_tl_fs_read_dir_status_invalid
+    movq %r12, %rdi
+    addq $1, %rdi
+    js .L_tl_fs_read_dir_status_invalid
+    call tl_alloc
+    movq %rax, %r13
+    xorq %rcx, %rcx
+.L_tl_fs_read_dir_status_path_copy_loop:
+    cmpq %r12, %rcx
+    jge .L_tl_fs_read_dir_status_path_copy_done
+    movzbl (%rbx,%rcx), %edx
+    movb %dl, (%r13,%rcx)
+    incq %rcx
+    jmp .L_tl_fs_read_dir_status_path_copy_loop
+.L_tl_fs_read_dir_status_path_copy_done:
+    movb $0, (%r13,%r12)
+    movq $257, %rax
+    movq $-100, %rdi
+    movq %r13, %rsi
+    movq $65536, %rdx
+    xorq %r10, %r10
+    syscall
+    testq %rax, %rax
+    js .L_tl_fs_read_dir_status_error_from_rax
+    movq %rax, %rbx
+    movq $3, %rax
+    movq %rbx, %rdi
+    syscall
+    testq %rax, %rax
+    js .L_tl_fs_read_dir_status_error_from_rax
+    xorq %rax, %rax
+    jmp .L_tl_fs_read_dir_status_return
+.L_tl_fs_read_dir_status_error_from_rax:
+    negq %rax
+    jmp .L_tl_fs_read_dir_status_return
+.L_tl_fs_read_dir_status_invalid:
+    movq $22, %rax
+.L_tl_fs_read_dir_status_return:
+    add $8, %rsp
+    pop %r13
+    pop %r12
+    pop %rbx
+    pop %rbp
+    ret
+
+.L_tl_fs_read_dir:
+    push %rbp
+    mov %rsp, %rbp
+    push %rbx
+    push %r12
+    push %r13
+    push %r14
+    push %r15
+    sub $24, %rsp
+    movq %rdi, %rbx
+    movq %rsi, %r12
+    cmpq $0, %r12
+    jl .L_tl_fs_read_dir_empty
+    movq %r12, %rdi
+    addq $1, %rdi
+    js .L_tl_fs_read_dir_empty
+    call tl_alloc
+    movq %rax, %r13
+    xorq %rcx, %rcx
+.L_tl_fs_read_dir_path_copy_loop:
+    cmpq %r12, %rcx
+    jge .L_tl_fs_read_dir_path_copy_done
+    movzbl (%rbx,%rcx), %edx
+    movb %dl, (%r13,%rcx)
+    incq %rcx
+    jmp .L_tl_fs_read_dir_path_copy_loop
+.L_tl_fs_read_dir_path_copy_done:
+    movb $0, (%r13,%r12)
+    movq $257, %rax
+    movq $-100, %rdi
+    movq %r13, %rsi
+    movq $65536, %rdx
+    xorq %r10, %r10
+    syscall
+    testq %rax, %rax
+    js .L_tl_fs_read_dir_empty
+    movq %rax, %rbx
+    movq $32768, %rdi
+    call tl_alloc
+    movq %rax, %r14
+    xorq %r15, %r15
+.L_tl_fs_read_dir_first_getdents:
+    movq $217, %rax
+    movq %rbx, %rdi
+    movq %r14, %rsi
+    movq $32768, %rdx
+    syscall
+    testq %rax, %rax
+    js .L_tl_fs_read_dir_close_empty
+    cmpq $0, %rax
+    je .L_tl_fs_read_dir_first_done
+    movq %rax, -16(%rbp)
+    xorq %rcx, %rcx
+.L_tl_fs_read_dir_first_entry:
+    cmpq -16(%rbp), %rcx
+    jge .L_tl_fs_read_dir_first_getdents
+    movzwq 16(%r14,%rcx), %r8
+    testq %r8, %r8
+    jz .L_tl_fs_read_dir_first_done
+    leaq 19(%r14,%rcx), %rsi
+    movzbl (%rsi), %edx
+    cmpb $46, %dl
+    jne .L_tl_fs_read_dir_first_count_name
+    movzbl 1(%rsi), %edx
+    testb %dl, %dl
+    je .L_tl_fs_read_dir_first_next
+    cmpb $46, %dl
+    jne .L_tl_fs_read_dir_first_count_name
+    movzbl 2(%rsi), %edx
+    testb %dl, %dl
+    je .L_tl_fs_read_dir_first_next
+.L_tl_fs_read_dir_first_count_name:
+    xorq %r9, %r9
+.L_tl_fs_read_dir_first_len_loop:
+    movzbl (%rsi,%r9), %edx
+    testb %dl, %dl
+    je .L_tl_fs_read_dir_first_len_done
+    incq %r9
+    jmp .L_tl_fs_read_dir_first_len_loop
+.L_tl_fs_read_dir_first_len_done:
+    addq %r9, %r15
+    incq %r15
+.L_tl_fs_read_dir_first_next:
+    addq %r8, %rcx
+    jmp .L_tl_fs_read_dir_first_entry
+.L_tl_fs_read_dir_first_done:
+    movq $3, %rax
+    movq %rbx, %rdi
+    syscall
+    movq %r15, %rdi
+    cmpq $0, %rdi
+    jne .L_tl_fs_read_dir_alloc_output
+    movq $1, %rdi
+.L_tl_fs_read_dir_alloc_output:
+    call tl_alloc
+    movq %rax, %r12
+    cmpq $0, %r15
+    je .L_tl_fs_read_dir_return_string
+    movq $257, %rax
+    movq $-100, %rdi
+    movq %r13, %rsi
+    movq $65536, %rdx
+    xorq %r10, %r10
+    syscall
+    testq %rax, %rax
+    js .L_tl_fs_read_dir_empty
+    movq %rax, %rbx
+    movq $0, -8(%rbp)
+.L_tl_fs_read_dir_second_getdents:
+    movq $217, %rax
+    movq %rbx, %rdi
+    movq %r14, %rsi
+    movq $32768, %rdx
+    syscall
+    testq %rax, %rax
+    js .L_tl_fs_read_dir_close_empty
+    cmpq $0, %rax
+    je .L_tl_fs_read_dir_second_done
+    movq %rax, -16(%rbp)
+    xorq %rcx, %rcx
+.L_tl_fs_read_dir_second_entry:
+    cmpq -16(%rbp), %rcx
+    jge .L_tl_fs_read_dir_second_getdents
+    movzwq 16(%r14,%rcx), %r8
+    testq %r8, %r8
+    jz .L_tl_fs_read_dir_second_done
+    movq %r8, -24(%rbp)
+    leaq 19(%r14,%rcx), %rsi
+    movzbl (%rsi), %edx
+    cmpb $46, %dl
+    jne .L_tl_fs_read_dir_second_count_name
+    movzbl 1(%rsi), %edx
+    testb %dl, %dl
+    je .L_tl_fs_read_dir_second_next
+    cmpb $46, %dl
+    jne .L_tl_fs_read_dir_second_count_name
+    movzbl 2(%rsi), %edx
+    testb %dl, %dl
+    je .L_tl_fs_read_dir_second_next
+.L_tl_fs_read_dir_second_count_name:
+    xorq %r9, %r9
+.L_tl_fs_read_dir_second_len_loop:
+    movzbl (%rsi,%r9), %edx
+    testb %dl, %dl
+    je .L_tl_fs_read_dir_second_len_done
+    incq %r9
+    jmp .L_tl_fs_read_dir_second_len_loop
+.L_tl_fs_read_dir_second_len_done:
+    movq -8(%rbp), %r8
+    xorq %r10, %r10
+.L_tl_fs_read_dir_second_copy_loop:
+    cmpq %r9, %r10
+    jge .L_tl_fs_read_dir_second_copy_done
+    movzbl (%rsi,%r10), %edx
+    movb %dl, (%r12,%r8)
+    incq %r10
+    incq %r8
+    jmp .L_tl_fs_read_dir_second_copy_loop
+.L_tl_fs_read_dir_second_copy_done:
+    movb $10, (%r12,%r8)
+    incq %r8
+    movq %r8, -8(%rbp)
+.L_tl_fs_read_dir_second_next:
+    addq -24(%rbp), %rcx
+    jmp .L_tl_fs_read_dir_second_entry
+.L_tl_fs_read_dir_second_done:
+    movq $3, %rax
+    movq %rbx, %rdi
+    syscall
+    jmp .L_tl_fs_read_dir_return_string
+.L_tl_fs_read_dir_close_empty:
+    movq $3, %rax
+    movq %rbx, %rdi
+    syscall
+.L_tl_fs_read_dir_empty:
+    movq $1, %rdi
+    call tl_alloc
+    movq %rax, %r12
+    xorq %r15, %r15
+.L_tl_fs_read_dir_return_string:
+    movq $16, %rdi
+    call tl_alloc
+    movq %r12, 0(%rax)
+    movq %r15, 8(%rax)
+    add $24, %rsp
+    pop %r15
+    pop %r14
+    pop %r13
+    pop %r12
+    pop %rbx
+    pop %rbp
+    ret
+
 .L_tl_fs_process_id:
     movq $39, %rax
     syscall
@@ -12833,6 +13101,26 @@ tl_fs_current_dir:
         (compiler-backend-runtime-windows-fs-remove-dir-status-functions)))
     ".L_tl_fs_rename_status:
     movq $38, %rax
+    ret
+
+.L_tl_fs_read_dir_status:
+    movq $38, %rax
+    ret
+
+.L_tl_fs_read_dir:
+    push %rbp
+    mov %rsp, %rbp
+    sub $48, %rsp
+    movq $1, %rcx
+    call tl_alloc
+    movq %rax, -8(%rbp)
+    movq $16, %rcx
+    call tl_alloc
+    movq -8(%rbp), %r8
+    movq %r8, 0(%rax)
+    movq $0, 8(%rax)
+    add $48, %rsp
+    pop %rbp
     ret
 
 .L_tl_fs_process_id:
@@ -16887,8 +17175,6 @@ tl_windows_sdk_registry_install:
 "
         (if (compiler-backend-plan-provides? plan ".L_tl_fs_mkdir_status")
           "    .extern _mkdir
-    .extern _unlink
-    .extern _rmdir
     .extern GetCurrentProcessId
 "
           ""))

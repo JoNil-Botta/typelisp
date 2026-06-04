@@ -460,12 +460,107 @@
             (box-get rest)
             (compiler-reg-instr-list-types instrs types))])]))
 
+(define (compiler-reg-var-type-array-set!
+  [present : (Array i64)]
+  [types : (Array AstType)]
+  [var : i64]
+  [ty : AstType]) : unit
+  (if (or (< var 0) (>= var (array-length present)))
+    unit
+    (begin
+      (array-set! present var 1)
+      (array-set! types var ty))))
+
+(define (compiler-reg-param-types-array!
+  [params : CompilerIrParamList]
+  [present : (Array i64)]
+  [types : (Array AstType)]) : unit
+  (match params
+    [(IrParamNil) unit]
+    [(IrParamCons param rest)
+      (match param
+        [(IrParam _ ty id)
+          (begin
+            (compiler-reg-var-type-array-set! present types id ty)
+            (compiler-reg-param-types-array! rest present types))])]))
+
+(define (compiler-reg-instr-def-type-array!
+  [instr : CompilerIrInstr]
+  [present : (Array i64)]
+  [types : (Array AstType)]) : unit
+  (match instr
+    [(IrInstrMov dst _ ty) (compiler-reg-var-type-array-set! present types dst ty)]
+    [(IrInstrLoad dst _ ty) (compiler-reg-var-type-array-set! present types dst ty)]
+    [(IrInstrCast dst _ _ to-ty)
+      (compiler-reg-var-type-array-set! present types dst to-ty)]
+    [(IrInstrBinOp dst _ _ _ ty)
+      (compiler-reg-var-type-array-set! present types dst ty)]
+    [(IrInstrUnOp dst _ _ ty)
+      (compiler-reg-var-type-array-set! present types dst ty)]
+    [(IrInstrVectorReduce dst _ _ _ elem-ty)
+      (compiler-reg-var-type-array-set! present types dst elem-ty)]
+    [(IrInstrMaskReduce dst _ _ _)
+      (compiler-reg-var-type-array-set! present types dst (AstTyBool))]
+    [(IrInstrCall dst _ _ ty) (compiler-reg-var-type-array-set! present types dst ty)]
+    [(IrInstrPhi dst _ ty) (compiler-reg-var-type-array-set! present types dst ty)]
+    [_ unit]))
+
+(define (compiler-reg-instr-list-types-array!
+  [instrs : CompilerIrInstrList]
+  [present : (Array i64)]
+  [types : (Array AstType)]) : unit
+  (match instrs
+    [(IrInstrNil) unit]
+    [(IrInstrCons instr rest)
+      (begin
+        (compiler-reg-instr-def-type-array! instr present types)
+        (compiler-reg-instr-list-types-array! rest present types))]))
+
+(define (compiler-reg-block-list-types-array!
+  [blocks : CompilerIrBlockList]
+  [present : (Array i64)]
+  [types : (Array AstType)]) : unit
+  (match blocks
+    [(IrBlockNil) unit]
+    [(IrBlockCons block rest)
+      (match block
+        [(IrBlock _ instrs)
+          (begin
+            (compiler-reg-instr-list-types-array! instrs present types)
+            (compiler-reg-block-list-types-array! rest present types))])]))
+
+(define (compiler-reg-var-type-arrays-to-list
+  [present : (Array i64)]
+  [types : (Array AstType)]
+  [index : i64]
+  [acc : CompilerRegVarTypeList]) : CompilerRegVarTypeList
+  (if (< index 0)
+    acc
+    (compiler-reg-var-type-arrays-to-list
+      present
+      types
+      (- index 1)
+      (if (= (array-ref present index) 0)
+        acc
+        (CompilerRegVarTypeCons
+          (CompilerRegVarType index (array-ref types index))
+          acc)))))
+
 (define (compiler-reg-function-var-types [func : CompilerIrFunction]) : CompilerRegVarTypeList
   (match func
-    [(IrFunction _ params _ _ blocks)
-      (compiler-reg-block-list-types
-        blocks
-        (compiler-reg-param-types params CompilerRegVarTypeNil))]))
+    [(IrFunction _ params _ vars blocks)
+      (let
+        [present : (Array i64) (make-array i64 vars)]
+        [types : (Array AstType) (make-array AstType vars)]
+        (begin
+          (compiler-reg-fill-i64-array present 0)
+          (compiler-reg-param-types-array! params present types)
+          (compiler-reg-block-list-types-array! blocks present types)
+          (compiler-reg-var-type-arrays-to-list
+            present
+            types
+            (- vars 1)
+            CompilerRegVarTypeNil)))]))
 
 (define (compiler-reg-move-list-contains?
   [moves : CompilerRegMoveList]

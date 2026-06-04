@@ -208,6 +208,7 @@
     [(AstDeclDefFn _ _ _ body) (tc-expr-diag body message)]
     [(AstDeclDefMacro _ _ _ body) (tc-expr-diag body message)]
     [(AstDeclTest _ _ span) (compiler-diagnostic-from-ast-span "" span message)]
+    [(AstDeclUnsafe inner) (tc-decl-diag inner message)]
     [(AstDeclComptimeDecl template) (tc-decl-diag template message)]
     [_ (tc-diag-at-start message)]))
 
@@ -216,6 +217,26 @@
 
 (define (tc-bind [env : TcTypeEnv] [name : String] [ty : AstType]) : TcTypeEnv
   (TcTypeBind name ty env))
+
+(define (tc-unsafe-decl-marker-name [name : String]) : String
+  (string-append " __tl_unsafe_decl:" name))
+
+(define (tc-bind-unsafe [env : TcTypeEnv] [name : String] [ty : AstType]) : TcTypeEnv
+  (tc-bind (tc-bind env (tc-unsafe-decl-marker-name name) (AstTyUnit)) name ty))
+
+(define (tc-binding-unsafe-marker-head? [env : TcTypeEnv] [name : String]) : bool
+  (match env
+    [(TcTypeBind key _ _) (string-eq key (tc-unsafe-decl-marker-name name))]
+    [_ false]))
+
+(define (tc-binding-unsafe? [env : TcTypeEnv] [name : String]) : bool
+  (match env
+    [(TcTypeNil) false]
+    [(TcTypeCache _ _ rest) (tc-binding-unsafe? rest name)]
+    [(TcTypeBind key _ rest)
+      (if (string-eq key name)
+        (tc-binding-unsafe-marker-head? rest name)
+        (tc-binding-unsafe? rest name))]))
 
 (define (tc-env-cache-count [env : TcTypeEnv]) : i64
   (match env
@@ -276,6 +297,15 @@
   (if (string-eq module "")
     (tc-bind env name ty)
     (tc-bind env (compiler-symbol-module-key module name) ty)))
+
+(define (tc-bind-module-name-unsafe
+  [env : TcTypeEnv]
+  [module : String]
+  [name : String]
+  [ty : AstType]) : TcTypeEnv
+  (if (string-eq module "")
+    (tc-bind-unsafe env name ty)
+    (tc-bind-unsafe env (compiler-symbol-module-key module name) ty)))
 
 (define (tc-default-boundary-name) : String
   "__tl_default_boundary")
@@ -413,11 +443,17 @@
     [out : TcTypeEnv env]
     (begin
       (set! out (tc-bind out "arena-make" (tc-fn0 (AstTyI64))))
-      (set! out (tc-bind out "arena-destroy" (tc-fn1 (AstTyI64) (AstTyUnit))))
+      (set!
+        out
+        (tc-bind-unsafe out "arena-destroy" (tc-fn1 (AstTyI64) (AstTyUnit))))
       (set! out (tc-bind out "arena-current" (tc-fn0 (AstTyI64))))
-      (set! out (tc-bind out "arena-set!" (tc-fn1 (AstTyI64) (AstTyUnit))))
+      (set!
+        out
+        (tc-bind-unsafe out "arena-set!" (tc-fn1 (AstTyI64) (AstTyUnit))))
       (set! out (tc-bind out "arena-mark" (tc-fn0 (AstTyI64))))
-      (set! out (tc-bind out "arena-rewind" (tc-fn1 (AstTyI64) (AstTyUnit))))
+      (set!
+        out
+        (tc-bind-unsafe out "arena-rewind" (tc-fn1 (AstTyI64) (AstTyUnit))))
       out)))
 
 (define (tc-default-env) : TcTypeEnv
@@ -1820,6 +1856,7 @@
     [(AstDeclExport _) OkTcUnit]
     [(AstDeclModule _) OkTcUnit]
     [(AstDeclTest _ body _) (tc-source-expr-policy-ok ctx body)]
+    [(AstDeclUnsafe inner) (tc-source-decl-policy-ok ctx inner)]
     [(AstDeclComptimeDecl template) (tc-source-decl-policy-ok ctx template)]))
 
 (define (tc-source-decl-list-policy-ok [ctx : TcContext] [decls : AstDeclList]) : ResultTcUnit
@@ -2145,21 +2182,6 @@
         "typecheck: "
         (string-append name " requires unsafe context")))))
 
-(define (tc-arena-unsafe-primitive? [name : String]) : bool
-  (or
-    (string-eq name "arena-set!")
-    (or (string-eq name "arena-destroy") (string-eq name "arena-rewind"))))
-
-(define (tc-require-arena-call-safe [env : TcTypeEnv] [func : AstExpr]) : ResultTcUnit
-  (match (tc-expr-var-name func)
-    [(TcSomeString name)
-      (if (and
-        (tc-arena-unsafe-primitive? name)
-        (tc-default-builtin-unshadowed? env name))
-        (tc-require-unsafe env name)
-        OkTcUnit)]
-    [(TcNoString) OkTcUnit]))
-
 (define (tc-dyn-array-elem-supported? [env : TcTypeEnv] [ty : AstType]) : bool
   (if (tc-integer-type? ty)
     true
@@ -2474,6 +2496,7 @@
       (OkTcType
         (AstTyFunc (tc-param-type-list ctx params) (tc-resolve-type ctx ret)))]
     [(AstDeclExtern _ _ ty) (OkTcType (tc-resolve-type ctx ty))]
+    [(AstDeclUnsafe inner) (tc-top-decl-type ctx inner)]
     [_ (ErrTcType "typecheck: declaration has no value type")]))
 
 ;; Like `tc-top-decl-type`, but infers an un-annotated top-level `define`'s type
@@ -2571,6 +2594,31 @@
       (match decl
         [(AstDeclModule next-module)
           (tc-build-top-env-list-in-module ctx rest env next-module)]
+        [(AstDeclUnsafe inner)
+          (match inner
+            [(AstDeclDefFn name _ _ _)
+              (match (tc-top-decl-type
+                (tc-context-with-module ctx module)
+                inner)
+                [(OkTcType ty)
+                  (tc-build-top-env-list-in-module
+                    ctx
+                    rest
+                    (tc-bind-module-name-unsafe env module name ty)
+                    module)]
+                [(ErrTcType message) (ErrTcEnv message)])]
+            [(AstDeclExtern name _ _)
+              (match (tc-top-decl-type
+                (tc-context-with-module ctx module)
+                inner)
+                [(OkTcType ty)
+                  (tc-build-top-env-list-in-module
+                    ctx
+                    rest
+                    (tc-bind-module-name-unsafe env module name ty)
+                    module)]
+                [(ErrTcType message) (ErrTcEnv message)])]
+            [_ (tc-build-top-env-list-in-module ctx rest env module)])]
         [(AstDeclDef name _ _)
           (match (tc-top-decl-type-with-env
             (tc-context-with-module ctx module)
@@ -2695,6 +2743,21 @@
   [module : String]
   [decl : AstDecl]) : ResultTcEnv
   (match decl
+    [(AstDeclUnsafe inner)
+      (match inner
+        [(AstDeclDefFn name _ _ _)
+          (match (tc-top-decl-type (tc-context-with-module ctx module) inner)
+            [(OkTcType ty)
+              (OkTcEnv
+                (tc-bind-unsafe env (compiler-symbol-module-key alias name) ty))]
+            [(ErrTcType message) (ErrTcEnv message)])]
+        [(AstDeclExtern name _ _)
+          (match (tc-top-decl-type (tc-context-with-module ctx module) inner)
+            [(OkTcType ty)
+              (OkTcEnv
+                (tc-bind-unsafe env (compiler-symbol-module-key alias name) ty))]
+            [(ErrTcType message) (ErrTcEnv message)])]
+        [_ (OkTcEnv env)])]
     [(AstDeclDef name _ _)
       (match (tc-top-decl-type (tc-context-with-module ctx module) decl)
         [(OkTcType ty)
@@ -2878,6 +2941,17 @@
   [module : String]
   [decl : AstDecl]) : ResultTcEnv
   (match decl
+    [(AstDeclUnsafe inner)
+      (match inner
+        [(AstDeclDefFn name _ _ _)
+          (match (tc-top-decl-type ctx inner)
+            [(OkTcType ty) (OkTcEnv (tc-bind-unsafe env name ty))]
+            [(ErrTcType message) (ErrTcEnv message)])]
+        [(AstDeclExtern name _ _)
+          (match (tc-top-decl-type ctx inner)
+            [(OkTcType ty) (OkTcEnv (tc-bind-unsafe env name ty))]
+            [(ErrTcType message) (ErrTcEnv message)])]
+        [_ (OkTcEnv env)])]
     [(AstDeclDef name _ _)
       (match (tc-top-decl-type-with-env ctx env decl)
         [(OkTcType ty) (OkTcEnv (tc-bind env name ty))]
@@ -3275,7 +3349,7 @@
           (tc-default-builtin-unshadowed-scan? rest name)))]))
 
 (define (tc-default-builtin-unshadowed? [env : TcTypeEnv] [name : String]) : bool
-  (if (or (tc-region-arg-builtin-name? name) (tc-arena-unsafe-primitive? name))
+  (if (tc-region-arg-builtin-name? name)
     (tc-default-builtin-unshadowed-scan? env name)
     false))
 
@@ -3478,44 +3552,30 @@
   [env : TcTypeEnv]
   [func : AstExpr]
   [args : AstExprList]) : ResultTcType
-  (match (tc-require-arena-call-safe env func)
-    [(OkTcUnit)
-      (match (tc-expr ctx env func)
-        [(OkTcType fn-ty)
-          (match fn-ty
+  (match (tc-expr ctx env func)
+    [(OkTcType fn-ty)
+      (match fn-ty
+        [(AstTyFunc params ret)
+          (tc-call-function-type ctx env func args params ret)]
+        [(AstTyRegion _ inner)
+          (match inner
             [(AstTyFunc params ret)
-              (tc-call-function-type ctx env func args params ret)]
-            [(AstTyRegion _ inner)
-              (match inner
-                [(AstTyFunc params ret)
-                  (match (tc-check-call-args
-                    ctx
-                    env
-                    args
-                    params
-                    false
-                    (AstNoType))
-                    [(OkTcUnit) (OkTcType (tc-tag-active-region env ret))]
-                    [(ErrTcUnit message) (ErrTcType message)])]
-                [(AstTyEnum enum-name)
-                  (match args
-                    [(AstExprNil)
-                      (tc-nullary-variant-call-expr
-                        ctx
-                        env
-                        func
-                        enum-name
-                        inner)]
-                    [_ (ErrTcType "typecheck: arity mismatch")])]
-                [_ (ErrTcType "typecheck: call target is not a function")])]
+              (match (tc-check-call-args ctx env args params false (AstNoType))
+                [(OkTcUnit) (OkTcType (tc-tag-active-region env ret))]
+                [(ErrTcUnit message) (ErrTcType message)])]
             [(AstTyEnum enum-name)
               (match args
                 [(AstExprNil)
-                  (tc-nullary-variant-call-expr ctx env func enum-name fn-ty)]
+                  (tc-nullary-variant-call-expr ctx env func enum-name inner)]
                 [_ (ErrTcType "typecheck: arity mismatch")])]
             [_ (ErrTcType "typecheck: call target is not a function")])]
-        [(ErrTcType message) (ErrTcType message)])]
-    [(ErrTcUnit message) (ErrTcType message)]))
+        [(AstTyEnum enum-name)
+          (match args
+            [(AstExprNil)
+              (tc-nullary-variant-call-expr ctx env func enum-name fn-ty)]
+            [_ (ErrTcType "typecheck: arity mismatch")])]
+        [_ (ErrTcType "typecheck: call target is not a function")])]
+    [(ErrTcType message) (ErrTcType message)]))
 
 ;; Whether `name` resolves to any binding in `env` (a builtin, a top-level
 ;; user definition, or a local). Used to decide whether an unbound builtin
@@ -7735,9 +7795,7 @@
     [(AstExprSpanned inner _) (tc-expr ctx env inner)]
     [(AstExprLiteral lit) (OkTcType (tc-literal-type lit))]
     [(AstExprVar name)
-      (if (and
-        (tc-arena-unsafe-primitive? name)
-        (tc-default-builtin-unshadowed? env name))
+      (if (tc-binding-unsafe? env name)
         (match (tc-require-unsafe env name)
           [(OkTcUnit) (tc-lookup env name)]
           [(ErrTcUnit message) (ErrTcType message)])
@@ -8390,6 +8448,7 @@
           (CompilerTypecheckSummary values (+ functions 1) externs)]
         [(AstDeclExtern _ _ _)
           (CompilerTypecheckSummary values functions (+ externs 1))]
+        [(AstDeclUnsafe inner) (tc-summary-add-decl summary inner)]
         [_ summary])]))
 
 (define (tc-check-defmacro-produced-type
@@ -9302,6 +9361,10 @@
         body)
         [(OkMacroExpr nbody) (OkMacroDecl (AstDeclDefFn name params ret nbody))]
         [(ErrMacroExpr diag) (ErrMacroDecl diag)])]
+    [(AstDeclUnsafe inner)
+      (match (macro-expand-decl ctx top-env decls inner)
+        [(OkMacroDecl ninner) (OkMacroDecl (AstDeclUnsafe ninner))]
+        [(ErrMacroDecl diag) (ErrMacroDecl diag)])]
     [(AstDeclTest name expr span)
       (match (macro-expand-expr ctx top-env decls 0 expr)
         [(OkMacroExpr nexpr) (OkMacroDecl (AstDeclTest name nexpr span))]
@@ -9582,6 +9645,7 @@
     [(AstDeclDefStruct name repr cleanup fields)
       (tc-check-cleanup-struct-decl ctx top-env name repr cleanup fields)]
     [(AstDeclComptimeDecl template) (tc-check-decl ctx top-env template)]
+    [(AstDeclUnsafe inner) (tc-check-decl ctx top-env inner)]
     [_ OkTcUnit]))
 
 (define (tc-check-decls

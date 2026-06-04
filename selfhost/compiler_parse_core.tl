@@ -3083,6 +3083,20 @@
           (ErrAstDecl "parse: comptime-decl accepts only defstruct or defenum")])]
     [_ (ErrAstDecl "parse: comptime-decl expects exactly one template")]))
 
+(define (parse-ast-unsafe-decl [dispatch : SymI64Env] [rest : SpannedSexpr]) : ResultAstDecl
+  (match rest
+    [(SpSCons inner (SpSNil _) _)
+      (match (parse-ast-decl dispatch inner)
+        [(OkAstDecl decl)
+          (match decl
+            [(AstDeclDefFn _ _ _ _) (OkAstDecl (AstDeclUnsafe decl))]
+            [(AstDeclExtern _ _ _) (OkAstDecl (AstDeclUnsafe decl))]
+            [_
+              (ErrAstDecl
+                "parse: unsafe declaration accepts only function define or extern")])]
+        [(ErrAstDecl message) (ErrAstDecl message)])]
+    [_ (ErrAstDecl "parse: unsafe declaration expects exactly one declaration")]))
+
 (define (parse-ast-decl [dispatch : SymI64Env] [s : SpannedSexpr]) : ResultAstDecl
   (match s
     [(SpSCons (SpSSym head _) rest _)
@@ -3106,6 +3120,8 @@
           [(= tag (compiler-parse-tag-decl-export)) (parse-ast-export rest)]
           [(= tag (compiler-parse-tag-decl-comptime-decl))
             (parse-ast-comptime-decl dispatch rest)]
+          [(= tag (compiler-parse-tag-expr-unsafe))
+            (parse-ast-unsafe-decl dispatch rest)]
           [(= tag (compiler-parse-tag-decl-test))
             (parse-ast-test
               dispatch
@@ -3842,6 +3858,24 @@
         (= (ast-decl-list-tag-sum decls) 16))]
     [(ErrAstProgram _) false]))
 
+(define (compiler-parse-unsafe-decl-source) : String
+  "(unsafe (define (danger [x : i64]) : i64 x))
+(unsafe (extern raw-call : (-> i64 i64)))")
+
+(define (compiler-parse-unsafe-decl-ok?) : bool
+  (match (parse-ast-source (compiler-parse-unsafe-decl-source))
+    [(OkAstProgram (AstProgram decls))
+      (match decls
+        [(AstDeclCons
+            (AstDeclUnsafe (AstDeclDefFn name _ (AstTyI64) _))
+            (AstDeclCons
+              (AstDeclUnsafe
+                (AstDeclExtern extern-name _ (AstTyFunc _ (AstTyI64))))
+              AstDeclNil))
+          (and (string-eq name "danger") (string-eq extern-name "raw-call"))]
+        [_ false])]
+    [(ErrAstProgram _) false]))
+
 (define (compiler-parse-field-count [fields : AstFieldDefList]) : i64
   (match fields
     [(AstFieldDefNil) 0]
@@ -4095,6 +4129,23 @@
         (compiler-parse-comptime-decl-extra-source)
         "parse: comptime-decl expects exactly one template"))))
 
+(define (compiler-parse-unsafe-decl-error-tests-ok?) : bool
+  (and
+    (compiler-parse-error-ok?
+      "(unsafe)"
+      "parse: unsafe declaration expects exactly one declaration")
+    (and
+      (compiler-parse-error-ok?
+        "(unsafe (define value : i64 1))"
+        "parse: unsafe declaration accepts only function define or extern")
+      (and
+        (compiler-parse-error-ok?
+          "(unsafe (defstruct Bad (x i64)))"
+          "parse: unsafe declaration accepts only function define or extern")
+        (compiler-parse-error-ok?
+          "(unsafe (extern a : (-> i64)) (extern b : (-> i64)))"
+          "parse: unsafe declaration expects exactly one declaration")))))
+
 (define (compiler-parse-export-error-tests-ok?) : bool
   (and
     (compiler-parse-error-ok?
@@ -4336,32 +4387,34 @@
     (and
       (compiler-parse-comptime-decl-error-tests-ok?)
       (and
-        (compiler-parse-repr-c-error-tests-ok?)
+        (compiler-parse-unsafe-decl-error-tests-ok?)
         (and
-          (compiler-parse-cleanup-error-tests-ok?)
+          (compiler-parse-repr-c-error-tests-ok?)
           (and
-            (compiler-parse-error-ok?
-              (compiler-parse-malformed-module-source)
-              "parse: malformed module")
+            (compiler-parse-cleanup-error-tests-ok?)
             (and
               (compiler-parse-error-ok?
-                (compiler-parse-malformed-import-source)
-                "parse: malformed import")
+                (compiler-parse-malformed-module-source)
+                "parse: malformed module")
               (and
                 (compiler-parse-error-ok?
-                  (compiler-parse-empty-test-source)
-                  "parse: test needs at least one expression")
+                  (compiler-parse-malformed-import-source)
+                  "parse: malformed import")
                 (and
-                  (compiler-parse-let-error-tests-ok?)
+                  (compiler-parse-error-ok?
+                    (compiler-parse-empty-test-source)
+                    "parse: test needs at least one expression")
                   (and
-                    (compiler-parse-abstraction-policy-tests-ok?)
+                    (compiler-parse-let-error-tests-ok?)
                     (and
-                      (compiler-parse-raw-pointer-error-tests-ok?)
+                      (compiler-parse-abstraction-policy-tests-ok?)
                       (and
-                        (compiler-parse-extern-metadata-error-tests-ok?)
+                        (compiler-parse-raw-pointer-error-tests-ok?)
                         (and
-                          (compiler-parse-box-error-tests-ok?)
-                          (compiler-parse-reference-error-tests-ok?))))))))))))))
+                          (compiler-parse-extern-metadata-error-tests-ok?)
+                          (and
+                            (compiler-parse-box-error-tests-ok?)
+                            (compiler-parse-reference-error-tests-ok?)))))))))))))))
 
 ;; Top-level declaration parsing (#1072 / #1041): accept value/function `define`,
 ;; `extern`, `defenum`, `defstruct`, and `import`; reject malformed forms with
@@ -4921,14 +4974,16 @@
   (and
     (compiler-parse-comptime-decl-ok?)
     (and
-      (compiler-parse-module-decl-ok?)
+      (compiler-parse-unsafe-decl-ok?)
       (and
-        (compiler-parse-import-metadata-ok?)
+        (compiler-parse-module-decl-ok?)
         (and
-          (compiler-parse-export-decl-ok?)
+          (compiler-parse-import-metadata-ok?)
           (and
-            (compiler-parse-flat-let-call-body-ok?)
-            (and (compiler-parse-inline-test-ok?) (compiler-parse-try-ok?))))))))
+            (compiler-parse-export-decl-ok?)
+            (and
+              (compiler-parse-flat-let-call-body-ok?)
+              (and (compiler-parse-inline-test-ok?) (compiler-parse-try-ok?)))))))))
 
 (define (compiler-parse-error-suite-front-ok?) : bool
   (and
@@ -5044,40 +5099,42 @@
                   (and
                     (compiler-parse-comptime-decl-ok?)
                     (and
-                      (compiler-parse-module-decl-ok?)
+                      (compiler-parse-unsafe-decl-ok?)
                       (and
-                        (compiler-parse-import-metadata-ok?)
+                        (compiler-parse-module-decl-ok?)
                         (and
-                          (compiler-parse-export-decl-ok?)
+                          (compiler-parse-import-metadata-ok?)
                           (and
-                            (compiler-parse-flat-let-call-body-ok?)
+                            (compiler-parse-export-decl-ok?)
                             (and
-                              (compiler-parse-inline-test-ok?)
+                              (compiler-parse-flat-let-call-body-ok?)
                               (and
-                                (compiler-parse-try-ok?)
+                                (compiler-parse-inline-test-ok?)
                                 (and
+                                  (compiler-parse-try-ok?)
                                   (and
-                                    (compiler-parse-return-ok?)
-                                    (compiler-parse-guard-forms-ok?))
-                                  (and
-                                    (compiler-parse-repr-c-ok?)
                                     (and
-                                      (compiler-parse-cleanup-metadata-ok?)
+                                      (compiler-parse-return-ok?)
+                                      (compiler-parse-guard-forms-ok?))
+                                    (and
+                                      (compiler-parse-repr-c-ok?)
                                       (and
-                                        (compiler-parse-raw-pointer-ok?)
+                                        (compiler-parse-cleanup-metadata-ok?)
                                         (and
-                                          (compiler-parse-extern-metadata-ok?)
+                                          (compiler-parse-raw-pointer-ok?)
                                           (and
-                                            (compiler-parse-raw-pointer-ops-ok?)
+                                            (compiler-parse-extern-metadata-ok?)
                                             (and
-                                              (compiler-parse-box-ok?)
+                                              (compiler-parse-raw-pointer-ops-ok?)
                                               (and
-                                                (compiler-parse-reference-ok?)
+                                                (compiler-parse-box-ok?)
                                                 (and
-                                                  (compiler-parse-borrow-ok?)
+                                                  (compiler-parse-reference-ok?)
                                                   (and
-                                                    (compiler-parse-resource-with-shape-ok?)
-                                                    (compiler-parse-quote-syntax-shape-ok?))))))))))))))))))))))))
+                                                    (compiler-parse-borrow-ok?)
+                                                    (and
+                                                      (compiler-parse-resource-with-shape-ok?)
+                                                      (compiler-parse-quote-syntax-shape-ok?)))))))))))))))))))))))))
         (if (and
           (compiler-parse-error-tests-ok?)
           (and

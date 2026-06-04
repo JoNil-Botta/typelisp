@@ -996,6 +996,15 @@
           ret))]
     [(AstDeclDefStruct _ _ _ _) (CompilerLoadSomeDecl decl)]
     [(AstDeclModule _) (CompilerLoadSomeDecl decl)]
+    [(AstDeclUnsafe inner)
+      (match (compiler-load-package-transform-decl
+        entry-path
+        decl-path
+        module
+        inner)
+        [(CompilerLoadSomeDecl transformed)
+          (CompilerLoadSomeDecl (AstDeclUnsafe transformed))]
+        [(CompilerLoadNoDecl) (CompilerLoadNoDecl)])]
     [(AstDeclComptimeDecl template)
       (match (compiler-load-package-transform-decl
         entry-path

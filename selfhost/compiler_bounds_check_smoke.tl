@@ -9,30 +9,30 @@
 (define (bounds-check-smoke-program) : CompilerIrProgram
   (IrProgram
     IrGlobalNil
-    (IrFunctionCons
+    (compiler-ir-function-cons
       (IrFunction
         "main"
         IrParamNil
         (AstTyI64)
         4
-        (IrBlockCons
+        (compiler-ir-block-cons
           (IrBlock
             "entry"
-            (IrInstrCons
+            (compiler-ir-instr-cons
               (IrInstrMov 0 (IrValueI64 0) (AstTyU64))
-              (IrInstrCons
+              (compiler-ir-instr-cons
                 (IrInstrMov 1 (IrValueI64 1) (AstTyU64))
-                (IrInstrCons
+                (compiler-ir-instr-cons
                   (IrInstrBoundsCheck
                     (IrValueVar 0)
                     (IrValueVar 1)
                     "bounds_ok.0")
-                  (IrInstrCons
+                  (compiler-ir-instr-cons
                     (IrInstrBoundsCheck
                       (IrValueVar 0)
                       (IrValueVar 1)
                       "bounds_ok.1")
-                    (IrInstrCons
+                    (compiler-ir-instr-cons
                       (IrInstrReturn (IrSomeValue (IrValueI64 42)))
                       (IrInstrNil)))))))
           (IrBlockNil)))

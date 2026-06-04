@@ -4,9 +4,9 @@ set -eu
 # verify-doc-tests.sh - auto-discover documented TypeLisp sources and run
 # `typelisp doc --test` for each one. This intentionally uses a built compiler
 # from TYPELISP_BIN so CI can run it without relying on the Rust test harness.
-# In the Linux no-Rust lane, TYPELISP_BIN is the stage1 wrapper whenever the
-# doc driver is available; seed fallback is only a compatibility path for older
-# artifacts and cannot verify future stdlib borrowed-`str` doctests.
+# In no-Rust lanes, TYPELISP_BIN is the command-tier compiler selected by the
+# caller. Seed fallback is only a compatibility path for older artifacts and
+# cannot verify future stdlib borrowed-`str` doctests.
 # refs #946
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
@@ -103,21 +103,15 @@ if [ ! -s "$DISCOVERED" ]; then
     echo "doc test verification found no documented TypeLisp files" >&2
     exit 1
 fi
-if [ "$HOST_OS" = linux ] && [ "$runnable_count" -eq 0 ]; then
+if [ "$runnable_count" -eq 0 ]; then
     echo "doc test verification found no runnable doctest files" >&2
     exit 1
 fi
 
 count=0
 skipped=0
-runnable_skipped=0
 while IFS= read -r source; do
     [ -n "$source" ] || continue
-    if [ "$HOST_OS" = windows ] && has_runnable_doctest "$source"; then
-        echo "[doc-tests] skipping runnable doctests on windows: $source"
-        runnable_skipped=$((runnable_skipped + 1))
-        continue
-    fi
     count=$((count + 1))
     case_name=$(safe_name "$source")
     stdout="$WORKDIR/$case_name.stdout"
@@ -156,14 +150,7 @@ while IFS= read -r source; do
     fi
 done < "$DISCOVERED"
 
-if [ "$HOST_OS" = windows ]; then
-    echo "doc test verification passed for $count non-runnable file(s) on windows"
-else
-    echo "doc test verification passed for $count file(s), including $runnable_count runnable doctest file(s)"
-fi
-if [ "$runnable_skipped" -gt 0 ]; then
-    echo "doc test verification skipped $runnable_skipped runnable doctest file(s) on windows"
-fi
+echo "doc test verification passed for $count file(s), including $runnable_count runnable doctest file(s)"
 if [ "$skipped" -gt 0 ]; then
     echo "doc test verification skipped $skipped staged-symbol file(s)"
 fi

@@ -33,6 +33,7 @@
     String
     bool
     CompilerBackendTarget
+    CompilerBackendMode
     CompilerLoadRootList
     i64
     SourceToolLinkInputs))
@@ -460,6 +461,7 @@
   [target-text : String]
   [has-target : bool]
   [opt-level : i64]
+  [mode : CompilerBackendMode]
   [stdlib-roots : CompilerLoadRootList]
   [fuel : i64]) : ResultBuildLibs
   (if (<= fuel 0)
@@ -497,6 +499,7 @@
                     target-text
                     has-target
                     opt-level
+                    mode
                     stdlib-roots
                     (- fuel 1))]
                 (if (= dep-status 0)
@@ -513,6 +516,7 @@
   [target-text : String]
   [has-target : bool]
   [opt-level : i64]
+  [mode : CompilerBackendMode]
   [stdlib-roots : CompilerLoadRootList]
   [fuel : i64]) : ResultBuildLibs
   (match deps
@@ -525,6 +529,7 @@
         target-text
         has-target
         opt-level
+        mode
         stdlib-roots
         fuel)
         [(ErrBuildLibs message) (ErrBuildLibs message)]
@@ -536,6 +541,7 @@
             target-text
             has-target
             opt-level
+            mode
             stdlib-roots
             fuel)
             [(ErrBuildLibs message) (ErrBuildLibs message)]
@@ -557,15 +563,6 @@
     (and
       (build-mkdir-ok? target-dir)
       (and (build-mkdir-ok? typelisp-dir) (build-mkdir-ok? package-dir)))))
-
-(define (build-package-mode-ok? [mode : String]) : bool
-  (string-eq mode "scalar"))
-
-(define (build-package-mode-error [mode : String]) : String
-  (build-cat3
-    "build: --backend-mode "
-    mode
-    " requires the Rust build driver until selfhost SIMD support (#1014)"))
 
 (define (build-package-artifact-status
   [kind : CompilerPkgKind]
@@ -591,6 +588,7 @@
   [target-text : String]
   [has-target : bool]
   [opt-level : i64]
+  [mode : CompilerBackendMode]
   [stdlib-roots : CompilerLoadRootList]
   [fuel : i64]) : i64
   (match (build-parse-target target-text)
@@ -625,6 +623,7 @@
             target-text
             has-target
             opt-level
+            mode
             stdlib-roots
             fuel)
             [(ErrBuildLibs message)
@@ -645,6 +644,7 @@
                   target
                   stdlib-roots
                   opt-level
+                  mode
                   manifest-dir
                   (struct-get manifest deps)
                   emit-entry
@@ -686,6 +686,7 @@
   [target-text : String]
   [has-target : bool]
   [opt-level : i64]
+  [mode : CompilerBackendMode]
   [stdlib-roots : CompilerLoadRootList]) : i64
   (build-package-emit-with-fuel
     manifest-path
@@ -693,6 +694,7 @@
     target-text
     has-target
     opt-level
+    mode
     stdlib-roots
     64))
 
@@ -703,23 +705,26 @@
   [mode : String]
   [opt-level : i64]
   [stdlib-roots : CompilerLoadRootList]) : i64
-  (if (not (build-package-mode-ok? mode))
-    (begin
-      (print-error (build-package-mode-error mode))
-      1)
-    (match (build-load-manifest manifest-path)
-      [(ErrBuildManifest message)
-        (begin
-          (print-error (string-append "Error: " message))
-          1)]
-      [(OkBuildManifest manifest)
-        (build-package-emit
-          manifest-path
-          manifest
-          target-text
-          has-target
-          opt-level
-          stdlib-roots)])))
+  (match (source-tool-backend-mode "build" mode)
+    [(ErrSourceToolBackendMode message)
+      (begin
+        (print-error message)
+        1)]
+    [(OkSourceToolBackendMode backend-mode)
+      (match (build-load-manifest manifest-path)
+        [(ErrBuildManifest message)
+          (begin
+            (print-error (string-append "Error: " message))
+            1)]
+        [(OkBuildManifest manifest)
+          (build-package-emit
+            manifest-path
+            manifest
+            target-text
+            has-target
+            opt-level
+            backend-mode
+            stdlib-roots)])]))
 
 (define (build-package [config : BuildConfig]) : i64
   (match config
@@ -854,6 +859,7 @@
   [output : String]
   [has-output : bool]
   [target : CompilerBackendTarget]
+  [mode : CompilerBackendMode]
   [stdlib-roots : CompilerLoadRootList]
   [opt-level : i64]
   [link-inputs : SourceToolLinkInputs]) : ResultBuildCliConfig
@@ -866,6 +872,7 @@
           output
           has-output
           target
+          mode
           stdlib-roots
           opt-level
           link-inputs))
@@ -888,6 +895,7 @@
                 (arg (+ idx 1))
                 true
                 target
+                mode
                 stdlib-roots
                 opt-level
                 link-inputs)))]
@@ -902,6 +910,7 @@
               output
               has-output
               target
+              mode
               (source-tool-root-list-append stdlib-roots (arg (+ idx 1)))
               opt-level
               link-inputs))]
@@ -920,6 +929,7 @@
                     output
                     has-output
                     parsed-target
+                    mode
                     stdlib-roots
                     opt-level
                     link-inputs)]
@@ -931,7 +941,7 @@
             (let
               [value : String (arg (+ idx 1))]
               (match (source-tool-backend-mode "build" value)
-                [(OkSourceToolBackendMode)
+                [(OkSourceToolBackendMode parsed-mode)
                   (build-cli-parse-options
                     (+ idx 2)
                     count
@@ -940,6 +950,7 @@
                     output
                     has-output
                     target
+                    parsed-mode
                     stdlib-roots
                     opt-level
                     link-inputs)]
@@ -958,6 +969,7 @@
                   output
                   has-output
                   target
+                  mode
                   stdlib-roots
                   (string->int value)
                   link-inputs)
@@ -973,6 +985,7 @@
               output
               has-output
               target
+              mode
               stdlib-roots
               opt-level
               (source-tool-link-inputs-add-lib link-inputs (arg (+ idx 1)))))]
@@ -987,6 +1000,7 @@
               output
               has-output
               target
+              mode
               stdlib-roots
               opt-level
               (source-tool-link-inputs-add-search-dir
@@ -1003,6 +1017,7 @@
               output
               has-output
               target
+              mode
               stdlib-roots
               opt-level
               (source-tool-link-inputs-add-raw-arg link-inputs (arg (+ idx 1)))))]
@@ -1024,6 +1039,7 @@
                 output
                 has-output
                 target
+                mode
                 stdlib-roots
                 opt-level
                 link-inputs)))]))))
@@ -1040,6 +1056,7 @@
     ""
     false
     (source-tool-default-target)
+    (BackendModeScalar)
     CompilerLoadRootNil
     (compiler-optimize-default-level)
     (source-tool-link-inputs-empty)))
@@ -1054,6 +1071,7 @@
             output
             has-output
             target
+            mode
             stdlib-roots
             opt-level
             link-inputs)
@@ -1064,6 +1082,7 @@
             target
             stdlib-roots
             opt-level
+            mode
             link-inputs)])]
     [(ErrBuildCliConfig message)
       (begin
@@ -1082,6 +1101,7 @@
             output
             has-output
             target
+            mode
             stdlib-roots
             opt-level
             link-inputs)
@@ -1092,6 +1112,7 @@
             target
             stdlib-roots
             opt-level
+            mode
             link-inputs)])]
     [(ErrBuildCliConfig message)
       (begin

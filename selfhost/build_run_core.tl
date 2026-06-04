@@ -26,7 +26,7 @@
   (ErrSourceToolTarget String))
 
 (defenum ResultSourceToolBackendMode
-  (OkSourceToolBackendMode)
+  (OkSourceToolBackendMode CompilerBackendMode)
   (ErrSourceToolBackendMode String))
 
 (defstruct SourceToolLinkInputs
@@ -69,22 +69,13 @@
     [(BackendTargetWindows) true]))
 
 (define (source-tool-backend-mode [command : String] [value : String]) : ResultSourceToolBackendMode
-  (if (string-eq value "scalar")
-    (OkSourceToolBackendMode)
-    (if (or (string-eq value "avx2") (string-eq value "avx512"))
+  (cond
+    [(string-eq value "scalar") (OkSourceToolBackendMode (BackendModeScalar))]
+    [(string-eq value "avx2") (OkSourceToolBackendMode (BackendModeAvx2))]
+    [(string-eq value "avx512") (OkSourceToolBackendMode (BackendModeAvx512))]
+    [else
       (ErrSourceToolBackendMode
-        (source-tool-cat3
-          command
-          ": --backend-mode "
-          (string-append
-            value
-            (string-append
-              " requires the Rust "
-              (string-append
-                command
-                " driver until selfhost SIMD support (#1014)")))))
-      (ErrSourceToolBackendMode
-        (source-tool-cat3 command ": unknown backend mode " value)))))
+        (source-tool-cat3 command ": unknown backend mode " value))]))
 
 (define (source-tool-opt-level-valid? [value : String]) : bool
   (or
@@ -532,6 +523,7 @@
   [target : CompilerBackendTarget]
   [stdlib-roots : CompilerLoadRootList]
   [opt-level : i64]
+  [mode : CompilerBackendMode]
   [link-inputs : SourceToolLinkInputs]) : ResultSourceToolString
   (match (try-read-file source)
     [(ErrIoString error)
@@ -544,7 +536,7 @@
         true
         stdlib-roots
         opt-level
-        (BackendModeScalar)
+        mode
         (source-tool-linux-crt-entry? target link-inputs))
         [(OkCompilerDriver asm)
           (OkSourceToolString
@@ -557,6 +549,7 @@
   [target : CompilerBackendTarget]
   [stdlib-roots : CompilerLoadRootList]
   [opt-level : i64]
+  [mode : CompilerBackendMode]
   [manifest-dir : String]
   [deps : CompilerPkgDepList]
   [emit-entry : bool]
@@ -566,12 +559,13 @@
       (ErrSourceToolString
         (source-tool-cannot-read-module-message source error))]
     [(OkIoString _)
-      (match (compiler-driver-emit-package-file-with-target-roots-level-and-crt
+      (match (compiler-driver-emit-package-file-with-target-roots-level-mode-and-crt
         source
         target
         true
         stdlib-roots
         opt-level
+        mode
         manifest-dir
         deps
         emit-entry
@@ -1032,6 +1026,7 @@ _tl_print_string:
   [target : CompilerBackendTarget]
   [stdlib-roots : CompilerLoadRootList]
   [opt-level : i64]
+  [mode : CompilerBackendMode]
   [link-inputs : SourceToolLinkInputs]
   [temp-dir : String]) : i64
   (let
@@ -1053,6 +1048,7 @@ _tl_print_string:
           target
           stdlib-roots
           opt-level
+          mode
           effective-link-inputs)
           [(ErrSourceToolString message)
             (begin
@@ -1112,6 +1108,7 @@ _tl_print_string:
   [target : CompilerBackendTarget]
   [stdlib-roots : CompilerLoadRootList]
   [opt-level : i64]
+  [mode : CompilerBackendMode]
   [link-inputs : SourceToolLinkInputs]) : i64
   (match (source-tool-create-temp-dir "typelisp-build")
     [(OkSourceToolString temp-dir)
@@ -1122,6 +1119,7 @@ _tl_print_string:
         target
         stdlib-roots
         opt-level
+        mode
         link-inputs
         temp-dir)]
     [(ErrSourceToolString message)
@@ -1145,6 +1143,7 @@ _tl_print_string:
   [stdlib-roots : CompilerLoadRootList]
   [runtime-args : ProcessStringList]
   [opt-level : i64]
+  [mode : CompilerBackendMode]
   [link-inputs : SourceToolLinkInputs]
   [temp-dir : String]) : i64
   (let
@@ -1163,6 +1162,7 @@ _tl_print_string:
           target
           stdlib-roots
           opt-level
+          mode
           effective-link-inputs)
           [(ErrSourceToolString message)
             (begin
@@ -1246,6 +1246,7 @@ _tl_print_string:
   [stdlib-roots : CompilerLoadRootList]
   [runtime-args : ProcessStringList]
   [opt-level : i64]
+  [mode : CompilerBackendMode]
   [link-inputs : SourceToolLinkInputs]) : i64
   (match (source-tool-create-temp-dir "typelisp-run")
     [(OkSourceToolString temp-dir)
@@ -1255,6 +1256,7 @@ _tl_print_string:
         stdlib-roots
         runtime-args
         opt-level
+        mode
         link-inputs
         temp-dir)]
     [(ErrSourceToolString message)

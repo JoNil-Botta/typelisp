@@ -1841,27 +1841,170 @@
 (define tc-nominal-owner-cache-name : String
   "")
 
-(define (tc-nominal-owner-cache-reset!) : unit
-  (set! tc-nominal-owner-cache-handle 0))
+(define tc-nominal-owner-cache-handle1 : i64
+  0)
 
-(define (tc-nominal-owner-cache-lookup [ctx : TcContext] [handle : i64]) : ResultTcString
-  (if (= tc-nominal-owner-cache-handle handle)
+(define tc-nominal-owner-cache-name1 : String
+  "")
+
+(define tc-nominal-owner-cache-handle2 : i64
+  0)
+
+(define tc-nominal-owner-cache-name2 : String
+  "")
+
+(define tc-nominal-owner-cache-handle3 : i64
+  0)
+
+(define tc-nominal-owner-cache-name3 : String
+  "")
+
+(define tc-nominal-owner-cache-handle4 : i64
+  0)
+
+(define tc-nominal-owner-cache-name4 : String
+  "")
+
+(define tc-nominal-owner-cache-handle5 : i64
+  0)
+
+(define tc-nominal-owner-cache-name5 : String
+  "")
+
+(define tc-nominal-owner-cache-handle6 : i64
+  0)
+
+(define tc-nominal-owner-cache-name6 : String
+  "")
+
+(define tc-nominal-owner-cache-handle7 : i64
+  0)
+
+(define tc-nominal-owner-cache-name7 : String
+  "")
+
+(define (tc-nominal-owner-cache-reset!) : unit
+  (begin
+    (set! tc-nominal-owner-cache-handle 0)
+    (set! tc-nominal-owner-cache-handle1 0)
+    (set! tc-nominal-owner-cache-handle2 0)
+    (set! tc-nominal-owner-cache-handle3 0)
+    (set! tc-nominal-owner-cache-handle4 0)
+    (set! tc-nominal-owner-cache-handle5 0)
+    (set! tc-nominal-owner-cache-handle6 0)
+    (set! tc-nominal-owner-cache-handle7 0)))
+
+(define (tc-nominal-owner-cache-slot [handle : i64]) : i64
+  (% (compiler-symbol-handle-index handle) 8))
+
+(define (tc-nominal-owner-cache-entry-lookup
+  [ctx : TcContext]
+  [handle : i64]
+  [cached-handle : i64]
+  [cached-name : String]) : ResultTcString
+  (if (= cached-handle handle)
     (match (compiler-symbols-lookup-type
       (tc-context-symbols ctx)
-      tc-nominal-owner-cache-name)
+      cached-name)
       [(SomeI64 cached-handle)
         (if (= cached-handle handle)
-          (OkTcString tc-nominal-owner-cache-name)
+          (OkTcString cached-name)
           (ErrTcString ""))]
       [(NoneI64) (ErrTcString "")])
     (ErrTcString "")))
 
+(define (tc-nominal-owner-cache-lookup [ctx : TcContext] [handle : i64]) : ResultTcString
+  (let
+    [slot : i64 (tc-nominal-owner-cache-slot handle)]
+    (cond
+      [(= slot 0)
+        (tc-nominal-owner-cache-entry-lookup
+          ctx
+          handle
+          tc-nominal-owner-cache-handle
+          tc-nominal-owner-cache-name)]
+      [(= slot 1)
+        (tc-nominal-owner-cache-entry-lookup
+          ctx
+          handle
+          tc-nominal-owner-cache-handle1
+          tc-nominal-owner-cache-name1)]
+      [(= slot 2)
+        (tc-nominal-owner-cache-entry-lookup
+          ctx
+          handle
+          tc-nominal-owner-cache-handle2
+          tc-nominal-owner-cache-name2)]
+      [(= slot 3)
+        (tc-nominal-owner-cache-entry-lookup
+          ctx
+          handle
+          tc-nominal-owner-cache-handle3
+          tc-nominal-owner-cache-name3)]
+      [(= slot 4)
+        (tc-nominal-owner-cache-entry-lookup
+          ctx
+          handle
+          tc-nominal-owner-cache-handle4
+          tc-nominal-owner-cache-name4)]
+      [(= slot 5)
+        (tc-nominal-owner-cache-entry-lookup
+          ctx
+          handle
+          tc-nominal-owner-cache-handle5
+          tc-nominal-owner-cache-name5)]
+      [(= slot 6)
+        (tc-nominal-owner-cache-entry-lookup
+          ctx
+          handle
+          tc-nominal-owner-cache-handle6
+          tc-nominal-owner-cache-name6)]
+      [else
+        (tc-nominal-owner-cache-entry-lookup
+          ctx
+          handle
+          tc-nominal-owner-cache-handle7
+          tc-nominal-owner-cache-name7)])))
+
 (define (tc-nominal-owner-cache-store-if-safe! [handle : i64] [name : String]) : unit
   (if (tc-name-qualified? name)
     unit
-    (begin
-      (set! tc-nominal-owner-cache-handle handle)
-      (set! tc-nominal-owner-cache-name name))))
+    (let
+      [slot : i64 (tc-nominal-owner-cache-slot handle)]
+      (cond
+        [(= slot 0)
+          (begin
+            (set! tc-nominal-owner-cache-handle handle)
+            (set! tc-nominal-owner-cache-name name))]
+        [(= slot 1)
+          (begin
+            (set! tc-nominal-owner-cache-handle1 handle)
+            (set! tc-nominal-owner-cache-name1 name))]
+        [(= slot 2)
+          (begin
+            (set! tc-nominal-owner-cache-handle2 handle)
+            (set! tc-nominal-owner-cache-name2 name))]
+        [(= slot 3)
+          (begin
+            (set! tc-nominal-owner-cache-handle3 handle)
+            (set! tc-nominal-owner-cache-name3 name))]
+        [(= slot 4)
+          (begin
+            (set! tc-nominal-owner-cache-handle4 handle)
+            (set! tc-nominal-owner-cache-name4 name))]
+        [(= slot 5)
+          (begin
+            (set! tc-nominal-owner-cache-handle5 handle)
+            (set! tc-nominal-owner-cache-name5 name))]
+        [(= slot 6)
+          (begin
+            (set! tc-nominal-owner-cache-handle6 handle)
+            (set! tc-nominal-owner-cache-name6 name))]
+        [else
+          (begin
+            (set! tc-nominal-owner-cache-handle7 handle)
+            (set! tc-nominal-owner-cache-name7 name))]))))
+
 
 (define (tc-nominal-owner-name-list
   [decls : AstDeclList]

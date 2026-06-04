@@ -1712,6 +1712,23 @@
     "main"
     (string-append "_tl_" (compiler-backend-asm-safe-symbol name))))
 
+(define (compiler-backend-compact-function-symbol?
+  [name : String]) : bool
+  (and
+    (> (string-length name) 32)
+    (and
+      (not (string-eq name "main"))
+      (not (compiler-backend-string-prefix-at? name "__global_init_" 0)))))
+
+(define (compiler-backend-function-symbol-index
+  [index : CompilerBackendProgramIndex]
+  [name : String]) : String
+  (if (compiler-backend-compact-function-symbol? name)
+    (match (string-i64-map-get (struct-get index functions) name)
+      [(StringI64MapFound slot) (backend-cat3 "_tl_f" (int->string slot) "")]
+      [(StringI64MapMissing) (compiler-backend-user-symbol name)])
+    (compiler-backend-user-symbol name)))
+
 (define (compiler-backend-closure-descriptor-label [name : String]) : String
   (string-append ".L_tl_fn_desc_" (compiler-backend-asm-safe-symbol name)))
 
@@ -1778,7 +1795,7 @@
       (if (compiler-backend-runtime-user-symbol? name)
         (compiler-backend-user-symbol name)
         name)
-      (compiler-backend-user-symbol name))))
+      (compiler-backend-function-symbol-index index name))))
 
 (define (compiler-backend-function-label-scope
   [index : CompilerBackendProgramIndex]
@@ -8496,7 +8513,8 @@
           0)
           [(OkCompilerBackend spills)
             (let
-              [symbol : String (compiler-backend-user-symbol name)]
+              [symbol : String
+                (compiler-backend-function-symbol-index program-index name)]
               [label-scope : String
                 (compiler-backend-function-label-scope program-index name)]
               (match (compiler-backend-emit-blocks
@@ -19697,30 +19715,20 @@ tl_windows_sdk_registry_install:
 
 (define (compiler-backend-file-handle-open-close-runtime-ok?) : bool
   (match (compiler-backend-emit-source
-    "(extern os-open (:symbol \"open\") : (-> (Ptr u8) i32 i32 i32))
-(extern os-close (:symbol \"close\") : (-> i32 i32))
-(define (file-open-status [path : String] [mode : i64]) : i64
-  (cast
-    (os-open (unsafe (string-data path)) (cast mode : i32) (cast 384 : i32))
-    : i64))
-(define (file-close-status [handle : i64]) : i64
-  (cast (os-close (cast handle : i32)) : i64))
-(define (main) : i64
+    "(define (main) : i64
   (let [handle : i64 (file-open-status \"input.txt\" 0)]
     (+ handle (file-close-status handle))))")
     [(OkCompilerBackend asm)
       (and
         (and
-          (compiler-backend-string-contains? asm "    call open\n")
-          (compiler-backend-string-contains? asm "    call close\n"))
+          (compiler-backend-string-contains? asm ".L_tl_file_open_status:\n")
+          (compiler-backend-string-contains? asm ".L_tl_file_close_status:\n"))
         (and
-          (not
-            (compiler-backend-string-contains? asm ".L_tl_file_open_status:\n"))
+          (compiler-backend-string-contains? asm "    call .L_tl_file_open_status\n")
           (and
-            (not
-              (compiler-backend-string-contains?
-                asm
-                ".L_tl_file_close_status:\n"))
+            (compiler-backend-string-contains?
+              asm
+              "    call .L_tl_file_close_status\n")
             (not
               (compiler-backend-string-contains?
                 asm
@@ -19728,55 +19736,7 @@ tl_windows_sdk_registry_install:
     [(ErrCompilerBackend _) false]))
 
 (define (compiler-backend-windows-driver-runtime-source) : String
-  "(extern win-open (:symbol \"_open\") : (-> (Ptr u8) i32 i32 i32))
-(extern win-read (:symbol \"_read\") : (-> i32 (MutPtr u8) i32 i32))
-(extern win-write (:symbol \"_write\") : (-> i32 (Ptr u8) i32 i32))
-(extern win-close (:symbol \"_close\") : (-> i32 i32))
-(extern win-access (:symbol \"_access\") : (-> (Ptr u8) i32 i32))
-(extern win-strlen (:symbol \"strlen\") : (-> (Ptr u8) i64))
-(define (arg-count) : i64
-  (program-argc))
-(define (arg [index : i64]) : String
-  (let
-    [argv : (Ptr (Ptr u8)) (unsafe (program-argv))]
-    [raw : (Ptr u8) (unsafe (ptr-read (ptr-offset argv index)))]
-    (unsafe (string-from-bytes raw (win-strlen raw)))))
-(define (print-error [text : String]) : unit
-  (begin
-    (win-write
-      (cast 2 : i32)
-      (unsafe (string-data text))
-      (cast (string-length text) : i32))
-    unit))
-(define (read-file [path : String]) : String
-  (let
-    [buf : (Array u8) (make-array u8 16)]
-    [fd : i32
-      (win-open
-        (unsafe (string-data path))
-        (cast 32768 : i32)
-        (cast 0 : i32))]
-    [n : i32 (win-read fd (unsafe (array-data buf)) (cast 16 : i32))]
-    (begin
-      (win-close fd)
-      (unsafe
-        (string-from-bytes
-          (ptr-cast (array-data buf) : (Ptr u8))
-          (cast n : i64))))))
-(define (write-file [path : String] [text : String]) : unit
-  (let
-    [fd : i32
-      (win-open
-        (unsafe (string-data path))
-        (cast 33537 : i32)
-        (cast 384 : i32))]
-    (begin
-      (win-write fd (unsafe (string-data text)) (cast (string-length text) : i32))
-      (win-close fd)
-      unit)))
-(define (file-exists? [path : String]) : bool
-  (= (win-access (unsafe (string-data path)) (cast 0 : i32)) (cast 0 : i32)))
-(define (main) : i64
+  "(define (main) : i64
   (if (< (arg-count) 3)
     (begin
       (print-error \"runtime driver: expected input and output paths\")
@@ -19802,12 +19762,12 @@ tl_windows_sdk_registry_install:
     [(OkCompilerBackend asm)
       (and
         (backend-and8
-          (not (compiler-backend-string-contains? asm ".L_tl_arg_count:\n"))
-          (not (compiler-backend-string-contains? asm ".L_tl_arg:\n"))
-          (not (compiler-backend-string-contains? asm ".L_tl_read_file:\n"))
-          (not (compiler-backend-string-contains? asm ".L_tl_write_file:\n"))
-          (not (compiler-backend-string-contains? asm ".L_tl_file_exists:\n"))
-          (not (compiler-backend-string-contains? asm "tl_print_err:\n"))
+          (compiler-backend-string-contains? asm ".L_tl_arg_count:\n")
+          (compiler-backend-string-contains? asm ".L_tl_arg:\n")
+          (compiler-backend-string-contains? asm ".L_tl_read_file:\n")
+          (compiler-backend-string-contains? asm ".L_tl_write_file:\n")
+          (compiler-backend-string-contains? asm ".L_tl_file_exists:\n")
+          (compiler-backend-string-contains? asm "tl_print_err:\n")
           (compiler-backend-string-contains? asm "tl_string_eq:\n")
           (compiler-backend-string-contains? asm "tl_string_to_int:\n"))
         (and

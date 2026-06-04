@@ -264,9 +264,9 @@
       (compiler-backend-string-contains? asm "_tl_answer:\n")
       (compiler-backend-string-contains? asm "    call _tl_inc\n"))
     (backend-and4
-      (compiler-backend-string-contains? asm "    jge .Lmain_while_exit.2\n")
-      (compiler-backend-string-contains? asm "    jle .Lmain_if_else.4\n")
-      (compiler-backend-string-contains? asm "    jmp .Lmain_while_header.0\n")
+      (compiler-backend-string-contains? asm "    jge .Lf1_while_exit.2\n")
+      (compiler-backend-string-contains? asm "    jle .Lf1_if_else.4\n")
+      (compiler-backend-string-contains? asm "    jmp .Lf1_while_header.0\n")
       true)))
 
 (define (compiler-backend-source-ok? [src : String]) : bool
@@ -522,23 +522,38 @@
     (compiler-backend-print-runtime-target-ok? (BackendTargetLinux))
     (compiler-backend-print-runtime-target-ok? (BackendTargetWindows))))
 
-(define (compiler-backend-varargs-ffi-linux-source) : String
-  "(extern snprintf (:abi c-varargs 3) (:symbol \"snprintf\") : (-> (MutPtr u8) i64 (Ptr u8) f64 i32))
-(define fmt : String \"%.17g\\n\")
+(define (compiler-backend-varargs-ffi-common-source
+  [symbol : String]) : String
+  (backend-cat3
+    "(extern tl_alloc : (-> i64 (MutPtr u8)))
+(extern snprintf (:abi c-varargs 3) (:symbol \""
+    symbol
+    "\") : (-> (MutPtr u8) i64 (Ptr u8) f64 i32))
+
+(define (write-byte! [p : (MutPtr u8)] [offset : i64] [value : i64]) : unit
+  (unsafe
+    (ptr-write! (ptr-offset p offset) (cast value : u8))))
+
+(define (snprintf-format) : (Ptr u8)
+  (let
+    [fmt : (MutPtr u8) (tl_alloc 3)]
+    (begin
+      (write-byte! fmt 0 37)
+      (write-byte! fmt 1 103)
+      (write-byte! fmt 2 0)
+      (unsafe (ptr-cast fmt : (Ptr u8))))))
+
 (define (main) : i64
   (let
-    [buf : (Array u8) (make-array u8 64)]
-    [n : i32 (snprintf (unsafe (array-data buf)) 64 (unsafe (string-data fmt)) 1.5)]
-    (cast n : i64)))")
+    [buf : (MutPtr u8) (tl_alloc 64)]
+    [n : i32 (snprintf buf 64 (snprintf-format) 1.5)]
+    (cast n : i64)))"))
+
+(define (compiler-backend-varargs-ffi-linux-source) : String
+  (compiler-backend-varargs-ffi-common-source "snprintf"))
 
 (define (compiler-backend-varargs-ffi-windows-source) : String
-  "(extern snprintf (:abi c-varargs 3) (:symbol \"_snprintf\") : (-> (MutPtr u8) i64 (Ptr u8) f64 i32))
-(define fmt : String \"%.17g\\n\")
-(define (main) : i64
-  (let
-    [buf : (Array u8) (make-array u8 64)]
-    [n : i32 (snprintf (unsafe (array-data buf)) 64 (unsafe (string-data fmt)) 1.5)]
-    (cast n : i64)))")
+  (compiler-backend-varargs-ffi-common-source "_snprintf"))
 
 (define (compiler-backend-c-abi-aggregate-source) : String
   "(defstruct Color (r u8) (g u8) (b u8) (a u8))
@@ -608,12 +623,8 @@
       [(ErrCompilerBackend _) false])))
 
 (define (compiler-backend-program-argv-entry-capture-source) : String
-  "(extern fixture-strlen (:symbol \"strlen\") : (-> (Ptr u8) i64))
-(define (main) : i64
-  (let
-    [argv : (Ptr (Ptr u8)) (unsafe (program-argv))]
-    [raw : (Ptr u8) (unsafe (ptr-read (ptr-offset argv 1)))]
-    (fixture-strlen raw)))")
+  "(define (main) : i64
+  (string-length (arg 1)))")
 
 (define (compiler-backend-program-argv-entry-capture-ok?) : bool
   (match (compiler-backend-emit-source
@@ -629,9 +640,9 @@
         (compiler-backend-string-contains?
           asm
           "    movq %rax, .L_tl_argv(%rip)\n")
-        (compiler-backend-string-contains? asm "    call strlen\n")
+        (compiler-backend-string-contains? asm ".L_tl_arg:\n")
         (not (compiler-backend-string-contains? asm ".L_tl_arg_count:\n"))
-        (not (compiler-backend-string-contains? asm ".L_tl_arg:\n")))]
+        (compiler-backend-string-contains? asm ".L_tl_arg:\n"))]
     [(ErrCompilerBackend _) false]))
 
 (define (compiler-backend-arg-runtime-source) : String
@@ -695,9 +706,7 @@
             asm
             "    .quad .L_tl_str_data_617a\n")
           (compiler-backend-string-contains? asm "    cmpq %r11, %rax\n")
-          (compiler-backend-string-contains?
-            asm
-            "    jb .L_tl_pick_str_bounds_ok")
+          (compiler-backend-string-contains? asm "    jb .Lf0_str_bounds_ok")
           (compiler-backend-string-contains? asm "    call tl_oob_abort")
           (compiler-backend-string-contains? asm "tl_oob_abort:\n"))
         (and
@@ -710,7 +719,7 @@
             (not
               (compiler-backend-string-contains?
                 asm
-                "    jl .L_tl_pick_str_bounds_ok"))
+                "    jl .Lf0_str_bounds_ok"))
             (not
               (compiler-backend-string-contains?
                 asm
@@ -999,11 +1008,11 @@
     [(OkCompilerBackend asm)
       (backend-and8
         (compiler-backend-string-contains? asm "_tl_score:\n")
-        (compiler-backend-string-contains? asm ".L_tl_score_match_arm.")
+        (compiler-backend-string-contains? asm ".Lf0_match_arm.")
         (compiler-backend-string-contains? asm "    cmpq $0, (%r10)\n")
         (compiler-backend-string-contains?
           asm
-          "    jne .L_tl_score_match_next.2\n")
+          "    jne .Lf0_match_next.2\n")
         (compiler-backend-string-contains? asm "    movq 8(%r10), %rax\n")
         (not (compiler-backend-string-contains? asm "    call _tl_None\n"))
         (not (compiler-backend-string-contains? asm "    call _tl_Some\n"))
@@ -1288,8 +1297,8 @@
   (match (compiler-backend-emit-program (compiler-backend-fallthrough-program))
     [(OkCompilerBackend asm)
       (and
-        (compiler-backend-string-contains? asm ".Lmain_done:\n")
-        (not (compiler-backend-string-contains? asm "    jmp .Lmain_done\n")))]
+        (compiler-backend-string-contains? asm ".Lf0_done:\n")
+        (not (compiler-backend-string-contains? asm "    jmp .Lf0_done\n")))]
     [(ErrCompilerBackend _) false]))
 
 (define (compiler-backend-branch-fallthrough-ok?) : bool
@@ -1571,7 +1580,7 @@
 (define value
   (seed))
 (define (main) : i64
-  (+ value (program-argc)))")
+  (+ value (arg-count)))")
 
 (define (compiler-backend-target-linux-crt-entry-ok?) : bool
   (match (lower-compiler-source
@@ -2586,19 +2595,7 @@
     [(ErrCompilerBackend _) false]))
 
 (define (compiler-backend-env-runtime-source) : String
-  "(extern env-ffi-getenv (:symbol \"getenv\") : (-> (Ptr u8) (Ptr u8)))
-(extern env-ffi-strlen (:symbol \"strlen\") : (-> (Ptr u8) i64))
-(define (env-var-exists? [name : String]) : bool
-  (not (ptr-null? (env-ffi-getenv (unsafe (string-data name))))))
-(define (env-var-value [name : String]) : String
-  (let
-    [value : (Ptr u8) (env-ffi-getenv (unsafe (string-data name)))]
-    (if (ptr-null? value)
-      \"\"
-      (unsafe (string-from-bytes value (env-ffi-strlen value))))))
-(define (env-path-separator) : String
-  \":\")
-(define (main) : i64
+  "(define (main) : i64
   (if (env-var-exists? \"TYPELISP_TEST_ENV\")
     (string-length (env-var-value \"TYPELISP_TEST_ENV\"))
     (string-length (env-path-separator))))")
@@ -2607,16 +2604,13 @@
   (match (compiler-backend-emit-source (compiler-backend-env-runtime-source))
     [(OkCompilerBackend asm)
       (and
-        (compiler-backend-string-contains? asm "    call getenv\n")
+        (compiler-backend-string-contains? asm "tl_env_var_exists:\n")
         (and
-          (compiler-backend-string-contains? asm "    call strlen\n")
+          (compiler-backend-string-contains? asm "tl_env_var_value:\n")
           (and
             (compiler-backend-string-contains? asm "tl_alloc:\n")
             (and
-              (not
-                (compiler-backend-string-contains?
-                  asm
-                  ".extern tl_env_var_exists\n"))
+              (compiler-backend-string-contains? asm "tl_env_path_separator:\n")
               (not
                 (compiler-backend-string-contains?
                   asm
@@ -2629,9 +2623,9 @@
     (BackendTargetWindows))
     [(OkCompilerBackend asm)
       (and
-        (compiler-backend-string-contains? asm ".extern getenv\n")
+        (compiler-backend-string-contains? asm "tl_env_var_exists:\n")
         (and
-          (compiler-backend-string-contains? asm ".extern strlen\n")
+          (compiler-backend-string-contains? asm "tl_env_var_value:\n")
           (and
             (compiler-backend-string-contains? asm "    call getenv\n")
             (and
@@ -2675,81 +2669,22 @@
 
 (define (compiler-backend-append-file-status-ok?) : bool
   (match (compiler-backend-emit-source
-    "(extern append-open (:symbol \"open\") : (-> (Ptr u8) i32 i32 i32))
-(extern append-write (:symbol \"write\") : (-> i32 (Ptr u8) i64 i64))
-(extern append-close (:symbol \"close\") : (-> i32 i32))
-(define (append-file-status [path : String] [text : String]) : i64
-  (let
-    [fd : i64
-      (cast
-        (append-open
-          (unsafe (string-data path))
-          (cast 1089 : i32)
-          (cast 384 : i32))
-        : i64)]
-    (if (< fd 0)
-      fd
-      (let
-        [written : i64
-          (append-write
-            (cast fd : i32)
-            (unsafe (string-data text))
-            (string-length text))]
-        [closed : i64 (cast (append-close (cast fd : i32)) : i64)]
-        (+ written closed)))))
-(define (main) : i64 (append-file-status \"out.txt\" \"x\"))")
+    "(define (main) : i64 (append-file-status \"out.txt\" \"x\"))")
     [(OkCompilerBackend asm)
       (and
-        (compiler-backend-string-contains? asm "    call open\n")
+        (compiler-backend-string-contains? asm ".L_tl_append_file_status:\n")
         (and
-          (compiler-backend-string-contains? asm "    call write\n")
-          (and
-            (compiler-backend-string-contains? asm "    call close\n")
-            (not
-              (compiler-backend-string-contains?
-                asm
-                ".extern tl_append_file_status\n")))))]
+          (compiler-backend-string-contains?
+            asm
+            "    call .L_tl_append_file_status\n")
+          (not
+            (compiler-backend-string-contains?
+              asm
+              ".extern tl_append_file_status\n"))))]
     [(ErrCompilerBackend _) false]))
 
 (define (compiler-backend-fs-runtime-source) : String
-  "(extern fs-linux-mkdir (:symbol \"mkdir\") : (-> (Ptr u8) i32 i32))
-(extern fs-linux-unlink (:symbol \"unlink\") : (-> (Ptr u8) i32))
-(extern fs-linux-rmdir (:symbol \"rmdir\") : (-> (Ptr u8) i32))
-(extern fs-linux-getpid (:symbol \"getpid\") : (-> i32))
-(extern fs-windows-mkdir (:symbol \"_mkdir\") : (-> (Ptr u8) i32))
-(extern fs-windows-unlink (:symbol \"_unlink\") : (-> (Ptr u8) i32))
-(extern fs-windows-rmdir (:symbol \"_rmdir\") : (-> (Ptr u8) i32))
-(extern fs-windows-get-current-process-id (:symbol \"GetCurrentProcessId\") : (-> u32))
-(extern fs-ffi-rename (:symbol \"rename\") : (-> (Ptr u8) (Ptr u8) i32))
-(define (fs-mkdir-status [path : String]) : i64
-  (let
-    [ptr : (Ptr u8) (unsafe (string-data path))]
-    (cfg windows
-      (cast (fs-windows-mkdir ptr) : i64)
-      (cast (fs-linux-mkdir ptr (cast 448 : i32)) : i64))))
-(define (fs-remove-file-status [path : String]) : i64
-  (let
-    [ptr : (Ptr u8) (unsafe (string-data path))]
-    (cfg windows
-      (cast (fs-windows-unlink ptr) : i64)
-      (cast (fs-linux-unlink ptr) : i64))))
-(define (fs-remove-dir-status [path : String]) : i64
-  (let
-    [ptr : (Ptr u8) (unsafe (string-data path))]
-    (cfg windows
-      (cast (fs-windows-rmdir ptr) : i64)
-      (cast (fs-linux-rmdir ptr) : i64))))
-(define (fs-rename-status [source : String] [destination : String]) : i64
-  (cast
-    (fs-ffi-rename
-      (unsafe (string-data source))
-      (unsafe (string-data destination)))
-    : i64))
-(define (fs-process-id) : i64
-  (cfg windows
-    (cast (fs-windows-get-current-process-id) : i64)
-    (cast (fs-linux-getpid) : i64)))
-(define (main) : i64
+  "(define (main) : i64
   (+ (fs-process-id)
     (+ (fs-mkdir-status \"target/typelisp-fs\")
       (+ (fs-remove-file-status \"target/typelisp-fs/artifact.o\")
@@ -2763,21 +2698,20 @@
     [(OkCompilerBackend asm)
       (and
         (backend-and8
-          (compiler-backend-string-contains? asm "    call mkdir\n")
-          (compiler-backend-string-contains? asm "    call unlink\n")
-          (compiler-backend-string-contains? asm "    call rmdir\n")
-          (compiler-backend-string-contains? asm "    call rename\n")
-          (compiler-backend-string-contains? asm "    call getpid\n")
-          (not
-            (compiler-backend-string-contains? asm ".L_tl_fs_mkdir_status:\n"))
-          (not (compiler-backend-string-contains? asm ".L_tl_fs_process_id:\n"))
+          (compiler-backend-string-contains? asm ".L_tl_fs_mkdir_status:\n")
+          (compiler-backend-string-contains? asm ".L_tl_fs_remove_file_status:\n")
+          (compiler-backend-string-contains? asm ".L_tl_fs_remove_dir_status:\n")
+          (compiler-backend-string-contains? asm ".L_tl_fs_rename_status:\n")
+          (compiler-backend-string-contains? asm ".L_tl_fs_process_id:\n")
+          (compiler-backend-string-contains? asm "    movq $39, %rax\n")
+          (compiler-backend-string-contains? asm "    movq $83, %rax\n")
           (not
             (compiler-backend-string-contains?
               asm
               ".extern tl_fs_rename_status\n")))
         (and
-          (compiler-backend-string-contains? asm ".extern mkdir\n")
-          (compiler-backend-string-contains? asm ".extern rename\n")))]
+          (not (compiler-backend-string-contains? asm ".extern mkdir\n"))
+          (not (compiler-backend-string-contains? asm ".extern rename\n"))))]
     [(ErrCompilerBackend _) false]))
 
 (define (compiler-backend-windows-fs-runtime-ok?) : bool
@@ -2787,16 +2721,13 @@
     [(OkCompilerBackend asm)
       (and
         (backend-and8
+          (compiler-backend-string-contains? asm ".L_tl_fs_mkdir_status:\n")
+          (compiler-backend-string-contains? asm ".L_tl_fs_remove_file_status:\n")
+          (compiler-backend-string-contains? asm ".L_tl_fs_remove_dir_status:\n")
+          (compiler-backend-string-contains? asm ".L_tl_fs_rename_status:\n")
+          (compiler-backend-string-contains? asm ".L_tl_fs_process_id:\n")
           (compiler-backend-string-contains? asm "    call _mkdir\n")
-          (compiler-backend-string-contains? asm "    call _unlink\n")
-          (compiler-backend-string-contains? asm "    call _rmdir\n")
-          (compiler-backend-string-contains? asm "    call rename\n")
-          (compiler-backend-string-contains?
-            asm
-            "    call GetCurrentProcessId\n")
-          (not
-            (compiler-backend-string-contains? asm ".L_tl_fs_mkdir_status:\n"))
-          (not (compiler-backend-string-contains? asm ".L_tl_fs_process_id:\n"))
+          (compiler-backend-string-contains? asm "    call GetCurrentProcessId\n")
           (not (compiler-backend-string-contains? asm "    syscall")))
         (and
           (compiler-backend-string-contains? asm ".extern _mkdir\n")
@@ -3808,7 +3739,7 @@
       (backend-and4
         (= (compiler-backend-string-count asm "    call tl_alloc\n") 0)
         (compiler-backend-string-contains? asm "    leaq -")
-        (compiler-backend-string-contains? asm ".Lmain_match_arm.")
+        (compiler-backend-string-contains? asm ".Lf0_match_arm.")
         (not
           (compiler-backend-string-contains? asm (compiler-backend-todo-marker))))]
     [(ErrCompilerBackend _) false]))

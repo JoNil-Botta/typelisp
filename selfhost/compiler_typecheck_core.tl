@@ -593,6 +593,9 @@
 (define (tc-unsafe-decl-marker-name [name : String]) : String
   (string-append " __tl_unsafe_decl:" name))
 
+(define (tc-unsafe-cache-key [name : String]) : String
+  (string-append " __tl_unsafe_cache:" name))
+
 (define (tc-bind-unsafe [env : TcTypeEnv] [name : String] [ty : AstType]) : TcTypeEnv
   (tc-bind (tc-bind env (tc-unsafe-decl-marker-name name) (AstTyUnit)) name ty))
 
@@ -604,7 +607,13 @@
 (define (tc-binding-unsafe? [env : TcTypeEnv] [name : String]) : bool
   (match env
     [(TcTypeNil) false]
-    [(TcTypeCache _ _ _ rest) (tc-binding-unsafe? rest name)]
+    [(TcTypeCache ids _ shadows rest)
+      (match (string-i64-map-get ids name)
+        [(StringI64MapFound _)
+          (match (string-i64-map-get shadows (tc-unsafe-cache-key name))
+            [(StringI64MapFound flag) (= flag 1)]
+            [(StringI64MapMissing) false])]
+        [(StringI64MapMissing) false])]
     [(TcTypeBind key _ rest)
       (if (string-eq key name)
         (tc-binding-unsafe-marker-head? rest name)
@@ -667,6 +676,31 @@
           (string-i64-map-put shadows name 1)))]
     [(TcTypeCache _ _ _ rest) (tc-env-default-shadow-fill rest shadows)]))
 
+(define (tc-env-unsafe-cache-add
+  [shadows : StringI64Map]
+  [name : String]
+  [unsafe : bool]) : StringI64Map
+  (let
+    [key : String (tc-unsafe-cache-key name)]
+    (match (string-i64-map-get shadows key)
+      [(StringI64MapFound _) shadows]
+      [(StringI64MapMissing)
+        (string-i64-map-put shadows key (if unsafe 1 0))])))
+
+(define (tc-env-unsafe-cache-fill
+  [env : TcTypeEnv]
+  [shadows : StringI64Map]) : StringI64Map
+  (match env
+    [(TcTypeNil) shadows]
+    [(TcTypeBind name _ rest)
+      (tc-env-unsafe-cache-fill
+        rest
+        (tc-env-unsafe-cache-add
+          shadows
+          name
+          (tc-binding-unsafe-marker-head? rest name)))]
+    [(TcTypeCache _ _ _ rest) (tc-env-unsafe-cache-fill rest shadows)]))
+
 (define (tc-env-with-cache [env : TcTypeEnv]) : TcTypeEnv
   (let
     [count : i64 (tc-env-cache-count env)]
@@ -678,9 +712,12 @@
         (string-i64-map-with-capacity (tc-env-cache-capacity count))
         values)]
     [shadows : StringI64Map
-      (tc-env-default-shadow-fill
+      (tc-env-unsafe-cache-fill
         env
-        (string-i64-map-with-capacity (tc-env-cache-capacity shadow-count)))]
+        (tc-env-default-shadow-fill
+          env
+          (string-i64-map-with-capacity
+            (tc-env-cache-capacity (+ count shadow-count)))))]
     (TcTypeCache ids values shadows env)))
 
 (define (tc-bind-alias-if-free [env : TcTypeEnv] [name : String] [ty : AstType]) : TcTypeEnv

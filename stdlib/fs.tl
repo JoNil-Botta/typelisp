@@ -66,10 +66,20 @@
   (FsFileDirectory)
   (FsFileOther))
 
+;: Minimal filesystem metadata. `size` is the byte length for regular files.
+(defstruct FsMetadata
+  (kind FsFileKind)
+  (size i64))
+
 ;: Result type for file-kind probes.
 (defenum ResultFsFileKind
   (OkFsFileKind FsFileKind)
   (ErrFsFileKind IoError))
+
+;: Result type for filesystem metadata probes.
+(defenum ResultFsMetadata
+  (OkFsMetadata FsMetadata)
+  (ErrFsMetadata IoError))
 
 ;: Return true on Windows-style hosts.
 (define (fs-windows?) : bool
@@ -408,6 +418,34 @@
   (match kind
     [(FsFileOther) true]
     [_ false]))
+
+;: Return the node kind stored in `metadata`.
+(define (fs-metadata-kind [metadata : FsMetadata]) : FsFileKind
+  (struct-get metadata kind))
+
+;: Return the regular-file byte size stored in `metadata`.
+(define (fs-metadata-size [metadata : FsMetadata]) : i64
+  (struct-get metadata size))
+
+;: Probe minimal metadata for `path`.
+;:
+;: Linux reports the coarse kind and, for regular files, byte size. This first
+;: slice derives the regular-file size by reading the file contents, so an
+;: unreadable regular file returns that `IoError`. Directory and other node
+;: sizes are reported as zero. Windows currently returns `IoUnsupported`
+;: through the runtime status helper.
+(define (try-file-metadata [path : String]) : ResultFsMetadata
+  (if (io-empty-path? path)
+    (ErrFsMetadata (IoInvalidPath path))
+    (match (try-file-kind path)
+      [(ErrFsFileKind error) (ErrFsMetadata error)]
+      [(OkFsFileKind kind)
+        (if (fs-file-kind-regular? kind)
+          (match (try-read-file path)
+            [(OkIoString contents)
+              (OkFsMetadata (FsMetadata kind (string-length contents)))]
+            [(ErrIoString error) (ErrFsMetadata error)])
+          (OkFsMetadata (FsMetadata kind 0)))])))
 
 ;: Split the runtime's newline-delimited directory payload into entry names.
 (define (fs-read-dir-split [entries : String]) : StringList

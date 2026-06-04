@@ -146,6 +146,8 @@
     (fs-rename-status s s)
     (fs-read-dir-status s)
     (fs-file-kind-status s)
+    (fs-file-size-status s)
+    (fs-file-size s)
     (fs-process-id)
     (fs-current-dir-status)
     (string-length (fs-current-dir))
@@ -3388,6 +3390,16 @@
         (compiler-typecheck-with-fs-source
           "(define (f [from : String] [to : String]) : i64
   (fs-rename-status from to))"))
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-ok?
+        (compiler-typecheck-with-fs-source
+          "(define (f [p : String]) : i64 (fs-file-size-status p))"))
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-ok?
+        (compiler-typecheck-with-fs-source
+          "(define (f [p : String]) : i64 (fs-file-size p))"))
         unit
         (set! ok false))
       (if (compiler-typecheck-ok?

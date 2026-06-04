@@ -9458,14 +9458,24 @@
                       (or
                         (compiler-backend-provides-runtime-name?
                           name
-                          "tl_fs_current_dir_status"
-                          (compiler-backend-runtime-tail-fs-current-dir?
-                            provides-tail))
-                        (compiler-backend-provides-runtime-name?
-                          name
-                          "tl_fs_current_dir"
-                          (compiler-backend-runtime-tail-fs-current-dir?
-                            provides-tail)))))
+                          ".L_tl_fs_file_size_status"
+                          provides-fs)
+                        (or
+                          (compiler-backend-provides-runtime-name?
+                            name
+                            ".L_tl_fs_file_size"
+                            provides-fs)
+                          (or
+                            (compiler-backend-provides-runtime-name?
+                              name
+                              "tl_fs_current_dir_status"
+                              (compiler-backend-runtime-tail-fs-current-dir?
+                                provides-tail))
+                            (compiler-backend-provides-runtime-name?
+                              name
+                              "tl_fs_current_dir"
+                              (compiler-backend-runtime-tail-fs-current-dir?
+                                provides-tail)))))))
                   (or
                     (compiler-backend-provides-runtime-name?
                       name
@@ -9731,6 +9741,12 @@
       (compiler-backend-extern-list-references?
         externs
         ".L_tl_fs_file_kind_status")]
+    [extern-fs-file-size-status : bool
+      (compiler-backend-extern-list-references?
+        externs
+        ".L_tl_fs_file_size_status")]
+    [extern-fs-file-size : bool
+      (compiler-backend-extern-list-references? externs ".L_tl_fs_file_size")]
     [extern-fs-process-id : bool
       (compiler-backend-extern-list-references-alias?
         externs
@@ -9900,6 +9916,12 @@
       (compiler-backend-function-list-calls?
         functions
         ".L_tl_fs_file_kind_status")]
+    [calls-fs-file-size-status : bool
+      (compiler-backend-function-list-calls?
+        functions
+        ".L_tl_fs_file_size_status")]
+    [calls-fs-file-size : bool
+      (compiler-backend-function-list-calls? functions ".L_tl_fs_file_size")]
     [calls-fs-process-id : bool
       (compiler-backend-function-list-calls? functions ".L_tl_fs_process_id")]
     [calls-fs-read-dir-status : bool
@@ -10026,24 +10048,28 @@
             (or extern-file-read-chunk-eof calls-file-read-chunk-eof))))]
     [needs-fs-runtime : bool
       (or
-        (backend-or8
-          extern-fs-mkdir-status
-          extern-fs-remove-file-status
-          extern-fs-remove-dir-status
-          extern-fs-rename-status
-          extern-fs-process-id
-          extern-fs-read-dir-status
-          extern-fs-read-dir
-          extern-fs-file-kind-status)
-        (backend-or8
-          calls-fs-mkdir-status
-          calls-fs-remove-file-status
-          calls-fs-remove-dir-status
-          calls-fs-rename-status
-          calls-fs-process-id
-          calls-fs-read-dir-status
-          calls-fs-read-dir
-          calls-fs-file-kind-status))]
+        (or
+          (backend-or8
+            extern-fs-mkdir-status
+            extern-fs-remove-file-status
+            extern-fs-remove-dir-status
+            extern-fs-rename-status
+            extern-fs-process-id
+            extern-fs-read-dir-status
+            extern-fs-read-dir
+            extern-fs-file-kind-status)
+          (or extern-fs-file-size-status extern-fs-file-size))
+        (or
+          (backend-or8
+            calls-fs-mkdir-status
+            calls-fs-remove-file-status
+            calls-fs-remove-dir-status
+            calls-fs-rename-status
+            calls-fs-process-id
+            calls-fs-read-dir-status
+            calls-fs-read-dir
+            calls-fs-file-kind-status)
+          (or calls-fs-file-size-status calls-fs-file-size)))]
     [needs-fs-current-dir : bool
       (or
         (or extern-fs-current-dir-status extern-fs-current-dir)
@@ -13442,6 +13468,105 @@ tl_fs_rename_status:
     pop %rbp
     ret
 
+.L_tl_fs_file_size_status:
+    push %rbp
+    mov %rsp, %rbp
+    push %rbx
+    push %r12
+    push %r13
+    push %r14
+    sub $160, %rsp
+    movq %rdi, %rbx
+    movq %rsi, %r12
+    cmpq $0, %r12
+    jl .L_tl_fs_file_size_status_invalid
+    movq %r12, %rdi
+    addq $1, %rdi
+    js .L_tl_fs_file_size_status_invalid
+    call tl_alloc
+    movq %rax, %r13
+    xorq %rcx, %rcx
+.L_tl_fs_file_size_status_path_copy_loop:
+    cmpq %r12, %rcx
+    jge .L_tl_fs_file_size_status_path_copy_done
+    movzbl (%rbx,%rcx), %edx
+    movb %dl, (%r13,%rcx)
+    incq %rcx
+    jmp .L_tl_fs_file_size_status_path_copy_loop
+.L_tl_fs_file_size_status_path_copy_done:
+    movb $0, (%r13,%r12)
+    movq $262, %rax
+    movq $-100, %rdi
+    movq %r13, %rsi
+    movq %rsp, %rdx
+    xorq %r10, %r10
+    syscall
+    testq %rax, %rax
+    js .L_tl_fs_file_size_status_error_from_rax
+    xorq %rax, %rax
+    jmp .L_tl_fs_file_size_status_return
+.L_tl_fs_file_size_status_error_from_rax:
+    negq %rax
+    jmp .L_tl_fs_file_size_status_return
+.L_tl_fs_file_size_status_invalid:
+    movq $22, %rax
+.L_tl_fs_file_size_status_return:
+    add $160, %rsp
+    pop %r14
+    pop %r13
+    pop %r12
+    pop %rbx
+    pop %rbp
+    ret
+
+.L_tl_fs_file_size:
+    push %rbp
+    mov %rsp, %rbp
+    push %rbx
+    push %r12
+    push %r13
+    push %r14
+    sub $160, %rsp
+    movq %rdi, %rbx
+    movq %rsi, %r12
+    cmpq $0, %r12
+    jl .L_tl_fs_file_size_zero
+    movq %r12, %rdi
+    addq $1, %rdi
+    js .L_tl_fs_file_size_zero
+    call tl_alloc
+    movq %rax, %r13
+    xorq %rcx, %rcx
+.L_tl_fs_file_size_path_copy_loop:
+    cmpq %r12, %rcx
+    jge .L_tl_fs_file_size_path_copy_done
+    movzbl (%rbx,%rcx), %edx
+    movb %dl, (%r13,%rcx)
+    incq %rcx
+    jmp .L_tl_fs_file_size_path_copy_loop
+.L_tl_fs_file_size_path_copy_done:
+    movb $0, (%r13,%r12)
+    movq $262, %rax
+    movq $-100, %rdi
+    movq %r13, %rsi
+    movq %rsp, %rdx
+    xorq %r10, %r10
+    syscall
+    testq %rax, %rax
+    js .L_tl_fs_file_size_zero
+    movq 48(%rsp), %rax
+    jmp .L_tl_fs_file_size_return
+.L_tl_fs_file_size_zero:
+    xorq %rax, %rax
+.L_tl_fs_file_size_return:
+    add $160, %rsp
+    pop %r14
+    pop %r13
+    pop %r12
+    pop %rbx
+    pop %rbp
+    ret
+
     .globl tl_fs_process_id
 tl_fs_process_id:
 .L_tl_fs_process_id:
@@ -13735,6 +13860,14 @@ tl_fs_rename_status:
 
 .L_tl_fs_file_kind_status:
     movq $38, %rax
+    ret
+
+.L_tl_fs_file_size_status:
+    movq $38, %rax
+    ret
+
+.L_tl_fs_file_size:
+    xorq %rax, %rax
     ret
 
     .globl tl_fs_process_id

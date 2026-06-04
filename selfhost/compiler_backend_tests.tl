@@ -2674,6 +2674,50 @@
                   "\ntl_fs_file_kind_status:\n"))))))]
     [(ErrCompilerBackend _) false]))
 
+(define (compiler-backend-fs-file-size-runtime-source) : String
+  "(define (main [path : String]) : i64
+  (+ (fs-file-size-status path) (fs-file-size path)))")
+
+(define (compiler-backend-fs-file-size-runtime-ok?) : bool
+  (match (compiler-backend-emit-source
+    (compiler-backend-fs-file-size-runtime-source))
+    [(OkCompilerBackend asm)
+      (and
+        (compiler-backend-string-contains? asm ".L_tl_fs_file_size_status:\n")
+        (and
+          (compiler-backend-string-contains? asm ".L_tl_fs_file_size:\n")
+          (and
+            (compiler-backend-string-contains? asm "    movq $262, %rax\n")
+            (and
+              (not
+                (compiler-backend-string-contains?
+                  asm
+                  ".globl tl_fs_file_size_status\n"))
+              (not
+                (compiler-backend-string-contains?
+                  asm
+                  "\ntl_fs_file_size_status:\n"))))))]
+    [(ErrCompilerBackend _) false]))
+
+(define (compiler-backend-windows-fs-file-size-runtime-ok?) : bool
+  (match (compiler-backend-emit-source-for-target
+    (compiler-backend-fs-file-size-runtime-source)
+    (BackendTargetWindows))
+    [(OkCompilerBackend asm)
+      (and
+        (compiler-backend-string-contains? asm ".L_tl_fs_file_size_status:\n")
+        (and
+          (compiler-backend-string-contains? asm ".L_tl_fs_file_size:\n")
+          (and
+            (compiler-backend-string-contains? asm "    movq $38, %rax\n")
+            (and
+              (not (compiler-backend-string-contains? asm "    syscall"))
+              (not
+                (compiler-backend-string-contains?
+                  asm
+                  ".globl tl_fs_file_size_status\n"))))))]
+    [(ErrCompilerBackend _) false]))
+
 (define (compiler-backend-fs-current-dir-source) : String
   "(define (main) : i64
   (+ (fs-current-dir-status) (string-length (fs-current-dir))))")
@@ -3491,11 +3535,15 @@
             (and
               (and
                 (compiler-backend-fs-read-dir-runtime-ok?)
-                (compiler-backend-fs-file-kind-runtime-ok?))
+                (and
+                  (compiler-backend-fs-file-kind-runtime-ok?)
+                  (compiler-backend-fs-file-size-runtime-ok?)))
               (and
                 (and
                   (compiler-backend-windows-fs-read-dir-runtime-ok?)
-                  (compiler-backend-windows-fs-file-kind-runtime-ok?))
+                  (and
+                    (compiler-backend-windows-fs-file-kind-runtime-ok?)
+                    (compiler-backend-windows-fs-file-size-runtime-ok?)))
                 (and
                   (compiler-backend-fs-current-dir-runtime-ok?)
                   (and

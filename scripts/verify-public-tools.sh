@@ -698,9 +698,6 @@ if [ "$SELFHOST_FRONTEND_DIAGNOSTICS" -eq 0 ]; then
 fi
 
 cat > "$CLI_MATRIX/text-buf-region-scalar.tl" <<'EOF'
-(define (panic [message : String]) : String
-  (let [_ : String message] ""))
-
 (import "stdlib/text_buf.tl")
 
 (define (main) : i64
@@ -714,9 +711,6 @@ assert_stderr_empty
 assert_contains "$out" "Type checking passed!"
 
 cat > "$CLI_MATRIX/text-buf-region-escape.tl" <<'EOF'
-(define (panic [message : String]) : String
-  (let [_ : String message] ""))
-
 (import "stdlib/text_buf.tl")
 
 (define (main) : String
@@ -1763,9 +1757,6 @@ fi
 
 echo "[public-tools] inline test command"
 cat > "$WORKDIR/inline_test_pass.tl" <<'EOF'
-(define (panic [message : String]) : unit
-  unit)
-
 (import "stdlib/test.tl")
 
 (define (inc [x : i64]) : i64 (+ x 1))
@@ -1798,13 +1789,6 @@ fi
 assert_not_contains "$WORKDIR/inline_test_pass.s" "__tl_inline_test"
 
 cat > "$WORKDIR/inline_test_fail.tl" <<'EOF'
-(define (panic [message : String]) : unit
-  (begin
-    (print-error message)
-    (print-error "\n")
-    (/ 1 0)
-    unit))
-
 (import "stdlib/test.tl")
 
 (test failing-case

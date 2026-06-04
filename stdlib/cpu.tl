@@ -12,16 +12,19 @@
 ;# sign of the widening cast is irrelevant.
 ;#
 ;# Usage: `(import "stdlib/cpu.tl")`
-
+;: Return CPUID EAX for `leaf` and `subleaf`.
 (define (cpu-cpuid-eax [leaf : i64] [subleaf : i64]) : i32
   (cast (cpuid-eax leaf subleaf) : i32))
 
+;: Return CPUID EBX for `leaf` and `subleaf`.
 (define (cpu-cpuid-ebx [leaf : i64] [subleaf : i64]) : i32
   (cast (cpuid-ebx leaf subleaf) : i32))
 
+;: Return CPUID ECX for `leaf` and `subleaf`.
 (define (cpu-cpuid-ecx [leaf : i64] [subleaf : i64]) : i32
   (cast (cpuid-ecx leaf subleaf) : i32))
 
+;: Return CPUID EDX for `leaf` and `subleaf`.
 (define (cpu-cpuid-edx [leaf : i64] [subleaf : i64]) : i32
   (cast (cpuid-edx leaf subleaf) : i32))
 

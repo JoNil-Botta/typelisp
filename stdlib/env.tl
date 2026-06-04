@@ -14,10 +14,13 @@
 ;# ```
 (import "string.tl")
 
+;: C library `getenv` binding used by environment helpers.
 (extern env-ffi-getenv (:symbol "getenv") : (-> (Ptr u8) (Ptr u8)))
 
+;: C library `strlen` binding used to copy environment values.
 (extern env-ffi-strlen (:symbol "strlen") : (-> (Ptr u8) i64))
 
+;: Copy `text` into a NUL-terminated byte array for C library calls.
 (define (env-c-string [text : String]) : (Array u8)
   (let
     [n : i64 (string-length text)]
@@ -31,6 +34,7 @@
       (array-set! buf n (cast #\nul' : u8))
       buf)))
 
+;: Copy a NUL-terminated C string into an owned TypeLisp String.
 (define (env-copy-c-string [ptr : (Ptr u8)]) : String
   (let
     [n : i64 (env-ffi-strlen ptr)]
@@ -39,15 +43,22 @@
     (begin
       (while (< i n)
         (begin
-          (array-set! buf i (unsafe (ptr-read (ptr-offset ptr i))))
+          (array-set!
+            buf
+            i
+            (unsafe
+              (ptr-read (ptr-offset ptr i))))
           (set! i (+ i 1))))
-      (unsafe (string-from-bytes (ptr-cast (array-data buf) : (Ptr u8)) n)))))
+      (unsafe
+        (string-from-bytes (ptr-cast (array-data buf) : (Ptr u8)) n)))))
 
+;: Return the raw C getenv pointer for `name`, or null when missing.
 (define (env-getenv-ptr [name : String]) : (Ptr u8)
   (let
     [name-bytes : (Array u8) (env-c-string name)]
     (env-ffi-getenv
-      (unsafe (ptr-cast (array-data name-bytes) : (Ptr u8))))))
+      (unsafe
+        (ptr-cast (array-data name-bytes) : (Ptr u8))))))
 
 ;: Return true when `name` is present in the process environment.
 (define (env-var-exists? [name : String]) : bool
@@ -108,9 +119,12 @@
 
 ;: Return the value of `name`, or `EnvNoString` when the variable is missing.
 (define (env-get [name : (& name str)]) : EnvMaybeString
-  (if (env-var-exists? name)
-    (EnvSomeString (env-var-value name))
-    (EnvNoString)))
+  (let
+    [empty : String ""]
+    [owned-name : String (string-append name (& empty))]
+    (if (env-var-exists? owned-name)
+      (EnvSomeString (env-var-value owned-name))
+      (EnvNoString))))
 
 ;: Split a PATH-style string using the supplied one-byte separator string.
 (define (env-path-split-with-separator

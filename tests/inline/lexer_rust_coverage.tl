@@ -4,11 +4,26 @@
 ;; This file exercises the remaining Rust test assertions that are not yet
 ;; mirrored by selfhost/lex.tl self-tests, using the (test ...) inline harness
 ;; from #947 so the no-Rust verification script picks them up automatically.
-(import "stdlib/test.tl")
-
 (import "stdlib/string.tl")
 
 (import "../../selfhost/lex.tl")
+
+(define (lexer-assert-true [condition : bool] [message : String]) : unit
+  (if condition
+    unit
+    (panic message)))
+
+(define (lexer-assert-bool-eq
+  [actual : bool]
+  [expected : bool]
+  [message : String]) : unit
+  (lexer-assert-true (= actual expected) message))
+
+(define (lexer-assert-char-eq
+  [actual : char]
+  [expected : char]
+  [message : String]) : unit
+  (lexer-assert-true (= (cast actual : i64) (cast expected : i64)) message))
 
 ;; ---- 1. src/lexer.rs test_basic_tokens  --------------------------------
 (test
@@ -44,11 +59,11 @@
             (if (= (token-tag (array-ref toks 4)) (tag-rparen))
               unit
               (set! ok false))
-            (assert-bool-eq
+            (lexer-assert-bool-eq
               ok
               true
               "basic token sequence should match Rust test_basic_tokens")))]
-      [(ErrTokens e) (assert-true false e)])))
+      [(ErrTokens e) (lexer-assert-true false e)])))
 
 ;; ---- 2. src/lexer.rs test_types ----------------------------------------
 (test
@@ -84,36 +99,45 @@
             (if (= (token-tag (array-ref toks 4)) (tag-rparen))
               unit
               (set! ok false))
-            (assert-bool-eq
+            (lexer-assert-bool-eq
               ok
               true
               "arrow-type tokens should lex as single tokens")))]
-      [(ErrTokens e) (assert-true false e)])))
+      [(ErrTokens e) (lexer-assert-true false e)])))
 
 ;; ---- 3. src/lexer.rs test_single_char_literals -------------------------
 (test
   lexer-single-char-literal-a
   (let
     [toks : (Array Token) (lex "#a'")]
-    (assert-char-eq (token-char (array-ref toks 0)) #a' "lowercase single char")))
+    (lexer-assert-char-eq
+      (token-char (array-ref toks 0))
+      #a'
+      "lowercase single char")))
 
 (test
   lexer-single-char-literal-Z
   (let
     [toks : (Array Token) (lex "#Z'")]
-    (assert-char-eq (token-char (array-ref toks 0)) #Z' "uppercase single char")))
+    (lexer-assert-char-eq
+      (token-char (array-ref toks 0))
+      #Z'
+      "uppercase single char")))
 
 (test
   lexer-single-char-literal-zero
   (let
     [toks : (Array Token) (lex "#0'")]
-    (assert-char-eq (token-char (array-ref toks 0)) #0' "digit single char")))
+    (lexer-assert-char-eq
+      (token-char (array-ref toks 0))
+      #0'
+      "digit single char")))
 
 (test
   lexer-single-char-literal-lparen
   (let
     [toks : (Array Token) (lex "#('")]
-    (assert-char-eq
+    (lexer-assert-char-eq
       (token-char (array-ref toks 0))
       #('
       "punctuation single char")))
@@ -122,13 +146,16 @@
   lexer-single-char-literal-plus
   (let
     [toks : (Array Token) (lex "#+'")]
-    (assert-char-eq (token-char (array-ref toks 0)) #+' "symbol single char")))
+    (lexer-assert-char-eq
+      (token-char (array-ref toks 0))
+      #+'
+      "symbol single char")))
 
 (test
   lexer-single-char-literal-space
   (let
     [toks : (Array Token) (lex "# '")]
-    (assert-char-eq
+    (lexer-assert-char-eq
       (token-char (array-ref toks 0))
       #\space'
       "space single char")))
@@ -138,7 +165,7 @@
   lexer-escaped-char-literal-a
   (let
     [toks : (Array Token) (lex "#\\a'")]
-    (assert-char-eq
+    (lexer-assert-char-eq
       (token-char (array-ref toks 0))
       #a'
       "escaped ordinary letter")))
@@ -177,11 +204,11 @@
             (if (= (token-tag (array-ref toks 4)) (tag-rparen))
               unit
               (set! ok false))
-            (assert-bool-eq
+            (lexer-assert-bool-eq
               ok
               true
               "named char literal should lex in a surrounding token stream")))]
-      [(ErrTokens e) (assert-true false e)])))
+      [(ErrTokens e) (lexer-assert-true false e)])))
 
 ;; ---- 6. src/lexer.rs test_spans_single_line ----------------------------
 (test
@@ -232,11 +259,11 @@
             (if (= (token-tag (spanned-token-tok (array-ref s 5))) (tag-end))
               unit
               (set! ok false))
-            (assert-bool-eq
+            (lexer-assert-bool-eq
               ok
               true
               "single-line spans should match Rust test_spans_single_line")))]
-      [(ErrSpannedTokens e) (assert-true false (source-error-message e))])))
+      [(ErrSpannedTokens e) (lexer-assert-true false (source-error-message e))])))
 
 ;; ---- 7. src/lexer.rs test_spans_multi_line_and_blank_lines -------------
 (test
@@ -260,18 +287,18 @@
             (if (= (spanned-token-col (array-ref s 2)) 3)
               unit
               (set! ok false))
-            (assert-bool-eq
+            (lexer-assert-bool-eq
               ok
               true
               "multi-line blank spans should match Rust test")))]
-      [(ErrSpannedTokens e) (assert-true false (source-error-message e))])))
+      [(ErrSpannedTokens e) (lexer-assert-true false (source-error-message e))])))
 
 ;; ---- 8. src/lexer.rs EOF handling --------------------------------------
 (test
   lexer-eof-singleton
   (let
     [toks : (Array Token) (lex "")]
-    (assert-bool-eq
+    (lexer-assert-bool-eq
       (= (token-tag (array-ref toks 0)) (tag-end))
       true
       "empty source should yield just EOF")))
@@ -282,9 +309,9 @@
   (let
     [r : ResultTokens (lex-result "#\\spcae'")]
     (match r
-      [(OkTokens _) (assert-true false "should error")]
+      [(OkTokens _) (lexer-assert-true false "should error")]
       [(ErrTokens msg)
-        (assert-bool-eq
+        (lexer-assert-bool-eq
           (string-contains msg "unknown named character literal")
           true
           "unknown named char literal should error")])))
@@ -293,42 +320,48 @@
   lexer-named-char-literals
   (let
     [toks : (Array Token) (lex "#\\space'")]
-    (assert-char-eq
+    (lexer-assert-char-eq
       (token-char (array-ref toks 0))
       #\space'
       "named char #space"))
   (let
     [toks : (Array Token) (lex "#\\newline'")]
-    (assert-char-eq
+    (lexer-assert-char-eq
       (token-char (array-ref toks 0))
       #\newline'
       "named char #newline"))
   (let
     [toks : (Array Token) (lex "#\\tab'")]
-    (assert-char-eq (token-char (array-ref toks 0)) #\tab' "named char #tab"))
+    (lexer-assert-char-eq
+      (token-char (array-ref toks 0))
+      #\tab'
+      "named char #tab"))
   (let
     [toks : (Array Token) (lex "#\\return'")]
-    (assert-char-eq
+    (lexer-assert-char-eq
       (token-char (array-ref toks 0))
       #\return'
       "named char #return"))
   (let
     [toks : (Array Token) (lex "#\\nul'")]
-    (assert-char-eq (token-char (array-ref toks 0)) #\nul' "named char #nul")))
+    (lexer-assert-char-eq
+      (token-char (array-ref toks 0))
+      #\nul'
+      "named char #nul")))
 
 (test
   lexer-escaped-char-literals
   (let
     [toks : (Array Token) (lex "#\\n'")]
-    (assert-char-eq (token-char (array-ref toks 0)) #\newline' "escape n"))
+    (lexer-assert-char-eq (token-char (array-ref toks 0)) #\newline' "escape n"))
   (let
     [toks : (Array Token) (lex "#\\t'")]
-    (assert-char-eq (token-char (array-ref toks 0)) #\tab' "escape t"))
+    (lexer-assert-char-eq (token-char (array-ref toks 0)) #\tab' "escape t"))
   (let
     [toks : (Array Token) (lex "#\\r'")]
-    (assert-char-eq (token-char (array-ref toks 0)) #\return' "escape r"))
+    (lexer-assert-char-eq (token-char (array-ref toks 0)) #\return' "escape r"))
   (let
     [toks : (Array Token) (lex "#\\0'")]
-    (assert-char-eq (token-char (array-ref toks 0)) #\nul' "escape 0"))
+    (lexer-assert-char-eq (token-char (array-ref toks 0)) #\nul' "escape 0"))
   ;; already have escaped ordinary letter in test 4
   )

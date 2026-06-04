@@ -125,6 +125,10 @@
   (OkLowerEnv LowerState SymI64Env TcTypeEnv)
   (ErrLowerEnv CompilerDiagnostic))
 
+(defenum ResultLowerModuleLocalEnv
+  (OkLowerModuleLocalEnv TcTypeEnv LowerNameEnv)
+  (ErrLowerModuleLocalEnv String))
+
 (defenum ResultLowerValue
   (OkLowerValue CompilerIrValue)
   (ErrLowerValue CompilerDiagnostic))
@@ -822,34 +826,111 @@
         names)]
     [_ names]))
 
-(define (lower-module-local-names-list
+(define (lower-module-local-type-env-bind-qualified
+  [top-env : TcTypeEnv]
+  [env : TcTypeEnv]
+  [module : String]
+  [name : String]) : ResultTcEnv
+  (match (tc-lookup top-env (compiler-symbol-module-key module name))
+    [(OkTcType ty) (OkTcEnv (tc-bind env name ty))]
+    [(ErrTcType message) (ErrTcEnv message)]))
+
+(define (lower-module-local-type-env-add-variants
+  [top-env : TcTypeEnv]
+  [env : TcTypeEnv]
+  [module : String]
+  [variants : AstVariantDefList]) : ResultTcEnv
+  (match variants
+    [(AstVariantDefNil) (OkTcEnv env)]
+    [(AstVariantDefCons variant rest)
+      (match variant
+        [(AstVariantDef name _)
+          (match (lower-module-local-type-env-bind-qualified
+            top-env
+            env
+            module
+            name)
+            [(OkTcEnv next-env)
+              (lower-module-local-type-env-add-variants
+                top-env
+                next-env
+                module
+                rest)]
+            [(ErrTcEnv message) (ErrTcEnv message)])])]))
+
+(define (lower-module-local-type-env-add-decl
+  [top-env : TcTypeEnv]
+  [env : TcTypeEnv]
+  [module : String]
+  [decl : AstDecl]) : ResultTcEnv
+  (match decl
+    [(AstDeclDef name _ _)
+      (lower-module-local-type-env-bind-qualified top-env env module name)]
+    [(AstDeclDefFn name _ _ _)
+      (lower-module-local-type-env-bind-qualified top-env env module name)]
+    [(AstDeclExtern name _ _)
+      (lower-module-local-type-env-bind-qualified top-env env module name)]
+    [(AstDeclDefEnum _ variants)
+      (lower-module-local-type-env-add-variants top-env env module variants)]
+    [(AstDeclDefStruct name _ _ _)
+      (lower-module-local-type-env-bind-qualified top-env env module name)]
+    [(AstDeclComptimeDecl template)
+      (lower-module-local-type-env-add-decl top-env env module template)]
+    [_ (OkTcEnv env)]))
+
+(define (lower-module-local-envs-list
+  [top-env : TcTypeEnv]
   [decls : AstDeclList]
+  [type-env : TcTypeEnv]
   [names : LowerNameEnv]
   [target-module : String]
-  [module : String]) : LowerNameEnv
+  [module : String]) : ResultLowerModuleLocalEnv
   (match decls
-    [(AstDeclNil) names]
+    [(AstDeclNil) (OkLowerModuleLocalEnv type-env names)]
     [(AstDeclCons decl rest)
       (match decl
         [(AstDeclModule next-module)
-          (lower-module-local-names-list rest names target-module next-module)]
+          (lower-module-local-envs-list
+            top-env
+            rest
+            type-env
+            names
+            target-module
+            next-module)]
         [_
           (if (string-eq module target-module)
-            (lower-module-local-names-list
-              rest
-              (lower-name-env-add-local-decl names target-module decl)
+            (match (lower-module-local-type-env-add-decl
+              top-env
+              type-env
               target-module
-              module)
-            (lower-module-local-names-list rest names target-module module))])]))
+              decl)
+              [(OkTcEnv next-type-env)
+                (lower-module-local-envs-list
+                  top-env
+                  rest
+                  next-type-env
+                  (lower-name-env-add-local-decl names target-module decl)
+                  target-module
+                  module)]
+              [(ErrTcEnv message) (ErrLowerModuleLocalEnv message)])
+            (lower-module-local-envs-list
+              top-env
+              rest
+              type-env
+              names
+              target-module
+              module))])]))
 
-(define (lower-module-local-names
+(define (lower-module-local-envs
   [ctx : TcContext]
+  [top-env : TcTypeEnv]
   [names : LowerNameEnv]
-  [module : String]) : LowerNameEnv
+  [module : String]) : ResultLowerModuleLocalEnv
   (if (string-eq module "")
-    names
+    (OkLowerModuleLocalEnv top-env names)
     (match (tc-context-program ctx)
-      [(AstProgram decls) (lower-module-local-names-list decls names module "")])))
+      [(AstProgram decls)
+        (lower-module-local-envs-list top-env decls top-env names module "")])))
 
 (define (lower-string-set-contains? [items : LowerStringSet] [name : String]) : bool
   (match items
@@ -2421,7 +2502,12 @@
   [index : AstExpr]
   [origin : AstExpr]
   [result-ty : AstType]) : ResultLowerExpr
-  (match (tc-expr ctx type-env arr)
+  (match (lower-expr-result-type-or-check
+    ctx
+    env
+    type-env
+    (lower-state-type-cache state)
+    arr)
     [(OkTcType arr-ty)
       (match (tc-type-strip-region arr-ty)
         [(AstTyDynArray elem-ty)
@@ -2429,7 +2515,12 @@
             [(OkLowerExpr arr-lowered)
               (match arr-lowered
                 [(LowerExpr arr-state arr-value _)
-                  (match (tc-expr ctx type-env index)
+                  (match (lower-index-result-type-or-check
+                    ctx
+                    env
+                    type-env
+                    (lower-state-type-cache arr-state)
+                    index)
                     [(OkTcType idx-ty)
                       (match (lower-expr ctx arr-state env type-env index)
                         [(OkLowerExpr idx-lowered)
@@ -2455,7 +2546,12 @@
               [(OkLowerExpr arr-lowered)
                 (match arr-lowered
                   [(LowerExpr arr-state arr-value _)
-                    (match (tc-expr ctx type-env index)
+                    (match (lower-index-result-type-or-check
+                      ctx
+                      env
+                      type-env
+                      (lower-state-type-cache arr-state)
+                      index)
                       [(OkTcType idx-ty)
                         (match (lower-expr ctx arr-state env type-env index)
                           [(OkLowerExpr idx-lowered)
@@ -5930,6 +6026,26 @@
       (lower-box-get-result-type-fast ctx env type-env type-cache box-expr)]
     [(AstExprSet _ _) (OkTcType (AstTyUnit))]
     [_ (ErrTcType "lower: expression result type is not fast-pathable")]))
+
+(define (lower-expr-result-type-or-check
+  [ctx : TcContext]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [type-cache : LowerTypeCache]
+  [expr : AstExpr]) : ResultTcType
+  (match (lower-expr-result-type-fast ctx env type-env type-cache expr)
+    [(OkTcType expr-ty) (OkTcType expr-ty)]
+    [(ErrTcType _) (tc-expr ctx type-env expr)]))
+
+(define (lower-index-result-type-or-check
+  [ctx : TcContext]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [type-cache : LowerTypeCache]
+  [index : AstExpr]) : ResultTcType
+  (match (lower-index-result-type-fast ctx env type-env type-cache index)
+    [(OkTcType index-ty) (OkTcType index-ty)]
+    [(ErrTcType _) (tc-expr ctx type-env index)]))
 
 (define (lower-expr-typechecked
   [ctx : TcContext]
@@ -9425,7 +9541,12 @@
   [type-env : TcTypeEnv]
   [arr : AstExpr]
   [index : AstExpr]) : ResultLowerExpr
-  (match (tc-expr ctx type-env arr)
+  (match (lower-expr-result-type-or-check
+    ctx
+    env
+    type-env
+    (lower-state-type-cache state)
+    arr)
     [(OkTcType arr-ty)
       (match (tc-type-strip-region arr-ty)
         [(AstTyDynArray elem-ty)
@@ -9433,7 +9554,12 @@
             [(OkLowerExpr arr-lowered)
               (match arr-lowered
                 [(LowerExpr arr-state arr-value _)
-                  (match (tc-expr ctx type-env index)
+                  (match (lower-index-result-type-or-check
+                    ctx
+                    env
+                    type-env
+                    (lower-state-type-cache arr-state)
+                    index)
                     [(OkTcType idx-ty)
                       (match (lower-expr ctx arr-state env type-env index)
                         [(OkLowerExpr idx-lowered)
@@ -9467,7 +9593,12 @@
               [(OkLowerExpr arr-lowered)
                 (match arr-lowered
                   [(LowerExpr arr-state arr-value _)
-                    (match (tc-expr ctx type-env index)
+                    (match (lower-index-result-type-or-check
+                      ctx
+                      env
+                      type-env
+                      (lower-state-type-cache arr-state)
+                      index)
                       [(OkTcType idx-ty)
                         (match (lower-expr ctx arr-state env type-env index)
                           [(OkLowerExpr idx-lowered)
@@ -9519,7 +9650,12 @@
   [arr : AstExpr]
   [index : AstExpr]
   [value : AstExpr]) : ResultLowerExpr
-  (match (tc-expr ctx type-env arr)
+  (match (lower-expr-result-type-or-check
+    ctx
+    env
+    type-env
+    (lower-state-type-cache state)
+    arr)
     [(OkTcType arr-ty)
       (match (tc-type-strip-region arr-ty)
         [(AstTyDynArray elem-ty)
@@ -9527,7 +9663,12 @@
             [(OkLowerExpr arr-lowered)
               (match arr-lowered
                 [(LowerExpr arr-state arr-value _)
-                  (match (tc-expr ctx type-env index)
+                  (match (lower-index-result-type-or-check
+                    ctx
+                    env
+                    type-env
+                    (lower-state-type-cache arr-state)
+                    index)
                     [(OkTcType idx-ty)
                       (match (lower-expr ctx arr-state env type-env index)
                         [(OkLowerExpr idx-lowered)
@@ -9572,7 +9713,12 @@
               [(OkLowerExpr arr-lowered)
                 (match arr-lowered
                   [(LowerExpr arr-state arr-value _)
-                    (match (tc-expr ctx type-env index)
+                    (match (lower-index-result-type-or-check
+                      ctx
+                      env
+                      type-env
+                      (lower-state-type-cache arr-state)
+                      index)
                       [(OkTcType idx-ty)
                         (match (lower-expr ctx arr-state env type-env index)
                           [(OkLowerExpr idx-lowered)
@@ -9862,7 +10008,12 @@
   [type-env : TcTypeEnv]
   [arr : AstExpr]
   [value : AstExpr]) : ResultLowerExpr
-  (match (tc-expr ctx type-env arr)
+  (match (lower-expr-result-type-or-check
+    ctx
+    env
+    type-env
+    (lower-state-type-cache state)
+    arr)
     [(OkTcType arr-ty)
       (match (tc-type-strip-region arr-ty)
         [(AstTyDynArray elem-ty)
@@ -13229,6 +13380,17 @@
 (define (lower-global-init-function-name [global-name : String]) : String
   (string-append "__global_init_" global-name))
 
+(define (lower-top-decl-type-or-check
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [decl : AstDecl]) : ResultTcType
+  (match decl
+    [(AstDeclDef name _ _)
+      (match (tc-lookup env name)
+        [(OkTcType ty) (OkTcType ty)]
+        [(ErrTcType _) (tc-top-decl-type-with-env ctx env decl)])]
+    [_ (tc-top-decl-type-with-env ctx env decl)]))
+
 ;; Record `name -> body span` into the provenance table (#605). A function whose
 ;;
 ;; body carries no source span leaves the table unchanged, so the backend simply
@@ -13357,7 +13519,7 @@
         [(AstDeclDef name _ expr)
           (let
             [decl-ctx : TcContext (tc-context-with-module ctx module)]
-            (match (tc-top-decl-type-with-env decl-ctx local-top-env decl)
+            (match (lower-top-decl-type-or-check decl-ctx local-top-env decl)
               [(OkTcType ty)
                 (let
                   [global-ty : AstType (tc-type-without-regions ty)]
@@ -13524,26 +13686,24 @@
             mode
             module)]
         [(AstDeclModule next-module)
-          (match (tc-module-local-env ctx top-env next-module)
-            [(OkTcEnv next-local-top-env)
-              (let
-                [local-names : LowerNameEnv
-                  (lower-module-local-names ctx names next-module)]
-                (lower-decls-in-module
-                  ctx
-                  top-env
-                  next-local-top-env
-                  rest
-                  globals
-                  functions
-                  externs
-                  spans
-                  names
-                  (lower-name-cache-from-env local-names)
-                  (lower-type-cache-from-env next-local-top-env)
-                  mode
-                  next-module))]
-            [(ErrTcEnv message) (ErrLowerDecls (lower-diagnostic message))])]
+          (match (lower-module-local-envs ctx top-env names next-module)
+            [(OkLowerModuleLocalEnv next-local-top-env local-names)
+              (lower-decls-in-module
+                ctx
+                top-env
+                next-local-top-env
+                rest
+                globals
+                functions
+                externs
+                spans
+                names
+                (lower-name-cache-from-env local-names)
+                (lower-type-cache-from-env next-local-top-env)
+                mode
+                next-module)]
+            [(ErrLowerModuleLocalEnv message)
+              (ErrLowerDecls (lower-diagnostic message))])]
         [(AstDeclTest _ _ _)
           (lower-decls-in-module
             ctx

@@ -51,9 +51,9 @@ if [ ! -x "$COMPILER" ]; then
 fi
 
 # Extended compatibility gate. The selfhost lane sets this to 0 because it still
-# differs from the retired Rust/stage1-wrapper lanes for SIMD compile/run,
-# generated docs, and package diagnostics. Focused direct build/run coverage
-# lives in scripts/verify-selfhost-cli-build-run.sh.
+# differs from the retired Rust/stage1-wrapper lanes for generated docs and some
+# package diagnostics. Focused direct build/run coverage lives in
+# scripts/verify-selfhost-cli-build-run.sh.
 HOST_ACTION_ENABLED="${TYPELISP_PUBLIC_TOOLS_HOST_ACTION_ENABLED:-0}"
 
 WORKDIR="$ROOT/target/public-tool-verify"
@@ -768,22 +768,16 @@ assert_stdout_empty
 assert_stderr_empty
 
 # Public `compile --backend-mode ...` still emits SIMD-targeted assembly above.
-# Linux public `run`/`build` route through the selfhost source tools, so
-# non-scalar modes stay rejected until those tools can delegate to the Rust SIMD
-# driver or implement selfhost SIMD support (#1014). Windows still uses the
-# Rust-backed public path and keeps CPU-gated execution coverage.
+# Public `run`/`build` now route non-scalar modes through the selfhost source
+# tools when that lane is active, so execution is gated only by host ISA support.
 SIMD_ISAS=$(sh "$ROOT/scripts/detect-simd-isa.sh" 2>/dev/null || true)
 run_backend_mode_exec() {
     # $1 = backend mode (avx2|avx512); $2 = required ISA token (avx2|avx512f)
-    if [ "$HOST_OS" = linux ]; then
+    if [ "$IS_STAGE1_WRAPPER" -eq 1 ]; then
         run_cmd "run-backend-$1-rejected" "$COMPILER" run "$CLI_MATRIX/main.tl" --backend-mode "$1" -- arg
         assert_failure
         assert_stdout_empty
-        if [ "$IS_STAGE1_WRAPPER" -eq 1 ]; then
-            assert_contains "$err" "Error: stage1 host-action wrapper supports scalar backend mode only, got $1"
-        else
-            assert_contains "$err" "run: --backend-mode $1 requires the Rust run driver until selfhost SIMD support (#1014)"
-        fi
+        assert_contains "$err" "Error: stage1 host-action wrapper supports scalar backend mode only, got $1"
         return
     fi
     if printf '%s\n' "$SIMD_ISAS" | grep -qx "$2"; then
@@ -798,9 +792,8 @@ run_backend_mode_exec() {
 run_backend_mode_exec avx2 avx2
 run_backend_mode_exec avx512 avx512f
 
-# The scalar SPMD source remains an always-run reference. On Linux, non-scalar
-# `run` modes are rejected at the source-tool boundary for now. On Windows, keep
-# CPU-gated SIMD execution coverage for the Rust-backed path.
+# The scalar SPMD source remains an always-run reference. Non-scalar modes now
+# execute through public `run` when the host CPU advertises the required ISA.
 SPMD_EXEC="$WORKDIR/spmd-exec"
 mkdir -p "$SPMD_EXEC"
 cat > "$SPMD_EXEC/spmd.tl" <<'TLEOF'
@@ -823,28 +816,21 @@ cat > "$SPMD_EXEC/spmd.tl" <<'TLEOF'
 TLEOF
 run_spmd_exec_mode() {
     # $1 = backend mode; $2 = required ISA token, or "-" to always run
-    if [ "$2" != "-" ] && [ "$HOST_OS" != linux ] && ! printf '%s\n' "$SIMD_ISAS" | grep -qx "$2"; then
+    if [ "$IS_STAGE1_WRAPPER" -eq 1 ] && [ "$1" != scalar ]; then
+        run_cmd "spmd-exec-$1-rejected" "$COMPILER" run "$SPMD_EXEC/spmd.tl" --backend-mode "$1" -- arg
+        assert_failure
+        assert_stdout_empty
+        assert_contains "$err" "Error: stage1 host-action wrapper supports scalar backend mode only, got $1"
+        return
+    fi
+    if [ "$2" != "-" ] && ! printf '%s\n' "$SIMD_ISAS" | grep -qx "$2"; then
         echo "[public-tools] skipping spmd-exec --backend-mode $1 ($2 not available on this $HOST_OS host)"
         return
     fi
     run_cmd "spmd-exec-$1" "$COMPILER" run "$SPMD_EXEC/spmd.tl" --backend-mode "$1" -- arg
-    if [ "$1" = scalar ]; then
-        assert_code 190
-        assert_stdout_empty
-        assert_stderr_empty
-    elif [ "$HOST_OS" = linux ]; then
-        assert_failure
-        assert_stdout_empty
-        if [ "$IS_STAGE1_WRAPPER" -eq 1 ]; then
-            assert_contains "$err" "Error: stage1 host-action wrapper supports scalar backend mode only, got $1"
-        else
-            assert_contains "$err" "run: --backend-mode $1 requires the Rust run driver until selfhost SIMD support (#1014)"
-        fi
-    else
-        assert_code 190
-        assert_stdout_empty
-        assert_stderr_empty
-    fi
+    assert_code 190
+    assert_stdout_empty
+    assert_stderr_empty
 }
 run_spmd_exec_mode scalar -
 run_spmd_exec_mode avx2 avx2
@@ -864,20 +850,35 @@ cat > "$BUILD_MATRIX/typelisp.pkg" <<'EOF'
 EOF
 maybe_strip_manifest_kind "$BUILD_MATRIX/typelisp.pkg"
 cat > "$BUILD_MATRIX/src/main.tl" <<'EOF'
-(define (main) : i64 42)
+(define (fill [a : (Array i64)] [b : (Array i64)] [out : (Array i64)] [n : i64]) : unit
+  (foreach
+    ([i : i64 0 n])
+    (array-set! out i (+ (array-ref a i) (array-ref b i)))))
+(define (main) : i64
+  (let
+    [a : (Array i64) (make-array i64 17)]
+    [b : (Array i64) (make-array i64 17)]
+    [out : (Array i64) (make-array i64 17)]
+    (begin
+      (fill a b out 17)
+      42)))
 EOF
 run_cmd build-package-avx512 "$COMPILER" build --manifest-path "$BUILD_MATRIX/typelisp.pkg" --backend-mode avx512
-if [ "$IS_STAGE1_WRAPPER" -eq 1 ] || [ "$HOST_ACTION_ENABLED" -eq 0 ]; then
-    # cli.tl (like the stage1 wrapper) has no SIMD build driver, so non-scalar
-    # `build --backend-mode` is rejected with the #1014 message rather than
-    # producing a `Generated:` artifact (#1327).
+if [ "$IS_STAGE1_WRAPPER" -eq 1 ]; then
     assert_failure
     assert_stdout_empty
-    assert_contains "$err" "build: --backend-mode avx512 requires the Rust build driver until selfhost SIMD support (#1014)"
+    assert_contains "$err" "Error: stage1 host-action wrapper supports scalar backend mode only, got avx512"
 else
     assert_success
     assert_stderr_empty
     assert_contains "$out" "Generated:"
+    BUILD_MATRIX_ASM="$BUILD_MATRIX/target/typelisp/backend_mode_build/backend_mode_build.s"
+    if [ "$HOST_OS" = linux ]; then
+        [ -f "$BUILD_MATRIX_ASM" ] || fail "package --backend-mode avx512 did not keep assembly"
+        assert_contains "$BUILD_MATRIX_ASM" "%zmm"
+        assert_contains "$BUILD_MATRIX_ASM" "%k"
+        assert_contains "$BUILD_MATRIX_ASM" "vmovdqu64"
+    fi
 fi
 
 run_cmd build-source-missing-output-value "$COMPILER" build "$CLI_MATRIX/main.tl" -o
@@ -1011,10 +1012,12 @@ EOF
     assert_stdout_empty
     assert_stderr_empty
 
-    run_cmd selfhost-build-tool-avx2-rejected "$SELFHOST_PLANNER_DIR/build-tool" --direct "$PLANNER_SOURCE" -o "$SELFHOST_PLANNER_DIR/with space/avx2 program" --target linux-x86_64 --backend-mode avx2
-    assert_failure
-    assert_stdout_empty
-    assert_contains "$err" "build: --backend-mode avx2 requires the Rust build driver until selfhost SIMD support (#1014)"
+    PLANNER_AVX2_OUTPUT="$SELFHOST_PLANNER_DIR/with space/avx2 program"
+    run_cmd selfhost-build-tool-avx2 "$SELFHOST_PLANNER_DIR/build-tool" --direct "$PLANNER_SOURCE" -o "$PLANNER_AVX2_OUTPUT" --target linux-x86_64 --backend-mode avx2
+    assert_success
+    assert_stderr_empty
+    assert_contains "$out" "Generated: $PLANNER_AVX2_OUTPUT"
+    [ -f "$PLANNER_AVX2_OUTPUT" ] || fail "selfhost build tool did not write avx2 executable"
 
     PLANNER_RUN_SOURCE="$SELFHOST_PLANNER_DIR/with space/run file.tl"
     cat > "$PLANNER_RUN_SOURCE" <<'EOF'
@@ -1028,10 +1031,10 @@ EOF
     assert_stderr_empty
     assert_contains "$out" "arg with spaces"
 
-    run_cmd selfhost-run-tool-avx512-rejected "$SELFHOST_PLANNER_DIR/run-tool" --direct "$PLANNER_RUN_SOURCE" --target linux-x86_64 --backend-mode avx512 --stdlib-root "$ROOT/stdlib" -- "arg with spaces" "colon:arg"
-    assert_failure
-    assert_stdout_empty
-    assert_contains "$err" "run: --backend-mode avx512 requires the Rust run driver until selfhost SIMD support (#1014)"
+    run_cmd selfhost-run-tool-avx512 "$SELFHOST_PLANNER_DIR/run-tool" --direct "$PLANNER_RUN_SOURCE" --target linux-x86_64 --backend-mode avx512 --stdlib-root "$ROOT/stdlib" -- "arg with spaces" "colon:arg"
+    assert_code 13
+    assert_stderr_empty
+    assert_contains "$out" "arg with spaces"
 
     SELFHOST_PKG="$SELFHOST_PLANNER_DIR/pkg"
     mkdir -p "$SELFHOST_PKG/src/nested/deeper" "$SELFHOST_PKG/vendor/math/src"
@@ -1231,10 +1234,13 @@ EOF
     assert_stdout_empty
     assert_contains "$err" "build: --opt-level requires a value"
 
+    rm -rf "$SELFHOST_PKG/target"
     run_cmd selfhost-build-package-mode-staged "$SELFHOST_PLANNER_DIR/build-tool" --direct --manifest-path "$SELFHOST_PKG/typelisp.pkg" --backend-mode avx2
-    assert_failure
-    assert_stdout_empty
-    assert_contains "$err" "build: --backend-mode avx2 requires the Rust build driver"
+    assert_success
+    assert_stderr_empty
+    [ -f "$SELFHOST_PKG_ASM" ] || fail "selfhost package --backend-mode avx2 did not keep assembly"
+    assert_contains "$out" "Generated: $SELFHOST_PKG_BIN"
+    assert_contains "$SELFHOST_PKG_ASM" "vzeroupper"
 
     run_cmd selfhost-run-tool-missing-target "$SELFHOST_PLANNER_DIR/run-tool" --direct "$PLANNER_SOURCE" --target
     assert_failure

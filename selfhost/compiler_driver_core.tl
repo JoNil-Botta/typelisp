@@ -272,6 +272,29 @@
   [deps : CompilerPkgDepList]
   [emit-entry : bool]
   [crt-entry : bool]) : ResultCompilerDriver
+  (compiler-driver-emit-package-file-with-target-roots-level-mode-and-crt
+    input-path
+    target
+    has-target
+    stdlib-roots
+    opt-level
+    (BackendModeScalar)
+    manifest-dir
+    deps
+    emit-entry
+    crt-entry))
+
+(define (compiler-driver-emit-package-file-with-target-roots-level-mode-and-crt
+  [input-path : String]
+  [target : CompilerBackendTarget]
+  [has-target : bool]
+  [stdlib-roots : CompilerLoadRootList]
+  [opt-level : i64]
+  [mode : CompilerBackendMode]
+  [manifest-dir : String]
+  [deps : CompilerPkgDepList]
+  [emit-entry : bool]
+  [crt-entry : bool]) : ResultCompilerDriver
   (match (compiler-load-package-file-with-paths-and-roots
     input-path
     (sym-i64-empty)
@@ -279,10 +302,11 @@
     manifest-dir
     deps)
     [(OkCompilerLoadWithPaths decls paths _ _)
-      (match (lower-compiler-program-with-decl-paths
+      (match (lower-compiler-program-with-decl-paths-mode
         input-path
         (AstProgram decls)
-        paths)
+        paths
+        (compiler-driver-lower-mode-for-backend mode))
         [(OkCompilerLower program spans)
           (compiler-driver-emit-lowered-with-level-mode-entry-and-crt
             input-path
@@ -290,7 +314,7 @@
             spans
             target
             has-target
-            (BackendModeScalar)
+            mode
             opt-level
             emit-entry
             crt-entry)]

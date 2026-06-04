@@ -84,12 +84,12 @@
 (define (json-char-code [c : char]) : i64
   (cast c : i64))
 
-;: Return the numeric scalar code at `idx` in `text`.
-(define (json-char-code-at [text : String] [idx : i64]) : i64
+;: Return the numeric scalar code at `idx` in borrowed `text`.
+(define (json-char-code-at [text : (& text str)] [idx : i64]) : i64
   (json-char-code (string-ref text idx)))
 
 ;: Return true when `text[idx]` exists and has the supplied code.
-(define (json-char-code-eq-at [text : String] [idx : i64] [code : i64]) : bool
+(define (json-char-code-eq-at [text : (& text str)] [idx : i64] [code : i64]) : bool
   (if (< idx (string-length text))
     (= (json-char-code-at text idx) code)
     false))
@@ -103,13 +103,13 @@
   (and (>= code 48) (<= code 57)))
 
 ;: Return true when `text[idx]` exists and is an ASCII decimal digit.
-(define (json-digit-at? [text : String] [idx : i64]) : bool
+(define (json-digit-at? [text : (& text str)] [idx : i64]) : bool
   (if (< idx (string-length text))
     (json-digit-code? (json-char-code-at text idx))
     false))
 
 ;: Return the first offset at or after `pos` that is not JSON whitespace.
-(define (json-skip-ws [text : String] [pos : i64]) : i64
+(define (json-skip-ws [text : (& text str)] [pos : i64]) : i64
   (let
     [i : i64 pos]
     [n : i64 (string-length text)]
@@ -123,8 +123,11 @@
           (set! done true)))
       i)))
 
-;: Return true when `prefix` occurs in `text` at `start`.
-(define (json-string-prefix-at? [text : String] [prefix : String] [start : i64]) : bool
+;: Return true when borrowed `prefix` occurs in borrowed `text` at `start`.
+(define (json-string-prefix-at?
+  [text : (& text str)]
+  [prefix : (& prefix str)]
+  [start : i64]) : bool
   (let
     [text-len : i64 (string-length text)]
     [prefix-len : i64 (string-length prefix)]
@@ -137,7 +140,7 @@
           (while (and ok (< i prefix-len))
             (if (=
               (json-char-code-at text (+ start i))
-              (json-char-code-at prefix i))
+              (json-char-code (string-ref prefix i)))
               (set! i (+ i 1))
               (set! ok false)))
           ok)))))
@@ -178,8 +181,8 @@
     [(JsonMemberListNil) 0]
     [(JsonMemberListCons _ _ rest) (+ 1 (json-member-list-count rest))]))
 
-;: Look up `key` in an object member list.
-(define (json-member-list-get [items : JsonMemberList] [key : String]) : JsonLookup
+;: Look up borrowed `key` in an object member list.
+(define (json-member-list-get [items : JsonMemberList] [key : (& key str)]) : JsonLookup
   (match items
     [(JsonMemberListNil) JsonMissing]
     [(JsonMemberListCons item-key value rest)
@@ -187,18 +190,20 @@
         (JsonFound value)
         (json-member-list-get rest key))]))
 
-;: Look up `key` in `value` when it is a JSON object.
+;: Look up borrowed `key` in `value` when it is a JSON object.
 ;:
 ;: Non-object values return `JsonMissing`.
 ;:
 ;: ```typelisp
 ;: (import "stdlib/json.tl")
 ;: (define found : JsonLookup
-;:   (json-object-get
-;:     (JsonObject (JsonMemberListCons "name" (JsonString "tl") JsonMemberListNil))
-;:     "name"))
+;:   (let
+;:     [key : String "name"]
+;:     (json-object-get
+;:       (JsonObject (JsonMemberListCons "name" (JsonString "tl") JsonMemberListNil))
+;:       (& key))))
 ;: ```
-(define (json-object-get [value : Json] [key : String]) : JsonLookup
+(define (json-object-get [value : Json] [key : (& key str)]) : JsonLookup
   (match value
     [(JsonObject members) (json-member-list-get members key)]
     [_ JsonMissing]))
@@ -256,10 +261,10 @@
       (string-append "\\" "\\")
       (json-control-escape code))))
 
-;: Escape a raw string for JSON string output.
+;: Escape borrowed raw text for JSON string output.
 ;:
 ;: The returned escaped string is allocated in the active arena.
-(define (json-escape-string [text : String]) : String
+(define (json-escape-string [text : (& text str)]) : String
   (let
     [n : i64 (string-length text)]
     [i : i64 0]
@@ -308,12 +313,13 @@
     [(JsonMemberListNil) buf]
     [(JsonMemberListCons key value rest)
       (let
+        [text : String key]
         [with-item : TextBuf
           (text-buf-append
             (text-buf-append
               (text-buf-append
                 (text-buf-append buf "\"")
-                (json-escape-string key))
+                (json-escape-string (& text)))
               "\":")
             (json-stringify value))]
         (match rest
@@ -344,7 +350,7 @@
         "true"
         "false")]
     [(JsonNumber text) text]
-    [(JsonString text) (json-cat3 "\"" (json-escape-string text) "\"")]
+    [(JsonString text) (json-cat3 "\"" (json-escape-string (& text)) "\"")]
     [(JsonArray items) (json-cat3 "[" (json-stringify-list items) "]")]
     [(JsonObject members) (json-cat3 "{" (json-stringify-members members) "}")]))
 
@@ -365,7 +371,7 @@
         "json: unicode escape outside supported string range")]))
 
 ;: Parse four hex digits after a `\u` escape and return the decoded string.
-(define (json-parse-unicode-escape [text : String] [pos : i64]) : JsonParseEscapeResult
+(define (json-parse-unicode-escape [text : (& text str)] [pos : i64]) : JsonParseEscapeResult
   (let
     [n : i64 (string-length text)]
     (if (> (+ pos 4) n)
@@ -396,7 +402,7 @@
 ;: Parse a JSON string escape at `pos`.
 ;:
 ;: Successful decoded strings allocate in the active arena.
-(define (json-parse-escape [text : String] [pos : i64]) : JsonParseEscapeResult
+(define (json-parse-escape [text : (& text str)] [pos : i64]) : JsonParseEscapeResult
   (if (>= pos (string-length text))
     (ErrJsonParseEscape "json: unterminated JSON escape")
     (let
@@ -414,7 +420,7 @@
 ;: Parse a JSON string starting at `pos`, including the opening quote.
 ;:
 ;: The decoded string is allocated in the active arena.
-(define (json-parse-string [text : String] [pos : i64]) : JsonParseStringResult
+(define (json-parse-string [text : (& text str)] [pos : i64]) : JsonParseStringResult
   (if (not (json-char-code-eq-at text pos 34))
     (ErrJsonParseString "json: expected string")
     (let
@@ -473,7 +479,7 @@
           (ErrJsonParseString message))))))
 
 ;: Return the first offset at or after `pos` that is not an ASCII digit.
-(define (json-consume-digits [text : String] [pos : i64]) : i64
+(define (json-consume-digits [text : (& text str)] [pos : i64]) : i64
   (let
     [i : i64 pos]
     [done : bool false]
@@ -487,7 +493,7 @@
 ;: Parse a JSON number starting at `pos`.
 ;:
 ;: The numeric spelling is kept as a String allocated in the active arena.
-(define (json-parse-number [text : String] [pos : i64]) : JsonParseValueResult
+(define (json-parse-number [text : (& text str)] [pos : i64]) : JsonParseValueResult
   (let
     [n : i64 (string-length text)]
     [i : i64 pos]
@@ -552,18 +558,20 @@
 
 ;: Parse `keyword` at `pos` and return its fixed JSON value.
 (define (json-parse-keyword
-  [text : String]
+  [text : (& text str)]
   [pos : i64]
   [keyword : String]
   [value : Json]) : JsonParseValueResult
-  (if (json-string-prefix-at? text keyword pos)
-    (OkJsonParseValue value (+ pos (string-length keyword)))
-    (ErrJsonParseValue "json: expected keyword")))
+  (let
+    [prefix : String keyword]
+    (if (json-string-prefix-at? text (& prefix) pos)
+      (OkJsonParseValue value (+ pos (string-length prefix)))
+      (ErrJsonParseValue "json: expected keyword"))))
 
 ;: Parse a JSON array starting at `pos`, including the opening bracket.
 ;:
 ;: The returned array list and nested values are allocated in the active arena.
-(define (json-parse-array [text : String] [pos : i64]) : JsonParseValueResult
+(define (json-parse-array [text : (& text str)] [pos : i64]) : JsonParseValueResult
   (let
     [i : i64 (json-skip-ws text (+ pos 1))]
     [items : JsonList JsonListNil]
@@ -602,7 +610,7 @@
 ;: Parse a JSON object starting at `pos`, including the opening brace.
 ;:
 ;: The returned member list, keys, and nested values allocate in the active arena.
-(define (json-parse-object [text : String] [pos : i64]) : JsonParseValueResult
+(define (json-parse-object [text : (& text str)] [pos : i64]) : JsonParseValueResult
   (let
     [i : i64 (json-skip-ws text (+ pos 1))]
     [members : JsonMemberList JsonMemberListNil]
@@ -653,7 +661,7 @@
 ;: Parse one JSON value from `text` at `pos`, after skipping whitespace.
 ;:
 ;: Returned aggregate, string, and number values allocate in the active arena.
-(define (json-parse-value [text : String] [pos : i64]) : JsonParseValueResult
+(define (json-parse-value [text : (& text str)] [pos : i64]) : JsonParseValueResult
   (let
     [i : i64 (json-skip-ws text pos)]
     [n : i64 (string-length text)]
@@ -682,9 +690,12 @@
 ;:
 ;: ```typelisp
 ;: (import "stdlib/json.tl")
-;: (define parsed : JsonParseResult (json-parse "{\"ok\":true}"))
+;: (define parsed : JsonParseResult
+;:   (let
+;:     [text : String "{\"ok\":true}"]
+;:     (json-parse (& text))))
 ;: ```
-(define (json-parse [text : String]) : JsonParseResult
+(define (json-parse [text : (& text str)]) : JsonParseResult
   (match (json-parse-value text 0)
     [(OkJsonParseValue value pos)
       (let

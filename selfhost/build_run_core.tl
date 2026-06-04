@@ -621,9 +621,14 @@ _tl_print_string:
 ")
 
 (define (source-tool-needs-print-string-runtime? [asm : String]) : bool
-  (and
-    (string-contains asm "call _tl_print_string")
-    (not (string-contains asm "_tl_print_string:"))))
+  (let
+    [haystack : String asm]
+    [needle : String "call _tl_print_string"]
+    (and
+      (string-contains (& haystack) (& needle))
+      (let
+        [needle : String "_tl_print_string:"]
+        (not (string-contains (& haystack) (& needle)))))))
 
 (define (source-tool-augment-assembly [asm : String]) : String
   (if (source-tool-needs-print-string-runtime? asm)
@@ -639,12 +644,13 @@ _tl_print_string:
   [asm : String]
   [target : CompilerBackendTarget]) : String
   (let
-    [base : String (source-tool-augment-assembly asm)]
+    [haystack : String (source-tool-augment-assembly asm)]
+    [needle : String ".note.GNU-stack"]
     (if (compiler-backend-target-linux? target)
-      (if (string-contains base ".note.GNU-stack")
-        base
-        (string-append base (source-tool-noexecstack-note)))
-      base)))
+      (if (string-contains (& haystack) (& needle))
+        haystack
+        (string-append haystack (source-tool-noexecstack-note)))
+      haystack)))
 
 (define (source-tool-write-file
   [path : String]

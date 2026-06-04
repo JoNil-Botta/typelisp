@@ -412,7 +412,8 @@
     (match (env-get (& name))
       [(EnvSomeString value)
         (let
-          [trimmed : String (string-trim value)]
+          [s : String value]
+          [trimmed : String (string-trim (& s))]
           (if (string-eq trimmed "")
             (MsvcNoString)
             (MsvcSomeString trimmed)))]
@@ -434,7 +435,8 @@
     (match (try-read-file (& path))
       [(OkIoString contents)
         (let
-          [trimmed : String (string-trim contents)]
+          [s : String contents]
+          [trimmed : String (string-trim (& s))]
           (if (string-eq trimmed "")
             (MsvcNoString)
             (MsvcSomeString trimmed)))]

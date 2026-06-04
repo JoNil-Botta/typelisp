@@ -63,6 +63,9 @@
         [(MsvcSetupUnavailable _) (panic message)])]
     [(OkMsvcTool _) (panic message)]))
 
+(define (msvc-test-contains [haystack : String] [needle : String]) : bool
+  (string-contains (& haystack) (& needle)))
+
 ;; Assert that the current Windows host can discover and run MSVC `link.exe /?`.
 (define (assert-link-help-if-windows) : unit
   (if (msvc-host-windows?)
@@ -76,15 +79,18 @@
             (msvc-tool-process-env found)
             (process-no-stdin)))
           [(OkProcessOutput output)
-            (begin
-              (assert-true
-                (string-contains (msvc-tool-executable found) "VC\\Tools\\MSVC")
-                "msvc link.exe path")
-              (assert-true
-                (string-contains
-                  (process-output-stdout output)
-                  "Incremental Linker")
-                "link.exe /? output"))]
+            (let
+              [executable : String (msvc-tool-executable found)]
+              [path-needle : String "VC\\Tools\\MSVC"]
+              [stdout : String (process-output-stdout output)]
+              [stdout-needle : String "Incremental Linker"]
+              (begin
+                (assert-true
+                  (msvc-test-contains executable path-needle)
+                  "msvc link.exe path")
+                (assert-true
+                  (msvc-test-contains stdout stdout-needle)
+                  "link.exe /? output")))]
           [(ErrProcessOutput error) (panic (process-error-message error))])]
       [(ErrMsvcTool error)
         (match error
@@ -120,6 +126,13 @@
         "C:\\SDK\\Lib\\10.0.99999.0\\um\\x64"
         "C:\\SDK\\bin\\10.0.99999.0\\x64")]
     [root : String (test-msvc-toolset-root instance "14.44.35207")]
+    [setup-path : String (test-msvc-setup-path root sdk)]
+    [setup-lib : String (test-msvc-setup-lib root sdk)]
+    [setup-include : String (test-msvc-setup-include root sdk)]
+    [path-needle : String
+      "C:\\VS\\BuildTools\\VC\\Tools\\MSVC\\14.44.35207\\bin\\Hostx64\\x64"]
+    [lib-needle : String "C:\\SDK\\Lib\\10.0.99999.0\\ucrt\\x64"]
+    [include-needle : String "C:\\SDK\\Include\\10.0.99999.0\\shared"]
     (begin
       (assert-string-eq
         root
@@ -138,19 +151,11 @@
         "C:\\VS\\BuildTools\\VC\\Tools\\MSVC\\14.44.35207\\include"
         "msvc toolset include")
       (assert-true
-        (string-contains
-          (test-msvc-setup-path root sdk)
-          "C:\\VS\\BuildTools\\VC\\Tools\\MSVC\\14.44.35207\\bin\\Hostx64\\x64")
+        (msvc-test-contains setup-path path-needle)
         "msvc setup PATH")
+      (assert-true (msvc-test-contains setup-lib lib-needle) "msvc setup LIB")
       (assert-true
-        (string-contains
-          (test-msvc-setup-lib root sdk)
-          "C:\\SDK\\Lib\\10.0.99999.0\\ucrt\\x64")
-        "msvc setup LIB")
-      (assert-true
-        (string-contains
-          (test-msvc-setup-include root sdk)
-          "C:\\SDK\\Include\\10.0.99999.0\\shared")
+        (msvc-test-contains setup-include include-needle)
         "msvc setup INCLUDE"))))
 
 (define (main) : i64

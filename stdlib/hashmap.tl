@@ -91,7 +91,7 @@
             index))]
       [(StringI64MapOccupied slot-key _ slot-hash)
         (if (if (= slot-hash hash)
-          (hash-key-string-eq? slot-key key)
+          (string-eq slot-key key)
           false)
           (StringI64MapProbeFound index)
           (string-i64-map-probe-from
@@ -194,7 +194,7 @@
       slots
       (string-i64-map-capacity map)
       key
-      (hash-string key))
+      (hash-string (& key)))
       [(StringI64MapProbeFound index)
         (match (array-ref slots index)
           [(StringI64MapOccupied _ value _) (StringI64MapFound value)]
@@ -226,7 +226,7 @@
   [value : i64]) : StringI64MapInsertResult
   (let
     [slots : (Array StringI64MapSlot) (string-i64-map-slots map)]
-    [hash : i64 (hash-string key)]
+    [hash : i64 (hash-string (& key))]
     (match (string-i64-map-probe slots (string-i64-map-capacity map) key hash)
       [(StringI64MapProbeFound index)
         (begin
@@ -260,7 +260,7 @@
       slots
       (string-i64-map-capacity map)
       key
-      (hash-string key))
+      (hash-string (& key)))
       [(StringI64MapProbeFound index)
         (begin
           (array-set! slots index (StringI64MapTombstone))

@@ -12,7 +12,7 @@
 (import "stdlib/hashmap.tl")
 
 (defenum CompilerSymbols
-  (CompilerSymbols StringI64Map StringI64Map StringI64Map))
+  (CompilerSymbols StringI64Map StringI64Map StringI64Map (Array AstDecl)))
 
 (defenum ResultCompilerSymbols
   (OkCompilerSymbols CompilerSymbols)
@@ -117,11 +117,28 @@
   [handle : i64]) : StringI64Map
   (string-i64-map-put map name handle))
 
-(define (compiler-symbols-empty) : CompilerSymbols
+(define (compiler-decl-list-index-count [decls : AstDeclList]) : i64
+  (match decls
+    [(AstDeclNil) 0]
+    [(AstDeclCons decl rest)
+      (let
+        [rest : AstDeclList (box-get rest)]
+        (match decl
+          [(AstDeclImport _) (compiler-decl-list-index-count rest)]
+          [(AstDeclExport _) (compiler-decl-list-index-count rest)]
+          [(AstDeclModule _) (compiler-decl-list-index-count rest)]
+          [(AstDeclTest _ _ _) (compiler-decl-list-index-count rest)]
+          [_ (+ 1 (compiler-decl-list-index-count rest))]))]))
+
+(define (compiler-symbols-empty-with-decls [decl-count : i64]) : CompilerSymbols
   (CompilerSymbols
     (compiler-symbol-map-empty)
     (compiler-symbol-map-empty)
-    (compiler-symbol-map-empty)))
+    (compiler-symbol-map-empty)
+    (make-array AstDecl decl-count)))
+
+(define (compiler-symbols-empty) : CompilerSymbols
+  (compiler-symbols-empty-with-decls 0))
 
 (define (compiler-registries-empty) : CompilerRegistries
   (CompilerRegistries (compiler-symbol-map-empty) (compiler-symbol-map-empty)))
@@ -168,19 +185,23 @@
   [symbols : CompilerSymbols]
   [name : String]) : MaybeI64
   (match symbols
-    [(CompilerSymbols values _ _) (compiler-symbol-map-lookup values name)]))
+    [(CompilerSymbols values _ _ _) (compiler-symbol-map-lookup values name)]))
 
 (define (compiler-symbols-lookup-type
   [symbols : CompilerSymbols]
   [name : String]) : MaybeI64
   (match symbols
-    [(CompilerSymbols _ types _) (compiler-symbol-map-lookup types name)]))
+    [(CompilerSymbols _ types _ _) (compiler-symbol-map-lookup types name)]))
 
 (define (compiler-symbols-lookup-macro
   [symbols : CompilerSymbols]
   [name : String]) : MaybeI64
   (match symbols
-    [(CompilerSymbols _ _ macros) (compiler-symbol-map-lookup macros name)]))
+    [(CompilerSymbols _ _ macros _) (compiler-symbol-map-lookup macros name)]))
+
+(define (compiler-symbols-decls [symbols : CompilerSymbols]) : (Array AstDecl)
+  (match symbols
+    [(CompilerSymbols _ _ _ decls) decls]))
 
 (define (compiler-symbols-duplicate-value-message [name : String]) : String
   (string-append "symbols: duplicate value declaration " name))
@@ -280,39 +301,42 @@
   [name : String]
   [handle : i64]) : CompilerSymbols
   (match symbols
-    [(CompilerSymbols values types macros)
+    [(CompilerSymbols values types macros decls)
       (if (compiler-symbol-map-contains? values name)
         symbols
         (CompilerSymbols
           (compiler-symbol-map-bind values name handle)
           types
-          macros))]))
+          macros
+          decls))]))
 
 (define (compiler-symbols-add-type-alias
   [symbols : CompilerSymbols]
   [name : String]
   [handle : i64]) : CompilerSymbols
   (match symbols
-    [(CompilerSymbols values types macros)
+    [(CompilerSymbols values types macros decls)
       (if (compiler-symbol-map-contains? types name)
         symbols
         (CompilerSymbols
           values
           (compiler-symbol-map-bind types name handle)
-          macros))]))
+          macros
+          decls))]))
 
 (define (compiler-symbols-add-macro-alias
   [symbols : CompilerSymbols]
   [name : String]
   [handle : i64]) : CompilerSymbols
   (match symbols
-    [(CompilerSymbols values types macros)
+    [(CompilerSymbols values types macros decls)
       (if (compiler-symbol-map-contains? macros name)
         symbols
         (CompilerSymbols
           values
           types
-          (compiler-symbol-map-bind macros name handle)))]))
+          (compiler-symbol-map-bind macros name handle)
+          decls))]))
 
 (define (compiler-registries-add-variant-alias
   [registries : CompilerRegistries]
@@ -331,7 +355,7 @@
   [name : String]
   [handle : i64]) : ResultCompilerSymbols
   (match symbols
-    [(CompilerSymbols values types macros)
+    [(CompilerSymbols values types macros decls)
       (if (compiler-symbol-map-contains? values name)
         (ErrCompilerSymbols (compiler-symbols-duplicate-value-message name))
         (if (compiler-symbol-map-contains? macros name)
@@ -341,14 +365,15 @@
             (CompilerSymbols
               (compiler-symbol-map-bind values name handle)
               types
-              macros))))]))
+              macros
+              decls))))]))
 
 (define (compiler-symbols-add-variant-value
   [symbols : CompilerSymbols]
   [name : String]
   [handle : i64]) : ResultCompilerSymbols
   (match symbols
-    [(CompilerSymbols values types macros)
+    [(CompilerSymbols values types macros decls)
       (match (compiler-symbol-map-lookup values name)
         [(SomeI64 existing)
           (if (=
@@ -365,28 +390,30 @@
               (CompilerSymbols
                 (compiler-symbol-map-bind values name handle)
                 types
-                macros)))])]))
+                macros
+                decls)))])]))
 
 (define (compiler-symbols-add-type
   [symbols : CompilerSymbols]
   [name : String]
   [handle : i64]) : ResultCompilerSymbols
   (match symbols
-    [(CompilerSymbols values types macros)
+    [(CompilerSymbols values types macros decls)
       (if (compiler-symbol-map-contains? types name)
         (ErrCompilerSymbols (compiler-symbols-duplicate-type-message name))
         (OkCompilerSymbols
           (CompilerSymbols
             values
             (compiler-symbol-map-bind types name handle)
-            macros)))]))
+            macros
+            decls)))]))
 
 (define (compiler-symbols-add-macro
   [symbols : CompilerSymbols]
   [name : String]
   [handle : i64]) : ResultCompilerSymbols
   (match symbols
-    [(CompilerSymbols values types macros)
+    [(CompilerSymbols values types macros decls)
       (if (compiler-symbol-map-contains? macros name)
         (ErrCompilerSymbols (compiler-symbols-duplicate-macro-message name))
         (if (compiler-symbol-map-contains? values name)
@@ -396,7 +423,8 @@
             (CompilerSymbols
               values
               types
-              (compiler-symbol-map-bind macros name handle)))))]))
+              (compiler-symbol-map-bind macros name handle)
+              decls))))]))
 
 (define (compiler-symbols-add-value-in-module
   [symbols : CompilerSymbols]
@@ -1270,6 +1298,24 @@
   [index : i64]) : ResultCompilerSymbols
   (build-compiler-symbol-list-in-module decls symbols index ""))
 
+(define (compiler-symbol-indexed-decl [decl : AstDecl]) : AstDecl
+  (match decl
+    [(AstDeclComptimeDecl template-box)
+      (let
+        [template : AstDecl (box-get template-box)]
+        template)]
+    [(AstDeclUnsafe inner-box)
+      (let
+        [inner : AstDecl (box-get inner-box)]
+        inner)]
+    [_ decl]))
+
+(define (compiler-symbols-index-decl!
+  [symbols : CompilerSymbols]
+  [decl : AstDecl]
+  [index : i64]) : unit
+  (array-set! (compiler-symbols-decls symbols) index (compiler-symbol-indexed-decl decl)))
+
 (define (build-compiler-symbol-list-in-module
   [decls : AstDeclList]
   [symbols : CompilerSymbols]
@@ -1296,25 +1342,30 @@
           [(AstDeclTest _ _ _)
             (build-compiler-symbol-list-in-module rest symbols index module)]
           [_
-            (match (compiler-symbols-add-decl-in-module
-              symbols
-              module
-              decl
-              index)
-              [(OkCompilerSymbols next-symbols)
-                (build-compiler-symbol-list-in-module
-                  rest
-                  next-symbols
-                  (+ index 1)
-                  module)]
-              [(ErrCompilerSymbols message) (ErrCompilerSymbols message)])]))]))
+            (begin
+              (compiler-symbols-index-decl! symbols decl index)
+              (match (compiler-symbols-add-decl-in-module
+                symbols
+                module
+                decl
+                index)
+                [(OkCompilerSymbols next-symbols)
+                  (build-compiler-symbol-list-in-module
+                    rest
+                    next-symbols
+                    (+ index 1)
+                    module)]
+                [(ErrCompilerSymbols message) (ErrCompilerSymbols message)]))]))]))
 
 (define (build-compiler-symbols [program : AstProgram]) : ResultCompilerSymbols
   (match program
     [(AstProgram decls-box)
       (let
         [decls : AstDeclList (box-get decls-box)]
-        (match (build-compiler-symbol-list decls (compiler-symbols-empty) 0)
+        (match (build-compiler-symbol-list
+          decls
+          (compiler-symbols-empty-with-decls (compiler-decl-list-index-count decls))
+          0)
           [(OkCompilerSymbols symbols)
             (OkCompilerSymbols
               (build-compiler-symbol-aliases-list decls decls symbols))]
@@ -2167,6 +2218,15 @@
         [decls : AstDeclList (box-get decls-box)]
         (compiler-decl-list-at-index decls target 0))]))
 
+(define (compiler-symbols-decl-at-index
+  [symbols : CompilerSymbols]
+  [target : i64]) : ResultAstDecl
+  (let
+    [decls : (Array AstDecl) (compiler-symbols-decls symbols)]
+    (if (or (< target 0) (>= target (array-length decls)))
+      (ErrAstDecl "symbols: declaration index not found")
+      (OkAstDecl (array-ref decls target)))))
+
 (define (compiler-variant-types-at-index
   [variants : AstVariantDefList]
   [target : i64]
@@ -2218,6 +2278,22 @@
         [_ (ErrAstTypeList "symbols: variant owner is not enum")])]
     [(ErrAstDecl message) (ErrAstTypeList message)]))
 
+(define (compiler-registries-variant-fields-indexed
+  [symbols : CompilerSymbols]
+  [handle : i64]) : ResultAstTypeList
+  (match (compiler-symbols-decl-at-index
+    symbols
+    (compiler-registry-handle-owner-index handle))
+    [(OkAstDecl decl)
+      (match decl
+        [(AstDeclDefEnum _ variants)
+          (compiler-variant-types-at-index
+            variants
+            (compiler-registry-handle-child-index handle)
+            0)]
+        [_ (ErrAstTypeList "symbols: variant owner is not enum")])]
+    [(ErrAstDecl message) (ErrAstTypeList message)]))
+
 (define (compiler-registries-struct-field-type
   [program : AstProgram]
   [handle : i64]) : ResultAstType
@@ -2232,6 +2308,22 @@
             (compiler-registry-handle-child-index handle)
             0)]
         [(AstDeclDefStructLifetimes _ _ _ _ fields)
+          (compiler-field-type-at-index
+            fields
+            (compiler-registry-handle-child-index handle)
+            0)]
+        [_ (ErrAstType "symbols: field owner is not struct")])]
+    [(ErrAstDecl message) (ErrAstType message)]))
+
+(define (compiler-registries-struct-field-type-indexed
+  [symbols : CompilerSymbols]
+  [handle : i64]) : ResultAstType
+  (match (compiler-symbols-decl-at-index
+    symbols
+    (compiler-registry-handle-owner-index handle))
+    [(OkAstDecl decl)
+      (match decl
+        [(AstDeclDefStruct _ _ _ fields)
           (compiler-field-type-at-index
             fields
             (compiler-registry-handle-child-index handle)

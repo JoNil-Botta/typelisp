@@ -4809,8 +4809,8 @@
           (match (tc-variant-owner-name ctx handle)
             [(OkTcString owner)
               (if (string-eq owner enum-name)
-                (match (compiler-registries-variant-fields
-                  (tc-context-program ctx)
+                (match (compiler-registries-variant-fields-indexed
+                  (tc-context-symbols ctx)
                   handle)
                   [(OkAstTypeList fields)
                     (match fields
@@ -8102,14 +8102,14 @@
 
 (define (tc-struct-decl [ctx : TcContext] [struct-name : String]) : ResultTcStructDecl
   (match ctx
-    [(TcContext program symbols _ _)
+    [(TcContext _ symbols _ _)
       (match (compiler-symbols-lookup-type symbols struct-name)
         [(SomeI64 handle)
           (if (=
             (compiler-symbol-handle-kind handle)
             (compiler-symbol-kind-defstruct))
-            (match (compiler-program-decl-at-index
-              program
+            (match (compiler-symbols-decl-at-index
+              symbols
               (compiler-symbol-handle-index handle))
               [(OkAstDecl decl)
                 (match decl
@@ -9190,8 +9190,8 @@
     struct-name
     field)
     [(SomeI64 handle)
-      (match (compiler-registries-struct-field-type
-        (tc-context-program ctx)
+      (match (compiler-registries-struct-field-type-indexed
+        (tc-context-symbols ctx)
         handle)
         [(OkAstType ty) (OkTcType (tc-resolve-type ctx ty))]
         [(ErrAstType message) (ErrTcType message)])]
@@ -9480,8 +9480,8 @@
         (match (tc-variant-owner-name ctx handle)
           [(OkTcString owner)
             (if (string-eq owner enum-name)
-              (match (compiler-registries-variant-fields
-                (tc-context-program ctx)
+              (match (compiler-registries-variant-fields-indexed
+                (tc-context-symbols ctx)
                 handle)
                 [(OkAstTypeList fields)
                   (match enum-lifetimes
@@ -9777,8 +9777,8 @@
       (tc-context-registries ctx)
       lookup-name)
       [(SomeI64 handle)
-        (match (compiler-registries-variant-fields
-          (tc-context-program ctx)
+        (match (compiler-registries-variant-fields-indexed
+          (tc-context-symbols ctx)
           handle)
           [(OkAstTypeList fields)
             (tc-pattern-list-irrefutable?

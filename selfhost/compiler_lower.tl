@@ -3437,14 +3437,14 @@
 
 (define (lower-struct-fields [ctx : TcContext] [struct-name : String]) : ResultAstFieldDefList
   (match ctx
-    [(TcContext program symbols _ _)
+    [(TcContext _ symbols _ _)
       (match (compiler-symbols-lookup-type symbols struct-name)
         [(SomeI64 handle)
           (if (=
             (compiler-symbol-handle-kind handle)
             (compiler-symbol-kind-defstruct))
-            (match (compiler-program-decl-at-index
-              program
+            (match (compiler-symbols-decl-at-index
+              symbols
               (compiler-symbol-handle-index handle))
               [(OkAstDecl decl)
                 (match decl
@@ -4419,7 +4419,7 @@
                     (let
                       [nested-args : AstPatternList (box-get nested-args-box)]
                       (match ctx
-                        [(TcContext program _ registries _)
+                        [(TcContext _ symbols registries _)
                           (match (compiler-registries-lookup-variant
                             registries
                             nested-name)
@@ -4430,8 +4430,8 @@
                                     "lower: unknown nested variant "
                                     nested-name)))]
                             [(SomeI64 handle)
-                              (match (compiler-registries-variant-fields
-                                program
+                              (match (compiler-registries-variant-fields-indexed
+                                symbols
                                 handle)
                                 [(ErrAstTypeList message)
                                   (ErrLowerEnv (lower-diagnostic message))]
@@ -4448,8 +4448,7 @@
                                         0
                                         (AstTyI64))
                                         [(LowerExpr tag-state tag-value _)
-                                          (match (lower-state-alloc-var
-                                            tag-state)
+                                      (match (lower-state-alloc-var tag-state)
                                             [(LowerAlloc eq-alloc eq-var)
                                               (match (lower-state-fresh-label
                                                 (lower-state-emit
@@ -6963,8 +6962,8 @@
   (match (tc-resolve-type ctx result-ty)
     [(AstTyEnum enum-name)
       (match ctx
-        [(TcContext program _ _ _)
-          (match (compiler-registries-variant-fields program handle)
+        [(TcContext _ symbols _ _)
+          (match (compiler-registries-variant-fields-indexed symbols handle)
             [(OkAstTypeList fields)
               (match (lower-args-as
                 ctx
@@ -7118,11 +7117,11 @@
           (let
             [lookup-name : String
               (lower-variant-constructor-lookup-name ctx name expr-ty)]
-            [program : AstProgram (tc-context-program ctx)]
+            [symbols : CompilerSymbols (tc-context-symbols ctx)]
             [registries : CompilerRegistries (tc-context-registries ctx)]
             (match (compiler-registries-lookup-variant registries lookup-name)
               [(SomeI64 handle)
-                (match (compiler-registries-variant-fields program handle)
+                (match (compiler-registries-variant-fields-indexed symbols handle)
                   [(OkAstTypeList fields)
                     (match fields
                       [(AstTypeNil)
@@ -15829,7 +15828,7 @@
   [expr-ty : AstType]
   [phi-inputs : CompilerIrPhiInputList]) : ResultLowerExpr
   (match ctx
-    [(TcContext program _ registries _)
+    [(TcContext _ symbols registries _)
       (let
         [lookup-name : String
           (match (tc-type-strip-region scrut-ty)
@@ -15838,7 +15837,7 @@
             [_ variant-name])]
         (match (compiler-registries-lookup-variant registries lookup-name)
           [(SomeI64 handle)
-            (match (compiler-registries-variant-fields program handle)
+            (match (compiler-registries-variant-fields-indexed symbols handle)
               [(OkAstTypeList fields)
                 ;; The final arm has no next-arm continuation, so a refutable
                 ;; payload subpattern here would have nowhere to fall through to;
@@ -15977,7 +15976,7 @@
   [expr-ty : AstType]
   [phi-inputs : CompilerIrPhiInputList]) : ResultLowerExpr
   (match ctx
-    [(TcContext program _ registries _)
+    [(TcContext _ symbols registries _)
       (let
         [lookup-name : String
           (match (tc-type-strip-region scrut-ty)
@@ -15986,7 +15985,7 @@
             [_ variant-name])]
         (match (compiler-registries-lookup-variant registries lookup-name)
           [(SomeI64 handle)
-            (match (compiler-registries-variant-fields program handle)
+            (match (compiler-registries-variant-fields-indexed symbols handle)
               [(OkAstTypeList fields)
                 (match (lower-state-alloc-var state)
                   [(LowerAlloc eq-alloc eq-var)

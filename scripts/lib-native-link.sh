@@ -344,9 +344,14 @@ assemble_and_link_windows() {
 
     obj_win=$(to_windows_path "$obj")
     bin_win=$(to_windows_path "$bin")
+    repro_arg=
+    if [ "${TYPELISP_WINDOWS_LINK_REPRO:-}" = 1 ]; then
+        repro_arg=/Brepro
+    fi
     echo "[native-link] link $label with MSVC link.exe"
     MSYS2_ARG_CONV_EXCL='*' "$TYPELISP_WINDOWS_LINK_POSIX" \
         /NOLOGO \
+        ${repro_arg:+"$repro_arg"} \
         "$obj_win" \
         "/OUT:$bin_win" \
         /SUBSYSTEM:CONSOLE \

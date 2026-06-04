@@ -469,9 +469,8 @@
         head
         (compiler-source-spans-entry-list-append rest entry))]))
 
-;; Record `name -> span`. Lowering appends in order; the first binding for a
-;;
-;; name wins on lookup, so re-recording a name is a no-op for diagnostics.
+;; Record `name -> span`. Function names are unique in lowered programs, so a
+;; prepend keeps diagnostics equivalent while avoiding O(n^2) provenance builds.
 (define (compiler-source-spans-insert
   [spans : CompilerSourceSpans]
   [name : String]
@@ -479,9 +478,9 @@
   (match spans
     [(CompilerSourceSpans entries instr-entries instr-count)
       (CompilerSourceSpans
-        (compiler-source-spans-entry-list-append
-          entries
-          (CompilerSourceSpansEntry name span))
+        (CompilerSourceSpansEntryCons
+          (CompilerSourceSpansEntry name span)
+          entries)
         instr-entries
         instr-count)]))
 

@@ -60,6 +60,14 @@
   (OkCompilerBackend String)
   (ErrCompilerBackend CompilerDiagnostic))
 
+(defstruct CompilerBackendRuntimeTailPlan
+  (fs-current-dir bool)
+  (profile bool))
+
+(defenum ResultCompilerBackendBuffer
+  (OkCompilerBackendBuffer TextBuf)
+  (ErrCompilerBackendBuffer CompilerDiagnostic))
+
 (defenum CompilerBackendRuntimePlan
   (BackendRuntimePlan
     bool
@@ -97,7 +105,15 @@
     bool
     bool
     bool
-    bool))
+    CompilerBackendRuntimeTailPlan))
+
+(define (compiler-backend-runtime-tail-fs-current-dir?
+  [tail : CompilerBackendRuntimeTailPlan]) : bool
+  (struct-get tail fs-current-dir))
+
+(define (compiler-backend-runtime-tail-profile?
+  [tail : CompilerBackendRuntimeTailPlan]) : bool
+  (struct-get tail profile))
 
 ;; Backend code-generation target (#646). Linux/System V and Windows x64 are
 ;; both modeled here; target-specific runtime helpers are emitted below.
@@ -1556,17 +1572,19 @@
   (let
     [i : i64 0]
     [n : i64 (string-length text)]
-    [out : String ""]
+    [buf : TextBuf (text-buf-empty)]
     (begin
       (while (< i n)
         (let
           [c : char (string-ref text i)]
           (begin
             (set!
-              out
-              (string-append out (compiler-backend-escape-string-byte text i c)))
+              buf
+              (text-buf-append
+                buf
+                (compiler-backend-escape-string-byte text i c)))
             (set! i (+ i 1)))))
-      out)))
+      (text-buf-render buf))))
 
 (define (compiler-backend-quoted-gas-string [text : String]) : String
   (string-append
@@ -1577,20 +1595,20 @@
   (let
     [i : i64 0]
     [n : i64 (string-length text)]
-    [out : String ""]
+    [buf : TextBuf (text-buf-empty)]
     (begin
       (while (< i n)
         (begin
           (set!
-            out
-            (string-append
-              out
+            buf
+            (text-buf-append
+              buf
               (compiler-backend-hex-byte
                 (compiler-backend-char-code (string-ref text i)))))
           (set! i (+ i 1))))
       (if (= n 0)
         "empty"
-        out))))
+        (text-buf-render buf)))))
 
 (define (compiler-backend-string-data-label [text : String]) : String
   (string-append ".L_tl_str_data_" (compiler-backend-string-label-suffix text)))
@@ -7648,6 +7666,66 @@
     (IrFunctionCons (compiler-backend-implicit-main-function) functions)
     functions))
 
+(define (compiler-backend-emit-functions-buffer-into
+  [target : CompilerBackendTarget]
+  [mode : CompilerBackendMode]
+  [functions : CompilerIrFunctionList]
+  [all-functions : CompilerIrFunctionList]
+  [globals : CompilerIrGlobalList]
+  [externs : CompilerIrExternList]
+  [plan : CompilerBackendRuntimePlan]
+  [spans : CompilerSourceSpans]
+  [crt-entry : bool]
+  [buf : TextBuf]) : ResultCompilerBackendBuffer
+  (match functions
+    [(IrFunctionNil) (OkCompilerBackendBuffer buf)]
+    [(IrFunctionCons func rest)
+      (match (compiler-backend-emit-function-escaping
+        target
+        mode
+        func
+        all-functions
+        globals
+        externs
+        plan
+        spans
+        crt-entry)
+        [(OkCompilerBackend head)
+          (compiler-backend-emit-functions-buffer-into
+            target
+            mode
+            rest
+            all-functions
+            globals
+            externs
+            plan
+            spans
+            crt-entry
+            (text-buf-append buf head))]
+        [(ErrCompilerBackend message) (ErrCompilerBackendBuffer message)])]))
+
+(define (compiler-backend-emit-functions-buffer
+  [target : CompilerBackendTarget]
+  [mode : CompilerBackendMode]
+  [functions : CompilerIrFunctionList]
+  [globals : CompilerIrGlobalList]
+  [all-functions : CompilerIrFunctionList]
+  [externs : CompilerIrExternList]
+  [plan : CompilerBackendRuntimePlan]
+  [spans : CompilerSourceSpans]
+  [crt-entry : bool]) : ResultCompilerBackendBuffer
+  (compiler-backend-emit-functions-buffer-into
+    target
+    mode
+    functions
+    all-functions
+    globals
+    externs
+    plan
+    spans
+    crt-entry
+    (text-buf-empty)))
+
 (define (compiler-backend-emit-closure-descriptor-entry [name : String]) : String
   (backend-cat5
     (compiler-backend-closure-descriptor-label name)
@@ -7656,22 +7734,35 @@
     "\n    .quad 0\n"
     ""))
 
-(define (compiler-backend-emit-closure-descriptor-entries
+(define (compiler-backend-emit-closure-descriptor-entry-into
+  [name : String]
+  [functions : CompilerIrFunctionList]
+  [externs : CompilerIrExternList]
+  [buf : TextBuf]) : TextBuf
+  (match (compiler-backend-signature functions externs name)
+    [(CompilerBackendSomeSignature _ _)
+      (text-buf-append
+        buf
+        (compiler-backend-emit-closure-descriptor-entry name))]
+    [(CompilerBackendNoSignature) buf]))
+
+(define (compiler-backend-emit-closure-descriptor-entries-into
   [names : BackendStringList]
   [functions : CompilerIrFunctionList]
-  [externs : CompilerIrExternList]) : String
+  [externs : CompilerIrExternList]
+  [buf : TextBuf]) : TextBuf
   (match names
-    [(BackendStringNil) ""]
+    [(BackendStringNil) buf]
     [(BackendStringCons name rest)
-      (string-append
-        (match (compiler-backend-signature functions externs name)
-          [(CompilerBackendSomeSignature _ _)
-            (compiler-backend-emit-closure-descriptor-entry name)]
-          [(CompilerBackendNoSignature) ""])
-        (compiler-backend-emit-closure-descriptor-entries
-          rest
+      (compiler-backend-emit-closure-descriptor-entries-into
+        rest
+        functions
+        externs
+        (compiler-backend-emit-closure-descriptor-entry-into
+          name
           functions
-          externs))]))
+          externs
+          buf))]))
 
 (define (compiler-backend-emit-closure-descriptors
   [names : BackendStringList]
@@ -7680,12 +7771,14 @@
   (match names
     [(BackendStringNil) ""]
     [_
-      (string-append
-        "    .section .rodata\n    .balign 8\n"
-        (compiler-backend-emit-closure-descriptor-entries
+      (text-buf-render
+        (compiler-backend-emit-closure-descriptor-entries-into
           names
           functions
-          externs))]))
+          externs
+          (text-buf-append
+            (text-buf-empty)
+            "    .section .rodata\n    .balign 8\n")))]))
 
 (define (compiler-backend-closure-adapter-outgoing-frame-space
   [target : CompilerBackendTarget]
@@ -7830,20 +7923,25 @@
         true
         (compiler-backend-string-list-contains? rest text))]))
 
-(define (compiler-backend-string-list-append
+(define (compiler-backend-string-list-reverse-into
   [strings : BackendStringList]
-  [text : String]) : BackendStringList
+  [out : BackendStringList]) : BackendStringList
   (match strings
-    [(BackendStringNil) (BackendStringCons text BackendStringNil)]
+    [(BackendStringNil) out]
     [(BackendStringCons head rest)
-      (BackendStringCons head (compiler-backend-string-list-append rest text))]))
+      (compiler-backend-string-list-reverse-into
+        rest
+        (BackendStringCons head out))]))
+
+(define (compiler-backend-string-list-reverse [strings : BackendStringList]) : BackendStringList
+  (compiler-backend-string-list-reverse-into strings BackendStringNil))
 
 (define (compiler-backend-string-list-add
   [strings : BackendStringList]
   [text : String]) : BackendStringList
   (if (compiler-backend-string-list-contains? strings text)
     strings
-    (compiler-backend-string-list-append strings text)))
+    (BackendStringCons text strings)))
 
 (define (compiler-backend-collect-value-function
   [functions : BackendStringList]
@@ -8025,9 +8123,10 @@
   [program : CompilerIrProgram]) : BackendStringList
   (match program
     [(IrProgram globals functions _)
-      (compiler-backend-collect-function-functions
-        (compiler-backend-collect-global-functions BackendStringNil globals)
-        functions)]))
+      (compiler-backend-string-list-reverse
+        (compiler-backend-collect-function-functions
+          (compiler-backend-collect-global-functions BackendStringNil globals)
+          functions))]))
 
 (define (compiler-backend-collect-value-string
   [strings : BackendStringList]
@@ -8204,9 +8303,10 @@
 (define (compiler-backend-collect-program-strings [program : CompilerIrProgram]) : BackendStringList
   (match program
     [(IrProgram globals functions _)
-      (compiler-backend-collect-function-strings
-        (compiler-backend-collect-global-strings BackendStringNil globals)
-        functions)]))
+      (compiler-backend-string-list-reverse
+        (compiler-backend-collect-function-strings
+          (compiler-backend-collect-global-strings BackendStringNil globals)
+          functions))]))
 
 (define (compiler-backend-collect-value-f64
   [floats : BackendStringList]
@@ -8376,9 +8476,10 @@
 (define (compiler-backend-collect-program-f64s [program : CompilerIrProgram]) : BackendStringList
   (match program
     [(IrProgram globals functions _)
-      (compiler-backend-collect-function-f64s
-        (compiler-backend-collect-global-f64s BackendStringNil globals)
-        functions)]))
+      (compiler-backend-string-list-reverse
+        (compiler-backend-collect-function-f64s
+          (compiler-backend-collect-global-f64s BackendStringNil globals)
+          functions))]))
 
 (define (compiler-backend-emit-string-entry [text : String]) : String
   (backend-cat5
@@ -8393,13 +8494,19 @@
       "\n    .quad "
       (backend-cat3 (int->string (string-length text)) "\n" ""))))
 
-(define (compiler-backend-emit-string-entries [strings : BackendStringList]) : String
+(define (compiler-backend-emit-string-entries-into
+  [strings : BackendStringList]
+  [buf : TextBuf]) : TextBuf
   (match strings
-    [(BackendStringNil) ""]
+    [(BackendStringNil) buf]
     [(BackendStringCons text rest)
-      (string-append
-        (compiler-backend-emit-string-entry text)
-        (compiler-backend-emit-string-entries rest))]))
+      (compiler-backend-emit-string-entries-into
+        rest
+        (text-buf-append buf (compiler-backend-emit-string-entry text)))]))
+
+(define (compiler-backend-emit-string-entries [strings : BackendStringList]) : String
+  (text-buf-render
+    (compiler-backend-emit-string-entries-into strings (text-buf-empty))))
 
 (define (compiler-backend-emit-string-rodata [strings : BackendStringList]) : String
   (match strings
@@ -8417,13 +8524,19 @@
     "\n"
     ""))
 
-(define (compiler-backend-emit-f64-entries [floats : BackendStringList]) : String
+(define (compiler-backend-emit-f64-entries-into
+  [floats : BackendStringList]
+  [buf : TextBuf]) : TextBuf
   (match floats
-    [(BackendStringNil) ""]
+    [(BackendStringNil) buf]
     [(BackendStringCons text rest)
-      (string-append
-        (compiler-backend-emit-f64-entry text)
-        (compiler-backend-emit-f64-entries rest))]))
+      (compiler-backend-emit-f64-entries-into
+        rest
+        (text-buf-append buf (compiler-backend-emit-f64-entry text)))]))
+
+(define (compiler-backend-emit-f64-entries [floats : BackendStringList]) : String
+  (text-buf-render
+    (compiler-backend-emit-f64-entries-into floats (text-buf-empty))))
 
 (define (compiler-backend-emit-f64-rodata [floats : BackendStringList]) : String
   (match floats
@@ -8521,19 +8634,25 @@
                   ""))]
             [(ErrCompilerBackend message) (ErrCompilerBackend message)])))]))
 
-(define (compiler-backend-emit-globals
+(define (compiler-backend-emit-globals-into
   [target : CompilerBackendTarget]
-  [globals : CompilerIrGlobalList]) : ResultCompilerBackend
+  [globals : CompilerIrGlobalList]
+  [buf : TextBuf]) : ResultCompilerBackend
   (match globals
-    [(IrGlobalNil) (OkCompilerBackend "")]
+    [(IrGlobalNil) (OkCompilerBackend (text-buf-render buf))]
     [(IrGlobalCons global rest)
       (match (compiler-backend-emit-global target global)
         [(OkCompilerBackend head)
-          (match (compiler-backend-emit-globals target rest)
-            [(OkCompilerBackend tail)
-              (OkCompilerBackend (string-append head tail))]
-            [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
+          (compiler-backend-emit-globals-into
+            target
+            rest
+            (text-buf-append buf head))]
         [(ErrCompilerBackend message) (ErrCompilerBackend message)])]))
+
+(define (compiler-backend-emit-globals
+  [target : CompilerBackendTarget]
+  [globals : CompilerIrGlobalList]) : ResultCompilerBackend
+  (compiler-backend-emit-globals-into target globals (text-buf-empty)))
 
 (define (compiler-backend-global-init-name [global-name : String]) : String
   (string-append "__global_init_" global-name))
@@ -8749,6 +8868,19 @@
   [enabled : bool]) : bool
   (and (string-eq name candidate) enabled))
 
+(define (compiler-backend-provides-profile-runtime-name?
+  [name : String]
+  [enabled : bool]) : bool
+  (and
+    enabled
+    (or
+      (backend-or4
+        (string-eq name "tl_profile_now_ms")
+        (string-eq name "tl_profile_alloc_total")
+        (string-eq name "tl_profile_alloc_live")
+        (string-eq name "tl_profile_alloc_peak"))
+      (string-eq name "tl_profile_alloc_reset_peak"))))
+
 (define (compiler-backend-plan-provides-tail?
   [name : String]
   [read-bytes : bool]
@@ -8854,7 +8986,7 @@
         provides-env-path-separator
         provides-div-abort
         provides-shift-abort
-        provides-fs-current-dir)
+        provides-tail)
       (or
         (backend-or8
           (compiler-backend-provides-runtime-name? name "tl_alloc" alloc)
@@ -9009,11 +9141,13 @@
                     (compiler-backend-provides-runtime-name?
                       name
                       "tl_fs_current_dir_status"
-                      provides-fs-current-dir)
+                      (compiler-backend-runtime-tail-fs-current-dir?
+                        provides-tail))
                     (compiler-backend-provides-runtime-name?
                       name
                       "tl_fs_current_dir"
-                      provides-fs-current-dir)
+                      (compiler-backend-runtime-tail-fs-current-dir?
+                        provides-tail))
                     false)
                   (or
                     (compiler-backend-provides-runtime-name?
@@ -9059,7 +9193,10 @@
                             name
                             "tl_shift_abort"
                             provides-shift-abort)
-                          false
+                          (compiler-backend-provides-profile-runtime-name?
+                            name
+                            (compiler-backend-runtime-tail-profile?
+                              provides-tail))
                           false))))))))))]))
 
 (define (compiler-backend-runtime-plan-for
@@ -9116,6 +9253,24 @@
       (compiler-backend-function-list-defines? functions "env-var-value")]
     [defines-env-path-separator : bool
       (compiler-backend-function-list-defines? functions "env-path-separator")]
+    [defines-profile-now-ms : bool
+      (compiler-backend-function-list-defines? functions "tl_profile_now_ms")]
+    [defines-profile-alloc-total : bool
+      (compiler-backend-function-list-defines?
+        functions
+        "tl_profile_alloc_total")]
+    [defines-profile-alloc-live : bool
+      (compiler-backend-function-list-defines?
+        functions
+        "tl_profile_alloc_live")]
+    [defines-profile-alloc-peak : bool
+      (compiler-backend-function-list-defines?
+        functions
+        "tl_profile_alloc_peak")]
+    [defines-profile-alloc-reset-peak : bool
+      (compiler-backend-function-list-defines?
+        functions
+        "tl_profile_alloc_reset_peak")]
     [extern-alloc : bool
       (compiler-backend-extern-list-references? externs "tl_alloc")]
     [extern-oob : bool
@@ -9252,6 +9407,20 @@
       (compiler-backend-extern-list-references? externs "env-var-value")]
     [extern-env-path-separator : bool
       (compiler-backend-extern-list-references? externs "env-path-separator")]
+    [extern-profile-now-ms : bool
+      (compiler-backend-extern-list-references? externs "tl_profile_now_ms")]
+    [extern-profile-alloc-total : bool
+      (compiler-backend-extern-list-references?
+        externs
+        "tl_profile_alloc_total")]
+    [extern-profile-alloc-live : bool
+      (compiler-backend-extern-list-references? externs "tl_profile_alloc_live")]
+    [extern-profile-alloc-peak : bool
+      (compiler-backend-extern-list-references? externs "tl_profile_alloc_peak")]
+    [extern-profile-alloc-reset-peak : bool
+      (compiler-backend-extern-list-references?
+        externs
+        "tl_profile_alloc_reset_peak")]
     [calls-alloc : bool
       (compiler-backend-function-list-calls? functions "tl_alloc")]
     [calls-oob : bool
@@ -9380,6 +9549,18 @@
       (compiler-backend-function-list-calls? functions "env-var-value")]
     [calls-env-path-separator : bool
       (compiler-backend-function-list-calls? functions "env-path-separator")]
+    [calls-profile-now-ms : bool
+      (compiler-backend-function-list-calls? functions "tl_profile_now_ms")]
+    [calls-profile-alloc-total : bool
+      (compiler-backend-function-list-calls? functions "tl_profile_alloc_total")]
+    [calls-profile-alloc-live : bool
+      (compiler-backend-function-list-calls? functions "tl_profile_alloc_live")]
+    [calls-profile-alloc-peak : bool
+      (compiler-backend-function-list-calls? functions "tl_profile_alloc_peak")]
+    [calls-profile-alloc-reset-peak : bool
+      (compiler-backend-function-list-calls?
+        functions
+        "tl_profile_alloc_reset_peak")]
     [needs-oob : bool (and (not defines-oob) (or extern-oob calls-oob))]
     [needs-div-abort : bool
       (or
@@ -9546,6 +9727,24 @@
               needs-env-var-value
               needs-env-path-separator
               false))))]
+    [needs-profile : bool
+      (or
+        (backend-or4
+          (and
+            (not defines-profile-now-ms)
+            (or extern-profile-now-ms calls-profile-now-ms))
+          (and
+            (not defines-profile-alloc-total)
+            (or extern-profile-alloc-total calls-profile-alloc-total))
+          (and
+            (not defines-profile-alloc-live)
+            (or extern-profile-alloc-live calls-profile-alloc-live))
+          (and
+            (not defines-profile-alloc-peak)
+            (or extern-profile-alloc-peak calls-profile-alloc-peak)))
+        (and
+          (not defines-profile-alloc-reset-peak)
+          (or extern-profile-alloc-reset-peak calls-profile-alloc-reset-peak)))]
     (OkBackendRuntimePlan
       (BackendRuntimePlan
         needs-alloc
@@ -9583,7 +9782,7 @@
         needs-env-path-separator
         needs-div-abort
         needs-shift-abort
-        needs-fs-current-dir))))
+        (CompilerBackendRuntimeTailPlan needs-fs-current-dir needs-profile)))))
 
 (define (compiler-backend-runtime-plan [program : CompilerIrProgram]) : ResultBackendRuntimePlan
   (match program
@@ -9636,6 +9835,20 @@ tl_current_arena:
     .zero 8
 
 ")
+
+(define (compiler-backend-runtime-profile-data [profile : bool]) : String
+  (if profile
+    "    .section .bss
+    .balign 8
+tl_profile_alloc_total_bytes:
+    .zero 8
+tl_profile_alloc_live_bytes:
+    .zero 8
+tl_profile_alloc_peak_bytes:
+    .zero 8
+
+"
+    ""))
 
 (define (compiler-backend-runtime-region-reset-data) : String
   "    .section .rodata
@@ -9918,13 +10131,16 @@ tl_current_arena:
         _
         div-abort
         shift-abort
-        _)
+        tail-plan)
       (string-append
         (string-append
           (compiler-backend-runtime-arena-data-for-target target)
-          (if alloc
-            (compiler-backend-runtime-alloc-data-for-target target)
-            ""))
+          (string-append
+            (compiler-backend-runtime-profile-data
+              (compiler-backend-runtime-tail-profile? tail-plan))
+            (if alloc
+              (compiler-backend-runtime-alloc-data-for-target target)
+              "")))
         (string-append
           (if oob
             (compiler-backend-runtime-oob-data)
@@ -9980,8 +10196,72 @@ tl_current_arena:
                                     (compiler-backend-runtime-windows-sdk-registry-install-data
                                       windows-sdk-registry-install))))))))))))))))]))
 
-(define (compiler-backend-runtime-alloc-functions) : String
-  "    .globl tl_alloc
+(define (compiler-backend-runtime-profile-alloc-account
+  [size-reg : String]
+  [done-label : String]
+  [profile : bool]) : String
+  (if profile
+    (string-append
+      (backend-cat5
+        "    addq "
+        size-reg
+        ", tl_profile_alloc_total_bytes(%rip)\n    addq "
+        size-reg
+        ", tl_profile_alloc_live_bytes(%rip)\n")
+      (backend-cat5
+        "    movq tl_profile_alloc_live_bytes(%rip), %r10\n    cmpq tl_profile_alloc_peak_bytes(%rip), %r10\n    jbe "
+        done-label
+        "\n    movq %r10, tl_profile_alloc_peak_bytes(%rip)\n"
+        done-label
+        ":\n"))
+    ""))
+
+(define (compiler-backend-runtime-profile-live-sub
+  [arena-reg : String]
+  [used-reg : String]
+  [profile : bool]) : String
+  (if profile
+    (backend-cat5
+      "    movq 16("
+      arena-reg
+      "), "
+      used-reg
+      (backend-cat5
+        "\n    subq 8("
+        arena-reg
+        "), "
+        used-reg
+        (backend-cat3
+          "\n    subq "
+          used-reg
+          ", tl_profile_alloc_live_bytes(%rip)\n")))
+    ""))
+
+(define (compiler-backend-runtime-profile-live-rewind
+  [arena-reg : String]
+  [mark-reg : String]
+  [used-reg : String]
+  [profile : bool]) : String
+  (if profile
+    (backend-cat5
+      "    movq 16("
+      arena-reg
+      "), "
+      used-reg
+      (backend-cat5
+        "\n    subq "
+        mark-reg
+        ", "
+        used-reg
+        (backend-cat3
+          "\n    subq "
+          used-reg
+          ", tl_profile_alloc_live_bytes(%rip)\n")))
+    ""))
+
+(define (compiler-backend-runtime-alloc-functions [profile : bool]) : String
+  (string-append
+    "    .globl tl_alloc
 tl_alloc:
     addq $7, %rdi
     jc .L_tl_alloc_abort
@@ -9997,7 +10277,14 @@ tl_alloc:
     cmpq 24(%r8), %rcx
     ja .L_tl_alloc_new_arena
     movq %rcx, 16(%r8)
-    ret
+"
+    (string-append
+      (string-append
+        (compiler-backend-runtime-profile-alloc-account
+          "%rsi"
+          ".L_tl_alloc_profile_fast_done"
+          profile)
+        "    ret
 .L_tl_alloc_new_arena:
     movq $0x4000000, %rdx
     movq %rsi, %rcx
@@ -10034,7 +10321,13 @@ tl_alloc:
     movq %rcx, 16(%rax)
     movq %rax, tl_current_arena(%rip)
     movq %r8, %rax
-    ret
+")
+      (string-append
+        (compiler-backend-runtime-profile-alloc-account
+          "%rsi"
+          ".L_tl_alloc_profile_new_done"
+          profile)
+        "    ret
 .L_tl_alloc_abort:
     movq $1, %rax
     movq $2, %rdi
@@ -10045,7 +10338,7 @@ tl_alloc:
     movq $134, %rdi
     syscall
 
-")
+"))))
 
 (define (compiler-backend-runtime-region-mark-functions) : String
   "    .globl tl_region_mark
@@ -10075,8 +10368,9 @@ tl_region_mark:
 ;; reference these symbols as externs, so a multi-object link (a package plus its
 ;; dependency .a archive) resolves every object's calls to the single definition
 ;; in the entry object — no `multiple definition` collision.
-(define (compiler-backend-runtime-arena-functions) : String
-  "    .globl tl_arena_current
+(define (compiler-backend-runtime-arena-functions [profile : bool]) : String
+  (string-append
+    "    .globl tl_arena_current
 tl_arena_current:
     movq tl_current_arena(%rip), %rax
     ret
@@ -10124,7 +10418,10 @@ tl_arena_destroy:
     testq %rbx, %rbx
     jz .L_tl_arena_destroy_done
     movq 0(%rbx), %r8
-    push %r8
+"
+    (string-append
+      (compiler-backend-runtime-profile-live-sub "%rbx" "%r10" profile)
+      "    push %r8
     cmpq $0, .L_tl_arena_poison_enabled(%rip)
     je .L_tl_arena_destroy_unmap
     movq 8(%rbx), %rdi
@@ -10146,13 +10443,14 @@ tl_arena_destroy:
     pop %rbx
     ret
 
-")
+")))
 
 ;; Windows flavor: VirtualAlloc/VirtualFree under the Win64 ABI. The arg arrives
 ;; in %rcx; a 32-byte shadow space is reserved before each call. A mapping
 ;; failure traps via `ud2` (no libc dependency).
-(define (compiler-backend-runtime-windows-arena-functions) : String
-  "    .globl tl_arena_current
+(define (compiler-backend-runtime-windows-arena-functions [profile : bool]) : String
+  (string-append
+    "    .globl tl_arena_current
 tl_arena_current:
     movq tl_current_arena(%rip), %rax
     ret
@@ -10207,7 +10505,10 @@ tl_arena_destroy:
     testq %rsi, %rsi
     jz .L_tl_arena_destroy_win_done
     movq 0(%rsi), %rbx
-    movq %rsi, %rcx
+"
+    (string-append
+      (compiler-backend-runtime-profile-live-sub "%rsi" "%r10" profile)
+      "    movq %rsi, %rcx
     xorq %rdx, %rdx
     movq $0x8000, %r8
     call VirtualFree
@@ -10220,10 +10521,11 @@ tl_arena_destroy:
     popq %rbp
     ret
 
-")
+")))
 
-(define (compiler-backend-runtime-region-reset-functions) : String
-  "    .globl tl_region_reset
+(define (compiler-backend-runtime-region-reset-functions [profile : bool]) : String
+  (string-append
+    "    .globl tl_region_reset
 tl_region_reset:
     push %rbx
     movq %rdi, %rbx
@@ -10250,7 +10552,11 @@ tl_region_reset:
     cmpq %r8, %r9
     je .L_tl_region_reset_restore
     movq 0(%r9), %r10
-    cmpq $0, .L_tl_arena_poison_enabled(%rip)
+"
+    (string-append
+      (compiler-backend-runtime-profile-live-sub "%r9" "%r11" profile)
+      (string-append
+        "    cmpq $0, .L_tl_arena_poison_enabled(%rip)
     je .L_tl_region_reset_drop_newer_unmap
     movq 8(%r9), %rdi
     movq 24(%r9), %rcx
@@ -10271,7 +10577,15 @@ tl_region_reset:
     movq %r10, %r9
     jmp .L_tl_region_reset_drop_newer
 .L_tl_region_reset_restore:
-    cmpq $0, .L_tl_arena_poison_enabled(%rip)
+"
+        (string-append
+          (compiler-backend-runtime-profile-live-rewind
+            "%r8"
+            "%rbx"
+            "%r10"
+            profile)
+          (string-append
+            "    cmpq $0, .L_tl_arena_poison_enabled(%rip)
     je .L_tl_region_reset_restore_set
     movq 16(%r8), %rcx
     subq %rbx, %rcx
@@ -10291,7 +10605,10 @@ tl_region_reset:
     testq %r8, %r8
     jz .L_tl_region_reset_done
     movq 0(%r8), %r9
-    cmpq $0, .L_tl_arena_poison_enabled(%rip)
+"
+            (string-append
+              (compiler-backend-runtime-profile-live-sub "%r8" "%r10" profile)
+              "    cmpq $0, .L_tl_arena_poison_enabled(%rip)
     je .L_tl_region_reset_all_unmap
     movq 8(%r8), %rdi
     movq 24(%r8), %rcx
@@ -10321,10 +10638,11 @@ tl_region_reset:
     movq $134, %rdi
     syscall
 
-")
+")))))))
 
-(define (compiler-backend-runtime-windows-alloc-functions) : String
-  "    .globl tl_alloc
+(define (compiler-backend-runtime-windows-alloc-functions [profile : bool]) : String
+  (string-append
+    "    .globl tl_alloc
 tl_alloc:
     testq %rcx, %rcx
     jg .L_tl_alloc_win_size_ready
@@ -10344,7 +10662,14 @@ tl_alloc:
     cmpq 24(%r8), %r10
     ja .L_tl_alloc_new_arena_entry
     movq %r10, 16(%r8)
-    ret
+"
+    (string-append
+      (string-append
+        (compiler-backend-runtime-profile-alloc-account
+          "%r11"
+          ".L_tl_alloc_profile_win_fast_done"
+          profile)
+        "    ret
 .L_tl_alloc_new_arena_entry:
     push %rbp
     mov %rsp, %rbp
@@ -10388,6 +10713,13 @@ tl_alloc:
     movq %r10, 16(%rax)
     movq %rax, tl_current_arena(%rip)
     movq %r8, %rax
+")
+      (string-append
+        (compiler-backend-runtime-profile-alloc-account
+          "%r11"
+          ".L_tl_alloc_profile_win_new_done"
+          profile)
+        "
     mov %rbp, %rsp
     pop %rbp
     ret
@@ -10399,7 +10731,7 @@ tl_alloc:
     movq $134, %rcx
     call exit
 
-")
+"))))
 
 (define (compiler-backend-runtime-oob-functions) : String
   "    .globl tl_oob_abort
@@ -10903,8 +11235,10 @@ _tl_env_var_value:
 ;; `VirtualFree(lpAddress=arena, dwSize=0, dwFreeType=MEM_RELEASE=0x8000)` — the
 ;; arena node address is exactly the VirtualAlloc base, so MEM_RELEASE frees the
 ;; whole chunk. Arg (the mark) arrives in %rcx.
-(define (compiler-backend-runtime-windows-region-reset-functions) : String
-  "    .globl tl_region_reset
+(define (compiler-backend-runtime-windows-region-reset-functions
+  [profile : bool]) : String
+  (string-append
+    "    .globl tl_region_reset
 tl_region_reset:
     push %rbp
     mov %rsp, %rbp
@@ -10947,7 +11281,11 @@ tl_region_reset:
     cmpq %r13, %r14
     je .L_tl_region_reset_win_restore
     movq 0(%r14), %rbx
-    movq %r14, %rcx
+"
+    (string-append
+      (compiler-backend-runtime-profile-live-sub "%r14" "%rax" profile)
+      (string-append
+        "    movq %r14, %rcx
     xorq %rdx, %rdx
     movq $0x8000, %r8
     sub $32, %rsp
@@ -10956,7 +11294,15 @@ tl_region_reset:
     movq %rbx, %r14
     jmp .L_tl_region_reset_win_drop
 .L_tl_region_reset_win_restore:
-    movq %r12, 16(%r13)
+"
+        (string-append
+          (compiler-backend-runtime-profile-live-rewind
+            "%r13"
+            "%r12"
+            "%rax"
+            profile)
+          (string-append
+            "    movq %r12, 16(%r13)
     movq %r13, tl_current_arena(%rip)
     jmp .L_tl_region_reset_win_done
 .L_tl_region_reset_win_all:
@@ -10966,7 +11312,10 @@ tl_region_reset:
     testq %r14, %r14
     jz .L_tl_region_reset_win_done
     movq 0(%r14), %rbx
-    movq %r14, %rcx
+"
+            (string-append
+              (compiler-backend-runtime-profile-live-sub "%r14" "%rax" profile)
+              "    movq %r14, %rcx
     xorq %rdx, %rdx
     movq $0x8000, %r8
     sub $32, %rsp
@@ -10983,7 +11332,99 @@ tl_region_reset:
     pop %rbp
     ret
 
+")))))))
+
+(define (compiler-backend-runtime-profile-functions) : String
+  "    .globl tl_profile_now_ms
+tl_profile_now_ms:
+    subq $16, %rsp
+    movq $1, %rdi
+    movq %rsp, %rsi
+    movq $228, %rax
+    syscall
+    testq %rax, %rax
+    js .L_tl_profile_now_zero
+    movq 0(%rsp), %r8
+    imulq $1000, %r8, %r8
+    movq 8(%rsp), %rax
+    xorq %rdx, %rdx
+    movq $1000000, %rcx
+    divq %rcx
+    addq %r8, %rax
+    addq $16, %rsp
+    ret
+.L_tl_profile_now_zero:
+    xorq %rax, %rax
+    addq $16, %rsp
+    ret
+
+    .globl tl_profile_alloc_total
+tl_profile_alloc_total:
+    movq tl_profile_alloc_total_bytes(%rip), %rax
+    ret
+
+    .globl tl_profile_alloc_live
+tl_profile_alloc_live:
+    movq tl_profile_alloc_live_bytes(%rip), %rax
+    ret
+
+    .globl tl_profile_alloc_peak
+tl_profile_alloc_peak:
+    movq tl_profile_alloc_peak_bytes(%rip), %rax
+    ret
+
+    .globl tl_profile_alloc_reset_peak
+tl_profile_alloc_reset_peak:
+    movq tl_profile_alloc_live_bytes(%rip), %rax
+    movq %rax, tl_profile_alloc_peak_bytes(%rip)
+    xorq %rax, %rax
+    ret
+
 ")
+
+(define (compiler-backend-runtime-windows-profile-functions) : String
+  "    .globl tl_profile_now_ms
+tl_profile_now_ms:
+    push %rbp
+    mov %rsp, %rbp
+    sub $32, %rsp
+    call GetTickCount64
+    mov %rbp, %rsp
+    pop %rbp
+    ret
+
+    .globl tl_profile_alloc_total
+tl_profile_alloc_total:
+    movq tl_profile_alloc_total_bytes(%rip), %rax
+    ret
+
+    .globl tl_profile_alloc_live
+tl_profile_alloc_live:
+    movq tl_profile_alloc_live_bytes(%rip), %rax
+    ret
+
+    .globl tl_profile_alloc_peak
+tl_profile_alloc_peak:
+    movq tl_profile_alloc_peak_bytes(%rip), %rax
+    ret
+
+    .globl tl_profile_alloc_reset_peak
+tl_profile_alloc_reset_peak:
+    movq tl_profile_alloc_live_bytes(%rip), %rax
+    movq %rax, tl_profile_alloc_peak_bytes(%rip)
+    xorq %rax, %rax
+    ret
+
+")
+
+(define (compiler-backend-runtime-profile-functions-for-target
+  [target : CompilerBackendTarget]
+  [profile : bool]) : String
+  (if profile
+    (if (compiler-backend-target-windows? target)
+      (compiler-backend-runtime-windows-profile-functions)
+      (compiler-backend-runtime-profile-functions))
+    ""))
 
 (define (compiler-backend-runtime-read-file-functions) : String
   ".L_tl_read_file:
@@ -15826,13 +16267,16 @@ tl_windows_sdk_registry_install:
         env-path-separator
         div-abort
         shift-abort
-        fs-current-dir)
+        tail-plan)
       (let
+        [fs-current-dir : bool
+          (compiler-backend-runtime-tail-fs-current-dir? tail-plan)]
+        [profile : bool (compiler-backend-runtime-tail-profile? tail-plan)]
         [alloc-asm : String
           (if alloc
             (if (compiler-backend-target-windows? target)
-              (compiler-backend-runtime-windows-alloc-functions)
-              (compiler-backend-runtime-alloc-functions))
+              (compiler-backend-runtime-windows-alloc-functions profile)
+              (compiler-backend-runtime-alloc-functions profile))
             "")]
         [oob-asm : String
           (if oob
@@ -16018,8 +16462,8 @@ tl_windows_sdk_registry_install:
         [region-reset-asm : String
           (if region-reset
             (if (compiler-backend-target-windows? target)
-              (compiler-backend-runtime-windows-region-reset-functions)
-              (compiler-backend-runtime-region-reset-functions))
+              (compiler-backend-runtime-windows-region-reset-functions profile)
+              (compiler-backend-runtime-region-reset-functions profile))
             "")]
         [random-system-seed-asm : String
           (if random-system-seed
@@ -16038,17 +16482,21 @@ tl_windows_sdk_registry_install:
             "")]
         [arena-asm : String
           (if (compiler-backend-target-windows? target)
-            (compiler-backend-runtime-windows-arena-functions)
-            (compiler-backend-runtime-arena-functions))]
+            (compiler-backend-runtime-windows-arena-functions profile)
+            (compiler-backend-runtime-arena-functions profile))]
+        [profile-asm : String
+          (compiler-backend-runtime-profile-functions-for-target target profile)]
         [runtime-front-asm : String
           (string-append
             arena-asm
-            (backend-cat5
-              alloc-asm
-              region-mark-asm
-              region-reset-asm
-              oob-asm
-              div-abort-asm))]
+            (string-append
+              profile-asm
+              (backend-cat5
+                alloc-asm
+                region-mark-asm
+                region-reset-asm
+                oob-asm
+                div-abort-asm)))]
         [runtime-string-asm : String
           (string-append
             (backend-cat5
@@ -16350,9 +16798,9 @@ tl_windows_sdk_registry_install:
         env-path-separator
         div-abort
         shift-abort
-        fs-current-dir)
-      (not
-        (or
+        tail-plan)
+      (let
+        [front-runtime : bool
           (backend-or8
             alloc
             oob
@@ -16361,44 +16809,49 @@ tl_windows_sdk_registry_install:
             string-eq
             string-to-int
             int-to-string
-            abort)
-          (or
-            (backend-or8
-              print-err
-              print-char
-              print-f64
-              arg-count
-              arg
-              read-file
-              write-file
-              file-exists)
+            abort)]
+        [io-runtime : bool
+          (backend-or8
+            print-err
+            print-str
+            print-char
+            print-f64
+            arg-count
+            arg
+            read-file
+            write-file)]
+        [file-runtime : bool
+          (backend-or8
+            file-exists
+            file-handle
+            file-read-chunk
+            fs-runtime
+            process-output
+            read-line
+            read-bytes
+            stdin-eof)]
+        [tail-runtime : bool
+          (backend-or8
+            flush-stdout
+            region-mark
+            region-reset
+            random-system-seed
+            windows-setup-instances
+            windows-sdk-registry-install
+            env-var-exists
+            env-var-value)]
+        [extra-runtime : bool
+          (backend-or4
+            env-path-separator
+            div-abort
+            shift-abort
             (or
-              (or print-str file-handle)
-              (or
-                (or fs-runtime file-read-chunk)
-                (or
-                  fs-current-dir
-                  (or
-                    process-output
-                    (or
-                      read-line
-                      (or
-                        (backend-or8
-                          read-bytes
-                          stdin-eof
-                          flush-stdout
-                          region-mark
-                          region-reset
-                          random-system-seed
-                          windows-setup-instances
-                          windows-sdk-registry-install)
-                        (or
-                          shift-abort
-                          (backend-or4
-                            env-var-exists
-                            env-var-value
-                            env-path-separator
-                            div-abort)))))))))))]))
+              (compiler-backend-runtime-tail-fs-current-dir? tail-plan)
+              (compiler-backend-runtime-tail-profile? tail-plan)))]
+        (not
+          (or
+            front-runtime
+            (or io-runtime (or file-runtime (or tail-runtime extra-runtime))))))]))
 
 ;; All runtime helpers the backend can be asked to emit now have a Windows
 ;; variant (region mark/reset and the env-var/env-path helpers were the last
@@ -16466,14 +16919,19 @@ tl_windows_sdk_registry_install:
               "    .extern _snprintf
 "
               "")
-            ;; The Windows tl_process_output spawns the child via CreateProcessA
-            ;; with a constructed contiguous env block (__p__environ above) and
-            ;; captures stdout/stderr through CRT temp files made inheritable
-            ;; (tmpfile/_fileno/_get_osfhandle/SetHandleInformation), waiting via
-            ;; WaitForSingleObject/GetExitCodeProcess/CloseHandle. The Linux
-            ;; variant uses raw syscalls instead.
-            (if (compiler-backend-plan-provides? plan "tl_process_output")
-              "    .extern __p__environ
+            (string-append
+              (if (compiler-backend-plan-provides? plan "tl_profile_now_ms")
+                "    .extern GetTickCount64
+"
+                "")
+              ;; The Windows tl_process_output spawns the child via CreateProcessA
+              ;; with a constructed contiguous env block (__p__environ above) and
+              ;; captures stdout/stderr through CRT temp files made inheritable
+              ;; (tmpfile/_fileno/_get_osfhandle/SetHandleInformation), waiting via
+              ;; WaitForSingleObject/GetExitCodeProcess/CloseHandle. The Linux
+              ;; variant uses raw syscalls instead.
+              (if (compiler-backend-plan-provides? plan "tl_process_output")
+                "    .extern __p__environ
     .extern tmpfile
     .extern fclose
     .extern _fileno
@@ -16485,7 +16943,7 @@ tl_windows_sdk_registry_install:
     .extern CloseHandle
     .extern GetStdHandle
 "
-              "")))))
+                ""))))))
     ""))
 
 ;; Emit a full program for `target`. Windows x64 has ABI-correct user function
@@ -16554,13 +17012,13 @@ tl_windows_sdk_registry_install:
     spans
     emit-entry))
 
-(define (compiler-backend-emit-program-target-with-mode
+(define (compiler-backend-emit-program-target-with-mode-buffer
   [program : CompilerIrProgram]
   [target : CompilerBackendTarget]
   [mode : CompilerBackendMode]
   [spans : CompilerSourceSpans]
-  [emit-entry : bool]) : ResultCompilerBackend
-  (compiler-backend-emit-program-target-with-mode-and-crt
+  [emit-entry : bool]) : ResultCompilerBackendBuffer
+  (compiler-backend-emit-program-target-with-mode-buffer-and-crt
     program
     target
     mode
@@ -16568,13 +17026,13 @@ tl_windows_sdk_registry_install:
     emit-entry
     false))
 
-(define (compiler-backend-emit-program-target-with-mode-and-crt
+(define (compiler-backend-emit-program-target-with-mode-buffer-and-crt
   [program : CompilerIrProgram]
   [target : CompilerBackendTarget]
   [mode : CompilerBackendMode]
   [spans : CompilerSourceSpans]
   [emit-entry : bool]
-  [crt-entry : bool]) : ResultCompilerBackend
+  [crt-entry : bool]) : ResultCompilerBackendBuffer
   (match (compiler-backend-runtime-plan program)
     [(OkBackendRuntimePlan plan)
       (if (compiler-backend-target-runtime-ok? target plan)
@@ -16587,7 +17045,7 @@ tl_windows_sdk_registry_install:
                     (compiler-backend-functions-with-implicit-main
                       functions
                       emit-entry)]
-                  (match (compiler-backend-emit-functions
+                  (match (compiler-backend-emit-functions-buffer
                     target
                     mode
                     entry-functions
@@ -16597,7 +17055,7 @@ tl_windows_sdk_registry_install:
                     plan
                     spans
                     crt-entry)
-                    [(OkCompilerBackend functions-asm)
+                    [(OkCompilerBackendBuffer functions-buf)
                       (let
                         [closure-names : BackendStringList
                           (compiler-backend-collect-program-functions program)]
@@ -16614,7 +17072,7 @@ tl_windows_sdk_registry_install:
                                   program)]
                               [floats : BackendStringList
                                 (compiler-backend-collect-program-f64s program)]
-                              [buf : TextBuf
+                              [prefix-buf : TextBuf
                                 (text-buf-append
                                   (text-buf-append
                                     (text-buf-append
@@ -16624,61 +17082,98 @@ tl_windows_sdk_registry_install:
                                             (text-buf-append
                                               (text-buf-append
                                                 (text-buf-append
-                                                  (text-buf-append
-                                                    (text-buf-append
-                                                      (text-buf-append
-                                                        (text-buf-empty)
-                                                        ".data\n")
-                                                      globals-asm)
-                                                    (compiler-backend-emit-string-rodata
-                                                      strings))
-                                                  (compiler-backend-emit-f64-rodata
-                                                    floats))
-                                                (compiler-backend-emit-closure-descriptors
-                                                  closure-names
-                                                  entry-functions
-                                                  externs))
-                                              (if emit-entry
-                                                (compiler-backend-runtime-data-for-target
-                                                  target
-                                                  plan)
-                                                ""))
-                                            (compiler-backend-emit-externs
-                                              externs
-                                              plan))
-                                          (compiler-backend-runtime-externs-for-target
+                                                  (text-buf-empty)
+                                                  ".data\n")
+                                                globals-asm)
+                                              (compiler-backend-emit-string-rodata
+                                                strings))
+                                            (compiler-backend-emit-f64-rodata
+                                              floats))
+                                          (compiler-backend-emit-closure-descriptors
+                                            closure-names
+                                            entry-functions
+                                            externs))
+                                        (if emit-entry
+                                          (compiler-backend-runtime-data-for-target
                                             target
-                                            plan))
-                                        (compiler-backend-target-entry-text-with-crt
-                                          target
-                                          emit-entry
-                                          crt-entry))
-                                      functions-asm)
-                                    closure-adapters-asm)
-                                  (string-append
+                                            plan)
+                                          ""))
+                                      (compiler-backend-emit-externs
+                                        externs
+                                        plan))
+                                    (compiler-backend-runtime-externs-for-target
+                                      target
+                                      plan))
+                                  (compiler-backend-target-entry-text-with-crt
+                                    target
+                                    emit-entry
+                                    crt-entry))]
+                              [with-functions : TextBuf
+                                (text-buf-append-buffer
+                                  prefix-buf
+                                  functions-buf)]
+                              [buf : TextBuf
+                                (text-buf-append
+                                  (text-buf-append
+                                    (text-buf-append
+                                      with-functions
+                                      closure-adapters-asm)
                                     (if emit-entry
                                       (compiler-backend-runtime-functions-for-target
                                         target
                                         plan)
-                                      "")
-                                    (if emit-entry
-                                      (compiler-backend-entry-for-target-with-crt
-                                        target
-                                        plan
-                                        globals
-                                        crt-entry)
-                                      "")))]
-                              (OkCompilerBackend (text-buf-render buf)))]
+                                      ""))
+                                  (if emit-entry
+                                    (compiler-backend-entry-for-target-with-crt
+                                      target
+                                      plan
+                                      globals
+                                      crt-entry)
+                                    ""))]
+                              (OkCompilerBackendBuffer buf))]
                           [(ErrCompilerBackend message)
-                            (ErrCompilerBackend message)]))]
-                    [(ErrCompilerBackend message) (ErrCompilerBackend message)]))]
-              [(ErrCompilerBackend message) (ErrCompilerBackend message)])])
-        (ErrCompilerBackend
+                            (ErrCompilerBackendBuffer message)]))]
+                    [(ErrCompilerBackendBuffer message)
+                      (ErrCompilerBackendBuffer message)]))]
+              [(ErrCompilerBackend message) (ErrCompilerBackendBuffer message)])])
+        (ErrCompilerBackendBuffer
           (compiler-diagnostic-at-start
             ""
             "backend: internal target runtime rejection")))]
     [(ErrBackendRuntimePlan message)
-      (ErrCompilerBackend (compiler-diagnostic-at-start "" message))]))
+      (ErrCompilerBackendBuffer (compiler-diagnostic-at-start "" message))]))
+
+(define (compiler-backend-emit-program-target-with-mode-and-crt
+  [program : CompilerIrProgram]
+  [target : CompilerBackendTarget]
+  [mode : CompilerBackendMode]
+  [spans : CompilerSourceSpans]
+  [emit-entry : bool]
+  [crt-entry : bool]) : ResultCompilerBackend
+  (match (compiler-backend-emit-program-target-with-mode-buffer-and-crt
+    program
+    target
+    mode
+    spans
+    emit-entry
+    crt-entry)
+    [(OkCompilerBackendBuffer buf) (OkCompilerBackend (text-buf-render buf))]
+    [(ErrCompilerBackendBuffer message) (ErrCompilerBackend message)]))
+
+(define (compiler-backend-emit-program-target-with-mode
+  [program : CompilerIrProgram]
+  [target : CompilerBackendTarget]
+  [mode : CompilerBackendMode]
+  [spans : CompilerSourceSpans]
+  [emit-entry : bool]) : ResultCompilerBackend
+  (match (compiler-backend-emit-program-target-with-mode-buffer
+    program
+    target
+    mode
+    spans
+    emit-entry)
+    [(OkCompilerBackendBuffer buf) (OkCompilerBackend (text-buf-render buf))]
+    [(ErrCompilerBackendBuffer message) (ErrCompilerBackend message)]))
 
 (define (compiler-backend-emit-source [src : String]) : ResultCompilerBackend
   (match (lower-compiler-source src)

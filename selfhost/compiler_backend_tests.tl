@@ -2229,6 +2229,7 @@
       (CompilerBackendRuntimeTailPlan false false))
     IrFunctionNil
     IrExternNil
+    (compiler-backend-program-index-build IrFunctionNil IrExternNil)
     (compiler-source-spans-empty)
     (compiler-diagnostic-at-start "" ""))
     [(OkCompilerBackend asm) (compiler-backend-string-contains? asm needle)]

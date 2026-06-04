@@ -12,10 +12,10 @@
 ;; new, and init. The command name is `(arg 1)`; each `*-run-from` entry parses
 ;; its own arguments starting at index 2.
 ;;
-;; This is the single-binary step toward a Rust-free stage0 (#666/#795): once
-;; this dispatcher is the shipped `typelisp`, the toolchain needs neither the
-;; Rust host driver nor per-command driver recompilation. Every command shares
-;; the single full typechecker frontend (`compiler_check_core` ->
+;; This is the shipped Rust-free stage0 dispatcher (#666/#795): the toolchain
+;; needs neither a host-language compiler driver nor per-command driver
+;; recompilation. Every command shares the single full typechecker frontend
+;; (`compiler_check_core` ->
 ;; `compiler_typecheck`), so `check` does the same macro-expansion and
 ;; specialization as build/run/test.
 (import "build_cli_core.tl")
@@ -40,8 +40,9 @@
 
 (import "lsp_frame_core.tl")
 
-;; Mirrors the Rust stage0 `print_usage` (src/main.rs) so the unified selfhost
-;; CLI presents the same help surface as the published stage0 driver.
+;; Keeps the shipped stage0 help surface stable while individual commands route
+;; through selfhost entry points. The unified selfhost CLI presents the same
+;; help surface as the published stage0 driver.
 (define (cli-help-text) : String
   "typelisp — A typed Lisp/Scheme dialect with x86_64 backend
 

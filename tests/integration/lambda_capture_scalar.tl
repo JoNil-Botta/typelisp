@@ -74,18 +74,12 @@
       142)))
 
 (define (main) : i64
-  (if (case-immediate)
-    (if (case-passed-as-arg)
-      (if (case-mixed-scalars)
-        (if (case-function-capture)
-          (if (case-snapshot)
-            (if (case-nested)
-              (if (case-shadowed-capture)
-                42
-                7)
-              6)
-            5)
-          4)
-        3)
-      2)
-    1))
+  (begin
+    (unless (case-immediate) (return 1))
+    (unless (case-passed-as-arg) (return 2))
+    (unless (case-mixed-scalars) (return 3))
+    (unless (case-function-capture) (return 4))
+    (unless (case-snapshot) (return 5))
+    (unless (case-nested) (return 6))
+    (unless (case-shadowed-capture) (return 7))
+    42))

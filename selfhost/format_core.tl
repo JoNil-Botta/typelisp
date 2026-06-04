@@ -116,12 +116,11 @@
     [narrow : String (format-core-render-source-width "(alpha beta gamma)" 10)]
     [commented : String (format-core-render-source-width "(a ; note\n b)" 80)]
     [atom : String (format-core-render (FmtCstAtom (FmtSymbol "name")))]
-    (if (string-eq flat "(foo [bar 1] baz)\n\n; leading\n(qux)")
-      (if (string-eq narrow "(alpha\n  beta\n  gamma)")
-        (if (string-eq commented "(a\n  ; note\n  b)")
-          (if (string-eq atom "name")
-            42
-            4)
-          3)
-        2)
-      1)))
+    (begin
+      (unless
+        (string-eq flat "(foo [bar 1] baz)\n\n; leading\n(qux)")
+        (return 1))
+      (unless (string-eq narrow "(alpha\n  beta\n  gamma)") (return 2))
+      (unless (string-eq commented "(a\n  ; note\n  b)") (return 3))
+      (unless (string-eq atom "name") (return 4))
+      42)))

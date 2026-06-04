@@ -4781,6 +4781,204 @@
     [(AstExprPtrToInt ptr) (tc-expr-uses-free-name? ptr name bound)]
     [(AstExprIntToPtr value _) (tc-expr-uses-free-name? value name bound)]))
 
+;; Same shadowing rules as `tc-expr-uses-free-name?`, but it only returns true
+;; when the expression assigns to the free name. Lambda capture checks use this
+;; to reject mutation of captured bindings while allowing local parameter/let
+;; assignment inside the lambda.
+(define (tc-expr-list-sets-free-name?
+  [exprs : AstExprList]
+  [name : String]
+  [bound : TcStringList]) : bool
+  (match exprs
+    [(AstExprNil) false]
+    [(AstExprCons expr rest)
+      (or
+        (tc-expr-sets-free-name? expr name bound)
+        (tc-expr-list-sets-free-name? rest name bound))]))
+
+(define (tc-let-binding-list-sets-free-name?
+  [bindings : AstLetBindingList]
+  [name : String]
+  [bound : TcStringList]) : bool
+  (match bindings
+    [(AstLetBindingNil) false]
+    [(AstLetBindingCons binding rest)
+      (match binding
+        [(AstLetBinding bind-name _ init)
+          (or
+            (tc-expr-sets-free-name? init name bound)
+            (tc-let-binding-list-sets-free-name?
+              rest
+              name
+              (tc-string-list-add bound bind-name)))])]))
+
+(define (tc-resource-binding-list-sets-free-name?
+  [bindings : AstResourceBindingList]
+  [name : String]
+  [bound : TcStringList]) : bool
+  (match bindings
+    [(AstResourceBindingNil) false]
+    [(AstResourceBindingCons binding rest)
+      (match binding
+        [(AstResourceBinding bind-name init cleanup)
+          (or
+            (tc-expr-sets-free-name? init name bound)
+            (or
+              (tc-expr-sets-free-name? cleanup name bound)
+              (tc-resource-binding-list-sets-free-name?
+                rest
+                name
+                (tc-string-list-add bound bind-name))))])]))
+
+(define (tc-match-arms-set-free-name?
+  [arms : AstMatchArmList]
+  [name : String]
+  [bound : TcStringList]) : bool
+  (match arms
+    [(AstMatchArmNil) false]
+    [(AstMatchArmCons arm rest)
+      (match arm
+        [(AstMatchArm pattern body)
+          (or
+            (tc-expr-sets-free-name?
+              body
+              name
+              (tc-pattern-add-bound-names pattern bound))
+            (tc-match-arms-set-free-name? rest name bound))])]))
+
+(define (tc-expr-sets-free-name?
+  [expr : AstExpr]
+  [name : String]
+  [bound : TcStringList]) : bool
+  (match expr
+    [(AstExprSpanned inner _) (tc-expr-sets-free-name? inner name bound)]
+    [(AstExprLiteral _) false]
+    [(AstExprVar _) false]
+    [(AstExprBinary _ left right)
+      (or
+        (tc-expr-sets-free-name? left name bound)
+        (tc-expr-sets-free-name? right name bound))]
+    [(AstExprUnary _ inner) (tc-expr-sets-free-name? inner name bound)]
+    [(AstExprCall func args)
+      (or
+        (tc-expr-sets-free-name? func name bound)
+        (tc-expr-list-sets-free-name? args name bound))]
+    [(AstExprTypeLiteral _) false]
+    [(AstExprIf cond then-branch else-branch)
+      (or
+        (tc-expr-sets-free-name? cond name bound)
+        (or
+          (tc-expr-sets-free-name? then-branch name bound)
+          (tc-expr-sets-free-name? else-branch name bound)))]
+    [(AstExprLet bindings body)
+      (or
+        (tc-let-binding-list-sets-free-name? bindings name bound)
+        (tc-expr-sets-free-name?
+          body
+          name
+          (tc-let-binding-list-add-bound-names bindings bound)))]
+    [(AstExprLambda params _ body)
+      (tc-expr-sets-free-name?
+        body
+        name
+        (tc-param-list-add-bound-names params bound))]
+    [(AstExprTuple exprs) (tc-expr-list-sets-free-name? exprs name bound)]
+    [(AstExprTupleRef tuple _) (tc-expr-sets-free-name? tuple name bound)]
+    [(AstExprArray exprs) (tc-expr-list-sets-free-name? exprs name bound)]
+    [(AstExprMakeArray _ len) (tc-expr-sets-free-name? len name bound)]
+    [(AstExprArrayRef array index)
+      (or
+        (tc-expr-sets-free-name? array name bound)
+        (tc-expr-sets-free-name? index name bound))]
+    [(AstExprArraySet array index value)
+      (or
+        (tc-expr-sets-free-name? array name bound)
+        (or
+          (tc-expr-sets-free-name? index name bound)
+          (tc-expr-sets-free-name? value name bound)))]
+    [(AstExprArrayPush array value)
+      (or
+        (tc-expr-sets-free-name? array name bound)
+        (tc-expr-sets-free-name? value name bound))]
+    [(AstExprStringRef str index)
+      (or
+        (tc-expr-sets-free-name? str name bound)
+        (tc-expr-sets-free-name? index name bound))]
+    [(AstExprWhile cond body)
+      (or
+        (tc-expr-sets-free-name? cond name bound)
+        (tc-expr-sets-free-name? body name bound))]
+    [(AstExprBegin exprs) (tc-expr-list-sets-free-name? exprs name bound)]
+    [(AstExprUnsafe exprs) (tc-expr-list-sets-free-name? exprs name bound)]
+    [(AstExprSet var-name value)
+      (or
+        (and
+          (string-eq var-name name)
+          (not (tc-string-list-contains bound name)))
+        (tc-expr-sets-free-name? value name bound))]
+    [(AstExprAnn inner _) (tc-expr-sets-free-name? inner name bound)]
+    [(AstExprCast inner _) (tc-expr-sets-free-name? inner name bound)]
+    [(AstExprBorrow _ place) (tc-expr-sets-free-name? place name bound)]
+    [(AstExprBox inner) (tc-expr-sets-free-name? inner name bound)]
+    [(AstExprBoxGet inner) (tc-expr-sets-free-name? inner name bound)]
+    [(AstExprMatch scrutinee arms)
+      (or
+        (tc-expr-sets-free-name? scrutinee name bound)
+        (tc-match-arms-set-free-name? arms name bound))]
+    [(AstExprForeach index _ start end body)
+      (or
+        (tc-expr-sets-free-name? start name bound)
+        (or
+          (tc-expr-sets-free-name? end name bound)
+          (tc-expr-sets-free-name? body name (tc-string-list-add bound index))))]
+    [(AstExprSpmdReduce _ index _ start end init value)
+      (or
+        (tc-expr-sets-free-name? start name bound)
+        (or
+          (tc-expr-sets-free-name? end name bound)
+          (or
+            (tc-expr-sets-free-name? init name bound)
+            (tc-expr-sets-free-name?
+              value
+              name
+              (tc-string-list-add bound index)))))]
+    [(AstExprStructGet receiver _)
+      (tc-expr-sets-free-name? receiver name bound)]
+    [(AstExprWithRegion _ body) (tc-expr-list-sets-free-name? body name bound)]
+    [(AstExprWithEscape scratch body)
+      (or
+        (tc-expr-sets-free-name? scratch name bound)
+        (tc-expr-list-sets-free-name? body name bound))]
+    [(AstExprWithResource bindings body)
+      (or
+        (tc-resource-binding-list-sets-free-name? bindings name bound)
+        (tc-expr-list-sets-free-name?
+          body
+          name
+          (tc-resource-binding-list-add-bound-names bindings bound)))]
+    [(AstExprTypeLiteral _) false]
+    [(AstExprComptime inner) (tc-expr-sets-free-name? inner name bound)]
+    [(AstExprQuote inner) (tc-expr-sets-free-name? inner name bound)]
+    [(AstExprQuasiquote inner) (tc-expr-sets-free-name? inner name bound)]
+    [(AstExprUnquote inner) (tc-expr-sets-free-name? inner name bound)]
+    [(AstExprUnquoteSplicing inner) (tc-expr-sets-free-name? inner name bound)]
+    [(AstExprTry inner) (tc-expr-sets-free-name? inner name bound)]
+    [(AstExprReturn inner) (tc-expr-sets-free-name? inner name bound)]
+    [(AstExprPtrNull _) false]
+    [(AstExprPtrNullCheck inner) (tc-expr-sets-free-name? inner name bound)]
+    [(AstExprPtrRead ptr) (tc-expr-sets-free-name? ptr name bound)]
+    [(AstExprPtrWrite ptr value)
+      (or
+        (tc-expr-sets-free-name? ptr name bound)
+        (tc-expr-sets-free-name? value name bound))]
+    [(AstExprPtrOffset ptr offset)
+      (or
+        (tc-expr-sets-free-name? ptr name bound)
+        (tc-expr-sets-free-name? offset name bound))]
+    [(AstExprPtrCast ptr _) (tc-expr-sets-free-name? ptr name bound)]
+    [(AstExprPtrToInt ptr) (tc-expr-sets-free-name? ptr name bound)]
+    [(AstExprIntToPtr value _) (tc-expr-sets-free-name? value name bound)]))
+
 (define (tc-name-is-free-cleanup-owner?
   [owners : TcStringList]
   [name : String]
@@ -4955,6 +5153,8 @@
           (tc-check-lambda-region-captures-scan-root root rest bound body)]
         [(not (tc-expr-uses-free-name? body key bound))
           (tc-check-lambda-region-captures-scan-root root rest bound body)]
+        [(tc-expr-sets-free-name? body key bound)
+          (ErrTcUnit "typecheck: lambda cannot assign captured binding")]
         [(tc-cleanup-owner-active? root key)
           (ErrTcUnit
             "typecheck: lambda cannot capture cleanup-required resource; resource value would escape")]

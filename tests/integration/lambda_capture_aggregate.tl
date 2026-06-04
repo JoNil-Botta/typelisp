@@ -45,14 +45,10 @@
     (= ((lambda () : i64 (+ n (string-length s)))) 42)))
 
 (define (main) : i64
-  (if (case-string-immediate)
-    (if (case-string-returned)
-      (if (case-dynarray-returned)
-        (if (case-dynarray-elem)
-          (if (case-mixed)
-            42
-            5)
-          4)
-        3)
-      2)
-    1))
+  (begin
+    (unless (case-string-immediate) (return 1))
+    (unless (case-string-returned) (return 2))
+    (unless (case-dynarray-returned) (return 3))
+    (unless (case-dynarray-elem) (return 4))
+    (unless (case-mixed) (return 5))
+    42))

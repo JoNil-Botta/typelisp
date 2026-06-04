@@ -22,10 +22,7 @@
 (define (main) : i64
   (begin
     (apply0u mark)
-    (if (= (apply1 inc 41) 42)
-      (if (= (shadow-inc dec 43) 42)
-        (if (= seen 42)
-          42
-          3)
-        2)
-      1)))
+    (unless (= (apply1 inc 41) 42) (return 1))
+    (unless (= (shadow-inc dec 43) 42) (return 2))
+    (unless (= seen 42) (return 3))
+    42))

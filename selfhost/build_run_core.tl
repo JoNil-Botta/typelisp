@@ -407,14 +407,17 @@
 (define (source-tool-resolve-command [tool : String]) : String
   (if (source-tool-has-path-separator? tool)
     tool
-    (match (env-path-list "PATH")
-      [(EnvSomeStringList paths) (source-tool-find-command-on-path tool paths)]
-      [(EnvNoStringList) tool])))
+    (let
+      [name : String "PATH"]
+      (match (env-path-list (& name))
+        [(EnvSomeStringList paths)
+          (source-tool-find-command-on-path tool paths)]
+        [(EnvNoStringList) tool]))))
 
 (define (source-tool-env-command-or-default
   [name : String]
   [default-command : String]) : String
-  (match (env-get name)
+  (match (env-get (& name))
     [(EnvSomeString value)
       (if (string-eq value "")
         default-command
@@ -675,16 +678,18 @@ _tl_print_string:
   (match args
     [(ProcessStringNil) false]
     [(ProcessStringCons head rest)
-      (or
-        (process-string-contains-char? head #\space')
-        (source-tool-windows-args-contain-space? rest))]))
+      (let
+        [text : String head]
+        (or
+          (process-string-contains-char? (& text) #\space')
+          (source-tool-windows-args-contain-space? rest)))]))
 
 (define (source-tool-windows-command-needs-cmd? [command : ProcessCommand]) : bool
-  (or
-    (process-string-contains-char?
-      (process-command-executable command)
-      #\space')
-    (source-tool-windows-args-contain-space? (process-command-argv command))))
+  (let
+    [text : String (process-command-executable command)]
+    (or
+      (process-string-contains-char? (& text) #\space')
+      (source-tool-windows-args-contain-space? (process-command-argv command)))))
 
 (define (source-tool-windows-cmd-quote [value : String]) : String
   (string-append "\"" (string-append value "\"")))

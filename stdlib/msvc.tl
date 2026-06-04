@@ -200,13 +200,15 @@
 
 ;: Locate `tool` on the PATH environment variable.
 (define (msvc-find-on-path [tool : String]) : MsvcMaybeString
-  (match (env-path-list "PATH")
-    [(EnvNoStringList) (MsvcNoString)]
-    [(EnvSomeStringList dirs) (msvc-search-dirs dirs tool)]))
+  (let
+    [name : String "PATH"]
+    (match (env-path-list (& name))
+      [(EnvNoStringList) (MsvcNoString)]
+      [(EnvSomeStringList dirs) (msvc-search-dirs dirs tool)])))
 
 ;: Read an environment variable or the empty string when it is unset.
 (define (msvc-env-or-empty [name : String]) : String
-  (match (env-get name)
+  (match (env-get (& name))
     [(EnvSomeString value) value]
     [(EnvNoString) ""]))
 
@@ -258,20 +260,24 @@
 
 ;: Build a configured tool result once the executable path is known.
 (define (msvc-configured-result [executable : String]) : ResultMsvcTool
-  (match (env-get "LIB")
-    [(EnvNoString)
-      (ErrMsvcTool
-        (MsvcMissingEnvironment
-          "msvc: LIB is not set; run from a Developer Command Prompt (toolset selection is tracked by #855)"))]
-    [(EnvSomeString lib)
-      (match (env-get "INCLUDE")
-        [(EnvNoString)
-          (ErrMsvcTool
-            (MsvcMissingEnvironment
-              "msvc: INCLUDE is not set; run from a Developer Command Prompt (toolset selection is tracked by #855)"))]
-        [(EnvSomeString include)
-          (OkMsvcTool
-            (MsvcTool executable (msvc-env-or-empty "PATH") lib include))])]))
+  (let
+    [name : String "LIB"]
+    (match (env-get (& name))
+      [(EnvNoString)
+        (ErrMsvcTool
+          (MsvcMissingEnvironment
+            "msvc: LIB is not set; run from a Developer Command Prompt (toolset selection is tracked by #855)"))]
+      [(EnvSomeString lib)
+        (let
+          [name : String "INCLUDE"]
+          (match (env-get (& name))
+            [(EnvNoString)
+              (ErrMsvcTool
+                (MsvcMissingEnvironment
+                  "msvc: INCLUDE is not set; run from a Developer Command Prompt (toolset selection is tracked by #855)"))]
+            [(EnvSomeString include)
+              (OkMsvcTool
+                (MsvcTool executable (msvc-env-or-empty "PATH") lib include))]))])))
 
 ;: Detect a configured MSVC command environment and resolve `tool`.
 (define (msvc-find-tool-configured [tool : String]) : ResultMsvcTool
@@ -286,14 +292,16 @@
 
 ;: Return a user-provided `VCToolsVersion` if one is set.
 (define (msvc-vc-tools-version-from-env) : MsvcMaybeString
-  (match (env-get "VCToolsVersion")
-    [(EnvSomeString value)
-      (let
-        [trimmed : String (string-trim value)]
-        (if (string-eq trimmed "")
-          (MsvcNoString)
-          (MsvcSomeString trimmed)))]
-    [(EnvNoString) (MsvcNoString)]))
+  (let
+    [name : String "VCToolsVersion"]
+    (match (env-get (& name))
+      [(EnvSomeString value)
+        (let
+          [trimmed : String (string-trim value)]
+          (if (string-eq trimmed "")
+            (MsvcNoString)
+            (MsvcSomeString trimmed)))]
+      [(EnvNoString) (MsvcNoString)])))
 
 ;: Path to an instance's default VC toolset version marker file.
 (define (msvc-default-vc-tools-version-path [instance : WindowsSetupInstance]) : String

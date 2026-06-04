@@ -97,41 +97,53 @@
 
 (define (main) : i64
   (begin
-    (assert-env-none (env-get "TYPELISP_STDLIB_TEST_MISSING_854") "env missing")
-    (assert-env-some (env-get "TYPELISP_STDLIB_TEST_EMPTY") "" "env empty")
-    (assert-env-some
-      (env-get "TYPELISP_STDLIB_TEST_VALUE")
-      "env-value-854"
-      "env value")
-    (assert-env-path-none
-      (env-path-list "TYPELISP_STDLIB_TEST_MISSING_854")
-      "env path missing")
-    (assert-env-path-empty
-      (env-path-list "TYPELISP_STDLIB_TEST_EMPTY")
-      "env path empty")
-    (assert-env-path3
-      (env-path-list "TYPELISP_STDLIB_TEST_PATH")
-      "one"
-      "two"
-      "three"
-      "env path list")
-    (assert-string-eq
-      (env-path-join
-        (env-path-split (env-var-value "TYPELISP_STDLIB_TEST_PATH")))
-      (env-var-value "TYPELISP_STDLIB_TEST_PATH")
-      "env path join")
-    (assert-env-list5
-      (env-path-split-with-separator "a;b;;c;" ";")
-      "a"
-      "b"
-      ""
-      "c"
-      ""
-      "env semicolon split")
-    (assert-string-eq
-      (env-path-join-with-separator
-        (env-path-split-with-separator "a;b;;c;" ";")
-        ";")
-      "a;b;;c;"
-      "env semicolon join")
+    (let
+      [name : String "TYPELISP_STDLIB_TEST_MISSING_854"]
+      (assert-env-none (env-get (& name)) "env missing"))
+    (let
+      [name : String "TYPELISP_STDLIB_TEST_EMPTY"]
+      (assert-env-some (env-get (& name)) "" "env empty"))
+    (let
+      [name : String "TYPELISP_STDLIB_TEST_VALUE"]
+      (assert-env-some (env-get (& name)) "env-value-854" "env value"))
+    (let
+      [name : String "TYPELISP_STDLIB_TEST_MISSING_854"]
+      (assert-env-path-none (env-path-list (& name)) "env path missing"))
+    (let
+      [name : String "TYPELISP_STDLIB_TEST_EMPTY"]
+      (assert-env-path-empty (env-path-list (& name)) "env path empty"))
+    (let
+      [name : String "TYPELISP_STDLIB_TEST_PATH"]
+      (assert-env-path3
+        (env-path-list (& name))
+        "one"
+        "two"
+        "three"
+        "env path list"))
+    (let
+      [value : String (env-var-value "TYPELISP_STDLIB_TEST_PATH")]
+      (assert-string-eq
+        (env-path-join (env-path-split (& value)))
+        value
+        "env path join"))
+    (let
+      [value : String "a;b;;c;"]
+      [separator : String ";"]
+      (assert-env-list5
+        (env-path-split-with-separator (& value) (& separator))
+        "a"
+        "b"
+        ""
+        "c"
+        ""
+        "env semicolon split"))
+    (let
+      [value : String "a;b;;c;"]
+      [separator : String ";"]
+      (assert-string-eq
+        (env-path-join-with-separator
+          (env-path-split-with-separator (& value) (& separator))
+          (& separator))
+        value
+        "env semicolon join"))
     42))

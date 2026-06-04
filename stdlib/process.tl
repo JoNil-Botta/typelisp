@@ -68,11 +68,11 @@
     [(ProcessStringNil) 0]
     [(ProcessStringCons _ rest) (+ 1 (process-args-count rest))]))
 
-;: Prepend an argument string to an argv list.
+;: Prepend an owned argument string to an argv list.
 (define (process-args-cons [value : String] [rest : ProcessStringList]) : ProcessStringList
   (ProcessStringCons value rest))
 
-;: Return a one-element argument list.
+;: Return a one-element argument list backed by an owned string.
 (define (process-args-single [value : String]) : ProcessStringList
   (ProcessStringCons value (ProcessStringNil)))
 
@@ -95,7 +95,7 @@
     [(ProcessEnvNil) 0]
     [(ProcessEnvCons _ _ rest) (+ 1 (process-env-count rest))]))
 
-;: Prepend an environment override to an env list.
+;: Prepend owned environment override strings to an env list.
 (define (process-env-cons
   [name : String]
   [value : String]
@@ -103,7 +103,7 @@
   (ProcessEnvCons name value rest))
 
 ;: Return true when `text` contains `needle`.
-(define (process-string-contains-char? [text : String] [needle : char]) : bool
+(define (process-string-contains-char? [text : (& text str)] [needle : char]) : bool
   (let
     [n : i64 (string-length text)]
     [i : i64 0]
@@ -121,7 +121,7 @@
 (define (process-no-stdin) : ProcessMaybeString
   (ProcessNoString))
 
-;: Return a command stdin value backed by a string.
+;: Return a command stdin value backed by an owned string.
 (define (process-stdin-string [value : String]) : ProcessMaybeString
   (ProcessSomeString value))
 
@@ -129,11 +129,12 @@
 (define (process-no-cwd) : ProcessMaybeString
   (ProcessNoString))
 
-;: Return a cwd value that runs the command under `value`.
+;: Return a cwd value that runs the command under an owned path string.
 (define (process-cwd [value : String]) : ProcessMaybeString
   (ProcessSomeString value))
 
-;: Construct a process command with default cwd, env, and stdin settings.
+;: Construct a process command with owned executable storage and default cwd,
+;: env, and stdin settings.
 (define (process-command [executable : String] [argv : ProcessStringList]) : ProcessCommand
   (ProcessCommand
     executable
@@ -164,7 +165,8 @@
     (process-command-env command)
     (process-command-stdin command)))
 
-;: Construct a process command with every field supplied explicitly.
+;: Construct a process command with every owned-storage field supplied
+;: explicitly.
 (define (process-command-full
   [executable : String]
   [argv : ProcessStringList]
@@ -295,9 +297,12 @@
     [(ProcessEnvCons name _ rest)
       (if (string-eq name "")
         (ProcessSomeString "process: environment variable name is empty")
-        (if (process-string-contains-char? name #=')
-          (ProcessSomeString "process: environment variable name contains '='")
-          (process-env-validation-error rest)))]))
+        (let
+          [text : String name]
+          (if (process-string-contains-char? (& text) #=')
+            (ProcessSomeString
+              "process: environment variable name contains '='")
+            (process-env-validation-error rest))))]))
 
 ;: Return the first command validation error, or `ProcessNoString`.
 (define (process-command-validation-error [command : ProcessCommand]) : ProcessMaybeString

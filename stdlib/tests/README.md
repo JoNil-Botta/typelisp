@@ -70,6 +70,7 @@ Coverage notes:
   success/error result shape.
 - `msvc_api.tl` covers MSVC tool result helpers, setup path assembly, numeric
   setup-version ordering, and on Windows running discovered `link.exe /?`.
-- `test_assert_success.tl` covers successful assertion helpers. The
-  `test_assert_failure.tl` fixture covers the panic-on-failure path and exact
-  caller diagnostic on stderr.
+- `test_assert_success.tl` covers successful assertion helpers, including the
+  borrowed `assert-string-eq` path through a fixture-local owned-string wrapper
+  with explicit borrows. The `test_assert_failure.tl` fixture covers the
+  panic-on-failure path and exact caller diagnostic on stderr.

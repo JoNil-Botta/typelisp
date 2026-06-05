@@ -4,6 +4,12 @@
 
 (import "stdlib/test.tl")
 
+(define (assert-owned-string-eq
+  [actual : String]
+  [expected : String]
+  [message : String]) : unit
+  (assert-string-eq (& actual) (& expected) message))
+
 (define handle-read-file : String
   "target/stdlib-verify/io_file_handle_read.txt")
 
@@ -69,7 +75,7 @@
   (match result
     [(OkIoRead read)
       (begin
-        (assert-string-eq
+        (assert-owned-string-eq
           (file-read-bytes read)
           expected-bytes
           (string-append message " bytes"))
@@ -112,7 +118,7 @@
   [expected : String]
   [message : String]) : unit
   (match (test-try-read-file path)
-    [(OkIoString contents) (assert-string-eq contents expected message)]
+    [(OkIoString contents) (assert-owned-string-eq contents expected message)]
     [(ErrIoString error)
       (panic (string-append message (io-error-message error)))]))
 

@@ -2,6 +2,12 @@
 
 (import "stdlib/test.tl")
 
+(define (assert-owned-string-eq
+  [actual : String]
+  [expected : String]
+  [message : String]) : unit
+  (assert-string-eq (& actual) (& expected) message))
+
 (define (string-test-trim-left [s : String]) : String
   (string-trim-left (& s)))
 
@@ -32,27 +38,30 @@
     (assert-false (is-char-whitespace #A') "letter is not whitespace")
     (assert-true (char-eq #A' #A') "same chars compare equal")
     (assert-false (char-eq #A' #B') "different chars do not compare equal")
-    (assert-string-eq
+    (assert-owned-string-eq
       (string-test-trim-left "  hello")
       "hello"
       "trim-left removes leading spaces")
-    (assert-string-eq
+    (assert-owned-string-eq
       (string-test-trim-left "")
       ""
       "trim-left handles empty strings")
-    (assert-string-eq
+    (assert-owned-string-eq
       (string-test-trim-right "hello  ")
       "hello"
       "trim-right removes trailing spaces")
-    (assert-string-eq
+    (assert-owned-string-eq
       (string-test-trim-right "   ")
       ""
       "trim-right handles all-space strings")
-    (assert-string-eq
+    (assert-owned-string-eq
       (string-test-trim "  hello  ")
       "hello"
       "trim removes both sides")
-    (assert-string-eq (string-test-trim "") "" "trim handles empty strings")
+    (assert-owned-string-eq
+      (string-test-trim "")
+      ""
+      "trim handles empty strings")
     (assert-true
       (string-test-contains "hello" "ell")
       "contains finds middle needle")
@@ -74,20 +83,23 @@
     (assert-false
       (string-test-contains-char "" #z')
       "contains-char handles empty string")
-    (assert-string-eq
+    (assert-owned-string-eq
       (string-replace "hello" "ell" "ipp")
       "hippo"
       "replace middle")
-    (assert-string-eq
+    (assert-owned-string-eq
       (string-replace "hello" "he" "ye")
       "yello"
       "replace prefix")
-    (assert-string-eq (string-replace "hello" "lo" "p") "help" "replace suffix")
-    (assert-string-eq
+    (assert-owned-string-eq
+      (string-replace "hello" "lo" "p")
+      "help"
+      "replace suffix")
+    (assert-owned-string-eq
       (string-replace "hello" "zz" "yy")
       "hello"
       "replace miss returns input")
-    (assert-string-eq
+    (assert-owned-string-eq
       (string-replace "abc" "" "x")
       "xabc"
       "replace empty needle prefixes")

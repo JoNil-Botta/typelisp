@@ -10,6 +10,12 @@
 
 (import "stdlib/windows_setup.tl")
 
+(define (assert-owned-string-eq
+  [actual : String]
+  [expected : String]
+  [message : String]) : unit
+  (assert-string-eq (& actual) (& expected) message))
+
 (define (test-windows-setup-string-list-cons
   [value : String]
   [rest : WindowsSetupStringList]) : WindowsSetupStringList
@@ -134,19 +140,19 @@
     [lib-needle : String "C:\\SDK\\Lib\\10.0.99999.0\\ucrt\\x64"]
     [include-needle : String "C:\\SDK\\Include\\10.0.99999.0\\shared"]
     (begin
-      (assert-string-eq
+      (assert-owned-string-eq
         root
         "C:\\VS\\BuildTools\\VC\\Tools\\MSVC\\14.44.35207"
         "msvc toolset root")
-      (assert-string-eq
+      (assert-owned-string-eq
         (test-msvc-toolset-executable root "link.exe")
         "C:\\VS\\BuildTools\\VC\\Tools\\MSVC\\14.44.35207\\bin\\Hostx64\\x64\\link.exe"
         "msvc toolset executable")
-      (assert-string-eq
+      (assert-owned-string-eq
         (test-msvc-toolset-lib-x64 root)
         "C:\\VS\\BuildTools\\VC\\Tools\\MSVC\\14.44.35207\\lib\\x64"
         "msvc toolset lib")
-      (assert-string-eq
+      (assert-owned-string-eq
         (test-msvc-toolset-include root)
         "C:\\VS\\BuildTools\\VC\\Tools\\MSVC\\14.44.35207\\include"
         "msvc toolset include")
@@ -163,32 +169,35 @@
     [tool : MsvcTool
       (MsvcTool "C:\\bin\\link.exe" "C:\\bin" "C:\\lib" "C:\\inc")]
     (begin
-      (assert-string-eq
+      (assert-owned-string-eq
         (msvc-tool-executable tool)
         "C:\\bin\\link.exe"
         "msvc tool executable")
-      (assert-string-eq (msvc-tool-path tool) "C:\\bin" "msvc tool path")
-      (assert-string-eq (msvc-tool-lib tool) "C:\\lib" "msvc tool lib")
-      (assert-string-eq (msvc-tool-include tool) "C:\\inc" "msvc tool include")
+      (assert-owned-string-eq (msvc-tool-path tool) "C:\\bin" "msvc tool path")
+      (assert-owned-string-eq (msvc-tool-lib tool) "C:\\lib" "msvc tool lib")
+      (assert-owned-string-eq
+        (msvc-tool-include tool)
+        "C:\\inc"
+        "msvc tool include")
       (assert-true
         (test-msvc-supported-target? "x86_64-pc-windows-msvc")
         "msvc supported target")
       (assert-false
         (test-msvc-supported-target? "x86_64-unknown-linux-gnu")
         "msvc unsupported target")
-      (assert-string-eq
+      (assert-owned-string-eq
         (msvc-error-message (MsvcUnsupported "u"))
         "u"
         "render unsupported")
-      (assert-string-eq
+      (assert-owned-string-eq
         (msvc-error-message (MsvcMissingEnvironment "m"))
         "m"
         "render missing-environment")
-      (assert-string-eq
+      (assert-owned-string-eq
         (msvc-error-message (MsvcToolNotFound "n"))
         "n"
         "render tool-not-found")
-      (assert-string-eq
+      (assert-owned-string-eq
         (msvc-error-message (MsvcSetupUnavailable "s"))
         "s"
         "render setup-unavailable")

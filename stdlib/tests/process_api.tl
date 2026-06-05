@@ -2,6 +2,12 @@
 
 (import "stdlib/test.tl")
 
+(define (assert-owned-string-eq
+  [actual : String]
+  [expected : String]
+  [message : String]) : unit
+  (assert-string-eq (& actual) (& expected) message))
+
 (define (assert-process-string-list
   [items : ProcessStringList]
   [first : String]
@@ -14,8 +20,8 @@
           (match tail
             [(ProcessStringNil)
               (begin
-                (assert-string-eq a first message)
-                (assert-string-eq b second message))]
+                (assert-owned-string-eq a first message)
+                (assert-owned-string-eq b second message))]
             [_ (panic message)])]
         [_ (panic message)])]
     [_ (panic message)]))
@@ -35,9 +41,9 @@
               (match tail
                 [(ProcessStringNil)
                   (begin
-                    (assert-string-eq a first message)
-                    (assert-string-eq b second message)
-                    (assert-string-eq c third message))]
+                    (assert-owned-string-eq a first message)
+                    (assert-owned-string-eq b second message)
+                    (assert-owned-string-eq c third message))]
                 [_ (panic message)])]
             [_ (panic message)])]
         [_ (panic message)])]
@@ -48,7 +54,8 @@
   [expected : String]
   [message : String]) : unit
   (match value
-    [(ProcessSomeString actual) (assert-string-eq actual expected message)]
+    [(ProcessSomeString actual)
+      (assert-owned-string-eq actual expected message)]
     [(ProcessNoString) (panic message)]))
 
 (define (assert-process-no-string
@@ -66,8 +73,8 @@
   (match env
     [(ProcessEnvCons name value _)
       (begin
-        (assert-string-eq name expected-name message)
-        (assert-string-eq value expected-value message))]
+        (assert-owned-string-eq name expected-name message)
+        (assert-owned-string-eq value expected-value message))]
     [(ProcessEnvNil) (panic message)]))
 
 (define (assert-process-invalid-command
@@ -77,7 +84,7 @@
     [(ErrProcessOutput error)
       (begin
         (assert-true (process-error-invalid-command? error) message)
-        (assert-string-eq (process-error-message error) message message))]
+        (assert-owned-string-eq (process-error-message error) message message))]
     [(OkProcessOutput _) (panic message)]))
 
 (define (main) : i64
@@ -96,7 +103,7 @@
           "1")
         "!")]
     (begin
-      (assert-string-eq
+      (assert-owned-string-eq
         (process-command-executable command)
         "echo"
         "process executable")

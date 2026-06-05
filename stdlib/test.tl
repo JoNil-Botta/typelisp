@@ -47,15 +47,21 @@
 (define (assert-char-eq [actual : char] [expected : char] [message : String]) : unit
   (assert-true (= (cast actual : i64) (cast expected : i64)) message))
 
-;: Assert that two String values compare equal without allocating on success.
+;: Assert that two borrowed text values compare equal without allocating on success.
+;:
+;: Messages intentionally remain owned `String` values while `panic` exposes an
+;: owned-string public API.
 ;:
 ;: ```typelisp
 ;: (import "stdlib/test.tl")
 ;: (define (test-doc-assert) : unit
-;:   (assert-string-eq "ok" "ok" "strings should match"))
+;:   (let
+;:     [actual : String "ok"]
+;:     [expected : String "ok"]
+;:     (assert-string-eq (& actual) (& expected) "strings should match")))
 ;: ```
 (define (assert-string-eq
-  [actual : String]
-  [expected : String]
+  [actual : (& actual str)]
+  [expected : (& expected str)]
   [message : String]) : unit
   (assert-true (string-eq actual expected) message))

@@ -2,6 +2,12 @@
 
 (import "stdlib/test.tl")
 
+(define (assert-owned-string-eq
+  [actual : String]
+  [expected : String]
+  [message : String]) : unit
+  (assert-string-eq (& actual) (& expected) message))
+
 (define (assert-json-found-number
   [lookup : JsonLookup]
   [expected : String]
@@ -9,7 +15,7 @@
   (match lookup
     [(JsonFound value)
       (match value
-        [(JsonNumber text) (assert-string-eq text expected message)]
+        [(JsonNumber text) (assert-owned-string-eq text expected message)]
         [_ (panic message)])]
     [(JsonMissing) (panic message)]))
 
@@ -26,7 +32,7 @@
   (match result
     [(OkJsonParseString value pos)
       (begin
-        (assert-string-eq value expected message)
+        (assert-owned-string-eq value expected message)
         (assert-i64-eq pos next message))]
     [(ErrJsonParseString _) (panic message)]))
 
@@ -38,7 +44,7 @@
   (match result
     [(OkJsonParseEscape value pos)
       (begin
-        (assert-string-eq value expected message)
+        (assert-owned-string-eq value expected message)
         (assert-i64-eq pos next message))]
     [(ErrJsonParseEscape _) (panic message)]))
 
@@ -47,7 +53,8 @@
   [expected : String]
   [message : String]) : unit
   (match result
-    [(OkJsonCodepointString value) (assert-string-eq value expected message)]
+    [(OkJsonCodepointString value)
+      (assert-owned-string-eq value expected message)]
     [(ErrJsonCodepointString _) (panic message)]))
 
 (define (assert-parse-value-number
@@ -60,7 +67,7 @@
       (match value
         [(JsonNumber text)
           (begin
-            (assert-string-eq text expected message)
+            (assert-owned-string-eq text expected message)
             (assert-i64-eq pos next message))]
         [_ (panic message)])]
     [(ErrJsonParseValue _) (panic message)]))
@@ -170,8 +177,8 @@
 
 (define (main) : i64
   (begin
-    (assert-string-eq (json-cat3 "a" "b" "c") "abc" "json-cat3")
-    (assert-string-eq (json-cat4 "a" "b" "c" "d") "abcd" "json-cat4")
+    (assert-owned-string-eq (json-cat3 "a" "b" "c") "abc" "json-cat3")
+    (assert-owned-string-eq (json-cat4 "a" "b" "c" "d") "abcd" "json-cat4")
     (assert-i64-eq (json-char-code #A') 65 "json-char-code")
     (assert-i64-eq (json-test-char-code-at "AZ" 1) 90 "json-char-code-at")
     (assert-true
@@ -199,7 +206,7 @@
         (JsonListCons JsonNull (JsonListCons (JsonBool true) JsonListNil)))
       2
       "json-list-count")
-    (assert-string-eq
+    (assert-owned-string-eq
       (json-stringify-list
         (json-list-reverse
           (JsonListCons
@@ -229,7 +236,7 @@
         (JsonMemberListCons "a" (JsonNumber "1") JsonMemberListNil)
         "z")
       "json-member-list-get missing")
-    (assert-string-eq
+    (assert-owned-string-eq
       (json-stringify-members
         (json-member-list-reverse
           (JsonMemberListCons
@@ -250,22 +257,28 @@
     (assert-i64-eq (json-hex-value #A') 10 "json-hex-value upper")
     (assert-i64-eq (json-hex-value #f') 15 "json-hex-value lower")
     (assert-i64-eq (json-hex-value #g') -1 "json-hex-value invalid")
-    (assert-string-eq (json-hex-digit 15) "f" "json-hex-digit")
-    (assert-string-eq
+    (assert-owned-string-eq (json-hex-digit 15) "f" "json-hex-digit")
+    (assert-owned-string-eq
       (json-control-escape 10)
       "\\n"
       "json-control-escape newline")
-    (assert-string-eq
+    (assert-owned-string-eq
       (json-control-escape 1)
       "\\u0001"
       "json-control-escape unicode")
-    (assert-string-eq (json-escape-char 34) "\\\"" "json-escape-char quote")
-    (assert-string-eq (json-escape-char 92) "\\\\" "json-escape-char slash")
-    (assert-string-eq
+    (assert-owned-string-eq
+      (json-escape-char 34)
+      "\\\""
+      "json-escape-char quote")
+    (assert-owned-string-eq
+      (json-escape-char 92)
+      "\\\\"
+      "json-escape-char slash")
+    (assert-owned-string-eq
       (json-test-escape-string "a\n\"\\")
       "a\\n\\\"\\\\"
       "json-escape-string")
-    (assert-string-eq
+    (assert-owned-string-eq
       (json-stringify
         (JsonArray
           (JsonListCons (JsonNumber "1") (JsonListCons JsonNull JsonListNil))))

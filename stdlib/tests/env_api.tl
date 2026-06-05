@@ -2,6 +2,12 @@
 
 (import "stdlib/test.tl")
 
+(define (assert-owned-string-eq
+  [actual : String]
+  [expected : String]
+  [message : String]) : unit
+  (assert-string-eq (& actual) (& expected) message))
+
 (define (assert-env-none [value : EnvMaybeString] [message : String]) : unit
   (match value
     [(EnvNoString) unit]
@@ -12,7 +18,7 @@
   [expected : String]
   [message : String]) : unit
   (match value
-    [(EnvSomeString actual) (assert-string-eq actual expected message)]
+    [(EnvSomeString actual) (assert-owned-string-eq actual expected message)]
     [(EnvNoString) (panic message)]))
 
 (define (assert-env-path-none [value : EnvMaybeStringList] [message : String]) : unit
@@ -43,9 +49,9 @@
               (match end
                 [(EnvStringNil)
                   (begin
-                    (assert-string-eq a first message)
-                    (assert-string-eq b second message)
-                    (assert-string-eq c third message))]
+                    (assert-owned-string-eq a first message)
+                    (assert-owned-string-eq b second message)
+                    (assert-owned-string-eq c third message))]
                 [_ (panic message)])]
             [_ (panic message)])]
         [_ (panic message)])]
@@ -72,11 +78,11 @@
                       (match end
                         [(EnvStringNil)
                           (begin
-                            (assert-string-eq a first message)
-                            (assert-string-eq b second message)
-                            (assert-string-eq c third message)
-                            (assert-string-eq d fourth message)
-                            (assert-string-eq e fifth message))]
+                            (assert-owned-string-eq a first message)
+                            (assert-owned-string-eq b second message)
+                            (assert-owned-string-eq c third message)
+                            (assert-owned-string-eq d fourth message)
+                            (assert-owned-string-eq e fifth message))]
                         [_ (panic message)])]
                     [_ (panic message)])]
                 [_ (panic message)])]
@@ -122,7 +128,7 @@
         "env path list"))
     (let
       [value : String (env-var-value "TYPELISP_STDLIB_TEST_PATH")]
-      (assert-string-eq
+      (assert-owned-string-eq
         (env-path-join (env-path-split (& value)))
         value
         "env path join"))
@@ -140,7 +146,7 @@
     (let
       [value : String "a;b;;c;"]
       [separator : String ";"]
-      (assert-string-eq
+      (assert-owned-string-eq
         (env-path-join-with-separator
           (env-path-split-with-separator (& value) (& separator))
           (& separator))

@@ -2,6 +2,12 @@
 
 (import "stdlib/test.tl")
 
+(define (assert-owned-string-eq
+  [actual : String]
+  [expected : String]
+  [message : String]) : unit
+  (assert-string-eq (& actual) (& expected) message))
+
 (define io-file : String
   "target/stdlib-verify/io_edges_file.txt")
 
@@ -23,7 +29,10 @@
 (define (expect-try-read-ok [path : String] [expected : String]) : unit
   (match (try-read-file (& path))
     [(OkIoString contents)
-      (assert-string-eq contents expected "try-read-file returned contents")]
+      (assert-owned-string-eq
+        contents
+        expected
+        "try-read-file returned contents")]
     [(ErrIoString error) (panic (io-error-message error))]))
 
 (define (expect-try-read-missing [path : String]) : unit
@@ -32,7 +41,7 @@
     [(ErrIoString error)
       (begin
         (assert-true (io-error-not-found? error) "missing read error kind")
-        (assert-string-eq
+        (assert-owned-string-eq
           (io-error-message error)
           (string-append "io: not found: " path)
           "missing read error render"))]))
@@ -79,7 +88,7 @@
 (define (expect-invalid-path [error : IoError]) : unit
   (begin
     (assert-true (io-error-invalid-path? error) "invalid path error kind")
-    (assert-string-eq
+    (assert-owned-string-eq
       (io-error-message error)
       "io: invalid path: "
       "invalid path error render")))
@@ -110,7 +119,7 @@
     (expect-try-read-error io-directory-path)
     (expect-try-write-error io-missing-parent-file)
     (expect-try-append-error io-missing-parent-file)
-    (assert-string-eq
+    (assert-owned-string-eq
       (test-read-file-or io-missing-file "fallback")
       "fallback"
       "missing file fallback")
@@ -123,7 +132,7 @@
       "empty file is not nonempty")
     (expect-try-write-ok io-file "alpha")
     (expect-try-read-ok io-file "alpha")
-    (assert-string-eq
+    (assert-owned-string-eq
       (test-read-file-or io-file "fallback")
       "alpha"
       "read existing file")
@@ -133,11 +142,14 @@
       (match (test-try-append-file io-file contents)
         [(OkIoUnit) unit]
         [(ErrIoUnit error) (panic (io-error-message error))]))
-    (assert-string-eq (read-file io-file) "alpha-beta" "append existing file")
+    (assert-owned-string-eq
+      (read-file io-file)
+      "alpha-beta"
+      "append existing file")
     (let
       [contents : String "created"]
       (test-append-file io-created-file contents))
-    (assert-string-eq
+    (assert-owned-string-eq
       (read-file io-created-file)
       "created"
       "append creates missing file")

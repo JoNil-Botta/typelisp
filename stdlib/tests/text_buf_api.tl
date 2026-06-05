@@ -2,9 +2,15 @@
 
 (import "stdlib/test.tl")
 
+(define (assert-owned-string-eq
+  [actual : String]
+  [expected : String]
+  [message : String]) : unit
+  (assert-string-eq (& actual) (& expected) message))
+
 (define (assert-text-buf [buf : TextBuf] [expected : String] [message : String]) : unit
   (begin
-    (assert-string-eq (text-buf-render buf) expected message)
+    (assert-owned-string-eq (text-buf-render buf) expected message)
     (assert-i64-eq (text-buf-length buf) (string-length expected) message)))
 
 (define (main) : i64

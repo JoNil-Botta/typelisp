@@ -137,7 +137,7 @@ should take borrowed text and which should return owned active-arena strings.
 | `string-list-*` helpers | Construct immutable `StringList` cons nodes and `StringListBuilder` values in the active arena. `string-list-reverse`, `-reverse-onto`, `-append`, `-from-array`, and builder build helpers allocate fresh list spines; `string-list-to-array` allocates a fresh active-arena `(Array String)` and copies the string handles into it. |
 | `process-*` helpers | Construct process command/output/error aggregates in the active arena. Command builders keep owned `String` parameters because `ProcessCommand`, argv, env, cwd, and stdin fields currently store owned strings; validators use borrowed text inspection where they do not store inputs. Ordered argv append helpers allocate list nodes; validators inspect executable/env/cwd metadata and reject invalid env names. On Linux, `process-run` and `process-output` execute directly through the backend runtime, preserving inherited environment entries, replacing entries named by env overrides, honoring cwd, and feeding string stdin. Unsupported targets return structured errors. |
 | `random-*` helpers | Construct deterministic RNG state, draw/result aggregates, and weight-list cons nodes in the active arena. Draws are deterministic from caller-provided seeds and do not read host entropy. `random-system-seed` reads host entropy through the backend, normalizes the returned seed, and returns a `ResultSystemSeed` aggregate in the active arena; `random-from-system` constructs and returns a new `RandomState` aggregate in the active arena. |
-| `assert-*` helpers in `test.tl` | Non-allocating checks on success; failures call `panic` with the caller-provided message. |
+| `assert-*` helpers in `test.tl` | Non-allocating checks on success; `assert-string-eq` borrows compared text inputs while assertion messages remain owned `String` values for the current `panic` API. |
 | `text-buf-*` helpers in `text_buf.tl` | Buffer chunks and rendered strings allocate in the active arena. Append helpers avoid concatenating the accumulated prefix until `text-buf-render`; `text-buf-clear`/`text-buf-reset` return a fresh empty immutable buffer value. |
 | `windows-registry-*` helpers | The SDK registry probe allocates returned root/version strings and result aggregates in the active arena. It reads only `HKLM\\SOFTWARE\\Microsoft\\Windows Kits\\Installed Roots`, the `KitsRoot10` string value, and version subkeys; unsupported hosts and registry failures return structured errors. |
 | `windows-sdk-*` helpers | Non-owning root/version/path inputs are borrowed `str` values. SDK layout structs/errors allocate in the active arena; path assembly returns owned strings, and path probes copy borrowed paths while the lower-level `io/fs` APIs still take owned `String`. Environment discovery reads `WindowsSdkDir` / `WindowsSDKVersion`, constructs include/lib/bin path strings, and validates required directories with `try-file-exists?`. Registry discovery uses the narrow `windows-registry-sdk-install` probe, then validates the same include/lib/bin layout before returning it. |
@@ -237,8 +237,9 @@ remain filesystem paths, but `--stdlib-root` is the canonical way to verify root
 lookup and override behavior.
 
 The assertion helpers in `stdlib/test.tl` are also intended for inline
-`(test ...)` items. They do not allocate on success; failures call `panic` with
-the caller-provided message. Repository CI runs
+`(test ...)` items. They do not allocate on success; `assert-string-eq` takes
+borrowed `str` comparison inputs, while messages remain owned `String` values
+because the public `panic` API still takes owned text. Repository CI runs
 `scripts/verify-inline-tests.sh`, so inline tests placed under stdlib modules or
 fixtures are discovered without a manifest edit.
 

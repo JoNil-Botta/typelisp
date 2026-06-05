@@ -6,6 +6,12 @@
 
 (import "stdlib/test.tl")
 
+(define (assert-owned-string-eq
+  [actual : String]
+  [expected : String]
+  [message : String]) : unit
+  (assert-string-eq (& actual) (& expected) message))
+
 (define (assert-ok-unit [result : ResultIoUnit] [message : String]) : unit
   (match result
     [(OkIoUnit) unit]
@@ -215,7 +221,7 @@
   [expected : String]
   [message : String]) : unit
   (match (test-try-read-file path)
-    [(OkIoString contents) (assert-string-eq contents expected message)]
+    [(OkIoString contents) (assert-owned-string-eq contents expected message)]
     [(ErrIoString error)
       (panic (string-append message (io-error-message error)))]))
 
@@ -426,79 +432,85 @@
         (string-append "left path" (fs-path-separator))
         "right file")]
     (begin
-      (assert-string-eq joined expected-join "path join inserts separator")
-      (assert-string-eq
+      (assert-owned-string-eq
+        joined
+        expected-join
+        "path join inserts separator")
+      (assert-owned-string-eq
         (test-fs-path-join "left/" "/right")
         "left/right"
         "path join avoids duplicate separator")
       ;; #822: pure path-string helpers (separator-agnostic; `/` cases are
       ;; stable on both Linux and Windows).
-      (assert-string-eq
+      (assert-owned-string-eq
         (test-fs-dirname "src/app/main.tl")
         "src/app"
         "dirname strips final component")
-      (assert-string-eq
+      (assert-owned-string-eq
         (test-fs-dirname "main.tl")
         "."
         "dirname of bare name is dot")
-      (assert-string-eq
+      (assert-owned-string-eq
         (test-fs-basename "src/app/main.tl")
         "main.tl"
         "basename is final component")
-      (assert-string-eq
+      (assert-owned-string-eq
         (test-fs-basename "main.tl")
         "main.tl"
         "basename of bare name is itself")
-      (assert-string-eq
+      (assert-owned-string-eq
         (test-fs-extension "src/main.tl")
         "tl"
         "extension after last dot")
-      (assert-string-eq
+      (assert-owned-string-eq
         (test-fs-extension "archive.tar.gz")
         "gz"
         "extension uses last dot")
-      (assert-string-eq
+      (assert-owned-string-eq
         (test-fs-extension "Makefile")
         ""
         "no dot means no extension")
-      (assert-string-eq
+      (assert-owned-string-eq
         (test-fs-extension ".gitignore")
         ""
         "leading-dot name has no extension")
-      (assert-string-eq
+      (assert-owned-string-eq
         (test-fs-path-normalize "")
         "."
         "normalize empty path to dot")
-      (assert-string-eq (test-fs-path-normalize ".") "." "normalize dot path")
-      (assert-string-eq
+      (assert-owned-string-eq
+        (test-fs-path-normalize ".")
+        "."
+        "normalize dot path")
+      (assert-owned-string-eq
         (test-fs-path-normalize "selfhost/./x/../compiler_load.tl")
         "selfhost/compiler_load.tl"
         "normalize dot and parent segments")
-      (assert-string-eq
+      (assert-owned-string-eq
         (test-fs-path-normalize "target\\loader\\..\\dep.tl")
         "target/dep.tl"
         "normalize windows separators to slash")
-      (assert-string-eq
+      (assert-owned-string-eq
         (test-fs-path-normalize "src//./app\\../main.tl")
         "src/main.tl"
         "normalize repeated and mixed separators")
-      (assert-string-eq
+      (assert-owned-string-eq
         (test-fs-path-normalize "../pkg/lib.tl")
         "../pkg/lib.tl"
         "normalize preserves leading relative parent")
-      (assert-string-eq
+      (assert-owned-string-eq
         (test-fs-path-normalize "a/../../b")
         "../b"
         "normalize preserves escaping relative parent")
-      (assert-string-eq
+      (assert-owned-string-eq
         (test-fs-path-normalize "/a/..")
         "/"
         "normalize preserves root")
-      (assert-string-eq
+      (assert-owned-string-eq
         (test-fs-path-normalize "\\a\\..\\b")
         "/b"
         "normalize rooted windows separators")
-      (assert-string-eq
+      (assert-owned-string-eq
         (test-fs-path-normalize "C:\\tmp\\..\\file.tl")
         "C:/file.tl"
         "normalize drive absolute path")

@@ -2,6 +2,12 @@
 
 (import "stdlib/test.tl")
 
+(define (assert-owned-string-eq
+  [actual : String]
+  [expected : String]
+  [message : String]) : unit
+  (assert-string-eq (& actual) (& expected) message))
+
 (define (assert-system-seed-ok [result : ResultSystemSeed]) : unit
   (match result
     [(OkSystemSeed seed)
@@ -35,7 +41,8 @@
   [want-message : String]) : unit
   (match result
     [(OkRandomBounded _ _) (panic "expected bounded random error")]
-    [(ErrRandomBounded err) (assert-string-eq err want-message want-message)]))
+    [(ErrRandomBounded err)
+      (assert-owned-string-eq err want-message want-message)]))
 
 (define (assert-weighted-ok
   [result : RandomWeightedIndexResult]
@@ -55,7 +62,7 @@
   (match result
     [(OkRandomWeightedIndex _ _) (panic "expected weighted random error")]
     [(ErrRandomWeightedIndex err)
-      (assert-string-eq err want-message want-message)]))
+      (assert-owned-string-eq err want-message want-message)]))
 
 (define (assert-sequence-from-one) : unit
   (let

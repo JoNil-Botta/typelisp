@@ -14173,7 +14173,8 @@
     [enclosing : i64 (arena-current)]
     [scratch : i64 (arena-make)]
     (begin
-      (unsafe (arena-set! scratch))
+      (unsafe
+        (arena-set! scratch))
       (match (lower-function
         ctx
         top-env
@@ -14189,24 +14190,28 @@
           (let
             [scratch-head : i64 (arena-current)]
             (begin
-              (unsafe (arena-set! enclosing))
+              (unsafe
+                (arena-set! enclosing))
               (let
                 [escaped-fns : CompilerIrFunctionList
                   (compiler-ir-clone-function-list fns)]
                 [escaped-spans : CompilerSourceSpans
                   (lower-record-function-span spans logical-name body)]
                 (begin
-                  (unsafe (arena-destroy scratch-head))
+                  (unsafe
+                    (arena-destroy scratch-head))
                   (OkLowerFunction escaped-fns escaped-spans)))))]
         [(ErrLowerFunction message)
           (let
             [scratch-head : i64 (arena-current)]
             (begin
-              (unsafe (arena-set! enclosing))
+              (unsafe
+                (arena-set! enclosing))
               (let
                 [escaped-message : CompilerDiagnostic (clone message)]
                 (begin
-                  (unsafe (arena-destroy scratch-head))
+                  (unsafe
+                    (arena-destroy scratch-head))
                   (ErrLowerFunction escaped-message)))))]))))
 
 (define (lower-decls

@@ -75,6 +75,15 @@ Coverage notes:
   boundaries, copied unrelated borrowed chunks, render, length, and empty
   predicates. The borrowed escape fixture verifies the checker rejects a
   borrowed buffer that would outlive its chunk owner.
+- `string_caller_result_check.tl` typechecks the check-only
+  `string_caller_result.tl` caller-result shape for borrowed no-match results,
+  owned replacement results, and explicit owned materialization. The escape
+  fixture verifies the checker rejects a borrowed no-match result tied to a
+  shorter-lived text owner.
+- `io_caller_result_check.tl` typechecks the check-only `io_caller_result.tl`
+  `read-file-or-result` surface for fallback-borrow and owned-result paths. The
+  escape fixture verifies the checker rejects returning a fallback result whose
+  fallback owner is shorter-lived than the declared result lifetime.
 - `visual_studio_api.tl` covers the SetupConfiguration stdlib data model,
   instance/package list helpers, result/error predicates, and the runtime
   success/error result shape.

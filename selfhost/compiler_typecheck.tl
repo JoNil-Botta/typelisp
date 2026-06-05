@@ -284,18 +284,20 @@
 
 (define (compiler-typecheck-clone-tests-ok?) : bool
   (and
-    (compiler-typecheck-ok? (compiler-typecheck-clone-aggregate-source))
+    (clone-name-set-smoke-ok?)
     (and
-      (compiler-typecheck-error-ok?
-        (compiler-typecheck-clone-function-source)
-        "typecheck: clone unsupported type (-> i64 i64)")
+      (compiler-typecheck-ok? (compiler-typecheck-clone-aggregate-source))
       (and
         (compiler-typecheck-error-ok?
-          (compiler-typecheck-clone-pointer-source)
-          "typecheck: clone unsupported type (MutPtr i64)")
-        (compiler-typecheck-error-ok?
-          (compiler-typecheck-clone-ref-source)
-          "typecheck: clone unsupported type (& n i64)")))))
+          (compiler-typecheck-clone-function-source)
+          "typecheck: clone unsupported type (-> i64 i64)")
+        (and
+          (compiler-typecheck-error-ok?
+            (compiler-typecheck-clone-pointer-source)
+            "typecheck: clone unsupported type (MutPtr i64)")
+          (compiler-typecheck-error-ok?
+            (compiler-typecheck-clone-ref-source)
+            "typecheck: clone unsupported type (& n i64)"))))))
 
 (define (compiler-typecheck-foreach-return-source) : String
   "(define (main [n : i64]) : i64

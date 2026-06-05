@@ -5475,7 +5475,9 @@
         [decls : AstDeclList (box-get decls-box)]
         (clone-field-type-able?
           (tc-type-without-regions (tc-resolve-type ctx ty))
-          (clone-fixpoint decls (clone-all-type-names decls (CloneNameNil)))))]))
+          (clone-fixpoint
+            decls
+            (clone-all-type-names decls (clone-name-set-empty)))))]))
 
 ;; `(clone x)` deep-copies x into the current arena (#1633). Type-directed: the
 ;; result is the argument's type, stripped of any inner-region tag (the copy

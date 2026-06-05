@@ -12081,18 +12081,25 @@
         [_ (ErrTcMove "typecheck: arity mismatch")])]
     [(AstExprCons head rest)
       (let
+        [head-expr : AstExpr (box-get head)]
         [rest : AstExprList (box-get rest)]
         (match types
           [(AstTypeCons ty rest-types)
             (let
+              [ty : AstType (box-get ty)]
               [rest-types : AstTypeList (box-get rest-types)]
-              (match (tc-move-check-expr ctx env locals moved head)
+              (match (tc-move-check-expr ctx env locals moved head-expr)
                 [(OkTcMove moved1)
                   (tc-move-check-exprs-with-types
                     ctx
                     env
                     locals
-                    (tc-move-after-consuming-value ctx locals moved1 head ty)
+                    (tc-move-after-consuming-value
+                      ctx
+                      locals
+                      moved1
+                      head-expr
+                      ty)
                     rest
                     rest-types)]
                 [(ErrTcMove message) (ErrTcMove message)]))]

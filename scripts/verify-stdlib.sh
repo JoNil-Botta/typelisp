@@ -41,9 +41,10 @@ case "$#" in
         ;;
 esac
 
-# Linux verifies through the GNU `as`/`ld` pipeline; Windows (Git Bash / MSYS /
-# Cygwin on the CI runner) verifies through the host-default native toolchain
-# (`typelisp build` -> `clang`/`lld-link`), mirroring tests/windows_native.rs.
+# Linux verifies through the GNU `as`/`ld` pipeline with libc linked for stdlib
+# host FFI bindings; Windows (Git Bash / MSYS / Cygwin on the CI runner)
+# verifies through the host-default native toolchain (`typelisp build` ->
+# `clang`/`lld-link`), mirroring tests/windows_native.rs.
 HOST_OS=linux
 case "$(uname -s)" in
     Linux*) HOST_OS=linux ;;
@@ -112,7 +113,8 @@ stdlib_build_run() {
             build_status=$?
         fi
         if [ "$build_status" -eq 0 ]; then
-            ld "$_stem.o" -o "$_stem" >> "$_stem.build.out" 2>> "$_stem.build.err"
+            ld "$_stem.o" -o "$_stem" -dynamic-linker /lib64/ld-linux-x86-64.so.2 -lc \
+                >> "$_stem.build.out" 2>> "$_stem.build.err"
             build_status=$?
         fi
         if [ "$build_status" -eq 0 ]; then

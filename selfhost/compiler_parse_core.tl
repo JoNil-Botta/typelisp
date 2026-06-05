@@ -102,6 +102,18 @@
   (OkAstVariantDefList AstVariantDefList)
   (ErrAstVariantDefList String))
 
+(defenum ResultAstDispatchIsa
+  (OkAstDispatchIsa AstDispatchIsa)
+  (ErrAstDispatchIsa String))
+
+(defenum ResultAstDispatchVariant
+  (OkAstDispatchVariant AstDispatchVariant)
+  (ErrAstDispatchVariant String))
+
+(defenum ResultAstDispatchVariantList
+  (OkAstDispatchVariantList AstDispatchVariantList)
+  (ErrAstDispatchVariantList String))
+
 (defenum ResultAstPattern
   (OkAstPattern AstPattern)
   (ErrAstPattern String))
@@ -671,6 +683,9 @@
 (define (compiler-parse-tag-decl-include-str) : i64
   410)
 
+(define (compiler-parse-tag-decl-defdispatch) : i64
+  411)
+
 (define (compiler-parse-dispatch-binops [e : SymI64Env]) : SymI64Env
   (let
     [e1 : SymI64Env (sym-i64-bind e "+" (compiler-parse-tag-bin-add))]
@@ -887,7 +902,9 @@
       (sym-i64-bind e8 "defmacro" (compiler-parse-tag-decl-defmacro))]
     [e10 : SymI64Env
       (sym-i64-bind e9 "export" (compiler-parse-tag-decl-export))]
-    (sym-i64-bind e10 "include-str" (compiler-parse-tag-decl-include-str))))
+    [e11 : SymI64Env
+      (sym-i64-bind e10 "include-str" (compiler-parse-tag-decl-include-str))]
+    (sym-i64-bind e11 "defdispatch" (compiler-parse-tag-decl-defdispatch))))
 
 (define (compiler-parse-dispatch-env) : SymI64Env
   (compiler-parse-dispatch-decls
@@ -1522,6 +1539,38 @@
             [(ErrAstVariantDefList message) (ErrAstVariantDefList message)])]
         [(ErrAstVariantDef message) (ErrAstVariantDefList message)])]
     [_ (ErrAstVariantDefList "parse: malformed variant list")]))
+
+(define (parse-ast-dispatch-isa [name : String]) : ResultAstDispatchIsa
+  (cond
+    [(string-eq name "scalar") (OkAstDispatchIsa (AstDispatchScalar))]
+    [(string-eq name "avx2") (OkAstDispatchIsa (AstDispatchAvx2))]
+    [(string-eq name "avx512") (OkAstDispatchIsa (AstDispatchAvx512))]
+    [else
+      (ErrAstDispatchIsa (string-append "parse: unknown defdispatch ISA " name))]))
+
+(define (parse-ast-dispatch-variant [s : SpannedSexpr]) : ResultAstDispatchVariant
+  (match s
+    [(SpSCons (SpSSym isa-name _) (SpSCons (SpSSym fn-name _) (SpSNil _) _) _)
+      (match (parse-ast-dispatch-isa isa-name)
+        [(OkAstDispatchIsa isa)
+          (OkAstDispatchVariant (AstDispatchVariant isa fn-name))]
+        [(ErrAstDispatchIsa message) (ErrAstDispatchVariant message)])]
+    [_ (ErrAstDispatchVariant "parse: malformed defdispatch variant")]))
+
+(define (parse-ast-dispatch-variant-list [variants : SpannedSexpr]) : ResultAstDispatchVariantList
+  (match variants
+    [(SpSNil _) (OkAstDispatchVariantList AstDispatchVariantNil)]
+    [(SpSCons head rest _)
+      (match (parse-ast-dispatch-variant head)
+        [(OkAstDispatchVariant parsed)
+          (match (parse-ast-dispatch-variant-list rest)
+            [(OkAstDispatchVariantList parsed-rest)
+              (OkAstDispatchVariantList
+                (ast-dispatch-variant-cons parsed parsed-rest))]
+            [(ErrAstDispatchVariantList message)
+              (ErrAstDispatchVariantList message)])]
+        [(ErrAstDispatchVariant message) (ErrAstDispatchVariantList message)])]
+    [_ (ErrAstDispatchVariantList "parse: malformed defdispatch variant list")]))
 
 (define (parse-ast-defenum-items
   [dispatch : SymI64Env]
@@ -3111,6 +3160,18 @@
         [(ErrAstStructDefParts message) (ErrAstDecl message)])]
     [_ (ErrAstDecl "parse: malformed defstruct")]))
 
+(define (parse-ast-defdispatch [rest : SpannedSexpr]) : ResultAstDecl
+  (match rest
+    [(SpSCons (SpSSym name _) variants _)
+      (match (parse-ast-dispatch-variant-list variants)
+        [(OkAstDispatchVariantList parsed-variants)
+          (match parsed-variants
+            [(AstDispatchVariantNil)
+              (ErrAstDecl "parse: defdispatch needs at least one variant")]
+            [_ (OkAstDecl (AstDeclDefDispatch name parsed-variants))])]
+        [(ErrAstDispatchVariantList message) (ErrAstDecl message)])]
+    [_ (ErrAstDecl "parse: malformed defdispatch")]))
+
 (define (parse-ast-module [rest : SpannedSexpr]) : ResultAstDecl
   (match rest
     [(SpSCons (SpSSym name _) (SpSNil _) _) (OkAstDecl (AstDeclModule name))]
@@ -3371,6 +3432,8 @@
             (parse-ast-defenum dispatch rest)]
           [(= tag (compiler-parse-tag-decl-defstruct))
             (parse-ast-defstruct dispatch rest)]
+          [(= tag (compiler-parse-tag-decl-defdispatch))
+            (parse-ast-defdispatch rest)]
           [(= tag (compiler-parse-tag-decl-defmacro))
             (parse-ast-defmacro dispatch rest)]
           [(= tag (compiler-parse-tag-decl-import)) (parse-ast-import rest)]
@@ -3736,6 +3799,103 @@
                 [_ false]))]
           [_ false]))]
     [(ErrAstProgram _) false]))
+
+(define (compiler-parse-defdispatch-variants-ok?
+  [variants : AstDispatchVariantList]) : bool
+  (match variants
+    [(AstDispatchVariantCons
+        (AstDispatchVariant (AstDispatchScalar) scalar-name)
+        rest0)
+      (let
+        [rest0 : AstDispatchVariantList (box-get rest0)]
+        (match rest0
+          [(AstDispatchVariantCons
+              (AstDispatchVariant (AstDispatchAvx2) avx2-name)
+              rest1)
+            (let
+              [rest1 : AstDispatchVariantList (box-get rest1)]
+              (match rest1
+                [(AstDispatchVariantCons
+                    (AstDispatchVariant (AstDispatchAvx512) avx512-name)
+                    rest2)
+                  (let
+                    [rest2 : AstDispatchVariantList (box-get rest2)]
+                    (match rest2
+                      [(AstDispatchVariantNil)
+                        (and
+                          (string-eq scalar-name "dot-scalar")
+                          (and
+                            (string-eq avx2-name "dot-avx2")
+                            (string-eq avx512-name "dot-avx512")))]
+                      [_ false]))]
+                [_ false]))]
+          [_ false]))]
+    [_ false]))
+
+(define (compiler-parse-defdispatch-shape-ok?) : bool
+  (match (parse-ast-source
+    "(defdispatch dot (scalar dot-scalar) (avx2 dot-avx2) (avx512 dot-avx512))")
+    [(OkAstProgram (AstProgram decls-box))
+      (let
+        [decls : AstDeclList (box-get decls-box)]
+        (match decls
+          [(AstDeclCons (AstDeclDefDispatch name variants) rest)
+            (let
+              [rest : AstDeclList (box-get rest)]
+              (match rest
+                [(AstDeclNil)
+                  (and
+                    (string-eq name "dot")
+                    (compiler-parse-defdispatch-variants-ok? variants))]
+                [_ false]))]
+          [_ false]))]
+    [(ErrAstProgram _) false]))
+
+(define (compiler-parse-defdispatch-scalar-only-ok?) : bool
+  (match (parse-ast-source "(defdispatch id (scalar id-scalar))")
+    [(OkAstProgram (AstProgram decls-box))
+      (let
+        [decls : AstDeclList (box-get decls-box)]
+        (match decls
+          [(AstDeclCons (AstDeclDefDispatch name variants) rest)
+            (let
+              [rest : AstDeclList (box-get rest)]
+              (match rest
+                [(AstDeclNil)
+                  (and
+                    (string-eq name "id")
+                    (match variants
+                      [(AstDispatchVariantCons
+                          (AstDispatchVariant (AstDispatchScalar) scalar-name)
+                          variant-rest)
+                        (let
+                          [variant-rest : AstDispatchVariantList
+                            (box-get variant-rest)]
+                          (match variant-rest
+                            [(AstDispatchVariantNil)
+                              (string-eq scalar-name "id-scalar")]
+                            [_ false]))]
+                      [_ false]))]
+                [_ false]))]
+          [_ false]))]
+    [(ErrAstProgram _) false]))
+
+(define (compiler-parse-defdispatch-tests-ok?) : bool
+  (and
+    (compiler-parse-defdispatch-shape-ok?)
+    (and
+      (compiler-parse-defdispatch-scalar-only-ok?)
+      (and
+        (compiler-parse-error-ok?
+          "(defdispatch dot)"
+          "parse: defdispatch needs at least one variant")
+        (and
+          (compiler-parse-error-ok?
+            "(defdispatch dot (sse2 dot-sse2))"
+            "parse: unknown defdispatch ISA sse2")
+          (compiler-parse-error-ok?
+            "(defdispatch dot (scalar))"
+            "parse: malformed defdispatch variant"))))))
 
 (define (ast-source-span-start-line [span : AstSourceSpan]) : i64
   (struct-get span start-line))
@@ -5903,8 +6063,10 @@
           (and
             (compiler-parse-export-decl-ok?)
             (and
-              (compiler-parse-flat-let-call-body-ok?)
-              (and (compiler-parse-inline-test-ok?) (compiler-parse-try-ok?)))))))))
+              (compiler-parse-defdispatch-tests-ok?)
+              (and
+                (compiler-parse-flat-let-call-body-ok?)
+                (and (compiler-parse-inline-test-ok?) (compiler-parse-try-ok?))))))))))
 
 (define (compiler-parse-error-suite-front-ok?) : bool
   (and
@@ -6028,34 +6190,36 @@
                           (and
                             (compiler-parse-export-decl-ok?)
                             (and
-                              (compiler-parse-flat-let-call-body-ok?)
+                              (compiler-parse-defdispatch-tests-ok?)
                               (and
-                                (compiler-parse-inline-test-ok?)
+                                (compiler-parse-flat-let-call-body-ok?)
                                 (and
-                                  (compiler-parse-try-ok?)
+                                  (compiler-parse-inline-test-ok?)
                                   (and
+                                    (compiler-parse-try-ok?)
                                     (and
-                                      (compiler-parse-return-ok?)
-                                      (compiler-parse-guard-forms-ok?))
-                                    (and
-                                      (compiler-parse-repr-c-ok?)
                                       (and
-                                        (compiler-parse-cleanup-metadata-ok?)
+                                        (compiler-parse-return-ok?)
+                                        (compiler-parse-guard-forms-ok?))
+                                      (and
+                                        (compiler-parse-repr-c-ok?)
                                         (and
-                                          (compiler-parse-raw-pointer-ok?)
+                                          (compiler-parse-cleanup-metadata-ok?)
                                           (and
-                                            (compiler-parse-extern-metadata-ok?)
+                                            (compiler-parse-raw-pointer-ok?)
                                             (and
-                                              (compiler-parse-raw-pointer-ops-ok?)
+                                              (compiler-parse-extern-metadata-ok?)
                                               (and
-                                                (compiler-parse-box-ok?)
+                                                (compiler-parse-raw-pointer-ops-ok?)
                                                 (and
-                                                  (compiler-parse-reference-ok?)
+                                                  (compiler-parse-box-ok?)
                                                   (and
-                                                    (compiler-parse-borrow-ok?)
+                                                    (compiler-parse-reference-ok?)
                                                     (and
-                                                      (compiler-parse-resource-with-shape-ok?)
-                                                      (compiler-parse-quote-syntax-shape-ok?)))))))))))))))))))))))))
+                                                      (compiler-parse-borrow-ok?)
+                                                      (and
+                                                        (compiler-parse-resource-with-shape-ok?)
+                                                        (compiler-parse-quote-syntax-shape-ok?))))))))))))))))))))))))))
         (if (and
           (compiler-parse-error-tests-ok?)
           (and

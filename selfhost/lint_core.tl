@@ -975,6 +975,7 @@
     [(AstDeclDefEnumLifetimes _ _ _) acc]
     [(AstDeclDefStruct _ _ _ _) acc]
     [(AstDeclDefStructLifetimes _ _ _ _ _) acc]
+    [(AstDeclDefDispatch _ _) acc]
     [(AstDeclExport _) acc]
     [(AstDeclIncludeStr _ _) acc]
     [(AstDeclImport _) acc]))

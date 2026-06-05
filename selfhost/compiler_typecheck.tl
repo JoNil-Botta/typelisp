@@ -4739,6 +4739,103 @@
           (compiler-typecheck-move-branch-source)
           "typecheck: use of moved value `s`")))))
 
+;; --- defdispatch frontend model (#1908) ------------------------------------
+(define (compiler-typecheck-defdispatch-full-source) : String
+  "(define (dot-scalar [x : i64]) : i64 x)
+(define (dot-avx2 [x : i64]) : i64 (+ x 1))
+(define (dot-avx512 [x : i64]) : i64 (+ x 2))
+(defdispatch dot (scalar dot-scalar) (avx2 dot-avx2) (avx512 dot-avx512))
+(define (main [x : i64]) : i64 (dot x))")
+
+(define (compiler-typecheck-defdispatch-scalar-only-source) : String
+  "(define (id-scalar [x : i64]) : i64 x)
+(defdispatch id (scalar id-scalar))
+(define (main [x : i64]) : i64 (id x))")
+
+(define (compiler-typecheck-defdispatch-no-scalar-source) : String
+  "(define (dot-avx2 [x : i64]) : i64 x)
+(defdispatch dot (avx2 dot-avx2))
+(define (main [x : i64]) : i64 (dot x))")
+
+(define (compiler-typecheck-defdispatch-duplicate-isa-source) : String
+  "(define (dot-scalar [x : i64]) : i64 x)
+(define (dot-avx2 [x : i64]) : i64 x)
+(define (dot-avx2b [x : i64]) : i64 x)
+(defdispatch dot (scalar dot-scalar) (avx2 dot-avx2) (avx2 dot-avx2b))
+(define (main [x : i64]) : i64 (dot x))")
+
+(define (compiler-typecheck-defdispatch-unknown-source) : String
+  "(define (dot-scalar [x : i64]) : i64 x)
+(defdispatch dot (scalar dot-scalar) (avx2 dot-avx2))
+(define (main [x : i64]) : i64 (dot x))")
+
+(define (compiler-typecheck-defdispatch-non-function-source) : String
+  "(define value : i64 1)
+(defdispatch dot (scalar value))
+(define (main [x : i64]) : i64 (dot x))")
+
+(define (compiler-typecheck-defdispatch-mismatch-source) : String
+  "(define (dot-scalar [x : i64]) : i64 x)
+(define (dot-avx2 [x : bool]) : i64 0)
+(defdispatch dot (scalar dot-scalar) (avx2 dot-avx2))
+(define (main [x : i64]) : i64 (dot x))")
+
+(define (compiler-typecheck-defdispatch-self-source) : String
+  "(defdispatch dot (scalar dot))
+(define (main [x : i64]) : i64 (dot x))")
+
+(define (compiler-typecheck-defdispatch-dispatch-variant-source) : String
+  "(define (dot-scalar [x : i64]) : i64 x)
+(defdispatch dot (scalar dot-scalar))
+(defdispatch other (scalar dot))
+(define (main [x : i64]) : i64 (other x))")
+
+(define (compiler-typecheck-defdispatch-export-alias-source) : String
+  "(module kernels)
+(define (dot-scalar [x : i64]) : i64 x)
+(defdispatch dot (scalar dot-scalar))
+(export (value dot))
+(module app)
+(import \"kernels.tl\" module kernels :as k)
+(define (main [x : i64]) : i64 (k/dot x))")
+
+(define (compiler-typecheck-defdispatch-tests-ok?) : bool
+  (and
+    (compiler-typecheck-ok? (compiler-typecheck-defdispatch-full-source))
+    (and
+      (compiler-typecheck-ok?
+        (compiler-typecheck-defdispatch-scalar-only-source))
+      (and
+        (compiler-typecheck-ok?
+          (compiler-typecheck-defdispatch-export-alias-source))
+        (and
+          (compiler-typecheck-error-ok?
+            (compiler-typecheck-defdispatch-no-scalar-source)
+            "typecheck: defdispatch requires exactly one scalar variant")
+          (and
+            (compiler-typecheck-error-ok?
+              (compiler-typecheck-defdispatch-duplicate-isa-source)
+              "typecheck: duplicate defdispatch ISA variant")
+            (and
+              (compiler-typecheck-error-ok?
+                (compiler-typecheck-defdispatch-unknown-source)
+                "typecheck: unknown defdispatch variant dot-avx2")
+              (and
+                (compiler-typecheck-error-ok?
+                  (compiler-typecheck-defdispatch-non-function-source)
+                  "typecheck: defdispatch variant is not a function value")
+                (and
+                  (compiler-typecheck-error-ok?
+                    (compiler-typecheck-defdispatch-mismatch-source)
+                    "typecheck: defdispatch variant signatures must match")
+                  (and
+                    (compiler-typecheck-error-ok?
+                      (compiler-typecheck-defdispatch-self-source)
+                      "typecheck: defdispatch cannot use itself as a variant")
+                    (compiler-typecheck-error-ok?
+                      (compiler-typecheck-defdispatch-dispatch-variant-source)
+                      "typecheck: defdispatch variant cannot be another dispatch")))))))))))
+
 ;; --- declaration namespace / duplicate diagnostics (#1537) ------------------
 ;; Migrated from src/typechecker.rs namespace coverage. These flow through
 ;; build-compiler-symbols / build-compiler-registries during typechecking, so the
@@ -4841,6 +4938,9 @@
     (if (compiler-typecheck-namespace-tests-ok?)
       unit
       (panic "typecheck: declaration namespace tests failed"))
+    (if (compiler-typecheck-defdispatch-tests-ok?)
+      unit
+      (panic "typecheck: defdispatch tests failed"))
     (if (compiler-typecheck-move-tests-ok?)
       unit
       (panic "typecheck: move checker tests failed"))

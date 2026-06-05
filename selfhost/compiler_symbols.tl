@@ -56,6 +56,9 @@
 (define (compiler-symbol-kind-defmacro) : i64
   8)
 
+(define (compiler-symbol-kind-defdispatch) : i64
+  9)
+
 (define (compiler-symbol-handle-stride) : i64
   1000000000)
 
@@ -487,7 +490,9 @@
       (= kind (compiler-symbol-kind-value-define))
       (or
         (= kind (compiler-symbol-kind-function-define))
-        (= kind (compiler-symbol-kind-extern))))))
+        (or
+          (= kind (compiler-symbol-kind-extern))
+          (= kind (compiler-symbol-kind-defdispatch)))))))
 
 (define (compiler-export-type-handle? [handle : i64]) : bool
   (let
@@ -812,6 +817,12 @@
         module
         name
         (compiler-symbol-make-handle (compiler-symbol-kind-extern) index))]
+    [(AstDeclDefDispatch name _)
+      (compiler-symbols-add-value-in-module
+        symbols
+        module
+        name
+        (compiler-symbol-make-handle (compiler-symbol-kind-defdispatch) index))]
     [(AstDeclDefEnum name variants)
       (match (compiler-symbols-add-type-in-module
         symbols
@@ -984,6 +995,12 @@
         module
         name
         (compiler-symbol-make-handle (compiler-symbol-kind-extern) index))]
+    [(AstDeclDefDispatch name _)
+      (compiler-symbols-add-local-value-in-module
+        symbols
+        module
+        name
+        (compiler-symbol-make-handle (compiler-symbol-kind-defdispatch) index))]
     [(AstDeclDefEnum name variants)
       (match (compiler-symbols-add-local-type-in-module
         symbols
@@ -1110,6 +1127,11 @@
         symbols
         (compiler-symbol-module-key alias name)
         (compiler-symbol-make-handle (compiler-symbol-kind-extern) index))]
+    [(AstDeclDefDispatch name _)
+      (compiler-symbols-add-value-alias
+        symbols
+        (compiler-symbol-module-key alias name)
+        (compiler-symbol-make-handle (compiler-symbol-kind-defdispatch) index))]
     [(AstDeclDefEnum name variants)
       (compiler-symbols-add-variant-value-aliases
         (compiler-symbols-add-type-alias

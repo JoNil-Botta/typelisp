@@ -60,6 +60,11 @@ installed-root discovery, namespace isolation, or an implicit prelude.
 - `process.tl`: process command/output/error data model for selfhost tools.
   Runtime execution currently returns structured unsupported diagnostics rather
   than using Rust host actions. Import it with `(import "stdlib/process.tl")`.
+- `profile.tl`: runtime profiling helpers for coarse elapsed time and
+  allocation counters, including `profile-now-ms`, `profile-alloc-total`,
+  `profile-alloc-live`, `profile-alloc-peak`, and
+  `profile-alloc-reset-peak`. Import it with
+  `(import "stdlib/profile.tl")`.
 - `queue.tl`: growable `i64` queue/deque (collections v1, #1549) over a
   circular `(Array i64)`: `i64-deque-with-capacity` / `-new` / `-push-back` /
   `-push-front` / `-pop-front` / `-pop-back` / `-peek-front` / `-peek-back` /

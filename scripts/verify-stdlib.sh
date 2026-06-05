@@ -167,6 +167,7 @@ json.tl
 list.tl
 msvc.tl
 process.tl
+profile.tl
 queue.tl
 random.tl
 string.tl
@@ -210,6 +211,7 @@ stdlib/tests/hashmap_api.tl|42|-|-
 stdlib/tests/list_api.tl|42|-|-
 stdlib/tests/process_api.tl|42|-|-|-|requires-stage0-symbol:tl_process_start,tl_process_wait
 stdlib/tests/process_runtime.tl|42|-|-
+stdlib/tests/profile_api.tl|42|-|-
 stdlib/tests/queue_api.tl|42|-|-
 stdlib/tests/random_api.tl|42|-|-|-|requires-stage0-symbol:tl_random_system_seed
 stdlib/tests/text_buf_api.tl|42|-|-

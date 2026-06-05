@@ -37,7 +37,7 @@
 
 (defenum OptAggregatePointerList
   (OptAggregatePointerNil)
-  (OptAggregatePointerCons OptAggregatePointer OptAggregatePointerList))
+  (OptAggregatePointerCons OptAggregatePointer (Box OptAggregatePointerList)))
 
 (defenum OptAggregateAccess
   (OptAggregateStore i64 AstType)
@@ -45,7 +45,7 @@
 
 (defenum OptAggregateAccessList
   (OptAggregateAccessNil)
-  (OptAggregateAccessCons OptAggregateAccess OptAggregateAccessList))
+  (OptAggregateAccessCons OptAggregateAccess (Box OptAggregateAccessList)))
 
 (defenum OptAggregateAllocCandidate
   (OptAggregateAllocCandidate
@@ -59,7 +59,7 @@
   (OptAggregateAllocCandidateNil)
   (OptAggregateAllocCandidateCons
     OptAggregateAllocCandidate
-    OptAggregateAllocCandidateList))
+    (Box OptAggregateAllocCandidateList)))
 
 (defenum OptMaybeAggregateAlloc
   (OptNoAggregateAlloc)
@@ -80,7 +80,12 @@
 
 (defenum OptAggregateFieldFacts
   (OptAggregateFieldNil)
-  (OptAggregateFieldCons i64 i64 CompilerIrValue AstType OptAggregateFieldFacts))
+  (OptAggregateFieldCons
+    i64
+    i64
+    CompilerIrValue
+    AstType
+    (Box OptAggregateFieldFacts)))
 
 (defenum OptAggregateSroaResult
   (OptAggregateSroaResult OptAggregateFieldFacts CompilerIrInstr))
@@ -92,7 +97,7 @@
   (OptAggregatePromoteSlotNil)
   (OptAggregatePromoteSlotCons
     OptAggregatePromoteSlot
-    OptAggregatePromoteSlotList))
+    (Box OptAggregatePromoteSlotList)))
 
 (defenum OptAggregatePromoteBuild
   (OptAggregatePromoteBuild OptAggregatePromoteSlotList i64))
@@ -130,30 +135,34 @@
 
 (defenum OptConstEnv
   (OptConstNil)
-  (OptConstCons i64 CompilerIrValue AstType OptConstEnv))
+  (OptConstCons i64 CompilerIrValue AstType (Box OptConstEnv)))
 
 (define (opt-const-unbind [env : OptConstEnv] [var : i64]) : OptConstEnv
   (match env
     [(OptConstNil) (OptConstNil)]
     [(OptConstCons id value ty rest)
-      (if (= id var)
-        (opt-const-unbind rest var)
-        (OptConstCons id value ty (opt-const-unbind rest var)))]))
+      (let
+        [rest : OptConstEnv (box-get rest)]
+        (if (= id var)
+          (opt-const-unbind rest var)
+          (OptConstCons id value ty (box (opt-const-unbind rest var)))))]))
 
 (define (opt-const-bind
   [env : OptConstEnv]
   [var : i64]
   [value : CompilerIrValue]
   [ty : AstType]) : OptConstEnv
-  (OptConstCons var value ty (opt-const-unbind env var)))
+  (OptConstCons var value ty (box (opt-const-unbind env var))))
 
 (define (opt-const-lookup [env : OptConstEnv] [var : i64]) : OptKnownConst
   (match env
     [(OptConstNil) (OptNoConst)]
     [(OptConstCons id value ty rest)
-      (if (= id var)
-        (OptSomeConst value ty)
-        (opt-const-lookup rest var))]))
+      (let
+        [rest : OptConstEnv (box-get rest)]
+        (if (= id var)
+          (OptSomeConst value ty)
+          (opt-const-lookup rest var)))]))
 
 (define (opt-integer-type? [ty : AstType]) : bool
   (match ty
@@ -870,20 +879,22 @@
 ;; reachability.
 (defenum OptUsedSet
   (OptUsedNil)
-  (OptUsedCons i64 OptUsedSet))
+  (OptUsedCons i64 (Box OptUsedSet)))
 
 (define (opt-used-contains [set : OptUsedSet] [var : i64]) : bool
   (match set
     [(OptUsedNil) false]
     [(OptUsedCons id rest)
-      (if (= id var)
-        true
-        (opt-used-contains rest var))]))
+      (let
+        [rest : OptUsedSet (box-get rest)]
+        (if (= id var)
+          true
+          (opt-used-contains rest var)))]))
 
 (define (opt-used-add [set : OptUsedSet] [var : i64]) : OptUsedSet
   (if (opt-used-contains set var)
     set
-    (OptUsedCons var set)))
+    (OptUsedCons var (box set))))
 
 (define (opt-collect-value-uses [set : OptUsedSet] [value : CompilerIrValue]) : OptUsedSet
   (match value
@@ -1115,11 +1126,13 @@
   (match ptrs
     [(OptAggregatePointerNil) (OptNoI64)]
     [(OptAggregatePointerCons ptr rest)
-      (match ptr
-        [(OptAggregatePointer ptr-var offset)
-          (if (= ptr-var var)
-            (OptSomeI64 offset)
-            (opt-aggregate-pointer-list-lookup rest var))])]))
+      (let
+        [rest : OptAggregatePointerList (box-get rest)]
+        (match ptr
+          [(OptAggregatePointer ptr-var offset)
+            (if (= ptr-var var)
+              (OptSomeI64 offset)
+              (opt-aggregate-pointer-list-lookup rest var))]))]))
 
 (define (opt-aggregate-value-offset
   [base : i64]
@@ -1401,7 +1414,7 @@
                       (box-get rest)
                       (OptAggregatePointerCons
                         (OptAggregatePointer dst (+ base-offset field-offset))
-                        ptrs)
+                        (box ptrs))
                       accesses
                       true)]
                   [_ (OptAggregateScanReject)])]
@@ -1427,7 +1440,7 @@
                   ptrs
                   (OptAggregateAccessCons
                     (OptAggregateLoad dst offset load-ty)
-                    accesses)
+                    (box accesses))
                   true)]
               [(OptNoI64)
                 (if (opt-aggregate-instrs-touch-candidate?
@@ -1456,7 +1469,7 @@
                     ptrs
                     (OptAggregateAccessCons
                       (OptAggregateStore offset store-ty)
-                      accesses)
+                      (box accesses))
                     true))]
               [(OptNoI64)
                 (if (or
@@ -1519,7 +1532,7 @@
             [(OptAggregateScanOk ptrs accesses)
               (OptAggregateAllocCandidateCons
                 (OptAggregateAllocCandidate base ty size ptrs accesses)
-                (opt-aggregate-candidates-from-instrs (box-get rest) all))]
+                (box (opt-aggregate-candidates-from-instrs (box-get rest) all)))]
             [(OptAggregateScanReject)
               (opt-aggregate-candidates-from-instrs (box-get rest) all)])]
         [(OptNoAggregateAlloc)
@@ -1561,7 +1574,7 @@
     [(OptAggregateAllocCandidateCons head rest)
       (OptAggregateAllocCandidateCons
         head
-        (opt-aggregate-candidate-list-append rest right))]))
+        (box (opt-aggregate-candidate-list-append (box-get rest) right)))]))
 
 (define (opt-aggregate-allocation-candidates-functions
   [functions : CompilerIrFunctionList]) : OptAggregateAllocCandidateList
@@ -1582,19 +1595,19 @@
   (match candidates
     [(OptAggregateAllocCandidateNil) 0]
     [(OptAggregateAllocCandidateCons _ rest)
-      (+ 1 (opt-aggregate-candidate-list-count rest))]))
+      (+ 1 (opt-aggregate-candidate-list-count (box-get rest)))]))
 
 (define (opt-aggregate-pointer-list-count [ptrs : OptAggregatePointerList]) : i64
   (match ptrs
     [(OptAggregatePointerNil) 0]
     [(OptAggregatePointerCons _ rest)
-      (+ 1 (opt-aggregate-pointer-list-count rest))]))
+      (+ 1 (opt-aggregate-pointer-list-count (box-get rest)))]))
 
 (define (opt-aggregate-access-list-count [accesses : OptAggregateAccessList]) : i64
   (match accesses
     [(OptAggregateAccessNil) 0]
     [(OptAggregateAccessCons _ rest)
-      (+ 1 (opt-aggregate-access-list-count rest))]))
+      (+ 1 (opt-aggregate-access-list-count (box-get rest)))]))
 
 (define (opt-aggregate-access-list-load-count
   [accesses : OptAggregateAccessList]) : i64
@@ -1605,7 +1618,7 @@
         (match access
           [(OptAggregateLoad _ _ _) 1]
           [_ 0])
-        (opt-aggregate-access-list-load-count rest))]))
+        (opt-aggregate-access-list-load-count (box-get rest)))]))
 
 (define (opt-aggregate-access-list-store-count
   [accesses : OptAggregateAccessList]) : i64
@@ -1616,7 +1629,7 @@
         (match access
           [(OptAggregateStore _ _) 1]
           [_ 0])
-        (opt-aggregate-access-list-store-count rest))]))
+        (opt-aggregate-access-list-store-count (box-get rest)))]))
 
 ;; --- aggregate stack promotion (#1489) --------------------------------------
 ;;
@@ -1653,14 +1666,14 @@
               [slots : i64 (opt-aggregate-stack-slot-count size)]
               [storage : i64 (+ next-frame (- slots 1))]
               [after-frame : i64 (+ next-frame slots)]
-              (match (opt-aggregate-promote-build rest after-frame)
+              (match (opt-aggregate-promote-build (box-get rest) after-frame)
                 [(OptAggregatePromoteBuild rest-slots final-frame)
                   (OptAggregatePromoteBuild
                     (OptAggregatePromoteSlotCons
                       (OptAggregatePromoteSlot base storage)
-                      rest-slots)
+                      (box rest-slots))
                     final-frame)]))
-            (opt-aggregate-promote-build rest next-frame))])]))
+            (opt-aggregate-promote-build (box-get rest) next-frame))])]))
 
 (define (opt-aggregate-promote-lookup
   [slots : OptAggregatePromoteSlotList]
@@ -1668,11 +1681,13 @@
   (match slots
     [(OptAggregatePromoteSlotNil) (OptNoI64)]
     [(OptAggregatePromoteSlotCons slot rest)
-      (match slot
-        [(OptAggregatePromoteSlot found storage)
-          (if (= found base)
-            (OptSomeI64 storage)
-            (opt-aggregate-promote-lookup rest base))])]))
+      (let
+        [rest : OptAggregatePromoteSlotList (box-get rest)]
+        (match slot
+          [(OptAggregatePromoteSlot found storage)
+            (if (= found base)
+              (OptSomeI64 storage)
+              (opt-aggregate-promote-lookup rest base))]))]))
 
 (define (opt-aggregate-promote-rewrite-instr
   [slots : OptAggregatePromoteSlotList]
@@ -1758,7 +1773,8 @@
       (match (opt-aggregate-candidate-location candidate value)
         [(OptSomeAggregateLocation base offset)
           (OptSomeAggregateLocation base offset)]
-        [(OptNoAggregateLocation) (opt-aggregate-location-for-value rest value)])]))
+        [(OptNoAggregateLocation)
+          (opt-aggregate-location-for-value (box-get rest) value)])]))
 
 (define (opt-aggregate-value-is-candidate-pointer?
   [candidates : OptAggregateAllocCandidateList]
@@ -1776,10 +1792,10 @@
     [(OptAggregateFieldCons fact-base fact-offset value ty rest)
       (let
         [rest2 : OptAggregateFieldFacts
-          (opt-aggregate-field-facts-unbind rest base offset)]
+          (opt-aggregate-field-facts-unbind (box-get rest) base offset)]
         (if (and (= fact-base base) (= fact-offset offset))
           rest2
-          (OptAggregateFieldCons fact-base fact-offset value ty rest2)))]))
+          (OptAggregateFieldCons fact-base fact-offset value ty (box rest2))))]))
 
 (define (opt-aggregate-field-facts-unbind-base
   [facts : OptAggregateFieldFacts]
@@ -1789,10 +1805,10 @@
     [(OptAggregateFieldCons fact-base fact-offset value ty rest)
       (let
         [rest2 : OptAggregateFieldFacts
-          (opt-aggregate-field-facts-unbind-base rest base)]
+          (opt-aggregate-field-facts-unbind-base (box-get rest) base)]
         (if (= fact-base base)
           rest2
-          (OptAggregateFieldCons fact-base fact-offset value ty rest2)))]))
+          (OptAggregateFieldCons fact-base fact-offset value ty (box rest2))))]))
 
 (define (opt-aggregate-field-facts-bind
   [facts : OptAggregateFieldFacts]
@@ -1805,7 +1821,7 @@
     offset
     value
     ty
-    (opt-aggregate-field-facts-unbind facts base offset)))
+    (box (opt-aggregate-field-facts-unbind facts base offset))))
 
 (define (opt-aggregate-field-facts-lookup
   [facts : OptAggregateFieldFacts]
@@ -1819,7 +1835,7 @@
         (= fact-base base)
         (and (= fact-offset offset) (opt-type-eq fact-ty ty)))
         (OptSomeAggregateStoredValue value fact-ty)
-        (opt-aggregate-field-facts-lookup rest base offset ty))]))
+        (opt-aggregate-field-facts-lookup (box-get rest) base offset ty))]))
 
 (define (opt-aggregate-field-facts-invalidate-var
   [facts : OptAggregateFieldFacts]
@@ -1829,10 +1845,10 @@
     [(OptAggregateFieldCons base offset value ty rest)
       (let
         [rest2 : OptAggregateFieldFacts
-          (opt-aggregate-field-facts-invalidate-var rest var)]
+          (opt-aggregate-field-facts-invalidate-var (box-get rest) var)]
         (if (or (= base var) (opt-value-is-var? value var))
           rest2
-          (OptAggregateFieldCons base offset value ty rest2)))]))
+          (OptAggregateFieldCons base offset value ty (box rest2))))]))
 
 (define (opt-aggregate-sroa-invalidate-def
   [facts : OptAggregateFieldFacts]
@@ -2015,7 +2031,7 @@
 
 (defenum OptExprTable
   (OptExprNil)
-  (OptExprCons OptExprKey i64 OptExprTable))
+  (OptExprCons OptExprKey i64 (Box OptExprTable)))
 
 (define (opt-binop-tag [op : CompilerIrBinOp]) : i64
   (match op
@@ -2870,9 +2886,11 @@
   (match table
     [(OptExprNil) (IrNoValue)]
     [(OptExprCons k var rest)
-      (if (opt-expr-key-eq k key)
-        (IrSomeValue (IrValueVar var))
-        (opt-expr-lookup rest key))]))
+      (let
+        [rest : OptExprTable (box-get rest)]
+        (if (opt-expr-key-eq k key)
+          (IrSomeValue (IrValueVar var))
+          (opt-expr-lookup rest key)))]))
 
 (define (opt-value-is-var? [value : CompilerIrValue] [var : i64]) : bool
   (match value
@@ -2891,10 +2909,10 @@
     [(OptExprNil) (OptExprNil)]
     [(OptExprCons k v rest)
       (let
-        [rest2 : OptExprTable (opt-expr-invalidate-var rest var)]
+        [rest2 : OptExprTable (opt-expr-invalidate-var (box-get rest) var)]
         (if (or (opt-key-uses-var? k var) (= v var))
           rest2
-          (OptExprCons k v rest2)))]))
+          (OptExprCons k v (box rest2))))]))
 
 (defenum OptCseResult
   (OptCseResult OptExprTable CompilerIrInstr))
@@ -2907,14 +2925,14 @@
         [key : OptExprKey (OptBinKey op l r)]
         (match (opt-expr-lookup t1 key)
           [(IrSomeValue earlier) (OptCseResult t1 (IrInstrMov dst earlier ty))]
-          [(IrNoValue) (OptCseResult (OptExprCons key dst t1) instr)]))]
+          [(IrNoValue) (OptCseResult (OptExprCons key dst (box t1)) instr)]))]
     [(IrInstrUnOp dst op v ty)
       (let
         [t1 : OptExprTable (opt-expr-invalidate-var table dst)]
         [key : OptExprKey (OptUnKey op v)]
         (match (opt-expr-lookup t1 key)
           [(IrSomeValue earlier) (OptCseResult t1 (IrInstrMov dst earlier ty))]
-          [(IrNoValue) (OptCseResult (OptExprCons key dst t1) instr)]))]
+          [(IrNoValue) (OptCseResult (OptExprCons key dst (box t1)) instr)]))]
     ;; Other defining instructions: invalidate their dst, keep the instruction.
     [(IrInstrMov dst _ _)
       (OptCseResult (opt-expr-invalidate-var table dst) instr)]
@@ -3005,15 +3023,17 @@
 ;; the non-SSA IR never triggers a stale rewrite.
 (defenum OptCopyEnv
   (OptCopyNil)
-  (OptCopyCons i64 CompilerIrValue OptCopyEnv))
+  (OptCopyCons i64 CompilerIrValue (Box OptCopyEnv)))
 
 (define (opt-copy-lookup [env : OptCopyEnv] [var : i64]) : CompilerIrMaybeValue
   (match env
     [(OptCopyNil) (IrNoValue)]
     [(OptCopyCons id value rest)
-      (if (= id var)
-        (IrSomeValue value)
-        (opt-copy-lookup rest var))]))
+      (let
+        [rest : OptCopyEnv (box-get rest)]
+        (if (= id var)
+          (IrSomeValue value)
+          (opt-copy-lookup rest var)))]))
 
 ;; Drop the mapping for `var` and any mapping whose replacement is `IrValueVar
 ;; var`, so redefining either a copied destination or a copied source clears the
@@ -3023,10 +3043,10 @@
     [(OptCopyNil) (OptCopyNil)]
     [(OptCopyCons id value rest)
       (let
-        [rest2 : OptCopyEnv (opt-copy-invalidate-var rest var)]
+        [rest2 : OptCopyEnv (opt-copy-invalidate-var (box-get rest) var)]
         (if (or (= id var) (opt-value-is-var? value var))
           rest2
-          (OptCopyCons id value rest2)))]))
+          (OptCopyCons id value (box rest2))))]))
 
 ;; Only var copies and unambiguous scalar literals are safe to propagate in this
 ;; slice; F64/String/global sources stay put until their backend paths exist.
@@ -3180,7 +3200,7 @@
       (let
         [e1 : OptCopyEnv (opt-copy-invalidate-var env dst)]
         (if (and (opt-copy-safe-source? src) (not (opt-value-is-var? src dst)))
-          (OptCopyCons dst src e1)
+          (OptCopyCons dst src (box e1))
           e1))]
     [(IrInstrAlloc dst _) (opt-copy-invalidate-var env dst)]
     [(IrInstrAddrOf dst _) (opt-copy-invalidate-var env dst)]
@@ -3242,7 +3262,7 @@
 
 (defenum OptBoundsFacts
   (OptBoundsNil)
-  (OptBoundsCons OptBoundsFact OptBoundsFacts))
+  (OptBoundsCons OptBoundsFact (Box OptBoundsFacts)))
 
 (define (opt-bounds-fact-eq
   [fact : OptBoundsFact]
@@ -3259,9 +3279,11 @@
   (match facts
     [(OptBoundsNil) false]
     [(OptBoundsCons fact rest)
-      (if (opt-bounds-fact-eq fact index length)
-        true
-        (opt-bounds-contains rest index length))]))
+      (let
+        [rest : OptBoundsFacts (box-get rest)]
+        (if (opt-bounds-fact-eq fact index length)
+          true
+          (opt-bounds-contains rest index length)))]))
 
 (define (opt-bounds-add
   [facts : OptBoundsFacts]
@@ -3269,7 +3291,7 @@
   [length : CompilerIrValue]) : OptBoundsFacts
   (if (opt-bounds-contains facts index length)
     facts
-    (OptBoundsCons (OptBoundsFact index length) facts)))
+    (OptBoundsCons (OptBoundsFact index length) (box facts))))
 
 (define (opt-bounds-fact-uses-var? [fact : OptBoundsFact] [var : i64]) : bool
   (match fact
@@ -3281,10 +3303,10 @@
     [(OptBoundsNil) (OptBoundsNil)]
     [(OptBoundsCons fact rest)
       (let
-        [rest2 : OptBoundsFacts (opt-bounds-invalidate-var rest var)]
+        [rest2 : OptBoundsFacts (opt-bounds-invalidate-var (box-get rest) var)]
         (if (opt-bounds-fact-uses-var? fact var)
           rest2
-          (OptBoundsCons fact rest2)))]))
+          (OptBoundsCons fact (box rest2))))]))
 
 (define (opt-bounds-update-facts
   [facts : OptBoundsFacts]
@@ -3359,31 +3381,33 @@
 ;; inputs from predecessors that are no longer reachable.
 (defenum OptLabelSet
   (OptLabelNil)
-  (OptLabelCons String OptLabelSet))
+  (OptLabelCons String (Box OptLabelSet)))
 
 (define (opt-label-contains [set : OptLabelSet] [label : String]) : bool
   (match set
     [(OptLabelNil) false]
     [(OptLabelCons head rest)
-      (if (string-eq head label)
-        true
-        (opt-label-contains rest label))]))
+      (let
+        [rest : OptLabelSet (box-get rest)]
+        (if (string-eq head label)
+          true
+          (opt-label-contains rest label)))]))
 
 (define (opt-label-add [set : OptLabelSet] [label : String]) : OptLabelSet
   (if (opt-label-contains set label)
     set
-    (OptLabelCons label set)))
+    (OptLabelCons label (box set))))
 
 (define (opt-label-count [set : OptLabelSet]) : i64
   (match set
     [(OptLabelNil) 0]
-    [(OptLabelCons _ rest) (+ 1 (opt-label-count rest))]))
+    [(OptLabelCons _ rest) (+ 1 (opt-label-count (box-get rest)))]))
 
 (define (opt-label-subset? [a : OptLabelSet] [b : OptLabelSet]) : bool
   (match a
     [(OptLabelNil) true]
     [(OptLabelCons label rest)
-      (and (opt-label-contains b label) (opt-label-subset? rest b))]))
+      (and (opt-label-contains b label) (opt-label-subset? (box-get rest) b))]))
 
 (define (opt-label-set-eq? [a : OptLabelSet] [b : OptLabelSet]) : bool
   (and (opt-label-subset? a b) (opt-label-subset? b a)))
@@ -3393,7 +3417,7 @@
     [(OptLabelNil) (OptLabelNil)]
     [(OptLabelCons label rest)
       (let
-        [tail : OptLabelSet (opt-label-intersection rest b)]
+        [tail : OptLabelSet (opt-label-intersection (box-get rest) b)]
         (if (opt-label-contains b label)
           (opt-label-add tail label)
           tail))]))
@@ -3506,17 +3530,19 @@
 
 (defenum OptDomTable
   (OptDomNil)
-  (OptDomCons OptDomEntry OptDomTable))
+  (OptDomCons OptDomEntry (Box OptDomTable)))
 
 (define (opt-dom-table-lookup [table : OptDomTable] [label : String]) : OptLabelSet
   (match table
     [(OptDomNil) (OptLabelNil)]
     [(OptDomCons entry rest)
-      (match entry
-        [(OptDomEntry entry-label labels)
-          (if (string-eq entry-label label)
-            labels
-            (opt-dom-table-lookup rest label))])]))
+      (let
+        [rest : OptDomTable (box-get rest)]
+        (match entry
+          [(OptDomEntry entry-label labels)
+            (if (string-eq entry-label label)
+              labels
+              (opt-dom-table-lookup rest label))]))]))
 
 (define (opt-dom-entry-eq? [a : OptDomEntry] [b : OptDomEntry]) : bool
   (match a
@@ -3538,7 +3564,7 @@
         [(OptDomCons b-entry b-rest)
           (and
             (opt-dom-entry-eq? a-entry b-entry)
-            (opt-dom-table-eq? a-rest b-rest))]
+            (opt-dom-table-eq? (box-get a-rest) (box-get b-rest)))]
         [_ false])]))
 
 (define (opt-dom-intersect-preds-rest
@@ -3550,7 +3576,7 @@
     [(OptLabelCons pred rest)
       (opt-dom-intersect-preds-rest
         table
-        rest
+        (box-get rest)
         (opt-label-intersection current (opt-dom-table-lookup table pred)))]))
 
 (define (opt-dom-intersect-preds [table : OptDomTable] [preds : OptLabelSet]) : OptLabelSet
@@ -3559,7 +3585,7 @@
     [(OptLabelCons pred rest)
       (opt-dom-intersect-preds-rest
         table
-        rest
+        (box-get rest)
         (opt-dom-table-lookup table pred))]))
 
 (define (opt-cfg-dominators-initial
@@ -3579,11 +3605,12 @@
                 (if (string-eq label entry-label)
                   (opt-label-add (OptLabelNil) label)
                   all-reachable))
-              (opt-cfg-dominators-initial
-                (box-get rest)
-                reachable
-                entry-label
-                all-reachable))
+              (box
+                (opt-cfg-dominators-initial
+                  (box-get rest)
+                  reachable
+                  entry-label
+                  all-reachable)))
             (opt-cfg-dominators-initial
               (box-get rest)
               reachable
@@ -3620,7 +3647,13 @@
     [(OptDomCons entry rest)
       (OptDomCons
         (opt-cfg-dominators-step-entry blocks reachable entry-label old entry)
-        (opt-cfg-dominators-step blocks reachable entry-label old rest))]))
+        (box
+          (opt-cfg-dominators-step
+            blocks
+            reachable
+            entry-label
+            old
+            (box-get rest))))]))
 
 (define (opt-cfg-dominators-fixed
   [blocks : CompilerIrBlockList]
@@ -3678,7 +3711,7 @@
     [(OptLabelCons pred rest)
       (if (opt-dom-dominates? doms label pred)
         true
-        (opt-cfg-frontier-has-pred? doms label rest))]))
+        (opt-cfg-frontier-has-pred? doms label (box-get rest)))]))
 
 (define (opt-cfg-dominance-frontier-blocks
   [all-blocks : CompilerIrBlockList]
@@ -3741,7 +3774,7 @@
 
 (defenum OptVarDefList
   (OptVarDefNil)
-  (OptVarDefCons OptVarDef OptVarDefList))
+  (OptVarDefCons OptVarDef (Box OptVarDefList)))
 
 (defenum OptMaybeVarDef
   (OptNoVarDef)
@@ -3851,7 +3884,7 @@
           (opt-var-defs-from-params
             (box-get rest)
             entry-label
-            (OptVarDefCons (OptVarDef var entry-label 0) defs))])]))
+            (OptVarDefCons (OptVarDef var entry-label 0) (box defs)))])]))
 
 (define (opt-var-defs-from-instrs
   [instrs : CompilerIrInstrList]
@@ -3869,7 +3902,7 @@
             (+ pos 1)
             (OptVarDefCons
               (OptVarDef var block-label (opt-instr-def-position instr pos))
-              defs))]
+              (box defs)))]
         [(OptNoI64)
           (opt-var-defs-from-instrs (box-get rest) block-label (+ pos 1) defs)])]))
 
@@ -3903,7 +3936,7 @@
         [(OptVarDef def-var _ _)
           (if (= def-var var)
             (OptSomeVarDef def)
-            (opt-var-def-lookup rest var))])]))
+            (opt-var-def-lookup (box-get rest) var))])]))
 
 (define (opt-verify-var-use
   [defs : OptVarDefList]
@@ -4313,14 +4346,14 @@
 
 (defenum OptGlobalExprFacts
   (OptGlobalExprNil)
-  (OptGlobalExprCons OptGlobalExprFact OptGlobalExprFacts))
+  (OptGlobalExprCons OptGlobalExprFact (Box OptGlobalExprFacts)))
 
 (defenum OptGlobalCopyFact
   (OptGlobalCopyFact i64 CompilerIrValue String i64))
 
 (defenum OptGlobalCopyFacts
   (OptGlobalCopyNil)
-  (OptGlobalCopyCons OptGlobalCopyFact OptGlobalCopyFacts))
+  (OptGlobalCopyCons OptGlobalCopyFact (Box OptGlobalCopyFacts)))
 
 (define (opt-global-expr-key-eq [a : OptGlobalExprKey] [b : OptGlobalExprKey]) : bool
   (match a
@@ -4408,7 +4441,7 @@
               (not (opt-value-is-var? src dst)))
               (OptGlobalCopyCons
                 (OptGlobalCopyFact dst src block-label pos)
-                rest-facts)
+                (box rest-facts))
               rest-facts)]
           [_ rest-facts]))]))
 
@@ -4445,7 +4478,7 @@
               use-pos
               doms))
             (IrSomeValue src)
-            (opt-global-copy-lookup rest var doms use-block use-pos))])]))
+            (opt-global-copy-lookup (box-get rest) var doms use-block use-pos))])]))
 
 (define (opt-global-copy-resolve-depth
   [facts : OptGlobalCopyFacts]
@@ -4725,7 +4758,7 @@
               [(OptSomeI64 dst)
                 (OptGlobalExprCons
                   (OptGlobalExprFact key dst block-label pos)
-                  rest-facts)]
+                  (box rest-facts))]
               [(OptNoI64) rest-facts])]
           [(OptNoGlobalExprKey) rest-facts]))]))
 
@@ -4765,7 +4798,13 @@
                 use-pos
                 doms)))
             (IrSomeValue (IrValueVar fact-dst))
-            (opt-global-expr-lookup rest key dst doms use-block use-pos))])]))
+            (opt-global-expr-lookup
+              (box-get rest)
+              key
+              dst
+              doms
+              use-block
+              use-pos))])]))
 
 (define (opt-global-cse-instr
   [facts : OptGlobalExprFacts]
@@ -4960,7 +4999,7 @@
     [(OptLabelCons label rest)
       (opt-cfg-reachable-label-list
         blocks
-        rest
+        (box-get rest)
         (opt-cfg-reachable-label blocks label seen))]))
 
 (define (opt-cfg-reachable-blocks [blocks : CompilerIrBlockList]) : OptLabelSet
@@ -4988,7 +5027,7 @@
 
 (defenum OptNaturalLoopList
   (OptNaturalLoopNil)
-  (OptNaturalLoopCons OptNaturalLoop OptNaturalLoopList))
+  (OptNaturalLoopCons OptNaturalLoop (Box OptNaturalLoopList)))
 
 (defenum OptNaturalLoopCollectState
   (OptNaturalLoopCollectState OptLabelSet OptLabelSet))
@@ -5012,7 +5051,8 @@
 (define (opt-natural-loop-list-count [loops : OptNaturalLoopList]) : i64
   (match loops
     [(OptNaturalLoopNil) 0]
-    [(OptNaturalLoopCons _ rest) (+ 1 (opt-natural-loop-list-count rest))]))
+    [(OptNaturalLoopCons _ rest)
+      (+ 1 (opt-natural-loop-list-count (box-get rest)))]))
 
 (define (opt-natural-loop-find
   [loops : OptNaturalLoopList]
@@ -5025,7 +5065,7 @@
         (string-eq (opt-natural-loop-header loop) header)
         (string-eq (opt-natural-loop-latch loop) latch))
         (OptSomeNaturalLoop loop)
-        (opt-natural-loop-find rest header latch))]))
+        (opt-natural-loop-find (box-get rest) header latch))]))
 
 (define (opt-natural-loop-collect-add-pred
   [reachable : OptLabelSet]
@@ -5050,7 +5090,7 @@
     [(OptLabelCons pred rest)
       (opt-natural-loop-collect-add-preds
         reachable
-        rest
+        (box-get rest)
         (opt-natural-loop-collect-add-pred reachable state pred))]))
 
 (define (opt-natural-loop-collect-body
@@ -5066,7 +5106,7 @@
           (opt-natural-loop-collect-add-preds
             reachable
             (opt-cfg-predecessors blocks label)
-            (OptNaturalLoopCollectState body rest))]
+            (OptNaturalLoopCollectState body (box-get rest)))]
         (match state
           [(OptNaturalLoopCollectState next-body next-worklist)
             (opt-natural-loop-collect-body
@@ -5116,7 +5156,7 @@
           reachable
           header
           body
-          rest
+          (box-get rest)
           (opt-natural-loop-preheader-candidate-add
             blocks
             header
@@ -5127,7 +5167,7 @@
           reachable
           header
           body
-          rest
+          (box-get rest)
           candidate))]))
 
 (define (opt-natural-loop-preheader-from-candidate
@@ -5185,14 +5225,14 @@
             reachable
             doms
             source
-            rest
+            (box-get rest)
             tail)]
         (if (and
           (opt-label-contains reachable header)
           (opt-dom-dominates? doms header source))
           (OptNaturalLoopCons
             (opt-natural-loop-build blocks reachable header source)
-            next)
+            (box next))
           next))]))
 
 (define (opt-cfg-natural-loop-blocks
@@ -5421,7 +5461,7 @@
   (match loops
     [(OptNaturalLoopNil) blocks]
     [(OptNaturalLoopCons loop rest)
-      (opt-licm-apply-loops rest (opt-licm-apply-loop blocks loop))]))
+      (opt-licm-apply-loops (box-get rest) (opt-licm-apply-loop blocks loop))]))
 
 (define (opt-licm-blocks [blocks : CompilerIrBlockList]) : CompilerIrBlockList
   (opt-licm-apply-loops (opt-cfg-natural-loops blocks) blocks))
@@ -5536,7 +5576,7 @@
 
 (defenum OptSccpEnv
   (OptSccpEnvNil)
-  (OptSccpEnvCons i64 OptSccpValue OptSccpEnv))
+  (OptSccpEnvCons i64 OptSccpValue (Box OptSccpEnv)))
 
 (defenum OptSccpState
   (OptSccpState OptLabelSet OptSccpEnv bool))
@@ -5575,20 +5615,24 @@
   (match env
     [(OptSccpEnvNil) (OptSccpUnknown)]
     [(OptSccpEnvCons id value rest)
-      (if (= id var)
-        value
-        (opt-sccp-env-lookup rest var))]))
+      (let
+        [rest : OptSccpEnv (box-get rest)]
+        (if (= id var)
+          value
+          (opt-sccp-env-lookup rest var)))]))
 
 (define (opt-sccp-env-remove [env : OptSccpEnv] [var : i64]) : OptSccpEnv
   (match env
     [(OptSccpEnvNil) (OptSccpEnvNil)]
     [(OptSccpEnvCons id value rest)
-      (if (= id var)
-        (opt-sccp-env-remove rest var)
-        (OptSccpEnvCons id value (opt-sccp-env-remove rest var)))]))
+      (let
+        [rest : OptSccpEnv (box-get rest)]
+        (if (= id var)
+          (opt-sccp-env-remove rest var)
+          (OptSccpEnvCons id value (box (opt-sccp-env-remove rest var)))))]))
 
 (define (opt-sccp-env-set [env : OptSccpEnv] [var : i64] [value : OptSccpValue]) : OptSccpEnv
-  (OptSccpEnvCons var value (opt-sccp-env-remove env var)))
+  (OptSccpEnvCons var value (box (opt-sccp-env-remove env var))))
 
 (define (opt-sccp-state-bind
   [state : OptSccpState]
@@ -6174,14 +6218,14 @@
 ;; either arm.
 (defenum OptGvnDefs
   (OptGvnDefsNil)
-  (OptGvnDefsCons i64 OptGvnDefs))
+  (OptGvnDefsCons i64 (Box OptGvnDefs)))
 
 (defenum OptGvnEntry
   (OptGvnEntry OptExprKey i64 String))
 
 (defenum OptGvnMap
   (OptGvnMapNil)
-  (OptGvnMapCons OptGvnEntry OptGvnMap))
+  (OptGvnMapCons OptGvnEntry (Box OptGvnMap)))
 
 ;; Number of times `var` appears as a definition site (instruction destination
 ;; or seeded parameter) in the collected value-source list.
@@ -6189,9 +6233,11 @@
   (match sources
     [(OptGvnDefsNil) 0]
     [(OptGvnDefsCons id rest)
-      (if (= id var)
-        (+ 1 (opt-gvn-count rest var))
-        (opt-gvn-count rest var))]))
+      (let
+        [rest : OptGvnDefs (box-get rest)]
+        (if (= id var)
+          (+ 1 (opt-gvn-count rest var))
+          (opt-gvn-count rest var)))]))
 
 ;; A var is reusable across dominance only when it has exactly one value source.
 (define (opt-gvn-stable-var? [sources : OptGvnDefs] [var : i64]) : bool
@@ -6263,7 +6309,7 @@
     [(IrParamCons param rest)
       (match param
         [(IrParam _ _ id)
-          (opt-gvn-sources-params (box-get rest) (OptGvnDefsCons id acc))])]))
+          (opt-gvn-sources-params (box-get rest) (OptGvnDefsCons id (box acc)))])]))
 
 (define (opt-gvn-sources-instrs
   [instrs : CompilerIrInstrList]
@@ -6277,7 +6323,7 @@
           (box-get rest)
           (if (= dst (- 0 1))
             acc
-            (OptGvnDefsCons dst acc))))]))
+            (OptGvnDefsCons dst (box acc)))))]))
 
 (define (opt-gvn-sources-blocks
   [blocks : CompilerIrBlockList]
@@ -6305,13 +6351,13 @@
         (and
           (opt-gvn-value-stable? sources l)
           (opt-gvn-value-stable? sources r)))
-        (OptGvnMapCons (OptGvnEntry (OptBinKey op l r) dst label) acc)
+        (OptGvnMapCons (OptGvnEntry (OptBinKey op l r) dst label) (box acc))
         acc)]
     [(IrInstrUnOp dst op v _)
       (if (and
         (opt-gvn-stable-var? sources dst)
         (opt-gvn-value-stable? sources v))
-        (OptGvnMapCons (OptGvnEntry (OptUnKey op v) dst label) acc)
+        (OptGvnMapCons (OptGvnEntry (OptUnKey op v) dst label) (box acc))
         acc)]
     [_ acc]))
 
@@ -6359,7 +6405,7 @@
             (opt-expr-key-eq ekey key)
             (opt-dom-strict-dominates? doms elabel use-label))
             evar
-            (opt-gvn-lookup rest doms use-label key))])]))
+            (opt-gvn-lookup (box-get rest) doms use-label key))])]))
 
 (define (opt-gvn-rewrite-instr
   [table : OptGvnMap]
@@ -6646,7 +6692,7 @@
 
 (defenum OptStringSet
   (OptStringNil)
-  (OptStringCons String OptStringSet))
+  (OptStringCons String (Box OptStringSet)))
 
 (defenum OptMaybeFunction
   (OptNoFunction)
@@ -6659,9 +6705,11 @@
   (match items
     [(OptStringNil) false]
     [(OptStringCons item rest)
-      (if (string-eq item name)
-        true
-        (opt-string-set-contains? rest name))]))
+      (let
+        [rest : OptStringSet (box-get rest)]
+        (if (string-eq item name)
+          true
+          (opt-string-set-contains? rest name)))]))
 
 (define (opt-function-list-defines?
   [functions : CompilerIrFunctionList]
@@ -6697,8 +6745,8 @@
         (if (opt-string-set-contains? reachable name)
           state
           (OptReachState
-            (OptStringCons name reachable)
-            (OptStringCons name worklist)))
+            (OptStringCons name (box reachable))
+            (OptStringCons name (box worklist))))
         state)]))
 
 (define (opt-reach-value
@@ -6900,7 +6948,7 @@
         [(OptStringNil) state]
         [(OptStringCons name rest)
           (let
-            [popped : OptReachState (OptReachState reachable rest)]
+            [popped : OptReachState (OptReachState reachable (box-get rest))]
             (match (opt-function-list-find functions name)
               [(OptSomeFunction func)
                 (opt-reach-process
@@ -7665,7 +7713,7 @@
   (match (opt-aggregate-allocation-candidates
     (opt-spans-program (opt-aggregate-positive-instrs)))
     [(OptAggregateAllocCandidateCons candidate rest)
-      (match rest
+      (match (box-get rest)
         [(OptAggregateAllocCandidateNil)
           (match candidate
             [(OptAggregateAllocCandidate base ty size ptrs accesses)
@@ -10878,7 +10926,7 @@
 
 (defenum OptAliasFacts
   (OptAliasNil)
-  (OptAliasCons OptAliasFact OptAliasFacts))
+  (OptAliasCons OptAliasFact (Box OptAliasFacts)))
 
 (defenum OptMaybeAliasKind
   (OptNoAliasKind)
@@ -10915,25 +10963,29 @@
   (match facts
     [(OptAliasNil) (OptNoAliasKind)]
     [(OptAliasCons fact rest)
-      (if (= (opt-alias-fact-var fact) var)
-        (OptSomeAliasKind (opt-alias-fact-kind fact))
-        (opt-alias-lookup rest var))]))
+      (let
+        [rest : OptAliasFacts (box-get rest)]
+        (if (= (opt-alias-fact-var fact) var)
+          (OptSomeAliasKind (opt-alias-fact-kind fact))
+          (opt-alias-lookup rest var)))]))
 
 ;; Drop any binding for `var` (a redefined/escaped temporary).
 (define (opt-alias-remove-var [facts : OptAliasFacts] [var : i64]) : OptAliasFacts
   (match facts
     [(OptAliasNil) (OptAliasNil)]
     [(OptAliasCons fact rest)
-      (if (= (opt-alias-fact-var fact) var)
-        (opt-alias-remove-var rest var)
-        (OptAliasCons fact (opt-alias-remove-var rest var)))]))
+      (let
+        [rest : OptAliasFacts (box-get rest)]
+        (if (= (opt-alias-fact-var fact) var)
+          (opt-alias-remove-var rest var)
+          (OptAliasCons fact (box (opt-alias-remove-var rest var)))))]))
 
 ;; Bind `var` to `kind`, replacing any prior binding for that var.
 (define (opt-alias-bind
   [facts : OptAliasFacts]
   [var : i64]
   [kind : OptAliasKind]) : OptAliasFacts
-  (OptAliasCons (OptAliasFact var kind) (opt-alias-remove-var facts var)))
+  (OptAliasCons (OptAliasFact var kind) (box (opt-alias-remove-var facts var))))
 
 (define (opt-alias-mark-unique [facts : OptAliasFacts] [var : i64]) : OptAliasFacts
   (opt-alias-bind facts var (OptAliasUnique)))
@@ -10985,18 +11037,18 @@
     [(OptAliasNil) (OptAliasNil)]
     [(OptAliasCons fact rest)
       (let
-        [rest2 : OptAliasFacts (opt-alias-intersect rest b)]
+        [rest2 : OptAliasFacts (opt-alias-intersect (box-get rest) b)]
         (if (opt-alias-contains?
           b
           (opt-alias-fact-var fact)
           (opt-alias-fact-kind fact))
-          (OptAliasCons fact rest2)
+          (OptAliasCons fact (box rest2))
           rest2))]))
 
 (define (opt-alias-facts-len [facts : OptAliasFacts]) : i64
   (match facts
     [(OptAliasNil) 0]
-    [(OptAliasCons _ rest) (+ 1 (opt-alias-facts-len rest))]))
+    [(OptAliasCons _ rest) (+ 1 (opt-alias-facts-len (box-get rest)))]))
 
 ;; A memory effect that can mutate or unknown-observe memory clears all facts.
 ;; `Alloc` is the one MemoryWrite that instead binds a fresh unique root, so it

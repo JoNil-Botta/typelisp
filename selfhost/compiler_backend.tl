@@ -17114,10 +17114,299 @@ tl_process_output:
   "tl_process_start:
     push %rbp
     movq %rsp, %rbp
-    leaq .L_tl_process_async_unsupported_msg(%rip), %rdi
-    movq $.L_tl_process_async_unsupported_msg_len, %rsi
-    movq $3, %rdx
+    push %rbx
+    push %r12
+    push %r13
+    push %r14
+    push %r15
+    subq $280, %rsp
+    movq %rdi, -8(%rbp)
+    movq $-1, -40(%rbp)
+    movq $-1, -56(%rbp)
+    movq $-1, -72(%rbp)
+    movq $-1, -80(%rbp)
+    movq $-1, -88(%rbp)
+    movq $-1, -152(%rbp)
+    movq $-1, -160(%rbp)
+    movq 0(%rdi), %rdi
+    call .L_tl_process_cstring_from_string
+    movq %rax, -16(%rbp)
+    movq -8(%rbp), %rax
+    movq 8(%rax), %r12
+    xorq %r13, %r13
+.L_tl_process_start_count_args:
+    cmpq $0, 0(%r12)
+    je .L_tl_process_start_count_args_done
+    incq %r13
+    movq 16(%r12), %r12
+    jmp .L_tl_process_start_count_args
+.L_tl_process_start_count_args_done:
+    movq %r13, -24(%rbp)
+    leaq 2(%r13), %rdi
+    shlq $3, %rdi
+    call tl_alloc
+    movq %rax, -32(%rbp)
+    movq -16(%rbp), %r10
+    movq %r10, 0(%rax)
+    movq -8(%rbp), %r10
+    movq 8(%r10), %r12
+    movq -32(%rbp), %r14
+    movq $1, %r15
+.L_tl_process_start_fill_argv:
+    cmpq $0, 0(%r12)
+    je .L_tl_process_start_fill_argv_done
+    movq 8(%r12), %rdi
+    call .L_tl_process_cstring_from_string
+    movq %rax, (%r14,%r15,8)
+    incq %r15
+    movq 16(%r12), %r12
+    jmp .L_tl_process_start_fill_argv
+.L_tl_process_start_fill_argv_done:
+    movq $0, (%r14,%r15,8)
+    movq $0, -120(%rbp)
+    movq -8(%rbp), %rax
+    movq 16(%rax), %r12
+    cmpq $1, 0(%r12)
+    jne .L_tl_process_start_cwd_done
+    movq 8(%r12), %rdi
+    call .L_tl_process_cstring_from_string
+    movq %rax, -120(%rbp)
+.L_tl_process_start_cwd_done:
+    movq -8(%rbp), %rax
+    movq 24(%rax), %rdi
+    call .L_tl_process_envp_from_overrides
+    movq %rax, -128(%rbp)
+    movq $0, -136(%rbp)
+    movq $0, -144(%rbp)
+    movq -8(%rbp), %rax
+    movq 32(%rax), %r12
+    cmpq $1, 0(%r12)
+    jne .L_tl_process_start_stdin_done
+    movq 8(%r12), %r12
+    movq 0(%r12), %rax
+    movq %rax, -136(%rbp)
+    movq 8(%r12), %rax
+    movq %rax, -144(%rbp)
+    leaq -192(%rbp), %rdi
+    movq $524288, %rsi
+    movq $293, %rax
+    syscall
+    testq %rax, %rax
+    js .L_tl_process_start_spawn_failed
+    movslq -192(%rbp), %rax
+    movq %rax, -152(%rbp)
+    movslq -188(%rbp), %rax
+    movq %rax, -160(%rbp)
+.L_tl_process_start_stdin_done:
+    leaq .L_tl_process_stdout_name(%rip), %rdi
+    xorq %rsi, %rsi
+    movq $319, %rax
+    syscall
+    testq %rax, %rax
+    js .L_tl_process_start_spawn_failed
+    movq %rax, -40(%rbp)
+    leaq .L_tl_process_stderr_name(%rip), %rdi
+    xorq %rsi, %rsi
+    movq $319, %rax
+    syscall
+    testq %rax, %rax
+    js .L_tl_process_start_spawn_failed
+    movq %rax, -56(%rbp)
+    leaq -176(%rbp), %rdi
+    movq $524288, %rsi
+    movq $293, %rax
+    syscall
+    testq %rax, %rax
+    js .L_tl_process_start_spawn_failed
+    movslq -176(%rbp), %rax
+    movq %rax, -72(%rbp)
+    movslq -172(%rbp), %rax
+    movq %rax, -80(%rbp)
+    movq $57, %rax
+    syscall
+    testq %rax, %rax
+    js .L_tl_process_start_spawn_failed
+    jz .L_tl_process_start_child
+    movq %rax, -88(%rbp)
+    movq -80(%rbp), %rdi
+    call .L_tl_process_close_fd
+    movq $-1, -80(%rbp)
+    movq -152(%rbp), %rdi
+    cmpq $0, %rdi
+    jl .L_tl_process_start_parent_stdin_done
+    call .L_tl_process_close_fd
+    movq $-1, -152(%rbp)
+    movq $1, -224(%rbp)
+    movq $0, -216(%rbp)
+    movq $0, -208(%rbp)
+    movq $0, -200(%rbp)
+    movq $13, %rdi
+    leaq -224(%rbp), %rsi
+    leaq -264(%rbp), %rdx
+    movq $8, %r10
+    movq $13, %rax
+    syscall
+    movq -160(%rbp), %rdi
+    movq -136(%rbp), %rsi
+    movq -144(%rbp), %rdx
+    call .L_tl_process_write_all
+    movq %rax, %r12
+    movq -160(%rbp), %rdi
+    call .L_tl_process_close_fd
+    movq $-1, -160(%rbp)
+    movq $13, %rdi
+    leaq -264(%rbp), %rsi
+    xorq %rdx, %rdx
+    movq $8, %r10
+    movq $13, %rax
+    syscall
+    testq %r12, %r12
+    jns .L_tl_process_start_parent_stdin_done
+    cmpq $-32, %r12
+    je .L_tl_process_start_parent_stdin_done
+    jmp .L_tl_process_start_wait_failed
+.L_tl_process_start_parent_stdin_done:
+    movq -72(%rbp), %rdi
+    call .L_tl_process_read_all
+    movq %rax, -112(%rbp)
+    movq -72(%rbp), %rdi
+    call .L_tl_process_close_fd
+    movq $-1, -72(%rbp)
+    movq -112(%rbp), %rax
+    cmpq $0, 8(%rax)
+    jne .L_tl_process_start_exec_failed
+    movq -88(%rbp), %rdi
+    movq -40(%rbp), %rsi
+    movq -56(%rbp), %rdx
+    call .L_tl_process_make_ok
+    jmp .L_tl_process_start_return
+.L_tl_process_start_child:
+    movq -72(%rbp), %rdi
+    call .L_tl_process_close_fd
+    movq -160(%rbp), %rdi
+    cmpq $0, %rdi
+    jl .L_tl_process_start_child_stdin_dup_done
+    call .L_tl_process_close_fd
+    movq -152(%rbp), %rdi
+    movq $0, %rsi
+    movq $33, %rax
+    syscall
+    testq %rax, %rax
+    js .L_tl_process_start_child_exec_failed
+    movq -152(%rbp), %rdi
+    call .L_tl_process_close_fd
+.L_tl_process_start_child_stdin_dup_done:
+    movq -40(%rbp), %rdi
+    movq $1, %rsi
+    movq $33, %rax
+    syscall
+    movq -56(%rbp), %rdi
+    movq $2, %rsi
+    movq $33, %rax
+    syscall
+    movq -40(%rbp), %rdi
+    call .L_tl_process_close_fd
+    movq -56(%rbp), %rdi
+    call .L_tl_process_close_fd
+    movq -120(%rbp), %rdi
+    testq %rdi, %rdi
+    jz .L_tl_process_start_child_cwd_done
+    movq $80, %rax
+    syscall
+    testq %rax, %rax
+    js .L_tl_process_start_child_exec_failed
+.L_tl_process_start_child_cwd_done:
+    movq -16(%rbp), %rdi
+    movq -32(%rbp), %rsi
+    movq -128(%rbp), %rdx
+    movq $59, %rax
+    syscall
+.L_tl_process_start_child_exec_failed:
+    movq $1, %rax
+    movq -80(%rbp), %rdi
+    leaq .L_tl_process_exec_marker(%rip), %rsi
+    movq $.L_tl_process_exec_marker_len, %rdx
+    syscall
+    movq $60, %rax
+    movq $127, %rdi
+    syscall
+.L_tl_process_start_exec_failed:
+    movq -88(%rbp), %rdi
+    cmpq $0, %rdi
+    jl .L_tl_process_start_spawn_failed
+    leaq -184(%rbp), %rsi
+    xorq %rdx, %rdx
+    xorq %r10, %r10
+    movq $61, %rax
+    syscall
+    jmp .L_tl_process_start_spawn_failed
+.L_tl_process_start_spawn_failed:
+    movq -40(%rbp), %rdi
+    cmpq $0, %rdi
+    jl .L_tl_process_start_spawn_close_stderr
+    call .L_tl_process_close_fd
+.L_tl_process_start_spawn_close_stderr:
+    movq -56(%rbp), %rdi
+    cmpq $0, %rdi
+    jl .L_tl_process_start_spawn_close_exec_read
+    call .L_tl_process_close_fd
+.L_tl_process_start_spawn_close_exec_read:
+    movq -72(%rbp), %rdi
+    cmpq $0, %rdi
+    jl .L_tl_process_start_spawn_close_exec_write
+    call .L_tl_process_close_fd
+.L_tl_process_start_spawn_close_exec_write:
+    movq -80(%rbp), %rdi
+    cmpq $0, %rdi
+    jl .L_tl_process_start_spawn_close_stdin_read
+    call .L_tl_process_close_fd
+.L_tl_process_start_spawn_close_stdin_read:
+    movq -152(%rbp), %rdi
+    cmpq $0, %rdi
+    jl .L_tl_process_start_spawn_close_stdin_write
+    call .L_tl_process_close_fd
+.L_tl_process_start_spawn_close_stdin_write:
+    movq -160(%rbp), %rdi
+    cmpq $0, %rdi
+    jl .L_tl_process_start_spawn_error
+    call .L_tl_process_close_fd
+.L_tl_process_start_spawn_error:
+    leaq .L_tl_process_spawn_msg(%rip), %rdi
+    movq $.L_tl_process_spawn_msg_len, %rsi
+    movq $1, %rdx
     call .L_tl_process_make_error
+    jmp .L_tl_process_start_return
+.L_tl_process_start_wait_failed:
+    movq -88(%rbp), %rdi
+    cmpq $0, %rdi
+    jl .L_tl_process_start_wait_close_stdout
+    leaq -184(%rbp), %rsi
+    xorq %rdx, %rdx
+    xorq %r10, %r10
+    movq $61, %rax
+    syscall
+.L_tl_process_start_wait_close_stdout:
+    movq -40(%rbp), %rdi
+    cmpq $0, %rdi
+    jl .L_tl_process_start_wait_close_stderr
+    call .L_tl_process_close_fd
+.L_tl_process_start_wait_close_stderr:
+    movq -56(%rbp), %rdi
+    cmpq $0, %rdi
+    jl .L_tl_process_start_wait_error
+    call .L_tl_process_close_fd
+.L_tl_process_start_wait_error:
+    leaq .L_tl_process_wait_msg(%rip), %rdi
+    movq $.L_tl_process_wait_msg_len, %rsi
+    movq $2, %rdx
+    call .L_tl_process_make_error
+.L_tl_process_start_return:
+    addq $280, %rsp
+    pop %r15
+    pop %r14
+    pop %r13
+    pop %r12
+    pop %rbx
     movq %rbp, %rsp
     pop %rbp
     ret
@@ -17125,10 +17414,82 @@ tl_process_output:
 tl_process_wait:
     push %rbp
     movq %rsp, %rbp
-    leaq .L_tl_process_async_unsupported_msg(%rip), %rdi
-    movq $.L_tl_process_async_unsupported_msg_len, %rsi
-    movq $3, %rdx
+    push %rbx
+    push %r12
+    push %r13
+    subq $72, %rsp
+    movq %rdi, -8(%rbp)
+    movq 0(%rdi), %rax
+    movq %rax, -16(%rbp)
+    movq 8(%rdi), %rax
+    movq %rax, -24(%rbp)
+    movq 16(%rdi), %rax
+    movq %rax, -32(%rbp)
+    movq -16(%rbp), %rdi
+    leaq -40(%rbp), %rsi
+    xorq %rdx, %rdx
+    xorq %r10, %r10
+    movq $61, %rax
+    syscall
+    testq %rax, %rax
+    js .L_tl_process_async_wait_failed
+    movq -24(%rbp), %rdi
+    call .L_tl_process_seek_start
+    testq %rax, %rax
+    js .L_tl_process_async_wait_failed
+    movq -24(%rbp), %rdi
+    call .L_tl_process_read_all
+    movq %rax, -48(%rbp)
+    movq -24(%rbp), %rdi
+    call .L_tl_process_close_fd
+    movq $-1, -24(%rbp)
+    movq -32(%rbp), %rdi
+    call .L_tl_process_seek_start
+    testq %rax, %rax
+    js .L_tl_process_async_wait_failed
+    movq -32(%rbp), %rdi
+    call .L_tl_process_read_all
+    movq %rax, -56(%rbp)
+    movq -32(%rbp), %rdi
+    call .L_tl_process_close_fd
+    movq $-1, -32(%rbp)
+    movl -40(%rbp), %eax
+    movl %eax, %ecx
+    andl $127, %ecx
+    cmpl $0, %ecx
+    jne .L_tl_process_async_wait_status_signal
+    shrl $8, %eax
+    andl $255, %eax
+    jmp .L_tl_process_async_wait_status_ready
+.L_tl_process_async_wait_status_signal:
+    movl %ecx, %eax
+    addl $128, %eax
+.L_tl_process_async_wait_status_ready:
+    movslq %eax, %rdi
+    movq -48(%rbp), %rsi
+    movq -56(%rbp), %rdx
+    call .L_tl_process_make_ok
+    jmp .L_tl_process_async_wait_return
+.L_tl_process_async_wait_failed:
+    movq -24(%rbp), %rdi
+    cmpq $0, %rdi
+    jl .L_tl_process_async_wait_close_stderr
+    call .L_tl_process_close_fd
+.L_tl_process_async_wait_close_stderr:
+    movq -32(%rbp), %rdi
+    cmpq $0, %rdi
+    jl .L_tl_process_async_wait_error
+    call .L_tl_process_close_fd
+.L_tl_process_async_wait_error:
+    leaq .L_tl_process_wait_msg(%rip), %rdi
+    movq $.L_tl_process_wait_msg_len, %rsi
+    movq $2, %rdx
     call .L_tl_process_make_error
+.L_tl_process_async_wait_return:
+    addq $72, %rsp
+    pop %r13
+    pop %r12
+    pop %rbx
     movq %rbp, %rsp
     pop %rbp
     ret

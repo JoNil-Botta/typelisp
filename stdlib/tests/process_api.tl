@@ -97,26 +97,6 @@
         (assert-owned-string-eq (process-error-message error) message message))]
     [(OkProcessChild _) (panic message)]))
 
-(define (assert-process-child-unsupported
-  [result : ResultProcessChild]
-  [message : String]) : unit
-  (match result
-    [(ErrProcessChild error)
-      (begin
-        (assert-true (process-error-unsupported? error) message)
-        (assert-owned-string-eq (process-error-message error) message message))]
-    [(OkProcessChild _) (panic message)]))
-
-(define (assert-process-output-unsupported
-  [result : ResultProcessOutput]
-  [message : String]) : unit
-  (match result
-    [(ErrProcessOutput error)
-      (begin
-        (assert-true (process-error-unsupported? error) message)
-        (assert-owned-string-eq (process-error-message error) message message))]
-    [(OkProcessOutput _) (panic message)]))
-
 (define (main) : i64
   (let
     [args : ProcessStringList
@@ -233,10 +213,4 @@
         (process-child-started?
           (ErrProcessChild (ProcessUnsupported "unsupported")))
         "process child unsupported predicate")
-      (assert-process-child-unsupported
-        (process-start command)
-        "process: async child handles are not supported by this runtime")
-      (assert-process-output-unsupported
-        (process-wait (ProcessChild 1 2 3))
-        "process: async child handles are not supported by this runtime")
       42)))

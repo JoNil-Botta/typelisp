@@ -2532,26 +2532,38 @@
           (and
             (compiler-backend-string-contains?
               asm
-              "process: async child handles are not supported by this runtime")
+              ".L_tl_process_start_child:\n")
             (and
               (compiler-backend-string-contains?
                 asm
-                "    call tl_process_start\n")
+                ".L_tl_process_async_wait_status_ready:\n")
               (and
                 (compiler-backend-string-contains?
                   asm
-                  "    call tl_process_wait\n")
+                  "    call tl_process_start\n")
                 (and
-                  (not
-                    (compiler-backend-string-contains?
-                      asm
-                      ".extern tl_process_start\n"))
+                  (compiler-backend-string-contains?
+                    asm
+                    "    call tl_process_wait\n")
                   (and
                     (not
                       (compiler-backend-string-contains?
                         asm
-                        ".extern tl_process_wait\n"))
-                    (compiler-backend-string-contains? asm "tl_alloc:\n"))))))))]
+                        ".extern tl_process_start\n"))
+                    (and
+                      (not
+                        (compiler-backend-string-contains?
+                          asm
+                          ".extern tl_process_wait\n"))
+                      (and
+                        (compiler-backend-string-contains?
+                          asm
+                          "    movq $57, %rax\n")
+                        (and
+                          (compiler-backend-string-contains?
+                            asm
+                            "    movq $61, %rax\n")
+                          (compiler-backend-string-contains? asm "tl_alloc:\n")))))))))))]
     [(ErrCompilerBackend _) false]))
 
 (define (compiler-backend-process-output-ok?) : bool

@@ -291,18 +291,42 @@
   (let
     [slots : (Array StringI64MapSlot) (string-i64-map-slots map)]
     [capacity : i64 (array-length slots)]
-    (match (string-i64-map-probe-borrowed
-      slots
-      capacity
-      key
-      (hash-string key))
-      [(StringI64MapProbeFound index)
-        (match (array-ref slots index)
-          [(StringI64MapOccupied _ value _) (StringI64MapFound value)]
-          [(StringI64MapEmpty) (StringI64MapMissing)]
-          [(StringI64MapTombstone) (StringI64MapMissing)])]
-      [(StringI64MapProbeAbsent _) (StringI64MapMissing)]
-      [(StringI64MapProbeFull) (StringI64MapMissing)])))
+    (if (<= capacity 0)
+      (StringI64MapMissing)
+      (let
+        [hash : i64 (hash-string key)]
+        [cursor : i64 (string-i64-map-normalized-bucket-index hash capacity)]
+        [walked : i64 0]
+        (begin
+          (while (< walked capacity)
+            (match (array-ref slots cursor)
+              [(StringI64MapEmpty)
+                (return (StringI64MapMissing))]
+              [(StringI64MapTombstone)
+                (let
+                  [next : i64 (+ cursor 1)]
+                  (begin
+                    (set!
+                      cursor
+                      (if (>= next capacity)
+                        0
+                        next))
+                    (set! walked (+ walked 1))))]
+              [(StringI64MapOccupied slot-key value slot-hash)
+                (if (if (= slot-hash hash)
+                  (string-eq slot-key key)
+                  false)
+                  (return (StringI64MapFound value))
+                  (let
+                    [next : i64 (+ cursor 1)]
+                    (begin
+                      (set!
+                        cursor
+                        (if (>= next capacity)
+                          0
+                          next))
+                      (set! walked (+ walked 1))))) ]))
+          (StringI64MapMissing))))))
 
 ;: Compatibility owned-key lookup wrapper for existing callers.
 (define (string-i64-map-get [map : StringI64Map] [key : String]) : StringI64MapLookup
@@ -312,9 +336,45 @@
 (define (string-i64-map-contains-borrowed?
   [map : StringI64Map]
   [key : (& key str)]) : bool
-  (match (string-i64-map-get-borrowed map key)
-    [(StringI64MapFound _) true]
-    [(StringI64MapMissing) false]))
+  (let
+    [slots : (Array StringI64MapSlot) (string-i64-map-slots map)]
+    [capacity : i64 (array-length slots)]
+    (if (<= capacity 0)
+      false
+      (let
+        [hash : i64 (hash-string key)]
+        [cursor : i64 (string-i64-map-normalized-bucket-index hash capacity)]
+        [walked : i64 0]
+        (begin
+          (while (< walked capacity)
+            (match (array-ref slots cursor)
+              [(StringI64MapEmpty)
+                (return false)]
+              [(StringI64MapTombstone)
+                (let
+                  [next : i64 (+ cursor 1)]
+                  (begin
+                    (set!
+                      cursor
+                      (if (>= next capacity)
+                        0
+                        next))
+                    (set! walked (+ walked 1))))]
+              [(StringI64MapOccupied slot-key _ slot-hash)
+                (if (if (= slot-hash hash)
+                  (string-eq slot-key key)
+                  false)
+                  (return true)
+                  (let
+                    [next : i64 (+ cursor 1)]
+                    (begin
+                      (set!
+                        cursor
+                        (if (>= next capacity)
+                          0
+                          next))
+                      (set! walked (+ walked 1))))) ]))
+          false)))))
 
 ;: Compatibility owned-key containment wrapper for existing callers.
 (define (string-i64-map-contains? [map : StringI64Map] [key : String]) : bool
@@ -339,25 +399,73 @@
     [slots : (Array StringI64MapSlot) (string-i64-map-slots map)]
     [capacity : i64 (array-length slots)]
     [hash : i64 (hash-string (& key))]
-    (match (string-i64-map-probe-normalized slots capacity key hash)
-      [(StringI64MapProbeFound index)
+    (if (<= capacity 0)
+      (StringI64MapInsertFull map)
+      (let
+        [cursor : i64 (string-i64-map-normalized-bucket-index hash capacity)]
+        [walked : i64 0]
+        [first : i64 -1]
         (begin
-          (array-set! slots index (StringI64MapOccupied key value hash))
-          (StringI64MapInsertOk map))]
-      [(StringI64MapProbeAbsent index)
-        (let
-          [reused-tombstone : bool
-            (string-i64-map-slot-tombstone? (array-ref slots index))]
-          (begin
-            (array-set! slots index (StringI64MapOccupied key value hash))
-            (StringI64MapInsertOk
-              (StringI64Map
-                slots
-                (+ (string-i64-map-len map) 1)
-                (if reused-tombstone
-                  (- (string-i64-map-deleted map) 1)
-                  (string-i64-map-deleted map))))))]
-      [(StringI64MapProbeFull) (StringI64MapInsertFull map)])))
+          (while (< walked capacity)
+            (match (array-ref slots cursor)
+              [(StringI64MapEmpty)
+                (let
+                  [index : i64
+                    (if (>= first 0)
+                      first
+                      cursor)]
+                  [reused-tombstone : bool (>= first 0)]
+                  [deleted : i64 (string-i64-map-deleted map)]
+                  (begin
+                    (array-set! slots index (StringI64MapOccupied key value hash))
+                    (return
+                      (StringI64MapInsertOk
+                        (StringI64Map
+                          slots
+                          (+ (string-i64-map-len map) 1)
+                          (if reused-tombstone
+                            (- deleted 1)
+                            deleted))))))]
+              [(StringI64MapTombstone)
+                (let
+                  [next : i64 (+ cursor 1)]
+                  (begin
+                    (if (< first 0)
+                      (set! first cursor)
+                      unit)
+                    (set!
+                      cursor
+                      (if (>= next capacity)
+                        0
+                        next))
+                    (set! walked (+ walked 1))))]
+              [(StringI64MapOccupied slot-key _ slot-hash)
+                (if (if (= slot-hash hash)
+                  (string-eq slot-key key)
+                  false)
+                  (begin
+                    (array-set! slots cursor (StringI64MapOccupied key value hash))
+                    (return (StringI64MapInsertOk map)))
+                  (let
+                    [next : i64 (+ cursor 1)]
+                    (begin
+                      (set!
+                        cursor
+                        (if (>= next capacity)
+                          0
+                          next))
+                      (set! walked (+ walked 1))))) ]))
+          (if (>= first 0)
+            (let
+              [deleted : i64 (string-i64-map-deleted map)]
+              (begin
+                (array-set! slots first (StringI64MapOccupied key value hash))
+                (StringI64MapInsertOk
+                  (StringI64Map
+                    slots
+                    (+ (string-i64-map-len map) 1)
+                    (- deleted 1)))))
+            (StringI64MapInsertFull map)))))))
 
 ;: Remove borrowed `key`, replacing its live slot with a tombstone (so probing
 ;: past it still finds later collided keys) and returning the updated map with
@@ -371,21 +479,49 @@
   (let
     [slots : (Array StringI64MapSlot) (string-i64-map-slots map)]
     [capacity : i64 (array-length slots)]
-    (match (string-i64-map-probe-borrowed
-      slots
-      capacity
-      key
-      (hash-string key))
-      [(StringI64MapProbeFound index)
+    (if (<= capacity 0)
+      (StringI64MapRemoveMissing map)
+      (let
+        [hash : i64 (hash-string key)]
+        [cursor : i64 (string-i64-map-normalized-bucket-index hash capacity)]
+        [walked : i64 0]
         (begin
-          (array-set! slots index (StringI64MapTombstone))
-          (StringI64MapRemoveOk
-            (StringI64Map
-              slots
-              (- (string-i64-map-len map) 1)
-              (+ (string-i64-map-deleted map) 1))))]
-      [(StringI64MapProbeAbsent _) (StringI64MapRemoveMissing map)]
-      [(StringI64MapProbeFull) (StringI64MapRemoveMissing map)])))
+          (while (< walked capacity)
+            (match (array-ref slots cursor)
+              [(StringI64MapEmpty)
+                (return (StringI64MapRemoveMissing map))]
+              [(StringI64MapTombstone)
+                (let
+                  [next : i64 (+ cursor 1)]
+                  (begin
+                    (set!
+                      cursor
+                      (if (>= next capacity)
+                        0
+                        next))
+                    (set! walked (+ walked 1))))]
+              [(StringI64MapOccupied slot-key _ slot-hash)
+                (if (if (= slot-hash hash)
+                  (string-eq slot-key key)
+                  false)
+                  (begin
+                    (array-set! slots cursor (StringI64MapTombstone))
+                    (return
+                      (StringI64MapRemoveOk
+                        (StringI64Map
+                          slots
+                          (- (string-i64-map-len map) 1)
+                          (+ (string-i64-map-deleted map) 1)))))
+                  (let
+                    [next : i64 (+ cursor 1)]
+                    (begin
+                      (set!
+                        cursor
+                        (if (>= next capacity)
+                          0
+                          next))
+                      (set! walked (+ walked 1))))) ]))
+          (StringI64MapRemoveMissing map))))))
 
 ;: Compatibility owned-key remove wrapper for existing callers.
 (define (string-i64-map-remove [map : StringI64Map] [key : String]) : StringI64MapRemoveResult

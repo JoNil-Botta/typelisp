@@ -63,7 +63,7 @@ Usage:
     typelisp build [--manifest-path <typelisp.pkg>] [--target <target>] [--backend-mode <mode>] [--opt-level <0|1|2|3>] [--stdlib-root <dir>...]
     typelisp clean [<file.tl>] [--manifest-path <typelisp.pkg>] [--dry-run]
     typelisp fmt [--check] <file.tl>... [--stdlib-root <dir>...]
-    typelisp lint <file.tl> [--stdlib-root <dir>...]
+    typelisp lint <file.tl> [--check] [--stdlib-root <dir>...]
     typelisp test [--check] <file.tl> [--target <target>] [--opt-level <0|1|2|3>] [--stdlib-root <dir>...]
     typelisp doc <file.tl> [-o <out.md>] [--stdlib-root <dir>...]
     typelisp doc --test <file.tl> [--stdlib-root <dir>...]
@@ -92,6 +92,8 @@ Options for clean:
     --manifest-path <file>         Defaults to nearest typelisp.pkg upward
 Options for fmt:
     --check                        Report files that would change without writing them
+Options for lint:
+    --check                        Exit non-zero when lint findings are present
 Options for test:
     --check                        Typecheck inline tests without running them
     --opt-level <0|1|2|3>          Select selfhost test harness optimization

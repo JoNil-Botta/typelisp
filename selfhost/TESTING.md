@@ -393,8 +393,9 @@ TYPELISP_BIN=$tl ./scripts/verify-selfhost.sh
 scripts/verify-no-rust-stage0.sh
 ```
 
-`scripts/check-tl-lint.sh` runs `typelisp lint` over tracked TypeLisp source
-units and fails CI on any finding.
+`scripts/check-tl-lint.sh` runs `typelisp lint <file.tl> --check` over tracked
+TypeLisp source units and fails CI on any finding. Plain `typelisp lint
+<file.tl>` remains warn-only for reviewable cleanup slices.
 
 Run the tests that match the layer you touched. On non-Linux platforms, scripts
 that require native `as`/`ld` either no-op by design or should be run through a

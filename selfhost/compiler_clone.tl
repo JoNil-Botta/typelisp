@@ -53,10 +53,10 @@
     [(AstTyNever) true]
     [(AstTyString) true]
     [(AstTyTuple elems) (clone-field-type-list-able? elems names)]
-    [(AstTyArray elem _) (clone-field-type-able? elem names)]
-    [(AstTyDynArray elem) (clone-field-type-able? elem names)]
-    [(AstTyBox elem) (clone-field-type-able? elem names)]
-    [(AstTyRegion _ inner) (clone-field-type-able? inner names)]
+    [(AstTyArray elem _) (clone-field-type-able? (box-get elem) names)]
+    [(AstTyDynArray elem) (clone-field-type-able? (box-get elem) names)]
+    [(AstTyBox elem) (clone-field-type-able? (box-get elem) names)]
+    [(AstTyRegion _ inner) (clone-field-type-able? (box-get inner) names)]
     [(AstTyVar name) (clone-name-list-contains? names name)]
     [(AstTyEnum name) (clone-name-list-contains? names name)]
     [(AstTyStruct name) (clone-name-list-contains? names name)]
@@ -263,12 +263,12 @@
 ;; True iff `tail` is the enum itself, either directly or through a Box tail.
 (define (clone-tail-is-self? [tail : AstType] [self-name : String]) : bool
   (match tail
-    [(AstTyBox inner) (clone-type-is-name? inner self-name)]
+    [(AstTyBox inner) (clone-type-is-name? (box-get inner) self-name)]
     [_ (clone-type-is-name? tail self-name)]))
 
 (define (clone-tail-is-boxed-self? [tail : AstType] [self-name : String]) : bool
   (match tail
-    [(AstTyBox inner) (clone-type-is-name? inner self-name)]
+    [(AstTyBox inner) (clone-type-is-name? (box-get inner) self-name)]
     [_ false]))
 
 ;; True iff `v` is a two-field variant whose SECOND field is the enum itself

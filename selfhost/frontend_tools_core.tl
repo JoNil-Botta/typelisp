@@ -390,33 +390,35 @@
       (front-cat3
         "Func(["
         (front-type-list-render args)
-        (front-cat3 "], " (front-type-render ret) ")"))]
+        (front-cat3 "], " (front-type-render (box-get ret)) ")"))]
     [(AstTyTuple elems)
       (front-cat3 "Tuple([" (front-type-list-render elems) "])")]
     [(AstTyArray elem count)
       (front-cat3
         "Array("
-        (front-type-render elem)
+        (front-type-render (box-get elem))
         (front-cat3 ", " (int->string count) ")"))]
-    [(AstTyDynArray elem) (front-cat3 "DynArray(" (front-type-render elem) ")")]
-    [(AstTyBox elem) (front-cat3 "Box(" (front-type-render elem) ")")]
-    [(AstTyPtr elem) (front-cat3 "Ptr(" (front-type-render elem) ")")]
-    [(AstTyMutPtr elem) (front-cat3 "MutPtr(" (front-type-render elem) ")")]
+    [(AstTyDynArray elem)
+      (front-cat3 "DynArray(" (front-type-render (box-get elem)) ")")]
+    [(AstTyBox elem) (front-cat3 "Box(" (front-type-render (box-get elem)) ")")]
+    [(AstTyPtr elem) (front-cat3 "Ptr(" (front-type-render (box-get elem)) ")")]
+    [(AstTyMutPtr elem)
+      (front-cat3 "MutPtr(" (front-type-render (box-get elem)) ")")]
     [(AstTyRef region inner)
       (front-cat3
         "Ref(\""
         region
-        (front-cat3 "\", " (front-type-render inner) ")"))]
+        (front-cat3 "\", " (front-type-render (box-get inner)) ")"))]
     [(AstTyMutRef region inner)
       (front-cat3
         "MutRef(\""
         region
-        (front-cat3 "\", " (front-type-render inner) ")"))]
+        (front-cat3 "\", " (front-type-render (box-get inner)) ")"))]
     [(AstTyRegion region inner)
       (front-cat3
         "Region(\""
         region
-        (front-cat3 "\", " (front-type-render inner) ")"))]
+        (front-cat3 "\", " (front-type-render (box-get inner)) ")"))]
     [(AstTyEnum name) (front-cat3 "Enum(\"" name "\")")]
     [(AstTyStruct name) (front-cat3 "Struct(\"" name "\")")]
     [(AstTyVar name) (front-cat3 "Var(\"" name "\")")]))

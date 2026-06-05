@@ -992,8 +992,8 @@
       (match (parse-ast-type dispatch inner)
         [(OkAstType inner-ty)
           (if mutable
-            (OkAstType (AstTyMutRef region inner-ty))
-            (OkAstType (AstTyRef region inner-ty)))]
+            (OkAstType (ast-ty-mut-ref region inner-ty))
+            (OkAstType (ast-ty-ref region inner-ty)))]
         [(ErrAstType message) (ErrAstType message)])]
     [(SCons _ (SCons _ (SNil)))
       (ErrAstType "parse: reference lifetime must be an identifier")]
@@ -1033,7 +1033,7 @@
         (cond
           [(= tag (compiler-parse-tag-ty-func))
             (match (parse-ast-func-type-parts dispatch rest)
-              [(OkAstFuncTypeParts args ret) (OkAstType (AstTyFunc args ret))]
+              [(OkAstFuncTypeParts args ret) (OkAstType (ast-ty-func args ret))]
               [(ErrAstFuncTypeParts message) (ErrAstType message)])]
           [(= tag (compiler-parse-tag-ty-tuple))
             (match (parse-ast-type-list dispatch rest)
@@ -1043,11 +1043,11 @@
             (match rest
               [(SCons elem (SNil))
                 (match (parse-ast-type dispatch elem)
-                  [(OkAstType elem-ty) (OkAstType (AstTyDynArray elem-ty))]
+                  [(OkAstType elem-ty) (OkAstType (ast-ty-dyn-array elem-ty))]
                   [(ErrAstType message) (ErrAstType message)])]
               [(SCons elem (SCons (SInt size) (SNil)))
                 (match (parse-ast-type dispatch elem)
-                  [(OkAstType elem-ty) (OkAstType (AstTyArray elem-ty size))]
+                  [(OkAstType elem-ty) (OkAstType (ast-ty-array elem-ty size))]
                   [(ErrAstType message) (ErrAstType message)])]
               [(SCons _ (SCons _ (SNil)))
                 (ErrAstType "parse: array size must be integer")]
@@ -1056,21 +1056,21 @@
             (match rest
               [(SCons elem (SNil))
                 (match (parse-ast-type dispatch elem)
-                  [(OkAstType elem-ty) (OkAstType (AstTyPtr elem-ty))]
+                  [(OkAstType elem-ty) (OkAstType (ast-ty-ptr elem-ty))]
                   [(ErrAstType message) (ErrAstType message)])]
               [_ (ErrAstType "parse: Ptr expects exactly one type")])]
           [(= tag (compiler-parse-tag-ty-mut-ptr))
             (match rest
               [(SCons elem (SNil))
                 (match (parse-ast-type dispatch elem)
-                  [(OkAstType elem-ty) (OkAstType (AstTyMutPtr elem-ty))]
+                  [(OkAstType elem-ty) (OkAstType (ast-ty-mut-ptr elem-ty))]
                   [(ErrAstType message) (ErrAstType message)])]
               [_ (ErrAstType "parse: MutPtr expects exactly one type")])]
           [(= tag (compiler-parse-tag-ty-box))
             (match rest
               [(SCons elem (SNil))
                 (match (parse-ast-type dispatch elem)
-                  [(OkAstType elem-ty) (OkAstType (AstTyBox elem-ty))]
+                  [(OkAstType elem-ty) (OkAstType (ast-ty-box elem-ty))]
                   [(ErrAstType message) (ErrAstType message)])]
               [_ (ErrAstType "parse: Box expects exactly one type")])]
           [(= tag (compiler-parse-tag-ty-ref))
@@ -1082,7 +1082,7 @@
               [(SCons (SSym region) (SCons inner (SNil)))
                 (match (parse-ast-type dispatch inner)
                   [(OkAstType inner-ty)
-                    (OkAstType (AstTyRegion region inner-ty))]
+                    (OkAstType (ast-ty-region region inner-ty))]
                   [(ErrAstType message) (ErrAstType message)])]
               [(SCons _ (SCons _ (SNil)))
                 (ErrAstType "parse: region name must be an identifier")]
@@ -3648,6 +3648,70 @@
 (define (compiler-parse-raw-pointer-source) : String
   "(extern raw-map : (-> (Ptr i64) (MutPtr (Ptr u8))))")
 
+(define (compiler-parse-type-ptr-u8? [ty : AstType]) : bool
+  (match ty
+    [(AstTyPtr elem)
+      (match (box-get elem)
+        [(AstTyU8) true]
+        [_ false])]
+    [_ false]))
+
+(define (compiler-parse-type-ptr-i64? [ty : AstType]) : bool
+  (match ty
+    [(AstTyPtr elem)
+      (match (box-get elem)
+        [(AstTyI64) true]
+        [_ false])]
+    [_ false]))
+
+(define (compiler-parse-type-mut-ptr-u8? [ty : AstType]) : bool
+  (match ty
+    [(AstTyMutPtr elem)
+      (match (box-get elem)
+        [(AstTyU8) true]
+        [_ false])]
+    [_ false]))
+
+(define (compiler-parse-type-mut-ptr-ptr-u8? [ty : AstType]) : bool
+  (match ty
+    [(AstTyMutPtr elem) (compiler-parse-type-ptr-u8? (box-get elem))]
+    [_ false]))
+
+(define (compiler-parse-type-ref-string? [ty : AstType] [region : String]) : bool
+  (match ty
+    [(AstTyRef actual inner)
+      (and
+        (string-eq actual region)
+        (match (box-get inner)
+          [(AstTyString) true]
+          [_ false]))]
+    [_ false]))
+
+(define (compiler-parse-type-ref-str? [ty : AstType] [region : String]) : bool
+  (match ty
+    [(AstTyRef actual inner)
+      (and
+        (string-eq actual region)
+        (match (box-get inner)
+          [(AstTyStr) true]
+          [_ false]))]
+    [_ false]))
+
+(define (compiler-parse-type-mut-ref-dyn-array-i64?
+  [ty : AstType]
+  [region : String]) : bool
+  (match ty
+    [(AstTyMutRef actual inner)
+      (and
+        (string-eq actual region)
+        (match (box-get inner)
+          [(AstTyDynArray elem)
+            (match (box-get elem)
+              [(AstTyI64) true]
+              [_ false])]
+          [_ false]))]
+    [_ false]))
+
 (define (compiler-parse-extern-metadata-source) : String
   "(extern local-call (:abi c) (:symbol \"foreign_exact\") (:link-lib \"m\") (:link-search \"native/lib\") (:link-arg \"-Wl,--as-needed\") : (-> i64 i64))")
 
@@ -3674,15 +3738,16 @@
                   (match ty
                     [(AstTyFunc args ret)
                       (match args
-                        [(AstTypeCons (AstTyPtr (AstTyI64)) tail)
-                          (let
-                            [tail : AstTypeList (box-get tail)]
-                            (match tail
-                              [(AstTypeNil)
-                                (match ret
-                                  [(AstTyMutPtr (AstTyPtr (AstTyU8))) true]
-                                  [_ false])]
-                              [_ false]))]
+                        [(AstTypeCons first tail)
+                          (and
+                            (compiler-parse-type-ptr-i64? first)
+                            (let
+                              [tail : AstTypeList (box-get tail)]
+                              (match tail
+                                [(AstTypeNil)
+                                  (compiler-parse-type-mut-ptr-ptr-u8?
+                                    (box-get ret))]
+                                [_ false])))]
                         [_ false])]
                     [_ false]))]
               [_ false]))]
@@ -3743,7 +3808,7 @@
                                   [tail : AstTypeList (box-get tail)]
                                   (match tail
                                     [(AstTypeNil)
-                                      (match ret
+                                      (match (box-get ret)
                                         [(AstTyI64) true]
                                         [_ false])]
                                     [_ false]))]
@@ -3773,34 +3838,39 @@
                       (match ty
                         [(AstTyFunc args ret)
                           (match args
-                            [(AstTypeCons (AstTyMutPtr (AstTyU8)) rest0)
-                              (let
-                                [rest0 : AstTypeList (box-get rest0)]
-                                (match rest0
-                                  [(AstTypeCons (AstTyI64) rest1)
-                                    (let
-                                      [rest1 : AstTypeList (box-get rest1)]
-                                      (match rest1
-                                        [(AstTypeCons
-                                            (AstTyPtr (AstTyU8))
-                                            rest2)
-                                          (let
-                                            [rest2 : AstTypeList
-                                              (box-get rest2)]
-                                            (match rest2
-                                              [(AstTypeCons (AstTyF64) rest3)
-                                                (let
-                                                  [rest3 : AstTypeList
-                                                    (box-get rest3)]
-                                                  (match rest3
-                                                    [(AstTypeNil)
-                                                      (match ret
-                                                        [(AstTyI32) true]
-                                                        [_ false])]
-                                                    [_ false]))]
-                                              [_ false]))]
-                                        [_ false]))]
-                                  [_ false]))]
+                            [(AstTypeCons first rest0)
+                              (and
+                                (compiler-parse-type-mut-ptr-u8? first)
+                                (let
+                                  [rest0 : AstTypeList (box-get rest0)]
+                                  (match rest0
+                                    [(AstTypeCons (AstTyI64) rest1)
+                                      (let
+                                        [rest1 : AstTypeList (box-get rest1)]
+                                        (match rest1
+                                          [(AstTypeCons third rest2)
+                                            (and
+                                              (compiler-parse-type-ptr-u8?
+                                                third)
+                                              (let
+                                                [rest2 : AstTypeList
+                                                  (box-get rest2)]
+                                                (match rest2
+                                                  [(AstTypeCons
+                                                      (AstTyF64)
+                                                      rest3)
+                                                    (let
+                                                      [rest3 : AstTypeList
+                                                        (box-get rest3)]
+                                                      (match rest3
+                                                        [(AstTypeNil)
+                                                          (match (box-get ret)
+                                                            [(AstTyI32) true]
+                                                            [_ false])]
+                                                        [_ false]))]
+                                                  [_ false])))]
+                                          [_ false]))]
+                                    [_ false])))]
                             [_ false])]
                         [_ false]))))]
               [_ false]))]
@@ -3831,38 +3901,31 @@
             (match rest
               [(AstDeclNil)
                 (match params
-                  [(AstParamCons
-                      (AstParam _ (AstTyRef region (AstTyString)) false)
-                      rest0)
+                  [(AstParamCons (AstParam _ first-ty false) rest0)
                     (let
                       [rest0 : AstParamList (box-get rest0)]
-                      (match rest0
-                        [(AstParamCons
-                            (AstParam _ (AstTyRef view-region (AstTyStr)) false)
-                            rest1)
-                          (let
-                            [rest1 : AstParamList (box-get rest1)]
-                            (match rest1
-                              [(AstParamCons
-                                  (AstParam
-                                    _
-                                    (AstTyMutRef
-                                      phase
-                                      (AstTyDynArray (AstTyI64)))
-                                    false)
-                                  rest2)
-                                (let
-                                  [rest2 : AstParamList (box-get rest2)]
-                                  (match rest2
-                                    [(AstParamNil)
-                                      (and
-                                        (string-eq region "r")
-                                        (and
-                                          (string-eq view-region "r")
-                                          (string-eq phase "phase")))]
-                                    [_ false]))]
-                              [_ false]))]
-                        [_ false]))]
+                      (and
+                        (compiler-parse-type-ref-string? first-ty "r")
+                        (match rest0
+                          [(AstParamCons (AstParam _ second-ty false) rest1)
+                            (let
+                              [rest1 : AstParamList (box-get rest1)]
+                              (and
+                                (compiler-parse-type-ref-str? second-ty "r")
+                                (match rest1
+                                  [(AstParamCons
+                                      (AstParam _ third-ty false)
+                                      rest2)
+                                    (let
+                                      [rest2 : AstParamList (box-get rest2)]
+                                      (match rest2
+                                        [(AstParamNil)
+                                          (compiler-parse-type-mut-ref-dyn-array-i64?
+                                            third-ty
+                                            "phase")]
+                                        [_ false]))]
+                                  [_ false])))]
+                          [_ false])))]
                   [_ false])]
               [_ false]))]
         [_ false])]
@@ -4074,12 +4137,18 @@
             [tail : AstDeclList (box-get tail)]
             (match tail
               [(AstDeclCons
-                  (AstDeclUnsafe
-                    (AstDeclExtern extern-name _ (AstTyFunc _ (AstTyI64))))
+                  (AstDeclUnsafe (AstDeclExtern extern-name _ extern-ty))
                   AstDeclNil)
                 (and
                   (string-eq name "danger")
-                  (string-eq extern-name "raw-call"))]
+                  (and
+                    (string-eq extern-name "raw-call")
+                    (match extern-ty
+                      [(AstTyFunc _ ret)
+                        (match (box-get ret)
+                          [(AstTyI64) true]
+                          [_ false])]
+                      [_ false])))]
               [_ false]))]
         [_ false])]
     [(ErrAstProgram _) false]))

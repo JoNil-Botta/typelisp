@@ -999,7 +999,7 @@
         (AstExternAbiC)
         (compiler-load-package-user-symbol logical)
         AstExternLinkInputNil)
-      (AstTyFunc (compiler-load-param-type-list params) ret))))
+      (ast-ty-func (compiler-load-param-type-list params) ret))))
 
 (define (compiler-load-package-transform-decl
   [entry-path : String]

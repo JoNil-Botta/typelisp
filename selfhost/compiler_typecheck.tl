@@ -945,7 +945,7 @@
                     [(ErrTcLayoutInfo _) (set! ok false)])
                   (match (tc-inline-aggregate-type-layout
                     ctx
-                    (AstTyArray
+                    (ast-ty-array
                       (AstTyTuple (tc-type-list2 (AstTyU8) (AstTyI32)))
                       2))
                     [(OkTcLayoutInfo info)
@@ -957,7 +957,7 @@
                     [(ErrTcLayoutInfo _) (set! ok false)])
                   (match (tc-inline-aggregate-type-layout
                     ctx
-                    (AstTyBox (AstTyStruct "InlinePacket")))
+                    (ast-ty-box (AstTyStruct "InlinePacket")))
                     [(OkTcLayoutInfo info)
                       (if (and
                         (= (tc-layout-info-size info) 8)
@@ -967,7 +967,7 @@
                     [(ErrTcLayoutInfo _) (set! ok false)])
                   (match (tc-inline-aggregate-type-layout
                     ctx
-                    (AstTyDynArray (AstTyStruct "InlinePacket")))
+                    (ast-ty-dyn-array (AstTyStruct "InlinePacket")))
                     [(OkTcLayoutInfo info)
                       (if (and
                         (= (tc-layout-info-size info) 8)
@@ -1319,12 +1319,16 @@
 
 (define (compiler-typecheck-box-render-ok?) : bool
   (and
-    (string-eq (tc-type-render (AstTyBox (AstTyI64))) "(Box i64)")
+    (string-eq (tc-type-render (ast-ty-box (AstTyI64))) "(Box i64)")
     (and
-      (tc-type-eq (AstTyBox (AstTyRegion "r" (AstTyI64))) (AstTyBox (AstTyI64)))
+      (tc-type-eq
+        (ast-ty-box (ast-ty-region "r" (AstTyI64)))
+        (ast-ty-box (AstTyI64)))
       (and
-        (tc-type-contains-region (AstTyBox (AstTyRegion "r" (AstTyString))) "r")
-        (tc-type-move-only? (AstTyBox (AstTyI64)))))))
+        (tc-type-contains-region
+          (ast-ty-box (ast-ty-region "r" (AstTyString)))
+          "r")
+        (tc-type-move-only? (ast-ty-box (AstTyI64)))))))
 
 (define (compiler-typecheck-box-tests-ok?) : bool
   (and
@@ -1737,22 +1741,22 @@
                 (and
                   (tc-type-copyable? (AstTyNever))
                   (and
-                    (tc-type-copyable? (AstTyFunc AstTypeNil (AstTyI64)))
+                    (tc-type-copyable? (ast-ty-func AstTypeNil (AstTyI64)))
                     (and
                       (tc-type-copyable?
-                        (AstTyPtr (AstTyRegion "inner" (AstTyString))))
+                        (ast-ty-ptr (ast-ty-region "inner" (AstTyString))))
                       (and
                         (tc-type-copyable?
-                          (AstTyMutPtr (AstTyDynArray (AstTyI64))))
-                        (tc-type-copyable? (AstTyRef "r" (AstTyString)))))))))))))))
+                          (ast-ty-mut-ptr (ast-ty-dyn-array (AstTyI64))))
+                        (tc-type-copyable? (ast-ty-ref "r" (AstTyString)))))))))))))))
 
 (define (compiler-typecheck-move-kind-move-only-tests-ok?) : bool
   (and
     (tc-type-move-only? (AstTyString))
     (and
-      (tc-type-move-only? (AstTyDynArray (AstTyI64)))
+      (tc-type-move-only? (ast-ty-dyn-array (AstTyI64)))
       (and
-        (tc-type-move-only? (AstTyArray (AstTyI64) 4))
+        (tc-type-move-only? (ast-ty-array (AstTyI64) 4))
         (and
           (tc-type-move-only?
             (AstTyTuple
@@ -1760,29 +1764,31 @@
           (and
             (tc-type-move-only? (AstTyStruct "Box"))
             (and
-              (tc-type-move-only? (AstTyBox (AstTyI64)))
+              (tc-type-move-only? (ast-ty-box (AstTyI64)))
               (and
                 (tc-type-move-only? (AstTyEnum "ResultI64"))
                 (and
-                  (tc-type-move-only? (AstTyMutRef "phase" (AstTyI64)))
+                  (tc-type-move-only? (ast-ty-mut-ref "phase" (AstTyI64)))
                   (tc-type-move-only?
                     (AstTyTuple
                       (ast-type-cons
                         (AstTyStruct "Box")
-                        (ast-type-cons (AstTyDynArray (AstTyI64)) AstTypeNil)))))))))))))
+                        (ast-type-cons (ast-ty-dyn-array (AstTyI64)) AstTypeNil)))))))))))))
 
 (define (compiler-typecheck-move-kind-region-tests-ok?) : bool
   (and
-    (tc-type-copyable? (AstTyRegion "r" (AstTyI64)))
+    (tc-type-copyable? (ast-ty-region "r" (AstTyI64)))
     (and
-      (tc-type-copyable? (AstTyRegion "r" (AstTyRef "inner" (AstTyString))))
+      (tc-type-copyable? (ast-ty-region "r" (ast-ty-ref "inner" (AstTyString))))
       (and
-        (tc-type-move-only? (AstTyRegion "r" (AstTyString)))
+        (tc-type-move-only? (ast-ty-region "r" (AstTyString)))
         (and
           (tc-type-move-only?
-            (AstTyRegion "r" (AstTyTuple (ast-type-cons (AstTyI64) AstTypeNil))))
+            (ast-ty-region
+              "r"
+              (AstTyTuple (ast-type-cons (AstTyI64) AstTypeNil))))
           (tc-type-move-only?
-            (AstTyRegion "r" (AstTyMutRef "phase" (AstTyI64)))))))))
+            (ast-ty-region "r" (ast-ty-mut-ref "phase" (AstTyI64)))))))))
 
 (define (compiler-typecheck-move-kind-tests-ok?) : bool
   (and
@@ -1799,18 +1805,18 @@
 
 (define (compiler-typecheck-raw-pointer-render-ok?) : bool
   (and
-    (string-eq (tc-type-render (AstTyPtr (AstTyI64))) "(Ptr i64)")
+    (string-eq (tc-type-render (ast-ty-ptr (AstTyI64))) "(Ptr i64)")
     (and
       (string-eq
-        (tc-type-render (AstTyMutPtr (AstTyPtr (AstTyU8))))
+        (tc-type-render (ast-ty-mut-ptr (ast-ty-ptr (AstTyU8))))
         "(MutPtr (Ptr u8))")
       (and
-        (tc-type-eq (AstTyPtr (AstTyI64)) (AstTyPtr (AstTyI64)))
+        (tc-type-eq (ast-ty-ptr (AstTyI64)) (ast-ty-ptr (AstTyI64)))
         (and
-          (not (tc-type-eq (AstTyPtr (AstTyI64)) (AstTyMutPtr (AstTyI64))))
+          (not (tc-type-eq (ast-ty-ptr (AstTyI64)) (ast-ty-mut-ptr (AstTyI64))))
           (tc-type-eq
-            (AstTyPtr (AstTyRegion "r" (AstTyI64)))
-            (AstTyPtr (AstTyI64))))))))
+            (ast-ty-ptr (ast-ty-region "r" (AstTyI64)))
+            (ast-ty-ptr (AstTyI64))))))))
 
 (define (compiler-typecheck-raw-pointer-ops-source) : String
   "(extern raw-make : (-> (MutPtr i64)))
@@ -2095,30 +2101,32 @@
 (define (compiler-typecheck-reference-render-ok?) : bool
   (let
     [string-ref-render-ok : bool
-      (string-eq (tc-type-render (AstTyRef "r" (AstTyString))) "(& r String)")]
+      (string-eq (tc-type-render (ast-ty-ref "r" (AstTyString))) "(& r String)")]
     [str-ref-render-ok : bool
-      (string-eq (tc-type-render (AstTyRef "r" (AstTyStr))) "(& r str)")]
+      (string-eq (tc-type-render (ast-ty-ref "r" (AstTyStr))) "(& r str)")]
     [mut-ref-render-ok : bool
       (string-eq
-        (tc-type-render (AstTyMutRef "phase" (AstTyDynArray (AstTyI64))))
+        (tc-type-render (ast-ty-mut-ref "phase" (ast-ty-dyn-array (AstTyI64))))
         "(&mut phase (Array i64))")]
     [str-eq-ok : bool (tc-type-eq (AstTyStr) (AstTyStr))]
     [str-distinct-ok : bool (not (tc-type-eq (AstTyStr) (AstTyString)))]
     [str-move-kind-ok : bool (tc-type-move-only? (AstTyStr))]
-    [str-ref-move-kind-ok : bool (tc-type-copyable? (AstTyRef "r" (AstTyStr)))]
+    [str-ref-move-kind-ok : bool
+      (tc-type-copyable? (ast-ty-ref "r" (AstTyStr)))]
     [region-erased-eq-ok : bool
       (tc-type-eq
-        (AstTyRef "r" (AstTyRegion "inner" (AstTyI64)))
-        (AstTyRef "r" (AstTyI64)))]
+        (ast-ty-ref "r" (ast-ty-region "inner" (AstTyI64)))
+        (ast-ty-ref "r" (AstTyI64)))]
     [region-distinct-ok : bool
-      (not (tc-type-eq (AstTyRef "r" (AstTyI64)) (AstTyRef "s" (AstTyI64))))]
+      (not (tc-type-eq (ast-ty-ref "r" (AstTyI64)) (ast-ty-ref "s" (AstTyI64))))]
     [mut-distinct-ok : bool
-      (not (tc-type-eq (AstTyRef "r" (AstTyI64)) (AstTyMutRef "r" (AstTyI64))))]
+      (not
+        (tc-type-eq (ast-ty-ref "r" (AstTyI64)) (ast-ty-mut-ref "r" (AstTyI64))))]
     [region-contains-ok : bool
-      (tc-type-contains-region (AstTyRef "r" (AstTyI64)) "r")]
+      (tc-type-contains-region (ast-ty-ref "r" (AstTyI64)) "r")]
     [inner-region-contains-ok : bool
       (tc-type-contains-region
-        (AstTyMutRef "phase" (AstTyRegion "inner" (AstTyString)))
+        (ast-ty-mut-ref "phase" (ast-ty-region "inner" (AstTyString)))
         "inner")]
     (and
       string-ref-render-ok

@@ -2116,7 +2116,7 @@
     [(AstTyMutPtr _) 8]
     [(AstTyRef _ _) 8]
     [(AstTyMutRef _ _) 8]
-    [(AstTyRegion _ inner) (lower-type-size ctx inner)]
+    [(AstTyRegion _ inner) (lower-type-size ctx (box-get inner))]
     [(AstTyEnum _) 8]
     [(AstTyStruct _) 8]
     [(AstTyString) 8]
@@ -2150,7 +2150,7 @@
     [(AstTyMutPtr _) 8]
     [(AstTyRef _ _) 8]
     [(AstTyMutRef _ _) 8]
-    [(AstTyRegion _ inner) (lower-type-align ctx inner)]
+    [(AstTyRegion _ inner) (lower-type-align ctx (box-get inner))]
     [(AstTyEnum _) 8]
     [(AstTyStruct _) 8]
     [(AstTyString) 8]
@@ -2462,7 +2462,7 @@
 (define (lower-str-ref-type? [ctx : TcContext] [ty : AstType]) : bool
   (match (tc-type-strip-region (tc-resolve-type ctx ty))
     [(AstTyRef _ inner)
-      (match (tc-type-strip-region (tc-resolve-type ctx inner))
+      (match (tc-type-strip-region (tc-resolve-type ctx (box-get inner)))
         [(AstTyStr) true]
         [_ false])]
     [_ false]))
@@ -2510,11 +2510,13 @@
       true
       (match resolved
         [(AstTyRef _ inner)
-          (lower-supported-reference-referent-type? ctx inner)]
+          (lower-supported-reference-referent-type? ctx (box-get inner))]
         [(AstTyMutRef _ _) false]
         [(AstTyTuple elems) (lower-supported-reference-type-list? ctx elems)]
-        [(AstTyArray elem _) (lower-supported-reference-type? ctx elem)]
-        [(AstTyRegion _ inner) (lower-supported-reference-type? ctx inner)]
+        [(AstTyArray elem _)
+          (lower-supported-reference-type? ctx (box-get elem))]
+        [(AstTyRegion _ inner)
+          (lower-supported-reference-type? ctx (box-get inner))]
         [_ false]))))
 
 (define (lower-borrowed-str-expr
@@ -2693,7 +2695,7 @@
                                 arr-value
                                 idx-value
                                 idx-ty
-                                (tc-type-without-regions elem-ty))
+                                (tc-type-without-regions (box-get elem-ty)))
                                 [(LowerExpr addr-state elem-ptr _)
                                   (OkLowerExpr
                                     (LowerExpr addr-state elem-ptr result-ty))])])]
@@ -2703,7 +2705,8 @@
             [(ErrLowerExpr message) (ErrLowerExpr message)])]
         [(AstTyArray elem-ty elem-count)
           (let
-            [fixed-elem-ty : AstType (tc-type-without-regions elem-ty)]
+            [fixed-elem-ty : AstType
+              (tc-type-without-regions (box-get elem-ty))]
             (match (lower-expr ctx state env type-env arr)
               [(OkLowerExpr arr-lowered)
                 (match arr-lowered
@@ -2799,7 +2802,7 @@
     (lower-borrowed-str-expr ctx state env type-env inner origin expr-ty)
     (match (tc-type-strip-region (tc-resolve-type ctx expr-ty))
       [(AstTyRef _ referent-ty)
-        (if (lower-supported-reference-referent-type? ctx referent-ty)
+        (if (lower-supported-reference-referent-type? ctx (box-get referent-ty))
           (lower-borrow-place-address
             ctx
             state
@@ -3498,7 +3501,7 @@
       (match (tc-expr ctx type-env lambda-expr)
         [(OkTcType ty)
           (match (tc-type-strip-region ty)
-            [(AstTyFunc _ ret) (OkTcType ret)]
+            [(AstTyFunc _ ret) (OkTcType (box-get ret))]
             [_ (ErrTcType "lower: lambda did not typecheck as a function")])]
         [(ErrTcType message) (ErrTcType message)])]))
 
@@ -3591,7 +3594,7 @@
         ctx
         state
         value
-        (tc-type-without-regions elem-ty)
+        (tc-type-without-regions (box-get elem-ty))
         ty)]
     [(AstTyTuple elem-tys)
       (lower-capture-snapshot-tuple-value
@@ -3609,7 +3612,7 @@
         env
         type-env
         value
-        (tc-type-without-regions elem-ty)
+        (tc-type-without-regions (box-get elem-ty))
         count
         ty)]
     [(AstTyStruct name)
@@ -5456,7 +5459,7 @@
           env
           type-env
           value
-          (tc-type-without-regions elem-ty)
+          (tc-type-without-regions (box-get elem-ty))
           count
           clone-ty)]
       [(AstTyDynArray elem-ty)
@@ -5466,7 +5469,7 @@
           env
           type-env
           value
-          (tc-type-without-regions elem-ty)
+          (tc-type-without-regions (box-get elem-ty))
           clone-ty)]
       [(AstTyBox elem-ty)
         (lower-clone-box-value
@@ -5475,7 +5478,7 @@
           env
           type-env
           value
-          (tc-type-without-regions elem-ty)
+          (tc-type-without-regions (box-get elem-ty))
           clone-ty)]
       [(AstTyEnum name) (lower-clone-named state env name value clone-ty)]
       [(AstTyStruct name) (lower-clone-named state env name value clone-ty)]
@@ -5990,7 +5993,8 @@
         [(OkTcType fn-ty)
           (match (tc-type-strip-region (tc-resolve-type ctx fn-ty))
             [(AstTyFunc _ ret)
-              (OkTcType (tc-type-without-regions (tc-resolve-type ctx ret)))]
+              (OkTcType
+                (tc-type-without-regions (tc-resolve-type ctx (box-get ret))))]
             [(AstTyEnum _) (OkTcType (tc-type-without-regions fn-ty))]
             [_ (ErrTcType "lower: call result type is not fast-pathable")])]
         [(ErrTcType message)
@@ -6324,9 +6328,17 @@
         [(OkTcType array-ty)
           (match (tc-type-strip-region (tc-resolve-type ctx array-ty))
             [(AstTyArray elem-ty _)
-              (OkTcType (lower-projected-result-type-fast ctx array-ty elem-ty))]
+              (OkTcType
+                (lower-projected-result-type-fast
+                  ctx
+                  array-ty
+                  (box-get elem-ty)))]
             [(AstTyDynArray elem-ty)
-              (OkTcType (lower-projected-result-type-fast ctx array-ty elem-ty))]
+              (OkTcType
+                (lower-projected-result-type-fast
+                  ctx
+                  array-ty
+                  (box-get elem-ty)))]
             [_ (ErrTcType "lower: array-ref result type is not fast-pathable")])]
         [(ErrTcType message) (ErrTcType message)])]
     [(ErrTcType message) (ErrTcType message)]))
@@ -6377,7 +6389,8 @@
     [(OkTcType box-ty)
       (match (tc-type-strip-region (tc-resolve-type ctx box-ty))
         [(AstTyBox inner-ty)
-          (OkTcType (lower-projected-result-type-fast ctx box-ty inner-ty))]
+          (OkTcType
+            (lower-projected-result-type-fast ctx box-ty (box-get inner-ty)))]
         [_ (ErrTcType "lower: box-get result type is not fast-pathable")])]
     [(ErrTcType message) (ErrTcType message)]))
 
@@ -7008,7 +7021,7 @@
                                       var-id
                                       ptr-value
                                       offset-value
-                                      elem-ty)
+                                      (box-get elem-ty))
                                     origin)
                                   (IrValueVar var-id)
                                   expr-ty))])]
@@ -7023,7 +7036,7 @@
                                       var-id
                                       ptr-value
                                       offset-value
-                                      elem-ty)
+                                      (box-get elem-ty))
                                     origin)
                                   (IrValueVar var-id)
                                   expr-ty))])]
@@ -7174,7 +7187,8 @@
                 [(AstTyFunc _ ret-ty)
                   (let
                     [actual-ty : AstType
-                      (tc-type-without-regions (tc-resolve-type ctx ret-ty))]
+                      (tc-type-without-regions
+                        (tc-resolve-type ctx (box-get ret-ty)))]
                     [expected-resolved : AstType
                       (tc-type-without-regions
                         (tc-resolve-type ctx expected-ty))]
@@ -7469,8 +7483,8 @@
   (match (tc-resolve-type ctx result-ty)
     [(AstTyArray elem-ty count)
       (let
-        [resolved-elem : AstType (tc-resolve-type ctx elem-ty)]
-        [elem-size : i64 (lower-type-size ctx elem-ty)]
+        [resolved-elem : AstType (tc-resolve-type ctx (box-get elem-ty))]
+        [elem-size : i64 (lower-type-size ctx (box-get elem-ty))]
         [storage-size : i64
           (lower-align-up
             (if (= (* count elem-size) 0)
@@ -11079,7 +11093,7 @@
       [(LowerExpr len-state len-i64 _)
         (let
           [elem-size : i64 (lower-type-size ctx resolved-elem)]
-          [arr-ty : AstType (AstTyDynArray resolved-elem)]
+          [arr-ty : AstType (ast-ty-dyn-array resolved-elem)]
           (match (lower-state-fresh-label len-state "make_array_len_nonneg")
             [(LowerLabel s1 check-max-label)
               (match (lower-state-fresh-label s1 "make_array_len_fail")
@@ -11178,25 +11192,27 @@
                                 arr-value
                                 idx-value
                                 idx-ty
-                                (tc-type-without-regions elem-ty))
+                                (tc-type-without-regions (box-get elem-ty)))
                                 [(LowerExpr addr-state elem-ptr _)
                                   (match (lower-emit-load
                                     addr-state
                                     elem-ptr
-                                    (tc-type-without-regions elem-ty))
+                                    (tc-type-without-regions (box-get elem-ty)))
                                     [(LowerExpr load-state load-value _)
                                       (OkLowerExpr
                                         (LowerExpr
                                           load-state
                                           load-value
-                                          (tc-type-without-regions elem-ty)))])])])]
+                                          (tc-type-without-regions
+                                            (box-get elem-ty))))])])])]
                         [(ErrLowerExpr message) (ErrLowerExpr message)])]
                     [(ErrTcType message)
                       (ErrLowerExpr (lower-diagnostic-at-expr index message))])])]
             [(ErrLowerExpr message) (ErrLowerExpr message)])]
         [(AstTyArray elem-ty elem-count)
           (let
-            [fixed-elem-ty : AstType (tc-type-without-regions elem-ty)]
+            [fixed-elem-ty : AstType
+              (tc-type-without-regions (box-get elem-ty))]
             (match (lower-expr ctx state env type-env arr)
               [(OkLowerExpr arr-lowered)
                 (match arr-lowered
@@ -11296,7 +11312,8 @@
                                         arr-value
                                         idx-value
                                         idx-ty
-                                        (tc-type-without-regions elem-ty))
+                                        (tc-type-without-regions
+                                          (box-get elem-ty)))
                                         [(LowerExpr addr-state elem-ptr _)
                                           (OkLowerExpr
                                             (LowerExpr
@@ -11306,7 +11323,7 @@
                                                   elem-ptr
                                                   value-ir
                                                   (tc-type-without-regions
-                                                    elem-ty)))
+                                                    (box-get elem-ty))))
                                               IrValueUnit
                                               (AstTyUnit)))])])]
                                 [(ErrLowerExpr message) (ErrLowerExpr message)])])]
@@ -11316,7 +11333,8 @@
             [(ErrLowerExpr message) (ErrLowerExpr message)])]
         [(AstTyArray elem-ty elem-count)
           (let
-            [fixed-elem-ty : AstType (tc-type-without-regions elem-ty)]
+            [fixed-elem-ty : AstType
+              (tc-type-without-regions (box-get elem-ty))]
             (match (lower-expr ctx state env type-env arr)
               [(OkLowerExpr arr-lowered)
                 (match arr-lowered
@@ -11626,7 +11644,7 @@
       (match (tc-type-strip-region arr-ty)
         [(AstTyDynArray elem-ty)
           (let
-            [elem-ir-ty : AstType (tc-type-without-regions elem-ty)]
+            [elem-ir-ty : AstType (tc-type-without-regions (box-get elem-ty))]
             (match (lower-expr ctx state env type-env arr)
               [(OkLowerExpr arr-lowered)
                 (match arr-lowered
@@ -12530,7 +12548,9 @@
             [(OkTcType ty)
               (match (tc-type-strip-region ty)
                 [(AstTyDynArray elem-ty)
-                  (LowerSomeArrayVar var-id (tc-type-without-regions elem-ty))]
+                  (LowerSomeArrayVar
+                    var-id
+                    (tc-type-without-regions (box-get elem-ty)))]
                 [_ LowerNoArrayVar])]
             [(ErrTcType _) LowerNoArrayVar])]
         [NoneI64 LowerNoArrayVar])]
@@ -14917,8 +14937,10 @@
     [(AstTyStruct _) true]
     [(AstTyEnum _) true]
     [(AstTyTuple elems) (lower-type-list-contains-inline-aggregate? ctx elems)]
-    [(AstTyArray elem _) (lower-type-contains-inline-aggregate? ctx elem)]
-    [(AstTyRegion _ inner) (lower-type-contains-inline-aggregate? ctx inner)]
+    [(AstTyArray elem _)
+      (lower-type-contains-inline-aggregate? ctx (box-get elem))]
+    [(AstTyRegion _ inner)
+      (lower-type-contains-inline-aggregate? ctx (box-get inner))]
     [_ false]))
 
 (define (lower-type-list-contains-inline-aggregate?
@@ -14963,7 +14985,8 @@
 
 (define (lower-supported-function-return-type? [ctx : TcContext] [ty : AstType]) : bool
   (match (tc-resolve-type ctx ty)
-    [(AstTyRegion _ inner) (lower-supported-function-return-type? ctx inner)]
+    [(AstTyRegion _ inner)
+      (lower-supported-function-return-type? ctx (box-get inner))]
     [_ true]))
 
 (define (lower-function

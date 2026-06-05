@@ -2,13 +2,20 @@
 
 (import "stdlib/test.tl")
 
+(define (assert-owned-string-eq
+  [actual : String]
+  [expected : String]
+  [message : String]) : unit
+  (assert-string-eq (& actual) (& expected) message))
+
 (define (json-test-name [doc : Json]) : unit
   (let
     [key : String "name"]
     (match (json-object-get doc (& key))
       [(JsonFound value)
         (match value
-          [(JsonString text) (assert-string-eq text "tl" "json name lookup")]
+          [(JsonString text)
+            (assert-owned-string-eq text "tl" "json name lookup")]
           [_ (panic "json name lookup")])]
       [(JsonMissing) (panic "json name lookup")])))
 
@@ -21,7 +28,7 @@
           [(JsonArray items)
             (begin
               (assert-i64-eq (json-list-count items) 5 "json array count")
-              (assert-string-eq
+              (assert-owned-string-eq
                 (json-stringify-list items)
                 "1,-2.5e3,true,false,null"
                 "json array stringify"))]
@@ -58,7 +65,7 @@
       [(JsonFound value)
         (match value
           [(JsonString text)
-            (assert-string-eq text "a\nb\tc" "json escaped string")]
+            (assert-owned-string-eq text "a\nb\tc" "json escaped string")]
           [_ (panic "json escaped string")])]
       [(JsonMissing) (panic "json escaped string")])))
 
@@ -78,11 +85,11 @@
           (json-test-numbers doc)
           (json-test-nested doc)
           (json-test-escaped doc)
-          (assert-string-eq
+          (assert-owned-string-eq
             (json-stringify doc)
             "{\"name\":\"tl\",\"items\":[1,-2.5e3,true,false,null],\"nested\":{\"ok\":true,\"empty\":[]},\"escaped\":\"a\\nb\\tc\"}"
             "json stringify document")
-          (assert-string-eq
+          (assert-owned-string-eq
             (json-stringify (JsonString "a\n\"\\"))
             "\"a\\n\\\"\\\\\""
             "json stringify escapes")

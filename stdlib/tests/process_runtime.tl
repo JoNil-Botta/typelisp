@@ -4,6 +4,12 @@
 
 (import "stdlib/test.tl")
 
+(define (assert-owned-string-eq
+  [actual : String]
+  [expected : String]
+  [message : String]) : unit
+  (assert-string-eq (& actual) (& expected) message))
+
 (define (assert-process-ok
   [result : ResultProcessOutput]
   [expected-status : i64]
@@ -14,11 +20,11 @@
     [(OkProcessOutput output)
       (begin
         (assert-i64-eq (process-output-status output) expected-status message)
-        (assert-string-eq
+        (assert-owned-string-eq
           (process-output-stdout output)
           expected-stdout
           message)
-        (assert-string-eq
+        (assert-owned-string-eq
           (process-output-stderr output)
           expected-stderr
           message))]
@@ -32,7 +38,7 @@
     [(OkProcessOutput output)
       (begin
         (assert-i64-eq (process-output-status output) expected-status message)
-        (assert-string-eq (process-output-stdout output) "" message)
+        (assert-owned-string-eq (process-output-stdout output) "" message)
         (assert-false (string-eq (process-output-stderr output) "") message))]
     [(ErrProcessOutput _) (panic message)]))
 
@@ -43,7 +49,7 @@
     [(ErrProcessOutput error)
       (begin
         (assert-true (process-error-spawn-failed? error) message)
-        (assert-string-eq
+        (assert-owned-string-eq
           (process-error-message error)
           "process: spawn failed"
           message))]
@@ -56,7 +62,7 @@
     [(ErrProcessOutput error)
       (begin
         (assert-true (process-error-unsupported? error) message)
-        (assert-string-eq (process-error-message error) message message))]
+        (assert-owned-string-eq (process-error-message error) message message))]
     [(OkProcessOutput _) (panic message)]))
 
 (define (process-runtime-simple-command) : ProcessCommand

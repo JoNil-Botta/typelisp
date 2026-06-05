@@ -2,6 +2,12 @@
 
 (import "stdlib/test.tl")
 
+(define (assert-owned-string-eq
+  [actual : String]
+  [expected : String]
+  [message : String]) : unit
+  (assert-string-eq (& actual) (& expected) message))
+
 (define (assert-windows-setup-unsupported
   [result : ResultWindowsSetupInstances]
   [message : String]) : unit
@@ -9,7 +15,10 @@
     [(ErrWindowsSetupInstances error)
       (begin
         (assert-true (windows-setup-error-unsupported? error) message)
-        (assert-string-eq (windows-setup-error-message error) message message))]
+        (assert-owned-string-eq
+          (windows-setup-error-message error)
+          message
+          message))]
     [(OkWindowsSetupInstances _) (panic message)]))
 
 (define (assert-windows-setup-runtime-result
@@ -35,7 +44,7 @@
   [error : WindowsSetupError]
   [expected : String]
   [message : String]) : unit
-  (assert-string-eq (windows-setup-error-message error) expected message))
+  (assert-owned-string-eq (windows-setup-error-message error) expected message))
 
 (define (test-windows-setup-string-list-cons
   [value : String]
@@ -88,19 +97,19 @@
         (windows-setup-instance-list-count instances)
         1
         "windows setup instance count")
-      (assert-string-eq
+      (assert-owned-string-eq
         (windows-setup-instance-installation-path instance)
         "C:\\VS\\BuildTools"
         "windows setup installation path")
-      (assert-string-eq
+      (assert-owned-string-eq
         (windows-setup-instance-installation-version instance)
         "17.10.0"
         "windows setup installation version")
-      (assert-string-eq
+      (assert-owned-string-eq
         (windows-setup-instance-display-name instance)
         "Visual Studio Build Tools"
         "windows setup display name")
-      (assert-string-eq
+      (assert-owned-string-eq
         (windows-setup-instance-product-id instance)
         "Microsoft.VisualStudio.Product.BuildTools"
         "windows setup product id")

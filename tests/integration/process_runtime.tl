@@ -6,6 +6,12 @@
 
 (import "stdlib/test.tl")
 
+(define (assert-owned-string-eq
+  [actual : String]
+  [expected : String]
+  [message : String]) : unit
+  (assert-string-eq (& actual) (& expected) message))
+
 (define (assert-process-output-result
   [result : ResultProcessOutput]
   [expected-status : i64]
@@ -18,11 +24,11 @@
           (process-output-status output)
           expected-status
           "process output status")
-        (assert-string-eq
+        (assert-owned-string-eq
           (process-output-stdout output)
           expected-stdout
           "process output stdout")
-        (assert-string-eq
+        (assert-owned-string-eq
           (process-output-stderr output)
           expected-stderr
           "process output stderr"))]
@@ -35,7 +41,7 @@
         (assert-true
           (process-error-spawn-failed? error)
           "process missing executable spawn failed")
-        (assert-string-eq
+        (assert-owned-string-eq
           (process-error-message error)
           "process: spawn failed"
           "process spawn failed message"))]

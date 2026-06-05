@@ -2,6 +2,12 @@
 
 (import "stdlib/test.tl")
 
+(define (assert-owned-string-eq
+  [actual : String]
+  [expected : String]
+  [message : String]) : unit
+  (assert-string-eq (& actual) (& expected) message))
+
 (define (assert-string-list-empty [items : StringList] [message : String]) : unit
   (match items
     [(StringNil) unit]
@@ -14,7 +20,7 @@
   (match items
     [(StringCons a rest)
       (match rest
-        [(StringNil) (assert-string-eq a first message)]
+        [(StringNil) (assert-owned-string-eq a first message)]
         [_ (panic message)])]
     [_ (panic message)]))
 
@@ -33,9 +39,9 @@
               (match tail
                 [(StringNil)
                   (begin
-                    (assert-string-eq a first message)
-                    (assert-string-eq b second message)
-                    (assert-string-eq c third message))]
+                    (assert-owned-string-eq a first message)
+                    (assert-owned-string-eq b second message)
+                    (assert-owned-string-eq c third message))]
                 [_ (panic message)])]
             [_ (panic message)])]
         [_ (panic message)])]
@@ -59,10 +65,10 @@
                   (match end
                     [(StringNil)
                       (begin
-                        (assert-string-eq a first message)
-                        (assert-string-eq b second message)
-                        (assert-string-eq c third message)
-                        (assert-string-eq d fourth message))]
+                        (assert-owned-string-eq a first message)
+                        (assert-owned-string-eq b second message)
+                        (assert-owned-string-eq c third message)
+                        (assert-owned-string-eq d fourth message))]
                     [_ (panic message)])]
                 [_ (panic message)])]
             [_ (panic message)])]
@@ -77,9 +83,9 @@
   [message : String]) : unit
   (begin
     (assert-i64-eq (array-length items) 3 message)
-    (assert-string-eq (array-ref items 0) first message)
-    (assert-string-eq (array-ref items 1) second message)
-    (assert-string-eq (array-ref items 2) third message)))
+    (assert-owned-string-eq (array-ref items 0) first message)
+    (assert-owned-string-eq (array-ref items 1) second message)
+    (assert-owned-string-eq (array-ref items 2) third message)))
 
 (define (make-source-array) : (Array String)
   (let

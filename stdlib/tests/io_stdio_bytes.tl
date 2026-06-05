@@ -2,13 +2,19 @@
 
 (import "stdlib/test.tl")
 
+(define (assert-owned-string-eq
+  [actual : String]
+  [expected : String]
+  [message : String]) : unit
+  (assert-string-eq (& actual) (& expected) message))
+
 (define (assert-stdin-read
   [read : StdinRead]
   [expected-text : String]
   [expected-eof : bool]
   [message : String]) : unit
   (begin
-    (assert-string-eq
+    (assert-owned-string-eq
       (stdin-read-text read)
       expected-text
       (string-append message " text"))

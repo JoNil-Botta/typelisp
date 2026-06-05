@@ -4,13 +4,22 @@
 
 (import "stdlib/windows_sdk.tl")
 
+(define (assert-owned-string-eq
+  [actual : String]
+  [expected : String]
+  [message : String]) : unit
+  (assert-string-eq (& actual) (& expected) message))
+
 (define (assert-windows-registry-error-message
   [result : ResultWindowsRegistrySdkInstall]
   [expected : String]
   [message : String]) : unit
   (match result
     [(ErrWindowsRegistrySdkInstall error)
-      (assert-string-eq (windows-registry-error-message error) expected message)]
+      (assert-owned-string-eq
+        (windows-registry-error-message error)
+        expected
+        message)]
     [(OkWindowsRegistrySdkInstall _) (panic message)]))
 
 (define (assert-windows-sdk-registry-error-structured [error : WindowsSdkError]) : unit

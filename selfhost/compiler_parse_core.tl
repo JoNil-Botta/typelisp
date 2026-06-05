@@ -1906,6 +1906,7 @@
     [(AstExprNil) (ast-expr-cons (parse-ast-unit-expr) AstExprNil)]
     [(AstExprCons head rest)
       (let
+        [head : AstExpr (box-get head)]
         [rest : AstExprList (box-get rest)]
         (ast-expr-cons head (parse-ast-expr-list-append-unit rest)))]))
 
@@ -3420,6 +3421,7 @@
   (match exprs
     [(AstExprCons only rest)
       (let
+        [only : AstExpr (box-get only)]
         [rest : AstExprList (box-get rest)]
         (match rest
           [(AstExprNil) only]
@@ -4203,10 +4205,11 @@
                       [(AstTyFunc args ret)
                         (match args
                           [(AstTypeCons first tail)
-                            (and
-                              (compiler-parse-type-ptr-i64? first)
-                              (let
-                                [tail : AstTypeList (box-get tail)]
+                            (let
+                              [first : AstType (box-get first)]
+                              [tail : AstTypeList (box-get tail)]
+                              (and
+                                (compiler-parse-type-ptr-i64? first)
                                 (match tail
                                   [(AstTypeNil)
                                     (compiler-parse-type-mut-ptr-ptr-u8?
@@ -4269,15 +4272,20 @@
                           (match ty
                             [(AstTyFunc args ret)
                               (match args
-                                [(AstTypeCons (AstTyI64) tail)
+                                [(AstTypeCons first tail)
                                   (let
+                                    [first : AstType (box-get first)]
                                     [tail : AstTypeList (box-get tail)]
-                                    (match tail
-                                      [(AstTypeNil)
-                                        (match (box-get ret)
-                                          [(AstTyI64) true]
-                                          [_ false])]
-                                      [_ false]))]
+                                    (and
+                                      (match first
+                                        [(AstTyI64) true]
+                                        [_ false])
+                                      (match tail
+                                        [(AstTypeNil)
+                                          (match (box-get ret)
+                                            [(AstTyI64) true]
+                                            [_ false])]
+                                        [_ false])))]
                                 [_ false])]
                             [_ false])))))]
                 [_ false]))]
@@ -4309,37 +4317,53 @@
                           [(AstTyFunc args ret)
                             (match args
                               [(AstTypeCons first rest0)
-                                (and
-                                  (compiler-parse-type-mut-ptr-u8? first)
-                                  (let
-                                    [rest0 : AstTypeList (box-get rest0)]
+                                (let
+                                  [first : AstType (box-get first)]
+                                  [rest0 : AstTypeList (box-get rest0)]
+                                  (and
+                                    (compiler-parse-type-mut-ptr-u8? first)
                                     (match rest0
-                                      [(AstTypeCons (AstTyI64) rest1)
+                                      [(AstTypeCons second rest1)
                                         (let
+                                          [second : AstType (box-get second)]
                                           [rest1 : AstTypeList (box-get rest1)]
-                                          (match rest1
-                                            [(AstTypeCons third rest2)
-                                              (and
-                                                (compiler-parse-type-ptr-u8?
-                                                  third)
+                                          (and
+                                            (match second
+                                              [(AstTyI64) true]
+                                              [_ false])
+                                            (match rest1
+                                              [(AstTypeCons third rest2)
                                                 (let
+                                                  [third : AstType
+                                                    (box-get third)]
                                                   [rest2 : AstTypeList
                                                     (box-get rest2)]
-                                                  (match rest2
-                                                    [(AstTypeCons
-                                                        (AstTyF64)
-                                                        rest3)
-                                                      (let
-                                                        [rest3 : AstTypeList
-                                                          (box-get rest3)]
-                                                        (match rest3
-                                                          [(AstTypeNil)
-                                                            (match (box-get ret)
-                                                              [(AstTyI32) true]
-                                                              [_ false])]
-                                                          [_ false]))]
-                                                    [_ false])))]
-                                            [_ false]))]
+                                                  (and
+                                                    (compiler-parse-type-ptr-u8?
+                                                      third)
+                                                    (match rest2
+                                                      [(AstTypeCons
+                                                          fourth
+                                                          rest3)
+                                                        (let
+                                                          [fourth : AstType
+                                                            (box-get fourth)]
+                                                          [rest3 : AstTypeList
+                                                            (box-get rest3)]
+                                                          (and
+                                                            (match fourth
+                                                              [(AstTyF64) true]
+                                                              [_ false])
+                                                            (match rest3
+                                                              [(AstTypeNil)
+                                                                (match (box-get
+                                                                  ret)
+                                                                  [(AstTyI32)
+                                                                    true]
+                                                                  [_ false])]
+                                                              [_ false])))]
+                                                      [_ false])))]
+                                              [_ false])))]
                                       [_ false])))]
                               [_ false])]
                           [_ false]))))]
@@ -4427,40 +4451,45 @@
                       (match exprs
                         [(AstExprCons first rest0)
                           (let
+                            [first : AstExpr (box-get first)]
                             [rest0 : AstExprList (box-get rest0)]
                             (match rest0
                               [(AstExprCons second _)
-                                (match (ast-expr-unspan first)
-                                  [(AstExprBorrow
-                                      AstBorrowLifetimeInferred
-                                      first-place-box)
-                                    (let
-                                      [first-place : AstExpr
-                                        (box-get first-place-box)]
-                                      (match (ast-expr-unspan first-place)
-                                        [(AstExprVar first-name)
-                                          (if (string-eq first-name "x")
-                                            (match (ast-expr-unspan second)
-                                              [(AstExprBorrow
-                                                  (AstBorrowLifetimeNamed
-                                                    lifetime)
-                                                  second-place-box)
-                                                (let
-                                                  [second-place : AstExpr
-                                                    (box-get second-place-box)]
-                                                  (match (ast-expr-unspan
-                                                    second-place)
-                                                    [(AstExprVar second-name)
-                                                      (and
-                                                        (string-eq lifetime "x")
-                                                        (string-eq
-                                                          second-name
-                                                          "x"))]
-                                                    [_ false]))]
-                                              [_ false])
-                                            false)]
-                                        [_ false]))]
-                                  [_ false])]
+                                (let
+                                  [second : AstExpr (box-get second)]
+                                  (match (ast-expr-unspan first)
+                                    [(AstExprBorrow
+                                        AstBorrowLifetimeInferred
+                                        first-place-box)
+                                      (let
+                                        [first-place : AstExpr
+                                          (box-get first-place-box)]
+                                        (match (ast-expr-unspan first-place)
+                                          [(AstExprVar first-name)
+                                            (if (string-eq first-name "x")
+                                              (match (ast-expr-unspan second)
+                                                [(AstExprBorrow
+                                                    (AstBorrowLifetimeNamed
+                                                      lifetime)
+                                                    second-place-box)
+                                                  (let
+                                                    [second-place : AstExpr
+                                                      (box-get second-place-box)]
+                                                    (match (ast-expr-unspan
+                                                      second-place)
+                                                      [(AstExprVar second-name)
+                                                        (and
+                                                          (string-eq
+                                                            lifetime
+                                                            "x")
+                                                          (string-eq
+                                                            second-name
+                                                            "x"))]
+                                                      [_ false]))]
+                                                [_ false])
+                                              false)]
+                                          [_ false]))]
+                                    [_ false]))]
                               [_ false]))]
                         [_ false])]
                     [_ false])]
@@ -4498,6 +4527,7 @@
                                   (match args
                                     [(AstExprCons arg rest)
                                       (let
+                                        [arg : AstExpr (box-get arg)]
                                         [rest : AstExprList (box-get rest)]
                                         (match rest
                                           [(AstExprNil)
@@ -4551,10 +4581,12 @@
       (match exprs
         [(AstExprCons first rest0)
           (let
+            [first : AstExpr (box-get first)]
             [rest0 : AstExprList (box-get rest0)]
             (match rest0
               [(AstExprCons last rest1)
                 (let
+                  [last : AstExpr (box-get last)]
                   [rest1 : AstExprList (box-get rest1)]
                   (match rest1
                     [(AstExprNil)
@@ -5817,21 +5849,27 @@
                               (let
                                 [tail : AstExprList (box-get tail)]
                                 (match tail
-                                  [(AstExprCons nested AstExprNil)
-                                    (match (ast-expr-unspan nested)
-                                      [(AstExprWithResource
-                                          nested-bindings
-                                          nested-body)
-                                        (and
-                                          (=
-                                            (compiler-parse-resource-binding-count
-                                              nested-bindings)
-                                            1)
-                                          (=
-                                            (compiler-parse-expr-list-count
-                                              nested-body)
-                                            1))]
-                                      [_ false])]
+                                  [(AstExprCons nested done-box)
+                                    (let
+                                      [nested : AstExpr (box-get nested)]
+                                      [done : AstExprList (box-get done-box)]
+                                      (match done
+                                        [(AstExprNil)
+                                          (match (ast-expr-unspan nested)
+                                            [(AstExprWithResource
+                                                nested-bindings
+                                                nested-body)
+                                              (and
+                                                (=
+                                                  (compiler-parse-resource-binding-count
+                                                    nested-bindings)
+                                                  1)
+                                                (=
+                                                  (compiler-parse-expr-list-count
+                                                    nested-body)
+                                                  1))]
+                                            [_ false])]
+                                        [_ false]))]
                                   [_ false]))]
                             [_ false])))]
                     [_ false])]

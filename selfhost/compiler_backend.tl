@@ -4545,6 +4545,7 @@
     [(AstTypeNil) IrParamNil]
     [(AstTypeCons ty rest)
       (let
+        [ty : AstType (box-get ty)]
         [rest : AstTypeList (box-get rest)]
         (compiler-ir-param-cons
           (IrParam (string-append "arg" (int->string idx)) ty idx)
@@ -4822,6 +4823,7 @@
     [(AstTypeNil) count]
     [(AstTypeCons ty rest)
       (let
+        [ty : AstType (box-get ty)]
         [rest : AstTypeList (box-get rest)]
         [is-float : bool (compiler-backend-float-type? ty)]
         [next-float : i64
@@ -4850,6 +4852,7 @@
     [(AstTypeNil) ""]
     [(AstTypeCons ty rest)
       (let
+        [ty : AstType (box-get ty)]
         [rest : AstTypeList (box-get rest)]
         [tail : String
           (compiler-backend-windows-vararg-dup-asm
@@ -4932,7 +4935,7 @@
     (let
       [arg-ty : AstType
         (match types
-          [(AstTypeCons ty _) ty]
+          [(AstTypeCons ty _) (box-get ty)]
           [(AstTypeNil) (AstTyI64)])]
       [rest-types : AstTypeList
         (match types
@@ -5107,7 +5110,7 @@
       [value : CompilerIrValue (compiler-backend-call-arg-at args arg-index)]
       [arg-ty : AstType
         (match types
-          [(AstTypeCons ty _) ty]
+          [(AstTypeCons ty _) (box-get ty)]
           [(AstTypeNil) (AstTyI64)])]
       [rest-types : AstTypeList
         (match types

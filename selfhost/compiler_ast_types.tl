@@ -95,7 +95,7 @@
 
 (defenum AstTypeList
   (AstTypeNil)
-  (AstTypeCons AstType (Box AstTypeList)))
+  (AstTypeCons (Box AstType) (Box AstTypeList)))
 
 (defenum AstLifetimeList
   (AstLifetimeNil)
@@ -176,7 +176,7 @@
 
 (defenum AstPatternList
   (AstPatternNil)
-  (AstPatternCons AstPattern (Box AstPatternList)))
+  (AstPatternCons (Box AstPattern) (Box AstPatternList)))
 
 (defenum AstLetBinding
   (AstLetBinding String AstMaybeType (Box AstExpr)))
@@ -296,7 +296,7 @@
 
 (defenum AstExprList
   (AstExprNil)
-  (AstExprCons AstExpr (Box AstExprList)))
+  (AstExprCons (Box AstExpr) (Box AstExprList)))
 
 (defenum AstMaybeModuleName
   (AstNoModuleName)
@@ -363,7 +363,7 @@
   (AstProgram (Box AstDeclList)))
 
 (define (ast-type-cons [head : AstType] [rest : AstTypeList]) : AstTypeList
-  (AstTypeCons head (box rest)))
+  (AstTypeCons (box head) (box rest)))
 
 (define (ast-ty-func [args : AstTypeList] [ret : AstType]) : AstType
   (AstTyFunc args (box ret)))
@@ -413,7 +413,7 @@
   (AstVariantDefCons head (box rest)))
 
 (define (ast-pattern-cons [head : AstPattern] [rest : AstPatternList]) : AstPatternList
-  (AstPatternCons head (box rest)))
+  (AstPatternCons (box head) (box rest)))
 
 (define (ast-pat-tuple [items : AstPatternList]) : AstPattern
   (AstPatTuple (box items)))
@@ -448,7 +448,7 @@
   (AstMatchArmCons head (box rest)))
 
 (define (ast-expr-cons [head : AstExpr] [rest : AstExprList]) : AstExprList
-  (AstExprCons head (box rest)))
+  (AstExprCons (box head) (box rest)))
 
 (define (ast-expr-spanned [inner : AstExpr] [span : AstSourceSpan]) : AstExpr
   (AstExprSpanned (box inner) span))
@@ -916,6 +916,7 @@
           (match args
             [(AstPatternCons tuple-pattern rest-box)
               (let
+                [tuple-pattern : AstPattern (box-get tuple-pattern)]
                 [rest : AstPatternList (box-get rest-box)]
                 (and
                   (match rest
@@ -928,6 +929,7 @@
                         (match items
                           [(AstPatternCons first tail-box)
                             (let
+                              [first : AstPattern (box-get first)]
                               [tail : AstPatternList (box-get tail-box)]
                               (and
                                 (match first
@@ -937,6 +939,7 @@
                                 (match tail
                                   [(AstPatternCons second done-box)
                                     (let
+                                      [second : AstPattern (box-get second)]
                                       [done : AstPatternList (box-get done-box)]
                                       (and
                                         (match second

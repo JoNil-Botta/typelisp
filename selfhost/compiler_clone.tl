@@ -116,6 +116,7 @@
     [(AstTypeNil) true]
     [(AstTypeCons head rest)
       (let
+        [head : AstType (box-get head)]
         [rest : AstTypeList (box-get rest)]
         (if (clone-field-type-able? head names)
           (clone-field-type-list-able? rest names)
@@ -326,6 +327,7 @@
             (match tail
               [(AstTypeCons tail-ty rest)
                 (let
+                  [tail-ty : AstType (box-get tail-ty)]
                   [rest : AstTypeList (box-get rest)]
                   (match rest
                     [(AstTypeNil) (clone-tail-is-self? tail-ty self-name)]
@@ -345,6 +347,7 @@
             (match tail
               [(AstTypeCons tail-ty rest)
                 (let
+                  [tail-ty : AstType (box-get tail-ty)]
                   [rest : AstTypeList (box-get rest)]
                   (match rest
                     [(AstTypeNil) (clone-tail-is-boxed-self? tail-ty self-name)]
@@ -584,6 +587,7 @@
     [(AstTypeNil) roots]
     [(AstTypeCons head rest)
       (let
+        [head : AstType (box-get head)]
         [rest : AstTypeList (box-get rest)]
         (clone-root-add-type-list
           decls

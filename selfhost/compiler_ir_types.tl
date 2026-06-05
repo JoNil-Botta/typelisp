@@ -673,6 +673,7 @@
     [(AstTypeNil) ""]
     [(AstTypeCons head rest)
       (let
+        [head : AstType (box-get head)]
         [rest : AstTypeList (box-get rest)]
         (string-append
           (compiler-ir-type-render head)
@@ -1745,6 +1746,7 @@
     [(AstTypeNil) ""]
     [(AstTypeCons head tail)
       (let
+        [head : AstType (box-get head)]
         [tail : AstTypeList (box-get tail)]
         (compiler-ir-cat3
           " "

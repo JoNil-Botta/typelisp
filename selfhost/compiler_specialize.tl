@@ -233,6 +233,7 @@
     [(AstPatternNil) templates]
     [(AstPatternCons pattern rest)
       (let
+        [pattern : AstPattern (box-get pattern)]
         [rest : AstPatternList (box-get rest)]
         (spec-template-list-remove-pattern-list
           (spec-template-list-remove-pattern templates pattern)
@@ -318,6 +319,7 @@
     [(AstTypeNil) "nil"]
     [(AstTypeCons head rest)
       (let
+        [head : AstType (box-get head)]
         [rest : AstTypeList (box-get rest)]
         (string-append
           (spec-type-key head)
@@ -557,6 +559,7 @@
     [(AstPatternNil) subs]
     [(AstPatternCons pattern rest)
       (let
+        [pattern : AstPattern (box-get pattern)]
         [rest : AstPatternList (box-get rest)]
         (spec-value-subst-remove-pattern-list
           (spec-value-subst-remove-pattern subs pattern)
@@ -623,6 +626,7 @@
     [(AstPatternNil) subs]
     [(AstPatternCons pattern rest)
       (let
+        [pattern : AstPattern (box-get pattern)]
         [rest : AstPatternList (box-get rest)]
         (spec-type-subst-remove-pattern-list
           (spec-type-subst-remove-pattern subs pattern)
@@ -666,6 +670,7 @@
     [(AstTypeNil) AstTypeNil]
     [(AstTypeCons head rest)
       (let
+        [head : AstType (box-get head)]
         [rest : AstTypeList (box-get rest)]
         (ast-type-cons
           (spec-substitute-type head subs)
@@ -732,6 +737,7 @@
     [(AstExprNil) (OkSpecExprList AstExprNil state)]
     [(AstExprCons head rest)
       (let
+        [head : AstExpr (box-get head)]
         [rest : AstExprList (box-get rest)]
         (match (spec-rewrite-expr head templates state)
           [(OkSpecExpr rewritten-head head-state)
@@ -841,6 +847,7 @@
         (match args
           [(AstExprCons arg rest-args)
             (let
+              [arg : AstExpr (box-get arg)]
               [rest-args : AstExprList (box-get rest-args)]
               (match param
                 [(AstParam param-name param-ty is-comptime)
@@ -2106,6 +2113,7 @@
     [(AstExprNil) (OkSpecSubExprList AstExprNil)]
     [(AstExprCons head rest)
       (let
+        [head : AstExpr (box-get head)]
         [rest : AstExprList (box-get rest)]
         (match (spec-substitute-values-expr head subs)
           [(OkSpecSubExpr rewritten-head)
@@ -2696,6 +2704,7 @@
     [(AstExprNil) (OkSpecSubExprList AstExprNil)]
     [(AstExprCons head rest)
       (let
+        [head : AstExpr (box-get head)]
         [rest : AstExprList (box-get rest)]
         (match (spec-substitute-types-expr head subs)
           [(OkSpecSubExpr rewritten-head)

@@ -359,6 +359,7 @@
     [(AstTypeNil) ""]
     [(AstTypeCons head rest)
       (let
+        [head : AstType (box-get head)]
         [rest : AstTypeList (box-get rest)]
         (string-append
           (front-type-render head)
@@ -502,6 +503,7 @@
     [(AstExprNil) ""]
     [(AstExprCons head rest)
       (let
+        [head : AstExpr (box-get head)]
         [rest : AstExprList (box-get rest)]
         (string-append
           (front-expr-render head)

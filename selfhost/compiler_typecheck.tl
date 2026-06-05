@@ -585,6 +585,21 @@
       [(Some n) (+ (struct-get p x) n)]
       [None 0])))")
 
+(define (compiler-typecheck-generated-decl-source) : String
+  "(comptime-decl (:generated point-family Point \"i64\")
+  (defstruct Point (x i64)))
+(comptime-decl (:generated make-point-family make-point \"i64\")
+  (define (make-point [x : i64]) : Point (Point x)))
+(define (main) : i64
+  (struct-get (make-point 7) x))")
+
+(define (compiler-typecheck-generated-decl-duplicate-visible-source) : String
+  "(comptime-decl (:generated point-family Point \"left\")
+  (defstruct Point (x i64)))
+(comptime-decl (:generated point-family Point \"right\")
+  (defstruct Point (x i64)))
+(define (main) : i64 0)")
+
 (define (compiler-typecheck-match-mismatch-source) : String
   "(defenum Maybe (None) (Some i64))
 (define (main [m : Maybe]) : i64
@@ -1510,6 +1525,14 @@
         unit
         (set! ok false))
       (if (compiler-typecheck-ok? (compiler-typecheck-comptime-decl-source))
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-ok? (compiler-typecheck-generated-decl-source))
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        (compiler-typecheck-generated-decl-duplicate-visible-source)
+        "symbols: duplicate type declaration Point")
         unit
         (set! ok false))
       (if (compiler-typecheck-error-ok?

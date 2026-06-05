@@ -3575,6 +3575,14 @@
       (match b
         [(AstLitChar b-c) (= a-c b-c)]
         [_ false])]
+    [(AstLitFloat a-text)
+      (match b
+        [(AstLitFloat b-text) (string-eq a-text b-text)]
+        [_ false])]
+    [(AstLitString a-text)
+      (match b
+        [(AstLitString b-text) (string-eq a-text b-text)]
+        [_ false])]
     [(AstLitUnit)
       (match b
         [(AstLitUnit) true]

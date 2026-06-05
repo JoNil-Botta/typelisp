@@ -17878,8 +17878,10 @@
           "typecheck: inline aggregate layout cycle BadList -> BadList; insert (Box BadList) at the recursive edge")))))
 
 (define (compiler-lower-comptime-decl-source) : String
-  "(comptime-decl (defstruct Point (x i64) (y i64)))
-(comptime-decl (defenum Shape (Nothing) (Circle i64) (Pair Point)))
+  "(comptime-decl (:generated point-family Point \"i64-i64\")
+  (defstruct Point (x i64) (y i64)))
+(comptime-decl (:generated shape-family Shape \"point\")
+  (defenum Shape (Nothing) (Circle i64) (Pair Point)))
 (define (make-point [x : i64] [y : i64]) : Point
   (Point x y))
 (define (get-y [p : Point]) : i64

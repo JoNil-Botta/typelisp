@@ -49,11 +49,13 @@
   (match paths
     [(AstDeclPathNil) DocModuleNil]
     [(AstDeclPathCons path rest)
-      (if (sym-i64-contains seen path)
-        (doc-modules-from-paths rest seen)
-        (DocModuleCons
-          (DocModule path (doc-extract-file path))
-          (doc-modules-from-paths rest (sym-i64-bind seen path 1))))]))
+      (let
+        [rest : AstDeclPathList (box-get rest)]
+        (if (sym-i64-contains seen path)
+          (doc-modules-from-paths rest seen)
+          (DocModuleCons
+            (DocModule path (doc-extract-file path))
+            (doc-modules-from-paths rest (sym-i64-bind seen path 1)))))]))
 
 (define (doc-render-loaded-markdown
   [input-path : String]
@@ -61,7 +63,7 @@
   (let
     [modules : DocModuleList
       (doc-modules-from-paths
-        (AstDeclPathCons input-path paths)
+        (ast-decl-path-cons input-path paths)
         (sym-i64-empty))]
     (if (> (doc-module-list-count modules) 1)
       (doc-render-module-graph-markdown modules)

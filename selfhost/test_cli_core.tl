@@ -210,7 +210,9 @@
   (match items
     [(AstDeclNil) out]
     [(AstDeclCons head rest)
-      (tltest-decl-list-reverse-in rest (AstDeclCons head out))]))
+      (let
+        [rest : AstDeclList (box-get rest)]
+        (tltest-decl-list-reverse-in rest (ast-decl-cons head out)))]))
 
 (define (tltest-decl-list-reverse [items : AstDeclList]) : AstDeclList
   (tltest-decl-list-reverse-in items AstDeclNil))
@@ -221,7 +223,9 @@
   (match items
     [(AstDeclPathNil) out]
     [(AstDeclPathCons head rest)
-      (tltest-path-list-reverse-in rest (AstDeclPathCons head out))]))
+      (let
+        [rest : AstDeclPathList (box-get rest)]
+        (tltest-path-list-reverse-in rest (ast-decl-path-cons head out)))]))
 
 (define (tltest-path-list-reverse [items : AstDeclPathList]) : AstDeclPathList
   (tltest-path-list-reverse-in items AstDeclPathNil))
@@ -241,12 +245,17 @@
   (match left
     [(AstDeclNil) right]
     [(AstDeclCons head rest)
-      (AstDeclCons head (tltest-decl-list-append rest right))]))
+      (let
+        [rest : AstDeclList (box-get rest)]
+        (ast-decl-cons head (tltest-decl-list-append rest right)))]))
 
 (define (tltest-decl-list-count [items : AstDeclList]) : i64
   (match items
     [(AstDeclNil) 0]
-    [(AstDeclCons _ rest) (+ 1 (tltest-decl-list-count rest))]))
+    [(AstDeclCons _ rest)
+      (let
+        [rest : AstDeclList (box-get rest)]
+        (+ 1 (tltest-decl-list-count rest)))]))
 
 (define (tltest-path-list-append
   [left : AstDeclPathList]
@@ -254,7 +263,9 @@
   (match left
     [(AstDeclPathNil) right]
     [(AstDeclPathCons head rest)
-      (AstDeclPathCons head (tltest-path-list-append rest right))]))
+      (let
+        [rest : AstDeclPathList (box-get rest)]
+        (ast-decl-path-cons head (tltest-path-list-append rest right)))]))
 
 (define (tltest-main-decl? [decl : AstDecl]) : bool
   (match decl
@@ -286,13 +297,17 @@
         test-count)]
     [(AstDeclCons decl rest)
       (let
+        [rest : AstDeclList (box-get rest)]
         [decl-path : String
           (match paths
             [(AstDeclPathCons path _) path]
             [(AstDeclPathNil) ""])]
         [rest-paths : AstDeclPathList
           (match paths
-            [(AstDeclPathCons _ path-rest) path-rest]
+            [(AstDeclPathCons _ path-rest)
+              (let
+                [path-rest : AstDeclPathList (box-get path-rest)]
+                path-rest)]
             [(AstDeclPathNil) AstDeclPathNil])]
         (match decl
           [(AstDeclTest name body span)
@@ -338,15 +353,15 @@
               (tltest-collect
                 rest
                 rest-paths
-                (AstDeclCons decl runtime-rev)
-                (AstDeclPathCons decl-path path-rev)
+                (ast-decl-cons decl runtime-rev)
+                (ast-decl-path-cons decl-path path-rev)
                 tests-rev
                 test-count))]))]))
 
 (define (tltest-print-expr [text : String]) : AstExpr
   (AstExprCall
     (AstExprVar "__tl_test_print_error")
-    (AstExprCons (AstExprLiteral (AstLitString text)) AstExprNil)))
+    (ast-expr-cons (AstExprLiteral (AstLitString text)) AstExprNil)))
 
 (define (tltest-call-expr [name : String]) : AstExpr
   (AstExprCall (AstExprVar name) AstExprNil))
@@ -381,9 +396,9 @@
 
 (define (tltest-print-runtime-write-type) : AstType
   (AstTyFunc
-    (AstTypeCons
+    (ast-type-cons
       (AstTyI32)
-      (AstTypeCons (AstTyPtr (AstTyU8)) (AstTypeCons (AstTyI32) AstTypeNil)))
+      (ast-type-cons (AstTyPtr (AstTyU8)) (ast-type-cons (AstTyI32) AstTypeNil)))
     (AstTyI32)))
 
 (define (tltest-print-runtime-write-decl [target : CompilerBackendTarget]) : AstDecl
@@ -396,22 +411,22 @@
     (tltest-print-runtime-write-type)))
 
 (define (tltest-text-param-list) : AstParamList
-  (AstParamCons (AstParam "text" (AstTyString) false) AstParamNil))
+  (ast-param-cons (AstParam "text" (AstTyString) false) AstParamNil))
 
 (define (tltest-text-length-expr) : AstExpr
   (AstExprCall
     (AstExprVar "string-length")
-    (AstExprCons (AstExprVar "text") AstExprNil)))
+    (ast-expr-cons (AstExprVar "text") AstExprNil)))
 
 (define (tltest-print-runtime-write-call) : AstExpr
   (AstExprCall
     (AstExprVar "__tl_test_write")
-    (AstExprCons
+    (ast-expr-cons
       (AstExprCast (AstExprLiteral (AstLitInt 2)) (AstTyI32))
-      (AstExprCons
+      (ast-expr-cons
         (AstExprUnsafe
-          (AstExprCons (AstExprStringData (AstExprVar "text")) AstExprNil))
-        (AstExprCons
+          (ast-expr-cons (AstExprStringData (AstExprVar "text")) AstExprNil))
+        (ast-expr-cons
           (AstExprCast (tltest-text-length-expr) (AstTyI32))
           AstExprNil)))))
 
@@ -421,14 +436,14 @@
     (tltest-text-param-list)
     (AstTyUnit)
     (AstExprBegin
-      (AstExprCons
+      (ast-expr-cons
         (tltest-print-runtime-write-call)
-        (AstExprCons (AstExprLiteral (AstLitUnit)) AstExprNil)))))
+        (ast-expr-cons (AstExprLiteral (AstLitUnit)) AstExprNil)))))
 
 (define (tltest-print-runtime-decls [target : CompilerBackendTarget]) : AstDeclList
-  (AstDeclCons
+  (ast-decl-cons
     (tltest-print-runtime-write-decl target)
-    (AstDeclCons (tltest-print-runtime-print-decl) AstDeclNil)))
+    (ast-decl-cons (tltest-print-runtime-print-decl) AstDeclNil)))
 
 (define (tltest-program-with-print-runtime
   [program : AstProgram]
@@ -439,24 +454,24 @@
         (tltest-decl-list-append (tltest-print-runtime-decls target) decls))]))
 
 (define (tltest-paths-with-print-runtime [paths : AstDeclPathList]) : AstDeclPathList
-  (AstDeclPathCons
+  (ast-decl-path-cons
     "<generated test runtime>"
-    (AstDeclPathCons "<generated test runtime>" paths)))
+    (ast-decl-path-cons "<generated test runtime>" paths)))
 
 (define (tltest-main-exprs [tests : InlineTestList] [count : i64]) : AstExprList
   (match tests
     [(InlineTestNil)
-      (AstExprCons
+      (ast-expr-cons
         (tltest-print-expr (tltest-summary-line count))
-        (AstExprCons (AstExprLiteral (AstLitInt 0)) AstExprNil))]
+        (ast-expr-cons (AstExprLiteral (AstLitInt 0)) AstExprNil))]
     [(InlineTestCons test rest)
       (match test
         [(InlineTest _ _ _ _ private-name)
-          (AstExprCons
+          (ast-expr-cons
             (tltest-print-expr (tltest-running-line test))
-            (AstExprCons
+            (ast-expr-cons
               (tltest-call-expr private-name)
-              (AstExprCons
+              (ast-expr-cons
                 (tltest-print-expr (tltest-ok-line test))
                 (tltest-main-exprs rest count))))])]))
 
@@ -466,7 +481,7 @@
     [(InlineTestCons test rest)
       (match test
         [(InlineTest _ _ _ body private-name)
-          (AstDeclCons
+          (ast-decl-cons
             (AstDeclDefFn private-name AstParamNil (AstTyUnit) body)
             (tltest-test-decls rest))])]))
 
@@ -476,7 +491,7 @@
     [(InlineTestCons test rest)
       (match test
         [(InlineTest _ path _ _ _)
-          (AstDeclPathCons path (tltest-test-paths rest))])]))
+          (ast-decl-path-cons path (tltest-test-paths rest))])]))
 
 (define (tltest-main-decl [tests : InlineTestList] [count : i64]) : AstDecl
   (AstDeclDefFn
@@ -494,7 +509,9 @@
   (match exprs
     [(AstExprNil) names]
     [(AstExprCons head rest)
-      (tltest-reach-mark-expr-list rest (tltest-reach-mark-expr head names))]))
+      (let
+        [rest : AstExprList (box-get rest)]
+        (tltest-reach-mark-expr-list rest (tltest-reach-mark-expr head names)))]))
 
 (define (tltest-reach-mark-let-bindings
   [bindings : AstLetBindingList]
@@ -502,11 +519,13 @@
   (match bindings
     [(AstLetBindingNil) names]
     [(AstLetBindingCons binding rest)
-      (match binding
-        [(AstLetBinding _ _ value)
-          (tltest-reach-mark-let-bindings
-            rest
-            (tltest-reach-mark-expr value names))])]))
+      (let
+        [rest : AstLetBindingList (box-get rest)]
+        (match binding
+          [(AstLetBinding _ _ value)
+            (tltest-reach-mark-let-bindings
+              rest
+              (tltest-reach-mark-expr value names))]))]))
 
 (define (tltest-reach-mark-resource-bindings
   [bindings : AstResourceBindingList]
@@ -514,11 +533,15 @@
   (match bindings
     [(AstResourceBindingNil) names]
     [(AstResourceBindingCons binding rest)
-      (match binding
-        [(AstResourceBinding _ init cleanup)
-          (tltest-reach-mark-resource-bindings
-            rest
-            (tltest-reach-mark-expr cleanup (tltest-reach-mark-expr init names)))])]))
+      (let
+        [rest : AstResourceBindingList (box-get rest)]
+        (match binding
+          [(AstResourceBinding _ init cleanup)
+            (tltest-reach-mark-resource-bindings
+              rest
+              (tltest-reach-mark-expr
+                cleanup
+                (tltest-reach-mark-expr init names)))]))]))
 
 (define (tltest-reach-mark-match-arms
   [arms : AstMatchArmList]
@@ -526,11 +549,13 @@
   (match arms
     [(AstMatchArmNil) names]
     [(AstMatchArmCons arm rest)
-      (match arm
-        [(AstMatchArm _ body)
-          (tltest-reach-mark-match-arms
-            rest
-            (tltest-reach-mark-expr body names))])]))
+      (let
+        [rest : AstMatchArmList (box-get rest)]
+        (match arm
+          [(AstMatchArm _ body)
+            (tltest-reach-mark-match-arms
+              rest
+              (tltest-reach-mark-expr body names))]))]))
 
 (define (tltest-reach-mark-expr [expr : AstExpr] [names : SymI64Env]) : SymI64Env
   (match expr
@@ -660,7 +685,9 @@
   (match decls
     [(AstDeclNil) names]
     [(AstDeclCons decl rest)
-      (tltest-reach-mark-decls rest (tltest-reach-mark-decl decl names))]))
+      (let
+        [rest : AstDeclList (box-get rest)]
+        (tltest-reach-mark-decls rest (tltest-reach-mark-decl decl names)))]))
 
 (define (tltest-reach-fixed
   [decls : AstDeclList]
@@ -698,21 +725,25 @@
         (tltest-path-list-reverse paths-rev))]
     [(AstDeclCons decl rest)
       (let
+        [rest : AstDeclList (box-get rest)]
         [decl-path : String
           (match paths
             [(AstDeclPathCons path _) path]
             [(AstDeclPathNil) ""])]
         [rest-paths : AstDeclPathList
           (match paths
-            [(AstDeclPathCons _ path-rest) path-rest]
+            [(AstDeclPathCons _ path-rest)
+              (let
+                [path-rest : AstDeclPathList (box-get path-rest)]
+                path-rest)]
             [(AstDeclPathNil) AstDeclPathNil])]
         (if (tltest-reachable-runtime-decl? decl names)
           (tltest-prune-runtime-decls-in
             rest
             rest-paths
             names
-            (AstDeclCons decl decls-rev)
-            (AstDeclPathCons decl-path paths-rev))
+            (ast-decl-cons decl decls-rev)
+            (ast-decl-path-cons decl-path paths-rev))
           (tltest-prune-runtime-decls-in
             rest
             rest-paths
@@ -748,12 +779,12 @@
                   pruned-decls
                   (tltest-decl-list-append
                     test-decls
-                    (AstDeclCons (tltest-main-decl tests count) AstDeclNil))))
+                    (ast-decl-cons (tltest-main-decl tests count) AstDeclNil))))
               (tltest-path-list-append
                 pruned-paths
                 (tltest-path-list-append
                   test-paths
-                  (AstDeclPathCons source AstDeclPathNil)))
+                  (ast-decl-path-cons source AstDeclPathNil)))
               count)]))]))
 
 (define (tltest-check-only
@@ -955,8 +986,8 @@
   ;; --check` owns source typechecking; run mode only needs the zero-test runner.
   (tltest-run-direct
     source
-    (AstProgram (AstDeclCons (tltest-main-decl InlineTestNil 0) AstDeclNil))
-    (AstDeclPathCons source AstDeclPathNil)
+    (AstProgram (ast-decl-cons (tltest-main-decl InlineTestNil 0) AstDeclNil))
+    (ast-decl-path-cons source AstDeclPathNil)
     target
     opt-level))
 

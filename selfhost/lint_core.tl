@@ -185,9 +185,11 @@
   (match exprs
     [(AstExprNil) false]
     [(AstExprCons head rest)
-      (if (lint-return-expr? head)
-        true
-        (lint-expr-list-has-return? rest))]))
+      (let
+        [rest : AstExprList (box-get rest)]
+        (if (lint-return-expr? head)
+          true
+          (lint-expr-list-has-return? rest)))]))
 
 (define (lint-return-branch? [expr : AstExpr]) : bool
   (match expr
@@ -242,7 +244,9 @@
   (match exprs
     [(AstExprNil) acc]
     [(AstExprCons head rest)
-      (lint-walk-expr-list rest threshold (lint-walk-expr head threshold acc))]))
+      (let
+        [rest : AstExprList (box-get rest)]
+        (lint-walk-expr-list rest threshold (lint-walk-expr head threshold acc)))]))
 
 ;: Walk each binding initializer in `bindings`.
 (define (lint-walk-let-bindings
@@ -252,12 +256,14 @@
   (match bindings
     [(AstLetBindingNil) acc]
     [(AstLetBindingCons binding rest)
-      (match binding
-        [(AstLetBinding _ _ init)
-          (lint-walk-let-bindings
-            rest
-            threshold
-            (lint-walk-expr init threshold acc))])]))
+      (let
+        [rest : AstLetBindingList (box-get rest)]
+        (match binding
+          [(AstLetBinding _ _ init)
+            (lint-walk-let-bindings
+              rest
+              threshold
+              (lint-walk-expr init threshold acc))]))]))
 
 (define (lint-let-bindings-contain-name?
   [bindings : AstLetBindingList]
@@ -265,11 +271,13 @@
   (match bindings
     [(AstLetBindingNil) false]
     [(AstLetBindingCons binding rest)
-      (match binding
-        [(AstLetBinding binding-name _ _)
-          (if (string-eq binding-name name)
-            true
-            (lint-let-bindings-contain-name? rest name))])]))
+      (let
+        [rest : AstLetBindingList (box-get rest)]
+        (match binding
+          [(AstLetBinding binding-name _ _)
+            (if (string-eq binding-name name)
+              true
+              (lint-let-bindings-contain-name? rest name))]))]))
 
 (define (lint-let-bindings-shadow-outer?
   [outer : AstLetBindingList]
@@ -277,11 +285,13 @@
   (match inner
     [(AstLetBindingNil) false]
     [(AstLetBindingCons binding rest)
-      (match binding
-        [(AstLetBinding name _ _)
-          (if (lint-let-bindings-contain-name? outer name)
-            true
-            (lint-let-bindings-shadow-outer? outer rest))])]))
+      (let
+        [rest : AstLetBindingList (box-get rest)]
+        (match binding
+          [(AstLetBinding name _ _)
+            (if (lint-let-bindings-contain-name? outer name)
+              true
+              (lint-let-bindings-shadow-outer? outer rest))]))]))
 
 (define (lint-nested-let-body? [body : AstExpr]) : bool
   (match body
@@ -340,15 +350,17 @@
   (match bindings
     [(AstResourceBindingNil) acc]
     [(AstResourceBindingCons binding rest)
-      (match binding
-        [(AstResourceBinding _ init cleanup)
-          (lint-walk-resource-bindings
-            rest
-            threshold
-            (lint-walk-expr
-              cleanup
+      (let
+        [rest : AstResourceBindingList (box-get rest)]
+        (match binding
+          [(AstResourceBinding _ init cleanup)
+            (lint-walk-resource-bindings
+              rest
               threshold
-              (lint-walk-expr init threshold acc)))])]))
+              (lint-walk-expr
+                cleanup
+                threshold
+                (lint-walk-expr init threshold acc)))]))]))
 
 ;: Walk each match-arm body in `arms`.
 (define (lint-walk-match-arms
@@ -358,12 +370,14 @@
   (match arms
     [(AstMatchArmNil) acc]
     [(AstMatchArmCons arm rest)
-      (match arm
-        [(AstMatchArm _ body)
-          (lint-walk-match-arms
-            rest
-            threshold
-            (lint-walk-expr body threshold acc))])]))
+      (let
+        [rest : AstMatchArmList (box-get rest)]
+        (match arm
+          [(AstMatchArm _ body)
+            (lint-walk-match-arms
+              rest
+              threshold
+              (lint-walk-expr body threshold acc))]))]))
 
 ;: Descend an if/else-`if` ladder whose head has already been flagged: walk
 ;: each rung's condition and then-branch as fresh sub-walks (so a ladder nested
@@ -496,13 +510,15 @@
   (match exprs
     [(AstExprNil) acc]
     [(AstExprCons head rest)
-      (match rest
-        [(AstExprNil) (lint-walk-tail-expr head threshold acc)]
-        [_
-          (lint-walk-tail-expr-list
-            rest
-            threshold
-            (lint-walk-expr head threshold acc))])]))
+      (let
+        [rest : AstExprList (box-get rest)]
+        (match rest
+          [(AstExprNil) (lint-walk-tail-expr head threshold acc)]
+          [_
+            (lint-walk-tail-expr-list
+              rest
+              threshold
+              (lint-walk-expr head threshold acc))]))]))
 
 ;;; Walk match arms whose bodies are in tail position.
 (define (lint-walk-tail-match-arms
@@ -512,12 +528,14 @@
   (match arms
     [(AstMatchArmNil) acc]
     [(AstMatchArmCons arm rest)
-      (match arm
-        [(AstMatchArm _ body)
-          (lint-walk-tail-match-arms
-            rest
-            threshold
-            (lint-walk-tail-expr body threshold acc))])]))
+      (let
+        [rest : AstMatchArmList (box-get rest)]
+        (match arm
+          [(AstMatchArm _ body)
+            (lint-walk-tail-match-arms
+              rest
+              threshold
+              (lint-walk-tail-expr body threshold acc))]))]))
 
 ;;; Walk `expr` in a function/lambda/test tail context. The return-path-chain
 ;;; rule is only valid here: in non-tail value contexts, introducing
@@ -718,7 +736,9 @@
   (match decls
     [(AstDeclNil) acc]
     [(AstDeclCons decl rest)
-      (lint-walk-decl-list rest threshold (lint-walk-decl decl threshold acc))]))
+      (let
+        [rest : AstDeclList (box-get rest)]
+        (lint-walk-decl-list rest threshold (lint-walk-decl decl threshold acc)))]))
 
 ;: Run all lint rules over `program`, returning the collected findings.
 (define (lint-program [program : AstProgram] [threshold : i64]) : LintFindingList
@@ -745,19 +765,25 @@
     [unit-then-guard : AstExpr (AstExprIf vx unit-expr return-one)]
     [unit-else-guard : AstExpr (AstExprIf vx return-one unit-expr)]
     [unit-value-guard : AstExpr (AstExprIf vx one unit-expr)]
-    [nested : AstExpr (AstExprBegin (AstExprCons ladder3 (AstExprNil)))]
+    [nested : AstExpr (AstExprBegin (ast-expr-cons ladder3 (AstExprNil)))]
     [in-let : AstExpr
       (AstExprLet
-        (AstLetBindingCons
+        (ast-let-binding-cons
           (AstLetBinding "y" (AstNoType) ladder3)
           (AstLetBindingNil))
         vx)]
     [outer-let-bindings : AstLetBindingList
-      (AstLetBindingCons (AstLetBinding "a" (AstNoType) one) (AstLetBindingNil))]
+      (ast-let-binding-cons
+        (AstLetBinding "a" (AstNoType) one)
+        (AstLetBindingNil))]
     [inner-let-bindings : AstLetBindingList
-      (AstLetBindingCons (AstLetBinding "b" (AstNoType) vx) (AstLetBindingNil))]
+      (ast-let-binding-cons
+        (AstLetBinding "b" (AstNoType) vx)
+        (AstLetBindingNil))]
     [shadowing-let-bindings : AstLetBindingList
-      (AstLetBindingCons (AstLetBinding "a" (AstNoType) one) (AstLetBindingNil))]
+      (ast-let-binding-cons
+        (AstLetBinding "a" (AstNoType) one)
+        (AstLetBindingNil))]
     [nested-let : AstExpr
       (AstExprLet outer-let-bindings (AstExprLet inner-let-bindings vx))]
     [shadowing-nested-let : AstExpr
@@ -766,9 +792,9 @@
       (AstExprLet
         outer-let-bindings
         (AstExprBegin
-          (AstExprCons
+          (ast-expr-cons
             (AstExprLet inner-let-bindings vx)
-            (AstExprCons vx (AstExprNil)))))]
+            (ast-expr-cons vx (AstExprNil)))))]
     [spanned : AstExpr (AstExprSpanned ladder3 (AstSourceSpan 7 3 9 4))]
     [spanned-nested-let : AstExpr
       (AstExprSpanned nested-let (AstSourceSpan 11 5 15 6))]

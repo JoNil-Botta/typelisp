@@ -246,7 +246,9 @@
   (match left
     [(AstDeclNil) right]
     [(AstDeclCons head rest)
-      (AstDeclCons head (compiler-load-decl-list-append rest right))]))
+      (let
+        [rest : AstDeclList (box-get rest)]
+        (ast-decl-cons head (compiler-load-decl-list-append rest right)))]))
 
 (define (compiler-load-decl-path-list-append
   [left : AstDeclPathList]
@@ -254,7 +256,11 @@
   (match left
     [(AstDeclPathNil) right]
     [(AstDeclPathCons head rest)
-      (AstDeclPathCons head (compiler-load-decl-path-list-append rest right))]))
+      (let
+        [rest : AstDeclPathList (box-get rest)]
+        (ast-decl-path-cons
+          head
+          (compiler-load-decl-path-list-append rest right)))]))
 
 (define (compiler-load-decl-module-list-append
   [left : AstDeclModuleList]
@@ -262,9 +268,11 @@
   (match left
     [(AstDeclModuleNil) right]
     [(AstDeclModuleCons head rest)
-      (AstDeclModuleCons
-        head
-        (compiler-load-decl-module-list-append rest right))]))
+      (let
+        [rest : AstDeclModuleList (box-get rest)]
+        (ast-decl-module-cons
+          head
+          (compiler-load-decl-module-list-append rest right)))]))
 
 (define (compiler-load-drop-paths [result : ResultCompilerLoadWithPaths]) : ResultCompilerLoad
   (match result
@@ -282,21 +290,23 @@
         [(CompilerLoadNoModuleId) (OkCompilerLoadModuleId fallback)]
         [(CompilerLoadSomeModuleId name) (OkCompilerLoadModuleId name)])]
     [(AstDeclCons decl rest)
-      (match decl
-        [(AstDeclModule name)
-          (match found
-            [(CompilerLoadNoModuleId)
-              (compiler-load-decls-module-id-loop
-                path
-                rest
-                fallback
-                (CompilerLoadSomeModuleId name))]
-            [(CompilerLoadSomeModuleId _)
-              (ErrCompilerLoadModuleId
-                (compiler-diagnostic-at-start
+      (let
+        [rest : AstDeclList (box-get rest)]
+        (match decl
+          [(AstDeclModule name)
+            (match found
+              [(CompilerLoadNoModuleId)
+                (compiler-load-decls-module-id-loop
                   path
-                  "compiler-load: duplicate module declaration"))])]
-        [_ (compiler-load-decls-module-id-loop path rest fallback found)])]))
+                  rest
+                  fallback
+                  (CompilerLoadSomeModuleId name))]
+              [(CompilerLoadSomeModuleId _)
+                (ErrCompilerLoadModuleId
+                  (compiler-diagnostic-at-start
+                    path
+                    "compiler-load: duplicate module declaration"))])]
+          [_ (compiler-load-decls-module-id-loop path rest fallback found)]))]))
 
 (define (compiler-load-decls-module-id [path : String] [decls : AstDeclList]) : ResultCompilerLoadModuleId
   (compiler-load-decls-module-id-loop
@@ -338,7 +348,7 @@
   [rest : AstDeclList]) : AstDeclList
   (match alias
     [(AstSomeImportAlias _)
-      (AstDeclCons
+      (ast-decl-cons
         (AstDeclImport (AstImportSpec import-path expected-module alias))
         rest)]
     [(AstNoImportAlias) rest]))
@@ -348,7 +358,7 @@
   [alias : AstMaybeImportAlias]
   [rest : AstDeclPathList]) : AstDeclPathList
   (match alias
-    [(AstSomeImportAlias _) (AstDeclPathCons importer-path rest)]
+    [(AstSomeImportAlias _) (ast-decl-path-cons importer-path rest)]
     [(AstNoImportAlias) rest]))
 
 (define (compiler-load-alias-module-list
@@ -356,7 +366,7 @@
   [alias : AstMaybeImportAlias]
   [rest : AstDeclModuleList]) : AstDeclModuleList
   (match alias
-    [(AstSomeImportAlias _) (AstDeclModuleCons importer-module rest)]
+    [(AstSomeImportAlias _) (ast-decl-module-cons importer-module rest)]
     [(AstNoImportAlias) rest]))
 
 (define (compiler-load-decls-with-module-and-roots
@@ -384,110 +394,112 @@
     [(AstDeclNil)
       (OkCompilerLoadWithPaths AstDeclNil AstDeclPathNil AstDeclModuleNil seen)]
     [(AstDeclCons decl rest)
-      (match decl
-        [(AstDeclImport (AstImportSpec import-path expected-module alias))
-          (match (compiler-load-resolve-import-result-with-roots
-            importer-path
-            import-path
-            stdlib-roots)
-            [(OkPkgResolve resolved)
-              (match (compiler-load-file-with-paths-and-roots-expect-cfg
-                resolved
-                seen
-                stdlib-roots
-                expected-module
-                cfgs)
-                [(OkCompilerLoadWithPaths
-                    imported-decls
-                    imported-paths
-                    imported-modules
-                    import-seen)
-                  (match (compiler-load-decls-with-module-and-roots-cfg
-                    rest
-                    importer-path
-                    importer-module
-                    import-seen
-                    stdlib-roots
-                    cfgs)
-                    [(OkCompilerLoadWithPaths
-                        rest-decls
-                        rest-paths
-                        rest-modules
-                        rest-seen)
-                      (OkCompilerLoadWithPaths
-                        (compiler-load-decl-list-append
-                          imported-decls
-                          (compiler-load-alias-decl-list
-                            resolved
-                            expected-module
-                            alias
-                            rest-decls))
-                        (compiler-load-decl-path-list-append
-                          imported-paths
-                          (compiler-load-alias-path-list
-                            importer-path
-                            alias
-                            rest-paths))
-                        (compiler-load-decl-module-list-append
-                          imported-modules
-                          (compiler-load-alias-module-list
-                            importer-module
-                            alias
-                            rest-modules))
-                        rest-seen)]
-                    [(ErrCompilerLoadWithPaths diag)
-                      (ErrCompilerLoadWithPaths diag)])]
-                [(ErrCompilerLoadWithPaths diag)
-                  (ErrCompilerLoadWithPaths diag)])]
-            [(ErrPkgResolve message)
-              (ErrCompilerLoadWithPaths
-                (compiler-diagnostic-at-start importer-path message))])]
-        [(AstDeclIncludeStr name include-path)
-          (match (compiler-load-expand-include-str
-            importer-path
-            include-path
-            name
-            stdlib-roots)
-            [(OkCompilerLoadInclude expanded)
-              (match (compiler-load-decls-with-module-and-roots-cfg
-                rest
-                importer-path
-                importer-module
-                seen
-                stdlib-roots
-                cfgs)
-                [(OkCompilerLoadWithPaths
-                    rest-decls
-                    rest-paths
-                    rest-modules
-                    rest-seen)
-                  (OkCompilerLoadWithPaths
-                    (AstDeclCons expanded rest-decls)
-                    (AstDeclPathCons importer-path rest-paths)
-                    (AstDeclModuleCons importer-module rest-modules)
-                    rest-seen)]
-                [(ErrCompilerLoadWithPaths diag)
-                  (ErrCompilerLoadWithPaths diag)])]
-            [(ErrCompilerLoadInclude diag) (ErrCompilerLoadWithPaths diag)])]
-        [_
-          (match (compiler-load-decls-with-module-and-roots-cfg
-            rest
-            importer-path
-            importer-module
-            seen
-            stdlib-roots
-            cfgs)
-            [(OkCompilerLoadWithPaths
-                rest-decls
-                rest-paths
-                rest-modules
-                rest-seen)
-              (OkCompilerLoadWithPaths
-                (AstDeclCons decl rest-decls)
-                (AstDeclPathCons importer-path rest-paths)
-                (AstDeclModuleCons importer-module rest-modules)
-                rest-seen)]
-            [(ErrCompilerLoadWithPaths diag) (ErrCompilerLoadWithPaths diag)])])]))
+      (let
+        [rest : AstDeclList (box-get rest)]
+        (match decl
+          [(AstDeclImport (AstImportSpec import-path expected-module alias))
+            (match (compiler-load-resolve-import-result-with-roots
+              importer-path
+              import-path
+              stdlib-roots)
+              [(OkPkgResolve resolved)
+                (match (compiler-load-file-with-paths-and-roots-expect-cfg
+                  resolved
+                  seen
+                  stdlib-roots
+                  expected-module
+                  cfgs)
+                  [(OkCompilerLoadWithPaths
+                      imported-decls
+                      imported-paths
+                      imported-modules
+                      import-seen)
+                    (match (compiler-load-decls-with-module-and-roots-cfg
+                      rest
+                      importer-path
+                      importer-module
+                      import-seen
+                      stdlib-roots
+                      cfgs)
+                      [(OkCompilerLoadWithPaths
+                          rest-decls
+                          rest-paths
+                          rest-modules
+                          rest-seen)
+                        (OkCompilerLoadWithPaths
+                          (compiler-load-decl-list-append
+                            imported-decls
+                            (compiler-load-alias-decl-list
+                              resolved
+                              expected-module
+                              alias
+                              rest-decls))
+                          (compiler-load-decl-path-list-append
+                            imported-paths
+                            (compiler-load-alias-path-list
+                              importer-path
+                              alias
+                              rest-paths))
+                          (compiler-load-decl-module-list-append
+                            imported-modules
+                            (compiler-load-alias-module-list
+                              importer-module
+                              alias
+                              rest-modules))
+                          rest-seen)]
+                      [(ErrCompilerLoadWithPaths diag)
+                        (ErrCompilerLoadWithPaths diag)])]
+                  [(ErrCompilerLoadWithPaths diag)
+                    (ErrCompilerLoadWithPaths diag)])]
+              [(ErrPkgResolve message)
+                (ErrCompilerLoadWithPaths
+                  (compiler-diagnostic-at-start importer-path message))])]
+          [(AstDeclIncludeStr name include-path)
+            (match (compiler-load-expand-include-str
+              importer-path
+              include-path
+              name
+              stdlib-roots)
+              [(OkCompilerLoadInclude expanded)
+                (match (compiler-load-decls-with-module-and-roots-cfg
+                  rest
+                  importer-path
+                  importer-module
+                  seen
+                  stdlib-roots
+                  cfgs)
+                  [(OkCompilerLoadWithPaths
+                      rest-decls
+                      rest-paths
+                      rest-modules
+                      rest-seen)
+                    (OkCompilerLoadWithPaths
+                      (ast-decl-cons expanded rest-decls)
+                      (ast-decl-path-cons importer-path rest-paths)
+                      (ast-decl-module-cons importer-module rest-modules)
+                      rest-seen)]
+                  [(ErrCompilerLoadWithPaths diag)
+                    (ErrCompilerLoadWithPaths diag)])]
+              [(ErrCompilerLoadInclude diag) (ErrCompilerLoadWithPaths diag)])]
+          [_
+            (match (compiler-load-decls-with-module-and-roots-cfg
+              rest
+              importer-path
+              importer-module
+              seen
+              stdlib-roots
+              cfgs)
+              [(OkCompilerLoadWithPaths
+                  rest-decls
+                  rest-paths
+                  rest-modules
+                  rest-seen)
+                (OkCompilerLoadWithPaths
+                  (ast-decl-cons decl rest-decls)
+                  (ast-decl-path-cons importer-path rest-paths)
+                  (ast-decl-module-cons importer-module rest-modules)
+                  rest-seen)]
+              [(ErrCompilerLoadWithPaths diag) (ErrCompilerLoadWithPaths diag)])]))]))
 
 (define (compiler-load-decls-with-paths-and-roots
   [decls : AstDeclList]
@@ -965,9 +977,11 @@
   (match params
     [(AstParamNil) AstTypeNil]
     [(AstParamCons param rest)
-      (match param
-        [(AstParam _ ty _)
-          (AstTypeCons ty (compiler-load-param-type-list rest))])]))
+      (let
+        [rest : AstParamList (box-get rest)]
+        (match param
+          [(AstParam _ ty _)
+            (ast-type-cons ty (compiler-load-param-type-list rest))]))]))
 
 (define (compiler-load-package-def-fn-extern
   [entry-path : String]
@@ -1033,7 +1047,10 @@
 
 (define (compiler-load-path-list-tail [paths : AstDeclPathList]) : AstDeclPathList
   (match paths
-    [(AstDeclPathCons _ rest) rest]
+    [(AstDeclPathCons _ rest)
+      (let
+        [rest : AstDeclPathList (box-get rest)]
+        rest)]
     [(AstDeclPathNil) AstDeclPathNil]))
 
 (define (compiler-load-package-extern-decls
@@ -1047,6 +1064,7 @@
       (OkCompilerLoadWithPaths AstDeclNil AstDeclPathNil AstDeclModuleNil seen)]
     [(AstDeclCons decl rest)
       (let
+        [rest : AstDeclList (box-get rest)]
         [decl-path : String (compiler-load-path-list-head-or paths entry-path)]
         [rest-paths : AstDeclPathList (compiler-load-path-list-tail paths)]
         [next-module : String
@@ -1071,9 +1089,9 @@
               decl)
               [(CompilerLoadSomeDecl transformed)
                 (OkCompilerLoadWithPaths
-                  (AstDeclCons transformed rest-decls)
-                  (AstDeclPathCons decl-path rest-decl-paths)
-                  (AstDeclModuleCons module rest-modules)
+                  (ast-decl-cons transformed rest-decls)
+                  (ast-decl-path-cons decl-path rest-decl-paths)
+                  (ast-decl-module-cons module rest-modules)
                   rest-seen)]
               [(CompilerLoadNoDecl)
                 (OkCompilerLoadWithPaths
@@ -1165,129 +1183,131 @@
     [(AstDeclNil)
       (OkCompilerLoadWithPaths AstDeclNil AstDeclPathNil AstDeclModuleNil seen)]
     [(AstDeclCons decl rest)
-      (match decl
-        [(AstDeclImport (AstImportSpec import-path expected-module alias))
-          (match (if (compiler-load-pkg-import? import-path)
-            (compiler-load-resolve-pkg-import import-path manifest-dir deps)
-            (compiler-load-resolve-import-result-with-roots
-              importer-path
-              import-path
-              stdlib-roots))
-            [(OkPkgResolve resolved)
-              (match (if (compiler-load-pkg-import? import-path)
-                (compiler-load-package-externs-from-import
-                  resolved
-                  seen
-                  stdlib-roots
-                  expected-module
-                  cfgs)
-                (compiler-load-package-file-with-paths-and-roots-expect
-                  resolved
-                  seen
-                  stdlib-roots
-                  expected-module
-                  manifest-dir
-                  deps
-                  cfgs))
-                [(OkCompilerLoadWithPaths
-                    imported-decls
-                    imported-paths
-                    imported-modules
-                    import-seen)
-                  (match (compiler-load-package-decls-with-module-and-roots
-                    rest
-                    importer-path
-                    importer-module
-                    import-seen
+      (let
+        [rest : AstDeclList (box-get rest)]
+        (match decl
+          [(AstDeclImport (AstImportSpec import-path expected-module alias))
+            (match (if (compiler-load-pkg-import? import-path)
+              (compiler-load-resolve-pkg-import import-path manifest-dir deps)
+              (compiler-load-resolve-import-result-with-roots
+                importer-path
+                import-path
+                stdlib-roots))
+              [(OkPkgResolve resolved)
+                (match (if (compiler-load-pkg-import? import-path)
+                  (compiler-load-package-externs-from-import
+                    resolved
+                    seen
                     stdlib-roots
+                    expected-module
+                    cfgs)
+                  (compiler-load-package-file-with-paths-and-roots-expect
+                    resolved
+                    seen
+                    stdlib-roots
+                    expected-module
                     manifest-dir
                     deps
-                    cfgs)
-                    [(OkCompilerLoadWithPaths
-                        rest-decls
-                        rest-paths
-                        rest-modules
-                        rest-seen)
-                      (OkCompilerLoadWithPaths
-                        (compiler-load-decl-list-append
-                          imported-decls
-                          (compiler-load-alias-decl-list
-                            resolved
-                            expected-module
-                            alias
-                            rest-decls))
-                        (compiler-load-decl-path-list-append
-                          imported-paths
-                          (compiler-load-alias-path-list
-                            importer-path
-                            alias
-                            rest-paths))
-                        (compiler-load-decl-module-list-append
-                          imported-modules
-                          (compiler-load-alias-module-list
-                            importer-module
-                            alias
-                            rest-modules))
-                        rest-seen)]
-                    [(ErrCompilerLoadWithPaths diag)
-                      (ErrCompilerLoadWithPaths diag)])]
-                [(ErrCompilerLoadWithPaths diag)
-                  (ErrCompilerLoadWithPaths diag)])]
-            [(ErrPkgResolve message)
-              (ErrCompilerLoadWithPaths
-                (compiler-diagnostic-at-start importer-path message))])]
-        [(AstDeclIncludeStr name include-path)
-          (match (compiler-load-package-expand-include-str
-            importer-path
-            include-path
-            name
-            stdlib-roots
-            manifest-dir
-            deps)
-            [(OkCompilerLoadInclude expanded)
-              (match (compiler-load-package-decls-with-module-and-roots
-                rest
-                importer-path
-                importer-module
-                seen
-                stdlib-roots
-                manifest-dir
-                deps
-                cfgs)
-                [(OkCompilerLoadWithPaths
-                    rest-decls
-                    rest-paths
-                    rest-modules
-                    rest-seen)
-                  (OkCompilerLoadWithPaths
-                    (AstDeclCons expanded rest-decls)
-                    (AstDeclPathCons importer-path rest-paths)
-                    (AstDeclModuleCons importer-module rest-modules)
-                    rest-seen)]
-                [(ErrCompilerLoadWithPaths diag)
-                  (ErrCompilerLoadWithPaths diag)])]
-            [(ErrCompilerLoadInclude diag) (ErrCompilerLoadWithPaths diag)])]
-        [_
-          (match (compiler-load-package-decls-with-module-and-roots
-            rest
-            importer-path
-            importer-module
-            seen
-            stdlib-roots
-            manifest-dir
-            deps
-            cfgs)
-            [(OkCompilerLoadWithPaths
-                rest-decls
-                rest-paths
-                rest-modules
-                rest-seen)
-              (OkCompilerLoadWithPaths
-                (AstDeclCons decl rest-decls)
-                (AstDeclPathCons importer-path rest-paths)
-                (AstDeclModuleCons importer-module rest-modules)
-                rest-seen)]
-            [(ErrCompilerLoadWithPaths diag) (ErrCompilerLoadWithPaths diag)])])]))
+                    cfgs))
+                  [(OkCompilerLoadWithPaths
+                      imported-decls
+                      imported-paths
+                      imported-modules
+                      import-seen)
+                    (match (compiler-load-package-decls-with-module-and-roots
+                      rest
+                      importer-path
+                      importer-module
+                      import-seen
+                      stdlib-roots
+                      manifest-dir
+                      deps
+                      cfgs)
+                      [(OkCompilerLoadWithPaths
+                          rest-decls
+                          rest-paths
+                          rest-modules
+                          rest-seen)
+                        (OkCompilerLoadWithPaths
+                          (compiler-load-decl-list-append
+                            imported-decls
+                            (compiler-load-alias-decl-list
+                              resolved
+                              expected-module
+                              alias
+                              rest-decls))
+                          (compiler-load-decl-path-list-append
+                            imported-paths
+                            (compiler-load-alias-path-list
+                              importer-path
+                              alias
+                              rest-paths))
+                          (compiler-load-decl-module-list-append
+                            imported-modules
+                            (compiler-load-alias-module-list
+                              importer-module
+                              alias
+                              rest-modules))
+                          rest-seen)]
+                      [(ErrCompilerLoadWithPaths diag)
+                        (ErrCompilerLoadWithPaths diag)])]
+                  [(ErrCompilerLoadWithPaths diag)
+                    (ErrCompilerLoadWithPaths diag)])]
+              [(ErrPkgResolve message)
+                (ErrCompilerLoadWithPaths
+                  (compiler-diagnostic-at-start importer-path message))])]
+          [(AstDeclIncludeStr name include-path)
+            (match (compiler-load-package-expand-include-str
+              importer-path
+              include-path
+              name
+              stdlib-roots
+              manifest-dir
+              deps)
+              [(OkCompilerLoadInclude expanded)
+                (match (compiler-load-package-decls-with-module-and-roots
+                  rest
+                  importer-path
+                  importer-module
+                  seen
+                  stdlib-roots
+                  manifest-dir
+                  deps
+                  cfgs)
+                  [(OkCompilerLoadWithPaths
+                      rest-decls
+                      rest-paths
+                      rest-modules
+                      rest-seen)
+                    (OkCompilerLoadWithPaths
+                      (ast-decl-cons expanded rest-decls)
+                      (ast-decl-path-cons importer-path rest-paths)
+                      (ast-decl-module-cons importer-module rest-modules)
+                      rest-seen)]
+                  [(ErrCompilerLoadWithPaths diag)
+                    (ErrCompilerLoadWithPaths diag)])]
+              [(ErrCompilerLoadInclude diag) (ErrCompilerLoadWithPaths diag)])]
+          [_
+            (match (compiler-load-package-decls-with-module-and-roots
+              rest
+              importer-path
+              importer-module
+              seen
+              stdlib-roots
+              manifest-dir
+              deps
+              cfgs)
+              [(OkCompilerLoadWithPaths
+                  rest-decls
+                  rest-paths
+                  rest-modules
+                  rest-seen)
+                (OkCompilerLoadWithPaths
+                  (ast-decl-cons decl rest-decls)
+                  (ast-decl-path-cons importer-path rest-paths)
+                  (ast-decl-module-cons importer-module rest-modules)
+                  rest-seen)]
+              [(ErrCompilerLoadWithPaths diag) (ErrCompilerLoadWithPaths diag)])]))]))
 
 (define (compiler-load-package-program-with-paths-and-roots-expect
   [path : String]
@@ -1385,7 +1405,10 @@
 (define (compiler-load-decl-list-count [decls : AstDeclList]) : i64
   (match decls
     [(AstDeclNil) 0]
-    [(AstDeclCons _ rest) (+ 1 (compiler-load-decl-list-count rest))]))
+    [(AstDeclCons _ rest)
+      (let
+        [rest : AstDeclList (box-get rest)]
+        (+ 1 (compiler-load-decl-list-count rest)))]))
 
 (define (compiler-load-first-string-def?
   [decls : AstDeclList]
@@ -1408,58 +1431,95 @@
   (match decls
     [(AstDeclNil) false]
     [(AstDeclCons decl rest)
-      (match decl
-        [(AstDeclImport
-            (AstImportSpec
-              _
-              (AstSomeModuleName module-name)
-              (AstSomeImportAlias alias)))
-          (if (and
-            (string-eq module-name target-module)
-            (string-eq alias target-alias))
-            true
+      (let
+        [rest : AstDeclList (box-get rest)]
+        (match decl
+          [(AstDeclImport
+              (AstImportSpec
+                _
+                (AstSomeModuleName module-name)
+                (AstSomeImportAlias alias)))
+            (if (and
+              (string-eq module-name target-module)
+              (string-eq alias target-alias))
+              true
+              (compiler-load-decl-list-has-import-alias?
+                rest
+                target-module
+                target-alias))]
+          [_
             (compiler-load-decl-list-has-import-alias?
               rest
               target-module
-              target-alias))]
-        [_
-          (compiler-load-decl-list-has-import-alias?
-            rest
-            target-module
-            target-alias)])]))
+              target-alias)]))]))
 
 (define (compiler-load-two-modules?
   [modules : AstDeclModuleList]
   [want : String]) : bool
   (match modules
-    [(AstDeclModuleCons first (AstDeclModuleCons second AstDeclModuleNil))
-      (and (string-eq first want) (string-eq second want))]
+    [(AstDeclModuleCons first tail)
+      (let
+        [tail : AstDeclModuleList (box-get tail)]
+        (match tail
+          [(AstDeclModuleCons second rest)
+            (let
+              [rest : AstDeclModuleList (box-get rest)]
+              (match rest
+                [(AstDeclModuleNil)
+                  (and (string-eq first want) (string-eq second want))]
+                [_ false]))]
+          [_ false]))]
     [_ false]))
 
 (define (compiler-load-entry-cycle-modules? [modules : AstDeclModuleList]) : bool
   (match modules
-    [(AstDeclModuleCons
-        first
-        (AstDeclModuleCons
-          second
-          (AstDeclModuleCons
-            third
-            (AstDeclModuleCons
-              fourth
-              (AstDeclModuleCons
-                fifth
-                (AstDeclModuleCons sixth AstDeclModuleNil))))))
-      (and
-        (string-eq first "smoke.entry")
-        (and
-          (string-eq second "smoke.dep")
-          (and
-            (string-eq third "smoke.dep")
-            (and
-              (string-eq fourth "smoke.dep")
-              (and
-                (string-eq fifth "smoke.entry")
-                (string-eq sixth "smoke.entry"))))))]
+    [(AstDeclModuleCons first tail)
+      (let
+        [tail : AstDeclModuleList (box-get tail)]
+        (match tail
+          [(AstDeclModuleCons second rest2)
+            (let
+              [rest2 : AstDeclModuleList (box-get rest2)]
+              (match rest2
+                [(AstDeclModuleCons third rest3)
+                  (let
+                    [rest3 : AstDeclModuleList (box-get rest3)]
+                    (match rest3
+                      [(AstDeclModuleCons fourth rest4)
+                        (let
+                          [rest4 : AstDeclModuleList (box-get rest4)]
+                          (match rest4
+                            [(AstDeclModuleCons fifth rest5)
+                              (let
+                                [rest5 : AstDeclModuleList (box-get rest5)]
+                                (match rest5
+                                  [(AstDeclModuleCons sixth rest6)
+                                    (let
+                                      [rest6 : AstDeclModuleList
+                                        (box-get rest6)]
+                                      (match rest6
+                                        [(AstDeclModuleNil)
+                                          (and
+                                            (string-eq first "smoke.entry")
+                                            (and
+                                              (string-eq second "smoke.dep")
+                                              (and
+                                                (string-eq third "smoke.dep")
+                                                (and
+                                                  (string-eq fourth "smoke.dep")
+                                                  (and
+                                                    (string-eq
+                                                      fifth
+                                                      "smoke.entry")
+                                                    (string-eq
+                                                      sixth
+                                                      "smoke.entry"))))))]
+                                        [_ false]))]
+                                  [_ false]))]
+                            [_ false]))]
+                      [_ false]))]
+                [_ false]))]
+          [_ false]))]
     [_ false]))
 
 (define (compiler-load-normalize-ok?) : bool
@@ -1599,12 +1659,17 @@
           (= (compiler-load-decl-list-count decls) 2)
           (and
             (match modules
-              [(AstDeclModuleCons
-                  first
-                  (AstDeclModuleCons second AstDeclModuleNil))
-                (and
-                  (string-eq first "target/compiler_load_legacy_dep.tl")
-                  (string-eq second "target/compiler_load_legacy_entry.tl"))]
+              [(AstDeclModuleCons first tail)
+                (let
+                  [tail : AstDeclModuleList (box-get tail)]
+                  (match tail
+                    [(AstDeclModuleCons second AstDeclModuleNil)
+                      (and
+                        (string-eq first "target/compiler_load_legacy_dep.tl")
+                        (string-eq
+                          second
+                          "target/compiler_load_legacy_entry.tl"))]
+                    [_ false]))]
               [_ false])
             (sym-i64-contains seen "target/compiler_load_legacy_dep.tl")))]
       [(ErrCompilerLoadWithPaths _) false])))

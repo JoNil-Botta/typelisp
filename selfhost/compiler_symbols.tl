@@ -449,22 +449,24 @@
   (match variants
     [(AstVariantDefNil) (OkCompilerSymbols symbols)]
     [(AstVariantDefCons variant rest)
-      (match variant
-        [(AstVariantDef name _)
-          (match (compiler-symbols-add-variant-value-in-module
-            symbols
-            module
-            name
-            enum-index
-            variant-index)
-            [(OkCompilerSymbols next)
-              (compiler-symbols-add-variant-values-in-module
-                next
-                module
-                rest
-                enum-index
-                (+ variant-index 1))]
-            [(ErrCompilerSymbols message) (ErrCompilerSymbols message)])])]))
+      (let
+        [rest : AstVariantDefList (box-get rest)]
+        (match variant
+          [(AstVariantDef name _)
+            (match (compiler-symbols-add-variant-value-in-module
+              symbols
+              module
+              name
+              enum-index
+              variant-index)
+              [(OkCompilerSymbols next)
+                (compiler-symbols-add-variant-values-in-module
+                  next
+                  module
+                  rest
+                  enum-index
+                  (+ variant-index 1))]
+              [(ErrCompilerSymbols message) (ErrCompilerSymbols message)])]))]))
 
 (define (compiler-symbols-add-macro-in-module
   [symbols : CompilerSymbols]
@@ -900,22 +902,24 @@
   (match variants
     [(AstVariantDefNil) (OkCompilerSymbols symbols)]
     [(AstVariantDefCons variant rest)
-      (match variant
-        [(AstVariantDef name _)
-          (match (compiler-symbols-add-local-variant-value-in-module
-            symbols
-            module
-            name
-            enum-index
-            variant-index)
-            [(OkCompilerSymbols next)
-              (compiler-symbols-add-local-variant-values-in-module
-                next
-                module
-                rest
-                enum-index
-                (+ variant-index 1))]
-            [(ErrCompilerSymbols message) (ErrCompilerSymbols message)])])]))
+      (let
+        [rest : AstVariantDefList (box-get rest)]
+        (match variant
+          [(AstVariantDef name _)
+            (match (compiler-symbols-add-local-variant-value-in-module
+              symbols
+              module
+              name
+              enum-index
+              variant-index)
+              [(OkCompilerSymbols next)
+                (compiler-symbols-add-local-variant-values-in-module
+                  next
+                  module
+                  rest
+                  enum-index
+                  (+ variant-index 1))]
+              [(ErrCompilerSymbols message) (ErrCompilerSymbols message)])]))]))
 
 (define (compiler-symbols-add-local-decl-in-module
   [symbols : CompilerSymbols]
@@ -995,20 +999,22 @@
   (match variants
     [(AstVariantDefNil) symbols]
     [(AstVariantDefCons variant rest)
-      (match variant
-        [(AstVariantDef name _)
-          (compiler-symbols-add-variant-value-aliases
-            (compiler-symbols-add-value-alias
-              symbols
-              (compiler-symbol-module-key alias name)
-              (compiler-registry-make-handle
-                (compiler-symbol-kind-enum-variant)
-                enum-index
-                variant-index))
-            alias
-            rest
-            enum-index
-            (+ variant-index 1))])]))
+      (let
+        [rest : AstVariantDefList (box-get rest)]
+        (match variant
+          [(AstVariantDef name _)
+            (compiler-symbols-add-variant-value-aliases
+              (compiler-symbols-add-value-alias
+                symbols
+                (compiler-symbol-module-key alias name)
+                (compiler-registry-make-handle
+                  (compiler-symbol-kind-enum-variant)
+                  enum-index
+                  variant-index))
+              alias
+              rest
+              enum-index
+              (+ variant-index 1))]))]))
 
 (define (compiler-symbols-add-decl-alias-in-module
   [symbols : CompilerSymbols]
@@ -1072,64 +1078,66 @@
   (match decls
     [(AstDeclNil) symbols]
     [(AstDeclCons decl rest)
-      (match decl
-        [(AstDeclImport _)
-          (compiler-symbols-add-module-aliases-list
-            symbols
-            rest
-            target-module
-            alias
-            index
-            module)]
-        [(AstDeclIncludeStr _ _)
-          (compiler-symbols-add-module-aliases-list
-            symbols
-            rest
-            target-module
-            alias
-            index
-            module)]
-        [(AstDeclExport _)
-          (compiler-symbols-add-module-aliases-list
-            symbols
-            rest
-            target-module
-            alias
-            index
-            module)]
-        [(AstDeclModule next-module)
-          (compiler-symbols-add-module-aliases-list
-            symbols
-            rest
-            target-module
-            alias
-            index
-            next-module)]
-        [(AstDeclTest _ _ _)
-          (compiler-symbols-add-module-aliases-list
-            symbols
-            rest
-            target-module
-            alias
-            index
-            module)]
-        [_
-          (let
-            [next-symbols : CompilerSymbols
-              (if (string-eq module target-module)
-                (compiler-symbols-add-decl-alias-in-module
-                  symbols
-                  alias
-                  decl
-                  index)
-                symbols)]
+      (let
+        [rest : AstDeclList (box-get rest)]
+        (match decl
+          [(AstDeclImport _)
             (compiler-symbols-add-module-aliases-list
-              next-symbols
+              symbols
               rest
               target-module
               alias
-              (+ index 1)
-              module))])]))
+              index
+              module)]
+          [(AstDeclIncludeStr _ _)
+            (compiler-symbols-add-module-aliases-list
+              symbols
+              rest
+              target-module
+              alias
+              index
+              module)]
+          [(AstDeclExport _)
+            (compiler-symbols-add-module-aliases-list
+              symbols
+              rest
+              target-module
+              alias
+              index
+              module)]
+          [(AstDeclModule next-module)
+            (compiler-symbols-add-module-aliases-list
+              symbols
+              rest
+              target-module
+              alias
+              index
+              next-module)]
+          [(AstDeclTest _ _ _)
+            (compiler-symbols-add-module-aliases-list
+              symbols
+              rest
+              target-module
+              alias
+              index
+              module)]
+          [_
+            (let
+              [next-symbols : CompilerSymbols
+                (if (string-eq module target-module)
+                  (compiler-symbols-add-decl-alias-in-module
+                    symbols
+                    alias
+                    decl
+                    index)
+                  symbols)]
+              (compiler-symbols-add-module-aliases-list
+                next-symbols
+                rest
+                target-module
+                alias
+                (+ index 1)
+                module))]))]))
 
 (define (compiler-symbols-add-module-aliases
   [symbols : CompilerSymbols]
@@ -1152,6 +1160,7 @@
     [(AstDeclNil) symbols]
     [(AstDeclCons decl rest)
       (let
+        [rest : AstDeclList (box-get rest)]
         [next-symbols : CompilerSymbols
           (match decl
             [(AstDeclImport
@@ -1181,26 +1190,36 @@
   (match decls
     [(AstDeclNil) (OkCompilerSymbols symbols)]
     [(AstDeclCons decl rest)
-      (match decl
-        [(AstDeclImport _)
-          (build-compiler-symbol-list-in-module rest symbols index module)]
-        [(AstDeclIncludeStr _ _)
-          (build-compiler-symbol-list-in-module rest symbols index module)]
-        [(AstDeclExport _)
-          (build-compiler-symbol-list-in-module rest symbols index module)]
-        [(AstDeclModule next-module)
-          (build-compiler-symbol-list-in-module rest symbols index next-module)]
-        [(AstDeclTest _ _ _)
-          (build-compiler-symbol-list-in-module rest symbols index module)]
-        [_
-          (match (compiler-symbols-add-decl-in-module symbols module decl index)
-            [(OkCompilerSymbols next-symbols)
-              (build-compiler-symbol-list-in-module
-                rest
-                next-symbols
-                (+ index 1)
-                module)]
-            [(ErrCompilerSymbols message) (ErrCompilerSymbols message)])])]))
+      (let
+        [rest : AstDeclList (box-get rest)]
+        (match decl
+          [(AstDeclImport _)
+            (build-compiler-symbol-list-in-module rest symbols index module)]
+          [(AstDeclIncludeStr _ _)
+            (build-compiler-symbol-list-in-module rest symbols index module)]
+          [(AstDeclExport _)
+            (build-compiler-symbol-list-in-module rest symbols index module)]
+          [(AstDeclModule next-module)
+            (build-compiler-symbol-list-in-module
+              rest
+              symbols
+              index
+              next-module)]
+          [(AstDeclTest _ _ _)
+            (build-compiler-symbol-list-in-module rest symbols index module)]
+          [_
+            (match (compiler-symbols-add-decl-in-module
+              symbols
+              module
+              decl
+              index)
+              [(OkCompilerSymbols next-symbols)
+                (build-compiler-symbol-list-in-module
+                  rest
+                  next-symbols
+                  (+ index 1)
+                  module)]
+              [(ErrCompilerSymbols message) (ErrCompilerSymbols message)])]))]))
 
 (define (build-compiler-symbols [program : AstProgram]) : ResultCompilerSymbols
   (match program
@@ -1224,34 +1243,52 @@
   (match decls
     [(AstDeclNil) (OkCompilerSymbols symbols)]
     [(AstDeclCons decl rest)
-      (match decl
-        [(AstDeclImport _)
-          (build-compiler-local-symbol-list-in-module rest symbols index module)]
-        [(AstDeclIncludeStr _ _)
-          (build-compiler-local-symbol-list-in-module rest symbols index module)]
-        [(AstDeclExport _)
-          (build-compiler-local-symbol-list-in-module rest symbols index module)]
-        [(AstDeclModule next-module)
-          (build-compiler-local-symbol-list-in-module
-            rest
-            symbols
-            index
-            next-module)]
-        [(AstDeclTest _ _ _)
-          (build-compiler-local-symbol-list-in-module rest symbols index module)]
-        [_
-          (match (compiler-symbols-add-local-decl-in-module
-            symbols
-            module
-            decl
-            index)
-            [(OkCompilerSymbols next-symbols)
-              (build-compiler-local-symbol-list-in-module
-                rest
-                next-symbols
-                (+ index 1)
-                module)]
-            [(ErrCompilerSymbols message) (ErrCompilerSymbols message)])])]))
+      (let
+        [rest : AstDeclList (box-get rest)]
+        (match decl
+          [(AstDeclImport _)
+            (build-compiler-local-symbol-list-in-module
+              rest
+              symbols
+              index
+              module)]
+          [(AstDeclIncludeStr _ _)
+            (build-compiler-local-symbol-list-in-module
+              rest
+              symbols
+              index
+              module)]
+          [(AstDeclExport _)
+            (build-compiler-local-symbol-list-in-module
+              rest
+              symbols
+              index
+              module)]
+          [(AstDeclModule next-module)
+            (build-compiler-local-symbol-list-in-module
+              rest
+              symbols
+              index
+              next-module)]
+          [(AstDeclTest _ _ _)
+            (build-compiler-local-symbol-list-in-module
+              rest
+              symbols
+              index
+              module)]
+          [_
+            (match (compiler-symbols-add-local-decl-in-module
+              symbols
+              module
+              decl
+              index)
+              [(OkCompilerSymbols next-symbols)
+                (build-compiler-local-symbol-list-in-module
+                  rest
+                  next-symbols
+                  (+ index 1)
+                  module)]
+              [(ErrCompilerSymbols message) (ErrCompilerSymbols message)])]))]))
 
 (define (build-compiler-local-symbols [program : AstProgram]) : ResultCompilerSymbols
   (match program
@@ -1373,20 +1410,22 @@
   (match variants
     [(AstVariantDefNil) registries]
     [(AstVariantDefCons variant rest)
-      (match variant
-        [(AstVariantDef name _)
-          (compiler-registries-add-variant-aliases-list
-            (compiler-registries-add-variant-alias
-              registries
-              (compiler-symbol-module-key alias name)
-              (compiler-registry-make-handle
-                (compiler-symbol-kind-enum-variant)
-                enum-index
-                variant-index))
-            alias
-            rest
-            enum-index
-            (+ variant-index 1))])]))
+      (let
+        [rest : AstVariantDefList (box-get rest)]
+        (match variant
+          [(AstVariantDef name _)
+            (compiler-registries-add-variant-aliases-list
+              (compiler-registries-add-variant-alias
+                registries
+                (compiler-symbol-module-key alias name)
+                (compiler-registry-make-handle
+                  (compiler-symbol-kind-enum-variant)
+                  enum-index
+                  variant-index))
+              alias
+              rest
+              enum-index
+              (+ variant-index 1))]))]))
 
 (define (compiler-registries-add-field-aliases-list
   [registries : CompilerRegistries]
@@ -1397,21 +1436,23 @@
   (match fields
     [(AstFieldDefNil) registries]
     [(AstFieldDefCons field rest)
-      (match field
-        [(AstFieldDef name _ _)
-          (compiler-registries-add-field-aliases-list
-            (compiler-registries-add-field-alias
-              registries
+      (let
+        [rest : AstFieldDefList (box-get rest)]
+        (match field
+          [(AstFieldDef name _ _)
+            (compiler-registries-add-field-aliases-list
+              (compiler-registries-add-field-alias
+                registries
+                struct-name
+                name
+                (compiler-registry-make-handle
+                  (compiler-symbol-kind-struct-field)
+                  struct-index
+                  field-index))
               struct-name
-              name
-              (compiler-registry-make-handle
-                (compiler-symbol-kind-struct-field)
-                struct-index
-                field-index))
-            struct-name
-            rest
-            struct-index
-            (+ field-index 1))])]))
+              rest
+              struct-index
+              (+ field-index 1))]))]))
 
 (define (compiler-registries-add-decl-alias-in-module
   [registries : CompilerRegistries]
@@ -1451,64 +1492,66 @@
   (match decls
     [(AstDeclNil) registries]
     [(AstDeclCons decl rest)
-      (match decl
-        [(AstDeclImport _)
-          (compiler-registries-add-module-aliases-list
-            registries
-            rest
-            target-module
-            alias
-            index
-            module)]
-        [(AstDeclIncludeStr _ _)
-          (compiler-registries-add-module-aliases-list
-            registries
-            rest
-            target-module
-            alias
-            index
-            module)]
-        [(AstDeclExport _)
-          (compiler-registries-add-module-aliases-list
-            registries
-            rest
-            target-module
-            alias
-            index
-            module)]
-        [(AstDeclModule next-module)
-          (compiler-registries-add-module-aliases-list
-            registries
-            rest
-            target-module
-            alias
-            index
-            next-module)]
-        [(AstDeclTest _ _ _)
-          (compiler-registries-add-module-aliases-list
-            registries
-            rest
-            target-module
-            alias
-            index
-            module)]
-        [_
-          (let
-            [next-registries : CompilerRegistries
-              (if (string-eq module target-module)
-                (compiler-registries-add-decl-alias-in-module
-                  registries
-                  alias
-                  decl
-                  index)
-                registries)]
+      (let
+        [rest : AstDeclList (box-get rest)]
+        (match decl
+          [(AstDeclImport _)
             (compiler-registries-add-module-aliases-list
-              next-registries
+              registries
               rest
               target-module
               alias
-              (+ index 1)
-              module))])]))
+              index
+              module)]
+          [(AstDeclIncludeStr _ _)
+            (compiler-registries-add-module-aliases-list
+              registries
+              rest
+              target-module
+              alias
+              index
+              module)]
+          [(AstDeclExport _)
+            (compiler-registries-add-module-aliases-list
+              registries
+              rest
+              target-module
+              alias
+              index
+              module)]
+          [(AstDeclModule next-module)
+            (compiler-registries-add-module-aliases-list
+              registries
+              rest
+              target-module
+              alias
+              index
+              next-module)]
+          [(AstDeclTest _ _ _)
+            (compiler-registries-add-module-aliases-list
+              registries
+              rest
+              target-module
+              alias
+              index
+              module)]
+          [_
+            (let
+              [next-registries : CompilerRegistries
+                (if (string-eq module target-module)
+                  (compiler-registries-add-decl-alias-in-module
+                    registries
+                    alias
+                    decl
+                    index)
+                  registries)]
+              (compiler-registries-add-module-aliases-list
+                next-registries
+                rest
+                target-module
+                alias
+                (+ index 1)
+                module))]))]))
 
 (define (compiler-registries-add-module-aliases
   [registries : CompilerRegistries]
@@ -1531,6 +1574,7 @@
     [(AstDeclNil) registries]
     [(AstDeclCons decl rest)
       (let
+        [rest : AstDeclList (box-get rest)]
         [next-registries : CompilerRegistries
           (match decl
             [(AstDeclImport
@@ -1567,22 +1611,24 @@
   (match variants
     [(AstVariantDefNil) (OkCompilerRegistries registries)]
     [(AstVariantDefCons variant rest)
-      (match variant
-        [(AstVariantDef name _)
-          (match (compiler-registries-add-variant-in-module
-            registries
-            module
-            name
-            enum-index
-            variant-index)
-            [(OkCompilerRegistries next-registries)
-              (build-compiler-variant-registry-list-in-module
-                rest
-                next-registries
-                module
-                enum-index
-                (+ variant-index 1))]
-            [(ErrCompilerRegistries message) (ErrCompilerRegistries message)])])]))
+      (let
+        [rest : AstVariantDefList (box-get rest)]
+        (match variant
+          [(AstVariantDef name _)
+            (match (compiler-registries-add-variant-in-module
+              registries
+              module
+              name
+              enum-index
+              variant-index)
+              [(OkCompilerRegistries next-registries)
+                (build-compiler-variant-registry-list-in-module
+                  rest
+                  next-registries
+                  module
+                  enum-index
+                  (+ variant-index 1))]
+              [(ErrCompilerRegistries message) (ErrCompilerRegistries message)])]))]))
 
 (define (build-compiler-field-registry-list
   [fields : AstFieldDefList]
@@ -1594,26 +1640,29 @@
   (match fields
     [(AstFieldDefNil) (OkCompilerRegistries registries)]
     [(AstFieldDefCons field rest)
-      (match field
-        [(AstFieldDef name _ _)
-          (if (sym-i64-contains seen name)
-            (ErrCompilerRegistries
-              (compiler-registries-duplicate-field-message struct-name name))
-            (match (compiler-registries-add-field
-              registries
-              struct-name
-              name
-              struct-index
-              field-index)
-              [(OkCompilerRegistries next-registries)
-                (build-compiler-field-registry-list
-                  rest
-                  next-registries
-                  (sym-i64-bind seen name field-index)
-                  struct-name
-                  struct-index
-                  (+ field-index 1))]
-              [(ErrCompilerRegistries message) (ErrCompilerRegistries message)]))])]))
+      (let
+        [rest : AstFieldDefList (box-get rest)]
+        (match field
+          [(AstFieldDef name _ _)
+            (if (sym-i64-contains seen name)
+              (ErrCompilerRegistries
+                (compiler-registries-duplicate-field-message struct-name name))
+              (match (compiler-registries-add-field
+                registries
+                struct-name
+                name
+                struct-index
+                field-index)
+                [(OkCompilerRegistries next-registries)
+                  (build-compiler-field-registry-list
+                    rest
+                    next-registries
+                    (sym-i64-bind seen name field-index)
+                    struct-name
+                    struct-index
+                    (+ field-index 1))]
+                [(ErrCompilerRegistries message)
+                  (ErrCompilerRegistries message)]))]))]))
 
 (define (build-compiler-registry-list
   [decls : AstDeclList]
@@ -1629,95 +1678,113 @@
   (match decls
     [(AstDeclNil) (OkCompilerRegistries registries)]
     [(AstDeclCons decl rest)
-      (match decl
-        [(AstDeclImport _)
-          (build-compiler-registry-list-in-module rest registries index module)]
-        [(AstDeclIncludeStr _ _)
-          (build-compiler-registry-list-in-module rest registries index module)]
-        [(AstDeclExport _)
-          (build-compiler-registry-list-in-module rest registries index module)]
-        [(AstDeclModule next-module)
-          (build-compiler-registry-list-in-module
-            rest
-            registries
-            index
-            next-module)]
-        [(AstDeclTest _ _ _)
-          (build-compiler-registry-list-in-module rest registries index module)]
-        [(AstDeclDefEnum _ variants)
-          (match (build-compiler-variant-registry-list-in-module
-            variants
-            registries
-            module
-            index
-            0)
-            [(OkCompilerRegistries next-registries)
-              (build-compiler-registry-list-in-module
-                rest
-                next-registries
-                (+ index 1)
-                module)]
-            [(ErrCompilerRegistries message) (ErrCompilerRegistries message)])]
-        [(AstDeclDefStruct name _ _ fields)
-          (match (build-compiler-field-registry-list
-            fields
-            registries
-            (sym-i64-empty)
-            (compiler-symbol-module-key module name)
-            index
-            0)
-            [(OkCompilerRegistries next-registries)
-              (build-compiler-registry-list-in-module
-                rest
-                next-registries
-                (+ index 1)
-                module)]
-            [(ErrCompilerRegistries message) (ErrCompilerRegistries message)])]
-        [(AstDeclComptimeDecl template)
-          (match template
-            [(AstDeclDefEnum _ variants)
-              (match (build-compiler-variant-registry-list-in-module
-                variants
-                registries
-                module
-                index
-                0)
-                [(OkCompilerRegistries next-registries)
-                  (build-compiler-registry-list-in-module
-                    rest
-                    next-registries
-                    (+ index 1)
-                    module)]
-                [(ErrCompilerRegistries message)
-                  (ErrCompilerRegistries message)])]
-            [(AstDeclDefStruct name _ _ fields)
-              (match (build-compiler-field-registry-list
-                fields
-                registries
-                (sym-i64-empty)
-                (compiler-symbol-module-key module name)
-                index
-                0)
-                [(OkCompilerRegistries next-registries)
-                  (build-compiler-registry-list-in-module
-                    rest
-                    next-registries
-                    (+ index 1)
-                    module)]
-                [(ErrCompilerRegistries message)
-                  (ErrCompilerRegistries message)])]
-            [_
-              (build-compiler-registry-list-in-module
-                rest
-                registries
-                (+ index 1)
-                module)])]
-        [_
-          (build-compiler-registry-list-in-module
-            rest
-            registries
-            (+ index 1)
-            module)])]))
+      (let
+        [rest : AstDeclList (box-get rest)]
+        (match decl
+          [(AstDeclImport _)
+            (build-compiler-registry-list-in-module
+              rest
+              registries
+              index
+              module)]
+          [(AstDeclIncludeStr _ _)
+            (build-compiler-registry-list-in-module
+              rest
+              registries
+              index
+              module)]
+          [(AstDeclExport _)
+            (build-compiler-registry-list-in-module
+              rest
+              registries
+              index
+              module)]
+          [(AstDeclModule next-module)
+            (build-compiler-registry-list-in-module
+              rest
+              registries
+              index
+              next-module)]
+          [(AstDeclTest _ _ _)
+            (build-compiler-registry-list-in-module
+              rest
+              registries
+              index
+              module)]
+          [(AstDeclDefEnum _ variants)
+            (match (build-compiler-variant-registry-list-in-module
+              variants
+              registries
+              module
+              index
+              0)
+              [(OkCompilerRegistries next-registries)
+                (build-compiler-registry-list-in-module
+                  rest
+                  next-registries
+                  (+ index 1)
+                  module)]
+              [(ErrCompilerRegistries message) (ErrCompilerRegistries message)])]
+          [(AstDeclDefStruct name _ _ fields)
+            (match (build-compiler-field-registry-list
+              fields
+              registries
+              (sym-i64-empty)
+              (compiler-symbol-module-key module name)
+              index
+              0)
+              [(OkCompilerRegistries next-registries)
+                (build-compiler-registry-list-in-module
+                  rest
+                  next-registries
+                  (+ index 1)
+                  module)]
+              [(ErrCompilerRegistries message) (ErrCompilerRegistries message)])]
+          [(AstDeclComptimeDecl template)
+            (match template
+              [(AstDeclDefEnum _ variants)
+                (match (build-compiler-variant-registry-list-in-module
+                  variants
+                  registries
+                  module
+                  index
+                  0)
+                  [(OkCompilerRegistries next-registries)
+                    (build-compiler-registry-list-in-module
+                      rest
+                      next-registries
+                      (+ index 1)
+                      module)]
+                  [(ErrCompilerRegistries message)
+                    (ErrCompilerRegistries message)])]
+              [(AstDeclDefStruct name _ _ fields)
+                (match (build-compiler-field-registry-list
+                  fields
+                  registries
+                  (sym-i64-empty)
+                  (compiler-symbol-module-key module name)
+                  index
+                  0)
+                  [(OkCompilerRegistries next-registries)
+                    (build-compiler-registry-list-in-module
+                      rest
+                      next-registries
+                      (+ index 1)
+                      module)]
+                  [(ErrCompilerRegistries message)
+                    (ErrCompilerRegistries message)])]
+              [_
+                (build-compiler-registry-list-in-module
+                  rest
+                  registries
+                  (+ index 1)
+                  module)])]
+          [_
+            (build-compiler-registry-list-in-module
+              rest
+              registries
+              (+ index 1)
+              module)]))]))
 
 (define (build-compiler-registries [program : AstProgram]) : ResultCompilerRegistries
   (match (build-compiler-symbols program)
@@ -1774,15 +1841,22 @@
   (match items
     [(AstExportItemNil) (OkCompilerExports exports)]
     [(AstExportItemCons item rest)
-      (match (build-compiler-export-item exports symbols registries module item)
-        [(OkCompilerExports next-exports)
-          (build-compiler-export-items
-            next-exports
-            symbols
-            registries
-            module
-            rest)]
-        [(ErrCompilerExports message) (ErrCompilerExports message)])]))
+      (let
+        [rest : AstExportItemList (box-get rest)]
+        (match (build-compiler-export-item
+          exports
+          symbols
+          registries
+          module
+          item)
+          [(OkCompilerExports next-exports)
+            (build-compiler-export-items
+              next-exports
+              symbols
+              registries
+              module
+              rest)]
+          [(ErrCompilerExports message) (ErrCompilerExports message)]))]))
 
 (define (build-compiler-export-list-in-module
   [decls : AstDeclList]
@@ -1793,60 +1867,62 @@
   (match decls
     [(AstDeclNil) (OkCompilerExports exports)]
     [(AstDeclCons decl rest)
-      (match decl
-        [(AstDeclModule next-module)
-          (build-compiler-export-list-in-module
-            rest
-            symbols
-            registries
-            exports
-            next-module)]
-        [(AstDeclExport items)
-          (match (build-compiler-export-items
-            exports
-            symbols
-            registries
-            module
-            items)
-            [(OkCompilerExports next-exports)
-              (build-compiler-export-list-in-module
-                rest
-                symbols
-                registries
-                next-exports
-                module)]
-            [(ErrCompilerExports message) (ErrCompilerExports message)])]
-        [(AstDeclUnsafe inner)
-          (match inner
-            [(AstDeclExport items)
-              (match (build-compiler-export-items
-                exports
-                symbols
-                registries
-                module
-                items)
-                [(OkCompilerExports next-exports)
-                  (build-compiler-export-list-in-module
-                    rest
-                    symbols
-                    registries
-                    next-exports
-                    module)]
-                [(ErrCompilerExports message) (ErrCompilerExports message)])]
-            [_
-              (build-compiler-export-list-in-module
-                rest
-                symbols
-                registries
-                exports
-                module)])]
-        [_
-          (build-compiler-export-list-in-module
-            rest
-            symbols
-            registries
-            exports
-            module)])]))
+      (let
+        [rest : AstDeclList (box-get rest)]
+        (match decl
+          [(AstDeclModule next-module)
+            (build-compiler-export-list-in-module
+              rest
+              symbols
+              registries
+              exports
+              next-module)]
+          [(AstDeclExport items)
+            (match (build-compiler-export-items
+              exports
+              symbols
+              registries
+              module
+              items)
+              [(OkCompilerExports next-exports)
+                (build-compiler-export-list-in-module
+                  rest
+                  symbols
+                  registries
+                  next-exports
+                  module)]
+              [(ErrCompilerExports message) (ErrCompilerExports message)])]
+          [(AstDeclUnsafe inner)
+            (match inner
+              [(AstDeclExport items)
+                (match (build-compiler-export-items
+                  exports
+                  symbols
+                  registries
+                  module
+                  items)
+                  [(OkCompilerExports next-exports)
+                    (build-compiler-export-list-in-module
+                      rest
+                      symbols
+                      registries
+                      next-exports
+                      module)]
+                  [(ErrCompilerExports message) (ErrCompilerExports message)])]
+              [_
+                (build-compiler-export-list-in-module
+                  rest
+                  symbols
+                  registries
+                  exports
+                  module)])]
+          [_
+            (build-compiler-export-list-in-module
+              rest
+              symbols
+              registries
+              exports
+              module)]))]))
 
 (define (build-compiler-exports-with
   [program : AstProgram]
@@ -1885,20 +1961,22 @@
   (match decls
     [(AstDeclNil) (ErrAstDecl "symbols: declaration index not found")]
     [(AstDeclCons decl rest)
-      (match decl
-        [(AstDeclImport _) (compiler-decl-list-at-index rest target index)]
-        [(AstDeclIncludeStr _ _)
-          (compiler-decl-list-at-index rest target index)]
-        [(AstDeclExport _) (compiler-decl-list-at-index rest target index)]
-        [(AstDeclModule _) (compiler-decl-list-at-index rest target index)]
-        [(AstDeclTest _ _ _) (compiler-decl-list-at-index rest target index)]
-        [_
-          (if (= target index)
-            (match decl
-              [(AstDeclComptimeDecl template) (OkAstDecl template)]
-              [(AstDeclUnsafe inner) (OkAstDecl inner)]
-              [_ (OkAstDecl decl)])
-            (compiler-decl-list-at-index rest target (+ index 1)))])]))
+      (let
+        [rest : AstDeclList (box-get rest)]
+        (match decl
+          [(AstDeclImport _) (compiler-decl-list-at-index rest target index)]
+          [(AstDeclIncludeStr _ _)
+            (compiler-decl-list-at-index rest target index)]
+          [(AstDeclExport _) (compiler-decl-list-at-index rest target index)]
+          [(AstDeclModule _) (compiler-decl-list-at-index rest target index)]
+          [(AstDeclTest _ _ _) (compiler-decl-list-at-index rest target index)]
+          [_
+            (if (= target index)
+              (match decl
+                [(AstDeclComptimeDecl template) (OkAstDecl template)]
+                [(AstDeclUnsafe inner) (OkAstDecl inner)]
+                [_ (OkAstDecl decl)])
+              (compiler-decl-list-at-index rest target (+ index 1)))]))]))
 
 (define (compiler-program-decl-at-index [program : AstProgram] [target : i64]) : ResultAstDecl
   (match program
@@ -1911,11 +1989,13 @@
   (match variants
     [(AstVariantDefNil) (ErrAstTypeList "symbols: variant index not found")]
     [(AstVariantDefCons variant rest)
-      (match variant
-        [(AstVariantDef _ fields)
-          (if (= target index)
-            (OkAstTypeList fields)
-            (compiler-variant-types-at-index rest target (+ index 1)))])]))
+      (let
+        [rest : AstVariantDefList (box-get rest)]
+        (match variant
+          [(AstVariantDef _ fields)
+            (if (= target index)
+              (OkAstTypeList fields)
+              (compiler-variant-types-at-index rest target (+ index 1)))]))]))
 
 (define (compiler-field-type-at-index
   [fields : AstFieldDefList]
@@ -1924,11 +2004,13 @@
   (match fields
     [(AstFieldDefNil) (ErrAstType "symbols: field index not found")]
     [(AstFieldDefCons field rest)
-      (match field
-        [(AstFieldDef _ ty _)
-          (if (= target index)
-            (OkAstType ty)
-            (compiler-field-type-at-index rest target (+ index 1)))])]))
+      (let
+        [rest : AstFieldDefList (box-get rest)]
+        (match field
+          [(AstFieldDef _ ty _)
+            (if (= target index)
+              (OkAstType ty)
+              (compiler-field-type-at-index rest target (+ index 1)))]))]))
 
 (define (compiler-registries-variant-fields
   [program : AstProgram]
@@ -2012,10 +2094,15 @@
   (match found
     [(OkAstTypeList types)
       (match types
-        [(AstTypeCons ty AstTypeNil)
-          (if (= (ast-type-tag ty) want-tag)
-            1
-            0)]
+        [(AstTypeCons ty rest)
+          (let
+            [rest : AstTypeList (box-get rest)]
+            (match rest
+              [(AstTypeNil)
+                (if (= (ast-type-tag ty) want-tag)
+                  1
+                  0)]
+              [_ 0]))]
         [_ 0])]
     [(ErrAstTypeList _) 0]))
 

@@ -92,7 +92,7 @@
 
 (defenum AstTypeList
   (AstTypeNil)
-  (AstTypeCons AstType AstTypeList))
+  (AstTypeCons AstType (Box AstTypeList)))
 
 (defenum AstMaybeType
   (AstNoType)
@@ -107,14 +107,14 @@
 
 (defenum AstParamList
   (AstParamNil)
-  (AstParamCons AstParam AstParamList))
+  (AstParamCons AstParam (Box AstParamList)))
 
 (defenum AstMacroParam
   (AstMacroParam String AstType bool))
 
 (defenum AstMacroParamList
   (AstMacroParamNil)
-  (AstMacroParamCons AstMacroParam AstMacroParamList))
+  (AstMacroParamCons AstMacroParam (Box AstMacroParamList)))
 
 (defenum AstFieldCleanup
   (AstFieldNoCleanup)
@@ -126,7 +126,7 @@
 
 (defenum AstFieldDefList
   (AstFieldDefNil)
-  (AstFieldDefCons AstFieldDef AstFieldDefList))
+  (AstFieldDefCons AstFieldDef (Box AstFieldDefList)))
 
 (defenum AstStructRepr
   (AstStructReprDefault)
@@ -143,7 +143,7 @@
 
 (defenum AstExternLinkInputList
   (AstExternLinkInputNil)
-  (AstExternLinkInputCons AstExternLinkInput AstExternLinkInputList))
+  (AstExternLinkInputCons AstExternLinkInput (Box AstExternLinkInputList)))
 
 (defenum AstExternMetadata
   (AstExternMetadata AstExternAbi String AstExternLinkInputList))
@@ -157,7 +157,7 @@
 
 (defenum AstVariantDefList
   (AstVariantDefNil)
-  (AstVariantDefCons AstVariantDef AstVariantDefList))
+  (AstVariantDefCons AstVariantDef (Box AstVariantDefList)))
 
 (defenum AstPattern
   (AstPatVar String AstMaybeType)
@@ -169,28 +169,28 @@
 
 (defenum AstPatternList
   (AstPatternNil)
-  (AstPatternCons AstPattern AstPatternList))
+  (AstPatternCons AstPattern (Box AstPatternList)))
 
 (defenum AstLetBinding
   (AstLetBinding String AstMaybeType AstExpr))
 
 (defenum AstLetBindingList
   (AstLetBindingNil)
-  (AstLetBindingCons AstLetBinding AstLetBindingList))
+  (AstLetBindingCons AstLetBinding (Box AstLetBindingList)))
 
 (defenum AstResourceBinding
   (AstResourceBinding String AstExpr AstExpr))
 
 (defenum AstResourceBindingList
   (AstResourceBindingNil)
-  (AstResourceBindingCons AstResourceBinding AstResourceBindingList))
+  (AstResourceBindingCons AstResourceBinding (Box AstResourceBindingList)))
 
 (defenum AstMatchArm
   (AstMatchArm AstPattern AstExpr))
 
 (defenum AstMatchArmList
   (AstMatchArmNil)
-  (AstMatchArmCons AstMatchArm AstMatchArmList))
+  (AstMatchArmCons AstMatchArm (Box AstMatchArmList)))
 
 (defenum AstExpr
   (AstExprSpanned AstExpr AstSourceSpan)
@@ -282,7 +282,7 @@
 
 (defenum AstExprList
   (AstExprNil)
-  (AstExprCons AstExpr AstExprList))
+  (AstExprCons AstExpr (Box AstExprList)))
 
 (defenum AstMaybeModuleName
   (AstNoModuleName)
@@ -305,7 +305,7 @@
 
 (defenum AstExportItemList
   (AstExportItemNil)
-  (AstExportItemCons AstExportItem AstExportItemList))
+  (AstExportItemCons AstExportItem (Box AstExportItemList)))
 
 (defenum AstDecl
   (AstDeclModule String)
@@ -324,18 +324,67 @@
 
 (defenum AstDeclList
   (AstDeclNil)
-  (AstDeclCons AstDecl AstDeclList))
+  (AstDeclCons AstDecl (Box AstDeclList)))
 
 (defenum AstDeclPathList
   (AstDeclPathNil)
-  (AstDeclPathCons String AstDeclPathList))
+  (AstDeclPathCons String (Box AstDeclPathList)))
 
 (defenum AstDeclModuleList
   (AstDeclModuleNil)
-  (AstDeclModuleCons String AstDeclModuleList))
+  (AstDeclModuleCons String (Box AstDeclModuleList)))
 
 (defenum AstProgram
   (AstProgram AstDeclList))
+
+(define (ast-type-cons [head : AstType] [rest : AstTypeList]) : AstTypeList
+  (AstTypeCons head (box rest)))
+
+(define (ast-param-cons [head : AstParam] [rest : AstParamList]) : AstParamList
+  (AstParamCons head (box rest)))
+
+(define (ast-macro-param-cons [head : AstMacroParam] [rest : AstMacroParamList]) : AstMacroParamList
+  (AstMacroParamCons head (box rest)))
+
+(define (ast-field-def-cons [head : AstFieldDef] [rest : AstFieldDefList]) : AstFieldDefList
+  (AstFieldDefCons head (box rest)))
+
+(define (ast-extern-link-input-cons
+  [head : AstExternLinkInput]
+  [rest : AstExternLinkInputList]) : AstExternLinkInputList
+  (AstExternLinkInputCons head (box rest)))
+
+(define (ast-variant-def-cons [head : AstVariantDef] [rest : AstVariantDefList]) : AstVariantDefList
+  (AstVariantDefCons head (box rest)))
+
+(define (ast-pattern-cons [head : AstPattern] [rest : AstPatternList]) : AstPatternList
+  (AstPatternCons head (box rest)))
+
+(define (ast-let-binding-cons [head : AstLetBinding] [rest : AstLetBindingList]) : AstLetBindingList
+  (AstLetBindingCons head (box rest)))
+
+(define (ast-resource-binding-cons
+  [head : AstResourceBinding]
+  [rest : AstResourceBindingList]) : AstResourceBindingList
+  (AstResourceBindingCons head (box rest)))
+
+(define (ast-match-arm-cons [head : AstMatchArm] [rest : AstMatchArmList]) : AstMatchArmList
+  (AstMatchArmCons head (box rest)))
+
+(define (ast-expr-cons [head : AstExpr] [rest : AstExprList]) : AstExprList
+  (AstExprCons head (box rest)))
+
+(define (ast-export-item-cons [head : AstExportItem] [rest : AstExportItemList]) : AstExportItemList
+  (AstExportItemCons head (box rest)))
+
+(define (ast-decl-cons [head : AstDecl] [rest : AstDeclList]) : AstDeclList
+  (AstDeclCons head (box rest)))
+
+(define (ast-decl-path-cons [head : String] [rest : AstDeclPathList]) : AstDeclPathList
+  (AstDeclPathCons head (box rest)))
+
+(define (ast-decl-module-cons [head : String] [rest : AstDeclModuleList]) : AstDeclModuleList
+  (AstDeclModuleCons head (box rest)))
 
 (define (ast-type-tag [ty : AstType]) : i64
   (match ty
@@ -512,23 +561,29 @@
         [(AstExternLinkInputNil) true]
         [_ false])]
     [(AstExternLinkInputCons ahead arest)
-      (match b
-        [(AstExternLinkInputCons bhead brest)
-          (and
-            (ast-extern-link-input-eq? ahead bhead)
-            (ast-extern-link-input-list-eq? arest brest))]
-        [_ false])]))
+      (let
+        [arest : AstExternLinkInputList (box-get arest)]
+        (match b
+          [(AstExternLinkInputCons bhead brest)
+            (let
+              [brest : AstExternLinkInputList (box-get brest)]
+              (and
+                (ast-extern-link-input-eq? ahead bhead)
+                (ast-extern-link-input-list-eq? arest brest)))]
+          [_ false]))]))
 
 (define (ast-extern-link-input-list-append
   [items : AstExternLinkInputList]
   [item : AstExternLinkInput]) : AstExternLinkInputList
   (match items
     [(AstExternLinkInputNil)
-      (AstExternLinkInputCons item AstExternLinkInputNil)]
+      (ast-extern-link-input-cons item AstExternLinkInputNil)]
     [(AstExternLinkInputCons head rest)
-      (AstExternLinkInputCons
-        head
-        (ast-extern-link-input-list-append rest item))]))
+      (let
+        [rest : AstExternLinkInputList (box-get rest)]
+        (ast-extern-link-input-cons
+          head
+          (ast-extern-link-input-list-append rest item)))]))
 
 (define (ast-extern-default-metadata [name : String]) : AstExternMetadata
   (AstExternMetadata (AstExternAbiC) name AstExternLinkInputNil))
@@ -561,15 +616,15 @@
     [i64-ty : AstType (AstTyI64)]
     [string-ty : AstType (AstTyString)]
     [arg-tys : AstTypeList
-      (AstTypeCons i64-ty (AstTypeCons string-ty AstTypeNil))]
+      (ast-type-cons i64-ty (ast-type-cons string-ty AstTypeNil))]
     [fn-ty : AstType (AstTyFunc arg-tys i64-ty)]
     [lit : AstLiteral (AstLitInt 41)]
     [one : AstExpr (AstExprLiteral (AstLitInt 1))]
     [expr : AstExpr (AstExprBinary (AstBinAdd) (AstExprLiteral lit) one)]
     [param : AstParam (AstParam "x" i64-ty false)]
-    [params : AstParamList (AstParamCons param AstParamNil)]
+    [params : AstParamList (ast-param-cons param AstParamNil)]
     [decl : AstDecl (AstDeclDefFn "main" params i64-ty expr)]
-    [program : AstProgram (AstProgram (AstDeclCons decl AstDeclNil))]
+    [program : AstProgram (AstProgram (ast-decl-cons decl AstDeclNil))]
     (match program
       [(AstProgram _)
         (+ (ast-type-tag fn-ty) (+ (ast-expr-tag expr) (ast-decl-tag decl)))])))

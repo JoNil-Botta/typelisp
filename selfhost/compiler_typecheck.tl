@@ -1628,24 +1628,24 @@
 
 (define (compiler-typecheck-cleanup-struct-repr-c-ast-program) : AstProgram
   (AstProgram
-    (AstDeclCons
+    (ast-decl-cons
       (AstDeclDefStruct
         "Bad"
         (AstStructReprC)
         (AstStructCleanupFn "cleanup-bad")
-        (AstFieldDefCons
+        (ast-field-def-cons
           (AstFieldDef "fd" (AstTyI64) (AstFieldNoCleanup))
           AstFieldDefNil))
       AstDeclNil)))
 
 (define (compiler-typecheck-cleanup-struct-field-outside-ast-program) : AstProgram
   (AstProgram
-    (AstDeclCons
+    (ast-decl-cons
       (AstDeclDefStruct
         "Bad"
         (AstStructReprDefault)
         (AstStructNoCleanup)
-        (AstFieldDefCons
+        (ast-field-def-cons
           (AstFieldDef "fd" (AstTyI64) (AstFieldCleanupFn "close-fd"))
           AstFieldDefNil))
       AstDeclNil)))
@@ -1756,7 +1756,7 @@
         (and
           (tc-type-move-only?
             (AstTyTuple
-              (AstTypeCons (AstTyI64) (AstTypeCons (AstTyBool) AstTypeNil))))
+              (ast-type-cons (AstTyI64) (ast-type-cons (AstTyBool) AstTypeNil))))
           (and
             (tc-type-move-only? (AstTyStruct "Box"))
             (and
@@ -1767,9 +1767,9 @@
                   (tc-type-move-only? (AstTyMutRef "phase" (AstTyI64)))
                   (tc-type-move-only?
                     (AstTyTuple
-                      (AstTypeCons
+                      (ast-type-cons
                         (AstTyStruct "Box")
-                        (AstTypeCons (AstTyDynArray (AstTyI64)) AstTypeNil)))))))))))))
+                        (ast-type-cons (AstTyDynArray (AstTyI64)) AstTypeNil)))))))))))))
 
 (define (compiler-typecheck-move-kind-region-tests-ok?) : bool
   (and
@@ -1780,7 +1780,7 @@
         (tc-type-move-only? (AstTyRegion "r" (AstTyString)))
         (and
           (tc-type-move-only?
-            (AstTyRegion "r" (AstTyTuple (AstTypeCons (AstTyI64) AstTypeNil))))
+            (AstTyRegion "r" (AstTyTuple (ast-type-cons (AstTyI64) AstTypeNil))))
           (tc-type-move-only?
             (AstTyRegion "r" (AstTyMutRef "phase" (AstTyI64)))))))))
 

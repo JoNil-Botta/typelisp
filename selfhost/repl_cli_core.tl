@@ -147,11 +147,13 @@
   (match types
     [(AstTypeNil) ""]
     [(AstTypeCons head rest)
-      (string-append
-        " "
+      (let
+        [rest : AstTypeList (box-get rest)]
         (string-append
-          (repl-type-render head)
-          (repl-type-list-render-spaced rest)))]))
+          " "
+          (string-append
+            (repl-type-render head)
+            (repl-type-list-render-spaced rest))))]))
 
 (define (repl-type-render [ty : AstType]) : String
   (match ty

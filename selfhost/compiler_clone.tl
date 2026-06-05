@@ -68,9 +68,11 @@
   (match types
     [(AstTypeNil) true]
     [(AstTypeCons head rest)
-      (if (clone-field-type-able? head names)
-        (clone-field-type-list-able? rest names)
-        false)]))
+      (let
+        [rest : AstTypeList (box-get rest)]
+        (if (clone-field-type-able? head names)
+          (clone-field-type-list-able? rest names)
+          false))]))
 
 (define (clone-variant-list-able?
   [variants : AstVariantDefList]
@@ -78,11 +80,13 @@
   (match variants
     [(AstVariantDefNil) true]
     [(AstVariantDefCons variant rest)
-      (match variant
-        [(AstVariantDef _ field-types)
-          (if (clone-field-type-list-able? field-types names)
-            (clone-variant-list-able? rest names)
-            false)])]))
+      (let
+        [rest : AstVariantDefList (box-get rest)]
+        (match variant
+          [(AstVariantDef _ field-types)
+            (if (clone-field-type-list-able? field-types names)
+              (clone-variant-list-able? rest names)
+              false)]))]))
 
 (define (clone-struct-fields-able?
   [fields : AstFieldDefList]
@@ -90,11 +94,13 @@
   (match fields
     [(AstFieldDefNil) true]
     [(AstFieldDefCons field rest)
-      (match field
-        [(AstFieldDef _ ty _)
-          (if (clone-field-type-able? ty names)
-            (clone-struct-fields-able? rest names)
-            false)])]))
+      (let
+        [rest : AstFieldDefList (box-get rest)]
+        (match field
+          [(AstFieldDef _ ty _)
+            (if (clone-field-type-able? ty names)
+              (clone-struct-fields-able? rest names)
+              false)]))]))
 
 ;; One fixpoint step: keep only names whose declaration's fields are all
 ;; clone-able under the current `names` set. Repeats until the set stops
@@ -106,22 +112,24 @@
   (match decls
     [(AstDeclNil) acc]
     [(AstDeclCons decl rest)
-      (match decl
-        [(AstDeclDefEnum name variants)
-          (clone-fixpoint-step
-            rest
-            names
-            (if (clone-variant-list-able? variants names)
-              (CloneNameCons name acc)
-              acc))]
-        [(AstDeclDefStruct name _ _ fields)
-          (clone-fixpoint-step
-            rest
-            names
-            (if (clone-struct-fields-able? fields names)
-              (CloneNameCons name acc)
-              acc))]
-        [_ (clone-fixpoint-step rest names acc)])]))
+      (let
+        [rest : AstDeclList (box-get rest)]
+        (match decl
+          [(AstDeclDefEnum name variants)
+            (clone-fixpoint-step
+              rest
+              names
+              (if (clone-variant-list-able? variants names)
+                (CloneNameCons name acc)
+                acc))]
+          [(AstDeclDefStruct name _ _ fields)
+            (clone-fixpoint-step
+              rest
+              names
+              (if (clone-struct-fields-able? fields names)
+                (CloneNameCons name acc)
+                acc))]
+          [_ (clone-fixpoint-step rest names acc)]))]))
 
 (define (clone-name-list-len [names : CloneNameList]) : i64
   (match names
@@ -133,12 +141,14 @@
   (match decls
     [(AstDeclNil) acc]
     [(AstDeclCons decl rest)
-      (match decl
-        [(AstDeclDefEnum name _)
-          (clone-all-type-names rest (CloneNameCons name acc))]
-        [(AstDeclDefStruct name _ _ _)
-          (clone-all-type-names rest (CloneNameCons name acc))]
-        [_ (clone-all-type-names rest acc)])]))
+      (let
+        [rest : AstDeclList (box-get rest)]
+        (match decl
+          [(AstDeclDefEnum name _)
+            (clone-all-type-names rest (CloneNameCons name acc))]
+          [(AstDeclDefStruct name _ _ _)
+            (clone-all-type-names rest (CloneNameCons name acc))]
+          [_ (clone-all-type-names rest acc)]))]))
 
 (define (clone-fixpoint [decls : AstDeclList] [names : CloneNameList]) : CloneNameList
   (let
@@ -150,7 +160,7 @@
 ;; --- code generation ---------------------------------------------------------
 ;; `(clone <expr>)`
 (define (clone-call-expr [inner : AstExpr]) : AstExpr
-  (AstExprCall (AstExprVar "clone") (AstExprCons inner AstExprNil)))
+  (AstExprCall (AstExprVar "clone") (ast-expr-cons inner AstExprNil)))
 
 ;; Binder name for the i-th field of a variant: tlc0, tlc1, ...
 (define (clone-binder-name [i : i64]) : String
@@ -160,7 +170,7 @@
 (define (clone-variant-pat-args [count : i64] [i : i64]) : AstPatternList
   (if (>= i count)
     AstPatternNil
-    (AstPatternCons
+    (ast-pattern-cons
       (AstPatBinding (clone-binder-name i))
       (clone-variant-pat-args count (+ i 1)))))
 
@@ -168,14 +178,17 @@
 (define (clone-variant-ctor-args [count : i64] [i : i64]) : AstExprList
   (if (>= i count)
     AstExprNil
-    (AstExprCons
+    (ast-expr-cons
       (clone-call-expr (AstExprVar (clone-binder-name i)))
       (clone-variant-ctor-args count (+ i 1)))))
 
 (define (clone-type-list-len [types : AstTypeList]) : i64
   (match types
     [(AstTypeNil) 0]
-    [(AstTypeCons _ rest) (+ 1 (clone-type-list-len rest))]))
+    [(AstTypeCons _ rest)
+      (let
+        [rest : AstTypeList (box-get rest)]
+        (+ 1 (clone-type-list-len rest)))]))
 
 ;; One match arm: [(V f...) (V (clone f)...)], or [(V) (V)] for nullary variants.
 (define (clone-variant-arm [variant : AstVariantDef]) : AstMatchArm
@@ -191,24 +204,30 @@
   (match variants
     [(AstVariantDefNil) AstMatchArmNil]
     [(AstVariantDefCons variant rest)
-      (AstMatchArmCons (clone-variant-arm variant) (clone-variant-arms rest))]))
+      (let
+        [rest : AstVariantDefList (box-get rest)]
+        (ast-match-arm-cons
+          (clone-variant-arm variant)
+          (clone-variant-arms rest)))]))
 
 ;; Struct constructor args: (clone (struct-get x f0)) (clone (struct-get x f1)) ...
 (define (clone-struct-ctor-args [fields : AstFieldDefList]) : AstExprList
   (match fields
     [(AstFieldDefNil) AstExprNil]
     [(AstFieldDefCons field rest)
-      (match field
-        [(AstFieldDef fname _ _)
-          (AstExprCons
-            (clone-call-expr (AstExprStructGet (AstExprVar "x") fname))
-            (clone-struct-ctor-args rest))])]))
+      (let
+        [rest : AstFieldDefList (box-get rest)]
+        (match field
+          [(AstFieldDef fname _ _)
+            (ast-expr-cons
+              (clone-call-expr (AstExprStructGet (AstExprVar "x") fname))
+              (clone-struct-ctor-args rest))]))]))
 
 ;; Build the `(define (clone$Name [x : Name]) : Name <body>)` declaration.
 (define (clone-make-helper-decl [type-name : String] [body : AstExpr]) : AstDecl
   (AstDeclDefFn
     (clone-helper-name type-name)
-    (AstParamCons (AstParam "x" (AstTyVar type-name) false) AstParamNil)
+    (ast-param-cons (AstParam "x" (AstTyVar type-name) false) AstParamNil)
     (AstTyVar type-name)
     body))
 
@@ -258,8 +277,17 @@
   (match v
     [(AstVariantDef _ field-types)
       (match field-types
-        [(AstTypeCons _ (AstTypeCons tail (AstTypeNil)))
-          (clone-tail-is-self? tail self-name)]
+        [(AstTypeCons _ tail)
+          (let
+            [tail : AstTypeList (box-get tail)]
+            (match tail
+              [(AstTypeCons tail-ty rest)
+                (let
+                  [rest : AstTypeList (box-get rest)]
+                  (match rest
+                    [(AstTypeNil) (clone-tail-is-self? tail-ty self-name)]
+                    [_ false]))]
+              [_ false]))]
         [_ false])]))
 
 (define (clone-variant-cons-tail-boxed?
@@ -268,8 +296,17 @@
   (match v
     [(AstVariantDef _ field-types)
       (match field-types
-        [(AstTypeCons _ (AstTypeCons tail (AstTypeNil)))
-          (clone-tail-is-boxed-self? tail self-name)]
+        [(AstTypeCons _ tail)
+          (let
+            [tail : AstTypeList (box-get tail)]
+            (match tail
+              [(AstTypeCons tail-ty rest)
+                (let
+                  [rest : AstTypeList (box-get rest)]
+                  (match rest
+                    [(AstTypeNil) (clone-tail-is-boxed-self? tail-ty self-name)]
+                    [_ false]))]
+              [_ false]))]
         [_ false])]))
 
 ;; If (nil-v, cons-v) form a Nil/Cons pair, return the list shape; else NotList.
@@ -290,10 +327,20 @@
 ;; `(Cons element Self)` or `(Cons element (Box Self))`, in either source order.
 (define (clone-list-shape [variants : AstVariantDefList] [self-name : String]) : CloneListShape
   (match variants
-    [(AstVariantDefCons v1 (AstVariantDefCons v2 (AstVariantDefNil)))
-      (match (clone-list-shape-try v1 v2 self-name)
-        [(CloneIsList n c boxed) (CloneIsList n c boxed)]
-        [(CloneNotList) (clone-list-shape-try v2 v1 self-name)])]
+    [(AstVariantDefCons v1 tail)
+      (let
+        [tail : AstVariantDefList (box-get tail)]
+        (match tail
+          [(AstVariantDefCons v2 rest)
+            (let
+              [rest : AstVariantDefList (box-get rest)]
+              (match rest
+                [(AstVariantDefNil)
+                  (match (clone-list-shape-try v1 v2 self-name)
+                    [(CloneIsList n c boxed) (CloneIsList n c boxed)]
+                    [(CloneNotList) (clone-list-shape-try v2 v1 self-name)])]
+                [_ (CloneNotList)]))]
+          [_ (CloneNotList)]))]
     [_ (CloneNotList)]))
 
 (define (clone-list-acc-name [type-name : String]) : String
@@ -323,9 +370,9 @@
   [body : AstExpr]) : AstDecl
   (AstDeclDefFn
     fn-name
-    (AstParamCons
+    (ast-param-cons
       (AstParam "x" (AstTyVar type-name) false)
-      (AstParamCons (AstParam "acc" (AstTyVar type-name) false) AstParamNil))
+      (ast-param-cons (AstParam "acc" (AstTyVar type-name) false) AstParamNil))
     (AstTyVar type-name)
     body))
 
@@ -340,19 +387,19 @@
   (AstMatchArm
     (AstPatVariant
       cons-ctor
-      (AstPatternCons
+      (ast-pattern-cons
         (AstPatBinding "h")
-        (AstPatternCons (AstPatBinding "t") AstPatternNil)))
+        (ast-pattern-cons (AstPatBinding "t") AstPatternNil)))
     (AstExprCall
       (AstExprVar fn-name)
-      (AstExprCons
+      (ast-expr-cons
         (clone-list-tail-next-expr boxed-tail)
-        (AstExprCons
+        (ast-expr-cons
           (AstExprCall
             (AstExprVar cons-ctor)
-            (AstExprCons
+            (ast-expr-cons
               head-expr
-              (AstExprCons (clone-list-tail-acc-expr boxed-tail) AstExprNil)))
+              (ast-expr-cons (clone-list-tail-acc-expr boxed-tail) AstExprNil)))
           AstExprNil)))))
 
 ;; (match x [(Nil) acc] [(Cons h t) (fn t (Cons head-expr acc))])
@@ -364,9 +411,9 @@
   [head-expr : AstExpr]) : AstExpr
   (AstExprMatch
     (AstExprVar "x")
-    (AstMatchArmCons
+    (ast-match-arm-cons
       (AstMatchArm (AstPatVariant nil-ctor AstPatternNil) (AstExprVar "acc"))
-      (AstMatchArmCons
+      (ast-match-arm-cons
         (clone-list-step-arm fn-name cons-ctor boxed-tail head-expr)
         AstMatchArmNil))))
 
@@ -412,13 +459,13 @@
     type-name
     (AstExprCall
       (AstExprVar (clone-list-rev-name type-name))
-      (AstExprCons
+      (ast-expr-cons
         (AstExprCall
           (AstExprVar (clone-list-acc-name type-name))
-          (AstExprCons
+          (ast-expr-cons
             (AstExprVar "x")
-            (AstExprCons (clone-nil-expr nil-ctor) AstExprNil)))
-        (AstExprCons (clone-nil-expr nil-ctor) AstExprNil)))))
+            (ast-expr-cons (clone-nil-expr nil-ctor) AstExprNil)))
+        (ast-expr-cons (clone-nil-expr nil-ctor) AstExprNil)))))
 
 ;; Emit the clone helper(s) for one clone-able enum: three tail-recursive
 ;; functions for a list shape, otherwise the single naive match-reconstruct.
@@ -428,15 +475,15 @@
   [acc : AstDeclList]) : AstDeclList
   (match (clone-list-shape variants name)
     [(CloneIsList nil-ctor cons-ctor boxed-tail)
-      (AstDeclCons
+      (ast-decl-cons
         (clone-list-entry-decl name nil-ctor)
-        (AstDeclCons
+        (ast-decl-cons
           (clone-list-acc-decl name nil-ctor cons-ctor boxed-tail)
-          (AstDeclCons
+          (ast-decl-cons
             (clone-list-rev-decl name nil-ctor cons-ctor boxed-tail)
             acc)))]
     [(CloneNotList)
-      (AstDeclCons
+      (ast-decl-cons
         (clone-make-helper-decl
           name
           (AstExprMatch (AstExprVar "x") (clone-variant-arms variants)))
@@ -450,34 +497,38 @@
   (match decls
     [(AstDeclNil) acc]
     [(AstDeclCons decl rest)
-      (match decl
-        [(AstDeclDefEnum name variants)
-          (clone-generate-decls
-            rest
-            able
-            (if (clone-name-list-contains? able name)
-              (clone-emit-enum-clone name variants acc)
-              acc))]
-        [(AstDeclDefStruct name _ _ fields)
-          (clone-generate-decls
-            rest
-            able
-            (if (clone-name-list-contains? able name)
-              (AstDeclCons
-                (clone-make-helper-decl
-                  name
-                  (AstExprCall
-                    (AstExprVar name)
-                    (clone-struct-ctor-args fields)))
-                acc)
-              acc))]
-        [_ (clone-generate-decls rest able acc)])]))
+      (let
+        [rest : AstDeclList (box-get rest)]
+        (match decl
+          [(AstDeclDefEnum name variants)
+            (clone-generate-decls
+              rest
+              able
+              (if (clone-name-list-contains? able name)
+                (clone-emit-enum-clone name variants acc)
+                acc))]
+          [(AstDeclDefStruct name _ _ fields)
+            (clone-generate-decls
+              rest
+              able
+              (if (clone-name-list-contains? able name)
+                (ast-decl-cons
+                  (clone-make-helper-decl
+                    name
+                    (AstExprCall
+                      (AstExprVar name)
+                      (clone-struct-ctor-args fields)))
+                  acc)
+                acc))]
+          [_ (clone-generate-decls rest able acc)]))]))
 
 (define (clone-decl-list-append [left : AstDeclList] [right : AstDeclList]) : AstDeclList
   (match left
     [(AstDeclNil) right]
     [(AstDeclCons head rest)
-      (AstDeclCons head (clone-decl-list-append rest right))]))
+      (let
+        [rest : AstDeclList (box-get rest)]
+        (ast-decl-cons head (clone-decl-list-append rest right)))]))
 
 ;; Append the generated clone$ helpers AFTER the program's decls, so the real
 ;; declarations keep their source paths (the generated helpers, being last, get

@@ -358,11 +358,13 @@
   (match types
     [(AstTypeNil) ""]
     [(AstTypeCons head rest)
-      (string-append
-        (front-type-render head)
-        (match rest
-          [(AstTypeNil) ""]
-          [_ (string-append ", " (front-type-list-render rest))]))]))
+      (let
+        [rest : AstTypeList (box-get rest)]
+        (string-append
+          (front-type-render head)
+          (match rest
+            [(AstTypeNil) ""]
+            [_ (string-append ", " (front-type-list-render rest))])))]))
 
 (define (front-type-render [ty : AstType]) : String
   (match ty
@@ -470,11 +472,13 @@
   (match exprs
     [(AstExprNil) ""]
     [(AstExprCons head rest)
-      (string-append
-        (front-expr-render head)
-        (match rest
-          [(AstExprNil) ""]
-          [_ (string-append ", " (front-expr-list-render rest))]))]))
+      (let
+        [rest : AstExprList (box-get rest)]
+        (string-append
+          (front-expr-render head)
+          (match rest
+            [(AstExprNil) ""]
+            [_ (string-append ", " (front-expr-list-render rest))])))]))
 
 (define (front-resource-binding-render [binding : AstResourceBinding]) : String
   (match binding
@@ -491,11 +495,13 @@
   (match bindings
     [(AstResourceBindingNil) ""]
     [(AstResourceBindingCons head rest)
-      (string-append
-        (front-resource-binding-render head)
-        (match rest
-          [(AstResourceBindingNil) ""]
-          [_ (string-append ", " (front-resource-binding-list-render rest))]))]))
+      (let
+        [rest : AstResourceBindingList (box-get rest)]
+        (string-append
+          (front-resource-binding-render head)
+          (match rest
+            [(AstResourceBindingNil) ""]
+            [_ (string-append ", " (front-resource-binding-list-render rest))])))]))
 
 (define (front-expr-render [expr : AstExpr]) : String
   (match (ast-expr-unspan expr)
@@ -785,12 +791,16 @@
 (define (front-field-list-items-render [fields : AstFieldDefList]) : String
   (match fields
     [(AstFieldDefNil) ""]
-    [(AstFieldDefCons field (AstFieldDefNil)) (front-field-render field)]
     [(AstFieldDefCons field rest)
-      (front-cat3
-        (front-field-render field)
-        ", "
-        (front-field-list-items-render rest))]))
+      (let
+        [rest : AstFieldDefList (box-get rest)]
+        (match rest
+          [(AstFieldDefNil) (front-field-render field)]
+          [_
+            (front-cat3
+              (front-field-render field)
+              ", "
+              (front-field-list-items-render rest))]))]))
 
 (define (front-field-list-render [fields : AstFieldDefList]) : String
   (front-cat3 "[" (front-field-list-items-render fields) "]"))
@@ -808,13 +818,16 @@
 (define (front-export-item-list-items-render [items : AstExportItemList]) : String
   (match items
     [(AstExportItemNil) ""]
-    [(AstExportItemCons item (AstExportItemNil))
-      (front-export-item-render item)]
     [(AstExportItemCons item rest)
-      (front-cat3
-        (front-export-item-render item)
-        ", "
-        (front-export-item-list-items-render rest))]))
+      (let
+        [rest : AstExportItemList (box-get rest)]
+        (match rest
+          [(AstExportItemNil) (front-export-item-render item)]
+          [_
+            (front-cat3
+              (front-export-item-render item)
+              ", "
+              (front-export-item-list-items-render rest))]))]))
 
 (define (front-export-item-list-render [items : AstExportItemList]) : String
   (front-cat3 "[" (front-export-item-list-items-render items) "]"))
@@ -894,7 +907,7 @@
     [(AstDeclCons head rest)
       (string-append
         (front-cat3 "    " (front-decl-render head) ",\n")
-        (front-decl-list-render rest))]))
+        (front-decl-list-render (box-get rest)))]))
 
 (define (front-program-render [program : AstProgram]) : String
   (match program

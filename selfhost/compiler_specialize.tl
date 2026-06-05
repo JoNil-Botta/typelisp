@@ -132,9 +132,11 @@
   (match params
     [(AstParamNil) false]
     [(AstParamCons param rest)
-      (if (spec-param-comptime? param)
-        true
-        (spec-param-list-has-comptime? rest))]))
+      (let
+        [rest : AstParamList (box-get rest)]
+        (if (spec-param-comptime? param)
+          true
+          (spec-param-list-has-comptime? rest)))]))
 
 (define (spec-template-lookup [templates : SpecTemplateList] [name : String]) : SpecMaybeTemplate
   (match templates
@@ -166,9 +168,11 @@
   (match params
     [(AstParamNil) templates]
     [(AstParamCons param rest)
-      (spec-template-list-remove-params
-        (spec-template-list-remove-name templates (spec-param-name param))
-        rest)]))
+      (let
+        [rest : AstParamList (box-get rest)]
+        (spec-template-list-remove-params
+          (spec-template-list-remove-name templates (spec-param-name param))
+          rest))]))
 
 (define (spec-template-list-remove-let-binding-names
   [templates : SpecTemplateList]
@@ -176,11 +180,13 @@
   (match bindings
     [(AstLetBindingNil) templates]
     [(AstLetBindingCons binding rest)
-      (match binding
-        [(AstLetBinding name _ _)
-          (spec-template-list-remove-let-binding-names
-            (spec-template-list-remove-name templates name)
-            rest)])]))
+      (let
+        [rest : AstLetBindingList (box-get rest)]
+        (match binding
+          [(AstLetBinding name _ _)
+            (spec-template-list-remove-let-binding-names
+              (spec-template-list-remove-name templates name)
+              rest)]))]))
 
 (define (spec-template-list-remove-pattern
   [templates : SpecTemplateList]
@@ -201,28 +207,32 @@
   (match patterns
     [(AstPatternNil) templates]
     [(AstPatternCons pattern rest)
-      (spec-template-list-remove-pattern-list
-        (spec-template-list-remove-pattern templates pattern)
-        rest)]))
+      (let
+        [rest : AstPatternList (box-get rest)]
+        (spec-template-list-remove-pattern-list
+          (spec-template-list-remove-pattern templates pattern)
+          rest))]))
 
 (define (spec-collect-templates [decls : AstDeclList]) : SpecTemplateList
   (match decls
     [(AstDeclNil) (SpecTemplateNil)]
     [(AstDeclCons decl rest)
-      (match decl
-        [(AstDeclUnsafe (AstDeclDefFn name params ret body))
-          (if (spec-param-list-has-comptime? params)
-            (SpecTemplateCons
-              (SpecTemplate name params ret body)
-              (spec-collect-templates rest))
-            (spec-collect-templates rest))]
-        [(AstDeclDefFn name params ret body)
-          (if (spec-param-list-has-comptime? params)
-            (SpecTemplateCons
-              (SpecTemplate name params ret body)
-              (spec-collect-templates rest))
-            (spec-collect-templates rest))]
-        [_ (spec-collect-templates rest)])]))
+      (let
+        [rest : AstDeclList (box-get rest)]
+        (match decl
+          [(AstDeclUnsafe (AstDeclDefFn name params ret body))
+            (if (spec-param-list-has-comptime? params)
+              (SpecTemplateCons
+                (SpecTemplate name params ret body)
+                (spec-collect-templates rest))
+              (spec-collect-templates rest))]
+          [(AstDeclDefFn name params ret body)
+            (if (spec-param-list-has-comptime? params)
+              (SpecTemplateCons
+                (SpecTemplate name params ret body)
+                (spec-collect-templates rest))
+              (spec-collect-templates rest))]
+          [_ (spec-collect-templates rest)]))]))
 
 (define (spec-cache-lookup [cache : SpecCache] [key : String]) : SpecMaybeString
   (match cache
@@ -234,15 +244,19 @@
 
 (define (spec-decl-list-append-one [decls : AstDeclList] [decl : AstDecl]) : AstDeclList
   (match decls
-    [(AstDeclNil) (AstDeclCons decl AstDeclNil)]
+    [(AstDeclNil) (ast-decl-cons decl AstDeclNil)]
     [(AstDeclCons head rest)
-      (AstDeclCons head (spec-decl-list-append-one rest decl))]))
+      (let
+        [rest : AstDeclList (box-get rest)]
+        (ast-decl-cons head (spec-decl-list-append-one rest decl)))]))
 
 (define (spec-decl-list-append [front : AstDeclList] [back : AstDeclList]) : AstDeclList
   (match front
     [(AstDeclNil) back]
     [(AstDeclCons head rest)
-      (AstDeclCons head (spec-decl-list-append rest back))]))
+      (let
+        [rest : AstDeclList (box-get rest)]
+        (ast-decl-cons head (spec-decl-list-append rest back)))]))
 
 (define (spec-int-key [n : i64]) : String
   (if (< n 0)
@@ -269,9 +283,11 @@
   (match types
     [(AstTypeNil) "nil"]
     [(AstTypeCons head rest)
-      (string-append
-        (spec-type-key head)
-        (string-append "_" (spec-type-list-key rest)))]))
+      (let
+        [rest : AstTypeList (box-get rest)]
+        (string-append
+          (spec-type-key head)
+          (string-append "_" (spec-type-list-key rest))))]))
 
 (define (spec-type-key [ty : AstType]) : String
   (match ty
@@ -426,9 +442,11 @@
   (match params
     [(AstParamNil) subs]
     [(AstParamCons param rest)
-      (spec-value-subst-remove-params
-        (spec-value-subst-remove-name subs (spec-param-name param))
-        rest)]))
+      (let
+        [rest : AstParamList (box-get rest)]
+        (spec-value-subst-remove-params
+          (spec-value-subst-remove-name subs (spec-param-name param))
+          rest))]))
 
 (define (spec-value-subst-remove-let-binding-names
   [subs : SpecValueSubst]
@@ -436,11 +454,13 @@
   (match bindings
     [(AstLetBindingNil) subs]
     [(AstLetBindingCons binding rest)
-      (match binding
-        [(AstLetBinding name _ _)
-          (spec-value-subst-remove-let-binding-names
-            (spec-value-subst-remove-name subs name)
-            rest)])]))
+      (let
+        [rest : AstLetBindingList (box-get rest)]
+        (match binding
+          [(AstLetBinding name _ _)
+            (spec-value-subst-remove-let-binding-names
+              (spec-value-subst-remove-name subs name)
+              rest)]))]))
 
 (define (spec-value-subst-remove-pattern
   [subs : SpecValueSubst]
@@ -461,9 +481,11 @@
   (match patterns
     [(AstPatternNil) subs]
     [(AstPatternCons pattern rest)
-      (spec-value-subst-remove-pattern-list
-        (spec-value-subst-remove-pattern subs pattern)
-        rest)]))
+      (let
+        [rest : AstPatternList (box-get rest)]
+        (spec-value-subst-remove-pattern-list
+          (spec-value-subst-remove-pattern subs pattern)
+          rest))]))
 
 (define (spec-type-subst-remove-name [subs : SpecTypeSubst] [name : String]) : SpecTypeSubst
   (match subs
@@ -479,9 +501,11 @@
   (match params
     [(AstParamNil) subs]
     [(AstParamCons param rest)
-      (spec-type-subst-remove-params
-        (spec-type-subst-remove-name subs (spec-param-name param))
-        rest)]))
+      (let
+        [rest : AstParamList (box-get rest)]
+        (spec-type-subst-remove-params
+          (spec-type-subst-remove-name subs (spec-param-name param))
+          rest))]))
 
 (define (spec-type-subst-remove-let-binding-names
   [subs : SpecTypeSubst]
@@ -489,11 +513,13 @@
   (match bindings
     [(AstLetBindingNil) subs]
     [(AstLetBindingCons binding rest)
-      (match binding
-        [(AstLetBinding name _ _)
-          (spec-type-subst-remove-let-binding-names
-            (spec-type-subst-remove-name subs name)
-            rest)])]))
+      (let
+        [rest : AstLetBindingList (box-get rest)]
+        (match binding
+          [(AstLetBinding name _ _)
+            (spec-type-subst-remove-let-binding-names
+              (spec-type-subst-remove-name subs name)
+              rest)]))]))
 
 (define (spec-type-subst-remove-pattern
   [subs : SpecTypeSubst]
@@ -513,9 +539,11 @@
   (match patterns
     [(AstPatternNil) subs]
     [(AstPatternCons pattern rest)
-      (spec-type-subst-remove-pattern-list
-        (spec-type-subst-remove-pattern subs pattern)
-        rest)]))
+      (let
+        [rest : AstPatternList (box-get rest)]
+        (spec-type-subst-remove-pattern-list
+          (spec-type-subst-remove-pattern subs pattern)
+          rest))]))
 
 (define (spec-substitute-type [ty : AstType] [subs : SpecTypeSubst]) : AstType
   (match ty
@@ -546,9 +574,11 @@
   (match types
     [(AstTypeNil) AstTypeNil]
     [(AstTypeCons head rest)
-      (AstTypeCons
-        (spec-substitute-type head subs)
-        (spec-substitute-type-list rest subs))]))
+      (let
+        [rest : AstTypeList (box-get rest)]
+        (ast-type-cons
+          (spec-substitute-type head subs)
+          (spec-substitute-type-list rest subs)))]))
 
 (define (spec-substitute-maybe-type [ty : AstMaybeType] [subs : SpecTypeSubst]) : AstMaybeType
   (match ty
@@ -561,11 +591,13 @@
   (match params
     [(AstParamNil) AstParamNil]
     [(AstParamCons param rest)
-      (match param
-        [(AstParam name ty _)
-          (AstParamCons
-            (AstParam name (spec-substitute-type ty subs) false)
-            (spec-substitute-param-types rest subs))])]))
+      (let
+        [rest : AstParamList (box-get rest)]
+        (match param
+          [(AstParam name ty _)
+            (ast-param-cons
+              (AstParam name (spec-substitute-type ty subs) false)
+              (spec-substitute-param-types rest subs))]))]))
 
 (define (spec-ctfe-value-to-expr [value : CompilerCtfeValue] [origin : AstExpr]) : ResultSpecSubExpr
   (match value
@@ -608,15 +640,17 @@
   (match exprs
     [(AstExprNil) (OkSpecExprList AstExprNil state)]
     [(AstExprCons head rest)
-      (match (spec-rewrite-expr head templates state)
-        [(OkSpecExpr rewritten-head head-state)
-          (match (spec-rewrite-expr-list rest templates head-state)
-            [(OkSpecExprList rewritten-rest rest-state)
-              (OkSpecExprList
-                (AstExprCons rewritten-head rewritten-rest)
-                rest-state)]
-            [(ErrSpecExprList diag) (ErrSpecExprList diag)])]
-        [(ErrSpecExpr diag) (ErrSpecExprList diag)])]))
+      (let
+        [rest : AstExprList (box-get rest)]
+        (match (spec-rewrite-expr head templates state)
+          [(OkSpecExpr rewritten-head head-state)
+            (match (spec-rewrite-expr-list rest templates head-state)
+              [(OkSpecExprList rewritten-rest rest-state)
+                (OkSpecExprList
+                  (ast-expr-cons rewritten-head rewritten-rest)
+                  rest-state)]
+              [(ErrSpecExprList diag) (ErrSpecExprList diag)])]
+          [(ErrSpecExpr diag) (ErrSpecExprList diag)]))]))
 
 (define (spec-rewrite-let-bindings
   [bindings : AstLetBindingList]
@@ -625,22 +659,24 @@
   (match bindings
     [(AstLetBindingNil) (OkSpecLetBindingList AstLetBindingNil state)]
     [(AstLetBindingCons binding rest)
-      (match binding
-        [(AstLetBinding name ty value)
-          (match (spec-rewrite-expr value templates state)
-            [(OkSpecExpr rewritten-value value-state)
-              (match (spec-rewrite-let-bindings
-                rest
-                (spec-template-list-remove-name templates name)
-                value-state)
-                [(OkSpecLetBindingList rewritten-rest rest-state)
-                  (OkSpecLetBindingList
-                    (AstLetBindingCons
-                      (AstLetBinding name ty rewritten-value)
-                      rewritten-rest)
-                    rest-state)]
-                [(ErrSpecLetBindingList diag) (ErrSpecLetBindingList diag)])]
-            [(ErrSpecExpr diag) (ErrSpecLetBindingList diag)])])]))
+      (let
+        [rest : AstLetBindingList (box-get rest)]
+        (match binding
+          [(AstLetBinding name ty value)
+            (match (spec-rewrite-expr value templates state)
+              [(OkSpecExpr rewritten-value value-state)
+                (match (spec-rewrite-let-bindings
+                  rest
+                  (spec-template-list-remove-name templates name)
+                  value-state)
+                  [(OkSpecLetBindingList rewritten-rest rest-state)
+                    (OkSpecLetBindingList
+                      (ast-let-binding-cons
+                        (AstLetBinding name ty rewritten-value)
+                        rewritten-rest)
+                      rest-state)]
+                  [(ErrSpecLetBindingList diag) (ErrSpecLetBindingList diag)])]
+              [(ErrSpecExpr diag) (ErrSpecLetBindingList diag)])]))]))
 
 (define (spec-rewrite-match-arms
   [arms : AstMatchArmList]
@@ -649,22 +685,24 @@
   (match arms
     [(AstMatchArmNil) (OkSpecMatchArmList AstMatchArmNil state)]
     [(AstMatchArmCons arm rest)
-      (match arm
-        [(AstMatchArm pattern body)
-          (match (spec-rewrite-expr
-            body
-            (spec-template-list-remove-pattern templates pattern)
-            state)
-            [(OkSpecExpr rewritten-body body-state)
-              (match (spec-rewrite-match-arms rest templates body-state)
-                [(OkSpecMatchArmList rewritten-rest rest-state)
-                  (OkSpecMatchArmList
-                    (AstMatchArmCons
-                      (AstMatchArm pattern rewritten-body)
-                      rewritten-rest)
-                    rest-state)]
-                [(ErrSpecMatchArmList diag) (ErrSpecMatchArmList diag)])]
-            [(ErrSpecExpr diag) (ErrSpecMatchArmList diag)])])]))
+      (let
+        [rest : AstMatchArmList (box-get rest)]
+        (match arm
+          [(AstMatchArm pattern body)
+            (match (spec-rewrite-expr
+              body
+              (spec-template-list-remove-pattern templates pattern)
+              state)
+              [(OkSpecExpr rewritten-body body-state)
+                (match (spec-rewrite-match-arms rest templates body-state)
+                  [(OkSpecMatchArmList rewritten-rest rest-state)
+                    (OkSpecMatchArmList
+                      (ast-match-arm-cons
+                        (AstMatchArm pattern rewritten-body)
+                        rewritten-rest)
+                      rest-state)]
+                  [(ErrSpecMatchArmList diag) (ErrSpecMatchArmList diag)])]
+              [(ErrSpecExpr diag) (ErrSpecMatchArmList diag)])]))]))
 
 (define (spec-rewrite-specialized-call
   [template : SpecTemplate]
@@ -703,94 +741,101 @@
           (ErrSpecArgs
             (compiler-diagnostic-at-start "" "specialize: arity mismatch"))])]
     [(AstParamCons param rest-params)
-      (match args
-        [(AstExprCons arg rest-args)
-          (match param
-            [(AstParam param-name param-ty is-comptime)
-              (if is-comptime
-                (match (compiler-ctfe-eval
-                  arg
-                  (spec-state-ctfe-env state)
-                  (ctfe-fuel-limit))
-                  [(OkCtfe value _)
-                    (if (spec-type-kind? param-ty)
-                      (match value
-                        [(CtfeType _)
-                          (match (spec-rewrite-specialized-args
-                            rest-params
-                            rest-args
-                            templates
-                            state
-                            fn-name)
-                            [(OkSpecArgs rest-values rest-runtime rest-state)
-                              (OkSpecArgs
-                                (SpecValueCons value rest-values)
-                                rest-runtime
-                                rest-state)]
-                            [(ErrSpecArgs diag) (ErrSpecArgs diag)])]
-                        [_
-                          (ErrSpecArgs
-                            (spec-diagnostic-at-expr
-                              arg
-                              (string-append
-                                "comptime argument '"
-                                (string-append
-                                  param-name
+      (let
+        [rest-params : AstParamList (box-get rest-params)]
+        (match args
+          [(AstExprCons arg rest-args)
+            (let
+              [rest-args : AstExprList (box-get rest-args)]
+              (match param
+                [(AstParam param-name param-ty is-comptime)
+                  (if is-comptime
+                    (match (compiler-ctfe-eval
+                      arg
+                      (spec-state-ctfe-env state)
+                      (ctfe-fuel-limit))
+                      [(OkCtfe value _)
+                        (if (spec-type-kind? param-ty)
+                          (match value
+                            [(CtfeType _)
+                              (match (spec-rewrite-specialized-args
+                                rest-params
+                                rest-args
+                                templates
+                                state
+                                fn-name)
+                                [(OkSpecArgs
+                                    rest-values
+                                    rest-runtime
+                                    rest-state)
+                                  (OkSpecArgs
+                                    (SpecValueCons value rest-values)
+                                    rest-runtime
+                                    rest-state)]
+                                [(ErrSpecArgs diag) (ErrSpecArgs diag)])]
+                            [_
+                              (ErrSpecArgs
+                                (spec-diagnostic-at-expr
+                                  arg
                                   (string-append
-                                    "' for function '"
+                                    "comptime argument '"
                                     (string-append
-                                      fn-name
-                                      "' must be a type value such as `(type i64)`"))))))])
-                      (if (spec-value-runtime-type-matches? value param-ty)
+                                      param-name
+                                      (string-append
+                                        "' for function '"
+                                        (string-append
+                                          fn-name
+                                          "' must be a type value such as `(type i64)`"))))))])
+                          (if (spec-value-runtime-type-matches? value param-ty)
+                            (match (spec-rewrite-specialized-args
+                              rest-params
+                              rest-args
+                              templates
+                              state
+                              fn-name)
+                              [(OkSpecArgs rest-values rest-runtime rest-state)
+                                (OkSpecArgs
+                                  (SpecValueCons value rest-values)
+                                  rest-runtime
+                                  rest-state)]
+                              [(ErrSpecArgs diag) (ErrSpecArgs diag)])
+                            (ErrSpecArgs
+                              (spec-diagnostic-at-expr
+                                arg
+                                (string-append
+                                  "comptime argument '"
+                                  (string-append
+                                    param-name
+                                    (string-append
+                                      "' for function '"
+                                      (string-append
+                                        fn-name
+                                        (string-append
+                                          "' has type "
+                                          (string-append
+                                            (spec-value-type-label value)
+                                            (string-append
+                                              ", expected "
+                                              (spec-type-key param-ty))))))))))))]
+                      [(ErrCtfe diag) (ErrSpecArgs diag)])
+                    (match (spec-rewrite-expr arg templates state)
+                      [(OkSpecExpr rewritten-arg arg-state)
                         (match (spec-rewrite-specialized-args
                           rest-params
                           rest-args
                           templates
-                          state
+                          arg-state
                           fn-name)
-                          [(OkSpecArgs rest-values rest-runtime rest-state)
+                          [(OkSpecArgs values rest-runtime rest-state)
                             (OkSpecArgs
-                              (SpecValueCons value rest-values)
-                              rest-runtime
+                              values
+                              (ast-expr-cons rewritten-arg rest-runtime)
                               rest-state)]
-                          [(ErrSpecArgs diag) (ErrSpecArgs diag)])
-                        (ErrSpecArgs
-                          (spec-diagnostic-at-expr
-                            arg
-                            (string-append
-                              "comptime argument '"
-                              (string-append
-                                param-name
-                                (string-append
-                                  "' for function '"
-                                  (string-append
-                                    fn-name
-                                    (string-append
-                                      "' has type "
-                                      (string-append
-                                        (spec-value-type-label value)
-                                        (string-append
-                                          ", expected "
-                                          (spec-type-key param-ty))))))))))))]
-                  [(ErrCtfe diag) (ErrSpecArgs diag)])
-                (match (spec-rewrite-expr arg templates state)
-                  [(OkSpecExpr rewritten-arg arg-state)
-                    (match (spec-rewrite-specialized-args
-                      rest-params
-                      rest-args
-                      templates
-                      arg-state
-                      fn-name)
-                      [(OkSpecArgs values rest-runtime rest-state)
-                        (OkSpecArgs
-                          values
-                          (AstExprCons rewritten-arg rest-runtime)
-                          rest-state)]
-                      [(ErrSpecArgs diag) (ErrSpecArgs diag)])]
-                  [(ErrSpecExpr diag) (ErrSpecArgs diag)]))])]
-        [_
-          (ErrSpecArgs
-            (compiler-diagnostic-at-start "" "specialize: arity mismatch"))])]))
+                          [(ErrSpecArgs diag) (ErrSpecArgs diag)])]
+                      [(ErrSpecExpr diag) (ErrSpecArgs diag)]))]))]
+          [_
+            (ErrSpecArgs
+              (compiler-diagnostic-at-start "" "specialize: arity mismatch"))]))]))
 
 (define (spec-build-specialization
   [params : AstParamList]
@@ -804,40 +849,44 @@
           (ErrSpecBuild
             (compiler-diagnostic-at-start "" "specialize: value mismatch"))])]
     [(AstParamCons param rest-params)
-      (match param
-        [(AstParam name ty is-comptime)
-          (if is-comptime
-            (match values
-              [(SpecValueCons value rest-values)
-                (match (spec-build-specialization rest-params rest-values)
-                  [(OkSpecBuild runtime value-subs type-subs)
-                    (if (spec-type-kind? ty)
-                      (match value
-                        [(CtfeType actual-ty)
-                          (OkSpecBuild
-                            runtime
-                            value-subs
-                            (SpecTypeSubstCons name actual-ty type-subs))]
-                        [_
-                          (ErrSpecBuild
-                            (compiler-diagnostic-at-start
-                              ""
-                              "specialize: expected type value"))])
-                      (OkSpecBuild
-                        runtime
-                        (SpecValueSubstCons name value value-subs)
-                        type-subs))]
-                  [(ErrSpecBuild diag) (ErrSpecBuild diag)])]
-              [_
-                (ErrSpecBuild
-                  (compiler-diagnostic-at-start "" "specialize: value mismatch"))])
-            (match (spec-build-specialization rest-params values)
-              [(OkSpecBuild runtime value-subs type-subs)
-                (OkSpecBuild
-                  (AstParamCons (AstParam name ty false) runtime)
-                  value-subs
-                  type-subs)]
-              [(ErrSpecBuild diag) (ErrSpecBuild diag)]))])]))
+      (let
+        [rest-params : AstParamList (box-get rest-params)]
+        (match param
+          [(AstParam name ty is-comptime)
+            (if is-comptime
+              (match values
+                [(SpecValueCons value rest-values)
+                  (match (spec-build-specialization rest-params rest-values)
+                    [(OkSpecBuild runtime value-subs type-subs)
+                      (if (spec-type-kind? ty)
+                        (match value
+                          [(CtfeType actual-ty)
+                            (OkSpecBuild
+                              runtime
+                              value-subs
+                              (SpecTypeSubstCons name actual-ty type-subs))]
+                          [_
+                            (ErrSpecBuild
+                              (compiler-diagnostic-at-start
+                                ""
+                                "specialize: expected type value"))])
+                        (OkSpecBuild
+                          runtime
+                          (SpecValueSubstCons name value value-subs)
+                          type-subs))]
+                    [(ErrSpecBuild diag) (ErrSpecBuild diag)])]
+                [_
+                  (ErrSpecBuild
+                    (compiler-diagnostic-at-start
+                      ""
+                      "specialize: value mismatch"))])
+              (match (spec-build-specialization rest-params values)
+                [(OkSpecBuild runtime value-subs type-subs)
+                  (OkSpecBuild
+                    (ast-param-cons (AstParam name ty false) runtime)
+                    value-subs
+                    type-subs)]
+                [(ErrSpecBuild diag) (ErrSpecBuild diag)]))]))]))
 
 (define (spec-ensure-specialization
   [template : SpecTemplate]
@@ -1706,13 +1755,16 @@
   (match exprs
     [(AstExprNil) (OkSpecSubExprList AstExprNil)]
     [(AstExprCons head rest)
-      (match (spec-substitute-values-expr head subs)
-        [(OkSpecSubExpr rewritten-head)
-          (match (spec-substitute-values-expr-list rest subs)
-            [(OkSpecSubExprList rewritten-rest)
-              (OkSpecSubExprList (AstExprCons rewritten-head rewritten-rest))]
-            [(ErrSpecSubExprList diag) (ErrSpecSubExprList diag)])]
-        [(ErrSpecSubExpr diag) (ErrSpecSubExprList diag)])]))
+      (let
+        [rest : AstExprList (box-get rest)]
+        (match (spec-substitute-values-expr head subs)
+          [(OkSpecSubExpr rewritten-head)
+            (match (spec-substitute-values-expr-list rest subs)
+              [(OkSpecSubExprList rewritten-rest)
+                (OkSpecSubExprList
+                  (ast-expr-cons rewritten-head rewritten-rest))]
+              [(ErrSpecSubExprList diag) (ErrSpecSubExprList diag)])]
+          [(ErrSpecSubExpr diag) (ErrSpecSubExprList diag)]))]))
 
 (define (spec-substitute-values-let-bindings
   [bindings : AstLetBindingList]
@@ -1720,21 +1772,23 @@
   (match bindings
     [(AstLetBindingNil) (OkSpecSubLetBindingList AstLetBindingNil)]
     [(AstLetBindingCons binding rest)
-      (match binding
-        [(AstLetBinding name ty value)
-          (match (spec-substitute-values-expr value subs)
-            [(OkSpecSubExpr rewritten-value)
-              (match (spec-substitute-values-let-bindings
-                rest
-                (spec-value-subst-remove-name subs name))
-                [(OkSpecSubLetBindingList rewritten-rest)
-                  (OkSpecSubLetBindingList
-                    (AstLetBindingCons
-                      (AstLetBinding name ty rewritten-value)
-                      rewritten-rest))]
-                [(ErrSpecSubLetBindingList diag)
-                  (ErrSpecSubLetBindingList diag)])]
-            [(ErrSpecSubExpr diag) (ErrSpecSubLetBindingList diag)])])]))
+      (let
+        [rest : AstLetBindingList (box-get rest)]
+        (match binding
+          [(AstLetBinding name ty value)
+            (match (spec-substitute-values-expr value subs)
+              [(OkSpecSubExpr rewritten-value)
+                (match (spec-substitute-values-let-bindings
+                  rest
+                  (spec-value-subst-remove-name subs name))
+                  [(OkSpecSubLetBindingList rewritten-rest)
+                    (OkSpecSubLetBindingList
+                      (ast-let-binding-cons
+                        (AstLetBinding name ty rewritten-value)
+                        rewritten-rest))]
+                  [(ErrSpecSubLetBindingList diag)
+                    (ErrSpecSubLetBindingList diag)])]
+              [(ErrSpecSubExpr diag) (ErrSpecSubLetBindingList diag)])]))]))
 
 (define (spec-substitute-values-match-arms
   [arms : AstMatchArmList]
@@ -1742,20 +1796,22 @@
   (match arms
     [(AstMatchArmNil) (OkSpecSubMatchArmList AstMatchArmNil)]
     [(AstMatchArmCons arm rest)
-      (match arm
-        [(AstMatchArm pattern body)
-          (match (spec-substitute-values-expr
-            body
-            (spec-value-subst-remove-pattern subs pattern))
-            [(OkSpecSubExpr rewritten-body)
-              (match (spec-substitute-values-match-arms rest subs)
-                [(OkSpecSubMatchArmList rewritten-rest)
-                  (OkSpecSubMatchArmList
-                    (AstMatchArmCons
-                      (AstMatchArm pattern rewritten-body)
-                      rewritten-rest))]
-                [(ErrSpecSubMatchArmList diag) (ErrSpecSubMatchArmList diag)])]
-            [(ErrSpecSubExpr diag) (ErrSpecSubMatchArmList diag)])])]))
+      (let
+        [rest : AstMatchArmList (box-get rest)]
+        (match arm
+          [(AstMatchArm pattern body)
+            (match (spec-substitute-values-expr
+              body
+              (spec-value-subst-remove-pattern subs pattern))
+              [(OkSpecSubExpr rewritten-body)
+                (match (spec-substitute-values-match-arms rest subs)
+                  [(OkSpecSubMatchArmList rewritten-rest)
+                    (OkSpecSubMatchArmList
+                      (ast-match-arm-cons
+                        (AstMatchArm pattern rewritten-body)
+                        rewritten-rest))]
+                  [(ErrSpecSubMatchArmList diag) (ErrSpecSubMatchArmList diag)])]
+              [(ErrSpecSubExpr diag) (ErrSpecSubMatchArmList diag)])]))]))
 
 (define (spec-substitute-types-expr [expr : AstExpr] [subs : SpecTypeSubst]) : ResultSpecSubExpr
   (match expr
@@ -2147,13 +2203,16 @@
   (match exprs
     [(AstExprNil) (OkSpecSubExprList AstExprNil)]
     [(AstExprCons head rest)
-      (match (spec-substitute-types-expr head subs)
-        [(OkSpecSubExpr rewritten-head)
-          (match (spec-substitute-types-expr-list rest subs)
-            [(OkSpecSubExprList rewritten-rest)
-              (OkSpecSubExprList (AstExprCons rewritten-head rewritten-rest))]
-            [(ErrSpecSubExprList diag) (ErrSpecSubExprList diag)])]
-        [(ErrSpecSubExpr diag) (ErrSpecSubExprList diag)])]))
+      (let
+        [rest : AstExprList (box-get rest)]
+        (match (spec-substitute-types-expr head subs)
+          [(OkSpecSubExpr rewritten-head)
+            (match (spec-substitute-types-expr-list rest subs)
+              [(OkSpecSubExprList rewritten-rest)
+                (OkSpecSubExprList
+                  (ast-expr-cons rewritten-head rewritten-rest))]
+              [(ErrSpecSubExprList diag) (ErrSpecSubExprList diag)])]
+          [(ErrSpecSubExpr diag) (ErrSpecSubExprList diag)]))]))
 
 (define (spec-substitute-types-let-bindings
   [bindings : AstLetBindingList]
@@ -2161,24 +2220,26 @@
   (match bindings
     [(AstLetBindingNil) (OkSpecSubLetBindingList AstLetBindingNil)]
     [(AstLetBindingCons binding rest)
-      (match binding
-        [(AstLetBinding name ty value)
-          (match (spec-substitute-types-expr value subs)
-            [(OkSpecSubExpr rewritten-value)
-              (match (spec-substitute-types-let-bindings
-                rest
-                (spec-type-subst-remove-name subs name))
-                [(OkSpecSubLetBindingList rewritten-rest)
-                  (OkSpecSubLetBindingList
-                    (AstLetBindingCons
-                      (AstLetBinding
-                        name
-                        (spec-substitute-maybe-type ty subs)
-                        rewritten-value)
-                      rewritten-rest))]
-                [(ErrSpecSubLetBindingList diag)
-                  (ErrSpecSubLetBindingList diag)])]
-            [(ErrSpecSubExpr diag) (ErrSpecSubLetBindingList diag)])])]))
+      (let
+        [rest : AstLetBindingList (box-get rest)]
+        (match binding
+          [(AstLetBinding name ty value)
+            (match (spec-substitute-types-expr value subs)
+              [(OkSpecSubExpr rewritten-value)
+                (match (spec-substitute-types-let-bindings
+                  rest
+                  (spec-type-subst-remove-name subs name))
+                  [(OkSpecSubLetBindingList rewritten-rest)
+                    (OkSpecSubLetBindingList
+                      (ast-let-binding-cons
+                        (AstLetBinding
+                          name
+                          (spec-substitute-maybe-type ty subs)
+                          rewritten-value)
+                        rewritten-rest))]
+                  [(ErrSpecSubLetBindingList diag)
+                    (ErrSpecSubLetBindingList diag)])]
+              [(ErrSpecSubExpr diag) (ErrSpecSubLetBindingList diag)])]))]))
 
 (define (spec-substitute-types-match-arms
   [arms : AstMatchArmList]
@@ -2186,20 +2247,22 @@
   (match arms
     [(AstMatchArmNil) (OkSpecSubMatchArmList AstMatchArmNil)]
     [(AstMatchArmCons arm rest)
-      (match arm
-        [(AstMatchArm pattern body)
-          (match (spec-substitute-types-expr
-            body
-            (spec-type-subst-remove-pattern subs pattern))
-            [(OkSpecSubExpr rewritten-body)
-              (match (spec-substitute-types-match-arms rest subs)
-                [(OkSpecSubMatchArmList rewritten-rest)
-                  (OkSpecSubMatchArmList
-                    (AstMatchArmCons
-                      (AstMatchArm pattern rewritten-body)
-                      rewritten-rest))]
-                [(ErrSpecSubMatchArmList diag) (ErrSpecSubMatchArmList diag)])]
-            [(ErrSpecSubExpr diag) (ErrSpecSubMatchArmList diag)])])]))
+      (let
+        [rest : AstMatchArmList (box-get rest)]
+        (match arm
+          [(AstMatchArm pattern body)
+            (match (spec-substitute-types-expr
+              body
+              (spec-type-subst-remove-pattern subs pattern))
+              [(OkSpecSubExpr rewritten-body)
+                (match (spec-substitute-types-match-arms rest subs)
+                  [(OkSpecSubMatchArmList rewritten-rest)
+                    (OkSpecSubMatchArmList
+                      (ast-match-arm-cons
+                        (AstMatchArm pattern rewritten-body)
+                        rewritten-rest))]
+                  [(ErrSpecSubMatchArmList diag) (ErrSpecSubMatchArmList diag)])]
+              [(ErrSpecSubExpr diag) (ErrSpecSubMatchArmList diag)])]))]))
 
 (define (spec-rewrite-decl
   [decl : AstDecl]
@@ -2247,18 +2310,20 @@
   (match decls
     [(AstDeclNil) (OkSpecDecls AstDeclNil state)]
     [(AstDeclCons decl rest)
-      (match (spec-rewrite-decl decl templates state)
-        [(OkSpecDecl maybe-decl decl-state)
-          (match (spec-rewrite-decls rest templates decl-state)
-            [(OkSpecDecls rewritten-rest rest-state)
-              (match maybe-decl
-                [(SpecNoDecl) (OkSpecDecls rewritten-rest rest-state)]
-                [(SpecSomeDecl rewritten-decl)
-                  (OkSpecDecls
-                    (AstDeclCons rewritten-decl rewritten-rest)
-                    rest-state)])]
-            [(ErrSpecDecls diag) (ErrSpecDecls diag)])]
-        [(ErrSpecDecl diag) (ErrSpecDecls diag)])]))
+      (let
+        [rest : AstDeclList (box-get rest)]
+        (match (spec-rewrite-decl decl templates state)
+          [(OkSpecDecl maybe-decl decl-state)
+            (match (spec-rewrite-decls rest templates decl-state)
+              [(OkSpecDecls rewritten-rest rest-state)
+                (match maybe-decl
+                  [(SpecNoDecl) (OkSpecDecls rewritten-rest rest-state)]
+                  [(SpecSomeDecl rewritten-decl)
+                    (OkSpecDecls
+                      (ast-decl-cons rewritten-decl rewritten-rest)
+                      rest-state)])]
+              [(ErrSpecDecls diag) (ErrSpecDecls diag)])]
+          [(ErrSpecDecl diag) (ErrSpecDecls diag)]))]))
 
 (define (compiler-specialize-program [program : AstProgram]) : ResultSpecProgram
   (match program
@@ -2296,16 +2361,18 @@
   (match decls
     [(AstDeclNil) false]
     [(AstDeclCons decl rest)
-      (match decl
-        [(AstDeclUnsafe (AstDeclDefFn fn-name _ _ _))
-          (if (string-eq fn-name name)
-            true
-            (compiler-specialize-decl-list-defines? rest name))]
-        [(AstDeclDefFn fn-name _ _ _)
-          (if (string-eq fn-name name)
-            true
-            (compiler-specialize-decl-list-defines? rest name))]
-        [_ (compiler-specialize-decl-list-defines? rest name)])]))
+      (let
+        [rest : AstDeclList (box-get rest)]
+        (match decl
+          [(AstDeclUnsafe (AstDeclDefFn fn-name _ _ _))
+            (if (string-eq fn-name name)
+              true
+              (compiler-specialize-decl-list-defines? rest name))]
+          [(AstDeclDefFn fn-name _ _ _)
+            (if (string-eq fn-name name)
+              true
+              (compiler-specialize-decl-list-defines? rest name))]
+          [_ (compiler-specialize-decl-list-defines? rest name)]))]))
 
 (define (compiler-specialize-type-param-source) : String
   "(define (alloc [comptime T : type] [n : i64]) : (Array i64)
@@ -2436,16 +2503,18 @@
   (match decls
     [(AstDeclNil) 0]
     [(AstDeclCons decl rest)
-      (match decl
-        [(AstDeclUnsafe (AstDeclDefFn fn-name _ _ _))
-          (if (string-eq fn-name name)
-            (+ 1 (compiler-specialize-decl-list-count-defs rest name))
-            (compiler-specialize-decl-list-count-defs rest name))]
-        [(AstDeclDefFn fn-name _ _ _)
-          (if (string-eq fn-name name)
-            (+ 1 (compiler-specialize-decl-list-count-defs rest name))
-            (compiler-specialize-decl-list-count-defs rest name))]
-        [_ (compiler-specialize-decl-list-count-defs rest name)])]))
+      (let
+        [rest : AstDeclList (box-get rest)]
+        (match decl
+          [(AstDeclUnsafe (AstDeclDefFn fn-name _ _ _))
+            (if (string-eq fn-name name)
+              (+ 1 (compiler-specialize-decl-list-count-defs rest name))
+              (compiler-specialize-decl-list-count-defs rest name))]
+          [(AstDeclDefFn fn-name _ _ _)
+            (if (string-eq fn-name name)
+              (+ 1 (compiler-specialize-decl-list-count-defs rest name))
+              (compiler-specialize-decl-list-count-defs rest name))]
+          [_ (compiler-specialize-decl-list-count-defs rest name)]))]))
 
 ;: Two call sites that request the SAME specialization (`alloc` at `type i64`)
 ;: must share one generated decl via the specialization cache, not emit two.
@@ -2502,7 +2571,7 @@
               (spec-type-key
                 (spec-substitute-type
                   (AstTyFunc
-                    (AstTypeCons (AstTyVar "T") AstTypeNil)
+                    (ast-type-cons (AstTyVar "T") AstTypeNil)
                     (AstTyVar "T"))
                   subs))
               "fn_i64_nil_to_i64")

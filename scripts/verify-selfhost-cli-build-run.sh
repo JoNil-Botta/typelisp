@@ -534,6 +534,34 @@ assert_status package-program "$status" 29
 assert_empty package-program "$WORKDIR/package-program.out"
 assert_empty package-program "$WORKDIR/package-program.err"
 
+ROOT_PKG_OUT_DIR="$ROOT/target/typelisp/typelisp"
+ROOT_PKG_EXE="$ROOT_PKG_OUT_DIR/typelisp"
+if [ "$HOST_OS" = windows ]; then
+    ROOT_PKG_EXE="$ROOT_PKG_EXE.exe"
+fi
+rm -rf "$ROOT_PKG_OUT_DIR"
+
+set +e
+(
+    cd "$ROOT"
+    "$COMPILER" build --target "$BUILD_TARGET" --opt-level 0 > "$WORKDIR/root-package-build.out" 2> "$WORKDIR/root-package-build.err"
+)
+status=$?
+set -e
+assert_status root-package-build "$status" 0
+assert_empty root-package-build "$WORKDIR/root-package-build.err"
+assert_contains root-package-build "$WORKDIR/root-package-build.out" "Generated:"
+[ -f "$ROOT_PKG_EXE" ] || fail "root package build did not write executable $ROOT_PKG_EXE"
+
+set +e
+"$ROOT_PKG_EXE" --help > "$WORKDIR/root-package-help.out" 2> "$WORKDIR/root-package-help.err"
+status=$?
+set -e
+assert_status root-package-help "$status" 0
+assert_empty root-package-help "$WORKDIR/root-package-help.out"
+assert_contains root-package-help "$WORKDIR/root-package-help.err" "Usage:"
+assert_contains root-package-help "$WORKDIR/root-package-help.err" "typelisp build [--manifest-path <typelisp.pkg>]"
+
 STATICLIB_DIR="$WORKDIR/staticlib-package-build"
 mkdir -p "$STATICLIB_DIR/src"
 cat > "$STATICLIB_DIR/typelisp.pkg" <<'EOF'

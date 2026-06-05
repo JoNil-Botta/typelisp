@@ -250,6 +250,14 @@ root, an absolute path, or the GitHub shorthand form shown above. `tag` and
 `https://github.com/owner/repo.git#rev=commit`. Remote entries currently report
 a fetch-support diagnostic until git dependency fetch, cache, and lockfile
 support lands; local paths keep the existing behavior.
+
+The repository root is also a package. From a checkout, `typelisp build` builds
+the unified selfhost CLI from `selfhost/cli.tl` and writes
+`target/typelisp/typelisp/typelisp` (or
+`target/typelisp/typelisp/typelisp.exe` on Windows). Stage0 publication still
+uses `scripts/build-stage0.sh`, which compiles `selfhost/cli.tl` directly until
+the remaining standalone-driver cleanup tracked by #1574 lands.
+
 Inside a package build, imports of the form `(import
 "pkg:math/src/lib.tl")` resolve from the dependency root declared for alias
 `math`; ordinary string imports remain relative to the importing file, and

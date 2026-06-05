@@ -393,6 +393,10 @@ contains|_tl_compiler_live_self_test:
 contains|_tl_compiler_live_analyze_function:
 end
 
+case|selfhost_compiler_embedded_stdlib|selfhost/compiler_embedded_stdlib.tl|assembly|skip|direct
+contains|_tl_compiler_embedded_stdlib_u2etl_colon_coloncompiler_embedded_stdlib_lookup:
+end
+
 case|selfhost_compiler_load|selfhost/compiler_load.tl|assembly|skip|direct
 requires-stage0-symbol|fs-read-dir-status,fs-read-dir,fs-file-size-status,fs-file-size
 contains|_tl_compiler_load_file:

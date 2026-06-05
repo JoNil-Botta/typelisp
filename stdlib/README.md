@@ -253,9 +253,9 @@ fixtures are discovered without a manifest edit.
    import path.
 4. Add the new top-level `.tl` file to `scripts/verify-stdlib.sh`'s module
    manifest.
-5. Add new stdlib `.tl` files, including test fixtures, to the embedded stdlib
-   manifest in `src/module.rs` so installed compiler binaries can use them
-   through embedded stdlib fallback.
+5. Add new stdlib `.tl` files, including test fixtures, to
+   `selfhost/compiler_embedded_stdlib.tl` so installed compiler binaries can use
+   them through embedded stdlib fallback.
 6. Add focused fixtures under `stdlib/tests/` and list them in
    `scripts/verify-stdlib.sh`'s runnable test manifest with expected
    exit/stdout/stderr or check-only manifest with expected pass/fail behavior.

@@ -14916,7 +14916,8 @@
   [ctx : TcContext]
   [top-env : TcTypeEnv]
   [orig-decls : AstDeclList]
-  [decls : AstDeclList]) : ResultMacroDecls
+  [decls : AstDeclList]
+  [compat-only : bool]) : ResultMacroDecls
   (match decls
     [(AstDeclNil) (OkMacroDecls (AstDeclNil))]
     [(AstDeclCons decl rest)
@@ -14926,22 +14927,33 @@
           [(AstDeclModule next-module)
             (begin
               (set! macro-expand-active-module next-module)
-              (match (macro-expand-decls ctx top-env orig-decls rest)
+              (match (macro-expand-decls ctx top-env orig-decls rest compat-only)
                 [(OkMacroDecls nrest) (OkMacroDecls (ast-decl-cons decl nrest))]
                 [(ErrMacroDecls diag) (ErrMacroDecls diag)]))]
           [_
-            (let
-              [decl-ctx : TcContext
-                (tc-context-with-module ctx macro-expand-active-module)]
-              (match (macro-expand-decl decl-ctx top-env orig-decls decl)
-                [(OkMacroDecl ndecl)
-                  (begin
-                    (macro-local-decl-index-step! decl)
-                    (match (macro-expand-decls ctx top-env orig-decls rest)
-                      [(OkMacroDecls nrest)
-                        (OkMacroDecls (ast-decl-cons ndecl nrest))]
-                      [(ErrMacroDecls diag) (ErrMacroDecls diag)]))]
-                [(ErrMacroDecl diag) (ErrMacroDecls diag)]))]))]))
+            (if (and compat-only (not (macro-decl-needs-expansion? decl)))
+              (begin
+                (macro-local-decl-index-step! decl)
+                (match (macro-expand-decls ctx top-env orig-decls rest compat-only)
+                  [(OkMacroDecls nrest) (OkMacroDecls (ast-decl-cons decl nrest))]
+                  [(ErrMacroDecls diag) (ErrMacroDecls diag)]))
+              (let
+                [decl-ctx : TcContext
+                  (tc-context-with-module ctx macro-expand-active-module)]
+                (match (macro-expand-decl decl-ctx top-env orig-decls decl)
+                  [(OkMacroDecl ndecl)
+                    (begin
+                      (macro-local-decl-index-step! decl)
+                      (match (macro-expand-decls
+                        ctx
+                        top-env
+                        orig-decls
+                        rest
+                        compat-only)
+                        [(OkMacroDecls nrest)
+                          (OkMacroDecls (ast-decl-cons ndecl nrest))]
+                        [(ErrMacroDecls diag) (ErrMacroDecls diag)]))]
+                  [(ErrMacroDecl diag) (ErrMacroDecls diag)])))]))]))
 
 (define (macro-expr-needs-compat-expansion? [expr : AstExpr]) : bool
   (or
@@ -14973,6 +14985,19 @@
         (macro-decl-needs-expansion? template))]
     [_ false]))
 
+(define (macro-decl-has-defmacro? [decl : AstDecl]) : bool
+  (match decl
+    [(AstDeclDefMacro _ _ _ _) true]
+    [(AstDeclUnsafe inner-box)
+      (let
+        [inner : AstDecl (box-get inner-box)]
+        (macro-decl-has-defmacro? inner))]
+    [(AstDeclComptimeDecl _ template-box)
+      (let
+        [template : AstDecl (box-get template-box)]
+        (macro-decl-has-defmacro? template))]
+    [_ false]))
+
 ;; Whether a program needs the macro expansion pass.
 (define (macro-program-needs-expansion? [decls : AstDeclList]) : bool
   (match decls
@@ -14984,6 +15009,16 @@
           (macro-decl-needs-expansion? decl)
           (macro-program-needs-expansion? rest)))]))
 
+(define (macro-program-has-defmacro? [decls : AstDeclList]) : bool
+  (match decls
+    [(AstDeclNil) false]
+    [(AstDeclCons decl rest)
+      (let
+        [rest : AstDeclList (box-get rest)]
+        (or
+          (macro-decl-has-defmacro? decl)
+          (macro-program-has-defmacro? rest)))]))
+
 ;; Expand all macro calls in a parsed program before typechecking. Programs that
 ;; need no macro or guard-compatibility expansion are returned unchanged without
 ;; rebuilding the AST, so the expansion phase adds no allocation for the common
@@ -14993,7 +15028,8 @@
     [(AstProgram decls-box)
       (let
         [decls : AstDeclList (box-get decls-box)]
-        (if (macro-program-needs-expansion? decls)
+        [has-defmacro : bool (macro-program-has-defmacro? decls)]
+        (if (or has-defmacro (macro-program-needs-expansion? decls))
           (match (build-compiler-symbols program)
             [(OkCompilerSymbols symbols)
               (match (build-compiler-registries-with-symbols program symbols)
@@ -15015,7 +15051,8 @@
                                 ctx
                                 top-env
                                 decls
-                                decls)
+                                decls
+                                (not has-defmacro))
                                 [(OkMacroDecls ndecls)
                                   (OkMacroExpand (ast-program ndecls))]
                                 [(ErrMacroDecls diag) (ErrMacroExpand diag)])]

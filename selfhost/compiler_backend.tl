@@ -125,7 +125,10 @@
 
 (defenum CompilerBackendGlobalTypeList
   (CompilerBackendGlobalTypeNil)
-  (CompilerBackendGlobalTypeCons String AstType CompilerBackendGlobalTypeList)
+  (CompilerBackendGlobalTypeCons
+    String
+    AstType
+    (Box CompilerBackendGlobalTypeList))
   (CompilerBackendGlobalTypeCache StringI64Map (Array AstType)))
 
 (defenum ResultCompilerBackend
@@ -2737,12 +2740,35 @@
     [(CompilerBackendGlobalTypeCons key ty rest)
       (if (string-eq key name)
         (CompilerRegSomeType ty)
-        (compiler-backend-global-type-lookup rest name))]
+        (compiler-backend-global-type-lookup (box-get rest) name))]
     [(CompilerBackendGlobalTypeCache ids values)
       (match (string-i64-map-get ids name)
         [(StringI64MapFound index)
           (CompilerRegSomeType (array-ref values index))]
         [(StringI64MapMissing) (CompilerRegNoType)])]))
+
+(define (compiler-backend-global-type-list-boxed-ok?) : bool
+  (let
+    [types : CompilerBackendGlobalTypeList
+      (CompilerBackendGlobalTypeCons
+        "left"
+        (AstTyI64)
+        (box
+          (CompilerBackendGlobalTypeCons
+            "right"
+            (AstTyBool)
+            (box CompilerBackendGlobalTypeNil))))]
+    (and
+      (match (compiler-backend-global-type-lookup types "left")
+        [(CompilerRegSomeType (AstTyI64)) true]
+        [_ false])
+      (and
+        (match (compiler-backend-global-type-lookup types "right")
+          [(CompilerRegSomeType (AstTyBool)) true]
+          [_ false])
+        (match (compiler-backend-global-type-lookup types "missing")
+          [(CompilerRegNoType) true]
+          [_ false])))))
 
 (define (compiler-backend-global-type-count [globals : CompilerIrGlobalList]) : i64
   (match globals

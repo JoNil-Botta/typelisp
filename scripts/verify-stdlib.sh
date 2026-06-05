@@ -41,9 +41,10 @@ case "$#" in
         ;;
 esac
 
-# Linux verifies through the GNU `as`/`ld` pipeline; Windows (Git Bash / MSYS /
-# Cygwin on the CI runner) verifies through the host-default native toolchain
-# (`typelisp build` -> `clang`/`lld-link`), mirroring tests/windows_native.rs.
+# Linux verifies through the GNU `as`/`ld` pipeline with libc linked for stdlib
+# host FFI bindings; Windows (Git Bash / MSYS / Cygwin on the CI runner)
+# verifies through the host-default native toolchain (`typelisp build` ->
+# `clang`/`lld-link`), mirroring tests/windows_native.rs.
 HOST_OS=linux
 case "$(uname -s)" in
     Linux*) HOST_OS=linux ;;
@@ -104,7 +105,9 @@ stdlib_build_run() {
             got=$?
         fi
     else
-        "$COMPILER" compile "$_src" --stdlib-root "$ROOT/stdlib" -o "$_stem.s" \
+        "$COMPILER" compile "$_src" --target linux-x86_64 \
+            --cfg linux --cfg unix --cfg target-linux --cfg os-linux \
+            --stdlib-root "$ROOT/stdlib" -o "$_stem.s" \
             > "$_stem.build.out" 2> "$_stem.build.err"
         build_status=$?
         if [ "$build_status" -eq 0 ]; then
@@ -112,7 +115,8 @@ stdlib_build_run() {
             build_status=$?
         fi
         if [ "$build_status" -eq 0 ]; then
-            ld "$_stem.o" -o "$_stem" >> "$_stem.build.out" 2>> "$_stem.build.err"
+            ld "$_stem.o" -o "$_stem" -dynamic-linker /lib64/ld-linux-x86-64.so.2 -lc \
+                >> "$_stem.build.out" 2>> "$_stem.build.err"
             build_status=$?
         fi
         if [ "$build_status" -eq 0 ]; then
@@ -145,6 +149,7 @@ should_skip_staged() {
 # or stdlib_check_manifest.
 stdlib_manifest() {
     cat <<'EOF'
+arena.tl
 io.tl
 env.tl
 cpu.tl
@@ -182,6 +187,7 @@ EOF
 # `<host>` is `linux`, `windows`, or `all`.
 stdlib_test_manifest() {
     cat <<'EOF'
+stdlib/tests/arena_api.tl|42|-|-
 stdlib/tests/string_edges.tl|42|-|-
 stdlib/tests/json_helpers.tl|42|-|-
 stdlib/tests/json_parse_stringify.tl|42|-|-

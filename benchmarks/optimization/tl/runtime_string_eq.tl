@@ -1,3 +1,5 @@
+(import "stdlib/io.tl")
+
 (define (score-bool [value : bool] [score : i64]) : i64
   (if value
     score

@@ -81,6 +81,7 @@ compile_cli_to_asm() {
     if ! run_with_heartbeat "$label" \
         "$compiler" compile selfhost/cli.tl -o "$asm" \
         --target "$NL_BOOTSTRAP_TARGET" \
+        $(native_target_cfg_args) \
         --stdlib-root stdlib \
         --stdlib-root selfhost \
         --opt-level 2 \
@@ -107,6 +108,7 @@ measure_compile_cli_to_asm() {
     if ! run_with_heartbeat "$label" \
         "$compiler" compile selfhost/cli.tl -o "$asm" \
         --target "$NL_BOOTSTRAP_TARGET" \
+        $(native_target_cfg_args) \
         --stdlib-root stdlib \
         --stdlib-root selfhost \
         --opt-level 2 \
@@ -165,6 +167,7 @@ echo "[compile-bench] build profile-enabled compile driver with stage2"
 if ! run_with_heartbeat "stage2 -> profile compile driver" \
     "$STAGE2_BIN" compile selfhost/compile.tl -o "$PROFILE_ASM" \
     --target "$NL_BOOTSTRAP_TARGET" \
+    $(native_target_cfg_args) \
     --stdlib-root stdlib \
     --stdlib-root selfhost \
     --opt-level 2 \
@@ -182,6 +185,7 @@ strip_if_needed "$PROFILE_BIN"
 echo "[compile-bench] run profiled phase breakdown"
 if ! "$PROFILE_BIN" compile selfhost/cli.tl -o "$PROFILE_CLI_ASM" \
     --target "$NL_BOOTSTRAP_TARGET" \
+    $(native_target_cfg_args) \
     --stdlib-root stdlib \
     --stdlib-root selfhost \
     --opt-level 2 \

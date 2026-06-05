@@ -1,6 +1,8 @@
 ;; compiler_driver_core.tl - Import-aware selfhost compiler driver helpers.
 (import "../stdlib/io.tl")
 
+(import "../stdlib/arena.tl")
+
 (import "compiler_backend.tl")
 
 (import "compiler_diagnostic.tl")
@@ -9,7 +11,7 @@
 
 (import "compiler_optimize.tl")
 
-(import "stdlib/text_buf.tl")
+(import "../stdlib/text_buf.tl")
 
 (defenum ResultCompilerDriver
   (OkCompilerDriver String)
@@ -349,8 +351,7 @@
     [scratch : i64 (arena-make)]
     (begin
       (unsafe
-        (begin
-          (arena-set! scratch)))
+        (arena-set! scratch))
       (match (compiler-load-file-with-paths-and-roots-cfg
         input-path
         (sym-i64-empty)
@@ -370,16 +371,14 @@
                   [scratch-head : i64 (arena-current)]
                   (begin
                     (unsafe
-                      (begin
-                        (arena-set! enclosing)))
+                      (arena-set! enclosing))
                     (let
                       [escaped-program : CompilerIrProgram
                         (compiler-ir-clone-program program)]
                       [escaped-spans : CompilerSourceSpans (clone spans)]
                       (begin
                         (unsafe
-                          (begin
-                            (arena-destroy scratch-head)))
+                          (arena-destroy scratch-head))
                         (cfg
                           compile-profile
                           (compiler-driver-profile-finish-phase "lower"))
@@ -389,14 +388,12 @@
                   [scratch-head : i64 (arena-current)]
                   (begin
                     (unsafe
-                      (begin
-                        (arena-set! enclosing)))
+                      (arena-set! enclosing))
                     (let
                       [escaped-diag : CompilerDiagnostic (clone diag)]
                       (begin
                         (unsafe
-                          (begin
-                            (arena-destroy scratch-head)))
+                          (arena-destroy scratch-head))
                         (cfg
                           compile-profile
                           (compiler-driver-profile-finish-phase "lower"))
@@ -406,14 +403,12 @@
             [scratch-head : i64 (arena-current)]
             (begin
               (unsafe
-                (begin
-                  (arena-set! enclosing)))
+                (arena-set! enclosing))
               (let
                 [escaped-diag : CompilerDiagnostic (clone diag)]
                 (begin
                   (unsafe
-                    (begin
-                      (arena-destroy scratch-head)))
+                    (arena-destroy scratch-head))
                   (cfg
                     compile-profile
                     (compiler-driver-profile-finish-phase "load"))

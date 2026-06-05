@@ -1,6 +1,8 @@
 ;; compiler_typecheck_core.tl - Specialization-free scalar typechecker core (#1436).
 (import "../stdlib/io.tl")
 
+(import "../stdlib/arena.tl")
+
 (import "compiler_symbols.tl")
 
 (import "compiler_diagnostic.tl")
@@ -479,33 +481,9 @@
     [(AstTyStruct name) name]
     [(AstTyVar name) name]))
 
-;; First-class arena primitives (#1633). The opaque `arena` handle is an i64
-;; pointer. `clone` is registered separately (it is type-directed: its result is
-;; its argument's type) in the call typechecker, not here.
-(define (tc-arena-builtins-env [env : TcTypeEnv]) : TcTypeEnv
-  (let
-    [out : TcTypeEnv env]
-    (begin
-      (set! out (tc-bind out "arena-make" (tc-fn0 (AstTyI64))))
-      (set!
-        out
-        (tc-bind-unsafe out "arena-destroy" (tc-fn1 (AstTyI64) (AstTyUnit))))
-      (set! out (tc-bind out "arena-current" (tc-fn0 (AstTyI64))))
-      (set!
-        out
-        (tc-bind-unsafe out "arena-set!" (tc-fn1 (AstTyI64) (AstTyUnit))))
-      (set! out (tc-bind out "arena-mark" (tc-fn0 (AstTyI64))))
-      (set!
-        out
-        (tc-bind-unsafe out "arena-rewind" (tc-fn1 (AstTyI64) (AstTyUnit))))
-      out)))
-
 (define (tc-default-env) : TcTypeEnv
   (tc-profile-builtins-env
-    (tc-bind
-      (tc-arena-builtins-env (tc-default-env-base))
-      (tc-default-boundary-name)
-      (AstTyUnit))))
+    (tc-bind (tc-default-env-base) (tc-default-boundary-name) (AstTyUnit))))
 
 (define (tc-profile-builtins-env [env : TcTypeEnv]) : TcTypeEnv
   (let
@@ -843,6 +821,12 @@
         (tc-string-list-contains allowed item)
         (tc-string-list-all-in? rest allowed))]))
 
+;; V1 lifetime names are owner names. Normal environment bindings own stack
+;; slots, and the synthetic region marker owns a with-arena scope. Environment
+;; order is the lexical outlives relation: older owners appear farther down the
+;; list and outlive nested stack bindings or scoped arenas. The default program
+;; arena is inferred for untagged aggregate handles, so it has no lexical
+;; binder in this environment walk.
 (define (tc-env-binding-matches-lifetime?
   [key : String]
   [ty : AstType]
@@ -1258,6 +1242,9 @@
     [(TcSomeString region) (tc-tag-region region projected-ty)]
     [(TcNoString) projected-ty]))
 
+;; Region-tagged aggregate flow uses the same lexical owner ordering as
+;; references, but only considers arena owners. A value from an outer region can
+;; flow into an inner target; an inner-region value cannot flow outward.
 (define (tc-region-outlives-or-matches
   [env : TcTypeEnv]
   [value-region : String]
@@ -7861,6 +7848,9 @@
     [(AstTyVar _) true]
     [_ (tc-type-copyable? ty)]))
 
+;; with-escape is a first-class scratch-arena clone path, not a lexical
+;; lifetime binder. The scratch expression is just an arena handle, and
+;; supported results leave the form with scratch-region tags erased.
 (define (tc-with-escape-expr
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -10259,31 +10249,27 @@
     [scratch : i64 (arena-make)]
     (begin
       (unsafe
-        (begin
-          (arena-set! scratch)))
+        (arena-set! scratch))
       (match (tc-check-decl ctx top-env decl)
         [(OkTcUnit)
           (let
             [scratch-head : i64 (arena-current)]
             (begin
               (unsafe
-                (begin
-                  (arena-set! enclosing)
-                  (arena-destroy scratch-head)))
+                (arena-set! enclosing)
+                (arena-destroy scratch-head))
               (OkTcUnit)))]
         [(ErrTcUnit message)
           (let
             [scratch-head : i64 (arena-current)]
             (begin
               (unsafe
-                (begin
-                  (arena-set! enclosing)))
+                (arena-set! enclosing))
               (let
                 [escaped : String (clone message)]
                 (begin
                   (unsafe
-                    (begin
-                      (arena-destroy scratch-head)))
+                    (arena-destroy scratch-head))
                   (ErrTcUnit escaped)))))]))))
 
 (define (tc-check-one-decl-with-module
@@ -10355,24 +10341,28 @@
     [(OkCompilerSymbols symbols)
       (match (build-compiler-registries program)
         [(OkCompilerRegistries registries)
-          (let
-            [ctx : TcContext (TcContext program symbols registries "")]
-            (match (tc-program-source-types-policy-ok ctx program)
-              [(OkTcUnit)
-                (match (tc-build-top-env ctx program)
-                  [(OkTcEnv top-env)
-                    (match program
-                      [(AstProgram decls)
-                        (tc-check-decls-with-paths
-                          ctx
-                          top-env
-                          decls
-                          paths
-                          (CompilerTypecheckSummary 0 0 0))])]
-                  [(ErrTcEnv message)
-                    (ErrCompilerTypecheck (tc-diag-at-start message))])]
-              [(ErrTcUnit message)
-                (ErrCompilerTypecheck (tc-diag-at-start message))]))]
+          (match (build-compiler-exports-with program symbols registries)
+            [(OkCompilerExports _)
+              (let
+                [ctx : TcContext (TcContext program symbols registries "")]
+                (match (tc-program-source-types-policy-ok ctx program)
+                  [(OkTcUnit)
+                    (match (tc-build-top-env ctx program)
+                      [(OkTcEnv top-env)
+                        (match program
+                          [(AstProgram decls)
+                            (tc-check-decls-with-paths
+                              ctx
+                              top-env
+                              decls
+                              paths
+                              (CompilerTypecheckSummary 0 0 0))])]
+                      [(ErrTcEnv message)
+                        (ErrCompilerTypecheck (tc-diag-at-start message))])]
+                  [(ErrTcUnit message)
+                    (ErrCompilerTypecheck (tc-diag-at-start message))]))]
+            [(ErrCompilerExports message)
+              (ErrCompilerTypecheck (tc-diag-at-start message))])]
         [(ErrCompilerRegistries message)
           (ErrCompilerTypecheck (tc-diag-at-start message))])]
     [(ErrCompilerSymbols message)

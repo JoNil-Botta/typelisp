@@ -874,15 +874,178 @@ references. Multiple parameters using the same name require the same caller
 lifetime.
 
 The first #804 stored-reference slice accepts reference lifetimes written
-directly in structural container types and nominal aggregate declarations:
-fixed arrays such as `(Array (& n i64) 1)`, tuple elements, struct fields, and
-enum payloads. Those lifetimes are preserved through array-ref, tuple-ref,
-field access, constructors, and match bindings. A nominal constructor result
-that stores references carries hidden lifetime facts while it remains local;
-passing or returning such a nominal value is rejected until explicit nominal
-lifetime-argument syntax lands. Structural return types that expose the
-reference lifetime directly, such as `(& n T)`, `(Tuple (& n T))`, and
-`(Array (& n T) k)`, may return when the lifetime is tied to an input.
+directly in structural container types: fixed arrays such as
+`(Array (& n i64) 1)`, tuple elements, and nested structural types. Those
+lifetimes are preserved through array-ref and tuple-ref. Structural return
+types that expose the reference lifetime directly, such as `(& n T)`,
+`(Tuple (& n T))`, and `(Array (& n T) k)`, may return when the lifetime is
+tied to an input.
+
+#### 3.10.1 Lifetime-parameterized named aggregates (v1 design)
+
+Named structs and enums may declare lifetime parameters with lifetime metadata
+after the nominal name and before all fields or variants, alongside any other
+declaration metadata:
+
+```lisp test=ignore name=lifetime-parameterized-aggregate-declaration reason="specified before selfhost parser/typechecker support"
+(defstruct RefPair
+  (:lifetimes a b)
+  (left (& a i64))
+  (right (& b str)))
+
+(defenum MaybeRef
+  (:lifetimes a)
+  (NoRef)
+  (SomeRef (& a i64)))
+```
+
+`(:lifetimes a b)` binds declaration-local lifetime parameters. They are not
+fields, runtime values, type values, or source-level generic type parameters.
+They may appear only as reference lifetime names or as lifetime arguments to
+other nominal aggregate types inside the aggregate declaration. The reserved
+lifetime name `program` may also appear in fields or payloads and is not listed
+in `(:lifetimes ...)`.
+
+Lifetime metadata has these declaration-site rules:
+
+- The metadata form is plural and requires at least one lifetime name:
+  `(:lifetimes a)`, `(:lifetimes a b)`, and so on.
+- Lifetime names are ordinary identifiers. Duplicate names in one declaration
+  are rejected.
+- At most one `(:lifetimes ...)` metadata form may appear on a declaration.
+- A field or enum payload reference lifetime must be one of the declaration's
+  lifetime parameters or the reserved `program` lifetime. Other names are
+  rejected as unknown lifetime parameters.
+- `(:lifetimes ...)` is compatible with ordinary default-layout structs and
+  enums. It is rejected with `(:repr c)` in v1 because safe references and
+  default aggregate handles are not C ABI fields.
+- Lifetime metadata is independent from cleanup ownership metadata. A future
+  cleanup-owning struct may also have lifetime parameters, but cleanup-owning
+  enum metadata remains reserved as described in section 4.6.1.
+
+Type-use sites supply lifetime arguments with a lifetime-only nominal type form:
+
+```lisp test=ignore name=lifetime-parameterized-aggregate-type-use reason="specified before selfhost parser/typechecker support"
+(define (first-ref [pair : (RefPair a b)]) : (& a i64)
+  (struct-get pair left))
+
+(define (select-ref [value : (MaybeRef a)]) : i64
+  (match value
+    [(SomeRef r) 1]
+    [NoRef 0]))
+```
+
+`(Name a b)` is a nominal type use for the already-declared struct or enum
+`Name` with lifetime arguments `a` and `b`. The arguments are lifetime names,
+not type expressions. `(Array T)`, `(Tuple ...)`, `(Box T)`, `(Ptr T)`,
+`(& a T)`, and the other built-in type constructors remain the only built-in
+type constructors. TypeLisp still rejects source-level generic type
+constructors, generic functions, traits, and type parameters; `(Name T)` is not
+a type-parameter application unless `T` is a lifetime name in scope.
+
+Lifetime argument type-use rules:
+
+- A nominal type declared without `(:lifetimes ...)` is used as bare `Name`.
+  Supplying arguments to a zero-lifetime nominal type is rejected.
+- A nominal type declared with lifetimes must be used as `(Name args...)` with
+  exactly the declared arity. Bare `Name`, too few arguments, and too many
+  arguments are rejected.
+- Each lifetime argument must be a lifetime name in the current lifetime scope:
+  a function signature lifetime, a declaration lifetime parameter, a current
+  lexical owner name, a current `with-arena` name for local annotations, or the
+  reserved `program` lifetime. Unknown names are rejected.
+- There is no lifetime subtyping or implicit lifetime coercion in v1. Two
+  nominal lifetime types are equal only when they have the same nominal identity
+  and the same lifetime argument list after substitution.
+- Nested uses are allowed wherever ordinary types are allowed, including
+  function parameters and returns, `let` annotations, struct fields, enum
+  payloads, tuple elements, fixed arrays, dynamic arrays, boxes, pointers, and
+  references.
+
+Declaration lifetime parameters are substituted by position. If
+`RefPair` declares `(:lifetimes a b)`, then the field type `(& a i64)` becomes
+`(& x i64)` in `(RefPair x y)`, and `(& b str)` becomes `(& y str)`.
+Substitution applies recursively through nested nominal types, arrays, tuples,
+boxes, pointers, and references.
+
+Struct constructor checking uses the substituted field types. A constructor
+call for a lifetime-parameterized struct produces the corresponding nominal
+lifetime type when every argument's stored lifetime matches the substituted
+field type:
+
+```lisp test=ignore name=lifetime-parameterized-struct-constructor reason="specified before selfhost parser/typechecker support"
+(defstruct RefBox
+  (:lifetimes a)
+  (value (& a i64)))
+
+(define (box-ref [value : (& a i64)]) : (RefBox a)
+  (RefBox value))
+```
+
+`struct-get` preserves the same substitution. If `box` has type `(RefBox a)`,
+then `(struct-get box value)` has type `(& a i64)`.
+
+Enum variant constructors and `match` arms use the same substitution. A variant
+constructor for a lifetime-parameterized enum produces the enum type with the
+lifetime arguments determined from the payloads or from the expected type. A
+`match` over `(MaybeRef a)` binds the `SomeRef` payload as `(& a i64)`.
+
+```lisp test=ignore name=lifetime-parameterized-enum-constructor-match reason="specified before selfhost parser/typechecker support"
+(defenum MaybeRef
+  (:lifetimes a)
+  (NoRef)
+  (SomeRef (& a i64)))
+
+(define (wrap-ref [value : (& a i64)]) : (MaybeRef a)
+  (SomeRef value))
+
+(define (unwrap-score [value : (MaybeRef a)]) : i64
+  (match value
+    [(SomeRef r) 1]
+    [NoRef 0]))
+```
+
+Function signatures bind lifetime names from reference types and nominal
+lifetime type arguments in parameter positions. A return type may mention a
+lifetime only when that lifetime is tied to at least one input parameter or is
+the reserved `program` lifetime. Returning a named aggregate containing
+references is valid only when every stored reference lifetime in the returned
+type is tied to such an input lifetime or to `program`.
+
+```lisp test=ignore name=lifetime-parameterized-return-ok reason="specified before selfhost parser/typechecker support"
+(define (keep-ref [value : (& a i64)]) : (RefBox a)
+  (RefBox value))
+```
+
+The checker rejects returned, stored, or assigned nominal aggregate values when
+any stored reference lifetime is local, scoped, unknown, untied to an input, or
+otherwise shorter than the destination lifetime:
+
+```lisp test=ignore name=lifetime-parameterized-return-reject-local reason="negative example for future nominal lifetime checker"
+(define (bad-local-box) : (RefBox local)
+  (let [local-value : i64 1]
+    (RefBox (& local-value))))
+```
+
+Diagnostics must be source-located and name the relevant aggregate/type where
+possible:
+
+- Missing lifetime arguments for a lifetime-parameterized nominal type.
+- Wrong lifetime argument arity.
+- Duplicate lifetime parameter names in `(:lifetimes ...)`.
+- Unknown lifetime names in declarations, type uses, fields, payloads, and
+  returns.
+- Incompatible stored lifetimes when constructing, assigning, storing, passing,
+  matching, or returning a nominal aggregate.
+- Attempts to use type parameters, type expressions, or generic type
+  constructors where only lifetime names are allowed.
+
+V1 exclusions: mutable-reference creation and exclusivity (#806), non-lexical
+lifetimes (#810), closure returned-reference semantics (#808), runtime
+generics/type parameters, trait-like bounds, lifetime elision syntax, lifetime
+subtyping/coercion, and Rust compiler product-surface changes are out of scope.
+The selfhost parser, AST, typechecker, and lowerer implementation for this
+specified syntax is tracked by #1722/#804.
 
 **Lexical v1 lifetime rule.** A borrow created in v1 lives until the end of the
 innermost lexical scope that contains the borrow expression. Lexical scopes are
@@ -910,9 +1073,10 @@ their owner or arena:
   body. Outer-arena references may be used inside inner arenas without gaining
   the inner lifetime.
 
-Mutable reference creation and exclusivity are #806. Returned/stored lifetime
-parameters are #804. Closure capture detail is #808. Non-lexical lifetime
-shortening is #810.
+Mutable reference creation and exclusivity are #806. Nominal returned/stored
+lifetime parameter syntax is specified in section 3.10.1 and implemented by
+#1722/#804. Closure capture detail is #808. Non-lexical lifetime shortening is
+#810.
 
 ```lisp test=ignore name=borrow-local-param-ok reason="borrow expressions are specified before selfhost implementation"
 (define (takes-i64 [x : (& n i64)]) : i64
@@ -1026,12 +1190,12 @@ Bare `str` is rejected even when it appears to be used read-only:
   0)
 ```
 
-Returned and stored borrowed string lifetimes require the lifetime-parameter
-rules from #804. Until that slice lands, returning or storing a borrowed `str`
-is rejected unless the checker can prove the reference is purely local to the
-current lexical scope:
+Returned and stored borrowed string lifetimes use the lifetime-parameter rules
+specified in section 3.10.1. Until the #1722/#804 implementation lands,
+returning or storing a borrowed `str` is rejected unless the checker can prove
+the reference is purely local to the current lexical scope:
 
-```lisp test=ignore name=string-borrow-reject-stored-returned reason="returned/stored borrowed lifetimes are deferred to #804"
+```lisp test=ignore name=string-borrow-reject-stored-returned reason="returned/stored borrowed lifetime implementation is tracked by #1722/#804"
 (defstruct SavedText
   (text (& input str)))
 
@@ -1072,7 +1236,7 @@ results for allocation sites.
 | Non-consuming text inspection | `string-length`/`length`, `string-ref`/`char-at`, `string-eq`/`string=?`, `string->int`, stdlib predicates such as `string-contains`, `string-contains-char`, and `is-string-prefix-at` | Accept borrowed `(& r str)` inputs and return scalars. They do not move or allocate text. |
 | Text output and diagnostics | `print-string`/`print-str`, `print-error`, `panic`/`error`, `stdout-write`, `stderr-write`, `write-file`, append/write status helpers, process stdin strings | Accept borrowed `(& r str)` text/path/message inputs. Host I/O may copy bytes outside the language heap but does not take TypeLisp ownership. |
 | Active-arena owned string results | `arg`, `read-file`, `file-read-chunk-bytes`, `read-stdin-line`, `read-stdin-bytes`, `int->string`, `string-append`/`string-concat`, `substring`/`string-slice`, stdlib trim/replacement helpers when they build text, env/path split/join helpers | Return owned `String` storage allocated in the active arena. Results created inside a scoped arena cannot escape that arena. |
-| Caller-provided fallback/result values | `stdlib/string.tl` `string-replace` when no match is found, `stdlib/io.tl` `read-file-or` fallback paths | Preserve the caller-owned value instead of allocating. Precise returned/stored lifetime signatures are deferred to #804; until then these remain conservatively checked. |
+| Caller-provided fallback/result values | `stdlib/string.tl` `string-replace` when no match is found, `stdlib/io.tl` `read-file-or` fallback paths | Preserve the caller-owned value instead of allocating. Precise returned/stored lifetime signatures use section 3.10.1 and remain conservatively checked until #1722/#804 lands. |
 | Mutable or binary byte storage | dynamic arrays today; future byte-buffer/slice work | Not modeled as `str`. `str` is immutable borrowed text/bytes and should not become the mutable buffer type. |
 
 #### ABI and lowering representation
@@ -2987,15 +3151,20 @@ stdlib extern wrappers.
 The compiler emits helper routines into the generated assembly when needed.
 They are not implemented by a separate C runtime.
 
+Stdlib APIs that are thin wrappers over platform facilities are not backend
+runtime helpers. `stdlib/io.tl`, `stdlib/env.tl`, `stdlib/fs.tl`, and
+`stdlib/cpu.tl` bind platform symbols directly with `extern` and choose
+target-specific implementations with `cfg`. Low-level language forms expose
+entry `argc`/`argv`/`envp`, raw string/array storage, and CPU instructions when
+stdlib code needs capabilities that are not expressible as ordinary FFI calls.
+
 | Symbol | Purpose |
 |--------|---------|
-| `tl_print_i64` | Print integer |
-| `tl_print_bool` | Print boolean |
-| `tl_print_f64` | Print floating-point value |
-| `tl_print_char` | Print character |
-| `tl_print_newline` | Print newline |
-| `tl_print_str` | Print string bytes |
 | `tl_alloc` | Allocate bump-allocator memory |
+| `tl_arena_current` | Return the current arena header |
+| `tl_arena_set` | Install a current arena header |
+| `tl_arena_make` | Allocate an independent arena chain |
+| `tl_arena_destroy` | Release an independent arena chain |
 | `tl_region_mark` | Return the current allocator region mark, or `0` before allocation |
 | `tl_region_reset` | Restore a region mark; mark `0` clears all current arenas |
 | `tl_string_eq` | String comparison |
@@ -3003,16 +3172,13 @@ They are not implemented by a separate C runtime.
 | `tl_substring` | String slicing |
 | `tl_string_to_int` | Parse integer |
 | `tl_int_to_string` | Format integer |
-| `.L_tl_arg_count` | Return captured process argc |
-| `.L_tl_arg` | Return copied argv entry |
-| `.L_tl_read_file` | Read whole file |
-| `.L_tl_write_file` | Write whole file |
-| `.L_tl_file_open_status` | Open a runtime-managed file-handle slot |
-| `.L_tl_file_close_status` | Close a runtime-managed file-handle slot |
-| `.L_tl_file_write_status` | Write all bytes from a string to a runtime-managed write handle |
-| `.L_tl_file_flush_status` | Flush a runtime-managed write handle |
-| `.L_tl_abort` | Print and abort (used by `panic`/`error`) |
 | `tl_oob_abort` | Bounds-check trap |
+| `tl_div_abort` | Integer division/remainder trap |
+| `tl_shift_abort` | Shift-count trap |
+| `tl_process_output` | Spawn a process and capture output |
+| `tl_random_system_seed` | Fetch system entropy for random seeding |
+| `tl_windows_setup_instances` | Windows SetupConfiguration enumeration |
+| `tl_windows_sdk_registry_install` | Windows SDK registry lookup |
 
 ### 6.3 Builtin operator aliases
 
@@ -3035,7 +3201,7 @@ it does not introduce a new error vocabulary.
 **Handle type.** A file handle is an opaque value `FileHandle`. Source-level
 TypeLisp v1 treats it as opaque: programs obtain it from `file-open`, pass it to
 read/write/close helpers, and never inspect its representation. Internally the
-handle carries an id into a runtime-managed table that stores the host
+handle carries an id into a stdlib-managed table that stores the host
 descriptor, open mode, and open/closed state; these fields are not part of the
 public contract and may change. A handle is an aggregate value and follows the
 move-only source contract in section 4.6.2 once that checker lands. Until then,
@@ -3069,7 +3235,7 @@ no destructor, drop glue, or implicit close — a handle that is never closed
 leaks its host descriptor for the life of the process, matching TypeLisp's
 current no-reclamation memory direction (§7.3). Use-after-close (any read or
 write on a closed handle) and double-close return a structured `IoUnsupported`
-error for stale handles that reach the runtime; they never panic and never touch
+error for stale handles that reach the stdlib implementation; they never panic and never touch
 a host descriptor. Once move checking is enforced, ordinary source-level double
 close through the same variable is rejected earlier as use-after-move. Automatic
 close on scope exit is still deferred to scoped cleanup work.
@@ -3249,6 +3415,36 @@ arena: the innermost scoped arena, or the default program-lifetime arena when
 no scoped arena is active. Executable stdlib policy tests use `with-arena` to
 verify these active-arena semantics.
 
+#### Lifetime owners and v1 outlives model
+
+The v1 checker treats a written lifetime name as the name of a visible owner,
+not as an independently quantified region. There are two owner classes:
+
+- **Stack/frame owners:** function parameters and lexical bindings in the
+  current frame. A reference type such as `(& x T)` names the stack slot or
+  aggregate handle bound as `x`.
+- **Arena/region owners:** the implicit default program-lifetime arena and
+  lexical `with-arena` binders. A scoped arena binder `phase` is named in
+  `(& phase T)` reference types and in `(in phase T)` region-tagged handles.
+  Untagged aggregate handles allocated outside any scoped arena are owned by
+  the default program-lifetime arena; borrow inference uses the reserved
+  lifetime name `program` for that storage, but there is no source binder to
+  introduce.
+
+The v1 outlives relation is lexical. The same owner outlives itself. An owner
+introduced by an outer parameter, `let` binding, or `with-arena` outlives
+owners introduced in nested scopes. A nested stack slot or scoped arena does
+not outlive its enclosing owner, so references and region-tagged handles tied
+to the nested owner cannot be returned, stored into longer-lived bindings or
+aggregates, or captured by closures that may escape. Non-lexical lifetime
+shortening is deferred to #810.
+
+`with-escape` is not a lexical lifetime binder and does not introduce a written
+lifetime name. Its scratch arena is a first-class arena handle. The only
+supported escape from that scratch arena is the form's clone step: supported
+body results are cloned into the saved enclosing arena, the scratch arena is
+rewound, and the result leaves the form without the scratch region tag.
+
 #### Standard library and builtin allocation policy
 
 Written reference and arena lifetime syntax exists, but current stdlib
@@ -3270,10 +3466,11 @@ stdlib surface.
 
 The owned `String` / borrowed `str` source contract is specified in section
 3.11, but no current stdlib function has migrated to a borrow-typed `str`
-signature. No current stdlib function manually resets arenas; safe scoped
-cleanup is owned by `with-arena`. Source code that needs manual arena control
-uses the first-class arena helpers, with `arena-set!`, `arena-destroy`, and
-`arena-rewind` gated by `(unsafe ...)`.
+signature. Except for the explicit `stdlib/arena.tl` manual-control surface, no
+current stdlib function manually resets arenas; safe scoped cleanup is owned by
+`with-arena`. Source code that needs manual arena control imports
+`stdlib/arena.tl` and uses the first-class arena helpers, with `arena-set!`,
+`arena-destroy`, and `arena-rewind` gated by `(unsafe ...)`.
 
 Nested `with-arena` forms create independent subregions whose values do not
 mix. Inner-region values cannot escape to the outer region; outer-region values
@@ -3285,11 +3482,14 @@ reclaim, matching the semantic contract minus the reset.
 
 #### First-class scratch arena escape - `with-escape`
 
-Compiler internals and long-running tools may allocate a first-class scratch
-arena with `arena-make`, switch to it for transient work, and then keep only a
-deep-cloned result. The safe source form for this pattern is:
+Compiler internals and long-running tools may import `stdlib/arena.tl`, allocate
+a first-class scratch arena with `arena-make`, switch to it for transient work,
+and then keep only a deep-cloned result. The safe source form for this pattern
+is:
 
 ```lisp test=ignore name=with-escape-example reason="depends on first-class arena runtime support"
+(import "stdlib/arena.tl")
+
 (define (build-message) : String
   (let
     [scratch : i64 (arena-make)]
@@ -3303,8 +3503,9 @@ body, switches back to the enclosing arena, clones the body result when the type
 requires it, rewinds the scratch arena to the entry mark, and restores the
 enclosing active arena. This lowers to the same `arena-current` / `arena-set!` /
 `arena-mark` / `clone` / `arena-rewind` sequence that hand-written escape sites
-used before. The form is intended for first-class scratch arenas; lexical region
-cleanup remains the job of `with-arena`.
+used before. The form is intended for first-class scratch arenas; it is not a
+lexical lifetime binder, and lexical region cleanup remains the job of
+`with-arena`.
 
 #### Scoped non-memory resources (reserved) - `with`
 
@@ -3324,9 +3525,12 @@ separately.
 
 #### Manual arena helpers
 
-Programs that need manual control can use the first-class arena helpers:
+Programs that need manual control can import `stdlib/arena.tl` and use the
+first-class arena helpers:
 
 ```lisp test=check name=arena-manual-helpers
+(import "stdlib/arena.tl")
+
 (define (main) : unit
   (let
     [arena : i64 (arena-current)]
@@ -3474,9 +3678,9 @@ not the future safe reference/borrow model (#182), not a replacement for
 - Bootstrap I/O helpers: `arg-count`, `arg`, `read-file`, `write-file`,
   `file-exists?`, `file-open`, `file-close`, `file-read-chunk`,
   `read-stdin-line`, `read-stdin-bytes`, `stdin-eof?`, `flush-stdout`.
-- First-class arena helpers: `arena-make`, `arena-current`, `arena-mark`,
-  `arena-set!`, `arena-destroy`, and `arena-rewind`; invalidating helpers
-  require `(unsafe ...)`.
+- First-class arena helpers in `stdlib/arena.tl`: `arena-make`,
+  `arena-current`, `arena-mark`, `arena-set!`, `arena-destroy`, and
+  `arena-rewind`; invalidating helpers require `(unsafe ...)`.
 - `extern` declarations, including unsafe declaration metadata for externs and
   top-level functions.
 - Multi-file modules via `import`.
@@ -3484,7 +3688,7 @@ not the future safe reference/borrow model (#182), not a replacement for
   `windows-x86_64` for Windows x64 ABI output with CRT-linked runtime helpers.
 - Builtin `print`, `print-bool`, `print-newline`, and string/array primitives such as
   `string-append`/`string-concat`.
-- Stdlib-owned runtime wrappers in `stdlib/io.tl`, `stdlib/env.tl`,
+- Stdlib-owned FFI wrappers in `stdlib/io.tl`, `stdlib/env.tl`,
   `stdlib/fs.tl`, and `stdlib/cpu.tl` for argv, file I/O, stdio, panic/error,
   environment variables, filesystem status helpers, and CPUID/XGETBV.
 
@@ -3511,7 +3715,7 @@ not the future safe reference/borrow model (#182), not a replacement for
 | SPMD / SIMD `foreach` | Scalar reference lowering implemented; AVX2 supports a first contiguous map/zip subset |
 | SPMD reductions and public cross-lane ops | Source semantics specified; parser/typechecker/lowering/backend support pending |
 | Runtime SIMD dispatch (`defdispatch`) | Source semantics specified; parser/typechecker/lowering/backend support pending |
-| Windows region helpers | `tl_region_mark`/`tl_region_reset` are Linux-only |
+| Windows region helpers | Implemented for `tl_region_mark`/`tl_region_reset` |
 | Complete source locations for all semantic errors | Partial |
 | REPL evaluation | Selfhost REPL bare expressions run through scratch build/run execution; public selfhost CLI routing is implemented |
 | Package manager | Not implemented |
@@ -3521,22 +3725,20 @@ not the future safe reference/borrow model (#182), not a replacement for
 
 ## 9. Error handling
 
-TypeLisp has one built-in error-handling mechanism today: **panic**.
+TypeLisp has one standard error-handling mechanism today: **panic**.
 
 ```lisp test=ignore name=panic-expression reason=not-standalone
 (panic "message")
 ```
 
-- Prints the message to stderr.
-- Calls the private runtime helper `.L_tl_abort` (which prints and exits).
+- Prints the message to stderr through the stdlib platform FFI binding.
+- Calls the platform `exit` binding with status `134`.
 - Panic is a terminal operation; it never returns normally.
 - `error` is an alias for `panic`.
 
-The type checker gives builtin `panic` and `error` a compiler-internal bottom
-type. It is not user-denotable syntax, but it can satisfy any expected type and
-can merge with concrete `if` branch or `match` arm result types. The lowerer
-still emits a destination-less `.L_tl_abort` call; the internal type is never a
-runtime value.
+The stdlib declarations give `panic` and `error` the `never` return type. It can
+satisfy any expected type and can merge with concrete `if` branch or `match` arm
+result types.
 
 ```lisp test=compile name=panic-never-branch
 (define (parse-or-zero [ok : bool]) : i64
@@ -4000,8 +4202,11 @@ export-item   ::= "(" "value" ident ")"
 defenum       ::= "(" "defenum" ident enum-meta* variant+ ")"
 defstruct     ::= "(" "defstruct" ident struct-meta* field+ ")"
 struct-meta   ::= "(" ":repr" "c" ")"
+                | aggregate-lifetime-meta
                 | aggregate-cleanup-meta
-enum-meta     ::= aggregate-cleanup-meta       ; reserved, rejected in v1
+enum-meta     ::= aggregate-lifetime-meta
+                | aggregate-cleanup-meta       ; reserved, rejected in v1
+aggregate-lifetime-meta ::= "(" ":lifetimes" ident+ ")"
 aggregate-cleanup-meta ::= "(" ":cleanup" ident ")"
 test-decl     ::= "(" "test" ident expr+ ")"
 
@@ -4084,7 +4289,11 @@ type          ::= "i64" | "i32" | "i16" | "i8"
                 | macro-type
                 | "(" "->" type+ ")"
                 | "(" "in" ident type ")"              ; region-tagged (v1)
-                | ident                                ; enum or struct name
+                | nominal-type
+
+nominal-type  ::= ident                                ; zero-lifetime enum/struct
+                | "(" ident lifetime-arg+ ")"          ; lifetime-only nominal use
+lifetime-arg  ::= ident
 
 ptr-type      ::= "(" "Ptr" type ")"
                 | "(" "MutPtr" type ")"

@@ -21,6 +21,8 @@
 ;; Out of scope: aggregate/String/array IR optimization.
 (import "../stdlib/io.tl")
 
+(import "../stdlib/arena.tl")
+
 (import "compiler_ir_types.tl")
 
 (defenum ResultCompilerOptimizeLevel
@@ -6326,8 +6328,7 @@
         (optimize-function-list-escaping funcs level scratch)]
       (begin
         (unsafe
-          (begin
-            (arena-destroy scratch)))
+          (arena-destroy scratch))
         result))))
 
 (define (optimize-function-list-escaping
@@ -6355,16 +6356,14 @@
     [enclosing : i64 (arena-current)]
     (begin
       (unsafe
-        (begin
-          (arena-set! scratch)))
+        (arena-set! scratch))
       (let
         [mark : i64 (arena-mark)]
         [raw : CompilerIrFunction (optimize-function-with-level func level)]
         [scratch-head : i64 (arena-current)]
         (begin
           (unsafe
-            (begin
-              (arena-set! enclosing)))
+            (arena-set! enclosing))
           (let
             [escaped : CompilerIrFunction (compiler-ir-clone-function raw)]
             [new-enclosing : i64 (arena-current)]

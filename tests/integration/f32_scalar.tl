@@ -6,6 +6,8 @@
 ;; `main` returns 42 only when every f32 result lands where IEEE-754 binary32
 ;; arithmetic says it should.
 ;; f32 parameters + arithmetic + an f32 return.
+(import "stdlib/io.tl")
+
 (define (addf [a : f32] [b : f32]) : f32
   (+ a b))
 

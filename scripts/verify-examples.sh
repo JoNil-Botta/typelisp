@@ -7,18 +7,12 @@ set -eu
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
 
-# Linux verifies through the GNU `as`/`ld` pipeline; Windows (Git Bash / MSYS /
-# Cygwin on the CI runner) verifies through the host-default native toolchain
-# (`typelisp build` -> `clang`/`lld-link`), mirroring tests/windows_native.rs.
-HOST_OS=linux
-case "$(uname -s)" in
-    Linux*) HOST_OS=linux ;;
-    MINGW* | MSYS* | CYGWIN*) HOST_OS=windows ;;
-    *)
-        echo "example verification is unsupported on this host" >&2
-        exit 1
-        ;;
-esac
+# Compile-only stage1 artifacts do not have the public `build` host action, so
+# verify examples through explicit compile -> assemble -> link -> run using the
+# same native linker setup as bootstrap and integration.
+. "$ROOT/scripts/lib-native-link.sh"
+native_link_detect_host
+configure_toolchain
 
 if [ -n "${TYPELISP_BIN:-}" ]; then
     COMPILER=$TYPELISP_BIN
@@ -52,10 +46,9 @@ WORKDIR="$ROOT/target/example-verify"
 rm -rf "$WORKDIR"
 mkdir -p "$WORKDIR"
 
-# On Windows, `typelisp build` emits intermediate .s/.obj next to its input, so
-# build from copies under the gitignored WORKDIR instead of polluting examples/.
-# Copy the whole directory at once so sibling imports (e.g. calc.tl imports
-# token.tl) still resolve among the copies.
+# On Windows, build from copies under the gitignored WORKDIR instead of
+# polluting examples/. Copy the whole directory at once so sibling imports
+# (e.g. calc.tl imports token.tl) still resolve among the copies.
 if [ "$HOST_OS" = windows ]; then
     cp "$ROOT/examples/"*.tl "$WORKDIR/"
 fi
@@ -66,30 +59,23 @@ for source in "$ROOT/examples/"*.tl; do
     name=$(basename "$source" .tl)
     want=$(expected_exit "$name")
     asm="$WORKDIR/$name.s"
-    obj="$WORKDIR/$name.o"
-    bin="$WORKDIR/$name"
+    obj="$WORKDIR/$name.$NL_OBJ_EXT"
+    bin="$WORKDIR/$name$NL_BIN_EXT"
 
     if [ "$HOST_OS" = windows ]; then
-        # The compile-only bootstrapped stage1 has `compile` but not `build`, so
-        # emit Windows asm then assemble + link with clang + lld-link (mirrors
-        # verify-integration.sh's assemble_link_windows).
         echo "[$name] compiling (windows-x86_64)"
-        "$COMPILER" compile "$WORKDIR/$name.tl" --target windows-x86_64 -o "$asm"
-        clang --target=x86_64-pc-windows-msvc -c "$asm" -o "$obj"
-        lld-link -NOLOGO "$(cygpath -aw "$obj")" "-OUT:$(cygpath -aw "$bin.exe")" \
-            -SUBSYSTEM:CONSOLE -STACK:268435456 msvcrt.lib legacy_stdio_definitions.lib advapi32.lib
+        "$COMPILER" compile "$WORKDIR/$name.tl" --target "$NL_BOOTSTRAP_TARGET" $(native_target_cfg_args) -o "$asm"
+        assemble_and_link "$name" "$asm" "$obj" "$bin"
 
         echo "[$name] running -> expect exit $want"
         set +e
-        "$bin.exe"
+        "$bin"
         got=$?
         set -e
     else
         echo "[$name] compiling $source"
-        "$COMPILER" compile "$source" -o "$asm"
-
-        as "$asm" -o "$obj"
-        ld "$obj" -o "$bin"
+        "$COMPILER" compile "$source" --target "$NL_BOOTSTRAP_TARGET" $(native_target_cfg_args) -o "$asm"
+        assemble_and_link "$name" "$asm" "$obj" "$bin"
 
         echo "[$name] running -> expect exit $want"
         set +e

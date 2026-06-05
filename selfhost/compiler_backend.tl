@@ -1,6 +1,8 @@
 ;; compiler_backend.tl - First selfhost CompilerIrProgram -> x86_64 .s emitter (#447).
 (import "../stdlib/io.tl")
 
+(import "../stdlib/arena.tl")
+
 (import "compiler_lower.tl")
 
 (import "compiler_diagnostic.tl")
@@ -9,7 +11,7 @@
 
 (import "compiler_regalloc.tl")
 
-(import "stdlib/text_buf.tl")
+(import "../stdlib/text_buf.tl")
 
 (defenum ResultBackendReg
   (OkBackendReg String)
@@ -28,7 +30,12 @@
 
 (defenum CompilerBackendPhiCopyList
   (BackendPhiCopyNil)
-  (BackendPhiCopyCons CompilerBackendPhiCopy CompilerBackendPhiCopyList))
+  (BackendPhiCopyCons CompilerBackendPhiCopy (Box CompilerBackendPhiCopyList)))
+
+(define (compiler-backend-phi-copy-cons
+  [copy : CompilerBackendPhiCopy]
+  [rest : CompilerBackendPhiCopyList]) : CompilerBackendPhiCopyList
+  (BackendPhiCopyCons copy (box rest)))
 
 (defenum CompilerBackendMaybePhiCopy
   (BackendNoPhiCopy)
@@ -138,7 +145,12 @@
 
 (defenum BackendStringList
   (BackendStringNil)
-  (BackendStringCons String BackendStringList))
+  (BackendStringCons String (Box BackendStringList)))
+
+(define (compiler-backend-string-cons
+  [head : String]
+  [rest : BackendStringList]) : BackendStringList
+  (BackendStringCons head (box rest)))
 
 (define (backend-cat3 [a : String] [b : String] [c : String]) : String
   (string-append a (string-append b c)))
@@ -4706,7 +4718,10 @@
     [(BackendPhiCopyCons copy rest)
       (if (compiler-backend-phi-copy-source-uses-home? assignments copy dst)
         true
-        (compiler-backend-phi-copy-list-source-uses-home? assignments rest dst))]))
+        (compiler-backend-phi-copy-list-source-uses-home?
+          assignments
+          (box-get rest)
+          dst))]))
 
 (define (compiler-backend-phi-copy-list-find-unblocked
   [assignments : CompilerRegAssignmentList]
@@ -4721,7 +4736,10 @@
             assignments
             all
             dst)
-            (compiler-backend-phi-copy-list-find-unblocked assignments rest all)
+            (compiler-backend-phi-copy-list-find-unblocked
+              assignments
+              (box-get rest)
+              all)
             (BackendSomePhiCopy copy))])]))
 
 (define (compiler-backend-phi-copy-list-remove-dst
@@ -4733,10 +4751,10 @@
       (match copy
         [(BackendPhiCopy found-dst _ _)
           (if (= found-dst dst)
-            (compiler-backend-phi-copy-list-remove-dst rest dst)
-            (BackendPhiCopyCons
+            (compiler-backend-phi-copy-list-remove-dst (box-get rest) dst)
+            (compiler-backend-phi-copy-cons
               copy
-              (compiler-backend-phi-copy-list-remove-dst rest dst)))])]))
+              (compiler-backend-phi-copy-list-remove-dst (box-get rest) dst)))])]))
 
 (define (compiler-backend-phi-source-replace-home
   [assignments : CompilerRegAssignmentList]
@@ -4761,7 +4779,7 @@
     [(BackendPhiCopyCons copy rest)
       (match copy
         [(BackendPhiCopy dst source ty)
-          (BackendPhiCopyCons
+          (compiler-backend-phi-copy-cons
             (BackendPhiCopy
               dst
               (compiler-backend-phi-source-replace-home
@@ -4771,7 +4789,7 @@
               ty)
             (compiler-backend-phi-copy-list-replace-source-home
               assignments
-              rest
+              (box-get rest)
               dst-home-var))])]))
 
 (define (compiler-backend-emit-phi-source-to-var
@@ -4879,7 +4897,7 @@
                   (if (compiler-backend-phi-same-home? assignments dst value)
                     (OkBackendPhiCopies tail)
                     (OkBackendPhiCopies
-                      (BackendPhiCopyCons
+                      (compiler-backend-phi-copy-cons
                         (BackendPhiCopy dst (BackendPhiSourceValue value) ty)
                         tail)))]
                 [(ErrBackendPhiCopies message) (ErrBackendPhiCopies message)])]
@@ -8135,8 +8153,7 @@
     [scratch : i64 (arena-make)]
     (begin
       (unsafe
-        (begin
-          (arena-set! scratch)))
+        (arena-set! scratch))
       (match (compiler-backend-emit-function
         target
         mode
@@ -8152,28 +8169,24 @@
             [scratch-head : i64 (arena-current)]
             (begin
               (unsafe
-                (begin
-                  (arena-set! enclosing)))
+                (arena-set! enclosing))
               (let
                 [escaped : String (clone asm)]
                 (begin
                   (unsafe
-                    (begin
-                      (arena-destroy scratch-head)))
+                    (arena-destroy scratch-head))
                   (OkCompilerBackend escaped)))))]
         [(ErrCompilerBackend message)
           (let
             [scratch-head : i64 (arena-current)]
             (begin
               (unsafe
-                (begin
-                  (arena-set! enclosing)))
+                (arena-set! enclosing))
               (let
                 [escaped : CompilerDiagnostic (clone message)]
                 (begin
                   (unsafe
-                    (begin
-                      (arena-destroy scratch-head)))
+                    (arena-destroy scratch-head))
                   (ErrCompilerBackend escaped)))))]))))
 
 (define (compiler-backend-emit-functions-into
@@ -8350,7 +8363,7 @@
     [(BackendStringNil) buf]
     [(BackendStringCons name rest)
       (compiler-backend-emit-closure-descriptor-entries-into
-        rest
+        (box-get rest)
         functions
         externs
         (compiler-backend-emit-closure-descriptor-entry-into
@@ -8487,7 +8500,7 @@
             [(OkCompilerBackend head)
               (compiler-backend-emit-closure-entry-adapters-into
                 target
-                rest
+                (box-get rest)
                 functions
                 externs
                 plan
@@ -8496,7 +8509,7 @@
         [(CompilerBackendNoSignature)
           (compiler-backend-emit-closure-entry-adapters-into
             target
-            rest
+            (box-get rest)
             functions
             externs
             plan
@@ -8524,7 +8537,7 @@
     [(BackendStringCons head rest)
       (if (string-eq head text)
         true
-        (compiler-backend-string-list-contains? rest text))]))
+        (compiler-backend-string-list-contains? (box-get rest) text))]))
 
 (define (compiler-backend-string-list-reverse-into
   [strings : BackendStringList]
@@ -8533,8 +8546,8 @@
     [(BackendStringNil) out]
     [(BackendStringCons head rest)
       (compiler-backend-string-list-reverse-into
-        rest
-        (BackendStringCons head out))]))
+        (box-get rest)
+        (compiler-backend-string-cons head out))]))
 
 (define (compiler-backend-string-list-reverse [strings : BackendStringList]) : BackendStringList
   (compiler-backend-string-list-reverse-into strings BackendStringNil))
@@ -8544,7 +8557,7 @@
   [text : String]) : BackendStringList
   (if (compiler-backend-string-list-contains? strings text)
     strings
-    (BackendStringCons text strings)))
+    (compiler-backend-string-cons text strings)))
 
 (define (compiler-backend-collect-value-function
   [functions : BackendStringList]
@@ -9200,7 +9213,7 @@
     [(BackendStringNil) buf]
     [(BackendStringCons text rest)
       (compiler-backend-emit-string-entries-into
-        rest
+        (box-get rest)
         (text-buf-append buf (compiler-backend-emit-string-entry text)))]))
 
 (define (compiler-backend-emit-string-entries [strings : BackendStringList]) : String
@@ -9230,7 +9243,7 @@
     [(BackendStringNil) buf]
     [(BackendStringCons text rest)
       (compiler-backend-emit-f64-entries-into
-        rest
+        (box-get rest)
         (text-buf-append buf (compiler-backend-emit-f64-entry text)))]))
 
 (define (compiler-backend-emit-f64-entries [floats : BackendStringList]) : String
@@ -18802,64 +18815,14 @@ tl_windows_sdk_registry_install:
               (compiler-ir-extern-cons
                 (compiler-ir-extern-default "tl_int_to_string" (AstTyString))
                 (compiler-ir-extern-cons
-                  (compiler-ir-extern-default "tl_print_err" (AstTyUnit))
+                  (compiler-ir-extern-default
+                    "tl_process_output"
+                    (AstTyFunc (AstTypeCons (AstTyI64) AstTypeNil) (AstTyI64)))
                   (compiler-ir-extern-cons
-                    (compiler-ir-extern-default ".L_tl_arg_count" (AstTyI64))
-                    (compiler-ir-extern-cons
-                      (compiler-ir-extern-default ".L_tl_arg" (AstTyString))
-                      (compiler-ir-extern-cons
-                        (compiler-ir-extern-default
-                          ".L_tl_read_file"
-                          (AstTyString))
-                        (compiler-ir-extern-cons
-                          (compiler-ir-extern-default
-                            ".L_tl_write_file"
-                            (AstTyUnit))
-                          (compiler-ir-extern-cons
-                            (compiler-ir-extern-default
-                              ".L_tl_file_exists"
-                              (AstTyBool))
-                            (compiler-ir-extern-cons
-                              (compiler-ir-extern-default
-                                ".L_tl_file_open_status"
-                                (AstTyI64))
-                              (compiler-ir-extern-cons
-                                (compiler-ir-extern-default
-                                  ".L_tl_file_close_status"
-                                  (AstTyI64))
-                                (compiler-ir-extern-cons
-                                  (compiler-ir-extern-default
-                                    ".L_tl_file_read_chunk_status"
-                                    (AstTyI64))
-                                  (compiler-ir-extern-cons
-                                    (compiler-ir-extern-default
-                                      ".L_tl_file_write_status"
-                                      (AstTyI64))
-                                    (compiler-ir-extern-cons
-                                      (compiler-ir-extern-default
-                                        ".L_tl_file_flush_status"
-                                        (AstTyI64))
-                                      (compiler-ir-extern-cons
-                                        (compiler-ir-extern-default
-                                          ".L_tl_file_read_chunk_bytes"
-                                          (AstTyString))
-                                        (compiler-ir-extern-cons
-                                          (compiler-ir-extern-default
-                                            ".L_tl_file_read_chunk_eof"
-                                            (AstTyBool))
-                                          (compiler-ir-extern-cons
-                                            (compiler-ir-extern-default
-                                              "tl_process_output"
-                                              (AstTyFunc
-                                                (AstTypeCons
-                                                  (AstTyI64)
-                                                  AstTypeNil)
-                                                (AstTyI64)))
-                                            (compiler-ir-extern-cons
-                                              (compiler-ir-extern-default
-                                                "tl_random_system_seed"
-                                                (AstTyI64))
-                                              IrExternNil)))))))))))))))))))))))
+                    (compiler-ir-extern-default
+                      "tl_random_system_seed"
+                      (AstTyI64))
+                    IrExternNil))))))))))
 
 (define (compiler-backend-runtime-helper-program) : CompilerIrProgram
   (IrProgram
@@ -18869,7 +18832,7 @@ tl_windows_sdk_registry_install:
         "main"
         IrParamNil
         (AstTyI64)
-        13
+        4
         (compiler-ir-block-cons
           (IrBlock
             "entry"
@@ -18906,76 +18869,12 @@ tl_windows_sdk_registry_install:
                   (compiler-ir-instr-cons
                     (IrInstrCall
                       3
-                      ".L_tl_read_stdin_line"
+                      "tl_random_system_seed"
                       (IrCallArgsNil)
-                      (AstTyString))
+                      (AstTyI64))
                     (compiler-ir-instr-cons
-                      (IrInstrCall
-                        4
-                        ".L_tl_read_stdin_bytes"
-                        (IrCallArgsOne (IrValueI64 0))
-                        (AstTyString))
-                      (compiler-ir-instr-cons
-                        (IrInstrCall
-                          5
-                          ".L_tl_stdin_eof"
-                          (IrCallArgsNil)
-                          (AstTyBool))
-                        (compiler-ir-instr-cons
-                          (IrInstrCall
-                            6
-                            ".L_tl_flush_stdout"
-                            (IrCallArgsNil)
-                            (AstTyUnit))
-                          (compiler-ir-instr-cons
-                            (IrInstrCall
-                              7
-                              "tl_random_system_seed"
-                              (IrCallArgsNil)
-                              (AstTyI64))
-                            (compiler-ir-instr-cons
-                              (IrInstrCall
-                                8
-                                ".L_tl_file_open_status"
-                                (compiler-ir-call-args-from-list
-                                  (compiler-ir-value-cons
-                                    (IrValueI64 0)
-                                    (compiler-ir-value-cons
-                                      (IrValueI64 0)
-                                      (compiler-ir-value-cons
-                                        (IrValueI64 0)
-                                        IrValueNil))))
-                                (AstTyI64))
-                              (compiler-ir-instr-cons
-                                (IrInstrCall
-                                  9
-                                  ".L_tl_file_close_status"
-                                  (IrCallArgsOne (IrValueI64 1))
-                                  (AstTyI64))
-                                (compiler-ir-instr-cons
-                                  (IrInstrCall
-                                    10
-                                    ".L_tl_file_read_chunk_status"
-                                    (IrCallArgsTwo
-                                      (IrValueI64 1)
-                                      (IrValueI64 4))
-                                    (AstTyI64))
-                                  (compiler-ir-instr-cons
-                                    (IrInstrCall
-                                      11
-                                      ".L_tl_file_read_chunk_bytes"
-                                      (IrCallArgsOne (IrValueI64 1))
-                                      (AstTyString))
-                                    (compiler-ir-instr-cons
-                                      (IrInstrCall
-                                        12
-                                        ".L_tl_file_read_chunk_eof"
-                                        (IrCallArgsOne (IrValueI64 1))
-                                        (AstTyBool))
-                                      (compiler-ir-instr-cons
-                                        (IrInstrReturn
-                                          (IrSomeValue (IrValueI64 42)))
-                                        IrInstrNil)))))))))))))))
+                      (IrInstrReturn (IrSomeValue (IrValueI64 42)))
+                      IrInstrNil))))))
           IrBlockNil))
       IrFunctionNil)
     (compiler-backend-runtime-helper-externs)))

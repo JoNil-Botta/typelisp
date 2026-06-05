@@ -12,14 +12,21 @@ installed-root discovery, namespace isolation, or an implicit prelude.
 
 ## Current Modules
 
+- `arena.tl`: first-class arena helper declarations for manual allocation
+  control. `arena-make`, `arena-current`, and `arena-mark` are safe; switching,
+  destroying, and rewinding arenas require `(unsafe ...)`. Import it with
+  `(import "stdlib/arena.tl")`.
 - `io.tl`: file I/O helpers, explicit file-handle open/close wrappers, stdio
-  wrappers, and monomorphic Result-style I/O error APIs built on
-  compiler/runtime primitives. Import it with
+  wrappers, argv access, panic/error, and monomorphic Result-style I/O error
+  APIs built as stdlib extern wrappers over backend runtime symbols. Import it with
   `(import "stdlib/io.tl")`.
 - `env.tl`: recoverable environment variable lookup and PATH-style list
-  helpers. Import it with `(import "stdlib/env.tl")`.
-- `cpu.tl`: host CPU SIMD ISA detection via the `cpuid`/`xgetbv` primitives
-  (#1167). `cpu-runs-avx2?` / `cpu-runs-avx512f?` report an ISA as runnable only
+  helpers, including the stdlib-owned `env-var-exists?`, `env-var-value`, and
+  target-cfg-derived `env-path-separator` wrappers. Import it with
+  `(import "stdlib/env.tl")`.
+- `cpu.tl`: host CPU SIMD ISA detection via stdlib-owned `cpuid`/`xgetbv`
+  wrappers over backend runtime symbols (#1167). `cpu-runs-avx2?` /
+  `cpu-runs-avx512f?` report an ISA as runnable only
   when both the CPUID feature bit and OS XSAVE state (XCR0) are present, plus the
   underlying `cpu-osxsave?` / `cpu-xcr0` / `cpu-max-leaf` / `cpu-has-avx2?` /
   `cpu-has-avx512f?` accessors. Backs `scripts/detect_simd_isa.tl`, which
@@ -30,8 +37,9 @@ installed-root discovery, namespace isolation, or an implicit prelude.
   checks.
 - `fs.tl`: minimal recoverable filesystem helpers for tool artifact paths,
   current-directory lookup, lexical path normalization, safe relative suffix
-  checks, temporary directories, cleanup, and coarse file-kind probes. Import it with
-  `(import "stdlib/fs.tl")`.
+  checks, temporary directories, cleanup, process ids, and coarse file-kind
+  probes, with public status helpers bound directly to platform externs where
+  available. Import it with `(import "stdlib/fs.tl")`.
 - `ffi.tl`: caller-owned FFI buffer helpers, including explicit
   NUL-terminated `String` copies into `(MutPtr u8)` storage. Import it with
   `(import "stdlib/ffi.tl")`.
@@ -107,24 +115,24 @@ should take borrowed text and which should return owned active-arena strings.
 | `is-char-whitespace`, `char-eq`, `string-contains`, `string-contains-char`, `is-string-prefix-at` | Non-allocating string/char inspection; text parameters are borrowed `str` inputs. |
 | `string-trim-left`, `string-trim-right`, `string-trim` | Borrow the input text and return fresh `String` storage from `substring`, allocated in the active arena. |
 | `string-replace` | Returns fresh `String` storage from `substring`/`string-append` when a replacement is made; returns the caller-provided `s` when `old` is not present. |
-| `try-read-file` | Performs host/runtime file inspection; returns `OkIoString` with fresh active-arena `String` storage from `read-file` when the path is readable, or `ErrIoString` for empty paths, expected absence, permission failures, interrupted reads, and target status-code failures. |
-| `try-write-file` | Writes through the recoverable runtime status helper; returns `OkIoUnit` on success or `ErrIoUnit` for empty paths, missing parents, permission failures, interrupted writes, and target status-code failures. |
+| `try-read-file` | Performs host file inspection through stdlib FFI; returns `OkIoString` with fresh active-arena `String` storage from `read-file` when the path is readable, or `ErrIoString` for empty paths, expected absence, permission failures, interrupted reads, and target status-code failures. |
+| `try-write-file` | Writes through the recoverable stdlib status helper; returns `OkIoUnit` on success or `ErrIoUnit` for empty paths, missing parents, permission failures, interrupted writes, and target status-code failures. |
 | `try-file-exists?` | Returns `OkIoBool` for existing or expected missing paths; empty paths and hard probe failures return `ErrIoBool`. |
-| `try-append-file` | Appends through the recoverable runtime status helper. It preserves existing contents, creates missing files, does not allocate a concatenated temporary string, and uses best-effort host append semantics rather than truncating or rewriting the whole file. |
-| `file-open`, `file-close` | `file-open` returns `ResultIoFile` with an opaque runtime-managed `FileHandle` for `OpenRead`, `OpenWriteTruncate`, and `OpenWriteAppend`. The Linux runtime copies the path into active-arena storage for the host syscall and tracks handle state in a process-global table; Windows currently returns `IoUnsupported`. `file-close` releases a valid handle and returns `IoUnsupported` for invalid or already-closed handles. |
+| `try-append-file` | Appends through the recoverable stdlib status helper. It preserves existing contents, creates missing files, does not allocate a concatenated temporary string, and uses best-effort host append semantics rather than truncating or rewriting the whole file. |
+| `file-open`, `file-close` | `file-open` returns `ResultIoFile` with an opaque stdlib-managed `FileHandle` for `OpenRead`, `OpenWriteTruncate`, and `OpenWriteAppend`. The stdlib copies the path into active-arena storage for the host call and tracks handle state in a process-global table. `file-close` releases a valid handle and returns `IoUnsupported` for invalid or already-closed handles. |
 | `file-read-chunk`, `file-read-bytes`, `file-read-eof?` | `file-read-chunk` reads up to the requested byte count from a read-mode `FileHandle` and returns `ResultIoRead` with active-arena `String` bytes plus the sticky EOF flag. Negative counts return `IoInvalidPath`; closed, invalid, write-only, and unsupported handles return `IoUnsupported`. The accessors are non-allocating field reads on `FileRead`. |
 | `file-write`, `file-flush` | `file-write` writes a `String` to an `OpenWriteTruncate` or `OpenWriteAppend` handle, retrying host short writes until complete or an error is reported. `file-flush` flushes a write-mode handle. Closed, invalid, read-only, and unsupported handles return `IoUnsupported`. |
 | `read-file-or` | Convenience wrapper over `try-read-file`; returns the caller-provided `fallback` for every structured error. |
 | `append-file` | Panic-on-error convenience wrapper over `try-append-file`; preserves existing contents and creates missing files through host append mode. |
 | `file-nonempty?` | Convenience wrapper over `try-read-file`; allocates a temporary active-arena `String` through `read-file` only when the path exists. |
-| `stdin-read-line`, `stdin-read-bytes` | Return `StdinRead` aggregates containing a runtime-allocated active-arena `String` plus the post-read sticky EOF state. Byte reads still use `String` storage until a future byte-buffer/slice split lands. |
-| `stdin-at-eof?`, `stdin-read-text`, `stdin-read-eof?`, `stdout-write`, `stderr-write`, `stdout-flush` | Non-allocating wrappers/accessors around runtime stdio primitives and `StdinRead` values. |
+| `stdin-read-line`, `stdin-read-bytes` | Return `StdinRead` aggregates containing an active-arena `String` plus the post-read sticky EOF state. Byte reads still use `String` storage until a future byte-buffer/slice split lands. |
+| `stdin-at-eof?`, `stdin-read-text`, `stdin-read-eof?`, `stdout-write`, `stderr-write`, `stdout-flush` | Non-allocating wrappers/accessors around stdlib FFI stdio helpers and `StdinRead` values. |
 | `stdout-write-line`, `stderr-write-line` | Allocate a newline-appended active-arena `String` via `string-append`, then write it to the target stream. |
 | `env-get`, `env-path-list`, `env-path-split`, `env-path-join` | Lookup names, split inputs, and explicit join separators are borrowed `str` inputs. Environment values and split/join results allocate fresh active-arena Strings/lists when runtime values are read or string pieces are created; missing variables return explicit `EnvNo*` options. |
-| `env-get`, `env-path-list`, `env-path-split`, `env-path-join` | Lookup names, split inputs, and explicit join separators are borrowed `str` inputs. Environment values and split/join results allocate fresh active-arena Strings/lists when runtime values are read or string pieces are created; missing variables return explicit `EnvNo*` options. |
-| `fs-path-join`, `fs-dirname`, `fs-basename`, `fs-extension`, `fs-path-absolute?`, `fs-path-normalize`, `fs-path-safe-relative?`, `try-current-dir`, `try-mkdir`, `try-mkdir-if-missing`, `try-remove-file`, `try-remove-dir`, `try-rename`, `try-read-dir`, `try-file-kind`, `try-file-metadata`, `try-create-temp-dir` | Path joins allocate active-arena Strings when a separator is inserted or duplicate separator is removed. `fs-dirname`/`fs-basename`/`fs-extension` are pure separator-agnostic string helpers (no allocation beyond the returned substring; `fs-extension` operates on the basename and treats a leading-dot name as extensionless). `fs-path-absolute?` is non-allocating and treats `/...`, `\\...`, `C:/...`, and `C:\\...` as absolute/rooted while leaving drive-relative `C:...` non-absolute. `fs-path-normalize` is lexical only: it accepts `/` and `\\`, collapses repeated separators, removes `.`, resolves `..` against normal segments, preserves relative leading `..`, preserves roots and drive roots, renders `/` as the stable separator on every host, and returns `"."` for empty relative paths. `fs-path-safe-relative?` allocates through normalization and returns true only for non-empty relative suffixes that remain below a caller-chosen root after lexical normalization; it rejects rooted, drive-qualified, empty/`.` and leading-parent paths. `try-current-dir` returns the host-reported cwd as an owned active-arena `String` on Linux, without symlink canonicalization; Windows currently returns `IoUnsupported`. Recoverable filesystem helpers map runtime status codes into `IoError`; `try-file-kind` returns `FsFileRegular`, `FsFileDirectory`, or `FsFileOther` on Linux and `IoUnsupported` on Windows. `try-file-metadata` returns `FsMetadata` with coarse kind and regular-file byte size on Linux; directory and other node sizes are zero in this first slice, and Windows currently returns `IoUnsupported`. `try-mkdir` works on Linux and Windows, `try-mkdir-if-missing` treats an already-existing path as success, and `try-rename` follows host rename/replacement behavior on Linux while returning `IoUnsupported` on Windows. `try-read-dir` returns entry names only, filters `.` and `..`, preserves host directory order without promising stable sorting, and allocates the returned list spine and entry strings in the active arena; Linux reads directories directly through the backend runtime, while Windows currently returns `IoUnsupported`. Linux temp directories are created under `$TMPDIR` or `/tmp` with process-id and retry suffixes. Windows temp directories are created under `%TEMP%`, `%TMP%`, or `.` with process-id and retry suffixes; cleanup helpers still return `IoUnsupported` on Windows. |
+| `fs-path-join`, `fs-dirname`, `fs-basename`, `fs-extension`, `fs-path-absolute?`, `fs-path-normalize`, `fs-path-safe-relative?`, `try-current-dir`, `try-mkdir`, `try-mkdir-if-missing`, `try-remove-file`, `try-remove-dir`, `try-rename`, `try-read-dir`, `try-file-kind`, `try-file-metadata`, `try-create-temp-dir` | Path joins allocate active-arena Strings when a separator is inserted or duplicate separator is removed. `fs-dirname`/`fs-basename`/`fs-extension` are pure separator-agnostic string helpers (no allocation beyond the returned substring; `fs-extension` operates on the basename and treats a leading-dot name as extensionless). `fs-path-absolute?` is non-allocating and treats `/...`, `\\...`, `C:/...`, and `C:\\...` as absolute/rooted while leaving drive-relative `C:...` non-absolute. `fs-path-normalize` is lexical only: it accepts `/` and `\\`, collapses repeated separators, removes `.`, resolves `..` against normal segments, preserves relative leading `..`, preserves roots and drive roots, renders `/` as the stable separator on every host, and returns `"."` for empty relative paths. `fs-path-safe-relative?` allocates through normalization and returns true only for non-empty relative suffixes that remain below a caller-chosen root after lexical normalization; it rejects rooted, drive-qualified, empty/`.` and leading-parent paths. `try-current-dir` returns the host-reported cwd as an owned active-arena `String` on Linux, without symlink canonicalization; Windows currently returns `IoUnsupported`. Recoverable filesystem helpers map host/runtime status codes into `IoError`; `try-file-kind` returns `FsFileRegular`, `FsFileDirectory`, or `FsFileOther` on Linux and `IoUnsupported` on Windows. `try-file-metadata` returns `FsMetadata` with coarse kind and regular-file byte size on Linux; directory and other node sizes are zero in this first slice, and Windows currently returns `IoUnsupported`. `try-mkdir` works on Linux and Windows, `try-mkdir-if-missing` treats an already-existing path as success, and `try-rename` follows host rename/replacement behavior on Linux while returning `IoUnsupported` on Windows. `try-read-dir` returns entry names only, filters `.` and `..`, preserves host directory order without promising stable sorting, and allocates the returned list spine and entry strings in the active arena; Linux reads directories directly through the backend runtime, while Windows currently returns `IoUnsupported`. Linux temp directories are created under `$TMPDIR` or `/tmp` with process-id and retry suffixes. Windows temp directories are created under `%TEMP%`, `%TMP%`, or `.` with process-id and retry suffixes; cleanup helpers still return `IoUnsupported` on Windows. |
 | `ffi-c-string-*` helpers | Non-allocating inspection and copying into caller-owned `(MutPtr u8)` storage. `ffi-c-string-copy!` validates interior NUL bytes and capacity before writing, appends the trailing NUL on success, and leaves raw-pointer validity/lifetime with the caller. |
 | `hash-*` helpers | Deterministic, non-cryptographic hash and key equality helpers are non-allocating; string hash/equality helpers borrow text inputs. Hashes are stable bucket hints only; collection users must still compare colliding candidate keys with the matching equality predicate. |
+| `arena-*` helpers in `arena.tl` | First-class arena control does not allocate returned aggregate storage. `arena-make` creates an independent arena handle, `arena-current` observes the active arena, and `arena-mark` observes the current bump mark. `arena-set!`, `arena-destroy`, and `arena-rewind` can invalidate live heap handles and require `(unsafe ...)`. |
 | `json-*` helpers | Parser, lookup, and escaping helpers borrow source text or keys. Parsed JSON aggregates, decoded strings, escaped strings, stringified output, and list/member spines allocate owned results in the active arena. |
 | `string-list-*` helpers | Construct immutable `StringList` cons nodes and `StringListBuilder` values in the active arena. `string-list-reverse`, `-reverse-onto`, `-append`, `-from-array`, and builder build helpers allocate fresh list spines; `string-list-to-array` allocates a fresh active-arena `(Array String)` and copies the string handles into it. |
 | `process-*` helpers | Construct process command/output/error aggregates in the active arena. Command builders keep owned `String` parameters because `ProcessCommand`, argv, env, cwd, and stdin fields currently store owned strings; validators use borrowed text inspection where they do not store inputs. Ordered argv append helpers allocate list nodes; validators inspect executable/env/cwd metadata and reject invalid env names. On Linux, `process-run` and `process-output` execute directly through the backend runtime, preserving inherited environment entries, replacing entries named by env overrides, honoring cwd, and feeding string stdin. Unsupported targets return structured errors. |
@@ -141,11 +149,12 @@ The recoverable I/O API maps the runtime's integer status codes into the public
 directory-read statuses get semantic variants; target-specific or unstable
 codes remain available as `IoSystemCode`.
 
-No current stdlib function returns a borrow-typed `str`, mutates a
-caller-provided buffer in place, or manually resets arenas. Source-level
-`arena-set!`, `arena-destroy`, and `arena-rewind` require `(unsafe ...)`; safe
-stdlib APIs should prefer `with-arena` for scoped reclamation. `str` is specified
-as an immutable borrowed text referent, not a mutable buffer type; those policies
+No current stdlib function returns a borrow-typed `str` or mutates a
+caller-provided buffer in place. Except for the explicit `stdlib/arena.tl`
+manual-control surface, stdlib APIs do not manually reset arenas and should
+prefer `with-arena` for scoped reclamation. Source-level `arena-set!`,
+`arena-destroy`, and `arena-rewind` require `(unsafe ...)`. `str` is specified as
+an immutable borrowed text referent, not a mutable buffer type; those policies
 should remain explicit when borrowed strings and mutable buffers are added.
 
 ### File-handle API (v1, #1036)
@@ -177,6 +186,7 @@ or invalid handles, and unsupported Windows operations return structured
 Stdlib modules are imported explicitly:
 
 ```lisp
+(import "stdlib/arena.tl")
 (import "stdlib/env.tl")
 (import "stdlib/ffi.tl")
 (import "stdlib/fs.tl")

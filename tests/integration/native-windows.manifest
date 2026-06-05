@@ -4,16 +4,16 @@
 # extra may be requires-stage0-symbol:<name>[,<name>...] for staged backend
 # primitives or expected-stderr:<printf escapes> for native trap diagnostics.
 aggregate_globals|tests/integration/aggregate_globals.tl|42|-|-|-
-arena_escape_stress|tests/integration/arena_escape_stress.tl|42|-|-|-
+arena_escape_stress|tests/integration/arena_escape_stress.tl|42|-|-|stdlib/arena.tl
 argv|tests/integration/argv.tl|7|alpha\n|alpha beta|-
 arithmetic|tests/integration/arithmetic.tl|47|-|-|-
 calc|tests/integration/calc.tl|14|-|-|token.tl
-clone_deep_copy|tests/integration/clone_deep_copy.tl|42|-|-|-|requires-stage0-symbol:_tl_clone_u24Bundle
+clone_deep_copy|tests/integration/clone_deep_copy.tl|42|-|-|stdlib/arena.tl|requires-stage0-symbol:_tl_clone_u24Bundle
 tl_emit|selfhost/emit.tl|0|@tests/golden/tl_emit_program.s|-|emit_core.tl ast_types.tl sym_i64_env.tl stdlib/io.tl
-tl_ast|selfhost/ast.tl|685|-|-|ast_types.tl read.tl lex.tl token.tl stdlib/io.tl
-tl_lexer|selfhost/lexer.tl|19|-|-|lex.tl token.tl stdlib/io.tl
-tl_reader|selfhost/reader.tl|62|-|-|lex.tl token.tl stdlib/io.tl
-tl_eval|selfhost/eval.tl|30|hello world3233\n25\n15\n2\n10\n1\n0\n1\n3\n(1 2 3)(1 (2 3) 4)(10 . 20)(1 2 . 3)(1 4 9 16)(1 2)|-|read.tl lex.tl token.tl stdlib/io.tl
+tl_ast|selfhost/ast.tl|685|-|-|ast_types.tl read.tl lex.tl token.tl stdlib/text_buf.tl stdlib/io.tl
+tl_lexer|selfhost/lexer.tl|19|-|-|lex.tl token.tl stdlib/text_buf.tl stdlib/io.tl
+tl_reader|selfhost/reader.tl|62|-|-|lex.tl token.tl stdlib/text_buf.tl stdlib/io.tl
+tl_eval|selfhost/eval.tl|30|hello world3233\n25\n15\n2\n10\n1\n0\n1\n3\n(1 2 3)(1 (2 3) 4)(10 . 20)(1 2 . 3)(1 4 9 16)(1 2)|-|read.tl lex.tl token.tl stdlib/text_buf.tl stdlib/io.tl
 comptime_scalar|tests/integration/comptime_scalar.tl|3|-|-|-
 cond|tests/integration/cond.tl|42|-|-|-
 control_flow|tests/integration/control_flow.tl|15|-|-|-
@@ -57,7 +57,7 @@ nested_eval|tests/integration/nested_eval.tl|7|-|-|-
 nullary_variant_call|tests/integration/nullary_variant_call.tl|42|-|-|-
 overflow_casts|tests/integration/overflow_casts.tl|0|-|-|-
 parser|tests/integration/parser.tl|14|-|-|-
-process_runtime|tests/integration/process_runtime.tl|42|-|-|stdlib/process.tl stdlib/test.tl
+process_runtime|tests/integration/process_runtime.tl|42|-|-|stdlib/process.tl stdlib/test.tl stdlib/io.tl
 read_file_missing_trap|tests/integration/read_file_missing_trap.tl|134|-|-|-|expected-stderr:tl: read-file failed\n
 write_file_invalid_trap|tests/integration/write_file_invalid_trap.tl|134|-|-|-|expected-stderr:tl: write-file failed\n
 selfhost_argv_oob|tests/integration/selfhost_argv_oob.tl|134|-|-|-|expected-stderr:tl: argv index out of bounds\n
@@ -81,9 +81,9 @@ spmd_foreach|tests/integration/spmd_foreach.tl|42|-|-|-
 spmd_reduce_scalar|tests/integration/spmd_reduce_scalar.tl|42|-|-|-
 stdlib_io|tests/integration/stdlib_io.tl|42|-|-|stdlib/io.tl|requires-stage0-symbol:file-read-chunk-status,file-write-status,file-flush-status,append-file-status
 stdlib_json|tests/integration/stdlib_json.tl|42|-|-|stdlib/json.tl stdlib/text_buf.tl
-stdlib_text_buf|tests/integration/stdlib_text_buf.tl|42|-|-|stdlib/text_buf.tl
+stdlib_text_buf|tests/integration/stdlib_text_buf.tl|42|-|-|stdlib/text_buf.tl stdlib/io.tl
 stdlib_string|tests/integration/stdlib_string.tl|42|hello\174\nhello\174\nhello\174\nfound\n\174empty-left\n\174empty-right\n\174all-space\ncontains\nmissing\nhippo\nabx\n|-|stdlib/string.tl
-stdlib_test|tests/integration/stdlib_test.tl|42|-|-|stdlib/test.tl
+stdlib_test|tests/integration/stdlib_test.tl|42|-|-|stdlib/test.tl stdlib/io.tl
 string_append|tests/integration/string_append.tl|0|[]\nright\nleft\nfoobar\nabcdefghijklmnopqrstuvwxyz0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ\n|-|-
 string_eq|tests/integration/string_eq.tl|0|true\ntrue\ntrue\nfalse\nfalse\ntrue\nfalse\n|-|-
 string_length|tests/integration/string_length.tl|5|-|-|-
@@ -100,24 +100,24 @@ u64_float_casts|tests/integration/u64_float_casts.tl|0|-|-|-
 unit_functions|tests/integration/unit_functions.tl|7|-|-|-
 unit_main|tests/integration/unit_main.tl|0|-|-|-
 valid_shift_counts|tests/integration/valid_shift_counts.tl|42|-|-|-
-compiler_parse_smoke|selfhost/compiler_parse_smoke.tl|42|-|-|compiler_parse_core.tl compiler_diagnostic.tl compiler_ast_types.tl sym_i64_env.tl read.tl lex.tl token.tl
-compiler_symbols_smoke|selfhost/compiler_symbols_smoke.tl|42|-|-|compiler_symbols.tl compiler_parse_core.tl compiler_diagnostic.tl compiler_ast_types.tl sym_i64_env.tl read.tl lex.tl token.tl
-compiler_typecheck_smoke|selfhost/compiler_typecheck_smoke.tl|42|-|-|compiler_typecheck.tl compiler_typecheck_core.tl compiler_ctfe.tl compiler_specialize.tl compiler_symbols.tl compiler_parse_core.tl compiler_diagnostic.tl compiler_ast_types.tl sym_i64_env.tl read.tl lex.tl token.tl compiler_clone.tl
-compiler_check_smoke|selfhost/compiler_check_smoke.tl|42|-|-|compiler_check_core.tl compiler_load.tl compiler_typecheck.tl compiler_typecheck_core.tl compiler_ctfe.tl compiler_specialize.tl compiler_symbols.tl compiler_parse_core.tl compiler_diagnostic.tl compiler_ast_types.tl sym_i64_env.tl read.tl lex.tl token.tl stdlib/fs.tl stdlib/env.tl stdlib/io.tl stdlib/list.tl stdlib/string.tl compiler_clone.tl|requires-stage0-symbol:fs-file-size-status,fs-file-size
+compiler_parse_smoke|selfhost/compiler_parse_smoke.tl|42|-|-|compiler_parse_core.tl compiler_diagnostic.tl compiler_ast_types.tl sym_i64_env.tl read.tl lex.tl token.tl stdlib/text_buf.tl stdlib/io.tl
+compiler_symbols_smoke|selfhost/compiler_symbols_smoke.tl|42|-|-|compiler_symbols.tl compiler_parse_core.tl compiler_diagnostic.tl compiler_ast_types.tl sym_i64_env.tl read.tl lex.tl token.tl stdlib/text_buf.tl stdlib/io.tl
+compiler_typecheck_smoke|selfhost/compiler_typecheck_smoke.tl|42|-|-|compiler_typecheck.tl compiler_typecheck_core.tl compiler_ctfe.tl compiler_specialize.tl compiler_symbols.tl compiler_parse_core.tl compiler_diagnostic.tl compiler_ast_types.tl sym_i64_env.tl read.tl lex.tl token.tl stdlib/text_buf.tl stdlib/io.tl stdlib/arena.tl compiler_clone.tl
+compiler_check_smoke|selfhost/compiler_check_smoke.tl|42|-|-|compiler_check_core.tl compiler_load.tl compiler_typecheck.tl compiler_typecheck_core.tl compiler_ctfe.tl compiler_specialize.tl compiler_symbols.tl compiler_parse_core.tl compiler_diagnostic.tl compiler_ast_types.tl sym_i64_env.tl read.tl lex.tl token.tl stdlib/text_buf.tl stdlib/fs.tl stdlib/env.tl stdlib/io.tl stdlib/list.tl stdlib/string.tl stdlib/arena.tl compiler_clone.tl|requires-stage0-symbol:fs-file-size-status,fs-file-size
 compiler_ctfe_smoke|selfhost/compiler_ctfe_smoke.tl|42|-|-|compiler_ctfe.tl compiler_diagnostic.tl compiler_ast_types.tl token.tl
-compiler_typecheck_reflection_smoke|selfhost/compiler_typecheck_reflection_smoke.tl|42|-|-|compiler_typecheck.tl compiler_typecheck_core.tl compiler_ctfe.tl compiler_specialize.tl compiler_symbols.tl compiler_parse_core.tl compiler_diagnostic.tl compiler_ast_types.tl sym_i64_env.tl read.tl lex.tl token.tl compiler_clone.tl
-compiler_lower_smoke|selfhost/compiler_lower_smoke.tl|42|-|-|compiler_lower.tl compiler_ctfe.tl compiler_specialize.tl compiler_ir_types.tl compiler_typecheck.tl compiler_typecheck_core.tl compiler_symbols.tl compiler_parse_core.tl compiler_diagnostic.tl compiler_ast_types.tl sym_i64_env.tl read.tl lex.tl token.tl compiler_clone.tl
+compiler_typecheck_reflection_smoke|selfhost/compiler_typecheck_reflection_smoke.tl|42|-|-|compiler_typecheck.tl compiler_typecheck_core.tl compiler_ctfe.tl compiler_specialize.tl compiler_symbols.tl compiler_parse_core.tl compiler_diagnostic.tl compiler_ast_types.tl sym_i64_env.tl read.tl lex.tl token.tl stdlib/text_buf.tl stdlib/io.tl stdlib/arena.tl compiler_clone.tl
+compiler_lower_smoke|selfhost/compiler_lower_smoke.tl|42|-|-|compiler_lower.tl compiler_ctfe.tl compiler_specialize.tl compiler_ir_types.tl compiler_typecheck.tl compiler_typecheck_core.tl compiler_symbols.tl compiler_parse_core.tl compiler_diagnostic.tl compiler_ast_types.tl sym_i64_env.tl read.tl lex.tl token.tl stdlib/text_buf.tl stdlib/io.tl stdlib/arena.tl compiler_clone.tl
 compiler_ir_types_smoke|selfhost/compiler_ir_types_smoke.tl|42|-|-|compiler_ir_types.tl compiler_ast_types.tl
 compiler_liveness_smoke|selfhost/compiler_liveness_smoke.tl|42|-|-|compiler_liveness.tl compiler_ir_types.tl compiler_ast_types.tl
 compiler_regalloc_smoke|selfhost/compiler_regalloc_smoke.tl|42|-|-|compiler_regalloc.tl compiler_liveness.tl compiler_ir_types.tl compiler_ast_types.tl
-compiler_optimize_smoke|selfhost/compiler_optimize_smoke.tl|42|-|-|compiler_optimize.tl compiler_ir_types.tl compiler_ast_types.tl
-lex_span_smoke|selfhost/lex_span_smoke.tl|42|-|-|lex.tl token.tl
-compiler_backend_smoke|selfhost/compiler_backend_smoke.tl|42|-|-|compiler_backend_tests.tl compiler_backend.tl compiler_optimize.tl compiler_regalloc.tl compiler_liveness.tl compiler_lower.tl compiler_ctfe.tl compiler_specialize.tl compiler_ir_types.tl compiler_typecheck.tl compiler_typecheck_core.tl compiler_symbols.tl compiler_parse_core.tl compiler_diagnostic.tl compiler_ast_types.tl sym_i64_env.tl stdlib/text_buf.tl read.tl lex.tl token.tl compiler_clone.tl
+compiler_optimize_smoke|selfhost/compiler_optimize_smoke.tl|42|-|-|compiler_optimize.tl compiler_ir_types.tl compiler_ast_types.tl stdlib/io.tl stdlib/arena.tl
+lex_span_smoke|selfhost/lex_span_smoke.tl|42|-|-|lex.tl token.tl stdlib/text_buf.tl stdlib/io.tl
+compiler_backend_smoke|selfhost/compiler_backend_smoke.tl|42|-|-|compiler_backend_tests.tl compiler_backend.tl compiler_optimize.tl compiler_regalloc.tl compiler_liveness.tl compiler_lower.tl compiler_ctfe.tl compiler_specialize.tl compiler_ir_types.tl compiler_typecheck.tl compiler_typecheck_core.tl compiler_symbols.tl compiler_parse_core.tl compiler_diagnostic.tl compiler_ast_types.tl sym_i64_env.tl stdlib/text_buf.tl stdlib/io.tl stdlib/arena.tl read.tl lex.tl token.tl compiler_clone.tl
 doc_extract_smoke|selfhost/doc_extract_smoke.tl|42|-|-|doc_extract.tl format_tokens.tl
-doc_test_smoke|selfhost/doc_test_smoke.tl|42|-|-|doc_test.tl build_run_core.tl compiler_driver_core.tl compiler_backend.tl compiler_optimize.tl compiler_regalloc.tl compiler_liveness.tl compiler_lower.tl compiler_check_core.tl compiler_load.tl compiler_typecheck.tl compiler_typecheck_core.tl compiler_ctfe.tl compiler_specialize.tl compiler_ir_types.tl compiler_symbols.tl compiler_parse_core.tl compiler_ast_types.tl compiler_diagnostic.tl sym_i64_env.tl stdlib/text_buf.tl read.tl lex.tl token.tl stdlib/fs.tl stdlib/env.tl stdlib/io.tl stdlib/list.tl stdlib/string.tl stdlib/process.tl stdlib/msvc.tl stdlib/windows_sdk.tl stdlib/windows_registry.tl stdlib/windows_setup.tl compiler_clone.tl|requires-stage0-symbol:fs-file-kind-status,fs-file-size-status,fs-file-size
+doc_test_smoke|selfhost/doc_test_smoke.tl|42|-|-|doc_test.tl build_run_core.tl compiler_driver_core.tl compiler_backend.tl compiler_optimize.tl compiler_regalloc.tl compiler_liveness.tl compiler_lower.tl compiler_check_core.tl compiler_load.tl compiler_typecheck.tl compiler_typecheck_core.tl compiler_ctfe.tl compiler_specialize.tl compiler_ir_types.tl compiler_symbols.tl compiler_parse_core.tl compiler_ast_types.tl compiler_diagnostic.tl sym_i64_env.tl stdlib/text_buf.tl read.tl lex.tl token.tl stdlib/fs.tl stdlib/env.tl stdlib/io.tl stdlib/list.tl stdlib/string.tl stdlib/process.tl stdlib/msvc.tl stdlib/windows_sdk.tl stdlib/windows_registry.tl stdlib/windows_setup.tl stdlib/arena.tl compiler_clone.tl|requires-stage0-symbol:fs-file-kind-status,fs-file-size-status,fs-file-size
 doc_render_smoke|selfhost/doc_render_smoke.tl|42|-|-|doc_render.tl doc_extract.tl format_tokens.tl
 doc_html_smoke|selfhost/doc_html_smoke.tl|42|-|-|doc_html.tl doc_render.tl doc_extract.tl format_tokens.tl
 doc_md_smoke|selfhost/doc_md_smoke.tl|42|-|-|doc_extract.tl doc_html.tl doc_md.tl doc_render.tl format_tokens.tl
-doc_site_smoke|selfhost/doc_site_smoke.tl|42|-|-|doc_site_core.tl doc_html.tl doc_md.tl doc_render.tl doc_extract.tl format_tokens.tl stdlib/fs.tl stdlib/env.tl stdlib/io.tl stdlib/list.tl stdlib/string.tl|requires-stage0-symbol:fs-file-size-status,fs-file-size
+doc_site_smoke|selfhost/doc_site_smoke.tl|42|-|-|doc_site_core.tl doc_html.tl doc_md.tl doc_render.tl doc_extract.tl format_tokens.tl stdlib/fs.tl stdlib/env.tl stdlib/io.tl stdlib/list.tl stdlib/string.tl stdlib/arena.tl|requires-stage0-symbol:fs-file-size-status,fs-file-size
 lint_smoke|selfhost/lint_smoke.tl|42|-|-|lint_core.tl compiler_ast_types.tl
 lint_driver_smoke|selfhost/lint_driver_smoke.tl|42|-|-|compiler_ast_types.tl compiler_diagnostic.tl compiler_load.tl compiler_parse_core.tl lex.tl lint_core.tl lint_driver_core.tl read.tl sym_i64_env.tl token.tl stdlib/fs.tl stdlib/env.tl stdlib/io.tl stdlib/list.tl stdlib/string.tl|requires-stage0-symbol:fs-file-size-status,fs-file-size

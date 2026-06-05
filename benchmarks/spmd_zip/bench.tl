@@ -13,6 +13,8 @@
 ;# with no extra arguments, matching C `argc`) keeps the result deterministic
 ;# while preventing whole-loop constant folding. It exercises a multi-input
 ;# multiply-add lane body, complementing spmd_map's two-input add.
+(import "stdlib/io.tl")
+
 (define array-len : i64
   4096)
 

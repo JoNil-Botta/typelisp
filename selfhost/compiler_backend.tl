@@ -10430,6 +10430,45 @@
   [enabled : bool]) : bool
   (and (string-eq name candidate) enabled))
 
+(define (compiler-backend-runtime-concat-name? [name : String]) : bool
+  (or
+    (backend-or4
+      (string-eq name "tl_string_concat")
+      (string-eq name "tl_string_concat3")
+      (string-eq name "tl_string_concat4")
+      (string-eq name "tl_string_concat5"))
+    false))
+
+(define (compiler-backend-runtime-index-defines-concat?
+  [index : CompilerBackendRuntimeIndex]) : bool
+  (or
+    (backend-or4
+      (compiler-backend-runtime-index-defines? index "tl_string_concat")
+      (compiler-backend-runtime-index-defines? index "tl_string_concat3")
+      (compiler-backend-runtime-index-defines? index "tl_string_concat4")
+      (compiler-backend-runtime-index-defines? index "tl_string_concat5"))
+    false))
+
+(define (compiler-backend-runtime-index-extern-concat?
+  [index : CompilerBackendRuntimeIndex]) : bool
+  (or
+    (backend-or4
+      (compiler-backend-runtime-index-extern? index "tl_string_concat")
+      (compiler-backend-runtime-index-extern? index "tl_string_concat3")
+      (compiler-backend-runtime-index-extern? index "tl_string_concat4")
+      (compiler-backend-runtime-index-extern? index "tl_string_concat5"))
+    false))
+
+(define (compiler-backend-runtime-index-calls-concat?
+  [index : CompilerBackendRuntimeIndex]) : bool
+  (or
+    (backend-or4
+      (compiler-backend-runtime-index-calls? index "tl_string_concat")
+      (compiler-backend-runtime-index-calls? index "tl_string_concat3")
+      (compiler-backend-runtime-index-calls? index "tl_string_concat4")
+      (compiler-backend-runtime-index-calls? index "tl_string_concat5"))
+    false))
+
 (define (compiler-backend-provides-runtime-alias?
   [name : String]
   [canonical : String]
@@ -10566,10 +10605,7 @@
             name
             "tl_substring"
             substring)
-          (compiler-backend-provides-runtime-name?
-            name
-            "tl_string_concat"
-            concat)
+          (and concat (compiler-backend-runtime-concat-name? name))
           (compiler-backend-provides-runtime-name?
             name
             "tl_string_eq"
@@ -10817,7 +10853,7 @@
     [defines-substring : bool
       (compiler-backend-runtime-index-defines? index "tl_substring")]
     [defines-concat : bool
-      (compiler-backend-runtime-index-defines? index "tl_string_concat")]
+      (compiler-backend-runtime-index-defines-concat? index)]
     [defines-string-eq : bool
       (compiler-backend-runtime-index-defines? index "tl_string_eq")]
     [defines-string-to-int : bool
@@ -10882,8 +10918,7 @@
       (compiler-backend-runtime-index-extern? index "tl_shift_abort")]
     [extern-substring : bool
       (compiler-backend-runtime-index-extern? index "tl_substring")]
-    [extern-concat : bool
-      (compiler-backend-runtime-index-extern? index "tl_string_concat")]
+    [extern-concat : bool (compiler-backend-runtime-index-extern-concat? index)]
     [extern-string-eq : bool
       (compiler-backend-runtime-index-extern? index "tl_string_eq")]
     [extern-string-to-int : bool
@@ -11032,8 +11067,7 @@
       (compiler-backend-runtime-index-calls? index "tl_shift_abort")]
     [calls-substring : bool
       (compiler-backend-runtime-index-calls? index "tl_substring")]
-    [calls-concat : bool
-      (compiler-backend-runtime-index-calls? index "tl_string_concat")]
+    [calls-concat : bool (compiler-backend-runtime-index-calls-concat? index)]
     [calls-string-eq : bool
       (compiler-backend-runtime-index-calls? index "tl_string_eq")]
     [calls-string-to-int : bool
@@ -16223,6 +16257,100 @@ tl_string_concat:
     pop %rbp
     ret
 
+    .globl tl_string_concat3
+tl_string_concat3:
+    push %rbp
+    mov %rsp, %rbp
+    sub $32, %rsp
+    movq $0, 0(%rsp)
+    movq $0, 8(%rsp)
+    movq $0, 16(%rsp)
+    movq $0, 24(%rsp)
+    call tl_string_concat5
+    leave
+    ret
+
+    .globl tl_string_concat4
+tl_string_concat4:
+    push %rbp
+    mov %rsp, %rbp
+    sub $32, %rsp
+    movq 16(%rbp), %rax
+    movq %rax, 0(%rsp)
+    movq 24(%rbp), %rax
+    movq %rax, 8(%rsp)
+    movq $0, 16(%rsp)
+    movq $0, 24(%rsp)
+    call tl_string_concat5
+    leave
+    ret
+
+    .globl tl_string_concat5
+tl_string_concat5:
+    push %rbp
+    mov %rsp, %rbp
+    sub $112, %rsp
+    movq %rdi, -8(%rbp)
+    movq %rsi, -16(%rbp)
+    movq %rdx, -24(%rbp)
+    movq %rcx, -32(%rbp)
+    movq %r8, -40(%rbp)
+    movq %r9, -48(%rbp)
+    movq 16(%rbp), %rax
+    movq %rax, -56(%rbp)
+    movq 24(%rbp), %rax
+    movq %rax, -64(%rbp)
+    movq 32(%rbp), %rax
+    movq %rax, -72(%rbp)
+    movq 40(%rbp), %rax
+    movq %rax, -80(%rbp)
+    movq -16(%rbp), %rdi
+    addq -32(%rbp), %rdi
+    addq -48(%rbp), %rdi
+    addq -64(%rbp), %rdi
+    addq -80(%rbp), %rdi
+    movq %rdi, -88(%rbp)
+    call tl_alloc
+    movq %rax, -96(%rbp)
+    movq -96(%rbp), %rdi
+    movq -8(%rbp), %rsi
+    movq -16(%rbp), %rcx
+    rep movsb
+    movq -96(%rbp), %rdi
+    addq -16(%rbp), %rdi
+    movq -24(%rbp), %rsi
+    movq -32(%rbp), %rcx
+    rep movsb
+    movq -96(%rbp), %rdi
+    addq -16(%rbp), %rdi
+    addq -32(%rbp), %rdi
+    movq -40(%rbp), %rsi
+    movq -48(%rbp), %rcx
+    rep movsb
+    movq -96(%rbp), %rdi
+    addq -16(%rbp), %rdi
+    addq -32(%rbp), %rdi
+    addq -48(%rbp), %rdi
+    movq -56(%rbp), %rsi
+    movq -64(%rbp), %rcx
+    rep movsb
+    movq -96(%rbp), %rdi
+    addq -16(%rbp), %rdi
+    addq -32(%rbp), %rdi
+    addq -48(%rbp), %rdi
+    addq -64(%rbp), %rdi
+    movq -72(%rbp), %rsi
+    movq -80(%rbp), %rcx
+    rep movsb
+    movq $16, %rdi
+    call tl_alloc
+    movq -96(%rbp), %rdx
+    movq %rdx, 0(%rax)
+    movq -88(%rbp), %rdx
+    movq %rdx, 8(%rax)
+    leave
+    ret
+
 ")
 
 (define (compiler-backend-runtime-windows-concat-functions) : String
@@ -16274,6 +16402,118 @@ tl_string_concat:
     pop %r12
     pop %rbx
     pop %rbp
+    ret
+
+    .globl tl_string_concat3
+tl_string_concat3:
+    push %rbp
+    mov %rsp, %rbp
+    sub $80, %rsp
+    movq 48(%rbp), %rax
+    movq %rax, 32(%rsp)
+    movq 56(%rbp), %rax
+    movq %rax, 40(%rsp)
+    movq $0, 48(%rsp)
+    movq $0, 56(%rsp)
+    movq $0, 64(%rsp)
+    movq $0, 72(%rsp)
+    call tl_string_concat5
+    leave
+    ret
+
+    .globl tl_string_concat4
+tl_string_concat4:
+    push %rbp
+    mov %rsp, %rbp
+    sub $80, %rsp
+    movq 48(%rbp), %rax
+    movq %rax, 32(%rsp)
+    movq 56(%rbp), %rax
+    movq %rax, 40(%rsp)
+    movq 64(%rbp), %rax
+    movq %rax, 48(%rsp)
+    movq 72(%rbp), %rax
+    movq %rax, 56(%rsp)
+    movq $0, 64(%rsp)
+    movq $0, 72(%rsp)
+    call tl_string_concat5
+    leave
+    ret
+
+    .globl tl_string_concat5
+tl_string_concat5:
+    push %rbp
+    mov %rsp, %rbp
+    sub $128, %rsp
+    movq %rsi, -8(%rbp)
+    movq %rdi, -16(%rbp)
+    movq %rcx, -24(%rbp)
+    movq %rdx, -32(%rbp)
+    movq %r8, -40(%rbp)
+    movq %r9, -48(%rbp)
+    movq 48(%rbp), %rax
+    movq %rax, -56(%rbp)
+    movq 56(%rbp), %rax
+    movq %rax, -64(%rbp)
+    movq 64(%rbp), %rax
+    movq %rax, -72(%rbp)
+    movq 72(%rbp), %rax
+    movq %rax, -80(%rbp)
+    movq 80(%rbp), %rax
+    movq %rax, -88(%rbp)
+    movq 88(%rbp), %rax
+    movq %rax, -96(%rbp)
+    movq -32(%rbp), %rcx
+    addq -48(%rbp), %rcx
+    addq -64(%rbp), %rcx
+    addq -80(%rbp), %rcx
+    addq -96(%rbp), %rcx
+    movq %rcx, -104(%rbp)
+    sub $32, %rsp
+    call tl_alloc
+    add $32, %rsp
+    movq %rax, -112(%rbp)
+    movq -112(%rbp), %rdi
+    movq -24(%rbp), %rsi
+    movq -32(%rbp), %rcx
+    rep movsb
+    movq -112(%rbp), %rdi
+    addq -32(%rbp), %rdi
+    movq -40(%rbp), %rsi
+    movq -48(%rbp), %rcx
+    rep movsb
+    movq -112(%rbp), %rdi
+    addq -32(%rbp), %rdi
+    addq -48(%rbp), %rdi
+    movq -56(%rbp), %rsi
+    movq -64(%rbp), %rcx
+    rep movsb
+    movq -112(%rbp), %rdi
+    addq -32(%rbp), %rdi
+    addq -48(%rbp), %rdi
+    addq -64(%rbp), %rdi
+    movq -72(%rbp), %rsi
+    movq -80(%rbp), %rcx
+    rep movsb
+    movq -112(%rbp), %rdi
+    addq -32(%rbp), %rdi
+    addq -48(%rbp), %rdi
+    addq -64(%rbp), %rdi
+    addq -80(%rbp), %rdi
+    movq -88(%rbp), %rsi
+    movq -96(%rbp), %rcx
+    rep movsb
+    movq $16, %rcx
+    sub $32, %rsp
+    call tl_alloc
+    add $32, %rsp
+    movq -112(%rbp), %rdx
+    movq %rdx, 0(%rax)
+    movq -104(%rbp), %rdx
+    movq %rdx, 8(%rax)
+    movq -16(%rbp), %rdi
+    movq -8(%rbp), %rsi
+    leave
     ret
 
 ")
@@ -20151,15 +20391,37 @@ tl_windows_sdk_registry_install:
           (compiler-backend-string-contains? asm ".globl tl_string_concat\n")
           (compiler-backend-string-contains? asm "tl_string_concat:\n"))
         (and
-          (backend-and8
-            (compiler-backend-string-contains? asm ".globl tl_string_eq\n")
-            (compiler-backend-string-contains? asm "tl_string_eq:\n")
-            (compiler-backend-string-contains? asm ".globl tl_string_to_int\n")
-            (compiler-backend-string-contains? asm "tl_string_to_int:\n")
-            (compiler-backend-string-contains? asm ".globl tl_int_to_string\n")
-            (compiler-backend-string-contains? asm "tl_int_to_string:\n")
-            (compiler-backend-string-contains? asm "tl_process_output:\n")
-            (compiler-backend-string-contains? asm "tl_random_system_seed:\n"))
+          (and
+            (backend-and8
+              (compiler-backend-string-contains?
+                asm
+                ".globl tl_string_concat3\n")
+              (compiler-backend-string-contains? asm "tl_string_concat3:\n")
+              (compiler-backend-string-contains?
+                asm
+                ".globl tl_string_concat4\n")
+              (compiler-backend-string-contains? asm "tl_string_concat4:\n")
+              (compiler-backend-string-contains?
+                asm
+                ".globl tl_string_concat5\n")
+              (compiler-backend-string-contains? asm "tl_string_concat5:\n")
+              (compiler-backend-string-contains?
+                asm
+                "    call tl_string_concat5\n")
+              true)
+            (backend-and8
+              (compiler-backend-string-contains? asm ".globl tl_string_eq\n")
+              (compiler-backend-string-contains? asm "tl_string_eq:\n")
+              (compiler-backend-string-contains?
+                asm
+                ".globl tl_string_to_int\n")
+              (compiler-backend-string-contains? asm "tl_string_to_int:\n")
+              (compiler-backend-string-contains?
+                asm
+                ".globl tl_int_to_string\n")
+              (compiler-backend-string-contains? asm "tl_int_to_string:\n")
+              (compiler-backend-string-contains? asm "tl_process_output:\n")
+              (compiler-backend-string-contains? asm "tl_random_system_seed:\n")))
           (and
             (backend-and4
               (compiler-backend-string-contains? asm "    call tl_alloc\n")

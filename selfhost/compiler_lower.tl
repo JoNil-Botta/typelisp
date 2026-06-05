@@ -207,6 +207,14 @@
 (defenum LowerStringFields
   (LowerStringFields LowerState CompilerIrValue CompilerIrValue))
 
+(defenum LowerMaybeStringConcatCall
+  (LowerNoStringConcatCall)
+  (LowerSomeStringConcatCall AstExpr AstExpr))
+
+(defenum ResultLowerStringValues
+  (OkLowerStringValues LowerState CompilerIrValueList i64)
+  (ErrLowerStringValues CompilerDiagnostic))
+
 (defenum LowerCleanup
   (LowerCleanup String String))
 
@@ -4073,6 +4081,130 @@
   (match (tc-type-strip-region (tc-resolve-type ctx ty))
     [(AstTyString) true]
     [_ (lower-str-ref-type? ctx ty)]))
+
+(define (lower-string-concat-builtin-name? [name : String]) : bool
+  (or (string-eq name "string-append") (string-eq name "string-concat")))
+
+(define (lower-string-concat-call-parts
+  [ctx : TcContext]
+  [env : SymI64Env]
+  [expr : AstExpr]) : LowerMaybeStringConcatCall
+  (match (ast-expr-unspan expr)
+    [(AstExprCall callee-box args)
+      (match (ast-expr-unspan (box-get callee-box))
+        [(AstExprVar name)
+          (if (and
+            (lower-string-concat-builtin-name? name)
+            (lower-builtin-call-available? ctx env name))
+            (match args
+              [(AstExprCons left tail)
+                (let
+                  [tail : AstExprList (box-get tail)]
+                  (match tail
+                    [(AstExprCons right rest)
+                      (let
+                        [rest : AstExprList (box-get rest)]
+                        (match rest
+                          [(AstExprNil) (LowerSomeStringConcatCall left right)]
+                          [_ (LowerNoStringConcatCall)]))]
+                    [_ (LowerNoStringConcatCall)]))]
+              [_ (LowerNoStringConcatCall)])
+            (LowerNoStringConcatCall))]
+        [_ (LowerNoStringConcatCall)])]
+    [_ (LowerNoStringConcatCall)]))
+
+(define (lower-string-concat-exprs-right
+  [ctx : TcContext]
+  [env : SymI64Env]
+  [left : AstExpr]
+  [right : AstExpr]
+  [remaining : i64]) : AstExprList
+  (if (<= remaining 2)
+    (ast-expr-cons left (ast-expr-cons right AstExprNil))
+    (match (lower-string-concat-call-parts ctx env right)
+      [(LowerSomeStringConcatCall nested-left nested-right)
+        (ast-expr-cons
+          left
+          (lower-string-concat-exprs-right
+            ctx
+            env
+            nested-left
+            nested-right
+            (- remaining 1)))]
+      [(LowerNoStringConcatCall)
+        (ast-expr-cons left (ast-expr-cons right AstExprNil))])))
+
+(define (lower-string-concat-runtime-name [count : i64]) : String
+  (cond
+    [(= count 3) "tl_string_concat3"]
+    [(= count 4) "tl_string_concat4"]
+    [(= count 5) "tl_string_concat5"]
+    [else "tl_string_concat"]))
+
+(define (lower-string-concat-values-rev
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [exprs : AstExprList]
+  [acc : CompilerIrValueList]
+  [count : i64]) : ResultLowerStringValues
+  (match exprs
+    [(AstExprNil) (OkLowerStringValues state acc count)]
+    [(AstExprCons expr rest)
+      (match (lower-expr ctx state env type-env expr)
+        [(OkLowerExpr lowered)
+          (match lowered
+            [(LowerExpr expr-state value expr-ty)
+              (if (lower-string-handle-type? ctx expr-ty)
+                (match (lower-string-fields expr-state value)
+                  [(LowerStringFields field-state ptr len)
+                    (lower-string-concat-values-rev
+                      ctx
+                      field-state
+                      env
+                      type-env
+                      (box-get rest)
+                      (compiler-ir-value-cons
+                        len
+                        (compiler-ir-value-cons ptr acc))
+                      (+ count 1))])
+                (ErrLowerStringValues
+                  (lower-diagnostic-at-expr
+                    expr
+                    "lower: string-concat requires String")))])]
+        [(ErrLowerExpr message) (ErrLowerStringValues message)])]))
+
+(define (lower-string-concat-exprs
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : SymI64Env]
+  [type-env : TcTypeEnv]
+  [exprs : AstExprList]) : ResultLowerExpr
+  (match (lower-string-concat-values-rev
+    ctx
+    state
+    env
+    type-env
+    exprs
+    IrValueNil
+    0)
+    [(OkLowerStringValues values-state values-rev count)
+      (match (lower-state-alloc-var values-state)
+        [(LowerAlloc allocated var-id)
+          (OkLowerExpr
+            (LowerExpr
+              (lower-state-emit
+                allocated
+                (IrInstrCall
+                  var-id
+                  (lower-string-concat-runtime-name count)
+                  (compiler-ir-call-args-from-list
+                    (compiler-ir-value-list-reverse-onto values-rev IrValueNil))
+                  (AstTyString)))
+              (IrValueVar var-id)
+              (AstTyString)))])]
+    [(ErrLowerStringValues message) (ErrLowerExpr message)]))
 
 (define (lower-supported-reference-referent-type?
   [ctx : TcContext]
@@ -9884,57 +10016,12 @@
   [type-env : TcTypeEnv]
   [left : AstExpr]
   [right : AstExpr]) : ResultLowerExpr
-  (match (lower-expr ctx state env type-env left)
-    [(OkLowerExpr lowered-left)
-      (match lowered-left
-        [(LowerExpr left-state left-value left-ty)
-          (if (lower-string-handle-type? ctx left-ty)
-            (match (lower-expr ctx left-state env type-env right)
-              [(OkLowerExpr lowered-right)
-                (match lowered-right
-                  [(LowerExpr right-state right-value right-ty)
-                    (if (lower-string-handle-type? ctx right-ty)
-                      (match (lower-string-fields right-state left-value)
-                        [(LowerStringFields left-fields-state left-ptr left-len)
-                          (match (lower-string-fields
-                            left-fields-state
-                            right-value)
-                            [(LowerStringFields
-                                done-fields-state
-                                right-ptr
-                                right-len)
-                              (match (lower-state-alloc-var done-fields-state)
-                                [(LowerAlloc allocated var-id)
-                                  (OkLowerExpr
-                                    (LowerExpr
-                                      (lower-state-emit
-                                        allocated
-                                        (IrInstrCall
-                                          var-id
-                                          "tl_string_concat"
-                                          (compiler-ir-call-args-from-list
-                                            (compiler-ir-value-cons
-                                              left-ptr
-                                              (compiler-ir-value-cons
-                                                left-len
-                                                (compiler-ir-value-cons
-                                                  right-ptr
-                                                  (compiler-ir-value-cons
-                                                    right-len
-                                                    IrValueNil)))))
-                                          (AstTyString)))
-                                      (IrValueVar var-id)
-                                      (AstTyString)))])])])
-                      (ErrLowerExpr
-                        (lower-diagnostic-at-expr
-                          right
-                          "lower: string-concat requires String")))])]
-              [(ErrLowerExpr message) (ErrLowerExpr message)])
-            (ErrLowerExpr
-              (lower-diagnostic-at-expr
-                left
-                "lower: string-concat requires String")))])]
-    [(ErrLowerExpr message) (ErrLowerExpr message)]))
+  (lower-string-concat-exprs
+    ctx
+    state
+    env
+    type-env
+    (lower-string-concat-exprs-right ctx env left right 5)))
 
 (define (lower-c-abi-runtime-handle-extern? [name : String]) : bool
   (or
@@ -17928,6 +18015,18 @@
             (+ (if (string-eq (& joined) (& extended)) 1 0)
               (cast (char-at (& spaced) 0) : i64))))))))")
 
+(define (compiler-lower-string-concat-fusion-source) : String
+  "(define (main) : i64
+  (let
+    [three : String (string-append \"a\" (string-append \"b\" \"c\"))]
+    [four : String
+      (string-append \"a\" (string-append \"b\" (string-append \"c\" \"d\")))]
+    [five : String
+      (string-append
+        \"a\"
+        (string-append \"b\" (string-append \"c\" (string-append \"d\" \"e\"))))]
+    (+ (string-length three) (+ (string-length four) (string-length five)))))")
+
 (define (compiler-lower-print-string-stdlib-source) : String
   "(define (print-string [text : String]) : unit
   unit)
@@ -20993,6 +21092,30 @@
               ok))])]
     [(ErrCompilerLower _) false]))
 
+(define (compiler-lower-string-concat-fusion-shape-ok?) : bool
+  (match (lower-compiler-source (compiler-lower-string-concat-fusion-source))
+    [(OkCompilerLower program _)
+      (match program
+        [(IrProgram _ functions _)
+          (and
+            (= (lower-test-functions-call-count functions "tl_string_concat") 0)
+            (and
+              (=
+                (lower-test-functions-call-count functions "tl_string_concat3")
+                1)
+              (and
+                (=
+                  (lower-test-functions-call-count
+                    functions
+                    "tl_string_concat4")
+                  1)
+                (=
+                  (lower-test-functions-call-count
+                    functions
+                    "tl_string_concat5")
+                  1))))])]
+    [(ErrCompilerLower _) false]))
+
 (define (compiler-lower-print-string-stdlib-shape-ok?) : bool
   (match (lower-compiler-source (compiler-lower-print-string-stdlib-source))
     [(OkCompilerLower program _)
@@ -22546,6 +22669,9 @@
         (set! ok false))
       (if (compiler-lower-string-runtime-shape-ok?
         (compiler-lower-string-runtime-source))
+        unit
+        (set! ok false))
+      (if (compiler-lower-string-concat-fusion-shape-ok?)
         unit
         (set! ok false))
       (if (compiler-lower-print-string-stdlib-shape-ok?)

@@ -1017,8 +1017,14 @@
         (or
           (string-eq name "tl_string_concat")
           (or
-            (string-eq name "tl_region_reset")
-            (string-eq name ".L_tl_flush_stdout")))))))
+            (string-eq name "tl_string_concat3")
+            (or
+              (string-eq name "tl_string_concat4")
+              (or
+                (string-eq name "tl_string_concat5")
+                (or
+                  (string-eq name "tl_region_reset")
+                  (string-eq name ".L_tl_flush_stdout"))))))))))
 
 (define (compiler-ir-runtime-control-flow? [name : String]) : bool
   (or

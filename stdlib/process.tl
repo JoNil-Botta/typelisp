@@ -13,7 +13,7 @@
 ;: Immutable list of process argument strings in argv order.
 (defenum ProcessStringList
   (ProcessStringNil)
-  (ProcessStringCons String ProcessStringList))
+  (ProcessStringCons String (Box ProcessStringList)))
 
 ;: Optional string value used for cwd and stdin configuration.
 (defenum ProcessMaybeString
@@ -23,7 +23,7 @@
 ;: Environment override list stored as name/value pairs.
 (defenum ProcessEnvList
   (ProcessEnvNil)
-  (ProcessEnvCons String String ProcessEnvList))
+  (ProcessEnvCons String String (Box ProcessEnvList)))
 
 ;: Process command data: executable path, argv, cwd, env, and stdin.
 (defstruct ProcessCommand
@@ -86,15 +86,15 @@
 (define (process-args-count [args : ProcessStringList]) : i64
   (match args
     [(ProcessStringNil) 0]
-    [(ProcessStringCons _ rest) (+ 1 (process-args-count rest))]))
+    [(ProcessStringCons _ rest) (+ 1 (process-args-count (box-get rest)))]))
 
 ;: Prepend an owned argument string to an argv list.
 (define (process-args-cons [value : String] [rest : ProcessStringList]) : ProcessStringList
-  (ProcessStringCons value rest))
+  (ProcessStringCons value (box rest)))
 
 ;: Return a one-element argument list backed by an owned string.
 (define (process-args-single [value : String]) : ProcessStringList
-  (ProcessStringCons value (ProcessStringNil)))
+  (ProcessStringCons value (box (ProcessStringNil))))
 
 ;: Concatenate two argument lists while preserving argv order.
 (define (process-args-append
@@ -103,7 +103,7 @@
   (match left
     [(ProcessStringNil) right]
     [(ProcessStringCons value rest)
-      (ProcessStringCons value (process-args-append rest right))]))
+      (ProcessStringCons value (box (process-args-append (box-get rest) right)))]))
 
 ;: Return an empty environment override list.
 (define (process-env-empty) : ProcessEnvList
@@ -113,14 +113,14 @@
 (define (process-env-count [env : ProcessEnvList]) : i64
   (match env
     [(ProcessEnvNil) 0]
-    [(ProcessEnvCons _ _ rest) (+ 1 (process-env-count rest))]))
+    [(ProcessEnvCons _ _ rest) (+ 1 (process-env-count (box-get rest)))]))
 
 ;: Prepend owned environment override strings to an env list.
 (define (process-env-cons
   [name : String]
   [value : String]
   [rest : ProcessEnvList]) : ProcessEnvList
-  (ProcessEnvCons name value rest))
+  (ProcessEnvCons name value (box rest)))
 
 ;: Return true when `text` contains `needle`.
 (define (process-string-contains-char? [text : (& text str)] [needle : char]) : bool
@@ -213,7 +213,7 @@
     (process-command-executable command)
     (process-command-argv command)
     (process-command-cwd command)
-    (ProcessEnvCons name value (process-command-env command))
+    (ProcessEnvCons name value (box (process-command-env command)))
     (process-command-stdin command)))
 
 ;: Return a copy of `command` with the full env override list replaced.
@@ -328,7 +328,7 @@
           (if (process-string-contains-char? (& text) #=')
             (ProcessSomeString
               "process: environment variable name contains '='")
-            (process-env-validation-error rest))))]))
+            (process-env-validation-error (box-get rest)))))]))
 
 ;: Return the first command validation error, or `ProcessNoString`.
 (define (process-command-validation-error [command : ProcessCommand]) : ProcessMaybeString

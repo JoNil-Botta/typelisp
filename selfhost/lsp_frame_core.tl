@@ -228,15 +228,27 @@
 (define (lsp-json-number [value : i64]) : Json
   (JsonNumber (int->string value)))
 
+(define (lsp-json-member [k : String] [v : Json] [rest : JsonMemberList]) : JsonMemberList
+  (JsonMemberListCons k v (box rest)))
+
+(define (lsp-json-object [members : JsonMemberList]) : Json
+  (JsonObject (box members)))
+
+(define (lsp-json-list-cons [value : Json] [rest : JsonList]) : JsonList
+  (JsonListCons value (box rest)))
+
+(define (lsp-json-array [items : JsonList]) : Json
+  (JsonArray (box items)))
+
 (define (lsp-json-rpc-member [rest : JsonMemberList]) : JsonMemberList
-  (JsonMemberListCons "jsonrpc" (JsonString "2.0") rest))
+  (lsp-json-member "jsonrpc" (JsonString "2.0") rest))
 
 (define (lsp-json-object1 [k : String] [v : Json]) : Json
-  (JsonObject (JsonMemberListCons k v JsonMemberListNil)))
+  (lsp-json-object (lsp-json-member k v JsonMemberListNil)))
 
 (define (lsp-json-object2 [k1 : String] [v1 : Json] [k2 : String] [v2 : Json]) : Json
-  (JsonObject
-    (JsonMemberListCons k1 v1 (JsonMemberListCons k2 v2 JsonMemberListNil))))
+  (lsp-json-object
+    (lsp-json-member k1 v1 (lsp-json-member k2 v2 JsonMemberListNil))))
 
 (define (lsp-json-object4
   [k1 : String]
@@ -247,14 +259,14 @@
   [v3 : Json]
   [k4 : String]
   [v4 : Json]) : Json
-  (JsonObject
-    (JsonMemberListCons
+  (lsp-json-object
+    (lsp-json-member
       k1
       v1
-      (JsonMemberListCons
+      (lsp-json-member
         k2
         v2
-        (JsonMemberListCons k3 v3 (JsonMemberListCons k4 v4 JsonMemberListNil))))))
+        (lsp-json-member k3 v3 (lsp-json-member k4 v4 JsonMemberListNil))))))
 
 (define (lsp-json-string-field [value : Json] [key : String]) : LspJsonText
   (match (json-object-get value (& key))
@@ -277,21 +289,21 @@
 
 (define (lsp-write-response [id : Json] [result : Json]) : unit
   (lsp-write-json
-    (JsonObject
+    (lsp-json-object
       (lsp-json-rpc-member
-        (JsonMemberListCons
+        (lsp-json-member
           "id"
           id
-          (JsonMemberListCons "result" result JsonMemberListNil))))))
+          (lsp-json-member "result" result JsonMemberListNil))))))
 
 (define (lsp-write-error [id : Json] [code : i64] [message : String]) : unit
   (lsp-write-json
-    (JsonObject
+    (lsp-json-object
       (lsp-json-rpc-member
-        (JsonMemberListCons
+        (lsp-json-member
           "id"
           id
-          (JsonMemberListCons
+          (lsp-json-member
             "error"
             (lsp-json-object2
               "code"
@@ -510,20 +522,20 @@
         (JsonString "typelisp")
         "message"
         (JsonString message))
-      (JsonObject
-        (JsonMemberListCons
+      (lsp-json-object
+        (lsp-json-member
           "range"
           (lsp-range line col)
-          (JsonMemberListCons
+          (lsp-json-member
             "severity"
             (lsp-json-number 1)
-            (JsonMemberListCons
+            (lsp-json-member
               "source"
               (JsonString "typelisp")
-              (JsonMemberListCons
+              (lsp-json-member
                 "code"
                 (JsonString code)
-                (JsonMemberListCons
+                (lsp-json-member
                   "message"
                   (JsonString message)
                   JsonMemberListNil)))))))))
@@ -546,24 +558,24 @@
 
 (define (lsp-publish-diagnostics [uri : String] [diagnostics : JsonList]) : unit
   (lsp-write-json
-    (JsonObject
+    (lsp-json-object
       (lsp-json-rpc-member
-        (JsonMemberListCons
+        (lsp-json-member
           "method"
           (JsonString "textDocument/publishDiagnostics")
-          (JsonMemberListCons
+          (lsp-json-member
             "params"
             (lsp-json-object2
               "uri"
               (JsonString uri)
               "diagnostics"
-              (JsonArray diagnostics))
+              (lsp-json-array diagnostics))
             JsonMemberListNil))))))
 
 (define (lsp-publish-uri-diagnostic [uri : String] [message : String]) : unit
   (lsp-publish-diagnostics
     uri
-    (JsonListCons (lsp-diagnostic 1 1 message) JsonListNil)))
+    (lsp-json-list-cons (lsp-diagnostic 1 1 message) JsonListNil)))
 
 (define (lsp-clear-stale-diagnostic
   [docs : LspDocumentList]
@@ -611,7 +623,7 @@
             (lsp-publish-diagnostics uri JsonListNil))
           (lsp-publish-diagnostics
             diag-uri
-            (JsonListCons (lsp-compiler-diagnostic diag) JsonListNil))
+            (lsp-json-list-cons (lsp-compiler-diagnostic diag) JsonListNil))
           diag-uri))]))
 
 (define (lsp-first-change-text [params : Json]) : LspJsonText
@@ -621,7 +633,7 @@
       [(JsonFound value)
         (match value
           [(JsonArray items)
-            (match items
+            (match (box-get items)
               [(JsonListNil) MissingLspJsonText]
               [(JsonListCons first _) (lsp-json-string-field first "text")])]
           [_ MissingLspJsonText])]

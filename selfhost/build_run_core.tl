@@ -176,7 +176,9 @@
   (match items
     [(ProcessStringNil) false]
     [(ProcessStringCons head rest)
-      (or (string-eq head value) (source-tool-string-list-contains? rest value))]))
+      (or
+        (string-eq head value)
+        (source-tool-string-list-contains? (box-get rest) value))]))
 
 (define (source-tool-args-append-unique
   [items : ProcessStringList]
@@ -193,7 +195,7 @@
     [(ProcessStringCons head rest)
       (source-tool-string-list-merge-unique
         (source-tool-args-append-unique left head)
-        rest)]))
+        (box-get rest))]))
 
 (define (source-tool-string-list-eq?
   [left : ProcessStringList]
@@ -208,7 +210,9 @@
         [(ProcessStringCons right-head right-rest)
           (and
             (string-eq left-head right-head)
-            (source-tool-string-list-eq? left-rest right-rest))]
+            (source-tool-string-list-eq?
+              (box-get left-rest)
+              (box-get right-rest)))]
         [_ false])]))
 
 (define (source-tool-link-inputs-merge
@@ -438,7 +442,7 @@
               (not (string-eq exe-candidate candidate))
               (source-tool-path-command-exists? exe-candidate))
               exe-candidate
-              (source-tool-find-command-on-path tool rest)))))]))
+              (source-tool-find-command-on-path tool (box-get rest))))))]))
 
 (define (source-tool-resolve-command [tool : String]) : String
   (if (source-tool-has-path-separator? tool)
@@ -724,7 +728,7 @@ _tl_print_string:
         [text : String head]
         (or
           (process-string-contains-char? (& text) #\space')
-          (source-tool-windows-args-contain-space? rest)))]))
+          (source-tool-windows-args-contain-space? (box-get rest))))]))
 
 (define (source-tool-windows-command-needs-cmd? [command : ProcessCommand]) : bool
   (let
@@ -744,7 +748,7 @@ _tl_print_string:
         " "
         (string-append
           (source-tool-windows-cmd-quote head)
-          (source-tool-windows-cmd-args rest)))]))
+          (source-tool-windows-cmd-args (box-get rest))))]))
 
 (define (source-tool-windows-cmd-line [command : ProcessCommand]) : String
   (string-append
@@ -796,7 +800,7 @@ _tl_print_string:
     [(ProcessStringCons dir rest)
       (process-args-cons
         (string-append "-L" dir)
-        (source-tool-linux-link-search-args rest))]))
+        (source-tool-linux-link-search-args (box-get rest)))]))
 
 (define (source-tool-linux-link-lib-args [libs : ProcessStringList]) : ProcessStringList
   (match libs
@@ -804,7 +808,7 @@ _tl_print_string:
     [(ProcessStringCons name rest)
       (process-args-cons
         (string-append "-l" name)
-        (source-tool-linux-link-lib-args rest))]))
+        (source-tool-linux-link-lib-args (box-get rest)))]))
 
 (define (source-tool-link-inputs-linux-args [inputs : SourceToolLinkInputs]) : ProcessStringList
   (process-args-append
@@ -867,7 +871,7 @@ _tl_print_string:
     [(ProcessStringCons dir rest)
       (process-args-cons
         (string-append "/LIBPATH:" dir)
-        (source-tool-windows-link-search-args rest))]))
+        (source-tool-windows-link-search-args (box-get rest)))]))
 
 (define (source-tool-windows-link-lib-args [libs : ProcessStringList]) : ProcessStringList
   (match libs
@@ -875,7 +879,7 @@ _tl_print_string:
     [(ProcessStringCons name rest)
       (process-args-cons
         (string-append name ".lib")
-        (source-tool-windows-link-lib-args rest))]))
+        (source-tool-windows-link-lib-args (box-get rest)))]))
 
 (define (source-tool-link-inputs-windows-args [inputs : SourceToolLinkInputs]) : ProcessStringList
   (process-args-append

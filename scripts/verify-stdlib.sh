@@ -55,6 +55,57 @@ case "$(uname -s)" in
         ;;
 esac
 
+. "$ROOT/scripts/lib-native-link.sh"
+native_link_detect_host
+STDLIB_NATIVE_LINK_CONFIGURED=0
+STDLIB_ORIGINAL_LIB_SET=0
+STDLIB_ORIGINAL_INCLUDE_SET=0
+STDLIB_ORIGINAL_LIB=
+STDLIB_ORIGINAL_INCLUDE=
+if [ "${LIB+x}" = x ]; then
+    STDLIB_ORIGINAL_LIB_SET=1
+    STDLIB_ORIGINAL_LIB=$LIB
+fi
+if [ "${INCLUDE+x}" = x ]; then
+    STDLIB_ORIGINAL_INCLUDE_SET=1
+    STDLIB_ORIGINAL_INCLUDE=$INCLUDE
+fi
+
+stdlib_configure_native_link() {
+    if [ "$STDLIB_NATIVE_LINK_CONFIGURED" -eq 0 ]; then
+        configure_toolchain
+        STDLIB_NATIVE_LINK_CONFIGURED=1
+    fi
+}
+
+stdlib_restore_fixture_tool_env() {
+    if [ "$HOST_OS" = windows ]; then
+        if [ "$STDLIB_ORIGINAL_LIB_SET" -eq 1 ]; then
+            LIB=$STDLIB_ORIGINAL_LIB
+            export LIB
+        else
+            unset LIB
+        fi
+        if [ "$STDLIB_ORIGINAL_INCLUDE_SET" -eq 1 ]; then
+            INCLUDE=$STDLIB_ORIGINAL_INCLUDE
+            export INCLUDE
+        else
+            unset INCLUDE
+        fi
+    fi
+}
+
+stdlib_run_fixture_binary() {
+    _bin=$1
+    _stdin=$2
+    _stdout=$3
+    _stderr=$4
+    (
+        stdlib_restore_fixture_tool_env
+        "$_bin" < "$_stdin" > "$_stdout" 2> "$_stderr"
+    )
+}
+
 if [ -n "${TYPELISP_BIN:-}" ]; then
     COMPILER=$TYPELISP_BIN
 else
@@ -88,26 +139,17 @@ stdlib_build_fixture() {
     _stem=$2
     build_status=0
     : > "$_stem.build.err"
+    stdlib_configure_native_link
     set +e
-    if [ "$HOST_OS" = windows ]; then
-        "$COMPILER" build "$_src" --stdlib-root "$ROOT/stdlib" -o "$_stem.exe" \
-            > "$_stem.build.out" 2> "$_stem.build.err"
+    "$COMPILER" compile "$_src" --target "$NL_BOOTSTRAP_TARGET" \
+        $(native_target_cfg_args) \
+        --stdlib-root "$ROOT/stdlib" -o "$_stem.s" \
+        > "$_stem.build.out" 2> "$_stem.build.err"
+    build_status=$?
+    if [ "$build_status" -eq 0 ]; then
+        assemble_and_link "$_src" "$_stem.s" "$_stem.$NL_OBJ_EXT" "$_stem$NL_BIN_EXT" \
+            >> "$_stem.build.out" 2>> "$_stem.build.err"
         build_status=$?
-    else
-        "$COMPILER" compile "$_src" --target linux-x86_64 \
-            --cfg linux --cfg unix --cfg target-linux --cfg os-linux \
-            --stdlib-root "$ROOT/stdlib" -o "$_stem.s" \
-            > "$_stem.build.out" 2> "$_stem.build.err"
-        build_status=$?
-        if [ "$build_status" -eq 0 ]; then
-            as "$_stem.s" -o "$_stem.o" >> "$_stem.build.out" 2>> "$_stem.build.err"
-            build_status=$?
-        fi
-        if [ "$build_status" -eq 0 ]; then
-            ld "$_stem.o" -o "$_stem" -dynamic-linker /lib64/ld-linux-x86-64.so.2 -lc \
-                >> "$_stem.build.out" 2>> "$_stem.build.err"
-            build_status=$?
-        fi
     fi
     set -e
 }
@@ -122,13 +164,8 @@ stdlib_build_run() {
     stdlib_build_fixture "$_src" "$_stem"
     if [ "$build_status" -eq 0 ]; then
         set +e
-        if [ "$HOST_OS" = windows ]; then
-            "$_stem.exe" < "$_stdin" > "$_stem.stdout" 2> "$_stem.stderr"
-            got=$?
-        else
-            "$_stem" < "$_stdin" > "$_stem.stdout" 2> "$_stem.stderr"
-            got=$?
-        fi
+        stdlib_run_fixture_binary "$_stem$NL_BIN_EXT" "$_stdin" "$_stem.stdout" "$_stem.stderr"
+        got=$?
         set -e
     fi
 }
@@ -141,10 +178,12 @@ stdlib_runtime_gap_applies() {
 
 should_skip_staged() {
     _symbols=$1
-    _stderr=$2
+    shift
     [ -n "$_symbols" ] || return 1
     for _symbol in $(printf '%s\n' "$_symbols" | tr ',' ' '); do
-        grep -qF "$_symbol" "$_stderr" && return 0
+        for _stream in "$@"; do
+            grep -qF "$_symbol" "$_stream" && return 0
+        done
     done
     return 1
 }
@@ -517,7 +556,7 @@ while IFS='|' read -r fixture want stdout_spec stderr_spec stdin_spec extra; do
     stdlib_build_run "$copied" "$stem" "$stdin"
 
     if [ "$build_status" -ne 0 ]; then
-        if should_skip_staged "$requires_symbol" "$stem.build.err"; then
+        if should_skip_staged "$requires_symbol" "$stem.build.err" "$stem.build.out"; then
             echo "[stdlib] SKIP $fixture (awaiting no-Rust compiler support for '$requires_symbol')"
             skipped=$((skipped + 1))
             continue
@@ -567,15 +606,12 @@ if [ "$BORROWED_STR_ONLY" -eq 0 ]; then
     fi
 
     set +e
-    if [ "$HOST_OS" = windows ]; then
-        dd if=/dev/zero bs=4096 count=512 2>/dev/null |
-            tr '\000' x |
-            "$stem.exe" > "$stdout" 2> "$stderr"
-    else
-        dd if=/dev/zero bs=4096 count=512 2>/dev/null |
-            tr '\000' x |
-            "$stem" > "$stdout" 2> "$stderr"
-    fi
+    dd if=/dev/zero bs=4096 count=512 2>/dev/null |
+        tr '\000' x |
+        (
+            stdlib_restore_fixture_tool_env
+            "$stem$NL_BIN_EXT" > "$stdout" 2> "$stderr"
+        )
     got=$?
     set -e
 

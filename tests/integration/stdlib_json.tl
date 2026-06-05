@@ -17,7 +17,7 @@
     (match (json-object-get doc (& key))
       [(JsonFound value)
         (match value
-          [(JsonArray items) (= (json-list-count items) 5)]
+          [(JsonArray items) (= (json-list-count (box-get items)) 5)]
           [_ false])]
       [(JsonMissing) false])))
 

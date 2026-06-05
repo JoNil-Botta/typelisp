@@ -84,7 +84,7 @@
 ;: Immutable list of strings used for PATH-style environment variables.
 (defenum EnvStringList
   (EnvStringNil)
-  (EnvStringCons String EnvStringList))
+  (EnvStringCons String (Box EnvStringList)))
 
 ;: Optional PATH-style list result. Missing variables use `EnvNoStringList`;
 ;: present empty variables use `EnvSomeStringList EnvStringNil`.
@@ -98,7 +98,7 @@
 
 ;: Prepend an owned string to an environment string list.
 (define (env-string-list-cons [value : String] [rest : EnvStringList]) : EnvStringList
-  (EnvStringCons value rest))
+  (EnvStringCons value (box rest)))
 
 ;: Reverse `items` onto `acc`, allocating a fresh active-arena list spine.
 (define (env-string-list-reverse-onto
@@ -107,7 +107,9 @@
   (match items
     [(EnvStringNil) acc]
     [(EnvStringCons head rest)
-      (env-string-list-reverse-onto rest (EnvStringCons head acc))]))
+      (env-string-list-reverse-onto
+        (box-get rest)
+        (EnvStringCons head (box acc)))]))
 
 ;: Return `items` in reverse order.
 (define (env-string-list-reverse [items : EnvStringList]) : EnvStringList
@@ -145,12 +147,14 @@
               (begin
                 (set!
                   items
-                  (EnvStringCons (substring value start (- i start)) items))
+                  (EnvStringCons
+                    (substring value start (- i start))
+                    (box items)))
                 (set! start (+ i 1))
                 (set! i (+ i 1)))
               (set! i (+ i 1))))
           (env-string-list-reverse
-            (EnvStringCons (substring value start (- n start)) items)))))))
+            (EnvStringCons (substring value start (- n start)) (box items))))))))
 
 ;: Split a PATH-style string using the current platform separator.
 (define (env-path-split [value : (& value str)]) : EnvStringList
@@ -174,7 +178,7 @@
     [(EnvStringCons head rest)
       (env-path-join-tail
         (string-append (string-append acc separator) head)
-        rest
+        (box-get rest)
         separator)]))
 
 ;: Join PATH-style items using the supplied separator.
@@ -183,7 +187,8 @@
   [separator : (& separator str)]) : String
   (match items
     [(EnvStringNil) ""]
-    [(EnvStringCons head rest) (env-path-join-tail head rest separator)]))
+    [(EnvStringCons head rest)
+      (env-path-join-tail head (box-get rest) separator)]))
 
 ;: Join PATH-style items using the current platform separator.
 (define (env-path-join [items : EnvStringList]) : String

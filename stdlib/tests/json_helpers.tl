@@ -24,6 +24,21 @@
     [(JsonMissing) unit]
     [(JsonFound _) (panic message)]))
 
+(define (test-json-list-cons [value : Json] [rest : JsonList]) : JsonList
+  (JsonListCons value (box rest)))
+
+(define (test-json-member-cons
+  [key : String]
+  [value : Json]
+  [rest : JsonMemberList]) : JsonMemberList
+  (JsonMemberListCons key value (box rest)))
+
+(define (test-json-array [items : JsonList]) : Json
+  (JsonArray (box items)))
+
+(define (test-json-object [members : JsonMemberList]) : Json
+  (JsonObject (box members)))
+
 (define (assert-parse-string
   [result : JsonParseStringResult]
   [expected : String]
@@ -97,7 +112,10 @@
       (match value
         [(JsonArray items)
           (begin
-            (assert-i64-eq (json-list-count items) expected-count message)
+            (assert-i64-eq
+              (json-list-count (box-get items))
+              expected-count
+              message)
             (assert-i64-eq pos next message))]
         [_ (panic message)])]
     [(ErrJsonParseValue _) (panic message)]))
@@ -113,7 +131,7 @@
         [(JsonObject members)
           (begin
             (assert-i64-eq
-              (json-member-list-count members)
+              (json-member-list-count (box-get members))
               expected-count
               message)
             (assert-i64-eq pos next message))]
@@ -203,51 +221,54 @@
       "json-string-prefix-at? false")
     (assert-i64-eq
       (json-list-count
-        (JsonListCons JsonNull (JsonListCons (JsonBool true) JsonListNil)))
+        (test-json-list-cons
+          JsonNull
+          (test-json-list-cons (JsonBool true) JsonListNil)))
       2
       "json-list-count")
     (assert-owned-string-eq
       (json-stringify-list
         (json-list-reverse
-          (JsonListCons
+          (test-json-list-cons
             (JsonNumber "2")
-            (JsonListCons (JsonNumber "1") JsonListNil))))
+            (test-json-list-cons (JsonNumber "1") JsonListNil))))
       "1,2"
       "json-list-reverse")
     (assert-i64-eq
       (json-member-list-count
-        (JsonMemberListCons
+        (test-json-member-cons
           "a"
           JsonNull
-          (JsonMemberListCons "b" (JsonBool true) JsonMemberListNil)))
+          (test-json-member-cons "b" (JsonBool true) JsonMemberListNil)))
       2
       "json-member-list-count")
     (assert-json-found-number
       (json-test-member-list-get
-        (JsonMemberListCons
+        (test-json-member-cons
           "a"
           (JsonNumber "1")
-          (JsonMemberListCons "b" (JsonNumber "2") JsonMemberListNil))
+          (test-json-member-cons "b" (JsonNumber "2") JsonMemberListNil))
         "b")
       "2"
       "json-member-list-get")
     (assert-json-missing
       (json-test-member-list-get
-        (JsonMemberListCons "a" (JsonNumber "1") JsonMemberListNil)
+        (test-json-member-cons "a" (JsonNumber "1") JsonMemberListNil)
         "z")
       "json-member-list-get missing")
     (assert-owned-string-eq
       (json-stringify-members
         (json-member-list-reverse
-          (JsonMemberListCons
+          (test-json-member-cons
             "b"
             (JsonBool true)
-            (JsonMemberListCons "a" JsonNull JsonMemberListNil))))
+            (test-json-member-cons "a" JsonNull JsonMemberListNil))))
       "\"a\":null,\"b\":true"
       "json-member-list-reverse")
     (assert-json-found-number
       (json-test-object-get
-        (JsonObject (JsonMemberListCons "n" (JsonNumber "7") JsonMemberListNil))
+        (test-json-object
+          (test-json-member-cons "n" (JsonNumber "7") JsonMemberListNil))
         "n")
       "7"
       "json-object-get")
@@ -280,8 +301,10 @@
       "json-escape-string")
     (assert-owned-string-eq
       (json-stringify
-        (JsonArray
-          (JsonListCons (JsonNumber "1") (JsonListCons JsonNull JsonListNil))))
+        (test-json-array
+          (test-json-list-cons
+            (JsonNumber "1")
+            (test-json-list-cons JsonNull JsonListNil))))
       "[1,null]"
       "json-stringify array")
     (assert-codepoint (json-codepoint-string 65) "A" "json-codepoint-string")

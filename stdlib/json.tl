@@ -25,18 +25,18 @@
   (JsonBool bool)
   (JsonNumber String)
   (JsonString String)
-  (JsonArray JsonList)
-  (JsonObject JsonMemberList))
+  (JsonArray (Box JsonList))
+  (JsonObject (Box JsonMemberList)))
 
 ;: Immutable list of JSON array elements in source order.
 (defenum JsonList
   (JsonListNil)
-  (JsonListCons Json JsonList))
+  (JsonListCons Json (Box JsonList)))
 
 ;: Immutable list of JSON object members in source order.
 (defenum JsonMemberList
   (JsonMemberListNil)
-  (JsonMemberListCons String Json JsonMemberList))
+  (JsonMemberListCons String Json (Box JsonMemberList)))
 
 ;: Recoverable top-level parse result.
 (defenum JsonParseResult
@@ -150,7 +150,7 @@
   (match items
     [(JsonListNil) acc]
     [(JsonListCons head rest)
-      (json-list-reverse-onto rest (JsonListCons head acc))]))
+      (json-list-reverse-onto (box-get rest) (JsonListCons head (box acc)))]))
 
 ;: Return `items` in reverse order.
 (define (json-list-reverse [items : JsonList]) : JsonList
@@ -163,7 +163,9 @@
   (match items
     [(JsonMemberListNil) acc]
     [(JsonMemberListCons key value rest)
-      (json-member-list-reverse-onto rest (JsonMemberListCons key value acc))]))
+      (json-member-list-reverse-onto
+        (box-get rest)
+        (JsonMemberListCons key value (box acc)))]))
 
 ;: Return object `items` in reverse order.
 (define (json-member-list-reverse [items : JsonMemberList]) : JsonMemberList
@@ -173,13 +175,14 @@
 (define (json-list-count [items : JsonList]) : i64
   (match items
     [(JsonListNil) 0]
-    [(JsonListCons _ rest) (+ 1 (json-list-count rest))]))
+    [(JsonListCons _ rest) (+ 1 (json-list-count (box-get rest)))]))
 
 ;: Return the number of key/value entries in a JSON object member list.
 (define (json-member-list-count [items : JsonMemberList]) : i64
   (match items
     [(JsonMemberListNil) 0]
-    [(JsonMemberListCons _ _ rest) (+ 1 (json-member-list-count rest))]))
+    [(JsonMemberListCons _ _ rest)
+      (+ 1 (json-member-list-count (box-get rest)))]))
 
 ;: Look up borrowed `key` in an object member list.
 (define (json-member-list-get [items : JsonMemberList] [key : (& key str)]) : JsonLookup
@@ -188,7 +191,7 @@
     [(JsonMemberListCons item-key value rest)
       (if (string-eq item-key key)
         (JsonFound value)
-        (json-member-list-get rest key))]))
+        (json-member-list-get (box-get rest) key))]))
 
 ;: Look up borrowed `key` in `value` when it is a JSON object.
 ;:
@@ -200,12 +203,17 @@
 ;:   (let
 ;:     [key : String "name"]
 ;:     (json-object-get
-;:       (JsonObject (JsonMemberListCons "name" (JsonString "tl") JsonMemberListNil))
+;:       (JsonObject
+;:         (box
+;:           (JsonMemberListCons
+;:             "name"
+;:             (JsonString "tl")
+;:             (box JsonMemberListNil))))
 ;:       (& key))))
 ;: ```
 (define (json-object-get [value : Json] [key : (& key str)]) : JsonLookup
   (match value
-    [(JsonObject members) (json-member-list-get members key)]
+    [(JsonObject members) (json-member-list-get (box-get members) key)]
     [_ JsonMissing]))
 
 ;: Decode a hexadecimal digit char, or return -1 when it is not a hex digit.
@@ -296,10 +304,12 @@
     [(JsonListCons head rest)
       (let
         [with-head : TextBuf (text-buf-append buf (json-stringify head))]
-        (match rest
+        (match (box-get rest)
           [(JsonListNil) with-head]
           [(JsonListCons _ _)
-            (json-stringify-list-into rest (text-buf-append with-head ","))]))]))
+            (json-stringify-list-into
+              (box-get rest)
+              (text-buf-append with-head ","))]))]))
 
 ;: Serialize array `items` without the surrounding brackets.
 ;:
@@ -322,10 +332,12 @@
                 (json-escape-string (& text)))
               "\":")
             (json-stringify value))]
-        (match rest
+        (match (box-get rest)
           [(JsonMemberListNil) with-item]
           [(JsonMemberListCons _ _ _)
-            (json-stringify-members-into rest (text-buf-append with-item ","))]))]))
+            (json-stringify-members-into
+              (box-get rest)
+              (text-buf-append with-item ","))]))]))
 
 ;: Serialize object `items` without the surrounding braces.
 ;:
@@ -340,7 +352,8 @@
 ;: ```typelisp
 ;: (import "stdlib/json.tl")
 ;: (define encoded : String
-;:   (json-stringify (JsonArray (JsonListCons (JsonBool true) JsonListNil))))
+;:   (json-stringify
+;:     (JsonArray (box (JsonListCons (JsonBool true) (box JsonListNil))))))
 ;: ```
 (define (json-stringify [value : Json]) : String
   (match value
@@ -351,8 +364,10 @@
         "false")]
     [(JsonNumber text) text]
     [(JsonString text) (json-cat3 "\"" (json-escape-string (& text)) "\"")]
-    [(JsonArray items) (json-cat3 "[" (json-stringify-list items) "]")]
-    [(JsonObject members) (json-cat3 "{" (json-stringify-members members) "}")]))
+    [(JsonArray items)
+      (json-cat3 "[" (json-stringify-list (box-get items)) "]")]
+    [(JsonObject members)
+      (json-cat3 "{" (json-stringify-members (box-get members)) "}")]))
 
 ;: Convert a supported Unicode scalar codepoint into a TypeLisp String.
 ;:
@@ -588,7 +603,7 @@
         (match (json-parse-value text i)
           [(OkJsonParseValue value next)
             (begin
-              (set! items (JsonListCons value items))
+              (set! items (JsonListCons value (box items)))
               (set! i (json-skip-ws text next))
               (if (json-char-code-eq-at text i 93)
                 (begin
@@ -604,7 +619,7 @@
               (set! ok false)
               (set! message err))]))
       (if ok
-        (OkJsonParseValue (JsonArray (json-list-reverse items)) i)
+        (OkJsonParseValue (JsonArray (box (json-list-reverse items))) i)
         (ErrJsonParseValue message)))))
 
 ;: Parse a JSON object starting at `pos`, including the opening brace.
@@ -632,7 +647,9 @@
                 (match (json-parse-value text (+ colon-pos 1))
                   [(OkJsonParseValue value next)
                     (begin
-                      (set! members (JsonMemberListCons key value members))
+                      (set!
+                        members
+                        (JsonMemberListCons key value (box members)))
                       (set! i (json-skip-ws text next))
                       (if (json-char-code-eq-at text i 125)
                         (begin
@@ -655,7 +672,9 @@
               (set! ok false)
               (set! message err))]))
       (if ok
-        (OkJsonParseValue (JsonObject (json-member-list-reverse members)) i)
+        (OkJsonParseValue
+          (JsonObject (box (json-member-list-reverse members)))
+          i)
         (ErrJsonParseValue message)))))
 
 ;: Parse one JSON value from `text` at `pos`, after skipping whitespace.

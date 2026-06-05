@@ -16,7 +16,7 @@
 ;: Immutable list of SetupConfiguration package/component identifiers.
 (defenum WindowsSetupStringList
   (WindowsSetupStringNil)
-  (WindowsSetupStringCons String WindowsSetupStringList))
+  (WindowsSetupStringCons String (Box WindowsSetupStringList)))
 
 ;: Visual Studio / Build Tools instance metadata returned by setup discovery.
 (defstruct WindowsSetupInstance
@@ -29,7 +29,7 @@
 ;: Immutable list of Visual Studio / Build Tools instances.
 (defenum WindowsSetupInstanceList
   (WindowsSetupInstanceNil)
-  (WindowsSetupInstanceCons WindowsSetupInstance WindowsSetupInstanceList))
+  (WindowsSetupInstanceCons WindowsSetupInstance (Box WindowsSetupInstanceList)))
 
 ;: Structured setup discovery failures.
 (defenum WindowsSetupError
@@ -59,14 +59,14 @@
 (define (windows-setup-string-list-cons
   [value : (& value str)]
   [rest : WindowsSetupStringList]) : WindowsSetupStringList
-  (WindowsSetupStringCons (windows-setup-copy-string value) rest))
+  (WindowsSetupStringCons (windows-setup-copy-string value) (box rest)))
 
 ;: Return the number of strings in `items`.
 (define (windows-setup-string-list-count [items : WindowsSetupStringList]) : i64
   (match items
     [(WindowsSetupStringNil) 0]
     [(WindowsSetupStringCons _ rest)
-      (+ 1 (windows-setup-string-list-count rest))]))
+      (+ 1 (windows-setup-string-list-count (box-get rest)))]))
 
 ;: Return true when `items` contains `value`.
 (define (windows-setup-string-list-contains?
@@ -77,7 +77,7 @@
     [(WindowsSetupStringCons head rest)
       (if (string-eq head package-id)
         true
-        (windows-setup-string-list-contains? rest package-id))]))
+        (windows-setup-string-list-contains? (box-get rest) package-id))]))
 
 ;: Return an empty Visual Studio instance list.
 (define (windows-setup-instance-list-empty) : WindowsSetupInstanceList
@@ -87,7 +87,7 @@
 (define (windows-setup-instance-list-cons
   [instance : WindowsSetupInstance]
   [rest : WindowsSetupInstanceList]) : WindowsSetupInstanceList
-  (WindowsSetupInstanceCons instance rest))
+  (WindowsSetupInstanceCons instance (box rest)))
 
 ;: Return the number of instances in `instances`.
 (define (windows-setup-instance-list-count
@@ -95,7 +95,7 @@
   (match instances
     [(WindowsSetupInstanceNil) 0]
     [(WindowsSetupInstanceCons _ rest)
-      (+ 1 (windows-setup-instance-list-count rest))]))
+      (+ 1 (windows-setup-instance-list-count (box-get rest)))]))
 
 ;: Return an instance's installation path.
 (define (windows-setup-instance-installation-path

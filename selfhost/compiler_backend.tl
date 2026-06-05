@@ -15783,6 +15783,7 @@ tl_process_output:
     jne .L_tl_process_count_argv_done
     incq %r13
     movq 16(%r14), %r14
+    movq 0(%r14), %r14
     jmp .L_tl_process_count_argv
 .L_tl_process_count_argv_done:
     movq %r13, %rcx
@@ -15811,6 +15812,7 @@ tl_process_output:
     movq %rax, (%r14,%r15,8)
     incq %r15
     movq 16(%r13), %r13
+    movq 0(%r13), %r13
     jmp .L_tl_process_fill_argv
 .L_tl_process_fill_argv_done:
     movq $0, (%r14,%r15,8)
@@ -16297,6 +16299,7 @@ tl_process_output:
     jmp .L_tl_process_win_env_match_return
 .L_tl_process_win_env_match_next:
     movq 24(%r12), %r12
+    movq 0(%r12), %r12
     jmp .L_tl_process_win_env_match_loop
 .L_tl_process_win_env_match_false:
     xorq %rax, %rax
@@ -16395,6 +16398,7 @@ tl_process_output:
     jne .L_tl_process_win_envp_alloc
     incq %r14
     movq 24(%r15), %r15
+    movq 0(%r15), %r15
     jmp .L_tl_process_win_envp_count_ov
 .L_tl_process_win_envp_alloc:
     movq %r13, %rcx
@@ -16433,6 +16437,7 @@ tl_process_output:
     movq %rax, (%r15,%r14,8)
     incq %r14
     movq 24(%rbx), %rbx
+    movq 0(%rbx), %rbx
     jmp .L_tl_process_win_envp_copy_ov
 .L_tl_process_win_envp_done:
     movq $0, (%r15,%r14,8)
@@ -16616,6 +16621,7 @@ tl_process_output:
     je .L_tl_process_count_args_done
     incq %r13
     movq 16(%r12), %r12
+    movq 0(%r12), %r12
     jmp .L_tl_process_count_args
 .L_tl_process_count_args_done:
     movq %r13, -24(%rbp)
@@ -16637,6 +16643,7 @@ tl_process_output:
     movq %rax, (%r14,%r15,8)
     incq %r15
     movq 16(%r12), %r12
+    movq 0(%r12), %r12
     jmp .L_tl_process_fill_argv
 .L_tl_process_fill_argv_done:
     movq $0, (%r14,%r15,8)
@@ -16987,6 +16994,7 @@ tl_process_output:
     jmp .L_tl_process_env_match_return
 .L_tl_process_env_match_next:
     movq 24(%r12), %r12
+    movq 0(%r12), %r12
     jmp .L_tl_process_env_match_loop
 .L_tl_process_env_match_false:
     xorq %rax, %rax
@@ -17087,6 +17095,7 @@ tl_process_output:
     jne .L_tl_process_envp_alloc
     incq %r14
     movq 24(%r15), %r15
+    movq 0(%r15), %r15
     jmp .L_tl_process_envp_count_ov
 .L_tl_process_envp_alloc:
     movq %r13, %rdi
@@ -17122,6 +17131,7 @@ tl_process_output:
     movq %rax, (%r15,%r14,8)
     incq %r14
     movq 24(%rbx), %rbx
+    movq 0(%rbx), %rbx
     jmp .L_tl_process_envp_copy_ov
 .L_tl_process_envp_done:
     movq $0, (%r15,%r14,8)

@@ -27,9 +27,12 @@
         (match value
           [(JsonArray items)
             (begin
-              (assert-i64-eq (json-list-count items) 5 "json array count")
+              (assert-i64-eq
+                (json-list-count (box-get items))
+                5
+                "json array count")
               (assert-owned-string-eq
-                (json-stringify-list items)
+                (json-stringify-list (box-get items))
                 "1,-2.5e3,true,false,null"
                 "json array stringify"))]
           [_ (panic "json array lookup")])]
@@ -44,12 +47,12 @@
           [(JsonObject members)
             (begin
               (assert-i64-eq
-                (json-member-list-count members)
+                (json-member-list-count (box-get members))
                 2
                 "json nested object count")
               (let
                 [key : String "ok"]
-                (match (json-member-list-get members (& key))
+                (match (json-member-list-get (box-get members) (& key))
                   [(JsonFound ok-value)
                     (match ok-value
                       [(JsonBool ok) (assert-true ok "json nested bool")]

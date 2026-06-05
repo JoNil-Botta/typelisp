@@ -863,7 +863,7 @@
     [(TextBufChunkCons chunk rest)
       (let
         [tail-status : i64
-          (compiler-driver-write-text-buf-chunks output-path rest)]
+          (compiler-driver-write-text-buf-chunks output-path (box-get rest))]
         (if (= tail-status 0)
           (compiler-driver-append-output-chunk output-path chunk)
           tail-status))]))

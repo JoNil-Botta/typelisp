@@ -8247,7 +8247,7 @@
         [(TcInlineFieldLayout name _ offset)
           (CtfeLayoutFieldCons
             (CtfeLayoutField name offset)
-            (tc-ctfe-inline-layout-fields rest))])]))
+            (box (tc-ctfe-inline-layout-fields rest)))])]))
 
 (define (tc-ctfe-inline-aggregate-layout-info
   [name : String]
@@ -12227,7 +12227,7 @@
             (if variadic
               (match (macro-check-variadic-operands ctx type-env pty args)
                 [(OkMacroCheck)
-                  (OkMacroEnv (CtfeEnvCons pname (CtfeExprList args) env))]
+                  (OkMacroEnv (CtfeEnvCons pname (CtfeExprList args) (box env)))]
                 [(ErrMacroCheck diag) (ErrMacroEnv diag)])
               (match args
                 [(AstExprNil)
@@ -12248,7 +12248,7 @@
                           (CtfeEnvCons
                             pname
                             (CtfeExpr arg (tc-resolve-type ctx pty))
-                            env)
+                            (box env))
                           call-expr)]
                       [(ErrMacroCheck diag) (ErrMacroEnv diag)]))]))]))]))
 

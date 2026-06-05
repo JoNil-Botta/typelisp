@@ -225,7 +225,7 @@
 
 ;; Build the `(define (clone$Name [x : Name]) : Name <body>)` declaration.
 (define (clone-make-helper-decl [type-name : String] [body : AstExpr]) : AstDecl
-  (AstDeclDefFn
+  (ast-decl-def-fn
     (clone-helper-name type-name)
     (ast-param-cons (AstParam "x" (AstTyVar type-name) false) AstParamNil)
     (AstTyVar type-name)
@@ -368,7 +368,7 @@
   [fn-name : String]
   [type-name : String]
   [body : AstExpr]) : AstDecl
-  (AstDeclDefFn
+  (ast-decl-def-fn
     fn-name
     (ast-param-cons
       (AstParam "x" (AstTyVar type-name) false)
@@ -544,4 +544,7 @@
 
 (define (clone-augment-program [program : AstProgram]) : AstProgram
   (match program
-    [(AstProgram decls) (AstProgram (clone-augment-decls decls))]))
+    [(AstProgram decls-box)
+      (let
+        [decls : AstDeclList (box-get decls-box)]
+        (ast-program (clone-augment-decls decls)))]))

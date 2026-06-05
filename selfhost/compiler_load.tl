@@ -189,7 +189,7 @@
       (OkPkgResolve resolved))))
 
 (define (compiler-load-include-str-def [name : String] [contents : String]) : AstDecl
-  (AstDeclDef
+  (ast-decl-def
     name
     (AstSomeType (AstTyString))
     (AstExprLiteral (AstLitString contents))))
@@ -599,29 +599,31 @@
   [expected-module : AstMaybeModuleName]
   [cfgs : SymI64Env]) : ResultCompilerLoadWithPaths
   (match program
-    [(AstProgram decls)
-      (match (compiler-load-decls-module-id path decls)
-        [(OkCompilerLoadModuleId module-id)
-          (match (compiler-load-check-expected-module
-            path
-            expected-module
-            module-id)
-            [(OkCompilerLoadModuleId _)
-              (if (sym-i64-contains seen module-id)
-                (OkCompilerLoadWithPaths
-                  AstDeclNil
-                  AstDeclPathNil
-                  AstDeclModuleNil
-                  seen)
-                (compiler-load-decls-with-module-and-roots-cfg
-                  decls
-                  path
-                  module-id
-                  (sym-i64-bind seen module-id 1)
-                  stdlib-roots
-                  cfgs))]
-            [(ErrCompilerLoadModuleId diag) (ErrCompilerLoadWithPaths diag)])]
-        [(ErrCompilerLoadModuleId diag) (ErrCompilerLoadWithPaths diag)])]))
+    [(AstProgram decls-box)
+      (let
+        [decls : AstDeclList (box-get decls-box)]
+        (match (compiler-load-decls-module-id path decls)
+          [(OkCompilerLoadModuleId module-id)
+            (match (compiler-load-check-expected-module
+              path
+              expected-module
+              module-id)
+              [(OkCompilerLoadModuleId _)
+                (if (sym-i64-contains seen module-id)
+                  (OkCompilerLoadWithPaths
+                    AstDeclNil
+                    AstDeclPathNil
+                    AstDeclModuleNil
+                    seen)
+                  (compiler-load-decls-with-module-and-roots-cfg
+                    decls
+                    path
+                    module-id
+                    (sym-i64-bind seen module-id 1)
+                    stdlib-roots
+                    cfgs))]
+              [(ErrCompilerLoadModuleId diag) (ErrCompilerLoadWithPaths diag)])]
+          [(ErrCompilerLoadModuleId diag) (ErrCompilerLoadWithPaths diag)]))]))
 
 (define (compiler-load-program
   [path : String]
@@ -1018,24 +1020,28 @@
           ret))]
     [(AstDeclDefStruct _ _ _ _) (CompilerLoadSomeDecl decl)]
     [(AstDeclModule _) (CompilerLoadSomeDecl decl)]
-    [(AstDeclUnsafe inner)
-      (match (compiler-load-package-transform-decl
-        entry-path
-        decl-path
-        module
-        inner)
-        [(CompilerLoadSomeDecl transformed)
-          (CompilerLoadSomeDecl (AstDeclUnsafe transformed))]
-        [(CompilerLoadNoDecl) (CompilerLoadNoDecl)])]
-    [(AstDeclComptimeDecl template)
-      (match (compiler-load-package-transform-decl
-        entry-path
-        decl-path
-        module
-        template)
-        [(CompilerLoadSomeDecl transformed)
-          (CompilerLoadSomeDecl (AstDeclComptimeDecl transformed))]
-        [(CompilerLoadNoDecl) (CompilerLoadNoDecl)])]
+    [(AstDeclUnsafe inner-box)
+      (let
+        [inner : AstDecl (box-get inner-box)]
+        (match (compiler-load-package-transform-decl
+          entry-path
+          decl-path
+          module
+          inner)
+          [(CompilerLoadSomeDecl transformed)
+            (CompilerLoadSomeDecl (ast-decl-unsafe transformed))]
+          [(CompilerLoadNoDecl) (CompilerLoadNoDecl)]))]
+    [(AstDeclComptimeDecl template-box)
+      (let
+        [template : AstDecl (box-get template-box)]
+        (match (compiler-load-package-transform-decl
+          entry-path
+          decl-path
+          module
+          template)
+          [(CompilerLoadSomeDecl transformed)
+            (CompilerLoadSomeDecl (ast-decl-comptime-decl transformed))]
+          [(CompilerLoadNoDecl) (CompilerLoadNoDecl)]))]
     [_ (CompilerLoadNoDecl)]))
 
 (define (compiler-load-path-list-head-or
@@ -1319,31 +1325,33 @@
   [deps : CompilerPkgDepList]
   [cfgs : SymI64Env]) : ResultCompilerLoadWithPaths
   (match program
-    [(AstProgram decls)
-      (match (compiler-load-decls-module-id path decls)
-        [(OkCompilerLoadModuleId module-id)
-          (match (compiler-load-check-expected-module
-            path
-            expected-module
-            module-id)
-            [(OkCompilerLoadModuleId _)
-              (if (sym-i64-contains seen module-id)
-                (OkCompilerLoadWithPaths
-                  AstDeclNil
-                  AstDeclPathNil
-                  AstDeclModuleNil
-                  seen)
-                (compiler-load-package-decls-with-module-and-roots
-                  decls
-                  path
-                  module-id
-                  (sym-i64-bind seen module-id 1)
-                  stdlib-roots
-                  manifest-dir
-                  deps
-                  cfgs))]
-            [(ErrCompilerLoadModuleId diag) (ErrCompilerLoadWithPaths diag)])]
-        [(ErrCompilerLoadModuleId diag) (ErrCompilerLoadWithPaths diag)])]))
+    [(AstProgram decls-box)
+      (let
+        [decls : AstDeclList (box-get decls-box)]
+        (match (compiler-load-decls-module-id path decls)
+          [(OkCompilerLoadModuleId module-id)
+            (match (compiler-load-check-expected-module
+              path
+              expected-module
+              module-id)
+              [(OkCompilerLoadModuleId _)
+                (if (sym-i64-contains seen module-id)
+                  (OkCompilerLoadWithPaths
+                    AstDeclNil
+                    AstDeclPathNil
+                    AstDeclModuleNil
+                    seen)
+                  (compiler-load-package-decls-with-module-and-roots
+                    decls
+                    path
+                    module-id
+                    (sym-i64-bind seen module-id 1)
+                    stdlib-roots
+                    manifest-dir
+                    deps
+                    cfgs))]
+              [(ErrCompilerLoadModuleId diag) (ErrCompilerLoadWithPaths diag)])]
+          [(ErrCompilerLoadModuleId diag) (ErrCompilerLoadWithPaths diag)]))]))
 
 (define (compiler-load-package-file-with-paths-and-roots-expect
   [path : String]
@@ -1415,13 +1423,13 @@
   [name : String]
   [want : String]) : bool
   (match decls
-    [(AstDeclCons
-        (AstDeclDef
-          got
-          (AstSomeType (AstTyString))
-          (AstExprLiteral (AstLitString text)))
-        _)
-      (and (string-eq got name) (string-eq text want))]
+    [(AstDeclCons (AstDeclDef got (AstSomeType (AstTyString)) value-box) _)
+      (let
+        [value : AstExpr (box-get value-box)]
+        (match value
+          [(AstExprLiteral (AstLitString text))
+            (and (string-eq got name) (string-eq text want))]
+          [_ false]))]
     [_ false]))
 
 (define (compiler-load-decl-list-has-import-alias?

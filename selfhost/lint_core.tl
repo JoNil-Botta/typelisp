@@ -945,12 +945,30 @@
   [threshold : i64]
   [acc : LintFindingList]) : LintFindingList
   (match decl
-    [(AstDeclDef _ _ body) (lint-walk-expr body threshold acc)]
-    [(AstDeclDefFn _ _ _ body) (lint-walk-tail-expr body threshold acc)]
-    [(AstDeclDefMacro _ _ _ body) (lint-walk-tail-expr body threshold acc)]
-    [(AstDeclTest _ body _) (lint-walk-tail-expr body threshold acc)]
-    [(AstDeclUnsafe inner) (lint-walk-decl inner threshold acc)]
-    [(AstDeclComptimeDecl inner) (lint-walk-decl inner threshold acc)]
+    [(AstDeclDef _ _ body-box)
+      (let
+        [body : AstExpr (box-get body-box)]
+        (lint-walk-expr body threshold acc))]
+    [(AstDeclDefFn _ _ _ body-box)
+      (let
+        [body : AstExpr (box-get body-box)]
+        (lint-walk-tail-expr body threshold acc))]
+    [(AstDeclDefMacro _ _ _ body-box)
+      (let
+        [body : AstExpr (box-get body-box)]
+        (lint-walk-tail-expr body threshold acc))]
+    [(AstDeclTest _ body-box _)
+      (let
+        [body : AstExpr (box-get body-box)]
+        (lint-walk-tail-expr body threshold acc))]
+    [(AstDeclUnsafe inner-box)
+      (let
+        [inner : AstDecl (box-get inner-box)]
+        (lint-walk-decl inner threshold acc))]
+    [(AstDeclComptimeDecl inner-box)
+      (let
+        [inner : AstDecl (box-get inner-box)]
+        (lint-walk-decl inner threshold acc))]
     [(AstDeclModule _) acc]
     [(AstDeclExtern _ _ _) acc]
     [(AstDeclDefEnum _ _) acc]
@@ -974,7 +992,10 @@
 ;: Run all lint rules over `program`, returning the collected findings.
 (define (lint-program [program : AstProgram] [threshold : i64]) : LintFindingList
   (match program
-    [(AstProgram decls) (lint-walk-decl-list decls threshold (LintFindingNil))]))
+    [(AstProgram decls-box)
+      (let
+        [decls : AstDeclList (box-get decls-box)]
+        (lint-walk-decl-list decls threshold (LintFindingNil)))]))
 
 ;: Self-test: the nested-`if`-ladder rule and the AST walk.
 (define (compiler-lint-self-test) : i64

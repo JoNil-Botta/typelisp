@@ -21,6 +21,10 @@
 (defstruct CloneNameSet
   (map StringI64Map))
 
+(defenum CloneNameList
+  (CloneNameNil)
+  (CloneNameCons String CloneNameList))
+
 (define (clone-helper-name [type-name : String]) : String
   (string-append "clone$" type-name))
 
@@ -35,6 +39,14 @@
 
 (define (clone-name-set-contains? [names : CloneNameSet] [name : String]) : bool
   (string-i64-map-contains? (clone-name-set-map names) name))
+
+(define (clone-name-list-contains? [names : CloneNameList] [name : String]) : bool
+  (match names
+    [(CloneNameNil) false]
+    [(CloneNameCons head rest)
+      (if (string-eq head name)
+        true
+        (clone-name-list-contains? rest name))]))
 
 (define (clone-name-set-len [names : CloneNameSet]) : i64
   (string-i64-map-len (clone-name-set-map names)))
@@ -563,6 +575,135 @@
         [rest : AstDeclList (box-get rest)]
         (ast-decl-cons head (clone-decl-list-append rest right)))]))
 
+(define (clone-root-add-type-list
+  [decls : AstDeclList]
+  [able : CloneNameSet]
+  [roots : CloneNameList]
+  [types : AstTypeList]) : CloneNameList
+  (match types
+    [(AstTypeNil) roots]
+    [(AstTypeCons head rest)
+      (let
+        [rest : AstTypeList (box-get rest)]
+        (clone-root-add-type-list
+          decls
+          able
+          (clone-root-add-type decls able roots head)
+          rest))]))
+
+(define (clone-root-add-fields
+  [decls : AstDeclList]
+  [able : CloneNameSet]
+  [roots : CloneNameList]
+  [fields : AstFieldDefList]) : CloneNameList
+  (match fields
+    [(AstFieldDefNil) roots]
+    [(AstFieldDefCons field rest)
+      (let
+        [rest : AstFieldDefList (box-get rest)]
+        (match field
+          [(AstFieldDef _ ty _)
+            (clone-root-add-fields
+              decls
+              able
+              (clone-root-add-type decls able roots ty)
+              rest)]))]))
+
+(define (clone-root-add-variants
+  [decls : AstDeclList]
+  [able : CloneNameSet]
+  [roots : CloneNameList]
+  [variants : AstVariantDefList]) : CloneNameList
+  (match variants
+    [(AstVariantDefNil) roots]
+    [(AstVariantDefCons variant rest)
+      (let
+        [rest : AstVariantDefList (box-get rest)]
+        (match variant
+          [(AstVariantDef _ fields)
+            (clone-root-add-variants
+              decls
+              able
+              (clone-root-add-type-list decls able roots fields)
+              rest)]))]))
+
+(define (clone-root-add-name-deps
+  [decls : AstDeclList]
+  [cursor : AstDeclList]
+  [able : CloneNameSet]
+  [roots : CloneNameList]
+  [name : String]) : CloneNameList
+  (match cursor
+    [(AstDeclNil) roots]
+    [(AstDeclCons decl rest)
+      (let
+        [rest : AstDeclList (box-get rest)]
+        (match decl
+          [(AstDeclDefEnum decl-name variants)
+            (if (string-eq decl-name name)
+              (clone-root-add-variants decls able roots variants)
+              (clone-root-add-name-deps decls rest able roots name))]
+          [(AstDeclDefStruct decl-name _ _ fields)
+            (if (string-eq decl-name name)
+              (clone-root-add-fields decls able roots fields)
+              (clone-root-add-name-deps decls rest able roots name))]
+          [_ (clone-root-add-name-deps decls rest able roots name)]))]))
+
+(define (clone-root-add-name
+  [decls : AstDeclList]
+  [able : CloneNameSet]
+  [roots : CloneNameList]
+  [name : String]) : CloneNameList
+  (if (clone-name-set-contains? able name)
+    (if (clone-name-list-contains? roots name)
+      roots
+      (clone-root-add-name-deps
+        decls
+        decls
+        able
+        (CloneNameCons name roots)
+        name))
+    roots))
+
+(define (clone-root-add-type
+  [decls : AstDeclList]
+  [able : CloneNameSet]
+  [roots : CloneNameList]
+  [ty : AstType]) : CloneNameList
+  (match ty
+    [(AstTyTuple elems) (clone-root-add-type-list decls able roots elems)]
+    [(AstTyArray elem _) (clone-root-add-type decls able roots (box-get elem))]
+    [(AstTyDynArray elem) (clone-root-add-type decls able roots (box-get elem))]
+    [(AstTyBox elem) (clone-root-add-type decls able roots (box-get elem))]
+    [(AstTyRegion _ inner)
+      (clone-root-add-type decls able roots (box-get inner))]
+    [(AstTyVar name) (clone-root-add-name decls able roots name)]
+    [(AstTyEnum name) (clone-root-add-name decls able roots name)]
+    [(AstTyStruct name) (clone-root-add-name decls able roots name)]
+    [_ roots]))
+
+(define (clone-root-expand
+  [decls : AstDeclList]
+  [able : CloneNameSet]
+  [roots : CloneNameList]
+  [cursor : CloneNameList]) : CloneNameList
+  (match cursor
+    [(CloneNameNil) roots]
+    [(CloneNameCons name rest)
+      (let
+        [with-name : CloneNameList (clone-root-add-name decls able roots name)]
+        (clone-root-expand
+          decls
+          able
+          (clone-root-add-name-deps decls decls able with-name name)
+          rest))]))
+
+(define (clone-name-list-to-set [names : CloneNameList] [acc : CloneNameSet]) : CloneNameSet
+  (match names
+    [(CloneNameNil) acc]
+    [(CloneNameCons name rest)
+      (clone-name-list-to-set rest (clone-name-set-insert acc name))]))
+
 ;; Append the generated clone$ helpers AFTER the program's decls, so the real
 ;; declarations keep their source paths (the generated helpers, being last, get
 ;; the empty path on lookup). Top-level functions are mutually visible, so the
@@ -573,9 +714,32 @@
       (clone-fixpoint decls (clone-all-type-names decls (clone-name-set-empty)))]
     (clone-decl-list-append decls (clone-generate-decls decls able AstDeclNil))))
 
+(define (clone-augment-decls-with-roots
+  [decls : AstDeclList]
+  [roots : CloneNameList]) : AstDeclList
+  (let
+    [able : CloneNameSet
+      (clone-fixpoint decls (clone-all-type-names decls (clone-name-set-empty)))]
+    [expanded : CloneNameList (clone-root-expand decls able roots roots)]
+    (clone-decl-list-append
+      decls
+      (clone-generate-decls
+        decls
+        (clone-name-list-to-set expanded (clone-name-set-empty))
+        AstDeclNil))))
+
 (define (clone-augment-program [program : AstProgram]) : AstProgram
   (match program
     [(AstProgram decls-box)
       (let
         [decls : AstDeclList (box-get decls-box)]
         (ast-program (clone-augment-decls decls)))]))
+
+(define (clone-augment-program-with-roots
+  [program : AstProgram]
+  [roots : CloneNameList]) : AstProgram
+  (match program
+    [(AstProgram decls-box)
+      (let
+        [decls : AstDeclList (box-get decls-box)]
+        (ast-program (clone-augment-decls-with-roots decls roots)))]))

@@ -3,6 +3,8 @@
 ;; `(string-concat a b)` : (-> String String String) allocates a fresh heap
 ;; String holding `a`'s bytes followed by `b`'s bytes. This covers empty,
 ;; left-empty, right-empty, short, and long concatenations and exits 0.
+(import "stdlib/io.tl")
+
 (define (main) : i64
   (begin
     (print-string "[")

@@ -1,3 +1,5 @@
+(import "stdlib/io.tl")
+
 (define (fill [xs : (Array i64)] [n : i64]) : unit
   (let
     [i : i64 0]

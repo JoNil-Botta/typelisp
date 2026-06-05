@@ -1,3 +1,5 @@
+(import "stdlib/io.tl")
+
 (define (unused-cli-helper) : unit
   (begin
     (print-string "unused")

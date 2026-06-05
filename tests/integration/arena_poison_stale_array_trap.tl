@@ -13,6 +13,5 @@
       (begin
         (array-set! items 0 (+ base 33))
         (unsafe
-          (begin
-            (arena-rewind mark)))
+          (arena-rewind mark))
         (array-ref items 0)))))

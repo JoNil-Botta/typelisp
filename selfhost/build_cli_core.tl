@@ -554,7 +554,7 @@
 
 (define (build-mkdir-ok? [path : String]) : bool
   (let
-    [status : i64 (fs-mkdir-status path)]
+    [status : i64 (fs-mkdir-status (& path))]
     (or (= status build-status-ok) (= status build-status-already-exists))))
 
 (define (build-ensure-package-output-dirs

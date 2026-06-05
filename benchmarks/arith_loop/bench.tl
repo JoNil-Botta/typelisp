@@ -10,6 +10,8 @@
 ;# with no extra arguments (matching C `argc`). Deriving it from a runtime
 ;# value keeps the result deterministic while preventing the compiler from
 ;# constant-folding the whole loop away.
+(import "stdlib/io.tl")
+
 (define base-iterations : i64
   1000000000)
 

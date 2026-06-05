@@ -39,6 +39,20 @@ jobs:
         shell: bash
         run: scripts/check-implementation-languages.sh
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: tools/vs-code-extension/package-lock.json
+
+      - name: VS Code extension smoke
+        shell: bash
+        working-directory: tools/vs-code-extension
+        run: |
+          npm ci
+          npm run check
+          npm run package
+
       - name: Check native toolchain
         shell: bash
         run: |

@@ -1026,7 +1026,7 @@
   (CompilerSourceSpansEntryNil)
   (CompilerSourceSpansEntryCons
     CompilerSourceSpansEntry
-    CompilerSourceSpansEntryList))
+    (Box CompilerSourceSpansEntryList)))
 
 (defenum CompilerSourceSpans
   (CompilerSourceSpans
@@ -1054,11 +1054,13 @@
   [entry : CompilerSourceSpansEntry]) : CompilerSourceSpansEntryList
   (match entries
     [(CompilerSourceSpansEntryNil)
-      (CompilerSourceSpansEntryCons entry (CompilerSourceSpansEntryNil))]
+      (CompilerSourceSpansEntryCons entry (box (CompilerSourceSpansEntryNil)))]
     [(CompilerSourceSpansEntryCons head rest)
-      (CompilerSourceSpansEntryCons
-        head
-        (compiler-source-spans-entry-list-append rest entry))]))
+      (let
+        [rest : CompilerSourceSpansEntryList (box-get rest)]
+        (CompilerSourceSpansEntryCons
+          head
+          (box (compiler-source-spans-entry-list-append rest entry))))]))
 
 ;; Record `name -> span`. Function names are unique in lowered programs, so a
 ;; prepend keeps diagnostics equivalent while avoiding O(n^2) provenance builds.
@@ -1071,7 +1073,7 @@
       (CompilerSourceSpans
         (CompilerSourceSpansEntryCons
           (CompilerSourceSpansEntry name span)
-          entries)
+          (box entries))
         instr-entries
         instr-count)]))
 
@@ -1081,11 +1083,13 @@
   (match entries
     [(CompilerSourceSpansEntryNil) (CompilerNoSourceSpan)]
     [(CompilerSourceSpansEntryCons entry rest)
-      (match entry
-        [(CompilerSourceSpansEntry entry-name span)
-          (if (string-eq entry-name name)
-            (CompilerSomeSourceSpan span)
-            (compiler-source-spans-entry-list-lookup rest name))])]))
+      (let
+        [rest : CompilerSourceSpansEntryList (box-get rest)]
+        (match entry
+          [(CompilerSourceSpansEntry entry-name span)
+            (if (string-eq entry-name name)
+              (CompilerSomeSourceSpan span)
+              (compiler-source-spans-entry-list-lookup rest name))]))]))
 
 (define (compiler-source-spans-lookup
   [spans : CompilerSourceSpans]
@@ -1112,7 +1116,7 @@
         entries
         (CompilerSourceSpansEntryCons
           (CompilerSourceSpansEntry key span)
-          instr-entries)
+          (box instr-entries))
         (+ instr-count 1))]))
 
 (define (compiler-source-spans-insert-instr
@@ -1399,7 +1403,9 @@
   (match entries
     [(CompilerSourceSpansEntryNil) 0]
     [(CompilerSourceSpansEntryCons _ rest)
-      (+ 1 (compiler-source-spans-entry-list-count rest))]))
+      (let
+        [rest : CompilerSourceSpansEntryList (box-get rest)]
+        (+ 1 (compiler-source-spans-entry-list-count rest)))]))
 
 (define (compiler-source-spans-count [spans : CompilerSourceSpans]) : i64
   (match spans
@@ -2501,6 +2507,32 @@
         (AstTyI64)))
     "  tailcall fact_loop(%3, 1) : i64"))
 
+(define (compiler-ir-source-spans-boxed-list-ok?) : bool
+  (let
+    [span1 : AstSourceSpan (AstSourceSpan 1 2 1 3)]
+    [span2 : AstSourceSpan (AstSourceSpan 4 5 4 8)]
+    [entries : CompilerSourceSpansEntryList
+      (compiler-source-spans-entry-list-append
+        (compiler-source-spans-entry-list-append
+          (CompilerSourceSpansEntryNil)
+          (CompilerSourceSpansEntry "first" span1))
+        (CompilerSourceSpansEntry "second" span2))]
+    [spans : CompilerSourceSpans
+      (compiler-source-spans-insert
+        (compiler-source-spans-insert (compiler-source-spans-empty) "one" span1)
+        "two"
+        span2)]
+    (and
+      (= (compiler-source-spans-entry-list-count entries) 2)
+      (and
+        (= (compiler-source-spans-count spans) 2)
+        (match (compiler-source-spans-entry-list-lookup entries "second")
+          [(CompilerSomeSourceSpan found)
+            (and
+              (= (struct-get found start-line) 4)
+              (= (struct-get found end-col) 8))]
+          [(CompilerNoSourceSpan) false])))))
+
 (define (compiler-ir-effect-self-test) : i64
   (begin
     (unless (compiler-ir-instruction-effects-ok?) (return 1))
@@ -2509,4 +2541,5 @@
     (unless (compiler-ir-effect-predicates-ok?) (return 1))
     (unless (compiler-ir-display-self-test-ok?) (return 1))
     (unless (compiler-ir-tail-call-render-ok?) (return 1))
+    (unless (compiler-ir-source-spans-boxed-list-ok?) (return 1))
     42))

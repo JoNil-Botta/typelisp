@@ -801,8 +801,6 @@
         (sym-i64-bind out "type" (compiler-parse-tag-expr-type-literal)))
       (set! out (sym-i64-bind out "try" (compiler-parse-tag-expr-try)))
       (set! out (sym-i64-bind out "return" (compiler-parse-tag-expr-return)))
-      (set! out (sym-i64-bind out "when" (compiler-parse-tag-expr-when)))
-      (set! out (sym-i64-bind out "unless" (compiler-parse-tag-expr-unless)))
       (set!
         out
         (sym-i64-bind out "ptr-null" (compiler-parse-tag-expr-ptr-null)))
@@ -976,7 +974,6 @@
           [(string-eq name "cast") (compiler-parse-tag-expr-cast)]
           [(string-eq name "cond") (compiler-parse-tag-expr-cond)]
           [(string-eq name "type") (compiler-parse-tag-expr-type-literal)]
-          [(string-eq name "when") (compiler-parse-tag-expr-when)]
           [(string-eq name "with") (compiler-parse-tag-expr-with-resource)]
           [(string-eq name "true") (compiler-parse-tag-lit-true)]
           [(string-eq name "test") (compiler-parse-tag-decl-test)]
@@ -1002,7 +999,6 @@
           [(string-eq name "lambda") (compiler-parse-tag-expr-lambda)]
           [(string-eq name "unsafe") (compiler-parse-tag-expr-unsafe)]
           [(string-eq name "return") (compiler-parse-tag-expr-return)]
-          [(string-eq name "unless") (compiler-parse-tag-expr-unless)]
           [(string-eq name "xgetbv") (compiler-parse-tag-expr-xgetbv)]
           [(string-eq name "define") (compiler-parse-tag-decl-define)]
           [(string-eq name "extern") (compiler-parse-tag-decl-extern)]
@@ -2046,6 +2042,23 @@
 (define (parse-ast-cond [dispatch : SymI64Env] [rest : SpannedSexpr]) : ResultAstExpr
   (parse-ast-cond-arms dispatch rest false))
 
+(define (parse-ast-cond-legacy-form? [rest : SpannedSexpr]) : bool
+  (match rest
+    [(SpSNil _) true]
+    [(SpSCons head _ _)
+      (match head
+        [(SpSBracketList _ _) true]
+        [_ false])]
+    [_ false]))
+
+(define (parse-ast-cond-or-call
+  [dispatch : SymI64Env]
+  [head : SpannedSexpr]
+  [rest : SpannedSexpr]) : ResultAstExpr
+  (if (parse-ast-cond-legacy-form? rest)
+    (parse-ast-cond dispatch rest)
+    (parse-ast-call dispatch head rest)))
+
 (define (parse-ast-while [dispatch : SymI64Env] [rest : SpannedSexpr]) : ResultAstExpr
   (match rest
     [(SpSCons cond (SpSCons body (SpSNil _) _) _)
@@ -2874,8 +2887,6 @@
   [rest : SpannedSexpr]) : ResultAstExpr
   (cond
     [(= tag (compiler-parse-tag-expr-if)) (parse-ast-if dispatch rest)]
-    [(= tag (compiler-parse-tag-expr-when)) (parse-ast-when dispatch rest)]
-    [(= tag (compiler-parse-tag-expr-unless)) (parse-ast-unless dispatch rest)]
     [(= tag (compiler-parse-tag-expr-let)) (parse-ast-let dispatch rest)]
     [(= tag (compiler-parse-tag-expr-lambda)) (parse-ast-lambda dispatch rest)]
     [(= tag (compiler-parse-tag-expr-while)) (parse-ast-while dispatch rest)]
@@ -2981,7 +2992,7 @@
           [(= tag (compiler-parse-tag-expr-int-to-ptr))
             (parse-ast-ptr-cast-like dispatch true rest)]
           [(= tag (compiler-parse-tag-expr-cond))
-            (parse-ast-cond dispatch rest)]
+            (parse-ast-cond-or-call dispatch head rest)]
           [(ast-unop-tag? tag)
             (parse-ast-unary dispatch (ast-unop-from-tag tag) rest)]
           [(ast-binop-tag? tag)
@@ -4729,7 +4740,48 @@
         [_ false])]
     [_ false]))
 
-(define (compiler-parse-guard-form-ok? [source : String] [is-unless : bool]) : bool
+(define (compiler-parse-call-head-name? [expr : AstExpr] [name : String]) : bool
+  (match (ast-expr-unspan expr)
+    [(AstExprVar found) (string-eq found name)]
+    [_ false]))
+
+(define (compiler-parse-return-expr? [expr : AstExpr]) : bool
+  (match (ast-expr-unspan expr)
+    [(AstExprReturn _) true]
+    [_ false]))
+
+(define (compiler-parse-guard-call-args-ok? [args : AstExprList]) : bool
+  (match args
+    [(AstExprCons cond rest0)
+      (let
+        [rest0 : AstExprList (box-get rest0)]
+        (and
+          (compiler-parse-call-head-name? cond "ok")
+          (match rest0
+            [(AstExprCons body-arg rest1)
+              (let
+                [rest1 : AstExprList (box-get rest1)]
+                (and
+                  (match rest1
+                    [(AstExprNil) true]
+                    [_ false])
+                  (compiler-parse-return-expr? body-arg)))]
+            [_ false])))]
+    [_ false]))
+
+(define (compiler-parse-call-arg-count [args : AstExprList]) : i64
+  (match args
+    [(AstExprNil) 0]
+    [(AstExprCons _ rest)
+      (let
+        [rest : AstExprList (box-get rest)]
+        (+ 1 (compiler-parse-call-arg-count rest)))]))
+
+(define (compiler-parse-call-body-ok?
+  [source : String]
+  [name : String]
+  [want-args : i64]
+  [check-guard-args : bool]) : bool
   (match (parse-ast-source source)
     [(OkAstProgram (AstProgram decls-box))
       (let
@@ -4742,24 +4794,16 @@
               (match rest
                 [(AstDeclNil)
                   (match (ast-expr-unspan body)
-                    [(AstExprIf cond-box then-branch-box else-branch-box)
+                    [(AstExprCall func-box args)
                       (let
-                        [cond : AstExpr (box-get cond-box)]
-                        [then-branch : AstExpr (box-get then-branch-box)]
-                        [else-branch : AstExpr (box-get else-branch-box)]
+                        [func : AstExpr (box-get func-box)]
                         (and
-                          (match (ast-expr-unspan cond)
-                            [(AstExprVar name) (string-eq name "ok")]
-                            [_ false])
-                          (if is-unless
-                            (and
-                              (compiler-parse-unit-expr? then-branch)
-                              (compiler-parse-return-then-unit-begin?
-                                else-branch))
-                            (and
-                              (compiler-parse-return-then-unit-begin?
-                                then-branch)
-                              (compiler-parse-unit-expr? else-branch)))))]
+                          (compiler-parse-call-head-name? func name)
+                          (and
+                            (= (compiler-parse-call-arg-count args) want-args)
+                            (if check-guard-args
+                              (compiler-parse-guard-call-args-ok? args)
+                              true))))]
                     [_ false])]
                 [_ false]))]
           [_ false]))]
@@ -4767,12 +4811,23 @@
 
 (define (compiler-parse-guard-forms-ok?) : bool
   (and
-    (compiler-parse-guard-form-ok?
+    (compiler-parse-call-body-ok?
       "(define (main [ok : bool]) : unit (when ok (return unit)))"
-      false)
-    (compiler-parse-guard-form-ok?
+      "when"
+      2
+      true)
+    (compiler-parse-call-body-ok?
       "(define (main [ok : bool]) : unit (unless ok (return unit)))"
+      "unless"
+      2
       true)))
+
+(define (compiler-parse-flat-cond-call-ok?) : bool
+  (compiler-parse-call-body-ok?
+    "(define (main) : i64 (cond true 1 0))"
+    "cond"
+    3
+    false))
 
 (define (compiler-parse-comptime-decl-source) : String
   "(comptime-decl (defstruct Point (x i64) (y i64)))
@@ -6369,7 +6424,9 @@
                                     (and
                                       (and
                                         (compiler-parse-return-ok?)
-                                        (compiler-parse-guard-forms-ok?))
+                                        (and
+                                          (compiler-parse-guard-forms-ok?)
+                                          (compiler-parse-flat-cond-call-ok?)))
                                       (and
                                         (compiler-parse-repr-c-ok?)
                                         (and

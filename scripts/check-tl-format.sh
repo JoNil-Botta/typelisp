@@ -52,6 +52,44 @@ mkdir -p "$WORKDIR"
 ALL_FILES="$WORKDIR/all-files.txt"
 CHECK_FILES="$WORKDIR/check-files.txt"
 METADATA_FILES="$WORKDIR/metadata-files.txt"
+CURRENT_CLI_ASM="$WORKDIR/current-cli.s"
+CURRENT_CLI_OBJ=
+CURRENT_CLI_BIN=
+CURRENT_CLI_COMPILE_STDOUT="$WORKDIR/current-cli-compile.stdout"
+CURRENT_CLI_COMPILE_STDERR="$WORKDIR/current-cli-compile.stderr"
+
+build_current_cli_for_format() {
+    . "$ROOT/scripts/lib-native-link.sh"
+    native_link_detect_host
+    configure_toolchain
+
+    CURRENT_CLI_OBJ="$WORKDIR/current-cli.$NL_OBJ_EXT"
+    CURRENT_CLI_BIN="$WORKDIR/current-cli$NL_BIN_EXT"
+
+    echo "Building current CLI for current-syntax-aware TypeLisp formatting."
+    if ! run_with_heartbeat_capture \
+        "compile current cli for format" \
+        "$CURRENT_CLI_COMPILE_STDOUT" \
+        "$CURRENT_CLI_COMPILE_STDERR" \
+        "$COMPILER" compile selfhost/cli.tl -o "$CURRENT_CLI_ASM" \
+        --target "$NL_BOOTSTRAP_TARGET" \
+        $(native_target_cfg_args) \
+        --stdlib-root stdlib \
+        --stdlib-root selfhost \
+        --opt-level 2; then
+        echo "Failed to compile current CLI for current-syntax-aware formatting." >&2
+        sed 's/^/  /' "$CURRENT_CLI_COMPILE_STDOUT" >&2 || true
+        sed 's/^/  /' "$CURRENT_CLI_COMPILE_STDERR" >&2 || true
+        exit 1
+    fi
+
+    [ -s "$CURRENT_CLI_ASM" ] || {
+        echo "Current CLI compile did not produce assembly: $CURRENT_CLI_ASM" >&2
+        exit 1
+    }
+
+    assemble_and_link "current-cli-format" "$CURRENT_CLI_ASM" "$CURRENT_CLI_OBJ" "$CURRENT_CLI_BIN"
+}
 
 # Check every git-tracked *.tl file in the repository so TypeLisp code in any
 # directory (including tools/, benchmarks/) meets the same formatting standard.
@@ -98,12 +136,10 @@ fi
 
 if [ -s "$METADATA_FILES" ]; then
     echo "Checking current-syntax-aware TypeLisp formatting for $metadata_count file(s)."
-    if ! xargs "$COMPILER" run selfhost/cli.tl \
-        --stdlib-root stdlib \
-        --stdlib-root selfhost \
-        -- fmt --check < "$METADATA_FILES"; then
+    build_current_cli_for_format
+    if ! xargs "$CURRENT_CLI_BIN" fmt --check < "$METADATA_FILES"; then
         echo "Current-syntax-aware TypeLisp format check failed." >&2
-        echo "Run: $COMPILER run selfhost/cli.tl --stdlib-root stdlib --stdlib-root selfhost -- fmt \$(cat $METADATA_FILES)" >&2
+        echo "Run: $CURRENT_CLI_BIN fmt --check \$(cat $METADATA_FILES)" >&2
         exit 1
     fi
 fi

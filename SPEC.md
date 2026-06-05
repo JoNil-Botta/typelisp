@@ -2443,6 +2443,14 @@ only when `cond` is false. The body must contain at least one expression. Body
 results are discarded, and the whole form has type `unit`, which makes these
 forms suitable for side effects and early-return guards.
 
+Transition note: during the stdlib macro migration, the selfhost parser leaves
+unqualified `when` and `unless` as macro-call candidates. Macro expansion gives
+a visible local macro with that name ownership of the call; otherwise the
+compiler applies the compatibility guard-form desugaring described above. The
+legacy bracket-arm `cond` form remains compatibility parsed for now, while a
+flat call-shaped `cond` form can be owned by a macro before #1141 decides the
+final stdlib `cond` arm surface.
+
 ```lisp test=ignore name=when-unless-guards reason=fragment
 (when (< x 0) (return 0))
 (unless (< x 100) (print-string "large\n"))
@@ -4072,14 +4080,13 @@ bundles are tracked by #902 on top of #893/#913.
 typelisp <command> [file.tl] [options]
 
 Commands:
-  debug tokenize    Print token stream
-  debug parse       Print AST
-  debug check       Run type checker
+  check             Run type checker
   repl              Minimal stdio command loop
   compile           Generate assembly (.s)
   build <file.tl>   Compile, assemble, and link a native executable
   run               Compile, assemble, link, and run binary
   build             Build nearest typelisp.pkg artifact
+  lint              Report lint findings
   test              Run inline `(test ...)` items
 
 Options:
@@ -4104,6 +4111,9 @@ Options:
   test --check <file.tl>
                           Type-check the generated inline test harness without
                           assembling or running it
+  lint <file.tl> --check
+                          Exit non-zero when lint findings are present; default
+                          lint mode is warn-only
   build <file.tl> -o <exe>
                           Write the native executable to the given path
   build --manifest-path <file>
@@ -4119,8 +4129,7 @@ Linux native build/run uses `as` and `ld`. Windows native build/run uses
 `clang --target=x86_64-pc-windows-msvc` and `lld-link`, links against the CRT,
 and emits a console `.exe`.
 
-`tokenize`, `parse`, and `check` are also accepted as top-level compatibility
-aliases for the corresponding `debug` commands.
+`check` is accepted as the public top-level type-check command.
 
 The selfhost `repl` driver supports `.help`, `.type <expr>`, and `.exit`.
 Top-level declarations are remembered for later commands. `.type` parses and

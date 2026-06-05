@@ -9,8 +9,8 @@
 ;;   typelisp run selfhost/cli.tl -- <command> <args...>
 ;;
 ;; Recognized commands: build, run, check, fmt, lint, test, doc, compile, clean,
-;; debug, new, and init. The command name is `(arg 1)`; each `*-run-from` entry
-;; parses its own arguments starting at index 2.
+;; repl, lsp, new, and init. The command name is `(arg 1)`; each `*-run-from`
+;; entry parses its own arguments starting at index 2.
 ;;
 ;; This is the shipped Rust-free stage0 dispatcher (#666/#795): the toolchain
 ;; needs neither a host-language compiler driver nor per-command driver
@@ -51,9 +51,6 @@
   "typelisp — A typed Lisp/Scheme dialect with x86_64 backend
 
 Usage:
-    typelisp debug tokenize <file.tl>    Show tokens
-    typelisp debug parse <file.tl>       Show AST
-    typelisp debug check <file.tl> [--stdlib-root <dir>...]
     typelisp lsp                            Start stdio LSP diagnostics server
     typelisp repl                           Start minimal stdio REPL
     typelisp check <file.tl> [--stdlib-root <dir>...]
@@ -63,7 +60,7 @@ Usage:
     typelisp build [--manifest-path <typelisp.pkg>] [--target <target>] [--backend-mode <mode>] [--opt-level <0|1|2|3>] [--stdlib-root <dir>...]
     typelisp clean [<file.tl>] [--manifest-path <typelisp.pkg>] [--dry-run]
     typelisp fmt [--check] <file.tl>... [--stdlib-root <dir>...]
-    typelisp lint <file.tl> [--stdlib-root <dir>...]
+    typelisp lint <file.tl> [--check] [--stdlib-root <dir>...]
     typelisp test [--check] <file.tl> [--target <target>] [--opt-level <0|1|2|3>] [--stdlib-root <dir>...]
     typelisp doc <file.tl> [-o <out.md>] [--stdlib-root <dir>...]
     typelisp doc --test <file.tl> [--stdlib-root <dir>...]
@@ -92,6 +89,8 @@ Options for clean:
     --manifest-path <file>         Defaults to nearest typelisp.pkg upward
 Options for fmt:
     --check                        Report files that would change without writing them
+Options for lint:
+    --check                        Exit non-zero when lint findings are present
 Options for test:
     --check                        Typecheck inline tests without running them
     --opt-level <0|1|2|3>          Select selfhost test harness optimization
@@ -131,11 +130,9 @@ Options for doc:
     [(string-eq command "lint") (selfhost-lint-run-from 2 count)]
     [(string-eq command "test") (tltest-run-from 2 count)]
     [(string-eq command "doc") (doc-run-from 2 count)]
-    ;; The compiler commands share compile_cli_core (#1639); it reads (arg 1) as
-    ;; the command, so the whole CLI is driven from this one binary. tokenize and
-    ;; parse are reached via their canonical `debug` forms (no top-level aliases).
+    ;; The compiler command shares compile_cli_core (#1639); it reads (arg 1) as
+    ;; the command, so the whole CLI is driven from this one binary.
     [(string-eq command "compile") (compile-cli-run count)]
-    [(string-eq command "debug") (compile-cli-run count)]
     [(string-eq command "lsp") (lsp-frame-run-from 2 count)]
     [(string-eq command "repl") (repl-run-from 2 count)]
     [(string-eq command "new") (scaffold-new-run-from 2 count)]

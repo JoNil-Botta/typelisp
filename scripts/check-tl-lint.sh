@@ -7,8 +7,8 @@ set -eu
 #   scripts/check-tl-lint.sh
 #   TYPELISP_BIN=./target/stage0/typelisp scripts/check-tl-lint.sh
 #
-# The public `typelisp lint` command is warn-only so cleanup can happen in
-# normal reviewable slices. This gate makes CI fail for any finding.
+# The public `typelisp lint` command is warn-only by default so cleanup can
+# happen in normal reviewable slices. This gate opts into enforcing mode.
 #
 # refs #1164.
 
@@ -85,15 +85,19 @@ for file do
     safe=$(printf "%s" "$file" | cksum | awk "{ print \$1 }")
     stdout="$WORKDIR/stdout/$safe.out"
     stderr="$WORKDIR/stderr/$safe.err"
-    if "$COMPILER" lint "$file" > "$stdout" 2> "$stderr"; then
-        awk '"'"'/^lint: [0-9][0-9]* finding\(s\)$/ { next } NF { print }'"'"' "$stdout" \
-            > "$WORKDIR/findings/$safe.out"
+    if "$COMPILER" lint "$file" --check > "$stdout" 2> "$stderr"; then
+        :
     else
-        {
-            printf "%s\n" "$file"
-            cat "$stderr"
-            cat "$stdout"
-        } > "$WORKDIR/failures/$safe.fail"
+        if grep -q '"'"'^lint: [1-9][0-9]* finding(s)$'"'"' "$stdout"; then
+            awk '"'"'/^lint: [0-9][0-9]* finding\(s\)$/ { next } NF { print }'"'"' "$stdout" \
+                > "$WORKDIR/findings/$safe.out"
+        else
+            {
+                printf "%s\n" "$file"
+                cat "$stderr"
+                cat "$stdout"
+            } > "$WORKDIR/failures/$safe.fail"
+        fi
     fi
 done
 ' sh < "$FILES"

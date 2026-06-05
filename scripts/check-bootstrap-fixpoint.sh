@@ -174,26 +174,6 @@ check_stage1_compile_cli() {
     run_stage1_cli_expect_failure stage1-missing-source "$STAGE1_BIN" compile
     assert_contains "$WORKDIR/stage1-missing-source.stderr" "compile: expected source path"
 
-    run_stage1_cli_capture stage1-tokenize "$STAGE1_BIN" tokenize "$STAGE1_CLI_SRC"
-    assert_contains "$WORKDIR/stage1-tokenize.stdout" "define"
-    assert_contains "$WORKDIR/stage1-tokenize.stdout" "main"
-
-    run_stage1_cli_capture stage1-debug-tokenize "$STAGE1_BIN" debug tokenize "$STAGE1_CLI_SRC"
-    if ! cmp -s "$WORKDIR/stage1-tokenize.stdout" "$WORKDIR/stage1-debug-tokenize.stdout"; then
-        echo "stage1 debug tokenize differs from top-level tokenize" >&2
-        exit 1
-    fi
-
-    run_stage1_cli_capture stage1-parse "$STAGE1_BIN" parse "$STAGE1_CLI_SRC"
-    assert_contains "$WORKDIR/stage1-parse.stdout" "Program"
-    assert_contains "$WORKDIR/stage1-parse.stdout" "DefFn"
-
-    run_stage1_cli_capture stage1-debug-parse "$STAGE1_BIN" debug parse "$STAGE1_CLI_SRC"
-    if ! cmp -s "$WORKDIR/stage1-parse.stdout" "$WORKDIR/stage1-debug-parse.stdout"; then
-        echo "stage1 debug parse differs from top-level parse" >&2
-        exit 1
-    fi
-
     run_stage1_cli_capture stage1-check "$STAGE1_BIN" check "$STAGE1_CLI_SRC" --stdlib-root "$ROOT/stdlib"
     assert_contains "$WORKDIR/stage1-check.stdout" "Type checking passed!"
 
@@ -226,20 +206,6 @@ EOF
         run_stage1_cli_capture stage1-check-env-stdlib-root "$STAGE1_BIN" check env-root.tl
     )
     assert_contains "$WORKDIR/stage1-check-env-stdlib-root.stdout" "Type checking passed!"
-
-    run_stage1_cli_capture stage1-debug-check "$STAGE1_BIN" debug check "$STAGE1_CLI_SRC" --stdlib-root "$ROOT/stdlib"
-    if ! cmp -s "$WORKDIR/stage1-check.stdout" "$WORKDIR/stage1-debug-check.stdout"; then
-        echo "stage1 debug check differs from top-level check" >&2
-        exit 1
-    fi
-
-    run_stage1_cli_expect_failure stage1-debug-missing "$STAGE1_BIN" debug
-    assert_contains "$WORKDIR/stage1-debug-missing.stderr" "Error: missing debug subcommand"
-    assert_contains "$WORKDIR/stage1-debug-missing.stderr" "typelisp debug tokenize <file.tl>"
-
-    run_stage1_cli_expect_failure stage1-debug-unknown "$STAGE1_BIN" debug wat
-    assert_contains "$WORKDIR/stage1-debug-unknown.stderr" "Unknown debug command: wat"
-    assert_contains "$WORKDIR/stage1-debug-unknown.stderr" "typelisp debug check <file.tl>"
 
     run_stage1_cli_expect_failure stage1-unknown-command "$STAGE1_BIN" definitely-not-a-command
     assert_contains "$WORKDIR/stage1-unknown-command.stderr" "Unknown command: definitely-not-a-command"

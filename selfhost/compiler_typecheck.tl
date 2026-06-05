@@ -684,11 +684,20 @@
 (define (get) : i64 same)
 (defenum Maybe (None) (Some i64))
 (defstruct Point (x i64))
+(export (value get))
 (module right)
 (define same : i64 22)
 (define (get) : i64 same)
 (defenum Maybe (None) (Some i64))
 (defstruct Point (x i64))
+(export
+  (value get)
+  (type Maybe)
+  (variant None)
+  (variant Some)
+  (type Point)
+  (constructor Point)
+  (field Point x))
 (module main)
 (define (main) : i64
   (+
@@ -713,6 +722,14 @@
 (define (get) : i64 20)
 (defenum Maybe (None) (Some i64))
 (defstruct Point (x i64))
+(export
+  (value get)
+  (type Maybe)
+  (variant None)
+  (variant Some)
+  (type Point)
+  (constructor Point)
+  (field Point x))
 (module main)
 (import \"data.tl\" module data :as d)
 (define (main) : i64
@@ -743,6 +760,168 @@
   "(module data)
 (export (value missing))
 (define (main) : i64 0)")
+
+(define (compiler-typecheck-export-visibility-allowed-source) : String
+  "(module data)
+(define (get) : i64 20)
+(defenum Maybe (None) (Some i64))
+(defstruct Point (x i64) (hidden i64))
+(export
+  (value get)
+  (type Maybe)
+  (variant None)
+  (variant Some)
+  (type Point)
+  (constructor Point)
+  (field Point x))
+(module main)
+(import \"data.tl\" module data :as d)
+(define (main) : i64
+  (+
+    (d/get)
+    (+
+      (let ([p : d/Point (d/Point 7 9)])
+        (struct-get p x))
+      (match (d/Some 3)
+        [(d/Some v) v]
+        [d/None 0]))))")
+
+(define (compiler-typecheck-export-private-alias-value-source) : String
+  "(module data)
+(define private : i64 1)
+(module main)
+(import \"data.tl\" module data :as d)
+(define (main) : i64 d/private)")
+
+(define (compiler-typecheck-export-private-canonical-value-source) : String
+  "(module data)
+(define private : i64 1)
+(module main)
+(define (main) : i64 data/private)")
+
+(define (compiler-typecheck-export-type-only-opaque-source) : String
+  "(module data)
+(defstruct Opaque (value i64))
+(export (type Opaque))
+(module main)
+(import \"data.tl\" module data :as d)
+(define (id [x : d/Opaque]) : d/Opaque x)
+(define (main) : i64 0)")
+
+(define (compiler-typecheck-export-type-only-constructor-source) : String
+  "(module data)
+(defstruct Opaque (value i64))
+(export (type Opaque))
+(module main)
+(import \"data.tl\" module data :as d)
+(define (main) : d/Opaque (d/Opaque 1))")
+
+(define (compiler-typecheck-export-type-only-field-source) : String
+  "(module data)
+(defstruct Opaque (value i64))
+(define (make) : Opaque (Opaque 1))
+(export (type Opaque) (value make))
+(module main)
+(import \"data.tl\" module data :as d)
+(define (main) : i64
+  (let ([x : d/Opaque (d/make)])
+    (struct-get x value)))")
+
+(define (compiler-typecheck-export-generated-decl-source) : String
+  "(module data)
+(comptime-decl (defstruct Generated (value i64)))
+(export (type Generated) (constructor Generated) (field Generated value))
+(module main)
+(import \"data.tl\" module data :as d)
+(define (main) : i64
+  (let ([x : d/Generated (d/Generated 7)])
+    (struct-get x value)))")
+
+(define (compiler-typecheck-export-private-type-source) : String
+  "(module data)
+(defstruct Hidden (value i64))
+(module main)
+(import \"data.tl\" module data :as d)
+(define (main [x : d/Hidden]) : i64 0)")
+
+(define (compiler-typecheck-export-private-variant-pattern-source) : String
+  "(module data)
+(defenum Choice (Hidden i64) (Visible i64))
+(define (make) : Choice (Hidden 1))
+(export (type Choice) (variant Visible) (value make))
+(module main)
+(import \"data.tl\" module data :as d)
+(define (main) : i64
+  (match (d/make)
+    [(d/Hidden v) v]
+    [(d/Visible v) v]))")
+
+(define (compiler-typecheck-export-same-module-private-source) : String
+  "(module data)
+(define private : i64 2)
+(defenum Maybe (None) (Some i64))
+(defstruct Point (x i64))
+(define (main) : i64
+  (+
+    data/private
+    (+
+      (let ([p : data/Point (data/Point 1)])
+        (struct-get p x))
+      (match (data/Some 2)
+        [(data/Some v) v]
+        [data/None 0]))))")
+
+(define (compiler-typecheck-export-visibility-tests-ok?) : bool
+  (let
+    [ok : bool true]
+    (begin
+      (if (compiler-typecheck-ok?
+        (compiler-typecheck-export-visibility-allowed-source))
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        (compiler-typecheck-export-private-alias-value-source)
+        "typecheck: private value d/private from module data")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        (compiler-typecheck-export-private-canonical-value-source)
+        "typecheck: private value data/private from module data")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-ok?
+        (compiler-typecheck-export-type-only-opaque-source))
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        (compiler-typecheck-export-type-only-constructor-source)
+        "typecheck: private constructor d/Opaque from module data")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        (compiler-typecheck-export-type-only-field-source)
+        "typecheck: private field data/Opaque.value from module data")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-ok?
+        (compiler-typecheck-export-generated-decl-source))
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        (compiler-typecheck-export-private-type-source)
+        "typecheck: private type data/Hidden from module data")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        (compiler-typecheck-export-private-variant-pattern-source)
+        "typecheck: private variant d/Hidden from module data")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-ok?
+        (compiler-typecheck-export-same-module-private-source))
+        unit
+        (set! ok false))
+      ok)))
 
 (define (compiler-typecheck-repr-c-layout-source) : String
   "(defstruct Packet
@@ -1372,6 +1551,9 @@
         "symbols: cannot export unknown value data/missing")
         unit
         (set! ok false))
+      (if (compiler-typecheck-export-visibility-tests-ok?)
+        unit
+        (set! ok false))
       (if (compiler-typecheck-repr-c-tests-ok?)
         unit
         (set! ok false))
@@ -1849,6 +2031,7 @@
 (define (compiler-typecheck-cleanup-struct-imported-cleanup-source) : String
   "(module cleanup)
 (define (close-fd [fd : i64]) : unit unit)
+(export (value close-fd))
 (module main)
 (import \"cleanup.tl\" module cleanup :as c)
 (defstruct FileHandle
@@ -4315,6 +4498,7 @@
 (define (compiler-typecheck-unsafe-import-safe-call-source) : String
   "(module foreign)
 (unsafe (define (danger [x : i64]) : i64 x))
+(export (value danger))
 (module main)
 (import \"foreign.tl\" module foreign :as f)
 (define (main) : i64 (f/danger 42))")
@@ -4322,6 +4506,7 @@
 (define (compiler-typecheck-unsafe-import-unsafe-call-source) : String
   "(module foreign)
 (unsafe (define (danger [x : i64]) : i64 x))
+(export (value danger))
 (module main)
 (import \"foreign.tl\" module foreign :as f)
 (define (main) : i64 (unsafe (f/danger 42)))")
@@ -4769,6 +4954,34 @@
   `(danger ,x))
 (define (main) : i64 (call-danger 1))")
 
+(define (compiler-typecheck-macro-own-when-source) : String
+  "(defmacro (when [condition : i64] [body : unit]) : unit body)
+(define (main) : unit (when 1 unit))")
+
+(define (compiler-typecheck-macro-own-unless-source) : String
+  "(defmacro (unless [condition : i64] [body : unit]) : unit body)
+(define (main) : unit (unless 1 unit))")
+
+(define (compiler-typecheck-macro-own-flat-cond-source) : String
+  "(defmacro (cond [condition : i64] [then-expr : i64] [else-expr : i64]) : i64
+  then-expr)
+(define (main) : i64 (cond 1 42 0))")
+
+(define (compiler-typecheck-compat-guards-source) : String
+  "(define (main) : unit
+  (begin
+    (when true unit)
+    (unless false unit)))")
+
+(define (compiler-typecheck-macro-ownership-tests-ok?) : bool
+  (and
+    (compiler-typecheck-ok? (compiler-typecheck-macro-own-when-source))
+    (and
+      (compiler-typecheck-ok? (compiler-typecheck-macro-own-unless-source))
+      (and
+        (compiler-typecheck-ok? (compiler-typecheck-macro-own-flat-cond-source))
+        (compiler-typecheck-ok? (compiler-typecheck-compat-guards-source))))))
+
 (define (compiler-typecheck-macro-export-tests-ok?) : bool
   (and
     (compiler-typecheck-ok? (compiler-typecheck-macro-export-source))
@@ -4819,9 +5032,11 @@
             (and
               (compiler-typecheck-ok?
                 (compiler-typecheck-macro-hygiene-splice-source))
-              (compiler-typecheck-error-ok?
-                (compiler-typecheck-macro-hygiene-unsafe-global-source)
-                "typecheck: danger requires unsafe context"))))))))
+              (and
+                (compiler-typecheck-error-ok?
+                  (compiler-typecheck-macro-hygiene-unsafe-global-source)
+                  "typecheck: danger requires unsafe context")
+                (compiler-typecheck-macro-ownership-tests-ok?)))))))))
 
 (define (compiler-typecheck-self-test-basics) : unit
   (begin
@@ -5042,6 +5257,7 @@
 (define (compiler-typecheck-cross-module-mismatch-source) : String
   "(module left)
 (define (helper [x : i64]) : i64 x)
+(export (value helper))
 (module main)
 (define (main) : i64 (left/helper true))")
 

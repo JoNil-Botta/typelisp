@@ -211,22 +211,18 @@ cli_surface_manifest_commands() {
             printf "cli surface manifest line %d must have 3 fields: %s\n", NR, $0 > "/dev/stderr"
             exit 2
         }
-        $1 != "active" && $1 != "pending" && $1 != "retired" {
+        $1 != "active" && $1 != "pending" {
             printf "cli surface manifest line %d has invalid status: %s\n", NR, $1 > "/dev/stderr"
             exit 2
         }
-        $1 != "retired" { print $2 }
+        { print $2 }
     ' "$CLI_SURFACE_MANIFEST" | sort -u
 }
 
 cli_surface_help_commands() {
     awk '
         /^[[:space:]]+typelisp / {
-            if ($2 == "debug") {
-                print $2 " " $3
-            } else {
-                print $2
-            }
+            print $2
         }
     ' "$WORKDIR/cli-surface-help.err" | sort -u
 }
@@ -376,24 +372,6 @@ assert_active_cli_surface_command() {
             assert_empty "$clean_idempotent_label" "$WORKDIR/$clean_idempotent_label.out"
             assert_empty "$clean_idempotent_label" "$WORKDIR/$clean_idempotent_label.err"
             ;;
-        "debug tokenize")
-            run_cli_capture "$label" "$COMPILER" debug tokenize "$CLI_SURFACE_SRC"
-            assert_status "$label" "$status" 0
-            assert_empty "$label" "$WORKDIR/$label.err"
-            assert_contains "$label" "$WORKDIR/$label.out" "define"
-            ;;
-        "debug parse")
-            run_cli_capture "$label" "$COMPILER" debug parse "$CLI_SURFACE_SRC"
-            assert_status "$label" "$status" 0
-            assert_empty "$label" "$WORKDIR/$label.err"
-            assert_contains "$label" "$WORKDIR/$label.out" "Program"
-            ;;
-        "debug check")
-            run_cli_capture "$label" "$COMPILER" debug check "$CLI_SURFACE_SRC"
-            assert_status "$label" "$status" 0
-            assert_empty "$label" "$WORKDIR/$label.err"
-            assert_contains "$label" "$WORKDIR/$label.out" "Type checking passed!"
-            ;;
         repl)
             cat > "$WORKDIR/$label.in" <<'EOF'
 .help
@@ -458,22 +436,6 @@ assert_pending_cli_surface_command() {
     assert_contains "$label" "$WORKDIR/$label.err" "$issue"
 }
 
-assert_retired_cli_surface_command() {
-    command=$1
-    label="cli-surface-retired-$(cli_surface_label "$command")"
-    case "$command" in
-        "debug host-action")
-            run_cli_capture "$label" "$COMPILER" debug host-action
-            assert_status "$label" "$status" 1
-            assert_empty "$label" "$WORKDIR/$label.out"
-            assert_contains "$label" "$WORKDIR/$label.err" "Unknown debug command: host-action"
-            ;;
-        *)
-            fail "retired cli surface command has no assertion: $command"
-            ;;
-    esac
-}
-
 run_cli_command_surface_matrix() {
     [ -f "$CLI_SURFACE_MANIFEST" ] || fail "missing cli command surface manifest: $CLI_SURFACE_MANIFEST"
     assert_cli_surface_help_matches_manifest
@@ -486,7 +448,6 @@ run_cli_command_surface_matrix() {
             "" | \#*) continue ;;
             active) assert_active_cli_surface_command "$command" ;;
             pending) assert_pending_cli_surface_command "$command" "$note" ;;
-            retired) assert_retired_cli_surface_command "$command" ;;
             *) fail "invalid cli command surface status: $kind" ;;
         esac
     done < "$CLI_SURFACE_MANIFEST"

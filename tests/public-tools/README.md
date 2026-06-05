@@ -53,8 +53,6 @@ The REPL and LSP fixtures are exercised by `run-corpus.sh`, which is called by
 
 `cli-command-surface.txt` is the explicit command-surface manifest for the
 freshly built `selfhost/cli.tl` binary in the no-Rust gate. Each row is
-`status|command|issue-or-note`, where `active` commands must have a smoke
-assertion in `scripts/verify-selfhost-cli-build-run.sh`, `pending` commands must
-return a `cli-pending` diagnostic with the listed tracking issue, and `retired`
-commands document internal/legacy public surface that must not be required by
-help parity.
+`status|command|issue`, where `active` commands must have a smoke assertion in
+`scripts/verify-selfhost-cli-build-run.sh`, and `pending` commands must return a
+`cli-pending` diagnostic with the listed tracking issue.

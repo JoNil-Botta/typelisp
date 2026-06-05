@@ -89,6 +89,24 @@ have an explicit compile-coverage decision. Staged cases cover integration
 drivers whose imports need temporary sibling names, such as the text buffer and
 symbol-table drivers.
 
+### Assembly size reports
+
+Use [`../scripts/analyze-selfhost-build-asm-size.sh`](../scripts/analyze-selfhost-build-asm-size.sh)
+for local code-size comparisons of the selfhost build driver. It compiles
+`selfhost/build.tl` with `TYPELISP_BIN` when set, otherwise with the published
+stage0 selected by `scripts/lib-stage0.sh`, then prints total assembly
+bytes/lines, section totals, top `.text` symbols, module/file buckets inferred
+from TypeLisp symbol names, and generated clone-helper totals:
+
+```sh
+TYPELISP_BIN=target/stage0/typelisp scripts/analyze-selfhost-build-asm-size.sh
+```
+
+Use `--top N` to change the table size, `TYPELISP_ASM_SIZE_OUT` to choose the
+artifact directory, and `--asm target/path/build.s` to analyze an existing
+assembly file without recompiling. The report is intentionally a local
+measurement tool, not a CI size gate.
+
 ### Coverage policy
 
 New behavior should get TypeLisp-owned coverage: a module-local self-test, a
@@ -109,8 +127,8 @@ TYPELISP_BIN=./target/stage0/typelisp ./scripts/verify-selfhost.sh
 
 Each published asset is a single self-hosted `selfhost/cli.tl` binary
 (`typelisp-stage0-linux`, `typelisp-stage0-windows.exe`) that handles every
-toolchain command (compile/build/run/check/fmt/lint/test/doc, plus
-`debug host-action`) in-process. The `Bootstrap Stage0` workflow is
+toolchain command (compile/build/run/check/fmt/lint/test/doc/repl/lsp/new/init)
+in-process. The `Bootstrap Stage0` workflow is
 self-perpetuating: it fetches the previously published stage0 and uses it to
 build the next stage0 via [`../scripts/build-stage0.sh`](../scripts/build-stage0.sh)
 (`compile selfhost/cli.tl` + native link). There is no Rust seed.
@@ -393,8 +411,9 @@ TYPELISP_BIN=$tl ./scripts/verify-selfhost.sh
 scripts/verify-no-rust-stage0.sh
 ```
 
-`scripts/check-tl-lint.sh` runs `typelisp lint` over tracked TypeLisp source
-units and fails CI on any finding.
+`scripts/check-tl-lint.sh` runs `typelisp lint <file.tl> --check` over tracked
+TypeLisp source units and fails CI on any finding. Plain `typelisp lint
+<file.tl>` remains warn-only for reviewable cleanup slices.
 
 Run the tests that match the layer you touched. On non-Linux platforms, scripts
 that require native `as`/`ld` either no-op by design or should be run through a

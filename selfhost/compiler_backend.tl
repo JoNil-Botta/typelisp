@@ -453,6 +453,34 @@
     [(BackendModeAvx2) "    vzeroupper\n"]
     [_ ""]))
 
+(define (compiler-backend-dispatch-avx2-prefix) : String
+  "__tl_dispatch_variant_avx2_")
+
+(define (compiler-backend-dispatch-avx512-prefix) : String
+  "__tl_dispatch_variant_avx512_")
+
+(define (compiler-backend-effective-mode-for-function-name
+  [mode : CompilerBackendMode]
+  [name : String]) : CompilerBackendMode
+  (if (compiler-backend-string-prefix-at?
+    name
+    (compiler-backend-dispatch-avx512-prefix)
+    0)
+    (BackendModeAvx512)
+    (if (compiler-backend-string-prefix-at?
+      name
+      (compiler-backend-dispatch-avx2-prefix)
+      0)
+      (BackendModeAvx2)
+      mode)))
+
+(define (compiler-backend-effective-function-mode
+  [mode : CompilerBackendMode]
+  [func : CompilerIrFunction]) : CompilerBackendMode
+  (match func
+    [(IrFunction name _ _ _ _)
+      (compiler-backend-effective-mode-for-function-name mode name)]))
+
 (define (compiler-backend-avx2-shape-ok? [elem-ty : AstType] [lanes : i64]) : bool
   (match elem-ty
     [(AstTyI64) (= lanes 4)]
@@ -8963,7 +8991,7 @@
     [(IrFunctionCons func rest)
       (match (compiler-backend-emit-function-escaping
         target
-        mode
+        (compiler-backend-effective-function-mode mode func)
         func
         all-functions
         globals
@@ -9066,7 +9094,7 @@
     [(IrFunctionCons func rest)
       (match (compiler-backend-emit-function-escaping
         target
-        mode
+        (compiler-backend-effective-function-mode mode func)
         func
         all-functions
         globals

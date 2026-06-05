@@ -1,6 +1,8 @@
 ;; compiler_check_core.tl - Shared selfhost check/typecheck helpers (#723).
 (import "../stdlib/io.tl")
 
+(cfg compile-profile (import "../stdlib/profile.tl"))
+
 (import "compiler_load.tl")
 
 (import "compiler_typecheck.tl")
@@ -8,6 +10,30 @@
 (defenum ResultCompilerCheck
   (OkCompilerCheck CompilerTypecheckSummary)
   (ErrCompilerCheck CompilerDiagnostic))
+
+(cfg
+  compile-profile
+  (define compiler-check-profile-start-ms : i64
+    0))
+
+(cfg
+  compile-profile
+  (define (compiler-check-profile-start) : unit
+    (set! compiler-check-profile-start-ms (profile-now-ms))))
+
+(cfg
+  compile-profile
+  (define (compiler-check-profile-finish [phase : String]) : unit
+    (print-error
+      (string-append
+        "compile-profile|check."
+        (string-append
+          phase
+          (string-append
+            "|"
+            (string-append
+              (int->string (- (profile-now-ms) compiler-check-profile-start-ms))
+              "|0|0|0\n")))))))
 
 (define (compiler-check-diagnostic-with-fallback-path
   [diag : CompilerDiagnostic]
@@ -20,50 +46,85 @@
   [path : String]
   [decls : AstDeclList]
   [paths : AstDeclPathList]) : ResultCompilerCheck
-  (match (typecheck-compiler-program-with-paths (ast-program decls) paths)
-    [(OkCompilerTypecheck summary) (OkCompilerCheck summary)]
-    [(ErrCompilerTypecheck diag)
-      (ErrCompilerCheck
-        (compiler-check-diagnostic-with-fallback-path diag path))]))
+  (begin
+    (cfg compile-profile (compiler-check-profile-start))
+    (match (typecheck-compiler-program-with-paths (ast-program decls) paths)
+      [(OkCompilerTypecheck summary)
+        (begin
+          (cfg compile-profile (compiler-check-profile-finish "typecheck"))
+          (OkCompilerCheck summary))]
+      [(ErrCompilerTypecheck diag)
+        (begin
+          (cfg compile-profile (compiler-check-profile-finish "typecheck"))
+          (ErrCompilerCheck
+            (compiler-check-diagnostic-with-fallback-path diag path)))])))
 
 (define (compiler-check-program [path : String] [decls : AstDeclList]) : ResultCompilerCheck
   (compiler-check-program-with-paths path decls AstDeclPathNil))
 
 (define (compiler-check-file [path : String]) : ResultCompilerCheck
-  (match (compiler-load-file-with-paths path (sym-i64-empty))
-    [(OkCompilerLoadWithPaths decls paths _ _)
-      (compiler-check-program-with-paths path decls paths)]
-    [(ErrCompilerLoadWithPaths diag) (ErrCompilerCheck diag)]))
+  (begin
+    (cfg compile-profile (compiler-check-profile-start))
+    (match (compiler-load-file-with-paths path (sym-i64-empty))
+      [(OkCompilerLoadWithPaths decls paths _ _)
+        (begin
+          (cfg compile-profile (compiler-check-profile-finish "load"))
+          (compiler-check-program-with-paths path decls paths))]
+      [(ErrCompilerLoadWithPaths diag)
+        (begin
+          (cfg compile-profile (compiler-check-profile-finish "load"))
+          (ErrCompilerCheck diag))])))
 
 (define (compiler-check-file-with-roots
   [path : String]
   [stdlib-roots : CompilerLoadRootList]) : ResultCompilerCheck
-  (match (compiler-load-file-with-paths-and-roots
-    path
-    (sym-i64-empty)
-    stdlib-roots)
-    [(OkCompilerLoadWithPaths decls paths _ _)
-      (compiler-check-program-with-paths path decls paths)]
-    [(ErrCompilerLoadWithPaths diag) (ErrCompilerCheck diag)]))
+  (begin
+    (cfg compile-profile (compiler-check-profile-start))
+    (match (compiler-load-file-with-paths-and-roots
+      path
+      (sym-i64-empty)
+      stdlib-roots)
+      [(OkCompilerLoadWithPaths decls paths _ _)
+        (begin
+          (cfg compile-profile (compiler-check-profile-finish "load"))
+          (compiler-check-program-with-paths path decls paths))]
+      [(ErrCompilerLoadWithPaths diag)
+        (begin
+          (cfg compile-profile (compiler-check-profile-finish "load"))
+          (ErrCompilerCheck diag))])))
 
 (define (compiler-check-source [path : String] [source : String]) : ResultCompilerCheck
-  (match (compiler-load-source-with-paths path source (sym-i64-empty))
-    [(OkCompilerLoadWithPaths decls paths _ _)
-      (compiler-check-program-with-paths path decls paths)]
-    [(ErrCompilerLoadWithPaths diag) (ErrCompilerCheck diag)]))
+  (begin
+    (cfg compile-profile (compiler-check-profile-start))
+    (match (compiler-load-source-with-paths path source (sym-i64-empty))
+      [(OkCompilerLoadWithPaths decls paths _ _)
+        (begin
+          (cfg compile-profile (compiler-check-profile-finish "load"))
+          (compiler-check-program-with-paths path decls paths))]
+      [(ErrCompilerLoadWithPaths diag)
+        (begin
+          (cfg compile-profile (compiler-check-profile-finish "load"))
+          (ErrCompilerCheck diag))])))
 
 (define (compiler-check-source-with-roots
   [path : String]
   [source : String]
   [stdlib-roots : CompilerLoadRootList]) : ResultCompilerCheck
-  (match (compiler-load-source-with-paths-and-roots
-    path
-    source
-    (sym-i64-empty)
-    stdlib-roots)
-    [(OkCompilerLoadWithPaths decls paths _ _)
-      (compiler-check-program-with-paths path decls paths)]
-    [(ErrCompilerLoadWithPaths diag) (ErrCompilerCheck diag)]))
+  (begin
+    (cfg compile-profile (compiler-check-profile-start))
+    (match (compiler-load-source-with-paths-and-roots
+      path
+      source
+      (sym-i64-empty)
+      stdlib-roots)
+      [(OkCompilerLoadWithPaths decls paths _ _)
+        (begin
+          (cfg compile-profile (compiler-check-profile-finish "load"))
+          (compiler-check-program-with-paths path decls paths))]
+      [(ErrCompilerLoadWithPaths diag)
+        (begin
+          (cfg compile-profile (compiler-check-profile-finish "load"))
+          (ErrCompilerCheck diag))])))
 
 (define (compiler-check-virtual-import-source) : String
   "(import \"compiler_ast_types.tl\")

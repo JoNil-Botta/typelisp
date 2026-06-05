@@ -2083,21 +2083,26 @@
               (+ index 1)
               module)]))]))
 
+(define (build-compiler-registries-with-symbols
+  [program : AstProgram]
+  [_symbols : CompilerSymbols]) : ResultCompilerRegistries
+  (match program
+    [(AstProgram decls-box)
+      (let
+        [decls : AstDeclList (box-get decls-box)]
+        (match (build-compiler-registry-list
+          decls
+          (compiler-registries-empty)
+          0)
+          [(OkCompilerRegistries registries)
+            (OkCompilerRegistries
+              (build-compiler-registry-aliases-list decls decls registries))]
+          [(ErrCompilerRegistries message) (ErrCompilerRegistries message)]))]))
+
 (define (build-compiler-registries [program : AstProgram]) : ResultCompilerRegistries
   (match (build-compiler-symbols program)
-    [(OkCompilerSymbols _)
-      (match program
-        [(AstProgram decls-box)
-          (let
-            [decls : AstDeclList (box-get decls-box)]
-            (match (build-compiler-registry-list
-              decls
-              (compiler-registries-empty)
-              0)
-              [(OkCompilerRegistries registries)
-                (OkCompilerRegistries
-                  (build-compiler-registry-aliases-list decls decls registries))]
-              [(ErrCompilerRegistries message) (ErrCompilerRegistries message)]))])]
+    [(OkCompilerSymbols symbols)
+      (build-compiler-registries-with-symbols program symbols)]
     [(ErrCompilerSymbols message) (ErrCompilerRegistries message)]))
 
 (define (build-compiler-registries-from-source [src : String]) : ResultCompilerRegistries
@@ -2225,28 +2230,53 @@
               exports
               module)]))]))
 
+(define (compiler-decl-list-has-exports? [decls : AstDeclList]) : bool
+  (match decls
+    [(AstDeclNil) false]
+    [(AstDeclCons decl rest)
+      (let
+        [rest : AstDeclList (box-get rest)]
+        (match decl
+          [(AstDeclExport _) true]
+          [(AstDeclComptimeDecl _ template-box)
+            (let
+              [template : AstDecl (box-get template-box)]
+              (match template
+                [(AstDeclExport _) true]
+                [_ (compiler-decl-list-has-exports? rest)]))]
+          [_ (compiler-decl-list-has-exports? rest)]))]))
+
+(define (compiler-program-has-exports? [program : AstProgram]) : bool
+  (match program
+    [(AstProgram decls-box)
+      (let
+        [decls : AstDeclList (box-get decls-box)]
+        (compiler-decl-list-has-exports? decls))]))
+
 (define (build-compiler-exports-with
   [program : AstProgram]
   [symbols : CompilerSymbols]
   [registries : CompilerRegistries]) : ResultCompilerExports
-  (match (build-compiler-local-symbols program)
-    [(OkCompilerSymbols local-symbols)
-      (match program
-        [(AstProgram decls-box)
-          (let
-            [decls : AstDeclList (box-get decls-box)]
-            (build-compiler-export-list-in-module
-              decls
-              local-symbols
-              registries
-              (compiler-exports-empty)
-              ""))])]
-    [(ErrCompilerSymbols message) (ErrCompilerExports message)]))
+  (if (compiler-program-has-exports? program)
+    (match (build-compiler-local-symbols program)
+      [(OkCompilerSymbols local-symbols)
+        (match program
+          [(AstProgram decls-box)
+            (let
+              [decls : AstDeclList (box-get decls-box)]
+              (build-compiler-export-list-in-module
+                decls
+                local-symbols
+                registries
+                (compiler-exports-empty)
+                ""))])]
+      [(ErrCompilerSymbols message) (ErrCompilerExports message)])
+    (OkCompilerExports (compiler-exports-empty))))
 
 (define (build-compiler-exports [program : AstProgram]) : ResultCompilerExports
   (match (build-compiler-symbols program)
     [(OkCompilerSymbols symbols)
-      (match (build-compiler-registries program)
+      (match (build-compiler-registries-with-symbols program symbols)
         [(OkCompilerRegistries registries)
           (build-compiler-exports-with program symbols registries)]
         [(ErrCompilerRegistries message) (ErrCompilerExports message)])]

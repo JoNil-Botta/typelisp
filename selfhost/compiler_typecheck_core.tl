@@ -2394,73 +2394,25 @@
       name
       "; TypeLisp has no source-level type parameters; use comptime-generated concrete declarations instead (#893/#913/#970/#902)")))
 
-(define (tc-nominal-lifetimes-list
-  [decls : AstDeclList]
-  [name : String]
-  [module : String]) : ResultTcLifetimeList
-  (match decls
-    [(AstDeclNil) (ErrTcLifetimeList "typecheck: nominal type not found")]
-    [(AstDeclCons decl rest)
-      (let
-        [rest : AstDeclList (box-get rest)]
-        (match decl
-          [(AstDeclModule next-module)
-            (tc-nominal-lifetimes-list rest name next-module)]
-          [(AstDeclDefEnum decl-name _)
-            (if (string-eq name (compiler-symbol-module-key module decl-name))
-              (OkTcLifetimeList AstLifetimeNil)
-              (tc-nominal-lifetimes-list rest name module))]
-          [(AstDeclDefEnumLifetimes decl-name lifetimes _)
-            (if (string-eq name (compiler-symbol-module-key module decl-name))
-              (OkTcLifetimeList lifetimes)
-              (tc-nominal-lifetimes-list rest name module))]
-          [(AstDeclDefStruct decl-name _ _ _)
-            (if (string-eq name (compiler-symbol-module-key module decl-name))
-              (OkTcLifetimeList AstLifetimeNil)
-              (tc-nominal-lifetimes-list rest name module))]
-          [(AstDeclDefStructLifetimes decl-name lifetimes _ _ _)
-            (if (string-eq name (compiler-symbol-module-key module decl-name))
-              (OkTcLifetimeList lifetimes)
-              (tc-nominal-lifetimes-list rest name module))]
-          [(AstDeclComptimeDecl _ template-box)
-            (let
-              [template : AstDecl (box-get template-box)]
-              (match template
-                [(AstDeclDefEnum decl-name _)
-                  (if (string-eq
-                    name
-                    (compiler-symbol-module-key module decl-name))
-                    (OkTcLifetimeList AstLifetimeNil)
-                    (tc-nominal-lifetimes-list rest name module))]
-                [(AstDeclDefEnumLifetimes decl-name lifetimes _)
-                  (if (string-eq
-                    name
-                    (compiler-symbol-module-key module decl-name))
-                    (OkTcLifetimeList lifetimes)
-                    (tc-nominal-lifetimes-list rest name module))]
-                [(AstDeclDefStruct decl-name _ _ _)
-                  (if (string-eq
-                    name
-                    (compiler-symbol-module-key module decl-name))
-                    (OkTcLifetimeList AstLifetimeNil)
-                    (tc-nominal-lifetimes-list rest name module))]
-                [(AstDeclDefStructLifetimes decl-name lifetimes _ _ _)
-                  (if (string-eq
-                    name
-                    (compiler-symbol-module-key module decl-name))
-                    (OkTcLifetimeList lifetimes)
-                    (tc-nominal-lifetimes-list rest name module))]
-                [_ (tc-nominal-lifetimes-list rest name module)]))]
-          [_ (tc-nominal-lifetimes-list rest name module)]))]))
+(define (tc-nominal-lifetimes-from-decl [decl : AstDecl]) : ResultTcLifetimeList
+  (match decl
+    [(AstDeclDefEnum _ _) (OkTcLifetimeList AstLifetimeNil)]
+    [(AstDeclDefEnumLifetimes _ lifetimes _) (OkTcLifetimeList lifetimes)]
+    [(AstDeclDefStruct _ _ _ _) (OkTcLifetimeList AstLifetimeNil)]
+    [(AstDeclDefStructLifetimes _ lifetimes _ _ _) (OkTcLifetimeList lifetimes)]
+    [_ (ErrTcLifetimeList "typecheck: nominal type not found")]))
 
 (define (tc-nominal-lifetimes [ctx : TcContext] [name : String]) : ResultTcLifetimeList
   (match ctx
-    [(TcContext program _ _ _)
-      (match program
-        [(AstProgram decls-box)
-          (let
-            [decls : AstDeclList (box-get decls-box)]
-            (tc-nominal-lifetimes-list decls name ""))])]))
+    [(TcContext _ symbols _ _)
+      (match (compiler-symbols-lookup-type symbols name)
+        [(SomeI64 handle)
+          (match (compiler-symbols-decl-at-index
+            symbols
+            (compiler-symbol-handle-index handle))
+            [(OkAstDecl decl) (tc-nominal-lifetimes-from-decl decl)]
+            [(ErrAstDecl message) (ErrTcLifetimeList message)])]
+        [(NoneI64) (ErrTcLifetimeList "typecheck: nominal type not found")])]))
 
 (define (tc-nominal-lifetime-use-policy-ok
   [ctx : TcContext]
@@ -13998,7 +13950,7 @@
         (if (macro-program-needs-expansion? decls)
           (match (build-compiler-symbols program)
             [(OkCompilerSymbols symbols)
-              (match (build-compiler-registries program)
+              (match (build-compiler-registries-with-symbols program symbols)
                 [(OkCompilerRegistries registries)
                   (match (build-compiler-exports-with
                     program
@@ -14521,7 +14473,7 @@
   [paths : AstDeclPathList]) : ResultCompilerTypecheckChecked
   (match (build-compiler-symbols program)
     [(OkCompilerSymbols symbols)
-      (match (build-compiler-registries program)
+      (match (build-compiler-registries-with-symbols program symbols)
         [(OkCompilerRegistries registries)
           (match (build-compiler-exports-with program symbols registries)
             [(OkCompilerExports _)

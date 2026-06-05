@@ -11889,9 +11889,8 @@
 ;; union (a place moved on any arm is moved afterward); loops and lambdas discard
 ;; their body's moves for the post-state because they may run zero times or be
 ;; deferred. Reassigning a slot with `set!` clears its moved mark.
-(defenum TcMovedSet
-  (TcMovedNil)
-  (TcMovedCons String TcMovedSet))
+(defstruct TcMovedSet
+  (map StringI64Map))
 
 (defenum TcMoveResult
   (OkTcMove TcMovedSet)
@@ -11901,31 +11900,54 @@
   (OkTcMoveBindings TcTypeEnv TcMovedSet TcMovedSet)
   (ErrTcMoveBindings String))
 
+(define (tc-moved-empty) : TcMovedSet
+  (TcMovedSet (string-i64-map-with-capacity 8)))
+
+(define (tc-moved-map [set : TcMovedSet]) : StringI64Map
+  (struct-get set map))
+
+(define (tc-moved-len [set : TcMovedSet]) : i64
+  (string-i64-map-len (tc-moved-map set)))
+
+(define (tc-moved-capacity [set : TcMovedSet]) : i64
+  (string-i64-map-capacity (tc-moved-map set)))
+
+(define (tc-moved-clone [set : TcMovedSet]) : TcMovedSet
+  (let
+    [map : StringI64Map (tc-moved-map set)]
+    (TcMovedSet (string-i64-map-resized map (string-i64-map-capacity map)))))
+
 (define (tc-moved-contains? [set : TcMovedSet] [name : String]) : bool
-  (match set
-    [(TcMovedNil) false]
-    [(TcMovedCons n rest)
-      (if (string-eq n name)
-        true
-        (tc-moved-contains? rest name))]))
+  (string-i64-map-contains? (tc-moved-map set) name))
 
 (define (tc-moved-add [set : TcMovedSet] [name : String]) : TcMovedSet
-  (if (tc-moved-contains? set name)
-    set
-    (TcMovedCons name set)))
+  (TcMovedSet (string-i64-map-put (tc-moved-map set) name 1)))
 
 (define (tc-moved-remove [set : TcMovedSet] [name : String]) : TcMovedSet
-  (match set
-    [(TcMovedNil) (TcMovedNil)]
-    [(TcMovedCons n rest)
-      (if (string-eq n name)
-        (tc-moved-remove rest name)
-        (TcMovedCons n (tc-moved-remove rest name)))]))
+  (match (string-i64-map-remove (tc-moved-map set) name)
+    [(StringI64MapRemoveOk map) (TcMovedSet map)]
+    [(StringI64MapRemoveMissing map) (TcMovedSet map)]))
+
+(define (tc-moved-union-loop
+  [a : StringI64Map]
+  [index : i64]
+  [out : TcMovedSet]) : TcMovedSet
+  (if (>= index (string-i64-map-capacity a))
+    out
+    (match (string-i64-map-entry-at a index)
+      [(StringI64MapEntrySome key _)
+        (tc-moved-union-loop
+          a
+          (string-i64-map-next-occupied a (+ index 1))
+          (tc-moved-add out key))]
+      [(StringI64MapEntryNone)
+        (tc-moved-union-loop a (string-i64-map-next-occupied a (+ index 1)) out)])))
 
 (define (tc-moved-union [a : TcMovedSet] [b : TcMovedSet]) : TcMovedSet
-  (match a
-    [(TcMovedNil) b]
-    [(TcMovedCons n rest) (tc-moved-union rest (tc-moved-add b n))]))
+  (tc-moved-union-loop
+    (tc-moved-map a)
+    (string-i64-map-next-occupied (tc-moved-map a) 0)
+    b))
 
 (define (tc-move-var-move-only? [env : TcTypeEnv] [name : String]) : bool
   (match (tc-lookup env name)
@@ -12048,9 +12070,19 @@
           [(AstMatchArm _ body-box)
             (let
               [body : AstExpr (box-get body-box)]
-              (match (tc-move-check-expr ctx env locals moved body)
+              (match (tc-move-check-expr
+                ctx
+                env
+                (tc-moved-clone locals)
+                (tc-moved-clone moved)
+                body)
                 [(OkTcMove arm-moved)
-                  (match (tc-move-check-arms ctx env locals moved rest)
+                  (match (tc-move-check-arms
+                    ctx
+                    env
+                    (tc-moved-clone locals)
+                    (tc-moved-clone moved)
+                    rest)
                     [(OkTcMove rest-moved)
                       (OkTcMove (tc-moved-union arm-moved rest-moved))]
                     [(ErrTcMove message) (ErrTcMove message)])]
@@ -12099,9 +12131,19 @@
         [else-branch : AstExpr (box-get else-branch-box)]
         (match (tc-move-check-expr ctx env locals moved cond)
           [(OkTcMove movedc)
-            (match (tc-move-check-expr ctx env locals movedc then-branch)
+            (match (tc-move-check-expr
+              ctx
+              env
+              (tc-moved-clone locals)
+              (tc-moved-clone movedc)
+              then-branch)
               [(OkTcMove movedt)
-                (match (tc-move-check-expr ctx env locals movedc else-branch)
+                (match (tc-move-check-expr
+                  ctx
+                  env
+                  (tc-moved-clone locals)
+                  (tc-moved-clone movedc)
+                  else-branch)
                   [(OkTcMove movede) (OkTcMove (tc-moved-union movedt movede))]
                   [(ErrTcMove message) (ErrTcMove message)])]
               [(ErrTcMove message) (ErrTcMove message)])]
@@ -12109,14 +12151,24 @@
     [(AstExprLet bindings body-box)
       (let
         [body : AstExpr (box-get body-box)]
-        (match (tc-move-check-let-bindings ctx env locals moved bindings)
+        (match (tc-move-check-let-bindings
+          ctx
+          env
+          (tc-moved-clone locals)
+          moved
+          bindings)
           [(OkTcMoveBindings env2 moved2 locals2)
             (tc-move-check-expr ctx env2 locals2 moved2 body)]
           [(ErrTcMoveBindings message) (ErrTcMove message)]))]
     [(AstExprLambda _ _ body-box)
       (let
         [body : AstExpr (box-get body-box)]
-        (match (tc-move-check-expr ctx env locals moved body)
+        (match (tc-move-check-expr
+          ctx
+          env
+          (tc-moved-clone locals)
+          (tc-moved-clone moved)
+          body)
           [(OkTcMove _) (OkTcMove moved)]
           [(ErrTcMove message) (ErrTcMove message)]))]
     [(AstExprTuple exprs) (tc-move-check-exprs ctx env locals moved exprs)]
@@ -12168,7 +12220,12 @@
         [body : AstExpr (box-get body-box)]
         (match (tc-move-check-expr ctx env locals moved cond)
           [(OkTcMove movedc)
-            (match (tc-move-check-expr ctx env locals movedc body)
+            (match (tc-move-check-expr
+              ctx
+              env
+              (tc-moved-clone locals)
+              (tc-moved-clone movedc)
+              body)
               [(OkTcMove _) (OkTcMove movedc)]
               [(ErrTcMove message) (ErrTcMove message)])]
           [(ErrTcMove message) (ErrTcMove message)]))]
@@ -12212,8 +12269,8 @@
                 (match (tc-move-check-expr
                   ctx
                   (tc-bind env index (tc-resolve-type ctx index-ty))
-                  (tc-moved-add locals index)
-                  moved2
+                  (tc-moved-add (tc-moved-clone locals) index)
+                  (tc-moved-clone moved2)
                   body)
                   [(OkTcMove _) (OkTcMove moved2)]
                   [(ErrTcMove message) (ErrTcMove message)])]
@@ -12367,8 +12424,8 @@
   (match (tc-move-check-expr
     ctx
     env
-    (tc-move-params-locals params (TcMovedNil))
-    (TcMovedNil)
+    (tc-move-params-locals params (tc-moved-empty))
+    (tc-moved-empty)
     body)
     [(OkTcMove _) OkTcUnit]
     [(ErrTcMove message) (ErrTcUnit message)]))

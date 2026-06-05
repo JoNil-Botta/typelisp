@@ -302,13 +302,10 @@ compile_windows_c_deps() {
 # Integration cases that are not Windows-applicable in this manifest
 # (kept covered on Linux via native-linux.manifest):
 #   arena_poison_*            Linux-only poison-on-reclaim debug mode
-#   with_arena_*               existing host gaps
 windows_integration_non_applicable_cases() {
     cat <<'EOF'
 arena_poison_clone_survives
 arena_poison_stale_array_trap
-with_arena_builtin_alloc
-with_arena_loop
 EOF
 }
 

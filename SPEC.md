@@ -2733,11 +2733,11 @@ active region, and a `tl_region_reset` at exit that restores the mark. Because
 the body result must be region-free, the reset is safe: no live handle refers
 to storage allocated after the mark.
 
-**Non-Linux targets:** `with-arena` remains a typechecked scope. On targets
-where `tl_region_mark` / `tl_region_reset` are unavailable the runtime does
-not perform a reset; the semantics match minus reclamation. The form still
-prevents escapes, so programs compile and run identically, but allocations
-accumulate in the process-lifetime arena instead of being reclaimed.
+**Target support:** Linux and Windows runtime helpers implement
+`tl_region_mark` / `tl_region_reset`, so `with-arena` reclaims scoped
+allocations on both native targets covered by integration tests. Future native
+targets must either provide equivalent helpers before enabling `with-arena`
+execution or document a target-specific limitation.
 
 **First-class arena escape:** `(with-escape arena-expr body ...)` is a
 separate scoped form for first-class scratch arenas. `arena-expr` must
@@ -3492,8 +3492,9 @@ mix. Inner-region values cannot escape to the outer region; outer-region values
 can be used inside the inner region without restriction (they carry the outer
 tag, not the inner one).
 
-On non-Linux targets `with-arena` still type-checks and scopes but does not
-reclaim, matching the semantic contract minus the reset.
+Linux and Windows native targets both implement `with-arena` reclamation through
+`tl_region_mark` / `tl_region_reset`. Integration tests assert that repeated
+scoped allocations restore the saved arena mark on both hosts.
 
 #### First-class scratch arena escape - `with-escape`
 
@@ -3730,7 +3731,7 @@ not the future safe reference/borrow model (#182), not a replacement for
 | SPMD / SIMD `foreach` | Scalar reference lowering implemented; AVX2 supports a first contiguous map/zip subset |
 | SPMD reductions and public cross-lane ops | Source semantics specified; parser/typechecker/lowering/backend support pending |
 | Runtime SIMD dispatch (`defdispatch`) | Source semantics specified; parser/typechecker/lowering/backend support pending |
-| Windows region helpers | Implemented for `tl_region_mark`/`tl_region_reset` |
+| Windows region helpers | Implemented for `tl_region_mark`/`tl_region_reset` and `with-arena` scoped reclamation |
 | Complete source locations for all semantic errors | Partial |
 | REPL evaluation | Selfhost REPL bare expressions run through scratch build/run execution; public selfhost CLI routing is implemented |
 | Package manager | Not implemented |

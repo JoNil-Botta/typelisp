@@ -4099,10 +4099,12 @@
             (match args
               [(AstExprCons left tail)
                 (let
+                  [left : AstExpr (box-get left)]
                   [tail : AstExprList (box-get tail)]
                   (match tail
                     [(AstExprCons right rest)
                       (let
+                        [right : AstExpr (box-get right)]
                         [rest : AstExprList (box-get rest)]
                         (match rest
                           [(AstExprNil) (LowerSomeStringConcatCall left right)]
@@ -4152,28 +4154,31 @@
   (match exprs
     [(AstExprNil) (OkLowerStringValues state acc count)]
     [(AstExprCons expr rest)
-      (match (lower-expr ctx state env type-env expr)
-        [(OkLowerExpr lowered)
-          (match lowered
-            [(LowerExpr expr-state value expr-ty)
-              (if (lower-string-handle-type? ctx expr-ty)
-                (match (lower-string-fields expr-state value)
-                  [(LowerStringFields field-state ptr len)
-                    (lower-string-concat-values-rev
-                      ctx
-                      field-state
-                      env
-                      type-env
-                      (box-get rest)
-                      (compiler-ir-value-cons
-                        len
-                        (compiler-ir-value-cons ptr acc))
-                      (+ count 1))])
-                (ErrLowerStringValues
-                  (lower-diagnostic-at-expr
-                    expr
-                    "lower: string-concat requires String")))])]
-        [(ErrLowerExpr message) (ErrLowerStringValues message)])]))
+      (let
+        [expr : AstExpr (box-get expr)]
+        [rest : AstExprList (box-get rest)]
+        (match (lower-expr ctx state env type-env expr)
+          [(OkLowerExpr lowered)
+            (match lowered
+              [(LowerExpr expr-state value expr-ty)
+                (if (lower-string-handle-type? ctx expr-ty)
+                  (match (lower-string-fields expr-state value)
+                    [(LowerStringFields field-state ptr len)
+                      (lower-string-concat-values-rev
+                        ctx
+                        field-state
+                        env
+                        type-env
+                        rest
+                        (compiler-ir-value-cons
+                          len
+                          (compiler-ir-value-cons ptr acc))
+                        (+ count 1))])
+                  (ErrLowerStringValues
+                    (lower-diagnostic-at-expr
+                      expr
+                      "lower: string-concat requires String")))])]
+          [(ErrLowerExpr message) (ErrLowerStringValues message)]))]))
 
 (define (lower-string-concat-exprs
   [ctx : TcContext]

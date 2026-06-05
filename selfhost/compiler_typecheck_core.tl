@@ -1557,6 +1557,7 @@
       [(AstTypeNil) AstTypeNil]
       [(AstTypeCons head tail)
         (let
+          [head : AstType (box-get head)]
           [tail : AstTypeList (box-get tail)]
           (ast-type-cons
             (tc-type-without-regions head)
@@ -1983,6 +1984,7 @@
       [(AstTypeNil) AstTypeNil]
       [(AstTypeCons head tail)
         (let
+          [head : AstType (box-get head)]
           [tail : AstTypeList (box-get tail)]
           (ast-type-cons
             (tc-resolve-type ctx head)

@@ -266,6 +266,7 @@ function Invoke-SuperluminalCapture {
     $stderr = Join-Path $OutDir "stage2-profile.superluminal.stderr"
     $capture = Join-Path $OutDir "stage2-profile.etl"
     $stage3 = Join-Path $OutDir "stage3-super.s"
+    Remove-Item -LiteralPath $stage3 -ErrorAction SilentlyContinue
 
     $args = @(
         "run", "windows",
@@ -300,6 +301,9 @@ function Invoke-SuperluminalCapture {
             $text = Get-Content -LiteralPath $stderr -Raw
         }
         throw "Superluminal capture failed with exit code $LASTEXITCODE`n$text"
+    }
+    if (-not (Test-Path -LiteralPath $stage3 -PathType Leaf)) {
+        throw "captured compile did not produce stage3 assembly: $stage3"
     }
 }
 

@@ -4165,6 +4165,26 @@
         "typecheck: unbound name read-stdin-line")
         unit
         (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        "(define (f [p : String]) : String (read-file p))"
+        "typecheck: unbound name read-file")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        "(define (f [p : String]) : i64 (file-open-status p 0))"
+        "typecheck: unbound name file-open-status")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        "(define (f) : i64 (fs-process-id))"
+        "typecheck: unbound name fs-process-id")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        "(define (f) : unit (flush-stdout))"
+        "typecheck: unbound name flush-stdout")
+        unit
+        (set! ok false))
       ok)))
 
 ;; Raw-pointer null construction / check (#1054).

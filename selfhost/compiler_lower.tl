@@ -367,8 +367,8 @@
 (define (lower-type-env-count [env : TcTypeEnv]) : i64
   (match env
     [(TcTypeNil) 0]
-    [(TcTypeCache _ _ rest) (lower-type-env-count rest)]
-    [(TcTypeBind _ _ rest) (+ 1 (lower-type-env-count rest))]))
+    [(TcTypeCache _ _ rest) (lower-type-env-count (box-get rest))]
+    [(TcTypeBind _ _ rest) (+ 1 (lower-type-env-count (box-get rest)))]))
 
 (define (lower-type-cache-capacity [count : i64]) : i64
   (if (< count 4)
@@ -397,9 +397,12 @@
   [cache : LowerTypeCache]) : LowerTypeCache
   (match env
     [(TcTypeNil) cache]
-    [(TcTypeCache _ _ rest) (lower-type-cache-from-env-into rest cache)]
+    [(TcTypeCache _ _ rest)
+      (lower-type-cache-from-env-into (box-get rest) cache)]
     [(TcTypeBind name ty rest)
-      (lower-type-cache-from-env-into rest (lower-type-cache-add cache name ty))]))
+      (lower-type-cache-from-env-into
+        (box-get rest)
+        (lower-type-cache-add cache name ty))]))
 
 (define (lower-type-cache-from-env [env : TcTypeEnv]) : LowerTypeCache
   (let
@@ -4729,42 +4732,45 @@
   [type-env : TcTypeEnv]) : ResultLowerState
   (match type-env
     [(TcTypeNil) (OkLowerState state)]
-    [(TcTypeCache _ _ rest) (lower-emit-active-exits state env rest)]
+    [(TcTypeCache _ _ rest) (lower-emit-active-exits state env (box-get rest))]
     [(TcTypeBind key ty rest)
-      (if (string-eq key (lower-cleanup-marker-name))
-        (match ty
-          [(AstTyTuple types)
-            (match types
-              [(AstTypeCons (AstTyVar hidden-name) type-rest)
-                (let
-                  [type-rest : AstTypeList (box-get type-rest)]
-                  (match type-rest
-                    [(AstTypeCons (AstTyVar cleanup-name) end)
-                      (let
-                        [end : AstTypeList (box-get end)]
-                        (match end
-                          [(AstTypeNil)
-                            (match (lower-emit-cleanup-call
-                              state
-                              env
-                              hidden-name
-                              cleanup-name)
-                              [(OkLowerState next-state)
-                                (lower-emit-active-exits next-state env rest)]
-                              [(ErrLowerState message) (ErrLowerState message)])]
-                          [_ (lower-emit-active-exits state env rest)]))]
-                    [_ (lower-emit-active-exits state env rest)]))]
-              [_ (lower-emit-active-exits state env rest)])]
-          [_ (lower-emit-active-exits state env rest)])
-        (if (string-eq key (lower-region-reset-marker-name))
+      (let
+        [tail : TcTypeEnv (box-get rest)]
+        (if (string-eq key (lower-cleanup-marker-name))
           (match ty
-            [(AstTyVar hidden-name)
-              (match (lower-emit-region-reset state env hidden-name)
-                [(OkLowerState next-state)
-                  (lower-emit-active-exits next-state env rest)]
-                [(ErrLowerState message) (ErrLowerState message)])]
-            [_ (lower-emit-active-exits state env rest)])
-          (lower-emit-active-exits state env rest)))]))
+            [(AstTyTuple types)
+              (match types
+                [(AstTypeCons (AstTyVar hidden-name) type-rest)
+                  (let
+                    [type-rest : AstTypeList (box-get type-rest)]
+                    (match type-rest
+                      [(AstTypeCons (AstTyVar cleanup-name) end)
+                        (let
+                          [end : AstTypeList (box-get end)]
+                          (match end
+                            [(AstTypeNil)
+                              (match (lower-emit-cleanup-call
+                                state
+                                env
+                                hidden-name
+                                cleanup-name)
+                                [(OkLowerState next-state)
+                                  (lower-emit-active-exits next-state env tail)]
+                                [(ErrLowerState message)
+                                  (ErrLowerState message)])]
+                            [_ (lower-emit-active-exits state env tail)]))]
+                      [_ (lower-emit-active-exits state env tail)]))]
+                [_ (lower-emit-active-exits state env tail)])]
+            [_ (lower-emit-active-exits state env tail)])
+          (if (string-eq key (lower-region-reset-marker-name))
+            (match ty
+              [(AstTyVar hidden-name)
+                (match (lower-emit-region-reset state env hidden-name)
+                  [(OkLowerState next-state)
+                    (lower-emit-active-exits next-state env tail)]
+                  [(ErrLowerState message) (ErrLowerState message)])]
+              [_ (lower-emit-active-exits state env tail)])
+            (lower-emit-active-exits state env tail))))]))
 
 (define (lower-emit-active-cleanups
   [state : LowerState]
@@ -4772,34 +4778,41 @@
   [type-env : TcTypeEnv]) : ResultLowerState
   (match type-env
     [(TcTypeNil) (OkLowerState state)]
-    [(TcTypeCache _ _ rest) (lower-emit-active-cleanups state env rest)]
+    [(TcTypeCache _ _ rest)
+      (lower-emit-active-cleanups state env (box-get rest))]
     [(TcTypeBind key ty rest)
-      (if (string-eq key (lower-cleanup-marker-name))
-        (match ty
-          [(AstTyTuple types)
-            (match types
-              [(AstTypeCons (AstTyVar hidden-name) type-rest)
-                (let
-                  [type-rest : AstTypeList (box-get type-rest)]
-                  (match type-rest
-                    [(AstTypeCons (AstTyVar cleanup-name) end)
-                      (let
-                        [end : AstTypeList (box-get end)]
-                        (match end
-                          [(AstTypeNil)
-                            (match (lower-emit-cleanup-call
-                              state
-                              env
-                              hidden-name
-                              cleanup-name)
-                              [(OkLowerState next-state)
-                                (lower-emit-active-cleanups next-state env rest)]
-                              [(ErrLowerState message) (ErrLowerState message)])]
-                          [_ (lower-emit-active-cleanups state env rest)]))]
-                    [_ (lower-emit-active-cleanups state env rest)]))]
-              [_ (lower-emit-active-cleanups state env rest)])]
-          [_ (lower-emit-active-cleanups state env rest)])
-        (lower-emit-active-cleanups state env rest))]))
+      (let
+        [tail : TcTypeEnv (box-get rest)]
+        (if (string-eq key (lower-cleanup-marker-name))
+          (match ty
+            [(AstTyTuple types)
+              (match types
+                [(AstTypeCons (AstTyVar hidden-name) type-rest)
+                  (let
+                    [type-rest : AstTypeList (box-get type-rest)]
+                    (match type-rest
+                      [(AstTypeCons (AstTyVar cleanup-name) end)
+                        (let
+                          [end : AstTypeList (box-get end)]
+                          (match end
+                            [(AstTypeNil)
+                              (match (lower-emit-cleanup-call
+                                state
+                                env
+                                hidden-name
+                                cleanup-name)
+                                [(OkLowerState next-state)
+                                  (lower-emit-active-cleanups
+                                    next-state
+                                    env
+                                    tail)]
+                                [(ErrLowerState message)
+                                  (ErrLowerState message)])]
+                            [_ (lower-emit-active-cleanups state env tail)]))]
+                      [_ (lower-emit-active-cleanups state env tail)]))]
+                [_ (lower-emit-active-cleanups state env tail)])]
+            [_ (lower-emit-active-cleanups state env tail)])
+          (lower-emit-active-cleanups state env tail)))]))
 
 (define (lower-return-form
   [ctx : TcContext]

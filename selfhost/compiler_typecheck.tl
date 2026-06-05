@@ -65,16 +65,68 @@
     [(ErrAstProgram message) (ErrCompilerTypecheck (tc-diag-at-start message))]))
 
 (define (compiler-typecheck-with-io-source [src : String]) : String
-  (string-append "(import \"stdlib/io.tl\")\n" src))
+  (string-append
+    "(extern print : (-> i64 unit))
+(extern print-bool : (-> bool unit))
+(extern print-float : (-> f64 unit))
+(extern print-char : (-> char unit))
+(extern print-newline : (-> unit))
+(extern print-string : (-> String unit))
+(extern print-str : (-> String unit))
+(extern print-error : (-> String unit))
+(extern panic : (-> String never))
+(extern error : (-> String never))
+(extern arg-count : (-> i64))
+(extern arg : (-> i64 String))
+(extern read-file : (-> String String))
+(extern read-file-status : (-> String i64))
+(extern write-file : (-> String String unit))
+(extern write-file-status : (-> String String i64))
+(extern append-file-status : (-> String String i64))
+(extern file-exists? : (-> String bool))
+(extern file-exists-status : (-> String i64))
+(extern file-open-status : (-> String i64 i64))
+(extern file-close-status : (-> i64 i64))
+(extern file-read-chunk-status : (-> i64 i64 i64))
+(extern file-write-status : (-> i64 String i64))
+(extern file-flush-status : (-> i64 i64))
+(extern file-read-chunk-bytes : (-> i64 String))
+(extern file-read-chunk-eof? : (-> i64 bool))
+(extern read-stdin-line : (-> String))
+(extern read-stdin-bytes : (-> i64 String))
+(extern stdin-eof? : (-> bool))
+(extern flush-stdout : (-> unit))
+"
+    src))
 
 (define (compiler-typecheck-with-fs-source [src : String]) : String
-  (string-append "(import \"stdlib/io.tl\")\n(import \"stdlib/fs.tl\")\n" src))
+  (compiler-typecheck-with-io-source
+    (string-append
+      "(extern fs-mkdir-status : (-> String i64))
+(extern fs-remove-file-status : (-> String i64))
+(extern fs-remove-dir-status : (-> String i64))
+(extern fs-rename-status : (-> String String i64))
+(extern fs-read-dir-status : (-> String i64))
+(extern fs-read-dir : (-> String String))
+(extern fs-file-kind-status : (-> String i64))
+(extern fs-file-size-status : (-> String i64))
+(extern fs-file-size : (-> String i64))
+(extern fs-process-id : (-> i64))
+(extern fs-current-dir-status : (-> i64))
+(extern fs-current-dir : (-> String))
+"
+      src)))
 
 (define (compiler-typecheck-with-cpu-source [src : String]) : String
   (string-append "(import \"stdlib/cpu.tl\")\n" src))
 
 (define (compiler-typecheck-with-env-source [src : String]) : String
-  (string-append "(import \"stdlib/env.tl\")\n" src))
+  (string-append
+    "(define (env-var-exists? [name : String]) : bool true)
+(define (env-var-value [name : String]) : String name)
+(define (env-path-separator) : String \":\")
+"
+    src))
 
 (define (compiler-typecheck-with-arena-source [src : String]) : String
   (string-append
@@ -199,6 +251,10 @@
   (if (env-var-exists? name)
     (env-var-value name)
     (env-path-separator)))"))
+
+(define (compiler-typecheck-env-missing-import-source) : String
+  "(define (main [name : String]) : String
+  (env-var-value name))")
 
 (define (compiler-typecheck-tuple-oob-source) : String
   "(define (main) : i64 (tuple-ref (tuple 1 true) 2))")
@@ -460,40 +516,44 @@
           (compiler-typecheck-ok? (compiler-typecheck-env-source))
           (and
             (compiler-typecheck-error-ok?
-              (compiler-typecheck-tuple-oob-source)
-              "typecheck: tuple index out of bounds")
+              (compiler-typecheck-env-missing-import-source)
+              "typecheck: unbound name env-var-value")
             (and
               (compiler-typecheck-error-ok?
-                (compiler-typecheck-array-mismatch-source)
-                "typecheck: array elements must have same type")
+                (compiler-typecheck-tuple-oob-source)
+                "typecheck: tuple index out of bounds")
               (and
                 (compiler-typecheck-error-ok?
-                  (compiler-typecheck-string-index-source)
-                  "typecheck: string index must be integer")
+                  (compiler-typecheck-array-mismatch-source)
+                  "typecheck: array elements must have same type")
                 (and
-                  (compiler-typecheck-ok-score?
-                    (compiler-typecheck-string-shadow-source)
-                    30)
+                  (compiler-typecheck-error-ok?
+                    (compiler-typecheck-string-index-source)
+                    "typecheck: string index must be integer")
                   (and
-                    (compiler-typecheck-error-ok?
-                      (compiler-typecheck-cast-bad-source)
-                      "typecheck: cast requires scalar numeric (integer/char/float) source and target")
+                    (compiler-typecheck-ok-score?
+                      (compiler-typecheck-string-shadow-source)
+                      30)
                     (and
-                      (compiler-typecheck-ok-score?
-                        (compiler-typecheck-char-range-source)
-                        20)
+                      (compiler-typecheck-error-ok?
+                        (compiler-typecheck-cast-bad-source)
+                        "typecheck: cast requires scalar numeric (integer/char/float) source and target")
                       (and
-                        (compiler-typecheck-ok?
-                          (compiler-typecheck-never-branch-source))
+                        (compiler-typecheck-ok-score?
+                          (compiler-typecheck-char-range-source)
+                          20)
                         (and
-                          (compiler-typecheck-error-ok?
-                            (compiler-typecheck-foreach-body-source)
-                            "typecheck: foreach body must be unit")
+                          (compiler-typecheck-ok?
+                            (compiler-typecheck-never-branch-source))
                           (and
                             (compiler-typecheck-error-ok?
-                              (compiler-typecheck-lambda-ret-source)
-                              "typecheck: lambda return type mismatch")
-                            (compiler-typecheck-return-tests-ok?)))))))))))))))
+                              (compiler-typecheck-foreach-body-source)
+                              "typecheck: foreach body must be unit")
+                            (and
+                              (compiler-typecheck-error-ok?
+                                (compiler-typecheck-lambda-ret-source)
+                                "typecheck: lambda return type mismatch")
+                              (compiler-typecheck-return-tests-ok?))))))))))))))))
 
 (define (compiler-typecheck-nominal-source) : String
   "(defenum Maybe (None) (Some i64))
@@ -3806,10 +3866,14 @@
   (fs-rename-status from to))"))
         unit
         (set! ok false))
-      (if (compiler-typecheck-ok? "(define (f) : i64 (fs-current-dir-status))")
+      (if (compiler-typecheck-ok?
+        (compiler-typecheck-with-fs-source
+          "(define (f) : i64 (fs-current-dir-status))"))
         unit
         (set! ok false))
-      (if (compiler-typecheck-ok? "(define (f) : String (fs-current-dir))")
+      (if (compiler-typecheck-ok?
+        (compiler-typecheck-with-fs-source
+          "(define (f) : String (fs-current-dir))"))
         unit
         (set! ok false))
       (if (compiler-typecheck-ok?
@@ -3847,13 +3911,18 @@
           "(define (f [h : i64]) : bool (file-read-chunk-eof? h))"))
         unit
         (set! ok false))
-      (if (compiler-typecheck-ok? "(define (f) : String (read-stdin-line))")
+      (if (compiler-typecheck-ok?
+        (compiler-typecheck-with-io-source
+          "(define (f) : String (read-stdin-line))"))
         unit
         (set! ok false))
-      (if (compiler-typecheck-ok? "(define (f) : String (read-stdin-bytes 3))")
+      (if (compiler-typecheck-ok?
+        (compiler-typecheck-with-io-source
+          "(define (f) : String (read-stdin-bytes 3))"))
         unit
         (set! ok false))
-      (if (compiler-typecheck-ok? "(define (f) : bool (stdin-eof?))")
+      (if (compiler-typecheck-ok?
+        (compiler-typecheck-with-io-source "(define (f) : bool (stdin-eof?))"))
         unit
         (set! ok false))
       (if (compiler-typecheck-ok?
@@ -3935,6 +4004,16 @@
         (compiler-typecheck-with-fs-source
           "(define (f [p : String] [c : String]) : i64 (write-file p c))")
         "typecheck: return type mismatch")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        "(define (f) : String (fs-current-dir))"
+        "typecheck: unbound name fs-current-dir")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        "(define (f) : String (read-stdin-line))"
+        "typecheck: unbound name read-stdin-line")
         unit
         (set! ok false))
       ok)))
@@ -4780,14 +4859,13 @@
 (define (compiler-typecheck-runtime-builtin-print-region-ok-source) : String
   (compiler-typecheck-with-io-source
     "(define (main) : i64
-  (with-arena r
-    (let
-      [s : String (int->string 42)]
-      (begin
-        (print-string (& s))
-        (print-str (& s))
-        (print-error (& s))
-        0))))"))
+  (let
+    [s : String (int->string 42)]
+    (begin
+      (print-string s)
+      (print-str s)
+      (print-error s)
+      0)))"))
 
 (define (compiler-typecheck-runtime-builtin-xgetbv-ok-source) : String
   (compiler-typecheck-with-cpu-source
@@ -4866,8 +4944,9 @@
                           (compiler-typecheck-runtime-builtin-cpuid-bad-source)
                           "typecheck: argument type mismatch")
                         (and
-                          (compiler-typecheck-ok?
-                            (compiler-typecheck-runtime-builtin-no-import-source))
+                          (compiler-typecheck-error-ok?
+                            (compiler-typecheck-runtime-builtin-no-import-source)
+                            "typecheck: unbound name print-string")
                           (and
                             (compiler-typecheck-error-ok?
                               (compiler-typecheck-runtime-builtin-string-ref-bad-index-source)
@@ -4880,63 +4959,76 @@
   (let
     [ok : bool true]
     (begin
-      (if (compiler-typecheck-ok? "(define (f [s : String]) : i64 (panic s))")
+      (if (compiler-typecheck-ok?
+        (compiler-typecheck-with-io-source
+          "(define (f [s : String]) : i64 (panic s))"))
         unit
         (set! ok false))
       (if (compiler-typecheck-ok?
-        "(define (f [s : String]) : i64 (panic (& s)))")
-        unit
-        (set! ok false))
-      (if (compiler-typecheck-ok? "(define (f [s : String]) : i64 (error s))")
-        unit
-        (set! ok false))
-      (if (compiler-typecheck-ok?
-        "(define (f [s : String]) : i64 (error (& s)))")
+        (compiler-typecheck-with-io-source
+          "(define (f [s : String]) : i64 (panic s))"))
         unit
         (set! ok false))
       (if (compiler-typecheck-ok?
-        "(define (f [flag : bool]) : i64 (if flag 42 (panic \"stop\")))")
+        (compiler-typecheck-with-io-source
+          "(define (f [s : String]) : i64 (error s))"))
         unit
         (set! ok false))
       (if (compiler-typecheck-ok?
-        "(define (f [flag : bool]) : String (if flag \"ok\" (error \"stop\")))")
+        (compiler-typecheck-with-io-source
+          "(define (f [s : String]) : i64 (error s))"))
         unit
         (set! ok false))
       (if (compiler-typecheck-ok?
-        "(defenum Choice (Left) (Right))
-(define (f [c : Choice]) : i64 (match c [(Left) (panic \"left\")] [(Right) 7]))")
+        (compiler-typecheck-with-io-source
+          "(define (f [flag : bool]) : i64 (if flag 42 (panic \"stop\")))"))
         unit
         (set! ok false))
       (if (compiler-typecheck-ok?
-        "(defenum Choice (Left) (Right))
-(define (f [c : Choice]) : String (match c [(Left) \"ok\"] [(Right) (error \"right\")]))")
+        (compiler-typecheck-with-io-source
+          "(define (f [flag : bool]) : String (if flag \"ok\" (error \"stop\")))"))
         unit
         (set! ok false))
       (if (compiler-typecheck-ok?
-        "(define (f) : unit (begin (panic \"stop\") unit))")
+        (compiler-typecheck-with-io-source
+          "(defenum Choice (Left) (Right))
+(define (f [c : Choice]) : i64 (match c [(Left) (panic \"left\")] [(Right) 7]))"))
         unit
         (set! ok false))
       (if (compiler-typecheck-ok?
-        "(define (f) : unit (begin (error \"stop\")))")
+        (compiler-typecheck-with-io-source
+          "(defenum Choice (Left) (Right))
+(define (f [c : Choice]) : String (match c [(Left) \"ok\"] [(Right) (error \"right\")]))"))
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-ok?
+        (compiler-typecheck-with-io-source
+          "(define (f) : unit (begin (panic \"stop\") unit))"))
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-ok?
+        (compiler-typecheck-with-io-source
+          "(define (f) : unit (begin (error \"stop\")))"))
         unit
         (set! ok false))
       (if (compiler-typecheck-error-ok?
-        "(define (f) : i64 (panic))"
+        (compiler-typecheck-with-io-source "(define (f) : i64 (panic))")
         "typecheck: arity mismatch")
         unit
         (set! ok false))
       (if (compiler-typecheck-error-ok?
-        "(define (f) : i64 (error \"a\" \"b\"))"
+        (compiler-typecheck-with-io-source
+          "(define (f) : i64 (error \"a\" \"b\"))")
         "typecheck: arity mismatch")
         unit
         (set! ok false))
       (if (compiler-typecheck-error-ok?
-        "(define (f) : i64 (panic 5))"
+        (compiler-typecheck-with-io-source "(define (f) : i64 (panic 5))")
         "typecheck: argument type mismatch")
         unit
         (set! ok false))
       (if (compiler-typecheck-error-ok?
-        "(define (f) : i64 (error true))"
+        (compiler-typecheck-with-io-source "(define (f) : i64 (error true))")
         "typecheck: argument type mismatch")
         unit
         (set! ok false))

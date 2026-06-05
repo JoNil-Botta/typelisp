@@ -449,6 +449,22 @@
 (define (print-str [text : String]) : unit
   (print-string text))
 
+;: Write a trailing newline to stdout.
+(define (print-newline) : unit
+  (print-string "\n"))
+
+;: Write an integer followed by a newline.
+(define (print [value : i64]) : unit
+  (begin
+    (print-string (int->string value))
+    (print-newline)))
+
+;: Write a boolean followed by a newline.
+(define (print-bool [value : bool]) : unit
+  (if value
+    (print-string "true\n")
+    (print-string "false\n")))
+
 ;: Write one character byte to stdout without adding a newline.
 (define (print-char [ch : char]) : unit
   (let

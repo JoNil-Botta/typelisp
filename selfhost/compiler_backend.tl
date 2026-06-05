@@ -16168,12 +16168,46 @@ tl_string_eq:
 (define (compiler-backend-runtime-hash-string-functions) : String
   "    .globl tl_hash_string
 tl_hash_string:
+    movq %rdi, %r10
+    movq %rsi, %r11
     xorq %rax, %rax
-    testq %rsi, %rsi
+    cmpq $4, %r11
+    jb .L_tl_hash_string_tail_check
+.L_tl_hash_string_loop4:
+    imulq $131, %rax, %rax
+    movzbq (%r10), %r8
+    addq %r8, %rax
+    incq %rax
+    imulq $131, %rax, %rax
+    movzbq 1(%r10), %r8
+    addq %r8, %rax
+    incq %rax
+    imulq $131, %rax, %rax
+    movzbq 2(%r10), %r8
+    addq %r8, %rax
+    incq %rax
+    imulq $131, %rax, %rax
+    movzbq 3(%r10), %r8
+    addq %r8, %rax
+    incq %rax
+    movq %rax, %r8
+    andq $2147483647, %rax
+    shrq $31, %r8
+    addq %r8, %rax
+    cmpq $2147483647, %rax
+    jl .L_tl_hash_string_keep4
+    subq $2147483647, %rax
+.L_tl_hash_string_keep4:
+    addq $4, %r10
+    subq $4, %r11
+    cmpq $4, %r11
+    jae .L_tl_hash_string_loop4
+.L_tl_hash_string_tail_check:
+    testq %r11, %r11
     jz .L_tl_hash_string_done
 .L_tl_hash_string_loop:
     imulq $131, %rax, %rax
-    movzbq (%rdi), %r8
+    movzbq (%r10), %r8
     addq %r8, %rax
     incq %rax
     movq %rax, %r8
@@ -16184,8 +16218,8 @@ tl_hash_string:
     jl .L_tl_hash_string_keep
     subq $2147483647, %rax
 .L_tl_hash_string_keep:
-    incq %rdi
-    decq %rsi
+    incq %r10
+    decq %r11
     jne .L_tl_hash_string_loop
 .L_tl_hash_string_done:
     ret
@@ -16285,6 +16319,38 @@ tl_hash_string:
     movq %rcx, %r10
     movq %rdx, %r11
     xorq %rax, %rax
+    cmpq $4, %r11
+    jb .L_tl_hash_string_tail_check
+.L_tl_hash_string_loop4:
+    imulq $131, %rax, %rax
+    movzbq (%r10), %r8
+    addq %r8, %rax
+    incq %rax
+    imulq $131, %rax, %rax
+    movzbq 1(%r10), %r8
+    addq %r8, %rax
+    incq %rax
+    imulq $131, %rax, %rax
+    movzbq 2(%r10), %r8
+    addq %r8, %rax
+    incq %rax
+    imulq $131, %rax, %rax
+    movzbq 3(%r10), %r8
+    addq %r8, %rax
+    incq %rax
+    movq %rax, %r8
+    andq $2147483647, %rax
+    shrq $31, %r8
+    addq %r8, %rax
+    cmpq $2147483647, %rax
+    jl .L_tl_hash_string_keep4
+    subq $2147483647, %rax
+.L_tl_hash_string_keep4:
+    addq $4, %r10
+    subq $4, %r11
+    cmpq $4, %r11
+    jae .L_tl_hash_string_loop4
+.L_tl_hash_string_tail_check:
     testq %r11, %r11
     jz .L_tl_hash_string_done
 .L_tl_hash_string_loop:

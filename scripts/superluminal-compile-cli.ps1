@@ -368,6 +368,47 @@ function Read-ProfileSymbolMap {
     return $map
 }
 
+function Convert-GeneratedSymbolToName {
+    param(
+        [string]$Symbol
+    )
+
+    $name = $Symbol
+    if ($name.StartsWith("_tl_")) {
+        $name = $name.Substring(4)
+    }
+
+    $name = $name.Replace("_question", "?")
+    $name = $name.Replace("_bang", "!")
+    $name = $name.Replace("_plus", "+")
+    $name = $name.Replace("_star", "*")
+    $name = $name.Replace("_slash", "/")
+    $name = $name.Replace("_eq", "=")
+    $name = $name.Replace("_lt", "<")
+    $name = $name.Replace("_gt", ">")
+    $name = $name.Replace("_colon", ":")
+    $name = [regex]::Replace($name, "_u([0-9a-fA-F]{2})", {
+        param($match)
+        [char][Convert]::ToInt32($match.Groups[1].Value, 16)
+    })
+    return $name
+}
+
+function Resolve-ProfileFunctionName {
+    param(
+        [string]$Symbol,
+        [hashtable]$SymbolMap
+    )
+
+    if ($SymbolMap.ContainsKey($Symbol)) {
+        return $SymbolMap[$Symbol]
+    }
+    if ($Symbol.StartsWith("_tl_")) {
+        return Convert-GeneratedSymbolToName $Symbol
+    }
+    return $Symbol
+}
+
 function Write-HotFunctionReport {
     param(
         [string]$DetailCsvPath,
@@ -385,7 +426,7 @@ function Write-HotFunctionReport {
             $weight = [int64]$Matches[1]
             $moduleFunc = $Matches[2].Trim()
             $stage2Weight += $weight
-            if ($moduleFunc -match '^stage2-profile\.exe!(_tlp_.+)$') {
+            if ($moduleFunc -match '^stage2-profile\.exe!((_tlp_|_tl_).+)$') {
                 $profileSymbol = $Matches[1]
                 $stage2CodeWeight += $weight
                 if ($weights.ContainsKey($profileSymbol)) {
@@ -414,10 +455,7 @@ function Write-HotFunctionReport {
         } else {
             "0.00"
         }
-        $function = $row.Symbol
-        if ($symbolMap.ContainsKey($row.Symbol)) {
-            $function = $symbolMap[$row.Symbol]
-        }
+        $function = Resolve-ProfileFunctionName $row.Symbol $symbolMap
         $rows.Add("$($row.Weight)`t$percent`t$($row.Symbol)`t$function")
     }
 

@@ -1876,22 +1876,21 @@
     false))
 
 (define (opt-aggregate-candidates-from-instrs
-  [scan : CompilerIrInstrList]
-  [all : CompilerIrInstrList]) : OptAggregateAllocCandidateList
+  [scan : CompilerIrInstrList]) : OptAggregateAllocCandidateList
   (match scan
     [(IrInstrNil) (OptAggregateAllocCandidateNil)]
     [(IrInstrCons instr rest)
       (match (opt-aggregate-direct-alloc instr)
         [(OptSomeAggregateAlloc base ty size)
-          (match (opt-aggregate-classify-one base ty size all)
+          (match (opt-aggregate-classify-one base ty size scan)
             [(OptAggregateScanOk ptrs accesses)
               (OptAggregateAllocCandidateCons
                 (OptAggregateAllocCandidate base ty size ptrs accesses)
-                (box (opt-aggregate-candidates-from-instrs (box-get rest) all)))]
+                (box (opt-aggregate-candidates-from-instrs (box-get rest))))]
             [(OptAggregateScanReject)
-              (opt-aggregate-candidates-from-instrs (box-get rest) all)])]
+              (opt-aggregate-candidates-from-instrs (box-get rest))])]
         [(OptNoAggregateAlloc)
-          (opt-aggregate-candidates-from-instrs (box-get rest) all)])]))
+          (opt-aggregate-candidates-from-instrs (box-get rest))])]))
 
 (define (opt-aggregate-instr-list-append
   [left : CompilerIrInstrList]
@@ -1919,7 +1918,7 @@
     [(IrFunction _ _ _ _ blocks)
       (let
         [instrs : CompilerIrInstrList (opt-aggregate-flatten-blocks blocks)]
-        (opt-aggregate-candidates-from-instrs instrs instrs))]))
+        (opt-aggregate-candidates-from-instrs instrs))]))
 
 (define (opt-aggregate-candidate-list-append
   [left : OptAggregateAllocCandidateList]

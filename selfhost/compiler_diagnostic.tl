@@ -27,11 +27,11 @@
   (CompilerDiagnosticLabelNil)
   (CompilerDiagnosticLabelCons
     CompilerDiagnosticLabel
-    CompilerDiagnosticLabelList))
+    (Box CompilerDiagnosticLabelList)))
 
 (defenum CompilerDiagnosticNoteList
   (CompilerDiagnosticNoteNil)
-  (CompilerDiagnosticNoteCons String CompilerDiagnosticNoteList))
+  (CompilerDiagnosticNoteCons String (Box CompilerDiagnosticNoteList)))
 
 (defstruct CompilerDiagnostic
   (message String)
@@ -261,7 +261,7 @@
     (compiler-diagnostic-help diag)
     (CompilerDiagnosticLabelCons
       (CompilerDiagnosticLabel span label)
-      (compiler-diagnostic-secondary-spans diag))
+      (box (compiler-diagnostic-secondary-spans diag)))
     (compiler-diagnostic-notes diag)))
 
 (define (compiler-diagnostic-with-note
@@ -275,7 +275,7 @@
     (compiler-diagnostic-primary-span diag)
     (compiler-diagnostic-help diag)
     (compiler-diagnostic-secondary-spans diag)
-    (CompilerDiagnosticNoteCons note (compiler-diagnostic-notes diag))))
+    (CompilerDiagnosticNoteCons note (box (compiler-diagnostic-notes diag)))))
 
 (define (compiler-diagnostic-with-primary-span
   [diag : CompilerDiagnostic]
@@ -570,24 +570,47 @@
   (let
     [diag : CompilerDiagnostic
       (compiler-diagnostic-with-note
-        (compiler-diagnostic-with-secondary
-          (compiler-diagnostic-with-category
-            (compiler-diagnostic-with-code
-              (compiler-diagnostic-simple "meta.tl" 1 2 "metadata")
-              "E1234")
-            "typecheck")
-          (CompilerDiagnosticSpan "other.tl" 4 5 4 8)
-          (CompilerDiagnosticSomeString "related"))
-        "first note")]
+        (compiler-diagnostic-with-note
+          (compiler-diagnostic-with-secondary
+            (compiler-diagnostic-with-secondary
+              (compiler-diagnostic-with-category
+                (compiler-diagnostic-with-code
+                  (compiler-diagnostic-simple "meta.tl" 1 2 "metadata")
+                  "E1234")
+                "typecheck")
+              (CompilerDiagnosticSpan "first.tl" 3 4 3 7)
+              (CompilerDiagnosticSomeString "first related"))
+            (CompilerDiagnosticSpan "other.tl" 4 5 4 8)
+            (CompilerDiagnosticSomeString "related"))
+          "first note")
+        "second note")]
     (match (compiler-diagnostic-secondary-spans diag)
-      [(CompilerDiagnosticLabelCons label _)
+      [(CompilerDiagnosticLabelCons label rest-labels-box)
         (match (compiler-diagnostic-notes diag)
-          [(CompilerDiagnosticNoteCons note _)
-            (and
-              (string-eq note "first note")
-              (match (compiler-diagnostic-code diag)
-                [(CompilerDiagnosticSomeString code) (string-eq code "E1234")]
-                [CompilerDiagnosticNoString false]))]
+          [(CompilerDiagnosticNoteCons note rest-notes-box)
+            (let
+              [rest-labels : CompilerDiagnosticLabelList
+                (box-get rest-labels-box)]
+              [rest-notes : CompilerDiagnosticNoteList (box-get rest-notes-box)]
+              (and
+                (string-eq note "second note")
+                (and
+                  (match rest-notes
+                    [(CompilerDiagnosticNoteCons tail-note _)
+                      (string-eq tail-note "first note")]
+                    [CompilerDiagnosticNoteNil false])
+                  (and
+                    (match rest-labels
+                      [(CompilerDiagnosticLabelCons _ _)
+                        (string-eq
+                          (compiler-diagnostic-span-path
+                            (struct-get label span))
+                          "other.tl")]
+                      [CompilerDiagnosticLabelNil false])
+                    (match (compiler-diagnostic-code diag)
+                      [(CompilerDiagnosticSomeString code)
+                        (string-eq code "E1234")]
+                      [CompilerDiagnosticNoString false])))))]
           [CompilerDiagnosticNoteNil false])]
       [CompilerDiagnosticLabelNil false])))
 

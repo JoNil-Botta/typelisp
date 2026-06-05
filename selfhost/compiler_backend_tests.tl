@@ -531,6 +531,50 @@
     [n : i32 (snprintf (unsafe (array-data buf)) 64 (unsafe (string-data fmt)) 1.5)]
     (cast n : i64)))")
 
+(define (compiler-backend-c-abi-aggregate-source) : String
+  "(defstruct Color (r u8) (g u8) (b u8) (a u8))
+(extern color-make (:symbol \"tl_cabi_color_make\") : (-> u8 u8 u8 u8 Color))
+(extern color-use (:symbol \"tl_cabi_color_use\") : (-> Color i64))
+(define (main) : i64
+  (let
+    [c : Color
+      (color-make
+        (cast 5 : u8)
+        (cast 7 : u8)
+        (cast 11 : u8)
+        (cast 13 : u8))]
+    [weighted : i64 (color-use c)]
+    [sum : i64
+      (+
+        (cast (struct-get c r) : i64)
+        (+
+          (cast (struct-get c g) : i64)
+          (+
+            (cast (struct-get c b) : i64)
+            (cast (struct-get c a) : i64))))]
+    (if (= weighted 104)
+      (if (= sum 36) 42 2)
+      1)))")
+
+(define (compiler-backend-c-abi-aggregate-ok?) : bool
+  (match (compiler-backend-emit-source-for-target
+    (compiler-backend-c-abi-aggregate-source)
+    (BackendTargetLinux))
+    [(OkCompilerBackend asm)
+      (backend-and8
+        (compiler-backend-string-contains? asm ".extern tl_cabi_color_make\n")
+        (compiler-backend-string-contains? asm ".extern tl_cabi_color_use\n")
+        (compiler-backend-string-contains? asm "    call tl_cabi_color_make\n")
+        (compiler-backend-string-contains?
+          asm
+          "    movq $4, %rdi\n    call tl_alloc\n")
+        (compiler-backend-string-contains? asm "    movl %eax, (%r10)\n")
+        (compiler-backend-string-contains? asm "    movl (%r10), %eax\n")
+        (compiler-backend-string-contains? asm "    call tl_cabi_color_use\n")
+        (not
+          (compiler-backend-string-contains? asm (compiler-backend-todo-marker))))]
+    [(ErrCompilerBackend _) false]))
+
 (define (compiler-backend-varargs-ffi-ok?) : bool
   (and
     (match (compiler-backend-emit-source-for-target
@@ -3815,7 +3859,9 @@
                           (compiler-backend-windows-env-runtime-ok?)
                           (and
                             (compiler-backend-extern-metadata-symbol-ok?)
-                            (compiler-backend-varargs-ffi-ok?)))
+                            (and
+                              (compiler-backend-varargs-ffi-ok?)
+                              (compiler-backend-c-abi-aggregate-ok?))))
                         (and
                           (backend-and4
                             (compiler-backend-string-ref-shape-ok?)

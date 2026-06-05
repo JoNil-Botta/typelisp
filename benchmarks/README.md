@@ -112,6 +112,36 @@ Useful knobs:
 | `TYPELISP_BOOTSTRAP_BENCH_TARGET` | host target | `windows-x86_64` or `linux-x86_64`. |
 | `TYPELISP_BOOTSTRAP_BENCH_OPT_LEVEL` | compiler default | Optional `--opt-level 0|1|2|3` passed to both compilers. |
 
+## CLI tool corpus benchmark
+
+To benchmark the non-compile public tools on the compiler implementation corpus,
+run:
+
+```sh
+bash scripts/benchmark-cli-tools.sh
+```
+
+The harness builds a fresh stage2 `selfhost/cli.tl` binary, then times tools
+whose implementation is not the compiler compile path: formatter, linter,
+documentation generation, doctest discovery, LSP framing/diagnostics, and the
+work-queue chooser. Compiler-front-end debug surfaces such as tokenize/parse are
+intentionally excluded because normal compilation already exercises that code.
+Deterministic stdout/stderr and generated docs are fingerprinted under
+`target/cli-tool-benchmark/baseline` and compared on the next full run. If the
+compiler corpus changed, the script refreshes the baseline after the tools pass;
+set `TYPELISP_TOOL_BENCH_STRICT_BASELINE=1` to make corpus changes fail instead,
+or `TYPELISP_TOOL_BENCH_UPDATE_BASELINE=1` to accept intentional output changes.
+
+Useful knobs:
+
+| Variable | Default | Meaning |
+|----------|---------|---------|
+| `TYPELISP_BIN` | (built) | Stage0 `typelisp` binary used as the seed compiler. |
+| `TYPELISP_TOOL_BENCH_RUNS` | `1` | Timed repetitions per tool case. |
+| `TYPELISP_TOOL_BENCH_FILTER` | (empty) | Run case labels containing this substring; skips baseline compare. |
+| `TYPELISP_TOOL_BENCH_CORPUS_FILE` | compiler corpus | Newline-separated corpus manifest override. |
+| `TYPELISP_TOOL_BENCH_OUT` | `target/cli-tool-benchmark` | Output and baseline root. |
+
 ## Reading the results
 
 For each benchmark the harness prints wall-clock runtime (min and median),

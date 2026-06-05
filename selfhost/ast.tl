@@ -7,7 +7,7 @@
 
 (define (sexpr-head [s : Sexpr]) : Sexpr
   (match s
-    [(SCons a _) a]
+    [(SCons a _) (box-get a)]
     [_
       (begin
         (panic "ast: expected non-empty list")
@@ -15,7 +15,7 @@
 
 (define (sexpr-tail [s : Sexpr]) : Sexpr
   (match s
-    [(SCons _ d) d]
+    [(SCons _ d) (box-get d)]
     [_
       (begin
         (panic "ast: expected list tail")
@@ -38,7 +38,13 @@
 
 (define (parse-not [rest : Sexpr]) : Expr
   (match rest
-    [(SCons arg (SNil)) (ENot (parse-expr arg))]
+    [(SCons arg end)
+      (match (box-get end)
+        [(SNil) (ENot (parse-expr (box-get arg)))]
+        [_
+          (begin
+            (panic "ast: malformed not")
+            (EInt 0))])]
     [_
       (begin
         (panic "ast: malformed not")
@@ -47,8 +53,35 @@
 (define (parse-let-bindings [bindings : Sexpr] [body : Expr]) : Expr
   (match bindings
     [(SNil) body]
-    [(SCons (SCons (SSym name) (SCons value (SNil))) rest)
-      (ELet name (parse-expr value) (parse-let-bindings rest body))]
+    [(SCons binding rest)
+      (match (box-get binding)
+        [(SCons name-node value-tail)
+          (match (box-get name-node)
+            [(SSym name)
+              (match (box-get value-tail)
+                [(SCons value end)
+                  (match (box-get end)
+                    [(SNil)
+                      (ELet
+                        name
+                        (parse-expr (box-get value))
+                        (parse-let-bindings (box-get rest) body))]
+                    [_
+                      (begin
+                        (panic "ast: malformed let binding")
+                        (EInt 0))])]
+                [_
+                  (begin
+                    (panic "ast: malformed let binding")
+                    (EInt 0))])]
+            [_
+              (begin
+                (panic "ast: malformed let binding")
+                (EInt 0))])]
+        [_
+          (begin
+            (panic "ast: malformed let binding")
+            (EInt 0))])]
     [_
       (begin
         (panic "ast: malformed let binding")
@@ -56,8 +89,22 @@
 
 (define (parse-let [rest : Sexpr]) : Expr
   (match rest
-    [(SCons bindings (SCons body (SNil)))
-      (parse-let-bindings bindings (parse-expr body))]
+    [(SCons bindings body-tail)
+      (match (box-get body-tail)
+        [(SCons body end)
+          (match (box-get end)
+            [(SNil)
+              (parse-let-bindings
+                (box-get bindings)
+                (parse-expr (box-get body)))]
+            [_
+              (begin
+                (panic "ast: malformed let")
+                (EInt 0))])]
+        [_
+          (begin
+            (panic "ast: malformed let")
+            (EInt 0))])]
     [_
       (begin
         (panic "ast: malformed let")
@@ -65,7 +112,25 @@
 
 (define (parse-set [rest : Sexpr]) : Expr
   (match rest
-    [(SCons (SSym name) (SCons value (SNil))) (ESet name (parse-expr value))]
+    [(SCons name-node value-tail)
+      (match (box-get name-node)
+        [(SSym name)
+          (match (box-get value-tail)
+            [(SCons value end)
+              (match (box-get end)
+                [(SNil) (ESet name (parse-expr (box-get value)))]
+                [_
+                  (begin
+                    (panic "ast: malformed set!")
+                    (EInt 0))])]
+            [_
+              (begin
+                (panic "ast: malformed set!")
+                (EInt 0))])]
+        [_
+          (begin
+            (panic "ast: malformed set!")
+            (EInt 0))])]
     [_
       (begin
         (panic "ast: malformed set!")
@@ -76,8 +141,29 @@
 ;; input and aborts via `panic`, matching `parse-let`'s discipline.
 (define (parse-if [rest : Sexpr]) : Expr
   (match rest
-    [(SCons c (SCons t (SCons e (SNil))))
-      (EIf (parse-expr c) (parse-expr t) (parse-expr e))]
+    [(SCons c then-tail)
+      (match (box-get then-tail)
+        [(SCons t else-tail)
+          (match (box-get else-tail)
+            [(SCons e end)
+              (match (box-get end)
+                [(SNil)
+                  (EIf
+                    (parse-expr (box-get c))
+                    (parse-expr (box-get t))
+                    (parse-expr (box-get e)))]
+                [_
+                  (begin
+                    (panic "ast: malformed if")
+                    (EInt 0))])]
+            [_
+              (begin
+                (panic "ast: malformed if")
+                (EInt 0))])]
+        [_
+          (begin
+            (panic "ast: malformed if")
+            (EInt 0))])]
     [_
       (begin
         (panic "ast: malformed if")
@@ -85,7 +171,20 @@
 
 (define (parse-while [rest : Sexpr]) : Expr
   (match rest
-    [(SCons c (SCons body (SNil))) (EWhile (parse-expr c) (parse-expr body))]
+    [(SCons c body-tail)
+      (match (box-get body-tail)
+        [(SCons body end)
+          (match (box-get end)
+            [(SNil)
+              (EWhile (parse-expr (box-get c)) (parse-expr (box-get body)))]
+            [_
+              (begin
+                (panic "ast: malformed while")
+                (EInt 0))])]
+        [_
+          (begin
+            (panic "ast: malformed while")
+            (EInt 0))])]
     [_
       (begin
         (panic "ast: malformed while")
@@ -93,7 +192,13 @@
 
 (define (parse-print [rest : Sexpr]) : Expr
   (match rest
-    [(SCons arg (SNil)) (EPrint (parse-expr arg))]
+    [(SCons arg end)
+      (match (box-get end)
+        [(SNil) (EPrint (parse-expr (box-get arg)))]
+        [_
+          (begin
+            (panic "ast: malformed print")
+            (EInt 0))])]
     [_
       (begin
         (panic "ast: malformed print")
@@ -114,7 +219,7 @@
 (define (parse-args [s : Sexpr]) : ExprList
   (match s
     [(SNil) ELNil]
-    [(SCons a d) (ELCons (parse-expr a) (parse-args d))]
+    [(SCons a d) (ELCons (parse-expr (box-get a)) (parse-args (box-get d)))]
     [_
       (begin
         (panic "ast: malformed argument list")
@@ -133,27 +238,33 @@
       (begin
         (panic "ast: unsupported char literal")
         (EInt 0))]
-    [(SCons (SSym op) rest)
-      (cond
-        [(string-eq op "+") (parse-binary (OpAdd) rest)]
-        [(string-eq op "-") (parse-binary (OpSub) rest)]
-        [(string-eq op "*") (parse-binary (OpMul) rest)]
-        [(string-eq op "<") (parse-binary (OpLt) rest)]
-        [(string-eq op "=") (parse-binary (OpEq) rest)]
-        [(string-eq op "<=") (parse-binary (OpLe) rest)]
-        [(string-eq op ">") (parse-binary (OpGt) rest)]
-        [(string-eq op ">=") (parse-binary (OpGe) rest)]
-        [(string-eq op "!=") (parse-binary (OpNe) rest)]
-        [(string-eq op "and") (parse-binary (OpAnd) rest)]
-        [(string-eq op "or") (parse-binary (OpOr) rest)]
-        [(string-eq op "not") (parse-not rest)]
-        [(string-eq op "let") (parse-let rest)]
-        [(string-eq op "if") (parse-if rest)]
-        [(string-eq op "while") (parse-while rest)]
-        [(string-eq op "print") (parse-print rest)]
-        [(string-eq op "set!") (parse-set rest)]
-        [(string-eq op "begin") (parse-begin rest)]
-        [else (ECall op (parse-args rest))])]
+    [(SCons head rest)
+      (match (box-get head)
+        [(SSym op)
+          (cond
+            [(string-eq op "+") (parse-binary (OpAdd) (box-get rest))]
+            [(string-eq op "-") (parse-binary (OpSub) (box-get rest))]
+            [(string-eq op "*") (parse-binary (OpMul) (box-get rest))]
+            [(string-eq op "<") (parse-binary (OpLt) (box-get rest))]
+            [(string-eq op "=") (parse-binary (OpEq) (box-get rest))]
+            [(string-eq op "<=") (parse-binary (OpLe) (box-get rest))]
+            [(string-eq op ">") (parse-binary (OpGt) (box-get rest))]
+            [(string-eq op ">=") (parse-binary (OpGe) (box-get rest))]
+            [(string-eq op "!=") (parse-binary (OpNe) (box-get rest))]
+            [(string-eq op "and") (parse-binary (OpAnd) (box-get rest))]
+            [(string-eq op "or") (parse-binary (OpOr) (box-get rest))]
+            [(string-eq op "not") (parse-not (box-get rest))]
+            [(string-eq op "let") (parse-let (box-get rest))]
+            [(string-eq op "if") (parse-if (box-get rest))]
+            [(string-eq op "while") (parse-while (box-get rest))]
+            [(string-eq op "print") (parse-print (box-get rest))]
+            [(string-eq op "set!") (parse-set (box-get rest))]
+            [(string-eq op "begin") (parse-begin (box-get rest))]
+            [else (ECall op (parse-args (box-get rest)))])]
+        [_
+          (begin
+            (panic "ast: malformed expression")
+            (EInt 0))])]
     [_
       (begin
         (panic "ast: malformed expression")
@@ -162,7 +273,13 @@
 (define (parse-params [s : Sexpr]) : StrList
   (match s
     [(SNil) SLNil]
-    [(SCons (SSym name) rest) (SLCons name (parse-params rest))]
+    [(SCons name-node rest)
+      (match (box-get name-node)
+        [(SSym name) (SLCons name (parse-params (box-get rest)))]
+        [_
+          (begin
+            (panic "ast: malformed parameter list")
+            SLNil)])]
     [_
       (begin
         (panic "ast: malformed parameter list")
@@ -170,25 +287,41 @@
 
 (define (parse-item [s : Sexpr]) : Item
   (match s
-    [(SCons (SSym head) rest)
-      (if (string-eq head "define")
-        (let
-          [header : Sexpr (sexpr-head rest)]
-          [after-header : Sexpr (sexpr-tail rest)]
-          [body : Sexpr (sexpr-head after-header)]
-          [after-body : Sexpr (sexpr-tail after-header)]
+    [(SCons head-node rest)
+      (match (box-get head-node)
+        [(SSym head)
+          (if (string-eq head "define")
+            (let
+              [rest : Sexpr (box-get rest)]
+              [header : Sexpr (sexpr-head rest)]
+              [after-header : Sexpr (sexpr-tail rest)]
+              [body : Sexpr (sexpr-head after-header)]
+              [after-body : Sexpr (sexpr-tail after-header)]
+              (begin
+                (sexpr-expect-nil after-body)
+                (match header
+                  [(SCons name-node params)
+                    (match (box-get name-node)
+                      [(SSym name)
+                        (IDefFn
+                          name
+                          (parse-params (box-get params))
+                          (parse-expr body))]
+                      [_
+                        (begin
+                          (panic "ast: malformed define header")
+                          (IDefFn "" SLNil (EInt 0)))])]
+                  [_
+                    (begin
+                      (panic "ast: malformed define header")
+                      (IDefFn "" SLNil (EInt 0)))])))
+            (begin
+              (panic "ast: expected define")
+              (IDefFn "" SLNil (EInt 0))))]
+        [_
           (begin
-            (sexpr-expect-nil after-body)
-            (match header
-              [(SCons (SSym name) params)
-                (IDefFn name (parse-params params) (parse-expr body))]
-              [_
-                (begin
-                  (panic "ast: malformed define header")
-                  (IDefFn "" SLNil (EInt 0)))])))
-        (begin
-          (panic "ast: expected define")
-          (IDefFn "" SLNil (EInt 0))))]
+            (panic "ast: malformed item")
+            (IDefFn "" SLNil (EInt 0)))])]
     [_
       (begin
         (panic "ast: malformed item")

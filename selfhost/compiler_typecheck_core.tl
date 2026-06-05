@@ -1064,6 +1064,14 @@
         (OkTcType ty)
         (tc-lookup rest name))]))
 
+(define (tc-lookup-visible [ctx : TcContext] [env : TcTypeEnv] [name : String]) : ResultTcType
+  (match (tc-lookup env name)
+    [(OkTcType ty)
+      (match (tc-qualified-value-visible-ok ctx name)
+        [(OkTcUnit) (OkTcType ty)]
+        [(ErrTcUnit message) (ErrTcType message)])]
+    [(ErrTcType message) (ErrTcType message)]))
+
 (define (tc-lookup-hygiene-global-scan
   [root : TcTypeEnv]
   [env : TcTypeEnv]
@@ -1078,6 +1086,17 @@
 
 (define (tc-lookup-hygiene-global [env : TcTypeEnv] [name : String]) : ResultTcType
   (tc-lookup-hygiene-global-scan env env name))
+
+(define (tc-lookup-hygiene-global-visible
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [name : String]) : ResultTcType
+  (match (tc-lookup-hygiene-global env name)
+    [(OkTcType ty)
+      (match (tc-qualified-value-visible-ok ctx name)
+        [(OkTcUnit) (OkTcType ty)]
+        [(ErrTcUnit message) (ErrTcType message)])]
+    [(ErrTcType message) (ErrTcType message)]))
 
 (define (tc-hygiene-global-binding-unsafe-scan
   [root : TcTypeEnv]
@@ -1884,6 +1903,129 @@
           (set! i (+ i 1))))
       found)))
 
+(define (tc-qualified-access-target-module
+  [ctx : TcContext]
+  [qualifier : String]) : String
+  (match ctx
+    [(TcContext program _ _ current-module)
+      (match program
+        [(AstProgram decls-box)
+          (let
+            [decls : AstDeclList (box-get decls-box)]
+            (macro-resolve-qualified-module decls current-module qualifier))])]))
+
+(define (tc-qualified-access-private-message
+  [kind-name : String]
+  [name : String]
+  [target-module : String]) : String
+  (string-append
+    "typecheck: private "
+    (string-append
+      kind-name
+      (string-append
+        " "
+        (string-append name (string-append " from module " target-module))))))
+
+(define (tc-qualified-export-visible-ok
+  [ctx : TcContext]
+  [kind-name : String]
+  [display-name : String]
+  [target-module : String]
+  [export-name : String]) : ResultTcUnit
+  (if (string-eq target-module (tc-context-module ctx))
+    OkTcUnit
+    (match (build-compiler-exports-with
+      (tc-context-program ctx)
+      (tc-context-symbols ctx)
+      (tc-context-registries ctx))
+      [(OkCompilerExports exports)
+        (match (compiler-exports-lookup
+          exports
+          kind-name
+          target-module
+          export-name)
+          [(SomeI64 _) OkTcUnit]
+          [(NoneI64)
+            (ErrTcUnit
+              (tc-qualified-access-private-message
+                kind-name
+                display-name
+                target-module))])]
+      [(ErrCompilerExports message) (ErrTcUnit message)])))
+
+(define (tc-qualified-name-export-visible-ok
+  [ctx : TcContext]
+  [kind-name : String]
+  [name : String]) : ResultTcUnit
+  (if (tc-name-qualified? name)
+    (let
+      [qualifier : String (tc-qualified-name-module name)]
+      [base : String (tc-qualified-name-base name)]
+      [target-module : String (tc-qualified-access-target-module ctx qualifier)]
+      (tc-qualified-export-visible-ok ctx kind-name name target-module base))
+    OkTcUnit))
+
+(define (tc-qualified-type-visible-ok [ctx : TcContext] [name : String]) : ResultTcUnit
+  (tc-qualified-name-export-visible-ok ctx (compiler-export-kind-type) name))
+
+(define (tc-value-export-kind-for-handle [handle : i64]) : String
+  (let
+    [kind : i64 (compiler-symbol-handle-kind handle)]
+    (if (= kind (compiler-symbol-kind-defstruct))
+      (compiler-export-kind-constructor)
+      (if (= kind (compiler-symbol-kind-enum-variant))
+        (compiler-export-kind-variant)
+        (compiler-export-kind-value)))))
+
+(define (tc-qualified-value-export-kind
+  [ctx : TcContext]
+  [target-module : String]
+  [base : String]) : String
+  (match (compiler-symbols-lookup-value-in-module
+    (tc-context-symbols ctx)
+    target-module
+    base)
+    [(SomeI64 handle) (tc-value-export-kind-for-handle handle)]
+    [(NoneI64) (compiler-export-kind-value)]))
+
+(define (tc-qualified-value-visible-ok [ctx : TcContext] [name : String]) : ResultTcUnit
+  (if (tc-name-qualified? name)
+    (let
+      [qualifier : String (tc-qualified-name-module name)]
+      [base : String (tc-qualified-name-base name)]
+      [target-module : String (tc-qualified-access-target-module ctx qualifier)]
+      [kind-name : String
+        (tc-qualified-value-export-kind ctx target-module base)]
+      (tc-qualified-export-visible-ok ctx kind-name name target-module base))
+    OkTcUnit))
+
+(define (tc-qualified-field-visible-ok
+  [ctx : TcContext]
+  [struct-name : String]
+  [field : String]) : ResultTcUnit
+  (if (tc-name-qualified? struct-name)
+    (let
+      [qualifier : String (tc-qualified-name-module struct-name)]
+      [type-base : String (tc-qualified-name-base struct-name)]
+      [target-module : String (tc-qualified-access-target-module ctx qualifier)]
+      [export-name : String (compiler-export-field-name type-base field)]
+      [display-name : String (compiler-export-field-name struct-name field)]
+      (tc-qualified-export-visible-ok
+        ctx
+        (compiler-export-kind-field)
+        display-name
+        target-module
+        export-name))
+    OkTcUnit))
+
+(define (tc-qualified-variant-visible-ok
+  [ctx : TcContext]
+  [variant-name : String]) : ResultTcUnit
+  (tc-qualified-name-export-visible-ok
+    ctx
+    (compiler-export-kind-variant)
+    variant-name))
+
 (define (tc-resolved-nominal-type [name : String] [handle : i64]) : AstType
   (if (= (compiler-symbol-handle-kind handle) (compiler-symbol-kind-defenum))
     (AstTyEnum name)
@@ -2376,12 +2518,22 @@
             [(ErrTcUnit message) (ErrTcUnit message)])])]
     [(AstTyRegion _ inner) (tc-source-type-policy-ok ctx (box-get inner))]
     [(AstTyStr) (ErrTcUnit (tc-source-str-value-policy-message))]
-    [(AstTyEnum name) (tc-bare-nominal-lifetime-policy-ok ctx name)]
-    [(AstTyStruct name) (tc-bare-nominal-lifetime-policy-ok ctx name)]
+    [(AstTyEnum name)
+      (match (tc-qualified-type-visible-ok ctx name)
+        [(OkTcUnit) (tc-bare-nominal-lifetime-policy-ok ctx name)]
+        [(ErrTcUnit message) (ErrTcUnit message)])]
+    [(AstTyStruct name)
+      (match (tc-qualified-type-visible-ok ctx name)
+        [(OkTcUnit) (tc-bare-nominal-lifetime-policy-ok ctx name)]
+        [(ErrTcUnit message) (ErrTcUnit message)])]
     [(AstTyEnumArgs name lifetimes)
-      (tc-nominal-lifetime-use-policy-ok ctx name lifetimes)]
+      (match (tc-qualified-type-visible-ok ctx name)
+        [(OkTcUnit) (tc-nominal-lifetime-use-policy-ok ctx name lifetimes)]
+        [(ErrTcUnit message) (ErrTcUnit message)])]
     [(AstTyStructArgs name lifetimes)
-      (tc-nominal-lifetime-use-policy-ok ctx name lifetimes)]
+      (match (tc-qualified-type-visible-ok ctx name)
+        [(OkTcUnit) (tc-nominal-lifetime-use-policy-ok ctx name lifetimes)]
+        [(ErrTcUnit message) (ErrTcUnit message)])]
     [(AstTyVarArgs name _) (ErrTcUnit (tc-source-type-policy-message name))]
     [(AstTyVar name) (ErrTcUnit (tc-source-type-policy-message name))]
     [_ OkTcUnit]))
@@ -5106,19 +5258,25 @@
         (tc-context-registries ctx)
         (tc-variant-name-for-enum enum-name name))
         [(SomeI64 handle)
-          (match (tc-variant-owner-name ctx handle)
-            [(OkTcString owner)
-              (if (string-eq owner enum-name)
-                (match (compiler-registries-variant-fields-indexed
-                  (tc-context-symbols ctx)
-                  handle)
-                  [(OkAstTypeList fields)
-                    (match fields
-                      [(AstTypeNil) (OkTcType (tc-tag-active-region env ret))]
-                      [_ (ErrTcType "typecheck: arity mismatch")])]
-                  [(ErrAstTypeList message) (ErrTcType message)])
-                (ErrTcType "typecheck: call target is not a function"))]
-            [(ErrTcString message) (ErrTcType message)])]
+          (let
+            [lookup-name : String (tc-variant-name-for-enum enum-name name)]
+            (match (tc-qualified-variant-visible-ok ctx lookup-name)
+              [(OkTcUnit)
+                (match (tc-variant-owner-name ctx handle)
+                  [(OkTcString owner)
+                    (if (string-eq owner enum-name)
+                      (match (compiler-registries-variant-fields-indexed
+                        (tc-context-symbols ctx)
+                        handle)
+                        [(OkAstTypeList fields)
+                          (match fields
+                            [(AstTypeNil)
+                              (OkTcType (tc-tag-active-region env ret))]
+                            [_ (ErrTcType "typecheck: arity mismatch")])]
+                        [(ErrAstTypeList message) (ErrTcType message)])
+                      (ErrTcType "typecheck: call target is not a function"))]
+                  [(ErrTcString message) (ErrTcType message)])]
+              [(ErrTcUnit message) (ErrTcType message)]))]
         [(NoneI64)
           (if (tc-name-qualified? name)
             (OkTcType (tc-tag-active-region env ret))
@@ -9517,11 +9675,14 @@
     struct-name
     field)
     [(SomeI64 handle)
-      (match (compiler-registries-struct-field-type-indexed
-        (tc-context-symbols ctx)
-        handle)
-        [(OkAstType ty) (OkTcType (tc-resolve-type ctx ty))]
-        [(ErrAstType message) (ErrTcType message)])]
+      (match (tc-qualified-field-visible-ok ctx struct-name field)
+        [(OkTcUnit)
+          (match (compiler-registries-struct-field-type-indexed
+            (tc-context-symbols ctx)
+            handle)
+            [(OkAstType ty) (OkTcType (tc-resolve-type ctx ty))]
+            [(ErrAstType message) (ErrTcType message)])]
+        [(ErrTcUnit message) (ErrTcType message)])]
     [(NoneI64)
       (ErrTcType
         (string-append
@@ -9547,15 +9708,22 @@
     struct-name
     field)
     [(SomeI64 handle)
-      (match (compiler-registries-struct-field-type
-        (tc-context-program ctx)
-        handle)
-        [(OkAstType ty)
-          (match (tc-lifetime-subst-from-nominal-args ctx struct-name lifetimes)
-            [(OkTcLifetimeSubst subst)
-              (OkTcType (tc-resolve-type ctx (tc-lifetime-subst-type subst ty)))]
-            [(ErrTcLifetimeSubst message) (ErrTcType message)])]
-        [(ErrAstType message) (ErrTcType message)])]
+      (match (tc-qualified-field-visible-ok ctx struct-name field)
+        [(OkTcUnit)
+          (match (compiler-registries-struct-field-type
+            (tc-context-program ctx)
+            handle)
+            [(OkAstType ty)
+              (match (tc-lifetime-subst-from-nominal-args
+                ctx
+                struct-name
+                lifetimes)
+                [(OkTcLifetimeSubst subst)
+                  (OkTcType
+                    (tc-resolve-type ctx (tc-lifetime-subst-type subst ty)))]
+                [(ErrTcLifetimeSubst message) (ErrTcType message)])]
+            [(ErrAstType message) (ErrTcType message)])]
+        [(ErrTcUnit message) (ErrTcType message)])]
     [(NoneI64)
       (ErrTcType
         (string-append
@@ -9638,7 +9806,7 @@
 (define (tc-borrow-place [ctx : TcContext] [env : TcTypeEnv] [expr : AstExpr]) : ResultTcBorrowPlace
   (match (ast-expr-unspan expr)
     [(AstExprVar name)
-      (match (tc-lookup env name)
+      (match (tc-lookup-visible ctx env name)
         [(OkTcType ty) (tc-borrow-place-var name ty)]
         [(ErrTcType message) (ErrTcBorrowPlace message)])]
     [(AstExprStructGet receiver-box field)
@@ -9683,7 +9851,7 @@
   [expr : AstExpr]) : ResultTcString
   (match (ast-expr-unspan expr)
     [(AstExprVar name)
-      (match (tc-lookup env name)
+      (match (tc-lookup-visible ctx env name)
         [(OkTcType ty) (tc-store-place-lifetime-var name ty)]
         [(ErrTcType message) (ErrTcString message)])]
     [(AstExprStructGet receiver-box _)
@@ -9804,37 +9972,20 @@
       (tc-context-registries ctx)
       lookup-name)
       [(SomeI64 handle)
-        (match (tc-variant-owner-name ctx handle)
-          [(OkTcString owner)
-            (if (string-eq owner enum-name)
-              (match (compiler-registries-variant-fields-indexed
-                (tc-context-symbols ctx)
-                handle)
-                [(OkAstTypeList fields)
-                  (match enum-lifetimes
-                    [(AstLifetimeNil)
-                      (let
-                        [resolved-fields : AstTypeList
-                          (tc-resolve-type-list ctx fields)]
-                        (tc-bind-sub-pattern-list
-                          ctx
-                          env
-                          args
-                          (match payload-region
-                            [(TcSomeString region)
-                              (tc-tag-type-list-region region resolved-fields)]
-                            [(TcNoString) resolved-fields])))]
-                    [_
-                      (match (tc-lifetime-subst-from-nominal-args
-                        ctx
-                        enum-name
-                        enum-lifetimes)
-                        [(OkTcLifetimeSubst subst)
+        (match (tc-qualified-variant-visible-ok ctx lookup-name)
+          [(OkTcUnit)
+            (match (tc-variant-owner-name ctx handle)
+              [(OkTcString owner)
+                (if (string-eq owner enum-name)
+                  (match (compiler-registries-variant-fields-indexed
+                    (tc-context-symbols ctx)
+                    handle)
+                    [(OkAstTypeList fields)
+                      (match enum-lifetimes
+                        [(AstLifetimeNil)
                           (let
                             [resolved-fields : AstTypeList
-                              (tc-resolve-type-list
-                                ctx
-                                (tc-lifetime-subst-type-list subst fields))]
+                              (tc-resolve-type-list ctx fields)]
                             (tc-bind-sub-pattern-list
                               ctx
                               env
@@ -9845,17 +9996,41 @@
                                     region
                                     resolved-fields)]
                                 [(TcNoString) resolved-fields])))]
-                        [(ErrTcLifetimeSubst message) (ErrTcEnv message)])])]
-                [(ErrAstTypeList message) (ErrTcEnv message)])
-              (ErrTcEnv
-                (string-append
-                  "typecheck: variant "
-                  (string-append
-                    variant-name
+                        [_
+                          (match (tc-lifetime-subst-from-nominal-args
+                            ctx
+                            enum-name
+                            enum-lifetimes)
+                            [(OkTcLifetimeSubst subst)
+                              (let
+                                [resolved-fields : AstTypeList
+                                  (tc-resolve-type-list
+                                    ctx
+                                    (tc-lifetime-subst-type-list subst fields))]
+                                (tc-bind-sub-pattern-list
+                                  ctx
+                                  env
+                                  args
+                                  (match payload-region
+                                    [(TcSomeString region)
+                                      (tc-tag-type-list-region
+                                        region
+                                        resolved-fields)]
+                                    [(TcNoString) resolved-fields])))]
+                            [(ErrTcLifetimeSubst message) (ErrTcEnv message)])])]
+                    [(ErrAstTypeList message) (ErrTcEnv message)])
+                  (ErrTcEnv
                     (string-append
-                      " belongs to enum "
-                      (string-append owner (string-append ", not " enum-name)))))))]
-          [(ErrTcString message) (ErrTcEnv message)])]
+                      "typecheck: variant "
+                      (string-append
+                        variant-name
+                        (string-append
+                          " belongs to enum "
+                          (string-append
+                            owner
+                            (string-append ", not " enum-name)))))))]
+              [(ErrTcString message) (ErrTcEnv message)])]
+          [(ErrTcUnit message) (ErrTcEnv message)])]
       [(NoneI64)
         (ErrTcEnv (string-append "typecheck: unknown variant " variant-name))])))
 
@@ -10846,14 +11021,15 @@
           [global-name : String (tc-hygiene-global-base name)]
           (if (tc-hygiene-global-binding-unsafe? env global-name)
             (match (tc-require-unsafe env global-name)
-              [(OkTcUnit) (tc-lookup-hygiene-global env global-name)]
+              [(OkTcUnit)
+                (tc-lookup-hygiene-global-visible ctx env global-name)]
               [(ErrTcUnit message) (ErrTcType message)])
-            (tc-lookup-hygiene-global env global-name)))
+            (tc-lookup-hygiene-global-visible ctx env global-name)))
         (if (tc-binding-unsafe? env name)
           (match (tc-require-unsafe env name)
-            [(OkTcUnit) (tc-lookup env name)]
+            [(OkTcUnit) (tc-lookup-visible ctx env name)]
             [(ErrTcUnit message) (ErrTcType message)])
-          (tc-lookup env name)))]
+          (tc-lookup-visible ctx env name)))]
     [(AstExprTypeLiteral ty)
       (ErrTcType
         (string-append
@@ -11187,7 +11363,7 @@
     [(AstExprSet name value-box)
       (let
         [value : AstExpr (box-get value-box)]
-        (match (tc-lookup env name)
+        (match (tc-lookup-visible ctx env name)
           [(OkTcType var-ty)
             (match (tc-expr-with-expected-or-actual ctx env value var-ty)
               [(OkTcType value-ty)
@@ -12219,6 +12395,11 @@
 (defenum ResultMacroExpr
   (OkMacroExpr AstExpr)
   (ErrMacroExpr CompilerDiagnostic))
+
+(defenum ResultMacroCompatCall
+  (OkMacroCompatCall AstExpr)
+  (NoMacroCompatCall)
+  (ErrMacroCompatCall CompilerDiagnostic))
 
 (defenum ResultMacroExprList
   (OkMacroExprList AstExprList)
@@ -13254,6 +13435,115 @@
                       (ErrMacroLetBindings (tc-expr-diag ninit message))])]
                 [(ErrMacroExpr diag) (ErrMacroLetBindings diag)]))]))]))
 
+(define (macro-compat-unit-expr) : AstExpr
+  (AstExprLiteral AstLitUnit))
+
+(define (macro-compat-append-unit [exprs : AstExprList]) : AstExprList
+  (match exprs
+    [(AstExprNil) (ast-expr-cons (macro-compat-unit-expr) AstExprNil)]
+    [(AstExprCons head rest)
+      (let
+        [rest : AstExprList (box-get rest)]
+        (ast-expr-cons head (macro-compat-append-unit rest)))]))
+
+(define (macro-compat-call-name [func : AstExpr]) : TcMaybeString
+  (match (ast-expr-unspan func)
+    [(AstExprVar name) (TcSomeString name)]
+    [_ (TcNoString)]))
+
+(define (macro-compat-guard-message [name : String]) : String
+  (if (string-eq name "unless")
+    "parse: unless expects a condition and at least one body expression"
+    "parse: when expects a condition and at least one body expression"))
+
+(define (macro-expand-compat-guard-body
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [decls : AstDeclList]
+  [depth : i64]
+  [cond : AstExpr]
+  [body : AstExprList]
+  [is-unless : bool]) : ResultMacroCompatCall
+  (match (macro-expand-expr ctx env decls depth cond)
+    [(OkMacroExpr ncond)
+      (match (macro-expand-exprs ctx env decls depth body)
+        [(OkMacroExprList nbody)
+          (let
+            [unit-expr : AstExpr (macro-compat-unit-expr)]
+            [body-expr : AstExpr
+              (AstExprBegin (macro-compat-append-unit nbody))]
+            (if is-unless
+              (OkMacroCompatCall (ast-expr-if ncond unit-expr body-expr))
+              (OkMacroCompatCall (ast-expr-if ncond body-expr unit-expr))))]
+        [(ErrMacroExprList diag) (ErrMacroCompatCall diag)])]
+    [(ErrMacroExpr diag) (ErrMacroCompatCall diag)]))
+
+(define (macro-expand-compat-guard-call
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [decls : AstDeclList]
+  [depth : i64]
+  [name : String]
+  [args : AstExprList]
+  [is-unless : bool]
+  [call-expr : AstExpr]) : ResultMacroCompatCall
+  (match args
+    [(AstExprCons cond body)
+      (let
+        [body : AstExprList (box-get body)]
+        (match body
+          [(AstExprNil)
+            (ErrMacroCompatCall
+              (ctfe-diagnostic-at-expr
+                call-expr
+                (macro-compat-guard-message name)))]
+          [_
+            (macro-expand-compat-guard-body
+              ctx
+              env
+              decls
+              depth
+              cond
+              body
+              is-unless)]))]
+    [_
+      (ErrMacroCompatCall
+        (ctfe-diagnostic-at-expr call-expr (macro-compat-guard-message name)))]))
+
+(define (macro-expand-compat-call
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [decls : AstDeclList]
+  [depth : i64]
+  [func : AstExpr]
+  [args : AstExprList]
+  [call-expr : AstExpr]) : ResultMacroCompatCall
+  (match (macro-compat-call-name func)
+    [(TcSomeString name)
+      (cond
+        [(string-eq name "when")
+          (macro-expand-compat-guard-call
+            ctx
+            env
+            decls
+            depth
+            name
+            args
+            false
+            call-expr)]
+        [(string-eq name "unless")
+          (macro-expand-compat-guard-call
+            ctx
+            env
+            decls
+            depth
+            name
+            args
+            true
+            call-expr)]
+        [else (NoMacroCompatCall)])]
+    [(TcNoString) (NoMacroCompatCall)]))
+
 (define (macro-expand-expr
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -13289,13 +13579,24 @@
                     depth
                     expr)]
                 [(MacroNoDecl)
-                  (match (macro-expand-expr ctx env decls depth func)
-                    [(OkMacroExpr nfunc)
-                      (match (macro-expand-exprs ctx env decls depth args)
-                        [(OkMacroExprList nargs)
-                          (OkMacroExpr (ast-expr-call nfunc nargs))]
-                        [(ErrMacroExprList diag) (ErrMacroExpr diag)])]
-                    [(ErrMacroExpr diag) (ErrMacroExpr diag)])])]
+                  (match (macro-expand-compat-call
+                    ctx
+                    env
+                    decls
+                    depth
+                    func
+                    args
+                    expr)
+                    [(OkMacroCompatCall expanded) (OkMacroExpr expanded)]
+                    [(NoMacroCompatCall)
+                      (match (macro-expand-expr ctx env decls depth func)
+                        [(OkMacroExpr nfunc)
+                          (match (macro-expand-exprs ctx env decls depth args)
+                            [(OkMacroExprList nargs)
+                              (OkMacroExpr (ast-expr-call nfunc nargs))]
+                            [(ErrMacroExprList diag) (ErrMacroExpr diag)])]
+                        [(ErrMacroExpr diag) (ErrMacroExpr diag)])]
+                    [(ErrMacroCompatCall diag) (ErrMacroExpr diag)])])]
             [(ErrMacroCallDecl diag) (ErrMacroExpr diag)]))]
       [(AstExprBinary op left-box right-box)
         (let
@@ -13644,26 +13945,57 @@
                       [(ErrMacroDecls diag) (ErrMacroDecls diag)]))]
                 [(ErrMacroDecl diag) (ErrMacroDecls diag)]))]))]))
 
-;; Whether a program declares any macros at all.
-(define (macro-program-has-macros? [decls : AstDeclList]) : bool
+(define (macro-expr-needs-compat-expansion? [expr : AstExpr]) : bool
+  (or
+    (tc-expr-uses-free-name? expr "when" TcStringNil)
+    (tc-expr-uses-free-name? expr "unless" TcStringNil)))
+
+(define (macro-decl-needs-expansion? [decl : AstDecl]) : bool
+  (match decl
+    [(AstDeclDef _ _ expr-box)
+      (let
+        [expr : AstExpr (box-get expr-box)]
+        (macro-expr-needs-compat-expansion? expr))]
+    [(AstDeclDefFn _ _ _ body-box)
+      (let
+        [body : AstExpr (box-get body-box)]
+        (macro-expr-needs-compat-expansion? body))]
+    [(AstDeclDefMacro _ _ _ _) true]
+    [(AstDeclTest _ body-box _)
+      (let
+        [body : AstExpr (box-get body-box)]
+        (macro-expr-needs-compat-expansion? body))]
+    [(AstDeclUnsafe inner-box)
+      (let
+        [inner : AstDecl (box-get inner-box)]
+        (macro-decl-needs-expansion? inner))]
+    [(AstDeclComptimeDecl _ template-box)
+      (let
+        [template : AstDecl (box-get template-box)]
+        (macro-decl-needs-expansion? template))]
+    [_ false]))
+
+;; Whether a program needs the macro expansion pass.
+(define (macro-program-needs-expansion? [decls : AstDeclList]) : bool
   (match decls
     [(AstDeclNil) false]
     [(AstDeclCons decl rest)
       (let
         [rest : AstDeclList (box-get rest)]
-        (match decl
-          [(AstDeclDefMacro _ _ _ _) true]
-          [_ (macro-program-has-macros? rest)]))]))
+        (or
+          (macro-decl-needs-expansion? decl)
+          (macro-program-needs-expansion? rest)))]))
 
 ;; Expand all macro calls in a parsed program before typechecking. Programs that
-;; declare no macros are returned unchanged without rebuilding the AST, so the
-;; expansion phase adds no allocation for the common (macro-free) case.
+;; need no macro or guard-compatibility expansion are returned unchanged without
+;; rebuilding the AST, so the expansion phase adds no allocation for the common
+;; case.
 (define (macro-expand-program [program : AstProgram]) : ResultMacroExpand
   (match program
     [(AstProgram decls-box)
       (let
         [decls : AstDeclList (box-get decls-box)]
-        (if (macro-program-has-macros? decls)
+        (if (macro-program-needs-expansion? decls)
           (match (build-compiler-symbols program)
             [(OkCompilerSymbols symbols)
               (match (build-compiler-registries program)
@@ -13775,7 +14107,7 @@
   [field-name : String]
   [cleanup-name : String]
   [field-ty : AstType]) : ResultTcUnit
-  (match (tc-lookup env cleanup-name)
+  (match (tc-lookup-visible ctx env cleanup-name)
     [(OkTcType cleanup-ty)
       (tc-expect
         cleanup-ty

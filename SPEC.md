@@ -2443,6 +2443,14 @@ only when `cond` is false. The body must contain at least one expression. Body
 results are discarded, and the whole form has type `unit`, which makes these
 forms suitable for side effects and early-return guards.
 
+Transition note: during the stdlib macro migration, the selfhost parser leaves
+unqualified `when` and `unless` as macro-call candidates. Macro expansion gives
+a visible local macro with that name ownership of the call; otherwise the
+compiler applies the compatibility guard-form desugaring described above. The
+legacy bracket-arm `cond` form remains compatibility parsed for now, while a
+flat call-shaped `cond` form can be owned by a macro before #1141 decides the
+final stdlib `cond` arm surface.
+
 ```lisp test=ignore name=when-unless-guards reason=fragment
 (when (< x 0) (return 0))
 (unless (< x 100) (print-string "large\n"))

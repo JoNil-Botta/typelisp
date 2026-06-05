@@ -57,10 +57,15 @@
   (% (hash-normalize hash) capacity))
 
 ;: Return the start bucket when `hash` is already in the public hash range.
+(define (string-i64-map-power-two-capacity? [capacity : i64]) : bool
+  (and (> capacity 0) (= (bit-and capacity (- capacity 1)) 0)))
+
 (define (string-i64-map-normalized-bucket-index
   [hash : i64]
   [capacity : i64]) : i64
-  (% hash capacity))
+  (if (string-i64-map-power-two-capacity? capacity)
+    (bit-and hash (- capacity 1))
+    (% hash capacity)))
 
 ;: Advance a bucket index by one slot, wrapping around the table.
 (define (string-i64-map-next-index [index : i64] [capacity : i64]) : i64

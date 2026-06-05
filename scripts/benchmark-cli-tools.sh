@@ -3,9 +3,9 @@ set -eu
 
 # benchmark-cli-tools.sh - benchmark non-compile CLI tools on the compiler corpus.
 #
-# This mirrors scripts/benchmark-compile-cli.sh's staged setup: resolve a seed,
-# build a fresh stage2 selfhost CLI, then run the measured tool commands through
-# that stage2 binary. The default corpus is the compiler/tool implementation
+# This mirrors scripts/benchmark-compile-cli.sh's staged setup enough to resolve
+# a seed and build one fresh selfhost CLI, then runs the measured tool commands
+# through that binary. The default corpus is the compiler/tool implementation
 # under selfhost/, excluding smoke/fixture/test snippet files.
 #
 # The script writes deterministic outputs under target/cli-tool-benchmark/run
@@ -32,6 +32,7 @@ Environment:
   TYPELISP_TOOL_BENCH_CORPUS_FILE      Newline-separated corpus manifest override.
   TYPELISP_TOOL_BENCH_FILTER           Substring filter for case labels; skips baseline compare.
   TYPELISP_TOOL_BENCH_RUNS             Timed repetitions per case (default 1).
+  TYPELISP_TOOL_BENCH_OPT_LEVEL        Compile optimization level for rebuilt tools (default 2).
   TYPELISP_TOOL_BENCH_UPDATE_BASELINE  Force baseline refresh after a successful full run.
   TYPELISP_TOOL_BENCH_STRICT_BASELINE  Fail instead of refreshing when the corpus changed.
 EOF
@@ -77,6 +78,15 @@ case "$RUNS" in
         ;;
 esac
 
+OPT_LEVEL=${TYPELISP_TOOL_BENCH_OPT_LEVEL:-2}
+case "$OPT_LEVEL" in
+    0 | 1 | 2 | 3) ;;
+    *)
+        echo "TYPELISP_TOOL_BENCH_OPT_LEVEL must be 0, 1, 2, or 3" >&2
+        exit 2
+        ;;
+esac
+
 FILTER=${TYPELISP_TOOL_BENCH_FILTER:-}
 WORKROOT=${TYPELISP_TOOL_BENCH_OUT:-"$ROOT/target/cli-tool-benchmark"}
 RUNDIR="$WORKROOT/run"
@@ -90,17 +100,16 @@ CORPUS_MANIFEST="$RUNDIR/compiler-corpus.txt"
 CORPUS_SIG="$RUNDIR/corpus.sha256"
 FINGERPRINTS="$RUNDIR/fingerprints.tsv"
 CASE_LIST="$RUNDIR/cases.txt"
+CHOOSER_QUEUE_FIXTURE="$ROOT/benchmarks/cli-tools/chooser-queue.json"
+TOTAL_MS=0
 
 rm -rf "$RUNDIR"
 mkdir -p "$BUILDDIR" "$OUTPUTS" "$ARTIFACTS" "$TMPDIR_BENCH" "$BASELINE_DIR"
 configure_toolchain
 
-STAGE1_ASM="$BUILDDIR/stage1.s"
-STAGE1_OBJ="$BUILDDIR/stage1.$NL_OBJ_EXT"
-STAGE1_BIN="$BUILDDIR/stage1$NL_BIN_EXT"
-STAGE2_ASM="$BUILDDIR/stage2.s"
-STAGE2_OBJ="$BUILDDIR/stage2.$NL_OBJ_EXT"
-STAGE2_BIN="$BUILDDIR/stage2$NL_BIN_EXT"
+CLI_ASM="$BUILDDIR/cli.s"
+CLI_OBJ="$BUILDDIR/cli.$NL_OBJ_EXT"
+CLI_BIN="$BUILDDIR/cli$NL_BIN_EXT"
 CHOOSER_ASM="$BUILDDIR/chooser.s"
 CHOOSER_OBJ="$BUILDDIR/chooser.$NL_OBJ_EXT"
 CHOOSER_BIN="$BUILDDIR/chooser$NL_BIN_EXT"
@@ -112,6 +121,21 @@ now_ms() {
         *) printf '%s\n' "$value"; return 0 ;;
     esac
     perl -MTime::HiRes=time -e 'printf "%d\n", time() * 1000'
+}
+
+record_timing() {
+    step=$1
+    iteration=$2
+    elapsed=$3
+    printf '%s\t%s\t%s\n' "$step" "$iteration" "$elapsed" >> "$TIMINGS"
+    TOTAL_MS=$((TOTAL_MS + elapsed))
+}
+
+record_timing_no_total() {
+    step=$1
+    iteration=$2
+    elapsed=$3
+    printf '%s\t%s\t%s\n' "$step" "$iteration" "$elapsed" >> "$TIMINGS"
 }
 
 fail() {
@@ -152,18 +176,21 @@ compile_cli_to_asm() {
     stdout="$BUILDDIR/$label.stdout"
     stderr="$BUILDDIR/$label.stderr"
     echo "[tool-bench] $label"
+    start=$(now_ms)
     if ! run_with_heartbeat "$label" \
         "$compiler" compile selfhost/cli.tl -o "$asm" \
         --target "$NL_BOOTSTRAP_TARGET" \
         $(native_target_cfg_args) \
         --stdlib-root stdlib \
         --stdlib-root selfhost \
-        --opt-level 2 \
+        --opt-level "$OPT_LEVEL" \
         >"$stdout" 2>"$stderr"; then
         echo "[tool-bench] $label failed" >&2
         show_failure_logs "$stdout" "$stderr"
         exit 1
     fi
+    end=$(now_ms)
+    record_timing_no_total "$label" compile "$((end - start))"
     [ -s "$asm" ] || fail "$label did not produce assembly: $asm"
 }
 
@@ -174,18 +201,45 @@ compile_tool_to_asm() {
     stdout="$BUILDDIR/$label.stdout"
     stderr="$BUILDDIR/$label.stderr"
     echo "[tool-bench] $label"
+    start=$(now_ms)
     if ! run_with_heartbeat "$label" \
-        "$STAGE2_BIN" compile "$source" -o "$asm" \
+        "$CLI_BIN" compile "$source" -o "$asm" \
         --target "$NL_BOOTSTRAP_TARGET" \
         $(native_target_cfg_args) \
         --stdlib-root stdlib \
-        --opt-level 2 \
+        --opt-level "$OPT_LEVEL" \
         >"$stdout" 2>"$stderr"; then
         echo "[tool-bench] $label failed" >&2
         show_failure_logs "$stdout" "$stderr"
         exit 1
     fi
+    end=$(now_ms)
+    record_timing "$label" compile "$((end - start))"
     [ -s "$asm" ] || fail "$label did not produce assembly: $asm"
+}
+
+measure_step() {
+    step_label=$1
+    shift
+    echo "[tool-bench] $step_label"
+    start=$(now_ms)
+    if ! "$@"; then
+        fail "$step_label failed"
+    fi
+    end=$(now_ms)
+    record_timing "$step_label" step "$((end - start))"
+}
+
+measure_setup_step_no_total() {
+    step_label=$1
+    shift
+    echo "[tool-bench] $step_label"
+    start=$(now_ms)
+    if ! "$@"; then
+        fail "$step_label failed"
+    fi
+    end=$(now_ms)
+    record_timing_no_total "$step_label" step "$((end - start))"
 }
 
 compare_text() {
@@ -262,10 +316,39 @@ measure_case() {
             exit 1
         fi
         end=$(now_ms)
-        printf '%s\t%s\t%s\n' "$label" "$run" "$((end - start))" >> "$TIMINGS"
+        record_timing "$label" "$run" "$((end - start))"
 
         if [ "$run" -gt 1 ]; then
             compare_text "$label stdout run 1 vs $run" "$OUTPUTS/$label.1.stdout" "$stdout"
+            compare_text "$label stderr run 1 vs $run" "$OUTPUTS/$label.1.stderr" "$stderr"
+        fi
+        run=$((run + 1))
+    done
+}
+
+measure_case_unstable_stdout() {
+    label=$1
+    shift
+    if ! should_run_case "$label"; then
+        return 0
+    fi
+
+    record_case "$label"
+    run=1
+    while [ "$run" -le "$RUNS" ]; do
+        stdout="$OUTPUTS/$label.$run.stdout"
+        stderr="$OUTPUTS/$label.$run.stderr"
+        echo "[tool-bench] measure $label run $run/$RUNS"
+        start=$(now_ms)
+        if ! run_with_heartbeat "$label" "$@" >"$stdout" 2>"$stderr"; then
+            echo "[tool-bench] $label failed on run $run" >&2
+            show_failure_logs "$stdout" "$stderr"
+            exit 1
+        fi
+        end=$(now_ms)
+        record_timing "$label" "$run" "$((end - start))"
+
+        if [ "$run" -gt 1 ]; then
             compare_text "$label stderr run 1 vs $run" "$OUTPUTS/$label.1.stderr" "$stderr"
         fi
         run=$((run + 1))
@@ -294,12 +377,15 @@ verify_formatter_no_mutation() {
     sed "s#^#$scratch/#" "$CORPUS_MANIFEST" > "$scratch_manifest"
 
     echo "[tool-bench] verify formatter output matches compiler corpus"
-    if ! xargs "$STAGE2_BIN" fmt < "$scratch_manifest" \
+    start=$(now_ms)
+    if ! xargs "$CLI_BIN" fmt < "$scratch_manifest" \
         >"$OUTPUTS/fmt-verify.stdout" 2>"$OUTPUTS/fmt-verify.stderr"; then
         echo "[tool-bench] formatter mutation verification failed" >&2
         show_failure_logs "$OUTPUTS/fmt-verify.stdout" "$OUTPUTS/fmt-verify.stderr"
         exit 1
     fi
+    end=$(now_ms)
+    record_timing "fmt-verify" step "$((end - start))"
 
     while IFS= read -r file || [ -n "$file" ]; do
         [ -n "$file" ] || continue
@@ -391,39 +477,10 @@ END { printf "\"" }
 ' "$1"
 }
 
-write_chooser_input() {
+copy_chooser_input() {
     output=$1
-    awk '
-function escape_json(s,    i, ch, out) {
-    out = ""
-    for (i = 1; i <= length(s); i++) {
-        ch = substr(s, i, 1)
-        if (ch == "\\") {
-            out = out "\\\\"
-        } else if (ch == "\"") {
-            out = out "\\\""
-        } else if (ch == "\t") {
-            out = out "\\t"
-        } else {
-            out = out ch
-        }
-    }
-    return out
-}
-BEGIN {
-    printf "{\"prs\":["
-}
-{
-    if (NR > 1) {
-        printf ","
-    }
-    title = escape_json($0)
-    printf "{\"number\":%d,\"title\":\"%s\",\"statusCheckRollup\":[{\"__typename\":\"CheckRun\",\"status\":\"IN_PROGRESS\"}]}", NR, title
-}
-END {
-    printf "],\"issues\":[{\"number\":900001,\"title\":\"compiler corpus chooser sentinel\",\"labels\":[{\"name\":\"ready-for-implementation\"},{\"name\":\"p0\"}]}]}\n"
-}
-' "$CORPUS_MANIFEST" > "$output"
+    [ -f "$CHOOSER_QUEUE_FIXTURE" ] || fail "missing chooser queue fixture: $CHOOSER_QUEUE_FIXTURE"
+    cp "$CHOOSER_QUEUE_FIXTURE" "$output"
 }
 
 frame_append() {
@@ -471,12 +528,32 @@ EOF
     chmod +x "$TMPDIR_BENCH/run-chooser-corpus.sh"
 }
 
+verify_chooser_output() {
+    if ! should_run_case "chooser-corpus"; then
+        return 0
+    fi
+
+    run=1
+    while [ "$run" -le "$RUNS" ]; do
+        stdout="$OUTPUTS/chooser-corpus.$run.stdout"
+        stderr="$OUTPUTS/chooser-corpus.$run.stderr"
+        [ ! -s "$stderr" ] || fail "chooser-corpus wrote stderr on run $run"
+        line=$(tr -d '\r' < "$stdout")
+        case "$line" in
+            "review pr #"*": "* | "implement issue #"*": "* | "research/triage issue #"*": "*) ;;
+            *) fail "chooser-corpus produced unexpected output on run $run: $line" ;;
+        esac
+        run=$((run + 1))
+    done
+}
+
 fingerprint_outputs() {
     {
         printf 'path\tbytes\tsha256\n'
         find "$OUTPUTS" "$ARTIFACTS" -type f | sort | while IFS= read -r file; do
             rel=${file#"$RUNDIR/"}
             case "$rel" in
+                outputs/chooser-corpus.*.stdout) continue ;;
                 outputs/*.1.stdout | outputs/*.1.stderr | outputs/fmt-verify.stdout | outputs/fmt-verify.stderr | artifacts/*) ;;
                 *) continue ;;
             esac
@@ -536,7 +613,7 @@ verify_previous_run() {
     echo "[tool-bench] output fingerprints match previous full run"
 }
 
-printf 'case\trun\telapsed_ms\n' > "$TIMINGS"
+printf 'step\titeration\telapsed_ms\n' > "$TIMINGS"
 : > "$CASE_LIST"
 
 compiler_corpus_manifest > "$CORPUS_MANIFEST"
@@ -545,37 +622,35 @@ write_corpus_signature "$CORPUS_MANIFEST" "$CORPUS_SIG"
 corpus_count=$(wc -l < "$CORPUS_MANIFEST" | tr -d '[:space:]')
 echo "[tool-bench] compiler corpus: $corpus_count file(s)"
 
-compile_cli_to_asm "seed-to-stage1" "$SEED" "$STAGE1_ASM"
-assemble_and_link "stage1" "$STAGE1_ASM" "$STAGE1_OBJ" "$STAGE1_BIN"
-strip_if_needed "$STAGE1_BIN"
-
-compile_cli_to_asm "stage1-to-stage2" "$STAGE1_BIN" "$STAGE2_ASM"
-assemble_and_link "stage2" "$STAGE2_ASM" "$STAGE2_OBJ" "$STAGE2_BIN"
-strip_if_needed "$STAGE2_BIN"
+compile_cli_to_asm "build-cli" "$SEED" "$CLI_ASM"
+measure_setup_step_no_total "cli-link" assemble_and_link "cli" "$CLI_ASM" "$CLI_OBJ" "$CLI_BIN"
+strip_if_needed "$CLI_BIN"
 
 write_fmt_runner
 write_lint_runner
 write_one_file_runner "$TMPDIR_BENCH/run-doc-test-corpus.sh" doc --test
 write_lsp_input "$TMPDIR_BENCH/lsp-compiler.in"
 write_lsp_runner
-write_chooser_input "$TMPDIR_BENCH/chooser-corpus.json"
+copy_chooser_input "$TMPDIR_BENCH/chooser-corpus.json"
 write_chooser_runner
 
 compile_tool_to_asm "build-chooser" tools/work-queue-chooser/chooser.tl "$CHOOSER_ASM"
-assemble_and_link "chooser" "$CHOOSER_ASM" "$CHOOSER_OBJ" "$CHOOSER_BIN"
+measure_step "chooser-link" assemble_and_link "chooser" "$CHOOSER_ASM" "$CHOOSER_OBJ" "$CHOOSER_BIN"
 strip_if_needed "$CHOOSER_BIN"
 
-measure_case "fmt-check" "$TMPDIR_BENCH/run-fmt-check-corpus.sh" "$STAGE2_BIN" "$CORPUS_MANIFEST"
+measure_case "fmt-check" "$TMPDIR_BENCH/run-fmt-check-corpus.sh" "$CLI_BIN" "$CORPUS_MANIFEST"
 verify_formatter_no_mutation
-measure_case "lint-check-corpus" "$TMPDIR_BENCH/run-lint-corpus.sh" "$STAGE2_BIN" "$CORPUS_MANIFEST"
-measure_case "doc-markdown-cli-graph" "$STAGE2_BIN" doc selfhost/cli.tl -o "$ARTIFACTS/compiler.md" --stdlib-root stdlib --stdlib-root selfhost
-measure_case "doc-html-cli" "$STAGE2_BIN" doc --html selfhost/cli.tl "$ARTIFACTS/compiler.html"
-measure_case "doc-test-corpus" "$TMPDIR_BENCH/run-doc-test-corpus.sh" "$STAGE2_BIN" "$CORPUS_MANIFEST"
-measure_case "lsp-diagnostics-cli" "$TMPDIR_BENCH/run-lsp-compiler.sh" "$STAGE2_BIN" "$TMPDIR_BENCH/lsp-compiler.in"
-measure_case "chooser-corpus" "$TMPDIR_BENCH/run-chooser-corpus.sh" "$CHOOSER_BIN" "$TMPDIR_BENCH/chooser-corpus.json"
+measure_case "lint-check-corpus" "$TMPDIR_BENCH/run-lint-corpus.sh" "$CLI_BIN" "$CORPUS_MANIFEST"
+measure_case "doc-markdown-cli-graph" "$CLI_BIN" doc selfhost/cli.tl -o "$ARTIFACTS/compiler.md" --stdlib-root stdlib --stdlib-root selfhost
+measure_case "doc-html-cli" "$CLI_BIN" doc --html selfhost/cli.tl "$ARTIFACTS/compiler.html"
+measure_case "doc-test-corpus" "$TMPDIR_BENCH/run-doc-test-corpus.sh" "$CLI_BIN" "$CORPUS_MANIFEST"
+measure_case "lsp-diagnostics-cli" "$TMPDIR_BENCH/run-lsp-compiler.sh" "$CLI_BIN" "$TMPDIR_BENCH/lsp-compiler.in"
+measure_case_unstable_stdout "chooser-corpus" "$TMPDIR_BENCH/run-chooser-corpus.sh" "$CHOOSER_BIN" "$TMPDIR_BENCH/chooser-corpus.json"
+verify_chooser_output
 
 [ -s "$CASE_LIST" ] || fail "no benchmark cases matched filter: $FILTER"
 
+printf 'total\tall\t%s\n' "$TOTAL_MS" >> "$TIMINGS"
 fingerprint_outputs
 verify_previous_run
 

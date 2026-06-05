@@ -121,8 +121,8 @@ run:
 bash scripts/benchmark-cli-tools.sh
 ```
 
-The harness builds a fresh stage2 `selfhost/cli.tl` binary, then times tools
-whose implementation is not the compiler compile path: formatter, linter,
+The harness builds one fresh `selfhost/cli.tl` binary, then times tools whose
+implementation is not the compiler compile path: formatter, linter,
 documentation generation, doctest discovery, LSP framing/diagnostics, and the
 work-queue chooser. Compiler-front-end debug surfaces such as tokenize/parse are
 intentionally excluded because normal compilation already exercises that code.
@@ -131,6 +131,13 @@ Deterministic stdout/stderr and generated docs are fingerprinted under
 compiler corpus changed, the script refreshes the baseline after the tools pass;
 set `TYPELISP_TOOL_BENCH_STRICT_BASELINE=1` to make corpus changes fail instead,
 or `TYPELISP_TOOL_BENCH_UPDATE_BASELINE=1` to accept intentional output changes.
+The chooser case uses `benchmarks/cli-tools/chooser-queue.json`, a normalized
+snapshot of the live GitHub queue; because chooser selection is random, the
+benchmark validates the action-line shape instead of fingerprinting exact chooser
+stdout. `timings.tsv` includes the single optimized current-worktree CLI
+compile/link setup as informational rows, separately compiled tool setup such as
+chooser, timed tool runs, formatter verification, and a final `total` row
+summing the measured tool steps while excluding the CLI compile/link setup.
 
 Useful knobs:
 
@@ -138,6 +145,7 @@ Useful knobs:
 |----------|---------|---------|
 | `TYPELISP_BIN` | (built) | Stage0 `typelisp` binary used as the seed compiler. |
 | `TYPELISP_TOOL_BENCH_RUNS` | `1` | Timed repetitions per tool case. |
+| `TYPELISP_TOOL_BENCH_OPT_LEVEL` | `2` | Optimization level for rebuilding the current CLI and standalone tools. |
 | `TYPELISP_TOOL_BENCH_FILTER` | (empty) | Run case labels containing this substring; skips baseline compare. |
 | `TYPELISP_TOOL_BENCH_CORPUS_FILE` | compiler corpus | Newline-separated corpus manifest override. |
 | `TYPELISP_TOOL_BENCH_OUT` | `target/cli-tool-benchmark` | Output and baseline root. |

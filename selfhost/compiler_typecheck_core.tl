@@ -821,6 +821,12 @@
         (tc-string-list-contains allowed item)
         (tc-string-list-all-in? rest allowed))]))
 
+;; V1 lifetime names are owner names. Normal environment bindings own stack
+;; slots, and the synthetic region marker owns a with-arena scope. Environment
+;; order is the lexical outlives relation: older owners appear farther down the
+;; list and outlive nested stack bindings or scoped arenas. The default program
+;; arena is inferred for untagged aggregate handles, so it has no lexical
+;; binder in this environment walk.
 (define (tc-env-binding-matches-lifetime?
   [key : String]
   [ty : AstType]
@@ -1236,6 +1242,9 @@
     [(TcSomeString region) (tc-tag-region region projected-ty)]
     [(TcNoString) projected-ty]))
 
+;; Region-tagged aggregate flow uses the same lexical owner ordering as
+;; references, but only considers arena owners. A value from an outer region can
+;; flow into an inner target; an inner-region value cannot flow outward.
 (define (tc-region-outlives-or-matches
   [env : TcTypeEnv]
   [value-region : String]
@@ -7839,6 +7848,9 @@
     [(AstTyVar _) true]
     [_ (tc-type-copyable? ty)]))
 
+;; with-escape is a first-class scratch-arena clone path, not a lexical
+;; lifetime binder. The scratch expression is just an arena handle, and
+;; supported results leave the form with scratch-region tags erased.
 (define (tc-with-escape-expr
   [ctx : TcContext]
   [env : TcTypeEnv]

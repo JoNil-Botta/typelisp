@@ -2041,6 +2041,57 @@
 (define (compiler-typecheck-str-mut-ref-source) : String
   "(define (main [s : (&mut text str)]) : unit unit)")
 
+(define (compiler-typecheck-owner-stack-local-source) : String
+  "(define (main) : i64
+  (let
+    [x : i64 1]
+    (let [r : (& x i64) (& x)] x)))")
+
+(define (compiler-typecheck-owner-stack-local-escape-source) : String
+  "(define (main [n : i64]) : (& n i64)
+  (let [x : i64 1] (& x)))")
+
+(define (compiler-typecheck-owner-default-arena-source) : String
+  "(define (main) : String
+  (let
+    [text : String (int->string 42)]
+    (with-arena phase
+      (let [n : i64 (string-length text)] text))))")
+
+(define (compiler-typecheck-owner-scoped-arena-source) : String
+  "(define (main) : i64
+  (with-arena phase
+    (let
+      [text : String (int->string 42)]
+      (string-length text))))")
+
+(define (compiler-typecheck-owner-scoped-arena-escape-source) : String
+  "(define (main) : String
+  (with-arena phase (int->string 42)))")
+
+(define (compiler-typecheck-owner-model-tests-ok?) : bool
+  (and
+    (compiler-typecheck-ok? (compiler-typecheck-owner-stack-local-source))
+    (and
+      (compiler-typecheck-error-ok?
+        (compiler-typecheck-owner-stack-local-escape-source)
+        "typecheck: reference value would escape lexical scope")
+      (and
+        (compiler-typecheck-ok?
+          (compiler-typecheck-reference-return-param-ref-source))
+        (and
+          (compiler-typecheck-ok?
+            (compiler-typecheck-owner-default-arena-source))
+          (and
+            (compiler-typecheck-ok?
+              (compiler-typecheck-owner-scoped-arena-source))
+            (and
+              (compiler-typecheck-error-ok?
+                (compiler-typecheck-owner-scoped-arena-escape-source)
+                "typecheck: region-tagged value cannot escape with-arena 'phase'")
+              (compiler-typecheck-ok?
+                (compiler-typecheck-with-escape-string-source)))))))))
+
 (define (compiler-typecheck-reference-render-ok?) : bool
   (let
     [string-ref-render-ok : bool
@@ -4457,6 +4508,9 @@
     (if (compiler-typecheck-with-escape-tests-ok?)
       unit
       (panic "typecheck: with-escape tests failed"))
+    (if (compiler-typecheck-owner-model-tests-ok?)
+      unit
+      (panic "typecheck: lifetime owner model tests failed"))
     (if (compiler-typecheck-box-tests-ok?)
       unit
       (panic "typecheck: box tests failed"))

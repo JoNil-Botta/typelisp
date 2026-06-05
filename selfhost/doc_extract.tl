@@ -20,7 +20,8 @@
   (DocKindFunction)
   (DocKindExtern)
   (DocKindDefEnum)
-  (DocKindDefStruct))
+  (DocKindDefStruct)
+  (DocKindDefMacro))
 
 (defenum DocItem
   (DocItem DocItemKind String String String))
@@ -42,7 +43,8 @@
     [(DocKindFunction) 2]
     [(DocKindExtern) 3]
     [(DocKindDefEnum) 4]
-    [(DocKindDefStruct) 5]))
+    [(DocKindDefStruct) 5]
+    [(DocKindDefMacro) 6]))
 
 (define (doc-kind-name [kind : DocItemKind]) : String
   (match kind
@@ -50,7 +52,8 @@
     [(DocKindFunction) "define-function"]
     [(DocKindExtern) "extern"]
     [(DocKindDefEnum) "defenum"]
-    [(DocKindDefStruct) "defstruct"]))
+    [(DocKindDefStruct) "defstruct"]
+    [(DocKindDefMacro) "defmacro"]))
 
 (define (doc-extraction-module-doc [docs : DocExtraction]) : String
   (match docs
@@ -316,6 +319,13 @@
       (doc-info-after-name (DocKindFunction) stream (+ next 1))
       (doc-info-after-name (DocKindDefine) stream next))))
 
+(define (doc-info-after-defmacro [stream : FormatTokenStream] [idx : i64]) : DocMaybeDeclInfo
+  (let
+    [next : i64 (doc-next-code-token-index stream idx)]
+    (if (= (format-token-tag (format-token-at stream next)) (fmt-tag-lparen))
+      (doc-info-after-name (DocKindDefMacro) stream (+ next 1))
+      (DocNoDeclInfo))))
+
 (define (doc-decl-info [signature : String]) : DocMaybeDeclInfo
   (let
     [stream : FormatTokenStream (format-lex signature)]
@@ -338,6 +348,8 @@
                 (doc-info-after-name (DocKindDefEnum) stream after-head)]
               [(string-eq head "defstruct")
                 (doc-info-after-name (DocKindDefStruct) stream after-head)]
+              [(string-eq head "defmacro")
+                (doc-info-after-defmacro stream after-head)]
               [else (DocNoDeclInfo)]))
           (DocNoDeclInfo)))
       (DocNoDeclInfo))))
@@ -453,6 +465,9 @@
 (extern print : (-> String unit))
 ;: struct doc
 (defstruct Point (x i64) (y i64))
+;: macro doc
+(defmacro (guard [condition : bool] [body : unit]) : unit
+  `(if ,condition ,body unit))
 ;: EOF unattached")
 
 (define (doc-extract-legacy-smoke-source) : String
@@ -480,7 +495,11 @@
         answer
         (DocItemCons
           main-fn
-          (DocItemCons maybe (DocItemCons print (DocItemCons point DocItemNil)))))
+          (DocItemCons
+            maybe
+            (DocItemCons
+              print
+              (DocItemCons point (DocItemCons guard DocItemNil))))))
       (begin
         (unless
           (doc-item-ok?
@@ -504,7 +523,10 @@
         (unless
           (doc-item-ok? print 3 "print" "external doc" "(extern print")
           (return false))
-        (doc-item-ok? point 5 "Point" "struct doc" "(defstruct Point"))]
+        (unless
+          (doc-item-ok? point 5 "Point" "struct doc" "(defstruct Point")
+          (return false))
+        (doc-item-ok? guard 6 "guard" "macro doc" "(defmacro (guard"))]
     [_ false]))
 
 (define (doc-extract-smoke) : i64
@@ -520,7 +542,7 @@
               (panic "doc-extract: module doc smoke mismatch")
               0)))
         (unless
-          (= (doc-item-list-count items) 5)
+          (= (doc-item-list-count items) 6)
           (return
             (begin
               (panic "doc-extract: item count smoke mismatch")

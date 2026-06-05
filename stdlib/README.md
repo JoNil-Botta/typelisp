@@ -35,6 +35,10 @@ installed-root discovery, namespace isolation, or an implicit prelude.
   dispatched calls should not require user code to import this module. Import it
   with `(import "stdlib/cpu.tl")` when code needs explicit host capability
   checks.
+- `core_macros.tl`: explicit-import typed expression macros for core guard
+  forms. Import it with
+  `(import "stdlib/core_macros.tl" module stdlib.core-macros as core)` and call
+  exported macros through the alias, such as `core/when` and `core/unless`.
 - `fs.tl`: minimal recoverable filesystem helpers for tool artifact paths,
   current-directory lookup, lexical path normalization, safe relative suffix
   checks, temporary directories, cleanup, process ids, and coarse file-kind

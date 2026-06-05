@@ -1098,7 +1098,7 @@
           [(CompilerLoadSomeDecl transformed)
             (CompilerLoadSomeDecl (ast-decl-unsafe transformed))]
           [(CompilerLoadNoDecl) (CompilerLoadNoDecl)]))]
-    [(AstDeclComptimeDecl template-box)
+    [(AstDeclComptimeDecl meta template-box)
       (let
         [template : AstDecl (box-get template-box)]
         (match (compiler-load-package-transform-decl
@@ -1107,7 +1107,8 @@
           module
           template)
           [(CompilerLoadSomeDecl transformed)
-            (CompilerLoadSomeDecl (ast-decl-comptime-decl transformed))]
+            (CompilerLoadSomeDecl
+              (ast-decl-comptime-decl-with-meta meta transformed))]
           [(CompilerLoadNoDecl) (CompilerLoadNoDecl)]))]
     [_ (CompilerLoadNoDecl)]))
 
@@ -1781,6 +1782,44 @@
       [(OkCompilerLoadWithPaths decls _ _ _)
         (compiler-load-decl-list-has-import-alias? decls "alias.dep" "dep")]
       [(ErrCompilerLoadWithPaths _) false])))
+
+(define (compiler-load-generated-meta-preserved-ok?) : bool
+  (let
+    [meta : AstGeneratedDeclMeta
+      (AstSomeGeneratedDeclMeta "gen" "generated-fn" AstExprNil)]
+    [inner : AstDecl
+      (ast-decl-def-fn
+        "generated-fn"
+        AstParamNil
+        (AstTyI64)
+        (AstExprLiteral (AstLitInt 1)))]
+    [decl : AstDecl (ast-decl-comptime-decl-with-meta meta inner)]
+    (match (compiler-load-package-transform-decl
+      "src/main.tl"
+      "src/main.tl"
+      "main"
+      decl)
+      [(CompilerLoadSomeDecl transformed)
+        (match transformed
+          [(AstDeclComptimeDecl found-meta template-box)
+            (let
+              [template : AstDecl (box-get template-box)]
+              (and
+                (match found-meta
+                  [(AstSomeGeneratedDeclMeta generator item arg-keys)
+                    (and
+                      (string-eq generator "gen")
+                      (and
+                        (string-eq item "generated-fn")
+                        (match arg-keys
+                          [(AstExprNil) true]
+                          [_ false])))]
+                  [_ false])
+                (match template
+                  [(AstDeclExtern name _ _) (string-eq name "generated-fn")]
+                  [_ false])))]
+          [_ false])]
+      [(CompilerLoadNoDecl) false])))
 
 ;; Diamond import dedup (#1074 / #1041): entry imports A and B, both of which
 ;; import C; C must load exactly once. Writes fixture modules under target/ and
@@ -3125,6 +3164,13 @@
       (return
         (begin
           (panic "compiler-load: import alias preservation smoke mismatch")
+          0)))
+    (unless
+      (compiler-load-generated-meta-preserved-ok?)
+      (return
+        (begin
+          (panic
+            "compiler-load: generated metadata preservation smoke mismatch")
           0)))
     (unless
       (compiler-load-diamond-import-ok?)

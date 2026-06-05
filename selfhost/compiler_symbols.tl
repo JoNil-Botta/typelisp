@@ -875,7 +875,7 @@
       (let
         [inner : AstDecl (box-get inner-box)]
         (compiler-symbols-add-decl-in-module symbols module inner index))]
-    [(AstDeclComptimeDecl template-box)
+    [(AstDeclComptimeDecl _ template-box)
       (let
         [template : AstDecl (box-get template-box)]
         (compiler-symbols-add-decl-in-module symbols module template index))]))
@@ -1047,7 +1047,7 @@
       (let
         [inner : AstDecl (box-get inner-box)]
         (compiler-symbols-add-local-decl-in-module symbols module inner index))]
-    [(AstDeclComptimeDecl template-box)
+    [(AstDeclComptimeDecl _ template-box)
       (let
         [template : AstDecl (box-get template-box)]
         (compiler-symbols-add-local-decl-in-module
@@ -1146,7 +1146,7 @@
           (compiler-symbol-make-handle (compiler-symbol-kind-defstruct) index))
         (compiler-symbol-module-key alias name)
         (compiler-symbol-make-handle (compiler-symbol-kind-defstruct) index))]
-    [(AstDeclComptimeDecl template-box)
+    [(AstDeclComptimeDecl _ template-box)
       (let
         [template : AstDecl (box-get template-box)]
         (compiler-symbols-add-decl-alias-in-module symbols alias template index))]
@@ -1580,7 +1580,7 @@
         fields
         index
         0)]
-    [(AstDeclComptimeDecl template-box)
+    [(AstDeclComptimeDecl _ template-box)
       (let
         [template : AstDecl (box-get template-box)]
         (compiler-registries-add-decl-alias-in-module
@@ -1877,7 +1877,7 @@
                   (+ index 1)
                   module)]
               [(ErrCompilerRegistries message) (ErrCompilerRegistries message)])]
-          [(AstDeclComptimeDecl template-box)
+          [(AstDeclComptimeDecl _ template-box)
             (let
               [template : AstDecl (box-get template-box)]
               (match template
@@ -2149,7 +2149,7 @@
           [_
             (if (= target index)
               (match decl
-                [(AstDeclComptimeDecl template-box)
+                [(AstDeclComptimeDecl _ template-box)
                   (let
                     [template : AstDecl (box-get template-box)]
                     (OkAstDecl template))]

@@ -361,7 +361,7 @@
                 rest
                 module
                 (ctfe-reflect-info-add-names infos info name module)))]
-          [(AstDeclComptimeDecl template-box)
+          [(AstDeclComptimeDecl _ template-box)
             (let
               [template : AstDecl (box-get template-box)]
               (match template

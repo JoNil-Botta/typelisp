@@ -773,7 +773,9 @@
     [prefix-len : i64 (string-length prefix)]
     (if (< text-len prefix-len)
       false
-      (string-eq (substring text 0 prefix-len) prefix))))
+      (if (= (string-ref text 0) (string-ref prefix 0))
+        (string-eq (substring text 0 prefix-len) prefix)
+        false))))
 
 (define (tc-hygiene-name-base [name : String] [prefix : String]) : String
   (substring

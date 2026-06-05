@@ -12396,6 +12396,11 @@
   (OkMacroExpr AstExpr)
   (ErrMacroExpr CompilerDiagnostic))
 
+(defenum ResultMacroCompatCall
+  (OkMacroCompatCall AstExpr)
+  (NoMacroCompatCall)
+  (ErrMacroCompatCall CompilerDiagnostic))
+
 (defenum ResultMacroExprList
   (OkMacroExprList AstExprList)
   (ErrMacroExprList CompilerDiagnostic))
@@ -13430,6 +13435,115 @@
                       (ErrMacroLetBindings (tc-expr-diag ninit message))])]
                 [(ErrMacroExpr diag) (ErrMacroLetBindings diag)]))]))]))
 
+(define (macro-compat-unit-expr) : AstExpr
+  (AstExprLiteral AstLitUnit))
+
+(define (macro-compat-append-unit [exprs : AstExprList]) : AstExprList
+  (match exprs
+    [(AstExprNil) (ast-expr-cons (macro-compat-unit-expr) AstExprNil)]
+    [(AstExprCons head rest)
+      (let
+        [rest : AstExprList (box-get rest)]
+        (ast-expr-cons head (macro-compat-append-unit rest)))]))
+
+(define (macro-compat-call-name [func : AstExpr]) : TcMaybeString
+  (match (ast-expr-unspan func)
+    [(AstExprVar name) (TcSomeString name)]
+    [_ (TcNoString)]))
+
+(define (macro-compat-guard-message [name : String]) : String
+  (if (string-eq name "unless")
+    "parse: unless expects a condition and at least one body expression"
+    "parse: when expects a condition and at least one body expression"))
+
+(define (macro-expand-compat-guard-body
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [decls : AstDeclList]
+  [depth : i64]
+  [cond : AstExpr]
+  [body : AstExprList]
+  [is-unless : bool]) : ResultMacroCompatCall
+  (match (macro-expand-expr ctx env decls depth cond)
+    [(OkMacroExpr ncond)
+      (match (macro-expand-exprs ctx env decls depth body)
+        [(OkMacroExprList nbody)
+          (let
+            [unit-expr : AstExpr (macro-compat-unit-expr)]
+            [body-expr : AstExpr
+              (AstExprBegin (macro-compat-append-unit nbody))]
+            (if is-unless
+              (OkMacroCompatCall (ast-expr-if ncond unit-expr body-expr))
+              (OkMacroCompatCall (ast-expr-if ncond body-expr unit-expr))))]
+        [(ErrMacroExprList diag) (ErrMacroCompatCall diag)])]
+    [(ErrMacroExpr diag) (ErrMacroCompatCall diag)]))
+
+(define (macro-expand-compat-guard-call
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [decls : AstDeclList]
+  [depth : i64]
+  [name : String]
+  [args : AstExprList]
+  [is-unless : bool]
+  [call-expr : AstExpr]) : ResultMacroCompatCall
+  (match args
+    [(AstExprCons cond body)
+      (let
+        [body : AstExprList (box-get body)]
+        (match body
+          [(AstExprNil)
+            (ErrMacroCompatCall
+              (ctfe-diagnostic-at-expr
+                call-expr
+                (macro-compat-guard-message name)))]
+          [_
+            (macro-expand-compat-guard-body
+              ctx
+              env
+              decls
+              depth
+              cond
+              body
+              is-unless)]))]
+    [_
+      (ErrMacroCompatCall
+        (ctfe-diagnostic-at-expr call-expr (macro-compat-guard-message name)))]))
+
+(define (macro-expand-compat-call
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [decls : AstDeclList]
+  [depth : i64]
+  [func : AstExpr]
+  [args : AstExprList]
+  [call-expr : AstExpr]) : ResultMacroCompatCall
+  (match (macro-compat-call-name func)
+    [(TcSomeString name)
+      (cond
+        [(string-eq name "when")
+          (macro-expand-compat-guard-call
+            ctx
+            env
+            decls
+            depth
+            name
+            args
+            false
+            call-expr)]
+        [(string-eq name "unless")
+          (macro-expand-compat-guard-call
+            ctx
+            env
+            decls
+            depth
+            name
+            args
+            true
+            call-expr)]
+        [else (NoMacroCompatCall)])]
+    [(TcNoString) (NoMacroCompatCall)]))
+
 (define (macro-expand-expr
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -13465,13 +13579,24 @@
                     depth
                     expr)]
                 [(MacroNoDecl)
-                  (match (macro-expand-expr ctx env decls depth func)
-                    [(OkMacroExpr nfunc)
-                      (match (macro-expand-exprs ctx env decls depth args)
-                        [(OkMacroExprList nargs)
-                          (OkMacroExpr (ast-expr-call nfunc nargs))]
-                        [(ErrMacroExprList diag) (ErrMacroExpr diag)])]
-                    [(ErrMacroExpr diag) (ErrMacroExpr diag)])])]
+                  (match (macro-expand-compat-call
+                    ctx
+                    env
+                    decls
+                    depth
+                    func
+                    args
+                    expr)
+                    [(OkMacroCompatCall expanded) (OkMacroExpr expanded)]
+                    [(NoMacroCompatCall)
+                      (match (macro-expand-expr ctx env decls depth func)
+                        [(OkMacroExpr nfunc)
+                          (match (macro-expand-exprs ctx env decls depth args)
+                            [(OkMacroExprList nargs)
+                              (OkMacroExpr (ast-expr-call nfunc nargs))]
+                            [(ErrMacroExprList diag) (ErrMacroExpr diag)])]
+                        [(ErrMacroExpr diag) (ErrMacroExpr diag)])]
+                    [(ErrMacroCompatCall diag) (ErrMacroExpr diag)])])]
             [(ErrMacroCallDecl diag) (ErrMacroExpr diag)]))]
       [(AstExprBinary op left-box right-box)
         (let
@@ -13820,26 +13945,57 @@
                       [(ErrMacroDecls diag) (ErrMacroDecls diag)]))]
                 [(ErrMacroDecl diag) (ErrMacroDecls diag)]))]))]))
 
-;; Whether a program declares any macros at all.
-(define (macro-program-has-macros? [decls : AstDeclList]) : bool
+(define (macro-expr-needs-compat-expansion? [expr : AstExpr]) : bool
+  (or
+    (tc-expr-uses-free-name? expr "when" TcStringNil)
+    (tc-expr-uses-free-name? expr "unless" TcStringNil)))
+
+(define (macro-decl-needs-expansion? [decl : AstDecl]) : bool
+  (match decl
+    [(AstDeclDef _ _ expr-box)
+      (let
+        [expr : AstExpr (box-get expr-box)]
+        (macro-expr-needs-compat-expansion? expr))]
+    [(AstDeclDefFn _ _ _ body-box)
+      (let
+        [body : AstExpr (box-get body-box)]
+        (macro-expr-needs-compat-expansion? body))]
+    [(AstDeclDefMacro _ _ _ _) true]
+    [(AstDeclTest _ body-box _)
+      (let
+        [body : AstExpr (box-get body-box)]
+        (macro-expr-needs-compat-expansion? body))]
+    [(AstDeclUnsafe inner-box)
+      (let
+        [inner : AstDecl (box-get inner-box)]
+        (macro-decl-needs-expansion? inner))]
+    [(AstDeclComptimeDecl _ template-box)
+      (let
+        [template : AstDecl (box-get template-box)]
+        (macro-decl-needs-expansion? template))]
+    [_ false]))
+
+;; Whether a program needs the macro expansion pass.
+(define (macro-program-needs-expansion? [decls : AstDeclList]) : bool
   (match decls
     [(AstDeclNil) false]
     [(AstDeclCons decl rest)
       (let
         [rest : AstDeclList (box-get rest)]
-        (match decl
-          [(AstDeclDefMacro _ _ _ _) true]
-          [_ (macro-program-has-macros? rest)]))]))
+        (or
+          (macro-decl-needs-expansion? decl)
+          (macro-program-needs-expansion? rest)))]))
 
 ;; Expand all macro calls in a parsed program before typechecking. Programs that
-;; declare no macros are returned unchanged without rebuilding the AST, so the
-;; expansion phase adds no allocation for the common (macro-free) case.
+;; need no macro or guard-compatibility expansion are returned unchanged without
+;; rebuilding the AST, so the expansion phase adds no allocation for the common
+;; case.
 (define (macro-expand-program [program : AstProgram]) : ResultMacroExpand
   (match program
     [(AstProgram decls-box)
       (let
         [decls : AstDeclList (box-get decls-box)]
-        (if (macro-program-has-macros? decls)
+        (if (macro-program-needs-expansion? decls)
           (match (build-compiler-symbols program)
             [(OkCompilerSymbols symbols)
               (match (build-compiler-registries program)

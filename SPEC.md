@@ -1883,10 +1883,15 @@ Example:
   through the same module loader and compiler pipeline as `compile`.
 - `typelisp build` without `--manifest-path` searches for `typelisp.pkg` from
   the current directory upward.
-- Build outputs are written under `target/typelisp/<package-name>/` in the
-  package root. `bin` packages produce `<package-name>` on Linux and
-  `<package-name>.exe` on Windows. `staticlib` packages produce
-  `lib<package-name>.a` on Linux and `<package-name>.lib` on Windows.
+- Package builds accept `--profile dev|release` and `--release`. The default
+  profile is `release`; `--release` is an alias for `--profile release`.
+  `--opt-level 0|1|2|3` overrides the profile's optimizer level. Without an
+  explicit level, `release` uses level 2 and `dev` uses level 0.
+- Build outputs are written under
+  `target/typelisp/<profile>/<package-name>/` in the package root. `bin`
+  packages produce `<package-name>` on Linux and `<package-name>.exe` on
+  Windows. `staticlib` packages produce `lib<package-name>.a` on Linux and
+  `<package-name>.lib` on Windows.
 - Package-root-qualified imports use the reserved string prefix
   `pkg:<alias>/...`, for example `(import "pkg:math/src/lib.tl")`.
 - This first package layer has no registry, semantic-version solving,
@@ -4120,6 +4125,10 @@ Options:
                           Write the native executable to the given path
   build --manifest-path <file>
                           Use an explicit package manifest path
+  build --profile dev|release
+                          Select package build profile; default release
+  build --release
+                          Alias for build --profile release
 ```
 
 For source-file builds, the default executable path is the source path with the

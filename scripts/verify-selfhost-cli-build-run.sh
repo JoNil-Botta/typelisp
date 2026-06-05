@@ -509,9 +509,13 @@ EOF
 cat > "$PKG_DIR/src/main.tl" <<'EOF'
 (define (main) : i64 29)
 EOF
-PKG_EXE="$PKG_DIR/target/typelisp/cli_pkg_smoke/cli_pkg_smoke"
+PKG_EXE="$PKG_DIR/target/typelisp/release/cli_pkg_smoke/cli_pkg_smoke"
 if [ "$HOST_OS" = windows ]; then
     PKG_EXE="$PKG_EXE.exe"
+fi
+PKG_DEV_EXE="$PKG_DIR/target/typelisp/dev/cli_pkg_smoke/cli_pkg_smoke"
+if [ "$HOST_OS" = windows ]; then
+    PKG_DEV_EXE="$PKG_DEV_EXE.exe"
 fi
 
 set +e
@@ -534,7 +538,20 @@ assert_status package-program "$status" 29
 assert_empty package-program "$WORKDIR/package-program.out"
 assert_empty package-program "$WORKDIR/package-program.err"
 
-ROOT_PKG_OUT_DIR="$ROOT/target/typelisp/typelisp"
+rm -rf "$PKG_DIR/target"
+set +e
+(
+    cd "$PKG_DIR"
+    "$COMPILER" build --target "$BUILD_TARGET" --profile dev > "$WORKDIR/package-build-dev.out" 2> "$WORKDIR/package-build-dev.err"
+)
+status=$?
+set -e
+assert_status package-build-dev "$status" 0
+assert_empty package-build-dev "$WORKDIR/package-build-dev.err"
+assert_contains package-build-dev "$WORKDIR/package-build-dev.out" "Generated:"
+[ -f "$PKG_DEV_EXE" ] || fail "package dev profile build did not write executable $PKG_DEV_EXE"
+
+ROOT_PKG_OUT_DIR="$ROOT/target/typelisp/release/typelisp"
 ROOT_PKG_EXE="$ROOT_PKG_OUT_DIR/typelisp"
 if [ "$HOST_OS" = windows ]; then
     ROOT_PKG_EXE="$ROOT_PKG_EXE.exe"
@@ -573,9 +590,9 @@ EOF
 cat > "$STATICLIB_DIR/src/lib.tl" <<'EOF'
 (define (static-answer) : i64 42)
 EOF
-STATICLIB_ARCHIVE="$STATICLIB_DIR/target/typelisp/cli_staticlib_smoke/libcli_staticlib_smoke.a"
+STATICLIB_ARCHIVE="$STATICLIB_DIR/target/typelisp/release/cli_staticlib_smoke/libcli_staticlib_smoke.a"
 if [ "$HOST_OS" = windows ]; then
-    STATICLIB_ARCHIVE="$STATICLIB_DIR/target/typelisp/cli_staticlib_smoke/cli_staticlib_smoke.lib"
+    STATICLIB_ARCHIVE="$STATICLIB_DIR/target/typelisp/release/cli_staticlib_smoke/cli_staticlib_smoke.lib"
 fi
 
 set +e
@@ -602,9 +619,9 @@ EOF
 cat > "$STATICLIB_OVERRIDE/custom/entry.tl" <<'EOF'
 (define (override-answer) : i64 77)
 EOF
-STATICLIB_OVERRIDE_ARCHIVE="$STATICLIB_OVERRIDE/target/typelisp/cli_staticlib_override/libcli_staticlib_override.a"
+STATICLIB_OVERRIDE_ARCHIVE="$STATICLIB_OVERRIDE/target/typelisp/release/cli_staticlib_override/libcli_staticlib_override.a"
 if [ "$HOST_OS" = windows ]; then
-    STATICLIB_OVERRIDE_ARCHIVE="$STATICLIB_OVERRIDE/target/typelisp/cli_staticlib_override/cli_staticlib_override.lib"
+    STATICLIB_OVERRIDE_ARCHIVE="$STATICLIB_OVERRIDE/target/typelisp/release/cli_staticlib_override/cli_staticlib_override.lib"
 fi
 
 set +e
@@ -638,7 +655,7 @@ NEW_BIN_DIR="$SCAFFOLD_ROOT/cli_new_bin"
 assert_contains scaffold-new-bin-manifest "$NEW_BIN_DIR/typelisp.pkg" '(kind "bin")'
 assert_contains scaffold-new-bin-manifest "$NEW_BIN_DIR/typelisp.pkg" '(entry "src/main.tl")'
 
-NEW_BIN_EXE="$NEW_BIN_DIR/target/typelisp/cli_new_bin/cli_new_bin"
+NEW_BIN_EXE="$NEW_BIN_DIR/target/typelisp/release/cli_new_bin/cli_new_bin"
 if [ "$HOST_OS" = windows ]; then
     NEW_BIN_EXE="$NEW_BIN_EXE.exe"
 fi
@@ -678,9 +695,9 @@ NEW_LIB_DIR="$SCAFFOLD_ROOT/cli_new_lib"
 assert_contains scaffold-new-lib-manifest "$NEW_LIB_DIR/typelisp.pkg" '(kind "staticlib")'
 assert_contains scaffold-new-lib-manifest "$NEW_LIB_DIR/typelisp.pkg" '(entry "src/lib.tl")'
 
-NEW_LIB_ARCHIVE="$NEW_LIB_DIR/target/typelisp/cli_new_lib/libcli_new_lib.a"
+NEW_LIB_ARCHIVE="$NEW_LIB_DIR/target/typelisp/release/cli_new_lib/libcli_new_lib.a"
 if [ "$HOST_OS" = windows ]; then
-    NEW_LIB_ARCHIVE="$NEW_LIB_DIR/target/typelisp/cli_new_lib/cli_new_lib.lib"
+    NEW_LIB_ARCHIVE="$NEW_LIB_DIR/target/typelisp/release/cli_new_lib/cli_new_lib.lib"
 fi
 set +e
 (

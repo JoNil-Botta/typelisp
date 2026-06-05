@@ -57,7 +57,7 @@ Usage:
     typelisp compile <file.tl> [-o <file>] [--emit-ir] [--target <target>] [--backend-mode <mode>] [--stdlib-root <dir>...] [--cfg <name>...]
     typelisp run <file.tl> [--target <target>] [--backend-mode <mode>] [--stdlib-root <dir>...] [-- args...]
     typelisp build <file.tl> [-o <exe>] [--target <target>] [--backend-mode <mode>] [--stdlib-root <dir>...]
-    typelisp build [--manifest-path <typelisp.pkg>] [--target <target>] [--backend-mode <mode>] [--opt-level <0|1|2|3>] [--stdlib-root <dir>...]
+    typelisp build [--manifest-path <typelisp.pkg>] [--profile dev|release] [--release] [--target <target>] [--backend-mode <mode>] [--opt-level <0|1|2|3>] [--stdlib-root <dir>...]
     typelisp clean [<file.tl>] [--manifest-path <typelisp.pkg>] [--dry-run]
     typelisp fmt [--check] <file.tl>... [--stdlib-root <dir>...]
     typelisp lint <file.tl> [--check] [--stdlib-root <dir>...]
@@ -83,6 +83,8 @@ Options for compile:
 Options for build:
     -o <exe>                       Source build executable output path
     --manifest-path <file>         Defaults to nearest typelisp.pkg upward
+    --profile dev|release          Package build profile (default release)
+    --release                      Alias for --profile release
     --opt-level <0|1|2|3>          Package-build optimizer level (default 2; 0 skips it)
 Options for clean:
     --dry-run                      List artifacts without deleting them

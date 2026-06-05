@@ -242,10 +242,12 @@ file to a native executable without running it. Without `-o`, the executable is
 written next to the source path with the `.tl` extension removed. `typelisp
 build [--manifest-path path/to/typelisp.pkg]` remains package-oriented: it
 resolves `entry` relative to the manifest directory and writes outputs under
-`target/typelisp/<package-name>/`. Omitted `kind` defaults to `bin`; omitted
-`entry` defaults to `src/main.tl` for binaries and `src/lib.tl` for static
-libraries. `kind "bin"` builds a native executable named after the package;
-`kind "staticlib"` builds a static archive (`lib<name>.a` on Linux,
+`target/typelisp/<profile>/<package-name>/`, where the package build profile
+defaults to `release`. `--profile dev` uses the `dev` profile; `--profile
+release` and `--release` select the release profile. Omitted `kind` defaults to
+`bin`; omitted `entry` defaults to `src/main.tl` for binaries and `src/lib.tl`
+for static libraries. `kind "bin"` builds a native executable named after the
+package; `kind "staticlib"` builds a static archive (`lib<name>.a` on Linux,
 `<name>.lib` on Windows). `kind "lib"` remains accepted as a compatibility
 alias. Dependency entries may use a local path relative to that same package
 root, an absolute path, or the GitHub shorthand form shown above. `tag` and
@@ -573,7 +575,7 @@ typelisp check          file.tl    # Type check
 typelisp compile        file.tl    # Generate assembly (.s); -o <path>, --target <target>, --emit-ir, --backend-mode <mode>, --cfg <name>
 typelisp build          file.tl    # Build native executable; -o <path>, --target <target>, --backend-mode <mode>
 typelisp run            file.tl    # Compile, assemble, link, and run; --target <target>, --backend-mode <mode>
-typelisp build                    # Build nearest typelisp.pkg artifact; --target <target>, --backend-mode <mode>
+typelisp build                    # Build nearest typelisp.pkg artifact; --profile dev|release, --target <target>, --backend-mode <mode>
 typelisp fmt            file.tl    # Format source in place; --check reports changes without writing
 typelisp lint           file.tl    # Report lint findings; --check exits non-zero when findings are present
 typelisp test           file.tl    # Run inline `(test ...)` items; --check type-checks the generated harness
@@ -615,13 +617,16 @@ runtime helper policy, and the `clang` + `lld-link` toolchain.
 
 The selfhost source-file build/run tools (`selfhost/build.tl --direct`,
 `selfhost/run.tl --direct`) and package build (`typelisp build
-[--manifest-path <typelisp.pkg>]`) accept `--opt-level 0|1|2|3`. When omitted,
-the optimizer runs, matching the prior default; `--opt-level 0` builds without
-the IR optimizer (faster compiles, larger/slower code) while `1|2|3` run it.
+[--manifest-path <typelisp.pkg>]`) accept `--opt-level 0|1|2|3`. Package builds
+also accept `--profile dev|release` and `--release`; the selected profile is
+visible in `target/typelisp/<profile>/<package-name>/`. When `--opt-level` is
+omitted, the release profile uses level 2 and the dev profile uses level 0.
+Explicit `--opt-level` overrides the profile default. `--opt-level 0` builds
+without the IR optimizer (faster compiles, larger/slower code) while `1|2|3` run
+it.
 Higher levels may spend more compile time but must preserve program semantics —
-the exit/output of a program never depends on the level. The package-build flag
-reports the same missing/duplicate/invalid diagnostics as the source path and
-defaults to the optimizer-running level. The finer numeric meanings and a
+the exit/output of a program never depends on the level. The package-build flags
+report missing/duplicate/invalid diagnostics. The finer numeric meanings and a
 canonical default are reserved for the optimizer-policy work split from \#939.
 
 ## Status

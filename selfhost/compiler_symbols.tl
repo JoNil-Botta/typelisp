@@ -443,6 +443,8 @@
     [(AstDeclExport _) (OkCompilerSymbols symbols)]
     [(AstDeclModule _) (OkCompilerSymbols symbols)]
     [(AstDeclTest _ _ _) (OkCompilerSymbols symbols)]
+    [(AstDeclUnsafe inner)
+      (compiler-symbols-add-decl-in-module symbols module inner index)]
     [(AstDeclComptimeDecl template)
       (compiler-symbols-add-decl-in-module symbols module template index)]))
 
@@ -518,6 +520,8 @@
         (compiler-symbol-make-handle (compiler-symbol-kind-defstruct) index))]
     [(AstDeclComptimeDecl template)
       (compiler-symbols-add-decl-alias-in-module symbols alias template index)]
+    [(AstDeclUnsafe inner)
+      (compiler-symbols-add-decl-alias-in-module symbols alias inner index)]
     [_ symbols]))
 
 (define (compiler-symbols-add-module-aliases-list
@@ -1169,6 +1173,7 @@
           (if (= target index)
             (match decl
               [(AstDeclComptimeDecl template) (OkAstDecl template)]
+              [(AstDeclUnsafe inner) (OkAstDecl inner)]
               [_ (OkAstDecl decl)])
             (compiler-decl-list-at-index rest target (+ index 1)))])]))
 

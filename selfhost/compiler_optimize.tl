@@ -21,6 +21,8 @@
 ;; Out of scope: aggregate/String/array IR optimization.
 (import "../stdlib/io.tl")
 
+(import "../stdlib/arena.tl")
+
 (import "compiler_ir_types.tl")
 
 (defenum ResultCompilerOptimizeLevel
@@ -4912,6 +4914,266 @@
       (match block
         [(IrBlock label _) (opt-cfg-reachable-label blocks label (OptLabelNil))])]))
 
+(defenum OptLoopPreheader
+  (OptNoLoopPreheader)
+  (OptSomeLoopPreheader String))
+
+(defenum OptLoopPreheaderCandidate
+  (OptLoopPreheaderNone)
+  (OptLoopPreheaderOne String)
+  (OptLoopPreheaderMany))
+
+(defenum OptNaturalLoop
+  (OptNaturalLoop String String OptLabelSet OptLoopPreheader))
+
+(defenum OptMaybeNaturalLoop
+  (OptNoNaturalLoop)
+  (OptSomeNaturalLoop OptNaturalLoop))
+
+(defenum OptNaturalLoopList
+  (OptNaturalLoopNil)
+  (OptNaturalLoopCons OptNaturalLoop OptNaturalLoopList))
+
+(defenum OptNaturalLoopCollectState
+  (OptNaturalLoopCollectState OptLabelSet OptLabelSet))
+
+(define (opt-natural-loop-header [loop : OptNaturalLoop]) : String
+  (match loop
+    [(OptNaturalLoop header _ _ _) header]))
+
+(define (opt-natural-loop-latch [loop : OptNaturalLoop]) : String
+  (match loop
+    [(OptNaturalLoop _ latch _ _) latch]))
+
+(define (opt-natural-loop-body [loop : OptNaturalLoop]) : OptLabelSet
+  (match loop
+    [(OptNaturalLoop _ _ body _) body]))
+
+(define (opt-natural-loop-preheader [loop : OptNaturalLoop]) : OptLoopPreheader
+  (match loop
+    [(OptNaturalLoop _ _ _ preheader) preheader]))
+
+(define (opt-natural-loop-list-count [loops : OptNaturalLoopList]) : i64
+  (match loops
+    [(OptNaturalLoopNil) 0]
+    [(OptNaturalLoopCons _ rest) (+ 1 (opt-natural-loop-list-count rest))]))
+
+(define (opt-natural-loop-find
+  [loops : OptNaturalLoopList]
+  [header : String]
+  [latch : String]) : OptMaybeNaturalLoop
+  (match loops
+    [(OptNaturalLoopNil) (OptNoNaturalLoop)]
+    [(OptNaturalLoopCons loop rest)
+      (if (and
+        (string-eq (opt-natural-loop-header loop) header)
+        (string-eq (opt-natural-loop-latch loop) latch))
+        (OptSomeNaturalLoop loop)
+        (opt-natural-loop-find rest header latch))]))
+
+(define (opt-natural-loop-collect-add-pred
+  [reachable : OptLabelSet]
+  [state : OptNaturalLoopCollectState]
+  [pred : String]) : OptNaturalLoopCollectState
+  (match state
+    [(OptNaturalLoopCollectState body worklist)
+      (if (and
+        (opt-label-contains reachable pred)
+        (not (opt-label-contains body pred)))
+        (OptNaturalLoopCollectState
+          (opt-label-add body pred)
+          (opt-label-add worklist pred))
+        state)]))
+
+(define (opt-natural-loop-collect-add-preds
+  [reachable : OptLabelSet]
+  [preds : OptLabelSet]
+  [state : OptNaturalLoopCollectState]) : OptNaturalLoopCollectState
+  (match preds
+    [(OptLabelNil) state]
+    [(OptLabelCons pred rest)
+      (opt-natural-loop-collect-add-preds
+        reachable
+        rest
+        (opt-natural-loop-collect-add-pred reachable state pred))]))
+
+(define (opt-natural-loop-collect-body
+  [blocks : CompilerIrBlockList]
+  [reachable : OptLabelSet]
+  [body : OptLabelSet]
+  [worklist : OptLabelSet]) : OptLabelSet
+  (match worklist
+    [(OptLabelNil) body]
+    [(OptLabelCons label rest)
+      (let
+        [state : OptNaturalLoopCollectState
+          (opt-natural-loop-collect-add-preds
+            reachable
+            (opt-cfg-predecessors blocks label)
+            (OptNaturalLoopCollectState body rest))]
+        (match state
+          [(OptNaturalLoopCollectState next-body next-worklist)
+            (opt-natural-loop-collect-body
+              blocks
+              reachable
+              next-body
+              next-worklist)]))]))
+
+(define (opt-natural-loop-safe-preheader-block?
+  [blocks : CompilerIrBlockList]
+  [label : String]
+  [header : String]) : bool
+  (let
+    [successors : OptLabelSet (opt-cfg-blocks-successors blocks label)]
+    (and
+      (= (opt-label-count successors) 1)
+      (opt-label-contains successors header))))
+
+(define (opt-natural-loop-preheader-candidate-add
+  [blocks : CompilerIrBlockList]
+  [header : String]
+  [candidate : OptLoopPreheaderCandidate]
+  [pred : String]) : OptLoopPreheaderCandidate
+  (match candidate
+    [(OptLoopPreheaderMany) (OptLoopPreheaderMany)]
+    [(OptLoopPreheaderNone)
+      (if (opt-natural-loop-safe-preheader-block? blocks pred header)
+        (OptLoopPreheaderOne pred)
+        (OptLoopPreheaderMany))]
+    [(OptLoopPreheaderOne _) (OptLoopPreheaderMany)]))
+
+(define (opt-natural-loop-preheader-candidate-scan
+  [blocks : CompilerIrBlockList]
+  [reachable : OptLabelSet]
+  [header : String]
+  [body : OptLabelSet]
+  [preds : OptLabelSet]
+  [candidate : OptLoopPreheaderCandidate]) : OptLoopPreheaderCandidate
+  (match preds
+    [(OptLabelNil) candidate]
+    [(OptLabelCons pred rest)
+      (if (and
+        (opt-label-contains reachable pred)
+        (not (opt-label-contains body pred)))
+        (opt-natural-loop-preheader-candidate-scan
+          blocks
+          reachable
+          header
+          body
+          rest
+          (opt-natural-loop-preheader-candidate-add
+            blocks
+            header
+            candidate
+            pred))
+        (opt-natural-loop-preheader-candidate-scan
+          blocks
+          reachable
+          header
+          body
+          rest
+          candidate))]))
+
+(define (opt-natural-loop-preheader-from-candidate
+  [candidate : OptLoopPreheaderCandidate]) : OptLoopPreheader
+  (match candidate
+    [(OptLoopPreheaderOne label) (OptSomeLoopPreheader label)]
+    [_ (OptNoLoopPreheader)]))
+
+(define (opt-natural-loop-find-preheader
+  [blocks : CompilerIrBlockList]
+  [reachable : OptLabelSet]
+  [header : String]
+  [body : OptLabelSet]) : OptLoopPreheader
+  (opt-natural-loop-preheader-from-candidate
+    (opt-natural-loop-preheader-candidate-scan
+      blocks
+      reachable
+      header
+      body
+      (opt-cfg-predecessors blocks header)
+      (OptLoopPreheaderNone))))
+
+(define (opt-natural-loop-build
+  [blocks : CompilerIrBlockList]
+  [reachable : OptLabelSet]
+  [header : String]
+  [latch : String]) : OptNaturalLoop
+  (let
+    [body : OptLabelSet
+      (opt-natural-loop-collect-body
+        blocks
+        reachable
+        (opt-label-add (opt-label-add (OptLabelNil) header) latch)
+        (opt-label-add (OptLabelNil) latch))]
+    (OptNaturalLoop
+      header
+      latch
+      body
+      (opt-natural-loop-find-preheader blocks reachable header body))))
+
+(define (opt-cfg-natural-loop-successors
+  [blocks : CompilerIrBlockList]
+  [reachable : OptLabelSet]
+  [doms : OptDomTable]
+  [source : String]
+  [successors : OptLabelSet]
+  [tail : OptNaturalLoopList]) : OptNaturalLoopList
+  (match successors
+    [(OptLabelNil) tail]
+    [(OptLabelCons header rest)
+      (let
+        [next : OptNaturalLoopList
+          (opt-cfg-natural-loop-successors
+            blocks
+            reachable
+            doms
+            source
+            rest
+            tail)]
+        (if (and
+          (opt-label-contains reachable header)
+          (opt-dom-dominates? doms header source))
+          (OptNaturalLoopCons
+            (opt-natural-loop-build blocks reachable header source)
+            next)
+          next))]))
+
+(define (opt-cfg-natural-loop-blocks
+  [all-blocks : CompilerIrBlockList]
+  [remaining : CompilerIrBlockList]
+  [reachable : OptLabelSet]
+  [doms : OptDomTable]) : OptNaturalLoopList
+  (match remaining
+    [(IrBlockNil) (OptNaturalLoopNil)]
+    [(IrBlockCons block rest)
+      (match block
+        [(IrBlock label _)
+          (let
+            [tail : OptNaturalLoopList
+              (opt-cfg-natural-loop-blocks
+                all-blocks
+                (box-get rest)
+                reachable
+                doms)]
+            (if (opt-label-contains reachable label)
+              (opt-cfg-natural-loop-successors
+                all-blocks
+                reachable
+                doms
+                label
+                (opt-cfg-block-successors-with-next
+                  block
+                  (opt-cfg-entry-label (box-get rest)))
+                tail)
+              tail))])]))
+
+(define (opt-cfg-natural-loops [blocks : CompilerIrBlockList]) : OptNaturalLoopList
+  (let
+    [reachable : OptLabelSet (opt-cfg-reachable-blocks blocks)]
+    [doms : OptDomTable (opt-cfg-dominators blocks)]
+    (opt-cfg-natural-loop-blocks blocks blocks reachable doms)))
+
 (define (opt-cfg-filter-phi-inputs
   [reachable : OptLabelSet]
   [inputs : CompilerIrPhiInputList]) : CompilerIrPhiInputList
@@ -6065,7 +6327,9 @@
       [result : CompilerIrFunctionList
         (optimize-function-list-escaping funcs level scratch)]
       (begin
-        (unsafe (arena-destroy scratch))
+        (unsafe
+          (begin
+            (arena-destroy scratch)))
         result))))
 
 (define (optimize-function-list-escaping
@@ -6092,13 +6356,17 @@
   (let
     [enclosing : i64 (arena-current)]
     (begin
-      (unsafe (arena-set! scratch))
+      (unsafe
+        (begin
+          (arena-set! scratch)))
       (let
         [mark : i64 (arena-mark)]
         [raw : CompilerIrFunction (optimize-function-with-level func level)]
         [scratch-head : i64 (arena-current)]
         (begin
-          (unsafe (arena-set! enclosing))
+          (unsafe
+            (begin
+              (arena-set! enclosing)))
           (let
             [escaped : CompilerIrFunction (compiler-ir-clone-function raw)]
             [new-enclosing : i64 (arena-current)]
@@ -9590,6 +9858,147 @@
     16
     (opt-ssa-loop-blocks)))
 
+(define (opt-natural-loop-nested-blocks) : CompilerIrBlockList
+  (compiler-ir-block-cons
+    (IrBlock
+      "entry"
+      (compiler-ir-instr-cons (IrInstrJump "outer") (IrInstrNil)))
+    (compiler-ir-block-cons
+      (IrBlock
+        "outer"
+        (compiler-ir-instr-cons (IrInstrJump "inner") (IrInstrNil)))
+      (compiler-ir-block-cons
+        (IrBlock
+          "inner"
+          (compiler-ir-instr-cons
+            (IrInstrBranch (IrValueVar 4) "inner-body" "outer-latch")
+            (IrInstrNil)))
+        (compiler-ir-block-cons
+          (IrBlock
+            "inner-body"
+            (compiler-ir-instr-cons (IrInstrJump "inner") (IrInstrNil)))
+          (compiler-ir-block-cons
+            (IrBlock
+              "outer-latch"
+              (compiler-ir-instr-cons
+                (IrInstrBranch (IrValueVar 8) "outer" "exit")
+                (IrInstrNil)))
+            (compiler-ir-block-cons
+              (IrBlock
+                "exit"
+                (compiler-ir-instr-cons
+                  (IrInstrReturn (IrSomeValue (IrValueI64 0)))
+                  (IrInstrNil)))
+              (IrBlockNil))))))))
+
+(define (opt-natural-loop-irreducible-blocks) : CompilerIrBlockList
+  (compiler-ir-block-cons
+    (IrBlock
+      "entry"
+      (compiler-ir-instr-cons
+        (IrInstrBranch (IrValueBool true) "left" "right")
+        (IrInstrNil)))
+    (compiler-ir-block-cons
+      (IrBlock
+        "left"
+        (compiler-ir-instr-cons (IrInstrJump "right") (IrInstrNil)))
+      (compiler-ir-block-cons
+        (IrBlock
+          "right"
+          (compiler-ir-instr-cons
+            (IrInstrBranch (IrValueBool true) "left" "exit")
+            (IrInstrNil)))
+        (compiler-ir-block-cons
+          (IrBlock
+            "exit"
+            (compiler-ir-instr-cons
+              (IrInstrReturn (IrSomeValue (IrValueI64 0)))
+              (IrInstrNil)))
+          (IrBlockNil))))))
+
+(define (opt-natural-loop-no-preheader-blocks) : CompilerIrBlockList
+  (compiler-ir-block-cons
+    (IrBlock
+      "entry"
+      (compiler-ir-instr-cons
+        (IrInstrBranch (IrValueBool true) "pre-one" "pre-two")
+        (IrInstrNil)))
+    (compiler-ir-block-cons
+      (IrBlock
+        "pre-one"
+        (compiler-ir-instr-cons (IrInstrJump "loop") (IrInstrNil)))
+      (compiler-ir-block-cons
+        (IrBlock
+          "pre-two"
+          (compiler-ir-instr-cons (IrInstrJump "loop") (IrInstrNil)))
+        (compiler-ir-block-cons
+          (IrBlock
+            "loop"
+            (compiler-ir-instr-cons
+              (IrInstrBranch (IrValueBool true) "body" "exit")
+              (IrInstrNil)))
+          (compiler-ir-block-cons
+            (IrBlock
+              "body"
+              (compiler-ir-instr-cons (IrInstrJump "loop") (IrInstrNil)))
+            (compiler-ir-block-cons
+              (IrBlock
+                "exit"
+                (compiler-ir-instr-cons
+                  (IrInstrReturn (IrSomeValue (IrValueI64 0)))
+                  (IrInstrNil)))
+              (IrBlockNil))))))))
+
+(define (opt-natural-loop-multi-backedge-blocks) : CompilerIrBlockList
+  (compiler-ir-block-cons
+    (IrBlock "entry" (compiler-ir-instr-cons (IrInstrJump "loop") (IrInstrNil)))
+    (compiler-ir-block-cons
+      (IrBlock
+        "loop"
+        (compiler-ir-instr-cons
+          (IrInstrBranch (IrValueBool true) "left" "right")
+          (IrInstrNil)))
+      (compiler-ir-block-cons
+        (IrBlock
+          "left"
+          (compiler-ir-instr-cons (IrInstrJump "loop") (IrInstrNil)))
+        (compiler-ir-block-cons
+          (IrBlock
+            "right"
+            (compiler-ir-instr-cons (IrInstrJump "loop") (IrInstrNil)))
+          (IrBlockNil))))))
+
+(define (opt-natural-loop-maybe-body-count [maybe : OptMaybeNaturalLoop]) : i64
+  (match maybe
+    [(OptNoNaturalLoop) 0]
+    [(OptSomeNaturalLoop loop) (opt-label-count (opt-natural-loop-body loop))]))
+
+(define (opt-natural-loop-maybe-body-contains?
+  [maybe : OptMaybeNaturalLoop]
+  [label : String]) : bool
+  (match maybe
+    [(OptNoNaturalLoop) false]
+    [(OptSomeNaturalLoop loop)
+      (opt-label-contains (opt-natural-loop-body loop) label)]))
+
+(define (opt-natural-loop-maybe-preheader-label?
+  [maybe : OptMaybeNaturalLoop]
+  [label : String]) : bool
+  (match maybe
+    [(OptNoNaturalLoop) false]
+    [(OptSomeNaturalLoop loop)
+      (match (opt-natural-loop-preheader loop)
+        [(OptSomeLoopPreheader actual) (string-eq actual label)]
+        [(OptNoLoopPreheader) false])]))
+
+(define (opt-natural-loop-maybe-no-preheader? [maybe : OptMaybeNaturalLoop]) : bool
+  (match maybe
+    [(OptNoNaturalLoop) false]
+    [(OptSomeNaturalLoop loop)
+      (match (opt-natural-loop-preheader loop)
+        [(OptNoLoopPreheader) true]
+        [(OptSomeLoopPreheader _) false])]))
+
 (define (opt-ssa-unreachable-blocks) : CompilerIrBlockList
   (compiler-ir-block-cons
     (IrBlock
@@ -9749,6 +10158,63 @@
                 (IrInstrReturn (IrSomeValue (IrValueVar 1)))
                 (IrInstrNil)))
             (IrBlockNil)))))))
+
+(define (compiler-optimize-natural-loop-self-test) : i64
+  (let
+    [single-loops : OptNaturalLoopList
+      (opt-cfg-natural-loops (opt-ssa-loop-blocks))]
+    [single : OptMaybeNaturalLoop
+      (opt-natural-loop-find single-loops "loop" "body")]
+    [nested-loops : OptNaturalLoopList
+      (opt-cfg-natural-loops (opt-natural-loop-nested-blocks))]
+    [inner : OptMaybeNaturalLoop
+      (opt-natural-loop-find nested-loops "inner" "inner-body")]
+    [outer : OptMaybeNaturalLoop
+      (opt-natural-loop-find nested-loops "outer" "outer-latch")]
+    [diamond-loops : OptNaturalLoopList
+      (opt-cfg-natural-loops (opt-ssa-diamond-blocks))]
+    [irreducible-loops : OptNaturalLoopList
+      (opt-cfg-natural-loops (opt-natural-loop-irreducible-blocks))]
+    [no-preheader-loops : OptNaturalLoopList
+      (opt-cfg-natural-loops (opt-natural-loop-no-preheader-blocks))]
+    [no-preheader : OptMaybeNaturalLoop
+      (opt-natural-loop-find no-preheader-loops "loop" "body")]
+    [multi-loops : OptNaturalLoopList
+      (opt-cfg-natural-loops (opt-natural-loop-multi-backedge-blocks))]
+    [multi-left : OptMaybeNaturalLoop
+      (opt-natural-loop-find multi-loops "loop" "left")]
+    [multi-right : OptMaybeNaturalLoop
+      (opt-natural-loop-find multi-loops "loop" "right")]
+    (cond
+      [(not (= (opt-natural-loop-list-count single-loops) 1)) 1]
+      [(not (= (opt-natural-loop-maybe-body-count single) 2)) 2]
+      [(not (opt-natural-loop-maybe-body-contains? single "loop")) 3]
+      [(not (opt-natural-loop-maybe-body-contains? single "body")) 4]
+      [(not (opt-natural-loop-maybe-preheader-label? single "entry")) 5]
+      [(not (= (opt-natural-loop-list-count nested-loops) 2)) 6]
+      [(not (= (opt-natural-loop-maybe-body-count inner) 2)) 7]
+      [(not (opt-natural-loop-maybe-body-contains? inner "inner")) 8]
+      [(not (opt-natural-loop-maybe-body-contains? inner "inner-body")) 9]
+      [(not (opt-natural-loop-maybe-preheader-label? inner "outer")) 10]
+      [(not (= (opt-natural-loop-maybe-body-count outer) 4)) 11]
+      [(not (opt-natural-loop-maybe-body-contains? outer "outer")) 12]
+      [(not (opt-natural-loop-maybe-body-contains? outer "inner")) 13]
+      [(not (opt-natural-loop-maybe-body-contains? outer "inner-body")) 14]
+      [(not (opt-natural-loop-maybe-body-contains? outer "outer-latch")) 15]
+      [(not (opt-natural-loop-maybe-preheader-label? outer "entry")) 16]
+      [(not (= (opt-natural-loop-list-count diamond-loops) 0)) 17]
+      [(not (= (opt-natural-loop-list-count irreducible-loops) 0)) 18]
+      [(not (= (opt-natural-loop-list-count no-preheader-loops) 1)) 19]
+      [(not (= (opt-natural-loop-maybe-body-count no-preheader) 2)) 20]
+      [(not (opt-natural-loop-maybe-no-preheader? no-preheader)) 21]
+      [(not (= (opt-natural-loop-list-count multi-loops) 2)) 22]
+      [(not (= (opt-natural-loop-maybe-body-count multi-left) 2)) 23]
+      [(not (opt-natural-loop-maybe-body-contains? multi-left "left")) 24]
+      [(not (opt-natural-loop-maybe-body-contains? multi-left "loop")) 25]
+      [(not (= (opt-natural-loop-maybe-body-count multi-right) 2)) 26]
+      [(not (opt-natural-loop-maybe-body-contains? multi-right "right")) 27]
+      [(not (opt-natural-loop-maybe-body-contains? multi-right "loop")) 28]
+      [else 42])))
 
 (define (compiler-optimize-ssa-self-test) : i64
   (let

@@ -25,12 +25,13 @@ these outcomes:
 - **Defined result:** the operation produces the specified value, including
   specified wrapping behavior where the language says arithmetic wraps.
 
-Safe code is source outside an `(unsafe ...)` context and outside helpers
-documented as unsafe by convention. An unsafe context does not disable ordinary
-type checking; it only moves responsibility for raw-pointer, foreign-ABI, and
-manual resource-reset invariants to the programmer. Optimizations may rely on
-the static type, move, borrow, and region facts below, but must not reinterpret
-accepted safe code as having behavior outside this table.
+Safe code is source outside an `(unsafe ...)` context and outside calls or
+references to declarations marked unsafe. An unsafe context does not disable
+ordinary type checking; it only moves responsibility for raw-pointer,
+foreign-ABI, and manual resource-reset invariants to the programmer.
+Optimizations may rely on the static type, move, borrow, and region facts below,
+but must not reinterpret accepted safe code as having behavior outside this
+table.
 
 | Safety area | Safe-code outcome | Binding rule and owner |
 |-------------|-------------------|------------------------|
@@ -1182,6 +1183,27 @@ Example:
 ```lisp test=ignore name=extern-link-metadata-declaration reason="requires native library fixture"
 (extern native-add (:link-search "native/lib") (:link-lib "native_math") : (-> i64 i64 i64))
 ```
+
+### 4.3.1 `(unsafe declaration)` - unsafe functions and externs
+
+An unsafe declaration is written by wrapping exactly one function `define` or
+`extern` declaration:
+
+```lisp test=ignore name=unsafe-declaration-surface reason="demonstrates call-site gating"
+(unsafe (define (raw-read [p : (Ptr i64)]) : i64
+  (unsafe (ptr-read p))))
+
+(unsafe (extern foreign-write : (-> (MutPtr i64) i64 unit)))
+```
+
+The wrapper is declaration metadata, not a runtime expression. It is preserved
+through module loading, package transformation, imports, aliases, macro
+expansion, and lowering. Safe code may mention the declared type only by entering
+an explicit `(unsafe ...)` expression; a safe direct call or safe function-value
+reference is rejected and the diagnostic names the callee. An unsafe function
+body is still checked as ordinary safe code unless the body itself uses
+`(unsafe ...)`. A local or later declaration that shadows the same name does not
+inherit the unsafe marker.
 
 ```lisp test=ignore name=extern-raw-pointer-signature reason="requires the selfhost raw-pointer checker path"
 (extern strlen : (-> (Ptr u8) u64))
@@ -2876,9 +2898,10 @@ evaluates one or more body expressions in order and returns the last value.
 
 An unsafe context does not disable normal type checking. It only permits forms
 that are rejected in safe code because they can violate memory safety, ABI
-contracts, aliasing assumptions, or region lifetime rules. Unsafe functions,
-unsafe declarations, and "unsafe by default" modules are deferred; v1 has only
-the expression/block form.
+contracts, aliasing assumptions, or region lifetime rules. Top-level unsafe
+function and extern declarations are supported through the `(unsafe
+declaration)` wrapper described in section 4.3.1. "Unsafe by default" modules
+are deferred.
 
 Initial raw pointer operation set:
 
@@ -3247,10 +3270,11 @@ stdlib surface.
 
 The owned `String` / borrowed `str` source contract is specified in section
 3.11, but no current stdlib function has migrated to a borrow-typed `str`
-signature. No current stdlib function manually resets arenas; safe scoped
-cleanup is owned by `with-arena`. Source code that needs manual arena control
-uses the first-class arena helpers, with `arena-set!`, `arena-destroy`, and
-`arena-rewind` gated by `(unsafe ...)`.
+signature. Except for the explicit `stdlib/arena.tl` manual-control surface, no
+current stdlib function manually resets arenas; safe scoped cleanup is owned by
+`with-arena`. Source code that needs manual arena control imports
+`stdlib/arena.tl` and uses the first-class arena helpers, with `arena-set!`,
+`arena-destroy`, and `arena-rewind` gated by `(unsafe ...)`.
 
 Nested `with-arena` forms create independent subregions whose values do not
 mix. Inner-region values cannot escape to the outer region; outer-region values
@@ -3262,11 +3286,14 @@ reclaim, matching the semantic contract minus the reset.
 
 #### First-class scratch arena escape - `with-escape`
 
-Compiler internals and long-running tools may allocate a first-class scratch
-arena with `arena-make`, switch to it for transient work, and then keep only a
-deep-cloned result. The safe source form for this pattern is:
+Compiler internals and long-running tools may import `stdlib/arena.tl`, allocate
+a first-class scratch arena with `arena-make`, switch to it for transient work,
+and then keep only a deep-cloned result. The safe source form for this pattern
+is:
 
 ```lisp test=ignore name=with-escape-example reason="depends on first-class arena runtime support"
+(import "stdlib/arena.tl")
+
 (define (build-message) : String
   (let
     [scratch : i64 (arena-make)]
@@ -3301,9 +3328,12 @@ separately.
 
 #### Manual arena helpers
 
-Programs that need manual control can use the first-class arena helpers:
+Programs that need manual control can import `stdlib/arena.tl` and use the
+first-class arena helpers:
 
 ```lisp test=check name=arena-manual-helpers
+(import "stdlib/arena.tl")
+
 (define (main) : unit
   (let
     [arena : i64 (arena-current)]
@@ -3451,10 +3481,11 @@ not the future safe reference/borrow model (#182), not a replacement for
 - Bootstrap I/O helpers: `arg-count`, `arg`, `read-file`, `write-file`,
   `file-exists?`, `file-open`, `file-close`, `file-read-chunk`,
   `read-stdin-line`, `read-stdin-bytes`, `stdin-eof?`, `flush-stdout`.
-- First-class arena helpers: `arena-make`, `arena-current`, `arena-mark`,
-  `arena-set!`, `arena-destroy`, and `arena-rewind`; invalidating helpers
-  require `(unsafe ...)`.
-- `extern` declarations.
+- First-class arena helpers in `stdlib/arena.tl`: `arena-make`,
+  `arena-current`, `arena-mark`, `arena-set!`, `arena-destroy`, and
+  `arena-rewind`; invalidating helpers require `(unsafe ...)`.
+- `extern` declarations, including unsafe declaration metadata for externs and
+  top-level functions.
 - Multi-file modules via `import`.
 - Native x86_64 executable targets: `linux-x86_64` by default, and
   `windows-x86_64` for Windows x64 ABI output with CRT-linked runtime helpers.
@@ -3478,7 +3509,7 @@ not the future safe reference/borrow model (#182), not a replacement for
 | Mutable captures (`set!` to captured names) in lambdas | Not implemented |
 | Tail call optimization | Not implemented |
 | `struct-set!` | Not implemented |
-| Raw pointer types and `(unsafe ...)` | Implemented v1 parser/typechecker/lowering/backend surface |
+| Raw pointer types, `(unsafe ...)`, and unsafe function/extern declarations | Implemented v1 parser/typechecker/lowering/backend surface |
 | Raw pointer dereference/write/offset/cast | Implemented unsafe v1 operations; address-of, C-string helpers, volatile/atomic access, and borrow-checked references remain follow-ups |
 | Garbage collection / general `free` | Not implemented; allocation is process-lifetime by default with unsafe explicit region reset for tool-owned phase boundaries |
 | Move-only aggregate handle checking | Specified for v1 source semantics; selfhost checker implementation pending (#1048/#1049) |
@@ -3928,6 +3959,7 @@ top-level     ::= define-var
                 | cfg-decl
                 | comptime-decl
                 | define-func
+                | unsafe-decl
                 | dispatch-decl
                 | defmacro
                 | extern-decl
@@ -3948,6 +3980,8 @@ generated-meta ::= "(" ":generated" qualified-name ident expr* ")"
 generated-payload ::= defstruct | defenum | define-var | define-func
 define-var    ::= "(" "define" ident [":" type] expr ")"
 define-func   ::= "(" "define" "(" ident param* ")" [":" type] expr ")"
+unsafe-decl   ::= "(" "unsafe" unsafe-decl-payload ")"
+unsafe-decl-payload ::= define-func | extern-decl
 dispatch-decl ::= "(" "defdispatch" ident dispatch-variant+ ")"
 dispatch-variant ::= "(" dispatch-isa ident ")"
 dispatch-isa  ::= "scalar" | "avx2" | "avx512"

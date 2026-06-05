@@ -130,8 +130,9 @@ Name              ; a defenum / defstruct nominal type
 
 Both `f64` and `f32` support scalar parameters, returns, locals, arithmetic,
 comparisons, and casts.
-Raw pointer types `(Ptr T)` and `(MutPtr T)` plus `(unsafe ...)` are implemented
-for the v1 FFI surface described in [SPEC.md](SPEC.md) sections 3.4 and 5.20.
+Raw pointer types `(Ptr T)` and `(MutPtr T)`, `(unsafe ...)`, and unsafe
+function/extern declaration wrappers are implemented for the v1 FFI surface
+described in [SPEC.md](SPEC.md) sections 3.4, 4.3.1, and 5.20.
 
 ### Abstraction policy
 
@@ -409,9 +410,10 @@ Scoped cleanup of non-memory resources is separate. The SPEC reserves
 handles, locks, mapped files, and similar resources; it is not implemented yet
 and does not imply destructors, `free`, or arena reset semantics.
 
-Programs that need manual control use the first-class arena helpers. `arena-make`,
-`arena-current`, and `arena-mark` are safe because they only create/read handles
-or record a reset mark. `arena-set!`, `arena-destroy`, and `arena-rewind` require
+Programs that need manual control import `stdlib/arena.tl` and use the
+first-class arena helpers. `arena-make`, `arena-current`, and `arena-mark` are
+safe because they only create/read handles or record a reset mark. `arena-set!`,
+`arena-destroy`, and `arena-rewind` require
 `(unsafe ...)`, because switching, freeing, or rewinding arenas can invalidate
 live heap handles. The safe `with-arena` surface remains preferred for scoped
 cleanup. See [SPEC.md §7.3](SPEC.md) for details.

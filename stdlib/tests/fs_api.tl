@@ -122,6 +122,9 @@
 (define (test-try-file-kind [path : String]) : ResultFsFileKind
   (try-file-kind (& path)))
 
+(define (test-try-file-metadata [path : String]) : ResultFsMetadata
+  (try-file-metadata (& path)))
+
 (define (test-try-remove-file-if-exists [path : String]) : ResultIoUnit
   (try-remove-file-if-exists (& path)))
 
@@ -140,6 +143,12 @@
   (match result
     [(OkFsFileKind kind) kind]
     [(ErrFsFileKind error)
+      (panic (string-append message (io-error-message error)))]))
+
+(define (expect-file-metadata [result : ResultFsMetadata] [message : String]) : FsMetadata
+  (match result
+    [(OkFsMetadata metadata) metadata]
+    [(ErrFsMetadata error)
       (panic (string-append message (io-error-message error)))]))
 
 (define (assert-file-kind-regular [path : String] [message : String]) : unit
@@ -166,6 +175,40 @@
   (match (test-try-file-kind path)
     [(ErrFsFileKind error) (assert-true (io-error-unsupported? error) message)]
     [(OkFsFileKind _) (panic message)]))
+
+(define (assert-file-metadata-regular-size
+  [path : String]
+  [expected-size : i64]
+  [message : String]) : unit
+  (let
+    [metadata : FsMetadata
+      (expect-file-metadata (test-try-file-metadata path) message)]
+    (begin
+      (match (fs-metadata-kind metadata)
+        [(FsFileRegular) unit]
+        [_ (panic message)])
+      (assert-i64-eq (fs-metadata-size metadata) expected-size message))))
+
+(define (assert-file-metadata-directory [path : String] [message : String]) : unit
+  (match (fs-metadata-kind
+    (expect-file-metadata (test-try-file-metadata path) message))
+    [(FsFileDirectory) unit]
+    [_ (panic message)]))
+
+(define (assert-file-metadata-not-found [path : String] [message : String]) : unit
+  (match (test-try-file-metadata path)
+    [(ErrFsMetadata error) (assert-true (io-error-not-found? error) message)]
+    [(OkFsMetadata _) (panic message)]))
+
+(define (assert-file-metadata-invalid [path : String] [message : String]) : unit
+  (match (test-try-file-metadata path)
+    [(ErrFsMetadata error) (assert-true (io-error-invalid-path? error) message)]
+    [(OkFsMetadata _) (panic message)]))
+
+(define (assert-file-metadata-unsupported [path : String] [message : String]) : unit
+  (match (test-try-file-metadata path)
+    [(ErrFsMetadata error) (assert-true (io-error-unsupported? error) message)]
+    [(OkFsMetadata _) (panic message)]))
 
 (define (assert-file-contents
   [path : String]
@@ -535,6 +578,9 @@
             (assert-mkdir-if-missing dir false))
           (assert-windows-rename-api)
           (assert-file-kind-unsupported "." "windows file kind unsupported")
+          (assert-file-metadata-unsupported
+            "."
+            "windows file metadata unsupported")
           (assert-unsupported-string-list
             (test-try-read-dir ".")
             "windows read-dir reports unsupported")
@@ -565,6 +611,9 @@
             (assert-exists dir-a true "temp dir a exists")
             (assert-exists dir-b true "temp dir b exists")
             (assert-file-kind-directory dir-a "temp dir a is directory")
+            (assert-file-metadata-directory
+              dir-a
+              "temp dir a metadata is directory")
             (assert-ok-unit
               (test-try-write-file file-a "assembly")
               "write temp artifact a: ")
@@ -574,9 +623,16 @@
             (assert-mkdir-if-missing dir-a true)
             (assert-exists file-a true "temp artifact a exists")
             (assert-file-kind-regular file-a "temp artifact a is regular")
+            (assert-file-metadata-regular-size
+              file-a
+              8
+              "temp artifact a metadata size")
             (assert-file-kind-not-found
               (test-fs-path-join dir-a "missing artifact.s")
               "missing file kind is not found")
+            (assert-file-metadata-not-found
+              (test-fs-path-join dir-a "missing artifact.s")
+              "missing file metadata is not found")
             (assert-ok-unit
               (test-try-remove-file file-a)
               "remove temp artifact a: ")
@@ -597,6 +653,7 @@
               "cleanup missing temp dir b: ")
             (assert-invalid-temp-dir)
             (assert-file-kind-invalid "" "empty file-kind path invalid")
+            (assert-file-metadata-invalid "" "empty metadata path invalid")
             (assert-linux-rename-api dir-c)
             (assert-ok-unit
               (test-try-remove-dir dir-c)

@@ -173,6 +173,38 @@
         (CtfeSomeValue value)
         (ctfe-env-lookup rest name))]))
 
+(define (ctfe-string-prefix? [text : String] [prefix : String]) : bool
+  (let
+    [text-len : i64 (string-length text)]
+    [prefix-len : i64 (string-length prefix)]
+    (if (< text-len prefix-len)
+      false
+      (string-eq (substring text 0 prefix-len) prefix))))
+
+(define (ctfe-hygiene-enabled-name) : String
+  "__tl_macro_hygiene_enabled")
+
+(define (ctfe-hygiene-template-prefix) : String
+  "__tl_macro_template$")
+
+(define (ctfe-hygiene-enabled? [env : CtfeEnv]) : bool
+  (match (ctfe-env-lookup env (ctfe-hygiene-enabled-name))
+    [(CtfeSomeValue value)
+      (match value
+        [(CtfeBool enabled) enabled]
+        [_ false])]
+    [(CtfeNoValue) false]))
+
+(define (ctfe-hygiene-template-name [name : String]) : String
+  (if (ctfe-string-prefix? name (ctfe-hygiene-template-prefix))
+    name
+    (string-append (ctfe-hygiene-template-prefix) name)))
+
+(define (ctfe-quote-name [env : CtfeEnv] [name : String]) : String
+  (if (ctfe-hygiene-enabled? env)
+    (ctfe-hygiene-template-name name)
+    name))
+
 (define (ctfe-reflect-info-key [info : CtfeReflectInfo]) : String
   (match info
     [(CtfeReflectStruct key _ _ _) key]
@@ -348,6 +380,26 @@
 (defenum ResultCtfeQuoteExprList
   (OkCtfeQuoteExprList AstExprList i64)
   (ErrCtfeQuoteExprList CompilerDiagnostic))
+
+(defenum ResultCtfeQuoteLetBindings
+  (OkCtfeQuoteLetBindings AstLetBindingList i64)
+  (ErrCtfeQuoteLetBindings CompilerDiagnostic))
+
+(defenum ResultCtfeQuoteResourceBindings
+  (OkCtfeQuoteResourceBindings AstResourceBindingList i64)
+  (ErrCtfeQuoteResourceBindings CompilerDiagnostic))
+
+(defenum ResultCtfeQuotePattern
+  (OkCtfeQuotePattern AstPattern)
+  (ErrCtfeQuotePattern CompilerDiagnostic))
+
+(defenum ResultCtfeQuotePatternList
+  (OkCtfeQuotePatternList AstPatternList)
+  (ErrCtfeQuotePatternList CompilerDiagnostic))
+
+(defenum ResultCtfeQuoteArms
+  (OkCtfeQuoteArms AstMatchArmList i64)
+  (ErrCtfeQuoteArms CompilerDiagnostic))
 
 (define (ctfe-fuel-limit) : i64
   10000)
@@ -2396,6 +2448,116 @@
                 [(ErrCtfeQuoteExprList diag) (ErrCtfeQuoteExprList diag)])]
             [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExprList diag)])])]))
 
+(define (ctfe-quote-param-list [params : AstParamList] [env : CtfeEnv]) : AstParamList
+  (match params
+    [(AstParamNil) AstParamNil]
+    [(AstParamCons param rest)
+      (match param
+        [(AstParam name ty comptime?)
+          (AstParamCons
+            (AstParam (ctfe-quote-name env name) ty comptime?)
+            (ctfe-quote-param-list rest env))])]))
+
+(define (ctfe-quote-pattern-list [patterns : AstPatternList] [env : CtfeEnv]) : AstPatternList
+  (match patterns
+    [(AstPatternNil) AstPatternNil]
+    [(AstPatternCons pattern rest)
+      (AstPatternCons
+        (ctfe-quote-pattern pattern env)
+        (ctfe-quote-pattern-list rest env))]))
+
+(define (ctfe-quote-pattern [pattern : AstPattern] [env : CtfeEnv]) : AstPattern
+  (match pattern
+    [(AstPatVar name maybe-ty) (AstPatVar (ctfe-quote-name env name) maybe-ty)]
+    [(AstPatTuple patterns)
+      (AstPatTuple (ctfe-quote-pattern-list patterns env))]
+    [(AstPatWildcard) AstPatWildcard]
+    [(AstPatBinding name) (AstPatBinding (ctfe-quote-name env name))]
+    [(AstPatVariant name args)
+      (AstPatVariant name (ctfe-quote-pattern-list args env))]
+    [(AstPatLiteral lit) (AstPatLiteral lit)]))
+
+(define (ctfe-quote-let-binding-list
+  [bindings : AstLetBindingList]
+  [env : CtfeEnv]
+  [fuel : i64]
+  [quasiquote : bool]) : ResultCtfeQuoteLetBindings
+  (match bindings
+    [(AstLetBindingNil) (OkCtfeQuoteLetBindings AstLetBindingNil fuel)]
+    [(AstLetBindingCons binding rest)
+      (match binding
+        [(AstLetBinding name maybe-ty init)
+          (match (ctfe-quote-expr init env fuel quasiquote)
+            [(OkCtfeQuoteExpr quoted-init _ init-fuel)
+              (match (ctfe-quote-let-binding-list rest env init-fuel quasiquote)
+                [(OkCtfeQuoteLetBindings quoted-rest rest-fuel)
+                  (OkCtfeQuoteLetBindings
+                    (AstLetBindingCons
+                      (AstLetBinding
+                        (ctfe-quote-name env name)
+                        maybe-ty
+                        quoted-init)
+                      quoted-rest)
+                    rest-fuel)]
+                [(ErrCtfeQuoteLetBindings diag) (ErrCtfeQuoteLetBindings diag)])]
+            [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteLetBindings diag)])])]))
+
+(define (ctfe-quote-resource-binding-list
+  [bindings : AstResourceBindingList]
+  [env : CtfeEnv]
+  [fuel : i64]
+  [quasiquote : bool]) : ResultCtfeQuoteResourceBindings
+  (match bindings
+    [(AstResourceBindingNil)
+      (OkCtfeQuoteResourceBindings AstResourceBindingNil fuel)]
+    [(AstResourceBindingCons binding rest)
+      (match binding
+        [(AstResourceBinding name init cleanup)
+          (match (ctfe-quote-expr init env fuel quasiquote)
+            [(OkCtfeQuoteExpr quoted-init _ init-fuel)
+              (match (ctfe-quote-expr cleanup env init-fuel quasiquote)
+                [(OkCtfeQuoteExpr quoted-cleanup _ cleanup-fuel)
+                  (match (ctfe-quote-resource-binding-list
+                    rest
+                    env
+                    cleanup-fuel
+                    quasiquote)
+                    [(OkCtfeQuoteResourceBindings quoted-rest rest-fuel)
+                      (OkCtfeQuoteResourceBindings
+                        (AstResourceBindingCons
+                          (AstResourceBinding
+                            (ctfe-quote-name env name)
+                            quoted-init
+                            quoted-cleanup)
+                          quoted-rest)
+                        rest-fuel)]
+                    [(ErrCtfeQuoteResourceBindings diag)
+                      (ErrCtfeQuoteResourceBindings diag)])]
+                [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteResourceBindings diag)])]
+            [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteResourceBindings diag)])])]))
+
+(define (ctfe-quote-arm-list
+  [arms : AstMatchArmList]
+  [env : CtfeEnv]
+  [fuel : i64]
+  [quasiquote : bool]) : ResultCtfeQuoteArms
+  (match arms
+    [(AstMatchArmNil) (OkCtfeQuoteArms AstMatchArmNil fuel)]
+    [(AstMatchArmCons arm rest)
+      (match arm
+        [(AstMatchArm pattern body)
+          (match (ctfe-quote-expr body env fuel quasiquote)
+            [(OkCtfeQuoteExpr quoted-body _ body-fuel)
+              (match (ctfe-quote-arm-list rest env body-fuel quasiquote)
+                [(OkCtfeQuoteArms quoted-rest rest-fuel)
+                  (OkCtfeQuoteArms
+                    (AstMatchArmCons
+                      (AstMatchArm (ctfe-quote-pattern pattern env) quoted-body)
+                      quoted-rest)
+                    rest-fuel)]
+                [(ErrCtfeQuoteArms diag) (ErrCtfeQuoteArms diag)])]
+            [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteArms diag)])])]))
+
 (define (ctfe-quote-expr
   [expr : AstExpr]
   [env : CtfeEnv]
@@ -2409,7 +2571,8 @@
         [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExpr diag)])]
     [(AstExprLiteral lit)
       (OkCtfeQuoteExpr expr (ctfe-quote-literal-type lit) fuel)]
-    [(AstExprVar _) (OkCtfeQuoteExpr expr (AstTyExpr) fuel)]
+    [(AstExprVar name)
+      (OkCtfeQuoteExpr (AstExprVar (ctfe-quote-name env name)) (AstTyExpr) fuel)]
     [(AstExprBinary op left right)
       (match (ctfe-quote-expr left env fuel quasiquote)
         [(OkCtfeQuoteExpr quoted-left _ left-fuel)
@@ -2451,6 +2614,28 @@
                 [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExpr diag)])]
             [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExpr diag)])]
         [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExpr diag)])]
+    [(AstExprLet bindings body)
+      (match (ctfe-quote-let-binding-list bindings env fuel quasiquote)
+        [(OkCtfeQuoteLetBindings quoted-bindings bindings-fuel)
+          (match (ctfe-quote-expr body env bindings-fuel quasiquote)
+            [(OkCtfeQuoteExpr quoted-body body-ty body-fuel)
+              (OkCtfeQuoteExpr
+                (AstExprLet quoted-bindings quoted-body)
+                body-ty
+                body-fuel)]
+            [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExpr diag)])]
+        [(ErrCtfeQuoteLetBindings diag) (ErrCtfeQuoteExpr diag)])]
+    [(AstExprLambda params maybe-ret body)
+      (match (ctfe-quote-expr body env fuel quasiquote)
+        [(OkCtfeQuoteExpr quoted-body _ next-fuel)
+          (OkCtfeQuoteExpr
+            (AstExprLambda
+              (ctfe-quote-param-list params env)
+              maybe-ret
+              quoted-body)
+            (AstTyExpr)
+            next-fuel)]
+        [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExpr diag)])]
     [(AstExprTuple exprs)
       (match (ctfe-quote-expr-list exprs env fuel quasiquote)
         [(OkCtfeQuoteExprList quoted next-fuel)
@@ -2471,6 +2656,25 @@
         [(OkCtfeQuoteExprList quoted next-fuel)
           (OkCtfeQuoteExpr (AstExprUnsafe quoted) (AstTyExpr) next-fuel)]
         [(ErrCtfeQuoteExprList diag) (ErrCtfeQuoteExpr diag)])]
+    [(AstExprWhile cond body)
+      (match (ctfe-quote-expr cond env fuel quasiquote)
+        [(OkCtfeQuoteExpr quoted-cond _ cond-fuel)
+          (match (ctfe-quote-expr body env cond-fuel quasiquote)
+            [(OkCtfeQuoteExpr quoted-body _ body-fuel)
+              (OkCtfeQuoteExpr
+                (AstExprWhile quoted-cond quoted-body)
+                (AstTyExpr)
+                body-fuel)]
+            [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExpr diag)])]
+        [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExpr diag)])]
+    [(AstExprSet name rhs)
+      (match (ctfe-quote-expr rhs env fuel quasiquote)
+        [(OkCtfeQuoteExpr quoted-rhs _ next-fuel)
+          (OkCtfeQuoteExpr
+            (AstExprSet (ctfe-quote-name env name) quoted-rhs)
+            (AstTyExpr)
+            next-fuel)]
+        [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExpr diag)])]
     [(AstExprAnn inner ty)
       (match (ctfe-quote-expr inner env fuel quasiquote)
         [(OkCtfeQuoteExpr quoted _ next-fuel)
@@ -2481,6 +2685,166 @@
         [(OkCtfeQuoteExpr quoted _ next-fuel)
           (OkCtfeQuoteExpr (AstExprCast quoted ty) ty next-fuel)]
         [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExpr diag)])]
+    [(AstExprBorrow lifetime place)
+      (match (ctfe-quote-expr place env fuel quasiquote)
+        [(OkCtfeQuoteExpr quoted-place _ next-fuel)
+          (OkCtfeQuoteExpr
+            (AstExprBorrow lifetime quoted-place)
+            (AstTyExpr)
+            next-fuel)]
+        [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExpr diag)])]
+    [(AstExprMatch scrut arms)
+      (match (ctfe-quote-expr scrut env fuel quasiquote)
+        [(OkCtfeQuoteExpr quoted-scrut _ scrut-fuel)
+          (match (ctfe-quote-arm-list arms env scrut-fuel quasiquote)
+            [(OkCtfeQuoteArms quoted-arms arms-fuel)
+              (OkCtfeQuoteExpr
+                (AstExprMatch quoted-scrut quoted-arms)
+                (AstTyExpr)
+                arms-fuel)]
+            [(ErrCtfeQuoteArms diag) (ErrCtfeQuoteExpr diag)])]
+        [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExpr diag)])]
+    [(AstExprForeach index index-ty start end body)
+      (match (ctfe-quote-expr start env fuel quasiquote)
+        [(OkCtfeQuoteExpr quoted-start _ start-fuel)
+          (match (ctfe-quote-expr end env start-fuel quasiquote)
+            [(OkCtfeQuoteExpr quoted-end _ end-fuel)
+              (match (ctfe-quote-expr body env end-fuel quasiquote)
+                [(OkCtfeQuoteExpr quoted-body _ body-fuel)
+                  (OkCtfeQuoteExpr
+                    (AstExprForeach
+                      (ctfe-quote-name env index)
+                      index-ty
+                      quoted-start
+                      quoted-end
+                      quoted-body)
+                    (AstTyExpr)
+                    body-fuel)]
+                [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExpr diag)])]
+            [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExpr diag)])]
+        [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExpr diag)])]
+    [(AstExprSpmdReduce op index index-ty start end init value)
+      (match (ctfe-quote-expr start env fuel quasiquote)
+        [(OkCtfeQuoteExpr quoted-start _ start-fuel)
+          (match (ctfe-quote-expr end env start-fuel quasiquote)
+            [(OkCtfeQuoteExpr quoted-end _ end-fuel)
+              (match (ctfe-quote-expr init env end-fuel quasiquote)
+                [(OkCtfeQuoteExpr quoted-init _ init-fuel)
+                  (match (ctfe-quote-expr value env init-fuel quasiquote)
+                    [(OkCtfeQuoteExpr quoted-value _ value-fuel)
+                      (OkCtfeQuoteExpr
+                        (AstExprSpmdReduce
+                          op
+                          (ctfe-quote-name env index)
+                          index-ty
+                          quoted-start
+                          quoted-end
+                          quoted-init
+                          quoted-value)
+                        (AstTyExpr)
+                        value-fuel)]
+                    [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExpr diag)])]
+                [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExpr diag)])]
+            [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExpr diag)])]
+        [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExpr diag)])]
+    [(AstExprStructGet inner field)
+      (match (ctfe-quote-expr inner env fuel quasiquote)
+        [(OkCtfeQuoteExpr quoted _ next-fuel)
+          (OkCtfeQuoteExpr
+            (AstExprStructGet quoted field)
+            (AstTyExpr)
+            next-fuel)]
+        [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExpr diag)])]
+    [(AstExprTupleRef tuple-expr index)
+      (match (ctfe-quote-expr tuple-expr env fuel quasiquote)
+        [(OkCtfeQuoteExpr quoted _ next-fuel)
+          (OkCtfeQuoteExpr (AstExprTupleRef quoted index) (AstTyExpr) next-fuel)]
+        [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExpr diag)])]
+    [(AstExprMakeArray ty len)
+      (match (ctfe-quote-expr len env fuel quasiquote)
+        [(OkCtfeQuoteExpr quoted-len _ next-fuel)
+          (OkCtfeQuoteExpr
+            (AstExprMakeArray ty quoted-len)
+            (AstTyExpr)
+            next-fuel)]
+        [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExpr diag)])]
+    [(AstExprArrayRef array index)
+      (match (ctfe-quote-expr array env fuel quasiquote)
+        [(OkCtfeQuoteExpr quoted-array _ array-fuel)
+          (match (ctfe-quote-expr index env array-fuel quasiquote)
+            [(OkCtfeQuoteExpr quoted-index _ index-fuel)
+              (OkCtfeQuoteExpr
+                (AstExprArrayRef quoted-array quoted-index)
+                (AstTyExpr)
+                index-fuel)]
+            [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExpr diag)])]
+        [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExpr diag)])]
+    [(AstExprArraySet array index value)
+      (match (ctfe-quote-expr array env fuel quasiquote)
+        [(OkCtfeQuoteExpr quoted-array _ array-fuel)
+          (match (ctfe-quote-expr index env array-fuel quasiquote)
+            [(OkCtfeQuoteExpr quoted-index _ index-fuel)
+              (match (ctfe-quote-expr value env index-fuel quasiquote)
+                [(OkCtfeQuoteExpr quoted-value _ value-fuel)
+                  (OkCtfeQuoteExpr
+                    (AstExprArraySet quoted-array quoted-index quoted-value)
+                    (AstTyExpr)
+                    value-fuel)]
+                [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExpr diag)])]
+            [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExpr diag)])]
+        [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExpr diag)])]
+    [(AstExprArrayPush array value)
+      (match (ctfe-quote-expr array env fuel quasiquote)
+        [(OkCtfeQuoteExpr quoted-array _ array-fuel)
+          (match (ctfe-quote-expr value env array-fuel quasiquote)
+            [(OkCtfeQuoteExpr quoted-value _ value-fuel)
+              (OkCtfeQuoteExpr
+                (AstExprArrayPush quoted-array quoted-value)
+                (AstTyExpr)
+                value-fuel)]
+            [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExpr diag)])]
+        [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExpr diag)])]
+    [(AstExprStringRef text index)
+      (match (ctfe-quote-expr text env fuel quasiquote)
+        [(OkCtfeQuoteExpr quoted-text _ text-fuel)
+          (match (ctfe-quote-expr index env text-fuel quasiquote)
+            [(OkCtfeQuoteExpr quoted-index _ index-fuel)
+              (OkCtfeQuoteExpr
+                (AstExprStringRef quoted-text quoted-index)
+                (AstTyExpr)
+                index-fuel)]
+            [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExpr diag)])]
+        [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExpr diag)])]
+    [(AstExprWithRegion name body)
+      (match (ctfe-quote-expr-list body env fuel quasiquote)
+        [(OkCtfeQuoteExprList quoted-body next-fuel)
+          (OkCtfeQuoteExpr
+            (AstExprWithRegion (ctfe-quote-name env name) quoted-body)
+            (AstTyExpr)
+            next-fuel)]
+        [(ErrCtfeQuoteExprList diag) (ErrCtfeQuoteExpr diag)])]
+    [(AstExprWithEscape scratch body)
+      (match (ctfe-quote-expr scratch env fuel quasiquote)
+        [(OkCtfeQuoteExpr quoted-scratch _ scratch-fuel)
+          (match (ctfe-quote-expr-list body env scratch-fuel quasiquote)
+            [(OkCtfeQuoteExprList quoted-body body-fuel)
+              (OkCtfeQuoteExpr
+                (AstExprWithEscape quoted-scratch quoted-body)
+                (AstTyExpr)
+                body-fuel)]
+            [(ErrCtfeQuoteExprList diag) (ErrCtfeQuoteExpr diag)])]
+        [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExpr diag)])]
+    [(AstExprWithResource bindings body)
+      (match (ctfe-quote-resource-binding-list bindings env fuel quasiquote)
+        [(OkCtfeQuoteResourceBindings quoted-bindings bindings-fuel)
+          (match (ctfe-quote-expr-list body env bindings-fuel quasiquote)
+            [(OkCtfeQuoteExprList quoted-body body-fuel)
+              (OkCtfeQuoteExpr
+                (AstExprWithResource quoted-bindings quoted-body)
+                (AstTyExpr)
+                body-fuel)]
+            [(ErrCtfeQuoteExprList diag) (ErrCtfeQuoteExpr diag)])]
+        [(ErrCtfeQuoteResourceBindings diag) (ErrCtfeQuoteExpr diag)])]
     [(AstExprBox inner)
       (match (ctfe-quote-expr inner env fuel quasiquote)
         [(OkCtfeQuoteExpr quoted _ next-fuel)
@@ -2500,6 +2864,128 @@
       (match (ctfe-quote-expr inner env fuel quasiquote)
         [(OkCtfeQuoteExpr quoted _ next-fuel)
           (OkCtfeQuoteExpr (AstExprReturn quoted) (AstTyExpr) next-fuel)]
+        [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExpr diag)])]
+    [(AstExprTry inner)
+      (match (ctfe-quote-expr inner env fuel quasiquote)
+        [(OkCtfeQuoteExpr quoted _ next-fuel)
+          (OkCtfeQuoteExpr (AstExprTry quoted) (AstTyExpr) next-fuel)]
+        [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExpr diag)])]
+    [(AstExprPtrNullCheck ptr)
+      (match (ctfe-quote-expr ptr env fuel quasiquote)
+        [(OkCtfeQuoteExpr quoted _ next-fuel)
+          (OkCtfeQuoteExpr (AstExprPtrNullCheck quoted) (AstTyExpr) next-fuel)]
+        [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExpr diag)])]
+    [(AstExprPtrRead ptr)
+      (match (ctfe-quote-expr ptr env fuel quasiquote)
+        [(OkCtfeQuoteExpr quoted _ next-fuel)
+          (OkCtfeQuoteExpr (AstExprPtrRead quoted) (AstTyExpr) next-fuel)]
+        [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExpr diag)])]
+    [(AstExprPtrWrite ptr value)
+      (match (ctfe-quote-expr ptr env fuel quasiquote)
+        [(OkCtfeQuoteExpr quoted-ptr _ ptr-fuel)
+          (match (ctfe-quote-expr value env ptr-fuel quasiquote)
+            [(OkCtfeQuoteExpr quoted-value _ value-fuel)
+              (OkCtfeQuoteExpr
+                (AstExprPtrWrite quoted-ptr quoted-value)
+                (AstTyExpr)
+                value-fuel)]
+            [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExpr diag)])]
+        [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExpr diag)])]
+    [(AstExprPtrOffset ptr offset)
+      (match (ctfe-quote-expr ptr env fuel quasiquote)
+        [(OkCtfeQuoteExpr quoted-ptr _ ptr-fuel)
+          (match (ctfe-quote-expr offset env ptr-fuel quasiquote)
+            [(OkCtfeQuoteExpr quoted-offset _ offset-fuel)
+              (OkCtfeQuoteExpr
+                (AstExprPtrOffset quoted-ptr quoted-offset)
+                (AstTyExpr)
+                offset-fuel)]
+            [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExpr diag)])]
+        [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExpr diag)])]
+    [(AstExprPtrCast ptr ty)
+      (match (ctfe-quote-expr ptr env fuel quasiquote)
+        [(OkCtfeQuoteExpr quoted _ next-fuel)
+          (OkCtfeQuoteExpr (AstExprPtrCast quoted ty) (AstTyExpr) next-fuel)]
+        [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExpr diag)])]
+    [(AstExprPtrToInt ptr)
+      (match (ctfe-quote-expr ptr env fuel quasiquote)
+        [(OkCtfeQuoteExpr quoted _ next-fuel)
+          (OkCtfeQuoteExpr (AstExprPtrToInt quoted) (AstTyExpr) next-fuel)]
+        [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExpr diag)])]
+    [(AstExprIntToPtr value ty)
+      (match (ctfe-quote-expr value env fuel quasiquote)
+        [(OkCtfeQuoteExpr quoted _ next-fuel)
+          (OkCtfeQuoteExpr (AstExprIntToPtr quoted ty) (AstTyExpr) next-fuel)]
+        [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExpr diag)])]
+    [(AstExprStringData inner)
+      (match (ctfe-quote-expr inner env fuel quasiquote)
+        [(OkCtfeQuoteExpr quoted _ next-fuel)
+          (OkCtfeQuoteExpr (AstExprStringData quoted) (AstTyExpr) next-fuel)]
+        [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExpr diag)])]
+    [(AstExprStringFromBytes ptr len)
+      (match (ctfe-quote-expr ptr env fuel quasiquote)
+        [(OkCtfeQuoteExpr quoted-ptr _ ptr-fuel)
+          (match (ctfe-quote-expr len env ptr-fuel quasiquote)
+            [(OkCtfeQuoteExpr quoted-len _ len-fuel)
+              (OkCtfeQuoteExpr
+                (AstExprStringFromBytes quoted-ptr quoted-len)
+                (AstTyExpr)
+                len-fuel)]
+            [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExpr diag)])]
+        [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExpr diag)])]
+    [(AstExprArrayData inner)
+      (match (ctfe-quote-expr inner env fuel quasiquote)
+        [(OkCtfeQuoteExpr quoted _ next-fuel)
+          (OkCtfeQuoteExpr (AstExprArrayData quoted) (AstTyExpr) next-fuel)]
+        [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExpr diag)])]
+    [(AstExprCpuIdEax leaf subleaf)
+      (match (ctfe-quote-expr leaf env fuel quasiquote)
+        [(OkCtfeQuoteExpr quoted-leaf _ leaf-fuel)
+          (match (ctfe-quote-expr subleaf env leaf-fuel quasiquote)
+            [(OkCtfeQuoteExpr quoted-subleaf _ subleaf-fuel)
+              (OkCtfeQuoteExpr
+                (AstExprCpuIdEax quoted-leaf quoted-subleaf)
+                (AstTyExpr)
+                subleaf-fuel)]
+            [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExpr diag)])]
+        [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExpr diag)])]
+    [(AstExprCpuIdEbx leaf subleaf)
+      (match (ctfe-quote-expr leaf env fuel quasiquote)
+        [(OkCtfeQuoteExpr quoted-leaf _ leaf-fuel)
+          (match (ctfe-quote-expr subleaf env leaf-fuel quasiquote)
+            [(OkCtfeQuoteExpr quoted-subleaf _ subleaf-fuel)
+              (OkCtfeQuoteExpr
+                (AstExprCpuIdEbx quoted-leaf quoted-subleaf)
+                (AstTyExpr)
+                subleaf-fuel)]
+            [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExpr diag)])]
+        [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExpr diag)])]
+    [(AstExprCpuIdEcx leaf subleaf)
+      (match (ctfe-quote-expr leaf env fuel quasiquote)
+        [(OkCtfeQuoteExpr quoted-leaf _ leaf-fuel)
+          (match (ctfe-quote-expr subleaf env leaf-fuel quasiquote)
+            [(OkCtfeQuoteExpr quoted-subleaf _ subleaf-fuel)
+              (OkCtfeQuoteExpr
+                (AstExprCpuIdEcx quoted-leaf quoted-subleaf)
+                (AstTyExpr)
+                subleaf-fuel)]
+            [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExpr diag)])]
+        [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExpr diag)])]
+    [(AstExprCpuIdEdx leaf subleaf)
+      (match (ctfe-quote-expr leaf env fuel quasiquote)
+        [(OkCtfeQuoteExpr quoted-leaf _ leaf-fuel)
+          (match (ctfe-quote-expr subleaf env leaf-fuel quasiquote)
+            [(OkCtfeQuoteExpr quoted-subleaf _ subleaf-fuel)
+              (OkCtfeQuoteExpr
+                (AstExprCpuIdEdx quoted-leaf quoted-subleaf)
+                (AstTyExpr)
+                subleaf-fuel)]
+            [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExpr diag)])]
+        [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExpr diag)])]
+    [(AstExprXgetbv index)
+      (match (ctfe-quote-expr index env fuel quasiquote)
+        [(OkCtfeQuoteExpr quoted-index _ index-fuel)
+          (OkCtfeQuoteExpr (AstExprXgetbv quoted-index) (AstTyExpr) index-fuel)]
         [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExpr diag)])]
     [(AstExprUnquote inner)
       (if quasiquote

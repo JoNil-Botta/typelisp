@@ -6,12 +6,12 @@
 ;#
 ;# `fs-mkdir-status`, `fs-remove-file-status`, `fs-remove-dir-status`,
 ;# `fs-rename-status`, `fs-read-dir-status`, `fs-read-dir`,
-;# `fs-file-kind-status`, `fs-process-id`, `tl_fs_current_dir_status`, and
-;# `tl_fs_current_dir`.
+;# `fs-file-kind-status`, `fs-file-size-status`, `fs-file-size`,
+;# `fs-process-id`, `tl_fs_current_dir_status`, and `tl_fs_current_dir`.
 ;#
 ;# Usage: `(import "stdlib/fs.tl")`
 ;#
-;; requires-stage0-symbol: fs-file-kind-status
+;; requires-stage0-symbol: fs-mkdir-status,fs-remove-file-status,fs-remove-dir-status,fs-rename-status,fs-read-dir-status,fs-read-dir,fs-file-kind-status,fs-file-size-status,fs-file-size
 ;# ```typelisp
 ;# (import "stdlib/fs.tl")
 ;# (define joined : String
@@ -70,10 +70,20 @@
   (FsFileDirectory)
   (FsFileOther))
 
+;: Minimal filesystem metadata. `size` is the byte length for regular files.
+(defstruct FsMetadata
+  (kind FsFileKind)
+  (size i64))
+
 ;: Result type for file-kind probes.
 (defenum ResultFsFileKind
   (OkFsFileKind FsFileKind)
   (ErrFsFileKind IoError))
+
+;: Result type for filesystem metadata probes.
+(defenum ResultFsMetadata
+  (OkFsMetadata FsMetadata)
+  (ErrFsMetadata IoError))
 
 ;: Return true on Windows-style hosts.
 (define (fs-windows?) : bool
@@ -426,6 +436,33 @@
   (match kind
     [(FsFileOther) true]
     [_ false]))
+
+;: Return the node kind stored in `metadata`.
+(define (fs-metadata-kind [metadata : FsMetadata]) : FsFileKind
+  (struct-get metadata kind))
+
+;: Return the regular-file byte size stored in `metadata`.
+(define (fs-metadata-size [metadata : FsMetadata]) : i64
+  (struct-get metadata size))
+
+;: Probe minimal metadata for `path`.
+;:
+;: Linux reports the coarse kind and, for regular files, byte size through the
+;: runtime metadata helper. Directory and other node sizes are reported as zero.
+;: Windows currently returns `IoUnsupported` through the runtime status helper.
+(define (try-file-metadata [path : (& path str)]) : ResultFsMetadata
+  (if (io-empty-path? path)
+    (ErrFsMetadata (io-invalid-path-error path))
+    (match (try-file-kind path)
+      [(ErrFsFileKind error) (ErrFsMetadata error)]
+      [(OkFsFileKind kind)
+        (if (fs-file-kind-regular? kind)
+          (let
+            [status : i64 (fs-file-size-status path)]
+            (if (= status io-status-ok)
+              (OkFsMetadata (FsMetadata kind (fs-file-size path)))
+              (ErrFsMetadata (io-error-from-status path status))))
+          (OkFsMetadata (FsMetadata kind 0)))])))
 
 ;: Split the runtime's newline-delimited directory payload into entry names.
 (define (fs-read-dir-split [entries : String]) : StringList

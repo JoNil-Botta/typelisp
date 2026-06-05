@@ -700,6 +700,7 @@
     [(AstDeclDefFn _ _ _ body) (lint-walk-tail-expr body threshold acc)]
     [(AstDeclDefMacro _ _ _ body) (lint-walk-tail-expr body threshold acc)]
     [(AstDeclTest _ body _) (lint-walk-tail-expr body threshold acc)]
+    [(AstDeclUnsafe inner) (lint-walk-decl inner threshold acc)]
     [(AstDeclComptimeDecl inner) (lint-walk-decl inner threshold acc)]
     [(AstDeclModule _) acc]
     [(AstDeclExtern _ _ _) acc]

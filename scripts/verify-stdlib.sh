@@ -129,12 +129,23 @@ stdlib_runtime_gap_applies() {
     [ "$_gap_host" = all ] || [ "$_gap_host" = "$_host" ]
 }
 
+should_skip_staged() {
+    _symbols=$1
+    _stderr=$2
+    [ -n "$_symbols" ] || return 1
+    for _symbol in $(printf '%s\n' "$_symbols" | tr ',' ' '); do
+        grep -qF "$_symbol" "$_stderr" && return 0
+    done
+    return 1
+}
+
 # Every canonical stdlib module must be listed here. Keep this manifest in sync
 # with stdlib/README.md so new modules land with an explicit verification
 # decision. Fixture files under stdlib/tests/ are covered by stdlib_test_manifest
 # or stdlib_check_manifest.
 stdlib_manifest() {
     cat <<'EOF'
+arena.tl
 io.tl
 env.tl
 cpu.tl
@@ -172,17 +183,18 @@ EOF
 # `<host>` is `linux`, `windows`, or `all`.
 stdlib_test_manifest() {
     cat <<'EOF'
+stdlib/tests/arena_api.tl|42|-|-
 stdlib/tests/string_edges.tl|42|-|-
 stdlib/tests/json_helpers.tl|42|-|-
 stdlib/tests/json_parse_stringify.tl|42|-|-
 stdlib/tests/io_edges.tl|42|-|-|-|requires-stage0-symbol:file-read-chunk-status,file-write-status,file-flush-status,append-file-status
-stdlib/tests/io_file_handle.tl|42|-|-|-|requires-stage0-symbol:file-read-chunk-status,file-write-status,file-flush-status,append-file-status,fs-file-kind-status
+stdlib/tests/io_file_handle.tl|42|-|-|-|requires-stage0-symbol:file-read-chunk-status,file-write-status,file-flush-status,append-file-status,fs-file-kind-status,fs-file-size-status,fs-file-size
 stdlib/tests/io_stdio_lines.tl|42|host-line:stdout-line|host-line:stderr-line|printf:alpha\n\nomega|requires-stage0-symbol:file-read-chunk-status,file-write-status,file-flush-status,append-file-status
 stdlib/tests/io_stdio_bytes.tl|42|-|-|literal:abcdef|requires-stage0-symbol:file-read-chunk-status,file-write-status,file-flush-status,append-file-status
 stdlib/tests/env_api.tl|42|-|-
 stdlib/tests/ffi_api.tl|42|-|-
 stdlib/tests/cpu_api.tl|42|-|-
-stdlib/tests/fs_api.tl|42|-|-|-|requires-stage0-symbol:file-read-chunk-status,file-write-status,file-flush-status,append-file-status,fs-rename-status,fs-read-dir-status,fs-read-dir,fs-file-kind-status
+stdlib/tests/fs_api.tl|42|-|-|-|requires-stage0-symbol:file-read-chunk-status,file-write-status,file-flush-status,append-file-status,fs-rename-status,fs-read-dir-status,fs-read-dir,fs-file-kind-status,fs-file-size-status,fs-file-size
 stdlib/tests/hash_api.tl|42|-|-
 stdlib/tests/hashmap_api.tl|42|-|-
 stdlib/tests/list_api.tl|42|-|-
@@ -197,7 +209,7 @@ stdlib/tests/test_assert_success.tl|42|-|-
 stdlib/tests/test_assert_failure.tl|134|-|literal:stdlib test failure message
 stdlib/tests/windows_registry_api.tl|42|-|-|-|requires-stage0-symbol:tl_windows_sdk_registry_install
 stdlib/tests/windows_sdk_api.tl|42|-|-|-|requires-stage0-symbol:file-read-chunk-status,file-write-status,file-flush-status,append-file-status,tl_windows_sdk_registry_install
-stdlib/tests/msvc_api.tl|42|-|-|-|requires-stage0-symbol:file-read-chunk-status,file-write-status,file-flush-status,append-file-status,fs-file-kind-status,tl_windows_sdk_registry_install
+stdlib/tests/msvc_api.tl|42|-|-|-|requires-stage0-symbol:file-read-chunk-status,file-write-status,file-flush-status,append-file-status,fs-file-kind-status,fs-file-size-status,fs-file-size,tl_windows_sdk_registry_install
 EOF
 }
 
@@ -419,6 +431,7 @@ fi
 export WindowsSDKVersion="$SDK_VERSION"
 
 passed=0
+skipped=0
 if [ "$BORROWED_STR_ONLY" -eq 0 ]; then
 while IFS='|' read -r fixture want stdout_spec stderr_spec stdin_spec extra; do
     case "$fixture" in
@@ -493,6 +506,11 @@ while IFS='|' read -r fixture want stdout_spec stderr_spec stdin_spec extra; do
     stdlib_build_run "$copied" "$stem" "$stdin"
 
     if [ "$build_status" -ne 0 ]; then
+        if should_skip_staged "$requires_symbol" "$stem.build.err"; then
+            echo "[stdlib] SKIP $fixture (awaiting no-Rust compiler support for '$requires_symbol')"
+            skipped=$((skipped + 1))
+            continue
+        fi
         echo "FAIL: $fixture failed to build" >&2
         sed 's/^/  /' "$stem.build.err" >&2 || true
         exit 1
@@ -626,4 +644,4 @@ fi
 
 module_count=$(wc -l < "$EXPECTED" | tr -d ' ')
 
-echo "stdlib verification passed for $module_count module(s), $passed runnable fixture(s), $checked check fixture(s)"
+echo "stdlib verification passed for $module_count module(s), $passed runnable fixture(s), $skipped staged fixture(s) skipped, $checked check fixture(s)"

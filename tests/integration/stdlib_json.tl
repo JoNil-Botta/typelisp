@@ -2,28 +2,34 @@
 (import "stdlib/json.tl")
 
 (define (json-test-name [doc : Json]) : bool
-  (match (json-object-get doc "name")
-    [(JsonFound value)
-      (match value
-        [(JsonString text) (string-eq text "tl")]
-        [_ false])]
-    [(JsonMissing) false]))
+  (let
+    [key : String "name"]
+    (match (json-object-get doc (& key))
+      [(JsonFound value)
+        (match value
+          [(JsonString text) (string-eq text "tl")]
+          [_ false])]
+      [(JsonMissing) false])))
 
 (define (json-test-items [doc : Json]) : bool
-  (match (json-object-get doc "items")
-    [(JsonFound value)
-      (match value
-        [(JsonArray items) (= (json-list-count items) 5)]
-        [_ false])]
-    [(JsonMissing) false]))
+  (let
+    [key : String "items"]
+    (match (json-object-get doc (& key))
+      [(JsonFound value)
+        (match value
+          [(JsonArray items) (= (json-list-count items) 5)]
+          [_ false])]
+      [(JsonMissing) false])))
 
 (define (json-test-escaped [doc : Json]) : bool
-  (match (json-object-get doc "escaped")
-    [(JsonFound value)
-      (match value
-        [(JsonString text) (string-eq text "a\nb")]
-        [_ false])]
-    [(JsonMissing) false]))
+  (let
+    [key : String "escaped"]
+    (match (json-object-get doc (& key))
+      [(JsonFound value)
+        (match value
+          [(JsonString text) (string-eq text "a\nb")]
+          [_ false])]
+      [(JsonMissing) false])))
 
 (define (json-test-stringify [doc : Json]) : bool
   (string-eq
@@ -34,21 +40,25 @@
   (string-eq (json-stringify (JsonString "a\n\"\\")) "\"a\\n\\\"\\\\\""))
 
 (define (json-test-invalid) : bool
-  (match (json-parse "{\"bad\":[1,]}")
-    [(OkJson _) false]
-    [(ErrJson _) true]))
+  (let
+    [text : String "{\"bad\":[1,]}"]
+    (match (json-parse (& text))
+      [(OkJson _) false]
+      [(ErrJson _) true])))
 
 (define (json-test-document-code) : i64
-  (match (json-parse
-    " { \"name\" : \"tl\", \"items\" : [1, -2.5e3, true, false, null], \"escaped\" : \"a\\nb\" } ")
-    [(OkJson doc)
-      (begin
-        (unless (json-test-name doc) (return 1))
-        (unless (json-test-items doc) (return 2))
-        (unless (json-test-escaped doc) (return 3))
-        (unless (json-test-stringify doc) (return 4))
-        42)]
-    [(ErrJson _) 7]))
+  (let
+    [text : String
+      " { \"name\" : \"tl\", \"items\" : [1, -2.5e3, true, false, null], \"escaped\" : \"a\\nb\" } "]
+    (match (json-parse (& text))
+      [(OkJson doc)
+        (begin
+          (unless (json-test-name doc) (return 1))
+          (unless (json-test-items doc) (return 2))
+          (unless (json-test-escaped doc) (return 3))
+          (unless (json-test-stringify doc) (return 4))
+          42)]
+      [(ErrJson _) 7])))
 
 (define (main) : i64
   (let

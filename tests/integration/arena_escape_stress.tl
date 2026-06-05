@@ -9,6 +9,8 @@
 ; reads the clone after later scratch cycles. RSS/peak-memory assertion is left
 ; manual because host reporting differs across CI platforms; stale handles fail
 ; as output/exit mismatches here.
+(import "stdlib/arena.tl")
+
 (extern tl_alloc : (-> u64 u64))
 
 (defenum StressList
@@ -48,7 +50,9 @@
     [enclosing : i64 (arena-current)]
     [scratch : i64 (arena-make)]
     (begin
-      (unsafe (arena-set! scratch))
+      (unsafe
+        (begin
+          (arena-set! scratch)))
       (let
         [raw : String (payload seed 999)]
         (begin
@@ -56,11 +60,15 @@
           (let
             [scratch-head : i64 (arena-current)]
             (begin
-              (unsafe (arena-set! enclosing))
+              (unsafe
+                (begin
+                  (arena-set! enclosing)))
               (let
                 [escaped : String (clone raw)]
                 (begin
-                  (unsafe (arena-destroy scratch-head))
+                  (unsafe
+                    (begin
+                      (arena-destroy scratch-head)))
                   escaped)))))))))
 
 (define (escape-list [count : i64] [seed : i64]) : StressList
@@ -68,7 +76,9 @@
     [enclosing : i64 (arena-current)]
     [scratch : i64 (arena-make)]
     (begin
-      (unsafe (arena-set! scratch))
+      (unsafe
+        (begin
+          (arena-set! scratch)))
       (let
         [raw : StressList (make-list count seed)]
         (begin
@@ -76,18 +86,24 @@
           (let
             [scratch-head : i64 (arena-current)]
             (begin
-              (unsafe (arena-set! enclosing))
+              (unsafe
+                (begin
+                  (arena-set! enclosing)))
               (let
                 [escaped : StressList (clone raw)]
                 (begin
-                  (unsafe (arena-destroy scratch-head))
+                  (unsafe
+                    (begin
+                      (arena-destroy scratch-head)))
                   escaped)))))))))
 
 (define (escape-list-rewind [scratch : i64] [count : i64] [seed : i64]) : StressList
   (let
     [enclosing : i64 (arena-current)]
     (begin
-      (unsafe (arena-set! scratch))
+      (unsafe
+        (begin
+          (arena-set! scratch)))
       (let
         [mark : i64 (arena-mark)]
         [raw : StressList (make-list count seed)]
@@ -96,7 +112,9 @@
           (let
             [scratch-head : i64 (arena-current)]
             (begin
-              (unsafe (arena-set! enclosing))
+              (unsafe
+                (begin
+                  (arena-set! enclosing)))
               (let
                 [escaped : StressList (clone raw)]
                 [new-enclosing : i64 (arena-current)]
@@ -144,7 +162,9 @@
     [scratch : i64 (arena-make)]
     [score : i64 (rewind-list-cycles-inner scratch n 0)]
     (begin
-      (unsafe (arena-destroy scratch))
+      (unsafe
+        (begin
+          (arena-destroy scratch)))
       score)))
 
 (define (main) : i64

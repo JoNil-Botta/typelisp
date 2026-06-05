@@ -332,6 +332,8 @@
             (source-tool-link-inputs-add-ast-list
               inputs
               (ast-extern-metadata-link-inputs metadata)))]
+        [(AstDeclUnsafe inner)
+          (source-tool-link-inputs-from-decls (AstDeclCons inner rest) inputs)]
         [_ (source-tool-link-inputs-from-decls rest inputs)])]))
 
 (define (source-tool-link-inputs-for-source
@@ -619,9 +621,14 @@ _tl_print_string:
 ")
 
 (define (source-tool-needs-print-string-runtime? [asm : String]) : bool
-  (and
-    (string-contains asm "call _tl_print_string")
-    (not (string-contains asm "_tl_print_string:"))))
+  (let
+    [haystack : String asm]
+    [needle : String "call _tl_print_string"]
+    (and
+      (string-contains (& haystack) (& needle))
+      (let
+        [needle : String "_tl_print_string:"]
+        (not (string-contains (& haystack) (& needle)))))))
 
 (define (source-tool-augment-assembly [asm : String]) : String
   (if (source-tool-needs-print-string-runtime? asm)
@@ -637,12 +644,13 @@ _tl_print_string:
   [asm : String]
   [target : CompilerBackendTarget]) : String
   (let
-    [base : String (source-tool-augment-assembly asm)]
+    [haystack : String (source-tool-augment-assembly asm)]
+    [needle : String ".note.GNU-stack"]
     (if (compiler-backend-target-linux? target)
-      (if (string-contains base ".note.GNU-stack")
-        base
-        (string-append base (source-tool-noexecstack-note)))
-      base)))
+      (if (string-contains (& haystack) (& needle))
+        haystack
+        (string-append haystack (source-tool-noexecstack-note)))
+      haystack)))
 
 (define (source-tool-write-file
   [path : String]
@@ -903,22 +911,25 @@ _tl_print_string:
   [obj-path : String]
   [bin-path : String]
   [link-inputs : SourceToolLinkInputs]) : ResultSourceToolCommand
-  (match (msvc-find-tool "x86_64-pc-windows-msvc" "link.exe")
-    [(OkMsvcTool tool)
-      (OkSourceToolCommand
-        (process-command-with-env-list
-          (process-command
-            (source-tool-env-command-or-default
-              "TYPELISP_WINDOWS_LINK"
-              (msvc-tool-executable tool))
-            (source-tool-windows-linker-args obj-path bin-path link-inputs))
-          (msvc-tool-process-env tool)))]
-    [(ErrMsvcTool _)
-      (OkSourceToolCommand
-        (source-tool-windows-linker-fallback-command
-          obj-path
-          bin-path
-          link-inputs))]))
+  (let
+    [target : String "x86_64-pc-windows-msvc"]
+    [tool : String "link.exe"]
+    (match (msvc-find-tool (& target) (& tool))
+      [(OkMsvcTool resolved-tool)
+        (OkSourceToolCommand
+          (process-command-with-env-list
+            (process-command
+              (source-tool-env-command-or-default
+                "TYPELISP_WINDOWS_LINK"
+                (msvc-tool-executable resolved-tool))
+              (source-tool-windows-linker-args obj-path bin-path link-inputs))
+            (msvc-tool-process-env resolved-tool)))]
+      [(ErrMsvcTool _)
+        (OkSourceToolCommand
+          (source-tool-windows-linker-fallback-command
+            obj-path
+            bin-path
+            link-inputs))])))
 
 (define (source-tool-archiver-command
   [obj-path : String]
@@ -952,19 +963,22 @@ _tl_print_string:
 (define (source-tool-windows-archiver-command
   [obj-path : String]
   [archive-path : String]) : ResultSourceToolCommand
-  (match (msvc-find-tool "x86_64-pc-windows-msvc" "lib.exe")
-    [(OkMsvcTool tool)
-      (OkSourceToolCommand
-        (process-command-with-env-list
-          (process-command
-            (source-tool-env-command-or-default
-              "TYPELISP_WINDOWS_LIB"
-              (msvc-tool-executable tool))
-            (source-tool-windows-archiver-args obj-path archive-path))
-          (msvc-tool-process-env tool)))]
-    [(ErrMsvcTool _)
-      (OkSourceToolCommand
-        (source-tool-windows-archiver-fallback-command obj-path archive-path))]))
+  (let
+    [target : String "x86_64-pc-windows-msvc"]
+    [tool : String "lib.exe"]
+    (match (msvc-find-tool (& target) (& tool))
+      [(OkMsvcTool resolved-tool)
+        (OkSourceToolCommand
+          (process-command-with-env-list
+            (process-command
+              (source-tool-env-command-or-default
+                "TYPELISP_WINDOWS_LIB"
+                (msvc-tool-executable resolved-tool))
+              (source-tool-windows-archiver-args obj-path archive-path))
+            (msvc-tool-process-env resolved-tool)))]
+      [(ErrMsvcTool _)
+        (OkSourceToolCommand
+          (source-tool-windows-archiver-fallback-command obj-path archive-path))])))
 
 (define (source-tool-clean-temp
   [temp-dir : String]

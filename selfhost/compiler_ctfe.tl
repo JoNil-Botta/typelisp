@@ -313,7 +313,39 @@
                 rest
                 module
                 (ctfe-reflect-info-add-names infos info name module)))]
+          [(AstDeclDefStructLifetimes name _ _ _ fields)
+            (let
+              [key : String
+                (if (= (string-length module) 0)
+                  name
+                  (string-append module (string-append "/" name)))]
+              [info : CtfeReflectInfo
+                (CtfeReflectStruct
+                  key
+                  module
+                  name
+                  (ctfe-reflect-field-list-from-fields fields))]
+              (ctfe-reflections-from-decls
+                rest
+                module
+                (ctfe-reflect-info-add-names infos info name module)))]
           [(AstDeclDefEnum name variants)
+            (let
+              [key : String
+                (if (= (string-length module) 0)
+                  name
+                  (string-append module (string-append "/" name)))]
+              [info : CtfeReflectInfo
+                (CtfeReflectEnum
+                  key
+                  module
+                  name
+                  (ctfe-reflect-variant-list-from-variants variants))]
+              (ctfe-reflections-from-decls
+                rest
+                module
+                (ctfe-reflect-info-add-names infos info name module)))]
+          [(AstDeclDefEnumLifetimes name _ variants)
             (let
               [key : String
                 (if (= (string-length module) 0)
@@ -347,7 +379,39 @@
                     rest
                     module
                     (ctfe-reflect-info-add-names infos info name module)))]
+              [(AstDeclDefStructLifetimes name _ _ _ fields)
+                (let
+                  [key : String
+                    (if (= (string-length module) 0)
+                      name
+                      (string-append module (string-append "/" name)))]
+                  [info : CtfeReflectInfo
+                    (CtfeReflectStruct
+                      key
+                      module
+                      name
+                      (ctfe-reflect-field-list-from-fields fields))]
+                  (ctfe-reflections-from-decls
+                    rest
+                    module
+                    (ctfe-reflect-info-add-names infos info name module)))]
               [(AstDeclDefEnum name variants)
+                (let
+                  [key : String
+                    (if (= (string-length module) 0)
+                      name
+                      (string-append module (string-append "/" name)))]
+                  [info : CtfeReflectInfo
+                    (CtfeReflectEnum
+                      key
+                      module
+                      name
+                      (ctfe-reflect-variant-list-from-variants variants))]
+                  (ctfe-reflections-from-decls
+                    rest
+                    module
+                    (ctfe-reflect-info-add-names infos info name module)))]
+              [(AstDeclDefEnumLifetimes name _ variants)
                 (let
                   [key : String
                     (if (= (string-length module) 0)
@@ -850,6 +914,32 @@
           (ctfe-type-key-with-reflections infos head)
           (string-append "_" (ctfe-type-list-key infos rest))))]))
 
+(define (ctfe-lifetime-list-key [lifetimes : AstLifetimeList]) : String
+  (match lifetimes
+    [(AstLifetimeNil) "nil"]
+    [(AstLifetimeCons head rest)
+      (let
+        [rest : AstLifetimeList (box-get rest)]
+        (string-append head (string-append "_" (ctfe-lifetime-list-key rest))))]))
+
+(define (ctfe-lifetime-list-eq [a : AstLifetimeList] [b : AstLifetimeList]) : bool
+  (match a
+    [(AstLifetimeNil)
+      (match b
+        [(AstLifetimeNil) true]
+        [_ false])]
+    [(AstLifetimeCons a-head a-rest)
+      (let
+        [a-rest : AstLifetimeList (box-get a-rest)]
+        (match b
+          [(AstLifetimeCons b-head b-rest)
+            (let
+              [b-rest : AstLifetimeList (box-get b-rest)]
+              (and
+                (string-eq a-head b-head)
+                (ctfe-lifetime-list-eq a-rest b-rest)))]
+          [_ false]))]))
+
 (define (ctfe-type-key-with-reflections
   [infos : CtfeReflectInfoList]
   [ty : AstType]) : String
@@ -929,8 +1019,26 @@
             "_"
             (ctfe-type-key-with-reflections infos (box-get inner)))))]
     [(AstTyEnum name) (string-append "enum_" name)]
+    [(AstTyEnumArgs name lifetimes)
+      (string-append
+        "enumargs_"
+        (string-append
+          name
+          (string-append "_" (ctfe-lifetime-list-key lifetimes))))]
     [(AstTyStruct name) (string-append "struct_" name)]
-    [(AstTyVar name) (string-append "var_" name)]))
+    [(AstTyStructArgs name lifetimes)
+      (string-append
+        "structargs_"
+        (string-append
+          name
+          (string-append "_" (ctfe-lifetime-list-key lifetimes))))]
+    [(AstTyVar name) (string-append "var_" name)]
+    [(AstTyVarArgs name lifetimes)
+      (string-append
+        "varargs_"
+        (string-append
+          name
+          (string-append "_" (ctfe-lifetime-list-key lifetimes))))]))
 
 (define (ctfe-type-key [ty : AstType]) : String
   (ctfe-type-key-with-reflections CtfeReflectInfoNil ty))
@@ -968,8 +1076,11 @@
     [(AstTyMutRef _ _) "mut-ref"]
     [(AstTyRegion _ _) "region"]
     [(AstTyEnum _) "enum"]
+    [(AstTyEnumArgs _ _) "enum"]
     [(AstTyStruct _) "struct"]
-    [(AstTyVar _) "type-var"]))
+    [(AstTyStructArgs _ _) "struct"]
+    [(AstTyVar _) "type-var"]
+    [(AstTyVarArgs _ _) "type-var"]))
 
 (define (ctfe-eval-type-arg
   [arg : AstExpr]
@@ -1202,7 +1313,14 @@
     [(AstTyMutRef _ _) 8]
     [(AstTyRegion _ inner) (ctfe-type-size layouts (box-get inner))]
     [(AstTyEnum _) 8]
+    [(AstTyEnumArgs _ _) 8]
     [(AstTyStruct name)
+      (match (ctfe-layout-info-lookup layouts name)
+        [(CtfeSomeLayoutInfo info)
+          (match info
+            [(CtfeLayoutInfo _ _ size _ _) size])]
+        [(CtfeNoLayoutInfo) 8])]
+    [(AstTyStructArgs name _)
       (match (ctfe-layout-info-lookup layouts name)
         [(CtfeSomeLayoutInfo info)
           (match info
@@ -1210,6 +1328,12 @@
         [(CtfeNoLayoutInfo) 8])]
     [(AstTyString) 8]
     [(AstTyVar name)
+      (match (ctfe-layout-info-lookup layouts name)
+        [(CtfeSomeLayoutInfo info)
+          (match info
+            [(CtfeLayoutInfo _ _ size _ _) size])]
+        [(CtfeNoLayoutInfo) -1])]
+    [(AstTyVarArgs name _)
       (match (ctfe-layout-info-lookup layouts name)
         [(CtfeSomeLayoutInfo info)
           (match info
@@ -1246,7 +1370,14 @@
     [(AstTyMutRef _ _) 8]
     [(AstTyRegion _ inner) (ctfe-type-align layouts (box-get inner))]
     [(AstTyEnum _) 8]
+    [(AstTyEnumArgs _ _) 8]
     [(AstTyStruct name)
+      (match (ctfe-layout-info-lookup layouts name)
+        [(CtfeSomeLayoutInfo info)
+          (match info
+            [(CtfeLayoutInfo _ _ _ align _) align])]
+        [(CtfeNoLayoutInfo) 8])]
+    [(AstTyStructArgs name _)
       (match (ctfe-layout-info-lookup layouts name)
         [(CtfeSomeLayoutInfo info)
           (match info
@@ -1254,6 +1385,12 @@
         [(CtfeNoLayoutInfo) 8])]
     [(AstTyString) 8]
     [(AstTyVar name)
+      (match (ctfe-layout-info-lookup layouts name)
+        [(CtfeSomeLayoutInfo info)
+          (match info
+            [(CtfeLayoutInfo _ _ _ align _) align])]
+        [(CtfeNoLayoutInfo) -1])]
+    [(AstTyVarArgs name _)
       (match (ctfe-layout-info-lookup layouts name)
         [(CtfeSomeLayoutInfo info)
           (match info
@@ -1596,8 +1733,11 @@
 (define (ctfe-type-nominal-key [ty : AstType]) : String
   (match ty
     [(AstTyStruct name) name]
+    [(AstTyStructArgs name _) name]
     [(AstTyEnum name) name]
+    [(AstTyEnumArgs name _) name]
     [(AstTyVar name) name]
+    [(AstTyVarArgs name _) name]
     [_ ""]))
 
 (define (ctfe-struct-field-arity-error [name : String] [expr : AstExpr]) : ResultCtfe
@@ -3788,13 +3928,34 @@
       (match b
         [(AstTyEnum b-name) (string-eq a-name b-name)]
         [_ false])]
+    [(AstTyEnumArgs a-name a-lifetimes)
+      (match b
+        [(AstTyEnumArgs b-name b-lifetimes)
+          (and
+            (string-eq a-name b-name)
+            (ctfe-lifetime-list-eq a-lifetimes b-lifetimes))]
+        [_ false])]
     [(AstTyStruct a-name)
       (match b
         [(AstTyStruct b-name) (string-eq a-name b-name)]
         [_ false])]
+    [(AstTyStructArgs a-name a-lifetimes)
+      (match b
+        [(AstTyStructArgs b-name b-lifetimes)
+          (and
+            (string-eq a-name b-name)
+            (ctfe-lifetime-list-eq a-lifetimes b-lifetimes))]
+        [_ false])]
     [(AstTyVar a-name)
       (match b
         [(AstTyVar b-name) (string-eq a-name b-name)]
+        [_ false])]
+    [(AstTyVarArgs a-name a-lifetimes)
+      (match b
+        [(AstTyVarArgs b-name b-lifetimes)
+          (and
+            (string-eq a-name b-name)
+            (ctfe-lifetime-list-eq a-lifetimes b-lifetimes))]
         [_ false])]))
 
 (define (compiler-ctfe-type-literal-ok?) : bool

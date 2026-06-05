@@ -85,14 +85,21 @@
   (AstTyRef String (Box AstType))
   (AstTyMutRef String (Box AstType))
   (AstTyEnum String)
+  (AstTyEnumArgs String AstLifetimeList)
   (AstTyStruct String)
+  (AstTyStructArgs String AstLifetimeList)
   (AstTyVar String)
+  (AstTyVarArgs String AstLifetimeList)
   (AstTyPtr (Box AstType))
   (AstTyMutPtr (Box AstType)))
 
 (defenum AstTypeList
   (AstTypeNil)
   (AstTypeCons AstType (Box AstTypeList)))
+
+(defenum AstLifetimeList
+  (AstLifetimeNil)
+  (AstLifetimeCons String (Box AstLifetimeList)))
 
 (defenum AstMaybeType
   (AstNoType)
@@ -314,7 +321,14 @@
   (AstDeclDefMacro String AstMacroParamList AstType AstExpr)
   (AstDeclExtern String AstExternMetadata AstType)
   (AstDeclDefEnum String AstVariantDefList)
+  (AstDeclDefEnumLifetimes String AstLifetimeList AstVariantDefList)
   (AstDeclDefStruct String AstStructRepr AstStructCleanup AstFieldDefList)
+  (AstDeclDefStructLifetimes
+    String
+    AstLifetimeList
+    AstStructRepr
+    AstStructCleanup
+    AstFieldDefList)
   (AstDeclImport AstImportSpec)
   (AstDeclIncludeStr String String)
   (AstDeclExport AstExportItemList)
@@ -366,6 +380,9 @@
 
 (define (ast-ty-mut-ptr [elem : AstType]) : AstType
   (AstTyMutPtr (box elem)))
+
+(define (ast-lifetime-cons [head : String] [rest : AstLifetimeList]) : AstLifetimeList
+  (AstLifetimeCons head (box rest)))
 
 (define (ast-param-cons [head : AstParam] [rest : AstParamList]) : AstParamList
   (AstParamCons head (box rest)))
@@ -445,7 +462,10 @@
     [(AstTyVar _) 26]
     [(AstTyPtr _) 27]
     [(AstTyMutPtr _) 28]
-    [(AstTyBox _) 31]))
+    [(AstTyBox _) 31]
+    [(AstTyEnumArgs _ _) 32]
+    [(AstTyStructArgs _ _) 33]
+    [(AstTyVarArgs _ _) 34]))
 
 (define (ast-expr-tag [expr : AstExpr]) : i64
   (match expr
@@ -529,7 +549,9 @@
     [(AstDeclModule _) 9]
     [(AstDeclExport _) 11]
     [(AstDeclIncludeStr _ _) 12]
-    [(AstDeclUnsafe _) 13]))
+    [(AstDeclUnsafe _) 13]
+    [(AstDeclDefEnumLifetimes _ _ _) 14]
+    [(AstDeclDefStructLifetimes _ _ _ _ _) 15]))
 
 (define (ast-struct-repr-c? [repr : AstStructRepr]) : bool
   (match repr

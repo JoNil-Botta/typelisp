@@ -289,6 +289,14 @@
           (spec-type-key head)
           (string-append "_" (spec-type-list-key rest))))]))
 
+(define (spec-lifetime-list-key [lifetimes : AstLifetimeList]) : String
+  (match lifetimes
+    [(AstLifetimeNil) "nil"]
+    [(AstLifetimeCons head rest)
+      (let
+        [rest : AstLifetimeList (box-get rest)]
+        (string-append head (string-append "_" (spec-lifetime-list-key rest))))]))
+
 (define (spec-type-key [ty : AstType]) : String
   (match ty
     [(AstTyI64) "i64"]
@@ -347,8 +355,26 @@
           region
           (string-append "_" (spec-type-key (box-get inner)))))]
     [(AstTyEnum name) (string-append "enum_" name)]
+    [(AstTyEnumArgs name lifetimes)
+      (string-append
+        "enumargs_"
+        (string-append
+          name
+          (string-append "_" (spec-lifetime-list-key lifetimes))))]
     [(AstTyStruct name) (string-append "struct_" name)]
-    [(AstTyVar name) (string-append "var_" name)]))
+    [(AstTyStructArgs name lifetimes)
+      (string-append
+        "structargs_"
+        (string-append
+          name
+          (string-append "_" (spec-lifetime-list-key lifetimes))))]
+    [(AstTyVar name) (string-append "var_" name)]
+    [(AstTyVarArgs name lifetimes)
+      (string-append
+        "varargs_"
+        (string-append
+          name
+          (string-append "_" (spec-lifetime-list-key lifetimes))))]))
 
 (define (spec-value-key [value : CompilerCtfeValue]) : String
   (match value
@@ -574,6 +600,12 @@
       (ast-ty-mut-ref region (spec-substitute-type (box-get inner) subs))]
     [(AstTyRegion region inner)
       (ast-ty-region region (spec-substitute-type (box-get inner) subs))]
+    [(AstTyEnumArgs name lifetimes) (AstTyEnumArgs name lifetimes)]
+    [(AstTyStructArgs name lifetimes) (AstTyStructArgs name lifetimes)]
+    [(AstTyVarArgs name lifetimes)
+      (match (spec-type-subst-lookup subs name)
+        [(SpecSomeString _) (spec-type-subst-type subs name)]
+        [(SpecNoString) (AstTyVarArgs name lifetimes)])]
     [(AstTyVar name)
       (match (spec-type-subst-lookup subs name)
         [(SpecSomeString _) (spec-type-subst-type subs name)]

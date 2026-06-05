@@ -2118,10 +2118,13 @@
     [(AstTyMutRef _ _) 8]
     [(AstTyRegion _ inner) (lower-type-size ctx (box-get inner))]
     [(AstTyEnum _) 8]
+    [(AstTyEnumArgs _ _) 8]
     [(AstTyStruct _) 8]
+    [(AstTyStructArgs _ _) 8]
     [(AstTyString) 8]
     [(AstTyStr) 8]
-    [(AstTyVar _) 8]))
+    [(AstTyVar _) 8]
+    [(AstTyVarArgs _ _) 8]))
 
 (define (lower-type-align [ctx : TcContext] [ty : AstType]) : i64
   (match (tc-resolve-type ctx ty)
@@ -2152,10 +2155,13 @@
     [(AstTyMutRef _ _) 8]
     [(AstTyRegion _ inner) (lower-type-align ctx (box-get inner))]
     [(AstTyEnum _) 8]
+    [(AstTyEnumArgs _ _) 8]
     [(AstTyStruct _) 8]
+    [(AstTyStructArgs _ _) 8]
     [(AstTyString) 8]
     [(AstTyStr) 8]
-    [(AstTyVar _) 8]))
+    [(AstTyVar _) 8]
+    [(AstTyVarArgs _ _) 8]))
 
 (define (lower-type-list-extent
   [ctx : TcContext]
@@ -15461,7 +15467,41 @@
               type-cache
               mode
               module)]
+          [(AstDeclDefEnumLifetimes name _ variants)
+            (lower-decls-in-module
+              ctx
+              top-env
+              local-top-env
+              rest
+              (lower-nullary-variant-globals
+                (lower-current-decl-logical-name names module name)
+                variants
+                0
+                globals)
+              functions
+              externs
+              spans
+              names
+              name-cache
+              type-cache
+              mode
+              module)]
           [(AstDeclDefStruct _ _ _ _)
+            (lower-decls-in-module
+              ctx
+              top-env
+              local-top-env
+              rest
+              globals
+              functions
+              externs
+              spans
+              names
+              name-cache
+              type-cache
+              mode
+              module)]
+          [(AstDeclDefStructLifetimes _ _ _ _ _)
             (lower-decls-in-module
               ctx
               top-env

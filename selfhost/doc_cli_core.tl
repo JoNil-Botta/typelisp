@@ -21,6 +21,17 @@
   (DocNoString)
   (DocSomeString String))
 
+(defenum DocTestPathList
+  (DocTestPathNil)
+  (DocTestPathCons String DocTestPathList))
+
+(defenum DocTestCliConfig
+  (DocTestCliConfig DocTestPathList CompilerLoadRootList))
+
+(defenum ResultDocTestCliConfig
+  (OkDocTestCliConfig DocTestCliConfig)
+  (ErrDocTestCliConfig String))
+
 (define (doc-print-generated [output-path : String]) : unit
   (print-string (string-append "Generated: " (string-append output-path "\n"))))
 
@@ -124,6 +135,9 @@
         (print-error (doc-test-run-report-render report)))
       (doc-test-run-report-status report))))
 
+(define (doc-flag? [value : String]) : bool
+  (and (> (string-length value) 0) (= (string-ref value 0) #-')))
+
 (define (doc-stdlib-roots [idx : i64]) : CompilerLoadRootList
   (if (>= idx (arg-count))
     CompilerLoadRootNil
@@ -134,6 +148,78 @@
           (box (doc-stdlib-roots (+ idx 2))))
         CompilerLoadRootNil)
       (doc-stdlib-roots (+ idx 1)))))
+
+(define (doc-test-path-list-empty? [paths : DocTestPathList]) : bool
+  (match paths
+    [(DocTestPathNil) true]
+    [(DocTestPathCons _ _) false]))
+
+(define (doc-test-path-list-append [paths : DocTestPathList] [path : String]) : DocTestPathList
+  (match paths
+    [(DocTestPathNil) (DocTestPathCons path DocTestPathNil)]
+    [(DocTestPathCons head rest)
+      (DocTestPathCons head (doc-test-path-list-append rest path))]))
+
+(define (doc-test-path-list-count [paths : DocTestPathList]) : i64
+  (match paths
+    [(DocTestPathNil) 0]
+    [(DocTestPathCons _ rest) (+ 1 (doc-test-path-list-count rest))]))
+
+(define (doc-test-parse-options
+  [idx : i64]
+  [count : i64]
+  [input-paths : DocTestPathList]
+  [stdlib-roots : CompilerLoadRootList]) : ResultDocTestCliConfig
+  (if (>= idx count)
+    (if (doc-test-path-list-empty? input-paths)
+      (ErrDocTestCliConfig "doc: expected --test input path")
+      (OkDocTestCliConfig (DocTestCliConfig input-paths stdlib-roots)))
+    (let
+      [current : String (arg idx)]
+      (cond
+        [(string-eq current "--stdlib-root")
+          (if (>= (+ idx 1) count)
+            (ErrDocTestCliConfig "doc: --stdlib-root requires a value")
+            (doc-test-parse-options
+              (+ idx 2)
+              count
+              input-paths
+              (CompilerLoadRootCons (arg (+ idx 1)) (box stdlib-roots))))]
+        [(doc-flag? current)
+          (ErrDocTestCliConfig (string-append "doc: unknown flag " current))]
+        [else
+          (doc-test-parse-options
+            (+ idx 1)
+            count
+            (doc-test-path-list-append input-paths current)
+            stdlib-roots)]))))
+
+(define (doc-test-config-from [base : i64] [count : i64]) : ResultDocTestCliConfig
+  (doc-test-parse-options (+ base 1) count DocTestPathNil CompilerLoadRootNil))
+
+(define (doc-test-files
+  [input-paths : DocTestPathList]
+  [stdlib-roots : CompilerLoadRootList]
+  [print-headers : bool]
+  [status : i64]) : i64
+  (match input-paths
+    [(DocTestPathNil) status]
+    [(DocTestPathCons input-path rest)
+      (let
+        [file-status : i64
+          (begin
+            (if print-headers
+              (print-string
+                (string-append "--- " (string-append input-path "\n")))
+              unit)
+            (doc-test-file input-path stdlib-roots))]
+        (doc-test-files
+          rest
+          stdlib-roots
+          print-headers
+          (if (= status 0)
+            file-status
+            status)))]))
 
 (define (doc-has-output-option [idx : i64]) : bool
   (if (>= idx (arg-count))
@@ -190,9 +276,19 @@
 ;; command-kind argument, so kind-relative arguments are at `base+1`, `base+2`,
 ;; ... The standalone driver passes base=1; the unified dispatcher passes base=2.
 (define (doc-main-test [base : i64]) : i64
-  (if (>= (arg-count) (+ base 2))
-    (doc-test-file (arg (+ base 1)) (doc-stdlib-roots (+ base 2)))
-    (doc-invalid-test-args)))
+  (match (doc-test-config-from base (arg-count))
+    [(OkDocTestCliConfig config)
+      (match config
+        [(DocTestCliConfig input-paths stdlib-roots)
+          (doc-test-files
+            input-paths
+            stdlib-roots
+            (> (doc-test-path-list-count input-paths) 1)
+            0)])]
+    [(ErrDocTestCliConfig message)
+      (begin
+        (print-error message)
+        1)]))
 
 (define (doc-main-html [base : i64]) : i64
   (if (= (arg-count) (+ base 3))

@@ -108,47 +108,79 @@ if [ "$runnable_count" -eq 0 ]; then
     exit 1
 fi
 
-count=0
-skipped=0
-while IFS= read -r source; do
-    [ -n "$source" ] || continue
-    count=$((count + 1))
-    case_name=$(safe_name "$source")
-    stdout="$WORKDIR/$case_name.stdout"
-    stderr="$WORKDIR/$case_name.stderr"
-    requires_symbol=$(staged_symbol_for "$source")
+run_doc_tests_per_file() {
+    count=0
+    skipped=0
+    while IFS= read -r source; do
+        [ -n "$source" ] || continue
+        count=$((count + 1))
+        case_name=$(safe_name "$source")
+        stdout="$WORKDIR/$case_name.stdout"
+        stderr="$WORKDIR/$case_name.stderr"
+        requires_symbol=$(staged_symbol_for "$source")
 
-    echo "[doc-tests] $source"
-    # Default 6 (not 3): some stdlib doc-tests (text_buf.tl, hash.tl) hit the
-    # #1204 Windows segfault often enough that 3 attempts can all crash
-    # (observed on PR #1225), so the crash-retry needs more headroom.
-    if ! run_with_retry "$stdout" "$stderr" "${VERIFY_DOC_TESTS_ATTEMPTS:-6}" \
-        "$COMPILER" doc --test "$source" --stdlib-root "$ROOT/stdlib"; then
-        if should_skip_staged "$requires_symbol" "$stderr"; then
-            echo "[doc-tests] SKIP $source (awaiting no-Rust compiler support for '$requires_symbol')"
-            skipped=$((skipped + 1))
-            continue
+        echo "[doc-tests] $source"
+        # Default 6 (not 3): some stdlib doc-tests (text_buf.tl, hash.tl) hit the
+        # #1204 Windows segfault often enough that 3 attempts can all crash
+        # (observed on PR #1225), so the crash-retry needs more headroom.
+        if ! run_with_retry "$stdout" "$stderr" "${VERIFY_DOC_TESTS_ATTEMPTS:-6}" \
+            "$COMPILER" doc --test "$source" --stdlib-root "$ROOT/stdlib"; then
+            if should_skip_staged "$requires_symbol" "$stderr"; then
+                echo "[doc-tests] SKIP $source (awaiting no-Rust compiler support for '$requires_symbol')"
+                skipped=$((skipped + 1))
+                continue
+            fi
+            echo "doc test verification failed for $source (after retries)" >&2
+            echo "stdout:" >&2
+            sed 's/^/  /' "$stdout" >&2 || true
+            echo "stderr:" >&2
+            sed 's/^/  /' "$stderr" >&2 || true
+            exit 1
         fi
-        echo "doc test verification failed for $source (after retries)" >&2
-        echo "stdout:" >&2
-        sed 's/^/  /' "$stdout" >&2 || true
-        echo "stderr:" >&2
-        sed 's/^/  /' "$stderr" >&2 || true
-        exit 1
-    fi
-    if [ -n "$requires_symbol" ]; then
-        echo "[doc-tests] NOTE: $source passed with staged symbol marker '$requires_symbol'; drop the marker once published stage0 carries it" >&2
-    fi
+        if [ -n "$requires_symbol" ]; then
+            echo "[doc-tests] NOTE: $source passed with staged symbol marker '$requires_symbol'; drop the marker once published stage0 carries it" >&2
+        fi
 
-    if ! grep -q '^Doc tests passed:' "$stdout"; then
-        echo "doc test verification failed for $source: missing success summary" >&2
+        if ! grep -q '^Doc tests passed:' "$stdout"; then
+            echo "doc test verification failed for $source: missing success summary" >&2
+            echo "stdout:" >&2
+            sed 's/^/  /' "$stdout" >&2 || true
+            echo "stderr:" >&2
+            sed 's/^/  /' "$stderr" >&2 || true
+            exit 1
+        fi
+    done < "$DISCOVERED"
+}
+
+count=$(wc -l < "$DISCOVERED" | tr -d ' ')
+skipped=0
+BATCH_STDOUT="$WORKDIR/batch.stdout"
+BATCH_STDERR="$WORKDIR/batch.stderr"
+
+echo "[doc-tests] batch $count file(s)"
+if run_with_retry "$BATCH_STDOUT" "$BATCH_STDERR" "${VERIFY_DOC_TESTS_ATTEMPTS:-6}" \
+    sh -c 'xargs "$1" doc --test --stdlib-root "$2" < "$3"' \
+    sh "$COMPILER" "$ROOT/stdlib" "$DISCOVERED"; then
+    summaries=$(grep -c '^Doc tests passed:' "$BATCH_STDOUT" || true)
+    if [ "$summaries" -ne "$count" ]; then
+        echo "doc test verification failed for batched run: expected $count success summaries, saw $summaries" >&2
         echo "stdout:" >&2
-        sed 's/^/  /' "$stdout" >&2 || true
+        sed 's/^/  /' "$BATCH_STDOUT" >&2 || true
         echo "stderr:" >&2
-        sed 's/^/  /' "$stderr" >&2 || true
+        sed 's/^/  /' "$BATCH_STDERR" >&2 || true
         exit 1
     fi
-done < "$DISCOVERED"
+    while IFS= read -r source; do
+        [ -n "$source" ] || continue
+        requires_symbol=$(staged_symbol_for "$source")
+        if [ -n "$requires_symbol" ]; then
+            echo "[doc-tests] NOTE: $source passed with staged symbol marker '$requires_symbol'; drop the marker once published stage0 carries it" >&2
+        fi
+    done < "$DISCOVERED"
+else
+    echo "[doc-tests] batched run failed; probing files one by one" >&2
+    run_doc_tests_per_file
+fi
 
 echo "doc test verification passed for $count file(s), including $runnable_count runnable doctest file(s)"
 if [ "$skipped" -gt 0 ]; then

@@ -120,8 +120,6 @@ while IFS= read -r module; do
     markdown="$WORKDIR/$name.md"
     doc_stdout="$WORKDIR/$name.doc.stdout"
     doc_stderr="$WORKDIR/$name.doc.stderr"
-    test_stdout="$WORKDIR/$name.doctest.stdout"
-    test_stderr="$WORKDIR/$name.doctest.stderr"
 
     check_source_docs "$module"
 
@@ -135,22 +133,23 @@ while IFS= read -r module; do
         exit 1
     fi
     check_markdown "$module" "$markdown"
-
-    echo "[stdlib-docs] doctest $module"
-    if ! "$COMPILER" doc --test "$module" --stdlib-root "$ROOT/stdlib" \
-        > "$test_stdout" 2> "$test_stderr"; then
-        echo "doctest stdout:" >&2
-        sed 's/^/  /' "$test_stdout" >&2
-        echo "doctest stderr:" >&2
-        sed 's/^/  /' "$test_stderr" >&2
-        exit 1
-    fi
-    if ! grep -q '^Doc tests passed:' "$test_stdout"; then
-        echo "stdlib doc verification failed: $module doctest output did not report success" >&2
-        sed 's/^/  /' "$test_stdout" >&2
-        exit 1
-    fi
 done < "$MODULES"
+
+echo "[stdlib-docs] doctest $module_count module(s)"
+if ! xargs "$COMPILER" doc --test --stdlib-root "$ROOT/stdlib" < "$MODULES" \
+    > "$WORKDIR/doctest.stdout" 2> "$WORKDIR/doctest.stderr"; then
+    echo "doctest stdout:" >&2
+    sed 's/^/  /' "$WORKDIR/doctest.stdout" >&2
+    echo "doctest stderr:" >&2
+    sed 's/^/  /' "$WORKDIR/doctest.stderr" >&2
+    exit 1
+fi
+doctest_summaries=$(grep -c '^Doc tests passed:' "$WORKDIR/doctest.stdout" || true)
+if [ "$doctest_summaries" -ne "$module_count" ]; then
+    echo "stdlib doc verification failed: doctest output reported $doctest_summaries/$module_count success summaries" >&2
+    sed 's/^/  /' "$WORKDIR/doctest.stdout" >&2
+    exit 1
+fi
 
 INDEX_SRC="$WORKDIR/stdlib_index.tl"
 INDEX_MD="$WORKDIR/stdlib_index.md"

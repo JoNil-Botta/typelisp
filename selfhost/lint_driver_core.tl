@@ -386,6 +386,16 @@
       unit)
     42))")
 
+(define (selfhost-lint-unit-set-source) : String
+  "(define (check [ok : bool]) : i64
+  (let
+    [seen : bool true]
+    (begin
+      (if (not ok)
+        unit
+        (set! seen false))
+      (if seen 42 0))))")
+
 (define (selfhost-lint-suppressed-unit-if-source) : String
   "(define (check [ok : bool]) : i64
   (begin
@@ -519,6 +529,11 @@
         "lint_driver_self_test.tl"
         (selfhost-lint-unit-if-source)
         CompilerLoadRootNil)]
+    [unit-set-reported : LintFindingList
+      (selfhost-lint-source-with-roots
+        "lint_driver_self_test.tl"
+        (selfhost-lint-unit-set-source)
+        CompilerLoadRootNil)]
     (cond
       ;; one reported finding, carrying the rule id / depth / span
       [(not (= (lint-finding-list-count reported) 1)) 1]
@@ -527,6 +542,8 @@
       [(not (selfhost-lint-return-path-finding-ok? return-reported)) 10]
       [(not (= (lint-finding-list-count unit-reported) 1)) 12]
       [(not (selfhost-lint-unit-if-finding-ok? unit-reported)) 13]
+      [(not (= (lint-finding-list-count unit-set-reported) 1)) 16]
+      [(not (selfhost-lint-unit-if-finding-ok? unit-set-reported)) 17]
       [(not
           (=
             (selfhost-lint-source-finding-count

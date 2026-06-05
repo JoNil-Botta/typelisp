@@ -57,7 +57,7 @@
   "unit-if-guard")
 
 (define (lint-rule-unit-if-guard-message) : String
-  "unit return guard if: prefer when/unless")
+  "unit guard if: prefer when/unless")
 
 (define (lint-rule-unit-if-guard-suggestion) : String
   "prefer when/unless for unit guard branches")
@@ -189,6 +189,32 @@
     [(AstExprLiteral AstLitUnit) true]
     [_ false]))
 
+(define (lint-single-arg-call? [args : AstExprList]) : bool
+  (match args
+    [(AstExprCons _ rest)
+      (let
+        [rest : AstExprList (box-get rest)]
+        (match rest
+          [(AstExprNil) true]
+          [_ false]))]
+    [_ false]))
+
+(define (lint-not-call? [expr : AstExpr]) : bool
+  (match expr
+    [(AstExprSpanned inner-box _)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (lint-not-call? inner))]
+    [(AstExprCall func-box args)
+      (let
+        [func : AstExpr (box-get func-box)]
+        (match func
+          [(AstExprVar name)
+            (and (string-eq name "not") (lint-single-arg-call? args))]
+          [_ false]))]
+    [(AstExprUnary (AstUnNot) _) true]
+    [_ false]))
+
 (define (lint-return-expr? [expr : AstExpr]) : bool
   (match expr
     [(AstExprSpanned inner-box _)
@@ -217,6 +243,28 @@
     [(AstExprReturn _) true]
     [(AstExprBegin exprs) (lint-expr-list-has-return? exprs)]
     [_ false]))
+
+(define (lint-side-effect-branch? [expr : AstExpr]) : bool
+  (match expr
+    [(AstExprSpanned inner-box _)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (lint-side-effect-branch? inner))]
+    [(AstExprSet _ _) true]
+    [(AstExprArraySet _ _ _) true]
+    [(AstExprArrayPush _ _) true]
+    [(AstExprBegin exprs) (lint-expr-list-has-side-effect? exprs)]
+    [_ false]))
+
+(define (lint-expr-list-has-side-effect? [exprs : AstExprList]) : bool
+  (match exprs
+    [(AstExprNil) false]
+    [(AstExprCons head rest)
+      (let
+        [rest : AstExprList (box-get rest)]
+        (if (lint-side-effect-branch? head)
+          true
+          (lint-expr-list-has-side-effect? rest)))]))
 
 ;: Sentinel span for a finding whose AST node carried no source location (a
 ;: synthesized or in-memory expression). Parsed ladders carry the span from
@@ -250,8 +298,8 @@
 (define (lint-unit-if-guard-finding [then-unit : bool] [span : AstSourceSpan]) : LintFinding
   (LintFinding
     (if then-unit
-      "unit return guard if: unit then-branch; prefer unless"
-      "unit return guard if: unit else-branch; prefer when")
+      "unit guard if: unit then-branch; prefer when/unless"
+      "unit guard if: unit else-branch; prefer when/unless")
     (lint-rule-unit-if-guard-id)
     1
     span))
@@ -500,8 +548,12 @@
     [else-unit : bool (lint-unit-expr? else-branch)]
     [then-return : bool (lint-return-branch? then-branch)]
     [else-return : bool (lint-return-branch? else-branch)]
+    [cond-not : bool (lint-not-call? cond)]
+    [else-side-effect : bool (lint-side-effect-branch? else-branch)]
     (cond
-      [(and then-unit (and (not else-unit) else-return))
+      [(and
+          then-unit
+          (and (not else-unit) (or else-return (and cond-not else-side-effect))))
         (lint-walk-unit-if-guard-branch
           else-branch
           tail-return-path
@@ -1017,9 +1069,13 @@
     [return-chain3 : AstExpr
       (ast-expr-if vx (ast-expr-if vx (ast-expr-if vx one one) one) one)]
     [return-one : AstExpr (ast-expr-return one)]
+    [not-vx : AstExpr (ast-expr-unary (AstUnNot) vx)]
+    [set-ok-false : AstExpr
+      (ast-expr-set "ok" (AstExprLiteral (AstLitBool false)))]
     [unit-then-guard : AstExpr (ast-expr-if vx unit-expr return-one)]
     [unit-else-guard : AstExpr (ast-expr-if vx return-one unit-expr)]
     [unit-value-guard : AstExpr (ast-expr-if vx one unit-expr)]
+    [unit-not-set-guard : AstExpr (ast-expr-if not-vx unit-expr set-ok-false)]
     [nested : AstExpr (AstExprBegin (ast-expr-cons ladder3 (AstExprNil)))]
     [in-let : AstExpr
       (ast-expr-let
@@ -1151,7 +1207,16 @@
             (LintFindingNil)))
         0)
         unit
-        (panic "lint: unit-if guard should only flag return guards"))
+        (panic "lint: unit-if guard should skip value branches"))
+      (if (=
+        (lint-finding-list-count
+          (lint-walk-expr
+            unit-not-set-guard
+            (lint-default-ladder-threshold)
+            (LintFindingNil)))
+        1)
+        unit
+        (panic "lint: inverted unit set! guard should be flagged"))
       (if (=
         (lint-finding-list-count
           (lint-walk-expr

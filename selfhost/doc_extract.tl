@@ -28,7 +28,7 @@
 
 (defenum DocItemList
   (DocItemNil)
-  (DocItemCons DocItem DocItemList))
+  (DocItemCons DocItem (Box DocItemList)))
 
 (defenum DocExtraction
   (DocExtraction String DocItemList))
@@ -82,13 +82,13 @@
 (define (doc-item-list-count [items : DocItemList]) : i64
   (match items
     [(DocItemNil) 0]
-    [(DocItemCons _ rest) (+ 1 (doc-item-list-count rest))]))
+    [(DocItemCons _ rest) (+ 1 (doc-item-list-count (box-get rest)))]))
 
 (define (doc-item-list-reverse-into [items : DocItemList] [acc : DocItemList]) : DocItemList
   (match items
     [(DocItemNil) acc]
     [(DocItemCons item rest)
-      (doc-item-list-reverse-into rest (DocItemCons item acc))]))
+      (doc-item-list-reverse-into (box-get rest) (DocItemCons item (box acc)))]))
 
 (define (doc-item-list-reverse [items : DocItemList]) : DocItemList
   (doc-item-list-reverse-into items DocItemNil))
@@ -426,7 +426,7 @@
                               items
                               (DocItemCons
                                 (DocItem kind name pending-doc signature)
-                                items))]
+                                (box items)))]
                           [(DocNoDeclInfo) (set! items items)])
                         (set! items items))
                       (set! pending-doc "")
@@ -491,42 +491,72 @@
 
 (define (doc-extract-smoke-items-ok? [items : DocItemList]) : bool
   (match items
-    [(DocItemCons
-        answer
-        (DocItemCons
-          main-fn
-          (DocItemCons
-            maybe
-            (DocItemCons
-              print
-              (DocItemCons point (DocItemCons guard DocItemNil))))))
-      (begin
-        (unless
-          (doc-item-ok?
-            answer
-            1
-            "answer"
-            "answer doc\nstill answer"
-            "(define answer : i64 42)")
-          (return false))
-        (unless
-          (doc-item-ok?
-            main-fn
-            2
-            "main"
-            "function doc"
-            "(define (main [argc : i64])")
-          (return false))
-        (unless
-          (doc-item-ok? maybe 4 "Maybe" "enum doc" "(defenum Maybe")
-          (return false))
-        (unless
-          (doc-item-ok? print 3 "print" "external doc" "(extern print")
-          (return false))
-        (unless
-          (doc-item-ok? point 5 "Point" "struct doc" "(defstruct Point")
-          (return false))
-        (doc-item-ok? guard 6 "guard" "macro doc" "(defmacro (guard"))]
+    [(DocItemCons answer rest-answer)
+      (match (box-get rest-answer)
+        [(DocItemCons main-fn rest-main)
+          (match (box-get rest-main)
+            [(DocItemCons maybe rest-maybe)
+              (match (box-get rest-maybe)
+                [(DocItemCons print rest-print)
+                  (match (box-get rest-print)
+                    [(DocItemCons point rest-point)
+                      (match (box-get rest-point)
+                        [(DocItemCons guard rest-guard)
+                          (match (box-get rest-guard)
+                            [(DocItemNil)
+                              (begin
+                                (unless
+                                  (doc-item-ok?
+                                    answer
+                                    1
+                                    "answer"
+                                    "answer doc\nstill answer"
+                                    "(define answer : i64 42)")
+                                  (return false))
+                                (unless
+                                  (doc-item-ok?
+                                    main-fn
+                                    2
+                                    "main"
+                                    "function doc"
+                                    "(define (main [argc : i64])")
+                                  (return false))
+                                (unless
+                                  (doc-item-ok?
+                                    maybe
+                                    4
+                                    "Maybe"
+                                    "enum doc"
+                                    "(defenum Maybe")
+                                  (return false))
+                                (unless
+                                  (doc-item-ok?
+                                    print
+                                    3
+                                    "print"
+                                    "external doc"
+                                    "(extern print")
+                                  (return false))
+                                (unless
+                                  (doc-item-ok?
+                                    point
+                                    5
+                                    "Point"
+                                    "struct doc"
+                                    "(defstruct Point")
+                                  (return false))
+                                (doc-item-ok?
+                                  guard
+                                  6
+                                  "guard"
+                                  "macro doc"
+                                  "(defmacro (guard"))]
+                            [_ false])]
+                        [_ false])]
+                    [_ false])]
+                [_ false])]
+            [_ false])]
+        [_ false])]
     [_ false]))
 
 (define (doc-extract-smoke) : i64
@@ -569,18 +599,21 @@
                     (panic "doc-extract: legacy item count mismatch")
                     0)))
               (match legacy-items
-                [(DocItemCons legacy DocItemNil)
-                  (begin
-                    (unless
-                      (doc-item-ok?
-                        legacy
-                        1
-                        "legacy"
-                        "legacy item"
-                        "(define legacy : i64 1)")
-                      (return
-                        (begin
-                          (panic "doc-extract: legacy item mismatch")
-                          0)))
-                    42)]
+                [(DocItemCons legacy legacy-rest)
+                  (match (box-get legacy-rest)
+                    [(DocItemNil)
+                      (begin
+                        (unless
+                          (doc-item-ok?
+                            legacy
+                            1
+                            "legacy"
+                            "legacy item"
+                            "(define legacy : i64 1)")
+                          (return
+                            (begin
+                              (panic "doc-extract: legacy item mismatch")
+                              0)))
+                        42)]
+                    [_ 0])]
                 [_ 0]))]))]))

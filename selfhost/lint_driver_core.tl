@@ -111,7 +111,7 @@
       (begin
         (print-string
           (string-append (selfhost-lint-render-finding path finding) "\n"))
-        (+ 1 (selfhost-lint-print-findings path rest)))]))
+        (+ 1 (selfhost-lint-print-findings path (box-get rest))))]))
 
 (define (selfhost-lint-space? [c : char]) : bool
   (or (= c #\space') (or (= c #\tab') (or (= c #\newline') (= c #\return')))))
@@ -236,12 +236,12 @@
     [(LintFindingCons finding rest)
       (let
         [filtered-rest : LintFindingList
-          (selfhost-lint-filter-derived-origins source rest)]
+          (selfhost-lint-filter-derived-origins source (box-get rest))]
         (if (or
           (selfhost-lint-derived-form-origin? source (struct-get finding span))
           (selfhost-lint-suppressed? source finding))
           filtered-rest
-          (LintFindingCons finding filtered-rest)))]))
+          (LintFindingCons finding (box filtered-rest))))]))
 
 (define (selfhost-lint-program-findings
   [source : String]

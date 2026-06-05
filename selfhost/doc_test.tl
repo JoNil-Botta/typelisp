@@ -32,24 +32,35 @@
 
 (defenum DocTestLineList
   (DocTestLineNil)
-  (DocTestLineCons DocTestLine DocTestLineList))
+  (DocTestLineCons DocTestLine (Box DocTestLineList)))
 
 (defenum DocTestExample
   (DocTestExample i64 i64 DocTestExpectation String))
 
 (defenum DocTestExampleList
   (DocTestExampleNil)
-  (DocTestExampleCons DocTestExample DocTestExampleList))
+  (DocTestExampleCons DocTestExample (Box DocTestExampleList)))
 
 (defenum DocTestError
   (DocTestError i64 String))
 
 (defenum DocTestErrorList
   (DocTestErrorNil)
-  (DocTestErrorCons DocTestError DocTestErrorList))
+  (DocTestErrorCons DocTestError (Box DocTestErrorList)))
 
 (defenum DocTestExtraction
   (DocTestExtraction DocTestExampleList DocTestErrorList))
+
+(define (doc-test-line-cons [line : DocTestLine] [rest : DocTestLineList]) : DocTestLineList
+  (DocTestLineCons line (box rest)))
+
+(define (doc-test-example-cons
+  [example : DocTestExample]
+  [rest : DocTestExampleList]) : DocTestExampleList
+  (DocTestExampleCons example (box rest)))
+
+(define (doc-test-error-cons [err : DocTestError] [rest : DocTestErrorList]) : DocTestErrorList
+  (DocTestErrorCons err (box rest)))
 
 (defenum DocTestMaybeString
   (DocTestNoString)
@@ -400,7 +411,9 @@
   (match lines
     [(DocTestLineNil) acc]
     [(DocTestLineCons line rest)
-      (doc-test-line-list-reverse-into rest (DocTestLineCons line acc))]))
+      (doc-test-line-list-reverse-into
+        (box-get rest)
+        (doc-test-line-cons line acc))]))
 
 (define (doc-test-line-list-reverse [lines : DocTestLineList]) : DocTestLineList
   (doc-test-line-list-reverse-into lines DocTestLineNil))
@@ -409,17 +422,19 @@
   [examples : DocTestExampleList]
   [example : DocTestExample]) : DocTestExampleList
   (match examples
-    [(DocTestExampleNil) (DocTestExampleCons example DocTestExampleNil)]
+    [(DocTestExampleNil) (doc-test-example-cons example DocTestExampleNil)]
     [(DocTestExampleCons head rest)
-      (DocTestExampleCons head (doc-test-example-list-append rest example))]))
+      (doc-test-example-cons
+        head
+        (doc-test-example-list-append (box-get rest) example))]))
 
 (define (doc-test-error-list-append
   [errors : DocTestErrorList]
   [err : DocTestError]) : DocTestErrorList
   (match errors
-    [(DocTestErrorNil) (DocTestErrorCons err DocTestErrorNil)]
+    [(DocTestErrorNil) (doc-test-error-cons err DocTestErrorNil)]
     [(DocTestErrorCons head rest)
-      (DocTestErrorCons head (doc-test-error-list-append rest err))]))
+      (doc-test-error-cons head (doc-test-error-list-append (box-get rest) err))]))
 
 (define (doc-test-error-list-append-all
   [errors : DocTestErrorList]
@@ -429,17 +444,18 @@
     [(DocTestErrorCons err rest)
       (doc-test-error-list-append-all
         (doc-test-error-list-append errors err)
-        rest)]))
+        (box-get rest))]))
 
 (define (doc-test-example-list-count [examples : DocTestExampleList]) : i64
   (match examples
     [(DocTestExampleNil) 0]
-    [(DocTestExampleCons _ rest) (+ 1 (doc-test-example-list-count rest))]))
+    [(DocTestExampleCons _ rest)
+      (+ 1 (doc-test-example-list-count (box-get rest)))]))
 
 (define (doc-test-error-list-count [errors : DocTestErrorList]) : i64
   (match errors
     [(DocTestErrorNil) 0]
-    [(DocTestErrorCons _ rest) (+ 1 (doc-test-error-list-count rest))]))
+    [(DocTestErrorCons _ rest) (+ 1 (doc-test-error-list-count (box-get rest)))]))
 
 (define (doc-test-doc-comment-body-with-prefix
   [line : String]
@@ -565,8 +581,8 @@
       (if (doc-test-string-prefix?
         (doc-test-trim-left (doc-test-line-text line))
         "```")
-        rest
-        (doc-test-skip-ignored-fence rest))]))
+        (box-get rest)
+        (doc-test-skip-ignored-fence (box-get rest)))]))
 
 (define (doc-test-collect-code-inner
   [lines : DocTestLineList]
@@ -584,14 +600,14 @@
         (doc-test-trim-left (doc-test-line-text line))
         "```")
         (DocTestCodeCollect
-          rest
+          (box-get rest)
           code
           (doc-test-line-list-reverse collected)
           true)
         (doc-test-collect-code-inner
-          rest
+          (box-get rest)
           (string-append code (string-append (doc-test-line-text line) "\n"))
-          (DocTestLineCons line collected)))]))
+          (doc-test-line-cons line collected)))]))
 
 (define (doc-test-collect-code [lines : DocTestLineList]) : DocTestCodeCollect
   (doc-test-collect-code-inner lines "" DocTestLineNil))
@@ -775,7 +791,7 @@
     [(DocTestLineNil) metadata]
     [(DocTestLineCons line rest)
       (doc-test-run-metadata-parse-lines
-        rest
+        (box-get rest)
         (doc-test-run-metadata-parse-line metadata line))]))
 
 (define (doc-test-parse-run-metadata
@@ -877,24 +893,24 @@
             (match (doc-test-parse-fence-info info (doc-test-line-number line))
               [(DocTestFenceIgnore)
                 (doc-test-scan-doc-block
-                  (doc-test-skip-ignored-fence rest)
+                  (doc-test-skip-ignored-fence (box-get rest))
                   state)]
               [(DocTestFenceMalformed err)
                 (match state
                   [(DocTestScanState examples errors next-index)
                     (doc-test-scan-doc-block
-                      (doc-test-skip-ignored-fence rest)
+                      (doc-test-skip-ignored-fence (box-get rest))
                       (DocTestScanState
                         examples
                         (doc-test-error-list-append errors err)
                         next-index))])]
               [(DocTestFenceTypeLisp expectation)
                 (doc-test-scan-type-lisp-fence
-                  rest
+                  (box-get rest)
                   state
                   (doc-test-line-number line)
                   expectation)]))
-          (doc-test-scan-doc-block rest state)))]))
+          (doc-test-scan-doc-block (box-get rest) state)))]))
 
 (define (doc-test-scan-reversed-block
   [lines : DocTestLineList]
@@ -922,7 +938,7 @@
                   (set! pending-lines DocTestLineNil)
                   (set!
                     module-lines
-                    (DocTestLineCons
+                    (doc-test-line-cons
                       (DocTestLine line-number body)
                       module-lines)))]
               [(DocTestNoString)
@@ -937,7 +953,7 @@
                       [(DocTestSomeString body)
                         (set!
                           pending-lines
-                          (DocTestLineCons
+                          (doc-test-line-cons
                             (DocTestLine line-number body)
                             pending-lines))]
                       [(DocTestNoString)
@@ -968,7 +984,12 @@
 
 (defenum DocTestRunFailureList
   (DocTestRunFailureNil)
-  (DocTestRunFailureCons DocTestRunFailure DocTestRunFailureList))
+  (DocTestRunFailureCons DocTestRunFailure (Box DocTestRunFailureList)))
+
+(define (doc-test-run-failure-cons
+  [failure : DocTestRunFailure]
+  [rest : DocTestRunFailureList]) : DocTestRunFailureList
+  (DocTestRunFailureCons failure (box rest)))
 
 ;; Outcome of running a source: how many examples were checked and which failed.
 (defenum DocTestRunReport
@@ -1006,7 +1027,7 @@
   (match failures
     [(DocTestRunFailureNil) 0]
     [(DocTestRunFailureCons _ rest)
-      (+ 1 (doc-test-run-failure-list-count rest))]))
+      (+ 1 (doc-test-run-failure-list-count (box-get rest)))]))
 
 (define (doc-test-run-report-ok? [report : DocTestRunReport]) : bool
   (match (doc-test-run-report-failures report)
@@ -1018,11 +1039,11 @@
   [failure : DocTestRunFailure]) : DocTestRunFailureList
   (match failures
     [(DocTestRunFailureNil)
-      (DocTestRunFailureCons failure DocTestRunFailureNil)]
+      (doc-test-run-failure-cons failure DocTestRunFailureNil)]
     [(DocTestRunFailureCons head rest)
-      (DocTestRunFailureCons
+      (doc-test-run-failure-cons
         head
-        (doc-test-run-failure-list-append rest failure))]))
+        (doc-test-run-failure-list-append (box-get rest) failure))]))
 
 ;; Render a failure as `path:line: message`. Fence-level extraction
 ;; errors use index `-1`; example failures include the example number in their
@@ -1554,11 +1575,15 @@
     [(DocTestExampleCons example rest)
       (match (doc-test-check-example-with-roots path example stdlib-roots)
         [(DocTestNoFailure)
-          (doc-test-run-examples-with-roots path rest failures stdlib-roots)]
+          (doc-test-run-examples-with-roots
+            path
+            (box-get rest)
+            failures
+            stdlib-roots)]
         [(DocTestSomeFailure failure)
           (doc-test-run-examples-with-roots
             path
-            rest
+            (box-get rest)
             (doc-test-run-failure-list-append failures failure)
             stdlib-roots)])]))
 
@@ -1573,7 +1598,7 @@
     [(DocTestErrorCons err rest)
       (doc-test-errors-to-failures
         path
-        rest
+        (box-get rest)
         (doc-test-run-failure-list-append
           failures
           (DocTestRunFailure
@@ -1624,7 +1649,7 @@
     [(DocTestRunFailureCons failure rest)
       (string-append
         (string-append (doc-test-run-failure-render failure) "\n")
-        (doc-test-run-failures-render rest))]))
+        (doc-test-run-failures-render (box-get rest)))]))
 
 ;; Human-readable report text. Success mirrors the Rust CLI's
 ;; `Doc tests passed: N example(s)` line; failure mirrors its
@@ -1795,39 +1820,52 @@
           (doc-test-error-message err)
           message-fragment)
           true
-          (doc-test-error-list-has? rest line message-fragment))
-        (doc-test-error-list-has? rest line message-fragment))]))
+          (doc-test-error-list-has? (box-get rest) line message-fragment))
+        (doc-test-error-list-has? (box-get rest) line message-fragment))]))
 
 (define (doc-test-smoke-examples-ok? [examples : DocTestExampleList]) : bool
   (match examples
-    [(DocTestExampleCons first (DocTestExampleCons second DocTestExampleNil))
-      (if (doc-test-example-ok? first 1 2 false "(define (main)")
-        (doc-test-example-ok? second 2 9 true "(define (bad)")
-        false)]
+    [(DocTestExampleCons first rest-first)
+      (match (box-get rest-first)
+        [(DocTestExampleCons second rest-second)
+          (match (box-get rest-second)
+            [(DocTestExampleNil)
+              (if (doc-test-example-ok? first 1 2 false "(define (main)")
+                (doc-test-example-ok? second 2 9 true "(define (bad)")
+                false)]
+            [_ false])]
+        [_ false])]
     [_ false]))
 
 (define (doc-test-malformed-errors-ok? [errors : DocTestErrorList]) : bool
   (match errors
-    [(DocTestErrorCons
-        first
-        (DocTestErrorCons second (DocTestErrorCons third DocTestErrorNil)))
-      (begin
-        (unless (= (doc-test-error-line first) 1) (return false))
-        (unless
-          (doc-test-string-contains?
-            (doc-test-error-message first)
-            "unsupported TypeLisp doctest option")
-          (return false))
-        (unless (= (doc-test-error-line second) 5) (return false))
-        (unless
-          (doc-test-string-contains?
-            (doc-test-error-message second)
-            "empty TypeLisp doctest fence")
-          (return false))
-        (unless (= (doc-test-error-line third) 8) (return false))
-        (doc-test-string-contains?
-          (doc-test-error-message third)
-          "unterminated TypeLisp doctest fence"))]
+    [(DocTestErrorCons first rest-first)
+      (match (box-get rest-first)
+        [(DocTestErrorCons second rest-second)
+          (match (box-get rest-second)
+            [(DocTestErrorCons third rest-third)
+              (match (box-get rest-third)
+                [(DocTestErrorNil)
+                  (begin
+                    (unless (= (doc-test-error-line first) 1) (return false))
+                    (unless
+                      (doc-test-string-contains?
+                        (doc-test-error-message first)
+                        "unsupported TypeLisp doctest option")
+                      (return false))
+                    (unless (= (doc-test-error-line second) 5) (return false))
+                    (unless
+                      (doc-test-string-contains?
+                        (doc-test-error-message second)
+                        "empty TypeLisp doctest fence")
+                      (return false))
+                    (unless (= (doc-test-error-line third) 8) (return false))
+                    (doc-test-string-contains?
+                      (doc-test-error-message third)
+                      "unterminated TypeLisp doctest fence"))]
+                [_ false])]
+            [_ false])]
+        [_ false])]
     [_ false]))
 
 (define (doc-test-ordinary-comments-ok?) : bool
@@ -1851,10 +1889,13 @@
         (unless (= (doc-test-error-list-count errors) 0) (return false))
         (unless (= (doc-test-example-list-count examples) 1) (return false))
         (match examples
-          [(DocTestExampleCons example DocTestExampleNil)
-            (doc-test-string-contains?
-              (doc-test-example-code example)
-              "(define legacy")]
+          [(DocTestExampleCons example rest)
+            (match (box-get rest)
+              [(DocTestExampleNil)
+                (doc-test-string-contains?
+                  (doc-test-example-code example)
+                  "(define legacy")]
+              [_ false])]
           [_ false]))]))
 
 (define (doc-test-malformed-smoke-ok?) : bool
@@ -1873,28 +1914,32 @@
         (unless (= (doc-test-error-list-count errors) 0) (return false))
         (unless (= (doc-test-example-list-count examples) 2) (return false))
         (match examples
-          [(DocTestExampleCons
-              first
-              (DocTestExampleCons second DocTestExampleNil))
-            (begin
-              (unless
-                (doc-test-runnable-example-ok?
-                  first
-                  1
-                  2
-                  0
-                  "hello\n"
-                  "error\tline\r"
-                  "(define (main)")
-                (return false))
-              (doc-test-runnable-example-ok?
-                second
-                2
-                13
-                42
-                ""
-                ""
-                "(define (main)"))]
+          [(DocTestExampleCons first rest-first)
+            (match (box-get rest-first)
+              [(DocTestExampleCons second rest-second)
+                (match (box-get rest-second)
+                  [(DocTestExampleNil)
+                    (begin
+                      (unless
+                        (doc-test-runnable-example-ok?
+                          first
+                          1
+                          2
+                          0
+                          "hello\n"
+                          "error\tline\r"
+                          "(define (main)")
+                        (return false))
+                      (doc-test-runnable-example-ok?
+                        second
+                        2
+                        13
+                        42
+                        ""
+                        ""
+                        "(define (main)"))]
+                  [_ false])]
+              [_ false])]
           [_ false]))]))
 
 (define (doc-test-runnable-malformed-smoke-ok?) : bool
@@ -2057,16 +2102,19 @@
     [report : DocTestRunReport
       (doc-test-run-source "docs/bad.tl" (doc-test-run-unexpected-error-source))]
     (match (doc-test-run-report-failures report)
-      [(DocTestRunFailureCons failure (DocTestRunFailureNil))
-        (begin
-          (unless (= (doc-test-run-failure-index failure) 1) (return false))
-          (unless (= (doc-test-run-failure-line failure) 1) (return false))
-          (unless
-            (string-eq (doc-test-run-failure-path failure) "docs/bad.tl")
-            (return false))
-          (doc-test-string-contains?
-            (doc-test-run-failure-message failure)
-            "return type mismatch"))]
+      [(DocTestRunFailureCons failure rest)
+        (match (box-get rest)
+          [(DocTestRunFailureNil)
+            (begin
+              (unless (= (doc-test-run-failure-index failure) 1) (return false))
+              (unless (= (doc-test-run-failure-line failure) 1) (return false))
+              (unless
+                (string-eq (doc-test-run-failure-path failure) "docs/bad.tl")
+                (return false))
+              (doc-test-string-contains?
+                (doc-test-run-failure-message failure)
+                "return type mismatch"))]
+          [_ false])]
       [_ false])))
 
 ;; An `expect-error` example that checks successfully is a failure.
@@ -2075,10 +2123,13 @@
     [report : DocTestRunReport
       (doc-test-run-source "docs/bad.tl" (doc-test-run-unexpected-pass-source))]
     (match (doc-test-run-report-failures report)
-      [(DocTestRunFailureCons failure (DocTestRunFailureNil))
-        (doc-test-string-contains?
-          (doc-test-run-failure-message failure)
-          "was expected to fail")]
+      [(DocTestRunFailureCons failure rest)
+        (match (box-get rest)
+          [(DocTestRunFailureNil)
+            (doc-test-string-contains?
+              (doc-test-run-failure-message failure)
+              "was expected to fail")]
+          [_ false])]
       [_ false])))
 
 ;; Malformed fences (the shared malformed source's three extraction errors)
@@ -2111,16 +2162,20 @@
         (doc-test-run-smoke-stdlib-roots))]
     (if (= (doc-test-run-report-count report) 2)
       (match (doc-test-run-report-failures report)
-        [(DocTestRunFailureCons
-            first
-            (DocTestRunFailureCons second DocTestRunFailureNil))
-          (if (doc-test-string-contains?
-            (doc-test-run-failure-message first)
-            "unsupported")
-            (doc-test-string-contains?
-              (doc-test-run-failure-message second)
-              "unsupported")
-            false)]
+        [(DocTestRunFailureCons first rest-first)
+          (match (box-get rest-first)
+            [(DocTestRunFailureCons second rest-second)
+              (match (box-get rest-second)
+                [(DocTestRunFailureNil)
+                  (if (doc-test-string-contains?
+                    (doc-test-run-failure-message first)
+                    "unsupported")
+                    (doc-test-string-contains?
+                      (doc-test-run-failure-message second)
+                      "unsupported")
+                    false)]
+                [_ false])]
+            [_ false])]
         [_ false])
       false)))
 
@@ -2157,10 +2212,13 @@
         (doc-test-run-smoke-stdlib-roots))]
     (if (= (doc-test-run-report-count report) 1)
       (match (doc-test-run-report-failures report)
-        [(DocTestRunFailureCons failure DocTestRunFailureNil)
-          (doc-test-string-contains?
-            (doc-test-run-failure-message failure)
-            fragment)]
+        [(DocTestRunFailureCons failure rest)
+          (match (box-get rest)
+            [(DocTestRunFailureNil)
+              (doc-test-string-contains?
+                (doc-test-run-failure-message failure)
+                fragment)]
+            [_ false])]
         [_ false])
       false)))
 

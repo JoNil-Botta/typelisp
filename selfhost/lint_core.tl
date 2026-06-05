@@ -73,7 +73,7 @@
 ;: Immutable list of registered rules.
 (defenum LintRuleList
   (LintRuleNil)
-  (LintRuleCons LintRule LintRuleList))
+  (LintRuleCons LintRule (Box LintRuleList)))
 
 (defenum LintMaybeRule
   (LintRuleNotFound)
@@ -103,16 +103,19 @@
     (lint-rule-unit-if-guard-message)
     (lint-rule-unit-if-guard-suggestion)))
 
+(define (lint-rule-cons [rule : LintRule] [rest : LintRuleList]) : LintRuleList
+  (LintRuleCons rule (box rest)))
+
 ;: Small registry for lint metadata. New rules plug into this list and the
 ;: shared lookup helpers without requiring public driver edits.
 (define (lint-rule-registry) : LintRuleList
-  (LintRuleCons
+  (lint-rule-cons
     (lint-rule-nested-if-ladder)
-    (LintRuleCons
+    (lint-rule-cons
       (lint-rule-nested-let)
-      (LintRuleCons
+      (lint-rule-cons
         (lint-rule-return-path-chain)
-        (LintRuleCons (lint-rule-unit-if-guard) LintRuleNil)))))
+        (lint-rule-cons (lint-rule-unit-if-guard) LintRuleNil)))))
 
 (define (lint-rule-find-in [rules : LintRuleList] [rule-id : String]) : LintMaybeRule
   (match rules
@@ -120,7 +123,7 @@
     [(LintRuleCons rule rest)
       (if (string-eq (struct-get rule rule-id) rule-id)
         (LintRuleFound rule)
-        (lint-rule-find-in rest rule-id))]))
+        (lint-rule-find-in (box-get rest) rule-id))]))
 
 (define (lint-rule-find [rule-id : String]) : LintMaybeRule
   (lint-rule-find-in (lint-rule-registry) rule-id))
@@ -140,13 +143,16 @@
 ;: Immutable list of findings.
 (defenum LintFindingList
   (LintFindingNil)
-  (LintFindingCons LintFinding LintFindingList))
+  (LintFindingCons LintFinding (Box LintFindingList)))
+
+(define (lint-finding-cons [finding : LintFinding] [rest : LintFindingList]) : LintFindingList
+  (LintFindingCons finding (box rest)))
 
 ;: Number of findings in `items`.
 (define (lint-finding-list-count [items : LintFindingList]) : i64
   (match items
     [(LintFindingNil) 0]
-    [(LintFindingCons _ rest) (+ 1 (lint-finding-list-count rest))]))
+    [(LintFindingCons _ rest) (+ 1 (lint-finding-list-count (box-get rest)))]))
 
 ;: Default nested-`if`-ladder depth threshold (an else-chain of this many `if`s
 ;: or more is flagged).
@@ -393,7 +399,7 @@
       (if (and
         (lint-nested-let-body? body)
         (not (lint-nested-let-shadows? bindings body)))
-        (LintFindingCons (lint-nested-let-finding span) acc)
+        (lint-finding-cons (lint-nested-let-finding span) acc)
         acc)]
     (lint-walk-expr
       body
@@ -411,7 +417,7 @@
       (if (and
         (lint-nested-let-body? body)
         (not (lint-nested-let-shadows? bindings body)))
-        (LintFindingCons (lint-nested-let-finding span) acc)
+        (lint-finding-cons (lint-nested-let-finding span) acc)
         acc)]
     (lint-walk-tail-expr
       body
@@ -558,7 +564,7 @@
           else-branch
           tail-return-path
           threshold
-          (LintFindingCons
+          (lint-finding-cons
             (lint-unit-if-guard-finding true span)
             (lint-walk-expr cond threshold acc)))]
       [(and else-unit (and (not then-unit) then-return))
@@ -566,14 +572,14 @@
           then-branch
           tail-return-path
           threshold
-          (LintFindingCons
+          (lint-finding-cons
             (lint-unit-if-guard-finding false span)
             (lint-walk-expr cond threshold acc)))]
       [(and tail-return-path (>= return-chain threshold))
         (lint-walk-return-path-chain
           (ast-expr-if cond then-branch else-branch)
           threshold
-          (LintFindingCons
+          (lint-finding-cons
             (lint-return-path-chain-finding return-chain span)
             acc))]
       [(>= ladder threshold)
@@ -581,7 +587,7 @@
           (ast-expr-if cond then-branch else-branch)
           threshold
           tail-return-path
-          (LintFindingCons (lint-ladder-finding ladder span) acc))]
+          (lint-finding-cons (lint-ladder-finding ladder span) acc))]
       [tail-return-path
         (lint-walk-tail-expr
           else-branch

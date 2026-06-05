@@ -5,7 +5,7 @@
 ;; order exactly by walking the reversed chunk list once.
 (defenum TextChunkList
   (TextChunkNil)
-  (TextChunkCons String TextChunkList))
+  (TextChunkCons String (Box TextChunkList)))
 
 (defenum TextBuf
   (TextBuf TextChunkList i64))
@@ -15,13 +15,14 @@
 
 (define (text-buf-append [buf : TextBuf] [chunk : String]) : TextBuf
   (match buf
-    [(TextBuf chunks count) (TextBuf (TextChunkCons chunk chunks) (+ count 1))]))
+    [(TextBuf chunks count)
+      (TextBuf (TextChunkCons chunk (box chunks)) (+ count 1))]))
 
 (define (text-chunk-list-concat [front : TextChunkList] [back : TextChunkList]) : TextChunkList
   (match front
     [(TextChunkNil) back]
     [(TextChunkCons chunk rest)
-      (TextChunkCons chunk (text-chunk-list-concat rest back))]))
+      (TextChunkCons chunk (box (text-chunk-list-concat (box-get rest) back)))]))
 
 (define (text-buf-append-buffer [left : TextBuf] [right : TextBuf]) : TextBuf
   (match left
@@ -36,7 +37,7 @@
   (match chunks
     [(TextChunkNil) out]
     [(TextChunkCons chunk rest)
-      (text-chunks-render-rev rest (string-append chunk out))]))
+      (text-chunks-render-rev (box-get rest) (string-append chunk out))]))
 
 (define (text-chunks-fill-array-rev
   [chunks : TextChunkList]
@@ -47,7 +48,7 @@
     [(TextChunkCons chunk rest)
       (begin
         (array-set! items index chunk)
-        (text-chunks-fill-array-rev rest items (- index 1)))]))
+        (text-chunks-fill-array-rev (box-get rest) items (- index 1)))]))
 
 (define (text-chunks-render-array-range
   [items : (Array String)]

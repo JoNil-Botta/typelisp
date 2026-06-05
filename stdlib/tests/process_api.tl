@@ -87,6 +87,36 @@
         (assert-owned-string-eq (process-error-message error) message message))]
     [(OkProcessOutput _) (panic message)]))
 
+(define (assert-process-child-invalid-command
+  [result : ResultProcessChild]
+  [message : String]) : unit
+  (match result
+    [(ErrProcessChild error)
+      (begin
+        (assert-true (process-error-invalid-command? error) message)
+        (assert-owned-string-eq (process-error-message error) message message))]
+    [(OkProcessChild _) (panic message)]))
+
+(define (assert-process-child-unsupported
+  [result : ResultProcessChild]
+  [message : String]) : unit
+  (match result
+    [(ErrProcessChild error)
+      (begin
+        (assert-true (process-error-unsupported? error) message)
+        (assert-owned-string-eq (process-error-message error) message message))]
+    [(OkProcessChild _) (panic message)]))
+
+(define (assert-process-output-unsupported
+  [result : ResultProcessOutput]
+  [message : String]) : unit
+  (match result
+    [(ErrProcessOutput error)
+      (begin
+        (assert-true (process-error-unsupported? error) message)
+        (assert-owned-string-eq (process-error-message error) message message))]
+    [(OkProcessOutput _) (panic message)]))
+
 (define (main) : i64
   (let
     [args : ProcessStringList
@@ -164,6 +194,18 @@
       (assert-process-invalid-command
         (process-output (process-command-with-env command "BAD=NAME" "1"))
         "process: environment variable name contains '='")
+      (assert-process-child-invalid-command
+        (process-start (process-command "" (process-args-empty)))
+        "process: executable path is empty")
+      (assert-process-child-invalid-command
+        (process-start (process-command-with-cwd command ""))
+        "process: cwd path is empty")
+      (assert-process-child-invalid-command
+        (process-start (process-command-with-env command "" "1"))
+        "process: environment variable name is empty")
+      (assert-process-child-invalid-command
+        (process-start (process-command-with-env command "BAD=NAME" "1"))
+        "process: environment variable name contains '='")
       (assert-true (process-command-valid? command) "process valid command")
       (assert-false
         (process-command-valid? (process-command "" (process-args-empty)))
@@ -184,4 +226,17 @@
       (assert-true
         (process-error-wait-failed? (ProcessWaitFailed "wait failed"))
         "process wait predicate")
+      (assert-true
+        (process-child-started? (OkProcessChild (ProcessChild 1 2 3)))
+        "process child started predicate")
+      (assert-false
+        (process-child-started?
+          (ErrProcessChild (ProcessUnsupported "unsupported")))
+        "process child unsupported predicate")
+      (assert-process-child-unsupported
+        (process-start command)
+        "process: async child handles are not supported by this runtime")
+      (assert-process-output-unsupported
+        (process-wait (ProcessChild 1 2 3))
+        "process: async child handles are not supported by this runtime")
       42)))

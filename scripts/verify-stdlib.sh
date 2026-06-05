@@ -239,14 +239,14 @@ stdlib/tests/arena_api.tl|42|-|-
 stdlib/tests/string_edges.tl|42|-|-
 stdlib/tests/json_helpers.tl|42|-|-
 stdlib/tests/json_parse_stringify.tl|42|-|-
-stdlib/tests/io_edges.tl|42|-|-|-|requires-stage0-symbol:file-read-chunk-status,file-write-status,file-flush-status,append-file-status
-stdlib/tests/io_file_handle.tl|42|-|-|-|requires-stage0-symbol:file-read-chunk-status,file-write-status,file-flush-status,append-file-status,fs-file-kind-status,fs-file-size-status,fs-file-size
-stdlib/tests/io_stdio_lines.tl|42|host-line:stdout-line|host-line:stderr-line|printf:alpha\n\nomega|requires-stage0-symbol:file-read-chunk-status,file-write-status,file-flush-status,append-file-status
-stdlib/tests/io_stdio_bytes.tl|42|-|-|literal:abcdef|requires-stage0-symbol:file-read-chunk-status,file-write-status,file-flush-status,append-file-status
+stdlib/tests/io_edges.tl|42|-|-|-
+stdlib/tests/io_file_handle.tl|42|-|-|-|requires-stage0-symbol:fs-file-kind-status,fs-file-size-status,fs-file-size
+stdlib/tests/io_stdio_lines.tl|42|host-line:stdout-line|host-line:stderr-line|printf:alpha\n\nomega
+stdlib/tests/io_stdio_bytes.tl|42|-|-|literal:abcdef
 stdlib/tests/env_api.tl|42|-|-
 stdlib/tests/ffi_api.tl|42|-|-
 stdlib/tests/cpu_api.tl|42|-|-
-stdlib/tests/fs_api.tl|42|-|-|-|requires-stage0-symbol:file-read-chunk-status,file-write-status,file-flush-status,append-file-status,fs-rename-status,fs-read-dir-status,fs-read-dir,fs-file-kind-status,fs-file-size-status,fs-file-size
+stdlib/tests/fs_api.tl|42|-|-|-|requires-stage0-symbol:fs-read-dir-status,fs-read-dir,fs-file-kind-status,fs-file-size-status,fs-file-size
 stdlib/tests/hash_api.tl|42|-|-
 stdlib/tests/hashmap_api.tl|42|-|-
 stdlib/tests/list_api.tl|42|-|-
@@ -261,8 +261,8 @@ stdlib/tests/visual_studio_api.tl|42|-|-
 stdlib/tests/test_assert_success.tl|42|-|-
 stdlib/tests/test_assert_failure.tl|134|-|literal:stdlib test failure message
 stdlib/tests/windows_registry_api.tl|42|-|-|-|requires-stage0-symbol:tl_windows_sdk_registry_install
-stdlib/tests/windows_sdk_api.tl|42|-|-|-|requires-stage0-symbol:file-read-chunk-status,file-write-status,file-flush-status,append-file-status,tl_windows_sdk_registry_install
-stdlib/tests/msvc_api.tl|42|-|-|-|requires-stage0-symbol:file-read-chunk-status,file-write-status,file-flush-status,append-file-status,fs-file-kind-status,fs-file-size-status,fs-file-size,tl_windows_sdk_registry_install
+stdlib/tests/windows_sdk_api.tl|42|-|-|-|requires-stage0-symbol:tl_windows_sdk_registry_install
+stdlib/tests/msvc_api.tl|42|-|-|-|requires-stage0-symbol:fs-file-kind-status,fs-file-size-status,fs-file-size,tl_windows_sdk_registry_install
 EOF
 }
 

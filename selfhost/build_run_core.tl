@@ -257,9 +257,11 @@
   (match items
     [(AstExternLinkInputNil) inputs]
     [(AstExternLinkInputCons head rest)
-      (source-tool-link-inputs-add-ast-list
-        (source-tool-link-inputs-add-ast inputs head)
-        rest)]))
+      (let
+        [rest : AstExternLinkInputList (box-get rest)]
+        (source-tool-link-inputs-add-ast-list
+          (source-tool-link-inputs-add-ast inputs head)
+          rest))]))
 
 (define (source-tool-link-inputs-eq?
   [left : SourceToolLinkInputs]
@@ -279,13 +281,13 @@
 (define (source-tool-link-inputs-dedupe-smoke-ok?) : bool
   (let
     [metadata-items : AstExternLinkInputList
-      (AstExternLinkInputCons
+      (ast-extern-link-input-cons
         (AstExternLinkLib "m")
-        (AstExternLinkInputCons
+        (ast-extern-link-input-cons
           (AstExternLinkLib "m")
-          (AstExternLinkInputCons
+          (ast-extern-link-input-cons
             (AstExternLinkSearch "native")
-            (AstExternLinkInputCons
+            (ast-extern-link-input-cons
               (AstExternLinkArg "-Wl,a")
               AstExternLinkInputNil))))]
     [metadata-inputs : SourceToolLinkInputs
@@ -325,16 +327,20 @@
   (match decls
     [(AstDeclNil) inputs]
     [(AstDeclCons decl rest)
-      (match decl
-        [(AstDeclExtern _ metadata _)
-          (source-tool-link-inputs-from-decls
-            rest
-            (source-tool-link-inputs-add-ast-list
-              inputs
-              (ast-extern-metadata-link-inputs metadata)))]
-        [(AstDeclUnsafe inner)
-          (source-tool-link-inputs-from-decls (AstDeclCons inner rest) inputs)]
-        [_ (source-tool-link-inputs-from-decls rest inputs)])]))
+      (let
+        [rest : AstDeclList (box-get rest)]
+        (match decl
+          [(AstDeclExtern _ metadata _)
+            (source-tool-link-inputs-from-decls
+              rest
+              (source-tool-link-inputs-add-ast-list
+                inputs
+                (ast-extern-metadata-link-inputs metadata)))]
+          [(AstDeclUnsafe inner)
+            (source-tool-link-inputs-from-decls
+              (ast-decl-cons inner rest)
+              inputs)]
+          [_ (source-tool-link-inputs-from-decls rest inputs)]))]))
 
 (define (source-tool-link-inputs-for-source
   [source : String]

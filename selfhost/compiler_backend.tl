@@ -4103,12 +4103,15 @@
     [(IrParamCons param rest)
       (match param
         [(IrParam _ ty _)
-          (AstTypeCons ty (compiler-backend-param-type-list (box-get rest)))])]))
+          (ast-type-cons ty (compiler-backend-param-type-list (box-get rest)))])]))
 
 (define (compiler-backend-type-list-count [types : AstTypeList]) : i64
   (match types
     [(AstTypeNil) 0]
-    [(AstTypeCons _ rest) (+ 1 (compiler-backend-type-list-count rest))]))
+    [(AstTypeCons _ rest)
+      (let
+        [rest : AstTypeList (box-get rest)]
+        (+ 1 (compiler-backend-type-list-count rest)))]))
 
 (define (compiler-backend-param-list-from-types
   [types : AstTypeList]
@@ -4116,9 +4119,11 @@
   (match types
     [(AstTypeNil) IrParamNil]
     [(AstTypeCons ty rest)
-      (compiler-ir-param-cons
-        (IrParam (string-append "arg" (int->string idx)) ty idx)
-        (compiler-backend-param-list-from-types rest (+ idx 1)))]))
+      (let
+        [rest : AstTypeList (box-get rest)]
+        (compiler-ir-param-cons
+          (IrParam (string-append "arg" (int->string idx)) ty idx)
+          (compiler-backend-param-list-from-types rest (+ idx 1))))]))
 
 (define (compiler-backend-var-value-list [count : i64] [idx : i64]) : CompilerIrValueList
   (if (>= idx count)
@@ -4194,8 +4199,8 @@
 
 (define (compiler-backend-runtime-param-types [name : String]) : AstTypeList
   (cond
-    [(string-eq name "tl_print_char") (AstTypeCons (AstTyChar) AstTypeNil)]
-    [(string-eq name "tl_print_f64") (AstTypeCons (AstTyF64) AstTypeNil)]
+    [(string-eq name "tl_print_char") (ast-type-cons (AstTyChar) AstTypeNil)]
+    [(string-eq name "tl_print_f64") (ast-type-cons (AstTyF64) AstTypeNil)]
     [else AstTypeNil]))
 
 (define (compiler-backend-call-param-types
@@ -4228,6 +4233,7 @@
     [(AstTypeNil) count]
     [(AstTypeCons ty rest)
       (let
+        [rest : AstTypeList (box-get rest)]
         [is-float : bool (compiler-backend-float-type? ty)]
         [next-float : i64
           (if is-float
@@ -4255,6 +4261,7 @@
     [(AstTypeNil) ""]
     [(AstTypeCons ty rest)
       (let
+        [rest : AstTypeList (box-get rest)]
         [tail : String
           (compiler-backend-windows-vararg-dup-asm
             rest
@@ -4333,7 +4340,10 @@
           [(AstTypeNil) (AstTyI64)])]
       [rest-types : AstTypeList
         (match types
-          [(AstTypeCons _ tail) tail]
+          [(AstTypeCons _ tail)
+            (let
+              [tail : AstTypeList (box-get tail)]
+              tail)]
           [(AstTypeNil) AstTypeNil])]
       [is-float : bool (compiler-backend-float-type? arg-ty)]
       (compiler-backend-call-stack-arg-count
@@ -4505,7 +4515,10 @@
           [(AstTypeNil) (AstTyI64)])]
       [rest-types : AstTypeList
         (match types
-          [(AstTypeCons _ tail) tail]
+          [(AstTypeCons _ tail)
+            (let
+              [tail : AstTypeList (box-get tail)]
+              tail)]
           [(AstTypeNil) AstTypeNil])]
       [is-float : bool (compiler-backend-float-type? arg-ty)]
       [next-int : i64
@@ -18683,7 +18696,7 @@ tl_windows_sdk_registry_install:
                 (compiler-ir-extern-cons
                   (compiler-ir-extern-default
                     "tl_process_output"
-                    (AstTyFunc (AstTypeCons (AstTyI64) AstTypeNil) (AstTyI64)))
+                    (AstTyFunc (ast-type-cons (AstTyI64) AstTypeNil) (AstTyI64)))
                   (compiler-ir-extern-cons
                     (compiler-ir-extern-default
                       "tl_random_system_seed"

@@ -2128,9 +2128,14 @@
         [(AstTypeNil) true]
         [_ false])]
     [(AstTypeCons ah at)
-      (match b
-        [(AstTypeCons bh bt) (and (opt-type-eq ah bh) (opt-type-list-eq at bt))]
-        [_ false])]))
+      (let
+        [at : AstTypeList (box-get at)]
+        (match b
+          [(AstTypeCons bh bt)
+            (let
+              [bt : AstTypeList (box-get bt)]
+              (and (opt-type-eq ah bh) (opt-type-list-eq at bt)))]
+          [_ false]))]))
 
 (define (opt-type-eq [a : AstType] [b : AstType]) : bool
   (match a

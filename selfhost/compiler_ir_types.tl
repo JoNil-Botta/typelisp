@@ -672,11 +672,13 @@
   (match types
     [(AstTypeNil) ""]
     [(AstTypeCons head rest)
-      (string-append
-        (compiler-ir-type-render head)
-        (match rest
-          [(AstTypeNil) ""]
-          [_ (string-append " " (compiler-ir-type-list-render rest))]))]))
+      (let
+        [rest : AstTypeList (box-get rest)]
+        (string-append
+          (compiler-ir-type-render head)
+          (match rest
+            [(AstTypeNil) ""]
+            [_ (string-append " " (compiler-ir-type-list-render rest))])))]))
 
 (define (compiler-ir-type-render [ty : AstType]) : String
   (match ty
@@ -1700,10 +1702,12 @@
   (match types
     [(AstTypeNil) ""]
     [(AstTypeCons head tail)
-      (compiler-ir-cat3
-        " "
-        (compiler-ir-type-name head)
-        (compiler-ir-type-list-name tail))]))
+      (let
+        [tail : AstTypeList (box-get tail)]
+        (compiler-ir-cat3
+          " "
+          (compiler-ir-type-name head)
+          (compiler-ir-type-list-name tail)))]))
 
 (define (compiler-ir-type-name [ty : AstType]) : String
   (match ty

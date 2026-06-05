@@ -41,6 +41,8 @@
 
 (include-str compiler-embedded-stdlib-tests-arena-api "stdlib/tests/arena_api.tl")
 
+(include-str compiler-embedded-stdlib-tests-arena-patterns "stdlib/tests/arena_patterns.tl")
+
 (include-str compiler-embedded-stdlib-tests-arena-policy "stdlib/tests/arena_policy.tl")
 
 (include-str compiler-embedded-stdlib-tests-arena-policy-escape-string "stdlib/tests/arena_policy_escape_string.tl")
@@ -164,6 +166,9 @@
     [(string-eq suffix "tests/arena_api.tl")
       (CompilerEmbeddedStdlibSomeSource
         compiler-embedded-stdlib-tests-arena-api)]
+    [(string-eq suffix "tests/arena_patterns.tl")
+      (CompilerEmbeddedStdlibSomeSource
+        compiler-embedded-stdlib-tests-arena-patterns)]
     [(string-eq suffix "tests/arena_policy.tl")
       (CompilerEmbeddedStdlibSomeSource
         compiler-embedded-stdlib-tests-arena-policy)]

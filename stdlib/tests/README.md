@@ -17,6 +17,9 @@ Coverage notes:
   proving active-arena stdlib results cannot escape their scoped arena.
 - `arena_api.tl` covers the imported first-class arena helpers, including safe
   handle/mark observation and unsafe switch, rewind, and destroy calls.
+- `arena_patterns.tl` covers the standard safe scratch workflows: temporary
+  scalar-only work inside `with-arena` and clone-out from a reusable
+  first-class scratch arena through `with-escape`.
 - `string_edges.tl` covers the public string predicates, trimming helpers,
   replacement paths, and prefix checks, including empty strings, empty needles,
   misses, prefix positions, and replacement edge cases.

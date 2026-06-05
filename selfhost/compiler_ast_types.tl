@@ -321,6 +321,18 @@
   (AstExportItemNil)
   (AstExportItemCons AstExportItem (Box AstExportItemList)))
 
+(defenum AstDispatchIsa
+  (AstDispatchScalar)
+  (AstDispatchAvx2)
+  (AstDispatchAvx512))
+
+(defenum AstDispatchVariant
+  (AstDispatchVariant AstDispatchIsa String))
+
+(defenum AstDispatchVariantList
+  (AstDispatchVariantNil)
+  (AstDispatchVariantCons AstDispatchVariant (Box AstDispatchVariantList)))
+
 (defenum AstGeneratedDeclMeta
   (AstNoGeneratedDeclMeta)
   (AstSomeGeneratedDeclMeta String String AstExprList))
@@ -343,6 +355,7 @@
   (AstDeclImport AstImportSpec)
   (AstDeclIncludeStr String String)
   (AstDeclExport AstExportItemList)
+  (AstDeclDefDispatch String AstDispatchVariantList)
   (AstDeclTest String (Box AstExpr) AstSourceSpan)
   (AstDeclUnsafe (Box AstDecl))
   (AstDeclComptimeDecl AstGeneratedDeclMeta (Box AstDecl)))
@@ -622,6 +635,11 @@
 (define (ast-export-item-cons [head : AstExportItem] [rest : AstExportItemList]) : AstExportItemList
   (AstExportItemCons head (box rest)))
 
+(define (ast-dispatch-variant-cons
+  [head : AstDispatchVariant]
+  [rest : AstDispatchVariantList]) : AstDispatchVariantList
+  (AstDispatchVariantCons head (box rest)))
+
 (define (ast-decl-cons [head : AstDecl] [rest : AstDeclList]) : AstDeclList
   (AstDeclCons head (box rest)))
 
@@ -792,7 +810,8 @@
     [(AstDeclIncludeStr _ _) 12]
     [(AstDeclUnsafe _) 13]
     [(AstDeclDefEnumLifetimes _ _ _) 14]
-    [(AstDeclDefStructLifetimes _ _ _ _ _) 15]))
+    [(AstDeclDefStructLifetimes _ _ _ _ _) 15]
+    [(AstDeclDefDispatch _ _) 16]))
 
 (define (ast-struct-repr-c? [repr : AstStructRepr]) : bool
   (match repr

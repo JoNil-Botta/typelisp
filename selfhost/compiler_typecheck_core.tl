@@ -3060,6 +3060,7 @@
                   (compiler-symbol-module-key (tc-context-module ctx) name)))
               OkTcUnit)]
           [(ErrTcUnit message) (ErrTcUnit message)]))]
+    [(AstDeclDefDispatch _ _) OkTcUnit]
     [(AstDeclIncludeStr _ _)
       (ErrTcUnit "typecheck: include-str must be expanded by compiler loader")]
     [(AstDeclImport _) OkTcUnit]
@@ -3820,6 +3821,162 @@
                   (CtfeExpr (AstExprVar name) (tc-resolve-type ctx ty))))
               rest)]))]))
 
+(define (tc-dispatch-isa-eq? [a : AstDispatchIsa] [b : AstDispatchIsa]) : bool
+  (match a
+    [(AstDispatchScalar)
+      (match b
+        [(AstDispatchScalar) true]
+        [_ false])]
+    [(AstDispatchAvx2)
+      (match b
+        [(AstDispatchAvx2) true]
+        [_ false])]
+    [(AstDispatchAvx512)
+      (match b
+        [(AstDispatchAvx512) true]
+        [_ false])]))
+
+(define (tc-dispatch-variant-list-contains-isa?
+  [variants : AstDispatchVariantList]
+  [isa : AstDispatchIsa]) : bool
+  (match variants
+    [(AstDispatchVariantNil) false]
+    [(AstDispatchVariantCons variant rest)
+      (let
+        [rest : AstDispatchVariantList (box-get rest)]
+        (match variant
+          [(AstDispatchVariant found-isa _)
+            (if (tc-dispatch-isa-eq? found-isa isa)
+              true
+              (tc-dispatch-variant-list-contains-isa? rest isa))]))]))
+
+(define (tc-dispatch-variant-list-duplicate-isa?
+  [variants : AstDispatchVariantList]) : bool
+  (match variants
+    [(AstDispatchVariantNil) false]
+    [(AstDispatchVariantCons variant rest)
+      (let
+        [rest : AstDispatchVariantList (box-get rest)]
+        (match variant
+          [(AstDispatchVariant isa _)
+            (or
+              (tc-dispatch-variant-list-contains-isa? rest isa)
+              (tc-dispatch-variant-list-duplicate-isa? rest))]))]))
+
+(define (tc-dispatch-variant-list-scalar-count
+  [variants : AstDispatchVariantList]) : i64
+  (match variants
+    [(AstDispatchVariantNil) 0]
+    [(AstDispatchVariantCons variant rest)
+      (let
+        [rest : AstDispatchVariantList (box-get rest)]
+        (match variant
+          [(AstDispatchVariant isa _)
+            (+
+              (match isa
+                [(AstDispatchScalar) 1]
+                [_ 0])
+              (tc-dispatch-variant-list-scalar-count rest))]))]))
+
+(define (tc-dispatch-symbol-name [module : String] [name : String]) : String
+  (if (and (> (string-length module) 0) (not (tc-name-qualified? name)))
+    (compiler-symbol-module-key module name)
+    name))
+
+(define (tc-dispatch-variant-non-function-message [name : String]) : String
+  (string-append "typecheck: defdispatch variant is not a function " name))
+
+(define (tc-dispatch-variant-type
+  [ctx : TcContext]
+  [dispatch-name : String]
+  [variant-name : String]) : ResultTcType
+  (let
+    [module : String (tc-context-module ctx)]
+    [logical-name : String (tc-dispatch-symbol-name module dispatch-name)]
+    [lookup-name : String (tc-dispatch-symbol-name module variant-name)]
+    (if (string-eq lookup-name logical-name)
+      (ErrTcType "typecheck: defdispatch cannot use itself as a variant")
+      (match (compiler-symbols-lookup-value
+        (tc-context-symbols ctx)
+        lookup-name)
+        [(SomeI64 handle)
+          (let
+            [kind : i64 (compiler-symbol-handle-kind handle)]
+            (cond
+              [(= kind (compiler-symbol-kind-defdispatch))
+                (ErrTcType
+                  "typecheck: defdispatch variant cannot be another dispatch")]
+              [(or
+                  (= kind (compiler-symbol-kind-function-define))
+                  (= kind (compiler-symbol-kind-extern)))
+                (match (compiler-program-decl-at-index
+                  (tc-context-program ctx)
+                  (compiler-symbol-handle-index handle))
+                  [(OkAstDecl decl)
+                    (match (tc-top-decl-type ctx decl)
+                      [(OkTcType ty)
+                        (match ty
+                          [(AstTyFunc _ _) (OkTcType ty)]
+                          [_
+                            (ErrTcType
+                              (tc-dispatch-variant-non-function-message
+                                variant-name))])]
+                      [(ErrTcType message) (ErrTcType message)])]
+                  [(ErrAstDecl message) (ErrTcType message)])]
+              [else
+                (ErrTcType
+                  (tc-dispatch-variant-non-function-message variant-name))]))]
+        [(NoneI64)
+          (ErrTcType
+            (string-append
+              "typecheck: unknown defdispatch variant "
+              variant-name))]))))
+
+(define (tc-dispatch-variant-signatures
+  [ctx : TcContext]
+  [dispatch-name : String]
+  [variants : AstDispatchVariantList]
+  [expected : AstMaybeType]) : ResultTcType
+  (match variants
+    [(AstDispatchVariantNil)
+      (match expected
+        [(AstSomeType ty) (OkTcType ty)]
+        [(AstNoType) (ErrTcType "typecheck: defdispatch has no variants")])]
+    [(AstDispatchVariantCons variant rest)
+      (let
+        [rest : AstDispatchVariantList (box-get rest)]
+        (match variant
+          [(AstDispatchVariant _ variant-name)
+            (match (tc-dispatch-variant-type ctx dispatch-name variant-name)
+              [(OkTcType ty)
+                (match expected
+                  [(AstNoType)
+                    (tc-dispatch-variant-signatures
+                      ctx
+                      dispatch-name
+                      rest
+                      (AstSomeType ty))]
+                  [(AstSomeType want)
+                    (if (tc-type-eq ty want)
+                      (tc-dispatch-variant-signatures
+                        ctx
+                        dispatch-name
+                        rest
+                        expected)
+                      (ErrTcType
+                        "typecheck: defdispatch variant signatures must match"))])]
+              [(ErrTcType message) (ErrTcType message)])]))]))
+
+(define (tc-dispatch-decl-type
+  [ctx : TcContext]
+  [name : String]
+  [variants : AstDispatchVariantList]) : ResultTcType
+  (if (!= (tc-dispatch-variant-list-scalar-count variants) 1)
+    (ErrTcType "typecheck: defdispatch requires exactly one scalar variant")
+    (if (tc-dispatch-variant-list-duplicate-isa? variants)
+      (ErrTcType "typecheck: duplicate defdispatch ISA variant")
+      (tc-dispatch-variant-signatures ctx name variants AstNoType))))
+
 (define (tc-top-decl-type [ctx : TcContext] [decl : AstDecl]) : ResultTcType
   (match decl
     [(AstDeclDef _ maybe-ty expr-box)
@@ -3836,6 +3993,8 @@
       (OkTcType
         (ast-ty-func (tc-param-type-list ctx params) (tc-resolve-type ctx ret)))]
     [(AstDeclExtern _ _ ty) (OkTcType (tc-resolve-type ctx ty))]
+    [(AstDeclDefDispatch name variants)
+      (tc-dispatch-decl-type ctx name variants)]
     [(AstDeclUnsafe inner-box)
       (let
         [inner : AstDecl (box-get inner-box)]
@@ -4002,6 +4161,15 @@
                   module)]
               [(ErrTcType message) (ErrTcEnv message)])]
           [(AstDeclDefFn name _ _ _)
+            (match (tc-top-decl-type (tc-context-with-module ctx module) decl)
+              [(OkTcType ty)
+                (tc-build-top-env-list-in-module
+                  ctx
+                  rest
+                  (tc-bind-module-name env module name ty)
+                  module)]
+              [(ErrTcType message) (ErrTcEnv message)])]
+          [(AstDeclDefDispatch name _)
             (match (tc-top-decl-type (tc-context-with-module ctx module) decl)
               [(OkTcType ty)
                 (tc-build-top-env-list-in-module
@@ -4210,6 +4378,11 @@
           (OkTcEnv (tc-bind env (compiler-symbol-module-key alias name) ty))]
         [(ErrTcType message) (ErrTcEnv message)])]
     [(AstDeclDefFn name _ _ _)
+      (match (tc-top-decl-type (tc-context-with-module ctx module) decl)
+        [(OkTcType ty)
+          (OkTcEnv (tc-bind env (compiler-symbol-module-key alias name) ty))]
+        [(ErrTcType message) (ErrTcEnv message)])]
+    [(AstDeclDefDispatch name _)
       (match (tc-top-decl-type (tc-context-with-module ctx module) decl)
         [(OkTcType ty)
           (OkTcEnv (tc-bind env (compiler-symbol-module-key alias name) ty))]
@@ -4439,6 +4612,10 @@
         [(OkTcType ty) (OkTcEnv (tc-bind env name ty))]
         [(ErrTcType message) (ErrTcEnv message)])]
     [(AstDeclDefFn name _ _ _)
+      (match (tc-top-decl-type ctx decl)
+        [(OkTcType ty) (OkTcEnv (tc-bind env name ty))]
+        [(ErrTcType message) (ErrTcEnv message)])]
+    [(AstDeclDefDispatch name _)
       (match (tc-top-decl-type ctx decl)
         [(OkTcType ty) (OkTcEnv (tc-bind env name ty))]
         [(ErrTcType message) (ErrTcEnv message)])]
@@ -13759,6 +13936,10 @@
         [body : AstExpr (box-get body-box)]
         (tc-check-defmacro ctx top-env params ret body))]
     [(AstDeclExtern _ metadata ty) (tc-check-extern-decl ctx metadata ty)]
+    [(AstDeclDefDispatch name variants)
+      (match (tc-dispatch-decl-type ctx name variants)
+        [(OkTcType _) OkTcUnit]
+        [(ErrTcType message) (ErrTcUnit message)])]
     [(AstDeclDefStruct name repr cleanup fields)
       (tc-check-cleanup-struct-decl ctx top-env name repr cleanup fields)]
     [(AstDeclDefStructLifetimes name _ repr cleanup fields)

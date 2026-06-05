@@ -1059,6 +1059,11 @@
         name
         (lower-current-decl-logical-name-cache name-cache module name)
         names)]
+    [(AstDeclDefDispatch name _)
+      (LowerNameBind
+        name
+        (lower-current-decl-logical-name names module name)
+        names)]
     [(AstDeclExtern name _ _)
       (LowerNameBind
         name
@@ -1113,6 +1118,8 @@
     [(AstDeclDef name _ _)
       (lower-module-local-type-env-bind-qualified top-env env module name)]
     [(AstDeclDefFn name _ _ _)
+      (lower-module-local-type-env-bind-qualified top-env env module name)]
+    [(AstDeclDefDispatch name _)
       (lower-module-local-type-env-bind-qualified top-env env module name)]
     [(AstDeclExtern name _ _)
       (lower-module-local-type-env-bind-qualified top-env env module name)]
@@ -16633,6 +16640,10 @@
               type-cache
               mode
               module)]
+          [(AstDeclDefDispatch _ _)
+            (ErrLowerDecls
+              (lower-diagnostic
+                "lower: defdispatch lowering is not implemented (#1484)"))]
           [(AstDeclImport _)
             (lower-decls-in-module
               ctx
@@ -17303,6 +17314,11 @@
   "(define (dup) : i64 1)
 (define (dup) : i64 2)
 (define (main) : i64 (dup))")
+
+(define (compiler-lower-defdispatch-source) : String
+  "(define (dot-scalar [x : i64]) : i64 x)
+(defdispatch dot (scalar dot-scalar))
+(define (main [x : i64]) : i64 (dot x))")
 
 (define (compiler-lower-error-ok? [src : String] [want : String]) : bool
   (match (lower-compiler-source src)
@@ -21941,6 +21957,11 @@
         unit
         (set! ok false))
       (if (compiler-lower-ok? (compiler-lower-export-source))
+        unit
+        (set! ok false))
+      (if (compiler-lower-error-ok?
+        (compiler-lower-defdispatch-source)
+        "lower: defdispatch lowering is not implemented (#1484)")
         unit
         (set! ok false))
       (if (compiler-lower-ok? (compiler-lower-result-try-source))

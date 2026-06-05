@@ -980,6 +980,35 @@
 (define (front-export-item-list-render [items : AstExportItemList]) : String
   (front-cat3 "[" (front-export-item-list-items-render items) "]"))
 
+(define (front-dispatch-isa-render [isa : AstDispatchIsa]) : String
+  (match isa
+    [(AstDispatchScalar) "scalar"]
+    [(AstDispatchAvx2) "avx2"]
+    [(AstDispatchAvx512) "avx512"]))
+
+(define (front-dispatch-variant-render [variant : AstDispatchVariant]) : String
+  (match variant
+    [(AstDispatchVariant isa name)
+      (front-cat3 (front-dispatch-isa-render isa) ":" name)]))
+
+(define (front-dispatch-variant-list-items-render
+  [variants : AstDispatchVariantList]) : String
+  (match variants
+    [(AstDispatchVariantNil) ""]
+    [(AstDispatchVariantCons variant rest)
+      (let
+        [rest : AstDispatchVariantList (box-get rest)]
+        (match rest
+          [(AstDispatchVariantNil) (front-dispatch-variant-render variant)]
+          [_
+            (front-cat3
+              (front-dispatch-variant-render variant)
+              ", "
+              (front-dispatch-variant-list-items-render rest))]))]))
+
+(define (front-dispatch-variant-list-render [variants : AstDispatchVariantList]) : String
+  (front-cat3 "[" (front-dispatch-variant-list-items-render variants) "]"))
+
 (define (front-decl-render [decl : AstDecl]) : String
   (match decl
     [(AstDeclModule name) (front-cat3 "Module(\"" name "\")")]
@@ -1069,6 +1098,14 @@
         (front-cat3 "\", path: \"" path "\" }"))]
     [(AstDeclExport items)
       (front-cat3 "Export { items: " (front-export-item-list-render items) " }")]
+    [(AstDeclDefDispatch name variants)
+      (front-cat3
+        "DefDispatch { name: \""
+        name
+        (front-cat3
+          "\", variants: "
+          (front-dispatch-variant-list-render variants)
+          " }"))]
     [(AstDeclTest name body-box _)
       (let
         [body : AstExpr (box-get body-box)]

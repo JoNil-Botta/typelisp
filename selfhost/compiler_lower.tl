@@ -6614,27 +6614,6 @@
                 "lower: clone unsupported type "
                 (tc-type-render clone-ty)))))])))
 
-(define (lower-clone-value-dispatch
-  [ctx : TcContext]
-  [state : LowerState]
-  [env : SymI64Env]
-  [value : CompilerIrValue]
-  [ty : AstType]) : ResultLowerExpr
-  (match (tc-resolve-type ctx ty)
-    [(AstTyString)
-      (match (lower-string-fields state value)
-        [(LowerStringFields fields-state ptr len)
-          (lower-substring-bounds-checked
-            fields-state
-            ptr
-            len
-            (IrValueI64 0)
-            len)])]
-    [(AstTyEnum name) (lower-clone-named state env name value ty)]
-    [(AstTyStruct name) (lower-clone-named state env name value ty)]
-    [(AstTyVar name) (lower-clone-named state env name value ty)]
-    [_ (OkLowerExpr (LowerExpr state value ty))]))
-
 (define (lower-clone-call
   [ctx : TcContext]
   [state : LowerState]
@@ -13586,11 +13565,12 @@
   [ctx : TcContext]
   [state : LowerState]
   [env : SymI64Env]
+  [type-env : TcTypeEnv]
   [scratch-head-value : CompilerIrValue]
   [mark-value : CompilerIrValue]
   [body-value : CompilerIrValue]
   [body-ty : AstType]) : ResultLowerExpr
-  (match (lower-clone-value-dispatch ctx state env body-value body-ty)
+  (match (lower-clone-dispatch ctx state env type-env body-value body-ty)
     [(OkLowerExpr escaped-lowered)
       (match escaped-lowered
         [(LowerExpr escaped-state escaped-value escaped-ty)
@@ -13634,6 +13614,7 @@
                             ctx
                             restore-state
                             env
+                            type-env
                             scratch-head-value
                             mark-value
                             body-value
@@ -21425,6 +21406,50 @@
     [scratch : i64 (arena-make)]
     (with-escape scratch (int->string 42))))"))
 
+(define (compiler-lower-with-escape-array-source) : String
+  (compiler-lower-with-arena-source
+    "(define (main) : (Array String)
+  (let
+    [scratch : i64 (arena-make)]
+    (with-escape scratch
+      (let
+        [items : (Array String) (make-array String 2)]
+        (begin
+          (array-set! items 0 (int->string 1))
+          (array-set! items 1 (int->string 2))
+          items)))))"))
+
+(define (compiler-lower-with-escape-box-source) : String
+  (compiler-lower-with-arena-source
+    "(define (main) : (Box String)
+  (let
+    [scratch : i64 (arena-make)]
+    (with-escape scratch (box (int->string 42)))))"))
+
+(define (compiler-lower-with-escape-owning-source) : String
+  (compiler-lower-with-arena-source
+    "(defstruct EscapePayload
+  (name String)
+  (items (Array String))
+  (cell (Box String)))
+(defenum EscapeResult
+  (EscapeOk EscapePayload)
+  (EscapeNone))
+(define (main) : EscapeResult
+  (let
+    [scratch : i64 (arena-make)]
+    (with-escape scratch
+      (let
+        [items : (Array String) (make-array String 2)]
+        (begin
+          (array-set! items 0 (int->string 1))
+          (array-set! items 1 (int->string 2))
+          (EscapeOk
+            (EscapePayload
+              (int->string 3)
+              items
+              (box (int->string 4)))))))))"))
+
 (define (compiler-lower-with-escape-arena-shape-ok? [src : String]) : bool
   (match (lower-compiler-source src)
     [(OkCompilerLower program _)
@@ -21445,19 +21470,80 @@
                   0))))])]
     [(ErrCompilerLower _) false]))
 
-(define (compiler-lower-with-escape-shape-ok?) : bool
-  (and
-    (compiler-lower-with-escape-arena-shape-ok?
-      (compiler-lower-with-escape-scalar-source))
-    (match (lower-compiler-source (compiler-lower-with-escape-string-source))
-      [(OkCompilerLower program _)
-        (match program
-          [(IrProgram _ functions _)
+(define (compiler-lower-with-escape-array-shape-ok?) : bool
+  (match (lower-compiler-source (compiler-lower-with-escape-array-source))
+    [(OkCompilerLower program _)
+      (match program
+        [(IrProgram _ functions _)
+          (and
+            (compiler-lower-with-escape-arena-shape-ok?
+              (compiler-lower-with-escape-array-source))
             (and
-              (compiler-lower-with-escape-arena-shape-ok?
-                (compiler-lower-with-escape-string-source))
-              (> (lower-test-functions-call-count functions "tl_substring") 0))])]
-      [(ErrCompilerLower _) false])))
+              (> (lower-test-functions-call-count functions "tl_alloc") 1)
+              (> (lower-test-function-branch-count functions "main") 0)))])]
+    [(ErrCompilerLower _) false]))
+
+(define (compiler-lower-with-escape-box-shape-ok?) : bool
+  (match (lower-compiler-source (compiler-lower-with-escape-box-source))
+    [(OkCompilerLower program _)
+      (match program
+        [(IrProgram _ functions _)
+          (and
+            (compiler-lower-with-escape-arena-shape-ok?
+              (compiler-lower-with-escape-box-source))
+            (and
+              (> (lower-test-functions-call-count functions "tl_alloc") 0)
+              (> (lower-test-functions-call-count functions "tl_substring") 0)))])]
+    [(ErrCompilerLower _) false]))
+
+(define (compiler-lower-with-escape-owning-shape-ok?) : bool
+  (match (lower-compiler-source (compiler-lower-with-escape-owning-source))
+    [(OkCompilerLower program _)
+      (match program
+        [(IrProgram _ functions _)
+          (and
+            (compiler-lower-with-escape-arena-shape-ok?
+              (compiler-lower-with-escape-owning-source))
+            (and
+              (=
+                (lower-test-function-call-count
+                  functions
+                  "main"
+                  "clone$EscapeResult")
+                1)
+              (> (lower-test-functions-call-count functions "tl_alloc") 0)))])]
+    [(ErrCompilerLower _) false]))
+
+(define (compiler-lower-with-escape-shape-ok?) : bool
+  (let
+    [ok : bool true]
+    (begin
+      (if (compiler-lower-with-escape-arena-shape-ok?
+        (compiler-lower-with-escape-scalar-source))
+        unit
+        (set! ok false))
+      (if (match (lower-compiler-source
+        (compiler-lower-with-escape-string-source))
+        [(OkCompilerLower program _)
+          (match program
+            [(IrProgram _ functions _)
+              (and
+                (compiler-lower-with-escape-arena-shape-ok?
+                  (compiler-lower-with-escape-string-source))
+                (> (lower-test-functions-call-count functions "tl_substring") 0))])]
+        [(ErrCompilerLower _) false])
+        unit
+        (set! ok false))
+      (if (compiler-lower-with-escape-array-shape-ok?)
+        unit
+        (set! ok false))
+      (if (compiler-lower-with-escape-box-shape-ok?)
+        unit
+        (set! ok false))
+      (if (compiler-lower-with-escape-owning-shape-ok?)
+        unit
+        (set! ok false))
+      ok)))
 
 (define (compiler-lower-repr-c-shape-ok?) : bool
   (match (lower-compiler-source (compiler-lower-repr-c-source))

@@ -1387,30 +1387,82 @@
 
 (define (compiler-typecheck-with-escape-box-result-source) : String
   (compiler-typecheck-with-arena-source
-    "(define (main) : (Box i64)
+    "(define (main) : (Box String)
   (let
     [scratch : i64 (arena-make)]
-    (with-escape scratch (box 4))))"))
+    (with-escape scratch (box (int->string 4)))))"))
+
+(define (compiler-typecheck-with-escape-owning-aggregate-source) : String
+  (compiler-typecheck-with-arena-source
+    "(defstruct EscapePayload
+  (name String)
+  (items (Array String))
+  (cell (Box String)))
+(defenum EscapeResult
+  (EscapeOk EscapePayload)
+  (EscapeNone))
+(define (main) : EscapeResult
+  (let
+    [scratch : i64 (arena-make)]
+    (with-escape scratch
+      (let
+        [items : (Array String) (make-array String 2)]
+        (begin
+          (array-set! items 0 (int->string 1))
+          (array-set! items 1 (int->string 2))
+          (EscapeOk
+            (EscapePayload
+              (int->string 3)
+              items
+              (box (int->string 4)))))))))"))
+
+(define (compiler-typecheck-with-escape-unsupported-result-source) : String
+  (compiler-typecheck-with-arena-source
+    "(define (inc [x : i64]) : i64 (+ x 1))
+(define (main) : (-> i64 i64)
+  (let
+    [scratch : i64 (arena-make)]
+    (with-escape scratch inc)))"))
 
 (define (compiler-typecheck-with-escape-tests-ok?) : bool
-  (and
-    (compiler-typecheck-ok? (compiler-typecheck-with-escape-scalar-source))
-    (and
-      (compiler-typecheck-ok? (compiler-typecheck-with-escape-string-source))
-      (and
-        (compiler-typecheck-ok?
-          (compiler-typecheck-with-escape-region-strip-source))
-        (and
-          (compiler-typecheck-error-ok?
-            (compiler-typecheck-with-escape-bad-arena-source)
-            "typecheck: with-escape arena must be i64")
-          (and
-            (compiler-typecheck-error-ok?
-              (compiler-typecheck-with-escape-array-result-source)
-              "typecheck: with-escape result type is not clone-supported")
-            (compiler-typecheck-error-ok?
-              (compiler-typecheck-with-escape-box-result-source)
-              "typecheck: with-escape result type is not clone-supported")))))))
+  (let
+    [ok : bool true]
+    (begin
+      (if (compiler-typecheck-ok?
+        (compiler-typecheck-with-escape-scalar-source))
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-ok?
+        (compiler-typecheck-with-escape-string-source))
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-ok?
+        (compiler-typecheck-with-escape-region-strip-source))
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-ok?
+        (compiler-typecheck-with-escape-array-result-source))
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-ok?
+        (compiler-typecheck-with-escape-box-result-source))
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-ok?
+        (compiler-typecheck-with-escape-owning-aggregate-source))
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        (compiler-typecheck-with-escape-bad-arena-source)
+        "typecheck: with-escape arena must be i64")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        (compiler-typecheck-with-escape-unsupported-result-source)
+        "typecheck: with-escape result type is not clone-supported: (-> i64 i64)")
+        unit
+        (set! ok false))
+      ok)))
 
 (define (compiler-typecheck-box-source) : String
   "(define (main) : i64

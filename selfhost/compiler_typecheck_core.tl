@@ -10046,16 +10046,10 @@
         (tc-quasiquote-template-ok ctx env inner))]
     [_ OkTcUnit]))
 
-(define (tc-with-escape-result-supported? [ctx : TcContext] [ty : AstType]) : bool
-  (match (tc-type-strip-region (tc-resolve-type ctx ty))
-    [(AstTyString) true]
-    [(AstTyEnum _) true]
-    [(AstTyEnumArgs _ _) true]
-    [(AstTyStruct _) true]
-    [(AstTyStructArgs _ _) true]
-    [(AstTyVar _) true]
-    [(AstTyVarArgs _ _) true]
-    [_ (tc-type-copyable? ty)]))
+(define (tc-with-escape-unsupported-message [ctx : TcContext] [ty : AstType]) : String
+  (string-append
+    "typecheck: with-escape result type is not clone-supported: "
+    (tc-type-render (tc-type-without-regions (tc-resolve-type ctx ty)))))
 
 ;; with-escape is a first-class scratch-arena clone path, not a lexical
 ;; lifetime binder. The scratch expression is just an arena handle, and
@@ -10070,10 +10064,9 @@
       (if (tc-type-eq scratch-ty (AstTyI64))
         (match (tc-begin-list ctx env body)
           [(OkTcType body-ty)
-            (if (tc-with-escape-result-supported? ctx body-ty)
+            (if (tc-clone-able-type? ctx body-ty)
               (OkTcType (tc-type-without-regions body-ty))
-              (ErrTcType
-                "typecheck: with-escape result type is not clone-supported"))]
+              (ErrTcType (tc-with-escape-unsupported-message ctx body-ty)))]
           [(ErrTcType message) (ErrTcType message)])
         (ErrTcType "typecheck: with-escape arena must be i64"))]
     [(ErrTcType message) (ErrTcType message)]))

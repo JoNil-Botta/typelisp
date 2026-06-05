@@ -384,12 +384,14 @@
   (print-string text))
 (define (parse-and-render [s : String]) : i64
   (+
-    (string->int s)
+    (if (string-eq s \"42\") 1 0)
     (+
-      (string-length (int->string 42))
+      (string->int s)
       (+
-        (string-length (substring s 0 1))
-        (string-length (string-concat s \"!\"))))))
+        (string-length (int->string 42))
+        (+
+          (string-length (substring s 0 1))
+          (string-length (string-concat s \"!\")))))))
 (define (emit-stdout [s : String]) : unit
   (begin
     (print-string s)
@@ -448,7 +450,7 @@
                 (compiler-backend-string-contains?
                   asm
                   ".extern tl_print_string\n"))
-              true)
+              (compiler-backend-string-contains? asm "    cmpq %rdi, %rdx\n"))
             (not
               (compiler-backend-string-contains?
                 asm
@@ -1259,6 +1261,32 @@
                 [(OkCompilerBackend asm) (string-eq asm "")]
                 [(ErrCompilerBackend _) false]))))))))
 
+(define (compiler-backend-direct-immediate-mov-ok?) : bool
+  (let
+    [assignments : CompilerRegAssignmentList
+      (compiler-reg-assignment-cons
+        (CompilerRegAssignment 0 (CompilerRegRegister "%r12"))
+        CompilerRegAssignmentNil)]
+    [index : CompilerBackendProgramIndex
+      (compiler-backend-program-index-build IrFunctionNil IrExternNil)]
+    (and
+      (match (compiler-backend-emit-mov
+        assignments
+        0
+        (IrValueI64 0)
+        (AstTyI64)
+        index)
+        [(OkCompilerBackend asm) (string-eq asm "    xorq %r12, %r12\n")]
+        [(ErrCompilerBackend _) false])
+      (match (compiler-backend-emit-mov
+        CompilerRegAssignmentNil
+        1
+        (IrValueI64 7)
+        (AstTyI64)
+        index)
+        [(OkCompilerBackend asm) (string-eq asm "    movq $7, -16(%rbp)\n")]
+        [(ErrCompilerBackend _) false]))))
+
 (define (compiler-backend-peephole-asm-ok?) : bool
   (let
     [assignments : CompilerRegAssignmentList
@@ -1360,18 +1388,20 @@
   (and
     (compiler-backend-peephole-register-moves-ok?)
     (and
-      (compiler-backend-peephole-asm-ok?)
+      (compiler-backend-direct-immediate-mov-ok?)
       (and
-        (compiler-backend-fallthrough-jump-ok?)
+        (compiler-backend-peephole-asm-ok?)
         (and
-          (compiler-backend-branch-fallthrough-ok?)
+          (compiler-backend-fallthrough-jump-ok?)
           (and
-            (compiler-backend-zero-load-ok?)
+            (compiler-backend-branch-fallthrough-ok?)
             (and
-              (compiler-backend-zero-compare-ok?)
+              (compiler-backend-zero-load-ok?)
               (and
-                (compiler-backend-call-return-ok?)
-                (compiler-backend-global-immediate-store-ok?)))))))))
+                (compiler-backend-zero-compare-ok?)
+                (and
+                  (compiler-backend-call-return-ok?)
+                  (compiler-backend-global-immediate-store-ok?))))))))))
 
 (define (compiler-backend-fallthrough-program) : CompilerIrProgram
   (IrProgram
@@ -1825,7 +1855,9 @@
                 (compiler-backend-string-contains?
                   asm
                   ".L_tl_file_handle_next:\n"))
-              (compiler-backend-windows-driver-runtime-ok?)))))]
+              (and
+                (compiler-backend-string-contains? asm "    cmpq %rcx, %r8\n")
+                (compiler-backend-windows-driver-runtime-ok?))))))]
     [(ErrCompilerBackend message) false]))
 
 (define (compiler-backend-windows-runtime-guard-source) : String

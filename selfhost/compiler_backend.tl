@@ -2527,6 +2527,47 @@
                 (backend-cat3 ", " addr "\n")))))]
       [(CompilerBackendNoImmediate) (CompilerBackendNoAsm)])))
 
+(define (compiler-backend-emit-load-immediate-to-reg
+  [value : CompilerIrValue]
+  [reg : String]) : CompilerBackendMaybeAsm
+  (match (compiler-backend-value-as-i64 value)
+    [(CompilerBackendSomeI64 n)
+      (CompilerBackendSomeAsm (compiler-backend-emit-load-i64-immediate n reg))]
+    [(CompilerBackendNoI64)
+      (match (compiler-backend-immediate-operand value)
+        [(CompilerBackendSomeImmediate imm)
+          (CompilerBackendSomeAsm (backend-cat5 "    movq " imm ", " reg "\n"))]
+        [(CompilerBackendNoImmediate) (CompilerBackendNoAsm)])]))
+
+(define (compiler-backend-emit-store-immediate-to-var-home
+  [assignments : CompilerRegAssignmentList]
+  [var-id : i64]
+  [value : CompilerIrValue]) : CompilerBackendMaybeAsm
+  (match (compiler-backend-immediate-operand value)
+    [(CompilerBackendSomeImmediate imm)
+      (match (compiler-reg-assignment-lookup assignments var-id)
+        [(CompilerRegSomeLocation location)
+          (match location
+            [(CompilerRegRegister home)
+              (compiler-backend-emit-load-immediate-to-reg value home)]
+            [(CompilerRegSpill offset)
+              (CompilerBackendSomeAsm
+                (backend-cat5
+                  "    movq "
+                  imm
+                  ", "
+                  (compiler-backend-frame-offset offset)
+                  "\n"))])]
+        [(CompilerRegNoLocation)
+          (CompilerBackendSomeAsm
+            (backend-cat5
+              "    movq "
+              imm
+              ", "
+              (compiler-backend-slot var-id)
+              "\n"))])]
+    [(CompilerBackendNoImmediate) (CompilerBackendNoAsm)]))
+
 (define (compiler-backend-avx2-vector-reduce-move-scalar [elem-ty : AstType]) : String
   (match elem-ty
     [(AstTyI32) "    vmovd %xmm0, %eax\n"]
@@ -5972,41 +6013,55 @@
   [program-index : CompilerBackendProgramIndex]) : ResultCompilerBackend
   (if (compiler-backend-value-same-home? assignments dst src)
     (OkCompilerBackend "")
-    (match (match src
-      [(IrValueGlobalAddr name)
-        (if (compiler-backend-float-type? ty)
-          (compiler-backend-emit-load-typed-value-with-plan
-            assignments
-            src
-            ty
-            program-index)
+    (if (compiler-backend-float-type? ty)
+      (match (compiler-backend-emit-load-typed-value-with-plan
+        assignments
+        src
+        ty
+        program-index)
+        [(OkCompilerBackend load)
           (OkCompilerBackend
-            (backend-cat5
-              "    leaq "
-              (compiler-backend-function-or-global-addr-symbol
-                program-index
-                name)
-              "(%rip), %rax\n"
-              ""
-              "")))]
-      [_
-        (compiler-backend-emit-load-typed-value-with-plan
-          assignments
-          src
-          ty
-          program-index)])
-      [(OkCompilerBackend load)
-        (OkCompilerBackend
-          (string-append
-            load
-            (compiler-backend-emit-store-typed-var-with-plan
-              assignments
-              dst
-              (if (compiler-backend-float-type? ty)
+            (string-append
+              load
+              (compiler-backend-emit-store-typed-var-with-plan
+                assignments
+                dst
                 "%xmm0"
-                "%rax")
-              ty)))]
-      [(ErrCompilerBackend message) (ErrCompilerBackend message)])))
+                ty)))]
+        [(ErrCompilerBackend message) (ErrCompilerBackend message)])
+      (match (compiler-backend-emit-store-immediate-to-var-home
+        assignments
+        dst
+        src)
+        [(CompilerBackendSomeAsm asm) (OkCompilerBackend asm)]
+        [(CompilerBackendNoAsm)
+          (match (match src
+            [(IrValueGlobalAddr name)
+              (OkCompilerBackend
+                (backend-cat5
+                  "    leaq "
+                  (compiler-backend-function-or-global-addr-symbol
+                    program-index
+                    name)
+                  "(%rip), %rax\n"
+                  ""
+                  ""))]
+            [_
+              (compiler-backend-emit-load-typed-value-with-plan
+                assignments
+                src
+                ty
+                program-index)])
+            [(OkCompilerBackend load)
+              (OkCompilerBackend
+                (string-append
+                  load
+                  (compiler-backend-emit-store-typed-var-with-plan
+                    assignments
+                    dst
+                    "%rax"
+                    ty)))]
+            [(ErrCompilerBackend message) (ErrCompilerBackend message)])]))))
 
 (define (compiler-backend-emit-entry-load
   [assignments : CompilerRegAssignmentList]
@@ -15775,6 +15830,8 @@ tl_arg:
 tl_string_eq:
     cmpq %rcx, %rsi
     jne .L_tl_string_eq_false
+    cmpq %rdi, %rdx
+    je .L_tl_string_eq_true
     movq %rsi, %r8
     shrq $3, %r8
     jz .L_tl_string_eq_tail
@@ -15844,6 +15901,8 @@ tl_string_to_int:
 tl_string_eq:
     cmpq %r9, %rdx
     jne .L_tl_string_eq_false
+    cmpq %rcx, %r8
+    je .L_tl_string_eq_true
     movq %rdx, %r10
     shrq $3, %r10
     jz .L_tl_string_eq_tail

@@ -149,9 +149,12 @@
   [roots : CompilerLoadRootList]
   [root : String]) : CompilerLoadRootList
   (match roots
-    [(CompilerLoadRootNil) (CompilerLoadRootCons root CompilerLoadRootNil)]
+    [(CompilerLoadRootNil)
+      (CompilerLoadRootCons root (box CompilerLoadRootNil))]
     [(CompilerLoadRootCons head rest)
-      (CompilerLoadRootCons head (compile-cli-root-list-append rest root))]))
+      (CompilerLoadRootCons
+        head
+        (box (compile-cli-root-list-append (box-get rest) root)))]))
 
 (define (compile-cli-parse-options
   [idx : i64]

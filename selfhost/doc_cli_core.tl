@@ -129,7 +129,9 @@
     CompilerLoadRootNil
     (if (string-eq (arg idx) "--stdlib-root")
       (if (< (+ idx 1) (arg-count))
-        (CompilerLoadRootCons (arg (+ idx 1)) (doc-stdlib-roots (+ idx 2)))
+        (CompilerLoadRootCons
+          (arg (+ idx 1))
+          (box (doc-stdlib-roots (+ idx 2))))
         CompilerLoadRootNil)
       (doc-stdlib-roots (+ idx 1)))))
 

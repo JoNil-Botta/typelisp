@@ -2144,17 +2144,22 @@
     [hash : i64 0]
     (begin
       (while (< i n)
-        (begin
-          (set!
-            hash
-            (%
+        (let
+          [next : i64
+            (+
               (+
-                (+
-                  (* hash 131)
-                  (compiler-backend-char-code (string-ref text i)))
-                1)
-              2147483647))
-          (set! i (+ i 1))))
+                (* hash 131)
+                (compiler-backend-char-code (string-ref text i)))
+              1)]
+          [reduced : i64
+            (+ (bit-and next 2147483647) (shr next 31))]
+          (begin
+            (set!
+              hash
+              (if (>= reduced 2147483647)
+                (- reduced 2147483647)
+                reduced))
+            (set! i (+ i 1)))))
       hash)))
 
 (define (compiler-backend-string-label-reverse-hash [text : String]) : i64
@@ -2163,17 +2168,22 @@
     [hash : i64 0]
     (begin
       (while (>= i 0)
-        (begin
-          (set!
-            hash
-            (%
+        (let
+          [next : i64
+            (+
               (+
-                (+
-                  (* hash 131)
-                  (compiler-backend-char-code (string-ref text i)))
-                1)
-              2147483647))
-          (set! i (- i 1))))
+                (* hash 131)
+                (compiler-backend-char-code (string-ref text i)))
+              1)]
+          [reduced : i64
+            (+ (bit-and next 2147483647) (shr next 31))]
+          (begin
+            (set!
+              hash
+              (if (>= reduced 2147483647)
+                (- reduced 2147483647)
+                reduced))
+            (set! i (- i 1)))))
       hash)))
 
 (define (compiler-backend-string-data-label [text : String]) : String
@@ -4684,7 +4694,7 @@
   [suffix : String]) : String
   (compiler-backend-asm-label
     function
-    (backend-cat5 "alloc16_" current-label "_v" (int->string dst) suffix)))
+    (backend-cat5 "alloc" current-label "_v" (int->string dst) suffix)))
 
 (define (compiler-backend-emit-inline-fast-alloc
   [target : CompilerBackendTarget]
@@ -12823,8 +12833,7 @@ tl_arg:
     incq %rcx
     jmp .L_tl_arg_copy_loop
 .L_tl_arg_copy_done:
-    movq $16, %rdi
-    call tl_alloc
+    call .L_tl_alloc16
     movq %r13, 0(%rax)
     movq %r12, 8(%rax)
     add $8, %rsp
@@ -12953,8 +12962,7 @@ _tl_env_var_value:
     xorq %r12, %r12
     xorq %r13, %r13
 .L_tl_env_var_value_fat:
-    movq $16, %rdi
-    call tl_alloc
+    call .L_tl_alloc16
     movq %r13, 0(%rax)
     movq %r12, 8(%rax)
     add $8, %rsp
@@ -12975,12 +12983,10 @@ _tl_env_path_separator:
     mov %rsp, %rbp
     push %r12
     sub $8, %rsp
-    movq $1, %rdi
-    call tl_alloc
+    call .L_tl_alloc8
     movq %rax, %r12
     movb $58, (%r12)
-    movq $16, %rdi
-    call tl_alloc
+    call .L_tl_alloc16
     movq %r12, 0(%rax)
     movq $1, 8(%rax)
     add $8, %rsp
@@ -13001,16 +13007,10 @@ _tl_env_path_separator:
     mov %rsp, %rbp
     push %r12
     sub $8, %rsp
-    movq $1, %rcx
-    sub $32, %rsp
-    call tl_alloc
-    add $32, %rsp
+    call .L_tl_alloc8
     movq %rax, %r12
     movb $59, (%r12)
-    movq $16, %rcx
-    sub $32, %rsp
-    call tl_alloc
-    add $32, %rsp
+    call .L_tl_alloc16
     movq %r12, 0(%rax)
     movq $1, 8(%rax)
     add $8, %rsp
@@ -13146,10 +13146,7 @@ _tl_env_var_value:
     xorq %r12, %r12
     xorq %r13, %r13
 .L_tl_env_var_value_win_fat:
-    movq $16, %rcx
-    sub $32, %rsp
-    call tl_alloc
-    add $32, %rsp
+    call .L_tl_alloc16
     movq %r13, 0(%rax)
     movq %r12, 8(%rax)
     add $8, %rsp
@@ -13420,8 +13417,7 @@ tl_profile_alloc_reset_peak:
     syscall
     testq %rax, %rax
     js .L_tl_read_file_error
-    movq $16, %rdi
-    call tl_alloc
+    call .L_tl_alloc16
     movq %r13, 0(%rax)
     movq %r12, 8(%rax)
     add $8, %rsp
@@ -14239,8 +14235,7 @@ tl_profile_alloc_reset_peak:
     leaq .L_tl_file_handle_last_lens(%rip), %rcx
     movq (%rcx,%rbx,8), %r13
 .L_tl_file_read_chunk_bytes_alloc:
-    movq $16, %rdi
-    call tl_alloc
+    call .L_tl_alloc16
     movq %r12, 0(%rax)
     movq %r13, 8(%rax)
     add $8, %rsp
@@ -14276,11 +14271,9 @@ tl_profile_alloc_reset_peak:
     mov %rsp, %rbp
     push %r12
     sub $40, %rsp
-    movq $1, %rcx
-    call tl_alloc
+    call .L_tl_alloc8
     movq %rax, %r12
-    movq $16, %rcx
-    call tl_alloc
+    call .L_tl_alloc16
     movq %r12, 0(%rax)
     movq $0, 8(%rax)
     add $40, %rsp
@@ -14744,13 +14737,11 @@ tl_profile_alloc_reset_peak:
     movq %rbx, %rdi
     syscall
 .L_tl_fs_read_dir_empty:
-    movq $1, %rdi
-    call tl_alloc
+    call .L_tl_alloc8
     movq %rax, %r12
     xorq %r15, %r15
 .L_tl_fs_read_dir_return_string:
-    movq $16, %rdi
-    call tl_alloc
+    call .L_tl_alloc16
     movq %r12, 0(%rax)
     movq %r15, 8(%rax)
     add $24, %rsp
@@ -14978,8 +14969,7 @@ tl_fs_current_dir:
 .L_tl_fs_current_dir_empty:
     xorq %r12, %r12
 .L_tl_fs_current_dir_alloc_result:
-    movq $16, %rdi
-    call tl_alloc
+    call .L_tl_alloc16
     movq %rbx, 0(%rax)
     movq %r12, 8(%rax)
     add $8, %rsp
@@ -15184,11 +15174,9 @@ tl_fs_current_dir:
     push %rbp
     mov %rsp, %rbp
     sub $48, %rsp
-    movq $1, %rcx
-    call tl_alloc
+    call .L_tl_alloc8
     movq %rax, -8(%rbp)
-    movq $16, %rcx
-    call tl_alloc
+    call .L_tl_alloc16
     movq -8(%rbp), %r8
     movq %r8, 0(%rax)
     movq $0, 8(%rax)
@@ -15233,8 +15221,7 @@ tl_fs_current_dir:
     xorq %rcx, %rcx
     call tl_alloc
     movq %rax, %rbx
-    movq $16, %rcx
-    call tl_alloc
+    call .L_tl_alloc16
     movq %rbx, 0(%rax)
     movq $0, 8(%rax)
     add $40, %rsp
@@ -15328,10 +15315,7 @@ tl_fs_current_dir:
     add $32, %rsp
     testl %eax, %eax
     js .L_tl_read_file_error
-    movq $16, %rcx
-    sub $32, %rsp
-    call tl_alloc
-    add $32, %rsp
+    call .L_tl_alloc16
     movq %r13, 0(%rax)
     movq %r12, 8(%rax)
     add $8, %rsp
@@ -16074,10 +16058,7 @@ tl_arg:
     incq %rcx
     jmp .L_tl_arg_copy_loop
 .L_tl_arg_copy_done:
-    movq $16, %rcx
-    sub $32, %rsp
-    call tl_alloc
-    add $32, %rsp
+    call .L_tl_alloc16
     movq %r13, 0(%rax)
     movq %r12, 8(%rax)
     add $8, %rsp
@@ -16324,8 +16305,7 @@ tl_int_to_string:
     incq %rcx
     jmp .L_tl_int_to_string_copy_loop
 .L_tl_int_to_string_copy_done:
-    movq $16, %rdi
-    call tl_alloc
+    call .L_tl_alloc16
     movq %r13, 0(%rax)
     movq %r12, 8(%rax)
     add $72, %rsp
@@ -16394,10 +16374,7 @@ tl_int_to_string:
     incq %rcx
     jmp .L_tl_int_to_string_copy_loop
 .L_tl_int_to_string_copy_done:
-    movq $16, %rcx
-    sub $32, %rsp
-    call tl_alloc
-    add $32, %rsp
+    call .L_tl_alloc16
     movq %r13, 0(%rax)
     movq %r12, 8(%rax)
     add $72, %rsp
@@ -16428,8 +16405,7 @@ tl_substring:
     movq %rbx, %rsi
     movq %r13, %rdi
     rep movsb
-    movq $16, %rdi
-    call tl_alloc
+    call .L_tl_alloc16
     movq %r13, 0(%rax)
     movq %r12, 8(%rax)
     add $8, %rsp
@@ -16464,10 +16440,7 @@ tl_substring:
     movq %rbx, %rsi
     movq %r13, %rdi
     rep movsb
-    movq $16, %rcx
-    sub $32, %rsp
-    call tl_alloc
-    add $32, %rsp
+    call .L_tl_alloc16
     movq %r13, 0(%rax)
     movq %r12, 8(%rax)
     add $8, %rsp
@@ -16509,8 +16482,7 @@ tl_string_concat:
     movq %r15, %rdi
     addq %r12, %rdi
     rep movsb
-    movq $16, %rdi
-    call tl_alloc
+    call .L_tl_alloc16
     movq %r15, 0(%rax)
     movq %r12, %rdx
     addq %r14, %rdx
@@ -16609,8 +16581,7 @@ tl_string_concat5:
     movq -72(%rbp), %rsi
     movq -80(%rbp), %rcx
     rep movsb
-    movq $16, %rdi
-    call tl_alloc
+    call .L_tl_alloc16
     movq -96(%rbp), %rdx
     movq %rdx, 0(%rax)
     movq -88(%rbp), %rdx
@@ -16652,10 +16623,7 @@ tl_string_concat:
     movq %r15, %rdi
     addq %r12, %rdi
     rep movsb
-    movq $16, %rcx
-    sub $32, %rsp
-    call tl_alloc
-    add $32, %rsp
+    call .L_tl_alloc16
     movq %r15, 0(%rax)
     movq %r12, %rdx
     addq %r14, %rdx
@@ -16770,10 +16738,7 @@ tl_string_concat5:
     movq -88(%rbp), %rsi
     movq -96(%rbp), %rcx
     rep movsb
-    movq $16, %rcx
-    sub $32, %rsp
-    call tl_alloc
-    add $32, %rsp
+    call .L_tl_alloc16
     movq -112(%rbp), %rdx
     movq %rdx, 0(%rax)
     movq -104(%rbp), %rdx
@@ -16966,20 +16931,14 @@ tl_process_output:
     jz .L_tl_process_output_wait_failed_close
     movq %rax, -104(%rbp)
     call .L_tl_process_close_temp_files
-    movq $24, %rcx
-    sub $32, %rsp
-    call tl_alloc
-    add $32, %rsp
+    call .L_tl_alloc24
     movq %r15, 0(%rax)
     movq -96(%rbp), %rdx
     movq %rdx, 8(%rax)
     movq -104(%rbp), %rdx
     movq %rdx, 16(%rax)
     movq %rax, %r12
-    movq $16, %rcx
-    sub $32, %rsp
-    call tl_alloc
-    add $32, %rsp
+    call .L_tl_alloc16
     movq $0, 0(%rax)
     movq %r12, 8(%rax)
     jmp .L_tl_process_output_epilogue
@@ -17553,8 +17512,7 @@ tl_process_output:
     addq %rax, %r14
     jmp .L_tl_process_read_fd_to_string_loop
 .L_tl_process_read_fd_to_string_fat:
-    movq $16, %rcx
-    call tl_alloc
+    call .L_tl_alloc16
     movq %r13, 0(%rax)
     movq %r14, 8(%rax)
     jmp .L_tl_process_read_fd_to_string_done
@@ -17581,18 +17539,15 @@ tl_process_output:
     movq %rcx, %rbx
     movq %rdx, %r12
     movq %r8, %r13
-    movq $16, %rcx
-    call tl_alloc
+    call .L_tl_alloc16
     movq %r12, 0(%rax)
     movq %r13, 8(%rax)
     movq %rax, %r14
-    movq $16, %rcx
-    call tl_alloc
+    call .L_tl_alloc16
     movq %rbx, 0(%rax)
     movq %r14, 8(%rax)
     movq %rax, %r15
-    movq $16, %rcx
-    call tl_alloc
+    call .L_tl_alloc16
     movq $1, 0(%rax)
     movq %r15, 8(%rax)
     add $8, %rsp
@@ -18617,8 +18572,7 @@ tl_process_output:
     movq %r10, %r14
     jmp .L_tl_process_read_loop
 .L_tl_process_read_done:
-    movq $16, %rdi
-    call tl_alloc
+    call .L_tl_alloc16
     movq %r14, 0(%rax)
     movq %r15, 8(%rax)
     addq $8, %rsp
@@ -18641,14 +18595,12 @@ tl_process_output:
     movq %rdi, %rbx
     movq %rsi, %r12
     movq %rdx, %r13
-    movq $24, %rdi
-    call tl_alloc
+    call .L_tl_alloc24
     movq %rbx, 0(%rax)
     movq %r12, 8(%rax)
     movq %r13, 16(%rax)
     movq %rax, %r12
-    movq $16, %rdi
-    call tl_alloc
+    call .L_tl_alloc16
     movq $0, 0(%rax)
     movq %r12, 8(%rax)
     addq $8, %rsp
@@ -18669,18 +18621,15 @@ tl_process_output:
     movq %rdi, %r12
     movq %rsi, %r13
     movq %rdx, %r14
-    movq $16, %rdi
-    call tl_alloc
+    call .L_tl_alloc16
     movq %r12, 0(%rax)
     movq %r13, 8(%rax)
     movq %rax, %r12
-    movq $16, %rdi
-    call tl_alloc
+    call .L_tl_alloc16
     movq %r14, 0(%rax)
     movq %r12, 8(%rax)
     movq %rax, %r12
-    movq $16, %rdi
-    call tl_alloc
+    call .L_tl_alloc16
     movq $1, 0(%rax)
     movq %r12, 8(%rax)
     pop %r14
@@ -18771,8 +18720,7 @@ tl_process_output:
 .L_tl_read_stdin_line_done:
     movq $0, .L_tl_stdin_eof_flag(%rip)
 .L_tl_read_stdin_line_return:
-    movq $16, %rdi
-    call tl_alloc
+    call .L_tl_alloc16
     movq %rbx, 0(%rax)
     movq %r12, 8(%rax)
     add $16, %rsp
@@ -18847,10 +18795,7 @@ tl_process_output:
 .L_tl_read_stdin_line_done:
     movq $0, .L_tl_stdin_eof_flag(%rip)
 .L_tl_read_stdin_line_return:
-    movq $16, %rcx
-    sub $32, %rsp
-    call tl_alloc
-    add $32, %rsp
+    call .L_tl_alloc16
     movq %rbx, 0(%rax)
     movq %r12, 8(%rax)
     add $16, %rsp
@@ -18906,8 +18851,7 @@ tl_process_output:
 .L_tl_read_stdin_bytes_eof:
     movq $1, .L_tl_stdin_eof_flag(%rip)
 .L_tl_read_stdin_bytes_return:
-    movq $16, %rdi
-    call tl_alloc
+    call .L_tl_alloc16
     movq %rbx, 0(%rax)
     movq %r13, 8(%rax)
     add $8, %rsp
@@ -18966,10 +18910,7 @@ tl_process_output:
 .L_tl_read_stdin_bytes_eof:
     movq $1, .L_tl_stdin_eof_flag(%rip)
 .L_tl_read_stdin_bytes_return:
-    movq $16, %rcx
-    sub $32, %rsp
-    call tl_alloc
-    add $32, %rsp
+    call .L_tl_alloc16
     movq %rbx, 0(%rax)
     movq %r13, 8(%rax)
     add $8, %rsp
@@ -19039,8 +18980,7 @@ tl_random_system_seed:
     cmpq $8, %rax
     jne .L_tl_random_system_seed_err
     movq (%rsp), %r12
-    movq $16, %rdi
-    call tl_alloc
+    call .L_tl_alloc16
     movq $0, 0(%rax)
     movq %r12, 8(%rax)
     add $16, %rsp
@@ -19051,23 +18991,19 @@ tl_random_system_seed:
 .L_tl_random_system_seed_err:
     leaq .L_tl_random_system_seed_err_msg(%rip), %r12
     movq $.L_tl_random_system_seed_err_msg_len, %r13
-    movq $16, %rdi
-    call tl_alloc
+    call .L_tl_alloc16
     movq %r12, 0(%rax)
     movq %r13, 8(%rax)
     movq %rax, %r12
-    movq $16, %rdi
-    call tl_alloc
+    call .L_tl_alloc16
     movq $0, 0(%rax)
     movq %r12, 8(%rax)
     movq %rax, %r12
-    movq $16, %rdi
-    call tl_alloc
+    call .L_tl_alloc16
     movq $1, 0(%rax)
     movq %r12, 8(%rax)
     movq %rax, %r12
-    movq $16, %rdi
-    call tl_alloc
+    call .L_tl_alloc16
     movq $1, 0(%rax)
     movq %r12, 8(%rax)
     add $16, %rsp
@@ -19094,10 +19030,7 @@ tl_random_system_seed:
     testb %al, %al
     jz .L_tl_random_system_seed_err
     movq (%rsp), %r12
-    movq $16, %rcx
-    sub $32, %rsp
-    call tl_alloc
-    add $32, %rsp
+    call .L_tl_alloc16
     movq $0, 0(%rax)
     movq %r12, 8(%rax)
     add $16, %rsp
@@ -19108,31 +19041,19 @@ tl_random_system_seed:
 .L_tl_random_system_seed_err:
     leaq .L_tl_random_system_seed_err_msg(%rip), %r12
     movq $.L_tl_random_system_seed_err_msg_len, %r13
-    movq $16, %rcx
-    sub $32, %rsp
-    call tl_alloc
-    add $32, %rsp
+    call .L_tl_alloc16
     movq %r12, 0(%rax)
     movq %r13, 8(%rax)
     movq %rax, %r12
-    movq $16, %rcx
-    sub $32, %rsp
-    call tl_alloc
-    add $32, %rsp
+    call .L_tl_alloc16
     movq $0, 0(%rax)
     movq %r12, 8(%rax)
     movq %rax, %r12
-    movq $16, %rcx
-    sub $32, %rsp
-    call tl_alloc
-    add $32, %rsp
+    call .L_tl_alloc16
     movq $1, 0(%rax)
     movq %r12, 8(%rax)
     movq %rax, %r12
-    movq $16, %rcx
-    sub $32, %rsp
-    call tl_alloc
-    add $32, %rsp
+    call .L_tl_alloc16
     movq $1, 0(%rax)
     movq %r12, 8(%rax)
     add $16, %rsp
@@ -19154,24 +19075,15 @@ tl_windows_setup_instances:
     push %r13
     leaq .L_tl_windows_setup_unavailable_msg(%rip), %r12
     movq $.L_tl_windows_setup_unavailable_msg_len, %r13
-    movq $16, %rcx
-    sub $32, %rsp
-    call tl_alloc
-    add $32, %rsp
+    call .L_tl_alloc16
     movq %r12, 0(%rax)
     movq %r13, 8(%rax)
     movq %rax, %r12
-    movq $16, %rcx
-    sub $32, %rsp
-    call tl_alloc
-    add $32, %rsp
+    call .L_tl_alloc16
     movq $1, 0(%rax)
     movq %r12, 8(%rax)
     movq %rax, %r12
-    movq $16, %rcx
-    sub $32, %rsp
-    call tl_alloc
-    add $32, %rsp
+    call .L_tl_alloc16
     movq $1, 0(%rax)
     movq %r12, 8(%rax)
     pop %r13
@@ -19188,18 +19100,15 @@ tl_windows_setup_instances:
     push %r13
     leaq .L_tl_windows_setup_unsupported_msg(%rip), %r12
     movq $.L_tl_windows_setup_unsupported_msg_len, %r13
-    movq $16, %rdi
-    call tl_alloc
+    call .L_tl_alloc16
     movq %r12, 0(%rax)
     movq %r13, 8(%rax)
     movq %rax, %r12
-    movq $16, %rdi
-    call tl_alloc
+    call .L_tl_alloc16
     movq $0, 0(%rax)
     movq %r12, 8(%rax)
     movq %rax, %r12
-    movq $16, %rdi
-    call tl_alloc
+    call .L_tl_alloc16
     movq $1, 0(%rax)
     movq %r12, 8(%rax)
     pop %r13
@@ -19223,24 +19132,15 @@ tl_windows_sdk_registry_install:
     movq $0, %r12
     leaq .L_tl_windows_registry_unsupported_msg(%rip), %r13
     movq $.L_tl_windows_registry_unsupported_msg_len, %r14
-    movq $16, %rcx
-    sub $32, %rsp
-    call tl_alloc
-    add $32, %rsp
+    call .L_tl_alloc16
     movq %r13, 0(%rax)
     movq %r14, 8(%rax)
     movq %rax, %r13
-    movq $16, %rcx
-    sub $32, %rsp
-    call tl_alloc
-    add $32, %rsp
+    call .L_tl_alloc16
     movq %r12, 0(%rax)
     movq %r13, 8(%rax)
     movq %rax, %r13
-    movq $16, %rcx
-    sub $32, %rsp
-    call tl_alloc
-    add $32, %rsp
+    call .L_tl_alloc16
     movq $1, 0(%rax)
     movq %r13, 8(%rax)
     add $8, %rsp
@@ -19262,18 +19162,15 @@ tl_windows_sdk_registry_install:
     movq $0, %r12
     leaq .L_tl_windows_registry_unsupported_msg(%rip), %r13
     movq $.L_tl_windows_registry_unsupported_msg_len, %r14
-    movq $16, %rdi
-    call tl_alloc
+    call .L_tl_alloc16
     movq %r13, 0(%rax)
     movq %r14, 8(%rax)
     movq %rax, %r13
-    movq $16, %rdi
-    call tl_alloc
+    call .L_tl_alloc16
     movq %r12, 0(%rax)
     movq %r13, 8(%rax)
     movq %rax, %r13
-    movq $16, %rdi
-    call tl_alloc
+    call .L_tl_alloc16
     movq $1, 0(%rax)
     movq %r13, 8(%rax)
     add $8, %rsp

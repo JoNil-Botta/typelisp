@@ -856,7 +856,7 @@
 ;; Direct-parse small files to avoid clone cost; large files use a scratch arena
 ;; to keep cold self-build peak memory below the 500 MB target.
 (define (compiler-load-direct-parse-source-limit) : i64
-  100000)
+  160000)
 
 (define (compiler-load-parse-source-diagnostic-escaped
   [path : String]

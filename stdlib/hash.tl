@@ -85,13 +85,18 @@
     [hash : i64 0]
     (begin
       (while (< i n)
-        (begin
-          (set!
-            hash
-            (%
-              (+ (+ (* hash 131) (cast (string-ref key i) : i64)) 1)
-              2147483647))
-          (set! i (+ i 1))))
+        (let
+          [next : i64
+            (+ (+ (* hash 131) (cast (string-ref key i) : i64)) 1)]
+          [reduced : i64
+            (+ (bit-and next 2147483647) (shr next 31))]
+          (begin
+            (set!
+              hash
+              (if (>= reduced 2147483647)
+                (- reduced 2147483647)
+                reduced))
+            (set! i (+ i 1)))))
       hash)))
 
 ;: Return true when two borrowed string keys are equal.

@@ -56,9 +56,19 @@
 (define (string-i64-map-bucket-index [hash : i64] [capacity : i64]) : i64
   (% (hash-normalize hash) capacity))
 
+;: Return the start bucket when `hash` is already in the public hash range.
+(define (string-i64-map-normalized-bucket-index
+  [hash : i64]
+  [capacity : i64]) : i64
+  (% hash capacity))
+
 ;: Advance a bucket index by one slot, wrapping around the table.
 (define (string-i64-map-next-index [index : i64] [capacity : i64]) : i64
-  (% (+ index 1) capacity))
+  (let
+    [next : i64 (+ index 1)]
+    (if (>= next capacity)
+      0
+      next)))
 
 ;: Pick the insertion slot for an absent key: reuse the first tombstone seen
 ;: (`first-tombstone` >= 0) so deletes do not strand keys, otherwise the empty
@@ -79,38 +89,49 @@
   [index : i64]
   [steps : i64]
   [first-tombstone : i64]) : StringI64MapProbe
-  (if (>= steps capacity)
-    (if (>= first-tombstone 0)
-      (StringI64MapProbeAbsent first-tombstone)
-      (StringI64MapProbeFull))
-    (match (array-ref slots index)
-      [(StringI64MapEmpty)
-        (StringI64MapProbeAbsent
-          (string-i64-map-insert-slot first-tombstone index))]
-      [(StringI64MapTombstone)
-        (string-i64-map-probe-from
-          slots
-          capacity
-          key
-          hash
-          (string-i64-map-next-index index capacity)
-          (+ steps 1)
-          (if (>= first-tombstone 0)
-            first-tombstone
-            index))]
-      [(StringI64MapOccupied slot-key _ slot-hash)
-        (if (if (= slot-hash hash)
-          (string-eq-borrowed (& slot-key) (& key))
-          false)
-          (StringI64MapProbeFound index)
-          (string-i64-map-probe-from
-            slots
-            capacity
-            key
-            hash
-            (string-i64-map-next-index index capacity)
-            (+ steps 1)
-            first-tombstone))])))
+  (let
+    [cursor : i64 index]
+    [walked : i64 steps]
+    [first : i64 first-tombstone]
+    (begin
+      (while (< walked capacity)
+        (match (array-ref slots cursor)
+          [(StringI64MapEmpty)
+            (return
+              (StringI64MapProbeAbsent
+                (if (>= first 0)
+                  first
+                  cursor)))]
+          [(StringI64MapTombstone)
+            (let
+              [next : i64 (+ cursor 1)]
+              (begin
+                (if (< first 0)
+                  (set! first cursor)
+                  unit)
+                (set!
+                  cursor
+                  (if (>= next capacity)
+                    0
+                    next))
+                (set! walked (+ walked 1))))]
+          [(StringI64MapOccupied slot-key _ slot-hash)
+            (if (if (= slot-hash hash)
+              (hash-key-string-eq? (& slot-key) (& key))
+              false)
+              (return (StringI64MapProbeFound cursor))
+              (let
+                [next : i64 (+ cursor 1)]
+                (begin
+                  (set!
+                    cursor
+                    (if (>= next capacity)
+                      0
+                      next))
+                  (set! walked (+ walked 1)))))]))
+      (if (>= first 0)
+        (StringI64MapProbeAbsent first)
+        (StringI64MapProbeFull)))))
 
 ;: Probe `slots` (a `capacity`-length open-addressing table) for `key` with the
 ;: precomputed `hash`. Returns where the key lives (`Found`), where it could be
@@ -183,6 +204,24 @@
       0
       -1)))
 
+;: Probe when `hash` is already normalized, as produced by `hash-string` or
+;: copied from an occupied slot.
+(define (string-i64-map-probe-normalized
+  [slots : (Array StringI64MapSlot)]
+  [capacity : i64]
+  [key : String]
+  [hash : i64]) : StringI64MapProbe
+  (if (<= capacity 0)
+    (StringI64MapProbeFull)
+    (string-i64-map-probe-from
+      slots
+      capacity
+      key
+      hash
+      (string-i64-map-normalized-bucket-index hash capacity)
+      0
+      -1)))
+
 ;: The v1 fixed-capacity `String -> i64` map (representation from #824): the
 ;: open-addressing slot table, the live-entry count, and the tombstone count.
 (defstruct StringI64Map
@@ -251,9 +290,10 @@
 (define (string-i64-map-get-borrowed [map : StringI64Map] [key : (& key str)]) : StringI64MapLookup
   (let
     [slots : (Array StringI64MapSlot) (string-i64-map-slots map)]
+    [capacity : i64 (array-length slots)]
     (match (string-i64-map-probe-borrowed
       slots
-      (string-i64-map-capacity map)
+      capacity
       key
       (hash-string key))
       [(StringI64MapProbeFound index)
@@ -297,8 +337,9 @@
   [value : i64]) : StringI64MapInsertResult
   (let
     [slots : (Array StringI64MapSlot) (string-i64-map-slots map)]
+    [capacity : i64 (array-length slots)]
     [hash : i64 (hash-string (& key))]
-    (match (string-i64-map-probe slots (string-i64-map-capacity map) key hash)
+    (match (string-i64-map-probe-normalized slots capacity key hash)
       [(StringI64MapProbeFound index)
         (begin
           (array-set! slots index (StringI64MapOccupied key value hash))
@@ -329,9 +370,10 @@
   [key : (& key str)]) : StringI64MapRemoveResult
   (let
     [slots : (Array StringI64MapSlot) (string-i64-map-slots map)]
+    [capacity : i64 (array-length slots)]
     (match (string-i64-map-probe-borrowed
       slots
-      (string-i64-map-capacity map)
+      capacity
       key
       (hash-string key))
       [(StringI64MapProbeFound index)
@@ -363,7 +405,7 @@
     (begin
       (match (array-ref src index)
         [(StringI64MapOccupied key value hash)
-          (match (string-i64-map-probe dst dst-capacity key hash)
+          (match (string-i64-map-probe-normalized dst dst-capacity key hash)
             [(StringI64MapProbeAbsent slot)
               (array-set! dst slot (StringI64MapOccupied key value hash))]
             [(StringI64MapProbeFound slot)
@@ -380,7 +422,7 @@
 (define (string-i64-map-resized [map : StringI64Map] [new-capacity : i64]) : StringI64Map
   (let
     [src : (Array StringI64MapSlot) (string-i64-map-slots map)]
-    [old-capacity : i64 (string-i64-map-capacity map)]
+    [old-capacity : i64 (array-length src)]
     [dst : (Array StringI64MapSlot) (make-array StringI64MapSlot new-capacity)]
     (begin
       (string-i64-map-fill-empty dst 0 new-capacity)
@@ -396,16 +438,18 @@
 
 ;: Grow `map` to the next capacity, rehashing its live entries.
 (define (string-i64-map-grow [map : StringI64Map]) : StringI64Map
-  (string-i64-map-resized
-    map
-    (string-i64-map-grow-capacity (string-i64-map-capacity map))))
+  (let
+    [slots : (Array StringI64MapSlot) (string-i64-map-slots map)]
+    (string-i64-map-resized
+      map
+      (string-i64-map-grow-capacity (array-length slots)))))
 
 ;: True when the table has reached the 3/4 load threshold, counting both live
 ;: entries and tombstones (both consume probe positions). A non-positive
 ;: capacity always needs to grow before it can hold anything.
 (define (string-i64-map-needs-grow? [map : StringI64Map]) : bool
   (let
-    [capacity : i64 (string-i64-map-capacity map)]
+    [capacity : i64 (array-length (string-i64-map-slots map))]
     [used : i64 (+ (string-i64-map-len map) (string-i64-map-deleted map))]
     (if (<= capacity 0)
       true
@@ -484,26 +528,30 @@
 ;:     (sum-values m (string-i64-map-next-occupied m 0) 0)))
 ;: ```
 (define (string-i64-map-next-occupied [map : StringI64Map] [from : i64]) : i64
-  (string-i64-map-next-occupied-from
-    (string-i64-map-slots map)
-    (if (< from 0)
-      0
-      from)
-    (string-i64-map-capacity map)))
+  (let
+    [slots : (Array StringI64MapSlot) (string-i64-map-slots map)]
+    (string-i64-map-next-occupied-from
+      slots
+      (if (< from 0)
+        0
+        from)
+      (array-length slots))))
 
 ;: The live entry at `index`, or `None` for an empty slot, a tombstone, or an
 ;: index outside `[0, capacity)`. Pair with `string-i64-map-next-occupied` to
 ;: walk the map in bucket order. The key is handed back by value; v1 does not
 ;: yet enforce that the borrow outlives the map (revisited under #806).
 (define (string-i64-map-entry-at [map : StringI64Map] [index : i64]) : StringI64MapEntry
-  (if (if (< index 0)
-    true
-    (>= index (string-i64-map-capacity map)))
-    (StringI64MapEntryNone)
-    (match (array-ref (string-i64-map-slots map) index)
-      [(StringI64MapOccupied key value _) (StringI64MapEntrySome key value)]
-      [(StringI64MapEmpty) (StringI64MapEntryNone)]
-      [(StringI64MapTombstone) (StringI64MapEntryNone)])))
+  (let
+    [slots : (Array StringI64MapSlot) (string-i64-map-slots map)]
+    (if (if (< index 0)
+      true
+      (>= index (array-length slots)))
+      (StringI64MapEntryNone)
+      (match (array-ref slots index)
+        [(StringI64MapOccupied key value _) (StringI64MapEntrySome key value)]
+        [(StringI64MapEmpty) (StringI64MapEntryNone)]
+        [(StringI64MapTombstone) (StringI64MapEntryNone)]))))
 
 ;: Generated `HashMap<String,String>` slot family.
 (comptime-decl

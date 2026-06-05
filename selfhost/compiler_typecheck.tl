@@ -4652,6 +4652,12 @@
 
 (define (compiler-typecheck-self-test-basics) : unit
   (begin
+    (if (tc-type-env-box-smoke?)
+      unit
+      (panic "typecheck: boxed type env smoke mismatch"))
+    (if (tc-spmd-env-box-smoke?)
+      unit
+      (panic "typecheck: boxed spmd env smoke mismatch"))
     (if (compiler-typecheck-ptr-null-tests-ok?)
       unit
       (panic "typecheck: ptr-null construction/check tests failed"))

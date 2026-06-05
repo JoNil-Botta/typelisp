@@ -40,9 +40,7 @@
 ;: `hash-combine 0 0` distinct from an untouched empty accumulator.
 (define (hash-combine [seed : i64] [component : i64]) : i64
   (hash-normalize
-    (+
-      (+ (* (hash-normalize seed) 131) (hash-normalize component))
-      1)))
+    (+ (+ (* (hash-normalize seed) 131) (hash-normalize component)) 1)))
 
 (define (hash-combine-normalized [seed : i64] [component : i64]) : i64
   (hash-normalize (+ (+ (* seed 131) component) 1)))

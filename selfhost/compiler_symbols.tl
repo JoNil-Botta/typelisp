@@ -213,7 +213,8 @@
   (match symbols
     [(CompilerSymbols _ _ _ decls _) decls]))
 
-(define (compiler-symbols-owner-names [symbols : CompilerSymbols]) : (Array String)
+(define (compiler-symbols-owner-names [symbols : CompilerSymbols]) : (Array
+  String)
   (match symbols
     [(CompilerSymbols _ _ _ _ owner-names) owner-names]))
 
@@ -1331,9 +1332,7 @@
         inner)]
     [_ decl]))
 
-(define (compiler-symbol-owner-name-for-decl
-  [decl : AstDecl]
-  [module : String]) : String
+(define (compiler-symbol-owner-name-for-decl [decl : AstDecl] [module : String]) : String
   (match decl
     [(AstDeclDefEnum name _) (compiler-symbol-module-key module name)]
     [(AstDeclDefStruct name _ _ _) (compiler-symbol-module-key module name)]
@@ -1414,7 +1413,8 @@
         [decls : AstDeclList (box-get decls-box)]
         (match (build-compiler-symbol-list
           decls
-          (compiler-symbols-empty-with-decls (compiler-decl-list-index-count decls))
+          (compiler-symbols-empty-with-decls
+            (compiler-decl-list-index-count decls))
           0)
           [(OkCompilerSymbols symbols)
             (OkCompilerSymbols

@@ -161,9 +161,7 @@
           (text-buf-chunks-render-balanced chunks count)
           (text-buf-chunks-render-rev chunks "")))]))
 
-(define (text-buf-write-chunks-rev
-  [raw : i64]
-  [chunks : TextBufChunkList]) : i64
+(define (text-buf-write-chunks-rev [raw : i64] [chunks : TextBufChunkList]) : i64
   (match chunks
     [(TextBufChunkNil) io-status-ok]
     [(TextBufChunkCons chunk rest)

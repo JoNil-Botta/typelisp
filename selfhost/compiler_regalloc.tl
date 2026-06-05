@@ -510,8 +510,10 @@
   [present : (Array i64)]
   [types : (Array AstType)]) : unit
   (match instr
-    [(IrInstrMov dst _ ty) (compiler-reg-var-type-array-set! present types dst ty)]
-    [(IrInstrLoad dst _ ty) (compiler-reg-var-type-array-set! present types dst ty)]
+    [(IrInstrMov dst _ ty)
+      (compiler-reg-var-type-array-set! present types dst ty)]
+    [(IrInstrLoad dst _ ty)
+      (compiler-reg-var-type-array-set! present types dst ty)]
     [(IrInstrCast dst _ _ to-ty)
       (compiler-reg-var-type-array-set! present types dst to-ty)]
     [(IrInstrBinOp dst _ _ _ ty)
@@ -522,8 +524,10 @@
       (compiler-reg-var-type-array-set! present types dst elem-ty)]
     [(IrInstrMaskReduce dst _ _ _)
       (compiler-reg-var-type-array-set! present types dst (AstTyBool))]
-    [(IrInstrCall dst _ _ ty) (compiler-reg-var-type-array-set! present types dst ty)]
-    [(IrInstrPhi dst _ ty) (compiler-reg-var-type-array-set! present types dst ty)]
+    [(IrInstrCall dst _ _ ty)
+      (compiler-reg-var-type-array-set! present types dst ty)]
+    [(IrInstrPhi dst _ ty)
+      (compiler-reg-var-type-array-set! present types dst ty)]
     [_ unit]))
 
 (define (compiler-reg-instr-list-types-array!
@@ -740,7 +744,9 @@
           starts
           ends
           (compiler-live-set-chunk-bits chunk)
-          (* (compiler-live-set-chunk-word-index chunk) (compiler-live-set-word-bits))
+          (*
+            (compiler-live-set-chunk-word-index chunk)
+            (compiler-live-set-word-bits))
           point)
         (compiler-reg-extend-set starts ends rest point))]))
 
@@ -756,9 +762,9 @@
       [index : i64 (compiler-reg-low-bit-index bits)]
       (begin
         (compiler-reg-extend-interval starts ends (+ var index) point)
-      (compiler-reg-extend-set-word-bits
-        starts
-        ends
+        (compiler-reg-extend-set-word-bits
+          starts
+          ends
           (bit-and bits (- bits 1))
           var
           point)))))
@@ -1719,11 +1725,7 @@
                       CompilerRegActiveNil
                       vector-assignments)
                       [(CompilerRegAssignState _ assignments)
-                        (CompilerRegPlan
-                          assignments
-                          ineligible
-                          intervals
-                          types)])])])])])))
+                        (CompilerRegPlan assignments ineligible intervals types)])])])])])))
 
 ;; Fast scalar backend plan: keep type discovery for emission decisions, but
 ;; leave values in their stack slots instead of spending compile time on liveness

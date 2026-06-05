@@ -376,16 +376,20 @@
           (compiler-driver-lower-mode-for-target target mode))
           [(OkCompilerLower program spans)
             (begin
-              (cfg compile-profile (compiler-driver-profile-finish-phase "lower"))
+              (cfg
+                compile-profile
+                (compiler-driver-profile-finish-phase "lower"))
               (OkCompilerDriverLowered program spans))]
           [(ErrCompilerLower diag)
             (begin
-              (cfg compile-profile (compiler-driver-profile-finish-phase "lower"))
+              (cfg
+                compile-profile
+                (compiler-driver-profile-finish-phase "lower"))
               (ErrCompilerDriverLowered diag))]))]
-     [(ErrCompilerLoadWithPaths diag)
-       (begin
-         (cfg compile-profile (compiler-driver-profile-finish-phase "load"))
-         (ErrCompilerDriverLowered diag))]))
+    [(ErrCompilerLoadWithPaths diag)
+      (begin
+        (cfg compile-profile (compiler-driver-profile-finish-phase "load"))
+        (ErrCompilerDriverLowered diag))]))
 
 (define (compiler-driver-emit-file-with-target
   [input-path : String]

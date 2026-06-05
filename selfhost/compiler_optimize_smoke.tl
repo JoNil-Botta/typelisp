@@ -4,8 +4,8 @@
 ;; #925 typed constant/cast folding, #926 CFG simplification, #930 bounds-check
 ;; elimination, #1347 CFG/dominance/SSA verification, opt-level policy, and
 ;; #923 fixed-point iteration, #1348 sparse conditional constant propagation,
-;; #1489 aggregate stack promotion, and #1349 global value
-;; numbering/cross-block copy propagation).
+;; #1489 aggregate stack promotion, #1349 global value numbering/cross-block
+;; copy propagation, and #1801 conservative loop-invariant code motion).
 ;;
 ;; Folds constant arithmetic and typed scalar operations into `Mov` literals,
 ;; reduces safe algebraic identities, eliminates an unused pure temporary,
@@ -14,7 +14,8 @@
 ;; CFG/dominance/SSA/natural-loop utility invariants, stack-promotes safe local
 ;; aggregate storage, selects optimization policies by level, reruns the pass
 ;; pipeline to a fixed point, and removes dominated repeated scalar expressions
-;; across blocks; returns 42 only when every self-test passes.
+;; across blocks, and hoists safe scalar loop invariants into preheaders;
+;; returns 42 only when every self-test passes.
 (import "compiler_optimize.tl")
 
 (define (main) : i64
@@ -31,6 +32,7 @@
     (unless (= (compiler-optimize-global-value-number-self-test) 42) (return 1))
     (unless (= (compiler-optimize-cfg-self-test) 42) (return 1))
     (unless (= (compiler-optimize-natural-loop-self-test) 42) (return 1))
+    (unless (= (compiler-optimize-licm-self-test) 42) (return 1))
     (unless (= (compiler-optimize-ssa-self-test) 42) (return 1))
     (unless (= (compiler-optimize-level-self-test) 42) (return 1))
     (unless (= (compiler-optimize-fixed-point-self-test) 42) (return 1))

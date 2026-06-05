@@ -13343,8 +13343,15 @@ tl_profile_alloc_reset_peak:
 tl_profile_now_ms:
     push %rbp
     mov %rsp, %rbp
-    sub $32, %rsp
-    call GetTickCount64
+    sub $64, %rsp
+    leaq -8(%rbp), %rcx
+    call QueryPerformanceCounter
+    leaq -16(%rbp), %rcx
+    call QueryPerformanceFrequency
+    movq -8(%rbp), %rax
+    imulq $1000, %rax, %rax
+    cqto
+    idivq -16(%rbp)
     mov %rbp, %rsp
     pop %rbp
     ret
@@ -19942,7 +19949,8 @@ tl_windows_sdk_registry_install:
                   "")
                 (string-append
                   (if (compiler-backend-plan-provides? plan "tl_profile_now_ms")
-                    "    .extern GetTickCount64
+                    "    .extern QueryPerformanceCounter
+    .extern QueryPerformanceFrequency
 "
                     "")
                   ;; The Windows tl_process_output spawns the child via CreateProcessA

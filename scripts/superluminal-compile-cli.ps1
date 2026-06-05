@@ -40,6 +40,31 @@ function Resolve-Tool([string]$Name, [string]$FallbackPath) {
     throw "missing required tool: $Name"
 }
 
+function Resolve-BenchmarkBash {
+    $fallback = "C:\Program Files\Git\bin\bash.exe"
+    if (Test-Path -LiteralPath $fallback -PathType Leaf) {
+        return $fallback
+    }
+
+    $commands = @(Get-Command "bash.exe" -All -ErrorAction SilentlyContinue)
+    foreach ($command in $commands) {
+        $source = $command.Source
+        if ($source -match "\\Windows\\System32\\bash\.exe$") {
+            continue
+        }
+
+        try {
+            $uname = & $source -lc "uname -s" 2>$null
+            if (($LASTEXITCODE -eq 0) -and ($uname -match "^(MINGW|MSYS|CYGWIN)")) {
+                return $source
+            }
+        } catch {
+        }
+    }
+
+    throw "missing required Git Bash/MSYS bash.exe for Windows benchmark capture"
+}
+
 function Resolve-Clang {
     $command = Get-Command "clang.exe" -ErrorAction SilentlyContinue
     if ($command) {
@@ -126,7 +151,7 @@ function Find-WindowsSdkLibRoot {
 }
 
 function Invoke-Benchmark {
-    $bash = Resolve-Tool "bash.exe" "C:\Program Files\Git\bin\bash.exe"
+    $bash = Resolve-BenchmarkBash
     Write-Host "[superluminal] running scripts/benchmark-compile-cli.sh"
     & $bash "scripts/benchmark-compile-cli.sh"
     if ($LASTEXITCODE -ne 0) {

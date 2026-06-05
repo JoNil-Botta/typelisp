@@ -307,8 +307,9 @@ EOF
     assert_file_exact "$_asm" "$ROOT/tests/golden/selfhost_compiler_driver_import.s" compiler-driver-import-golden
     for _snippet in \
         "_tl_shared_u2etl_colon_colonshared:" \
-        "_tl_helper_u2etl_colon_colonhelper:" \
-        "call _tl_helper_u2etl_colon_colonhelper" \
+        "#t _tl_f0 _tl_helper" \
+        "_tl_f0:" \
+        "call _tl_f0" \
         "_tl_shared_u2etl_colon_colonshared(%rip)" \
         "_start:"
     do
@@ -350,7 +351,8 @@ EOF
     run_compiler_driver "$_driver" compiler-driver-pkg-import "$_pkg/src/main.tl" "$_asm"
     run_compiler_driver "$_driver" compiler-driver-pkg-import-again "$_pkg/src/main.tl" "$_again"
     assert_file_exact "$_again" "$_asm" compiler-driver-pkg-import-deterministic
-    assert_contains "$_asm" "add_one:" compiler-driver-pkg-import
+    assert_contains "$_asm" "#t _tl_f0 _tl_add_one" compiler-driver-pkg-import
+    assert_contains "$_asm" "call _tl_f0" compiler-driver-pkg-import
     assemble_link_run_asm compiler-driver-pkg-import "$_asm" 42 - - 1
 
     cat > "$_pkg/bad/missing-alias.tl" <<'EOF'
@@ -426,10 +428,10 @@ EOF
         "call tl_substring" \
         "call tl_string_concat" \
         "tl_oob_abort:" \
-        "jb .Lmain_str_bounds_ok" \
-        ".Lmain_str_bounds_ok" \
+        "jb .Lf0_str_bounds_ok" \
+        ".Lf0_str_bounds_ok" \
         "substr_bounds_fail" \
-        "jbe .Lmain_substr_ok"
+        "jbe .Lf0_substr_ok"
     do
         assert_contains "$_asm" "$_snippet" compiler-driver-string-runtime
     done
@@ -463,9 +465,9 @@ EOF
     echo "[selfhost-native] compiler_driver stdlib JSON import graph"
     run_compiler_driver "$_driver" compiler-driver-stdlib-json "$_src" "$_asm"
     for _snippet in \
-        "_tl_stdlib_slashjson_u2etl_colon_colonjson_parse:" \
-        "_tl_stdlib_slashjson_u2etl_colon_colonjson_stringify:" \
-        "_tl_stdlib_slashjson_u2etl_colon_colonjson_parse_object:"
+        "_tl_json_parse" \
+        "_tl_json_stringify" \
+        "_tl_json_parse_object"
     do
         assert_contains "$_asm" "$_snippet" compiler-driver-stdlib-json
     done

@@ -156,17 +156,154 @@ stage1_symbol_regex() {
 
 stage1_contains_text() {
     needle=$1
-    regex=$(stage1_symbol_regex "$needle") || return 1
-    grep -E -- "$regex" "$asm_path" >/dev/null
+    if regex=$(stage1_symbol_regex "$needle"); then
+        grep -E -- "$regex" "$asm_path" >/dev/null && return 0
+    fi
+    stage1_compact_contains_text "$needle"
 }
 
 stage1_count_text() {
     needle=$1
-    regex=$(stage1_symbol_regex "$needle") || {
+    if regex=$(stage1_symbol_regex "$needle"); then
+        count=$(grep -E -- "$regex" "$asm_path" | wc -l | tr -d ' ')
+        if [ "$count" -gt 0 ]; then
+            printf '%s\n' "$count"
+            return
+        fi
+    fi
+    stage1_compact_count_text "$needle"
+}
+
+stage1_compact_readable_symbol() {
+    needle=$1
+    case "$needle" in
+        .L_tl_*:)
+            symbol=${needle%:}
+            symbol=${symbol#.}
+            printf '_tl__u2e%s\n' "$symbol"
+            return 0
+            ;;
+        .L_tl_*)
+            symbol=${needle#.}
+            printf '_tl__u2e%s\n' "$symbol"
+            return 0
+            ;;
+        _tl_*:)
+            symbol=${needle#_tl_}
+            symbol=${symbol%:}
+            case "$symbol" in
+                *_u2etl_colon_colon*) symbol=${symbol##*_u2etl_colon_colon} ;;
+            esac
+            printf '_tl_%s\n' "$symbol"
+            return 0
+            ;;
+        _tl_*)
+            symbol=${needle#_tl_}
+            case "$symbol" in
+                *_u2etl_colon_colon*) symbol=${symbol##*_u2etl_colon_colon} ;;
+            esac
+            printf '_tl_%s\n' "$symbol"
+            return 0
+            ;;
+        call\ _tl_*)
+            symbol=${needle#call _tl_}
+            case "$symbol" in
+                *_u2etl_colon_colon*) symbol=${symbol##*_u2etl_colon_colon} ;;
+            esac
+            printf '_tl_%s\n' "$symbol"
+            return 0
+            ;;
+        call\ .L_tl_*)
+            symbol=${needle#call }
+            symbol=${symbol#.}
+            printf '_tl__u2e%s\n' "$symbol"
+            return 0
+            ;;
+        *:)
+            symbol=${needle%:}
+            printf '_tl_%s\n' "$symbol"
+            return 0
+            ;;
+    esac
+    return 1
+}
+
+stage1_compact_symbols_for() {
+    readable=$1
+    awk -v readable="$readable" '
+        $1 == "#" && $2 == "typelisp-symbol" && $4 == readable { print $3 }
+        $1 == "#t" && $3 == readable { print $2 }
+    ' "$asm_path"
+}
+
+stage1_compact_contains_text() {
+    needle=$1
+    readable=$(stage1_compact_readable_symbol "$needle") || return 1
+    for compact in $(stage1_compact_symbols_for "$readable"); do
+        case "$needle" in
+            .L_tl_*:)
+                grep -F -- "$compact:" "$asm_path" >/dev/null && return 0
+                ;;
+            _tl_*:)
+                grep -F -- "$compact:" "$asm_path" >/dev/null && return 0
+                ;;
+            call\ .L_tl_*)
+                grep -E -- "call[[:space:]]+$compact([^[:alnum:]_]|$)" "$asm_path" >/dev/null && return 0
+                ;;
+            call\ _tl_*)
+                grep -E -- "call[[:space:]]+$compact([^[:alnum:]_]|$)" "$asm_path" >/dev/null && return 0
+                ;;
+            .L_tl_*)
+                grep -E -- "$compact([^[:alnum:]_]|$)" "$asm_path" >/dev/null && return 0
+                ;;
+            _tl_*)
+                grep -E -- "$compact([^[:alnum:]_]|$)" "$asm_path" >/dev/null && return 0
+                ;;
+            *:)
+                grep -F -- "$compact:" "$asm_path" >/dev/null && return 0
+                ;;
+        esac
+    done
+    return 1
+}
+
+stage1_compact_count_text() {
+    needle=$1
+    readable=$(stage1_compact_readable_symbol "$needle") || {
         printf '0\n'
         return
     }
-    grep -E -- "$regex" "$asm_path" | wc -l | tr -d ' '
+    total=0
+    for compact in $(stage1_compact_symbols_for "$readable"); do
+        case "$needle" in
+            .L_tl_*:)
+                count=$(grep -F -- "$compact:" "$asm_path" | wc -l | tr -d ' ')
+                ;;
+            _tl_*:)
+                count=$(grep -F -- "$compact:" "$asm_path" | wc -l | tr -d ' ')
+                ;;
+            call\ .L_tl_*)
+                count=$(grep -E -- "call[[:space:]]+$compact([^[:alnum:]_]|$)" "$asm_path" | wc -l | tr -d ' ')
+                ;;
+            call\ _tl_*)
+                count=$(grep -E -- "call[[:space:]]+$compact([^[:alnum:]_]|$)" "$asm_path" | wc -l | tr -d ' ')
+                ;;
+            .L_tl_*)
+                count=$(grep -E -- "$compact([^[:alnum:]_]|$)" "$asm_path" | wc -l | tr -d ' ')
+                ;;
+            _tl_*)
+                count=$(grep -E -- "$compact([^[:alnum:]_]|$)" "$asm_path" | wc -l | tr -d ' ')
+                ;;
+            *:)
+                count=$(grep -F -- "$compact:" "$asm_path" | wc -l | tr -d ' ')
+                ;;
+            *)
+                count=0
+                ;;
+        esac
+        total=$((total + count))
+    done
+    printf '%s\n' "$total"
 }
 
 main_label_count() {

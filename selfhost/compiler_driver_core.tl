@@ -360,73 +360,36 @@
   [stdlib-roots : CompilerLoadRootList]
   [mode : CompilerBackendMode]
   [cfgs : SymI64Env]) : ResultCompilerDriverLowered
-  (let
-    [enclosing : i64 (arena-current)]
-    [scratch : i64 (arena-make)]
-    (begin
-      (unsafe
-        (arena-set! scratch))
-      (match (compiler-load-file-with-paths-and-roots-cfg
-        input-path
-        (sym-i64-empty)
-        stdlib-roots
-        cfgs)
-        [(OkCompilerLoadWithPaths decls paths _ _)
-          (begin
-            (cfg compile-profile (compiler-driver-profile-finish-phase "load"))
-            (cfg compile-profile (compiler-driver-profile-start-phase))
-            (match (lower-compiler-program-with-decl-paths-mode
-              input-path
-              (ast-program decls)
-              paths
-              (compiler-driver-lower-mode-for-target target mode))
-              [(OkCompilerLower program spans)
-                (let
-                  [scratch-head : i64 (arena-current)]
-                  (begin
-                    (unsafe
-                      (arena-set! enclosing))
-                    (let
-                      [escaped-program : CompilerIrProgram
-                        (compiler-ir-clone-program program)]
-                      [escaped-spans : CompilerSourceSpans (clone spans)]
-                      (begin
-                        (unsafe
-                          (arena-destroy scratch-head))
-                        (cfg
-                          compile-profile
-                          (compiler-driver-profile-finish-phase "lower"))
-                        (OkCompilerDriverLowered escaped-program escaped-spans)))))]
-              [(ErrCompilerLower diag)
-                (let
-                  [scratch-head : i64 (arena-current)]
-                  (begin
-                    (unsafe
-                      (arena-set! enclosing))
-                    (let
-                      [escaped-diag : CompilerDiagnostic (clone diag)]
-                      (begin
-                        (unsafe
-                          (arena-destroy scratch-head))
-                        (cfg
-                          compile-profile
-                          (compiler-driver-profile-finish-phase "lower"))
-                        (ErrCompilerDriverLowered escaped-diag)))))]))]
-        [(ErrCompilerLoadWithPaths diag)
-          (let
-            [scratch-head : i64 (arena-current)]
+  (match (compiler-load-file-with-paths-and-roots-cfg
+    input-path
+    (sym-i64-empty)
+    stdlib-roots
+    cfgs)
+    [(OkCompilerLoadWithPaths decls paths _ _)
+      (begin
+        (cfg compile-profile (compiler-driver-profile-finish-phase "load"))
+        (cfg compile-profile (compiler-driver-profile-start-phase))
+        (match (lower-compiler-program-with-decl-paths-mode
+          input-path
+          (ast-program decls)
+          paths
+          (compiler-driver-lower-mode-for-target target mode))
+          [(OkCompilerLower program spans)
             (begin
-              (unsafe
-                (arena-set! enclosing))
-              (let
-                [escaped-diag : CompilerDiagnostic (clone diag)]
-                (begin
-                  (unsafe
-                    (arena-destroy scratch-head))
-                  (cfg
-                    compile-profile
-                    (compiler-driver-profile-finish-phase "load"))
-                  (ErrCompilerDriverLowered escaped-diag)))))]))))
+              (cfg
+                compile-profile
+                (compiler-driver-profile-finish-phase "lower"))
+              (OkCompilerDriverLowered program spans))]
+          [(ErrCompilerLower diag)
+            (begin
+              (cfg
+                compile-profile
+                (compiler-driver-profile-finish-phase "lower"))
+              (ErrCompilerDriverLowered diag))]))]
+    [(ErrCompilerLoadWithPaths diag)
+      (begin
+        (cfg compile-profile (compiler-driver-profile-finish-phase "load"))
+        (ErrCompilerDriverLowered diag))]))
 
 (define (compiler-driver-emit-file-with-target
   [input-path : String]
@@ -843,39 +806,8 @@
     stdlib-roots
     opt-level))
 
-(define (compiler-driver-append-output-chunk
-  [output-path : String]
-  [chunk : String]) : i64
-  (let
-    [status : i64 (append-file-status output-path chunk)]
-    (if (= status 0)
-      0
-      (begin
-        (print-error
-          (string-append
-            "compiler: append output failed with status "
-            (string-append (int->string status) "\n")))
-        1))))
-
-(define (compiler-driver-write-text-buf-chunks
-  [output-path : String]
-  [chunks : TextBufChunkList]) : i64
-  (match chunks
-    [(TextBufChunkNil) 0]
-    [(TextBufChunkCons chunk rest)
-      (let
-        [tail-status : i64
-          (compiler-driver-write-text-buf-chunks output-path (box-get rest))]
-        (if (= tail-status 0)
-          (compiler-driver-append-output-chunk output-path chunk)
-          tail-status))]))
-
 (define (compiler-driver-write-text-buf [output-path : String] [buf : TextBuf]) : i64
-  (match buf
-    [(TextBuf chunks _)
-      (begin
-        (write-file output-path "")
-        (compiler-driver-write-text-buf-chunks output-path chunks))]))
+  (text-buf-write-file output-path buf))
 
 (define (compiler-driver-write-result
   [result : ResultCompilerDriver]

@@ -28,8 +28,8 @@
 ;: Normalize any integer into the public hash range.
 (define (hash-normalize [value : i64]) : i64
   (let
-    [m : i64 (hash-modulus)]
-    [raw : i64 (% value (hash-modulus))]
+    [m : i64 2147483647]
+    [raw : i64 (% value 2147483647)]
     (if (< raw 0)
       (+ raw m)
       raw)))
@@ -40,9 +40,11 @@
 ;: `hash-combine 0 0` distinct from an untouched empty accumulator.
 (define (hash-combine [seed : i64] [component : i64]) : i64
   (hash-normalize
-    (+
-      (+ (* (hash-normalize seed) (hash-multiplier)) (hash-normalize component))
-      1)))
+    (+ (+ (* (hash-normalize seed) 131) (hash-normalize component)) 1)))
+
+;: Combine already-normalized hash parts without re-normalizing inputs.
+(define (hash-combine-normalized [seed : i64] [component : i64]) : i64
+  (hash-normalize (+ (+ (* seed 131) component) 1)))
 
 ;: Hash an `i64` key value.
 (define (hash-i64 [value : i64]) : i64
@@ -82,7 +84,11 @@
     (begin
       (while (< i n)
         (begin
-          (set! hash (hash-combine hash (hash-char (string-ref key i))))
+          (set!
+            hash
+            (%
+              (+ (+ (* hash 131) (cast (string-ref key i) : i64)) 1)
+              2147483647))
           (set! i (+ i 1))))
       hash)))
 

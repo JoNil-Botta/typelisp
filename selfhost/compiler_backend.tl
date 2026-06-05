@@ -13,6 +13,64 @@
 
 (import "../stdlib/text_buf.tl")
 
+(import "stdlib/hashmap.tl")
+
+(cfg
+  compile-profile
+  (define compiler-backend-profile-start-ms : i64
+    0))
+
+(cfg
+  compile-profile
+  (define compiler-backend-profile-start-total : i64
+    0))
+
+(cfg
+  compile-profile
+  (define compiler-backend-profile-start-live : i64
+    0))
+
+(cfg
+  compile-profile
+  (define (compiler-backend-profile-field [value : i64]) : String
+    (string-append "|" (int->string value))))
+
+(cfg
+  compile-profile
+  (define (compiler-backend-profile-start) : unit
+    (begin
+      (set! compiler-backend-profile-start-ms (profile-now-ms))
+      (set! compiler-backend-profile-start-total (profile-alloc-total))
+      (set! compiler-backend-profile-start-live (profile-alloc-live))
+      (profile-alloc-reset-peak))))
+
+(cfg
+  compile-profile
+  (define (compiler-backend-profile-finish [phase : String]) : unit
+    (let
+      [end-ms : i64 (profile-now-ms)]
+      [end-total : i64 (profile-alloc-total)]
+      [end-live : i64 (profile-alloc-live)]
+      [peak-delta : i64
+        (- (profile-alloc-peak) compiler-backend-profile-start-live)]
+      (print-error
+        (string-append
+          "compile-profile|backend."
+          (string-append
+            phase
+            (string-append
+              (compiler-backend-profile-field
+                (- end-ms compiler-backend-profile-start-ms))
+              (string-append
+                (compiler-backend-profile-field
+                  (- end-total compiler-backend-profile-start-total))
+                (string-append
+                  (compiler-backend-profile-field
+                    (- end-live compiler-backend-profile-start-live))
+                  (string-append
+                    (compiler-backend-profile-field peak-delta)
+                    "\n"))))))))))
+
 (defenum ResultBackendReg
   (OkBackendReg String)
   (ErrBackendReg String))
@@ -67,7 +125,8 @@
 
 (defenum CompilerBackendGlobalTypeList
   (CompilerBackendGlobalTypeNil)
-  (CompilerBackendGlobalTypeCons String AstType CompilerBackendGlobalTypeList))
+  (CompilerBackendGlobalTypeCons String AstType CompilerBackendGlobalTypeList)
+  (CompilerBackendGlobalTypeCache StringI64Map (Array AstType)))
 
 (defenum ResultCompilerBackend
   (OkCompilerBackend String)
@@ -120,6 +179,25 @@
     bool
     CompilerBackendRuntimeTailPlan))
 
+(defstruct CompilerBackendRuntimeIndex
+  (defines StringI64Map)
+  (externs StringI64Map)
+  (calls StringI64Map)
+  (needs-div-abort bool)
+  (needs-shift-abort bool))
+
+(defstruct CompilerBackendProgramIndex
+  (functions StringI64Map)
+  (function-signatures (Array CompilerBackendMaybeSignature))
+  (extern-signatures StringI64Map)
+  (extern-signature-values (Array CompilerBackendMaybeSignature))
+  (extern-references StringI64Map)
+  (extern-link-symbols (Array String)))
+
+(defstruct CompilerBackendSourceSpanIndex
+  (entries StringI64Map)
+  (values (Array CompilerMaybeSourceSpan)))
+
 (define (compiler-backend-runtime-tail-fs-current-dir?
   [tail : CompilerBackendRuntimeTailPlan]) : bool
   (struct-get tail fs-current-dir))
@@ -139,6 +217,11 @@
   (BackendModeAvx2)
   (BackendModeAvx512))
 
+(define (compiler-backend-mode-scalar? [mode : CompilerBackendMode]) : bool
+  (match mode
+    [(BackendModeScalar) true]
+    [_ false]))
+
 (defenum ResultBackendRuntimePlan
   (OkBackendRuntimePlan CompilerBackendRuntimePlan)
   (ErrBackendRuntimePlan String))
@@ -151,6 +234,57 @@
   [head : String]
   [rest : BackendStringList]) : BackendStringList
   (BackendStringCons head (box rest)))
+
+(defstruct BackendStringSet
+  (seen StringI64Map)
+  (items BackendStringList))
+
+(defstruct CompilerBackendProgramCollections
+  (functions BackendStringSet)
+  (strings BackendStringSet)
+  (floats BackendStringSet))
+
+(define (compiler-backend-string-set-new [capacity : i64]) : BackendStringSet
+  (BackendStringSet (string-i64-map-with-capacity capacity) BackendStringNil))
+
+(define (compiler-backend-string-set-add
+  [set : BackendStringSet]
+  [text : String]) : BackendStringSet
+  (if (string-i64-map-contains? (struct-get set seen) text)
+    set
+    (BackendStringSet
+      (string-i64-map-put (struct-get set seen) text 1)
+      (compiler-backend-string-cons text (struct-get set items)))))
+
+(define (compiler-backend-program-collections-new) : CompilerBackendProgramCollections
+  (CompilerBackendProgramCollections
+    (compiler-backend-string-set-new 256)
+    (compiler-backend-string-set-new 256)
+    (compiler-backend-string-set-new 256)))
+
+(define (compiler-backend-program-collections-add-function
+  [collections : CompilerBackendProgramCollections]
+  [name : String]) : CompilerBackendProgramCollections
+  (CompilerBackendProgramCollections
+    (compiler-backend-string-set-add (struct-get collections functions) name)
+    (struct-get collections strings)
+    (struct-get collections floats)))
+
+(define (compiler-backend-program-collections-add-string
+  [collections : CompilerBackendProgramCollections]
+  [text : String]) : CompilerBackendProgramCollections
+  (CompilerBackendProgramCollections
+    (struct-get collections functions)
+    (compiler-backend-string-set-add (struct-get collections strings) text)
+    (struct-get collections floats)))
+
+(define (compiler-backend-program-collections-add-float
+  [collections : CompilerBackendProgramCollections]
+  [text : String]) : CompilerBackendProgramCollections
+  (CompilerBackendProgramCollections
+    (struct-get collections functions)
+    (struct-get collections strings)
+    (compiler-backend-string-set-add (struct-get collections floats) text)))
 
 (define (backend-cat3 [a : String] [b : String] [c : String]) : String
   (string-append a (string-append b c)))
@@ -205,6 +339,78 @@
 ;; `path:1:1` location. `function` is the raw IR function name (the key used by
 ;;
 ;; the spans table), not the mangled assembly symbol.
+(define (compiler-backend-source-span-index-fill
+  [values : (Array CompilerMaybeSourceSpan)]
+  [index : i64]) : unit
+  (if (>= index (array-length values))
+    unit
+    (begin
+      (array-set! values index (CompilerNoSourceSpan))
+      (compiler-backend-source-span-index-fill values (+ index 1)))))
+
+(define (compiler-backend-source-span-index-add
+  [entries : CompilerSourceSpansEntryList]
+  [map : StringI64Map]
+  [values : (Array CompilerMaybeSourceSpan)]
+  [index : i64]) : StringI64Map
+  (match entries
+    [(CompilerSourceSpansEntryNil) map]
+    [(CompilerSourceSpansEntryCons entry rest)
+      (match entry
+        [(CompilerSourceSpansEntry name span)
+          (if (string-i64-map-contains? map name)
+            (compiler-backend-source-span-index-add
+              (box-get rest)
+              map
+              values
+              index)
+            (match (string-i64-map-insert map name index)
+              [(StringI64MapInsertOk next-map)
+                (begin
+                  (array-set! values index (CompilerSomeSourceSpan span))
+                  (compiler-backend-source-span-index-add
+                    (box-get rest)
+                    next-map
+                    values
+                    (+ index 1)))]
+              [(StringI64MapInsertFull next-map) next-map]))])]))
+
+(define (compiler-backend-source-span-index-build [spans : CompilerSourceSpans]) : CompilerBackendSourceSpanIndex
+  (match spans
+    [(CompilerSourceSpans entries _ _)
+      (let
+        [count : i64 (compiler-source-spans-count spans)]
+        [values : (Array CompilerMaybeSourceSpan)
+          (make-array CompilerMaybeSourceSpan count)]
+        (begin
+          (compiler-backend-source-span-index-fill values 0)
+          (CompilerBackendSourceSpanIndex
+            (compiler-backend-source-span-index-add
+              entries
+              (string-i64-map-with-capacity (+ (* count 2) 16))
+              values
+              0)
+            values)))]))
+
+(define (compiler-backend-source-span-index-lookup
+  [index : CompilerBackendSourceSpanIndex]
+  [name : String]) : CompilerMaybeSourceSpan
+  (match (string-i64-map-get (struct-get index entries) name)
+    [(StringI64MapFound slot)
+      (if (and (>= slot 0) (< slot (array-length (struct-get index values))))
+        (array-ref (struct-get index values) slot)
+        (CompilerNoSourceSpan))]
+    [(StringI64MapMissing) (CompilerNoSourceSpan)]))
+
+(define (compiler-backend-function-diagnostic-index
+  [index : CompilerBackendSourceSpanIndex]
+  [function : String]
+  [message : String]) : CompilerDiagnostic
+  (match (compiler-backend-source-span-index-lookup index function)
+    [(CompilerSomeSourceSpan span)
+      (compiler-diagnostic-from-ast-span "" span message)]
+    [(CompilerNoSourceSpan) (compiler-diagnostic-at-start "" message)]))
+
 (define (compiler-backend-function-diagnostic
   [spans : CompilerSourceSpans]
   [function : String]
@@ -1566,6 +1772,51 @@
     "main"
     (string-append "_tl_" (compiler-backend-asm-safe-symbol name))))
 
+(define (compiler-backend-symbol-leaf [name : String]) : String
+  (let
+    [i : i64 0]
+    [n : i64 (string-length name)]
+    [start : i64 0]
+    (begin
+      (while (< i n)
+        (begin
+          (if (or (= (string-ref name i) #/') (= (string-ref name i) #:'))
+            (set! start (+ i 1))
+            unit)
+          (set! i (+ i 1))))
+      (substring name start (- n start)))))
+
+(define (compiler-backend-compact-function-symbol? [name : String]) : bool
+  (and
+    (> (string-length name) 16)
+    (and
+      (not (string-eq name "main"))
+      (not (compiler-backend-string-prefix-at? name "__global_init_" 0)))))
+
+(define (compiler-backend-function-symbol-index
+  [index : CompilerBackendProgramIndex]
+  [name : String]) : String
+  (if (compiler-backend-compact-function-symbol? name)
+    (match (string-i64-map-get (struct-get index functions) name)
+      [(StringI64MapFound slot) (backend-cat3 "_tl_f" (int->string slot) "")]
+      [(StringI64MapMissing) (compiler-backend-user-symbol name)])
+    (compiler-backend-user-symbol name)))
+
+(define (compiler-backend-function-symbol-map-comment
+  [index : CompilerBackendProgramIndex]
+  [name : String]) : String
+  (if (compiler-backend-compact-function-symbol? name)
+    (string-append
+      "#t "
+      (string-append
+        (compiler-backend-function-symbol-index index name)
+        (string-append
+          " "
+          (string-append
+            (compiler-backend-user-symbol (compiler-backend-symbol-leaf name))
+            "\n"))))
+    ""))
+
 (define (compiler-backend-closure-descriptor-label [name : String]) : String
   (string-append ".L_tl_fn_desc_" (compiler-backend-asm-safe-symbol name)))
 
@@ -1609,6 +1860,38 @@
         (compiler-backend-user-symbol name)
         name)
       (compiler-backend-user-symbol name))))
+
+(define (compiler-backend-call-symbol-index
+  [name : String]
+  [plan : CompilerBackendRuntimePlan]
+  [index : CompilerBackendProgramIndex]) : String
+  (if (compiler-backend-index-extern-references? index name)
+    (let
+      [link-symbol : String
+        (compiler-backend-index-extern-link-symbol index name)]
+      (if (and
+        (and
+          (string-eq link-symbol name)
+          (compiler-backend-plan-provides? plan name))
+        (not (compiler-backend-index-function-defines? index name)))
+        (if (compiler-backend-runtime-user-symbol? name)
+          (compiler-backend-user-symbol name)
+          name)
+        (compiler-backend-link-symbol link-symbol plan)))
+    (if (and
+      (compiler-backend-plan-provides? plan name)
+      (not (compiler-backend-index-function-defines? index name)))
+      (if (compiler-backend-runtime-user-symbol? name)
+        (compiler-backend-user-symbol name)
+        name)
+      (compiler-backend-function-symbol-index index name))))
+
+(define (compiler-backend-function-label-scope
+  [index : CompilerBackendProgramIndex]
+  [name : String]) : String
+  (match (string-i64-map-get (struct-get index functions) name)
+    [(StringI64MapFound slot) (backend-cat3 "f" (int->string slot) "")]
+    [(StringI64MapMissing) (compiler-backend-user-symbol name)]))
 
 (define (compiler-backend-type-size [ty : AstType]) : i64
   (match ty
@@ -2337,7 +2620,8 @@
 (define (compiler-backend-emit-load-typed-value-with-plan
   [assignments : CompilerRegAssignmentList]
   [value : CompilerIrValue]
-  [ty : AstType]) : ResultCompilerBackend
+  [ty : AstType]
+  [program-index : CompilerBackendProgramIndex]) : ResultCompilerBackend
   (if (compiler-backend-float-type? ty)
     (compiler-backend-emit-load-float-value-with-plan
       assignments
@@ -2369,7 +2653,7 @@
         (OkCompilerBackend
           (backend-cat5
             "    leaq "
-            (compiler-backend-user-symbol name)
+            (compiler-backend-function-or-global-addr-symbol program-index name)
             "(%rip), %rax\n"
             ""
             ""))]
@@ -2381,7 +2665,15 @@
   (compiler-backend-emit-load-typed-value-with-plan
     CompilerRegAssignmentNil
     value
-    ty))
+    ty
+    (compiler-backend-program-index-build IrFunctionNil IrExternNil)))
+
+(define (compiler-backend-function-or-global-addr-symbol
+  [program-index : CompilerBackendProgramIndex]
+  [name : String]) : String
+  (if (compiler-backend-index-function-defines? program-index name)
+    (compiler-backend-function-symbol-index program-index name)
+    (compiler-backend-user-symbol name)))
 
 (define (compiler-backend-unsigned-rel-ty? [ty : AstType]) : bool
   (match ty
@@ -2399,18 +2691,48 @@
     [(CompilerBackendGlobalTypeCons key ty rest)
       (if (string-eq key name)
         (CompilerRegSomeType ty)
-        (compiler-backend-global-type-lookup rest name))]))
+        (compiler-backend-global-type-lookup rest name))]
+    [(CompilerBackendGlobalTypeCache ids values)
+      (match (string-i64-map-get ids name)
+        [(StringI64MapFound index)
+          (CompilerRegSomeType (array-ref values index))]
+        [(StringI64MapMissing) (CompilerRegNoType)])]))
 
-(define (compiler-backend-global-types [globals : CompilerIrGlobalList]) : CompilerBackendGlobalTypeList
+(define (compiler-backend-global-type-count [globals : CompilerIrGlobalList]) : i64
   (match globals
-    [(IrGlobalNil) (CompilerBackendGlobalTypeNil)]
+    [(IrGlobalNil) 0]
+    [(IrGlobalCons _ rest)
+      (+ 1 (compiler-backend-global-type-count (box-get rest)))]))
+
+(define (compiler-backend-global-types-fill
+  [globals : CompilerIrGlobalList]
+  [ids : StringI64Map]
+  [values : (Array AstType)]
+  [index : i64]) : StringI64Map
+  (match globals
+    [(IrGlobalNil) ids]
     [(IrGlobalCons global rest)
       (match global
         [(IrGlobal name ty _)
-          (CompilerBackendGlobalTypeCons
-            name
-            ty
-            (compiler-backend-global-types (box-get rest)))])]))
+          (begin
+            (array-set! values index ty)
+            (compiler-backend-global-types-fill
+              (box-get rest)
+              (string-i64-map-put ids name index)
+              values
+              (+ index 1)))])]))
+
+(define (compiler-backend-global-types [globals : CompilerIrGlobalList]) : CompilerBackendGlobalTypeList
+  (let
+    [count : i64 (compiler-backend-global-type-count globals)]
+    [values : (Array AstType) (make-array AstType count)]
+    (CompilerBackendGlobalTypeCache
+      (compiler-backend-global-types-fill
+        globals
+        (string-i64-map-with-capacity (+ (* count 2) 16))
+        values
+        0)
+      values)))
 
 (define (compiler-backend-value-type
   [types : CompilerRegVarTypeList]
@@ -3548,7 +3870,8 @@
   [ok-label : String]
   [plan : CompilerBackendRuntimePlan]
   [functions : CompilerIrFunctionList]
-  [externs : CompilerIrExternList]) : ResultCompilerBackend
+  [externs : CompilerIrExternList]
+  [program-index : CompilerBackendProgramIndex]) : ResultCompilerBackend
   (match (compiler-backend-emit-load-value-with-plan assignments index "%rax")
     [(OkCompilerBackend index-asm)
       (match (compiler-backend-emit-load-value-with-plan
@@ -3578,11 +3901,10 @@
                       (compiler-backend-emit-call-space-sub call-space)
                       (backend-cat5
                         "    call "
-                        (compiler-backend-call-symbol
+                        (compiler-backend-call-symbol-index
                           "tl_oob_abort"
                           plan
-                          functions
-                          externs)
+                          program-index)
                         "\n"
                         (string-append
                           (compiler-backend-emit-call-space-add call-space)
@@ -3793,7 +4115,8 @@
   [assignments : CompilerRegAssignmentList]
   [dst : CompilerIrValue]
   [src : CompilerIrValue]
-  [ty : AstType]) : ResultCompilerBackend
+  [ty : AstType]
+  [program-index : CompilerBackendProgramIndex]) : ResultCompilerBackend
   (match (compiler-backend-emit-load-value-with-plan assignments dst "%r10")
     [(OkCompilerBackend ptr-asm)
       (match (compiler-backend-emit-store-immediate-to-memory src "(%r10)" ty)
@@ -3803,7 +4126,8 @@
           (match (compiler-backend-emit-load-typed-value-with-plan
             assignments
             src
-            ty)
+            ty
+            program-index)
             [(OkCompilerBackend src-asm)
               (OkCompilerBackend
                 (string-append
@@ -3825,7 +4149,8 @@
   [offset : CompilerIrValue]
   [elem-ty : AstType]
   [value : CompilerIrValue]
-  [store-ty : AstType]) : ResultCompilerBackend
+  [store-ty : AstType]
+  [program-index : CompilerBackendProgramIndex]) : ResultCompilerBackend
   (match (compiler-backend-value-as-i64 offset)
     [(CompilerBackendSomeI64 n)
       (let
@@ -3846,7 +4171,8 @@
                 (match (compiler-backend-emit-load-typed-value-with-plan
                   assignments
                   value
-                  store-ty)
+                  store-ty
+                  program-index)
                   [(OkCompilerBackend value-asm)
                     (OkCompilerBackend
                       (string-append
@@ -3967,11 +4293,13 @@
   [dst : i64]
   [src : CompilerIrValue]
   [from-ty : AstType]
-  [to-ty : AstType]) : ResultCompilerBackend
+  [to-ty : AstType]
+  [program-index : CompilerBackendProgramIndex]) : ResultCompilerBackend
   (match (compiler-backend-emit-load-typed-value-with-plan
     assignments
     src
-    from-ty)
+    from-ty
+    program-index)
     [(OkCompilerBackend load)
       (OkCompilerBackend
         (string-append
@@ -4023,7 +4351,8 @@
   [dst : i64]
   [src : CompilerIrValue]
   [from-ty : AstType]
-  [to-ty : AstType]) : ResultCompilerBackend
+  [to-ty : AstType]
+  [program-index : CompilerBackendProgramIndex]) : ResultCompilerBackend
   (cond
     [(and
         (opt-type-eq from-ty to-ty)
@@ -4048,7 +4377,8 @@
         dst
         src
         from-ty
-        to-ty)]
+        to-ty
+        program-index)]
     [(and
         (compiler-backend-float-type? from-ty)
         (not (compiler-backend-float-type? to-ty)))
@@ -4062,7 +4392,8 @@
       (match (compiler-backend-emit-load-typed-value-with-plan
         assignments
         src
-        from-ty)
+        from-ty
+        program-index)
         [(OkCompilerBackend load)
           (OkCompilerBackend
             (string-append
@@ -4235,6 +4566,170 @@
               [_ (CompilerBackendNoSignature)])
             (compiler-backend-extern-signature (box-get rest) name))])]))
 
+(define (compiler-backend-function-list-count
+  [functions : CompilerIrFunctionList]) : i64
+  (match functions
+    [(IrFunctionNil) 0]
+    [(IrFunctionCons _ rest)
+      (+ 1 (compiler-backend-function-list-count (box-get rest)))]))
+
+(define (compiler-backend-extern-list-count [externs : CompilerIrExternList]) : i64
+  (match externs
+    [(IrExternNil) 0]
+    [(IrExternCons _ rest)
+      (+ 1 (compiler-backend-extern-list-count (box-get rest)))]))
+
+(define (compiler-backend-program-index-functions-into
+  [functions : CompilerIrFunctionList]
+  [ids : StringI64Map]
+  [signatures : (Array CompilerBackendMaybeSignature)]
+  [index : i64]) : StringI64Map
+  (match functions
+    [(IrFunctionNil) ids]
+    [(IrFunctionCons func rest)
+      (match func
+        [(IrFunction name params ret-ty _ _)
+          (begin
+            (array-set!
+              signatures
+              index
+              (CompilerBackendSomeSignature
+                (compiler-backend-param-type-list params)
+                ret-ty))
+            (compiler-backend-program-index-functions-into
+              (box-get rest)
+              (string-i64-map-put ids name index)
+              signatures
+              (+ index 1)))])]))
+
+(define (compiler-backend-program-index-extern-signature [ty : AstType]) : CompilerBackendMaybeSignature
+  (match ty
+    [(AstTyFunc args ret-ty)
+      (CompilerBackendSomeSignature args (box-get ret-ty))]
+    [_ (CompilerBackendNoSignature)]))
+
+(define (compiler-backend-program-index-extern-signatures-into
+  [externs : CompilerIrExternList]
+  [signature-ids : StringI64Map]
+  [signatures : (Array CompilerBackendMaybeSignature)]
+  [index : i64]) : StringI64Map
+  (match externs
+    [(IrExternNil) signature-ids]
+    [(IrExternCons item rest)
+      (match item
+        [(IrExtern extern-name ty _ _ _)
+          (begin
+            (array-set!
+              signatures
+              index
+              (compiler-backend-program-index-extern-signature ty))
+            (compiler-backend-program-index-extern-signatures-into
+              (box-get rest)
+              (string-i64-map-put signature-ids extern-name index)
+              signatures
+              (+ index 1)))])]))
+
+(define (compiler-backend-program-index-extern-references-into
+  [externs : CompilerIrExternList]
+  [reference-ids : StringI64Map]
+  [link-symbols : (Array String)]
+  [index : i64]) : StringI64Map
+  (match externs
+    [(IrExternNil) reference-ids]
+    [(IrExternCons item rest)
+      (match item
+        [(IrExtern extern-name _ _ link-symbol _)
+          (begin
+            (array-set! link-symbols index link-symbol)
+            (compiler-backend-program-index-extern-references-into
+              (box-get rest)
+              (string-i64-map-put
+                (string-i64-map-put reference-ids extern-name index)
+                link-symbol
+                index)
+              link-symbols
+              (+ index 1)))])]))
+
+(define (compiler-backend-program-index-build
+  [functions : CompilerIrFunctionList]
+  [externs : CompilerIrExternList]) : CompilerBackendProgramIndex
+  (let
+    [function-count : i64 (compiler-backend-function-list-count functions)]
+    [extern-count : i64 (compiler-backend-extern-list-count externs)]
+    [function-signatures : (Array CompilerBackendMaybeSignature)
+      (make-array CompilerBackendMaybeSignature function-count)]
+    [extern-signatures : (Array CompilerBackendMaybeSignature)
+      (make-array CompilerBackendMaybeSignature extern-count)]
+    [extern-link-symbols : (Array String) (make-array String extern-count)]
+    [function-ids : StringI64Map
+      (compiler-backend-program-index-functions-into
+        functions
+        (string-i64-map-with-capacity (+ (* function-count 2) 1))
+        function-signatures
+        0)]
+    [extern-signature-ids : StringI64Map
+      (compiler-backend-program-index-extern-signatures-into
+        externs
+        (string-i64-map-with-capacity (+ (* extern-count 2) 1))
+        extern-signatures
+        0)]
+    [extern-reference-ids : StringI64Map
+      (compiler-backend-program-index-extern-references-into
+        externs
+        (string-i64-map-with-capacity (+ (* extern-count 4) 1))
+        extern-link-symbols
+        0)]
+    (CompilerBackendProgramIndex
+      function-ids
+      function-signatures
+      extern-signature-ids
+      extern-signatures
+      extern-reference-ids
+      extern-link-symbols)))
+
+(define (compiler-backend-index-function-signature
+  [index : CompilerBackendProgramIndex]
+  [name : String]) : CompilerBackendMaybeSignature
+  (match (string-i64-map-get (struct-get index functions) name)
+    [(StringI64MapFound slot)
+      (array-ref (struct-get index function-signatures) slot)]
+    [(StringI64MapMissing) (CompilerBackendNoSignature)]))
+
+(define (compiler-backend-index-extern-signature
+  [index : CompilerBackendProgramIndex]
+  [name : String]) : CompilerBackendMaybeSignature
+  (match (string-i64-map-get (struct-get index extern-signatures) name)
+    [(StringI64MapFound slot)
+      (array-ref (struct-get index extern-signature-values) slot)]
+    [(StringI64MapMissing) (CompilerBackendNoSignature)]))
+
+(define (compiler-backend-index-signature
+  [index : CompilerBackendProgramIndex]
+  [name : String]) : CompilerBackendMaybeSignature
+  (match (compiler-backend-index-function-signature index name)
+    [(CompilerBackendSomeSignature args ret-ty)
+      (CompilerBackendSomeSignature args ret-ty)]
+    [(CompilerBackendNoSignature)
+      (compiler-backend-index-extern-signature index name)]))
+
+(define (compiler-backend-index-function-defines?
+  [index : CompilerBackendProgramIndex]
+  [name : String]) : bool
+  (string-i64-map-contains? (struct-get index functions) name))
+
+(define (compiler-backend-index-extern-references?
+  [index : CompilerBackendProgramIndex]
+  [name : String]) : bool
+  (string-i64-map-contains? (struct-get index extern-references) name))
+
+(define (compiler-backend-index-extern-link-symbol
+  [index : CompilerBackendProgramIndex]
+  [name : String]) : String
+  (match (string-i64-map-get (struct-get index extern-references) name)
+    [(StringI64MapFound slot)
+      (array-ref (struct-get index extern-link-symbols) slot)]
+    [(StringI64MapMissing) name]))
+
 (define (compiler-backend-signature
   [functions : CompilerIrFunctionList]
   [externs : CompilerIrExternList]
@@ -4348,6 +4843,13 @@
             "")]
         [(BackendTargetWindows)
           (compiler-backend-windows-vararg-dup-asm param-types fixed-count 0)]))))
+
+(define (compiler-backend-call-param-types-index
+  [name : String]
+  [index : CompilerBackendProgramIndex]) : AstTypeList
+  (match (compiler-backend-index-signature index name)
+    [(CompilerBackendSomeSignature param-types _) param-types]
+    [(CompilerBackendNoSignature) (compiler-backend-runtime-param-types name)]))
 
 ;; Byte offset from %rsp where the `stack-idx`-th stack-passed OUTGOING argument
 ;; is stored (#750). Stack args are numbered sequentially in argument order (0,
@@ -4823,7 +5325,8 @@
         (match (compiler-backend-emit-load-typed-value-with-plan
           assignments
           value
-          ty)
+          ty
+          (compiler-backend-program-index-build IrFunctionNil IrExternNil))
           [(OkCompilerBackend load)
             (OkCompilerBackend
               (string-append
@@ -5037,7 +5540,8 @@
       (match (compiler-backend-emit-load-typed-value-with-plan
         assignments
         v
-        ret-ty)
+        ret-ty
+        (compiler-backend-program-index-build IrFunctionNil IrExternNil))
         [(OkCompilerBackend load)
           (OkCompilerBackend
             (string-append
@@ -5061,10 +5565,11 @@
   [plan : CompilerBackendRuntimePlan]
   [functions : CompilerIrFunctionList]
   [externs : CompilerIrExternList]
+  [program-index : CompilerBackendProgramIndex]
   [instr-diag : CompilerDiagnostic]) : ResultCompilerBackend
   (let
     [param-types : AstTypeList
-      (compiler-backend-call-param-types name functions externs)]
+      (compiler-backend-call-param-types-index name program-index)]
     [call-space : i64 (compiler-backend-call-arg-space target args param-types)]
     (match (compiler-backend-emit-call-args
       target
@@ -5091,7 +5596,7 @@
                   param-types)
                 (backend-cat5
                   "    call "
-                  (compiler-backend-call-symbol name plan functions externs)
+                  (compiler-backend-call-symbol-index name plan program-index)
                   "\n"
                   (string-append
                     (compiler-backend-emit-call-space-add call-space)
@@ -5269,10 +5774,33 @@
   [assignments : CompilerRegAssignmentList]
   [dst : i64]
   [src : CompilerIrValue]
-  [ty : AstType]) : ResultCompilerBackend
+  [ty : AstType]
+  [program-index : CompilerBackendProgramIndex]) : ResultCompilerBackend
   (if (compiler-backend-value-same-home? assignments dst src)
     (OkCompilerBackend "")
-    (match (compiler-backend-emit-load-typed-value-with-plan assignments src ty)
+    (match (match src
+      [(IrValueGlobalAddr name)
+        (if (compiler-backend-float-type? ty)
+          (compiler-backend-emit-load-typed-value-with-plan
+            assignments
+            src
+            ty
+            program-index)
+          (OkCompilerBackend
+            (backend-cat5
+              "    leaq "
+              (compiler-backend-function-or-global-addr-symbol
+                program-index
+                name)
+              "(%rip), %rax\n"
+              ""
+              "")))]
+      [_
+        (compiler-backend-emit-load-typed-value-with-plan
+          assignments
+          src
+          ty
+          program-index)])
       [(OkCompilerBackend load)
         (OkCompilerBackend
           (string-append
@@ -5374,6 +5902,7 @@
   [plan : CompilerBackendRuntimePlan]
   [functions : CompilerIrFunctionList]
   [externs : CompilerIrExternList]
+  [program-index : CompilerBackendProgramIndex]
   [spans : CompilerSourceSpans]
   [func-diag : CompilerDiagnostic]) : ResultCompilerBackend
   (let
@@ -5386,7 +5915,7 @@
         "")]
     (match instr
       [(IrInstrMov dst src ty)
-        (match (compiler-backend-emit-mov assignments dst src ty)
+        (match (compiler-backend-emit-mov assignments dst src ty program-index)
           [(OkCompilerBackend asm) (OkCompilerBackend asm)]
           [(ErrCompilerBackend message)
             (ErrCompilerBackend
@@ -5411,7 +5940,12 @@
             (ErrCompilerBackend
               (compiler-backend-apply-instr-diagnostic message instr-diag))])]
       [(IrInstrStorePtr dst src ty)
-        (match (compiler-backend-emit-store-ptr assignments dst src ty)
+        (match (compiler-backend-emit-store-ptr
+          assignments
+          dst
+          src
+          ty
+          program-index)
           [(OkCompilerBackend asm) (OkCompilerBackend asm)]
           [(ErrCompilerBackend message)
             (ErrCompilerBackend
@@ -5426,7 +5960,8 @@
           ok-label
           plan
           functions
-          externs)
+          externs
+          program-index)
           [(OkCompilerBackend asm) (OkCompilerBackend asm)]
           [(ErrCompilerBackend message)
             (ErrCompilerBackend
@@ -5439,7 +5974,8 @@
           dst
           src
           from-ty
-          to-ty)
+          to-ty
+          program-index)
           [(OkCompilerBackend asm) (OkCompilerBackend asm)]
           [(ErrCompilerBackend message)
             (ErrCompilerBackend
@@ -5588,7 +6124,7 @@
       [(IrInstrCall dst name args ty)
         (let
           [param-types : AstTypeList
-            (compiler-backend-call-param-types name functions externs)]
+            (compiler-backend-call-param-types-index name program-index)]
           [call-space : i64
             (compiler-backend-call-arg-space target args param-types)]
           (match (compiler-backend-emit-call-args
@@ -5616,11 +6152,10 @@
                         param-types)
                       (backend-cat5
                         "    call "
-                        (compiler-backend-call-symbol
+                        (compiler-backend-call-symbol-index
                           name
                           plan
-                          functions
-                          externs)
+                          program-index)
                         "\n"
                         (string-append
                           (compiler-backend-emit-call-space-add call-space)
@@ -5646,6 +6181,7 @@
           types
           functions
           externs
+          program-index
           instr-diag)]
       [(IrInstrTailCall name args ty)
         (match (compiler-backend-emit-tail-call
@@ -5660,6 +6196,7 @@
           plan
           functions
           externs
+          program-index
           instr-diag)
           [(OkCompilerBackend asm) (OkCompilerBackend asm)]
           [(ErrCompilerBackend message)
@@ -5675,7 +6212,8 @@
               (match (compiler-backend-emit-load-typed-value-with-plan
                 assignments
                 value
-                ty)
+                ty
+                program-index)
                 [(OkCompilerBackend load)
                   (OkCompilerBackend
                     (string-append
@@ -5756,16 +6294,6 @@
             (ErrCompilerBackend
               (compiler-backend-apply-instr-diagnostic message instr-diag))])]
       [(IrInstrPhi _ _ _) (OkCompilerBackend "")])))
-
-(define (compiler-backend-use-counts-fill
-  [counts : (Array i64)]
-  [index : i64]
-  [value : i64]) : unit
-  (if (>= index (array-length counts))
-    unit
-    (begin
-      (array-set! counts index value)
-      (compiler-backend-use-counts-fill counts (+ index 1) value))))
 
 (define (compiler-backend-use-count-inc [counts : (Array i64)] [var : i64]) : unit
   (if (< var 0)
@@ -5946,7 +6474,6 @@
   (let
     [counts : (Array i64) (make-array i64 vars)]
     (begin
-      (compiler-backend-use-counts-fill counts 0 0)
       (compiler-backend-count-block-uses counts blocks)
       counts)))
 
@@ -5986,6 +6513,7 @@
   [plan : CompilerBackendRuntimePlan]
   [functions : CompilerIrFunctionList]
   [externs : CompilerIrExternList]
+  [program-index : CompilerBackendProgramIndex]
   [spans : CompilerSourceSpans]
   [func-diag : CompilerDiagnostic]
   [use-counts : (Array i64)]) : ResultCompilerBackend
@@ -6007,6 +6535,7 @@
     plan
     functions
     externs
+    program-index
     spans
     func-diag)
     [(OkCompilerBackend head)
@@ -6026,6 +6555,7 @@
         plan
         functions
         externs
+        program-index
         spans
         func-diag
         use-counts)
@@ -6056,6 +6586,7 @@
   [plan : CompilerBackendRuntimePlan]
   [functions : CompilerIrFunctionList]
   [externs : CompilerIrExternList]
+  [program-index : CompilerBackendProgramIndex]
   [spans : CompilerSourceSpans]
   [func-diag : CompilerDiagnostic]
   [use-counts : (Array i64)]) : ResultCompilerBackend
@@ -6086,6 +6617,7 @@
         plan
         functions
         externs
+        program-index
         spans
         func-diag
         use-counts)
@@ -6127,6 +6659,7 @@
   [plan : CompilerBackendRuntimePlan]
   [functions : CompilerIrFunctionList]
   [externs : CompilerIrExternList]
+  [program-index : CompilerBackendProgramIndex]
   [spans : CompilerSourceSpans]
   [func-diag : CompilerDiagnostic]
   [use-counts : (Array i64)]) : ResultCompilerBackend
@@ -6157,6 +6690,7 @@
         plan
         functions
         externs
+        program-index
         spans
         func-diag
         use-counts)
@@ -6201,6 +6735,7 @@
   [plan : CompilerBackendRuntimePlan]
   [functions : CompilerIrFunctionList]
   [externs : CompilerIrExternList]
+  [program-index : CompilerBackendProgramIndex]
   [spans : CompilerSourceSpans]
   [func-diag : CompilerDiagnostic]
   [use-counts : (Array i64)]) : ResultCompilerBackend
@@ -6233,6 +6768,7 @@
         plan
         functions
         externs
+        program-index
         spans
         func-diag
         use-counts)
@@ -6271,6 +6807,7 @@
   [plan : CompilerBackendRuntimePlan]
   [functions : CompilerIrFunctionList]
   [externs : CompilerIrExternList]
+  [program-index : CompilerBackendProgramIndex]
   [spans : CompilerSourceSpans]
   [func-diag : CompilerDiagnostic]
   [use-counts : (Array i64)]) : ResultCompilerBackend
@@ -6298,6 +6835,7 @@
         plan
         functions
         externs
+        program-index
         spans
         func-diag
         use-counts)
@@ -6336,6 +6874,7 @@
   [plan : CompilerBackendRuntimePlan]
   [functions : CompilerIrFunctionList]
   [externs : CompilerIrExternList]
+  [program-index : CompilerBackendProgramIndex]
   [spans : CompilerSourceSpans]
   [func-diag : CompilerDiagnostic]
   [use-counts : (Array i64)]) : ResultCompilerBackend
@@ -6345,7 +6884,8 @@
     offset
     elem-ty
     value
-    store-ty)
+    store-ty
+    program-index)
     [(OkCompilerBackend head)
       (match (compiler-backend-emit-instrs
         target
@@ -6363,6 +6903,7 @@
         plan
         functions
         externs
+        program-index
         spans
         func-diag
         use-counts)
@@ -6399,6 +6940,7 @@
   [plan : CompilerBackendRuntimePlan]
   [functions : CompilerIrFunctionList]
   [externs : CompilerIrExternList]
+  [program-index : CompilerBackendProgramIndex]
   [spans : CompilerSourceSpans]
   [func-diag : CompilerDiagnostic]
   [use-counts : (Array i64)]) : ResultCompilerBackend
@@ -6431,6 +6973,7 @@
           plan
           functions
           externs
+          program-index
           spans
           func-diag
           use-counts)
@@ -6450,6 +6993,7 @@
           plan
           functions
           externs
+          program-index
           spans
           func-diag
           use-counts)
@@ -6478,10 +7022,11 @@
   [plan : CompilerBackendRuntimePlan]
   [functions : CompilerIrFunctionList]
   [externs : CompilerIrExternList]
+  [program-index : CompilerBackendProgramIndex]
   [instr-diag : CompilerDiagnostic]) : ResultCompilerBackend
   (let
     [param-types : AstTypeList
-      (compiler-backend-call-param-types name functions externs)]
+      (compiler-backend-call-param-types-index name program-index)]
     [call-space : i64 (compiler-backend-call-arg-space target args param-types)]
     (match (compiler-backend-emit-call-args
       target
@@ -6508,7 +7053,7 @@
                   param-types)
                 (backend-cat5
                   "    call "
-                  (compiler-backend-call-symbol name plan functions externs)
+                  (compiler-backend-call-symbol-index name plan program-index)
                   "\n"
                   (string-append
                     (compiler-backend-emit-call-space-add call-space)
@@ -6526,10 +7071,11 @@
   [types : CompilerRegVarTypeList]
   [func : CompilerIrValue]
   [functions : CompilerIrFunctionList]
-  [externs : CompilerIrExternList]) : AstTypeList
+  [externs : CompilerIrExternList]
+  [program-index : CompilerBackendProgramIndex]) : AstTypeList
   (match func
     [(IrValueFunction name)
-      (match (compiler-backend-signature functions externs name)
+      (match (compiler-backend-index-signature program-index name)
         [(CompilerBackendSomeSignature param-types _) param-types]
         [(CompilerBackendNoSignature) AstTypeNil])]
     [_
@@ -6553,10 +7099,16 @@
   [types : CompilerRegVarTypeList]
   [functions : CompilerIrFunctionList]
   [externs : CompilerIrExternList]
+  [program-index : CompilerBackendProgramIndex]
   [instr-diag : CompilerDiagnostic]) : ResultCompilerBackend
   (let
     [param-types : AstTypeList
-      (compiler-backend-indirect-call-param-types types func functions externs)]
+      (compiler-backend-indirect-call-param-types
+        types
+        func
+        functions
+        externs
+        program-index)]
     [call-space : i64
       (compiler-backend-closure-call-arg-space target args param-types)]
     (match (compiler-backend-emit-call-args
@@ -6625,6 +7177,7 @@
   [plan : CompilerBackendRuntimePlan]
   [functions : CompilerIrFunctionList]
   [externs : CompilerIrExternList]
+  [program-index : CompilerBackendProgramIndex]
   [spans : CompilerSourceSpans]
   [func-diag : CompilerDiagnostic]
   [use-counts : (Array i64)]) : ResultCompilerBackend
@@ -6657,6 +7210,7 @@
                     plan
                     functions
                     externs
+                    program-index
                     spans
                     func-diag
                     use-counts)]
@@ -6701,6 +7255,7 @@
                               plan
                               functions
                               externs
+                              program-index
                               spans
                               func-diag
                               use-counts))]
@@ -6722,6 +7277,7 @@
                             plan
                             functions
                             externs
+                            program-index
                             spans
                             func-diag
                             use-counts)])]
@@ -6743,6 +7299,7 @@
                         plan
                         functions
                         externs
+                        program-index
                         spans
                         func-diag
                         use-counts)])]
@@ -6764,6 +7321,7 @@
                     plan
                     functions
                     externs
+                    program-index
                     spans
                     func-diag
                     use-counts)])]
@@ -6785,6 +7343,7 @@
                 plan
                 functions
                 externs
+                program-index
                 spans
                 func-diag
                 use-counts)])]
@@ -6811,6 +7370,7 @@
                               plan
                               functions
                               externs
+                              program-index
                               (compiler-backend-instr-diagnostic
                                 spans
                                 source-function
@@ -6834,6 +7394,7 @@
                               plan
                               functions
                               externs
+                              program-index
                               spans
                               func-diag
                               use-counts))]
@@ -6855,6 +7416,7 @@
                             plan
                             functions
                             externs
+                            program-index
                             spans
                             func-diag
                             use-counts)])]
@@ -6876,6 +7438,7 @@
                         plan
                         functions
                         externs
+                        program-index
                         spans
                         func-diag
                         use-counts)])]
@@ -6897,6 +7460,7 @@
                     plan
                     functions
                     externs
+                    program-index
                     spans
                     func-diag
                     use-counts)])]
@@ -6918,6 +7482,7 @@
                 plan
                 functions
                 externs
+                program-index
                 spans
                 func-diag
                 use-counts)])]
@@ -6994,6 +7559,7 @@
                                                   plan
                                                   functions
                                                   externs
+                                                  program-index
                                                   spans
                                                   func-diag
                                                   use-counts)
@@ -7019,6 +7585,7 @@
                                                   plan
                                                   functions
                                                   externs
+                                                  program-index
                                                   spans
                                                   func-diag
                                                   use-counts))]
@@ -7045,6 +7612,7 @@
                                                 plan
                                                 functions
                                                 externs
+                                                program-index
                                                 spans
                                                 func-diag
                                                 use-counts)])]
@@ -7071,6 +7639,7 @@
                                             plan
                                             functions
                                             externs
+                                            program-index
                                             spans
                                             func-diag
                                             use-counts)])
@@ -7096,6 +7665,7 @@
                                         plan
                                         functions
                                         externs
+                                        program-index
                                         spans
                                         func-diag
                                         use-counts))]
@@ -7122,6 +7692,7 @@
                                       plan
                                       functions
                                       externs
+                                      program-index
                                       spans
                                       func-diag
                                       use-counts)])]
@@ -7148,6 +7719,7 @@
                                   plan
                                   functions
                                   externs
+                                  program-index
                                   spans
                                   func-diag
                                   use-counts)])
@@ -7173,6 +7745,7 @@
                               plan
                               functions
                               externs
+                              program-index
                               spans
                               func-diag
                               use-counts))
@@ -7193,6 +7766,7 @@
                             plan
                             functions
                             externs
+                            program-index
                             spans
                             func-diag
                             use-counts))]
@@ -7220,6 +7794,7 @@
                             plan
                             functions
                             externs
+                            program-index
                             spans
                             func-diag
                             use-counts)
@@ -7240,6 +7815,7 @@
                             plan
                             functions
                             externs
+                            program-index
                             spans
                             func-diag
                             use-counts))]
@@ -7261,6 +7837,7 @@
                           plan
                           functions
                           externs
+                          program-index
                           spans
                           func-diag
                           use-counts)])]
@@ -7282,6 +7859,7 @@
                       plan
                       functions
                       externs
+                      program-index
                       spans
                       func-diag
                       use-counts)])]
@@ -7303,6 +7881,7 @@
                   plan
                   functions
                   externs
+                  program-index
                   spans
                   func-diag
                   use-counts)])
@@ -7323,6 +7902,7 @@
               plan
               functions
               externs
+              program-index
               spans
               func-diag
               use-counts))]
@@ -7379,6 +7959,7 @@
                                   plan
                                   functions
                                   externs
+                                  program-index
                                   spans
                                   func-diag
                                   use-counts)
@@ -7399,6 +7980,7 @@
                                   plan
                                   functions
                                   externs
+                                  program-index
                                   spans
                                   func-diag
                                   use-counts))]
@@ -7420,6 +8002,7 @@
                                 plan
                                 functions
                                 externs
+                                program-index
                                 spans
                                 func-diag
                                 use-counts)])]
@@ -7441,6 +8024,7 @@
                             plan
                             functions
                             externs
+                            program-index
                             spans
                             func-diag
                             use-counts)])
@@ -7461,6 +8045,7 @@
                         plan
                         functions
                         externs
+                        program-index
                         spans
                         func-diag
                         use-counts))]
@@ -7482,6 +8067,7 @@
                       plan
                       functions
                       externs
+                      program-index
                       spans
                       func-diag
                       use-counts)])]
@@ -7503,6 +8089,7 @@
                   plan
                   functions
                   externs
+                  program-index
                   spans
                   func-diag
                   use-counts)])
@@ -7523,6 +8110,7 @@
               plan
               functions
               externs
+              program-index
               spans
               func-diag
               use-counts))]
@@ -7569,6 +8157,7 @@
                                 plan
                                 functions
                                 externs
+                                program-index
                                 spans
                                 func-diag
                                 use-counts))]
@@ -7590,6 +8179,7 @@
                               plan
                               functions
                               externs
+                              program-index
                               spans
                               func-diag
                               use-counts)])]
@@ -7611,6 +8201,7 @@
                           plan
                           functions
                           externs
+                          program-index
                           spans
                           func-diag
                           use-counts)])]
@@ -7639,6 +8230,7 @@
                         plan
                         functions
                         externs
+                        program-index
                         spans
                         func-diag
                         use-counts)
@@ -7659,6 +8251,7 @@
                         plan
                         functions
                         externs
+                        program-index
                         spans
                         func-diag
                         use-counts))]
@@ -7680,6 +8273,7 @@
                       plan
                       functions
                       externs
+                      program-index
                       spans
                       func-diag
                       use-counts)])]
@@ -7701,6 +8295,7 @@
                   plan
                   functions
                   externs
+                  program-index
                   spans
                   func-diag
                   use-counts)])
@@ -7721,6 +8316,7 @@
               plan
               functions
               externs
+              program-index
               spans
               func-diag
               use-counts))]
@@ -7742,6 +8338,7 @@
             plan
             functions
             externs
+            program-index
             spans
             func-diag
             use-counts)])]))
@@ -7761,6 +8358,7 @@
   [plan : CompilerBackendRuntimePlan]
   [functions : CompilerIrFunctionList]
   [externs : CompilerIrExternList]
+  [program-index : CompilerBackendProgramIndex]
   [spans : CompilerSourceSpans]
   [func-diag : CompilerDiagnostic]
   [use-counts : (Array i64)]) : ResultCompilerBackend
@@ -7782,6 +8380,7 @@
         plan
         functions
         externs
+        program-index
         spans
         func-diag
         use-counts)
@@ -7815,6 +8414,7 @@
   [plan : CompilerBackendRuntimePlan]
   [functions : CompilerIrFunctionList]
   [externs : CompilerIrExternList]
+  [program-index : CompilerBackendProgramIndex]
   [spans : CompilerSourceSpans]
   [func-diag : CompilerDiagnostic]
   [use-counts : (Array i64)]
@@ -7837,6 +8437,7 @@
         plan
         functions
         externs
+        program-index
         spans
         func-diag
         use-counts)
@@ -7855,6 +8456,7 @@
             plan
             functions
             externs
+            program-index
             spans
             func-diag
             use-counts
@@ -7875,6 +8477,7 @@
   [plan : CompilerBackendRuntimePlan]
   [functions : CompilerIrFunctionList]
   [externs : CompilerIrExternList]
+  [program-index : CompilerBackendProgramIndex]
   [spans : CompilerSourceSpans]
   [func-diag : CompilerDiagnostic]
   [use-counts : (Array i64)]) : ResultCompilerBackend
@@ -7892,6 +8495,7 @@
     plan
     functions
     externs
+    program-index
     spans
     func-diag
     use-counts
@@ -8038,9 +8642,12 @@
   [func : CompilerIrFunction]
   [functions : CompilerIrFunctionList]
   [globals : CompilerIrGlobalList]
+  [global-types : CompilerBackendGlobalTypeList]
   [externs : CompilerIrExternList]
   [plan : CompilerBackendRuntimePlan]
+  [program-index : CompilerBackendProgramIndex]
   [spans : CompilerSourceSpans]
+  [span-index : CompilerBackendSourceSpanIndex]
   [crt-entry : bool]) : ResultCompilerBackend
   (match func
     [(IrFunction name params ret-ty vars blocks)
@@ -8049,14 +8656,15 @@
       ;; (or `1:1` when none was recorded) rather than always `1:1`.
       (let
         [func-diag : CompilerDiagnostic
-          (compiler-backend-function-diagnostic spans name "")]
-        [reg-plan : CompilerRegPlan (compiler-reg-plan-function func)]
+          (compiler-backend-function-diagnostic-index span-index name "")]
+        [reg-plan : CompilerRegPlan
+          (if (compiler-backend-mode-scalar? mode)
+            (compiler-reg-plan-function-stack-only func)
+            (compiler-reg-plan-function func))]
         [raw-assignments : CompilerRegAssignmentList
           (compiler-reg-plan-assignments reg-plan)]
         [assignments : CompilerRegAssignmentList raw-assignments]
-        [types : CompilerRegVarTypeList (compiler-reg-function-var-types func)]
-        [global-types : CompilerBackendGlobalTypeList
-          (compiler-backend-global-types globals)]
+        [types : CompilerRegVarTypeList (compiler-reg-plan-types reg-plan)]
         [use-counts : (Array i64)
           (compiler-backend-function-use-counts vars blocks)]
         (match (compiler-backend-emit-param-spills
@@ -8069,10 +8677,13 @@
           0)
           [(OkCompilerBackend spills)
             (let
-              [symbol : String (compiler-backend-user-symbol name)]
+              [symbol : String
+                (compiler-backend-function-symbol-index program-index name)]
+              [label-scope : String
+                (compiler-backend-function-label-scope program-index name)]
               (match (compiler-backend-emit-blocks
                 target
-                symbol
+                label-scope
                 name
                 blocks
                 blocks
@@ -8084,6 +8695,7 @@
                 plan
                 functions
                 externs
+                program-index
                 spans
                 func-diag
                 use-counts)
@@ -8096,6 +8708,9 @@
                         (compiler-backend-outgoing-frame-space target blocks))]
                     (OkCompilerBackend
                       (backend-cat5
+                        (compiler-backend-function-symbol-map-comment
+                          program-index
+                          name)
                         ".globl "
                         symbol
                         "\n"
@@ -8142,27 +8757,32 @@
                                           assignments
                                           vars
                                           blocks))))))))
-                          "\n")
-                        "")))]
+                          "\n"))))]
                 [(ErrCompilerBackend message) (ErrCompilerBackend message)]))]
           [(ErrCompilerBackend message) (ErrCompilerBackend message)]))]))
 
-;; Per-function arena escape for the backend (#1633). Emitting one function's
-;; assembly allocates per-instruction transient strings (right-associative
-;; string-append) that the bump allocator never frees â€” the ~5 GB the backend
-;; phase adds. We emit each function inside its own scratch arena, deep-`clone`
-;; ONLY the resulting assembly String into the enclosing arena, then destroy the
-;; scratch â€” reclaiming the per-function transient. `clone` of a String copies
-;; the same bytes, so the assembled program text is byte-identical.
-(define (compiler-backend-emit-function-escaping
+(define (compiler-backend-direct-emit-instr-limit) : i64
+  24)
+
+(define (compiler-backend-emit-function-direct? [func : CompilerIrFunction]) : bool
+  (match func
+    [(IrFunction _ _ _ _ blocks)
+      (<=
+        (compiler-ir-block-list-instruction-count blocks)
+        (compiler-backend-direct-emit-instr-limit))]))
+
+(define (compiler-backend-emit-function-scratch
   [target : CompilerBackendTarget]
   [mode : CompilerBackendMode]
   [func : CompilerIrFunction]
   [all-functions : CompilerIrFunctionList]
   [globals : CompilerIrGlobalList]
+  [global-types : CompilerBackendGlobalTypeList]
   [externs : CompilerIrExternList]
   [plan : CompilerBackendRuntimePlan]
+  [program-index : CompilerBackendProgramIndex]
   [spans : CompilerSourceSpans]
+  [span-index : CompilerBackendSourceSpanIndex]
   [crt-entry : bool]) : ResultCompilerBackend
   (let
     [enclosing : i64 (arena-current)]
@@ -8176,9 +8796,12 @@
         func
         all-functions
         globals
+        global-types
         externs
         plan
+        program-index
         spans
+        span-index
         crt-entry)
         [(OkCompilerBackend asm)
           (let
@@ -8205,15 +8828,62 @@
                     (arena-destroy scratch-head))
                   (ErrCompilerBackend escaped)))))]))))
 
+;; Emit small functions directly to avoid scratch/clone overhead. Larger functions
+;; still use a scratch arena so transient assembly strings stay within the
+;; self-build memory budget.
+(define (compiler-backend-emit-function-escaping
+  [target : CompilerBackendTarget]
+  [mode : CompilerBackendMode]
+  [func : CompilerIrFunction]
+  [all-functions : CompilerIrFunctionList]
+  [globals : CompilerIrGlobalList]
+  [global-types : CompilerBackendGlobalTypeList]
+  [externs : CompilerIrExternList]
+  [plan : CompilerBackendRuntimePlan]
+  [program-index : CompilerBackendProgramIndex]
+  [spans : CompilerSourceSpans]
+  [span-index : CompilerBackendSourceSpanIndex]
+  [crt-entry : bool]) : ResultCompilerBackend
+  (if (compiler-backend-emit-function-direct? func)
+    (compiler-backend-emit-function
+      target
+      mode
+      func
+      all-functions
+      globals
+      global-types
+      externs
+      plan
+      program-index
+      spans
+      span-index
+      crt-entry)
+    (compiler-backend-emit-function-scratch
+      target
+      mode
+      func
+      all-functions
+      globals
+      global-types
+      externs
+      plan
+      program-index
+      spans
+      span-index
+      crt-entry)))
+
 (define (compiler-backend-emit-functions-into
   [target : CompilerBackendTarget]
   [mode : CompilerBackendMode]
   [functions : CompilerIrFunctionList]
   [all-functions : CompilerIrFunctionList]
   [globals : CompilerIrGlobalList]
+  [global-types : CompilerBackendGlobalTypeList]
   [externs : CompilerIrExternList]
   [plan : CompilerBackendRuntimePlan]
+  [program-index : CompilerBackendProgramIndex]
   [spans : CompilerSourceSpans]
+  [span-index : CompilerBackendSourceSpanIndex]
   [crt-entry : bool]
   [buf : TextBuf]) : ResultCompilerBackend
   (match functions
@@ -8225,9 +8895,12 @@
         func
         all-functions
         globals
+        global-types
         externs
         plan
+        program-index
         spans
+        span-index
         crt-entry)
         [(OkCompilerBackend head)
           (compiler-backend-emit-functions-into
@@ -8236,9 +8909,12 @@
             (box-get rest)
             all-functions
             globals
+            global-types
             externs
             plan
+            program-index
             spans
+            span-index
             crt-entry
             (text-buf-append buf head))]
         [(ErrCompilerBackend message) (ErrCompilerBackend message)])]))
@@ -8251,19 +8927,28 @@
   [all-functions : CompilerIrFunctionList]
   [externs : CompilerIrExternList]
   [plan : CompilerBackendRuntimePlan]
+  [program-index : CompilerBackendProgramIndex]
   [spans : CompilerSourceSpans]
   [crt-entry : bool]) : ResultCompilerBackend
-  (compiler-backend-emit-functions-into
-    target
-    mode
-    functions
-    all-functions
-    globals
-    externs
-    plan
-    spans
-    crt-entry
-    (text-buf-empty)))
+  (let
+    [span-index : CompilerBackendSourceSpanIndex
+      (compiler-backend-source-span-index-build spans)]
+    [global-types : CompilerBackendGlobalTypeList
+      (compiler-backend-global-types globals)]
+    (compiler-backend-emit-functions-into
+      target
+      mode
+      functions
+      all-functions
+      globals
+      global-types
+      externs
+      plan
+      program-index
+      spans
+      span-index
+      crt-entry
+      (text-buf-empty))))
 
 (define (compiler-backend-implicit-main-function) : CompilerIrFunction
   (IrFunction
@@ -8296,9 +8981,12 @@
   [functions : CompilerIrFunctionList]
   [all-functions : CompilerIrFunctionList]
   [globals : CompilerIrGlobalList]
+  [global-types : CompilerBackendGlobalTypeList]
   [externs : CompilerIrExternList]
   [plan : CompilerBackendRuntimePlan]
+  [program-index : CompilerBackendProgramIndex]
   [spans : CompilerSourceSpans]
+  [span-index : CompilerBackendSourceSpanIndex]
   [crt-entry : bool]
   [buf : TextBuf]) : ResultCompilerBackendBuffer
   (match functions
@@ -8310,9 +8998,12 @@
         func
         all-functions
         globals
+        global-types
         externs
         plan
+        program-index
         spans
+        span-index
         crt-entry)
         [(OkCompilerBackend head)
           (compiler-backend-emit-functions-buffer-into
@@ -8321,9 +9012,12 @@
             (box-get rest)
             all-functions
             globals
+            global-types
             externs
             plan
+            program-index
             spans
+            span-index
             crt-entry
             (text-buf-append buf head))]
         [(ErrCompilerBackend message) (ErrCompilerBackendBuffer message)])]))
@@ -8336,19 +9030,28 @@
   [all-functions : CompilerIrFunctionList]
   [externs : CompilerIrExternList]
   [plan : CompilerBackendRuntimePlan]
+  [program-index : CompilerBackendProgramIndex]
   [spans : CompilerSourceSpans]
   [crt-entry : bool]) : ResultCompilerBackendBuffer
-  (compiler-backend-emit-functions-buffer-into
-    target
-    mode
-    functions
-    all-functions
-    globals
-    externs
-    plan
-    spans
-    crt-entry
-    (text-buf-empty)))
+  (let
+    [span-index : CompilerBackendSourceSpanIndex
+      (compiler-backend-source-span-index-build spans)]
+    [global-types : CompilerBackendGlobalTypeList
+      (compiler-backend-global-types globals)]
+    (compiler-backend-emit-functions-buffer-into
+      target
+      mode
+      functions
+      all-functions
+      globals
+      global-types
+      externs
+      plan
+      program-index
+      spans
+      span-index
+      crt-entry
+      (text-buf-empty))))
 
 (define (compiler-backend-emit-closure-descriptor-entry [name : String]) : String
   (backend-cat5
@@ -8362,8 +9065,9 @@
   [name : String]
   [functions : CompilerIrFunctionList]
   [externs : CompilerIrExternList]
+  [program-index : CompilerBackendProgramIndex]
   [buf : TextBuf]) : TextBuf
-  (match (compiler-backend-signature functions externs name)
+  (match (compiler-backend-index-signature program-index name)
     [(CompilerBackendSomeSignature _ _)
       (text-buf-append
         buf
@@ -8374,6 +9078,7 @@
   [names : BackendStringList]
   [functions : CompilerIrFunctionList]
   [externs : CompilerIrExternList]
+  [program-index : CompilerBackendProgramIndex]
   [buf : TextBuf]) : TextBuf
   (match names
     [(BackendStringNil) buf]
@@ -8382,27 +9087,42 @@
         (box-get rest)
         functions
         externs
+        program-index
         (compiler-backend-emit-closure-descriptor-entry-into
           name
           functions
           externs
+          program-index
           buf))]))
 
 (define (compiler-backend-emit-closure-descriptors
   [names : BackendStringList]
   [functions : CompilerIrFunctionList]
-  [externs : CompilerIrExternList]) : String
+  [externs : CompilerIrExternList]
+  [program-index : CompilerBackendProgramIndex]) : String
+  (text-buf-render
+    (compiler-backend-emit-closure-descriptors-into
+      names
+      functions
+      externs
+      program-index
+      (text-buf-empty))))
+
+(define (compiler-backend-emit-closure-descriptors-into
+  [names : BackendStringList]
+  [functions : CompilerIrFunctionList]
+  [externs : CompilerIrExternList]
+  [program-index : CompilerBackendProgramIndex]
+  [buf : TextBuf]) : TextBuf
   (match names
-    [(BackendStringNil) ""]
+    [(BackendStringNil) buf]
     [_
-      (text-buf-render
-        (compiler-backend-emit-closure-descriptor-entries-into
-          names
-          functions
-          externs
-          (text-buf-append
-            (text-buf-empty)
-            "    .section .rodata\n    .balign 8\n")))]))
+      (compiler-backend-emit-closure-descriptor-entries-into
+        names
+        functions
+        externs
+        program-index
+        (text-buf-append buf "    .section .rodata\n    .balign 8\n"))]))
 
 (define (compiler-backend-closure-adapter-outgoing-frame-space
   [target : CompilerBackendTarget]
@@ -8422,7 +9142,8 @@
   [ret-ty : AstType]
   [plan : CompilerBackendRuntimePlan]
   [functions : CompilerIrFunctionList]
-  [externs : CompilerIrExternList]) : ResultCompilerBackend
+  [externs : CompilerIrExternList]
+  [program-index : CompilerBackendProgramIndex]) : ResultCompilerBackend
   (let
     [params : CompilerIrParamList
       (compiler-backend-param-list-from-types param-types 0)]
@@ -8479,11 +9200,10 @@
                           param-types)
                         (backend-cat5
                           "    call "
-                          (compiler-backend-call-symbol
+                          (compiler-backend-call-symbol-index
                             name
                             plan
-                            functions
-                            externs)
+                            program-index)
                           "\n"
                           (string-append
                             (compiler-backend-emit-call-space-add call-space)
@@ -8499,11 +9219,31 @@
   [functions : CompilerIrFunctionList]
   [externs : CompilerIrExternList]
   [plan : CompilerBackendRuntimePlan]
+  [program-index : CompilerBackendProgramIndex]
   [buf : TextBuf]) : ResultCompilerBackend
+  (match (compiler-backend-emit-closure-entry-adapters-buffer-into
+    target
+    names
+    functions
+    externs
+    plan
+    program-index
+    buf)
+    [(OkCompilerBackendBuffer out) (OkCompilerBackend (text-buf-render out))]
+    [(ErrCompilerBackendBuffer message) (ErrCompilerBackend message)]))
+
+(define (compiler-backend-emit-closure-entry-adapters-buffer-into
+  [target : CompilerBackendTarget]
+  [names : BackendStringList]
+  [functions : CompilerIrFunctionList]
+  [externs : CompilerIrExternList]
+  [plan : CompilerBackendRuntimePlan]
+  [program-index : CompilerBackendProgramIndex]
+  [buf : TextBuf]) : ResultCompilerBackendBuffer
   (match names
-    [(BackendStringNil) (OkCompilerBackend (text-buf-render buf))]
+    [(BackendStringNil) (OkCompilerBackendBuffer buf)]
     [(BackendStringCons name rest)
-      (match (compiler-backend-signature functions externs name)
+      (match (compiler-backend-index-signature program-index name)
         [(CompilerBackendSomeSignature param-types ret-ty)
           (match (compiler-backend-emit-closure-entry-adapter
             target
@@ -8512,23 +9252,26 @@
             ret-ty
             plan
             functions
-            externs)
+            externs
+            program-index)
             [(OkCompilerBackend head)
-              (compiler-backend-emit-closure-entry-adapters-into
+              (compiler-backend-emit-closure-entry-adapters-buffer-into
                 target
                 (box-get rest)
                 functions
                 externs
                 plan
+                program-index
                 (text-buf-append buf head))]
-            [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
+            [(ErrCompilerBackend message) (ErrCompilerBackendBuffer message)])]
         [(CompilerBackendNoSignature)
-          (compiler-backend-emit-closure-entry-adapters-into
+          (compiler-backend-emit-closure-entry-adapters-buffer-into
             target
             (box-get rest)
             functions
             externs
             plan
+            program-index
             buf)])]))
 
 (define (compiler-backend-emit-closure-entry-adapters
@@ -8536,24 +9279,16 @@
   [names : BackendStringList]
   [functions : CompilerIrFunctionList]
   [externs : CompilerIrExternList]
-  [plan : CompilerBackendRuntimePlan]) : ResultCompilerBackend
+  [plan : CompilerBackendRuntimePlan]
+  [program-index : CompilerBackendProgramIndex]) : ResultCompilerBackend
   (compiler-backend-emit-closure-entry-adapters-into
     target
     names
     functions
     externs
     plan
+    program-index
     (text-buf-empty)))
-
-(define (compiler-backend-string-list-contains?
-  [strings : BackendStringList]
-  [text : String]) : bool
-  (match strings
-    [(BackendStringNil) false]
-    [(BackendStringCons head rest)
-      (if (string-eq head text)
-        true
-        (compiler-backend-string-list-contains? (box-get rest) text))]))
 
 (define (compiler-backend-string-list-reverse-into
   [strings : BackendStringList]
@@ -8568,659 +9303,287 @@
 (define (compiler-backend-string-list-reverse [strings : BackendStringList]) : BackendStringList
   (compiler-backend-string-list-reverse-into strings BackendStringNil))
 
-(define (compiler-backend-string-list-add
-  [strings : BackendStringList]
-  [text : String]) : BackendStringList
-  (if (compiler-backend-string-list-contains? strings text)
-    strings
-    (compiler-backend-string-cons text strings)))
+(define (compiler-backend-string-set-list [set : BackendStringSet]) : BackendStringList
+  (compiler-backend-string-list-reverse (struct-get set items)))
 
-(define (compiler-backend-collect-value-function
-  [functions : BackendStringList]
-  [value : CompilerIrValue]) : BackendStringList
+(define (compiler-backend-program-collections-functions
+  [collections : CompilerBackendProgramCollections]) : BackendStringList
+  (compiler-backend-string-set-list (struct-get collections functions)))
+
+(define (compiler-backend-program-collections-strings
+  [collections : CompilerBackendProgramCollections]) : BackendStringList
+  (compiler-backend-string-set-list (struct-get collections strings)))
+
+(define (compiler-backend-program-collections-floats
+  [collections : CompilerBackendProgramCollections]) : BackendStringList
+  (compiler-backend-string-set-list (struct-get collections floats)))
+
+(define (compiler-backend-collect-value-collections
+  [collections : CompilerBackendProgramCollections]
+  [value : CompilerIrValue]) : CompilerBackendProgramCollections
   (match value
-    [(IrValueFunction name) (compiler-backend-string-list-add functions name)]
-    [_ functions]))
+    [(IrValueFunction name)
+      (compiler-backend-program-collections-add-function collections name)]
+    [(IrValueString text)
+      (compiler-backend-program-collections-add-string collections text)]
+    [(IrValueF64 text)
+      (compiler-backend-program-collections-add-float collections text)]
+    [_ collections]))
 
-(define (compiler-backend-collect-value-list-functions
-  [functions : BackendStringList]
-  [values : CompilerIrValueList]) : BackendStringList
+(define (compiler-backend-collect-maybe-value-collections
+  [collections : CompilerBackendProgramCollections]
+  [value : CompilerIrMaybeValue]) : CompilerBackendProgramCollections
+  (match value
+    [(IrNoValue) collections]
+    [(IrSomeValue inner)
+      (compiler-backend-collect-value-collections collections inner)]))
+
+(define (compiler-backend-collect-value-list-collections
+  [collections : CompilerBackendProgramCollections]
+  [values : CompilerIrValueList]) : CompilerBackendProgramCollections
   (match values
-    [(IrValueNil) functions]
+    [(IrValueNil) collections]
     [(IrValueCons value rest)
-      (compiler-backend-collect-value-list-functions
-        (compiler-backend-collect-value-function functions value)
+      (compiler-backend-collect-value-list-collections
+        (compiler-backend-collect-value-collections collections value)
         (box-get rest))]))
 
-(define (compiler-backend-collect-call-args-array-functions
-  [functions : BackendStringList]
+(define (compiler-backend-collect-call-args-array-collections
+  [collections : CompilerBackendProgramCollections]
   [values : (Array CompilerIrValue)]
-  [index : i64]) : BackendStringList
+  [index : i64]) : CompilerBackendProgramCollections
   (if (>= index (array-length values))
-    functions
-    (compiler-backend-collect-call-args-array-functions
-      (compiler-backend-collect-value-function
-        functions
+    collections
+    (compiler-backend-collect-call-args-array-collections
+      (compiler-backend-collect-value-collections
+        collections
         (array-ref values index))
       values
       (+ index 1))))
 
-(define (compiler-backend-collect-call-args-functions
-  [functions : BackendStringList]
-  [args : CompilerIrCallArgs]) : BackendStringList
+(define (compiler-backend-collect-call-args-collections
+  [collections : CompilerBackendProgramCollections]
+  [args : CompilerIrCallArgs]) : CompilerBackendProgramCollections
   (match args
-    [(IrCallArgsNil) functions]
+    [(IrCallArgsNil) collections]
     [(IrCallArgsOne value)
-      (compiler-backend-collect-value-function functions value)]
+      (compiler-backend-collect-value-collections collections value)]
     [(IrCallArgsTwo a b)
-      (compiler-backend-collect-value-function
-        (compiler-backend-collect-value-function functions a)
+      (compiler-backend-collect-value-collections
+        (compiler-backend-collect-value-collections collections a)
         b)]
     [(IrCallArgsArray values)
-      (compiler-backend-collect-call-args-array-functions functions values 0)]))
+      (compiler-backend-collect-call-args-array-collections
+        collections
+        values
+        0)]))
 
-(define (compiler-backend-collect-phi-functions
-  [functions : BackendStringList]
-  [inputs : CompilerIrPhiInputList]) : BackendStringList
+(define (compiler-backend-collect-phi-collections
+  [collections : CompilerBackendProgramCollections]
+  [inputs : CompilerIrPhiInputList]) : CompilerBackendProgramCollections
   (match inputs
-    [(IrPhiInputNil) functions]
+    [(IrPhiInputNil) collections]
     [(IrPhiInputCons value _ rest)
-      (compiler-backend-collect-phi-functions
-        (compiler-backend-collect-value-function functions value)
+      (compiler-backend-collect-phi-collections
+        (compiler-backend-collect-value-collections collections value)
         (box-get rest))]))
 
-(define (compiler-backend-collect-instr-functions
-  [functions : BackendStringList]
-  [instr : CompilerIrInstr]) : BackendStringList
+(define (compiler-backend-collect-instr-collections
+  [collections : CompilerBackendProgramCollections]
+  [instr : CompilerIrInstr]) : CompilerBackendProgramCollections
   (match instr
     [(IrInstrMov _ src _)
-      (compiler-backend-collect-value-function functions src)]
+      (compiler-backend-collect-value-collections collections src)]
     [(IrInstrBinOp _ _ lhs rhs _)
-      (compiler-backend-collect-value-function
-        (compiler-backend-collect-value-function functions lhs)
+      (compiler-backend-collect-value-collections
+        (compiler-backend-collect-value-collections collections lhs)
         rhs)]
     [(IrInstrUnOp _ _ src _)
-      (compiler-backend-collect-value-function functions src)]
+      (compiler-backend-collect-value-collections collections src)]
     [(IrInstrCall _ _ args _)
-      (compiler-backend-collect-call-args-functions functions args)]
+      (compiler-backend-collect-call-args-collections collections args)]
     [(IrInstrCallIndirect _ func args _)
-      (compiler-backend-collect-call-args-functions
-        (compiler-backend-collect-value-function functions func)
+      (compiler-backend-collect-call-args-collections
+        (compiler-backend-collect-value-collections collections func)
         args)]
     [(IrInstrTailCall _ args _)
-      (compiler-backend-collect-call-args-functions functions args)]
+      (compiler-backend-collect-call-args-collections collections args)]
+    [(IrInstrStore _ value _)
+      (compiler-backend-collect-value-collections collections value)]
     [(IrInstrBranch cond _ _)
-      (compiler-backend-collect-value-function functions cond)]
+      (compiler-backend-collect-value-collections collections cond)]
     [(IrInstrReturn maybe)
-      (match maybe
-        [(IrNoValue) functions]
-        [(IrSomeValue value)
-          (compiler-backend-collect-value-function functions value)])]
+      (compiler-backend-collect-maybe-value-collections collections maybe)]
     [(IrInstrPhi _ inputs _)
-      (compiler-backend-collect-phi-functions functions inputs)]
+      (compiler-backend-collect-phi-collections collections inputs)]
     [(IrInstrGep _ base offset _)
-      (compiler-backend-collect-value-function
-        (compiler-backend-collect-value-function functions base)
+      (compiler-backend-collect-value-collections
+        (compiler-backend-collect-value-collections collections base)
         offset)]
     [(IrInstrLoad _ src _)
-      (compiler-backend-collect-value-function functions src)]
-    [(IrInstrStore _ src _)
-      (compiler-backend-collect-value-function functions src)]
+      (compiler-backend-collect-value-collections collections src)]
     [(IrInstrStorePtr dst src _)
-      (compiler-backend-collect-value-function
-        (compiler-backend-collect-value-function functions dst)
-        src)]
-    [(IrInstrCast _ src _ _)
-      (compiler-backend-collect-value-function functions src)]
-    [(IrInstrBoundsCheck index len _)
-      (compiler-backend-collect-value-function
-        (compiler-backend-collect-value-function functions index)
-        len)]
-    [(IrInstrVectorBinOp _ _ lhs rhs _ _)
-      (compiler-backend-collect-value-function
-        (compiler-backend-collect-value-function functions lhs)
-        rhs)]
-    [(IrInstrVectorReduce _ _ src _ _)
-      (compiler-backend-collect-value-function functions src)]
-    [(IrInstrVectorCompare _ _ lhs rhs _ _)
-      (compiler-backend-collect-value-function
-        (compiler-backend-collect-value-function functions lhs)
-        rhs)]
-    [(IrInstrMaskBinOp _ _ lhs rhs _)
-      (compiler-backend-collect-value-function
-        (compiler-backend-collect-value-function functions lhs)
-        rhs)]
-    [(IrInstrMaskNot _ src _)
-      (compiler-backend-collect-value-function functions src)]
-    [(IrInstrMaskReduce _ _ src _)
-      (compiler-backend-collect-value-function functions src)]
-    [(IrInstrSelect _ mask on-true on-false _ _)
-      (compiler-backend-collect-value-function
-        (compiler-backend-collect-value-function
-          (compiler-backend-collect-value-function functions mask)
-          on-true)
-        on-false)]
-    [(IrInstrVectorLoad _ base index _ _)
-      (compiler-backend-collect-value-function
-        (compiler-backend-collect-value-function functions base)
-        index)]
-    [(IrInstrVectorStore base index value _ _)
-      (compiler-backend-collect-value-function
-        (compiler-backend-collect-value-function
-          (compiler-backend-collect-value-function functions base)
-          index)
-        value)]
-    [(IrInstrPredicatedStore base index value mask _ _)
-      (compiler-backend-collect-value-function
-        (compiler-backend-collect-value-function
-          (compiler-backend-collect-value-function
-            (compiler-backend-collect-value-function functions base)
-            index)
-          value)
-        mask)]
-    [(IrInstrPredicatedLoad _ base index mask _ _)
-      (compiler-backend-collect-value-function
-        (compiler-backend-collect-value-function
-          (compiler-backend-collect-value-function functions base)
-          index)
-        mask)]
-    [(IrInstrTailMask _ index len _)
-      (compiler-backend-collect-value-function
-        (compiler-backend-collect-value-function functions index)
-        len)]
-    [(IrInstrEntryArgc _) functions]
-    [(IrInstrEntryArgv _) functions]
-    [(IrInstrEntryEnvp _) functions]
-    [(IrInstrCpuId _ leaf subleaf _)
-      (compiler-backend-collect-value-function
-        (compiler-backend-collect-value-function functions leaf)
-        subleaf)]
-    [(IrInstrXgetbv _ index)
-      (compiler-backend-collect-value-function functions index)]
-    [_ functions]))
-
-(define (compiler-backend-collect-instr-list-functions
-  [functions : BackendStringList]
-  [instrs : CompilerIrInstrList]) : BackendStringList
-  (match instrs
-    [(IrInstrNil) functions]
-    [(IrInstrCons instr rest)
-      (compiler-backend-collect-instr-list-functions
-        (compiler-backend-collect-instr-functions functions instr)
-        (box-get rest))]))
-
-(define (compiler-backend-collect-block-functions
-  [functions : BackendStringList]
-  [blocks : CompilerIrBlockList]) : BackendStringList
-  (match blocks
-    [(IrBlockNil) functions]
-    [(IrBlockCons block rest)
-      (match block
-        [(IrBlock _ instrs)
-          (compiler-backend-collect-block-functions
-            (compiler-backend-collect-instr-list-functions functions instrs)
-            (box-get rest))])]))
-
-(define (compiler-backend-collect-function-functions
-  [names : BackendStringList]
-  [functions : CompilerIrFunctionList]) : BackendStringList
-  (match functions
-    [(IrFunctionNil) names]
-    [(IrFunctionCons func rest)
-      (match func
-        [(IrFunction _ _ _ _ blocks)
-          (compiler-backend-collect-function-functions
-            (compiler-backend-collect-block-functions names blocks)
-            (box-get rest))])]))
-
-(define (compiler-backend-collect-global-functions
-  [names : BackendStringList]
-  [globals : CompilerIrGlobalList]) : BackendStringList
-  (match globals
-    [(IrGlobalNil) names]
-    [(IrGlobalCons global rest)
-      (match global
-        [(IrGlobal _ _ value)
-          (compiler-backend-collect-global-functions
-            (compiler-backend-collect-value-function names value)
-            (box-get rest))])]))
-
-(define (compiler-backend-collect-program-functions
-  [program : CompilerIrProgram]) : BackendStringList
-  (match program
-    [(IrProgram globals functions _)
-      (compiler-backend-string-list-reverse
-        (compiler-backend-collect-function-functions
-          (compiler-backend-collect-global-functions BackendStringNil globals)
-          functions))]))
-
-(define (compiler-backend-collect-value-string
-  [strings : BackendStringList]
-  [value : CompilerIrValue]) : BackendStringList
-  (match value
-    [(IrValueString text) (compiler-backend-string-list-add strings text)]
-    [_ strings]))
-
-(define (compiler-backend-collect-value-list-strings
-  [strings : BackendStringList]
-  [values : CompilerIrValueList]) : BackendStringList
-  (match values
-    [(IrValueNil) strings]
-    [(IrValueCons value rest)
-      (compiler-backend-collect-value-list-strings
-        (compiler-backend-collect-value-string strings value)
-        (box-get rest))]))
-
-(define (compiler-backend-collect-call-args-array-strings
-  [strings : BackendStringList]
-  [values : (Array CompilerIrValue)]
-  [index : i64]) : BackendStringList
-  (if (>= index (array-length values))
-    strings
-    (compiler-backend-collect-call-args-array-strings
-      (compiler-backend-collect-value-string strings (array-ref values index))
-      values
-      (+ index 1))))
-
-(define (compiler-backend-collect-call-args-strings
-  [strings : BackendStringList]
-  [args : CompilerIrCallArgs]) : BackendStringList
-  (match args
-    [(IrCallArgsNil) strings]
-    [(IrCallArgsOne value)
-      (compiler-backend-collect-value-string strings value)]
-    [(IrCallArgsTwo a b)
-      (compiler-backend-collect-value-string
-        (compiler-backend-collect-value-string strings a)
-        b)]
-    [(IrCallArgsArray values)
-      (compiler-backend-collect-call-args-array-strings strings values 0)]))
-
-(define (compiler-backend-collect-phi-strings
-  [strings : BackendStringList]
-  [inputs : CompilerIrPhiInputList]) : BackendStringList
-  (match inputs
-    [(IrPhiInputNil) strings]
-    [(IrPhiInputCons value _ rest)
-      (compiler-backend-collect-phi-strings
-        (compiler-backend-collect-value-string strings value)
-        (box-get rest))]))
-
-(define (compiler-backend-collect-instr-strings
-  [strings : BackendStringList]
-  [instr : CompilerIrInstr]) : BackendStringList
-  (match instr
-    [(IrInstrMov _ src _) (compiler-backend-collect-value-string strings src)]
-    [(IrInstrBinOp _ _ lhs rhs _)
-      (compiler-backend-collect-value-string
-        (compiler-backend-collect-value-string strings lhs)
-        rhs)]
-    [(IrInstrUnOp _ _ src _)
-      (compiler-backend-collect-value-string strings src)]
-    [(IrInstrCall _ _ args _)
-      (compiler-backend-collect-call-args-strings strings args)]
-    [(IrInstrTailCall _ args _)
-      (compiler-backend-collect-call-args-strings strings args)]
-    [(IrInstrStore _ value _)
-      (compiler-backend-collect-value-string strings value)]
-    [(IrInstrBranch cond _ _)
-      (compiler-backend-collect-value-string strings cond)]
-    [(IrInstrReturn maybe)
-      (match maybe
-        [(IrNoValue) strings]
-        [(IrSomeValue value)
-          (compiler-backend-collect-value-string strings value)])]
-    [(IrInstrPhi _ inputs _)
-      (compiler-backend-collect-phi-strings strings inputs)]
-    [(IrInstrGep _ base offset _)
-      (compiler-backend-collect-value-string
-        (compiler-backend-collect-value-string strings base)
-        offset)]
-    [(IrInstrLoad _ src _) (compiler-backend-collect-value-string strings src)]
-    [(IrInstrStorePtr dst src _)
-      (compiler-backend-collect-value-string
-        (compiler-backend-collect-value-string strings dst)
+      (compiler-backend-collect-value-collections
+        (compiler-backend-collect-value-collections collections dst)
         src)]
     [(IrInstrBoundsCheck index length _)
-      (compiler-backend-collect-value-string
-        (compiler-backend-collect-value-string strings index)
+      (compiler-backend-collect-value-collections
+        (compiler-backend-collect-value-collections collections index)
         length)]
     [(IrInstrCast _ src _ _)
-      (compiler-backend-collect-value-string strings src)]
+      (compiler-backend-collect-value-collections collections src)]
     [(IrInstrSplat _ value _ _)
-      (compiler-backend-collect-value-string strings value)]
+      (compiler-backend-collect-value-collections collections value)]
     [(IrInstrVectorBinOp _ _ lhs rhs _ _)
-      (compiler-backend-collect-value-string
-        (compiler-backend-collect-value-string strings lhs)
+      (compiler-backend-collect-value-collections
+        (compiler-backend-collect-value-collections collections lhs)
         rhs)]
     [(IrInstrVectorReduce _ _ src _ _)
-      (compiler-backend-collect-value-string strings src)]
+      (compiler-backend-collect-value-collections collections src)]
     [(IrInstrVectorCompare _ _ lhs rhs _ _)
-      (compiler-backend-collect-value-string
-        (compiler-backend-collect-value-string strings lhs)
+      (compiler-backend-collect-value-collections
+        (compiler-backend-collect-value-collections collections lhs)
         rhs)]
     [(IrInstrMaskBinOp _ _ lhs rhs _)
-      (compiler-backend-collect-value-string
-        (compiler-backend-collect-value-string strings lhs)
+      (compiler-backend-collect-value-collections
+        (compiler-backend-collect-value-collections collections lhs)
         rhs)]
     [(IrInstrMaskNot _ src _)
-      (compiler-backend-collect-value-string strings src)]
+      (compiler-backend-collect-value-collections collections src)]
     [(IrInstrMaskReduce _ _ src _)
-      (compiler-backend-collect-value-string strings src)]
+      (compiler-backend-collect-value-collections collections src)]
     [(IrInstrSelect _ mask on-true on-false _ _)
-      (compiler-backend-collect-value-string
-        (compiler-backend-collect-value-string
-          (compiler-backend-collect-value-string strings mask)
+      (compiler-backend-collect-value-collections
+        (compiler-backend-collect-value-collections
+          (compiler-backend-collect-value-collections collections mask)
           on-true)
         on-false)]
     [(IrInstrVectorLoad _ base index _ _)
-      (compiler-backend-collect-value-string
-        (compiler-backend-collect-value-string strings base)
+      (compiler-backend-collect-value-collections
+        (compiler-backend-collect-value-collections collections base)
         index)]
     [(IrInstrVectorStore base index value _ _)
-      (compiler-backend-collect-value-string
-        (compiler-backend-collect-value-string
-          (compiler-backend-collect-value-string strings base)
+      (compiler-backend-collect-value-collections
+        (compiler-backend-collect-value-collections
+          (compiler-backend-collect-value-collections collections base)
           index)
         value)]
     [(IrInstrPredicatedStore base index value mask _ _)
-      (compiler-backend-collect-value-string
-        (compiler-backend-collect-value-string
-          (compiler-backend-collect-value-string
-            (compiler-backend-collect-value-string strings base)
+      (compiler-backend-collect-value-collections
+        (compiler-backend-collect-value-collections
+          (compiler-backend-collect-value-collections
+            (compiler-backend-collect-value-collections collections base)
             index)
           value)
         mask)]
     [(IrInstrPredicatedLoad _ base index mask _ _)
-      (compiler-backend-collect-value-string
-        (compiler-backend-collect-value-string
-          (compiler-backend-collect-value-string strings base)
+      (compiler-backend-collect-value-collections
+        (compiler-backend-collect-value-collections
+          (compiler-backend-collect-value-collections collections base)
           index)
         mask)]
     [(IrInstrTailMask _ index length _)
-      (compiler-backend-collect-value-string
-        (compiler-backend-collect-value-string strings index)
+      (compiler-backend-collect-value-collections
+        (compiler-backend-collect-value-collections collections index)
         length)]
-    [(IrInstrEntryArgc _) strings]
-    [(IrInstrEntryArgv _) strings]
-    [(IrInstrEntryEnvp _) strings]
     [(IrInstrCpuId _ leaf subleaf _)
-      (compiler-backend-collect-value-string
-        (compiler-backend-collect-value-string strings leaf)
+      (compiler-backend-collect-value-collections
+        (compiler-backend-collect-value-collections collections leaf)
         subleaf)]
     [(IrInstrXgetbv _ index)
-      (compiler-backend-collect-value-string strings index)]
-    [_ strings]))
+      (compiler-backend-collect-value-collections collections index)]
+    [_ collections]))
 
-(define (compiler-backend-collect-instr-list-strings
-  [strings : BackendStringList]
-  [instrs : CompilerIrInstrList]) : BackendStringList
+(define (compiler-backend-collect-instr-list-collections
+  [collections : CompilerBackendProgramCollections]
+  [instrs : CompilerIrInstrList]) : CompilerBackendProgramCollections
   (match instrs
-    [(IrInstrNil) strings]
+    [(IrInstrNil) collections]
     [(IrInstrCons instr rest)
-      (compiler-backend-collect-instr-list-strings
-        (compiler-backend-collect-instr-strings strings instr)
+      (compiler-backend-collect-instr-list-collections
+        (compiler-backend-collect-instr-collections collections instr)
         (box-get rest))]))
 
-(define (compiler-backend-collect-block-strings
-  [strings : BackendStringList]
-  [blocks : CompilerIrBlockList]) : BackendStringList
+(define (compiler-backend-collect-block-collections
+  [collections : CompilerBackendProgramCollections]
+  [blocks : CompilerIrBlockList]) : CompilerBackendProgramCollections
   (match blocks
-    [(IrBlockNil) strings]
+    [(IrBlockNil) collections]
     [(IrBlockCons block rest)
       (match block
         [(IrBlock _ instrs)
-          (compiler-backend-collect-block-strings
-            (compiler-backend-collect-instr-list-strings strings instrs)
+          (compiler-backend-collect-block-collections
+            (compiler-backend-collect-instr-list-collections collections instrs)
             (box-get rest))])]))
 
-(define (compiler-backend-collect-function-strings
-  [strings : BackendStringList]
-  [functions : CompilerIrFunctionList]) : BackendStringList
+(define (compiler-backend-collect-function-collections
+  [collections : CompilerBackendProgramCollections]
+  [functions : CompilerIrFunctionList]) : CompilerBackendProgramCollections
   (match functions
-    [(IrFunctionNil) strings]
+    [(IrFunctionNil) collections]
     [(IrFunctionCons func rest)
       (match func
         [(IrFunction _ _ _ _ blocks)
-          (compiler-backend-collect-function-strings
-            (compiler-backend-collect-block-strings strings blocks)
+          (compiler-backend-collect-function-collections
+            (compiler-backend-collect-block-collections collections blocks)
             (box-get rest))])]))
 
-(define (compiler-backend-collect-global-strings
-  [strings : BackendStringList]
-  [globals : CompilerIrGlobalList]) : BackendStringList
+(define (compiler-backend-collect-global-collections
+  [collections : CompilerBackendProgramCollections]
+  [globals : CompilerIrGlobalList]) : CompilerBackendProgramCollections
   (match globals
-    [(IrGlobalNil) strings]
+    [(IrGlobalNil) collections]
     [(IrGlobalCons global rest)
       (match global
         [(IrGlobal _ _ value)
-          (compiler-backend-collect-global-strings
-            (compiler-backend-collect-value-string strings value)
+          (compiler-backend-collect-global-collections
+            (compiler-backend-collect-value-collections collections value)
             (box-get rest))])]))
 
-(define (compiler-backend-collect-program-strings [program : CompilerIrProgram]) : BackendStringList
+(define (compiler-backend-collect-program-collections
+  [program : CompilerIrProgram]) : CompilerBackendProgramCollections
   (match program
     [(IrProgram globals functions _)
-      (compiler-backend-string-list-reverse
-        (compiler-backend-collect-function-strings
-          (compiler-backend-collect-global-strings BackendStringNil globals)
-          functions))]))
+      (compiler-backend-collect-function-collections
+        (compiler-backend-collect-global-collections
+          (compiler-backend-program-collections-new)
+          globals)
+        functions)]))
 
-(define (compiler-backend-collect-value-f64
-  [floats : BackendStringList]
-  [value : CompilerIrValue]) : BackendStringList
-  (match value
-    [(IrValueF64 text) (compiler-backend-string-list-add floats text)]
-    [_ floats]))
-
-(define (compiler-backend-collect-value-list-f64s
-  [floats : BackendStringList]
-  [values : CompilerIrValueList]) : BackendStringList
-  (match values
-    [(IrValueNil) floats]
-    [(IrValueCons value rest)
-      (compiler-backend-collect-value-list-f64s
-        (compiler-backend-collect-value-f64 floats value)
-        (box-get rest))]))
-
-(define (compiler-backend-collect-call-args-array-f64s
-  [floats : BackendStringList]
-  [values : (Array CompilerIrValue)]
-  [index : i64]) : BackendStringList
-  (if (>= index (array-length values))
-    floats
-    (compiler-backend-collect-call-args-array-f64s
-      (compiler-backend-collect-value-f64 floats (array-ref values index))
-      values
-      (+ index 1))))
-
-(define (compiler-backend-collect-call-args-f64s
-  [floats : BackendStringList]
-  [args : CompilerIrCallArgs]) : BackendStringList
-  (match args
-    [(IrCallArgsNil) floats]
-    [(IrCallArgsOne value) (compiler-backend-collect-value-f64 floats value)]
-    [(IrCallArgsTwo a b)
-      (compiler-backend-collect-value-f64
-        (compiler-backend-collect-value-f64 floats a)
-        b)]
-    [(IrCallArgsArray values)
-      (compiler-backend-collect-call-args-array-f64s floats values 0)]))
-
-(define (compiler-backend-collect-phi-f64s
-  [floats : BackendStringList]
-  [inputs : CompilerIrPhiInputList]) : BackendStringList
-  (match inputs
-    [(IrPhiInputNil) floats]
-    [(IrPhiInputCons value _ rest)
-      (compiler-backend-collect-phi-f64s
-        (compiler-backend-collect-value-f64 floats value)
-        (box-get rest))]))
-
-(define (compiler-backend-collect-instr-f64s
-  [floats : BackendStringList]
-  [instr : CompilerIrInstr]) : BackendStringList
-  (match instr
-    [(IrInstrMov _ src _) (compiler-backend-collect-value-f64 floats src)]
-    [(IrInstrBinOp _ _ lhs rhs _)
-      (compiler-backend-collect-value-f64
-        (compiler-backend-collect-value-f64 floats lhs)
-        rhs)]
-    [(IrInstrUnOp _ _ src _) (compiler-backend-collect-value-f64 floats src)]
-    [(IrInstrCall _ _ args _)
-      (compiler-backend-collect-call-args-f64s floats args)]
-    [(IrInstrTailCall _ args _)
-      (compiler-backend-collect-call-args-f64s floats args)]
-    [(IrInstrStore _ value _) (compiler-backend-collect-value-f64 floats value)]
-    [(IrInstrBranch cond _ _) (compiler-backend-collect-value-f64 floats cond)]
-    [(IrInstrReturn maybe)
-      (match maybe
-        [(IrNoValue) floats]
-        [(IrSomeValue value) (compiler-backend-collect-value-f64 floats value)])]
-    [(IrInstrPhi _ inputs _) (compiler-backend-collect-phi-f64s floats inputs)]
-    [(IrInstrGep _ base offset _)
-      (compiler-backend-collect-value-f64
-        (compiler-backend-collect-value-f64 floats base)
-        offset)]
-    [(IrInstrLoad _ src _) (compiler-backend-collect-value-f64 floats src)]
-    [(IrInstrStorePtr dst src _)
-      (compiler-backend-collect-value-f64
-        (compiler-backend-collect-value-f64 floats dst)
-        src)]
-    [(IrInstrBoundsCheck index length _)
-      (compiler-backend-collect-value-f64
-        (compiler-backend-collect-value-f64 floats index)
-        length)]
-    [(IrInstrCast _ src _ _) (compiler-backend-collect-value-f64 floats src)]
-    [(IrInstrSplat _ value _ _)
-      (compiler-backend-collect-value-f64 floats value)]
-    [(IrInstrVectorBinOp _ _ lhs rhs _ _)
-      (compiler-backend-collect-value-f64
-        (compiler-backend-collect-value-f64 floats lhs)
-        rhs)]
-    [(IrInstrVectorReduce _ _ src _ _)
-      (compiler-backend-collect-value-f64 floats src)]
-    [(IrInstrVectorCompare _ _ lhs rhs _ _)
-      (compiler-backend-collect-value-f64
-        (compiler-backend-collect-value-f64 floats lhs)
-        rhs)]
-    [(IrInstrMaskBinOp _ _ lhs rhs _)
-      (compiler-backend-collect-value-f64
-        (compiler-backend-collect-value-f64 floats lhs)
-        rhs)]
-    [(IrInstrMaskNot _ src _) (compiler-backend-collect-value-f64 floats src)]
-    [(IrInstrMaskReduce _ _ src _)
-      (compiler-backend-collect-value-f64 floats src)]
-    [(IrInstrSelect _ mask on-true on-false _ _)
-      (compiler-backend-collect-value-f64
-        (compiler-backend-collect-value-f64
-          (compiler-backend-collect-value-f64 floats mask)
-          on-true)
-        on-false)]
-    [(IrInstrVectorLoad _ base index _ _)
-      (compiler-backend-collect-value-f64
-        (compiler-backend-collect-value-f64 floats base)
-        index)]
-    [(IrInstrVectorStore base index value _ _)
-      (compiler-backend-collect-value-f64
-        (compiler-backend-collect-value-f64
-          (compiler-backend-collect-value-f64 floats base)
-          index)
-        value)]
-    [(IrInstrPredicatedStore base index value mask _ _)
-      (compiler-backend-collect-value-f64
-        (compiler-backend-collect-value-f64
-          (compiler-backend-collect-value-f64
-            (compiler-backend-collect-value-f64 floats base)
-            index)
-          value)
-        mask)]
-    [(IrInstrPredicatedLoad _ base index mask _ _)
-      (compiler-backend-collect-value-f64
-        (compiler-backend-collect-value-f64
-          (compiler-backend-collect-value-f64 floats base)
-          index)
-        mask)]
-    [(IrInstrTailMask _ index length _)
-      (compiler-backend-collect-value-f64
-        (compiler-backend-collect-value-f64 floats index)
-        length)]
-    [(IrInstrEntryArgc _) floats]
-    [(IrInstrEntryArgv _) floats]
-    [(IrInstrEntryEnvp _) floats]
-    [(IrInstrCpuId _ leaf subleaf _)
-      (compiler-backend-collect-value-f64
-        (compiler-backend-collect-value-f64 floats leaf)
-        subleaf)]
-    [(IrInstrXgetbv _ index) (compiler-backend-collect-value-f64 floats index)]
-    [_ floats]))
-
-(define (compiler-backend-collect-instr-list-f64s
-  [floats : BackendStringList]
-  [instrs : CompilerIrInstrList]) : BackendStringList
-  (match instrs
-    [(IrInstrNil) floats]
-    [(IrInstrCons instr rest)
-      (compiler-backend-collect-instr-list-f64s
-        (compiler-backend-collect-instr-f64s floats instr)
-        (box-get rest))]))
-
-(define (compiler-backend-collect-block-f64s
-  [floats : BackendStringList]
-  [blocks : CompilerIrBlockList]) : BackendStringList
-  (match blocks
-    [(IrBlockNil) floats]
-    [(IrBlockCons block rest)
-      (match block
-        [(IrBlock _ instrs)
-          (compiler-backend-collect-block-f64s
-            (compiler-backend-collect-instr-list-f64s floats instrs)
-            (box-get rest))])]))
-
-(define (compiler-backend-collect-function-f64s
-  [floats : BackendStringList]
-  [functions : CompilerIrFunctionList]) : BackendStringList
-  (match functions
-    [(IrFunctionNil) floats]
-    [(IrFunctionCons func rest)
-      (match func
-        [(IrFunction _ _ _ _ blocks)
-          (compiler-backend-collect-function-f64s
-            (compiler-backend-collect-block-f64s floats blocks)
-            (box-get rest))])]))
-
-(define (compiler-backend-collect-global-f64s
-  [floats : BackendStringList]
-  [globals : CompilerIrGlobalList]) : BackendStringList
-  (match globals
-    [(IrGlobalNil) floats]
-    [(IrGlobalCons global rest)
-      (match global
-        [(IrGlobal _ _ value)
-          (compiler-backend-collect-global-f64s
-            (compiler-backend-collect-value-f64 floats value)
-            (box-get rest))])]))
-
-(define (compiler-backend-collect-program-f64s [program : CompilerIrProgram]) : BackendStringList
-  (match program
-    [(IrProgram globals functions _)
-      (compiler-backend-string-list-reverse
-        (compiler-backend-collect-function-f64s
-          (compiler-backend-collect-global-f64s BackendStringNil globals)
-          functions))]))
+(define (compiler-backend-emit-string-entry-into
+  [text : String]
+  [buf : TextBuf]) : TextBuf
+  (let
+    [suffix : String (compiler-backend-string-label-suffix text)]
+    [data-label : String (string-append ".L_tl_str_data_" suffix)]
+    [fat-label : String (string-append ".L_tl_str_" suffix)]
+    [escaped : String (compiler-backend-escape-string text)]
+    [len-text : String (int->string (string-length text))]
+    (text-buf-append
+      (text-buf-append
+        (text-buf-append
+          (text-buf-append
+            (text-buf-append
+              (text-buf-append
+                (text-buf-append
+                  (text-buf-append
+                    (text-buf-append
+                      (text-buf-append
+                        (text-buf-append buf data-label)
+                        ":\n    .string \"")
+                      escaped)
+                    "\"\n    .balign 8\n")
+                  fat-label)
+                ":\n    .quad ")
+              data-label)
+            "\n    .quad ")
+          len-text)
+        "\n")
+      "")))
 
 (define (compiler-backend-emit-string-entry [text : String]) : String
-  (backend-cat5
-    (compiler-backend-string-data-label text)
-    ":\n    .string "
-    (compiler-backend-quoted-gas-string text)
-    "\n    .balign 8\n"
-    (backend-cat5
-      (compiler-backend-string-fat-label text)
-      ":\n    .quad "
-      (compiler-backend-string-data-label text)
-      "\n    .quad "
-      (backend-cat3 (int->string (string-length text)) "\n" ""))))
+  (text-buf-render
+    (compiler-backend-emit-string-entry-into text (text-buf-empty))))
 
 (define (compiler-backend-emit-string-entries-into
   [strings : BackendStringList]
@@ -9230,19 +9593,27 @@
     [(BackendStringCons text rest)
       (compiler-backend-emit-string-entries-into
         (box-get rest)
-        (text-buf-append buf (compiler-backend-emit-string-entry text)))]))
+        (compiler-backend-emit-string-entry-into text buf))]))
 
 (define (compiler-backend-emit-string-entries [strings : BackendStringList]) : String
   (text-buf-render
     (compiler-backend-emit-string-entries-into strings (text-buf-empty))))
 
-(define (compiler-backend-emit-string-rodata [strings : BackendStringList]) : String
+(define (compiler-backend-emit-string-rodata-into
+  [strings : BackendStringList]
+  [buf : TextBuf]) : TextBuf
   (match strings
-    [(BackendStringNil) ""]
+    [(BackendStringNil) buf]
     [_
-      (string-append
-        "    .section .rodata\n"
-        (string-append (compiler-backend-emit-string-entries strings) "\n"))]))
+      (text-buf-append
+        (compiler-backend-emit-string-entries-into
+          strings
+          (text-buf-append buf "    .section .rodata\n"))
+        "\n")]))
+
+(define (compiler-backend-emit-string-rodata [strings : BackendStringList]) : String
+  (text-buf-render
+    (compiler-backend-emit-string-rodata-into strings (text-buf-empty))))
 
 (define (compiler-backend-emit-f64-entry [text : String]) : String
   (backend-cat5
@@ -9266,13 +9637,19 @@
   (text-buf-render
     (compiler-backend-emit-f64-entries-into floats (text-buf-empty))))
 
-(define (compiler-backend-emit-f64-rodata [floats : BackendStringList]) : String
+(define (compiler-backend-emit-f64-rodata-into
+  [floats : BackendStringList]
+  [buf : TextBuf]) : TextBuf
   (match floats
-    [(BackendStringNil) ""]
+    [(BackendStringNil) buf]
     [_
-      (string-append
-        "    .section .rodata\n"
-        (compiler-backend-emit-f64-entries floats))]))
+      (compiler-backend-emit-f64-entries-into
+        floats
+        (text-buf-append buf "    .section .rodata\n"))]))
+
+(define (compiler-backend-emit-f64-rodata [floats : BackendStringList]) : String
+  (text-buf-render
+    (compiler-backend-emit-f64-rodata-into floats (text-buf-empty))))
 
 (define (compiler-backend-global-value-asm
   [ty : AstType]
@@ -9366,16 +9743,24 @@
   [target : CompilerBackendTarget]
   [globals : CompilerIrGlobalList]
   [buf : TextBuf]) : ResultCompilerBackend
+  (match (compiler-backend-emit-globals-buffer-into target globals buf)
+    [(OkCompilerBackendBuffer out) (OkCompilerBackend (text-buf-render out))]
+    [(ErrCompilerBackendBuffer message) (ErrCompilerBackend message)]))
+
+(define (compiler-backend-emit-globals-buffer-into
+  [target : CompilerBackendTarget]
+  [globals : CompilerIrGlobalList]
+  [buf : TextBuf]) : ResultCompilerBackendBuffer
   (match globals
-    [(IrGlobalNil) (OkCompilerBackend (text-buf-render buf))]
+    [(IrGlobalNil) (OkCompilerBackendBuffer buf)]
     [(IrGlobalCons global rest)
       (match (compiler-backend-emit-global target global)
         [(OkCompilerBackend head)
-          (compiler-backend-emit-globals-into
+          (compiler-backend-emit-globals-buffer-into
             target
             (box-get rest)
             (text-buf-append buf head))]
-        [(ErrCompilerBackend message) (ErrCompilerBackend message)])]))
+        [(ErrCompilerBackend message) (ErrCompilerBackendBuffer message)])]))
 
 (define (compiler-backend-emit-globals
   [target : CompilerBackendTarget]
@@ -9598,6 +9983,173 @@
             true
             (compiler-backend-function-list-needs-shift-abort? (box-get rest)))])]))
 
+(define (compiler-backend-runtime-index-empty) : CompilerBackendRuntimeIndex
+  (CompilerBackendRuntimeIndex
+    (string-i64-map-with-capacity 256)
+    (string-i64-map-with-capacity 256)
+    (string-i64-map-with-capacity 256)
+    false
+    false))
+
+(define (compiler-backend-runtime-index-defines?
+  [index : CompilerBackendRuntimeIndex]
+  [name : String]) : bool
+  (string-i64-map-contains? (struct-get index defines) name))
+
+(define (compiler-backend-runtime-index-extern?
+  [index : CompilerBackendRuntimeIndex]
+  [name : String]) : bool
+  (string-i64-map-contains? (struct-get index externs) name))
+
+(define (compiler-backend-runtime-index-extern-alias?
+  [index : CompilerBackendRuntimeIndex]
+  [canonical : String]
+  [alias : String]) : bool
+  (or
+    (compiler-backend-runtime-index-extern? index canonical)
+    (compiler-backend-runtime-index-extern? index alias)))
+
+(define (compiler-backend-runtime-index-calls?
+  [index : CompilerBackendRuntimeIndex]
+  [name : String]) : bool
+  (string-i64-map-contains? (struct-get index calls) name))
+
+(define (compiler-backend-runtime-index-needs-div-abort?
+  [index : CompilerBackendRuntimeIndex]) : bool
+  (struct-get index needs-div-abort))
+
+(define (compiler-backend-runtime-index-needs-shift-abort?
+  [index : CompilerBackendRuntimeIndex]) : bool
+  (struct-get index needs-shift-abort))
+
+(define (compiler-backend-runtime-index-add-define
+  [index : CompilerBackendRuntimeIndex]
+  [name : String]) : CompilerBackendRuntimeIndex
+  (CompilerBackendRuntimeIndex
+    (string-i64-map-put (struct-get index defines) name 1)
+    (struct-get index externs)
+    (struct-get index calls)
+    (struct-get index needs-div-abort)
+    (struct-get index needs-shift-abort)))
+
+(define (compiler-backend-runtime-index-add-extern-name
+  [index : CompilerBackendRuntimeIndex]
+  [name : String]) : CompilerBackendRuntimeIndex
+  (CompilerBackendRuntimeIndex
+    (struct-get index defines)
+    (string-i64-map-put (struct-get index externs) name 1)
+    (struct-get index calls)
+    (struct-get index needs-div-abort)
+    (struct-get index needs-shift-abort)))
+
+(define (compiler-backend-runtime-index-add-call
+  [index : CompilerBackendRuntimeIndex]
+  [name : String]) : CompilerBackendRuntimeIndex
+  (CompilerBackendRuntimeIndex
+    (struct-get index defines)
+    (struct-get index externs)
+    (string-i64-map-put (struct-get index calls) name 1)
+    (struct-get index needs-div-abort)
+    (struct-get index needs-shift-abort)))
+
+(define (compiler-backend-runtime-index-with-div-abort
+  [index : CompilerBackendRuntimeIndex]) : CompilerBackendRuntimeIndex
+  (CompilerBackendRuntimeIndex
+    (struct-get index defines)
+    (struct-get index externs)
+    (struct-get index calls)
+    true
+    (struct-get index needs-shift-abort)))
+
+(define (compiler-backend-runtime-index-with-shift-abort
+  [index : CompilerBackendRuntimeIndex]) : CompilerBackendRuntimeIndex
+  (CompilerBackendRuntimeIndex
+    (struct-get index defines)
+    (struct-get index externs)
+    (struct-get index calls)
+    (struct-get index needs-div-abort)
+    true))
+
+(define (compiler-backend-runtime-index-instr
+  [index : CompilerBackendRuntimeIndex]
+  [instr : CompilerIrInstr]) : CompilerBackendRuntimeIndex
+  (match instr
+    [(IrInstrCall _ call-name _ _)
+      (compiler-backend-runtime-index-add-call index call-name)]
+    [(IrInstrTailCall call-name _ _)
+      (compiler-backend-runtime-index-add-call index call-name)]
+    [(IrInstrBoundsCheck _ _ _)
+      (compiler-backend-runtime-index-add-call index "tl_oob_abort")]
+    [(IrInstrBinOp _ op _ _ ty)
+      (let
+        [with-div : CompilerBackendRuntimeIndex
+          (if (compiler-backend-binop-needs-div-abort? op ty)
+            (compiler-backend-runtime-index-with-div-abort index)
+            index)]
+        (if (compiler-backend-binop-needs-shift-abort? op ty)
+          (compiler-backend-runtime-index-with-shift-abort with-div)
+          with-div))]
+    [_ index]))
+
+(define (compiler-backend-runtime-index-instrs
+  [index : CompilerBackendRuntimeIndex]
+  [instrs : CompilerIrInstrList]) : CompilerBackendRuntimeIndex
+  (match instrs
+    [(IrInstrNil) index]
+    [(IrInstrCons instr rest)
+      (compiler-backend-runtime-index-instrs
+        (compiler-backend-runtime-index-instr index instr)
+        (box-get rest))]))
+
+(define (compiler-backend-runtime-index-blocks
+  [index : CompilerBackendRuntimeIndex]
+  [blocks : CompilerIrBlockList]) : CompilerBackendRuntimeIndex
+  (match blocks
+    [(IrBlockNil) index]
+    [(IrBlockCons block rest)
+      (match block
+        [(IrBlock _ instrs)
+          (compiler-backend-runtime-index-blocks
+            (compiler-backend-runtime-index-instrs index instrs)
+            (box-get rest))])]))
+
+(define (compiler-backend-runtime-index-functions
+  [index : CompilerBackendRuntimeIndex]
+  [functions : CompilerIrFunctionList]) : CompilerBackendRuntimeIndex
+  (match functions
+    [(IrFunctionNil) index]
+    [(IrFunctionCons func rest)
+      (match func
+        [(IrFunction name _ _ _ blocks)
+          (compiler-backend-runtime-index-functions
+            (compiler-backend-runtime-index-blocks
+              (compiler-backend-runtime-index-add-define index name)
+              blocks)
+            (box-get rest))])]))
+
+(define (compiler-backend-runtime-index-externs
+  [index : CompilerBackendRuntimeIndex]
+  [externs : CompilerIrExternList]) : CompilerBackendRuntimeIndex
+  (match externs
+    [(IrExternNil) index]
+    [(IrExternCons item rest)
+      (match item
+        [(IrExtern extern-name _ _ link-symbol _)
+          (compiler-backend-runtime-index-externs
+            (compiler-backend-runtime-index-add-extern-name
+              (compiler-backend-runtime-index-add-extern-name index extern-name)
+              link-symbol)
+            (box-get rest))])]))
+
+(define (compiler-backend-runtime-index
+  [functions : CompilerIrFunctionList]
+  [externs : CompilerIrExternList]) : CompilerBackendRuntimeIndex
+  (compiler-backend-runtime-index-functions
+    (compiler-backend-runtime-index-externs
+      (compiler-backend-runtime-index-empty)
+      externs)
+    functions))
+
 (define (compiler-backend-provides-runtime-name?
   [name : String]
   [candidate : String]
@@ -9766,25 +10318,30 @@
               name
               "tl_print_err"
               provides-print-err)
-            (compiler-backend-provides-runtime-name?
+            (compiler-backend-provides-runtime-alias?
               name
               ".L_tl_arg_count"
+              "tl_arg_count"
               provides-arg-count)
-            (compiler-backend-provides-runtime-name?
+            (compiler-backend-provides-runtime-alias?
               name
               ".L_tl_arg"
+              "tl_arg"
               provides-arg)
-            (compiler-backend-provides-runtime-name?
+            (compiler-backend-provides-runtime-alias?
               name
               ".L_tl_read_file"
+              "tl_read_file"
               provides-read-file)
-            (compiler-backend-provides-runtime-name?
+            (compiler-backend-provides-runtime-alias?
               name
               ".L_tl_write_file"
+              "tl_write_file"
               provides-write-file)
-            (compiler-backend-provides-runtime-name?
+            (compiler-backend-provides-runtime-alias?
               name
               ".L_tl_file_exists"
+              "tl_file_exists"
               provides-file-exists))
           (or
             (backend-or4
@@ -9820,51 +10377,62 @@
                       name
                       "tl_process_wait"
                       provides-process-output)))
-                (compiler-backend-provides-runtime-name?
+                (compiler-backend-provides-runtime-alias?
                   name
                   ".L_tl_read_file_status"
+                  "tl_read_file_status"
                   provides-read-file)
-                (compiler-backend-provides-runtime-name?
+                (compiler-backend-provides-runtime-alias?
                   name
                   ".L_tl_write_file_status"
+                  "tl_write_file_status"
                   provides-write-file)
-                (compiler-backend-provides-runtime-name?
+                (compiler-backend-provides-runtime-alias?
                   name
                   ".L_tl_append_file_status"
+                  "tl_append_file_status"
                   provides-write-file)
-                (compiler-backend-provides-runtime-name?
+                (compiler-backend-provides-runtime-alias?
                   name
                   ".L_tl_file_exists_status"
+                  "tl_file_exists_status"
                   provides-file-exists)
-                (compiler-backend-provides-runtime-name?
+                (compiler-backend-provides-runtime-alias?
                   name
                   ".L_tl_file_open_status"
+                  "tl_file_open_status"
                   provides-file-handle)
-                (compiler-backend-provides-runtime-name?
+                (compiler-backend-provides-runtime-alias?
                   name
                   ".L_tl_file_close_status"
+                  "tl_file_close_status"
                   provides-file-handle)
-                (compiler-backend-provides-runtime-name?
+                (compiler-backend-provides-runtime-alias?
                   name
                   ".L_tl_file_read_chunk_status"
+                  "tl_file_read_chunk_status"
                   provides-file-read-chunk))
               (or
                 (backend-or4
-                  (compiler-backend-provides-runtime-name?
+                  (compiler-backend-provides-runtime-alias?
                     name
                     ".L_tl_file_write_status"
+                    "tl_file_write_status"
                     provides-file-handle)
-                  (compiler-backend-provides-runtime-name?
+                  (compiler-backend-provides-runtime-alias?
                     name
                     ".L_tl_file_flush_status"
+                    "tl_file_flush_status"
                     provides-file-handle)
-                  (compiler-backend-provides-runtime-name?
+                  (compiler-backend-provides-runtime-alias?
                     name
                     ".L_tl_file_read_chunk_bytes"
+                    "tl_file_read_chunk_bytes"
                     provides-file-read-chunk)
-                  (compiler-backend-provides-runtime-name?
+                  (compiler-backend-provides-runtime-alias?
                     name
                     ".L_tl_file_read_chunk_eof"
+                    "tl_file_read_chunk_eof"
                     provides-file-read-chunk))
                 (or
                   (backend-or8
@@ -9981,400 +10549,362 @@
   [functions : CompilerIrFunctionList]
   [externs : CompilerIrExternList]) : ResultBackendRuntimePlan
   (let
+    [index : CompilerBackendRuntimeIndex
+      (compiler-backend-runtime-index functions externs)]
     [defines-alloc : bool
-      (compiler-backend-function-list-defines? functions "tl_alloc")]
+      (compiler-backend-runtime-index-defines? index "tl_alloc")]
     [defines-oob : bool
-      (compiler-backend-function-list-defines? functions "tl_oob_abort")]
+      (compiler-backend-runtime-index-defines? index "tl_oob_abort")]
     [defines-div-abort : bool
-      (compiler-backend-function-list-defines? functions "tl_div_abort")]
+      (compiler-backend-runtime-index-defines? index "tl_div_abort")]
     [defines-shift-abort : bool
-      (compiler-backend-function-list-defines? functions "tl_shift_abort")]
+      (compiler-backend-runtime-index-defines? index "tl_shift_abort")]
     [defines-substring : bool
-      (compiler-backend-function-list-defines? functions "tl_substring")]
+      (compiler-backend-runtime-index-defines? index "tl_substring")]
     [defines-concat : bool
-      (compiler-backend-function-list-defines? functions "tl_string_concat")]
+      (compiler-backend-runtime-index-defines? index "tl_string_concat")]
     [defines-string-eq : bool
-      (compiler-backend-function-list-defines? functions "tl_string_eq")]
+      (compiler-backend-runtime-index-defines? index "tl_string_eq")]
     [defines-string-to-int : bool
-      (compiler-backend-function-list-defines? functions "tl_string_to_int")]
+      (compiler-backend-runtime-index-defines? index "tl_string_to_int")]
     [defines-int-to-string : bool
-      (compiler-backend-function-list-defines? functions "tl_int_to_string")]
+      (compiler-backend-runtime-index-defines? index "tl_int_to_string")]
     [defines-print-err : bool
-      (compiler-backend-function-list-defines? functions "tl_print_err")]
+      (compiler-backend-runtime-index-defines? index "tl_print_err")]
     [defines-print-str : bool
-      (compiler-backend-function-list-defines? functions "tl_print_str")]
+      (compiler-backend-runtime-index-defines? index "tl_print_str")]
     [defines-print-string : bool
-      (compiler-backend-function-list-defines? functions "tl_print_string")]
+      (compiler-backend-runtime-index-defines? index "tl_print_string")]
     [defines-print-char : bool
-      (compiler-backend-function-list-defines? functions "tl_print_char")]
+      (compiler-backend-runtime-index-defines? index "tl_print_char")]
     [defines-print-f64 : bool
-      (compiler-backend-function-list-defines? functions "tl_print_f64")]
+      (compiler-backend-runtime-index-defines? index "tl_print_f64")]
     [defines-region-mark : bool
-      (compiler-backend-function-list-defines? functions "tl_region_mark")]
+      (compiler-backend-runtime-index-defines? index "tl_region_mark")]
     [defines-region-reset : bool
-      (compiler-backend-function-list-defines? functions "tl_region_reset")]
+      (compiler-backend-runtime-index-defines? index "tl_region_reset")]
     [defines-process-output : bool
-      (compiler-backend-function-list-defines? functions "tl_process_output")]
+      (compiler-backend-runtime-index-defines? index "tl_process_output")]
     [defines-process-start : bool
-      (compiler-backend-function-list-defines? functions "tl_process_start")]
+      (compiler-backend-runtime-index-defines? index "tl_process_start")]
     [defines-process-wait : bool
-      (compiler-backend-function-list-defines? functions "tl_process_wait")]
+      (compiler-backend-runtime-index-defines? index "tl_process_wait")]
     [defines-random-system-seed : bool
-      (compiler-backend-function-list-defines?
-        functions
-        "tl_random_system_seed")]
+      (compiler-backend-runtime-index-defines? index "tl_random_system_seed")]
     [defines-windows-setup-instances : bool
-      (compiler-backend-function-list-defines?
-        functions
+      (compiler-backend-runtime-index-defines?
+        index
         "tl_windows_setup_instances")]
     [defines-windows-sdk-registry-install : bool
-      (compiler-backend-function-list-defines?
-        functions
+      (compiler-backend-runtime-index-defines?
+        index
         "tl_windows_sdk_registry_install")]
     [defines-env-var-exists : bool
-      (compiler-backend-function-list-defines? functions "tl_env_var_exists")]
+      (compiler-backend-runtime-index-defines? index "tl_env_var_exists")]
     [defines-env-var-value : bool
-      (compiler-backend-function-list-defines? functions "tl_env_var_value")]
+      (compiler-backend-runtime-index-defines? index "tl_env_var_value")]
     [defines-env-path-separator : bool
-      (compiler-backend-function-list-defines? functions "env-path-separator")]
+      (compiler-backend-runtime-index-defines? index "env-path-separator")]
     [defines-profile-now-ms : bool
-      (compiler-backend-function-list-defines? functions "tl_profile_now_ms")]
+      (compiler-backend-runtime-index-defines? index "tl_profile_now_ms")]
     [defines-profile-alloc-total : bool
-      (compiler-backend-function-list-defines?
-        functions
-        "tl_profile_alloc_total")]
+      (compiler-backend-runtime-index-defines? index "tl_profile_alloc_total")]
     [defines-profile-alloc-live : bool
-      (compiler-backend-function-list-defines?
-        functions
-        "tl_profile_alloc_live")]
+      (compiler-backend-runtime-index-defines? index "tl_profile_alloc_live")]
     [defines-profile-alloc-peak : bool
-      (compiler-backend-function-list-defines?
-        functions
-        "tl_profile_alloc_peak")]
+      (compiler-backend-runtime-index-defines? index "tl_profile_alloc_peak")]
     [defines-profile-alloc-reset-peak : bool
-      (compiler-backend-function-list-defines?
-        functions
+      (compiler-backend-runtime-index-defines?
+        index
         "tl_profile_alloc_reset_peak")]
     [extern-alloc : bool
-      (compiler-backend-extern-list-references? externs "tl_alloc")]
+      (compiler-backend-runtime-index-extern? index "tl_alloc")]
     [extern-oob : bool
-      (compiler-backend-extern-list-references? externs "tl_oob_abort")]
+      (compiler-backend-runtime-index-extern? index "tl_oob_abort")]
     [extern-div-abort : bool
-      (compiler-backend-extern-list-references? externs "tl_div_abort")]
+      (compiler-backend-runtime-index-extern? index "tl_div_abort")]
     [extern-shift-abort : bool
-      (compiler-backend-extern-list-references? externs "tl_shift_abort")]
+      (compiler-backend-runtime-index-extern? index "tl_shift_abort")]
     [extern-substring : bool
-      (compiler-backend-extern-list-references? externs "tl_substring")]
+      (compiler-backend-runtime-index-extern? index "tl_substring")]
     [extern-concat : bool
-      (compiler-backend-extern-list-references? externs "tl_string_concat")]
+      (compiler-backend-runtime-index-extern? index "tl_string_concat")]
     [extern-string-eq : bool
-      (compiler-backend-extern-list-references? externs "tl_string_eq")]
+      (compiler-backend-runtime-index-extern? index "tl_string_eq")]
     [extern-string-to-int : bool
-      (compiler-backend-extern-list-references? externs "tl_string_to_int")]
+      (compiler-backend-runtime-index-extern? index "tl_string_to_int")]
     [extern-int-to-string : bool
-      (compiler-backend-extern-list-references? externs "tl_int_to_string")]
+      (compiler-backend-runtime-index-extern? index "tl_int_to_string")]
     [extern-abort : bool
-      (compiler-backend-extern-list-references-alias?
-        externs
+      (compiler-backend-runtime-index-extern-alias?
+        index
         ".L_tl_abort"
         "tl_abort_string")]
     [extern-print-err : bool
-      (compiler-backend-extern-list-references-alias?
-        externs
+      (compiler-backend-runtime-index-extern-alias?
+        index
         "tl_print_err"
         "tl_print_error")]
     [extern-print-str : bool
-      (compiler-backend-extern-list-references-alias?
-        externs
+      (compiler-backend-runtime-index-extern-alias?
+        index
         "tl_print_str"
         "tl_print_string")]
     [extern-print-char : bool
-      (compiler-backend-extern-list-references? externs "tl_print_char")]
+      (compiler-backend-runtime-index-extern? index "tl_print_char")]
     [extern-print-f64 : bool
-      (compiler-backend-extern-list-references? externs "tl_print_f64")]
+      (compiler-backend-runtime-index-extern? index "tl_print_f64")]
     [extern-arg-count : bool
-      (compiler-backend-extern-list-references-alias?
-        externs
+      (compiler-backend-runtime-index-extern-alias?
+        index
         ".L_tl_arg_count"
         "tl_arg_count")]
     [extern-arg : bool
-      (compiler-backend-extern-list-references-alias?
-        externs
-        ".L_tl_arg"
-        "tl_arg")]
+      (compiler-backend-runtime-index-extern-alias? index ".L_tl_arg" "tl_arg")]
     [extern-read-file : bool
-      (compiler-backend-extern-list-references-alias?
-        externs
+      (compiler-backend-runtime-index-extern-alias?
+        index
         ".L_tl_read_file"
         "tl_read_file")]
     [extern-write-file : bool
-      (compiler-backend-extern-list-references-alias?
-        externs
+      (compiler-backend-runtime-index-extern-alias?
+        index
         ".L_tl_write_file"
         "tl_write_file")]
     [extern-file-exists : bool
-      (compiler-backend-extern-list-references-alias?
-        externs
+      (compiler-backend-runtime-index-extern-alias?
+        index
         ".L_tl_file_exists"
         "tl_file_exists")]
     [extern-read-file-status : bool
-      (compiler-backend-extern-list-references-alias?
-        externs
+      (compiler-backend-runtime-index-extern-alias?
+        index
         ".L_tl_read_file_status"
         "tl_read_file_status")]
     [extern-write-file-status : bool
-      (compiler-backend-extern-list-references-alias?
-        externs
+      (compiler-backend-runtime-index-extern-alias?
+        index
         ".L_tl_write_file_status"
         "tl_write_file_status")]
     [extern-append-file-status : bool
-      (compiler-backend-extern-list-references-alias?
-        externs
+      (compiler-backend-runtime-index-extern-alias?
+        index
         ".L_tl_append_file_status"
         "tl_append_file_status")]
     [extern-file-exists-status : bool
-      (compiler-backend-extern-list-references-alias?
-        externs
+      (compiler-backend-runtime-index-extern-alias?
+        index
         ".L_tl_file_exists_status"
         "tl_file_exists_status")]
     [extern-file-open-status : bool
-      (compiler-backend-extern-list-references-alias?
-        externs
+      (compiler-backend-runtime-index-extern-alias?
+        index
         ".L_tl_file_open_status"
         "tl_file_open_status")]
     [extern-file-close-status : bool
-      (compiler-backend-extern-list-references-alias?
-        externs
+      (compiler-backend-runtime-index-extern-alias?
+        index
         ".L_tl_file_close_status"
         "tl_file_close_status")]
     [extern-file-read-chunk-status : bool
-      (compiler-backend-extern-list-references-alias?
-        externs
+      (compiler-backend-runtime-index-extern-alias?
+        index
         ".L_tl_file_read_chunk_status"
         "tl_file_read_chunk_status")]
     [extern-file-write-status : bool
-      (compiler-backend-extern-list-references-alias?
-        externs
+      (compiler-backend-runtime-index-extern-alias?
+        index
         ".L_tl_file_write_status"
         "tl_file_write_status")]
     [extern-file-flush-status : bool
-      (compiler-backend-extern-list-references-alias?
-        externs
+      (compiler-backend-runtime-index-extern-alias?
+        index
         ".L_tl_file_flush_status"
         "tl_file_flush_status")]
     [extern-file-read-chunk-bytes : bool
-      (compiler-backend-extern-list-references-alias?
-        externs
+      (compiler-backend-runtime-index-extern-alias?
+        index
         ".L_tl_file_read_chunk_bytes"
         "tl_file_read_chunk_bytes")]
     [extern-file-read-chunk-eof : bool
-      (compiler-backend-extern-list-references-alias?
-        externs
+      (compiler-backend-runtime-index-extern-alias?
+        index
         ".L_tl_file_read_chunk_eof"
         "tl_file_read_chunk_eof")]
     [extern-fs-mkdir-status : bool
-      (compiler-backend-extern-list-references-alias?
-        externs
+      (compiler-backend-runtime-index-extern-alias?
+        index
         ".L_tl_fs_mkdir_status"
         "tl_fs_mkdir_status")]
     [extern-fs-remove-file-status : bool
-      (compiler-backend-extern-list-references-alias?
-        externs
+      (compiler-backend-runtime-index-extern-alias?
+        index
         ".L_tl_fs_remove_file_status"
         "tl_fs_remove_file_status")]
     [extern-fs-remove-dir-status : bool
-      (compiler-backend-extern-list-references-alias?
-        externs
+      (compiler-backend-runtime-index-extern-alias?
+        index
         ".L_tl_fs_remove_dir_status"
         "tl_fs_remove_dir_status")]
     [extern-fs-rename-status : bool
-      (compiler-backend-extern-list-references-alias?
-        externs
+      (compiler-backend-runtime-index-extern-alias?
+        index
         ".L_tl_fs_rename_status"
         "tl_fs_rename_status")]
     [extern-fs-file-kind-status : bool
-      (compiler-backend-extern-list-references?
-        externs
-        ".L_tl_fs_file_kind_status")]
+      (compiler-backend-runtime-index-extern? index ".L_tl_fs_file_kind_status")]
     [extern-fs-file-size-status : bool
-      (compiler-backend-extern-list-references?
-        externs
-        ".L_tl_fs_file_size_status")]
+      (compiler-backend-runtime-index-extern? index ".L_tl_fs_file_size_status")]
     [extern-fs-file-size : bool
-      (compiler-backend-extern-list-references? externs ".L_tl_fs_file_size")]
+      (compiler-backend-runtime-index-extern? index ".L_tl_fs_file_size")]
     [extern-fs-process-id : bool
-      (compiler-backend-extern-list-references-alias?
-        externs
+      (compiler-backend-runtime-index-extern-alias?
+        index
         ".L_tl_fs_process_id"
         "tl_fs_process_id")]
     [extern-fs-read-dir-status : bool
-      (compiler-backend-extern-list-references?
-        externs
-        ".L_tl_fs_read_dir_status")]
+      (compiler-backend-runtime-index-extern? index ".L_tl_fs_read_dir_status")]
     [extern-fs-read-dir : bool
-      (compiler-backend-extern-list-references? externs ".L_tl_fs_read_dir")]
+      (compiler-backend-runtime-index-extern? index ".L_tl_fs_read_dir")]
     [extern-fs-current-dir-status : bool
-      (compiler-backend-extern-list-references?
-        externs
-        "tl_fs_current_dir_status")]
+      (compiler-backend-runtime-index-extern? index "tl_fs_current_dir_status")]
     [extern-fs-current-dir : bool
-      (compiler-backend-extern-list-references? externs "tl_fs_current_dir")]
+      (compiler-backend-runtime-index-extern? index "tl_fs_current_dir")]
     [extern-read-line : bool
-      (compiler-backend-extern-list-references-alias?
-        externs
+      (compiler-backend-runtime-index-extern-alias?
+        index
         ".L_tl_read_stdin_line"
         "tl_read_stdin_line")]
     [extern-read-bytes : bool
-      (compiler-backend-extern-list-references-alias?
-        externs
+      (compiler-backend-runtime-index-extern-alias?
+        index
         ".L_tl_read_stdin_bytes"
         "tl_read_stdin_bytes")]
     [extern-stdin-eof : bool
-      (compiler-backend-extern-list-references-alias?
-        externs
+      (compiler-backend-runtime-index-extern-alias?
+        index
         ".L_tl_stdin_eof"
         "tl_stdin_eof")]
     [extern-flush-stdout : bool
-      (compiler-backend-extern-list-references-alias?
-        externs
+      (compiler-backend-runtime-index-extern-alias?
+        index
         ".L_tl_flush_stdout"
         "tl_flush_stdout")]
     [extern-process-output : bool
-      (compiler-backend-extern-list-references? externs "tl_process_output")]
+      (compiler-backend-runtime-index-extern? index "tl_process_output")]
     [extern-process-start : bool
-      (compiler-backend-extern-list-references? externs "tl_process_start")]
+      (compiler-backend-runtime-index-extern? index "tl_process_start")]
     [extern-process-wait : bool
-      (compiler-backend-extern-list-references? externs "tl_process_wait")]
+      (compiler-backend-runtime-index-extern? index "tl_process_wait")]
     [extern-region-mark : bool
-      (compiler-backend-extern-list-references? externs "tl_region_mark")]
+      (compiler-backend-runtime-index-extern? index "tl_region_mark")]
     [extern-region-reset : bool
-      (compiler-backend-extern-list-references? externs "tl_region_reset")]
+      (compiler-backend-runtime-index-extern? index "tl_region_reset")]
     [extern-random-system-seed : bool
-      (compiler-backend-extern-list-references? externs "tl_random_system_seed")]
+      (compiler-backend-runtime-index-extern? index "tl_random_system_seed")]
     [extern-windows-setup-instances : bool
-      (compiler-backend-extern-list-references?
-        externs
+      (compiler-backend-runtime-index-extern?
+        index
         "tl_windows_setup_instances")]
     [extern-windows-sdk-registry-install : bool
-      (compiler-backend-extern-list-references?
-        externs
+      (compiler-backend-runtime-index-extern?
+        index
         "tl_windows_sdk_registry_install")]
     [extern-env-var-exists : bool
-      (compiler-backend-extern-list-references? externs "tl_env_var_exists")]
+      (compiler-backend-runtime-index-extern? index "tl_env_var_exists")]
     [extern-env-var-value : bool
-      (compiler-backend-extern-list-references? externs "tl_env_var_value")]
+      (compiler-backend-runtime-index-extern? index "tl_env_var_value")]
     [extern-env-path-separator : bool
-      (compiler-backend-extern-list-references? externs "env-path-separator")]
+      (compiler-backend-runtime-index-extern? index "env-path-separator")]
     [extern-profile-now-ms : bool
-      (compiler-backend-extern-list-references? externs "tl_profile_now_ms")]
+      (compiler-backend-runtime-index-extern? index "tl_profile_now_ms")]
     [extern-profile-alloc-total : bool
-      (compiler-backend-extern-list-references?
-        externs
-        "tl_profile_alloc_total")]
+      (compiler-backend-runtime-index-extern? index "tl_profile_alloc_total")]
     [extern-profile-alloc-live : bool
-      (compiler-backend-extern-list-references? externs "tl_profile_alloc_live")]
+      (compiler-backend-runtime-index-extern? index "tl_profile_alloc_live")]
     [extern-profile-alloc-peak : bool
-      (compiler-backend-extern-list-references? externs "tl_profile_alloc_peak")]
+      (compiler-backend-runtime-index-extern? index "tl_profile_alloc_peak")]
     [extern-profile-alloc-reset-peak : bool
-      (compiler-backend-extern-list-references?
-        externs
+      (compiler-backend-runtime-index-extern?
+        index
         "tl_profile_alloc_reset_peak")]
     [calls-alloc : bool
-      (compiler-backend-function-list-calls? functions "tl_alloc")]
+      (compiler-backend-runtime-index-calls? index "tl_alloc")]
     [calls-oob : bool
-      (compiler-backend-function-list-calls? functions "tl_oob_abort")]
+      (compiler-backend-runtime-index-calls? index "tl_oob_abort")]
     [calls-div-abort : bool
-      (compiler-backend-function-list-calls? functions "tl_div_abort")]
+      (compiler-backend-runtime-index-calls? index "tl_div_abort")]
     [calls-shift-abort : bool
-      (compiler-backend-function-list-calls? functions "tl_shift_abort")]
+      (compiler-backend-runtime-index-calls? index "tl_shift_abort")]
     [calls-substring : bool
-      (compiler-backend-function-list-calls? functions "tl_substring")]
+      (compiler-backend-runtime-index-calls? index "tl_substring")]
     [calls-concat : bool
-      (compiler-backend-function-list-calls? functions "tl_string_concat")]
+      (compiler-backend-runtime-index-calls? index "tl_string_concat")]
     [calls-string-eq : bool
-      (compiler-backend-function-list-calls? functions "tl_string_eq")]
+      (compiler-backend-runtime-index-calls? index "tl_string_eq")]
     [calls-string-to-int : bool
-      (compiler-backend-function-list-calls? functions "tl_string_to_int")]
+      (compiler-backend-runtime-index-calls? index "tl_string_to_int")]
     [calls-int-to-string : bool
-      (compiler-backend-function-list-calls? functions "tl_int_to_string")]
+      (compiler-backend-runtime-index-calls? index "tl_int_to_string")]
     [calls-abort : bool
-      (compiler-backend-function-list-calls? functions ".L_tl_abort")]
+      (compiler-backend-runtime-index-calls? index ".L_tl_abort")]
     [calls-print-err : bool
-      (compiler-backend-function-list-calls? functions "tl_print_err")]
+      (compiler-backend-runtime-index-calls? index "tl_print_err")]
     [calls-print-str : bool
-      (compiler-backend-function-list-calls? functions "tl_print_str")]
+      (compiler-backend-runtime-index-calls? index "tl_print_str")]
     [calls-print-string : bool
-      (compiler-backend-function-list-calls? functions "tl_print_string")]
+      (compiler-backend-runtime-index-calls? index "tl_print_string")]
     [calls-print-char : bool
-      (compiler-backend-function-list-calls? functions "tl_print_char")]
+      (compiler-backend-runtime-index-calls? index "tl_print_char")]
     [calls-print-f64 : bool
-      (compiler-backend-function-list-calls? functions "tl_print_f64")]
+      (compiler-backend-runtime-index-calls? index "tl_print_f64")]
     [calls-arg-count : bool
-      (compiler-backend-function-list-calls? functions ".L_tl_arg_count")]
-    [calls-arg : bool
-      (compiler-backend-function-list-calls? functions ".L_tl_arg")]
+      (compiler-backend-runtime-index-calls? index ".L_tl_arg_count")]
+    [calls-arg : bool (compiler-backend-runtime-index-calls? index ".L_tl_arg")]
     [calls-read-file : bool
-      (compiler-backend-function-list-calls? functions ".L_tl_read_file")]
+      (compiler-backend-runtime-index-calls? index ".L_tl_read_file")]
     [calls-write-file : bool
-      (compiler-backend-function-list-calls? functions ".L_tl_write_file")]
+      (compiler-backend-runtime-index-calls? index ".L_tl_write_file")]
     [calls-file-exists : bool
-      (compiler-backend-function-list-calls? functions ".L_tl_file_exists")]
+      (compiler-backend-runtime-index-calls? index ".L_tl_file_exists")]
     [calls-read-file-status : bool
-      (compiler-backend-function-list-calls? functions ".L_tl_read_file_status")]
+      (compiler-backend-runtime-index-calls? index ".L_tl_read_file_status")]
     [calls-write-file-status : bool
-      (compiler-backend-function-list-calls?
-        functions
-        ".L_tl_write_file_status")]
+      (compiler-backend-runtime-index-calls? index ".L_tl_write_file_status")]
     [calls-append-file-status : bool
-      (compiler-backend-function-list-calls?
-        functions
-        ".L_tl_append_file_status")]
+      (compiler-backend-runtime-index-calls? index ".L_tl_append_file_status")]
     [calls-file-exists-status : bool
-      (compiler-backend-function-list-calls?
-        functions
-        ".L_tl_file_exists_status")]
+      (compiler-backend-runtime-index-calls? index ".L_tl_file_exists_status")]
     [calls-file-open-status : bool
-      (compiler-backend-function-list-calls? functions ".L_tl_file_open_status")]
+      (compiler-backend-runtime-index-calls? index ".L_tl_file_open_status")]
     [calls-file-close-status : bool
-      (compiler-backend-function-list-calls?
-        functions
-        ".L_tl_file_close_status")]
+      (compiler-backend-runtime-index-calls? index ".L_tl_file_close_status")]
     [calls-file-read-chunk-status : bool
-      (compiler-backend-function-list-calls?
-        functions
+      (compiler-backend-runtime-index-calls?
+        index
         ".L_tl_file_read_chunk_status")]
     [calls-file-write-status : bool
-      (compiler-backend-function-list-calls?
-        functions
-        ".L_tl_file_write_status")]
+      (compiler-backend-runtime-index-calls? index ".L_tl_file_write_status")]
     [calls-file-flush-status : bool
-      (compiler-backend-function-list-calls?
-        functions
-        ".L_tl_file_flush_status")]
+      (compiler-backend-runtime-index-calls? index ".L_tl_file_flush_status")]
     [calls-file-read-chunk-bytes : bool
-      (compiler-backend-function-list-calls?
-        functions
+      (compiler-backend-runtime-index-calls?
+        index
         ".L_tl_file_read_chunk_bytes")]
     [calls-file-read-chunk-eof : bool
-      (compiler-backend-function-list-calls?
-        functions
-        ".L_tl_file_read_chunk_eof")]
+      (compiler-backend-runtime-index-calls? index ".L_tl_file_read_chunk_eof")]
     [calls-fs-mkdir-status : bool
-      (compiler-backend-function-list-calls? functions ".L_tl_fs_mkdir_status")]
+      (compiler-backend-runtime-index-calls? index ".L_tl_fs_mkdir_status")]
     [calls-fs-remove-file-status : bool
-      (compiler-backend-function-list-calls?
-        functions
+      (compiler-backend-runtime-index-calls?
+        index
         ".L_tl_fs_remove_file_status")]
     [calls-fs-remove-dir-status : bool
-      (compiler-backend-function-list-calls?
-        functions
-        ".L_tl_fs_remove_dir_status")]
+      (compiler-backend-runtime-index-calls? index ".L_tl_fs_remove_dir_status")]
     [calls-fs-rename-status : bool
-      (compiler-backend-function-list-calls? functions ".L_tl_fs_rename_status")]
+      (compiler-backend-runtime-index-calls? index ".L_tl_fs_rename_status")]
     [calls-fs-file-kind-status : bool
-      (compiler-backend-function-list-calls?
-        functions
-        ".L_tl_fs_file_kind_status")]
+      (compiler-backend-runtime-index-calls? index ".L_tl_fs_file_kind_status")]
     [calls-fs-file-size-status : bool
       (compiler-backend-function-list-calls?
         functions
@@ -10382,73 +10912,67 @@
     [calls-fs-file-size : bool
       (compiler-backend-function-list-calls? functions ".L_tl_fs_file_size")]
     [calls-fs-process-id : bool
-      (compiler-backend-function-list-calls? functions ".L_tl_fs_process_id")]
+      (compiler-backend-runtime-index-calls? index ".L_tl_fs_process_id")]
     [calls-fs-read-dir-status : bool
-      (compiler-backend-function-list-calls?
-        functions
-        ".L_tl_fs_read_dir_status")]
+      (compiler-backend-runtime-index-calls? index ".L_tl_fs_read_dir_status")]
     [calls-fs-read-dir : bool
-      (compiler-backend-function-list-calls? functions ".L_tl_fs_read_dir")]
+      (compiler-backend-runtime-index-calls? index ".L_tl_fs_read_dir")]
     [calls-fs-current-dir-status : bool
-      (compiler-backend-function-list-calls?
-        functions
-        "tl_fs_current_dir_status")]
+      (compiler-backend-runtime-index-calls? index "tl_fs_current_dir_status")]
     [calls-fs-current-dir : bool
-      (compiler-backend-function-list-calls? functions "tl_fs_current_dir")]
+      (compiler-backend-runtime-index-calls? index "tl_fs_current_dir")]
     [calls-read-line : bool
-      (compiler-backend-function-list-calls? functions ".L_tl_read_stdin_line")]
+      (compiler-backend-runtime-index-calls? index ".L_tl_read_stdin_line")]
     [calls-read-bytes : bool
-      (compiler-backend-function-list-calls? functions ".L_tl_read_stdin_bytes")]
+      (compiler-backend-runtime-index-calls? index ".L_tl_read_stdin_bytes")]
     [calls-stdin-eof : bool
-      (compiler-backend-function-list-calls? functions ".L_tl_stdin_eof")]
+      (compiler-backend-runtime-index-calls? index ".L_tl_stdin_eof")]
     [calls-flush-stdout : bool
-      (compiler-backend-function-list-calls? functions ".L_tl_flush_stdout")]
+      (compiler-backend-runtime-index-calls? index ".L_tl_flush_stdout")]
     [calls-process-output : bool
-      (compiler-backend-function-list-calls? functions "tl_process_output")]
+      (compiler-backend-runtime-index-calls? index "tl_process_output")]
     [calls-process-start : bool
-      (compiler-backend-function-list-calls? functions "tl_process_start")]
+      (compiler-backend-runtime-index-calls? index "tl_process_start")]
     [calls-process-wait : bool
-      (compiler-backend-function-list-calls? functions "tl_process_wait")]
+      (compiler-backend-runtime-index-calls? index "tl_process_wait")]
     [calls-region-mark : bool
-      (compiler-backend-function-list-calls? functions "tl_region_mark")]
+      (compiler-backend-runtime-index-calls? index "tl_region_mark")]
     [calls-region-reset : bool
-      (compiler-backend-function-list-calls? functions "tl_region_reset")]
+      (compiler-backend-runtime-index-calls? index "tl_region_reset")]
     [calls-random-system-seed : bool
-      (compiler-backend-function-list-calls? functions "tl_random_system_seed")]
+      (compiler-backend-runtime-index-calls? index "tl_random_system_seed")]
     [calls-windows-setup-instances : bool
-      (compiler-backend-function-list-calls?
-        functions
-        "tl_windows_setup_instances")]
+      (compiler-backend-runtime-index-calls? index "tl_windows_setup_instances")]
     [calls-windows-sdk-registry-install : bool
-      (compiler-backend-function-list-calls?
-        functions
+      (compiler-backend-runtime-index-calls?
+        index
         "tl_windows_sdk_registry_install")]
     [calls-env-var-exists : bool
-      (compiler-backend-function-list-calls? functions "tl_env_var_exists")]
+      (compiler-backend-runtime-index-calls? index "tl_env_var_exists")]
     [calls-env-var-value : bool
-      (compiler-backend-function-list-calls? functions "tl_env_var_value")]
+      (compiler-backend-runtime-index-calls? index "tl_env_var_value")]
     [calls-env-path-separator : bool
-      (compiler-backend-function-list-calls? functions "env-path-separator")]
+      (compiler-backend-runtime-index-calls? index "env-path-separator")]
     [calls-profile-now-ms : bool
-      (compiler-backend-function-list-calls? functions "tl_profile_now_ms")]
+      (compiler-backend-runtime-index-calls? index "tl_profile_now_ms")]
     [calls-profile-alloc-total : bool
-      (compiler-backend-function-list-calls? functions "tl_profile_alloc_total")]
+      (compiler-backend-runtime-index-calls? index "tl_profile_alloc_total")]
     [calls-profile-alloc-live : bool
-      (compiler-backend-function-list-calls? functions "tl_profile_alloc_live")]
+      (compiler-backend-runtime-index-calls? index "tl_profile_alloc_live")]
     [calls-profile-alloc-peak : bool
-      (compiler-backend-function-list-calls? functions "tl_profile_alloc_peak")]
+      (compiler-backend-runtime-index-calls? index "tl_profile_alloc_peak")]
     [calls-profile-alloc-reset-peak : bool
-      (compiler-backend-function-list-calls?
-        functions
+      (compiler-backend-runtime-index-calls?
+        index
         "tl_profile_alloc_reset_peak")]
     [needs-oob : bool (and (not defines-oob) (or extern-oob calls-oob))]
     [needs-div-abort : bool
       (or
-        (compiler-backend-function-list-needs-div-abort? functions)
+        (compiler-backend-runtime-index-needs-div-abort? index)
         (and (not defines-div-abort) (or extern-div-abort calls-div-abort)))]
     [needs-shift-abort : bool
       (or
-        (compiler-backend-function-list-needs-shift-abort? functions)
+        (compiler-backend-runtime-index-needs-shift-abort? index)
         (and
           (not defines-shift-abort)
           (or extern-shift-abort calls-shift-abort)))]
@@ -10684,8 +11208,15 @@
 (define (compiler-backend-emit-externs
   [externs : CompilerIrExternList]
   [plan : CompilerBackendRuntimePlan]) : String
+  (text-buf-render
+    (compiler-backend-emit-externs-into externs plan (text-buf-empty))))
+
+(define (compiler-backend-emit-externs-into
+  [externs : CompilerIrExternList]
+  [plan : CompilerBackendRuntimePlan]
+  [buf : TextBuf]) : TextBuf
   (match externs
-    [(IrExternNil) ""]
+    [(IrExternNil) buf]
     [(IrExternCons item rest)
       (match item
         [(IrExtern name _ _ link-symbol _)
@@ -10694,12 +11225,16 @@
               (string-eq name link-symbol)
               (compiler-backend-plan-provides? plan name))
             (compiler-backend-plan-provides? plan link-symbol))
-            (compiler-backend-emit-externs (box-get rest) plan)
-            (backend-cat4
-              ".extern "
-              (compiler-backend-link-symbol link-symbol plan)
-              "\n"
-              (compiler-backend-emit-externs (box-get rest) plan)))])]))
+            (compiler-backend-emit-externs-into (box-get rest) plan buf)
+            (compiler-backend-emit-externs-into
+              (box-get rest)
+              plan
+              (text-buf-append
+                (text-buf-append buf ".extern ")
+                (backend-cat3
+                  (compiler-backend-link-symbol link-symbol plan)
+                  "\n"
+                  ""))))])]))
 
 (define (compiler-backend-runtime-alloc-data-for-target
   [target : CompilerBackendTarget]) : String
@@ -18649,6 +19184,212 @@ tl_windows_sdk_registry_install:
     emit-entry
     false))
 
+(define (compiler-backend-emit-program-prefix-buffer
+  [target : CompilerBackendTarget]
+  [entry-functions : CompilerIrFunctionList]
+  [externs : CompilerIrExternList]
+  [plan : CompilerBackendRuntimePlan]
+  [program-index : CompilerBackendProgramIndex]
+  [closure-names : BackendStringList]
+  [strings : BackendStringList]
+  [floats : BackendStringList]
+  [globals-buf : TextBuf]
+  [emit-entry : bool]
+  [crt-entry : bool]) : TextBuf
+  (let
+    [string-buf : TextBuf
+      (compiler-backend-emit-string-rodata-into strings globals-buf)]
+    (begin
+      (cfg
+        compile-profile
+        (compiler-backend-profile-finish "compose.string_rodata"))
+      (cfg compile-profile (compiler-backend-profile-start))
+      (let
+        [f64-buf : TextBuf
+          (compiler-backend-emit-f64-rodata-into floats string-buf)]
+        (begin
+          (cfg
+            compile-profile
+            (compiler-backend-profile-finish "compose.f64_rodata"))
+          (cfg compile-profile (compiler-backend-profile-start))
+          (let
+            [descriptor-buf : TextBuf
+              (compiler-backend-emit-closure-descriptors-into
+                closure-names
+                entry-functions
+                externs
+                program-index
+                f64-buf)]
+            (begin
+              (cfg
+                compile-profile
+                (compiler-backend-profile-finish "compose.closure_descriptors"))
+              (cfg compile-profile (compiler-backend-profile-start))
+              (let
+                [runtime-data-buf : TextBuf
+                  (text-buf-append
+                    descriptor-buf
+                    (if emit-entry
+                      (compiler-backend-runtime-data-for-target target plan)
+                      ""))]
+                (begin
+                  (cfg
+                    compile-profile
+                    (compiler-backend-profile-finish "compose.runtime_data"))
+                  (cfg compile-profile (compiler-backend-profile-start))
+                  (let
+                    [externs-buf : TextBuf
+                      (compiler-backend-emit-externs-into
+                        externs
+                        plan
+                        runtime-data-buf)]
+                    (begin
+                      (cfg
+                        compile-profile
+                        (compiler-backend-profile-finish "compose.externs"))
+                      (cfg compile-profile (compiler-backend-profile-start))
+                      (let
+                        [runtime-externs-buf : TextBuf
+                          (text-buf-append
+                            externs-buf
+                            (compiler-backend-runtime-externs-for-target
+                              target
+                              plan))]
+                        (begin
+                          (cfg
+                            compile-profile
+                            (compiler-backend-profile-finish
+                              "compose.runtime_externs"))
+                          (cfg compile-profile (compiler-backend-profile-start))
+                          (let
+                            [prefix-buf : TextBuf
+                              (text-buf-append
+                                runtime-externs-buf
+                                (compiler-backend-target-entry-text-with-crt
+                                  target
+                                  emit-entry
+                                  crt-entry))]
+                            (begin
+                              (cfg
+                                compile-profile
+                                (compiler-backend-profile-finish
+                                  "compose.entry_text"))
+                              prefix-buf)))))))))))))))
+
+(define (compiler-backend-emit-program-buffer-after-index
+  [program : CompilerIrProgram]
+  [target : CompilerBackendTarget]
+  [mode : CompilerBackendMode]
+  [entry-functions : CompilerIrFunctionList]
+  [globals : CompilerIrGlobalList]
+  [externs : CompilerIrExternList]
+  [plan : CompilerBackendRuntimePlan]
+  [program-index : CompilerBackendProgramIndex]
+  [spans : CompilerSourceSpans]
+  [globals-buf : TextBuf]
+  [emit-entry : bool]
+  [crt-entry : bool]) : ResultCompilerBackendBuffer
+  (let
+    [collections : CompilerBackendProgramCollections
+      (compiler-backend-collect-program-collections program)]
+    [closure-names : BackendStringList
+      (compiler-backend-program-collections-functions collections)]
+    [strings : BackendStringList
+      (compiler-backend-program-collections-strings collections)]
+    [floats : BackendStringList
+      (compiler-backend-program-collections-floats collections)]
+    [span-index : CompilerBackendSourceSpanIndex
+      (compiler-backend-source-span-index-build spans)]
+    [global-types : CompilerBackendGlobalTypeList
+      (compiler-backend-global-types globals)]
+    (begin
+      (cfg compile-profile (compiler-backend-profile-finish "collect"))
+      (cfg compile-profile (compiler-backend-profile-start))
+      (let
+        [prefix-buf : TextBuf
+          (compiler-backend-emit-program-prefix-buffer
+            target
+            entry-functions
+            externs
+            plan
+            program-index
+            closure-names
+            strings
+            floats
+            globals-buf
+            emit-entry
+            crt-entry)]
+        (begin
+          (cfg compile-profile (compiler-backend-profile-start))
+          (match (compiler-backend-emit-functions-buffer-into
+            target
+            mode
+            entry-functions
+            entry-functions
+            globals
+            global-types
+            externs
+            plan
+            program-index
+            spans
+            span-index
+            crt-entry
+            prefix-buf)
+            [(OkCompilerBackendBuffer with-functions)
+              (begin
+                (cfg
+                  compile-profile
+                  (compiler-backend-profile-finish "functions"))
+                (cfg compile-profile (compiler-backend-profile-start))
+                (match (compiler-backend-emit-closure-entry-adapters-buffer-into
+                  target
+                  closure-names
+                  entry-functions
+                  externs
+                  plan
+                  program-index
+                  with-functions)
+                  [(OkCompilerBackendBuffer with-adapters)
+                    (begin
+                      (cfg
+                        compile-profile
+                        (compiler-backend-profile-finish "adapters"))
+                      (cfg compile-profile (compiler-backend-profile-start))
+                      (let
+                        [buf : TextBuf
+                          (text-buf-append
+                            (text-buf-append
+                              with-adapters
+                              (if emit-entry
+                                (compiler-backend-runtime-functions-for-target
+                                  target
+                                  plan)
+                                ""))
+                            (if emit-entry
+                              (compiler-backend-entry-for-target-with-crt
+                                target
+                                plan
+                                globals
+                                crt-entry)
+                              ""))]
+                        (begin
+                          (cfg
+                            compile-profile
+                            (compiler-backend-profile-finish "compose_tail"))
+                          (OkCompilerBackendBuffer buf))))]
+                  [(ErrCompilerBackendBuffer message)
+                    (begin
+                      (cfg
+                        compile-profile
+                        (compiler-backend-profile-finish "adapters"))
+                      (ErrCompilerBackendBuffer message))]))]
+            [(ErrCompilerBackendBuffer message)
+              (begin
+                (cfg
+                  compile-profile
+                  (compiler-backend-profile-finish "functions"))
+                (ErrCompilerBackendBuffer message))]))))))
+
 (define (compiler-backend-emit-program-target-with-mode-buffer-and-crt
   [program : CompilerIrProgram]
   [target : CompilerBackendTarget]
@@ -18656,115 +19397,78 @@ tl_windows_sdk_registry_install:
   [spans : CompilerSourceSpans]
   [emit-entry : bool]
   [crt-entry : bool]) : ResultCompilerBackendBuffer
-  (match (compiler-backend-runtime-plan program)
-    [(OkBackendRuntimePlan plan)
-      (if (compiler-backend-target-runtime-ok? target plan)
-        (match program
-          [(IrProgram globals functions externs)
-            (match (compiler-backend-emit-globals target globals)
-              [(OkCompilerBackend globals-asm)
-                (let
-                  [entry-functions : CompilerIrFunctionList
-                    (compiler-backend-functions-with-implicit-main
-                      functions
-                      emit-entry)]
-                  (match (compiler-backend-emit-functions-buffer
+  (begin
+    (cfg compile-profile (compiler-backend-profile-start))
+    (match (compiler-backend-runtime-plan program)
+      [(OkBackendRuntimePlan plan)
+        (begin
+          (cfg compile-profile (compiler-backend-profile-finish "runtime_plan"))
+          (cfg compile-profile (compiler-backend-profile-start))
+          (if (compiler-backend-target-runtime-ok? target plan)
+            (begin
+              (cfg
+                compile-profile
+                (compiler-backend-profile-finish "target_check"))
+              (cfg compile-profile (compiler-backend-profile-start))
+              (match program
+                [(IrProgram globals functions externs)
+                  (match (compiler-backend-emit-globals-buffer-into
                     target
-                    mode
-                    entry-functions
                     globals
-                    entry-functions
-                    externs
-                    plan
-                    spans
-                    crt-entry)
-                    [(OkCompilerBackendBuffer functions-buf)
-                      (let
-                        [closure-names : BackendStringList
-                          (compiler-backend-collect-program-functions program)]
-                        (match (compiler-backend-emit-closure-entry-adapters
-                          target
-                          closure-names
-                          entry-functions
-                          externs
-                          plan)
-                          [(OkCompilerBackend closure-adapters-asm)
-                            (let
-                              [strings : BackendStringList
-                                (compiler-backend-collect-program-strings
-                                  program)]
-                              [floats : BackendStringList
-                                (compiler-backend-collect-program-f64s program)]
-                              [prefix-buf : TextBuf
-                                (text-buf-append
-                                  (text-buf-append
-                                    (text-buf-append
-                                      (text-buf-append
-                                        (text-buf-append
-                                          (text-buf-append
-                                            (text-buf-append
-                                              (text-buf-append
-                                                (text-buf-append
-                                                  (text-buf-empty)
-                                                  ".data\n")
-                                                globals-asm)
-                                              (compiler-backend-emit-string-rodata
-                                                strings))
-                                            (compiler-backend-emit-f64-rodata
-                                              floats))
-                                          (compiler-backend-emit-closure-descriptors
-                                            closure-names
-                                            entry-functions
-                                            externs))
-                                        (if emit-entry
-                                          (compiler-backend-runtime-data-for-target
-                                            target
-                                            plan)
-                                          ""))
-                                      (compiler-backend-emit-externs
-                                        externs
-                                        plan))
-                                    (compiler-backend-runtime-externs-for-target
-                                      target
-                                      plan))
-                                  (compiler-backend-target-entry-text-with-crt
-                                    target
-                                    emit-entry
-                                    crt-entry))]
-                              [with-functions : TextBuf
-                                (text-buf-append-buffer
-                                  prefix-buf
-                                  functions-buf)]
-                              [buf : TextBuf
-                                (text-buf-append
-                                  (text-buf-append
-                                    (text-buf-append
-                                      with-functions
-                                      closure-adapters-asm)
-                                    (if emit-entry
-                                      (compiler-backend-runtime-functions-for-target
-                                        target
-                                        plan)
-                                      ""))
-                                  (if emit-entry
-                                    (compiler-backend-entry-for-target-with-crt
-                                      target
-                                      plan
-                                      globals
-                                      crt-entry)
-                                    ""))]
-                              (OkCompilerBackendBuffer buf))]
-                          [(ErrCompilerBackend message)
-                            (ErrCompilerBackendBuffer message)]))]
+                    (text-buf-append (text-buf-empty) ".data\n"))
+                    [(OkCompilerBackendBuffer globals-buf)
+                      (begin
+                        (cfg
+                          compile-profile
+                          (compiler-backend-profile-finish "globals"))
+                        (cfg compile-profile (compiler-backend-profile-start))
+                        (let
+                          [entry-functions : CompilerIrFunctionList
+                            (compiler-backend-functions-with-implicit-main
+                              functions
+                              emit-entry)]
+                          [program-index : CompilerBackendProgramIndex
+                            (compiler-backend-program-index-build
+                              entry-functions
+                              externs)]
+                          (begin
+                            (cfg
+                              compile-profile
+                              (compiler-backend-profile-finish "index"))
+                            (cfg
+                              compile-profile
+                              (compiler-backend-profile-start))
+                            (compiler-backend-emit-program-buffer-after-index
+                              program
+                              target
+                              mode
+                              entry-functions
+                              globals
+                              externs
+                              plan
+                              program-index
+                              spans
+                              globals-buf
+                              emit-entry
+                              crt-entry))))]
                     [(ErrCompilerBackendBuffer message)
-                      (ErrCompilerBackendBuffer message)]))]
-              [(ErrCompilerBackend message) (ErrCompilerBackendBuffer message)])])
-        (ErrCompilerBackendBuffer
-          (compiler-diagnostic-at-start
-            ""
-            "backend: internal target runtime rejection")))]
-    [(ErrBackendRuntimePlan message)
-      (ErrCompilerBackendBuffer (compiler-diagnostic-at-start "" message))]))
+                      (begin
+                        (cfg
+                          compile-profile
+                          (compiler-backend-profile-finish "globals"))
+                        (ErrCompilerBackendBuffer message))])]))
+            (begin
+              (cfg
+                compile-profile
+                (compiler-backend-profile-finish "target_check"))
+              (ErrCompilerBackendBuffer
+                (compiler-diagnostic-at-start
+                  ""
+                  "backend: internal target runtime rejection")))))]
+      [(ErrBackendRuntimePlan message)
+        (begin
+          (cfg compile-profile (compiler-backend-profile-finish "runtime_plan"))
+          (ErrCompilerBackendBuffer (compiler-diagnostic-at-start "" message)))])))
 
 (define (compiler-backend-emit-program-target-with-mode-and-crt
   [program : CompilerIrProgram]
@@ -19107,30 +19811,30 @@ tl_windows_sdk_registry_install:
 
 (define (compiler-backend-file-handle-open-close-runtime-ok?) : bool
   (match (compiler-backend-emit-source
-    "(extern os-open (:symbol \"open\") : (-> (Ptr u8) i32 i32 i32))
-(extern os-close (:symbol \"close\") : (-> i32 i32))
-(define (file-open-status [path : String] [mode : i64]) : i64
-  (cast
-    (os-open (unsafe (string-data path)) (cast mode : i32) (cast 384 : i32))
-    : i64))
-(define (file-close-status [handle : i64]) : i64
-  (cast (os-close (cast handle : i32)) : i64))
+    "(extern file-open-status (:symbol \"tl_file_open_status\") : (->
+  String
+  i64
+  i64))
+(extern file-close-status (:symbol \"tl_file_close_status\") : (->
+  i64
+  i64))
 (define (main) : i64
-  (let [handle : i64 (file-open-status \"input.txt\" 0)]
+  (let
+    [handle : i64 (file-open-status \"input.txt\" 0)]
     (+ handle (file-close-status handle))))")
     [(OkCompilerBackend asm)
       (and
         (and
-          (compiler-backend-string-contains? asm "    call open\n")
-          (compiler-backend-string-contains? asm "    call close\n"))
+          (compiler-backend-string-contains? asm ".L_tl_file_open_status:\n")
+          (compiler-backend-string-contains? asm ".L_tl_file_close_status:\n"))
         (and
-          (not
-            (compiler-backend-string-contains? asm ".L_tl_file_open_status:\n"))
+          (compiler-backend-string-contains?
+            asm
+            "    call tl_file_open_status\n")
           (and
-            (not
-              (compiler-backend-string-contains?
-                asm
-                ".L_tl_file_close_status:\n"))
+            (compiler-backend-string-contains?
+              asm
+              "    call tl_file_close_status\n")
             (not
               (compiler-backend-string-contains?
                 asm
@@ -19138,54 +19842,15 @@ tl_windows_sdk_registry_install:
     [(ErrCompilerBackend _) false]))
 
 (define (compiler-backend-windows-driver-runtime-source) : String
-  "(extern win-open (:symbol \"_open\") : (-> (Ptr u8) i32 i32 i32))
-(extern win-read (:symbol \"_read\") : (-> i32 (MutPtr u8) i32 i32))
-(extern win-write (:symbol \"_write\") : (-> i32 (Ptr u8) i32 i32))
-(extern win-close (:symbol \"_close\") : (-> i32 i32))
-(extern win-access (:symbol \"_access\") : (-> (Ptr u8) i32 i32))
-(extern win-strlen (:symbol \"strlen\") : (-> (Ptr u8) i64))
-(define (arg-count) : i64
-  (program-argc))
-(define (arg [index : i64]) : String
-  (let
-    [argv : (Ptr (Ptr u8)) (unsafe (program-argv))]
-    [raw : (Ptr u8) (unsafe (ptr-read (ptr-offset argv index)))]
-    (unsafe (string-from-bytes raw (win-strlen raw)))))
-(define (print-error [text : String]) : unit
-  (begin
-    (win-write
-      (cast 2 : i32)
-      (unsafe (string-data text))
-      (cast (string-length text) : i32))
-    unit))
-(define (read-file [path : String]) : String
-  (let
-    [buf : (Array u8) (make-array u8 16)]
-    [fd : i32
-      (win-open
-        (unsafe (string-data path))
-        (cast 32768 : i32)
-        (cast 0 : i32))]
-    [n : i32 (win-read fd (unsafe (array-data buf)) (cast 16 : i32))]
-    (begin
-      (win-close fd)
-      (unsafe
-        (string-from-bytes
-          (ptr-cast (array-data buf) : (Ptr u8))
-          (cast n : i64))))))
-(define (write-file [path : String] [text : String]) : unit
-  (let
-    [fd : i32
-      (win-open
-        (unsafe (string-data path))
-        (cast 33537 : i32)
-        (cast 384 : i32))]
-    (begin
-      (win-write fd (unsafe (string-data text)) (cast (string-length text) : i32))
-      (win-close fd)
-      unit)))
-(define (file-exists? [path : String]) : bool
-  (= (win-access (unsafe (string-data path)) (cast 0 : i32)) (cast 0 : i32)))
+  "(extern arg-count (:symbol \"tl_arg_count\") : (-> i64))
+(extern arg (:symbol \"tl_arg\") : (-> i64 String))
+(extern read-file (:symbol \"tl_read_file\") : (-> String String))
+(extern write-file (:symbol \"tl_write_file\") : (-> String String unit))
+(extern file-exists? (:symbol \"tl_file_exists\") : (-> String bool))
+(extern print-error (:symbol \"tl_print_err\") : (-> String unit))
+(extern string-eq (:symbol \"tl_string_eq\") : (-> String String bool))
+(extern string->int (:symbol \"tl_string_to_int\") : (-> String i64))
+(extern int->string (:symbol \"tl_int_to_string\") : (-> i64 String))
 (define (main) : i64
   (if (< (arg-count) 3)
     (begin
@@ -19212,12 +19877,12 @@ tl_windows_sdk_registry_install:
     [(OkCompilerBackend asm)
       (and
         (backend-and8
-          (not (compiler-backend-string-contains? asm ".L_tl_arg_count:\n"))
-          (not (compiler-backend-string-contains? asm ".L_tl_arg:\n"))
-          (not (compiler-backend-string-contains? asm ".L_tl_read_file:\n"))
-          (not (compiler-backend-string-contains? asm ".L_tl_write_file:\n"))
-          (not (compiler-backend-string-contains? asm ".L_tl_file_exists:\n"))
-          (not (compiler-backend-string-contains? asm "tl_print_err:\n"))
+          (compiler-backend-string-contains? asm ".L_tl_arg_count:\n")
+          (compiler-backend-string-contains? asm ".L_tl_arg:\n")
+          (compiler-backend-string-contains? asm ".L_tl_read_file:\n")
+          (compiler-backend-string-contains? asm ".L_tl_write_file:\n")
+          (compiler-backend-string-contains? asm ".L_tl_file_exists:\n")
+          (compiler-backend-string-contains? asm "tl_print_err:\n")
           (compiler-backend-string-contains? asm "tl_string_eq:\n")
           (compiler-backend-string-contains? asm "tl_string_to_int:\n"))
         (and
@@ -19321,9 +19986,13 @@ tl_windows_sdk_registry_install:
     (compiler-backend-user-helper-name-program))
     [(OkCompilerBackend asm)
       (and
-        (compiler-backend-string-contains? asm ".globl _tl_tl_alloc\n")
+        (or
+          (compiler-backend-string-contains? asm ".globl _tl_tl_alloc")
+          (compiler-backend-string-contains? asm ".globl _tl_f"))
         (and
-          (compiler-backend-string-contains? asm "    call _tl_tl_alloc\n")
+          (or
+            (compiler-backend-string-contains? asm "    call _tl_tl_alloc")
+            (compiler-backend-string-contains? asm "    call _tl_f"))
           (not (compiler-backend-string-contains? asm ".L_tl_alloc_msg"))))]
     [(ErrCompilerBackend _) false]))
 
@@ -19379,13 +20048,17 @@ tl_windows_sdk_registry_install:
     (compiler-backend-runtime-coexist-program))
     [(OkCompilerBackend asm)
       (and
-        (compiler-backend-string-contains? asm ".globl _tl_tl_alloc\n")
+        (or
+          (compiler-backend-string-contains? asm ".globl _tl_tl_alloc")
+          (compiler-backend-string-contains? asm ".globl _tl_f"))
         (and
           (compiler-backend-string-contains? asm ".globl tl_alloc\n")
           (and
             (compiler-backend-string-contains? asm ".globl tl_substring\n")
             (and
-              (compiler-backend-string-contains? asm "    call _tl_tl_alloc\n")
+              (or
+                (compiler-backend-string-contains? asm "    call _tl_tl_alloc")
+                (compiler-backend-string-contains? asm "    call _tl_f"))
               (and
                 (compiler-backend-string-contains?
                   asm
@@ -19435,16 +20108,22 @@ tl_windows_sdk_registry_install:
     (compiler-backend-module-symbol-program))
     [(OkCompilerBackend asm)
       (and
-        (compiler-backend-string-contains?
-          asm
-          ".globl _tl_lib_u2etl_colon_colonhelper\n")
+        (or
+          (compiler-backend-string-contains?
+            asm
+            ".globl _tl_lib_u2etl_colon_colonhelper")
+          (compiler-backend-string-contains? asm ".globl _tl_f"))
         (and
-          (compiler-backend-string-contains?
-            asm
-            "_tl_lib_u2etl_colon_colonhelper:\n")
-          (compiler-backend-string-contains?
-            asm
-            "    call _tl_lib_u2etl_colon_colonhelper\n")))]
+          (or
+            (compiler-backend-string-contains?
+              asm
+              "_tl_lib_u2etl_colon_colonhelper")
+            (compiler-backend-string-contains? asm "_tl_f"))
+          (or
+            (compiler-backend-string-contains?
+              asm
+              "    call _tl_lib_u2etl_colon_colonhelper")
+            (compiler-backend-string-contains? asm "    call _tl_f"))))]
     [(ErrCompilerBackend _) false]))
 
 (define (compiler-backend-extern-metadata-source) : String
@@ -19463,7 +20142,9 @@ tl_windows_sdk_registry_install:
         (and
           (compiler-backend-string-contains? asm "    call foreign_exact\n")
           (and
-            (compiler-backend-string-contains? asm "    call _tl_normal\n")
+            (or
+              (compiler-backend-string-contains? asm "    call _tl_normal")
+              (compiler-backend-string-contains? asm "    call _tl_f"))
             (and
               (not
                 (compiler-backend-string-contains? asm ".extern local-call\n"))

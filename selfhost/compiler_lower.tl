@@ -214,6 +214,60 @@
 (define (lower-diagnostic [message : String]) : CompilerDiagnostic
   (compiler-diagnostic-at-start "" message))
 
+(cfg
+  compile-profile
+  (define compiler-lower-profile-start-ms : i64
+    0))
+
+(cfg
+  compile-profile
+  (define compiler-lower-profile-start-total : i64
+    0))
+
+(cfg
+  compile-profile
+  (define compiler-lower-profile-start-live : i64
+    0))
+
+(cfg
+  compile-profile
+  (define (compiler-lower-profile-field [value : i64]) : String
+    (string-append "|" (int->string value))))
+
+(cfg
+  compile-profile
+  (define (compiler-lower-profile-start) : unit
+    (begin
+      (set! compiler-lower-profile-start-ms (profile-now-ms))
+      (set! compiler-lower-profile-start-total (profile-alloc-total))
+      (set! compiler-lower-profile-start-live (profile-alloc-live))
+      (profile-alloc-reset-peak))))
+
+(cfg
+  compile-profile
+  (define (compiler-lower-profile-finish [phase : String]) : unit
+    (let
+      [end-ms : i64 (profile-now-ms)]
+      [end-total : i64 (profile-alloc-total)]
+      [end-live : i64 (profile-alloc-live)]
+      [peak-delta : i64
+        (- (profile-alloc-peak) compiler-lower-profile-start-live)]
+      (print-error
+        (string-append
+          "compile-profile|lower."
+          (string-append
+            phase
+            (string-append
+              (compiler-lower-profile-field
+                (- end-ms compiler-lower-profile-start-ms))
+              (string-append
+                (compiler-lower-profile-field
+                  (- end-total compiler-lower-profile-start-total))
+                (string-append
+                  (compiler-lower-profile-field
+                    (- end-live compiler-lower-profile-start-live))
+                  (string-append (compiler-lower-profile-field peak-delta) "\n"))))))))))
+
 (define (lower-diagnostic-at-expr [expr : AstExpr] [message : String]) : CompilerDiagnostic
   (match expr
     [(AstExprSpanned _ span)
@@ -381,8 +435,8 @@
 (define (lower-type-env-count [env : TcTypeEnv]) : i64
   (match env
     [(TcTypeNil) 0]
-    [(TcTypeCache _ _ rest) (lower-type-env-count (box-get rest))]
-    [(TcTypeBind _ _ rest) (+ 1 (lower-type-env-count (box-get rest)))]))
+    [(TcTypeCache _ _ _ rest) (lower-type-env-count rest)]
+    [(TcTypeBind _ _ rest) (+ 1 (lower-type-env-count rest))]))
 
 (define (lower-type-cache-capacity [count : i64]) : i64
   (if (< count 4)
@@ -411,12 +465,9 @@
   [cache : LowerTypeCache]) : LowerTypeCache
   (match env
     [(TcTypeNil) cache]
-    [(TcTypeCache _ _ rest)
-      (lower-type-cache-from-env-into (box-get rest) cache)]
+    [(TcTypeCache _ _ _ rest) (lower-type-cache-from-env-into rest cache)]
     [(TcTypeBind name ty rest)
-      (lower-type-cache-from-env-into
-        (box-get rest)
-        (lower-type-cache-add cache name ty))]))
+      (lower-type-cache-from-env-into rest (lower-type-cache-add cache name ty))]))
 
 (define (lower-type-cache-from-env [env : TcTypeEnv]) : LowerTypeCache
   (let
@@ -588,6 +639,19 @@
       (lower-name-env-resolve
         names
         (compiler-symbol-module-key module source-name))]
+    (if (and
+      (and (string-eq module "main") (string-eq source-name "main"))
+      (string-eq resolved key))
+      "main"
+      resolved)))
+
+(define (lower-current-decl-logical-name-cache
+  [names : LowerNameCache]
+  [module : String]
+  [source-name : String]) : String
+  (let
+    [key : String (compiler-symbol-module-key module source-name)]
+    [resolved : String (lower-name-cache-resolve names key)]
     (if (and
       (and (string-eq module "main") (string-eq source-name "main"))
       (string-eq resolved key))
@@ -981,28 +1045,29 @@
 
 (define (lower-name-env-add-local-decl
   [names : LowerNameEnv]
+  [name-cache : LowerNameCache]
   [module : String]
   [decl : AstDecl]) : LowerNameEnv
   (match decl
     [(AstDeclDef name _ _)
       (LowerNameBind
         name
-        (lower-current-decl-logical-name names module name)
+        (lower-current-decl-logical-name-cache name-cache module name)
         names)]
     [(AstDeclDefFn name _ _ _)
       (LowerNameBind
         name
-        (lower-current-decl-logical-name names module name)
+        (lower-current-decl-logical-name-cache name-cache module name)
         names)]
     [(AstDeclExtern name _ _)
       (LowerNameBind
         name
-        (lower-current-decl-logical-name names module name)
+        (lower-current-decl-logical-name-cache name-cache module name)
         names)]
     [(AstDeclUnsafe inner-box)
       (let
         [inner : AstDecl (box-get inner-box)]
-        (lower-name-env-add-local-decl names module inner))]
+        (lower-name-env-add-local-decl names name-cache module inner))]
     [_ names]))
 
 (define (lower-module-local-type-env-bind-qualified
@@ -1070,6 +1135,7 @@
   [decls : AstDeclList]
   [type-env : TcTypeEnv]
   [names : LowerNameEnv]
+  [name-cache : LowerNameCache]
   [target-module : String]
   [module : String]) : ResultLowerModuleLocalEnv
   (match decls
@@ -1084,6 +1150,7 @@
               rest
               type-env
               names
+              name-cache
               target-module
               next-module)]
           [_
@@ -1098,7 +1165,12 @@
                     top-env
                     rest
                     next-type-env
-                    (lower-name-env-add-local-decl names target-module decl)
+                    (lower-name-env-add-local-decl
+                      names
+                      name-cache
+                      target-module
+                      decl)
+                    name-cache
                     target-module
                     module)]
                 [(ErrTcEnv message) (ErrLowerModuleLocalEnv message)])
@@ -1107,6 +1179,7 @@
                 rest
                 type-env
                 names
+                name-cache
                 target-module
                 module))]))]))
 
@@ -1121,7 +1194,14 @@
       [(AstProgram decls-box)
         (let
           [decls : AstDeclList (box-get decls-box)]
-          (lower-module-local-envs-list top-env decls top-env names module ""))])))
+          (lower-module-local-envs-list
+            top-env
+            decls
+            top-env
+            names
+            (lower-name-cache-from-env names)
+            module
+            ""))])))
 
 (define (lower-string-set-contains? [items : LowerStringSet] [name : String]) : bool
   (match items
@@ -1824,13 +1904,18 @@
     [(AstExprWithEscape scratch-box exprs)
       (let
         [scratch : AstExpr (box-get scratch-box)]
-        (lower-clone-roots-expr-list
-          ctx
-          env
-          decls
-          able
-          (lower-clone-roots-expr ctx env decls able roots scratch)
-          exprs))]
+        [walked : CloneNameList
+          (lower-clone-roots-expr-list
+            ctx
+            env
+            decls
+            able
+            (lower-clone-roots-expr ctx env decls able roots scratch)
+            exprs)]
+        (match (tc-with-escape-expr ctx env scratch exprs)
+          [(OkTcType result-ty)
+            (lower-clone-root-add-type ctx decls able walked result-ty)]
+          [(ErrTcType _) walked]))]
     [(AstExprWithResource bindings body)
       (let
         [binding-roots : CloneNameList
@@ -2125,25 +2210,22 @@
   [program : AstProgram]
   [paths : AstDeclPathList]
   [names : LowerNameEnv]) : ResultLowerCloneRoots
-  (match (typecheck-compiler-specialized-program-with-paths program paths)
-    [(OkCompilerTypecheck _)
-      (match (build-compiler-symbols program)
-        [(OkCompilerSymbols symbols)
-          (match (build-compiler-registries program)
-            [(OkCompilerRegistries registries)
-              (let
-                [ctx : TcContext (TcContext program symbols registries "")]
-                (match (tc-build-top-env ctx program)
-                  [(OkTcEnv top-env)
-                    (OkLowerCloneRoots
-                      (lower-clone-roots-program ctx top-env names program))]
-                  [(ErrTcEnv message)
-                    (ErrLowerCloneRoots (lower-diagnostic message))]))]
-            [(ErrCompilerRegistries message)
-              (ErrLowerCloneRoots (lower-diagnostic message))])]
-        [(ErrCompilerSymbols message)
+  (match (build-compiler-symbols program)
+    [(OkCompilerSymbols symbols)
+      (match (build-compiler-registries program)
+        [(OkCompilerRegistries registries)
+          (let
+            [ctx : TcContext (TcContext program symbols registries "")]
+            (match (tc-build-top-env ctx program)
+              [(OkTcEnv top-env)
+                (OkLowerCloneRoots
+                  (lower-clone-roots-program ctx top-env names program))]
+              [(ErrTcEnv message)
+                (ErrLowerCloneRoots (lower-diagnostic message))]))]
+        [(ErrCompilerRegistries message)
           (ErrLowerCloneRoots (lower-diagnostic message))])]
-    [(ErrCompilerTypecheck diag) (ErrLowerCloneRoots diag)]))
+    [(ErrCompilerSymbols message)
+      (ErrLowerCloneRoots (lower-diagnostic message))]))
 
 (define (lower-reach-call-callee
   [all-functions : StringI64Map]
@@ -3384,27 +3466,27 @@
             max-size)))]))
 
 (define (lower-enum-storage-size [ctx : TcContext] [enum-name : String]) : i64
-  (match ctx
-    [(TcContext program _ _ _)
-      (match (tc-program-enum-variants program enum-name)
-        [(OkAstVariantDefList variants)
-          (lower-enum-variants-storage-size ctx variants 8)]
-        [(ErrAstVariantDefList _) 8])]))
+  (match (tc-context-enum-variants ctx enum-name)
+    [(OkAstVariantDefList variants)
+      (lower-enum-variants-storage-size ctx variants 8)]
+    [(ErrAstVariantDefList _) 8]))
 
 (define (lower-struct-fields [ctx : TcContext] [struct-name : String]) : ResultAstFieldDefList
   (match ctx
-    [(TcContext program symbols _ _)
+    [(TcContext _ symbols _ _)
       (match (compiler-symbols-lookup-type symbols struct-name)
         [(SomeI64 handle)
           (if (=
             (compiler-symbol-handle-kind handle)
             (compiler-symbol-kind-defstruct))
-            (match (compiler-program-decl-at-index
-              program
+            (match (compiler-symbols-decl-at-index
+              symbols
               (compiler-symbol-handle-index handle))
               [(OkAstDecl decl)
                 (match decl
                   [(AstDeclDefStruct _ _ _ fields) (OkAstFieldDefList fields)]
+                  [(AstDeclDefStructLifetimes _ _ _ _ fields)
+                    (OkAstFieldDefList fields)]
                   [_
                     (ErrAstFieldDefList
                       "lower: struct symbol owner is not a struct")])]
@@ -4431,7 +4513,7 @@
                     (let
                       [nested-args : AstPatternList (box-get nested-args-box)]
                       (match ctx
-                        [(TcContext program _ registries _)
+                        [(TcContext _ symbols registries _)
                           (match (compiler-registries-lookup-variant
                             registries
                             nested-name)
@@ -4442,8 +4524,8 @@
                                     "lower: unknown nested variant "
                                     nested-name)))]
                             [(SomeI64 handle)
-                              (match (compiler-registries-variant-fields
-                                program
+                              (match (compiler-registries-variant-fields-indexed
+                                symbols
                                 handle)
                                 [(ErrAstTypeList message)
                                   (ErrLowerEnv (lower-diagnostic message))]
@@ -5733,45 +5815,42 @@
   [type-env : TcTypeEnv]) : ResultLowerState
   (match type-env
     [(TcTypeNil) (OkLowerState state)]
-    [(TcTypeCache _ _ rest) (lower-emit-active-exits state env (box-get rest))]
+    [(TcTypeCache _ _ _ rest) (lower-emit-active-exits state env rest)]
     [(TcTypeBind key ty rest)
-      (let
-        [tail : TcTypeEnv (box-get rest)]
-        (if (string-eq key (lower-cleanup-marker-name))
+      (if (string-eq key (lower-cleanup-marker-name))
+        (match ty
+          [(AstTyTuple types)
+            (match types
+              [(AstTypeCons (AstTyVar hidden-name) type-rest)
+                (let
+                  [type-rest : AstTypeList (box-get type-rest)]
+                  (match type-rest
+                    [(AstTypeCons (AstTyVar cleanup-name) end)
+                      (let
+                        [end : AstTypeList (box-get end)]
+                        (match end
+                          [(AstTypeNil)
+                            (match (lower-emit-cleanup-call
+                              state
+                              env
+                              hidden-name
+                              cleanup-name)
+                              [(OkLowerState next-state)
+                                (lower-emit-active-exits next-state env rest)]
+                              [(ErrLowerState message) (ErrLowerState message)])]
+                          [_ (lower-emit-active-exits state env rest)]))]
+                    [_ (lower-emit-active-exits state env rest)]))]
+              [_ (lower-emit-active-exits state env rest)])]
+          [_ (lower-emit-active-exits state env rest)])
+        (if (string-eq key (lower-region-reset-marker-name))
           (match ty
-            [(AstTyTuple types)
-              (match types
-                [(AstTypeCons (AstTyVar hidden-name) type-rest)
-                  (let
-                    [type-rest : AstTypeList (box-get type-rest)]
-                    (match type-rest
-                      [(AstTypeCons (AstTyVar cleanup-name) end)
-                        (let
-                          [end : AstTypeList (box-get end)]
-                          (match end
-                            [(AstTypeNil)
-                              (match (lower-emit-cleanup-call
-                                state
-                                env
-                                hidden-name
-                                cleanup-name)
-                                [(OkLowerState next-state)
-                                  (lower-emit-active-exits next-state env tail)]
-                                [(ErrLowerState message)
-                                  (ErrLowerState message)])]
-                            [_ (lower-emit-active-exits state env tail)]))]
-                      [_ (lower-emit-active-exits state env tail)]))]
-                [_ (lower-emit-active-exits state env tail)])]
-            [_ (lower-emit-active-exits state env tail)])
-          (if (string-eq key (lower-region-reset-marker-name))
-            (match ty
-              [(AstTyVar hidden-name)
-                (match (lower-emit-region-reset state env hidden-name)
-                  [(OkLowerState next-state)
-                    (lower-emit-active-exits next-state env tail)]
-                  [(ErrLowerState message) (ErrLowerState message)])]
-              [_ (lower-emit-active-exits state env tail)])
-            (lower-emit-active-exits state env tail))))]))
+            [(AstTyVar hidden-name)
+              (match (lower-emit-region-reset state env hidden-name)
+                [(OkLowerState next-state)
+                  (lower-emit-active-exits next-state env rest)]
+                [(ErrLowerState message) (ErrLowerState message)])]
+            [_ (lower-emit-active-exits state env rest)])
+          (lower-emit-active-exits state env rest)))]))
 
 (define (lower-emit-active-cleanups
   [state : LowerState]
@@ -5779,41 +5858,34 @@
   [type-env : TcTypeEnv]) : ResultLowerState
   (match type-env
     [(TcTypeNil) (OkLowerState state)]
-    [(TcTypeCache _ _ rest)
-      (lower-emit-active-cleanups state env (box-get rest))]
+    [(TcTypeCache _ _ _ rest) (lower-emit-active-cleanups state env rest)]
     [(TcTypeBind key ty rest)
-      (let
-        [tail : TcTypeEnv (box-get rest)]
-        (if (string-eq key (lower-cleanup-marker-name))
-          (match ty
-            [(AstTyTuple types)
-              (match types
-                [(AstTypeCons (AstTyVar hidden-name) type-rest)
-                  (let
-                    [type-rest : AstTypeList (box-get type-rest)]
-                    (match type-rest
-                      [(AstTypeCons (AstTyVar cleanup-name) end)
-                        (let
-                          [end : AstTypeList (box-get end)]
-                          (match end
-                            [(AstTypeNil)
-                              (match (lower-emit-cleanup-call
-                                state
-                                env
-                                hidden-name
-                                cleanup-name)
-                                [(OkLowerState next-state)
-                                  (lower-emit-active-cleanups
-                                    next-state
-                                    env
-                                    tail)]
-                                [(ErrLowerState message)
-                                  (ErrLowerState message)])]
-                            [_ (lower-emit-active-cleanups state env tail)]))]
-                      [_ (lower-emit-active-cleanups state env tail)]))]
-                [_ (lower-emit-active-cleanups state env tail)])]
-            [_ (lower-emit-active-cleanups state env tail)])
-          (lower-emit-active-cleanups state env tail)))]))
+      (if (string-eq key (lower-cleanup-marker-name))
+        (match ty
+          [(AstTyTuple types)
+            (match types
+              [(AstTypeCons (AstTyVar hidden-name) type-rest)
+                (let
+                  [type-rest : AstTypeList (box-get type-rest)]
+                  (match type-rest
+                    [(AstTypeCons (AstTyVar cleanup-name) end)
+                      (let
+                        [end : AstTypeList (box-get end)]
+                        (match end
+                          [(AstTypeNil)
+                            (match (lower-emit-cleanup-call
+                              state
+                              env
+                              hidden-name
+                              cleanup-name)
+                              [(OkLowerState next-state)
+                                (lower-emit-active-cleanups next-state env rest)]
+                              [(ErrLowerState message) (ErrLowerState message)])]
+                          [_ (lower-emit-active-cleanups state env rest)]))]
+                    [_ (lower-emit-active-cleanups state env rest)]))]
+              [_ (lower-emit-active-cleanups state env rest)])]
+          [_ (lower-emit-active-cleanups state env rest)])
+        (lower-emit-active-cleanups state env rest))]))
 
 (define (lower-return-form
   [ctx : TcContext]
@@ -6971,8 +7043,8 @@
   (match (tc-resolve-type ctx result-ty)
     [(AstTyEnum enum-name)
       (match ctx
-        [(TcContext program _ _ _)
-          (match (compiler-registries-variant-fields program handle)
+        [(TcContext _ symbols _ _)
+          (match (compiler-registries-variant-fields-indexed symbols handle)
             [(OkAstTypeList fields)
               (match (lower-args-as
                 ctx
@@ -7126,11 +7198,13 @@
           (let
             [lookup-name : String
               (lower-variant-constructor-lookup-name ctx name expr-ty)]
-            [program : AstProgram (tc-context-program ctx)]
+            [symbols : CompilerSymbols (tc-context-symbols ctx)]
             [registries : CompilerRegistries (tc-context-registries ctx)]
             (match (compiler-registries-lookup-variant registries lookup-name)
               [(SomeI64 handle)
-                (match (compiler-registries-variant-fields program handle)
+                (match (compiler-registries-variant-fields-indexed
+                  symbols
+                  handle)
                   [(OkAstTypeList fields)
                     (match fields
                       [(AstTypeNil)
@@ -15898,7 +15972,7 @@
   [expr-ty : AstType]
   [phi-inputs : CompilerIrPhiInputList]) : ResultLowerExpr
   (match ctx
-    [(TcContext program _ registries _)
+    [(TcContext _ symbols registries _)
       (let
         [lookup-name : String
           (match (tc-type-strip-region scrut-ty)
@@ -15907,7 +15981,7 @@
             [_ variant-name])]
         (match (compiler-registries-lookup-variant registries lookup-name)
           [(SomeI64 handle)
-            (match (compiler-registries-variant-fields program handle)
+            (match (compiler-registries-variant-fields-indexed symbols handle)
               [(OkAstTypeList fields)
                 ;; The final arm has no next-arm continuation, so a refutable
                 ;; payload subpattern here would have nowhere to fall through to;
@@ -16046,7 +16120,7 @@
   [expr-ty : AstType]
   [phi-inputs : CompilerIrPhiInputList]) : ResultLowerExpr
   (match ctx
-    [(TcContext program _ registries _)
+    [(TcContext _ symbols registries _)
       (let
         [lookup-name : String
           (match (tc-type-strip-region scrut-ty)
@@ -16055,7 +16129,7 @@
             [_ variant-name])]
         (match (compiler-registries-lookup-variant registries lookup-name)
           [(SomeI64 handle)
-            (match (compiler-registries-variant-fields program handle)
+            (match (compiler-registries-variant-fields-indexed symbols handle)
               [(OkAstTypeList fields)
                 (match (lower-state-alloc-var state)
                   [(LowerAlloc eq-alloc eq-var)
@@ -17000,19 +17074,10 @@
       (compiler-source-spans-insert spans name span)]
     [(CompilerNoSourceSpan) spans]))
 
-;; Per-function arena escape for lowering (#1633). Lowering one function allocates
-;; a fresh LowerState plus all the transient IR/AST-walk scratch that the bump
-;; allocator never frees; across thousands of functions this is the ~9 GB the
-;; lower phase adds. We lower each function inside its own scratch arena, deep-
-;; `clone` ONLY the produced IR function list into the enclosing (program) arena,
-;; then destroy the scratch — reclaiming the per-function transient. The growing
-;; spans side-table is DROPPED (returns the unchanged input spans): it never
-;; affects emitted assembly, only backend-error source locations, and cloning the
-;; monotonically-growing accumulator per function would be O(n^2). `enclosing` is
-;; captured fresh and `scratch`'s grown head re-read before destroy so nothing
-;; leaks. Output stays byte-identical (same proof as the optimizer escape).
-;; TODO(#1688): migrate this hand-rolled arena escape to `with-escape` after the
-;; bootstrapping stage0 parser supports the new form.
+;; Direct lowering is now comfortably below the self-build memory budget, so
+;; avoid the old per-function scratch arena and deep clone. Keep only
+;; function-level source spans to preserve the previous backend diagnostic
+;; surface and emitted assembly.
 (define (lower-function-escaping
   [ctx : TcContext]
   [top-env : TcTypeEnv]
@@ -17024,50 +17089,20 @@
   [spans : CompilerSourceSpans]
   [names : LowerNameCache]
   [mode : CompilerLowerMode]) : ResultLowerFunction
-  (let
-    [enclosing : i64 (arena-current)]
-    [scratch : i64 (arena-make)]
-    (begin
-      (unsafe
-        (arena-set! scratch))
-      (match (lower-function
-        ctx
-        top-env
-        type-cache
-        logical-name
-        params
-        ret
-        body
-        spans
-        names
-        mode)
-        [(OkLowerFunction fns _function-spans)
-          (let
-            [scratch-head : i64 (arena-current)]
-            (begin
-              (unsafe
-                (arena-set! enclosing))
-              (let
-                [escaped-fns : CompilerIrFunctionList
-                  (compiler-ir-clone-function-list fns)]
-                [escaped-spans : CompilerSourceSpans
-                  (lower-record-function-span spans logical-name body)]
-                (begin
-                  (unsafe
-                    (arena-destroy scratch-head))
-                  (OkLowerFunction escaped-fns escaped-spans)))))]
-        [(ErrLowerFunction message)
-          (let
-            [scratch-head : i64 (arena-current)]
-            (begin
-              (unsafe
-                (arena-set! enclosing))
-              (let
-                [escaped-message : CompilerDiagnostic (clone message)]
-                (begin
-                  (unsafe
-                    (arena-destroy scratch-head))
-                  (ErrLowerFunction escaped-message)))))]))))
+  (match (lower-function
+    ctx
+    top-env
+    type-cache
+    logical-name
+    params
+    ret
+    body
+    spans
+    names
+    mode)
+    [(OkLowerFunction fns _function-spans)
+      (OkLowerFunction fns (lower-record-function-span spans logical-name body))]
+    [(ErrLowerFunction message) (ErrLowerFunction message)]))
 
 (define (lower-decls
   [ctx : TcContext]
@@ -17145,7 +17180,10 @@
                   (let
                     [global-ty : AstType (tc-type-without-regions ty)]
                     [global-name : String
-                      (lower-current-decl-logical-name names module name)]
+                      (lower-current-decl-logical-name-cache
+                        name-cache
+                        module
+                        name)]
                     (match (lower-global-value name-cache expr)
                       [(OkLowerValue value)
                         (lower-decls-in-module
@@ -17239,7 +17277,7 @@
                 decl-ctx
                 local-top-env
                 type-cache
-                (lower-current-decl-logical-name names module name)
+                (lower-current-decl-logical-name-cache name-cache module name)
                 params
                 ret
                 body
@@ -17363,7 +17401,7 @@
               local-top-env
               rest
               (lower-nullary-variant-globals
-                (lower-current-decl-logical-name names module name)
+                (lower-current-decl-logical-name-cache name-cache module name)
                 variants
                 0
                 globals)
@@ -17490,44 +17528,29 @@
   [mode : CompilerLowerMode]) : ResultCompilerLower
   (match (compiler-specialize-program program)
     [(OkSpecProgram specialized)
-      (match (typecheck-compiler-specialized-program-with-paths
+      (match (typecheck-compiler-specialized-program-with-paths-checked
         specialized
         AstDeclPathNil)
-        [(OkCompilerTypecheck _)
-          (match (build-compiler-symbols specialized)
-            [(OkCompilerSymbols symbols)
-              (match (build-compiler-registries specialized)
-                [(OkCompilerRegistries registries)
+        [(OkCompilerTypecheckChecked _ ctx top-env)
+          (let
+            [alias-names : LowerNameEnv
+              (match specialized
+                [(AstProgram decls-box)
                   (let
-                    [ctx : TcContext
-                      (TcContext specialized symbols registries "")]
-                    (match (tc-build-top-env ctx specialized)
-                      [(OkTcEnv top-env)
-                        (let
-                          [alias-names : LowerNameEnv
-                            (match specialized
-                              [(AstProgram decls-box)
-                                (let
-                                  [decls : AstDeclList (box-get decls-box)]
-                                  (lower-name-env-with-import-aliases
-                                    decls
-                                    AstDeclPathNil
-                                    "<source>"
-                                    LowerNameNil
-                                    false))])]
-                          (lower-compiler-program-checked-with-names-mode
-                            ctx
-                            top-env
-                            specialized
-                            alias-names
-                            mode))]
-                      [(ErrTcEnv message)
-                        (ErrCompilerLower (lower-diagnostic message))]))]
-                [(ErrCompilerRegistries message)
-                  (ErrCompilerLower (lower-diagnostic message))])]
-            [(ErrCompilerSymbols message)
-              (ErrCompilerLower (lower-diagnostic message))])]
-        [(ErrCompilerTypecheck diag) (ErrCompilerLower diag)])]
+                    [decls : AstDeclList (box-get decls-box)]
+                    (lower-name-env-with-import-aliases
+                      decls
+                      AstDeclPathNil
+                      "<source>"
+                      LowerNameNil
+                      false))])]
+            (lower-compiler-program-checked-with-names-mode
+              ctx
+              top-env
+              specialized
+              alias-names
+              mode))]
+        [(ErrCompilerTypecheckChecked diag) (ErrCompilerLower diag)])]
     [(ErrSpecProgram diag) (ErrCompilerLower diag)]))
 
 (define (lower-compiler-program-unlocated-mode
@@ -17560,137 +17583,169 @@
   [program : AstProgram]
   [paths : AstDeclPathList]
   [mode : CompilerLowerMode]) : ResultCompilerLower
-  (let
-    [needs-specialization : bool (compiler-specialize-needed? program)]
-    [specialized-paths : AstDeclPathList
-      (if needs-specialization
-        AstDeclPathNil
-        paths)]
-    [names : LowerNameEnv
-      (match program
-        [(AstProgram decls-box)
-          (let
-            [decls : AstDeclList (box-get decls-box)]
-            (lower-name-env-from-decls decls paths entry-path LowerNameNil))])]
-    (match (compiler-specialize-program program)
-      [(OkSpecProgram specialized)
-        (let
-          [prune-names : LowerNameEnv
-            (if needs-specialization
-              (match specialized
-                [(AstProgram decls-box)
-                  (let
-                    [decls : AstDeclList (box-get decls-box)]
-                    (lower-name-env-from-decls
-                      decls
-                      specialized-paths
-                      entry-path
-                      LowerNameNil))])
-              names)]
-          (match (lower-prune-unreachable-functions-with-clone-roots
-            entry-path
-            specialized
-            specialized-paths
-            prune-names
-            (CloneNameNil))
-            [(LowerPrunedProgram base-program base-paths)
-              (match (lower-reachable-clone-roots
-                base-program
-                base-paths
-                prune-names)
-                [(OkLowerCloneRoots clone-roots)
-                  (let
-                    [checked-program : AstProgram
-                      (clone-augment-program-with-roots
-                        base-program
-                        clone-roots)]
-                    [checked-paths : AstDeclPathList base-paths]
-                    [checked-names : LowerNameEnv
-                      (match checked-program
-                        [(AstProgram decls-box)
+  (begin
+    (cfg compile-profile (compiler-lower-profile-start))
+    (let
+      [needs-specialization : bool (compiler-specialize-needed? program)]
+      [specialized-paths : AstDeclPathList
+        (if needs-specialization
+          AstDeclPathNil
+          paths)]
+      [names : LowerNameEnv
+        (match program
+          [(AstProgram decls-box)
+            (let
+              [decls : AstDeclList (box-get decls-box)]
+              (lower-name-env-from-decls decls paths entry-path LowerNameNil))])]
+      (match (compiler-specialize-program program)
+        [(OkSpecProgram specialized)
+          (begin
+            (cfg compile-profile (compiler-lower-profile-finish "specialize"))
+            (cfg compile-profile (compiler-lower-profile-start))
+            (let
+              [prune-names : LowerNameEnv
+                (if needs-specialization
+                  (match specialized
+                    [(AstProgram decls-box)
+                      (let
+                        [decls : AstDeclList (box-get decls-box)]
+                        (lower-name-env-from-decls
+                          decls
+                          specialized-paths
+                          entry-path
+                          LowerNameNil))])
+                  names)]
+              (match (lower-prune-unreachable-functions-with-clone-roots
+                entry-path
+                specialized
+                specialized-paths
+                prune-names
+                (CloneNameNil))
+                [(LowerPrunedProgram base-program base-paths)
+                  (begin
+                    (cfg
+                      compile-profile
+                      (compiler-lower-profile-finish "prune"))
+                    (cfg compile-profile (compiler-lower-profile-start))
+                    (match (lower-reachable-clone-roots
+                      base-program
+                      base-paths
+                      prune-names)
+                      [(OkLowerCloneRoots clone-roots)
+                        (begin
+                          (cfg
+                            compile-profile
+                            (compiler-lower-profile-finish "clone_roots"))
+                          (cfg compile-profile (compiler-lower-profile-start))
                           (let
-                            [decls : AstDeclList (box-get decls-box)]
-                            (lower-name-env-from-decls
-                              decls
-                              checked-paths
-                              entry-path
-                              LowerNameNil))])]
-                    [lower-names : LowerNameEnv
-                      (if needs-specialization
-                        (match checked-program
-                          [(AstProgram decls-box)
-                            (let
-                              [decls : AstDeclList (box-get decls-box)]
-                              (lower-name-env-add-clone-decls
-                                decls
-                                checked-paths
-                                entry-path
-                                names))])
-                        checked-names)]
-                    (match (typecheck-compiler-specialized-program-with-paths
-                      checked-program
-                      checked-paths)
-                      [(OkCompilerTypecheck _)
-                        (match (build-compiler-symbols checked-program)
-                          [(OkCompilerSymbols symbols)
-                            (match (build-compiler-registries checked-program)
-                              [(OkCompilerRegistries registries)
-                                (let
-                                  [ctx : TcContext
-                                    (TcContext
+                            [checked-program : AstProgram
+                              (clone-augment-program-with-roots
+                                base-program
+                                clone-roots)]
+                            [checked-paths : AstDeclPathList base-paths]
+                            [checked-names : LowerNameEnv
+                              (match checked-program
+                                [(AstProgram decls-box)
+                                  (let
+                                    [decls : AstDeclList (box-get decls-box)]
+                                    (lower-name-env-from-decls
+                                      decls
+                                      checked-paths
+                                      entry-path
+                                      LowerNameNil))])]
+                            [lower-names : LowerNameEnv
+                              (if needs-specialization
+                                (match checked-program
+                                  [(AstProgram decls-box)
+                                    (let
+                                      [decls : AstDeclList (box-get decls-box)]
+                                      (lower-name-env-add-clone-decls
+                                        decls
+                                        checked-paths
+                                        entry-path
+                                        names))])
+                                checked-names)]
+                            (begin
+                              (cfg
+                                compile-profile
+                                (compiler-lower-profile-finish
+                                  "clone_augment_names"))
+                              (cfg
+                                compile-profile
+                                (compiler-lower-profile-start))
+                              (match (typecheck-compiler-specialized-program-with-paths-checked
+                                checked-program
+                                checked-paths)
+                                [(OkCompilerTypecheckChecked _ ctx top-env)
+                                  (begin
+                                    (cfg
+                                      compile-profile
+                                      (compiler-lower-profile-finish
+                                        "typecheck"))
+                                    (cfg
+                                      compile-profile
+                                      (compiler-lower-profile-start))
+                                    (match (lower-compiler-program-checked-with-names-mode
+                                      ctx
+                                      top-env
                                       checked-program
-                                      symbols
-                                      registries
-                                      "")]
-                                  (match (tc-build-top-env ctx checked-program)
-                                    [(OkTcEnv top-env)
-                                      (match (lower-compiler-program-checked-with-names-mode
-                                        ctx
-                                        top-env
-                                        checked-program
-                                        lower-names
-                                        mode)
-                                        [(OkCompilerLower ir spans)
-                                          (OkCompilerLower ir spans)]
-                                        [(ErrCompilerLower diag)
+                                      lower-names
+                                      mode)
+                                      [(OkCompilerLower ir spans)
+                                        (begin
+                                          (cfg
+                                            compile-profile
+                                            (compiler-lower-profile-finish
+                                              "decls"))
+                                          (OkCompilerLower ir spans))]
+                                      [(ErrCompilerLower diag)
+                                        (begin
+                                          (cfg
+                                            compile-profile
+                                            (compiler-lower-profile-finish
+                                              "decls"))
                                           (ErrCompilerLower
                                             (lower-diagnostic-with-path
                                               diag
-                                              entry-path))])]
-                                    [(ErrTcEnv message)
-                                      (ErrCompilerLower
-                                        (lower-diagnostic-with-path
-                                          (lower-diagnostic message)
-                                          entry-path))]))]
-                              [(ErrCompilerRegistries message)
-                                (ErrCompilerLower
-                                  (lower-diagnostic-with-path
-                                    (lower-diagnostic message)
-                                    entry-path))])]
-                          [(ErrCompilerSymbols message)
-                            (ErrCompilerLower
-                              (lower-diagnostic-with-path
-                                (lower-diagnostic message)
-                                entry-path))])]
-                      [(ErrCompilerTypecheck diag) (ErrCompilerLower diag)]))]
-                [(ErrLowerCloneRoots diag) (ErrCompilerLower diag)])]))]
-      [(ErrSpecProgram diag)
-        (ErrCompilerLower (lower-diagnostic-with-path diag entry-path))])))
+                                              entry-path)))]))]
+                                [(ErrCompilerTypecheckChecked diag)
+                                  (begin
+                                    (cfg
+                                      compile-profile
+                                      (compiler-lower-profile-finish
+                                        "typecheck"))
+                                    (ErrCompilerLower diag))]))))]
+                      [(ErrLowerCloneRoots diag)
+                        (begin
+                          (cfg
+                            compile-profile
+                            (compiler-lower-profile-finish "clone_roots"))
+                          (ErrCompilerLower diag))]))])))]
+        [(ErrSpecProgram diag)
+          (begin
+            (cfg compile-profile (compiler-lower-profile-finish "specialize"))
+            (ErrCompilerLower (lower-diagnostic-with-path diag entry-path)))]))))
 
 (define (lower-compiler-program-with-decl-paths-mode
   [entry-path : String]
   [program : AstProgram]
   [paths : AstDeclPathList]
   [mode : CompilerLowerMode]) : ResultCompilerLower
-  (match (macro-expand-program program)
-    [(OkMacroExpand expanded)
-      (lower-compiler-expanded-program-with-decl-paths-mode
-        entry-path
-        expanded
-        paths
-        mode)]
-    [(ErrMacroExpand diag)
-      (ErrCompilerLower (lower-diagnostic-with-path diag entry-path))]))
+  (begin
+    (cfg compile-profile (compiler-lower-profile-start))
+    (match (macro-expand-program program)
+      [(OkMacroExpand expanded)
+        (begin
+          (cfg compile-profile (compiler-lower-profile-finish "macro_expand"))
+          (lower-compiler-expanded-program-with-decl-paths-mode
+            entry-path
+            expanded
+            paths
+            mode))]
+      [(ErrMacroExpand diag)
+        (begin
+          (cfg compile-profile (compiler-lower-profile-finish "macro_expand"))
+          (ErrCompilerLower (lower-diagnostic-with-path diag entry-path)))])))
 
 (define (lower-compiler-program-with-decl-paths
   [entry-path : String]
@@ -21716,22 +21771,32 @@
     [(ErrCompilerLower _) false]))
 
 (define (compiler-lower-with-escape-owning-shape-ok?) : bool
-  (match (lower-compiler-source (compiler-lower-with-escape-owning-source))
-    [(OkCompilerLower program _)
-      (match program
-        [(IrProgram _ functions _)
-          (and
-            (compiler-lower-with-escape-arena-shape-ok?
-              (compiler-lower-with-escape-owning-source))
-            (and
-              (=
-                (lower-test-function-call-count
-                  functions
-                  "main"
-                  "clone$EscapeResult")
-                1)
-              (> (lower-test-functions-call-count functions "tl_alloc") 0)))])]
-    [(ErrCompilerLower _) false]))
+  (match (parse-ast-source (compiler-lower-with-escape-owning-source))
+    [(OkAstProgram ast)
+      (match (lower-compiler-program-with-decl-paths
+        "<source>"
+        ast
+        AstDeclPathNil)
+        [(OkCompilerLower program _)
+          (match program
+            [(IrProgram _ functions _)
+              (and
+                (compiler-lower-with-escape-arena-shape-ok?
+                  (compiler-lower-with-escape-owning-source))
+                (and
+                  (=
+                    (lower-test-function-call-count
+                      functions
+                      "main"
+                      "<source>::clone$EscapeResult")
+                    1)
+                  (and
+                    (lower-test-function-defined?
+                      functions
+                      "<source>::clone$EscapeResult")
+                    (> (lower-test-functions-call-count functions "tl_alloc") 0))))])]
+        [(ErrCompilerLower _) false])]
+    [(ErrAstProgram _) false]))
 
 (define (compiler-lower-with-escape-shape-ok?) : bool
   (let

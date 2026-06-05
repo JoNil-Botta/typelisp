@@ -164,6 +164,32 @@
           (text-buf-chunks-render-balanced chunks count)
           (text-buf-chunks-render-rev chunks "")))]))
 
+;: Write chunks in insertion order to an open raw file handle.
+(define (text-buf-write-chunks-rev [raw : i64] [chunks : TextBufChunkList]) : i64
+  (match chunks
+    [(TextBufChunkNil) io-status-ok]
+    [(TextBufChunkCons chunk rest)
+      (let
+        [status : i64 (text-buf-write-chunks-rev raw (box-get rest))]
+        (if (= status io-status-ok)
+          (file-write-status raw chunk)
+          status))]))
+
+;: Write the rendered buffer contents to `path`, replacing any existing file.
+(define (text-buf-write-file [path : String] [buf : TextBuf]) : i64
+  (match (file-open (& path) (OpenWriteTruncate))
+    [(OkIoFile handle)
+      (let
+        [write-status : i64
+          (match buf
+            [(TextBuf chunks _)
+              (text-buf-write-chunks-rev (struct-get handle id) chunks)])]
+        [close-result : ResultIoUnit (file-close handle)]
+        (match close-result
+          [(OkIoUnit) write-status]
+          [(ErrIoUnit _) 1]))]
+    [(ErrIoFile _) 1]))
+
 ;: Return an empty buffer, leaving the old immutable `buf` value unchanged.
 (define (text-buf-clear [buf : TextBuf]) : TextBuf
   (match buf

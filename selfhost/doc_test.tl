@@ -1302,7 +1302,7 @@
       [(OkCompilerLoadWithPaths decls paths _ _)
         (match (lower-compiler-program-with-decl-paths
           virtual-path
-          (AstProgram decls)
+          (ast-program decls)
           paths)
           [(OkCompilerLower program spans)
             (match (compiler-driver-emit-lowered-with-level

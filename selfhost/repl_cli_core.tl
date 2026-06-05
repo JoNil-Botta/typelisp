@@ -451,15 +451,17 @@
   [expr-source : String]
   [expr : AstExpr]) : unit
   (match (parse-ast-source session-source)
-    [(OkAstProgram (AstProgram decls))
-      (match (typecheck-compiler-repl-expr decls expr)
-        [(OkTcType ty)
-          (match (repl-scratch-source session-source expr-source ty)
-            [(OkReplString scratch-source)
-              (repl-run-scratch-source scratch-source)]
-            [(ErrReplString message) (repl-print-error-line message)])]
-        [(ErrTcType message)
-          (repl-print-error-line (string-append "Error: " message))])]
+    [(OkAstProgram (AstProgram decls-box))
+      (let
+        [decls : AstDeclList (box-get decls-box)]
+        (match (typecheck-compiler-repl-expr decls expr)
+          [(OkTcType ty)
+            (match (repl-scratch-source session-source expr-source ty)
+              [(OkReplString scratch-source)
+                (repl-run-scratch-source scratch-source)]
+              [(ErrReplString message) (repl-print-error-line message)])]
+          [(ErrTcType message)
+            (repl-print-error-line (string-append "Error: " message))]))]
     [(ErrAstProgram message)
       (repl-print-error-line (string-append "Error: " message))]))
 
@@ -476,11 +478,14 @@
               "Error: .type expects an expression, got a declaration")]
           [(AstReplExpr expr)
             (match (parse-ast-source session-source)
-              [(OkAstProgram (AstProgram decls))
-                (match (typecheck-compiler-repl-expr decls expr)
-                  [(OkTcType ty) (repl-stdout-write-line (repl-type-render ty))]
-                  [(ErrTcType message)
-                    (repl-print-error-line (string-append "Error: " message))])]
+              [(OkAstProgram (AstProgram decls-box))
+                (let
+                  [decls : AstDeclList (box-get decls-box)]
+                  (match (typecheck-compiler-repl-expr decls expr)
+                    [(OkTcType ty)
+                      (repl-stdout-write-line (repl-type-render ty))]
+                    [(ErrTcType message)
+                      (repl-print-error-line (string-append "Error: " message))]))]
               [(ErrAstProgram message)
                 (repl-print-error-line (string-append "Error: " message))])])]
       [(ErrAstReplItem message)

@@ -244,10 +244,12 @@
   [source : String]
   [program : AstProgram]) : LintFindingList
   (match program
-    [(AstProgram decls)
-      (selfhost-lint-filter-derived-origins
-        source
-        (lint-program (AstProgram decls) (lint-default-ladder-threshold)))]))
+    [(AstProgram decls-box)
+      (let
+        [decls : AstDeclList (box-get decls-box)]
+        (selfhost-lint-filter-derived-origins
+          source
+          (lint-program (ast-program decls) (lint-default-ladder-threshold))))]))
 
 ;; Parse `source` (attributed to `path`) and run the lint rules over this source
 ;; unit only. Imports are linted when their own files are selected by the repo

@@ -323,9 +323,9 @@
 
 (defenum AstDecl
   (AstDeclModule String)
-  (AstDeclDef String AstMaybeType AstExpr)
-  (AstDeclDefFn String AstParamList AstType AstExpr)
-  (AstDeclDefMacro String AstMacroParamList AstType AstExpr)
+  (AstDeclDef String AstMaybeType (Box AstExpr))
+  (AstDeclDefFn String AstParamList AstType (Box AstExpr))
+  (AstDeclDefMacro String AstMacroParamList AstType (Box AstExpr))
   (AstDeclExtern String AstExternMetadata AstType)
   (AstDeclDefEnum String AstVariantDefList)
   (AstDeclDefEnumLifetimes String AstLifetimeList AstVariantDefList)
@@ -339,9 +339,9 @@
   (AstDeclImport AstImportSpec)
   (AstDeclIncludeStr String String)
   (AstDeclExport AstExportItemList)
-  (AstDeclTest String AstExpr AstSourceSpan)
-  (AstDeclUnsafe AstDecl)
-  (AstDeclComptimeDecl AstDecl))
+  (AstDeclTest String (Box AstExpr) AstSourceSpan)
+  (AstDeclUnsafe (Box AstDecl))
+  (AstDeclComptimeDecl (Box AstDecl)))
 
 (defenum AstDeclList
   (AstDeclNil)
@@ -356,7 +356,7 @@
   (AstDeclModuleCons String (Box AstDeclModuleList)))
 
 (defenum AstProgram
-  (AstProgram AstDeclList))
+  (AstProgram (Box AstDeclList)))
 
 (define (ast-type-cons [head : AstType] [rest : AstTypeList]) : AstTypeList
   (AstTypeCons head (box rest)))
@@ -621,11 +621,43 @@
 (define (ast-decl-cons [head : AstDecl] [rest : AstDeclList]) : AstDeclList
   (AstDeclCons head (box rest)))
 
+(define (ast-decl-def
+  [name : String]
+  [maybe-ty : AstMaybeType]
+  [value : AstExpr]) : AstDecl
+  (AstDeclDef name maybe-ty (box value)))
+
+(define (ast-decl-def-fn
+  [name : String]
+  [params : AstParamList]
+  [ret : AstType]
+  [body : AstExpr]) : AstDecl
+  (AstDeclDefFn name params ret (box body)))
+
+(define (ast-decl-def-macro
+  [name : String]
+  [params : AstMacroParamList]
+  [ret : AstType]
+  [body : AstExpr]) : AstDecl
+  (AstDeclDefMacro name params ret (box body)))
+
+(define (ast-decl-test [name : String] [body : AstExpr] [span : AstSourceSpan]) : AstDecl
+  (AstDeclTest name (box body) span))
+
+(define (ast-decl-unsafe [inner : AstDecl]) : AstDecl
+  (AstDeclUnsafe (box inner)))
+
+(define (ast-decl-comptime-decl [inner : AstDecl]) : AstDecl
+  (AstDeclComptimeDecl (box inner)))
+
 (define (ast-decl-path-cons [head : String] [rest : AstDeclPathList]) : AstDeclPathList
   (AstDeclPathCons head (box rest)))
 
 (define (ast-decl-module-cons [head : String] [rest : AstDeclModuleList]) : AstDeclModuleList
   (AstDeclModuleCons head (box rest)))
+
+(define (ast-program [decls : AstDeclList]) : AstProgram
+  (AstProgram (box decls)))
 
 (define (ast-type-tag [ty : AstType]) : i64
   (match ty
@@ -1005,6 +1037,71 @@
         (ast-expr-if (AstExprVar "cond") match-expr begin-expr))]
     (compiler-ast-nested-expr-box-ok? nested)))
 
+(define (compiler-ast-decl-def-lit-ok?
+  [decl : AstDecl]
+  [want-name : String]
+  [want-value : i64]) : bool
+  (match decl
+    [(AstDeclDef name _ value-box)
+      (let
+        [value : AstExpr (box-get value-box)]
+        (and
+          (string-eq name want-name)
+          (match value
+            [(AstExprLiteral (AstLitInt actual)) (= actual want-value)]
+            [_ false])))]
+    [_ false]))
+
+(define (compiler-ast-nested-decl-box-ok? [decl : AstDecl]) : bool
+  (match decl
+    [(AstDeclUnsafe inner-box)
+      (let
+        [inner : AstDecl (box-get inner-box)]
+        (match inner
+          [(AstDeclComptimeDecl template-box)
+            (let
+              [template : AstDecl (box-get template-box)]
+              (compiler-ast-decl-def-lit-ok? template "generated" 7))]
+          [_ false]))]
+    [_ false]))
+
+(define (compiler-ast-decl-program-box-smoke?) : bool
+  (let
+    [generated : AstDecl
+      (ast-decl-def
+        "generated"
+        (AstSomeType (AstTyI64))
+        (AstExprLiteral (AstLitInt 7)))]
+    [runtime : AstDecl
+      (ast-decl-def
+        "runtime"
+        (AstSomeType (AstTyI64))
+        (AstExprLiteral (AstLitInt 9)))]
+    [nested : AstDecl (ast-decl-unsafe (ast-decl-comptime-decl generated))]
+    [program : AstProgram
+      (ast-program (ast-decl-cons nested (ast-decl-cons runtime AstDeclNil)))]
+    (match program
+      [(AstProgram decls-box)
+        (let
+          [decls : AstDeclList (box-get decls-box)]
+          (match decls
+            [(AstDeclCons first rest-box)
+              (let
+                [rest : AstDeclList (box-get rest-box)]
+                (and
+                  (compiler-ast-nested-decl-box-ok? first)
+                  (match rest
+                    [(AstDeclCons second done-box)
+                      (let
+                        [done : AstDeclList (box-get done-box)]
+                        (and
+                          (compiler-ast-decl-def-lit-ok? second "runtime" 9)
+                          (match done
+                            [(AstDeclNil) true]
+                            [_ false])))]
+                    [_ false])))]
+            [_ false]))])))
+
 (define (compiler-ast-smoke) : i64
   (let
     [i64-ty : AstType (AstTyI64)]
@@ -1037,12 +1134,13 @@
     [one : AstExpr (AstExprLiteral (AstLitInt 1))]
     [expr : AstExpr (ast-expr-binary (AstBinAdd) (AstExprLiteral lit) one)]
     [nested-expr-pattern-ok? : bool (compiler-ast-expr-pattern-box-smoke?)]
+    [decl-program-ok? : bool (compiler-ast-decl-program-box-smoke?)]
     [param : AstParam (AstParam "x" i64-ty false)]
     [params : AstParamList (ast-param-cons param AstParamNil)]
-    [decl : AstDecl (AstDeclDefFn "main" params i64-ty expr)]
-    [program : AstProgram (AstProgram (ast-decl-cons decl AstDeclNil))]
+    [decl : AstDecl (ast-decl-def-fn "main" params i64-ty expr)]
+    [program : AstProgram (ast-program (ast-decl-cons decl AstDeclNil))]
     (match program
       [(AstProgram _)
-        (if (and nested-ty-ok? nested-expr-pattern-ok?)
+        (if (and nested-ty-ok? (and nested-expr-pattern-ok? decl-program-ok?))
           (+ (ast-type-tag fn-ty) (+ (ast-expr-tag expr) (ast-decl-tag decl)))
           0)])))

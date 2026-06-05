@@ -363,7 +363,7 @@
             (cfg compile-profile (compiler-driver-profile-start-phase))
             (match (lower-compiler-program-with-decl-paths-mode
               input-path
-              (AstProgram decls)
+              (ast-program decls)
               paths
               (compiler-driver-lower-mode-for-backend mode))
               [(OkCompilerLower program spans)
@@ -625,7 +625,7 @@
     [(OkCompilerLoadWithPaths decls paths _ _)
       (match (lower-compiler-program-with-decl-paths-mode
         input-path
-        (AstProgram decls)
+        (ast-program decls)
         paths
         (compiler-driver-lower-mode-for-backend mode))
         [(OkCompilerLower program spans)
@@ -767,7 +767,7 @@
     [(OkCompilerLoadWithPaths decls paths _ _)
       (match (lower-compiler-program-with-decl-paths
         input-path
-        (AstProgram decls)
+        (ast-program decls)
         paths)
         [(OkCompilerLower program spans)
           (compiler-driver-emit-ir-summary-lowered-with-level

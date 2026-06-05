@@ -272,7 +272,10 @@
     [(AstDeclDef name _ _) (string-eq name "main")]
     [(AstDeclDefFn name _ _ _) (string-eq name "main")]
     [(AstDeclDefMacro _ _ _ _) false]
-    [(AstDeclUnsafe inner) (tltest-main-decl? inner)]
+    [(AstDeclUnsafe inner-box)
+      (let
+        [inner : AstDecl (box-get inner-box)]
+        (tltest-main-decl? inner))]
     [_ false]))
 
 (define (tltest-source-line [span : AstSourceSpan]) : i64
@@ -310,21 +313,23 @@
                 path-rest)]
             [(AstDeclPathNil) AstDeclPathNil])]
         (match decl
-          [(AstDeclTest name body span)
-            (tltest-collect
-              rest
-              rest-paths
-              runtime-rev
-              path-rev
-              (InlineTestCons
-                (InlineTest
-                  name
-                  decl-path
-                  (tltest-source-line span)
-                  body
-                  (tltest-private-name test-count))
-                tests-rev)
-              (+ test-count 1))]
+          [(AstDeclTest name body-box span)
+            (let
+              [body : AstExpr (box-get body-box)]
+              (tltest-collect
+                rest
+                rest-paths
+                runtime-rev
+                path-rev
+                (InlineTestCons
+                  (InlineTest
+                    name
+                    decl-path
+                    (tltest-source-line span)
+                    body
+                    (tltest-private-name test-count))
+                  tests-rev)
+                (+ test-count 1)))]
           [(AstDeclImport _)
             (tltest-collect
               rest
@@ -433,7 +438,7 @@
           AstExprNil)))))
 
 (define (tltest-print-runtime-print-decl) : AstDecl
-  (AstDeclDefFn
+  (ast-decl-def-fn
     "__tl_test_print_error"
     (tltest-text-param-list)
     (AstTyUnit)
@@ -451,9 +456,11 @@
   [program : AstProgram]
   [target : CompilerBackendTarget]) : AstProgram
   (match program
-    [(AstProgram decls)
-      (AstProgram
-        (tltest-decl-list-append (tltest-print-runtime-decls target) decls))]))
+    [(AstProgram decls-box)
+      (let
+        [decls : AstDeclList (box-get decls-box)]
+        (ast-program
+          (tltest-decl-list-append (tltest-print-runtime-decls target) decls)))]))
 
 (define (tltest-paths-with-print-runtime [paths : AstDeclPathList]) : AstDeclPathList
   (ast-decl-path-cons
@@ -484,7 +491,7 @@
       (match test
         [(InlineTest _ _ _ body private-name)
           (ast-decl-cons
-            (AstDeclDefFn private-name AstParamNil (AstTyUnit) body)
+            (ast-decl-def-fn private-name AstParamNil (AstTyUnit) body)
             (tltest-test-decls rest))])]))
 
 (define (tltest-test-paths [tests : InlineTestList]) : AstDeclPathList
@@ -496,7 +503,7 @@
           (ast-decl-path-cons path (tltest-test-paths rest))])]))
 
 (define (tltest-main-decl [tests : InlineTestList] [count : i64]) : AstDecl
-  (AstDeclDefFn
+  (ast-decl-def-fn
     "main"
     AstParamNil
     (AstTyI64)
@@ -820,16 +827,23 @@
 
 (define (tltest-reach-mark-decl [decl : AstDecl] [names : SymI64Env]) : SymI64Env
   (match decl
-    [(AstDeclDef name _ expr)
-      (if (sym-i64-contains names name)
-        (tltest-reach-mark-expr expr names)
-        names)]
-    [(AstDeclDefFn name _ _ body)
-      (if (sym-i64-contains names name)
-        (tltest-reach-mark-expr body names)
-        names)]
+    [(AstDeclDef name _ expr-box)
+      (let
+        [expr : AstExpr (box-get expr-box)]
+        (if (sym-i64-contains names name)
+          (tltest-reach-mark-expr expr names)
+          names))]
+    [(AstDeclDefFn name _ _ body-box)
+      (let
+        [body : AstExpr (box-get body-box)]
+        (if (sym-i64-contains names name)
+          (tltest-reach-mark-expr body names)
+          names))]
     [(AstDeclDefMacro _ _ _ _) names]
-    [(AstDeclUnsafe inner) (tltest-reach-mark-decl inner names)]
+    [(AstDeclUnsafe inner-box)
+      (let
+        [inner : AstDecl (box-get inner-box)]
+        (tltest-reach-mark-decl inner names))]
     [_ names]))
 
 (define (tltest-reach-mark-decls [decls : AstDeclList] [names : SymI64Env]) : SymI64Env
@@ -860,7 +874,10 @@
     [(AstDeclDefFn name _ _ _) (sym-i64-contains names name)]
     [(AstDeclExtern name _ _) (sym-i64-contains names name)]
     [(AstDeclDefMacro _ _ _ _) true]
-    [(AstDeclUnsafe inner) (tltest-reachable-runtime-decl? inner names)]
+    [(AstDeclUnsafe inner-box)
+      (let
+        [inner : AstDecl (box-get inner-box)]
+        (tltest-reachable-runtime-decl? inner names))]
     [_ true]))
 
 (define (tltest-prune-runtime-decls-in
@@ -925,7 +942,7 @@
         (match (tltest-prune-runtime-decls runtime-decls runtime-paths tests)
           [(InlineRuntimeDecls pruned-decls pruned-paths)
             (InlineHarness
-              (AstProgram
+              (ast-program
                 (tltest-decl-list-append
                   pruned-decls
                   (tltest-decl-list-append
@@ -1116,7 +1133,7 @@
             1)])]))
 
 (define (tltest-no-tests-check [decls : AstDeclList] [paths : AstDeclPathList]) : i64
-  (match (typecheck-compiler-program-with-paths (AstProgram decls) paths)
+  (match (typecheck-compiler-program-with-paths (ast-program decls) paths)
     [(OkCompilerTypecheck _)
       (begin
         (print-string "TypeLisp test typecheck passed: 0 test(s)\n")
@@ -1137,7 +1154,7 @@
   ;; --check` owns source typechecking; run mode only needs the zero-test runner.
   (tltest-run-direct
     source
-    (AstProgram (ast-decl-cons (tltest-main-decl InlineTestNil 0) AstDeclNil))
+    (ast-program (ast-decl-cons (tltest-main-decl InlineTestNil 0) AstDeclNil))
     (ast-decl-path-cons source AstDeclPathNil)
     target
     opt-level))

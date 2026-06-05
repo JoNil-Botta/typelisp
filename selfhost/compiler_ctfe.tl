@@ -329,47 +329,51 @@
                 rest
                 module
                 (ctfe-reflect-info-add-names infos info name module)))]
-          [(AstDeclComptimeDecl template)
-            (match template
-              [(AstDeclDefStruct name _ _ fields)
-                (let
-                  [key : String
-                    (if (= (string-length module) 0)
-                      name
-                      (string-append module (string-append "/" name)))]
-                  [info : CtfeReflectInfo
-                    (CtfeReflectStruct
-                      key
+          [(AstDeclComptimeDecl template-box)
+            (let
+              [template : AstDecl (box-get template-box)]
+              (match template
+                [(AstDeclDefStruct name _ _ fields)
+                  (let
+                    [key : String
+                      (if (= (string-length module) 0)
+                        name
+                        (string-append module (string-append "/" name)))]
+                    [info : CtfeReflectInfo
+                      (CtfeReflectStruct
+                        key
+                        module
+                        name
+                        (ctfe-reflect-field-list-from-fields fields))]
+                    (ctfe-reflections-from-decls
+                      rest
                       module
-                      name
-                      (ctfe-reflect-field-list-from-fields fields))]
-                  (ctfe-reflections-from-decls
-                    rest
-                    module
-                    (ctfe-reflect-info-add-names infos info name module)))]
-              [(AstDeclDefEnum name variants)
-                (let
-                  [key : String
-                    (if (= (string-length module) 0)
-                      name
-                      (string-append module (string-append "/" name)))]
-                  [info : CtfeReflectInfo
-                    (CtfeReflectEnum
-                      key
+                      (ctfe-reflect-info-add-names infos info name module)))]
+                [(AstDeclDefEnum name variants)
+                  (let
+                    [key : String
+                      (if (= (string-length module) 0)
+                        name
+                        (string-append module (string-append "/" name)))]
+                    [info : CtfeReflectInfo
+                      (CtfeReflectEnum
+                        key
+                        module
+                        name
+                        (ctfe-reflect-variant-list-from-variants variants))]
+                    (ctfe-reflections-from-decls
+                      rest
                       module
-                      name
-                      (ctfe-reflect-variant-list-from-variants variants))]
-                  (ctfe-reflections-from-decls
-                    rest
-                    module
-                    (ctfe-reflect-info-add-names infos info name module)))]
-              [_ (ctfe-reflections-from-decls rest module infos)])]
+                      (ctfe-reflect-info-add-names infos info name module)))]
+                [_ (ctfe-reflections-from-decls rest module infos)]))]
           [_ (ctfe-reflections-from-decls rest module infos)]))]))
 
 (define (ctfe-reflections-from-program [program : AstProgram]) : CtfeReflectInfoList
   (match program
-    [(AstProgram decls)
-      (ctfe-reflections-from-decls decls "" CtfeReflectInfoNil)]))
+    [(AstProgram decls-box)
+      (let
+        [decls : AstDeclList (box-get decls-box)]
+        (ctfe-reflections-from-decls decls "" CtfeReflectInfoNil))]))
 
 ;; Result of evaluating a sub-expression: either a value (carrying the remaining
 ;; fuel) or a diagnostic. Fuel is threaded so each evaluation step decrements a

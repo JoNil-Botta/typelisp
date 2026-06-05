@@ -956,32 +956,38 @@
 (define (front-decl-render [decl : AstDecl]) : String
   (match decl
     [(AstDeclModule name) (front-cat3 "Module(\"" name "\")")]
-    [(AstDeclDef name ty value)
-      (front-cat3
-        "Def { name: \""
-        name
+    [(AstDeclDef name ty value-box)
+      (let
+        [value : AstExpr (box-get value-box)]
         (front-cat3
-          "\", ty: "
-          (match ty
-            [(AstNoType) "None"]
-            [(AstSomeType some-ty) (front-type-render some-ty)])
-          (front-cat3 ", value: " (front-expr-render value) " }")))]
-    [(AstDeclDefFn name _ ret body)
-      (front-cat3
-        "DefFn { name: \""
-        name
+          "Def { name: \""
+          name
+          (front-cat3
+            "\", ty: "
+            (match ty
+              [(AstNoType) "None"]
+              [(AstSomeType some-ty) (front-type-render some-ty)])
+            (front-cat3 ", value: " (front-expr-render value) " }"))))]
+    [(AstDeclDefFn name _ ret body-box)
+      (let
+        [body : AstExpr (box-get body-box)]
         (front-cat3
-          "\", ret: "
-          (front-type-render ret)
-          (front-cat3 ", body: " (front-expr-render body) " }")))]
-    [(AstDeclDefMacro name _ ret body)
-      (front-cat3
-        "DefMacro { name: \""
-        name
+          "DefFn { name: \""
+          name
+          (front-cat3
+            "\", ret: "
+            (front-type-render ret)
+            (front-cat3 ", body: " (front-expr-render body) " }"))))]
+    [(AstDeclDefMacro name _ ret body-box)
+      (let
+        [body : AstExpr (box-get body-box)]
         (front-cat3
-          "\", ret: "
-          (front-type-render ret)
-          (front-cat3 ", body: " (front-expr-render body) " }")))]
+          "DefMacro { name: \""
+          name
+          (front-cat3
+            "\", ret: "
+            (front-type-render ret)
+            (front-cat3 ", body: " (front-expr-render body) " }"))))]
     [(AstDeclExtern name metadata ty)
       (front-cat3
         "Extern { name: \""
@@ -1012,15 +1018,24 @@
         (front-cat3 "\", path: \"" path "\" }"))]
     [(AstDeclExport items)
       (front-cat3 "Export { items: " (front-export-item-list-render items) " }")]
-    [(AstDeclTest name body _)
-      (front-cat3
-        "Test { name: \""
-        name
-        (front-cat3 "\", body: " (front-expr-render body) " }"))]
-    [(AstDeclUnsafe inner)
-      (front-cat3 "UnsafeDecl { inner: " (front-decl-render inner) " }")]
-    [(AstDeclComptimeDecl template)
-      (front-cat3 "ComptimeDecl { template: " (front-decl-render template) " }")]))
+    [(AstDeclTest name body-box _)
+      (let
+        [body : AstExpr (box-get body-box)]
+        (front-cat3
+          "Test { name: \""
+          name
+          (front-cat3 "\", body: " (front-expr-render body) " }")))]
+    [(AstDeclUnsafe inner-box)
+      (let
+        [inner : AstDecl (box-get inner-box)]
+        (front-cat3 "UnsafeDecl { inner: " (front-decl-render inner) " }"))]
+    [(AstDeclComptimeDecl template-box)
+      (let
+        [template : AstDecl (box-get template-box)]
+        (front-cat3
+          "ComptimeDecl { template: "
+          (front-decl-render template)
+          " }"))]))
 
 (define (front-decl-list-render [decls : AstDeclList]) : String
   (match decls
@@ -1032,11 +1047,13 @@
 
 (define (front-program-render [program : AstProgram]) : String
   (match program
-    [(AstProgram decls)
-      (front-cat3
-        "Program {\n  decls: [\n"
-        (front-decl-list-render decls)
-        "  ],\n}\n")]))
+    [(AstProgram decls-box)
+      (let
+        [decls : AstDeclList (box-get decls-box)]
+        (front-cat3
+          "Program {\n  decls: [\n"
+          (front-decl-list-render decls)
+          "  ],\n}\n"))]))
 
 (define (front-parse-file [path : String]) : i64
   (match (parse-ast-source-diagnostic path (read-file path))

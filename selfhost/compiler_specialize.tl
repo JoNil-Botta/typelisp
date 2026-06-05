@@ -245,18 +245,27 @@
       (let
         [rest : AstDeclList (box-get rest)]
         (match decl
-          [(AstDeclUnsafe (AstDeclDefFn name params ret body))
-            (if (spec-param-list-has-comptime? params)
-              (spec-template-cons
-                (SpecTemplate name params ret body)
-                (spec-collect-templates rest))
-              (spec-collect-templates rest))]
-          [(AstDeclDefFn name params ret body)
-            (if (spec-param-list-has-comptime? params)
-              (spec-template-cons
-                (SpecTemplate name params ret body)
-                (spec-collect-templates rest))
-              (spec-collect-templates rest))]
+          [(AstDeclUnsafe inner-box)
+            (let
+              [inner : AstDecl (box-get inner-box)]
+              (match inner
+                [(AstDeclDefFn name params ret body-box)
+                  (let
+                    [body : AstExpr (box-get body-box)]
+                    (if (spec-param-list-has-comptime? params)
+                      (spec-template-cons
+                        (SpecTemplate name params ret body)
+                        (spec-collect-templates rest))
+                      (spec-collect-templates rest)))]
+                [_ (spec-collect-templates rest)]))]
+          [(AstDeclDefFn name params ret body-box)
+            (let
+              [body : AstExpr (box-get body-box)]
+              (if (spec-param-list-has-comptime? params)
+                (spec-template-cons
+                  (SpecTemplate name params ret body)
+                  (spec-collect-templates rest))
+                (spec-collect-templates rest)))]
           [_ (spec-collect-templates rest)]))]))
 
 (define (spec-cache-lookup [cache : SpecCache] [key : String]) : SpecMaybeString
@@ -992,7 +1001,7 @@
                                           (SpecState
                                             (spec-decl-list-append-one
                                               rewritten-generated
-                                              (AstDeclDefFn
+                                              (ast-decl-def-fn
                                                 generated-name
                                                 (spec-substitute-param-types
                                                   runtime-params
@@ -2725,38 +2734,46 @@
   [templates : SpecTemplateList]
   [state : SpecState]) : ResultSpecDecl
   (match decl
-    [(AstDeclDef name ty value)
-      (match (spec-rewrite-expr value templates state)
-        [(OkSpecExpr rewritten state2)
-          (OkSpecDecl (SpecSomeDecl (AstDeclDef name ty rewritten)) state2)]
-        [(ErrSpecExpr diag) (ErrSpecDecl diag)])]
-    [(AstDeclDefFn name params ret body)
-      (if (spec-param-list-has-comptime? params)
-        (OkSpecDecl (SpecNoDecl) state)
-        (match (spec-rewrite-expr
-          body
-          (spec-template-list-remove-params templates params)
-          state)
+    [(AstDeclDef name ty value-box)
+      (let
+        [value : AstExpr (box-get value-box)]
+        (match (spec-rewrite-expr value templates state)
+          [(OkSpecExpr rewritten state2)
+            (OkSpecDecl (SpecSomeDecl (ast-decl-def name ty rewritten)) state2)]
+          [(ErrSpecExpr diag) (ErrSpecDecl diag)]))]
+    [(AstDeclDefFn name params ret body-box)
+      (let
+        [body : AstExpr (box-get body-box)]
+        (if (spec-param-list-has-comptime? params)
+          (OkSpecDecl (SpecNoDecl) state)
+          (match (spec-rewrite-expr
+            body
+            (spec-template-list-remove-params templates params)
+            state)
+            [(OkSpecExpr rewritten state2)
+              (OkSpecDecl
+                (SpecSomeDecl (ast-decl-def-fn name params ret rewritten))
+                state2)]
+            [(ErrSpecExpr diag) (ErrSpecDecl diag)])))]
+    [(AstDeclUnsafe inner-box)
+      (let
+        [inner : AstDecl (box-get inner-box)]
+        (match (spec-rewrite-decl inner templates state)
+          [(OkSpecDecl maybe state2)
+            (match maybe
+              [(SpecSomeDecl rewritten)
+                (OkSpecDecl (SpecSomeDecl (ast-decl-unsafe rewritten)) state2)]
+              [(SpecNoDecl) (OkSpecDecl SpecNoDecl state2)])]
+          [(ErrSpecDecl diag) (ErrSpecDecl diag)]))]
+    [(AstDeclDefMacro name params ret body-box)
+      (let
+        [body : AstExpr (box-get body-box)]
+        (match (spec-rewrite-expr body templates state)
           [(OkSpecExpr rewritten state2)
             (OkSpecDecl
-              (SpecSomeDecl (AstDeclDefFn name params ret rewritten))
+              (SpecSomeDecl (ast-decl-def-macro name params ret rewritten))
               state2)]
           [(ErrSpecExpr diag) (ErrSpecDecl diag)]))]
-    [(AstDeclUnsafe inner)
-      (match (spec-rewrite-decl inner templates state)
-        [(OkSpecDecl maybe state2)
-          (match maybe
-            [(SpecSomeDecl rewritten)
-              (OkSpecDecl (SpecSomeDecl (AstDeclUnsafe rewritten)) state2)]
-            [(SpecNoDecl) (OkSpecDecl SpecNoDecl state2)])]
-        [(ErrSpecDecl diag) (ErrSpecDecl diag)])]
-    [(AstDeclDefMacro name params ret body)
-      (match (spec-rewrite-expr body templates state)
-        [(OkSpecExpr rewritten state2)
-          (OkSpecDecl
-            (SpecSomeDecl (AstDeclDefMacro name params ret rewritten))
-            state2)]
-        [(ErrSpecExpr diag) (ErrSpecDecl diag)])]
     [_ (OkSpecDecl (SpecSomeDecl decl) state)]))
 
 (define (spec-rewrite-decls
@@ -2783,8 +2800,9 @@
 
 (define (compiler-specialize-program [program : AstProgram]) : ResultSpecProgram
   (match program
-    [(AstProgram decls)
+    [(AstProgram decls-box)
       (let
+        [decls : AstDeclList (box-get decls-box)]
         [templates : SpecTemplateList (spec-collect-templates decls)]
         (match templates
           [(SpecTemplateNil) (OkSpecProgram program)]
@@ -2801,15 +2819,17 @@
                 (match state
                   [(SpecState generated _ _)
                     (OkSpecProgram
-                      (AstProgram (spec-decl-list-append rewritten generated)))])]
+                      (ast-program (spec-decl-list-append rewritten generated)))])]
               [(ErrSpecDecls diag) (ErrSpecProgram diag)])]))]))
 
 (define (compiler-specialize-needed? [program : AstProgram]) : bool
   (match program
-    [(AstProgram decls)
-      (match (spec-collect-templates decls)
-        [(SpecTemplateNil) false]
-        [_ true])]))
+    [(AstProgram decls-box)
+      (let
+        [decls : AstDeclList (box-get decls-box)]
+        (match (spec-collect-templates decls)
+          [(SpecTemplateNil) false]
+          [_ true]))]))
 
 (define (compiler-specialize-decl-list-defines?
   [decls : AstDeclList]
@@ -2820,10 +2840,15 @@
       (let
         [rest : AstDeclList (box-get rest)]
         (match decl
-          [(AstDeclUnsafe (AstDeclDefFn fn-name _ _ _))
-            (if (string-eq fn-name name)
-              true
-              (compiler-specialize-decl-list-defines? rest name))]
+          [(AstDeclUnsafe inner-box)
+            (let
+              [inner : AstDecl (box-get inner-box)]
+              (match inner
+                [(AstDeclDefFn fn-name _ _ _)
+                  (if (string-eq fn-name name)
+                    true
+                    (compiler-specialize-decl-list-defines? rest name))]
+                [_ (compiler-specialize-decl-list-defines? rest name)]))]
           [(AstDeclDefFn fn-name _ _ _)
             (if (string-eq fn-name name)
               true
@@ -2855,12 +2880,14 @@
       (match (compiler-specialize-program program)
         [(OkSpecProgram specialized)
           (match specialized
-            [(AstProgram decls)
-              (and
-                (not (compiler-specialize-decl-list-defines? decls "alloc"))
-                (compiler-specialize-decl-list-defines?
-                  decls
-                  "__tl_specialized_alloc_type_i64_none"))])]
+            [(AstProgram decls-box)
+              (let
+                [decls : AstDeclList (box-get decls-box)]
+                (and
+                  (not (compiler-specialize-decl-list-defines? decls "alloc"))
+                  (compiler-specialize-decl-list-defines?
+                    decls
+                    "__tl_specialized_alloc_type_i64_none")))])]
         [(ErrSpecProgram _) false])]
     [(ErrAstProgram _) false]))
 
@@ -2886,10 +2913,12 @@
       (match (compiler-specialize-program program)
         [(OkSpecProgram specialized)
           (match specialized
-            [(AstProgram decls)
-              (compiler-specialize-decl-list-defines?
-                decls
-                "__tl_specialized_pick_type_i64_none")])]
+            [(AstProgram decls-box)
+              (let
+                [decls : AstDeclList (box-get decls-box)]
+                (compiler-specialize-decl-list-defines?
+                  decls
+                  "__tl_specialized_pick_type_i64_none"))])]
         [(ErrSpecProgram _) false])]
     [(ErrAstProgram _) false]))
 
@@ -2963,10 +2992,15 @@
       (let
         [rest : AstDeclList (box-get rest)]
         (match decl
-          [(AstDeclUnsafe (AstDeclDefFn fn-name _ _ _))
-            (if (string-eq fn-name name)
-              (+ 1 (compiler-specialize-decl-list-count-defs rest name))
-              (compiler-specialize-decl-list-count-defs rest name))]
+          [(AstDeclUnsafe inner-box)
+            (let
+              [inner : AstDecl (box-get inner-box)]
+              (match inner
+                [(AstDeclDefFn fn-name _ _ _)
+                  (if (string-eq fn-name name)
+                    (+ 1 (compiler-specialize-decl-list-count-defs rest name))
+                    (compiler-specialize-decl-list-count-defs rest name))]
+                [_ (compiler-specialize-decl-list-count-defs rest name)]))]
           [(AstDeclDefFn fn-name _ _ _)
             (if (string-eq fn-name name)
               (+ 1 (compiler-specialize-decl-list-count-defs rest name))
@@ -2991,14 +3025,16 @@
       (match (compiler-specialize-program program)
         [(OkSpecProgram specialized)
           (match specialized
-            [(AstProgram decls)
-              (and
-                (not (compiler-specialize-decl-list-defines? decls "alloc"))
-                (=
-                  (compiler-specialize-decl-list-count-defs
-                    decls
-                    "__tl_specialized_alloc_type_i64_none")
-                  1))])]
+            [(AstProgram decls-box)
+              (let
+                [decls : AstDeclList (box-get decls-box)]
+                (and
+                  (not (compiler-specialize-decl-list-defines? decls "alloc"))
+                  (=
+                    (compiler-specialize-decl-list-count-defs
+                      decls
+                      "__tl_specialized_alloc_type_i64_none")
+                    1)))])]
         [(ErrSpecProgram _) false])]
     [(ErrAstProgram _) false]))
 
@@ -3155,10 +3191,12 @@
       (match (compiler-specialize-program program)
         [(OkSpecProgram specialized)
           (match specialized
-            [(AstProgram decls)
-              (compiler-specialize-decl-list-defines?
-                decls
-                "__tl_specialized_tag-helper_string_12_115_116_114_117_99_116_95_80_111_105_110_116_none")])]
+            [(AstProgram decls-box)
+              (let
+                [decls : AstDeclList (box-get decls-box)]
+                (compiler-specialize-decl-list-defines?
+                  decls
+                  "__tl_specialized_tag-helper_string_12_115_116_114_117_99_116_95_80_111_105_110_116_none"))])]
         [(ErrSpecProgram _) false])]
     [(ErrAstProgram _) false]))
 

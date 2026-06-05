@@ -20,7 +20,7 @@
   [path : String]
   [decls : AstDeclList]
   [paths : AstDeclPathList]) : ResultCompilerCheck
-  (match (typecheck-compiler-program-with-paths (AstProgram decls) paths)
+  (match (typecheck-compiler-program-with-paths (ast-program decls) paths)
     [(OkCompilerTypecheck summary) (OkCompilerCheck summary)]
     [(ErrCompilerTypecheck diag)
       (ErrCompilerCheck

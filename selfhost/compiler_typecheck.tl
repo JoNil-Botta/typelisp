@@ -28,7 +28,7 @@
 
 (define (typecheck-compiler-repl-expr [decls : AstDeclList] [expr : AstExpr]) : ResultTcType
   (let
-    [program : AstProgram (AstProgram decls)]
+    [program : AstProgram (ast-program decls)]
     (match (build-compiler-symbols program)
       [(OkCompilerSymbols symbols)
         (match (build-compiler-registries program)
@@ -1631,7 +1631,7 @@
   (n i64 (:owned)))")
 
 (define (compiler-typecheck-cleanup-struct-repr-c-ast-program) : AstProgram
-  (AstProgram
+  (ast-program
     (ast-decl-cons
       (AstDeclDefStruct
         "Bad"
@@ -1643,7 +1643,7 @@
       AstDeclNil)))
 
 (define (compiler-typecheck-cleanup-struct-field-outside-ast-program) : AstProgram
-  (AstProgram
+  (ast-program
     (ast-decl-cons
       (AstDeclDefStruct
         "Bad"

@@ -97,6 +97,13 @@ assert_file_nonempty() {
     [ -s "$file" ] || fail "$label expected nonempty file $file"
 }
 
+record_refreshed_compiler_path() {
+    if [ -n "${TYPELISP_SELFHOST_CLI_REFRESHED_PATH_FILE:-}" ]; then
+        mkdir -p "$(dirname -- "$TYPELISP_SELFHOST_CLI_REFRESHED_PATH_FILE")"
+        printf '%s\n' "$COMPILER" > "$TYPELISP_SELFHOST_CLI_REFRESHED_PATH_FILE"
+    fi
+}
+
 run_cli_capture() {
     label=$1
     shift
@@ -176,6 +183,7 @@ refresh_compiler_for_host_actions() {
     }
     [ -s "$refresh_bin" ] || fail "refreshed compiler is empty: $refresh_bin"
     COMPILER=$refresh_bin
+    record_refreshed_compiler_path
 }
 
 lsp_frame_append() {

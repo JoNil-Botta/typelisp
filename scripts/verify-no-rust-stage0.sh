@@ -331,7 +331,19 @@ if [ "$HOST_OS" = windows ]; then
 fi
 run_gate "fresh selfhost cli build" scripts/build-stage0.sh "$SEED_TYPELISP_BIN" "$SELFHOST_CLI_BIN"
 ensure_executable "fresh selfhost cli" "$SELFHOST_CLI_BIN"
+SELFHOST_CLI_REFRESHED_PATH_FILE="$ROOT/target/no-rust-stage0-cli/refreshed.path"
+rm -f "$SELFHOST_CLI_REFRESHED_PATH_FILE"
+TYPELISP_SELFHOST_CLI_REFRESHED_PATH_FILE=$SELFHOST_CLI_REFRESHED_PATH_FILE
+export TYPELISP_SELFHOST_CLI_REFRESHED_PATH_FILE
 run_with_compiler "$SELFHOST_CLI_BIN" "fresh selfhost cli build/run and chooser smoke" scripts/verify-selfhost-cli-build-run.sh
+unset TYPELISP_SELFHOST_CLI_REFRESHED_PATH_FILE
+if [ ! -s "$SELFHOST_CLI_REFRESHED_PATH_FILE" ]; then
+    echo "[no-rust-stage0] fresh selfhost cli smoke did not write refreshed compiler path: $SELFHOST_CLI_REFRESHED_PATH_FILE" >&2
+    exit 1
+fi
+SELFHOST_CLI_BIN=$(sed -n '1p' "$SELFHOST_CLI_REFRESHED_PATH_FILE")
+ensure_executable "refreshed selfhost cli" "$SELFHOST_CLI_BIN"
+echo "[no-rust-stage0] downstream fresh CLI gates use refreshed selfhost cli: $SELFHOST_CLI_BIN"
 
 if [ "$HOST_OS" = linux ]; then
     STAGE1_PATH_FILE="$ROOT/target/no-rust-stage0-stage1.path"

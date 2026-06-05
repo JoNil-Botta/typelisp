@@ -179,11 +179,10 @@
           (match buf
             [(TextBuf chunks _)
               (text-buf-write-chunks-rev (struct-get handle id) chunks)])]
-        (let
-          [close-result : ResultIoUnit (file-close handle)]
-          (match close-result
-            [(OkIoUnit) write-status]
-            [(ErrIoUnit _) 1])))]
+        [close-result : ResultIoUnit (file-close handle)]
+        (match close-result
+          [(OkIoUnit) write-status]
+          [(ErrIoUnit _) 1]))]
     [(ErrIoFile _) 1]))
 
 ;: Return an empty buffer, leaving the old immutable `buf` value unchanged.

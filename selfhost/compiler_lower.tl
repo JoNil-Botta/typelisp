@@ -1904,13 +1904,18 @@
     [(AstExprWithEscape scratch-box exprs)
       (let
         [scratch : AstExpr (box-get scratch-box)]
-        (lower-clone-roots-expr-list
-          ctx
-          env
-          decls
-          able
-          (lower-clone-roots-expr ctx env decls able roots scratch)
-          exprs))]
+        [walked : CloneNameList
+          (lower-clone-roots-expr-list
+            ctx
+            env
+            decls
+            able
+            (lower-clone-roots-expr ctx env decls able roots scratch)
+            exprs)]
+        (match (tc-with-escape-expr ctx env scratch exprs)
+          [(OkTcType result-ty)
+            (lower-clone-root-add-type ctx decls able walked result-ty)]
+          [(ErrTcType _) walked]))]
     [(AstExprWithResource bindings body)
       (let
         [binding-roots : CloneNameList
@@ -21766,22 +21771,32 @@
     [(ErrCompilerLower _) false]))
 
 (define (compiler-lower-with-escape-owning-shape-ok?) : bool
-  (match (lower-compiler-source (compiler-lower-with-escape-owning-source))
-    [(OkCompilerLower program _)
-      (match program
-        [(IrProgram _ functions _)
-          (and
-            (compiler-lower-with-escape-arena-shape-ok?
-              (compiler-lower-with-escape-owning-source))
-            (and
-              (=
-                (lower-test-function-call-count
-                  functions
-                  "main"
-                  "clone$EscapeResult")
-                1)
-              (> (lower-test-functions-call-count functions "tl_alloc") 0)))])]
-    [(ErrCompilerLower _) false]))
+  (match (parse-ast-source (compiler-lower-with-escape-owning-source))
+    [(OkAstProgram ast)
+      (match (lower-compiler-program-with-decl-paths
+        "<source>"
+        ast
+        AstDeclPathNil)
+        [(OkCompilerLower program _)
+          (match program
+            [(IrProgram _ functions _)
+              (and
+                (compiler-lower-with-escape-arena-shape-ok?
+                  (compiler-lower-with-escape-owning-source))
+                (and
+                  (=
+                    (lower-test-function-call-count
+                      functions
+                      "main"
+                      "<source>::clone$EscapeResult")
+                    1)
+                  (and
+                    (lower-test-function-defined?
+                      functions
+                      "<source>::clone$EscapeResult")
+                    (> (lower-test-functions-call-count functions "tl_alloc") 0))))])]
+        [(ErrCompilerLower _) false])]
+    [(ErrAstProgram _) false]))
 
 (define (compiler-lower-with-escape-shape-ok?) : bool
   (let

@@ -31,5 +31,5 @@ safe_raw_pointer_read_reject|check-fail|tests/safety/safe_raw_pointer_read_rejec
 manual_arena_reset_unsafe_reject|check-fail|tests/safety/manual_arena_reset_unsafe_reject.tl|-|arena-rewind requires unsafe context
 spmd_outer_mutation_reject|check-fail|tests/safety/spmd_outer_mutation_reject.tl|-|foreach cannot set binding declared outside foreach
 invalid_struct_field_reject|check-fail|tests/safety/invalid_struct_field_reject.tl|-|unknown struct field Point.z
-foreign_abi_metadata_reject|check-fail|tests/safety/foreign_abi_metadata_reject.tl|-|unknown extern metadata
+foreign_abi_metadata_reject|check-fail|tests/safety/foreign_abi_metadata_reject.tl|-|unknown extern ABI stdcall
 runtime_type_literal_reject|check-fail|tests/safety/runtime_type_literal_reject.tl|-|type value i64 is compile-time only

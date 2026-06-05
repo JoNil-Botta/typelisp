@@ -24,6 +24,8 @@
 
 (import "compiler_typecheck.tl")
 
+(import "compiler_load.tl")
+
 (import "build_run_core.tl")
 
 (defenum ReplTypeCommand
@@ -36,6 +38,10 @@
 (defenum ResultReplString
   (OkReplString String)
   (ErrReplString String))
+
+(defenum ResultReplDeclList
+  (OkReplDeclList AstDeclList)
+  (ErrReplDeclList String))
 
 (define (repl-banner) : String
   "TypeLisp REPL. Type .help for commands.\n")
@@ -378,6 +384,24 @@
     (repl-try-remove-dir-if-exists temp-dir)
     unit))
 
+(define (repl-session-source-path) : String
+  "repl-session.tl")
+
+(define (repl-load-session-decls [session-source : String]) : ResultReplDeclList
+  (match (compiler-load-source
+    (repl-session-source-path)
+    session-source
+    (sym-i64-empty))
+    [(OkCompilerLoad decls _) (OkReplDeclList decls)]
+    [(ErrCompilerLoad diag)
+      (ErrReplDeclList (compiler-diagnostic-message diag))]))
+
+(define (repl-typecheck-session-source [session-source : String]) : ResultCompilerTypecheck
+  (match (repl-load-session-decls session-source)
+    [(OkReplDeclList decls) (typecheck-compiler-program (ast-program decls))]
+    [(ErrReplDeclList message)
+      (ErrCompilerTypecheck (tc-diag-at-start message))]))
+
 (define (repl-report-run-status [status : i64]) : unit
   (if (= status 0)
     unit
@@ -424,19 +448,17 @@
   [session-source : String]
   [expr-source : String]
   [expr : AstExpr]) : unit
-  (match (parse-ast-source session-source)
-    [(OkAstProgram (AstProgram decls-box))
-      (let
-        [decls : AstDeclList (box-get decls-box)]
-        (match (typecheck-compiler-repl-expr decls expr)
-          [(OkTcType ty)
-            (match (repl-scratch-source session-source expr-source ty)
-              [(OkReplString scratch-source)
-                (repl-run-scratch-source scratch-source)]
-              [(ErrReplString message) (repl-print-error-line message)])]
-          [(ErrTcType message)
-            (repl-print-error-line (string-append "Error: " message))]))]
-    [(ErrAstProgram message)
+  (match (repl-load-session-decls session-source)
+    [(OkReplDeclList decls)
+      (match (typecheck-compiler-repl-expr decls expr)
+        [(OkTcType ty)
+          (match (repl-scratch-source session-source expr-source ty)
+            [(OkReplString scratch-source)
+              (repl-run-scratch-source scratch-source)]
+            [(ErrReplString message) (repl-print-error-line message)])]
+        [(ErrTcType message)
+          (repl-print-error-line (string-append "Error: " message))])]
+    [(ErrReplDeclList message)
       (repl-print-error-line (string-append "Error: " message))]))
 
 (define (repl-handle-type-command
@@ -451,16 +473,13 @@
             (repl-print-error-line
               "Error: .type expects an expression, got a declaration")]
           [(AstReplExpr expr)
-            (match (parse-ast-source session-source)
-              [(OkAstProgram (AstProgram decls-box))
-                (let
-                  [decls : AstDeclList (box-get decls-box)]
-                  (match (typecheck-compiler-repl-expr decls expr)
-                    [(OkTcType ty)
-                      (repl-stdout-write-line (repl-type-render ty))]
-                    [(ErrTcType message)
-                      (repl-print-error-line (string-append "Error: " message))]))]
-              [(ErrAstProgram message)
+            (match (repl-load-session-decls session-source)
+              [(OkReplDeclList decls)
+                (match (typecheck-compiler-repl-expr decls expr)
+                  [(OkTcType ty) (repl-stdout-write-line (repl-type-render ty))]
+                  [(ErrTcType message)
+                    (repl-print-error-line (string-append "Error: " message))])]
+              [(ErrReplDeclList message)
                 (repl-print-error-line (string-append "Error: " message))])])]
       [(ErrAstReplItem message)
         (repl-print-error-line (string-append "Error: " message))])))
@@ -475,7 +494,7 @@
         [(AstReplDecl _)
           (let
             [candidate : String (repl-session-candidate session-source input)]
-            (match (typecheck-compiler-source candidate)
+            (match (repl-typecheck-session-source candidate)
               [(OkCompilerTypecheck _) candidate]
               [(ErrCompilerTypecheck diag)
                 (begin

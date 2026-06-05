@@ -110,7 +110,7 @@ compiler_lower_smoke|selfhost/compiler_lower_smoke.tl|42|-|-|compiler_lower.tl c
 compiler_ir_types_smoke|selfhost/compiler_ir_types_smoke.tl|42|-|-|compiler_ir_types.tl compiler_ast_types.tl
 compiler_liveness_smoke|selfhost/compiler_liveness_smoke.tl|42|-|-|compiler_liveness.tl compiler_ir_types.tl compiler_ast_types.tl
 compiler_regalloc_smoke|selfhost/compiler_regalloc_smoke.tl|42|-|-|compiler_regalloc.tl compiler_liveness.tl compiler_ir_types.tl compiler_ast_types.tl
-compiler_optimize_smoke|selfhost/compiler_optimize_smoke.tl|42|-|-|compiler_optimize.tl compiler_ir_types.tl compiler_ast_types.tl stdlib/arena.tl
+compiler_optimize_smoke|selfhost/compiler_optimize_smoke.tl|42|-|-|compiler_optimize.tl compiler_ir_types.tl compiler_ast_types.tl stdlib/io.tl stdlib/arena.tl
 lex_span_smoke|selfhost/lex_span_smoke.tl|42|-|-|lex.tl token.tl stdlib/text_buf.tl stdlib/io.tl
 compiler_backend_smoke|selfhost/compiler_backend_smoke.tl|42|-|-|compiler_backend_tests.tl compiler_backend.tl compiler_optimize.tl compiler_regalloc.tl compiler_liveness.tl compiler_lower.tl compiler_ctfe.tl compiler_specialize.tl compiler_ir_types.tl compiler_typecheck.tl compiler_typecheck_core.tl compiler_symbols.tl compiler_parse_core.tl compiler_diagnostic.tl compiler_ast_types.tl sym_i64_env.tl stdlib/text_buf.tl stdlib/io.tl stdlib/arena.tl read.tl lex.tl token.tl compiler_clone.tl
 doc_extract_smoke|selfhost/doc_extract_smoke.tl|42|-|-|doc_extract.tl format_tokens.tl

@@ -2198,25 +2198,22 @@
   [program : AstProgram]
   [paths : AstDeclPathList]
   [names : LowerNameEnv]) : ResultLowerCloneRoots
-  (match (typecheck-compiler-specialized-program-with-paths program paths)
-    [(OkCompilerTypecheck _)
-      (match (build-compiler-symbols program)
-        [(OkCompilerSymbols symbols)
-          (match (build-compiler-registries program)
-            [(OkCompilerRegistries registries)
-              (let
-                [ctx : TcContext (TcContext program symbols registries "")]
-                (match (tc-build-top-env ctx program)
-                  [(OkTcEnv top-env)
-                    (OkLowerCloneRoots
-                      (lower-clone-roots-program ctx top-env names program))]
-                  [(ErrTcEnv message)
-                    (ErrLowerCloneRoots (lower-diagnostic message))]))]
-            [(ErrCompilerRegistries message)
-              (ErrLowerCloneRoots (lower-diagnostic message))])]
-        [(ErrCompilerSymbols message)
+  (match (build-compiler-symbols program)
+    [(OkCompilerSymbols symbols)
+      (match (build-compiler-registries program)
+        [(OkCompilerRegistries registries)
+          (let
+            [ctx : TcContext (TcContext program symbols registries "")]
+            (match (tc-build-top-env ctx program)
+              [(OkTcEnv top-env)
+                (OkLowerCloneRoots
+                  (lower-clone-roots-program ctx top-env names program))]
+              [(ErrTcEnv message)
+                (ErrLowerCloneRoots (lower-diagnostic message))]))]
+        [(ErrCompilerRegistries message)
           (ErrLowerCloneRoots (lower-diagnostic message))])]
-    [(ErrCompilerTypecheck diag) (ErrLowerCloneRoots diag)]))
+    [(ErrCompilerSymbols message)
+      (ErrLowerCloneRoots (lower-diagnostic message))]))
 
 (define (lower-reach-call-callee
   [all-functions : StringI64Map]

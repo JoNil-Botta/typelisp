@@ -55,6 +55,27 @@
           message))]
     [(OkProcessOutput _) (panic message)]))
 
+(define (assert-process-child-ok
+  [result : ResultProcessChild]
+  [message : String]) : ProcessChild
+  (match result
+    [(OkProcessChild child) child]
+    [(ErrProcessChild error)
+      (panic (string-append message (process-error-message error)))]))
+
+(define (assert-process-child-spawn-failed
+  [result : ResultProcessChild]
+  [message : String]) : unit
+  (match result
+    [(ErrProcessChild error)
+      (begin
+        (assert-true (process-error-spawn-failed? error) message)
+        (assert-owned-string-eq
+          (process-error-message error)
+          "process: spawn failed"
+          message))]
+    [(OkProcessChild _) (panic message)]))
+
 (define (assert-process-unsupported
   [result : ResultProcessOutput]
   [message : String]) : unit
@@ -65,10 +86,23 @@
         (assert-owned-string-eq (process-error-message error) message message))]
     [(OkProcessOutput _) (panic message)]))
 
+(define (assert-process-child-unsupported
+  [result : ResultProcessChild]
+  [message : String]) : unit
+  (match result
+    [(ErrProcessChild error)
+      (begin
+        (assert-true (process-error-unsupported? error) message)
+        (assert-owned-string-eq (process-error-message error) message message))]
+    [(OkProcessChild _) (panic message)]))
+
 (define (process-runtime-simple-command) : ProcessCommand
   (process-command
     "/usr/bin/printf"
     (process-args-single "typelisp-process-runtime")))
+
+(define (process-runtime-printf-command [text : String]) : ProcessCommand
+  (process-command "/usr/bin/printf" (process-args-single text)))
 
 (define (process-runtime-cwd-command) : ProcessCommand
   (process-command-with-cwd
@@ -140,6 +174,12 @@
       (assert-process-spawn-failed
         (process-output (process-runtime-windows-missing-command))
         "windows process missing executable")
+      (assert-process-child-unsupported
+        (process-start (process-runtime-windows-command))
+        "process: async child handles are not supported by this runtime")
+      (assert-process-unsupported
+        (process-wait (ProcessChild 1 2 3))
+        "process: async child handles are not supported by this runtime")
       42)
     (begin
       (assert-process-ok
@@ -197,4 +237,32 @@
             "/definitely_missing_typelisp_process_840"
             (process-args-empty)))
         "process missing executable")
+      (let
+        [child-a : ProcessChild
+          (assert-process-child-ok
+            (process-start (process-runtime-printf-command "async-a"))
+            "process async start a: ")]
+        [child-b : ProcessChild
+          (assert-process-child-ok
+            (process-start (process-runtime-printf-command "async-b"))
+            "process async start b: ")]
+        (begin
+          (assert-process-ok
+            (process-wait child-b)
+            0
+            "async-b"
+            ""
+            "process async wait b")
+          (assert-process-ok
+            (process-wait child-a)
+            0
+            "async-a"
+            ""
+            "process async wait a")))
+      (assert-process-child-spawn-failed
+        (process-start
+          (process-command
+            "/definitely_missing_typelisp_process_async_1847"
+            (process-args-empty)))
+        "process async missing executable")
       42)))

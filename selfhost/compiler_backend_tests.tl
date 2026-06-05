@@ -2583,36 +2583,46 @@
 (extern tl_process_wait : (-> i64 i64))
 (define (main) : i64 (+ (tl_process_start 0) (tl_process_wait 0)))")
 
+(define (compiler-backend-process-async-boxed-argv-ok? [asm : String]) : bool
+  (>=
+    (compiler-backend-string-count
+      asm
+      "    movq 16(%r12), %r12\n    movq 0(%r12), %r12\n")
+    2))
+
 (define (compiler-backend-process-async-ok?) : bool
   (match (compiler-backend-emit-source (compiler-backend-process-async-source))
     [(OkCompilerBackend asm)
-      (and
-        (compiler-backend-string-contains? asm "tl_process_start:\n")
-        (and
-          (compiler-backend-string-contains? asm "tl_process_wait:\n")
-          (and
+      (let
+        [runtime-labels : bool
+          (backend-and8
+            (compiler-backend-string-contains? asm "tl_process_start:\n")
+            (compiler-backend-string-contains? asm "tl_process_wait:\n")
             (compiler-backend-string-contains?
               asm
-              "process: async child handles are not supported by this runtime")
-            (and
+              ".L_tl_process_start_child:\n")
+            (compiler-backend-string-contains?
+              asm
+              ".L_tl_process_async_wait_status_ready:\n")
+            (not
               (compiler-backend-string-contains?
                 asm
-                "    call tl_process_start\n")
-              (and
-                (compiler-backend-string-contains?
-                  asm
-                  "    call tl_process_wait\n")
-                (and
-                  (not
-                    (compiler-backend-string-contains?
-                      asm
-                      ".extern tl_process_start\n"))
-                  (and
-                    (not
-                      (compiler-backend-string-contains?
-                        asm
-                        ".extern tl_process_wait\n"))
-                    (compiler-backend-string-contains? asm "tl_alloc:\n"))))))))]
+                ".extern tl_process_start\n"))
+            (not
+              (compiler-backend-string-contains?
+                asm
+                ".extern tl_process_wait\n"))
+            (compiler-backend-process-async-boxed-argv-ok? asm)
+            (compiler-backend-string-contains? asm "tl_alloc:\n"))]
+        [runtime-calls : bool
+          (backend-and4
+            (compiler-backend-string-contains?
+              asm
+              "    call tl_process_start\n")
+            (compiler-backend-string-contains? asm "    call tl_process_wait\n")
+            (compiler-backend-string-contains? asm "    movq $57, %rax\n")
+            (compiler-backend-string-contains? asm "    movq $61, %rax\n"))]
+        (and runtime-labels runtime-calls))]
     [(ErrCompilerBackend _) false]))
 
 (define (compiler-backend-process-output-ok?) : bool

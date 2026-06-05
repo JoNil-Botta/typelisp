@@ -303,16 +303,12 @@ compile_windows_c_deps() {
 # (kept covered on Linux via native-linux.manifest):
 #   arena_poison_*            Linux-only poison-on-reclaim debug mode
 #   with_arena_*               existing host gaps
-#   tl_alloc_huge_trap /       Windows huge-alloc + region-reset guards do not
-#   region_reset_invalid_trap  abort cleanly with 134 (#1660)
 windows_integration_non_applicable_cases() {
     cat <<'EOF'
 arena_poison_clone_survives
 arena_poison_stale_array_trap
 with_arena_builtin_alloc
 with_arena_loop
-tl_alloc_huge_trap
-region_reset_invalid_trap
 EOF
 }
 

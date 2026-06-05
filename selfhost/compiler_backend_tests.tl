@@ -1735,6 +1735,48 @@
               (compiler-backend-windows-driver-runtime-ok?)))))]
     [(ErrCompilerBackend message) false]))
 
+(define (compiler-backend-windows-runtime-guard-source) : String
+  "(extern tl_alloc : (-> u64 u64))
+(extern tl_region_reset : (-> u64 unit))
+(define (main) : u64
+  (begin
+    (tl_region_reset (cast 0 : u64))
+    (tl_alloc (cast 0 : u64))))")
+
+(define (compiler-backend-windows-runtime-guard-ok?) : bool
+  (match (compiler-backend-emit-source-for-target
+    (compiler-backend-windows-runtime-guard-source)
+    (BackendTargetWindows))
+    [(OkCompilerBackend asm)
+      (and
+        (backend-and8
+          (compiler-backend-string-contains? asm "tl_alloc:\n")
+          (compiler-backend-string-contains?
+            asm
+            "    testq %rcx, %rcx\n    jnz .L_tl_alloc_win_size_ready\n")
+          (not
+            (compiler-backend-string-contains?
+              asm
+              "    testq %rcx, %rcx\n    jg .L_tl_alloc_win_size_ready\n"))
+          (compiler-backend-string-contains?
+            asm
+            "    jc .L_tl_alloc_enter_abort\n")
+          (compiler-backend-string-contains?
+            asm
+            ".L_tl_region_reset_win_invalid:\n")
+          (compiler-backend-string-contains?
+            asm
+            "    call _write\n    add $32, %rsp\n    movq $134, %rcx\n")
+          (compiler-backend-string-contains?
+            asm
+            "    push %r14\n    movq %rcx, %r12\n")
+          (not
+            (compiler-backend-string-contains?
+              asm
+              "    push %r14\n    sub $8, %rsp\n    movq %rcx, %r12\n")))
+        (not (compiler-backend-string-contains? asm "syscall\n")))]
+    [(ErrCompilerBackend _) false]))
+
 (define (compiler-backend-deterministic-ok? [src : String]) : bool
   (match (compiler-backend-emit-source src)
     [(OkCompilerBackend first)
@@ -3964,7 +4006,9 @@
                                   (compiler-backend-shift-guard-ok?)
                                   (and
                                     (compiler-backend-windows-sdk-registry-runtime-ok?)
-                                    (compiler-backend-simd-vector-ok?))))))))))))))))))
+                                    (and
+                                      (compiler-backend-windows-runtime-guard-ok?)
+                                      (compiler-backend-simd-vector-ok?)))))))))))))))))))
     42
     (begin
       (panic "backend: smoke output mismatch")

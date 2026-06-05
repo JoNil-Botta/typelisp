@@ -1114,6 +1114,9 @@
     [(= tag (compiler-parse-tag-bin-shl)) true]
     [else (= tag (compiler-parse-tag-bin-shr))]))
 
+(define (compiler-parse-and-or-binop-tag? [tag : i64]) : bool
+  (or (= tag (compiler-parse-tag-bin-and)) (= tag (compiler-parse-tag-bin-or))))
+
 (define (ast-binop? [dispatch : SymI64Env] [name : String]) : bool
   (ast-binop-tag? (compiler-parse-dispatch-tag dispatch name)))
 
@@ -2156,6 +2159,17 @@
                 [(ErrAstExprList message) (ErrAstExprList message)])]
             [(ErrAstExpr message) (ErrAstExprList message)])])]
     [_ (ErrAstExprList "parse: malformed expression list")]))
+
+(define (parse-ast-spanned-list-exactly-two? [s : SpannedSexpr]) : bool
+  (match s
+    [(SpSCons _ tail _)
+      (match (box-get tail)
+        [(SpSCons _ end _)
+          (match (box-get end)
+            [(SpSNil _) true]
+            [_ false])]
+        [_ false])]
+    [_ false]))
 
 (define (parse-ast-binary
   [dispatch : SymI64Env]
@@ -3640,7 +3654,11 @@
           [(ast-unop-tag? tag)
             (parse-ast-unary dispatch (ast-unop-from-tag tag) rest)]
           [(ast-binop-tag? tag)
-            (parse-ast-binary dispatch (ast-binop-from-tag tag) rest)]
+            (if (and
+              (compiler-parse-and-or-binop-tag? tag)
+              (not (parse-ast-spanned-list-exactly-two? rest)))
+              (parse-ast-call dispatch head rest)
+              (parse-ast-binary dispatch (ast-binop-from-tag tag) rest))]
           [(= tag (compiler-parse-tag-ty-ref)) (parse-ast-borrow dispatch rest)]
           [(= tag (compiler-parse-tag-ty-mut-ref))
             (ErrAstExpr
@@ -5775,6 +5793,27 @@
     3
     false))
 
+(define (compiler-parse-and-or-macro-call-candidates-ok?) : bool
+  (and
+    (compiler-parse-call-body-ok? "(define (main) : bool (and))" "and" 0 false)
+    (and
+      (compiler-parse-call-body-ok?
+        "(define (main [x : bool]) : bool (and x))"
+        "and"
+        1
+        false)
+      (and
+        (compiler-parse-call-body-ok?
+          "(define (main [x : bool] [y : bool] [z : bool]) : bool (and x y z))"
+          "and"
+          3
+          false)
+        (compiler-parse-call-body-ok?
+          "(define (main [x : bool] [y : bool] [z : bool]) : bool (or x y z))"
+          "or"
+          3
+          false)))))
+
 (define (compiler-parse-comptime-decl-source) : String
   "(comptime-decl (defstruct Point (x i64) (y i64)))
 (comptime-decl (defenum Maybe (None) (Some i64)))
@@ -7378,7 +7417,9 @@
                                         (compiler-parse-return-ok?)
                                         (and
                                           (compiler-parse-guard-forms-ok?)
-                                          (compiler-parse-flat-cond-call-ok?)))
+                                          (and
+                                            (compiler-parse-flat-cond-call-ok?)
+                                            (compiler-parse-and-or-macro-call-candidates-ok?))))
                                       (and
                                         (compiler-parse-repr-c-ok?)
                                         (and

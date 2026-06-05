@@ -2403,6 +2403,11 @@
           (string-eq name "expr-if-cond")
           (or (string-eq name "expr-if-then") (string-eq name "expr-if-else")))))))
 
+(define (ctfe-expr-list-inspector-name? [name : String]) : bool
+  (or
+    (string-eq name "expr-list-empty?")
+    (or (string-eq name "expr-list-head") (string-eq name "expr-list-tail"))))
+
 (define (ctfe-eval-expr-inspector-call
   [name : String]
   [args : AstExprList]
@@ -2459,6 +2464,59 @@
                       (ctfe-diagnostic-at-expr
                         expr
                         (string-append name " expects Expr")))])]
+              [(ErrCtfe diag) (ErrCtfe diag)])]
+          [_
+            (ErrCtfe
+              (ctfe-diagnostic-at-expr
+                expr
+                (string-append name " expects exactly one arg")))]))]
+    [_
+      (ErrCtfe
+        (ctfe-diagnostic-at-expr
+          expr
+          (string-append name " expects exactly one arg")))]))
+
+(define (ctfe-eval-expr-list-inspector-call
+  [name : String]
+  [args : AstExprList]
+  [expr : AstExpr]
+  [env : CtfeEnv]
+  [fuel : i64]) : ResultCtfe
+  (match args
+    [(AstExprCons arg rest)
+      (let
+        [arg : AstExpr (box-get arg)]
+        [rest : AstExprList (box-get rest)]
+        (match rest
+          [(AstExprNil)
+            (match (compiler-ctfe-eval arg env fuel)
+              [(OkCtfe value arg-fuel)
+                (match value
+                  [(CtfeExprList nodes)
+                    (cond
+                      [(string-eq name "expr-list-empty?")
+                        (OkCtfe
+                          (CtfeBool (ctfe-expr-list-empty? nodes))
+                          arg-fuel)]
+                      [(ctfe-expr-list-empty? nodes)
+                        (ErrCtfe
+                          (ctfe-diagnostic-at-expr
+                            expr
+                            (string-append name " expects non-empty ExprList")))]
+                      [(string-eq name "expr-list-head")
+                        (OkCtfe
+                          (CtfeExpr (ctfe-expr-list-head nodes) (AstTyExpr))
+                          arg-fuel)]
+                      [(string-eq name "expr-list-tail")
+                        (OkCtfe
+                          (CtfeExprList (ctfe-expr-list-tail nodes))
+                          arg-fuel)]
+                      [else (ctfe-unsupported-form expr)])]
+                  [_
+                    (ErrCtfe
+                      (ctfe-diagnostic-at-expr
+                        expr
+                        (string-append name " expects ExprList")))])]
               [(ErrCtfe diag) (ErrCtfe diag)])]
           [_
             (ErrCtfe
@@ -2605,6 +2663,8 @@
         [(string-eq name "expr-if") (ctfe-eval-expr-if-call args expr env fuel)]
         [(ctfe-expr-inspector-name? name)
           (ctfe-eval-expr-inspector-call name args expr env fuel)]
+        [(ctfe-expr-list-inspector-name? name)
+          (ctfe-eval-expr-list-inspector-call name args expr env fuel)]
         [else (ctfe-unsupported-form expr)])]
     [_ (ctfe-unsupported-form expr)]))
 

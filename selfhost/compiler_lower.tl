@@ -6777,39 +6777,9 @@
     [(string-eq name "int->string") true]
     [(string-eq name "arg-count") true]
     [(string-eq name "arg") true]
-    [(string-eq name "read-file") true]
-    [(string-eq name "read-file-status") true]
-    [(string-eq name "write-file") true]
-    [(string-eq name "write-file-status") true]
-    [(string-eq name "append-file-status") true]
-    [(string-eq name "file-exists?") true]
-    [(string-eq name "file-exists-status") true]
-    [(string-eq name "file-open-status") true]
-    [(string-eq name "file-close-status") true]
-    [(string-eq name "file-read-chunk-status") true]
-    [(string-eq name "file-write-status") true]
-    [(string-eq name "file-flush-status") true]
-    [(string-eq name "file-read-chunk-bytes") true]
-    [(string-eq name "file-read-chunk-eof?") true]
-    [(string-eq name "fs-mkdir-status") true]
-    [(string-eq name "fs-remove-file-status") true]
-    [(string-eq name "fs-remove-dir-status") true]
-    [(string-eq name "fs-rename-status") true]
-    [(string-eq name "fs-read-dir-status") true]
-    [(string-eq name "fs-read-dir") true]
-    [(string-eq name "fs-file-kind-status") true]
-    [(string-eq name "fs-file-size-status") true]
-    [(string-eq name "fs-file-size") true]
-    [(string-eq name "fs-process-id") true]
-    [(string-eq name "fs-current-dir-status") true]
-    [(string-eq name "fs-current-dir") true]
     [(string-eq name "env-var-exists?") true]
     [(string-eq name "env-var-value") true]
     [(string-eq name "env-path-separator") true]
-    [(string-eq name "read-stdin-line") true]
-    [(string-eq name "read-stdin-bytes") true]
-    [(string-eq name "stdin-eof?") true]
-    [(string-eq name "flush-stdout") true]
     [(string-eq name "panic") true]
     [(string-eq name "error") true]
     [else (string-eq name "print-error")]))
@@ -11609,224 +11579,12 @@
       (lower-arg-count-call ctx state env type-env args result-ty origin)]
     [(string-eq name "arg")
       (lower-arg-call ctx state env type-env args result-ty origin)]
-    [(string-eq name "read-file")
-      (lower-read-file-call ctx state env type-env args result-ty origin)]
-    [(string-eq name "read-file-status")
-      (lower-read-file-status-call ctx state env type-env args result-ty origin)]
-    [(string-eq name "write-file")
-      (lower-write-file-call ctx state env type-env args result-ty origin)]
-    [(string-eq name "write-file-status")
-      (lower-write-file-status-call
-        ctx
-        state
-        env
-        type-env
-        args
-        result-ty
-        origin)]
-    [(string-eq name "append-file-status")
-      (lower-append-file-status-call
-        ctx
-        state
-        env
-        type-env
-        args
-        result-ty
-        origin)]
-    [(string-eq name "file-exists?")
-      (lower-file-exists-call ctx state env type-env args result-ty origin)]
-    [(string-eq name "file-exists-status")
-      (lower-file-exists-status-call
-        ctx
-        state
-        env
-        type-env
-        args
-        result-ty
-        origin)]
-    [(string-eq name "file-open-status")
-      (lower-file-open-status-call ctx state env type-env args result-ty origin)]
-    [(string-eq name "file-close-status")
-      (lower-file-close-status-call
-        ctx
-        state
-        env
-        type-env
-        args
-        result-ty
-        origin)]
-    [(string-eq name "file-read-chunk-status")
-      (lower-file-read-chunk-status-call
-        ctx
-        state
-        env
-        type-env
-        args
-        result-ty
-        origin)]
-    [(string-eq name "file-write-status")
-      (lower-file-write-status-call
-        ctx
-        state
-        env
-        type-env
-        args
-        result-ty
-        origin)]
-    [(string-eq name "file-flush-status")
-      (lower-file-flush-status-call
-        ctx
-        state
-        env
-        type-env
-        args
-        result-ty
-        origin)]
-    [(string-eq name "file-read-chunk-bytes")
-      (lower-file-read-chunk-field-call
-        ctx
-        state
-        env
-        type-env
-        args
-        "file-read-chunk-bytes"
-        ".L_tl_file_read_chunk_bytes"
-        result-ty
-        origin)]
-    [(string-eq name "file-read-chunk-eof?")
-      (lower-file-read-chunk-field-call
-        ctx
-        state
-        env
-        type-env
-        args
-        "file-read-chunk-eof?"
-        ".L_tl_file_read_chunk_eof"
-        result-ty
-        origin)]
-    [(string-eq name "fs-mkdir-status")
-      (lower-fs-path-status-call
-        ctx
-        state
-        env
-        type-env
-        name
-        ".L_tl_fs_mkdir_status"
-        args
-        result-ty
-        origin)]
-    [(string-eq name "fs-remove-file-status")
-      (lower-fs-path-status-call
-        ctx
-        state
-        env
-        type-env
-        name
-        ".L_tl_fs_remove_file_status"
-        args
-        result-ty
-        origin)]
-    [(string-eq name "fs-remove-dir-status")
-      (lower-fs-path-status-call
-        ctx
-        state
-        env
-        type-env
-        name
-        ".L_tl_fs_remove_dir_status"
-        args
-        result-ty
-        origin)]
-    [(string-eq name "fs-rename-status")
-      (lower-fs-rename-status-call ctx state env type-env args result-ty origin)]
-    [(string-eq name "fs-read-dir-status")
-      (lower-fs-path-status-call
-        ctx
-        state
-        env
-        type-env
-        name
-        ".L_tl_fs_read_dir_status"
-        args
-        result-ty
-        origin)]
-    [(string-eq name "fs-read-dir")
-      (lower-fs-path-status-call
-        ctx
-        state
-        env
-        type-env
-        name
-        ".L_tl_fs_read_dir"
-        args
-        result-ty
-        origin)]
-    [(string-eq name "fs-file-kind-status")
-      (lower-fs-path-status-call
-        ctx
-        state
-        env
-        type-env
-        name
-        ".L_tl_fs_file_kind_status"
-        args
-        result-ty
-        origin)]
-    [(string-eq name "fs-file-size-status")
-      (lower-fs-path-status-call
-        ctx
-        state
-        env
-        type-env
-        name
-        ".L_tl_fs_file_size_status"
-        args
-        result-ty
-        origin)]
-    [(string-eq name "fs-file-size")
-      (lower-fs-path-status-call
-        ctx
-        state
-        env
-        type-env
-        name
-        ".L_tl_fs_file_size"
-        args
-        result-ty
-        origin)]
-    [(string-eq name "fs-process-id")
-      (lower-fs-process-id-call ctx state env type-env args result-ty origin)]
-    [(string-eq name "fs-current-dir-status")
-      (lower-fs-current-dir-status-call
-        ctx
-        state
-        env
-        type-env
-        args
-        result-ty
-        origin)]
-    [(string-eq name "fs-current-dir")
-      (lower-fs-current-dir-call ctx state env type-env args result-ty origin)]
     [(or
         (string-eq name "env-var-exists?")
         (or
           (string-eq name "env-var-value")
           (string-eq name "env-path-separator")))
       (lower-env-runtime-call ctx state env type-env name args result-ty origin)]
-    [(or
-        (string-eq name "read-stdin-line")
-        (or
-          (string-eq name "read-stdin-bytes")
-          (or (string-eq name "stdin-eof?") (string-eq name "flush-stdout"))))
-      (lower-stdio-runtime-call
-        ctx
-        state
-        env
-        type-env
-        name
-        args
-        result-ty
-        origin)]
     [(or (string-eq name "panic") (string-eq name "error"))
       (lower-message-runtime-call
         ctx
@@ -22462,6 +22220,25 @@
               ok))])]
     [(ErrCompilerLower _) false]))
 
+(define (compiler-lower-stdlib-helper-defaults-disabled-ok?) : bool
+  (and
+    (not (lower-bootstrap-runtime-builtin? "read-file"))
+    (and
+      (not (lower-bootstrap-runtime-builtin? "write-file"))
+      (and
+        (not (lower-bootstrap-runtime-builtin? "file-open-status"))
+        (and
+          (not (lower-bootstrap-runtime-builtin? "fs-process-id"))
+          (and
+            (not (lower-bootstrap-runtime-builtin? "fs-current-dir"))
+            (and
+              (not (lower-bootstrap-runtime-builtin? "read-stdin-line"))
+              (and
+                (not (lower-bootstrap-runtime-builtin? "read-stdin-bytes"))
+                (and
+                  (not (lower-bootstrap-runtime-builtin? "stdin-eof?"))
+                  (not (lower-bootstrap-runtime-builtin? "flush-stdout")))))))))))
+
 (define (compiler-lower-cpu-builtin-shape-ok?) : bool
   (match (lower-compiler-source (compiler-lower-cpu-builtin-source))
     [(OkCompilerLower program _)
@@ -22519,6 +22296,9 @@
         unit
         (set! ok false))
       (if (compiler-lower-stdio-builtin-shape-ok?)
+        unit
+        (set! ok false))
+      (if (compiler-lower-stdlib-helper-defaults-disabled-ok?)
         unit
         (set! ok false))
       (if (compiler-lower-env-builtin-shape-ok?)

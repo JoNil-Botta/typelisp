@@ -3820,9 +3820,11 @@ not the future safe reference/borrow model (#182), not a replacement for
   `string-eq`/`string=?`, `string-append`/`string-concat`,
   `substring`/`string-slice`, `string->int`, `int->string`,
   `print-string`/`print-str`, `print-char`, `print-float`, `print-error`.
-- Bootstrap I/O helpers: `arg-count`, `arg`, `read-file`, `write-file`,
-  `file-exists?`, `file-open`, `file-close`, `file-read-chunk`,
-  `read-stdin-line`, `read-stdin-bytes`, `stdin-eof?`, `flush-stdout`.
+- Stdlib I/O helpers in `stdlib/io.tl`: `arg-count`, `arg`, `read-file`,
+  `write-file`, `file-exists?`, `file-open`, `file-close`,
+  `file-read-chunk`, `read-stdin-line`, `read-stdin-bytes`, `stdin-eof?`,
+  `flush-stdout`, and related recoverable wrappers. These are imported stdlib
+  definitions, not implicit compiler builtins.
 - First-class arena helpers in `stdlib/arena.tl`: `arena-make`,
   `arena-current`, `arena-mark`, `arena-set!`, `arena-destroy`, and
   `arena-rewind`; invalidating helpers require `(unsafe ...)`.

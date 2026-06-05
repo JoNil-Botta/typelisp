@@ -359,18 +359,15 @@ SIMD backend modes vectorize eligible contiguous array reductions: `sum` over
 
 ### Builtins
 
-`print`, `print-bool`, `print-newline`; stdlib `print-float`, `print-char`,
-`print-string`/`print-str`; `arg-count`, `arg`, `read-file`, `write-file`,
-`file-exists?`, `read-file-status`, `write-file-status`,
-`append-file-status`, `file-exists-status`, `file-open-status`,
-`file-close-status`, `file-read-chunk-status`, `file-write-status`,
-`file-flush-status`, `file-read-chunk-bytes`, `file-read-chunk-eof?`,
-`read-stdin-line`, `read-stdin-bytes`, `stdin-eof?`, `flush-stdout`;
+Compiler-owned builtins are `print`, `print-bool`, `print-newline`,
 `make-array`, `array-ref`, `array-set!`,
 `array-length`/`length`; strings: `string-length`/`length`,
 `string-ref`/`char-at`, `string-eq`/`string=?`, `string-append`/`string-concat`,
 `substring`/`string-slice`, `string->int`, `int->string`; and `panic`/`error`.
-Array and string indexing is bounds-checked at runtime.
+Array and string indexing is bounds-checked at runtime. File, stdin/stdout,
+argv, filesystem, and richer printing helpers live in `stdlib/io.tl` and
+`stdlib/fs.tl`; import those modules to use `read-file`, `write-file`,
+`file-open`, `read-stdin-line`, `flush-stdout`, `fs-*`, and related APIs.
 
 ### Memory and aliasing
 

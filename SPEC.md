@@ -1552,6 +1552,12 @@ ordinary imports. Relative paths, canonical module identities, stdlib-root
 fallback, and `pkg:<alias>/...` package dependency resolution are shared with
 sections 4.4 and 4.4.1; there is no separate macro search path.
 
+There is no automatic stdlib macro prelude in v1. Core macro modules are loaded
+with ordinary explicit imports, for example
+`(import "stdlib/core_macros.tl" module stdlib.core-macros as core)`, and their
+exports are called through the import alias such as `core/when`. Unqualified
+parser-owned core forms remain separate until the final stdlib macro migration.
+
 Before expanding a module's non-import forms, the loader parses the module,
 collects its import declarations, recursively loads imported modules, and builds
 the imported macro namespace from each dependency's exported macro items.

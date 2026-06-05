@@ -155,8 +155,9 @@ generic/type-constructor work in #483 is superseded by that chain.
 ### Top-level forms
 
 Implemented today: `define` (variable / function), `defenum`, `defstruct`,
-`extern`, and `import`. The selfhost module/macro path additionally specifies
-`module`, `export`, and `defmacro`; those are pending implementation slices.
+`extern`, and `import`. The selfhost module/macro path also supports `module`,
+`export`, and `defmacro` for typed expression macro workflows; the final
+stdlib-macro migration of parser-owned core forms remains separate.
 
 ```lisp
 (defenum Tree (Leaf i64) (Node (Box Tree) (Box Tree))) ; future inline-safe recursion
@@ -203,6 +204,13 @@ module, the compiler falls back to its embedded copy of the checked-in stdlib.
 Prefer `--stdlib-root` for CI, bootstrap, and reproducible scripts. See
 [stdlib/README.md](stdlib/README.md) for the current stdlib layout and
 verification conventions.
+
+Stdlib macros are explicit imports, not an automatic prelude. The checked-in
+core macro module is available as
+`(import "stdlib/core_macros.tl" module stdlib.core-macros as core)`, after
+which exported macros are called through the alias, for example `core/when` and
+`core/unless`. Unqualified built-in guard forms remain available during the
+transition to the final stdlib macro migration.
 
 `typelisp compile` accepts `--cfg <name>` to enable source-level conditional
 compilation flags. Source may wrap a top-level declaration as

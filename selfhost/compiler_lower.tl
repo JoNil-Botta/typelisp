@@ -61,10 +61,13 @@
 (defenum CompilerLowerMode
   (CompilerLowerScalar)
   (CompilerLowerLinuxScalar)
+  (CompilerLowerWindowsScalar)
   (CompilerLowerAvx2)
   (CompilerLowerLinuxAvx2)
+  (CompilerLowerWindowsAvx2)
   (CompilerLowerAvx512)
   (CompilerLowerLinuxAvx512)
+  (CompilerLowerWindowsAvx512)
   (CompilerLowerInlineAggregates))
 
 (defenum LowerState
@@ -6621,27 +6624,6 @@
                 "lower: clone unsupported type "
                 (tc-type-render clone-ty)))))])))
 
-(define (lower-clone-value-dispatch
-  [ctx : TcContext]
-  [state : LowerState]
-  [env : SymI64Env]
-  [value : CompilerIrValue]
-  [ty : AstType]) : ResultLowerExpr
-  (match (tc-resolve-type ctx ty)
-    [(AstTyString)
-      (match (lower-string-fields state value)
-        [(LowerStringFields fields-state ptr len)
-          (lower-substring-bounds-checked
-            fields-state
-            ptr
-            len
-            (IrValueI64 0)
-            len)])]
-    [(AstTyEnum name) (lower-clone-named state env name value ty)]
-    [(AstTyStruct name) (lower-clone-named state env name value ty)]
-    [(AstTyVar name) (lower-clone-named state env name value ty)]
-    [_ (OkLowerExpr (LowerExpr state value ty))]))
-
 (define (lower-clone-call
   [ctx : TcContext]
   [state : LowerState]
@@ -9231,7 +9213,7 @@
   [state : LowerState]
   [env : SymI64Env]
   [name : String]) : bool
-  (if (not (lower-mode-linux-c-abi? (lower-state-mode state)))
+  (if (not (lower-mode-c-abi? (lower-state-mode state)))
     false
     (match (sym-i64-lookup env name)
       [(SomeI64 _) false]
@@ -9282,14 +9264,40 @@
     [(<= size 4) (AstTyU32)]
     [else (AstTyU64)]))
 
-(define (lower-c-abi-unsupported-message [ty : AstType]) : String
-  (string-append
-    "lower: unsupported linux-x86_64 C aggregate ABI for "
-    (string-append
-      (tc-type-render ty)
-      "; this slice supports integer-only structs up to 8 bytes")))
+(define (lower-c-abi-target-name [mode : CompilerLowerMode]) : String
+  (if (lower-mode-windows-c-abi? mode)
+    "windows-x86_64"
+    "linux-x86_64"))
 
-(define (lower-c-abi-aggregate-class [ctx : TcContext] [ty : AstType]) : LowerCAbiAggregate
+(define (lower-c-abi-register-aggregate-size?
+  [mode : CompilerLowerMode]
+  [size : i64]) : bool
+  (if (lower-mode-windows-c-abi? mode)
+    (or (= size 1) (or (= size 2) (or (= size 4) (= size 8))))
+    (and (> size 0) (<= size 8))))
+
+(define (lower-c-abi-aggregate-size-message [mode : CompilerLowerMode]) : String
+  (if (lower-mode-windows-c-abi? mode)
+    "integer-only structs of size 1, 2, 4, or 8 bytes"
+    "integer-only structs up to 8 bytes"))
+
+(define (lower-c-abi-unsupported-message
+  [mode : CompilerLowerMode]
+  [ty : AstType]) : String
+  (string-append
+    (string-append "lower: unsupported " (lower-c-abi-target-name mode))
+    (string-append
+      " C aggregate ABI for "
+      (string-append
+        (tc-type-render ty)
+        (string-append
+          "; this slice supports "
+          (lower-c-abi-aggregate-size-message mode))))))
+
+(define (lower-c-abi-aggregate-class
+  [ctx : TcContext]
+  [mode : CompilerLowerMode]
+  [ty : AstType]) : LowerCAbiAggregate
   (let
     [resolved : AstType (tc-type-without-regions (tc-resolve-type ctx ty))]
     (match resolved
@@ -9299,23 +9307,21 @@
             (match layout
               [(TcInlineStructLayout size _ fields)
                 (if (and
-                  (> size 0)
-                  (and
-                    (<= size 8)
-                    (lower-c-abi-inline-fields-integer-only? ctx fields)))
+                  (lower-c-abi-register-aggregate-size? mode size)
+                  (lower-c-abi-inline-fields-integer-only? ctx fields))
                   (LowerCAbiIntegerAggregate
                     (lower-c-abi-integer-scalar-type size)
                     size)
                   (LowerCAbiUnsupportedAggregate
-                    (lower-c-abi-unsupported-message resolved)))]
+                    (lower-c-abi-unsupported-message mode resolved)))]
               [(TcInlineEnumLayout _ _ _)
                 (LowerCAbiUnsupportedAggregate
-                  (lower-c-abi-unsupported-message resolved))])]
+                  (lower-c-abi-unsupported-message mode resolved))])]
           [(ErrTcInlineAggregateLayout message)
             (LowerCAbiUnsupportedAggregate message)])]
       [(AstTyEnum _)
         (LowerCAbiUnsupportedAggregate
-          (lower-c-abi-unsupported-message resolved))]
+          (lower-c-abi-unsupported-message mode resolved))]
       [_ (LowerCAbiNoAggregate)])))
 
 (define (lower-c-abi-args-as
@@ -9344,7 +9350,10 @@
                 [(OkLowerExpr lowered)
                   (match lowered
                     [(LowerExpr arg-state value _)
-                      (match (lower-c-abi-aggregate-class ctx arg-ty)
+                      (match (lower-c-abi-aggregate-class
+                        ctx
+                        (lower-state-mode arg-state)
+                        arg-ty)
                         [(LowerCAbiNoAggregate)
                           (match (lower-c-abi-args-as
                             ctx
@@ -9418,7 +9427,10 @@
   [origin : AstExpr]) : ResultLowerExpr
   (match (lower-c-abi-args-as ctx state env type-env args param-types)
     [(OkLowerArgs args-state values)
-      (match (lower-c-abi-aggregate-class ctx result-ty)
+      (match (lower-c-abi-aggregate-class
+        ctx
+        (lower-state-mode args-state)
+        result-ty)
         [(LowerCAbiUnsupportedAggregate message)
           (ErrLowerExpr (lower-diagnostic-at-expr origin message))]
         [(LowerCAbiNoAggregate)
@@ -13593,11 +13605,12 @@
   [ctx : TcContext]
   [state : LowerState]
   [env : SymI64Env]
+  [type-env : TcTypeEnv]
   [scratch-head-value : CompilerIrValue]
   [mark-value : CompilerIrValue]
   [body-value : CompilerIrValue]
   [body-ty : AstType]) : ResultLowerExpr
-  (match (lower-clone-value-dispatch ctx state env body-value body-ty)
+  (match (lower-clone-dispatch ctx state env type-env body-value body-ty)
     [(OkLowerExpr escaped-lowered)
       (match escaped-lowered
         [(LowerExpr escaped-state escaped-value escaped-ty)
@@ -13641,6 +13654,7 @@
                             ctx
                             restore-state
                             env
+                            type-env
                             scratch-head-value
                             mark-value
                             body-value
@@ -14108,14 +14122,17 @@
   (match mode
     [(CompilerLowerAvx2) true]
     [(CompilerLowerLinuxAvx2) true]
+    [(CompilerLowerWindowsAvx2) true]
     [(CompilerLowerAvx512) true]
     [(CompilerLowerLinuxAvx512) true]
+    [(CompilerLowerWindowsAvx512) true]
     [_ false]))
 
 (define (lower-mode-avx512? [mode : CompilerLowerMode]) : bool
   (match mode
     [(CompilerLowerAvx512) true]
     [(CompilerLowerLinuxAvx512) true]
+    [(CompilerLowerWindowsAvx512) true]
     [_ false]))
 
 (define (lower-mode-inline-aggregates? [mode : CompilerLowerMode]) : bool
@@ -14129,6 +14146,16 @@
     [(CompilerLowerLinuxAvx2) true]
     [(CompilerLowerLinuxAvx512) true]
     [_ false]))
+
+(define (lower-mode-windows-c-abi? [mode : CompilerLowerMode]) : bool
+  (match mode
+    [(CompilerLowerWindowsScalar) true]
+    [(CompilerLowerWindowsAvx2) true]
+    [(CompilerLowerWindowsAvx512) true]
+    [_ false]))
+
+(define (lower-mode-c-abi? [mode : CompilerLowerMode]) : bool
+  (or (lower-mode-linux-c-abi? mode) (lower-mode-windows-c-abi? mode)))
 
 (define (lower-type-i64? [ty : AstType]) : bool
   (match (tc-type-without-regions ty)
@@ -14153,6 +14180,14 @@
         [(AstTyI32) 8]
         [(AstTyU32) 8]
         [_ 0])]
+    [(CompilerLowerWindowsAvx2)
+      (match (tc-type-without-regions ty)
+        [(AstTyI64) 4]
+        [(AstTyU64) 4]
+        [(AstTyF64) 4]
+        [(AstTyI32) 8]
+        [(AstTyU32) 8]
+        [_ 0])]
     [(CompilerLowerAvx512)
       (match (tc-type-without-regions ty)
         [(AstTyI64) 8]
@@ -14162,6 +14197,14 @@
         [(AstTyU32) 16]
         [_ 0])]
     [(CompilerLowerLinuxAvx512)
+      (match (tc-type-without-regions ty)
+        [(AstTyI64) 8]
+        [(AstTyU64) 8]
+        [(AstTyF64) 8]
+        [(AstTyI32) 16]
+        [(AstTyU32) 16]
+        [_ 0])]
+    [(CompilerLowerWindowsAvx512)
       (match (tc-type-without-regions ty)
         [(AstTyI64) 8]
         [(AstTyU64) 8]
@@ -17777,6 +17820,12 @@
       (string-eq (compiler-diagnostic-message diag) want)]
     [(OkCompilerLower _ _) false]))
 
+(define (compiler-lower-windows-error-ok? [src : String] [want : String]) : bool
+  (match (lower-compiler-source-with-mode src (CompilerLowerWindowsScalar))
+    [(ErrCompilerLower diag)
+      (string-eq (compiler-diagnostic-message diag) want)]
+    [(OkCompilerLower _ _) false]))
+
 ;; Scalar match lowering smoke (#568): an i64 literal match with a binding
 ;; catch-all (value-returning), an exhaustive bool match, and a unit-typed match.
 (define (compiler-lower-match-source) : String
@@ -20142,6 +20191,12 @@
 (define (main) : i64
   (big-use (Big 1 2)))")
 
+(define (compiler-lower-c-abi-windows-unsupported-aggregate-source) : String
+  "(defstruct Rgb (r u8) (g u8) (b u8))
+(extern rgb-use (:symbol \"tl_cabi_rgb_use\") : (-> Rgb i64))
+(define (main) : i64
+  (rgb-use (Rgb (cast 1 : u8) (cast 2 : u8) (cast 3 : u8))))")
+
 (define (compiler-lower-extern-link-inputs-ok?
   [inputs : AstExternLinkInputList]) : bool
   (match inputs
@@ -21441,6 +21496,50 @@
     [scratch : i64 (arena-make)]
     (with-escape scratch (int->string 42))))"))
 
+(define (compiler-lower-with-escape-array-source) : String
+  (compiler-lower-with-arena-source
+    "(define (main) : (Array String)
+  (let
+    [scratch : i64 (arena-make)]
+    (with-escape scratch
+      (let
+        [items : (Array String) (make-array String 2)]
+        (begin
+          (array-set! items 0 (int->string 1))
+          (array-set! items 1 (int->string 2))
+          items)))))"))
+
+(define (compiler-lower-with-escape-box-source) : String
+  (compiler-lower-with-arena-source
+    "(define (main) : (Box String)
+  (let
+    [scratch : i64 (arena-make)]
+    (with-escape scratch (box (int->string 42)))))"))
+
+(define (compiler-lower-with-escape-owning-source) : String
+  (compiler-lower-with-arena-source
+    "(defstruct EscapePayload
+  (name String)
+  (items (Array String))
+  (cell (Box String)))
+(defenum EscapeResult
+  (EscapeOk EscapePayload)
+  (EscapeNone))
+(define (main) : EscapeResult
+  (let
+    [scratch : i64 (arena-make)]
+    (with-escape scratch
+      (let
+        [items : (Array String) (make-array String 2)]
+        (begin
+          (array-set! items 0 (int->string 1))
+          (array-set! items 1 (int->string 2))
+          (EscapeOk
+            (EscapePayload
+              (int->string 3)
+              items
+              (box (int->string 4)))))))))"))
+
 (define (compiler-lower-with-escape-arena-shape-ok? [src : String]) : bool
   (match (lower-compiler-source src)
     [(OkCompilerLower program _)
@@ -21461,19 +21560,80 @@
                   0))))])]
     [(ErrCompilerLower _) false]))
 
-(define (compiler-lower-with-escape-shape-ok?) : bool
-  (and
-    (compiler-lower-with-escape-arena-shape-ok?
-      (compiler-lower-with-escape-scalar-source))
-    (match (lower-compiler-source (compiler-lower-with-escape-string-source))
-      [(OkCompilerLower program _)
-        (match program
-          [(IrProgram _ functions _)
+(define (compiler-lower-with-escape-array-shape-ok?) : bool
+  (match (lower-compiler-source (compiler-lower-with-escape-array-source))
+    [(OkCompilerLower program _)
+      (match program
+        [(IrProgram _ functions _)
+          (and
+            (compiler-lower-with-escape-arena-shape-ok?
+              (compiler-lower-with-escape-array-source))
             (and
-              (compiler-lower-with-escape-arena-shape-ok?
-                (compiler-lower-with-escape-string-source))
-              (> (lower-test-functions-call-count functions "tl_substring") 0))])]
-      [(ErrCompilerLower _) false])))
+              (> (lower-test-functions-call-count functions "tl_alloc") 1)
+              (> (lower-test-function-branch-count functions "main") 0)))])]
+    [(ErrCompilerLower _) false]))
+
+(define (compiler-lower-with-escape-box-shape-ok?) : bool
+  (match (lower-compiler-source (compiler-lower-with-escape-box-source))
+    [(OkCompilerLower program _)
+      (match program
+        [(IrProgram _ functions _)
+          (and
+            (compiler-lower-with-escape-arena-shape-ok?
+              (compiler-lower-with-escape-box-source))
+            (and
+              (> (lower-test-functions-call-count functions "tl_alloc") 0)
+              (> (lower-test-functions-call-count functions "tl_substring") 0)))])]
+    [(ErrCompilerLower _) false]))
+
+(define (compiler-lower-with-escape-owning-shape-ok?) : bool
+  (match (lower-compiler-source (compiler-lower-with-escape-owning-source))
+    [(OkCompilerLower program _)
+      (match program
+        [(IrProgram _ functions _)
+          (and
+            (compiler-lower-with-escape-arena-shape-ok?
+              (compiler-lower-with-escape-owning-source))
+            (and
+              (=
+                (lower-test-function-call-count
+                  functions
+                  "main"
+                  "clone$EscapeResult")
+                1)
+              (> (lower-test-functions-call-count functions "tl_alloc") 0)))])]
+    [(ErrCompilerLower _) false]))
+
+(define (compiler-lower-with-escape-shape-ok?) : bool
+  (let
+    [ok : bool true]
+    (begin
+      (if (compiler-lower-with-escape-arena-shape-ok?
+        (compiler-lower-with-escape-scalar-source))
+        unit
+        (set! ok false))
+      (if (match (lower-compiler-source
+        (compiler-lower-with-escape-string-source))
+        [(OkCompilerLower program _)
+          (match program
+            [(IrProgram _ functions _)
+              (and
+                (compiler-lower-with-escape-arena-shape-ok?
+                  (compiler-lower-with-escape-string-source))
+                (> (lower-test-functions-call-count functions "tl_substring") 0))])]
+        [(ErrCompilerLower _) false])
+        unit
+        (set! ok false))
+      (if (compiler-lower-with-escape-array-shape-ok?)
+        unit
+        (set! ok false))
+      (if (compiler-lower-with-escape-box-shape-ok?)
+        unit
+        (set! ok false))
+      (if (compiler-lower-with-escape-owning-shape-ok?)
+        unit
+        (set! ok false))
+      ok)))
 
 (define (compiler-lower-repr-c-shape-ok?) : bool
   (match (lower-compiler-source (compiler-lower-repr-c-source))
@@ -22244,6 +22404,16 @@
       (if (compiler-lower-linux-error-ok?
         (compiler-lower-c-abi-unsupported-aggregate-source)
         "lower: unsupported linux-x86_64 C aggregate ABI for Big; this slice supports integer-only structs up to 8 bytes")
+        unit
+        (set! ok false))
+      (if (compiler-lower-windows-error-ok?
+        (compiler-lower-c-abi-unsupported-aggregate-source)
+        "lower: unsupported windows-x86_64 C aggregate ABI for Big; this slice supports integer-only structs of size 1, 2, 4, or 8 bytes")
+        unit
+        (set! ok false))
+      (if (compiler-lower-windows-error-ok?
+        (compiler-lower-c-abi-windows-unsupported-aggregate-source)
+        "lower: unsupported windows-x86_64 C aggregate ABI for Rgb; this slice supports integer-only structs of size 1, 2, 4, or 8 bytes")
         unit
         (set! ok false))
       (if (compiler-lower-global-shape-ok?)

@@ -7,6 +7,8 @@
 
 (include-str compiler-embedded-stdlib-cpu "stdlib/cpu.tl")
 
+(include-str compiler-embedded-stdlib-core-macros "stdlib/core_macros.tl")
+
 (include-str compiler-embedded-stdlib-env "stdlib/env.tl")
 
 (include-str compiler-embedded-stdlib-ffi "stdlib/ffi.tl")
@@ -48,6 +50,8 @@
 (include-str compiler-embedded-stdlib-tests-borrowed-str-gate "stdlib/tests/borrowed_str_gate.tl")
 
 (include-str compiler-embedded-stdlib-tests-cpu-api "stdlib/tests/cpu_api.tl")
+
+(include-str compiler-embedded-stdlib-tests-core-macros-api "stdlib/tests/core_macros_api.tl")
 
 (include-str compiler-embedded-stdlib-tests-env-api "stdlib/tests/env_api.tl")
 
@@ -119,6 +123,8 @@
       (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-arena)]
     [(string-eq suffix "cpu.tl")
       (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-cpu)]
+    [(string-eq suffix "core_macros.tl")
+      (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-core-macros)]
     [(string-eq suffix "env.tl")
       (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-env)]
     [(string-eq suffix "ffi.tl")
@@ -166,6 +172,9 @@
         compiler-embedded-stdlib-tests-borrowed-str-gate)]
     [(string-eq suffix "tests/cpu_api.tl")
       (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-tests-cpu-api)]
+    [(string-eq suffix "tests/core_macros_api.tl")
+      (CompilerEmbeddedStdlibSomeSource
+        compiler-embedded-stdlib-tests-core-macros-api)]
     [(string-eq suffix "tests/env_api.tl")
       (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-tests-env-api)]
     [(string-eq suffix "tests/ffi_api.tl")

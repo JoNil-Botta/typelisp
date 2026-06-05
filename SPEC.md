@@ -874,15 +874,178 @@ references. Multiple parameters using the same name require the same caller
 lifetime.
 
 The first #804 stored-reference slice accepts reference lifetimes written
-directly in structural container types and nominal aggregate declarations:
-fixed arrays such as `(Array (& n i64) 1)`, tuple elements, struct fields, and
-enum payloads. Those lifetimes are preserved through array-ref, tuple-ref,
-field access, constructors, and match bindings. A nominal constructor result
-that stores references carries hidden lifetime facts while it remains local;
-passing or returning such a nominal value is rejected until explicit nominal
-lifetime-argument syntax lands. Structural return types that expose the
-reference lifetime directly, such as `(& n T)`, `(Tuple (& n T))`, and
-`(Array (& n T) k)`, may return when the lifetime is tied to an input.
+directly in structural container types: fixed arrays such as
+`(Array (& n i64) 1)`, tuple elements, and nested structural types. Those
+lifetimes are preserved through array-ref and tuple-ref. Structural return
+types that expose the reference lifetime directly, such as `(& n T)`,
+`(Tuple (& n T))`, and `(Array (& n T) k)`, may return when the lifetime is
+tied to an input.
+
+#### 3.10.1 Lifetime-parameterized named aggregates (v1 design)
+
+Named structs and enums may declare lifetime parameters with lifetime metadata
+after the nominal name and before all fields or variants, alongside any other
+declaration metadata:
+
+```lisp test=ignore name=lifetime-parameterized-aggregate-declaration reason="specified before selfhost parser/typechecker support"
+(defstruct RefPair
+  (:lifetimes a b)
+  (left (& a i64))
+  (right (& b str)))
+
+(defenum MaybeRef
+  (:lifetimes a)
+  (NoRef)
+  (SomeRef (& a i64)))
+```
+
+`(:lifetimes a b)` binds declaration-local lifetime parameters. They are not
+fields, runtime values, type values, or source-level generic type parameters.
+They may appear only as reference lifetime names or as lifetime arguments to
+other nominal aggregate types inside the aggregate declaration. The reserved
+lifetime name `program` may also appear in fields or payloads and is not listed
+in `(:lifetimes ...)`.
+
+Lifetime metadata has these declaration-site rules:
+
+- The metadata form is plural and requires at least one lifetime name:
+  `(:lifetimes a)`, `(:lifetimes a b)`, and so on.
+- Lifetime names are ordinary identifiers. Duplicate names in one declaration
+  are rejected.
+- At most one `(:lifetimes ...)` metadata form may appear on a declaration.
+- A field or enum payload reference lifetime must be one of the declaration's
+  lifetime parameters or the reserved `program` lifetime. Other names are
+  rejected as unknown lifetime parameters.
+- `(:lifetimes ...)` is compatible with ordinary default-layout structs and
+  enums. It is rejected with `(:repr c)` in v1 because safe references and
+  default aggregate handles are not C ABI fields.
+- Lifetime metadata is independent from cleanup ownership metadata. A future
+  cleanup-owning struct may also have lifetime parameters, but cleanup-owning
+  enum metadata remains reserved as described in section 4.6.1.
+
+Type-use sites supply lifetime arguments with a lifetime-only nominal type form:
+
+```lisp test=ignore name=lifetime-parameterized-aggregate-type-use reason="specified before selfhost parser/typechecker support"
+(define (first-ref [pair : (RefPair a b)]) : (& a i64)
+  (struct-get pair left))
+
+(define (select-ref [value : (MaybeRef a)]) : i64
+  (match value
+    [(SomeRef r) 1]
+    [NoRef 0]))
+```
+
+`(Name a b)` is a nominal type use for the already-declared struct or enum
+`Name` with lifetime arguments `a` and `b`. The arguments are lifetime names,
+not type expressions. `(Array T)`, `(Tuple ...)`, `(Box T)`, `(Ptr T)`,
+`(& a T)`, and the other built-in type constructors remain the only built-in
+type constructors. TypeLisp still rejects source-level generic type
+constructors, generic functions, traits, and type parameters; `(Name T)` is not
+a type-parameter application unless `T` is a lifetime name in scope.
+
+Lifetime argument type-use rules:
+
+- A nominal type declared without `(:lifetimes ...)` is used as bare `Name`.
+  Supplying arguments to a zero-lifetime nominal type is rejected.
+- A nominal type declared with lifetimes must be used as `(Name args...)` with
+  exactly the declared arity. Bare `Name`, too few arguments, and too many
+  arguments are rejected.
+- Each lifetime argument must be a lifetime name in the current lifetime scope:
+  a function signature lifetime, a declaration lifetime parameter, a current
+  lexical owner name, a current `with-arena` name for local annotations, or the
+  reserved `program` lifetime. Unknown names are rejected.
+- There is no lifetime subtyping or implicit lifetime coercion in v1. Two
+  nominal lifetime types are equal only when they have the same nominal identity
+  and the same lifetime argument list after substitution.
+- Nested uses are allowed wherever ordinary types are allowed, including
+  function parameters and returns, `let` annotations, struct fields, enum
+  payloads, tuple elements, fixed arrays, dynamic arrays, boxes, pointers, and
+  references.
+
+Declaration lifetime parameters are substituted by position. If
+`RefPair` declares `(:lifetimes a b)`, then the field type `(& a i64)` becomes
+`(& x i64)` in `(RefPair x y)`, and `(& b str)` becomes `(& y str)`.
+Substitution applies recursively through nested nominal types, arrays, tuples,
+boxes, pointers, and references.
+
+Struct constructor checking uses the substituted field types. A constructor
+call for a lifetime-parameterized struct produces the corresponding nominal
+lifetime type when every argument's stored lifetime matches the substituted
+field type:
+
+```lisp test=ignore name=lifetime-parameterized-struct-constructor reason="specified before selfhost parser/typechecker support"
+(defstruct RefBox
+  (:lifetimes a)
+  (value (& a i64)))
+
+(define (box-ref [value : (& a i64)]) : (RefBox a)
+  (RefBox value))
+```
+
+`struct-get` preserves the same substitution. If `box` has type `(RefBox a)`,
+then `(struct-get box value)` has type `(& a i64)`.
+
+Enum variant constructors and `match` arms use the same substitution. A variant
+constructor for a lifetime-parameterized enum produces the enum type with the
+lifetime arguments determined from the payloads or from the expected type. A
+`match` over `(MaybeRef a)` binds the `SomeRef` payload as `(& a i64)`.
+
+```lisp test=ignore name=lifetime-parameterized-enum-constructor-match reason="specified before selfhost parser/typechecker support"
+(defenum MaybeRef
+  (:lifetimes a)
+  (NoRef)
+  (SomeRef (& a i64)))
+
+(define (wrap-ref [value : (& a i64)]) : (MaybeRef a)
+  (SomeRef value))
+
+(define (unwrap-score [value : (MaybeRef a)]) : i64
+  (match value
+    [(SomeRef r) 1]
+    [NoRef 0]))
+```
+
+Function signatures bind lifetime names from reference types and nominal
+lifetime type arguments in parameter positions. A return type may mention a
+lifetime only when that lifetime is tied to at least one input parameter or is
+the reserved `program` lifetime. Returning a named aggregate containing
+references is valid only when every stored reference lifetime in the returned
+type is tied to such an input lifetime or to `program`.
+
+```lisp test=ignore name=lifetime-parameterized-return-ok reason="specified before selfhost parser/typechecker support"
+(define (keep-ref [value : (& a i64)]) : (RefBox a)
+  (RefBox value))
+```
+
+The checker rejects returned, stored, or assigned nominal aggregate values when
+any stored reference lifetime is local, scoped, unknown, untied to an input, or
+otherwise shorter than the destination lifetime:
+
+```lisp test=ignore name=lifetime-parameterized-return-reject-local reason="negative example for future nominal lifetime checker"
+(define (bad-local-box) : (RefBox local)
+  (let [local-value : i64 1]
+    (RefBox (& local-value))))
+```
+
+Diagnostics must be source-located and name the relevant aggregate/type where
+possible:
+
+- Missing lifetime arguments for a lifetime-parameterized nominal type.
+- Wrong lifetime argument arity.
+- Duplicate lifetime parameter names in `(:lifetimes ...)`.
+- Unknown lifetime names in declarations, type uses, fields, payloads, and
+  returns.
+- Incompatible stored lifetimes when constructing, assigning, storing, passing,
+  matching, or returning a nominal aggregate.
+- Attempts to use type parameters, type expressions, or generic type
+  constructors where only lifetime names are allowed.
+
+V1 exclusions: mutable-reference creation and exclusivity (#806), non-lexical
+lifetimes (#810), closure returned-reference semantics (#808), runtime
+generics/type parameters, trait-like bounds, lifetime elision syntax, lifetime
+subtyping/coercion, and Rust compiler product-surface changes are out of scope.
+The selfhost parser, AST, typechecker, and lowerer implementation for this
+specified syntax is tracked by #1722/#804.
 
 **Lexical v1 lifetime rule.** A borrow created in v1 lives until the end of the
 innermost lexical scope that contains the borrow expression. Lexical scopes are
@@ -910,9 +1073,10 @@ their owner or arena:
   body. Outer-arena references may be used inside inner arenas without gaining
   the inner lifetime.
 
-Mutable reference creation and exclusivity are #806. Returned/stored lifetime
-parameters are #804. Closure capture detail is #808. Non-lexical lifetime
-shortening is #810.
+Mutable reference creation and exclusivity are #806. Nominal returned/stored
+lifetime parameter syntax is specified in section 3.10.1 and implemented by
+#1722/#804. Closure capture detail is #808. Non-lexical lifetime shortening is
+#810.
 
 ```lisp test=ignore name=borrow-local-param-ok reason="borrow expressions are specified before selfhost implementation"
 (define (takes-i64 [x : (& n i64)]) : i64
@@ -1026,12 +1190,12 @@ Bare `str` is rejected even when it appears to be used read-only:
   0)
 ```
 
-Returned and stored borrowed string lifetimes require the lifetime-parameter
-rules from #804. Until that slice lands, returning or storing a borrowed `str`
-is rejected unless the checker can prove the reference is purely local to the
-current lexical scope:
+Returned and stored borrowed string lifetimes use the lifetime-parameter rules
+specified in section 3.10.1. Until the #1722/#804 implementation lands,
+returning or storing a borrowed `str` is rejected unless the checker can prove
+the reference is purely local to the current lexical scope:
 
-```lisp test=ignore name=string-borrow-reject-stored-returned reason="returned/stored borrowed lifetimes are deferred to #804"
+```lisp test=ignore name=string-borrow-reject-stored-returned reason="returned/stored borrowed lifetime implementation is tracked by #1722/#804"
 (defstruct SavedText
   (text (& input str)))
 
@@ -1072,7 +1236,7 @@ results for allocation sites.
 | Non-consuming text inspection | `string-length`/`length`, `string-ref`/`char-at`, `string-eq`/`string=?`, `string->int`, stdlib predicates such as `string-contains`, `string-contains-char`, and `is-string-prefix-at` | Accept borrowed `(& r str)` inputs and return scalars. They do not move or allocate text. |
 | Text output and diagnostics | `print-string`/`print-str`, `print-error`, `panic`/`error`, `stdout-write`, `stderr-write`, `write-file`, append/write status helpers, process stdin strings | Accept borrowed `(& r str)` text/path/message inputs. Host I/O may copy bytes outside the language heap but does not take TypeLisp ownership. |
 | Active-arena owned string results | `arg`, `read-file`, `file-read-chunk-bytes`, `read-stdin-line`, `read-stdin-bytes`, `int->string`, `string-append`/`string-concat`, `substring`/`string-slice`, stdlib trim/replacement helpers when they build text, env/path split/join helpers | Return owned `String` storage allocated in the active arena. Results created inside a scoped arena cannot escape that arena. |
-| Caller-provided fallback/result values | `stdlib/string.tl` `string-replace` when no match is found, `stdlib/io.tl` `read-file-or` fallback paths | Preserve the caller-owned value instead of allocating. Precise returned/stored lifetime signatures are deferred to #804; until then these remain conservatively checked. |
+| Caller-provided fallback/result values | `stdlib/string.tl` `string-replace` when no match is found, `stdlib/io.tl` `read-file-or` fallback paths | Preserve the caller-owned value instead of allocating. Precise returned/stored lifetime signatures use section 3.10.1 and remain conservatively checked until #1722/#804 lands. |
 | Mutable or binary byte storage | dynamic arrays today; future byte-buffer/slice work | Not modeled as `str`. `str` is immutable borrowed text/bytes and should not become the mutable buffer type. |
 
 #### ABI and lowering representation
@@ -4007,8 +4171,11 @@ export-item   ::= "(" "value" ident ")"
 defenum       ::= "(" "defenum" ident enum-meta* variant+ ")"
 defstruct     ::= "(" "defstruct" ident struct-meta* field+ ")"
 struct-meta   ::= "(" ":repr" "c" ")"
+                | aggregate-lifetime-meta
                 | aggregate-cleanup-meta
-enum-meta     ::= aggregate-cleanup-meta       ; reserved, rejected in v1
+enum-meta     ::= aggregate-lifetime-meta
+                | aggregate-cleanup-meta       ; reserved, rejected in v1
+aggregate-lifetime-meta ::= "(" ":lifetimes" ident+ ")"
 aggregate-cleanup-meta ::= "(" ":cleanup" ident ")"
 test-decl     ::= "(" "test" ident expr+ ")"
 
@@ -4091,7 +4258,11 @@ type          ::= "i64" | "i32" | "i16" | "i8"
                 | macro-type
                 | "(" "->" type+ ")"
                 | "(" "in" ident type ")"              ; region-tagged (v1)
-                | ident                                ; enum or struct name
+                | nominal-type
+
+nominal-type  ::= ident                                ; zero-lifetime enum/struct
+                | "(" ident lifetime-arg+ ")"          ; lifetime-only nominal use
+lifetime-arg  ::= ident
 
 ptr-type      ::= "(" "Ptr" type ")"
                 | "(" "MutPtr" type ")"

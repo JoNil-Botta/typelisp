@@ -1983,6 +1983,49 @@
     [(SomeRef value) 0]
     [(NoRef) 1]))")
 
+(define (compiler-typecheck-lifetime-struct-return-source) : String
+  "(defstruct RefBox (:lifetimes a) (value (& a i64)))
+(define (main [value : (& n i64)]) : (RefBox n)
+  (RefBox value))")
+
+(define (compiler-typecheck-lifetime-struct-field-source) : String
+  "(defstruct RefBox (:lifetimes a) (value (& a i64)))
+(define (main [n : i64]) : i64
+  (let
+    [box : (RefBox n) (RefBox (& n))]
+    (let [value : (& n i64) (struct-get box value)] 0)))")
+
+(define (compiler-typecheck-lifetime-enum-match-source) : String
+  "(defenum RefOption (:lifetimes a) (SomeRef (& a i64)) (NoRef))
+(define (main [n : i64]) : i64
+  (match (SomeRef (& n))
+    [(SomeRef value) (let [same : (& n i64) value] 0)]
+    [(NoRef) 1]))")
+
+(define (compiler-typecheck-lifetime-duplicate-source) : String
+  "(defstruct RefBox (:lifetimes a a) (value (& a i64)))")
+
+(define (compiler-typecheck-lifetime-missing-args-source) : String
+  "(defstruct RefBox (:lifetimes a) (value (& a i64)))
+(define (main [box : RefBox]) : unit unit)")
+
+(define (compiler-typecheck-lifetime-arity-source) : String
+  "(defstruct RefBox (:lifetimes a) (value (& a i64)))
+(define (main [box : (RefBox n extra)]) : unit unit)")
+
+(define (compiler-typecheck-lifetime-unknown-decl-source) : String
+  "(defstruct RefBox (:lifetimes a) (value (& b i64)))")
+
+(define (compiler-typecheck-lifetime-untied-return-source) : String
+  "(defstruct RefBox (:lifetimes a) (value (& a i64)))
+(define (main [n : i64]) : (RefBox other)
+  (RefBox (& n)))")
+
+(define (compiler-typecheck-lifetime-local-escape-source) : String
+  "(defstruct RefBox (:lifetimes a) (value (& a i64)))
+(define (main [n : i64]) : (RefBox n)
+  (let [x : i64 1] (RefBox (& x))))")
+
 (define (compiler-typecheck-reference-array-stored-source) : String
   "(define (main [n : i64]) : i64
   (let
@@ -2108,8 +2151,18 @@
       (string-eq
         (tc-type-render (ast-ty-mut-ref "phase" (ast-ty-dyn-array (AstTyI64))))
         "(&mut phase (Array i64))")]
+    [nominal-lifetime-render-ok : bool
+      (string-eq
+        (tc-type-render
+          (AstTyStructArgs "RefBox" (ast-lifetime-cons "n" AstLifetimeNil)))
+        "(RefBox n)")]
     [str-eq-ok : bool (tc-type-eq (AstTyStr) (AstTyStr))]
     [str-distinct-ok : bool (not (tc-type-eq (AstTyStr) (AstTyString)))]
+    [nominal-lifetime-distinct-ok : bool
+      (not
+        (tc-type-eq
+          (AstTyStructArgs "RefBox" (ast-lifetime-cons "n" AstLifetimeNil))
+          (AstTyStructArgs "RefBox" (ast-lifetime-cons "m" AstLifetimeNil))))]
     [str-move-kind-ok : bool (tc-type-move-only? (AstTyStr))]
     [str-ref-move-kind-ok : bool
       (tc-type-copyable? (ast-ty-ref "r" (AstTyStr)))]
@@ -2139,16 +2192,20 @@
             (and
               str-distinct-ok
               (and
-                str-move-kind-ok
+                nominal-lifetime-render-ok
                 (and
-                  str-ref-move-kind-ok
+                  nominal-lifetime-distinct-ok
                   (and
-                    region-erased-eq-ok
+                    str-move-kind-ok
                     (and
-                      region-distinct-ok
+                      str-ref-move-kind-ok
                       (and
-                        mut-distinct-ok
-                        (and region-contains-ok inner-region-contains-ok)))))))))))))
+                        region-erased-eq-ok
+                        (and
+                          region-distinct-ok
+                          (and
+                            mut-distinct-ok
+                            (and region-contains-ok inner-region-contains-ok)))))))))))))))
 
 (define (compiler-typecheck-reference-tests-ok?) : bool
   (let
@@ -2194,6 +2251,37 @@
     [enum-payload-ok : bool
       (compiler-typecheck-ok?
         (compiler-typecheck-reference-enum-payload-source))]
+    [lifetime-struct-return-ok : bool
+      (compiler-typecheck-ok?
+        (compiler-typecheck-lifetime-struct-return-source))]
+    [lifetime-struct-field-ok : bool
+      (compiler-typecheck-ok? (compiler-typecheck-lifetime-struct-field-source))]
+    [lifetime-enum-match-ok : bool
+      (compiler-typecheck-ok? (compiler-typecheck-lifetime-enum-match-source))]
+    [lifetime-duplicate-error-ok : bool
+      (compiler-typecheck-error-ok?
+        (compiler-typecheck-lifetime-duplicate-source)
+        "typecheck: duplicate lifetime parameter")]
+    [lifetime-missing-args-error-ok : bool
+      (compiler-typecheck-error-ok?
+        (compiler-typecheck-lifetime-missing-args-source)
+        "typecheck: missing nominal lifetime arguments")]
+    [lifetime-arity-error-ok : bool
+      (compiler-typecheck-error-ok?
+        (compiler-typecheck-lifetime-arity-source)
+        "typecheck: nominal lifetime argument arity mismatch")]
+    [lifetime-unknown-decl-error-ok : bool
+      (compiler-typecheck-error-ok?
+        (compiler-typecheck-lifetime-unknown-decl-source)
+        "typecheck: unknown aggregate lifetime parameter")]
+    [lifetime-untied-return-error-ok : bool
+      (compiler-typecheck-error-ok?
+        (compiler-typecheck-lifetime-untied-return-source)
+        "typecheck: returned reference lifetime must be tied to a parameter")]
+    [lifetime-local-escape-error-ok : bool
+      (compiler-typecheck-error-ok?
+        (compiler-typecheck-lifetime-local-escape-source)
+        "typecheck: reference value would escape lexical scope")]
     [array-stored-ok : bool
       (compiler-typecheck-ok?
         (compiler-typecheck-reference-array-stored-source))]
@@ -2286,6 +2374,33 @@
         unit
         (set! ok false))
       (if enum-payload-ok
+        unit
+        (set! ok false))
+      (if lifetime-struct-return-ok
+        unit
+        (set! ok false))
+      (if lifetime-struct-field-ok
+        unit
+        (set! ok false))
+      (if lifetime-enum-match-ok
+        unit
+        (set! ok false))
+      (if lifetime-duplicate-error-ok
+        unit
+        (set! ok false))
+      (if lifetime-missing-args-error-ok
+        unit
+        (set! ok false))
+      (if lifetime-arity-error-ok
+        unit
+        (set! ok false))
+      (if lifetime-unknown-decl-error-ok
+        unit
+        (set! ok false))
+      (if lifetime-untied-return-error-ok
+        unit
+        (set! ok false))
+      (if lifetime-local-escape-error-ok
         unit
         (set! ok false))
       (if array-stored-ok

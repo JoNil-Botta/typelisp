@@ -1081,7 +1081,9 @@
 (define (opt-aggregate-fixed-type? [ty : AstType]) : bool
   (match ty
     [(AstTyStruct _) true]
+    [(AstTyStructArgs _ _) true]
     [(AstTyEnum _) true]
+    [(AstTyEnumArgs _ _) true]
     [(AstTyTuple _) true]
     [(AstTyArray _ _) true]
     [_ false]))
@@ -1628,7 +1630,9 @@
 (define (opt-aggregate-stack-promote-type? [ty : AstType]) : bool
   (match ty
     [(AstTyStruct _) true]
+    [(AstTyStructArgs _ _) true]
     [(AstTyEnum _) true]
+    [(AstTyEnumArgs _ _) true]
     [(AstTyTuple _) true]
     [_ false]))
 
@@ -2137,6 +2141,24 @@
               (and (opt-type-eq ah bh) (opt-type-list-eq at bt)))]
           [_ false]))]))
 
+(define (opt-lifetime-list-eq [a : AstLifetimeList] [b : AstLifetimeList]) : bool
+  (match a
+    [(AstLifetimeNil)
+      (match b
+        [(AstLifetimeNil) true]
+        [_ false])]
+    [(AstLifetimeCons a-head a-rest)
+      (let
+        [a-rest : AstLifetimeList (box-get a-rest)]
+        (match b
+          [(AstLifetimeCons b-head b-rest)
+            (let
+              [b-rest : AstLifetimeList (box-get b-rest)]
+              (and
+                (string-eq a-head b-head)
+                (opt-lifetime-list-eq a-rest b-rest)))]
+          [_ false]))]))
+
 (define (opt-type-eq [a : AstType] [b : AstType]) : bool
   (match a
     [(AstTyI64)
@@ -2268,13 +2290,34 @@
       (match b
         [(AstTyEnum b-name) (string-eq a-name b-name)]
         [_ false])]
+    [(AstTyEnumArgs a-name a-lifetimes)
+      (match b
+        [(AstTyEnumArgs b-name b-lifetimes)
+          (and
+            (string-eq a-name b-name)
+            (opt-lifetime-list-eq a-lifetimes b-lifetimes))]
+        [_ false])]
     [(AstTyStruct a-name)
       (match b
         [(AstTyStruct b-name) (string-eq a-name b-name)]
         [_ false])]
+    [(AstTyStructArgs a-name a-lifetimes)
+      (match b
+        [(AstTyStructArgs b-name b-lifetimes)
+          (and
+            (string-eq a-name b-name)
+            (opt-lifetime-list-eq a-lifetimes b-lifetimes))]
+        [_ false])]
     [(AstTyVar a-name)
       (match b
         [(AstTyVar b-name) (string-eq a-name b-name)]
+        [_ false])]
+    [(AstTyVarArgs a-name a-lifetimes)
+      (match b
+        [(AstTyVarArgs b-name b-lifetimes)
+          (and
+            (string-eq a-name b-name)
+            (opt-lifetime-list-eq a-lifetimes b-lifetimes))]
         [_ false])]))
 
 (define (opt-maybe-value-eq

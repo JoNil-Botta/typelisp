@@ -826,7 +826,34 @@
             index
             0)]
         [(ErrCompilerSymbols message) (ErrCompilerSymbols message)])]
+    [(AstDeclDefEnumLifetimes name _ variants)
+      (match (compiler-symbols-add-type-in-module
+        symbols
+        module
+        name
+        (compiler-symbol-make-handle (compiler-symbol-kind-defenum) index))
+        [(OkCompilerSymbols next)
+          (compiler-symbols-add-variant-values-in-module
+            next
+            module
+            variants
+            index
+            0)]
+        [(ErrCompilerSymbols message) (ErrCompilerSymbols message)])]
     [(AstDeclDefStruct name _ _ _)
+      (match (compiler-symbols-add-type-in-module
+        symbols
+        module
+        name
+        (compiler-symbol-make-handle (compiler-symbol-kind-defstruct) index))
+        [(OkCompilerSymbols next)
+          (compiler-symbols-add-value-in-module
+            next
+            module
+            name
+            (compiler-symbol-make-handle (compiler-symbol-kind-defstruct) index))]
+        [(ErrCompilerSymbols message) (ErrCompilerSymbols message)])]
+    [(AstDeclDefStructLifetimes name _ _ _ _)
       (match (compiler-symbols-add-type-in-module
         symbols
         module
@@ -971,7 +998,34 @@
             index
             0)]
         [(ErrCompilerSymbols message) (ErrCompilerSymbols message)])]
+    [(AstDeclDefEnumLifetimes name _ variants)
+      (match (compiler-symbols-add-local-type-in-module
+        symbols
+        module
+        name
+        (compiler-symbol-make-handle (compiler-symbol-kind-defenum) index))
+        [(OkCompilerSymbols next)
+          (compiler-symbols-add-local-variant-values-in-module
+            next
+            module
+            variants
+            index
+            0)]
+        [(ErrCompilerSymbols message) (ErrCompilerSymbols message)])]
     [(AstDeclDefStruct name _ _ _)
+      (match (compiler-symbols-add-local-type-in-module
+        symbols
+        module
+        name
+        (compiler-symbol-make-handle (compiler-symbol-kind-defstruct) index))
+        [(OkCompilerSymbols next)
+          (compiler-symbols-add-local-value-in-module
+            next
+            module
+            name
+            (compiler-symbol-make-handle (compiler-symbol-kind-defstruct) index))]
+        [(ErrCompilerSymbols message) (ErrCompilerSymbols message)])]
+    [(AstDeclDefStructLifetimes name _ _ _ _)
       (match (compiler-symbols-add-local-type-in-module
         symbols
         module
@@ -1066,7 +1120,25 @@
         variants
         index
         0)]
+    [(AstDeclDefEnumLifetimes name _ variants)
+      (compiler-symbols-add-variant-value-aliases
+        (compiler-symbols-add-type-alias
+          symbols
+          (compiler-symbol-module-key alias name)
+          (compiler-symbol-make-handle (compiler-symbol-kind-defenum) index))
+        alias
+        variants
+        index
+        0)]
     [(AstDeclDefStruct name _ _ _)
+      (compiler-symbols-add-value-alias
+        (compiler-symbols-add-type-alias
+          symbols
+          (compiler-symbol-module-key alias name)
+          (compiler-symbol-make-handle (compiler-symbol-kind-defstruct) index))
+        (compiler-symbol-module-key alias name)
+        (compiler-symbol-make-handle (compiler-symbol-kind-defstruct) index))]
+    [(AstDeclDefStructLifetimes name _ _ _ _)
       (compiler-symbols-add-value-alias
         (compiler-symbols-add-type-alias
           symbols
@@ -1487,7 +1559,21 @@
         variants
         index
         0)]
+    [(AstDeclDefEnumLifetimes _ _ variants)
+      (compiler-registries-add-variant-aliases-list
+        registries
+        alias
+        variants
+        index
+        0)]
     [(AstDeclDefStruct name _ _ fields)
+      (compiler-registries-add-field-aliases-list
+        registries
+        (compiler-symbol-module-key alias name)
+        fields
+        index
+        0)]
+    [(AstDeclDefStructLifetimes name _ _ _ fields)
       (compiler-registries-add-field-aliases-list
         registries
         (compiler-symbol-module-key alias name)
@@ -1747,7 +1833,36 @@
                   (+ index 1)
                   module)]
               [(ErrCompilerRegistries message) (ErrCompilerRegistries message)])]
+          [(AstDeclDefEnumLifetimes _ _ variants)
+            (match (build-compiler-variant-registry-list-in-module
+              variants
+              registries
+              module
+              index
+              0)
+              [(OkCompilerRegistries next-registries)
+                (build-compiler-registry-list-in-module
+                  rest
+                  next-registries
+                  (+ index 1)
+                  module)]
+              [(ErrCompilerRegistries message) (ErrCompilerRegistries message)])]
           [(AstDeclDefStruct name _ _ fields)
+            (match (build-compiler-field-registry-list
+              fields
+              registries
+              (sym-i64-empty)
+              (compiler-symbol-module-key module name)
+              index
+              0)
+              [(OkCompilerRegistries next-registries)
+                (build-compiler-registry-list-in-module
+                  rest
+                  next-registries
+                  (+ index 1)
+                  module)]
+              [(ErrCompilerRegistries message) (ErrCompilerRegistries message)])]
+          [(AstDeclDefStructLifetimes name _ _ _ fields)
             (match (build-compiler-field-registry-list
               fields
               registries
@@ -1781,7 +1896,38 @@
                         module)]
                     [(ErrCompilerRegistries message)
                       (ErrCompilerRegistries message)])]
+                [(AstDeclDefEnumLifetimes _ _ variants)
+                  (match (build-compiler-variant-registry-list-in-module
+                    variants
+                    registries
+                    module
+                    index
+                    0)
+                    [(OkCompilerRegistries next-registries)
+                      (build-compiler-registry-list-in-module
+                        rest
+                        next-registries
+                        (+ index 1)
+                        module)]
+                    [(ErrCompilerRegistries message)
+                      (ErrCompilerRegistries message)])]
                 [(AstDeclDefStruct name _ _ fields)
+                  (match (build-compiler-field-registry-list
+                    fields
+                    registries
+                    (sym-i64-empty)
+                    (compiler-symbol-module-key module name)
+                    index
+                    0)
+                    [(OkCompilerRegistries next-registries)
+                      (build-compiler-registry-list-in-module
+                        rest
+                        next-registries
+                        (+ index 1)
+                        module)]
+                    [(ErrCompilerRegistries message)
+                      (ErrCompilerRegistries message)])]
+                [(AstDeclDefStructLifetimes name _ _ _ fields)
                   (match (build-compiler-field-registry-list
                     fields
                     registries
@@ -2064,6 +2210,11 @@
             variants
             (compiler-registry-handle-child-index handle)
             0)]
+        [(AstDeclDefEnumLifetimes _ _ variants)
+          (compiler-variant-types-at-index
+            variants
+            (compiler-registry-handle-child-index handle)
+            0)]
         [_ (ErrAstTypeList "symbols: variant owner is not enum")])]
     [(ErrAstDecl message) (ErrAstTypeList message)]))
 
@@ -2076,6 +2227,11 @@
     [(OkAstDecl decl)
       (match decl
         [(AstDeclDefStruct _ _ _ fields)
+          (compiler-field-type-at-index
+            fields
+            (compiler-registry-handle-child-index handle)
+            0)]
+        [(AstDeclDefStructLifetimes _ _ _ _ fields)
           (compiler-field-type-at-index
             fields
             (compiler-registry-handle-child-index handle)

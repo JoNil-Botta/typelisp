@@ -155,6 +155,16 @@
             (repl-type-render head)
             (repl-type-list-render-spaced rest))))]))
 
+(define (repl-lifetime-list-render-spaced [lifetimes : AstLifetimeList]) : String
+  (match lifetimes
+    [(AstLifetimeNil) ""]
+    [(AstLifetimeCons head rest)
+      (let
+        [rest : AstLifetimeList (box-get rest)]
+        (string-append
+          " "
+          (string-append head (repl-lifetime-list-render-spaced rest))))]))
+
 (define (repl-type-render [ty : AstType]) : String
   (match ty
     [(AstTyI64) "i64"]
@@ -234,8 +244,26 @@
             " "
             (string-append (repl-type-render (box-get inner)) ")"))))]
     [(AstTyEnum name) name]
+    [(AstTyEnumArgs name lifetimes)
+      (string-append
+        "("
+        (string-append
+          name
+          (string-append (repl-lifetime-list-render-spaced lifetimes) ")")))]
     [(AstTyStruct name) name]
-    [(AstTyVar name) (string-append "'" (string-append name "'"))]))
+    [(AstTyStructArgs name lifetimes)
+      (string-append
+        "("
+        (string-append
+          name
+          (string-append (repl-lifetime-list-render-spaced lifetimes) ")")))]
+    [(AstTyVar name) (string-append "'" (string-append name "'"))]
+    [(AstTyVarArgs name lifetimes)
+      (string-append
+        "("
+        (string-append
+          name
+          (string-append (repl-lifetime-list-render-spaced lifetimes) ")")))]))
 
 (define (repl-print-error-line [message : String]) : unit
   (repl-stderr-write-line message))

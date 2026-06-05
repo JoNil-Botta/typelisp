@@ -680,6 +680,28 @@
             [(AstTypeNil) ""]
             [_ (string-append " " (compiler-ir-type-list-render rest))])))]))
 
+(define (compiler-ir-lifetime-list-render [lifetimes : AstLifetimeList]) : String
+  (match lifetimes
+    [(AstLifetimeNil) ""]
+    [(AstLifetimeCons head rest)
+      (let
+        [rest : AstLifetimeList (box-get rest)]
+        (string-append
+          head
+          (match rest
+            [(AstLifetimeNil) ""]
+            [_ (string-append " " (compiler-ir-lifetime-list-render rest))])))]))
+
+(define (compiler-ir-nominal-lifetime-render
+  [name : String]
+  [lifetimes : AstLifetimeList]) : String
+  (compiler-ir-cat3
+    "("
+    name
+    (string-append
+      " "
+      (string-append (compiler-ir-lifetime-list-render lifetimes) ")"))))
+
 (define (compiler-ir-type-render [ty : AstType]) : String
   (match ty
     [(AstTyI64) "i64"]
@@ -740,8 +762,14 @@
           " "
           (string-append (compiler-ir-type-render (box-get inner)) ")")))]
     [(AstTyEnum name) name]
+    [(AstTyEnumArgs name lifetimes)
+      (compiler-ir-nominal-lifetime-render name lifetimes)]
     [(AstTyStruct name) name]
+    [(AstTyStructArgs name lifetimes)
+      (compiler-ir-nominal-lifetime-render name lifetimes)]
     [(AstTyVar name) name]
+    [(AstTyVarArgs name lifetimes)
+      (compiler-ir-nominal-lifetime-render name lifetimes)]
     [(AstTyPtr elem)
       (compiler-ir-cat3 "(Ptr " (compiler-ir-type-render (box-get elem)) ")")]
     [(AstTyMutPtr elem)
@@ -1778,8 +1806,14 @@
         (compiler-ir-type-name (box-get inner))
         ")")]
     [(AstTyEnum name) name]
+    [(AstTyEnumArgs name lifetimes)
+      (compiler-ir-nominal-lifetime-render name lifetimes)]
     [(AstTyStruct name) name]
+    [(AstTyStructArgs name lifetimes)
+      (compiler-ir-nominal-lifetime-render name lifetimes)]
     [(AstTyVar name) (compiler-ir-cat3 "'" name "'")]
+    [(AstTyVarArgs name lifetimes)
+      (compiler-ir-nominal-lifetime-render name lifetimes)]
     [(AstTyPtr elem)
       (compiler-ir-cat3 "(Ptr " (compiler-ir-type-name (box-get elem)) ")")]
     [(AstTyMutPtr elem)

@@ -1639,10 +1639,13 @@
     [(AstTyMutRef _ _) 8]
     [(AstTyRegion _ inner) (compiler-backend-type-size (box-get inner))]
     [(AstTyEnum _) 8]
+    [(AstTyEnumArgs _ _) 8]
     [(AstTyStruct _) 8]
+    [(AstTyStructArgs _ _) 8]
     [(AstTyString) 8]
     [(AstTyStr) 8]
-    [(AstTyVar _) 8]))
+    [(AstTyVar _) 8]
+    [(AstTyVarArgs _ _) 8]))
 
 (define (compiler-backend-f64-type? [ty : AstType]) : bool
   (match ty

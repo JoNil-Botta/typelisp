@@ -366,6 +366,18 @@
             [(AstTypeNil) ""]
             [_ (string-append ", " (front-type-list-render rest))])))]))
 
+(define (front-lifetime-list-render [lifetimes : AstLifetimeList]) : String
+  (match lifetimes
+    [(AstLifetimeNil) ""]
+    [(AstLifetimeCons head rest)
+      (let
+        [rest : AstLifetimeList (box-get rest)]
+        (string-append
+          head
+          (match rest
+            [(AstLifetimeNil) ""]
+            [_ (string-append ", " (front-lifetime-list-render rest))])))]))
+
 (define (front-type-render [ty : AstType]) : String
   (match ty
     [(AstTyI64) "I64"]
@@ -420,8 +432,23 @@
         region
         (front-cat3 "\", " (front-type-render (box-get inner)) ")"))]
     [(AstTyEnum name) (front-cat3 "Enum(\"" name "\")")]
+    [(AstTyEnumArgs name lifetimes)
+      (front-cat3
+        "Enum(\""
+        name
+        (front-cat3 "\", [" (front-lifetime-list-render lifetimes) "])"))]
     [(AstTyStruct name) (front-cat3 "Struct(\"" name "\")")]
-    [(AstTyVar name) (front-cat3 "Var(\"" name "\")")]))
+    [(AstTyStructArgs name lifetimes)
+      (front-cat3
+        "Struct(\""
+        name
+        (front-cat3 "\", [" (front-lifetime-list-render lifetimes) "])"))]
+    [(AstTyVar name) (front-cat3 "Var(\"" name "\")")]
+    [(AstTyVarArgs name lifetimes)
+      (front-cat3
+        "Var(\""
+        name
+        (front-cat3 "\", [" (front-lifetime-list-render lifetimes) "])"))]))
 
 (define (front-binop-render [op : AstBinOp]) : String
   (match op
@@ -997,6 +1024,14 @@
           (ast-extern-metadata-symbol metadata)
           (front-cat3 "\", ty: " (front-type-render ty) " }")))]
     [(AstDeclDefEnum name _) (front-cat3 "DefEnum { name: \"" name "\" }")]
+    [(AstDeclDefEnumLifetimes name lifetimes _)
+      (front-cat3
+        "DefEnum { name: \""
+        name
+        (front-cat3
+          "\", lifetimes: ["
+          (front-lifetime-list-render lifetimes)
+          "] }"))]
     [(AstDeclDefStruct name repr cleanup fields)
       (front-cat3
         "DefStruct { name: \""
@@ -1010,6 +1045,22 @@
             ", cleanup: "
             (front-struct-cleanup-render cleanup)
             (front-cat3 ", fields: " (front-field-list-render fields) " }"))))]
+    [(AstDeclDefStructLifetimes name lifetimes repr cleanup fields)
+      (front-cat3
+        "DefStruct { name: \""
+        name
+        (front-cat3
+          "\", lifetimes: ["
+          (front-lifetime-list-render lifetimes)
+          (front-cat3
+            "], repr: "
+            (if (ast-struct-repr-c? repr)
+              "c"
+              "default")
+            (front-cat3
+              ", cleanup: "
+              (front-struct-cleanup-render cleanup)
+              (front-cat3 ", fields: " (front-field-list-render fields) " }")))))]
     [(AstDeclImport spec) (front-import-render spec)]
     [(AstDeclIncludeStr name path)
       (front-cat3

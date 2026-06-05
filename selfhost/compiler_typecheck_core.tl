@@ -53,6 +53,18 @@
   (TcStringNil)
   (TcStringCons String TcStringList))
 
+(defenum ResultTcLifetimeList
+  (OkTcLifetimeList AstLifetimeList)
+  (ErrTcLifetimeList String))
+
+(defenum TcLifetimeSubst
+  (TcLifetimeSubstNil)
+  (TcLifetimeSubstCons String String TcLifetimeSubst))
+
+(defenum ResultTcLifetimeSubst
+  (OkTcLifetimeSubst TcLifetimeSubst)
+  (ErrTcLifetimeSubst String))
+
 (defenum ResultTcEnv
   (OkTcEnv TcTypeEnv)
   (ErrTcEnv String))
@@ -444,6 +456,26 @@
             [(AstTypeNil) ""]
             [_ (string-append " " (tc-type-list-render rest))])))]))
 
+(define (tc-lifetime-list-render [lifetimes : AstLifetimeList]) : String
+  (match lifetimes
+    [(AstLifetimeNil) ""]
+    [(AstLifetimeCons head rest)
+      (let
+        [rest : AstLifetimeList (box-get rest)]
+        (string-append
+          head
+          (match rest
+            [(AstLifetimeNil) ""]
+            [_ (string-append " " (tc-lifetime-list-render rest))])))]))
+
+(define (tc-render-nominal-lifetime-type
+  [name : String]
+  [lifetimes : AstLifetimeList]) : String
+  (tc-cat3
+    "("
+    name
+    (string-append " " (string-append (tc-lifetime-list-render lifetimes) ")"))))
+
 (define (tc-type-render [ty : AstType]) : String
   (match ty
     [(AstTyI64) "i64"]
@@ -497,8 +529,14 @@
         region
         (string-append " " (string-append (tc-type-render (box-get inner)) ")")))]
     [(AstTyEnum name) name]
+    [(AstTyEnumArgs name lifetimes)
+      (tc-render-nominal-lifetime-type name lifetimes)]
     [(AstTyStruct name) name]
-    [(AstTyVar name) name]))
+    [(AstTyStructArgs name lifetimes)
+      (tc-render-nominal-lifetime-type name lifetimes)]
+    [(AstTyVar name) name]
+    [(AstTyVarArgs name lifetimes)
+      (tc-render-nominal-lifetime-type name lifetimes)]))
 
 (define (tc-default-env) : TcTypeEnv
   (tc-profile-builtins-env
@@ -840,6 +878,114 @@
         (tc-string-list-contains allowed item)
         (tc-string-list-all-in? rest allowed))]))
 
+(define (tc-lifetime-list-count [items : AstLifetimeList]) : i64
+  (match items
+    [(AstLifetimeNil) 0]
+    [(AstLifetimeCons _ rest)
+      (let
+        [rest : AstLifetimeList (box-get rest)]
+        (+ 1 (tc-lifetime-list-count rest)))]))
+
+(define (tc-lifetime-list-contains [items : AstLifetimeList] [name : String]) : bool
+  (match items
+    [(AstLifetimeNil) false]
+    [(AstLifetimeCons item rest)
+      (let
+        [rest : AstLifetimeList (box-get rest)]
+        (if (string-eq item name)
+          true
+          (tc-lifetime-list-contains rest name)))]))
+
+(define (tc-lifetime-list-duplicates? [items : AstLifetimeList]) : bool
+  (match items
+    [(AstLifetimeNil) false]
+    [(AstLifetimeCons item rest)
+      (let
+        [rest : AstLifetimeList (box-get rest)]
+        (or
+          (tc-lifetime-list-contains rest item)
+          (tc-lifetime-list-duplicates? rest)))]))
+
+(define (tc-lifetime-list-eq [a : AstLifetimeList] [b : AstLifetimeList]) : bool
+  (match a
+    [(AstLifetimeNil)
+      (match b
+        [(AstLifetimeNil) true]
+        [_ false])]
+    [(AstLifetimeCons a-head a-rest)
+      (let
+        [a-rest : AstLifetimeList (box-get a-rest)]
+        (match b
+          [(AstLifetimeCons b-head b-rest)
+            (let
+              [b-rest : AstLifetimeList (box-get b-rest)]
+              (and
+                (string-eq a-head b-head)
+                (tc-lifetime-list-eq a-rest b-rest)))]
+          [_ false]))]))
+
+(define (tc-lifetime-list-all-in?
+  [items : AstLifetimeList]
+  [allowed : AstLifetimeList]) : bool
+  (match items
+    [(AstLifetimeNil) true]
+    [(AstLifetimeCons item rest)
+      (let
+        [rest : AstLifetimeList (box-get rest)]
+        (and
+          (or
+            (string-eq item "program")
+            (tc-lifetime-list-contains allowed item))
+          (tc-lifetime-list-all-in? rest allowed)))]))
+
+(define (tc-lifetime-list-to-string-list-into
+  [items : AstLifetimeList]
+  [out : TcStringList]) : TcStringList
+  (match items
+    [(AstLifetimeNil) out]
+    [(AstLifetimeCons item rest)
+      (let
+        [rest : AstLifetimeList (box-get rest)]
+        (tc-lifetime-list-to-string-list-into
+          rest
+          (tc-string-list-add out item)))]))
+
+(define (tc-lifetime-subst-lookup [subst : TcLifetimeSubst] [name : String]) : TcMaybeString
+  (match subst
+    [(TcLifetimeSubstNil) (TcNoString)]
+    [(TcLifetimeSubstCons from to rest)
+      (if (string-eq from name)
+        (TcSomeString to)
+        (tc-lifetime-subst-lookup rest name))]))
+
+(define (tc-lifetime-subst-bind
+  [subst : TcLifetimeSubst]
+  [from : String]
+  [to : String]) : ResultTcLifetimeSubst
+  (match (tc-lifetime-subst-lookup subst from)
+    [(TcSomeString existing)
+      (if (string-eq existing to)
+        (OkTcLifetimeSubst subst)
+        (ErrTcLifetimeSubst "typecheck: constructor lifetime mismatch"))]
+    [(TcNoString) (OkTcLifetimeSubst (TcLifetimeSubstCons from to subst))]))
+
+(define (tc-lifetime-subst-apply [subst : TcLifetimeSubst] [name : String]) : String
+  (match (tc-lifetime-subst-lookup subst name)
+    [(TcSomeString replacement) replacement]
+    [(TcNoString) name]))
+
+(define (tc-lifetime-subst-list
+  [subst : TcLifetimeSubst]
+  [items : AstLifetimeList]) : AstLifetimeList
+  (match items
+    [(AstLifetimeNil) AstLifetimeNil]
+    [(AstLifetimeCons item rest)
+      (let
+        [rest : AstLifetimeList (box-get rest)]
+        (ast-lifetime-cons
+          (tc-lifetime-subst-apply subst item)
+          (tc-lifetime-subst-list subst rest)))]))
+
 ;; V1 lifetime names are owner names. Normal environment bindings own stack
 ;; slots, and the synthetic region marker owns a with-arena scope. Environment
 ;; order is the lexical outlives relation: older owners appear farther down the
@@ -1017,6 +1163,9 @@
     [(AstTyMutRef region inner)
       (ast-ty-mut-ref region (tc-type-without-regions (box-get inner)))]
     [(AstTyRegion _ inner) (tc-type-without-regions (box-get inner))]
+    [(AstTyEnumArgs name lifetimes) (AstTyEnumArgs name lifetimes)]
+    [(AstTyStructArgs name lifetimes) (AstTyStructArgs name lifetimes)]
+    [(AstTyVarArgs name lifetimes) (AstTyVarArgs name lifetimes)]
     [_ ty]))
 
 (define (tc-type-list-contains-region [types : AstTypeList] [region : String]) : bool
@@ -1053,6 +1202,9 @@
       (or
         (string-eq name region)
         (tc-type-contains-region (box-get inner) region))]
+    [(AstTyEnumArgs _ lifetimes) (tc-lifetime-list-contains lifetimes region)]
+    [(AstTyStructArgs _ lifetimes) (tc-lifetime-list-contains lifetimes region)]
+    [(AstTyVarArgs _ lifetimes) (tc-lifetime-list-contains lifetimes region)]
     [_ false]))
 
 (define (tc-type-list-contains-any-region [types : AstTypeList]) : bool
@@ -1080,6 +1232,9 @@
     [(AstTyRef _ _) true]
     [(AstTyMutRef _ _) true]
     [(AstTyRegion _ _) true]
+    [(AstTyEnumArgs _ lifetimes) (> (tc-lifetime-list-count lifetimes) 0)]
+    [(AstTyStructArgs _ lifetimes) (> (tc-lifetime-list-count lifetimes) 0)]
+    [(AstTyVarArgs _ lifetimes) (> (tc-lifetime-list-count lifetimes) 0)]
     [_ false]))
 
 (define (tc-type-list-contains-reference? [types : AstTypeList]) : bool
@@ -1107,6 +1262,9 @@
     [(AstTyRef _ _) true]
     [(AstTyMutRef _ _) true]
     [(AstTyRegion _ inner) (tc-type-contains-reference? (box-get inner))]
+    [(AstTyEnumArgs _ lifetimes) (> (tc-lifetime-list-count lifetimes) 0)]
+    [(AstTyStructArgs _ lifetimes) (> (tc-lifetime-list-count lifetimes) 0)]
+    [(AstTyVarArgs _ lifetimes) (> (tc-lifetime-list-count lifetimes) 0)]
     [_ false]))
 
 (define (tc-type-list-collect-reference-lifetimes
@@ -1150,6 +1308,12 @@
         (tc-string-list-add out lifetime))]
     [(AstTyRegion _ inner)
       (tc-type-collect-reference-lifetimes-into (box-get inner) out)]
+    [(AstTyEnumArgs _ lifetimes)
+      (tc-lifetime-list-to-string-list-into lifetimes out)]
+    [(AstTyStructArgs _ lifetimes)
+      (tc-lifetime-list-to-string-list-into lifetimes out)]
+    [(AstTyVarArgs _ lifetimes)
+      (tc-lifetime-list-to-string-list-into lifetimes out)]
     [_ out]))
 
 (define (tc-type-collect-reference-lifetimes [ty : AstType]) : TcStringList
@@ -1245,6 +1409,12 @@
       (tc-type-collect-regions-into
         (box-get inner)
         (tc-string-list-add out name))]
+    [(AstTyEnumArgs _ lifetimes)
+      (tc-lifetime-list-to-string-list-into lifetimes out)]
+    [(AstTyStructArgs _ lifetimes)
+      (tc-lifetime-list-to-string-list-into lifetimes out)]
+    [(AstTyVarArgs _ lifetimes)
+      (tc-lifetime-list-to-string-list-into lifetimes out)]
     [_ out]))
 
 (define (tc-type-collect-regions [ty : AstType]) : TcStringList
@@ -1262,7 +1432,9 @@
     [(AstTyBox _) true]
     [(AstTyTuple _) true]
     [(AstTyStruct _) true]
+    [(AstTyStructArgs _ _) true]
     [(AstTyEnum _) true]
+    [(AstTyEnumArgs _ _) true]
     [_ false]))
 
 (define (tc-tag-region [region : String] [ty : AstType]) : AstType
@@ -1405,6 +1577,18 @@
       (AstTyStruct name)
       (AstTyVar name))))
 
+(define (tc-resolved-nominal-type-with-args
+  [name : String]
+  [handle : i64]
+  [lifetimes : AstLifetimeList]) : AstType
+  (if (= (compiler-symbol-handle-kind handle) (compiler-symbol-kind-defenum))
+    (AstTyEnumArgs name lifetimes)
+    (if (=
+      (compiler-symbol-handle-kind handle)
+      (compiler-symbol-kind-defstruct))
+      (AstTyStructArgs name lifetimes)
+      (AstTyVarArgs name lifetimes))))
+
 (define tc-nominal-owner-cache-handle : i64
   0)
 
@@ -1458,7 +1642,15 @@
             (if (= target index)
               (OkTcString (compiler-symbol-module-key module name))
               (tc-nominal-owner-name-list rest target (+ index 1) module))]
+          [(AstDeclDefEnumLifetimes name _ _)
+            (if (= target index)
+              (OkTcString (compiler-symbol-module-key module name))
+              (tc-nominal-owner-name-list rest target (+ index 1) module))]
           [(AstDeclDefStruct name _ _ _)
+            (if (= target index)
+              (OkTcString (compiler-symbol-module-key module name))
+              (tc-nominal-owner-name-list rest target (+ index 1) module))]
+          [(AstDeclDefStructLifetimes name _ _ _ _)
             (if (= target index)
               (OkTcString (compiler-symbol-module-key module name))
               (tc-nominal-owner-name-list rest target (+ index 1) module))]
@@ -1470,7 +1662,15 @@
                   (if (= target index)
                     (OkTcString (compiler-symbol-module-key module name))
                     (tc-nominal-owner-name-list rest target (+ index 1) module))]
+                [(AstDeclDefEnumLifetimes name _ _)
+                  (if (= target index)
+                    (OkTcString (compiler-symbol-module-key module name))
+                    (tc-nominal-owner-name-list rest target (+ index 1) module))]
                 [(AstDeclDefStruct name _ _ _)
+                  (if (= target index)
+                    (OkTcString (compiler-symbol-module-key module name))
+                    (tc-nominal-owner-name-list rest target (+ index 1) module))]
+                [(AstDeclDefStructLifetimes name _ _ _ _)
                   (if (= target index)
                     (OkTcString (compiler-symbol-module-key module name))
                     (tc-nominal-owner-name-list rest target (+ index 1) module))]
@@ -1544,8 +1744,36 @@
       (ast-ty-mut-ref region (tc-resolve-type ctx (box-get inner)))]
     [(AstTyRegion region inner)
       (ast-ty-region region (tc-resolve-type ctx (box-get inner)))]
+    [(AstTyVarArgs name lifetimes)
+      (tc-resolve-type-name-with-args ctx name lifetimes)]
     [(AstTyVar name) (tc-resolve-type-name ctx name)]
     [_ ty]))
+
+(define (tc-resolve-type-name-with-args
+  [ctx : TcContext]
+  [name : String]
+  [lifetimes : AstLifetimeList]) : AstType
+  (match ctx
+    [(TcContext _ symbols _ module)
+      (let
+        [lookup-name : String
+          (if (and (> (string-length module) 0) (not (tc-name-qualified? name)))
+            (compiler-symbol-module-key module name)
+            name)]
+        (match (compiler-symbols-lookup-type symbols lookup-name)
+          [(SomeI64 handle)
+            (match (tc-nominal-owner-name ctx handle)
+              [(OkTcString canonical-name)
+                (tc-resolved-nominal-type-with-args
+                  canonical-name
+                  handle
+                  lifetimes)]
+              [(ErrTcString _)
+                (tc-resolved-nominal-type-with-args
+                  lookup-name
+                  handle
+                  lifetimes)])]
+          [(NoneI64) (AstTyVarArgs name lifetimes)]))]))
 
 (define (tc-source-str-value-policy-message) : String
   "typecheck: str is a borrowed string-slice referent; use (& lifetime str)")
@@ -1559,6 +1787,93 @@
     (string-append
       name
       "; TypeLisp has no source-level type parameters; use comptime-generated concrete declarations instead (#893/#913/#970/#902)")))
+
+(define (tc-nominal-lifetimes-list
+  [decls : AstDeclList]
+  [name : String]
+  [module : String]) : ResultTcLifetimeList
+  (match decls
+    [(AstDeclNil) (ErrTcLifetimeList "typecheck: nominal type not found")]
+    [(AstDeclCons decl rest)
+      (let
+        [rest : AstDeclList (box-get rest)]
+        (match decl
+          [(AstDeclModule next-module)
+            (tc-nominal-lifetimes-list rest name next-module)]
+          [(AstDeclDefEnum decl-name _)
+            (if (string-eq name (compiler-symbol-module-key module decl-name))
+              (OkTcLifetimeList AstLifetimeNil)
+              (tc-nominal-lifetimes-list rest name module))]
+          [(AstDeclDefEnumLifetimes decl-name lifetimes _)
+            (if (string-eq name (compiler-symbol-module-key module decl-name))
+              (OkTcLifetimeList lifetimes)
+              (tc-nominal-lifetimes-list rest name module))]
+          [(AstDeclDefStruct decl-name _ _ _)
+            (if (string-eq name (compiler-symbol-module-key module decl-name))
+              (OkTcLifetimeList AstLifetimeNil)
+              (tc-nominal-lifetimes-list rest name module))]
+          [(AstDeclDefStructLifetimes decl-name lifetimes _ _ _)
+            (if (string-eq name (compiler-symbol-module-key module decl-name))
+              (OkTcLifetimeList lifetimes)
+              (tc-nominal-lifetimes-list rest name module))]
+          [(AstDeclComptimeDecl template-box)
+            (let
+              [template : AstDecl (box-get template-box)]
+              (match template
+                [(AstDeclDefEnum decl-name _)
+                  (if (string-eq
+                    name
+                    (compiler-symbol-module-key module decl-name))
+                    (OkTcLifetimeList AstLifetimeNil)
+                    (tc-nominal-lifetimes-list rest name module))]
+                [(AstDeclDefEnumLifetimes decl-name lifetimes _)
+                  (if (string-eq
+                    name
+                    (compiler-symbol-module-key module decl-name))
+                    (OkTcLifetimeList lifetimes)
+                    (tc-nominal-lifetimes-list rest name module))]
+                [(AstDeclDefStruct decl-name _ _ _)
+                  (if (string-eq
+                    name
+                    (compiler-symbol-module-key module decl-name))
+                    (OkTcLifetimeList AstLifetimeNil)
+                    (tc-nominal-lifetimes-list rest name module))]
+                [(AstDeclDefStructLifetimes decl-name lifetimes _ _ _)
+                  (if (string-eq
+                    name
+                    (compiler-symbol-module-key module decl-name))
+                    (OkTcLifetimeList lifetimes)
+                    (tc-nominal-lifetimes-list rest name module))]
+                [_ (tc-nominal-lifetimes-list rest name module)]))]
+          [_ (tc-nominal-lifetimes-list rest name module)]))]))
+
+(define (tc-nominal-lifetimes [ctx : TcContext] [name : String]) : ResultTcLifetimeList
+  (match ctx
+    [(TcContext program _ _ _)
+      (match program
+        [(AstProgram decls-box)
+          (let
+            [decls : AstDeclList (box-get decls-box)]
+            (tc-nominal-lifetimes-list decls name ""))])]))
+
+(define (tc-nominal-lifetime-use-policy-ok
+  [ctx : TcContext]
+  [name : String]
+  [lifetimes : AstLifetimeList]) : ResultTcUnit
+  (match (tc-nominal-lifetimes ctx name)
+    [(OkTcLifetimeList params)
+      (if (= (tc-lifetime-list-count params) (tc-lifetime-list-count lifetimes))
+        OkTcUnit
+        (ErrTcUnit "typecheck: nominal lifetime argument arity mismatch"))]
+    [(ErrTcLifetimeList message) (ErrTcUnit message)]))
+
+(define (tc-bare-nominal-lifetime-policy-ok [ctx : TcContext] [name : String]) : ResultTcUnit
+  (match (tc-nominal-lifetimes ctx name)
+    [(OkTcLifetimeList params)
+      (match params
+        [(AstLifetimeNil) OkTcUnit]
+        [_ (ErrTcUnit "typecheck: missing nominal lifetime arguments")])]
+    [(ErrTcLifetimeList message) (ErrTcUnit message)]))
 
 (define (tc-source-type-list-policy-ok [ctx : TcContext] [types : AstTypeList]) : ResultTcUnit
   (match types
@@ -1597,6 +1912,13 @@
             [(ErrTcUnit message) (ErrTcUnit message)])])]
     [(AstTyRegion _ inner) (tc-source-type-policy-ok ctx (box-get inner))]
     [(AstTyStr) (ErrTcUnit (tc-source-str-value-policy-message))]
+    [(AstTyEnum name) (tc-bare-nominal-lifetime-policy-ok ctx name)]
+    [(AstTyStruct name) (tc-bare-nominal-lifetime-policy-ok ctx name)]
+    [(AstTyEnumArgs name lifetimes)
+      (tc-nominal-lifetime-use-policy-ok ctx name lifetimes)]
+    [(AstTyStructArgs name lifetimes)
+      (tc-nominal-lifetime-use-policy-ok ctx name lifetimes)]
+    [(AstTyVarArgs name _) (ErrTcUnit (tc-source-type-policy-message name))]
     [(AstTyVar name) (ErrTcUnit (tc-source-type-policy-message name))]
     [_ OkTcUnit]))
 
@@ -1666,6 +1988,84 @@
               [(OkTcUnit) (tc-source-variant-list-policy-ok ctx rest)]
               [(ErrTcUnit message) (ErrTcUnit message)])]))]))
 
+(define (tc-decl-lifetime-name-allowed?
+  [params : AstLifetimeList]
+  [name : String]) : bool
+  (or (string-eq name "program") (tc-lifetime-list-contains params name)))
+
+(define (tc-decl-lifetime-string-list-all-in?
+  [lifetimes : TcStringList]
+  [params : AstLifetimeList]) : bool
+  (match lifetimes
+    [(TcStringNil) true]
+    [(TcStringCons lifetime rest)
+      (and
+        (tc-decl-lifetime-name-allowed? params lifetime)
+        (tc-decl-lifetime-string-list-all-in? rest params))]))
+
+(define (tc-source-type-decl-lifetimes-ok
+  [ctx : TcContext]
+  [params : AstLifetimeList]
+  [ty : AstType]) : ResultTcUnit
+  (let
+    [lifetimes : TcStringList
+      (tc-type-collect-reference-lifetimes (tc-resolve-type ctx ty))]
+    (if (tc-decl-lifetime-string-list-all-in? lifetimes params)
+      OkTcUnit
+      (ErrTcUnit "typecheck: unknown aggregate lifetime parameter"))))
+
+(define (tc-source-field-list-lifetimes-policy-ok
+  [ctx : TcContext]
+  [params : AstLifetimeList]
+  [fields : AstFieldDefList]) : ResultTcUnit
+  (match fields
+    [(AstFieldDefNil) OkTcUnit]
+    [(AstFieldDefCons field rest)
+      (let
+        [rest : AstFieldDefList (box-get rest)]
+        (match field
+          [(AstFieldDef _ ty _)
+            (match (tc-source-type-policy-ok ctx ty)
+              [(OkTcUnit)
+                (match (tc-source-type-decl-lifetimes-ok ctx params ty)
+                  [(OkTcUnit)
+                    (tc-source-field-list-lifetimes-policy-ok ctx params rest)]
+                  [(ErrTcUnit message) (ErrTcUnit message)])]
+              [(ErrTcUnit message) (ErrTcUnit message)])]))]))
+
+(define (tc-source-type-list-lifetimes-policy-ok
+  [ctx : TcContext]
+  [params : AstLifetimeList]
+  [types : AstTypeList]) : ResultTcUnit
+  (match types
+    [(AstTypeNil) OkTcUnit]
+    [(AstTypeCons head tail)
+      (let
+        [tail : AstTypeList (box-get tail)]
+        (match (tc-source-type-policy-ok ctx head)
+          [(OkTcUnit)
+            (match (tc-source-type-decl-lifetimes-ok ctx params head)
+              [(OkTcUnit)
+                (tc-source-type-list-lifetimes-policy-ok ctx params tail)]
+              [(ErrTcUnit message) (ErrTcUnit message)])]
+          [(ErrTcUnit message) (ErrTcUnit message)]))]))
+
+(define (tc-source-variant-list-lifetimes-policy-ok
+  [ctx : TcContext]
+  [params : AstLifetimeList]
+  [variants : AstVariantDefList]) : ResultTcUnit
+  (match variants
+    [(AstVariantDefNil) OkTcUnit]
+    [(AstVariantDefCons variant rest)
+      (let
+        [rest : AstVariantDefList (box-get rest)]
+        (match variant
+          [(AstVariantDef _ fields)
+            (match (tc-source-type-list-lifetimes-policy-ok ctx params fields)
+              [(OkTcUnit)
+                (tc-source-variant-list-lifetimes-policy-ok ctx params rest)]
+              [(ErrTcUnit message) (ErrTcUnit message)])]))]))
+
 (define (tc-type-list-mentions-enum?
   [ctx : TcContext]
   [types : AstTypeList]
@@ -1685,6 +2085,7 @@
   [enum-name : String]) : bool
   (match (tc-type-strip-region (tc-resolve-type ctx ty))
     [(AstTyEnum name) (string-eq name enum-name)]
+    [(AstTyEnumArgs name _) (string-eq name enum-name)]
     [(AstTyTuple elems) (tc-type-list-mentions-enum? ctx elems enum-name)]
     [(AstTyArray elem _) (tc-type-mentions-enum? ctx (box-get elem) enum-name)]
     [_ false]))
@@ -2162,6 +2563,19 @@
             (compiler-symbol-module-key (tc-context-module ctx) name)
             variants)]
         [(ErrTcUnit message) (ErrTcUnit message)])]
+    [(AstDeclDefEnumLifetimes name lifetimes variants)
+      (if (tc-lifetime-list-duplicates? lifetimes)
+        (ErrTcUnit "typecheck: duplicate lifetime parameter")
+        (match (tc-source-variant-list-lifetimes-policy-ok
+          ctx
+          lifetimes
+          variants)
+          [(OkTcUnit)
+            (tc-recursive-enum-inline-policy-ok
+              ctx
+              (compiler-symbol-module-key (tc-context-module ctx) name)
+              variants)]
+          [(ErrTcUnit message) (ErrTcUnit message)]))]
     [(AstDeclDefStruct name repr cleanup fields)
       (match (tc-source-field-list-policy-ok ctx fields)
         [(OkTcUnit)
@@ -2177,6 +2591,23 @@
                 [(ErrTcReprCLayout message) (ErrTcUnit message)])
               OkTcUnit))]
         [(ErrTcUnit message) (ErrTcUnit message)])]
+    [(AstDeclDefStructLifetimes name lifetimes repr cleanup fields)
+      (if (tc-lifetime-list-duplicates? lifetimes)
+        (ErrTcUnit "typecheck: duplicate lifetime parameter")
+        (match (tc-source-field-list-lifetimes-policy-ok ctx lifetimes fields)
+          [(OkTcUnit)
+            (if (and (ast-struct-repr-c? repr) (ast-struct-cleanup? cleanup))
+              (ErrTcUnit
+                (tc-struct-cleanup-repr-c-message
+                  (compiler-symbol-module-key (tc-context-module ctx) name)))
+              (if (ast-struct-repr-c? repr)
+                (match (tc-repr-c-struct-layout
+                  ctx
+                  (compiler-symbol-module-key (tc-context-module ctx) name))
+                  [(OkTcReprCLayout _) OkTcUnit]
+                  [(ErrTcReprCLayout message) (ErrTcUnit message)])
+                OkTcUnit))]
+          [(ErrTcUnit message) (ErrTcUnit message)]))]
     [(AstDeclIncludeStr _ _)
       (ErrTcUnit "typecheck: include-str must be expanded by compiler loader")]
     [(AstDeclImport _) OkTcUnit]
@@ -2373,13 +2804,34 @@
       (match b
         [(AstTyEnum b-name) (string-eq a-name b-name)]
         [_ false])]
+    [(AstTyEnumArgs a-name a-lifetimes)
+      (match b
+        [(AstTyEnumArgs b-name b-lifetimes)
+          (and
+            (string-eq a-name b-name)
+            (tc-lifetime-list-eq a-lifetimes b-lifetimes))]
+        [_ false])]
     [(AstTyStruct a-name)
       (match b
         [(AstTyStruct b-name) (string-eq a-name b-name)]
         [_ false])]
+    [(AstTyStructArgs a-name a-lifetimes)
+      (match b
+        [(AstTyStructArgs b-name b-lifetimes)
+          (and
+            (string-eq a-name b-name)
+            (tc-lifetime-list-eq a-lifetimes b-lifetimes))]
+        [_ false])]
     [(AstTyVar a-name)
       (match b
         [(AstTyVar b-name) (string-eq a-name b-name)]
+        [_ false])]
+    [(AstTyVarArgs a-name a-lifetimes)
+      (match b
+        [(AstTyVarArgs b-name b-lifetimes)
+          (and
+            (string-eq a-name b-name)
+            (tc-lifetime-list-eq a-lifetimes b-lifetimes))]
         [_ false])]))
 
 (define (tc-type-eq [a : AstType] [b : AstType]) : bool
@@ -2501,8 +2953,11 @@
     [(AstTyBox _) (TcMoveOnly)]
     [(AstTyMutRef _ _) (TcMoveOnly)]
     [(AstTyEnum _) (TcMoveOnly)]
+    [(AstTyEnumArgs _ _) (TcMoveOnly)]
     [(AstTyStruct _) (TcMoveOnly)]
-    [(AstTyVar _) (TcMoveOnly)]))
+    [(AstTyStructArgs _ _) (TcMoveOnly)]
+    [(AstTyVar _) (TcMoveOnly)]
+    [(AstTyVarArgs _ _) (TcMoveOnly)]))
 
 (define (tc-move-kind-copyable? [kind : TcMoveKind]) : bool
   (match kind
@@ -2543,7 +2998,9 @@
       [(AstTyF64) true]
       [(AstTyString) true]
       [(AstTyEnum _) true]
+      [(AstTyEnumArgs _ _) true]
       [(AstTyStruct _) true]
+      [(AstTyStructArgs _ _) true]
       [(AstTyDynArray _) true]
       [(AstTyRef _ _)
         (tc-reference-lifetimes-visible?
@@ -2928,23 +3385,30 @@
 (define (tc-enum-variant-constructor-type
   [ctx : TcContext]
   [enum-name : String]
+  [lifetimes : AstLifetimeList]
   [fields : AstTypeList]) : AstType
-  (match fields
-    [(AstTypeNil) (AstTyEnum enum-name)]
-    [_ (ast-ty-func (tc-resolve-type-list ctx fields) (AstTyEnum enum-name))]))
+  (let
+    [ret : AstType
+      (match lifetimes
+        [(AstLifetimeNil) (AstTyEnum enum-name)]
+        [_ (AstTyEnumArgs enum-name lifetimes)])]
+    (match fields
+      [(AstTypeNil) ret]
+      [_ (ast-ty-func (tc-resolve-type-list ctx fields) ret)])))
 
 (define (tc-bind-enum-variants
   [ctx : TcContext]
   [env : TcTypeEnv]
   [enum-name : String]
   [variants : AstVariantDefList]) : ResultTcEnv
-  (tc-bind-enum-variants-in-module ctx env "" enum-name variants))
+  (tc-bind-enum-variants-in-module ctx env "" enum-name AstLifetimeNil variants))
 
 (define (tc-bind-enum-variants-in-module
   [ctx : TcContext]
   [env : TcTypeEnv]
   [module : String]
   [enum-name : String]
+  [lifetimes : AstLifetimeList]
   [variants : AstVariantDefList]) : ResultTcEnv
   (match variants
     [(AstVariantDefNil) (OkTcEnv env)]
@@ -2962,9 +3426,14 @@
                   env
                   module
                   name
-                  (tc-enum-variant-constructor-type ctx scoped-enum fields))
+                  (tc-enum-variant-constructor-type
+                    ctx
+                    scoped-enum
+                    lifetimes
+                    fields))
                 module
                 enum-name
+                lifetimes
                 rest))]))]))
 
 (define (tc-build-top-env-list
@@ -3051,6 +3520,18 @@
               env
               module
               name
+              AstLifetimeNil
+              variants)
+              [(OkTcEnv next-env)
+                (tc-build-top-env-list-in-module ctx rest next-env module)]
+              [(ErrTcEnv message) (ErrTcEnv message)])]
+          [(AstDeclDefEnumLifetimes name lifetimes variants)
+            (match (tc-bind-enum-variants-in-module
+              (tc-context-with-module ctx module)
+              env
+              module
+              name
+              lifetimes
               variants)
               [(OkTcEnv next-env)
                 (tc-build-top-env-list-in-module ctx rest next-env module)]
@@ -3071,6 +3552,22 @@
                       fields)
                     (AstTyStruct scoped-name)))
                 module))]
+          [(AstDeclDefStructLifetimes name lifetimes _ _ fields)
+            (let
+              [scoped-name : String (compiler-symbol-module-key module name)]
+              (tc-build-top-env-list-in-module
+                ctx
+                rest
+                (tc-bind-module-name
+                  env
+                  module
+                  name
+                  (ast-ty-func
+                    (tc-field-type-list
+                      (tc-context-with-module ctx module)
+                      fields)
+                    (AstTyStructArgs scoped-name lifetimes)))
+                module))]
           [(AstDeclComptimeDecl template-box)
             (let
               [template : AstDecl (box-get template-box)]
@@ -3081,6 +3578,18 @@
                     env
                     module
                     name
+                    AstLifetimeNil
+                    variants)
+                    [(OkTcEnv next-env)
+                      (tc-build-top-env-list-in-module ctx rest next-env module)]
+                    [(ErrTcEnv message) (ErrTcEnv message)])]
+                [(AstDeclDefEnumLifetimes name lifetimes variants)
+                  (match (tc-bind-enum-variants-in-module
+                    (tc-context-with-module ctx module)
+                    env
+                    module
+                    name
+                    lifetimes
                     variants)
                     [(OkTcEnv next-env)
                       (tc-build-top-env-list-in-module ctx rest next-env module)]
@@ -3102,6 +3611,23 @@
                             fields)
                           (AstTyStruct scoped-name)))
                       module))]
+                [(AstDeclDefStructLifetimes name lifetimes _ _ fields)
+                  (let
+                    [scoped-name : String
+                      (compiler-symbol-module-key module name)]
+                    (tc-build-top-env-list-in-module
+                      ctx
+                      rest
+                      (tc-bind-module-name
+                        env
+                        module
+                        name
+                        (ast-ty-func
+                          (tc-field-type-list
+                            (tc-context-with-module ctx module)
+                            fields)
+                          (AstTyStructArgs scoped-name lifetimes)))
+                      module))]
                 [_ (tc-build-top-env-list-in-module ctx rest env module)]))]
           [(AstDeclImport _)
             (tc-build-top-env-list-in-module ctx rest env module)]
@@ -3117,6 +3643,7 @@
   [env : TcTypeEnv]
   [alias : String]
   [enum-name : String]
+  [lifetimes : AstLifetimeList]
   [variants : AstVariantDefList]) : TcTypeEnv
   (match variants
     [(AstVariantDefNil) env]
@@ -3130,9 +3657,14 @@
               (tc-bind
                 env
                 (compiler-symbol-module-key alias name)
-                (tc-enum-variant-constructor-type ctx enum-name fields))
+                (tc-enum-variant-constructor-type
+                  ctx
+                  enum-name
+                  lifetimes
+                  fields))
               alias
               enum-name
+              lifetimes
               rest)]))]))
 
 (define (tc-bind-import-alias-decl-in-module
@@ -3187,6 +3719,16 @@
           env
           alias
           (compiler-symbol-module-key module name)
+          AstLifetimeNil
+          variants))]
+    [(AstDeclDefEnumLifetimes name lifetimes variants)
+      (OkTcEnv
+        (tc-bind-enum-variant-aliases
+          (tc-context-with-module ctx module)
+          env
+          alias
+          (compiler-symbol-module-key module name)
+          lifetimes
           variants))]
     [(AstDeclDefStruct name _ _ fields)
       (OkTcEnv
@@ -3196,6 +3738,14 @@
           (ast-ty-func
             (tc-field-type-list (tc-context-with-module ctx module) fields)
             (AstTyStruct (compiler-symbol-module-key module name)))))]
+    [(AstDeclDefStructLifetimes name lifetimes _ _ fields)
+      (OkTcEnv
+        (tc-bind
+          env
+          (compiler-symbol-module-key alias name)
+          (ast-ty-func
+            (tc-field-type-list (tc-context-with-module ctx module) fields)
+            (AstTyStructArgs (compiler-symbol-module-key module name) lifetimes))))]
     [(AstDeclComptimeDecl template-box)
       (let
         [template : AstDecl (box-get template-box)]
@@ -3334,6 +3884,7 @@
   [env : TcTypeEnv]
   [enum-name : String]
   [scoped-enum : String]
+  [lifetimes : AstLifetimeList]
   [variants : AstVariantDefList]) : TcTypeEnv
   (match variants
     [(AstVariantDefNil) env]
@@ -3347,9 +3898,14 @@
               (tc-bind
                 env
                 name
-                (tc-enum-variant-constructor-type ctx scoped-enum fields))
+                (tc-enum-variant-constructor-type
+                  ctx
+                  scoped-enum
+                  lifetimes
+                  fields))
               enum-name
               scoped-enum
+              lifetimes
               rest)]))]))
 
 (define (tc-module-local-env-add-decl
@@ -3390,6 +3946,16 @@
           env
           name
           (compiler-symbol-module-key module name)
+          AstLifetimeNil
+          variants))]
+    [(AstDeclDefEnumLifetimes name lifetimes variants)
+      (OkTcEnv
+        (tc-bind-enum-variants-local
+          ctx
+          env
+          name
+          (compiler-symbol-module-key module name)
+          lifetimes
           variants))]
     [(AstDeclDefStruct name _ _ fields)
       (OkTcEnv
@@ -3399,6 +3965,14 @@
           (ast-ty-func
             (tc-field-type-list ctx fields)
             (AstTyStruct (compiler-symbol-module-key module name)))))]
+    [(AstDeclDefStructLifetimes name lifetimes _ _ fields)
+      (OkTcEnv
+        (tc-bind
+          env
+          name
+          (ast-ty-func
+            (tc-field-type-list ctx fields)
+            (AstTyStructArgs (compiler-symbol-module-key module name) lifetimes))))]
     [(AstDeclComptimeDecl template-box)
       (let
         [template : AstDecl (box-get template-box)]
@@ -3895,6 +4469,333 @@
         (AstNoType))]
     [(TcNoString) (AstNoType)]))
 
+(define (tc-lifetime-constructor-ret? [ret : AstType]) : bool
+  (match ret
+    [(AstTyStructArgs _ lifetimes) (> (tc-lifetime-list-count lifetimes) 0)]
+    [(AstTyEnumArgs _ lifetimes) (> (tc-lifetime-list-count lifetimes) 0)]
+    [_ false]))
+
+(define (tc-call-lifetime-constructor-for-func?
+  [ctx : TcContext]
+  [func : AstExpr]
+  [ret : AstType]) : bool
+  (if (tc-lifetime-constructor-ret? ret)
+    (match (tc-expr-var-name func)
+      [(TcSomeString name) (tc-constructor-name? ctx name)]
+      [(TcNoString) false])
+    false))
+
+(define (tc-lifetime-subst-type-list
+  [subst : TcLifetimeSubst]
+  [types : AstTypeList]) : AstTypeList
+  (match types
+    [(AstTypeNil) AstTypeNil]
+    [(AstTypeCons head tail)
+      (let
+        [tail : AstTypeList (box-get tail)]
+        (ast-type-cons
+          (tc-lifetime-subst-type subst head)
+          (tc-lifetime-subst-type-list subst tail)))]))
+
+(define (tc-lifetime-subst-type [subst : TcLifetimeSubst] [ty : AstType]) : AstType
+  (match ty
+    [(AstTyFunc args ret)
+      (ast-ty-func
+        (tc-lifetime-subst-type-list subst args)
+        (tc-lifetime-subst-type subst (box-get ret)))]
+    [(AstTyTuple elems) (AstTyTuple (tc-lifetime-subst-type-list subst elems))]
+    [(AstTyArray elem len)
+      (ast-ty-array (tc-lifetime-subst-type subst (box-get elem)) len)]
+    [(AstTyDynArray elem)
+      (ast-ty-dyn-array (tc-lifetime-subst-type subst (box-get elem)))]
+    [(AstTyBox elem) (ast-ty-box (tc-lifetime-subst-type subst (box-get elem)))]
+    [(AstTyPtr elem) (ast-ty-ptr (tc-lifetime-subst-type subst (box-get elem)))]
+    [(AstTyMutPtr elem)
+      (ast-ty-mut-ptr (tc-lifetime-subst-type subst (box-get elem)))]
+    [(AstTyRef lifetime inner)
+      (ast-ty-ref
+        (tc-lifetime-subst-apply subst lifetime)
+        (tc-lifetime-subst-type subst (box-get inner)))]
+    [(AstTyMutRef lifetime inner)
+      (ast-ty-mut-ref
+        (tc-lifetime-subst-apply subst lifetime)
+        (tc-lifetime-subst-type subst (box-get inner)))]
+    [(AstTyRegion region inner)
+      (ast-ty-region region (tc-lifetime-subst-type subst (box-get inner)))]
+    [(AstTyEnumArgs name lifetimes)
+      (AstTyEnumArgs name (tc-lifetime-subst-list subst lifetimes))]
+    [(AstTyStructArgs name lifetimes)
+      (AstTyStructArgs name (tc-lifetime-subst-list subst lifetimes))]
+    [(AstTyVarArgs name lifetimes)
+      (AstTyVarArgs name (tc-lifetime-subst-list subst lifetimes))]
+    [_ ty]))
+
+(define (tc-infer-lifetime-name
+  [params : AstLifetimeList]
+  [subst : TcLifetimeSubst]
+  [formal : String]
+  [actual : String]) : ResultTcLifetimeSubst
+  (if (tc-lifetime-list-contains params formal)
+    (tc-lifetime-subst-bind subst formal actual)
+    (if (string-eq formal actual)
+      (OkTcLifetimeSubst subst)
+      (ErrTcLifetimeSubst "typecheck: argument type mismatch"))))
+
+(define (tc-infer-lifetime-list
+  [params : AstLifetimeList]
+  [subst : TcLifetimeSubst]
+  [formal : AstLifetimeList]
+  [actual : AstLifetimeList]) : ResultTcLifetimeSubst
+  (match formal
+    [(AstLifetimeNil)
+      (match actual
+        [(AstLifetimeNil) (OkTcLifetimeSubst subst)]
+        [_ (ErrTcLifetimeSubst "typecheck: argument type mismatch")])]
+    [(AstLifetimeCons formal-head formal-rest)
+      (let
+        [formal-rest : AstLifetimeList (box-get formal-rest)]
+        (match actual
+          [(AstLifetimeCons actual-head actual-rest)
+            (let
+              [actual-rest : AstLifetimeList (box-get actual-rest)]
+              (match (tc-infer-lifetime-name
+                params
+                subst
+                formal-head
+                actual-head)
+                [(OkTcLifetimeSubst next-subst)
+                  (tc-infer-lifetime-list
+                    params
+                    next-subst
+                    formal-rest
+                    actual-rest)]
+                [(ErrTcLifetimeSubst message) (ErrTcLifetimeSubst message)]))]
+          [_ (ErrTcLifetimeSubst "typecheck: argument type mismatch")]))]))
+
+(define (tc-infer-lifetime-subst-from-type
+  [ctx : TcContext]
+  [params : AstLifetimeList]
+  [subst : TcLifetimeSubst]
+  [formal : AstType]
+  [actual : AstType]) : ResultTcLifetimeSubst
+  (let
+    [want : AstType (tc-resolve-type ctx formal)]
+    [got : AstType (tc-resolve-type ctx actual)]
+    (match want
+      [(AstTyRef formal-lifetime formal-inner)
+        (match got
+          [(AstTyRef actual-lifetime actual-inner)
+            (match (tc-infer-lifetime-name
+              params
+              subst
+              formal-lifetime
+              actual-lifetime)
+              [(OkTcLifetimeSubst next-subst)
+                (tc-infer-lifetime-subst-from-type
+                  ctx
+                  params
+                  next-subst
+                  (box-get formal-inner)
+                  (box-get actual-inner))]
+              [(ErrTcLifetimeSubst message) (ErrTcLifetimeSubst message)])]
+          [_ (ErrTcLifetimeSubst "typecheck: argument type mismatch")])]
+      [(AstTyMutRef formal-lifetime formal-inner)
+        (match got
+          [(AstTyMutRef actual-lifetime actual-inner)
+            (match (tc-infer-lifetime-name
+              params
+              subst
+              formal-lifetime
+              actual-lifetime)
+              [(OkTcLifetimeSubst next-subst)
+                (tc-infer-lifetime-subst-from-type
+                  ctx
+                  params
+                  next-subst
+                  (box-get formal-inner)
+                  (box-get actual-inner))]
+              [(ErrTcLifetimeSubst message) (ErrTcLifetimeSubst message)])]
+          [_ (ErrTcLifetimeSubst "typecheck: argument type mismatch")])]
+      [(AstTyEnumArgs formal-name formal-lifetimes)
+        (match got
+          [(AstTyEnumArgs actual-name actual-lifetimes)
+            (if (string-eq formal-name actual-name)
+              (tc-infer-lifetime-list
+                params
+                subst
+                formal-lifetimes
+                actual-lifetimes)
+              (ErrTcLifetimeSubst "typecheck: argument type mismatch"))]
+          [_ (ErrTcLifetimeSubst "typecheck: argument type mismatch")])]
+      [(AstTyStructArgs formal-name formal-lifetimes)
+        (match got
+          [(AstTyStructArgs actual-name actual-lifetimes)
+            (if (string-eq formal-name actual-name)
+              (tc-infer-lifetime-list
+                params
+                subst
+                formal-lifetimes
+                actual-lifetimes)
+              (ErrTcLifetimeSubst "typecheck: argument type mismatch"))]
+          [_ (ErrTcLifetimeSubst "typecheck: argument type mismatch")])]
+      [(AstTyTuple formal-elems)
+        (match got
+          [(AstTyTuple actual-elems)
+            (tc-infer-lifetime-subst-from-type-list
+              ctx
+              params
+              subst
+              formal-elems
+              actual-elems)]
+          [_ (ErrTcLifetimeSubst "typecheck: argument type mismatch")])]
+      [(AstTyArray formal-elem formal-len)
+        (match got
+          [(AstTyArray actual-elem actual-len)
+            (if (= formal-len actual-len)
+              (tc-infer-lifetime-subst-from-type
+                ctx
+                params
+                subst
+                (box-get formal-elem)
+                (box-get actual-elem))
+              (ErrTcLifetimeSubst "typecheck: argument type mismatch"))]
+          [_ (ErrTcLifetimeSubst "typecheck: argument type mismatch")])]
+      [(AstTyDynArray formal-elem)
+        (match got
+          [(AstTyDynArray actual-elem)
+            (tc-infer-lifetime-subst-from-type
+              ctx
+              params
+              subst
+              (box-get formal-elem)
+              (box-get actual-elem))]
+          [_ (ErrTcLifetimeSubst "typecheck: argument type mismatch")])]
+      [(AstTyBox formal-elem)
+        (match got
+          [(AstTyBox actual-elem)
+            (tc-infer-lifetime-subst-from-type
+              ctx
+              params
+              subst
+              (box-get formal-elem)
+              (box-get actual-elem))]
+          [_ (ErrTcLifetimeSubst "typecheck: argument type mismatch")])]
+      [_
+        (if (tc-type-compatible? want got)
+          (OkTcLifetimeSubst subst)
+          (ErrTcLifetimeSubst "typecheck: argument type mismatch"))])))
+
+(define (tc-infer-lifetime-subst-from-type-list
+  [ctx : TcContext]
+  [params : AstLifetimeList]
+  [subst : TcLifetimeSubst]
+  [formal : AstTypeList]
+  [actual : AstTypeList]) : ResultTcLifetimeSubst
+  (match formal
+    [(AstTypeNil)
+      (match actual
+        [(AstTypeNil) (OkTcLifetimeSubst subst)]
+        [_ (ErrTcLifetimeSubst "typecheck: argument type mismatch")])]
+    [(AstTypeCons formal-head formal-rest)
+      (let
+        [formal-rest : AstTypeList (box-get formal-rest)]
+        (match actual
+          [(AstTypeCons actual-head actual-rest)
+            (let
+              [actual-rest : AstTypeList (box-get actual-rest)]
+              (match (tc-infer-lifetime-subst-from-type
+                ctx
+                params
+                subst
+                formal-head
+                actual-head)
+                [(OkTcLifetimeSubst next-subst)
+                  (tc-infer-lifetime-subst-from-type-list
+                    ctx
+                    params
+                    next-subst
+                    formal-rest
+                    actual-rest)]
+                [(ErrTcLifetimeSubst message) (ErrTcLifetimeSubst message)]))]
+          [_ (ErrTcLifetimeSubst "typecheck: argument type mismatch")]))]))
+
+(define (tc-infer-call-lifetime-subst
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [args : AstExprList]
+  [params : AstTypeList]
+  [lifetimes : AstLifetimeList]
+  [subst : TcLifetimeSubst]) : ResultTcLifetimeSubst
+  (match args
+    [(AstExprNil)
+      (match params
+        [(AstTypeNil) (OkTcLifetimeSubst subst)]
+        [_ (ErrTcLifetimeSubst "typecheck: arity mismatch")])]
+    [(AstExprCons arg rest-args)
+      (let
+        [rest-args : AstExprList (box-get rest-args)]
+        (match params
+          [(AstTypeCons want rest-params)
+            (let
+              [rest-params : AstTypeList (box-get rest-params)]
+              (match (tc-expr ctx env arg)
+                [(OkTcType got)
+                  (match (tc-infer-lifetime-subst-from-type
+                    ctx
+                    lifetimes
+                    subst
+                    want
+                    got)
+                    [(OkTcLifetimeSubst next-subst)
+                      (tc-infer-call-lifetime-subst
+                        ctx
+                        env
+                        rest-args
+                        rest-params
+                        lifetimes
+                        next-subst)]
+                    [(ErrTcLifetimeSubst message) (ErrTcLifetimeSubst message)])]
+                [(ErrTcType message) (ErrTcLifetimeSubst message)]))]
+          [(AstTypeNil) (ErrTcLifetimeSubst "typecheck: arity mismatch")]))]))
+
+(define (tc-call-lifetime-constructor-type
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [func : AstExpr]
+  [args : AstExprList]
+  [params : AstTypeList]
+  [ret : AstType]
+  [allow-region-args : bool]) : ResultTcType
+  (let
+    [lifetimes : AstLifetimeList
+      (match ret
+        [(AstTyStructArgs _ params-lifetimes) params-lifetimes]
+        [(AstTyEnumArgs _ params-lifetimes) params-lifetimes]
+        [_ AstLifetimeNil])]
+    (match (tc-infer-call-lifetime-subst
+      ctx
+      env
+      args
+      params
+      lifetimes
+      TcLifetimeSubstNil)
+      [(OkTcLifetimeSubst subst)
+        (let
+          [target : AstType
+            (tc-tag-active-region env (tc-lifetime-subst-type subst ret))]
+          [resolved-params : AstTypeList
+            (tc-lifetime-subst-type-list subst params)]
+          (match (tc-check-call-args
+            ctx
+            env
+            args
+            resolved-params
+            allow-region-args
+            (AstSomeType target))
+            [(OkTcUnit) (OkTcType target)]
+            [(ErrTcUnit message) (ErrTcType message)]))]
+      [(ErrTcLifetimeSubst message) (ErrTcType message)])))
+
 (define (tc-call-function-type
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -3905,20 +4806,30 @@
   (let
     [allow-region-args : bool
       (tc-call-region-args-allowed-for-func ctx env func)]
-    [constructor-target : AstMaybeType
-      (tc-call-constructor-target-for-func ctx env func params ret)]
-    (match (tc-check-call-args
-      ctx
-      env
-      args
-      params
-      allow-region-args
-      constructor-target)
-      [(OkTcUnit)
-        (match constructor-target
-          [(AstSomeType target) (OkTcType target)]
-          [(AstNoType) (OkTcType (tc-tag-active-region env ret))])]
-      [(ErrTcUnit message) (ErrTcType message)])))
+    (if (tc-call-lifetime-constructor-for-func? ctx func ret)
+      (tc-call-lifetime-constructor-type
+        ctx
+        env
+        func
+        args
+        params
+        ret
+        allow-region-args)
+      (let
+        [constructor-target : AstMaybeType
+          (tc-call-constructor-target-for-func ctx env func params ret)]
+        (match (tc-check-call-args
+          ctx
+          env
+          args
+          params
+          allow-region-args
+          constructor-target)
+          [(OkTcUnit)
+            (match constructor-target
+              [(AstSomeType target) (OkTcType target)]
+              [(AstNoType) (OkTcType (tc-tag-active-region env ret))])]
+          [(ErrTcUnit message) (ErrTcType message)])))))
 
 (define (tc-check-call-args
   [ctx : TcContext]
@@ -4040,8 +4951,23 @@
                     enum-name
                     (box-get inner))]
                 [_ (ErrTcType "typecheck: arity mismatch")])]
+            [(AstTyEnumArgs enum-name _)
+              (match args
+                [(AstExprNil)
+                  (tc-nullary-variant-call-expr
+                    ctx
+                    env
+                    func
+                    enum-name
+                    (box-get inner))]
+                [_ (ErrTcType "typecheck: arity mismatch")])]
             [_ (ErrTcType "typecheck: call target is not a function")])]
         [(AstTyEnum enum-name)
+          (match args
+            [(AstExprNil)
+              (tc-nullary-variant-call-expr ctx env func enum-name fn-ty)]
+            [_ (ErrTcType "typecheck: arity mismatch")])]
+        [(AstTyEnumArgs enum-name _)
           (match args
             [(AstExprNil)
               (tc-nullary-variant-call-expr ctx env func enum-name fn-ty)]
@@ -6648,11 +7574,28 @@
               (string-eq (compiler-symbol-module-key module name) enum-name))
               (OkAstVariantDefList variants)
               (tc-program-enum-variants-list-in-module rest enum-name module))]
+          [(AstDeclDefEnumLifetimes name _ variants)
+            (if (or
+              (string-eq name enum-name)
+              (string-eq (compiler-symbol-module-key module name) enum-name))
+              (OkAstVariantDefList variants)
+              (tc-program-enum-variants-list-in-module rest enum-name module))]
           [(AstDeclComptimeDecl template-box)
             (let
               [template : AstDecl (box-get template-box)]
               (match template
                 [(AstDeclDefEnum name variants)
+                  (if (or
+                    (string-eq name enum-name)
+                    (string-eq
+                      (compiler-symbol-module-key module name)
+                      enum-name))
+                    (OkAstVariantDefList variants)
+                    (tc-program-enum-variants-list-in-module
+                      rest
+                      enum-name
+                      module))]
+                [(AstDeclDefEnumLifetimes name _ variants)
                   (if (or
                     (string-eq name enum-name)
                     (string-eq
@@ -6862,6 +7805,8 @@
                 (match decl
                   [(AstDeclDefStruct _ repr cleanup fields)
                     (OkTcStructDecl (TcStructDecl repr cleanup fields))]
+                  [(AstDeclDefStructLifetimes _ _ repr cleanup fields)
+                    (OkTcStructDecl (TcStructDecl repr cleanup fields))]
                   [_
                     (ErrTcStructDecl
                       "typecheck: struct symbol owner is not a struct")])]
@@ -6985,7 +7930,11 @@
     [(AstTyArray elem _)
       (tc-inline-aggregate-type-finite-ok ctx (box-get elem) stack)]
     [(AstTyEnum name) (tc-inline-aggregate-nominal-finite-ok ctx name stack)]
+    [(AstTyEnumArgs name _)
+      (tc-inline-aggregate-nominal-finite-ok ctx name stack)]
     [(AstTyStruct name) (tc-inline-aggregate-nominal-finite-ok ctx name stack)]
+    [(AstTyStructArgs name _)
+      (tc-inline-aggregate-nominal-finite-ok ctx name stack)]
     [_ OkTcUnit]))
 
 (define (tc-inline-aggregate-layout-finite-ok [ctx : TcContext] [name : String]) : ResultTcUnit
@@ -7297,6 +8246,8 @@
     [(AstTyString) (OkTcLayoutInfo (tc-inline-aggregate-pointer-layout-info))]
     [(AstTyStr) (OkTcLayoutInfo (tc-inline-aggregate-pointer-layout-info))]
     [(AstTyVar _) (OkTcLayoutInfo (tc-inline-aggregate-pointer-layout-info))]
+    [(AstTyVarArgs _ _)
+      (OkTcLayoutInfo (tc-inline-aggregate-pointer-layout-info))]
     [(AstTyTuple elems)
       (tc-inline-aggregate-type-list-layout-info ctx elems 0 0 stack)]
     [(AstTyArray elem count)
@@ -7321,7 +8272,23 @@
               (tc-inline-aggregate-layout-size layout)
               (tc-inline-aggregate-layout-align layout)))]
         [(ErrTcInlineAggregateLayout message) (ErrTcLayoutInfo message)])]
+    [(AstTyStructArgs name _)
+      (match (tc-inline-aggregate-layout-for-with-stack ctx name stack)
+        [(OkTcInlineAggregateLayout layout)
+          (OkTcLayoutInfo
+            (TcLayoutInfo
+              (tc-inline-aggregate-layout-size layout)
+              (tc-inline-aggregate-layout-align layout)))]
+        [(ErrTcInlineAggregateLayout message) (ErrTcLayoutInfo message)])]
     [(AstTyEnum name)
+      (match (tc-inline-aggregate-layout-for-with-stack ctx name stack)
+        [(OkTcInlineAggregateLayout layout)
+          (OkTcLayoutInfo
+            (TcLayoutInfo
+              (tc-inline-aggregate-layout-size layout)
+              (tc-inline-aggregate-layout-align layout)))]
+        [(ErrTcInlineAggregateLayout message) (ErrTcLayoutInfo message)])]
+    [(AstTyEnumArgs name _)
       (match (tc-inline-aggregate-layout-for-with-stack ctx name stack)
         [(OkTcInlineAggregateLayout layout)
           (OkTcLayoutInfo
@@ -7374,6 +8341,30 @@
     [(AstTyPtr _) (OkTcLayoutInfo (TcLayoutInfo 8 8))]
     [(AstTyMutPtr _) (OkTcLayoutInfo (TcLayoutInfo 8 8))]
     [(AstTyStruct nested)
+      (match (tc-struct-decl ctx nested)
+        [(OkTcStructDecl decl)
+          (match decl
+            [(TcStructDecl repr _ _)
+              (if (ast-struct-repr-c? repr)
+                (match (tc-repr-c-struct-layout-with-seen ctx nested seen)
+                  [(OkTcReprCLayout layout)
+                    (OkTcLayoutInfo
+                      (TcLayoutInfo
+                        (tc-repr-c-layout-size layout)
+                        (tc-repr-c-layout-align layout)))]
+                  [(ErrTcReprCLayout message) (ErrTcLayoutInfo message)])
+                (ErrTcLayoutInfo
+                  (tc-cat3
+                    "typecheck: repr c struct "
+                    owner
+                    (tc-cat3
+                      " field "
+                      field
+                      (string-append
+                        " references default-layout struct "
+                        nested)))))])]
+        [(ErrTcStructDecl message) (ErrTcLayoutInfo message)])]
+    [(AstTyStructArgs nested _)
       (match (tc-struct-decl ctx nested)
         [(OkTcStructDecl decl)
           (match decl
@@ -7550,7 +8541,25 @@
                 rest
                 module
                 (tc-ctfe-layout-add-names layouts info name module)))]
+          [(AstDeclDefStructLifetimes name _ repr _ _)
+            (let
+              [key : String (compiler-symbol-module-key module name)]
+              [info : CtfeLayoutInfo (tc-ctfe-struct-layout-info ctx key repr)]
+              (tc-ctfe-layouts-from-decls
+                ctx
+                rest
+                module
+                (tc-ctfe-layout-add-names layouts info name module)))]
           [(AstDeclDefEnum name _)
+            (let
+              [key : String (compiler-symbol-module-key module name)]
+              [info : CtfeLayoutInfo (tc-ctfe-type-layout-info key)]
+              (tc-ctfe-layouts-from-decls
+                ctx
+                rest
+                module
+                (tc-ctfe-layout-add-names layouts info name module)))]
+          [(AstDeclDefEnumLifetimes name _ _)
             (let
               [key : String (compiler-symbol-module-key module name)]
               [info : CtfeLayoutInfo (tc-ctfe-type-layout-info key)]
@@ -7573,7 +8582,26 @@
                       rest
                       module
                       (tc-ctfe-layout-add-names layouts info name module)))]
+                [(AstDeclDefStructLifetimes name _ repr _ _)
+                  (let
+                    [key : String (compiler-symbol-module-key module name)]
+                    [info : CtfeLayoutInfo
+                      (tc-ctfe-struct-layout-info ctx key repr)]
+                    (tc-ctfe-layouts-from-decls
+                      ctx
+                      rest
+                      module
+                      (tc-ctfe-layout-add-names layouts info name module)))]
                 [(AstDeclDefEnum name _)
+                  (let
+                    [key : String (compiler-symbol-module-key module name)]
+                    [info : CtfeLayoutInfo (tc-ctfe-type-layout-info key)]
+                    (tc-ctfe-layouts-from-decls
+                      ctx
+                      rest
+                      module
+                      (tc-ctfe-layout-add-names layouts info name module)))]
+                [(AstDeclDefEnumLifetimes name _ _)
                   (let
                     [key : String (compiler-symbol-module-key module name)]
                     [info : CtfeLayoutInfo (tc-ctfe-type-layout-info key)]
@@ -7733,6 +8761,11 @@
         [(OkAstVariantDefList variants)
           (tc-result-info-from-variants ctx enum-name variants)]
         [(ErrAstVariantDefList message) (ErrTcResultInfo message)])]
+    [(AstTyEnumArgs enum-name _)
+      (match (tc-program-enum-variants (tc-context-program ctx) enum-name)
+        [(OkAstVariantDefList variants)
+          (tc-result-info-from-variants ctx enum-name variants)]
+        [(ErrAstVariantDefList message) (ErrTcResultInfo message)])]
     [_ (ErrTcResultInfo "typecheck: try requires Result-like enum")]))
 
 (define (tc-try-expr [ctx : TcContext] [env : TcTypeEnv] [inner : AstExpr]) : ResultTcType
@@ -7818,12 +8851,16 @@
                 (match template
                   [(AstDeclDefEnum name _)
                     (OkTcString (compiler-symbol-module-key module name))]
+                  [(AstDeclDefEnumLifetimes name _ _)
+                    (OkTcString (compiler-symbol-module-key module name))]
                   [_ (ErrTcString "typecheck: variant owner is not enum")])
                 (tc-variant-owner-name-list rest target (+ index 1) module)))]
           [_
             (if (= target index)
               (match decl
                 [(AstDeclDefEnum name _)
+                  (OkTcString (compiler-symbol-module-key module name))]
+                [(AstDeclDefEnumLifetimes name _ _)
                   (OkTcString (compiler-symbol-module-key module name))]
                 [_ (ErrTcString "typecheck: variant owner is not enum")])
               (tc-variant-owner-name-list rest target (+ index 1) module))]))]))
@@ -7841,6 +8878,40 @@
         (tc-context-program ctx)
         handle)
         [(OkAstType ty) (OkTcType (tc-resolve-type ctx ty))]
+        [(ErrAstType message) (ErrTcType message)])]
+    [(NoneI64)
+      (ErrTcType
+        (string-append
+          "typecheck: unknown struct field "
+          (compiler-struct-field-key struct-name field)))]))
+
+(define (tc-lifetime-subst-from-nominal-args
+  [ctx : TcContext]
+  [name : String]
+  [args : AstLifetimeList]) : ResultTcLifetimeSubst
+  (match (tc-nominal-lifetimes ctx name)
+    [(OkTcLifetimeList params)
+      (tc-infer-lifetime-list params TcLifetimeSubstNil params args)]
+    [(ErrTcLifetimeList message) (ErrTcLifetimeSubst message)]))
+
+(define (tc-struct-field-type-with-args
+  [ctx : TcContext]
+  [struct-name : String]
+  [lifetimes : AstLifetimeList]
+  [field : String]) : ResultTcType
+  (match (compiler-registries-lookup-struct-field
+    (tc-context-registries ctx)
+    struct-name
+    field)
+    [(SomeI64 handle)
+      (match (compiler-registries-struct-field-type
+        (tc-context-program ctx)
+        handle)
+        [(OkAstType ty)
+          (match (tc-lifetime-subst-from-nominal-args ctx struct-name lifetimes)
+            [(OkTcLifetimeSubst subst)
+              (OkTcType (tc-resolve-type ctx (tc-lifetime-subst-type subst ty)))]
+            [(ErrTcLifetimeSubst message) (ErrTcType message)])]
         [(ErrAstType message) (ErrTcType message)])]
     [(NoneI64)
       (ErrTcType
@@ -7872,6 +8943,16 @@
       (match (tc-type-strip-region (tc-resolve-type ctx receiver-ty))
         [(AstTyStruct struct-name)
           (match (tc-struct-field-type ctx struct-name field)
+            [(OkTcType field-ty)
+              (OkTcBorrowPlace
+                (TcBorrowPlace lifetime (tc-borrow-referent-type field-ty)))]
+            [(ErrTcType message) (ErrTcBorrowPlace message)])]
+        [(AstTyStructArgs struct-name lifetimes)
+          (match (tc-struct-field-type-with-args
+            ctx
+            struct-name
+            lifetimes
+            field)
             [(OkTcType field-ty)
               (OkTcBorrowPlace
                 (TcBorrowPlace lifetime (tc-borrow-referent-type field-ty)))]
@@ -8071,6 +9152,7 @@
   [env : TcTypeEnv]
   [enum-name : String]
   [variant-name : String]
+  [enum-lifetimes : AstLifetimeList]
   [args : AstPatternList]
   [payload-region : TcMaybeString]) : ResultTcEnv
   (let
@@ -8086,17 +9168,41 @@
                 (tc-context-program ctx)
                 handle)
                 [(OkAstTypeList fields)
-                  (let
-                    [resolved-fields : AstTypeList
-                      (tc-resolve-type-list ctx fields)]
-                    (tc-bind-sub-pattern-list
-                      ctx
-                      env
-                      args
-                      (match payload-region
-                        [(TcSomeString region)
-                          (tc-tag-type-list-region region resolved-fields)]
-                        [(TcNoString) resolved-fields])))]
+                  (match enum-lifetimes
+                    [(AstLifetimeNil)
+                      (let
+                        [resolved-fields : AstTypeList
+                          (tc-resolve-type-list ctx fields)]
+                        (tc-bind-sub-pattern-list
+                          ctx
+                          env
+                          args
+                          (match payload-region
+                            [(TcSomeString region)
+                              (tc-tag-type-list-region region resolved-fields)]
+                            [(TcNoString) resolved-fields])))]
+                    [_
+                      (match (tc-lifetime-subst-from-nominal-args
+                        ctx
+                        enum-name
+                        enum-lifetimes)
+                        [(OkTcLifetimeSubst subst)
+                          (let
+                            [resolved-fields : AstTypeList
+                              (tc-resolve-type-list
+                                ctx
+                                (tc-lifetime-subst-type-list subst fields))]
+                            (tc-bind-sub-pattern-list
+                              ctx
+                              env
+                              args
+                              (match payload-region
+                                [(TcSomeString region)
+                                  (tc-tag-type-list-region
+                                    region
+                                    resolved-fields)]
+                                [(TcNoString) resolved-fields])))]
+                        [(ErrTcLifetimeSubst message) (ErrTcEnv message)])])]
                 [(ErrAstTypeList message) (ErrTcEnv message)])
               (ErrTcEnv
                 (string-append
@@ -8134,6 +9240,16 @@
                 env
                 enum-name
                 name
+                AstLifetimeNil
+                args
+                (tc-type-outer-region ty))]
+            [(AstTyEnumArgs enum-name lifetimes)
+              (tc-bind-variant-pattern
+                ctx
+                env
+                enum-name
+                name
+                lifetimes
                 args
                 (tc-type-outer-region ty))]
             [_
@@ -8155,6 +9271,7 @@
             env
             enum-name
             variant-name
+            AstLifetimeNil
             AstPatternNil
             (tc-type-outer-region scrut-ty))]
         [(AstPatVariant variant-name args-box)
@@ -8165,6 +9282,31 @@
               env
               enum-name
               variant-name
+              AstLifetimeNil
+              args
+              (tc-type-outer-region scrut-ty)))]
+        [_ (ErrTcEnv "typecheck: unsupported enum match pattern")])]
+    [(AstTyEnumArgs enum-name lifetimes)
+      (match pattern
+        [(AstPatWildcard) (OkTcEnv env)]
+        [(AstPatBinding variant-name)
+          (tc-bind-variant-pattern
+            ctx
+            env
+            enum-name
+            variant-name
+            lifetimes
+            AstPatternNil
+            (tc-type-outer-region scrut-ty))]
+        [(AstPatVariant variant-name args-box)
+          (let
+            [args : AstPatternList (box-get args-box)]
+            (tc-bind-variant-pattern
+              ctx
+              env
+              enum-name
+              variant-name
+              lifetimes
               args
               (tc-type-outer-region scrut-ty)))]
         [_ (ErrTcEnv "typecheck: unsupported enum match pattern")])]
@@ -8349,6 +9491,13 @@
                   (tc-variant-pattern-irrefutable? ctx enum-name name args)
                   false)]
               [(ErrAstVariantDefList _) false])]
+          [(AstTyEnumArgs enum-name _)
+            (match (tc-program-enum-variants (tc-context-program ctx) enum-name)
+              [(OkAstVariantDefList variants)
+                (if (tc-enum-has-single-variant? ctx variants enum-name name)
+                  (tc-variant-pattern-irrefutable? ctx enum-name name args)
+                  false)]
+              [(ErrAstVariantDefList _) false])]
           [_ false]))]
     [_ false]))
 
@@ -8459,6 +9608,10 @@
       (match pattern
         [(AstPatWildcard) true]
         [_ false])]
+    [(AstTyEnumArgs _ _)
+      (match pattern
+        [(AstPatWildcard) true]
+        [_ false])]
     [_
       (match pattern
         [(AstPatWildcard) true]
@@ -8497,6 +9650,11 @@
   [arms : AstMatchArmList]) : bool
   (match (tc-type-strip-region scrut-ty)
     [(AstTyEnum enum-name)
+      (match (tc-program-enum-variants (tc-context-program ctx) enum-name)
+        [(OkAstVariantDefList variants)
+          (tc-enum-variants-covered? ctx enum-name variants arms)]
+        [(ErrAstVariantDefList _) false])]
+    [(AstTyEnumArgs enum-name _)
       (match (tc-program-enum-variants (tc-context-program ctx) enum-name)
         [(OkAstVariantDefList variants)
           (tc-enum-variants-covered? ctx enum-name variants arms)]
@@ -9011,8 +10169,11 @@
   (match (tc-type-strip-region (tc-resolve-type ctx ty))
     [(AstTyString) true]
     [(AstTyEnum _) true]
+    [(AstTyEnumArgs _ _) true]
     [(AstTyStruct _) true]
+    [(AstTyStructArgs _ _) true]
     [(AstTyVar _) true]
+    [(AstTyVarArgs _ _) true]
     [_ (tc-type-copyable? ty)]))
 
 ;; with-escape is a first-class scratch-arena clone path, not a lexical
@@ -9588,6 +10749,16 @@
                     (OkTcType
                       (tc-project-from-region-container receiver-ty field-ty))]
                   [(ErrTcType message) (ErrTcType message)])]
+              [(AstTyStructArgs struct-name lifetimes)
+                (match (tc-struct-field-type-with-args
+                  ctx
+                  struct-name
+                  lifetimes
+                  field)
+                  [(OkTcType field-ty)
+                    (OkTcType
+                      (tc-project-from-region-container receiver-ty field-ty))]
+                  [(ErrTcType message) (ErrTcType message)])]
               [_ (ErrTcType "typecheck: struct-get requires struct")])]
           [(ErrTcType message) (ErrTcType message)]))]
     [(AstExprWithRegion region body)
@@ -9778,7 +10949,9 @@
     [(AstTyString) true]
     [(AstTyDynArray _) true]
     [(AstTyEnum _) true]
+    [(AstTyEnumArgs _ _) true]
     [(AstTyStruct _) true]
+    [(AstTyStructArgs _ _) true]
     [_ false]))
 
 (define (tc-extern-abi-unsupported-message [position : String] [ty : AstType]) : String
@@ -11904,6 +13077,12 @@
           (match decl
             [(TcStructDecl _ cleanup _) (ast-struct-cleanup? cleanup)])]
         [(ErrTcStructDecl _) false])]
+    [(AstTyStructArgs struct-name _)
+      (match (tc-struct-decl ctx struct-name)
+        [(OkTcStructDecl decl)
+          (match decl
+            [(TcStructDecl _ cleanup _) (ast-struct-cleanup? cleanup)])]
+        [(ErrTcStructDecl _) false])]
     [_ false]))
 
 (define (tc-struct-field-cleanup-outside-message
@@ -12126,6 +13305,8 @@
           (tc-check-defmacro ctx top-env params ret body))]
       [(AstDeclExtern _ metadata ty) (tc-check-extern-decl ctx metadata ty)]
       [(AstDeclDefStruct name repr cleanup fields)
+        (tc-check-cleanup-struct-decl ctx top-env name repr cleanup fields)]
+      [(AstDeclDefStructLifetimes name _ repr cleanup fields)
         (tc-check-cleanup-struct-decl ctx top-env name repr cleanup fields)]
       [(AstDeclComptimeDecl template-box)
         (let

@@ -30,6 +30,10 @@
   (OkAstTypeList AstTypeList)
   (ErrAstTypeList String))
 
+(defenum ResultAstLifetimeList
+  (OkAstLifetimeList AstLifetimeList)
+  (ErrAstLifetimeList String))
+
 (defenum ResultAstParam
   (OkAstParam AstParam)
   (ErrAstParam String))
@@ -67,8 +71,16 @@
   (ErrAstStructCleanup String))
 
 (defenum ResultAstStructDefParts
-  (OkAstStructDefParts AstStructRepr AstStructCleanup AstFieldDefList)
+  (OkAstStructDefParts
+    AstLifetimeList
+    AstStructRepr
+    AstStructCleanup
+    AstFieldDefList)
   (ErrAstStructDefParts String))
+
+(defenum ResultAstEnumDefParts
+  (OkAstEnumDefParts AstLifetimeList AstVariantDefList)
+  (ErrAstEnumDefParts String))
 
 (defenum ResultAstExternAbi
   (OkAstExternAbi AstExternAbi)
@@ -965,6 +977,43 @@
         [(ErrAstType message) (ErrAstTypeList message)])]
     [_ (ErrAstTypeList "parse: malformed type list")]))
 
+(define (parse-ast-lifetime-name? [dispatch : SymI64Env] [name : String]) : bool
+  (let
+    [tag : i64 (compiler-parse-dispatch-tag dispatch name)]
+    (not
+      (or
+        (and
+          (>= tag (compiler-parse-tag-ty-i64))
+          (<= tag (compiler-parse-tag-ty-str)))
+        (and
+          (>= tag (compiler-parse-tag-ty-func))
+          (<= tag (compiler-parse-tag-ty-box)))))))
+
+(define (parse-ast-lifetime-list
+  [dispatch : SymI64Env]
+  [s : Sexpr]
+  [message : String]) : ResultAstLifetimeList
+  (match s
+    [(SNil) (OkAstLifetimeList AstLifetimeNil)]
+    [(SCons (SSym name) tail)
+      (if (parse-ast-lifetime-name? dispatch name)
+        (match (parse-ast-lifetime-list dispatch tail message)
+          [(OkAstLifetimeList parsed-tail)
+            (OkAstLifetimeList (ast-lifetime-cons name parsed-tail))]
+          [(ErrAstLifetimeList parse-message)
+            (ErrAstLifetimeList parse-message)])
+        (ErrAstLifetimeList message))]
+    [(SCons _ _) (ErrAstLifetimeList message)]
+    [_ (ErrAstLifetimeList message)]))
+
+(define (parse-ast-lifetime-list-nonempty
+  [dispatch : SymI64Env]
+  [s : Sexpr]
+  [message : String]) : ResultAstLifetimeList
+  (match s
+    [(SNil) (ErrAstLifetimeList message)]
+    [_ (parse-ast-lifetime-list dispatch s message)]))
+
 (define (parse-ast-func-type-parts [dispatch : SymI64Env] [s : Sexpr]) : ResultAstFuncTypeParts
   (match s
     [(SCons ret (SNil))
@@ -1087,7 +1136,14 @@
               [(SCons _ (SCons _ (SNil)))
                 (ErrAstType "parse: region name must be an identifier")]
               [_ (ErrAstType "parse: malformed region type")])]
-          [else (ErrAstType (compiler-parse-generic-type-policy-message head))]))]
+          [else
+            (match (parse-ast-lifetime-list-nonempty
+              dispatch
+              rest
+              (compiler-parse-generic-type-policy-message head))
+              [(OkAstLifetimeList lifetimes)
+                (OkAstType (AstTyVarArgs head lifetimes))]
+              [(ErrAstLifetimeList message) (ErrAstType message)])]))]
     [_ (ErrAstType "parse: expected type")]))
 
 (define (parse-ast-param [dispatch : SymI64Env] [s : Sexpr]) : ResultAstParam
@@ -1246,6 +1302,12 @@
 (define (compiler-parse-metadata-key? [name : String]) : bool
   (and (> (string-length name) 0) (= (string-ref name 0) #:')))
 
+(define (parse-ast-aggregate-lifetimes-tail [tail : Sexpr]) : ResultAstLifetimeList
+  (parse-ast-lifetime-list-nonempty
+    (compiler-parse-dispatch-env)
+    tail
+    "parse: :lifetimes metadata expects at least one lifetime identifier"))
+
 (define (parse-ast-defstruct-repr-tail [tail : Sexpr]) : ResultAstStructRepr
   (match tail
     [(SCons (SSym name) (SNil))
@@ -1265,17 +1327,40 @@
 (define (parse-ast-defstruct-items
   [dispatch : SymI64Env]
   [items : SpannedSexpr]
+  [lifetimes : AstLifetimeList]
   [repr : AstStructRepr]
   [cleanup : AstStructCleanup]
+  [seen-lifetimes : bool]
   [seen-repr : bool]
   [seen-cleanup : bool]
   [seen-field : bool]) : ResultAstStructDefParts
   (match items
-    [(SpSNil _) (OkAstStructDefParts repr cleanup AstFieldDefNil)]
+    [(SpSNil _) (OkAstStructDefParts lifetimes repr cleanup AstFieldDefNil)]
     [(SpSCons head tail _)
       (match (spanned-sexpr-form head)
         [(SCons (SSym key) after-key)
           (cond
+            [(string-eq key ":lifetimes")
+              (if seen-field
+                (ErrAstStructDefParts
+                  "parse: defstruct metadata must appear before fields")
+                (if seen-lifetimes
+                  (ErrAstStructDefParts
+                    "parse: duplicate defstruct :lifetimes metadata")
+                  (match (parse-ast-aggregate-lifetimes-tail after-key)
+                    [(OkAstLifetimeList next-lifetimes)
+                      (parse-ast-defstruct-items
+                        dispatch
+                        tail
+                        next-lifetimes
+                        repr
+                        cleanup
+                        true
+                        seen-repr
+                        seen-cleanup
+                        false)]
+                    [(ErrAstLifetimeList message)
+                      (ErrAstStructDefParts message)])))]
             [(string-eq key ":repr")
               (if seen-field
                 (ErrAstStructDefParts
@@ -1293,8 +1378,10 @@
                         (parse-ast-defstruct-items
                           dispatch
                           tail
+                          lifetimes
                           next-repr
                           cleanup
+                          seen-lifetimes
                           true
                           seen-cleanup
                           false))]
@@ -1314,8 +1401,10 @@
                         (parse-ast-defstruct-items
                           dispatch
                           tail
+                          lifetimes
                           repr
                           next-cleanup
+                          seen-lifetimes
                           seen-repr
                           true
                           false))]
@@ -1338,16 +1427,20 @@
                   (match (parse-ast-defstruct-items
                     dispatch
                     tail
+                    lifetimes
                     repr
                     cleanup
+                    seen-lifetimes
                     seen-repr
                     seen-cleanup
                     true)
                     [(OkAstStructDefParts
+                        parsed-lifetimes
                         parsed-repr
                         parsed-cleanup
                         parsed-rest)
                       (OkAstStructDefParts
+                        parsed-lifetimes
                         parsed-repr
                         parsed-cleanup
                         (ast-field-def-cons parsed-field parsed-rest))]
@@ -1363,13 +1456,20 @@
               (match (parse-ast-defstruct-items
                 dispatch
                 tail
+                lifetimes
                 repr
                 cleanup
+                seen-lifetimes
                 seen-repr
                 seen-cleanup
                 true)
-                [(OkAstStructDefParts parsed-repr parsed-cleanup parsed-rest)
+                [(OkAstStructDefParts
+                    parsed-lifetimes
+                    parsed-repr
+                    parsed-cleanup
+                    parsed-rest)
                   (OkAstStructDefParts
+                    parsed-lifetimes
                     parsed-repr
                     parsed-cleanup
                     (ast-field-def-cons parsed-field parsed-rest))]
@@ -1418,6 +1518,72 @@
             [(ErrAstVariantDefList message) (ErrAstVariantDefList message)])]
         [(ErrAstVariantDef message) (ErrAstVariantDefList message)])]
     [_ (ErrAstVariantDefList "parse: malformed variant list")]))
+
+(define (parse-ast-defenum-items
+  [dispatch : SymI64Env]
+  [items : SpannedSexpr]
+  [lifetimes : AstLifetimeList]
+  [seen-lifetimes : bool]
+  [seen-variant : bool]) : ResultAstEnumDefParts
+  (match items
+    [(SpSNil _) (OkAstEnumDefParts lifetimes AstVariantDefNil)]
+    [(SpSCons head tail _)
+      (match (spanned-sexpr-form head)
+        [(SCons (SSym key) after-key)
+          (cond
+            [(not (compiler-parse-metadata-key? key))
+              (match (parse-ast-variant-def dispatch (spanned-sexpr-form head))
+                [(OkAstVariantDef parsed-variant)
+                  (match (parse-ast-defenum-items
+                    dispatch
+                    tail
+                    lifetimes
+                    seen-lifetimes
+                    true)
+                    [(OkAstEnumDefParts parsed-lifetimes parsed-rest)
+                      (OkAstEnumDefParts
+                        parsed-lifetimes
+                        (ast-variant-def-cons parsed-variant parsed-rest))]
+                    [(ErrAstEnumDefParts message) (ErrAstEnumDefParts message)])]
+                [(ErrAstVariantDef message) (ErrAstEnumDefParts message)])]
+            [(not (string-eq key ":lifetimes"))
+              (if (string-eq key ":cleanup")
+                (ErrAstEnumDefParts
+                  "parse: defenum cleanup metadata is reserved")
+                (ErrAstEnumDefParts
+                  (string-append "parse: unknown defenum metadata " key)))]
+            [seen-variant
+              (ErrAstEnumDefParts
+                "parse: defenum metadata must appear before variants")]
+            [seen-lifetimes
+              (ErrAstEnumDefParts
+                "parse: duplicate defenum :lifetimes metadata")]
+            [else
+              (match (parse-ast-aggregate-lifetimes-tail after-key)
+                [(OkAstLifetimeList next-lifetimes)
+                  (parse-ast-defenum-items
+                    dispatch
+                    tail
+                    next-lifetimes
+                    true
+                    false)]
+                [(ErrAstLifetimeList message) (ErrAstEnumDefParts message)])])]
+        [_
+          (match (parse-ast-variant-def dispatch (spanned-sexpr-form head))
+            [(OkAstVariantDef parsed-variant)
+              (match (parse-ast-defenum-items
+                dispatch
+                tail
+                lifetimes
+                seen-lifetimes
+                true)
+                [(OkAstEnumDefParts parsed-lifetimes parsed-rest)
+                  (OkAstEnumDefParts
+                    parsed-lifetimes
+                    (ast-variant-def-cons parsed-variant parsed-rest))]
+                [(ErrAstEnumDefParts message) (ErrAstEnumDefParts message)])]
+            [(ErrAstVariantDef message) (ErrAstEnumDefParts message)])])]
+    [_ (ErrAstEnumDefParts "parse: malformed variant list")]))
 
 (define (parse-ast-pattern-list [dispatch : SymI64Env] [s : Sexpr]) : ResultAstPatternList
   (match s
@@ -2889,15 +3055,24 @@
 (define (parse-ast-defenum [dispatch : SymI64Env] [rest : SpannedSexpr]) : ResultAstDecl
   (match rest
     [(SpSCons (SpSSym name _) variants _)
-      (match (spanned-sexpr-form variants)
-        [(SNil) (ErrAstDecl "parse: defenum needs at least one variant")]
-        [_
-          (match (parse-ast-variant-def-list
-            dispatch
-            (spanned-sexpr-form variants))
-            [(OkAstVariantDefList parsed-variants)
-              (OkAstDecl (AstDeclDefEnum name parsed-variants))]
-            [(ErrAstVariantDefList message) (ErrAstDecl message)])])]
+      (match (parse-ast-defenum-items
+        dispatch
+        variants
+        AstLifetimeNil
+        false
+        false)
+        [(OkAstEnumDefParts lifetimes parsed-variants)
+          (match parsed-variants
+            [(AstVariantDefNil)
+              (ErrAstDecl "parse: defenum needs at least one variant")]
+            [_
+              (match lifetimes
+                [(AstLifetimeNil)
+                  (OkAstDecl (AstDeclDefEnum name parsed-variants))]
+                [_
+                  (OkAstDecl
+                    (AstDeclDefEnumLifetimes name lifetimes parsed-variants))])])]
+        [(ErrAstEnumDefParts message) (ErrAstDecl message)])]
     [_ (ErrAstDecl "parse: malformed defenum")]))
 
 (define (parse-ast-defstruct [dispatch : SymI64Env] [rest : SpannedSexpr]) : ResultAstDecl
@@ -2906,16 +3081,29 @@
       (match (parse-ast-defstruct-items
         dispatch
         fields
+        AstLifetimeNil
         (AstStructReprDefault)
         (AstStructNoCleanup)
         false
         false
+        false
         false)
-        [(OkAstStructDefParts repr cleanup parsed-fields)
+        [(OkAstStructDefParts lifetimes repr cleanup parsed-fields)
           (match parsed-fields
             [(AstFieldDefNil)
               (ErrAstDecl "parse: defstruct needs at least one field")]
-            [_ (OkAstDecl (AstDeclDefStruct name repr cleanup parsed-fields))])]
+            [_
+              (match lifetimes
+                [(AstLifetimeNil)
+                  (OkAstDecl (AstDeclDefStruct name repr cleanup parsed-fields))]
+                [_
+                  (OkAstDecl
+                    (AstDeclDefStructLifetimes
+                      name
+                      lifetimes
+                      repr
+                      cleanup
+                      parsed-fields))])])]
         [(ErrAstStructDefParts message) (ErrAstDecl message)])]
     [_ (ErrAstDecl "parse: malformed defstruct")]))
 
@@ -4986,7 +5174,16 @@
           (and
             (compiler-parse-ok?
               "(define (f [p : Point]) : i64 (struct-get p x))")
-            (compiler-parse-ok? "(define (f) : Point (Point 1 2))")))))))
+            (and
+              (compiler-parse-ok? "(define (f) : Point (Point 1 2))")
+              (and
+                (compiler-parse-ok?
+                  "(defstruct RefBox (:lifetimes a) (value (& a i64)))")
+                (and
+                  (compiler-parse-ok?
+                    "(defenum RefOption (:lifetimes a) (SomeRef (& a i64)) (NoRef))")
+                  (compiler-parse-ok?
+                    "(define (f [box : (RefBox n)]) : (& n i64) (struct-get box value))"))))))))))
 
 ;
 ;; let-binding parsing (#1072 / #1041): accept untyped, multi-binding, and

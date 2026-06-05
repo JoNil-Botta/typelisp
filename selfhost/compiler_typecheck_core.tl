@@ -2477,13 +2477,7 @@
             (ErrTcUnit
               (tc-struct-cleanup-repr-c-message
                 (compiler-symbol-module-key (tc-context-module ctx) name)))
-            (if (ast-struct-repr-c? repr)
-              (match (tc-repr-c-struct-layout
-                ctx
-                (compiler-symbol-module-key (tc-context-module ctx) name))
-                [(OkTcReprCLayout _) OkTcUnit]
-                [(ErrTcReprCLayout message) (ErrTcUnit message)])
-              OkTcUnit))]
+            OkTcUnit)]
         [(ErrTcUnit message) (ErrTcUnit message)])]
     [(AstDeclDefStructLifetimes name lifetimes repr cleanup fields)
       (if (tc-lifetime-list-duplicates? lifetimes)
@@ -2494,13 +2488,7 @@
               (ErrTcUnit
                 (tc-struct-cleanup-repr-c-message
                   (compiler-symbol-module-key (tc-context-module ctx) name)))
-              (if (ast-struct-repr-c? repr)
-                (match (tc-repr-c-struct-layout
-                  ctx
-                  (compiler-symbol-module-key (tc-context-module ctx) name))
-                  [(OkTcReprCLayout _) OkTcUnit]
-                  [(ErrTcReprCLayout message) (ErrTcUnit message)])
-                OkTcUnit))]
+              OkTcUnit)]
           [(ErrTcUnit message) (ErrTcUnit message)]))]
     [(AstDeclIncludeStr _ _)
       (ErrTcUnit "typecheck: include-str must be expanded by compiler loader")]
@@ -8263,35 +8251,43 @@
 (define (tc-repr-c-struct-layout [ctx : TcContext] [struct-name : String]) : ResultTcReprCLayout
   (tc-repr-c-struct-layout-with-seen ctx struct-name TcStringNil))
 
-(define (tc-ctfe-layout-fields [fields : TcReprCFieldLayoutList]) : CtfeLayoutFieldList
+(define (tc-ctfe-inline-layout-fields [fields : TcInlineFieldLayoutList]) : CtfeLayoutFieldList
   (match fields
-    [(TcReprCFieldLayoutNil) CtfeLayoutFieldNil]
-    [(TcReprCFieldLayoutCons field rest)
+    [(TcInlineFieldLayoutNil) CtfeLayoutFieldNil]
+    [(TcInlineFieldLayoutCons field rest)
       (match field
-        [(TcReprCFieldLayout name _ offset)
+        [(TcInlineFieldLayout name _ offset)
           (CtfeLayoutFieldCons
             (CtfeLayoutField name offset)
-            (tc-ctfe-layout-fields rest))])]))
+            (tc-ctfe-inline-layout-fields rest))])]))
 
-(define (tc-ctfe-struct-layout-info
-  [ctx : TcContext]
-  [struct-name : String]
-  [repr : AstStructRepr]) : CtfeLayoutInfo
-  (if (ast-struct-repr-c? repr)
-    (match (tc-repr-c-struct-layout ctx struct-name)
-      [(OkTcReprCLayout layout)
-        (CtfeLayoutInfo
-          struct-name
-          true
-          (tc-repr-c-layout-size layout)
-          (tc-repr-c-layout-align layout)
-          (tc-ctfe-layout-fields (tc-repr-c-layout-fields layout)))]
-      [(ErrTcReprCLayout _)
-        (CtfeLayoutInfo struct-name true 8 8 CtfeLayoutFieldNil)])
-    (CtfeLayoutInfo struct-name false 8 8 CtfeLayoutFieldNil)))
+(define (tc-ctfe-inline-aggregate-layout-info
+  [name : String]
+  [layout : TcInlineAggregateLayout]) : CtfeLayoutInfo
+  (match layout
+    [(TcInlineStructLayout size align fields)
+      (CtfeLayoutInfo
+        name
+        true
+        size
+        align
+        (tc-ctfe-inline-layout-fields fields))]
+    [(TcInlineEnumLayout size align _)
+      (CtfeLayoutInfo name false size align CtfeLayoutFieldNil)]))
 
-(define (tc-ctfe-type-layout-info [type-name : String]) : CtfeLayoutInfo
-  (CtfeLayoutInfo type-name false 8 8 CtfeLayoutFieldNil))
+(define (tc-ctfe-struct-layout-info [ctx : TcContext] [struct-name : String]) : CtfeLayoutInfo
+  (match (tc-inline-aggregate-layout-for ctx struct-name)
+    [(OkTcInlineAggregateLayout layout)
+      (tc-ctfe-inline-aggregate-layout-info struct-name layout)]
+    [(ErrTcInlineAggregateLayout _)
+      (CtfeLayoutInfo struct-name false 8 8 CtfeLayoutFieldNil)]))
+
+(define (tc-ctfe-type-layout-info [ctx : TcContext] [type-name : String]) : CtfeLayoutInfo
+  (match (tc-inline-aggregate-layout-for ctx type-name)
+    [(OkTcInlineAggregateLayout layout)
+      (tc-ctfe-inline-aggregate-layout-info type-name layout)]
+    [(ErrTcInlineAggregateLayout _)
+      (CtfeLayoutInfo type-name false 8 8 CtfeLayoutFieldNil)]))
 
 (define (tc-ctfe-layout-add-alias
   [layouts : CtfeLayoutInfoList]
@@ -8328,19 +8324,19 @@
         (match decl
           [(AstDeclModule next-module)
             (tc-ctfe-layouts-from-decls ctx rest next-module layouts)]
-          [(AstDeclDefStruct name repr _ _)
+          [(AstDeclDefStruct name _ _ _)
             (let
               [key : String (compiler-symbol-module-key module name)]
-              [info : CtfeLayoutInfo (tc-ctfe-struct-layout-info ctx key repr)]
+              [info : CtfeLayoutInfo (tc-ctfe-struct-layout-info ctx key)]
               (tc-ctfe-layouts-from-decls
                 ctx
                 rest
                 module
                 (tc-ctfe-layout-add-names layouts info name module)))]
-          [(AstDeclDefStructLifetimes name _ repr _ _)
+          [(AstDeclDefStructLifetimes name _ _ _ _)
             (let
               [key : String (compiler-symbol-module-key module name)]
-              [info : CtfeLayoutInfo (tc-ctfe-struct-layout-info ctx key repr)]
+              [info : CtfeLayoutInfo (tc-ctfe-struct-layout-info ctx key)]
               (tc-ctfe-layouts-from-decls
                 ctx
                 rest
@@ -8349,7 +8345,7 @@
           [(AstDeclDefEnum name _)
             (let
               [key : String (compiler-symbol-module-key module name)]
-              [info : CtfeLayoutInfo (tc-ctfe-type-layout-info key)]
+              [info : CtfeLayoutInfo (tc-ctfe-type-layout-info ctx key)]
               (tc-ctfe-layouts-from-decls
                 ctx
                 rest
@@ -8358,7 +8354,7 @@
           [(AstDeclDefEnumLifetimes name _ _)
             (let
               [key : String (compiler-symbol-module-key module name)]
-              [info : CtfeLayoutInfo (tc-ctfe-type-layout-info key)]
+              [info : CtfeLayoutInfo (tc-ctfe-type-layout-info ctx key)]
               (tc-ctfe-layouts-from-decls
                 ctx
                 rest
@@ -8368,21 +8364,19 @@
             (let
               [template : AstDecl (box-get template-box)]
               (match template
-                [(AstDeclDefStruct name repr _ _)
+                [(AstDeclDefStruct name _ _ _)
                   (let
                     [key : String (compiler-symbol-module-key module name)]
-                    [info : CtfeLayoutInfo
-                      (tc-ctfe-struct-layout-info ctx key repr)]
+                    [info : CtfeLayoutInfo (tc-ctfe-struct-layout-info ctx key)]
                     (tc-ctfe-layouts-from-decls
                       ctx
                       rest
                       module
                       (tc-ctfe-layout-add-names layouts info name module)))]
-                [(AstDeclDefStructLifetimes name _ repr _ _)
+                [(AstDeclDefStructLifetimes name _ _ _ _)
                   (let
                     [key : String (compiler-symbol-module-key module name)]
-                    [info : CtfeLayoutInfo
-                      (tc-ctfe-struct-layout-info ctx key repr)]
+                    [info : CtfeLayoutInfo (tc-ctfe-struct-layout-info ctx key)]
                     (tc-ctfe-layouts-from-decls
                       ctx
                       rest
@@ -8391,7 +8385,7 @@
                 [(AstDeclDefEnum name _)
                   (let
                     [key : String (compiler-symbol-module-key module name)]
-                    [info : CtfeLayoutInfo (tc-ctfe-type-layout-info key)]
+                    [info : CtfeLayoutInfo (tc-ctfe-type-layout-info ctx key)]
                     (tc-ctfe-layouts-from-decls
                       ctx
                       rest
@@ -8400,7 +8394,7 @@
                 [(AstDeclDefEnumLifetimes name _ _)
                   (let
                     [key : String (compiler-symbol-module-key module name)]
-                    [info : CtfeLayoutInfo (tc-ctfe-type-layout-info key)]
+                    [info : CtfeLayoutInfo (tc-ctfe-type-layout-info ctx key)]
                     (tc-ctfe-layouts-from-decls
                       ctx
                       rest

@@ -1745,8 +1745,14 @@
 (define (tc-source-pattern-policy-ok [ctx : TcContext] [pattern : AstPattern]) : ResultTcUnit
   (match pattern
     [(AstPatVar _ maybe-ty) (tc-source-maybe-type-policy-ok ctx maybe-ty)]
-    [(AstPatTuple patterns) (tc-source-pattern-list-policy-ok ctx patterns)]
-    [(AstPatVariant _ patterns) (tc-source-pattern-list-policy-ok ctx patterns)]
+    [(AstPatTuple patterns-box)
+      (let
+        [patterns : AstPatternList (box-get patterns-box)]
+        (tc-source-pattern-list-policy-ok ctx patterns))]
+    [(AstPatVariant _ patterns-box)
+      (let
+        [patterns : AstPatternList (box-get patterns-box)]
+        (tc-source-pattern-list-policy-ok ctx patterns))]
     [_ OkTcUnit]))
 
 (define (tc-source-match-arm-list-policy-ok
@@ -1758,13 +1764,15 @@
       (let
         [rest : AstMatchArmList (box-get rest)]
         (match arm
-          [(AstMatchArm pattern body)
-            (match (tc-source-pattern-policy-ok ctx pattern)
-              [(OkTcUnit)
-                (match (tc-source-expr-policy-ok ctx body)
-                  [(OkTcUnit) (tc-source-match-arm-list-policy-ok ctx rest)]
-                  [(ErrTcUnit message) (ErrTcUnit message)])]
-              [(ErrTcUnit message) (ErrTcUnit message)])]))]))
+          [(AstMatchArm pattern body-box)
+            (let
+              [body : AstExpr (box-get body-box)]
+              (match (tc-source-pattern-policy-ok ctx pattern)
+                [(OkTcUnit)
+                  (match (tc-source-expr-policy-ok ctx body)
+                    [(OkTcUnit) (tc-source-match-arm-list-policy-ok ctx rest)]
+                    [(ErrTcUnit message) (ErrTcUnit message)])]
+                [(ErrTcUnit message) (ErrTcUnit message)]))]))]))
 
 (define (tc-source-let-binding-list-policy-ok
   [ctx : TcContext]
@@ -1775,13 +1783,15 @@
       (let
         [rest : AstLetBindingList (box-get rest)]
         (match binding
-          [(AstLetBinding _ maybe-ty init)
-            (match (tc-source-maybe-type-policy-ok ctx maybe-ty)
-              [(OkTcUnit)
-                (match (tc-source-expr-policy-ok ctx init)
-                  [(OkTcUnit) (tc-source-let-binding-list-policy-ok ctx rest)]
-                  [(ErrTcUnit message) (ErrTcUnit message)])]
-              [(ErrTcUnit message) (ErrTcUnit message)])]))]))
+          [(AstLetBinding _ maybe-ty init-box)
+            (let
+              [init : AstExpr (box-get init-box)]
+              (match (tc-source-maybe-type-policy-ok ctx maybe-ty)
+                [(OkTcUnit)
+                  (match (tc-source-expr-policy-ok ctx init)
+                    [(OkTcUnit) (tc-source-let-binding-list-policy-ok ctx rest)]
+                    [(ErrTcUnit message) (ErrTcUnit message)])]
+                [(ErrTcUnit message) (ErrTcUnit message)]))]))]))
 
 (define (tc-source-resource-binding-list-policy-ok
   [ctx : TcContext]
@@ -1792,14 +1802,17 @@
       (let
         [rest : AstResourceBindingList (box-get rest)]
         (match binding
-          [(AstResourceBinding _ init cleanup)
-            (match (tc-source-expr-policy-ok ctx init)
-              [(OkTcUnit)
-                (match (tc-source-expr-policy-ok ctx cleanup)
-                  [(OkTcUnit)
-                    (tc-source-resource-binding-list-policy-ok ctx rest)]
-                  [(ErrTcUnit message) (ErrTcUnit message)])]
-              [(ErrTcUnit message) (ErrTcUnit message)])]))]))
+          [(AstResourceBinding _ init-box cleanup-box)
+            (let
+              [init : AstExpr (box-get init-box)]
+              [cleanup : AstExpr (box-get cleanup-box)]
+              (match (tc-source-expr-policy-ok ctx init)
+                [(OkTcUnit)
+                  (match (tc-source-expr-policy-ok ctx cleanup)
+                    [(OkTcUnit)
+                      (tc-source-resource-binding-list-policy-ok ctx rest)]
+                    [(ErrTcUnit message) (ErrTcUnit message)])]
+                [(ErrTcUnit message) (ErrTcUnit message)]))]))]))
 
 (define (tc-source-expr-list-policy-ok [ctx : TcContext] [exprs : AstExprList]) : ResultTcUnit
   (match exprs
@@ -1830,123 +1843,262 @@
 
 (define (tc-source-expr-policy-ok [ctx : TcContext] [expr : AstExpr]) : ResultTcUnit
   (match expr
-    [(AstExprSpanned inner _) (tc-source-expr-policy-ok ctx inner)]
-    [(AstExprBinary _ left right)
-      (tc-source-expr-pair-policy-ok ctx left right)]
-    [(AstExprUnary _ inner) (tc-source-expr-policy-ok ctx inner)]
-    [(AstExprCall func args)
-      (match (tc-source-expr-policy-ok ctx func)
-        [(OkTcUnit) (tc-source-expr-list-policy-ok ctx args)]
-        [(ErrTcUnit message) (ErrTcUnit message)])]
+    [(AstExprSpanned inner-box _)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (tc-source-expr-policy-ok ctx inner))]
+    [(AstExprBinary _ left-box right-box)
+      (let
+        [left : AstExpr (box-get left-box)]
+        [right : AstExpr (box-get right-box)]
+        (tc-source-expr-pair-policy-ok ctx left right))]
+    [(AstExprUnary _ inner-box)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (tc-source-expr-policy-ok ctx inner))]
+    [(AstExprCall func-box args)
+      (let
+        [func : AstExpr (box-get func-box)]
+        (match (tc-source-expr-policy-ok ctx func)
+          [(OkTcUnit) (tc-source-expr-list-policy-ok ctx args)]
+          [(ErrTcUnit message) (ErrTcUnit message)]))]
     [(AstExprTypeLiteral ty) (tc-source-type-policy-ok ctx ty)]
-    [(AstExprIf cond then-branch else-branch)
-      (tc-source-expr-triple-policy-ok ctx cond then-branch else-branch)]
-    [(AstExprLet bindings body)
-      (match (tc-source-let-binding-list-policy-ok ctx bindings)
-        [(OkTcUnit) (tc-source-expr-policy-ok ctx body)]
-        [(ErrTcUnit message) (ErrTcUnit message)])]
-    [(AstExprLambda params maybe-ret body)
-      (match (tc-source-param-list-policy-ok ctx params)
-        [(OkTcUnit)
-          (match (tc-source-maybe-type-policy-ok ctx maybe-ret)
-            [(OkTcUnit)
-              (if (tc-maybe-type-contains-reference? maybe-ret)
-                (ErrTcUnit
-                  "typecheck: returning references requires lifetime support (#804)")
-                (tc-source-expr-policy-ok ctx body))]
-            [(ErrTcUnit message) (ErrTcUnit message)])]
-        [(ErrTcUnit message) (ErrTcUnit message)])]
+    [(AstExprIf cond-box then-branch-box else-branch-box)
+      (let
+        [cond : AstExpr (box-get cond-box)]
+        [then-branch : AstExpr (box-get then-branch-box)]
+        [else-branch : AstExpr (box-get else-branch-box)]
+        (tc-source-expr-triple-policy-ok ctx cond then-branch else-branch))]
+    [(AstExprLet bindings body-box)
+      (let
+        [body : AstExpr (box-get body-box)]
+        (match (tc-source-let-binding-list-policy-ok ctx bindings)
+          [(OkTcUnit) (tc-source-expr-policy-ok ctx body)]
+          [(ErrTcUnit message) (ErrTcUnit message)]))]
+    [(AstExprLambda params maybe-ret body-box)
+      (let
+        [body : AstExpr (box-get body-box)]
+        (match (tc-source-param-list-policy-ok ctx params)
+          [(OkTcUnit)
+            (match (tc-source-maybe-type-policy-ok ctx maybe-ret)
+              [(OkTcUnit)
+                (if (tc-maybe-type-contains-reference? maybe-ret)
+                  (ErrTcUnit
+                    "typecheck: returning references requires lifetime support (#804)")
+                  (tc-source-expr-policy-ok ctx body))]
+              [(ErrTcUnit message) (ErrTcUnit message)])]
+          [(ErrTcUnit message) (ErrTcUnit message)]))]
     [(AstExprTuple exprs) (tc-source-expr-list-policy-ok ctx exprs)]
-    [(AstExprTupleRef tuple _) (tc-source-expr-policy-ok ctx tuple)]
+    [(AstExprTupleRef tuple-box _)
+      (let
+        [tuple : AstExpr (box-get tuple-box)]
+        (tc-source-expr-policy-ok ctx tuple))]
     [(AstExprArray exprs) (tc-source-expr-list-policy-ok ctx exprs)]
-    [(AstExprMakeArray elem-ty len)
-      (match (tc-source-type-policy-ok ctx elem-ty)
-        [(OkTcUnit) (tc-source-expr-policy-ok ctx len)]
-        [(ErrTcUnit message) (ErrTcUnit message)])]
-    [(AstExprArrayRef array index)
-      (tc-source-expr-pair-policy-ok ctx array index)]
-    [(AstExprArraySet array index value)
-      (tc-source-expr-triple-policy-ok ctx array index value)]
-    [(AstExprArrayPush array value)
-      (tc-source-expr-pair-policy-ok ctx array value)]
-    [(AstExprStringRef str index) (tc-source-expr-pair-policy-ok ctx str index)]
-    [(AstExprWhile cond body) (tc-source-expr-pair-policy-ok ctx cond body)]
+    [(AstExprMakeArray elem-ty len-box)
+      (let
+        [len : AstExpr (box-get len-box)]
+        (match (tc-source-type-policy-ok ctx elem-ty)
+          [(OkTcUnit) (tc-source-expr-policy-ok ctx len)]
+          [(ErrTcUnit message) (ErrTcUnit message)]))]
+    [(AstExprArrayRef array-box index-box)
+      (let
+        [array : AstExpr (box-get array-box)]
+        [index : AstExpr (box-get index-box)]
+        (tc-source-expr-pair-policy-ok ctx array index))]
+    [(AstExprArraySet array-box index-box value-box)
+      (let
+        [array : AstExpr (box-get array-box)]
+        [index : AstExpr (box-get index-box)]
+        [value : AstExpr (box-get value-box)]
+        (tc-source-expr-triple-policy-ok ctx array index value))]
+    [(AstExprArrayPush array-box value-box)
+      (let
+        [array : AstExpr (box-get array-box)]
+        [value : AstExpr (box-get value-box)]
+        (tc-source-expr-pair-policy-ok ctx array value))]
+    [(AstExprStringRef str-box index-box)
+      (let
+        [str : AstExpr (box-get str-box)]
+        [index : AstExpr (box-get index-box)]
+        (tc-source-expr-pair-policy-ok ctx str index))]
+    [(AstExprWhile cond-box body-box)
+      (let
+        [cond : AstExpr (box-get cond-box)]
+        [body : AstExpr (box-get body-box)]
+        (tc-source-expr-pair-policy-ok ctx cond body))]
     [(AstExprBegin exprs) (tc-source-expr-list-policy-ok ctx exprs)]
     [(AstExprUnsafe exprs) (tc-source-expr-list-policy-ok ctx exprs)]
-    [(AstExprSet _ value) (tc-source-expr-policy-ok ctx value)]
-    [(AstExprAnn inner ty)
-      (match (tc-source-expr-policy-ok ctx inner)
-        [(OkTcUnit) (tc-source-type-policy-ok ctx ty)]
-        [(ErrTcUnit message) (ErrTcUnit message)])]
-    [(AstExprCast inner ty)
-      (match (tc-source-expr-policy-ok ctx inner)
-        [(OkTcUnit) (tc-source-type-policy-ok ctx ty)]
-        [(ErrTcUnit message) (ErrTcUnit message)])]
-    [(AstExprBorrow _ place) (tc-source-expr-policy-ok ctx place)]
-    [(AstExprBox inner) (tc-source-expr-policy-ok ctx inner)]
-    [(AstExprBoxGet inner) (tc-source-expr-policy-ok ctx inner)]
-    [(AstExprMatch scrutinee arms)
-      (match (tc-source-expr-policy-ok ctx scrutinee)
-        [(OkTcUnit) (tc-source-match-arm-list-policy-ok ctx arms)]
-        [(ErrTcUnit message) (ErrTcUnit message)])]
-    [(AstExprForeach _ index-ty start end body)
-      (match (tc-source-type-policy-ok ctx index-ty)
-        [(OkTcUnit) (tc-source-expr-triple-policy-ok ctx start end body)]
-        [(ErrTcUnit message) (ErrTcUnit message)])]
-    [(AstExprSpmdReduce _ _ index-ty start end init value)
-      (match (tc-source-type-policy-ok ctx index-ty)
-        [(OkTcUnit)
-          (match (tc-source-expr-triple-policy-ok ctx start end init)
-            [(OkTcUnit) (tc-source-expr-policy-ok ctx value)]
-            [(ErrTcUnit message) (ErrTcUnit message)])]
-        [(ErrTcUnit message) (ErrTcUnit message)])]
-    [(AstExprStructGet receiver _) (tc-source-expr-policy-ok ctx receiver)]
+    [(AstExprSet _ value-box)
+      (let
+        [value : AstExpr (box-get value-box)]
+        (tc-source-expr-policy-ok ctx value))]
+    [(AstExprAnn inner-box ty)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (match (tc-source-expr-policy-ok ctx inner)
+          [(OkTcUnit) (tc-source-type-policy-ok ctx ty)]
+          [(ErrTcUnit message) (ErrTcUnit message)]))]
+    [(AstExprCast inner-box ty)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (match (tc-source-expr-policy-ok ctx inner)
+          [(OkTcUnit) (tc-source-type-policy-ok ctx ty)]
+          [(ErrTcUnit message) (ErrTcUnit message)]))]
+    [(AstExprBorrow _ place-box)
+      (let
+        [place : AstExpr (box-get place-box)]
+        (tc-source-expr-policy-ok ctx place))]
+    [(AstExprBox inner-box)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (tc-source-expr-policy-ok ctx inner))]
+    [(AstExprBoxGet inner-box)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (tc-source-expr-policy-ok ctx inner))]
+    [(AstExprMatch scrutinee-box arms)
+      (let
+        [scrutinee : AstExpr (box-get scrutinee-box)]
+        (match (tc-source-expr-policy-ok ctx scrutinee)
+          [(OkTcUnit) (tc-source-match-arm-list-policy-ok ctx arms)]
+          [(ErrTcUnit message) (ErrTcUnit message)]))]
+    [(AstExprForeach _ index-ty start-box end-box body-box)
+      (let
+        [start : AstExpr (box-get start-box)]
+        [end : AstExpr (box-get end-box)]
+        [body : AstExpr (box-get body-box)]
+        (match (tc-source-type-policy-ok ctx index-ty)
+          [(OkTcUnit) (tc-source-expr-triple-policy-ok ctx start end body)]
+          [(ErrTcUnit message) (ErrTcUnit message)]))]
+    [(AstExprSpmdReduce _ _ index-ty start-box end-box init-box value-box)
+      (let
+        [start : AstExpr (box-get start-box)]
+        [end : AstExpr (box-get end-box)]
+        [init : AstExpr (box-get init-box)]
+        [value : AstExpr (box-get value-box)]
+        (match (tc-source-type-policy-ok ctx index-ty)
+          [(OkTcUnit)
+            (match (tc-source-expr-triple-policy-ok ctx start end init)
+              [(OkTcUnit) (tc-source-expr-policy-ok ctx value)]
+              [(ErrTcUnit message) (ErrTcUnit message)])]
+          [(ErrTcUnit message) (ErrTcUnit message)]))]
+    [(AstExprStructGet receiver-box _)
+      (let
+        [receiver : AstExpr (box-get receiver-box)]
+        (tc-source-expr-policy-ok ctx receiver))]
     [(AstExprWithRegion _ body) (tc-source-expr-list-policy-ok ctx body)]
-    [(AstExprWithEscape scratch body)
-      (match (tc-source-expr-policy-ok ctx scratch)
-        [(OkTcUnit) (tc-source-expr-list-policy-ok ctx body)]
-        [(ErrTcUnit message) (ErrTcUnit message)])]
+    [(AstExprWithEscape scratch-box body)
+      (let
+        [scratch : AstExpr (box-get scratch-box)]
+        (match (tc-source-expr-policy-ok ctx scratch)
+          [(OkTcUnit) (tc-source-expr-list-policy-ok ctx body)]
+          [(ErrTcUnit message) (ErrTcUnit message)]))]
     [(AstExprWithResource bindings body)
       (match (tc-source-resource-binding-list-policy-ok ctx bindings)
         [(OkTcUnit) (tc-source-expr-list-policy-ok ctx body)]
         [(ErrTcUnit message) (ErrTcUnit message)])]
-    [(AstExprComptime inner) (tc-source-expr-policy-ok ctx inner)]
-    [(AstExprQuote inner) (tc-source-expr-policy-ok ctx inner)]
-    [(AstExprQuasiquote inner) (tc-source-expr-policy-ok ctx inner)]
-    [(AstExprUnquote inner) (tc-source-expr-policy-ok ctx inner)]
-    [(AstExprUnquoteSplicing inner) (tc-source-expr-policy-ok ctx inner)]
-    [(AstExprTry inner) (tc-source-expr-policy-ok ctx inner)]
-    [(AstExprReturn inner) (tc-source-expr-policy-ok ctx inner)]
-    [(AstExprPtrNullCheck inner) (tc-source-expr-policy-ok ctx inner)]
-    [(AstExprPtrRead ptr) (tc-source-expr-policy-ok ctx ptr)]
-    [(AstExprPtrWrite ptr value) (tc-source-expr-pair-policy-ok ctx ptr value)]
-    [(AstExprPtrOffset ptr offset)
-      (tc-source-expr-pair-policy-ok ctx ptr offset)]
-    [(AstExprPtrCast ptr ty)
-      (match (tc-source-expr-policy-ok ctx ptr)
-        [(OkTcUnit) (tc-source-type-policy-ok ctx ty)]
-        [(ErrTcUnit message) (ErrTcUnit message)])]
-    [(AstExprPtrToInt ptr) (tc-source-expr-policy-ok ctx ptr)]
-    [(AstExprIntToPtr value ty)
-      (match (tc-source-expr-policy-ok ctx value)
-        [(OkTcUnit) (tc-source-type-policy-ok ctx ty)]
-        [(ErrTcUnit message) (ErrTcUnit message)])]
-    [(AstExprStringData str) (tc-source-expr-policy-ok ctx str)]
-    [(AstExprStringFromBytes ptr len)
-      (tc-source-expr-pair-policy-ok ctx ptr len)]
-    [(AstExprArrayData array) (tc-source-expr-policy-ok ctx array)]
+    [(AstExprComptime inner-box)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (tc-source-expr-policy-ok ctx inner))]
+    [(AstExprQuote inner-box)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (tc-source-expr-policy-ok ctx inner))]
+    [(AstExprQuasiquote inner-box)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (tc-source-expr-policy-ok ctx inner))]
+    [(AstExprUnquote inner-box)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (tc-source-expr-policy-ok ctx inner))]
+    [(AstExprUnquoteSplicing inner-box)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (tc-source-expr-policy-ok ctx inner))]
+    [(AstExprTry inner-box)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (tc-source-expr-policy-ok ctx inner))]
+    [(AstExprReturn inner-box)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (tc-source-expr-policy-ok ctx inner))]
+    [(AstExprPtrNullCheck inner-box)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (tc-source-expr-policy-ok ctx inner))]
+    [(AstExprPtrRead ptr-box)
+      (let
+        [ptr : AstExpr (box-get ptr-box)]
+        (tc-source-expr-policy-ok ctx ptr))]
+    [(AstExprPtrWrite ptr-box value-box)
+      (let
+        [ptr : AstExpr (box-get ptr-box)]
+        [value : AstExpr (box-get value-box)]
+        (tc-source-expr-pair-policy-ok ctx ptr value))]
+    [(AstExprPtrOffset ptr-box offset-box)
+      (let
+        [ptr : AstExpr (box-get ptr-box)]
+        [offset : AstExpr (box-get offset-box)]
+        (tc-source-expr-pair-policy-ok ctx ptr offset))]
+    [(AstExprPtrCast ptr-box ty)
+      (let
+        [ptr : AstExpr (box-get ptr-box)]
+        (match (tc-source-expr-policy-ok ctx ptr)
+          [(OkTcUnit) (tc-source-type-policy-ok ctx ty)]
+          [(ErrTcUnit message) (ErrTcUnit message)]))]
+    [(AstExprPtrToInt ptr-box)
+      (let
+        [ptr : AstExpr (box-get ptr-box)]
+        (tc-source-expr-policy-ok ctx ptr))]
+    [(AstExprIntToPtr value-box ty)
+      (let
+        [value : AstExpr (box-get value-box)]
+        (match (tc-source-expr-policy-ok ctx value)
+          [(OkTcUnit) (tc-source-type-policy-ok ctx ty)]
+          [(ErrTcUnit message) (ErrTcUnit message)]))]
+    [(AstExprStringData str-box)
+      (let
+        [str : AstExpr (box-get str-box)]
+        (tc-source-expr-policy-ok ctx str))]
+    [(AstExprStringFromBytes ptr-box len-box)
+      (let
+        [ptr : AstExpr (box-get ptr-box)]
+        [len : AstExpr (box-get len-box)]
+        (tc-source-expr-pair-policy-ok ctx ptr len))]
+    [(AstExprArrayData array-box)
+      (let
+        [array : AstExpr (box-get array-box)]
+        (tc-source-expr-policy-ok ctx array))]
     [(AstExprProgramArgc) OkTcUnit]
     [(AstExprProgramArgv) OkTcUnit]
     [(AstExprProgramEnvp) OkTcUnit]
-    [(AstExprCpuIdEax leaf subleaf)
-      (tc-source-expr-pair-policy-ok ctx leaf subleaf)]
-    [(AstExprCpuIdEbx leaf subleaf)
-      (tc-source-expr-pair-policy-ok ctx leaf subleaf)]
-    [(AstExprCpuIdEcx leaf subleaf)
-      (tc-source-expr-pair-policy-ok ctx leaf subleaf)]
-    [(AstExprCpuIdEdx leaf subleaf)
-      (tc-source-expr-pair-policy-ok ctx leaf subleaf)]
-    [(AstExprXgetbv index) (tc-source-expr-policy-ok ctx index)]
+    [(AstExprCpuIdEax leaf-box subleaf-box)
+      (let
+        [leaf : AstExpr (box-get leaf-box)]
+        [subleaf : AstExpr (box-get subleaf-box)]
+        (tc-source-expr-pair-policy-ok ctx leaf subleaf))]
+    [(AstExprCpuIdEbx leaf-box subleaf-box)
+      (let
+        [leaf : AstExpr (box-get leaf-box)]
+        [subleaf : AstExpr (box-get subleaf-box)]
+        (tc-source-expr-pair-policy-ok ctx leaf subleaf))]
+    [(AstExprCpuIdEcx leaf-box subleaf-box)
+      (let
+        [leaf : AstExpr (box-get leaf-box)]
+        [subleaf : AstExpr (box-get subleaf-box)]
+        (tc-source-expr-pair-policy-ok ctx leaf subleaf))]
+    [(AstExprCpuIdEdx leaf-box subleaf-box)
+      (let
+        [leaf : AstExpr (box-get leaf-box)]
+        [subleaf : AstExpr (box-get subleaf-box)]
+        (tc-source-expr-pair-policy-ok ctx leaf subleaf))]
+    [(AstExprXgetbv index-box)
+      (let
+        [index : AstExpr (box-get index-box)]
+        (tc-source-expr-policy-ok ctx index))]
     [_ OkTcUnit]))
 
 (define (tc-source-decl-policy-ok [ctx : TcContext] [decl : AstDecl]) : ResultTcUnit
@@ -3243,7 +3395,10 @@
 
 (define (tc-float-literal-expr? [expr : AstExpr]) : bool
   (match expr
-    [(AstExprSpanned inner _) (tc-float-literal-expr? inner)]
+    [(AstExprSpanned inner-box _)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (tc-float-literal-expr? inner))]
     [(AstExprLiteral lit)
       (match lit
         [(AstLitFloat _) true]
@@ -3413,16 +3568,22 @@
   [expr : AstExpr]
   [expected : AstType]) : ResultTcType
   (match expr
-    [(AstExprSpanned inner _)
-      (tc-expr-with-expected-or-actual ctx env inner expected)]
-    [(AstExprIf cond then-branch else-branch)
-      (tc-expr-if-with-expected-or-actual
-        ctx
-        env
-        cond
-        then-branch
-        else-branch
-        expected)]
+    [(AstExprSpanned inner-box _)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (tc-expr-with-expected-or-actual ctx env inner expected))]
+    [(AstExprIf cond-box then-branch-box else-branch-box)
+      (let
+        [cond : AstExpr (box-get cond-box)]
+        [then-branch : AstExpr (box-get then-branch-box)]
+        [else-branch : AstExpr (box-get else-branch-box)]
+        (tc-expr-if-with-expected-or-actual
+          ctx
+          env
+          cond
+          then-branch
+          else-branch
+          expected))]
     [(AstExprArray exprs)
       (match (tc-type-strip-region expected)
         [(AstTyArray elem-ty len)
@@ -4389,57 +4550,62 @@
       (let
         [rest : AstLetBindingList (box-get rest)]
         (match binding
-          [(AstLetBinding name maybe-ty init)
-            (match maybe-ty
-              [(AstSomeType want)
-                (let
-                  [resolved-want : AstType (tc-resolve-type ctx want)]
-                  (match (tc-expr-with-expected-or-actual
-                    ctx
-                    env
-                    init
-                    resolved-want)
+          [(AstLetBinding name maybe-ty init-box)
+            (let
+              [init : AstExpr (box-get init-box)]
+              (match maybe-ty
+                [(AstSomeType want)
+                  (let
+                    [resolved-want : AstType (tc-resolve-type ctx want)]
+                    (match (tc-expr-with-expected-or-actual
+                      ctx
+                      env
+                      init
+                      resolved-want)
+                      [(OkTcType init-ty)
+                        (match (tc-expect
+                          init-ty
+                          resolved-want
+                          "typecheck: let binding type mismatch")
+                          [(OkTcUnit)
+                            (match (tc-ensure-cleanup-resource-not-let-bound
+                              env
+                              init)
+                              [(OkTcUnit)
+                                (match (tc-ensure-reference-value-can-bind
+                                  env
+                                  init-ty)
+                                  [(OkTcUnit)
+                                    (tc-let-bindings
+                                      ctx
+                                      (tc-bind
+                                        env
+                                        name
+                                        (if (tc-type-contains-any-region
+                                          init-ty)
+                                          init-ty
+                                          resolved-want))
+                                      rest)]
+                                  [(ErrTcUnit message) (ErrTcEnv message)])]
+                              [(ErrTcUnit message) (ErrTcEnv message)])]
+                          [(ErrTcUnit message) (ErrTcEnv message)])]
+                      [(ErrTcType message) (ErrTcEnv message)]))]
+                [(AstNoType)
+                  (match (tc-expr ctx env init)
                     [(OkTcType init-ty)
-                      (match (tc-expect
-                        init-ty
-                        resolved-want
-                        "typecheck: let binding type mismatch")
+                      (match (tc-ensure-cleanup-resource-not-let-bound env init)
                         [(OkTcUnit)
-                          (match (tc-ensure-cleanup-resource-not-let-bound
+                          (match (tc-ensure-reference-value-can-bind
                             env
-                            init)
+                            init-ty)
                             [(OkTcUnit)
-                              (match (tc-ensure-reference-value-can-bind
-                                env
-                                init-ty)
-                                [(OkTcUnit)
-                                  (tc-let-bindings
-                                    ctx
-                                    (tc-bind
-                                      env
-                                      name
-                                      (if (tc-type-contains-any-region init-ty)
-                                        init-ty
-                                        resolved-want))
-                                    rest)]
-                                [(ErrTcUnit message) (ErrTcEnv message)])]
+                              (tc-let-bindings
+                                ctx
+                                (tc-bind env name init-ty)
+                                rest)]
                             [(ErrTcUnit message) (ErrTcEnv message)])]
                         [(ErrTcUnit message) (ErrTcEnv message)])]
-                    [(ErrTcType message) (ErrTcEnv message)]))]
-              [(AstNoType)
-                (match (tc-expr ctx env init)
-                  [(OkTcType init-ty)
-                    (match (tc-ensure-cleanup-resource-not-let-bound env init)
-                      [(OkTcUnit)
-                        (match (tc-ensure-reference-value-can-bind env init-ty)
-                          [(OkTcUnit)
-                            (tc-let-bindings
-                              ctx
-                              (tc-bind env name init-ty)
-                              rest)]
-                          [(ErrTcUnit message) (ErrTcEnv message)])]
-                      [(ErrTcUnit message) (ErrTcEnv message)])]
-                  [(ErrTcType message) (ErrTcEnv message)])])]))]))
+                    [(ErrTcType message) (ErrTcEnv message)])]))]))]))
 
 (define (tc-resource-cleanup-direct-name-ok [cleanup : AstExpr]) : ResultTcUnit
   (match (ast-expr-unspan cleanup)
@@ -4472,23 +4638,26 @@
       (let
         [rest : AstResourceBindingList (box-get rest)]
         (match binding
-          [(AstResourceBinding name init cleanup)
-            (match (tc-expr ctx env init)
-              [(OkTcType init-ty)
-                (match (tc-ensure-cleanup-resource-not-transferred env init)
-                  [(OkTcUnit)
-                    (match (tc-resource-cleanup-ok ctx env cleanup init-ty)
-                      [(OkTcUnit)
-                        (tc-resource-bindings
-                          ctx
-                          (tc-bind
-                            (tc-bind-cleanup-owner env name)
-                            name
-                            (tc-type-without-regions init-ty))
-                          rest)]
-                      [(ErrTcUnit message) (ErrTcEnv message)])]
-                  [(ErrTcUnit message) (ErrTcEnv message)])]
-              [(ErrTcType message) (ErrTcEnv message)])]))]))
+          [(AstResourceBinding name init-box cleanup-box)
+            (let
+              [init : AstExpr (box-get init-box)]
+              [cleanup : AstExpr (box-get cleanup-box)]
+              (match (tc-expr ctx env init)
+                [(OkTcType init-ty)
+                  (match (tc-ensure-cleanup-resource-not-transferred env init)
+                    [(OkTcUnit)
+                      (match (tc-resource-cleanup-ok ctx env cleanup init-ty)
+                        [(OkTcUnit)
+                          (tc-resource-bindings
+                            ctx
+                            (tc-bind
+                              (tc-bind-cleanup-owner env name)
+                              name
+                              (tc-type-without-regions init-ty))
+                            rest)]
+                        [(ErrTcUnit message) (ErrTcEnv message)])]
+                    [(ErrTcUnit message) (ErrTcEnv message)])]
+                [(ErrTcType message) (ErrTcEnv message)]))]))]))
 
 (define (tc-begin-list
   [ctx : TcContext]
@@ -4523,31 +4692,33 @@
       (let
         [rest : AstLetBindingList (box-get rest)]
         (match binding
-          [(AstLetBinding name maybe-ty init)
-            (match (tc-spmd-expr ctx env spmd-env init)
-              [(OkTcSpmdExprInfo info)
-                (match info
-                  [(TcSpmdExprInfo init-ty init-class next-spmd-env)
-                    (let
-                      [bound-ty : AstType
-                        (match maybe-ty
-                          [(AstSomeType want)
-                            (if (tc-type-contains-any-region init-ty)
-                              init-ty
-                              (tc-resolve-type ctx want))]
-                          [(AstNoType) init-ty])]
-                      (tc-spmd-let-bindings
-                        ctx
-                        (tc-bind env name bound-ty)
-                        (tc-spmd-env-bind
-                          next-spmd-env
-                          name
-                          bound-ty
-                          init-class
-                          TcSpmdLocal)
-                        rest
-                        (+ count 1)))])]
-              [(ErrTcSpmdExprInfo message) (ErrTcSpmdLetState message)])]))]))
+          [(AstLetBinding name maybe-ty init-box)
+            (let
+              [init : AstExpr (box-get init-box)]
+              (match (tc-spmd-expr ctx env spmd-env init)
+                [(OkTcSpmdExprInfo info)
+                  (match info
+                    [(TcSpmdExprInfo init-ty init-class next-spmd-env)
+                      (let
+                        [bound-ty : AstType
+                          (match maybe-ty
+                            [(AstSomeType want)
+                              (if (tc-type-contains-any-region init-ty)
+                                init-ty
+                                (tc-resolve-type ctx want))]
+                            [(AstNoType) init-ty])]
+                        (tc-spmd-let-bindings
+                          ctx
+                          (tc-bind env name bound-ty)
+                          (tc-spmd-env-bind
+                            next-spmd-env
+                            name
+                            bound-ty
+                            init-class
+                            TcSpmdLocal)
+                          rest
+                          (+ count 1)))])]
+                [(ErrTcSpmdExprInfo message) (ErrTcSpmdLetState message)]))]))]))
 
 (define (tc-spmd-expr-list
   [ctx : TcContext]
@@ -4611,33 +4782,36 @@
       (let
         [rest : AstMatchArmList (box-get rest)]
         (match arm
-          [(AstMatchArm pattern body)
-            (match (tc-bind-match-pattern ctx env scrut-ty pattern)
-              [(OkTcEnv arm-env)
-                (match (tc-spmd-expr ctx arm-env spmd-env body)
-                  [(OkTcSpmdExprInfo body-info)
-                    (match body-info
-                      [(TcSpmdExprInfo _ body-class body-env)
-                        (match (tc-spmd-match-arms
-                          ctx
-                          env
-                          spmd-env
-                          scrut-ty
-                          rest
-                          (tc-spmd-merge-class class body-class))
-                          [(OkTcSpmdExprListInfo rest-info)
-                            (match rest-info
-                              [(TcSpmdExprListInfo rest-class rest-env)
-                                (OkTcSpmdExprListInfo
-                                  (TcSpmdExprListInfo
-                                    rest-class
-                                    (tc-spmd-env-merge-classes
-                                      body-env
-                                      rest-env)))])]
-                          [(ErrTcSpmdExprListInfo message)
-                            (ErrTcSpmdExprListInfo message)])])]
-                  [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprListInfo message)])]
-              [(ErrTcEnv message) (ErrTcSpmdExprListInfo message)])]))]))
+          [(AstMatchArm pattern body-box)
+            (let
+              [body : AstExpr (box-get body-box)]
+              (match (tc-bind-match-pattern ctx env scrut-ty pattern)
+                [(OkTcEnv arm-env)
+                  (match (tc-spmd-expr ctx arm-env spmd-env body)
+                    [(OkTcSpmdExprInfo body-info)
+                      (match body-info
+                        [(TcSpmdExprInfo _ body-class body-env)
+                          (match (tc-spmd-match-arms
+                            ctx
+                            env
+                            spmd-env
+                            scrut-ty
+                            rest
+                            (tc-spmd-merge-class class body-class))
+                            [(OkTcSpmdExprListInfo rest-info)
+                              (match rest-info
+                                [(TcSpmdExprListInfo rest-class rest-env)
+                                  (OkTcSpmdExprListInfo
+                                    (TcSpmdExprListInfo
+                                      rest-class
+                                      (tc-spmd-env-merge-classes
+                                        body-env
+                                        rest-env)))])]
+                            [(ErrTcSpmdExprListInfo message)
+                              (ErrTcSpmdExprListInfo message)])])]
+                    [(ErrTcSpmdExprInfo message)
+                      (ErrTcSpmdExprListInfo message)])]
+                [(ErrTcEnv message) (ErrTcSpmdExprListInfo message)]))]))]))
 
 (define (tc-spmd-check-foreach-body-with-env
   [ctx : TcContext]
@@ -4689,110 +4863,131 @@
   [expr : AstExpr]
   [expr-ty : AstType]) : ResultTcSpmdExprInfo
   (match expr
-    [(AstExprSpanned inner _)
-      (tc-spmd-expr-typed ctx env spmd-env inner expr-ty)]
+    [(AstExprSpanned inner-box _)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (tc-spmd-expr-typed ctx env spmd-env inner expr-ty))]
     [(AstExprLiteral _) (tc-spmd-finish expr-ty TcSpmdUniform spmd-env)]
     [(AstExprVar name)
       (match (tc-spmd-env-lookup spmd-env name)
         [(TcSpmdFound _ class _) (tc-spmd-finish expr-ty class spmd-env)]
         [(TcSpmdMissing) (tc-spmd-finish expr-ty TcSpmdUniform spmd-env)])]
     [(AstExprTypeLiteral _) (tc-spmd-finish expr-ty TcSpmdUniform spmd-env)]
-    [(AstExprAnn inner _)
-      (match (tc-spmd-expr ctx env spmd-env inner)
-        [(OkTcSpmdExprInfo info)
-          (match info
-            [(TcSpmdExprInfo _ class next-spmd-env)
-              (tc-spmd-finish expr-ty class next-spmd-env)])]
-        [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)])]
-    [(AstExprCast inner _)
-      (match (tc-spmd-expr ctx env spmd-env inner)
-        [(OkTcSpmdExprInfo info)
-          (match info
-            [(TcSpmdExprInfo _ class next-spmd-env)
-              (tc-spmd-finish expr-ty class next-spmd-env)])]
-        [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)])]
-    [(AstExprUnary _ inner)
-      (match (tc-spmd-expr ctx env spmd-env inner)
-        [(OkTcSpmdExprInfo info)
-          (match info
-            [(TcSpmdExprInfo _ class next-spmd-env)
-              (tc-spmd-finish expr-ty class next-spmd-env)])]
-        [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)])]
-    [(AstExprBinary _ left right)
-      (match (tc-spmd-expr ctx env spmd-env left)
-        [(OkTcSpmdExprInfo left-info)
-          (match left-info
-            [(TcSpmdExprInfo _ left-class left-env)
-              (match (tc-spmd-expr ctx env left-env right)
-                [(OkTcSpmdExprInfo right-info)
-                  (match right-info
-                    [(TcSpmdExprInfo _ right-class right-env)
-                      (tc-spmd-finish
-                        expr-ty
-                        (tc-spmd-merge-class left-class right-class)
-                        right-env)])]
-                [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)])])]
-        [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)])]
-    [(AstExprCall func args)
-      (match (tc-spmd-expr ctx env spmd-env func)
-        [(OkTcSpmdExprInfo func-info)
-          (match func-info
-            [(TcSpmdExprInfo _ _ func-env)
-              (match (tc-spmd-expr-list ctx env func-env args)
-                [(OkTcSpmdExprListInfo args-info)
-                  (match args-info
-                    [(TcSpmdExprListInfo args-class args-env)
-                      (match (tc-spmd-require-uniform
-                        args-class
-                        "typecheck: foreach calls with varying arguments are not supported")
-                        [(OkTcUnit)
-                          (tc-spmd-finish expr-ty TcSpmdUniform args-env)]
-                        [(ErrTcUnit message) (ErrTcSpmdExprInfo message)])])]
-                [(ErrTcSpmdExprListInfo message) (ErrTcSpmdExprInfo message)])])]
-        [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)])]
-    [(AstExprIf cond then-branch else-branch)
-      (match (tc-spmd-expr ctx env spmd-env cond)
-        [(OkTcSpmdExprInfo cond-info)
-          (match cond-info
-            [(TcSpmdExprInfo _ cond-class cond-env)
-              (match (tc-spmd-require-uniform
-                cond-class
-                "typecheck: foreach if condition must be uniform")
-                [(OkTcUnit)
-                  (match (tc-spmd-expr ctx env cond-env then-branch)
-                    [(OkTcSpmdExprInfo then-info)
-                      (match then-info
-                        [(TcSpmdExprInfo _ then-class then-env)
-                          (match (tc-spmd-expr ctx env cond-env else-branch)
-                            [(OkTcSpmdExprInfo else-info)
-                              (match else-info
-                                [(TcSpmdExprInfo _ else-class else-env)
-                                  (tc-spmd-finish
-                                    expr-ty
-                                    (tc-spmd-merge-class then-class else-class)
-                                    (tc-spmd-env-merge-classes
-                                      then-env
-                                      else-env))])]
-                            [(ErrTcSpmdExprInfo message)
-                              (ErrTcSpmdExprInfo message)])])]
-                    [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)])]
-                [(ErrTcUnit message) (ErrTcSpmdExprInfo message)])])]
-        [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)])]
-    [(AstExprLet bindings body)
-      (match (tc-spmd-let-bindings ctx env spmd-env bindings 0)
-        [(OkTcSpmdLetState state)
-          (match state
-            [(TcSpmdLetState body-env body-spmd-env count)
-              (match (tc-spmd-expr ctx body-env body-spmd-env body)
-                [(OkTcSpmdExprInfo body-info)
-                  (match body-info
-                    [(TcSpmdExprInfo _ body-class final-spmd-env)
-                      (tc-spmd-finish
-                        expr-ty
-                        body-class
-                        (tc-spmd-env-pop final-spmd-env count))])]
-                [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)])])]
-        [(ErrTcSpmdLetState message) (ErrTcSpmdExprInfo message)])]
+    [(AstExprAnn inner-box _)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (match (tc-spmd-expr ctx env spmd-env inner)
+          [(OkTcSpmdExprInfo info)
+            (match info
+              [(TcSpmdExprInfo _ class next-spmd-env)
+                (tc-spmd-finish expr-ty class next-spmd-env)])]
+          [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)]))]
+    [(AstExprCast inner-box _)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (match (tc-spmd-expr ctx env spmd-env inner)
+          [(OkTcSpmdExprInfo info)
+            (match info
+              [(TcSpmdExprInfo _ class next-spmd-env)
+                (tc-spmd-finish expr-ty class next-spmd-env)])]
+          [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)]))]
+    [(AstExprUnary _ inner-box)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (match (tc-spmd-expr ctx env spmd-env inner)
+          [(OkTcSpmdExprInfo info)
+            (match info
+              [(TcSpmdExprInfo _ class next-spmd-env)
+                (tc-spmd-finish expr-ty class next-spmd-env)])]
+          [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)]))]
+    [(AstExprBinary _ left-box right-box)
+      (let
+        [left : AstExpr (box-get left-box)]
+        [right : AstExpr (box-get right-box)]
+        (match (tc-spmd-expr ctx env spmd-env left)
+          [(OkTcSpmdExprInfo left-info)
+            (match left-info
+              [(TcSpmdExprInfo _ left-class left-env)
+                (match (tc-spmd-expr ctx env left-env right)
+                  [(OkTcSpmdExprInfo right-info)
+                    (match right-info
+                      [(TcSpmdExprInfo _ right-class right-env)
+                        (tc-spmd-finish
+                          expr-ty
+                          (tc-spmd-merge-class left-class right-class)
+                          right-env)])]
+                  [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)])])]
+          [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)]))]
+    [(AstExprCall func-box args)
+      (let
+        [func : AstExpr (box-get func-box)]
+        (match (tc-spmd-expr ctx env spmd-env func)
+          [(OkTcSpmdExprInfo func-info)
+            (match func-info
+              [(TcSpmdExprInfo _ _ func-env)
+                (match (tc-spmd-expr-list ctx env func-env args)
+                  [(OkTcSpmdExprListInfo args-info)
+                    (match args-info
+                      [(TcSpmdExprListInfo args-class args-env)
+                        (match (tc-spmd-require-uniform
+                          args-class
+                          "typecheck: foreach calls with varying arguments are not supported")
+                          [(OkTcUnit)
+                            (tc-spmd-finish expr-ty TcSpmdUniform args-env)]
+                          [(ErrTcUnit message) (ErrTcSpmdExprInfo message)])])]
+                  [(ErrTcSpmdExprListInfo message) (ErrTcSpmdExprInfo message)])])]
+          [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)]))]
+    [(AstExprIf cond-box then-branch-box else-branch-box)
+      (let
+        [cond : AstExpr (box-get cond-box)]
+        [then-branch : AstExpr (box-get then-branch-box)]
+        [else-branch : AstExpr (box-get else-branch-box)]
+        (match (tc-spmd-expr ctx env spmd-env cond)
+          [(OkTcSpmdExprInfo cond-info)
+            (match cond-info
+              [(TcSpmdExprInfo _ cond-class cond-env)
+                (match (tc-spmd-require-uniform
+                  cond-class
+                  "typecheck: foreach if condition must be uniform")
+                  [(OkTcUnit)
+                    (match (tc-spmd-expr ctx env cond-env then-branch)
+                      [(OkTcSpmdExprInfo then-info)
+                        (match then-info
+                          [(TcSpmdExprInfo _ then-class then-env)
+                            (match (tc-spmd-expr ctx env cond-env else-branch)
+                              [(OkTcSpmdExprInfo else-info)
+                                (match else-info
+                                  [(TcSpmdExprInfo _ else-class else-env)
+                                    (tc-spmd-finish
+                                      expr-ty
+                                      (tc-spmd-merge-class
+                                        then-class
+                                        else-class)
+                                      (tc-spmd-env-merge-classes
+                                        then-env
+                                        else-env))])]
+                              [(ErrTcSpmdExprInfo message)
+                                (ErrTcSpmdExprInfo message)])])]
+                      [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)])]
+                  [(ErrTcUnit message) (ErrTcSpmdExprInfo message)])])]
+          [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)]))]
+    [(AstExprLet bindings body-box)
+      (let
+        [body : AstExpr (box-get body-box)]
+        (match (tc-spmd-let-bindings ctx env spmd-env bindings 0)
+          [(OkTcSpmdLetState state)
+            (match state
+              [(TcSpmdLetState body-env body-spmd-env count)
+                (match (tc-spmd-expr ctx body-env body-spmd-env body)
+                  [(OkTcSpmdExprInfo body-info)
+                    (match body-info
+                      [(TcSpmdExprInfo _ body-class final-spmd-env)
+                        (tc-spmd-finish
+                          expr-ty
+                          body-class
+                          (tc-spmd-env-pop final-spmd-env count))])]
+                  [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)])])]
+          [(ErrTcSpmdLetState message) (ErrTcSpmdExprInfo message)]))]
     [(AstExprLambda _ _ _) (tc-spmd-finish expr-ty TcSpmdUniform spmd-env)]
     [(AstExprTuple exprs)
       (match (tc-spmd-expr-list ctx env spmd-env exprs)
@@ -4801,13 +4996,15 @@
             [(TcSpmdExprListInfo class next-spmd-env)
               (tc-spmd-finish expr-ty class next-spmd-env)])]
         [(ErrTcSpmdExprListInfo message) (ErrTcSpmdExprInfo message)])]
-    [(AstExprTupleRef tuple _)
-      (match (tc-spmd-expr ctx env spmd-env tuple)
-        [(OkTcSpmdExprInfo info)
-          (match info
-            [(TcSpmdExprInfo _ class next-spmd-env)
-              (tc-spmd-finish expr-ty class next-spmd-env)])]
-        [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)])]
+    [(AstExprTupleRef tuple-box _)
+      (let
+        [tuple : AstExpr (box-get tuple-box)]
+        (match (tc-spmd-expr ctx env spmd-env tuple)
+          [(OkTcSpmdExprInfo info)
+            (match info
+              [(TcSpmdExprInfo _ class next-spmd-env)
+                (tc-spmd-finish expr-ty class next-spmd-env)])]
+          [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)]))]
     [(AstExprArray exprs)
       (match (tc-spmd-expr-list ctx env spmd-env exprs)
         [(OkTcSpmdExprListInfo info)
@@ -4815,257 +5012,295 @@
             [(TcSpmdExprListInfo class next-spmd-env)
               (tc-spmd-finish expr-ty class next-spmd-env)])]
         [(ErrTcSpmdExprListInfo message) (ErrTcSpmdExprInfo message)])]
-    [(AstExprMakeArray _ len)
-      (match (tc-spmd-expr ctx env spmd-env len)
-        [(OkTcSpmdExprInfo info)
-          (match info
-            [(TcSpmdExprInfo _ class next-spmd-env)
-              (tc-spmd-finish expr-ty class next-spmd-env)])]
-        [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)])]
-    [(AstExprArrayRef array index)
-      (match (tc-spmd-expr ctx env spmd-env array)
-        [(OkTcSpmdExprInfo array-info)
-          (match array-info
-            [(TcSpmdExprInfo _ array-class array-env)
-              (match (tc-spmd-expr ctx env array-env index)
-                [(OkTcSpmdExprInfo index-info)
-                  (match index-info
-                    [(TcSpmdExprInfo _ index-class index-env)
-                      (tc-spmd-finish-lane
-                        expr-ty
-                        (tc-spmd-merge-class array-class index-class)
-                        index-env)])]
-                [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)])])]
-        [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)])]
-    [(AstExprArraySet array index value)
-      (match (tc-spmd-expr ctx env spmd-env array)
-        [(OkTcSpmdExprInfo array-info)
-          (match array-info
-            [(TcSpmdExprInfo array-ty array-class array-env)
-              (match (tc-spmd-expr ctx env array-env index)
-                [(OkTcSpmdExprInfo index-info)
-                  (match index-info
-                    [(TcSpmdExprInfo _ index-class index-env)
-                      (match (tc-spmd-expr ctx env index-env value)
-                        [(OkTcSpmdExprInfo value-info)
-                          (match value-info
-                            [(TcSpmdExprInfo _ value-class value-env)
-                              (let
-                                [write-class : TcSpmdClass
-                                  (tc-spmd-merge-class
-                                    array-class
+    [(AstExprMakeArray _ len-box)
+      (let
+        [len : AstExpr (box-get len-box)]
+        (match (tc-spmd-expr ctx env spmd-env len)
+          [(OkTcSpmdExprInfo info)
+            (match info
+              [(TcSpmdExprInfo _ class next-spmd-env)
+                (tc-spmd-finish expr-ty class next-spmd-env)])]
+          [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)]))]
+    [(AstExprArrayRef array-box index-box)
+      (let
+        [array : AstExpr (box-get array-box)]
+        [index : AstExpr (box-get index-box)]
+        (match (tc-spmd-expr ctx env spmd-env array)
+          [(OkTcSpmdExprInfo array-info)
+            (match array-info
+              [(TcSpmdExprInfo _ array-class array-env)
+                (match (tc-spmd-expr ctx env array-env index)
+                  [(OkTcSpmdExprInfo index-info)
+                    (match index-info
+                      [(TcSpmdExprInfo _ index-class index-env)
+                        (tc-spmd-finish-lane
+                          expr-ty
+                          (tc-spmd-merge-class array-class index-class)
+                          index-env)])]
+                  [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)])])]
+          [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)]))]
+    [(AstExprArraySet array-box index-box value-box)
+      (let
+        [array : AstExpr (box-get array-box)]
+        [index : AstExpr (box-get index-box)]
+        [value : AstExpr (box-get value-box)]
+        (match (tc-spmd-expr ctx env spmd-env array)
+          [(OkTcSpmdExprInfo array-info)
+            (match array-info
+              [(TcSpmdExprInfo array-ty array-class array-env)
+                (match (tc-spmd-expr ctx env array-env index)
+                  [(OkTcSpmdExprInfo index-info)
+                    (match index-info
+                      [(TcSpmdExprInfo _ index-class index-env)
+                        (match (tc-spmd-expr ctx env index-env value)
+                          [(OkTcSpmdExprInfo value-info)
+                            (match value-info
+                              [(TcSpmdExprInfo _ value-class value-env)
+                                (let
+                                  [write-class : TcSpmdClass
                                     (tc-spmd-merge-class
-                                      index-class
-                                      value-class))]
-                                (match (tc-type-strip-region array-ty)
-                                  [(AstTyArray elem-ty _)
-                                    (if (and
-                                      (tc-spmd-varying? write-class)
-                                      (not
-                                        (tc-spmd-lane-type-supported?
-                                          (box-get elem-ty))))
-                                      (ErrTcSpmdExprInfo
-                                        (string-append
-                                          "typecheck: foreach varying array lane type is not supported: "
-                                          (tc-type-render
-                                            (tc-type-strip-region
-                                              (box-get elem-ty)))))
+                                      array-class
+                                      (tc-spmd-merge-class
+                                        index-class
+                                        value-class))]
+                                  (match (tc-type-strip-region array-ty)
+                                    [(AstTyArray elem-ty _)
+                                      (if (and
+                                        (tc-spmd-varying? write-class)
+                                        (not
+                                          (tc-spmd-lane-type-supported?
+                                            (box-get elem-ty))))
+                                        (ErrTcSpmdExprInfo
+                                          (string-append
+                                            "typecheck: foreach varying array lane type is not supported: "
+                                            (tc-type-render
+                                              (tc-type-strip-region
+                                                (box-get elem-ty)))))
+                                        (tc-spmd-finish
+                                          expr-ty
+                                          TcSpmdUniform
+                                          value-env))]
+                                    [(AstTyDynArray elem-ty)
+                                      (if (and
+                                        (tc-spmd-varying? write-class)
+                                        (not
+                                          (tc-spmd-lane-type-supported?
+                                            (box-get elem-ty))))
+                                        (ErrTcSpmdExprInfo
+                                          (string-append
+                                            "typecheck: foreach varying array lane type is not supported: "
+                                            (tc-type-render
+                                              (tc-type-strip-region
+                                                (box-get elem-ty)))))
+                                        (tc-spmd-finish
+                                          expr-ty
+                                          TcSpmdUniform
+                                          value-env))]
+                                    [_
                                       (tc-spmd-finish
                                         expr-ty
                                         TcSpmdUniform
-                                        value-env))]
-                                  [(AstTyDynArray elem-ty)
-                                    (if (and
-                                      (tc-spmd-varying? write-class)
-                                      (not
-                                        (tc-spmd-lane-type-supported?
-                                          (box-get elem-ty))))
-                                      (ErrTcSpmdExprInfo
-                                        (string-append
-                                          "typecheck: foreach varying array lane type is not supported: "
-                                          (tc-type-render
-                                            (tc-type-strip-region
-                                              (box-get elem-ty)))))
-                                      (tc-spmd-finish
-                                        expr-ty
-                                        TcSpmdUniform
-                                        value-env))]
-                                  [_
-                                    (tc-spmd-finish
-                                      expr-ty
-                                      TcSpmdUniform
-                                      value-env)]))])]
-                        [(ErrTcSpmdExprInfo message)
-                          (ErrTcSpmdExprInfo message)])])]
-                [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)])])]
-        [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)])]
-    [(AstExprArrayPush array value)
-      (match (tc-spmd-expr ctx env spmd-env array)
-        [(OkTcSpmdExprInfo array-info)
-          (match array-info
-            [(TcSpmdExprInfo array-ty array-class array-env)
-              (match (tc-spmd-expr ctx env array-env value)
-                [(OkTcSpmdExprInfo value-info)
-                  (match value-info
-                    [(TcSpmdExprInfo _ value-class value-env)
-                      (let
-                        [write-class : TcSpmdClass
-                          (tc-spmd-merge-class array-class value-class)]
-                        (match (tc-type-strip-region array-ty)
-                          [(AstTyDynArray elem-ty)
-                            (if (and
-                              (tc-spmd-varying? write-class)
-                              (not
-                                (tc-spmd-lane-type-supported? (box-get elem-ty))))
-                              (ErrTcSpmdExprInfo
-                                (string-append
-                                  "typecheck: foreach varying array lane type is not supported: "
-                                  (tc-type-render
-                                    (tc-type-strip-region (box-get elem-ty)))))
-                              (tc-spmd-finish expr-ty TcSpmdUniform value-env))]
-                          [_ (tc-spmd-finish expr-ty TcSpmdUniform value-env)]))])]
-                [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)])])]
-        [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)])]
-    [(AstExprStringRef str index)
-      (match (tc-spmd-expr ctx env spmd-env str)
-        [(OkTcSpmdExprInfo str-info)
-          (match str-info
-            [(TcSpmdExprInfo _ str-class str-env)
-              (match (tc-spmd-expr ctx env str-env index)
-                [(OkTcSpmdExprInfo index-info)
-                  (match index-info
-                    [(TcSpmdExprInfo _ index-class index-env)
-                      (tc-spmd-finish
-                        expr-ty
-                        (tc-spmd-merge-class str-class index-class)
-                        index-env)])]
-                [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)])])]
-        [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)])]
-    [(AstExprWhile cond body)
-      (match (tc-spmd-expr ctx env spmd-env cond)
-        [(OkTcSpmdExprInfo cond-info)
-          (match cond-info
-            [(TcSpmdExprInfo _ cond-class cond-env)
-              (match (tc-spmd-require-uniform
-                cond-class
-                "typecheck: foreach while condition must be uniform")
-                [(OkTcUnit)
-                  (match (tc-spmd-expr ctx env cond-env body)
-                    [(OkTcSpmdExprInfo body-info)
-                      (match body-info
-                        [(TcSpmdExprInfo _ _ body-env)
-                          (tc-spmd-finish
-                            expr-ty
-                            TcSpmdUniform
-                            (tc-spmd-env-merge-classes cond-env body-env))])]
-                    [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)])]
-                [(ErrTcUnit message) (ErrTcSpmdExprInfo message)])])]
-        [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)])]
+                                        value-env)]))])]
+                          [(ErrTcSpmdExprInfo message)
+                            (ErrTcSpmdExprInfo message)])])]
+                  [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)])])]
+          [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)]))]
+    [(AstExprArrayPush array-box value-box)
+      (let
+        [array : AstExpr (box-get array-box)]
+        [value : AstExpr (box-get value-box)]
+        (match (tc-spmd-expr ctx env spmd-env array)
+          [(OkTcSpmdExprInfo array-info)
+            (match array-info
+              [(TcSpmdExprInfo array-ty array-class array-env)
+                (match (tc-spmd-expr ctx env array-env value)
+                  [(OkTcSpmdExprInfo value-info)
+                    (match value-info
+                      [(TcSpmdExprInfo _ value-class value-env)
+                        (let
+                          [write-class : TcSpmdClass
+                            (tc-spmd-merge-class array-class value-class)]
+                          (match (tc-type-strip-region array-ty)
+                            [(AstTyDynArray elem-ty)
+                              (if (and
+                                (tc-spmd-varying? write-class)
+                                (not
+                                  (tc-spmd-lane-type-supported?
+                                    (box-get elem-ty))))
+                                (ErrTcSpmdExprInfo
+                                  (string-append
+                                    "typecheck: foreach varying array lane type is not supported: "
+                                    (tc-type-render
+                                      (tc-type-strip-region (box-get elem-ty)))))
+                                (tc-spmd-finish expr-ty TcSpmdUniform value-env))]
+                            [_ (tc-spmd-finish expr-ty TcSpmdUniform value-env)]))])]
+                  [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)])])]
+          [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)]))]
+    [(AstExprStringRef str-box index-box)
+      (let
+        [str : AstExpr (box-get str-box)]
+        [index : AstExpr (box-get index-box)]
+        (match (tc-spmd-expr ctx env spmd-env str)
+          [(OkTcSpmdExprInfo str-info)
+            (match str-info
+              [(TcSpmdExprInfo _ str-class str-env)
+                (match (tc-spmd-expr ctx env str-env index)
+                  [(OkTcSpmdExprInfo index-info)
+                    (match index-info
+                      [(TcSpmdExprInfo _ index-class index-env)
+                        (tc-spmd-finish
+                          expr-ty
+                          (tc-spmd-merge-class str-class index-class)
+                          index-env)])]
+                  [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)])])]
+          [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)]))]
+    [(AstExprWhile cond-box body-box)
+      (let
+        [cond : AstExpr (box-get cond-box)]
+        [body : AstExpr (box-get body-box)]
+        (match (tc-spmd-expr ctx env spmd-env cond)
+          [(OkTcSpmdExprInfo cond-info)
+            (match cond-info
+              [(TcSpmdExprInfo _ cond-class cond-env)
+                (match (tc-spmd-require-uniform
+                  cond-class
+                  "typecheck: foreach while condition must be uniform")
+                  [(OkTcUnit)
+                    (match (tc-spmd-expr ctx env cond-env body)
+                      [(OkTcSpmdExprInfo body-info)
+                        (match body-info
+                          [(TcSpmdExprInfo _ _ body-env)
+                            (tc-spmd-finish
+                              expr-ty
+                              TcSpmdUniform
+                              (tc-spmd-env-merge-classes cond-env body-env))])]
+                      [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)])]
+                  [(ErrTcUnit message) (ErrTcSpmdExprInfo message)])])]
+          [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)]))]
     [(AstExprBegin exprs) (tc-spmd-begin-list ctx env spmd-env exprs)]
     [(AstExprUnsafe exprs)
       (tc-spmd-begin-list ctx (tc-enter-unsafe env) spmd-env exprs)]
-    [(AstExprSet name value)
-      (match (tc-spmd-expr ctx env spmd-env value)
-        [(OkTcSpmdExprInfo value-info)
-          (match value-info
-            [(TcSpmdExprInfo _ value-class value-env)
-              (if (tc-spmd-env-has-local? value-env name)
-                (tc-spmd-finish
-                  expr-ty
-                  TcSpmdUniform
-                  (tc-spmd-env-set-local-class value-env name value-class))
-                (if (tc-spmd-env-has-outer? value-env name)
-                  (ErrTcSpmdExprInfo
-                    "typecheck: foreach cannot set binding declared outside foreach")
-                  (tc-spmd-finish expr-ty TcSpmdUniform value-env)))])]
-        [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)])]
-    [(AstExprMatch scrutinee arms)
-      (match (tc-spmd-expr ctx env spmd-env scrutinee)
-        [(OkTcSpmdExprInfo scrut-info)
-          (match scrut-info
-            [(TcSpmdExprInfo scrut-ty scrut-class scrut-env)
-              (match (tc-spmd-require-uniform
-                scrut-class
-                "typecheck: foreach match scrutinee must be uniform")
-                [(OkTcUnit)
-                  (match (tc-spmd-match-arms
-                    ctx
-                    env
-                    scrut-env
-                    scrut-ty
-                    arms
-                    TcSpmdUniform)
-                    [(OkTcSpmdExprListInfo arms-info)
-                      (match arms-info
-                        [(TcSpmdExprListInfo arms-class arms-env)
-                          (tc-spmd-finish expr-ty arms-class arms-env)])]
-                    [(ErrTcSpmdExprListInfo message)
-                      (ErrTcSpmdExprInfo message)])]
-                [(ErrTcUnit message) (ErrTcSpmdExprInfo message)])])]
-        [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)])]
-    [(AstExprForeach index index-ty start end body)
-      (match (tc-spmd-expr ctx env spmd-env start)
-        [(OkTcSpmdExprInfo start-info)
-          (match start-info
-            [(TcSpmdExprInfo _ start-class start-env)
-              (match (tc-spmd-require-uniform
-                start-class
-                "typecheck: foreach bounds must be uniform")
-                [(OkTcUnit)
-                  (match (tc-spmd-expr ctx env start-env end)
-                    [(OkTcSpmdExprInfo end-info)
-                      (match end-info
-                        [(TcSpmdExprInfo _ end-class end-env)
-                          (match (tc-spmd-require-uniform
-                            end-class
-                            "typecheck: foreach bounds must be uniform")
-                            [(OkTcUnit)
-                              (match (tc-spmd-check-foreach-body-with-env
-                                ctx
-                                env
-                                end-env
-                                index
-                                (tc-resolve-type ctx index-ty)
-                                body)
-                                [(OkTcUnit)
-                                  (tc-spmd-finish expr-ty TcSpmdUniform end-env)]
-                                [(ErrTcUnit message)
-                                  (ErrTcSpmdExprInfo message)])]
-                            [(ErrTcUnit message) (ErrTcSpmdExprInfo message)])])]
-                    [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)])]
-                [(ErrTcUnit message) (ErrTcSpmdExprInfo message)])])]
-        [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)])]
+    [(AstExprSet name value-box)
+      (let
+        [value : AstExpr (box-get value-box)]
+        (match (tc-spmd-expr ctx env spmd-env value)
+          [(OkTcSpmdExprInfo value-info)
+            (match value-info
+              [(TcSpmdExprInfo _ value-class value-env)
+                (if (tc-spmd-env-has-local? value-env name)
+                  (tc-spmd-finish
+                    expr-ty
+                    TcSpmdUniform
+                    (tc-spmd-env-set-local-class value-env name value-class))
+                  (if (tc-spmd-env-has-outer? value-env name)
+                    (ErrTcSpmdExprInfo
+                      "typecheck: foreach cannot set binding declared outside foreach")
+                    (tc-spmd-finish expr-ty TcSpmdUniform value-env)))])]
+          [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)]))]
+    [(AstExprMatch scrutinee-box arms)
+      (let
+        [scrutinee : AstExpr (box-get scrutinee-box)]
+        (match (tc-spmd-expr ctx env spmd-env scrutinee)
+          [(OkTcSpmdExprInfo scrut-info)
+            (match scrut-info
+              [(TcSpmdExprInfo scrut-ty scrut-class scrut-env)
+                (match (tc-spmd-require-uniform
+                  scrut-class
+                  "typecheck: foreach match scrutinee must be uniform")
+                  [(OkTcUnit)
+                    (match (tc-spmd-match-arms
+                      ctx
+                      env
+                      scrut-env
+                      scrut-ty
+                      arms
+                      TcSpmdUniform)
+                      [(OkTcSpmdExprListInfo arms-info)
+                        (match arms-info
+                          [(TcSpmdExprListInfo arms-class arms-env)
+                            (tc-spmd-finish expr-ty arms-class arms-env)])]
+                      [(ErrTcSpmdExprListInfo message)
+                        (ErrTcSpmdExprInfo message)])]
+                  [(ErrTcUnit message) (ErrTcSpmdExprInfo message)])])]
+          [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)]))]
+    [(AstExprForeach index index-ty start-box end-box body-box)
+      (let
+        [start : AstExpr (box-get start-box)]
+        [end : AstExpr (box-get end-box)]
+        [body : AstExpr (box-get body-box)]
+        (match (tc-spmd-expr ctx env spmd-env start)
+          [(OkTcSpmdExprInfo start-info)
+            (match start-info
+              [(TcSpmdExprInfo _ start-class start-env)
+                (match (tc-spmd-require-uniform
+                  start-class
+                  "typecheck: foreach bounds must be uniform")
+                  [(OkTcUnit)
+                    (match (tc-spmd-expr ctx env start-env end)
+                      [(OkTcSpmdExprInfo end-info)
+                        (match end-info
+                          [(TcSpmdExprInfo _ end-class end-env)
+                            (match (tc-spmd-require-uniform
+                              end-class
+                              "typecheck: foreach bounds must be uniform")
+                              [(OkTcUnit)
+                                (match (tc-spmd-check-foreach-body-with-env
+                                  ctx
+                                  env
+                                  end-env
+                                  index
+                                  (tc-resolve-type ctx index-ty)
+                                  body)
+                                  [(OkTcUnit)
+                                    (tc-spmd-finish
+                                      expr-ty
+                                      TcSpmdUniform
+                                      end-env)]
+                                  [(ErrTcUnit message)
+                                    (ErrTcSpmdExprInfo message)])]
+                              [(ErrTcUnit message) (ErrTcSpmdExprInfo message)])])]
+                      [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)])]
+                  [(ErrTcUnit message) (ErrTcSpmdExprInfo message)])])]
+          [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)]))]
     [(AstExprSpmdReduce _ _ _ _ _ _ _)
       (ErrTcSpmdExprInfo
         "typecheck: spmd-reduce inside foreach is not supported")]
-    [(AstExprBorrow _ place)
-      (match (tc-spmd-expr ctx env spmd-env place)
-        [(OkTcSpmdExprInfo info)
-          (match info
-            [(TcSpmdExprInfo _ class next-spmd-env)
-              (tc-spmd-finish expr-ty class next-spmd-env)])]
-        [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)])]
-    [(AstExprStructGet receiver _)
-      (match (tc-spmd-expr ctx env spmd-env receiver)
-        [(OkTcSpmdExprInfo info)
-          (match info
-            [(TcSpmdExprInfo _ class next-spmd-env)
-              (tc-spmd-finish expr-ty class next-spmd-env)])]
-        [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)])]
-    [(AstExprBox inner)
-      (match (tc-spmd-expr ctx env spmd-env inner)
-        [(OkTcSpmdExprInfo info)
-          (match info
-            [(TcSpmdExprInfo _ class next-spmd-env)
-              (tc-spmd-finish expr-ty class next-spmd-env)])]
-        [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)])]
-    [(AstExprBoxGet inner)
-      (match (tc-spmd-expr ctx env spmd-env inner)
-        [(OkTcSpmdExprInfo info)
-          (match info
-            [(TcSpmdExprInfo _ class next-spmd-env)
-              (tc-spmd-finish expr-ty class next-spmd-env)])]
-        [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)])]
+    [(AstExprBorrow _ place-box)
+      (let
+        [place : AstExpr (box-get place-box)]
+        (match (tc-spmd-expr ctx env spmd-env place)
+          [(OkTcSpmdExprInfo info)
+            (match info
+              [(TcSpmdExprInfo _ class next-spmd-env)
+                (tc-spmd-finish expr-ty class next-spmd-env)])]
+          [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)]))]
+    [(AstExprStructGet receiver-box _)
+      (let
+        [receiver : AstExpr (box-get receiver-box)]
+        (match (tc-spmd-expr ctx env spmd-env receiver)
+          [(OkTcSpmdExprInfo info)
+            (match info
+              [(TcSpmdExprInfo _ class next-spmd-env)
+                (tc-spmd-finish expr-ty class next-spmd-env)])]
+          [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)]))]
+    [(AstExprBox inner-box)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (match (tc-spmd-expr ctx env spmd-env inner)
+          [(OkTcSpmdExprInfo info)
+            (match info
+              [(TcSpmdExprInfo _ class next-spmd-env)
+                (tc-spmd-finish expr-ty class next-spmd-env)])]
+          [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)]))]
+    [(AstExprBoxGet inner-box)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (match (tc-spmd-expr ctx env spmd-env inner)
+          [(OkTcSpmdExprInfo info)
+            (match info
+              [(TcSpmdExprInfo _ class next-spmd-env)
+                (tc-spmd-finish expr-ty class next-spmd-env)])]
+          [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)]))]
     [(AstExprWithRegion region body)
       (tc-spmd-begin-list ctx (tc-push-region env region) spmd-env body)]
     [(AstExprWithEscape _ _)
@@ -5073,13 +5308,15 @@
     [(AstExprWithResource _ _)
       (ErrTcSpmdExprInfo
         "typecheck: resource with is not implemented yet (#907)")]
-    [(AstExprComptime inner)
-      (match (tc-spmd-expr ctx env spmd-env inner)
-        [(OkTcSpmdExprInfo info)
-          (match info
-            [(TcSpmdExprInfo _ class next-spmd-env)
-              (tc-spmd-finish expr-ty class next-spmd-env)])]
-        [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)])]
+    [(AstExprComptime inner-box)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (match (tc-spmd-expr ctx env spmd-env inner)
+          [(OkTcSpmdExprInfo info)
+            (match info
+              [(TcSpmdExprInfo _ class next-spmd-env)
+                (tc-spmd-finish expr-ty class next-spmd-env)])]
+          [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)]))]
     [(AstExprQuote _) (tc-spmd-finish expr-ty TcSpmdUniform spmd-env)]
     [(AstExprQuasiquote _) (tc-spmd-finish expr-ty TcSpmdUniform spmd-env)]
     [(AstExprUnquote _)
@@ -5087,128 +5324,167 @@
     [(AstExprUnquoteSplicing _)
       (ErrTcSpmdExprInfo
         "typecheck: unquote-splicing is only valid inside quasiquote")]
-    [(AstExprTry inner)
-      (match (tc-spmd-expr ctx env spmd-env inner)
-        [(OkTcSpmdExprInfo info)
-          (match info
-            [(TcSpmdExprInfo _ class next-spmd-env)
-              (tc-spmd-finish expr-ty class next-spmd-env)])]
-        [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)])]
+    [(AstExprTry inner-box)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (match (tc-spmd-expr ctx env spmd-env inner)
+          [(OkTcSpmdExprInfo info)
+            (match info
+              [(TcSpmdExprInfo _ class next-spmd-env)
+                (tc-spmd-finish expr-ty class next-spmd-env)])]
+          [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)]))]
     [(AstExprReturn _)
       (ErrTcSpmdExprInfo "typecheck: return inside foreach is not supported")]
     [(AstExprPtrNull _) (tc-spmd-finish expr-ty TcSpmdUniform spmd-env)]
-    [(AstExprPtrNullCheck inner)
-      (match (tc-spmd-expr ctx env spmd-env inner)
-        [(OkTcSpmdExprInfo info)
-          (match info
-            [(TcSpmdExprInfo _ class next-spmd-env)
-              (tc-spmd-finish expr-ty class next-spmd-env)])]
-        [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)])]
-    [(AstExprPtrRead ptr)
-      (match (tc-spmd-expr ctx env spmd-env ptr)
-        [(OkTcSpmdExprInfo info)
-          (match info
-            [(TcSpmdExprInfo _ class next-spmd-env)
-              (tc-spmd-finish expr-ty class next-spmd-env)])]
-        [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)])]
-    [(AstExprPtrWrite ptr value)
-      (match (tc-spmd-expr ctx env spmd-env ptr)
-        [(OkTcSpmdExprInfo ptr-info)
-          (match ptr-info
-            [(TcSpmdExprInfo _ ptr-class ptr-env)
-              (match (tc-spmd-expr ctx env ptr-env value)
-                [(OkTcSpmdExprInfo value-info)
-                  (match value-info
-                    [(TcSpmdExprInfo _ value-class value-env)
-                      (tc-spmd-finish
-                        expr-ty
-                        (tc-spmd-merge-class ptr-class value-class)
-                        value-env)])]
-                [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)])])]
-        [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)])]
-    [(AstExprPtrOffset ptr offset)
-      (match (tc-spmd-expr ctx env spmd-env ptr)
-        [(OkTcSpmdExprInfo ptr-info)
-          (match ptr-info
-            [(TcSpmdExprInfo _ ptr-class ptr-env)
-              (match (tc-spmd-expr ctx env ptr-env offset)
-                [(OkTcSpmdExprInfo offset-info)
-                  (match offset-info
-                    [(TcSpmdExprInfo _ offset-class offset-env)
-                      (tc-spmd-finish
-                        expr-ty
-                        (tc-spmd-merge-class ptr-class offset-class)
-                        offset-env)])]
-                [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)])])]
-        [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)])]
-    [(AstExprPtrCast ptr _)
-      (match (tc-spmd-expr ctx env spmd-env ptr)
-        [(OkTcSpmdExprInfo info)
-          (match info
-            [(TcSpmdExprInfo _ class next-spmd-env)
-              (tc-spmd-finish expr-ty class next-spmd-env)])]
-        [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)])]
-    [(AstExprPtrToInt ptr)
-      (match (tc-spmd-expr ctx env spmd-env ptr)
-        [(OkTcSpmdExprInfo info)
-          (match info
-            [(TcSpmdExprInfo _ class next-spmd-env)
-              (tc-spmd-finish expr-ty class next-spmd-env)])]
-        [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)])]
-    [(AstExprIntToPtr value _)
-      (match (tc-spmd-expr ctx env spmd-env value)
-        [(OkTcSpmdExprInfo info)
-          (match info
-            [(TcSpmdExprInfo _ class next-spmd-env)
-              (tc-spmd-finish expr-ty class next-spmd-env)])]
-        [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)])]
-    [(AstExprStringData str)
-      (match (tc-spmd-expr ctx env spmd-env str)
-        [(OkTcSpmdExprInfo info)
-          (match info
-            [(TcSpmdExprInfo _ class next-spmd-env)
-              (tc-spmd-finish expr-ty class next-spmd-env)])]
-        [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)])]
-    [(AstExprStringFromBytes ptr len)
-      (match (tc-spmd-expr ctx env spmd-env ptr)
-        [(OkTcSpmdExprInfo ptr-info)
-          (match ptr-info
-            [(TcSpmdExprInfo _ ptr-class ptr-env)
-              (match (tc-spmd-expr ctx env ptr-env len)
-                [(OkTcSpmdExprInfo len-info)
-                  (match len-info
-                    [(TcSpmdExprInfo _ len-class len-env)
-                      (tc-spmd-finish
-                        expr-ty
-                        (tc-spmd-merge-class ptr-class len-class)
-                        len-env)])]
-                [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)])])]
-        [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)])]
-    [(AstExprArrayData array)
-      (match (tc-spmd-expr ctx env spmd-env array)
-        [(OkTcSpmdExprInfo info)
-          (match info
-            [(TcSpmdExprInfo _ class next-spmd-env)
-              (tc-spmd-finish expr-ty class next-spmd-env)])]
-        [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)])]
+    [(AstExprPtrNullCheck inner-box)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (match (tc-spmd-expr ctx env spmd-env inner)
+          [(OkTcSpmdExprInfo info)
+            (match info
+              [(TcSpmdExprInfo _ class next-spmd-env)
+                (tc-spmd-finish expr-ty class next-spmd-env)])]
+          [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)]))]
+    [(AstExprPtrRead ptr-box)
+      (let
+        [ptr : AstExpr (box-get ptr-box)]
+        (match (tc-spmd-expr ctx env spmd-env ptr)
+          [(OkTcSpmdExprInfo info)
+            (match info
+              [(TcSpmdExprInfo _ class next-spmd-env)
+                (tc-spmd-finish expr-ty class next-spmd-env)])]
+          [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)]))]
+    [(AstExprPtrWrite ptr-box value-box)
+      (let
+        [ptr : AstExpr (box-get ptr-box)]
+        [value : AstExpr (box-get value-box)]
+        (match (tc-spmd-expr ctx env spmd-env ptr)
+          [(OkTcSpmdExprInfo ptr-info)
+            (match ptr-info
+              [(TcSpmdExprInfo _ ptr-class ptr-env)
+                (match (tc-spmd-expr ctx env ptr-env value)
+                  [(OkTcSpmdExprInfo value-info)
+                    (match value-info
+                      [(TcSpmdExprInfo _ value-class value-env)
+                        (tc-spmd-finish
+                          expr-ty
+                          (tc-spmd-merge-class ptr-class value-class)
+                          value-env)])]
+                  [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)])])]
+          [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)]))]
+    [(AstExprPtrOffset ptr-box offset-box)
+      (let
+        [ptr : AstExpr (box-get ptr-box)]
+        [offset : AstExpr (box-get offset-box)]
+        (match (tc-spmd-expr ctx env spmd-env ptr)
+          [(OkTcSpmdExprInfo ptr-info)
+            (match ptr-info
+              [(TcSpmdExprInfo _ ptr-class ptr-env)
+                (match (tc-spmd-expr ctx env ptr-env offset)
+                  [(OkTcSpmdExprInfo offset-info)
+                    (match offset-info
+                      [(TcSpmdExprInfo _ offset-class offset-env)
+                        (tc-spmd-finish
+                          expr-ty
+                          (tc-spmd-merge-class ptr-class offset-class)
+                          offset-env)])]
+                  [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)])])]
+          [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)]))]
+    [(AstExprPtrCast ptr-box _)
+      (let
+        [ptr : AstExpr (box-get ptr-box)]
+        (match (tc-spmd-expr ctx env spmd-env ptr)
+          [(OkTcSpmdExprInfo info)
+            (match info
+              [(TcSpmdExprInfo _ class next-spmd-env)
+                (tc-spmd-finish expr-ty class next-spmd-env)])]
+          [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)]))]
+    [(AstExprPtrToInt ptr-box)
+      (let
+        [ptr : AstExpr (box-get ptr-box)]
+        (match (tc-spmd-expr ctx env spmd-env ptr)
+          [(OkTcSpmdExprInfo info)
+            (match info
+              [(TcSpmdExprInfo _ class next-spmd-env)
+                (tc-spmd-finish expr-ty class next-spmd-env)])]
+          [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)]))]
+    [(AstExprIntToPtr value-box _)
+      (let
+        [value : AstExpr (box-get value-box)]
+        (match (tc-spmd-expr ctx env spmd-env value)
+          [(OkTcSpmdExprInfo info)
+            (match info
+              [(TcSpmdExprInfo _ class next-spmd-env)
+                (tc-spmd-finish expr-ty class next-spmd-env)])]
+          [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)]))]
+    [(AstExprStringData str-box)
+      (let
+        [str : AstExpr (box-get str-box)]
+        (match (tc-spmd-expr ctx env spmd-env str)
+          [(OkTcSpmdExprInfo info)
+            (match info
+              [(TcSpmdExprInfo _ class next-spmd-env)
+                (tc-spmd-finish expr-ty class next-spmd-env)])]
+          [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)]))]
+    [(AstExprStringFromBytes ptr-box len-box)
+      (let
+        [ptr : AstExpr (box-get ptr-box)]
+        [len : AstExpr (box-get len-box)]
+        (match (tc-spmd-expr ctx env spmd-env ptr)
+          [(OkTcSpmdExprInfo ptr-info)
+            (match ptr-info
+              [(TcSpmdExprInfo _ ptr-class ptr-env)
+                (match (tc-spmd-expr ctx env ptr-env len)
+                  [(OkTcSpmdExprInfo len-info)
+                    (match len-info
+                      [(TcSpmdExprInfo _ len-class len-env)
+                        (tc-spmd-finish
+                          expr-ty
+                          (tc-spmd-merge-class ptr-class len-class)
+                          len-env)])]
+                  [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)])])]
+          [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)]))]
+    [(AstExprArrayData array-box)
+      (let
+        [array : AstExpr (box-get array-box)]
+        (match (tc-spmd-expr ctx env spmd-env array)
+          [(OkTcSpmdExprInfo info)
+            (match info
+              [(TcSpmdExprInfo _ class next-spmd-env)
+                (tc-spmd-finish expr-ty class next-spmd-env)])]
+          [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)]))]
     [(AstExprProgramArgc) (tc-spmd-finish expr-ty TcSpmdUniform spmd-env)]
     [(AstExprProgramArgv) (tc-spmd-finish expr-ty TcSpmdUniform spmd-env)]
     [(AstExprProgramEnvp) (tc-spmd-finish expr-ty TcSpmdUniform spmd-env)]
-    [(AstExprCpuIdEax leaf subleaf)
-      (tc-spmd-cpuid-like ctx env spmd-env expr-ty leaf subleaf)]
-    [(AstExprCpuIdEbx leaf subleaf)
-      (tc-spmd-cpuid-like ctx env spmd-env expr-ty leaf subleaf)]
-    [(AstExprCpuIdEcx leaf subleaf)
-      (tc-spmd-cpuid-like ctx env spmd-env expr-ty leaf subleaf)]
-    [(AstExprCpuIdEdx leaf subleaf)
-      (tc-spmd-cpuid-like ctx env spmd-env expr-ty leaf subleaf)]
-    [(AstExprXgetbv index)
-      (match (tc-spmd-expr ctx env spmd-env index)
-        [(OkTcSpmdExprInfo info)
-          (match info
-            [(TcSpmdExprInfo _ class next-spmd-env)
-              (tc-spmd-finish expr-ty class next-spmd-env)])]
-        [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)])]))
+    [(AstExprCpuIdEax leaf-box subleaf-box)
+      (let
+        [leaf : AstExpr (box-get leaf-box)]
+        [subleaf : AstExpr (box-get subleaf-box)]
+        (tc-spmd-cpuid-like ctx env spmd-env expr-ty leaf subleaf))]
+    [(AstExprCpuIdEbx leaf-box subleaf-box)
+      (let
+        [leaf : AstExpr (box-get leaf-box)]
+        [subleaf : AstExpr (box-get subleaf-box)]
+        (tc-spmd-cpuid-like ctx env spmd-env expr-ty leaf subleaf))]
+    [(AstExprCpuIdEcx leaf-box subleaf-box)
+      (let
+        [leaf : AstExpr (box-get leaf-box)]
+        [subleaf : AstExpr (box-get subleaf-box)]
+        (tc-spmd-cpuid-like ctx env spmd-env expr-ty leaf subleaf))]
+    [(AstExprCpuIdEdx leaf-box subleaf-box)
+      (let
+        [leaf : AstExpr (box-get leaf-box)]
+        [subleaf : AstExpr (box-get subleaf-box)]
+        (tc-spmd-cpuid-like ctx env spmd-env expr-ty leaf subleaf))]
+    [(AstExprXgetbv index-box)
+      (let
+        [index : AstExpr (box-get index-box)]
+        (match (tc-spmd-expr ctx env spmd-env index)
+          [(OkTcSpmdExprInfo info)
+            (match info
+              [(TcSpmdExprInfo _ class next-spmd-env)
+                (tc-spmd-finish expr-ty class next-spmd-env)])]
+          [(ErrTcSpmdExprInfo message) (ErrTcSpmdExprInfo message)]))]))
 
 (define (tc-param-list-add-bound-names
   [params : AstParamList]
@@ -5230,11 +5506,16 @@
   [bound : TcStringList]) : TcStringList
   (match pattern
     [(AstPatVar name _) (tc-string-list-add bound name)]
-    [(AstPatTuple patterns) (tc-pattern-list-add-bound-names patterns bound)]
+    [(AstPatTuple patterns-box)
+      (let
+        [patterns : AstPatternList (box-get patterns-box)]
+        (tc-pattern-list-add-bound-names patterns bound))]
     [(AstPatWildcard) bound]
     [(AstPatBinding name) (tc-string-list-add bound name)]
-    [(AstPatVariant _ patterns)
-      (tc-pattern-list-add-bound-names patterns bound)]
+    [(AstPatVariant _ patterns-box)
+      (let
+        [patterns : AstPatternList (box-get patterns-box)]
+        (tc-pattern-list-add-bound-names patterns bound))]
     [(AstPatLiteral _) bound]))
 
 (define (tc-pattern-list-add-bound-names
@@ -5300,13 +5581,15 @@
       (let
         [rest : AstLetBindingList (box-get rest)]
         (match binding
-          [(AstLetBinding bind-name _ init)
-            (or
-              (tc-expr-uses-free-name? init name bound)
-              (tc-let-binding-list-uses-free-name?
-                rest
-                name
-                (tc-string-list-add bound bind-name)))]))]))
+          [(AstLetBinding bind-name _ init-box)
+            (let
+              [init : AstExpr (box-get init-box)]
+              (or
+                (tc-expr-uses-free-name? init name bound)
+                (tc-let-binding-list-uses-free-name?
+                  rest
+                  name
+                  (tc-string-list-add bound bind-name))))]))]))
 
 (define (tc-resource-binding-list-uses-free-name?
   [bindings : AstResourceBindingList]
@@ -5318,15 +5601,18 @@
       (let
         [rest : AstResourceBindingList (box-get rest)]
         (match binding
-          [(AstResourceBinding bind-name init cleanup)
-            (or
-              (tc-expr-uses-free-name? init name bound)
+          [(AstResourceBinding bind-name init-box cleanup-box)
+            (let
+              [init : AstExpr (box-get init-box)]
+              [cleanup : AstExpr (box-get cleanup-box)]
               (or
-                (tc-expr-uses-free-name? cleanup name bound)
-                (tc-resource-binding-list-uses-free-name?
-                  rest
-                  name
-                  (tc-string-list-add bound bind-name))))]))]))
+                (tc-expr-uses-free-name? init name bound)
+                (or
+                  (tc-expr-uses-free-name? cleanup name bound)
+                  (tc-resource-binding-list-uses-free-name?
+                    rest
+                    name
+                    (tc-string-list-add bound bind-name)))))]))]))
 
 (define (tc-match-arms-use-free-name?
   [arms : AstMatchArmList]
@@ -5338,118 +5624,193 @@
       (let
         [rest : AstMatchArmList (box-get rest)]
         (match arm
-          [(AstMatchArm pattern body)
-            (or
-              (tc-expr-uses-free-name?
-                body
-                name
-                (tc-pattern-add-bound-names pattern bound))
-              (tc-match-arms-use-free-name? rest name bound))]))]))
+          [(AstMatchArm pattern body-box)
+            (let
+              [body : AstExpr (box-get body-box)]
+              (or
+                (tc-expr-uses-free-name?
+                  body
+                  name
+                  (tc-pattern-add-bound-names pattern bound))
+                (tc-match-arms-use-free-name? rest name bound)))]))]))
 
 (define (tc-expr-uses-free-name?
   [expr : AstExpr]
   [name : String]
   [bound : TcStringList]) : bool
   (match expr
-    [(AstExprSpanned inner _) (tc-expr-uses-free-name? inner name bound)]
+    [(AstExprSpanned inner-box _)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (tc-expr-uses-free-name? inner name bound))]
     [(AstExprLiteral _) false]
     [(AstExprVar var-name)
       (and (string-eq var-name name) (not (tc-string-list-contains bound name)))]
-    [(AstExprBinary _ left right)
-      (or
-        (tc-expr-uses-free-name? left name bound)
-        (tc-expr-uses-free-name? right name bound))]
-    [(AstExprUnary _ inner) (tc-expr-uses-free-name? inner name bound)]
-    [(AstExprCall func args)
-      (or
-        (tc-expr-uses-free-name? func name bound)
-        (tc-expr-list-uses-free-name? args name bound))]
-    [(AstExprTypeLiteral _) false]
-    [(AstExprIf cond then-branch else-branch)
-      (or
-        (tc-expr-uses-free-name? cond name bound)
+    [(AstExprBinary _ left-box right-box)
+      (let
+        [left : AstExpr (box-get left-box)]
+        [right : AstExpr (box-get right-box)]
         (or
-          (tc-expr-uses-free-name? then-branch name bound)
-          (tc-expr-uses-free-name? else-branch name bound)))]
-    [(AstExprLet bindings body)
-      (or
-        (tc-let-binding-list-uses-free-name? bindings name bound)
+          (tc-expr-uses-free-name? left name bound)
+          (tc-expr-uses-free-name? right name bound)))]
+    [(AstExprUnary _ inner-box)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (tc-expr-uses-free-name? inner name bound))]
+    [(AstExprCall func-box args)
+      (let
+        [func : AstExpr (box-get func-box)]
+        (or
+          (tc-expr-uses-free-name? func name bound)
+          (tc-expr-list-uses-free-name? args name bound)))]
+    [(AstExprTypeLiteral _) false]
+    [(AstExprIf cond-box then-branch-box else-branch-box)
+      (let
+        [cond : AstExpr (box-get cond-box)]
+        [then-branch : AstExpr (box-get then-branch-box)]
+        [else-branch : AstExpr (box-get else-branch-box)]
+        (or
+          (tc-expr-uses-free-name? cond name bound)
+          (or
+            (tc-expr-uses-free-name? then-branch name bound)
+            (tc-expr-uses-free-name? else-branch name bound))))]
+    [(AstExprLet bindings body-box)
+      (let
+        [body : AstExpr (box-get body-box)]
+        (or
+          (tc-let-binding-list-uses-free-name? bindings name bound)
+          (tc-expr-uses-free-name?
+            body
+            name
+            (tc-let-binding-list-add-bound-names bindings bound))))]
+    [(AstExprLambda params _ body-box)
+      (let
+        [body : AstExpr (box-get body-box)]
         (tc-expr-uses-free-name?
           body
           name
-          (tc-let-binding-list-add-bound-names bindings bound)))]
-    [(AstExprLambda params _ body)
-      (tc-expr-uses-free-name?
-        body
-        name
-        (tc-param-list-add-bound-names params bound))]
+          (tc-param-list-add-bound-names params bound)))]
     [(AstExprTuple exprs) (tc-expr-list-uses-free-name? exprs name bound)]
-    [(AstExprTupleRef tuple _) (tc-expr-uses-free-name? tuple name bound)]
+    [(AstExprTupleRef tuple-box _)
+      (let
+        [tuple : AstExpr (box-get tuple-box)]
+        (tc-expr-uses-free-name? tuple name bound))]
     [(AstExprArray exprs) (tc-expr-list-uses-free-name? exprs name bound)]
-    [(AstExprMakeArray _ len) (tc-expr-uses-free-name? len name bound)]
-    [(AstExprArrayRef array index)
-      (or
-        (tc-expr-uses-free-name? array name bound)
-        (tc-expr-uses-free-name? index name bound))]
-    [(AstExprArraySet array index value)
-      (or
-        (tc-expr-uses-free-name? array name bound)
+    [(AstExprMakeArray _ len-box)
+      (let
+        [len : AstExpr (box-get len-box)]
+        (tc-expr-uses-free-name? len name bound))]
+    [(AstExprArrayRef array-box index-box)
+      (let
+        [array : AstExpr (box-get array-box)]
+        [index : AstExpr (box-get index-box)]
         (or
-          (tc-expr-uses-free-name? index name bound)
+          (tc-expr-uses-free-name? array name bound)
+          (tc-expr-uses-free-name? index name bound)))]
+    [(AstExprArraySet array-box index-box value-box)
+      (let
+        [array : AstExpr (box-get array-box)]
+        [index : AstExpr (box-get index-box)]
+        [value : AstExpr (box-get value-box)]
+        (or
+          (tc-expr-uses-free-name? array name bound)
+          (or
+            (tc-expr-uses-free-name? index name bound)
+            (tc-expr-uses-free-name? value name bound))))]
+    [(AstExprArrayPush array-box value-box)
+      (let
+        [array : AstExpr (box-get array-box)]
+        [value : AstExpr (box-get value-box)]
+        (or
+          (tc-expr-uses-free-name? array name bound)
           (tc-expr-uses-free-name? value name bound)))]
-    [(AstExprArrayPush array value)
-      (or
-        (tc-expr-uses-free-name? array name bound)
-        (tc-expr-uses-free-name? value name bound))]
-    [(AstExprStringRef str index)
-      (or
-        (tc-expr-uses-free-name? str name bound)
-        (tc-expr-uses-free-name? index name bound))]
-    [(AstExprWhile cond body)
-      (or
-        (tc-expr-uses-free-name? cond name bound)
-        (tc-expr-uses-free-name? body name bound))]
+    [(AstExprStringRef str-box index-box)
+      (let
+        [str : AstExpr (box-get str-box)]
+        [index : AstExpr (box-get index-box)]
+        (or
+          (tc-expr-uses-free-name? str name bound)
+          (tc-expr-uses-free-name? index name bound)))]
+    [(AstExprWhile cond-box body-box)
+      (let
+        [cond : AstExpr (box-get cond-box)]
+        [body : AstExpr (box-get body-box)]
+        (or
+          (tc-expr-uses-free-name? cond name bound)
+          (tc-expr-uses-free-name? body name bound)))]
     [(AstExprBegin exprs) (tc-expr-list-uses-free-name? exprs name bound)]
     [(AstExprUnsafe exprs) (tc-expr-list-uses-free-name? exprs name bound)]
-    [(AstExprSet var-name value)
-      (or
-        (and
-          (string-eq var-name name)
-          (not (tc-string-list-contains bound name)))
-        (tc-expr-uses-free-name? value name bound))]
-    [(AstExprAnn inner _) (tc-expr-uses-free-name? inner name bound)]
-    [(AstExprCast inner _) (tc-expr-uses-free-name? inner name bound)]
-    [(AstExprBorrow _ place) (tc-expr-uses-free-name? place name bound)]
-    [(AstExprBox inner) (tc-expr-uses-free-name? inner name bound)]
-    [(AstExprBoxGet inner) (tc-expr-uses-free-name? inner name bound)]
-    [(AstExprMatch scrutinee arms)
-      (or
-        (tc-expr-uses-free-name? scrutinee name bound)
-        (tc-match-arms-use-free-name? arms name bound))]
-    [(AstExprForeach index _ start end body)
-      (or
-        (tc-expr-uses-free-name? start name bound)
+    [(AstExprSet var-name value-box)
+      (let
+        [value : AstExpr (box-get value-box)]
         (or
-          (tc-expr-uses-free-name? end name bound)
-          (tc-expr-uses-free-name? body name (tc-string-list-add bound index))))]
-    [(AstExprSpmdReduce _ index _ start end init value)
-      (or
-        (tc-expr-uses-free-name? start name bound)
+          (and
+            (string-eq var-name name)
+            (not (tc-string-list-contains bound name)))
+          (tc-expr-uses-free-name? value name bound)))]
+    [(AstExprAnn inner-box _)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (tc-expr-uses-free-name? inner name bound))]
+    [(AstExprCast inner-box _)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (tc-expr-uses-free-name? inner name bound))]
+    [(AstExprBorrow _ place-box)
+      (let
+        [place : AstExpr (box-get place-box)]
+        (tc-expr-uses-free-name? place name bound))]
+    [(AstExprBox inner-box)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (tc-expr-uses-free-name? inner name bound))]
+    [(AstExprBoxGet inner-box)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (tc-expr-uses-free-name? inner name bound))]
+    [(AstExprMatch scrutinee-box arms)
+      (let
+        [scrutinee : AstExpr (box-get scrutinee-box)]
         (or
-          (tc-expr-uses-free-name? end name bound)
+          (tc-expr-uses-free-name? scrutinee name bound)
+          (tc-match-arms-use-free-name? arms name bound)))]
+    [(AstExprForeach index _ start-box end-box body-box)
+      (let
+        [start : AstExpr (box-get start-box)]
+        [end : AstExpr (box-get end-box)]
+        [body : AstExpr (box-get body-box)]
+        (or
+          (tc-expr-uses-free-name? start name bound)
           (or
-            (tc-expr-uses-free-name? init name bound)
-            (tc-expr-uses-free-name?
-              value
-              name
-              (tc-string-list-add bound index)))))]
-    [(AstExprStructGet receiver _)
-      (tc-expr-uses-free-name? receiver name bound)]
+            (tc-expr-uses-free-name? end name bound)
+            (tc-expr-uses-free-name? body name (tc-string-list-add bound index)))))]
+    [(AstExprSpmdReduce _ index _ start-box end-box init-box value-box)
+      (let
+        [start : AstExpr (box-get start-box)]
+        [end : AstExpr (box-get end-box)]
+        [init : AstExpr (box-get init-box)]
+        [value : AstExpr (box-get value-box)]
+        (or
+          (tc-expr-uses-free-name? start name bound)
+          (or
+            (tc-expr-uses-free-name? end name bound)
+            (or
+              (tc-expr-uses-free-name? init name bound)
+              (tc-expr-uses-free-name?
+                value
+                name
+                (tc-string-list-add bound index))))))]
+    [(AstExprStructGet receiver-box _)
+      (let
+        [receiver : AstExpr (box-get receiver-box)]
+        (tc-expr-uses-free-name? receiver name bound))]
     [(AstExprWithRegion _ body) (tc-expr-list-uses-free-name? body name bound)]
-    [(AstExprWithEscape scratch body)
-      (or
-        (tc-expr-uses-free-name? scratch name bound)
-        (tc-expr-list-uses-free-name? body name bound))]
+    [(AstExprWithEscape scratch-box body)
+      (let
+        [scratch : AstExpr (box-get scratch-box)]
+        (or
+          (tc-expr-uses-free-name? scratch name bound)
+          (tc-expr-list-uses-free-name? body name bound)))]
     [(AstExprWithResource bindings body)
       (or
         (tc-resource-binding-list-uses-free-name? bindings name bound)
@@ -5458,53 +5819,119 @@
           name
           (tc-resource-binding-list-add-bound-names bindings bound)))]
     [(AstExprTypeLiteral _) false]
-    [(AstExprComptime inner) (tc-expr-uses-free-name? inner name bound)]
-    [(AstExprQuote inner) (tc-expr-uses-free-name? inner name bound)]
-    [(AstExprQuasiquote inner) (tc-expr-uses-free-name? inner name bound)]
-    [(AstExprUnquote inner) (tc-expr-uses-free-name? inner name bound)]
-    [(AstExprUnquoteSplicing inner) (tc-expr-uses-free-name? inner name bound)]
-    [(AstExprTry inner) (tc-expr-uses-free-name? inner name bound)]
-    [(AstExprReturn inner) (tc-expr-uses-free-name? inner name bound)]
+    [(AstExprComptime inner-box)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (tc-expr-uses-free-name? inner name bound))]
+    [(AstExprQuote inner-box)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (tc-expr-uses-free-name? inner name bound))]
+    [(AstExprQuasiquote inner-box)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (tc-expr-uses-free-name? inner name bound))]
+    [(AstExprUnquote inner-box)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (tc-expr-uses-free-name? inner name bound))]
+    [(AstExprUnquoteSplicing inner-box)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (tc-expr-uses-free-name? inner name bound))]
+    [(AstExprTry inner-box)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (tc-expr-uses-free-name? inner name bound))]
+    [(AstExprReturn inner-box)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (tc-expr-uses-free-name? inner name bound))]
     [(AstExprPtrNull _) false]
-    [(AstExprPtrNullCheck inner) (tc-expr-uses-free-name? inner name bound)]
-    [(AstExprPtrRead ptr) (tc-expr-uses-free-name? ptr name bound)]
-    [(AstExprPtrWrite ptr value)
-      (or
-        (tc-expr-uses-free-name? ptr name bound)
+    [(AstExprPtrNullCheck inner-box)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (tc-expr-uses-free-name? inner name bound))]
+    [(AstExprPtrRead ptr-box)
+      (let
+        [ptr : AstExpr (box-get ptr-box)]
+        (tc-expr-uses-free-name? ptr name bound))]
+    [(AstExprPtrWrite ptr-box value-box)
+      (let
+        [ptr : AstExpr (box-get ptr-box)]
+        [value : AstExpr (box-get value-box)]
+        (or
+          (tc-expr-uses-free-name? ptr name bound)
+          (tc-expr-uses-free-name? value name bound)))]
+    [(AstExprPtrOffset ptr-box offset-box)
+      (let
+        [ptr : AstExpr (box-get ptr-box)]
+        [offset : AstExpr (box-get offset-box)]
+        (or
+          (tc-expr-uses-free-name? ptr name bound)
+          (tc-expr-uses-free-name? offset name bound)))]
+    [(AstExprPtrCast ptr-box _)
+      (let
+        [ptr : AstExpr (box-get ptr-box)]
+        (tc-expr-uses-free-name? ptr name bound))]
+    [(AstExprPtrToInt ptr-box)
+      (let
+        [ptr : AstExpr (box-get ptr-box)]
+        (tc-expr-uses-free-name? ptr name bound))]
+    [(AstExprIntToPtr value-box _)
+      (let
+        [value : AstExpr (box-get value-box)]
         (tc-expr-uses-free-name? value name bound))]
-    [(AstExprPtrOffset ptr offset)
-      (or
-        (tc-expr-uses-free-name? ptr name bound)
-        (tc-expr-uses-free-name? offset name bound))]
-    [(AstExprPtrCast ptr _) (tc-expr-uses-free-name? ptr name bound)]
-    [(AstExprPtrToInt ptr) (tc-expr-uses-free-name? ptr name bound)]
-    [(AstExprIntToPtr value _) (tc-expr-uses-free-name? value name bound)]
-    [(AstExprStringData str) (tc-expr-uses-free-name? str name bound)]
-    [(AstExprStringFromBytes ptr len)
-      (or
-        (tc-expr-uses-free-name? ptr name bound)
-        (tc-expr-uses-free-name? len name bound))]
-    [(AstExprArrayData array) (tc-expr-uses-free-name? array name bound)]
+    [(AstExprStringData str-box)
+      (let
+        [str : AstExpr (box-get str-box)]
+        (tc-expr-uses-free-name? str name bound))]
+    [(AstExprStringFromBytes ptr-box len-box)
+      (let
+        [ptr : AstExpr (box-get ptr-box)]
+        [len : AstExpr (box-get len-box)]
+        (or
+          (tc-expr-uses-free-name? ptr name bound)
+          (tc-expr-uses-free-name? len name bound)))]
+    [(AstExprArrayData array-box)
+      (let
+        [array : AstExpr (box-get array-box)]
+        (tc-expr-uses-free-name? array name bound))]
     [(AstExprProgramArgc) false]
     [(AstExprProgramArgv) false]
     [(AstExprProgramEnvp) false]
-    [(AstExprCpuIdEax leaf subleaf)
-      (or
-        (tc-expr-uses-free-name? leaf name bound)
-        (tc-expr-uses-free-name? subleaf name bound))]
-    [(AstExprCpuIdEbx leaf subleaf)
-      (or
-        (tc-expr-uses-free-name? leaf name bound)
-        (tc-expr-uses-free-name? subleaf name bound))]
-    [(AstExprCpuIdEcx leaf subleaf)
-      (or
-        (tc-expr-uses-free-name? leaf name bound)
-        (tc-expr-uses-free-name? subleaf name bound))]
-    [(AstExprCpuIdEdx leaf subleaf)
-      (or
-        (tc-expr-uses-free-name? leaf name bound)
-        (tc-expr-uses-free-name? subleaf name bound))]
-    [(AstExprXgetbv index) (tc-expr-uses-free-name? index name bound)]))
+    [(AstExprCpuIdEax leaf-box subleaf-box)
+      (let
+        [leaf : AstExpr (box-get leaf-box)]
+        [subleaf : AstExpr (box-get subleaf-box)]
+        (or
+          (tc-expr-uses-free-name? leaf name bound)
+          (tc-expr-uses-free-name? subleaf name bound)))]
+    [(AstExprCpuIdEbx leaf-box subleaf-box)
+      (let
+        [leaf : AstExpr (box-get leaf-box)]
+        [subleaf : AstExpr (box-get subleaf-box)]
+        (or
+          (tc-expr-uses-free-name? leaf name bound)
+          (tc-expr-uses-free-name? subleaf name bound)))]
+    [(AstExprCpuIdEcx leaf-box subleaf-box)
+      (let
+        [leaf : AstExpr (box-get leaf-box)]
+        [subleaf : AstExpr (box-get subleaf-box)]
+        (or
+          (tc-expr-uses-free-name? leaf name bound)
+          (tc-expr-uses-free-name? subleaf name bound)))]
+    [(AstExprCpuIdEdx leaf-box subleaf-box)
+      (let
+        [leaf : AstExpr (box-get leaf-box)]
+        [subleaf : AstExpr (box-get subleaf-box)]
+        (or
+          (tc-expr-uses-free-name? leaf name bound)
+          (tc-expr-uses-free-name? subleaf name bound)))]
+    [(AstExprXgetbv index-box)
+      (let
+        [index : AstExpr (box-get index-box)]
+        (tc-expr-uses-free-name? index name bound))]))
 
 ;; Same shadowing rules as `tc-expr-uses-free-name?`, but it only returns true
 ;; when the expression assigns to the free name. Lambda capture checks use this
@@ -5533,13 +5960,15 @@
       (let
         [rest : AstLetBindingList (box-get rest)]
         (match binding
-          [(AstLetBinding bind-name _ init)
-            (or
-              (tc-expr-sets-free-name? init name bound)
-              (tc-let-binding-list-sets-free-name?
-                rest
-                name
-                (tc-string-list-add bound bind-name)))]))]))
+          [(AstLetBinding bind-name _ init-box)
+            (let
+              [init : AstExpr (box-get init-box)]
+              (or
+                (tc-expr-sets-free-name? init name bound)
+                (tc-let-binding-list-sets-free-name?
+                  rest
+                  name
+                  (tc-string-list-add bound bind-name))))]))]))
 
 (define (tc-resource-binding-list-sets-free-name?
   [bindings : AstResourceBindingList]
@@ -5551,15 +5980,18 @@
       (let
         [rest : AstResourceBindingList (box-get rest)]
         (match binding
-          [(AstResourceBinding bind-name init cleanup)
-            (or
-              (tc-expr-sets-free-name? init name bound)
+          [(AstResourceBinding bind-name init-box cleanup-box)
+            (let
+              [init : AstExpr (box-get init-box)]
+              [cleanup : AstExpr (box-get cleanup-box)]
               (or
-                (tc-expr-sets-free-name? cleanup name bound)
-                (tc-resource-binding-list-sets-free-name?
-                  rest
-                  name
-                  (tc-string-list-add bound bind-name))))]))]))
+                (tc-expr-sets-free-name? init name bound)
+                (or
+                  (tc-expr-sets-free-name? cleanup name bound)
+                  (tc-resource-binding-list-sets-free-name?
+                    rest
+                    name
+                    (tc-string-list-add bound bind-name)))))]))]))
 
 (define (tc-match-arms-set-free-name?
   [arms : AstMatchArmList]
@@ -5571,116 +6003,191 @@
       (let
         [rest : AstMatchArmList (box-get rest)]
         (match arm
-          [(AstMatchArm pattern body)
-            (or
-              (tc-expr-sets-free-name?
-                body
-                name
-                (tc-pattern-add-bound-names pattern bound))
-              (tc-match-arms-set-free-name? rest name bound))]))]))
+          [(AstMatchArm pattern body-box)
+            (let
+              [body : AstExpr (box-get body-box)]
+              (or
+                (tc-expr-sets-free-name?
+                  body
+                  name
+                  (tc-pattern-add-bound-names pattern bound))
+                (tc-match-arms-set-free-name? rest name bound)))]))]))
 
 (define (tc-expr-sets-free-name?
   [expr : AstExpr]
   [name : String]
   [bound : TcStringList]) : bool
   (match expr
-    [(AstExprSpanned inner _) (tc-expr-sets-free-name? inner name bound)]
+    [(AstExprSpanned inner-box _)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (tc-expr-sets-free-name? inner name bound))]
     [(AstExprLiteral _) false]
     [(AstExprVar _) false]
-    [(AstExprBinary _ left right)
-      (or
-        (tc-expr-sets-free-name? left name bound)
-        (tc-expr-sets-free-name? right name bound))]
-    [(AstExprUnary _ inner) (tc-expr-sets-free-name? inner name bound)]
-    [(AstExprCall func args)
-      (or
-        (tc-expr-sets-free-name? func name bound)
-        (tc-expr-list-sets-free-name? args name bound))]
-    [(AstExprIf cond then-branch else-branch)
-      (or
-        (tc-expr-sets-free-name? cond name bound)
+    [(AstExprBinary _ left-box right-box)
+      (let
+        [left : AstExpr (box-get left-box)]
+        [right : AstExpr (box-get right-box)]
         (or
-          (tc-expr-sets-free-name? then-branch name bound)
-          (tc-expr-sets-free-name? else-branch name bound)))]
-    [(AstExprLet bindings body)
-      (or
-        (tc-let-binding-list-sets-free-name? bindings name bound)
+          (tc-expr-sets-free-name? left name bound)
+          (tc-expr-sets-free-name? right name bound)))]
+    [(AstExprUnary _ inner-box)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (tc-expr-sets-free-name? inner name bound))]
+    [(AstExprCall func-box args)
+      (let
+        [func : AstExpr (box-get func-box)]
+        (or
+          (tc-expr-sets-free-name? func name bound)
+          (tc-expr-list-sets-free-name? args name bound)))]
+    [(AstExprIf cond-box then-branch-box else-branch-box)
+      (let
+        [cond : AstExpr (box-get cond-box)]
+        [then-branch : AstExpr (box-get then-branch-box)]
+        [else-branch : AstExpr (box-get else-branch-box)]
+        (or
+          (tc-expr-sets-free-name? cond name bound)
+          (or
+            (tc-expr-sets-free-name? then-branch name bound)
+            (tc-expr-sets-free-name? else-branch name bound))))]
+    [(AstExprLet bindings body-box)
+      (let
+        [body : AstExpr (box-get body-box)]
+        (or
+          (tc-let-binding-list-sets-free-name? bindings name bound)
+          (tc-expr-sets-free-name?
+            body
+            name
+            (tc-let-binding-list-add-bound-names bindings bound))))]
+    [(AstExprLambda params _ body-box)
+      (let
+        [body : AstExpr (box-get body-box)]
         (tc-expr-sets-free-name?
           body
           name
-          (tc-let-binding-list-add-bound-names bindings bound)))]
-    [(AstExprLambda params _ body)
-      (tc-expr-sets-free-name?
-        body
-        name
-        (tc-param-list-add-bound-names params bound))]
+          (tc-param-list-add-bound-names params bound)))]
     [(AstExprTuple exprs) (tc-expr-list-sets-free-name? exprs name bound)]
-    [(AstExprTupleRef tuple _) (tc-expr-sets-free-name? tuple name bound)]
+    [(AstExprTupleRef tuple-box _)
+      (let
+        [tuple : AstExpr (box-get tuple-box)]
+        (tc-expr-sets-free-name? tuple name bound))]
     [(AstExprArray exprs) (tc-expr-list-sets-free-name? exprs name bound)]
-    [(AstExprMakeArray _ len) (tc-expr-sets-free-name? len name bound)]
-    [(AstExprArrayRef array index)
-      (or
-        (tc-expr-sets-free-name? array name bound)
-        (tc-expr-sets-free-name? index name bound))]
-    [(AstExprArraySet array index value)
-      (or
-        (tc-expr-sets-free-name? array name bound)
+    [(AstExprMakeArray _ len-box)
+      (let
+        [len : AstExpr (box-get len-box)]
+        (tc-expr-sets-free-name? len name bound))]
+    [(AstExprArrayRef array-box index-box)
+      (let
+        [array : AstExpr (box-get array-box)]
+        [index : AstExpr (box-get index-box)]
         (or
-          (tc-expr-sets-free-name? index name bound)
+          (tc-expr-sets-free-name? array name bound)
+          (tc-expr-sets-free-name? index name bound)))]
+    [(AstExprArraySet array-box index-box value-box)
+      (let
+        [array : AstExpr (box-get array-box)]
+        [index : AstExpr (box-get index-box)]
+        [value : AstExpr (box-get value-box)]
+        (or
+          (tc-expr-sets-free-name? array name bound)
+          (or
+            (tc-expr-sets-free-name? index name bound)
+            (tc-expr-sets-free-name? value name bound))))]
+    [(AstExprArrayPush array-box value-box)
+      (let
+        [array : AstExpr (box-get array-box)]
+        [value : AstExpr (box-get value-box)]
+        (or
+          (tc-expr-sets-free-name? array name bound)
           (tc-expr-sets-free-name? value name bound)))]
-    [(AstExprArrayPush array value)
-      (or
-        (tc-expr-sets-free-name? array name bound)
-        (tc-expr-sets-free-name? value name bound))]
-    [(AstExprStringRef str index)
-      (or
-        (tc-expr-sets-free-name? str name bound)
-        (tc-expr-sets-free-name? index name bound))]
-    [(AstExprWhile cond body)
-      (or
-        (tc-expr-sets-free-name? cond name bound)
-        (tc-expr-sets-free-name? body name bound))]
+    [(AstExprStringRef str-box index-box)
+      (let
+        [str : AstExpr (box-get str-box)]
+        [index : AstExpr (box-get index-box)]
+        (or
+          (tc-expr-sets-free-name? str name bound)
+          (tc-expr-sets-free-name? index name bound)))]
+    [(AstExprWhile cond-box body-box)
+      (let
+        [cond : AstExpr (box-get cond-box)]
+        [body : AstExpr (box-get body-box)]
+        (or
+          (tc-expr-sets-free-name? cond name bound)
+          (tc-expr-sets-free-name? body name bound)))]
     [(AstExprBegin exprs) (tc-expr-list-sets-free-name? exprs name bound)]
     [(AstExprUnsafe exprs) (tc-expr-list-sets-free-name? exprs name bound)]
-    [(AstExprSet var-name value)
-      (or
-        (and
-          (string-eq var-name name)
-          (not (tc-string-list-contains bound name)))
-        (tc-expr-sets-free-name? value name bound))]
-    [(AstExprAnn inner _) (tc-expr-sets-free-name? inner name bound)]
-    [(AstExprCast inner _) (tc-expr-sets-free-name? inner name bound)]
-    [(AstExprBorrow _ place) (tc-expr-sets-free-name? place name bound)]
-    [(AstExprBox inner) (tc-expr-sets-free-name? inner name bound)]
-    [(AstExprBoxGet inner) (tc-expr-sets-free-name? inner name bound)]
-    [(AstExprMatch scrutinee arms)
-      (or
-        (tc-expr-sets-free-name? scrutinee name bound)
-        (tc-match-arms-set-free-name? arms name bound))]
-    [(AstExprForeach index _ start end body)
-      (or
-        (tc-expr-sets-free-name? start name bound)
+    [(AstExprSet var-name value-box)
+      (let
+        [value : AstExpr (box-get value-box)]
         (or
-          (tc-expr-sets-free-name? end name bound)
-          (tc-expr-sets-free-name? body name (tc-string-list-add bound index))))]
-    [(AstExprSpmdReduce _ index _ start end init value)
-      (or
-        (tc-expr-sets-free-name? start name bound)
+          (and
+            (string-eq var-name name)
+            (not (tc-string-list-contains bound name)))
+          (tc-expr-sets-free-name? value name bound)))]
+    [(AstExprAnn inner-box _)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (tc-expr-sets-free-name? inner name bound))]
+    [(AstExprCast inner-box _)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (tc-expr-sets-free-name? inner name bound))]
+    [(AstExprBorrow _ place-box)
+      (let
+        [place : AstExpr (box-get place-box)]
+        (tc-expr-sets-free-name? place name bound))]
+    [(AstExprBox inner-box)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (tc-expr-sets-free-name? inner name bound))]
+    [(AstExprBoxGet inner-box)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (tc-expr-sets-free-name? inner name bound))]
+    [(AstExprMatch scrutinee-box arms)
+      (let
+        [scrutinee : AstExpr (box-get scrutinee-box)]
         (or
-          (tc-expr-sets-free-name? end name bound)
+          (tc-expr-sets-free-name? scrutinee name bound)
+          (tc-match-arms-set-free-name? arms name bound)))]
+    [(AstExprForeach index _ start-box end-box body-box)
+      (let
+        [start : AstExpr (box-get start-box)]
+        [end : AstExpr (box-get end-box)]
+        [body : AstExpr (box-get body-box)]
+        (or
+          (tc-expr-sets-free-name? start name bound)
           (or
-            (tc-expr-sets-free-name? init name bound)
-            (tc-expr-sets-free-name?
-              value
-              name
-              (tc-string-list-add bound index)))))]
-    [(AstExprStructGet receiver _)
-      (tc-expr-sets-free-name? receiver name bound)]
+            (tc-expr-sets-free-name? end name bound)
+            (tc-expr-sets-free-name? body name (tc-string-list-add bound index)))))]
+    [(AstExprSpmdReduce _ index _ start-box end-box init-box value-box)
+      (let
+        [start : AstExpr (box-get start-box)]
+        [end : AstExpr (box-get end-box)]
+        [init : AstExpr (box-get init-box)]
+        [value : AstExpr (box-get value-box)]
+        (or
+          (tc-expr-sets-free-name? start name bound)
+          (or
+            (tc-expr-sets-free-name? end name bound)
+            (or
+              (tc-expr-sets-free-name? init name bound)
+              (tc-expr-sets-free-name?
+                value
+                name
+                (tc-string-list-add bound index))))))]
+    [(AstExprStructGet receiver-box _)
+      (let
+        [receiver : AstExpr (box-get receiver-box)]
+        (tc-expr-sets-free-name? receiver name bound))]
     [(AstExprWithRegion _ body) (tc-expr-list-sets-free-name? body name bound)]
-    [(AstExprWithEscape scratch body)
-      (or
-        (tc-expr-sets-free-name? scratch name bound)
-        (tc-expr-list-sets-free-name? body name bound))]
+    [(AstExprWithEscape scratch-box body)
+      (let
+        [scratch : AstExpr (box-get scratch-box)]
+        (or
+          (tc-expr-sets-free-name? scratch name bound)
+          (tc-expr-list-sets-free-name? body name bound)))]
     [(AstExprWithResource bindings body)
       (or
         (tc-resource-binding-list-sets-free-name? bindings name bound)
@@ -5689,53 +6196,119 @@
           name
           (tc-resource-binding-list-add-bound-names bindings bound)))]
     [(AstExprTypeLiteral _) false]
-    [(AstExprComptime inner) (tc-expr-sets-free-name? inner name bound)]
-    [(AstExprQuote inner) (tc-expr-sets-free-name? inner name bound)]
-    [(AstExprQuasiquote inner) (tc-expr-sets-free-name? inner name bound)]
-    [(AstExprUnquote inner) (tc-expr-sets-free-name? inner name bound)]
-    [(AstExprUnquoteSplicing inner) (tc-expr-sets-free-name? inner name bound)]
-    [(AstExprTry inner) (tc-expr-sets-free-name? inner name bound)]
-    [(AstExprReturn inner) (tc-expr-sets-free-name? inner name bound)]
+    [(AstExprComptime inner-box)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (tc-expr-sets-free-name? inner name bound))]
+    [(AstExprQuote inner-box)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (tc-expr-sets-free-name? inner name bound))]
+    [(AstExprQuasiquote inner-box)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (tc-expr-sets-free-name? inner name bound))]
+    [(AstExprUnquote inner-box)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (tc-expr-sets-free-name? inner name bound))]
+    [(AstExprUnquoteSplicing inner-box)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (tc-expr-sets-free-name? inner name bound))]
+    [(AstExprTry inner-box)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (tc-expr-sets-free-name? inner name bound))]
+    [(AstExprReturn inner-box)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (tc-expr-sets-free-name? inner name bound))]
     [(AstExprPtrNull _) false]
-    [(AstExprPtrNullCheck inner) (tc-expr-sets-free-name? inner name bound)]
-    [(AstExprPtrRead ptr) (tc-expr-sets-free-name? ptr name bound)]
-    [(AstExprPtrWrite ptr value)
-      (or
-        (tc-expr-sets-free-name? ptr name bound)
+    [(AstExprPtrNullCheck inner-box)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (tc-expr-sets-free-name? inner name bound))]
+    [(AstExprPtrRead ptr-box)
+      (let
+        [ptr : AstExpr (box-get ptr-box)]
+        (tc-expr-sets-free-name? ptr name bound))]
+    [(AstExprPtrWrite ptr-box value-box)
+      (let
+        [ptr : AstExpr (box-get ptr-box)]
+        [value : AstExpr (box-get value-box)]
+        (or
+          (tc-expr-sets-free-name? ptr name bound)
+          (tc-expr-sets-free-name? value name bound)))]
+    [(AstExprPtrOffset ptr-box offset-box)
+      (let
+        [ptr : AstExpr (box-get ptr-box)]
+        [offset : AstExpr (box-get offset-box)]
+        (or
+          (tc-expr-sets-free-name? ptr name bound)
+          (tc-expr-sets-free-name? offset name bound)))]
+    [(AstExprPtrCast ptr-box _)
+      (let
+        [ptr : AstExpr (box-get ptr-box)]
+        (tc-expr-sets-free-name? ptr name bound))]
+    [(AstExprPtrToInt ptr-box)
+      (let
+        [ptr : AstExpr (box-get ptr-box)]
+        (tc-expr-sets-free-name? ptr name bound))]
+    [(AstExprIntToPtr value-box _)
+      (let
+        [value : AstExpr (box-get value-box)]
         (tc-expr-sets-free-name? value name bound))]
-    [(AstExprPtrOffset ptr offset)
-      (or
-        (tc-expr-sets-free-name? ptr name bound)
-        (tc-expr-sets-free-name? offset name bound))]
-    [(AstExprPtrCast ptr _) (tc-expr-sets-free-name? ptr name bound)]
-    [(AstExprPtrToInt ptr) (tc-expr-sets-free-name? ptr name bound)]
-    [(AstExprIntToPtr value _) (tc-expr-sets-free-name? value name bound)]
-    [(AstExprStringData str) (tc-expr-sets-free-name? str name bound)]
-    [(AstExprStringFromBytes ptr len)
-      (or
-        (tc-expr-sets-free-name? ptr name bound)
-        (tc-expr-sets-free-name? len name bound))]
-    [(AstExprArrayData array) (tc-expr-sets-free-name? array name bound)]
+    [(AstExprStringData str-box)
+      (let
+        [str : AstExpr (box-get str-box)]
+        (tc-expr-sets-free-name? str name bound))]
+    [(AstExprStringFromBytes ptr-box len-box)
+      (let
+        [ptr : AstExpr (box-get ptr-box)]
+        [len : AstExpr (box-get len-box)]
+        (or
+          (tc-expr-sets-free-name? ptr name bound)
+          (tc-expr-sets-free-name? len name bound)))]
+    [(AstExprArrayData array-box)
+      (let
+        [array : AstExpr (box-get array-box)]
+        (tc-expr-sets-free-name? array name bound))]
     [(AstExprProgramArgc) false]
     [(AstExprProgramArgv) false]
     [(AstExprProgramEnvp) false]
-    [(AstExprCpuIdEax leaf subleaf)
-      (or
-        (tc-expr-sets-free-name? leaf name bound)
-        (tc-expr-sets-free-name? subleaf name bound))]
-    [(AstExprCpuIdEbx leaf subleaf)
-      (or
-        (tc-expr-sets-free-name? leaf name bound)
-        (tc-expr-sets-free-name? subleaf name bound))]
-    [(AstExprCpuIdEcx leaf subleaf)
-      (or
-        (tc-expr-sets-free-name? leaf name bound)
-        (tc-expr-sets-free-name? subleaf name bound))]
-    [(AstExprCpuIdEdx leaf subleaf)
-      (or
-        (tc-expr-sets-free-name? leaf name bound)
-        (tc-expr-sets-free-name? subleaf name bound))]
-    [(AstExprXgetbv index) (tc-expr-sets-free-name? index name bound)]))
+    [(AstExprCpuIdEax leaf-box subleaf-box)
+      (let
+        [leaf : AstExpr (box-get leaf-box)]
+        [subleaf : AstExpr (box-get subleaf-box)]
+        (or
+          (tc-expr-sets-free-name? leaf name bound)
+          (tc-expr-sets-free-name? subleaf name bound)))]
+    [(AstExprCpuIdEbx leaf-box subleaf-box)
+      (let
+        [leaf : AstExpr (box-get leaf-box)]
+        [subleaf : AstExpr (box-get subleaf-box)]
+        (or
+          (tc-expr-sets-free-name? leaf name bound)
+          (tc-expr-sets-free-name? subleaf name bound)))]
+    [(AstExprCpuIdEcx leaf-box subleaf-box)
+      (let
+        [leaf : AstExpr (box-get leaf-box)]
+        [subleaf : AstExpr (box-get subleaf-box)]
+        (or
+          (tc-expr-sets-free-name? leaf name bound)
+          (tc-expr-sets-free-name? subleaf name bound)))]
+    [(AstExprCpuIdEdx leaf-box subleaf-box)
+      (let
+        [leaf : AstExpr (box-get leaf-box)]
+        [subleaf : AstExpr (box-get subleaf-box)]
+        (or
+          (tc-expr-sets-free-name? leaf name bound)
+          (tc-expr-sets-free-name? subleaf name bound)))]
+    [(AstExprXgetbv index-box)
+      (let
+        [index : AstExpr (box-get index-box)]
+        (tc-expr-sets-free-name? index name bound))]))
 
 (define (tc-name-is-free-cleanup-owner?
   [owners : TcStringList]
@@ -5781,58 +6354,84 @@
       (let
         [rest : AstMatchArmList (box-get rest)]
         (match arm
-          [(AstMatchArm pattern body)
-            (or
-              (tc-expr-result-uses-cleanup-owner?
-                body
-                owners
-                (tc-pattern-add-bound-names pattern bound))
-              (tc-match-arms-result-use-cleanup-owner? rest owners bound))]))]))
+          [(AstMatchArm pattern body-box)
+            (let
+              [body : AstExpr (box-get body-box)]
+              (or
+                (tc-expr-result-uses-cleanup-owner?
+                  body
+                  owners
+                  (tc-pattern-add-bound-names pattern bound))
+                (tc-match-arms-result-use-cleanup-owner? rest owners bound)))]))]))
 
 (define (tc-expr-result-uses-cleanup-owner?
   [expr : AstExpr]
   [owners : TcStringList]
   [bound : TcStringList]) : bool
   (match expr
-    [(AstExprSpanned inner _)
-      (tc-expr-result-uses-cleanup-owner? inner owners bound)]
+    [(AstExprSpanned inner-box _)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (tc-expr-result-uses-cleanup-owner? inner owners bound))]
     [(AstExprVar name) (tc-name-is-free-cleanup-owner? owners name bound)]
-    [(AstExprIf _ then-branch else-branch)
-      (or
-        (tc-expr-result-uses-cleanup-owner? then-branch owners bound)
-        (tc-expr-result-uses-cleanup-owner? else-branch owners bound))]
-    [(AstExprLet bindings body)
-      (tc-expr-result-uses-cleanup-owner?
-        body
-        owners
-        (tc-let-binding-list-add-bound-names bindings bound))]
+    [(AstExprIf _ then-branch-box else-branch-box)
+      (let
+        [then-branch : AstExpr (box-get then-branch-box)]
+        [else-branch : AstExpr (box-get else-branch-box)]
+        (or
+          (tc-expr-result-uses-cleanup-owner? then-branch owners bound)
+          (tc-expr-result-uses-cleanup-owner? else-branch owners bound)))]
+    [(AstExprLet bindings body-box)
+      (let
+        [body : AstExpr (box-get body-box)]
+        (tc-expr-result-uses-cleanup-owner?
+          body
+          owners
+          (tc-let-binding-list-add-bound-names bindings bound)))]
     [(AstExprMatch _ arms)
       (tc-match-arms-result-use-cleanup-owner? arms owners bound)]
-    [(AstExprForeach index _ _ _ body)
-      (tc-expr-result-uses-cleanup-owner?
-        body
-        owners
-        (tc-string-list-add bound index))]
-    [(AstExprSpmdReduce _ index _ _ _ _ value)
-      (tc-expr-result-uses-cleanup-owner?
-        value
-        owners
-        (tc-string-list-add bound index))]
+    [(AstExprForeach index _ _ _ body-box)
+      (let
+        [body : AstExpr (box-get body-box)]
+        (tc-expr-result-uses-cleanup-owner?
+          body
+          owners
+          (tc-string-list-add bound index)))]
+    [(AstExprSpmdReduce _ index _ _ _ _ value-box)
+      (let
+        [value : AstExpr (box-get value-box)]
+        (tc-expr-result-uses-cleanup-owner?
+          value
+          owners
+          (tc-string-list-add bound index)))]
     [(AstExprBegin exprs)
       (tc-expr-list-result-uses-cleanup-owner? exprs owners bound)]
     [(AstExprUnsafe exprs)
       (tc-expr-list-result-uses-cleanup-owner? exprs owners bound)]
-    [(AstExprAnn inner _)
-      (tc-expr-result-uses-cleanup-owner? inner owners bound)]
-    [(AstExprCast inner _)
-      (tc-expr-result-uses-cleanup-owner? inner owners bound)]
-    [(AstExprComptime inner)
-      (tc-expr-result-uses-cleanup-owner? inner owners bound)]
-    [(AstExprTry inner) (tc-expr-result-uses-cleanup-owner? inner owners bound)]
-    [(AstExprReturn inner)
-      (tc-expr-result-uses-cleanup-owner? inner owners bound)]
-    [(AstExprBoxGet inner)
-      (tc-expr-result-uses-cleanup-owner? inner owners bound)]
+    [(AstExprAnn inner-box _)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (tc-expr-result-uses-cleanup-owner? inner owners bound))]
+    [(AstExprCast inner-box _)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (tc-expr-result-uses-cleanup-owner? inner owners bound))]
+    [(AstExprComptime inner-box)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (tc-expr-result-uses-cleanup-owner? inner owners bound))]
+    [(AstExprTry inner-box)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (tc-expr-result-uses-cleanup-owner? inner owners bound))]
+    [(AstExprReturn inner-box)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (tc-expr-result-uses-cleanup-owner? inner owners bound))]
+    [(AstExprBoxGet inner-box)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (tc-expr-result-uses-cleanup-owner? inner owners bound))]
     [(AstExprWithRegion _ body)
       (tc-expr-list-result-uses-cleanup-owner? body owners bound)]
     [(AstExprWithEscape _ body)
@@ -7232,24 +7831,33 @@
       (match (tc-lookup env name)
         [(OkTcType ty) (tc-borrow-place-var name ty)]
         [(ErrTcType message) (ErrTcBorrowPlace message)])]
-    [(AstExprStructGet receiver field)
-      (match (tc-borrow-place ctx env receiver)
-        [(OkTcBorrowPlace place) (tc-borrow-place-struct-field ctx place field)]
-        [(ErrTcBorrowPlace message) (ErrTcBorrowPlace message)])]
-    [(AstExprTupleRef tuple index)
-      (match (tc-borrow-place ctx env tuple)
-        [(OkTcBorrowPlace place) (tc-borrow-place-tuple-field ctx place index)]
-        [(ErrTcBorrowPlace message) (ErrTcBorrowPlace message)])]
-    [(AstExprArrayRef array index)
-      (match (tc-expr ctx env index)
-        [(OkTcType index-ty)
-          (if (tc-integer-type? index-ty)
-            (match (tc-borrow-place ctx env array)
-              [(OkTcBorrowPlace place)
-                (tc-borrow-place-array-element ctx place)]
-              [(ErrTcBorrowPlace message) (ErrTcBorrowPlace message)])
-            (ErrTcBorrowPlace "typecheck: array index must be integer"))]
-        [(ErrTcType message) (ErrTcBorrowPlace message)])]
+    [(AstExprStructGet receiver-box field)
+      (let
+        [receiver : AstExpr (box-get receiver-box)]
+        (match (tc-borrow-place ctx env receiver)
+          [(OkTcBorrowPlace place)
+            (tc-borrow-place-struct-field ctx place field)]
+          [(ErrTcBorrowPlace message) (ErrTcBorrowPlace message)]))]
+    [(AstExprTupleRef tuple-box index)
+      (let
+        [tuple : AstExpr (box-get tuple-box)]
+        (match (tc-borrow-place ctx env tuple)
+          [(OkTcBorrowPlace place)
+            (tc-borrow-place-tuple-field ctx place index)]
+          [(ErrTcBorrowPlace message) (ErrTcBorrowPlace message)]))]
+    [(AstExprArrayRef array-box index-box)
+      (let
+        [array : AstExpr (box-get array-box)]
+        [index : AstExpr (box-get index-box)]
+        (match (tc-expr ctx env index)
+          [(OkTcType index-ty)
+            (if (tc-integer-type? index-ty)
+              (match (tc-borrow-place ctx env array)
+                [(OkTcBorrowPlace place)
+                  (tc-borrow-place-array-element ctx place)]
+                [(ErrTcBorrowPlace message) (ErrTcBorrowPlace message)])
+              (ErrTcBorrowPlace "typecheck: array index must be integer"))]
+          [(ErrTcType message) (ErrTcBorrowPlace message)]))]
     [_
       (ErrTcBorrowPlace
         "typecheck: borrow requires a local, parameter, or aggregate place")]))
@@ -7268,15 +7876,24 @@
       (match (tc-lookup env name)
         [(OkTcType ty) (tc-store-place-lifetime-var name ty)]
         [(ErrTcType message) (ErrTcString message)])]
-    [(AstExprStructGet receiver _) (tc-store-place-lifetime ctx env receiver)]
-    [(AstExprTupleRef tuple _) (tc-store-place-lifetime ctx env tuple)]
-    [(AstExprArrayRef array index)
-      (match (tc-expr ctx env index)
-        [(OkTcType index-ty)
-          (if (tc-integer-type? index-ty)
-            (tc-store-place-lifetime ctx env array)
-            (ErrTcString "typecheck: array index must be integer"))]
-        [(ErrTcType message) (ErrTcString message)])]
+    [(AstExprStructGet receiver-box _)
+      (let
+        [receiver : AstExpr (box-get receiver-box)]
+        (tc-store-place-lifetime ctx env receiver))]
+    [(AstExprTupleRef tuple-box _)
+      (let
+        [tuple : AstExpr (box-get tuple-box)]
+        (tc-store-place-lifetime ctx env tuple))]
+    [(AstExprArrayRef array-box index-box)
+      (let
+        [array : AstExpr (box-get array-box)]
+        [index : AstExpr (box-get index-box)]
+        (match (tc-expr ctx env index)
+          [(OkTcType index-ty)
+            (if (tc-integer-type? index-ty)
+              (tc-store-place-lifetime ctx env array)
+              (ErrTcString "typecheck: array index must be integer"))]
+          [(ErrTcType message) (ErrTcString message)]))]
     [_ (ErrTcString "typecheck: expression is not a storage place")]))
 
 (define (tc-ensure-reference-value-can-store-in-place
@@ -7421,17 +8038,20 @@
         (if (tc-literal-pattern-compatible? lit ty)
           (OkTcEnv env)
           (ErrTcEnv "typecheck: literal pattern type mismatch"))]
-      [(AstPatVariant name args)
-        (match (tc-type-strip-region ty)
-          [(AstTyEnum enum-name)
-            (tc-bind-variant-pattern
-              ctx
-              env
-              enum-name
-              name
-              args
-              (tc-type-outer-region ty))]
-          [_ (ErrTcEnv "typecheck: nested variant pattern requires enum field")])]
+      [(AstPatVariant name args-box)
+        (let
+          [args : AstPatternList (box-get args-box)]
+          (match (tc-type-strip-region ty)
+            [(AstTyEnum enum-name)
+              (tc-bind-variant-pattern
+                ctx
+                env
+                enum-name
+                name
+                args
+                (tc-type-outer-region ty))]
+            [_
+              (ErrTcEnv "typecheck: nested variant pattern requires enum field")]))]
       [_ (ErrTcEnv "typecheck: unsupported nested match pattern")])))
 
 (define (tc-bind-match-pattern
@@ -7451,14 +8071,16 @@
             variant-name
             AstPatternNil
             (tc-type-outer-region scrut-ty))]
-        [(AstPatVariant variant-name args)
-          (tc-bind-variant-pattern
-            ctx
-            env
-            enum-name
-            variant-name
-            args
-            (tc-type-outer-region scrut-ty))]
+        [(AstPatVariant variant-name args-box)
+          (let
+            [args : AstPatternList (box-get args-box)]
+            (tc-bind-variant-pattern
+              ctx
+              env
+              enum-name
+              variant-name
+              args
+              (tc-type-outer-region scrut-ty)))]
         [_ (ErrTcEnv "typecheck: unsupported enum match pattern")])]
     [_
       (match pattern
@@ -7478,10 +8100,12 @@
   [scrut-ty : AstType]
   [arm : AstMatchArm]) : ResultTcType
   (match arm
-    [(AstMatchArm pattern body)
-      (match (tc-bind-match-pattern ctx env scrut-ty pattern)
-        [(OkTcEnv arm-env) (tc-expr ctx arm-env body)]
-        [(ErrTcEnv message) (ErrTcType message)])]))
+    [(AstMatchArm pattern body-box)
+      (let
+        [body : AstExpr (box-get body-box)]
+        (match (tc-bind-match-pattern ctx env scrut-ty pattern)
+          [(OkTcEnv arm-env) (tc-expr ctx arm-env body)]
+          [(ErrTcEnv message) (ErrTcType message)]))]))
 
 (define (tc-match-rest-types
   [ctx : TcContext]
@@ -7628,16 +8252,18 @@
     [(AstPatWildcard) true]
     [(AstPatBinding _) true]
     [(AstPatLiteral _) false]
-    [(AstPatVariant name args)
-      (match (tc-type-strip-region (tc-resolve-type ctx field-ty))
-        [(AstTyEnum enum-name)
-          (match (tc-program-enum-variants (tc-context-program ctx) enum-name)
-            [(OkAstVariantDefList variants)
-              (if (tc-enum-has-single-variant? ctx variants enum-name name)
-                (tc-variant-pattern-irrefutable? ctx enum-name name args)
-                false)]
-            [(ErrAstVariantDefList _) false])]
-        [_ false])]
+    [(AstPatVariant name args-box)
+      (let
+        [args : AstPatternList (box-get args-box)]
+        (match (tc-type-strip-region (tc-resolve-type ctx field-ty))
+          [(AstTyEnum enum-name)
+            (match (tc-program-enum-variants (tc-context-program ctx) enum-name)
+              [(OkAstVariantDefList variants)
+                (if (tc-enum-has-single-variant? ctx variants enum-name name)
+                  (tc-variant-pattern-irrefutable? ctx enum-name name args)
+                  false)]
+              [(ErrAstVariantDefList _) false])]
+          [_ false]))]
     [_ false]))
 
 (define (tc-pattern-list-irrefutable?
@@ -7670,10 +8296,12 @@
     [(AstPatWildcard) true]
     [(AstPatBinding name)
       (tc-variant-name-matches? ctx enum-name name variant-name)]
-    [(AstPatVariant name args)
-      (and
-        (tc-variant-name-matches? ctx enum-name name variant-name)
-        (tc-variant-pattern-irrefutable? ctx enum-name name args))]
+    [(AstPatVariant name args-box)
+      (let
+        [args : AstPatternList (box-get args-box)]
+        (and
+          (tc-variant-name-matches? ctx enum-name name variant-name)
+          (tc-variant-pattern-irrefutable? ctx enum-name name args)))]
     [_ false]))
 
 (define (tc-match-arms-cover-variant?
@@ -7868,27 +8496,47 @@
 
 (define (tc-spmd-value-pure-at [expr : AstExpr] [in-index : bool]) : ResultTcUnit
   (match expr
-    [(AstExprSpanned inner _) (tc-spmd-value-pure-at inner in-index)]
+    [(AstExprSpanned inner-box _)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (tc-spmd-value-pure-at inner in-index))]
     [(AstExprLiteral _) OkTcUnit]
     [(AstExprVar _) OkTcUnit]
-    [(AstExprBinary _ left right)
-      (match (tc-spmd-value-pure-at left in-index)
-        [(OkTcUnit) (tc-spmd-value-pure-at right in-index)]
-        [(ErrTcUnit message) (ErrTcUnit message)])]
-    [(AstExprUnary _ inner) (tc-spmd-value-pure-at inner in-index)]
-    [(AstExprAnn inner _) (tc-spmd-value-pure-at inner in-index)]
-    [(AstExprCast inner _) (tc-spmd-value-pure-at inner in-index)]
-    [(AstExprLet bindings body)
-      (match (tc-spmd-value-let-bindings-pure-at bindings in-index)
-        [(OkTcUnit) (tc-spmd-value-pure-at body in-index)]
-        [(ErrTcUnit message) (ErrTcUnit message)])]
-    [(AstExprArrayRef array index)
-      (if in-index
-        (ErrTcUnit
-          "indirect array indexing is not allowed inside a spmd-reduce value expression; gather/scatter is deferred in the first slice (SPEC.md §5.16)")
-        (match (tc-spmd-value-pure-at array false)
-          [(OkTcUnit) (tc-spmd-value-pure-at index true)]
+    [(AstExprBinary _ left-box right-box)
+      (let
+        [left : AstExpr (box-get left-box)]
+        [right : AstExpr (box-get right-box)]
+        (match (tc-spmd-value-pure-at left in-index)
+          [(OkTcUnit) (tc-spmd-value-pure-at right in-index)]
           [(ErrTcUnit message) (ErrTcUnit message)]))]
+    [(AstExprUnary _ inner-box)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (tc-spmd-value-pure-at inner in-index))]
+    [(AstExprAnn inner-box _)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (tc-spmd-value-pure-at inner in-index))]
+    [(AstExprCast inner-box _)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (tc-spmd-value-pure-at inner in-index))]
+    [(AstExprLet bindings body-box)
+      (let
+        [body : AstExpr (box-get body-box)]
+        (match (tc-spmd-value-let-bindings-pure-at bindings in-index)
+          [(OkTcUnit) (tc-spmd-value-pure-at body in-index)]
+          [(ErrTcUnit message) (ErrTcUnit message)]))]
+    [(AstExprArrayRef array-box index-box)
+      (let
+        [array : AstExpr (box-get array-box)]
+        [index : AstExpr (box-get index-box)]
+        (if in-index
+          (ErrTcUnit
+            "indirect array indexing is not allowed inside a spmd-reduce value expression; gather/scatter is deferred in the first slice (SPEC.md §5.16)")
+          (match (tc-spmd-value-pure-at array false)
+            [(OkTcUnit) (tc-spmd-value-pure-at index true)]
+            [(ErrTcUnit message) (ErrTcUnit message)])))]
     [(AstExprSet _ _)
       (ErrTcUnit
         "`set!` is not allowed inside a spmd-reduce value expression; reductions must use the explicit accumulator, not outer mutation (SPEC.md §5.16)")]
@@ -7929,10 +8577,12 @@
       (let
         [rest : AstLetBindingList (box-get rest)]
         (match binding
-          [(AstLetBinding _ _ init)
-            (match (tc-spmd-value-pure-at init in-index)
-              [(OkTcUnit) (tc-spmd-value-let-bindings-pure-at rest in-index)]
-              [(ErrTcUnit message) (ErrTcUnit message)])]))]))
+          [(AstLetBinding _ _ init-box)
+            (let
+              [init : AstExpr (box-get init-box)]
+              (match (tc-spmd-value-pure-at init in-index)
+                [(OkTcUnit) (tc-spmd-value-let-bindings-pure-at rest in-index)]
+                [(ErrTcUnit message) (ErrTcUnit message)]))]))]))
 
 (define (tc-ptr-read-expr [ctx : TcContext] [env : TcTypeEnv] [ptr : AstExpr]) : ResultTcType
   (match (tc-require-unsafe env "ptr-read")
@@ -8187,48 +8837,88 @@
   [env : TcTypeEnv]
   [expr : AstExpr]) : ResultTcUnit
   (match expr
-    [(AstExprSpanned inner _) (tc-quasiquote-template-ok ctx env inner)]
-    [(AstExprUnquote inner)
-      (match (tc-expr ctx env inner)
-        [(OkTcType ty)
-          (tc-expect ty (AstTyExpr) "typecheck: unquote expects Expr")]
-        [(ErrTcType message) (ErrTcUnit message)])]
-    [(AstExprUnquoteSplicing inner)
-      (match (tc-expr ctx env inner)
-        [(OkTcType ty)
-          (tc-expect
-            ty
-            (AstTyExprList)
-            "typecheck: unquote-splicing expects ExprList")]
-        [(ErrTcType message) (ErrTcUnit message)])]
-    [(AstExprBinary _ left right)
-      (match (tc-quasiquote-template-ok ctx env left)
-        [(OkTcUnit) (tc-quasiquote-template-ok ctx env right)]
-        [(ErrTcUnit message) (ErrTcUnit message)])]
-    [(AstExprUnary _ inner) (tc-quasiquote-template-ok ctx env inner)]
-    [(AstExprCall func args)
-      (match (tc-quasiquote-template-ok ctx env func)
-        [(OkTcUnit) (tc-quasiquote-template-list-ok ctx env args)]
-        [(ErrTcUnit message) (ErrTcUnit message)])]
-    [(AstExprIf cond then-branch else-branch)
-      (match (tc-quasiquote-template-ok ctx env cond)
-        [(OkTcUnit)
-          (match (tc-quasiquote-template-ok ctx env then-branch)
-            [(OkTcUnit) (tc-quasiquote-template-ok ctx env else-branch)]
-            [(ErrTcUnit message) (ErrTcUnit message)])]
-        [(ErrTcUnit message) (ErrTcUnit message)])]
+    [(AstExprSpanned inner-box _)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (tc-quasiquote-template-ok ctx env inner))]
+    [(AstExprUnquote inner-box)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (match (tc-expr ctx env inner)
+          [(OkTcType ty)
+            (tc-expect ty (AstTyExpr) "typecheck: unquote expects Expr")]
+          [(ErrTcType message) (ErrTcUnit message)]))]
+    [(AstExprUnquoteSplicing inner-box)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (match (tc-expr ctx env inner)
+          [(OkTcType ty)
+            (tc-expect
+              ty
+              (AstTyExprList)
+              "typecheck: unquote-splicing expects ExprList")]
+          [(ErrTcType message) (ErrTcUnit message)]))]
+    [(AstExprBinary _ left-box right-box)
+      (let
+        [left : AstExpr (box-get left-box)]
+        [right : AstExpr (box-get right-box)]
+        (match (tc-quasiquote-template-ok ctx env left)
+          [(OkTcUnit) (tc-quasiquote-template-ok ctx env right)]
+          [(ErrTcUnit message) (ErrTcUnit message)]))]
+    [(AstExprUnary _ inner-box)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (tc-quasiquote-template-ok ctx env inner))]
+    [(AstExprCall func-box args)
+      (let
+        [func : AstExpr (box-get func-box)]
+        (match (tc-quasiquote-template-ok ctx env func)
+          [(OkTcUnit) (tc-quasiquote-template-list-ok ctx env args)]
+          [(ErrTcUnit message) (ErrTcUnit message)]))]
+    [(AstExprIf cond-box then-branch-box else-branch-box)
+      (let
+        [cond : AstExpr (box-get cond-box)]
+        [then-branch : AstExpr (box-get then-branch-box)]
+        [else-branch : AstExpr (box-get else-branch-box)]
+        (match (tc-quasiquote-template-ok ctx env cond)
+          [(OkTcUnit)
+            (match (tc-quasiquote-template-ok ctx env then-branch)
+              [(OkTcUnit) (tc-quasiquote-template-ok ctx env else-branch)]
+              [(ErrTcUnit message) (ErrTcUnit message)])]
+          [(ErrTcUnit message) (ErrTcUnit message)]))]
     [(AstExprTuple exprs) (tc-quasiquote-template-list-ok ctx env exprs)]
     [(AstExprArray exprs) (tc-quasiquote-template-list-ok ctx env exprs)]
     [(AstExprBegin exprs) (tc-quasiquote-template-list-ok ctx env exprs)]
     [(AstExprUnsafe exprs) (tc-quasiquote-template-list-ok ctx env exprs)]
-    [(AstExprAnn inner _) (tc-quasiquote-template-ok ctx env inner)]
-    [(AstExprCast inner _) (tc-quasiquote-template-ok ctx env inner)]
-    [(AstExprBox inner) (tc-quasiquote-template-ok ctx env inner)]
-    [(AstExprBoxGet inner) (tc-quasiquote-template-ok ctx env inner)]
-    [(AstExprComptime inner) (tc-quasiquote-template-ok ctx env inner)]
-    [(AstExprReturn inner) (tc-quasiquote-template-ok ctx env inner)]
+    [(AstExprAnn inner-box _)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (tc-quasiquote-template-ok ctx env inner))]
+    [(AstExprCast inner-box _)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (tc-quasiquote-template-ok ctx env inner))]
+    [(AstExprBox inner-box)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (tc-quasiquote-template-ok ctx env inner))]
+    [(AstExprBoxGet inner-box)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (tc-quasiquote-template-ok ctx env inner))]
+    [(AstExprComptime inner-box)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (tc-quasiquote-template-ok ctx env inner))]
+    [(AstExprReturn inner-box)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (tc-quasiquote-template-ok ctx env inner))]
     [(AstExprQuote _) OkTcUnit]
-    [(AstExprQuasiquote inner) (tc-quasiquote-template-ok ctx env inner)]
+    [(AstExprQuasiquote inner-box)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (tc-quasiquote-template-ok ctx env inner))]
     [_ OkTcUnit]))
 
 (define (tc-with-escape-result-supported? [ctx : TcContext] [ty : AstType]) : bool
@@ -8262,7 +8952,10 @@
 
 (define (tc-expr [ctx : TcContext] [env : TcTypeEnv] [expr : AstExpr]) : ResultTcType
   (match expr
-    [(AstExprSpanned inner _) (tc-expr ctx env inner)]
+    [(AstExprSpanned inner-box _)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (tc-expr ctx env inner))]
     [(AstExprLiteral lit) (OkTcType (tc-literal-type lit))]
     [(AstExprVar name)
       (if (tc-hygiene-global-name? name)
@@ -8285,79 +8978,85 @@
           (string-append
             (tc-type-render (tc-resolve-type ctx ty))
             " is compile-time only")))]
-    [(AstExprAnn inner ty)
-      (match (tc-expr-with-expected-or-actual
-        ctx
-        env
-        inner
-        (tc-resolve-type ctx ty))
-        [(OkTcType got)
-          (match (tc-expect
-            got
-            (tc-resolve-type ctx ty)
-            "typecheck: annotation type mismatch")
-            [(OkTcUnit)
-              (OkTcType
-                (if (tc-type-contains-any-region got)
-                  got
-                  (tc-resolve-type ctx ty)))]
-            [(ErrTcUnit message) (ErrTcType message)])]
-        [(ErrTcType message) (ErrTcType message)])]
-    [(AstExprLet bindings body)
-      (match (tc-let-bindings ctx env bindings)
-        [(OkTcEnv next-env)
-          (match (tc-expr ctx next-env body)
-            [(OkTcType body-ty)
-              (match (tc-ensure-reference-type-does-not-escape-names
-                body-ty
-                (tc-let-binding-list-add-bound-names bindings TcStringNil))
-                [(OkTcUnit) (OkTcType body-ty)]
-                [(ErrTcUnit message) (ErrTcType message)])]
-            [(ErrTcType message) (ErrTcType message)])]
-        [(ErrTcEnv message) (ErrTcType message)])]
-    [(AstExprLambda params maybe-ret body)
-      (match (tc-check-lambda-region-captures env params body)
-        [(OkTcUnit)
-          (let
-            [lambda-env : TcTypeEnv
-              (match maybe-ret
-                [(AstSomeType ret)
-                  (tc-bind-return-type
-                    (tc-bind-params ctx env params)
-                    (tc-resolve-type ctx ret))]
-                [(AstNoType)
-                  (tc-bind-return-type
-                    (tc-bind-params ctx env params)
-                    (AstTyNever))])]
-            (match (match maybe-ret
-              [(AstSomeType ret)
-                (tc-expr-with-expected-or-actual
-                  ctx
-                  lambda-env
-                  body
-                  (tc-resolve-type ctx ret))]
-              [(AstNoType) (tc-expr ctx lambda-env body)])
+    [(AstExprAnn inner-box ty)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (match (tc-expr-with-expected-or-actual
+          ctx
+          env
+          inner
+          (tc-resolve-type ctx ty))
+          [(OkTcType got)
+            (match (tc-expect
+              got
+              (tc-resolve-type ctx ty)
+              "typecheck: annotation type mismatch")
+              [(OkTcUnit)
+                (OkTcType
+                  (if (tc-type-contains-any-region got)
+                    got
+                    (tc-resolve-type ctx ty)))]
+              [(ErrTcUnit message) (ErrTcType message)])]
+          [(ErrTcType message) (ErrTcType message)]))]
+    [(AstExprLet bindings body-box)
+      (let
+        [body : AstExpr (box-get body-box)]
+        (match (tc-let-bindings ctx env bindings)
+          [(OkTcEnv next-env)
+            (match (tc-expr ctx next-env body)
               [(OkTcType body-ty)
-                (if (tc-type-contains-any-region body-ty)
-                  (ErrTcType
-                    "typecheck: lambda return value has region-tagged type; region value would escape")
-                  (match maybe-ret
-                    [(AstSomeType ret)
-                      (match (tc-expect
-                        body-ty
-                        (tc-resolve-type ctx ret)
-                        "typecheck: lambda return type mismatch")
-                        [(OkTcUnit)
-                          (OkTcType
-                            (ast-ty-func
-                              (tc-param-type-list ctx params)
-                              (tc-resolve-type ctx ret)))]
-                        [(ErrTcUnit message) (ErrTcType message)])]
-                    [(AstNoType)
-                      (OkTcType
-                        (ast-ty-func (tc-param-type-list ctx params) body-ty))]))]
-              [(ErrTcType message) (ErrTcType message)]))]
-        [(ErrTcUnit message) (ErrTcType message)])]
+                (match (tc-ensure-reference-type-does-not-escape-names
+                  body-ty
+                  (tc-let-binding-list-add-bound-names bindings TcStringNil))
+                  [(OkTcUnit) (OkTcType body-ty)]
+                  [(ErrTcUnit message) (ErrTcType message)])]
+              [(ErrTcType message) (ErrTcType message)])]
+          [(ErrTcEnv message) (ErrTcType message)]))]
+    [(AstExprLambda params maybe-ret body-box)
+      (let
+        [body : AstExpr (box-get body-box)]
+        (match (tc-check-lambda-region-captures env params body)
+          [(OkTcUnit)
+            (let
+              [lambda-env : TcTypeEnv
+                (match maybe-ret
+                  [(AstSomeType ret)
+                    (tc-bind-return-type
+                      (tc-bind-params ctx env params)
+                      (tc-resolve-type ctx ret))]
+                  [(AstNoType)
+                    (tc-bind-return-type
+                      (tc-bind-params ctx env params)
+                      (AstTyNever))])]
+              (match (match maybe-ret
+                [(AstSomeType ret)
+                  (tc-expr-with-expected-or-actual
+                    ctx
+                    lambda-env
+                    body
+                    (tc-resolve-type ctx ret))]
+                [(AstNoType) (tc-expr ctx lambda-env body)])
+                [(OkTcType body-ty)
+                  (if (tc-type-contains-any-region body-ty)
+                    (ErrTcType
+                      "typecheck: lambda return value has region-tagged type; region value would escape")
+                    (match maybe-ret
+                      [(AstSomeType ret)
+                        (match (tc-expect
+                          body-ty
+                          (tc-resolve-type ctx ret)
+                          "typecheck: lambda return type mismatch")
+                          [(OkTcUnit)
+                            (OkTcType
+                              (ast-ty-func
+                                (tc-param-type-list ctx params)
+                                (tc-resolve-type ctx ret)))]
+                          [(ErrTcUnit message) (ErrTcType message)])]
+                      [(AstNoType)
+                        (OkTcType
+                          (ast-ty-func (tc-param-type-list ctx params) body-ty))]))]
+                [(ErrTcType message) (ErrTcType message)]))]
+          [(ErrTcUnit message) (ErrTcType message)]))]
     [(AstExprTuple exprs)
       (match (tc-ensure-cleanup-resource-not-stored-list env exprs)
         [(OkTcUnit)
@@ -8366,17 +9065,20 @@
               (OkTcType (tc-tag-active-region env (AstTyTuple tys)))]
             [(ErrTcTypeList message) (ErrTcType message)])]
         [(ErrTcUnit message) (ErrTcType message)])]
-    [(AstExprTupleRef tuple index)
-      (match (tc-expr ctx env tuple)
-        [(OkTcType tuple-ty)
-          (match (tc-type-strip-region tuple-ty)
-            [(AstTyTuple tys)
-              (match (tc-type-list-ref tys index)
-                [(OkTcType elem-ty)
-                  (OkTcType (tc-project-from-region-container tuple-ty elem-ty))]
-                [(ErrTcType message) (ErrTcType message)])]
-            [_ (ErrTcType "typecheck: tuple-ref requires tuple type")])]
-        [(ErrTcType message) (ErrTcType message)])]
+    [(AstExprTupleRef tuple-box index)
+      (let
+        [tuple : AstExpr (box-get tuple-box)]
+        (match (tc-expr ctx env tuple)
+          [(OkTcType tuple-ty)
+            (match (tc-type-strip-region tuple-ty)
+              [(AstTyTuple tys)
+                (match (tc-type-list-ref tys index)
+                  [(OkTcType elem-ty)
+                    (OkTcType
+                      (tc-project-from-region-container tuple-ty elem-ty))]
+                  [(ErrTcType message) (ErrTcType message)])]
+              [_ (ErrTcType "typecheck: tuple-ref requires tuple type")])]
+          [(ErrTcType message) (ErrTcType message)]))]
     [(AstExprArray exprs)
       (match (tc-ensure-cleanup-resource-not-stored-list env exprs)
         [(OkTcUnit)
@@ -8395,8 +9097,9 @@
                       [(ErrTcUnit message) (ErrTcType message)])]
                   [(ErrTcType message) (ErrTcType message)]))])]
         [(ErrTcUnit message) (ErrTcType message)])]
-    [(AstExprMakeArray elem-ty len)
+    [(AstExprMakeArray elem-ty len-box)
       (let
+        [len : AstExpr (box-get len-box)]
         [elem : AstType (tc-resolve-type ctx elem-ty)]
         (match (tc-expr ctx env len)
           [(OkTcType len-ty)
@@ -8407,255 +9110,297 @@
                   "typecheck: make-array element type is not supported"))
               (ErrTcType "typecheck: make-array length must be integer"))]
           [(ErrTcType message) (ErrTcType message)]))]
-    [(AstExprArrayRef array index)
-      (match (tc-expr ctx env array)
-        [(OkTcType array-ty)
-          (match (tc-expr ctx env index)
-            [(OkTcType index-ty)
-              (if (tc-integer-type? index-ty)
-                (match (tc-type-strip-region array-ty)
-                  [(AstTyArray elem-ty _)
-                    (OkTcType
-                      (tc-project-from-region-container
-                        array-ty
-                        (box-get elem-ty)))]
-                  [(AstTyDynArray elem-ty)
-                    (OkTcType
-                      (tc-project-from-region-container
-                        array-ty
-                        (box-get elem-ty)))]
-                  [_ (ErrTcType "typecheck: array-ref requires array type")])
-                (ErrTcType "typecheck: array index must be integer"))]
-            [(ErrTcType message) (ErrTcType message)])]
-        [(ErrTcType message) (ErrTcType message)])]
-    [(AstExprArraySet array index value)
-      (match (tc-expr ctx env array)
-        [(OkTcType array-ty)
-          (match (tc-expr ctx env index)
-            [(OkTcType index-ty)
-              (if (tc-integer-type? index-ty)
-                (match (tc-type-strip-region array-ty)
-                  [(AstTyArray elem-ty _)
-                    (match (tc-expr-with-expected-or-actual
-                      ctx
-                      env
-                      value
-                      (box-get elem-ty))
-                      [(OkTcType value-ty)
-                        (match (tc-expect
-                          value-ty
-                          (box-get elem-ty)
-                          "typecheck: array-set! value type mismatch")
-                          [(OkTcUnit)
-                            (match (tc-ensure-cleanup-resource-not-stored-expr
-                              env
-                              value)
-                              [(OkTcUnit)
-                                (match (tc-ensure-region-value-can-flow-into
-                                  env
-                                  array-ty
-                                  value-ty
-                                  "array")
-                                  [(OkTcUnit)
-                                    (match (tc-ensure-reference-value-can-store-in-place
-                                      ctx
-                                      env
-                                      array
-                                      value-ty
-                                      "array")
-                                      [(OkTcUnit) (OkTcType (AstTyUnit))]
-                                      [(ErrTcUnit message) (ErrTcType message)])]
-                                  [(ErrTcUnit message) (ErrTcType message)])]
-                              [(ErrTcUnit message) (ErrTcType message)])]
-                          [(ErrTcUnit message) (ErrTcType message)])]
-                      [(ErrTcType message) (ErrTcType message)])]
-                  [(AstTyDynArray elem-ty)
-                    (match (tc-expr-with-expected-or-actual
-                      ctx
-                      env
-                      value
-                      (box-get elem-ty))
-                      [(OkTcType value-ty)
-                        (match (tc-expect
-                          value-ty
-                          (box-get elem-ty)
-                          "typecheck: array-set! value type mismatch")
-                          [(OkTcUnit)
-                            (match (tc-ensure-cleanup-resource-not-stored-expr
-                              env
-                              value)
-                              [(OkTcUnit)
-                                (match (tc-ensure-region-value-can-flow-into
-                                  env
-                                  array-ty
-                                  value-ty
-                                  "array")
-                                  [(OkTcUnit)
-                                    (match (tc-ensure-reference-value-can-store-in-place
-                                      ctx
-                                      env
-                                      array
-                                      value-ty
-                                      "array")
-                                      [(OkTcUnit) (OkTcType (AstTyUnit))]
-                                      [(ErrTcUnit message) (ErrTcType message)])]
-                                  [(ErrTcUnit message) (ErrTcType message)])]
-                              [(ErrTcUnit message) (ErrTcType message)])]
-                          [(ErrTcUnit message) (ErrTcType message)])]
-                      [(ErrTcType message) (ErrTcType message)])]
-                  [_ (ErrTcType "typecheck: array-set! requires array type")])
-                (ErrTcType "typecheck: array index must be integer"))]
-            [(ErrTcType message) (ErrTcType message)])]
-        [(ErrTcType message) (ErrTcType message)])]
-    [(AstExprArrayPush array value)
-      (match (tc-expr ctx env array)
-        [(OkTcType array-ty)
-          (match (tc-type-strip-region array-ty)
-            [(AstTyDynArray elem-ty)
-              (match (tc-expr-with-expected-or-actual
-                ctx
-                env
-                value
-                (box-get elem-ty))
-                [(OkTcType value-ty)
-                  (match (tc-expect
-                    value-ty
-                    (box-get elem-ty)
-                    "typecheck: array-push! value type mismatch")
-                    [(OkTcUnit)
-                      (match (tc-ensure-cleanup-resource-not-stored-expr
+    [(AstExprArrayRef array-box index-box)
+      (let
+        [array : AstExpr (box-get array-box)]
+        [index : AstExpr (box-get index-box)]
+        (match (tc-expr ctx env array)
+          [(OkTcType array-ty)
+            (match (tc-expr ctx env index)
+              [(OkTcType index-ty)
+                (if (tc-integer-type? index-ty)
+                  (match (tc-type-strip-region array-ty)
+                    [(AstTyArray elem-ty _)
+                      (OkTcType
+                        (tc-project-from-region-container
+                          array-ty
+                          (box-get elem-ty)))]
+                    [(AstTyDynArray elem-ty)
+                      (OkTcType
+                        (tc-project-from-region-container
+                          array-ty
+                          (box-get elem-ty)))]
+                    [_ (ErrTcType "typecheck: array-ref requires array type")])
+                  (ErrTcType "typecheck: array index must be integer"))]
+              [(ErrTcType message) (ErrTcType message)])]
+          [(ErrTcType message) (ErrTcType message)]))]
+    [(AstExprArraySet array-box index-box value-box)
+      (let
+        [array : AstExpr (box-get array-box)]
+        [index : AstExpr (box-get index-box)]
+        [value : AstExpr (box-get value-box)]
+        (match (tc-expr ctx env array)
+          [(OkTcType array-ty)
+            (match (tc-expr ctx env index)
+              [(OkTcType index-ty)
+                (if (tc-integer-type? index-ty)
+                  (match (tc-type-strip-region array-ty)
+                    [(AstTyArray elem-ty _)
+                      (match (tc-expr-with-expected-or-actual
+                        ctx
                         env
-                        value)
-                        [(OkTcUnit)
-                          (match (tc-ensure-region-value-can-flow-into
-                            env
-                            array-ty
+                        value
+                        (box-get elem-ty))
+                        [(OkTcType value-ty)
+                          (match (tc-expect
                             value-ty
-                            "array")
+                            (box-get elem-ty)
+                            "typecheck: array-set! value type mismatch")
                             [(OkTcUnit)
-                              (match (tc-ensure-reference-value-can-store-in-place
-                                ctx
+                              (match (tc-ensure-cleanup-resource-not-stored-expr
                                 env
-                                array
-                                value-ty
-                                "array")
-                                [(OkTcUnit) (OkTcType (AstTyUnit))]
+                                value)
+                                [(OkTcUnit)
+                                  (match (tc-ensure-region-value-can-flow-into
+                                    env
+                                    array-ty
+                                    value-ty
+                                    "array")
+                                    [(OkTcUnit)
+                                      (match (tc-ensure-reference-value-can-store-in-place
+                                        ctx
+                                        env
+                                        array
+                                        value-ty
+                                        "array")
+                                        [(OkTcUnit) (OkTcType (AstTyUnit))]
+                                        [(ErrTcUnit message)
+                                          (ErrTcType message)])]
+                                    [(ErrTcUnit message) (ErrTcType message)])]
                                 [(ErrTcUnit message) (ErrTcType message)])]
                             [(ErrTcUnit message) (ErrTcType message)])]
-                        [(ErrTcUnit message) (ErrTcType message)])]
-                    [(ErrTcUnit message) (ErrTcType message)])]
-                [(ErrTcType message) (ErrTcType message)])]
-            [_ (ErrTcType "typecheck: array-push! requires dynamic array type")])]
-        [(ErrTcType message) (ErrTcType message)])]
-    [(AstExprStringRef str index)
-      (match (tc-expr ctx env str)
-        [(OkTcType str-ty)
-          (match (tc-expect
-            str-ty
-            (AstTyString)
-            "typecheck: string-ref requires String")
-            [(OkTcUnit)
-              (match (tc-expr ctx env index)
-                [(OkTcType index-ty)
-                  (if (tc-integer-type? index-ty)
-                    (OkTcType (AstTyChar))
-                    (ErrTcType "typecheck: string index must be integer"))]
-                [(ErrTcType message) (ErrTcType message)])]
-            [(ErrTcUnit message) (ErrTcType message)])]
-        [(ErrTcType message) (ErrTcType message)])]
+                        [(ErrTcType message) (ErrTcType message)])]
+                    [(AstTyDynArray elem-ty)
+                      (match (tc-expr-with-expected-or-actual
+                        ctx
+                        env
+                        value
+                        (box-get elem-ty))
+                        [(OkTcType value-ty)
+                          (match (tc-expect
+                            value-ty
+                            (box-get elem-ty)
+                            "typecheck: array-set! value type mismatch")
+                            [(OkTcUnit)
+                              (match (tc-ensure-cleanup-resource-not-stored-expr
+                                env
+                                value)
+                                [(OkTcUnit)
+                                  (match (tc-ensure-region-value-can-flow-into
+                                    env
+                                    array-ty
+                                    value-ty
+                                    "array")
+                                    [(OkTcUnit)
+                                      (match (tc-ensure-reference-value-can-store-in-place
+                                        ctx
+                                        env
+                                        array
+                                        value-ty
+                                        "array")
+                                        [(OkTcUnit) (OkTcType (AstTyUnit))]
+                                        [(ErrTcUnit message)
+                                          (ErrTcType message)])]
+                                    [(ErrTcUnit message) (ErrTcType message)])]
+                                [(ErrTcUnit message) (ErrTcType message)])]
+                            [(ErrTcUnit message) (ErrTcType message)])]
+                        [(ErrTcType message) (ErrTcType message)])]
+                    [_ (ErrTcType "typecheck: array-set! requires array type")])
+                  (ErrTcType "typecheck: array index must be integer"))]
+              [(ErrTcType message) (ErrTcType message)])]
+          [(ErrTcType message) (ErrTcType message)]))]
+    [(AstExprArrayPush array-box value-box)
+      (let
+        [array : AstExpr (box-get array-box)]
+        [value : AstExpr (box-get value-box)]
+        (match (tc-expr ctx env array)
+          [(OkTcType array-ty)
+            (match (tc-type-strip-region array-ty)
+              [(AstTyDynArray elem-ty)
+                (match (tc-expr-with-expected-or-actual
+                  ctx
+                  env
+                  value
+                  (box-get elem-ty))
+                  [(OkTcType value-ty)
+                    (match (tc-expect
+                      value-ty
+                      (box-get elem-ty)
+                      "typecheck: array-push! value type mismatch")
+                      [(OkTcUnit)
+                        (match (tc-ensure-cleanup-resource-not-stored-expr
+                          env
+                          value)
+                          [(OkTcUnit)
+                            (match (tc-ensure-region-value-can-flow-into
+                              env
+                              array-ty
+                              value-ty
+                              "array")
+                              [(OkTcUnit)
+                                (match (tc-ensure-reference-value-can-store-in-place
+                                  ctx
+                                  env
+                                  array
+                                  value-ty
+                                  "array")
+                                  [(OkTcUnit) (OkTcType (AstTyUnit))]
+                                  [(ErrTcUnit message) (ErrTcType message)])]
+                              [(ErrTcUnit message) (ErrTcType message)])]
+                          [(ErrTcUnit message) (ErrTcType message)])]
+                      [(ErrTcUnit message) (ErrTcType message)])]
+                  [(ErrTcType message) (ErrTcType message)])]
+              [_
+                (ErrTcType "typecheck: array-push! requires dynamic array type")])]
+          [(ErrTcType message) (ErrTcType message)]))]
+    [(AstExprStringRef str-box index-box)
+      (let
+        [str : AstExpr (box-get str-box)]
+        [index : AstExpr (box-get index-box)]
+        (match (tc-expr ctx env str)
+          [(OkTcType str-ty)
+            (match (tc-expect
+              str-ty
+              (AstTyString)
+              "typecheck: string-ref requires String")
+              [(OkTcUnit)
+                (match (tc-expr ctx env index)
+                  [(OkTcType index-ty)
+                    (if (tc-integer-type? index-ty)
+                      (OkTcType (AstTyChar))
+                      (ErrTcType "typecheck: string index must be integer"))]
+                  [(ErrTcType message) (ErrTcType message)])]
+              [(ErrTcUnit message) (ErrTcType message)])]
+          [(ErrTcType message) (ErrTcType message)]))]
     [(AstExprBegin exprs) (tc-begin-list ctx env exprs)]
     ;; `(unsafe ...)` types like `begin` in v1; the unsafe-context flag for
     ;; raw-pointer ops is added with their checks (#955).
     [(AstExprUnsafe exprs) (tc-begin-list ctx (tc-enter-unsafe env) exprs)]
-    [(AstExprIf cond then-branch else-branch)
-      (match (tc-expr ctx env cond)
-        [(OkTcType cond-ty)
-          (match (tc-expect
-            cond-ty
-            (AstTyBool)
-            "typecheck: if condition must be bool")
-            [(OkTcUnit)
-              (match (tc-expr ctx env then-branch)
-                [(OkTcType then-ty)
-                  (match (tc-expr ctx env else-branch)
-                    [(OkTcType else-ty) (tc-merge-branch-type then-ty else-ty)]
-                    [(ErrTcType message) (ErrTcType message)])]
-                [(ErrTcType message) (ErrTcType message)])]
-            [(ErrTcUnit message) (ErrTcType message)])]
-        [(ErrTcType message) (ErrTcType message)])]
-    [(AstExprSet name value)
-      (match (tc-lookup env name)
-        [(OkTcType var-ty)
-          (match (tc-expr-with-expected-or-actual ctx env value var-ty)
-            [(OkTcType value-ty)
-              (match (tc-expect
-                value-ty
-                var-ty
-                "typecheck: assignment type mismatch")
-                [(OkTcUnit)
-                  (match (tc-ensure-cleanup-resource-not-assigned env value)
-                    [(OkTcUnit)
-                      (match (tc-ensure-region-value-can-flow-into
-                        env
-                        var-ty
-                        value-ty
-                        "assignment")
-                        [(OkTcUnit)
-                          (match (tc-ensure-reference-value-can-assign
-                            env
-                            name
-                            value-ty)
-                            [(OkTcUnit) (OkTcType (AstTyUnit))]
-                            [(ErrTcUnit message) (ErrTcType message)])]
-                        [(ErrTcUnit message) (ErrTcType message)])]
-                    [(ErrTcUnit message) (ErrTcType message)])]
-                [(ErrTcUnit message) (ErrTcType message)])]
-            [(ErrTcType message) (ErrTcType message)])]
-        [(ErrTcType message) (ErrTcType message)])]
-    [(AstExprCast inner ty)
-      (match (tc-expr ctx env inner)
-        [(OkTcType inner-ty)
-          (if (and
-            (tc-castable-type? inner-ty)
-            (tc-castable-type? (tc-resolve-type ctx ty)))
-            (OkTcType (tc-resolve-type ctx ty))
-            (ErrTcType
-              "typecheck: cast requires scalar numeric (integer/char/float) source and target"))]
-        [(ErrTcType message) (ErrTcType message)])]
-    [(AstExprBorrow lifetime place) (tc-borrow-expr ctx env lifetime place)]
-    [(AstExprUnary op inner)
-      (match (tc-expr ctx env inner)
-        [(OkTcType ty) (tc-unop-type op ty)]
-        [(ErrTcType message) (ErrTcType message)])]
-    [(AstExprBinary op left right)
-      (match (tc-expr ctx env left)
-        [(OkTcType left-ty)
-          (match (tc-expr-with-expected-or-actual ctx env right left-ty)
-            [(OkTcType right-ty) (tc-binop-type op left-ty right-ty)]
-            [(ErrTcType message) (ErrTcType message)])]
-        [(ErrTcType message) (ErrTcType message)])]
-    [(AstExprCall func args) (tc-call-or-array-length ctx env func args)]
-    [(AstExprWhile cond body)
-      (match (tc-expr ctx env cond)
-        [(OkTcType cond-ty)
-          (match (tc-expect
-            cond-ty
-            (AstTyBool)
-            "typecheck: while condition must be bool")
-            [(OkTcUnit)
-              (match (tc-expr ctx env body)
-                [(OkTcType body-ty)
-                  (match (tc-expect
-                    body-ty
-                    (AstTyUnit)
-                    "typecheck: while body must be unit")
-                    [(OkTcUnit) (OkTcType (AstTyUnit))]
-                    [(ErrTcUnit message) (ErrTcType message)])]
-                [(ErrTcType message) (ErrTcType message)])]
-            [(ErrTcUnit message) (ErrTcType message)])]
-        [(ErrTcType message) (ErrTcType message)])]
-    [(AstExprForeach index index-ty start end body)
+    [(AstExprIf cond-box then-branch-box else-branch-box)
       (let
+        [cond : AstExpr (box-get cond-box)]
+        [then-branch : AstExpr (box-get then-branch-box)]
+        [else-branch : AstExpr (box-get else-branch-box)]
+        (match (tc-expr ctx env cond)
+          [(OkTcType cond-ty)
+            (match (tc-expect
+              cond-ty
+              (AstTyBool)
+              "typecheck: if condition must be bool")
+              [(OkTcUnit)
+                (match (tc-expr ctx env then-branch)
+                  [(OkTcType then-ty)
+                    (match (tc-expr ctx env else-branch)
+                      [(OkTcType else-ty)
+                        (tc-merge-branch-type then-ty else-ty)]
+                      [(ErrTcType message) (ErrTcType message)])]
+                  [(ErrTcType message) (ErrTcType message)])]
+              [(ErrTcUnit message) (ErrTcType message)])]
+          [(ErrTcType message) (ErrTcType message)]))]
+    [(AstExprSet name value-box)
+      (let
+        [value : AstExpr (box-get value-box)]
+        (match (tc-lookup env name)
+          [(OkTcType var-ty)
+            (match (tc-expr-with-expected-or-actual ctx env value var-ty)
+              [(OkTcType value-ty)
+                (match (tc-expect
+                  value-ty
+                  var-ty
+                  "typecheck: assignment type mismatch")
+                  [(OkTcUnit)
+                    (match (tc-ensure-cleanup-resource-not-assigned env value)
+                      [(OkTcUnit)
+                        (match (tc-ensure-region-value-can-flow-into
+                          env
+                          var-ty
+                          value-ty
+                          "assignment")
+                          [(OkTcUnit)
+                            (match (tc-ensure-reference-value-can-assign
+                              env
+                              name
+                              value-ty)
+                              [(OkTcUnit) (OkTcType (AstTyUnit))]
+                              [(ErrTcUnit message) (ErrTcType message)])]
+                          [(ErrTcUnit message) (ErrTcType message)])]
+                      [(ErrTcUnit message) (ErrTcType message)])]
+                  [(ErrTcUnit message) (ErrTcType message)])]
+              [(ErrTcType message) (ErrTcType message)])]
+          [(ErrTcType message) (ErrTcType message)]))]
+    [(AstExprCast inner-box ty)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (match (tc-expr ctx env inner)
+          [(OkTcType inner-ty)
+            (if (and
+              (tc-castable-type? inner-ty)
+              (tc-castable-type? (tc-resolve-type ctx ty)))
+              (OkTcType (tc-resolve-type ctx ty))
+              (ErrTcType
+                "typecheck: cast requires scalar numeric (integer/char/float) source and target"))]
+          [(ErrTcType message) (ErrTcType message)]))]
+    [(AstExprBorrow lifetime place-box)
+      (let
+        [place : AstExpr (box-get place-box)]
+        (tc-borrow-expr ctx env lifetime place))]
+    [(AstExprUnary op inner-box)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (match (tc-expr ctx env inner)
+          [(OkTcType ty) (tc-unop-type op ty)]
+          [(ErrTcType message) (ErrTcType message)]))]
+    [(AstExprBinary op left-box right-box)
+      (let
+        [left : AstExpr (box-get left-box)]
+        [right : AstExpr (box-get right-box)]
+        (match (tc-expr ctx env left)
+          [(OkTcType left-ty)
+            (match (tc-expr-with-expected-or-actual ctx env right left-ty)
+              [(OkTcType right-ty) (tc-binop-type op left-ty right-ty)]
+              [(ErrTcType message) (ErrTcType message)])]
+          [(ErrTcType message) (ErrTcType message)]))]
+    [(AstExprCall func-box args)
+      (let
+        [func : AstExpr (box-get func-box)]
+        (tc-call-or-array-length ctx env func args))]
+    [(AstExprWhile cond-box body-box)
+      (let
+        [cond : AstExpr (box-get cond-box)]
+        [body : AstExpr (box-get body-box)]
+        (match (tc-expr ctx env cond)
+          [(OkTcType cond-ty)
+            (match (tc-expect
+              cond-ty
+              (AstTyBool)
+              "typecheck: while condition must be bool")
+              [(OkTcUnit)
+                (match (tc-expr ctx env body)
+                  [(OkTcType body-ty)
+                    (match (tc-expect
+                      body-ty
+                      (AstTyUnit)
+                      "typecheck: while body must be unit")
+                      [(OkTcUnit) (OkTcType (AstTyUnit))]
+                      [(ErrTcUnit message) (ErrTcType message)])]
+                  [(ErrTcType message) (ErrTcType message)])]
+              [(ErrTcUnit message) (ErrTcType message)])]
+          [(ErrTcType message) (ErrTcType message)]))]
+    [(AstExprForeach index index-ty start-box end-box body-box)
+      (let
+        [start : AstExpr (box-get start-box)]
+        [end : AstExpr (box-get end-box)]
+        [body : AstExpr (box-get body-box)]
         [resolved-index-ty : AstType (tc-resolve-type ctx index-ty)]
         (if (tc-integer-type? resolved-index-ty)
           (match (tc-expr ctx env start)
@@ -8691,8 +9436,12 @@
                   "typecheck: foreach start expression must be integer"))]
             [(ErrTcType message) (ErrTcType message)])
           (ErrTcType "typecheck: foreach index type must be integer")))]
-    [(AstExprSpmdReduce op index index-ty start end init value)
+    [(AstExprSpmdReduce op index index-ty start-box end-box init-box value-box)
       (let
+        [start : AstExpr (box-get start-box)]
+        [end : AstExpr (box-get end-box)]
+        [init : AstExpr (box-get init-box)]
+        [value : AstExpr (box-get value-box)]
         [resolved-index-ty : AstType (tc-resolve-type ctx index-ty)]
         (if (tc-integer-type? resolved-index-ty)
           (match (tc-expr ctx env start)
@@ -8735,22 +9484,26 @@
                   "typecheck: spmd-reduce start expression must be integer"))]
             [(ErrTcType message) (ErrTcType message)])
           (ErrTcType "typecheck: spmd-reduce index type must be integer")))]
-    [(AstExprMatch scrutinee arms)
-      (match (tc-expr ctx env scrutinee)
-        [(OkTcType scrut-ty) (tc-match-expr ctx env scrut-ty arms)]
-        [(ErrTcType message) (ErrTcType message)])]
-    [(AstExprStructGet receiver field)
-      (match (tc-expr ctx env receiver)
-        [(OkTcType receiver-ty)
-          (match (tc-type-strip-region receiver-ty)
-            [(AstTyStruct struct-name)
-              (match (tc-struct-field-type ctx struct-name field)
-                [(OkTcType field-ty)
-                  (OkTcType
-                    (tc-project-from-region-container receiver-ty field-ty))]
-                [(ErrTcType message) (ErrTcType message)])]
-            [_ (ErrTcType "typecheck: struct-get requires struct")])]
-        [(ErrTcType message) (ErrTcType message)])]
+    [(AstExprMatch scrutinee-box arms)
+      (let
+        [scrutinee : AstExpr (box-get scrutinee-box)]
+        (match (tc-expr ctx env scrutinee)
+          [(OkTcType scrut-ty) (tc-match-expr ctx env scrut-ty arms)]
+          [(ErrTcType message) (ErrTcType message)]))]
+    [(AstExprStructGet receiver-box field)
+      (let
+        [receiver : AstExpr (box-get receiver-box)]
+        (match (tc-expr ctx env receiver)
+          [(OkTcType receiver-ty)
+            (match (tc-type-strip-region receiver-ty)
+              [(AstTyStruct struct-name)
+                (match (tc-struct-field-type ctx struct-name field)
+                  [(OkTcType field-ty)
+                    (OkTcType
+                      (tc-project-from-region-container receiver-ty field-ty))]
+                  [(ErrTcType message) (ErrTcType message)])]
+              [_ (ErrTcType "typecheck: struct-get requires struct")])]
+          [(ErrTcType message) (ErrTcType message)]))]
     [(AstExprWithRegion region body)
       (let
         [region-env : TcTypeEnv (tc-push-region env region)]
@@ -8763,8 +9516,10 @@
                   (string-append region "'")))
               (OkTcType body-ty))]
           [(ErrTcType message) (ErrTcType message)]))]
-    [(AstExprWithEscape scratch body)
-      (tc-with-escape-expr ctx env scratch body)]
+    [(AstExprWithEscape scratch-box body)
+      (let
+        [scratch : AstExpr (box-get scratch-box)]
+        (tc-with-escape-expr ctx env scratch body))]
     [(AstExprWithResource bindings body)
       (match (tc-resource-bindings ctx env bindings)
         [(OkTcEnv body-env)
@@ -8779,38 +9534,54 @@
                 (OkTcType body-ty))]
             [(ErrTcType message) (ErrTcType message)])]
         [(ErrTcEnv message) (ErrTcType message)])]
-    [(AstExprBox inner) (tc-box-expr ctx env inner)]
-    [(AstExprBoxGet inner) (tc-box-get-expr ctx env inner)]
-    [(AstExprComptime inner)
-      (match (compiler-ctfe-eval inner (tc-ctfe-env ctx) (ctfe-fuel-limit))
-        [(OkCtfe value _)
-          (match value
-            [(CtfeI64 _) (OkTcType (AstTyI64))]
-            [(CtfeBool _) (OkTcType (AstTyBool))]
-            [(CtfeChar _) (OkTcType (AstTyChar))]
-            [(CtfeString _) (ErrTcType "String value is compile-time only")]
-            [(CtfeUnit) (OkTcType (AstTyUnit))]
-            [(CtfeExpr _ _) (OkTcType (AstTyExpr))]
-            [(CtfeType ty)
-              (ErrTcType
-                (string-append
-                  "type value "
+    [(AstExprBox inner-box)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (tc-box-expr ctx env inner))]
+    [(AstExprBoxGet inner-box)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (tc-box-get-expr ctx env inner))]
+    [(AstExprComptime inner-box)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (match (compiler-ctfe-eval inner (tc-ctfe-env ctx) (ctfe-fuel-limit))
+          [(OkCtfe value _)
+            (match value
+              [(CtfeI64 _) (OkTcType (AstTyI64))]
+              [(CtfeBool _) (OkTcType (AstTyBool))]
+              [(CtfeChar _) (OkTcType (AstTyChar))]
+              [(CtfeString _) (ErrTcType "String value is compile-time only")]
+              [(CtfeUnit) (OkTcType (AstTyUnit))]
+              [(CtfeExpr _ _) (OkTcType (AstTyExpr))]
+              [(CtfeType ty)
+                (ErrTcType
                   (string-append
-                    (tc-type-render (tc-resolve-type ctx ty))
-                    " is compile-time only")))]
-            [(CtfeExprList _) (OkTcType (AstTyExprList))])]
-        [(ErrCtfe diag) (ErrTcType (compiler-diagnostic-message diag))])]
+                    "type value "
+                    (string-append
+                      (tc-type-render (tc-resolve-type ctx ty))
+                      " is compile-time only")))]
+              [(CtfeExprList _) (OkTcType (AstTyExprList))])]
+          [(ErrCtfe diag) (ErrTcType (compiler-diagnostic-message diag))]))]
     [(AstExprQuote _) (OkTcType (AstTyExpr))]
-    [(AstExprQuasiquote template)
-      (match (tc-quasiquote-template-ok ctx env template)
-        [(OkTcUnit) (OkTcType (AstTyExpr))]
-        [(ErrTcUnit message) (ErrTcType message)])]
+    [(AstExprQuasiquote template-box)
+      (let
+        [template : AstExpr (box-get template-box)]
+        (match (tc-quasiquote-template-ok ctx env template)
+          [(OkTcUnit) (OkTcType (AstTyExpr))]
+          [(ErrTcUnit message) (ErrTcType message)]))]
     [(AstExprUnquote _)
       (ErrTcType "typecheck: unquote is only valid inside quasiquote")]
     [(AstExprUnquoteSplicing _)
       (ErrTcType "typecheck: unquote-splicing is only valid inside quasiquote")]
-    [(AstExprTry inner) (tc-try-expr ctx env inner)]
-    [(AstExprReturn value) (tc-return-expr ctx env value)]
+    [(AstExprTry inner-box)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (tc-try-expr ctx env inner))]
+    [(AstExprReturn value-box)
+      (let
+        [value : AstExpr (box-get value-box)]
+        (tc-return-expr ctx env value))]
     [(AstExprPtrNull ty)
       (let
         [resolved : AstType (tc-resolve-type ctx ty)]
@@ -8820,33 +9591,84 @@
           [_
             (ErrTcType
               "typecheck: ptr-null requires a pointer type, e.g. (ptr-null : (Ptr i64))")]))]
-    [(AstExprPtrNullCheck inner)
-      (match (tc-expr ctx env inner)
-        [(OkTcType inner-ty)
-          (match (tc-type-strip-region inner-ty)
-            [(AstTyPtr _) (OkTcType (AstTyBool))]
-            [(AstTyMutPtr _) (OkTcType (AstTyBool))]
-            [_
-              (ErrTcType "typecheck: ptr-null? requires a raw pointer operand")])]
-        [(ErrTcType message) (ErrTcType message)])]
-    [(AstExprPtrRead ptr) (tc-ptr-read-expr ctx env ptr)]
-    [(AstExprPtrWrite ptr value) (tc-ptr-write-expr ctx env ptr value)]
-    [(AstExprPtrOffset ptr offset) (tc-ptr-offset-expr ctx env ptr offset)]
-    [(AstExprPtrCast ptr target) (tc-ptr-cast-expr ctx env ptr target)]
-    [(AstExprPtrToInt ptr) (tc-ptr-to-int-expr ctx env ptr)]
-    [(AstExprIntToPtr value target) (tc-int-to-ptr-expr ctx env value target)]
-    [(AstExprStringData str) (tc-string-data-expr ctx env str)]
-    [(AstExprStringFromBytes ptr len)
-      (tc-string-from-bytes-expr ctx env ptr len)]
-    [(AstExprArrayData array) (tc-array-data-expr ctx env array)]
+    [(AstExprPtrNullCheck inner-box)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (match (tc-expr ctx env inner)
+          [(OkTcType inner-ty)
+            (match (tc-type-strip-region inner-ty)
+              [(AstTyPtr _) (OkTcType (AstTyBool))]
+              [(AstTyMutPtr _) (OkTcType (AstTyBool))]
+              [_
+                (ErrTcType
+                  "typecheck: ptr-null? requires a raw pointer operand")])]
+          [(ErrTcType message) (ErrTcType message)]))]
+    [(AstExprPtrRead ptr-box)
+      (let
+        [ptr : AstExpr (box-get ptr-box)]
+        (tc-ptr-read-expr ctx env ptr))]
+    [(AstExprPtrWrite ptr-box value-box)
+      (let
+        [ptr : AstExpr (box-get ptr-box)]
+        [value : AstExpr (box-get value-box)]
+        (tc-ptr-write-expr ctx env ptr value))]
+    [(AstExprPtrOffset ptr-box offset-box)
+      (let
+        [ptr : AstExpr (box-get ptr-box)]
+        [offset : AstExpr (box-get offset-box)]
+        (tc-ptr-offset-expr ctx env ptr offset))]
+    [(AstExprPtrCast ptr-box target)
+      (let
+        [ptr : AstExpr (box-get ptr-box)]
+        (tc-ptr-cast-expr ctx env ptr target))]
+    [(AstExprPtrToInt ptr-box)
+      (let
+        [ptr : AstExpr (box-get ptr-box)]
+        (tc-ptr-to-int-expr ctx env ptr))]
+    [(AstExprIntToPtr value-box target)
+      (let
+        [value : AstExpr (box-get value-box)]
+        (tc-int-to-ptr-expr ctx env value target))]
+    [(AstExprStringData str-box)
+      (let
+        [str : AstExpr (box-get str-box)]
+        (tc-string-data-expr ctx env str))]
+    [(AstExprStringFromBytes ptr-box len-box)
+      (let
+        [ptr : AstExpr (box-get ptr-box)]
+        [len : AstExpr (box-get len-box)]
+        (tc-string-from-bytes-expr ctx env ptr len))]
+    [(AstExprArrayData array-box)
+      (let
+        [array : AstExpr (box-get array-box)]
+        (tc-array-data-expr ctx env array))]
     [(AstExprProgramArgc) (OkTcType (AstTyI64))]
     [(AstExprProgramArgv) (tc-program-entry-ptr-expr env "program-argv")]
     [(AstExprProgramEnvp) (tc-program-entry-ptr-expr env "program-envp")]
-    [(AstExprCpuIdEax leaf subleaf) (tc-cpuid-expr ctx env leaf subleaf)]
-    [(AstExprCpuIdEbx leaf subleaf) (tc-cpuid-expr ctx env leaf subleaf)]
-    [(AstExprCpuIdEcx leaf subleaf) (tc-cpuid-expr ctx env leaf subleaf)]
-    [(AstExprCpuIdEdx leaf subleaf) (tc-cpuid-expr ctx env leaf subleaf)]
-    [(AstExprXgetbv index) (tc-xgetbv-expr ctx env index)]
+    [(AstExprCpuIdEax leaf-box subleaf-box)
+      (let
+        [leaf : AstExpr (box-get leaf-box)]
+        [subleaf : AstExpr (box-get subleaf-box)]
+        (tc-cpuid-expr ctx env leaf subleaf))]
+    [(AstExprCpuIdEbx leaf-box subleaf-box)
+      (let
+        [leaf : AstExpr (box-get leaf-box)]
+        [subleaf : AstExpr (box-get subleaf-box)]
+        (tc-cpuid-expr ctx env leaf subleaf))]
+    [(AstExprCpuIdEcx leaf-box subleaf-box)
+      (let
+        [leaf : AstExpr (box-get leaf-box)]
+        [subleaf : AstExpr (box-get subleaf-box)]
+        (tc-cpuid-expr ctx env leaf subleaf))]
+    [(AstExprCpuIdEdx leaf-box subleaf-box)
+      (let
+        [leaf : AstExpr (box-get leaf-box)]
+        [subleaf : AstExpr (box-get subleaf-box)]
+        (tc-cpuid-expr ctx env leaf subleaf))]
+    [(AstExprXgetbv index-box)
+      (let
+        [index : AstExpr (box-get index-box)]
+        (tc-xgetbv-expr ctx env index))]
     [_ (ErrTcType "typecheck: unsupported expression")]))
 
 (define (tc-extern-abi-value-type-ok? [ty : AstType]) : bool
@@ -9046,8 +9868,14 @@
 ;; annotations, or none if the expression is not a whole-variable reference.
 (define (tc-move-bare-var [expr : AstExpr]) : TcMaybeString
   (match expr
-    [(AstExprSpanned inner _) (tc-move-bare-var inner)]
-    [(AstExprAnn inner _) (tc-move-bare-var inner)]
+    [(AstExprSpanned inner-box _)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (tc-move-bare-var inner))]
+    [(AstExprAnn inner-box _)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (tc-move-bare-var inner))]
     [(AstExprVar name) (TcSomeString name)]
     [_ (TcNoString)]))
 
@@ -9117,21 +9945,23 @@
       (let
         [rest : AstLetBindingList (box-get rest)]
         (match binding
-          [(AstLetBinding name maybe-ty init)
-            (match (tc-move-check-expr ctx env locals moved init)
-              [(OkTcMove moved1)
-                (tc-move-check-let-bindings
-                  ctx
-                  (tc-bind
-                    env
-                    name
-                    (tc-move-binding-type ctx env maybe-ty init))
-                  (tc-moved-add locals name)
-                  (tc-moved-remove
-                    (tc-move-after-bind env locals moved1 init)
-                    name)
-                  rest)]
-              [(ErrTcMove message) (ErrTcMoveBindings message)])]))]))
+          [(AstLetBinding name maybe-ty init-box)
+            (let
+              [init : AstExpr (box-get init-box)]
+              (match (tc-move-check-expr ctx env locals moved init)
+                [(OkTcMove moved1)
+                  (tc-move-check-let-bindings
+                    ctx
+                    (tc-bind
+                      env
+                      name
+                      (tc-move-binding-type ctx env maybe-ty init))
+                    (tc-moved-add locals name)
+                    (tc-moved-remove
+                      (tc-move-after-bind env locals moved1 init)
+                      name)
+                    rest)]
+                [(ErrTcMove message) (ErrTcMoveBindings message)]))]))]))
 
 ;; Each arm is checked from the same post-scrutinee state; results are unioned so
 ;; a place moved on any arm is considered moved after the match.
@@ -9147,14 +9977,16 @@
       (let
         [rest : AstMatchArmList (box-get rest)]
         (match arm
-          [(AstMatchArm _ body)
-            (match (tc-move-check-expr ctx env locals moved body)
-              [(OkTcMove arm-moved)
-                (match (tc-move-check-arms ctx env locals moved rest)
-                  [(OkTcMove rest-moved)
-                    (OkTcMove (tc-moved-union arm-moved rest-moved))]
-                  [(ErrTcMove message) (ErrTcMove message)])]
-              [(ErrTcMove message) (ErrTcMove message)])]))]))
+          [(AstMatchArm _ body-box)
+            (let
+              [body : AstExpr (box-get body-box)]
+              (match (tc-move-check-expr ctx env locals moved body)
+                [(OkTcMove arm-moved)
+                  (match (tc-move-check-arms ctx env locals moved rest)
+                    [(OkTcMove rest-moved)
+                      (OkTcMove (tc-moved-union arm-moved rest-moved))]
+                    [(ErrTcMove message) (ErrTcMove message)])]
+                [(ErrTcMove message) (ErrTcMove message)]))]))]))
 
 (define (tc-move-check-expr
   [ctx : TcContext]
@@ -9163,7 +9995,10 @@
   [moved : TcMovedSet]
   [expr : AstExpr]) : TcMoveResult
   (match expr
-    [(AstExprSpanned inner _) (tc-move-check-expr ctx env locals moved inner)]
+    [(AstExprSpanned inner-box _)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (tc-move-check-expr ctx env locals moved inner))]
     [(AstExprLiteral _) (OkTcMove moved)]
     [(AstExprVar name)
       (if (tc-moved-contains? moved name)
@@ -9172,164 +10007,289 @@
             (string-append "typecheck: use of moved value `" name)
             "`"))
         (OkTcMove moved))]
-    [(AstExprBinary _ left right)
-      (match (tc-move-check-expr ctx env locals moved left)
-        [(OkTcMove moved1) (tc-move-check-expr ctx env locals moved1 right)]
-        [(ErrTcMove message) (ErrTcMove message)])]
-    [(AstExprUnary _ inner) (tc-move-check-expr ctx env locals moved inner)]
-    [(AstExprCall func args)
-      (match (tc-move-check-expr ctx env locals moved func)
-        [(OkTcMove moved1) (tc-move-check-exprs ctx env locals moved1 args)]
-        [(ErrTcMove message) (ErrTcMove message)])]
-    [(AstExprIf cond then-branch else-branch)
-      (match (tc-move-check-expr ctx env locals moved cond)
-        [(OkTcMove movedc)
-          (match (tc-move-check-expr ctx env locals movedc then-branch)
-            [(OkTcMove movedt)
-              (match (tc-move-check-expr ctx env locals movedc else-branch)
-                [(OkTcMove movede) (OkTcMove (tc-moved-union movedt movede))]
-                [(ErrTcMove message) (ErrTcMove message)])]
-            [(ErrTcMove message) (ErrTcMove message)])]
-        [(ErrTcMove message) (ErrTcMove message)])]
-    [(AstExprLet bindings body)
-      (match (tc-move-check-let-bindings ctx env locals moved bindings)
-        [(OkTcMoveBindings env2 moved2 locals2)
-          (tc-move-check-expr ctx env2 locals2 moved2 body)]
-        [(ErrTcMoveBindings message) (ErrTcMove message)])]
-    [(AstExprLambda _ _ body)
-      (match (tc-move-check-expr ctx env locals moved body)
-        [(OkTcMove _) (OkTcMove moved)]
-        [(ErrTcMove message) (ErrTcMove message)])]
+    [(AstExprBinary _ left-box right-box)
+      (let
+        [left : AstExpr (box-get left-box)]
+        [right : AstExpr (box-get right-box)]
+        (match (tc-move-check-expr ctx env locals moved left)
+          [(OkTcMove moved1) (tc-move-check-expr ctx env locals moved1 right)]
+          [(ErrTcMove message) (ErrTcMove message)]))]
+    [(AstExprUnary _ inner-box)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (tc-move-check-expr ctx env locals moved inner))]
+    [(AstExprCall func-box args)
+      (let
+        [func : AstExpr (box-get func-box)]
+        (match (tc-move-check-expr ctx env locals moved func)
+          [(OkTcMove moved1) (tc-move-check-exprs ctx env locals moved1 args)]
+          [(ErrTcMove message) (ErrTcMove message)]))]
+    [(AstExprIf cond-box then-branch-box else-branch-box)
+      (let
+        [cond : AstExpr (box-get cond-box)]
+        [then-branch : AstExpr (box-get then-branch-box)]
+        [else-branch : AstExpr (box-get else-branch-box)]
+        (match (tc-move-check-expr ctx env locals moved cond)
+          [(OkTcMove movedc)
+            (match (tc-move-check-expr ctx env locals movedc then-branch)
+              [(OkTcMove movedt)
+                (match (tc-move-check-expr ctx env locals movedc else-branch)
+                  [(OkTcMove movede) (OkTcMove (tc-moved-union movedt movede))]
+                  [(ErrTcMove message) (ErrTcMove message)])]
+              [(ErrTcMove message) (ErrTcMove message)])]
+          [(ErrTcMove message) (ErrTcMove message)]))]
+    [(AstExprLet bindings body-box)
+      (let
+        [body : AstExpr (box-get body-box)]
+        (match (tc-move-check-let-bindings ctx env locals moved bindings)
+          [(OkTcMoveBindings env2 moved2 locals2)
+            (tc-move-check-expr ctx env2 locals2 moved2 body)]
+          [(ErrTcMoveBindings message) (ErrTcMove message)]))]
+    [(AstExprLambda _ _ body-box)
+      (let
+        [body : AstExpr (box-get body-box)]
+        (match (tc-move-check-expr ctx env locals moved body)
+          [(OkTcMove _) (OkTcMove moved)]
+          [(ErrTcMove message) (ErrTcMove message)]))]
     [(AstExprTuple exprs) (tc-move-check-exprs ctx env locals moved exprs)]
-    [(AstExprTupleRef inner _) (tc-move-check-expr ctx env locals moved inner)]
+    [(AstExprTupleRef inner-box _)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (tc-move-check-expr ctx env locals moved inner))]
     [(AstExprArray exprs) (tc-move-check-exprs ctx env locals moved exprs)]
-    [(AstExprMakeArray _ inner) (tc-move-check-expr ctx env locals moved inner)]
-    [(AstExprArrayRef array index)
-      (match (tc-move-check-expr ctx env locals moved array)
-        [(OkTcMove moved1) (tc-move-check-expr ctx env locals moved1 index)]
-        [(ErrTcMove message) (ErrTcMove message)])]
-    [(AstExprArraySet array index value)
-      (match (tc-move-check-expr ctx env locals moved array)
-        [(OkTcMove moved1)
-          (match (tc-move-check-expr ctx env locals moved1 index)
-            [(OkTcMove moved2) (tc-move-check-expr ctx env locals moved2 value)]
-            [(ErrTcMove message) (ErrTcMove message)])]
-        [(ErrTcMove message) (ErrTcMove message)])]
-    [(AstExprArrayPush array value)
-      (match (tc-move-check-expr ctx env locals moved array)
-        [(OkTcMove moved1) (tc-move-check-expr ctx env locals moved1 value)]
-        [(ErrTcMove message) (ErrTcMove message)])]
-    [(AstExprStringRef str index)
-      (match (tc-move-check-expr ctx env locals moved str)
-        [(OkTcMove moved1) (tc-move-check-expr ctx env locals moved1 index)]
-        [(ErrTcMove message) (ErrTcMove message)])]
-    [(AstExprWhile cond body)
-      (match (tc-move-check-expr ctx env locals moved cond)
-        [(OkTcMove movedc)
-          (match (tc-move-check-expr ctx env locals movedc body)
-            [(OkTcMove _) (OkTcMove movedc)]
-            [(ErrTcMove message) (ErrTcMove message)])]
-        [(ErrTcMove message) (ErrTcMove message)])]
+    [(AstExprMakeArray _ inner-box)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (tc-move-check-expr ctx env locals moved inner))]
+    [(AstExprArrayRef array-box index-box)
+      (let
+        [array : AstExpr (box-get array-box)]
+        [index : AstExpr (box-get index-box)]
+        (match (tc-move-check-expr ctx env locals moved array)
+          [(OkTcMove moved1) (tc-move-check-expr ctx env locals moved1 index)]
+          [(ErrTcMove message) (ErrTcMove message)]))]
+    [(AstExprArraySet array-box index-box value-box)
+      (let
+        [array : AstExpr (box-get array-box)]
+        [index : AstExpr (box-get index-box)]
+        [value : AstExpr (box-get value-box)]
+        (match (tc-move-check-expr ctx env locals moved array)
+          [(OkTcMove moved1)
+            (match (tc-move-check-expr ctx env locals moved1 index)
+              [(OkTcMove moved2)
+                (tc-move-check-expr ctx env locals moved2 value)]
+              [(ErrTcMove message) (ErrTcMove message)])]
+          [(ErrTcMove message) (ErrTcMove message)]))]
+    [(AstExprArrayPush array-box value-box)
+      (let
+        [array : AstExpr (box-get array-box)]
+        [value : AstExpr (box-get value-box)]
+        (match (tc-move-check-expr ctx env locals moved array)
+          [(OkTcMove moved1) (tc-move-check-expr ctx env locals moved1 value)]
+          [(ErrTcMove message) (ErrTcMove message)]))]
+    [(AstExprStringRef str-box index-box)
+      (let
+        [str : AstExpr (box-get str-box)]
+        [index : AstExpr (box-get index-box)]
+        (match (tc-move-check-expr ctx env locals moved str)
+          [(OkTcMove moved1) (tc-move-check-expr ctx env locals moved1 index)]
+          [(ErrTcMove message) (ErrTcMove message)]))]
+    [(AstExprWhile cond-box body-box)
+      (let
+        [cond : AstExpr (box-get cond-box)]
+        [body : AstExpr (box-get body-box)]
+        (match (tc-move-check-expr ctx env locals moved cond)
+          [(OkTcMove movedc)
+            (match (tc-move-check-expr ctx env locals movedc body)
+              [(OkTcMove _) (OkTcMove movedc)]
+              [(ErrTcMove message) (ErrTcMove message)])]
+          [(ErrTcMove message) (ErrTcMove message)]))]
     [(AstExprBegin exprs) (tc-move-check-exprs ctx env locals moved exprs)]
     [(AstExprUnsafe exprs) (tc-move-check-exprs ctx env locals moved exprs)]
-    [(AstExprSet name rhs)
-      (match (tc-move-check-expr ctx env locals moved rhs)
-        [(OkTcMove moved1)
-          (OkTcMove
-            (tc-moved-remove (tc-move-after-bind env locals moved1 rhs) name))]
-        [(ErrTcMove message) (ErrTcMove message)])]
-    [(AstExprAnn inner _) (tc-move-check-expr ctx env locals moved inner)]
-    [(AstExprCast inner _) (tc-move-check-expr ctx env locals moved inner)]
-    [(AstExprBorrow _ inner) (tc-move-check-expr ctx env locals moved inner)]
-    [(AstExprMatch scrut arms)
-      (match (tc-move-check-expr ctx env locals moved scrut)
-        [(OkTcMove moveds) (tc-move-check-arms ctx env locals moveds arms)]
-        [(ErrTcMove message) (ErrTcMove message)])]
-    [(AstExprForeach index index-ty start end body)
-      (match (tc-move-check-expr ctx env locals moved start)
-        [(OkTcMove moved1)
-          (match (tc-move-check-expr ctx env locals moved1 end)
-            [(OkTcMove moved2)
-              (match (tc-move-check-expr
-                ctx
-                (tc-bind env index (tc-resolve-type ctx index-ty))
-                (tc-moved-add locals index)
-                moved2
-                body)
-                [(OkTcMove _) (OkTcMove moved2)]
-                [(ErrTcMove message) (ErrTcMove message)])]
-            [(ErrTcMove message) (ErrTcMove message)])]
-        [(ErrTcMove message) (ErrTcMove message)])]
-    [(AstExprSpmdReduce _ _ _ a b c d)
-      (match (tc-move-check-expr ctx env locals moved a)
-        [(OkTcMove m1)
-          (match (tc-move-check-expr ctx env locals m1 b)
-            [(OkTcMove m2)
-              (match (tc-move-check-expr ctx env locals m2 c)
-                [(OkTcMove m3) (tc-move-check-expr ctx env locals m3 d)]
-                [(ErrTcMove message) (ErrTcMove message)])]
-            [(ErrTcMove message) (ErrTcMove message)])]
-        [(ErrTcMove message) (ErrTcMove message)])]
-    [(AstExprStructGet inner _) (tc-move-check-expr ctx env locals moved inner)]
+    [(AstExprSet name rhs-box)
+      (let
+        [rhs : AstExpr (box-get rhs-box)]
+        (match (tc-move-check-expr ctx env locals moved rhs)
+          [(OkTcMove moved1)
+            (OkTcMove
+              (tc-moved-remove (tc-move-after-bind env locals moved1 rhs) name))]
+          [(ErrTcMove message) (ErrTcMove message)]))]
+    [(AstExprAnn inner-box _)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (tc-move-check-expr ctx env locals moved inner))]
+    [(AstExprCast inner-box _)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (tc-move-check-expr ctx env locals moved inner))]
+    [(AstExprBorrow _ inner-box)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (tc-move-check-expr ctx env locals moved inner))]
+    [(AstExprMatch scrut-box arms)
+      (let
+        [scrut : AstExpr (box-get scrut-box)]
+        (match (tc-move-check-expr ctx env locals moved scrut)
+          [(OkTcMove moveds) (tc-move-check-arms ctx env locals moveds arms)]
+          [(ErrTcMove message) (ErrTcMove message)]))]
+    [(AstExprForeach index index-ty start-box end-box body-box)
+      (let
+        [start : AstExpr (box-get start-box)]
+        [end : AstExpr (box-get end-box)]
+        [body : AstExpr (box-get body-box)]
+        (match (tc-move-check-expr ctx env locals moved start)
+          [(OkTcMove moved1)
+            (match (tc-move-check-expr ctx env locals moved1 end)
+              [(OkTcMove moved2)
+                (match (tc-move-check-expr
+                  ctx
+                  (tc-bind env index (tc-resolve-type ctx index-ty))
+                  (tc-moved-add locals index)
+                  moved2
+                  body)
+                  [(OkTcMove _) (OkTcMove moved2)]
+                  [(ErrTcMove message) (ErrTcMove message)])]
+              [(ErrTcMove message) (ErrTcMove message)])]
+          [(ErrTcMove message) (ErrTcMove message)]))]
+    [(AstExprSpmdReduce _ _ _ a-box b-box c-box d-box)
+      (let
+        [a : AstExpr (box-get a-box)]
+        [b : AstExpr (box-get b-box)]
+        [c : AstExpr (box-get c-box)]
+        [d : AstExpr (box-get d-box)]
+        (match (tc-move-check-expr ctx env locals moved a)
+          [(OkTcMove m1)
+            (match (tc-move-check-expr ctx env locals m1 b)
+              [(OkTcMove m2)
+                (match (tc-move-check-expr ctx env locals m2 c)
+                  [(OkTcMove m3) (tc-move-check-expr ctx env locals m3 d)]
+                  [(ErrTcMove message) (ErrTcMove message)])]
+              [(ErrTcMove message) (ErrTcMove message)])]
+          [(ErrTcMove message) (ErrTcMove message)]))]
+    [(AstExprStructGet inner-box _)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (tc-move-check-expr ctx env locals moved inner))]
     [(AstExprWithRegion _ exprs)
       (tc-move-check-exprs ctx env locals moved exprs)]
-    [(AstExprWithEscape scratch exprs)
-      (match (tc-move-check-expr ctx env locals moved scratch)
-        [(OkTcMove moved1) (tc-move-check-exprs ctx env locals moved1 exprs)]
-        [(ErrTcMove message) (ErrTcMove message)])]
+    [(AstExprWithEscape scratch-box exprs)
+      (let
+        [scratch : AstExpr (box-get scratch-box)]
+        (match (tc-move-check-expr ctx env locals moved scratch)
+          [(OkTcMove moved1) (tc-move-check-exprs ctx env locals moved1 exprs)]
+          [(ErrTcMove message) (ErrTcMove message)]))]
     [(AstExprWithResource _ exprs)
       (tc-move-check-exprs ctx env locals moved exprs)]
-    [(AstExprBox inner) (tc-move-check-expr ctx env locals moved inner)]
-    [(AstExprBoxGet inner) (tc-move-check-expr ctx env locals moved inner)]
+    [(AstExprBox inner-box)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (tc-move-check-expr ctx env locals moved inner))]
+    [(AstExprBoxGet inner-box)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (tc-move-check-expr ctx env locals moved inner))]
     [(AstExprTypeLiteral _) (OkTcMove moved)]
-    [(AstExprComptime inner) (tc-move-check-expr ctx env locals moved inner)]
+    [(AstExprComptime inner-box)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (tc-move-check-expr ctx env locals moved inner))]
     [(AstExprQuote _) (OkTcMove moved)]
     [(AstExprQuasiquote _) (OkTcMove moved)]
     [(AstExprUnquote _) (OkTcMove moved)]
     [(AstExprUnquoteSplicing _) (OkTcMove moved)]
-    [(AstExprTry inner) (tc-move-check-expr ctx env locals moved inner)]
-    [(AstExprReturn inner) (tc-move-check-expr ctx env locals moved inner)]
+    [(AstExprTry inner-box)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (tc-move-check-expr ctx env locals moved inner))]
+    [(AstExprReturn inner-box)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (tc-move-check-expr ctx env locals moved inner))]
     [(AstExprPtrNull _) (OkTcMove moved)]
-    [(AstExprPtrNullCheck inner)
-      (tc-move-check-expr ctx env locals moved inner)]
-    [(AstExprPtrRead inner) (tc-move-check-expr ctx env locals moved inner)]
-    [(AstExprPtrWrite ptr value)
-      (match (tc-move-check-expr ctx env locals moved ptr)
-        [(OkTcMove moved1) (tc-move-check-expr ctx env locals moved1 value)]
-        [(ErrTcMove message) (ErrTcMove message)])]
-    [(AstExprPtrOffset ptr offset)
-      (match (tc-move-check-expr ctx env locals moved ptr)
-        [(OkTcMove moved1) (tc-move-check-expr ctx env locals moved1 offset)]
-        [(ErrTcMove message) (ErrTcMove message)])]
-    [(AstExprPtrCast inner _) (tc-move-check-expr ctx env locals moved inner)]
-    [(AstExprPtrToInt inner) (tc-move-check-expr ctx env locals moved inner)]
-    [(AstExprIntToPtr inner _) (tc-move-check-expr ctx env locals moved inner)]
-    [(AstExprStringData inner) (tc-move-check-expr ctx env locals moved inner)]
-    [(AstExprStringFromBytes ptr len)
-      (match (tc-move-check-expr ctx env locals moved ptr)
-        [(OkTcMove moved1) (tc-move-check-expr ctx env locals moved1 len)]
-        [(ErrTcMove message) (ErrTcMove message)])]
-    [(AstExprArrayData inner) (tc-move-check-expr ctx env locals moved inner)]
+    [(AstExprPtrNullCheck inner-box)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (tc-move-check-expr ctx env locals moved inner))]
+    [(AstExprPtrRead inner-box)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (tc-move-check-expr ctx env locals moved inner))]
+    [(AstExprPtrWrite ptr-box value-box)
+      (let
+        [ptr : AstExpr (box-get ptr-box)]
+        [value : AstExpr (box-get value-box)]
+        (match (tc-move-check-expr ctx env locals moved ptr)
+          [(OkTcMove moved1) (tc-move-check-expr ctx env locals moved1 value)]
+          [(ErrTcMove message) (ErrTcMove message)]))]
+    [(AstExprPtrOffset ptr-box offset-box)
+      (let
+        [ptr : AstExpr (box-get ptr-box)]
+        [offset : AstExpr (box-get offset-box)]
+        (match (tc-move-check-expr ctx env locals moved ptr)
+          [(OkTcMove moved1) (tc-move-check-expr ctx env locals moved1 offset)]
+          [(ErrTcMove message) (ErrTcMove message)]))]
+    [(AstExprPtrCast inner-box _)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (tc-move-check-expr ctx env locals moved inner))]
+    [(AstExprPtrToInt inner-box)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (tc-move-check-expr ctx env locals moved inner))]
+    [(AstExprIntToPtr inner-box _)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (tc-move-check-expr ctx env locals moved inner))]
+    [(AstExprStringData inner-box)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (tc-move-check-expr ctx env locals moved inner))]
+    [(AstExprStringFromBytes ptr-box len-box)
+      (let
+        [ptr : AstExpr (box-get ptr-box)]
+        [len : AstExpr (box-get len-box)]
+        (match (tc-move-check-expr ctx env locals moved ptr)
+          [(OkTcMove moved1) (tc-move-check-expr ctx env locals moved1 len)]
+          [(ErrTcMove message) (ErrTcMove message)]))]
+    [(AstExprArrayData inner-box)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (tc-move-check-expr ctx env locals moved inner))]
     [(AstExprProgramArgc) (OkTcMove moved)]
     [(AstExprProgramArgv) (OkTcMove moved)]
     [(AstExprProgramEnvp) (OkTcMove moved)]
-    [(AstExprCpuIdEax leaf subleaf)
-      (match (tc-move-check-expr ctx env locals moved leaf)
-        [(OkTcMove moved1) (tc-move-check-expr ctx env locals moved1 subleaf)]
-        [(ErrTcMove message) (ErrTcMove message)])]
-    [(AstExprCpuIdEbx leaf subleaf)
-      (match (tc-move-check-expr ctx env locals moved leaf)
-        [(OkTcMove moved1) (tc-move-check-expr ctx env locals moved1 subleaf)]
-        [(ErrTcMove message) (ErrTcMove message)])]
-    [(AstExprCpuIdEcx leaf subleaf)
-      (match (tc-move-check-expr ctx env locals moved leaf)
-        [(OkTcMove moved1) (tc-move-check-expr ctx env locals moved1 subleaf)]
-        [(ErrTcMove message) (ErrTcMove message)])]
-    [(AstExprCpuIdEdx leaf subleaf)
-      (match (tc-move-check-expr ctx env locals moved leaf)
-        [(OkTcMove moved1) (tc-move-check-expr ctx env locals moved1 subleaf)]
-        [(ErrTcMove message) (ErrTcMove message)])]
-    [(AstExprXgetbv index) (tc-move-check-expr ctx env locals moved index)]))
+    [(AstExprCpuIdEax leaf-box subleaf-box)
+      (let
+        [leaf : AstExpr (box-get leaf-box)]
+        [subleaf : AstExpr (box-get subleaf-box)]
+        (match (tc-move-check-expr ctx env locals moved leaf)
+          [(OkTcMove moved1) (tc-move-check-expr ctx env locals moved1 subleaf)]
+          [(ErrTcMove message) (ErrTcMove message)]))]
+    [(AstExprCpuIdEbx leaf-box subleaf-box)
+      (let
+        [leaf : AstExpr (box-get leaf-box)]
+        [subleaf : AstExpr (box-get subleaf-box)]
+        (match (tc-move-check-expr ctx env locals moved leaf)
+          [(OkTcMove moved1) (tc-move-check-expr ctx env locals moved1 subleaf)]
+          [(ErrTcMove message) (ErrTcMove message)]))]
+    [(AstExprCpuIdEcx leaf-box subleaf-box)
+      (let
+        [leaf : AstExpr (box-get leaf-box)]
+        [subleaf : AstExpr (box-get subleaf-box)]
+        (match (tc-move-check-expr ctx env locals moved leaf)
+          [(OkTcMove moved1) (tc-move-check-expr ctx env locals moved1 subleaf)]
+          [(ErrTcMove message) (ErrTcMove message)]))]
+    [(AstExprCpuIdEdx leaf-box subleaf-box)
+      (let
+        [leaf : AstExpr (box-get leaf-box)]
+        [subleaf : AstExpr (box-get subleaf-box)]
+        (match (tc-move-check-expr ctx env locals moved leaf)
+          [(OkTcMove moved1) (tc-move-check-expr ctx env locals moved1 subleaf)]
+          [(ErrTcMove message) (ErrTcMove message)]))]
+    [(AstExprXgetbv index-box)
+      (let
+        [index : AstExpr (box-get index-box)]
+        (tc-move-check-expr ctx env locals moved index))]))
 
 (define (tc-move-check-body
   [ctx : TcContext]
@@ -9519,19 +10479,23 @@
       (match (macro-hygiene-bind-name env macro-name depth name)
         [(MacroHygieneName renamed next-env)
           (MacroHygienePattern (AstPatVar renamed maybe-ty) next-env)])]
-    [(AstPatTuple patterns)
-      (match (macro-hygiene-pattern-list patterns env macro-name depth)
-        [(MacroHygienePatternList npatterns next-env)
-          (MacroHygienePattern (AstPatTuple npatterns) next-env)])]
+    [(AstPatTuple patterns-box)
+      (let
+        [patterns : AstPatternList (box-get patterns-box)]
+        (match (macro-hygiene-pattern-list patterns env macro-name depth)
+          [(MacroHygienePatternList npatterns next-env)
+            (MacroHygienePattern (ast-pat-tuple npatterns) next-env)]))]
     [(AstPatWildcard) (MacroHygienePattern AstPatWildcard env)]
     [(AstPatBinding name)
       (match (macro-hygiene-bind-name env macro-name depth name)
         [(MacroHygieneName renamed next-env)
           (MacroHygienePattern (AstPatBinding renamed) next-env)])]
-    [(AstPatVariant name args)
-      (match (macro-hygiene-pattern-list args env macro-name depth)
-        [(MacroHygienePatternList nargs next-env)
-          (MacroHygienePattern (AstPatVariant name nargs) next-env)])]
+    [(AstPatVariant name args-box)
+      (let
+        [args : AstPatternList (box-get args-box)]
+        (match (macro-hygiene-pattern-list args env macro-name depth)
+          [(MacroHygienePatternList nargs next-env)
+            (MacroHygienePattern (ast-pat-variant name nargs) next-env)]))]
     [(AstPatLiteral lit) (MacroHygienePattern (AstPatLiteral lit) env)]))
 
 (define (macro-hygiene-let-bindings
@@ -9545,8 +10509,9 @@
       (let
         [rest : AstLetBindingList (box-get rest)]
         (match binding
-          [(AstLetBinding name maybe-ty init)
+          [(AstLetBinding name maybe-ty init-box)
             (let
+              [init : AstExpr (box-get init-box)]
               [ninit : AstExpr (macro-hygiene-expr init env macro-name depth)]
               (match (macro-hygiene-bind-name env macro-name depth name)
                 [(MacroHygieneName renamed next-env)
@@ -9558,7 +10523,7 @@
                     [(MacroHygieneLetBindings nrest final-env)
                       (MacroHygieneLetBindings
                         (ast-let-binding-cons
-                          (AstLetBinding renamed maybe-ty ninit)
+                          (ast-let-binding renamed maybe-ty ninit)
                           nrest)
                         final-env)])]))]))]))
 
@@ -9574,8 +10539,10 @@
       (let
         [rest : AstResourceBindingList (box-get rest)]
         (match binding
-          [(AstResourceBinding name init cleanup)
+          [(AstResourceBinding name init-box cleanup-box)
             (let
+              [init : AstExpr (box-get init-box)]
+              [cleanup : AstExpr (box-get cleanup-box)]
               [ninit : AstExpr (macro-hygiene-expr init env macro-name depth)]
               [ncleanup : AstExpr
                 (macro-hygiene-expr cleanup env macro-name depth)]
@@ -9589,7 +10556,7 @@
                     [(MacroHygieneResourceBindings nrest final-env)
                       (MacroHygieneResourceBindings
                         (ast-resource-binding-cons
-                          (AstResourceBinding renamed ninit ncleanup)
+                          (ast-resource-binding renamed ninit ncleanup)
                           nrest)
                         final-env)])]))]))]))
 
@@ -9604,14 +10571,16 @@
       (let
         [rest : AstMatchArmList (box-get rest)]
         (match arm
-          [(AstMatchArm pattern body)
-            (match (macro-hygiene-pattern pattern env macro-name depth)
-              [(MacroHygienePattern npattern arm-env)
-                (ast-match-arm-cons
-                  (AstMatchArm
-                    npattern
-                    (macro-hygiene-expr body arm-env macro-name depth))
-                  (macro-hygiene-arm-list rest env macro-name depth))])]))]))
+          [(AstMatchArm pattern body-box)
+            (let
+              [body : AstExpr (box-get body-box)]
+              (match (macro-hygiene-pattern pattern env macro-name depth)
+                [(MacroHygienePattern npattern arm-env)
+                  (ast-match-arm-cons
+                    (ast-match-arm
+                      npattern
+                      (macro-hygiene-expr body arm-env macro-name depth))
+                    (macro-hygiene-arm-list rest env macro-name depth))]))]))]))
 
 (define (macro-hygiene-expr
   [expr : AstExpr]
@@ -9619,180 +10588,291 @@
   [macro-name : String]
   [depth : i64]) : AstExpr
   (match expr
-    [(AstExprSpanned inner span)
-      (AstExprSpanned (macro-hygiene-expr inner env macro-name depth) span)]
+    [(AstExprSpanned inner-box span)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (ast-expr-spanned (macro-hygiene-expr inner env macro-name depth) span))]
     [(AstExprVar name) (AstExprVar (macro-hygiene-rename-var env name))]
-    [(AstExprBinary op left right)
-      (AstExprBinary
-        op
-        (macro-hygiene-expr left env macro-name depth)
-        (macro-hygiene-expr right env macro-name depth))]
-    [(AstExprUnary op inner)
-      (AstExprUnary op (macro-hygiene-expr inner env macro-name depth))]
-    [(AstExprCall func args)
-      (AstExprCall
-        (macro-hygiene-expr func env macro-name depth)
-        (macro-hygiene-expr-list args env macro-name depth))]
-    [(AstExprIf cond then-branch else-branch)
-      (AstExprIf
-        (macro-hygiene-expr cond env macro-name depth)
-        (macro-hygiene-expr then-branch env macro-name depth)
-        (macro-hygiene-expr else-branch env macro-name depth))]
-    [(AstExprLet bindings body)
-      (match (macro-hygiene-let-bindings bindings env macro-name depth)
-        [(MacroHygieneLetBindings nbindings body-env)
-          (AstExprLet
-            nbindings
-            (macro-hygiene-expr body body-env macro-name depth))])]
-    [(AstExprLambda params maybe-ret body)
-      (match (macro-hygiene-param-list params env macro-name depth)
-        [(MacroHygieneParams nparams body-env)
-          (AstExprLambda
-            nparams
-            maybe-ret
-            (macro-hygiene-expr body body-env macro-name depth))])]
+    [(AstExprBinary op left-box right-box)
+      (let
+        [left : AstExpr (box-get left-box)]
+        [right : AstExpr (box-get right-box)]
+        (ast-expr-binary
+          op
+          (macro-hygiene-expr left env macro-name depth)
+          (macro-hygiene-expr right env macro-name depth)))]
+    [(AstExprUnary op inner-box)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (ast-expr-unary op (macro-hygiene-expr inner env macro-name depth)))]
+    [(AstExprCall func-box args)
+      (let
+        [func : AstExpr (box-get func-box)]
+        (ast-expr-call
+          (macro-hygiene-expr func env macro-name depth)
+          (macro-hygiene-expr-list args env macro-name depth)))]
+    [(AstExprIf cond-box then-branch-box else-branch-box)
+      (let
+        [cond : AstExpr (box-get cond-box)]
+        [then-branch : AstExpr (box-get then-branch-box)]
+        [else-branch : AstExpr (box-get else-branch-box)]
+        (ast-expr-if
+          (macro-hygiene-expr cond env macro-name depth)
+          (macro-hygiene-expr then-branch env macro-name depth)
+          (macro-hygiene-expr else-branch env macro-name depth)))]
+    [(AstExprLet bindings body-box)
+      (let
+        [body : AstExpr (box-get body-box)]
+        (match (macro-hygiene-let-bindings bindings env macro-name depth)
+          [(MacroHygieneLetBindings nbindings body-env)
+            (ast-expr-let
+              nbindings
+              (macro-hygiene-expr body body-env macro-name depth))]))]
+    [(AstExprLambda params maybe-ret body-box)
+      (let
+        [body : AstExpr (box-get body-box)]
+        (match (macro-hygiene-param-list params env macro-name depth)
+          [(MacroHygieneParams nparams body-env)
+            (ast-expr-lambda
+              nparams
+              maybe-ret
+              (macro-hygiene-expr body body-env macro-name depth))]))]
     [(AstExprTuple exprs)
       (AstExprTuple (macro-hygiene-expr-list exprs env macro-name depth))]
-    [(AstExprTupleRef tuple-expr index)
-      (AstExprTupleRef
-        (macro-hygiene-expr tuple-expr env macro-name depth)
-        index)]
+    [(AstExprTupleRef tuple-expr-box index)
+      (let
+        [tuple-expr : AstExpr (box-get tuple-expr-box)]
+        (ast-expr-tuple-ref
+          (macro-hygiene-expr tuple-expr env macro-name depth)
+          index))]
     [(AstExprArray exprs)
       (AstExprArray (macro-hygiene-expr-list exprs env macro-name depth))]
-    [(AstExprMakeArray ty len)
-      (AstExprMakeArray ty (macro-hygiene-expr len env macro-name depth))]
-    [(AstExprArrayRef array index)
-      (AstExprArrayRef
-        (macro-hygiene-expr array env macro-name depth)
-        (macro-hygiene-expr index env macro-name depth))]
-    [(AstExprArraySet array index value)
-      (AstExprArraySet
-        (macro-hygiene-expr array env macro-name depth)
-        (macro-hygiene-expr index env macro-name depth)
-        (macro-hygiene-expr value env macro-name depth))]
-    [(AstExprArrayPush array value)
-      (AstExprArrayPush
-        (macro-hygiene-expr array env macro-name depth)
-        (macro-hygiene-expr value env macro-name depth))]
-    [(AstExprStringRef text index)
-      (AstExprStringRef
-        (macro-hygiene-expr text env macro-name depth)
-        (macro-hygiene-expr index env macro-name depth))]
-    [(AstExprWhile cond body)
-      (AstExprWhile
-        (macro-hygiene-expr cond env macro-name depth)
-        (macro-hygiene-expr body env macro-name depth))]
+    [(AstExprMakeArray ty len-box)
+      (let
+        [len : AstExpr (box-get len-box)]
+        (ast-expr-make-array ty (macro-hygiene-expr len env macro-name depth)))]
+    [(AstExprArrayRef array-box index-box)
+      (let
+        [array : AstExpr (box-get array-box)]
+        [index : AstExpr (box-get index-box)]
+        (ast-expr-array-ref
+          (macro-hygiene-expr array env macro-name depth)
+          (macro-hygiene-expr index env macro-name depth)))]
+    [(AstExprArraySet array-box index-box value-box)
+      (let
+        [array : AstExpr (box-get array-box)]
+        [index : AstExpr (box-get index-box)]
+        [value : AstExpr (box-get value-box)]
+        (ast-expr-array-set
+          (macro-hygiene-expr array env macro-name depth)
+          (macro-hygiene-expr index env macro-name depth)
+          (macro-hygiene-expr value env macro-name depth)))]
+    [(AstExprArrayPush array-box value-box)
+      (let
+        [array : AstExpr (box-get array-box)]
+        [value : AstExpr (box-get value-box)]
+        (ast-expr-array-push
+          (macro-hygiene-expr array env macro-name depth)
+          (macro-hygiene-expr value env macro-name depth)))]
+    [(AstExprStringRef text-box index-box)
+      (let
+        [text : AstExpr (box-get text-box)]
+        [index : AstExpr (box-get index-box)]
+        (ast-expr-string-ref
+          (macro-hygiene-expr text env macro-name depth)
+          (macro-hygiene-expr index env macro-name depth)))]
+    [(AstExprWhile cond-box body-box)
+      (let
+        [cond : AstExpr (box-get cond-box)]
+        [body : AstExpr (box-get body-box)]
+        (ast-expr-while
+          (macro-hygiene-expr cond env macro-name depth)
+          (macro-hygiene-expr body env macro-name depth)))]
     [(AstExprBegin exprs)
       (AstExprBegin (macro-hygiene-expr-list exprs env macro-name depth))]
     [(AstExprUnsafe exprs)
       (AstExprUnsafe (macro-hygiene-expr-list exprs env macro-name depth))]
-    [(AstExprSet name rhs)
-      (AstExprSet
-        (macro-hygiene-rename-var env name)
-        (macro-hygiene-expr rhs env macro-name depth))]
-    [(AstExprAnn inner ty)
-      (AstExprAnn (macro-hygiene-expr inner env macro-name depth) ty)]
-    [(AstExprCast inner ty)
-      (AstExprCast (macro-hygiene-expr inner env macro-name depth) ty)]
-    [(AstExprBorrow lifetime place)
-      (AstExprBorrow lifetime (macro-hygiene-expr place env macro-name depth))]
-    [(AstExprMatch scrut arms)
-      (AstExprMatch
-        (macro-hygiene-expr scrut env macro-name depth)
-        (macro-hygiene-arm-list arms env macro-name depth))]
-    [(AstExprForeach index index-ty start end body)
-      (match (macro-hygiene-bind-name env macro-name depth index)
-        [(MacroHygieneName nindex body-env)
-          (AstExprForeach
-            nindex
-            index-ty
-            (macro-hygiene-expr start env macro-name depth)
-            (macro-hygiene-expr end env macro-name depth)
-            (macro-hygiene-expr body body-env macro-name depth))])]
-    [(AstExprSpmdReduce op index index-ty start end init value)
-      (match (macro-hygiene-bind-name env macro-name depth index)
-        [(MacroHygieneName nindex body-env)
-          (AstExprSpmdReduce
-            op
-            nindex
-            index-ty
-            (macro-hygiene-expr start env macro-name depth)
-            (macro-hygiene-expr end env macro-name depth)
-            (macro-hygiene-expr init env macro-name depth)
-            (macro-hygiene-expr value body-env macro-name depth))])]
-    [(AstExprStructGet inner field)
-      (AstExprStructGet (macro-hygiene-expr inner env macro-name depth) field)]
+    [(AstExprSet name rhs-box)
+      (let
+        [rhs : AstExpr (box-get rhs-box)]
+        (ast-expr-set
+          (macro-hygiene-rename-var env name)
+          (macro-hygiene-expr rhs env macro-name depth)))]
+    [(AstExprAnn inner-box ty)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (ast-expr-ann (macro-hygiene-expr inner env macro-name depth) ty))]
+    [(AstExprCast inner-box ty)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (ast-expr-cast (macro-hygiene-expr inner env macro-name depth) ty))]
+    [(AstExprBorrow lifetime place-box)
+      (let
+        [place : AstExpr (box-get place-box)]
+        (ast-expr-borrow
+          lifetime
+          (macro-hygiene-expr place env macro-name depth)))]
+    [(AstExprMatch scrut-box arms)
+      (let
+        [scrut : AstExpr (box-get scrut-box)]
+        (ast-expr-match
+          (macro-hygiene-expr scrut env macro-name depth)
+          (macro-hygiene-arm-list arms env macro-name depth)))]
+    [(AstExprForeach index index-ty start-box end-box body-box)
+      (let
+        [start : AstExpr (box-get start-box)]
+        [end : AstExpr (box-get end-box)]
+        [body : AstExpr (box-get body-box)]
+        (match (macro-hygiene-bind-name env macro-name depth index)
+          [(MacroHygieneName nindex body-env)
+            (ast-expr-foreach
+              nindex
+              index-ty
+              (macro-hygiene-expr start env macro-name depth)
+              (macro-hygiene-expr end env macro-name depth)
+              (macro-hygiene-expr body body-env macro-name depth))]))]
+    [(AstExprSpmdReduce op index index-ty start-box end-box init-box value-box)
+      (let
+        [start : AstExpr (box-get start-box)]
+        [end : AstExpr (box-get end-box)]
+        [init : AstExpr (box-get init-box)]
+        [value : AstExpr (box-get value-box)]
+        (match (macro-hygiene-bind-name env macro-name depth index)
+          [(MacroHygieneName nindex body-env)
+            (ast-expr-spmd-reduce
+              op
+              nindex
+              index-ty
+              (macro-hygiene-expr start env macro-name depth)
+              (macro-hygiene-expr end env macro-name depth)
+              (macro-hygiene-expr init env macro-name depth)
+              (macro-hygiene-expr value body-env macro-name depth))]))]
+    [(AstExprStructGet inner-box field)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (ast-expr-struct-get
+          (macro-hygiene-expr inner env macro-name depth)
+          field))]
     [(AstExprWithRegion name body)
       (match (macro-hygiene-bind-name env macro-name depth name)
         [(MacroHygieneName nname body-env)
           (AstExprWithRegion
             nname
             (macro-hygiene-expr-list body body-env macro-name depth))])]
-    [(AstExprWithEscape scratch body)
-      (AstExprWithEscape
-        (macro-hygiene-expr scratch env macro-name depth)
-        (macro-hygiene-expr-list body env macro-name depth))]
+    [(AstExprWithEscape scratch-box body)
+      (let
+        [scratch : AstExpr (box-get scratch-box)]
+        (ast-expr-with-escape
+          (macro-hygiene-expr scratch env macro-name depth)
+          (macro-hygiene-expr-list body env macro-name depth)))]
     [(AstExprWithResource bindings body)
       (match (macro-hygiene-resource-bindings bindings env macro-name depth)
         [(MacroHygieneResourceBindings nbindings body-env)
           (AstExprWithResource
             nbindings
             (macro-hygiene-expr-list body body-env macro-name depth))])]
-    [(AstExprBox inner)
-      (AstExprBox (macro-hygiene-expr inner env macro-name depth))]
-    [(AstExprBoxGet inner)
-      (AstExprBoxGet (macro-hygiene-expr inner env macro-name depth))]
-    [(AstExprComptime inner)
-      (AstExprComptime (macro-hygiene-expr inner env macro-name depth))]
-    [(AstExprReturn inner)
-      (AstExprReturn (macro-hygiene-expr inner env macro-name depth))]
-    [(AstExprTry inner)
-      (AstExprTry (macro-hygiene-expr inner env macro-name depth))]
+    [(AstExprBox inner-box)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (ast-expr-box (macro-hygiene-expr inner env macro-name depth)))]
+    [(AstExprBoxGet inner-box)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (ast-expr-box-get (macro-hygiene-expr inner env macro-name depth)))]
+    [(AstExprComptime inner-box)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (ast-expr-comptime (macro-hygiene-expr inner env macro-name depth)))]
+    [(AstExprReturn inner-box)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (ast-expr-return (macro-hygiene-expr inner env macro-name depth)))]
+    [(AstExprTry inner-box)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (ast-expr-try (macro-hygiene-expr inner env macro-name depth)))]
     [(AstExprPtrNull ty) (AstExprPtrNull ty)]
-    [(AstExprPtrNullCheck ptr)
-      (AstExprPtrNullCheck (macro-hygiene-expr ptr env macro-name depth))]
-    [(AstExprPtrRead ptr)
-      (AstExprPtrRead (macro-hygiene-expr ptr env macro-name depth))]
-    [(AstExprPtrWrite ptr value)
-      (AstExprPtrWrite
-        (macro-hygiene-expr ptr env macro-name depth)
-        (macro-hygiene-expr value env macro-name depth))]
-    [(AstExprPtrOffset ptr offset)
-      (AstExprPtrOffset
-        (macro-hygiene-expr ptr env macro-name depth)
-        (macro-hygiene-expr offset env macro-name depth))]
-    [(AstExprPtrCast ptr ty)
-      (AstExprPtrCast (macro-hygiene-expr ptr env macro-name depth) ty)]
-    [(AstExprPtrToInt ptr)
-      (AstExprPtrToInt (macro-hygiene-expr ptr env macro-name depth))]
-    [(AstExprIntToPtr value ty)
-      (AstExprIntToPtr (macro-hygiene-expr value env macro-name depth) ty)]
-    [(AstExprStringData inner)
-      (AstExprStringData (macro-hygiene-expr inner env macro-name depth))]
-    [(AstExprStringFromBytes ptr len)
-      (AstExprStringFromBytes
-        (macro-hygiene-expr ptr env macro-name depth)
-        (macro-hygiene-expr len env macro-name depth))]
-    [(AstExprArrayData inner)
-      (AstExprArrayData (macro-hygiene-expr inner env macro-name depth))]
-    [(AstExprCpuIdEax leaf subleaf)
-      (AstExprCpuIdEax
-        (macro-hygiene-expr leaf env macro-name depth)
-        (macro-hygiene-expr subleaf env macro-name depth))]
-    [(AstExprCpuIdEbx leaf subleaf)
-      (AstExprCpuIdEbx
-        (macro-hygiene-expr leaf env macro-name depth)
-        (macro-hygiene-expr subleaf env macro-name depth))]
-    [(AstExprCpuIdEcx leaf subleaf)
-      (AstExprCpuIdEcx
-        (macro-hygiene-expr leaf env macro-name depth)
-        (macro-hygiene-expr subleaf env macro-name depth))]
-    [(AstExprCpuIdEdx leaf subleaf)
-      (AstExprCpuIdEdx
-        (macro-hygiene-expr leaf env macro-name depth)
-        (macro-hygiene-expr subleaf env macro-name depth))]
-    [(AstExprXgetbv index)
-      (AstExprXgetbv (macro-hygiene-expr index env macro-name depth))]
+    [(AstExprPtrNullCheck ptr-box)
+      (let
+        [ptr : AstExpr (box-get ptr-box)]
+        (ast-expr-ptr-null-check (macro-hygiene-expr ptr env macro-name depth)))]
+    [(AstExprPtrRead ptr-box)
+      (let
+        [ptr : AstExpr (box-get ptr-box)]
+        (ast-expr-ptr-read (macro-hygiene-expr ptr env macro-name depth)))]
+    [(AstExprPtrWrite ptr-box value-box)
+      (let
+        [ptr : AstExpr (box-get ptr-box)]
+        [value : AstExpr (box-get value-box)]
+        (ast-expr-ptr-write
+          (macro-hygiene-expr ptr env macro-name depth)
+          (macro-hygiene-expr value env macro-name depth)))]
+    [(AstExprPtrOffset ptr-box offset-box)
+      (let
+        [ptr : AstExpr (box-get ptr-box)]
+        [offset : AstExpr (box-get offset-box)]
+        (ast-expr-ptr-offset
+          (macro-hygiene-expr ptr env macro-name depth)
+          (macro-hygiene-expr offset env macro-name depth)))]
+    [(AstExprPtrCast ptr-box ty)
+      (let
+        [ptr : AstExpr (box-get ptr-box)]
+        (ast-expr-ptr-cast (macro-hygiene-expr ptr env macro-name depth) ty))]
+    [(AstExprPtrToInt ptr-box)
+      (let
+        [ptr : AstExpr (box-get ptr-box)]
+        (ast-expr-ptr-to-int (macro-hygiene-expr ptr env macro-name depth)))]
+    [(AstExprIntToPtr value-box ty)
+      (let
+        [value : AstExpr (box-get value-box)]
+        (ast-expr-int-to-ptr (macro-hygiene-expr value env macro-name depth) ty))]
+    [(AstExprStringData inner-box)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (ast-expr-string-data (macro-hygiene-expr inner env macro-name depth)))]
+    [(AstExprStringFromBytes ptr-box len-box)
+      (let
+        [ptr : AstExpr (box-get ptr-box)]
+        [len : AstExpr (box-get len-box)]
+        (ast-expr-string-from-bytes
+          (macro-hygiene-expr ptr env macro-name depth)
+          (macro-hygiene-expr len env macro-name depth)))]
+    [(AstExprArrayData inner-box)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (ast-expr-array-data (macro-hygiene-expr inner env macro-name depth)))]
+    [(AstExprCpuIdEax leaf-box subleaf-box)
+      (let
+        [leaf : AstExpr (box-get leaf-box)]
+        [subleaf : AstExpr (box-get subleaf-box)]
+        (ast-expr-cpuid-eax
+          (macro-hygiene-expr leaf env macro-name depth)
+          (macro-hygiene-expr subleaf env macro-name depth)))]
+    [(AstExprCpuIdEbx leaf-box subleaf-box)
+      (let
+        [leaf : AstExpr (box-get leaf-box)]
+        [subleaf : AstExpr (box-get subleaf-box)]
+        (ast-expr-cpuid-ebx
+          (macro-hygiene-expr leaf env macro-name depth)
+          (macro-hygiene-expr subleaf env macro-name depth)))]
+    [(AstExprCpuIdEcx leaf-box subleaf-box)
+      (let
+        [leaf : AstExpr (box-get leaf-box)]
+        [subleaf : AstExpr (box-get subleaf-box)]
+        (ast-expr-cpuid-ecx
+          (macro-hygiene-expr leaf env macro-name depth)
+          (macro-hygiene-expr subleaf env macro-name depth)))]
+    [(AstExprCpuIdEdx leaf-box subleaf-box)
+      (let
+        [leaf : AstExpr (box-get leaf-box)]
+        [subleaf : AstExpr (box-get subleaf-box)]
+        (ast-expr-cpuid-edx
+          (macro-hygiene-expr leaf env macro-name depth)
+          (macro-hygiene-expr subleaf env macro-name depth)))]
+    [(AstExprXgetbv index-box)
+      (let
+        [index : AstExpr (box-get index-box)]
+        (ast-expr-xgetbv (macro-hygiene-expr index env macro-name depth)))]
     [(AstExprQuote _) expr]
     [(AstExprQuasiquote _) expr]
     [(AstExprUnquote _) expr]
@@ -9818,7 +10898,10 @@
 ;; If `func` is a bare reference to a defined macro, return that macro's decl.
 (define (macro-call-decl [func : AstExpr] [decls : AstDeclList]) : MacroMaybeDecl
   (match func
-    [(AstExprSpanned inner _) (macro-call-decl inner decls)]
+    [(AstExprSpanned inner-box _)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (macro-call-decl inner decls))]
     [(AstExprVar name)
       (macro-find-decl
         decls
@@ -10007,18 +11090,28 @@
       (let
         [rest : AstMatchArmList (box-get rest)]
         (match arm
-          [(AstMatchArm pattern body)
-            (match (tc-bind-match-pattern ctx env scrut-ty pattern)
-              [(OkTcEnv arm-env)
-                (match (macro-expand-expr ctx arm-env decls depth body)
-                  [(OkMacroExpr nbody)
-                    (match (macro-expand-arms ctx env decls depth scrut-ty rest)
-                      [(OkMacroArms nrest)
-                        (OkMacroArms
-                          (ast-match-arm-cons (AstMatchArm pattern nbody) nrest))]
-                      [(ErrMacroArms diag) (ErrMacroArms diag)])]
-                  [(ErrMacroExpr diag) (ErrMacroArms diag)])]
-              [(ErrTcEnv message) (ErrMacroArms (tc-expr-diag body message))])]))]))
+          [(AstMatchArm pattern body-box)
+            (let
+              [body : AstExpr (box-get body-box)]
+              (match (tc-bind-match-pattern ctx env scrut-ty pattern)
+                [(OkTcEnv arm-env)
+                  (match (macro-expand-expr ctx arm-env decls depth body)
+                    [(OkMacroExpr nbody)
+                      (match (macro-expand-arms
+                        ctx
+                        env
+                        decls
+                        depth
+                        scrut-ty
+                        rest)
+                        [(OkMacroArms nrest)
+                          (OkMacroArms
+                            (ast-match-arm-cons
+                              (ast-match-arm pattern nbody)
+                              nrest))]
+                        [(ErrMacroArms diag) (ErrMacroArms diag)])]
+                    [(ErrMacroExpr diag) (ErrMacroArms diag)])]
+                [(ErrTcEnv message) (ErrMacroArms (tc-expr-diag body message))]))]))]))
 
 (define (macro-expand-bindings
   [ctx : TcContext]
@@ -10032,27 +11125,34 @@
       (let
         [rest : AstLetBindingList (box-get rest)]
         (match binding
-          [(AstLetBinding name maybe-ty init)
-            (match (macro-expand-expr ctx env decls depth init)
-              [(OkMacroExpr ninit)
-                (match (tc-let-bindings
-                  ctx
-                  env
-                  (ast-let-binding-cons
-                    (AstLetBinding name maybe-ty ninit)
-                    AstLetBindingNil))
-                  [(OkTcEnv next-env)
-                    (match (macro-expand-bindings ctx next-env decls depth rest)
-                      [(OkMacroLetBindings nrest final-env)
-                        (OkMacroLetBindings
-                          (ast-let-binding-cons
-                            (AstLetBinding name maybe-ty ninit)
-                            nrest)
-                          final-env)]
-                      [(ErrMacroLetBindings diag) (ErrMacroLetBindings diag)])]
-                  [(ErrTcEnv message)
-                    (ErrMacroLetBindings (tc-expr-diag ninit message))])]
-              [(ErrMacroExpr diag) (ErrMacroLetBindings diag)])]))]))
+          [(AstLetBinding name maybe-ty init-box)
+            (let
+              [init : AstExpr (box-get init-box)]
+              (match (macro-expand-expr ctx env decls depth init)
+                [(OkMacroExpr ninit)
+                  (match (tc-let-bindings
+                    ctx
+                    env
+                    (ast-let-binding-cons
+                      (ast-let-binding name maybe-ty ninit)
+                      AstLetBindingNil))
+                    [(OkTcEnv next-env)
+                      (match (macro-expand-bindings
+                        ctx
+                        next-env
+                        decls
+                        depth
+                        rest)
+                        [(OkMacroLetBindings nrest final-env)
+                          (OkMacroLetBindings
+                            (ast-let-binding-cons
+                              (ast-let-binding name maybe-ty ninit)
+                              nrest)
+                            final-env)]
+                        [(ErrMacroLetBindings diag) (ErrMacroLetBindings diag)])]
+                    [(ErrTcEnv message)
+                      (ErrMacroLetBindings (tc-expr-diag ninit message))])]
+                [(ErrMacroExpr diag) (ErrMacroLetBindings diag)]))]))]))
 
 (define (macro-expand-expr
   [ctx : TcContext]
@@ -10064,62 +11164,78 @@
     (ErrMacroExpr
       (ctfe-diagnostic-at-expr expr "macro expansion exceeded depth limit"))
     (match expr
-      [(AstExprSpanned inner span)
-        (match (macro-expand-expr ctx env decls depth inner)
-          [(OkMacroExpr ninner) (OkMacroExpr (AstExprSpanned ninner span))]
-          [(ErrMacroExpr diag) (ErrMacroExpr diag)])]
-      [(AstExprCall func args)
-        (match (macro-call-decl func decls)
-          [(MacroSomeDecl macro-name params ret body)
-            (macro-expand-call
-              ctx
-              env
-              decls
-              macro-name
-              params
-              ret
-              body
-              args
-              depth
-              expr)]
-          [(MacroNoDecl)
-            (match (macro-expand-expr ctx env decls depth func)
-              [(OkMacroExpr nfunc)
-                (match (macro-expand-exprs ctx env decls depth args)
-                  [(OkMacroExprList nargs)
-                    (OkMacroExpr (AstExprCall nfunc nargs))]
-                  [(ErrMacroExprList diag) (ErrMacroExpr diag)])]
-              [(ErrMacroExpr diag) (ErrMacroExpr diag)])])]
-      [(AstExprBinary op left right)
-        (match (macro-expand-expr ctx env decls depth left)
-          [(OkMacroExpr nleft)
-            (match (macro-expand-expr ctx env decls depth right)
-              [(OkMacroExpr nright)
-                (OkMacroExpr (AstExprBinary op nleft nright))]
-              [(ErrMacroExpr diag) (ErrMacroExpr diag)])]
-          [(ErrMacroExpr diag) (ErrMacroExpr diag)])]
-      [(AstExprUnary op inner)
-        (match (macro-expand-expr ctx env decls depth inner)
-          [(OkMacroExpr ninner) (OkMacroExpr (AstExprUnary op ninner))]
-          [(ErrMacroExpr diag) (ErrMacroExpr diag)])]
-      [(AstExprIf cond then-branch else-branch)
-        (match (macro-expand-expr ctx env decls depth cond)
-          [(OkMacroExpr ncond)
-            (match (macro-expand-expr ctx env decls depth then-branch)
-              [(OkMacroExpr nthen)
-                (match (macro-expand-expr ctx env decls depth else-branch)
-                  [(OkMacroExpr nelse)
-                    (OkMacroExpr (AstExprIf ncond nthen nelse))]
-                  [(ErrMacroExpr diag) (ErrMacroExpr diag)])]
-              [(ErrMacroExpr diag) (ErrMacroExpr diag)])]
-          [(ErrMacroExpr diag) (ErrMacroExpr diag)])]
-      [(AstExprLet bindings body)
-        (match (macro-expand-bindings ctx env decls depth bindings)
-          [(OkMacroLetBindings nbindings body-env)
-            (match (macro-expand-expr ctx body-env decls depth body)
-              [(OkMacroExpr nbody) (OkMacroExpr (AstExprLet nbindings nbody))]
-              [(ErrMacroExpr diag) (ErrMacroExpr diag)])]
-          [(ErrMacroLetBindings diag) (ErrMacroExpr diag)])]
+      [(AstExprSpanned inner-box span)
+        (let
+          [inner : AstExpr (box-get inner-box)]
+          (match (macro-expand-expr ctx env decls depth inner)
+            [(OkMacroExpr ninner) (OkMacroExpr (ast-expr-spanned ninner span))]
+            [(ErrMacroExpr diag) (ErrMacroExpr diag)]))]
+      [(AstExprCall func-box args)
+        (let
+          [func : AstExpr (box-get func-box)]
+          (match (macro-call-decl func decls)
+            [(MacroSomeDecl macro-name params ret body)
+              (macro-expand-call
+                ctx
+                env
+                decls
+                macro-name
+                params
+                ret
+                body
+                args
+                depth
+                expr)]
+            [(MacroNoDecl)
+              (match (macro-expand-expr ctx env decls depth func)
+                [(OkMacroExpr nfunc)
+                  (match (macro-expand-exprs ctx env decls depth args)
+                    [(OkMacroExprList nargs)
+                      (OkMacroExpr (ast-expr-call nfunc nargs))]
+                    [(ErrMacroExprList diag) (ErrMacroExpr diag)])]
+                [(ErrMacroExpr diag) (ErrMacroExpr diag)])]))]
+      [(AstExprBinary op left-box right-box)
+        (let
+          [left : AstExpr (box-get left-box)]
+          [right : AstExpr (box-get right-box)]
+          (match (macro-expand-expr ctx env decls depth left)
+            [(OkMacroExpr nleft)
+              (match (macro-expand-expr ctx env decls depth right)
+                [(OkMacroExpr nright)
+                  (OkMacroExpr (ast-expr-binary op nleft nright))]
+                [(ErrMacroExpr diag) (ErrMacroExpr diag)])]
+            [(ErrMacroExpr diag) (ErrMacroExpr diag)]))]
+      [(AstExprUnary op inner-box)
+        (let
+          [inner : AstExpr (box-get inner-box)]
+          (match (macro-expand-expr ctx env decls depth inner)
+            [(OkMacroExpr ninner) (OkMacroExpr (ast-expr-unary op ninner))]
+            [(ErrMacroExpr diag) (ErrMacroExpr diag)]))]
+      [(AstExprIf cond-box then-branch-box else-branch-box)
+        (let
+          [cond : AstExpr (box-get cond-box)]
+          [then-branch : AstExpr (box-get then-branch-box)]
+          [else-branch : AstExpr (box-get else-branch-box)]
+          (match (macro-expand-expr ctx env decls depth cond)
+            [(OkMacroExpr ncond)
+              (match (macro-expand-expr ctx env decls depth then-branch)
+                [(OkMacroExpr nthen)
+                  (match (macro-expand-expr ctx env decls depth else-branch)
+                    [(OkMacroExpr nelse)
+                      (OkMacroExpr (ast-expr-if ncond nthen nelse))]
+                    [(ErrMacroExpr diag) (ErrMacroExpr diag)])]
+                [(ErrMacroExpr diag) (ErrMacroExpr diag)])]
+            [(ErrMacroExpr diag) (ErrMacroExpr diag)]))]
+      [(AstExprLet bindings body-box)
+        (let
+          [body : AstExpr (box-get body-box)]
+          (match (macro-expand-bindings ctx env decls depth bindings)
+            [(OkMacroLetBindings nbindings body-env)
+              (match (macro-expand-expr ctx body-env decls depth body)
+                [(OkMacroExpr nbody)
+                  (OkMacroExpr (ast-expr-let nbindings nbody))]
+                [(ErrMacroExpr diag) (ErrMacroExpr diag)])]
+            [(ErrMacroLetBindings diag) (ErrMacroExpr diag)]))]
       [(AstExprBegin exprs)
         (match (macro-expand-exprs ctx env decls depth exprs)
           [(OkMacroExprList nexprs) (OkMacroExpr (AstExprBegin nexprs))]
@@ -10136,160 +11252,219 @@
         (match (macro-expand-exprs ctx env decls depth exprs)
           [(OkMacroExprList nexprs) (OkMacroExpr (AstExprArray nexprs))]
           [(ErrMacroExprList diag) (ErrMacroExpr diag)])]
-      [(AstExprMatch scrut arms)
-        (match (macro-expand-expr ctx env decls depth scrut)
-          [(OkMacroExpr nscrut)
-            (match (tc-expr ctx env nscrut)
-              [(OkTcType scrut-ty)
-                (match (macro-expand-arms ctx env decls depth scrut-ty arms)
-                  [(OkMacroArms narms)
-                    (OkMacroExpr (AstExprMatch nscrut narms))]
-                  [(ErrMacroArms diag) (ErrMacroExpr diag)])]
-              [(ErrTcType message) (ErrMacroExpr (tc-expr-diag nscrut message))])]
-          [(ErrMacroExpr diag) (ErrMacroExpr diag)])]
-      [(AstExprWhile cond body)
-        (match (macro-expand-expr ctx env decls depth cond)
-          [(OkMacroExpr ncond)
-            (match (macro-expand-expr ctx env decls depth body)
-              [(OkMacroExpr nbody) (OkMacroExpr (AstExprWhile ncond nbody))]
-              [(ErrMacroExpr diag) (ErrMacroExpr diag)])]
-          [(ErrMacroExpr diag) (ErrMacroExpr diag)])]
-      [(AstExprForeach index index-ty start end body)
-        (match (macro-expand-expr ctx env decls depth start)
-          [(OkMacroExpr nstart)
-            (match (macro-expand-expr ctx env decls depth end)
-              [(OkMacroExpr nend)
-                (match (macro-expand-expr
-                  ctx
-                  (tc-bind env index (tc-resolve-type ctx index-ty))
-                  decls
-                  depth
-                  body)
-                  [(OkMacroExpr nbody)
-                    (OkMacroExpr
-                      (AstExprForeach index index-ty nstart nend nbody))]
-                  [(ErrMacroExpr diag) (ErrMacroExpr diag)])]
-              [(ErrMacroExpr diag) (ErrMacroExpr diag)])]
-          [(ErrMacroExpr diag) (ErrMacroExpr diag)])]
-      [(AstExprLambda params maybe-ret body)
-        (match (macro-expand-expr
-          ctx
-          (match maybe-ret
-            [(AstSomeType ret)
-              (tc-bind-return-type
-                (tc-bind-params ctx env params)
-                (tc-resolve-type ctx ret))]
-            [(AstNoType)
-              (tc-bind-return-type (tc-bind-params ctx env params) (AstTyNever))])
-          decls
-          depth
-          body)
-          [(OkMacroExpr nbody)
-            (OkMacroExpr (AstExprLambda params maybe-ret nbody))]
-          [(ErrMacroExpr diag) (ErrMacroExpr diag)])]
-      [(AstExprAnn inner ty)
-        (match (macro-expand-expr ctx env decls depth inner)
-          [(OkMacroExpr ninner) (OkMacroExpr (AstExprAnn ninner ty))]
-          [(ErrMacroExpr diag) (ErrMacroExpr diag)])]
-      [(AstExprCast inner ty)
-        (match (macro-expand-expr ctx env decls depth inner)
-          [(OkMacroExpr ninner) (OkMacroExpr (AstExprCast ninner ty))]
-          [(ErrMacroExpr diag) (ErrMacroExpr diag)])]
-      [(AstExprStructGet inner field)
-        (match (macro-expand-expr ctx env decls depth inner)
-          [(OkMacroExpr ninner) (OkMacroExpr (AstExprStructGet ninner field))]
-          [(ErrMacroExpr diag) (ErrMacroExpr diag)])]
-      [(AstExprArrayRef array index)
-        (match (macro-expand-expr ctx env decls depth array)
-          [(OkMacroExpr narray)
-            (match (macro-expand-expr ctx env decls depth index)
-              [(OkMacroExpr nindex)
-                (OkMacroExpr (AstExprArrayRef narray nindex))]
-              [(ErrMacroExpr diag) (ErrMacroExpr diag)])]
-          [(ErrMacroExpr diag) (ErrMacroExpr diag)])]
-      [(AstExprArraySet array index value)
-        (match (macro-expand-expr ctx env decls depth array)
-          [(OkMacroExpr narray)
-            (match (macro-expand-expr ctx env decls depth index)
-              [(OkMacroExpr nindex)
-                (match (macro-expand-expr ctx env decls depth value)
-                  [(OkMacroExpr nvalue)
-                    (OkMacroExpr (AstExprArraySet narray nindex nvalue))]
-                  [(ErrMacroExpr diag) (ErrMacroExpr diag)])]
-              [(ErrMacroExpr diag) (ErrMacroExpr diag)])]
-          [(ErrMacroExpr diag) (ErrMacroExpr diag)])]
-      [(AstExprBox inner)
-        (match (macro-expand-expr ctx env decls depth inner)
-          [(OkMacroExpr ninner) (OkMacroExpr (AstExprBox ninner))]
-          [(ErrMacroExpr diag) (ErrMacroExpr diag)])]
-      [(AstExprBoxGet inner)
-        (match (macro-expand-expr ctx env decls depth inner)
-          [(OkMacroExpr ninner) (OkMacroExpr (AstExprBoxGet ninner))]
-          [(ErrMacroExpr diag) (ErrMacroExpr diag)])]
-      [(AstExprComptime inner)
-        (match (macro-expand-expr ctx env decls depth inner)
-          [(OkMacroExpr ninner) (OkMacroExpr (AstExprComptime ninner))]
-          [(ErrMacroExpr diag) (ErrMacroExpr diag)])]
-      [(AstExprReturn inner)
-        (match (macro-expand-expr ctx env decls depth inner)
-          [(OkMacroExpr ninner) (OkMacroExpr (AstExprReturn ninner))]
-          [(ErrMacroExpr diag) (ErrMacroExpr diag)])]
-      [(AstExprSet name rhs)
-        (match (macro-expand-expr ctx env decls depth rhs)
-          [(OkMacroExpr nrhs) (OkMacroExpr (AstExprSet name nrhs))]
-          [(ErrMacroExpr diag) (ErrMacroExpr diag)])]
-      [(AstExprStringData inner)
-        (match (macro-expand-expr ctx env decls depth inner)
-          [(OkMacroExpr ninner) (OkMacroExpr (AstExprStringData ninner))]
-          [(ErrMacroExpr diag) (ErrMacroExpr diag)])]
-      [(AstExprStringFromBytes ptr len)
-        (match (macro-expand-expr ctx env decls depth ptr)
-          [(OkMacroExpr nptr)
-            (match (macro-expand-expr ctx env decls depth len)
-              [(OkMacroExpr nlen)
-                (OkMacroExpr (AstExprStringFromBytes nptr nlen))]
-              [(ErrMacroExpr diag) (ErrMacroExpr diag)])]
-          [(ErrMacroExpr diag) (ErrMacroExpr diag)])]
-      [(AstExprArrayData inner)
-        (match (macro-expand-expr ctx env decls depth inner)
-          [(OkMacroExpr ninner) (OkMacroExpr (AstExprArrayData ninner))]
-          [(ErrMacroExpr diag) (ErrMacroExpr diag)])]
-      [(AstExprCpuIdEax leaf subleaf)
-        (match (macro-expand-expr ctx env decls depth leaf)
-          [(OkMacroExpr nleaf)
-            (match (macro-expand-expr ctx env decls depth subleaf)
-              [(OkMacroExpr nsubleaf)
-                (OkMacroExpr (AstExprCpuIdEax nleaf nsubleaf))]
-              [(ErrMacroExpr diag) (ErrMacroExpr diag)])]
-          [(ErrMacroExpr diag) (ErrMacroExpr diag)])]
-      [(AstExprCpuIdEbx leaf subleaf)
-        (match (macro-expand-expr ctx env decls depth leaf)
-          [(OkMacroExpr nleaf)
-            (match (macro-expand-expr ctx env decls depth subleaf)
-              [(OkMacroExpr nsubleaf)
-                (OkMacroExpr (AstExprCpuIdEbx nleaf nsubleaf))]
-              [(ErrMacroExpr diag) (ErrMacroExpr diag)])]
-          [(ErrMacroExpr diag) (ErrMacroExpr diag)])]
-      [(AstExprCpuIdEcx leaf subleaf)
-        (match (macro-expand-expr ctx env decls depth leaf)
-          [(OkMacroExpr nleaf)
-            (match (macro-expand-expr ctx env decls depth subleaf)
-              [(OkMacroExpr nsubleaf)
-                (OkMacroExpr (AstExprCpuIdEcx nleaf nsubleaf))]
-              [(ErrMacroExpr diag) (ErrMacroExpr diag)])]
-          [(ErrMacroExpr diag) (ErrMacroExpr diag)])]
-      [(AstExprCpuIdEdx leaf subleaf)
-        (match (macro-expand-expr ctx env decls depth leaf)
-          [(OkMacroExpr nleaf)
-            (match (macro-expand-expr ctx env decls depth subleaf)
-              [(OkMacroExpr nsubleaf)
-                (OkMacroExpr (AstExprCpuIdEdx nleaf nsubleaf))]
-              [(ErrMacroExpr diag) (ErrMacroExpr diag)])]
-          [(ErrMacroExpr diag) (ErrMacroExpr diag)])]
-      [(AstExprXgetbv index)
-        (match (macro-expand-expr ctx env decls depth index)
-          [(OkMacroExpr nindex) (OkMacroExpr (AstExprXgetbv nindex))]
-          [(ErrMacroExpr diag) (ErrMacroExpr diag)])]
+      [(AstExprMatch scrut-box arms)
+        (let
+          [scrut : AstExpr (box-get scrut-box)]
+          (match (macro-expand-expr ctx env decls depth scrut)
+            [(OkMacroExpr nscrut)
+              (match (tc-expr ctx env nscrut)
+                [(OkTcType scrut-ty)
+                  (match (macro-expand-arms ctx env decls depth scrut-ty arms)
+                    [(OkMacroArms narms)
+                      (OkMacroExpr (ast-expr-match nscrut narms))]
+                    [(ErrMacroArms diag) (ErrMacroExpr diag)])]
+                [(ErrTcType message)
+                  (ErrMacroExpr (tc-expr-diag nscrut message))])]
+            [(ErrMacroExpr diag) (ErrMacroExpr diag)]))]
+      [(AstExprWhile cond-box body-box)
+        (let
+          [cond : AstExpr (box-get cond-box)]
+          [body : AstExpr (box-get body-box)]
+          (match (macro-expand-expr ctx env decls depth cond)
+            [(OkMacroExpr ncond)
+              (match (macro-expand-expr ctx env decls depth body)
+                [(OkMacroExpr nbody) (OkMacroExpr (ast-expr-while ncond nbody))]
+                [(ErrMacroExpr diag) (ErrMacroExpr diag)])]
+            [(ErrMacroExpr diag) (ErrMacroExpr diag)]))]
+      [(AstExprForeach index index-ty start-box end-box body-box)
+        (let
+          [start : AstExpr (box-get start-box)]
+          [end : AstExpr (box-get end-box)]
+          [body : AstExpr (box-get body-box)]
+          (match (macro-expand-expr ctx env decls depth start)
+            [(OkMacroExpr nstart)
+              (match (macro-expand-expr ctx env decls depth end)
+                [(OkMacroExpr nend)
+                  (match (macro-expand-expr
+                    ctx
+                    (tc-bind env index (tc-resolve-type ctx index-ty))
+                    decls
+                    depth
+                    body)
+                    [(OkMacroExpr nbody)
+                      (OkMacroExpr
+                        (ast-expr-foreach index index-ty nstart nend nbody))]
+                    [(ErrMacroExpr diag) (ErrMacroExpr diag)])]
+                [(ErrMacroExpr diag) (ErrMacroExpr diag)])]
+            [(ErrMacroExpr diag) (ErrMacroExpr diag)]))]
+      [(AstExprLambda params maybe-ret body-box)
+        (let
+          [body : AstExpr (box-get body-box)]
+          (match (macro-expand-expr
+            ctx
+            (match maybe-ret
+              [(AstSomeType ret)
+                (tc-bind-return-type
+                  (tc-bind-params ctx env params)
+                  (tc-resolve-type ctx ret))]
+              [(AstNoType)
+                (tc-bind-return-type
+                  (tc-bind-params ctx env params)
+                  (AstTyNever))])
+            decls
+            depth
+            body)
+            [(OkMacroExpr nbody)
+              (OkMacroExpr (ast-expr-lambda params maybe-ret nbody))]
+            [(ErrMacroExpr diag) (ErrMacroExpr diag)]))]
+      [(AstExprAnn inner-box ty)
+        (let
+          [inner : AstExpr (box-get inner-box)]
+          (match (macro-expand-expr ctx env decls depth inner)
+            [(OkMacroExpr ninner) (OkMacroExpr (ast-expr-ann ninner ty))]
+            [(ErrMacroExpr diag) (ErrMacroExpr diag)]))]
+      [(AstExprCast inner-box ty)
+        (let
+          [inner : AstExpr (box-get inner-box)]
+          (match (macro-expand-expr ctx env decls depth inner)
+            [(OkMacroExpr ninner) (OkMacroExpr (ast-expr-cast ninner ty))]
+            [(ErrMacroExpr diag) (ErrMacroExpr diag)]))]
+      [(AstExprStructGet inner-box field)
+        (let
+          [inner : AstExpr (box-get inner-box)]
+          (match (macro-expand-expr ctx env decls depth inner)
+            [(OkMacroExpr ninner)
+              (OkMacroExpr (ast-expr-struct-get ninner field))]
+            [(ErrMacroExpr diag) (ErrMacroExpr diag)]))]
+      [(AstExprArrayRef array-box index-box)
+        (let
+          [array : AstExpr (box-get array-box)]
+          [index : AstExpr (box-get index-box)]
+          (match (macro-expand-expr ctx env decls depth array)
+            [(OkMacroExpr narray)
+              (match (macro-expand-expr ctx env decls depth index)
+                [(OkMacroExpr nindex)
+                  (OkMacroExpr (ast-expr-array-ref narray nindex))]
+                [(ErrMacroExpr diag) (ErrMacroExpr diag)])]
+            [(ErrMacroExpr diag) (ErrMacroExpr diag)]))]
+      [(AstExprArraySet array-box index-box value-box)
+        (let
+          [array : AstExpr (box-get array-box)]
+          [index : AstExpr (box-get index-box)]
+          [value : AstExpr (box-get value-box)]
+          (match (macro-expand-expr ctx env decls depth array)
+            [(OkMacroExpr narray)
+              (match (macro-expand-expr ctx env decls depth index)
+                [(OkMacroExpr nindex)
+                  (match (macro-expand-expr ctx env decls depth value)
+                    [(OkMacroExpr nvalue)
+                      (OkMacroExpr (ast-expr-array-set narray nindex nvalue))]
+                    [(ErrMacroExpr diag) (ErrMacroExpr diag)])]
+                [(ErrMacroExpr diag) (ErrMacroExpr diag)])]
+            [(ErrMacroExpr diag) (ErrMacroExpr diag)]))]
+      [(AstExprBox inner-box)
+        (let
+          [inner : AstExpr (box-get inner-box)]
+          (match (macro-expand-expr ctx env decls depth inner)
+            [(OkMacroExpr ninner) (OkMacroExpr (ast-expr-box ninner))]
+            [(ErrMacroExpr diag) (ErrMacroExpr diag)]))]
+      [(AstExprBoxGet inner-box)
+        (let
+          [inner : AstExpr (box-get inner-box)]
+          (match (macro-expand-expr ctx env decls depth inner)
+            [(OkMacroExpr ninner) (OkMacroExpr (ast-expr-box-get ninner))]
+            [(ErrMacroExpr diag) (ErrMacroExpr diag)]))]
+      [(AstExprComptime inner-box)
+        (let
+          [inner : AstExpr (box-get inner-box)]
+          (match (macro-expand-expr ctx env decls depth inner)
+            [(OkMacroExpr ninner) (OkMacroExpr (ast-expr-comptime ninner))]
+            [(ErrMacroExpr diag) (ErrMacroExpr diag)]))]
+      [(AstExprReturn inner-box)
+        (let
+          [inner : AstExpr (box-get inner-box)]
+          (match (macro-expand-expr ctx env decls depth inner)
+            [(OkMacroExpr ninner) (OkMacroExpr (ast-expr-return ninner))]
+            [(ErrMacroExpr diag) (ErrMacroExpr diag)]))]
+      [(AstExprSet name rhs-box)
+        (let
+          [rhs : AstExpr (box-get rhs-box)]
+          (match (macro-expand-expr ctx env decls depth rhs)
+            [(OkMacroExpr nrhs) (OkMacroExpr (ast-expr-set name nrhs))]
+            [(ErrMacroExpr diag) (ErrMacroExpr diag)]))]
+      [(AstExprStringData inner-box)
+        (let
+          [inner : AstExpr (box-get inner-box)]
+          (match (macro-expand-expr ctx env decls depth inner)
+            [(OkMacroExpr ninner) (OkMacroExpr (ast-expr-string-data ninner))]
+            [(ErrMacroExpr diag) (ErrMacroExpr diag)]))]
+      [(AstExprStringFromBytes ptr-box len-box)
+        (let
+          [ptr : AstExpr (box-get ptr-box)]
+          [len : AstExpr (box-get len-box)]
+          (match (macro-expand-expr ctx env decls depth ptr)
+            [(OkMacroExpr nptr)
+              (match (macro-expand-expr ctx env decls depth len)
+                [(OkMacroExpr nlen)
+                  (OkMacroExpr (ast-expr-string-from-bytes nptr nlen))]
+                [(ErrMacroExpr diag) (ErrMacroExpr diag)])]
+            [(ErrMacroExpr diag) (ErrMacroExpr diag)]))]
+      [(AstExprArrayData inner-box)
+        (let
+          [inner : AstExpr (box-get inner-box)]
+          (match (macro-expand-expr ctx env decls depth inner)
+            [(OkMacroExpr ninner) (OkMacroExpr (ast-expr-array-data ninner))]
+            [(ErrMacroExpr diag) (ErrMacroExpr diag)]))]
+      [(AstExprCpuIdEax leaf-box subleaf-box)
+        (let
+          [leaf : AstExpr (box-get leaf-box)]
+          [subleaf : AstExpr (box-get subleaf-box)]
+          (match (macro-expand-expr ctx env decls depth leaf)
+            [(OkMacroExpr nleaf)
+              (match (macro-expand-expr ctx env decls depth subleaf)
+                [(OkMacroExpr nsubleaf)
+                  (OkMacroExpr (ast-expr-cpuid-eax nleaf nsubleaf))]
+                [(ErrMacroExpr diag) (ErrMacroExpr diag)])]
+            [(ErrMacroExpr diag) (ErrMacroExpr diag)]))]
+      [(AstExprCpuIdEbx leaf-box subleaf-box)
+        (let
+          [leaf : AstExpr (box-get leaf-box)]
+          [subleaf : AstExpr (box-get subleaf-box)]
+          (match (macro-expand-expr ctx env decls depth leaf)
+            [(OkMacroExpr nleaf)
+              (match (macro-expand-expr ctx env decls depth subleaf)
+                [(OkMacroExpr nsubleaf)
+                  (OkMacroExpr (ast-expr-cpuid-ebx nleaf nsubleaf))]
+                [(ErrMacroExpr diag) (ErrMacroExpr diag)])]
+            [(ErrMacroExpr diag) (ErrMacroExpr diag)]))]
+      [(AstExprCpuIdEcx leaf-box subleaf-box)
+        (let
+          [leaf : AstExpr (box-get leaf-box)]
+          [subleaf : AstExpr (box-get subleaf-box)]
+          (match (macro-expand-expr ctx env decls depth leaf)
+            [(OkMacroExpr nleaf)
+              (match (macro-expand-expr ctx env decls depth subleaf)
+                [(OkMacroExpr nsubleaf)
+                  (OkMacroExpr (ast-expr-cpuid-ecx nleaf nsubleaf))]
+                [(ErrMacroExpr diag) (ErrMacroExpr diag)])]
+            [(ErrMacroExpr diag) (ErrMacroExpr diag)]))]
+      [(AstExprCpuIdEdx leaf-box subleaf-box)
+        (let
+          [leaf : AstExpr (box-get leaf-box)]
+          [subleaf : AstExpr (box-get subleaf-box)]
+          (match (macro-expand-expr ctx env decls depth leaf)
+            [(OkMacroExpr nleaf)
+              (match (macro-expand-expr ctx env decls depth subleaf)
+                [(OkMacroExpr nsubleaf)
+                  (OkMacroExpr (ast-expr-cpuid-edx nleaf nsubleaf))]
+                [(ErrMacroExpr diag) (ErrMacroExpr diag)])]
+            [(ErrMacroExpr diag) (ErrMacroExpr diag)]))]
+      [(AstExprXgetbv index-box)
+        (let
+          [index : AstExpr (box-get index-box)]
+          (match (macro-expand-expr ctx env decls depth index)
+            [(OkMacroExpr nindex) (OkMacroExpr (ast-expr-xgetbv nindex))]
+            [(ErrMacroExpr diag) (ErrMacroExpr diag)]))]
       [_ (OkMacroExpr expr)])))
 
 (define (macro-expand-decl

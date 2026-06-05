@@ -240,6 +240,10 @@ contains|_tl_ast_decl_tag:
 contains|_tl_compiler_ast_smoke:
 end
 
+case|selfhost_compiler_ast_types_smoke|selfhost/compiler_ast_types_smoke.tl|assembly|exactly-one|direct
+contains|_tl_compiler_ast_smoke:
+end
+
 case|selfhost_compiler_backend|selfhost/compiler_backend.tl|assembly|skip|direct
 contains|_tl_compiler_backend_emit_source:
 contains|_tl_compiler_backend_emit_program_for_target:

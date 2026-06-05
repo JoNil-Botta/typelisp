@@ -160,7 +160,7 @@
 ;; --- code generation ---------------------------------------------------------
 ;; `(clone <expr>)`
 (define (clone-call-expr [inner : AstExpr]) : AstExpr
-  (AstExprCall (AstExprVar "clone") (ast-expr-cons inner AstExprNil)))
+  (ast-expr-call (AstExprVar "clone") (ast-expr-cons inner AstExprNil)))
 
 ;; Binder name for the i-th field of a variant: tlc0, tlc1, ...
 (define (clone-binder-name [i : i64]) : String
@@ -196,9 +196,9 @@
     [(AstVariantDef vname field-types)
       (let
         [count : i64 (clone-type-list-len field-types)]
-        (AstMatchArm
-          (AstPatVariant vname (clone-variant-pat-args count 0))
-          (AstExprCall (AstExprVar vname) (clone-variant-ctor-args count 0))))]))
+        (ast-match-arm
+          (ast-pat-variant vname (clone-variant-pat-args count 0))
+          (ast-expr-call (AstExprVar vname) (clone-variant-ctor-args count 0))))]))
 
 (define (clone-variant-arms [variants : AstVariantDefList]) : AstMatchArmList
   (match variants
@@ -220,7 +220,7 @@
         (match field
           [(AstFieldDef fname _ _)
             (ast-expr-cons
-              (clone-call-expr (AstExprStructGet (AstExprVar "x") fname))
+              (clone-call-expr (ast-expr-struct-get (AstExprVar "x") fname))
               (clone-struct-ctor-args rest))]))]))
 
 ;; Build the `(define (clone$Name [x : Name]) : Name <body>)` declaration.
@@ -351,16 +351,16 @@
 
 ;; `(Nil)` — a nullary constructor is a zero-arg call, as in clone-variant-arm.
 (define (clone-nil-expr [nil-ctor : String]) : AstExpr
-  (AstExprCall (AstExprVar nil-ctor) AstExprNil))
+  (ast-expr-call (AstExprVar nil-ctor) AstExprNil))
 
 (define (clone-list-tail-next-expr [boxed-tail : bool]) : AstExpr
   (if boxed-tail
-    (AstExprBoxGet (AstExprVar "t"))
+    (ast-expr-box-get (AstExprVar "t"))
     (AstExprVar "t")))
 
 (define (clone-list-tail-acc-expr [boxed-tail : bool]) : AstExpr
   (if boxed-tail
-    (AstExprBox (AstExprVar "acc"))
+    (ast-expr-box (AstExprVar "acc"))
     (AstExprVar "acc")))
 
 ;; A two-parameter `(define (fn [x : T] [acc : T]) : T body)`.
@@ -384,18 +384,18 @@
   [cons-ctor : String]
   [boxed-tail : bool]
   [head-expr : AstExpr]) : AstMatchArm
-  (AstMatchArm
-    (AstPatVariant
+  (ast-match-arm
+    (ast-pat-variant
       cons-ctor
       (ast-pattern-cons
         (AstPatBinding "h")
         (ast-pattern-cons (AstPatBinding "t") AstPatternNil)))
-    (AstExprCall
+    (ast-expr-call
       (AstExprVar fn-name)
       (ast-expr-cons
         (clone-list-tail-next-expr boxed-tail)
         (ast-expr-cons
-          (AstExprCall
+          (ast-expr-call
             (AstExprVar cons-ctor)
             (ast-expr-cons
               head-expr
@@ -409,10 +409,12 @@
   [cons-ctor : String]
   [boxed-tail : bool]
   [head-expr : AstExpr]) : AstExpr
-  (AstExprMatch
+  (ast-expr-match
     (AstExprVar "x")
     (ast-match-arm-cons
-      (AstMatchArm (AstPatVariant nil-ctor AstPatternNil) (AstExprVar "acc"))
+      (ast-match-arm
+        (ast-pat-variant nil-ctor AstPatternNil)
+        (AstExprVar "acc"))
       (ast-match-arm-cons
         (clone-list-step-arm fn-name cons-ctor boxed-tail head-expr)
         AstMatchArmNil))))
@@ -457,10 +459,10 @@
 (define (clone-list-entry-decl [type-name : String] [nil-ctor : String]) : AstDecl
   (clone-make-helper-decl
     type-name
-    (AstExprCall
+    (ast-expr-call
       (AstExprVar (clone-list-rev-name type-name))
       (ast-expr-cons
-        (AstExprCall
+        (ast-expr-call
           (AstExprVar (clone-list-acc-name type-name))
           (ast-expr-cons
             (AstExprVar "x")
@@ -486,7 +488,7 @@
       (ast-decl-cons
         (clone-make-helper-decl
           name
-          (AstExprMatch (AstExprVar "x") (clone-variant-arms variants)))
+          (ast-expr-match (AstExprVar "x") (clone-variant-arms variants)))
         acc)]))
 
 ;; Generate clone$ helpers for every clone-able enum/struct, prepended in order.
@@ -515,7 +517,7 @@
                 (ast-decl-cons
                   (clone-make-helper-decl
                     name
-                    (AstExprCall
+                    (ast-expr-call
                       (AstExprVar name)
                       (clone-struct-ctor-args fields)))
                   acc)

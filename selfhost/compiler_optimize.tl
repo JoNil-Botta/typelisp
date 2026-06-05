@@ -3752,14 +3752,18 @@
   (OptLabelCons String (Box OptLabelSet)))
 
 (define (opt-label-contains [set : OptLabelSet] [label : String]) : bool
-  (match set
-    [(OptLabelNil) false]
-    [(OptLabelCons head rest)
-      (let
-        [rest : OptLabelSet (box-get rest)]
-        (if (string-eq head label)
-          true
-          (opt-label-contains rest label)))]))
+  (let
+    [cursor : OptLabelSet set]
+    [found : bool false]
+    (begin
+      (while (not found)
+        (match cursor
+          [(OptLabelNil) (return false)]
+          [(OptLabelCons head rest)
+            (if (string-eq head label)
+              (set! found true)
+              (set! cursor (box-get rest)))]))
+      true)))
 
 (define (opt-label-add [set : OptLabelSet] [label : String]) : OptLabelSet
   (if (opt-label-contains set label)

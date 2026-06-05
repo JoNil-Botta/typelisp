@@ -15,12 +15,21 @@
   (SymI64Bind k v (box e)))
 
 (define (sym-i64-lookup [e : SymI64Env] [k : String]) : MaybeI64
-  (match e
-    [(SymI64Nil) NoneI64]
-    [(SymI64Bind kk vv rest)
-      (if (string-eq kk k)
-        (SomeI64 vv)
-        (sym-i64-lookup (box-get rest) k))]))
+  (let
+    [cursor : SymI64Env e]
+    [found : bool false]
+    [out : MaybeI64 NoneI64]
+    (begin
+      (while (not found)
+        (match cursor
+          [(SymI64Nil) (return NoneI64)]
+          [(SymI64Bind kk vv rest)
+            (if (string-eq kk k)
+              (begin
+                (set! out (SomeI64 vv))
+                (set! found true))
+              (set! cursor (box-get rest)))]))
+      out)))
 
 (define (sym-i64-contains [e : SymI64Env] [k : String]) : bool
   (match (sym-i64-lookup e k)

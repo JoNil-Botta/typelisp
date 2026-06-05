@@ -354,24 +354,24 @@
   (match (compiler-backend-emit-source (compiler-backend-string-source))
     [(OkCompilerBackend asm)
       (and
-        (compiler-backend-string-contains? asm ".L_tl_str_data_6869:")
+        (compiler-backend-string-contains? asm ".L_tl_str_data_l2_13861_13991:")
         (and
-          (compiler-backend-string-contains? asm ".L_tl_str_6869:")
+          (compiler-backend-string-contains? asm ".L_tl_str_l2_13861_13991:")
           (and
             (compiler-backend-string-contains? asm "    .string \"hi\"\n")
             (and
               (compiler-backend-string-contains?
                 asm
-                "    .quad .L_tl_str_data_6869\n")
+                "    .quad .L_tl_str_data_l2_13861_13991\n")
               (and
                 (compiler-backend-string-contains? asm "    .quad 2\n")
                 (and
                   (compiler-backend-string-contains?
                     asm
-                    "_tl_greeting:\n    .quad .L_tl_str_6869\n")
+                    "_tl_greeting:\n    .quad .L_tl_str_l2_13861_13991\n")
                   (compiler-backend-string-contains?
                     asm
-                    "    leaq .L_tl_str_6869(%rip), %rax\n")))))))]
+                    "    leaq .L_tl_str_l2_13861_13991(%rip), %rax\n")))))))]
     [(ErrCompilerBackend _) false]))
 
 ;; Backend-owned replacement for the string runtime helper emission tests
@@ -820,12 +820,14 @@
     [(OkCompilerBackend asm)
       (and
         (backend-and8
-          (compiler-backend-string-contains? asm ".L_tl_str_data_617a:")
-          (compiler-backend-string-contains? asm ".L_tl_str_617a:")
+          (compiler-backend-string-contains?
+            asm
+            ".L_tl_str_data_l2_12961_16211:")
+          (compiler-backend-string-contains? asm ".L_tl_str_l2_12961_16211:")
           (compiler-backend-string-contains? asm "    .string \"az\"\n")
           (compiler-backend-string-contains?
             asm
-            "    .quad .L_tl_str_data_617a\n")
+            "    .quad .L_tl_str_data_l2_12961_16211\n")
           (compiler-backend-string-contains? asm "    cmpq %r11, %rax\n")
           (compiler-backend-string-contains? asm "    jb .Lf0_str_bounds_ok")
           (compiler-backend-string-contains? asm "    call tl_oob_abort")
@@ -895,7 +897,9 @@
           (compiler-backend-string-contains? asm "movq $7,")
           (compiler-backend-string-contains? asm "movq $1,")
           (compiler-backend-string-contains? asm "movq $2,")
-          (compiler-backend-string-contains? asm ".L_tl_str_data_6869:")
+          (compiler-backend-string-contains?
+            asm
+            ".L_tl_str_data_l2_13861_13991:")
           (compiler-backend-string-contains? asm "    .quad 2\n"))
         (not
           (compiler-backend-string-contains? asm (compiler-backend-todo-marker))))]

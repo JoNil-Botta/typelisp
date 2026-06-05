@@ -124,6 +124,11 @@
 
 (cfg
   compile-profile
+  (define compiler-opt-profile-detail-start-ms : i64
+    0))
+
+(cfg
+  compile-profile
   (define (compiler-opt-profile-field [value : i64]) : String
     (string-append "|" (int->string value))))
 
@@ -160,6 +165,35 @@
                   (compiler-opt-profile-field
                     (- end-live compiler-opt-profile-start-live))
                   (string-append (compiler-opt-profile-field peak-delta) "\n"))))))))))
+
+(cfg
+  compile-profile
+  (define (compiler-opt-profile-detail-start) : unit
+    (set! compiler-opt-profile-detail-start-ms (profile-now-ms))))
+
+(cfg
+  compile-profile
+  (define (compiler-opt-profile-detail-finish [phase : String] [name : String]) : unit
+    (let
+      [elapsed : i64 (- (profile-now-ms) compiler-opt-profile-detail-start-ms)]
+      (if (>= elapsed 1)
+        (print-error
+          (string-append
+            "compile-profile-detail|optimize."
+            (string-append
+              phase
+              (string-append
+                "|"
+                (string-append
+                  (int->string elapsed)
+                  (string-append "|" (string-append name "\n")))))))
+        unit))))
+
+(cfg
+  compile-profile
+  (define (compiler-opt-profile-function-name [func : CompilerIrFunction]) : String
+    (match func
+      [(IrFunction name _ _ _ _) name])))
 
 (define (compiler-optimize-default-level) : i64
   compiler-optimize-level-default)
@@ -7760,9 +7794,20 @@
   (match funcs
     [(IrFunctionNil) (IrFunctionNil)]
     [(IrFunctionCons func rest)
-      (compiler-ir-function-cons
-        (optimize-function-escaping func level scratch)
-        (optimize-function-list-escaping (box-get rest) level scratch))]))
+      (begin
+        (cfg compile-profile (compiler-opt-profile-detail-start))
+        (let
+          [optimized : CompilerIrFunction
+            (optimize-function-escaping func level scratch)]
+          (begin
+            (cfg
+              compile-profile
+              (compiler-opt-profile-detail-finish
+                "function"
+                (compiler-opt-profile-function-name func)))
+            (compiler-ir-function-cons
+              optimized
+              (optimize-function-list-escaping (box-get rest) level scratch)))))]))
 
 ;; Optimize one function inside `scratch`, then escape the result by deep-cloning
 ;; it into the enclosing arena and rewinding `scratch` for reuse. The enclosing

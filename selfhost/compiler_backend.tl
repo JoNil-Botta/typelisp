@@ -32,6 +32,11 @@
 
 (cfg
   compile-profile
+  (define compiler-backend-profile-detail-start-ms : i64
+    0))
+
+(cfg
+  compile-profile
   (define (compiler-backend-profile-field [value : i64]) : String
     (string-append "|" (int->string value))))
 
@@ -70,6 +75,38 @@
                   (string-append
                     (compiler-backend-profile-field peak-delta)
                     "\n"))))))))))
+
+(cfg
+  compile-profile
+  (define (compiler-backend-profile-detail-start) : unit
+    (set! compiler-backend-profile-detail-start-ms (profile-now-ms))))
+
+(cfg
+  compile-profile
+  (define (compiler-backend-profile-detail-finish
+    [phase : String]
+    [name : String]) : unit
+    (let
+      [elapsed : i64
+        (- (profile-now-ms) compiler-backend-profile-detail-start-ms)]
+      (if (>= elapsed 1)
+        (print-error
+          (string-append
+            "compile-profile-detail|backend."
+            (string-append
+              phase
+              (string-append
+                "|"
+                (string-append
+                  (int->string elapsed)
+                  (string-append "|" (string-append name "\n")))))))
+        unit))))
+
+(cfg
+  compile-profile
+  (define (compiler-backend-profile-function-name [func : CompilerIrFunction]) : String
+    (match func
+      [(IrFunction name _ _ _ _) name])))
 
 (defenum ResultBackendReg
   (OkBackendReg String)
@@ -2088,22 +2125,56 @@
 
 (define (compiler-backend-string-label-suffix [text : String]) : String
   (let
+    [n : i64 (string-length text)]
+    (if (= n 0)
+      "empty"
+      (backend-cat5
+        "l"
+        (int->string n)
+        "_"
+        (int->string (compiler-backend-string-label-forward-hash text))
+        (string-append
+          "_"
+          (int->string (compiler-backend-string-label-reverse-hash text)))))))
+
+(define (compiler-backend-string-label-forward-hash [text : String]) : i64
+  (let
     [i : i64 0]
     [n : i64 (string-length text)]
-    [buf : TextBuf (text-buf-empty)]
+    [hash : i64 0]
     (begin
       (while (< i n)
         (begin
           (set!
-            buf
-            (text-buf-append
-              buf
-              (compiler-backend-hex-byte
-                (compiler-backend-char-code (string-ref text i)))))
+            hash
+            (%
+              (+
+                (+
+                  (* hash 131)
+                  (compiler-backend-char-code (string-ref text i)))
+                1)
+              2147483647))
           (set! i (+ i 1))))
-      (if (= n 0)
-        "empty"
-        (text-buf-render buf)))))
+      hash)))
+
+(define (compiler-backend-string-label-reverse-hash [text : String]) : i64
+  (let
+    [i : i64 (- (string-length text) 1)]
+    [hash : i64 0]
+    (begin
+      (while (>= i 0)
+        (begin
+          (set!
+            hash
+            (%
+              (+
+                (+
+                  (* hash 131)
+                  (compiler-backend-char-code (string-ref text i)))
+                1)
+              2147483647))
+          (set! i (- i 1))))
+      hash)))
 
 (define (compiler-backend-string-data-label [text : String]) : String
   (string-append ".L_tl_str_data_" (compiler-backend-string-label-suffix text)))
@@ -9117,35 +9188,50 @@
   (match functions
     [(IrFunctionNil) (OkCompilerBackendBuffer buf)]
     [(IrFunctionCons func rest)
-      (match (compiler-backend-emit-function-escaping
-        target
-        (compiler-backend-effective-function-mode mode func)
-        func
-        all-functions
-        globals
-        global-types
-        externs
-        plan
-        program-index
-        spans
-        span-index
-        crt-entry)
-        [(OkCompilerBackend head)
-          (compiler-backend-emit-functions-buffer-into
-            target
-            mode
-            (box-get rest)
-            all-functions
-            globals
-            global-types
-            externs
-            plan
-            program-index
-            spans
-            span-index
-            crt-entry
-            (text-buf-append buf head))]
-        [(ErrCompilerBackend message) (ErrCompilerBackendBuffer message)])]))
+      (begin
+        (cfg compile-profile (compiler-backend-profile-detail-start))
+        (match (compiler-backend-emit-function-escaping
+          target
+          (compiler-backend-effective-function-mode mode func)
+          func
+          all-functions
+          globals
+          global-types
+          externs
+          plan
+          program-index
+          spans
+          span-index
+          crt-entry)
+          [(OkCompilerBackend head)
+            (begin
+              (cfg
+                compile-profile
+                (compiler-backend-profile-detail-finish
+                  "function"
+                  (compiler-backend-profile-function-name func)))
+              (compiler-backend-emit-functions-buffer-into
+                target
+                mode
+                (box-get rest)
+                all-functions
+                globals
+                global-types
+                externs
+                plan
+                program-index
+                spans
+                span-index
+                crt-entry
+                (text-buf-append buf head)))]
+          [(ErrCompilerBackend message)
+            (begin
+              (cfg
+                compile-profile
+                (compiler-backend-profile-detail-finish
+                  "function"
+                  (compiler-backend-profile-function-name func)))
+              (ErrCompilerBackendBuffer message))]))]))
 
 (define (compiler-backend-emit-functions-buffer
   [target : CompilerBackendTarget]

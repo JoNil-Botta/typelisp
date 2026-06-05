@@ -241,6 +241,11 @@
 
 (cfg
   compile-profile
+  (define compiler-lower-profile-detail-start-ms : i64
+    0))
+
+(cfg
+  compile-profile
   (define (compiler-lower-profile-field [value : i64]) : String
     (string-append "|" (int->string value))))
 
@@ -277,6 +282,32 @@
                   (compiler-lower-profile-field
                     (- end-live compiler-lower-profile-start-live))
                   (string-append (compiler-lower-profile-field peak-delta) "\n"))))))))))
+
+(cfg
+  compile-profile
+  (define (compiler-lower-profile-detail-start) : unit
+    (set! compiler-lower-profile-detail-start-ms (profile-now-ms))))
+
+(cfg
+  compile-profile
+  (define (compiler-lower-profile-detail-finish
+    [phase : String]
+    [name : String]) : unit
+    (let
+      [elapsed : i64
+        (- (profile-now-ms) compiler-lower-profile-detail-start-ms)]
+      (if (>= elapsed 1)
+        (print-error
+          (string-append
+            "compile-profile-detail|lower."
+            (string-append
+              phase
+              (string-append
+                "|"
+                (string-append
+                  (int->string elapsed)
+                  (string-append "|" (string-append name "\n")))))))
+        unit))))
 
 (define (lower-diagnostic-at-expr [expr : AstExpr] [message : String]) : CompilerDiagnostic
   (match expr
@@ -16897,6 +16928,8 @@
                   dispatch-variants
                   mode
                   module)
+                (begin
+                  (cfg compile-profile (compiler-lower-profile-detail-start))
                 (match (lower-function-escaping
                   decl-ctx
                   local-top-env
@@ -16909,22 +16942,35 @@
                   name-cache
                   mode)
                   [(OkLowerFunction lowered-functions function-spans)
-                    (lower-decls-in-module
-                      ctx
-                      top-env
-                      local-top-env
-                      rest
-                      globals
-                      (lower-function-list-append lowered-functions functions)
-                      externs
-                      function-spans
-                      names
-                      name-cache
-                      type-cache
-                      dispatch-variants
-                      mode
-                      module)]
-                  [(ErrLowerFunction message) (ErrLowerDecls message)])))]
+                    (begin
+                      (cfg
+                        compile-profile
+                        (compiler-lower-profile-detail-finish
+                          "function"
+                          logical-name))
+                      (lower-decls-in-module
+                        ctx
+                        top-env
+                        local-top-env
+                        rest
+                        globals
+                        (lower-function-list-append lowered-functions functions)
+                        externs
+                        function-spans
+                        names
+                        name-cache
+                        type-cache
+                        dispatch-variants
+                        mode
+                        module))]
+                  [(ErrLowerFunction message)
+                    (begin
+                      (cfg
+                        compile-profile
+                        (compiler-lower-profile-detail-finish
+                          "function"
+                          logical-name))
+                      (ErrLowerDecls message))])))]
           [(AstDeclDefMacro _ _ _ _)
             (lower-decls-in-module
               ctx

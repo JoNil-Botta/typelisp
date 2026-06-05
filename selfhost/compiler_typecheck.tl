@@ -4769,6 +4769,34 @@
   `(danger ,x))
 (define (main) : i64 (call-danger 1))")
 
+(define (compiler-typecheck-macro-own-when-source) : String
+  "(defmacro (when [condition : i64] [body : unit]) : unit body)
+(define (main) : unit (when 1 unit))")
+
+(define (compiler-typecheck-macro-own-unless-source) : String
+  "(defmacro (unless [condition : i64] [body : unit]) : unit body)
+(define (main) : unit (unless 1 unit))")
+
+(define (compiler-typecheck-macro-own-flat-cond-source) : String
+  "(defmacro (cond [condition : i64] [then-expr : i64] [else-expr : i64]) : i64
+  then-expr)
+(define (main) : i64 (cond 1 42 0))")
+
+(define (compiler-typecheck-compat-guards-source) : String
+  "(define (main) : unit
+  (begin
+    (when true unit)
+    (unless false unit)))")
+
+(define (compiler-typecheck-macro-ownership-tests-ok?) : bool
+  (and
+    (compiler-typecheck-ok? (compiler-typecheck-macro-own-when-source))
+    (and
+      (compiler-typecheck-ok? (compiler-typecheck-macro-own-unless-source))
+      (and
+        (compiler-typecheck-ok? (compiler-typecheck-macro-own-flat-cond-source))
+        (compiler-typecheck-ok? (compiler-typecheck-compat-guards-source))))))
+
 (define (compiler-typecheck-macro-export-tests-ok?) : bool
   (and
     (compiler-typecheck-ok? (compiler-typecheck-macro-export-source))
@@ -4819,9 +4847,11 @@
             (and
               (compiler-typecheck-ok?
                 (compiler-typecheck-macro-hygiene-splice-source))
-              (compiler-typecheck-error-ok?
-                (compiler-typecheck-macro-hygiene-unsafe-global-source)
-                "typecheck: danger requires unsafe context"))))))))
+              (and
+                (compiler-typecheck-error-ok?
+                  (compiler-typecheck-macro-hygiene-unsafe-global-source)
+                  "typecheck: danger requires unsafe context")
+                (compiler-typecheck-macro-ownership-tests-ok?)))))))))
 
 (define (compiler-typecheck-self-test-basics) : unit
   (begin

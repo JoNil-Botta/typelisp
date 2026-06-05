@@ -1145,6 +1145,38 @@
                 src
                 "CtfeReflectVariantList"))))))))
 
+(define (compiler-typecheck-inline-boxed-formatter-source) : String
+  "(defenum FormatToken
+  (FmtSymbol String)
+  (FmtColon))
+(defenum FormatCst
+  (FmtCstAtom FormatToken)
+  (FmtCstComment String)
+  (FmtCstPrefix FormatToken (Box FormatCst))
+  (FmtCstList (Box FormatCstList))
+  (FmtCstBracketList (Box FormatCstList))
+  (FmtCstForms (Box FormatCstList)))
+(defenum FormatCstList
+  (FmtCstNil)
+  (FmtCstCons FormatCst (Box FormatCstList)))
+(defenum Doc
+  (DEmpty)
+  (DText String)
+  (DSoftLine)
+  (DHardLine)
+  (DConcat (Box Doc) (Box Doc))
+  (DNest i64 (Box Doc))
+  (DGroup (Box Doc)))")
+
+(define (compiler-typecheck-inline-formatter-layout-ok?) : bool
+  (let
+    [src : String (compiler-typecheck-inline-boxed-formatter-source)]
+    (and
+      (compiler-typecheck-inline-layout-ok? src "FormatCst")
+      (and
+        (compiler-typecheck-inline-layout-ok? src "FormatCstList")
+        (compiler-typecheck-inline-layout-ok? src "Doc")))))
+
 (define (compiler-typecheck-inline-pointer-boundaries-source) : String
   "(defstruct Node
   (name String)
@@ -1207,6 +1239,9 @@
         unit
         (set! ok false))
       (if (compiler-typecheck-inline-ctfe-metadata-layout-ok?)
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-inline-formatter-layout-ok?)
         unit
         (set! ok false))
       (if (compiler-typecheck-inline-layout-ok?

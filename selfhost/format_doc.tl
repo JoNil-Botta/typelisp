@@ -8,9 +8,9 @@
   (DText String)
   (DSoftLine)
   (DHardLine)
-  (DConcat Doc Doc)
-  (DNest i64 Doc)
-  (DGroup Doc))
+  (DConcat (Box Doc) (Box Doc))
+  (DNest i64 (Box Doc))
+  (DGroup (Box Doc)))
 
 (defenum RenderedDoc
   (Rendered String i64))
@@ -36,13 +36,13 @@
     [_
       (match right
         [(DEmpty) left]
-        [_ (DConcat left right)])]))
+        [_ (DConcat (box left) (box right))])]))
 
 (define (doc-nest [indent : i64] [doc : Doc]) : Doc
-  (DNest indent doc))
+  (DNest indent (box doc)))
 
 (define (doc-group [doc : Doc]) : Doc
-  (DGroup doc))
+  (DGroup (box doc)))
 
 (define (spaces [count : i64]) : String
   (let
@@ -61,9 +61,10 @@
     [(DText text) (string-length text)]
     [(DSoftLine) 1]
     [(DHardLine) 1000000]
-    [(DConcat left right) (+ (flat-width left) (flat-width right))]
-    [(DNest _ inner) (flat-width inner)]
-    [(DGroup inner) (flat-width inner)]))
+    [(DConcat left right)
+      (+ (flat-width (box-get left)) (flat-width (box-get right)))]
+    [(DNest _ inner) (flat-width (box-get inner))]
+    [(DGroup inner) (flat-width (box-get inner))]))
 
 (define (fits-flat [doc : Doc] [remaining : i64]) : bool
   (<= (flat-width doc) remaining))
@@ -94,16 +95,17 @@
         (render-newline indent))]
     [(DHardLine) (render-newline indent)]
     [(DConcat left right)
-      (match (render-doc-in left width indent col flat)
+      (match (render-doc-in (box-get left) width indent col flat)
         [(Rendered left-text left-col)
-          (match (render-doc-in right width indent left-col flat)
+          (match (render-doc-in (box-get right) width indent left-col flat)
             [(Rendered right-text right-col)
               (Rendered (string-append left-text right-text) right-col)])])]
-    [(DNest extra inner) (render-doc-in inner width (+ indent extra) col flat)]
+    [(DNest extra inner)
+      (render-doc-in (box-get inner) width (+ indent extra) col flat)]
     [(DGroup inner)
-      (if (fits-flat inner (- width col))
-        (render-doc-in inner width indent col true)
-        (render-doc-in inner width indent col false))]))
+      (if (fits-flat (box-get inner) (- width col))
+        (render-doc-in (box-get inner) width indent col true)
+        (render-doc-in (box-get inner) width indent col false))]))
 
 (define (render-doc-width [doc : Doc] [width : i64]) : String
   (rendered-text (render-doc-in doc width 0 0 false)))
@@ -112,21 +114,46 @@
   (render-doc-width doc (format-width)))
 
 (define (sample-group-doc) : Doc
-  (DGroup
-    (DNest 2 (DConcat (DText "alpha") (DConcat (DSoftLine) (DText "beta"))))))
+  (doc-group
+    (doc-nest
+      2
+      (doc-append
+        (doc-text "alpha")
+        (doc-append (doc-soft-line) (doc-text "beta"))))))
 
 (define (sample-hard-line-doc) : Doc
-  (DGroup (DConcat (DText "a") (DConcat (DHardLine) (DText "b")))))
+  (doc-group
+    (doc-append (doc-text "a") (doc-append (doc-hard-line) (doc-text "b")))))
+
+(define (format-doc-boxed-algebra-ok?) : bool
+  (let
+    [doc : Doc
+      (doc-group
+        (doc-nest
+          4
+          (doc-append
+            (doc-text "a")
+            (doc-append
+              (doc-soft-line)
+              (doc-append
+                (doc-text "b")
+                (doc-append (doc-soft-line) (doc-text "c")))))))]
+    [flat : String (render-doc-width doc 80)]
+    [broken : String (render-doc-width doc 4)]
+    (and
+      (string-eq flat "a b c")
+      (and (string-eq broken "a\n    b\n    c") (= (flat-width doc) 5)))))
 
 (define (format-doc-self-test) : i64
   (let
     [flat : String (render-doc-width (sample-group-doc) 80)]
     [broken : String (render-doc-width (sample-group-doc) 6)]
     [hard : String (render-doc-width (sample-hard-line-doc) 80)]
-    [empty : String (render-doc (doc-append (doc-empty) (DText "x")))]
+    [empty : String (render-doc (doc-append (doc-empty) (doc-text "x")))]
     (begin
       (unless (string-eq flat "alpha beta") (return 1))
       (unless (string-eq broken "alpha\n  beta") (return 2))
       (unless (string-eq hard "a\nb") (return 3))
       (unless (string-eq empty "x") (return 4))
+      (unless (format-doc-boxed-algebra-ok?) (return 5))
       42)))

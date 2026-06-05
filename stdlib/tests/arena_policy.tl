@@ -12,7 +12,8 @@
     (with-arena
       outer
       (let
-        [outer-trimmed : String (string-trim "  outer  ")]
+        [s : String "  outer  "]
+        [outer-trimmed : String (string-trim (& s))]
         (begin
           (assert-true
             (string-eq outer-trimmed "outer")

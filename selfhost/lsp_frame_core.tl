@@ -257,7 +257,7 @@
         (JsonMemberListCons k3 v3 (JsonMemberListCons k4 v4 JsonMemberListNil))))))
 
 (define (lsp-json-string-field [value : Json] [key : String]) : LspJsonText
-  (match (json-object-get value key)
+  (match (json-object-get value (& key))
     [(JsonFound field)
       (match field
         [(JsonString text) (OkLspJsonText text)]
@@ -615,53 +615,30 @@
           diag-uri))]))
 
 (define (lsp-first-change-text [params : Json]) : LspJsonText
-  (match (json-object-get params "contentChanges")
-    [(JsonFound value)
-      (match value
-        [(JsonArray items)
-          (match items
-            [(JsonListNil) MissingLspJsonText]
-            [(JsonListCons first _) (lsp-json-string-field first "text")])]
-        [_ MissingLspJsonText])]
-    [(JsonMissing) MissingLspJsonText]))
+  (let
+    [key : String "contentChanges"]
+    (match (json-object-get params (& key))
+      [(JsonFound value)
+        (match value
+          [(JsonArray items)
+            (match items
+              [(JsonListNil) MissingLspJsonText]
+              [(JsonListCons first _) (lsp-json-string-field first "text")])]
+          [_ MissingLspJsonText])]
+      [(JsonMissing) MissingLspJsonText])))
 
 (define (lsp-did-open
   [params : Json]
   [docs : LspDocumentList]
   [stdlib-roots : CompilerLoadRootList]) : LspHandleResult
-  (match (json-object-get params "textDocument")
-    [(JsonFound document)
-      (match (lsp-json-string-field document "uri")
-        [(OkLspJsonText uri)
-          (let
-            [text : String (lsp-json-string-field-default document "text" "")]
-            (match (lsp-file-uri-to-path uri)
-              [(OkLspUriPath path)
-                (let
-                  [diagnostic-uri : String
-                    (lsp-analyze-document uri path text stdlib-roots)]
-                  [next-docs : LspDocumentList
-                    (lsp-documents-set docs uri path text diagnostic-uri)]
-                  (begin
-                    (lsp-clear-stale-diagnostic docs uri diagnostic-uri)
-                    (LspContinue next-docs)))]
-              [(ErrLspUriPath message)
-                (begin
-                  (lsp-publish-uri-diagnostic uri message)
-                  (LspContinue docs))]))]
-        [(MissingLspJsonText) (LspContinue docs)])]
-    [(JsonMissing) (LspContinue docs)]))
-
-(define (lsp-did-change
-  [params : Json]
-  [docs : LspDocumentList]
-  [stdlib-roots : CompilerLoadRootList]) : LspHandleResult
-  (match (json-object-get params "textDocument")
-    [(JsonFound document)
-      (match (lsp-json-string-field document "uri")
-        [(OkLspJsonText uri)
-          (match (lsp-first-change-text params)
-            [(OkLspJsonText text)
+  (let
+    [key : String "textDocument"]
+    (match (json-object-get params (& key))
+      [(JsonFound document)
+        (match (lsp-json-string-field document "uri")
+          [(OkLspJsonText uri)
+            (let
+              [text : String (lsp-json-string-field-default document "text" "")]
               (match (lsp-file-uri-to-path uri)
                 [(OkLspUriPath path)
                   (let
@@ -675,32 +652,65 @@
                 [(ErrLspUriPath message)
                   (begin
                     (lsp-publish-uri-diagnostic uri message)
-                    (LspContinue docs))])]
-            [(MissingLspJsonText)
-              (match (lsp-documents-lookup docs uri)
-                [(FoundLspDocument path text _)
-                  (begin
-                    (lsp-analyze-document uri path text stdlib-roots)
-                    (LspContinue docs))]
-                [(MissingLspDocument) (LspContinue docs)])])]
-        [(MissingLspJsonText) (LspContinue docs)])]
-    [(JsonMissing) (LspContinue docs)]))
+                    (LspContinue docs))]))]
+          [(MissingLspJsonText) (LspContinue docs)])]
+      [(JsonMissing) (LspContinue docs)])))
+
+(define (lsp-did-change
+  [params : Json]
+  [docs : LspDocumentList]
+  [stdlib-roots : CompilerLoadRootList]) : LspHandleResult
+  (let
+    [key : String "textDocument"]
+    (match (json-object-get params (& key))
+      [(JsonFound document)
+        (match (lsp-json-string-field document "uri")
+          [(OkLspJsonText uri)
+            (match (lsp-first-change-text params)
+              [(OkLspJsonText text)
+                (match (lsp-file-uri-to-path uri)
+                  [(OkLspUriPath path)
+                    (let
+                      [diagnostic-uri : String
+                        (lsp-analyze-document uri path text stdlib-roots)]
+                      [next-docs : LspDocumentList
+                        (lsp-documents-set docs uri path text diagnostic-uri)]
+                      (begin
+                        (lsp-clear-stale-diagnostic docs uri diagnostic-uri)
+                        (LspContinue next-docs)))]
+                  [(ErrLspUriPath message)
+                    (begin
+                      (lsp-publish-uri-diagnostic uri message)
+                      (LspContinue docs))])]
+              [(MissingLspJsonText)
+                (match (lsp-documents-lookup docs uri)
+                  [(FoundLspDocument path text _)
+                    (begin
+                      (lsp-analyze-document uri path text stdlib-roots)
+                      (LspContinue docs))]
+                  [(MissingLspDocument) (LspContinue docs)])])]
+          [(MissingLspJsonText) (LspContinue docs)])]
+      [(JsonMissing) (LspContinue docs)])))
 
 (define (lsp-did-close [params : Json] [docs : LspDocumentList]) : LspHandleResult
-  (match (json-object-get params "textDocument")
-    [(JsonFound document)
-      (match (lsp-json-string-field document "uri")
-        [(OkLspJsonText uri)
-          (begin
-            (lsp-clear-close-diagnostics docs uri)
-            (LspContinue (lsp-documents-remove docs uri)))]
-        [(MissingLspJsonText) (LspContinue docs)])]
-    [(JsonMissing) (LspContinue docs)]))
+  (let
+    [key : String "textDocument"]
+    (match (json-object-get params (& key))
+      [(JsonFound document)
+        (match (lsp-json-string-field document "uri")
+          [(OkLspJsonText uri)
+            (begin
+              (lsp-clear-close-diagnostics docs uri)
+              (LspContinue (lsp-documents-remove docs uri)))]
+          [(MissingLspJsonText) (LspContinue docs)])]
+      [(JsonMissing) (LspContinue docs)])))
 
 (define (lsp-maybe-write-method-not-found [message : Json]) : unit
-  (match (json-object-get message "id")
-    [(JsonFound id) (lsp-write-error id -32601 "Method not found")]
-    [(JsonMissing) unit]))
+  (let
+    [key : String "id"]
+    (match (json-object-get message (& key))
+      [(JsonFound id) (lsp-write-error id -32601 "Method not found")]
+      [(JsonMissing) unit])))
 
 (define (lsp-handle-message
   [message : Json]
@@ -711,30 +721,40 @@
       (cond
         [(string-eq method "initialize")
           (begin
-            (match (json-object-get message "id")
-              [(JsonFound id) (lsp-write-response id (lsp-initialize-result))]
-              [(JsonMissing) unit])
+            (let
+              [key : String "id"]
+              (match (json-object-get message (& key))
+                [(JsonFound id) (lsp-write-response id (lsp-initialize-result))]
+                [(JsonMissing) unit]))
             (LspContinue docs))]
         [(string-eq method "initialized") (LspContinue docs)]
         [(string-eq method "shutdown")
           (begin
-            (match (json-object-get message "id")
-              [(JsonFound id) (lsp-write-response id JsonNull)]
-              [(JsonMissing) unit])
+            (let
+              [key : String "id"]
+              (match (json-object-get message (& key))
+                [(JsonFound id) (lsp-write-response id JsonNull)]
+                [(JsonMissing) unit]))
             (LspContinue docs))]
         [(string-eq method "exit") (LspExit docs)]
         [(string-eq method "textDocument/didOpen")
-          (match (json-object-get message "params")
-            [(JsonFound params) (lsp-did-open params docs stdlib-roots)]
-            [(JsonMissing) (LspContinue docs)])]
+          (let
+            [key : String "params"]
+            (match (json-object-get message (& key))
+              [(JsonFound params) (lsp-did-open params docs stdlib-roots)]
+              [(JsonMissing) (LspContinue docs)]))]
         [(string-eq method "textDocument/didChange")
-          (match (json-object-get message "params")
-            [(JsonFound params) (lsp-did-change params docs stdlib-roots)]
-            [(JsonMissing) (LspContinue docs)])]
+          (let
+            [key : String "params"]
+            (match (json-object-get message (& key))
+              [(JsonFound params) (lsp-did-change params docs stdlib-roots)]
+              [(JsonMissing) (LspContinue docs)]))]
         [(string-eq method "textDocument/didClose")
-          (match (json-object-get message "params")
-            [(JsonFound params) (lsp-did-close params docs)]
-            [(JsonMissing) (LspContinue docs)])]
+          (let
+            [key : String "params"]
+            (match (json-object-get message (& key))
+              [(JsonFound params) (lsp-did-close params docs)]
+              [(JsonMissing) (LspContinue docs)]))]
         [else
           (begin
             (lsp-maybe-write-method-not-found message)
@@ -765,15 +785,17 @@
       (while (not done)
         (match (lsp-frame-read-message)
           [(LspFrameOk payload)
-            (match (json-parse payload)
-              [(OkJson message)
-                (match (lsp-handle-message message docs stdlib-roots)
-                  [(LspContinue next-docs) (set! docs next-docs)]
-                  [(LspExit next-docs)
-                    (begin
-                      (set! docs next-docs)
-                      (set! done true))])]
-              [(ErrJson message) (lsp-write-parse-error message)])]
+            (let
+              [text : String payload]
+              (match (json-parse (& text))
+                [(OkJson message)
+                  (match (lsp-handle-message message docs stdlib-roots)
+                    [(LspContinue next-docs) (set! docs next-docs)]
+                    [(LspExit next-docs)
+                      (begin
+                        (set! docs next-docs)
+                        (set! done true))])]
+                [(ErrJson message) (lsp-write-parse-error message)]))]
           [(LspFrameEof) (set! done true)]
           [(LspFrameErr message)
             (begin

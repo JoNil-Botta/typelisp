@@ -311,10 +311,13 @@
     (match r
       [(OkTokens _) (lexer-assert-true false "should error")]
       [(ErrTokens msg)
-        (lexer-assert-bool-eq
-          (string-contains msg "unknown named character literal")
-          true
-          "unknown named char literal should error")])))
+        (let
+          [haystack : String msg]
+          [needle : String "unknown named character literal"]
+          (lexer-assert-bool-eq
+            (string-contains (& haystack) (& needle))
+            true
+            "unknown named char literal should error"))])))
 
 (test
   lexer-named-char-literals

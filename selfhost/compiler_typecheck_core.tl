@@ -13631,10 +13631,12 @@
       (ErrTcUnit (tc-struct-cleanup-repr-c-message struct-name))
       (tc-check-cleanup-struct-fields ctx env struct-name cleanup fields))))
 
-(define (tc-check-decl [ctx : TcContext] [top-env : TcTypeEnv] [decl : AstDecl]) : ResultTcUnit
-  (let
-    [global-env : TcTypeEnv (tc-hygiene-global-env top-env)]
-    (match decl
+(define (tc-check-decl-with-global-env
+  [ctx : TcContext]
+  [top-env : TcTypeEnv]
+  [global-env : TcTypeEnv]
+  [decl : AstDecl]) : ResultTcUnit
+  (match decl
       [(AstDeclDef _ maybe-ty expr-box)
         (let
           [expr : AstExpr (box-get expr-box)]
@@ -13701,12 +13703,19 @@
       [(AstDeclComptimeDecl _ template-box)
         (let
           [template : AstDecl (box-get template-box)]
-          (tc-check-decl ctx top-env template))]
+          (tc-check-decl-with-global-env ctx top-env global-env template))]
       [(AstDeclUnsafe inner-box)
         (let
           [inner : AstDecl (box-get inner-box)]
-          (tc-check-decl ctx top-env inner))]
-      [_ OkTcUnit])))
+          (tc-check-decl-with-global-env ctx top-env global-env inner))]
+      [_ OkTcUnit]))
+
+(define (tc-check-decl [ctx : TcContext] [top-env : TcTypeEnv] [decl : AstDecl]) : ResultTcUnit
+  (tc-check-decl-with-global-env
+    ctx
+    top-env
+    (tc-hygiene-global-env top-env)
+    decl))
 
 (define (tc-check-decls
   [ctx : TcContext]
@@ -13814,6 +13823,37 @@
   [summary : CompilerTypecheckSummary]
   [module : String]
   [cache : TcModuleLocalEnvCache]) : ResultCompilerTypecheck
+  (begin
+    (cfg compile-profile (compiler-tc-decl-profile-start-section))
+    (match (tc-module-local-env-cached ctx top-env module cache)
+      [(OkTcModuleLocalEnv local-env next-cache)
+        (begin
+          (cfg compile-profile (compiler-tc-decl-profile-add-local-env))
+          (tc-check-decls-with-paths-in-module-env
+            ctx
+            top-env
+            decls
+            paths
+            summary
+            module
+            next-cache
+            local-env
+            (tc-hygiene-global-env local-env)))]
+      [(ErrTcModuleLocalEnv message)
+        (begin
+          (cfg compile-profile (compiler-tc-decl-profile-add-local-env))
+          (ErrCompilerTypecheck (tc-diag-at-start message)))])))
+
+(define (tc-check-decls-with-paths-in-module-env
+  [ctx : TcContext]
+  [top-env : TcTypeEnv]
+  [decls : AstDeclList]
+  [paths : AstDeclPathList]
+  [summary : CompilerTypecheckSummary]
+  [module : String]
+  [cache : TcModuleLocalEnvCache]
+  [local-env : TcTypeEnv]
+  [global-env : TcTypeEnv]) : ResultCompilerTypecheck
   (match decls
     [(AstDeclNil) (OkCompilerTypecheck summary)]
     [(AstDeclCons decl rest)
@@ -13832,53 +13872,63 @@
             [(AstDeclPathNil) AstDeclPathNil])]
         (match decl
           [(AstDeclModule next-module)
-            (tc-check-decls-with-paths-in-module
-              ctx
-              top-env
-              rest
-              rest-paths
-              summary
-              next-module
-              cache)]
+            (begin
+              (cfg compile-profile (compiler-tc-decl-profile-start-section))
+              (match (tc-module-local-env-cached ctx top-env next-module cache)
+                [(OkTcModuleLocalEnv next-local-env next-cache)
+                  (begin
+                    (cfg compile-profile (compiler-tc-decl-profile-add-local-env))
+                    (tc-check-decls-with-paths-in-module-env
+                      ctx
+                      top-env
+                      rest
+                      rest-paths
+                      summary
+                      next-module
+                      next-cache
+                      next-local-env
+                      (tc-hygiene-global-env next-local-env)))]
+                [(ErrTcModuleLocalEnv message)
+                  (begin
+                    (cfg compile-profile (compiler-tc-decl-profile-add-local-env))
+                    (ErrCompilerTypecheck
+                      (tc-typecheck-diag-with-path decl decl-path message)))]))]
           [_
             (if (tc-generated-clone-decl-with-path? decl decl-path)
-              (tc-check-decls-with-paths-in-module
+              (tc-check-decls-with-paths-in-module-env
                 ctx
                 top-env
                 rest
                 rest-paths
                 (tc-summary-add-decl summary decl)
                 module
-                cache)
-              (begin
-                (cfg compile-profile (compiler-tc-decl-profile-start-section))
-                (match (tc-module-local-env-cached ctx top-env module cache)
-                  [(OkTcModuleLocalEnv local-env next-cache)
-                    (begin
-                      (cfg compile-profile (compiler-tc-decl-profile-add-local-env))
-                      (let
-                        [decl-ctx : TcContext (tc-context-with-module ctx module)]
-                        (match (tc-check-decl-escaping decl-ctx local-env decl)
-                          [(OkTcUnit)
-                            (tc-check-decls-with-paths-in-module
-                              ctx
-                              top-env
-                              rest
-                              rest-paths
-                              (tc-summary-add-decl summary decl)
-                              module
-                              next-cache)]
-                          [(ErrTcUnit message)
-                            (ErrCompilerTypecheck
-                              (tc-typecheck-diag-with-path
-                                decl
-                                decl-path
-                                message))])))]
-                  [(ErrTcModuleLocalEnv message)
-                    (begin
-                      (cfg compile-profile (compiler-tc-decl-profile-add-local-env))
-                      (ErrCompilerTypecheck
-                        (tc-typecheck-diag-with-path decl decl-path message)))])))]))]))
+                cache
+                local-env
+                global-env)
+              (let
+                [decl-ctx : TcContext (tc-context-with-module ctx module)]
+                (match (tc-check-decl-with-global-env
+                  decl-ctx
+                  local-env
+                  global-env
+                  decl)
+                  [(OkTcUnit)
+                    (tc-check-decls-with-paths-in-module-env
+                      ctx
+                      top-env
+                      rest
+                      rest-paths
+                      (tc-summary-add-decl summary decl)
+                      module
+                      cache
+                      local-env
+                      global-env)]
+                  [(ErrTcUnit message)
+                    (ErrCompilerTypecheck
+                      (tc-typecheck-diag-with-path
+                        decl
+                        decl-path
+                        message))])))]))]))
 
 (define (typecheck-compiler-specialized-program-with-paths
   [program : AstProgram]

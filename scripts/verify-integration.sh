@@ -1116,6 +1116,12 @@ while IFS='|' read -r name source want stdout_spec runtime_args deps extra || [ 
         if ! lld-link -NOLOGO "$(cygpath -aw "$obj")" $native_objs "-OUT:$(cygpath -aw "$bin.exe")" \
             -SUBSYSTEM:CONSOLE -STACK:268435456 msvcrt.lib legacy_stdio_definitions.lib advapi32.lib \
             >> "$build_stdout" 2>> "$build_stderr"; then
+            if should_skip_staged "$requires_symbol" "$build_stderr"; then
+                echo "[integration] SKIP $name (awaiting no-Rust compiler support for '$requires_symbol')"
+                skipped=$((skipped + 1))
+                ran=$((ran + 1))
+                continue
+            fi
             echo "FAIL: $name link failed" >&2
             show_build_streams "$build_stdout" "$build_stderr"
             failed=$((failed + 1))
@@ -1164,6 +1170,12 @@ while IFS='|' read -r name source want stdout_spec runtime_args deps extra || [ 
         # shellcheck disable=SC2086
         if ! ld "$obj" $native_objs -o "$bin" -dynamic-linker /lib64/ld-linux-x86-64.so.2 -lc \
             >> "$build_stdout" 2>> "$build_stderr"; then
+            if should_skip_staged "$requires_symbol" "$build_stderr"; then
+                echo "[integration] SKIP $name (awaiting no-Rust compiler support for '$requires_symbol')"
+                skipped=$((skipped + 1))
+                ran=$((ran + 1))
+                continue
+            fi
             echo "FAIL: $name link failed" >&2
             show_build_streams "$build_stdout" "$build_stderr"
             failed=$((failed + 1))

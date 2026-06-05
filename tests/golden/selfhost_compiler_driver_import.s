@@ -25,19 +25,18 @@ tl_current_arena:
 
 .text
 .globl _start
-.globl _tl_helper_u2etl_colon_colonhelper
-_tl_helper_u2etl_colon_colonhelper:
+#t _tl_f0 _tl_helper
+.globl _tl_f0
+_tl_f0:
     pushq %rbp
     movq %rsp, %rbp
-    subq $48, %rsp
-    movq %r12, -24(%rbp)
-.L_tl_helper_u2etl_colon_colonhelper_entry:
+    subq $16, %rsp
+.Lf0_entry:
     movq $38, %rax
     movq _tl_shared_u2etl_colon_colonshared(%rip), %rbx
     addq %rbx, %rax
-    movq %rax, %r12
-    movq %r12, %rax
-    movq -24(%rbp), %r12
+    movq %rax, -16(%rbp)
+    movq -16(%rbp), %rax
     leave
     ret
 
@@ -45,17 +44,15 @@ _tl_helper_u2etl_colon_colonhelper:
 main:
     pushq %rbp
     movq %rsp, %rbp
-    subq $48, %rsp
-    movq %r12, -24(%rbp)
-.Lmain_entry:
-    call _tl_helper_u2etl_colon_colonhelper
+    subq $16, %rsp
+.Lf1_entry:
+    call _tl_f0
     movq %rax, -8(%rbp)
     movq -8(%rbp), %rax
     movq _tl_shared_u2etl_colon_colonshared(%rip), %rbx
     addq %rbx, %rax
-    movq %rax, %r12
-    movq %r12, %rax
-    movq -24(%rbp), %r12
+    movq %rax, -16(%rbp)
+    movq -16(%rbp), %rax
     leave
     ret
 

@@ -21,6 +21,8 @@
 ;; Out of scope: aggregate/String/array IR optimization.
 (import "../stdlib/io.tl")
 
+(import "../stdlib/arena.tl")
+
 (import "compiler_ir_types.tl")
 
 (defenum ResultCompilerOptimizeLevel

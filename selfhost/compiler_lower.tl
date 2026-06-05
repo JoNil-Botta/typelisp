@@ -6,6 +6,8 @@
 ;; explicit future work.
 (import "../stdlib/io.tl")
 
+(import "../stdlib/arena.tl")
+
 (import "compiler_typecheck.tl")
 
 (import "compiler_diagnostic.tl")
@@ -18566,17 +18568,34 @@
             (> (lower-test-functions-call-count functions "tl_region_reset") 0))])]
     [(ErrCompilerLower _) false]))
 
+(define (compiler-lower-with-arena-source [src : String]) : String
+  (string-append
+    "(extern tl_arena_make : (-> i64))
+(extern tl_arena_current : (-> i64))
+(extern tl_region_mark : (-> i64))
+(unsafe (extern tl_arena_set : (-> i64 unit)))
+(unsafe (extern tl_region_reset : (-> i64 unit)))
+(define (arena-make) : i64 (tl_arena_make))
+(define (arena-current) : i64 (tl_arena_current))
+(define (arena-mark) : i64 (tl_region_mark))
+(unsafe (define (arena-set! [arena : i64]) : unit (unsafe (tl_arena_set arena))))
+(unsafe (define (arena-rewind [mark : i64]) : unit (unsafe (tl_region_reset mark))))
+"
+    src))
+
 (define (compiler-lower-with-escape-scalar-source) : String
-  "(define (main) : i64
+  (compiler-lower-with-arena-source
+    "(define (main) : i64
   (let
     [scratch : i64 (arena-make)]
-    (with-escape scratch 40 42)))")
+    (with-escape scratch 40 42)))"))
 
 (define (compiler-lower-with-escape-string-source) : String
-  "(define (main) : String
+  (compiler-lower-with-arena-source
+    "(define (main) : String
   (let
     [scratch : i64 (arena-make)]
-    (with-escape scratch (int->string 42))))")
+    (with-escape scratch (int->string 42))))"))
 
 (define (compiler-lower-with-escape-arena-shape-ok? [src : String]) : bool
   (match (lower-compiler-source src)

@@ -15,6 +15,8 @@ Coverage notes:
 - `arena_policy.tl` exercises stdlib allocating APIs inside nested scoped
   arenas. The `arena_policy_escape_*.tl` fixtures are check-only negative cases
   proving active-arena stdlib results cannot escape their scoped arena.
+- `arena_api.tl` covers the imported first-class arena helpers, including safe
+  handle/mark observation and unsafe switch, rewind, and destroy calls.
 - `string_edges.tl` covers the public string predicates, trimming helpers,
   replacement paths, and prefix checks, including empty strings, empty needles,
   misses, prefix positions, and replacement edge cases.

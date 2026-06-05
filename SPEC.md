@@ -3270,10 +3270,11 @@ stdlib surface.
 
 The owned `String` / borrowed `str` source contract is specified in section
 3.11, but no current stdlib function has migrated to a borrow-typed `str`
-signature. No current stdlib function manually resets arenas; safe scoped
-cleanup is owned by `with-arena`. Source code that needs manual arena control
-uses the first-class arena helpers, with `arena-set!`, `arena-destroy`, and
-`arena-rewind` gated by `(unsafe ...)`.
+signature. Except for the explicit `stdlib/arena.tl` manual-control surface, no
+current stdlib function manually resets arenas; safe scoped cleanup is owned by
+`with-arena`. Source code that needs manual arena control imports
+`stdlib/arena.tl` and uses the first-class arena helpers, with `arena-set!`,
+`arena-destroy`, and `arena-rewind` gated by `(unsafe ...)`.
 
 Nested `with-arena` forms create independent subregions whose values do not
 mix. Inner-region values cannot escape to the outer region; outer-region values
@@ -3285,11 +3286,14 @@ reclaim, matching the semantic contract minus the reset.
 
 #### First-class scratch arena escape - `with-escape`
 
-Compiler internals and long-running tools may allocate a first-class scratch
-arena with `arena-make`, switch to it for transient work, and then keep only a
-deep-cloned result. The safe source form for this pattern is:
+Compiler internals and long-running tools may import `stdlib/arena.tl`, allocate
+a first-class scratch arena with `arena-make`, switch to it for transient work,
+and then keep only a deep-cloned result. The safe source form for this pattern
+is:
 
 ```lisp test=ignore name=with-escape-example reason="depends on first-class arena runtime support"
+(import "stdlib/arena.tl")
+
 (define (build-message) : String
   (let
     [scratch : i64 (arena-make)]
@@ -3324,9 +3328,12 @@ separately.
 
 #### Manual arena helpers
 
-Programs that need manual control can use the first-class arena helpers:
+Programs that need manual control can import `stdlib/arena.tl` and use the
+first-class arena helpers:
 
 ```lisp test=check name=arena-manual-helpers
+(import "stdlib/arena.tl")
+
 (define (main) : unit
   (let
     [arena : i64 (arena-current)]
@@ -3474,9 +3481,9 @@ not the future safe reference/borrow model (#182), not a replacement for
 - Bootstrap I/O helpers: `arg-count`, `arg`, `read-file`, `write-file`,
   `file-exists?`, `file-open`, `file-close`, `file-read-chunk`,
   `read-stdin-line`, `read-stdin-bytes`, `stdin-eof?`, `flush-stdout`.
-- First-class arena helpers: `arena-make`, `arena-current`, `arena-mark`,
-  `arena-set!`, `arena-destroy`, and `arena-rewind`; invalidating helpers
-  require `(unsafe ...)`.
+- First-class arena helpers in `stdlib/arena.tl`: `arena-make`,
+  `arena-current`, `arena-mark`, `arena-set!`, `arena-destroy`, and
+  `arena-rewind`; invalidating helpers require `(unsafe ...)`.
 - `extern` declarations, including unsafe declaration metadata for externs and
   top-level functions.
 - Multi-file modules via `import`.

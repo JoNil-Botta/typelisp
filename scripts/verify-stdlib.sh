@@ -145,6 +145,7 @@ should_skip_staged() {
 # or stdlib_check_manifest.
 stdlib_manifest() {
     cat <<'EOF'
+arena.tl
 io.tl
 env.tl
 cpu.tl
@@ -182,6 +183,7 @@ EOF
 # `<host>` is `linux`, `windows`, or `all`.
 stdlib_test_manifest() {
     cat <<'EOF'
+stdlib/tests/arena_api.tl|42|-|-
 stdlib/tests/string_edges.tl|42|-|-
 stdlib/tests/json_helpers.tl|42|-|-
 stdlib/tests/json_parse_stringify.tl|42|-|-

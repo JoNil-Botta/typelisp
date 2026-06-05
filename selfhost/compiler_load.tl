@@ -1,6 +1,8 @@
 ;; compiler_load.tl - Shared selfhost compiler source/import loader.
 (import "../stdlib/io.tl")
 
+(import "../stdlib/arena.tl")
+
 (import "compiler_parse_core.tl")
 
 (import "compiler_diagnostic.tl")

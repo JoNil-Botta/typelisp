@@ -37,14 +37,14 @@
 
 (defenum CtfeLayoutFieldList
   (CtfeLayoutFieldNil)
-  (CtfeLayoutFieldCons CtfeLayoutField CtfeLayoutFieldList))
+  (CtfeLayoutFieldCons CtfeLayoutField (Box CtfeLayoutFieldList)))
 
 (defenum CtfeLayoutInfo
   (CtfeLayoutInfo String bool i64 i64 CtfeLayoutFieldList))
 
 (defenum CtfeLayoutInfoList
   (CtfeLayoutInfoNil)
-  (CtfeLayoutInfoCons CtfeLayoutInfo CtfeLayoutInfoList))
+  (CtfeLayoutInfoCons CtfeLayoutInfo (Box CtfeLayoutInfoList)))
 
 (defenum CtfeMaybeLayoutInfo
   (CtfeNoLayoutInfo)
@@ -61,14 +61,14 @@
 
 (defenum CtfeReflectFieldList
   (CtfeReflectFieldNil)
-  (CtfeReflectFieldCons CtfeReflectField CtfeReflectFieldList))
+  (CtfeReflectFieldCons CtfeReflectField (Box CtfeReflectFieldList)))
 
 (defenum CtfeReflectVariant
   (CtfeReflectVariant String AstTypeList))
 
 (defenum CtfeReflectVariantList
   (CtfeReflectVariantNil)
-  (CtfeReflectVariantCons CtfeReflectVariant CtfeReflectVariantList))
+  (CtfeReflectVariantCons CtfeReflectVariant (Box CtfeReflectVariantList)))
 
 (defenum CtfeReflectInfo
   (CtfeReflectStruct String String String CtfeReflectFieldList)
@@ -76,7 +76,7 @@
 
 (defenum CtfeReflectInfoList
   (CtfeReflectInfoNil)
-  (CtfeReflectInfoCons CtfeReflectInfo CtfeReflectInfoList))
+  (CtfeReflectInfoCons CtfeReflectInfo (Box CtfeReflectInfoList)))
 
 (defenum CtfeMaybeReflectInfo
   (CtfeNoReflectInfo)
@@ -87,7 +87,7 @@
 ;; binding first; metadata lives at the root and is shared by extensions.
 (defenum CtfeEnv
   (CtfeEnvNil CtfeLayoutInfoList CtfeReflectInfoList)
-  (CtfeEnvCons String CompilerCtfeValue CtfeEnv))
+  (CtfeEnvCons String CompilerCtfeValue (Box CtfeEnv)))
 
 (define (ctfe-env-empty) : CtfeEnv
   (CtfeEnvNil CtfeLayoutInfoNil CtfeReflectInfoNil))
@@ -107,7 +107,7 @@
   [env : CtfeEnv]
   [name : String]
   [value : CompilerCtfeValue]) : CtfeEnv
-  (CtfeEnvCons name value env))
+  (CtfeEnvCons name value (box env)))
 
 (define (ctfe-layout-info-name [info : CtfeLayoutInfo]) : String
   (match info
@@ -121,14 +121,14 @@
     [(CtfeLayoutInfoCons info rest)
       (if (string-eq (ctfe-layout-info-name info) name)
         true
-        (ctfe-layout-info-list-contains rest name))]))
+        (ctfe-layout-info-list-contains (box-get rest) name))]))
 
 (define (ctfe-layout-info-list-add-if-missing
   [layouts : CtfeLayoutInfoList]
   [info : CtfeLayoutInfo]) : CtfeLayoutInfoList
   (if (ctfe-layout-info-list-contains layouts (ctfe-layout-info-name info))
     layouts
-    (CtfeLayoutInfoCons info layouts)))
+    (CtfeLayoutInfoCons info (box layouts))))
 
 (define (ctfe-layout-info-lookup [layouts : CtfeLayoutInfoList] [name : String]) : CtfeMaybeLayoutInfo
   (match layouts
@@ -136,7 +136,7 @@
     [(CtfeLayoutInfoCons info rest)
       (if (string-eq (ctfe-layout-info-name info) name)
         (CtfeSomeLayoutInfo info)
-        (ctfe-layout-info-lookup rest name))]))
+        (ctfe-layout-info-lookup (box-get rest) name))]))
 
 (define (ctfe-layout-field-offset
   [fields : CtfeLayoutFieldList]
@@ -148,17 +148,17 @@
         [(CtfeLayoutField field-name offset)
           (if (string-eq field-name name)
             offset
-            (ctfe-layout-field-offset rest name))])]))
+            (ctfe-layout-field-offset (box-get rest) name))])]))
 
 (define (ctfe-env-layouts [env : CtfeEnv]) : CtfeLayoutInfoList
   (match env
     [(CtfeEnvNil layouts _) layouts]
-    [(CtfeEnvCons _ _ rest) (ctfe-env-layouts rest)]))
+    [(CtfeEnvCons _ _ rest) (ctfe-env-layouts (box-get rest))]))
 
 (define (ctfe-env-reflections [env : CtfeEnv]) : CtfeReflectInfoList
   (match env
     [(CtfeEnvNil _ reflections) reflections]
-    [(CtfeEnvCons _ _ rest) (ctfe-env-reflections rest)]))
+    [(CtfeEnvCons _ _ rest) (ctfe-env-reflections (box-get rest))]))
 
 ;; Lookup result for an environment probe.
 (defenum CtfeMaybeValue
@@ -171,7 +171,7 @@
     [(CtfeEnvCons key value rest)
       (if (string-eq key name)
         (CtfeSomeValue value)
-        (ctfe-env-lookup rest name))]))
+        (ctfe-env-lookup (box-get rest) name))]))
 
 (define (ctfe-string-prefix? [text : String] [prefix : String]) : bool
   (let
@@ -218,14 +218,14 @@
     [(CtfeReflectInfoCons info rest)
       (if (string-eq (ctfe-reflect-info-key info) key)
         true
-        (ctfe-reflect-info-list-contains rest key))]))
+        (ctfe-reflect-info-list-contains (box-get rest) key))]))
 
 (define (ctfe-reflect-info-list-add-if-missing
   [infos : CtfeReflectInfoList]
   [info : CtfeReflectInfo]) : CtfeReflectInfoList
   (if (ctfe-reflect-info-list-contains infos (ctfe-reflect-info-key info))
     infos
-    (CtfeReflectInfoCons info infos)))
+    (CtfeReflectInfoCons info (box infos))))
 
 (define (ctfe-reflect-info-lookup [infos : CtfeReflectInfoList] [key : String]) : CtfeMaybeReflectInfo
   (match infos
@@ -233,7 +233,7 @@
     [(CtfeReflectInfoCons info rest)
       (if (string-eq (ctfe-reflect-info-key info) key)
         (CtfeSomeReflectInfo info)
-        (ctfe-reflect-info-lookup rest key))]))
+        (ctfe-reflect-info-lookup (box-get rest) key))]))
 
 (define (ctfe-reflect-field-list-from-fields [fields : AstFieldDefList]) : CtfeReflectFieldList
   (match fields
@@ -245,7 +245,7 @@
           [(AstFieldDef name ty _)
             (CtfeReflectFieldCons
               (CtfeReflectField name ty)
-              (ctfe-reflect-field-list-from-fields rest))]))]))
+              (box (ctfe-reflect-field-list-from-fields rest)))]))]))
 
 (define (ctfe-reflect-variant-list-from-variants [variants : AstVariantDefList]) : CtfeReflectVariantList
   (match variants
@@ -257,7 +257,7 @@
           [(AstVariantDef name payloads)
             (CtfeReflectVariantCons
               (CtfeReflectVariant name payloads)
-              (ctfe-reflect-variant-list-from-variants rest))]))]))
+              (box (ctfe-reflect-variant-list-from-variants rest)))]))]))
 
 (define (ctfe-reflect-info-add-alias
   [infos : CtfeReflectInfoList]
@@ -1143,7 +1143,8 @@
 (define (ctfe-reflect-field-list-count [fields : CtfeReflectFieldList]) : i64
   (match fields
     [(CtfeReflectFieldNil) 0]
-    [(CtfeReflectFieldCons _ rest) (+ 1 (ctfe-reflect-field-list-count rest))]))
+    [(CtfeReflectFieldCons _ rest)
+      (+ 1 (ctfe-reflect-field-list-count (box-get rest)))]))
 
 (define (ctfe-reflect-field-name-at
   [fields : CtfeReflectFieldList]
@@ -1156,7 +1157,7 @@
         (if (= index 0)
           (match field
             [(CtfeReflectField name _) (OkCtfeStringLookup name)])
-          (ctfe-reflect-field-name-at rest (- index 1)))])))
+          (ctfe-reflect-field-name-at (box-get rest) (- index 1)))])))
 
 (define (ctfe-reflect-field-type-at
   [fields : CtfeReflectFieldList]
@@ -1171,13 +1172,13 @@
           (match field
             [(CtfeReflectField _ ty)
               (OkCtfeTypeLookup (ctfe-reflect-resolve-type infos ty))])
-          (ctfe-reflect-field-type-at rest infos (- index 1)))])))
+          (ctfe-reflect-field-type-at (box-get rest) infos (- index 1)))])))
 
 (define (ctfe-reflect-variant-list-count [variants : CtfeReflectVariantList]) : i64
   (match variants
     [(CtfeReflectVariantNil) 0]
     [(CtfeReflectVariantCons _ rest)
-      (+ 1 (ctfe-reflect-variant-list-count rest))]))
+      (+ 1 (ctfe-reflect-variant-list-count (box-get rest)))]))
 
 (define (ctfe-reflect-variant-name-at
   [variants : CtfeReflectVariantList]
@@ -1190,7 +1191,7 @@
         (if (= index 0)
           (match variant
             [(CtfeReflectVariant name _) (OkCtfeStringLookup name)])
-          (ctfe-reflect-variant-name-at rest (- index 1)))])))
+          (ctfe-reflect-variant-name-at (box-get rest) (- index 1)))])))
 
 (define (ctfe-reflect-variant-payloads-at
   [variants : CtfeReflectVariantList]
@@ -1203,7 +1204,7 @@
         (if (= index 0)
           (match variant
             [(CtfeReflectVariant _ payloads) (OkCtfeTypeListLookup payloads)])
-          (ctfe-reflect-variant-payloads-at rest (- index 1)))])))
+          (ctfe-reflect-variant-payloads-at (box-get rest) (- index 1)))])))
 
 (define (ctfe-type-list-count [types : AstTypeList]) : i64
   (match types
@@ -4472,19 +4473,24 @@
             8
             (CtfeLayoutFieldCons
               (CtfeLayoutField "tag" 0)
-              (CtfeLayoutFieldCons
-                (CtfeLayoutField "count" 8)
-                CtfeLayoutFieldNil)))
-          (CtfeLayoutInfoCons
-            (CtfeLayoutInfo
-              "Box"
-              true
-              8
-              8
-              (CtfeLayoutFieldCons (CtfeLayoutField "x" 0) CtfeLayoutFieldNil))
+              (box
+                (CtfeLayoutFieldCons
+                  (CtfeLayoutField "count" 8)
+                  (box CtfeLayoutFieldNil)))))
+          (box
             (CtfeLayoutInfoCons
-              (CtfeLayoutInfo "Choice" false 24 8 CtfeLayoutFieldNil)
-              CtfeLayoutInfoNil))))]
+              (CtfeLayoutInfo
+                "Box"
+                true
+                8
+                8
+                (CtfeLayoutFieldCons
+                  (CtfeLayoutField "x" 0)
+                  (box CtfeLayoutFieldNil)))
+              (box
+                (CtfeLayoutInfoCons
+                  (CtfeLayoutInfo "Choice" false 24 8 CtfeLayoutFieldNil)
+                  (box CtfeLayoutInfoNil)))))))]
     [ok : bool true]
     (begin
       (if (compiler-ctfe-eval-i64-ok?
@@ -4552,22 +4558,25 @@
         "Point"
         (CtfeReflectFieldCons
           (CtfeReflectField "x" (AstTyI64))
-          (CtfeReflectFieldCons
-            (CtfeReflectField "flag" (AstTyBool))
-            CtfeReflectFieldNil)))
-      (CtfeReflectInfoCons
-        (CtfeReflectEnum
-          "Maybe"
-          ""
-          "Maybe"
-          (CtfeReflectVariantCons
-            (CtfeReflectVariant "None" AstTypeNil)
+          (box
+            (CtfeReflectFieldCons
+              (CtfeReflectField "flag" (AstTyBool))
+              (box CtfeReflectFieldNil)))))
+      (box
+        (CtfeReflectInfoCons
+          (CtfeReflectEnum
+            "Maybe"
+            ""
+            "Maybe"
             (CtfeReflectVariantCons
-              (CtfeReflectVariant
-                "Some"
-                (ast-type-cons (AstTyString) AstTypeNil))
-              CtfeReflectVariantNil)))
-        CtfeReflectInfoNil))))
+              (CtfeReflectVariant "None" AstTypeNil)
+              (box
+                (CtfeReflectVariantCons
+                  (CtfeReflectVariant
+                    "Some"
+                    (ast-type-cons (AstTyString) AstTypeNil))
+                  (box CtfeReflectVariantNil)))))
+          (box CtfeReflectInfoNil))))))
 
 (define (compiler-ctfe-reflection-query-ok?) : bool
   (let

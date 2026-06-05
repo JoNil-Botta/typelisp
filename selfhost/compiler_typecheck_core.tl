@@ -1064,6 +1064,14 @@
         (OkTcType ty)
         (tc-lookup rest name))]))
 
+(define (tc-lookup-visible [ctx : TcContext] [env : TcTypeEnv] [name : String]) : ResultTcType
+  (match (tc-lookup env name)
+    [(OkTcType ty)
+      (match (tc-qualified-value-visible-ok ctx name)
+        [(OkTcUnit) (OkTcType ty)]
+        [(ErrTcUnit message) (ErrTcType message)])]
+    [(ErrTcType message) (ErrTcType message)]))
+
 (define (tc-lookup-hygiene-global-scan
   [root : TcTypeEnv]
   [env : TcTypeEnv]
@@ -1078,6 +1086,17 @@
 
 (define (tc-lookup-hygiene-global [env : TcTypeEnv] [name : String]) : ResultTcType
   (tc-lookup-hygiene-global-scan env env name))
+
+(define (tc-lookup-hygiene-global-visible
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [name : String]) : ResultTcType
+  (match (tc-lookup-hygiene-global env name)
+    [(OkTcType ty)
+      (match (tc-qualified-value-visible-ok ctx name)
+        [(OkTcUnit) (OkTcType ty)]
+        [(ErrTcUnit message) (ErrTcType message)])]
+    [(ErrTcType message) (ErrTcType message)]))
 
 (define (tc-hygiene-global-binding-unsafe-scan
   [root : TcTypeEnv]
@@ -1884,6 +1903,129 @@
           (set! i (+ i 1))))
       found)))
 
+(define (tc-qualified-access-target-module
+  [ctx : TcContext]
+  [qualifier : String]) : String
+  (match ctx
+    [(TcContext program _ _ current-module)
+      (match program
+        [(AstProgram decls-box)
+          (let
+            [decls : AstDeclList (box-get decls-box)]
+            (macro-resolve-qualified-module decls current-module qualifier))])]))
+
+(define (tc-qualified-access-private-message
+  [kind-name : String]
+  [name : String]
+  [target-module : String]) : String
+  (string-append
+    "typecheck: private "
+    (string-append
+      kind-name
+      (string-append
+        " "
+        (string-append name (string-append " from module " target-module))))))
+
+(define (tc-qualified-export-visible-ok
+  [ctx : TcContext]
+  [kind-name : String]
+  [display-name : String]
+  [target-module : String]
+  [export-name : String]) : ResultTcUnit
+  (if (string-eq target-module (tc-context-module ctx))
+    OkTcUnit
+    (match (build-compiler-exports-with
+      (tc-context-program ctx)
+      (tc-context-symbols ctx)
+      (tc-context-registries ctx))
+      [(OkCompilerExports exports)
+        (match (compiler-exports-lookup
+          exports
+          kind-name
+          target-module
+          export-name)
+          [(SomeI64 _) OkTcUnit]
+          [(NoneI64)
+            (ErrTcUnit
+              (tc-qualified-access-private-message
+                kind-name
+                display-name
+                target-module))])]
+      [(ErrCompilerExports message) (ErrTcUnit message)])))
+
+(define (tc-qualified-name-export-visible-ok
+  [ctx : TcContext]
+  [kind-name : String]
+  [name : String]) : ResultTcUnit
+  (if (tc-name-qualified? name)
+    (let
+      [qualifier : String (tc-qualified-name-module name)]
+      [base : String (tc-qualified-name-base name)]
+      [target-module : String (tc-qualified-access-target-module ctx qualifier)]
+      (tc-qualified-export-visible-ok ctx kind-name name target-module base))
+    OkTcUnit))
+
+(define (tc-qualified-type-visible-ok [ctx : TcContext] [name : String]) : ResultTcUnit
+  (tc-qualified-name-export-visible-ok ctx (compiler-export-kind-type) name))
+
+(define (tc-value-export-kind-for-handle [handle : i64]) : String
+  (let
+    [kind : i64 (compiler-symbol-handle-kind handle)]
+    (if (= kind (compiler-symbol-kind-defstruct))
+      (compiler-export-kind-constructor)
+      (if (= kind (compiler-symbol-kind-enum-variant))
+        (compiler-export-kind-variant)
+        (compiler-export-kind-value)))))
+
+(define (tc-qualified-value-export-kind
+  [ctx : TcContext]
+  [target-module : String]
+  [base : String]) : String
+  (match (compiler-symbols-lookup-value-in-module
+    (tc-context-symbols ctx)
+    target-module
+    base)
+    [(SomeI64 handle) (tc-value-export-kind-for-handle handle)]
+    [(NoneI64) (compiler-export-kind-value)]))
+
+(define (tc-qualified-value-visible-ok [ctx : TcContext] [name : String]) : ResultTcUnit
+  (if (tc-name-qualified? name)
+    (let
+      [qualifier : String (tc-qualified-name-module name)]
+      [base : String (tc-qualified-name-base name)]
+      [target-module : String (tc-qualified-access-target-module ctx qualifier)]
+      [kind-name : String
+        (tc-qualified-value-export-kind ctx target-module base)]
+      (tc-qualified-export-visible-ok ctx kind-name name target-module base))
+    OkTcUnit))
+
+(define (tc-qualified-field-visible-ok
+  [ctx : TcContext]
+  [struct-name : String]
+  [field : String]) : ResultTcUnit
+  (if (tc-name-qualified? struct-name)
+    (let
+      [qualifier : String (tc-qualified-name-module struct-name)]
+      [type-base : String (tc-qualified-name-base struct-name)]
+      [target-module : String (tc-qualified-access-target-module ctx qualifier)]
+      [export-name : String (compiler-export-field-name type-base field)]
+      [display-name : String (compiler-export-field-name struct-name field)]
+      (tc-qualified-export-visible-ok
+        ctx
+        (compiler-export-kind-field)
+        display-name
+        target-module
+        export-name))
+    OkTcUnit))
+
+(define (tc-qualified-variant-visible-ok
+  [ctx : TcContext]
+  [variant-name : String]) : ResultTcUnit
+  (tc-qualified-name-export-visible-ok
+    ctx
+    (compiler-export-kind-variant)
+    variant-name))
+
 (define (tc-resolved-nominal-type [name : String] [handle : i64]) : AstType
   (if (= (compiler-symbol-handle-kind handle) (compiler-symbol-kind-defenum))
     (AstTyEnum name)
@@ -2376,12 +2518,22 @@
             [(ErrTcUnit message) (ErrTcUnit message)])])]
     [(AstTyRegion _ inner) (tc-source-type-policy-ok ctx (box-get inner))]
     [(AstTyStr) (ErrTcUnit (tc-source-str-value-policy-message))]
-    [(AstTyEnum name) (tc-bare-nominal-lifetime-policy-ok ctx name)]
-    [(AstTyStruct name) (tc-bare-nominal-lifetime-policy-ok ctx name)]
+    [(AstTyEnum name)
+      (match (tc-qualified-type-visible-ok ctx name)
+        [(OkTcUnit) (tc-bare-nominal-lifetime-policy-ok ctx name)]
+        [(ErrTcUnit message) (ErrTcUnit message)])]
+    [(AstTyStruct name)
+      (match (tc-qualified-type-visible-ok ctx name)
+        [(OkTcUnit) (tc-bare-nominal-lifetime-policy-ok ctx name)]
+        [(ErrTcUnit message) (ErrTcUnit message)])]
     [(AstTyEnumArgs name lifetimes)
-      (tc-nominal-lifetime-use-policy-ok ctx name lifetimes)]
+      (match (tc-qualified-type-visible-ok ctx name)
+        [(OkTcUnit) (tc-nominal-lifetime-use-policy-ok ctx name lifetimes)]
+        [(ErrTcUnit message) (ErrTcUnit message)])]
     [(AstTyStructArgs name lifetimes)
-      (tc-nominal-lifetime-use-policy-ok ctx name lifetimes)]
+      (match (tc-qualified-type-visible-ok ctx name)
+        [(OkTcUnit) (tc-nominal-lifetime-use-policy-ok ctx name lifetimes)]
+        [(ErrTcUnit message) (ErrTcUnit message)])]
     [(AstTyVarArgs name _) (ErrTcUnit (tc-source-type-policy-message name))]
     [(AstTyVar name) (ErrTcUnit (tc-source-type-policy-message name))]
     [_ OkTcUnit]))
@@ -5106,19 +5258,25 @@
         (tc-context-registries ctx)
         (tc-variant-name-for-enum enum-name name))
         [(SomeI64 handle)
-          (match (tc-variant-owner-name ctx handle)
-            [(OkTcString owner)
-              (if (string-eq owner enum-name)
-                (match (compiler-registries-variant-fields-indexed
-                  (tc-context-symbols ctx)
-                  handle)
-                  [(OkAstTypeList fields)
-                    (match fields
-                      [(AstTypeNil) (OkTcType (tc-tag-active-region env ret))]
-                      [_ (ErrTcType "typecheck: arity mismatch")])]
-                  [(ErrAstTypeList message) (ErrTcType message)])
-                (ErrTcType "typecheck: call target is not a function"))]
-            [(ErrTcString message) (ErrTcType message)])]
+          (let
+            [lookup-name : String (tc-variant-name-for-enum enum-name name)]
+            (match (tc-qualified-variant-visible-ok ctx lookup-name)
+              [(OkTcUnit)
+                (match (tc-variant-owner-name ctx handle)
+                  [(OkTcString owner)
+                    (if (string-eq owner enum-name)
+                      (match (compiler-registries-variant-fields-indexed
+                        (tc-context-symbols ctx)
+                        handle)
+                        [(OkAstTypeList fields)
+                          (match fields
+                            [(AstTypeNil)
+                              (OkTcType (tc-tag-active-region env ret))]
+                            [_ (ErrTcType "typecheck: arity mismatch")])]
+                        [(ErrAstTypeList message) (ErrTcType message)])
+                      (ErrTcType "typecheck: call target is not a function"))]
+                  [(ErrTcString message) (ErrTcType message)])]
+              [(ErrTcUnit message) (ErrTcType message)]))]
         [(NoneI64)
           (if (tc-name-qualified? name)
             (OkTcType (tc-tag-active-region env ret))
@@ -9517,11 +9675,14 @@
     struct-name
     field)
     [(SomeI64 handle)
-      (match (compiler-registries-struct-field-type-indexed
-        (tc-context-symbols ctx)
-        handle)
-        [(OkAstType ty) (OkTcType (tc-resolve-type ctx ty))]
-        [(ErrAstType message) (ErrTcType message)])]
+      (match (tc-qualified-field-visible-ok ctx struct-name field)
+        [(OkTcUnit)
+          (match (compiler-registries-struct-field-type-indexed
+            (tc-context-symbols ctx)
+            handle)
+            [(OkAstType ty) (OkTcType (tc-resolve-type ctx ty))]
+            [(ErrAstType message) (ErrTcType message)])]
+        [(ErrTcUnit message) (ErrTcType message)])]
     [(NoneI64)
       (ErrTcType
         (string-append
@@ -9547,15 +9708,22 @@
     struct-name
     field)
     [(SomeI64 handle)
-      (match (compiler-registries-struct-field-type
-        (tc-context-program ctx)
-        handle)
-        [(OkAstType ty)
-          (match (tc-lifetime-subst-from-nominal-args ctx struct-name lifetimes)
-            [(OkTcLifetimeSubst subst)
-              (OkTcType (tc-resolve-type ctx (tc-lifetime-subst-type subst ty)))]
-            [(ErrTcLifetimeSubst message) (ErrTcType message)])]
-        [(ErrAstType message) (ErrTcType message)])]
+      (match (tc-qualified-field-visible-ok ctx struct-name field)
+        [(OkTcUnit)
+          (match (compiler-registries-struct-field-type
+            (tc-context-program ctx)
+            handle)
+            [(OkAstType ty)
+              (match (tc-lifetime-subst-from-nominal-args
+                ctx
+                struct-name
+                lifetimes)
+                [(OkTcLifetimeSubst subst)
+                  (OkTcType
+                    (tc-resolve-type ctx (tc-lifetime-subst-type subst ty)))]
+                [(ErrTcLifetimeSubst message) (ErrTcType message)])]
+            [(ErrAstType message) (ErrTcType message)])]
+        [(ErrTcUnit message) (ErrTcType message)])]
     [(NoneI64)
       (ErrTcType
         (string-append
@@ -9638,7 +9806,7 @@
 (define (tc-borrow-place [ctx : TcContext] [env : TcTypeEnv] [expr : AstExpr]) : ResultTcBorrowPlace
   (match (ast-expr-unspan expr)
     [(AstExprVar name)
-      (match (tc-lookup env name)
+      (match (tc-lookup-visible ctx env name)
         [(OkTcType ty) (tc-borrow-place-var name ty)]
         [(ErrTcType message) (ErrTcBorrowPlace message)])]
     [(AstExprStructGet receiver-box field)
@@ -9683,7 +9851,7 @@
   [expr : AstExpr]) : ResultTcString
   (match (ast-expr-unspan expr)
     [(AstExprVar name)
-      (match (tc-lookup env name)
+      (match (tc-lookup-visible ctx env name)
         [(OkTcType ty) (tc-store-place-lifetime-var name ty)]
         [(ErrTcType message) (ErrTcString message)])]
     [(AstExprStructGet receiver-box _)
@@ -9804,37 +9972,20 @@
       (tc-context-registries ctx)
       lookup-name)
       [(SomeI64 handle)
-        (match (tc-variant-owner-name ctx handle)
-          [(OkTcString owner)
-            (if (string-eq owner enum-name)
-              (match (compiler-registries-variant-fields-indexed
-                (tc-context-symbols ctx)
-                handle)
-                [(OkAstTypeList fields)
-                  (match enum-lifetimes
-                    [(AstLifetimeNil)
-                      (let
-                        [resolved-fields : AstTypeList
-                          (tc-resolve-type-list ctx fields)]
-                        (tc-bind-sub-pattern-list
-                          ctx
-                          env
-                          args
-                          (match payload-region
-                            [(TcSomeString region)
-                              (tc-tag-type-list-region region resolved-fields)]
-                            [(TcNoString) resolved-fields])))]
-                    [_
-                      (match (tc-lifetime-subst-from-nominal-args
-                        ctx
-                        enum-name
-                        enum-lifetimes)
-                        [(OkTcLifetimeSubst subst)
+        (match (tc-qualified-variant-visible-ok ctx lookup-name)
+          [(OkTcUnit)
+            (match (tc-variant-owner-name ctx handle)
+              [(OkTcString owner)
+                (if (string-eq owner enum-name)
+                  (match (compiler-registries-variant-fields-indexed
+                    (tc-context-symbols ctx)
+                    handle)
+                    [(OkAstTypeList fields)
+                      (match enum-lifetimes
+                        [(AstLifetimeNil)
                           (let
                             [resolved-fields : AstTypeList
-                              (tc-resolve-type-list
-                                ctx
-                                (tc-lifetime-subst-type-list subst fields))]
+                              (tc-resolve-type-list ctx fields)]
                             (tc-bind-sub-pattern-list
                               ctx
                               env
@@ -9845,17 +9996,41 @@
                                     region
                                     resolved-fields)]
                                 [(TcNoString) resolved-fields])))]
-                        [(ErrTcLifetimeSubst message) (ErrTcEnv message)])])]
-                [(ErrAstTypeList message) (ErrTcEnv message)])
-              (ErrTcEnv
-                (string-append
-                  "typecheck: variant "
-                  (string-append
-                    variant-name
+                        [_
+                          (match (tc-lifetime-subst-from-nominal-args
+                            ctx
+                            enum-name
+                            enum-lifetimes)
+                            [(OkTcLifetimeSubst subst)
+                              (let
+                                [resolved-fields : AstTypeList
+                                  (tc-resolve-type-list
+                                    ctx
+                                    (tc-lifetime-subst-type-list subst fields))]
+                                (tc-bind-sub-pattern-list
+                                  ctx
+                                  env
+                                  args
+                                  (match payload-region
+                                    [(TcSomeString region)
+                                      (tc-tag-type-list-region
+                                        region
+                                        resolved-fields)]
+                                    [(TcNoString) resolved-fields])))]
+                            [(ErrTcLifetimeSubst message) (ErrTcEnv message)])])]
+                    [(ErrAstTypeList message) (ErrTcEnv message)])
+                  (ErrTcEnv
                     (string-append
-                      " belongs to enum "
-                      (string-append owner (string-append ", not " enum-name)))))))]
-          [(ErrTcString message) (ErrTcEnv message)])]
+                      "typecheck: variant "
+                      (string-append
+                        variant-name
+                        (string-append
+                          " belongs to enum "
+                          (string-append
+                            owner
+                            (string-append ", not " enum-name)))))))]
+              [(ErrTcString message) (ErrTcEnv message)])]
+          [(ErrTcUnit message) (ErrTcEnv message)])]
       [(NoneI64)
         (ErrTcEnv (string-append "typecheck: unknown variant " variant-name))])))
 
@@ -10846,14 +11021,15 @@
           [global-name : String (tc-hygiene-global-base name)]
           (if (tc-hygiene-global-binding-unsafe? env global-name)
             (match (tc-require-unsafe env global-name)
-              [(OkTcUnit) (tc-lookup-hygiene-global env global-name)]
+              [(OkTcUnit)
+                (tc-lookup-hygiene-global-visible ctx env global-name)]
               [(ErrTcUnit message) (ErrTcType message)])
-            (tc-lookup-hygiene-global env global-name)))
+            (tc-lookup-hygiene-global-visible ctx env global-name)))
         (if (tc-binding-unsafe? env name)
           (match (tc-require-unsafe env name)
-            [(OkTcUnit) (tc-lookup env name)]
+            [(OkTcUnit) (tc-lookup-visible ctx env name)]
             [(ErrTcUnit message) (ErrTcType message)])
-          (tc-lookup env name)))]
+          (tc-lookup-visible ctx env name)))]
     [(AstExprTypeLiteral ty)
       (ErrTcType
         (string-append
@@ -11187,7 +11363,7 @@
     [(AstExprSet name value-box)
       (let
         [value : AstExpr (box-get value-box)]
-        (match (tc-lookup env name)
+        (match (tc-lookup-visible ctx env name)
           [(OkTcType var-ty)
             (match (tc-expr-with-expected-or-actual ctx env value var-ty)
               [(OkTcType value-ty)
@@ -13775,7 +13951,7 @@
   [field-name : String]
   [cleanup-name : String]
   [field-ty : AstType]) : ResultTcUnit
-  (match (tc-lookup env cleanup-name)
+  (match (tc-lookup-visible ctx env cleanup-name)
     [(OkTcType cleanup-ty)
       (tc-expect
         cleanup-ty

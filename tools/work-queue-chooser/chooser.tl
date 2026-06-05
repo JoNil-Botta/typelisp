@@ -56,7 +56,7 @@
 ;: Immutable list of candidates in source order (PRs first, then issues).
 (defenum CandList
   (CandNil)
-  (CandCons Candidate CandList))
+  (CandCons Candidate (Box CandList)))
 
 (defenum ChooserResult
   (ChooserOk Candidate)
@@ -254,7 +254,7 @@
       (let
         [tail : CandList (pr-candidates (box-get rest))]
         (if (pr-checks-complete? head)
-          (CandCons (pr-candidate head) tail)
+          (CandCons (pr-candidate head) (box tail))
           tail))]))
 
 ;: Map a JSON array of issue objects to candidates, preserving source order.
@@ -262,13 +262,14 @@
   (match items
     [(JsonListNil) (CandNil)]
     [(JsonListCons head rest)
-      (CandCons (issue-candidate head) (issue-candidates (box-get rest)))]))
+      (CandCons (issue-candidate head) (box (issue-candidates (box-get rest))))]))
 
 ;: Concatenate two candidate lists, preserving order.
 (define (cand-append [front : CandList] [back : CandList]) : CandList
   (match front
     [(CandNil) back]
-    [(CandCons head rest) (CandCons head (cand-append rest back))]))
+    [(CandCons head rest)
+      (CandCons head (box (cand-append (box-get rest) back)))]))
 
 ;: Look up the JSON array stored at `field`, or an empty list when absent.
 (define (json-field-array [value : Json] [field : String]) : JsonList
@@ -293,7 +294,9 @@
   (match cands
     [(CandNil) (random-weight-list-empty)]
     [(CandCons head rest)
-      (random-weight-list-cons (struct-get head weight) (cand-weights rest))]))
+      (random-weight-list-cons
+        (struct-get head weight)
+        (cand-weights (box-get rest)))]))
 
 ;: Return the candidate at zero-based `index`, or a sentinel triage candidate
 ;: when out of range (should not happen for a valid weighted index).
@@ -303,13 +306,13 @@
     [(CandCons head rest)
       (if (= index 0)
         head
-        (cand-nth rest (- index 1)))]))
+        (cand-nth (box-get rest) (- index 1)))]))
 
 ;: Number of candidates in a list.
 (define (cand-count [cands : CandList]) : i64
   (match cands
     [(CandNil) 0]
-    [(CandCons _ rest) (+ 1 (cand-count rest))]))
+    [(CandCons _ rest) (+ 1 (cand-count (box-get rest)))]))
 
 (test
   chooser-skips-incomplete-pr-checks

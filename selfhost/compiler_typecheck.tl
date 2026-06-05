@@ -308,7 +308,7 @@
   (pair (Tuple String String)))
 (defenum StringList
   (SNil)
-  (SCons String StringList))
+  (SCons String (Box StringList)))
 (define (clone-tuple [items : (Array String)]) : (Tuple String (Array String))
   (clone (tuple \"tuple\" items)))
 (define (clone-fixed) : (Array String 2)
@@ -1443,11 +1443,23 @@
   (let
     [ok : bool true]
     (begin
-      (if (compiler-typecheck-ok?
+      (if (compiler-typecheck-error-ok?
         (tc-cat3
           (compiler-typecheck-inline-unboxed-list-source)
           "\n"
-          "(define (main [x : BadList]) : i64 0)"))
+          "(define (main [x : BadList]) : i64 0)")
+        "typecheck: inline aggregate layout cycle BadList -> BadList; insert (Box BadList) at the recursive edge")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        (compiler-typecheck-inline-mutual-struct-source)
+        "typecheck: inline aggregate layout cycle A -> B -> A; insert (Box A) at the recursive edge")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-ok? (compiler-typecheck-inline-boxed-list-source))
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-ok? (compiler-typecheck-inline-boxed-tree-source))
         unit
         (set! ok false))
       (if (compiler-typecheck-inline-layout-ok?
@@ -3406,17 +3418,24 @@
   (match t [(TPos p) (struct-get p line)] [(TEnd) -1]))")
 
 (define (compiler-typecheck-match-ok-nested-source) : String
-  "(defenum Sexpr (SInt i64) (SSym String) (SNil) (SCons Sexpr Sexpr))
+  "(defenum SexprAtom (SInt i64) (SSym String) (SNil))
+(defenum Sexpr (SAtom SexprAtom) (SCons SexprAtom SexprAtom))
 (define (main [s : Sexpr]) : i64
   (match s [(SCons (SSym op) rest) (string-length op)] [_ 0]))")
 
 (define (compiler-typecheck-match-ok-nested-rest-source) : String
-  "(defenum Sexpr (SInt i64) (SSym String) (SNil) (SCons Sexpr Sexpr))
+  "(defenum Sexpr (SInt i64) (SSym String) (SNil) (SCons (Box Sexpr) (Box Sexpr)))
 (define (depth [s : Sexpr]) : i64
-  (match s [(SCons (SSym op) rest) (+ 1 (depth rest))] [_ 0]))")
+  (match s
+    [(SCons head rest)
+      (match (box-get head)
+        [(SSym op) (+ 1 (depth (box-get rest)))]
+        [_ 0])]
+    [_ 0]))")
 
 (define (compiler-typecheck-match-bad-nested-field-use-source) : String
-  "(defenum Sexpr (SInt i64) (SSym String) (SNil) (SCons Sexpr Sexpr))
+  "(defenum SexprAtom (SInt i64) (SSym String) (SNil))
+(defenum Sexpr (SAtom SexprAtom) (SCons SexprAtom SexprAtom))
 (define (main [s : Sexpr]) : i64
   (match s [(SCons (SInt n) rest) (string-length n)] [_ 0]))")
 
@@ -3425,17 +3444,19 @@
 (define (main [s : Sexpr]) : i64 (match s [(SInt (SNil)) 1] [_ 0]))")
 
 (define (compiler-typecheck-match-ok-nested-literal-source) : String
-  "(defenum Sexpr (SInt i64) (SNil) (SCons Sexpr Sexpr))
+  "(defenum SexprAtom (SInt i64) (SNil))
+(defenum Sexpr (SAtom SexprAtom) (SCons SexprAtom SexprAtom))
 (define (main [s : Sexpr]) : i64
   (match s [(SCons (SInt 0) rest) 1] [_ 0]))")
 
 (define (compiler-typecheck-match-bad-nested-literal-source) : String
-  "(defenum Sexpr (SInt i64) (SNil) (SCons Sexpr Sexpr))
+  "(defenum SexprAtom (SInt i64) (SNil))
+(defenum Sexpr (SAtom SexprAtom) (SCons SexprAtom SexprAtom))
 (define (main [s : Sexpr]) : i64
   (match s [(SCons (SInt true) rest) 1] [_ 0]))")
 
 (define (compiler-typecheck-match-bad-flat-exhaustiveness-source) : String
-  "(defenum Sexpr (SInt i64) (SSym String) (SNil) (SCons Sexpr Sexpr))
+  "(defenum Sexpr (SInt i64) (SSym String) (SNil) (SCons i64 i64))
 (define (main [s : Sexpr]) : i64
   (match s [(SInt n) n] [(SSym x) 0] [(SNil) 0]))")
 
@@ -3500,13 +3521,13 @@
 (define (main [r : ResultI64]) : i64 (match r [(OkI64 v) v]))")
 
 (define (compiler-typecheck-match-ok-recursive-list-source) : String
-  "(defenum List (Cons i64 List) (Nil))
+  "(defenum List (Cons i64 (Box List)) (Nil))
 (define (main [l : List]) : i64 (match l [(Cons n rest) n] [(Nil) 0]))")
 
 (define (compiler-typecheck-match-ok-recursive-expr-source) : String
-  "(defenum Expr (ENum i64) (EAdd Expr Expr))
+  "(defenum Expr (ENum i64) (EAdd (Box Expr) (Box Expr)))
 (define (eval [e : Expr]) : i64
-  (match e [(ENum n) n] [(EAdd l r) (+ (eval l) (eval r))]))
+  (match e [(ENum n) n] [(EAdd l r) (+ (eval (box-get l)) (eval (box-get r)))]))
 (define (main [e : Expr]) : i64 (eval e))")
 
 (define (compiler-typecheck-match-bad-recursive-tuple-source) : String
@@ -3778,14 +3799,14 @@
           ok
           (compiler-typecheck-error-ok?
             (compiler-typecheck-match-bad-recursive-tuple-source)
-            "typecheck: recursive enum Bad (variant V) via an inline compound type is not yet supported; reference the enum directly (it is heap-pointer-indirected) - see #13")))
+            "typecheck: inline aggregate layout cycle Bad -> Bad; insert (Box Bad) at the recursive edge")))
       (set!
         ok
         (and
           ok
           (compiler-typecheck-error-ok?
             (compiler-typecheck-match-bad-recursive-array-source)
-            "typecheck: recursive enum Bad (variant V) via an inline compound type is not yet supported; reference the enum directly (it is heap-pointer-indirected) - see #13")))
+            "typecheck: inline aggregate layout cycle Bad -> Bad; insert (Box Bad) at the recursive edge")))
       (set!
         ok
         (and

@@ -34,13 +34,13 @@
     [after-b : Sexpr (sexpr-tail after-a)]
     (begin
       (sexpr-expect-nil after-b)
-      (EBin op (parse-expr a) (parse-expr b)))))
+      (EBin op (box (parse-expr a)) (box (parse-expr b))))))
 
 (define (parse-not [rest : Sexpr]) : Expr
   (match rest
     [(SCons arg end)
       (match (box-get end)
-        [(SNil) (ENot (parse-expr (box-get arg)))]
+        [(SNil) (ENot (box (parse-expr (box-get arg))))]
         [_
           (begin
             (panic "ast: malformed not")
@@ -64,8 +64,8 @@
                     [(SNil)
                       (ELet
                         name
-                        (parse-expr (box-get value))
-                        (parse-let-bindings (box-get rest) body))]
+                        (box (parse-expr (box-get value)))
+                        (box (parse-let-bindings (box-get rest) body)))]
                     [_
                       (begin
                         (panic "ast: malformed let binding")
@@ -118,7 +118,7 @@
           (match (box-get value-tail)
             [(SCons value end)
               (match (box-get end)
-                [(SNil) (ESet name (parse-expr (box-get value)))]
+                [(SNil) (ESet name (box (parse-expr (box-get value))))]
                 [_
                   (begin
                     (panic "ast: malformed set!")
@@ -149,9 +149,9 @@
               (match (box-get end)
                 [(SNil)
                   (EIf
-                    (parse-expr (box-get c))
-                    (parse-expr (box-get t))
-                    (parse-expr (box-get e)))]
+                    (box (parse-expr (box-get c)))
+                    (box (parse-expr (box-get t)))
+                    (box (parse-expr (box-get e))))]
                 [_
                   (begin
                     (panic "ast: malformed if")
@@ -176,7 +176,9 @@
         [(SCons body end)
           (match (box-get end)
             [(SNil)
-              (EWhile (parse-expr (box-get c)) (parse-expr (box-get body)))]
+              (EWhile
+                (box (parse-expr (box-get c)))
+                (box (parse-expr (box-get body))))]
             [_
               (begin
                 (panic "ast: malformed while")
@@ -194,7 +196,7 @@
   (match rest
     [(SCons arg end)
       (match (box-get end)
-        [(SNil) (EPrint (parse-expr (box-get arg)))]
+        [(SNil) (EPrint (box (parse-expr (box-get arg))))]
         [_
           (begin
             (panic "ast: malformed print")
@@ -210,7 +212,7 @@
       (begin
         (panic "ast: empty begin")
         (EInt 0))]
-    [(SCons _ _) (EBegin (parse-args rest))]
+    [(SCons _ _) (EBegin (box (parse-args rest)))]
     [_
       (begin
         (panic "ast: malformed begin")
@@ -219,7 +221,8 @@
 (define (parse-args [s : Sexpr]) : ExprList
   (match s
     [(SNil) ELNil]
-    [(SCons a d) (ELCons (parse-expr (box-get a)) (parse-args (box-get d)))]
+    [(SCons a d)
+      (ELCons (parse-expr (box-get a)) (box (parse-args (box-get d))))]
     [_
       (begin
         (panic "ast: malformed argument list")
@@ -260,7 +263,7 @@
             [(string-eq op "print") (parse-print (box-get rest))]
             [(string-eq op "set!") (parse-set (box-get rest))]
             [(string-eq op "begin") (parse-begin (box-get rest))]
-            [else (ECall op (parse-args (box-get rest)))])]
+            [else (ECall op (box (parse-args (box-get rest))))])]
         [_
           (begin
             (panic "ast: malformed expression")
@@ -275,7 +278,7 @@
     [(SNil) SLNil]
     [(SCons name-node rest)
       (match (box-get name-node)
-        [(SSym name) (SLCons name (parse-params (box-get rest)))]
+        [(SSym name) (SLCons name (box (parse-params (box-get rest))))]
         [_
           (begin
             (panic "ast: malformed parameter list")
@@ -344,28 +347,37 @@
 (define (expr-list-score [xs : ExprList]) : i64
   (match xs
     [(ELNil) 0]
-    [(ELCons e rest) (+ (expr-score e) (expr-list-score rest))]))
+    [(ELCons e rest) (+ (expr-score e) (expr-list-score (box-get rest)))]))
 
 (define (str-list-count [xs : StrList]) : i64
   (match xs
     [(SLNil) 0]
-    [(SLCons _ rest) (+ 1 (str-list-count rest))]))
+    [(SLCons _ rest) (+ 1 (str-list-count (box-get rest)))]))
 
 (define (expr-score [e : Expr]) : i64
   (match e
     [(EInt n) n]
     [(EVar name) (string-length name)]
-    [(EBin op a b) (+ (op-score op) (+ (expr-score a) (expr-score b)))]
-    [(ENot e) (+ 120 (expr-score e))]
+    [(EBin op a b)
+      (+ (op-score op) (+ (expr-score (box-get a)) (expr-score (box-get b))))]
+    [(ENot e) (+ 120 (expr-score (box-get e)))]
     [(ELet name value body)
-      (+ (string-length name) (+ (expr-score value) (expr-score body)))]
-    [(EIf c t e) (+ (expr-score c) (+ (expr-score t) (expr-score e)))]
-    [(EWhile c body) (+ 400 (+ (expr-score c) (expr-score body)))]
-    [(ECall name args) (+ (string-length name) (expr-list-score args))]
+      (+
+        (string-length name)
+        (+ (expr-score (box-get value)) (expr-score (box-get body))))]
+    [(EIf c t e)
+      (+
+        (expr-score (box-get c))
+        (+ (expr-score (box-get t)) (expr-score (box-get e))))]
+    [(EWhile c body)
+      (+ 400 (+ (expr-score (box-get c)) (expr-score (box-get body))))]
+    [(ECall name args)
+      (+ (string-length name) (expr-list-score (box-get args)))]
     [(EStr s) (string-length s)]
-    [(EPrint e) (+ 100 (expr-score e))]
-    [(ESet name value) (+ 300 (+ (string-length name) (expr-score value)))]
-    [(EBegin body) (+ 200 (expr-list-score body))]))
+    [(EPrint e) (+ 100 (expr-score (box-get e)))]
+    [(ESet name value)
+      (+ 300 (+ (string-length name) (expr-score (box-get value))))]
+    [(EBegin body) (+ 200 (expr-list-score (box-get body)))]))
 
 (define (item-score [i : Item]) : i64
   (match i

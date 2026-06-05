@@ -23,7 +23,7 @@
 
 (defenum DocTestPathList
   (DocTestPathNil)
-  (DocTestPathCons String DocTestPathList))
+  (DocTestPathCons String (Box DocTestPathList)))
 
 (defenum DocTestCliConfig
   (DocTestCliConfig DocTestPathList CompilerLoadRootList))
@@ -159,14 +159,16 @@
 
 (define (doc-test-path-list-append [paths : DocTestPathList] [path : String]) : DocTestPathList
   (match paths
-    [(DocTestPathNil) (DocTestPathCons path DocTestPathNil)]
+    [(DocTestPathNil) (DocTestPathCons path (box DocTestPathNil))]
     [(DocTestPathCons head rest)
-      (DocTestPathCons head (doc-test-path-list-append rest path))]))
+      (DocTestPathCons
+        head
+        (box (doc-test-path-list-append (box-get rest) path)))]))
 
 (define (doc-test-path-list-count [paths : DocTestPathList]) : i64
   (match paths
     [(DocTestPathNil) 0]
-    [(DocTestPathCons _ rest) (+ 1 (doc-test-path-list-count rest))]))
+    [(DocTestPathCons _ rest) (+ 1 (doc-test-path-list-count (box-get rest)))]))
 
 (define (doc-test-parse-options
   [idx : i64]
@@ -217,7 +219,7 @@
               unit)
             (doc-test-file input-path stdlib-roots))]
         (doc-test-files
-          rest
+          (box-get rest)
           stdlib-roots
           print-headers
           (if (= status 0)

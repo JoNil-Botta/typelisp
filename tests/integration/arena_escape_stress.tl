@@ -15,7 +15,7 @@
 
 (defenum StressList
   (StressNil)
-  (StressCons String StressList))
+  (StressCons String (Box StressList)))
 
 (define (overflow-bytes) : u64
   (cast 67108864 : u64))
@@ -33,7 +33,7 @@
 (define (make-list [count : i64] [seed : i64]) : StressList
   (if (= count 0)
     (StressNil)
-    (StressCons (payload seed count) (make-list (- count 1) seed))))
+    (StressCons (payload seed count) (box (make-list (- count 1) seed)))))
 
 (define (list-ok? [items : StressList] [count : i64] [seed : i64]) : bool
   (match items
@@ -43,7 +43,7 @@
         (> count 0)
         (and
           (string-eq head (payload seed count))
-          (list-ok? rest (- count 1) seed)))]))
+          (list-ok? (box-get rest) (- count 1) seed)))]))
 
 (define (escape-string [seed : i64]) : String
   (let

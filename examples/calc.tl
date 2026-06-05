@@ -50,10 +50,10 @@
 ;; payloads (#111) are 8-byte heap-pointer indirections, so the layout is finite.
 (defenum Expr
   (ENum i64)
-  (EAdd Expr Expr)
-  (ESub Expr Expr)
-  (EMul Expr Expr)
-  (EDiv Expr Expr))
+  (EAdd (Box Expr) (Box Expr))
+  (ESub (Box Expr) (Box Expr))
+  (EMul (Box Expr) (Box Expr))
+  (EDiv (Box Expr) (Box Expr)))
 
 ;; ============================ Lexer =======================================
 ;; Scan a source String character by character into a real `(Array Token)`.
@@ -224,10 +224,10 @@
         (if (= (current-tag toks cur) (tag-star))
           (begin
             (advance cur)
-            (set! acc (EMul acc (parse-factor toks cur))))
+            (set! acc (EMul (box acc) (box (parse-factor toks cur)))))
           (begin
             (advance cur)
-            (set! acc (EDiv acc (parse-factor toks cur))))))
+            (set! acc (EDiv (box acc) (box (parse-factor toks cur)))))))
       acc)))
 
 ;; expr := term (('+' | '-') term)*  (left-associative '+' / '-').
@@ -244,10 +244,10 @@
         (if (= (current-tag toks cur) (tag-plus))
           (begin
             (advance cur)
-            (set! acc (EAdd acc (parse-term toks cur))))
+            (set! acc (EAdd (box acc) (box (parse-term toks cur)))))
           (begin
             (advance cur)
-            (set! acc (ESub acc (parse-term toks cur))))))
+            (set! acc (ESub (box acc) (box (parse-term toks cur)))))))
       acc)))
 
 ;; Parse a whole token array starting at index 0: thread a fresh cursor cell
@@ -268,10 +268,10 @@
 (define (eval [e : Expr]) : i64
   (match e
     [(ENum n) n]
-    [(EAdd a b) (+ (eval a) (eval b))]
-    [(ESub a b) (- (eval a) (eval b))]
-    [(EMul a b) (* (eval a) (eval b))]
-    [(EDiv a b) (/ (eval a) (eval b))]))
+    [(EAdd a b) (+ (eval (box-get a)) (eval (box-get b)))]
+    [(ESub a b) (- (eval (box-get a)) (eval (box-get b)))]
+    [(EMul a b) (* (eval (box-get a)) (eval (box-get b)))]
+    [(EDiv a b) (/ (eval (box-get a)) (eval (box-get b)))]))
 
 ;; ============================ End to end ==================================
 ;; Run the full front-end on "2 + 3 * 4":

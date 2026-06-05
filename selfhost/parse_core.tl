@@ -148,7 +148,7 @@
               (match (parse-with-dispatch dispatch (box-get a))
                 [(OkExpr left)
                   (match (parse-with-dispatch dispatch (box-get b))
-                    [(OkExpr right) (OkExpr (EBin op left right))]
+                    [(OkExpr right) (OkExpr (EBin op (box left) (box right)))]
                     [(ErrExpr message) (ErrExpr message)])]
                 [(ErrExpr message) (ErrExpr message)])]
             [_
@@ -176,7 +176,7 @@
       (match (box-get end)
         [(SNil)
           (match (parse-with-dispatch dispatch (box-get arg))
-            [(OkExpr parsed-arg) (OkExpr (ENot parsed-arg))]
+            [(OkExpr parsed-arg) (OkExpr (ENot (box parsed-arg)))]
             [(ErrExpr message) (ErrExpr message)])]
         [_ (ErrExpr "parse: malformed not")])]
     [_ (ErrExpr "parse: malformed not")]))
@@ -205,7 +205,8 @@
                             (box-get rest)
                             body)
                             [(OkExpr parsed-rest)
-                              (OkExpr (ELet name parsed-value parsed-rest))]
+                              (OkExpr
+                                (ELet name (box parsed-value) (box parsed-rest)))]
                             [(ErrExpr message) (ErrExpr message)])]
                         [(ErrExpr message) (ErrExpr message)])]
                     [_ (ErrExpr "parse: malformed let binding")])]
@@ -239,7 +240,8 @@
               (match (box-get end)
                 [(SNil)
                   (match (parse-with-dispatch dispatch (box-get value))
-                    [(OkExpr parsed-value) (OkExpr (ESet name parsed-value))]
+                    [(OkExpr parsed-value)
+                      (OkExpr (ESet name (box parsed-value)))]
                     [(ErrExpr message) (ErrExpr message)])]
                 [_ (ErrExpr "parse: malformed set!")])]
             [_ (ErrExpr "parse: malformed set!")])]
@@ -261,7 +263,11 @@
                         [(OkExpr parsed-t)
                           (match (parse-with-dispatch dispatch (box-get e))
                             [(OkExpr parsed-e)
-                              (OkExpr (EIf parsed-c parsed-t parsed-e))]
+                              (OkExpr
+                                (EIf
+                                  (box parsed-c)
+                                  (box parsed-t)
+                                  (box parsed-e)))]
                             [(ErrExpr message) (ErrExpr message)])]
                         [(ErrExpr message) (ErrExpr message)])]
                     [(ErrExpr message) (ErrExpr message)])]
@@ -281,7 +287,7 @@
                 [(OkExpr parsed-c)
                   (match (parse-with-dispatch dispatch (box-get body))
                     [(OkExpr parsed-body)
-                      (OkExpr (EWhile parsed-c parsed-body))]
+                      (OkExpr (EWhile (box parsed-c) (box parsed-body)))]
                     [(ErrExpr message) (ErrExpr message)])]
                 [(ErrExpr message) (ErrExpr message)])]
             [_ (ErrExpr "parse: malformed while")])]
@@ -294,7 +300,7 @@
       (match (box-get end)
         [(SNil)
           (match (parse-with-dispatch dispatch (box-get arg))
-            [(OkExpr parsed-arg) (OkExpr (EPrint parsed-arg))]
+            [(OkExpr parsed-arg) (OkExpr (EPrint (box parsed-arg)))]
             [(ErrExpr message) (ErrExpr message)])]
         [_ (ErrExpr "parse: malformed print")])]
     [_ (ErrExpr "parse: malformed print")]))
@@ -304,7 +310,7 @@
     [(SNil) (ErrExpr "parse: empty begin")]
     [(SCons _ _)
       (match (parse-args dispatch rest)
-        [(OkExprList args) (OkExpr (EBegin args))]
+        [(OkExprList args) (OkExpr (EBegin (box args)))]
         [(ErrExprList message) (ErrExpr message)])]
     [_ (ErrExpr "parse: malformed begin")]))
 
@@ -315,7 +321,8 @@
       (match (parse-with-dispatch dispatch (box-get a))
         [(OkExpr parsed-a)
           (match (parse-args dispatch (box-get d))
-            [(OkExprList parsed-d) (OkExprList (ELCons parsed-a parsed-d))]
+            [(OkExprList parsed-d)
+              (OkExprList (ELCons parsed-a (box parsed-d)))]
             [(ErrExprList message) (ErrExprList message)])]
         [(ErrExpr message) (ErrExprList message)])]
     [_ (ErrExprList "parse: malformed argument list")]))
@@ -344,7 +351,7 @@
                 (parse-binary dispatch (parse-op-tag tag) (box-get rest) tag)]
               [else
                 (match (parse-args dispatch (box-get rest))
-                  [(OkExprList args) (OkExpr (ECall op args))]
+                  [(OkExprList args) (OkExpr (ECall op (box args)))]
                   [(ErrExprList message) (ErrExpr message)])]))]
         [_ (ErrExpr "parse: malformed expression")])]
     [_ (ErrExpr "parse: malformed expression")]))
@@ -359,7 +366,8 @@
       (match (box-get name-node)
         [(SSym name)
           (match (parse-params (box-get rest))
-            [(OkStrList parsed-rest) (OkStrList (SLCons name parsed-rest))]
+            [(OkStrList parsed-rest)
+              (OkStrList (SLCons name (box parsed-rest)))]
             [(ErrStrList message) (ErrStrList message)])]
         [_ (ErrStrList "parse: malformed parameter list")])]
     [_ (ErrStrList "parse: malformed parameter list")]))
@@ -423,8 +431,9 @@
 
 (define (item-list-append-one [items : ItemList] [item : Item]) : ItemList
   (match items
-    [(ILNil) (ILCons item ILNil)]
-    [(ILCons head rest) (ILCons head (item-list-append-one rest item))]))
+    [(ILNil) (ILCons item (box ILNil))]
+    [(ILCons head rest)
+      (ILCons head (box (item-list-append-one (box-get rest) item)))]))
 
 (define (parse-program-forms
   [dispatch : SymI64Env]

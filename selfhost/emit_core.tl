@@ -42,43 +42,51 @@
 (define (expr-list-max-let-depth [xs : ExprList]) : i64
   (match xs
     [(ELNil) 0]
-    [(ELCons e rest) (max-i64 (max-let-depth e) (expr-list-max-let-depth rest))]))
+    [(ELCons e rest)
+      (max-i64 (max-let-depth e) (expr-list-max-let-depth (box-get rest)))]))
 
 (define (expr-list-count [xs : ExprList]) : i64
   (match xs
     [(ELNil) 0]
-    [(ELCons _ rest) (+ 1 (expr-list-count rest))]))
+    [(ELCons _ rest) (+ 1 (expr-list-count (box-get rest)))]))
 
 (define (str-list-count [xs : StrList]) : i64
   (match xs
     [(SLNil) 0]
-    [(SLCons _ rest) (+ 1 (str-list-count rest))]))
+    [(SLCons _ rest) (+ 1 (str-list-count (box-get rest)))]))
 
 (define (str-list-append-one [xs : StrList] [s : String]) : StrList
   (match xs
-    [(SLNil) (SLCons s SLNil)]
-    [(SLCons head rest) (SLCons head (str-list-append-one rest s))]))
+    [(SLNil) (SLCons s (box SLNil))]
+    [(SLCons head rest)
+      (SLCons head (box (str-list-append-one (box-get rest) s)))]))
 
 (define (expr-list-collect-strings [xs : ExprList] [acc : StrList]) : StrList
   (match xs
     [(ELNil) acc]
-    [(ELCons e rest) (expr-list-collect-strings rest (collect-strings e acc))]))
+    [(ELCons e rest)
+      (expr-list-collect-strings (box-get rest) (collect-strings e acc))]))
 
 (define (collect-strings [e : Expr] [acc : StrList]) : StrList
   (match e
     [(EInt _) acc]
     [(EVar _) acc]
-    [(EBin _ a b) (collect-strings b (collect-strings a acc))]
-    [(ENot e) (collect-strings e acc)]
-    [(ELet _ value body) (collect-strings body (collect-strings value acc))]
+    [(EBin _ a b)
+      (collect-strings (box-get b) (collect-strings (box-get a) acc))]
+    [(ENot e) (collect-strings (box-get e) acc)]
+    [(ELet _ value body)
+      (collect-strings (box-get body) (collect-strings (box-get value) acc))]
     [(EIf c t e)
-      (collect-strings e (collect-strings t (collect-strings c acc)))]
-    [(EWhile c body) (collect-strings body (collect-strings c acc))]
-    [(ECall _ args) (expr-list-collect-strings args acc)]
+      (collect-strings
+        (box-get e)
+        (collect-strings (box-get t) (collect-strings (box-get c) acc)))]
+    [(EWhile c body)
+      (collect-strings (box-get body) (collect-strings (box-get c) acc))]
+    [(ECall _ args) (expr-list-collect-strings (box-get args) acc)]
     [(EStr s) (str-list-append-one acc s)]
-    [(EPrint e) (collect-strings e acc)]
-    [(ESet _ value) (collect-strings value acc)]
-    [(EBegin body) (expr-list-collect-strings body acc)]))
+    [(EPrint e) (collect-strings (box-get e) acc)]
+    [(ESet _ value) (collect-strings (box-get value) acc)]
+    [(EBegin body) (expr-list-collect-strings (box-get body) acc)]))
 
 (define (collect-item-strings [item : Item] [acc : StrList]) : StrList
   (match item
@@ -88,7 +96,7 @@
   (match items
     [(ILNil) acc]
     [(ILCons item rest)
-      (collect-items-strings rest (collect-item-strings item acc))]))
+      (collect-items-strings (box-get rest) (collect-item-strings item acc))]))
 
 (define (string-index-in [needle : String] [xs : StrList] [idx : i64]) : i64
   (match xs
@@ -99,7 +107,7 @@
     [(SLCons s rest)
       (if (string-eq needle s)
         idx
-        (string-index-in needle rest (+ idx 1)))]))
+        (string-index-in needle (box-get rest) (+ idx 1)))]))
 
 (define (string-index [needle : String] [strings : StrList]) : i64
   (string-index-in needle strings 0))
@@ -165,7 +173,7 @@
           ":\n    .string "
           (string-append
             (quoted-gas-string s)
-            (string-append "\n" (emit-rodata-entries rest (+ idx 1))))))]))
+            (string-append "\n" (emit-rodata-entries (box-get rest) (+ idx 1))))))]))
 
 (define (emit-rodata [strings : StrList]) : String
   (match strings
@@ -179,18 +187,24 @@
   (match e
     [(EInt _) 0]
     [(EVar _) 0]
-    [(EBin _ a b) (max-i64 (max-let-depth a) (max-let-depth b))]
-    [(ENot e) (max-let-depth e)]
+    [(EBin _ a b)
+      (max-i64 (max-let-depth (box-get a)) (max-let-depth (box-get b)))]
+    [(ENot e) (max-let-depth (box-get e))]
     [(ELet _ value body)
-      (max-i64 (max-let-depth value) (+ 1 (max-let-depth body)))]
+      (max-i64
+        (max-let-depth (box-get value))
+        (+ 1 (max-let-depth (box-get body))))]
     [(EIf c t e)
-      (max-i64 (max-let-depth c) (max-i64 (max-let-depth t) (max-let-depth e)))]
-    [(EWhile c body) (max-i64 (max-let-depth c) (max-let-depth body))]
-    [(ECall _ args) (expr-list-max-let-depth args)]
+      (max-i64
+        (max-let-depth (box-get c))
+        (max-i64 (max-let-depth (box-get t)) (max-let-depth (box-get e))))]
+    [(EWhile c body)
+      (max-i64 (max-let-depth (box-get c)) (max-let-depth (box-get body)))]
+    [(ECall _ args) (expr-list-max-let-depth (box-get args))]
     [(EStr _) 0]
-    [(EPrint e) (max-let-depth e)]
-    [(ESet _ value) (max-let-depth value)]
-    [(EBegin body) (expr-list-max-let-depth body)]))
+    [(EPrint e) (max-let-depth (box-get e))]
+    [(ESet _ value) (max-let-depth (box-get value))]
+    [(EBegin body) (expr-list-max-let-depth (box-get body))]))
 
 (define (frame-size [e : Expr]) : i64
   (round-up-16 (* 8 (max-let-depth e))))
@@ -226,7 +240,10 @@
   (match params
     [(SLNil) env]
     [(SLCons name rest)
-      (bind-params rest (+ slot 1) (sym-i64-bind env name (slot-offset slot)))]))
+      (bind-params
+        (box-get rest)
+        (+ slot 1)
+        (sym-i64-bind env name (slot-offset slot)))]))
 
 (define (emit-param-spills [params : StrList] [idx : i64]) : String
   (match params
@@ -240,7 +257,7 @@
             ", "
             (string-append
               (emit-slot (slot-offset (+ idx 1)))
-              (string-append "\n" (emit-param-spills rest (+ idx 1)))))))]))
+              (string-append "\n" (emit-param-spills (box-get rest) (+ idx 1)))))))]))
 
 (define (emit-int [n : i64]) : String
   (string-append "    movq $" (string-append (int->string n) ", %rax\n")))
@@ -404,7 +421,7 @@
         (emit-expr-in strings env depth lc arg)
         (string-append
           "    pushq %rax\n"
-          (emit-call-arg-pushes strings env depth lc rest)))]))
+          (emit-call-arg-pushes strings env depth lc (box-get rest))))]))
 
 (define (emit-call-arg-pops [argc : i64]) : String
   (if (= argc 0)
@@ -487,11 +504,13 @@
   [lc : (Array i64)]
   [body : ExprList]) : String
   (match body
-    [(ELCons e (ELNil)) (emit-expr-in strings env depth lc e)]
     [(ELCons e rest)
-      (string-append
-        (emit-expr-in strings env depth lc e)
-        (emit-begin strings env depth lc rest))]
+      (match (box-get rest)
+        [(ELNil) (emit-expr-in strings env depth lc e)]
+        [_
+          (string-append
+            (emit-expr-in strings env depth lc e)
+            (emit-begin strings env depth lc (box-get rest)))])]
     [(ELNil)
       (begin
         (panic "emit: empty begin")
@@ -506,16 +525,19 @@
   (match e
     [(EInt n) (emit-int n)]
     [(EVar name) (emit-var env name)]
-    [(EBin op a b) (emit-bin strings env depth lc op a b)]
-    [(ENot arg) (emit-not strings env depth lc arg)]
-    [(ELet name value body) (emit-let strings env depth lc name value body)]
-    [(EIf c t e) (emit-if strings env depth lc c t e)]
-    [(EWhile c body) (emit-while strings env depth lc c body)]
-    [(ECall name args) (emit-call strings env depth lc name args)]
+    [(EBin op a b) (emit-bin strings env depth lc op (box-get a) (box-get b))]
+    [(ENot arg) (emit-not strings env depth lc (box-get arg))]
+    [(ELet name value body)
+      (emit-let strings env depth lc name (box-get value) (box-get body))]
+    [(EIf c t e)
+      (emit-if strings env depth lc (box-get c) (box-get t) (box-get e))]
+    [(EWhile c body)
+      (emit-while strings env depth lc (box-get c) (box-get body))]
+    [(ECall name args) (emit-call strings env depth lc name (box-get args))]
     [(EStr s) (emit-str strings s)]
-    [(EPrint arg) (emit-print strings arg)]
-    [(ESet name value) (emit-set strings env depth lc name value)]
-    [(EBegin body) (emit-begin strings env depth lc body)]))
+    [(EPrint arg) (emit-print strings (box-get arg))]
+    [(ESet name value) (emit-set strings env depth lc name (box-get value))]
+    [(EBegin body) (emit-begin strings env depth lc (box-get body))]))
 
 (define (function-frame-size [params : StrList] [body : Expr]) : i64
   (round-up-16 (* 8 (+ (str-list-count params) (max-let-depth body)))))
@@ -554,7 +576,9 @@
   (match items
     [(ILNil) ""]
     [(ILCons item rest)
-      (string-append (emit-def strings lc item) (emit-defs strings lc rest))]))
+      (string-append
+        (emit-def strings lc item)
+        (emit-defs strings lc (box-get rest)))]))
 
 (define (emit-expr [e : Expr]) : String
   (let

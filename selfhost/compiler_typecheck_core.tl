@@ -13,8 +13,8 @@
 
 (defenum TcTypeEnv
   (TcTypeNil)
-  (TcTypeBind String AstType TcTypeEnv)
-  (TcTypeCache StringI64Map (Array AstType) StringI64Map TcTypeEnv))
+  (TcTypeBind String AstType (Box TcTypeEnv))
+  (TcTypeCache StringI64Map (Array AstType) StringI64Map (Box TcTypeEnv)))
 
 (defenum TcContext
   (TcContext AstProgram CompilerSymbols CompilerRegistries String))
@@ -51,7 +51,7 @@
 
 (defenum TcStringList
   (TcStringNil)
-  (TcStringCons String TcStringList))
+  (TcStringCons String (Box TcStringList)))
 
 (defenum ResultTcLifetimeList
   (OkTcLifetimeList AstLifetimeList)
@@ -59,7 +59,7 @@
 
 (defenum TcLifetimeSubst
   (TcLifetimeSubstNil)
-  (TcLifetimeSubstCons String String TcLifetimeSubst))
+  (TcLifetimeSubstCons String String (Box TcLifetimeSubst)))
 
 (defenum ResultTcLifetimeSubst
   (OkTcLifetimeSubst TcLifetimeSubst)
@@ -71,7 +71,7 @@
 
 (defenum TcModuleLocalEnvCache
   (TcModuleLocalEnvNil)
-  (TcModuleLocalEnvCons String TcTypeEnv TcModuleLocalEnvCache))
+  (TcModuleLocalEnvCons String TcTypeEnv (Box TcModuleLocalEnvCache)))
 
 (defenum ResultTcModuleLocalEnv
   (OkTcModuleLocalEnv TcTypeEnv TcModuleLocalEnvCache)
@@ -99,7 +99,7 @@
 
 (defenum TcSpmdEnv
   (TcSpmdEnvNil)
-  (TcSpmdEnvBind String AstType TcSpmdClass TcSpmdScope TcSpmdEnv))
+  (TcSpmdEnvBind String AstType TcSpmdClass TcSpmdScope (Box TcSpmdEnv)))
 
 (defenum TcSpmdLookup
   (TcSpmdMissing)
@@ -145,7 +145,7 @@
 
 (defenum TcReprCFieldLayoutList
   (TcReprCFieldLayoutNil)
-  (TcReprCFieldLayoutCons TcReprCFieldLayout TcReprCFieldLayoutList))
+  (TcReprCFieldLayoutCons TcReprCFieldLayout (Box TcReprCFieldLayoutList)))
 
 (defenum TcReprCLayout
   (TcReprCLayout i64 i64 TcReprCFieldLayoutList))
@@ -159,21 +159,25 @@
 
 (defenum TcInlineFieldLayoutList
   (TcInlineFieldLayoutNil)
-  (TcInlineFieldLayoutCons TcInlineFieldLayout TcInlineFieldLayoutList))
+  (TcInlineFieldLayoutCons TcInlineFieldLayout (Box TcInlineFieldLayoutList)))
 
 (defenum TcInlinePayloadLayout
   (TcInlinePayloadLayout i64 AstType i64))
 
 (defenum TcInlinePayloadLayoutList
   (TcInlinePayloadLayoutNil)
-  (TcInlinePayloadLayoutCons TcInlinePayloadLayout TcInlinePayloadLayoutList))
+  (TcInlinePayloadLayoutCons
+    TcInlinePayloadLayout
+    (Box TcInlinePayloadLayoutList)))
 
 (defenum TcInlineVariantLayout
   (TcInlineVariantLayout String i64 i64 TcInlinePayloadLayoutList))
 
 (defenum TcInlineVariantLayoutList
   (TcInlineVariantLayoutNil)
-  (TcInlineVariantLayoutCons TcInlineVariantLayout TcInlineVariantLayoutList))
+  (TcInlineVariantLayoutCons
+    TcInlineVariantLayout
+    (Box TcInlineVariantLayoutList)))
 
 (defenum TcInlineFieldsLayout
   (TcInlineFieldsLayout i64 i64 TcInlineFieldLayoutList))
@@ -619,7 +623,7 @@
   TcTypeNil)
 
 (define (tc-bind [env : TcTypeEnv] [name : String] [ty : AstType]) : TcTypeEnv
-  (TcTypeBind name ty env))
+  (TcTypeBind name ty (box env)))
 
 (define (tc-unsafe-decl-marker-name [name : String]) : String
   (string-append " __tl_unsafe_decl:" name))
@@ -647,14 +651,14 @@
         [(StringI64MapMissing) false])]
     [(TcTypeBind key _ rest)
       (if (string-eq key name)
-        (tc-binding-unsafe-marker-head? rest name)
-        (tc-binding-unsafe? rest name))]))
+        (tc-binding-unsafe-marker-head? (box-get rest) name)
+        (tc-binding-unsafe? (box-get rest) name))]))
 
 (define (tc-env-cache-count [env : TcTypeEnv]) : i64
   (match env
     [(TcTypeNil) 0]
-    [(TcTypeBind _ _ rest) (+ 1 (tc-env-cache-count rest))]
-    [(TcTypeCache _ _ _ rest) (tc-env-cache-count rest)]))
+    [(TcTypeBind _ _ rest) (+ 1 (tc-env-cache-count (box-get rest)))]
+    [(TcTypeCache _ _ _ rest) (tc-env-cache-count (box-get rest))]))
 
 (define (tc-env-cache-capacity [count : i64]) : i64
   (if (< count 4)
@@ -682,8 +686,11 @@
   (match env
     [(TcTypeNil) ids]
     [(TcTypeBind name ty rest)
-      (tc-env-cache-fill rest (tc-env-cache-add ids values name ty) values)]
-    [(TcTypeCache _ _ _ rest) (tc-env-cache-fill rest ids values)]))
+      (tc-env-cache-fill
+        (box-get rest)
+        (tc-env-cache-add ids values name ty)
+        values)]
+    [(TcTypeCache _ _ _ rest) (tc-env-cache-fill (box-get rest) ids values)]))
 
 (define (tc-env-default-shadow-count [env : TcTypeEnv]) : i64
   (match env
@@ -691,8 +698,8 @@
     [(TcTypeBind name _ rest)
       (if (string-eq name (tc-default-boundary-name))
         0
-        (+ 1 (tc-env-default-shadow-count rest)))]
-    [(TcTypeCache _ _ _ rest) (tc-env-default-shadow-count rest)]))
+        (+ 1 (tc-env-default-shadow-count (box-get rest))))]
+    [(TcTypeCache _ _ _ rest) (tc-env-default-shadow-count (box-get rest))]))
 
 (define (tc-env-default-shadow-fill [env : TcTypeEnv] [shadows : StringI64Map]) : StringI64Map
   (match env
@@ -700,8 +707,11 @@
     [(TcTypeBind name _ rest)
       (if (string-eq name (tc-default-boundary-name))
         shadows
-        (tc-env-default-shadow-fill rest (string-i64-map-put shadows name 1)))]
-    [(TcTypeCache _ _ _ rest) (tc-env-default-shadow-fill rest shadows)]))
+        (tc-env-default-shadow-fill
+          (box-get rest)
+          (string-i64-map-put shadows name 1)))]
+    [(TcTypeCache _ _ _ rest)
+      (tc-env-default-shadow-fill (box-get rest) shadows)]))
 
 (define (tc-env-unsafe-cache-add
   [shadows : StringI64Map]
@@ -724,12 +734,12 @@
     [(TcTypeNil) shadows]
     [(TcTypeBind name _ rest)
       (tc-env-unsafe-cache-fill
-        rest
+        (box-get rest)
         (tc-env-unsafe-cache-add
           shadows
           name
-          (tc-binding-unsafe-marker-head? rest name)))]
-    [(TcTypeCache _ _ _ rest) (tc-env-unsafe-cache-fill rest shadows)]))
+          (tc-binding-unsafe-marker-head? (box-get rest) name)))]
+    [(TcTypeCache _ _ _ rest) (tc-env-unsafe-cache-fill (box-get rest) shadows)]))
 
 (define (tc-env-with-cache [env : TcTypeEnv]) : TcTypeEnv
   (let
@@ -748,7 +758,7 @@
           env
           (string-i64-map-with-capacity
             (tc-env-cache-capacity (+ count shadow-count)))))]
-    (TcTypeCache ids values shadows env)))
+    (TcTypeCache ids values shadows (box env))))
 
 (define (tc-bind-alias-if-free [env : TcTypeEnv] [name : String] [ty : AstType]) : TcTypeEnv
   (if (tc-name-bound? env name)
@@ -844,7 +854,7 @@
     [(TcTypeBind key _ rest)
       (if (string-eq key (tc-unsafe-marker-name))
         true
-        (tc-in-unsafe? rest))]))
+        (tc-in-unsafe? (box-get rest)))]))
 
 (define (tc-bind-return-type [env : TcTypeEnv] [ty : AstType]) : TcTypeEnv
   (tc-bind env (tc-return-type-name) ty))
@@ -858,7 +868,7 @@
     [(TcTypeBind key ty rest)
       (if (string-eq key (tc-return-type-name))
         (OkTcType ty)
-        (tc-current-return-type rest))]))
+        (tc-current-return-type (box-get rest)))]))
 
 (define (tc-type-list1 [a : AstType]) : AstTypeList
   (ast-type-cons a AstTypeNil))
@@ -1070,7 +1080,7 @@
     [(TcTypeBind key ty rest)
       (if (string-eq key name)
         (OkTcType ty)
-        (tc-lookup rest name))]))
+        (tc-lookup (box-get rest) name))]))
 
 (define (tc-lookup-visible [ctx : TcContext] [env : TcTypeEnv] [name : String]) : ResultTcType
   (match (tc-lookup env name)
@@ -1086,11 +1096,12 @@
   [name : String]) : ResultTcType
   (match env
     [(TcTypeNil) (tc-lookup root name)]
-    [(TcTypeCache _ _ _ rest) (tc-lookup-hygiene-global-scan root rest name)]
+    [(TcTypeCache _ _ _ rest)
+      (tc-lookup-hygiene-global-scan root (box-get rest) name)]
     [(TcTypeBind key _ rest)
       (if (string-eq key (tc-hygiene-global-boundary-name))
-        (tc-lookup rest name)
-        (tc-lookup-hygiene-global-scan root rest name))]))
+        (tc-lookup (box-get rest) name)
+        (tc-lookup-hygiene-global-scan root (box-get rest) name))]))
 
 (define (tc-lookup-hygiene-global [env : TcTypeEnv] [name : String]) : ResultTcType
   (tc-lookup-hygiene-global-scan env env name))
@@ -1113,11 +1124,11 @@
   (match env
     [(TcTypeNil) (tc-binding-unsafe? root name)]
     [(TcTypeCache _ _ _ rest)
-      (tc-hygiene-global-binding-unsafe-scan root rest name)]
+      (tc-hygiene-global-binding-unsafe-scan root (box-get rest) name)]
     [(TcTypeBind key _ rest)
       (if (string-eq key (tc-hygiene-global-boundary-name))
-        (tc-binding-unsafe? rest name)
-        (tc-hygiene-global-binding-unsafe-scan root rest name))]))
+        (tc-binding-unsafe? (box-get rest) name)
+        (tc-hygiene-global-binding-unsafe-scan root (box-get rest) name))]))
 
 (define (tc-hygiene-global-binding-unsafe? [env : TcTypeEnv] [name : String]) : bool
   (tc-hygiene-global-binding-unsafe-scan env env name))
@@ -1130,8 +1141,8 @@
       (if (string-eq key (tc-region-marker-name))
         (match ty
           [(AstTyVar region) (TcSomeString region)]
-          [_ (tc-active-region rest)])
-        (tc-active-region rest))]))
+          [_ (tc-active-region (box-get rest))])
+        (tc-active-region (box-get rest)))]))
 
 (define (tc-push-region [env : TcTypeEnv] [region : String]) : TcTypeEnv
   (tc-bind env (tc-region-marker-name) (AstTyVar region)))
@@ -1142,12 +1153,12 @@
     [(TcStringCons item rest)
       (if (string-eq item name)
         true
-        (tc-string-list-contains rest name))]))
+        (tc-string-list-contains (box-get rest) name))]))
 
 (define (tc-string-list-add [items : TcStringList] [name : String]) : TcStringList
   (if (tc-string-list-contains items name)
     items
-    (TcStringCons name items)))
+    (TcStringCons name (box items))))
 
 (define (tc-bind-cleanup-owner [env : TcTypeEnv] [name : String]) : TcTypeEnv
   (tc-bind env (tc-cleanup-owner-marker-name) (AstTyVar name)))
@@ -1181,8 +1192,8 @@
     [(TcTypeCache _ _ _ _) false]
     [(TcTypeBind key ty rest)
       (if (string-eq key name)
-        (tc-cleanup-owner-marker-head? rest name)
-        (tc-cleanup-owner-active? rest name))]))
+        (tc-cleanup-owner-marker-head? (box-get rest) name)
+        (tc-cleanup-owner-active? (box-get rest) name))]))
 
 (define (tc-active-cleanup-owners-scan [root : TcTypeEnv] [env : TcTypeEnv]) : TcStringList
   (match env
@@ -1190,7 +1201,8 @@
     [(TcTypeCache _ _ _ _) TcStringNil]
     [(TcTypeBind key ty rest)
       (let
-        [owners : TcStringList (tc-active-cleanup-owners-scan root rest)]
+        [owners : TcStringList
+          (tc-active-cleanup-owners-scan root (box-get rest))]
         (if (string-eq key (tc-cleanup-owner-marker-name))
           (match ty
             [(AstTyVar owner)
@@ -1210,7 +1222,9 @@
         [(TcStringNil) true]
         [_ false])]
     [(TcStringCons item rest)
-      (and (tc-string-list-contains b item) (tc-string-list-eq rest b))]))
+      (and
+        (tc-string-list-contains b item)
+        (tc-string-list-eq (box-get rest) b))]))
 
 (define (tc-string-list-overlaps? [a : TcStringList] [b : TcStringList]) : bool
   (match a
@@ -1218,7 +1232,7 @@
     [(TcStringCons item rest)
       (if (tc-string-list-contains b item)
         true
-        (tc-string-list-overlaps? rest b))]))
+        (tc-string-list-overlaps? (box-get rest) b))]))
 
 (define (tc-string-list-all-in? [items : TcStringList] [allowed : TcStringList]) : bool
   (match items
@@ -1226,7 +1240,7 @@
     [(TcStringCons item rest)
       (and
         (tc-string-list-contains allowed item)
-        (tc-string-list-all-in? rest allowed))]))
+        (tc-string-list-all-in? (box-get rest) allowed))]))
 
 (define (tc-lifetime-list-count [items : AstLifetimeList]) : i64
   (match items
@@ -1306,7 +1320,7 @@
     [(TcLifetimeSubstCons from to rest)
       (if (string-eq from name)
         (TcSomeString to)
-        (tc-lifetime-subst-lookup rest name))]))
+        (tc-lifetime-subst-lookup (box-get rest) name))]))
 
 (define (tc-lifetime-subst-bind
   [subst : TcLifetimeSubst]
@@ -1317,7 +1331,7 @@
       (if (string-eq existing to)
         (OkTcLifetimeSubst subst)
         (ErrTcLifetimeSubst "typecheck: constructor lifetime mismatch"))]
-    [(TcNoString) (OkTcLifetimeSubst (TcLifetimeSubstCons from to subst))]))
+    [(TcNoString) (OkTcLifetimeSubst (TcLifetimeSubstCons from to (box subst)))]))
 
 (define (tc-lifetime-subst-apply [subst : TcLifetimeSubst] [name : String]) : String
   (match (tc-lifetime-subst-lookup subst name)
@@ -1361,7 +1375,7 @@
     [(TcTypeBind key ty rest)
       (if (tc-env-binding-matches-lifetime? key ty lifetime)
         true
-        (tc-lifetime-visible? rest lifetime))]))
+        (tc-lifetime-visible? (box-get rest) lifetime))]))
 
 (define (tc-reference-lifetimes-visible?
   [env : TcTypeEnv]
@@ -1371,7 +1385,7 @@
     [(TcStringCons lifetime rest)
       (and
         (tc-lifetime-visible? env lifetime)
-        (tc-reference-lifetimes-visible? env rest))]))
+        (tc-reference-lifetimes-visible? env (box-get rest)))]))
 
 (define (tc-lifetime-outlives-binding-scan
   [env : TcTypeEnv]
@@ -1385,7 +1399,7 @@
       (if (tc-env-binding-matches-lifetime? key ty lifetime)
         seen-target
         (tc-lifetime-outlives-binding-scan
-          rest
+          (box-get rest)
           lifetime
           target
           (or seen-target (string-eq key target))))]))
@@ -1405,7 +1419,7 @@
     [(TcStringCons lifetime rest)
       (and
         (tc-lifetime-outlives-binding? env lifetime target)
-        (tc-reference-lifetimes-outlive-binding? env rest target))]))
+        (tc-reference-lifetimes-outlive-binding? env (box-get rest) target))]))
 
 (define (tc-lifetime-outlives-lifetime-scan
   [env : TcTypeEnv]
@@ -1421,7 +1435,7 @@
         (if (tc-env-binding-matches-lifetime? key ty value-lifetime)
           seen-target
           (tc-lifetime-outlives-lifetime-scan
-            rest
+            (box-get rest)
             value-lifetime
             target-lifetime
             (or
@@ -1443,7 +1457,10 @@
     [(TcStringCons lifetime rest)
       (and
         (tc-lifetime-outlives-lifetime? env lifetime target-lifetime)
-        (tc-reference-lifetimes-outlive-lifetime? env rest target-lifetime))]))
+        (tc-reference-lifetimes-outlive-lifetime?
+          env
+          (box-get rest)
+          target-lifetime))]))
 
 (define (tc-ensure-reference-value-can-bind
   [env : TcTypeEnv]
@@ -1804,7 +1821,7 @@
   (match lifetimes
     [(TcStringNil) ty]
     [(TcStringCons lifetime rest)
-      (tc-tag-region lifetime (tc-tag-reference-lifetimes rest ty))]))
+      (tc-tag-region lifetime (tc-tag-reference-lifetimes (box-get rest) ty))]))
 
 (define (tc-constructor-target-type
   [env : TcTypeEnv]
@@ -1844,11 +1861,18 @@
                 (if (string-eq region target-region)
                   true
                   (tc-region-outlives-or-matches
-                    rest
+                    (box-get rest)
                     value-region
                     target-region)))]
-            [_ (tc-region-outlives-or-matches rest value-region target-region)])
-          (tc-region-outlives-or-matches rest value-region target-region))])))
+            [_
+              (tc-region-outlives-or-matches
+                (box-get rest)
+                value-region
+                target-region)])
+          (tc-region-outlives-or-matches
+            (box-get rest)
+            value-region
+            target-region))])))
 
 (define (tc-region-can-flow-into-any
   [env : TcTypeEnv]
@@ -1859,7 +1883,7 @@
     [(TcStringCons target rest)
       (if (tc-region-outlives-or-matches env value-region target)
         true
-        (tc-region-can-flow-into-any env value-region rest))]))
+        (tc-region-can-flow-into-any env value-region (box-get rest)))]))
 
 (define (tc-region-list-can-flow-into
   [env : TcTypeEnv]
@@ -1870,7 +1894,7 @@
     [(TcStringCons value rest)
       (and
         (tc-region-can-flow-into-any env value target-regions)
-        (tc-region-list-can-flow-into env rest target-regions))]))
+        (tc-region-list-can-flow-into env (box-get rest) target-regions))]))
 
 (define (tc-ensure-region-value-can-flow-into
   [env : TcTypeEnv]
@@ -2585,7 +2609,7 @@
     [(TcStringCons lifetime rest)
       (and
         (tc-decl-lifetime-name-allowed? params lifetime)
-        (tc-decl-lifetime-string-list-all-in? rest params))]))
+        (tc-decl-lifetime-string-list-all-in? (box-get rest) params))]))
 
 (define (tc-source-type-decl-lifetimes-ok
   [ctx : TcContext]
@@ -2651,91 +2675,20 @@
                 (tc-source-variant-list-lifetimes-policy-ok ctx params rest)]
               [(ErrTcUnit message) (ErrTcUnit message)])]))]))
 
-(define (tc-type-list-mentions-enum?
+(define (tc-source-default-aggregate-layout-finite-ok
   [ctx : TcContext]
-  [types : AstTypeList]
-  [enum-name : String]) : bool
-  (match types
-    [(AstTypeNil) false]
-    [(AstTypeCons head tail)
-      (let
-        [head : AstType (box-get head)]
-        [tail : AstTypeList (box-get tail)]
-        (or
-          (tc-type-mentions-enum? ctx head enum-name)
-          (tc-type-list-mentions-enum? ctx tail enum-name)))]))
+  [name : String]) : ResultTcUnit
+  (tc-inline-aggregate-layout-finite-ok
+    ctx
+    (compiler-symbol-module-key (tc-context-module ctx) name)))
 
-(define (tc-type-mentions-enum?
+(define (tc-source-default-struct-layout-finite-ok
   [ctx : TcContext]
-  [ty : AstType]
-  [enum-name : String]) : bool
-  (match (tc-type-strip-region (tc-resolve-type ctx ty))
-    [(AstTyEnum name) (string-eq name enum-name)]
-    [(AstTyEnumArgs name _) (string-eq name enum-name)]
-    [(AstTyTuple elems) (tc-type-list-mentions-enum? ctx elems enum-name)]
-    [(AstTyArray elem _) (tc-type-mentions-enum? ctx (box-get elem) enum-name)]
-    [_ false]))
-
-(define (tc-type-mentions-enum-indirectly?
-  [ctx : TcContext]
-  [ty : AstType]
-  [enum-name : String]) : bool
-  (match (tc-type-strip-region (tc-resolve-type ctx ty))
-    [(AstTyTuple elems) (tc-type-list-mentions-enum? ctx elems enum-name)]
-    [(AstTyArray elem _) (tc-type-mentions-enum? ctx (box-get elem) enum-name)]
-    [_ false]))
-
-(define (tc-recursive-enum-inline-message
-  [enum-name : String]
-  [variant-name : String]) : String
-  (string-append
-    "typecheck: recursive enum "
-    (string-append
-      enum-name
-      (string-append
-        " (variant "
-        (string-append
-          variant-name
-          ") via an inline compound type is not yet supported; reference the enum directly (it is heap-pointer-indirected) - see #13")))))
-
-(define (tc-recursive-enum-variant-inline-policy-ok
-  [ctx : TcContext]
-  [enum-name : String]
-  [variant-name : String]
-  [fields : AstTypeList]) : ResultTcUnit
-  (match fields
-    [(AstTypeNil) OkTcUnit]
-    [(AstTypeCons field rest)
-      (let
-        [field : AstType (box-get field)]
-        [rest : AstTypeList (box-get rest)]
-        (if (tc-type-mentions-enum-indirectly? ctx field enum-name)
-          (ErrTcUnit (tc-recursive-enum-inline-message enum-name variant-name))
-          (tc-recursive-enum-variant-inline-policy-ok
-            ctx
-            enum-name
-            variant-name
-            rest)))]))
-
-(define (tc-recursive-enum-inline-policy-ok
-  [ctx : TcContext]
-  [enum-name : String]
-  [variants : AstVariantDefList]) : ResultTcUnit
-  (match variants
-    [(AstVariantDefNil) OkTcUnit]
-    [(AstVariantDefCons variant rest)
-      (let
-        [rest : AstVariantDefList (box-get rest)]
-        (match variant
-          [(AstVariantDef variant-name fields)
-            (match (tc-recursive-enum-variant-inline-policy-ok
-              ctx
-              enum-name
-              variant-name
-              fields)
-              [(OkTcUnit)
-                (tc-recursive-enum-inline-policy-ok ctx enum-name rest)]
-              [(ErrTcUnit message) (ErrTcUnit message)])]))]))
+  [name : String]
+  [repr : AstStructRepr]) : ResultTcUnit
+  (if (ast-struct-repr-c? repr)
+    OkTcUnit
+    (tc-source-default-aggregate-layout-finite-ok ctx name)))
 
 (define (tc-source-pattern-list-policy-ok
   [ctx : TcContext]
@@ -3146,11 +3099,7 @@
     [(AstDeclExtern _ _ ty) (tc-source-type-policy-ok ctx ty)]
     [(AstDeclDefEnum name variants)
       (match (tc-source-variant-list-policy-ok ctx variants)
-        [(OkTcUnit)
-          (tc-recursive-enum-inline-policy-ok
-            ctx
-            (compiler-symbol-module-key (tc-context-module ctx) name)
-            variants)]
+        [(OkTcUnit) (tc-source-default-aggregate-layout-finite-ok ctx name)]
         [(ErrTcUnit message) (ErrTcUnit message)])]
     [(AstDeclDefEnumLifetimes name lifetimes variants)
       (if (tc-lifetime-list-duplicates? lifetimes)
@@ -3159,11 +3108,7 @@
           ctx
           lifetimes
           variants)
-          [(OkTcUnit)
-            (tc-recursive-enum-inline-policy-ok
-              ctx
-              (compiler-symbol-module-key (tc-context-module ctx) name)
-              variants)]
+          [(OkTcUnit) (tc-source-default-aggregate-layout-finite-ok ctx name)]
           [(ErrTcUnit message) (ErrTcUnit message)]))]
     [(AstDeclDefStruct name repr cleanup fields)
       (match (tc-source-field-list-policy-ok ctx fields)
@@ -3172,7 +3117,7 @@
             (ErrTcUnit
               (tc-struct-cleanup-repr-c-message
                 (compiler-symbol-module-key (tc-context-module ctx) name)))
-            OkTcUnit)]
+            (tc-source-default-struct-layout-finite-ok ctx name repr))]
         [(ErrTcUnit message) (ErrTcUnit message)])]
     [(AstDeclDefStructLifetimes name lifetimes repr cleanup fields)
       (if (tc-lifetime-list-duplicates? lifetimes)
@@ -3183,7 +3128,7 @@
               (ErrTcUnit
                 (tc-struct-cleanup-repr-c-message
                   (compiler-symbol-module-key (tc-context-module ctx) name)))
-              OkTcUnit)]
+              (tc-source-default-struct-layout-finite-ok ctx name repr))]
           [(ErrTcUnit message) (ErrTcUnit message)]))]
     [(AstDeclDefDispatch _ _) OkTcUnit]
     [(AstDeclIncludeStr _ _)
@@ -3669,14 +3614,14 @@
 (define (tc-spmd-env-from-type-env [env : TcTypeEnv]) : TcSpmdEnv
   (match env
     [(TcTypeNil) TcSpmdEnvNil]
-    [(TcTypeCache _ _ _ rest) (tc-spmd-env-from-type-env rest)]
+    [(TcTypeCache _ _ _ rest) (tc-spmd-env-from-type-env (box-get rest))]
     [(TcTypeBind name ty rest)
       (TcSpmdEnvBind
         name
         ty
         TcSpmdUniform
         TcSpmdOuter
-        (tc-spmd-env-from-type-env rest))]))
+        (box (tc-spmd-env-from-type-env (box-get rest))))]))
 
 (define (tc-spmd-env-bind
   [env : TcSpmdEnv]
@@ -3684,7 +3629,7 @@
   [ty : AstType]
   [class : TcSpmdClass]
   [scope : TcSpmdScope]) : TcSpmdEnv
-  (TcSpmdEnvBind name ty class scope env))
+  (TcSpmdEnvBind name ty class scope (box env)))
 
 (define (tc-spmd-env-lookup [env : TcSpmdEnv] [name : String]) : TcSpmdLookup
   (match env
@@ -3692,7 +3637,7 @@
     [(TcSpmdEnvBind key ty class scope rest)
       (if (string-eq key name)
         (TcSpmdFound ty class scope)
-        (tc-spmd-env-lookup rest name))]))
+        (tc-spmd-env-lookup (box-get rest) name))]))
 
 (define (tc-spmd-env-has-local? [env : TcSpmdEnv] [name : String]) : bool
   (match env
@@ -3701,8 +3646,8 @@
       (if (string-eq key name)
         (match scope
           [(TcSpmdLocal) true]
-          [(TcSpmdOuter) (tc-spmd-env-has-local? rest name)])
-        (tc-spmd-env-has-local? rest name))]))
+          [(TcSpmdOuter) (tc-spmd-env-has-local? (box-get rest) name)])
+        (tc-spmd-env-has-local? (box-get rest) name))]))
 
 (define (tc-spmd-env-has-outer? [env : TcSpmdEnv] [name : String]) : bool
   (match env
@@ -3711,8 +3656,8 @@
       (if (string-eq key name)
         (match scope
           [(TcSpmdOuter) true]
-          [(TcSpmdLocal) (tc-spmd-env-has-outer? rest name)])
-        (tc-spmd-env-has-outer? rest name))]))
+          [(TcSpmdLocal) (tc-spmd-env-has-outer? (box-get rest) name)])
+        (tc-spmd-env-has-outer? (box-get rest) name))]))
 
 (define (tc-spmd-env-set-local-class
   [env : TcSpmdEnv]
@@ -3730,26 +3675,32 @@
               ty
               old-class
               scope
-              (tc-spmd-env-set-local-class rest name class))])
+              (box (tc-spmd-env-set-local-class (box-get rest) name class)))])
         (TcSpmdEnvBind
           key
           ty
           old-class
           scope
-          (tc-spmd-env-set-local-class rest name class)))]))
+          (box (tc-spmd-env-set-local-class (box-get rest) name class))))]))
 
 (define (tc-spmd-env-pop [env : TcSpmdEnv] [count : i64]) : TcSpmdEnv
   (if (<= count 0)
     env
     (match env
       [(TcSpmdEnvNil) TcSpmdEnvNil]
-      [(TcSpmdEnvBind _ _ _ _ rest) (tc-spmd-env-pop rest (- count 1))])))
+      [(TcSpmdEnvBind _ _ _ _ rest)
+        (tc-spmd-env-pop (box-get rest) (- count 1))])))
 
 (define (tc-spmd-env-mark-outer [env : TcSpmdEnv]) : TcSpmdEnv
   (match env
     [(TcSpmdEnvNil) TcSpmdEnvNil]
     [(TcSpmdEnvBind name ty class _ rest)
-      (TcSpmdEnvBind name ty class TcSpmdOuter (tc-spmd-env-mark-outer rest))]))
+      (TcSpmdEnvBind
+        name
+        ty
+        class
+        TcSpmdOuter
+        (box (tc-spmd-env-mark-outer (box-get rest))))]))
 
 (define (tc-spmd-env-merge-classes [left : TcSpmdEnv] [right : TcSpmdEnv]) : TcSpmdEnv
   (match left
@@ -3763,7 +3714,10 @@
             ty
             (tc-spmd-merge-class class right-class)
             scope
-            (tc-spmd-env-merge-classes left-rest right-rest))])]))
+            (box
+              (tc-spmd-env-merge-classes
+                (box-get left-rest)
+                (box-get right-rest))))])]))
 
 (define (tc-type-env-box-smoke?) : bool
   (let
@@ -4846,7 +4800,7 @@
     [(TcModuleLocalEnvCons cached-module env rest)
       (if (string-eq cached-module module)
         (TcSomeTypeEnv env)
-        (tc-module-local-env-cache-lookup rest module))]))
+        (tc-module-local-env-cache-lookup (box-get rest) module))]))
 
 (define (tc-module-local-env-cached
   [ctx : TcContext]
@@ -4860,7 +4814,9 @@
       [(TcNoTypeEnv)
         (match (tc-module-local-env ctx top-env module)
           [(OkTcEnv env)
-            (OkTcModuleLocalEnv env (TcModuleLocalEnvCons module env cache))]
+            (OkTcModuleLocalEnv
+              env
+              (TcModuleLocalEnvCons module env (box cache)))]
           [(ErrTcEnv message) (ErrTcModuleLocalEnv message)])])))
 
 (define (tc-expect [actual : AstType] [expected : AstType] [message : String]) : ResultTcUnit
@@ -5185,7 +5141,7 @@
         false
         (if (string-eq key (tc-default-boundary-name))
           true
-          (tc-default-builtin-unshadowed-scan? rest name)))]))
+          (tc-default-builtin-unshadowed-scan? (box-get rest) name)))]))
 
 (define (tc-default-builtin-unshadowed? [env : TcTypeEnv] [name : String]) : bool
   (if (tc-region-arg-builtin-name? name)
@@ -8291,9 +8247,17 @@
             (or
               (string-eq key (tc-default-boundary-name))
               (tc-cleanup-owner-marker-entry? key ty)))
-          (tc-check-lambda-region-captures-scan-root root rest bound body)]
+          (tc-check-lambda-region-captures-scan-root
+            root
+            (box-get rest)
+            bound
+            body)]
         [(not (tc-expr-uses-free-name? body key bound))
-          (tc-check-lambda-region-captures-scan-root root rest bound body)]
+          (tc-check-lambda-region-captures-scan-root
+            root
+            (box-get rest)
+            bound
+            body)]
         [(tc-expr-sets-free-name? body key bound)
           (ErrTcUnit "typecheck: lambda cannot assign captured binding")]
         [(tc-cleanup-owner-active? root key)
@@ -8305,7 +8269,12 @@
         [(tc-type-contains-any-region ty)
           (ErrTcUnit
             "typecheck: lambda cannot capture region-tagged value; region value would escape")]
-        [else (tc-check-lambda-region-captures-scan-root root rest bound body)])]))
+        [else
+          (tc-check-lambda-region-captures-scan-root
+            root
+            (box-get rest)
+            bound
+            body)])]))
 
 (define (tc-check-lambda-region-captures-scan
   [env : TcTypeEnv]
@@ -8464,7 +8433,7 @@
     [(TcReprCFieldLayoutCons field rest)
       (if (string-eq (tc-repr-c-field-layout-name field) name)
         (tc-repr-c-field-layout-offset field)
-        (tc-repr-c-layout-field-offset rest name))]))
+        (tc-repr-c-layout-field-offset (box-get rest) name))]))
 
 (define (tc-inline-field-layout-name [field : TcInlineFieldLayout]) : String
   (match field
@@ -8486,7 +8455,7 @@
     [(TcInlineFieldLayoutCons field rest)
       (if (string-eq (tc-inline-field-layout-name field) name)
         (tc-inline-field-layout-offset field)
-        (tc-inline-field-layout-list-offset rest name))]))
+        (tc-inline-field-layout-list-offset (box-get rest) name))]))
 
 (define (tc-inline-payload-layout-index [payload : TcInlinePayloadLayout]) : i64
   (match payload
@@ -8508,7 +8477,7 @@
     [(TcInlinePayloadLayoutCons payload rest)
       (if (= (tc-inline-payload-layout-index payload) index)
         (tc-inline-payload-layout-offset payload)
-        (tc-inline-payload-layout-list-offset rest index))]))
+        (tc-inline-payload-layout-list-offset (box-get rest) index))]))
 
 (define (tc-inline-variant-layout-name [variant : TcInlineVariantLayout]) : String
   (match variant
@@ -8534,7 +8503,7 @@
     [(TcInlineVariantLayoutCons variant rest)
       (if (string-eq (tc-inline-variant-layout-name variant) name)
         (tc-inline-variant-layout-size variant)
-        (tc-inline-variant-layout-list-size rest name))]))
+        (tc-inline-variant-layout-list-size (box-get rest) name))]))
 
 (define (tc-inline-variant-layout-list-payload-offset
   [variants : TcInlineVariantLayoutList]
@@ -8547,7 +8516,7 @@
         (tc-inline-payload-layout-list-offset
           (tc-inline-variant-layout-payloads variant)
           index)
-        (tc-inline-variant-layout-list-payload-offset rest name index))]))
+        (tc-inline-variant-layout-list-payload-offset (box-get rest) name index))]))
 
 (define (tc-inline-aggregate-layout-size [layout : TcInlineAggregateLayout]) : i64
   (match layout
@@ -8626,7 +8595,7 @@
     [(TcStringNil) ""]
     [(TcStringCons head rest)
       (let
-        [tail : String (tc-inline-aggregate-cycle-stack-render rest)]
+        [tail : String (tc-inline-aggregate-cycle-stack-render (box-get rest))]
         (if (string-eq tail "")
           head
           (tc-cat3 tail " -> " head)))]))
@@ -8707,7 +8676,7 @@
               (tc-inline-aggregate-variants-finite-ok
                 ctx
                 variants
-                (TcStringCons name stack))]
+                (TcStringCons name (box stack)))]
             [(ErrAstVariantDefList message) (ErrTcUnit message)])
           (if (=
             (compiler-symbol-handle-kind handle)
@@ -8719,7 +8688,7 @@
                     (tc-inline-aggregate-fields-finite-ok
                       ctx
                       fields
-                      (TcStringCons name stack))])]
+                      (TcStringCons name (box stack)))])]
               [(ErrTcStructDecl message) (ErrTcUnit message)])
             (ErrTcUnit (string-append "typecheck: unknown aggregate " name))))]
       [(NoneI64)
@@ -8844,7 +8813,7 @@
                                 align
                                 (TcInlineFieldLayoutCons
                                   (TcInlineFieldLayout name resolved offset)
-                                  rest-fields)))])]
+                                  (box rest-fields))))])]
                       [(ErrTcInlineFieldsLayout message)
                         (ErrTcInlineFieldsLayout message)]))]
                 [(ErrTcLayoutInfo message) (ErrTcInlineFieldsLayout message)]))]))]))
@@ -8891,7 +8860,7 @@
                           align
                           (TcInlinePayloadLayoutCons
                             (TcInlinePayloadLayout index resolved offset)
-                            rest-payloads)))])]
+                            (box rest-payloads))))])]
                 [(ErrTcInlinePayloadFieldsLayout message)
                   (ErrTcInlinePayloadFieldsLayout message)]))]
           [(ErrTcLayoutInfo message) (ErrTcInlinePayloadFieldsLayout message)]))]))
@@ -8912,7 +8881,7 @@
               fields
               0
               0
-              (TcStringCons struct-name stack))
+              (TcStringCons struct-name (box stack)))
               [(OkTcInlineFieldsLayout layout)
                 (match layout
                   [(TcInlineFieldsLayout size align fields-layout)
@@ -8972,7 +8941,7 @@
                                       variant-size
                                       variant-align
                                       payloads)
-                                    rest-variants)))]
+                                    (box rest-variants))))]
                             [(TcInlineStructLayout _ _ _)
                               (ErrTcInlineAggregateLayout
                                 "typecheck: internal inline enum layout mismatch")])]
@@ -8995,7 +8964,7 @@
           variants
           8
           8
-          (TcStringCons enum-name stack))]
+          (TcStringCons enum-name (box stack)))]
       [(ErrAstVariantDefList message) (ErrTcInlineAggregateLayout message)])))
 
 (define (tc-inline-aggregate-layout-for-with-stack
@@ -9242,7 +9211,7 @@
                             (tc-repr-c-layout-align rest-layout)
                             (TcReprCFieldLayoutCons
                               (TcReprCFieldLayout name resolved offset)
-                              (tc-repr-c-layout-fields rest-layout))))]
+                              (box (tc-repr-c-layout-fields rest-layout)))))]
                       [(ErrTcReprCLayout message) (ErrTcReprCLayout message)]))]
                 [(ErrTcLayoutInfo message) (ErrTcReprCLayout message)]))]))]))
 
@@ -9282,7 +9251,7 @@
         [(TcInlineFieldLayout name _ offset)
           (CtfeLayoutFieldCons
             (CtfeLayoutField name offset)
-            (box (tc-ctfe-inline-layout-fields rest)))])]))
+            (box (tc-ctfe-inline-layout-fields (box-get rest))))])]))
 
 (define (tc-ctfe-inline-aggregate-layout-info
   [name : String]
@@ -12518,7 +12487,7 @@
 
 (defenum MacroHygieneEnv
   (MacroHygieneNil)
-  (MacroHygieneBind String String MacroHygieneEnv))
+  (MacroHygieneBind String String (Box MacroHygieneEnv)))
 
 (defenum MacroHygieneName
   (MacroHygieneName String MacroHygieneEnv))
@@ -12550,7 +12519,7 @@
     [(MacroHygieneBind key value rest)
       (if (string-eq key name)
         (TcSomeString value)
-        (macro-hygiene-env-lookup rest name))]))
+        (macro-hygiene-env-lookup (box-get rest) name))]))
 
 (define (macro-hygiene-fresh-local
   [macro-name : String]
@@ -12580,7 +12549,7 @@
     (let
       [base : String (tc-hygiene-template-base name)]
       [renamed : String (macro-hygiene-fresh-local macro-name depth base)]
-      (MacroHygieneName renamed (MacroHygieneBind base renamed env)))
+      (MacroHygieneName renamed (MacroHygieneBind base renamed (box env))))
     (MacroHygieneName name env)))
 
 (define (macro-hygiene-expr-list

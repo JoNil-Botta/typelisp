@@ -27,6 +27,8 @@ Coverage notes:
 - `list_api.tl` covers the monomorphic `StringList` and `StringListBuilder`
   helpers: empty/single lists, count, reverse, append, build-onto order, and
   array conversion with count clamping.
+- `core_macros_api.tl` covers explicit import of the stdlib core macro module
+  and the qualified `core/when` and `core/unless` guard macros.
 - `io_edges.tl` covers `IoError` rendering, `try-read-file`,
   `try-write-file`, `try-file-exists?`, `try-append-file`, `read-file-or`,
   `append-file`, and `file-nonempty?` on missing, empty-path, directory-read,

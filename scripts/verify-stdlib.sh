@@ -156,6 +156,7 @@ should_skip_staged() {
 stdlib_manifest() {
     cat <<'EOF'
 arena.tl
+core_macros.tl
 io.tl
 env.tl
 cpu.tl
@@ -240,6 +241,7 @@ stdlib_check_manifest() {
 stdlib/tests/arena_policy.tl|pass|-
 stdlib/tests/arena_policy_escape_string.tl|fail|cannot escape with-arena 'inner'
 stdlib/tests/arena_policy_escape_text_buf.tl|fail|cannot escape with-arena 'inner'
+stdlib/tests/core_macros_api.tl|pass|-
 stdlib/tests/io_stdio_pipe_short_read.tl|pass|-
 stdlib/tests/borrowed_str_gate.tl|pass|-|requires-borrowed-str-capable
 EOF

@@ -841,7 +841,8 @@
 
 (define (compiler-typecheck-export-generated-decl-source) : String
   "(module data)
-(comptime-decl (defstruct Generated (value i64)))
+(comptime-decl (:generated generated-family Generated \"i64\")
+  (defstruct Generated (value i64)))
 (export (type Generated) (constructor Generated) (field Generated value))
 (module main)
 (import \"data.tl\" module data :as d)

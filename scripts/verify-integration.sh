@@ -274,8 +274,6 @@ compile_linux_c_deps() {
 #   arena_poison_*            Linux-only poison-on-reclaim debug mode
 #   c_abi_aggregate_color     Linux System V aggregate ABI fixture
 #   with_arena_*               existing host gaps
-#   tl_alloc_huge_trap /       Windows huge-alloc + region-reset guards do not
-#   region_reset_invalid_trap  abort cleanly with 134 (#1660)
 windows_integration_non_applicable_cases() {
     cat <<'EOF'
 arena_poison_clone_survives
@@ -283,8 +281,6 @@ arena_poison_stale_array_trap
 c_abi_aggregate_color
 with_arena_builtin_alloc
 with_arena_loop
-tl_alloc_huge_trap
-region_reset_invalid_trap
 EOF
 }
 

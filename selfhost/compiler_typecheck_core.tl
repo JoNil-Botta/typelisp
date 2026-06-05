@@ -1,6 +1,8 @@
 ;; compiler_typecheck_core.tl - Specialization-free scalar typechecker core (#1436).
 (import "../stdlib/io.tl")
 
+(import "../stdlib/arena.tl")
+
 (import "compiler_symbols.tl")
 
 (import "compiler_diagnostic.tl")
@@ -319,6 +321,50 @@
 (define (tc-return-type-name) : String
   "__tl_return_type")
 
+(define (tc-hygiene-global-boundary-name) : String
+  "__tl_hygiene_global_boundary")
+
+(define (tc-hygiene-template-prefix) : String
+  "__tl_macro_template$")
+
+(define (tc-hygiene-global-prefix) : String
+  "__tl_macro_global$")
+
+(define (tc-hygiene-local-prefix) : String
+  "__tl_macro_local$")
+
+(define (tc-hygiene-string-prefix? [text : String] [prefix : String]) : bool
+  (let
+    [text-len : i64 (string-length text)]
+    [prefix-len : i64 (string-length prefix)]
+    (if (< text-len prefix-len)
+      false
+      (string-eq (substring text 0 prefix-len) prefix))))
+
+(define (tc-hygiene-name-base [name : String] [prefix : String]) : String
+  (substring
+    name
+    (string-length prefix)
+    (- (string-length name) (string-length prefix))))
+
+(define (tc-hygiene-template-name? [name : String]) : bool
+  (tc-hygiene-string-prefix? name (tc-hygiene-template-prefix)))
+
+(define (tc-hygiene-template-base [name : String]) : String
+  (tc-hygiene-name-base name (tc-hygiene-template-prefix)))
+
+(define (tc-hygiene-global-name? [name : String]) : bool
+  (tc-hygiene-string-prefix? name (tc-hygiene-global-prefix)))
+
+(define (tc-hygiene-global-base [name : String]) : String
+  (tc-hygiene-name-base name (tc-hygiene-global-prefix)))
+
+(define (tc-hygiene-global-name [name : String]) : String
+  (string-append (tc-hygiene-global-prefix) name))
+
+(define (tc-hygiene-global-env [top-env : TcTypeEnv]) : TcTypeEnv
+  (tc-bind top-env (tc-hygiene-global-boundary-name) (AstTyUnit)))
+
 (define (tc-unsafe-marker-name) : String
   " __tl_unsafe_context")
 
@@ -435,33 +481,9 @@
     [(AstTyStruct name) name]
     [(AstTyVar name) name]))
 
-;; First-class arena primitives (#1633). The opaque `arena` handle is an i64
-;; pointer. `clone` is registered separately (it is type-directed: its result is
-;; its argument's type) in the call typechecker, not here.
-(define (tc-arena-builtins-env [env : TcTypeEnv]) : TcTypeEnv
-  (let
-    [out : TcTypeEnv env]
-    (begin
-      (set! out (tc-bind out "arena-make" (tc-fn0 (AstTyI64))))
-      (set!
-        out
-        (tc-bind-unsafe out "arena-destroy" (tc-fn1 (AstTyI64) (AstTyUnit))))
-      (set! out (tc-bind out "arena-current" (tc-fn0 (AstTyI64))))
-      (set!
-        out
-        (tc-bind-unsafe out "arena-set!" (tc-fn1 (AstTyI64) (AstTyUnit))))
-      (set! out (tc-bind out "arena-mark" (tc-fn0 (AstTyI64))))
-      (set!
-        out
-        (tc-bind-unsafe out "arena-rewind" (tc-fn1 (AstTyI64) (AstTyUnit))))
-      out)))
-
 (define (tc-default-env) : TcTypeEnv
   (tc-profile-builtins-env
-    (tc-bind
-      (tc-arena-builtins-env (tc-default-env-base))
-      (tc-default-boundary-name)
-      (AstTyUnit))))
+    (tc-bind (tc-default-env-base) (tc-default-boundary-name) (AstTyUnit))))
 
 (define (tc-profile-builtins-env [env : TcTypeEnv]) : TcTypeEnv
   (let
@@ -661,6 +683,37 @@
       (if (string-eq key name)
         (OkTcType ty)
         (tc-lookup rest name))]))
+
+(define (tc-lookup-hygiene-global-scan
+  [root : TcTypeEnv]
+  [env : TcTypeEnv]
+  [name : String]) : ResultTcType
+  (match env
+    [(TcTypeNil) (tc-lookup root name)]
+    [(TcTypeCache _ _ rest) (tc-lookup-hygiene-global-scan root rest name)]
+    [(TcTypeBind key _ rest)
+      (if (string-eq key (tc-hygiene-global-boundary-name))
+        (tc-lookup rest name)
+        (tc-lookup-hygiene-global-scan root rest name))]))
+
+(define (tc-lookup-hygiene-global [env : TcTypeEnv] [name : String]) : ResultTcType
+  (tc-lookup-hygiene-global-scan env env name))
+
+(define (tc-hygiene-global-binding-unsafe-scan
+  [root : TcTypeEnv]
+  [env : TcTypeEnv]
+  [name : String]) : bool
+  (match env
+    [(TcTypeNil) (tc-binding-unsafe? root name)]
+    [(TcTypeCache _ _ rest)
+      (tc-hygiene-global-binding-unsafe-scan root rest name)]
+    [(TcTypeBind key _ rest)
+      (if (string-eq key (tc-hygiene-global-boundary-name))
+        (tc-binding-unsafe? rest name)
+        (tc-hygiene-global-binding-unsafe-scan root rest name))]))
+
+(define (tc-hygiene-global-binding-unsafe? [env : TcTypeEnv] [name : String]) : bool
+  (tc-hygiene-global-binding-unsafe-scan env env name))
 
 (define (tc-active-region [env : TcTypeEnv]) : TcMaybeString
   (match env
@@ -7809,11 +7862,19 @@
     [(AstExprSpanned inner _) (tc-expr ctx env inner)]
     [(AstExprLiteral lit) (OkTcType (tc-literal-type lit))]
     [(AstExprVar name)
-      (if (tc-binding-unsafe? env name)
-        (match (tc-require-unsafe env name)
-          [(OkTcUnit) (tc-lookup env name)]
-          [(ErrTcUnit message) (ErrTcType message)])
-        (tc-lookup env name))]
+      (if (tc-hygiene-global-name? name)
+        (let
+          [global-name : String (tc-hygiene-global-base name)]
+          (if (tc-hygiene-global-binding-unsafe? env global-name)
+            (match (tc-require-unsafe env global-name)
+              [(OkTcUnit) (tc-lookup-hygiene-global env global-name)]
+              [(ErrTcUnit message) (ErrTcType message)])
+            (tc-lookup-hygiene-global env global-name)))
+        (if (tc-binding-unsafe? env name)
+          (match (tc-require-unsafe env name)
+            [(OkTcUnit) (tc-lookup env name)]
+            [(ErrTcUnit message) (ErrTcType message)])
+          (tc-lookup env name)))]
     [(AstExprTypeLiteral ty)
       (ErrTcType
         (string-append
@@ -8471,9 +8532,11 @@
   [value : CompilerCtfeValue]) : ResultTcUnit
   (match value
     [(CtfeExpr _ produced)
-      (if (tc-type-compatible?
-        (tc-resolve-type ctx ret)
-        (tc-resolve-type ctx produced))
+      (if (or
+        (tc-type-eq produced (AstTyExpr))
+        (tc-type-compatible?
+          (tc-resolve-type ctx ret)
+          (tc-resolve-type ctx produced)))
         OkTcUnit
         (ErrTcUnit
           "typecheck: macro body produced type does not match declaration"))]
@@ -8867,7 +8930,7 @@
 ;; so obvious operand type errors are reported at the macro call site.
 (defenum MacroMaybeDecl
   (MacroNoDecl)
-  (MacroSomeDecl AstMacroParamList AstType AstExpr))
+  (MacroSomeDecl String AstMacroParamList AstType AstExpr))
 
 (defenum ResultMacroExpr
   (OkMacroExpr AstExpr)
@@ -8905,6 +8968,397 @@
   (OkMacroExpand AstProgram)
   (ErrMacroExpand CompilerDiagnostic))
 
+(defenum MacroHygieneEnv
+  (MacroHygieneNil)
+  (MacroHygieneBind String String MacroHygieneEnv))
+
+(defenum MacroHygieneName
+  (MacroHygieneName String MacroHygieneEnv))
+
+(defenum MacroHygieneParams
+  (MacroHygieneParams AstParamList MacroHygieneEnv))
+
+(defenum MacroHygieneLetBindings
+  (MacroHygieneLetBindings AstLetBindingList MacroHygieneEnv))
+
+(defenum MacroHygieneResourceBindings
+  (MacroHygieneResourceBindings AstResourceBindingList MacroHygieneEnv))
+
+(defenum MacroHygienePattern
+  (MacroHygienePattern AstPattern MacroHygieneEnv))
+
+(defenum MacroHygienePatternList
+  (MacroHygienePatternList AstPatternList MacroHygieneEnv))
+
+(define (macro-hygiene-env-lookup [env : MacroHygieneEnv] [name : String]) : TcMaybeString
+  (match env
+    [(MacroHygieneNil) (TcNoString)]
+    [(MacroHygieneBind key value rest)
+      (if (string-eq key name)
+        (TcSomeString value)
+        (macro-hygiene-env-lookup rest name))]))
+
+(define (macro-hygiene-fresh-local
+  [macro-name : String]
+  [depth : i64]
+  [base : String]) : String
+  (string-append
+    (tc-hygiene-local-prefix)
+    (string-append
+      (int->string depth)
+      (string-append "$" (string-append macro-name (string-append "$" base))))))
+
+(define (macro-hygiene-rename-var [env : MacroHygieneEnv] [name : String]) : String
+  (if (tc-hygiene-template-name? name)
+    (let
+      [base : String (tc-hygiene-template-base name)]
+      (match (macro-hygiene-env-lookup env base)
+        [(TcSomeString renamed) renamed]
+        [(TcNoString) (tc-hygiene-global-name base)]))
+    name))
+
+(define (macro-hygiene-bind-name
+  [env : MacroHygieneEnv]
+  [macro-name : String]
+  [depth : i64]
+  [name : String]) : MacroHygieneName
+  (if (tc-hygiene-template-name? name)
+    (let
+      [base : String (tc-hygiene-template-base name)]
+      [renamed : String (macro-hygiene-fresh-local macro-name depth base)]
+      (MacroHygieneName renamed (MacroHygieneBind base renamed env)))
+    (MacroHygieneName name env)))
+
+(define (macro-hygiene-expr-list
+  [exprs : AstExprList]
+  [env : MacroHygieneEnv]
+  [macro-name : String]
+  [depth : i64]) : AstExprList
+  (match exprs
+    [(AstExprNil) AstExprNil]
+    [(AstExprCons head rest)
+      (AstExprCons
+        (macro-hygiene-expr head env macro-name depth)
+        (macro-hygiene-expr-list rest env macro-name depth))]))
+
+(define (macro-hygiene-param-list
+  [params : AstParamList]
+  [env : MacroHygieneEnv]
+  [macro-name : String]
+  [depth : i64]) : MacroHygieneParams
+  (match params
+    [(AstParamNil) (MacroHygieneParams AstParamNil env)]
+    [(AstParamCons param rest)
+      (match param
+        [(AstParam name ty comptime?)
+          (match (macro-hygiene-bind-name env macro-name depth name)
+            [(MacroHygieneName renamed next-env)
+              (match (macro-hygiene-param-list rest next-env macro-name depth)
+                [(MacroHygieneParams nrest final-env)
+                  (MacroHygieneParams
+                    (AstParamCons (AstParam renamed ty comptime?) nrest)
+                    final-env)])])])]))
+
+(define (macro-hygiene-pattern-list
+  [patterns : AstPatternList]
+  [env : MacroHygieneEnv]
+  [macro-name : String]
+  [depth : i64]) : MacroHygienePatternList
+  (match patterns
+    [(AstPatternNil) (MacroHygienePatternList AstPatternNil env)]
+    [(AstPatternCons pattern rest)
+      (match (macro-hygiene-pattern pattern env macro-name depth)
+        [(MacroHygienePattern npattern next-env)
+          (match (macro-hygiene-pattern-list rest next-env macro-name depth)
+            [(MacroHygienePatternList nrest final-env)
+              (MacroHygienePatternList
+                (AstPatternCons npattern nrest)
+                final-env)])])]))
+
+(define (macro-hygiene-pattern
+  [pattern : AstPattern]
+  [env : MacroHygieneEnv]
+  [macro-name : String]
+  [depth : i64]) : MacroHygienePattern
+  (match pattern
+    [(AstPatVar name maybe-ty)
+      (match (macro-hygiene-bind-name env macro-name depth name)
+        [(MacroHygieneName renamed next-env)
+          (MacroHygienePattern (AstPatVar renamed maybe-ty) next-env)])]
+    [(AstPatTuple patterns)
+      (match (macro-hygiene-pattern-list patterns env macro-name depth)
+        [(MacroHygienePatternList npatterns next-env)
+          (MacroHygienePattern (AstPatTuple npatterns) next-env)])]
+    [(AstPatWildcard) (MacroHygienePattern AstPatWildcard env)]
+    [(AstPatBinding name)
+      (match (macro-hygiene-bind-name env macro-name depth name)
+        [(MacroHygieneName renamed next-env)
+          (MacroHygienePattern (AstPatBinding renamed) next-env)])]
+    [(AstPatVariant name args)
+      (match (macro-hygiene-pattern-list args env macro-name depth)
+        [(MacroHygienePatternList nargs next-env)
+          (MacroHygienePattern (AstPatVariant name nargs) next-env)])]
+    [(AstPatLiteral lit) (MacroHygienePattern (AstPatLiteral lit) env)]))
+
+(define (macro-hygiene-let-bindings
+  [bindings : AstLetBindingList]
+  [env : MacroHygieneEnv]
+  [macro-name : String]
+  [depth : i64]) : MacroHygieneLetBindings
+  (match bindings
+    [(AstLetBindingNil) (MacroHygieneLetBindings AstLetBindingNil env)]
+    [(AstLetBindingCons binding rest)
+      (match binding
+        [(AstLetBinding name maybe-ty init)
+          (let
+            [ninit : AstExpr (macro-hygiene-expr init env macro-name depth)]
+            (match (macro-hygiene-bind-name env macro-name depth name)
+              [(MacroHygieneName renamed next-env)
+                (match (macro-hygiene-let-bindings
+                  rest
+                  next-env
+                  macro-name
+                  depth)
+                  [(MacroHygieneLetBindings nrest final-env)
+                    (MacroHygieneLetBindings
+                      (AstLetBindingCons
+                        (AstLetBinding renamed maybe-ty ninit)
+                        nrest)
+                      final-env)])]))])]))
+
+(define (macro-hygiene-resource-bindings
+  [bindings : AstResourceBindingList]
+  [env : MacroHygieneEnv]
+  [macro-name : String]
+  [depth : i64]) : MacroHygieneResourceBindings
+  (match bindings
+    [(AstResourceBindingNil)
+      (MacroHygieneResourceBindings AstResourceBindingNil env)]
+    [(AstResourceBindingCons binding rest)
+      (match binding
+        [(AstResourceBinding name init cleanup)
+          (let
+            [ninit : AstExpr (macro-hygiene-expr init env macro-name depth)]
+            [ncleanup : AstExpr
+              (macro-hygiene-expr cleanup env macro-name depth)]
+            (match (macro-hygiene-bind-name env macro-name depth name)
+              [(MacroHygieneName renamed next-env)
+                (match (macro-hygiene-resource-bindings
+                  rest
+                  next-env
+                  macro-name
+                  depth)
+                  [(MacroHygieneResourceBindings nrest final-env)
+                    (MacroHygieneResourceBindings
+                      (AstResourceBindingCons
+                        (AstResourceBinding renamed ninit ncleanup)
+                        nrest)
+                      final-env)])]))])]))
+
+(define (macro-hygiene-arm-list
+  [arms : AstMatchArmList]
+  [env : MacroHygieneEnv]
+  [macro-name : String]
+  [depth : i64]) : AstMatchArmList
+  (match arms
+    [(AstMatchArmNil) AstMatchArmNil]
+    [(AstMatchArmCons arm rest)
+      (match arm
+        [(AstMatchArm pattern body)
+          (match (macro-hygiene-pattern pattern env macro-name depth)
+            [(MacroHygienePattern npattern arm-env)
+              (AstMatchArmCons
+                (AstMatchArm
+                  npattern
+                  (macro-hygiene-expr body arm-env macro-name depth))
+                (macro-hygiene-arm-list rest env macro-name depth))])])]))
+
+(define (macro-hygiene-expr
+  [expr : AstExpr]
+  [env : MacroHygieneEnv]
+  [macro-name : String]
+  [depth : i64]) : AstExpr
+  (match expr
+    [(AstExprSpanned inner span)
+      (AstExprSpanned (macro-hygiene-expr inner env macro-name depth) span)]
+    [(AstExprVar name) (AstExprVar (macro-hygiene-rename-var env name))]
+    [(AstExprBinary op left right)
+      (AstExprBinary
+        op
+        (macro-hygiene-expr left env macro-name depth)
+        (macro-hygiene-expr right env macro-name depth))]
+    [(AstExprUnary op inner)
+      (AstExprUnary op (macro-hygiene-expr inner env macro-name depth))]
+    [(AstExprCall func args)
+      (AstExprCall
+        (macro-hygiene-expr func env macro-name depth)
+        (macro-hygiene-expr-list args env macro-name depth))]
+    [(AstExprIf cond then-branch else-branch)
+      (AstExprIf
+        (macro-hygiene-expr cond env macro-name depth)
+        (macro-hygiene-expr then-branch env macro-name depth)
+        (macro-hygiene-expr else-branch env macro-name depth))]
+    [(AstExprLet bindings body)
+      (match (macro-hygiene-let-bindings bindings env macro-name depth)
+        [(MacroHygieneLetBindings nbindings body-env)
+          (AstExprLet
+            nbindings
+            (macro-hygiene-expr body body-env macro-name depth))])]
+    [(AstExprLambda params maybe-ret body)
+      (match (macro-hygiene-param-list params env macro-name depth)
+        [(MacroHygieneParams nparams body-env)
+          (AstExprLambda
+            nparams
+            maybe-ret
+            (macro-hygiene-expr body body-env macro-name depth))])]
+    [(AstExprTuple exprs)
+      (AstExprTuple (macro-hygiene-expr-list exprs env macro-name depth))]
+    [(AstExprTupleRef tuple-expr index)
+      (AstExprTupleRef
+        (macro-hygiene-expr tuple-expr env macro-name depth)
+        index)]
+    [(AstExprArray exprs)
+      (AstExprArray (macro-hygiene-expr-list exprs env macro-name depth))]
+    [(AstExprMakeArray ty len)
+      (AstExprMakeArray ty (macro-hygiene-expr len env macro-name depth))]
+    [(AstExprArrayRef array index)
+      (AstExprArrayRef
+        (macro-hygiene-expr array env macro-name depth)
+        (macro-hygiene-expr index env macro-name depth))]
+    [(AstExprArraySet array index value)
+      (AstExprArraySet
+        (macro-hygiene-expr array env macro-name depth)
+        (macro-hygiene-expr index env macro-name depth)
+        (macro-hygiene-expr value env macro-name depth))]
+    [(AstExprArrayPush array value)
+      (AstExprArrayPush
+        (macro-hygiene-expr array env macro-name depth)
+        (macro-hygiene-expr value env macro-name depth))]
+    [(AstExprStringRef text index)
+      (AstExprStringRef
+        (macro-hygiene-expr text env macro-name depth)
+        (macro-hygiene-expr index env macro-name depth))]
+    [(AstExprWhile cond body)
+      (AstExprWhile
+        (macro-hygiene-expr cond env macro-name depth)
+        (macro-hygiene-expr body env macro-name depth))]
+    [(AstExprBegin exprs)
+      (AstExprBegin (macro-hygiene-expr-list exprs env macro-name depth))]
+    [(AstExprUnsafe exprs)
+      (AstExprUnsafe (macro-hygiene-expr-list exprs env macro-name depth))]
+    [(AstExprSet name rhs)
+      (AstExprSet
+        (macro-hygiene-rename-var env name)
+        (macro-hygiene-expr rhs env macro-name depth))]
+    [(AstExprAnn inner ty)
+      (AstExprAnn (macro-hygiene-expr inner env macro-name depth) ty)]
+    [(AstExprCast inner ty)
+      (AstExprCast (macro-hygiene-expr inner env macro-name depth) ty)]
+    [(AstExprBorrow lifetime place)
+      (AstExprBorrow lifetime (macro-hygiene-expr place env macro-name depth))]
+    [(AstExprMatch scrut arms)
+      (AstExprMatch
+        (macro-hygiene-expr scrut env macro-name depth)
+        (macro-hygiene-arm-list arms env macro-name depth))]
+    [(AstExprForeach index index-ty start end body)
+      (match (macro-hygiene-bind-name env macro-name depth index)
+        [(MacroHygieneName nindex body-env)
+          (AstExprForeach
+            nindex
+            index-ty
+            (macro-hygiene-expr start env macro-name depth)
+            (macro-hygiene-expr end env macro-name depth)
+            (macro-hygiene-expr body body-env macro-name depth))])]
+    [(AstExprSpmdReduce op index index-ty start end init value)
+      (match (macro-hygiene-bind-name env macro-name depth index)
+        [(MacroHygieneName nindex body-env)
+          (AstExprSpmdReduce
+            op
+            nindex
+            index-ty
+            (macro-hygiene-expr start env macro-name depth)
+            (macro-hygiene-expr end env macro-name depth)
+            (macro-hygiene-expr init env macro-name depth)
+            (macro-hygiene-expr value body-env macro-name depth))])]
+    [(AstExprStructGet inner field)
+      (AstExprStructGet (macro-hygiene-expr inner env macro-name depth) field)]
+    [(AstExprWithRegion name body)
+      (match (macro-hygiene-bind-name env macro-name depth name)
+        [(MacroHygieneName nname body-env)
+          (AstExprWithRegion
+            nname
+            (macro-hygiene-expr-list body body-env macro-name depth))])]
+    [(AstExprWithEscape scratch body)
+      (AstExprWithEscape
+        (macro-hygiene-expr scratch env macro-name depth)
+        (macro-hygiene-expr-list body env macro-name depth))]
+    [(AstExprWithResource bindings body)
+      (match (macro-hygiene-resource-bindings bindings env macro-name depth)
+        [(MacroHygieneResourceBindings nbindings body-env)
+          (AstExprWithResource
+            nbindings
+            (macro-hygiene-expr-list body body-env macro-name depth))])]
+    [(AstExprBox inner)
+      (AstExprBox (macro-hygiene-expr inner env macro-name depth))]
+    [(AstExprBoxGet inner)
+      (AstExprBoxGet (macro-hygiene-expr inner env macro-name depth))]
+    [(AstExprComptime inner)
+      (AstExprComptime (macro-hygiene-expr inner env macro-name depth))]
+    [(AstExprReturn inner)
+      (AstExprReturn (macro-hygiene-expr inner env macro-name depth))]
+    [(AstExprTry inner)
+      (AstExprTry (macro-hygiene-expr inner env macro-name depth))]
+    [(AstExprPtrNull ty) (AstExprPtrNull ty)]
+    [(AstExprPtrNullCheck ptr)
+      (AstExprPtrNullCheck (macro-hygiene-expr ptr env macro-name depth))]
+    [(AstExprPtrRead ptr)
+      (AstExprPtrRead (macro-hygiene-expr ptr env macro-name depth))]
+    [(AstExprPtrWrite ptr value)
+      (AstExprPtrWrite
+        (macro-hygiene-expr ptr env macro-name depth)
+        (macro-hygiene-expr value env macro-name depth))]
+    [(AstExprPtrOffset ptr offset)
+      (AstExprPtrOffset
+        (macro-hygiene-expr ptr env macro-name depth)
+        (macro-hygiene-expr offset env macro-name depth))]
+    [(AstExprPtrCast ptr ty)
+      (AstExprPtrCast (macro-hygiene-expr ptr env macro-name depth) ty)]
+    [(AstExprPtrToInt ptr)
+      (AstExprPtrToInt (macro-hygiene-expr ptr env macro-name depth))]
+    [(AstExprIntToPtr value ty)
+      (AstExprIntToPtr (macro-hygiene-expr value env macro-name depth) ty)]
+    [(AstExprStringData inner)
+      (AstExprStringData (macro-hygiene-expr inner env macro-name depth))]
+    [(AstExprStringFromBytes ptr len)
+      (AstExprStringFromBytes
+        (macro-hygiene-expr ptr env macro-name depth)
+        (macro-hygiene-expr len env macro-name depth))]
+    [(AstExprArrayData inner)
+      (AstExprArrayData (macro-hygiene-expr inner env macro-name depth))]
+    [(AstExprCpuIdEax leaf subleaf)
+      (AstExprCpuIdEax
+        (macro-hygiene-expr leaf env macro-name depth)
+        (macro-hygiene-expr subleaf env macro-name depth))]
+    [(AstExprCpuIdEbx leaf subleaf)
+      (AstExprCpuIdEbx
+        (macro-hygiene-expr leaf env macro-name depth)
+        (macro-hygiene-expr subleaf env macro-name depth))]
+    [(AstExprCpuIdEcx leaf subleaf)
+      (AstExprCpuIdEcx
+        (macro-hygiene-expr leaf env macro-name depth)
+        (macro-hygiene-expr subleaf env macro-name depth))]
+    [(AstExprCpuIdEdx leaf subleaf)
+      (AstExprCpuIdEdx
+        (macro-hygiene-expr leaf env macro-name depth)
+        (macro-hygiene-expr subleaf env macro-name depth))]
+    [(AstExprXgetbv index)
+      (AstExprXgetbv (macro-hygiene-expr index env macro-name depth))]
+    [(AstExprQuote _) expr]
+    [(AstExprQuasiquote _) expr]
+    [(AstExprUnquote _) expr]
+    [(AstExprUnquoteSplicing _) expr]
+    [_ expr]))
+
 (define (macro-expand-depth-limit) : i64
   64)
 
@@ -8915,7 +9369,7 @@
       (match decl
         [(AstDeclDefMacro mname params ret body)
           (if (string-eq mname name)
-            (MacroSomeDecl params ret body)
+            (MacroSomeDecl mname params ret body)
             (macro-find-decl rest name))]
         [_ (macro-find-decl rest name)])]))
 
@@ -8923,7 +9377,12 @@
 (define (macro-call-decl [func : AstExpr] [decls : AstDeclList]) : MacroMaybeDecl
   (match func
     [(AstExprSpanned inner _) (macro-call-decl inner decls)]
-    [(AstExprVar name) (macro-find-decl decls name)]
+    [(AstExprVar name)
+      (macro-find-decl
+        decls
+        (if (tc-hygiene-global-name? name)
+          (tc-hygiene-global-base name)
+          name))]
     [_ (MacroNoDecl)]))
 
 (define (macro-operand-mismatch-message [expected : AstType] [actual : AstType]) : String
@@ -9019,6 +9478,7 @@
   [ctx : TcContext]
   [type-env : TcTypeEnv]
   [decls : AstDeclList]
+  [macro-name : String]
   [params : AstMacroParamList]
   [ret : AstType]
   [body : AstExpr]
@@ -9033,14 +9493,28 @@
     (tc-ctfe-env ctx)
     call-expr)
     [(OkMacroEnv env)
-      (match (ctfe-eval-node body env (ctfe-fuel-limit))
+      (match (ctfe-eval-node
+        body
+        (ctfe-env-extend env (ctfe-hygiene-enabled-name) (CtfeBool true))
+        (ctfe-fuel-limit))
         [(OkCtfe value _)
           (match value
             [(CtfeExpr expanded produced)
-              (if (tc-type-compatible?
-                (tc-resolve-type ctx ret)
-                (tc-resolve-type ctx produced))
-                (macro-expand-expr ctx type-env decls (+ depth 1) expanded)
+              (if (or
+                (tc-type-eq produced (AstTyExpr))
+                (tc-type-compatible?
+                  (tc-resolve-type ctx ret)
+                  (tc-resolve-type ctx produced)))
+                (macro-expand-expr
+                  ctx
+                  type-env
+                  decls
+                  (+ depth 1)
+                  (macro-hygiene-expr
+                    expanded
+                    MacroHygieneNil
+                    macro-name
+                    (+ depth 1)))
                 (ErrMacroExpr
                   (ctfe-diagnostic-at-expr
                     call-expr
@@ -9142,8 +9616,18 @@
           [(ErrMacroExpr diag) (ErrMacroExpr diag)])]
       [(AstExprCall func args)
         (match (macro-call-decl func decls)
-          [(MacroSomeDecl params ret body)
-            (macro-expand-call ctx env decls params ret body args depth expr)]
+          [(MacroSomeDecl macro-name params ret body)
+            (macro-expand-call
+              ctx
+              env
+              decls
+              macro-name
+              params
+              ret
+              body
+              args
+              depth
+              expr)]
           [(MacroNoDecl)
             (match (macro-expand-expr ctx env decls depth func)
               [(OkMacroExpr nfunc)
@@ -9359,31 +9843,34 @@
   [top-env : TcTypeEnv]
   [decls : AstDeclList]
   [decl : AstDecl]) : ResultMacroDecl
-  (match decl
-    [(AstDeclDef name maybe-ty expr)
-      (match (macro-expand-expr ctx top-env decls 0 expr)
-        [(OkMacroExpr nexpr) (OkMacroDecl (AstDeclDef name maybe-ty nexpr))]
-        [(ErrMacroExpr diag) (ErrMacroDecl diag)])]
-    [(AstDeclDefFn name params ret body)
-      (match (macro-expand-expr
-        ctx
-        (tc-bind-return-type
-          (tc-bind-params ctx top-env params)
-          (tc-resolve-type ctx ret))
-        decls
-        0
-        body)
-        [(OkMacroExpr nbody) (OkMacroDecl (AstDeclDefFn name params ret nbody))]
-        [(ErrMacroExpr diag) (ErrMacroDecl diag)])]
-    [(AstDeclUnsafe inner)
-      (match (macro-expand-decl ctx top-env decls inner)
-        [(OkMacroDecl ninner) (OkMacroDecl (AstDeclUnsafe ninner))]
-        [(ErrMacroDecl diag) (ErrMacroDecl diag)])]
-    [(AstDeclTest name expr span)
-      (match (macro-expand-expr ctx top-env decls 0 expr)
-        [(OkMacroExpr nexpr) (OkMacroDecl (AstDeclTest name nexpr span))]
-        [(ErrMacroExpr diag) (ErrMacroDecl diag)])]
-    [_ (OkMacroDecl decl)]))
+  (let
+    [global-env : TcTypeEnv (tc-hygiene-global-env top-env)]
+    (match decl
+      [(AstDeclDef name maybe-ty expr)
+        (match (macro-expand-expr ctx global-env decls 0 expr)
+          [(OkMacroExpr nexpr) (OkMacroDecl (AstDeclDef name maybe-ty nexpr))]
+          [(ErrMacroExpr diag) (ErrMacroDecl diag)])]
+      [(AstDeclDefFn name params ret body)
+        (match (macro-expand-expr
+          ctx
+          (tc-bind-return-type
+            (tc-bind-params ctx global-env params)
+            (tc-resolve-type ctx ret))
+          decls
+          0
+          body)
+          [(OkMacroExpr nbody)
+            (OkMacroDecl (AstDeclDefFn name params ret nbody))]
+          [(ErrMacroExpr diag) (ErrMacroDecl diag)])]
+      [(AstDeclTest name expr span)
+        (match (macro-expand-expr ctx global-env decls 0 expr)
+          [(OkMacroExpr nexpr) (OkMacroDecl (AstDeclTest name nexpr span))]
+          [(ErrMacroExpr diag) (ErrMacroDecl diag)])]
+      [(AstDeclUnsafe inner)
+        (match (macro-expand-decl ctx top-env decls inner)
+          [(OkMacroDecl ninner) (OkMacroDecl (AstDeclUnsafe ninner))]
+          [(ErrMacroDecl diag) (ErrMacroDecl diag)])]
+      [_ (OkMacroDecl decl)])))
 
 (define (macro-expand-decls
   [ctx : TcContext]
@@ -9601,66 +10088,68 @@
       (tc-check-cleanup-struct-fields ctx env struct-name cleanup fields))))
 
 (define (tc-check-decl [ctx : TcContext] [top-env : TcTypeEnv] [decl : AstDecl]) : ResultTcUnit
-  (match decl
-    [(AstDeclDef _ maybe-ty expr)
-      (match maybe-ty
-        [(AstSomeType want)
+  (let
+    [global-env : TcTypeEnv (tc-hygiene-global-env top-env)]
+    (match decl
+      [(AstDeclDef _ maybe-ty expr)
+        (match maybe-ty
+          [(AstSomeType want)
+            (match (tc-expr-with-expected-or-actual
+              ctx
+              global-env
+              expr
+              (tc-resolve-type ctx want))
+              [(OkTcType got)
+                (match (tc-expect
+                  got
+                  (tc-resolve-type ctx want)
+                  "typecheck: value definition type mismatch")
+                  [(OkTcUnit)
+                    (tc-ensure-region-value-can-flow-into
+                      global-env
+                      (tc-resolve-type ctx want)
+                      got
+                      "top-level value")]
+                  [(ErrTcUnit message) (ErrTcUnit message)])]
+              [(ErrTcType message) (ErrTcUnit message)])]
+          [(AstNoType)
+            (match (tc-expr ctx global-env expr)
+              [(OkTcType _) OkTcUnit]
+              [(ErrTcType message) (ErrTcUnit message)])])]
+      [(AstDeclDefFn _ params ret body)
+        (let
+          [env : TcTypeEnv
+            (tc-bind-return-type
+              (tc-bind-params ctx global-env params)
+              (tc-resolve-type ctx ret))]
           (match (tc-expr-with-expected-or-actual
             ctx
-            top-env
-            expr
-            (tc-resolve-type ctx want))
+            env
+            body
+            (tc-resolve-type ctx ret))
             [(OkTcType got)
               (match (tc-expect
                 got
-                (tc-resolve-type ctx want)
-                "typecheck: value definition type mismatch")
+                (tc-resolve-type ctx ret)
+                "typecheck: return type mismatch")
                 [(OkTcUnit)
-                  (tc-ensure-region-value-can-flow-into
-                    top-env
-                    (tc-resolve-type ctx want)
+                  (match (tc-ensure-region-value-can-flow-into
+                    env
+                    (tc-resolve-type ctx ret)
                     got
-                    "top-level value")]
+                    "return value")
+                    [(OkTcUnit) (tc-move-check-body ctx env params body)]
+                    [(ErrTcUnit message) (ErrTcUnit message)])]
                 [(ErrTcUnit message) (ErrTcUnit message)])]
-            [(ErrTcType message) (ErrTcUnit message)])]
-        [(AstNoType)
-          (match (tc-expr ctx top-env expr)
-            [(OkTcType _) OkTcUnit]
-            [(ErrTcType message) (ErrTcUnit message)])])]
-    [(AstDeclDefFn _ params ret body)
-      (let
-        [env : TcTypeEnv
-          (tc-bind-return-type
-            (tc-bind-params ctx top-env params)
-            (tc-resolve-type ctx ret))]
-        (match (tc-expr-with-expected-or-actual
-          ctx
-          env
-          body
-          (tc-resolve-type ctx ret))
-          [(OkTcType got)
-            (match (tc-expect
-              got
-              (tc-resolve-type ctx ret)
-              "typecheck: return type mismatch")
-              [(OkTcUnit)
-                (match (tc-ensure-region-value-can-flow-into
-                  env
-                  (tc-resolve-type ctx ret)
-                  got
-                  "return value")
-                  [(OkTcUnit) (tc-move-check-body ctx env params body)]
-                  [(ErrTcUnit message) (ErrTcUnit message)])]
-              [(ErrTcUnit message) (ErrTcUnit message)])]
-          [(ErrTcType message) (ErrTcUnit message)]))]
-    [(AstDeclDefMacro _ params ret body)
-      (tc-check-defmacro ctx top-env params ret body)]
-    [(AstDeclExtern _ metadata ty) (tc-check-extern-decl ctx metadata ty)]
-    [(AstDeclDefStruct name repr cleanup fields)
-      (tc-check-cleanup-struct-decl ctx top-env name repr cleanup fields)]
-    [(AstDeclComptimeDecl template) (tc-check-decl ctx top-env template)]
-    [(AstDeclUnsafe inner) (tc-check-decl ctx top-env inner)]
-    [_ OkTcUnit]))
+            [(ErrTcType message) (ErrTcUnit message)]))]
+      [(AstDeclDefMacro _ params ret body)
+        (tc-check-defmacro ctx top-env params ret body)]
+      [(AstDeclExtern _ metadata ty) (tc-check-extern-decl ctx metadata ty)]
+      [(AstDeclDefStruct name repr cleanup fields)
+        (tc-check-cleanup-struct-decl ctx top-env name repr cleanup fields)]
+      [(AstDeclComptimeDecl template) (tc-check-decl ctx top-env template)]
+      [(AstDeclUnsafe inner) (tc-check-decl ctx top-env inner)]
+      [_ OkTcUnit])))
 
 (define (tc-check-decls
   [ctx : TcContext]

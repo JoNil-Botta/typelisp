@@ -6,6 +6,8 @@
 ;; explicit future work.
 (import "../stdlib/io.tl")
 
+(import "../stdlib/arena.tl")
+
 (import "compiler_typecheck.tl")
 
 (import "compiler_diagnostic.tl")
@@ -411,14 +413,21 @@
         [(StringI64MapMissing)
           (ErrTcType (string-append "typecheck: unbound name " name))])]))
 
+(define (lower-hygiene-source-name [name : String]) : String
+  (if (tc-hygiene-global-name? name)
+    (tc-hygiene-global-base name)
+    name))
+
 (define (lower-lookup-type
   [type-cache : LowerTypeCache]
   [env : SymI64Env]
   [type-env : TcTypeEnv]
   [name : String]) : ResultTcType
-  (match (sym-i64-lookup env name)
-    [(SomeI64 _) (tc-lookup type-env name)]
-    [(NoneI64) (lower-type-cache-lookup type-cache name)]))
+  (if (tc-hygiene-global-name? name)
+    (lower-type-cache-lookup type-cache (tc-hygiene-global-base name))
+    (match (sym-i64-lookup env name)
+      [(SomeI64 _) (tc-lookup type-env name)]
+      [(NoneI64) (lower-type-cache-lookup type-cache name)])))
 
 (define (lower-name-env-add-alias-if-free
   [names : LowerNameEnv]
@@ -441,7 +450,9 @@
       names)))
 
 (define (lower-resolve-name [state : LowerState] [source-name : String]) : String
-  (lower-name-cache-resolve (lower-state-names state) source-name))
+  (lower-name-cache-resolve
+    (lower-state-names state)
+    (lower-hygiene-source-name source-name)))
 
 (define (lower-resolve-call-name
   [state : LowerState]
@@ -3375,7 +3386,9 @@
   [name : String]) : bool
   (let
     [symbols : CompilerSymbols (tc-context-symbols ctx)]
-    (match (compiler-symbols-lookup-value symbols name)
+    (match (compiler-symbols-lookup-value
+      symbols
+      (lower-hygiene-source-name name))
       [(SomeI64 handle)
         (or
           (=
@@ -9386,17 +9399,21 @@
       (lower-direct-call ctx state env type-env name args result-ty origin)]
     [(NoneI64)
       (let
+        [source-name : String (lower-hygiene-source-name name)]
         [symbols : CompilerSymbols (tc-context-symbols ctx)]
         [registries : CompilerRegistries (tc-context-registries ctx)]
         [variant-name : String
-          (lower-variant-constructor-lookup-name ctx name result-ty)]
+          (lower-variant-constructor-lookup-name ctx source-name result-ty)]
         [struct-name : String
           (match (tc-type-strip-region result-ty)
             [(AstTyStruct resolved-struct)
-              (if (lower-call-name-matches-nominal? ctx name resolved-struct)
+              (if (lower-call-name-matches-nominal?
+                ctx
+                source-name
+                resolved-struct)
                 resolved-struct
-                (lower-module-lookup-name ctx name))]
-            [_ (lower-module-lookup-name ctx name)])]
+                (lower-module-lookup-name ctx source-name))]
+            [_ (lower-module-lookup-name ctx source-name)])]
         (match (compiler-registries-lookup-variant registries variant-name)
           [(SomeI64 handle)
             (lower-construct-enum-with-handle
@@ -14110,7 +14127,7 @@
         [env : SymI64Env (lower-bind-params params 0 (sym-i64-empty))]
         [type-env : TcTypeEnv
           (tc-bind-return-type
-            (tc-bind-params ctx top-env params)
+            (tc-bind-params ctx (tc-hygiene-global-env top-env) params)
             (tc-type-without-regions (tc-resolve-type ctx ret)))]
         [function-spans : CompilerSourceSpans
           (lower-record-function-span spans logical-name body)]
@@ -14841,6 +14858,16 @@
   "(defmacro (and2 [lhs : bool] [rhs : bool]) : bool
   (expr-if lhs rhs (expr-bool false)))
 (define (main) : i64 (if (and2 true) 1 0))")
+
+(define (compiler-lower-macro-hygiene-definition-source) : String
+  "(define (macro-helper [x : bool]) : bool (not x))
+(defmacro (unless2 [condition : bool] [body : unit]) : unit
+  `(if (macro-helper ,condition)
+     ,body
+     unit))
+(define (main) : unit
+  (let ([macro-helper : bool true])
+    (unless2 false unit)))")
 
 ;; A fixed-array literal `(array ...)`: it type-checks to `(Array i64 N)` and now
 ;; lowers to inline storage with each element stored at its offset, returning the
@@ -18536,17 +18563,34 @@
             (> (lower-test-functions-call-count functions "tl_region_reset") 0))])]
     [(ErrCompilerLower _) false]))
 
+(define (compiler-lower-with-arena-source [src : String]) : String
+  (string-append
+    "(extern tl_arena_make : (-> i64))
+(extern tl_arena_current : (-> i64))
+(extern tl_region_mark : (-> i64))
+(unsafe (extern tl_arena_set : (-> i64 unit)))
+(unsafe (extern tl_region_reset : (-> i64 unit)))
+(define (arena-make) : i64 (tl_arena_make))
+(define (arena-current) : i64 (tl_arena_current))
+(define (arena-mark) : i64 (tl_region_mark))
+(unsafe (define (arena-set! [arena : i64]) : unit (unsafe (tl_arena_set arena))))
+(unsafe (define (arena-rewind [mark : i64]) : unit (unsafe (tl_region_reset mark))))
+"
+    src))
+
 (define (compiler-lower-with-escape-scalar-source) : String
-  "(define (main) : i64
+  (compiler-lower-with-arena-source
+    "(define (main) : i64
   (let
     [scratch : i64 (arena-make)]
-    (with-escape scratch 40 42)))")
+    (with-escape scratch 40 42)))"))
 
 (define (compiler-lower-with-escape-string-source) : String
-  "(define (main) : String
+  (compiler-lower-with-arena-source
+    "(define (main) : String
   (let
     [scratch : i64 (arena-make)]
-    (with-escape scratch (int->string 42))))")
+    (with-escape scratch (int->string 42))))"))
 
 (define (compiler-lower-with-escape-arena-shape-ok? [src : String]) : bool
   (match (lower-compiler-source src)
@@ -19169,6 +19213,9 @@
         unit
         (set! ok false))
       (if (compiler-lower-ok? (compiler-lower-macro-expand-source))
+        unit
+        (set! ok false))
+      (if (compiler-lower-ok? (compiler-lower-macro-hygiene-definition-source))
         unit
         (set! ok false))
       (if (compiler-lower-error-ok?

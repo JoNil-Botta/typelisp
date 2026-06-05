@@ -1,3 +1,5 @@
+(import "stdlib/arena.tl")
+
 (defstruct Bundle
   (name String)
   (pair (Tuple String String))

@@ -1,6 +1,8 @@
 ;; compiler_driver_core.tl - Import-aware selfhost compiler driver helpers.
 (import "../stdlib/io.tl")
 
+(import "../stdlib/arena.tl")
+
 (import "compiler_backend.tl")
 
 (import "compiler_diagnostic.tl")

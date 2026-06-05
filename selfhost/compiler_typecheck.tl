@@ -72,6 +72,23 @@
 (define (compiler-typecheck-with-env-source [src : String]) : String
   (string-append "(import \"stdlib/env.tl\")\n" src))
 
+(define (compiler-typecheck-with-arena-source [src : String]) : String
+  (string-append
+    "(extern tl_arena_make : (-> i64))
+(extern tl_arena_current : (-> i64))
+(extern tl_region_mark : (-> i64))
+(unsafe (extern tl_arena_set : (-> i64 unit)))
+(unsafe (extern tl_arena_destroy : (-> i64 unit)))
+(unsafe (extern tl_region_reset : (-> i64 unit)))
+(define (arena-make) : i64 (tl_arena_make))
+(define (arena-current) : i64 (tl_arena_current))
+(define (arena-mark) : i64 (tl_region_mark))
+(unsafe (define (arena-set! [arena : i64]) : unit (unsafe (tl_arena_set arena))))
+(unsafe (define (arena-destroy [arena : i64]) : unit (unsafe (tl_arena_destroy arena))))
+(unsafe (define (arena-rewind [mark : i64]) : unit (unsafe (tl_region_reset mark))))
+"
+    src))
+
 (define (compiler-typecheck-smoke-source) : String
   "(extern print-i64 : (-> i64 unit))
 (define answer : i64 40)
@@ -1201,39 +1218,44 @@
       [End 0])))")
 
 (define (compiler-typecheck-with-escape-scalar-source) : String
-  "(define (main) : i64
+  (compiler-typecheck-with-arena-source
+    "(define (main) : i64
   (let
     [scratch : i64 (arena-make)]
-    (with-escape scratch 40 42)))")
+    (with-escape scratch 40 42)))"))
 
 (define (compiler-typecheck-with-escape-string-source) : String
-  "(define (main) : String
+  (compiler-typecheck-with-arena-source
+    "(define (main) : String
   (let
     [scratch : i64 (arena-make)]
-    (with-escape scratch (int->string 42))))")
+    (with-escape scratch (int->string 42))))"))
 
 (define (compiler-typecheck-with-escape-region-strip-source) : String
-  "(define (main) : String
+  (compiler-typecheck-with-arena-source
+    "(define (main) : String
   (let
     [scratch : i64 (arena-make)]
     (with-arena r
-      (with-escape scratch (int->string 42)))))")
+      (with-escape scratch (int->string 42)))))"))
 
 (define (compiler-typecheck-with-escape-bad-arena-source) : String
   "(define (main) : i64
   (with-escape true 1))")
 
 (define (compiler-typecheck-with-escape-array-result-source) : String
-  "(define (main) : (Array i64)
+  (compiler-typecheck-with-arena-source
+    "(define (main) : (Array i64)
   (let
     [scratch : i64 (arena-make)]
-    (with-escape scratch (make-array i64 4))))")
+    (with-escape scratch (make-array i64 4))))"))
 
 (define (compiler-typecheck-with-escape-box-result-source) : String
-  "(define (main) : (Box i64)
+  (compiler-typecheck-with-arena-source
+    "(define (main) : (Box i64)
   (let
     [scratch : i64 (arena-make)]
-    (with-escape scratch (box 4))))")
+    (with-escape scratch (box 4))))"))
 
 (define (compiler-typecheck-with-escape-tests-ok?) : bool
   (and
@@ -3251,14 +3273,15 @@
       (begin (g) n))))")
 
 (define (compiler-typecheck-lambda-captured-set-with-escape-source) : String
-  "(define (main) : i64
+  (compiler-typecheck-with-arena-source
+    "(define (main) : i64
   (let
     [scratch : i64 (arena-make)]
     (let
       [n : i64 0]
       (let
         [g : (-> unit) (lambda () : unit (with-escape scratch (set! n 1)))]
-        (begin (g) n)))))")
+        (begin (g) n)))))"))
 
 (define (compiler-typecheck-lambda-param-set-source) : String
   "(define (main) : i64
@@ -3820,12 +3843,13 @@
       ok)))
 
 (define (compiler-typecheck-arena-safe-observe-source) : String
-  "(define (main) : i64
+  (compiler-typecheck-with-arena-source
+    "(define (main) : i64
   (let
     [arena : i64 (arena-make)]
     [current : i64 (arena-current)]
     [mark : i64 (arena-mark)]
-    (+ arena (+ current mark))))")
+    (+ arena (+ current mark))))"))
 
 (define (compiler-typecheck-arena-with-arena-safe-source) : String
   "(define (main) : i64
@@ -3834,22 +3858,29 @@
       (string-length s))))")
 
 (define (compiler-typecheck-arena-safe-set-source) : String
-  "(define (main) : unit
-  (arena-set! (arena-current)))")
+  (compiler-typecheck-with-arena-source
+    "(define (main) : unit
+  (arena-set! (arena-current)))"))
 
 (define (compiler-typecheck-arena-safe-destroy-source) : String
-  "(define (main) : unit
-  (arena-destroy (arena-current)))")
+  (compiler-typecheck-with-arena-source
+    "(define (main) : unit
+  (arena-destroy (arena-current)))"))
 
 (define (compiler-typecheck-arena-safe-rewind-source) : String
-  "(define (main) : unit
-  (arena-rewind (arena-mark)))")
+  (compiler-typecheck-with-arena-source
+    "(define (main) : unit
+  (arena-rewind (arena-mark)))"))
 
 (define (compiler-typecheck-arena-safe-alias-source) : String
-  "(define (main) : unit
+  (compiler-typecheck-with-arena-source
+    "(define (main) : unit
   (let
     [rewind : (-> i64 unit) arena-rewind]
-    (rewind (arena-mark))))")
+    (rewind (arena-mark))))"))
+
+(define (compiler-typecheck-arena-unimported-source) : String
+  "(define (main) : i64 (arena-make))")
 
 (define (compiler-typecheck-arena-top-level-shadow-source) : String
   "(define (arena-rewind [mark : i64]) : unit unit)
@@ -3862,29 +3893,32 @@
     (arena-destroy 3)))")
 
 (define (compiler-typecheck-arena-local-shadow-source) : String
-  "(define (main) : unit
+  (compiler-typecheck-with-arena-source
+    "(define (main) : unit
   (let
     [arena-rewind : (-> i64 unit) (lambda ([mark : i64]) : unit unit)]
-    (arena-rewind 1)))")
+    (arena-rewind 1)))"))
 
 (define (compiler-typecheck-arena-unsafe-mutate-source) : String
-  "(define (main) : unit
+  (compiler-typecheck-with-arena-source
+    "(define (main) : unit
   (let
     [arena : i64 (arena-current)]
     [mark : i64 (arena-mark)]
     (unsafe
       (arena-rewind mark)
       (arena-set! arena)
-      (arena-destroy arena))))")
+      (arena-destroy arena))))"))
 
 (define (compiler-typecheck-arena-unsafe-alias-source) : String
-  "(define (main) : unit
+  (compiler-typecheck-with-arena-source
+    "(define (main) : unit
   (let
     [mark : i64 (arena-mark)]
     (unsafe
       (let
         [rewind : (-> i64 unit) arena-rewind]
-        (rewind mark)))))")
+        (rewind mark)))))"))
 
 (define (compiler-typecheck-arena-unsafe-tests-ok?) : bool
   (let
@@ -3916,6 +3950,11 @@
       (if (compiler-typecheck-error-ok?
         (compiler-typecheck-arena-safe-alias-source)
         "typecheck: arena-rewind requires unsafe context")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        (compiler-typecheck-arena-unimported-source)
+        "typecheck: unbound name arena-make")
         unit
         (set! ok false))
       (if (compiler-typecheck-ok?
@@ -4098,26 +4137,59 @@
   "(defmacro (again) : Expr `(again))
 (define (main) : i64 (again))")
 
+(define (compiler-typecheck-macro-hygiene-capture-source) : String
+  "(defmacro (with-temp-bool [body : bool]) : bool
+  `(let ([tmp : i64 1])
+     ,body))
+(define (main) : bool
+  (let ([tmp : bool true])
+    (with-temp-bool tmp)))")
+
+(define (compiler-typecheck-macro-hygiene-definition-source) : String
+  "(define (macro-helper [x : bool]) : bool (not x))
+(defmacro (unless2 [condition : bool] [body : unit]) : unit
+  `(if (macro-helper ,condition)
+     ,body
+     unit))
+(define (main) : unit
+  (let ([macro-helper : bool true])
+    (unless2 false unit)))")
+
+(define (compiler-typecheck-macro-hygiene-unsafe-global-source) : String
+  "(unsafe (define (danger [x : i64]) : i64 x))
+(defmacro (call-danger [x : i64]) : i64
+  `(danger ,x))
+(define (main) : i64 (call-danger 1))")
+
 ;; Returns true when a macro call expands and the result typechecks, and when
 ;; arity plus operand-type errors are rejected during expansion at the call site.
 (define (compiler-typecheck-macro-expand-tests-ok?) : bool
   (and
-    (compiler-typecheck-ok? (compiler-typecheck-macro-expand-source))
     (and
-      (compiler-typecheck-error-ok?
-        (compiler-typecheck-macro-expand-arity-source)
-        "macro call has too few arguments")
+      (compiler-typecheck-ok? (compiler-typecheck-macro-expand-source))
       (and
         (compiler-typecheck-error-ok?
-          (compiler-typecheck-macro-expand-operand-source)
-          "typecheck: macro operand type mismatch: expected bool, got i64")
+          (compiler-typecheck-macro-expand-arity-source)
+          "macro call has too few arguments")
         (and
           (compiler-typecheck-error-ok?
-            (compiler-typecheck-macro-expand-variadic-operand-source)
+            (compiler-typecheck-macro-expand-operand-source)
             "typecheck: macro operand type mismatch: expected bool, got i64")
-          (compiler-typecheck-error-ok?
-            (compiler-typecheck-macro-expand-depth-source)
-            "macro expansion exceeded depth limit"))))))
+          (and
+            (compiler-typecheck-error-ok?
+              (compiler-typecheck-macro-expand-variadic-operand-source)
+              "typecheck: macro operand type mismatch: expected bool, got i64")
+            (compiler-typecheck-error-ok?
+              (compiler-typecheck-macro-expand-depth-source)
+              "macro expansion exceeded depth limit")))))
+    (and
+      (compiler-typecheck-ok? (compiler-typecheck-macro-hygiene-capture-source))
+      (and
+        (compiler-typecheck-ok?
+          (compiler-typecheck-macro-hygiene-definition-source))
+        (compiler-typecheck-error-ok?
+          (compiler-typecheck-macro-hygiene-unsafe-global-source)
+          "typecheck: danger requires unsafe context")))))
 
 (define (compiler-typecheck-self-test-basics) : unit
   (begin

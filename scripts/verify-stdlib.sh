@@ -80,19 +80,12 @@ if { [ "$BORROWED_STR_COMPILER_EXPLICIT" -eq 1 ] || [ "$BORROWED_STR_ONLY" -eq 1
     exit 1
 fi
 
-# Build a fixture .tl to a runnable binary and run it (host-aware) with the
-# supplied stdin file, capturing the program exit code in `got` and writing
-# program stdout/stderr to <stem>.stdout / <stem>.stderr. Linux uses GNU as/ld;
-# Windows builds a native executable via clang/lld-link. Callers
-# pass the same <stem> they use for their .stdout/.stderr assertion paths.
-# Sets `build_status` (0 = built ok) and, on success, runs the binary setting
-# `got`. Build/link output is captured to <stem>.build.err. A build failure does
-# NOT abort this helper; the caller reports the fixture failure with captured
-# output so CI cannot silently lose coverage.
-stdlib_build_run() {
+# Build a fixture .tl to a runnable binary (host-aware). Linux uses GNU as/ld;
+# Windows builds a native executable via clang/lld-link. Build/link output is
+# captured to <stem>.build.out / <stem>.build.err and `build_status` is set.
+stdlib_build_fixture() {
     _src=$1
     _stem=$2
-    _stdin=$3
     build_status=0
     : > "$_stem.build.err"
     set +e
@@ -100,10 +93,6 @@ stdlib_build_run() {
         "$COMPILER" build "$_src" --stdlib-root "$ROOT/stdlib" -o "$_stem.exe" \
             > "$_stem.build.out" 2> "$_stem.build.err"
         build_status=$?
-        if [ "$build_status" -eq 0 ]; then
-            "$_stem.exe" < "$_stdin" > "$_stem.stdout" 2> "$_stem.stderr"
-            got=$?
-        fi
     else
         "$COMPILER" compile "$_src" --target linux-x86_64 \
             --cfg linux --cfg unix --cfg target-linux --cfg os-linux \
@@ -119,12 +108,29 @@ stdlib_build_run() {
                 >> "$_stem.build.out" 2>> "$_stem.build.err"
             build_status=$?
         fi
-        if [ "$build_status" -eq 0 ]; then
+    fi
+    set -e
+}
+
+# Build a fixture .tl to a runnable binary and run it with the supplied stdin
+# file, capturing the program exit code in `got` and writing program
+# stdout/stderr to <stem>.stdout / <stem>.stderr.
+stdlib_build_run() {
+    _src=$1
+    _stem=$2
+    _stdin=$3
+    stdlib_build_fixture "$_src" "$_stem"
+    if [ "$build_status" -eq 0 ]; then
+        set +e
+        if [ "$HOST_OS" = windows ]; then
+            "$_stem.exe" < "$_stdin" > "$_stem.stdout" 2> "$_stem.stderr"
+            got=$?
+        else
             "$_stem" < "$_stdin" > "$_stem.stdout" 2> "$_stem.stderr"
             got=$?
         fi
+        set -e
     fi
-    set -e
 }
 
 stdlib_runtime_gap_applies() {
@@ -544,15 +550,32 @@ fi
 pipe_regressions=0
 if [ "$BORROWED_STR_ONLY" -eq 0 ]; then
     fixture=stdlib/tests/io_stdio_pipe_short_read.tl
+    copied="$TEST_COPY_ROOT/$fixture"
     stem="$RUN_ROOT/stdlib_tests_io_stdio_pipe_short_read.pipe"
     stdout="$stem.stdout"
     stderr="$stem.stderr"
 
-    echo "[stdlib] running $fixture through native pipe (--stdlib-root)"
+    mkdir -p "$(dirname "$copied")"
+    cp "$fixture" "$copied"
+
+    echo "[stdlib] building+running $fixture through native pipe (--stdlib-root)"
+    stdlib_build_fixture "$copied" "$stem"
+    if [ "$build_status" -ne 0 ]; then
+        echo "FAIL: $fixture pipe regression failed to build" >&2
+        sed 's/^/  /' "$stem.build.err" >&2 || true
+        exit 1
+    fi
+
     set +e
-    dd if=/dev/zero bs=4096 count=512 2>/dev/null |
-        tr '\000' x |
-        "$COMPILER" run "$fixture" --stdlib-root "$ROOT/stdlib" > "$stdout" 2> "$stderr"
+    if [ "$HOST_OS" = windows ]; then
+        dd if=/dev/zero bs=4096 count=512 2>/dev/null |
+            tr '\000' x |
+            "$stem.exe" > "$stdout" 2> "$stderr"
+    else
+        dd if=/dev/zero bs=4096 count=512 2>/dev/null |
+            tr '\000' x |
+            "$stem" > "$stdout" 2> "$stderr"
+    fi
     got=$?
     set -e
 

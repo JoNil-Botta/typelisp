@@ -16881,19 +16881,10 @@
       (compiler-source-spans-insert spans name span)]
     [(CompilerNoSourceSpan) spans]))
 
-;; Per-function arena escape for lowering (#1633). Lowering one function allocates
-;; a fresh LowerState plus all the transient IR/AST-walk scratch that the bump
-;; allocator never frees; across thousands of functions this is the ~9 GB the
-;; lower phase adds. We lower each function inside its own scratch arena, deep-
-;; `clone` ONLY the produced IR function list into the enclosing (program) arena,
-;; then destroy the scratch — reclaiming the per-function transient. The growing
-;; spans side-table is DROPPED (returns the unchanged input spans): it never
-;; affects emitted assembly, only backend-error source locations, and cloning the
-;; monotonically-growing accumulator per function would be O(n^2). `enclosing` is
-;; captured fresh and `scratch`'s grown head re-read before destroy so nothing
-;; leaks. Output stays byte-identical (same proof as the optimizer escape).
-;; TODO(#1688): migrate this hand-rolled arena escape to `with-escape` after the
-;; bootstrapping stage0 parser supports the new form.
+;; Direct lowering is now comfortably below the self-build memory budget, so
+;; avoid the old per-function scratch arena and deep clone. Keep only
+;; function-level source spans to preserve the previous backend diagnostic
+;; surface and emitted assembly.
 (define (lower-function-escaping
   [ctx : TcContext]
   [top-env : TcTypeEnv]
@@ -16905,50 +16896,20 @@
   [spans : CompilerSourceSpans]
   [names : LowerNameCache]
   [mode : CompilerLowerMode]) : ResultLowerFunction
-  (let
-    [enclosing : i64 (arena-current)]
-    [scratch : i64 (arena-make)]
-    (begin
-      (unsafe
-        (arena-set! scratch))
-      (match (lower-function
-        ctx
-        top-env
-        type-cache
-        logical-name
-        params
-        ret
-        body
-        spans
-        names
-        mode)
-        [(OkLowerFunction fns _function-spans)
-          (let
-            [scratch-head : i64 (arena-current)]
-            (begin
-              (unsafe
-                (arena-set! enclosing))
-              (let
-                [escaped-fns : CompilerIrFunctionList
-                  (compiler-ir-clone-function-list fns)]
-                [escaped-spans : CompilerSourceSpans
-                  (lower-record-function-span spans logical-name body)]
-                (begin
-                  (unsafe
-                    (arena-destroy scratch-head))
-                  (OkLowerFunction escaped-fns escaped-spans)))))]
-        [(ErrLowerFunction message)
-          (let
-            [scratch-head : i64 (arena-current)]
-            (begin
-              (unsafe
-                (arena-set! enclosing))
-              (let
-                [escaped-message : CompilerDiagnostic (clone message)]
-                (begin
-                  (unsafe
-                    (arena-destroy scratch-head))
-                  (ErrLowerFunction escaped-message)))))]))))
+  (match (lower-function
+    ctx
+    top-env
+    type-cache
+    logical-name
+    params
+    ret
+    body
+    spans
+    names
+    mode)
+    [(OkLowerFunction fns _function-spans)
+      (OkLowerFunction fns (lower-record-function-span spans logical-name body))]
+    [(ErrLowerFunction message) (ErrLowerFunction message)]))
 
 (define (lower-decls
   [ctx : TcContext]

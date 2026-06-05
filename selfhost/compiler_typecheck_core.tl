@@ -13786,54 +13786,13 @@
       diag
       (compiler-diagnostic-with-path diag path))))
 
-;; Per-declaration arena escape for typechecking (#1633). Checking one decl
-;; allocates type-inference scratch (unification temporaries, per-expression
-;; environment extensions) that the bump allocator never frees. We check each
-;; decl inside its own scratch arena and reclaim it afterward; the result is just
-;; `OkTcUnit` (nullary — nothing escapes) or an `ErrTcUnit` String (deep-cloned
-;; into the enclosing arena before the scratch is freed). The kept top-level type
-;; environment and the AST both live in the enclosing arena and are only read, so
-;; nothing dangles. Typecheck verdicts are unchanged (same diagnostics/summary).
-;; TODO(#1688): migrate this hand-rolled arena escape to `with-escape` after the
-;; bootstrapping stage0 parser supports the new form.
+;; Direct declaration typechecking stays below the self-build memory budget and
+;; avoids the per-declaration scratch arena overhead.
 (define (tc-check-decl-escaping
   [ctx : TcContext]
   [top-env : TcTypeEnv]
   [decl : AstDecl]) : ResultTcUnit
-  (begin
-    (cfg compile-profile (compiler-tc-decl-profile-start-section))
-    (let
-      [enclosing : i64 (arena-current)]
-      [scratch : i64 (arena-make)]
-      (begin
-        (cfg compile-profile (compiler-tc-decl-profile-add-arena))
-        (unsafe (arena-set! scratch))
-        (match (tc-check-decl ctx top-env decl)
-          [(OkTcUnit)
-            (begin
-              (cfg compile-profile (compiler-tc-decl-profile-start-section))
-              (let
-                [scratch-head : i64 (arena-current)]
-                (begin
-                  (unsafe
-                    (begin
-                      (arena-set! enclosing)
-                      (arena-destroy scratch-head)))
-                  (cfg compile-profile (compiler-tc-decl-profile-add-arena))
-                  (OkTcUnit))))]
-          [(ErrTcUnit message)
-            (begin
-              (cfg compile-profile (compiler-tc-decl-profile-start-section))
-              (let
-                [scratch-head : i64 (arena-current)]
-                (begin
-                  (unsafe (arena-set! enclosing))
-                  (let
-                    [escaped : String (clone message)]
-                    (begin
-                      (unsafe (arena-destroy scratch-head))
-                      (cfg compile-profile (compiler-tc-decl-profile-add-arena))
-                      (ErrTcUnit escaped))))))])))))
+  (tc-check-decl ctx top-env decl))
 
 (define (tc-check-one-decl-with-module
   [ctx : TcContext]

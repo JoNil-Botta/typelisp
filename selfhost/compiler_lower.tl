@@ -1318,6 +1318,7 @@
     [(AstTypeNil) roots]
     [(AstTypeCons head rest)
       (let
+        [head : AstType (box-get head)]
         [rest : AstTypeList (box-get rest)]
         (lower-clone-root-add-type-list
           ctx
@@ -1463,6 +1464,7 @@
     [(AstExprNil) state]
     [(AstExprCons expr rest)
       (let
+        [expr : AstExpr (box-get expr)]
         [rest : AstExprList (box-get rest)]
         (lower-reach-expr-list
           all-functions
@@ -1546,6 +1548,7 @@
     [(AstExprNil) roots]
     [(AstExprCons expr rest)
       (let
+        [expr : AstExpr (box-get expr)]
         [rest : AstExprList (box-get rest)]
         (lower-clone-roots-expr-list
           ctx
@@ -1680,6 +1683,7 @@
           (match args
             [(AstExprCons arg rest)
               (let
+                [arg : AstExpr (box-get arg)]
                 [rest : AstExprList (box-get rest)]
                 (match rest
                   [(AstExprNil)
@@ -3543,6 +3547,7 @@
     [(AstTypeNil) cursor]
     [(AstTypeCons ty rest)
       (let
+        [ty : AstType (box-get ty)]
         [rest : AstTypeList (box-get rest)]
         [resolved : AstType (tc-resolve-type ctx ty)]
         [offset : i64 (lower-align-up cursor (lower-type-align ctx resolved))]
@@ -3932,6 +3937,7 @@
     [(AstTypeNil) true]
     [(AstTypeCons head rest)
       (let
+        [head : AstType (box-get head)]
         [rest : AstTypeList (box-get rest)]
         (and
           (lower-supported-reference-type? ctx head)
@@ -4275,6 +4281,7 @@
       (match types
         [(AstTypeCons ty rest-types)
           (let
+            [ty : AstType (box-get ty)]
             [rest-types : AstTypeList (box-get rest-types)]
             [resolved : AstType (tc-resolve-type ctx ty)]
             [offset : i64
@@ -4399,6 +4406,7 @@
       (match types
         [(AstTypeCons ty rest-types)
           (let
+            [ty : AstType (box-get ty)]
             [rest-types : AstTypeList (box-get rest-types)]
             [resolved : AstType (tc-resolve-type ctx ty)]
             [offset : i64
@@ -4551,10 +4559,12 @@
             (lower-diagnostic "lower: enum payload pattern arity mismatch"))])]
     [(AstPatternCons pattern rest-patterns)
       (let
+        [pattern : AstPattern (box-get pattern)]
         [rest-patterns : AstPatternList (box-get rest-patterns)]
         (match types
           [(AstTypeCons ty rest-types)
             (let
+              [ty : AstType (box-get ty)]
               [rest-types : AstTypeList (box-get rest-types)]
               [resolved : AstType (tc-resolve-type ctx ty)]
               [default-offset : i64
@@ -4777,6 +4787,7 @@
     [(AstPatternNil) false]
     [(AstPatternCons pattern rest)
       (let
+        [pattern : AstPattern (box-get pattern)]
         [rest : AstPatternList (box-get rest)]
         (if (lower-pattern-refutable? pattern)
           true
@@ -5180,6 +5191,7 @@
     [(AstTypeNil) (OkLowerState state)]
     [(AstTypeCons ty rest)
       (let
+        [ty : AstType (box-get ty)]
         [rest : AstTypeList (box-get rest)]
         [resolved : AstType (tc-type-without-regions (tc-resolve-type ctx ty))]
         [offset : i64 (lower-align-up cursor (lower-type-align ctx resolved))]
@@ -5992,24 +6004,36 @@
         (match ty
           [(AstTyTuple types)
             (match types
-              [(AstTypeCons (AstTyVar hidden-name) type-rest)
+              [(AstTypeCons hidden-ty type-rest)
                 (let
+                  [hidden-ty : AstType (box-get hidden-ty)]
                   [type-rest : AstTypeList (box-get type-rest)]
-                  (match type-rest
-                    [(AstTypeCons (AstTyVar cleanup-name) end)
-                      (let
-                        [end : AstTypeList (box-get end)]
-                        (match end
-                          [(AstTypeNil)
-                            (match (lower-emit-cleanup-call
-                              state
-                              env
-                              hidden-name
-                              cleanup-name)
-                              [(OkLowerState next-state)
-                                (lower-emit-active-exits next-state env rest)]
-                              [(ErrLowerState message) (ErrLowerState message)])]
-                          [_ (lower-emit-active-exits state env rest)]))]
+                  (match hidden-ty
+                    [(AstTyVar hidden-name)
+                      (match type-rest
+                        [(AstTypeCons cleanup-ty end)
+                          (let
+                            [cleanup-ty : AstType (box-get cleanup-ty)]
+                            [end : AstTypeList (box-get end)]
+                            (match cleanup-ty
+                              [(AstTyVar cleanup-name)
+                                (match end
+                                  [(AstTypeNil)
+                                    (match (lower-emit-cleanup-call
+                                      state
+                                      env
+                                      hidden-name
+                                      cleanup-name)
+                                      [(OkLowerState next-state)
+                                        (lower-emit-active-exits
+                                          next-state
+                                          env
+                                          rest)]
+                                      [(ErrLowerState message)
+                                        (ErrLowerState message)])]
+                                  [_ (lower-emit-active-exits state env rest)])]
+                              [_ (lower-emit-active-exits state env rest)]))]
+                        [_ (lower-emit-active-exits state env rest)])]
                     [_ (lower-emit-active-exits state env rest)]))]
               [_ (lower-emit-active-exits state env rest)])]
           [_ (lower-emit-active-exits state env rest)])
@@ -6035,24 +6059,37 @@
         (match ty
           [(AstTyTuple types)
             (match types
-              [(AstTypeCons (AstTyVar hidden-name) type-rest)
+              [(AstTypeCons hidden-ty type-rest)
                 (let
+                  [hidden-ty : AstType (box-get hidden-ty)]
                   [type-rest : AstTypeList (box-get type-rest)]
-                  (match type-rest
-                    [(AstTypeCons (AstTyVar cleanup-name) end)
-                      (let
-                        [end : AstTypeList (box-get end)]
-                        (match end
-                          [(AstTypeNil)
-                            (match (lower-emit-cleanup-call
-                              state
-                              env
-                              hidden-name
-                              cleanup-name)
-                              [(OkLowerState next-state)
-                                (lower-emit-active-cleanups next-state env rest)]
-                              [(ErrLowerState message) (ErrLowerState message)])]
-                          [_ (lower-emit-active-cleanups state env rest)]))]
+                  (match hidden-ty
+                    [(AstTyVar hidden-name)
+                      (match type-rest
+                        [(AstTypeCons cleanup-ty end)
+                          (let
+                            [cleanup-ty : AstType (box-get cleanup-ty)]
+                            [end : AstTypeList (box-get end)]
+                            (match cleanup-ty
+                              [(AstTyVar cleanup-name)
+                                (match end
+                                  [(AstTypeNil)
+                                    (match (lower-emit-cleanup-call
+                                      state
+                                      env
+                                      hidden-name
+                                      cleanup-name)
+                                      [(OkLowerState next-state)
+                                        (lower-emit-active-cleanups
+                                          next-state
+                                          env
+                                          rest)]
+                                      [(ErrLowerState message)
+                                        (ErrLowerState message)])]
+                                  [_
+                                    (lower-emit-active-cleanups state env rest)])]
+                              [_ (lower-emit-active-cleanups state env rest)]))]
+                        [_ (lower-emit-active-cleanups state env rest)])]
                     [_ (lower-emit-active-cleanups state env rest)]))]
               [_ (lower-emit-active-cleanups state env rest)])]
           [_ (lower-emit-active-cleanups state env rest)])
@@ -6358,6 +6395,7 @@
     (match args
       [(AstExprCons arg tail)
         (let
+          [arg : AstExpr (box-get arg)]
           [tail : AstExprList (box-get tail)]
           (match tail
             [(AstExprNil)
@@ -6442,6 +6480,7 @@
     [(AstTypeNil) (OkLowerState state)]
     [(AstTypeCons ty rest)
       (let
+        [ty : AstType (box-get ty)]
         [rest : AstTypeList (box-get rest)]
         [resolved : AstType (tc-type-without-regions (tc-resolve-type ctx ty))]
         [offset : i64 (lower-align-up cursor (lower-type-align ctx resolved))]
@@ -6984,6 +7023,7 @@
     (match args
       [(AstExprCons arg tail)
         (let
+          [arg : AstExpr (box-get arg)]
           [tail : AstExprList (box-get tail)]
           (match tail
             [(AstExprNil)
@@ -7055,10 +7095,12 @@
           (ErrLowerArgs (lower-diagnostic "lower: constructor arity mismatch"))])]
     [(AstExprCons arg rest-args)
       (let
+        [arg : AstExpr (box-get arg)]
         [rest-args : AstExprList (box-get rest-args)]
         (match types
           [(AstTypeCons expected rest-types)
             (let
+              [expected : AstType (box-get expected)]
               [rest-types : AstTypeList (box-get rest-types)]
               [arg-ty : AstType
                 (tc-type-without-regions (tc-resolve-type ctx expected))]
@@ -7385,6 +7427,7 @@
                 (match args
                   [(AstExprCons arg tail)
                     (let
+                      [arg : AstExpr (box-get arg)]
                       [tail : AstExprList (box-get tail)]
                       (match tail
                         [(AstExprNil)
@@ -7452,6 +7495,7 @@
     [(AstExprNil) (OkTcType (AstTyUnit))]
     [(AstExprCons expr rest)
       (let
+        [expr : AstExpr (box-get expr)]
         [rest : AstExprList (box-get rest)]
         (match rest
           [(AstExprNil)
@@ -7466,6 +7510,7 @@
     [(AstPatternNil) env]
     [(AstPatternCons pattern rest)
       (let
+        [pattern : AstPattern (box-get pattern)]
         [rest : AstPatternList (box-get rest)]
         (lower-pattern-list-bind-local-names
           (lower-pattern-bind-local-names env pattern)
@@ -8918,6 +8963,7 @@
         (lower-diagnostic "lower: tuple-ref index out of range"))]
     [(AstTypeCons ty rest)
       (let
+        [ty : AstType (box-get ty)]
         [rest : AstTypeList (box-get rest)]
         [resolved : AstType (tc-resolve-type ctx ty)]
         [offset : i64 (lower-align-up cursor (lower-type-align ctx resolved))]
@@ -8947,12 +8993,14 @@
     [(AstExprNil) (OkLowerState state)]
     [(AstExprCons value rest-values)
       (let
+        [value : AstExpr (box-get value)]
         [rest-values : AstExprList (box-get rest-values)]
         (match types
           [(AstTypeNil)
             (ErrLowerState (lower-diagnostic "lower: tuple arity mismatch"))]
           [(AstTypeCons ty rest-types)
             (let
+              [ty : AstType (box-get ty)]
               [rest-types : AstTypeList (box-get rest-types)]
               [resolved : AstType (tc-resolve-type ctx ty)]
               [offset : i64
@@ -9033,6 +9081,7 @@
     [(AstExprNil) (OkLowerState state)]
     [(AstExprCons value rest-values)
       (let
+        [value : AstExpr (box-get value)]
         [rest-values : AstExprList (box-get rest-values)]
         (match (lower-expr ctx state env type-env value)
           [(OkLowerExpr lowered)
@@ -9606,10 +9655,12 @@
           (ErrLowerArgs (lower-diagnostic "lower: constructor arity mismatch"))])]
     [(AstExprCons arg rest-args)
       (let
+        [arg : AstExpr (box-get arg)]
         [rest-args : AstExprList (box-get rest-args)]
         (match types
           [(AstTypeCons expected rest-types)
             (let
+              [expected : AstType (box-get expected)]
               [rest-types : AstTypeList (box-get rest-types)]
               [arg-ty : AstType
                 (tc-type-without-regions (tc-resolve-type ctx expected))]
@@ -9865,14 +9916,17 @@
   (match args
     [(AstExprCons str tail)
       (let
+        [str : AstExpr (box-get str)]
         [tail : AstExprList (box-get tail)]
         (match tail
           [(AstExprCons start rest1)
             (let
+              [start : AstExpr (box-get start)]
               [rest1 : AstExprList (box-get rest1)]
               (match rest1
                 [(AstExprCons len rest2)
                   (let
+                    [len : AstExpr (box-get len)]
                     [rest2 : AstExprList (box-get rest2)]
                     (match rest2
                       [(AstExprNil)
@@ -9921,10 +9975,12 @@
   (match args
     [(AstExprCons left tail)
       (let
+        [left : AstExpr (box-get left)]
         [tail : AstExprList (box-get tail)]
         (match tail
           [(AstExprCons right rest)
             (let
+              [right : AstExpr (box-get right)]
               [rest : AstExprList (box-get rest)]
               (match rest
                 [(AstExprNil)
@@ -9997,6 +10053,7 @@
   (match args
     [(AstExprCons arg tail)
       (let
+        [arg : AstExpr (box-get arg)]
         [tail : AstExprList (box-get tail)]
         (match tail
           [(AstExprNil)
@@ -10143,6 +10200,7 @@
   (match args
     [(AstExprCons arg tail)
       (let
+        [arg : AstExpr (box-get arg)]
         [tail : AstExprList (box-get tail)]
         (match tail
           [(AstExprNil)
@@ -10187,6 +10245,7 @@
   (match args
     [(AstExprCons arg tail)
       (let
+        [arg : AstExpr (box-get arg)]
         [tail : AstExprList (box-get tail)]
         (match tail
           [(AstExprNil)
@@ -10238,6 +10297,7 @@
   (match args
     [(AstExprCons arg tail)
       (let
+        [arg : AstExpr (box-get arg)]
         [tail : AstExprList (box-get tail)]
         (match tail
           [(AstExprNil)
@@ -10282,6 +10342,7 @@
   (match args
     [(AstExprCons arg tail)
       (let
+        [arg : AstExpr (box-get arg)]
         [tail : AstExprList (box-get tail)]
         (match tail
           [(AstExprNil)
@@ -10326,6 +10387,7 @@
   (match args
     [(AstExprCons arg tail)
       (let
+        [arg : AstExpr (box-get arg)]
         [tail : AstExprList (box-get tail)]
         (match tail
           [(AstExprNil)
@@ -10370,6 +10432,7 @@
   (match args
     [(AstExprCons arg tail)
       (let
+        [arg : AstExpr (box-get arg)]
         [tail : AstExprList (box-get tail)]
         (match tail
           [(AstExprNil)
@@ -10416,6 +10479,7 @@
   (match args
     [(AstExprCons arg tail)
       (let
+        [arg : AstExpr (box-get arg)]
         [tail : AstExprList (box-get tail)]
         (match tail
           [(AstExprNil)
@@ -10451,10 +10515,12 @@
   (match args
     [(AstExprCons source tail)
       (let
+        [source : AstExpr (box-get source)]
         [tail : AstExprList (box-get tail)]
         (match tail
           [(AstExprCons destination rest)
             (let
+              [destination : AstExpr (box-get destination)]
               [rest : AstExprList (box-get rest)]
               (match rest
                 [(AstExprNil)
@@ -10584,10 +10650,12 @@
   (match args
     [(AstExprCons path tail)
       (let
+        [path : AstExpr (box-get path)]
         [tail : AstExprList (box-get tail)]
         (match tail
           [(AstExprCons mode rest)
             (let
+              [mode : AstExpr (box-get mode)]
               [rest : AstExprList (box-get rest)]
               (match rest
                 [(AstExprNil)
@@ -10667,6 +10735,7 @@
   (match args
     [(AstExprCons handle tail)
       (let
+        [handle : AstExpr (box-get handle)]
         [tail : AstExprList (box-get tail)]
         (match tail
           [(AstExprNil)
@@ -10718,10 +10787,12 @@
   (match args
     [(AstExprCons handle tail)
       (let
+        [handle : AstExpr (box-get handle)]
         [tail : AstExprList (box-get tail)]
         (match tail
           [(AstExprCons count rest)
             (let
+              [count : AstExpr (box-get count)]
               [rest : AstExprList (box-get rest)]
               (match rest
                 [(AstExprNil)
@@ -10809,10 +10880,12 @@
   (match args
     [(AstExprCons handle tail)
       (let
+        [handle : AstExpr (box-get handle)]
         [tail : AstExprList (box-get tail)]
         (match tail
           [(AstExprCons contents rest)
             (let
+              [contents : AstExpr (box-get contents)]
               [rest : AstExprList (box-get rest)]
               (match rest
                 [(AstExprNil)
@@ -10897,6 +10970,7 @@
   (match args
     [(AstExprCons handle tail)
       (let
+        [handle : AstExpr (box-get handle)]
         [tail : AstExprList (box-get tail)]
         (match tail
           [(AstExprNil)
@@ -10950,6 +11024,7 @@
   (match args
     [(AstExprCons handle tail)
       (let
+        [handle : AstExpr (box-get handle)]
         [tail : AstExprList (box-get tail)]
         (match tail
           [(AstExprNil)
@@ -11001,10 +11076,12 @@
   (match args
     [(AstExprCons path tail)
       (let
+        [path : AstExpr (box-get path)]
         [tail : AstExprList (box-get tail)]
         (match tail
           [(AstExprCons contents rest)
             (let
+              [contents : AstExpr (box-get contents)]
               [rest : AstExprList (box-get rest)]
               (match rest
                 [(AstExprNil)
@@ -11092,10 +11169,12 @@
   (match args
     [(AstExprCons path tail)
       (let
+        [path : AstExpr (box-get path)]
         [tail : AstExprList (box-get tail)]
         (match tail
           [(AstExprCons contents rest)
             (let
+              [contents : AstExpr (box-get contents)]
               [rest : AstExprList (box-get rest)]
               (match rest
                 [(AstExprNil)
@@ -11183,10 +11262,12 @@
   (match args
     [(AstExprCons path tail)
       (let
+        [path : AstExpr (box-get path)]
         [tail : AstExprList (box-get tail)]
         (match tail
           [(AstExprCons contents rest)
             (let
+              [contents : AstExpr (box-get contents)]
               [rest : AstExprList (box-get rest)]
               (match rest
                 [(AstExprNil)
@@ -11274,10 +11355,12 @@
   (match args
     [(AstExprCons left tail)
       (let
+        [left : AstExpr (box-get left)]
         [tail : AstExprList (box-get tail)]
         (match tail
           [(AstExprCons right rest)
             (let
+              [right : AstExpr (box-get right)]
               [rest : AstExprList (box-get rest)]
               (match rest
                 [(AstExprNil)
@@ -11389,10 +11472,12 @@
   (match args
     [(AstExprCons str tail)
       (let
+        [str : AstExpr (box-get str)]
         [tail : AstExprList (box-get tail)]
         (match tail
           [(AstExprCons index rest)
             (let
+              [index : AstExpr (box-get index)]
               [rest : AstExprList (box-get rest)]
               (match rest
                 [(AstExprNil)
@@ -11629,6 +11714,7 @@
               (match args
                 [(AstExprCons arg tail)
                   (let
+                    [arg : AstExpr (box-get arg)]
                     [tail : AstExprList (box-get tail)]
                     (match tail
                       [(AstExprNil)
@@ -11711,6 +11797,7 @@
   (match args
     [(AstExprCons arr tail)
       (let
+        [arr : AstExpr (box-get arr)]
         [tail : AstExprList (box-get tail)]
         (match tail
           [(AstExprNil)
@@ -12038,10 +12125,12 @@
   (match args
     [(AstExprCons leaf tail)
       (let
+        [leaf : AstExpr (box-get leaf)]
         [tail : AstExprList (box-get tail)]
         (match tail
           [(AstExprCons subleaf rest)
             (let
+              [subleaf : AstExpr (box-get subleaf)]
               [rest : AstExprList (box-get rest)]
               (match rest
                 [(AstExprNil)
@@ -12103,6 +12192,7 @@
   (match args
     [(AstExprCons index tail)
       (let
+        [index : AstExpr (box-get index)]
         [tail : AstExprList (box-get tail)]
         (match tail
           [(AstExprNil) (lower-xgetbv ctx state env type-env index)]
@@ -12903,6 +12993,7 @@
     [(AstExprNil) (OkLowerArgs state IrValueNil)]
     [(AstExprCons arg rest)
       (let
+        [arg : AstExpr (box-get arg)]
         [rest : AstExprList (box-get rest)]
         (match (lower-expr ctx state env type-env arg)
           [(OkLowerExpr lowered)
@@ -13081,6 +13172,7 @@
     [(AstExprNil) (OkLowerExpr (LowerExpr state IrValueUnit (AstTyUnit)))]
     [(AstExprCons expr rest)
       (let
+        [expr : AstExpr (box-get expr)]
         [rest : AstExprList (box-get rest)]
         (match rest
           [(AstExprNil) (lower-expr ctx state env type-env expr)]
@@ -15852,6 +15944,7 @@
     [(AstExprNil) false]
     [(AstExprCons expr rest)
       (let
+        [expr : AstExpr (box-get expr)]
         [rest : AstExprList (box-get rest)]
         (match rest
           [(AstExprNil) (lower-tail-expr-candidate? state env expr)]
@@ -15982,6 +16075,7 @@
           (IrInstrReturn (lower-return-maybe IrValueUnit ret-ty))))]
     [(AstExprCons expr rest)
       (let
+        [expr : AstExpr (box-get expr)]
         [rest : AstExprList (box-get rest)]
         (match rest
           [(AstExprNil) (lower-tail-expr ctx state env type-env expr ret-ty)]
@@ -16406,6 +16500,7 @@
     [(AstTypeNil) false]
     [(AstTypeCons ty rest)
       (let
+        [ty : AstType (box-get ty)]
         [rest : AstTypeList (box-get rest)]
         (or
           (lower-type-contains-inline-aggregate? ctx ty)
@@ -16638,6 +16733,7 @@
     [(AstTypeNil) AstTypeNil]
     [(AstTypeCons ty rest)
       (let
+        [ty : AstType (box-get ty)]
         [rest : AstTypeList (box-get rest)]
         (ast-type-cons
           (tc-type-without-regions ty)
@@ -16656,6 +16752,7 @@
     [(AstTypeNil) IrParamNil]
     [(AstTypeCons ty rest)
       (let
+        [ty : AstType (box-get ty)]
         [rest : AstTypeList (box-get rest)]
         (compiler-ir-param-cons
           (IrParam

@@ -1281,7 +1281,7 @@
   (AstTyI64))
 (defenum AstTypeList
   (AstTypeNil)
-  (AstTypeCons AstType (Box AstTypeList)))
+  (AstTypeCons (Box AstType) (Box AstTypeList)))
 (defstruct CtfeReflectField
   (name String)
   (ty AstType))
@@ -1320,6 +1320,45 @@
               (compiler-typecheck-inline-layout-ok?
                 src
                 "CtfeReflectVariantList"))))))))
+
+(define (compiler-typecheck-inline-boxed-ast-list-source) : String
+  "(defenum AstType
+  (AstTyI64)
+  (AstTyFunc AstTypeList (Box AstType))
+  (AstTyTuple AstTypeList)
+  (AstTyBox (Box AstType)))
+(defenum AstTypeList
+  (AstTypeNil)
+  (AstTypeCons (Box AstType) (Box AstTypeList)))
+(defenum AstPattern
+  (AstPatWildcard)
+  (AstPatTuple (Box AstPatternList)))
+(defenum AstPatternList
+  (AstPatternNil)
+  (AstPatternCons (Box AstPattern) (Box AstPatternList)))
+(defenum AstExpr
+  (AstExprLiteral i64)
+  (AstExprCall (Box AstExpr) AstExprList)
+  (AstExprTuple AstExprList)
+  (AstExprMatch (Box AstExpr) AstPatternList))
+(defenum AstExprList
+  (AstExprNil)
+  (AstExprCons (Box AstExpr) (Box AstExprList)))")
+
+(define (compiler-typecheck-inline-ast-list-layout-ok?) : bool
+  (let
+    [src : String (compiler-typecheck-inline-boxed-ast-list-source)]
+    (and
+      (compiler-typecheck-inline-layout-ok? src "AstType")
+      (and
+        (compiler-typecheck-inline-layout-ok? src "AstTypeList")
+        (and
+          (compiler-typecheck-inline-layout-ok? src "AstPattern")
+          (and
+            (compiler-typecheck-inline-layout-ok? src "AstPatternList")
+            (and
+              (compiler-typecheck-inline-layout-ok? src "AstExpr")
+              (compiler-typecheck-inline-layout-ok? src "AstExprList"))))))))
 
 (define (compiler-typecheck-inline-boxed-formatter-source) : String
   "(defenum FormatToken
@@ -1415,6 +1454,9 @@
         unit
         (set! ok false))
       (if (compiler-typecheck-inline-ctfe-metadata-layout-ok?)
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-inline-ast-list-layout-ok?)
         unit
         (set! ok false))
       (if (compiler-typecheck-inline-formatter-layout-ok?)

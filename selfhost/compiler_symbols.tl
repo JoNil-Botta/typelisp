@@ -2499,6 +2499,7 @@
       (match types
         [(AstTypeCons ty rest)
           (let
+            [ty : AstType (box-get ty)]
             [rest : AstTypeList (box-get rest)]
             (match rest
               [(AstTypeNil)

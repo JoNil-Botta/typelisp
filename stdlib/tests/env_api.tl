@@ -42,11 +42,11 @@
   [message : String]) : unit
   (match items
     [(EnvStringCons a rest)
-      (match rest
+      (match (box-get rest)
         [(EnvStringCons b tail)
-          (match tail
+          (match (box-get tail)
             [(EnvStringCons c end)
-              (match end
+              (match (box-get end)
                 [(EnvStringNil)
                   (begin
                     (assert-owned-string-eq a first message)
@@ -67,15 +67,15 @@
   [message : String]) : unit
   (match items
     [(EnvStringCons a rest)
-      (match rest
+      (match (box-get rest)
         [(EnvStringCons b rest2)
-          (match rest2
+          (match (box-get rest2)
             [(EnvStringCons c rest3)
-              (match rest3
+              (match (box-get rest3)
                 [(EnvStringCons d rest4)
-                  (match rest4
+                  (match (box-get rest4)
                     [(EnvStringCons e end)
-                      (match end
+                      (match (box-get end)
                         [(EnvStringNil)
                           (begin
                             (assert-owned-string-eq a first message)

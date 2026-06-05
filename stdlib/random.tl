@@ -59,7 +59,7 @@
 ;: Linear list of non-negative weights.
 (defenum RandomWeightList
   (RandomWeightNil)
-  (RandomWeightCons i64 RandomWeightList))
+  (RandomWeightCons i64 (Box RandomWeightList)))
 
 ;: Recoverable weighted-index result.
 (defenum RandomWeightedIndexResult
@@ -135,7 +135,7 @@
 
 ;: Prepend `weight` to a weight list.
 (define (random-weight-list-cons [weight : i64] [rest : RandomWeightList]) : RandomWeightList
-  (RandomWeightCons weight rest))
+  (RandomWeightCons weight (box rest)))
 
 ;: Return true when a weight list has no entries.
 (define (random-weight-list-empty? [weights : RandomWeightList]) : bool
@@ -152,7 +152,7 @@
     [(RandomWeightCons weight rest)
       (if (< weight 0)
         (ErrRandomWeightTotal "random: weight must not be negative")
-        (random-weight-list-total-nonempty rest (+ acc weight)))]))
+        (random-weight-list-total-nonempty (box-get rest) (+ acc weight)))]))
 
 ;: Return the total weight, rejecting empty lists and negative weights.
 (define (random-weight-list-total [weights : RandomWeightList]) : RandomWeightTotalResult
@@ -169,10 +169,13 @@
     [(RandomWeightNil) -1]
     [(RandomWeightCons weight rest)
       (if (<= weight 0)
-        (random-weighted-index-scan rest target (+ index 1))
+        (random-weighted-index-scan (box-get rest) target (+ index 1))
         (if (< target weight)
           index
-          (random-weighted-index-scan rest (- target weight) (+ index 1))))]))
+          (random-weighted-index-scan
+            (box-get rest)
+            (- target weight)
+            (+ index 1))))]))
 
 ;: Choose an index from `weights`, skipping zero weights.
 ;:

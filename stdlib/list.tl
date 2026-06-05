@@ -20,7 +20,7 @@
 ;: Immutable list of strings.
 (defenum StringList
   (StringNil)
-  (StringCons String StringList))
+  (StringCons String (Box StringList)))
 
 ;: Builder for appending strings in call order. `items` is stored reversed so
 ;: each push is constant-time; build helpers allocate a fresh ordered spine.
@@ -33,21 +33,21 @@
 
 ;: Prepend `value` to `rest`.
 (define (string-list-cons [value : String] [rest : StringList]) : StringList
-  (StringCons value rest))
+  (StringCons value (box rest)))
 
 ;: Alias for `string-list-cons` for builder-style call sites.
 (define (string-list-push-front [items : StringList] [value : String]) : StringList
-  (StringCons value items))
+  (StringCons value (box items)))
 
 ;: Return a one-element list.
 (define (string-list-single [value : String]) : StringList
-  (StringCons value (StringNil)))
+  (StringCons value (box (StringNil))))
 
 ;: Return the number of list nodes.
 (define (string-list-count [items : StringList]) : i64
   (match items
     [(StringNil) 0]
-    [(StringCons _ rest) (+ 1 (string-list-count rest))]))
+    [(StringCons _ rest) (+ 1 (string-list-count (box-get rest)))]))
 
 ;: Return true when `items` contains `value`.
 (define (string-list-contains? [items : StringList] [value : String]) : bool
@@ -56,14 +56,14 @@
     [(StringCons head rest)
       (if (string-eq head value)
         true
-        (string-list-contains? rest value))]))
+        (string-list-contains? (box-get rest) value))]))
 
 ;: Reverse `items` onto `acc`, allocating a fresh active-arena list spine.
 (define (string-list-reverse-onto [items : StringList] [acc : StringList]) : StringList
   (match items
     [(StringNil) acc]
     [(StringCons head rest)
-      (string-list-reverse-onto rest (StringCons head acc))]))
+      (string-list-reverse-onto (box-get rest) (StringCons head (box acc)))]))
 
 ;: Return `items` in reverse order.
 (define (string-list-reverse [items : StringList]) : StringList
@@ -74,7 +74,8 @@
 (define (string-list-append [left : StringList] [right : StringList]) : StringList
   (match left
     [(StringNil) right]
-    [(StringCons head rest) (StringCons head (string-list-append rest right))]))
+    [(StringCons head rest)
+      (StringCons head (box (string-list-append (box-get rest) right)))]))
 
 ;: Copy the first `count` array items into `acc` in reverse order, clamping the
 ;: count to the source array length.
@@ -89,7 +90,7 @@
       src
       (+ index 1)
       count
-      (StringCons (array-ref src index) acc))))
+      (StringCons (array-ref src index) (box acc)))))
 
 ;: Build a list from the live prefix `[0, count)` of `src`. Negative counts
 ;: produce an empty list; counts past the source length are clamped.
@@ -114,7 +115,7 @@
     [(StringCons head rest)
       (begin
         (array-set! out index head)
-        (string-list-to-array-fill rest out (+ index 1)))]))
+        (string-list-to-array-fill (box-get rest) out (+ index 1)))]))
 
 ;: Return a fresh array containing exactly the list's items in order.
 (define (string-list-to-array [items : StringList]) : (Array String)
@@ -133,7 +134,7 @@
 (define (string-list-builder-push
   [builder : StringListBuilder]
   [value : String]) : StringListBuilder
-  (StringListBuilder (StringCons value (struct-get builder items))))
+  (StringListBuilder (StringCons value (box (struct-get builder items)))))
 
 ;: Return the number of values currently in `builder`.
 (define (string-list-builder-count [builder : StringListBuilder]) : i64

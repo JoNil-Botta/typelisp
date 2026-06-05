@@ -215,7 +215,7 @@
         [candidate : String (msvc-path-join dir tool)]
         (if (msvc-path-exists-owned? candidate)
           (MsvcSomeString candidate)
-          (msvc-search-dirs-owned rest tool)))]))
+          (msvc-search-dirs-owned (box-get rest) tool)))]))
 
 ;: Search PATH directories for `tool`, returning the first existing candidate.
 (define (msvc-search-dirs [dirs : EnvStringList] [tool : (& tool str)]) : MsvcMaybeString
@@ -665,7 +665,7 @@
       (match (msvc-tool-from-instance instance sdk tool)
         [(OkMsvcTool resolved)
           (msvc-find-tool-in-instances
-            rest
+            (box-get rest)
             sdk
             tool
             (let
@@ -678,7 +678,7 @@
             last-error)]
         [(ErrMsvcTool error)
           (msvc-find-tool-in-instances
-            rest
+            (box-get rest)
             sdk
             tool
             best

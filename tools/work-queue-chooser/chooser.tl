@@ -154,7 +154,7 @@
     [(JsonListCons head rest)
       (if (string-eq (json-field-string head "name") needle)
         true
-        (label-list-has? rest needle))]))
+        (label-list-has? (box-get rest) needle))]))
 
 ;: Return the `labels` array of an issue, or an empty list when absent.
 (define (issue-label-list [item : Json]) : JsonList
@@ -163,7 +163,7 @@
     (match (json-object-get item (& key))
       [(JsonFound found)
         (match found
-          [(JsonArray entries) entries]
+          [(JsonArray entries) (box-get entries)]
           [_ (JsonListNil)])]
       [(JsonMissing) (JsonListNil)])))
 
@@ -212,7 +212,7 @@
     [(JsonListNil) true]
     [(JsonListCons head rest)
       (if (pr-check-entry-complete? head)
-        (pr-check-list-complete? rest)
+        (pr-check-list-complete? (box-get rest))
         false)]))
 
 ;: Missing or empty `statusCheckRollup` means the PR has no checks and remains
@@ -223,7 +223,7 @@
     (match (json-object-get item (& key))
       [(JsonFound found)
         (match found
-          [(JsonArray entries) (pr-check-list-complete? entries)]
+          [(JsonArray entries) (pr-check-list-complete? (box-get entries))]
           [_ true])]
       [(JsonMissing) true])))
 
@@ -252,7 +252,7 @@
     [(JsonListNil) (CandNil)]
     [(JsonListCons head rest)
       (let
-        [tail : CandList (pr-candidates rest)]
+        [tail : CandList (pr-candidates (box-get rest))]
         (if (pr-checks-complete? head)
           (CandCons (pr-candidate head) tail)
           tail))]))
@@ -262,7 +262,7 @@
   (match items
     [(JsonListNil) (CandNil)]
     [(JsonListCons head rest)
-      (CandCons (issue-candidate head) (issue-candidates rest))]))
+      (CandCons (issue-candidate head) (issue-candidates (box-get rest)))]))
 
 ;: Concatenate two candidate lists, preserving order.
 (define (cand-append [front : CandList] [back : CandList]) : CandList
@@ -277,7 +277,7 @@
     (match (json-object-get value (& key))
       [(JsonFound found)
         (match found
-          [(JsonArray entries) entries]
+          [(JsonArray entries) (box-get entries)]
           [_ (JsonListNil)])]
       [(JsonMissing) (JsonListNil)])))
 

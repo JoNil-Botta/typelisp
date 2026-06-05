@@ -735,7 +735,7 @@ contains|tl_string_concat:
 contains|tl_substring:
 contains|tl_int_to_string:
 contains|tl_string_to_int:
-contains|tl_print_str:
+contains|print_string:
 contains|.string "lambda"
 contains|.string "if"
 contains|.string "begin"

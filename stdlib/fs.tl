@@ -39,6 +39,27 @@
 ;: Runtime string probe for retrieving the current working directory.
 (extern tl_fs_current_dir : (-> String))
 
+;: Runtime status probe for listing directory entries.
+(extern fs-runtime-read-dir-status (:symbol ".L_tl_fs_read_dir_status") : (->
+  String
+  i64))
+
+;: Runtime string probe for listing directory entries.
+(extern fs-runtime-read-dir (:symbol ".L_tl_fs_read_dir") : (-> String String))
+
+;: Runtime status probe for retrieving a filesystem node kind.
+(extern fs-runtime-file-kind-status (:symbol ".L_tl_fs_file_kind_status") : (->
+  String
+  i64))
+
+;: Runtime status probe for retrieving a regular-file size.
+(extern fs-runtime-file-size-status (:symbol ".L_tl_fs_file_size_status") : (->
+  String
+  i64))
+
+;: Runtime integer probe for retrieving a regular-file size.
+(extern fs-runtime-file-size (:symbol ".L_tl_fs_file_size") : (-> String i64))
+
 ;: Linux `mkdir` binding for directory creation.
 (extern fs-linux-mkdir (:symbol "mkdir") : (-> (Ptr u8) i32 i32))
 
@@ -156,6 +177,34 @@
     windows
     (cast (fs-windows-get-current-process-id) : i64)
     (cast (fs-linux-getpid) : i64)))
+
+;: Return the host status code for reading a directory listing.
+(define (fs-read-dir-status [path : String]) : i64
+  (fs-runtime-read-dir-status path))
+
+;: Return the newline-delimited host directory listing payload.
+(define (fs-read-dir [path : String]) : String
+  (fs-runtime-read-dir path))
+
+;: Return the host status code or sentinel for a filesystem node kind.
+(define (fs-file-kind-status [path : String]) : i64
+  (fs-runtime-file-kind-status path))
+
+;: Return the host status code for retrieving a regular-file size.
+(define (fs-file-size-status [path : String]) : i64
+  (fs-runtime-file-size-status path))
+
+;: Return the host-reported byte size for a regular file.
+(define (fs-file-size [path : String]) : i64
+  (fs-runtime-file-size path))
+
+;: Return the host status code for retrieving the current working directory.
+(define (fs-current-dir-status) : i64
+  (tl_fs_current_dir_status))
+
+;: Return the process current directory as an owned String.
+(define (fs-current-dir) : String
+  (tl_fs_current_dir))
 
 ;: Common host status code for attempting to create an already-existing path.
 (define fs-status-already-exists : i64

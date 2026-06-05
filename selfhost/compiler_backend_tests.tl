@@ -444,7 +444,16 @@
     [(ErrCompilerBackend _) false]))
 
 (define (compiler-backend-windows-print-runtime-source) : String
-  "(define (main) : i64
+  "(extern runtime-print-string (:symbol \"tl_print_string\") : (-> String unit))
+(define (print-string [text : String]) : unit
+  (runtime-print-string text))
+(define (print-newline) : unit
+  (print-string \"\\n\"))
+(define (print [value : i64]) : unit
+  (begin
+    (print-string (int->string value))
+    (print-newline)))
+(define (main) : i64
   (begin
     (print 3)
     0))")
@@ -457,7 +466,7 @@
       (backend-and8
         (compiler-backend-string-contains? asm ".globl tl_print_string\n")
         (compiler-backend-string-contains? asm "tl_print_string:\n")
-        (compiler-backend-string-contains? asm "    call tl_print_str\n")
+        (compiler-backend-string-contains? asm "    call tl_print_string\n")
         (not
           (compiler-backend-string-contains? asm "    call _tl_tl_print_str\n"))
         (not (compiler-backend-string-contains? asm ".extern tl_print_str\n"))
@@ -582,7 +591,10 @@
     [(ErrCompilerBackend _) false]))
 
 (define (compiler-backend-arg-runtime-source) : String
-  "(define (main) : i64
+  "(extern runtime-arg (:symbol \".L_tl_arg\") : (-> i64 String))
+(define (arg [index : i64]) : String
+  (runtime-arg index))
+(define (main) : i64
   (string-length (arg 0)))")
 
 (define (compiler-backend-arg-runtime-abort-ok?) : bool
@@ -2749,7 +2761,15 @@
     [(ErrCompilerBackend _) false]))
 
 (define (compiler-backend-fs-read-dir-runtime-source) : String
-  "(define (main [path : String]) : i64
+  "(extern fs-runtime-read-dir-status (:symbol \".L_tl_fs_read_dir_status\") : (->
+  String
+  i64))
+(extern fs-runtime-read-dir (:symbol \".L_tl_fs_read_dir\") : (-> String String))
+(define (fs-read-dir-status [path : String]) : i64
+  (fs-runtime-read-dir-status path))
+(define (fs-read-dir [path : String]) : String
+  (fs-runtime-read-dir path))
+(define (main [path : String]) : i64
   (+ (fs-read-dir-status path) (string-length (fs-read-dir path))))")
 
 (define (compiler-backend-fs-read-dir-runtime-ok?) : bool
@@ -2793,7 +2813,12 @@
     [(ErrCompilerBackend _) false]))
 
 (define (compiler-backend-fs-file-kind-runtime-source) : String
-  "(define (main [path : String]) : i64 (fs-file-kind-status path))")
+  "(extern fs-runtime-file-kind-status (:symbol \".L_tl_fs_file_kind_status\") : (->
+  String
+  i64))
+(define (fs-file-kind-status [path : String]) : i64
+  (fs-runtime-file-kind-status path))
+(define (main [path : String]) : i64 (fs-file-kind-status path))")
 
 (define (compiler-backend-fs-file-kind-runtime-ok?) : bool
   (match (compiler-backend-emit-source
@@ -2837,7 +2862,15 @@
     [(ErrCompilerBackend _) false]))
 
 (define (compiler-backend-fs-file-size-runtime-source) : String
-  "(define (main [path : String]) : i64
+  "(extern fs-runtime-file-size-status (:symbol \".L_tl_fs_file_size_status\") : (->
+  String
+  i64))
+(extern fs-runtime-file-size (:symbol \".L_tl_fs_file_size\") : (-> String i64))
+(define (fs-file-size-status [path : String]) : i64
+  (fs-runtime-file-size-status path))
+(define (fs-file-size [path : String]) : i64
+  (fs-runtime-file-size path))
+(define (main [path : String]) : i64
   (+ (fs-file-size-status path) (fs-file-size path)))")
 
 (define (compiler-backend-fs-file-size-runtime-ok?) : bool
@@ -2881,7 +2914,13 @@
     [(ErrCompilerBackend _) false]))
 
 (define (compiler-backend-fs-current-dir-source) : String
-  "(define (main) : i64
+  "(extern tl_fs_current_dir_status : (-> i64))
+(extern tl_fs_current_dir : (-> String))
+(define (fs-current-dir-status) : i64
+  (tl_fs_current_dir_status))
+(define (fs-current-dir) : String
+  (tl_fs_current_dir))
+(define (main) : i64
   (+ (fs-current-dir-status) (string-length (fs-current-dir))))")
 
 (define (compiler-backend-fs-current-dir-extern-source) : String

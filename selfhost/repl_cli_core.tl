@@ -362,12 +362,14 @@
     [(OkReplString body)
       (OkReplString
         (string-append
-          session-source
+          "(import \"stdlib/io.tl\")\n"
           (string-append
-            "\n"
+            session-source
             (string-append
-              (repl-display-helpers-source ty)
-              (repl-scratch-main-source body)))))]
+              "\n"
+              (string-append
+                (repl-display-helpers-source ty)
+                (repl-scratch-main-source body))))))]
     [(ErrReplString message) (ErrReplString message)]))
 
 (define (repl-clean-scratch-source [temp-dir : String] [source-path : String]) : unit

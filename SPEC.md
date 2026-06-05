@@ -1701,6 +1701,8 @@ bodies; assertion helpers in `stdlib/test.tl` panic on failure.
 
 Example:
 ```lisp test=check name=inline-test-declaration
+(import "stdlib/io.tl")
+
 (define (inc [x : i64]) : i64 (+ x 1))
 
 (test inc-basic
@@ -2692,9 +2694,7 @@ nesting `with-arena` forms.
   (with-arena r
     (let
       [s : String (int->string 42)]
-      (begin
-        (print-string s)
-        0))))
+      (string-length s))))
 ```
 
 **Static escape checking:** Values allocated inside a region are typed as
@@ -3741,6 +3741,8 @@ satisfy any expected type and can merge with concrete `if` branch or `match` arm
 result types.
 
 ```lisp test=compile name=panic-never-branch
+(import "stdlib/io.tl")
+
 (define (parse-or-zero [ok : bool]) : i64
   (if ok
     1
@@ -3751,6 +3753,8 @@ The older dummy-value style also remains valid, but it is no longer required
 for builtin `panic`/`error`:
 
 ```lisp test=compile name=panic-dummy-value
+(import "stdlib/io.tl")
+
 (define (parse-or-zero-compat [ok : bool]) : i64
   (if ok
     1
@@ -3899,6 +3903,8 @@ an error variant, and its internal bottom type can still inhabit a
 result-returning branch:
 
 ```lisp test=compile name=panic-vs-result
+(import "stdlib/io.tl")
+
 (defenum ResultI64
   (OkI64 i64)
   (ErrI64 String))
@@ -4110,6 +4116,8 @@ fields are rejected before lowering.
 ```
 
 ```lisp test=run name=print-string exit=0 stdout="hello\n"
+(import "stdlib/io.tl")
+
 (define (main) : i64
   (begin
     (print-string "hello\n")

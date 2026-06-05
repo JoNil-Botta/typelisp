@@ -59,7 +59,8 @@ Coverage notes:
   range normalization, and string edge cases.
 - `process_api.tl` covers command construction, argv append helpers,
   cwd/stdin/env accessors, invalid-command diagnostics, result/error predicates,
-  and unsupported optional execution settings.
+  async start/wait API validation, and structured unsupported async runtime
+  results.
 - `process_runtime.tl` covers backend process execution for stdout, stderr,
   nonzero status, and failed spawn on Linux, plus the structured unsupported
   result on Windows.

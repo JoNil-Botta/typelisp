@@ -2377,6 +2377,43 @@
   "(extern tl_process_output : (-> i64 i64))
 (define (main) : i64 (tl_process_output 0))")
 
+(define (compiler-backend-process-async-source) : String
+  "(extern tl_process_start : (-> i64 i64))
+(extern tl_process_wait : (-> i64 i64))
+(define (main) : i64 (+ (tl_process_start 0) (tl_process_wait 0)))")
+
+(define (compiler-backend-process-async-ok?) : bool
+  (match (compiler-backend-emit-source (compiler-backend-process-async-source))
+    [(OkCompilerBackend asm)
+      (and
+        (compiler-backend-string-contains? asm "tl_process_start:\n")
+        (and
+          (compiler-backend-string-contains? asm "tl_process_wait:\n")
+          (and
+            (compiler-backend-string-contains?
+              asm
+              "process: async child handles are not supported by this runtime")
+            (and
+              (compiler-backend-string-contains?
+                asm
+                "    call tl_process_start\n")
+              (and
+                (compiler-backend-string-contains?
+                  asm
+                  "    call tl_process_wait\n")
+                (and
+                  (not
+                    (compiler-backend-string-contains?
+                      asm
+                      ".extern tl_process_start\n"))
+                  (and
+                    (not
+                      (compiler-backend-string-contains?
+                        asm
+                        ".extern tl_process_wait\n"))
+                    (compiler-backend-string-contains? asm "tl_alloc:\n"))))))))]
+    [(ErrCompilerBackend _) false]))
+
 (define (compiler-backend-process-output-ok?) : bool
   (match (compiler-backend-emit-source (compiler-backend-process-output-source))
     [(OkCompilerBackend asm)
@@ -2422,9 +2459,45 @@
                               (compiler-backend-string-contains?
                                 asm
                                 "    movq $293, %rax\n")
-                              (compiler-backend-string-contains?
-                                asm
-                                "tl_alloc:\n")))))))))))))]
+                              (and
+                                (compiler-backend-string-contains?
+                                  asm
+                                  "tl_alloc:\n")
+                                (compiler-backend-process-async-ok?))))))))))))))]
+    [(ErrCompilerBackend _) false]))
+
+(define (compiler-backend-windows-process-async-ok?) : bool
+  (match (compiler-backend-emit-source-for-target
+    (compiler-backend-process-async-source)
+    (BackendTargetWindows))
+    [(OkCompilerBackend asm)
+      (and
+        (compiler-backend-string-contains? asm "tl_process_start:\n")
+        (and
+          (compiler-backend-string-contains? asm "tl_process_wait:\n")
+          (and
+            (compiler-backend-string-contains?
+              asm
+              "process: async child handles are not supported by this runtime")
+            (and
+              (compiler-backend-string-contains?
+                asm
+                "    call tl_process_start\n")
+              (and
+                (compiler-backend-string-contains?
+                  asm
+                  "    call tl_process_wait\n")
+                (and
+                  (not
+                    (compiler-backend-string-contains?
+                      asm
+                      ".extern tl_process_start\n"))
+                  (and
+                    (not
+                      (compiler-backend-string-contains?
+                        asm
+                        ".extern tl_process_wait\n"))
+                    (compiler-backend-string-contains? asm "tl_alloc:\n"))))))))]
     [(ErrCompilerBackend _) false]))
 
 (define (compiler-backend-windows-process-output-ok?) : bool
@@ -2450,7 +2523,9 @@
                 (not (compiler-backend-string-contains? asm "    syscall"))
                 (and
                   (compiler-backend-string-contains? asm ".L_tl_envp:\n")
-                  (compiler-backend-string-contains? asm "tl_alloc:\n")))))))]
+                  (and
+                    (compiler-backend-string-contains? asm "tl_alloc:\n")
+                    (compiler-backend-windows-process-async-ok?))))))))]
     [(ErrCompilerBackend _) false]))
 
 (define (compiler-backend-env-runtime-source) : String

@@ -2,9 +2,9 @@
 ;#
 ;# Defines the canonical process command/output/error data model for selfhost
 ;# tools. Runtime process execution is provided by the backend-emitted
-;# `tl_process_output` helper; unsupported target/runtime combinations return
-;# structured errors instead of routing through Rust host actions or
-;# shell-tokenized command strings.
+;# `tl_process_output`, `tl_process_start`, and `tl_process_wait` helpers;
+;# unsupported target/runtime combinations return structured errors instead of
+;# routing through Rust host actions or shell-tokenized command strings.
 ;# Linux execution preserves inherited environment entries except names
 ;# provided by `ProcessEnvList`, which are replaced by the override value.
 ;#
@@ -39,6 +39,15 @@
   (stdout String)
   (stderr String))
 
+;: Runtime-owned asynchronous process handle data.
+;:
+;: The integer fields are opaque runtime handles. Callers should pass the value
+;: to `process-wait` rather than inspecting or constructing handles directly.
+(defstruct ProcessChild
+  (pid i64)
+  (stdout-handle i64)
+  (stderr-handle i64))
+
 ;: Structured process failures returned instead of host-action panics.
 (defenum ProcessError
   (ProcessInvalidCommand String)
@@ -51,12 +60,23 @@
   (OkProcessOutput ProcessOutput)
   (ErrProcessOutput ProcessError))
 
+;: Result type for asynchronous process start APIs.
+(defenum ResultProcessChild
+  (OkProcessChild ProcessChild)
+  (ErrProcessChild ProcessError))
+
 ;: Backend runtime hook used by `process-output`.
 ;:
 ;: The public wrapper performs TypeLisp-side validation first. The runtime
 ;: helper receives structured command data and returns the same concrete result
 ;: model.
 (extern tl_process_output : (-> ProcessCommand ResultProcessOutput))
+
+;: Backend runtime hook used by `process-start`.
+(extern tl_process_start : (-> ProcessCommand ResultProcessChild))
+
+;: Backend runtime hook used by `process-wait`.
+(extern tl_process_wait : (-> ProcessChild ResultProcessOutput))
 
 ;: Return an empty argument list.
 (define (process-args-empty) : ProcessStringList
@@ -258,6 +278,12 @@
     [(OkProcessOutput output) (process-success? output)]
     [(ErrProcessOutput _) false]))
 
+;: Return true when `result` is a started child handle.
+(define (process-child-started? [result : ResultProcessChild]) : bool
+  (match result
+    [(OkProcessChild _) true]
+    [(ErrProcessChild _) false]))
+
 ;: Return the diagnostic message stored in `error`.
 (define (process-error-message [error : ProcessError]) : String
   (match error
@@ -332,3 +358,14 @@
 ;: Run a command using the same captured-output path as `process-output`.
 (define (process-run [command : ProcessCommand]) : ResultProcessOutput
   (process-output command))
+
+;: Start a command without waiting for process completion.
+(define (process-start [command : ProcessCommand]) : ResultProcessChild
+  (match (process-command-validation-error command)
+    [(ProcessSomeString message)
+      (ErrProcessChild (ProcessInvalidCommand message))]
+    [(ProcessNoString) (tl_process_start command)]))
+
+;: Wait for a child started by `process-start` and collect its captured output.
+(define (process-wait [child : ProcessChild]) : ResultProcessOutput
+  (tl_process_wait child))

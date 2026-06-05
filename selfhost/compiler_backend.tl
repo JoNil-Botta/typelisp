@@ -4519,7 +4519,8 @@
 
 (define (compiler-backend-program-index-extern-signature [ty : AstType]) : CompilerBackendMaybeSignature
   (match ty
-    [(AstTyFunc args ret-ty) (CompilerBackendSomeSignature args ret-ty)]
+    [(AstTyFunc args ret-ty)
+      (CompilerBackendSomeSignature args (box-get ret-ty))]
     [_ (CompilerBackendNoSignature)]))
 
 (define (compiler-backend-program-index-extern-signatures-into

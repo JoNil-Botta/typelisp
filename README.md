@@ -124,8 +124,10 @@ i64 i32 i16 i8   u64 u32 u16 u8   f64 f32   bool   char   unit   String
 (Array t n)       ; fixed-size array (literals/ref/set compile; returns rejected)
 (Tuple t1 t2 ...) ; local tuple literals/ref compile; params/returns rejected
 (Box t)           ; specified arena-owned indirection for recursive aggregates
+(& r t)           ; specified immutable reference tied to lifetime/arena r
 (-> arg... ret)   ; function type
 Name              ; a defenum / defstruct nominal type
+(Name r...)       ; specified lifetime-parameterized nominal type use
 ```
 
 Both `f64` and `f32` support scalar parameters, returns, locals, arithmetic,
@@ -382,6 +384,11 @@ used as `(& lifetime str)`, and borrowing a `String` place produces a borrowed
 `str` view. Implementation of the `str` frontend and stdlib API migration is
 still pending; current public builtins continue to use compatibility `String`
 signatures.
+
+Lifetime-parameterized named aggregates are specified with declaration metadata
+such as `(:lifetimes r)` on `defstruct`/`defenum` and type uses such as
+`(RefBox r)`. Those arguments are lifetime names only, not source-level generic
+type parameters; selfhost parser/typechecker support is tracked by #1722.
 
 `(Box T)` is specified as a safe, move-only, arena-owned indirection handle:
 `(box expr)` allocates `expr` in the active arena, and `(box-get b)` projects

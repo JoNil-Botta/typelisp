@@ -2505,9 +2505,9 @@
 (define (compiler-load-manifest-string-value [ftail : Sexpr] [fname : String]) : ResultPkgString
   (match ftail
     [(SCons vhead vrest)
-      (match vhead
+      (match (box-get vhead)
         [(SStr val)
-          (match vrest
+          (match (box-get vrest)
             [(SNil) (OkPkgString val)]
             [_
               (ErrPkgString
@@ -2530,47 +2530,53 @@
   [address : String]
   [pin-form : Sexpr]) : ResultPkgString
   (match pin-form
-    [(SCons (SSym pin-kind) pin-tail)
-      (if (compiler-load-github-pin-kind-valid? pin-kind)
-        (match pin-tail
-          [(SCons (SStr pin-value) (SNil))
-            (if (string-eq pin-value "")
-              (ErrPkgString
-                (string-append
-                  "manifest dependency `"
-                  (string-append alias "` github pin must not be empty")))
-              (compiler-load-normalize-github-address
-                alias
-                address
-                pin-kind
-                pin-value))]
-          [_
+    [(SCons pin-kind-node pin-tail)
+      (match (box-get pin-kind-node)
+        [(SSym pin-kind)
+          (if (compiler-load-github-pin-kind-valid? pin-kind)
+            (match (box-get pin-tail)
+              [(SCons pin-value-node end)
+                (match (box-get end)
+                  [(SNil)
+                    (match (box-get pin-value-node)
+                      [(SStr pin-value)
+                        (if (string-eq pin-value "")
+                          (ErrPkgString
+                            (string-append
+                              "manifest dependency `"
+                              (string-append
+                                alias
+                                "` github pin must not be empty")))
+                          (compiler-load-normalize-github-address
+                            alias
+                            address
+                            pin-kind
+                            pin-value))]
+                      [_
+                        (ErrPkgString
+                          (string-append
+                            "manifest dependency `"
+                            (string-append
+                              alias
+                              "` github pin must be a single string value")))])]
+                  [_
+                    (ErrPkgString
+                      (string-append
+                        "manifest dependency `"
+                        (string-append
+                          alias
+                          "` github pin must be a single string value")))])]
+              [_
+                (ErrPkgString
+                  (string-append
+                    "manifest dependency `"
+                    (string-append
+                      alias
+                      "` github pin must be a single string value")))])
             (ErrPkgString
               (string-append
                 "manifest dependency `"
-                (string-append
-                  alias
-                  "` github pin must be a single string value")))])
-        (ErrPkgString
-          (string-append
-            "manifest dependency `"
-            (string-append alias "` github pin must be rev, tag, or branch"))))]
-    [_
-      (ErrPkgString
-        (string-append
-          "manifest dependency `"
-          (string-append
-            alias
-            "` github source requires exactly one rev, tag, or branch pin")))]))
-
-(define (compiler-load-manifest-github-value
-  [alias : String]
-  [source-tail : Sexpr]) : ResultPkgString
-  (match source-tail
-    [(SCons (SStr address) after-address)
-      (match after-address
-        [(SCons pin-form (SNil))
-          (compiler-load-manifest-github-pin alias address pin-form)]
+                (string-append alias "` github pin must be rev, tag, or branch"))))]
         [_
           (ErrPkgString
             (string-append
@@ -2584,6 +2590,50 @@
           "manifest dependency `"
           (string-append
             alias
+            "` github source requires exactly one rev, tag, or branch pin")))]))
+
+(define (compiler-load-manifest-github-value
+  [alias : String]
+  [source-tail : Sexpr]) : ResultPkgString
+  (match source-tail
+    [(SCons address-node after-address)
+      (match (box-get address-node)
+        [(SStr address)
+          (match (box-get after-address)
+            [(SCons pin-form end)
+              (match (box-get end)
+                [(SNil)
+                  (compiler-load-manifest-github-pin
+                    alias
+                    address
+                    (box-get pin-form))]
+                [_
+                  (ErrPkgString
+                    (string-append
+                      "manifest dependency `"
+                      (string-append
+                        alias
+                        "` github source requires exactly one rev, tag, or branch pin")))])]
+            [_
+              (ErrPkgString
+                (string-append
+                  "manifest dependency `"
+                  (string-append
+                    alias
+                    "` github source requires exactly one rev, tag, or branch pin")))])]
+        [_
+          (ErrPkgString
+            (string-append
+              "manifest dependency `"
+              (string-append
+                alias
+                "` github source must be `(github \"owner/repo\" (rev|tag|branch \"pin\"))`")))])]
+    [_
+      (ErrPkgString
+        (string-append
+          "manifest dependency `"
+          (string-append
+            alias
             "` github source must be `(github \"owner/repo\" (rev|tag|branch \"pin\"))`")))]))
 
 (define (compiler-load-manifest-dependency-value
@@ -2591,19 +2641,30 @@
   [alias : String]) : ResultPkgString
   (match etail
     [(SCons vhead vrest)
-      (match vrest
+      (match (box-get vrest)
         [(SNil)
-          (match vhead
+          (match (box-get vhead)
             [(SStr path) (OkPkgString path)]
-            [(SCons (SSym source-kind) source-tail)
-              (if (string-eq source-kind "github")
-                (compiler-load-manifest-github-value alias source-tail)
-                (ErrPkgString
-                  (string-append
-                    "manifest dependency `"
-                    (string-append
+            [(SCons source-kind-node source-tail)
+              (match (box-get source-kind-node)
+                [(SSym source-kind)
+                  (if (string-eq source-kind "github")
+                    (compiler-load-manifest-github-value
                       alias
-                      "` must be a path string or github source"))))]
+                      (box-get source-tail))
+                    (ErrPkgString
+                      (string-append
+                        "manifest dependency `"
+                        (string-append
+                          alias
+                          "` must be a path string or github source"))))]
+                [_
+                  (ErrPkgString
+                    (string-append
+                      "manifest dependency `"
+                      (string-append
+                        alias
+                        "` must be a path string or github source")))])]
             [_
               (ErrPkgString
                 (string-append
@@ -2635,9 +2696,9 @@
 (define (compiler-load-manifest-kind-value [ftail : Sexpr]) : ResultCompilerPkgKind
   (match ftail
     [(SCons vhead vrest)
-      (match vrest
+      (match (box-get vrest)
         [(SNil)
-          (match vhead
+          (match (box-get vhead)
             [(SStr val) (compiler-load-manifest-kind-token val)]
             [(SSym val) (compiler-load-manifest-kind-token val)]
             [_
@@ -2680,14 +2741,16 @@
   (match entries
     [(SNil) (OkCompilerPkgDepList (CompilerPkgDepNil))]
     [(SCons entry rest)
-      (match entry
+      (match (box-get entry)
         [(SCons ehead etail)
-          (match ehead
+          (match (box-get ehead)
             [(SSym alias)
-              (match (compiler-load-manifest-dependency-value etail alias)
+              (match (compiler-load-manifest-dependency-value
+                (box-get etail)
+                alias)
                 [(ErrPkgString m) (ErrCompilerPkgDepList m)]
                 [(OkPkgString path)
-                  (compiler-load-manifest-cons-dep alias path rest)])]
+                  (compiler-load-manifest-cons-dep alias path (box-get rest))])]
             [_
               (ErrCompilerPkgDepList
                 "dependency entries must start with an alias name")])]
@@ -2747,20 +2810,20 @@
             (OkCompilerPkgManifest
               (CompilerPkgManifest name version kind final-entry deps))]))]
     [(SCons field rest)
-      (match field
+      (match (box-get field)
         [(SCons fhead ftail)
-          (match fhead
+          (match (box-get fhead)
             [(SSym fname)
               (cond
                 [(string-eq fname "dependencies")
                   (if has-deps
                     (ErrCompilerPkgManifest
                       "duplicate manifest field `dependencies`")
-                    (match (compiler-load-manifest-parse-deps ftail)
+                    (match (compiler-load-manifest-parse-deps (box-get ftail))
                       [(ErrCompilerPkgDepList m) (ErrCompilerPkgManifest m)]
                       [(OkCompilerPkgDepList parsed-deps)
                         (compiler-load-manifest-fields
-                          rest
+                          (box-get rest)
                           name
                           has-name
                           version
@@ -2774,11 +2837,13 @@
                 [(string-eq fname "name")
                   (if has-name
                     (ErrCompilerPkgManifest "duplicate manifest field `name`")
-                    (match (compiler-load-manifest-string-value ftail fname)
+                    (match (compiler-load-manifest-string-value
+                      (box-get ftail)
+                      fname)
                       [(ErrPkgString m) (ErrCompilerPkgManifest m)]
                       [(OkPkgString val)
                         (compiler-load-manifest-fields
-                          rest
+                          (box-get rest)
                           val
                           true
                           version
@@ -2793,11 +2858,13 @@
                   (if has-version
                     (ErrCompilerPkgManifest
                       "duplicate manifest field `version`")
-                    (match (compiler-load-manifest-string-value ftail fname)
+                    (match (compiler-load-manifest-string-value
+                      (box-get ftail)
+                      fname)
                       [(ErrPkgString m) (ErrCompilerPkgManifest m)]
                       [(OkPkgString val)
                         (compiler-load-manifest-fields
-                          rest
+                          (box-get rest)
                           name
                           has-name
                           val
@@ -2811,11 +2878,11 @@
                 [(string-eq fname "kind")
                   (if has-kind
                     (ErrCompilerPkgManifest "duplicate manifest field `kind`")
-                    (match (compiler-load-manifest-kind-value ftail)
+                    (match (compiler-load-manifest-kind-value (box-get ftail))
                       [(ErrCompilerPkgKind m) (ErrCompilerPkgManifest m)]
                       [(OkCompilerPkgKind val)
                         (compiler-load-manifest-fields
-                          rest
+                          (box-get rest)
                           name
                           has-name
                           version
@@ -2829,11 +2896,13 @@
                 [(string-eq fname "entry")
                   (if has-entry
                     (ErrCompilerPkgManifest "duplicate manifest field `entry`")
-                    (match (compiler-load-manifest-string-value ftail fname)
+                    (match (compiler-load-manifest-string-value
+                      (box-get ftail)
+                      fname)
                       [(ErrPkgString m) (ErrCompilerPkgManifest m)]
                       [(OkPkgString val)
                         (compiler-load-manifest-fields
-                          rest
+                          (box-get rest)
                           name
                           has-name
                           version
@@ -2863,11 +2932,11 @@
 (define (compiler-load-manifest-from-form [form : Sexpr]) : ResultCompilerPkgManifest
   (match form
     [(SCons head rest)
-      (match head
+      (match (box-get head)
         [(SSym s)
           (if (string-eq s "package")
             (compiler-load-manifest-fields
-              rest
+              (box-get rest)
               ""
               false
               ""

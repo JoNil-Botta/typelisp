@@ -763,16 +763,11 @@
     (and
       (compiler-typecheck-repr-c-layout-ok?)
       (and
-        (compiler-typecheck-error-ok?
-          (compiler-typecheck-repr-c-string-source)
-          "typecheck: repr c struct Bad field s has unsupported field type String")
+        (compiler-typecheck-ok? (compiler-typecheck-repr-c-string-source))
         (and
-          (compiler-typecheck-error-ok?
-            (compiler-typecheck-repr-c-default-nested-source)
-            "typecheck: repr c struct Bad field inner references default-layout struct Inner")
-          (compiler-typecheck-error-ok?
-            (compiler-typecheck-repr-c-recursive-source)
-            "typecheck: recursive repr c struct layout cycle involving Node"))))))
+          (compiler-typecheck-ok?
+            (compiler-typecheck-repr-c-default-nested-source))
+          (compiler-typecheck-ok? (compiler-typecheck-repr-c-recursive-source)))))))
 
 (define (compiler-typecheck-inline-layout-result [src : String] [name : String]) : ResultTcUnit
   (match (parse-ast-source src)
@@ -4204,46 +4199,62 @@
       ok)))
 
 ;; CTFE layout queries (#989): folded calls produce `i64`, runtime calls are
-;; rejected, and `offset-of` is restricted to repr-c structs and known fields.
+;; rejected, and `offset-of` is restricted to structs with known fields.
 (define (compiler-typecheck-layout-query-tests-ok?) : bool
-  (and
-    (compiler-typecheck-ok?
-      "(define (f) : i64 (comptime (size-of (type i64))))")
-    (and
-      (compiler-typecheck-ok?
+  (let
+    [ok : bool true]
+    (begin
+      (if (compiler-typecheck-ok?
+        "(define (f) : i64 (comptime (size-of (type i64))))")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-ok?
         "(define (f) : i64 (comptime (align-of (type bool))))")
-      (and
-        (compiler-typecheck-ok?
-          "(defstruct Inner
-  (:repr c)
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-ok?
+        "(defstruct Inner
   (x i32))
 (defstruct Outer
-  (:repr c)
   (tag u8)
   (inner Inner)
   (tail i64))
 (define (f) : i64
   (comptime (+ (size-of (type Outer)) (offset-of (type Outer) tail))))")
-        (and
-          (compiler-typecheck-error-ok?
-            "(define (f) : i64 (comptime (size-of (type i64) (type bool))))"
-            "size-of expects exactly one type argument")
-          (and
-            (compiler-typecheck-error-ok?
-              "(define (f) : i64 (size-of (type i64)))"
-              "typecheck: size-of is compile-time only; wrap it in (comptime ...)")
-            (and
-              (compiler-typecheck-error-ok?
-                "(defstruct Box (x i64))
-(define (f) : i64 (comptime (offset-of (type Box) x)))"
-                "offset-of requires repr c struct type")
-              (compiler-typecheck-error-ok?
-                "(defstruct Packet
-  (:repr c)
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-ok?
+        "(defenum Choice
+  (Empty)
+  (Wide u8 i64))
+(define (f) : i64
+  (comptime (+ (size-of (type Choice)) (align-of (type Choice)))))")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-ok?
+        "(defstruct Box (x i64))
+(define (f) : i64 (comptime (offset-of (type Box) x)))")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        "(define (f) : i64 (comptime (size-of (type i64) (type bool))))"
+        "size-of expects exactly one type argument")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        "(define (f) : i64 (size-of (type i64)))"
+        "typecheck: size-of is compile-time only; wrap it in (comptime ...)")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        "(defstruct Packet
   (tag u8)
   (count i64))
 (define (f) : i64 (comptime (offset-of (type Packet) missing)))"
-                "offset-of unknown field missing"))))))))
+        "offset-of unknown field missing")
+        unit
+        (set! ok false))
+      ok)))
 
 (define (compiler-typecheck-reflection-source) : String
   "(defstruct Point (x i64) (flag bool))

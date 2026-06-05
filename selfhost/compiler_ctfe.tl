@@ -1499,11 +1499,14 @@
   [ty : AstType]) : CtfeMaybeLayoutInfo
   (match ty
     [(AstTyStruct name) (ctfe-layout-info-lookup layouts name)]
+    [(AstTyStructArgs name _) (ctfe-layout-info-lookup layouts name)]
+    [(AstTyEnum name) (ctfe-layout-info-lookup layouts name)]
+    [(AstTyEnumArgs name _) (ctfe-layout-info-lookup layouts name)]
     [(AstTyVar name) (ctfe-layout-info-lookup layouts name)]
     [(AstTyRegion _ inner) (ctfe-layout-info-for-type layouts (box-get inner))]
     [_ (CtfeNoLayoutInfo)]))
 
-;; Evaluate `(offset-of (type ReprCStruct) field)` to the field byte offset.
+;; Evaluate `(offset-of (type Struct) field)` to the field byte offset.
 ;; The field name is intentionally syntactic: a bare variable names the field
 ;; and is not resolved as a runtime/comptime variable.
 (define (ctfe-eval-offset-from-layout
@@ -1523,7 +1526,7 @@
                 (string-append "offset-of unknown field " field-name)))
             (OkCtfe (CtfeI64 offset) fuel)))
         (ErrCtfe
-          (ctfe-diagnostic-at-expr expr "offset-of requires repr c struct type")))]))
+          (ctfe-diagnostic-at-expr expr "offset-of requires struct layout type")))]))
 
 (define (ctfe-eval-offset-from-type
   [ty : AstType]
@@ -1536,7 +1539,7 @@
       (ctfe-eval-offset-from-layout field-name info expr fuel)]
     [(CtfeNoLayoutInfo)
       (ErrCtfe
-        (ctfe-diagnostic-at-expr expr "offset-of requires repr c struct type"))]))
+        (ctfe-diagnostic-at-expr expr "offset-of requires struct layout type"))]))
 
 (define (ctfe-eval-offset-value
   [value : CompilerCtfeValue]
@@ -4458,6 +4461,7 @@
   (let
     [packet-ty : AstExpr (AstExprTypeLiteral (AstTyVar "Packet"))]
     [box-ty : AstExpr (AstExprTypeLiteral (AstTyVar "Box"))]
+    [choice-ty : AstExpr (AstExprTypeLiteral (AstTyVar "Choice"))]
     [env : CtfeEnv
       (ctfe-env-with-layouts
         (CtfeLayoutInfoCons
@@ -4472,40 +4476,73 @@
                 (CtfeLayoutField "count" 8)
                 CtfeLayoutFieldNil)))
           (CtfeLayoutInfoCons
-            (CtfeLayoutInfo "Box" false 8 8 CtfeLayoutFieldNil)
-            CtfeLayoutInfoNil)))]
-    (and
-      (compiler-ctfe-eval-i64-ok?
-        (compiler-ctfe-call1 "size-of" packet-ty)
-        env
-        16)
-      (and
-        (compiler-ctfe-eval-i64-ok?
+            (CtfeLayoutInfo
+              "Box"
+              true
+              8
+              8
+              (CtfeLayoutFieldCons (CtfeLayoutField "x" 0) CtfeLayoutFieldNil))
+            (CtfeLayoutInfoCons
+              (CtfeLayoutInfo "Choice" false 24 8 CtfeLayoutFieldNil)
+              CtfeLayoutInfoNil))))]
+    (let
+      [ok : bool true]
+      (begin
+        (if (compiler-ctfe-eval-i64-ok?
+          (compiler-ctfe-call1 "size-of" packet-ty)
+          env
+          16)
+          unit
+          (set! ok false))
+        (if (compiler-ctfe-eval-i64-ok?
           (compiler-ctfe-call1 "align-of" packet-ty)
           env
           8)
-        (and
-          (compiler-ctfe-eval-i64-ok?
-            (compiler-ctfe-call2 "offset-of" packet-ty (AstExprVar "count"))
-            env
-            8)
-          (and
-            (compiler-ctfe-eval-i64-ok?
-              (compiler-ctfe-call1 "size-of" box-ty)
-              env
-              8)
-            (and
-              (compiler-ctfe-eval-error-ok?
-                (compiler-ctfe-call2 "offset-of" box-ty (AstExprVar "x"))
-                env
-                "offset-of requires repr c struct type")
-              (compiler-ctfe-eval-error-ok?
-                (compiler-ctfe-call2
-                  "offset-of"
-                  packet-ty
-                  (AstExprVar "missing"))
-                env
-                "offset-of unknown field missing"))))))))
+          unit
+          (set! ok false))
+        (if (compiler-ctfe-eval-i64-ok?
+          (compiler-ctfe-call2 "offset-of" packet-ty (AstExprVar "count"))
+          env
+          8)
+          unit
+          (set! ok false))
+        (if (compiler-ctfe-eval-i64-ok?
+          (compiler-ctfe-call1 "size-of" box-ty)
+          env
+          8)
+          unit
+          (set! ok false))
+        (if (compiler-ctfe-eval-i64-ok?
+          (compiler-ctfe-call2 "offset-of" box-ty (AstExprVar "x"))
+          env
+          0)
+          unit
+          (set! ok false))
+        (if (compiler-ctfe-eval-i64-ok?
+          (compiler-ctfe-call1 "size-of" choice-ty)
+          env
+          24)
+          unit
+          (set! ok false))
+        (if (compiler-ctfe-eval-i64-ok?
+          (compiler-ctfe-call1 "align-of" choice-ty)
+          env
+          8)
+          unit
+          (set! ok false))
+        (if (compiler-ctfe-eval-error-ok?
+          (compiler-ctfe-call2 "offset-of" choice-ty (AstExprVar "tag"))
+          env
+          "offset-of requires struct layout type")
+          unit
+          (set! ok false))
+        (if (compiler-ctfe-eval-error-ok?
+          (compiler-ctfe-call2 "offset-of" packet-ty (AstExprVar "missing"))
+          env
+          "offset-of unknown field missing")
+          unit
+          (set! ok false))
+        ok))))
 
 (define (compiler-ctfe-reflection-env) : CtfeEnv
   (ctfe-env-with-reflections

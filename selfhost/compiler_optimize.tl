@@ -7361,9 +7361,7 @@
                     (cfg compile-profile (compiler-opt-profile-start))
                     (let
                       [final-functions : CompilerIrFunctionList
-                        (opt-prune-unreachable-functions
-                          globals
-                          optimized-functions)]
+                        optimized-functions]
                       (begin
                         (cfg
                           compile-profile

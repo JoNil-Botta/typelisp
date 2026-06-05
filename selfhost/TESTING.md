@@ -89,6 +89,24 @@ have an explicit compile-coverage decision. Staged cases cover integration
 drivers whose imports need temporary sibling names, such as the text buffer and
 symbol-table drivers.
 
+### Assembly size reports
+
+Use [`../scripts/analyze-selfhost-build-asm-size.sh`](../scripts/analyze-selfhost-build-asm-size.sh)
+for local code-size comparisons of the selfhost build driver. It compiles
+`selfhost/build.tl` with `TYPELISP_BIN` when set, otherwise with the published
+stage0 selected by `scripts/lib-stage0.sh`, then prints total assembly
+bytes/lines, section totals, top `.text` symbols, module/file buckets inferred
+from TypeLisp symbol names, and generated clone-helper totals:
+
+```sh
+TYPELISP_BIN=target/stage0/typelisp scripts/analyze-selfhost-build-asm-size.sh
+```
+
+Use `--top N` to change the table size, `TYPELISP_ASM_SIZE_OUT` to choose the
+artifact directory, and `--asm target/path/build.s` to analyze an existing
+assembly file without recompiling. The report is intentionally a local
+measurement tool, not a CI size gate.
+
 ### Coverage policy
 
 New behavior should get TypeLisp-owned coverage: a module-local self-test, a

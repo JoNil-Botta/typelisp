@@ -12,7 +12,7 @@
 
 (defenum DocModuleList
   (DocModuleNil)
-  (DocModuleCons DocModule DocModuleList))
+  (DocModuleCons DocModule (Box DocModuleList)))
 
 (define (doc-module-path [module : DocModule]) : String
   (match module
@@ -127,7 +127,9 @@
   (match items
     [(DocItemNil) ""]
     [(DocItemCons item rest)
-      (string-append (doc-render-item item) (doc-render-item-list rest))]))
+      (string-append
+        (doc-render-item item)
+        (doc-render-item-list (box-get rest)))]))
 
 (define (doc-render-items [items : DocItemList]) : String
   (match items
@@ -158,7 +160,7 @@
     [(DocModuleCons module rest)
       (string-append
         (doc-render-module-nav-item module)
-        (doc-render-module-nav rest))]))
+        (doc-render-module-nav (box-get rest)))]))
 
 (define (doc-render-module-section [module : DocModule]) : String
   (let
@@ -188,7 +190,7 @@
     [(DocModuleCons module rest)
       (string-append
         (doc-render-module-section module)
-        (doc-render-module-sections rest))]))
+        (doc-render-module-sections (box-get rest)))]))
 
 (define (doc-render-module-graph-markdown [modules : DocModuleList]) : String
   (string-append

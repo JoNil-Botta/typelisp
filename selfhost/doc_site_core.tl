@@ -16,14 +16,14 @@
 
 (defenum DocSiteModuleList
   (DocSiteModuleNil)
-  (DocSiteModuleCons DocSiteModule DocSiteModuleList))
+  (DocSiteModuleCons DocSiteModule (Box DocSiteModuleList)))
 
 (defenum DocSiteGuidePage
   (DocSiteGuidePage String String String String))
 
 (defenum DocSiteGuidePageList
   (DocSiteGuidePageNil)
-  (DocSiteGuidePageCons DocSiteGuidePage DocSiteGuidePageList))
+  (DocSiteGuidePageCons DocSiteGuidePage (Box DocSiteGuidePageList)))
 
 (defenum DocSiteApiTree
   (DocSiteApiTree String String DocSiteModuleList))
@@ -34,7 +34,7 @@
 
 (defenum DocSiteSectionList
   (DocSiteSectionNil)
-  (DocSiteSectionCons DocSiteSection DocSiteSectionList))
+  (DocSiteSectionCons DocSiteSection (Box DocSiteSectionList)))
 
 (define doc-site-status-ok : i64
   0)
@@ -84,79 +84,94 @@
   (match tree
     [(DocSiteApiTree _ _ modules) modules]))
 
+(define (doc-site-module-cons
+  [module : DocSiteModule]
+  [rest : DocSiteModuleList]) : DocSiteModuleList
+  (DocSiteModuleCons module (box rest)))
+
+(define (doc-site-guide-page-cons
+  [guide : DocSiteGuidePage]
+  [rest : DocSiteGuidePageList]) : DocSiteGuidePageList
+  (DocSiteGuidePageCons guide (box rest)))
+
+(define (doc-site-section-cons
+  [section : DocSiteSection]
+  [rest : DocSiteSectionList]) : DocSiteSectionList
+  (DocSiteSectionCons section (box rest)))
+
 (define (doc-site-stdlib-modules) : DocSiteModuleList
-  (DocSiteModuleCons
+  (doc-site-module-cons
     (DocSiteModule "stdlib/arena.tl" "stdlib-arena.html")
-    (DocSiteModuleCons
+    (doc-site-module-cons
       (DocSiteModule "stdlib/cpu.tl" "stdlib-cpu.html")
-      (DocSiteModuleCons
+      (doc-site-module-cons
         (DocSiteModule "stdlib/env.tl" "stdlib-env.html")
-        (DocSiteModuleCons
+        (doc-site-module-cons
           (DocSiteModule "stdlib/ffi.tl" "stdlib-ffi.html")
-          (DocSiteModuleCons
+          (doc-site-module-cons
             (DocSiteModule "stdlib/fs.tl" "stdlib-fs.html")
-            (DocSiteModuleCons
+            (doc-site-module-cons
               (DocSiteModule "stdlib/hash.tl" "stdlib-hash.html")
-              (DocSiteModuleCons
+              (doc-site-module-cons
                 (DocSiteModule "stdlib/hashmap.tl" "stdlib-hashmap.html")
-                (DocSiteModuleCons
+                (doc-site-module-cons
                   (DocSiteModule "stdlib/io.tl" "stdlib-io.html")
-                  (DocSiteModuleCons
+                  (doc-site-module-cons
                     (DocSiteModule "stdlib/json.tl" "stdlib-json.html")
-                    (DocSiteModuleCons
+                    (doc-site-module-cons
                       (DocSiteModule "stdlib/list.tl" "stdlib-list.html")
-                      (DocSiteModuleCons
+                      (doc-site-module-cons
                         (DocSiteModule "stdlib/msvc.tl" "stdlib-msvc.html")
-                        (DocSiteModuleCons
+                        (doc-site-module-cons
                           (DocSiteModule
                             "stdlib/process.tl"
                             "stdlib-process.html")
-                          (DocSiteModuleCons
+                          (doc-site-module-cons
                             (DocSiteModule
                               "stdlib/queue.tl"
                               "stdlib-queue.html")
-                            (DocSiteModuleCons
+                            (doc-site-module-cons
                               (DocSiteModule
                                 "stdlib/random.tl"
                                 "stdlib-random.html")
-                              (DocSiteModuleCons
+                              (doc-site-module-cons
                                 (DocSiteModule
                                   "stdlib/string.tl"
                                   "stdlib-string.html")
-                                (DocSiteModuleCons
+                                (doc-site-module-cons
                                   (DocSiteModule
                                     "stdlib/test.tl"
                                     "stdlib-test.html")
-                                  (DocSiteModuleCons
+                                  (doc-site-module-cons
                                     (DocSiteModule
                                       "stdlib/text_buf.tl"
                                       "stdlib-text-buf.html")
-                                    (DocSiteModuleCons
+                                    (doc-site-module-cons
                                       (DocSiteModule
                                         "stdlib/text_buf_borrowed.tl"
                                         "stdlib-text-buf-borrowed.html")
-                                      (DocSiteModuleCons
+                                      (doc-site-module-cons
                                         (DocSiteModule
                                           "stdlib/vector.tl"
                                           "stdlib-vector.html")
-                                        (DocSiteModuleCons
+                                        (doc-site-module-cons
                                           (DocSiteModule
                                             "stdlib/windows_registry.tl"
                                             "stdlib-windows-registry.html")
-                                          (DocSiteModuleCons
+                                          (doc-site-module-cons
                                             (DocSiteModule
                                               "stdlib/windows_sdk.tl"
                                               "stdlib-windows-sdk.html")
-                                            (DocSiteModuleCons
+                                            (doc-site-module-cons
                                               (DocSiteModule
                                                 "stdlib/windows_setup.tl"
                                                 "stdlib-windows-setup.html")
                                               DocSiteModuleNil)))))))))))))))))))))))
 
 (define (doc-site-language-guides) : DocSiteGuidePageList
-  (DocSiteGuidePageCons
+  (doc-site-guide-page-cons
     (DocSiteGuidePage "TypeLisp Overview" "README.md" "readme.html" "Overview")
-    (DocSiteGuidePageCons
+    (doc-site-guide-page-cons
       (DocSiteGuidePage
         "TypeLisp Language Reference"
         "SPEC.md"
@@ -168,16 +183,17 @@
   (DocSiteApiTree "stdlib" "stdlib.html" (doc-site-stdlib-modules)))
 
 (define (doc-site-typelisp-sections) : DocSiteSectionList
-  (DocSiteSectionCons
+  (doc-site-section-cons
     (DocSiteGuideSection "Language" (doc-site-language-guides))
-    (DocSiteSectionCons
+    (doc-site-section-cons
       (DocSiteApiTreeSection (doc-site-stdlib-api-tree))
       DocSiteSectionNil)))
 
 (define (doc-site-module-list-count [modules : DocSiteModuleList]) : i64
   (match modules
     [(DocSiteModuleNil) 0]
-    [(DocSiteModuleCons _ rest) (+ 1 (doc-site-module-list-count rest))]))
+    [(DocSiteModuleCons _ rest)
+      (+ 1 (doc-site-module-list-count (box-get rest)))]))
 
 (define (doc-site-output-in-list?
   [output : String]
@@ -187,7 +203,7 @@
     [(DocSiteModuleCons module rest)
       (or
         (string-eq output (doc-site-module-output module))
-        (doc-site-output-in-list? output rest))]))
+        (doc-site-output-in-list? output (box-get rest)))]))
 
 (define (doc-site-output-reserved? [output : String]) : bool
   (or
@@ -207,8 +223,10 @@
       (or
         (doc-site-output-reserved? (doc-site-module-output module))
         (or
-          (doc-site-output-in-list? (doc-site-module-output module) rest)
-          (doc-site-output-list-has-duplicate? rest)))]))
+          (doc-site-output-in-list?
+            (doc-site-module-output module)
+            (box-get rest))
+          (doc-site-output-list-has-duplicate? (box-get rest))))]))
 
 (define (doc-site-expected-manifest-size? [modules : DocSiteModuleList]) : bool
   (= (doc-site-module-list-count modules) doc-site-stdlib-manifest-size))
@@ -271,7 +289,7 @@
     [(DocSiteGuidePageCons guide rest)
       (if (string-eq target (doc-site-guide-source guide))
         (doc-site-guide-output guide)
-        (doc-site-guide-output-for-source target rest))]))
+        (doc-site-guide-output-for-source target (box-get rest)))]))
 
 (define (doc-site-module-output-for-source
   [target : String]
@@ -281,7 +299,7 @@
     [(DocSiteModuleCons module rest)
       (if (string-eq target (doc-site-module-source module))
         (doc-site-module-output module)
-        (doc-site-module-output-for-source target rest))]))
+        (doc-site-module-output-for-source target (box-get rest)))]))
 
 (define (doc-site-section-output-for-source
   [target : String]
@@ -304,7 +322,7 @@
         [output : String (doc-site-section-output-for-source target section)]
         (if (> (string-length output) 0)
           output
-          (doc-site-sections-output-for-source target rest)))]))
+          (doc-site-sections-output-for-source target (box-get rest))))]))
 
 (define (doc-site-rewrite-language-link-target
   [sections : DocSiteSectionList]
@@ -534,7 +552,7 @@ pre {
     [(DocSiteModuleCons module rest)
       (string-append
         (doc-site-index-module-entry module)
-        (doc-site-index-module-entries rest))]))
+        (doc-site-index-module-entries (box-get rest)))]))
 
 (define (doc-site-index-guide-entry [guide : DocSiteGuidePage]) : String
   (doc-html-cat5
@@ -550,7 +568,7 @@ pre {
     [(DocSiteGuidePageCons guide rest)
       (string-append
         (doc-site-index-guide-entry guide)
-        (doc-site-index-guide-entries rest))]))
+        (doc-site-index-guide-entries (box-get rest)))]))
 
 (define (doc-site-render-guide-index-section
   [title : String]
@@ -590,7 +608,7 @@ pre {
     [(DocSiteSectionCons section rest)
       (string-append
         (doc-site-render-index-section section)
-        (doc-site-render-index-sections rest))]))
+        (doc-site-render-index-sections (box-get rest)))]))
 
 (define (doc-site-module-label [module : DocSiteModule]) : String
   (let
@@ -660,7 +678,7 @@ pre {
     [(DocSiteGuidePageCons guide rest)
       (string-append
         (doc-site-sidebar-guide-entry guide current)
-        (doc-site-sidebar-guide-entries rest current))]))
+        (doc-site-sidebar-guide-entries (box-get rest) current))]))
 
 (define (doc-site-sidebar-module-entry
   [module : DocSiteModule]
@@ -680,7 +698,7 @@ pre {
     [(DocSiteModuleCons module rest)
       (string-append
         (doc-site-sidebar-module-entry module current)
-        (doc-site-sidebar-module-entries rest current))]))
+        (doc-site-sidebar-module-entries (box-get rest) current))]))
 
 (define (doc-site-sidebar-guide-section
   [title : String]
@@ -719,7 +737,7 @@ pre {
     [(DocSiteSectionCons section rest)
       (string-append
         (doc-site-sidebar-section section current)
-        (doc-site-sidebar-sections rest current))]))
+        (doc-site-sidebar-sections (box-get rest) current))]))
 
 (define (doc-site-sidebar [sections : DocSiteSectionList] [current : String]) : String
   (doc-html-cat5
@@ -854,7 +872,7 @@ pre {
     [(DocSiteModuleCons module rest)
       (begin
         (doc-site-write-module-page output-dir sections module)
-        (doc-site-write-module-pages output-dir sections rest))]))
+        (doc-site-write-module-pages output-dir sections (box-get rest)))]))
 
 (define (doc-site-write-guide-page
   [output-dir : String]
@@ -876,7 +894,7 @@ pre {
     [(DocSiteGuidePageCons guide rest)
       (begin
         (doc-site-write-guide-page output-dir sections guide)
-        (doc-site-write-guide-pages output-dir sections rest))]))
+        (doc-site-write-guide-pages output-dir sections (box-get rest)))]))
 
 (define (doc-site-write-api-tree
   [output-dir : String]
@@ -910,7 +928,7 @@ pre {
     [(DocSiteSectionCons section rest)
       (begin
         (doc-site-write-section output-dir sections section)
-        (doc-site-write-sections output-dir sections rest))]))
+        (doc-site-write-sections output-dir sections (box-get rest)))]))
 
 (define (doc-site-build [output-dir : String]) : i64
   (let
@@ -949,16 +967,16 @@ See [the spec](SPEC.md), [the second module](stdlib/second.tl), and [the builder
 ```")
 
 (define (doc-site-smoke-modules) : DocSiteModuleList
-  (DocSiteModuleCons
+  (doc-site-module-cons
     (DocSiteModule "stdlib/smoke<&>.tl" "stdlib-smoke.html")
-    (DocSiteModuleCons
+    (doc-site-module-cons
       (DocSiteModule "stdlib/second.tl" "stdlib-second.html")
       DocSiteModuleNil)))
 
 (define (doc-site-smoke-guides) : DocSiteGuidePageList
-  (DocSiteGuidePageCons
+  (doc-site-guide-page-cons
     (DocSiteGuidePage "TypeLisp Overview" "README.md" "readme.html" "Overview")
-    (DocSiteGuidePageCons
+    (doc-site-guide-page-cons
       (DocSiteGuidePage
         "TypeLisp Language Reference"
         "SPEC.md"
@@ -970,9 +988,9 @@ See [the spec](SPEC.md), [the second module](stdlib/second.tl), and [the builder
   (DocSiteApiTree "stdlib" "stdlib.html" (doc-site-smoke-modules)))
 
 (define (doc-site-smoke-sections) : DocSiteSectionList
-  (DocSiteSectionCons
+  (doc-site-section-cons
     (DocSiteGuideSection "Language" (doc-site-smoke-guides))
-    (DocSiteSectionCons
+    (doc-site-section-cons
       (DocSiteApiTreeSection (doc-site-smoke-api-tree))
       DocSiteSectionNil)))
 
@@ -1109,9 +1127,9 @@ See [the spec](SPEC.md), [the second module](stdlib/second.tl), and [the builder
         "doc-site: css marker missing")
       (doc-site-require
         (doc-site-output-list-has-duplicate?
-          (DocSiteModuleCons
+          (doc-site-module-cons
             (DocSiteModule "a.tl" "same.html")
-            (DocSiteModuleCons
+            (doc-site-module-cons
               (DocSiteModule "b.tl" "same.html")
               DocSiteModuleNil)))
         "doc-site: duplicate output detection missing")

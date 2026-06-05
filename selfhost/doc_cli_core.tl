@@ -33,17 +33,20 @@
       (doc-print-generated output-path)
       0)))
 
+(define (doc-cli-module-cons [module : DocModule] [rest : DocModuleList]) : DocModuleList
+  (DocModuleCons module (box rest)))
+
 (define (doc-read-modules [idx : i64] [end : i64]) : DocModuleList
   (if (>= idx end)
     DocModuleNil
-    (DocModuleCons
+    (doc-cli-module-cons
       (DocModule (arg idx) (doc-extract-file (arg idx)))
       (doc-read-modules (+ idx 1) end))))
 
 (define (doc-module-list-count [modules : DocModuleList]) : i64
   (match modules
     [(DocModuleNil) 0]
-    [(DocModuleCons _ rest) (+ 1 (doc-module-list-count rest))]))
+    [(DocModuleCons _ rest) (+ 1 (doc-module-list-count (box-get rest)))]))
 
 (define (doc-modules-from-paths [paths : AstDeclPathList] [seen : SymI64Env]) : DocModuleList
   (match paths
@@ -53,7 +56,7 @@
         [rest : AstDeclPathList (box-get rest)]
         (if (sym-i64-contains seen path)
           (doc-modules-from-paths rest seen)
-          (DocModuleCons
+          (doc-cli-module-cons
             (DocModule path (doc-extract-file path))
             (doc-modules-from-paths rest (sym-i64-bind seen path 1)))))]))
 

@@ -138,7 +138,7 @@
     [(DocItemCons item rest)
       (string-append
         (doc-html-item-nav-entry item)
-        (doc-html-item-nav-entries rest))]))
+        (doc-html-item-nav-entries (box-get rest)))]))
 
 (define (doc-html-item-nav [items : DocItemList]) : String
   (match items
@@ -178,7 +178,7 @@
   (match items
     [(DocItemNil) ""]
     [(DocItemCons item rest)
-      (string-append (doc-html-item item) (doc-html-item-list rest))]))
+      (string-append (doc-html-item item) (doc-html-item-list (box-get rest)))]))
 
 (define (doc-html-items [items : DocItemList]) : String
   (match items
@@ -202,7 +202,7 @@
     [(DocModuleCons module rest)
       (string-append
         (doc-html-module-nav-entry module)
-        (doc-html-module-nav-entries rest))]))
+        (doc-html-module-nav-entries (box-get rest)))]))
 
 (define (doc-html-module-nav [modules : DocModuleList]) : String
   (match modules
@@ -244,7 +244,7 @@
     [(DocModuleCons module rest)
       (string-append
         (doc-html-module-section module)
-        (doc-html-module-sections rest))]))
+        (doc-html-module-sections (box-get rest)))]))
 
 (define (doc-html-render-module-page [path : String] [docs : DocExtraction]) : String
   (let
@@ -306,7 +306,10 @@
       (doc-html-render-module-graph
         (DocModuleCons
           (DocModule "smoke<&>.tl" docs)
-          (DocModuleCons (DocModule "second.tl" second-docs) DocModuleNil)))]
+          (box
+            (DocModuleCons
+              (DocModule "second.tl" second-docs)
+              (box DocModuleNil)))))]
     (if (and
       (doc-html-require-contains
         page

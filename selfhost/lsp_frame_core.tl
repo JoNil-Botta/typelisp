@@ -37,7 +37,7 @@
 
 (defenum LspDocumentList
   (LspDocumentNil)
-  (LspDocumentCons String String String String LspDocumentList))
+  (LspDocumentCons String String String String (Box LspDocumentList)))
 
 (defenum LspHandleResult
   (LspContinue LspDocumentList)
@@ -340,7 +340,7 @@
   [diagnostic-uri : String]) : LspDocumentList
   (match docs
     [(LspDocumentNil)
-      (LspDocumentCons uri path text diagnostic-uri LspDocumentNil)]
+      (LspDocumentCons uri path text diagnostic-uri (box LspDocumentNil))]
     [(LspDocumentCons item-uri item-path item-text item-diagnostic-uri rest)
       (if (string-eq item-uri uri)
         (LspDocumentCons uri path text diagnostic-uri rest)
@@ -349,20 +349,20 @@
           item-path
           item-text
           item-diagnostic-uri
-          (lsp-documents-set rest uri path text diagnostic-uri)))]))
+          (box (lsp-documents-set (box-get rest) uri path text diagnostic-uri))))]))
 
 (define (lsp-documents-remove [docs : LspDocumentList] [uri : String]) : LspDocumentList
   (match docs
     [(LspDocumentNil) LspDocumentNil]
     [(LspDocumentCons item-uri item-path item-text item-diagnostic-uri rest)
       (if (string-eq item-uri uri)
-        rest
+        (box-get rest)
         (LspDocumentCons
           item-uri
           item-path
           item-text
           item-diagnostic-uri
-          (lsp-documents-remove rest uri)))]))
+          (box (lsp-documents-remove (box-get rest) uri))))]))
 
 (define (lsp-documents-lookup [docs : LspDocumentList] [uri : String]) : LspDocumentLookup
   (match docs
@@ -370,7 +370,7 @@
     [(LspDocumentCons item-uri item-path item-text item-diagnostic-uri rest)
       (if (string-eq item-uri uri)
         (FoundLspDocument item-path item-text item-diagnostic-uri)
-        (lsp-documents-lookup rest uri))]))
+        (lsp-documents-lookup (box-get rest) uri))]))
 
 (define (lsp-hex-value [c : char]) : i64
   (let

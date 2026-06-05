@@ -32,7 +32,7 @@
 
 (defenum InlineTestList
   (InlineTestNil)
-  (InlineTestCons InlineTest InlineTestList))
+  (InlineTestCons InlineTest (Box InlineTestList)))
 
 (defenum InlineCollect
   (InlineCollect AstDeclList AstDeclPathList InlineTestList i64))
@@ -236,7 +236,9 @@
   (match items
     [(InlineTestNil) out]
     [(InlineTestCons head rest)
-      (tltest-inline-list-reverse-in rest (InlineTestCons head out))]))
+      (tltest-inline-list-reverse-in
+        (box-get rest)
+        (InlineTestCons head (box out)))]))
 
 (define (tltest-inline-list-reverse [items : InlineTestList]) : InlineTestList
   (tltest-inline-list-reverse-in items InlineTestNil))
@@ -328,7 +330,7 @@
                     (tltest-source-line span)
                     body
                     (tltest-private-name test-count))
-                  tests-rev)
+                  (box tests-rev))
                 (+ test-count 1)))]
           [(AstDeclImport _)
             (tltest-collect
@@ -482,7 +484,7 @@
               (tltest-call-expr private-name)
               (ast-expr-cons
                 (tltest-print-expr (tltest-ok-line test))
-                (tltest-main-exprs rest count))))])]))
+                (tltest-main-exprs (box-get rest) count))))])]))
 
 (define (tltest-test-decls [tests : InlineTestList]) : AstDeclList
   (match tests
@@ -492,7 +494,7 @@
         [(InlineTest _ _ _ body private-name)
           (ast-decl-cons
             (ast-decl-def-fn private-name AstParamNil (AstTyUnit) body)
-            (tltest-test-decls rest))])]))
+            (tltest-test-decls (box-get rest)))])]))
 
 (define (tltest-test-paths [tests : InlineTestList]) : AstDeclPathList
   (match tests
@@ -500,7 +502,7 @@
     [(InlineTestCons test rest)
       (match test
         [(InlineTest _ path _ _ _)
-          (ast-decl-path-cons path (tltest-test-paths rest))])]))
+          (ast-decl-path-cons path (tltest-test-paths (box-get rest)))])]))
 
 (define (tltest-main-decl [tests : InlineTestList] [count : i64]) : AstDecl
   (ast-decl-def-fn
@@ -823,7 +825,9 @@
     [(InlineTestCons test rest)
       (match test
         [(InlineTest _ _ _ body _)
-          (tltest-reach-mark-tests rest (tltest-reach-mark-expr body names))])]))
+          (tltest-reach-mark-tests
+            (box-get rest)
+            (tltest-reach-mark-expr body names))])]))
 
 (define (tltest-reach-mark-decl [decl : AstDecl] [names : SymI64Env]) : SymI64Env
   (match decl

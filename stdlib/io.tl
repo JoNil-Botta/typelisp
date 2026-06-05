@@ -753,7 +753,7 @@
     (io-file-bool-ref (io-file-eofs-ptr) raw)
     true))
 
-;: Read up to `count` bytes from stdin.
+;: Read up to `count` bytes from stdin, continuing across positive short reads.
 (define (read-stdin-bytes [count : i64]) : String
   (if (< count 0)
     (panic "tl: stdin failed\n")
@@ -761,15 +761,30 @@
       ""
       (let
         [buf : (Array u8) (make-array u8 count)]
-        [read-count : i64 (io-platform-read 0 (io-array-ptr buf) count)]
-        (if (< read-count 0)
-          (panic "tl: stdin failed\n")
-          (begin
-            (if (< read-count count)
-              (set! io-stdin-eof-state true)
-              (set! io-stdin-eof-state false))
-            (unsafe
-              (string-from-bytes (io-array-const-ptr buf) read-count))))))))
+        [offset : i64 0]
+        [done : bool false]
+        (begin
+          (while (not done)
+            (if (>= offset count)
+              (begin
+                (set! io-stdin-eof-state false)
+                (set! done true))
+              (let
+                [read-count : i64
+                  (io-platform-read
+                    0
+                    (unsafe
+                      (ptr-offset (io-array-ptr buf) offset))
+                    (- count offset))]
+                (if (< read-count 0)
+                  (panic "tl: stdin failed\n")
+                  (if (= read-count 0)
+                    (begin
+                      (set! io-stdin-eof-state true)
+                      (set! done true))
+                    (set! offset (+ offset read-count)))))))
+          (unsafe
+            (string-from-bytes (io-array-const-ptr buf) offset)))))))
 
 ;: Read one stdin line without the trailing newline.
 (define (read-stdin-line) : String

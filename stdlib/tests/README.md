@@ -41,6 +41,9 @@ Coverage notes:
   stdout/stderr write-line helpers, and stdout flushing with fixture stdin.
 - `io_stdio_bytes.tl` covers fixed-byte stdin wrappers, short reads at EOF, and
   zero-byte reads preserving the sticky EOF state.
+- `io_stdio_pipe_short_read.tl` is typechecked like the other witnesses and is
+  also run by `scripts/verify-stdlib.sh` through a native pipe to ensure
+  positive short pipe reads do not report EOF before all bytes arrive.
 - `env_api.tl` covers missing, empty, and present environment variables,
   host-separator PATH splitting/joining, and explicit Windows `;` path-list
   behavior.

@@ -28,7 +28,7 @@ contains|_tl_token_tag:
 contains|_tl_token_int:
 contains|call tl_alloc
 contains|call tl_oob_abort
-contains|call .L_tl_abort
+contains|call _tl_panic
 contains|call _tl_lex
 contains|call _tl_parse
 contains|call _tl_parse_expr
@@ -57,7 +57,7 @@ contains|_tl_token_int:
 contains|parser: unexpected token
 contains|call tl_alloc
 contains|call tl_oob_abort
-contains|call .L_tl_abort
+contains|call _tl_panic
 contains|call _tl_parse_term
 contains|call _tl_parse_factor
 contains|call _tl_parse_expr
@@ -83,7 +83,7 @@ contains|_tl_sexpr_tail:
 contains|match_nested
 contains|tl_string_eq:
 contains|call _tl_eval_sexpr
-contains|.L_tl_abort
+contains|call _tl_panic
 end
 
 case|integration_nullary_variant_call|tests/integration/nullary_variant_call.tl|assembly|skip|direct

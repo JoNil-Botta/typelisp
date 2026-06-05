@@ -19,6 +19,8 @@
 ;# program-lifetime arena outside `(with-arena ...)`, or the scoped arena
 ;# inside one. No borrow-typed `str` API is exposed yet because the owned
 ;# `String` / borrowed `str` split is still tracked by #807.
+(import "io.tl")
+
 ;: Reversed chunk list. Each cons node is allocated in the active arena.
 (defenum TextBufChunkList
   (TextBufChunkNil)

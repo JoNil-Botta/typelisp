@@ -297,9 +297,9 @@
   (begin
     (if (fs-windows?)
       (begin
-        (assert-open-unsupported
+        (assert-open-not-found
           (test-file-open handle-read-file OpenRead)
-          "windows file handles are unsupported")
+          "windows missing read handle reports not found")
         (assert-read-unsupported
           (file-read-chunk (FileHandle 1) 1)
           "windows file reads are unsupported")

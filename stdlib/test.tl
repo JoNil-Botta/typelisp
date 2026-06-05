@@ -12,6 +12,8 @@
 ;#     (assert-true true "expected true")
 ;#     42))
 ;# ```
+(import "io.tl")
+
 ;: Assert that `condition` is true, panicking with `message` when it is false.
 (define (assert-true [condition : bool] [message : String]) : unit
   (if condition

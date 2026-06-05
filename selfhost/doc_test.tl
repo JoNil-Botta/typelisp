@@ -1293,11 +1293,12 @@
     [index : i64 (doc-test-example-index example)]
     [virtual-path : String (doc-test-example-virtual-path path index)]
     [code : String (doc-test-example-code example)]
-    (match (compiler-load-source-with-paths-and-roots
+    (match (compiler-load-source-with-paths-and-roots-cfg
       virtual-path
       code
       (sym-i64-empty)
-      stdlib-roots)
+      stdlib-roots
+      (compiler-driver-target-cfgs target (compiler-cfg-empty)))
       [(OkCompilerLoadWithPaths decls paths _ _)
         (match (lower-compiler-program-with-decl-paths
           virtual-path

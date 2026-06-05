@@ -56,6 +56,14 @@ native_link_detect_host() {
     BIN_EXT=$NL_BIN_EXT
 }
 
+native_target_cfg_args() {
+    if [ "$NL_HOST_OS" = windows ]; then
+        printf '%s\n' --cfg windows --cfg target-windows --cfg os-windows
+    else
+        printf '%s\n' --cfg linux --cfg unix --cfg target-linux --cfg os-linux
+    fi
+}
+
 fail() {
     echo "$*" >&2
     exit 1

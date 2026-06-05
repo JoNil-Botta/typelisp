@@ -1,3 +1,7 @@
+(import "stdlib/io.tl")
+
+(import "stdlib/env.tl")
+
 (import "stdlib/process.tl")
 
 (import "stdlib/test.tl")

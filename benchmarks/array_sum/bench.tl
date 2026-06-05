@@ -12,6 +12,8 @@
 ;# array each round (`xs[r] = acc`), creating a cross-round data dependency:
 ;# without it the per-round sum would be loop-invariant and the optimizer
 ;# could collapse every round into a single pass times `rounds`.
+(import "stdlib/io.tl")
+
 (define base-size : i64
   200003)
 

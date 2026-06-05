@@ -124,8 +124,10 @@ i64 i32 i16 i8   u64 u32 u16 u8   f64 f32   bool   char   unit   String
 (Array t n)       ; fixed-size array (literals/ref/set compile; returns rejected)
 (Tuple t1 t2 ...) ; local tuple literals/ref compile; params/returns rejected
 (Box t)           ; specified arena-owned indirection for recursive aggregates
+(& r t)           ; specified immutable reference tied to lifetime/arena r
 (-> arg... ret)   ; function type
 Name              ; a defenum / defstruct nominal type
+(Name r...)       ; specified lifetime-parameterized nominal type use
 ```
 
 Both `f64` and `f32` support scalar parameters, returns, locals, arithmetic,
@@ -205,7 +207,10 @@ compilation flags. Source may wrap a top-level declaration as
 `(cfg predicate declaration)`, where `predicate` is a flag name, `(all ...)`,
 `(any ...)`, or `(not predicate)`. Inactive `cfg` branches are lexed/read but are
 not parsed as TypeLisp declarations, so they can hide stage- or platform-specific
-declarations from compilers that should not see them.
+declarations from compilers that should not see them. The compiler also enables
+target OS predicates automatically: `linux`, `unix`, `target-linux`, and
+`os-linux` for `linux-x86_64`; `windows`, `target-windows`, and `os-windows` for
+`windows-x86_64`.
 
 Local packages can be described with a std-only S-expression manifest named
 `typelisp.pkg`:
@@ -333,7 +338,7 @@ using the `stdlib/cpu.tl` capability checks. Parser/compiler support for
 
 ### Builtins
 
-`print`, `print-bool`, `print-float`, `print-char`, `print-newline`,
+`print`, `print-bool`, `print-newline`; stdlib `print-float`, `print-char`,
 `print-string`/`print-str`; `arg-count`, `arg`, `read-file`, `write-file`,
 `file-exists?`, `read-file-status`, `write-file-status`,
 `append-file-status`, `file-exists-status`, `file-open-status`,
@@ -379,6 +384,11 @@ used as `(& lifetime str)`, and borrowing a `String` place produces a borrowed
 `str` view. Implementation of the `str` frontend and stdlib API migration is
 still pending; current public builtins continue to use compatibility `String`
 signatures.
+
+Lifetime-parameterized named aggregates are specified with declaration metadata
+such as `(:lifetimes r)` on `defstruct`/`defenum` and type uses such as
+`(RefBox r)`. Those arguments are lifetime names only, not source-level generic
+type parameters; selfhost parser/typechecker support is tracked by #1722.
 
 `(Box T)` is specified as a safe, move-only, arena-owned indirection handle:
 `(box expr)` allocates `expr` in the active arena, and `(box-get b)` projects
@@ -558,7 +568,10 @@ predicated tails. Unsupported vector IR falls back or rejects explicitly.
 predicate declaration)` and expression-level `(cfg predicate expr [else-expr])`
 forms. Without `--cfg`, named predicates are false, `(all ...)` is true only when
 all operands are true, `(any ...)` is true when any operand is true, and
-`(not ...)` negates one predicate.
+`(not ...)` negates one predicate. Target OS predicates are enabled implicitly
+from `--target`: `linux`, `unix`, `target-linux`, and `os-linux` for
+`linux-x86_64`; `windows`, `target-windows`, and `os-windows` for
+`windows-x86_64`.
 
 The language-level runtime dispatch design is specified as `defdispatch` in
 `SPEC.md`: one logical function can list scalar, AVX2, and AVX-512 variant

@@ -1052,6 +1052,24 @@
   (SymI64Nil)
   (SymI64Bind String i64 (Box SymI64Env)))")
 
+(define (compiler-typecheck-inline-boxed-loader-helper-source) : String
+  "(defenum CompilerLoadRootList
+  (CompilerLoadRootNil)
+  (CompilerLoadRootCons String (Box CompilerLoadRootList)))
+(defstruct CompilerPkgDep
+  (alias String)
+  (path String))
+(defenum CompilerPkgDepList
+  (CompilerPkgDepNil)
+  (CompilerPkgDepCons CompilerPkgDep (Box CompilerPkgDepList)))")
+
+(define (compiler-typecheck-inline-loader-helper-layout-ok?) : bool
+  (let
+    [src : String (compiler-typecheck-inline-boxed-loader-helper-source)]
+    (and
+      (compiler-typecheck-inline-layout-ok? src "CompilerLoadRootList")
+      (compiler-typecheck-inline-layout-ok? src "CompilerPkgDepList"))))
+
 (define (compiler-typecheck-inline-boxed-ctfe-metadata-source) : String
   "(defenum CompilerCtfeValue
   (CtfeUnit))
@@ -1147,56 +1165,76 @@
   (next (in phase BadRegion)))")
 
 (define (compiler-typecheck-inline-layout-tests-ok?) : bool
-  (and
-    (compiler-typecheck-ok?
-      (tc-cat3
-        (compiler-typecheck-inline-unboxed-list-source)
-        "\n"
-        "(define (main [x : BadList]) : i64 0)"))
-    (and
-      (compiler-typecheck-inline-layout-ok?
+  (let
+    [ok : bool true]
+    (begin
+      (if (compiler-typecheck-ok?
+        (tc-cat3
+          (compiler-typecheck-inline-unboxed-list-source)
+          "\n"
+          "(define (main [x : BadList]) : i64 0)"))
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-inline-layout-ok?
         (compiler-typecheck-inline-boxed-list-source)
         "ListI64")
-      (and
-        (compiler-typecheck-inline-layout-ok?
-          (compiler-typecheck-inline-boxed-tree-source)
-          "Tree")
-        (and
-          (compiler-typecheck-inline-layout-ok?
-            (compiler-typecheck-inline-boxed-sym-i64-env-source)
-            "SymI64Env")
-          (and
-            (compiler-typecheck-inline-ctfe-metadata-layout-ok?)
-            (and
-              (compiler-typecheck-inline-layout-ok?
-                (compiler-typecheck-inline-pointer-boundaries-source)
-                "Node")
-              (and
-                (compiler-typecheck-inline-layout-query-ok?)
-                (and
-                  (compiler-typecheck-inline-layout-error-ok?
-                    (compiler-typecheck-inline-unboxed-list-source)
-                    "BadList"
-                    "typecheck: inline aggregate layout cycle BadList -> BadList; insert (Box BadList) at the recursive edge")
-                  (and
-                    (compiler-typecheck-inline-layout-error-ok?
-                      (compiler-typecheck-inline-mutual-struct-source)
-                      "A"
-                      "typecheck: inline aggregate layout cycle A -> B -> A; insert (Box A) at the recursive edge")
-                    (and
-                      (compiler-typecheck-inline-layout-error-ok?
-                        (compiler-typecheck-inline-fixed-array-source)
-                        "BadFixed"
-                        "typecheck: inline aggregate layout cycle BadFixed -> BadFixed; insert (Box BadFixed) at the recursive edge")
-                      (and
-                        (compiler-typecheck-inline-layout-error-ok?
-                          (compiler-typecheck-inline-tuple-source)
-                          "BadTuple"
-                          "typecheck: inline aggregate layout cycle BadTuple -> BadTuple; insert (Box BadTuple) at the recursive edge")
-                        (compiler-typecheck-inline-layout-error-ok?
-                          (compiler-typecheck-inline-region-wrapper-source)
-                          "BadRegion"
-                          "typecheck: inline aggregate layout cycle BadRegion -> BadRegion; insert (Box BadRegion) at the recursive edge")))))))))))))
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-inline-layout-ok?
+        (compiler-typecheck-inline-boxed-tree-source)
+        "Tree")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-inline-layout-ok?
+        (compiler-typecheck-inline-boxed-sym-i64-env-source)
+        "SymI64Env")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-inline-loader-helper-layout-ok?)
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-inline-ctfe-metadata-layout-ok?)
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-inline-layout-ok?
+        (compiler-typecheck-inline-pointer-boundaries-source)
+        "Node")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-inline-layout-query-ok?)
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-inline-layout-error-ok?
+        (compiler-typecheck-inline-unboxed-list-source)
+        "BadList"
+        "typecheck: inline aggregate layout cycle BadList -> BadList; insert (Box BadList) at the recursive edge")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-inline-layout-error-ok?
+        (compiler-typecheck-inline-mutual-struct-source)
+        "A"
+        "typecheck: inline aggregate layout cycle A -> B -> A; insert (Box A) at the recursive edge")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-inline-layout-error-ok?
+        (compiler-typecheck-inline-fixed-array-source)
+        "BadFixed"
+        "typecheck: inline aggregate layout cycle BadFixed -> BadFixed; insert (Box BadFixed) at the recursive edge")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-inline-layout-error-ok?
+        (compiler-typecheck-inline-tuple-source)
+        "BadTuple"
+        "typecheck: inline aggregate layout cycle BadTuple -> BadTuple; insert (Box BadTuple) at the recursive edge")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-inline-layout-error-ok?
+        (compiler-typecheck-inline-region-wrapper-source)
+        "BadRegion"
+        "typecheck: inline aggregate layout cycle BadRegion -> BadRegion; insert (Box BadRegion) at the recursive edge")
+        unit
+        (set! ok false))
+      ok)))
 
 (define (compiler-typecheck-nominal-tests-ok?) : bool
   (let

@@ -21756,69 +21756,33 @@
   (let
     [ok : bool true]
     (begin
-      (if (not (lower-bootstrap-runtime-builtin? "print"))
-        unit
+      (when (lower-bootstrap-runtime-builtin? "print") (set! ok false))
+      (when (lower-bootstrap-runtime-builtin? "print-string") (set! ok false))
+      (when (lower-bootstrap-runtime-builtin? "print-str") (set! ok false))
+      (when (lower-bootstrap-runtime-builtin? "print-newline") (set! ok false))
+      (when (lower-bootstrap-runtime-builtin? "print-bool") (set! ok false))
+      (when (lower-bootstrap-runtime-builtin? "print-char") (set! ok false))
+      (when (lower-bootstrap-runtime-builtin? "print-float") (set! ok false))
+      (when (lower-bootstrap-runtime-builtin? "print-error") (set! ok false))
+      (when (lower-bootstrap-runtime-builtin? "panic") (set! ok false))
+      (when (lower-bootstrap-runtime-builtin? "error") (set! ok false))
+      (when (lower-bootstrap-runtime-builtin? "arg-count") (set! ok false))
+      (when (lower-bootstrap-runtime-builtin? "arg") (set! ok false))
+      (when (lower-bootstrap-runtime-builtin? "read-file") (set! ok false))
+      (when (lower-bootstrap-runtime-builtin? "write-file") (set! ok false))
+      (when
+        (lower-bootstrap-runtime-builtin? "file-open-status")
         (set! ok false))
-      (if (not (lower-bootstrap-runtime-builtin? "print-string"))
-        unit
+      (when (lower-bootstrap-runtime-builtin? "fs-process-id") (set! ok false))
+      (when (lower-bootstrap-runtime-builtin? "fs-current-dir") (set! ok false))
+      (when
+        (lower-bootstrap-runtime-builtin? "read-stdin-line")
         (set! ok false))
-      (if (not (lower-bootstrap-runtime-builtin? "print-str"))
-        unit
+      (when
+        (lower-bootstrap-runtime-builtin? "read-stdin-bytes")
         (set! ok false))
-      (if (not (lower-bootstrap-runtime-builtin? "print-newline"))
-        unit
-        (set! ok false))
-      (if (not (lower-bootstrap-runtime-builtin? "print-bool"))
-        unit
-        (set! ok false))
-      (if (not (lower-bootstrap-runtime-builtin? "print-char"))
-        unit
-        (set! ok false))
-      (if (not (lower-bootstrap-runtime-builtin? "print-float"))
-        unit
-        (set! ok false))
-      (if (not (lower-bootstrap-runtime-builtin? "print-error"))
-        unit
-        (set! ok false))
-      (if (not (lower-bootstrap-runtime-builtin? "panic"))
-        unit
-        (set! ok false))
-      (if (not (lower-bootstrap-runtime-builtin? "error"))
-        unit
-        (set! ok false))
-      (if (not (lower-bootstrap-runtime-builtin? "arg-count"))
-        unit
-        (set! ok false))
-      (if (not (lower-bootstrap-runtime-builtin? "arg"))
-        unit
-        (set! ok false))
-      (if (not (lower-bootstrap-runtime-builtin? "read-file"))
-        unit
-        (set! ok false))
-      (if (not (lower-bootstrap-runtime-builtin? "write-file"))
-        unit
-        (set! ok false))
-      (if (not (lower-bootstrap-runtime-builtin? "file-open-status"))
-        unit
-        (set! ok false))
-      (if (not (lower-bootstrap-runtime-builtin? "fs-process-id"))
-        unit
-        (set! ok false))
-      (if (not (lower-bootstrap-runtime-builtin? "fs-current-dir"))
-        unit
-        (set! ok false))
-      (if (not (lower-bootstrap-runtime-builtin? "read-stdin-line"))
-        unit
-        (set! ok false))
-      (if (not (lower-bootstrap-runtime-builtin? "read-stdin-bytes"))
-        unit
-        (set! ok false))
-      (if (not (lower-bootstrap-runtime-builtin? "stdin-eof?"))
-        unit
-        (set! ok false))
-      (if (not (lower-bootstrap-runtime-builtin? "flush-stdout"))
-        unit
-        (set! ok false))
+      (when (lower-bootstrap-runtime-builtin? "stdin-eof?") (set! ok false))
+      (when (lower-bootstrap-runtime-builtin? "flush-stdout") (set! ok false))
       ok)))
 
 (define (compiler-lower-cpu-builtin-shape-ok?) : bool

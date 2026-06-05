@@ -344,6 +344,8 @@ fi
 SELFHOST_CLI_BIN=$(sed -n '1p' "$SELFHOST_CLI_REFRESHED_PATH_FILE")
 ensure_executable "refreshed selfhost cli" "$SELFHOST_CLI_BIN"
 echo "[no-rust-stage0] downstream fresh CLI gates use refreshed selfhost cli: $SELFHOST_CLI_BIN"
+run_with_compiler "$SELFHOST_CLI_BIN" "fresh selfhost CLI TypeLisp source lint" \
+    env TYPELISP_LINT_JOBS="${TYPELISP_LINT_JOBS:-8}" scripts/check-tl-lint.sh
 
 if [ "$HOST_OS" = linux ]; then
     STAGE1_PATH_FILE="$ROOT/target/no-rust-stage0-stage1.path"

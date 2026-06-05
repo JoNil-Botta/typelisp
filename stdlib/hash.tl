@@ -42,6 +42,7 @@
   (hash-normalize
     (+ (+ (* (hash-normalize seed) 131) (hash-normalize component)) 1)))
 
+;: Combine already-normalized hash parts without re-normalizing inputs.
 (define (hash-combine-normalized [seed : i64] [component : i64]) : i64
   (hash-normalize (+ (+ (* seed 131) component) 1)))
 

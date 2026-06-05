@@ -567,7 +567,7 @@
       (- index 1)
       (if (= (array-ref present index) 0)
         acc
-        (CompilerRegVarTypeCons
+        (compiler-reg-var-type-cons
           (CompilerRegVarType index (array-ref types index))
           acc)))))
 
@@ -841,7 +841,7 @@
     [(CompilerLiveBlockNil) CompilerLiveBlockNil]
     [(CompilerLiveBlockCons live-block rest)
       (if (string-eq (compiler-live-block-label live-block) label)
-        rest
+        (box-get rest)
         live-blocks)]))
 
 (define (compiler-reg-live-intervals-blocks-with-live

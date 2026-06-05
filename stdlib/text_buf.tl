@@ -161,6 +161,7 @@
           (text-buf-chunks-render-balanced chunks count)
           (text-buf-chunks-render-rev chunks "")))]))
 
+;: Write chunks in insertion order to an open raw file handle.
 (define (text-buf-write-chunks-rev [raw : i64] [chunks : TextBufChunkList]) : i64
   (match chunks
     [(TextBufChunkNil) io-status-ok]
@@ -171,6 +172,7 @@
           (file-write-status raw chunk)
           status))]))
 
+;: Write the rendered buffer contents to `path`, replacing any existing file.
 (define (text-buf-write-file [path : String] [buf : TextBuf]) : i64
   (match (file-open (& path) (OpenWriteTruncate))
     [(OkIoFile handle)

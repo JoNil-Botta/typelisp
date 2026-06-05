@@ -662,7 +662,8 @@
 (define (compiler-live-block-count [blocks : CompilerLiveBlockList]) : i64
   (match blocks
     [(CompilerLiveBlockNil) 0]
-    [(CompilerLiveBlockCons _ rest) (+ 1 (compiler-live-block-count rest))]))
+    [(CompilerLiveBlockCons _ rest)
+      (+ 1 (compiler-live-block-count (box-get rest)))]))
 
 (define (compiler-live-block-graph-fill!
   [blocks : CompilerLiveBlockList]
@@ -677,7 +678,7 @@
           (begin
             (array-set! values index block)
             (compiler-live-block-graph-fill!
-              rest
+              (box-get rest)
               (if (string-i64-map-contains? ids label)
                 ids
                 (string-i64-map-put ids label index))
@@ -729,7 +730,7 @@
               index
               (compiler-live-label-set-to-index-set block-successors ids))
             (compiler-live-block-graph-fill-successors!
-              rest
+              (box-get rest)
               ids
               successors
               (+ index 1)))])]))
@@ -871,7 +872,7 @@
     (compiler-live-graph-to-list-from
       blocks
       (- index 1)
-      (CompilerLiveBlockCons (array-ref blocks index) acc))))
+      (compiler-live-block-cons (array-ref blocks index) acc))))
 
 (define (compiler-live-graph-to-list [graph : CompilerLiveBlockGraph]) : CompilerLiveBlockList
   (let

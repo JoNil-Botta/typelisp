@@ -924,7 +924,10 @@
           [(ErrAstProgramDiagnostic diag) (ErrCompilerLoadWithPaths diag)])
         (match (compiler-load-embedded-stdlib-source-for-path path)
           [(CompilerEmbeddedStdlibSomeSource source)
-            (match (compiler-load-parse-source-diagnostic-escaping path source cfgs)
+            (match (compiler-load-parse-source-diagnostic-escaping
+              path
+              source
+              cfgs)
               [(OkAstProgramDiagnostic program)
                 (compiler-load-bind-path-dedup
                   (compiler-load-program-with-paths-and-roots-expect-cfg

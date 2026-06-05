@@ -6836,21 +6836,28 @@
 
 ;; Level 2 keeps the self-build path lightweight while preserving the explicit
 ;; optimized-level checks for local scalar cleanup, bounds checks, stack
-;; CFG cleanup, DCE, and program-level reachability pruning. Stack promotion
-;; remains in the heavier level-3 pipeline.
+;; promotion, CFG cleanup, DCE, and program-level reachability pruning.
 (define (optimize-function-once-level2 [func : CompilerIrFunction]) : CompilerIrFunction
   (match func
     [(IrFunction name params ret-ty frame blocks)
       (let
         [folded : CompilerIrBlockList (optimize-block-list blocks)]
-        [cfg : CompilerIrBlockList (opt-cfg-simplify-blocks folded)]
-        [used : (Array bool) (opt-collect-blocks-uses-array frame cfg)]
-        (IrFunction
-          name
-          params
-          ret-ty
-          frame
-          (opt-dce-block-list-array used cfg)))]))
+        [promoted : CompilerIrFunction
+          (opt-aggregate-stack-promote-function
+            (IrFunction name params ret-ty frame folded))]
+        (match promoted
+          [(IrFunction _ _ _ promoted-frame promoted-blocks)
+            (let
+              [cfg : CompilerIrBlockList
+                (opt-cfg-simplify-blocks promoted-blocks)]
+              [used : (Array bool)
+                (opt-collect-blocks-uses-array promoted-frame cfg)]
+              (IrFunction
+                name
+                params
+                ret-ty
+                promoted-frame
+                (opt-dce-block-list-array used cfg)))]))]))
 
 (define (optimize-function-once-fast [func : CompilerIrFunction]) : CompilerIrFunction
   (match func

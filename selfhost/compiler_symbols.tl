@@ -1335,7 +1335,11 @@
 (define (compiler-symbol-owner-name-for-decl [decl : AstDecl] [module : String]) : String
   (match decl
     [(AstDeclDefEnum name _) (compiler-symbol-module-key module name)]
+    [(AstDeclDefEnumLifetimes name _ _)
+      (compiler-symbol-module-key module name)]
     [(AstDeclDefStruct name _ _ _) (compiler-symbol-module-key module name)]
+    [(AstDeclDefStructLifetimes name _ _ _ _)
+      (compiler-symbol-module-key module name)]
     [_ ""]))
 
 (define (compiler-symbols-index-decl!
@@ -2341,6 +2345,11 @@
             variants
             (compiler-registry-handle-child-index handle)
             0)]
+        [(AstDeclDefEnumLifetimes _ _ variants)
+          (compiler-variant-types-at-index
+            variants
+            (compiler-registry-handle-child-index handle)
+            0)]
         [_ (ErrAstTypeList "symbols: variant owner is not enum")])]
     [(ErrAstDecl message) (ErrAstTypeList message)]))
 
@@ -2374,6 +2383,11 @@
     [(OkAstDecl decl)
       (match decl
         [(AstDeclDefStruct _ _ _ fields)
+          (compiler-field-type-at-index
+            fields
+            (compiler-registry-handle-child-index handle)
+            0)]
+        [(AstDeclDefStructLifetimes _ _ _ _ fields)
           (compiler-field-type-at-index
             fields
             (compiler-registry-handle-child-index handle)

@@ -204,6 +204,10 @@
   (OkCompilerTypecheck CompilerTypecheckSummary)
   (ErrCompilerTypecheck CompilerDiagnostic))
 
+(defenum ResultCompilerTypecheckChecked
+  (OkCompilerTypecheckChecked CompilerTypecheckSummary TcContext TcTypeEnv)
+  (ErrCompilerTypecheckChecked CompilerDiagnostic))
+
 (define (tc-context-with-module [ctx : TcContext] [module : String]) : TcContext
   (match ctx
     [(TcContext program symbols registries _)
@@ -270,9 +274,7 @@
                 (string-append
                   (compiler-tc-profile-field
                     (- end-live compiler-tc-profile-start-live))
-                  (string-append
-                    (compiler-tc-profile-field peak-delta)
-                    "\n"))))))))))
+                  (string-append (compiler-tc-profile-field peak-delta) "\n"))))))))))
 
 (cfg
   compile-profile
@@ -453,46 +455,81 @@
   compile-profile
   (define (compiler-tc-decl-profile-count-def) : unit
     (begin
-      (set! compiler-tc-decl-profile-decl-count
+      (set!
+        compiler-tc-decl-profile-decl-count
         (+ compiler-tc-decl-profile-decl-count 1))
-      (set! compiler-tc-decl-profile-def-count
+      (set!
+        compiler-tc-decl-profile-def-count
         (+ compiler-tc-decl-profile-def-count 1)))))
 
 (cfg
   compile-profile
   (define (compiler-tc-decl-profile-count-fn) : unit
     (begin
-      (set! compiler-tc-decl-profile-decl-count
+      (set!
+        compiler-tc-decl-profile-decl-count
         (+ compiler-tc-decl-profile-decl-count 1))
-      (set! compiler-tc-decl-profile-fn-count
+      (set!
+        compiler-tc-decl-profile-fn-count
         (+ compiler-tc-decl-profile-fn-count 1)))))
 
 (cfg
   compile-profile
   (define (compiler-tc-decl-profile-count-macro) : unit
     (begin
-      (set! compiler-tc-decl-profile-decl-count
+      (set!
+        compiler-tc-decl-profile-decl-count
         (+ compiler-tc-decl-profile-decl-count 1))
-      (set! compiler-tc-decl-profile-macro-count
+      (set!
+        compiler-tc-decl-profile-macro-count
         (+ compiler-tc-decl-profile-macro-count 1)))))
 
 (cfg
   compile-profile
   (define (compiler-tc-decl-profile-count-extern) : unit
     (begin
-      (set! compiler-tc-decl-profile-decl-count
+      (set!
+        compiler-tc-decl-profile-decl-count
         (+ compiler-tc-decl-profile-decl-count 1))
-      (set! compiler-tc-decl-profile-extern-count
+      (set!
+        compiler-tc-decl-profile-extern-count
         (+ compiler-tc-decl-profile-extern-count 1)))))
 
 (cfg
   compile-profile
   (define (compiler-tc-decl-profile-count-other) : unit
     (begin
-      (set! compiler-tc-decl-profile-decl-count
+      (set!
+        compiler-tc-decl-profile-decl-count
         (+ compiler-tc-decl-profile-decl-count 1))
-      (set! compiler-tc-decl-profile-other-count
+      (set!
+        compiler-tc-decl-profile-other-count
         (+ compiler-tc-decl-profile-other-count 1)))))
+
+(cfg
+  compile-profile
+  (define (compiler-tc-decl-profile-record [decl : AstDecl]) : unit
+    (match decl
+      [(AstDeclDef _ _ _)
+        (begin
+          (compiler-tc-decl-profile-count-def)
+          (compiler-tc-decl-profile-add-def-expr))]
+      [(AstDeclDefFn name _ _ _)
+        (begin
+          (compiler-tc-decl-profile-count-fn)
+          (compiler-tc-decl-profile-add-fn-expr-named name))]
+      [(AstDeclDefMacro _ _ _ _)
+        (begin
+          (compiler-tc-decl-profile-count-macro)
+          (compiler-tc-decl-profile-add-macro))]
+      [(AstDeclExtern _ _ _)
+        (begin
+          (compiler-tc-decl-profile-count-extern)
+          (compiler-tc-decl-profile-add-extern))]
+      [_
+        (begin
+          (compiler-tc-decl-profile-count-other)
+          (compiler-tc-decl-profile-add-arena))])))
 
 (cfg
   compile-profile
@@ -502,9 +539,7 @@
         "compile-profile|typecheck.decl."
         (string-append
           phase
-          (string-append
-            (compiler-tc-profile-field value)
-            "|0|0|0\n"))))))
+          (string-append (compiler-tc-profile-field value) "|0|0|0\n"))))))
 
 (cfg
   compile-profile
@@ -513,9 +548,7 @@
       (compiler-tc-decl-profile-line
         "local_env"
         compiler-tc-decl-profile-local-env-ms)
-      (compiler-tc-decl-profile-line
-        "arena"
-        compiler-tc-decl-profile-arena-ms)
+      (compiler-tc-decl-profile-line "arena" compiler-tc-decl-profile-arena-ms)
       (compiler-tc-decl-profile-line
         "def_expr"
         compiler-tc-decl-profile-def-expr-ms)
@@ -525,9 +558,7 @@
       (compiler-tc-decl-profile-line
         "fn_move"
         compiler-tc-decl-profile-fn-move-ms)
-      (compiler-tc-decl-profile-line
-        "macro"
-        compiler-tc-decl-profile-macro-ms)
+      (compiler-tc-decl-profile-line "macro" compiler-tc-decl-profile-macro-ms)
       (compiler-tc-decl-profile-line
         "extern"
         compiler-tc-decl-profile-extern-ms)
@@ -663,17 +694,13 @@
         (+ 1 (tc-env-default-shadow-count rest)))]
     [(TcTypeCache _ _ _ rest) (tc-env-default-shadow-count rest)]))
 
-(define (tc-env-default-shadow-fill
-  [env : TcTypeEnv]
-  [shadows : StringI64Map]) : StringI64Map
+(define (tc-env-default-shadow-fill [env : TcTypeEnv] [shadows : StringI64Map]) : StringI64Map
   (match env
     [(TcTypeNil) shadows]
     [(TcTypeBind name _ rest)
       (if (string-eq name (tc-default-boundary-name))
         shadows
-        (tc-env-default-shadow-fill
-          rest
-          (string-i64-map-put shadows name 1)))]
+        (tc-env-default-shadow-fill rest (string-i64-map-put shadows name 1)))]
     [(TcTypeCache _ _ _ rest) (tc-env-default-shadow-fill rest shadows)]))
 
 (define (tc-env-unsafe-cache-add
@@ -685,11 +712,14 @@
     (match (string-i64-map-get shadows key)
       [(StringI64MapFound _) shadows]
       [(StringI64MapMissing)
-        (string-i64-map-put shadows key (if unsafe 1 0))])))
+        (string-i64-map-put
+          shadows
+          key
+          (if unsafe
+            1
+            0))])))
 
-(define (tc-env-unsafe-cache-fill
-  [env : TcTypeEnv]
-  [shadows : StringI64Map]) : StringI64Map
+(define (tc-env-unsafe-cache-fill [env : TcTypeEnv] [shadows : StringI64Map]) : StringI64Map
   (match env
     [(TcTypeNil) shadows]
     [(TcTypeBind name _ rest)
@@ -1943,9 +1973,7 @@
   [cached-handle : i64]
   [cached-name : String]) : ResultTcString
   (if (= cached-handle handle)
-    (match (compiler-symbols-lookup-type
-      (tc-context-symbols ctx)
-      cached-name)
+    (match (compiler-symbols-lookup-type (tc-context-symbols ctx) cached-name)
       [(SomeI64 cached-handle)
         (if (= cached-handle handle)
           (OkTcString cached-name)
@@ -2044,7 +2072,6 @@
           (begin
             (set! tc-nominal-owner-cache-handle7 handle)
             (set! tc-nominal-owner-cache-name7 name))]))))
-
 
 (define (tc-nominal-owner-name-list
   [decls : AstDeclList]
@@ -4475,9 +4502,7 @@
       [(TcNoTypeEnv)
         (match (tc-module-local-env ctx top-env module)
           [(OkTcEnv env)
-            (OkTcModuleLocalEnv
-              env
-              (TcModuleLocalEnvCons module env cache))]
+            (OkTcModuleLocalEnv env (TcModuleLocalEnvCons module env cache))]
           [(ErrTcEnv message) (ErrTcModuleLocalEnv message)])])))
 
 (define (tc-expect [actual : AstType] [expected : AstType] [message : String]) : ResultTcUnit
@@ -7978,9 +8003,7 @@
         [decls : AstDeclList (box-get decls-box)]
         (tc-program-enum-variants-list decls enum-name))]))
 
-(define (tc-context-enum-variants
-  [ctx : TcContext]
-  [enum-name : String]) : ResultAstVariantDefList
+(define (tc-context-enum-variants [ctx : TcContext] [enum-name : String]) : ResultAstVariantDefList
   (match (compiler-symbols-lookup-type (tc-context-symbols ctx) enum-name)
     [(SomeI64 handle)
       (if (=
@@ -7992,13 +8015,15 @@
           [(OkAstDecl decl)
             (match decl
               [(AstDeclDefEnum _ variants) (OkAstVariantDefList variants)]
-              [_ (ErrAstVariantDefList
-                (string-append "typecheck: unknown enum " enum-name))])]
+              [(AstDeclDefEnumLifetimes _ _ variants)
+                (OkAstVariantDefList variants)]
+              [_
+                (ErrAstVariantDefList
+                  (string-append "typecheck: unknown enum " enum-name))])]
           [(ErrAstDecl message) (ErrAstVariantDefList message)])
         (ErrAstVariantDefList
           (string-append "typecheck: unknown enum " enum-name)))]
-    [(NoneI64)
-      (tc-program-enum-variants (tc-context-program ctx) enum-name)]))
+    [(NoneI64) (tc-program-enum-variants (tc-context-program ctx) enum-name)]))
 
 (define (tc-layout-info-size [info : TcLayoutInfo]) : i64
   (match info
@@ -10620,16 +10645,9 @@
       (let
         [inner : AstExpr (box-get inner-box)]
         [want-ty : AstType (tc-resolve-type ctx ty)]
-        (match (tc-expr-with-expected-or-actual
-          ctx
-          env
-          inner
-          want-ty)
+        (match (tc-expr-with-expected-or-actual ctx env inner want-ty)
           [(OkTcType got)
-            (match (tc-expect
-              got
-              want-ty
-              "typecheck: annotation type mismatch")
+            (match (tc-expect got want-ty "typecheck: annotation type mismatch")
               [(OkTcUnit)
                 (OkTcType
                   (if (tc-type-contains-any-region got)
@@ -13639,78 +13657,78 @@
   [global-env : TcTypeEnv]
   [decl : AstDecl]) : ResultTcUnit
   (match decl
-      [(AstDeclDef _ maybe-ty expr-box)
-        (let
-          [expr : AstExpr (box-get expr-box)]
-          (match maybe-ty
-            [(AstSomeType want)
-              (match (tc-expr-with-expected-or-actual
-                ctx
-                global-env
-                expr
-                (tc-resolve-type ctx want))
-                [(OkTcType got)
-                  (match (tc-expect
-                    got
-                    (tc-resolve-type ctx want)
-                    "typecheck: value definition type mismatch")
-                    [(OkTcUnit)
-                      (tc-ensure-region-value-can-flow-into
-                        global-env
-                        (tc-resolve-type ctx want)
-                        got
-                        "top-level value")]
-                    [(ErrTcUnit message) (ErrTcUnit message)])]
-                [(ErrTcType message) (ErrTcUnit message)])]
-            [(AstNoType)
-              (match (tc-expr ctx global-env expr)
-                [(OkTcType _) OkTcUnit]
-                [(ErrTcType message) (ErrTcUnit message)])]))]
-      [(AstDeclDefFn _ params ret body-box)
-        (let
-          [body : AstExpr (box-get body-box)]
-          [env : TcTypeEnv
-            (tc-bind-return-type
-              (tc-bind-params ctx global-env params)
-              (tc-resolve-type ctx ret))]
-          (match (tc-expr-with-expected-or-actual
-            ctx
-            env
-            body
-            (tc-resolve-type ctx ret))
-            [(OkTcType got)
-              (match (tc-expect
-                got
-                (tc-resolve-type ctx ret)
-                "typecheck: return type mismatch")
-                [(OkTcUnit)
-                  (match (tc-ensure-region-value-can-flow-into
-                    env
-                    (tc-resolve-type ctx ret)
-                    got
-                    "return value")
-                    [(OkTcUnit) (tc-move-check-body ctx env params body)]
-                    [(ErrTcUnit message) (ErrTcUnit message)])]
-                [(ErrTcUnit message) (ErrTcUnit message)])]
-            [(ErrTcType message) (ErrTcUnit message)]))]
-      [(AstDeclDefMacro _ params ret body-box)
-        (let
-          [body : AstExpr (box-get body-box)]
-          (tc-check-defmacro ctx top-env params ret body))]
-      [(AstDeclExtern _ metadata ty) (tc-check-extern-decl ctx metadata ty)]
-      [(AstDeclDefStruct name repr cleanup fields)
-        (tc-check-cleanup-struct-decl ctx top-env name repr cleanup fields)]
-      [(AstDeclDefStructLifetimes name _ repr cleanup fields)
-        (tc-check-cleanup-struct-decl ctx top-env name repr cleanup fields)]
-      [(AstDeclComptimeDecl _ template-box)
-        (let
-          [template : AstDecl (box-get template-box)]
-          (tc-check-decl-with-global-env ctx top-env global-env template))]
-      [(AstDeclUnsafe inner-box)
-        (let
-          [inner : AstDecl (box-get inner-box)]
-          (tc-check-decl-with-global-env ctx top-env global-env inner))]
-      [_ OkTcUnit]))
+    [(AstDeclDef _ maybe-ty expr-box)
+      (let
+        [expr : AstExpr (box-get expr-box)]
+        (match maybe-ty
+          [(AstSomeType want)
+            (match (tc-expr-with-expected-or-actual
+              ctx
+              global-env
+              expr
+              (tc-resolve-type ctx want))
+              [(OkTcType got)
+                (match (tc-expect
+                  got
+                  (tc-resolve-type ctx want)
+                  "typecheck: value definition type mismatch")
+                  [(OkTcUnit)
+                    (tc-ensure-region-value-can-flow-into
+                      global-env
+                      (tc-resolve-type ctx want)
+                      got
+                      "top-level value")]
+                  [(ErrTcUnit message) (ErrTcUnit message)])]
+              [(ErrTcType message) (ErrTcUnit message)])]
+          [(AstNoType)
+            (match (tc-expr ctx global-env expr)
+              [(OkTcType _) OkTcUnit]
+              [(ErrTcType message) (ErrTcUnit message)])]))]
+    [(AstDeclDefFn _ params ret body-box)
+      (let
+        [body : AstExpr (box-get body-box)]
+        [env : TcTypeEnv
+          (tc-bind-return-type
+            (tc-bind-params ctx global-env params)
+            (tc-resolve-type ctx ret))]
+        (match (tc-expr-with-expected-or-actual
+          ctx
+          env
+          body
+          (tc-resolve-type ctx ret))
+          [(OkTcType got)
+            (match (tc-expect
+              got
+              (tc-resolve-type ctx ret)
+              "typecheck: return type mismatch")
+              [(OkTcUnit)
+                (match (tc-ensure-region-value-can-flow-into
+                  env
+                  (tc-resolve-type ctx ret)
+                  got
+                  "return value")
+                  [(OkTcUnit) (tc-move-check-body ctx env params body)]
+                  [(ErrTcUnit message) (ErrTcUnit message)])]
+              [(ErrTcUnit message) (ErrTcUnit message)])]
+          [(ErrTcType message) (ErrTcUnit message)]))]
+    [(AstDeclDefMacro _ params ret body-box)
+      (let
+        [body : AstExpr (box-get body-box)]
+        (tc-check-defmacro ctx top-env params ret body))]
+    [(AstDeclExtern _ metadata ty) (tc-check-extern-decl ctx metadata ty)]
+    [(AstDeclDefStruct name repr cleanup fields)
+      (tc-check-cleanup-struct-decl ctx top-env name repr cleanup fields)]
+    [(AstDeclDefStructLifetimes name _ repr cleanup fields)
+      (tc-check-cleanup-struct-decl ctx top-env name repr cleanup fields)]
+    [(AstDeclComptimeDecl _ template-box)
+      (let
+        [template : AstDecl (box-get template-box)]
+        (tc-check-decl-with-global-env ctx top-env global-env template))]
+    [(AstDeclUnsafe inner-box)
+      (let
+        [inner : AstDecl (box-get inner-box)]
+        (tc-check-decl-with-global-env ctx top-env global-env inner))]
+    [_ OkTcUnit]))
 
 (define (tc-check-decl [ctx : TcContext] [top-env : TcTypeEnv] [decl : AstDecl]) : ResultTcUnit
   (tc-check-decl-with-global-env
@@ -13857,7 +13875,10 @@
   [local-env : TcTypeEnv]
   [global-env : TcTypeEnv]) : ResultCompilerTypecheck
   (match decls
-    [(AstDeclNil) (OkCompilerTypecheck summary)]
+    [(AstDeclNil)
+      (begin
+        (cfg compile-profile (compiler-tc-decl-profile-finish))
+        (OkCompilerTypecheck summary))]
     [(AstDeclCons decl rest)
       (let
         [rest : AstDeclList (box-get rest)]
@@ -13879,7 +13900,9 @@
               (match (tc-module-local-env-cached ctx top-env next-module cache)
                 [(OkTcModuleLocalEnv next-local-env next-cache)
                   (begin
-                    (cfg compile-profile (compiler-tc-decl-profile-add-local-env))
+                    (cfg
+                      compile-profile
+                      (compiler-tc-decl-profile-add-local-env))
                     (tc-check-decls-with-paths-in-module-env
                       ctx
                       top-env
@@ -13892,7 +13915,9 @@
                       (tc-hygiene-global-env next-local-env)))]
                 [(ErrTcModuleLocalEnv message)
                   (begin
-                    (cfg compile-profile (compiler-tc-decl-profile-add-local-env))
+                    (cfg
+                      compile-profile
+                      (compiler-tc-decl-profile-add-local-env))
                     (ErrCompilerTypecheck
                       (tc-typecheck-diag-with-path decl decl-path message)))]))]
           [_
@@ -13909,32 +13934,35 @@
                 global-env)
               (let
                 [decl-ctx : TcContext (tc-context-with-module ctx module)]
-                (match (tc-check-decl-with-global-env
-                  decl-ctx
-                  local-env
-                  global-env
-                  decl)
-                  [(OkTcUnit)
-                    (tc-check-decls-with-paths-in-module-env
-                      ctx
-                      top-env
-                      rest
-                      rest-paths
-                      (tc-summary-add-decl summary decl)
-                      module
-                      cache
-                      local-env
-                      global-env)]
-                  [(ErrTcUnit message)
-                    (ErrCompilerTypecheck
-                      (tc-typecheck-diag-with-path
-                        decl
-                        decl-path
-                        message))])))]))]))
+                (begin
+                  (cfg compile-profile (compiler-tc-decl-profile-start-section))
+                  (match (tc-check-decl-with-global-env
+                    decl-ctx
+                    local-env
+                    global-env
+                    decl)
+                    [(OkTcUnit)
+                      (begin
+                        (cfg
+                          compile-profile
+                          (compiler-tc-decl-profile-record decl))
+                        (tc-check-decls-with-paths-in-module-env
+                          ctx
+                          top-env
+                          rest
+                          rest-paths
+                          (tc-summary-add-decl summary decl)
+                          module
+                          cache
+                          local-env
+                          global-env))]
+                    [(ErrTcUnit message)
+                      (ErrCompilerTypecheck
+                        (tc-typecheck-diag-with-path decl decl-path message))]))))]))]))
 
-(define (typecheck-compiler-specialized-program-with-paths
+(define (typecheck-compiler-specialized-program-with-paths-checked
   [program : AstProgram]
-  [paths : AstDeclPathList]) : ResultCompilerTypecheck
+  [paths : AstDeclPathList]) : ResultCompilerTypecheckChecked
   (match (build-compiler-symbols program)
     [(OkCompilerSymbols symbols)
       (match (build-compiler-registries program)
@@ -13951,19 +13979,35 @@
                           [(AstProgram decls-box)
                             (let
                               [decls : AstDeclList (box-get decls-box)]
-                              (tc-check-decls-with-paths
+                              (match (tc-check-decls-with-paths
                                 ctx
                                 top-env
                                 decls
                                 paths
-                                (CompilerTypecheckSummary 0 0 0)))])]
+                                (CompilerTypecheckSummary 0 0 0))
+                                [(OkCompilerTypecheck summary)
+                                  (OkCompilerTypecheckChecked
+                                    summary
+                                    ctx
+                                    top-env)]
+                                [(ErrCompilerTypecheck diag)
+                                  (ErrCompilerTypecheckChecked diag)]))])]
                       [(ErrTcEnv message)
-                        (ErrCompilerTypecheck (tc-diag-at-start message))])]
+                        (ErrCompilerTypecheckChecked (tc-diag-at-start message))])]
                   [(ErrTcUnit message)
-                    (ErrCompilerTypecheck (tc-diag-at-start message))]))]
+                    (ErrCompilerTypecheckChecked (tc-diag-at-start message))]))]
             [(ErrCompilerExports message)
-              (ErrCompilerTypecheck (tc-diag-at-start message))])]
+              (ErrCompilerTypecheckChecked (tc-diag-at-start message))])]
         [(ErrCompilerRegistries message)
-          (ErrCompilerTypecheck (tc-diag-at-start message))])]
+          (ErrCompilerTypecheckChecked (tc-diag-at-start message))])]
     [(ErrCompilerSymbols message)
-      (ErrCompilerTypecheck (tc-diag-at-start message))]))
+      (ErrCompilerTypecheckChecked (tc-diag-at-start message))]))
+
+(define (typecheck-compiler-specialized-program-with-paths
+  [program : AstProgram]
+  [paths : AstDeclPathList]) : ResultCompilerTypecheck
+  (match (typecheck-compiler-specialized-program-with-paths-checked
+    program
+    paths)
+    [(OkCompilerTypecheckChecked summary _ _) (OkCompilerTypecheck summary)]
+    [(ErrCompilerTypecheckChecked diag) (ErrCompilerTypecheck diag)]))

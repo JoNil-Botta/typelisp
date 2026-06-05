@@ -1042,6 +1042,7 @@
           [(string-eq name "spmd-reduce") (compiler-parse-tag-expr-spmd-reduce)]
           [(string-eq name "with-escape") (compiler-parse-tag-expr-with-escape)]
           [(string-eq name "string-data") (compiler-parse-tag-expr-string-data)]
+          [(string-eq name "include-str") (compiler-parse-tag-decl-include-str)]
           [else (compiler-parse-tag-unknown)])]
       [(= n 12)
         (cond

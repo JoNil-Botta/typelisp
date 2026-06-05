@@ -3457,12 +3457,10 @@
             max-size)))]))
 
 (define (lower-enum-storage-size [ctx : TcContext] [enum-name : String]) : i64
-  (match ctx
-    [(TcContext program _ _ _)
-      (match (tc-program-enum-variants program enum-name)
-        [(OkAstVariantDefList variants)
-          (lower-enum-variants-storage-size ctx variants 8)]
-        [(ErrAstVariantDefList _) 8])]))
+  (match (tc-context-enum-variants ctx enum-name)
+    [(OkAstVariantDefList variants)
+      (lower-enum-variants-storage-size ctx variants 8)]
+    [(ErrAstVariantDefList _) 8]))
 
 (define (lower-struct-fields [ctx : TcContext] [struct-name : String]) : ResultAstFieldDefList
   (match ctx
@@ -3478,6 +3476,8 @@
               [(OkAstDecl decl)
                 (match decl
                   [(AstDeclDefStruct _ _ _ fields) (OkAstFieldDefList fields)]
+                  [(AstDeclDefStructLifetimes _ _ _ _ fields)
+                    (OkAstFieldDefList fields)]
                   [_
                     (ErrAstFieldDefList
                       "lower: struct symbol owner is not a struct")])]
@@ -17338,44 +17338,29 @@
   [mode : CompilerLowerMode]) : ResultCompilerLower
   (match (compiler-specialize-program program)
     [(OkSpecProgram specialized)
-      (match (typecheck-compiler-specialized-program-with-paths
+      (match (typecheck-compiler-specialized-program-with-paths-checked
         specialized
         AstDeclPathNil)
-        [(OkCompilerTypecheck _)
-          (match (build-compiler-symbols specialized)
-            [(OkCompilerSymbols symbols)
-              (match (build-compiler-registries specialized)
-                [(OkCompilerRegistries registries)
+        [(OkCompilerTypecheckChecked _ ctx top-env)
+          (let
+            [alias-names : LowerNameEnv
+              (match specialized
+                [(AstProgram decls-box)
                   (let
-                    [ctx : TcContext
-                      (TcContext specialized symbols registries "")]
-                    (match (tc-build-top-env ctx specialized)
-                      [(OkTcEnv top-env)
-                        (let
-                          [alias-names : LowerNameEnv
-                            (match specialized
-                              [(AstProgram decls-box)
-                                (let
-                                  [decls : AstDeclList (box-get decls-box)]
-                                  (lower-name-env-with-import-aliases
-                                    decls
-                                    AstDeclPathNil
-                                    "<source>"
-                                    LowerNameNil
-                                    false))])]
-                          (lower-compiler-program-checked-with-names-mode
-                            ctx
-                            top-env
-                            specialized
-                            alias-names
-                            mode))]
-                      [(ErrTcEnv message)
-                        (ErrCompilerLower (lower-diagnostic message))]))]
-                [(ErrCompilerRegistries message)
-                  (ErrCompilerLower (lower-diagnostic message))])]
-            [(ErrCompilerSymbols message)
-              (ErrCompilerLower (lower-diagnostic message))])]
-        [(ErrCompilerTypecheck diag) (ErrCompilerLower diag)])]
+                    [decls : AstDeclList (box-get decls-box)]
+                    (lower-name-env-with-import-aliases
+                      decls
+                      AstDeclPathNil
+                      "<source>"
+                      LowerNameNil
+                      false))])]
+            (lower-compiler-program-checked-with-names-mode
+              ctx
+              top-env
+              specialized
+              alias-names
+              mode))]
+        [(ErrCompilerTypecheckChecked diag) (ErrCompilerLower diag)])]
     [(ErrSpecProgram diag) (ErrCompilerLower diag)]))
 
 (define (lower-compiler-program-unlocated-mode
@@ -17475,52 +17460,23 @@
                                 entry-path
                                 names))])
                         checked-names)]
-                    (match (typecheck-compiler-specialized-program-with-paths
+                    (match (typecheck-compiler-specialized-program-with-paths-checked
                       checked-program
                       checked-paths)
-                      [(OkCompilerTypecheck _)
-                        (match (build-compiler-symbols checked-program)
-                          [(OkCompilerSymbols symbols)
-                            (match (build-compiler-registries checked-program)
-                              [(OkCompilerRegistries registries)
-                                (let
-                                  [ctx : TcContext
-                                    (TcContext
-                                      checked-program
-                                      symbols
-                                      registries
-                                      "")]
-                                  (match (tc-build-top-env ctx checked-program)
-                                    [(OkTcEnv top-env)
-                                      (match (lower-compiler-program-checked-with-names-mode
-                                        ctx
-                                        top-env
-                                        checked-program
-                                        lower-names
-                                        mode)
-                                        [(OkCompilerLower ir spans)
-                                          (OkCompilerLower ir spans)]
-                                        [(ErrCompilerLower diag)
-                                          (ErrCompilerLower
-                                            (lower-diagnostic-with-path
-                                              diag
-                                              entry-path))])]
-                                    [(ErrTcEnv message)
-                                      (ErrCompilerLower
-                                        (lower-diagnostic-with-path
-                                          (lower-diagnostic message)
-                                          entry-path))]))]
-                              [(ErrCompilerRegistries message)
-                                (ErrCompilerLower
-                                  (lower-diagnostic-with-path
-                                    (lower-diagnostic message)
-                                    entry-path))])]
-                          [(ErrCompilerSymbols message)
+                      [(OkCompilerTypecheckChecked _ ctx top-env)
+                        (match (lower-compiler-program-checked-with-names-mode
+                          ctx
+                          top-env
+                          checked-program
+                          lower-names
+                          mode)
+                          [(OkCompilerLower ir spans)
+                            (OkCompilerLower ir spans)]
+                          [(ErrCompilerLower diag)
                             (ErrCompilerLower
-                              (lower-diagnostic-with-path
-                                (lower-diagnostic message)
-                                entry-path))])]
-                      [(ErrCompilerTypecheck diag) (ErrCompilerLower diag)]))]
+                              (lower-diagnostic-with-path diag entry-path))])]
+                      [(ErrCompilerTypecheckChecked diag)
+                        (ErrCompilerLower diag)]))]
                 [(ErrLowerCloneRoots diag) (ErrCompilerLower diag)])]))]
       [(ErrSpecProgram diag)
         (ErrCompilerLower (lower-diagnostic-with-path diag entry-path))])))

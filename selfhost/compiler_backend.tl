@@ -125,7 +125,8 @@
 
 (defenum CompilerBackendGlobalTypeList
   (CompilerBackendGlobalTypeNil)
-  (CompilerBackendGlobalTypeCons String AstType CompilerBackendGlobalTypeList))
+  (CompilerBackendGlobalTypeCons String AstType CompilerBackendGlobalTypeList)
+  (CompilerBackendGlobalTypeCache StringI64Map (Array AstType)))
 
 (defenum ResultCompilerBackend
   (OkCompilerBackend String)
@@ -358,13 +359,17 @@
       (match entry
         [(CompilerSourceSpansEntry name span)
           (if (string-i64-map-contains? map name)
-            (compiler-backend-source-span-index-add rest map values index)
+            (compiler-backend-source-span-index-add
+              (box-get rest)
+              map
+              values
+              index)
             (match (string-i64-map-insert map name index)
               [(StringI64MapInsertOk next-map)
                 (begin
                   (array-set! values index (CompilerSomeSourceSpan span))
                   (compiler-backend-source-span-index-add
-                    rest
+                    (box-get rest)
                     next-map
                     values
                     (+ index 1)))]
@@ -1767,9 +1772,23 @@
     "main"
     (string-append "_tl_" (compiler-backend-asm-safe-symbol name))))
 
+(define (compiler-backend-symbol-leaf [name : String]) : String
+  (let
+    [i : i64 0]
+    [n : i64 (string-length name)]
+    [start : i64 0]
+    (begin
+      (while (< i n)
+        (begin
+          (if (or (= (string-ref name i) #/') (= (string-ref name i) #:'))
+            (set! start (+ i 1))
+            unit)
+          (set! i (+ i 1))))
+      (substring name start (- n start)))))
+
 (define (compiler-backend-compact-function-symbol? [name : String]) : bool
   (and
-    (> (string-length name) 32)
+    (> (string-length name) 16)
     (and
       (not (string-eq name "main"))
       (not (compiler-backend-string-prefix-at? name "__global_init_" 0)))))
@@ -1782,6 +1801,21 @@
       [(StringI64MapFound slot) (backend-cat3 "_tl_f" (int->string slot) "")]
       [(StringI64MapMissing) (compiler-backend-user-symbol name)])
     (compiler-backend-user-symbol name)))
+
+(define (compiler-backend-function-symbol-map-comment
+  [index : CompilerBackendProgramIndex]
+  [name : String]) : String
+  (if (compiler-backend-compact-function-symbol? name)
+    (string-append
+      "#t "
+      (string-append
+        (compiler-backend-function-symbol-index index name)
+        (string-append
+          " "
+          (string-append
+            (compiler-backend-user-symbol (compiler-backend-symbol-leaf name))
+            "\n"))))
+    ""))
 
 (define (compiler-backend-closure-descriptor-label [name : String]) : String
   (string-append ".L_tl_fn_desc_" (compiler-backend-asm-safe-symbol name)))
@@ -1843,7 +1877,7 @@
         (if (compiler-backend-runtime-user-symbol? name)
           (compiler-backend-user-symbol name)
           name)
-        (compiler-backend-asm-safe-symbol link-symbol)))
+        (compiler-backend-link-symbol link-symbol plan)))
     (if (and
       (compiler-backend-plan-provides? plan name)
       (not (compiler-backend-index-function-defines? index name)))
@@ -2586,7 +2620,8 @@
 (define (compiler-backend-emit-load-typed-value-with-plan
   [assignments : CompilerRegAssignmentList]
   [value : CompilerIrValue]
-  [ty : AstType]) : ResultCompilerBackend
+  [ty : AstType]
+  [program-index : CompilerBackendProgramIndex]) : ResultCompilerBackend
   (if (compiler-backend-float-type? ty)
     (compiler-backend-emit-load-float-value-with-plan
       assignments
@@ -2618,7 +2653,7 @@
         (OkCompilerBackend
           (backend-cat5
             "    leaq "
-            (compiler-backend-user-symbol name)
+            (compiler-backend-function-or-global-addr-symbol program-index name)
             "(%rip), %rax\n"
             ""
             ""))]
@@ -2630,7 +2665,15 @@
   (compiler-backend-emit-load-typed-value-with-plan
     CompilerRegAssignmentNil
     value
-    ty))
+    ty
+    (compiler-backend-program-index-build IrFunctionNil IrExternNil)))
+
+(define (compiler-backend-function-or-global-addr-symbol
+  [program-index : CompilerBackendProgramIndex]
+  [name : String]) : String
+  (if (compiler-backend-index-function-defines? program-index name)
+    (compiler-backend-function-symbol-index program-index name)
+    (compiler-backend-user-symbol name)))
 
 (define (compiler-backend-unsigned-rel-ty? [ty : AstType]) : bool
   (match ty
@@ -2648,18 +2691,48 @@
     [(CompilerBackendGlobalTypeCons key ty rest)
       (if (string-eq key name)
         (CompilerRegSomeType ty)
-        (compiler-backend-global-type-lookup rest name))]))
+        (compiler-backend-global-type-lookup rest name))]
+    [(CompilerBackendGlobalTypeCache ids values)
+      (match (string-i64-map-get ids name)
+        [(StringI64MapFound index)
+          (CompilerRegSomeType (array-ref values index))]
+        [(StringI64MapMissing) (CompilerRegNoType)])]))
 
-(define (compiler-backend-global-types [globals : CompilerIrGlobalList]) : CompilerBackendGlobalTypeList
+(define (compiler-backend-global-type-count [globals : CompilerIrGlobalList]) : i64
   (match globals
-    [(IrGlobalNil) (CompilerBackendGlobalTypeNil)]
+    [(IrGlobalNil) 0]
+    [(IrGlobalCons _ rest)
+      (+ 1 (compiler-backend-global-type-count (box-get rest)))]))
+
+(define (compiler-backend-global-types-fill
+  [globals : CompilerIrGlobalList]
+  [ids : StringI64Map]
+  [values : (Array AstType)]
+  [index : i64]) : StringI64Map
+  (match globals
+    [(IrGlobalNil) ids]
     [(IrGlobalCons global rest)
       (match global
         [(IrGlobal name ty _)
-          (CompilerBackendGlobalTypeCons
-            name
-            ty
-            (compiler-backend-global-types (box-get rest)))])]))
+          (begin
+            (array-set! values index ty)
+            (compiler-backend-global-types-fill
+              (box-get rest)
+              (string-i64-map-put ids name index)
+              values
+              (+ index 1)))])]))
+
+(define (compiler-backend-global-types [globals : CompilerIrGlobalList]) : CompilerBackendGlobalTypeList
+  (let
+    [count : i64 (compiler-backend-global-type-count globals)]
+    [values : (Array AstType) (make-array AstType count)]
+    (CompilerBackendGlobalTypeCache
+      (compiler-backend-global-types-fill
+        globals
+        (string-i64-map-with-capacity (+ (* count 2) 16))
+        values
+        0)
+      values)))
 
 (define (compiler-backend-value-type
   [types : CompilerRegVarTypeList]
@@ -4042,7 +4115,8 @@
   [assignments : CompilerRegAssignmentList]
   [dst : CompilerIrValue]
   [src : CompilerIrValue]
-  [ty : AstType]) : ResultCompilerBackend
+  [ty : AstType]
+  [program-index : CompilerBackendProgramIndex]) : ResultCompilerBackend
   (match (compiler-backend-emit-load-value-with-plan assignments dst "%r10")
     [(OkCompilerBackend ptr-asm)
       (match (compiler-backend-emit-store-immediate-to-memory src "(%r10)" ty)
@@ -4052,7 +4126,8 @@
           (match (compiler-backend-emit-load-typed-value-with-plan
             assignments
             src
-            ty)
+            ty
+            program-index)
             [(OkCompilerBackend src-asm)
               (OkCompilerBackend
                 (string-append
@@ -4074,7 +4149,8 @@
   [offset : CompilerIrValue]
   [elem-ty : AstType]
   [value : CompilerIrValue]
-  [store-ty : AstType]) : ResultCompilerBackend
+  [store-ty : AstType]
+  [program-index : CompilerBackendProgramIndex]) : ResultCompilerBackend
   (match (compiler-backend-value-as-i64 offset)
     [(CompilerBackendSomeI64 n)
       (let
@@ -4095,7 +4171,8 @@
                 (match (compiler-backend-emit-load-typed-value-with-plan
                   assignments
                   value
-                  store-ty)
+                  store-ty
+                  program-index)
                   [(OkCompilerBackend value-asm)
                     (OkCompilerBackend
                       (string-append
@@ -4216,11 +4293,13 @@
   [dst : i64]
   [src : CompilerIrValue]
   [from-ty : AstType]
-  [to-ty : AstType]) : ResultCompilerBackend
+  [to-ty : AstType]
+  [program-index : CompilerBackendProgramIndex]) : ResultCompilerBackend
   (match (compiler-backend-emit-load-typed-value-with-plan
     assignments
     src
-    from-ty)
+    from-ty
+    program-index)
     [(OkCompilerBackend load)
       (OkCompilerBackend
         (string-append
@@ -4272,7 +4351,8 @@
   [dst : i64]
   [src : CompilerIrValue]
   [from-ty : AstType]
-  [to-ty : AstType]) : ResultCompilerBackend
+  [to-ty : AstType]
+  [program-index : CompilerBackendProgramIndex]) : ResultCompilerBackend
   (cond
     [(and
         (opt-type-eq from-ty to-ty)
@@ -4297,7 +4377,8 @@
         dst
         src
         from-ty
-        to-ty)]
+        to-ty
+        program-index)]
     [(and
         (compiler-backend-float-type? from-ty)
         (not (compiler-backend-float-type? to-ty)))
@@ -4311,7 +4392,8 @@
       (match (compiler-backend-emit-load-typed-value-with-plan
         assignments
         src
-        from-ty)
+        from-ty
+        program-index)
         [(OkCompilerBackend load)
           (OkCompilerBackend
             (string-append
@@ -5243,7 +5325,8 @@
         (match (compiler-backend-emit-load-typed-value-with-plan
           assignments
           value
-          ty)
+          ty
+          (compiler-backend-program-index-build IrFunctionNil IrExternNil))
           [(OkCompilerBackend load)
             (OkCompilerBackend
               (string-append
@@ -5457,7 +5540,8 @@
       (match (compiler-backend-emit-load-typed-value-with-plan
         assignments
         v
-        ret-ty)
+        ret-ty
+        (compiler-backend-program-index-build IrFunctionNil IrExternNil))
         [(OkCompilerBackend load)
           (OkCompilerBackend
             (string-append
@@ -5690,10 +5774,33 @@
   [assignments : CompilerRegAssignmentList]
   [dst : i64]
   [src : CompilerIrValue]
-  [ty : AstType]) : ResultCompilerBackend
+  [ty : AstType]
+  [program-index : CompilerBackendProgramIndex]) : ResultCompilerBackend
   (if (compiler-backend-value-same-home? assignments dst src)
     (OkCompilerBackend "")
-    (match (compiler-backend-emit-load-typed-value-with-plan assignments src ty)
+    (match (match src
+      [(IrValueGlobalAddr name)
+        (if (compiler-backend-float-type? ty)
+          (compiler-backend-emit-load-typed-value-with-plan
+            assignments
+            src
+            ty
+            program-index)
+          (OkCompilerBackend
+            (backend-cat5
+              "    leaq "
+              (compiler-backend-function-or-global-addr-symbol
+                program-index
+                name)
+              "(%rip), %rax\n"
+              ""
+              "")))]
+      [_
+        (compiler-backend-emit-load-typed-value-with-plan
+          assignments
+          src
+          ty
+          program-index)])
       [(OkCompilerBackend load)
         (OkCompilerBackend
           (string-append
@@ -5808,7 +5915,7 @@
         "")]
     (match instr
       [(IrInstrMov dst src ty)
-        (match (compiler-backend-emit-mov assignments dst src ty)
+        (match (compiler-backend-emit-mov assignments dst src ty program-index)
           [(OkCompilerBackend asm) (OkCompilerBackend asm)]
           [(ErrCompilerBackend message)
             (ErrCompilerBackend
@@ -5833,7 +5940,12 @@
             (ErrCompilerBackend
               (compiler-backend-apply-instr-diagnostic message instr-diag))])]
       [(IrInstrStorePtr dst src ty)
-        (match (compiler-backend-emit-store-ptr assignments dst src ty)
+        (match (compiler-backend-emit-store-ptr
+          assignments
+          dst
+          src
+          ty
+          program-index)
           [(OkCompilerBackend asm) (OkCompilerBackend asm)]
           [(ErrCompilerBackend message)
             (ErrCompilerBackend
@@ -5862,7 +5974,8 @@
           dst
           src
           from-ty
-          to-ty)
+          to-ty
+          program-index)
           [(OkCompilerBackend asm) (OkCompilerBackend asm)]
           [(ErrCompilerBackend message)
             (ErrCompilerBackend
@@ -6099,7 +6212,8 @@
               (match (compiler-backend-emit-load-typed-value-with-plan
                 assignments
                 value
-                ty)
+                ty
+                program-index)
                 [(OkCompilerBackend load)
                   (OkCompilerBackend
                     (string-append
@@ -6770,7 +6884,8 @@
     offset
     elem-ty
     value
-    store-ty)
+    store-ty
+    program-index)
     [(OkCompilerBackend head)
       (match (compiler-backend-emit-instrs
         target
@@ -8527,6 +8642,7 @@
   [func : CompilerIrFunction]
   [functions : CompilerIrFunctionList]
   [globals : CompilerIrGlobalList]
+  [global-types : CompilerBackendGlobalTypeList]
   [externs : CompilerIrExternList]
   [plan : CompilerBackendRuntimePlan]
   [program-index : CompilerBackendProgramIndex]
@@ -8549,8 +8665,6 @@
           (compiler-reg-plan-assignments reg-plan)]
         [assignments : CompilerRegAssignmentList raw-assignments]
         [types : CompilerRegVarTypeList (compiler-reg-plan-types reg-plan)]
-        [global-types : CompilerBackendGlobalTypeList
-          (compiler-backend-global-types globals)]
         [use-counts : (Array i64)
           (compiler-backend-function-use-counts vars blocks)]
         (match (compiler-backend-emit-param-spills
@@ -8594,6 +8708,9 @@
                         (compiler-backend-outgoing-frame-space target blocks))]
                     (OkCompilerBackend
                       (backend-cat5
+                        (compiler-backend-function-symbol-map-comment
+                          program-index
+                          name)
                         ".globl "
                         symbol
                         "\n"
@@ -8640,13 +8757,12 @@
                                           assignments
                                           vars
                                           blocks))))))))
-                          "\n")
-                        "")))]
+                          "\n"))))]
                 [(ErrCompilerBackend message) (ErrCompilerBackend message)]))]
           [(ErrCompilerBackend message) (ErrCompilerBackend message)]))]))
 
 (define (compiler-backend-direct-emit-instr-limit) : i64
-  114)
+  24)
 
 (define (compiler-backend-emit-function-direct? [func : CompilerIrFunction]) : bool
   (match func
@@ -8661,6 +8777,7 @@
   [func : CompilerIrFunction]
   [all-functions : CompilerIrFunctionList]
   [globals : CompilerIrGlobalList]
+  [global-types : CompilerBackendGlobalTypeList]
   [externs : CompilerIrExternList]
   [plan : CompilerBackendRuntimePlan]
   [program-index : CompilerBackendProgramIndex]
@@ -8679,6 +8796,7 @@
         func
         all-functions
         globals
+        global-types
         externs
         plan
         program-index
@@ -8719,6 +8837,7 @@
   [func : CompilerIrFunction]
   [all-functions : CompilerIrFunctionList]
   [globals : CompilerIrGlobalList]
+  [global-types : CompilerBackendGlobalTypeList]
   [externs : CompilerIrExternList]
   [plan : CompilerBackendRuntimePlan]
   [program-index : CompilerBackendProgramIndex]
@@ -8732,6 +8851,7 @@
       func
       all-functions
       globals
+      global-types
       externs
       plan
       program-index
@@ -8744,6 +8864,7 @@
       func
       all-functions
       globals
+      global-types
       externs
       plan
       program-index
@@ -8757,6 +8878,7 @@
   [functions : CompilerIrFunctionList]
   [all-functions : CompilerIrFunctionList]
   [globals : CompilerIrGlobalList]
+  [global-types : CompilerBackendGlobalTypeList]
   [externs : CompilerIrExternList]
   [plan : CompilerBackendRuntimePlan]
   [program-index : CompilerBackendProgramIndex]
@@ -8773,6 +8895,7 @@
         func
         all-functions
         globals
+        global-types
         externs
         plan
         program-index
@@ -8786,6 +8909,7 @@
             (box-get rest)
             all-functions
             globals
+            global-types
             externs
             plan
             program-index
@@ -8809,12 +8933,15 @@
   (let
     [span-index : CompilerBackendSourceSpanIndex
       (compiler-backend-source-span-index-build spans)]
+    [global-types : CompilerBackendGlobalTypeList
+      (compiler-backend-global-types globals)]
     (compiler-backend-emit-functions-into
       target
       mode
       functions
       all-functions
       globals
+      global-types
       externs
       plan
       program-index
@@ -8854,6 +8981,7 @@
   [functions : CompilerIrFunctionList]
   [all-functions : CompilerIrFunctionList]
   [globals : CompilerIrGlobalList]
+  [global-types : CompilerBackendGlobalTypeList]
   [externs : CompilerIrExternList]
   [plan : CompilerBackendRuntimePlan]
   [program-index : CompilerBackendProgramIndex]
@@ -8870,6 +8998,7 @@
         func
         all-functions
         globals
+        global-types
         externs
         plan
         program-index
@@ -8883,6 +9012,7 @@
             (box-get rest)
             all-functions
             globals
+            global-types
             externs
             plan
             program-index
@@ -8906,12 +9036,15 @@
   (let
     [span-index : CompilerBackendSourceSpanIndex
       (compiler-backend-source-span-index-build spans)]
+    [global-types : CompilerBackendGlobalTypeList
+      (compiler-backend-global-types globals)]
     (compiler-backend-emit-functions-buffer-into
       target
       mode
       functions
       all-functions
       globals
+      global-types
       externs
       plan
       program-index
@@ -8967,18 +9100,29 @@
   [functions : CompilerIrFunctionList]
   [externs : CompilerIrExternList]
   [program-index : CompilerBackendProgramIndex]) : String
+  (text-buf-render
+    (compiler-backend-emit-closure-descriptors-into
+      names
+      functions
+      externs
+      program-index
+      (text-buf-empty))))
+
+(define (compiler-backend-emit-closure-descriptors-into
+  [names : BackendStringList]
+  [functions : CompilerIrFunctionList]
+  [externs : CompilerIrExternList]
+  [program-index : CompilerBackendProgramIndex]
+  [buf : TextBuf]) : TextBuf
   (match names
-    [(BackendStringNil) ""]
+    [(BackendStringNil) buf]
     [_
-      (text-buf-render
-        (compiler-backend-emit-closure-descriptor-entries-into
-          names
-          functions
-          externs
-          program-index
-          (text-buf-append
-            (text-buf-empty)
-            "    .section .rodata\n    .balign 8\n")))]))
+      (compiler-backend-emit-closure-descriptor-entries-into
+        names
+        functions
+        externs
+        program-index
+        (text-buf-append buf "    .section .rodata\n    .balign 8\n"))]))
 
 (define (compiler-backend-closure-adapter-outgoing-frame-space
   [target : CompilerBackendTarget]
@@ -9077,8 +9221,27 @@
   [plan : CompilerBackendRuntimePlan]
   [program-index : CompilerBackendProgramIndex]
   [buf : TextBuf]) : ResultCompilerBackend
+  (match (compiler-backend-emit-closure-entry-adapters-buffer-into
+    target
+    names
+    functions
+    externs
+    plan
+    program-index
+    buf)
+    [(OkCompilerBackendBuffer out) (OkCompilerBackend (text-buf-render out))]
+    [(ErrCompilerBackendBuffer message) (ErrCompilerBackend message)]))
+
+(define (compiler-backend-emit-closure-entry-adapters-buffer-into
+  [target : CompilerBackendTarget]
+  [names : BackendStringList]
+  [functions : CompilerIrFunctionList]
+  [externs : CompilerIrExternList]
+  [plan : CompilerBackendRuntimePlan]
+  [program-index : CompilerBackendProgramIndex]
+  [buf : TextBuf]) : ResultCompilerBackendBuffer
   (match names
-    [(BackendStringNil) (OkCompilerBackend (text-buf-render buf))]
+    [(BackendStringNil) (OkCompilerBackendBuffer buf)]
     [(BackendStringCons name rest)
       (match (compiler-backend-index-signature program-index name)
         [(CompilerBackendSomeSignature param-types ret-ty)
@@ -9092,7 +9255,7 @@
             externs
             program-index)
             [(OkCompilerBackend head)
-              (compiler-backend-emit-closure-entry-adapters-into
+              (compiler-backend-emit-closure-entry-adapters-buffer-into
                 target
                 (box-get rest)
                 functions
@@ -9100,9 +9263,9 @@
                 plan
                 program-index
                 (text-buf-append buf head))]
-            [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
+            [(ErrCompilerBackend message) (ErrCompilerBackendBuffer message)])]
         [(CompilerBackendNoSignature)
-          (compiler-backend-emit-closure-entry-adapters-into
+          (compiler-backend-emit-closure-entry-adapters-buffer-into
             target
             (box-get rest)
             functions
@@ -9414,13 +9577,21 @@
   (text-buf-render
     (compiler-backend-emit-string-entries-into strings (text-buf-empty))))
 
-(define (compiler-backend-emit-string-rodata [strings : BackendStringList]) : String
+(define (compiler-backend-emit-string-rodata-into
+  [strings : BackendStringList]
+  [buf : TextBuf]) : TextBuf
   (match strings
-    [(BackendStringNil) ""]
+    [(BackendStringNil) buf]
     [_
-      (string-append
-        "    .section .rodata\n"
-        (string-append (compiler-backend-emit-string-entries strings) "\n"))]))
+      (text-buf-append
+        (compiler-backend-emit-string-entries-into
+          strings
+          (text-buf-append buf "    .section .rodata\n"))
+        "\n")]))
+
+(define (compiler-backend-emit-string-rodata [strings : BackendStringList]) : String
+  (text-buf-render
+    (compiler-backend-emit-string-rodata-into strings (text-buf-empty))))
 
 (define (compiler-backend-emit-f64-entry [text : String]) : String
   (backend-cat5
@@ -9444,13 +9615,19 @@
   (text-buf-render
     (compiler-backend-emit-f64-entries-into floats (text-buf-empty))))
 
-(define (compiler-backend-emit-f64-rodata [floats : BackendStringList]) : String
+(define (compiler-backend-emit-f64-rodata-into
+  [floats : BackendStringList]
+  [buf : TextBuf]) : TextBuf
   (match floats
-    [(BackendStringNil) ""]
+    [(BackendStringNil) buf]
     [_
-      (string-append
-        "    .section .rodata\n"
-        (compiler-backend-emit-f64-entries floats))]))
+      (compiler-backend-emit-f64-entries-into
+        floats
+        (text-buf-append buf "    .section .rodata\n"))]))
+
+(define (compiler-backend-emit-f64-rodata [floats : BackendStringList]) : String
+  (text-buf-render
+    (compiler-backend-emit-f64-rodata-into floats (text-buf-empty))))
 
 (define (compiler-backend-global-value-asm
   [ty : AstType]
@@ -9544,16 +9721,24 @@
   [target : CompilerBackendTarget]
   [globals : CompilerIrGlobalList]
   [buf : TextBuf]) : ResultCompilerBackend
+  (match (compiler-backend-emit-globals-buffer-into target globals buf)
+    [(OkCompilerBackendBuffer out) (OkCompilerBackend (text-buf-render out))]
+    [(ErrCompilerBackendBuffer message) (ErrCompilerBackend message)]))
+
+(define (compiler-backend-emit-globals-buffer-into
+  [target : CompilerBackendTarget]
+  [globals : CompilerIrGlobalList]
+  [buf : TextBuf]) : ResultCompilerBackendBuffer
   (match globals
-    [(IrGlobalNil) (OkCompilerBackend (text-buf-render buf))]
+    [(IrGlobalNil) (OkCompilerBackendBuffer buf)]
     [(IrGlobalCons global rest)
       (match (compiler-backend-emit-global target global)
         [(OkCompilerBackend head)
-          (compiler-backend-emit-globals-into
+          (compiler-backend-emit-globals-buffer-into
             target
             (box-get rest)
             (text-buf-append buf head))]
-        [(ErrCompilerBackend message) (ErrCompilerBackend message)])]))
+        [(ErrCompilerBackend message) (ErrCompilerBackendBuffer message)])]))
 
 (define (compiler-backend-emit-globals
   [target : CompilerBackendTarget]
@@ -10111,25 +10296,30 @@
               name
               "tl_print_err"
               provides-print-err)
-            (compiler-backend-provides-runtime-name?
+            (compiler-backend-provides-runtime-alias?
               name
               ".L_tl_arg_count"
+              "tl_arg_count"
               provides-arg-count)
-            (compiler-backend-provides-runtime-name?
+            (compiler-backend-provides-runtime-alias?
               name
               ".L_tl_arg"
+              "tl_arg"
               provides-arg)
-            (compiler-backend-provides-runtime-name?
+            (compiler-backend-provides-runtime-alias?
               name
               ".L_tl_read_file"
+              "tl_read_file"
               provides-read-file)
-            (compiler-backend-provides-runtime-name?
+            (compiler-backend-provides-runtime-alias?
               name
               ".L_tl_write_file"
+              "tl_write_file"
               provides-write-file)
-            (compiler-backend-provides-runtime-name?
+            (compiler-backend-provides-runtime-alias?
               name
               ".L_tl_file_exists"
+              "tl_file_exists"
               provides-file-exists))
           (or
             (backend-or4
@@ -10165,51 +10355,62 @@
                       name
                       "tl_process_wait"
                       provides-process-output)))
-                (compiler-backend-provides-runtime-name?
+                (compiler-backend-provides-runtime-alias?
                   name
                   ".L_tl_read_file_status"
+                  "tl_read_file_status"
                   provides-read-file)
-                (compiler-backend-provides-runtime-name?
+                (compiler-backend-provides-runtime-alias?
                   name
                   ".L_tl_write_file_status"
+                  "tl_write_file_status"
                   provides-write-file)
-                (compiler-backend-provides-runtime-name?
+                (compiler-backend-provides-runtime-alias?
                   name
                   ".L_tl_append_file_status"
+                  "tl_append_file_status"
                   provides-write-file)
-                (compiler-backend-provides-runtime-name?
+                (compiler-backend-provides-runtime-alias?
                   name
                   ".L_tl_file_exists_status"
+                  "tl_file_exists_status"
                   provides-file-exists)
-                (compiler-backend-provides-runtime-name?
+                (compiler-backend-provides-runtime-alias?
                   name
                   ".L_tl_file_open_status"
+                  "tl_file_open_status"
                   provides-file-handle)
-                (compiler-backend-provides-runtime-name?
+                (compiler-backend-provides-runtime-alias?
                   name
                   ".L_tl_file_close_status"
+                  "tl_file_close_status"
                   provides-file-handle)
-                (compiler-backend-provides-runtime-name?
+                (compiler-backend-provides-runtime-alias?
                   name
                   ".L_tl_file_read_chunk_status"
+                  "tl_file_read_chunk_status"
                   provides-file-read-chunk))
               (or
                 (backend-or4
-                  (compiler-backend-provides-runtime-name?
+                  (compiler-backend-provides-runtime-alias?
                     name
                     ".L_tl_file_write_status"
+                    "tl_file_write_status"
                     provides-file-handle)
-                  (compiler-backend-provides-runtime-name?
+                  (compiler-backend-provides-runtime-alias?
                     name
                     ".L_tl_file_flush_status"
+                    "tl_file_flush_status"
                     provides-file-handle)
-                  (compiler-backend-provides-runtime-name?
+                  (compiler-backend-provides-runtime-alias?
                     name
                     ".L_tl_file_read_chunk_bytes"
+                    "tl_file_read_chunk_bytes"
                     provides-file-read-chunk)
-                  (compiler-backend-provides-runtime-name?
+                  (compiler-backend-provides-runtime-alias?
                     name
                     ".L_tl_file_read_chunk_eof"
+                    "tl_file_read_chunk_eof"
                     provides-file-read-chunk))
                 (or
                   (backend-or8
@@ -10985,8 +11186,15 @@
 (define (compiler-backend-emit-externs
   [externs : CompilerIrExternList]
   [plan : CompilerBackendRuntimePlan]) : String
+  (text-buf-render
+    (compiler-backend-emit-externs-into externs plan (text-buf-empty))))
+
+(define (compiler-backend-emit-externs-into
+  [externs : CompilerIrExternList]
+  [plan : CompilerBackendRuntimePlan]
+  [buf : TextBuf]) : TextBuf
   (match externs
-    [(IrExternNil) ""]
+    [(IrExternNil) buf]
     [(IrExternCons item rest)
       (match item
         [(IrExtern name _ _ link-symbol _)
@@ -10995,12 +11203,16 @@
               (string-eq name link-symbol)
               (compiler-backend-plan-provides? plan name))
             (compiler-backend-plan-provides? plan link-symbol))
-            (compiler-backend-emit-externs (box-get rest) plan)
-            (backend-cat4
-              ".extern "
-              (compiler-backend-link-symbol link-symbol plan)
-              "\n"
-              (compiler-backend-emit-externs (box-get rest) plan)))])]))
+            (compiler-backend-emit-externs-into (box-get rest) plan buf)
+            (compiler-backend-emit-externs-into
+              (box-get rest)
+              plan
+              (text-buf-append
+                (text-buf-append buf ".extern ")
+                (backend-cat3
+                  (compiler-backend-link-symbol link-symbol plan)
+                  "\n"
+                  ""))))])]))
 
 (define (compiler-backend-runtime-alloc-data-for-target
   [target : CompilerBackendTarget]) : String
@@ -18954,8 +19166,11 @@ tl_windows_sdk_registry_install:
       (if (compiler-backend-target-runtime-ok? target plan)
         (match program
           [(IrProgram globals functions externs)
-            (match (compiler-backend-emit-globals target globals)
-              [(OkCompilerBackend globals-asm)
+            (match (compiler-backend-emit-globals-buffer-into
+              target
+              globals
+              (text-buf-append (text-buf-empty) ".data\n"))
+              [(OkCompilerBackendBuffer globals-buf)
                 (let
                   [entry-functions : CompilerIrFunctionList
                     (compiler-backend-functions-with-implicit-main
@@ -18990,14 +19205,15 @@ tl_windows_sdk_registry_install:
                             [closure-names : BackendStringList
                               (compiler-backend-program-collections-functions
                                 collections)]
-                            (match (compiler-backend-emit-closure-entry-adapters
+                            (match (compiler-backend-emit-closure-entry-adapters-buffer-into
                               target
                               closure-names
                               entry-functions
                               externs
                               plan
-                              program-index)
-                              [(OkCompilerBackend closure-adapters-asm)
+                              program-index
+                              (text-buf-empty))
+                              [(OkCompilerBackendBuffer closure-adapters-buf)
                                 (let
                                   [strings : BackendStringList
                                     (compiler-backend-program-collections-strings
@@ -19008,33 +19224,25 @@ tl_windows_sdk_registry_install:
                                   [prefix-buf : TextBuf
                                     (text-buf-append
                                       (text-buf-append
-                                        (text-buf-append
+                                        (compiler-backend-emit-externs-into
+                                          externs
+                                          plan
                                           (text-buf-append
-                                            (text-buf-append
-                                              (text-buf-append
-                                                (text-buf-append
-                                                  (text-buf-append
-                                                    (text-buf-append
-                                                      (text-buf-empty)
-                                                      ".data\n")
-                                                    globals-asm)
-                                                  (compiler-backend-emit-string-rodata
-                                                    strings))
-                                                (compiler-backend-emit-f64-rodata
-                                                  floats))
-                                              (compiler-backend-emit-closure-descriptors
-                                                closure-names
-                                                entry-functions
-                                                externs
-                                                program-index))
+                                            (compiler-backend-emit-closure-descriptors-into
+                                              closure-names
+                                              entry-functions
+                                              externs
+                                              program-index
+                                              (compiler-backend-emit-f64-rodata-into
+                                                floats
+                                                (compiler-backend-emit-string-rodata-into
+                                                  strings
+                                                  globals-buf)))
                                             (if emit-entry
                                               (compiler-backend-runtime-data-for-target
                                                 target
                                                 plan)
-                                              ""))
-                                          (compiler-backend-emit-externs
-                                            externs
-                                            plan))
+                                              "")))
                                         (compiler-backend-runtime-externs-for-target
                                           target
                                           plan))
@@ -19049,9 +19257,9 @@ tl_windows_sdk_registry_install:
                                   [buf : TextBuf
                                     (text-buf-append
                                       (text-buf-append
-                                        (text-buf-append
+                                        (text-buf-append-buffer
                                           with-functions
-                                          closure-adapters-asm)
+                                          closure-adapters-buf)
                                         (if emit-entry
                                           (compiler-backend-runtime-functions-for-target
                                             target
@@ -19065,7 +19273,7 @@ tl_windows_sdk_registry_install:
                                           crt-entry)
                                         ""))]
                                   (OkCompilerBackendBuffer buf))]
-                              [(ErrCompilerBackend message)
+                              [(ErrCompilerBackendBuffer message)
                                 (ErrCompilerBackendBuffer message)])))]
                       [(ErrCompilerBackendBuffer message)
                         (begin
@@ -19073,7 +19281,8 @@ tl_windows_sdk_registry_install:
                             compile-profile
                             (compiler-backend-profile-finish "functions"))
                           (ErrCompilerBackendBuffer message))])))]
-              [(ErrCompilerBackend message) (ErrCompilerBackendBuffer message)])])
+              [(ErrCompilerBackendBuffer message)
+                (ErrCompilerBackendBuffer message)])])
         (ErrCompilerBackendBuffer
           (compiler-diagnostic-at-start
             ""
@@ -19422,8 +19631,16 @@ tl_windows_sdk_registry_install:
 
 (define (compiler-backend-file-handle-open-close-runtime-ok?) : bool
   (match (compiler-backend-emit-source
-    "(define (main) : i64
-  (let [handle : i64 (file-open-status \"input.txt\" 0)]
+    "(extern file-open-status (:symbol \"tl_file_open_status\") : (->
+  String
+  i64
+  i64))
+(extern file-close-status (:symbol \"tl_file_close_status\") : (->
+  i64
+  i64))
+(define (main) : i64
+  (let
+    [handle : i64 (file-open-status \"input.txt\" 0)]
     (+ handle (file-close-status handle))))")
     [(OkCompilerBackend asm)
       (and
@@ -19433,11 +19650,11 @@ tl_windows_sdk_registry_install:
         (and
           (compiler-backend-string-contains?
             asm
-            "    call .L_tl_file_open_status\n")
+            "    call tl_file_open_status\n")
           (and
             (compiler-backend-string-contains?
               asm
-              "    call .L_tl_file_close_status\n")
+              "    call tl_file_close_status\n")
             (not
               (compiler-backend-string-contains?
                 asm
@@ -19445,7 +19662,16 @@ tl_windows_sdk_registry_install:
     [(ErrCompilerBackend _) false]))
 
 (define (compiler-backend-windows-driver-runtime-source) : String
-  "(define (main) : i64
+  "(extern arg-count (:symbol \"tl_arg_count\") : (-> i64))
+(extern arg (:symbol \"tl_arg\") : (-> i64 String))
+(extern read-file (:symbol \"tl_read_file\") : (-> String String))
+(extern write-file (:symbol \"tl_write_file\") : (-> String String unit))
+(extern file-exists? (:symbol \"tl_file_exists\") : (-> String bool))
+(extern print-error (:symbol \"tl_print_err\") : (-> String unit))
+(extern string-eq (:symbol \"tl_string_eq\") : (-> String String bool))
+(extern string->int (:symbol \"tl_string_to_int\") : (-> String i64))
+(extern int->string (:symbol \"tl_int_to_string\") : (-> i64 String))
+(define (main) : i64
   (if (< (arg-count) 3)
     (begin
       (print-error \"runtime driver: expected input and output paths\")
@@ -19580,9 +19806,13 @@ tl_windows_sdk_registry_install:
     (compiler-backend-user-helper-name-program))
     [(OkCompilerBackend asm)
       (and
-        (compiler-backend-string-contains? asm ".globl _tl_f")
+        (or
+          (compiler-backend-string-contains? asm ".globl _tl_tl_alloc")
+          (compiler-backend-string-contains? asm ".globl _tl_f"))
         (and
-          (compiler-backend-string-contains? asm "    call _tl_f")
+          (or
+            (compiler-backend-string-contains? asm "    call _tl_tl_alloc")
+            (compiler-backend-string-contains? asm "    call _tl_f"))
           (not (compiler-backend-string-contains? asm ".L_tl_alloc_msg"))))]
     [(ErrCompilerBackend _) false]))
 
@@ -19638,13 +19868,17 @@ tl_windows_sdk_registry_install:
     (compiler-backend-runtime-coexist-program))
     [(OkCompilerBackend asm)
       (and
-        (compiler-backend-string-contains? asm ".globl _tl_f")
+        (or
+          (compiler-backend-string-contains? asm ".globl _tl_tl_alloc")
+          (compiler-backend-string-contains? asm ".globl _tl_f"))
         (and
           (compiler-backend-string-contains? asm ".globl tl_alloc\n")
           (and
             (compiler-backend-string-contains? asm ".globl tl_substring\n")
             (and
-              (compiler-backend-string-contains? asm "    call _tl_f")
+              (or
+                (compiler-backend-string-contains? asm "    call _tl_tl_alloc")
+                (compiler-backend-string-contains? asm "    call _tl_f"))
               (and
                 (compiler-backend-string-contains?
                   asm
@@ -19694,10 +19928,22 @@ tl_windows_sdk_registry_install:
     (compiler-backend-module-symbol-program))
     [(OkCompilerBackend asm)
       (and
-        (compiler-backend-string-contains? asm ".globl _tl_f")
+        (or
+          (compiler-backend-string-contains?
+            asm
+            ".globl _tl_lib_u2etl_colon_colonhelper")
+          (compiler-backend-string-contains? asm ".globl _tl_f"))
         (and
-          (compiler-backend-string-contains? asm "_tl_f")
-          (compiler-backend-string-contains? asm "    call _tl_f")))]
+          (or
+            (compiler-backend-string-contains?
+              asm
+              "_tl_lib_u2etl_colon_colonhelper")
+            (compiler-backend-string-contains? asm "_tl_f"))
+          (or
+            (compiler-backend-string-contains?
+              asm
+              "    call _tl_lib_u2etl_colon_colonhelper")
+            (compiler-backend-string-contains? asm "    call _tl_f"))))]
     [(ErrCompilerBackend _) false]))
 
 (define (compiler-backend-extern-metadata-source) : String
@@ -19716,7 +19962,9 @@ tl_windows_sdk_registry_install:
         (and
           (compiler-backend-string-contains? asm "    call foreign_exact\n")
           (and
-            (compiler-backend-string-contains? asm "    call _tl_f")
+            (or
+              (compiler-backend-string-contains? asm "    call _tl_normal")
+              (compiler-backend-string-contains? asm "    call _tl_f"))
             (and
               (not
                 (compiler-backend-string-contains? asm ".extern local-call\n"))

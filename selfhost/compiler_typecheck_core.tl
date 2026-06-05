@@ -10329,24 +10329,28 @@
     [(OkCompilerSymbols symbols)
       (match (build-compiler-registries program)
         [(OkCompilerRegistries registries)
-          (let
-            [ctx : TcContext (TcContext program symbols registries "")]
-            (match (tc-program-source-types-policy-ok ctx program)
-              [(OkTcUnit)
-                (match (tc-build-top-env ctx program)
-                  [(OkTcEnv top-env)
-                    (match program
-                      [(AstProgram decls)
-                        (tc-check-decls-with-paths
-                          ctx
-                          top-env
-                          decls
-                          paths
-                          (CompilerTypecheckSummary 0 0 0))])]
-                  [(ErrTcEnv message)
-                    (ErrCompilerTypecheck (tc-diag-at-start message))])]
-              [(ErrTcUnit message)
-                (ErrCompilerTypecheck (tc-diag-at-start message))]))]
+          (match (build-compiler-exports-with program symbols registries)
+            [(OkCompilerExports _)
+              (let
+                [ctx : TcContext (TcContext program symbols registries "")]
+                (match (tc-program-source-types-policy-ok ctx program)
+                  [(OkTcUnit)
+                    (match (tc-build-top-env ctx program)
+                      [(OkTcEnv top-env)
+                        (match program
+                          [(AstProgram decls)
+                            (tc-check-decls-with-paths
+                              ctx
+                              top-env
+                              decls
+                              paths
+                              (CompilerTypecheckSummary 0 0 0))])]
+                      [(ErrTcEnv message)
+                        (ErrCompilerTypecheck (tc-diag-at-start message))])]
+                  [(ErrTcUnit message)
+                    (ErrCompilerTypecheck (tc-diag-at-start message))]))]
+            [(ErrCompilerExports message)
+              (ErrCompilerTypecheck (tc-diag-at-start message))])]
         [(ErrCompilerRegistries message)
           (ErrCompilerTypecheck (tc-diag-at-start message))])]
     [(ErrCompilerSymbols message)

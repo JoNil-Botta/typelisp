@@ -33,25 +33,29 @@
       [(OkCompilerSymbols symbols)
         (match (build-compiler-registries program)
           [(OkCompilerRegistries registries)
-            (let
-              [ctx : TcContext (TcContext program symbols registries "")]
-              (match (tc-program-source-types-policy-ok ctx program)
-                [(OkTcUnit)
-                  (match (tc-source-expr-policy-ok ctx expr)
+            (match (build-compiler-exports-with program symbols registries)
+              [(OkCompilerExports _)
+                (let
+                  [ctx : TcContext (TcContext program symbols registries "")]
+                  (match (tc-program-source-types-policy-ok ctx program)
                     [(OkTcUnit)
-                      (match (tc-build-top-env ctx program)
-                        [(OkTcEnv top-env)
-                          (match (tc-check-decls
-                            ctx
-                            top-env
-                            decls
-                            (CompilerTypecheckSummary 0 0 0))
-                            [(OkCompilerTypecheck _) (tc-expr ctx top-env expr)]
-                            [(ErrCompilerTypecheck diag)
-                              (ErrTcType (compiler-diagnostic-message diag))])]
-                        [(ErrTcEnv message) (ErrTcType message)])]
-                    [(ErrTcUnit message) (ErrTcType message)])]
-                [(ErrTcUnit message) (ErrTcType message)]))]
+                      (match (tc-source-expr-policy-ok ctx expr)
+                        [(OkTcUnit)
+                          (match (tc-build-top-env ctx program)
+                            [(OkTcEnv top-env)
+                              (match (tc-check-decls
+                                ctx
+                                top-env
+                                decls
+                                (CompilerTypecheckSummary 0 0 0))
+                                [(OkCompilerTypecheck _)
+                                  (tc-expr ctx top-env expr)]
+                                [(ErrCompilerTypecheck diag)
+                                  (ErrTcType (compiler-diagnostic-message diag))])]
+                            [(ErrTcEnv message) (ErrTcType message)])]
+                        [(ErrTcUnit message) (ErrTcType message)])]
+                    [(ErrTcUnit message) (ErrTcType message)]))]
+              [(ErrCompilerExports message) (ErrTcType message)])]
           [(ErrCompilerRegistries message) (ErrTcType message)])]
       [(ErrCompilerSymbols message) (ErrTcType message)])))
 
@@ -660,6 +664,11 @@
 (import \"data.tl\" module data :as d)
 (define (main) : i64 (d/missing))")
 
+(define (compiler-typecheck-export-unknown-source) : String
+  "(module data)
+(export (value missing))
+(define (main) : i64 0)")
+
 (define (compiler-typecheck-repr-c-layout-source) : String
   "(defstruct Packet
   (:repr c)
@@ -1149,6 +1158,11 @@
       (if (compiler-typecheck-error-ok?
         (compiler-typecheck-import-alias-missing-member-source)
         "typecheck: unbound name d/missing")
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        (compiler-typecheck-export-unknown-source)
+        "symbols: cannot export unknown value data/missing")
         unit
         (set! ok false))
       (if (compiler-typecheck-repr-c-tests-ok?)

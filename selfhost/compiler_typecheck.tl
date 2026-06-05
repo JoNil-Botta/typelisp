@@ -10,17 +10,14 @@
   [paths : AstDeclPathList]) : ResultCompilerTypecheck
   (match (macro-expand-program program)
     [(OkMacroExpand expanded)
-      (let
-        [specialized-paths : AstDeclPathList
-          (if (compiler-specialize-needed? expanded)
-            AstDeclPathNil
-            paths)]
+      (if (compiler-specialize-needed? expanded)
         (match (compiler-specialize-program expanded)
           [(OkSpecProgram specialized)
             (typecheck-compiler-specialized-program-with-paths
               specialized
-              specialized-paths)]
-          [(ErrSpecProgram diag) (ErrCompilerTypecheck diag)]))]
+              AstDeclPathNil)]
+          [(ErrSpecProgram diag) (ErrCompilerTypecheck diag)])
+        (typecheck-compiler-specialized-program-with-paths expanded paths))]
     [(ErrMacroExpand diag) (ErrCompilerTypecheck diag)]))
 
 (define (typecheck-compiler-program [program : AstProgram]) : ResultCompilerTypecheck

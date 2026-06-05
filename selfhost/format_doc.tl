@@ -3,6 +3,8 @@
 ;; The formatter front end and rule traversal are separate issues. This module
 ;; owns the reusable layout engine: callers build `Doc` values, then render them
 ;; with deterministic width-aware grouping and indentation.
+(import "../stdlib/text_buf.tl")
+
 (defenum Doc
   (DEmpty)
   (DText String)
@@ -14,6 +16,9 @@
 
 (defenum RenderedDoc
   (Rendered String i64))
+
+(defenum RenderState
+  (RenderState TextBuf i64))
 
 (define (format-width) : i64
   80)
@@ -80,6 +85,51 @@
 (define (render-newline [indent : i64]) : RenderedDoc
   (Rendered (string-append "\n" (spaces indent)) indent))
 
+(define (render-state-buf [state : RenderState]) : TextBuf
+  (match state
+    [(RenderState buf _) buf]))
+
+(define (render-state-col [state : RenderState]) : i64
+  (match state
+    [(RenderState _ col) col]))
+
+(define (render-newline-into [buf : TextBuf] [indent : i64]) : TextBuf
+  (text-buf-append (text-buf-append buf "\n") (spaces indent)))
+
+(define (render-doc-into
+  [doc : Doc]
+  [width : i64]
+  [indent : i64]
+  [col : i64]
+  [flat : bool]
+  [buf : TextBuf]) : RenderState
+  (match doc
+    [(DEmpty) (RenderState buf col)]
+    [(DText text)
+      (RenderState (text-buf-append buf text) (+ col (string-length text)))]
+    [(DSoftLine)
+      (if flat
+        (RenderState (text-buf-append buf " ") (+ col 1))
+        (RenderState (render-newline-into buf indent) indent))]
+    [(DHardLine) (RenderState (render-newline-into buf indent) indent)]
+    [(DConcat left right)
+      (let
+        [left-state : RenderState
+          (render-doc-into (box-get left) width indent col flat buf)]
+        (render-doc-into
+          (box-get right)
+          width
+          indent
+          (render-state-col left-state)
+          flat
+          (render-state-buf left-state)))]
+    [(DNest extra inner)
+      (render-doc-into (box-get inner) width (+ indent extra) col flat buf)]
+    [(DGroup inner)
+      (if (fits-flat (box-get inner) (- width col))
+        (render-doc-into (box-get inner) width indent col true buf)
+        (render-doc-into (box-get inner) width indent col false buf))]))
+
 (define (render-doc-in
   [doc : Doc]
   [width : i64]
@@ -108,7 +158,8 @@
         (render-doc-in (box-get inner) width indent col false))]))
 
 (define (render-doc-width [doc : Doc] [width : i64]) : String
-  (rendered-text (render-doc-in doc width 0 0 false)))
+  (match (render-doc-into doc width 0 0 false (text-buf-empty))
+    [(RenderState buf _) (text-buf-render buf)]))
 
 (define (render-doc [doc : Doc]) : String
   (render-doc-width doc (format-width)))

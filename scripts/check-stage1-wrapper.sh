@@ -645,7 +645,7 @@ assert_empty "$WORKDIR/fmt-parse-error.stdout"
 assert_nonempty "$WORKDIR/fmt-parse-error.stderr"
 
 echo "[stage1-wrapper] lint"
-assert_contains "$WORKDIR/help.stderr" "typelisp lint <file.tl> [--check]"
+assert_contains "$WORKDIR/help.stderr" "typelisp lint <file.tl>... [--check] [--stdlib-root <dir>...]"
 
 run_expect_failure lint-missing "$COMPILER" lint
 assert_empty "$WORKDIR/lint-missing.stdout"

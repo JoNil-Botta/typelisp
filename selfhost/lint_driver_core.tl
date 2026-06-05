@@ -10,10 +10,14 @@
 
 (import "lint_core.tl")
 
-;; Parsed lint CLI config: input path, stdlib roots, and whether `--check`
+;; Parsed lint CLI config: input paths, stdlib roots, and whether `--check`
 ;; enforcing mode was requested (exit non-zero when findings are present).
+(defenum SelfhostLintPathList
+  (SelfhostLintPathNil)
+  (SelfhostLintPathCons String SelfhostLintPathList))
+
 (defenum SelfhostLintConfig
-  (SelfhostLintConfig String CompilerLoadRootList bool))
+  (SelfhostLintConfig SelfhostLintPathList CompilerLoadRootList bool))
 
 (defenum ResultSelfhostLintConfig
   (OkSelfhostLintConfig SelfhostLintConfig)
@@ -33,15 +37,35 @@
         head
         (box (selfhost-lint-root-list-append (box-get rest) root)))]))
 
+(define (selfhost-lint-path-list-empty? [paths : SelfhostLintPathList]) : bool
+  (match paths
+    [(SelfhostLintPathNil) true]
+    [(SelfhostLintPathCons _ _) false]))
+
+(define (selfhost-lint-path-list-append
+  [paths : SelfhostLintPathList]
+  [path : String]) : SelfhostLintPathList
+  (match paths
+    [(SelfhostLintPathNil) (SelfhostLintPathCons path SelfhostLintPathNil)]
+    [(SelfhostLintPathCons head rest)
+      (SelfhostLintPathCons head (selfhost-lint-path-list-append rest path))]))
+
+(define (selfhost-lint-path-list-count [paths : SelfhostLintPathList]) : i64
+  (match paths
+    [(SelfhostLintPathNil) 0]
+    [(SelfhostLintPathCons _ rest) (+ 1 (selfhost-lint-path-list-count rest))]))
+
 (define (selfhost-lint-parse-options
   [idx : i64]
   [count : i64]
-  [input-path : String]
+  [input-paths : SelfhostLintPathList]
   [stdlib-roots : CompilerLoadRootList]
   [enforcing : bool]) : ResultSelfhostLintConfig
   (if (>= idx count)
-    (OkSelfhostLintConfig
-      (SelfhostLintConfig input-path stdlib-roots enforcing))
+    (if (selfhost-lint-path-list-empty? input-paths)
+      (ErrSelfhostLintConfig "selfhost-lint: expected input path")
+      (OkSelfhostLintConfig
+        (SelfhostLintConfig input-paths stdlib-roots enforcing)))
     (let
       [current : String (arg idx)]
       (cond
@@ -49,7 +73,7 @@
           (selfhost-lint-parse-options
             (+ idx 1)
             count
-            input-path
+            input-paths
             stdlib-roots
             true)]
         [(string-eq current "--stdlib-root")
@@ -59,32 +83,30 @@
             (selfhost-lint-parse-options
               (+ idx 2)
               count
-              input-path
+              input-paths
               (selfhost-lint-root-list-append stdlib-roots (arg (+ idx 1)))
               enforcing))]
         [(selfhost-lint-flag? current)
           (ErrSelfhostLintConfig
             (string-append "selfhost-lint: unknown flag " current))]
         [else
-          (ErrSelfhostLintConfig
-            (string-append "selfhost-lint: unexpected argument " current))]))))
+          (selfhost-lint-parse-options
+            (+ idx 1)
+            count
+            (selfhost-lint-path-list-append input-paths current)
+            stdlib-roots
+            enforcing)]))))
 
-;; Parse the `lint` config from arguments starting at `start` (the index of the
-;; input path); options follow at `start+1`. `count` is `(arg-count)`.
+;; Parse the `lint` config from arguments starting at `start`.
 (define (selfhost-lint-config-from [start : i64] [count : i64]) : ResultSelfhostLintConfig
   (if (< count (+ start 1))
     (ErrSelfhostLintConfig "selfhost-lint: expected input path")
-    (let
-      [input-path : String (arg start)]
-      (if (selfhost-lint-flag? input-path)
-        (ErrSelfhostLintConfig
-          "selfhost-lint: expected input path before flags")
-        (selfhost-lint-parse-options
-          (+ start 1)
-          count
-          input-path
-          CompilerLoadRootNil
-          false)))))
+    (selfhost-lint-parse-options
+      start
+      count
+      SelfhostLintPathNil
+      CompilerLoadRootNil
+      false)))
 
 ;; Render one finding as `path:line:col: message` (line/col from the flagged
 ;; node's source span; 0:0 only for synthesized nodes that carry no location).
@@ -303,13 +325,44 @@
           (print-error (compiler-diagnostic-render diag))
           1)])))
 
+(define (selfhost-lint-files
+  [input-paths : SelfhostLintPathList]
+  [stdlib-roots : CompilerLoadRootList]
+  [enforcing : bool]
+  [print-headers : bool]
+  [status : i64]) : i64
+  (match input-paths
+    [(SelfhostLintPathNil) status]
+    [(SelfhostLintPathCons input-path rest)
+      (let
+        [file-status : i64
+          (begin
+            (if print-headers
+              (print-string
+                (string-append "--- " (string-append input-path "\n")))
+              unit)
+            (selfhost-lint-file input-path stdlib-roots enforcing))]
+        (selfhost-lint-files
+          rest
+          stdlib-roots
+          enforcing
+          print-headers
+          (if (= status 0)
+            file-status
+            status)))]))
+
 ;; Run the `lint` command over arguments starting at `start`.
 (define (selfhost-lint-run-from [start : i64] [count : i64]) : i64
   (match (selfhost-lint-config-from start count)
     [(OkSelfhostLintConfig config)
       (match config
-        [(SelfhostLintConfig input-path stdlib-roots enforcing)
-          (selfhost-lint-file input-path stdlib-roots enforcing)])]
+        [(SelfhostLintConfig input-paths stdlib-roots enforcing)
+          (selfhost-lint-files
+            input-paths
+            stdlib-roots
+            enforcing
+            (> (selfhost-lint-path-list-count input-paths) 1)
+            0)])]
     [(ErrSelfhostLintConfig message)
       (begin
         (print-error (string-append message "\n"))

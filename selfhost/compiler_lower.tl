@@ -2245,7 +2245,7 @@
   [names : LowerNameEnv]) : ResultLowerCloneRoots
   (match (build-compiler-symbols program)
     [(OkCompilerSymbols symbols)
-      (match (build-compiler-registries program)
+      (match (build-compiler-registries-with-symbols program symbols)
         [(OkCompilerRegistries registries)
           (let
             [ctx : TcContext (TcContext program symbols registries "")]

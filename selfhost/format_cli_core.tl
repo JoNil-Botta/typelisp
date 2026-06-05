@@ -18,9 +18,11 @@
           (print-error
             (string-append "fmt: would reformat " (string-append path "\n")))
           1))
-      (begin
-        (write-file path formatted)
-        0))))
+      (if (string-eq source formatted)
+        0
+        (begin
+          (write-file path formatted)
+          0)))))
 
 (define (fmt-files [check : bool] [index : i64] [count : i64] [status : i64]) : i64
   (if (< index count)

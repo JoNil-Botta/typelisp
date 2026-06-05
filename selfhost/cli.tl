@@ -60,10 +60,10 @@ Usage:
     typelisp build [--manifest-path <typelisp.pkg>] [--target <target>] [--backend-mode <mode>] [--opt-level <0|1|2|3>] [--stdlib-root <dir>...]
     typelisp clean [<file.tl>] [--manifest-path <typelisp.pkg>] [--dry-run]
     typelisp fmt [--check] <file.tl>... [--stdlib-root <dir>...]
-    typelisp lint <file.tl> [--check] [--stdlib-root <dir>...]
+    typelisp lint <file.tl>... [--check] [--stdlib-root <dir>...]
     typelisp test [--check] <file.tl> [--target <target>] [--opt-level <0|1|2|3>] [--stdlib-root <dir>...]
     typelisp doc <file.tl> [-o <out.md>] [--stdlib-root <dir>...]
-    typelisp doc --test <file.tl> [--stdlib-root <dir>...]
+    typelisp doc --test <file.tl>... [--stdlib-root <dir>...]
     typelisp new [--lib] <name>    Scaffold a new package in <name>/
     typelisp init [--lib] <name>   Scaffold a package in the current directory
 

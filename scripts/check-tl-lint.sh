@@ -46,10 +46,12 @@ fi
 
 WORKDIR="$ROOT/target/tl-lint-check"
 rm -rf "$WORKDIR"
-mkdir -p "$WORKDIR/findings" "$WORKDIR/stdout" "$WORKDIR/stderr" "$WORKDIR/failures"
+mkdir -p "$WORKDIR"
 
 FILES="$WORKDIR/files.txt"
 ACTUAL="$WORKDIR/findings.actual"
+STDOUT="$WORKDIR/lint.stdout"
+STDERR="$WORKDIR/lint.stderr"
 
 # Lint every git-tracked TypeLisp source that is expected to parse as a source
 # unit. The excluded paths are fixture harness inputs rather than direct source
@@ -71,16 +73,19 @@ fi
 count=$(wc -l < "$FILES" | tr -d ' ')
 echo "Linting TypeLisp sources for $count file(s)."
 
-JOBS=${TYPELISP_LINT_JOBS:-4}
-case "$JOBS" in
-    '' | *[!0-9]* | 0)
-        echo "TYPELISP_LINT_JOBS must be a positive integer" >&2
-        exit 2
-        ;;
-esac
+run_lint_per_file() {
+    mkdir -p "$WORKDIR/findings" "$WORKDIR/stdout" "$WORKDIR/stderr" "$WORKDIR/failures"
 
-export COMPILER WORKDIR
-xargs -n 1 -P "$JOBS" sh -c '
+    JOBS=${TYPELISP_LINT_JOBS:-4}
+    case "$JOBS" in
+        '' | *[!0-9]* | 0)
+            echo "TYPELISP_LINT_JOBS must be a positive integer" >&2
+            exit 2
+            ;;
+    esac
+
+    export COMPILER WORKDIR
+    xargs -n 1 -P "$JOBS" sh -c '
 for file do
     safe=$(printf "%s" "$file" | cksum | awk "{ print \$1 }")
     stdout="$WORKDIR/stdout/$safe.out"
@@ -102,21 +107,52 @@ for file do
 done
 ' sh < "$FILES"
 
-if find "$WORKDIR/failures" -type f | grep -q .; then
-    echo "TypeLisp lint failed for one or more files:" >&2
-    find "$WORKDIR/failures" -type f -print | sort | while IFS= read -r failure; do
-        echo "---" >&2
-        cat "$failure" >&2
-    done
-    exit 1
-fi
+    if find "$WORKDIR/failures" -type f | grep -q .; then
+        echo "TypeLisp lint failed for one or more files:" >&2
+        find "$WORKDIR/failures" -type f -print | sort | while IFS= read -r failure; do
+            echo "---" >&2
+            cat "$failure" >&2
+        done
+        exit 1
+    fi
 
-find "$WORKDIR/findings" -type f -name '*.out' -exec cat {} + | LC_ALL=C sort > "$ACTUAL"
+    find "$WORKDIR/findings" -type f -name '*.out' -exec cat {} + | LC_ALL=C sort > "$ACTUAL"
 
-if [ -s "$ACTUAL" ]; then
-    echo "TypeLisp lint found finding(s):" >&2
-    cat "$ACTUAL" >&2
-    exit 1
+    if [ -s "$ACTUAL" ]; then
+        echo "TypeLisp lint found finding(s):" >&2
+        cat "$ACTUAL" >&2
+        exit 1
+    fi
+}
+
+if ! xargs "$COMPILER" lint --check < "$FILES" > "$STDOUT" 2> "$STDERR"; then
+    if [ -s "$STDERR" ] || ! grep -q '^lint: [1-9][0-9]* finding(s)$' "$STDOUT"; then
+        echo "Batched TypeLisp lint failed; probing files one by one."
+        run_lint_per_file
+    else
+        awk '
+            /^--- / { next }
+            /^lint: [0-9][0-9]* finding\(s\)$/ { next }
+            NF { print }
+        ' "$STDOUT" | LC_ALL=C sort > "$ACTUAL"
+
+        if [ -s "$ACTUAL" ]; then
+            echo "TypeLisp lint found finding(s):" >&2
+            cat "$ACTUAL" >&2
+            exit 1
+        fi
+
+        echo "TypeLisp lint failed for the batched source set:" >&2
+        if [ -s "$STDERR" ]; then
+            echo "stderr:" >&2
+            sed 's/^/  /' "$STDERR" >&2 || true
+        fi
+        if [ -s "$STDOUT" ]; then
+            echo "stdout:" >&2
+            sed 's/^/  /' "$STDOUT" >&2 || true
+        fi
+        exit 1
+    fi
 fi
 
 echo "TypeLisp lint check passed for $count file(s); 0 finding(s)."

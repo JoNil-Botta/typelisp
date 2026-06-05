@@ -405,11 +405,7 @@ write_lint_runner() {
 set -eu
 cli=$1
 manifest=$2
-while IFS= read -r file || [ -n "$file" ]; do
-    [ -n "$file" ] || continue
-    printf '%s\n' "--- $file"
-    "$cli" lint "$file" --check --stdlib-root stdlib --stdlib-root selfhost
-done < "$manifest"
+xargs "$cli" lint --check --stdlib-root stdlib --stdlib-root selfhost < "$manifest"
 EOF
     chmod +x "$TMPDIR_BENCH/run-lint-corpus.sh"
 }
@@ -445,6 +441,17 @@ while IFS= read -r file || [ -n "\$file" ]; do
 done < "\$manifest"
 EOF
     chmod +x "$runner"
+}
+
+write_doc_test_runner() {
+    cat > "$TMPDIR_BENCH/run-doc-test-corpus.sh" <<'EOF'
+#!/usr/bin/env sh
+set -eu
+cli=$1
+manifest=$2
+xargs "$cli" doc --test --stdlib-root stdlib --stdlib-root selfhost < "$manifest"
+EOF
+    chmod +x "$TMPDIR_BENCH/run-doc-test-corpus.sh"
 }
 
 json_escape_file() {
@@ -628,7 +635,7 @@ strip_if_needed "$CLI_BIN"
 
 write_fmt_runner
 write_lint_runner
-write_one_file_runner "$TMPDIR_BENCH/run-doc-test-corpus.sh" doc --test
+write_doc_test_runner
 write_lsp_input "$TMPDIR_BENCH/lsp-compiler.in"
 write_lsp_runner
 copy_chooser_input "$TMPDIR_BENCH/chooser-corpus.json"

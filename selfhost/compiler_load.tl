@@ -2214,17 +2214,21 @@
     [body : String (compiler-load-github-address-body address)]
     [body-len : i64 (string-length body)]
     [slash : i64 (compiler-load-slash-index-from body 0 body-len)]
-    (if (or (< slash 1) (>= slash (- body-len 1)))
-      (compiler-load-github-address-error alias)
-      (let
-        [owner : String (substring body 0 slash)]
-        [repo : String (substring body (+ slash 1) (- body-len (+ slash 1)))]
-        (if (>= (compiler-load-slash-index-from repo 0 (string-length repo)) 0)
-          (compiler-load-github-address-error alias)
-          (if (not (compiler-load-github-component-valid? owner))
-            (compiler-load-github-address-error alias)
-            (if (not (compiler-load-github-component-valid? repo))
-              (compiler-load-github-address-error alias)
+    (cond
+      [(or (< slash 1) (>= slash (- body-len 1)))
+        (compiler-load-github-address-error alias)]
+      [else
+        (let
+          [owner : String (substring body 0 slash)]
+          [repo : String (substring body (+ slash 1) (- body-len (+ slash 1)))]
+          (cond
+            [(>= (compiler-load-slash-index-from repo 0 (string-length repo)) 0)
+              (compiler-load-github-address-error alias)]
+            [(not (compiler-load-github-component-valid? owner))
+              (compiler-load-github-address-error alias)]
+            [(not (compiler-load-github-component-valid? repo))
+              (compiler-load-github-address-error alias)]
+            [else
               (OkPkgString
                 (string-append
                   "https://github.com/"
@@ -2236,7 +2240,7 @@
                         repo
                         (string-append
                           ".git#"
-                          (string-append pin-kind (string-append "=" pin-value)))))))))))))))
+                          (string-append pin-kind (string-append "=" pin-value))))))))]))])))
 
 (define (compiler-load-normal-relative-entry? [path : String]) : bool
   (compiler-load-safe-relative? path))

@@ -1300,6 +1300,12 @@
           rest
           (tc-string-list-add out item)))]))
 
+(define (tc-string-list-to-lifetime-list [items : TcStringList]) : AstLifetimeList
+  (match items
+    [(TcStringNil) AstLifetimeNil]
+    [(TcStringCons item rest)
+      (ast-lifetime-cons item (tc-string-list-to-lifetime-list rest))]))
+
 (define (tc-lifetime-subst-lookup [subst : TcLifetimeSubst] [name : String]) : TcMaybeString
   (match subst
     [(TcLifetimeSubstNil) (TcNoString)]
@@ -5619,6 +5625,43 @@
             [(ErrTcUnit message) (ErrTcType message)]))]
       [(ErrTcLifetimeSubst message) (ErrTcType message)])))
 
+(define (tc-call-function-lifetimes [params : AstTypeList] [ret : AstType]) : AstLifetimeList
+  (tc-string-list-to-lifetime-list
+    (tc-type-collect-reference-lifetimes-into
+      ret
+      (tc-type-list-collect-reference-lifetimes params TcStringNil))))
+
+(define (tc-call-lifetime-function-type
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [args : AstExprList]
+  [params : AstTypeList]
+  [ret : AstType]
+  [lifetimes : AstLifetimeList]
+  [allow-region-args : bool]) : ResultTcType
+  (match (tc-infer-call-lifetime-subst
+    ctx
+    env
+    args
+    params
+    lifetimes
+    TcLifetimeSubstNil)
+    [(OkTcLifetimeSubst subst)
+      (let
+        [resolved-ret : AstType (tc-lifetime-subst-type subst ret)]
+        [resolved-params : AstTypeList
+          (tc-lifetime-subst-type-list subst params)]
+        (match (tc-check-call-args
+          ctx
+          env
+          args
+          resolved-params
+          allow-region-args
+          (AstNoType))
+          [(OkTcUnit) (OkTcType (tc-tag-active-region env resolved-ret))]
+          [(ErrTcUnit message) (ErrTcType message)]))]
+    [(ErrTcLifetimeSubst message) (ErrTcType message)]))
+
 (define (tc-call-function-type
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -5641,18 +5684,44 @@
       (let
         [constructor-target : AstMaybeType
           (tc-call-constructor-target-for-func ctx env func params ret)]
-        (match (tc-check-call-args
-          ctx
-          env
-          args
-          params
-          allow-region-args
-          constructor-target)
-          [(OkTcUnit)
-            (match constructor-target
-              [(AstSomeType target) (OkTcType target)]
-              [(AstNoType) (OkTcType (tc-tag-active-region env ret))])]
-          [(ErrTcUnit message) (ErrTcType message)])))))
+        (match constructor-target
+          [(AstSomeType _)
+            (match (tc-check-call-args
+              ctx
+              env
+              args
+              params
+              allow-region-args
+              constructor-target)
+              [(OkTcUnit)
+                (match constructor-target
+                  [(AstSomeType target) (OkTcType target)]
+                  [(AstNoType) (OkTcType (tc-tag-active-region env ret))])]
+              [(ErrTcUnit message) (ErrTcType message)])]
+          [(AstNoType)
+            (let
+              [lifetimes : AstLifetimeList
+                (tc-call-function-lifetimes params ret)]
+              (match lifetimes
+                [(AstLifetimeNil)
+                  (match (tc-check-call-args
+                    ctx
+                    env
+                    args
+                    params
+                    allow-region-args
+                    constructor-target)
+                    [(OkTcUnit) (OkTcType (tc-tag-active-region env ret))]
+                    [(ErrTcUnit message) (ErrTcType message)])]
+                [_
+                  (tc-call-lifetime-function-type
+                    ctx
+                    env
+                    args
+                    params
+                    ret
+                    lifetimes
+                    allow-region-args)]))])))))
 
 (define (tc-check-call-args
   [ctx : TcContext]

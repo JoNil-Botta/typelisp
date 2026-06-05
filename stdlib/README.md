@@ -85,8 +85,8 @@ installed-root discovery, namespace isolation, or an implicit prelude.
 - `string.tl`: string utility functions built on compiler/runtime primitives.
   Import it with `(import "stdlib/string.tl")`.
 - `string_caller_result.tl`: check-only lifetime-preserving string replacement
-  caller-result surface. It exposes a branch-composed `StringReplaceResult`
-  shape for no-match borrowed results and replacement-owned results. Import it
+  caller-result surface. It exposes `string-replace-result`, which selects
+  between no-match borrowed results and replacement-owned results. Import it
   with `(import "stdlib/string_caller_result.tl")`; ordinary lowering still
   rejects reference-typed aggregate values until borrow/reference lowering
   lands.
@@ -156,7 +156,7 @@ runnable stdlib imports keep the lowerable compatibility wrappers.
 |-----------|---------------------|
 | `is-char-whitespace`, `char-eq`, `string-contains`, `string-contains-char`, `is-string-prefix-at` | Non-allocating string/char inspection; text parameters are borrowed `str` inputs. |
 | `string-trim-left`, `string-trim-right`, `string-trim` | Borrow the input text and return fresh `String` storage from `substring`, allocated in the active arena. |
-| `string-replace` | Compatibility wrapper: returns fresh `String` storage from `substring`/`string-append` when a replacement is made; returns the caller-provided `s` when `old` is not present. `string_caller_result.tl` exposes a check-only branch-composed caller-result shape that preserves the no-match borrow until explicit materialization. |
+| `string-replace` | Compatibility wrapper: returns fresh `String` storage from `substring`/`string-append` when a replacement is made; returns the caller-provided `s` when `old` is not present. `string_caller_result.tl` exposes the check-only `string-replace-result` caller-result shape that preserves the no-match borrow until explicit materialization. |
 | `try-read-file` | Performs host file inspection through stdlib FFI; returns `OkIoString` with fresh active-arena `String` storage from `read-file` when the path is readable, or `ErrIoString` for empty paths, expected absence, permission failures, interrupted reads, and target status-code failures. |
 | `try-write-file` | Writes through the recoverable stdlib status helper; returns `OkIoUnit` on success or `ErrIoUnit` for empty paths, missing parents, permission failures, interrupted writes, and target status-code failures. |
 | `try-file-exists?` | Returns `OkIoBool` for existing or expected missing paths; empty paths and hard probe failures return `ErrIoBool`. |

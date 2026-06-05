@@ -709,24 +709,26 @@
   (match exprs
     [(AstExprNil) (OkGenKey "none" fuel)]
     [(AstExprCons head rest)
-      (match (compiler-ctfe-eval head env fuel)
-        [(OkCtfe value head-fuel)
-          (match value
-            [(CtfeString text)
-              (match (gen-key-exprs (box-get rest) env head-fuel)
-                [(OkGenKey tail tail-fuel)
-                  (OkGenKey
-                    (string-append
-                      (spec-string-key text)
-                      (string-append "_" tail))
-                    tail-fuel)]
-                [(ErrGenKey diag) (ErrGenKey diag)])]
-            [_
-              (ErrGenKey
-                (spec-diagnostic-at-expr
-                  head
-                  "generated-decl: key expression must evaluate to String"))])]
-        [(ErrCtfe diag) (ErrGenKey diag)])]))
+      (let
+        [head-expr : AstExpr (box-get head)]
+        (match (compiler-ctfe-eval head-expr env fuel)
+          [(OkCtfe value head-fuel)
+            (match value
+              [(CtfeString text)
+                (match (gen-key-exprs (box-get rest) env head-fuel)
+                  [(OkGenKey tail tail-fuel)
+                    (OkGenKey
+                      (string-append
+                        (spec-string-key text)
+                        (string-append "_" tail))
+                      tail-fuel)]
+                  [(ErrGenKey diag) (ErrGenKey diag)])]
+              [_
+                (ErrGenKey
+                  (spec-diagnostic-at-expr
+                    head-expr
+                    "generated-decl: key expression must evaluate to String"))])]
+          [(ErrCtfe diag) (ErrGenKey diag)]))]))
 
 (define (gen-full-key
   [module : String]

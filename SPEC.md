@@ -1723,7 +1723,8 @@ Example:
   (name "my-app")
   (version "0.1.0")
   (dependencies
-    (math "../math")))
+    (math "../math")
+    (lint (github "JoNil-Botta/typelisp-lint" (rev "abc123")))))
 ```
 
 - `name` and `version` are required string fields.
@@ -1734,13 +1735,20 @@ Example:
 - `entry` is optional. It defaults to `src/main.tl` for `bin` packages and
   `src/lib.tl` for `staticlib` packages. An explicit `entry` string overrides
   the convention default.
-- `dependencies` is optional. Each entry has an alias symbol and a string root
-  path: `(alias "relative/or/absolute/path")`.
+- `dependencies` is optional. Each entry has an alias symbol and either a
+  string root path, `(alias "relative/or/absolute/path")`, or a GitHub
+  shorthand source, `(alias (github "owner/repo" (rev "commit")))`.
+- GitHub shorthand also accepts `github.com/owner/repo` addresses. It requires
+  exactly one non-empty `rev`, `tag`, or `branch` string pin and normalizes to a
+  git remote URL with a pin fragment such as
+  `https://github.com/owner/repo.git#rev=commit`.
 - Dependency aliases use the same character rules as package names: ASCII
   letters, digits, `-`, and `_`; duplicate aliases are rejected.
 - `entry` is resolved relative to the manifest directory.
 - Relative dependency paths are resolved relative to the manifest directory;
-  absolute dependency paths are used as written.
+  absolute dependency paths are used as written. Remote entries are manifest
+  syntax for git dependency fetch support; local path entries keep the existing
+  build and `pkg:` resolution behavior.
 - `typelisp build --manifest-path path/to/typelisp.pkg` builds the entry file
   through the same module loader and compiler pipeline as `compile`.
 - `typelisp build` without `--manifest-path` searches for `typelisp.pkg` from

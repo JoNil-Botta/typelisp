@@ -2167,6 +2167,81 @@
           (set! ok false)))
       (= i n))))
 
+(define (compiler-load-github-component-char? [c : char]) : bool
+  (or (compiler-load-package-name-char? c) (= c #.')))
+
+(define (compiler-load-github-component-valid? [value : String]) : bool
+  (let
+    [n : i64 (string-length value)]
+    [i : i64 0]
+    [ok : bool (> n 0)]
+    (begin
+      (while ok
+        (if (< i n)
+          (if (compiler-load-github-component-char? (string-ref value i))
+            (set! i (+ i 1))
+            (set! ok false))
+          (set! ok false)))
+      (= i n))))
+
+(define (compiler-load-github-dependency-path? [path : String]) : bool
+  (compiler-load-string-prefix-at? path "https://github.com/" 0))
+
+(define (compiler-load-github-pin-kind-valid? [kind : String]) : bool
+  (or
+    (string-eq kind "rev")
+    (or (string-eq kind "tag") (string-eq kind "branch"))))
+
+(define (compiler-load-github-address-body [address : String]) : String
+  (if (compiler-load-string-prefix-at? address "github.com/" 0)
+    (substring address 11 (- (string-length address) 11))
+    address))
+
+(define (compiler-load-github-address-error [alias : String]) : ResultPkgString
+  (ErrPkgString
+    (string-append
+      "manifest dependency `"
+      (string-append
+        alias
+        "` github address must be `owner/repo` or `github.com/owner/repo`"))))
+
+(define (compiler-load-normalize-github-address
+  [alias : String]
+  [address : String]
+  [pin-kind : String]
+  [pin-value : String]) : ResultPkgString
+  (let
+    [body : String (compiler-load-github-address-body address)]
+    [body-len : i64 (string-length body)]
+    [slash : i64 (compiler-load-slash-index-from body 0 body-len)]
+    (cond
+      [(or (< slash 1) (>= slash (- body-len 1)))
+        (compiler-load-github-address-error alias)]
+      [else
+        (let
+          [owner : String (substring body 0 slash)]
+          [repo : String (substring body (+ slash 1) (- body-len (+ slash 1)))]
+          (cond
+            [(>= (compiler-load-slash-index-from repo 0 (string-length repo)) 0)
+              (compiler-load-github-address-error alias)]
+            [(not (compiler-load-github-component-valid? owner))
+              (compiler-load-github-address-error alias)]
+            [(not (compiler-load-github-component-valid? repo))
+              (compiler-load-github-address-error alias)]
+            [else
+              (OkPkgString
+                (string-append
+                  "https://github.com/"
+                  (string-append
+                    owner
+                    (string-append
+                      "/"
+                      (string-append
+                        repo
+                        (string-append
+                          ".git#"
+                          (string-append pin-kind (string-append "=" pin-value))))))))]))])))
+
 (define (compiler-load-normal-relative-entry? [path : String]) : bool
   (compiler-load-safe-relative? path))
 
@@ -2203,6 +2278,105 @@
         (string-append
           "manifest field `"
           (string-append fname "` must have a string value")))]))
+
+(define (compiler-load-manifest-github-pin
+  [alias : String]
+  [address : String]
+  [pin-form : Sexpr]) : ResultPkgString
+  (match pin-form
+    [(SCons (SSym pin-kind) pin-tail)
+      (if (compiler-load-github-pin-kind-valid? pin-kind)
+        (match pin-tail
+          [(SCons (SStr pin-value) (SNil))
+            (if (string-eq pin-value "")
+              (ErrPkgString
+                (string-append
+                  "manifest dependency `"
+                  (string-append alias "` github pin must not be empty")))
+              (compiler-load-normalize-github-address
+                alias
+                address
+                pin-kind
+                pin-value))]
+          [_
+            (ErrPkgString
+              (string-append
+                "manifest dependency `"
+                (string-append
+                  alias
+                  "` github pin must be a single string value")))])
+        (ErrPkgString
+          (string-append
+            "manifest dependency `"
+            (string-append alias "` github pin must be rev, tag, or branch"))))]
+    [_
+      (ErrPkgString
+        (string-append
+          "manifest dependency `"
+          (string-append
+            alias
+            "` github source requires exactly one rev, tag, or branch pin")))]))
+
+(define (compiler-load-manifest-github-value
+  [alias : String]
+  [source-tail : Sexpr]) : ResultPkgString
+  (match source-tail
+    [(SCons (SStr address) after-address)
+      (match after-address
+        [(SCons pin-form (SNil))
+          (compiler-load-manifest-github-pin alias address pin-form)]
+        [_
+          (ErrPkgString
+            (string-append
+              "manifest dependency `"
+              (string-append
+                alias
+                "` github source requires exactly one rev, tag, or branch pin")))])]
+    [_
+      (ErrPkgString
+        (string-append
+          "manifest dependency `"
+          (string-append
+            alias
+            "` github source must be `(github \"owner/repo\" (rev|tag|branch \"pin\"))`")))]))
+
+(define (compiler-load-manifest-dependency-value
+  [etail : Sexpr]
+  [alias : String]) : ResultPkgString
+  (match etail
+    [(SCons vhead vrest)
+      (match vrest
+        [(SNil)
+          (match vhead
+            [(SStr path) (OkPkgString path)]
+            [(SCons (SSym source-kind) source-tail)
+              (if (string-eq source-kind "github")
+                (compiler-load-manifest-github-value alias source-tail)
+                (ErrPkgString
+                  (string-append
+                    "manifest dependency `"
+                    (string-append
+                      alias
+                      "` must be a path string or github source"))))]
+            [_
+              (ErrPkgString
+                (string-append
+                  "manifest dependency `"
+                  (string-append
+                    alias
+                    "` must be a path string or github source")))])]
+        [_
+          (ErrPkgString
+            (string-append
+              "manifest dependency `"
+              (string-append
+                alias
+                "` takes a single path string or github source")))])]
+    [_
+      (ErrPkgString
+        (string-append
+          "manifest dependency `"
+          (string-append alias "` must be a path string or github source")))]))
 
 (define (compiler-load-manifest-kind-token [val : String]) : ResultCompilerPkgKind
   (if (string-eq val "bin")
@@ -2264,7 +2438,7 @@
         [(SCons ehead etail)
           (match ehead
             [(SSym alias)
-              (match (compiler-load-manifest-string-value etail alias)
+              (match (compiler-load-manifest-dependency-value etail alias)
                 [(ErrPkgString m) (ErrCompilerPkgDepList m)]
                 [(OkPkgString path)
                   (compiler-load-manifest-cons-dep alias path rest)])]
@@ -2276,7 +2450,7 @@
             "dependency entries must be lists like `(alias \"path\")`")])]
     [_
       (ErrCompilerPkgDepList
-        "`dependencies` must be a list of `(alias \"path\")` entries")]))
+        "`dependencies` must be a list of `(alias \"path\")` or `(alias (github ...))` entries")]))
 
 (define (compiler-load-manifest-default-entry [kind : CompilerPkgKind]) : String
   (match kind
@@ -2520,11 +2694,57 @@
         [(CompilerPkgKindBin) false])]
     [(ErrCompilerPkgManifest _) false]))
 
+(define (compiler-load-manifest-dep-path-is?
+  [deps : CompilerPkgDepList]
+  [alias : String]
+  [expected : String]) : bool
+  (match (compiler-load-pkg-dep-lookup deps alias)
+    [(CompilerLoadSomePath path) (string-eq path expected)]
+    [(CompilerLoadNoPath) false]))
+
+(define (compiler-load-manifest-github-deps-ok?) : bool
+  (match (compiler-load-parse-manifest
+    "(package (name \"github_demo\") (version \"1\") (kind \"bin\") (entry \"src/main.tl\") (dependencies (math (github \"JoNil-Botta/math\" (rev \"abc123\"))) (util (github \"github.com/JoNil-Botta/util.repo\" (tag \"v1.0.0\"))) (core \"../core\")))")
+    [(OkCompilerPkgManifest m)
+      (let
+        [deps : CompilerPkgDepList (struct-get m deps)]
+        (and
+          (= (compiler-pkg-dep-list-count deps) 3)
+          (and
+            (compiler-load-manifest-dep-path-is?
+              deps
+              "math"
+              "https://github.com/JoNil-Botta/math.git#rev=abc123")
+            (and
+              (compiler-load-manifest-dep-path-is?
+                deps
+                "util"
+                "https://github.com/JoNil-Botta/util.repo.git#tag=v1.0.0")
+              (compiler-load-manifest-dep-path-is? deps "core" "../core")))))]
+    [(ErrCompilerPkgManifest _) false]))
+
 ;: True when parsing `source` fails with exactly the `expected` diagnostic.
 (define (compiler-load-manifest-rejects? [source : String] [expected : String]) : bool
   (match (compiler-load-parse-manifest source)
     [(ErrCompilerPkgManifest m) (string-eq m expected)]
     [(OkCompilerPkgManifest _) false]))
+
+(define (compiler-load-pkg-manifest-github-validation-ok?) : bool
+  (and
+    (compiler-load-manifest-rejects?
+      "(package (name \"x\") (version \"1\") (kind \"bin\") (entry \"e.tl\") (dependencies (math (github \"owner/repo\"))))"
+      "manifest dependency `math` github source requires exactly one rev, tag, or branch pin")
+    (and
+      (compiler-load-manifest-rejects?
+        "(package (name \"x\") (version \"1\") (kind \"bin\") (entry \"e.tl\") (dependencies (math (github \"owner/repo/extra\" (rev \"abc\")))))"
+        "manifest dependency `math` github address must be `owner/repo` or `github.com/owner/repo`")
+      (and
+        (compiler-load-manifest-rejects?
+          "(package (name \"x\") (version \"1\") (kind \"bin\") (entry \"e.tl\") (dependencies (math (github \"owner/repo\" (sha \"abc\")))))"
+          "manifest dependency `math` github pin must be rev, tag, or branch")
+        (compiler-load-manifest-rejects?
+          "(package (name \"x\") (version \"1\") (kind \"bin\") (entry \"e.tl\") (dependencies (math (github \"owner/repo\" (rev \"\")))))"
+          "manifest dependency `math` github pin must not be empty")))))
 
 (define (compiler-load-pkg-manifest-validation-ok?) : bool
   (and
@@ -2597,7 +2817,11 @@
                 (compiler-load-manifest-rejects?
                   "(module foo)"
                   "expected `package` form, got `module`")
-                (compiler-load-pkg-manifest-validation-ok?)))))))))
+                (and
+                  (compiler-load-pkg-manifest-validation-ok?)
+                  (and
+                    (compiler-load-manifest-github-deps-ok?)
+                    (compiler-load-pkg-manifest-github-validation-ok?)))))))))))
 
 ;: --- pkg:<alias>/... import resolution (#834, slice 2) ----------------------
 ;: Resolve a `pkg:<alias>/<rest>` import against a parsed manifest's dependency
@@ -2661,18 +2885,27 @@
                   "compiler-load: unknown package alias '"
                   (string-append alias (string-append "': " import-path))))]
             [(CompilerLoadSomePath dep-path)
-              (let
-                [norm-rest : String (compiler-load-normalize-path rest)]
-                (if (compiler-load-path-escapes? norm-rest)
-                  (ErrPkgResolve
+              (if (compiler-load-github-dependency-path? dep-path)
+                (ErrPkgResolve
+                  (string-append
+                    "compiler-load: GitHub dependency '"
                     (string-append
-                      "compiler-load: pkg import escapes package root: "
-                      import-path))
-                  (OkPkgResolve
-                    (compiler-load-normalize-path
-                      (compiler-load-join-root-path
-                        (compiler-load-join-root-path manifest-dir dep-path)
-                        norm-rest)))))]))))))
+                      alias
+                      (string-append
+                        "' requires fetch support (#1157): "
+                        import-path))))
+                (let
+                  [norm-rest : String (compiler-load-normalize-path rest)]
+                  (if (compiler-load-path-escapes? norm-rest)
+                    (ErrPkgResolve
+                      (string-append
+                        "compiler-load: pkg import escapes package root: "
+                        import-path))
+                    (OkPkgResolve
+                      (compiler-load-normalize-path
+                        (compiler-load-join-root-path
+                          (compiler-load-join-root-path manifest-dir dep-path)
+                          norm-rest))))))]))))))
 
 ;: Parent directory of a directory path, or no-path at the top. `dirname`
 ;: returns a path *including* its trailing separator, so a trailing separator
@@ -2729,13 +2962,15 @@
             (compiler-load-dirname manifest-path)
             (struct-get manifest deps))])]))
 
-;: Self-test fixture: `math` -> sibling dir, `util` -> vendored subdir.
+;: Self-test fixture: local deps plus one GitHub dep that needs fetch support.
 (define (compiler-load-pkg-resolve-deps) : CompilerPkgDepList
   (CompilerPkgDepCons
     (CompilerPkgDep "math" "../math")
     (CompilerPkgDepCons
       (CompilerPkgDep "util" "vendor/util")
-      (CompilerPkgDepNil))))
+      (CompilerPkgDepCons
+        (CompilerPkgDep "remote" "https://github.com/owner/repo.git#rev=abc")
+        (CompilerPkgDepNil)))))
 
 ;: True when resolving `import-path` yields exactly `expected`.
 (define (compiler-load-pkg-resolves? [import-path : String] [expected : String]) : bool
@@ -2771,9 +3006,13 @@
           (compiler-load-pkg-resolve-rejects?
             "pkg:math"
             "compiler-load: pkg import missing '/' after alias: pkg:math")
-          (compiler-load-pkg-resolve-rejects?
-            "pkg:math/../../etc.tl"
-            "compiler-load: pkg import escapes package root: pkg:math/../../etc.tl"))))))
+          (and
+            (compiler-load-pkg-resolve-rejects?
+              "pkg:math/../../etc.tl"
+              "compiler-load: pkg import escapes package root: pkg:math/../../etc.tl")
+            (compiler-load-pkg-resolve-rejects?
+              "pkg:remote/src/lib.tl"
+              "compiler-load: GitHub dependency 'remote' requires fetch support (#1157): pkg:remote/src/lib.tl")))))))
 
 ;: True when `parent-dir dir` yields exactly `expected`.
 (define (compiler-load-pkg-parent-dir-is? [dir : String] [expected : String]) : bool

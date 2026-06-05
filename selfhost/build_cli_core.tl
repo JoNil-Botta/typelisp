@@ -470,48 +470,59 @@
   [fuel : i64]) : ResultBuildLibs
   (if (<= fuel 0)
     (ErrBuildLibs "build: dependency graph is too deep or cyclic")
-    (let
-      [dep-manifest-path : String
-        (build-package-dep-manifest-path manifest-dir dep)]
-      (match (build-load-manifest dep-manifest-path)
-        [(ErrBuildManifest message)
-          (ErrBuildLibs
-            (string-append
-              "dependency `"
+    (if (compiler-load-github-dependency-path? (struct-get dep path))
+      (ErrBuildLibs
+        (string-append
+          "build: GitHub dependency `"
+          (string-append
+            (struct-get dep alias)
+            "` requires git dependency fetch support (#1157)")))
+      (let
+        [dep-manifest-path : String
+          (build-package-dep-manifest-path manifest-dir dep)]
+        (match (build-load-manifest dep-manifest-path)
+          [(ErrBuildManifest message)
+            (ErrBuildLibs
               (string-append
-                (struct-get dep alias)
-                (string-append "`: " message))))]
-        [(OkBuildManifest dep-manifest)
-          (let
-            [dep-kind : CompilerPkgKind (struct-get dep-manifest kind)]
-            (if (not (build-package-kind-lib? dep-kind))
-              (ErrBuildLibs
+                "dependency `"
                 (string-append
-                  "build: dependency `"
+                  (struct-get dep alias)
+                  (string-append "`: " message))))]
+          [(OkBuildManifest dep-manifest)
+            (let
+              [dep-kind : CompilerPkgKind (struct-get dep-manifest kind)]
+              (if (not (build-package-kind-lib? dep-kind))
+                (ErrBuildLibs
                   (string-append
-                    (struct-get dep alias)
-                    "` must be a lib package")))
-              (let
-                [dep-dir : String (compiler-load-dirname dep-manifest-path)]
-                [dep-name : String (struct-get dep-manifest name)]
-                [dep-artifact : String
-                  (build-package-artifact-path dep-dir dep-name dep-kind target)]
-                [dep-status : i64
-                  (build-package-emit-with-fuel
-                    dep-manifest-path
-                    dep-manifest
-                    target-text
-                    has-target
-                    opt-level
-                    mode
-                    stdlib-roots
-                    (- fuel 1))]
-                (if (= dep-status 0)
-                  (OkBuildLibs (process-args-single dep-artifact))
-                  (ErrBuildLibs
+                    "build: dependency `"
                     (string-append
-                      "build: dependency `"
-                      (string-append (struct-get dep alias) "` failed")))))))]))))
+                      (struct-get dep alias)
+                      "` must be a lib package")))
+                (let
+                  [dep-dir : String (compiler-load-dirname dep-manifest-path)]
+                  [dep-name : String (struct-get dep-manifest name)]
+                  [dep-artifact : String
+                    (build-package-artifact-path
+                      dep-dir
+                      dep-name
+                      dep-kind
+                      target)]
+                  [dep-status : i64
+                    (build-package-emit-with-fuel
+                      dep-manifest-path
+                      dep-manifest
+                      target-text
+                      has-target
+                      opt-level
+                      mode
+                      stdlib-roots
+                      (- fuel 1))]
+                  (if (= dep-status 0)
+                    (OkBuildLibs (process-args-single dep-artifact))
+                    (ErrBuildLibs
+                      (string-append
+                        "build: dependency `"
+                        (string-append (struct-get dep alias) "` failed")))))))])))))
 
 (define (build-package-deps-artifacts
   [manifest-dir : String]

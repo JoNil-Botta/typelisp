@@ -222,7 +222,8 @@ Local packages can be described with a std-only S-expression manifest named
   (name "my-app")
   (version "0.1.0")
   (dependencies
-    (math "../math")))
+    (math "../math")
+    (lint (github "JoNil-Botta/typelisp-lint" (rev "abc123")))))
 ```
 
 `typelisp build <file.tl> [-o <exe>]` compiles, assembles, and links one source
@@ -235,7 +236,12 @@ resolves `entry` relative to the manifest directory and writes outputs under
 libraries. `kind "bin"` builds a native executable named after the package;
 `kind "staticlib"` builds a static archive (`lib<name>.a` on Linux,
 `<name>.lib` on Windows). `kind "lib"` remains accepted as a compatibility
-alias. Dependency paths may be relative to that same package root or absolute.
+alias. Dependency entries may use a local path relative to that same package
+root, an absolute path, or the GitHub shorthand form shown above. `tag` and
+`branch` pins are also accepted, and the shorthand normalizes to
+`https://github.com/owner/repo.git#rev=commit`. Remote entries currently report
+a fetch-support diagnostic until git dependency fetch, cache, and lockfile
+support lands; local paths keep the existing behavior.
 Inside a package build, imports of the form `(import
 "pkg:math/src/lib.tl")` resolve from the dependency root declared for alias
 `math`; ordinary string imports remain relative to the importing file, and

@@ -1879,6 +1879,13 @@ Example:
   absolute dependency paths are used as written. Remote entries are manifest
   syntax for git dependency fetch support; local path entries keep the existing
   build and `pkg:` resolution behavior.
+- Local dependency manifests are loaded into a normalized serial DAG keyed by
+  manifest path before build execution. Transitive dependency packages build
+  once per root build invocation, diamond graphs de-duplicate the common
+  archive, and dependency cycles fail before code generation with a diagnostic
+  that includes the manifest path chain.
+- Dependency packages must be `staticlib`/`lib` packages; a `bin` dependency is
+  rejected as a package graph diagnostic.
 - `typelisp build --manifest-path path/to/typelisp.pkg` builds the entry file
   through the same module loader and compiler pipeline as `compile`.
 - `typelisp build` without `--manifest-path` searches for `typelisp.pkg` from
@@ -1895,10 +1902,9 @@ Example:
 - Package-root-qualified imports use the reserved string prefix
   `pkg:<alias>/...`, for example `(import "pkg:math/src/lib.tl")`.
 - This first package layer has no registry, semantic-version solving,
-  transitive manifest loading, implicit preludes, lockfile, workspace model, or
-  dynamic/shared library output. Namespace isolation and qualified symbol access
-  are specified by the selfhost module model in section 4.4, not by package
-  resolution itself.
+  implicit preludes, lockfile, workspace model, or dynamic/shared library
+  output. Namespace isolation and qualified symbol access are specified by the
+  selfhost module model in section 4.4, not by package resolution itself.
 
 ### 4.6 `(defenum ...)` and `(defstruct ...)`
 

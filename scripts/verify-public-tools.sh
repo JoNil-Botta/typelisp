@@ -343,8 +343,14 @@ else
     assert_contains "$err" "typelisp lsp"
     assert_contains "$err" "typelisp fmt"
     assert_contains "$err" "typelisp doc"
+    assert_contains "$err" "typelisp clean"
 fi
 USAGE_ERR=$err
+if grep -q "typelisp clean" "$USAGE_ERR"; then
+    HAS_CLEAN_COMMAND=1
+else
+    HAS_CLEAN_COMMAND=0
+fi
 if grep -q "typelisp lsp" "$USAGE_ERR"; then
     HAS_LSP_COMMAND=1
 else
@@ -458,6 +464,46 @@ if [ "$HOST_ACTION_ENABLED" -eq 1 ]; then
     assert_contains "$out" "Generated:"
 fi
 assert_contains "$WORKDIR/hello.s" "main:"
+
+if [ "$HAS_CLEAN_COMMAND" -eq 1 ]; then
+echo "[public-tools] clean source artifacts"
+CLEAN_SRC_DIR="$WORKDIR/clean-source"
+mkdir -p "$CLEAN_SRC_DIR"
+CLEAN_SRC="$CLEAN_SRC_DIR/main.tl"
+CLEAN_BASE="$CLEAN_SRC_DIR/main"
+cat > "$CLEAN_SRC" <<'EOF'
+(define (main) : i64 0)
+EOF
+: > "$CLEAN_BASE.s"
+: > "$CLEAN_BASE.ir"
+: > "$CLEAN_BASE.o"
+: > "$CLEAN_BASE.obj"
+: > "$CLEAN_BASE"
+: > "$CLEAN_BASE.exe"
+run_cmd clean-source-dry-run "$COMPILER" clean --dry-run "$CLEAN_SRC"
+assert_success
+assert_stderr_empty
+assert_contains "$out" "Would remove:"
+assert_contains "$out" "main.s"
+[ -f "$CLEAN_SRC" ] || fail "clean dry-run removed source file"
+[ -f "$CLEAN_BASE.s" ] || fail "clean dry-run removed assembly"
+[ -f "$CLEAN_BASE" ] || fail "clean dry-run removed executable"
+run_cmd clean-source "$COMPILER" clean "$CLEAN_SRC"
+assert_success
+assert_stderr_empty
+assert_contains "$out" "Removed:"
+[ -f "$CLEAN_SRC" ] || fail "clean removed source file"
+[ ! -e "$CLEAN_BASE.s" ] || fail "clean did not remove $CLEAN_BASE.s"
+[ ! -e "$CLEAN_BASE.ir" ] || fail "clean did not remove $CLEAN_BASE.ir"
+[ ! -e "$CLEAN_BASE.o" ] || fail "clean did not remove $CLEAN_BASE.o"
+[ ! -e "$CLEAN_BASE.obj" ] || fail "clean did not remove $CLEAN_BASE.obj"
+[ ! -e "$CLEAN_BASE" ] || fail "clean did not remove $CLEAN_BASE"
+[ ! -e "$CLEAN_BASE.exe" ] || fail "clean did not remove $CLEAN_BASE.exe"
+run_cmd clean-source-idempotent "$COMPILER" clean "$CLEAN_SRC"
+assert_success
+assert_stdout_empty
+assert_stderr_empty
+fi
 
 run_cmd bad-target "$COMPILER" compile examples/hello.tl --target definitely-not-a-target -o "$WORKDIR/bad-target.s"
 assert_failure
@@ -1865,6 +1911,25 @@ if [ "$IS_STAGE1_WRAPPER" -eq 1 ]; then
 else
     assert_contains_any "$PKG_ASM" "_tl_inc:" "_tl_math_u2etl_colon_coloninc:"
     assert_contains "$PKG_ASM" "add_one"
+fi
+if [ "$HAS_CLEAN_COMMAND" -eq 1 ]; then
+PKG_OUT_DIR="$PKG/target/typelisp/public_tool_pkg"
+run_cmd package-clean-dry-run "$COMPILER" clean --dry-run --manifest-path "$PKG/typelisp.pkg"
+assert_success
+assert_stderr_empty
+assert_contains "$out" "Would remove:"
+assert_contains "$out" "public_tool_pkg.s"
+[ -f "$PKG_ASM" ] || fail "package clean dry-run removed assembly"
+run_cmd package-clean "$COMPILER" clean --manifest-path "$PKG/typelisp.pkg"
+assert_success
+assert_stderr_empty
+assert_contains "$out" "Removed:"
+[ ! -e "$PKG_ASM" ] || fail "package clean did not remove $PKG_ASM"
+[ ! -d "$PKG_OUT_DIR" ] || fail "package clean did not remove $PKG_OUT_DIR"
+run_cmd package-clean-idempotent "$COMPILER" clean --manifest-path "$PKG/typelisp.pkg"
+assert_success
+assert_stdout_empty
+assert_stderr_empty
 fi
 
 BADPKG="$WORKDIR/badpkg"

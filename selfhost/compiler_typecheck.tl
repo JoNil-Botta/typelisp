@@ -4098,26 +4098,59 @@
   "(defmacro (again) : Expr `(again))
 (define (main) : i64 (again))")
 
+(define (compiler-typecheck-macro-hygiene-capture-source) : String
+  "(defmacro (with-temp-bool [body : bool]) : bool
+  `(let ([tmp : i64 1])
+     ,body))
+(define (main) : bool
+  (let ([tmp : bool true])
+    (with-temp-bool tmp)))")
+
+(define (compiler-typecheck-macro-hygiene-definition-source) : String
+  "(define (macro-helper [x : bool]) : bool (not x))
+(defmacro (unless2 [condition : bool] [body : unit]) : unit
+  `(if (macro-helper ,condition)
+     ,body
+     unit))
+(define (main) : unit
+  (let ([macro-helper : bool true])
+    (unless2 false unit)))")
+
+(define (compiler-typecheck-macro-hygiene-unsafe-global-source) : String
+  "(unsafe (define (danger [x : i64]) : i64 x))
+(defmacro (call-danger [x : i64]) : i64
+  `(danger ,x))
+(define (main) : i64 (call-danger 1))")
+
 ;; Returns true when a macro call expands and the result typechecks, and when
 ;; arity plus operand-type errors are rejected during expansion at the call site.
 (define (compiler-typecheck-macro-expand-tests-ok?) : bool
   (and
-    (compiler-typecheck-ok? (compiler-typecheck-macro-expand-source))
     (and
-      (compiler-typecheck-error-ok?
-        (compiler-typecheck-macro-expand-arity-source)
-        "macro call has too few arguments")
+      (compiler-typecheck-ok? (compiler-typecheck-macro-expand-source))
       (and
         (compiler-typecheck-error-ok?
-          (compiler-typecheck-macro-expand-operand-source)
-          "typecheck: macro operand type mismatch: expected bool, got i64")
+          (compiler-typecheck-macro-expand-arity-source)
+          "macro call has too few arguments")
         (and
           (compiler-typecheck-error-ok?
-            (compiler-typecheck-macro-expand-variadic-operand-source)
+            (compiler-typecheck-macro-expand-operand-source)
             "typecheck: macro operand type mismatch: expected bool, got i64")
-          (compiler-typecheck-error-ok?
-            (compiler-typecheck-macro-expand-depth-source)
-            "macro expansion exceeded depth limit"))))))
+          (and
+            (compiler-typecheck-error-ok?
+              (compiler-typecheck-macro-expand-variadic-operand-source)
+              "typecheck: macro operand type mismatch: expected bool, got i64")
+            (compiler-typecheck-error-ok?
+              (compiler-typecheck-macro-expand-depth-source)
+              "macro expansion exceeded depth limit")))))
+    (and
+      (compiler-typecheck-ok? (compiler-typecheck-macro-hygiene-capture-source))
+      (and
+        (compiler-typecheck-ok?
+          (compiler-typecheck-macro-hygiene-definition-source))
+        (compiler-typecheck-error-ok?
+          (compiler-typecheck-macro-hygiene-unsafe-global-source)
+          "typecheck: danger requires unsafe context")))))
 
 (define (compiler-typecheck-self-test-basics) : unit
   (begin

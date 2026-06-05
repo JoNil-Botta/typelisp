@@ -2462,10 +2462,12 @@
         [_ false])]
     [(AstTypeCons ah at)
       (let
+        [ah : AstType (box-get ah)]
         [at : AstTypeList (box-get at)]
         (match b
           [(AstTypeCons bh bt)
             (let
+              [bh : AstType (box-get bh)]
               [bt : AstTypeList (box-get bt)]
               (and (opt-type-eq ah bh) (opt-type-list-eq at bt)))]
           [_ false]))]))

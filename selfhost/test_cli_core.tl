@@ -521,6 +521,7 @@
     [(AstExprNil) names]
     [(AstExprCons head rest)
       (let
+        [head : AstExpr (box-get head)]
         [rest : AstExprList (box-get rest)]
         (tltest-reach-mark-expr-list rest (tltest-reach-mark-expr head names)))]))
 

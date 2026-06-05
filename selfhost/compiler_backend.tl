@@ -8652,14 +8652,18 @@
                 [(ErrCompilerBackend message) (ErrCompilerBackend message)]))]
           [(ErrCompilerBackend message) (ErrCompilerBackend message)]))]))
 
-;; Per-function arena escape for the backend (#1633). Emitting one function's
-;; assembly allocates per-instruction transient strings (right-associative
-;; string-append) that the bump allocator never frees â€” the ~5 GB the backend
-;; phase adds. We emit each function inside its own scratch arena, deep-`clone`
-;; ONLY the resulting assembly String into the enclosing arena, then destroy the
-;; scratch â€” reclaiming the per-function transient. `clone` of a String copies
-;; the same bytes, so the assembled program text is byte-identical.
-(define (compiler-backend-emit-function-escaping
+(define (compiler-backend-direct-emit-instr-limit) : i64
+  80)
+
+(define (compiler-backend-emit-function-direct?
+  [func : CompilerIrFunction]) : bool
+  (match func
+    [(IrFunction _ _ _ _ blocks)
+      (<=
+        (compiler-ir-block-list-instruction-count blocks)
+        (compiler-backend-direct-emit-instr-limit))]))
+
+(define (compiler-backend-emit-function-scratch
   [target : CompilerBackendTarget]
   [mode : CompilerBackendMode]
   [func : CompilerIrFunction]
@@ -8713,6 +8717,47 @@
                   (unsafe
                     (arena-destroy scratch-head))
                   (ErrCompilerBackend escaped)))))]))))
+
+;; Emit small functions directly to avoid scratch/clone overhead. Larger functions
+;; still use a scratch arena so transient assembly strings stay within the
+;; self-build memory budget.
+(define (compiler-backend-emit-function-escaping
+  [target : CompilerBackendTarget]
+  [mode : CompilerBackendMode]
+  [func : CompilerIrFunction]
+  [all-functions : CompilerIrFunctionList]
+  [globals : CompilerIrGlobalList]
+  [externs : CompilerIrExternList]
+  [plan : CompilerBackendRuntimePlan]
+  [program-index : CompilerBackendProgramIndex]
+  [spans : CompilerSourceSpans]
+  [span-index : CompilerBackendSourceSpanIndex]
+  [crt-entry : bool]) : ResultCompilerBackend
+  (if (compiler-backend-emit-function-direct? func)
+    (compiler-backend-emit-function
+      target
+      mode
+      func
+      all-functions
+      globals
+      externs
+      plan
+      program-index
+      spans
+      span-index
+      crt-entry)
+    (compiler-backend-emit-function-scratch
+      target
+      mode
+      func
+      all-functions
+      globals
+      externs
+      plan
+      program-index
+      spans
+      span-index
+      crt-entry)))
 
 (define (compiler-backend-emit-functions-into
   [target : CompilerBackendTarget]

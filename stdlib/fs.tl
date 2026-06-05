@@ -41,24 +41,33 @@
 
 ;: Runtime status probe for listing directory entries.
 (extern fs-runtime-read-dir-status (:symbol ".L_tl_fs_read_dir_status") : (->
-  String
+  (Ptr u8)
+  i64
   i64))
 
 ;: Runtime string probe for listing directory entries.
-(extern fs-runtime-read-dir (:symbol ".L_tl_fs_read_dir") : (-> String String))
+(extern fs-runtime-read-dir (:symbol ".L_tl_fs_read_dir") : (->
+  (Ptr u8)
+  i64
+  String))
 
 ;: Runtime status probe for retrieving a filesystem node kind.
 (extern fs-runtime-file-kind-status (:symbol ".L_tl_fs_file_kind_status") : (->
-  String
+  (Ptr u8)
+  i64
   i64))
 
 ;: Runtime status probe for retrieving a regular-file size.
 (extern fs-runtime-file-size-status (:symbol ".L_tl_fs_file_size_status") : (->
-  String
+  (Ptr u8)
+  i64
   i64))
 
 ;: Runtime integer probe for retrieving a regular-file size.
-(extern fs-runtime-file-size (:symbol ".L_tl_fs_file_size") : (-> String i64))
+(extern fs-runtime-file-size (:symbol ".L_tl_fs_file_size") : (->
+  (Ptr u8)
+  i64
+  i64))
 
 ;: Linux `mkdir` binding for directory creation.
 (extern fs-linux-mkdir (:symbol "mkdir") : (-> (Ptr u8) i32 i32))
@@ -180,23 +189,23 @@
 
 ;: Return the host status code for reading a directory listing.
 (define (fs-read-dir-status [path : String]) : i64
-  (fs-runtime-read-dir-status path))
+  (fs-runtime-read-dir-status (io-string-data path) (string-length path)))
 
 ;: Return the newline-delimited host directory listing payload.
 (define (fs-read-dir [path : String]) : String
-  (fs-runtime-read-dir path))
+  (fs-runtime-read-dir (io-string-data path) (string-length path)))
 
 ;: Return the host status code or sentinel for a filesystem node kind.
 (define (fs-file-kind-status [path : String]) : i64
-  (fs-runtime-file-kind-status path))
+  (fs-runtime-file-kind-status (io-string-data path) (string-length path)))
 
 ;: Return the host status code for retrieving a regular-file size.
 (define (fs-file-size-status [path : String]) : i64
-  (fs-runtime-file-size-status path))
+  (fs-runtime-file-size-status (io-string-data path) (string-length path)))
 
 ;: Return the host-reported byte size for a regular file.
 (define (fs-file-size [path : String]) : i64
-  (fs-runtime-file-size path))
+  (fs-runtime-file-size (io-string-data path) (string-length path)))
 
 ;: Return the host status code for retrieving the current working directory.
 (define (fs-current-dir-status) : i64

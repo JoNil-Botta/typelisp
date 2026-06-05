@@ -2762,13 +2762,17 @@
 
 (define (compiler-backend-fs-read-dir-runtime-source) : String
   "(extern fs-runtime-read-dir-status (:symbol \".L_tl_fs_read_dir_status\") : (->
-  String
+  (Ptr u8)
+  i64
   i64))
-(extern fs-runtime-read-dir (:symbol \".L_tl_fs_read_dir\") : (-> String String))
+(extern fs-runtime-read-dir (:symbol \".L_tl_fs_read_dir\") : (->
+  (Ptr u8)
+  i64
+  String))
 (define (fs-read-dir-status [path : String]) : i64
-  (fs-runtime-read-dir-status path))
+  (fs-runtime-read-dir-status (unsafe (string-data path)) (string-length path)))
 (define (fs-read-dir [path : String]) : String
-  (fs-runtime-read-dir path))
+  (fs-runtime-read-dir (unsafe (string-data path)) (string-length path)))
 (define (main [path : String]) : i64
   (+ (fs-read-dir-status path) (string-length (fs-read-dir path))))")
 
@@ -2814,10 +2818,13 @@
 
 (define (compiler-backend-fs-file-kind-runtime-source) : String
   "(extern fs-runtime-file-kind-status (:symbol \".L_tl_fs_file_kind_status\") : (->
-  String
+  (Ptr u8)
+  i64
   i64))
 (define (fs-file-kind-status [path : String]) : i64
-  (fs-runtime-file-kind-status path))
+  (fs-runtime-file-kind-status
+    (unsafe (string-data path))
+    (string-length path)))
 (define (main [path : String]) : i64 (fs-file-kind-status path))")
 
 (define (compiler-backend-fs-file-kind-runtime-ok?) : bool
@@ -2863,13 +2870,17 @@
 
 (define (compiler-backend-fs-file-size-runtime-source) : String
   "(extern fs-runtime-file-size-status (:symbol \".L_tl_fs_file_size_status\") : (->
-  String
+  (Ptr u8)
+  i64
   i64))
-(extern fs-runtime-file-size (:symbol \".L_tl_fs_file_size\") : (-> String i64))
+(extern fs-runtime-file-size (:symbol \".L_tl_fs_file_size\") : (->
+  (Ptr u8)
+  i64
+  i64))
 (define (fs-file-size-status [path : String]) : i64
-  (fs-runtime-file-size-status path))
+  (fs-runtime-file-size-status (unsafe (string-data path)) (string-length path)))
 (define (fs-file-size [path : String]) : i64
-  (fs-runtime-file-size path))
+  (fs-runtime-file-size (unsafe (string-data path)) (string-length path)))
 (define (main [path : String]) : i64
   (+ (fs-file-size-status path) (fs-file-size path)))")
 

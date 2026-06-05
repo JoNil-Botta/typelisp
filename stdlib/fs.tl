@@ -11,7 +11,7 @@
 ;#
 ;# Usage: `(import "stdlib/fs.tl")`
 ;#
-;; requires-stage0-symbol: fs-mkdir-status,fs-remove-file-status,fs-remove-dir-status,fs-rename-status,fs-read-dir-status,fs-read-dir,fs-file-kind-status,fs-file-size-status,fs-file-size
+;; requires-stage0-symbol: fs-read-dir-status,fs-read-dir,fs-file-kind-status,fs-file-size-status,fs-file-size
 ;# ```typelisp
 ;# (import "stdlib/fs.tl")
 ;# (define joined : String

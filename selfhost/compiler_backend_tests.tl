@@ -1008,18 +1008,18 @@
     [(ErrCompilerBackend _) false]))
 
 (define (compiler-backend-peephole-assignments) : CompilerRegAssignmentList
-  (CompilerRegAssignmentCons
+  (compiler-reg-assignment-cons
     (CompilerRegAssignment 0 (CompilerRegRegister "%r12"))
-    (CompilerRegAssignmentCons
+    (compiler-reg-assignment-cons
       (CompilerRegAssignment 1 (CompilerRegRegister "%xmm2"))
-      (CompilerRegAssignmentCons
+      (compiler-reg-assignment-cons
         (CompilerRegAssignment 2 (CompilerRegRegister "%r13"))
         CompilerRegAssignmentNil))))
 
 (define (compiler-backend-expanded-scalar-assignments) : CompilerRegAssignmentList
-  (CompilerRegAssignmentCons
+  (compiler-reg-assignment-cons
     (CompilerRegAssignment 0 (CompilerRegRegister "%r8"))
-    (CompilerRegAssignmentCons
+    (compiler-reg-assignment-cons
       (CompilerRegAssignment 1 (CompilerRegRegister "%r9"))
       CompilerRegAssignmentNil)))
 
@@ -1048,9 +1048,9 @@
     [assignments : CompilerRegAssignmentList
       (compiler-backend-peephole-assignments)]
     [coalesced : CompilerRegAssignmentList
-      (CompilerRegAssignmentCons
+      (compiler-reg-assignment-cons
         (CompilerRegAssignment 0 (CompilerRegRegister "%r12"))
-        (CompilerRegAssignmentCons
+        (compiler-reg-assignment-cons
           (CompilerRegAssignment 2 (CompilerRegRegister "%r12"))
           CompilerRegAssignmentNil))]
     (and
@@ -1355,9 +1355,9 @@
     [(ErrCompilerBackend _) false]))
 
 (define (compiler-backend-phi-same-home-assignments) : CompilerRegAssignmentList
-  (CompilerRegAssignmentCons
+  (compiler-reg-assignment-cons
     (CompilerRegAssignment 0 (CompilerRegRegister "%r12"))
-    (CompilerRegAssignmentCons
+    (compiler-reg-assignment-cons
       (CompilerRegAssignment 1 (CompilerRegRegister "%r12"))
       CompilerRegAssignmentNil)))
 
@@ -3225,9 +3225,11 @@
 (define (compiler-backend-narrow-binop-types
   [lhs-ty : AstType]
   [rhs-ty : AstType]) : CompilerRegVarTypeList
-  (CompilerRegVarTypeCons
+  (compiler-reg-var-type-cons
     (CompilerRegVarType 0 lhs-ty)
-    (CompilerRegVarTypeCons (CompilerRegVarType 1 rhs-ty) CompilerRegVarTypeNil)))
+    (compiler-reg-var-type-cons
+      (CompilerRegVarType 1 rhs-ty)
+      CompilerRegVarTypeNil)))
 
 (define (compiler-backend-narrow-binop-shape?
   [op : CompilerIrBinOp]

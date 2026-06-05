@@ -1190,8 +1190,8 @@
             [(CompilerRegRegister found)
               (if (string-eq found reg)
                 true
-                (compiler-backend-plan-uses-reg? rest reg))]
-            [_ (compiler-backend-plan-uses-reg? rest reg)])])]))
+                (compiler-backend-plan-uses-reg? (box-get rest) reg))]
+            [_ (compiler-backend-plan-uses-reg? (box-get rest) reg)])])]))
 
 (define (compiler-backend-plan-uses-callee-regs?
   [assignments : CompilerRegAssignmentList]) : bool
@@ -1230,10 +1230,10 @@
         [(CompilerRegAssignment var _)
           (let
             [tail : CompilerRegAssignmentList
-              (compiler-backend-drop-param-assignments rest params)]
+              (compiler-backend-drop-param-assignments (box-get rest) params)]
             (if (compiler-backend-param-var? params var)
               tail
-              (CompilerRegAssignmentCons item tail)))])]))
+              (compiler-reg-assignment-cons item tail)))])]))
 
 (define (compiler-backend-callee-save-slot [vars : i64] [idx : i64]) : String
   (compiler-backend-frame-offset (- 0 (* 8 (+ vars (+ idx 1))))))

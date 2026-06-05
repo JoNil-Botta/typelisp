@@ -50,6 +50,7 @@ echo "[build-stage0] compile selfhost/cli.tl with seed ($NL_BOOTSTRAP_TARGET)"
 if ! run_with_heartbeat_capture "compile cli.tl" "$COMPILE_STDOUT" "$COMPILE_STDERR" \
     "$SEED" compile selfhost/cli.tl -o "$ASM" \
     --target "$NL_BOOTSTRAP_TARGET" \
+    $(native_target_cfg_args) \
     --stdlib-root stdlib --stdlib-root selfhost --opt-level 2; then
     echo "[build-stage0] seed compiler failed while compiling selfhost/cli.tl" >&2
     echo "[build-stage0] compiler stdout:" >&2

@@ -8,8 +8,9 @@ set -eu
 #   TYPELISP_BIN=./target/stage0/typelisp scripts/check-tl-format.sh
 #
 # The check runs the self-hosted formatter through `typelisp fmt --check` over
-# the checked-in TypeLisp corpus. CI must not rewrite files; run
-# `typelisp fmt <file.tl>...` locally to normalize sources before committing.
+# most of the TypeLisp corpus. Files using syntax that the published seed
+# formatter may not preserve yet, such as extern metadata `(:symbol ...)` and
+# unsafe blocks, are checked with the formatter source in the current tree.
 #
 # refs #384.
 
@@ -50,6 +51,7 @@ mkdir -p "$WORKDIR"
 
 ALL_FILES="$WORKDIR/all-files.txt"
 CHECK_FILES="$WORKDIR/check-files.txt"
+METADATA_FILES="$WORKDIR/metadata-files.txt"
 
 # Check every git-tracked *.tl file in the repository so TypeLisp code in any
 # directory (including tools/, benchmarks/) meets the same formatting standard.
@@ -59,17 +61,23 @@ CHECK_FILES="$WORKDIR/check-files.txt"
 #     the test assertions.
 git ls-files '*.tl' | grep -v '^tests/format_golden/' | sort > "$ALL_FILES"
 
-cp "$ALL_FILES" "$CHECK_FILES"
+xargs grep -lE '\(:(symbol|abi|link-lib|link-search|link-arg)([[:space:]]|\)|$)|\(unsafe([[:space:]]|\)|$)' < "$ALL_FILES" > "$METADATA_FILES" || true
+if [ -s "$METADATA_FILES" ]; then
+    grep -F -x -v -f "$METADATA_FILES" "$ALL_FILES" > "$CHECK_FILES"
+else
+    cp "$ALL_FILES" "$CHECK_FILES"
+fi
 
-if [ ! -s "$CHECK_FILES" ]; then
+if [ ! -s "$CHECK_FILES" ] && [ ! -s "$METADATA_FILES" ]; then
     echo "no TypeLisp source files selected for formatting check" >&2
     exit 1
 fi
 
 count=$(wc -l < "$CHECK_FILES" | tr -d ' ')
+metadata_count=$(wc -l < "$METADATA_FILES" | tr -d ' ')
 echo "Checking TypeLisp formatting for $count file(s)."
 
-if ! xargs "$COMPILER" fmt --check < "$CHECK_FILES"; then
+if [ -s "$CHECK_FILES" ] && ! xargs "$COMPILER" fmt --check < "$CHECK_FILES"; then
     echo "Batch TypeLisp format check failed; probing files one by one." >&2
     while IFS= read -r file; do
         echo "TypeLisp format probe: $file" >&2
@@ -88,4 +96,16 @@ if ! xargs "$COMPILER" fmt --check < "$CHECK_FILES"; then
     exit 1
 fi
 
-echo "TypeLisp format check passed for $count file(s)."
+if [ -s "$METADATA_FILES" ]; then
+    echo "Checking current-syntax-aware TypeLisp formatting for $metadata_count file(s)."
+    if ! xargs "$COMPILER" run selfhost/cli.tl \
+        --stdlib-root stdlib \
+        --stdlib-root selfhost \
+        -- fmt --check < "$METADATA_FILES"; then
+        echo "Current-syntax-aware TypeLisp format check failed." >&2
+        echo "Run: $COMPILER run selfhost/cli.tl --stdlib-root stdlib --stdlib-root selfhost -- fmt \$(cat $METADATA_FILES)" >&2
+        exit 1
+    fi
+fi
+
+echo "TypeLisp format check passed for $count file(s), plus $metadata_count current-syntax-aware file(s)."

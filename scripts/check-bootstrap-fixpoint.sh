@@ -144,6 +144,7 @@ check_stage1_compile_cli() {
         stage1-compile-command \
         "$STAGE1_BIN" compile "$STAGE1_CLI_SRC" \
         --target "$BOOTSTRAP_TARGET" \
+        $(native_target_cfg_args) \
         --backend-mode scalar \
         --opt-level 0 \
         --stdlib-root "$ROOT/stdlib" \
@@ -156,7 +157,7 @@ check_stage1_compile_cli() {
 
     run_stage1_cli_capture \
         stage1-compile-emit-ir \
-        "$STAGE1_BIN" compile "$STAGE1_CLI_SRC" --emit-ir --target "$BOOTSTRAP_TARGET" --stdlib-root "$ROOT/stdlib"
+        "$STAGE1_BIN" compile "$STAGE1_CLI_SRC" --emit-ir --target "$BOOTSTRAP_TARGET" $(native_target_cfg_args) --stdlib-root "$ROOT/stdlib"
     [ -s "$STAGE1_CLI_IR" ] || {
         echo "stage1 compile --emit-ir did not write default IR: $STAGE1_CLI_IR" >&2
         exit 1
@@ -216,19 +217,19 @@ check_stage1_compile_cli() {
 }
 
 echo "[bootstrap] stage0 -> stage1.s"
-run_with_heartbeat "stage0 -> stage1.s" "$COMPILER" compile selfhost/compile.tl -o "$STAGE1_ASM" --target "$BOOTSTRAP_TARGET"
+run_with_heartbeat "stage0 -> stage1.s" "$COMPILER" compile selfhost/compile.tl -o "$STAGE1_ASM" --target "$BOOTSTRAP_TARGET" $(native_target_cfg_args)
 
 assemble_and_link "stage1" "$STAGE1_ASM" "$STAGE1_OBJ" "$STAGE1_BIN"
 
 check_stage1_compile_cli
 
 echo "[bootstrap] stage1 -> stage2.s"
-run_with_heartbeat "stage1 -> stage2.s" "$STAGE1_BIN" compile selfhost/compile.tl -o "$STAGE2_ASM" --target "$BOOTSTRAP_TARGET"
+run_with_heartbeat "stage1 -> stage2.s" "$STAGE1_BIN" compile selfhost/compile.tl -o "$STAGE2_ASM" --target "$BOOTSTRAP_TARGET" $(native_target_cfg_args)
 
 assemble_and_link_stage2
 
 echo "[bootstrap] stage2 -> stage3.s"
-run_with_heartbeat "stage2 -> stage3.s" "$STAGE2_BIN" compile selfhost/compile.tl -o "$STAGE3_ASM" --target "$BOOTSTRAP_TARGET"
+run_with_heartbeat "stage2 -> stage3.s" "$STAGE2_BIN" compile selfhost/compile.tl -o "$STAGE3_ASM" --target "$BOOTSTRAP_TARGET" $(native_target_cfg_args)
 
 echo "[bootstrap] compare stage2.s and stage3.s"
 if ! cmp -s "$STAGE2_ASM" "$STAGE3_ASM"; then

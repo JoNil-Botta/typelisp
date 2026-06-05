@@ -27,6 +27,8 @@
 ;;   - Digit char literals: `#\0` lexes as NUL (the `\0` escape), so digit and
 ;;     whitespace classification compares the char's `i64` code point against
 ;;     ASCII constants rather than against char literals.
+(import "stdlib/io.tl")
+
 (defenum Token
   (TIdent String)
   (TInt i64)

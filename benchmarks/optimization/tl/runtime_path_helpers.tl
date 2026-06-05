@@ -1,3 +1,5 @@
+(import "stdlib/io.tl")
+
 (define (path-separator? [c : char]) : bool
   (= c #/'))
 

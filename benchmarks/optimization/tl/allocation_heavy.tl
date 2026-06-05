@@ -1,3 +1,5 @@
+(import "stdlib/io.tl")
+
 (define (bench [n : i64]) : i64
   (let
     [i : i64 0]

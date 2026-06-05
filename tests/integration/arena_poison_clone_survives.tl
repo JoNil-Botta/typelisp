@@ -13,21 +13,18 @@
     (begin
       (tl_arena_poison_enable)
       (unsafe
-        (begin
-          (arena-set! scratch)))
+        (arena-set! scratch))
       (let
         [source : PoisonPayload
           (PoisonPayload (string-append "poison" "ok") 34)]
         (begin
           (unsafe
-            (begin
-              (arena-set! outer)))
+            (arena-set! outer))
           (let
             [copy : PoisonPayload (clone source)]
             (begin
               (unsafe
-                (begin
-                  (arena-destroy scratch)))
+                (arena-destroy scratch))
               (+
                 (string-length (struct-get copy label))
                 (struct-get copy value)))))))))

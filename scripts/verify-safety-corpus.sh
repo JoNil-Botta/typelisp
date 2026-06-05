@@ -75,9 +75,11 @@ tr -d '\r' < "$MANIFEST" > "$NORMALIZED_MANIFEST"
 
 BUILD_TARGET=linux-x86_64
 CHECK_BIN="$WORKDIR/selfhost-check"
+TARGET_CFG_ARGS="--cfg linux --cfg unix --cfg target-linux --cfg os-linux"
 if [ "$HOST_OS" = windows ]; then
     BUILD_TARGET=windows-x86_64
     CHECK_BIN="$WORKDIR/selfhost-check.exe"
+    TARGET_CFG_ARGS="--cfg windows --cfg target-windows --cfg os-windows"
 fi
 
 fail() {
@@ -159,6 +161,7 @@ build_selfhost_checker() {
         run_case "$out" "$err" 0 \
             "$COMPILER" compile selfhost/check.tl \
             --target "$BUILD_TARGET" \
+            $TARGET_CFG_ARGS \
             --stdlib-root "$ROOT/stdlib" \
             -o "$asm"
         if [ "$code" -ne 0 ]; then
@@ -178,6 +181,7 @@ build_selfhost_checker() {
         run_case "$out" "$err" 0 \
             "$COMPILER" compile selfhost/check.tl \
             --target "$BUILD_TARGET" \
+            $TARGET_CFG_ARGS \
             --stdlib-root "$ROOT/stdlib" \
             -o "$asm"
         if [ "$code" -ne 0 ]; then
@@ -230,6 +234,7 @@ build_case_program() {
         run_case "$build_out" "$build_err" 0 \
             "$COMPILER" compile "$case_source" \
             --target "$BUILD_TARGET" \
+            $TARGET_CFG_ARGS \
             --stdlib-root "$ROOT/stdlib" \
             -o "$asm"
         if [ "$code" -ne 0 ]; then
@@ -245,6 +250,7 @@ build_case_program() {
         run_case "$build_out" "$build_err" 0 \
             "$COMPILER" compile "$source" \
             --target "$BUILD_TARGET" \
+            $TARGET_CFG_ARGS \
             --stdlib-root "$ROOT/stdlib" \
             -o "$asm"
         if [ "$code" -ne 0 ]; then

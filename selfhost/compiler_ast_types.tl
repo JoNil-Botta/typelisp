@@ -161,10 +161,10 @@
 
 (defenum AstPattern
   (AstPatVar String AstMaybeType)
-  (AstPatTuple AstPatternList)
+  (AstPatTuple (Box AstPatternList))
   (AstPatWildcard)
   (AstPatBinding String)
-  (AstPatVariant String AstPatternList)
+  (AstPatVariant String (Box AstPatternList))
   (AstPatLiteral AstLiteral))
 
 (defenum AstPatternList
@@ -172,113 +172,120 @@
   (AstPatternCons AstPattern (Box AstPatternList)))
 
 (defenum AstLetBinding
-  (AstLetBinding String AstMaybeType AstExpr))
+  (AstLetBinding String AstMaybeType (Box AstExpr)))
 
 (defenum AstLetBindingList
   (AstLetBindingNil)
   (AstLetBindingCons AstLetBinding (Box AstLetBindingList)))
 
 (defenum AstResourceBinding
-  (AstResourceBinding String AstExpr AstExpr))
+  (AstResourceBinding String (Box AstExpr) (Box AstExpr)))
 
 (defenum AstResourceBindingList
   (AstResourceBindingNil)
   (AstResourceBindingCons AstResourceBinding (Box AstResourceBindingList)))
 
 (defenum AstMatchArm
-  (AstMatchArm AstPattern AstExpr))
+  (AstMatchArm AstPattern (Box AstExpr)))
 
 (defenum AstMatchArmList
   (AstMatchArmNil)
   (AstMatchArmCons AstMatchArm (Box AstMatchArmList)))
 
 (defenum AstExpr
-  (AstExprSpanned AstExpr AstSourceSpan)
+  (AstExprSpanned (Box AstExpr) AstSourceSpan)
   (AstExprLiteral AstLiteral)
   (AstExprVar String)
-  (AstExprBinary AstBinOp AstExpr AstExpr)
-  (AstExprUnary AstUnOp AstExpr)
-  (AstExprCall AstExpr AstExprList)
-  (AstExprIf AstExpr AstExpr AstExpr)
-  (AstExprLet AstLetBindingList AstExpr)
-  (AstExprLambda AstParamList AstMaybeType AstExpr)
+  (AstExprBinary AstBinOp (Box AstExpr) (Box AstExpr))
+  (AstExprUnary AstUnOp (Box AstExpr))
+  (AstExprCall (Box AstExpr) AstExprList)
+  (AstExprIf (Box AstExpr) (Box AstExpr) (Box AstExpr))
+  (AstExprLet AstLetBindingList (Box AstExpr))
+  (AstExprLambda AstParamList AstMaybeType (Box AstExpr))
   (AstExprTuple AstExprList)
-  (AstExprTupleRef AstExpr i64)
+  (AstExprTupleRef (Box AstExpr) i64)
   (AstExprArray AstExprList)
-  (AstExprMakeArray AstType AstExpr)
-  (AstExprArrayRef AstExpr AstExpr)
-  (AstExprArraySet AstExpr AstExpr AstExpr)
-  (AstExprArrayPush AstExpr AstExpr)
-  (AstExprStringRef AstExpr AstExpr)
-  (AstExprWhile AstExpr AstExpr)
+  (AstExprMakeArray AstType (Box AstExpr))
+  (AstExprArrayRef (Box AstExpr) (Box AstExpr))
+  (AstExprArraySet (Box AstExpr) (Box AstExpr) (Box AstExpr))
+  (AstExprArrayPush (Box AstExpr) (Box AstExpr))
+  (AstExprStringRef (Box AstExpr) (Box AstExpr))
+  (AstExprWhile (Box AstExpr) (Box AstExpr))
   (AstExprBegin AstExprList)
   ;; `(unsafe expr+)` (#1053): a `begin`-like block that additionally marks an
   ;; unsafe context (v1 has the same runtime/type behavior as `begin`; the
   ;; unsafe-context flag is consumed by later raw-pointer ops, #955).
   (AstExprUnsafe AstExprList)
-  (AstExprSet String AstExpr)
-  (AstExprAnn AstExpr AstType)
-  (AstExprCast AstExpr AstType)
-  (AstExprBorrow AstBorrowLifetime AstExpr)
-  (AstExprMatch AstExpr AstMatchArmList)
-  (AstExprForeach String AstType AstExpr AstExpr AstExpr)
-  (AstExprSpmdReduce AstReduceOp String AstType AstExpr AstExpr AstExpr AstExpr)
-  (AstExprStructGet AstExpr String)
+  (AstExprSet String (Box AstExpr))
+  (AstExprAnn (Box AstExpr) AstType)
+  (AstExprCast (Box AstExpr) AstType)
+  (AstExprBorrow AstBorrowLifetime (Box AstExpr))
+  (AstExprMatch (Box AstExpr) AstMatchArmList)
+  (AstExprForeach String AstType (Box AstExpr) (Box AstExpr) (Box AstExpr))
+  (AstExprSpmdReduce
+    AstReduceOp
+    String
+    AstType
+    (Box AstExpr)
+    (Box AstExpr)
+    (Box AstExpr)
+    (Box AstExpr))
+  (AstExprStructGet (Box AstExpr) String)
   (AstExprWithRegion String AstExprList)
-  (AstExprWithEscape AstExpr AstExprList)
+  (AstExprWithEscape (Box AstExpr) AstExprList)
   (AstExprWithResource AstResourceBindingList AstExprList)
-  (AstExprBox AstExpr)
-  (AstExprBoxGet AstExpr)
+  (AstExprBox (Box AstExpr))
+  (AstExprBoxGet (Box AstExpr))
   ;; Compile-time-only type value literal: `(type T)`.
   (AstExprTypeLiteral AstType)
   ;; Reserved compile-time evaluation form `(comptime expr)` (#718). Parsed and
   ;; type-checked (as the inner expression's type); evaluation lands in #719.
-  (AstExprComptime AstExpr)
+  (AstExprComptime (Box AstExpr))
   ;; Macro quote syntax (#1136). The reader desugars prefix quote tokens into
   ;; these list-headed forms before parsing:
   ;;   'x       -> (quote x)
   ;;   `x       -> (quasiquote x)
   ;;   ,x       -> (unquote x)
   ;;   ,@xs     -> (unquote-splicing xs)
-  (AstExprQuote AstExpr)
-  (AstExprQuasiquote AstExpr)
-  (AstExprUnquote AstExpr)
-  (AstExprUnquoteSplicing AstExpr)
+  (AstExprQuote (Box AstExpr))
+  (AstExprQuasiquote (Box AstExpr))
+  (AstExprUnquote (Box AstExpr))
+  (AstExprUnquoteSplicing (Box AstExpr))
   ;; Narrow Result-like propagation form `(try expr)` (#903). The temporary
   ;; convention recognizes concrete enums with one `Ok*` and one `Err*`
   ;; variant, each carrying exactly one payload.
-  (AstExprTry AstExpr)
+  (AstExprTry (Box AstExpr))
   ;; General function-local early exit: `(return expr)` checks `expr` against
   ;; the enclosing function's return type and has the internal `never` type.
-  (AstExprReturn AstExpr)
+  (AstExprReturn (Box AstExpr))
   ;; Null raw-pointer construction `(ptr-null : T)` where `T` is `(Ptr U)` or
   ;; `(MutPtr U)` (#1054). Lowers to a pointer-sized zero; type is `T`.
   (AstExprPtrNull AstType)
   ;; Null check `(ptr-null? p)` on a raw pointer (#1054). Result is `bool`.
-  (AstExprPtrNullCheck AstExpr)
+  (AstExprPtrNullCheck (Box AstExpr))
   ;; Unsafe raw-pointer operations (#1055). The typechecker admits these only
   ;; inside `(unsafe ...)`; lowering maps them to existing pointer IR.
-  (AstExprPtrRead AstExpr)
-  (AstExprPtrWrite AstExpr AstExpr)
-  (AstExprPtrOffset AstExpr AstExpr)
-  (AstExprPtrCast AstExpr AstType)
-  (AstExprPtrToInt AstExpr)
-  (AstExprIntToPtr AstExpr AstType)
+  (AstExprPtrRead (Box AstExpr))
+  (AstExprPtrWrite (Box AstExpr) (Box AstExpr))
+  (AstExprPtrOffset (Box AstExpr) (Box AstExpr))
+  (AstExprPtrCast (Box AstExpr) AstType)
+  (AstExprPtrToInt (Box AstExpr))
+  (AstExprIntToPtr (Box AstExpr) AstType)
   ;; Low-level FFI bridge operations used by stdlib. These expose raw backing
   ;; storage and process entry state without synthesizing runtime wrapper calls.
-  (AstExprStringData AstExpr)
-  (AstExprStringFromBytes AstExpr AstExpr)
-  (AstExprArrayData AstExpr)
+  (AstExprStringData (Box AstExpr))
+  (AstExprStringFromBytes (Box AstExpr) (Box AstExpr))
+  (AstExprArrayData (Box AstExpr))
   (AstExprProgramArgc)
   (AstExprProgramArgv)
   (AstExprProgramEnvp)
   ;; Inline CPU feature instructions. These lower directly to x86_64 `cpuid`
   ;; and `xgetbv` instructions, avoiding emitted forwarding helpers.
-  (AstExprCpuIdEax AstExpr AstExpr)
-  (AstExprCpuIdEbx AstExpr AstExpr)
-  (AstExprCpuIdEcx AstExpr AstExpr)
-  (AstExprCpuIdEdx AstExpr AstExpr)
-  (AstExprXgetbv AstExpr))
+  (AstExprCpuIdEax (Box AstExpr) (Box AstExpr))
+  (AstExprCpuIdEbx (Box AstExpr) (Box AstExpr))
+  (AstExprCpuIdEcx (Box AstExpr) (Box AstExpr))
+  (AstExprCpuIdEdx (Box AstExpr) (Box AstExpr))
+  (AstExprXgetbv (Box AstExpr)))
 
 (defenum AstExprList
   (AstExprNil)
@@ -387,19 +394,209 @@
 (define (ast-pattern-cons [head : AstPattern] [rest : AstPatternList]) : AstPatternList
   (AstPatternCons head (box rest)))
 
+(define (ast-pat-tuple [items : AstPatternList]) : AstPattern
+  (AstPatTuple (box items)))
+
+(define (ast-pat-variant [name : String] [items : AstPatternList]) : AstPattern
+  (AstPatVariant name (box items)))
+
+(define (ast-let-binding
+  [name : String]
+  [maybe-ty : AstMaybeType]
+  [value : AstExpr]) : AstLetBinding
+  (AstLetBinding name maybe-ty (box value)))
+
 (define (ast-let-binding-cons [head : AstLetBinding] [rest : AstLetBindingList]) : AstLetBindingList
   (AstLetBindingCons head (box rest)))
+
+(define (ast-resource-binding
+  [name : String]
+  [init : AstExpr]
+  [cleanup : AstExpr]) : AstResourceBinding
+  (AstResourceBinding name (box init) (box cleanup)))
 
 (define (ast-resource-binding-cons
   [head : AstResourceBinding]
   [rest : AstResourceBindingList]) : AstResourceBindingList
   (AstResourceBindingCons head (box rest)))
 
+(define (ast-match-arm [pattern : AstPattern] [body : AstExpr]) : AstMatchArm
+  (AstMatchArm pattern (box body)))
+
 (define (ast-match-arm-cons [head : AstMatchArm] [rest : AstMatchArmList]) : AstMatchArmList
   (AstMatchArmCons head (box rest)))
 
 (define (ast-expr-cons [head : AstExpr] [rest : AstExprList]) : AstExprList
   (AstExprCons head (box rest)))
+
+(define (ast-expr-spanned [inner : AstExpr] [span : AstSourceSpan]) : AstExpr
+  (AstExprSpanned (box inner) span))
+
+(define (ast-expr-binary [op : AstBinOp] [left : AstExpr] [right : AstExpr]) : AstExpr
+  (AstExprBinary op (box left) (box right)))
+
+(define (ast-expr-unary [op : AstUnOp] [inner : AstExpr]) : AstExpr
+  (AstExprUnary op (box inner)))
+
+(define (ast-expr-call [callee : AstExpr] [args : AstExprList]) : AstExpr
+  (AstExprCall (box callee) args))
+
+(define (ast-expr-if
+  [cond : AstExpr]
+  [then-expr : AstExpr]
+  [else-expr : AstExpr]) : AstExpr
+  (AstExprIf (box cond) (box then-expr) (box else-expr)))
+
+(define (ast-expr-let [bindings : AstLetBindingList] [body : AstExpr]) : AstExpr
+  (AstExprLet bindings (box body)))
+
+(define (ast-expr-lambda
+  [params : AstParamList]
+  [ret : AstMaybeType]
+  [body : AstExpr]) : AstExpr
+  (AstExprLambda params ret (box body)))
+
+(define (ast-expr-tuple-ref [target : AstExpr] [index : i64]) : AstExpr
+  (AstExprTupleRef (box target) index))
+
+(define (ast-expr-make-array [elem : AstType] [size : AstExpr]) : AstExpr
+  (AstExprMakeArray elem (box size)))
+
+(define (ast-expr-array-ref [target : AstExpr] [index : AstExpr]) : AstExpr
+  (AstExprArrayRef (box target) (box index)))
+
+(define (ast-expr-array-set
+  [target : AstExpr]
+  [index : AstExpr]
+  [value : AstExpr]) : AstExpr
+  (AstExprArraySet (box target) (box index) (box value)))
+
+(define (ast-expr-array-push [target : AstExpr] [value : AstExpr]) : AstExpr
+  (AstExprArrayPush (box target) (box value)))
+
+(define (ast-expr-string-ref [target : AstExpr] [index : AstExpr]) : AstExpr
+  (AstExprStringRef (box target) (box index)))
+
+(define (ast-expr-while [cond : AstExpr] [body : AstExpr]) : AstExpr
+  (AstExprWhile (box cond) (box body)))
+
+(define (ast-expr-set [name : String] [value : AstExpr]) : AstExpr
+  (AstExprSet name (box value)))
+
+(define (ast-expr-ann [expr : AstExpr] [ty : AstType]) : AstExpr
+  (AstExprAnn (box expr) ty))
+
+(define (ast-expr-cast [expr : AstExpr] [ty : AstType]) : AstExpr
+  (AstExprCast (box expr) ty))
+
+(define (ast-expr-borrow [lifetime : AstBorrowLifetime] [expr : AstExpr]) : AstExpr
+  (AstExprBorrow lifetime (box expr)))
+
+(define (ast-expr-match [scrutinee : AstExpr] [arms : AstMatchArmList]) : AstExpr
+  (AstExprMatch (box scrutinee) arms))
+
+(define (ast-expr-foreach
+  [name : String]
+  [index-ty : AstType]
+  [start : AstExpr]
+  [end : AstExpr]
+  [body : AstExpr]) : AstExpr
+  (AstExprForeach name index-ty (box start) (box end) (box body)))
+
+(define (ast-expr-spmd-reduce
+  [op : AstReduceOp]
+  [name : String]
+  [index-ty : AstType]
+  [start : AstExpr]
+  [end : AstExpr]
+  [init : AstExpr]
+  [value : AstExpr]) : AstExpr
+  (AstExprSpmdReduce
+    op
+    name
+    index-ty
+    (box start)
+    (box end)
+    (box init)
+    (box value)))
+
+(define (ast-expr-struct-get [target : AstExpr] [field : String]) : AstExpr
+  (AstExprStructGet (box target) field))
+
+(define (ast-expr-with-escape [escape : AstExpr] [body : AstExprList]) : AstExpr
+  (AstExprWithEscape (box escape) body))
+
+(define (ast-expr-box [value : AstExpr]) : AstExpr
+  (AstExprBox (box value)))
+
+(define (ast-expr-box-get [value : AstExpr]) : AstExpr
+  (AstExprBoxGet (box value)))
+
+(define (ast-expr-comptime [inner : AstExpr]) : AstExpr
+  (AstExprComptime (box inner)))
+
+(define (ast-expr-quote [inner : AstExpr]) : AstExpr
+  (AstExprQuote (box inner)))
+
+(define (ast-expr-quasiquote [inner : AstExpr]) : AstExpr
+  (AstExprQuasiquote (box inner)))
+
+(define (ast-expr-unquote [inner : AstExpr]) : AstExpr
+  (AstExprUnquote (box inner)))
+
+(define (ast-expr-unquote-splicing [inner : AstExpr]) : AstExpr
+  (AstExprUnquoteSplicing (box inner)))
+
+(define (ast-expr-try [inner : AstExpr]) : AstExpr
+  (AstExprTry (box inner)))
+
+(define (ast-expr-return [inner : AstExpr]) : AstExpr
+  (AstExprReturn (box inner)))
+
+(define (ast-expr-ptr-null-check [ptr : AstExpr]) : AstExpr
+  (AstExprPtrNullCheck (box ptr)))
+
+(define (ast-expr-ptr-read [ptr : AstExpr]) : AstExpr
+  (AstExprPtrRead (box ptr)))
+
+(define (ast-expr-ptr-write [ptr : AstExpr] [value : AstExpr]) : AstExpr
+  (AstExprPtrWrite (box ptr) (box value)))
+
+(define (ast-expr-ptr-offset [ptr : AstExpr] [offset : AstExpr]) : AstExpr
+  (AstExprPtrOffset (box ptr) (box offset)))
+
+(define (ast-expr-ptr-cast [ptr : AstExpr] [ty : AstType]) : AstExpr
+  (AstExprPtrCast (box ptr) ty))
+
+(define (ast-expr-ptr-to-int [ptr : AstExpr]) : AstExpr
+  (AstExprPtrToInt (box ptr)))
+
+(define (ast-expr-int-to-ptr [value : AstExpr] [ty : AstType]) : AstExpr
+  (AstExprIntToPtr (box value) ty))
+
+(define (ast-expr-string-data [value : AstExpr]) : AstExpr
+  (AstExprStringData (box value)))
+
+(define (ast-expr-string-from-bytes [data : AstExpr] [len : AstExpr]) : AstExpr
+  (AstExprStringFromBytes (box data) (box len)))
+
+(define (ast-expr-array-data [value : AstExpr]) : AstExpr
+  (AstExprArrayData (box value)))
+
+(define (ast-expr-cpuid-eax [leaf : AstExpr] [subleaf : AstExpr]) : AstExpr
+  (AstExprCpuIdEax (box leaf) (box subleaf)))
+
+(define (ast-expr-cpuid-ebx [leaf : AstExpr] [subleaf : AstExpr]) : AstExpr
+  (AstExprCpuIdEbx (box leaf) (box subleaf)))
+
+(define (ast-expr-cpuid-ecx [leaf : AstExpr] [subleaf : AstExpr]) : AstExpr
+  (AstExprCpuIdEcx (box leaf) (box subleaf)))
+
+(define (ast-expr-cpuid-edx [leaf : AstExpr] [subleaf : AstExpr]) : AstExpr
+  (AstExprCpuIdEdx (box leaf) (box subleaf)))
+
+(define (ast-expr-xgetbv [index : AstExpr]) : AstExpr
+  (AstExprXgetbv (box index)))
 
 (define (ast-export-item-cons [head : AstExportItem] [rest : AstExportItemList]) : AstExportItemList
   (AstExportItemCons head (box rest)))
@@ -512,7 +709,10 @@
 
 (define (ast-expr-unspan [expr : AstExpr]) : AstExpr
   (match expr
-    [(AstExprSpanned inner _) (ast-expr-unspan inner)]
+    [(AstExprSpanned inner-box _)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (ast-expr-unspan inner))]
     [_ expr]))
 
 (define (ast-decl-tag [decl : AstDecl]) : i64
@@ -638,6 +838,151 @@
     [(AstFieldOwnedCleanup) true]
     [(AstFieldNoCleanup) false]))
 
+(define (compiler-ast-begin-expr? [expr : AstExpr]) : bool
+  (match expr
+    [(AstExprBegin _) true]
+    [_ false]))
+
+(define (compiler-ast-nested-pattern-box-ok? [pattern : AstPattern]) : bool
+  (match pattern
+    [(AstPatVariant name args-box)
+      (let
+        [args : AstPatternList (box-get args-box)]
+        (and
+          (string-eq name "Some")
+          (match args
+            [(AstPatternCons tuple-pattern rest-box)
+              (let
+                [rest : AstPatternList (box-get rest-box)]
+                (and
+                  (match rest
+                    [(AstPatternNil) true]
+                    [_ false])
+                  (match tuple-pattern
+                    [(AstPatTuple items-box)
+                      (let
+                        [items : AstPatternList (box-get items-box)]
+                        (match items
+                          [(AstPatternCons first tail-box)
+                            (let
+                              [tail : AstPatternList (box-get tail-box)]
+                              (and
+                                (match first
+                                  [(AstPatBinding bind-name)
+                                    (string-eq bind-name "item")]
+                                  [_ false])
+                                (match tail
+                                  [(AstPatternCons second done-box)
+                                    (let
+                                      [done : AstPatternList (box-get done-box)]
+                                      (and
+                                        (match second
+                                          [(AstPatWildcard) true]
+                                          [_ false])
+                                        (match done
+                                          [(AstPatternNil) true]
+                                          [_ false])))]
+                                  [_ false])))]
+                          [_ false]))]
+                    [_ false])))]
+            [_ false])))]
+    [_ false]))
+
+(define (compiler-ast-single-arm-box-ok? [arms : AstMatchArmList]) : bool
+  (match arms
+    [(AstMatchArmCons arm rest-box)
+      (let
+        [rest : AstMatchArmList (box-get rest-box)]
+        (and
+          (match rest
+            [(AstMatchArmNil) true]
+            [_ false])
+          (match arm
+            [(AstMatchArm pattern body-box)
+              (let
+                [body : AstExpr (box-get body-box)]
+                (and
+                  (compiler-ast-nested-pattern-box-ok? pattern)
+                  (compiler-ast-begin-expr? body)))]
+            [_ false])))]
+    [_ false]))
+
+(define (compiler-ast-nested-expr-box-ok? [expr : AstExpr]) : bool
+  (match expr
+    [(AstExprLet bindings body-box)
+      (let
+        [body : AstExpr (box-get body-box)]
+        (and
+          (match bindings
+            [(AstLetBindingCons binding rest-box)
+              (let
+                [rest : AstLetBindingList (box-get rest-box)]
+                (and
+                  (match rest
+                    [(AstLetBindingNil) true]
+                    [_ false])
+                  (match binding
+                    [(AstLetBinding name _ init-box)
+                      (let
+                        [init : AstExpr (box-get init-box)]
+                        (and
+                          (string-eq name "x")
+                          (compiler-ast-begin-expr? init)))]
+                    [_ false])))]
+            [_ false])
+          (match body
+            [(AstExprIf cond-box then-box else-box)
+              (let
+                [cond : AstExpr (box-get cond-box)]
+                [then-expr : AstExpr (box-get then-box)]
+                [else-expr : AstExpr (box-get else-box)]
+                (and
+                  (match cond
+                    [(AstExprVar name) (string-eq name "cond")]
+                    [_ false])
+                  (and
+                    (match then-expr
+                      [(AstExprMatch scrut-box arms)
+                        (let
+                          [scrut : AstExpr (box-get scrut-box)]
+                          (and
+                            (match scrut
+                              [(AstExprVar name) (string-eq name "input")]
+                              [_ false])
+                            (compiler-ast-single-arm-box-ok? arms)))]
+                      [_ false])
+                    (compiler-ast-begin-expr? else-expr))))]
+            [_ false])))]
+    [_ false]))
+
+(define (compiler-ast-expr-pattern-box-smoke?) : bool
+  (let
+    [one : AstExpr (AstExprLiteral (AstLitInt 1))]
+    [two : AstExpr (AstExprLiteral (AstLitInt 2))]
+    [begin-expr : AstExpr
+      (AstExprBegin (ast-expr-cons one (ast-expr-cons two AstExprNil)))]
+    [bindings : AstLetBindingList
+      (ast-let-binding-cons
+        (ast-let-binding "x" (AstNoType) begin-expr)
+        AstLetBindingNil)]
+    [tuple-pattern : AstPattern
+      (ast-pat-tuple
+        (ast-pattern-cons
+          (AstPatBinding "item")
+          (ast-pattern-cons (AstPatWildcard) AstPatternNil)))]
+    [variant-pattern : AstPattern
+      (ast-pat-variant "Some" (ast-pattern-cons tuple-pattern AstPatternNil))]
+    [arms : AstMatchArmList
+      (ast-match-arm-cons
+        (ast-match-arm variant-pattern begin-expr)
+        AstMatchArmNil)]
+    [match-expr : AstExpr (ast-expr-match (AstExprVar "input") arms)]
+    [nested : AstExpr
+      (ast-expr-let
+        bindings
+        (ast-expr-if (AstExprVar "cond") match-expr begin-expr))]
+    (compiler-ast-nested-expr-box-ok? nested)))
+
 (define (compiler-ast-smoke) : i64
   (let
     [i64-ty : AstType (AstTyI64)]
@@ -668,13 +1013,14 @@
         [_ false])]
     [lit : AstLiteral (AstLitInt 41)]
     [one : AstExpr (AstExprLiteral (AstLitInt 1))]
-    [expr : AstExpr (AstExprBinary (AstBinAdd) (AstExprLiteral lit) one)]
+    [expr : AstExpr (ast-expr-binary (AstBinAdd) (AstExprLiteral lit) one)]
+    [nested-expr-pattern-ok? : bool (compiler-ast-expr-pattern-box-smoke?)]
     [param : AstParam (AstParam "x" i64-ty false)]
     [params : AstParamList (ast-param-cons param AstParamNil)]
     [decl : AstDecl (AstDeclDefFn "main" params i64-ty expr)]
     [program : AstProgram (AstProgram (ast-decl-cons decl AstDeclNil))]
     (match program
       [(AstProgram _)
-        (if nested-ty-ok?
+        (if (and nested-ty-ok? nested-expr-pattern-ok?)
           (+ (ast-type-tag fn-ty) (+ (ast-expr-tag expr) (ast-decl-tag decl)))
           0)])))

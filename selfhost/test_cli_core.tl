@@ -359,12 +359,12 @@
                 test-count))]))]))
 
 (define (tltest-print-expr [text : String]) : AstExpr
-  (AstExprCall
+  (ast-expr-call
     (AstExprVar "__tl_test_print_error")
     (ast-expr-cons (AstExprLiteral (AstLitString text)) AstExprNil)))
 
 (define (tltest-call-expr [name : String]) : AstExpr
-  (AstExprCall (AstExprVar name) AstExprNil))
+  (ast-expr-call (AstExprVar name) AstExprNil))
 
 (define (tltest-location [path : String] [line : i64]) : String
   (if (string-eq path "")
@@ -416,20 +416,20 @@
   (ast-param-cons (AstParam "text" (AstTyString) false) AstParamNil))
 
 (define (tltest-text-length-expr) : AstExpr
-  (AstExprCall
+  (ast-expr-call
     (AstExprVar "string-length")
     (ast-expr-cons (AstExprVar "text") AstExprNil)))
 
 (define (tltest-print-runtime-write-call) : AstExpr
-  (AstExprCall
+  (ast-expr-call
     (AstExprVar "__tl_test_write")
     (ast-expr-cons
-      (AstExprCast (AstExprLiteral (AstLitInt 2)) (AstTyI32))
+      (ast-expr-cast (AstExprLiteral (AstLitInt 2)) (AstTyI32))
       (ast-expr-cons
         (AstExprUnsafe
-          (ast-expr-cons (AstExprStringData (AstExprVar "text")) AstExprNil))
+          (ast-expr-cons (ast-expr-string-data (AstExprVar "text")) AstExprNil))
         (ast-expr-cons
-          (AstExprCast (tltest-text-length-expr) (AstTyI32))
+          (ast-expr-cast (tltest-text-length-expr) (AstTyI32))
           AstExprNil)))))
 
 (define (tltest-print-runtime-print-decl) : AstDecl
@@ -524,10 +524,12 @@
       (let
         [rest : AstLetBindingList (box-get rest)]
         (match binding
-          [(AstLetBinding _ _ value)
-            (tltest-reach-mark-let-bindings
-              rest
-              (tltest-reach-mark-expr value names))]))]))
+          [(AstLetBinding _ _ value-box)
+            (let
+              [value : AstExpr (box-get value-box)]
+              (tltest-reach-mark-let-bindings
+                rest
+                (tltest-reach-mark-expr value names)))]))]))
 
 (define (tltest-reach-mark-resource-bindings
   [bindings : AstResourceBindingList]
@@ -538,12 +540,15 @@
       (let
         [rest : AstResourceBindingList (box-get rest)]
         (match binding
-          [(AstResourceBinding _ init cleanup)
-            (tltest-reach-mark-resource-bindings
-              rest
-              (tltest-reach-mark-expr
-                cleanup
-                (tltest-reach-mark-expr init names)))]))]))
+          [(AstResourceBinding _ init-box cleanup-box)
+            (let
+              [init : AstExpr (box-get init-box)]
+              [cleanup : AstExpr (box-get cleanup-box)]
+              (tltest-reach-mark-resource-bindings
+                rest
+                (tltest-reach-mark-expr
+                  cleanup
+                  (tltest-reach-mark-expr init names))))]))]))
 
 (define (tltest-reach-mark-match-arms
   [arms : AstMatchArmList]
@@ -554,112 +559,256 @@
       (let
         [rest : AstMatchArmList (box-get rest)]
         (match arm
-          [(AstMatchArm _ body)
-            (tltest-reach-mark-match-arms
-              rest
-              (tltest-reach-mark-expr body names))]))]))
+          [(AstMatchArm _ body-box)
+            (let
+              [body : AstExpr (box-get body-box)]
+              (tltest-reach-mark-match-arms
+                rest
+                (tltest-reach-mark-expr body names)))]))]))
 
 (define (tltest-reach-mark-expr [expr : AstExpr] [names : SymI64Env]) : SymI64Env
   (match expr
-    [(AstExprSpanned inner _) (tltest-reach-mark-expr inner names)]
+    [(AstExprSpanned inner-box _)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (tltest-reach-mark-expr inner names))]
     [(AstExprLiteral _) names]
     [(AstExprVar name) (tltest-reach-mark-name names name)]
-    [(AstExprBinary _ left right)
-      (tltest-reach-mark-expr right (tltest-reach-mark-expr left names))]
-    [(AstExprUnary _ inner) (tltest-reach-mark-expr inner names)]
-    [(AstExprCall func args)
-      (tltest-reach-mark-expr-list args (tltest-reach-mark-expr func names))]
-    [(AstExprIf cond then-branch else-branch)
-      (tltest-reach-mark-expr
-        else-branch
-        (tltest-reach-mark-expr then-branch (tltest-reach-mark-expr cond names)))]
-    [(AstExprLet bindings body)
-      (tltest-reach-mark-expr
-        body
-        (tltest-reach-mark-let-bindings bindings names))]
-    [(AstExprLambda _ _ body) (tltest-reach-mark-expr body names)]
+    [(AstExprBinary _ left-box right-box)
+      (let
+        [left : AstExpr (box-get left-box)]
+        [right : AstExpr (box-get right-box)]
+        (tltest-reach-mark-expr right (tltest-reach-mark-expr left names)))]
+    [(AstExprUnary _ inner-box)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (tltest-reach-mark-expr inner names))]
+    [(AstExprCall func-box args)
+      (let
+        [func : AstExpr (box-get func-box)]
+        (tltest-reach-mark-expr-list args (tltest-reach-mark-expr func names)))]
+    [(AstExprIf cond-box then-branch-box else-branch-box)
+      (let
+        [cond : AstExpr (box-get cond-box)]
+        [then-branch : AstExpr (box-get then-branch-box)]
+        [else-branch : AstExpr (box-get else-branch-box)]
+        (tltest-reach-mark-expr
+          else-branch
+          (tltest-reach-mark-expr
+            then-branch
+            (tltest-reach-mark-expr cond names))))]
+    [(AstExprLet bindings body-box)
+      (let
+        [body : AstExpr (box-get body-box)]
+        (tltest-reach-mark-expr
+          body
+          (tltest-reach-mark-let-bindings bindings names)))]
+    [(AstExprLambda _ _ body-box)
+      (let
+        [body : AstExpr (box-get body-box)]
+        (tltest-reach-mark-expr body names))]
     [(AstExprTuple exprs) (tltest-reach-mark-expr-list exprs names)]
-    [(AstExprTupleRef tuple _) (tltest-reach-mark-expr tuple names)]
+    [(AstExprTupleRef tuple-box _)
+      (let
+        [tuple : AstExpr (box-get tuple-box)]
+        (tltest-reach-mark-expr tuple names))]
     [(AstExprArray exprs) (tltest-reach-mark-expr-list exprs names)]
-    [(AstExprMakeArray _ len) (tltest-reach-mark-expr len names)]
-    [(AstExprArrayRef array index)
-      (tltest-reach-mark-expr index (tltest-reach-mark-expr array names))]
-    [(AstExprArraySet array index value)
-      (tltest-reach-mark-expr
-        value
+    [(AstExprMakeArray _ len-box)
+      (let
+        [len : AstExpr (box-get len-box)]
+        (tltest-reach-mark-expr len names))]
+    [(AstExprArrayRef array-box index-box)
+      (let
+        [array : AstExpr (box-get array-box)]
+        [index : AstExpr (box-get index-box)]
         (tltest-reach-mark-expr index (tltest-reach-mark-expr array names)))]
-    [(AstExprArrayPush array value)
-      (tltest-reach-mark-expr value (tltest-reach-mark-expr array names))]
-    [(AstExprStringRef text index)
-      (tltest-reach-mark-expr index (tltest-reach-mark-expr text names))]
-    [(AstExprWhile cond body)
-      (tltest-reach-mark-expr body (tltest-reach-mark-expr cond names))]
+    [(AstExprArraySet array-box index-box value-box)
+      (let
+        [array : AstExpr (box-get array-box)]
+        [index : AstExpr (box-get index-box)]
+        [value : AstExpr (box-get value-box)]
+        (tltest-reach-mark-expr
+          value
+          (tltest-reach-mark-expr index (tltest-reach-mark-expr array names))))]
+    [(AstExprArrayPush array-box value-box)
+      (let
+        [array : AstExpr (box-get array-box)]
+        [value : AstExpr (box-get value-box)]
+        (tltest-reach-mark-expr value (tltest-reach-mark-expr array names)))]
+    [(AstExprStringRef text-box index-box)
+      (let
+        [text : AstExpr (box-get text-box)]
+        [index : AstExpr (box-get index-box)]
+        (tltest-reach-mark-expr index (tltest-reach-mark-expr text names)))]
+    [(AstExprWhile cond-box body-box)
+      (let
+        [cond : AstExpr (box-get cond-box)]
+        [body : AstExpr (box-get body-box)]
+        (tltest-reach-mark-expr body (tltest-reach-mark-expr cond names)))]
     [(AstExprBegin exprs) (tltest-reach-mark-expr-list exprs names)]
     [(AstExprUnsafe exprs) (tltest-reach-mark-expr-list exprs names)]
-    [(AstExprSet name value)
-      (tltest-reach-mark-expr value (tltest-reach-mark-name names name))]
-    [(AstExprAnn inner _) (tltest-reach-mark-expr inner names)]
-    [(AstExprCast inner _) (tltest-reach-mark-expr inner names)]
-    [(AstExprBorrow _ place) (tltest-reach-mark-expr place names)]
-    [(AstExprMatch scrutinee arms)
-      (tltest-reach-mark-match-arms
-        arms
-        (tltest-reach-mark-expr scrutinee names))]
-    [(AstExprForeach _ _ start end body)
-      (tltest-reach-mark-expr
-        body
-        (tltest-reach-mark-expr end (tltest-reach-mark-expr start names)))]
-    [(AstExprSpmdReduce _ _ _ start end init value)
-      (tltest-reach-mark-expr
-        value
+    [(AstExprSet name value-box)
+      (let
+        [value : AstExpr (box-get value-box)]
+        (tltest-reach-mark-expr value (tltest-reach-mark-name names name)))]
+    [(AstExprAnn inner-box _)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (tltest-reach-mark-expr inner names))]
+    [(AstExprCast inner-box _)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (tltest-reach-mark-expr inner names))]
+    [(AstExprBorrow _ place-box)
+      (let
+        [place : AstExpr (box-get place-box)]
+        (tltest-reach-mark-expr place names))]
+    [(AstExprMatch scrutinee-box arms)
+      (let
+        [scrutinee : AstExpr (box-get scrutinee-box)]
+        (tltest-reach-mark-match-arms
+          arms
+          (tltest-reach-mark-expr scrutinee names)))]
+    [(AstExprForeach _ _ start-box end-box body-box)
+      (let
+        [start : AstExpr (box-get start-box)]
+        [end : AstExpr (box-get end-box)]
+        [body : AstExpr (box-get body-box)]
         (tltest-reach-mark-expr
-          init
+          body
           (tltest-reach-mark-expr end (tltest-reach-mark-expr start names))))]
-    [(AstExprStructGet receiver _) (tltest-reach-mark-expr receiver names)]
+    [(AstExprSpmdReduce _ _ _ start-box end-box init-box value-box)
+      (let
+        [start : AstExpr (box-get start-box)]
+        [end : AstExpr (box-get end-box)]
+        [init : AstExpr (box-get init-box)]
+        [value : AstExpr (box-get value-box)]
+        (tltest-reach-mark-expr
+          value
+          (tltest-reach-mark-expr
+            init
+            (tltest-reach-mark-expr end (tltest-reach-mark-expr start names)))))]
+    [(AstExprStructGet receiver-box _)
+      (let
+        [receiver : AstExpr (box-get receiver-box)]
+        (tltest-reach-mark-expr receiver names))]
     [(AstExprWithRegion _ body) (tltest-reach-mark-expr-list body names)]
-    [(AstExprWithEscape scratch body)
-      (tltest-reach-mark-expr-list body (tltest-reach-mark-expr scratch names))]
+    [(AstExprWithEscape scratch-box body)
+      (let
+        [scratch : AstExpr (box-get scratch-box)]
+        (tltest-reach-mark-expr-list
+          body
+          (tltest-reach-mark-expr scratch names)))]
     [(AstExprWithResource bindings body)
       (tltest-reach-mark-expr-list
         body
         (tltest-reach-mark-resource-bindings bindings names))]
-    [(AstExprBox inner) (tltest-reach-mark-expr inner names)]
-    [(AstExprBoxGet inner) (tltest-reach-mark-expr inner names)]
-    [(AstExprBorrow _ place) (tltest-reach-mark-expr place names)]
+    [(AstExprBox inner-box)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (tltest-reach-mark-expr inner names))]
+    [(AstExprBoxGet inner-box)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (tltest-reach-mark-expr inner names))]
+    [(AstExprBorrow _ place-box)
+      (let
+        [place : AstExpr (box-get place-box)]
+        (tltest-reach-mark-expr place names))]
     [(AstExprTypeLiteral _) names]
-    [(AstExprComptime inner) (tltest-reach-mark-expr inner names)]
+    [(AstExprComptime inner-box)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (tltest-reach-mark-expr inner names))]
     [(AstExprQuote _) names]
     [(AstExprQuasiquote _) names]
-    [(AstExprUnquote inner) (tltest-reach-mark-expr inner names)]
-    [(AstExprUnquoteSplicing inner) (tltest-reach-mark-expr inner names)]
-    [(AstExprTry inner) (tltest-reach-mark-expr inner names)]
-    [(AstExprReturn inner) (tltest-reach-mark-expr inner names)]
+    [(AstExprUnquote inner-box)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (tltest-reach-mark-expr inner names))]
+    [(AstExprUnquoteSplicing inner-box)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (tltest-reach-mark-expr inner names))]
+    [(AstExprTry inner-box)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (tltest-reach-mark-expr inner names))]
+    [(AstExprReturn inner-box)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (tltest-reach-mark-expr inner names))]
     [(AstExprPtrNull _) names]
-    [(AstExprPtrNullCheck inner) (tltest-reach-mark-expr inner names)]
-    [(AstExprPtrRead ptr) (tltest-reach-mark-expr ptr names)]
-    [(AstExprPtrWrite ptr value)
-      (tltest-reach-mark-expr value (tltest-reach-mark-expr ptr names))]
-    [(AstExprPtrOffset ptr offset)
-      (tltest-reach-mark-expr offset (tltest-reach-mark-expr ptr names))]
-    [(AstExprPtrCast ptr _) (tltest-reach-mark-expr ptr names)]
-    [(AstExprPtrToInt ptr) (tltest-reach-mark-expr ptr names)]
-    [(AstExprIntToPtr value _) (tltest-reach-mark-expr value names)]
-    [(AstExprStringData inner) (tltest-reach-mark-expr inner names)]
-    [(AstExprStringFromBytes ptr len)
-      (tltest-reach-mark-expr len (tltest-reach-mark-expr ptr names))]
-    [(AstExprArrayData inner) (tltest-reach-mark-expr inner names)]
+    [(AstExprPtrNullCheck inner-box)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (tltest-reach-mark-expr inner names))]
+    [(AstExprPtrRead ptr-box)
+      (let
+        [ptr : AstExpr (box-get ptr-box)]
+        (tltest-reach-mark-expr ptr names))]
+    [(AstExprPtrWrite ptr-box value-box)
+      (let
+        [ptr : AstExpr (box-get ptr-box)]
+        [value : AstExpr (box-get value-box)]
+        (tltest-reach-mark-expr value (tltest-reach-mark-expr ptr names)))]
+    [(AstExprPtrOffset ptr-box offset-box)
+      (let
+        [ptr : AstExpr (box-get ptr-box)]
+        [offset : AstExpr (box-get offset-box)]
+        (tltest-reach-mark-expr offset (tltest-reach-mark-expr ptr names)))]
+    [(AstExprPtrCast ptr-box _)
+      (let
+        [ptr : AstExpr (box-get ptr-box)]
+        (tltest-reach-mark-expr ptr names))]
+    [(AstExprPtrToInt ptr-box)
+      (let
+        [ptr : AstExpr (box-get ptr-box)]
+        (tltest-reach-mark-expr ptr names))]
+    [(AstExprIntToPtr value-box _)
+      (let
+        [value : AstExpr (box-get value-box)]
+        (tltest-reach-mark-expr value names))]
+    [(AstExprStringData inner-box)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (tltest-reach-mark-expr inner names))]
+    [(AstExprStringFromBytes ptr-box len-box)
+      (let
+        [ptr : AstExpr (box-get ptr-box)]
+        [len : AstExpr (box-get len-box)]
+        (tltest-reach-mark-expr len (tltest-reach-mark-expr ptr names)))]
+    [(AstExprArrayData inner-box)
+      (let
+        [inner : AstExpr (box-get inner-box)]
+        (tltest-reach-mark-expr inner names))]
     [(AstExprProgramArgc) names]
     [(AstExprProgramArgv) names]
     [(AstExprProgramEnvp) names]
-    [(AstExprCpuIdEax leaf subleaf)
-      (tltest-reach-mark-expr subleaf (tltest-reach-mark-expr leaf names))]
-    [(AstExprCpuIdEbx leaf subleaf)
-      (tltest-reach-mark-expr subleaf (tltest-reach-mark-expr leaf names))]
-    [(AstExprCpuIdEcx leaf subleaf)
-      (tltest-reach-mark-expr subleaf (tltest-reach-mark-expr leaf names))]
-    [(AstExprCpuIdEdx leaf subleaf)
-      (tltest-reach-mark-expr subleaf (tltest-reach-mark-expr leaf names))]
-    [(AstExprXgetbv index) (tltest-reach-mark-expr index names)]))
+    [(AstExprCpuIdEax leaf-box subleaf-box)
+      (let
+        [leaf : AstExpr (box-get leaf-box)]
+        [subleaf : AstExpr (box-get subleaf-box)]
+        (tltest-reach-mark-expr subleaf (tltest-reach-mark-expr leaf names)))]
+    [(AstExprCpuIdEbx leaf-box subleaf-box)
+      (let
+        [leaf : AstExpr (box-get leaf-box)]
+        [subleaf : AstExpr (box-get subleaf-box)]
+        (tltest-reach-mark-expr subleaf (tltest-reach-mark-expr leaf names)))]
+    [(AstExprCpuIdEcx leaf-box subleaf-box)
+      (let
+        [leaf : AstExpr (box-get leaf-box)]
+        [subleaf : AstExpr (box-get subleaf-box)]
+        (tltest-reach-mark-expr subleaf (tltest-reach-mark-expr leaf names)))]
+    [(AstExprCpuIdEdx leaf-box subleaf-box)
+      (let
+        [leaf : AstExpr (box-get leaf-box)]
+        [subleaf : AstExpr (box-get subleaf-box)]
+        (tltest-reach-mark-expr subleaf (tltest-reach-mark-expr leaf names)))]
+    [(AstExprXgetbv index-box)
+      (let
+        [index : AstExpr (box-get index-box)]
+        (tltest-reach-mark-expr index names))]))
 
 (define (tltest-reach-mark-tests [tests : InlineTestList] [names : SymI64Env]) : SymI64Env
   (match tests

@@ -23,6 +23,10 @@ case "$(uname -s)" in
         ;;
 esac
 
+. "$ROOT/scripts/lib-native-link.sh"
+native_link_detect_host
+configure_toolchain
+
 if [ -n "${TYPELISP_BIN:-}" ]; then
     COMPILER=$TYPELISP_BIN
 else
@@ -110,8 +114,7 @@ CC_ASM="$WORKDIR/selfhost-cc.s"
 CC_OBJ="$WORKDIR/selfhost-cc.o"
 CC_BIN="$WORKDIR/selfhost-cc"
 "$COMPILER" compile selfhost/compile_smoke.tl -o "$CC_ASM"
-as "$CC_ASM" -o "$CC_OBJ"
-ld "$CC_OBJ" -o "$CC_BIN"
+assemble_and_link selfhost-cc "$CC_ASM" "$CC_OBJ" "$CC_BIN"
 
 OK_LIST="$WORKDIR/ok-manifest.txt"
 ok_manifest > "$OK_LIST"
@@ -149,8 +152,7 @@ while IFS='|' read -r name want_exit want_stdout; do
         exit 1
     fi
 
-    as "$asm" -o "$obj"
-    ld "$obj" -o "$bin"
+    assemble_and_link "$base" "$asm" "$obj" "$bin"
 
     prog_out="$WORKDIR/$base.out"
     prog_err="$WORKDIR/$base.err"

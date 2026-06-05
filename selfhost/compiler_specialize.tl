@@ -12,26 +12,47 @@
 
 (defenum SpecTemplateList
   (SpecTemplateNil)
-  (SpecTemplateCons SpecTemplate SpecTemplateList))
+  (SpecTemplateCons SpecTemplate (Box SpecTemplateList)))
 
 (defenum SpecCache
   (SpecCacheNil)
-  (SpecCacheCons String String SpecCache))
+  (SpecCacheCons String String (Box SpecCache)))
 
 (defenum SpecState
   (SpecState AstDeclList SpecCache CtfeEnv))
 
 (defenum SpecValueList
   (SpecValueNil)
-  (SpecValueCons CompilerCtfeValue SpecValueList))
+  (SpecValueCons CompilerCtfeValue (Box SpecValueList)))
 
 (defenum SpecValueSubst
   (SpecValueSubstNil)
-  (SpecValueSubstCons String CompilerCtfeValue SpecValueSubst))
+  (SpecValueSubstCons String CompilerCtfeValue (Box SpecValueSubst)))
 
 (defenum SpecTypeSubst
   (SpecTypeSubstNil)
-  (SpecTypeSubstCons String AstType SpecTypeSubst))
+  (SpecTypeSubstCons String AstType (Box SpecTypeSubst)))
+
+(define (spec-template-cons [head : SpecTemplate] [rest : SpecTemplateList]) : SpecTemplateList
+  (SpecTemplateCons head (box rest)))
+
+(define (spec-cache-cons [key : String] [name : String] [rest : SpecCache]) : SpecCache
+  (SpecCacheCons key name (box rest)))
+
+(define (spec-value-cons [head : CompilerCtfeValue] [rest : SpecValueList]) : SpecValueList
+  (SpecValueCons head (box rest)))
+
+(define (spec-value-subst-cons
+  [key : String]
+  [value : CompilerCtfeValue]
+  [rest : SpecValueSubst]) : SpecValueSubst
+  (SpecValueSubstCons key value (box rest)))
+
+(define (spec-type-subst-cons
+  [key : String]
+  [ty : AstType]
+  [rest : SpecTypeSubst]) : SpecTypeSubst
+  (SpecTypeSubstCons key ty (box rest)))
 
 (defenum SpecMaybeString
   (SpecNoString)
@@ -146,7 +167,7 @@
         [(SpecTemplate template-name _ _ _)
           (if (string-eq template-name name)
             (SpecSomeTemplate template)
-            (spec-template-lookup rest name))])]))
+            (spec-template-lookup (box-get rest) name))])]))
 
 (define (spec-template-list-remove-name
   [templates : SpecTemplateList]
@@ -157,10 +178,10 @@
       (match template
         [(SpecTemplate template-name _ _ _)
           (if (string-eq template-name name)
-            (spec-template-list-remove-name rest name)
-            (SpecTemplateCons
+            (spec-template-list-remove-name (box-get rest) name)
+            (spec-template-cons
               template
-              (spec-template-list-remove-name rest name)))])]))
+              (spec-template-list-remove-name (box-get rest) name)))])]))
 
 (define (spec-template-list-remove-params
   [templates : SpecTemplateList]
@@ -222,13 +243,13 @@
         (match decl
           [(AstDeclUnsafe (AstDeclDefFn name params ret body))
             (if (spec-param-list-has-comptime? params)
-              (SpecTemplateCons
+              (spec-template-cons
                 (SpecTemplate name params ret body)
                 (spec-collect-templates rest))
               (spec-collect-templates rest))]
           [(AstDeclDefFn name params ret body)
             (if (spec-param-list-has-comptime? params)
-              (SpecTemplateCons
+              (spec-template-cons
                 (SpecTemplate name params ret body)
                 (spec-collect-templates rest))
               (spec-collect-templates rest))]
@@ -240,7 +261,7 @@
     [(SpecCacheCons cached-key name rest)
       (if (string-eq cached-key key)
         (SpecSomeString name)
-        (spec-cache-lookup rest key))]))
+        (spec-cache-lookup (box-get rest) key))]))
 
 (define (spec-decl-list-append-one [decls : AstDeclList] [decl : AstDecl]) : AstDeclList
   (match decls
@@ -362,7 +383,7 @@
     [(SpecValueCons head rest)
       (string-append
         (spec-value-key head)
-        (string-append "_" (spec-values-key rest)))]))
+        (string-append "_" (spec-values-key (box-get rest))))]))
 
 (define (spec-specialization-key [name : String] [values : SpecValueList]) : String
   (string-append name (string-append ":" (spec-values-key values))))
@@ -402,7 +423,7 @@
     [(SpecTypeSubstCons key _ rest)
       (if (string-eq key name)
         (SpecSomeString key)
-        (spec-type-subst-lookup rest name))]))
+        (spec-type-subst-lookup (box-get rest) name))]))
 
 (define (spec-type-subst-type [subs : SpecTypeSubst] [name : String]) : AstType
   (match subs
@@ -410,7 +431,7 @@
     [(SpecTypeSubstCons key ty rest)
       (if (string-eq key name)
         ty
-        (spec-type-subst-type rest name))]))
+        (spec-type-subst-type (box-get rest) name))]))
 
 (define (spec-value-subst-lookup [subs : SpecValueSubst] [name : String]) : SpecMaybeString
   (match subs
@@ -418,7 +439,7 @@
     [(SpecValueSubstCons key _ rest)
       (if (string-eq key name)
         (SpecSomeString key)
-        (spec-value-subst-lookup rest name))]))
+        (spec-value-subst-lookup (box-get rest) name))]))
 
 (define (spec-value-subst-value [subs : SpecValueSubst] [name : String]) : CompilerCtfeValue
   (match subs
@@ -426,15 +447,18 @@
     [(SpecValueSubstCons key value rest)
       (if (string-eq key name)
         value
-        (spec-value-subst-value rest name))]))
+        (spec-value-subst-value (box-get rest) name))]))
 
 (define (spec-value-subst-remove-name [subs : SpecValueSubst] [name : String]) : SpecValueSubst
   (match subs
     [(SpecValueSubstNil) SpecValueSubstNil]
     [(SpecValueSubstCons key value rest)
       (if (string-eq key name)
-        (spec-value-subst-remove-name rest name)
-        (SpecValueSubstCons key value (spec-value-subst-remove-name rest name)))]))
+        (spec-value-subst-remove-name (box-get rest) name)
+        (spec-value-subst-cons
+          key
+          value
+          (spec-value-subst-remove-name (box-get rest) name)))]))
 
 (define (spec-value-subst-remove-params
   [subs : SpecValueSubst]
@@ -492,8 +516,11 @@
     [(SpecTypeSubstNil) SpecTypeSubstNil]
     [(SpecTypeSubstCons key ty rest)
       (if (string-eq key name)
-        (spec-type-subst-remove-name rest name)
-        (SpecTypeSubstCons key ty (spec-type-subst-remove-name rest name)))]))
+        (spec-type-subst-remove-name (box-get rest) name)
+        (spec-type-subst-cons
+          key
+          ty
+          (spec-type-subst-remove-name (box-get rest) name)))]))
 
 (define (spec-type-subst-remove-params
   [subs : SpecTypeSubst]
@@ -769,7 +796,7 @@
                                     rest-runtime
                                     rest-state)
                                   (OkSpecArgs
-                                    (SpecValueCons value rest-values)
+                                    (spec-value-cons value rest-values)
                                     rest-runtime
                                     rest-state)]
                                 [(ErrSpecArgs diag) (ErrSpecArgs diag)])]
@@ -795,7 +822,7 @@
                               fn-name)
                               [(OkSpecArgs rest-values rest-runtime rest-state)
                                 (OkSpecArgs
-                                  (SpecValueCons value rest-values)
+                                  (spec-value-cons value rest-values)
                                   rest-runtime
                                   rest-state)]
                               [(ErrSpecArgs diag) (ErrSpecArgs diag)])
@@ -856,7 +883,9 @@
             (if is-comptime
               (match values
                 [(SpecValueCons value rest-values)
-                  (match (spec-build-specialization rest-params rest-values)
+                  (match (spec-build-specialization
+                    rest-params
+                    (box-get rest-values))
                     [(OkSpecBuild runtime value-subs type-subs)
                       (if (spec-type-kind? ty)
                         (match value
@@ -864,7 +893,7 @@
                             (OkSpecBuild
                               runtime
                               value-subs
-                              (SpecTypeSubstCons name actual-ty type-subs))]
+                              (spec-type-subst-cons name actual-ty type-subs))]
                           [_
                             (ErrSpecBuild
                               (compiler-diagnostic-at-start
@@ -872,7 +901,7 @@
                                 "specialize: expected type value"))])
                         (OkSpecBuild
                           runtime
-                          (SpecValueSubstCons name value value-subs)
+                          (spec-value-subst-cons name value value-subs)
                           type-subs))]
                     [(ErrSpecBuild diag) (ErrSpecBuild diag)])]
                 [_
@@ -917,7 +946,7 @@
                                 [cached-state : SpecState
                                   (SpecState
                                     generated
-                                    (SpecCacheCons key generated-name cache)
+                                    (spec-cache-cons key generated-name cache)
                                     ctfe-env)]
                                 (match (spec-rewrite-expr
                                   valued-body
@@ -2439,7 +2468,8 @@
 
 (define (compiler-specialize-raw-pointer-type-ok?) : bool
   (let
-    [subs : SpecTypeSubst (SpecTypeSubstCons "T" (AstTyI64) SpecTypeSubstNil)]
+    [subs : SpecTypeSubst
+      (spec-type-subst-cons "T" (AstTyI64) SpecTypeSubstNil)]
     (and
       (string-eq (spec-type-key (AstTyPtr (AstTyI64))) "ptr_i64")
       (and
@@ -2459,15 +2489,15 @@
 (define (compiler-specialize-name-key-ok?) : bool
   (let
     [vals-i64 : SpecValueList
-      (SpecValueCons (CtfeType (AstTyI64)) (SpecValueNil))]
+      (spec-value-cons (CtfeType (AstTyI64)) (SpecValueNil))]
     [vals-bool : SpecValueList
-      (SpecValueCons (CtfeType (AstTyBool)) (SpecValueNil))]
+      (spec-value-cons (CtfeType (AstTyBool)) (SpecValueNil))]
     [vals-multi : SpecValueList
-      (SpecValueCons
+      (spec-value-cons
         (CtfeType (AstTyI64))
-        (SpecValueCons (CtfeI64 5) (SpecValueNil)))]
+        (spec-value-cons (CtfeI64 5) (SpecValueNil)))]
     [vals-string : SpecValueList
-      (SpecValueCons (CtfeString "a b") (SpecValueNil))]
+      (spec-value-cons (CtfeString "a b") (SpecValueNil))]
     (and
       (string-eq
         (spec-specialized-name "alloc" vals-i64)
@@ -2552,7 +2582,8 @@
 ;: the single MutPtr case embedded in `compiler-specialize-raw-pointer-type-ok?`.
 (define (compiler-specialize-subst-ok?) : bool
   (let
-    [subs : SpecTypeSubst (SpecTypeSubstCons "T" (AstTyI64) SpecTypeSubstNil)]
+    [subs : SpecTypeSubst
+      (spec-type-subst-cons "T" (AstTyI64) SpecTypeSubstNil)]
     (and
       (string-eq
         (spec-type-key (spec-substitute-type (AstTyVar "T") subs))
@@ -2586,7 +2617,7 @@
 (define (compiler-specialize-value-subst-ok?) : bool
   (let
     [subs : SpecValueSubst
-      (SpecValueSubstCons "x" (CtfeI64 5) SpecValueSubstNil)]
+      (spec-value-subst-cons "x" (CtfeI64 5) SpecValueSubstNil)]
     (and
       ;; mapped variable x -> integer literal 5
       (match (spec-substitute-values-expr (AstExprVar "x") subs)
@@ -2629,6 +2660,59 @@
               [_ false])]
           [(ErrSpecSubExpr _) false])))))
 
+(define (compiler-specialize-boxed-tails-ok?) : bool
+  (let
+    [templates : SpecTemplateList
+      (spec-template-cons
+        (SpecTemplate
+          "first"
+          AstParamNil
+          (AstTyI64)
+          (AstExprLiteral (AstLitInt 1)))
+        (spec-template-cons
+          (SpecTemplate
+            "second"
+            AstParamNil
+            (AstTyBool)
+            (AstExprLiteral (AstLitBool true)))
+          SpecTemplateNil))]
+    [cache : SpecCache
+      (spec-cache-cons
+        "one"
+        "generated-one"
+        (spec-cache-cons "two" "generated-two" SpecCacheNil))]
+    [values : SpecValueList
+      (spec-value-cons
+        (CtfeI64 1)
+        (spec-value-cons (CtfeBool true) SpecValueNil))]
+    [value-subs : SpecValueSubst
+      (spec-value-subst-cons
+        "x"
+        (CtfeI64 1)
+        (spec-value-subst-cons "flag" (CtfeBool true) SpecValueSubstNil))]
+    [type-subs : SpecTypeSubst
+      (spec-type-subst-cons
+        "T"
+        (AstTyI64)
+        (spec-type-subst-cons "U" (AstTyBool) SpecTypeSubstNil))]
+    (and
+      (match (spec-template-lookup templates "second")
+        [(SpecSomeTemplate template)
+          (match template
+            [(SpecTemplate name _ _ _) (string-eq name "second")])]
+        [(SpecNoTemplate) false])
+      (and
+        (match (spec-cache-lookup cache "two")
+          [(SpecSomeString name) (string-eq name "generated-two")]
+          [(SpecNoString) false])
+        (and
+          (string-eq (spec-values-key values) "i64_1_bool_1_none")
+          (and
+            (match (spec-value-subst-value value-subs "flag")
+              [(CtfeBool flag) flag]
+              [_ false])
+            (ctfe-type-eq (spec-type-subst-type type-subs "U") (AstTyBool))))))))
+
 (define (compiler-specialize-reflection-string-param-source) : String
   "(defstruct Point (x i64))
 (define (tag-helper [comptime key : String] [x : i64]) : i64 x)
@@ -2658,5 +2742,6 @@
     (unless (compiler-specialize-reuse-ok?) (return 0))
     (unless (compiler-specialize-subst-ok?) (return 0))
     (unless (compiler-specialize-value-subst-ok?) (return 0))
+    (unless (compiler-specialize-boxed-tails-ok?) (return 0))
     (unless (compiler-specialize-reflection-string-param-ok?) (return 0))
     1))

@@ -4663,6 +4663,17 @@
           (IrValueUnit)))]
     [(IrCallArgsArray values) (array-ref values index)]))
 
+(define (compiler-backend-fast-alloc-size [args : CompilerIrCallArgs]) : i64
+  (match args
+    [(IrCallArgsOne (IrValueI64 size))
+      (if (or (<= size 0) (> size 64))
+        0
+        (* (/ (+ size 7) 8) 8))]
+    [_ 0]))
+
+(define (compiler-backend-fast-alloc-label [size : i64]) : String
+  (backend-cat4 ".L_tl_alloc" (int->string size) "" ""))
+
 (define (compiler-backend-call-register-count [target : CompilerBackendTarget]) : i64
   (match target
     [(BackendTargetLinux) 6]
@@ -6372,53 +6383,72 @@
         (compiler-backend-emit-xgetbv assignments dst index)]
       [(IrInstrCall dst name args ty)
         (let
-          [param-types : AstTypeList
-            (compiler-backend-call-param-types-index name program-index)]
-          [call-space : i64
-            (compiler-backend-call-arg-space target args param-types)]
-          (match (compiler-backend-emit-call-args
-            target
-            assignments
-            args
-            param-types
-            0
-            0
-            0
-            0
-            0
-            instr-diag)
-            [(OkCompilerBackend args-asm)
-              (OkCompilerBackend
-                (string-append
-                  (compiler-backend-emit-call-space-sub call-space)
-                  (string-append
-                    args-asm
+          [fast-alloc-size : i64 (compiler-backend-fast-alloc-size args)]
+          [call-symbol : String
+            (compiler-backend-call-symbol-index name plan program-index)]
+          (if (and
+            (> fast-alloc-size 0)
+            (and
+              (string-eq name "tl_alloc")
+              (and
+                (compiler-backend-plan-provides? plan "tl_alloc")
+                (string-eq call-symbol "tl_alloc"))))
+            (OkCompilerBackend
+              (backend-cat5
+                "    call "
+                (compiler-backend-fast-alloc-label fast-alloc-size)
+                "\n"
+                (compiler-backend-emit-store-typed-var-with-plan
+                  assignments
+                  dst
+                  "%rax"
+                  ty)
+                ""))
+            (let
+              [param-types : AstTypeList
+                (compiler-backend-call-param-types-index name program-index)]
+              [call-space : i64
+                (compiler-backend-call-arg-space target args param-types)]
+              (match (compiler-backend-emit-call-args
+                target
+                assignments
+                args
+                param-types
+                0
+                0
+                0
+                0
+                0
+                instr-diag)
+                [(OkCompilerBackend args-asm)
+                  (OkCompilerBackend
                     (string-append
-                      (compiler-backend-varargs-pre-call
-                        target
-                        name
-                        externs
-                        param-types)
-                      (backend-cat5
-                        "    call "
-                        (compiler-backend-call-symbol-index
-                          name
-                          plan
-                          program-index)
-                        "\n"
+                      (compiler-backend-emit-call-space-sub call-space)
+                      (string-append
+                        args-asm
                         (string-append
-                          (compiler-backend-emit-call-space-add call-space)
-                          (compiler-backend-emit-store-typed-var-with-plan
-                            assignments
-                            dst
-                            (if (compiler-backend-float-type? ty)
-                              "%xmm0"
-                              "%rax")
-                            ty))
-                        "")))))]
-            [(ErrCompilerBackend message)
-              (ErrCompilerBackend
-                (compiler-backend-apply-instr-diagnostic message instr-diag))]))]
+                          (compiler-backend-varargs-pre-call
+                            target
+                            name
+                            externs
+                            param-types)
+                          (backend-cat5
+                            "    call "
+                            call-symbol
+                            "\n"
+                            (string-append
+                              (compiler-backend-emit-call-space-add call-space)
+                              (compiler-backend-emit-store-typed-var-with-plan
+                                assignments
+                                dst
+                                (if (compiler-backend-float-type? ty)
+                                  "%xmm0"
+                                  "%rax")
+                                ty))
+                            "")))))]
+                [(ErrCompilerBackend message)
+                  (ErrCompilerBackend
+                    (compiler-backend-apply-instr-diagnostic message instr-diag))]))))]
       [(IrInstrCallIndirect dst func args ty)
         (compiler-backend-emit-indirect-call
           target
@@ -11922,9 +11952,120 @@ tl_profile_alloc_peak_bytes:
           ", tl_profile_alloc_live_bytes(%rip)\n")))
     ""))
 
+(define (compiler-backend-runtime-fast-alloc-function
+  [size : i64]
+  [size-reg : String]
+  [next-reg : String]
+  [profile : bool]) : String
+  (let
+    [size-text : String (int->string size)]
+    [size-imm : String (string-append "$" size-text)]
+    [label : String (compiler-backend-fast-alloc-label size)]
+    [slow-label : String (string-append label "_slow")]
+    [profile-label : String (string-append label "_profile_done")]
+    (backend-cat5
+      label
+      ":
+    movq tl_current_arena(%rip), %r8
+    testq %r8, %r8
+    jz "
+      slow-label
+      "
+"
+      (backend-cat5
+        "    movq 16(%r8), %rax
+    movq %rax, "
+        next-reg
+        "
+    addq $"
+        size-text
+        (backend-cat5
+          ", "
+          next-reg
+          "
+    jc "
+          slow-label
+          (backend-cat5
+            "
+    cmpq 24(%r8), "
+            next-reg
+            "
+    ja "
+            slow-label
+            (backend-cat5
+              "
+    movq "
+              next-reg
+              ", 16(%r8)
+"
+              (compiler-backend-runtime-profile-alloc-account
+                size-imm
+                profile-label
+                profile)
+              (backend-cat5
+                "    ret
+"
+                slow-label
+                ":
+    movq $"
+                size-text
+                (backend-cat4 ", " size-reg "
+    jmp tl_alloc
+" "")))))))))
+
+(define (compiler-backend-runtime-fast-alloc-functions
+  [size-reg : String]
+  [next-reg : String]
+  [profile : bool]) : String
+  (string-append
+    (string-append
+      (compiler-backend-runtime-fast-alloc-function 8 size-reg next-reg profile)
+      (compiler-backend-runtime-fast-alloc-function
+        16
+        size-reg
+        next-reg
+        profile))
+    (string-append
+      (string-append
+        (compiler-backend-runtime-fast-alloc-function
+          24
+          size-reg
+          next-reg
+          profile)
+        (compiler-backend-runtime-fast-alloc-function
+          32
+          size-reg
+          next-reg
+          profile))
+      (string-append
+        (string-append
+          (compiler-backend-runtime-fast-alloc-function
+            40
+            size-reg
+            next-reg
+            profile)
+          (compiler-backend-runtime-fast-alloc-function
+            48
+            size-reg
+            next-reg
+            profile))
+        (string-append
+          (compiler-backend-runtime-fast-alloc-function
+            56
+            size-reg
+            next-reg
+            profile)
+          (compiler-backend-runtime-fast-alloc-function
+            64
+            size-reg
+            next-reg
+            profile))))))
+
 (define (compiler-backend-runtime-alloc-functions [profile : bool]) : String
   (string-append
-    "    .globl tl_alloc
+    (compiler-backend-runtime-fast-alloc-functions "%rdi" "%rcx" profile)
+    (string-append
+      "    .globl tl_alloc
 tl_alloc:
     addq $7, %rdi
     jc .L_tl_alloc_abort
@@ -11941,13 +12082,13 @@ tl_alloc:
     ja .L_tl_alloc_new_arena
     movq %rcx, 16(%r8)
 "
-    (string-append
       (string-append
-        (compiler-backend-runtime-profile-alloc-account
-          "%rsi"
-          ".L_tl_alloc_profile_fast_done"
-          profile)
-        "    ret
+        (string-append
+          (compiler-backend-runtime-profile-alloc-account
+            "%rsi"
+            ".L_tl_alloc_profile_fast_done"
+            profile)
+          "    ret
 .L_tl_alloc_new_arena:
     movq $0x4000000, %rdx
     movq %rsi, %rcx
@@ -11985,12 +12126,12 @@ tl_alloc:
     movq %rax, tl_current_arena(%rip)
     movq %r8, %rax
 ")
-      (string-append
-        (compiler-backend-runtime-profile-alloc-account
-          "%rsi"
-          ".L_tl_alloc_profile_new_done"
-          profile)
-        "    ret
+        (string-append
+          (compiler-backend-runtime-profile-alloc-account
+            "%rsi"
+            ".L_tl_alloc_profile_new_done"
+            profile)
+          "    ret
 .L_tl_alloc_abort:
     movq $1, %rax
     movq $2, %rdi
@@ -12001,7 +12142,7 @@ tl_alloc:
     movq $134, %rdi
     syscall
 
-"))))
+")))))
 
 (define (compiler-backend-runtime-region-mark-functions) : String
   "    .globl tl_region_mark
@@ -12305,7 +12446,9 @@ tl_region_reset:
 
 (define (compiler-backend-runtime-windows-alloc-functions [profile : bool]) : String
   (string-append
-    "    .globl tl_alloc
+    (compiler-backend-runtime-fast-alloc-functions "%rcx" "%r10" profile)
+    (string-append
+      "    .globl tl_alloc
 tl_alloc:
     testq %rcx, %rcx
     jnz .L_tl_alloc_win_size_ready
@@ -12326,13 +12469,13 @@ tl_alloc:
     ja .L_tl_alloc_new_arena_entry
     movq %r10, 16(%r8)
 "
-    (string-append
       (string-append
-        (compiler-backend-runtime-profile-alloc-account
-          "%r11"
-          ".L_tl_alloc_profile_win_fast_done"
-          profile)
-        "    ret
+        (string-append
+          (compiler-backend-runtime-profile-alloc-account
+            "%r11"
+            ".L_tl_alloc_profile_win_fast_done"
+            profile)
+          "    ret
 .L_tl_alloc_new_arena_entry:
     push %rbp
     mov %rsp, %rbp
@@ -12377,12 +12520,12 @@ tl_alloc:
     movq %rax, tl_current_arena(%rip)
     movq %r8, %rax
 ")
-      (string-append
-        (compiler-backend-runtime-profile-alloc-account
-          "%r11"
-          ".L_tl_alloc_profile_win_new_done"
-          profile)
-        "
+        (string-append
+          (compiler-backend-runtime-profile-alloc-account
+            "%r11"
+            ".L_tl_alloc_profile_win_new_done"
+            profile)
+          "
     mov %rbp, %rsp
     pop %rbp
     ret
@@ -12394,7 +12537,7 @@ tl_alloc:
     movq $134, %rcx
     call exit
 
-"))))
+")))))
 
 (define (compiler-backend-runtime-oob-functions) : String
   "    .globl tl_oob_abort
@@ -20424,7 +20567,7 @@ tl_windows_sdk_registry_install:
               (compiler-backend-string-contains? asm "tl_random_system_seed:\n")))
           (and
             (backend-and4
-              (compiler-backend-string-contains? asm "    call tl_alloc\n")
+              (compiler-backend-string-contains? asm "    call .L_tl_alloc8\n")
               (not (compiler-backend-string-contains? asm ".extern tl_alloc\n"))
               (not
                 (compiler-backend-string-contains?

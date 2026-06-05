@@ -71,6 +71,11 @@ Coverage notes:
   skipping, and stable picks for fixed seeds.
 - `text_buf_api.tl` covers empty buffers, repeated appends, char/int append
   helpers, buffer concatenation, clear/reset behavior, and rendering.
+- `text_buf_borrowed_check.tl` typechecks the lifetime-parameterized
+  `text_buf_borrowed.tl` surface, including borrowed chunks, owned chunk
+  boundaries, copied unrelated borrowed chunks, render, length, and empty
+  predicates. The borrowed escape fixture verifies the checker rejects a
+  borrowed buffer that would outlive its chunk owner.
 - `visual_studio_api.tl` covers the SetupConfiguration stdlib data model,
   instance/package list helpers, result/error predicates, and the runtime
   success/error result shape.

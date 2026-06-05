@@ -213,6 +213,7 @@ random.tl
 string.tl
 test.tl
 text_buf.tl
+text_buf_borrowed.tl
 vector.tl
 windows_registry.tl
 windows_sdk.tl
@@ -281,8 +282,10 @@ stdlib/tests/arena_policy.tl|pass|-
 stdlib/tests/arena_policy_escape_string.tl|fail|cannot escape with-arena 'inner'
 stdlib/tests/arena_policy_escape_text_buf.tl|fail|cannot escape with-arena 'inner'
 stdlib/tests/core_macros_api.tl|pass|-
+stdlib/tests/arena_policy_escape_text_buf_borrowed.tl|fail|typecheck: argument type mismatch|requires-borrowed-str-capable
 stdlib/tests/io_stdio_pipe_short_read.tl|pass|-
 stdlib/tests/borrowed_str_gate.tl|pass|-|requires-borrowed-str-capable
+stdlib/tests/text_buf_borrowed_check.tl|pass|-|requires-borrowed-str-capable
 EOF
 }
 

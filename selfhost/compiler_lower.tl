@@ -6775,17 +6775,9 @@
     [(string-eq name "string=?") true]
     [(string-eq name "string->int") true]
     [(string-eq name "int->string") true]
-    [(string-eq name "arg-count") true]
-    [(string-eq name "arg") true]
     [(string-eq name "env-var-exists?") true]
     [(string-eq name "env-var-value") true]
-    [(string-eq name "env-path-separator") true]
-    [(string-eq name "panic") true]
-    [(string-eq name "error") true]
-    [else (string-eq name "print-error")]))
-
-(define (lower-print-string-builtin? [name : String]) : bool
-  (or (string-eq name "print-string") (string-eq name "print-str")))
+    [else (string-eq name "env-path-separator")]))
 
 (define (lower-stdio-runtime-name [name : String]) : String
   (cond
@@ -10064,332 +10056,6 @@
         result-ty
         origin)]))
 
-;; A single newline byte, produced as an embedded string literal (the lexer has
-;; no `\n` escape, so the backend uses embedded newlines the same way for its
-;; emitted assembly). Used to terminate the line printed by the `print` builtin.
-(define (lower-print-newline-text) : String
-  "
-")
-
-(define (lower-print-string-value-call
-  [state : LowerState]
-  [value : CompilerIrValue]
-  [result-ty : AstType]) : ResultLowerExpr
-  (match (lower-string-fields state value)
-    [(LowerStringFields fields-state ptr len)
-      (lower-runtime-call-values
-        fields-state
-        "tl_print_str"
-        (compiler-ir-value-cons ptr (compiler-ir-value-cons len IrValueNil))
-        result-ty)]))
-
-(define (lower-print-string-call
-  [ctx : TcContext]
-  [state : LowerState]
-  [env : SymI64Env]
-  [type-env : TcTypeEnv]
-  [name : String]
-  [args : AstExprList]
-  [result-ty : AstType]
-  [origin : AstExpr]) : ResultLowerExpr
-  (match args
-    [(AstExprCons arg tail)
-      (let
-        [tail : AstExprList (box-get tail)]
-        (match tail
-          [(AstExprNil)
-            (lower-one-string-runtime-call
-              ctx
-              state
-              env
-              type-env
-              arg
-              "tl_print_str"
-              result-ty
-              (string-append (string-append "lower: " name) " requires String"))]
-          [_
-            (lower-direct-call
-              ctx
-              state
-              env
-              type-env
-              name
-              args
-              result-ty
-              origin)]))]
-    [_ (lower-direct-call ctx state env type-env name args result-ty origin)]))
-
-(define (lower-print-char-call
-  [ctx : TcContext]
-  [state : LowerState]
-  [env : SymI64Env]
-  [type-env : TcTypeEnv]
-  [args : AstExprList]
-  [result-ty : AstType]
-  [origin : AstExpr]) : ResultLowerExpr
-  (lower-one-arg-runtime-call
-    ctx
-    state
-    env
-    type-env
-    args
-    "print-char"
-    "tl_print_char"
-    (AstTyChar)
-    result-ty
-    origin))
-
-(define (lower-print-float-call
-  [ctx : TcContext]
-  [state : LowerState]
-  [env : SymI64Env]
-  [type-env : TcTypeEnv]
-  [args : AstExprList]
-  [result-ty : AstType]
-  [origin : AstExpr]) : ResultLowerExpr
-  (lower-one-arg-runtime-call
-    ctx
-    state
-    env
-    type-env
-    args
-    "print-float"
-    "tl_print_f64"
-    (AstTyF64)
-    result-ty
-    origin))
-
-(define (lower-print-literal-call
-  [ctx : TcContext]
-  [state : LowerState]
-  [env : SymI64Env]
-  [type-env : TcTypeEnv]
-  [text : String]
-  [result-ty : AstType]) : ResultLowerExpr
-  (lower-one-string-runtime-call
-    ctx
-    state
-    env
-    type-env
-    (AstExprLiteral (AstLitString text))
-    "tl_print_str"
-    result-ty
-    "lower: print literal requires String"))
-
-;; The bare `print` builtin (i64 -> unit) remains compiler-owned. It lowers to
-;; int->string plus the backend runtime print ABI directly, so the public
-;; stdlib `print-string` wrapper is not an implicit fallback.
-(define (lower-print-call
-  [ctx : TcContext]
-  [state : LowerState]
-  [env : SymI64Env]
-  [type-env : TcTypeEnv]
-  [args : AstExprList]
-  [result-ty : AstType]
-  [origin : AstExpr]) : ResultLowerExpr
-  (match args
-    [(AstExprCons number-arg tail)
-      (let
-        [tail : AstExprList (box-get tail)]
-        (match tail
-          [(AstExprNil)
-            (match (lower-int-to-string-call
-              ctx
-              state
-              env
-              type-env
-              (ast-expr-cons number-arg AstExprNil)
-              (AstTyString)
-              origin)
-              [(OkLowerExpr decimal-printed)
-                (match decimal-printed
-                  [(LowerExpr decimal-state decimal-value _)
-                    (match (lower-print-string-value-call
-                      decimal-state
-                      decimal-value
-                      (AstTyUnit))
-                      [(OkLowerExpr decimal-output)
-                        (match decimal-output
-                          [(LowerExpr newline-state _ _)
-                            (lower-print-literal-call
-                              ctx
-                              newline-state
-                              env
-                              type-env
-                              (lower-print-newline-text)
-                              result-ty)])]
-                      [(ErrLowerExpr message) (ErrLowerExpr message)])])]
-              [(ErrLowerExpr message) (ErrLowerExpr message)])]
-          [_
-            (lower-direct-call
-              ctx
-              state
-              env
-              type-env
-              "print"
-              args
-              result-ty
-              origin)]))]
-    [_ (lower-direct-call ctx state env type-env "print" args result-ty origin)]))
-
-;; `(print-newline)` writes a single newline through the runtime print ABI.
-(define (lower-print-newline-call
-  [ctx : TcContext]
-  [state : LowerState]
-  [env : SymI64Env]
-  [type-env : TcTypeEnv]
-  [args : AstExprList]
-  [result-ty : AstType]
-  [origin : AstExpr]) : ResultLowerExpr
-  (match args
-    [(AstExprNil)
-      (lower-print-literal-call
-        ctx
-        state
-        env
-        type-env
-        (lower-print-newline-text)
-        result-ty)]
-    [_
-      (lower-direct-call
-        ctx
-        state
-        env
-        type-env
-        "print-newline"
-        args
-        result-ty
-        origin)]))
-
-;; `(print-bool b)` writes `true`/`false` followed by a newline (matching the
-;; print family's line-terminating behavior).
-(define (lower-print-bool-call
-  [ctx : TcContext]
-  [state : LowerState]
-  [env : SymI64Env]
-  [type-env : TcTypeEnv]
-  [args : AstExprList]
-  [result-ty : AstType]
-  [origin : AstExpr]) : ResultLowerExpr
-  (match args
-    [(AstExprCons flag tail)
-      (let
-        [tail : AstExprList (box-get tail)]
-        (match tail
-          [(AstExprNil)
-            (match (lower-if
-              ctx
-              state
-              env
-              type-env
-              flag
-              (AstExprLiteral (AstLitString "true"))
-              (AstExprLiteral (AstLitString "false"))
-              (AstTyString))
-              [(OkLowerExpr word-lowered)
-                (match word-lowered
-                  [(LowerExpr word-state word-value _)
-                    (match (lower-print-string-value-call
-                      word-state
-                      word-value
-                      (AstTyUnit))
-                      [(OkLowerExpr word-printed)
-                        (match word-printed
-                          [(LowerExpr newline-state _ _)
-                            (lower-print-literal-call
-                              ctx
-                              newline-state
-                              env
-                              type-env
-                              (lower-print-newline-text)
-                              result-ty)])]
-                      [(ErrLowerExpr message) (ErrLowerExpr message)])])]
-              [(ErrLowerExpr message) (ErrLowerExpr message)])]
-          [_
-            (lower-direct-call
-              ctx
-              state
-              env
-              type-env
-              "print-bool"
-              args
-              result-ty
-              origin)]))]
-    [_
-      (lower-direct-call
-        ctx
-        state
-        env
-        type-env
-        "print-bool"
-        args
-        result-ty
-        origin)]))
-
-(define (lower-arg-count-call
-  [ctx : TcContext]
-  [state : LowerState]
-  [env : SymI64Env]
-  [type-env : TcTypeEnv]
-  [args : AstExprList]
-  [result-ty : AstType]
-  [origin : AstExpr]) : ResultLowerExpr
-  (match args
-    [(AstExprNil)
-      (lower-runtime-call-values state ".L_tl_arg_count" IrValueNil result-ty)]
-    [_
-      (lower-direct-call
-        ctx
-        state
-        env
-        type-env
-        "arg-count"
-        args
-        result-ty
-        origin)]))
-
-(define (lower-arg-call
-  [ctx : TcContext]
-  [state : LowerState]
-  [env : SymI64Env]
-  [type-env : TcTypeEnv]
-  [args : AstExprList]
-  [result-ty : AstType]
-  [origin : AstExpr]) : ResultLowerExpr
-  (match args
-    [(AstExprCons arg tail)
-      (let
-        [tail : AstExprList (box-get tail)]
-        (match tail
-          [(AstExprNil)
-            (match (lower-expr ctx state env type-env arg)
-              [(OkLowerExpr lowered)
-                (match lowered
-                  [(LowerExpr arg-state arg-value arg-ty)
-                    (match (lower-cast-value
-                      arg-state
-                      arg-value
-                      arg-ty
-                      (AstTyI64))
-                      [(LowerExpr cast-state cast-value _)
-                        (lower-runtime-call-values
-                          cast-state
-                          ".L_tl_arg"
-                          (compiler-ir-value-cons cast-value IrValueNil)
-                          result-ty)])])]
-              [(ErrLowerExpr message) (ErrLowerExpr message)])]
-          [_
-            (lower-direct-call
-              ctx
-              state
-              env
-              type-env
-              "arg"
-              args
-              result-ty
-              origin)]))]
-    [_ (lower-direct-call ctx state env type-env "arg" args result-ty origin)]))
-
 (define (lower-read-file-call
   [ctx : TcContext]
   [state : LowerState]
@@ -11153,53 +10819,6 @@
         result-ty
         origin)]))
 
-(define (lower-message-runtime-call
-  [ctx : TcContext]
-  [state : LowerState]
-  [env : SymI64Env]
-  [type-env : TcTypeEnv]
-  [args : AstExprList]
-  [fallback-name : String]
-  [runtime-name : String]
-  [result-ty : AstType]
-  [message : String]
-  [origin : AstExpr]) : ResultLowerExpr
-  (match args
-    [(AstExprCons arg tail)
-      (let
-        [tail : AstExprList (box-get tail)]
-        (match tail
-          [(AstExprNil)
-            (lower-one-string-runtime-call
-              ctx
-              state
-              env
-              type-env
-              arg
-              runtime-name
-              result-ty
-              message)]
-          [_
-            (lower-direct-call
-              ctx
-              state
-              env
-              type-env
-              fallback-name
-              args
-              result-ty
-              origin)]))]
-    [_
-      (lower-direct-call
-        ctx
-        state
-        env
-        type-env
-        fallback-name
-        args
-        result-ty
-        origin)]))
-
 (define (lower-write-file-call
   [ctx : TcContext]
   [state : LowerState]
@@ -11575,40 +11194,13 @@
       (lower-string-to-int-call ctx state env type-env args result-ty origin)]
     [(string-eq name "int->string")
       (lower-int-to-string-call ctx state env type-env args result-ty origin)]
-    [(string-eq name "arg-count")
-      (lower-arg-count-call ctx state env type-env args result-ty origin)]
-    [(string-eq name "arg")
-      (lower-arg-call ctx state env type-env args result-ty origin)]
     [(or
         (string-eq name "env-var-exists?")
         (or
           (string-eq name "env-var-value")
           (string-eq name "env-path-separator")))
       (lower-env-runtime-call ctx state env type-env name args result-ty origin)]
-    [(or (string-eq name "panic") (string-eq name "error"))
-      (lower-message-runtime-call
-        ctx
-        state
-        env
-        type-env
-        args
-        name
-        ".L_tl_abort"
-        result-ty
-        "lower: panic requires String"
-        origin)]
-    [else
-      (lower-message-runtime-call
-        ctx
-        state
-        env
-        type-env
-        args
-        "print-error"
-        "tl_print_err"
-        result-ty
-        "lower: print-error requires String"
-        origin)]))
+    [else (lower-direct-call ctx state env type-env name args result-ty origin)]))
 
 ;; Lower an unshadowed `(string-ref s i)` / `(char-at s i)` builtin call to the
 ;; bounds-checked String byte index. Since #677 the parser emits these names as
@@ -11849,66 +11441,6 @@
                 env
                 type-env
                 name
-                args
-                result-ty
-                origin)]
-            [(and
-                (lower-builtin-call-available? ctx env name)
-                (string-eq name "print"))
-              (lower-print-call ctx state env type-env args result-ty origin)]
-            [(and
-                (lower-builtin-call-available? ctx env name)
-                (lower-print-string-builtin? name))
-              (lower-print-string-call
-                ctx
-                state
-                env
-                type-env
-                name
-                args
-                result-ty
-                origin)]
-            [(and
-                (lower-builtin-call-available? ctx env name)
-                (string-eq name "print-char"))
-              (lower-print-char-call
-                ctx
-                state
-                env
-                type-env
-                args
-                result-ty
-                origin)]
-            [(and
-                (lower-builtin-call-available? ctx env name)
-                (string-eq name "print-float"))
-              (lower-print-float-call
-                ctx
-                state
-                env
-                type-env
-                args
-                result-ty
-                origin)]
-            [(and
-                (lower-builtin-call-available? ctx env name)
-                (string-eq name "print-newline"))
-              (lower-print-newline-call
-                ctx
-                state
-                env
-                type-env
-                args
-                result-ty
-                origin)]
-            [(and
-                (lower-builtin-call-available? ctx env name)
-                (string-eq name "print-bool"))
-              (lower-print-bool-call
-                ctx
-                state
-                env
-                type-env
                 args
                 result-ty
                 origin)]
@@ -17900,7 +17432,7 @@
             (+ (if (string-eq (& joined) (& extended)) 1 0)
               (cast (char-at (& spaced) 0) : i64))))))))")
 
-(define (compiler-lower-print-string-builtin-source) : String
+(define (compiler-lower-print-string-stdlib-source) : String
   "(define (print-string [text : String]) : unit
   unit)
 (define (print-str [text : String]) : unit
@@ -20748,8 +20280,8 @@
               ok))])]
     [(ErrCompilerLower _) false]))
 
-(define (compiler-lower-print-string-builtin-shape-ok?) : bool
-  (match (lower-compiler-source (compiler-lower-print-string-builtin-source))
+(define (compiler-lower-print-string-stdlib-shape-ok?) : bool
+  (match (lower-compiler-source (compiler-lower-print-string-stdlib-source))
     [(OkCompilerLower program _)
       (match program
         [(IrProgram _ functions _)
@@ -22221,23 +21753,73 @@
     [(ErrCompilerLower _) false]))
 
 (define (compiler-lower-stdlib-helper-defaults-disabled-ok?) : bool
-  (and
-    (not (lower-bootstrap-runtime-builtin? "read-file"))
-    (and
-      (not (lower-bootstrap-runtime-builtin? "write-file"))
-      (and
-        (not (lower-bootstrap-runtime-builtin? "file-open-status"))
-        (and
-          (not (lower-bootstrap-runtime-builtin? "fs-process-id"))
-          (and
-            (not (lower-bootstrap-runtime-builtin? "fs-current-dir"))
-            (and
-              (not (lower-bootstrap-runtime-builtin? "read-stdin-line"))
-              (and
-                (not (lower-bootstrap-runtime-builtin? "read-stdin-bytes"))
-                (and
-                  (not (lower-bootstrap-runtime-builtin? "stdin-eof?"))
-                  (not (lower-bootstrap-runtime-builtin? "flush-stdout")))))))))))
+  (let
+    [ok : bool true]
+    (begin
+      (if (not (lower-bootstrap-runtime-builtin? "print"))
+        unit
+        (set! ok false))
+      (if (not (lower-bootstrap-runtime-builtin? "print-string"))
+        unit
+        (set! ok false))
+      (if (not (lower-bootstrap-runtime-builtin? "print-str"))
+        unit
+        (set! ok false))
+      (if (not (lower-bootstrap-runtime-builtin? "print-newline"))
+        unit
+        (set! ok false))
+      (if (not (lower-bootstrap-runtime-builtin? "print-bool"))
+        unit
+        (set! ok false))
+      (if (not (lower-bootstrap-runtime-builtin? "print-char"))
+        unit
+        (set! ok false))
+      (if (not (lower-bootstrap-runtime-builtin? "print-float"))
+        unit
+        (set! ok false))
+      (if (not (lower-bootstrap-runtime-builtin? "print-error"))
+        unit
+        (set! ok false))
+      (if (not (lower-bootstrap-runtime-builtin? "panic"))
+        unit
+        (set! ok false))
+      (if (not (lower-bootstrap-runtime-builtin? "error"))
+        unit
+        (set! ok false))
+      (if (not (lower-bootstrap-runtime-builtin? "arg-count"))
+        unit
+        (set! ok false))
+      (if (not (lower-bootstrap-runtime-builtin? "arg"))
+        unit
+        (set! ok false))
+      (if (not (lower-bootstrap-runtime-builtin? "read-file"))
+        unit
+        (set! ok false))
+      (if (not (lower-bootstrap-runtime-builtin? "write-file"))
+        unit
+        (set! ok false))
+      (if (not (lower-bootstrap-runtime-builtin? "file-open-status"))
+        unit
+        (set! ok false))
+      (if (not (lower-bootstrap-runtime-builtin? "fs-process-id"))
+        unit
+        (set! ok false))
+      (if (not (lower-bootstrap-runtime-builtin? "fs-current-dir"))
+        unit
+        (set! ok false))
+      (if (not (lower-bootstrap-runtime-builtin? "read-stdin-line"))
+        unit
+        (set! ok false))
+      (if (not (lower-bootstrap-runtime-builtin? "read-stdin-bytes"))
+        unit
+        (set! ok false))
+      (if (not (lower-bootstrap-runtime-builtin? "stdin-eof?"))
+        unit
+        (set! ok false))
+      (if (not (lower-bootstrap-runtime-builtin? "flush-stdout"))
+        unit
+        (set! ok false))
+      ok)))
 
 (define (compiler-lower-cpu-builtin-shape-ok?) : bool
   (match (lower-compiler-source (compiler-lower-cpu-builtin-source))
@@ -22282,7 +21864,7 @@
         (compiler-lower-string-runtime-source))
         unit
         (set! ok false))
-      (if (compiler-lower-print-string-builtin-shape-ok?)
+      (if (compiler-lower-print-string-stdlib-shape-ok?)
         unit
         (set! ok false))
       (if (compiler-lower-borrowed-str-param-shape-ok?)

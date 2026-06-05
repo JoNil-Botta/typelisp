@@ -7,6 +7,7 @@
 # `retired` entries are documented internal/legacy commands and are not required
 # to appear in help.
 active|build|-
+active|clean|-
 active|run|-
 active|check|-
 active|fmt|-

@@ -19581,9 +19581,11 @@
   "(module left)
 (define same : i64 20)
 (define (get) : i64 same)
+(export (value get))
 (module right)
 (define same : i64 22)
 (define (get) : i64 same)
+(export (value get))
 (module main)
 (define (main) : i64 (+ (left/get) (right/get)))")
 
@@ -19608,6 +19610,14 @@
 (define (get) : i64 20)
 (defenum Maybe (None) (Some i64))
 (defstruct Point (x i64))
+(export
+  (value get)
+  (type Maybe)
+  (variant None)
+  (variant Some)
+  (type Point)
+  (constructor Point)
+  (field Point x))
 (module main)
 (import \"data.tl\" module data :as d)
 (define (main) : i64
@@ -19638,6 +19648,14 @@
   (match cands
     [(CandNil) (Candidate 0)]
     [(CandCons head rest) head]))
+(export
+  (value cand-nth)
+  (type Candidate)
+  (constructor Candidate)
+  (field Candidate number)
+  (type CandList)
+  (variant CandNil)
+  (variant CandCons))
 (module main)
 (define (main) : i64
   (let [c : data/Candidate
@@ -19656,6 +19674,7 @@
 (define (compiler-lower-module-function-returning-enum-source) : String
   "(module data)
 (defenum Maybe (get))
+(export (type Maybe) (variant get))
 (module main)
 (define (get) : data/Maybe
   (data/get))

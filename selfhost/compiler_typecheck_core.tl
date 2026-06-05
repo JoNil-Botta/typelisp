@@ -10320,6 +10320,10 @@
   (MacroNoDecl)
   (MacroSomeDecl String AstMacroParamList AstType AstExpr))
 
+(defenum ResultMacroCallDecl
+  (OkMacroCallDecl MacroMaybeDecl)
+  (ErrMacroCallDecl CompilerDiagnostic))
+
 (defenum ResultMacroExpr
   (OkMacroExpr AstExpr)
   (ErrMacroExpr CompilerDiagnostic))
@@ -10377,6 +10381,12 @@
 
 (defenum MacroHygienePatternList
   (MacroHygienePatternList AstPatternList MacroHygieneEnv))
+
+(define macro-expand-active-module : String
+  "")
+
+(define macro-expand-active-index : i64
+  0)
 
 (define (macro-hygiene-env-lookup [env : MacroHygieneEnv] [name : String]) : TcMaybeString
   (match env
@@ -10895,20 +10905,208 @@
               (macro-find-decl rest name))]
           [_ (macro-find-decl rest name)]))]))
 
-;; If `func` is a bare reference to a defined macro, return that macro's decl.
-(define (macro-call-decl [func : AstExpr] [decls : AstDeclList]) : MacroMaybeDecl
+(define (macro-decl-from-decl [decl : AstDecl]) : MacroMaybeDecl
+  (match decl
+    [(AstDeclDefMacro name params ret body)
+      (MacroSomeDecl name params ret body)]
+    [(AstDeclUnsafe inner) (macro-decl-from-decl inner)]
+    [(AstDeclComptimeDecl template) (macro-decl-from-decl template)]
+    [_ (MacroNoDecl)]))
+
+(define (macro-decl-counts-for-symbol-index? [decl : AstDecl]) : bool
+  (match decl
+    [(AstDeclImport _) false]
+    [(AstDeclIncludeStr _ _) false]
+    [(AstDeclExport _) false]
+    [(AstDeclModule _) false]
+    [(AstDeclTest _ _ _) false]
+    [_ true]))
+
+(define (macro-find-decl-by-index-loop
+  [decls : AstDeclList]
+  [target : i64]
+  [index : i64]) : MacroMaybeDecl
+  (match decls
+    [(AstDeclNil) (MacroNoDecl)]
+    [(AstDeclCons decl rest)
+      (let
+        [rest : AstDeclList (box-get rest)]
+        (if (macro-decl-counts-for-symbol-index? decl)
+          (if (= index target)
+            (macro-decl-from-decl decl)
+            (macro-find-decl-by-index-loop rest target (+ index 1)))
+          (macro-find-decl-by-index-loop rest target index)))]))
+
+(define (macro-find-decl-by-index [decls : AstDeclList] [target : i64]) : MacroMaybeDecl
+  (macro-find-decl-by-index-loop decls target 0))
+
+(define (macro-import-alias-target-list
+  [decls : AstDeclList]
+  [current-module : String]
+  [alias : String]
+  [module : String]) : TcMaybeString
+  (match decls
+    [(AstDeclNil) (TcNoString)]
+    [(AstDeclCons decl rest)
+      (let
+        [rest : AstDeclList (box-get rest)]
+        (match decl
+          [(AstDeclModule next-module)
+            (macro-import-alias-target-list
+              rest
+              current-module
+              alias
+              next-module)]
+          [(AstDeclImport (AstImportSpec _ expected maybe-alias))
+            (match maybe-alias
+              [(AstSomeImportAlias import-alias)
+                (if (and
+                  (string-eq module current-module)
+                  (string-eq import-alias alias))
+                  (match expected
+                    [(AstSomeModuleName target) (TcSomeString target)]
+                    [(AstNoModuleName) (TcSomeString alias)])
+                  (macro-import-alias-target-list
+                    rest
+                    current-module
+                    alias
+                    module))]
+              [(AstNoImportAlias)
+                (macro-import-alias-target-list
+                  rest
+                  current-module
+                  alias
+                  module)])]
+          [_ (macro-import-alias-target-list rest current-module alias module)]))]))
+
+(define (macro-resolve-qualified-module
+  [decls : AstDeclList]
+  [current-module : String]
+  [qualifier : String]) : String
+  (match (macro-import-alias-target-list decls current-module qualifier "")
+    [(TcSomeString target) target]
+    [(TcNoString) qualifier]))
+
+(define (macro-missing-export-message [name : String]) : String
+  (string-append "typecheck: missing macro export " name))
+
+(define (macro-private-message [name : String]) : String
+  (string-append "typecheck: private macro " name))
+
+(define (macro-late-local-message [name : String]) : String
+  (string-append
+    "typecheck: local macro "
+    (string-append name " is defined later")))
+
+(define (macro-qualified-call-decl-with-exports
+  [ctx : TcContext]
+  [exports : CompilerExports]
+  [decls : AstDeclList]
+  [target-module : String]
+  [base : String]
+  [name : String]
+  [call-expr : AstExpr]) : ResultMacroCallDecl
+  (match (compiler-exports-lookup
+    exports
+    (compiler-export-kind-macro)
+    target-module
+    base)
+    [(SomeI64 handle)
+      (match (macro-find-decl-by-index
+        decls
+        (compiler-symbol-handle-index handle))
+        [(MacroSomeDecl macro-name params ret body)
+          (OkMacroCallDecl (MacroSomeDecl macro-name params ret body))]
+        [(MacroNoDecl)
+          (ErrMacroCallDecl
+            (ctfe-diagnostic-at-expr
+              call-expr
+              (macro-missing-export-message name)))])]
+    [(NoneI64)
+      (match (compiler-symbols-lookup-macro-in-module
+        (tc-context-symbols ctx)
+        target-module
+        base)
+        [(SomeI64 _)
+          (ErrMacroCallDecl
+            (ctfe-diagnostic-at-expr call-expr (macro-private-message name)))]
+        [(NoneI64)
+          (ErrMacroCallDecl
+            (ctfe-diagnostic-at-expr
+              call-expr
+              (macro-missing-export-message name)))])]))
+
+(define (macro-qualified-call-decl
+  [ctx : TcContext]
+  [decls : AstDeclList]
+  [name : String]
+  [call-expr : AstExpr]) : ResultMacroCallDecl
+  (let
+    [qualifier : String (tc-qualified-name-module name)]
+    [base : String (tc-qualified-name-base name)]
+    [target-module : String
+      (macro-resolve-qualified-module decls (tc-context-module ctx) qualifier)]
+    (match (build-compiler-exports-with
+      (tc-context-program ctx)
+      (tc-context-symbols ctx)
+      (tc-context-registries ctx))
+      [(OkCompilerExports exports)
+        (macro-qualified-call-decl-with-exports
+          ctx
+          exports
+          decls
+          target-module
+          base
+          name
+          call-expr)]
+      [(ErrCompilerExports message)
+        (ErrMacroCallDecl (ctfe-diagnostic-at-expr call-expr message))])))
+
+;; If `func` names a visible macro, return that macro's decl. Bare local macros
+;; are source-order visible; qualified macro calls must pass the export table.
+(define (macro-call-decl
+  [ctx : TcContext]
+  [func : AstExpr]
+  [decls : AstDeclList]
+  [call-expr : AstExpr]) : ResultMacroCallDecl
   (match func
     [(AstExprSpanned inner-box _)
       (let
         [inner : AstExpr (box-get inner-box)]
-        (macro-call-decl inner decls))]
+        (macro-call-decl ctx inner decls call-expr))]
     [(AstExprVar name)
-      (macro-find-decl
-        decls
-        (if (tc-hygiene-global-name? name)
-          (tc-hygiene-global-base name)
-          name))]
-    [_ (MacroNoDecl)]))
+      (let
+        [lookup-name : String
+          (if (tc-hygiene-global-name? name)
+            (tc-hygiene-global-base name)
+            name)]
+        (if (tc-name-qualified? lookup-name)
+          (macro-qualified-call-decl ctx decls lookup-name call-expr)
+          (match (compiler-symbols-lookup-macro-in-module
+            (tc-context-symbols ctx)
+            (tc-context-module ctx)
+            lookup-name)
+            [(SomeI64 handle)
+              (if (<
+                (compiler-symbol-handle-index handle)
+                macro-expand-active-index)
+                (match (macro-find-decl-by-index
+                  decls
+                  (compiler-symbol-handle-index handle))
+                  [(MacroSomeDecl macro-name params ret body)
+                    (OkMacroCallDecl (MacroSomeDecl macro-name params ret body))]
+                  [(MacroNoDecl) (OkMacroCallDecl (MacroNoDecl))])
+                (ErrMacroCallDecl
+                  (ctfe-diagnostic-at-expr
+                    call-expr
+                    (macro-late-local-message lookup-name))))]
+            [(NoneI64) (OkMacroCallDecl (MacroNoDecl))])))]
+    [_ (OkMacroCallDecl (MacroNoDecl))]))
+
+(define (macro-local-decl-index-step! [decl : AstDecl]) : unit
+  (if (macro-decl-counts-for-symbol-index? decl)
+    (set! macro-expand-active-index (+ macro-expand-active-index 1))
+    unit))
 
 (define (macro-operand-mismatch-message [expected : AstType] [actual : AstType]) : String
   (tc-cat3
@@ -11173,27 +11371,30 @@
       [(AstExprCall func-box args)
         (let
           [func : AstExpr (box-get func-box)]
-          (match (macro-call-decl func decls)
-            [(MacroSomeDecl macro-name params ret body)
-              (macro-expand-call
-                ctx
-                env
-                decls
-                macro-name
-                params
-                ret
-                body
-                args
-                depth
-                expr)]
-            [(MacroNoDecl)
-              (match (macro-expand-expr ctx env decls depth func)
-                [(OkMacroExpr nfunc)
-                  (match (macro-expand-exprs ctx env decls depth args)
-                    [(OkMacroExprList nargs)
-                      (OkMacroExpr (ast-expr-call nfunc nargs))]
-                    [(ErrMacroExprList diag) (ErrMacroExpr diag)])]
-                [(ErrMacroExpr diag) (ErrMacroExpr diag)])]))]
+          (match (macro-call-decl ctx func decls expr)
+            [(OkMacroCallDecl maybe-decl)
+              (match maybe-decl
+                [(MacroSomeDecl macro-name params ret body)
+                  (macro-expand-call
+                    ctx
+                    env
+                    decls
+                    macro-name
+                    params
+                    ret
+                    body
+                    args
+                    depth
+                    expr)]
+                [(MacroNoDecl)
+                  (match (macro-expand-expr ctx env decls depth func)
+                    [(OkMacroExpr nfunc)
+                      (match (macro-expand-exprs ctx env decls depth args)
+                        [(OkMacroExprList nargs)
+                          (OkMacroExpr (ast-expr-call nfunc nargs))]
+                        [(ErrMacroExprList diag) (ErrMacroExpr diag)])]
+                    [(ErrMacroExpr diag) (ErrMacroExpr diag)])])]
+            [(ErrMacroCallDecl diag) (ErrMacroExpr diag)]))]
       [(AstExprBinary op left-box right-box)
         (let
           [left : AstExpr (box-get left-box)]
@@ -11511,12 +11712,26 @@
     [(AstDeclCons decl rest)
       (let
         [rest : AstDeclList (box-get rest)]
-        (match (macro-expand-decl ctx top-env orig-decls decl)
-          [(OkMacroDecl ndecl)
-            (match (macro-expand-decls ctx top-env orig-decls rest)
-              [(OkMacroDecls nrest) (OkMacroDecls (ast-decl-cons ndecl nrest))]
-              [(ErrMacroDecls diag) (ErrMacroDecls diag)])]
-          [(ErrMacroDecl diag) (ErrMacroDecls diag)]))]))
+        (match decl
+          [(AstDeclModule next-module)
+            (begin
+              (set! macro-expand-active-module next-module)
+              (match (macro-expand-decls ctx top-env orig-decls rest)
+                [(OkMacroDecls nrest) (OkMacroDecls (ast-decl-cons decl nrest))]
+                [(ErrMacroDecls diag) (ErrMacroDecls diag)]))]
+          [_
+            (let
+              [decl-ctx : TcContext
+                (tc-context-with-module ctx macro-expand-active-module)]
+              (match (macro-expand-decl decl-ctx top-env orig-decls decl)
+                [(OkMacroDecl ndecl)
+                  (begin
+                    (macro-local-decl-index-step! decl)
+                    (match (macro-expand-decls ctx top-env orig-decls rest)
+                      [(OkMacroDecls nrest)
+                        (OkMacroDecls (ast-decl-cons ndecl nrest))]
+                      [(ErrMacroDecls diag) (ErrMacroDecls diag)]))]
+                [(ErrMacroDecl diag) (ErrMacroDecls diag)]))]))]))
 
 ;; Whether a program declares any macros at all.
 (define (macro-program-has-macros? [decls : AstDeclList]) : bool
@@ -11540,16 +11755,24 @@
           [(OkCompilerSymbols symbols)
             (match (build-compiler-registries program)
               [(OkCompilerRegistries registries)
-                (let
-                  [ctx : TcContext (TcContext program symbols registries "")]
-                  (match (tc-build-top-env ctx program)
-                    [(OkTcEnv top-env)
-                      (match (macro-expand-decls ctx top-env decls decls)
-                        [(OkMacroDecls ndecls)
-                          (OkMacroExpand (AstProgram ndecls))]
-                        [(ErrMacroDecls diag) (ErrMacroExpand diag)])]
-                    [(ErrTcEnv message)
-                      (ErrMacroExpand (tc-diag-at-start message))]))]
+                (match (build-compiler-exports-with program symbols registries)
+                  [(OkCompilerExports _)
+                    (begin
+                      (set! macro-expand-active-module "")
+                      (set! macro-expand-active-index 0)
+                      (let
+                        [ctx : TcContext
+                          (TcContext program symbols registries "")]
+                        (match (tc-build-top-env ctx program)
+                          [(OkTcEnv top-env)
+                            (match (macro-expand-decls ctx top-env decls decls)
+                              [(OkMacroDecls ndecls)
+                                (OkMacroExpand (AstProgram ndecls))]
+                              [(ErrMacroDecls diag) (ErrMacroExpand diag)])]
+                          [(ErrTcEnv message)
+                            (ErrMacroExpand (tc-diag-at-start message))])))]
+                  [(ErrCompilerExports message)
+                    (ErrMacroExpand (tc-diag-at-start message))])]
               [(ErrCompilerRegistries message)
                 (ErrMacroExpand (tc-diag-at-start message))])]
           [(ErrCompilerSymbols message)

@@ -686,7 +686,9 @@ cat > "$CLI_MATRIX/stdlib-region-escape.tl" <<'EOF'
 (define (main) : String
   (with-arena outer
     (with-arena inner
-      (string-trim "  scoped  "))))
+      (let
+        [s : String "  scoped  "]
+        (string-trim (& s))))))
 EOF
 run_cmd check-stdlib-region-escape "$COMPILER" check "$CLI_MATRIX/stdlib-region-escape.tl" --stdlib-root "$ROOT/stdlib"
 assert_failure

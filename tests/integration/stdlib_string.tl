@@ -16,35 +16,50 @@
 ;; Exit code: 42
 (import "stdlib/string.tl")
 
+(define (integration-trim-left [s : String]) : String
+  (string-trim-left (& s)))
+
+(define (integration-trim-right [s : String]) : String
+  (string-trim-right (& s)))
+
+(define (integration-trim [s : String]) : String
+  (string-trim (& s)))
+
+(define (integration-contains [haystack : String] [needle : String]) : bool
+  (string-contains (& haystack) (& needle)))
+
+(define (integration-contains-char [haystack : String] [c : char]) : bool
+  (string-contains-char (& haystack) c))
+
 (define (main) : i64
   (begin
-    (print-string (string-trim-left "  hello"))
+    (print-string (integration-trim-left "  hello"))
     (print-string "|")
     (print-newline)
-    (print-string (string-trim-right "hello  "))
+    (print-string (integration-trim-right "hello  "))
     (print-string "|")
     (print-newline)
-    (print-string (string-trim "  hello  "))
+    (print-string (integration-trim "  hello  "))
     (print-string "|")
     (print-newline)
-    (if (string-contains-char "hello" #\l')
+    (if (integration-contains-char "hello" #\l')
       (print-string "found")
       (print-string "not found"))
     (print-newline)
-    (print-string (string-trim-left ""))
+    (print-string (integration-trim-left ""))
     (print-string "|empty-left")
     (print-newline)
-    (print-string (string-trim-right ""))
+    (print-string (integration-trim-right ""))
     (print-string "|empty-right")
     (print-newline)
-    (print-string (string-trim "   "))
+    (print-string (integration-trim "   "))
     (print-string "|all-space")
     (print-newline)
-    (if (string-contains "hello" "ell")
+    (if (integration-contains "hello" "ell")
       (print-string "contains")
       (print-string "not contains"))
     (print-newline)
-    (if (string-contains "hello" "zzz")
+    (if (integration-contains "hello" "zzz")
       (print-string "not missing")
       (print-string "missing"))
     (print-newline)

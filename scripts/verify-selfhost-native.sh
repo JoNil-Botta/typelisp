@@ -448,14 +448,16 @@ verify_compiler_driver_stdlib_json() {
 (import "stdlib/json.tl")
 
 (define (main) : i64
-  (match (json-parse "{\"ok\":true,\"values\":[1,2,null]}")
-    [(OkJson value)
-      (if (string-eq
-        (json-stringify value)
-        "{\"ok\":true,\"values\":[1,2,null]}")
-        42
-        2)]
-    [(ErrJson _) 1]))
+  (let
+    [text : String "{\"ok\":true,\"values\":[1,2,null]}"]
+    (match (json-parse (& text))
+      [(OkJson value)
+        (if (string-eq
+          (json-stringify value)
+          "{\"ok\":true,\"values\":[1,2,null]}")
+          42
+          2)]
+      [(ErrJson _) 1])))
 EOF
 
     echo "[selfhost-native] compiler_driver stdlib JSON import graph"

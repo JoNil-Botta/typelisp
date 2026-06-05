@@ -46,10 +46,10 @@
 ;; cell pairing a head s-expression with a tail s-expression. A *proper list*
 ;; `(a b c)` is the right-nested spine `(SCons a (SCons b (SCons c (SNil))))`,
 ;; terminated by `SNil` - exactly the cons-cell encoding of a list in any Lisp.
-;; `SCons` carries two `Sexpr` children; recursive enum payloads (#111) make each
-;; child an 8-byte heap pointer, so the layout is finite and every constructed
-;; node that escapes via a return is heap-promoted. The reader builds this tree;
-;; the evaluator that imports this module walks it with a `match`-based recursion.
+;; `SCons` carries two boxed `Sexpr` children, so the recursive layout is finite
+;; and every constructed node that escapes via a return is heap-promoted. The
+;; reader builds this tree; the evaluator that imports this module walks it with
+;; a `match`-based recursion.
 ;; `SStr` carries the inner text of a `"..."` string-literal datum: the reader
 ;; consumes the lexer's `TStr` token (#128) into it, so a quoted string reads as a
 ;; distinct atom rather than being conflated with a `SSym` of the same characters.
@@ -61,7 +61,7 @@
   (SInt i64)
   (SSym String)
   (SNil)
-  (SCons Sexpr Sexpr)
+  (SCons (Box Sexpr) (Box Sexpr))
   (SStr String)
   (SChar char)
   (SFloat String))
@@ -74,15 +74,27 @@
   (SpSInt i64 SourceSpan)
   (SpSSym String SourceSpan)
   (SpSNil SourceSpan)
-  (SpSCons SpannedSexpr SpannedSexpr SourceSpan)
+  (SpSCons (Box SpannedSexpr) (Box SpannedSexpr) SourceSpan)
   (SpSStr String SourceSpan)
   (SpSChar char SourceSpan)
   (SpSFloat String SourceSpan)
-  (SpSBracketList SpannedSexpr SourceSpan))
+  (SpSBracketList (Box SpannedSexpr) SourceSpan))
 
 (defenum ResultSpannedSexpr
   (OkSpannedSexpr SpannedSexpr)
   (ErrSpannedSexpr SourceError))
+
+(define (sexpr-cons [head : Sexpr] [tail : Sexpr]) : Sexpr
+  (SCons (box head) (box tail)))
+
+(define (spanned-sexpr-cons
+  [head : SpannedSexpr]
+  [tail : SpannedSexpr]
+  [span : SourceSpan]) : SpannedSexpr
+  (SpSCons (box head) (box tail) span))
+
+(define (spanned-sexpr-bracket-list [items : SpannedSexpr] [span : SourceSpan]) : SpannedSexpr
+  (SpSBracketList (box items) span))
 
 (define (spanned-sexpr-span [s : SpannedSexpr]) : SourceSpan
   (match s
@@ -101,11 +113,13 @@
     [(SpSSym sym _) (SSym sym)]
     [(SpSNil _) SNil]
     [(SpSCons head tail _)
-      (SCons (spanned-sexpr-form head) (spanned-sexpr-form tail))]
+      (sexpr-cons
+        (spanned-sexpr-form (box-get head))
+        (spanned-sexpr-form (box-get tail)))]
     [(SpSStr text _) (SStr text)]
     [(SpSChar c _) (SChar c)]
     [(SpSFloat text _) (SFloat text)]
-    [(SpSBracketList items _) (spanned-sexpr-form items)]))
+    [(SpSBracketList items _) (spanned-sexpr-form (box-get items))]))
 
 ;; --------------------------------------------------------------------------
 ;; The reader cursor: a single mutable index into the `(Array Token)`.
@@ -153,7 +167,7 @@
     [else "quote"]))
 
 (define (read-prefix-form [name : String] [form : Sexpr]) : Sexpr
-  (SCons (SSym name) (SCons form SNil)))
+  (sexpr-cons (SSym name) (sexpr-cons form SNil)))
 
 (define (read-prefix-spanned-form
   [name : String]
@@ -161,9 +175,9 @@
   [form : SpannedSexpr]) : SpannedSexpr
   (let
     [span : SourceSpan (merge-spans prefix-span (spanned-sexpr-span form))]
-    (SpSCons
+    (spanned-sexpr-cons
       (SpSSym name prefix-span)
-      (SpSCons form (SpSNil (spanned-sexpr-span form)) span)
+      (spanned-sexpr-cons form (SpSNil (spanned-sexpr-span form)) span)
       span)))
 
 ;; --------------------------------------------------------------------------
@@ -270,7 +284,7 @@
               unterminated-message)
               [(OkSpannedSexpr tail)
                 (OkSpannedSexpr
-                  (SpSCons
+                  (spanned-sexpr-cons
                     head
                     tail
                     (merge-spans open-span (spanned-sexpr-span tail))))]
@@ -299,7 +313,8 @@
     (tag-rbracket)
     "reader: unterminated list (missing ']')")
     [(OkSpannedSexpr items)
-      (OkSpannedSexpr (SpSBracketList items (spanned-sexpr-span items)))]
+      (OkSpannedSexpr
+        (spanned-sexpr-bracket-list items (spanned-sexpr-span items)))]
     [(ErrSpannedSexpr err) (ErrSpannedSexpr err)]))
 
 (define (read-form-result [toks : (Array Token)] [cur : (Array i64)]) : ResultSexpr
@@ -399,7 +414,7 @@
               cur
               close-tag
               unterminated-message)
-              [(OkSexpr tail) (OkSexpr (SCons head tail))]
+              [(OkSexpr tail) (OkSexpr (sexpr-cons head tail))]
               [(ErrSexpr message) (ErrSexpr message)])]
           [(ErrSexpr message) (ErrSexpr message)])))))
 

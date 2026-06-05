@@ -1731,6 +1731,14 @@
       (compiler-backend-emit-program-with-spans program spans)]
     [(ErrCompilerLower message) (ErrCompilerBackend message)]))
 
+(define (compiler-backend-emit-source-inline-aggregates-for-target
+  [src : String]
+  [target : CompilerBackendTarget]) : ResultCompilerBackend
+  (match (lower-compiler-source-with-mode src (CompilerLowerInlineAggregates))
+    [(OkCompilerLower program spans)
+      (compiler-backend-emit-program-with-spans-for-target program spans target)]
+    [(ErrCompilerLower message) (ErrCompilerBackend message)]))
+
 (define (compiler-backend-source-contains? [src : String] [needle : String]) : bool
   (match (compiler-backend-emit-source src)
     [(OkCompilerBackend asm) (compiler-backend-string-contains? asm needle)]
@@ -3826,12 +3834,58 @@
           (compiler-backend-string-contains? asm (compiler-backend-todo-marker))))]
     [(ErrCompilerBackend _) false]))
 
+(define (compiler-backend-inline-aggregate-call-source) : String
+  "(defstruct Color (r u8) (g u8) (b u8) (a u8))
+(defenum Swatch (Empty) (Paint Color))
+(define (make-color) : Color
+  (Color (cast 5 : u8) (cast 7 : u8) (cast 11 : u8) (cast 13 : u8)))
+(define (id-color [c : Color]) : Color c)
+(define (use-color [c : Color]) : i64
+  (+
+    (cast (struct-get c r) : i64)
+    (+
+      (cast (struct-get c g) : i64)
+      (+ (cast (struct-get c b) : i64) (cast (struct-get c a) : i64)))))
+(define (id-swatch [s : Swatch]) : Swatch s)
+(define (score-swatch [s : Swatch]) : i64
+  (match s
+    [Empty 0]
+    [(Paint c) (use-color c)]))
+(define (main) : i64
+  (let
+    [c : Color (id-color (make-color))]
+    [s : Swatch (id-swatch (Paint c))]
+    (if (= (use-color c) 36)
+      (if (= (score-swatch s) 36) 42 2)
+      1)))")
+
+(define (compiler-backend-inline-aggregate-call-target-ok?
+  [target : CompilerBackendTarget]) : bool
+  (match (compiler-backend-emit-source-inline-aggregates-for-target
+    (compiler-backend-inline-aggregate-call-source)
+    target)
+    [(OkCompilerBackend asm)
+      (backend-and4
+        (compiler-backend-string-contains? asm "main:\n")
+        (>= (compiler-backend-string-count asm "    call ") 6)
+        (compiler-backend-string-contains? asm "    call tl_alloc\n")
+        (not
+          (compiler-backend-string-contains? asm (compiler-backend-todo-marker))))]
+    [(ErrCompilerBackend _) false]))
+
+(define (compiler-backend-inline-aggregate-call-ok?) : bool
+  (and
+    (compiler-backend-inline-aggregate-call-target-ok? (BackendTargetLinux))
+    (compiler-backend-inline-aggregate-call-target-ok? (BackendTargetWindows))))
+
 (define (compiler-backend-inline-aggregate-storage-ok?) : bool
   (and
     (compiler-backend-inline-struct-ok?)
     (and
       (compiler-backend-inline-enum-ok?)
-      (compiler-backend-inline-boxed-recursive-ok?))))
+      (and
+        (compiler-backend-inline-boxed-recursive-ok?)
+        (compiler-backend-inline-aggregate-call-ok?)))))
 
 (define (compiler-backend-self-test) : i64
   (if (and

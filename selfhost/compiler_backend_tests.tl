@@ -1097,6 +1097,7 @@
       (compiler-backend-peephole-assignments)]
     (match (compiler-backend-emit-binop
       (CompilerRegVarTypeNil)
+      (CompilerBackendGlobalTypeNil)
       assignments
       2
       (IrBinAdd)
@@ -1106,6 +1107,7 @@
       [(OkCompilerBackend add-asm)
         (match (compiler-backend-emit-binop
           (CompilerRegVarTypeNil)
+          (CompilerBackendGlobalTypeNil)
           assignments
           2
           (IrBinMul)
@@ -1115,6 +1117,7 @@
           [(OkCompilerBackend mul-asm)
             (match (compiler-backend-emit-binop
               (CompilerRegVarTypeNil)
+              (CompilerBackendGlobalTypeNil)
               assignments
               2
               (IrBinShl)
@@ -1124,6 +1127,7 @@
               [(OkCompilerBackend shl-asm)
                 (match (compiler-backend-emit-binop
                   (CompilerRegVarTypeNil)
+                  (CompilerBackendGlobalTypeNil)
                   assignments
                   2
                   (IrBinLt)
@@ -1283,6 +1287,7 @@
 (define (compiler-backend-zero-compare-ok?) : bool
   (match (compiler-backend-emit-binop
     (CompilerRegVarTypeNil)
+    (CompilerBackendGlobalTypeNil)
     (compiler-backend-peephole-assignments)
     2
     (IrBinEq)
@@ -2140,6 +2145,7 @@
     CompilerRegAssignmentNil
     8
     CompilerRegVarTypeNil
+    (CompilerBackendGlobalTypeNil)
     (AstTyI64)
     (BackendRuntimePlan
       false
@@ -3170,6 +3176,7 @@
   [bad : String]) : bool
   (match (compiler-backend-emit-binop
     (compiler-backend-narrow-binop-types lhs-ty rhs-ty)
+    (CompilerBackendGlobalTypeNil)
     CompilerRegAssignmentNil
     2
     op
@@ -3296,6 +3303,87 @@
           (AstTyBool)
           "    cmpb %bl, %al\n    setb %al\n"
           "    setl %al\n")))))
+
+(define (compiler-backend-global-compare-types) : CompilerBackendGlobalTypeList
+  (CompilerBackendGlobalTypeCons
+    "g_next"
+    (AstTyI64)
+    (CompilerBackendGlobalTypeCons
+      "g_cap"
+      (AstTyI64)
+      (CompilerBackendGlobalTypeNil))))
+
+(define (compiler-backend-global-compare-binop-ok?) : bool
+  (match (compiler-backend-emit-binop
+    (CompilerRegVarTypeNil)
+    (compiler-backend-global-compare-types)
+    CompilerRegAssignmentNil
+    0
+    (IrBinGe)
+    (IrValueGlobal "g_next")
+    (IrValueGlobal "g_cap")
+    (AstTyBool))
+    [(OkCompilerBackend asm)
+      (and
+        (compiler-backend-string-contains? asm "    cmpq %rbx, %rax\n")
+        (not (compiler-backend-string-contains? asm "    cmpb %bl, %al\n")))]
+    [(ErrCompilerBackend _) false]))
+
+(define (compiler-backend-global-compare-program) : CompilerIrProgram
+  (IrProgram
+    (compiler-ir-global-cons
+      (IrGlobal "g_next" (AstTyI64) (IrValueI64 1))
+      (compiler-ir-global-cons
+        (IrGlobal "g_cap" (AstTyI64) (IrValueI64 1024))
+        IrGlobalNil))
+    (compiler-ir-function-cons
+      (IrFunction
+        "main"
+        IrParamNil
+        (AstTyI64)
+        1
+        (compiler-ir-block-cons
+          (IrBlock
+            "entry"
+            (compiler-ir-instr-cons
+              (IrInstrBinOp
+                0
+                (IrBinGe)
+                (IrValueGlobal "g_next")
+                (IrValueGlobal "g_cap")
+                (AstTyBool))
+              (compiler-ir-instr-cons
+                (IrInstrBranch (IrValueVar 0) "full" "ok")
+                IrInstrNil)))
+          (compiler-ir-block-cons
+            (IrBlock
+              "full"
+              (compiler-ir-instr-cons
+                (IrInstrReturn (IrSomeValue (IrValueI64 1)))
+                IrInstrNil))
+            (compiler-ir-block-cons
+              (IrBlock
+                "ok"
+                (compiler-ir-instr-cons
+                  (IrInstrReturn (IrSomeValue (IrValueI64 42)))
+                  IrInstrNil))
+              IrBlockNil))))
+      IrFunctionNil)
+    IrExternNil))
+
+(define (compiler-backend-global-compare-branch-ok?) : bool
+  (match (compiler-backend-emit-program
+    (compiler-backend-global-compare-program))
+    [(OkCompilerBackend asm)
+      (and
+        (compiler-backend-string-contains? asm "    cmpq %rbx, %rax\n")
+        (not (compiler-backend-string-contains? asm "    cmpb %bl, %al\n")))]
+    [(ErrCompilerBackend _) false]))
+
+(define (compiler-backend-global-compare-width-ok?) : bool
+  (and
+    (compiler-backend-global-compare-binop-ok?)
+    (compiler-backend-global-compare-branch-ok?)))
 
 (define (compiler-backend-f64-abi-source) : String
   "(define (half [x : f64]) : f64 (/ x 2.0))
@@ -3683,7 +3771,9 @@
                                 (backend-and8
                                   (compiler-backend-scalar-wide-ops-ok?)
                                   (compiler-backend-scalar-div-mod-ok?)
-                                  (compiler-backend-narrow-scalar-instr-ok?)
+                                  (and
+                                    (compiler-backend-narrow-scalar-instr-ok?)
+                                    (compiler-backend-global-compare-width-ok?))
                                   (compiler-backend-f64-abi-ok?)
                                   (compiler-backend-win64-f64-abi-ok?)
                                   (compiler-backend-aggregate-storage-shape-ok?)

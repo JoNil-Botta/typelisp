@@ -1835,21 +1835,49 @@
         "_u"
         (compiler-backend-hex-byte (compiler-backend-char-code c)))]))
 
+(define (compiler-backend-symbol-safe-char? [c : char]) : bool
+  (or
+    (and (>= c #A') (<= c #Z'))
+    (or
+      (and (>= c #a') (<= c #z'))
+      (or (and (>= c #0') (<= c #9')) (= c #_')))))
+
+(define (compiler-backend-asm-safe-symbol-flush-run
+  [name : String]
+  [start : i64]
+  [end : i64]
+  [buf : TextBuf]) : TextBuf
+  (if (> end start)
+    (text-buf-append buf (substring name start (- end start)))
+    buf))
+
 (define (compiler-backend-asm-safe-symbol [name : String]) : String
   (let
     [i : i64 0]
     [n : i64 (string-length name)]
-    [out : String ""]
+    [start : i64 0]
+    [changed : bool false]
+    [buf : TextBuf (text-buf-empty)]
     (begin
       (while (< i n)
         (let
           [c : char (string-ref name i)]
-          (begin
-            (set!
-              out
-              (string-append out (compiler-backend-symbol-char name i c)))
-            (set! i (+ i 1)))))
-      out)))
+          (if (compiler-backend-symbol-safe-char? c)
+            (set! i (+ i 1))
+            (begin
+              (set! changed true)
+              (set!
+                buf
+                (compiler-backend-asm-safe-symbol-flush-run name start i buf))
+              (set!
+                buf
+                (text-buf-append buf (compiler-backend-symbol-char name i c)))
+              (set! i (+ i 1))
+              (set! start i)))))
+      (if changed
+        (text-buf-render
+          (compiler-backend-asm-safe-symbol-flush-run name start n buf))
+        name))))
 
 (define (compiler-backend-user-symbol [name : String]) : String
   (if (string-eq name "main")
@@ -20588,7 +20616,13 @@ tl_windows_sdk_registry_install:
               (compiler-backend-string-contains? asm "tl_random_system_seed:\n")))
           (and
             (backend-and4
-              (compiler-backend-string-contains? asm "    call .L_tl_alloc8\n")
+              (or
+                (compiler-backend-string-contains?
+                  asm
+                  "    call .L_tl_alloc8\n")
+                (compiler-backend-string-contains?
+                  asm
+                  "    call .L_tl_alloc16\n"))
               (not (compiler-backend-string-contains? asm ".extern tl_alloc\n"))
               (not
                 (compiler-backend-string-contains?

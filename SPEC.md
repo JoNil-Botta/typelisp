@@ -819,8 +819,8 @@ The selfhost compiler accepts written lifetime-bearing reference type forms:
 - Immutable references are copyable pointer/provenance values. Copying an
   immutable reference aliases the same immutable referent and does not move or
   copy the referent.
-- Mutable reference expression syntax, mutable exclusivity, returned/stored
-  lifetime parameters, closure-capture details, and non-lexical lifetimes are
+- Mutable reference expression syntax, mutable exclusivity, implementation of
+  reference-capturing closure relaxation, and non-lexical lifetimes are
   follow-up borrow-checker work. Borrowed `str` source semantics are specified
   in section 3.11. Source programs using reference types are rejected before
   lowering until the selfhost borrow-checker slices land.
@@ -1044,11 +1044,12 @@ possible:
   constructors where only lifetime names are allowed.
 
 V1 exclusions: mutable-reference creation and exclusivity (#806), non-lexical
-lifetimes (#810), closure returned-reference semantics (#808), runtime
-generics/type parameters, trait-like bounds, lifetime elision syntax, lifetime
-subtyping/coercion, and Rust compiler product-surface changes are out of scope.
-The selfhost parser, AST, typechecker, and lowerer implementation for this
-specified syntax is tracked by #1722/#804.
+lifetimes (#810), type-level closure lifetime markers and escaping
+reference-capturing closures (#808), runtime generics/type parameters,
+trait-like bounds, lifetime elision syntax, lifetime subtyping/coercion, and
+Rust compiler product-surface changes are out of scope. The selfhost parser,
+AST, typechecker, and lowerer implementation for this specified syntax is
+tracked by #1722/#804.
 
 **Lexical v1 lifetime rule.** A borrow created in v1 lives until the end of the
 innermost lexical scope that contains the borrow expression. Lexical scopes are
@@ -1070,16 +1071,16 @@ their owner or arena:
   is tied to an input or arena that outlives the call.
 - Assigning or storing a shorter-lived reference into a longer-lived local,
   global, aggregate field, enum payload, tuple element, or array element.
-- Capturing a reference in a closure that may escape the reference's lexical
-  scope. Detailed closure borrow capture rules are deferred to #808.
+- Capturing a reference in a closure value whose use is not proven
+  non-escaping by section 3.10.2.
 - Letting a reference to `(in inner T)` data escape the `with-arena inner`
   body. Outer-arena references may be used inside inner arenas without gaining
   the inner lifetime.
 
 Mutable reference creation and exclusivity are #806. Nominal returned/stored
 lifetime parameter syntax is specified in section 3.10.1 and implemented by
-#1722/#804. Closure capture detail is #808. Non-lexical lifetime shortening is
-#810.
+#1722/#804. Reference-capturing closure implementation is #808. Non-lexical
+lifetime shortening is #810.
 
 ```lisp test=ignore name=borrow-local-param-ok reason="borrow expressions are specified before selfhost implementation"
 (define (takes-i64 [x : (& n i64)]) : i64
@@ -1138,6 +1139,129 @@ lifetime parameter syntax is specified in section 3.10.1 and implemented by
 (define (bad-capture [n : i64]) : (-> i64)
   (let [r (& n)]
     (lambda () (takes-captured r))))
+```
+
+#### 3.10.2 Closure reference captures (v1 design)
+
+This section specifies the first safe rule for closures that capture immutable
+references. It does not relax the current checker yet: implementation remains
+tracked by #808, and the current selfhost checker conservatively rejects any
+lambda that captures a binding whose type contains a reference.
+
+A closure is **reference-capturing** when any captured binding has a type that
+contains `(& lifetime T)`. Capturing `(&mut lifetime T)` is rejected in v1; the
+creation, exclusivity, and mutation rules for mutable references remain owned by
+#806. Capturing region-tagged owner values such as `(in r String)` remains
+governed by section 3.9.
+
+The source function type `(-> args ... ret)` does not encode captured
+lifetimes. V1 therefore uses checker-only escape classification rather than a
+source-visible type-level capture marker. The checker may attach internal
+capture-lifetime facts to lambda expressions and local closure bindings while
+checking a lexical scope. If a flow would erase those facts, the flow is treated
+as escaping and is rejected. The runtime closure descriptor ABI is unchanged.
+
+An immutable reference capture is allowed only when every use of the produced
+closure value is proven non-escaping relative to every captured reference
+lifetime:
+
+- Immediate invocation of the lambda literal before the captured reference's
+  lexical scope ends.
+- Binding the closure to a local whose lexical scope is contained within every
+  captured reference lifetime, then calling that local only within the same
+  proof scope.
+- Nesting reference-capturing closures, provided every enclosing closure in the
+  chain is also proven non-escaping.
+
+A closure value flow is escaping unless the checker can prove one of the
+non-escaping cases above. The v1 checker must reject these flows for a
+reference-capturing closure:
+
+- Returning it from a function or lambda, because `(-> args ... ret)` carries no
+  captured-lifetime marker.
+- Producing it as the result of `with-arena`, resource `with`, `let`, `match`,
+  or another lexical scope when that exits the lifetime of any captured
+  reference.
+- Assigning it into a binding whose scope is not contained within every
+  captured reference lifetime, including assignment into an outer local.
+- Storing it in a global/top-level slot.
+- Storing it in an aggregate, tuple, fixed array, dynamic array, enum payload,
+  struct field, or `Box`.
+- Passing it to an ordinary named function, function pointer, extern, or other
+  callee whose body/contract is not checker-known to invoke the closure without
+  retaining or returning it.
+- Capturing it inside another closure that is not itself proven non-escaping.
+
+Future non-escaping higher-order APIs may add explicit checker-visible
+contracts, but no such public annotation exists in v1. Unknown callees are
+therefore escaping by default.
+
+Nested arenas follow the same lifetime containment rule. A closure created in
+an inner arena may capture an outer reference when the closure cannot outlive
+the outer owner; leaving the inner arena is allowed only if the closure does not
+also capture inner references or inner region-tagged owner values and the
+remaining outer-scope uses are still proven non-escaping. A closure that captures
+`(& inner T)` cannot escape the `with-arena inner` body.
+
+```lisp test=ignore name=closure-reference-local-ok reason="specified before reference-capturing closure checker support"
+(define (read-ref [x : (& n i64)]) : i64
+  0)
+
+(define (closure-local-reference-ok [n : i64]) : i64
+  (let [r : (& n i64) (& n)]
+    (let [f : (-> i64) (lambda () (read-ref r))]
+      (f))))
+```
+
+```lisp test=ignore name=closure-reference-return-reject reason="negative example for future reference-capturing closure checker"
+(define (read-ref [x : (& n i64)]) : i64
+  0)
+
+(define (bad-return-reference-closure [n : i64]) : (-> i64)
+  (let [r : (& n i64) (& n)]
+    (lambda () (read-ref r))))
+```
+
+```lisp test=ignore name=closure-reference-store-reject reason="negative example for future reference-capturing closure checker"
+(defstruct SavedCallback
+  (run (-> i64)))
+
+(define (read-ref [x : (& n i64)]) : i64
+  0)
+
+(define (bad-store-reference-closure [n : i64]) : SavedCallback
+  (let [r : (& n i64) (& n)]
+    (SavedCallback (lambda () (read-ref r)))))
+```
+
+```lisp test=ignore name=closure-reference-pass-unknown-reject reason="negative example for future reference-capturing closure checker"
+(define (call-now [f : (-> i64)]) : i64
+  (f))
+
+(define (read-ref [x : (& n i64)]) : i64
+  0)
+
+(define (bad-pass-reference-closure [n : i64]) : i64
+  (let [r : (& n i64) (& n)]
+    (call-now (lambda () (read-ref r)))))
+```
+
+```lisp test=ignore name=closure-reference-nested-arena-ok reason="specified before reference-capturing closure checker support"
+(define (closure-nested-arena-outer-ref-ok) : i64
+  (with-arena outer
+    (let [text : String (int->string 42)]
+      (let [view : (& outer str) (& outer text)]
+        (with-arena inner
+          (let [f : (-> i64) (lambda () (string-length view))]
+            (f)))))))
+```
+
+```lisp test=ignore name=closure-reference-inner-arena-reject reason="negative example for future reference-capturing closure checker"
+(define (bad-inner-arena-reference-closure) : (-> i64)
+  (with-arena inner
+    (let [text : String (int->string 42)]
+      (let [view : (& inner str) (& inner text)]
+        (lambda () (string-length view))))))
 ```
 
 ### 3.11 Owned `String` and borrowed `str` (v1 design)
@@ -2016,7 +2140,9 @@ move-only values and as copies for copyable values:
   Payload bindings then own the active payload values for that arm.
 - Closure capture. Capturing a move-only local by value moves it into the
   closure environment at closure creation time; the local cannot be used after
-  the lambda literal. Capturing by reference is deferred to the borrow checker.
+  the lambda literal. Immutable reference captures are governed by section
+  3.10.2 and remain implementation work under #808; mutable reference captures
+  remain deferred to #806.
 
 **Non-consuming use sites.** A non-consuming use may inspect a move-only value
 without moving it. In v1 these are limited to:
@@ -2398,6 +2524,9 @@ integer/`char` ↔ float conversions (float → integer truncates toward zero).
   a fixed array reached through an aggregate field, are also rejected: array
   elements live inline (not as pointer-sized handles), so their per-element
   deep-copy is not yet wired (tracked under #571/#435).
+- Immutable reference captures are specified separately in section 3.10.2. Until
+  #808 implements the checker-only non-escaping classification, the selfhost
+  checker rejects lambdas that capture reference-typed bindings.
 
 ```lisp test=ignore name=lambda-lift-immediate reason="integration tests cover executable lambda lifting"
 ((lambda ([x : i64]) : i64 (+ x 1)) 41)
@@ -3718,7 +3847,7 @@ not the future safe reference/borrow model (#182), not a replacement for
 | Tuple by-value ABI | Function parameters/returns rejected by backend validation |
 | Fixed-array by-value return | Rejected by backend validation |
 | Tuple/Struct/Enum/String globals | Rejected by backend validation |
-| Aggregate-element reference captures in lambdas | Not implemented (by-value captures work for scalars, String, dynamic arrays, tuples/structs/enums, and fixed arrays, including nested aggregate/fixed-array contents) |
+| Reference captures in lambdas | Specified for local non-escaping immutable captures; implementation pending #808. By-value captures work for scalars, String, dynamic arrays, tuples/structs/enums, and fixed arrays, including nested aggregate/fixed-array contents |
 | Mutable captures (`set!` to captured names) in lambdas | Not implemented |
 | Tail call optimization | Not implemented |
 | `struct-set!` | Not implemented |

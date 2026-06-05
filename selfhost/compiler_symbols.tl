@@ -1322,7 +1322,7 @@
 
 (define (compiler-symbol-indexed-decl [decl : AstDecl]) : AstDecl
   (match decl
-    [(AstDeclComptimeDecl template-box)
+    [(AstDeclComptimeDecl _ template-box)
       (let
         [template : AstDecl (box-get template-box)]
         template)]

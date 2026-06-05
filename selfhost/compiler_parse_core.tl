@@ -1017,7 +1017,8 @@
         (cond
           [(string-eq name "tuple-ref") (compiler-parse-tag-expr-tuple-ref)]
           [(string-eq name "array-ref") (compiler-parse-tag-expr-array-ref)]
-          [(string-eq name "ptr-null?") (compiler-parse-tag-expr-ptr-null-check)]
+          [(string-eq name "ptr-null?")
+            (compiler-parse-tag-expr-ptr-null-check)]
           [(string-eq name "cpuid-eax") (compiler-parse-tag-expr-cpuid-eax)]
           [(string-eq name "cpuid-ebx") (compiler-parse-tag-expr-cpuid-ebx)]
           [(string-eq name "cpuid-ecx") (compiler-parse-tag-expr-cpuid-ecx)]
@@ -1044,9 +1045,12 @@
           [else (compiler-parse-tag-unknown)])]
       [(= n 12)
         (cond
-          [(string-eq name "program-argc") (compiler-parse-tag-expr-program-argc)]
-          [(string-eq name "program-argv") (compiler-parse-tag-expr-program-argv)]
-          [(string-eq name "program-envp") (compiler-parse-tag-expr-program-envp)]
+          [(string-eq name "program-argc")
+            (compiler-parse-tag-expr-program-argc)]
+          [(string-eq name "program-argv")
+            (compiler-parse-tag-expr-program-argv)]
+          [(string-eq name "program-envp")
+            (compiler-parse-tag-expr-program-envp)]
           [else (compiler-parse-tag-unknown)])]
       [(= n 13)
         (cond

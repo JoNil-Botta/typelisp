@@ -522,8 +522,7 @@
     (compiler-backend-print-runtime-target-ok? (BackendTargetLinux))
     (compiler-backend-print-runtime-target-ok? (BackendTargetWindows))))
 
-(define (compiler-backend-varargs-ffi-common-source
-  [symbol : String]) : String
+(define (compiler-backend-varargs-ffi-common-source [symbol : String]) : String
   (backend-cat3
     "(extern tl_alloc : (-> i64 (MutPtr u8)))
 (extern snprintf (:abi c-varargs 3) (:symbol \""
@@ -906,9 +905,7 @@
           (compiler-backend-string-contains?
             asm
             ".L_tl_fn_entry___tl_lambda_main_0:\n")
-          (compiler-backend-string-contains?
-            asm
-            "    call _tl_f")
+          (compiler-backend-string-contains? asm "    call _tl_f")
           (compiler-backend-string-contains?
             asm
             "    leaq .L_tl_fn_desc___tl_lambda_main_0(%rip), ")
@@ -928,9 +925,7 @@
     [(OkCompilerBackend asm)
       (backend-and4
         (compiler-backend-string-contains? asm "_tl_f")
-        (compiler-backend-string-contains?
-          asm
-          "    call _tl_f")
+        (compiler-backend-string-contains? asm "    call _tl_f")
         (compiler-backend-string-contains? asm "    call *%rax\n")
         (not
           (compiler-backend-string-contains? asm (compiler-backend-todo-marker))))]
@@ -1010,9 +1005,7 @@
         (compiler-backend-string-contains? asm "_tl_f")
         (compiler-backend-string-contains? asm ".Lf0_match_arm.")
         (compiler-backend-string-contains? asm "    cmpq $0, (%r10)\n")
-        (compiler-backend-string-contains?
-          asm
-          "    jne .Lf0_match_next.2\n")
+        (compiler-backend-string-contains? asm "    jne .Lf0_match_next.2\n")
         (compiler-backend-string-contains? asm "    movq 8(%r10), %rax\n")
         (not (compiler-backend-string-contains? asm "    call _tl_None\n"))
         (not (compiler-backend-string-contains? asm "    call _tl_Some\n"))
@@ -1388,9 +1381,7 @@
   (match (compiler-backend-emit-program (compiler-backend-call-return-program))
     [(OkCompilerBackend asm)
       (and
-        (compiler-backend-string-contains?
-          asm
-          "    call _tl_f")
+        (compiler-backend-string-contains? asm "    call _tl_f")
         (not
           (compiler-backend-string-contains?
             asm
@@ -2677,8 +2668,12 @@
       (and
         (backend-and8
           (compiler-backend-string-contains? asm ".L_tl_fs_mkdir_status:\n")
-          (compiler-backend-string-contains? asm ".L_tl_fs_remove_file_status:\n")
-          (compiler-backend-string-contains? asm ".L_tl_fs_remove_dir_status:\n")
+          (compiler-backend-string-contains?
+            asm
+            ".L_tl_fs_remove_file_status:\n")
+          (compiler-backend-string-contains?
+            asm
+            ".L_tl_fs_remove_dir_status:\n")
           (compiler-backend-string-contains? asm ".L_tl_fs_rename_status:\n")
           (compiler-backend-string-contains? asm ".L_tl_fs_process_id:\n")
           (compiler-backend-string-contains? asm "    movq $39, %rax\n")
@@ -2700,12 +2695,18 @@
       (and
         (backend-and8
           (compiler-backend-string-contains? asm ".L_tl_fs_mkdir_status:\n")
-          (compiler-backend-string-contains? asm ".L_tl_fs_remove_file_status:\n")
-          (compiler-backend-string-contains? asm ".L_tl_fs_remove_dir_status:\n")
+          (compiler-backend-string-contains?
+            asm
+            ".L_tl_fs_remove_file_status:\n")
+          (compiler-backend-string-contains?
+            asm
+            ".L_tl_fs_remove_dir_status:\n")
           (compiler-backend-string-contains? asm ".L_tl_fs_rename_status:\n")
           (compiler-backend-string-contains? asm ".L_tl_fs_process_id:\n")
           (compiler-backend-string-contains? asm "    call _mkdir\n")
-          (compiler-backend-string-contains? asm "    call GetCurrentProcessId\n")
+          (compiler-backend-string-contains?
+            asm
+            "    call GetCurrentProcessId\n")
           (not (compiler-backend-string-contains? asm "    syscall")))
         (and
           (compiler-backend-string-contains? asm ".extern _mkdir\n")
@@ -3510,11 +3511,11 @@
           (compiler-backend-string-contains? asm "    movsd %xmm15, 32(%rsp)\n")
           (compiler-backend-string-contains? asm "    movsd 48(%rbp), %xmm0\n"))
         (and
-          (compiler-backend-string-contains?
-            asm
-            "    call _tl_f")
+          (compiler-backend-string-contains? asm "    call _tl_f")
           (and
-            (compiler-backend-string-contains? asm "    movsd %xmm0, -16(%rbp)\n")
+            (compiler-backend-string-contains?
+              asm
+              "    movsd %xmm0, -16(%rbp)\n")
             (and
               (not (compiler-backend-string-contains? asm "too many call args"))
               (and

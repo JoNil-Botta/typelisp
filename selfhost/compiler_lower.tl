@@ -4477,7 +4477,8 @@
                                         0
                                         (AstTyI64))
                                         [(LowerExpr tag-state tag-value _)
-                                      (match (lower-state-alloc-var tag-state)
+                                          (match (lower-state-alloc-var
+                                            tag-state)
                                             [(LowerAlloc eq-alloc eq-var)
                                               (match (lower-state-fresh-label
                                                 (lower-state-emit
@@ -7150,7 +7151,9 @@
             [registries : CompilerRegistries (tc-context-registries ctx)]
             (match (compiler-registries-lookup-variant registries lookup-name)
               [(SomeI64 handle)
-                (match (compiler-registries-variant-fields-indexed symbols handle)
+                (match (compiler-registries-variant-fields-indexed
+                  symbols
+                  handle)
                   [(OkAstTypeList fields)
                     (match fields
                       [(AstTypeNil)

@@ -370,8 +370,7 @@
                     (+ index 1)))]
               [(StringI64MapInsertFull next-map) next-map]))])]))
 
-(define (compiler-backend-source-span-index-build
-  [spans : CompilerSourceSpans]) : CompilerBackendSourceSpanIndex
+(define (compiler-backend-source-span-index-build [spans : CompilerSourceSpans]) : CompilerBackendSourceSpanIndex
   (match spans
     [(CompilerSourceSpans entries _ _)
       (let
@@ -1768,8 +1767,7 @@
     "main"
     (string-append "_tl_" (compiler-backend-asm-safe-symbol name))))
 
-(define (compiler-backend-compact-function-symbol?
-  [name : String]) : bool
+(define (compiler-backend-compact-function-symbol? [name : String]) : bool
   (and
     (not (string-eq name "main"))
     (not (compiler-backend-string-prefix-at? name "__global_init_" 0))))
@@ -1833,7 +1831,8 @@
   [index : CompilerBackendProgramIndex]) : String
   (if (compiler-backend-index-extern-references? index name)
     (let
-      [link-symbol : String (compiler-backend-index-extern-link-symbol index name)]
+      [link-symbol : String
+        (compiler-backend-index-extern-link-symbol index name)]
       (if (and
         (and
           (string-eq link-symbol name)
@@ -1843,9 +1842,9 @@
           (compiler-backend-user-symbol name)
           name)
         (compiler-backend-asm-safe-symbol link-symbol)))
-      (if (and
-        (compiler-backend-plan-provides? plan name)
-        (not (compiler-backend-index-function-defines? index name)))
+    (if (and
+      (compiler-backend-plan-provides? plan name)
+      (not (compiler-backend-index-function-defines? index name)))
       (if (compiler-backend-runtime-user-symbol? name)
         (compiler-backend-user-symbol name)
         name)
@@ -4487,12 +4486,14 @@
   [functions : CompilerIrFunctionList]) : i64
   (match functions
     [(IrFunctionNil) 0]
-    [(IrFunctionCons _ rest) (+ 1 (compiler-backend-function-list-count (box-get rest)))]))
+    [(IrFunctionCons _ rest)
+      (+ 1 (compiler-backend-function-list-count (box-get rest)))]))
 
 (define (compiler-backend-extern-list-count [externs : CompilerIrExternList]) : i64
   (match externs
     [(IrExternNil) 0]
-    [(IrExternCons _ rest) (+ 1 (compiler-backend-extern-list-count (box-get rest)))]))
+    [(IrExternCons _ rest)
+      (+ 1 (compiler-backend-extern-list-count (box-get rest)))]))
 
 (define (compiler-backend-program-index-functions-into
   [functions : CompilerIrFunctionList]
@@ -8645,8 +8646,7 @@
 (define (compiler-backend-direct-emit-instr-limit) : i64
   114)
 
-(define (compiler-backend-emit-function-direct?
-  [func : CompilerIrFunction]) : bool
+(define (compiler-backend-emit-function-direct? [func : CompilerIrFunction]) : bool
   (match func
     [(IrFunction _ _ _ _ blocks)
       (<=
@@ -9928,9 +9928,7 @@
         [(IrExtern extern-name _ _ link-symbol _)
           (compiler-backend-runtime-index-externs
             (compiler-backend-runtime-index-add-extern-name
-              (compiler-backend-runtime-index-add-extern-name
-                index
-                extern-name)
+              (compiler-backend-runtime-index-add-extern-name index extern-name)
               link-symbol)
             (box-get rest))])]))
 
@@ -10369,9 +10367,13 @@
     [defines-random-system-seed : bool
       (compiler-backend-runtime-index-defines? index "tl_random_system_seed")]
     [defines-windows-setup-instances : bool
-      (compiler-backend-runtime-index-defines? index "tl_windows_setup_instances")]
+      (compiler-backend-runtime-index-defines?
+        index
+        "tl_windows_setup_instances")]
     [defines-windows-sdk-registry-install : bool
-      (compiler-backend-runtime-index-defines? index "tl_windows_sdk_registry_install")]
+      (compiler-backend-runtime-index-defines?
+        index
+        "tl_windows_sdk_registry_install")]
     [defines-env-var-exists : bool
       (compiler-backend-runtime-index-defines? index "tl_env_var_exists")]
     [defines-env-var-value : bool
@@ -10387,7 +10389,9 @@
     [defines-profile-alloc-peak : bool
       (compiler-backend-runtime-index-defines? index "tl_profile_alloc_peak")]
     [defines-profile-alloc-reset-peak : bool
-      (compiler-backend-runtime-index-defines? index "tl_profile_alloc_reset_peak")]
+      (compiler-backend-runtime-index-defines?
+        index
+        "tl_profile_alloc_reset_peak")]
     [extern-alloc : bool
       (compiler-backend-runtime-index-extern? index "tl_alloc")]
     [extern-oob : bool
@@ -10431,10 +10435,7 @@
         ".L_tl_arg_count"
         "tl_arg_count")]
     [extern-arg : bool
-      (compiler-backend-runtime-index-extern-alias?
-        index
-        ".L_tl_arg"
-        "tl_arg")]
+      (compiler-backend-runtime-index-extern-alias? index ".L_tl_arg" "tl_arg")]
     [extern-read-file : bool
       (compiler-backend-runtime-index-extern-alias?
         index
@@ -10577,9 +10578,13 @@
     [extern-random-system-seed : bool
       (compiler-backend-runtime-index-extern? index "tl_random_system_seed")]
     [extern-windows-setup-instances : bool
-      (compiler-backend-runtime-index-extern? index "tl_windows_setup_instances")]
+      (compiler-backend-runtime-index-extern?
+        index
+        "tl_windows_setup_instances")]
     [extern-windows-sdk-registry-install : bool
-      (compiler-backend-runtime-index-extern? index "tl_windows_sdk_registry_install")]
+      (compiler-backend-runtime-index-extern?
+        index
+        "tl_windows_sdk_registry_install")]
     [extern-env-var-exists : bool
       (compiler-backend-runtime-index-extern? index "tl_env_var_exists")]
     [extern-env-var-value : bool
@@ -10595,7 +10600,9 @@
     [extern-profile-alloc-peak : bool
       (compiler-backend-runtime-index-extern? index "tl_profile_alloc_peak")]
     [extern-profile-alloc-reset-peak : bool
-      (compiler-backend-runtime-index-extern? index "tl_profile_alloc_reset_peak")]
+      (compiler-backend-runtime-index-extern?
+        index
+        "tl_profile_alloc_reset_peak")]
     [calls-alloc : bool
       (compiler-backend-runtime-index-calls? index "tl_alloc")]
     [calls-oob : bool
@@ -10628,8 +10635,7 @@
       (compiler-backend-runtime-index-calls? index "tl_print_f64")]
     [calls-arg-count : bool
       (compiler-backend-runtime-index-calls? index ".L_tl_arg_count")]
-    [calls-arg : bool
-      (compiler-backend-runtime-index-calls? index ".L_tl_arg")]
+    [calls-arg : bool (compiler-backend-runtime-index-calls? index ".L_tl_arg")]
     [calls-read-file : bool
       (compiler-backend-runtime-index-calls? index ".L_tl_read_file")]
     [calls-write-file : bool
@@ -10649,27 +10655,31 @@
     [calls-file-close-status : bool
       (compiler-backend-runtime-index-calls? index ".L_tl_file_close_status")]
     [calls-file-read-chunk-status : bool
-      (compiler-backend-runtime-index-calls? index ".L_tl_file_read_chunk_status")]
+      (compiler-backend-runtime-index-calls?
+        index
+        ".L_tl_file_read_chunk_status")]
     [calls-file-write-status : bool
       (compiler-backend-runtime-index-calls? index ".L_tl_file_write_status")]
     [calls-file-flush-status : bool
       (compiler-backend-runtime-index-calls? index ".L_tl_file_flush_status")]
     [calls-file-read-chunk-bytes : bool
-      (compiler-backend-runtime-index-calls? index ".L_tl_file_read_chunk_bytes")]
+      (compiler-backend-runtime-index-calls?
+        index
+        ".L_tl_file_read_chunk_bytes")]
     [calls-file-read-chunk-eof : bool
       (compiler-backend-runtime-index-calls? index ".L_tl_file_read_chunk_eof")]
     [calls-fs-mkdir-status : bool
       (compiler-backend-runtime-index-calls? index ".L_tl_fs_mkdir_status")]
     [calls-fs-remove-file-status : bool
-      (compiler-backend-runtime-index-calls? index ".L_tl_fs_remove_file_status")]
+      (compiler-backend-runtime-index-calls?
+        index
+        ".L_tl_fs_remove_file_status")]
     [calls-fs-remove-dir-status : bool
       (compiler-backend-runtime-index-calls? index ".L_tl_fs_remove_dir_status")]
     [calls-fs-rename-status : bool
       (compiler-backend-runtime-index-calls? index ".L_tl_fs_rename_status")]
     [calls-fs-file-kind-status : bool
-      (compiler-backend-runtime-index-calls?
-        index
-        ".L_tl_fs_file_kind_status")]
+      (compiler-backend-runtime-index-calls? index ".L_tl_fs_file_kind_status")]
     [calls-fs-file-size-status : bool
       (compiler-backend-function-list-calls?
         functions
@@ -10709,7 +10719,9 @@
     [calls-windows-setup-instances : bool
       (compiler-backend-runtime-index-calls? index "tl_windows_setup_instances")]
     [calls-windows-sdk-registry-install : bool
-      (compiler-backend-runtime-index-calls? index "tl_windows_sdk_registry_install")]
+      (compiler-backend-runtime-index-calls?
+        index
+        "tl_windows_sdk_registry_install")]
     [calls-env-var-exists : bool
       (compiler-backend-runtime-index-calls? index "tl_env_var_exists")]
     [calls-env-var-value : bool
@@ -10725,7 +10737,9 @@
     [calls-profile-alloc-peak : bool
       (compiler-backend-runtime-index-calls? index "tl_profile_alloc_peak")]
     [calls-profile-alloc-reset-peak : bool
-      (compiler-backend-runtime-index-calls? index "tl_profile_alloc_reset_peak")]
+      (compiler-backend-runtime-index-calls?
+        index
+        "tl_profile_alloc_reset_peak")]
     [needs-oob : bool (and (not defines-oob) (or extern-oob calls-oob))]
     [needs-div-abort : bool
       (or
@@ -18934,23 +18948,23 @@ tl_windows_sdk_registry_install:
   [emit-entry : bool]
   [crt-entry : bool]) : ResultCompilerBackendBuffer
   (match (compiler-backend-runtime-plan program)
-      [(OkBackendRuntimePlan plan)
-        (if (compiler-backend-target-runtime-ok? target plan)
-          (match program
-            [(IrProgram globals functions externs)
-              (match (compiler-backend-emit-globals target globals)
-                [(OkCompilerBackend globals-asm)
-                  (let
-                    [entry-functions : CompilerIrFunctionList
-                      (compiler-backend-functions-with-implicit-main
-                        functions
-                        emit-entry)]
-                    [program-index : CompilerBackendProgramIndex
-                      (compiler-backend-program-index-build
-                        entry-functions
-                        externs)]
-                    (begin
-                      (cfg compile-profile (compiler-backend-profile-start))
+    [(OkBackendRuntimePlan plan)
+      (if (compiler-backend-target-runtime-ok? target plan)
+        (match program
+          [(IrProgram globals functions externs)
+            (match (compiler-backend-emit-globals target globals)
+              [(OkCompilerBackend globals-asm)
+                (let
+                  [entry-functions : CompilerIrFunctionList
+                    (compiler-backend-functions-with-implicit-main
+                      functions
+                      emit-entry)]
+                  [program-index : CompilerBackendProgramIndex
+                    (compiler-backend-program-index-build
+                      entry-functions
+                      externs)]
+                  (begin
+                    (cfg compile-profile (compiler-backend-profile-start))
                     (match (compiler-backend-emit-functions-buffer
                       target
                       mode
@@ -18990,8 +19004,6 @@ tl_windows_sdk_registry_install:
                                     (compiler-backend-program-collections-floats
                                       collections)]
                                   [prefix-buf : TextBuf
-                                (text-buf-append
-                                  (text-buf-append
                                     (text-buf-append
                                       (text-buf-append
                                         (text-buf-append
@@ -18999,71 +19011,73 @@ tl_windows_sdk_registry_install:
                                             (text-buf-append
                                               (text-buf-append
                                                 (text-buf-append
-                                                  (text-buf-empty)
-                                                  ".data\n")
-                                                globals-asm)
-                                              (compiler-backend-emit-string-rodata
-                                                strings))
-                                            (compiler-backend-emit-f64-rodata
-                                              floats))
-                                          (compiler-backend-emit-closure-descriptors
-                                            closure-names
-                                            entry-functions
+                                                  (text-buf-append
+                                                    (text-buf-append
+                                                      (text-buf-empty)
+                                                      ".data\n")
+                                                    globals-asm)
+                                                  (compiler-backend-emit-string-rodata
+                                                    strings))
+                                                (compiler-backend-emit-f64-rodata
+                                                  floats))
+                                              (compiler-backend-emit-closure-descriptors
+                                                closure-names
+                                                entry-functions
+                                                externs
+                                                program-index))
+                                            (if emit-entry
+                                              (compiler-backend-runtime-data-for-target
+                                                target
+                                                plan)
+                                              ""))
+                                          (compiler-backend-emit-externs
                                             externs
-                                            program-index))
+                                            plan))
+                                        (compiler-backend-runtime-externs-for-target
+                                          target
+                                          plan))
+                                      (compiler-backend-target-entry-text-with-crt
+                                        target
+                                        emit-entry
+                                        crt-entry))]
+                                  [with-functions : TextBuf
+                                    (text-buf-append-buffer
+                                      prefix-buf
+                                      functions-buf)]
+                                  [buf : TextBuf
+                                    (text-buf-append
+                                      (text-buf-append
+                                        (text-buf-append
+                                          with-functions
+                                          closure-adapters-asm)
                                         (if emit-entry
-                                          (compiler-backend-runtime-data-for-target
+                                          (compiler-backend-runtime-functions-for-target
                                             target
                                             plan)
                                           ""))
-                                      (compiler-backend-emit-externs
-                                        externs
-                                        plan))
-                                    (compiler-backend-runtime-externs-for-target
-                                      target
-                                      plan))
-                                  (compiler-backend-target-entry-text-with-crt
-                                    target
-                                    emit-entry
-                                    crt-entry))]
-                              [with-functions : TextBuf
-                                (text-buf-append-buffer
-                                  prefix-buf
-                                  functions-buf)]
-                              [buf : TextBuf
-                                (text-buf-append
-                                  (text-buf-append
-                                    (text-buf-append
-                                      with-functions
-                                      closure-adapters-asm)
-                                    (if emit-entry
-                                      (compiler-backend-runtime-functions-for-target
-                                        target
-                                        plan)
-                                      ""))
-                                  (if emit-entry
-                                    (compiler-backend-entry-for-target-with-crt
-                                      target
-                                      plan
-                                      globals
-                                      crt-entry)
-                                    ""))]
-                              (OkCompilerBackendBuffer buf))]
-                          [(ErrCompilerBackend message)
-                            (ErrCompilerBackendBuffer message)])))]
-                    [(ErrCompilerBackendBuffer message)
-                      (begin
-                        (cfg
-                          compile-profile
-                          (compiler-backend-profile-finish "functions"))
-                        (ErrCompilerBackendBuffer message))])))]
-                [(ErrCompilerBackend message) (ErrCompilerBackendBuffer message)])])
-          (ErrCompilerBackendBuffer
-            (compiler-diagnostic-at-start
-              ""
-              "backend: internal target runtime rejection")))]
-      [(ErrBackendRuntimePlan message)
-        (ErrCompilerBackendBuffer (compiler-diagnostic-at-start "" message))]))
+                                      (if emit-entry
+                                        (compiler-backend-entry-for-target-with-crt
+                                          target
+                                          plan
+                                          globals
+                                          crt-entry)
+                                        ""))]
+                                  (OkCompilerBackendBuffer buf))]
+                              [(ErrCompilerBackend message)
+                                (ErrCompilerBackendBuffer message)])))]
+                      [(ErrCompilerBackendBuffer message)
+                        (begin
+                          (cfg
+                            compile-profile
+                            (compiler-backend-profile-finish "functions"))
+                          (ErrCompilerBackendBuffer message))])))]
+              [(ErrCompilerBackend message) (ErrCompilerBackendBuffer message)])])
+        (ErrCompilerBackendBuffer
+          (compiler-diagnostic-at-start
+            ""
+            "backend: internal target runtime rejection")))]
+    [(ErrBackendRuntimePlan message)
+      (ErrCompilerBackendBuffer (compiler-diagnostic-at-start "" message))]))
 
 (define (compiler-backend-emit-program-target-with-mode-and-crt
   [program : CompilerIrProgram]
@@ -19415,7 +19429,9 @@ tl_windows_sdk_registry_install:
           (compiler-backend-string-contains? asm ".L_tl_file_open_status:\n")
           (compiler-backend-string-contains? asm ".L_tl_file_close_status:\n"))
         (and
-          (compiler-backend-string-contains? asm "    call .L_tl_file_open_status\n")
+          (compiler-backend-string-contains?
+            asm
+            "    call .L_tl_file_open_status\n")
           (and
             (compiler-backend-string-contains?
               asm
@@ -19676,16 +19692,10 @@ tl_windows_sdk_registry_install:
     (compiler-backend-module-symbol-program))
     [(OkCompilerBackend asm)
       (and
-        (compiler-backend-string-contains?
-          asm
-          ".globl _tl_f")
+        (compiler-backend-string-contains? asm ".globl _tl_f")
         (and
-          (compiler-backend-string-contains?
-            asm
-            "_tl_f")
-          (compiler-backend-string-contains?
-            asm
-            "    call _tl_f")))]
+          (compiler-backend-string-contains? asm "_tl_f")
+          (compiler-backend-string-contains? asm "    call _tl_f")))]
     [(ErrCompilerBackend _) false]))
 
 (define (compiler-backend-extern-metadata-source) : String

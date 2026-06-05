@@ -2442,10 +2442,9 @@ Initial dynamic-array use cases:
 - Reads through `array-ref` and writes through `array-set!`.
 - Array indexes must be the loop index or a simple uniform offset from it, such
   as `i` or `(+ base i)`. Gather/scatter through an index array is deferred.
-- Supported lane element types for the first slice are `i32`, `i64`, and `f64`.
-  `f32` waits for scalar backend support; narrow integers, unsigned integers,
-  `bool`, `String`, structs, enums, tuples, and arrays as lane elements are
-  deferred.
+- Supported lane element types for the first slice are `i32`, `i64`, `f32`,
+  and `f64`. Narrow integers, unsigned integers, `bool`, `String`, structs,
+  enums, tuples, and arrays as lane elements are deferred.
 
 Uniform and varying rules:
 
@@ -2527,9 +2526,10 @@ Evaluation and empty ranges:
   - `all`: `acc = (and acc value)`.
   - `any`: `acc = (or acc value)`.
 - Integer `sum` uses the existing modulo-wrapping integer `+` semantics.
-- `f64 sum` uses the same ordered scalar `+` semantics as an explicit loop.
-  SIMD backends must preserve that observable result or leave `f64 sum` on the
-  scalar path until a future relaxed-floating-point mode exists.
+- `f64 sum` uses the same ordered scalar `+` semantics as an explicit loop in
+  scalar backend modes. SIMD backend modes may use deterministic horizontal
+  lane grouping for eligible contiguous array folds; strict bit-for-bit scalar
+  floating-point accumulation order is reserved for future FP policy controls.
 
 Type rules for the first slice:
 
@@ -3711,9 +3711,6 @@ not the future safe reference/borrow model (#182), not a replacement for
 
 | Feature | Status |
 |---------|--------|
-| `f32` type | Rejected by backend validation |
-| `f32` local/parameter type | Rejected by backend validation |
-| Floating-point casts in `(cast ...)` | Not implemented; casts currently support integer/char conversions only |
 | Tuple by-value ABI | Function parameters/returns rejected by backend validation |
 | Fixed-array by-value return | Rejected by backend validation |
 | Tuple/Struct/Enum/String globals | Rejected by backend validation |
@@ -3727,8 +3724,8 @@ not the future safe reference/borrow model (#182), not a replacement for
 | Move-only aggregate handle checking | Specified for v1 source semantics; selfhost checker implementation pending (#1048/#1049) |
 | `(with ...)` scoped non-memory resource cleanup | Specified and reserved; parser/typechecker/lowering support pending |
 | Cleanup-owning aggregate declarations | Specified for structs and reserved for enums; parser/typechecker/lowering support pending |
-| SPMD / SIMD `foreach` | Scalar reference lowering implemented; AVX2 supports a first contiguous map/zip subset |
-| SPMD reductions and public cross-lane ops | Source semantics specified; parser/typechecker/lowering/backend support pending |
+| SPMD / SIMD `foreach` | Scalar reference lowering implemented; AVX2/AVX-512 support a first contiguous map/zip subset over `i32`, `i64`, `f32`, and `f64` |
+| Public cross-lane ops beyond `spmd-reduce` | Scans/prefix reductions, shuffles, broadcasts, public lane indices/counts, gathers/scatters, atomics, and public vector/mask values remain deferred |
 | Runtime SIMD dispatch (`defdispatch`) | Source semantics specified; parser/typechecker/lowering/backend support pending |
 | Windows region helpers | Implemented for `tl_region_mark`/`tl_region_reset` |
 | Complete source locations for all semantic errors | Partial |

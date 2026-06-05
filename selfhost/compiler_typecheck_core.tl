@@ -3453,6 +3453,7 @@
       [(AstTyBool) true]
       [(AstTyChar) true]
       [(AstTyF64) true]
+      [(AstTyF32) true]
       [(AstTyString) true]
       [(AstTyEnum _) true]
       [(AstTyEnumArgs _ _) true]
@@ -3482,6 +3483,7 @@
     [(AstTyI64) true]
     [(AstTyI32) true]
     [(AstTyF64) true]
+    [(AstTyF32) true]
     [(AstTyBool) true]
     [_ false]))
 
@@ -3490,6 +3492,7 @@
     [(AstTyI64) true]
     [(AstTyI32) true]
     [(AstTyF64) true]
+    [(AstTyF32) true]
     [_ false]))
 
 (define (tc-spmd-finish [ty : AstType] [class : TcSpmdClass] [env : TcSpmdEnv]) : ResultTcSpmdExprInfo

@@ -1946,10 +1946,15 @@
         "i32"
         "    vmovdqu "
         "    vpaddd ")
-      (compiler-backend-avx2-map-asm-contains?
-        "f64"
-        "    vmovupd "
-        "    vaddpd "))))
+      (and
+        (compiler-backend-avx2-map-asm-contains?
+          "f64"
+          "    vmovupd "
+          "    vaddpd ")
+        (compiler-backend-avx2-map-asm-contains?
+          "f32"
+          "    vmovups "
+          "    vaddps ")))))
 
 (define (compiler-backend-avx512-map-asm-contains?
   [elem : String]
@@ -1994,15 +1999,22 @@
         "i32"
         "    vmovdqu32 "
         "    vpaddd ")
-      (compiler-backend-avx512-map-asm-contains?
-        "f64"
-        "    vmovupd "
-        "    vaddpd "))))
+      (and
+        (compiler-backend-avx512-map-asm-contains?
+          "f64"
+          "    vmovupd "
+          "    vaddpd ")
+        (compiler-backend-avx512-map-asm-contains?
+          "f32"
+          "    vmovups "
+          "    vaddps ")))))
 
 (define (compiler-backend-avx2-reduce-asm-contains?
   [src : String]
   [op : String]
-  [move : String]) : bool
+  [extract : String]
+  [horizontal : String]
+  [store : String]) : bool
   (match (lower-compiler-source-with-mode src (CompilerLowerAvx2))
     [(OkCompilerLower program spans)
       (match (compiler-backend-emit-program-target-with-mode
@@ -2015,10 +2027,10 @@
           (and
             (backend-and8
               (compiler-backend-string-contains? asm "    vzeroupper\n")
-              (compiler-backend-string-contains? asm "    vextracti128 $1, ")
-              (compiler-backend-string-contains? asm "    vpsrldq $8, ")
+              (compiler-backend-string-contains? asm extract)
+              (compiler-backend-string-contains? asm horizontal)
               (compiler-backend-string-contains? asm op)
-              (compiler-backend-string-contains? asm move)
+              (compiler-backend-string-contains? asm store)
               (compiler-backend-string-contains? asm "%ymm")
               (compiler-backend-string-contains? asm "spmd_reduce_avx2")
               (compiler-backend-string-contains? asm "spmd_reduce_tail"))
@@ -2034,26 +2046,43 @@
     (compiler-backend-avx2-reduce-asm-contains?
       "(define (f [xs : (Array i64)] [n : i64]) : i64 (spmd-reduce sum ([i : i64 0 n]) 0 (array-ref xs i)))"
       "    vpaddq "
+      "    vextracti128 $1, "
+      "    vpsrldq $8, "
       "    vmovq %xmm0, %rax\n")
     (and
       (compiler-backend-avx2-reduce-asm-contains?
         "(define (f [xs : (Array i32)] [n : i64]) : i32 (spmd-reduce sum ([i : i64 0 n]) (cast 0 : i32) (array-ref xs i)))"
         "    vpaddd "
+        "    vextracti128 $1, "
+        "    vpsrldq $8, "
         "    vmovd %xmm0, %eax\n")
       (and
         (compiler-backend-avx2-reduce-asm-contains?
           "(define (f [xs : (Array i32)] [n : i64] [seed : i32]) : i32 (spmd-reduce min ([i : i64 0 n]) seed (array-ref xs i)))"
           "    vpminsd "
+          "    vextracti128 $1, "
+          "    vpsrldq $8, "
           "    vmovd %xmm0, %eax\n")
-        (compiler-backend-avx2-reduce-asm-contains?
-          "(define (f [xs : (Array i32)] [n : i64] [seed : i32]) : i32 (spmd-reduce max ([i : i64 0 n]) seed (array-ref xs i)))"
-          "    vpmaxsd "
-          "    vmovd %xmm0, %eax\n")))))
+        (and
+          (compiler-backend-avx2-reduce-asm-contains?
+            "(define (f [xs : (Array i32)] [n : i64] [seed : i32]) : i32 (spmd-reduce max ([i : i64 0 n]) seed (array-ref xs i)))"
+            "    vpmaxsd "
+            "    vextracti128 $1, "
+            "    vpsrldq $8, "
+            "    vmovd %xmm0, %eax\n")
+          (compiler-backend-avx2-reduce-asm-contains?
+            "(define (f [xs : (Array f64)] [n : i64]) : f64 (spmd-reduce sum ([i : i64 0 n]) 0.0 (array-ref xs i)))"
+            "    vaddpd "
+            "    vextractf128 $1, "
+            "    vaddsd "
+            "    movsd %xmm0, "))))))
 
 (define (compiler-backend-avx512-reduce-asm-contains?
   [src : String]
   [op : String]
-  [move : String]) : bool
+  [extract : String]
+  [horizontal : String]
+  [store : String]) : bool
   (match (lower-compiler-source-with-mode src (CompilerLowerAvx512))
     [(OkCompilerLower program spans)
       (match (compiler-backend-emit-program-target-with-mode
@@ -2065,14 +2094,14 @@
         [(OkCompilerBackend asm)
           (and
             (backend-and8
-              (compiler-backend-string-contains? asm "    vextracti64x4 $1, ")
-              (compiler-backend-string-contains? asm "    vextracti128 $1, ")
-              (compiler-backend-string-contains? asm "    vpsrldq $8, ")
+              (compiler-backend-string-contains? asm extract)
+              (compiler-backend-string-contains? asm horizontal)
               (compiler-backend-string-contains? asm op)
-              (compiler-backend-string-contains? asm move)
+              (compiler-backend-string-contains? asm store)
               (compiler-backend-string-contains? asm "%zmm")
               (compiler-backend-string-contains? asm "%ymm")
-              (compiler-backend-string-contains? asm "spmd_reduce_avx2"))
+              (compiler-backend-string-contains? asm "spmd_reduce_avx2")
+              true)
             (not
               (compiler-backend-string-contains?
                 asm
@@ -2080,26 +2109,58 @@
         [(ErrCompilerBackend _) false])]
     [(ErrCompilerLower _) false]))
 
+(define (compiler-backend-avx512-vector-reduce-i64-minmax-ok?) : bool
+  (and
+    (compiler-backend-avx512-reduce-asm-contains?
+      "(define (f [xs : (Array i64)] [n : i64] [seed : i64]) : i64 (spmd-reduce min ([i : i64 0 n]) seed (array-ref xs i)))"
+      "    vpminsq "
+      "    vextracti64x4 $1, "
+      "    vpsrldq $8, "
+      "    vmovq %xmm0, %rax\n")
+    (compiler-backend-avx512-reduce-asm-contains?
+      "(define (f [xs : (Array i64)] [n : i64] [seed : i64]) : i64 (spmd-reduce max ([i : i64 0 n]) seed (array-ref xs i)))"
+      "    vpmaxsq "
+      "    vextracti64x4 $1, "
+      "    vpsrldq $8, "
+      "    vmovq %xmm0, %rax\n")))
+
 (define (compiler-backend-avx512-vector-reduce-ok?) : bool
   (and
     (compiler-backend-avx512-reduce-asm-contains?
       "(define (f [xs : (Array i64)] [n : i64]) : i64 (spmd-reduce sum ([i : i64 0 n]) 0 (array-ref xs i)))"
       "    vpaddq "
+      "    vextracti64x4 $1, "
+      "    vpsrldq $8, "
       "    vmovq %xmm0, %rax\n")
     (and
       (compiler-backend-avx512-reduce-asm-contains?
         "(define (f [xs : (Array i32)] [n : i64]) : i32 (spmd-reduce sum ([i : i64 0 n]) (cast 0 : i32) (array-ref xs i)))"
         "    vpaddd "
+        "    vextracti64x4 $1, "
+        "    vpsrldq $8, "
         "    vmovd %xmm0, %eax\n")
       (and
         (compiler-backend-avx512-reduce-asm-contains?
           "(define (f [xs : (Array i32)] [n : i64] [seed : i32]) : i32 (spmd-reduce min ([i : i64 0 n]) seed (array-ref xs i)))"
           "    vpminsd "
+          "    vextracti64x4 $1, "
+          "    vpsrldq $8, "
           "    vmovd %xmm0, %eax\n")
-        (compiler-backend-avx512-reduce-asm-contains?
-          "(define (f [xs : (Array i32)] [n : i64] [seed : i32]) : i32 (spmd-reduce max ([i : i64 0 n]) seed (array-ref xs i)))"
-          "    vpmaxsd "
-          "    vmovd %xmm0, %eax\n")))))
+        (and
+          (compiler-backend-avx512-reduce-asm-contains?
+            "(define (f [xs : (Array i32)] [n : i64] [seed : i32]) : i32 (spmd-reduce max ([i : i64 0 n]) seed (array-ref xs i)))"
+            "    vpmaxsd "
+            "    vextracti64x4 $1, "
+            "    vpsrldq $8, "
+            "    vmovd %xmm0, %eax\n")
+          (and
+            (compiler-backend-avx512-reduce-asm-contains?
+              "(define (f [xs : (Array f64)] [n : i64]) : f64 (spmd-reduce sum ([i : i64 0 n]) 0.0 (array-ref xs i)))"
+              "    vaddpd "
+              "    vextractf64x4 $1, "
+              "    vaddsd "
+              "    movsd %xmm0, ")
+            (compiler-backend-avx512-vector-reduce-i64-minmax-ok?)))))))
 
 (define (compiler-backend-vector-home-program [func : CompilerIrFunction]) : CompilerIrProgram
   (IrProgram

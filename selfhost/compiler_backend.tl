@@ -455,6 +455,7 @@
     [(AstTyI64) (= lanes 4)]
     [(AstTyU64) (= lanes 4)]
     [(AstTyF64) (= lanes 4)]
+    [(AstTyF32) (= lanes 8)]
     [(AstTyI32) (= lanes 8)]
     [(AstTyU32) (= lanes 8)]
     [_ false]))
@@ -580,6 +581,7 @@
 (define (compiler-backend-avx2-vector-move [elem-ty : AstType]) : String
   (match elem-ty
     [(AstTyF64) "vmovupd"]
+    [(AstTyF32) "vmovups"]
     [_ "vmovdqu"]))
 
 (define (compiler-backend-avx2-vector-binop-mnemonic
@@ -593,6 +595,7 @@
         [(AstTyI32) "vpaddd"]
         [(AstTyU32) "vpaddd"]
         [(AstTyF64) "vaddpd"]
+        [(AstTyF32) "vaddps"]
         [_ ""])]
     [_ ""]))
 
@@ -604,6 +607,7 @@
       (match elem-ty
         [(AstTyI64) "vpaddq"]
         [(AstTyI32) "vpaddd"]
+        [(AstTyF64) "vaddpd"]
         [_ ""])]
     [(IrVectorReduceMin)
       (match elem-ty
@@ -762,6 +766,7 @@
     [(AstTyI64) (= lanes 8)]
     [(AstTyU64) (= lanes 8)]
     [(AstTyF64) (= lanes 8)]
+    [(AstTyF32) (= lanes 16)]
     [(AstTyI32) (= lanes 16)]
     [(AstTyU32) (= lanes 16)]
     [_ false]))
@@ -803,6 +808,7 @@
 (define (compiler-backend-avx512-vector-move [elem-ty : AstType]) : String
   (match elem-ty
     [(AstTyF64) "vmovupd"]
+    [(AstTyF32) "vmovups"]
     [(AstTyI64) "vmovdqu64"]
     [(AstTyU64) "vmovdqu64"]
     [(AstTyI32) "vmovdqu32"]
@@ -820,13 +826,23 @@
         [(AstTyI32) "vpaddd"]
         [(AstTyU32) "vpaddd"]
         [(AstTyF64) "vaddpd"]
+        [(AstTyF32) "vaddps"]
         [_ ""])]
     [_ ""]))
 
 (define (compiler-backend-avx512-vector-reduce-op-mnemonic
   [op : CompilerIrVectorReduceOp]
   [elem-ty : AstType]) : String
-  (compiler-backend-avx2-vector-reduce-op-mnemonic op elem-ty))
+  (match op
+    [(IrVectorReduceMin)
+      (match elem-ty
+        [(AstTyI64) "vpminsq"]
+        [_ (compiler-backend-avx2-vector-reduce-op-mnemonic op elem-ty)])]
+    [(IrVectorReduceMax)
+      (match elem-ty
+        [(AstTyI64) "vpmaxsq"]
+        [_ (compiler-backend-avx2-vector-reduce-op-mnemonic op elem-ty)])]
+    [_ (compiler-backend-avx2-vector-reduce-op-mnemonic op elem-ty)]))
 
 (define (compiler-backend-avx512-lane-mask [lanes : i64]) : i64
   (cond [(= lanes 8) 255] [(= lanes 16) 65535] [else 0]))
@@ -2396,7 +2412,13 @@
 (define (compiler-backend-avx2-vector-reduce-move-scalar [elem-ty : AstType]) : String
   (match elem-ty
     [(AstTyI32) "    vmovd %xmm0, %eax\n"]
+    [(AstTyF64) ""]
     [_ "    vmovq %xmm0, %rax\n"]))
+
+(define (compiler-backend-vector-reduce-result-reg [elem-ty : AstType]) : String
+  (if (compiler-backend-float-type? elem-ty)
+    "%xmm0"
+    "%rax"))
 
 (define (compiler-backend-avx2-vector-reduce-horizontal-asm
   [mnemonic : String]
@@ -2404,6 +2426,15 @@
   [xmm : String]
   [elem-ty : AstType]) : String
   (match elem-ty
+    [(AstTyF64)
+      (string-append
+        (backend-cat5
+          "    vextractf128 $1, "
+          ymm
+          ", %xmm0\n    "
+          mnemonic
+          (backend-cat3 " %xmm0, " xmm ", %xmm0\n"))
+        "    vunpckhpd %xmm0, %xmm0, %xmm1\n    vaddsd %xmm1, %xmm0, %xmm0\n")]
     [(AstTyI64)
       (string-append
         (backend-cat5
@@ -2482,7 +2513,7 @@
                           (compiler-backend-emit-store-typed-var-with-plan
                             assignments
                             dst
-                            "%rax"
+                            (compiler-backend-vector-reduce-result-reg elem-ty)
                             elem-ty))))]
                   [(ErrBackendReg message)
                     (ErrCompilerBackend
@@ -2503,6 +2534,21 @@
   [ymm : String]
   [elem-ty : AstType]) : String
   (match elem-ty
+    [(AstTyF64)
+      (string-append
+        (string-append
+          (backend-cat5
+            "    vextractf64x4 $1, "
+            zmm
+            ", %ymm0\n    "
+            mnemonic
+            (backend-cat3 " %ymm0, " ymm ", %ymm0\n"))
+          (backend-cat4
+            "    vextractf128 $1, %ymm0, %xmm1\n    "
+            mnemonic
+            " %xmm1, %xmm0, %xmm0\n"
+            ""))
+        "    vunpckhpd %xmm0, %xmm0, %xmm1\n    vaddsd %xmm1, %xmm0, %xmm0\n")]
     [(AstTyI64)
       (string-append
         (string-append
@@ -2593,7 +2639,7 @@
                           (compiler-backend-emit-store-typed-var-with-plan
                             assignments
                             dst
-                            "%rax"
+                            (compiler-backend-vector-reduce-result-reg elem-ty)
                             elem-ty))))]
                   [(ErrBackendReg message)
                     (ErrCompilerBackend

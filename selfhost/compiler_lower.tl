@@ -14303,6 +14303,7 @@
         [(AstTyI64) 4]
         [(AstTyU64) 4]
         [(AstTyF64) 4]
+        [(AstTyF32) 8]
         [(AstTyI32) 8]
         [(AstTyU32) 8]
         [_ 0])]
@@ -14311,6 +14312,7 @@
         [(AstTyI64) 4]
         [(AstTyU64) 4]
         [(AstTyF64) 4]
+        [(AstTyF32) 8]
         [(AstTyI32) 8]
         [(AstTyU32) 8]
         [_ 0])]
@@ -14319,6 +14321,7 @@
         [(AstTyI64) 4]
         [(AstTyU64) 4]
         [(AstTyF64) 4]
+        [(AstTyF32) 8]
         [(AstTyI32) 8]
         [(AstTyU32) 8]
         [_ 0])]
@@ -14327,6 +14330,7 @@
         [(AstTyI64) 8]
         [(AstTyU64) 8]
         [(AstTyF64) 8]
+        [(AstTyF32) 16]
         [(AstTyI32) 16]
         [(AstTyU32) 16]
         [_ 0])]
@@ -14335,6 +14339,7 @@
         [(AstTyI64) 8]
         [(AstTyU64) 8]
         [(AstTyF64) 8]
+        [(AstTyF32) 16]
         [(AstTyI32) 16]
         [(AstTyU32) 16]
         [_ 0])]
@@ -14343,6 +14348,7 @@
         [(AstTyI64) 8]
         [(AstTyU64) 8]
         [(AstTyF64) 8]
+        [(AstTyF32) 16]
         [(AstTyI32) 16]
         [(AstTyU32) 16]
         [_ 0])]
@@ -14523,6 +14529,12 @@
                         (IrVectorReduceSum)
                         elem
                         lanes)]
+                    [(AstTyF64)
+                      (LowerSomeVectorReduce
+                        array-var
+                        (IrVectorReduceSum)
+                        elem
+                        lanes)]
                     [_ LowerNoVectorReduce])]
                 [(AstReduceMin)
                   (match elem
@@ -14532,6 +14544,14 @@
                         (IrVectorReduceMin)
                         elem
                         lanes)]
+                    [(AstTyI64)
+                      (if (lower-mode-avx512? mode)
+                        (LowerSomeVectorReduce
+                          array-var
+                          (IrVectorReduceMin)
+                          elem
+                          lanes)
+                        LowerNoVectorReduce)]
                     [_ LowerNoVectorReduce])]
                 [(AstReduceMax)
                   (match elem
@@ -14541,6 +14561,14 @@
                         (IrVectorReduceMax)
                         elem
                         lanes)]
+                    [(AstTyI64)
+                      (if (lower-mode-avx512? mode)
+                        (LowerSomeVectorReduce
+                          array-var
+                          (IrVectorReduceMax)
+                          elem
+                          lanes)
+                        LowerNoVectorReduce)]
                     [_ LowerNoVectorReduce])]
                 [_ LowerNoVectorReduce]))]
           [LowerNoArrayVar LowerNoVectorReduce])])
@@ -21872,6 +21900,12 @@
     ([i : i64 0 n])
     (array-set! out i (+ (array-ref a i) (array-ref b i)))))")
 
+(define (compiler-lower-avx2-foreach-map-f32-source) : String
+  "(define (fill [a : (Array f32)] [b : (Array f32)] [out : (Array f32)] [n : i64]) : unit
+  (foreach
+    ([i : i64 0 n])
+    (array-set! out i (+ (array-ref a i) (array-ref b i)))))")
+
 (define (compiler-lower-avx2-foreach-scalar-fallback-source) : String
   "(define (fill [a : (Array i64)] [out : (Array i64)] [n : i64]) : unit
   (foreach
@@ -21921,10 +21955,15 @@
         (compiler-lower-avx2-foreach-map-i32-source)
         (AstTyI32)
         8)
-      (compiler-lower-avx2-foreach-map-source-shape-ok?
-        (compiler-lower-avx2-foreach-map-f64-source)
-        (AstTyF64)
-        4))))
+      (and
+        (compiler-lower-avx2-foreach-map-source-shape-ok?
+          (compiler-lower-avx2-foreach-map-f64-source)
+          (AstTyF64)
+          4)
+        (compiler-lower-avx2-foreach-map-source-shape-ok?
+          (compiler-lower-avx2-foreach-map-f32-source)
+          (AstTyF32)
+          8)))))
 
 (define (compiler-lower-and8
   [a : bool]
@@ -21988,10 +22027,15 @@
         (compiler-lower-avx2-foreach-map-i32-source)
         (AstTyI32)
         16)
-      (compiler-lower-avx512-foreach-map-source-shape-ok?
-        (compiler-lower-avx2-foreach-map-f64-source)
-        (AstTyF64)
-        8))))
+      (and
+        (compiler-lower-avx512-foreach-map-source-shape-ok?
+          (compiler-lower-avx2-foreach-map-f64-source)
+          (AstTyF64)
+          8)
+        (compiler-lower-avx512-foreach-map-source-shape-ok?
+          (compiler-lower-avx2-foreach-map-f32-source)
+          (AstTyF32)
+          16)))))
 
 (define (compiler-lower-scalar-foreach-stays-scalar-ok?) : bool
   (match (lower-compiler-source (compiler-lower-avx2-foreach-map-source))
@@ -22064,6 +22108,29 @@
           (= (lower-test-function-vector-reduce-count functions "f") 0)])]
     [(ErrCompilerLower _) false]))
 
+(define (compiler-lower-avx512-spmd-reduce-shape-ok?
+  [src : String]
+  [elem-ty : AstType]
+  [lanes : i64]) : bool
+  (match (lower-compiler-source-with-mode src (CompilerLowerAvx512))
+    [(OkCompilerLower program _)
+      (match program
+        [(IrProgram _ functions _)
+          (and
+            (= (lower-test-function-vector-load-count functions "f") 1)
+            (and
+              (= (lower-test-function-vector-reduce-count functions "f") 1)
+              (and
+                (=
+                  (lower-test-function-vector-shape-count
+                    functions
+                    "f"
+                    lanes
+                    elem-ty)
+                  2)
+                (> (lower-test-function-bounds-count functions "f") 0))))])]
+    [(ErrCompilerLower _) false]))
+
 (define (compiler-lower-avx2-spmd-reduce-tests-ok?) : bool
   (and
     (compiler-lower-and8
@@ -22083,12 +22150,43 @@
         "(define (f [xs : (Array i32)] [n : i64] [seed : i32]) : i32 (spmd-reduce max ([i : i64 0 n]) seed (array-ref xs i)))"
         (AstTyI32)
         8)
-      (compiler-lower-avx2-spmd-reduce-stays-scalar-ok?
-        "(define (f [xs : (Array f64)] [n : i64]) : f64 (spmd-reduce sum ([i : i64 0 n]) 0.0 (array-ref xs i)))")
+      (compiler-lower-avx2-spmd-reduce-shape-ok?
+        "(define (f [xs : (Array f64)] [n : i64]) : f64 (spmd-reduce sum ([i : i64 0 n]) 0.0 (array-ref xs i)))"
+        (AstTyF64)
+        4)
       (compiler-lower-avx2-spmd-reduce-stays-scalar-ok?
         "(define (f [xs : (Array i64)] [n : i64] [seed : i64]) : i64 (spmd-reduce max ([i : i64 0 n]) seed (array-ref xs i)))")
       true
       true)
+    true))
+
+(define (compiler-lower-avx512-spmd-reduce-tests-ok?) : bool
+  (compiler-lower-and8
+    (compiler-lower-avx512-spmd-reduce-shape-ok?
+      "(define (f [xs : (Array i64)] [n : i64]) : i64 (spmd-reduce sum ([i : i64 0 n]) 0 (array-ref xs i)))"
+      (AstTyI64)
+      8)
+    (compiler-lower-avx512-spmd-reduce-shape-ok?
+      "(define (f [xs : (Array i64)] [n : i64] [seed : i64]) : i64 (spmd-reduce min ([i : i64 0 n]) seed (array-ref xs i)))"
+      (AstTyI64)
+      8)
+    (compiler-lower-avx512-spmd-reduce-shape-ok?
+      "(define (f [xs : (Array i64)] [n : i64] [seed : i64]) : i64 (spmd-reduce max ([i : i64 0 n]) seed (array-ref xs i)))"
+      (AstTyI64)
+      8)
+    (compiler-lower-avx512-spmd-reduce-shape-ok?
+      "(define (f [xs : (Array f64)] [n : i64]) : f64 (spmd-reduce sum ([i : i64 0 n]) 0.0 (array-ref xs i)))"
+      (AstTyF64)
+      8)
+    (compiler-lower-avx512-spmd-reduce-shape-ok?
+      "(define (f [xs : (Array i32)] [n : i64] [seed : i32]) : i32 (spmd-reduce min ([i : i64 0 n]) seed (array-ref xs i)))"
+      (AstTyI32)
+      16)
+    (compiler-lower-avx512-spmd-reduce-shape-ok?
+      "(define (f [xs : (Array i32)] [n : i64] [seed : i32]) : i32 (spmd-reduce max ([i : i64 0 n]) seed (array-ref xs i)))"
+      (AstTyI32)
+      16)
+    true
     true))
 
 ;; `spmd-reduce` sum lowering (#1013): integer and f64 sum reductions lower (to
@@ -22116,7 +22214,9 @@
               (and
                 (compiler-lower-ok?
                   "(define (f [xs : (Array bool)] [n : i64]) : bool (spmd-reduce any ([i : i64 0 n]) false (array-ref xs i)))")
-                (compiler-lower-avx2-spmd-reduce-tests-ok?)))))))))
+                (and
+                  (compiler-lower-avx2-spmd-reduce-tests-ok?)
+                  (compiler-lower-avx512-spmd-reduce-tests-ok?))))))))))
 
 ;; Comptime folding of the remaining scalar operators: each `(comptime ...)`
 ;; must collapse to a single constant `mov` with no residual runtime binop,

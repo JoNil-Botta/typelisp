@@ -347,12 +347,15 @@ specifies the future checker-only rule for local non-escaping immutable
 reference captures; relaxing the current rejection is tracked by #808.
 SPMD/SIMD `foreach` is documented in [SPEC.md section 5.15](SPEC.md). The
 compiler parses and type-checks the first source form and lowers it to scalar
-reference loops; `--backend-mode avx2` supports a first contiguous map/zip
-subset. Runtime-dispatched SIMD variants are specified with `defdispatch`:
+reference loops; `--backend-mode avx2|avx512` supports a first contiguous
+map/zip subset over `i32`, `i64`, `f32`, and `f64` lanes. Runtime-dispatched
+SIMD variants are specified with `defdispatch`:
 ordinary calls resolve once per process to AVX-512, AVX2, or scalar fallback
 using the `stdlib/cpu.tl` capability checks. Parser/compiler support for
 `defdispatch` is pending. `spmd-reduce` scalar lowering is implemented, and
-`--backend-mode avx2` vectorizes scalar-equivalent integer array reductions.
+SIMD backend modes vectorize eligible contiguous array reductions: `sum` over
+`i32`, `i64`, and `f64`; `min`/`max` over `i32`; and AVX-512 `min`/`max` over
+`i64`.
 
 ### Builtins
 
@@ -578,10 +581,11 @@ commands and bare expressions are evaluated by compiling a scratch program
 through the TypeLisp-owned build/run path.
 
 `compile`, `run`, and `build` accept `--backend-mode scalar|avx2|avx512`.
-`scalar` is the default. `avx2` supports a first contiguous SPMD `foreach`
-map/zip subset plus scalar-equivalent integer `spmd-reduce` array folds;
-`avx512` supports the same `foreach` map/zip subset with ZMM vectors and opmask
-predicated tails. Unsupported vector IR falls back or rejects explicitly.
+`scalar` is the default. `avx2` and `avx512` support a first contiguous SPMD
+`foreach` map/zip subset over `i32`, `i64`, `f32`, and `f64` lanes, plus
+eligible `spmd-reduce` array folds. AVX-512 uses ZMM vectors and opmask
+predicated tails, and additionally vectorizes `i64` min/max reductions.
+Unsupported vector IR falls back or rejects explicitly.
 
 `compile` accepts repeated `--cfg <name>` flags. Enabled names control `(cfg
 predicate declaration)` and expression-level `(cfg predicate expr [else-expr])`
@@ -617,16 +621,16 @@ canonical default are reserved for the optimizer-policy work split from \#939.
 ## Status
 
 Implemented: lexer, parser, type checker, IR lowering, optimizer, and working
-x86_64 Linux/Windows backend targets. Integers, floats (`f64`), bool/char/unit,
+x86_64 Linux/Windows backend targets. Integers, floats (`f64`/`f32`), bool/char/unit,
 `if`/`while`/`begin`, local & global variables, direct and indirect calls,
 `cast`, enums + `match`, structs + field access, dynamic arrays, strings,
-`extern`, multi-file modules, scalar `foreach`, and an initial AVX2 `foreach`
-map/zip path all compile to native code. See the
+`extern`, multi-file modules, scalar `foreach`, an initial SIMD `foreach`
+map/zip path, and initial SIMD `spmd-reduce` folds all compile to native code. See the
 [project roadmap](https://github.com/JoNil-Botta/typelisp/issues/8) and
 [SPEC.md §8](SPEC.md) for what is not yet supported (aggregate-element
 reference captures, tail calls, tuple/fixed-array by-value returns,
-`f32` codegen, general GC/free, ownership/borrowing, and later SPMD/SIMD
-reductions/cross-lane work). Raw pointer types and unsafe pointer operations are
+general GC/free, ownership/borrowing, and later public SPMD/SIMD cross-lane
+work). Raw pointer types and unsafe pointer operations are
 implemented, while C-string/address-of ergonomics remain follow-up FFI work.
 
 ## Contributing

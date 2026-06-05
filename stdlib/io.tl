@@ -662,14 +662,15 @@
           (io-open-mode))]
       (if (< fd 0)
         (io-neg-status (io-last-error-code))
-        (if (>= io-file-handle-next io-file-handle-cap)
-          (begin
-            (io-platform-close fd)
-            (io-neg-status 38))
-          (let
-            [handle : i64 io-file-handle-next]
+        (let
+          [handle : i64 io-file-handle-next]
+          [handle-cap : i64 io-file-handle-cap]
+          (if (>= handle handle-cap)
             (begin
-              (set! io-file-handle-next (+ io-file-handle-next 1))
+              (io-platform-close fd)
+              (io-neg-status 38))
+            (begin
+              (set! io-file-handle-next (+ handle 1))
               (io-file-i64-set! (io-file-fds-ptr) handle fd)
               (io-file-i64-set! (io-file-modes-ptr) handle mode)
               (io-file-i64-set! (io-file-states-ptr) handle 1)

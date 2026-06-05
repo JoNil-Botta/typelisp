@@ -3634,6 +3634,53 @@
             scope
             (tc-spmd-env-merge-classes left-rest right-rest))])]))
 
+(define (tc-type-env-box-smoke?) : bool
+  (let
+    [env : TcTypeEnv
+      (tc-bind-return-type
+        (tc-bind
+          (tc-bind (tc-push-region (tc-empty-env) "arena") "x" (AstTyI64))
+          "x"
+          (AstTyBool))
+        (AstTyI64))]
+    [cached : TcTypeEnv (tc-env-with-cache env)]
+    (and
+      (= (tc-env-cache-count cached) 4)
+      (and
+        (match (tc-lookup cached "x")
+          [(OkTcType (AstTyBool)) true]
+          [_ false])
+        (and
+          (match (tc-current-return-type env)
+            [(OkTcType (AstTyI64)) true]
+            [_ false])
+          (and
+            (match (tc-active-region env)
+              [(TcSomeString region) (string-eq region "arena")]
+              [_ false])
+            (tc-lifetime-visible? env "arena")))))))
+
+(define (tc-spmd-env-box-smoke?) : bool
+  (let
+    [env : TcTypeEnv
+      (tc-bind (tc-bind (tc-empty-env) "x" (AstTyI64)) "flag" (AstTyBool))]
+    [outer : TcSpmdEnv (tc-spmd-env-from-type-env env)]
+    [local : TcSpmdEnv
+      (tc-spmd-env-bind outer "lane" (AstTyI64) TcSpmdVarying TcSpmdLocal)]
+    [updated : TcSpmdEnv
+      (tc-spmd-env-set-local-class local "lane" TcSpmdUniform)]
+    (and
+      (match (tc-spmd-env-lookup updated "lane")
+        [(TcSpmdFound (AstTyI64) (TcSpmdUniform) (TcSpmdLocal)) true]
+        [_ false])
+      (and
+        (tc-spmd-env-has-local? updated "lane")
+        (and
+          (tc-spmd-env-has-outer? updated "x")
+          (match (tc-spmd-env-lookup (tc-spmd-env-pop updated 1) "lane")
+            [(TcSpmdMissing) true]
+            [_ false]))))))
+
 (define (tc-literal-type [lit : AstLiteral]) : AstType
   (match lit
     [(AstLitInt _) (AstTyI64)]
@@ -8880,7 +8927,7 @@
         [(TcInlineFieldLayout name _ offset)
           (CtfeLayoutFieldCons
             (CtfeLayoutField name offset)
-            (tc-ctfe-inline-layout-fields rest))])]))
+            (box (tc-ctfe-inline-layout-fields rest)))])]))
 
 (define (tc-ctfe-inline-aggregate-layout-info
   [name : String]
@@ -12859,7 +12906,7 @@
             (if variadic
               (match (macro-check-variadic-operands ctx type-env pty args)
                 [(OkMacroCheck)
-                  (OkMacroEnv (CtfeEnvCons pname (CtfeExprList args) env))]
+                  (OkMacroEnv (CtfeEnvCons pname (CtfeExprList args) (box env)))]
                 [(ErrMacroCheck diag) (ErrMacroEnv diag)])
               (match args
                 [(AstExprNil)
@@ -12880,7 +12927,7 @@
                           (CtfeEnvCons
                             pname
                             (CtfeExpr arg (tc-resolve-type ctx pty))
-                            env)
+                            (box env))
                           call-expr)]
                       [(ErrMacroCheck diag) (ErrMacroEnv diag)]))]))]))]))
 

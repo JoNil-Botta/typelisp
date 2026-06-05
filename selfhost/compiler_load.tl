@@ -393,6 +393,26 @@
 (define (compiler-load-seen-path-key [path : String]) : String
   (string-append "path:" (compiler-load-normalize-path path)))
 
+(define (compiler-load-decls-source-module [decls : AstDeclList]) : String
+  (match decls
+    [(AstDeclNil) ""]
+    [(AstDeclCons decl rest)
+      (let
+        [rest : AstDeclList (box-get rest)]
+        (match decl
+          [(AstDeclModule name) name]
+          [_ (compiler-load-decls-source-module rest)]))]))
+
+(define (compiler-load-decl-list-has-module? [decls : AstDeclList]) : bool
+  (match decls
+    [(AstDeclNil) false]
+    [(AstDeclCons decl rest)
+      (let
+        [rest : AstDeclList (box-get rest)]
+        (match decl
+          [(AstDeclModule _) true]
+          [_ (compiler-load-decl-list-has-module? rest)]))]))
+
 (define (compiler-load-decls-with-paths
   [decls : AstDeclList]
   [importer-path : String]
@@ -431,16 +451,58 @@
     [(AstSomeImportAlias _) (ast-decl-module-cons importer-module rest)]
     [(AstNoImportAlias) rest]))
 
+;; Imported module declarations switch the flattened declaration context; restore
+;; the importer's source module before the alias marker and remaining decls.
+(define (compiler-load-decls-after-import
+  [import-path : String]
+  [expected-module : AstMaybeModuleName]
+  [alias : AstMaybeImportAlias]
+  [importer-source-module : String]
+  [imported-decls : AstDeclList]
+  [rest : AstDeclList]) : AstDeclList
+  (let
+    [after-alias : AstDeclList
+      (compiler-load-alias-decl-list import-path expected-module alias rest)]
+    (if (compiler-load-decl-list-has-module? imported-decls)
+      (ast-decl-cons (AstDeclModule importer-source-module) after-alias)
+      after-alias)))
+
+(define (compiler-load-paths-after-import
+  [importer-path : String]
+  [alias : AstMaybeImportAlias]
+  [imported-decls : AstDeclList]
+  [rest : AstDeclPathList]) : AstDeclPathList
+  (let
+    [after-alias : AstDeclPathList
+      (compiler-load-alias-path-list importer-path alias rest)]
+    (if (compiler-load-decl-list-has-module? imported-decls)
+      (ast-decl-path-cons importer-path after-alias)
+      after-alias)))
+
+(define (compiler-load-modules-after-import
+  [importer-module : String]
+  [alias : AstMaybeImportAlias]
+  [imported-decls : AstDeclList]
+  [rest : AstDeclModuleList]) : AstDeclModuleList
+  (let
+    [after-alias : AstDeclModuleList
+      (compiler-load-alias-module-list importer-module alias rest)]
+    (if (compiler-load-decl-list-has-module? imported-decls)
+      (ast-decl-module-cons importer-module after-alias)
+      after-alias)))
+
 (define (compiler-load-decls-with-module-and-roots
   [decls : AstDeclList]
   [importer-path : String]
   [importer-module : String]
+  [importer-source-module : String]
   [seen : SymI64Env]
   [stdlib-roots : CompilerLoadRootList]) : ResultCompilerLoadWithPaths
   (compiler-load-decls-with-module-and-roots-cfg
     decls
     importer-path
     importer-module
+    importer-source-module
     seen
     stdlib-roots
     (compiler-cfg-empty)))
@@ -449,6 +511,7 @@
   [decls : AstDeclList]
   [importer-path : String]
   [importer-module : String]
+  [importer-source-module : String]
   [seen : SymI64Env]
   [stdlib-roots : CompilerLoadRootList]
   [cfgs : SymI64Env]) : ResultCompilerLoadWithPaths
@@ -480,6 +543,7 @@
                       rest
                       importer-path
                       importer-module
+                      importer-source-module
                       import-seen
                       stdlib-roots
                       cfgs)
@@ -491,22 +555,26 @@
                         (OkCompilerLoadWithPaths
                           (compiler-load-decl-list-append
                             imported-decls
-                            (compiler-load-alias-decl-list
+                            (compiler-load-decls-after-import
                               resolved
                               expected-module
                               alias
+                              importer-source-module
+                              imported-decls
                               rest-decls))
                           (compiler-load-decl-path-list-append
                             imported-paths
-                            (compiler-load-alias-path-list
+                            (compiler-load-paths-after-import
                               importer-path
                               alias
+                              imported-decls
                               rest-paths))
                           (compiler-load-decl-module-list-append
                             imported-modules
-                            (compiler-load-alias-module-list
+                            (compiler-load-modules-after-import
                               importer-module
                               alias
+                              imported-decls
                               rest-modules))
                           rest-seen)]
                       [(ErrCompilerLoadWithPaths diag)
@@ -527,6 +595,7 @@
                   rest
                   importer-path
                   importer-module
+                  importer-source-module
                   seen
                   stdlib-roots
                   cfgs)
@@ -548,6 +617,7 @@
               rest
               importer-path
               importer-module
+              importer-source-module
               seen
               stdlib-roots
               cfgs)
@@ -593,6 +663,7 @@
           decls
           importer-path
           module-id
+          (compiler-load-decls-source-module decls)
           (sym-i64-bind seen module-id 1)
           stdlib-roots
           cfgs))]
@@ -681,6 +752,7 @@
                     decls
                     path
                     module-id
+                    (compiler-load-decls-source-module decls)
                     (sym-i64-bind seen module-id 1)
                     stdlib-roots
                     cfgs))]
@@ -1291,6 +1363,7 @@
   [decls : AstDeclList]
   [importer-path : String]
   [importer-module : String]
+  [importer-source-module : String]
   [seen : SymI64Env]
   [stdlib-roots : CompilerLoadRootList]
   [manifest-dir : String]
@@ -1335,6 +1408,7 @@
                       rest
                       importer-path
                       importer-module
+                      importer-source-module
                       import-seen
                       stdlib-roots
                       manifest-dir
@@ -1348,22 +1422,26 @@
                         (OkCompilerLoadWithPaths
                           (compiler-load-decl-list-append
                             imported-decls
-                            (compiler-load-alias-decl-list
+                            (compiler-load-decls-after-import
                               resolved
                               expected-module
                               alias
+                              importer-source-module
+                              imported-decls
                               rest-decls))
                           (compiler-load-decl-path-list-append
                             imported-paths
-                            (compiler-load-alias-path-list
+                            (compiler-load-paths-after-import
                               importer-path
                               alias
+                              imported-decls
                               rest-paths))
                           (compiler-load-decl-module-list-append
                             imported-modules
-                            (compiler-load-alias-module-list
+                            (compiler-load-modules-after-import
                               importer-module
                               alias
+                              imported-decls
                               rest-modules))
                           rest-seen)]
                       [(ErrCompilerLoadWithPaths diag)
@@ -1386,6 +1464,7 @@
                   rest
                   importer-path
                   importer-module
+                  importer-source-module
                   seen
                   stdlib-roots
                   manifest-dir
@@ -1409,6 +1488,7 @@
               rest
               importer-path
               importer-module
+              importer-source-module
               seen
               stdlib-roots
               manifest-dir
@@ -1456,6 +1536,7 @@
                     decls
                     path
                     module-id
+                    (compiler-load-decls-source-module decls)
                     (sym-i64-bind seen module-id 1)
                     stdlib-roots
                     manifest-dir
@@ -1587,6 +1668,50 @@
               target-module
               target-alias)]))]))
 
+(define (compiler-load-unmoduled-import-restored-decls? [decls : AstDeclList]) : bool
+  (match decls
+    [(AstDeclCons (AstDeclModule imported-module) rest1)
+      (let
+        [rest1 : AstDeclList (box-get rest1)]
+        (match rest1
+          [(AstDeclCons (AstDeclDef imported-name _ _) rest2)
+            (let
+              [rest2 : AstDeclList (box-get rest2)]
+              (match rest2
+                [(AstDeclCons (AstDeclModule restored-module) rest3)
+                  (let
+                    [rest3 : AstDeclList (box-get rest3)]
+                    (match rest3
+                      [(AstDeclCons
+                          (AstDeclImport
+                            (AstImportSpec
+                              _
+                              (AstSomeModuleName alias-module)
+                              (AstSomeImportAlias alias-name)))
+                          rest4)
+                        (let
+                          [rest4 : AstDeclList (box-get rest4)]
+                          (match rest4
+                            [(AstDeclCons
+                                (AstDeclDefFn main-name _ _ _)
+                                AstDeclNil)
+                              (and
+                                (string-eq imported-module "restore.dep")
+                                (and
+                                  (string-eq imported-name "dep-value")
+                                  (and
+                                    (string-eq restored-module "")
+                                    (and
+                                      (string-eq alias-module "restore.dep")
+                                      (and
+                                        (string-eq alias-name "dep")
+                                        (string-eq main-name "main"))))))]
+                            [_ false]))]
+                      [_ false]))]
+                [_ false]))]
+          [_ false]))]
+    [_ false]))
+
 (define (compiler-load-two-modules?
   [modules : AstDeclModuleList]
   [want : String]) : bool
@@ -1632,22 +1757,40 @@
                                       [rest6 : AstDeclModuleList
                                         (box-get rest6)]
                                       (match rest6
-                                        [(AstDeclModuleNil)
-                                          (and
-                                            (string-eq first "smoke.entry")
-                                            (and
-                                              (string-eq second "smoke.dep")
-                                              (and
-                                                (string-eq third "smoke.dep")
+                                        [(AstDeclModuleCons seventh rest7)
+                                          (let
+                                            [rest7 : AstDeclModuleList
+                                              (box-get rest7)]
+                                            (match rest7
+                                              [(AstDeclModuleNil)
                                                 (and
-                                                  (string-eq fourth "smoke.dep")
+                                                  (string-eq
+                                                    first
+                                                    "smoke.entry")
                                                   (and
                                                     (string-eq
-                                                      fifth
-                                                      "smoke.entry")
-                                                    (string-eq
-                                                      sixth
-                                                      "smoke.entry"))))))]
+                                                      second
+                                                      "smoke.dep")
+                                                    (and
+                                                      (string-eq
+                                                        third
+                                                        "smoke.dep")
+                                                      (and
+                                                        (string-eq
+                                                          fourth
+                                                          "smoke.dep")
+                                                        (and
+                                                          (string-eq
+                                                            fifth
+                                                            "smoke.entry")
+                                                          (and
+                                                            (string-eq
+                                                              sixth
+                                                              "smoke.entry")
+                                                            (string-eq
+                                                              seventh
+                                                              "smoke.entry")))))))]
+                                              [_ false]))]
                                         [_ false]))]
                                   [_ false]))]
                             [_ false]))]
@@ -1767,12 +1910,29 @@
       (sym-i64-empty))
       [(OkCompilerLoadWithPaths decls _ modules seen)
         (and
-          (= (compiler-load-decl-list-count decls) 6)
+          (= (compiler-load-decl-list-count decls) 7)
           (and
             (compiler-load-entry-cycle-modules? modules)
             (and
               (sym-i64-contains seen "smoke.entry")
               (sym-i64-contains seen "smoke.dep"))))]
+      [(ErrCompilerLoadWithPaths _) false])))
+
+(define (compiler-load-import-module-restore-ok?) : bool
+  (begin
+    (write-file
+      "target/cl_restore_dep.tl"
+      "(module restore.dep)
+(define dep-value : i64 1)")
+    (write-file
+      "target/cl_restore_entry.tl"
+      "(import \"cl_restore_dep.tl\" module restore.dep as dep)
+(define (main) : i64 42)")
+    (match (compiler-load-file-with-paths
+      "target/cl_restore_entry.tl"
+      (sym-i64-empty))
+      [(OkCompilerLoadWithPaths decls _ _ _)
+        (compiler-load-unmoduled-import-restored-decls? decls)]
       [(ErrCompilerLoadWithPaths _) false])))
 
 (define (compiler-load-file-fallback-path-dedup-ok?) : bool
@@ -1894,7 +2054,7 @@
       (sym-i64-empty))
       [(OkCompilerLoadWithPaths decls _ _ seen)
         (and
-          (= (compiler-load-decl-list-count decls) 12)
+          (= (compiler-load-decl-list-count decls) 15)
           (and
             (sym-i64-contains seen "diamond.c")
             (and
@@ -1931,7 +2091,7 @@
       (sym-i64-empty))
       [(OkCompilerLoadWithPaths decls _ _ seen)
         (and
-          (= (compiler-load-decl-list-count decls) 11)
+          (= (compiler-load-decl-list-count decls) 14)
           (and
             (sym-i64-contains seen "tr.c")
             (and
@@ -3201,6 +3361,12 @@
       (return
         (begin
           (panic "compiler-load: fallback path dedup smoke mismatch")
+          0)))
+    (unless
+      (compiler-load-import-module-restore-ok?)
+      (return
+        (begin
+          (panic "compiler-load: import module restore smoke mismatch")
           0)))
     (unless
       (compiler-load-import-alias-preserved-ok?)

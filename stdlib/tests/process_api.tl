@@ -15,9 +15,9 @@
   [message : String]) : unit
   (match items
     [(ProcessStringCons a rest)
-      (match rest
+      (match (box-get rest)
         [(ProcessStringCons b tail)
-          (match tail
+          (match (box-get tail)
             [(ProcessStringNil)
               (begin
                 (assert-owned-string-eq a first message)
@@ -34,11 +34,11 @@
   [message : String]) : unit
   (match items
     [(ProcessStringCons a rest)
-      (match rest
+      (match (box-get rest)
         [(ProcessStringCons b more)
-          (match more
+          (match (box-get more)
             [(ProcessStringCons c tail)
-              (match tail
+              (match (box-get tail)
                 [(ProcessStringNil)
                   (begin
                     (assert-owned-string-eq a first message)

@@ -19,7 +19,7 @@
   [message : String]) : unit
   (match items
     [(StringCons a rest)
-      (match rest
+      (match (box-get rest)
         [(StringNil) (assert-owned-string-eq a first message)]
         [_ (panic message)])]
     [_ (panic message)]))
@@ -32,11 +32,11 @@
   [message : String]) : unit
   (match items
     [(StringCons a rest)
-      (match rest
+      (match (box-get rest)
         [(StringCons b more)
-          (match more
+          (match (box-get more)
             [(StringCons c tail)
-              (match tail
+              (match (box-get tail)
                 [(StringNil)
                   (begin
                     (assert-owned-string-eq a first message)
@@ -56,13 +56,13 @@
   [message : String]) : unit
   (match items
     [(StringCons a rest)
-      (match rest
+      (match (box-get rest)
         [(StringCons b more)
-          (match more
+          (match (box-get more)
             [(StringCons c tail)
-              (match tail
+              (match (box-get tail)
                 [(StringCons d end)
-                  (match end
+                  (match (box-get end)
                     [(StringNil)
                       (begin
                         (assert-owned-string-eq a first message)
@@ -126,16 +126,16 @@
       (assert-string-list3 built "alpha" "beta" "gamma" "builder order")
       (assert-string-list3
         (string-list-reverse
-          (StringCons
+          (string-list-cons
             "third"
-            (StringCons "second" (StringCons "first" (StringNil)))))
+            (string-list-cons "second" (string-list-single "first"))))
         "first"
         "second"
         "third"
         "reverse order")
       (assert-string-list3
         (string-list-append
-          (StringCons "left" (StringCons "middle" (StringNil)))
+          (string-list-cons "left" (string-list-single "middle"))
           (string-list-single "right"))
         "left"
         "middle"
@@ -150,7 +150,7 @@
       (assert-string-list3
         (string-list-builder-build-onto
           (string-list-builder-push (string-list-builder-empty) "head")
-          (StringCons "tail1" (StringCons "tail2" (StringNil))))
+          (string-list-cons "tail1" (string-list-single "tail2")))
         "head"
         "tail1"
         "tail2"

@@ -226,7 +226,7 @@
 ;: Reversed path segment stack used by lexical path normalization.
 (defenum FsPathSegmentList
   (FsPathSegmentNil)
-  (FsPathSegmentCons String FsPathSegmentList))
+  (FsPathSegmentCons String (Box FsPathSegmentList)))
 
 ;: Runtime status sentinel for regular files returned by `fs-file-kind-status`.
 (define fs-file-kind-regular-code : i64
@@ -322,7 +322,7 @@
     [(FsPathSegmentNil) ""]
     [(FsPathSegmentCons head rest)
       (let
-        [prefix : String (fs-path-segment-list-render rest)]
+        [prefix : String (fs-path-segment-list-render (box-get rest))]
         (if (= (string-length prefix) 0)
           head
           (string-append prefix (string-append "/" head))))]))
@@ -339,12 +339,12 @@
         [(FsPathSegmentNil)
           (if rooted
             FsPathSegmentNil
-            (FsPathSegmentCons segment segments))]
+            (FsPathSegmentCons segment (box segments)))]
         [(FsPathSegmentCons top rest)
           (if (string-eq top "..")
-            (FsPathSegmentCons segment segments)
-            rest)])
-      (FsPathSegmentCons segment segments))))
+            (FsPathSegmentCons segment (box segments))
+            (box-get rest))])
+      (FsPathSegmentCons segment (box segments)))))
 
 ;: Lexically normalize `path` without resolving symlinks or touching the host FS.
 ;:
@@ -677,14 +677,14 @@
             (if (> i start)
               (set!
                 items
-                (StringCons (substring entries start (- i start)) items))
+                (string-list-cons (substring entries start (- i start)) items))
               unit)
             (set! start (+ i 1))
             (set! i (+ i 1)))
           (set! i (+ i 1))))
       (if (< start n)
         (string-list-reverse
-          (StringCons (substring entries start (- n start)) items))
+          (string-list-cons (substring entries start (- n start)) items))
         (string-list-reverse items)))))
 
 ;: Read one directory and return entry names as a `StringList`.

@@ -24,7 +24,7 @@
 ;: Reversed chunk list. Each cons node is allocated in the active arena.
 (defenum TextBufChunkList
   (TextBufChunkNil)
-  (TextBufChunkCons String TextBufChunkList))
+  (TextBufChunkCons String (Box TextBufChunkList)))
 
 ;: Text buffer value with reversed chunks and cached byte length.
 (defenum TextBuf
@@ -56,7 +56,7 @@
       buf
       (match buf
         [(TextBuf chunks len)
-          (TextBuf (TextBufChunkCons chunk chunks) (+ len chunk-len))]))))
+          (TextBuf (TextBufChunkCons chunk (box chunks)) (+ len chunk-len))]))))
 
 ;: Convert a supported byte-sized char to a one-byte String.
 (define (text-buf-char-string [c : char]) : String
@@ -85,7 +85,9 @@
   (match front
     [(TextBufChunkNil) back]
     [(TextBufChunkCons chunk rest)
-      (TextBufChunkCons chunk (text-buf-chunk-list-concat rest back))]))
+      (TextBufChunkCons
+        chunk
+        (box (text-buf-chunk-list-concat (box-get rest) back)))]))
 
 ;: Append all chunks from `right` after `left`.
 (define (text-buf-append-buffer [left : TextBuf] [right : TextBuf]) : TextBuf
@@ -106,13 +108,14 @@
   (match chunks
     [(TextBufChunkNil) out]
     [(TextBufChunkCons chunk rest)
-      (text-buf-chunks-render-rev rest (string-append chunk out))]))
+      (text-buf-chunks-render-rev (box-get rest) (string-append chunk out))]))
 
 ;: Return the number of chunk nodes in `chunks`, accumulating into `count`.
 (define (text-buf-chunk-count [chunks : TextBufChunkList] [count : i64]) : i64
   (match chunks
     [(TextBufChunkNil) count]
-    [(TextBufChunkCons _ rest) (text-buf-chunk-count rest (+ count 1))]))
+    [(TextBufChunkCons _ rest)
+      (text-buf-chunk-count (box-get rest) (+ count 1))]))
 
 ;: Fill `items` from a reversed chunk list so array order matches render order.
 (define (text-buf-chunks-fill-array-rev
@@ -124,7 +127,7 @@
     [(TextBufChunkCons chunk rest)
       (begin
         (array-set! items index chunk)
-        (text-buf-chunks-fill-array-rev rest items (- index 1)))]))
+        (text-buf-chunks-fill-array-rev (box-get rest) items (- index 1)))]))
 
 ;: Render the half-open chunk array range `[lo, hi)` with balanced concatenation.
 (define (text-buf-chunks-render-array-range
@@ -167,7 +170,7 @@
     [(TextBufChunkNil) io-status-ok]
     [(TextBufChunkCons chunk rest)
       (let
-        [status : i64 (text-buf-write-chunks-rev raw rest)]
+        [status : i64 (text-buf-write-chunks-rev raw (box-get rest))]
         (if (= status io-status-ok)
           (file-write-status raw chunk)
           status))]))

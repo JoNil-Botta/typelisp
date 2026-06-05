@@ -1052,6 +1052,68 @@
   (SymI64Nil)
   (SymI64Bind String i64 (Box SymI64Env)))")
 
+(define (compiler-typecheck-inline-boxed-ctfe-metadata-source) : String
+  "(defenum CompilerCtfeValue
+  (CtfeUnit))
+(defstruct CtfeLayoutField
+  (name String)
+  (offset i64))
+(defenum CtfeLayoutFieldList
+  (CtfeLayoutFieldNil)
+  (CtfeLayoutFieldCons CtfeLayoutField (Box CtfeLayoutFieldList)))
+(defstruct CtfeLayoutInfo
+  (name String)
+  (is-struct bool)
+  (size i64)
+  (align i64)
+  (fields CtfeLayoutFieldList))
+(defenum CtfeLayoutInfoList
+  (CtfeLayoutInfoNil)
+  (CtfeLayoutInfoCons CtfeLayoutInfo (Box CtfeLayoutInfoList)))
+(defenum AstType
+  (AstTyI64))
+(defenum AstTypeList
+  (AstTypeNil)
+  (AstTypeCons AstType (Box AstTypeList)))
+(defstruct CtfeReflectField
+  (name String)
+  (ty AstType))
+(defenum CtfeReflectFieldList
+  (CtfeReflectFieldNil)
+  (CtfeReflectFieldCons CtfeReflectField (Box CtfeReflectFieldList)))
+(defstruct CtfeReflectVariant
+  (name String)
+  (payloads AstTypeList))
+(defenum CtfeReflectVariantList
+  (CtfeReflectVariantNil)
+  (CtfeReflectVariantCons CtfeReflectVariant (Box CtfeReflectVariantList)))
+(defenum CtfeReflectInfo
+  (CtfeReflectStruct String String String CtfeReflectFieldList)
+  (CtfeReflectEnum String String String CtfeReflectVariantList))
+(defenum CtfeReflectInfoList
+  (CtfeReflectInfoNil)
+  (CtfeReflectInfoCons CtfeReflectInfo (Box CtfeReflectInfoList)))
+(defenum CtfeEnv
+  (CtfeEnvNil CtfeLayoutInfoList CtfeReflectInfoList)
+  (CtfeEnvCons String CompilerCtfeValue (Box CtfeEnv)))")
+
+(define (compiler-typecheck-inline-ctfe-metadata-layout-ok?) : bool
+  (let
+    [src : String (compiler-typecheck-inline-boxed-ctfe-metadata-source)]
+    (and
+      (compiler-typecheck-inline-layout-ok? src "CtfeEnv")
+      (and
+        (compiler-typecheck-inline-layout-ok? src "CtfeLayoutInfoList")
+        (and
+          (compiler-typecheck-inline-layout-ok? src "CtfeLayoutFieldList")
+          (and
+            (compiler-typecheck-inline-layout-ok? src "CtfeReflectInfoList")
+            (and
+              (compiler-typecheck-inline-layout-ok? src "CtfeReflectFieldList")
+              (compiler-typecheck-inline-layout-ok?
+                src
+                "CtfeReflectVariantList"))))))))
+
 (define (compiler-typecheck-inline-pointer-boundaries-source) : String
   "(defstruct Node
   (name String)
@@ -1104,35 +1166,37 @@
             (compiler-typecheck-inline-boxed-sym-i64-env-source)
             "SymI64Env")
           (and
+            (compiler-typecheck-inline-ctfe-metadata-layout-ok?)
             (and
               (compiler-typecheck-inline-layout-ok?
                 (compiler-typecheck-inline-pointer-boundaries-source)
                 "Node")
-              (compiler-typecheck-inline-layout-query-ok?))
-            (and
-              (compiler-typecheck-inline-layout-error-ok?
-                (compiler-typecheck-inline-unboxed-list-source)
-                "BadList"
-                "typecheck: inline aggregate layout cycle BadList -> BadList; insert (Box BadList) at the recursive edge")
               (and
-                (compiler-typecheck-inline-layout-error-ok?
-                  (compiler-typecheck-inline-mutual-struct-source)
-                  "A"
-                  "typecheck: inline aggregate layout cycle A -> B -> A; insert (Box A) at the recursive edge")
+                (compiler-typecheck-inline-layout-query-ok?)
                 (and
                   (compiler-typecheck-inline-layout-error-ok?
-                    (compiler-typecheck-inline-fixed-array-source)
-                    "BadFixed"
-                    "typecheck: inline aggregate layout cycle BadFixed -> BadFixed; insert (Box BadFixed) at the recursive edge")
+                    (compiler-typecheck-inline-unboxed-list-source)
+                    "BadList"
+                    "typecheck: inline aggregate layout cycle BadList -> BadList; insert (Box BadList) at the recursive edge")
                   (and
                     (compiler-typecheck-inline-layout-error-ok?
-                      (compiler-typecheck-inline-tuple-source)
-                      "BadTuple"
-                      "typecheck: inline aggregate layout cycle BadTuple -> BadTuple; insert (Box BadTuple) at the recursive edge")
-                    (compiler-typecheck-inline-layout-error-ok?
-                      (compiler-typecheck-inline-region-wrapper-source)
-                      "BadRegion"
-                      "typecheck: inline aggregate layout cycle BadRegion -> BadRegion; insert (Box BadRegion) at the recursive edge")))))))))))
+                      (compiler-typecheck-inline-mutual-struct-source)
+                      "A"
+                      "typecheck: inline aggregate layout cycle A -> B -> A; insert (Box A) at the recursive edge")
+                    (and
+                      (compiler-typecheck-inline-layout-error-ok?
+                        (compiler-typecheck-inline-fixed-array-source)
+                        "BadFixed"
+                        "typecheck: inline aggregate layout cycle BadFixed -> BadFixed; insert (Box BadFixed) at the recursive edge")
+                      (and
+                        (compiler-typecheck-inline-layout-error-ok?
+                          (compiler-typecheck-inline-tuple-source)
+                          "BadTuple"
+                          "typecheck: inline aggregate layout cycle BadTuple -> BadTuple; insert (Box BadTuple) at the recursive edge")
+                        (compiler-typecheck-inline-layout-error-ok?
+                          (compiler-typecheck-inline-region-wrapper-source)
+                          "BadRegion"
+                          "typecheck: inline aggregate layout cycle BadRegion -> BadRegion; insert (Box BadRegion) at the recursive edge")))))))))))))
 
 (define (compiler-typecheck-nominal-tests-ok?) : bool
   (let
@@ -4588,6 +4652,12 @@
 
 (define (compiler-typecheck-self-test-basics) : unit
   (begin
+    (if (tc-type-env-box-smoke?)
+      unit
+      (panic "typecheck: boxed type env smoke mismatch"))
+    (if (tc-spmd-env-box-smoke?)
+      unit
+      (panic "typecheck: boxed spmd env smoke mismatch"))
     (if (compiler-typecheck-ptr-null-tests-ok?)
       unit
       (panic "typecheck: ptr-null construction/check tests failed"))

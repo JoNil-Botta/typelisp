@@ -75,7 +75,7 @@ check_source_docs() {
         /^[[:space:]]*$/ {
             next
         }
-        /^\((define|defenum|defstruct|extern)([[:space:]]|\()/ {
+        /^\((define|defenum|defstruct|defmacro|extern)([[:space:]]|\(|$)/ {
             if (!pending_doc) {
                 printf "%s:%d: missing item docs before %s\n", FILENAME, NR, $0
                 missing = 1

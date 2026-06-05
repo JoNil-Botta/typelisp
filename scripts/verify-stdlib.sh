@@ -105,7 +105,9 @@ stdlib_build_run() {
             got=$?
         fi
     else
-        "$COMPILER" compile "$_src" --stdlib-root "$ROOT/stdlib" -o "$_stem.s" \
+        "$COMPILER" compile "$_src" --target linux-x86_64 \
+            --cfg linux --cfg unix --cfg target-linux --cfg os-linux \
+            --stdlib-root "$ROOT/stdlib" -o "$_stem.s" \
             > "$_stem.build.out" 2> "$_stem.build.err"
         build_status=$?
         if [ "$build_status" -eq 0 ]; then

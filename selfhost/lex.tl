@@ -106,7 +106,27 @@
 ;; `c` may appear in a symbol: a letter, a digit, or a symbol-punctuation char.
 ;; A symbol run is the maximal span of these starting at a non-digit symbol char.
 (define (is-symbol-char [c : char]) : bool
-  (or (is-alpha c) (or (is-digit c) (is-symbol-punct c))))
+  (let
+    [code : i64 (cast c : i64)]
+    (or
+      (and (>= code 65) (<= code 90))
+      (or
+        (and (>= code 97) (<= code 122))
+        (or
+          (and (>= code 48) (<= code 57))
+          (or
+            (= code 33)
+            (or
+              (and (>= code 37) (<= code 38))
+              (or
+                (if (and (>= code 42) (<= code 47))
+                  (not (= code 44))
+                  false)
+                (or
+                  (= code 58)
+                  (or
+                    (and (>= code 60) (<= code 63))
+                    (= code 95)))))))))))
 
 ;; `c` is ASCII whitespace.
 (define (is-space [c : char]) : bool

@@ -986,6 +986,7 @@
           [(string-eq name "unsafe") (compiler-parse-tag-expr-unsafe)]
           [(string-eq name "return") (compiler-parse-tag-expr-return)]
           [(string-eq name "unless") (compiler-parse-tag-expr-unless)]
+          [(string-eq name "xgetbv") (compiler-parse-tag-expr-xgetbv)]
           [(string-eq name "define") (compiler-parse-tag-decl-define)]
           [(string-eq name "extern") (compiler-parse-tag-decl-extern)]
           [(string-eq name "import") (compiler-parse-tag-decl-import)]
@@ -1017,12 +1018,17 @@
           [(string-eq name "tuple-ref") (compiler-parse-tag-expr-tuple-ref)]
           [(string-eq name "array-ref") (compiler-parse-tag-expr-array-ref)]
           [(string-eq name "ptr-null?") (compiler-parse-tag-expr-ptr-null-check)]
+          [(string-eq name "cpuid-eax") (compiler-parse-tag-expr-cpuid-eax)]
+          [(string-eq name "cpuid-ebx") (compiler-parse-tag-expr-cpuid-ebx)]
+          [(string-eq name "cpuid-ecx") (compiler-parse-tag-expr-cpuid-ecx)]
+          [(string-eq name "cpuid-edx") (compiler-parse-tag-expr-cpuid-edx)]
           [(string-eq name "defstruct") (compiler-parse-tag-decl-defstruct)]
           [else (compiler-parse-tag-unknown)])]
       [(= n 10)
         (cond
           [(string-eq name "make-array") (compiler-parse-tag-expr-make-array)]
           [(string-eq name "array-set!") (compiler-parse-tag-expr-array-set)]
+          [(string-eq name "array-data") (compiler-parse-tag-expr-array-data)]
           [(string-eq name "struct-get") (compiler-parse-tag-expr-struct-get)]
           [(string-eq name "with-arena") (compiler-parse-tag-expr-with-region)]
           [(string-eq name "ptr-write!") (compiler-parse-tag-expr-ptr-write)]
@@ -1034,6 +1040,13 @@
           [(string-eq name "array-push!") (compiler-parse-tag-expr-array-push)]
           [(string-eq name "spmd-reduce") (compiler-parse-tag-expr-spmd-reduce)]
           [(string-eq name "with-escape") (compiler-parse-tag-expr-with-escape)]
+          [(string-eq name "string-data") (compiler-parse-tag-expr-string-data)]
+          [else (compiler-parse-tag-unknown)])]
+      [(= n 12)
+        (cond
+          [(string-eq name "program-argc") (compiler-parse-tag-expr-program-argc)]
+          [(string-eq name "program-argv") (compiler-parse-tag-expr-program-argv)]
+          [(string-eq name "program-envp") (compiler-parse-tag-expr-program-envp)]
           [else (compiler-parse-tag-unknown)])]
       [(= n 13)
         (cond
@@ -1044,6 +1057,11 @@
         (cond
           [(string-eq name "unquote-splicing")
             (compiler-parse-tag-expr-unquote-splicing)]
+          [else (compiler-parse-tag-unknown)])]
+      [(= n 17)
+        (cond
+          [(string-eq name "string-from-bytes")
+            (compiler-parse-tag-expr-string-from-bytes)]
           [else (compiler-parse-tag-unknown)])]
       [else (compiler-parse-tag-unknown)])))
 

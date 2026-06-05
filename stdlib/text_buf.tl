@@ -161,6 +161,33 @@
           (text-buf-chunks-render-balanced chunks count)
           (text-buf-chunks-render-rev chunks "")))]))
 
+(define (text-buf-write-chunks-rev
+  [raw : i64]
+  [chunks : TextBufChunkList]) : i64
+  (match chunks
+    [(TextBufChunkNil) io-status-ok]
+    [(TextBufChunkCons chunk rest)
+      (let
+        [status : i64 (text-buf-write-chunks-rev raw rest)]
+        (if (= status io-status-ok)
+          (file-write-status raw chunk)
+          status))]))
+
+(define (text-buf-write-file [path : String] [buf : TextBuf]) : i64
+  (match (file-open (& path) (OpenWriteTruncate))
+    [(OkIoFile handle)
+      (let
+        [write-status : i64
+          (match buf
+            [(TextBuf chunks _)
+              (text-buf-write-chunks-rev (struct-get handle id) chunks)])]
+        (let
+          [close-result : ResultIoUnit (file-close handle)]
+          (match close-result
+            [(OkIoUnit) write-status]
+            [(ErrIoUnit _) 1])))]
+    [(ErrIoFile _) 1]))
+
 ;: Return an empty buffer, leaving the old immutable `buf` value unchanged.
 (define (text-buf-clear [buf : TextBuf]) : TextBuf
   (match buf

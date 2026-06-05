@@ -803,9 +803,7 @@
     opt-level))
 
 (define (compiler-driver-write-text-buf [output-path : String] [buf : TextBuf]) : i64
-  (begin
-    (write-file output-path (text-buf-render buf))
-    0))
+  (text-buf-write-file output-path buf))
 
 (define (compiler-driver-write-result
   [result : ResultCompilerDriver]

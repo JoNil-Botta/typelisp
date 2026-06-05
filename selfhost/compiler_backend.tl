@@ -8643,7 +8643,7 @@
           [(ErrCompilerBackend message) (ErrCompilerBackend message)]))]))
 
 (define (compiler-backend-direct-emit-instr-limit) : i64
-  200)
+  114)
 
 (define (compiler-backend-emit-function-direct?
   [func : CompilerIrFunction]) : bool

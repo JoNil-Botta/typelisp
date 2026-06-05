@@ -30,7 +30,12 @@
 
 (defenum CompilerBackendPhiCopyList
   (BackendPhiCopyNil)
-  (BackendPhiCopyCons CompilerBackendPhiCopy CompilerBackendPhiCopyList))
+  (BackendPhiCopyCons CompilerBackendPhiCopy (Box CompilerBackendPhiCopyList)))
+
+(define (compiler-backend-phi-copy-cons
+  [copy : CompilerBackendPhiCopy]
+  [rest : CompilerBackendPhiCopyList]) : CompilerBackendPhiCopyList
+  (BackendPhiCopyCons copy (box rest)))
 
 (defenum CompilerBackendMaybePhiCopy
   (BackendNoPhiCopy)
@@ -136,7 +141,12 @@
 
 (defenum BackendStringList
   (BackendStringNil)
-  (BackendStringCons String BackendStringList))
+  (BackendStringCons String (Box BackendStringList)))
+
+(define (compiler-backend-string-cons
+  [head : String]
+  [rest : BackendStringList]) : BackendStringList
+  (BackendStringCons head (box rest)))
 
 (define (backend-cat3 [a : String] [b : String] [c : String]) : String
   (string-append a (string-append b c)))
@@ -4663,7 +4673,10 @@
     [(BackendPhiCopyCons copy rest)
       (if (compiler-backend-phi-copy-source-uses-home? assignments copy dst)
         true
-        (compiler-backend-phi-copy-list-source-uses-home? assignments rest dst))]))
+        (compiler-backend-phi-copy-list-source-uses-home?
+          assignments
+          (box-get rest)
+          dst))]))
 
 (define (compiler-backend-phi-copy-list-find-unblocked
   [assignments : CompilerRegAssignmentList]
@@ -4678,7 +4691,10 @@
             assignments
             all
             dst)
-            (compiler-backend-phi-copy-list-find-unblocked assignments rest all)
+            (compiler-backend-phi-copy-list-find-unblocked
+              assignments
+              (box-get rest)
+              all)
             (BackendSomePhiCopy copy))])]))
 
 (define (compiler-backend-phi-copy-list-remove-dst
@@ -4690,10 +4706,10 @@
       (match copy
         [(BackendPhiCopy found-dst _ _)
           (if (= found-dst dst)
-            (compiler-backend-phi-copy-list-remove-dst rest dst)
-            (BackendPhiCopyCons
+            (compiler-backend-phi-copy-list-remove-dst (box-get rest) dst)
+            (compiler-backend-phi-copy-cons
               copy
-              (compiler-backend-phi-copy-list-remove-dst rest dst)))])]))
+              (compiler-backend-phi-copy-list-remove-dst (box-get rest) dst)))])]))
 
 (define (compiler-backend-phi-source-replace-home
   [assignments : CompilerRegAssignmentList]
@@ -4718,7 +4734,7 @@
     [(BackendPhiCopyCons copy rest)
       (match copy
         [(BackendPhiCopy dst source ty)
-          (BackendPhiCopyCons
+          (compiler-backend-phi-copy-cons
             (BackendPhiCopy
               dst
               (compiler-backend-phi-source-replace-home
@@ -4728,7 +4744,7 @@
               ty)
             (compiler-backend-phi-copy-list-replace-source-home
               assignments
-              rest
+              (box-get rest)
               dst-home-var))])]))
 
 (define (compiler-backend-emit-phi-source-to-var
@@ -4836,7 +4852,7 @@
                   (if (compiler-backend-phi-same-home? assignments dst value)
                     (OkBackendPhiCopies tail)
                     (OkBackendPhiCopies
-                      (BackendPhiCopyCons
+                      (compiler-backend-phi-copy-cons
                         (BackendPhiCopy dst (BackendPhiSourceValue value) ty)
                         tail)))]
                 [(ErrBackendPhiCopies message) (ErrBackendPhiCopies message)])]
@@ -8218,7 +8234,7 @@
     [(BackendStringNil) buf]
     [(BackendStringCons name rest)
       (compiler-backend-emit-closure-descriptor-entries-into
-        rest
+        (box-get rest)
         functions
         externs
         (compiler-backend-emit-closure-descriptor-entry-into
@@ -8355,7 +8371,7 @@
             [(OkCompilerBackend head)
               (compiler-backend-emit-closure-entry-adapters-into
                 target
-                rest
+                (box-get rest)
                 functions
                 externs
                 plan
@@ -8364,7 +8380,7 @@
         [(CompilerBackendNoSignature)
           (compiler-backend-emit-closure-entry-adapters-into
             target
-            rest
+            (box-get rest)
             functions
             externs
             plan
@@ -8392,7 +8408,7 @@
     [(BackendStringCons head rest)
       (if (string-eq head text)
         true
-        (compiler-backend-string-list-contains? rest text))]))
+        (compiler-backend-string-list-contains? (box-get rest) text))]))
 
 (define (compiler-backend-string-list-reverse-into
   [strings : BackendStringList]
@@ -8401,8 +8417,8 @@
     [(BackendStringNil) out]
     [(BackendStringCons head rest)
       (compiler-backend-string-list-reverse-into
-        rest
-        (BackendStringCons head out))]))
+        (box-get rest)
+        (compiler-backend-string-cons head out))]))
 
 (define (compiler-backend-string-list-reverse [strings : BackendStringList]) : BackendStringList
   (compiler-backend-string-list-reverse-into strings BackendStringNil))
@@ -8412,7 +8428,7 @@
   [text : String]) : BackendStringList
   (if (compiler-backend-string-list-contains? strings text)
     strings
-    (BackendStringCons text strings)))
+    (compiler-backend-string-cons text strings)))
 
 (define (compiler-backend-collect-value-function
   [functions : BackendStringList]
@@ -9068,7 +9084,7 @@
     [(BackendStringNil) buf]
     [(BackendStringCons text rest)
       (compiler-backend-emit-string-entries-into
-        rest
+        (box-get rest)
         (text-buf-append buf (compiler-backend-emit-string-entry text)))]))
 
 (define (compiler-backend-emit-string-entries [strings : BackendStringList]) : String
@@ -9098,7 +9114,7 @@
     [(BackendStringNil) buf]
     [(BackendStringCons text rest)
       (compiler-backend-emit-f64-entries-into
-        rest
+        (box-get rest)
         (text-buf-append buf (compiler-backend-emit-f64-entry text)))]))
 
 (define (compiler-backend-emit-f64-entries [floats : BackendStringList]) : String

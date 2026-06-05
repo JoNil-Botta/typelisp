@@ -591,7 +591,7 @@
       (if (= sum 36) 42 2)
       1)))")
 
-(define (compiler-backend-c-abi-aggregate-ok?) : bool
+(define (compiler-backend-c-abi-aggregate-linux-ok?) : bool
   (match (compiler-backend-emit-source-for-target
     (compiler-backend-c-abi-aggregate-source)
     (BackendTargetLinux))
@@ -609,6 +609,30 @@
         (not
           (compiler-backend-string-contains? asm (compiler-backend-todo-marker))))]
     [(ErrCompilerBackend _) false]))
+
+(define (compiler-backend-c-abi-aggregate-windows-ok?) : bool
+  (match (compiler-backend-emit-source-for-target
+    (compiler-backend-c-abi-aggregate-source)
+    (BackendTargetWindows))
+    [(OkCompilerBackend asm)
+      (backend-and8
+        (compiler-backend-string-contains? asm ".extern tl_cabi_color_make\n")
+        (compiler-backend-string-contains? asm ".extern tl_cabi_color_use\n")
+        (compiler-backend-string-contains? asm "    call tl_cabi_color_make\n")
+        (compiler-backend-string-contains?
+          asm
+          "    movq $4, %rcx\n    call tl_alloc\n")
+        (compiler-backend-string-contains? asm "    movl %eax, (%r10)\n")
+        (compiler-backend-string-contains? asm "    movl (%r10), %eax\n")
+        (compiler-backend-string-contains? asm "    call tl_cabi_color_use\n")
+        (not
+          (compiler-backend-string-contains? asm (compiler-backend-todo-marker))))]
+    [(ErrCompilerBackend _) false]))
+
+(define (compiler-backend-c-abi-aggregate-ok?) : bool
+  (and
+    (compiler-backend-c-abi-aggregate-linux-ok?)
+    (compiler-backend-c-abi-aggregate-windows-ok?)))
 
 (define (compiler-backend-varargs-ffi-ok?) : bool
   (and
@@ -1718,6 +1742,48 @@
               (compiler-backend-windows-driver-runtime-ok?)))))]
     [(ErrCompilerBackend message) false]))
 
+(define (compiler-backend-windows-runtime-guard-source) : String
+  "(extern tl_alloc : (-> u64 u64))
+(extern tl_region_reset : (-> u64 unit))
+(define (main) : u64
+  (begin
+    (tl_region_reset (cast 0 : u64))
+    (tl_alloc (cast 0 : u64))))")
+
+(define (compiler-backend-windows-runtime-guard-ok?) : bool
+  (match (compiler-backend-emit-source-for-target
+    (compiler-backend-windows-runtime-guard-source)
+    (BackendTargetWindows))
+    [(OkCompilerBackend asm)
+      (and
+        (backend-and8
+          (compiler-backend-string-contains? asm "tl_alloc:\n")
+          (compiler-backend-string-contains?
+            asm
+            "    testq %rcx, %rcx\n    jnz .L_tl_alloc_win_size_ready\n")
+          (not
+            (compiler-backend-string-contains?
+              asm
+              "    testq %rcx, %rcx\n    jg .L_tl_alloc_win_size_ready\n"))
+          (compiler-backend-string-contains?
+            asm
+            "    jc .L_tl_alloc_enter_abort\n")
+          (compiler-backend-string-contains?
+            asm
+            ".L_tl_region_reset_win_invalid:\n")
+          (compiler-backend-string-contains?
+            asm
+            "    call _write\n    add $32, %rsp\n    movq $134, %rcx\n")
+          (compiler-backend-string-contains?
+            asm
+            "    push %r14\n    movq %rcx, %r12\n")
+          (not
+            (compiler-backend-string-contains?
+              asm
+              "    push %r14\n    sub $8, %rsp\n    movq %rcx, %r12\n")))
+        (not (compiler-backend-string-contains? asm "syscall\n")))]
+    [(ErrCompilerBackend _) false]))
+
 (define (compiler-backend-deterministic-ok? [src : String]) : bool
   (match (compiler-backend-emit-source src)
     [(OkCompilerBackend first)
@@ -1736,6 +1802,14 @@
   (match (lower-compiler-source-with-mode src (CompilerLowerInlineAggregates))
     [(OkCompilerLower program spans)
       (compiler-backend-emit-program-with-spans program spans)]
+    [(ErrCompilerLower message) (ErrCompilerBackend message)]))
+
+(define (compiler-backend-emit-source-inline-aggregates-for-target
+  [src : String]
+  [target : CompilerBackendTarget]) : ResultCompilerBackend
+  (match (lower-compiler-source-with-mode src (CompilerLowerInlineAggregates))
+    [(OkCompilerLower program spans)
+      (compiler-backend-emit-program-with-spans-for-target program spans target)]
     [(ErrCompilerLower message) (ErrCompilerBackend message)]))
 
 (define (compiler-backend-source-contains? [src : String] [needle : String]) : bool
@@ -3822,12 +3896,58 @@
           (compiler-backend-string-contains? asm (compiler-backend-todo-marker))))]
     [(ErrCompilerBackend _) false]))
 
+(define (compiler-backend-inline-aggregate-call-source) : String
+  "(defstruct Color (r u8) (g u8) (b u8) (a u8))
+(defenum Swatch (Empty) (Paint Color))
+(define (make-color) : Color
+  (Color (cast 5 : u8) (cast 7 : u8) (cast 11 : u8) (cast 13 : u8)))
+(define (id-color [c : Color]) : Color c)
+(define (use-color [c : Color]) : i64
+  (+
+    (cast (struct-get c r) : i64)
+    (+
+      (cast (struct-get c g) : i64)
+      (+ (cast (struct-get c b) : i64) (cast (struct-get c a) : i64)))))
+(define (id-swatch [s : Swatch]) : Swatch s)
+(define (score-swatch [s : Swatch]) : i64
+  (match s
+    [Empty 0]
+    [(Paint c) (use-color c)]))
+(define (main) : i64
+  (let
+    [c : Color (id-color (make-color))]
+    [s : Swatch (id-swatch (Paint c))]
+    (if (= (use-color c) 36)
+      (if (= (score-swatch s) 36) 42 2)
+      1)))")
+
+(define (compiler-backend-inline-aggregate-call-target-ok?
+  [target : CompilerBackendTarget]) : bool
+  (match (compiler-backend-emit-source-inline-aggregates-for-target
+    (compiler-backend-inline-aggregate-call-source)
+    target)
+    [(OkCompilerBackend asm)
+      (backend-and4
+        (compiler-backend-string-contains? asm "main:\n")
+        (>= (compiler-backend-string-count asm "    call ") 6)
+        (compiler-backend-string-contains? asm "    call tl_alloc\n")
+        (not
+          (compiler-backend-string-contains? asm (compiler-backend-todo-marker))))]
+    [(ErrCompilerBackend _) false]))
+
+(define (compiler-backend-inline-aggregate-call-ok?) : bool
+  (and
+    (compiler-backend-inline-aggregate-call-target-ok? (BackendTargetLinux))
+    (compiler-backend-inline-aggregate-call-target-ok? (BackendTargetWindows))))
+
 (define (compiler-backend-inline-aggregate-storage-ok?) : bool
   (and
     (compiler-backend-inline-struct-ok?)
     (and
       (compiler-backend-inline-enum-ok?)
-      (compiler-backend-inline-boxed-recursive-ok?))))
+      (and
+        (compiler-backend-inline-boxed-recursive-ok?)
+        (compiler-backend-inline-aggregate-call-ok?)))))
 
 (define (compiler-backend-self-test) : i64
   (if (and
@@ -3936,7 +4056,9 @@
                                   (compiler-backend-shift-guard-ok?)
                                   (and
                                     (compiler-backend-windows-sdk-registry-runtime-ok?)
-                                    (compiler-backend-simd-vector-ok?))))))))))))))))))
+                                    (and
+                                      (compiler-backend-windows-runtime-guard-ok?)
+                                      (compiler-backend-simd-vector-ok?)))))))))))))))))))
     42
     (begin
       (panic "backend: smoke output mismatch")

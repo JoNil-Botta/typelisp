@@ -4,6 +4,7 @@
 # extra may be requires-stage0-symbol:<name>[,<name>...] for staged backend
 # primitives or expected-stderr:<printf escapes> for native trap diagnostics.
 aggregate_globals|tests/integration/aggregate_globals.tl|42|-|-|-
+c_abi_aggregate_color|tests/integration/c_abi_aggregate_color.tl|42|-|-|benchmarks/c_abi_aggregate_color/baseline.c
 arena_escape_stress|tests/integration/arena_escape_stress.tl|42|-|-|stdlib/arena.tl
 argv|tests/integration/argv.tl|7|alpha\n|alpha beta|-
 arithmetic|tests/integration/arithmetic.tl|47|-|-|-
@@ -61,13 +62,13 @@ process_runtime|tests/integration/process_runtime.tl|42|-|-|stdlib/process.tl st
 read_file_missing_trap|tests/integration/read_file_missing_trap.tl|134|-|-|-|expected-stderr:tl: read-file failed\n
 write_file_invalid_trap|tests/integration/write_file_invalid_trap.tl|134|-|-|-|expected-stderr:tl: write-file failed\n
 selfhost_argv_oob|tests/integration/selfhost_argv_oob.tl|134|-|-|-|expected-stderr:tl: argv index out of bounds\n
-# run-assert deferred on windows (huge-alloc guard does not abort cleanly, #1660): tl_alloc_huge_trap|tests/integration/tl_alloc_huge_trap.tl|134|-|-|-|expected-stderr:tl: allocation failed\n
+tl_alloc_huge_trap|tests/integration/tl_alloc_huge_trap.tl|134|-|-|-|expected-stderr:tl: allocation failed\n
 stdin_bytes_negative_trap|tests/integration/stdin_bytes_negative_trap.tl|134|-|-|-|expected-stderr:tl: stdin failed\n
 region_mark_zero|tests/integration/region_mark_zero.tl|42|-|-|-
 region_reset_zero|tests/integration/region_reset_zero.tl|44|-|-|-
 region_reset_discard|tests/integration/region_reset_discard.tl|3|-|-|-
 region_reset_preserve|tests/integration/region_reset_preserve.tl|62|-|-|-
-# run-assert deferred on windows (region-reset guard faults instead of aborting, #1660): region_reset_invalid_trap|tests/integration/region_reset_invalid_trap.tl|134|-|-|-|expected-stderr:tl: invalid region mark\n
+region_reset_invalid_trap|tests/integration/region_reset_invalid_trap.tl|134|-|-|-|expected-stderr:tl: invalid region mark\n
 print|tests/integration/print.tl|0|42\nfalse\n|-|-
 print_char|tests/integration/print_char.tl|0|A\n|-|-
 print_float|tests/integration/print_float.tl|0|1.5\n|-|-
@@ -100,6 +101,7 @@ u64_float_casts|tests/integration/u64_float_casts.tl|0|-|-|-
 unit_functions|tests/integration/unit_functions.tl|7|-|-|-
 unit_main|tests/integration/unit_main.tl|0|-|-|-
 valid_shift_counts|tests/integration/valid_shift_counts.tl|42|-|-|-
+with_escape_clone_out|tests/integration/with_escape_clone_out.tl|42|-|-|stdlib/arena.tl|requires-stage0-symbol:with-escape
 compiler_ast_types_smoke|selfhost/compiler_ast_types_smoke.tl|42|-|-|compiler_ast_types.tl
 compiler_parse_smoke|selfhost/compiler_parse_smoke.tl|42|-|-|compiler_parse_core.tl compiler_diagnostic.tl compiler_ast_types.tl sym_i64_env.tl read.tl lex.tl token.tl stdlib/text_buf.tl stdlib/io.tl
 compiler_symbols_smoke|selfhost/compiler_symbols_smoke.tl|42|-|-|compiler_symbols.tl compiler_parse_core.tl compiler_diagnostic.tl compiler_ast_types.tl sym_i64_env.tl read.tl lex.tl token.tl stdlib/text_buf.tl stdlib/io.tl
